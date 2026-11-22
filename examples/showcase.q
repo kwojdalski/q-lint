@@ -941,6 +941,33 @@ definedBelow:2
 readsBuiltin:{[] v:sum; v}
 readsLocal:{[] w:1; v:w; v}
 
+/ QT033-QT035: a local every assignment of which is one literal type is
+/ judged where it is read as that literal would be.
+typedLocals:{[]
+  s:`a; n:1 2; v:`x`y;
+  / expect-next: QT033
+  r1:s="a";
+  / expect-next: QT035
+  r2:s+1;
+  / expect-next: QT034
+  r3:n,v;
+  (r1;r2;r3)}
+
+/ QK001-QK005 report only for a configuration's target-version that does
+/ not run them; with no profile deciding, every one is shown here.
+/ expect-next: QK001
+dictLiteral:([a:1;b:2])
+/ expect-next: QK003
+typedParam:{[x:`j] x+1}
+patterns:{[]
+  / expect-next: QK002
+  (a;b):1 2;
+  a+b}
+/ expect-next: QK004
+deferred:{[h] -30!(h;0b;1)}
+/ expect-next: QK005
+removed:{[] .Q.Xf}
+
 / QS002: a dot that is not a namespace. It fires only at root, so the file
 / returns there first - inside the `\d .demo` above, the same text names a
 / sub-namespace, which q creates properly.

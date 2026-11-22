@@ -105,6 +105,35 @@ pub(crate) fn layout_at(
     })
 }
 
+/// A query's parts as written: the lead word, the items after it, each
+/// clause word with its items, and the bytes it spans. What the qSQL
+/// conversions (`functional`) and the explainer read.
+pub(crate) struct Parts {
+    pub lead: &'static str,
+    pub head: Vec<String>,
+    pub clauses: Vec<(&'static str, Vec<String>)>,
+    pub start: usize,
+    pub end: usize,
+}
+
+/// The outermost query whose span holds byte `at`, split into its parts;
+/// `None` outside one, and in one this module would refuse to lay out (a
+/// comment in it, a second query word at its own depth, a clause out of
+/// order), whose parts it cannot be sure of.
+pub(crate) fn parts_at(code: &str, comments: &str, source: &str, at: usize) -> Option<Parts> {
+    let plain = crate::unsymbolled(code);
+    leads(&plain).into_iter().find_map(|lead| {
+        let q = parse(&plain, comments, source, lead)?;
+        (q.start..=q.end).contains(&at).then_some(Parts {
+            lead: q.lead,
+            head: q.head,
+            clauses: q.clauses,
+            start: q.start,
+            end: q.end,
+        })
+    })
+}
+
 /// Where each lead word is, in order, in `plain`: the code with its symbols
 /// blanked too, since a word inside a symbol is no query word.
 fn leads(plain: &str) -> Vec<usize> {

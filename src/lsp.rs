@@ -156,8 +156,9 @@ use crate::jsonrpc::{INVALID_REQUEST, Malformed, receive, send};
 use q_lint_rs::graph::Placement;
 use q_lint_rs::{
     FileIndex, Finding, Fix, References, TokenKind, Workspace, balanced, broken_statement,
-    file_suppression_for, fix_all, fix_for, fix_lines, folds, organise_loads, qsql_layout_at,
-    qsql_layouts, rule_url, semantic_tokens_in, suppressions_for, whole_edit,
+    file_suppression_for, fix_all, fix_for, fix_lines, folds, functional_to_qsql, organise_loads,
+    qsql_layout_at, qsql_layouts, qsql_to_functional, rule_url, semantic_tokens_in,
+    suppressions_for, whole_edit,
 };
 use serde_json::{Value, json};
 use std::{
@@ -186,6 +187,7 @@ const REQUEST_CANCELLED: i64 = -32800;
 
 mod annotate;
 mod help;
+mod inventory;
 mod live;
 mod navigate;
 mod relate;
@@ -621,7 +623,10 @@ fn workspace_folders(params: &Value) -> Vec<(String, String)> {
 ///  "suppressions": {"enable": true}, "organiseLoads": {"enable": true},
 ///  "performanceLints": {"enable": true}, "formatChangedLines": {"enable": false},
 ///  "workspaceIndex": {"enable": true, "exclude": []},
-///  "qsqlLayout": {"enable": true, "onFormat": false, "lineLength": 80}}
+///  "qsqlLayout": {"enable": true, "onFormat": false, "lineLength": 80},
+///  "functionalForm": {"enable": true}, "qsqlExplain": {"enable": true},
+///  "versionCheck": {"enable": true}, "baseline": {"enable": true},
+///  "typeLints": {"enable": true}}
 /// ```
 ///
 /// `lint.select` and `lint.ignore` narrow the selection (see
@@ -705,6 +710,21 @@ struct Options {
     qsql_on_format: bool,
     /// The line length a laid-out query's parts are fitted to.
     qsql_width: usize,
+    /// Offer the code actions that rewrite the qSQL query at the cursor in
+    /// its functional form, and a functional form as qSQL.
+    functional_form: bool,
+    /// Say the qSQL query or functional form under the cursor in words, on
+    /// hover over its lead word or its `?`/`!`.
+    qsql_explain: bool,
+    /// Report the QK rules for a configuration's `target-version`. Off,
+    /// they are ignored as `lint.ignore` would.
+    version_check: bool,
+    /// Pass over the findings in a configuration's `baseline` file. Off,
+    /// every finding is shown.
+    baseline: bool,
+    /// Report the lints from inferred types, QT033-QT035. Off, they are
+    /// ignored as `lint.ignore` would.
+    type_lints: bool,
     /// Whether the client shows an action it cannot take with the reason
     /// (`codeAction.disabledSupport`): a capability, not a setting.
     disabled_actions: bool,
@@ -743,6 +763,11 @@ impl Default for Options {
             qsql_layout: true,
             qsql_on_format: false,
             qsql_width: 80,
+            functional_form: true,
+            qsql_explain: true,
+            version_check: true,
+            baseline: true,
+            type_lints: true,
             disabled_actions: false,
             severity: vec![],
         }
@@ -789,6 +814,11 @@ impl Options {
                         "performanceLints",
                         "formatChangedLines",
                         "qsqlLayout",
+                        "functionalForm",
+                        "qsqlExplain",
+                        "versionCheck",
+                        "baseline",
+                        "typeLints",
                     ]
                     .contains(&key.as_str())
                         && !value.is_object()
@@ -834,6 +864,11 @@ impl Options {
         options.format_changed_lines = flag("/formatChangedLines/enable", false);
         options.qsql_layout = flag("/qsqlLayout/enable", true);
         options.qsql_on_format = flag("/qsqlLayout/onFormat", false);
+        options.functional_form = flag("/functionalForm/enable", true);
+        options.qsql_explain = flag("/qsqlExplain/enable", true);
+        options.version_check = flag("/versionCheck/enable", true);
+        options.baseline = flag("/baseline/enable", true);
+        options.type_lints = flag("/typeLints/enable", true);
         match init.pointer("/qsqlLayout/lineLength") {
             None | Some(Value::Null) => {}
             Some(n) => match n.as_u64().filter(|n| (20..=400).contains(n)) {
@@ -888,6 +923,12 @@ impl Options {
         let mut ignore = codes("/lint/ignore", ignore);
         if !options.performance_lints {
             ignore.push("QV".to_string());
+        }
+        if !options.version_check {
+            ignore.push("QK".to_string());
+        }
+        if !options.type_lints {
+            ignore.extend(["QT033", "QT034", "QT035"].map(String::from));
         }
         for text in exclude {
             match crate::config::pattern(&text) {
@@ -1129,6 +1170,7 @@ pub fn serve(
                 if layer.select.is_some() || !layer.ignore.is_empty() {
                     policy.narrow(layer);
                 }
+                policy.use_baseline(opts.baseline);
                 code_action_literals = params
                     .pointer("/capabilities/textDocument/codeAction/codeActionLiteralSupport")
                     .is_some_and(|v| !v.is_null());
@@ -1165,6 +1207,7 @@ pub fn serve(
                 help::announce(&mut result["capabilities"], opts.help, opts.completion);
                 relate::announce(&mut result["capabilities"], opts.call_hierarchy, opts.graph);
                 live::announce(&mut result["capabilities"]);
+                inventory::announce(&mut result["capabilities"]);
                 annotate::announce(
                     &mut result["capabilities"],
                     opts.inlay_hints || opts.inferred_types,
@@ -1443,6 +1486,7 @@ pub fn serve(
                     let more = help::More {
                         inferred_types: opts.inferred_types,
                         auto_load: opts.auto_load,
+                        qsql_explain: opts.qsql_explain,
                     };
                     help::answer(&method, &params, &sources, help_client, more)
                 });
@@ -1491,6 +1535,16 @@ pub fn serve(
                 let answer = guarded(|| {
                     let sources = navigate::Sources::new(&docs, &idx);
                     live::answer(&method, &params, &sources, opts.inlay_hints)
+                });
+                match answer {
+                    Ok(result) => send(writer, json!({"id": id, "result": result}))?,
+                    Err(panic) => send(writer, internal_error(id, &panic))?,
+                }
+            }
+            ("q-lint/definitions" | "q-lint/deadCode" | "q-lint/testsReaching", Some(id)) => {
+                let answer = guarded(|| {
+                    let sources = navigate::Sources::new(&docs, &idx);
+                    inventory::answer(&method, &params, &sources)
                 });
                 match answer {
                     Ok(result) => send(writer, json!({"id": id, "result": result}))?,
@@ -1651,7 +1705,7 @@ fn capabilities(opts: &Options, code_action_literals: bool) -> Value {
         // The kinds, not a bare `true`: an editor asks for `source.fixAll`
         // actions on save only of a server that says it has some.
         let mut kinds = vec![QUICK_FIX, FIX_ALL];
-        if opts.generate_qdoc || opts.qsql_layout {
+        if opts.generate_qdoc || opts.qsql_layout || opts.functional_form {
             kinds.push(REWRITE);
         }
         if opts.extract_function {
@@ -1957,6 +2011,15 @@ fn code_actions(
     {
         actions.extend(qsql_action(params, docs, opts.qsql_width));
     }
+    if opts.functional_form
+        && match &only {
+            None => !about_diagnostics,
+            Some(only) => only.iter().any(|kind| asks_for(kind, REWRITE)),
+        }
+    {
+        let why = opts.disabled_actions && only.is_some();
+        actions.extend(functional_actions(params, docs, why));
+    }
     if opts.extract_function
         && match &only {
             None => !about_diagnostics,
@@ -2246,6 +2309,55 @@ fn qsql_action(params: &Value, docs: &Documents, width: usize) -> Option<Value> 
         "kind": REWRITE,
         "edit": {"changes": changes},
     }))
+}
+
+/// The qSQL query at the cursor rewritten in its functional form, and the
+/// functional form at the cursor rewritten as qSQL
+/// (`q_lint_rs::qsql_to_functional`, `functional_to_qsql`). Where one is
+/// there but cannot be rewritten, nothing - or with `why` the action
+/// disabled with the reason.
+fn functional_actions(params: &Value, docs: &Documents, why: bool) -> Vec<Value> {
+    let uri = uri_of(&params["textDocument"]);
+    let Some(source) = docs.get(&uri).filter(|_| is_q_uri(&uri)) else {
+        return vec![];
+    };
+    let lines = Lines::new(source);
+    let start = &params["range"]["start"];
+    let (Some(line), Some(character)) = (start["line"].as_u64(), start["character"].as_u64())
+    else {
+        return vec![];
+    };
+    let cursor = lines.offset(line as usize, character as usize);
+    let mut out = vec![];
+    for (title, answer) in [
+        (
+            "Rewrite qSQL query in functional form",
+            qsql_to_functional(source, cursor),
+        ),
+        (
+            "Rewrite functional form as qSQL",
+            functional_to_qsql(source, cursor),
+        ),
+    ] {
+        match answer {
+            Some(Ok(c)) => {
+                let mut changes = serde_json::Map::new();
+                changes.insert(
+                    uri.clone(),
+                    json!([{"range": {"start": lines.json(c.start), "end": lines.json(c.end)},
+                            "newText": c.text}]),
+                );
+                out.push(json!({"title": title, "kind": REWRITE, "edit": {"changes": changes}}));
+            }
+            Some(Err(reason)) if why => out.push(json!({
+                "title": title,
+                "kind": REWRITE,
+                "disabled": {"reason": format!("Not rewritten: {reason}.")},
+            })),
+            _ => {}
+        }
+    }
+    out
 }
 
 /// Extract Function over the request's range: the selection made a lambda
@@ -3093,6 +3205,9 @@ mod tests {
                 exclude: vec![],
                 config: None,
                 isolated: true,
+                target: None,
+                baseline: None,
+                no_baseline: false,
             },
             true,
         );

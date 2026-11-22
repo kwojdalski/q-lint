@@ -355,6 +355,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     // Group V (#1032-#1041), as each is declared.
     ...[ADMIN_COMMANDS.bulkAdd, ADMIN_COMMANDS.importQStudio, ADMIN_COMMANDS.importKx, ADMIN_COMMANDS.setCredentialCommand, ADMIN_COMMANDS.setTimeout, ADMIN_COMMANDS.interrupt, ADMIN_COMMANDS.runAsync, ADMIN_COMMANDS.pendingAsync, ADMIN_COMMANDS.copyLink, ADMIN_COMMANDS.addSchedule, ADMIN_COMMANDS.manageSchedules, ADMIN_COMMANDS.refreshClients, ADMIN_COMMANDS.closeClient, ADMIN_COMMANDS.refreshTimers, ADMIN_COMMANDS.toggleTimer, ADMIN_COMMANDS.setTimerInterval],
     ...Object.values(require("../out/processtools.js").PROCESS_TOOL_COMMANDS),
+    ...Object.values(require("../out/languagefeatures.js").LANGUAGE_COMMANDS),
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });

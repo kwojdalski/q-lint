@@ -1,6 +1,6 @@
 # Rules
 
-All 126 rules, generated from `src/taxonomy.json` - the same data
+All 134 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -138,6 +138,9 @@ it, or `ALL`.
 | <a id="qt030"></a>`QT030` | cast-unknown-type | A cast to a type character q does not have | every profile |
 | <a id="qt031"></a>`QT031` | uppercase-cast-literal | An uppercase cast parses a string; given a number or a symbol it is 'type, and "C"$ refuses only a vector | every profile |
 | <a id="qt032"></a>`QT032` | cast-by-name-refused-on-string | `symbol$ or `guid$ on a string, which q 5 refuses with 'type | every profile |
+| <a id="qt033"></a>`QT033` | inferred-symbol-comparison | A local that is always a symbol compared with a number, boolean, temporal, char or string, or one that is never a symbol compared with a symbol: 'type | `style` and above |
+| <a id="qt034"></a>`QT034` | inferred-mixed-join | Two lists of different types joined with `,`, one of them a typed local: the result is a general list, not a simple one | `style` and above |
+| <a id="qt035"></a>`QT035` | inferred-symbol-arithmetic | Arithmetic on a local that is always a symbol: 'type | `style` and above |
 
 ## Correctness - q that runs and does the wrong thing
 
@@ -194,6 +197,16 @@ it, or `ALL`.
 | <a id="qv001"></a>`QV001` | partition-filter-late | A where phrase constrains date, month, year or int after another column: on a partitioned table q reads every partition for the earlier constraint | `style` and above |
 | <a id="qv002"></a>`QV002` | atomic-builtin-each | each over an atomic builtin - abs, neg, sqrt, exp, log, floor, ceiling, not, null, signum, reciprocal - which already applies to every item in one call | `style` and above |
 | <a id="qv003"></a>`QV003` | append-in-loop | r:r,x or r:raze(r;x) in a do or while body copies r on every pass, so the loop is quadratic; r,:x appends in place | `style` and above |
+
+## Compatibility - q that does not run on the q release a configuration targets
+
+| code | name | summary | on in |
+|---|---|---|---|
+| <a id="qk001"></a>`QK001` | target-dictionary-literal | A dictionary literal, ([a:1;b:2]), which q reads from 4.1 on: reported only for an older target-version | every profile |
+| <a id="qk002"></a>`QK002` | target-pattern-assignment | A pattern assignment, (a;b):x, which q runs from 4.1 on: reported only for an older target-version | every profile |
+| <a id="qk003"></a>`QK003` | target-typed-parameter | A typed or filtered lambda parameter, {[x:`j] ...}, which q runs from 4.1 on: reported only for an older target-version | every profile |
+| <a id="qk004"></a>`QK004` | target-deferred-response | -30!, the deferred response, which q has from 3.6 on: reported only for an older target-version | every profile |
+| <a id="qk005"></a>`QK005` | target-removed-q-function | .Q.Xf or .Q.Cf, removed in q 4.1: reported only for a target-version of 4.1 or KDB-X | every profile |
 
 ## Leftovers - things left in q that were never meant to ship
 

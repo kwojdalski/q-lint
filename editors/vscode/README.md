@@ -302,6 +302,76 @@ to a process you add and connect to, and sends only the code you run.
   `tests` directory. A changed file that was deleted or is excluded from
   the index cannot be followed, and the list says how many were.
 
+### Language and linter tools
+
+Each has its own switch, listed in [Settings](#settings) and
+[Language tools settings](#language-tools-settings).
+
+- **Rewrite qSQL Query in Functional Form** and **Rewrite Functional Form
+  as qSQL**, in the lightbulb and **Refactor...** menu and the palette:
+  `select n:count i by sym from t where px>2` becomes
+  `?[t;enlist (>;`px;2);(enlist`sym)!enlist `sym;(enlist`n)!enlist (count;`i)]`
+  and back. Each column, constraint and grouping is written as the tree
+  q's `parse` gives - a name as a symbol, a symbol literal enlisted - and an
+  unnamed column gets the name q would give it. What the rewrite cannot read
+  (an adverb, a projection, `select[n]`, a glyph used as a monad) is refused,
+  and **Refactor...** says why. Every case in the tests was run both ways on
+  KDB-X and PeachQ and compared with `~`. `q-lint.functionalForm.enable`.
+- **The qSQL explainer**: hover over a query's `select`, `exec`, `update` or
+  `delete` (or a functional form's `?`/`!`) to read it in words - what it
+  reads, which rows it keeps (each `where` condition only on the rows the
+  ones before kept), how it groups and what it returns, and for `update` or
+  `delete` whether it changes the table in place (`` from `t ``) or returns
+  a copy. **q-lint: Explain qSQL Query** opens the words beside the editor.
+  Deterministic and offline; no model is involved. `q-lint.qsqlExplain.enable`.
+- **q-lint: Explain q Error**: what a q error means, its likely causes and,
+  from the backtrace of the last query that failed, the operation that
+  failed (`c:b+`x;` in `mid`, at `+`). It explains the last failure, the
+  selected text, or an error typed in; a problem whose message names a q
+  error (`'type`, `'length`, ...) gets a Quick Fix that explains it. The
+  catalogue is offline; each example in it was run on KDB-X and PeachQ, and
+  the few from the KX reference alone are marked so. `q-lint.errorExplain.enable`.
+- **The q version check**: name a release in a folder's `qlinter.toml` -
+  `target-version = "4.0"` (`3.6`, `4.0`, `4.1` or `kdbx`) - and q-lint
+  reports what does not run there: a dictionary literal, a pattern
+  assignment or a typed parameter before 4.1, `-30!` before 3.6, `.Q.Xf` on
+  4.1 and later (QK001-QK005). `q-lint.versionCheck.enable`.
+- **A lint baseline**: **q-lint: Write Lint Baseline** writes today's
+  findings to `qlinter-baseline.json` in the folder - it says how many and
+  asks first, and again before it replaces one - and offers to add
+  `baseline = "qlinter-baseline.json"` to `qlinter.toml`. From then on the
+  editor and `qlinter` show only the findings that are not in it; a finding
+  stays matched when lines move above it. `q-lint.baseline.enable`.
+- **q-lint: Show Dead Code Report**: the functions defined in the workspace
+  that nothing in the workspace reads, linked to each definition. A name
+  spelled in a symbol or a string counts as read, and `.z` handlers and
+  tests are never listed; the report says how many places reach a name by a
+  value built at run time, which it cannot see. With
+  `q-lint.deadCode.checkProcess` on it also asks the active process, in one
+  read-only query, which of them a function it holds names. `q-lint.deadCode.enable`.
+- **q Namespaces**, a view in the Explorer: every global the workspace
+  defines, grouped by namespace, each opening its definition. It reads the
+  language server's index when shown, after a save and on Refresh.
+  `q-lint.namespaceTree.enable`.
+- **Run affected tests on save**, off by default: on saving a q file, the
+  language server finds the functions the save changed and the tests that
+  reach them through the call graph, and the Test Explorer runs those tests
+  only, on the active connection (a production process is confirmed first).
+  `q-lint.testing.runAffectedOnSave.enable`.
+- **Type lints** (style profile): a local every assignment of which is a
+  literal of one type is judged where it is read - a symbol compared with a
+  string or a number (QT033) or used in arithmetic (QT035), both 'type in q,
+  and two lists of different types joined (QT034), which makes a general
+  list. A lambda of more than 64 locals is not read. `q-lint.typeLints.enable`.
+- **The SQL tab for KDB-X**: **q-lint: New SQL Query for Process** opens a
+  `.sql` editor bound to a process, with completion from its tables and
+  columns (read once, when it opens); **q-lint: Run SQL** (the Run button in the editor's title) sends
+  the selection or the editor to KDB-X's SQL engine, `.s.e`, loading it
+  (`\l s.k_`) where the process has none, and shows the result as a query's.
+  A statement that changes data (`INSERT`, `UPDATE`, `DELETE`, `CREATE`,
+  `DROP`, ...) and the engine's load are confirmed first on a process the
+  read-only guard guards. PeachQ's own `.s.e` needs DuckDB. `q-lint.sql.enable`.
+
 ## q processes and queries
 
 The **q-lint** panel in the activity bar holds four views: Processes,
@@ -2432,6 +2502,11 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.qsqlLayout.enable` | `true` | Offer **Lay out qSQL query on aligned lines** inside a query. Off: no action, and Format Document lays nothing out. | - |
 | `q-lint.qsqlLayout.onFormat` | `false` | Have **Format Document** lay out every qSQL query longer than the line length, after the safe fixes. | - |
 | `q-lint.qsqlLayout.lineLength` | `80` | The line length a query is laid out to, 20 to 400. | - |
+| `q-lint.functionalForm.enable` | `true` | Offer the rewrites between a qSQL query and its functional form, in the lightbulb, **Refactor...** and the palette. Off: neither is offered. | - |
+| `q-lint.qsqlExplain.enable` | `true` | Say a qSQL query in words on hover over its lead word, and offer **Explain qSQL Query**. Off: no words, no command. | - |
+| `q-lint.versionCheck.enable` | `true` | Report the QK rules for a folder's `target-version`. Off: hidden as `q-lint.lint.ignore` would. | - |
+| `q-lint.baseline.enable` | `true` | Hide the findings in a folder's configured `baseline`, and offer **Write Lint Baseline**. Off: every finding shows. | - |
+| `q-lint.typeLints.enable` | `true` | Report QT033-QT035, the lints from inferred types. Off: hidden as `q-lint.lint.ignore` would. | - |
 | `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines, up to 20,000 files or 500,000 directory entries. Off: only open files. | - |
 | `q-lint.workspaceIndex.exclude` | `[]` | Globs, relative to the workspace folder, the index does not read: `["vendor/**"]`. | `q-lang-server.sourceFiles.ignoreGlob` |
 | `q-lint.trace.server` | `off` | Log client-server traffic: `off`, `messages`, `verbose`. | `q-lang-server.trace.server` |
@@ -2568,6 +2643,19 @@ Each applies at once, without a reload. None reaches the language server.
 | `q-lint.repl.enable` | `true` | **Open q REPL Pane**: a console on the connected process, with multiline input, history, Ctrl+R search and Tab completion. Off, the command is hidden and refuses, and the pane closes. | - |
 | `q-lint.view.enable` | `true` | Open what `.qlint.view` and `.qlint.plot` send, and offer **Define .qlint.view and .qlint.plot on Process**. Off, nothing listens and nothing is defined. | - |
 | `q-lint.view.defineOnConnect` | `false` | Define `.qlint.view` and `.qlint.plot` on each process as it is connected to; never on one the read-only guard guards. | - |
+
+### Language tools settings
+
+Each applies at once, without a reload. None reaches the language server.
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.errorExplain.enable` | `true` | **Explain q Error**, and its Quick Fix on a problem that names a q error. Off: the command is hidden and refuses, the Quick Fix withdrawn. | - |
+| `q-lint.deadCode.enable` | `true` | **Show Dead Code Report**. Off: the command is hidden and refuses. | - |
+| `q-lint.deadCode.checkProcess` | `false` | Also ask the active process which candidates a function it holds names (one read-only query). | - |
+| `q-lint.namespaceTree.enable` | `true` | The **q Namespaces** view. Off: hidden, and it asks nothing. | - |
+| `q-lint.testing.runAffectedOnSave.enable` | `false` | Run the tests that reach the functions a save changed. Off: nothing listens. | - |
+| `q-lint.sql.enable` | `true` | **New SQL Query for Process**, **Run SQL** and SQL completion. Off: hidden, refusing, and nothing sent. | - |
 
 ### Connection settings
 

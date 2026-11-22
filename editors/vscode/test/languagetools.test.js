@@ -1,0 +1,366 @@
+// The language and linter features of #1052-#1061 in the editor: their
+// switches, each command refusing when its feature is off and sending
+// nothing, and what each does on. The server's side of #1052, #1053 and
+// #1055-#1060 is tested in the Rust suite (tests/functional.rs,
+// tests/annotations.rs, tests/baseline_target.rs); the q side in
+// languagetools_q.test.js.
+const { stub, vscode } = require("./vscode_stub.js");
+const test = require("node:test");
+const assert = require("node:assert");
+const pkg = require("../package.json");
+const { LANGUAGE_SETTINGS, LANGUAGE_COMMANDS, languageOn, languageOff, NAMESPACES_VIEW } = require("../out/languagefeatures.js");
+const { registerQsqlTools, leadBefore, REWRITE_TITLES } = require("../out/qsqltools.js");
+const { ERRORS, errorName, explainError, errorInMessage, failedAt } = require("../out/errorexplain.js");
+const { registerErrorExplainer } = require("../out/errorexplainview.js");
+const { tomlWithBaseline, writtenCount, rebased, registerBaseline } = require("../out/baselineview.js");
+const { readDeadCode, deadCodeReport, registerDeadCode, DEAD_CODE } = require("../out/deadcodeview.js");
+const { readDefinitions, byNamespace, registerNamespaces, DEFINITIONS } = require("../out/namespaceview.js");
+const { affectedIds, registerAffectedOnSave, TESTS_REACHING } = require("../out/affectedonsave.js");
+const { sqlQuery, sqlWrites, readSchema, sqlCompletions } = require("../out/sql.js");
+const { registerSql } = require("../out/sqlview.js");
+const { launch } = require("../out/settings.js");
+
+const props = Object.assign({}, ...pkg.contributes.configuration.map((c) => c.properties));
+const palette = (command) => pkg.contributes.menus.commandPalette.find((m) => m.command === command);
+
+test("every switch is declared with its default, read as declared, and hides its commands", () => {
+  for (const [feature, { key, fallback }] of Object.entries(LANGUAGE_SETTINGS)) {
+    assert.strictEqual(props[`q-lint.${key}`]?.default, fallback, key);
+    assert.strictEqual(languageOn(() => undefined, feature), fallback);
+    assert.strictEqual(languageOn((k, d) => (k === key ? !fallback : d), feature), !fallback);
+    assert.strictEqual(languageOn((k, d) => (k === key ? "yes" : d), feature), fallback);
+    assert.match(languageOff(feature), new RegExp(`Set q-lint\\.${key.replace(/\./g, "\\.")} to true`));
+  }
+  // What sends code on its own is off by default.
+  assert.strictEqual(LANGUAGE_SETTINGS.affectedTestsOnSave.fallback, false);
+  assert.strictEqual(LANGUAGE_SETTINGS.deadCodeProcess.fallback, false);
+  const gate = {
+    toFunctional: "functionalForm.enable",
+    toQsql: "functionalForm.enable",
+    explainQsql: "qsqlExplain.enable",
+    explainError: "errorExplain.enable",
+    writeBaseline: "baseline.enable",
+    deadCode: "deadCode.enable",
+    namespacesRefresh: "namespaceTree.enable",
+    newSql: "sql.enable",
+    runSql: "sql.enable",
+  };
+  for (const [name, key] of Object.entries(gate)) {
+    const command = LANGUAGE_COMMANDS[name];
+    assert.ok(pkg.contributes.commands.some((c) => c.command === command && c.category === "q-lint"), command);
+    assert.match(palette(command).when, new RegExp(`config\\.q-lint\\.${key.replace(/\./g, "\\.")}`), command);
+  }
+  const view = pkg.contributes.views.explorer.find((v) => v.id === NAMESPACES_VIEW);
+  assert.match(view.when, /config\.q-lint\.namespaceTree\.enable/);
+  // The server's switches reach it, and restart it.
+  const l = launch({ get: (k, d) => (k === "versionCheck.enable" ? false : d), inspect: () => ({}) }, undefined);
+  assert.deepStrictEqual(l.initializationOptions.versionCheck, { enable: false });
+  assert.deepStrictEqual(l.initializationOptions.functionalForm, { enable: true });
+});
+
+// A context and a vscode with what these commands touch.
+function setUp() {
+  stub.reset();
+  const context = stub.newContext();
+  const ran = [];
+  const shown = [];
+  const execute = vscode.commands.executeCommand;
+  vscode.window.showTextDocument = async (doc) => (shown.push(doc), {});
+  vscode.workspace.openTextDocument = async (spec) => spec;
+  return { context, ran, shown, restore: () => ((vscode.commands.executeCommand = execute), (vscode.window.activeTextEditor = undefined)) };
+}
+
+test("the qSQL rewrites refuse when off, and apply the server's action when on", async () => {
+  const { context, ran, restore } = setUp();
+  const applied = [];
+  vscode.CodeActionKind = { RefactorRewrite: { value: "refactor.rewrite" } };
+  vscode.Range = class {};
+  vscode.workspace.applyEdit = async (edit) => (applied.push(edit), true);
+  const execute = vscode.commands.executeCommand;
+  vscode.commands.executeCommand = async (name, ...args) =>
+    name.startsWith("q-lint.") ? execute(name, ...args) : (ran.push(name), [{ title: REWRITE_TITLES.toFunctional, edit: "the edit" }]);
+  try {
+    registerQsqlTools(context);
+    vscode.window.activeTextEditor = { document: { languageId: "q" }, selection: { active: {} } };
+    stub.config.user["functionalForm.enable"] = false;
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.toFunctional)(), false);
+    assert.match(stub.messages.at(-1)[1], /Rewriting qSQL to and from functional form is turned off/);
+    assert.deepStrictEqual(ran, []);
+    stub.config.user["functionalForm.enable"] = true;
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.toFunctional)(), true);
+    assert.deepStrictEqual(applied, ["the edit"]);
+    // None titled so: nothing applied, and it says why.
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.toQsql)(), false);
+    assert.match(stub.messages.at(-1)[1], /not in a functional form/);
+    stub.config.user["qsqlExplain.enable"] = false;
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.explainQsql)(), false);
+    assert.match(stub.messages.at(-1)[1], /qSQL explainer is turned off/);
+  } finally {
+    restore();
+  }
+});
+
+test("Explain qSQL finds where the query starts", () => {
+  const text = "a:1\nr:select n:count i\n    by sym\n  from t where px>2\nb:2\n";
+  assert.strictEqual(leadBefore(text, text.indexOf("px>2")), text.indexOf("select"));
+  assert.strictEqual(leadBefore(text, text.indexOf("a:1")), undefined);
+  assert.strictEqual(leadBefore(text, text.indexOf("b:2")), undefined);
+  const f = "r:?[t;enlist(>;`px;2);0b;()]\n";
+  assert.strictEqual(leadBefore(f, f.indexOf("px")), 2);
+  // A name ending in a query word is no query.
+  assert.strictEqual(leadBefore("x:.my.select 1\n", 10), undefined);
+});
+
+test("a q error is explained from the catalogue, with the operation that failed", () => {
+  assert.strictEqual(errorName("'type"), "type");
+  assert.strictEqual(errorName("2026.11.22T19:23:04.352 length"), "length");
+  assert.strictEqual(errorName("data.csv. OS reports: No such file or directory"), "os");
+  assert.strictEqual(errorName("hop. OS reports: Connection refused"), "hop");
+  const trace = ["  [2]  /w/lib.q:5: mid:{[a]", "    b:a+1;", "    c:b+`x;", "       ^", "    d:c*2}"].join("\n");
+  const text = explainError("type", trace);
+  assert.match(text, /# q error `'type`/);
+  assert.match(text, /An argument is of a type the operation does not take/);
+  assert.match(text, /The operation that failed in `mid` \(\/w\/lib\.q, line 5\): `` c:b\+`x; ``, at `\+`\./);
+  assert.match(failedAt(trace), /at `\+`/);
+  assert.match(explainError("undefinedname123"), /`undefinedname123` is not defined where it was read/);
+  assert.match(explainError("x.csv. OS reports: No such file"), /operating system refused/);
+  assert.match(explainError("@@@"), /no explanation/);
+  assert.strictEqual(errorInMessage("`s+1` is 'type: `s` is always a symbol here"), "type");
+  assert.strictEqual(errorInMessage("no q error here, it's fine"), undefined);
+  for (const [name, e] of Object.entries(ERRORS)) {
+    assert.ok(e.meaning && e.causes.length > 0, name);
+  }
+});
+
+test("Explain q Error refuses when off, and explains the last failure or the one given when on", async () => {
+  const { context, shown, restore } = setUp();
+  const providers = [];
+  vscode.languages.registerCodeActionsProvider = (_sel, provider) => (providers.push(provider), { dispose: () => providers.splice(providers.indexOf(provider), 1) });
+  try {
+    const live = { lastFailure: { process: "p", code: "1+`a", error: "type", trace: "" } };
+    stub.config.user["errorExplain.enable"] = false;
+    const api = registerErrorExplainer(context, live);
+    assert.strictEqual(api.registered(), false);
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.explainError)(), undefined);
+    assert.match(stub.messages.at(-1)[1], /error explainer is turned off/);
+    assert.deepStrictEqual(shown, []);
+    stub.config.user["errorExplain.enable"] = true;
+    stub.changeConfig("q-lint.errorExplain.enable");
+    assert.strictEqual(api.registered(), true);
+    assert.match(await stub.commands.get(LANGUAGE_COMMANDS.explainError)(), /'type/);
+    assert.match(await stub.commands.get(LANGUAGE_COMMANDS.explainError)("'length"), /'length/);
+    assert.strictEqual(shown.length, 2);
+    // The Quick Fix, for a problem that names a q error.
+    vscode.CodeAction = class {
+      constructor(title, kind) {
+        this.title = title;
+        this.kind = kind;
+      }
+    };
+    const actions = providers[0].provideCodeActions({}, {}, { diagnostics: [{ message: "`s+1` is 'type: no" }, { message: "plain" }] });
+    assert.deepStrictEqual(actions.map((a) => a.command.arguments), [["type"]]);
+    stub.config.user["errorExplain.enable"] = false;
+    stub.changeConfig("q-lint.errorExplain.enable");
+    assert.strictEqual(api.registered(), false);
+    assert.strictEqual(providers.length, 0);
+  } finally {
+    restore();
+  }
+});
+
+test("a baseline is named first in qlinter.toml, its count read, and its paths made relative", async () => {
+  assert.strictEqual(tomlWithBaseline(""), 'baseline = "qlinter-baseline.json"\n');
+  assert.strictEqual(tomlWithBaseline('profile = "style"\n\n[lint]\nignore = ["QS"]\n'), 'baseline = "qlinter-baseline.json"\nprofile = "style"\n\n[lint]\nignore = ["QS"]\n');
+  assert.strictEqual(tomlWithBaseline("# top\nprofile = 1\n"), '# top\nbaseline = "qlinter-baseline.json"\nprofile = 1\n');
+  assert.strictEqual(tomlWithBaseline('baseline = "b.json"\n'), undefined);
+  assert.deepStrictEqual(writtenCount("qlinter: wrote 12 finding(s) in 3 file(s) to the baseline x"), { findings: 12, files: 3 });
+  assert.strictEqual(writtenCount("nothing"), undefined);
+  assert.strictEqual(rebased('{"code":"QS001","count":1,"line":"a","path":"/ws/src/a.q"}', "/ws"), '{"code":"QS001","count":1,"line":"a","path":"src/a.q"}');
+  const { context, restore } = setUp();
+  try {
+    let asked = 0;
+    registerBaseline(context, () => (asked++, { command: "qlinter", args: [] }));
+    stub.config.user["baseline.enable"] = false;
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.writeBaseline)(), undefined);
+    assert.match(stub.messages.at(-1)[1], /lint baseline is turned off/);
+    assert.strictEqual(asked, 0);
+  } finally {
+    restore();
+  }
+});
+
+test("the dead code report refuses when off and asks nothing; on, it lists the server's answer", async () => {
+  const answer = { functions: [{ name: "lonely", uri: "file:///ws/b.q", range: { start: { line: 3, character: 0 } } }, { name: ".u.x", uri: "file:///ws/a.q", range: { start: { line: 0, character: 0 } } }], dynamic: 2 };
+  const read = readDeadCode(answer);
+  assert.deepStrictEqual(read.functions.map((f) => [f.name, f.line]), [["lonely", 3], [".u.x", 0]]);
+  assert.strictEqual(readDeadCode(null), undefined);
+  const report = deadCodeReport(read.functions, read.dynamic, (u) => u.slice(8), { process: "dev", names: new Set([".u.x"]) });
+  assert.match(report, /1 function\(s\) defined in the workspace that nothing in the workspace reads/);
+  assert.match(report, /- \[lonely\]\(file:\/\/\/ws\/b\.q#L4\) - line 4/);
+  assert.match(report, /## Called on dev/);
+  assert.match(report, /in 2 place\(s\)/);
+  const { context, shown, restore } = setUp();
+  try {
+    const sent = [];
+    const server = { sendRequest: async (method, params) => (sent.push([method, params]), answer) };
+    const calls = [];
+    const live = { activeLabel: () => "dev", borrow: (use) => (calls.push(use), undefined) };
+    registerDeadCode(context, live, () => server);
+    stub.config.user["deadCode.enable"] = false;
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.deadCode)(), undefined);
+    assert.deepStrictEqual(sent, []);
+    stub.config.user["deadCode.enable"] = true;
+    const text = await stub.commands.get(LANGUAGE_COMMANDS.deadCode)();
+    assert.deepStrictEqual(sent, [[DEAD_CODE, {}]]);
+    assert.match(text, /lonely/);
+    assert.strictEqual(shown.length, 1);
+    // The process is asked nothing unless checkProcess is on.
+    assert.deepStrictEqual(calls, []);
+  } finally {
+    restore();
+  }
+});
+
+test("the q Namespaces view groups the server's definitions and goes away when off", async () => {
+  const answer = [
+    { name: ".u.f", namespace: ".u", kind: "function", uri: "file:///a.q", range: { start: { line: 1, character: 0 } } },
+    { name: "top", namespace: ".", kind: "variable", uri: "file:///a.q", range: { start: { line: 0, character: 0 } } },
+    { name: ".a.g", namespace: ".a", kind: "function", uri: "file:///b.q", range: { start: { line: 2, character: 0 } } },
+    { junk: true },
+  ];
+  const groups = byNamespace(readDefinitions(answer));
+  assert.deepStrictEqual(groups.map(([ns, ds]) => [ns, ds.map((d) => d.name)]), [[".", ["top"]], [".a", [".a.g"]], [".u", [".u.f"]]]);
+  const { context, restore } = setUp();
+  try {
+    const sent = [];
+    const server = { sendRequest: async (method) => (sent.push(method), answer) };
+    stub.config.user["namespaceTree.enable"] = false;
+    const api = registerNamespaces(context, () => server);
+    assert.strictEqual(api.registered(), false);
+    assert.strictEqual(stub.trees.length, 0);
+    await stub.commands.get(LANGUAGE_COMMANDS.namespacesRefresh)();
+    assert.match(stub.messages.at(-1)[1], /q Namespaces view is turned off/);
+    assert.deepStrictEqual(sent, []);
+    stub.config.user["namespaceTree.enable"] = true;
+    stub.changeConfig("q-lint.namespaceTree.enable");
+    assert.strictEqual(api.registered(), true);
+    await api.refresh();
+    assert.deepStrictEqual(sent.at(-1), DEFINITIONS);
+    assert.deepStrictEqual(api.groups().map(([ns]) => ns), [".", ".a", ".u"]);
+    stub.config.user["namespaceTree.enable"] = false;
+    stub.changeConfig("q-lint.namespaceTree.enable");
+    assert.strictEqual(api.registered(), false);
+    assert.strictEqual(stub.trees.at(-1).disposed, true);
+  } finally {
+    restore();
+  }
+});
+
+test("affected tests on save are off by default; on, a save runs the tests the server names", async () => {
+  assert.deepStrictEqual(affectedIds({ tests: [{ uri: "file:///t.q", name: "test_a" }, { uri: "file:///t.q", name: "test_gone" }] }, ["file:///t.q#test_a"]), ["file:///t.q#test_a"]);
+  assert.deepStrictEqual(affectedIds(null, ["x"]), []);
+  const { context, restore } = setUp();
+  const saves = [];
+  vscode.workspace.onDidSaveTextDocument = (l) => (saves.push(l), { dispose: () => saves.splice(saves.indexOf(l), 1) });
+  vscode.workspace.onDidOpenTextDocument = () => ({ dispose() {} });
+  vscode.workspace.onDidCloseTextDocument = () => ({ dispose() {} });
+  vscode.workspace.textDocuments = [];
+  try {
+    const sent = [];
+    const runs = [];
+    const server = { sendRequest: async (method, params) => (sent.push([method, params.previous]), { tests: [{ uri: "file:///t.q", name: "test_a" }] }) };
+    const tests = { discover: async () => {}, items: () => ["file:///t.q#test_a"], run: async (ids) => void runs.push(ids) };
+    const api = registerAffectedOnSave(context, () => server, tests);
+    assert.strictEqual(api.registered(), false);
+    assert.strictEqual(saves.length, 0);
+    stub.config.user["testing.runAffectedOnSave.enable"] = true;
+    stub.changeConfig("q-lint.testing.runAffectedOnSave.enable");
+    assert.strictEqual(api.registered(), true);
+    const doc = { languageId: "q", uri: { scheme: "file", fsPath: "/w/lib.q", toString: () => "file:///w/lib.q" }, getText: () => "f:{x+1}\n" };
+    saves[0](doc);
+    await api.settled();
+    assert.deepStrictEqual(sent, [[TESTS_REACHING, ""]]);
+    assert.deepStrictEqual(runs, [["file:///t.q#test_a"]]);
+    stub.config.user["testing.runAffectedOnSave.enable"] = false;
+    stub.changeConfig("q-lint.testing.runAffectedOnSave.enable");
+    assert.strictEqual(saves.length, 0);
+  } finally {
+    restore();
+  }
+});
+
+test("SQL is sent to .s.e with its comments dropped, and a write is recognised", () => {
+  assert.strictEqual(sqlQuery("select sym, px -- the price\nfrom t\nwhere px > 1;"), '.s.e "select sym, px from t where px > 1"');
+  assert.strictEqual(sqlQuery("select 'a--b' as s from t"), `.s.e "select 'a--b' as s from t"`);
+  assert.strictEqual(sqlQuery('select "x" from t'), '.s.e "select \\"x\\" from t"');
+  assert.match(sqlQuery("select 1", true), /^\{if\[not `e in key `\.s;system "l s\.k_"\];\.s\.e x\} "select 1"$/);
+  assert.deepStrictEqual(sqlWrites("select * from t"), []);
+  assert.deepStrictEqual(sqlWrites("-- note\ninsert into t values (1); DELETE from t"), ["INSERT", "DELETE"]);
+  const schema = readSchema({ trade: ["sym", "px"], quote: ["sym", "bid"] });
+  assert.deepStrictEqual([...schema.keys()], ["trade", "quote"]);
+  assert.deepStrictEqual(sqlCompletions(schema, "select trade.").map((c) => c.label), ["sym", "px"]);
+  assert.deepStrictEqual(sqlCompletions(schema, "select ").map((c) => c.label), ["trade", "sym", "px", "quote", "bid"]);
+  assert.strictEqual(readSchema(null).size, 0);
+});
+
+test("the SQL tab refuses when off and sends nothing; its completion goes with it", async () => {
+  const { context, restore } = setUp();
+  const providers = [];
+  vscode.languages.registerCompletionItemProvider = (_sel, p) => (providers.push(p), { dispose: () => providers.splice(providers.indexOf(p), 1) });
+  try {
+    const sent = [];
+    const live = { pick: async () => (sent.push("pick"), undefined), queryCode: async (c) => void sent.push(c), activeLabel: () => undefined, fileBinding: () => undefined, processes: () => [] };
+    stub.config.user["sql.enable"] = false;
+    const api = registerSql(context, live);
+    assert.strictEqual(api.registered(), false);
+    vscode.window.activeTextEditor = { document: { languageId: "sql", uri: { toString: () => "untitled:1" }, getText: () => "select 1" }, selection: { isEmpty: true } };
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.runSql)(), undefined);
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.newSql)(), undefined);
+    assert.match(stub.messages.at(-1)[1], /SQL tab for KDB-X is turned off/);
+    assert.deepStrictEqual(sent, []);
+    stub.config.user["sql.enable"] = true;
+    stub.changeConfig("q-lint.sql.enable");
+    assert.strictEqual(api.registered(), true);
+    // On, with no process connected: the engine is loaded in the query.
+    const code = await stub.commands.get(LANGUAGE_COMMANDS.runSql)();
+    assert.match(code, /system "l s\.k_"/);
+    assert.deepStrictEqual(sent, [code]);
+    stub.config.user["sql.enable"] = false;
+    stub.changeConfig("q-lint.sql.enable");
+    assert.strictEqual(providers.length, 0);
+  } finally {
+    restore();
+  }
+});
+
+test("a SQL write on a guarded process is held until confirmed", async () => {
+  const { context, restore } = setUp();
+  vscode.languages.registerCompletionItemProvider = () => ({ dispose() {} });
+  try {
+    const sent = [];
+    const asked = [];
+    const process = { label: "prod1", tags: ["prod"] };
+    const live = {
+      activeLabel: () => undefined,
+      fileBinding: () => "prod1",
+      processes: () => [process],
+      guardAllows: async (code, targets, what) => (asked.push([code, targets[0].label, what]), false),
+      queryCode: async (c) => void sent.push(c),
+    };
+    registerSql(context, live);
+    vscode.window.activeTextEditor = { document: { languageId: "sql", uri: { toString: () => "untitled:2" }, getText: () => "insert into t values (1)" }, selection: { isEmpty: true } };
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.runSql)(), undefined);
+    assert.deepStrictEqual(asked, [["`t insert ()", "prod1", "This SQL statement (INSERT)"]]);
+    assert.deepStrictEqual(sent, []);
+  } finally {
+    restore();
+  }
+});
+
+test("the q the SQL tab shows the guard is one the guard reads as a write", () => {
+  const { writes } = require("../out/guard.js");
+  assert.ok(writes("`t insert ()").length > 0);
+  // And the inline engine load is a system command it asks about.
+  assert.ok(writes(sqlQuery("select 1", true)).length > 0);
+  assert.deepStrictEqual(writes(sqlQuery("select 1")), []);
+});

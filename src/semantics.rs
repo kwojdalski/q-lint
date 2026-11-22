@@ -2,11 +2,15 @@ use crate::{Finding, blank, boundary, matching, operand_ends, signature};
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
+pub(crate) mod explain;
 pub(crate) mod extract;
+pub(crate) mod functional;
 pub(crate) mod help;
 pub(crate) mod infer;
 pub(crate) mod layout;
 pub(crate) mod navigate;
+pub(crate) mod typelint;
+pub(crate) mod version;
 
 struct Scope {
     start: usize,

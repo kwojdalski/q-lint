@@ -69,6 +69,11 @@ export interface InitializationOptions {
   performanceLints: { enable: boolean };
   formatChangedLines: { enable: boolean };
   qsqlLayout: { enable: boolean; onFormat: boolean; lineLength: number };
+  functionalForm: { enable: boolean };
+  qsqlExplain: { enable: boolean };
+  versionCheck: { enable: boolean };
+  baseline: { enable: boolean };
+  typeLints: { enable: boolean };
   workspaceIndex: { enable: boolean; exclude: string[] };
 }
 
@@ -171,6 +176,11 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
         onFormat: settings.get<boolean>("qsqlLayout.onFormat", false),
         lineLength: lineLength(settings.get<unknown>("qsqlLayout.lineLength", 80)),
       },
+      functionalForm: { enable: settings.get<boolean>("functionalForm.enable", true) },
+      qsqlExplain: { enable: settings.get<boolean>("qsqlExplain.enable", true) },
+      versionCheck: { enable: settings.get<boolean>("versionCheck.enable", true) },
+      baseline: { enable: settings.get<boolean>("baseline.enable", true) },
+      typeLints: { enable: settings.get<boolean>("typeLints.enable", true) },
       workspaceIndex: {
         enable: settings.get<boolean>("workspaceIndex.enable", true),
         exclude: strings(settings, "workspaceIndex.exclude"),
@@ -211,6 +221,11 @@ const RESTARTING = [
   "formatChangedLines",
   "qsqlLayout",
   "workspaceIndex",
+  "functionalForm",
+  "qsqlExplain",
+  "versionCheck",
+  "baseline",
+  "typeLints",
 ];
 
 /// Whether a configuration change needs a new server.

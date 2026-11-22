@@ -1,3 +1,4 @@
+mod baseline;
 mod config;
 mod jsonrpc;
 mod lsp;
@@ -86,6 +87,20 @@ struct Args {
     /// Ignore every configuration file; use the defaults and the flags.
     #[arg(long)]
     isolated: bool,
+    /// Report what does not run on this q release: `3.6`, `4.0`, `4.1` or
+    /// `kdbx` (the QK rules). Wins over `target-version` in a configuration
+    /// file; without either, the QK rules report nothing.
+    #[arg(long, value_parser = ["3.6", "4.0", "4.1", "kdbx"])]
+    target_version: Option<String>,
+    /// Report only the findings not in this baseline file, which
+    /// `--write-baseline` writes. Wins over `baseline` in a configuration.
+    #[arg(long, conflicts_with = "write_baseline")]
+    baseline: Option<PathBuf>,
+    /// Write every finding of this run to a baseline file (replacing it), and
+    /// report none. Later runs given it with `--baseline`, or under a
+    /// configuration naming it, report only what is new.
+    #[arg(long, conflicts_with_all = ["fix", "diff", "show_settings"])]
+    write_baseline: Option<PathBuf>,
     /// Print which configuration governs each path (or `--stdin-filename`)
     /// and the rules it turns on, then exit.
     #[arg(long, conflicts_with_all = ["fix", "diff"])]
@@ -136,7 +151,7 @@ struct Args {
     /// with the builtin backend alone, so `--backend` is one too (#544).
     #[arg(long, conflicts_with_all = ["paths", "rules", "explain", "fix", "diff", "show_settings",
         "stdin_filename", "format", "color", "force_exclude", "unsafe_fixes",
-        "backend", "qls_executable", "qls_timeout"])]
+        "backend", "qls_executable", "qls_timeout", "baseline", "write_baseline"])]
     lsp: bool,
     /// Colour the text output: `auto` (a terminal, and NO_COLOR unset or empty),
     /// `always`, or `never`.
@@ -219,6 +234,12 @@ fn overrides(args: &Args) -> Result<Overrides, String> {
             .map_err(|e| format!("--exclude: {e}"))?,
         config: args.config.clone(),
         isolated: args.isolated,
+        target: args
+            .target_version
+            .as_deref()
+            .and_then(q_lint_rs::Target::parse),
+        baseline: args.baseline.clone(),
+        no_baseline: args.write_baseline.is_some(),
     })
 }
 
@@ -641,6 +662,8 @@ fn run(args: Args) -> Result<u8, String> {
             }
         }
     }
+    // What the baseline passes over is counted once, for the run as reported.
+    policy.baselined.set(0);
     let mut findings = vec![];
     if args.backend != "qls" {
         for (path, source) in &sources {
@@ -666,6 +689,23 @@ fn run(args: Args) -> Result<u8, String> {
         (&a.path, a.line, a.column, &a.source, &a.rule)
             .cmp(&(&b.path, b.line, b.column, &b.source, &b.rule))
     });
+    if let Some(file) = &args.write_baseline {
+        let text = baseline::render(file, &findings, &sources);
+        fs::write(file, text).map_err(|e| format!("{}: {e}", file.display()))?;
+        eprintln!(
+            "qlinter: wrote {} finding(s) in {} file(s) to the baseline {}",
+            findings.len(),
+            sources.len(),
+            file.display()
+        );
+        return Ok(if failed { 2 } else { 0 });
+    }
+    if policy.baselined.get() > 0 {
+        eprintln!(
+            "qlinter: {} finding(s) in the baseline not shown",
+            policy.baselined.get()
+        );
+    }
     if args.format == "json" {
         out!("{}", serde_json::to_string(&findings).unwrap());
     } else {
@@ -778,6 +818,9 @@ fn analyze_graph(args: GraphArgs) -> Result<u8, String> {
             .map_err(|e| format!("--exclude: {e}"))?,
         config: None,
         isolated: false,
+        target: None,
+        baseline: None,
+        no_baseline: true,
     };
     let policy = Policy::new(overrides, false);
     let paths = if args.paths.is_empty() {

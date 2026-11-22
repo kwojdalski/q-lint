@@ -317,14 +317,25 @@ pub struct Typed {
 /// value ends; `comments` the one with only comments blank, whose text is
 /// the literal.
 pub fn typed_locals(code: &str, raw: &str, comments: &str) -> Vec<Typed> {
+    typed_locals_up_to(code, raw, comments, usize::MAX)
+}
+
+/// `typed_locals`, passing over a lambda with more than `most` locals:
+/// each local costs a read of its lambda, so a rule run over every file
+/// bounds it to stay linear in the file's length.
+pub fn typed_locals_up_to(code: &str, raw: &str, comments: &str, most: usize) -> Vec<Typed> {
     let (scopes, _) = scopes(code, raw);
+    let sigs = signatures(code);
     let mut out = vec![];
     for s in 0..scopes.len() {
+        if scopes[s].locals.len() > most {
+            continue;
+        }
         let mut names: Vec<&String> = scopes[s].locals.iter().collect();
         names.sort_unstable();
         for name in names {
             let local = super::navigate::local_of(code, raw, &scopes, s, name);
-            if let Some((kind, end)) = settled(code, comments, &local) {
+            if let Some((kind, end)) = settled(code, comments, &local, &sigs) {
                 out.push(Typed { local, kind, end });
             }
         }
@@ -335,9 +346,19 @@ pub fn typed_locals(code: &str, raw: &str, comments: &str) -> Vec<Typed> {
 
 /// The one type every write of `local` gives it, when each is a plain
 /// assignment of a literal, with where the first one's value ends.
-fn settled(code: &str, comments: &str, local: &Local) -> Option<(i16, usize)> {
+fn settled(
+    code: &str,
+    comments: &str,
+    local: &Local,
+    sigs: &[(usize, usize)],
+) -> Option<(i16, usize)> {
     let mut found: Option<(i16, usize)> = None;
     for place in local.places.iter().filter(|p| p.write) {
+        // A typed parameter, `{[a:`j] ...}` (q 4.1), is no assignment: `a`
+        // is whatever the caller passes, checked to be a long.
+        if in_signature(sigs, place.at) {
+            return None;
+        }
         let value = assigned(code, place.at + place.len)?;
         let text = &comments[value.clone()];
         let t = literal_type(text)?;
@@ -348,6 +369,43 @@ fn settled(code: &str, comments: &str, local: &Local) -> Option<(i16, usize)> {
         }
     }
     found
+}
+
+/// Each lambda signature in `code`, `{[...]`, as the bytes between its
+/// brackets: one pass, a signature holding no other bracket of its kind.
+fn signatures(code: &str) -> Vec<(usize, usize)> {
+    let b = code.as_bytes();
+    let mut out = vec![];
+    let mut i = 0;
+    while i + 1 < b.len() {
+        if b[i] == b'{' && b[i + 1] == b'[' {
+            let mut depth = 0usize;
+            let mut j = i + 1;
+            while j < b.len() {
+                match b[j] {
+                    b'[' => depth += 1,
+                    b']' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                j += 1;
+            }
+            out.push((i + 2, j));
+            i = j;
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Whether byte `at` is inside one of `sigs`.
+fn in_signature(sigs: &[(usize, usize)], at: usize) -> bool {
+    let k = sigs.partition_point(|&(start, _)| start <= at);
+    k > 0 && at < sigs[k - 1].1
 }
 
 /// What a plain assignment whose name ends at `end` assigns, as a range of
