@@ -599,6 +599,10 @@ fn to_functional(p: &layout::Parts) -> Result<String, String> {
                             _ => return Err("a delete of something other than column names".into()),
                         }
                     }
+                    // One column is `enlist`a`: q refuses `` `a `` alone ('type).
+                    if cols.len() == 1 {
+                        names.insert_str(0, "enlist");
+                    }
                     Ok(format!("![{from};();0b;{names}]"))
                 }
                 (_, false) => Err("a delete with both columns and a where clause".into()),
