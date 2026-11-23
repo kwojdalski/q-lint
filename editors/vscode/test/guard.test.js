@@ -679,3 +679,43 @@ test("a three-argument amend with an attribute or a unary is a change (#1323)", 
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("ordinary reads stay reads after the round-6 rules", () => {
+  for (const code of [
+    "select from t",
+    "select a,b from t where sym=`x",
+    "exec price from t",
+    "exec a by b from t",
+    "get `:hdb/sym",
+    "get `t",
+    "value `t",
+    "value t",
+    "`a xasc t",
+    "`a xdesc t",
+    "`a`b xasc select from t",
+    "hopen `:host:5000",
+    'system"c"',
+    'system "P"',
+    "\\c",
+    "\\w 0",
+    "count t",
+    "t?`x",
+    "`a`b?`a",
+    "x?3",
+    "-1 \"hello\";",
+    "1 \"hello\";",
+    "{x+:1}[3]",
+    "{[t] t[0]:1; t}[1 2]",
+    "([] a:1 2; b:`x`y)",
+    "@[f;x;{y}]",
+    ".[f;(1;2);::]",
+    "@[value;`t;::]",
+    "(a;b)",
+    '("SJ";enlist ",") 0: `:f.csv',
+    "read0 `:f.txt",
+    "eval parse_tree",
+    "-21!`:dst",
+  ]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});
