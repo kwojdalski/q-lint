@@ -33,8 +33,8 @@ export interface Plan {
 /// What starting `process` runs: its command (else `qBinary`), its script,
 /// `-p <port>` unless its arguments set one, then its arguments; in its
 /// `cwd`, else the workspace folder, else the home directory. A leading `~`
-/// is the home directory, and a relative script or cwd is from the folder.
-/// An error when it cannot be started here.
+/// (`~/`, or `~\` as Windows writes it) is the home directory, and a
+/// relative script or cwd is from the folder. An error when it cannot be started here.
 export function launchPlan(process: Process, qBinary: string, folder: string | undefined, home: string = os.homedir()): Plan | { error: string } {
   const launch: Launch | undefined = process.launch;
   if (launch === undefined) {
@@ -54,7 +54,7 @@ export function launchPlan(process: Process, qBinary: string, folder: string | u
   const args = launch.args ?? [];
   const command = launch.command ?? qBinary;
   return {
-    command: command === "~" || command.startsWith("~/") ? scriptPath(command, home, undefined)! : command,
+    command: /^~([\\/]|$)/.test(command) ? scriptPath(command, home, undefined)! : command,
     args: [...(script !== undefined ? [script] : []), ...(args.includes("-p") ? [] : ["-p", String(process.port)]), ...args],
     cwd,
     env: launch.env ?? {},

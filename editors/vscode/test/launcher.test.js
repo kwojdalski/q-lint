@@ -31,6 +31,11 @@ test("a launch definition starts its program with its script, -p and its argumen
   const own = launchPlan(proc("a", 1, { command: "~/q/m64/q", cwd: "~/torq", script: "x.q", args: ["-p", "6000"] }), "q", undefined, "/home/me");
   assert.deepStrictEqual(own, { command: "/home/me/q/m64/q", args: ["/home/me/torq/x.q", "-p", "6000"], cwd: "/home/me/torq", env: {} });
   assert.deepStrictEqual(launchPlan(proc("b", 7, {}), "q", undefined, "/home/me"), { command: "q", args: ["-p", "7"], cwd: "/home/me", env: {} });
+  // ~\ is home too, as Windows writes it (#1284), in the definition and in q-lint.qBinary.
+  const winHome = path.join("/home/me", "q\\w64\\q.exe");
+  assert.strictEqual(launchPlan(proc("w", 1, { command: "~\\q\\w64\\q.exe" }), "q", undefined, "/home/me").command, winHome);
+  assert.strictEqual(launchPlan(proc("w", 1, {}), "~\\q\\w64\\q.exe", undefined, "/home/me").command, winHome);
+  assert.strictEqual(launchPlan(proc("w", 1, {}), "~q", undefined, "/home/me").command, "~q");
   assert.match(launchPlan(proc("c", 1), "q", "/w").error, /c has no launch definition/);
   assert.match(launchPlan({ ...proc("d", 1, {}), host: "rdb.example" }, "q", "/w").error, /only a local process can be started/);
   assert.match(launchPlan(proc("e", 1, { cwd: "rel" }), "q", undefined).error, /relative, and there is no workspace folder/);
