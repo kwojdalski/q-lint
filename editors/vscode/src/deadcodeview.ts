@@ -21,7 +21,8 @@ import type { Live } from "./live";
 export const DEAD_CODE = "q-lint/deadCode";
 
 /// Which of a space-separated list of names the body of some function in
-/// the process names as a word (its last part), other than its own: every namespace but q's own, and
+/// the process names as a word - its last part (`helper` in its own
+/// namespace) or the whole name (`.util.helper`, #1227) - other than its own: every namespace but q's own, and
 /// `.z`. Reads only. Checked on KDB-X and PeachQ; PeachQ lists no `.z`
 /// handler, so a function only a handler calls stays a candidate there.
 export const CALLED = [
@@ -31,7 +32,7 @@ export const CALLED = [
   " fs:fs where 100h=type each get each fs;",
   " b:{last value get x} each fs;",
   " w:{[s;l] any {[s;l;i] not any s[(i-1),i+count l] in .Q.an,\"_.\"}[s;l] each ss[s;l]};",
-  " n where {[b;fs;w;n] any (fs<>`$n) & w[;last \".\" vs n] each b}[b;fs;w] each n}",
+  " n where {[b;fs;w;n] any (fs<>`$n) & (w[;last \".\" vs n] each b) or w[;n] each b}[b;fs;w] each n}",
 ].join("\n");
 
 export interface DeadFunction {
