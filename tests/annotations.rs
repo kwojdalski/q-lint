@@ -1297,6 +1297,34 @@ fn renaming_a_folder_rewrites_the_loads_under_it_and_moving_a_loader_its_own() {
     );
 }
 
+/// An absolute load written through a symlink (`/tmp` for `/private/tmp`)
+/// is followed to the file renamed, and keeps its spelling (#1219).
+#[cfg(unix)]
+#[test]
+fn an_absolute_load_through_a_symlink_is_rewritten_as_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let alias = elsewhere.path().join("alias");
+    std::os::unix::fs::symlink(dir.path(), &alias).unwrap();
+    std::fs::create_dir_all(dir.path().join("lib")).unwrap();
+    let load = format!("{}/lib/a.q", alias.display());
+    let main = format!("\\l {load}\n");
+    let files = [("lib/a.q", "a:1\n"), ("main.q", main.as_str())];
+    let options = json!({"renameLoads": {"enable": true}});
+    let (mut server, _) = Server::over(dir.path(), &files, client(), options);
+    let reply = server.request(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("lib/a.q", "lib/b.q")]),
+    );
+    let edits = renamed(&reply, dir.path());
+    assert_eq!(edits.len(), 1, "{reply}");
+    assert_eq!(
+        edits[0].4,
+        format!("{}/lib/b.q", alias.display()),
+        "{reply}"
+    );
+}
+
 #[test]
 fn rename_edits_are_not_announced_or_sent_unless_asked_for() {
     let dir = tempfile::tempdir().unwrap();
