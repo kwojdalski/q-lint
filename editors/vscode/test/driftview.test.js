@@ -257,3 +257,18 @@ test("drift detection off: the command refuses, says how to turn it on, and read
   assert.match(stub.messages[0][1], /Drift detection is turned off\. Set q-lint\.processExplorer\.driftDetection\.enable to true/);
   assert.deepStrictEqual(live.sent, []);
 });
+
+test("a process connected while Redefine was asked is not redefined: the reload names the one asked about (#1289)", async () => {
+  const held = { f: "{x}" };
+  const { live, drift } = setup(held);
+  const doc = documentOf("/w/a.q", "f:{x}\n");
+  listeners.open.forEach((l) => l(doc));
+  doc.text = "f:{x+1}\n";
+  stub.picks = [(o) => ((live.process = prod), "Reload")];
+  const out = await drift.reload(doc);
+  assert.strictEqual(out.process, "dev");
+  assert.deepStrictEqual(out.sent, []);
+  assert.match(out.failed[0].why, /dev is no longer the active process; nothing was run/);
+  assert.deepStrictEqual(live.sent.map((s) => s[0]), ["DRIFT"]);
+  assert.strictEqual(held.f, "{x}");
+});
