@@ -26,6 +26,10 @@ jobs:
           python-version: "3.12"
       - run: pip install pytest pyyaml
       - run: python -m pytest -q tests/
+      # Findings must not move when line endings, position or a trailing
+      # comment do, which no case can check. Over the q in this tree - every
+      # case and example - since the corpus it was written for is not here.
+      - run: python scripts/check_invariance.py target/release/qlinter examples tests/corpus tests/cases
   # The oldest compiler Cargo.toml's rust-version promises, so the promise is
   # checked rather than remembered: a newer std API or language feature
   # fails here, not on a user's older toolchain.

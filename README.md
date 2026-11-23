@@ -1076,6 +1076,8 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 cargo build --release                                 # the Python harness needs it
 Q_LINT_TEST_QLS=qls uv run pytest tests                # black-box CLI checks
+python3 scripts/check_invariance.py target/release/qlinter examples tests/corpus tests/cases
+                                                      # findings unmoved by CRLF, position, comments
 cargo build --release --example profile               # for profiling the analysis API
 ```
 

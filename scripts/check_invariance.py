@@ -1,9 +1,13 @@
 """Findings must not depend on things that do not change what q runs.
 
     python3 scripts/check_invariance.py target/release/qlinter ~/q-corpus
+    python3 scripts/check_invariance.py target/release/qlinter examples tests/corpus tests/cases
 
-Each file of the corpus is rewritten three ways that leave its meaning alone,
-and the findings compared with the original's:
+Each source is rewritten three ways that leave its meaning alone, and the
+findings compared with the original's. A source is a `.q` file, found under a
+directory or named outright, linted under the `uqf` profile; or one case of a
+`tests/cases/*.cases` file, linted under the profile its header names - which
+is how CI runs it over the q in this tree without the external corpus.
 
 - line endings: LF and CRLF give the same findings at the same positions;
 - position: a blank line prepended moves every finding down exactly one line;
@@ -23,9 +27,20 @@ import tempfile
 from pathlib import Path
 
 
-def lint(binary, paths):
+# How each profile a case can name is asked for on the command line: `every`
+# is every rule, which `--select Q` is, since every code starts with Q.
+PROFILES = {
+    "uqf": ["--profile", "uqf"],
+    "style": ["--profile", "style"],
+    "styleq": ["--profile", "styleq"],
+    "general": ["--profile", "general"],
+    "every": ["--select", "Q"],
+}
+
+
+def lint(binary, paths, profile="uqf"):
     out = subprocess.run(
-        [binary, "--profile", "uqf", "--format", "json", *map(str, paths)],
+        [binary, *PROFILES[profile], "--format", "json", *map(str, paths)],
         capture_output=True,
         text=True,
     ).stdout
@@ -69,34 +84,76 @@ def commented(text):
     return "\n".join(out)
 
 
+def cases(path):
+    """Each case of a `.cases` file as (label, profile, source), split and
+    trimmed as `tests/cases.rs` does."""
+    found = []
+    for i, line in enumerate(path.read_text().split("\n")):
+        if line.startswith("=== "):
+            codes = line[4:].split("|")[0].split()
+            profile = codes[codes.index("profile:") + 1] if "profile:" in codes else "style"
+            found.append([f"{path}:{i + 1}", profile if profile in PROFILES else "style", []])
+        elif found:
+            found[-1][2].append(line)
+    return [(label, profile, "\n".join(body).strip("\n")) for label, profile, body in found]
+
+
+def sources(roots):
+    """(label, profile, text) for every `.q` file and every case under
+    `roots`, each a directory or a file."""
+    found = []
+    for root in map(lambda r: Path(r).expanduser(), roots):
+        files = sorted(p for p in root.rglob("*") if p.is_file()) if root.is_dir() else [root]
+        for path in files:
+            if path.suffix == ".q":
+                text = path.read_bytes().decode("utf-8", "replace")
+                found.append((str(path), "uqf", text))
+            elif path.suffix == ".cases":
+                found.extend(cases(path))
+    return found
+
+
 def main() -> int:
-    binary, corpus = sys.argv[1], Path(sys.argv[2]).expanduser()
-    sources = sorted(p for p in corpus.rglob("*.q") if p.is_file())
+    if len(sys.argv) < 3:
+        sys.exit(__doc__)
+    binary, found = sys.argv[1], sources(sys.argv[2:])
+    if not found:
+        sys.exit(f"no .q file or case under {' '.join(sys.argv[2:])}")
     with tempfile.TemporaryDirectory() as tmp:
         dirs = {k: Path(tmp, k) for k in ("lf", "crlf", "shift", "comment")}
         for d in dirs.values():
             d.mkdir()
-        for i, path in enumerate(sources):
-            text = path.read_bytes().decode("utf-8", "replace").replace("\r\n", "\n")
+        for i, (_, _, text) in enumerate(found):
+            text = text.replace("\r\n", "\n")
             name = f"{i}.q"
             (dirs["lf"] / name).write_text(text)
             (dirs["crlf"] / name).write_text(text.replace("\n", "\r\n"))
             (dirs["shift"] / name).write_text("\n" + text)
             (dirs["comment"] / name).write_text(commented(text))
-        names = [f"{i}.q" for i in range(len(sources))]
-        got = {k: lint(binary, [d / n for n in names]) for k, d in dirs.items()}
+        names = [f"{i}.q" for i in range(len(found))]
+        got = {}
+        for k, d in dirs.items():
+            got[k] = collections.defaultdict(set)
+            for profile in {p for _, p, _ in found}:
+                chosen = [d / n for n, (_, p, _) in zip(names, found) if p == profile]
+                got[k].update(lint(binary, chosen, profile))
     base = got["lf"]
     failures = 0
-    for kind, expect in [
-        ("crlf", lambda s: s),
-        ("shift", lambda s: {(line + 1, col, code) for line, col, code in s}),
-        ("comment", lambda s: s),
+    # A byte-order mark or a `#!` line means something only at the very
+    # start of a file, so a blank line before it changes the program: q skips
+    # `#!` on line 1 alone. Those are left out of the position check.
+    anchored = {n for n, (_, _, text) in zip(names, found) if text.startswith(("\ufeff", "#!"))}
+    for kind, expect, checked in [
+        ("crlf", lambda s: s, names),
+        ("shift", lambda s: {(line + 1, col, code) for line, col, code in s},
+         [n for n in names if n not in anchored]),
+        ("comment", lambda s: s, names),
     ]:
-        bad = [n for n in names if expect(base[n]) != got[kind][n]]
+        bad = [n for n in checked if expect(base[n]) != got[kind][n]]
         failures += len(bad)
-        print(f"{kind:8} {len(bad)} of {len(names)} files differ")
+        print(f"{kind:8} {len(bad)} of {len(checked)} files differ")
         for n in bad[:5]:
-            print(f"    {sources[int(n[:-2])]}: {sorted(expect(base[n]) ^ got[kind][n])[:3]}")
+            print(f"    {found[int(n[:-2])][0]}: {sorted(expect(base[n]) ^ got[kind][n])[:3]}")
     return 1 if failures else 0
 
 

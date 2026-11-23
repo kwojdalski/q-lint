@@ -116,3 +116,10 @@ def test_ci_packages_the_vsix_and_the_wheel_and_keeps_them():
         assert "actions/upload-artifact@v4" in ran, job
         [upload] = [s for s in jobs[job]["steps"] if s.get("uses") == "actions/upload-artifact@v4"]
         assert upload["with"]["if-no-files-found"] == "error", job
+
+
+def test_ci_checks_invariance_over_the_q_in_this_tree():
+    ran = steps(workflow("ci.yml")["jobs"]["rust"])
+    [check] = [s for s in ran if "check_invariance.py" in s]
+    assert check.split()[-3:] == ["examples", "tests/corpus", "tests/cases"]
+    assert ran.index("cargo build --release") < ran.index(check)
