@@ -14,7 +14,7 @@ import type { Live, ProcessArg } from "./live";
 import { decode } from "./qdecode";
 import type { QConnection } from "./qclient";
 import { RowWindow, STREAM_COMMANDS, SUBSCRIBE, TABLES, readStream, readUpdate } from "./stream";
-import { plainMessage } from "./history";
+import { iconsEscaped, plainMessage } from "./history";
 
 /// How often the grid is redrawn, at most.
 const DRAW_MS = 200;
@@ -116,7 +116,7 @@ export class TableStreams {
         const tables = (Array.isArray(listed) ? listed : [listed]).filter((t): t is string => typeof t === "string" && t !== "");
         name =
           tables.length > 0
-            ? (await window.showQuickPick(tables, { title: `Stream which table of ${process.label}?` }))
+            ? (await window.showQuickPick(tables.map((t) => ({ label: iconsEscaped(t), table: t })), { title: `Stream which table of ${process.label}?` }))?.table
             : await window.showInputBox({ title: `Stream which table of ${process.label}?`, prompt: "The table's name, as .u.sub takes it." });
         name = name?.trim().replace(/^`/, "");
       }

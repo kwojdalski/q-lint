@@ -111,7 +111,7 @@ import { imagePath, linkTarget, resultMarkdown } from "./resultreport";
 import { SAVED_QUERIES, SAVED_QUERIES_KEY, parseSaved } from "./savedqueries";
 import { NOTEBOOK } from "./qnb";
 import type { Grid } from "./grid";
-import { plainMessage } from "./history";
+import { iconsEscaped, plainMessage } from "./history";
 
 /// `media/gridlook.js`'s helpers the column commands use, as the page does.
 interface GridLookHelpers {
@@ -610,8 +610,8 @@ export class QueryModes {
     if (chosen === undefined) {
       const picked = await window.showQuickPick(
         [...this.history].reverse().map((h) => ({
-          label: oneLine(h.code),
-          description: `${h.process} · ${new Date(h.at).toLocaleTimeString()}`,
+          label: iconsEscaped(oneLine(h.code)),
+          description: iconsEscaped(`${h.process} · ${new Date(h.at).toLocaleTimeString()}`),
           detail: `${h.payload.count.toLocaleString("en-US")} row(s)${h === this.shown ? " · on show" : ""}`,
           id: h.id,
         })),

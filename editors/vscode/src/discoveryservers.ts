@@ -33,7 +33,7 @@ import {
 } from "./discovery";
 import { DISCOVERY_COMMANDS, readDiscovery } from "./liveconfig";
 import { passwordKey, type Process } from "./processes";
-import { plainMessage } from "./history";
+import { iconsEscaped, plainMessage } from "./history";
 
 const SERVERS_KEY = "q-lint.discoveryServers";
 /// The discovered processes a password was given for, by server, as
@@ -307,7 +307,7 @@ export class DiscoveryServers {
       return undefined;
     }
     const picked = await window.showQuickPick(
-      servers.map((s) => ({ label: s.label, description: s.url, server: s })),
+      servers.map((s) => ({ label: iconsEscaped(s.label), description: iconsEscaped(s.url), server: s })),
       { title, matchOnDescription: true },
     );
     return picked?.server;

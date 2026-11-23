@@ -1155,7 +1155,7 @@ export class Live {
       processes.map((p) => ({
         label: iconsEscaped(p.label),
         description: address(p.host, p.port),
-        detail: p.tags.length ? p.tags.join(", ") : undefined,
+        detail: p.tags.length ? iconsEscaped(p.tags.join(", ")) : undefined,
         process: p,
       })),
       { title, matchOnDescription: true, matchOnDetail: true },

@@ -15,7 +15,7 @@ import { elapsedText } from "./progress";
 import type { Live } from "./live";
 import { readLive } from "./liveconfig";
 import { statements } from "./statements";
-import { plainMessage } from "./history";
+import { iconsEscaped, plainMessage } from "./history";
 
 const on = (): boolean => readAdmin((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback)).asyncQuery;
 
@@ -176,8 +176,9 @@ export class AsyncQueries {
     }
     const picked = await window.showQuickPick(
       [...this.pending.values()].map((p) => ({
-        label: p.code.split(/\r?\n/)[0].slice(0, 80),
-        description: `${p.process}, ${elapsedText(Date.now() - p.started)}`,
+        line: p.code.split(/\r?\n/)[0].slice(0, 80),
+        label: iconsEscaped(p.code.split(/\r?\n/)[0].slice(0, 80)),
+        description: iconsEscaped(`${p.process}, ${elapsedText(Date.now() - p.started)}`),
         id: p.id,
       })),
       { title: "Asynchronous queries waiting for their result: pick one to forget it" },
@@ -186,7 +187,7 @@ export class AsyncQueries {
       return;
     }
     const forget = "Forget Result";
-    if ((await window.showInformationMessage(plainMessage(`Forget the result of "${picked.label}"? q runs it to the end anyway: q cannot cancel a running query.`), { modal: true }, forget)) === forget) {
+    if ((await window.showInformationMessage(plainMessage(`Forget the result of "${picked.line}"? q runs it to the end anyway: q cannot cancel a running query.`), { modal: true }, forget)) === forget) {
       this.pending.delete(picked.id);
       this.showCount();
     }

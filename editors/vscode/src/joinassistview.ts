@@ -16,7 +16,7 @@ import { TABLES, TABLE_SHAPE, readShape, suggestJoins, type Shape, type Suggesti
 import type { Live } from "./live";
 import { PROCESS_TOOL_COMMANDS, asCode, isString, listOf, toolOff, toolOn } from "./processtools";
 import { statements } from "./statements";
-import { plainMessage } from "./history";
+import { iconsEscaped, plainMessage } from "./history";
 
 const on = (): boolean => toolOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "joinAssistant");
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
@@ -52,8 +52,8 @@ export function registerJoinAssistant(
     const TYPE = "Type an expression...";
     const picked = await window.showQuickPick(
       [
-        ...(result !== undefined && statements(result.code).length === 1 ? [{ label: "Result on show", description: result.code.trim().slice(0, 80), value: result.code.trim() }] : []),
-        ...names.map((n) => ({ label: n, description: "table", value: n })),
+        ...(result !== undefined && statements(result.code).length === 1 ? [{ label: "Result on show", description: iconsEscaped(result.code.trim().slice(0, 80)), value: result.code.trim() }] : []),
+        ...names.map((n) => ({ label: iconsEscaped(n), description: "table", value: n })),
         { label: TYPE, description: "a table's name or a query", value: "" },
       ],
       { title },

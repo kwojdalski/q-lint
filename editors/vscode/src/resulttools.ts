@@ -49,7 +49,7 @@ import {
   type FilterOp,
   type Step,
 } from "./wrangle";
-import { plainMessage } from "./history";
+import { iconsEscaped, plainMessage } from "./history";
 
 /// Wrangles kept, to go on from the result of one.
 const WRANGLES = 50;
@@ -187,7 +187,7 @@ export class ResultTools {
 
   private async pickColumn(payload: GridPayload, what: string): Promise<number | undefined> {
     const picked = await window.showQuickPick(
-      payload.names.map((n, i) => ({ label: n, description: typeName(payload.types[i]) + (i < payload.keys ? " · key" : ""), at: i })),
+      payload.names.map((n, i) => ({ label: iconsEscaped(n), description: typeName(payload.types[i]) + (i < payload.keys ? " · key" : ""), at: i })),
       { title: `q-lint: ${what}: which column?` },
     );
     return picked?.at;

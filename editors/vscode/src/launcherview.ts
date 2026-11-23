@@ -11,7 +11,7 @@ import { mergeEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import type { Live, ProcessArg } from "./live";
 import { launchOf, splitArgs, withExtras, type Launch, type Process } from "./processes";
-import { plainMessage } from "./history";
+import { iconsEscaped, plainMessage } from "./history";
 
 /// How long a process has to end after SIGTERM before it is killed.
 const STOP_GRACE_MS = 3000;
@@ -207,7 +207,7 @@ export class Launcher {
         void window.showInformationMessage("q-lint: no process started from here is running.");
         return;
       }
-      label = running.length === 1 ? running[0] : await window.showQuickPick(running, { title: "Stop which q process?" });
+      label = running.length === 1 ? running[0] : (await window.showQuickPick(running.map((r) => ({ label: iconsEscaped(r), name: r })), { title: "Stop which q process?" }))?.name;
     } else {
       label = (await this.live.pick(row, "Stop which q process?"))?.label;
     }

@@ -29,7 +29,7 @@ import { SEARCH, SEARCH_LIMIT, groupHits, patternProblem, readFound, type Found 
 import { PROCESS_TOOL_COMMANDS, toolOff, toolOn } from "./processtools";
 import { AT_ONCE, allTags, tagged } from "./tagquery";
 import { ToolTree, type ToolNode } from "./toolstree";
-import { plainMessage } from "./history";
+import { iconsEscaped, plainMessage } from "./history";
 
 export const FIND_VIEW = "q-lint.findInProcesses";
 export const FOUND_SCHEME = "q-lint-found";
@@ -132,7 +132,7 @@ export function registerFindInProcesses(
       }
       tag = (
         await window.showQuickPick(
-          tags.map((t) => ({ label: t.tag, description: `${t.count} process${t.count === 1 ? "" : "es"}`, tag: t.tag })),
+          tags.map((t) => ({ label: iconsEscaped(t.tag), description: `${t.count} process${t.count === 1 ? "" : "es"}`, tag: t.tag })),
           { title: "Find in Processes: search every process with which tag?" },
         )
       )?.tag;
