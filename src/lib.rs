@@ -9113,7 +9113,21 @@ fn lint_rules(
                 } else {
                     line.as_bytes()[dollar] == b'$'
                 };
-                if in_code {
+                // The string has to be the whole operand: in
+                // `` `date$"I"$x `` it is the type of another cast, and q 5
+                // gives 2019.03.02 for x "7000" (#1202).
+                let whole = m.get(0).unwrap();
+                let close = if whole.as_str().ends_with(')') {
+                    Some(whole.end())
+                } else {
+                    let mut i = whole.end();
+                    let b = literals.as_bytes();
+                    while i < b.len() && b[i] != b'"' {
+                        i += if b[i] == b'\\' { 2 } else { 1 };
+                    }
+                    (i < b.len()).then_some(i + 1)
+                };
+                if in_code && close.is_some_and(|c| operand_ends(code, &v.comments, offset + c)) {
                     return Some(m);
                 }
                 at = start + 1;

@@ -167,6 +167,12 @@ d:"j"$("12")
 e:{"b"$ "10"}
 f:"t"$"09:30"
 
+=== clean profile: general | a string that is the type of another cast is not the operand (q 5: `date$"I"$"7000" is 2019.03.02, `symbol$"S"$x and `long$"J"$"12" run; #1202)
+a:`date$"I"$"7000"
+b:`symbol$"S"$"ab"
+c:`long$"J"$"12"
+d:`guid$"G"$"8c680a01-5a49-5aab-5a65-d4bfddb6a661"
+
 === clean | a code by a lowercase cast, the char and byte casts, uppercase, or not the whole operand (#1168)
 a:"i"$"A"
 b:"j"$"5"
