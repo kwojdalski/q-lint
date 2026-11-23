@@ -48,7 +48,8 @@
 // - `value`, `get` or `eval` applied to a string, to `parse`, or to a
 //   tree headed by `:` or `::` (`eval(:;`t;())`) or by the symbol of
 //   a writer above (`` value(`.q.set;`a;1) ``), also through `[`,
-//   `each` or `'`, and by their `.q.` names;
+//   `each`, `'`, `@`, `.` or `enlist` and in parentheses (`(value)"a:1"`),
+//   and by their `.q.` names;
 // - a system command (`\l`, `\cd x`, `\\`), except one that only reads a
 //   setting (`\c`, `\d`, `\P`, `\_`, `\r`, `\E` without an argument, and
 //   `\w 0` or `\w 1`) and `\t` or `\ts`, whose
@@ -274,6 +275,32 @@ function lambdaLocals(t: Token[], open: number, touching: (a: Token | undefined,
   return out;
 }
 
+/// What an evaluator - `value`, `get`, `eval` - applied to what starts at
+/// `t[j]` would run that changes the process, and where that is; past
+/// brackets, `each`, `'`, `@`, `.` and `enlist`.
+function evaluated(t: Token[], j: number): { reason: string; at: number } | undefined {
+  while (
+    t[j] !== undefined &&
+    ((t[j].kind === "open" && t[j].text !== "{") ||
+      (t[j].kind === "name" && ["each", "peach", "enlist"].includes(t[j].text)) ||
+      (t[j].kind === "op" && ["'", "@", "."].includes(t[j].text)))
+  ) {
+    j++;
+  }
+  const k = t[j];
+  const head = t[j - 1]?.text === "(" && t[j - 1]?.kind === "open";
+  const reason = k?.kind === "str"
+    ? "a string"
+    : k?.kind === "name" && k.text === "parse"
+      ? "a parse tree"
+      : head && k?.kind === "op" && k.text === ":"
+        ? "an assignment"
+        : head && k?.kind === "sym" && WRITERS.has(unqualified(k.text.slice(1)))
+          ? `a call of ${k.text.slice(1)}`
+          : undefined;
+  return reason === undefined ? undefined : { reason, at: j };
+}
+
 /// What one statement does that the guard asks about, added to `found`.
 function readStatement(statement: string, found: Set<string>): void {
   const text = statement.trimStart();
@@ -445,23 +472,12 @@ function readStatement(statement: string, found: Set<string>): void {
         continue;
       }
       if (["value", "get", "eval"].includes(unqualified(k.text))) {
-        // What it is applied to, past brackets and `each` or `'`.
-        let j = i + 1;
-        while (t[j] !== undefined && (["[", "(", "each", "peach"].includes(t[j].text) || (t[j].kind === "op" && t[j].text === "'"))) {
-          j++;
-        }
-        const reason = t[j]?.kind === "str"
-          ? "a string"
-          : t[j]?.kind === "name" && t[j].text === "parse"
-            ? "a parse tree"
-            : t[j - 1]?.text === "(" && t[j - 1]?.kind === "open" && t[j]?.kind === "op" && t[j].text === ":"
-              ? "an assignment"
-              : t[j - 1]?.text === "(" && t[j - 1]?.kind === "open" && t[j]?.kind === "sym" && WRITERS.has(unqualified(t[j].text.slice(1)))
-                ? `a call of ${t[j].text.slice(1)}`
-                : undefined;
-        if (reason !== undefined) {
-          found.add(`evaluates ${reason} with ${k.text}`);
-          i = j;
+        // `(value)"a:1"` applies it as `value "a:1"` does.
+        const wrapped = t[i - 1]?.text === "(" && next?.text === ")";
+        const what = evaluated(t, i + (wrapped ? 2 : 1));
+        if (what !== undefined) {
+          found.add(`evaluates ${what.reason} with ${k.text}`);
+          i = what.at;
           continue;
         }
       }

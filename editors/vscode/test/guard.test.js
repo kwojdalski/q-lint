@@ -515,3 +515,21 @@ test("a gateway call applied with . or @ is read inside its strings (#1255)", ()
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("value, get or eval applied with @, . or in parentheses evaluates (#1325)", () => {
+  const cases = {
+    'value@"q:1"': ["evaluates a string with value"],
+    'value . enlist "a:1"': ["evaluates a string with value"],
+    '(value)"a:1"': ["evaluates a string with value"],
+    'get@"a:1"': ["evaluates a string with get"],
+    'value enlist["a:1"]': ["evaluates a string with value"],
+    // Applied to a value they read.
+    "value@`t": [],
+    "(value)`t": [],
+    "value . enlist `t": [],
+    "value{x}": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
