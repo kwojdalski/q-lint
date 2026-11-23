@@ -8922,7 +8922,10 @@ fn lint_rules(
                 // comma (#215).
                 // Read from the phrase with each bracket kept as `_`: q 5 runs
                 // `a=1 2 3[0]`, since the index makes it the atom 1 (#627).
-                let groups = grouped(&line[w.end()..phrase_end(line, w.end())]);
+                // From the same text as `phrase`, so the two line up: the
+                // line alone is shorter when the statement runs on past it,
+                // and indexing it at `phrase`'s offsets panicked.
+                let groups = grouped(&query[w.end()..read_to]);
                 let mut reported = vec![];
                 for m in re!(r"(?:=|<>)\s*(?:-?\d[A-Za-z0-9.]*(?:\s+-?\d[A-Za-z0-9.]*)+|`[A-Za-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)+)")
                     .find_iter(&phrase)
