@@ -412,3 +412,19 @@ test("a string sent to handle 0 is evaluated by the process (#1316)", () => {
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("an assignment inside a table literal's column expression is a change (#1317)", () => {
+  const cases = {
+    "([] c:(g:5)+1 2)": ["assigns g"],
+    "([] c:1 2; d:g:3)": ["assigns g"],
+    "([k:(g:1)+0] v:2)": ["assigns g"],
+    // The column names themselves are not.
+    "([] a:1 2; b:3)": [],
+    "([k:1 2] v:3 4)": [],
+    "([k:1 2; j:3 4] v:5 6; w:7 8)": [],
+    "([] a:([] b:1 2))": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

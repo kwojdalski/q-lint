@@ -15,7 +15,7 @@
 // - `name:`, `name::`, `name+:` and `name[i]:` at the top level, and
 //   `name::` or a dotted `.ns.name:` inside a lambda, where q makes them
 //   global. A column named in `select a:x from t` or `([] a:1 2)` is not
-//   an assignment;
+//   an assignment, but one inside a column's expression (`([] c:g:1)`) is;
 // - `update` or `delete` from a table named by a symbol (`` from `t ``,
 //   `` from (`t) ``), which changes it in place;
 // - `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`, `system`,
@@ -256,10 +256,10 @@ function readStatement(statement: string, found: Set<string>): void {
   const touching = (a: Token | undefined, b: Token | undefined): boolean =>
     a !== undefined && b !== undefined && at.get(b) === (at.get(a) ?? -2) + 1;
   const t = all.filter((k) => k.kind !== "space");
-  // What each open bracket is: a lambda, a table literal, or neither.
-  const stack: ("lambda" | "table" | "other")[] = [];
+  // What each open bracket is: a lambda, a table literal, its key columns'
+  // `[`, or none of them.
+  const stack: ("lambda" | "table" | "key" | "other")[] = [];
   let lambdas = 0;
-  let tables = 0;
   // Between `select`, `exec`, `update` or `delete` and its `from`, a name
   // before `:` names a column.
   let qsql: string | undefined;
@@ -267,10 +267,16 @@ function readStatement(statement: string, found: Set<string>): void {
     const k = t[i];
     const next = t[i + 1];
     if (k.kind === "open") {
-      const kind = k.text === "{" ? "lambda" : k.text === "(" && next?.text === "[" ? "table" : "other";
+      const kind =
+        k.text === "{"
+          ? "lambda"
+          : k.text === "(" && next?.text === "["
+            ? "table"
+            : k.text === "[" && stack[stack.length - 1] === "table" && t[i - 1]?.text === "("
+              ? "key"
+              : "other";
       stack.push(kind);
       lambdas += kind === "lambda" ? 1 : 0;
-      tables += kind === "table" ? 1 : 0;
       const amend = t[i - 1]?.kind === "op" ? t[i - 1].text : "";
       const target = symbolAt(t, i + 1);
       if (k.text === "[" && (amend === "@" || amend === "." || amend === "!") && target !== undefined && target.length > 1) {
@@ -294,7 +300,6 @@ function readStatement(statement: string, found: Set<string>): void {
     if (k.kind === "close") {
       const kind = stack.pop();
       lambdas -= kind === "lambda" ? 1 : 0;
-      tables -= kind === "table" ? 1 : 0;
       continue;
     }
     if (k.kind === "name") {
@@ -414,7 +419,10 @@ function readStatement(statement: string, found: Set<string>): void {
         continue;
       }
       const global = t[j + 1]?.text === ":" && touching(t[j], t[j + 1]);
-      const column = qsql !== undefined || tables > 0;
+      // In a table literal only the name that starts an item is a column:
+      // `([] c:(g:5)+1 2)` and `([] d:g:3)` assign `g`.
+      const top = stack[stack.length - 1];
+      const column = qsql !== undefined || ((top === "table" || top === "key") && ["[", "]", ";"].includes(t[i - 1]?.text ?? ""));
       if (column && !global) {
         continue;
       }

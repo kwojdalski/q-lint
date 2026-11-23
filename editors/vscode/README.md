@@ -1047,7 +1047,7 @@ first, and when it would change the process, a modal asks before anything
 is sent; Escape sends nothing. A change is: assigning a global (`a:1`,
 `a+:1`, `t[0]:5`, `a::b` - and, inside a lambda, `a::` or a dotted
 `.ns.v:`, as q makes those global; a column named in `select a:x from t` or
-`([] a:1 2)` is not one), `update` or `delete` from a table named by a
+`([] a:1 2)` is not one, but one in a column's expression, `([] c:(g:5)+1)`, is), `update` or `delete` from a table named by a
 symbol (`` from `t `` or `` from (`t) ``), `xasc`, `xdesc` or `xkey` on a table named by a
 symbol (`` `a xasc `t ``), extending an enumeration with `?` (`` `sym?`x ``), a string sent to handle 0 (`0"a:1"`), `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`,
 `system`, `setenv`, `save`, `rsave`, `dsave`, `load`, `rload`, `.Q.dpft`, `.Q.dpfts`,
