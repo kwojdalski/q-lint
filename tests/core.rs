@@ -379,6 +379,16 @@ fn a_column_named_like_a_parameter_is_not_coloured_as_one() {
 }
 
 #[test]
+fn a_root_name_and_a_dotted_name_are_not_the_same_function() {
+    // KDB-X: after `f:{x}`, `.f` is undefined, and after `.g:{x+1}`, `g 1`
+    // is 'g (#1243).
+    assert!(functions("f:{x}\nh:{.f}\n").is_empty());
+    assert!(functions(".g:{x+1}\nr:g 1\n").is_empty());
+    assert_eq!(functions("f:{x}\nh:{f 1}\n"), ["f"]);
+    assert_eq!(functions(".g:{x+1}\nr:.g 1\n"), [".g"]);
+}
+
+#[test]
 fn a_system_commands_argument_is_not_coloured() {
     // `\l f/a.q` loads a file under the directory `f` (#553); `\t` and
     // `\ts` run theirs as q.
