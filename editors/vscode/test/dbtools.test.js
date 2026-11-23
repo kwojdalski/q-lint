@@ -172,6 +172,9 @@ test("the sym report warns above the threshold and lists columns and growth", ()
   assert.match(text, /\| 2026\.01\.06 \| 2,000 \| 1,900 \|/);
   assert.doesNotMatch(symReport(a, "hdb", 5000), /Warning/);
   assert.match(symReport({ sym: false, root: "/x" }, "p", 1), /no sym file/);
+  // Int partitions grow in number order, not text order (#1128).
+  const ints = readSym({ sym: true, root: "/db", count: 300, bytes: 1, partitions: 3, sampled: 3, ctable: [], ccol: [], cdistinct: [], gpart: ["10", "8", "9"], gsize: [300, 100, 200] });
+  assert.deepStrictEqual(ints.growth.map((g) => g.partition), ["8", "9", "10"]);
 });
 
 test("the attribute advisor counts filters and suggests by shape, never for an unfiltered column", () => {
