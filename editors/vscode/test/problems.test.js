@@ -56,6 +56,9 @@ test("the trend keeps one point a commit, oldest first, at most the limit", () =
   trend = withPoint(trend, p("a", "2026-01-01", 7));
   trend = withPoint(trend, p("b", "2026-01-02", 4));
   assert.deepStrictEqual(trend.map((x) => [x.commit, x.total]), [["a", 7], ["b", 4]]);
+  // Dates with different committer offsets are ordered as instants (#1106).
+  const zones = withPoint([p("east", "2026-03-01T10:00:00+05:00", 1)], p("utc", "2026-03-01T09:00:00+00:00", 2));
+  assert.deepStrictEqual(zones.map((x) => x.commit), ["east", "utc"]);
   for (let i = 0; i < TREND_LIMIT + 5; i++) {
     trend = withPoint(trend, p(`c${i}`, `2027-01-01T00:00:${String(i).padStart(3, "0")}`, i));
   }

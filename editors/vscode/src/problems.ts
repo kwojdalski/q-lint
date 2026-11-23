@@ -138,11 +138,13 @@ export function pointOf(findings: Finding[], commit: string, date: string, subje
 export const TREND_LIMIT = 100;
 
 /// `trend` with `point` in it - replacing one of the same commit - oldest
-/// first by commit date, at most `TREND_LIMIT` of the newest.
+/// first by commit date, at most `TREND_LIMIT` of the newest. The dates
+/// are compared as instants: `%cI` keeps each committer's offset, so their
+/// text does not sort (#1106).
 export function withPoint(trend: Point[], point: Point): Point[] {
   const kept = trend.filter((p) => p.commit !== point.commit);
   kept.push(point);
-  kept.sort((a, b) => a.date.localeCompare(b.date));
+  kept.sort((a, b) => Date.parse(a.date) - Date.parse(b.date) || a.date.localeCompare(b.date));
   return kept.slice(-TREND_LIMIT);
 }
 
