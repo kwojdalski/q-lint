@@ -180,6 +180,75 @@ fn column(item: &str) -> String {
     said(item)
 }
 
+/// The `[...]` a `select` is written with, `select[2] a`: what is inside
+/// the brackets and what follows them; `None` without one.
+fn bracketed(item: &str) -> Option<(String, String)> {
+    let item = item.trim_start();
+    if !item.starts_with('[') {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (i, c) in item.char_indices() {
+        match c {
+            '[' | '(' | '{' => depth += 1,
+            ']' | ')' | '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return (c == ']')
+                        .then(|| (item[1..i].to_string(), item[i + 1..].trim().to_string()));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// `text` split at `sep` outside brackets and parentheses.
+fn split_top(text: &str, sep: u8) -> Vec<String> {
+    let mut out = vec![];
+    let (mut depth, mut from) = (0usize, 0);
+    for (i, b) in text.bytes().enumerate() {
+        match b {
+            b'[' | b'(' | b'{' => depth += 1,
+            b']' | b')' | b'}' => depth = depth.saturating_sub(1),
+            _ if b == sep && depth == 0 => {
+                out.push(text[from..i].trim().to_string());
+                from = i + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(text[from..].trim().to_string());
+    out.retain(|s| !s.is_empty());
+    out
+}
+
+/// One item of `select[...]` in words: a sort (`>c`, `<c`), or a limit -
+/// `n` rows from the top, `-n` from the bottom, `m n` from row `m` - taken
+/// of the result, after any grouping (checked in KDB-X).
+fn limited(item: &str) -> String {
+    if let Some(c) = item.strip_prefix('>') {
+        return format!("Sorts the result by {}, largest first.", said(c));
+    }
+    if let Some(c) = item.strip_prefix('<') {
+        return format!("Sorts the result by {}, smallest first.", said(c));
+    }
+    let n: Vec<&str> = item.split_whitespace().collect();
+    let int = |t: &str| t.parse::<i64>().ok();
+    match n[..] {
+        [k] => match int(k) {
+            Some(k) if k < 0 => format!("Keeps only the last {} rows of the result.", -k),
+            Some(k) => format!("Keeps only the first {k} rows of the result."),
+            None => format!("Keeps only the rows of the result {} picks.", code(item)),
+        },
+        [m, k] if int(m).is_some() && int(k).is_some() => {
+            format!("Keeps only {k} rows of the result, starting at row {m}.")
+        }
+        _ => format!("Keeps only the rows of the result {} picks.", code(item)),
+    }
+}
+
 fn list(items: &[String], each: fn(&str) -> String) -> String {
     let parts: Vec<String> = items.iter().map(|i| each(i)).collect();
     match parts.len() {
@@ -205,6 +274,17 @@ fn explain(p: &layout::Parts) -> String {
     let wheres = clause("where");
     let by = clause("by");
     let mut head = p.head.clone();
+    let mut limit = vec![];
+    if let Some(first) = head.first_mut()
+        && p.lead == "select"
+        && let Some((inside, rest)) = bracketed(first)
+    {
+        limit = split_top(&inside, b';');
+        *first = rest;
+        if first.is_empty() {
+            head.remove(0);
+        }
+    }
     let mut distinct = false;
     if let Some(first) = head.first_mut()
         && p.lead == "select"
@@ -261,6 +341,10 @@ fn explain(p: &layout::Parts) -> String {
             if distinct {
                 steps.push("Leaves out rows that repeat one already returned.".into());
             }
+            // A sort is applied before a limit, whatever order they are in.
+            let (sorts, limits): (Vec<&String>, Vec<&String>) =
+                limit.iter().partition(|l| l.starts_with(['<', '>']));
+            steps.extend(sorts.into_iter().chain(limits).map(|l| limited(l)));
         }
         "exec" => {
             if !by.is_empty() {
@@ -269,7 +353,9 @@ fn explain(p: &layout::Parts) -> String {
                     list(&by, column)
                 ));
             }
-            steps.push(if head.len() == 1 && !head[0].contains(':') {
+            steps.push(if head.is_empty() {
+                "Returns the last row, as a dictionary from each column to its value.".to_string()
+            } else if head.len() == 1 && !head[0].contains(':') {
                 format!("Returns {} as a list, not a table.", column(&head[0]))
             } else {
                 format!(
@@ -296,7 +382,9 @@ fn explain(p: &layout::Parts) -> String {
             ));
         }
         "delete" => {
-            steps.push(if head.is_empty() {
+            steps.push(if head.is_empty() && wheres.is_empty() {
+                "Removes every row; the columns stay, in an empty table.".to_string()
+            } else if head.is_empty() {
                 "Removes those rows.".to_string()
             } else {
                 format!("Removes the columns {}.", list(&head, code))
@@ -331,5 +419,38 @@ mod tests {
         assert!(w.contains("(`a` plus `1`) equals `b`"), "{w}");
         let w = words("r:select from t where px>2\n");
         assert!(w.contains("`px` is greater than `2`."), "{w}");
+    }
+
+    // Checked in KDB-X: `exec from t` is the last row as a dictionary;
+    // `select[n]` takes of the result, after a sort in the brackets;
+    // `delete from t` with no where removes every row.
+    #[test]
+    fn exec_with_no_columns_select_with_a_limit_and_delete_with_no_where() {
+        let w = words("r:exec from t\n");
+        assert!(w.contains("Returns the last row, as a dictionary"), "{w}");
+        let w = words("r:select[2] a from t\n");
+        assert!(
+            w.contains("1. Returns `a`.\n2. Keeps only the first 2 rows"),
+            "{w}"
+        );
+        let w = words("r:select[-3] from t\n");
+        assert!(
+            w.contains("Keeps only the last 3 rows of the result."),
+            "{w}"
+        );
+        let w = words("r:select[1 2] from t\n");
+        assert!(
+            w.contains("Keeps only 2 rows of the result, starting at row 1."),
+            "{w}"
+        );
+        let w = words("r:select[2;>a] a from t\n");
+        assert!(
+            w.contains("2. Sorts the result by `a`, largest first.\n3. Keeps only the first 2"),
+            "{w}"
+        );
+        let w = words("r:delete from t\n");
+        assert!(w.contains("Removes every row"), "{w}");
+        let w = words("r:delete from t where a>1\n");
+        assert!(w.contains("Removes those rows."), "{w}");
     }
 }
