@@ -447,3 +447,16 @@ test("an ordered list keeps its start, and only a 1. or a bullet interrupts a pa
   assert.strictEqual(markdownHtml("text\n1. one"), "<p>text</p>\n<ol><li>one</li></ol>");
   assert.strictEqual(markdownHtml("text\n- one"), "<p>text</p>\n<ul><li>one</li></ul>");
 });
+
+test("a GFM table, as a result is written into a notebook, is a table (#1309)", () => {
+  assert.strictEqual(
+    markdownHtml("| a | n |\n| --- | ---: |\n| x\\|y | 1 |\n| &lt;b&gt; |\n\nafter"),
+    '<table><thead><tr><th>a</th><th style="text-align:right">n</th></tr></thead>' +
+      '<tbody><tr><td>x|y</td><td style="text-align:right">1</td></tr><tr><td>&lt;b&gt;</td><td style="text-align:right"></td></tr></tbody></table>\n<p>after</p>',
+  );
+  // Not a table: the delimiter row has a different count of cells.
+  assert.strictEqual(markdownHtml("a | b | c\n--- | ---"), "<p>a | b | c<br>\n--- | ---</p>");
+  const { resultMarkdown } = require("../out/resultreport.js");
+  const md = resultMarkdown({ at: 0, process: "dev", code: "t", decimals: 2, payload: { count: 1, keys: 0, names: ["s"], types: [11], cells: [["<a>"]], raw: [[]], rank: [[0]] } }).text;
+  assert.match(markdownHtml(md), /<table><thead><tr><th>s<\/th><\/tr><\/thead><tbody><tr><td>&lt;a&gt;<\/td><\/tr><\/tbody><\/table>/);
+});
