@@ -102,6 +102,9 @@ export class TickerplantLog {
   private panel: WebviewPanel | undefined;
   private local: LocalQ | undefined;
   private log: (TpLog & { file: string }) | undefined;
+  /// Bumped by every stop: an open that started before one is superseded,
+  /// and stops the q it started (#1074).
+  private generation = 0;
   /// What the page was last sent, for tests.
   posted: unknown[] = [];
 
@@ -123,14 +126,28 @@ export class TickerplantLog {
     const file = given ?? (await window.showOpenDialog({ canSelectMany: false, title: "Open which tickerplant log?" }))?.[0]?.fsPath;
     if (file === undefined) return "cancelled";
     this.stop();
+    const opening = this.generation;
     const configuration = workspace.getConfiguration("q-lint");
     const { qBinary } = readTerminal((key, fallback) => configuration.get(key, fallback));
     const binary = expandHome(qBinary, os.homedir());
     const folder = workspace.workspaceFolders?.[0]?.uri;
+    let local: LocalQ | undefined;
     try {
-      this.local = await startLocalQ(binary, mergeEnv(layoutEnvFor(binary, folder), await dotenvFor(folder)));
-      this.log = { ...readTpLog(await this.local.connection.call(".qlint.tp.load", file)), file };
+      local = await startLocalQ(binary, mergeEnv(layoutEnvFor(binary, folder), await dotenvFor(folder)));
+      if (opening !== this.generation) {
+        stopLocalQ(local);
+        return "superseded";
+      }
+      this.local = local;
+      const read = readTpLog(await local.connection.call(".qlint.tp.load", file));
+      // A stop since has stopped this q already.
+      if (opening !== this.generation) return "superseded";
+      this.log = { ...read, file };
     } catch (error) {
+      if (opening !== this.generation) {
+        if (local !== undefined) stopLocalQ(local);
+        return "superseded";
+      }
       this.stop();
       return say(`q-lint: could not read ${file}: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -169,6 +186,7 @@ export class TickerplantLog {
   }
 
   private stop(): void {
+    this.generation++;
     if (this.local !== undefined) stopLocalQ(this.local);
     this.local = undefined;
     this.log = undefined;

@@ -314,3 +314,43 @@ test("the tickerplant log is read in a q of the extension's own, replayed there 
   });
   assert.strictEqual(up, false);
 });
+
+/// A tickerplant log of two messages, written by a q of the test's own, in a
+/// directory removed after.
+function tpLogFile(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-tplog-test-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const make = path.join(dir, "make.q");
+  fs.writeFileSync(make, ['f:hsym`$"' + path.join(dir, "tp.log") + '";', ".[f;();:;()];", "h:hopen f;", "h enlist(`upd;`t;([]time:enlist 2026.01.05D09:00:00;x:enlist 1));", "h enlist(`upd;`t;([]time:enlist 2026.01.05D10:00:00;x:enlist 2));", "hclose h;", "exit 0;", ""].join("\n"));
+  require("node:child_process").execSync(`${Q} ${make}`, { stdio: "ignore", timeout: 15000 });
+  return path.join(dir, "tp.log");
+}
+
+test("a log opened while another is starting stops the first one's q (#1074)", { skip: Q ? false : "QLINT_TEST_Q names no q binary" }, async (t) => {
+  capture();
+  stub.reset();
+  stub.config.user["terminal.qBinary"] = Q;
+  const context = stub.newContext();
+  const log = new TickerplantLog(context);
+  t.after(() => context.subscriptions.forEach((d) => d.dispose?.()));
+  const file = tpLogFile(t);
+  const cp = require("node:child_process");
+  const spawn = cp.spawn;
+  const children = [];
+  cp.spawn = (...args) => {
+    const child = spawn(...args);
+    children.push({ child, dir: args[2]?.cwd });
+    return child;
+  };
+  t.after(() => (cp.spawn = spawn));
+  const [first, second] = await Promise.all([log.open(file), log.open(file)]);
+  cp.spawn = spawn;
+  assert.strictEqual(first, "superseded");
+  assert.strictEqual(second, "2 messages");
+  assert.strictEqual(children.length, 2);
+  await new Promise((r) => setTimeout(r, 300));
+  assert.notStrictEqual(children[0].child.exitCode ?? children[0].child.signalCode, null);
+  assert.strictEqual(fs.existsSync(children[0].dir), false);
+  assert.strictEqual(children[1].child.exitCode, null);
+  log.close();
+});
