@@ -44,7 +44,7 @@ import { isProduction, resolveProcess } from "./agent";
 import { type OutputPart } from "./celldata";
 import { cellDirective } from "./celldirectives";
 import { LIVE_KEY, liveExpressions, markdownAfter, type LiveValue } from "./livemarkdown";
-import { cellAnswer, liveValues } from "./qnbrun";
+import { cellAnswer, guardedText, liveValues } from "./qnbrun";
 import { fromIpynb, toHtml, toIpynb } from "./qnbconvert";
 import { address } from "./processes";
 import {
@@ -410,7 +410,8 @@ class QnbKernel {
       }
     });
     try {
-      const result = await this.live.runOnActive(source, async (connection): Promise<[boolean, OutputPart[], Record<string, LiveValue>[]] | undefined> => {
+      // The guard reads the live values' expressions too: they are sent.
+      const result = await this.live.runOnActive(guardedText(source, markdown.map((j) => all[j].document.getText())), async (connection): Promise<[boolean, OutputPart[], Record<string, LiveValue>[]] | undefined> => {
         if (execution.token.isCancellationRequested) {
           // Interrupted while connecting, before anything was sent.
           return undefined;

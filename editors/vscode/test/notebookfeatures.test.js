@@ -11,7 +11,8 @@ const pkg = require("../package.json");
 const { cellDirective } = require("../out/celldirectives.js");
 const { LIVE, LIVE_KEY, inlineSpans, liveExpressions, markdownAfter, readLiveValues, scanLive } = require("../out/livemarkdown.js");
 const { ERROR_MIME, fromIpynb, markdownHtml, toHtml, toIpynb, IpynbError } = require("../out/qnbconvert.js");
-const { INJECTED_KEY, cliProcess, injectParameters, parametersCell, parametersOf, parseArgs, passwordVariable, runNotebook, writeAs } = require("../out/qnbrun.js");
+const { INJECTED_KEY, cliProcess, guardedText, injectParameters, parametersCell, parametersOf, parseArgs, passwordVariable, runNotebook, writeAs } = require("../out/qnbrun.js");
+const { writes } = require("../out/guard.js");
 const { describeVariable, readVariables, bytesText, VARS } = require("../out/notebookvars.js");
 const { NOTEBOOK, parseQnb, serializeQnb } = require("../out/qnb.js");
 
@@ -241,10 +242,13 @@ test("given values go in a cell after the parameters cell, replacing an earlier 
 /// recording the process each cell went to.
 function fakeExecutor(answer) {
   const sent = [];
+  const codes = [];
   return {
     sent,
+    codes,
     on: async (label, code, use) => {
       sent.push(label ?? "default");
+      codes.push(code);
       return use({
         query: async (cut) => answer(cut),
         call: async (lambda, arg) => (lambda.startsWith("{[es]") ? arg.map((e) => [true, `v(${e})`]) : answer(arg)),
@@ -282,6 +286,18 @@ test("a headless run numbers and runs the q cells, reads live values, and goes w
   assert.deepStrictEqual(cells[5], qnb.cells[4]);
   // The notebook given is not changed.
   assert.strictEqual(qnb.cells.length, 5);
+});
+
+test("the guard reads a cell's live values' expressions with its source (#1088)", async () => {
+  const markdown = ["Count {{q: count trade}}", "Gone {{q: delete from `trade}}", "Again {{q: count trade}}"];
+  assert.strictEqual(guardedText("/ just a note", markdown), "/ just a note\ncount trade\ndelete from `trade");
+  assert.deepStrictEqual(writes(guardedText("/ just a note", markdown)), ["deletes from `trade in place"]);
+  assert.strictEqual(guardedText("1+1", []), "1+1");
+  // A headless run hands the executor, which guards it, the same text.
+  const qnb = { cells: [{ kind: "code", source: "1" }, { kind: "markdown", source: markdown[1] }] };
+  const ex = fakeExecutor((cut) => ({ ok: true, type: -7, text: [cut.join(";")] }));
+  await runNotebook(qnb, ex, SETTINGS);
+  assert.deepStrictEqual(ex.codes, ["1\ndelete from `trade"]);
 });
 
 test("a headless run stops at the first cell that fails, and clears what the cells after it showed", async () => {

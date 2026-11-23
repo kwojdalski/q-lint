@@ -50,6 +50,13 @@ export async function cellAnswer(connection: QConnection, mode: CellMode, cut: s
   return [answer.ok, cellOutputs(mode, answer, settings.rowLimitFrom)];
 }
 
+/// What the read-only guard reads for a code cell `source` run with the
+/// Markdown cells `markdown` after it: the source and every live value's
+/// expression, each on a line of its own, since all of them are sent (#1088).
+export function guardedText(source: string, markdown: string[]): string {
+  return [source, ...new Set(markdown.flatMap(liveExpressions))].join("\n");
+}
+
 /// The live values of the Markdown `sources`, each cell's by expression,
 /// read on `connection` in one call; empty when they have none.
 export async function liveValues(connection: QConnection, sources: string[]): Promise<Record<string, LiveValue>[]> {
@@ -193,7 +200,7 @@ export async function runNotebook(
     const cut = statements(cell.source);
     const after = hooks.liveValues === false ? [] : markdownAfter(cells, i).filter((j) => cells[j].kind === "markdown");
     try {
-      const [ok, parts, values] = await executor.on(directive.process, cell.source, async (connection) => {
+      const [ok, parts, values] = await executor.on(directive.process, guardedText(cell.source, after.map((j) => cells[j].source)), async (connection) => {
         const [ok, parts] = cut.length === 0 ? [true, []] : await cellAnswer(connection, directive, cut, settings);
         const values = ok ? await liveValues(connection, after.map((j) => cells[j].source)) : [];
         return [ok, parts, values] as const;
