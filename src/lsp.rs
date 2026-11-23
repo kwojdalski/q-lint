@@ -649,6 +649,7 @@ fn workspace_folders(params: &Value) -> Vec<(String, String)> {
 /// `lint.select` and `lint.ignore` narrow the selection (see
 /// `Policy::narrow`); everything else here is the server's own behaviour,
 /// which no configuration file describes.
+#[derive(Debug)]
 struct Options {
     /// Lint on save rather than on every change. An open buffer's text is
     /// still kept current, for code actions and formatting.
@@ -3390,5 +3391,96 @@ mod tests {
         assert_eq!(severity("error"), 1);
         assert_eq!(severity("warning"), 2);
         assert_eq!(severity("anything else"), 2);
+    }
+
+    /// The README's `initializationOptions` block, as JSON.
+    fn readme_options() -> Value {
+        let readme = include_str!("../README.md");
+        let section = readme
+            .split("### Editor options: `initializationOptions`")
+            .nth(1)
+            .expect("README lost its initializationOptions section");
+        let block = section
+            .split("```json\n")
+            .nth(1)
+            .and_then(|rest| rest.split("\n```").next())
+            .expect("README lost its initializationOptions block");
+        serde_json::from_str(block).expect("the README's block is JSON")
+    }
+
+    /// Each leaf of `v` - a value that is not an object, or an empty one -
+    /// by its JSON pointer.
+    fn leaves(v: &Value, at: String, out: &mut Vec<(String, Value)>) {
+        match v {
+            Value::Object(map) if !map.is_empty() => {
+                for (k, v) in map {
+                    leaves(v, format!("{at}/{k}"), out);
+                }
+            }
+            _ => out.push((at, v.clone())),
+        }
+    }
+
+    fn read_options(init: Value) -> (String, Vec<String>) {
+        // The client capability `relatedInformation.enable` also needs.
+        let params = json!({"initializationOptions": init, "capabilities": {"textDocument":
+            {"publishDiagnostics": {"relatedInformation": true}}}});
+        let (options, layer, problems) = Options::read(&params);
+        (format!("{options:?} {layer:?}"), problems)
+    }
+
+    #[test]
+    fn the_readme_initialization_options_are_the_servers_defaults() {
+        let readme = readme_options();
+        let (defaults, problems) = read_options(Value::Null);
+        assert!(problems.is_empty(), "{problems:?}");
+        let (documented, problems) = read_options(readme.clone());
+        assert!(problems.is_empty(), "the README's block: {problems:?}");
+        assert_eq!(
+            documented, defaults,
+            "the README's block is not the defaults"
+        );
+        assert_eq!(
+            format!("{:?}", Options::default()),
+            format!("{:?}", Options::read(&json!({})).0)
+        );
+
+        // Each key in it is one the server reads: a value other than the one
+        // documented changes what it does.
+        let mut found = vec![];
+        leaves(&readme, String::new(), &mut found);
+        for (pointer, value) in &found {
+            let other = match value {
+                Value::Bool(b) => json!(!b),
+                Value::Number(_) => json!(81),
+                Value::String(s) if s == "onType" => json!("onSave"),
+                Value::String(s) if s == "open" => json!("workspace"),
+                Value::Array(_) if pointer.ends_with("exclude") => json!(["build/**"]),
+                Value::Array(_) => json!(["QS001"]),
+                Value::Object(_) => json!({"QS001": "hint"}),
+                other => panic!("{pointer}: no other value to try for {other}"),
+            };
+            let mut changed = readme.clone();
+            *changed.pointer_mut(pointer).unwrap() = other.clone();
+            let (read, problems) = read_options(changed);
+            assert!(problems.is_empty(), "{pointer} = {other}: {problems:?}");
+            assert_ne!(read, defaults, "{pointer} = {other} changed nothing");
+        }
+
+        // And each key the server reads is in it. The pointers are read
+        // from this file's source, where `Options::read` names them.
+        let source = include_str!("lsp.rs");
+        let body = &source[source.find("fn read(params: &Value)").unwrap()..];
+        let body = &body[..body.find("\n    }\n").unwrap()];
+        let mut read: Vec<String> = ["flag(\"", "init.pointer(\"", "strings(\""]
+            .iter()
+            .flat_map(|call| body.match_indices(call).map(move |(at, _)| at + call.len()))
+            .map(|at| body[at..at + body[at..].find('"').unwrap()].to_string())
+            .collect();
+        read.sort();
+        read.dedup();
+        let mut documented: Vec<String> = found.into_iter().map(|(p, _)| p).collect();
+        documented.sort();
+        assert_eq!(documented, read);
     }
 }

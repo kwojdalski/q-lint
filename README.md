@@ -100,8 +100,9 @@ warning, with a tally on the summary line - and plain everywhere else: a pipe,
 a file, or anywhere `NO_COLOR` is set to a nonempty value. `--color always|never` overrides the
 guess in either direction. JSON output never carries colour.
 
-`qlinter --version` (or `-v`) reports the build, and `--stdio` is accepted and ignored
-so a client that appends it gets a server rather than an exit code.
+`qlinter --help` (or `-h`) lists every option, `--version` (or `-v`)
+reports the build, and `--stdio` is accepted and ignored so a client that
+appends it gets a server rather than an exit code.
 
 The CLI supports `--profile general|style|styleq|uqf`, `--format text|json|sarif|github`
 (see [Reports for CI](#reports-for-ci)),
