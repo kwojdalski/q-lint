@@ -42,6 +42,10 @@ test("a data file is loaded by its path, or from its text for a process elsewher
   assert.strictEqual(d.linesLiteral("only\n"), 'enlist "only"');
   assert.strictEqual(d.tableName("/x/2024 trades-v2.csv"), "trades_v2");
   assert.strictEqual(d.tableName("/x/1.csv"), "t");
+  // A reserved word or builtin cannot be assigned, so it gets a trailing _ (#1117).
+  assert.strictEqual(d.tableName("/x/select.csv"), "select_");
+  assert.strictEqual(d.tableName("/x/count.csv"), "count_");
+  assert.strictEqual(d.tableName("/x/selection.csv"), "selection");
   assert.strictEqual(d.isLocalHost("LOCALHOST", "mac"), true);
   assert.strictEqual(d.isLocalHost("Mac", "mac"), true);
   assert.strictEqual(d.isLocalHost("db1", "mac"), false);

@@ -20,7 +20,7 @@
 // the wizard lets each be changed, or the column skipped.
 import { basename } from "node:path";
 import { readDelimited } from "./pastetable";
-import { stringLiteral } from "./qliteral";
+import { RESERVED, stringLiteral } from "./qliteral";
 
 /// The commands, as `resulttools.ts` registers them.
 export const DATA_FILES = {
@@ -225,11 +225,12 @@ export function loadExpression(kind: DataKind, path: string, local: boolean, sam
   return csvLoad(sample.types, sample.delimiter, local ? fileHandle(path) : linesLiteral(text ?? ""));
 }
 
-/// A name for the table a file is loaded as: its base name, made a q name.
+/// A name for the table a file is loaded as: its base name, made a q name,
+/// with a `_` after a reserved word or builtin, which q will not assign (#1117).
 export function tableName(path: string): string {
   const base = basename(path.replace(/\\/g, "/")).replace(/\.[^.]*$/, "");
   const name = base.replace(/[^A-Za-z0-9_]/g, "_").replace(/^[^A-Za-z]+/, "");
-  return name === "" ? "t" : name;
+  return name === "" ? "t" : RESERVED.has(name) ? `${name}_` : name;
 }
 
 /// Whether a process at `host` (reached with no SSH tunnel) runs on this
