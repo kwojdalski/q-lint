@@ -42,10 +42,12 @@ export const INFO = {
   refreshHdb: "q-lint.refreshHdbBrowser",
 } as const;
 
-/// The Monitor's seconds between reads while it is shown; 0 is never.
+/// The Monitor's seconds between reads while it is shown; 0 is never. At
+/// most an hour, the setting's maximum: setInterval runs one too long for it
+/// every millisecond (#1110).
 export function readMonitorInterval(get: <T>(key: string, fallback: T) => T): number {
   const seconds = get<unknown>("processMonitor.refreshInterval", 0);
-  return typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 1 ? Math.floor(seconds) : 0;
+  return typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 1 ? Math.min(Math.floor(seconds), 3600) : 0;
 }
 
 /// A row of the Process Monitor or the HDB browser.

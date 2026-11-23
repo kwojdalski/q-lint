@@ -10,6 +10,7 @@
 // changing nothing, and none with a `{{placeholder}}`, which a refresh
 // could not ask for.
 import { writes } from "./guard";
+import { placeholderNames } from "./placeholders";
 
 /// Where the dashboards are kept: `workspaceState`, under this key.
 export const DASHBOARDS_KEY = "q-lint.dashboards";
@@ -74,7 +75,8 @@ export function dashboardNameProblem(name: string, taken: string[]): string | un
 
 /// Why `code` cannot be a tile's query; undefined when it can.
 export function tileQueryProblem(code: string): string | undefined {
-  if (/\{\{\s*[A-Za-z_]\w*\s*\}\}/.test(code)) return "it has a {{placeholder}}, which a refresh cannot ask for";
+  // Any name a query asks for, `{{.cfg.day}}` too (#1129).
+  if (placeholderNames(code).length > 0) return "it has a {{placeholder}}, which a refresh cannot ask for";
   const w = writes(code);
   if (w.length > 0) return `a dashboard runs read-only queries only, and this one would change the process (${w.join("; ")})`;
   return undefined;

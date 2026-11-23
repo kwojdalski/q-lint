@@ -169,3 +169,16 @@ test("turned off, both commands refuse and import nothing; on again without a re
   stub.picks.push("From the clipboard", "Import");
   assert.strictEqual(await stub.commands.get(ADMIN_COMMANDS.importQStudio)(), 1);
 });
+
+// The first `@` was taken for the name's end even in the password: part of
+// it became the label, saved to settings.json, or was shown in a skip.
+test("an @ in a qStudio line's password is not read as the name's end (#1071)", () => {
+  const read = readQStudioLines("prodhost:5000:alice:pw@x:1\nprodhost:5001:alice:s3cr@t\nrdb@h:5002:bob:p@ss");
+  assert.deepStrictEqual(read.processes.map((p) => [p.label, p.host, p.port, p.user]), [
+    ["prodhost:5000", "prodhost", 5000, "alice"],
+    ["prodhost:5001", "prodhost", 5001, "alice"],
+    ["rdb", "h", 5002, "bob"],
+  ]);
+  assert.deepStrictEqual(read.skipped, []);
+  assert.ok(!JSON.stringify(read).includes("pw") && !JSON.stringify(read).includes("s3cr"));
+});

@@ -241,6 +241,43 @@ test("a dashboard runs its tiles' read-only queries, keeps a timer only with an 
   assert.deepStrictEqual(tileContent({ ok: false, error: "type", trace: "" }, "table"), { kind: "error", text: "type" });
 });
 
+// A timer was set only when a tile had none: 5 s -> 300 s went on
+// querying every 5 s until the panel closed.
+test("changing a tile's refresh interval sets its timer again (#1123)", async (t) => {
+  capture();
+  const { live, context } = await setUp(t);
+  await context.workspaceState.update(SAVED_QUERIES_KEY, [{ name: "px", code: "select from trade" }]);
+  live.runApart = async () => ({ ok: true, type: -7, text: ["1"] });
+  const dashboards = new Dashboards(context, live);
+  stub.inputs.push("Desk");
+  stub.picks.push("$(add) New dashboard...");
+  const id = await stub.commands.get(DB_COMMANDS.addToDashboard)("px", undefined, "hdb");
+  await stub.commands.get(DB_COMMANDS.openDashboard)("Desk");
+  await dashboards.receive({ type: "refresh-interval", id, seconds: 5 });
+  assert.deepStrictEqual(dashboards.timerSeconds(), [5]);
+  await dashboards.receive({ type: "refresh-interval", id, seconds: 300 });
+  assert.deepStrictEqual(dashboards.timerSeconds(), [300]);
+  await dashboards.receive({ type: "view", id, view: "line" });
+  assert.deepStrictEqual(dashboards.timerSeconds(), [300]);
+  dashboards.close();
+});
+
+// Add to Dashboard offers discovered and shared processes, but a tile ran
+// only on a saved one: "There is no saved process desk/rdb", every time.
+test("a tile on a discovered process runs on it (#1122)", async (t) => {
+  capture();
+  const { live, context } = await setUp(t);
+  await context.workspaceState.update(SAVED_QUERIES_KEY, [{ name: "px", code: "select from trade" }]);
+  live.discovery.discovered = () => [{ server: { label: "desk", url: "http://x/" }, state: { processes: [{ label: "rdb", host: "h", port: 1, tags: [] }], problems: [], loading: false } }];
+  const ran = [];
+  live.runApart = async (process) => (ran.push([process.label, process.server, process.host]), { ok: true, type: -7, text: ["1"] });
+  const dashboards = new Dashboards(context, live);
+  await dashboards.runTile({ id: "t", query: "px", process: "desk/rdb", view: "table", refresh: 0 });
+  assert.deepStrictEqual(ran, [["desk/rdb", "desk", "h"]]);
+  await dashboards.runTile({ id: "u", query: "px", process: "gone/rdb", view: "table", refresh: 0 });
+  assert.deepStrictEqual(dashboards.contents.get("u"), { kind: "error", text: "There is no q process gone/rdb." });
+});
+
 test("a chart is rendered from a file to the path given", async (t) => {
   capture();
   const { context, live } = await setUp(t);

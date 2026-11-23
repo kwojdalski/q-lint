@@ -112,6 +112,18 @@ test("ssh is run with no command, in batch mode, the destination after --", () =
   assert.deepStrictEqual(args.slice(-5), ["127.0.0.1:5001:[::1]:5010", "-p", "2222", "--", "bastion"]);
 });
 
+// The last `:digits` was taken as a port: 2001:db8::1 became -p 1 to
+// 2001:db8:, and user@fe80::1 -p 1 to user@fe80:.
+test("a bare IPv6 jump host is not split into a host and a port (#1068)", () => {
+  const tail = (d) => sshArgs(d, 5001, "h", 5010).slice(-4);
+  assert.deepStrictEqual(tail("2001:db8::1"), ["-L", "127.0.0.1:5001:h:5010", "--", "2001:db8::1"]);
+  assert.deepStrictEqual(tail("user@fe80::1"), ["-L", "127.0.0.1:5001:h:5010", "--", "user@fe80::1"]);
+  assert.deepStrictEqual(tail("[2001:db8::1]:2222"), ["-p", "2222", "--", "2001:db8::1"]);
+  assert.deepStrictEqual(tail("me@[2001:db8::1]:2222"), ["-p", "2222", "--", "me@2001:db8::1"]);
+  assert.deepStrictEqual(tail("me@[2001:db8::1]"), ["-L", "127.0.0.1:5001:h:5010", "--", "me@2001:db8::1"]);
+  assert.deepStrictEqual(tail("me@bastion:2222"), ["-p", "2222", "--", "me@bastion"]);
+});
+
 test("a destination that ssh would read as an option, or as two words, is refused", () => {
   assert.strictEqual(sshDestination(" me@bastion "), "me@bastion");
   assert.strictEqual(sshDestination("bastion:2222"), "bastion:2222");

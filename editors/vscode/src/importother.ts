@@ -89,8 +89,10 @@ export function readQStudioLines(text: string): Imported {
       continue;
     }
     let name = "";
+    // A name is before the host, so before the first colon: an `@` after it
+    // is in the user or password (#1071).
     const at = line.indexOf("@");
-    if (at > -1) {
+    if (at > -1 && (line.indexOf(":") === -1 || at < line.indexOf(":"))) {
       name = line.slice(0, at).trim();
       line = line.slice(at + 1).trim();
     }

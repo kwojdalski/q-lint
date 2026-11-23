@@ -65,7 +65,8 @@ export function tileContent(answer: GridAnswer, view: TileView): TileContent {
 export class Dashboards {
   private panel: WebviewPanel | undefined;
   private shown: string | undefined;
-  private readonly timers = new Map<string, ReturnType<typeof setInterval>>();
+  /// Each tile's timer and the seconds it was set for.
+  private readonly timers = new Map<string, { timer: ReturnType<typeof setInterval>; every: number }>();
   private readonly running = new Set<string>();
   /// What each tile last showed, for tests.
   readonly contents = new Map<string, TileContent>();
@@ -105,6 +106,11 @@ export class Dashboards {
   /// Timers running, for tests.
   timerCount(): number {
     return this.timers.size;
+  }
+
+  /// The seconds each running timer was set for, for tests.
+  timerSeconds(): number[] {
+    return [...this.timers.values()].map(({ every }) => every);
   }
 
   /// Ask for a new dashboard's name; undefined on Escape.
@@ -194,7 +200,7 @@ export class Dashboards {
   }
 
   private stopTimers(): void {
-    for (const t of this.timers.values()) clearInterval(t);
+    for (const { timer } of this.timers.values()) clearInterval(timer);
     this.timers.clear();
   }
 
@@ -213,21 +219,23 @@ export class Dashboards {
       intervals: REFRESH_CHOICES,
       tiles: d.tiles,
     });
-    for (const [id, t] of this.timers) {
-      if (!d.tiles.some((x) => x.id === id && x.refresh > 0)) {
-        clearInterval(t);
+    // A timer goes with its tile's interval, and is set again when the
+    // interval changes (#1123).
+    for (const [id, { timer, every }] of this.timers) {
+      if (!d.tiles.some((x) => x.id === id && x.refresh > 0 && x.refresh === every)) {
+        clearInterval(timer);
         this.timers.delete(id);
       }
     }
     for (const tile of d.tiles) {
       if (tile.refresh > 0 && !this.timers.has(tile.id)) {
-        this.timers.set(
-          tile.id,
-          setInterval(() => {
+        this.timers.set(tile.id, {
+          timer: setInterval(() => {
             const now = this.current()?.tiles.find((x) => x.id === tile.id);
             if (now !== undefined && on()) void this.runTile(now);
           }, tile.refresh * 1000),
-        );
+          every: tile.refresh,
+        });
       }
       const content = this.contents.get(tile.id);
       if (runAll || content === undefined) void this.runTile(tile);
@@ -246,8 +254,9 @@ export class Dashboards {
     if (query === undefined) return post({ kind: "error", text: `There is no saved query ${tile.query} any more.` });
     const problem = tileQueryProblem(query.code);
     if (problem !== undefined) return post({ kind: "error", text: `Not run: ${problem}.` });
-    const process = this.live.processes().find((p) => p.label === tile.process);
-    if (process === undefined) return post({ kind: "error", text: `There is no saved process ${tile.process}.` });
+    // Saved, discovered or shared, as Add to Dashboard offered it (#1122).
+    const process = this.live.named(tile.process);
+    if (process === undefined) return post({ kind: "error", text: `There is no q process ${tile.process}.` });
     this.running.add(tile.id);
     void this.panel?.webview.postMessage({ type: "running", id: tile.id });
     try {

@@ -80,11 +80,18 @@ export class ScheduledExports {
     if (!on()) {
       return [];
     }
-    const due = this.list().filter((s) => isDue(s, now) && !this.running.has(s.id));
-    for (const s of due) {
+    const ran: string[] = [];
+    for (const { id } of this.list().filter((s) => isDue(s, now))) {
+      // Asked again before each run: one before it may have taken long
+      // enough for a later tick to run this one, or to be running it (#1089).
+      const s = this.list().find((x) => x.id === id);
+      if (s === undefined || !isDue(s, now) || this.running.has(id)) {
+        continue;
+      }
       await this.runOne(s, now);
+      ran.push(id);
     }
-    return due.map((s) => s.id);
+    return ran;
   }
 
   /// Run `s` now and write its file; say a failure. Its new `last`.
@@ -247,6 +254,10 @@ export class ScheduledExports {
     if (action === "Remove") {
       await this.save(this.list().filter((x) => x.id !== s.id));
       void window.showInformationMessage(`q-lint: removed the scheduled export ${scheduleText(s)}.`);
+      return;
+    }
+    if (this.running.has(s.id)) {
+      void window.showInformationMessage(`q-lint: ${scheduleText(s)} is running; it was not started again.`);
       return;
     }
     const last = await this.runOne(s, new Date());
