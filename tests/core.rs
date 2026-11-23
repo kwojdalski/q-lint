@@ -1002,6 +1002,23 @@ fn a_line_of_where_phrases_lints_in_bounded_time() {
         "a line of 4000 where phrases took {elapsed:?}"
     );
 }
+/// The char-column comparison rule compiled a regex for each where phrase's
+/// table and scanned the whole file with it, so a file of one-line queries
+/// took time quadratic in their number - 15.6 s for 20000 in a release
+/// build (#1206).
+#[test]
+fn many_where_phrases_lint_in_bounded_time() {
+    let source: String = (0..8000)
+        .map(|i| format!("f{i}:{{update a:1 from t where b}}\n"))
+        .collect();
+    let started = std::time::Instant::now();
+    lint(&source, "t.q", Profile::Uqf);
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "8000 where phrases took {elapsed:?}"
+    );
+}
 /// Nested `$[`, `@[` and `.[`: each split its whole contents into slots, the
 /// brackets nested in it included, so a deep nest was quadratic (#710). Past
 /// q's limit of 100, so read as with QE001 deselected.
