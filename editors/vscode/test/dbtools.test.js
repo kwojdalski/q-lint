@@ -280,6 +280,9 @@ test("dashboards are parsed, changed, and take read-only queries without placeho
   assert.strictEqual(tileQueryProblem("select from trade"), undefined);
   assert.match(tileQueryProblem("t:select from trade"), /read-only queries only/);
   assert.match(tileQueryProblem("select from trade where sym={{s}}"), /placeholder/);
+  // A dotted name was let through and sent unfilled, read by q as a lambda (#1129).
+  assert.match(tileQueryProblem("select from trade where date={{.cfg.day}}"), /placeholder/);
+  assert.match(tileQueryProblem("select from trade where date={{cfg.day}}"), /placeholder/);
   assert.match(dashboardNameProblem(" a ", ["a"]), /already/);
   assert.deepStrictEqual(withDashboard([{ name: "x", columns: 1, tiles: [] }], { name: "x", columns: 3, tiles: [] }), [{ name: "x", columns: 3, tiles: [] }]);
 });
