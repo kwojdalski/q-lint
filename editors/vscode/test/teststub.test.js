@@ -133,3 +133,15 @@ test("with no test file, a new one is made in tests/, never over one made meanwh
   assert.strictEqual(await run(vscode.Uri.file("/ws/src/lib.q"), 3), false);
   assert.match(stub.messages.at(-1)[1], /q-lint\.testStub\.enable to true/);
 });
+
+test("a new test file's path on Windows keeps the folder and the separator (#1094)", () => {
+  const { win32, posix } = require("node:path");
+  const src = win32.join("C:\\proj", "src", "a.q");
+  assert.strictEqual(newTestPath(src, "C:\\proj", true), win32.join("C:\\proj", "tests", "test_a.q"));
+  assert.strictEqual(newTestPath(src, "C:\\proj\\", true), win32.join("C:\\proj", "tests", "test_a.q"));
+  assert.strictEqual(newTestPath(src, "C:\\proj", false), win32.join("C:\\proj", "src", "test_a.q"));
+  assert.strictEqual(newTestPath(src, undefined, true), win32.join("C:\\proj", "src", "test_a.q"));
+  const psrc = posix.join("/ws", "src", "a.q");
+  assert.strictEqual(newTestPath(psrc, "/ws/", true), posix.join("/ws", "tests", "test_a.q"));
+  assert.strictEqual(newTestPath("a.q", undefined, false), "test_a.q");
+});
