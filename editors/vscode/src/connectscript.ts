@@ -56,6 +56,47 @@ export function scriptsBrought(before: Process[], incoming: Process[]): string[]
   return incoming.filter((p) => scriptOf(p) !== undefined && had.get(p.label) !== JSON.stringify(scriptOf(p))).map((p) => p.label);
 }
 
+/// What a process holds that runs, or reaches somewhere, at every connect,
+/// beyond the query: its connect script (q code), credential command (a
+/// local shell command), launch definition (a local process) and SSH tunnel
+/// (where the password goes). The keys an untrusted shared list refuses.
+const ON_CONNECT: { name: string; of: (p: Process) => unknown }[] = [
+  { name: "connect script", of: (p) => scriptOf(p) },
+  { name: "credential command", of: (p) => p.credentialCommand },
+  { name: "launch definition", of: (p) => p.launch },
+  { name: "SSH tunnel", of: (p) => p.ssh },
+];
+
+/// The processes in `incoming` that bring any of those new, or other than
+/// the one `before` has, with what they bring: an import asks before taking
+/// them (#1108), as `scriptsBrought` does for scripts.
+export function onConnectBrought(before: Process[], incoming: Process[]): { label: string; what: string[] }[] {
+  const had = new Map(before.map((p) => [p.label, p]));
+  return incoming
+    .map((p) => {
+      const old = had.get(p.label);
+      const what = ON_CONNECT.filter(({ of }) => of(p) !== undefined && JSON.stringify((old && of(old)) ?? null) !== JSON.stringify(of(p))).map(({ name }) => name);
+      return { label: p.label, what };
+    })
+    .filter(({ what }) => what.length > 0);
+}
+
+/// `process` with the connect script, credential command, launch definition
+/// and SSH tunnel `old` has, or none when there is no `old`: an import taken
+/// without what it brought.
+export function onConnectOf<P extends Process>(process: P, old: Process | undefined): P {
+  const { credentialCommand: _c, launch: _l, ssh: _s, ...rest } = withScript(process, old && scriptOf(old));
+  void _c;
+  void _l;
+  void _s;
+  return {
+    ...rest,
+    ...(old?.credentialCommand !== undefined ? { credentialCommand: old.credentialCommand } : {}),
+    ...(old?.launch !== undefined ? { launch: old.launch } : {}),
+    ...(old?.ssh !== undefined ? { ssh: old.ssh } : {}),
+  } as P;
+}
+
 /// What a connect script is called in a pick or a message.
 export function scriptSummary(script: ConnectScript | undefined): string {
   if (script === undefined) {

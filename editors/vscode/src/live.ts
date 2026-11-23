@@ -88,7 +88,7 @@ import {
   normalised,
   type HistoryFilter,
 } from "./historyfilter";
-import { CONNECT_SCRIPT_COMMANDS, readConnectScript, scriptOf, scriptPath, scriptsBrought, scriptSummary, withScript, type ConnectScript } from "./connectscript";
+import { CONNECT_SCRIPT_COMMANDS, onConnectBrought, onConnectOf, readConnectScript, scriptOf, scriptPath, scriptSummary, withScript, type ConnectScript } from "./connectscript";
 import { isProduction } from "./agent";
 import { PAGE, readPage, type GridPage } from "./grid";
 import { PLACEHOLDER_VALUES_KEY, lastValue, placeholderNames, readPlaceholders, remembered, substitute } from "./placeholders";
@@ -1313,14 +1313,20 @@ export class Live {
     const { problems } = read;
     let { processes } = read;
     const before = this.processes();
-    // Code that runs on a process at every connect is not taken from a file
-    // unasked: someone else's list may hold it.
-    const brought = scriptsBrought(before, processes);
+    // Code that runs on a process, or on this machine, at every connect - a
+    // connect script, a credential command, a launch definition - and a
+    // tunnel the password is sent through are not taken from a file unasked:
+    // someone else's list may hold them (#1108).
+    const brought = onConnectBrought(before, processes);
     if (brought.length > 0) {
-      const keep = "Import with Scripts";
-      const drop = "Import without Scripts";
+      const scriptsOnly = brought.every(({ what }) => what.length === 1 && what[0] === "connect script");
+      const keep = scriptsOnly ? "Import with Scripts" : "Import with Them";
+      const drop = scriptsOnly ? "Import without Scripts" : "Import without Them";
+      const listed = `${brought.slice(0, 5).map(({ label, what }) => (scriptsOnly ? label : `${label} (${what.join(", ")})`)).join(", ")}${brought.length > 5 ? ", ..." : ""}`;
       const answer = await window.showWarningMessage(
-        `${files[0].fsPath} gives ${brought.length} process(es) a connect script, q code run on the process at every connect: ${brought.slice(0, 5).join(", ")}${brought.length > 5 ? ", ..." : ""}. Keep the scripts?`,
+        scriptsOnly
+          ? `${files[0].fsPath} gives ${brought.length} process(es) a connect script, q code run on the process at every connect: ${listed}. Keep the scripts?`
+          : `${files[0].fsPath} gives ${brought.length} process(es) what runs at every connect - a connect script runs q code on the process, a credential command or launch definition a command on this machine, and an SSH tunnel decides where the password goes: ${listed}. Keep them?`,
         { modal: true },
         keep,
         drop,
@@ -1330,7 +1336,8 @@ export class Live {
       }
       if (answer === drop) {
         const old = new Map(before.map((p) => [p.label, p]));
-        processes = processes.map((p) => (brought.includes(p.label) ? withScript(p, old.get(p.label) && scriptOf(old.get(p.label)!)) : p));
+        const labels = new Set(brought.map(({ label }) => label));
+        processes = processes.map((p) => (labels.has(p.label) ? onConnectOf(p, old.get(p.label)) : p));
       }
     }
     for (const label of passwordsToForget(before, processes)) {
