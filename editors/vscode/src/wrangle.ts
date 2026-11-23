@@ -118,15 +118,40 @@ export function stringColumn(payload: GridPayload, i: number): boolean {
   return payload.types[i] === 0 && (payload.cells[i] ?? []).every((t) => t === "" || /^,?"/.test(t));
 }
 
+/// `base` without its comments: each line cut at a `/` after whitespace
+/// outside a string, so nesting it does not leave the `)` or `;` that
+/// follows in a comment (#1072). A line left empty is dropped.
+function uncommented(base: string): string {
+  const cut = (line: string): string => {
+    let quoted = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (quoted) {
+        if (c === "\\") {
+          i++;
+        } else if (c === '"') {
+          quoted = false;
+        }
+      } else if (c === '"') {
+        quoted = true;
+      } else if (c === "/" && (i === 0 || /\s/.test(line[i - 1]))) {
+        return line.slice(0, i).trimEnd();
+      }
+    }
+    return line.trimEnd();
+  };
+  return base.trim().split(/\r?\n/).map(cut).filter((l) => l.trim() !== "").join("\n");
+}
+
 /// The steps nested in one expression over `base`.
 export function wrangleQuery(base: string, steps: Step[]): string {
-  return steps.reduce((x, step) => stepCode(step, `(${x})`), base.trim());
+  return steps.reduce((x, step) => stepCode(step, `(${x})`), uncommented(base));
 }
 
 /// The steps as a script to keep: one line each, over a local `w`, in a
 /// lambda run at once so nothing is assigned on the process.
 export function wrangleScript(base: string, steps: Step[], process: string): string {
-  const first = base.trim().split(/\r?\n/);
+  const first = uncommented(base).split(/\r?\n/);
   return [
     `/ Wrangled on ${process} by q-lint: ${steps.length} step${steps.length === 1 ? "" : "s"}`,
     "{[]",
