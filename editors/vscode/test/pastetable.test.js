@@ -75,6 +75,11 @@ test("JSON is written as .j.k reads it", () => {
   assert.strictEqual(q('{"a b":[]}'), '(enlist `$"a b")!enlist ()');
   assert.strictEqual(q("1e400"), "0w");
   assert.match(jsonToQ("{oops").error, /^the clipboard holds no JSON/);
+  // Keys in the text's order, integer-like ones too, as .j.k keeps them (#1075).
+  assert.strictEqual(q('{"sym":"a","2024":1,"1":2}'), '(`sym`2024`1)!(enlist "a";1f;2f)');
+  assert.strictEqual(q('[{"b":1,"1":2},{"1":3,"b":4}]'), "((`b`1)!1 2f;(`1`b)!3 4f)");
+  assert.strictEqual(q('{"a":1,"b":2,"a":3}'), "(`a`b)!3 2f");
+  assert.strictEqual(q('{"__proto__":1}'), '(enlist `$"__proto__")!enlist 1f');
   assert.strictEqual(toJsonQuery('t:([] a:1); "x"'), '.j.j value "t:([] a:1); \\"x\\""');
 });
 
