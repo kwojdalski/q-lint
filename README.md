@@ -1107,13 +1107,13 @@ builds and publishes every platform.
 A [pre-commit](https://pre-commit.com) hook lints the `.q` files a commit
 changes. `qlinter` builds the linter from this repository at `rev` with cargo,
 so it needs Rust; `qlinter-system` runs the `qlinter` already on `PATH`. `rev`
-is a release tag, from the first release that carries `.pre-commit-hooks.yaml`
-on:
+is a release tag, v0.34.0 or later (the first to carry
+`.pre-commit-hooks.yaml`):
 
 ```yaml
 repos:
   - repo: https://github.com/kwojdalski/q-lint
-    rev: v0.33.2
+    rev: v0.34.0
     hooks:
       - id: qlinter
 ```
@@ -1128,7 +1128,7 @@ needs neither Rust nor a build:
 
 ```yaml
 - uses: actions/checkout@v4
-- uses: kwojdalski/q-lint@vX.Y.Z
+- uses: kwojdalski/q-lint@v0.34.0
   with:
     version: X.Y.Z         # the qlinter release to run; required
     paths: src tests       # default: .
