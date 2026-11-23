@@ -134,7 +134,7 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./profileview": { registerFunctionProfile: () => ({ panelOpen: () => false }) },
     "./formatchangedview": { registerFormatChanged: () => ({ registered: () => false }) },
     "./organiseloads": { registerOrganiseLoads() {} },
-    "./problemsview": { registerProblemsDashboard: () => ({ panelOpen: () => false }) },
+    "./problemsview": { registerProblemsDashboard: (_c, linter) => ((world.linter = linter), { panelOpen: () => false }) },
     "./dbtoolsview": { registerDbTools: () => ({ state: {}, registered: () => [] }) },
     "./dashboardview": { Dashboards: class {} },
     "./tplogview": { TickerplantLog: class {} },
@@ -143,7 +143,7 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./processtoolsview": { registerProcessTools: () => ({}) },
     "./qsqltools": { registerQsqlTools() {} },
     "./errorexplainview": { registerErrorExplainer: () => ({ registered: () => false }) },
-    "./baselineview": { registerBaseline() {} },
+    "./baselineview": { registerBaseline: (_c, linter) => void (world.baseline = linter) },
     "./deadcodeview": { registerDeadCode() {} },
     "./namespaceview": { registerNamespaces: () => ({ registered: () => false, serverChanged() {} }) },
     "./affectedonsave": { registerAffectedOnSave: () => ({ registered: () => false }) },
@@ -195,6 +195,30 @@ test("a bundled server that cannot run falls back to PATH without an error", { s
   await sleep(100);
   assert.deepStrictEqual(w.started, ["qlinter"]);
   assert.deepStrictEqual(w.errors, []);
+  await w.extension.deactivate();
+});
+
+test("on Windows a bare qlinter is looked for on PATH, never in the workspace folder", async (t) => {
+  // libuv tries a bare name in the directory it starts it in before PATH,
+  // and the dashboard and baseline start qlinter in the workspace folder: a
+  // qlinter.exe checked in there would run (#1251). With PATH holding none,
+  // nothing is started, and the error says qlinter is not on PATH.
+  const platform = Object.getOwnPropertyDescriptor(process, "platform");
+  const PATH = process.env.PATH;
+  Object.defineProperty(process, "platform", { value: "win32" });
+  process.env.PATH = ".;bin";
+  t.after(() => {
+    Object.defineProperty(process, "platform", platform);
+    process.env.PATH = PATH;
+  });
+  const w = load();
+  await w.extension.activate(w.context);
+  await sleep(100);
+  assert.deepStrictEqual(w.started, []);
+  assert.strictEqual(w.clients.length, 0);
+  assert.match(w.errors.join("\n"), /could not start "qlinter"\..*qlinter is not on PATH\./);
+  assert.strictEqual(w.linter().command, undefined);
+  assert.strictEqual(w.baseline().command, undefined);
   await w.extension.deactivate();
 });
 
