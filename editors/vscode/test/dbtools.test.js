@@ -288,6 +288,11 @@ test("a chart is drawn from CSV and JSON tables, and the command line writes it"
   const g = gridFromCsv('day,a,"b, c"\nmon,1,10\ntue,,5\n');
   assert.deepStrictEqual(g.columns.map((c) => [c.name, c.numeric]), [["day", false], ["a", true], ["b, c", true]]);
   assert.deepStrictEqual(g.values[1], [1, null]);
+  // A quoted newline is inside one field of one record (#1115).
+  const quoted = gridFromCsv('label,v\n"two\nlines",1\nb,2');
+  assert.deepStrictEqual(quoted.cells, [["two\nlines", "b"], ["1", "2"]]);
+  assert.deepStrictEqual(quoted.values[1], [1, 2]);
+  assert.throws(() => gridFromCsv("\n  \n"), /no header row/);
   assert.deepStrictEqual(gridFromJson('[{"x":1,"y":2},{"x":2,"y":3}]').values[1], [2, 3]);
   assert.deepStrictEqual(gridFromJson('{"x":[1,2],"y":["a","b"]}').columns.map((c) => c.numeric), [true, false]);
   assert.throws(() => gridFromJson("3"), /not a table/);

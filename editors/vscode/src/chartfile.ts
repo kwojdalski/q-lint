@@ -11,6 +11,7 @@
 // would need a rasterizer, and so a dependency.
 import type { Column, Grid, GridPayload } from "./grid";
 import { toGrid } from "./grid";
+import { readDelimited } from "./pastetable";
 
 // The chart code is the webviews' own, plain script; it exports itself to
 // node when `module` is there.
@@ -24,36 +25,6 @@ const charts = require("../media/chartspec.js") as {
 
 export const CHART_KINDS = ["line", "area", "step", "bar", "scatter", "histogram", "candlestick"] as const;
 export type ChartKind = (typeof CHART_KINDS)[number];
-
-/// One CSV line's fields: quoted fields may hold the separator, and `""`
-/// is a quote.
-function csvFields(line: string, sep: string): string[] {
-  const out: string[] = [];
-  let field = "";
-  let quoted = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (quoted) {
-      if (ch === '"' && line[i + 1] === '"') {
-        field += '"';
-        i++;
-      } else if (ch === '"') {
-        quoted = false;
-      } else {
-        field += ch;
-      }
-    } else if (ch === '"' && field === "") {
-      quoted = true;
-    } else if (ch === sep) {
-      out.push(field);
-      field = "";
-    } else {
-      field += ch;
-    }
-  }
-  out.push(field);
-  return out;
-}
 
 const isNumber = (s: string) => s.trim() !== "" && Number.isFinite(Number(s));
 
@@ -73,15 +44,18 @@ export function gridOf(names: string[], cells: string[][]): Grid {
   };
 }
 
-/// A CSV (or, by its first line, a tab-separated) table as a grid.
+/// A CSV (or, by its first line, a tab-separated) table as a grid, read in
+/// whole records: a quoted field may hold the separator, a newline (#1115)
+/// and `""` for a quote.
 export function gridFromCsv(text: string): Grid {
-  const lines = text.replace(/^﻿/, "").split(/\r?\n/).filter((l) => l.trim() !== "");
-  if (lines.length === 0) {
+  const first = text.replace(/^﻿/, "").split(/\r?\n/).find((l) => l.trim() !== "");
+  if (first === undefined) {
     throw new Error("the file has no header row");
   }
-  const sep = lines[0].includes("\t") && !lines[0].includes(",") ? "\t" : ",";
-  const names = csvFields(lines[0], sep).map((n) => n.trim());
-  const rows = lines.slice(1).map((l) => csvFields(l, sep));
+  const sep = first.includes("\t") && !first.includes(",") ? "\t" : ",";
+  const records = readDelimited(text, sep).rows.filter((r) => r.length > 1 || r[0].trim() !== "");
+  const names = records[0].map((n) => n.trim());
+  const rows = records.slice(1);
   return gridOf(names, names.map((_, i) => rows.map((r) => r[i] ?? "")));
 }
 
