@@ -51,3 +51,9 @@ def test_a_lambda_in_a_query_column_is_compared_by_what_it_compiles_to(tmp_path)
         check=False,
     )
     assert json.loads(run.stdout.strip().splitlines()[-1]) == ["same", "changed", "changed", "changed", "same"]
+
+
+def test_only_a_slash_in_column_0_opens_a_block_comment():
+    # On KDB-X `a:1`,`  /`,`b:2` defines both: the indented slash is a comment.
+    assert check_fixes.statements("a:1\n  /\nb:2\n") == ["a:1\n  /", "b:2"]
+    assert check_fixes.statements("a:1\n/ \nb:2\n  \\\nc:3\n\\\nd:4\n") == ["a:1", "d:4"]

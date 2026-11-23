@@ -56,10 +56,13 @@ def statements(text):
     out, current, block = [], None, False
     for line in text.split("\n"):
         stripped = line.strip()
+        # Only a `/` or `\` in column 0 opens, closes or ends anything: q
+        # reads an indented one as a comment or a continuation.
+        bare = line.rstrip()
         if block:
-            block = stripped != "\\"
+            block = bare != "\\"
             continue
-        if stripped == "/":
+        if bare == "/":
             block = True
             continue
         if not line.startswith((" ", "\t")) and stripped:
