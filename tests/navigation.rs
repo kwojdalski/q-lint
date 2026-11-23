@@ -198,6 +198,30 @@ fn a_multiple_assignment_declares_each_name_it_binds() {
 }
 
 #[test]
+fn an_indexed_assignment_writes_the_local_without_declaring_it() {
+    // KDB-X: `{[a] a[0]:2; a} 1 2` is 2 2 - the assignment amends `a`
+    // (#1246), as do `a[0]+:2` and `a[0;1]:2`.
+    for source in [
+        "f:{[a] a[0]:2; a}\n",
+        "f:{[a] a[0]+:2; a}\n",
+        "f:{[a] a[0][1]:2; a}\n",
+    ] {
+        let Some(Name::Local(a)) = name_at(source, at(source, "a]", 0)) else {
+            panic!("a is a local in {source}");
+        };
+        let writes: Vec<bool> = a.places.iter().map(|p| p.write).collect();
+        assert_eq!(writes, [true, true, false], "{source}");
+        assert_eq!(a.declared, Some(0), "{source}");
+    }
+    // An index that is read is no write.
+    let source = "f:{[a] b:a[0]; b}\n";
+    let Some(Name::Local(a)) = name_at(source, at(source, "a]", 0)) else {
+        panic!("a is a local");
+    };
+    assert!(!a.places[1].write);
+}
+
+#[test]
 fn a_name_outside_any_lambda_is_a_global_and_whitespace_is_nothing() {
     let source = "g:1\nf:{g+1}\n";
     assert_eq!(

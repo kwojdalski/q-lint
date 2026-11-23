@@ -231,10 +231,22 @@ fn local(code: &str, raw: &str, scopes: &[Scope], s: usize, name: &str) -> Local
         if assigned && declared.is_none() {
             declared = Some(places.len());
         }
+        // An indexed assignment amends the name, `a[0]:2` and `a[0]+:2`
+        // (KDB-X), without declaring it.
+        let mut amended = after;
+        while amended.starts_with('[') {
+            let open = direct.len() - amended.len();
+            let Some(close) = crate::matching(direct, open, b'[', b']') else {
+                break;
+            };
+            amended = direct[close..].trim_start_matches([' ', '\t']);
+        }
+        let amends = amended.len() < after.len()
+            && (amended.starts_with(':') || re!(r"^[-+*%&|^=<>,#~!?@$]:").is_match(amended));
         places.push(Place {
             at: scope.body + m.start(),
             len: m.len(),
-            write: assigned || re!(r"^[-+*%&|^=<>,#~!?@$]:").is_match(after),
+            write: assigned || amends || re!(r"^[-+*%&|^=<>,#~!?@$]:").is_match(after),
             column: phrases.as_bytes()[m.start()] == b' ',
         });
     }
