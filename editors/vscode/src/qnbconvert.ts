@@ -273,6 +273,11 @@ export function toIpynb(qnb: Qnb): string {
       return { cell_type: "markdown", metadata: cell.metadata ?? {}, source: jupyterLines(cell.source) };
     }
     const language = cell.language ?? "q";
+    // A Jupyter raw cell, which `fromIpynb` reads as a code cell in `raw`,
+    // goes back as one (#1107).
+    if (language === "raw") {
+      return { cell_type: "raw", metadata: cell.metadata ?? {}, source: jupyterLines(cell.source) };
+    }
     const metadata: Json = { ...(cell.metadata ?? {}) };
     if (language !== "q") {
       metadata.vscode = { ...(isObject(metadata.vscode) ? metadata.vscode : {}), languageId: language };

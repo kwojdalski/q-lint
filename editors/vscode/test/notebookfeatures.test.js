@@ -203,6 +203,8 @@ test("a Python notebook imports with its code as Python, a %%q cell as q, and it
   assert.strictEqual(qnb.cells[3].metadata, undefined);
   assert.strictEqual(JSON.parse(qnb.cells[3].outputs[0].items[0].text).stack, "red");
   assert.deepStrictEqual(qnb.cells[5].outputs[0].items[0], { mime: "image/png", base64: "iVBORw==" });
+  // A raw cell goes back to Jupyter as a raw cell (#1107).
+  assert.deepStrictEqual(JSON.parse(toIpynb(qnb)).cells[4], { cell_type: "raw", metadata: {}, source: ["raw text"] });
   // What is not a notebook is refused, with why.
   assert.throws(() => fromIpynb("{"), IpynbError);
   assert.throws(() => fromIpynb('{"nbformat": 3, "cells": []}'), /nbformat 3/);
