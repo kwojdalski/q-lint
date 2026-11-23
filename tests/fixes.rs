@@ -420,6 +420,13 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             false,
         ),
         ("QT004", "r:`int$\"12\"", "r:\"I\"$\"12\"", false),
+        ("QT004", "r:\"j\"$\"12\"", "r:\"J\"$\"12\"", false),
+        (
+            "QT004",
+            "r:\"d\"$ \"2024.01.01\"",
+            "r:\"D\"$ \"2024.01.01\"",
+            false,
+        ),
         ("QT032", "r:`symbol$\"ab\"", "r:`$\"ab\"", false),
         (
             "QT032",

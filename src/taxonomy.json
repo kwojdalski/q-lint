@@ -318,7 +318,7 @@
     "code": "QT004",
     "name": "cast-by-name-on-string",
     "category": "types-and-shapes",
-    "summary": "Symbol-named cast on a string converts char codes, not text",
+    "summary": "Cast named by symbol or lowercase type char on a string converts char codes, not text",
     "scope": "style"
   },
   {

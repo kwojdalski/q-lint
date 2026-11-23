@@ -361,6 +361,12 @@ num: `long$"123"
 / expect-next: QT004
 day: `date$"2024.01.01"
 
+/ QT004: the same by a lowercase type char - "j"$"12" is 49 50, the codes;
+/ "J"$ parses. "i"$"A", one character's code, is the idiom and is not this.
+/ expect-next: QT004
+qty: "j"$"12"
+letterA: "i"$"A"
+
 / QT005: a table literal in which every column is a scalar is a 'rank
 / error; a one-row table needs `enlist`. One vector column would do.
 / expect-next: QT005

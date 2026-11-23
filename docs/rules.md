@@ -111,7 +111,7 @@ it, or `ALL`.
 | <a id="qt001"></a>`QT001` | literal-dictionary-length | Literal dictionary key/value lengths differ | every profile |
 | <a id="qt002"></a>`QT002` | literal-argument-type | Symbol passed to a visible numeric function | every profile |
 | <a id="qt003"></a>`QT003` | symbol-arithmetic | Arithmetic on a symbol literal errors at runtime | every profile |
-| <a id="qt004"></a>`QT004` | cast-by-name-on-string | Symbol-named cast on a string converts char codes, not text | `style` and above |
+| <a id="qt004"></a>`QT004` | cast-by-name-on-string | Cast named by symbol or lowercase type char on a string converts char codes, not text | `style` and above |
 | <a id="qt005"></a>`QT005` | single-row-table | Table literal of scalars needs enlist and errors 'rank | every profile |
 | <a id="qt006"></a>`QT006` | vector-length-mismatch | Infix on two vectors of known, different lengths | every profile |
 | <a id="qt007"></a>`QT007` | string-function-on-symbol | ss or ssr given a symbol literal is a runtime type error | every profile |

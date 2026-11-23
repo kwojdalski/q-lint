@@ -1300,6 +1300,9 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         finding.code.as_str(),
         "QE002" | "QL002" | "QE005" | "QP005" | "QP007"
     ) && v.code.as_bytes().get(start) != source.as_bytes().get(start)
+        // QT004 by a type char is reported at its quote, and only where
+        // the `$` after it is code; its arm reads the rest.
+        && !(finding.code == "QT004" && source[start..].starts_with('"'))
     {
         return None;
     }
@@ -1711,6 +1714,17 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         // Both run, so which was meant is the author's to confirm.
         // `` `symbol$"ab" `` and `` `guid$".." `` are 'type; what was meant is
         // `` `$ `` and `"G"$`.
+        // `"j"$"12"` is the same cast by type char, and `"J"$` parses.
+        "QT004" if source[start..].starts_with('"') => {
+            let m = re!(r#"^"([bhijefpmdznuvt])"[ \t]*\$"#).captures(source.get(start..)?)?;
+            let letter = m[1].to_ascii_uppercase();
+            (
+                m.get(0)?.as_str(),
+                format!("\"{letter}\"$").into(),
+                format!("Parse the text with `\"{letter}\"$`").into(),
+                false,
+            )
+        }
         "QT004" | "QT032" => {
             let m = re!(r"^`([a-z]+)\s*\$").captures(source.get(start..)?)?;
             let letter = match &m[1] {
@@ -8761,6 +8775,39 @@ fn lint_rules(
                 )
             };
             add(offset + at, code, detail);
+        }
+        // QT004 by a lowercase type char too: q 5 `"j"$"12"` is 49 50, the
+        // codes, and `"d"$"20"` two dates near 2000.02.20, where `"J"$"12"`
+        // is 12. A lowercase cast of a string is also how q gives a
+        // character's code - `"i"$"A"` is 65 - and of every character of a
+        // text, so only a literal of two characters or more that reads as a
+        // number or a temporal, which is text to parse, and only as the
+        // whole operand. Not `"c"` or `"x"`, which keep the characters, nor
+        // `"s"` and `"g"`, which q refuses (QT032).
+        for m in re!(
+            r#""([bhijefpmdznuvt])"[ \t]*\$[ \t]*(\([ \t]*)?"(-?[0-9][0-9.:DTeE+-]+)"([ \t]*\))?"#
+        )
+        .captures_iter(literals)
+        {
+            let whole = m.get(0).unwrap();
+            let dollar = m.get(1).unwrap().end() + 1;
+            let dollar = dollar + literals[dollar..].find('$').unwrap();
+            if line.as_bytes()[dollar] != b'$'
+                || m.get(2).is_some() != m.get(4).is_some()
+                || !operand_ends(code, &v.comments, offset + whole.end())
+            {
+                continue;
+            }
+            let letter = &m[1];
+            add(
+                offset + whole.start(),
+                "QT004",
+                format!(
+                    "\"{letter}\"$ on a string casts each character's code, not the text; \
+                     parsing text is \"{}\"$\"...\"",
+                    letter.to_ascii_uppercase()
+                ),
+            );
         }
         // Equality against a string literal in a filter pairs each row with
         // one character. q 5: 'length whenever the row count differs from
