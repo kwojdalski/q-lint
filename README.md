@@ -355,6 +355,13 @@ Two more top-level keys, both opt-in: `target-version = "4.0"` (see
 `baseline = "qlinter-baseline.json"`, relative to the file (see
 [A lint baseline](#a-lint-baseline---write-baseline-and---baseline)).
 
+`required-version = ">=0.33, <0.34"` pins the qlinter a repository is linted
+with: a run under any other release is refused (exit 2), naming the version
+asked for and the one running, so CI and every checkout agree on the findings.
+It takes comma-separated clauses of `==`, `!=`, `>=`, `<=`, `>`, `<` or `~=`
+(`~=0.33.1` is `>=0.33.1, <0.34`) and a version, or a version alone, which
+must match exactly; a value that is none of these is a configuration error.
+
 `exclude`, `extend-exclude`, `--exclude` and the keys of `per-file-ignores`
 are globs read the way Ruff reads them. A pattern with a `/` anywhere in it -
 `lib/`, `./lib`, `src/gen/*.q`, a trailing slash included - is anchored at the

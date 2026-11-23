@@ -27,6 +27,7 @@
 //!
 //! target-version = "4.0"          # 3.6 | 4.0 | 4.1 | kdbx: report what does not run there (QK)
 //! baseline = "qlinter-baseline.json" # report only findings not in it (`--write-baseline`)
+//! required-version = ">=0.33, <0.34" # refuse to run under any other qlinter
 //!
 //! [lint]
 //! select = ["QE", "QF"]             # codes or prefixes; replaces the profile's set
@@ -70,7 +71,7 @@ const DEFAULT_EXCLUDE: [&str; 7] = [
     "target",
 ];
 const KEYS: &str = "profile, select, extend-select, ignore, per-file-ignores, exclude, \
-                    extend-exclude, extend, target-version, baseline and [lint]";
+                    extend-exclude, extend, target-version, baseline, required-version and [lint]";
 
 /// One step of rule selection: a configuration file's, or the command line's.
 #[derive(Clone, Debug, Default)]
@@ -793,6 +794,7 @@ fn load(
             "lint",
             "target-version",
             "baseline",
+            "required-version",
         ]
         .contains(&key.as_str())
         {
@@ -871,6 +873,17 @@ fn load(
         })?;
         settings.target = Some(target);
     }
+    if let Some(v) = table.get("required-version") {
+        let spec = v
+            .as_str()
+            .ok_or_else(|| format!("{shown}: required-version must be a string"))?;
+        let ours = env!("CARGO_PKG_VERSION");
+        if !version_matches(spec, ours).map_err(|e| format!("{shown}: required-version: {e}"))? {
+            return Err(format!(
+                "{shown}: required-version \"{spec}\" does not match this qlinter, {ours}"
+            ));
+        }
+    }
     if let Some(v) = table.get("baseline") {
         let file = v
             .as_str()
@@ -940,6 +953,59 @@ fn load(
         }
     }
     Ok(Some(settings))
+}
+
+/// A version, `X`, `X.Y` or `X.Y.Z`, as numbers; a missing part is 0.
+fn version(text: &str) -> Option<[u64; 3]> {
+    let mut parts = [0; 3];
+    for (n, part) in text.trim().split('.').enumerate() {
+        // Digits only: `u64::from_str` would take a leading `+`.
+        if n == 3 || part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        parts[n] = part.parse().ok()?;
+    }
+    Some(parts)
+}
+
+/// Whether `ours` satisfies `spec`, `required-version`'s value: clauses
+/// joined by commas, each an operator - `==`, `!=`, `>=`, `<=`, `>`, `<` or
+/// `~=` (PEP 440's compatible release: `~=0.33.1` is `>=0.33.1, <0.34`) -
+/// and a version, or a version alone, which must be the one. An error for a
+/// spec that is not one.
+fn version_matches(spec: &str, ours: &str) -> Result<bool, String> {
+    let ours = version(ours).ok_or_else(|| format!("cannot read this version, {ours}"))?;
+    if spec.trim().is_empty() {
+        return Err("empty".into());
+    }
+    let mut all = true;
+    for clause in spec.split(',') {
+        let clause = clause.trim();
+        let (op, rest) = ["==", "!=", ">=", "<=", "~=", ">", "<", "="]
+            .into_iter()
+            .find_map(|op| clause.strip_prefix(op).map(|rest| (op, rest)))
+            .unwrap_or(("==", clause));
+        let bad = || format!("`{clause}` is not an operator and a version, such as `>=0.33`");
+        let want = version(rest).ok_or_else(bad)?;
+        let ok = match op {
+            "==" | "=" => ours == want,
+            "!=" => ours != want,
+            ">=" => ours >= want,
+            "<=" => ours <= want,
+            ">" => ours > want,
+            "<" => ours < want,
+            _ => {
+                // The last part given may rise; the ones before it are fixed.
+                let given = rest.trim().split('.').count();
+                if given < 2 {
+                    return Err(format!("`{clause}`: ~= needs at least X.Y"));
+                }
+                ours >= want && ours[..given - 1] == want[..given - 1]
+            }
+        };
+        all &= ok;
+    }
+    Ok(all)
 }
 
 /// `path` without Windows' verbatim prefix: `\\?\C:\x` is `C:\x`. Any
@@ -1117,4 +1183,36 @@ fn lexical(path: &Path) -> PathBuf {
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::version_matches;
+
+    #[test]
+    fn a_required_version_reads_ranges_exact_versions_and_compatible_releases() {
+        for (spec, ours, want) in [
+            (">=0.33, <0.34", "0.33.2", true),
+            (">=0.33, <0.34", "0.34.0", false),
+            (">=0.33,<0.34", "0.32.9", false),
+            ("0.33.2", "0.33.2", true),
+            ("==0.33", "0.33.0", true),
+            ("==0.33", "0.33.2", false),
+            ("!=0.33.2", "0.33.2", false),
+            (">0.33.1", "0.33.2", true),
+            ("<=0.33.1", "0.33.2", false),
+            ("~=0.33.1", "0.33.9", true),
+            ("~=0.33.1", "0.34.0", false),
+            ("~=0.33", "0.99.0", true),
+            ("~=0.33", "1.0.0", false),
+            (" >= 0.33 ", "0.33.0", true),
+        ] {
+            assert_eq!(version_matches(spec, ours), Ok(want), "{spec} vs {ours}");
+        }
+        for bad in [
+            "", "latest", ">=", ">=0.33,", "=>0.33", "0.33.1.2", "~=1", ">=+1", "0.x",
+        ] {
+            assert!(version_matches(bad, "0.33.2").is_err(), "{bad:?}");
+        }
+    }
 }
