@@ -401,6 +401,47 @@ test("a SQL write is checked against the process it goes to, and refused while t
   }
 });
 
+test("a SQL write to a discovered or shared process is guarded, and refused when its process is unknown (#1104)", async () => {
+  const { context, restore } = setUp();
+  vscode.languages.registerCompletionItemProvider = () => ({ dispose() {} });
+  try {
+    const sent = [];
+    const asked = [];
+    const prodHdb = { label: "desk/hdb", tags: ["prod"] };
+    let binding;
+    let active;
+    const live = {
+      activeLabel: () => active?.label,
+      activeProcess: () => active,
+      fileBinding: () => binding,
+      processes: () => [],
+      discovery: { discovered: () => [] },
+      sharedList: () => [{ server: { label: "shared" }, state: { processes: [{ label: "rdb", tags: ["prod"] }] } }],
+      guardAllows: async (code, targets, what) => (asked.push([code, targets[0].label, what]), false),
+      queryCode: async (c) => void sent.push(c),
+    };
+    registerSql(context, live);
+    vscode.window.activeTextEditor = { document: { languageId: "sql", uri: { toString: () => "untitled:4" }, getText: () => "DELETE FROM trade" }, selection: { isEmpty: true } };
+    // Connected to a discovered process: the guard is asked about it.
+    active = prodHdb;
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.runSql)(), undefined);
+    assert.deepStrictEqual(asked, [["`t insert ()", "desk/hdb", "This SQL statement (DELETE)"]]);
+    // Bound to a shared process not connected yet: that one is asked about.
+    active = undefined;
+    binding = "shared/rdb";
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.runSql)(), undefined);
+    assert.deepStrictEqual(asked[1], ["`t insert ()", "shared/rdb", "This SQL statement (DELETE)"]);
+    // Bound to a label nothing lists: refused, nothing sent.
+    binding = "gone/rdb";
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.runSql)(), undefined);
+    assert.match(stub.messages.at(-1)[1], /no q process is labelled "gone\/rdb"/);
+    assert.strictEqual(asked.length, 2);
+    assert.deepStrictEqual(sent, []);
+  } finally {
+    restore();
+  }
+});
+
 test("the q the SQL tab shows the guard is one the guard reads as a write", () => {
   const { writes } = require("../out/guard.js");
   assert.ok(writes("`t insert ()").length > 0);
