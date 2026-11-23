@@ -408,7 +408,7 @@ export function readPage(raw: unknown): GridPage | string {
 
 /// A raw number as it sorts: a long, timestamp or timespan exactly, as a
 /// bigint; q's null before everything, its infinities at either end.
-function sortKey(x: unknown): number | bigint {
+export function sortKey(x: unknown): number | bigint {
   if (x === null || x === undefined) {
     return -Infinity;
   }
@@ -423,8 +423,20 @@ function sortKey(x: unknown): number | bigint {
   }
 }
 
+/// A cell's text as it sorts: a string item, which `GRID` writes quoted and
+/// escaped as `-3!` does, as its characters, so a one-character one (`,"b"`)
+/// sorts among the others as `iasc` puts it (#1126).
+export function sortText(cell: string): string {
+  const m = /^,?"((?:[^"\\]|\\.)*)"$/s.exec(cell);
+  if (m === null) {
+    return cell;
+  }
+  const named: Record<string, string> = { n: "\n", r: "\r", t: "\t" };
+  return m[1].replace(/\\([0-7]{3}|.)/gs, (_, e: string) => (e.length === 3 ? String.fromCharCode(parseInt(e, 8)) : (named[e] ?? e)));
+}
+
 /// Ranks over a whole column, as `GRID` gives them: equal values share one.
-function denseRank(n: number, compare: (a: number, b: number) => number): number[] {
+export function denseRank(n: number, compare: (a: number, b: number) => number): number[] {
   const order = [...Array(n).keys()].sort((a, b) => compare(a, b) || a - b);
   const rank = new Array<number>(n);
   let r = -1;
@@ -455,9 +467,10 @@ export function appendPage(payload: GridPayload, page: GridPage): GridPayload {
     }
     const byNumber = NUMERIC.has(payload.types[i]) || TEMPORAL.has(payload.types[i]);
     const values = byNumber && raw[i].length === column.length && raw[i].length > 0 ? raw[i].map(sortKey) : undefined;
+    const texts = values === undefined ? column.map(sortText) : [];
     const compare = values !== undefined
       ? (a: number, b: number) => (values[a] < values[b] ? -1 : values[a] > values[b] ? 1 : 0)
-      : (a: number, b: number) => (column[a] < column[b] ? -1 : column[a] > column[b] ? 1 : 0);
+      : (a: number, b: number) => (texts[a] < texts[b] ? -1 : texts[a] > texts[b] ? 1 : 0);
     return denseRank(column.length, compare);
   });
   return { ...payload, count: page.count, cells, raw, rank };
