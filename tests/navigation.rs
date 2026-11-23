@@ -1461,6 +1461,35 @@ fn a_global_rename_is_refused_where_it_would_change_what_the_code_means() {
         reply["error"].is_object() || reply["result"].is_null(),
         "{reply}"
     );
+    // A name read in a qSQL phrase is a column whenever the table has one
+    // (#1207); the table after `from` is a global, and is renamed.
+    let query = "foo:1\nr:select foo from t where foo>0\ntab:([] a:1 2)\ns:select from tab\n";
+    let quri = server.open(dir.path(), "query.q", query);
+    let reply = server.ask(
+        "textDocument/rename",
+        &quri,
+        query,
+        "foo:1",
+        0,
+        json!({"newName": "bar"}),
+    );
+    let why = refused(&reply);
+    assert!(why.contains("qSQL") && why.contains("query.q:2"), "{why}");
+    let reply = server.ask(
+        "textDocument/rename",
+        &quri,
+        query,
+        "tab:",
+        0,
+        json!({"newName": "tbl"}),
+    );
+    assert_eq!(
+        edits(&reply["result"]),
+        [
+            edit("query.q", 2, 0, 3, "tbl"),
+            edit("query.q", 3, 14, 17, "tbl")
+        ]
+    );
     // A legal one goes through: lib.q's definition and both calls.
     let reply = ask(&mut server, "helper v", "bump");
     assert_eq!(
