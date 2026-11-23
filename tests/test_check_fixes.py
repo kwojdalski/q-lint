@@ -34,6 +34,10 @@ def test_a_lambda_in_a_query_column_is_compared_by_what_it_compiles_to(tmp_path)
             "update d:{[b] c:g[b]; c} each content from a",
         ],
         ["update d:{[b] b+1} each c from a", "update d:{[b] b+2} each c from a"],
+        # A string or long-vector constant is the program, not its source text.
+        ['f:{x,"ab"}', 'f:{x,"cd"}'],
+        ["f:{x+1 2 3}", "f:{x+4 5 6}"],
+        ['f:{x,"ab"}', 'f:{x,  "ab"}'],
     ]
     (tmp_path / "pairs.json").write_text(json.dumps(pairs))
     (tmp_path / "compare.q").write_text(check_fixes.COMPARE)
@@ -46,4 +50,4 @@ def test_a_lambda_in_a_query_column_is_compared_by_what_it_compiles_to(tmp_path)
         timeout=30,
         check=False,
     )
-    assert json.loads(run.stdout.strip().splitlines()[-1]) == ["same", "changed"]
+    assert json.loads(run.stdout.strip().splitlines()[-1]) == ["same", "changed", "changed", "changed", "same"]

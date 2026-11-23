@@ -37,7 +37,11 @@ from pathlib import Path
 
 COMPARE = r"""
 p:.j.k raze read0 hsym`$getenv`PAIRS;
-norm:{$[100h=type x; .z.s each v where not (type each v:value x) in 7 10h; 0h=type x; .z.s each x;
+/ value of a lambda ends in its source text - and on KDB-X its offsets, name,
+/ file and line before that: drop those by position, since a constant may be
+/ a string or a long vector too.
+debug:$[5<=.z.K;5;1];
+norm:{$[100h=type x; .z.s each (neg debug)_value x; 0h=type x; .z.s each x;
   99h=type x; (.z.s key x)!.z.s value x; x]};
 r:{[x] a:@[parse;x 0;{`ERR}]; b:@[parse;x 1;{`ERR}];
   $[(`ERR~a)&`ERR~b;`unparseable;`ERR~b;`broken;`ERR~a;`repaired;(norm a)~norm b;`same;`changed]} each p;
