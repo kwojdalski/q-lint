@@ -410,3 +410,43 @@ test("deleting a discovery server after a reload forgets its processes' password
   await stub.commands.get("q-lint.deleteDiscoveryServer")("desk");
   assert.deepStrictEqual([...context.secrets.all.keys()].filter((k) => k.includes("rdb")), []);
 });
+
+// Two queries started in one turn - a keybinding pressed twice, a command
+// and a watch tick - both passed the check for a query still running, made
+// before either was sent. The second was then refused by the connection and
+// recorded as a failed query, and, both having started in one millisecond,
+// took the first's place as the one running: Abort Current Query said it
+// had stopped the Process Explorer's read, and recorded the first as failed.
+test("of two queries started together one runs, and the other is told one is running (#1353)", async (t) => {
+  const got = [];
+  const q = await fakeQ((message) => void got.push(message));
+  t.after(() => q.close());
+  const { live } = await setUp(t, [proc("p", q.port)]);
+  assert.strictEqual(await live.connectTo("p"), true);
+  stub.messages = [];
+  const first = live.run("1+1");
+  await live.run("2+2");
+  await sleep(50);
+  assert.strictEqual(got.length, 1);
+  assert.deepStrictEqual(stub.messages, [["info", "q-lint: a query is still running on p. q-lint: Abort Current Query stops waiting for it."]]);
+  assert.deepStrictEqual(live.history(), []);
+  stub.messages = [];
+  await live.abort();
+  await first;
+  assert.deepStrictEqual(live.history().map((e) => [e.code, e.outcome]), [["1+1", "aborted"]]);
+  assert.ok(!stub.messages.some(([, text]) => text.includes("Process Explorer")), JSON.stringify(stub.messages));
+});
+
+test("of two cells started together one runs, and the other is not sent (#1353)", async (t) => {
+  let n = 0;
+  const q = await fakeQ(() => ((n += 1), OK));
+  t.after(() => q.close());
+  const { live } = await setUp(t, [proc("p", q.port)]);
+  assert.strictEqual(await live.connectTo("p"), true);
+  stub.messages = [];
+  const cell = (code) => live.runOnActive(code, (connection) => connection.query([code], [10, 10]));
+  const [one, two] = await Promise.all([cell("1+1"), cell("2+2")]);
+  assert.deepStrictEqual([one?.process, two], ["p", undefined]);
+  assert.strictEqual(n, 1);
+  assert.deepStrictEqual(stub.messages, [["info", "q-lint: a query is still running on p. q-lint: Abort Current Query stops waiting for it."]]);
+});

@@ -2181,6 +2181,9 @@ export class Live {
         return undefined;
       }
     }
+    if (this.overtaken(ready)) {
+      return undefined;
+    }
     const started = Date.now();
     this.running = { code, started };
     this.showStatus();
@@ -2223,6 +2226,19 @@ export class Live {
       return undefined;
     }
     return ready;
+  }
+
+  /// Whether a call that asked `ready` in the same turn has sent its query
+  /// since: both pass its check, made before either sends (#1353). Says so,
+  /// as `ready` does of a query it finds running.
+  private overtaken(ready: { connection: QConnection; process: Process }): boolean {
+    if (!ready.connection.isBusy) {
+      return false;
+    }
+    void window.showInformationMessage(
+      `q-lint: a query is still running on ${ready.process.label}. q-lint: Abort Current Query stops waiting for it.`,
+    );
+    return true;
   }
 
   /// The code a command takes from the active editor: the selection, or the
@@ -2486,6 +2502,9 @@ export class Live {
       if (ready === undefined) {
         return;
       }
+    }
+    if (this.overtaken(ready)) {
+      return;
     }
     const { connection, process } = ready;
     const code = this.throughGateway(written, process, serverTypes);
