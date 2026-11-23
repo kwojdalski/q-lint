@@ -57,6 +57,13 @@ class Element {
   }
 }
 
+/// The element that holds the focus in the page under `body`, as
+/// document.activeElement has it: the body, once that element left the page.
+function activeIn(body) {
+  const focused = Element.focused;
+  return focused && body.all((e) => e === focused).length > 0 ? focused : body;
+}
+
 /// A Chart.js stand-in: it keeps its configuration, counts its draws and
 /// updates, and maps pixels to values one to one.
 class FakeChart {
@@ -124,4 +131,4 @@ function loadPage(saved, globals = {}) {
   return page;
 }
 
-module.exports = { Element, FakeChart, loadPage };
+module.exports = { Element, FakeChart, loadPage, activeIn };

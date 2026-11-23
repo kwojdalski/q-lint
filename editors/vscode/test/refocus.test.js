@@ -1,0 +1,115 @@
+// The keyboard focus over a redraw (media/refocus.js): a page that replaces
+// its controls hands the focus to the control made in the place of the one
+// that held it. The helper alone, then the pages that redraw through it.
+const test = require("node:test");
+const assert = require("node:assert");
+
+const { keepFocus } = require("../media/refocus.js");
+const { loadSmallPage } = require("./smallpage.js");
+
+/// A document of controls that are in the page while `page` holds them.
+function fakeDocument() {
+  const document = { body: { tagName: "BODY" }, page: [], focused: undefined };
+  Object.defineProperty(document, "activeElement", { get: () => (document.page.includes(document.focused) ? document.focused : document.body) });
+  document.control = (extra = {}) => ({ tagName: "BUTTON", focus() { document.focused = this; }, ...extra });
+  return document;
+}
+
+test("the control redrawn under the name of the one that held the focus takes it", () => {
+  const document = fakeDocument();
+  const focus = keepFocus(document);
+  const draw = (names, disabled = []) => () => {
+    document.page = names.map((n) => focus.name(document.control({ title: n, disabled: disabled.includes(n) }), n, n === "next" ? "previous" : undefined));
+    return names.length;
+  };
+  assert.strictEqual(focus.over(draw(["previous", "next"])), 2, "what the redraw returns");
+  assert.strictEqual(document.activeElement, document.body, "nothing held the focus: nothing takes it");
+  const next = document.page[1];
+  next.focus();
+  focus.over(draw(["previous", "next"]));
+  assert.strictEqual(document.activeElement.title, "next");
+  assert.notStrictEqual(document.activeElement, next, "the one drawn now");
+  // Drawn disabled, or not at all: the control named to stand in.
+  focus.over(draw(["previous", "next"], ["next"]));
+  assert.strictEqual(document.activeElement.title, "previous");
+  document.page[1].disabled = false;
+  document.page[1].focus();
+  focus.over(draw(["previous"]));
+  assert.strictEqual(document.activeElement.title, "previous");
+  // A redraw that leaves the focused control in the page moves nothing.
+  const kept = document.activeElement;
+  focus.over(() => document.page.push(focus.name(document.control({ title: "other" }), "other")));
+  assert.strictEqual(document.activeElement, kept);
+  // A control with no name, and one whose name nothing is drawn under.
+  const plain = document.control();
+  document.page.push(plain);
+  plain.focus();
+  focus.over(draw(["previous", "next"]));
+  assert.strictEqual(document.activeElement, document.body);
+});
+
+test("each names the controls under a container by place and kind", () => {
+  const document = fakeDocument();
+  const focus = keepFocus(document);
+  const draw = (kinds) => () => {
+    const controls = kinds.map((k) => document.control({ tagName: k.split(" ")[0], type: k.split(" ")[1] }));
+    document.page = controls;
+    focus.each({ children: [{ tagName: "LABEL", children: controls.slice(0, 1) }, ...controls.slice(1), { tagName: "SPAN" }] }, "bar");
+  };
+  focus.over(draw(["SELECT", "INPUT checkbox", "BUTTON"]));
+  document.page[1].focus();
+  focus.over(draw(["SELECT", "INPUT checkbox", "BUTTON"]));
+  assert.strictEqual(document.activeElement, document.page[1]);
+  // Another kind of control in that place is not the same control.
+  focus.over(draw(["SELECT", "INPUT color", "BUTTON"]));
+  assert.strictEqual(document.activeElement, document.body);
+});
+
+/// The pages that redraw through refocus.js, by the script that makes their HTML.
+const PAGES = { "dashboardview.js": "dashboard.js" };
+
+test("a page that redraws through refocus.js loads it before its own script", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  for (const [host, script] of Object.entries(PAGES)) {
+    const source = fs.readFileSync(path.join(__dirname, "..", "out", host), "utf8");
+    const at = (name) => source.indexOf(`file("${name}")`);
+    assert.ok(at("refocus.js") >= 0 && at("refocus.js") < at(script), host);
+  }
+});
+
+const LAYOUT = { type: "layout", name: "Desk", columns: 2, intervals: [0, 5, 60], views: ["table", "line"] };
+const tile = (id, extra = {}) => ({ id, query: "q" + id, process: "hdb", view: "table", refresh: 0, ...extra });
+
+test("a dashboard tile's control keeps the focus when the layout is drawn again (#1340)", () => {
+  const page = loadSmallPage(["refocus.js", "dashboard.js"]);
+  const control = (tileIndex, title) => page.find("section")[tileIndex].all((e) => e.title === title)[0];
+  page.send({ ...LAYOUT, tiles: [tile("a"), tile("b"), tile("c")] });
+  // The interval select of the second tile: a change is answered with a new layout.
+  const interval = control(1, "Refresh interval");
+  interval.focus();
+  interval.value = "5";
+  interval.fire("change");
+  assert.deepStrictEqual(page.posted.at(-1), { type: "refresh-interval", id: "b", seconds: 5 });
+  page.send({ ...LAYOUT, tiles: [tile("a"), tile("b", { refresh: 5 }), tile("c")] });
+  assert.strictEqual(page.active(), control(1, "Refresh interval"));
+  assert.notStrictEqual(page.active(), interval);
+  // A moved tile's arrow goes with the tile; at the end of the row, the other arrow.
+  control(0, "Move it later").focus();
+  control(0, "Move it later").fire("click");
+  page.send({ ...LAYOUT, tiles: [tile("b"), tile("a"), tile("c")] });
+  assert.strictEqual(page.active(), control(1, "Move it later"));
+  page.active().fire("click");
+  page.send({ ...LAYOUT, tiles: [tile("b"), tile("c"), tile("a")] });
+  assert.strictEqual(page.active(), control(2, "Move it earlier"));
+  // The dashboard's own controls.
+  const columns = page.find("header")[0].all((e) => e.tagName === "SELECT")[0];
+  columns.focus();
+  page.send({ ...LAYOUT, columns: 3, tiles: [tile("b"), tile("c"), tile("a")] });
+  assert.strictEqual(page.active().title, "Tiles a row");
+  assert.notStrictEqual(page.active(), columns);
+  // A removed tile's button has nothing to hand the focus to.
+  control(0, "Remove it from the dashboard").focus();
+  page.send({ ...LAYOUT, tiles: [tile("c"), tile("a")] });
+  assert.strictEqual(page.active(), page.body);
+});

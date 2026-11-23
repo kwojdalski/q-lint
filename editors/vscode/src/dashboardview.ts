@@ -323,6 +323,7 @@ function dashboardHtml(webview: Webview, media: Uri): string {
     '<meta name="viewport" content="width=device-width, initial-scale=1.0">',
     `<link rel="stylesheet" href="${file("dashboard.css")}">`,
     "<title>q-lint: dashboard</title></head><body>",
+    `<script nonce="${nonce}" src="${file("refocus.js")}"></script>`,
     `<script nonce="${nonce}" src="${file("dashboard.js")}"></script>`,
     "</body></html>",
   ].join("\n");
