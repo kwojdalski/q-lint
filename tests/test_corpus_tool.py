@@ -118,3 +118,29 @@ def test_the_shipped_repository_list_is_well_formed():
     repos = json.loads((ROOT / "scripts" / "corpus.json").read_text())
     assert len({r["repo"] for r in repos}) == len(repos), "a repository listed twice"
     assert all(len(r["commit"]) == 40 for r in repos)
+
+
+def test_a_linter_that_crashes_is_not_a_clean_run(world, capsys):
+    corpus.main(["sync", str(world["dir"])])
+    corpus.main(["accept", str(world["dir"]), "--binary", world["linter"]])
+    triaged = corpus.BASELINE_FILE.read_text()
+    Path(world["linter"]).write_text("#!/bin/sh\necho 'thread main panicked' >&2\nexit 101\n")
+    with pytest.raises(SystemExit, match="exit 101"):
+        lint(world)
+    with pytest.raises(SystemExit, match="exit 101"):
+        corpus.main(["accept", str(world["dir"]), "--binary", world["linter"]])
+    assert corpus.BASELINE_FILE.read_text() == triaged
+
+
+def test_corpus_diff_refuses_a_linter_that_crashes(tmp_path):
+    spec = importlib.util.spec_from_file_location(
+        "corpus_diff", ROOT / "scripts" / "corpus_diff.py"
+    )
+    corpus_diff = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(corpus_diff)
+    (tmp_path / "a.q").write_text("a:1\n")
+    crashing = tmp_path / "qlinter"
+    crashing.write_text("#!/bin/sh\nexit 101\n")
+    crashing.chmod(0o755)
+    with pytest.raises(SystemExit, match="exit 101"):
+        corpus_diff.findings(str(crashing), [str(tmp_path / "a.q")], "general")
