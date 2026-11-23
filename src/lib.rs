@@ -1511,8 +1511,10 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 false,
             )
         }
-        // Sorting adds no duplicates, and q 5 agrees on the value and the
-        // sorted attribute both.
+        // Sorting adds no duplicates, and q 5 agrees on the value and, for
+        // a list, the sorted attribute. Not unattended: for a table it does
+        // not - `attr distinct asc distinct t` is `` ` `` on KDB-X and
+        // `attr asc distinct t` is `` `s `` (#1201) - and x may be one.
         "QR003" => {
             let m = re!(concat!(
                 r"^distinct",
@@ -1526,7 +1528,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 m.as_str(),
                 "asc distinct".into(),
                 "Replace with `asc distinct`".into(),
-                true,
+                false,
             )
         }
         // `(a)` becomes `a`, where nothing around it reads differently

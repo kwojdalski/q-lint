@@ -354,7 +354,7 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             "QR003",
             "r:distinct asc distinct 3 1 1",
             "r:asc distinct 3 1 1",
-            true,
+            false,
         ),
         ("QS004", "a:1;r:(a)+1", "a:1;r:a+1", true),
         ("QS004", "a:1;r:(a)b", "a:1;r:a b", true),
