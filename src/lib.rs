@@ -243,7 +243,7 @@ pub struct Place {
 /// Every global name `source` writes or reads, in order.
 pub fn mentions(source: &str) -> Vec<Mention> {
     let v = views(source);
-    semantics::navigate::mentions(&v.code, source)
+    semantics::navigate::mentions(&v.code, &v.comments, source)
 }
 
 /// The path of the load at byte `offset` of `source` - `\l path`,

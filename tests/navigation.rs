@@ -124,7 +124,7 @@ fn a_definition_just_after_a_character_of_more_than_one_byte_is_found() {
 
 #[test]
 fn a_definition_carries_its_kind_its_signature_and_its_statement() {
-    let source = "limit:10\nadd:{[a;b]\n  a+b}\nneg1:{neg x}\n";
+    let source = "limit:10\nadd:{[a;b]\n  a+b}\nneg1:{neg x}\ns:\"ab\";r:1\nm:\"a\n b\" / note\n";
     let all = mentions(source);
     let defined: Vec<_> = all
         .iter()
@@ -138,6 +138,10 @@ fn a_definition_carries_its_kind_its_signature_and_its_statement() {
             ("add", true, "[a;b]", "add:{[a;b]\n  a+b}"),
             // An implicit signature is not written, so there is none to show.
             ("neg1", true, "", "neg1:{neg x}"),
+            // A string the statement ends in is in it, a comment is not (#1215).
+            ("s", false, "", "s:\"ab\""),
+            ("r", false, "", "r:1"),
+            ("m", false, "", "m:\"a\n b\""),
         ]
     );
 }
