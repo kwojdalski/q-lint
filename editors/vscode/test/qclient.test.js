@@ -382,6 +382,8 @@ p:f[1];
 v:1 2 3f;
 .ns.g:{[a] a};
 .ns.sub.z:"abc";
+hits:0;
+vw::[hits+:1;select from t where a>1];
 .ns.sub.deep.w:42;
 {(\` sv \`.big,x) set 1} each \`$"n",/:string til 3000;
 `;
@@ -436,6 +438,16 @@ test("the explorer's call against a real q process", { skip }, async (t) => {
     assert.deepStrictEqual([entry(".ns.sub.deep", "w").type, entry(".ns.sub.deep", "w").count], [-7, 1]);
     // A nested namespace is a namespace, not a variable of its parent.
     assert.strictEqual(entry(".ns", "sub"), undefined);
+  });
+
+  await t.test("a view is a view with no parameters, and reading it does not evaluate it (#1354)", async () => {
+    assert.deepStrictEqual(entry(".", "vw"), {
+      ns: ".", name: "vw", kind: "function", type: 100, count: null, cols: [], keys: [], params: [], view: true, partitioned: false,
+    });
+    assert.strictEqual(entry(".", "f").view, undefined);
+    assert.strictEqual(await connection.call('"f"$hits'), 0);
+    const functions = explorerTree(g, []).find((n) => n.label === ".").children.find((c) => c.label === "Functions");
+    assert.strictEqual(functions.children.find((c) => c.label === "vw").description, "view");
   });
 
   await t.test("bounded: the first names of a large namespace, and its total", async () => {

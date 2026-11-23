@@ -250,3 +250,17 @@ test("completion offers every name, and the table's columns in its statement", (
   // A table the process does not have adds nothing.
   assert.strictEqual(liveCompletions(g, "rdb", "nope").length, items.length);
 });
+
+// A view has a lambda's type, and `value` of it gives its parse tree where
+// a lambda has its parameters: the row read `[;;func,t,func,a,1,false,;null]`.
+test("a view is shown as a view, not as a lambda with its parse tree for parameters (#1354)", () => {
+  const raw = { rows: [row(".", "vw", "function", { view: true }), row(".", "f", "function", { params: ["x"], view: false })], spaces: [{ ns: ".", total: 2 }], more: 0 };
+  const g = readGathered(raw);
+  assert.deepStrictEqual(g.entries.map((e) => [e.name, e.view, e.params]), [["vw", true, []], ["f", undefined, ["x"]]]);
+  const functions = explorerTree(g, []).find((n) => n.label === ".").children.find((c) => c.label === "Functions").children;
+  assert.deepStrictEqual(functions.map((n) => [n.label, n.description, n.tooltip]), [["vw", "view", "vw: view"], ["f", "[x]", "f[x]"]]);
+  assert.deepStrictEqual(liveCompletions(g, "rdb").map((c) => [c.label, c.detail]), [["vw", "view (rdb)"], ["f", "[x] (rdb)"]]);
+  // The process is asked which it is, and gives parameters only when they are names.
+  assert.ok(GATHER.includes("`partitioned`ncols`view!"), GATHER);
+  assert.ok(GATHER.includes("$[11h=type p:(value x)1;p;`$()]"), GATHER);
+});
