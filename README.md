@@ -1147,6 +1147,7 @@ cargo test                                            # unit, CLI and LSP suites
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 cargo build --release                                 # the Python harness needs it
+cargo test --release --test never_panic -- --ignored  # no panic on any mutated q in the tree
 Q_LINT_TEST_QLS=qls uv run pytest tests                # black-box CLI checks
 python3 scripts/check_invariance.py target/release/qlinter examples tests/corpus tests/cases
                                                       # findings unmoved by CRLF, position, comments

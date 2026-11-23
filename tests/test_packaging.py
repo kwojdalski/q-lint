@@ -123,3 +123,8 @@ def test_ci_checks_invariance_over_the_q_in_this_tree():
     [check] = [s for s in ran if "check_invariance.py" in s]
     assert check.split()[-3:] == ["examples", "tests/corpus", "tests/cases"]
     assert ran.index("cargo build --release") < ran.index(check)
+
+
+def test_ci_runs_the_never_panic_sweep_in_release():
+    ran = steps(workflow("ci.yml")["jobs"]["rust"])
+    assert "cargo test --release --test never_panic -- --ignored" in ran
