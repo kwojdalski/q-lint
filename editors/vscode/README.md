@@ -1045,22 +1045,30 @@ guarded process, whatever the query (`q-lint.query.functionProfile.enable`).
 `production` (`q-lint.processes.readOnlyGuard.tags`, ignoring case) is read
 first, and when it would change the process, a modal asks before anything
 is sent; Escape sends nothing. A change is: assigning a global (`a:1`,
-`a+:1`, `t[0]:5`, `a::b` - and, inside a lambda, `a::` or a dotted
-`.ns.v:`, as q makes those global; a column named in `select a:x from t` or
-`([] a:1 2)` is not one), `update` or `delete` from a table named by a
-symbol (`` from `t `` or `` from (`t) ``), `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`,
-`system`, `save`, `rsave`, `dsave`, `load`, `rload`, `.Q.dpft`, `.Q.dpfts`,
-`.Q.hdpf`, `.Q.en`, `.Q.chk`, `.Q.dsftg` (each also by its `.q.` name,
-`.q.set`), `hopen` of a file handle (`` hopen `:f ``, which creates the
+`a+:1`, `t[0]:5`, `a::b`, `(a;b):1 2` - and, inside a lambda, `a::`, a dotted
+`.ns.v:`, or `a+:1` or `a[0]:1` to a name that is not its parameter or local, as q makes those global; a column named in `select a:x from t` or
+`([] a:1 2)` is not one, but one in a column's expression, `([] c:(g:5)+1)`, is), `update` or `delete` from a table named by a
+symbol (`` from `t `` or `` from (`t) ``), `xasc`, `xdesc` or `xkey` on a table named by a
+symbol (`` `a xasc `t ``), extending an enumeration with `?` (`` `sym?`x ``), a string sent to handle 0 (`0"a:1"`), `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`,
+`system`, `setenv`, `save`, `rsave`, `dsave`, `load`, `rload`, `.Q.dpft`, `.Q.dpfts`,
+`.Q.dpt`, `.Q.dpts`, `.Q.hdpf`, `.Q.en`, `.Q.ens`, `.Q.enx`, `.Q.enxs`, `.Q.chk`, `.Q.dsftg`,
+`.Q.view`, `.Q.l`, `.Q.lo`, `.Q.bv`, `.Q.opt` (each also by its `.q.` name,
+`.q.set`, its symbol, `` `.q.set . (`a;1) ``, and indexed, `` .q[`set] ``; `system` of a string literal is read as that command, so
+`system "c"` only reads), `hopen` of a file handle (`` hopen `:f ``, `` hopen hsym `f ``, `hopen ":f"`, which creates the
 file to write through; opening a connection, `` hopen `:host:5000 ``, is
 not a change, and what is sent over it is not read), `0:` or `1:` to a file
-handle (`` `:f ``, or one made with `hsym`), `2:`, replaying a log with `-11!` (not `-11!(-1;..)` or `(-2;..)`,
-which only count and check it), compressing a file with `-19!`, an amend in place (`` @[`t;i;:;v] ``, `` .[(`t);i;f;v] ``) or
-a functional update or delete in place (`` ![`t;c;b;a] ``),
-`value`, `get` or `eval` of a string, of `parse` or of an assignment tree
-(`` eval(:;`t;()) ``) or of a list headed by a writer's symbol
-(`` value(`.q.set;`a;1) ``), and a system command other than one that
-reads a setting (`\c`, `\d`, `\P` alone) - `\t` and `\ts` are read for their
+handle (`` `:f ``, or one made with `hsym` or `` `$":f" ``, also applied:
+`` 0:[`:f;x] ``, `` .[0:;(`:f;x)] ``), `2:`, replaying a log with `-11!` (not `-11!(-1;..)` or `(-2;..)`,
+which only count and check it), compressing a file with `-19!` (also spaced, `-19 !x`, or
+in parentheses, `(-19)!x`), an amend in place (`` @[`t;i;:;v] ``, `` .[(`t);i;f;v] ``, `` @[`t;`c;`p#] ``,
+`` @[`t;`a;neg] ``, `` @[;`a;:;1] `. ``, `` .[@;(`.;`a;:;1)] ``) or
+a functional update or delete in place (`` ![`t;c;b;a] ``, `` .[!;(`t;c;b;a)] ``),
+`value`, `get`, `eval` or `-6!` of a string, of `parse` or `-5!`, of an assignment tree
+(`` eval(:;`t;()) ``, `` eval(+:;`a;1) ``), of a functional update or delete on a table by name
+(`` eval(!;enlist`t;..) ``, `` value(!;`t;..) ``) or of a list headed by a writer's symbol
+(`` value(`.q.set;`a;1) ``), however it is applied (`value@"a:1"`,
+`(value)"a:1"`, through a trap: `@[value;"a:1";h]`), and a system command other than one that
+reads a setting (`\c`, `\d`, `\P`, `\_`, `\r`, `\E` alone, `\w 0`, `\w 1`) - `\t` and `\ts` are read for their
 expression, except `\t 500`, which sets the timer. It holds for every
 path that sends code: a query (line, selection, block, file, a Run lens, a
 rerun, Preview, a saved query, a watched one, asked once when it starts),
@@ -1073,7 +1081,8 @@ connection kept, when declined; also a result-grid drill-down query, a
 Data Wrangler step, a cell edit, a data file opened in the grid and a CSV
 load statement, a run from the Testing view (each test's definition), and a query to a TorQ
 gateway, read as written - and a `.gw.syncexec` or `.gw.asyncexec` call,
-such as one rerun from the history, is read inside its strings. A guarded
+such as one rerun from the history, is read inside its strings, in brackets
+or applied (`` .gw.syncexec . ("a:1";`rdb) ``). A guarded
 process holds no result for paging, since holding assigns `.qlint.held`;
 **Profile Functions on Process** asks first whatever the query, as it
 replaces the namespace's functions for the run; **Time Lines on Process**
