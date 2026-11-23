@@ -238,6 +238,11 @@ test("Compare Notebook Cells with another notebook, and what it says when there 
   // No notebook.
   await fake.commands["q-lint.diffNotebook"]();
   assert.match(fake.messages.at(-1), /open a q notebook \(\.qnb\) to compare its cells/);
+  // From the Explorer: (the file, the selection) - the selection is asked about, not read (#1336).
+  fake.picks.push("Another q notebook...");
+  fake.opened.push([Uri.file(path.join(dir, "a.qnb"))]);
+  await fake.commands["q-lint.diffNotebook"](Uri.file(path.join(dir, "b.qnb")), [Uri.file(path.join(dir, "b.qnb"))]);
+  assert.match(fake.messages.at(-1), /a\.qnb against b\.qnb: 0 cells changed, 1 added/);
   // Escape at the pick compares nothing.
   const before = fake.diffs.length;
   await fake.commands["q-lint.diffNotebook"](Uri.file(path.join(dir, "a.qnb")));

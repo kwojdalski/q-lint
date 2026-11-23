@@ -62,7 +62,7 @@ export class NotebookDiff implements TextDocumentContentProvider {
   constructor(context: ExtensionContext) {
     this.follow();
     context.subscriptions.push(
-      commands.registerCommand(NOTEBOOK.diffCommand, (source?: unknown, other?: Uri | string) => this.compare(source, other)),
+      commands.registerCommand(NOTEBOOK.diffCommand, (source?: unknown, other?: unknown) => this.compare(source, other)),
       workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration("q-lint.notebook.diff")) {
           this.follow();
@@ -107,7 +107,7 @@ export class NotebookDiff implements TextDocumentContentProvider {
   /// Compare the notebook `source` - the active one when not given - with
   /// `other`: a notebook file, `HEAD` (the file as last committed), or what
   /// the user picks.
-  async compare(source?: unknown, other?: Uri | string): Promise<void> {
+  async compare(source?: unknown, other?: unknown): Promise<void> {
     if (!requireFeature("diff")) {
       return;
     }
@@ -117,7 +117,9 @@ export class NotebookDiff implements TextDocumentContentProvider {
       void window.showInformationMessage("q-lint: open a q notebook (.qnb) to compare its cells.");
       return;
     }
-    let against = other;
+    // From the Explorer, the second argument is the selection, not a
+    // notebook: anything but a Uri or HEAD is asked for (#1336).
+    let against = other instanceof Uri || other === HEAD ? other : undefined;
     if (against === undefined) {
       const picked = await window.showQuickPick(
         [
