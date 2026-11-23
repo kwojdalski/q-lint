@@ -206,6 +206,24 @@ test("elsewhere the column manager shows its script and runs it only after Run",
   assert.ok(q.sent.slice(n).every((m) => m[0] === TABLE_INFO));
 });
 
+test("the column manager runs nothing when the active process changed while Run was asked (#1081)", async (t) => {
+  capture();
+  const { q, live, context } = await setUp(t);
+  const other = await fakeQ(answers);
+  t.after(() => other.close());
+  await context.globalState.update("q-lint.processes", [
+    { label: "hdb", host: "127.0.0.1", port: q.port, tags: [] },
+    { label: "other", host: "127.0.0.1", port: other.port, tags: [] },
+  ]);
+  live.refreshProcesses();
+  await live.connectTo("hdb");
+  stub.picks.push(async () => (await live.connectTo("other"), "Run"));
+  const said = await stub.commands.get(DB_COMMANDS.manageColumn)("trade", { op: "delete", column: "px" });
+  assert.match(said, /hdb is no longer the active process/);
+  assert.ok(!q.sent.some((m) => m[0] === RUN_SCRIPT));
+  assert.ok(!other.sent.some((m) => m[0] === RUN_SCRIPT));
+});
+
 test("a dashboard runs its tiles' read-only queries, keeps a timer only with an interval, and stops when turned off", async (t) => {
   const { panels } = capture();
   const { live, context } = await setUp(t);
@@ -332,4 +350,62 @@ test("the tickerplant log is read in a q of the extension's own, replayed there 
     s.on("error", () => resolve(false));
   });
   assert.strictEqual(up, false);
+});
+
+/// A tickerplant log of two messages, written by a q of the test's own, in a
+/// directory removed after.
+function tpLogFile(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-tplog-test-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const make = path.join(dir, "make.q");
+  fs.writeFileSync(make, ['f:hsym`$"' + path.join(dir, "tp.log") + '";', ".[f;();:;()];", "h:hopen f;", "h enlist(`upd;`t;([]time:enlist 2026.01.05D09:00:00;x:enlist 1));", "h enlist(`upd;`t;([]time:enlist 2026.01.05D10:00:00;x:enlist 2));", "hclose h;", "exit 0;", ""].join("\n"));
+  require("node:child_process").execSync(`${Q} ${make}`, { stdio: "ignore", timeout: 15000 });
+  return path.join(dir, "tp.log");
+}
+
+test("a log opened while another is starting stops the first one's q (#1074)", { skip: Q ? false : "QLINT_TEST_Q names no q binary" }, async (t) => {
+  capture();
+  stub.reset();
+  stub.config.user["terminal.qBinary"] = Q;
+  const context = stub.newContext();
+  const log = new TickerplantLog(context);
+  t.after(() => context.subscriptions.forEach((d) => d.dispose?.()));
+  const file = tpLogFile(t);
+  const cp = require("node:child_process");
+  const spawn = cp.spawn;
+  const children = [];
+  cp.spawn = (...args) => {
+    const child = spawn(...args);
+    children.push({ child, dir: args[2]?.cwd });
+    return child;
+  };
+  t.after(() => (cp.spawn = spawn));
+  const [first, second] = await Promise.all([log.open(file), log.open(file)]);
+  cp.spawn = spawn;
+  assert.strictEqual(first, "superseded");
+  assert.strictEqual(second, "2 messages");
+  assert.strictEqual(children.length, 2);
+  await new Promise((r) => setTimeout(r, 300));
+  assert.notStrictEqual(children[0].child.exitCode ?? children[0].child.signalCode, null);
+  assert.strictEqual(fs.existsSync(children[0].dir), false);
+  assert.strictEqual(children[1].child.exitCode, null);
+  log.close();
+});
+
+test("the tickerplant log's page asks one thing at a time: a click during a page load waits (#1112)", { skip: Q ? false : "QLINT_TEST_Q names no q binary" }, async (t) => {
+  capture();
+  stub.reset();
+  stub.config.user["terminal.qBinary"] = Q;
+  const context = stub.newContext();
+  const log = new TickerplantLog(context);
+  t.after(() => log.close());
+  assert.strictEqual(await log.open(tpLogFile(t)), "2 messages");
+  await Promise.all([
+    log.receive({ type: "page", table: "", from: "", to: "", offset: 0 }),
+    log.receive({ type: "show", index: 1 }),
+    log.receive({ type: "page", table: "t", from: "09:30", to: "", offset: 0 }),
+  ]);
+  assert.deepStrictEqual(log.posted.filter((m) => m.failed), []);
+  assert.deepStrictEqual(log.posted.map((m) => m.type), ["page", "message", "page"]);
+  assert.deepStrictEqual(log.posted.at(-1).rows.map((r) => r.index), [1]);
 });

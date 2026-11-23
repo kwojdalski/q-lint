@@ -11,7 +11,8 @@
 // partitions is looked at through its `.d` and its column files' headers
 // (`type get`, which maps the file and reads none of its data) and counted
 // by its first column's header. Only a full check (`deep`) reads data: the
-// largest index of every symbol column, to find one past its domain's end.
+// largest index of every symbol column, to find one past its own domain's
+// end (#1103), as a float: a long arrives as an object, which reads as none.
 // Works on kdb+ (KDB-X) and PeachQ; held there by dbtools_q.test.js.
 
 export const PARTITION_CHECK = [
@@ -21,14 +22,14 @@ export const PARTITION_CHECK = [
   " fs:((key r)except`$string .Q.pv)except`par.txt;",
   " dom:fs!{@[{$[11h=type v:get x;count v;0N]};x;0N]}each` sv'r,/:fs;dom:(where not null dom)#dom;",
   " one:{[r;deep;t;p] d:.Q.par[r;p;t];k:key d;",
-  "  e:`tbl`part`dir`dotd`cols`missing`types`enums`maxidx`rows!(string t;string p;0b;0b;();();`short$();();0N;0n);",
+  "  e:`tbl`part`dir`dotd`cols`missing`types`enums`maxidx`rows!(string t;string p;0b;0b;();();`short$();();`float$();0n);",
   "  if[(not 11h=abs type k)|0=count k;:e];",
   "  if[-11h=type k;:e];",
   "  if[not`.d in k;:@[e;`dir;:;1b]];",
   "  cs:(),get` sv d,`.d;have:cs where cs in k;",
   "  ty:{[d;c]@[{type get x};` sv d,c;0Nh]}[d]each have;",
   "  en:{[d;c;y]$[y within 20 76h;@[{key get x};` sv d,c;`];`]}[d]'[have;ty];",
-  "  mx:$[deep&any ty within 20 76h;max{[d;c;y]$[y within 20 76h;@[{max\"j\"$get x};` sv d,c;0N];0N]}[d]'[have;ty];0N];",
+  "  mx:\"f\"${[d;deep;c;y]$[deep&y within 20 76h;@[{max\"j\"$get x};` sv d,c;0N];0N]}[d;deep]'[have;ty];",
   "  n:$[count have;@[{\"f\"$count get x};` sv d,first have;0n];0n];",
   "  @[e;`dir`dotd`cols`missing`types`enums`maxidx`rows;:;(1b;1b;string cs;string cs except have;\"h\"$ty;string en;mx;n)]};",
   " rows:raze{[one;r;deep;pt;p]one[r;deep;;p]each pt}[one;r;deep;pt]each pv;",
@@ -48,7 +49,9 @@ export interface PartRow {
   missing: string[];
   types: number[];
   enums: string[];
-  maxIndex: number | null;
+  /// The largest index of each column that has a file, by `columns` less
+  /// `missing`: null for one not enumerated, or in a quick check.
+  maxIndexes: (number | null)[];
   rows: number | null;
 }
 
@@ -75,15 +78,17 @@ export function readPartitions(raw: unknown): PartAnswer {
   const rows = (r.rows ?? {}) as Record<string, unknown>;
   const tbl = strings(rows.tbl);
   const n = tbl.length;
-  const one = (v: unknown) => (n === 1 ? [v] : list(v));
+  // A one-row answer's columns are one-item lists already: only a bare
+  // scalar is wrapped (#1102).
+  const one = (v: unknown) => (n === 1 && !Array.isArray(v) ? [v] : list(v));
   const part = strings(rows.part);
   const cols = each(rows.cols, n);
   const missing = each(rows.missing, n);
-  const types = n === 1 ? [rows.types] : list(rows.types);
+  const types = each(rows.types, n);
   const enums = each(rows.enums, n);
   const dirs = one(rows.dir);
   const dotd = one(rows.dotd);
-  const maxIdx = one(rows.maxidx);
+  const maxIdx = each(rows.maxidx, n);
   const counts = one(rows.rows);
   const names = strings(r.domains);
   const sizes = list(r.domainsizes);
@@ -104,7 +109,7 @@ export function readPartitions(raw: unknown): PartAnswer {
       missing: strings(missing[i]),
       types: list(types[i]).map((t) => (typeof t === "number" ? t : NaN)),
       enums: strings(enums[i]),
-      maxIndex: number(maxIdx[i]),
+      maxIndexes: list(maxIdx[i]).map(number),
       rows: number(counts[i]),
     })),
   };
@@ -192,7 +197,7 @@ export function partitionProblems(a: Extract<PartAnswer, { hdb: true }>): Proble
       }
     }
     // Enumerations: a domain the root has no file for, or an index past its end.
-    const enumCols = (r: PartRow) => r.columns.filter((c) => !r.missing.includes(c)).map((c, i) => ({ c, d: r.enums[i] ?? "", t: r.types[i] })).filter((x) => x.t >= 20 && x.t <= 76);
+    const enumCols = (r: PartRow) => r.columns.filter((c) => !r.missing.includes(c)).map((c, i) => ({ c, d: r.enums[i] ?? "", t: r.types[i], max: r.maxIndexes[i] ?? null })).filter((x) => x.t >= 20 && x.t <= 76);
     const noDomain = new Map<string, string[]>();
     for (const r of good) {
       for (const { c, d } of enumCols(r)) {
@@ -206,15 +211,21 @@ export function partitionProblems(a: Extract<PartAnswer, { hdb: true }>): Proble
       const [c, d] = key.split("|");
       add("enumeration", `${table}.${c} is enumerated against ${d || "an unknown domain"}, which the root has no file for`, parts);
     }
-    const sizeOf = (r: PartRow) => {
-      const ds = enumCols(r).map((x) => a.domains.get(x.d)).filter((n): n is number => typeof n === "number");
-      return ds.length === 0 ? undefined : Math.min(...ds);
-    };
-    add(
-      "enumeration",
-      `${table} has a symbol index past the end of its domain`,
-      good.filter((r) => r.maxIndex !== null && sizeOf(r) !== undefined && r.maxIndex >= sizeOf(r)!).map((r) => r.partition),
-    );
+    // Each column's largest index against its own domain's size.
+    const past = new Map<string, string[]>();
+    for (const r of good) {
+      for (const { c, d, max } of enumCols(r)) {
+        const size = a.domains.get(d);
+        if (max !== null && typeof size === "number" && max >= size) {
+          const key = `${c}|${d}`;
+          past.set(key, [...(past.get(key) ?? []), r.partition]);
+        }
+      }
+    }
+    for (const [key, parts] of past) {
+      const [c, d] = key.split("|");
+      add("enumeration", `${table}.${c} has a symbol index past the end of ${d}`, parts);
+    }
     const counted = good.filter((r) => r.rows !== null);
     const mid = median(counted.map((r) => r.rows!));
     if (counted.length >= 3 && mid > 0) {

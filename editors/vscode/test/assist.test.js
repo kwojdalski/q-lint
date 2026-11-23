@@ -33,6 +33,7 @@ test("what DESCRIBE answered, one name or many", () => {
   ]);
   const two = readDescribed({ name: ["t", "n"], kind: ["table", "weird"], type: [98, 0], count: [null, null], text: ["a b", ""] });
   assert.deepStrictEqual(two.map((d) => d.kind), ["table", "missing"]);
+  assert.deepStrictEqual(readDescribed({ name: "v", kind: "view", type: 0, count: null, text: "" }).map((d) => d.kind), ["view"]);
   assert.throws(() => readDescribed([]), /something other/);
 });
 

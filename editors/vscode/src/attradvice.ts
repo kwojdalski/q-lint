@@ -89,8 +89,10 @@ export function readAttributeSample(raw: unknown): AttributeSample {
 /// a `where` clause, or in a `?[...]` functional select, and name the table.
 export function filterCounts(queries: string[], table: string, columns: string[]): Map<string, number> {
   const out = new Map(columns.map((c) => [c, 0]));
-  const word = (w: string) => new RegExp(`(?<![\\w.\`])${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w])`);
-  const tableWord = word(table.replace(/^\./, ""));
+  const escape = (w: string) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const word = (w: string) => new RegExp(`(?<![\\w.\`])${escape(w)}(?![\\w])`);
+  // A namespaced table is named whole, its leading dot included (#1113).
+  const tableWord = table.startsWith(".") ? new RegExp(`(?<![\\w\`])${escape(table)}(?![\\w.])`) : word(table);
   for (const q of queries) {
     if (!tableWord.test(q)) continue;
     const clauses = [...q.matchAll(/\bwhere\b([^\n]*)/g)].map((m) => m[1]);

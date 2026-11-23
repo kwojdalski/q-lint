@@ -94,6 +94,12 @@ test("DESCRIBE says what each name holds, reading nothing whole", { skip }, asyn
   assert.deepStrictEqual(readDescribed(await c.call(DESCRIBE, "f")).map((x) => x.kind), ["lambda"]);
 });
 
+test("DESCRIBE names a view and does not evaluate it (#1133)", { skip }, async (t) => {
+  const c = await connect(t, "calls:0\nvw::calls+::1\n");
+  assert.deepStrictEqual(readDescribed(await c.call(DESCRIBE, "vw calls")).map((x) => [x.name, x.kind]), [["vw", "view"], ["calls", "variable"]]);
+  assert.strictEqual(String((await c.evaluate("calls")).value), "0");
+});
+
 test("the tables GATHER lists, and one table's schema", { skip }, async (t) => {
   const c = await connect(t, SERVER);
   const { tables, more } = tablesOf(readGathered(await c.call(GATHER, "q Q h j o s z help", LIMITS)));

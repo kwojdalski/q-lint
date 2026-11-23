@@ -37,6 +37,10 @@ test("timings are read, one repeat as atoms, and summed per run", () => {
   assert.deepStrictEqual(a, { expression: "a", min: 1, median: 2, mean: 2, max: 3, space: 80, ratio: 1 });
   assert.strictEqual(b.mean, 0.5);
   assert.strictEqual(b.ratio, 0.25);
+  // A first expression that measures 0 ms gives no ratio, not 1.00x (#1116).
+  const zero = summarise(readTimings([[0, 64], [51, 64]], ["a", "b"]), 10);
+  assert.deepStrictEqual(zero.map((s) => s.ratio), [1, null]);
+  assert.match(benchmarkHtml(zero, "p", 10, 1, "N"), /<td>-<\/td><\/tr>/);
   assert.strictEqual(msText(2), "2.00 ms");
   assert.strictEqual(msText(0.0123), "12.30 µs");
 });

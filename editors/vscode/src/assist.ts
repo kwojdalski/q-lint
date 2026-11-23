@@ -16,8 +16,8 @@ export const QSQL_COMMANDS = { draft: "q-lint.draftQsql" } as const;
 
 /// What each of `nms` (one string, names split by spaces) holds: missing, a
 /// lambda and its text, another function as q prints it, a table and its
-/// columns, or a variable: its type, count and its first ten items as q
-/// prints them. Texts are cut at 300 characters, and nothing is counted or
+/// columns, a view, which is named and not evaluated (#1133), or a
+/// variable: its type, count and its first ten items as q prints them. Texts are cut at 300 characters, and nothing is counted or
 /// read whole: a table's rows are not counted. The value is taken by `get`
 /// straight into a local: PeachQ loads a partitioned table put in a list,
 /// and it would no longer read as partitioned. Works on KDB-X and PeachQ.
@@ -25,6 +25,7 @@ export const DESCRIBE = [
   "{[nms]",
   " n:\" \" vs(),nms;",
   " r:{s:`$x;",
+  "  if[s in views[];:(`view;0h;0n;\"\")];",
   "  if[not @[{get x;1b};s;0b];:(`missing;0h;0n;\"\")];",
   "  v:get s;t:type v;",
   "  $[100h=t;(`lambda;t;0n;last value v);",
@@ -39,14 +40,14 @@ export const DESCRIBE_LIMIT = 20;
 
 export interface Described {
   name: string;
-  kind: "missing" | "lambda" | "function" | "table" | "keyed" | "splayed" | "partitioned" | "variable";
+  kind: "missing" | "lambda" | "function" | "table" | "keyed" | "splayed" | "partitioned" | "variable" | "view";
   type: number;
   count: number | null;
   text: string;
 }
 
 const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : v === undefined || v === null ? [] : [v]);
-const KINDS = new Set(["missing", "lambda", "function", "table", "keyed", "splayed", "partitioned", "variable"]);
+const KINDS = new Set(["missing", "lambda", "function", "table", "keyed", "splayed", "partitioned", "variable", "view"]);
 
 /// What `DESCRIBE` answered. Throws when it is not that.
 export function readDescribed(raw: unknown): Described[] {
@@ -247,6 +248,8 @@ function describedText(d: Described): string {
       return `- \`${d.name}\`: a function defined on the process as:\n${fence(cut(d.text))}`;
     case "function":
       return `- \`${d.name}\`: a function value (type ${d.type}): \`${d.text}\``;
+    case "view":
+      return `- \`${d.name}\`: a view on the process (not evaluated, so its value is not known)`;
     case "variable":
       return `- \`${d.name}\`: a variable of type ${d.type}, count ${d.count ?? "?"}, starting \`${d.text}\``;
     default:

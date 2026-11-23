@@ -68,6 +68,7 @@ export function readSym(raw: unknown): SymAnswer {
   const distinct = numbers(r.cdistinct);
   const parts = strings(r.gpart);
   const sizes = numbers(r.gsize);
+  // Partitions in order by number, so int partitions 8 9 10 grow in that order (#1128).
   return {
     sym: true,
     root,
@@ -76,7 +77,7 @@ export function readSym(raw: unknown): SymAnswer {
     partitions: number(r.partitions) ?? 0,
     sampled: number(r.sampled) ?? 0,
     columns: tables.map((table, i) => ({ table, column: cols[i] ?? "", distinct: distinct[i] ?? 0 })).sort((a, b) => b.distinct - a.distinct),
-    growth: parts.map((partition, i) => ({ partition, size: sizes[i] ?? 0 })).sort((a, b) => (a.partition < b.partition ? -1 : 1)),
+    growth: parts.map((partition, i) => ({ partition, size: sizes[i] ?? 0 })).sort((a, b) => a.partition.localeCompare(b.partition, "en", { numeric: true })),
   };
 }
 
