@@ -251,7 +251,7 @@ test("test data: pools, ranges, a q generator per type, and CSV that sorts and r
   assert.strictEqual(generator("f", o), "10+n?10f");
   const info = { kind: "keyed", rows: 0, bytes: null, partitions: null, keys: ["k"], ncols: 3, columns: [{ name: "k", type: "s", fkey: "", attr: "" }, { name: "px", type: "f", fkey: "", attr: "" }, { name: "t", type: "p", fkey: "", attr: "" }] };
   const q = testDataQ(info, "gen", o);
-  assert.match(q, /\\S 3\nn:20\ngen:`k xkey \(\[\] k:n\?enlist`A; px:asc 10\+n\?10f; t:2026\.01\.02D\+n\?1D\)/);
+  assert.match(q, /\\S 3\nn:20\ngen:`k xkey \{x where\(til count x\)=k\?k:\(\(\),y\)#x\}\[\(\[\] k:n\?enlist`A; px:asc 10\+n\?10f; t:2026\.01\.02D\+n\?1D\);`k\]/);
   assert.match(q, /\ndelete n from `\.\n/);
   // A table named n is not deleted by the script's own clean-up (#1084).
   assert.doesNotMatch(testDataQ(info, "n", o), /delete n from/);
@@ -347,4 +347,47 @@ test("a chart is drawn from CSV and JSON tables, and the command line writes it"
   assert.strictEqual(await main([path.join(dir, "missing.csv"), "-o", out], io), 1);
   assert.strictEqual(await main(["-", "--json", "-o", out], { ...io, stdin: () => '[{"a":1,"b":2}]' }), 0);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("the tickerplant log page forgets the last log's messages, pick and range when another log comes (#1258)", () => {
+  const vm = require("node:vm");
+  const fsm = require("node:fs");
+  const pathm = require("node:path");
+  const { Element } = require("./pagedom.js");
+  // The page builds with appendChild, and empties an element by its text.
+  class PageElement extends Element {
+    appendChild(n) {
+      this.append(n);
+      return n;
+    }
+    get textContent() {
+      return this.text ?? "";
+    }
+    set textContent(t) {
+      this.text = t;
+      this.children = [];
+    }
+  }
+  const body = new PageElement("body");
+  const listeners = [];
+  const sandbox = {
+    document: { body, createElement: (t) => new PageElement(t) },
+    window: { addEventListener: (type, f) => type === "message" && listeners.push(f) },
+    acquireVsCodeApi: () => ({ postMessage: () => {} }),
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(fsm.readFileSync(pathm.join(__dirname, "..", "media", "tplog.js"), "utf8"), sandbox);
+  const send = (data) => listeners.forEach((f) => f({ data }));
+  const cells = () => body.all((e) => e.tagName === "TD").map((e) => e.textContent);
+  const inputs = () => body.all((e) => e.tagName === "INPUT").map((e) => e.value ?? "");
+  send({ type: "log", log: { file: "a.log", count: 3, complete: true, tables: ["t"] }, port: 1 });
+  send({ type: "page", offset: 0, size: 200, total: 3, rows: [0, 1, 2].map((i) => ({ index: i, fn: "upd", table: "t", rows: 1, time: "" })) });
+  body.all((e) => e.tagName === "TR")[2].fire("click");
+  body.all((e) => e.tagName === "INPUT")[0].value = "09:00";
+  send({ type: "message", index: 1, text: "old" });
+  assert.ok(cells().includes("2"));
+  send({ type: "log", log: { file: "b.log", count: 1, complete: true, tables: ["u"] }, port: 2 });
+  assert.deepStrictEqual(cells(), []);
+  assert.deepStrictEqual(inputs(), ["", "", "", ""]);
+  assert.strictEqual(body.all((e) => e.tagName === "PRE")[0].textContent, "");
 });
