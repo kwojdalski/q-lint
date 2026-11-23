@@ -2,8 +2,8 @@
 // a q error means, what usually causes it and - from the backtrace q sent
 // with it - the operation that failed, from the catalogue in
 // `errorexplain.ts`. It explains, in order: an error handed to it (a
-// string), the last query from the editor that failed, the selected text,
-// or one typed in. A diagnostic in the Problems view whose message names a
+// string), the selected text, the last query from the editor when it
+// failed, or one typed in. A diagnostic in the Problems view whose message names a
 // q error (`'type`, `'length`, ...) gets a Quick Fix that explains it.
 // Nothing is sent anywhere. Off (q-lint.errorExplain.enable), the command
 // refuses and the Quick Fix provider is disposed.
@@ -14,7 +14,7 @@ import type { Live } from "./live";
 
 const on = (): boolean => languageOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "errorExplain");
 
-export function registerErrorExplainer(context: ExtensionContext, live: Pick<Live, "lastFailure">): { registered: () => boolean } {
+export function registerErrorExplainer(context: ExtensionContext, live: Pick<Live, "lastFailure" | "history">): { registered: () => boolean } {
   let provider: Disposable | undefined;
   const sync = (): void => {
     if (on() && provider === undefined) {
@@ -49,14 +49,21 @@ export function registerErrorExplainer(context: ExtensionContext, live: Pick<Liv
       }
       let error: string | undefined;
       let trace: string | undefined;
+      const editor = window.activeTextEditor;
+      const selected = editor && !editor.selection.isEmpty ? editor.document.getText(editor.selection) : "";
+      // The failure only while it is the last query run: one that answered
+      // since has made it old news (#1231).
+      const failure = live.lastFailure;
+      const latest = live.history()[0];
+      const current = failure !== undefined && latest?.outcome === "error" && latest.code === failure.code && latest.process === failure.process;
       if (typeof given === "string" && given.trim() !== "") {
         error = given;
-      } else if (live.lastFailure !== undefined) {
-        ({ error, trace } = live.lastFailure);
+      } else if (selected.trim() !== "") {
+        error = selected;
+      } else if (current) {
+        ({ error, trace } = failure);
       } else {
-        const editor = window.activeTextEditor;
-        const selected = editor && !editor.selection.isEmpty ? editor.document.getText(editor.selection) : "";
-        error = selected.trim() !== "" ? selected : await window.showInputBox({ prompt: "The q error to explain", placeHolder: "'type" });
+        error = await window.showInputBox({ prompt: "The q error to explain", placeHolder: "'type" });
       }
       if (error === undefined || error.trim() === "") {
         return undefined;

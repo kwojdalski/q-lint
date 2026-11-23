@@ -48,12 +48,30 @@ test("a line whose brackets close, a comment and a trailing comment's bracket ke
   assert.ok(!OPENS.test("f:{x}"));
 });
 
+test("a string or brackets nested and closed on the line leave an open one open (#1226)", () => {
+  for (const line of [
+    'f:{[x] -1 "start";',
+    "f:{a[b[1]]",
+    "f:{x:(1;(2;3));",
+    'f:{-1 "(";',
+    'f:{s:"a\\"b";',
+    "f:{g[{x}[1];(2;[3])]",
+  ]) {
+    assert.strictEqual(enter(line), "indent", line);
+  }
+  for (const line of ['f:{[x] -1 "start"}', "f:{a[b[1]]}", "f:{x:(1;(2;3))}", 'x:"{"', 'x:"a\\"("']) {
+    assert.notStrictEqual(enter(line), "indent", line);
+  }
+});
+
 test("the patterns are linear: a long line is answered at once", () => {
   const line = `f:{${"a[b;c](d)".repeat(5000)}`;
   const start = Date.now();
   assert.strictEqual(enter(line), "indent");
   assert.strictEqual(enter(`${line}}`), undefined);
   assert.strictEqual(enter(`x:1 / ${"(".repeat(20000)}`), undefined);
+  // An unclosed string after many brackets is read once per bracket.
+  assert.strictEqual(enter(`x:"${'(\\"'.repeat(5000)}`), undefined);
   assert.ok(Date.now() - start < 1000, `${Date.now() - start} ms`);
 });
 

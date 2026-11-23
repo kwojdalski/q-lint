@@ -121,6 +121,21 @@ test("opening a link shows the query bound to the process and runs nothing when 
   assert.strictEqual(ran, 1);
 });
 
+test("a link run with {{placeholders}} asks for them and sends the query filled in (#1225)", async (t) => {
+  const { live, links } = await setUp(t, [{ label: "rdb", host: "h", port: 1, tags: [] }]);
+  const sent = [];
+  live.queryCode = async (code) => void sent.push(code);
+  stub.picks.push("Run");
+  stub.inputs.push("`AAPL");
+  assert.strictEqual(await links.open(asUri(queryLink("vscode", "wojdalski.q-lint", "rdb", "select from t where sym={{s}}").link)), true);
+  assert.deepStrictEqual(sent, ["select from t where sym=`AAPL"]);
+  // Escape at the placeholder sends nothing.
+  stub.picks.push("Run");
+  stub.inputs.push(undefined);
+  await links.open(asUri(queryLink("vscode", "wojdalski.q-lint", "rdb", "select from t where sym={{s}}").link));
+  assert.deepStrictEqual(sent, ["select from t where sym=`AAPL"]);
+});
+
 // Copy offers discovered processes, but open accepted saved labels only:
 // a link to desk/rdb was refused even on the machine that made it.
 test("a link to a discovered process opens bound to it (#1125)", async (t) => {

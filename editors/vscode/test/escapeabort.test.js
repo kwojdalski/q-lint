@@ -48,6 +48,11 @@ test("Escape is bound to Abort in a q editor only while a query runs and the swi
   for (const clause of ["!suggestWidgetVisible", "!parameterHintsVisible", "!inSnippetMode", "!findWidgetVisible", "!editorHasSelection", "!notebookEditorFocused"]) {
     assert.ok(when.includes(clause), clause);
   }
+  // And what it closes outside the text: a notification, the dirty diff, a
+  // breakpoint's widget, a message, accessibility help, a rename (#1229).
+  for (const clause of ["!notificationToastsVisible", "!notificationCenterVisible", "!dirtyDiffVisible", "!breakpointWidgetVisible", "!messageVisible", "!accessibilityHelpWidgetVisible", "!renameInputVisible"]) {
+    assert.ok(when.includes(clause), clause);
+  }
   const props = Object.assign({}, ...pkg.contributes.configuration.map((c) => c.properties));
   assert.strictEqual(props["q-lint.query.escapeAborts.enable"].default, true);
 });

@@ -132,6 +132,30 @@ test("a q error is explained from the catalogue, with the operation that failed"
   }
 });
 
+test("Explain q Error prefers the selection, and forgets a failure once a later query answers (#1231)", async () => {
+  const { context, restore } = setUp();
+  vscode.languages.registerCodeActionsProvider = () => ({ dispose() {} });
+  const history = [{ process: "p", code: "1+`a", outcome: "error" }];
+  const live = { lastFailure: { process: "p", code: "1+`a", error: "type", trace: "" }, history: () => history };
+  try {
+    stub.config.user["errorExplain.enable"] = true;
+    registerErrorExplainer(context, live);
+    const explain = () => stub.commands.get(LANGUAGE_COMMANDS.explainError)();
+    assert.match(await explain(), /'type/);
+    // A selection wins over the failure.
+    vscode.window.activeTextEditor = { selection: { isEmpty: false }, document: { getText: () => "'length" } };
+    assert.match(await explain(), /'length/);
+    vscode.window.activeTextEditor = undefined;
+    // A query that answered since: the failure is not explained, the box asks.
+    history.unshift({ process: "p", code: "1+1", outcome: "ok" });
+    stub.inputs.push("'rank");
+    assert.match(await explain(), /'rank/);
+  } finally {
+    vscode.window.activeTextEditor = undefined;
+    restore();
+  }
+});
+
 test("an error named after an Object.prototype member is an undefined name, not a crash (#1078)", () => {
   for (const name of ["constructor", "toString", "valueOf", "hasOwnProperty"]) {
     assert.match(explainError(`'${name}`), new RegExp(`\`${name}\` is not defined where it was read`), name);
@@ -144,7 +168,8 @@ test("Explain q Error refuses when off, and explains the last failure or the one
   const providers = [];
   vscode.languages.registerCodeActionsProvider = (_sel, provider) => (providers.push(provider), { dispose: () => providers.splice(providers.indexOf(provider), 1) });
   try {
-    const live = { lastFailure: { process: "p", code: "1+`a", error: "type", trace: "" } };
+    const history = [{ process: "p", code: "1+`a", outcome: "error" }];
+    const live = { lastFailure: { process: "p", code: "1+`a", error: "type", trace: "" }, history: () => history };
     stub.config.user["errorExplain.enable"] = false;
     const api = registerErrorExplainer(context, live);
     assert.strictEqual(api.registered(), false);
@@ -363,6 +388,37 @@ test("affected tests queued on save are not run once the setting is turned off (
     assert.deepStrictEqual(runs, []);
     assert.strictEqual(sent.length, 1, "the queued save asks nothing");
   } finally {
+    restore();
+  }
+});
+
+test("in a workspace that is not trusted a save runs no affected test (#1228)", async () => {
+  const { context, restore } = setUp();
+  const saves = [];
+  const trusted = vscode.workspace.isTrusted;
+  vscode.workspace.onDidSaveTextDocument = (l) => (saves.push(l), { dispose: () => saves.splice(saves.indexOf(l), 1) });
+  vscode.workspace.onDidOpenTextDocument = () => ({ dispose() {} });
+  vscode.workspace.onDidCloseTextDocument = () => ({ dispose() {} });
+  vscode.workspace.textDocuments = [];
+  try {
+    const sent = [];
+    const runs = [];
+    const server = { sendRequest: async () => (sent.push(1), { tests: [{ uri: "file:///t.q", name: "test_a" }] }) };
+    const tests = { discover: async () => {}, items: () => ["file:///t.q#test_a"], run: async (ids) => void runs.push(ids) };
+    stub.config.user["testing.runAffectedOnSave.enable"] = true;
+    const api = registerAffectedOnSave(context, () => server, tests);
+    const doc = { languageId: "q", uri: { scheme: "file", fsPath: "/w/lib.q", toString: () => "file:///w/lib.q" }, getText: () => "f:{x+1}\n" };
+    vscode.workspace.isTrusted = false;
+    saves[0](doc);
+    await api.settled();
+    assert.deepStrictEqual([sent, runs], [[], []]);
+    // Trusted later: the next save runs them.
+    vscode.workspace.isTrusted = true;
+    saves[0](doc);
+    await api.settled();
+    assert.deepStrictEqual(runs, [["file:///t.q#test_a"]]);
+  } finally {
+    vscode.workspace.isTrusted = trusted;
     restore();
   }
 });
