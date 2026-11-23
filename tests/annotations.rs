@@ -1191,6 +1191,72 @@ fn the_tests_reaching_the_functions_a_save_changed_are_listed() {
     assert_eq!(reply["result"]["tests"], json!([]), "{reply}");
 }
 
+/// `q-lint/testsReaching` for `name`, saved as `now` over `previous`: the
+/// changed names and the tests reached, sorted.
+fn reaching(
+    server: &mut Server,
+    dir: &Path,
+    name: &str,
+    previous: &str,
+    now: &str,
+) -> (Value, Vec<String>) {
+    let uri = server.open(dir, name, now);
+    let reply = server.request(
+        "q-lint/testsReaching",
+        json!({"textDocument": {"uri": uri}, "previous": previous}),
+    );
+    let mut tests: Vec<String> = reply["result"]["tests"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a list of tests, not {reply}"))
+        .iter()
+        .map(|t| t["name"].as_str().unwrap().to_string())
+        .collect();
+    tests.sort();
+    (reply["result"]["changed"].clone(), tests)
+}
+
+#[test]
+fn a_function_gone_or_redefined_later_reaches_its_tests() {
+    // Only the first statement of each name in the saved text was compared,
+    // so a function deleted, made a value, or changed in a later definition
+    // of two - the one q keeps - ran no test (#1359).
+    let dir = tempfile::tempdir().unwrap();
+    let gone = "gone:{x}\nuse_gone:{gone x}\n";
+    let value = "value_now:{x}\nuse_value:{value_now x}\n";
+    let twice = "twice:{x}\ntwice:{x+1}\nuse_twice:{twice x}\n";
+    let files = [
+        ("gone.q", gone),
+        ("value.q", value),
+        ("twice.q", twice),
+        (
+            "test_lib.q",
+            "test_gone:{use_gone 1}\ntest_value:{use_value 1}\ntest_twice:{use_twice 1}\n",
+        ),
+    ];
+    let (mut server, _) = Server::over(dir.path(), &files, client(), Value::Null);
+    let d = dir.path();
+    let (changed, tests) = reaching(&mut server, d, "gone.q", gone, "use_gone:{gone x}\n");
+    assert_eq!(
+        (changed, tests),
+        (json!(["gone"]), vec!["test_gone".into()])
+    );
+    let now = "value_now:1\nuse_value:{value_now x}\n";
+    let (changed, tests) = reaching(&mut server, d, "value.q", value, now);
+    assert_eq!(
+        (changed, tests),
+        (json!(["value_now"]), vec!["test_value".into()])
+    );
+    let now = "twice:{x}\ntwice:{x+2}\nuse_twice:{twice x}\n";
+    let (changed, tests) = reaching(&mut server, d, "twice.q", twice, now);
+    assert_eq!(
+        (changed, tests),
+        (json!(["twice"]), vec!["test_twice".into()])
+    );
+    // Two definitions unchanged are no change.
+    let (changed, tests) = reaching(&mut server, d, "twice.q", now, now);
+    assert_eq!((changed, tests), (json!([]), vec![]));
+}
+
 /// The edits a `workspace/willRenameFiles` reply makes, as
 /// `(file under dir, line, start, end, new text)`, in order.
 fn renamed(reply: &Value, dir: &Path) -> Vec<(String, u64, u64, u64, String)> {

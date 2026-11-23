@@ -25,7 +25,7 @@ use super::navigate::{Sources, range};
 use super::{Lines, file_key, path_of};
 use q_lint_rs::mentions;
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 pub(super) fn announce(capabilities: &mut Value) {
     for method in [
@@ -203,16 +203,18 @@ fn dead_code(params: &Value, sources: &Sources) -> Value {
     json!({"functions": out, "dynamic": dynamic})
 }
 
-/// Each top-level function a text defines, by name, with its statement.
-fn statements(text: &str) -> BTreeMap<String, String> {
-    let mut out = BTreeMap::new();
+/// Each top-level function a text defines, by name, with its statements in
+/// order: every one, since q keeps the last of two (#1359).
+fn statements(text: &str) -> BTreeMap<String, Vec<String>> {
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for m in &mentions(text) {
         if let Some(d) = &m.definition
             && d.function
             && m.at == d.start
         {
             out.entry(m.name.clone())
-                .or_insert_with(|| text[d.start..d.end].trim_end().to_string());
+                .or_default()
+                .push(text[d.start..d.end].trim_end().to_string());
         }
     }
     out
@@ -220,18 +222,23 @@ fn statements(text: &str) -> BTreeMap<String, String> {
 
 /// `q-lint/testsReaching`: given `textDocument` and the `previous` text the
 /// client saw of it, `{changed: [names], tests: [{uri, name}]}` - the
-/// functions whose statements differ or are new, and every test that
-/// reaches one of them, the changed tests themselves included.
+/// functions whose statements differ, are new or are gone, and every test
+/// that reaches one of them, the changed tests themselves included.
 fn tests_reaching(params: &Value, sources: &Sources) -> Value {
     let Some((_, now)) = sources.document(params) else {
         return Value::Null;
     };
     let previous = params["previous"].as_str().unwrap_or("");
-    let before = statements(previous);
-    let changed: Vec<String> = statements(now)
+    let (before, after) = (statements(previous), statements(now));
+    // One deleted, or made a value, is in `before` alone, and what called
+    // it now fails.
+    let changed: Vec<String> = before
+        .keys()
+        .chain(after.keys())
+        .filter(|&name| before.get(name) != after.get(name))
+        .collect::<BTreeSet<_>>()
         .into_iter()
-        .filter(|(name, text)| before.get(name) != Some(text))
-        .map(|(name, _)| name)
+        .cloned()
         .collect();
     // Who names whom: each name read inside a top-level function's
     // statement is an edge from that function to it, the name as q
