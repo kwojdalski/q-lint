@@ -177,6 +177,9 @@ test("the sym report warns above the threshold and lists columns and growth", ()
 test("the attribute advisor counts filters and suggests by shape, never for an unfiltered column", () => {
   const queries = ["select from trade where sym=`a", "select from trade where sym in `a`b, px>1", "?[trade;enlist(=;`id;1);0b;()]", "select from quote where sym=`a"];
   assert.deepStrictEqual(Object.fromEntries(filterCounts(queries, "trade", ["sym", "px", "id", "sz"])), { sym: 2, px: 1, id: 1, sz: 0 });
+  // A namespaced table is matched by its whole name, and not by its last part (#1113).
+  assert.deepStrictEqual(Object.fromEntries(filterCounts(["select from .ns.t where sym=`a", "select from t where px>1"], ".ns.t", ["sym", "px"])), { sym: 1, px: 0 });
+  assert.deepStrictEqual(Object.fromEntries(filterCounts(["select from .ns.t where sym=`a"], "t", ["sym"])), { sym: 0 });
   const s = readAttributeSample({
     kind: "table",
     rows: 1000,
