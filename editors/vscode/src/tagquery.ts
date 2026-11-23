@@ -13,7 +13,7 @@
 // by are worked out again here over all the rows: each process's own say
 // nothing of another's.
 import { qualified, type Discovered } from "./discovery";
-import { denseRank, sortText, type GridAnswer, type GridPayload } from "./grid";
+import { denseRank, sortKey, sortText, type GridAnswer, type GridPayload } from "./grid";
 import type { Process } from "./processes";
 
 export const TAG_QUERY = {
@@ -68,12 +68,11 @@ const ORDERED = new Set([5, 6, 7, 8, 9, 12, 13, 14, 15, 16, 17, 18, 19]);
 
 /// Each value's place among the column's distinct values, ascending, equal
 /// values sharing one: by number where every value has one (null first,
-/// then -0W to 0W, as q sorts), else by text, a string item by its
-/// characters.
+/// then -0W to 0W, as q sorts; a long or timestamp exactly, as `grid.ts`'s
+/// paging does), else by text, a string item by its characters.
 function ranks(type: number, cells: string[], raw: unknown[]): number[] {
   const numeric = ORDERED.has(type) && raw.length === cells.length;
-  const key = (x: unknown): number => (x === null || x === undefined ? -Infinity : x === -Infinity ? -Number.MAX_VALUE : x === Infinity ? Number.MAX_VALUE : Number(x));
-  const keys: (number | string)[] = numeric ? raw.map(key) : cells.map(sortText);
+  const keys: (number | bigint | string)[] = numeric ? raw.map(sortKey) : cells.map(sortText);
   return denseRank(cells.length, (a, b) => (keys[a] < keys[b] ? -1 : keys[a] > keys[b] ? 1 : 0));
 }
 

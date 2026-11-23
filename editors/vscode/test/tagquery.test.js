@@ -120,3 +120,10 @@ test("a one-character string ranks by its text, not its leading comma (#1126)", 
   assert.deepStrictEqual(merged.rank[1], [0, 2, 1]);
 });
 
+test("timestamps and longs nanoseconds apart rank apart, exactly (#1127)", () => {
+  const merged = mergeOutcomes([
+    { process: "a", answer: ok(grid({ t: [12, ["2026.01.01D00:00:00.000000050"], ["820540800000000050"]] })) },
+    { process: "b", answer: ok(grid({ t: [12, ["2026.01.01D00:00:00.000000000"], ["820540800000000000"]] })) },
+  ]);
+  assert.deepStrictEqual(merged.rank[1], [1, 0]);
+});
