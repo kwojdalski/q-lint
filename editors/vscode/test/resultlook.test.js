@@ -227,15 +227,36 @@ test("the Excel export writes each rule as Excel's own conditional formatting, t
   ];
   const files = unzip(exportResult("xlsx", PAYLOAD, -1, undefined, rules).data);
   const sheet = files["xl/worksheets/sheet1.xml"];
-  assert.match(sheet, /<\/sheetData><conditionalFormatting sqref="B2:B4"><cfRule type="cellIs" dxfId="0" priority="5" operator="greaterThan"><formula>4<\/formula><\/cfRule><\/conditionalFormatting>/);
+  // An empty cell is no number: Excel would take it for 0 (#1266).
+  assert.match(sheet, /<\/sheetData><conditionalFormatting sqref="B2:B4"><cfRule type="expression" dxfId="0" priority="5"><formula>AND\(ISNUMBER\(B2\),B2&gt;4\)<\/formula><\/cfRule><\/conditionalFormatting>/);
   assert.match(sheet, /<cfRule type="top10" dxfId="1" priority="4" rank="1" bottom="1"\/>/);
-  assert.match(sheet, /<conditionalFormatting sqref="A2:A4"><cfRule type="containsText" dxfId="2" priority="3" operator="containsText" text="b&quot;&lt;"><formula>NOT\(ISERROR\(SEARCH\(&quot;b&quot;&quot;&lt;&quot;,A2\)\)\)<\/formula>/);
+  // contains: in any case, with no wildcards, never an empty cell (#1266).
+  assert.match(sheet, /<conditionalFormatting sqref="A2:A4"><cfRule type="expression" dxfId="2" priority="3"><formula>AND\(LEN\(A2\)&gt;0,ISNUMBER\(FIND\(LOWER\(&quot;b&quot;&quot;&lt;&quot;\),LOWER\(A2\)\)\)\)<\/formula>/);
   assert.strictEqual((sheet.match(/<conditionalFormatting /g) || []).length, 3, "a comparison of numbers on text, and a missing column, are left out");
   assert.match(files["xl/styles.xml"], /<dxfs count="3"><dxf><fill><patternFill patternType="solid"><bgColor rgb="FFF14C4C"\/><\/patternFill><\/fill><\/dxf><dxf><font><b\/><color rgb="FF89D185"\/><\/font><\/dxf>/);
   assert.match(files["xl/styles.xml"], /<\/cellStyles><dxfs /, "dxfs come after cellStyles, as the schema orders them");
   // With no rules, the workbook is as before.
   const plain = unzip(exportResult("xlsx", PAYLOAD, -1).data);
   assert.ok(!/conditionalFormatting|dxfs/.test(plain["xl/worksheets/sheet1.xml"] + plain["xl/styles.xml"]));
+});
+
+test("Excel's conditional formats match the cells the grid's rules do (#1266)", () => {
+  const { xlsxRules } = require("../out/resultlook.js");
+  const letter = (i) => "ABCD"[i];
+  const rule = (column, op, value) => ({ column, op, value, style: { bold: true } });
+  const out = xlsxRules(
+    [rule("s", "=", "Ab"), rule("s", "<>", "Ab"), rule("d", "=", "2024.01.02"), rule("d", "contains", "2024"), rule("n", "contains", "1"), rule("n", "<", "x"), rule("n", "<", 5)],
+    ["s", "d", "n"],
+    [false, false, true],
+    letter,
+    4,
+    [true, false, false],
+  ).formatting;
+  assert.deepStrictEqual(out.map((f) => /<formula>(.*)<\/formula>/.exec(f)[1]), [
+    "AND(LEN(A2)&gt;0,EXACT(A2,&quot;Ab&quot;))",
+    "AND(LEN(A2)&gt;0,NOT(EXACT(A2,&quot;Ab&quot;)))",
+    "AND(ISNUMBER(C2),C2&lt;5)",
+  ]);
 });
 
 test("the HTML export is one escaped table, the cells a rule matches styled as the grid styles them (#1013)", () => {
