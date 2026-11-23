@@ -409,3 +409,35 @@ test("the tickerplant log's page asks one thing at a time: a click during a page
   assert.deepStrictEqual(log.posted.map((m) => m.type), ["page", "message", "page"]);
   assert.deepStrictEqual(log.posted.at(-1).rows.map((r) => r.index), [1]);
 });
+
+test("Load Schema loads a q file whose path has a space, and the local q keeps its own directory (#1257)", { skip: Q ? false : "QLINT_TEST_Q names no q binary" }, async (t) => {
+  capture();
+  stub.reset();
+  stub.config.user["terminal.qBinary"] = Q;
+  const context = stub.newContext();
+  const log = new TickerplantLog(context);
+  t.after(() => log.close());
+  const file = tpLogFile(t);
+  assert.strictEqual(await log.open(file), "2 messages");
+  const spaced = path.join(path.dirname(file), "sch ema");
+  fs.mkdirSync(spaced);
+  fs.writeFileSync(path.join(spaced, "part.q"), "u:([]time:`timestamp$();x:`long$())\n");
+  fs.writeFileSync(path.join(spaced, "schema.q"), "\\l part.q\nt:u\n");
+  fs.writeFileSync(path.join(spaced, "my schema.q"), "t:([]time:`timestamp$();x:`long$();y:`float$())\n");
+  const dialog = vscode.window.showOpenDialog;
+  t.after(() => (vscode.window.showOpenDialog = dialog));
+  // A schema that loads another file by a path relative to its own.
+  vscode.window.showOpenDialog = async () => [vscode.Uri.file(path.join(spaced, "schema.q"))];
+  await log.receive({ type: "schema" });
+  assert.deepStrictEqual(log.posted.at(-1), { type: "status", text: "Loaded schema.q into the local q." });
+  stub.picks.push("Replay");
+  assert.match(await log.replay(0, 1), /Replayed 2 messages\. .* holds t 2 rows, u 0 rows/);
+  // A file name with a space in it.
+  vscode.window.showOpenDialog = async () => [vscode.Uri.file(path.join(spaced, "my schema.q"))];
+  await log.receive({ type: "schema" });
+  assert.deepStrictEqual(log.posted.at(-1), { type: "status", text: "Loaded my schema.q into the local q." });
+  // The local q still reads a cut log in its own directory.
+  const b = fs.readFileSync(file);
+  fs.writeFileSync(path.join(path.dirname(file), "cut.log"), b.subarray(0, b.length - 4));
+  assert.strictEqual(await log.open(path.join(path.dirname(file), "cut.log")), "1 messages");
+});

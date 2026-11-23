@@ -48,6 +48,10 @@ export const TPLOG_INIT = [
   " r:{@[{value x;`ok};x;{`$x}]}each .qlint.tp.m ix;",
   " e:r where not r=`ok;",
   " `replayed`failed`errors`tables`rows!(\"f\"$count ix;\"f\"$count e;string 5 sublist distinct e;string tables`.;\"f\"${count get x}each tables`.)}",
+  // `\l` refuses a path with a space in it ('nyi, KDB-X), so a schema is
+  // loaded by its name from its own directory - where its own relative
+  // `\l`s look too - and the local q goes back to its directory after.
+  ".qlint.tp.schema:{[d;f] c:system\"cd\";system\"cd \",d;r:@[{system\"l \",x;};f;{x}];system\"cd \",c;if[10h=type r;'r];}",
 ].join("\n");
 
 export interface TpLog {

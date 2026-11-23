@@ -13,7 +13,7 @@
 // off (q-lint.tickerplantLog.enable).
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -236,7 +236,14 @@ export class TickerplantLog {
         case "schema": {
           const file = (await window.showOpenDialog({ canSelectMany: false, filters: { q: ["q", "k"] }, title: "Load which q file into the local q first?" }))?.[0];
           if (file === undefined || this.local !== local) return;
-          await this.call(local, "{system\"l \",x}", file.fsPath);
+          // A name with a space in it cannot be `\l`ed even from its own
+          // directory: a copy of it under a plain name in the local q's is.
+          let [dir, name] = [path.dirname(file.fsPath), path.basename(file.fsPath)];
+          if (/\s/.test(name)) {
+            copyFileSync(file.fsPath, path.join(local.dir, "qlint_schema.q"));
+            [dir, name] = [local.dir, "qlint_schema.q"];
+          }
+          await this.call(local, ".qlint.tp.schema", dir, name);
           await this.post({ type: "status", text: `Loaded ${path.basename(file.fsPath)} into the local q.` });
           break;
         }
