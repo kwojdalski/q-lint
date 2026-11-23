@@ -367,6 +367,27 @@ test("affected tests queued on save are not run once the setting is turned off (
   }
 });
 
+test("overlapping reads of the q Namespaces view keep the latest, whichever answers last (#1120)", async () => {
+  const def = (name) => ({ name, namespace: ".", kind: "variable", uri: "file:///a.q", range: { start: { line: 0, character: 0 } } });
+  const { context, restore } = setUp();
+  try {
+    const pending = [];
+    const server = { sendRequest: () => new Promise((resolve) => pending.push(resolve)) };
+    stub.config.user["namespaceTree.enable"] = true;
+    const api = registerNamespaces(context, () => server);
+    const older = api.refresh();
+    const newer = api.refresh();
+    // The newer read answers first; the older one, answering after, is stale.
+    pending.at(-1)([def("fresh")]);
+    await newer;
+    pending.at(-2)([def("stale")]);
+    await older;
+    assert.deepStrictEqual(api.groups()[0][1].map((d) => d.name), ["fresh"]);
+  } finally {
+    restore();
+  }
+});
+
 test("SQL is sent to .s.e with its comments dropped, and a write is recognised", () => {
   assert.strictEqual(sqlQuery("select sym, px -- the price\nfrom t\nwhere px > 1;"), '.s.e "select sym, px from t where px > 1"');
   assert.strictEqual(sqlQuery("select 'a--b' as s from t"), `.s.e "select 'a--b' as s from t"`);
