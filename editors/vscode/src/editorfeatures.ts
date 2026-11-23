@@ -1,9 +1,10 @@
 // The switches for the editor features that work with a q process or add to
 // the editor's lists (#939, #940, #944, #945, #996, #997), and the test and
-// debugging tools built on them (#979-#985): each has its own `enable`
-// setting. Free of any `vscode` import, so node tests it. A feature turned
-// off has its commands hidden (package.json's `when`) and refusing, its
-// providers and listeners unregistered, and sends nothing.
+// debugging tools built on them (#979-#985), and the q editor's own
+// behaviour (#1161): each has its own `enable` setting. Free of any `vscode`
+// import, so node tests it. A feature turned off has its commands hidden
+// (package.json's `when`) and refusing, its providers and listeners
+// unregistered, and sends nothing.
 //
 // The live value hover, the undefined-name check and the process names in
 // symbol search are off unless asked for: each would ask the connected
@@ -30,6 +31,7 @@ export const EDITOR_SETTINGS = {
   localsAtError: { key: "localsAtError.enable", fallback: true, name: "Capture Locals at Last Error" },
   argumentSlot: { key: "argumentSlot.enable", fallback: true, name: "The argument slot highlight" },
   processSymbols: { key: "processSymbols.enable", fallback: false, name: "Process names in workspace symbol search" },
+  continuationIndent: { key: "editor.continuationIndent.enable", fallback: true, name: "The continuation indent on Enter" },
 } as const;
 
 export type EditorFeature = keyof typeof EDITOR_SETTINGS;

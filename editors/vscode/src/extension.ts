@@ -69,6 +69,7 @@ import { registerLogpoints } from "./logpointview";
 import { registerLocalsAtError } from "./localsview";
 import { SHOW_REFERENCES, lensTarget } from "./editorassist";
 import { registerArgumentSlot, registerProcessSymbols } from "./editorassistview";
+import { registerEditing } from "./editingview";
 import { registerLineTimings } from "./linetimingsview";
 import { registerFunctionProfile } from "./profileview";
 import { registerFormatChanged } from "./formatchangedview";
@@ -186,6 +187,7 @@ export async function activate(
     argumentSlot: ReturnType<typeof registerArgumentSlot>;
     processSymbols: ReturnType<typeof registerProcessSymbols>;
     idioms: ReturnType<typeof registerIdioms>;
+    editing: ReturnType<typeof registerEditing>;
     hotReload: Drift["hotReloadState"];
     assistTools: () => string[];
     chatParticipant: () => boolean;
@@ -309,6 +311,7 @@ export async function activate(
   const argumentSlot = registerArgumentSlot(context, running);
   const processSymbols = registerProcessSymbols(context, live, running);
   const idioms = registerIdioms(context);
+  const editing = registerEditing(context);
   const interpreters = new Interpreters(context);
   const qTasks = registerTasks(context);
   registerDevContainer(context);
@@ -392,6 +395,7 @@ export async function activate(
     argumentSlot,
     processSymbols,
     idioms,
+    editing,
     hotReload: () => drift.hotReloadState(),
     assistTools: assistTools.registered,
     chatParticipant: chatParticipant.registered,

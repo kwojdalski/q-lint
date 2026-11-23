@@ -863,6 +863,12 @@
             "order": 145,
             "markdownDescription": "In `f[a;b;c]`, highlight the argument the cursor is in and name the parameter it is passed as, beside it, where no parameter inlay hint already does. Asks the language server only, never a process. Off, nothing listens and nothing is drawn."
           },
+          "q-lint.editor.continuationIndent.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 147,
+            "markdownDescription": "Press Enter after a line that leaves a bracket open - `f:{[x]`, `select from t where x in (1;2` - and the new line is indented, so it continues the definition: q ends one at a line that starts at column 0. A comment line is never indented after, and nothing is outdented. Needs `editor.autoIndent` at `full` or `advanced`, its default. Off, Enter is VS Code's own."
+          },
           "q-lint.processSymbols.enable": {
             "type": "boolean",
             "default": false,
