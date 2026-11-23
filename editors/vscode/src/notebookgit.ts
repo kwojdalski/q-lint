@@ -319,12 +319,16 @@ export class NotebookStrip {
   /// write, or why it cannot be set up there.
   async plan(folder: string, where: AttributesAt): Promise<FilterPlan | { error: string }> {
     const top = await git(["rev-parse", "--show-toplevel"], folder);
-    const dir = await git(["rev-parse", "--absolute-git-dir"], folder);
-    if (top.code !== 0 || dir.code !== 0) {
-      return { error: `${folder} is not in a git repository (${(top.stderr || dir.stderr).trim()}).` };
+    // The repository's common directory and the attributes file git reads:
+    // in a linked worktree, those of the main one - the filter set with
+    // --local is shared, so its script must outlive the worktree (#1270).
+    const dir = await git(["rev-parse", "--git-common-dir"], folder);
+    const info = await git(["rev-parse", "--git-path", "info/attributes"], folder);
+    if (top.code !== 0 || dir.code !== 0 || info.code !== 0) {
+      return { error: `${folder} is not in a git repository (${(top.stderr || dir.stderr || info.stderr).trim()}).` };
     }
     const root = top.stdout.trim();
-    const gitDir = dir.stdout.trim();
+    const gitDir = path.resolve(folder, dir.stdout.trim());
     const script = path.join(gitDir, "q-lint", "qnbgit.js");
     const ours = readText(this.source);
     if (ours === undefined) {
@@ -340,7 +344,7 @@ export class NotebookStrip {
         error: `filter.${FILTER}.clean is set already, to ${current}, and q-lint does not change it. To have q-lint set it, remove it first: git config --unset filter.${FILTER}.clean`,
       };
     }
-    const attributes = where === "info" ? path.join(gitDir, "info", "attributes") : path.join(root, ".gitattributes");
+    const attributes = where === "info" ? path.resolve(folder, info.stdout.trim()) : path.join(root, ".gitattributes");
     return {
       top: root,
       script,

@@ -352,6 +352,31 @@ test("Set Up Git to Strip Notebook Outputs shows what it writes, writes it on Wr
   assert.match(fake.messages.at(-1), /strips notebook outputs on commit already/);
 });
 
+test("in a linked worktree the setup writes the attributes git reads and the script under the common directory (#1270)", async () => {
+  const { dir, git } = repo({ README: "r\n" });
+  const linked = fs.mkdtempSync(path.join(os.tmpdir(), "qnbgit-wt-"));
+  fs.rmSync(linked, { recursive: true });
+  git("worktree", "add", "-q", linked);
+  const fake = fakeVscode();
+  load(fake);
+  fake.answers.push("Write");
+  await fake.commands["q-lint.setUpNotebookStripFilter"](fake.vscode.Uri.file(linked), "info");
+  assert.match(fake.messages.at(-1), /now commits q notebooks without their outputs/);
+  const main = fs.realpathSync(path.join(dir, ".git"));
+  assert.strictEqual(fs.readFileSync(path.join(main, "info", "attributes"), "utf8").trim().split("\n").at(-1), "*.qnb filter=qnb-strip");
+  assert.ok(fs.existsSync(path.join(main, "q-lint", "qnbgit.js")));
+  // The worktree commits without outputs, and the main checkout still can once it is gone.
+  const wgit = (...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], { cwd: linked, encoding: "utf8" });
+  fs.writeFileSync(path.join(linked, "a.qnb"), withOutputs());
+  wgit("add", "a.qnb");
+  wgit("commit", "-qm", "nb");
+  assert.strictEqual(wgit("show", "HEAD:a.qnb"), stripQnb(withOutputs()));
+  git("worktree", "remove", "--force", linked);
+  fs.writeFileSync(path.join(dir, "b.qnb"), withOutputs());
+  git("add", "b.qnb");
+  assert.strictEqual(git("show", ":b.qnb"), stripQnb(withOutputs()));
+});
+
 test("the setup never changes a filter set otherwise, asks before replacing its script, and can write .gitattributes", async () => {
   const { dir, git } = repo({ ".gitattributes": "*.png binary" });
   const fake = fakeVscode();
