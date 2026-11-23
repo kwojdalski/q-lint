@@ -616,6 +616,13 @@
     "scope": "builtin"
   },
   {
+    "code": "QA013",
+    "name": "multiparam-trap-handler",
+    "category": "application",
+    "summary": "The error handler of @[f;x;h] or .[f;x;h] is a lambda of rank 2 or more, so an error returns a projection of it instead of running it",
+    "scope": "style"
+  },
+  {
     "code": "QT015",
     "name": "symbol-comparison",
     "category": "types-and-shapes",

@@ -748,6 +748,13 @@ takesOne:{[a] a+1}
 / expect-next: QA012
 tooMany:takesOne[1;2]
 
+/ QA013: the handler is given one argument, the error text, so a handler of
+/ two returns a projection of itself instead of logging; one of one runs.
+risky:{'"boom"}
+/ expect-next: QA013
+caught:@[risky;1;{[n;e] -1 string[n]," failed: ",e}]
+caught2:@[risky;1;{[e] -1 "risky failed: ",e}]
+
 / ------------------------------------------------ multiline continuations
 
 / QT005: line breaks do not make scalar columns into lists.

@@ -1,6 +1,6 @@
 # Rules
 
-All 137 rules, generated from `src/taxonomy.json` - the same data
+All 138 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -102,6 +102,7 @@ it, or `ALL`.
 | <a id="qa010"></a>`QA010` | builtin-excess-arguments | Excess arguments in a complete builtin call | every profile |
 | <a id="qa011"></a>`QA011` | cond-non-atom-condition | $[ ... ], if and while tests and the do count must be atoms; a vector or symbol is a type error, and in a later $[ ... ] test a symbol, string or float is | every profile |
 | <a id="qa012"></a>`QA012` | named-lambda-rank | More arguments than the named lambda takes | every profile |
+| <a id="qa013"></a>`QA013` | multiparam-trap-handler | The error handler of @[f;x;h] or .[f;x;h] is a lambda of rank 2 or more, so an error returns a projection of it instead of running it | `style` and above |
 
 ## Types and shapes - literals that cannot be what the operator needs
 
