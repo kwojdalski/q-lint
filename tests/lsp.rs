@@ -3409,3 +3409,76 @@ fn a_duplicate_declaration_points_at_the_first() {
         assert_eq!(server.shutdown_and_exit(), 0);
     }
 }
+
+/// Editing a file that defines a function asks a client that can be asked
+/// to fetch its code lenses and inlay hints again (#1159); with the setting
+/// left alone, it is not asked.
+#[test]
+fn a_definition_changed_asks_for_lenses_and_hints_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = file_uri(&dir.path().join("a.q"));
+    let start = |options: Value| {
+        let mut server = Server::spawn(dir.path(), &["--lsp"]);
+        let mut capabilities = client_capabilities();
+        capabilities["workspace"] = json!({"codeLens": {"refreshSupport": true},
+                                           "inlayHint": {"refreshSupport": true}});
+        server.send(
+            json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+            "capabilities": capabilities, "initializationOptions": options,
+            "workspaceFolders":[{"uri":file_uri(dir.path()),"name":"ws"}]}}),
+        );
+        server.receive();
+        server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+        server.open(&a, "g:1\n");
+        server.diagnostics_for(&a);
+        server
+    };
+    let mut server = start(json!({"crossFileRefresh": {"enable": true},
+                                  "referenceLens": {"enable": true}}));
+    // Drained: whatever the open sent, a marker request answered after it.
+    server.send(
+        json!({"jsonrpc":"2.0","id":50,"method":"textDocument/foldingRange",
+        "params":{"textDocument":{"uri":a}}}),
+    );
+    server.until(|m| m["id"] == 50);
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didChange",
+        "params":{"textDocument":{"uri":a,"version":2},"contentChanges":[{"text":"g:1\nf:{[p;q] p+q}\n"}]}}));
+    let mut seen = vec![];
+    while seen.len() < 2 {
+        let message = server.receive();
+        if let Some(method) = message["method"].as_str()
+            && method.ends_with("/refresh")
+        {
+            assert!(message["id"].is_string(), "{message}");
+            server.send(json!({"jsonrpc":"2.0","id":message["id"],"result":null}));
+            seen.push(method.to_string());
+        }
+    }
+    seen.sort();
+    assert_eq!(
+        seen,
+        ["workspace/codeLens/refresh", "workspace/inlayHint/refresh"]
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+
+    let mut server = start(json!({}));
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didChange",
+        "params":{"textDocument":{"uri":a,"version":2},"contentChanges":[{"text":"f:{[p;q] p+q}\n"}]}}));
+    server.send(
+        json!({"jsonrpc":"2.0","id":51,"method":"textDocument/foldingRange",
+        "params":{"textDocument":{"uri":a}}}),
+    );
+    loop {
+        let message = server.receive();
+        assert!(
+            !message["method"]
+                .as_str()
+                .is_some_and(|m| m.ends_with("/refresh")),
+            "{message}"
+        );
+        if message["id"] == 51 {
+            break;
+        }
+    }
+    assert_eq!(server.shutdown_and_exit(), 0);
+}

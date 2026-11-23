@@ -269,7 +269,9 @@ to a process you add and connect to, and sends only the code you run.
 - **Reference counts** above each top-level function: `3 references`, the
   places the workspace's `.q` files read it, as Find All References lists
   them without the assignments. Click it to see them in place.
-  `q-lint.referenceLens.enable` turns them off.
+  `q-lint.referenceLens.enable` turns them off. The counts and the inlay
+  hints of every open file are redrawn when another file changes what they
+  show; `q-lint.crossFileRefresh.enable` turns that off.
 - **Completion**, when turned on with `q-lint.completion.enable`: a lambda's
   parameters and locals first, then the names the workspace defines, spelled
   as the `\d` context in force reads them, then q's own words. It does not
@@ -2526,6 +2528,7 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.typeLints.enable` | `true` | Report QT033-QT035, the lints from inferred types. Off: hidden as `q-lint.lint.ignore` would. | - |
 | `q-lint.selectionRange.enable` | `true` | Grow **Expand Selection** by q's brackets and statements. Off: VS Code's own word-and-bracket selection. | - |
 | `q-lint.relatedInformation.enable` | `true` | Link a duplicate parameter or column's problem to the first of the two. Off: the problem alone. | - |
+| `q-lint.crossFileRefresh.enable` | `true` | Redraw open files' code lenses and inlay hints when another file's definitions, or the reads a count counts, change. Off: only when the file itself is edited. | - |
 | `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines, up to 20,000 files or 500,000 directory entries. Off: only open files. | - |
 | `q-lint.workspaceIndex.exclude` | `[]` | Globs, relative to the workspace folder, the index does not read: `["vendor/**"]`. | `q-lang-server.sourceFiles.ignoreGlob` |
 | `q-lint.trace.server` | `off` | Log client-server traffic: `off`, `messages`, `verbose`. | `q-lang-server.trace.server` |

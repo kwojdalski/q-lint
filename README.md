@@ -952,7 +952,7 @@ Every key is optional, and these are the defaults:
  "functionalForm": {"enable": true}, "qsqlExplain": {"enable": true},
  "versionCheck": {"enable": true}, "baseline": {"enable": true},
  "typeLints": {"enable": true}, "selectionRange": {"enable": false},
- "relatedInformation": {"enable": false},
+ "relatedInformation": {"enable": false}, "crossFileRefresh": {"enable": false},
  "workspaceIndex": {"enable": true, "exclude": []}}
 ```
 
@@ -984,7 +984,11 @@ words on hover. `versionCheck.enable: false` ignores the QK rules and
 configuration names. `selectionRange.enable: true` announces
 `textDocument/selectionRange`; off, an editor keeps its own expansion.
 `relatedInformation.enable: true` adds `relatedInformation` to the
-diagnostics that point at a second place.
+diagnostics that point at a second place. `crossFileRefresh.enable: true`
+sends `workspace/codeLens/refresh` and `workspace/inlayHint/refresh`, to a
+client that declares it takes them, when what the workspace defines changes
+- and the first also when the names a file reads change, while reference
+lenses are on - as `workspace/semanticTokens/refresh` is sent for colours.
 `workspaceIndex.exclude`
 holds globs relative to each workspace folder that the index does not read.
 The index stops after 20,000 `.q` files or 500,000 directory entries of any

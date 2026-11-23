@@ -63,6 +63,7 @@ test("the defaults start the server as it was started before settings", () => {
     typeLints: { enable: true },
     selectionRange: { enable: true },
     relatedInformation: { enable: true },
+    crossFileRefresh: { enable: true },
     workspaceIndex: { enable: true, exclude: [] },
   });
 });
@@ -138,6 +139,7 @@ test("every editor-only setting reaches the server's options", () => {
       "typeLints.enable": false,
       "selectionRange.enable": false,
       "relatedInformation.enable": false,
+      "crossFileRefresh.enable": false,
       "workspaceIndex.enable": false,
       "workspaceIndex.exclude": ["vendor/**"],
     }),
@@ -176,6 +178,7 @@ test("every editor-only setting reaches the server's options", () => {
     typeLints: { enable: false },
     selectionRange: { enable: false },
     relatedInformation: { enable: false },
+    crossFileRefresh: { enable: false },
     workspaceIndex: { enable: false, exclude: ["vendor/**"] },
   });
 });

@@ -239,6 +239,9 @@ struct Index {
     /// Bumped whenever what the workspace defines changes, which is what
     /// makes the open documents' semantic tokens stale.
     generation: u64,
+    /// Bumped whenever the names some file reads change, which is what
+    /// makes a count of references stale.
+    reads: u64,
     /// What may be read from disk: `.q` files under these folders, less
     /// those `exclude` names - and nothing at all while `enabled` is off,
     /// when only open documents are indexed.
@@ -308,6 +311,9 @@ impl Index {
         let (loads, implicit) = (read.loads.clone(), read.implicit_defines.clone());
         let old = self.files.remove(&path);
         self.stale |= old.as_ref().is_none_or(|old| old.loads != loads);
+        if old.as_ref().is_none_or(|old| old.read.names != read.names) {
+            self.reads += 1;
+        }
         let placement = old
             .as_ref()
             .map(|old| old.placement.clone())
@@ -340,6 +346,7 @@ impl Index {
             Some(old) => {
                 self.ws.remove(&old.placed);
                 self.generation += 1;
+                self.reads += 1;
                 self.stale = true;
                 true
             }
@@ -632,7 +639,7 @@ fn workspace_folders(params: &Value) -> Vec<(String, String)> {
 ///  "functionalForm": {"enable": true}, "qsqlExplain": {"enable": true},
 ///  "versionCheck": {"enable": true}, "baseline": {"enable": true},
 ///  "typeLints": {"enable": true}, "selectionRange": {"enable": false},
-///  "relatedInformation": {"enable": false}}
+///  "relatedInformation": {"enable": false}, "crossFileRefresh": {"enable": false}}
 /// ```
 ///
 /// `lint.select` and `lint.ignore` narrow the selection (see
@@ -739,6 +746,10 @@ struct Options {
     /// parameters or columns of one name - that place as
     /// `relatedInformation`, when the client takes it. Off unless asked for.
     related_information: bool,
+    /// Ask the client to fetch code lenses and inlay hints again when
+    /// another file's definitions, or the reads a reference count counts,
+    /// change - for a client that can be asked. Off unless asked for.
+    cross_file_refresh: bool,
     /// Whether the client shows an action it cannot take with the reason
     /// (`codeAction.disabledSupport`): a capability, not a setting.
     disabled_actions: bool,
@@ -784,6 +795,7 @@ impl Default for Options {
             type_lints: true,
             selection_range: false,
             related_information: false,
+            cross_file_refresh: false,
             disabled_actions: false,
             severity: vec![],
         }
@@ -837,6 +849,7 @@ impl Options {
                         "typeLints",
                         "selectionRange",
                         "relatedInformation",
+                        "crossFileRefresh",
                     ]
                     .contains(&key.as_str())
                         && !value.is_object()
@@ -888,6 +901,7 @@ impl Options {
         options.baseline = flag("/baseline/enable", true);
         options.type_lints = flag("/typeLints/enable", true);
         options.selection_range = flag("/selectionRange/enable", false);
+        options.cross_file_refresh = flag("/crossFileRefresh/enable", false);
         options.related_information = flag("/relatedInformation/enable", false)
             && params
                 .pointer("/capabilities/textDocument/publishDiagnostics/relatedInformation")
@@ -1063,6 +1077,9 @@ pub fn serve(
     // Whether the client re-asks for semantic tokens when told to, and the
     // id of the next request the server sends it.
     let mut token_refresh = false;
+    // Likewise for code lenses and inlay hints (LSP 3.16 and 3.17).
+    let mut lens_refresh = false;
+    let mut hint_refresh = false;
     // Whether the client takes the outline as `DocumentSymbol`s, and asks
     // before a rename what would be renamed.
     let mut nested_symbols = false;
@@ -1175,7 +1192,7 @@ pub fn serve(
                 is_change_to(later, params["textDocument"]["uri"].as_str().unwrap_or(""))
             });
 
-        let generation = idx.generation;
+        let (generation, reads) = (idx.generation, idx.reads);
         match (method.as_str(), id) {
             // LSP 3.17: "The initialize request may only be sent once." A
             // second is refused and changes nothing - answered, its options
@@ -1202,6 +1219,15 @@ pub fn serve(
                     .pointer("/capabilities/workspace/semanticTokens/refreshSupport")
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
+                let refreshes = |what: &str| {
+                    opts.cross_file_refresh
+                        && params
+                            .pointer(&format!("/capabilities/workspace/{what}/refreshSupport"))
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false)
+                };
+                lens_refresh = refreshes("codeLens") && (opts.code_lens || opts.reference_lens);
+                hint_refresh = refreshes("inlayHint") && opts.inlay_hints;
                 let watched = |key: &str| {
                     params
                         .pointer(&format!(
@@ -1718,6 +1744,28 @@ pub fn serve(
                 writer,
                 json!({"id": format!("qlinter-{next_request}"), "method": "workspace/semanticTokens/refresh"}),
             )?;
+        }
+        // And what is drawn over the text: a parameter name at a call comes
+        // from the definition another file holds, and a reference count
+        // from the reads of every file. Only once the client is ready.
+        let defined = idx.generation != generation;
+        if ready && !shutdown_requested {
+            let counted = opts.reference_lens && idx.reads != reads;
+            for (asked, method) in [
+                (
+                    lens_refresh && (defined || counted),
+                    "workspace/codeLens/refresh",
+                ),
+                (hint_refresh && defined, "workspace/inlayHint/refresh"),
+            ] {
+                if asked {
+                    next_request += 1;
+                    send(
+                        writer,
+                        json!({"id": format!("qlinter-{next_request}"), "method": method}),
+                    )?;
+                }
+            }
         }
     }
 }

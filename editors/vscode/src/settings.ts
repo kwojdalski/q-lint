@@ -76,6 +76,7 @@ export interface InitializationOptions {
   typeLints: { enable: boolean };
   selectionRange: { enable: boolean };
   relatedInformation: { enable: boolean };
+  crossFileRefresh: { enable: boolean };
   workspaceIndex: { enable: boolean; exclude: string[] };
 }
 
@@ -185,6 +186,7 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
       typeLints: { enable: settings.get<boolean>("typeLints.enable", true) },
       selectionRange: { enable: settings.get<boolean>("selectionRange.enable", true) },
       relatedInformation: { enable: settings.get<boolean>("relatedInformation.enable", true) },
+      crossFileRefresh: { enable: settings.get<boolean>("crossFileRefresh.enable", true) },
       workspaceIndex: {
         enable: settings.get<boolean>("workspaceIndex.enable", true),
         exclude: strings(settings, "workspaceIndex.exclude"),
@@ -232,6 +234,7 @@ const RESTARTING = [
   "typeLints",
   "selectionRange",
   "relatedInformation",
+  "crossFileRefresh",
 ];
 
 /// Whether a configuration change needs a new server.
