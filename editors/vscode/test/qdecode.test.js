@@ -41,3 +41,27 @@ test("a primitive shows as q prints it, not as (::) (#1232)", () => {
   // The generic null is unary 0, and still (::).
   assert.strictEqual(formatQ(decode(message([0x65, 0])), undefined, 101).join(""), "::");
 });
+
+/// A simple vector of q type `t`, each item written by `put`.
+function vector(t, size, put, items) {
+  const b = Buffer.alloc(6 + size * items.length);
+  b.writeInt8(t, 0);
+  b.writeInt32LE(items.length, 2);
+  items.forEach((x, i) => put(b, x, 6 + size * i));
+  return b;
+}
+const longs = (t, items) => vector(t, 8, (b, x, at) => b.writeBigInt64LE(x, at), items);
+const floats = (items) => vector(9, 8, (b, x, at) => b.writeDoubleLE(x, at), items);
+
+test("the unwrapped grid ranks longs and timestamps exactly, and a null below -0W and -0w (#1233)", () => {
+  const { gridOfQ } = require("../out/qformat.js");
+  const NULL = -(2n ** 63n);
+  // Two timestamps 1ns apart, which Number() made one; the null, then -0W.
+  const ts = gridOfQ(decode(message(longs(12, [1700000000000000001n, 1700000000000000000n, NULL, NULL + 1n]))), 100);
+  assert.deepStrictEqual(ts.rank[0], [3, 2, 0, 1]);
+  const js = gridOfQ(decode(message(longs(7, [2n ** 62n + 1n, 2n ** 62n]))), 100);
+  assert.deepStrictEqual(js.rank[0], [1, 0]);
+  // 0n is below -0w, as q's iasc puts it.
+  const fs = gridOfQ(decode(message(floats([1, -Infinity, NaN]))), 100);
+  assert.deepStrictEqual(fs.rank[0], [2, 1, 0]);
+});
