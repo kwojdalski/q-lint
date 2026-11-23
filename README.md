@@ -189,6 +189,9 @@ after it.
 
 ### Reports for CI
 
+`--format json` prints the findings as a list of objects, each field of
+which [docs/output.md](docs/output.md) describes.
+
 `--format sarif` prints SARIF 2.1.0, which GitHub code scanning and other
 SARIF readers take: one result per finding, its region, and the rules the
 results name, each with its summary and a link to its row in
