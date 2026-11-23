@@ -19,8 +19,10 @@
 // - `update` or `delete` from a table named by a symbol (`` from `t ``,
 //   `` from (`t) ``), which changes it in place;
 // - `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`, `system`,
-//   `save`, `rsave`, `dsave`, `load`, `rload`, `.Q.dpft`, `.Q.dpfts`,
-//   `.Q.hdpf`, `.Q.en`, `.Q.ens`, `.Q.chk` and `.Q.dsftg`, and `0:` or `1:` to a
+//   `setenv`, `save`, `rsave`, `dsave`, `load`, `rload`, `.Q.dpft`,
+//   `.Q.dpfts`, `.Q.dpt`, `.Q.dpts`, `.Q.hdpf`, `.Q.en`, `.Q.ens`,
+//   `.Q.enx`, `.Q.enxs`, `.Q.chk`, `.Q.dsftg`, `.Q.view`, `.Q.l`, `.Q.lo`,
+//   `.Q.bv` and `.Q.opt` (which sets `.Q.x`), and `0:` or `1:` to a
 //   file handle (`` `:f 0: ``, `hsym[`f] 0:`, `(hsym `f) 1:`), and `2:`,
 //   each also by its `.q.` name (`.q.set`); `hopen` of a file handle
 //   (`` hopen `:f ``), which creates the file to write through - of a
@@ -88,8 +90,9 @@ const NAME = /[A-Za-z0-9_.]/;
 /// The characters that make a compound assignment with `:` after them.
 const OPERATORS = new Set([..."+-*%&|^=<>$,#_~!?@."]);
 const WRITERS = new Set([
-  "set", "upsert", "insert", "hdel", "exit", "hclose", "system", "save", "rsave", "dsave", "load", "rload",
-  ".Q.dpft", ".Q.dpfts", ".Q.hdpf", ".Q.en", ".Q.ens", ".Q.chk", ".Q.dsftg",
+  "set", "upsert", "insert", "hdel", "exit", "hclose", "system", "save", "rsave", "dsave", "load", "rload", "setenv",
+  ".Q.dpft", ".Q.dpfts", ".Q.dpt", ".Q.dpts", ".Q.hdpf", ".Q.en", ".Q.ens", ".Q.enx", ".Q.enxs", ".Q.chk", ".Q.dsftg",
+  ".Q.view", ".Q.l", ".Q.lo", ".Q.bv", ".Q.opt",
 ]);
 /// System commands that only read a setting when they are given no argument.
 const READS_BARE = new Set([..."abBcCdefgoOpPsSTvwWz", "cd"]);

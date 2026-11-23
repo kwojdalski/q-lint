@@ -302,3 +302,25 @@ test("hopen of a file handle is a change; of a process handle it only connects (
 test(".Q.ens enumerates into a sym file and is a change (#1256)", () => {
   assert.deepStrictEqual(writes(".Q.ens[`:db;([]s:`x`y);`sym]"), ["calls .Q.ens"]);
 });
+
+test("setenv and the .Q writers that save, enumerate, load or narrow an HDB are changes (#1329)", () => {
+  const cases = {
+    ".Q.dpt[`:db;2024.01.01;`t]": ["calls .Q.dpt"],
+    ".Q.dpts[`:db;2024.01.01;`t;`sym]": ["calls .Q.dpts"],
+    ".Q.view 2024.01.01": ["calls .Q.view"],
+    ".Q.l `:hdb": ["calls .Q.l"],
+    ".Q.lo[`:hdb;0;0]": ["calls .Q.lo"],
+    ".Q.bv[]": ["calls .Q.bv"],
+    '.Q.opt enlist "-x"': ["calls .Q.opt"],
+    '`HOME setenv "/tmp"': ["calls setenv"],
+    ".Q.enx[$;`:db;([]s:`x`y)]": ["calls .Q.enx"],
+    ".Q.enxs[$;`:db;([]s:`x`y);`sym]": ["calls .Q.enxs"],
+    // Reads stay reads.
+    'getenv `HOME': [],
+    ".Q.pv": [],
+    ".Q.s1 t": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

@@ -1049,8 +1049,9 @@ is sent; Escape sends nothing. A change is: assigning a global (`a:1`,
 `.ns.v:`, as q makes those global; a column named in `select a:x from t` or
 `([] a:1 2)` is not one), `update` or `delete` from a table named by a
 symbol (`` from `t `` or `` from (`t) ``), `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`,
-`system`, `save`, `rsave`, `dsave`, `load`, `rload`, `.Q.dpft`, `.Q.dpfts`,
-`.Q.hdpf`, `.Q.en`, `.Q.ens`, `.Q.chk`, `.Q.dsftg` (each also by its `.q.` name,
+`system`, `setenv`, `save`, `rsave`, `dsave`, `load`, `rload`, `.Q.dpft`, `.Q.dpfts`,
+`.Q.dpt`, `.Q.dpts`, `.Q.hdpf`, `.Q.en`, `.Q.ens`, `.Q.enx`, `.Q.enxs`, `.Q.chk`, `.Q.dsftg`,
+`.Q.view`, `.Q.l`, `.Q.lo`, `.Q.bv`, `.Q.opt` (each also by its `.q.` name,
 `.q.set`), `hopen` of a file handle (`` hopen `:f ``, which creates the
 file to write through; opening a connection, `` hopen `:host:5000 ``, is
 not a change, and what is sent over it is not read), `0:` or `1:` to a file
