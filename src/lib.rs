@@ -4739,7 +4739,7 @@ pub(crate) fn lambda_rank(code: &str, raw: &str, brace: usize, end: usize) -> us
             " ".repeat(m[0].len())
         })
         .into_owned();
-    let body = outside_query_phrases(&body);
+    let body = table_columns_blanked(&outside_query_phrases(&body));
     // Not as part of a dotted name: `.z.s` is the lambda itself, and
     // reading it says nothing about a third argument. After a drop it is a
     // read: `{x,1_y}` takes two (q 5, #339), while `a_y` is one name.
@@ -4758,6 +4758,32 @@ pub(crate) fn lambda_rank(code: &str, raw: &str, brace: usize, end: usize) -> us
         1
     }
 }
+/// `text` with the column names of each table literal blanked, `z` in
+/// `([]z:x)` and `([z:1]b:2)`: a column name reads nothing, while its value
+/// may - KDB-X `{([]z:x)}` takes one argument, `{([]a:y)}` two. A group
+/// assigned to, `([k;v]):d`, is a pattern and no literal. Same length.
+pub(crate) fn table_columns_blanked(text: &str) -> String {
+    let mut out = text.as_bytes().to_vec();
+    for (open, _) in text.match_indices('(') {
+        if !text[open + 1..].trim_start().starts_with('[') {
+            continue;
+        }
+        let Some(close) = matching(text, open, b'(', b')') else {
+            continue;
+        };
+        if re!(r"^\s*:([^:]|$)").is_match(&text[close..]) {
+            continue;
+        }
+        let inside = &text[open..close];
+        for m in re!(r"[A-Za-z][A-Za-z0-9_]*\s*:").find_iter(inside) {
+            if boundary(inside, m.start()) && !inside[m.end()..].starts_with(':') {
+                blank(&mut out[open + m.start()..open + m.end() - 1]);
+            }
+        }
+    }
+    String::from_utf8(out).unwrap_or_else(|_| text.to_string())
+}
+
 /// A lambda body with the column, by and where phrases of its queries
 /// blanked: q leaves the names there out of the implicit signature, so
 /// `{select from x where a=y}` takes one argument and `{select from y}` two
