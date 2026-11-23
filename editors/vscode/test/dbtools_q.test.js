@@ -287,7 +287,9 @@ test("the test data generator's q makes the rows asked for, and its CSV loads ba
   const ran = readRun(await connection.call(RUN_SCRIPT, statements(q)));
   assert.ok(ran.ok, ran.error);
   assert.deepStrictEqual(await connection.call("{exec t from meta gen}", 0), "spfjdC");
-  assert.strictEqual(await connection.call('{"f"$count gen}', 0), 50);
+  // Keyed by k, drawn from two symbols: one row a key, never two (#1282).
+  assert.strictEqual(await connection.call('{"f"$count gen}', 0), 2);
+  assert.strictEqual(await connection.call("{count[gen]=count distinct key gen}", 0), true);
   assert.strictEqual(await connection.call("{all 10<=exec px from gen}", 0), true);
   assert.strictEqual(await connection.call("{(exec time from gen)~asc exec time from gen}", 0), true);
   assert.deepStrictEqual(await connection.call("{asc distinct exec k from gen}", 0), ["AAPL", "MSFT"]);
@@ -307,6 +309,17 @@ test("the test data generator's q takes symbols a bare symbol cannot write (#127
     assert.ok(ran.ok, ran.error);
     assert.deepStrictEqual([].concat(await connection.call("{string asc distinct exec s from gen}", 0)).flat().map(String), [...symbols].sort());
   }
+});
+
+test("the test data generator keys a table by distinct keys, of two columns too, in the sorted column's order (#1282)", { skip }, async (t) => {
+  const { connection } = await connect(t, "");
+  const col = (name, type) => ({ name, type, fkey: "", attr: "" });
+  const info = { kind: "keyed", rows: 0, bytes: null, partitions: null, keys: ["s", "j"], ncols: 3, columns: [col("s", "s"), col("j", "j"), col("t", "p")] };
+  const ran = readRun(await connection.call(RUN_SCRIPT, statements(testDataQ(info, "gen", { rows: 200, symbols: ["A", "B"], low: 0, high: 5, sorted: "t", seed: 4 }))));
+  assert.ok(ran.ok, ran.error);
+  assert.strictEqual(await connection.call('{"f"$count gen}', 0), 10);
+  assert.strictEqual(await connection.call("{(keys gen)~`s`j}", 0), true);
+  assert.strictEqual(await connection.call("{(exec t from gen)~asc exec t from gen}", 0), true);
 });
 
 test("the test data CSV's bytes load back as the bytes written (#1278)", { skip }, async (t) => {

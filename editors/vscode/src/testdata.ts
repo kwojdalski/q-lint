@@ -89,11 +89,14 @@ export function testDataQ(info: TableInfo, name: string, o: TestDataOptions): st
     return `${c.name}:${c.name === o.sorted ? `asc ${g}` : g}`;
   });
   const keys = info.keys.filter((k) => info.columns.some((c) => c.name === k));
+  const by = keys.map((k) => `\`${k}`).join("");
+  const rows = `([] ${cols.join("; ")})`;
   return [
-    `/ q-lint: ${o.rows.toLocaleString("en-US")} rows of test data shaped as ${name}. Run it on a local process.`,
+    `/ q-lint: ${keys.length > 0 ? "up to " : ""}${o.rows.toLocaleString("en-US")} rows of test data shaped as ${name}. Run it on a local process.`,
     `\\S ${o.seed}`,
     `n:${o.rows}`,
-    `${name}:${keys.length > 0 ? `${keys.map((k) => `\`${k}`).join("")} xkey ` : ""}([] ${cols.join("; ")})`,
+    // A keyed table keeps the first row of each key drawn: a key is one row (#1282).
+    `${name}:${keys.length > 0 ? `${by} xkey {x where(til count x)=k?k:((),y)#x}[${rows};${by}]` : rows}`,
     // A table named n is the count's name too: it stays (#1084).
     ...(name === "n" ? [] : [`delete n from \`.`]),
     "",
