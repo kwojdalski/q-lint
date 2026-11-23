@@ -151,6 +151,10 @@ test("the partition check finds weekday gaps, and each kind of problem in an ans
   assert.match(report, /\*\*missing dates\*\*/);
   assert.match(partitionReport({ hdb: false, root: "/x" }, "rdb", false), /no partitioned database/);
   assert.deepStrictEqual(readPartitions({ hdb: false, root: "/x" }), { hdb: false, root: "/x" });
+  // One table in one partition: each column of the answer is a one-item list (#1102).
+  const single = readPartitions({ hdb: true, pf: "date", root: "/db", all: ["2026.01.05"], checked: 1, tables: ["trade"], domains: ["sym"], domainsizes: [2], rows: { tbl: ["trade"], part: ["2026.01.05"], dir: [true], dotd: [true], cols: [["sym", "px"]], missing: [[]], types: [[20, 9]], enums: [["sym", ""]], maxidx: [1], rows: [2] } });
+  assert.deepStrictEqual(single.rows, [{ table: "trade", partition: "2026.01.05", dir: true, dotd: true, columns: ["sym", "px"], missing: [], types: [20, 9], enums: ["sym", ""], maxIndex: 1, rows: 2 }]);
+  assert.deepStrictEqual(partitionProblems(single), []);
 });
 
 test("the sym report warns above the threshold and lists columns and growth", () => {

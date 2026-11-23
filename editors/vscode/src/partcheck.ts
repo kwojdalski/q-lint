@@ -75,11 +75,13 @@ export function readPartitions(raw: unknown): PartAnswer {
   const rows = (r.rows ?? {}) as Record<string, unknown>;
   const tbl = strings(rows.tbl);
   const n = tbl.length;
-  const one = (v: unknown) => (n === 1 ? [v] : list(v));
+  // A one-row answer's columns are one-item lists already: only a bare
+  // scalar is wrapped (#1102).
+  const one = (v: unknown) => (n === 1 && !Array.isArray(v) ? [v] : list(v));
   const part = strings(rows.part);
   const cols = each(rows.cols, n);
   const missing = each(rows.missing, n);
-  const types = n === 1 ? [rows.types] : list(rows.types);
+  const types = each(rows.types, n);
   const enums = each(rows.enums, n);
   const dirs = one(rows.dir);
   const dotd = one(rows.dotd);

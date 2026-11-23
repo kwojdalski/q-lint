@@ -182,6 +182,9 @@ test("the partition check finds missing dates, files, differing types and outlie
   assert.deepStrictEqual(kinds("different types")[0].partitions, ["2026.01.12"]);
   assert.match(kinds("row count")[0].partitions[0], /2026\.01\.14 \(5,000\)/);
   assert.strictEqual(kinds("enumeration").length, 0);
+  // One table in one partition is healthy (#1102).
+  const { connection: lone } = await connect(t, 'r:hsym`$"$DIR/one";\n.Q.dd[r;2026.01.05,`trade`] set .Q.en[r] ([] sym:`a`b;px:1 2f);\n\\l $DIR/one\n');
+  assert.deepStrictEqual(partitionProblems(readPartitions(await lone.call(PARTITION_CHECK, 1000, true))), []);
   // A process with no database says so.
   const { connection: plain } = await connect(t, "a:1\n");
   assert.strictEqual(readPartitions(await plain.call(PARTITION_CHECK, 1000, false)).hdb, false);
