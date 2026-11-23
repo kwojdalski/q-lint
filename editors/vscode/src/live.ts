@@ -446,7 +446,7 @@ export class QTerminals {
     const args = file === undefined ? [] : [inside ? relative : file, ...extraArgs];
     const line = commandLine(settings.qBinary, args, shellKind(env.shell), shown);
     if (typeof line !== "string") {
-      void window.showErrorMessage(`q-lint: ${line.error}`);
+      void window.showErrorMessage(plainMessage(`q-lint: ${line.error}`));
       return undefined;
     }
     before?.();
@@ -1390,7 +1390,7 @@ export class Live {
       const drop = "Import as Written";
       const listed = `${removed.slice(0, 5).map(({ label, what }) => `${label} (${what.join(", ")})`).join(", ")}${removed.length > 5 ? ", ..." : ""}`;
       const answer = await window.showWarningMessage(
-        `${files[0].fsPath} takes from ${removed.length} process(es) what protects them - TLS, an SSH tunnel, a tag the read-only guard guards: ${listed}. Keep them?`,
+        plainMessage(`${files[0].fsPath} takes from ${removed.length} process(es) what protects them - TLS, an SSH tunnel, a tag the read-only guard guards: ${listed}. Keep them?`),
         { modal: true },
         keep,
         drop,
