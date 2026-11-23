@@ -239,6 +239,33 @@ test("the dead code report refuses when off and asks nothing; on, it lists the s
   }
 });
 
+test("the dead code report's file names are the decoded paths, relative to the workspace (#1093)", async () => {
+  const { fileURLToPath } = require("node:url");
+  const answer = {
+    functions: [
+      { name: "a", uri: "file:///ws/my%20proj/a.q", range: { start: { line: 0, character: 0 } } },
+      { name: "b", uri: "file:///c%3A/my%20proj/b.q", range: { start: { line: 0, character: 0 } } },
+    ],
+    dynamic: 0,
+  };
+  const { context, restore } = setUp();
+  const parse = vscode.Uri.parse;
+  // VS Code's Uri.parse decodes; asRelativePath is given a Uri, on either OS.
+  vscode.Uri.parse = (s) => ({ fsPath: fileURLToPath(s, { windows: /^file:\/\/\/[a-z]%3A/i.test(s) }) });
+  vscode.workspace.asRelativePath = (u) => (typeof u === "string" ? `unparsed ${u}` : u.fsPath.replace(/^\/ws\/|^c:\\/, ""));
+  try {
+    registerDeadCode(context, { activeLabel: () => undefined }, () => ({ sendRequest: async () => answer }));
+    stub.config.user["deadCode.enable"] = true;
+    const text = await stub.commands.get(LANGUAGE_COMMANDS.deadCode)();
+    // The headings; the links keep the URI. Markdown escapes the backslash.
+    const headings = text.split("\n").filter((l) => l.startsWith("## "));
+    assert.deepStrictEqual(headings, ["## my proj/a.q", "## my proj\\\\b.q"]);
+  } finally {
+    vscode.Uri.parse = parse;
+    restore();
+  }
+});
+
 test("the q Namespaces view groups the server's definitions and goes away when off", async () => {
   const answer = [
     { name: ".u.f", namespace: ".u", kind: "function", uri: "file:///a.q", range: { start: { line: 1, character: 0 } } },
