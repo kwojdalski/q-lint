@@ -46,8 +46,8 @@ export function resultMarkdown(result: ReportResult, image?: string): { text: st
   const when = new Date(result.at).toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC");
   const fence = fenceFor(result.code);
   const lines = [`**Result** from ${markdownText(result.process)} at ${when}`, "", `${fence}q`, result.code.replace(/\s+$/, ""), fence, ""];
-  // A cell's text is shown as text: a `<` in it starts no HTML.
-  lines.push(toMarkdown(result.payload, result.decimals, shown).replace(/\n$/, "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"));
+  // A cell's text is shown as text: its `<` is escaped and starts no HTML.
+  lines.push(toMarkdown(result.payload, result.decimals, shown).replace(/\n$/, ""));
   const held = result.payload.cells[0]?.length ?? 0;
   if (shown.length < order.length || result.payload.count > held) {
     const of = Math.max(order.length, result.payload.count);

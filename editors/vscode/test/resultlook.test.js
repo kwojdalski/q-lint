@@ -258,7 +258,7 @@ test("a result sent to a notebook or a report is its query in a fence it cannot 
     "**Result** from rdb at 2026-11-22 09:30:05 UTC\n\n```q\nselect from t\n```\n\n| sym | px |\n| --- | ---: |\n| c | 9 |\n| a | 1 |\n\n![chart](img/c.svg)\n\n",
   );
   const html = report.resultMarkdown({ process: "p", code: "t", at: 0, payload: { ...PAYLOAD, cells: [["<img src=x onerror=alert(1)>", "a&b", "c"], ["1", "2", "3"]] }, decimals: -1 });
-  assert.match(html.text, /\| &lt;img src=x onerror=alert\(1\)&gt; \| 1 \|\n\| a&amp;b \| 2 \|/);
+  assert.match(html.text, /\| \\<img src=x onerror=alert\(1\)\\> \| 1 \|\n\| a\\&b \| 2 \|/);
   const many = { ...PAYLOAD, count: 600, cells: [Array(600).fill("a"), Array(600).fill("1")], raw: [[], Array(600).fill(1)], rank: [[], []] };
   const cut = report.resultMarkdown({ process: "p", code: "t", at: 0, payload: many, decimals: -1 });
   assert.strictEqual(cut.rows, report.MAX_ROWS);
