@@ -101,10 +101,11 @@ export function stepCode(step: Step, x: string): string {
 
 /// A cast of column `c` to `letter`. A column of strings is parsed, by the
 /// letter in upper case (`"J"$c`), and made symbols with `` `$c ``; any other
-/// is cast (`"j"$c`). `*` writes each item as a string.
+/// is cast (`"j"$c`). `*` writes each item as a string: a string is left as
+/// it is, which `string` would split into characters (#1281).
 export function castCode(c: string, letter: string, strings = false): string {
   if (letter === "*") {
-    return `string ${c}`;
+    return strings ? `{$[10h=type x;x;string x]}each ${c}` : `string ${c}`;
   }
   if (strings) {
     return letter === "s" ? `\`$${c}` : `"${letter.toUpperCase()}"$${c}`;

@@ -143,6 +143,9 @@ test("the q of the data tools against a real q process", { skip }, async (t) => 
     assert.strictEqual(out.grid.types[3], 9);
     const parsed = await grid(w.wrangleQuery("([] s:(\"1\";\"22\"))", [{ kind: "cast", column: "s", to: "j", strings: w.stringColumn(base.grid, 4) }]));
     assert.strictEqual(parsed.grid.types[0], 7);
+    // A column of strings cast to strings stays as it was, not split into characters (#1281).
+    const same = await grid(w.wrangleQuery("([] s:(\"1\";\"22\"))", [{ kind: "cast", column: "s", to: "*", strings: true }]));
+    assert.deepStrictEqual(cells(same, "s"), [',"1"', '"22"']);
     // The script form gives the same table, and assigns nothing.
     const script = w.wrangleScript("select from t", steps, "test");
     const viaScript = await grid(script);
