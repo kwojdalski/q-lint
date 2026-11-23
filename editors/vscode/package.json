@@ -5081,7 +5081,7 @@
       {
         "command": "q-lint.abortQuery",
         "key": "escape",
-        "when": "editorTextFocus && editorLangId == q && q-lint.queryRunning && config.q-lint.query.escapeAborts.enable && !notebookEditorFocused && !suggestWidgetVisible && !parameterHintsVisible && !inSnippetMode && !findWidgetVisible && !editorHasSelection && !editorHasMultipleSelections && !inlineSuggestionVisible && !referenceSearchVisible && !markersNavigationVisible"
+        "when": "editorTextFocus && editorLangId == q && q-lint.queryRunning && config.q-lint.query.escapeAborts.enable && !notebookEditorFocused && !suggestWidgetVisible && !parameterHintsVisible && !inSnippetMode && !findWidgetVisible && !editorHasSelection && !editorHasMultipleSelections && !inlineSuggestionVisible && !referenceSearchVisible && !markersNavigationVisible && !notificationToastsVisible && !notificationCenterVisible && !dirtyDiffVisible && !breakpointWidgetVisible && !messageVisible && !accessibilityHelpWidgetVisible && !renameInputVisible"
       },
       {
         "command": "q-lint.sendCurrentLineToTerminal",

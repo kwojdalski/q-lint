@@ -872,7 +872,8 @@ it waiting.
 Escape in a q editor aborts too, while a query runs: the context key
 `q-lint.queryRunning` is set then, and only then. What Escape already does
 comes first - closing a suggestion list, parameter hints, a snippet, the
-find widget or a selection - and in a notebook it is left alone.
+find widget, a selection, a notification, the dirty diff, a breakpoint's
+widget, a message, accessibility help or a rename - and in a notebook it is left alone.
 `q-lint.query.escapeAborts.enable` turns it off.
 
 **Query a Tag**, on a tag row in Processes, in a q editor's context menu or
