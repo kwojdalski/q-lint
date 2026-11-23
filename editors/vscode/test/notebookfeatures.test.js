@@ -434,3 +434,8 @@ test("a fence closes only on a bare run of its own character, at least as long (
   assert.strictEqual(markdownHtml("````\n```q\nx\n```\n````\nafter"), "<pre><code>```q\nx\n```</code></pre>\n<p>after</p>");
   assert.strictEqual(markdownHtml("```\n```q\n~~~\n```"), "<pre><code>```q\n~~~</code></pre>");
 });
+
+test("a backslash escapes any ASCII punctuation (#1310)", () => {
+  assert.strictEqual(markdownHtml("\\<b\\> a\\|b \\& \\~ \\$ \\*x\\*"), "<p>&lt;b&gt; a|b &amp; ~ $ *x*</p>");
+  assert.strictEqual(markdownHtml("a\\b"), "<p>a\\b</p>");
+});

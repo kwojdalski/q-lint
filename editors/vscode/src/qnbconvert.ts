@@ -47,7 +47,8 @@ function inline(text: string, values: Record<string, LiveValue>): string {
     s += text.slice(from, span.start) + hold(span.kind === "code" ? `<code>${escapeHtml(span.expr.trim())}</code>` : liveHtml(span.expr, values[span.expr]));
     from = span.end;
   }
-  s = escapeHtml((s + text.slice(from)).replace(/\\([\\`*_{}[\]()#+\-.!])/g, (_m, c: string) => hold(escapeHtml(c))));
+  // A backslash escapes any ASCII punctuation (CommonMark 2.4, #1310).
+  s = escapeHtml((s + text.slice(from)).replace(/\\([!-/:-@[-`{-~])/g, (_m, c: string) => hold(escapeHtml(c))));
   s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, label: string, href: string) => {
     // `href` is escaped already: `&amp;` reads back as `&` in an attribute.
     // The tags are held, so the emphasis below finds no `_` in the URL (#1105).
