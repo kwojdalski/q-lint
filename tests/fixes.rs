@@ -678,6 +678,28 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             "t:([]price:1 2);r:select price from t",
             false,
         ),
+        // Each glyph's keyword: on KDB-X `(g:)x` and the keyword parse alike.
+        ("QE008", "r:-x", "r:neg x", true),
+        ("QE008", "r:#x", "r:count x", true),
+        ("QE008", "r:,x", "r:enlist x", true),
+        ("QE008", "r:~x", "r:not x", true),
+        ("QE008", "r:_x", "r:floor x", true),
+        ("QE008", "r:%x", "r:reciprocal x", true),
+        ("QE008", "r:!x", "r:key x", true),
+        ("QE008", "r:$x", "r:string x", true),
+        ("QE008", "r:&x", "r:where x", true),
+        ("QE008", "r:|x", "r:reverse x", true),
+        ("QE008", "r:^x", "r:null x", true),
+        ("QE008", "r:@x", "r:type x", true),
+        ("QE008", "r:?x", "r:distinct x", true),
+        ("QE008", "r:*x", "r:first x", true),
+        ("QE008", "r:+x", "r:flip x", true),
+        ("QE008", "r:.(x)", "r:value (x)", true),
+        ("QE008", "r:#:x", "r:count x", true),
+        ("QE008", "r:,-1", "r:enlist -1", true),
+        ("QE008", "r:*$[a;b;c]", "r:first $[a;b;c]", true),
+        ("QE008", "f:{[a]-x}", "f:{[a] neg x}", true),
+        ("QE008", "r:- x", "r:neg x", true),
     ];
     for (code, source, expected, safe) in cases {
         let finding = lint(source, "probe.q", Profile::Uqf)
@@ -755,6 +777,12 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         // `:[x]` and `:'[x]` return a projection of `:`, not x (#770).
         ("QF015", "f:{return[x]}"),
         ("QF015", "f:{return'[x]}"),
+        // Hopen or a grade, by the argument: no one keyword (q 5: (<:)5 is hopen).
+        ("QE008", "r:<x"),
+        ("QE008", "r:>x"),
+        ("QE008", "f:{[a]-1 2}"),       // a literal, or neg of the vector
+        ("QE008", "r:.%name%.summary"), // a template placeholder
+        ("QE008", "r:a%.%b"),
     ] {
         for finding in lint(source, "probe.q", Profile::Uqf)
             .iter()

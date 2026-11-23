@@ -2409,6 +2409,71 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 true,
             )
         }
+        // `-x` becomes `neg x`: q 4 read a glyph applied to one argument,
+        // `-:x` too, as the monadic form, which q 5 spells only with its
+        // keyword - on KDB-X `(-:)x` and `neg x` parse alike, and `(,:)x`
+        // and `enlist x` give the same value. Not `<` and `>`: on an atom
+        // they are hopen and hclose, on a list a grade, which no one keyword
+        // is. Nor `-::a`, nor the file verbs.
+        "QE008" => {
+            let rest = v.code.get(start..)?;
+            let keyword = match rest.as_bytes().first()? {
+                b'+' => "flip",
+                b'-' => "neg",
+                b'*' => "first",
+                b'%' => "reciprocal",
+                b'!' => "key",
+                b'#' => "count",
+                b'$' => "string",
+                b'&' => "where",
+                b'|' => "reverse",
+                b'^' => "null",
+                b'=' => "group",
+                b'~' => "not",
+                b',' => "enlist",
+                b'@' => "type",
+                b'?' => "distinct",
+                b'.' => "value",
+                b'_' => "floor",
+                _ => return None,
+            };
+            if rest[1..].starts_with("::") {
+                return None;
+            }
+            let old = &source[start..start + 1 + usize::from(rest[1..].starts_with(':'))];
+            let after = &v.code[start + old.len()..];
+            let next = refusals::continued(after);
+            // An operand, not another glyph - `a%.%b` - unless one applied
+            // with brackets or a negative literal. A `%name%` template
+            // placeholder is no reciprocal anybody meant.
+            let glyph = next.starts_with(|c: char| "+-*%!#$&|^=<>~,@?._".contains(c))
+                && !re!(r"^\.[A-Za-z0-9]").is_match(next);
+            if glyph && !(next.as_bytes().get(1) == Some(&b'[') || re!(r"^-\.?\d").is_match(next))
+                || keyword == "reciprocal" && re!(r"^[A-Za-z0-9_]+%").is_match(next)
+                // `{[a]-1 2}`: whether q 4 read the literal is not certain.
+                || keyword == "neg"
+                    && v.code[..start].ends_with(']')
+                    && next.starts_with(|c: char| c.is_ascii_digit() || c == '.')
+            {
+                return None;
+            }
+            let gap = if after.starts_with([' ', '\t', '\r', '\n']) {
+                ""
+            } else {
+                " "
+            };
+            let lead = if ends_in_token(&source[..start]) {
+                " "
+            } else {
+                ""
+            };
+            (
+                old,
+                format!("{lead}{keyword}{gap}").into(),
+                format!("Write `{keyword}`, the monadic form q 5 keeps").into(),
+                true,
+            )
+        }
         _ => return None,
     };
     // An edit that leaves a `-` against a number makes it a negative
