@@ -279,6 +279,14 @@ test("a schema migration parses text and symbols it casts to numbers (#1096)", {
   assert.deepStrictEqual(await connection.call("{(exec t from meta a;\"f\"$a`x;\"f\"$a`y)}", 0), ["jj", [12, 3], [4, 5]]);
 });
 
+test("a schema migration adds a mixed column to a table with rows (#1097)", { skip }, async (t) => {
+  const { connection } = await connect(t, "a:([] k:1 2)\nb:([] k:`long$(); m:())\n");
+  const info = async (n) => readTableInfo(await connection.call(TABLE_INFO, n, 100));
+  const ran = readRun(await connection.call(RUN_SCRIPT, statements(migrationScript("a", await info("a"), "a", await info("b"), "b", "p"))));
+  assert.ok(ran.ok, ran.error);
+  assert.strictEqual(await connection.call("{\"f\"$count select from a where 0=count each m}", 0), 2);
+});
+
 test("the tickerplant log is read, paged, filtered, shown and replayed in a q of its own", { skip }, async (t) => {
   const log = [
     'f:hsym`$"$DIR/tp.log";',

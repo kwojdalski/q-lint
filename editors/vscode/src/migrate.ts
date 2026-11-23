@@ -109,7 +109,8 @@ export function migrationScript(name: string, fromInfo: TableInfo, fromWhere: st
   const lines = [...head];
   if (keyed) lines.push(`${t}:0!${t}`);
   for (const c of d.drop) lines.push(`${t}:delete ${c} from ${t}`);
-  for (const a of d.add) lines.push(a.type !== "" && a.type === a.type.toUpperCase() ? `${t}:update ${a.name}:count[i]#enlist ${nullOf(a.type)} from ${t}` : `${t}:update ${a.name}:${nullOf(a.type)} from ${t}`);
+  // A nested or mixed column takes its empty item once a row: `m:()` is 'length (#1097).
+  for (const a of d.add) lines.push(a.type === a.type.toUpperCase() ? `${t}:update ${a.name}:count[i]#enlist ${nullOf(a.type)} from ${t}` : `${t}:update ${a.name}:${nullOf(a.type)} from ${t}`);
   for (const c of d.cast) lines.push(`${t}:update ${c.name}:${castOf(c.name, c.from, c.to)} from ${t}`);
   for (const c of d.attrs) lines.push(`${t}:update ${c.name}:${c.to ? `\`${c.to}#` : "`#"}${c.name} from ${t}`);
   if (d.order) lines.push(`${t}:${d.order.map((c) => `\`${c}`).join("")} xcols ${t}`);

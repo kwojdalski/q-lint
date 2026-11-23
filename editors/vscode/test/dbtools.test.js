@@ -214,6 +214,8 @@ test("a schema diff names adds, drops, casts and order, and the script turns one
   assert.strictEqual(castOf("c", "C", "j"), '"J"$c');
   assert.strictEqual(castOf("c", "s", "j"), '"J"$string c');
   assert.strictEqual(castOf("c", "s", "d"), '"D"$string c');
+  // A mixed column is added as an empty list a row (#1097).
+  assert.match(migrationScript("a", t("table", [["k", "j"]]), "a", t("table", [["k", "j"], ["m", ""]]), "b", "p"), /\na:update m:count\[i\]#enlist \(\) from a\n/);
   assert.match(migrationScript("a", from, "a", from, "a", "p"), /the same: there is nothing to change/);
   const disk = migrationScript("trade", t("partitioned", [["date", "d"], ["sym", "s"], ["px", "f"]]), "trade", t("table", [["sym", "s"], ["px", "j"], ["ex", "s"]]), "t2", "hdb");
   assert.match(disk, /HDB column manager/);
