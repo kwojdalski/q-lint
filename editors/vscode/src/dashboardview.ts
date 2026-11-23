@@ -254,8 +254,9 @@ export class Dashboards {
     if (query === undefined) return post({ kind: "error", text: `There is no saved query ${tile.query} any more.` });
     const problem = tileQueryProblem(query.code);
     if (problem !== undefined) return post({ kind: "error", text: `Not run: ${problem}.` });
-    const process = this.live.processes().find((p) => p.label === tile.process);
-    if (process === undefined) return post({ kind: "error", text: `There is no saved process ${tile.process}.` });
+    // Saved, discovered or shared, as Add to Dashboard offered it (#1122).
+    const process = this.live.named(tile.process);
+    if (process === undefined) return post({ kind: "error", text: `There is no q process ${tile.process}.` });
     this.running.add(tile.id);
     void this.panel?.webview.postMessage({ type: "running", id: tile.id });
     try {

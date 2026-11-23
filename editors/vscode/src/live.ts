@@ -1168,6 +1168,13 @@ export class Live {
     return this.chosen(row, title, true);
   }
 
+  /// The process `label` names, as a connect to it finds it: a saved one
+  /// before a discovered or shared one, whose label is qualified. For a view
+  /// that keeps a label `pick` gave (#1122, #1125).
+  named(label: string): Process | undefined {
+    return this.processes().find((p) => p.label === label) ?? findDiscovered([...this.discovery.discovered(), ...this.sharedList()], label);
+  }
+
   private async edit(row?: ProcessArg): Promise<void> {
     const old = await this.chosen(row, "Edit which q process?");
     if (old === undefined) {
