@@ -482,6 +482,11 @@ formatting is not offered.
 
 Around those:
 
+- With `relatedInformation.enable: true`, and a client that takes it, a
+  diagnostic that points at a second place carries it as
+  `relatedInformation`: the first of two parameters of one name (QF008), of
+  two columns of one name (QB019), and the result column a by group repeats
+  (QB021), each with the repeat beside it.
 - Each diagnostic links its code to that rule's row in
   [docs/rules.md](docs/rules.md) (`codeDescription`), so the code is clickable
   wherever an editor shows it.
@@ -503,6 +508,12 @@ Around those:
   bracketed blocks and block comments that span lines, found in the masked
   text so that a bracket in a string or a comment folds nothing. A statement
   continued over indented lines with no bracket open is not a range.
+- `textDocument/selectionRange`, with `selectionRange.enable: true`, grows a
+  selection by q's structure: the token (a whole string literal in a string),
+  then each bracket around it from the inside out - the `;`-separated item,
+  the contents, the bracket, and a call with the name before its `[` - then
+  the top-level statement. A file whose brackets do not close gets the token
+  and the statement only.
 - While a bracket or a string is open - every keystroke of a call or a
   string being typed - a file reports only QE001, as the CLI does, placed at
   the bracket that is not closed rather than the closer it runs into. The
@@ -970,7 +981,7 @@ What only an editor has a use for is read from the `initialize` request's
 Every key is optional, and these are the defaults:
 
 ```json
-{"lint": {"select": [], "ignore": [], "run": "onType", "severity": {}},
+{"lint": {"select": [], "ignore": [], "run": "onType", "severity": {}, "scope": "open"},
  "fixes": {"unsafe": true}, "format": {"enable": true},
  "semanticTokens": {"enable": true}, "navigation": {"enable": true},
  "help": {"enable": true}, "completion": {"enable": false},
@@ -985,7 +996,8 @@ Every key is optional, and these are the defaults:
  "qsqlLayout": {"enable": true, "onFormat": false, "lineLength": 80},
  "functionalForm": {"enable": true}, "qsqlExplain": {"enable": true},
  "versionCheck": {"enable": true}, "baseline": {"enable": true},
- "typeLints": {"enable": true},
+ "typeLints": {"enable": true}, "selectionRange": {"enable": false},
+ "relatedInformation": {"enable": false}, "crossFileRefresh": {"enable": false},
  "workspaceIndex": {"enable": true, "exclude": []}}
 ```
 
@@ -993,7 +1005,15 @@ Every key is optional, and these are the defaults:
 configuration and the command line, and only turn rules off: a rule reports
 when the configuration selects it and they do too. `lint.run` is `onType` or
 `onSave`. `lint.severity` maps a code or prefix to `error`, `warning`,
-`information` or `hint`, the longest winning. `fixes.unsafe: false` offers
+`information` or `hint`, the longest winning. `lint.scope` is `open` or
+`workspace`: with `workspace`, every file the index reads reports too, open
+or not - read from disk and linted one at a time while no message is
+waiting, so none holds up the editor, at most 5,000 of them; again when it
+changes on disk or is closed, and all of them again when a save, a close or
+a change on disk changes what the workspace defines. Its files are the
+index's, so `workspaceIndex.exclude` and the configuration's `exclude` leave
+a file out, and with `workspaceIndex.enable: false` there are none.
+`fixes.unsafe: false` offers
 only the fixes `--fix` applies; `format.enable`, `semanticTokens.enable`,
 `navigation.enable` and `help.enable` (hover and signature help) set to
 `false` leave the capability unannounced - the last two for when another q
@@ -1014,7 +1034,15 @@ query and its functional form, and `qsqlExplain.enable: false` the query in
 words on hover. `versionCheck.enable: false` ignores the QK rules and
 `typeLints.enable: false` QT033-QT035, as `lint.ignore` would;
 `baseline.enable: false` shows every finding, whatever baseline the
-configuration names.
+configuration names. `selectionRange.enable: true` announces
+`textDocument/selectionRange`; off, an editor keeps its own expansion.
+`relatedInformation.enable: true` adds `relatedInformation` to the
+diagnostics that point at a second place. `crossFileRefresh.enable: true`
+sends `workspace/codeLens/refresh` and `workspace/inlayHint/refresh`, to a
+client that declares it takes them, when what the workspace defines
+changes, and the first also when the names a file reads change while
+reference lenses are on, as `workspace/semanticTokens/refresh` is sent for
+colours.
 `workspaceIndex.exclude`
 holds globs relative to each workspace folder that the index does not read.
 The index stops after 20,000 `.q` files or 500,000 directory entries of any

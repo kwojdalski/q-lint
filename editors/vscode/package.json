@@ -203,6 +203,12 @@
             ],
             "markdownDescription": "When to lint."
           },
+          "q-lint.lint.workspaceScope.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 14,
+            "markdownDescription": "Show problems for every `.q` file the workspace index reads, not only the open ones: each is read from disk and linted while the editor is otherwise idle, at most 5,000 of them, and again when it changes on disk, or when a save or a change on disk changes what the workspace defines. Files `#q-lint.workspaceIndex.exclude#` or the configuration's `exclude` skip are not linted, and with `#q-lint.workspaceIndex.enable#` off there are none. Off, only open files show problems."
+          },
           "q-lint.lint.severity": {
             "type": "object",
             "default": {},
@@ -419,6 +425,24 @@
             "default": true,
             "order": 47,
             "markdownDescription": "Report the lints from inferred types (style profile): a local that is always a symbol compared with a string or number (QT033), lists of different types joined (QT034), arithmetic on a local that is always a symbol (QT035). Off, they are hidden as `#q-lint.lint.ignore#` would."
+          },
+          "q-lint.selectionRange.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 48,
+            "markdownDescription": "Grow **Expand Selection** by q's structure: the token, then each bracket around it - the `;`-separated item, the contents, the bracket, a call with its name - then the top-level statement. Read from the source, never from a running q. Off, q-lint announces none and VS Code's own word-and-bracket selection is used."
+          },
+          "q-lint.relatedInformation.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 49,
+            "markdownDescription": "Link a problem that points at a second place to that place, under the problem in the Problems panel and its hover: the first of two parameters of one name (QF008), the first of two columns of one name (QB019), the result column a `by` group repeats (QB021). Off, the problems are shown alone."
+          },
+          "q-lint.crossFileRefresh.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 50,
+            "markdownDescription": "Redraw the code lenses and inlay hints of every open q file when another file's definitions change - a parameter renamed, a function added - and the reference counts when the names a file reads change. Off, a file's lenses and hints are redrawn only when it is edited itself."
           }
         }
       },

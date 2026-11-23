@@ -28,6 +28,9 @@ to a process you add and connect to, and sends only the code you run.
   conventions, depending on the profile. A finding's code, in the Problems
   panel and on hover, links to that rule in the
   [rule reference](https://github.com/kwojdalski/q-lint/blob/master/docs/rules.md).
+  A duplicate parameter or column links to the first of the two, under the
+  problem. `q-lint.relatedInformation.enable`. Open files only, unless
+  `q-lint.lint.workspaceScope.enable` asks for every file in the workspace.
 - **Quick Fixes** for over forty rules, among them operators and keywords
   from other languages (`==`, `&&`, `+=`, `true`, `return`), invalid string
   escapes, symbols where q wants strings, `f(a;b)` calls, one-row tables,
@@ -80,6 +83,9 @@ to a process you add and connect to, and sends only the code you run.
 - **Folding** of lambdas, parenthesised lists, bracketed blocks and block
   comments that span lines, read from the brackets and never from one inside
   a string or a comment. See [Folding](#folding) for what that replaces.
+- **Expand Selection** by q's structure: from the token out through each
+  bracket - its `;`-separated item, its contents, the bracket, a call with
+  its name - to the top-level statement. `q-lint.selectionRange.enable`.
 - **Snippets** for the forms q is mostly written in: qSQL (`select`,
   `selectby`, `update`, `updateby`, `exec`, `execby`, `delete`,
   `deletecols`, and the functional `fselect` and `fupdate`), protected
@@ -264,7 +270,9 @@ to a process you add and connect to, and sends only the code you run.
 - **Reference counts** above each top-level function: `3 references`, the
   places the workspace's `.q` files read it, as Find All References lists
   them without the assignments. Click it to see them in place.
-  `q-lint.referenceLens.enable` turns them off.
+  `q-lint.referenceLens.enable` turns them off. The counts and the inlay
+  hints of every open file are redrawn when another file changes what they
+  show; `q-lint.crossFileRefresh.enable` turns that off.
 - **Completion**, when turned on with `q-lint.completion.enable`: a lambda's
   parameters and locals first, then the names the workspace defines, spelled
   as the `\d` context in force reads them, then q's own words. It does not
@@ -2489,6 +2497,7 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.lint.select` | `[]` | Show only these rule codes or prefixes, among those the configuration turns on. Narrows, never widens. | - |
 | `q-lint.lint.ignore` | `[]` | Hide these rule codes or prefixes. | - |
 | `q-lint.lint.run` | `onType` | `onType` lints every change; `onSave` lints on open and save. | - |
+| `q-lint.lint.workspaceScope.enable` | `false` | Show problems for every `.q` file the workspace index reads, not only open ones: linted from disk while the editor is idle, at most 5,000, again when one changes on disk or a save changes what the workspace defines. Excluded files are skipped. | - |
 | `q-lint.lint.severity` | `{}` | The severity shown, by code or prefix, longest wins: `{"QS": "hint"}`. Display only. | - |
 | `q-lint.fixes.unsafe` | `true` | Offer the editor-only Quick Fixes (`--unsafe-fixes`) as well as those `--fix` applies. | - |
 | `q-lint.format.enable` | `true` | Register **Format Document** (the safe fixes). | - |
@@ -2519,6 +2528,9 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.versionCheck.enable` | `true` | Report the QK rules for a folder's `target-version`. Off: hidden as `q-lint.lint.ignore` would. | - |
 | `q-lint.baseline.enable` | `true` | Hide the findings in a folder's configured `baseline`, and offer **Write Lint Baseline**. Off: every finding shows. | - |
 | `q-lint.typeLints.enable` | `true` | Report QT033-QT035, the lints from inferred types. Off: hidden as `q-lint.lint.ignore` would. | - |
+| `q-lint.selectionRange.enable` | `true` | Grow **Expand Selection** by q's brackets and statements. Off: VS Code's own word-and-bracket selection. | - |
+| `q-lint.relatedInformation.enable` | `true` | Link a duplicate parameter or column's problem to the first of the two. Off: the problem alone. | - |
+| `q-lint.crossFileRefresh.enable` | `true` | Redraw open files' code lenses and inlay hints when another file's definitions, or the reads a count counts, change. Off: only when the file itself is edited. | - |
 | `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines, up to 20,000 files or 500,000 directory entries. Off: only open files. | - |
 | `q-lint.workspaceIndex.exclude` | `[]` | Globs, relative to the workspace folder, the index does not read: `["vendor/**"]`. | `q-lang-server.sourceFiles.ignoreGlob` |
 | `q-lint.trace.server` | `off` | Log client-server traffic: `off`, `messages`, `verbose`. | `q-lang-server.trace.server` |

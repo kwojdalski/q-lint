@@ -63,7 +63,9 @@
 //! in. The client runs and asks; this server reads.
 //!
 //! Around those: each diagnostic links its code to that rule's row in the
-//! reference (`codeDescription`); beside its fix, or without one, a finding
+//! reference (`codeDescription`), and one that points at a second place -
+//! the first of two names that collide - carries it when asked (`related`);
+//! beside its fix, or without one, a finding
 //! has a quick fix that accepts it with `/ noqa: CODE` on its line, offered
 //! only where the linter would read that comment (`suppression_for`);
 //! textDocument/codeAction also answers `source.fixAll.q-lint` with the
@@ -73,12 +75,15 @@
 //! accepted for its whole file with `/ qlinter: noqa: CODE`;
 //! `q-lint/formatChangedLines` formats only the lines a client says changed;
 //! and textDocument/foldingRange folds the brackets and block comments that
-//! span lines.
+//! span lines; textDocument/selectionRange, when asked for, grows a
+//! selection through the same brackets to the statement (`selection`).
 //!
 //! A workspace index: every `.q` file under the workspace folders is read at
 //! startup - never run - for the global names it defines and reads, and
 //! kept current from open buffers, closes, and
-//! workspace/didChangeWatchedFiles. A name
+//! workspace/didChangeWatchedFiles. With `lint.scope: "workspace"` its files
+//! report as the open ones do, linted while the client waits for nothing
+//! (`scope`). A name
 //! another file defines is not undefined here, a name two files assign is not
 //! tracked by value, and another file's function is coloured as one.
 //! The server registers the watchers itself (`watchers`), for a client that
@@ -191,6 +196,9 @@ mod inventory;
 mod live;
 mod navigate;
 mod relate;
+mod related;
+mod scope;
+mod selection;
 
 /// Open documents, by URI. The editor is the authority on their contents from
 /// didOpen until didClose, so nothing here reads from disk.
@@ -234,6 +242,9 @@ struct Index {
     /// Bumped whenever what the workspace defines changes, which is what
     /// makes the open documents' semantic tokens stale.
     generation: u64,
+    /// Bumped whenever the names some file reads change, which is what
+    /// makes a count of references stale.
+    reads: u64,
     /// What may be read from disk: `.q` files under these folders, less
     /// those `exclude` names - and nothing at all while `enabled` is off,
     /// when only open documents are indexed.
@@ -303,6 +314,9 @@ impl Index {
         let (loads, implicit) = (read.loads.clone(), read.implicit_defines.clone());
         let old = self.files.remove(&path);
         self.stale |= old.as_ref().is_none_or(|old| old.loads != loads);
+        if old.as_ref().is_none_or(|old| old.read.names != read.names) {
+            self.reads += 1;
+        }
         let placement = old
             .as_ref()
             .map(|old| old.placement.clone())
@@ -335,6 +349,7 @@ impl Index {
             Some(old) => {
                 self.ws.remove(&old.placed);
                 self.generation += 1;
+                self.reads += 1;
                 self.stale = true;
                 true
             }
@@ -613,7 +628,8 @@ fn workspace_folders(params: &Value) -> Vec<(String, String)> {
 /// nothing - every editor but VS Code, unless configured - sees no change:
 ///
 /// ```json
-/// {"lint": {"select": [], "ignore": [], "run": "onType", "severity": {}},
+/// {"lint": {"select": [], "ignore": [], "run": "onType", "severity": {},
+///           "scope": "open"},
 ///  "fixes": {"unsafe": true}, "format": {"enable": true},
 ///  "semanticTokens": {"enable": true}, "navigation": {"enable": true},
 ///  "help": {"enable": true}, "completion": {"enable": false},
@@ -626,7 +642,8 @@ fn workspace_folders(params: &Value) -> Vec<(String, String)> {
 ///  "qsqlLayout": {"enable": true, "onFormat": false, "lineLength": 80},
 ///  "functionalForm": {"enable": true}, "qsqlExplain": {"enable": true},
 ///  "versionCheck": {"enable": true}, "baseline": {"enable": true},
-///  "typeLints": {"enable": true}}
+///  "typeLints": {"enable": true}, "selectionRange": {"enable": false},
+///  "relatedInformation": {"enable": false}, "crossFileRefresh": {"enable": false}}
 /// ```
 ///
 /// `lint.select` and `lint.ignore` narrow the selection (see
@@ -636,6 +653,9 @@ struct Options {
     /// Lint on save rather than on every change. An open buffer's text is
     /// still kept current, for code actions and formatting.
     on_save: bool,
+    /// `lint.scope: "workspace"`: publish diagnostics for every file the
+    /// index reads, not only the open ones (`scope`).
+    workspace_scope: bool,
     /// Offer the editor-only fixes as Quick Fixes, not just the batch-safe
     /// ones `--fix` applies.
     unsafe_fixes: bool,
@@ -725,6 +745,18 @@ struct Options {
     /// Report the lints from inferred types, QT033-QT035. Off, they are
     /// ignored as `lint.ignore` would.
     type_lints: bool,
+    /// Answer textDocument/selectionRange: Expand Selection by the
+    /// brackets and statements of q. Off unless asked for, since an editor
+    /// told a server answers it stops using its own word-and-bracket guess.
+    selection_range: bool,
+    /// Give a diagnostic that points at a second place - the first of two
+    /// parameters or columns of one name - that place as
+    /// `relatedInformation`, when the client takes it. Off unless asked for.
+    related_information: bool,
+    /// Ask the client to fetch code lenses and inlay hints again when
+    /// another file's definitions, or the reads a reference count counts,
+    /// change - for a client that can be asked. Off unless asked for.
+    cross_file_refresh: bool,
     /// Whether the client shows an action it cannot take with the reason
     /// (`codeAction.disabledSupport`): a capability, not a setting.
     disabled_actions: bool,
@@ -737,6 +769,7 @@ impl Default for Options {
     fn default() -> Self {
         Options {
             on_save: false,
+            workspace_scope: false,
             unsafe_fixes: true,
             format: true,
             semantic_tokens: true,
@@ -768,6 +801,9 @@ impl Default for Options {
             version_check: true,
             baseline: true,
             type_lints: true,
+            selection_range: false,
+            related_information: false,
+            cross_file_refresh: false,
             disabled_actions: false,
             severity: vec![],
         }
@@ -819,6 +855,9 @@ impl Options {
                         "versionCheck",
                         "baseline",
                         "typeLints",
+                        "selectionRange",
+                        "relatedInformation",
+                        "crossFileRefresh",
                     ]
                     .contains(&key.as_str())
                         && !value.is_object()
@@ -869,6 +908,13 @@ impl Options {
         options.version_check = flag("/versionCheck/enable", true);
         options.baseline = flag("/baseline/enable", true);
         options.type_lints = flag("/typeLints/enable", true);
+        options.selection_range = flag("/selectionRange/enable", false);
+        options.cross_file_refresh = flag("/crossFileRefresh/enable", false);
+        options.related_information = flag("/relatedInformation/enable", false)
+            && params
+                .pointer("/capabilities/textDocument/publishDiagnostics/relatedInformation")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
         match init.pointer("/qsqlLayout/lineLength") {
             None | Some(Value::Null) => {}
             Some(n) => match n.as_u64().filter(|n| (20..=400).contains(n)) {
@@ -888,6 +934,14 @@ impl Options {
             Some(v) if v == "onSave" => options.on_save = true,
             Some(other) => problems.push(format!(
                 "/lint/run must be \"onType\" or \"onSave\", not {other}"
+            )),
+        }
+        match init.pointer("/lint/scope") {
+            None | Some(Value::Null) => {}
+            Some(v) if v == "open" => {}
+            Some(v) if v == "workspace" => options.workspace_scope = true,
+            Some(other) => problems.push(format!(
+                "/lint/scope must be \"open\" or \"workspace\", not {other}"
             )),
         }
         let mut strings = |pointer: &str| -> Vec<String> {
@@ -1031,6 +1085,7 @@ pub fn serve(
     let mut unsaved = Unsaved::new();
     let mut kept = Kept::new();
     let mut idx = Index::default();
+    let mut closed = scope::Closed::default();
     let mut opts = Options::default();
     let mut problems: Vec<String> = vec![];
     let mut initialized = false;
@@ -1039,6 +1094,9 @@ pub fn serve(
     // Whether the client re-asks for semantic tokens when told to, and the
     // id of the next request the server sends it.
     let mut token_refresh = false;
+    // Likewise for code lenses and inlay hints (LSP 3.16 and 3.17).
+    let mut lens_refresh = false;
+    let mut hint_refresh = false;
     // Whether the client takes the outline as `DocumentSymbol`s, and asks
     // before a rename what would be renamed.
     let mut nested_symbols = false;
@@ -1057,6 +1115,18 @@ pub fn serve(
     loop {
         // Everything the client has sent so far, before the oldest of it is
         // handled: what is behind a message can make it moot.
+        // And while nothing has, a closed file of the workspace is linted,
+        // one at a time, so none of them holds up a message (`scope`).
+        if queue.is_empty() {
+            queue.extend(messages.try_iter());
+        }
+        if queue.is_empty()
+            && !shutdown_requested
+            && let Some(key) = closed.next()
+        {
+            closed.lint(writer, &key, &docs, &idx, policy, &opts)?;
+            continue;
+        }
         if queue.is_empty() {
             match messages.recv() {
                 Ok(next) => queue.push_back(next),
@@ -1151,7 +1221,7 @@ pub fn serve(
                 is_change_to(later, params["textDocument"]["uri"].as_str().unwrap_or(""))
             });
 
-        let generation = idx.generation;
+        let (generation, reads) = (idx.generation, idx.reads);
         match (method.as_str(), id) {
             // LSP 3.17: "The initialize request may only be sent once." A
             // second is refused and changes nothing - answered, its options
@@ -1178,6 +1248,15 @@ pub fn serve(
                     .pointer("/capabilities/workspace/semanticTokens/refreshSupport")
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
+                let refreshes = |what: &str| {
+                    opts.cross_file_refresh
+                        && params
+                            .pointer(&format!("/capabilities/workspace/{what}/refreshSupport"))
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false)
+                };
+                lens_refresh = refreshes("codeLens") && (opts.code_lens || opts.reference_lens);
+                hint_refresh = refreshes("inlayHint") && opts.inlay_hints;
                 let watched = |key: &str| {
                     params
                         .pointer(&format!(
@@ -1208,6 +1287,7 @@ pub fn serve(
                 relate::announce(&mut result["capabilities"], opts.call_hierarchy, opts.graph);
                 live::announce(&mut result["capabilities"]);
                 inventory::announce(&mut result["capabilities"]);
+                selection::announce(&mut result["capabilities"], opts.selection_range);
                 annotate::announce(
                     &mut result["capabilities"],
                     opts.inlay_hints || opts.inferred_types,
@@ -1242,6 +1322,8 @@ pub fn serve(
                 idx.enabled = opts.index;
                 idx.exclude = opts.index_exclude.clone();
                 idx.rebuild(policy, &docs);
+                closed.on = opts.workspace_scope;
+                closed.sync(writer, &idx, &docs, true)?;
                 ready = true;
             }
             // A request after shutdown is the one protocol error worth
@@ -1254,6 +1336,7 @@ pub fn serve(
             )?,
             ("shutdown", Some(id)) => {
                 shutdown_requested = true;
+                closed.stop();
                 docs.clear();
                 unsaved.clear();
                 kept.clear();
@@ -1286,6 +1369,7 @@ pub fn serve(
                 | "textDocument/inlayHint"
                 | "textDocument/codeLens"
                 | "textDocument/documentLink"
+                | "textDocument/selectionRange"
                 | "q-lint/graph"
                 | "q-lint/globalAt"
                 | "q-lint/unresolvedNames"
@@ -1368,6 +1452,7 @@ pub fn serve(
                         writer, &mut docs, &unsaved, &mut kept, &mut idx, uri, text, policy, &opts,
                     )?;
                 }
+                closed.sync(writer, &idx, &docs, false)?;
             }
             ("textDocument/didClose", None) => {
                 let uri = uri_of(&params["textDocument"]);
@@ -1383,12 +1468,20 @@ pub fn serve(
                 }
                 // An empty list, not silence: diagnostics are owned by the
                 // server until it says otherwise, so a closed file would keep
-                // its squiggles in the problems panel forever.
-                send(
-                    writer,
-                    json!({"method": "textDocument/publishDiagnostics",
-                           "params": {"uri": uri, "diagnostics": []}}),
-                )?;
+                // its squiggles in the problems panel forever. Unless every
+                // file the index reads reports, when it does as one on disk.
+                let key = file_key(&path_of(&uri));
+                if closed.on && idx.files.contains_key(&key) {
+                    closed.lint(writer, &key, &docs, &idx, policy, &opts)?;
+                }
+                if !closed.published(&key) {
+                    send(
+                        writer,
+                        json!({"method": "textDocument/publishDiagnostics",
+                               "params": {"uri": uri, "diagnostics": []}}),
+                    )?;
+                }
+                closed.sync(writer, &idx, &docs, false)?;
             }
             ("textDocument/semanticTokens/full", Some(id)) => {
                 let uri = uri_of(&params["textDocument"]);
@@ -1459,6 +1552,20 @@ pub fn serve(
                         writer,
                         json!({"id": id, "error": {"code": REQUEST_FAILED, "message": refusal}}),
                     )?,
+                    Err(panic) => send(writer, internal_error(id, &panic))?,
+                }
+            }
+            ("textDocument/selectionRange", Some(id)) => {
+                // Asked of a server that did not announce it, answered with
+                // nothing rather than refused.
+                let answer = guarded(|| {
+                    if !opts.selection_range {
+                        return Value::Null;
+                    }
+                    selection::answer(&params, &navigate::Sources::new(&docs, &idx))
+                });
+                match answer {
+                    Ok(result) => send(writer, json!({"id": id, "result": result}))?,
                     Err(panic) => send(writer, internal_error(id, &panic))?,
                 }
             }
@@ -1587,6 +1694,7 @@ pub fn serve(
                     if docs.contains_key(&uri) {
                         continue;
                     }
+                    closed.touch(file_key(&path));
                     changed |= if change["type"].as_i64() == Some(3) {
                         idx.remove_tree(&path, &docs)
                     } else {
@@ -1606,6 +1714,7 @@ pub fn serve(
                         writer, &docs, &unsaved, &mut kept, &idx, None, policy, &opts,
                     )?;
                 }
+                closed.sync(writer, &idx, &docs, config_changed)?;
             }
             // A folder added to or removed from a multi-root workspace (#797).
             ("workspace/didChangeWorkspaceFolders", None) => {
@@ -1624,6 +1733,7 @@ pub fn serve(
                         writer, &docs, &unsaved, &mut kept, &idx, None, policy, &opts,
                     )?;
                 }
+                closed.sync(writer, &idx, &docs, false)?;
             }
             // Every other REQUEST gets an error, because a client waiting on a
             // reply that never arrives looks like a hung server.
@@ -1678,6 +1788,28 @@ pub fn serve(
                 writer,
                 json!({"id": format!("qlinter-{next_request}"), "method": "workspace/semanticTokens/refresh"}),
             )?;
+        }
+        // And what is drawn over the text: a parameter name at a call comes
+        // from the definition another file holds, and a reference count
+        // from the reads of every file. Only once the client is ready.
+        let defined = idx.generation != generation;
+        if ready && !shutdown_requested {
+            let counted = opts.reference_lens && idx.reads != reads;
+            for (asked, method) in [
+                (
+                    lens_refresh && (defined || counted),
+                    "workspace/codeLens/refresh",
+                ),
+                (hint_refresh && defined, "workspace/inlayHint/refresh"),
+            ] {
+                if asked {
+                    next_request += 1;
+                    send(
+                        writer,
+                        json!({"id": format!("qlinter-{next_request}"), "method": method}),
+                    )?;
+                }
+            }
         }
     }
 }
@@ -2638,6 +2770,15 @@ fn diagnose(
             if let Some(level) = opts.severity_of(&f.code) {
                 d["severity"] = json!(level);
             }
+            if opts.related_information
+                && let Some(column) = f.column
+            {
+                let at = lines.q_offset(f.line.saturating_sub(1), column.saturating_sub(1));
+                let places = related::related(f, text, &lines, at, uri);
+                if !places.is_empty() {
+                    d["relatedInformation"] = json!(places);
+                }
+            }
             d
         })
         .collect();
@@ -2659,6 +2800,26 @@ fn diagnose(
                     let mut d = d.clone();
                     d["range"]["start"]["line"] = json!(start);
                     d["range"]["end"]["line"] = json!(end);
+                    // The places it points at move with it, or go.
+                    if let Some(places) = d.get_mut("relatedInformation") {
+                        let moved: Vec<Value> = places
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|place| {
+                                let range = &place["location"]["range"];
+                                let (start, end) = carry.lines(
+                                    range["start"]["line"].as_u64()? as usize,
+                                    range["end"]["line"].as_u64()? as usize,
+                                )?;
+                                let mut place = place.clone();
+                                place["location"]["range"]["start"]["line"] = json!(start);
+                                place["location"]["range"]["end"]["line"] = json!(end);
+                                Some(place)
+                            })
+                            .collect();
+                        *places = json!(moved);
+                    }
                     Some(d)
                 }));
             }
