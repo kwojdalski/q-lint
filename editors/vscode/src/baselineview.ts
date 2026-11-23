@@ -10,7 +10,7 @@
 import { execFile } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { commands, window, workspace, type ExtensionContext } from "vscode";
 import { LANGUAGE_COMMANDS, languageOff, languageOn } from "./languagefeatures";
 
@@ -98,9 +98,9 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
         if (answer !== write) {
           return undefined;
         }
-        // Rewritten to be relative to the folder, as the draft's paths were
-        // relative to the scratch directory.
-        const text = readFileSync(draft, "utf8");
+        // Rewritten to be relative to the folder: the draft's paths are
+        // relative to the scratch directory, through `..` (#1191, #1275).
+        const text = absolutePaths(readFileSync(draft, "utf8"), canonicalDir(scratch));
         writeFileSync(target, rebased(text, dir, canonicalDir(dir)));
         await offerConfiguration(dir);
         return target;
@@ -111,7 +111,17 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
   );
 }
 
-/// A baseline written from a scratch directory, whose paths are absolute,
+/// A baseline's `text` with each relative path - relative to `dir`, its
+/// directory, `../` included - resolved against `dir`, `/`-separated. A path
+/// already absolute (another Windows drive) is left as it is.
+export function absolutePaths(text: string, dir: string): string {
+  const base = dir.replace(/\\/g, "/").replace(/^\/\/\?\//, "");
+  return text.replace(/"path":"([^"]*)"/g, (whole, path: string) =>
+    /^(\/|[A-Za-z]:)/.test(path) ? whole : `"path":"${posix.normalize(`${base}/${path}`)}"`,
+  );
+}
+
+/// A baseline written from a scratch directory, its paths made absolute,
 /// with each path under one of `folders` (one folder's names: as opened,
 /// and with its symlinks resolved) made relative to it. qlinter writes
 /// canonical `/`-separated paths, `//?/C:/proj/a.q` on Windows, so both
