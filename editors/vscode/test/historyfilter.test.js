@@ -85,6 +85,10 @@ test("each entry of the exported script loads as it ran on its own (#1098)", () 
   assert.deepStrictEqual(script("a:1", "/ note\n  b:2\n  c"), ["a:1", "b:2\n  c"]);
   assert.deepStrictEqual(script("a:1", "b:2\n/\nhidden", "c:3"), ["a:1", "b:2", "c:3"]);
   assert.deepStrictEqual(script("/\nx\n\\\ny:1", "z:2"), ["y:1", "z:2"]);
+  // An end of script ended only its own entry (#1136): the rest of it is
+  // commented out, and the entries after it still load.
+  assert.deepStrictEqual(script("a:1", "b:2\n\\\nnever:1\n\n\\", "c:3"), ["a:1", "b:2", "c:3"]);
+  assert.match(historyScript([entry("b:2\n\\\nnever:1")]), /^b:2\n\/ \\\n\/ never:1$/m);
   // A closed block comment, kept as written.
   assert.match(historyScript([entry("/\nx\n\\\ny:1")]), /^\/\nx\n\\\ny:1\n$/m);
 });

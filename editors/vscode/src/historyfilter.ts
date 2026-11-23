@@ -112,9 +112,9 @@ export function historyJson(entries: Entry[]): string {
 
 /// The history as a q script, oldest first so it reads in the order it ran:
 /// each query after a comment line naming its process, time, duration and
-/// outcome, and its error under it. Its own block-comment or end-of-script
-/// lines (`/` or `\` alone) are kept, as they ran, and each entry loads as
-/// it ran on its own.
+/// outcome, and its error under it. Its own block comments (`/` ... `\`)
+/// are kept as they ran, an end of script (`\` alone) and what follows it in
+/// its entry are commented out, and each entry loads as it ran on its own.
 export function historyScript(entries: Entry[]): string {
   const comment = (text: string): string => `/ ${text.replace(/\r?\n/g, " ")}`;
   return (
@@ -146,7 +146,9 @@ function standalone(code: string): string {
     } else if (line === "/") {
       inBlock = true;
     } else if (line === "\\") {
-      break;
+      // The end of the script ended this entry when it ran, and would end
+      // the export here: it and the rest of the entry become comments (#1136).
+      return lines.map((l, j) => (j < i || l.trim() === "" ? l : `/ ${l}`)).join("\n");
     } else if (!started && line.trim() !== "" && !line.startsWith("/")) {
       lines[i] = lines[i].trimStart();
       started = true;
