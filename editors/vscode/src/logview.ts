@@ -229,6 +229,10 @@ export class LogViewer {
     await this.reload(view);
     const document = await workspace.openTextDocument(view.uri);
     const editor = await window.showTextDocument(document, { preview: false });
+    // Closed, or the viewer turned off, while it opened: nothing to follow (#1295).
+    if (this.views.get(id) !== view) {
+      return undefined;
+    }
     this.decorate(editor);
     this.reveal(view);
     this.watch(view);
