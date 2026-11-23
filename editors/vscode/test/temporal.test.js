@@ -48,6 +48,10 @@ test("nulls and infinities are each type's own, and convert as q's casts do", ()
   assert.deepStrictEqual(t.parse("0wz"), { type: "datetime", special: "inf", n: 0n });
   assert.deepStrictEqual(texts("0Np"), ["0N", "0Nd"]);
   assert.deepStrictEqual(texts("0Wp"), ["0W", "0Wd"]);
+  // 0Wp written out in full is still the infinity, not a date in 2292 (#1069).
+  assert.deepStrictEqual(t.parse("2292.04.10D23:47:16.854775807"), { type: "timestamp", special: "inf", n: 0n });
+  assert.deepStrictEqual(texts("2292.04.10D23:47:16.854775807"), ["0W", "0Wd"]);
+  assert.deepStrictEqual(t.parse("2292.04.10D23:47:16.854775806").special, undefined);
   assert.deepStrictEqual(texts("-0Wd"), ["-0Wi", "-0Wp"]);
   assert.deepStrictEqual(texts("0Nt"), ["0Ni"]);
   assert.strictEqual(t.format({ type: "datetime", special: "-inf", n: 0n }), "-0wz");

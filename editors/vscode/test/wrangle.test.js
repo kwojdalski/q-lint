@@ -48,6 +48,11 @@ test("each step is written as q over the step before, and the steps as a script 
   assert.strictEqual(w.wrangleQuery("select from t", steps), "`px xasc (select from (select from t) where px>1)");
   assert.strictEqual(w.wrangleScript("t", steps, "rdb"), "/ Wrangled on rdb by q-lint: 2 steps\n{[]\n  w:t;\n  w:select from w where px>1;\n  w:`px xasc w;\n  w}[]\n");
   assert.deepStrictEqual(steps.map(w.stepText), ["keep rows where px > 1", "sort by px, ascending"]);
+  // A base's comments are dropped before it is nested, so they eat no ")" or ";" (#1072).
+  assert.strictEqual(w.wrangleBase("select from t / note"), undefined);
+  assert.strictEqual(w.wrangleQuery("select from t / note", [steps[1]]), "`px xasc (select from t)");
+  assert.strictEqual(w.wrangleQuery('select from t where s like "a /b" / note\n  / more', [steps[1]]), '`px xasc (select from t where s like "a /b")');
+  assert.match(w.wrangleScript("select from t / note", steps, "rdb"), /\n  w:select from t;\n/);
   // Only a plain name can be a q-sql column.
   assert.strictEqual(w.columnProblem("px"), undefined);
   assert.match(w.columnProblem("a b"), /cannot be named in q-sql/);

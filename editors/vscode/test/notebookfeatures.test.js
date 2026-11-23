@@ -138,6 +138,9 @@ test("an HTML export escapes everything from the notebook, copies no output HTML
 test("Markdown without a value shows its expression as written", () => {
   assert.strictEqual(markdownHtml("n is {{q: n}}"), "<p>n is <code>{{q: n}}</code></p>");
   assert.strictEqual(markdownHtml("> quoted *a*\n\n1. x\n2. y"), "<blockquote><p>quoted <em>a</em></p></blockquote>\n<ol><li>x</li><li>y</li></ol>");
+  // A link's URL is not read for emphasis; its label is (#1105).
+  assert.strictEqual(markdownHtml("[docs](https://code.kx.com/q/ref/_x_/)"), '<p><a href="https://code.kx.com/q/ref/_x_/">docs</a></p>');
+  assert.strictEqual(markdownHtml("[*a*](https://x.io/a*b*c) and *b*"), '<p><a href="https://x.io/a*b*c"><em>a</em></a> and <em>b</em></p>');
 });
 
 test("a Jupyter export is nbformat 4 with q's kernel, other languages and errors as Jupyter writes them", () => {
@@ -201,6 +204,8 @@ test("a Python notebook imports with its code as Python, a %%q cell as q, and it
   assert.strictEqual(qnb.cells[3].metadata, undefined);
   assert.strictEqual(JSON.parse(qnb.cells[3].outputs[0].items[0].text).stack, "red");
   assert.deepStrictEqual(qnb.cells[5].outputs[0].items[0], { mime: "image/png", base64: "iVBORw==" });
+  // A raw cell goes back to Jupyter as a raw cell (#1107).
+  assert.deepStrictEqual(JSON.parse(toIpynb(qnb)).cells[4], { cell_type: "raw", metadata: {}, source: ["raw text"] });
   // What is not a notebook is refused, with why.
   assert.throws(() => fromIpynb("{"), IpynbError);
   assert.throws(() => fromIpynb('{"nbformat": 3, "cells": []}'), /nbformat 3/);

@@ -323,8 +323,9 @@ export class QueryModes {
   private runner: ((code: string, process: string) => Promise<void>) | undefined;
   /// A page fetch under way, so a second is not sent behind it.
   private paging = false;
-  /// Save Result Chart's request, until the page sends the image.
-  private image: { key: string; target?: Uri; resolve: () => void } | undefined;
+  /// Save Result Chart's requests, by key, until the page sends each image:
+  /// a second run does not strand the first (#1130).
+  private readonly saving = new Map<string, { target?: Uri; resolve: () => void }>();
   /// Requests for the chart as an image to send somewhere (#1021), by key.
   private readonly images = new Map<string, (data: string | undefined) => void>();
   /// The saved query being run, whose result is the next of its code.
@@ -367,8 +368,8 @@ export class QueryModes {
       commands.registerCommand(RESULT_VIEW.saveChartPreset, (preset?: unknown) => this.enabled("chartPresets") && this.saveChartPreset(preset)),
       commands.registerCommand(RESULT_VIEW.forgetChartPreset, () => this.enabled("chartPresets") && this.forgetChartPreset()),
       commands.registerCommand(RESULT_VIEW.correlation, () => this.enabled("correlation") && this.showCorrelation()),
-      commands.registerCommand(RESULT_VIEW.toNotebook, (withChart?: boolean, notebook?: Uri) => this.enabled("sendResult") && this.toNotebook(undefined, withChart, notebook)),
-      commands.registerCommand(RESULT_VIEW.toReport, (target?: Uri, withChart?: boolean) => this.enabled("sendResult") && this.toReport(undefined, target, withChart)),
+      commands.registerCommand(RESULT_VIEW.toNotebook, (withChart?: boolean, notebook?: Uri) => this.enabled("sendResult") && this.toNotebook(this.order[settings().resultsLocation], withChart, notebook)),
+      commands.registerCommand(RESULT_VIEW.toReport, (target?: Uri, withChart?: boolean) => this.enabled("sendResult") && this.toReport(this.order[settings().resultsLocation], target, withChart)),
       window.registerWebviewViewProvider(RESULTS.view, { resolveWebviewView: (view) => this.resolveView(view) }),
       workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration("q-lint.query")) {
@@ -925,11 +926,12 @@ export class QueryModes {
         resolve();
         return;
       }
-      this.image = { key: `${this.session}.${this.controls}`, target, resolve };
+      const key = `${this.session}.${this.controls}`;
+      this.saving.set(key, { target, resolve });
       // A page that never answers (closed) does not keep the command waiting.
       setTimeout(() => {
-        if (this.image?.resolve === resolve) {
-          this.image = undefined;
+        if (this.saving.get(key)?.resolve === resolve) {
+          this.saving.delete(key);
           resolve();
         }
       }, 10000);
@@ -948,9 +950,9 @@ export class QueryModes {
         : format === "svg" && data.startsWith("<svg")
           ? Buffer.from(data, "utf8")
           : undefined;
-    const request = message.key !== undefined && this.image?.key === message.key ? this.image : undefined;
-    if (request !== undefined) {
-      this.image = undefined;
+    const request = message.key !== undefined ? this.saving.get(message.key) : undefined;
+    if (request !== undefined && message.key !== undefined) {
+      this.saving.delete(message.key);
     }
     try {
       if (format === undefined || bytes === undefined) {

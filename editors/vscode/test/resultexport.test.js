@@ -225,6 +225,13 @@ test("a page of rows is added after the grid's, ranked again over both, and a pa
   assert.deepStrictEqual(appendPage({ ...first, rank: [[], [1, 0]] }, next).rank[0], []);
 });
 
+test("a page of strings ranks a one-character one by its text, not its leading comma (#1126)", () => {
+  const first = { count: 4, keys: 0, names: ["s"], types: [0], cells: [['"ab"', '"zz"']], raw: [[]], rank: [[0, 1]] };
+  const next = readPage({ count: 4, names: ["s"], types: [0], cells: [[',"b"', '"a\\"q"']], raw: [[]], rank: [[1, 0]] });
+  // As iasc: "a\"q", "ab", "b", "zz".
+  assert.deepStrictEqual(appendPage(first, next).rank, [[1, 3, 2, 0]]);
+});
+
 test("a drill-down template has the cell's value, its column and its row's other cells put in as q", () => {
   const p = typed();
   assert.deepStrictEqual(fillDrilldown("select from t where sym={{value}}, d={{row.d}}, c={{column}}", p, 0, 2), {

@@ -14,6 +14,74 @@ import { floatText } from "./pastetable";
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 
+/// Each object's keys in the order the text wrote them: `Object.keys` puts
+/// integer-like ones first, and `.j.k` keeps the text's order (#1075).
+const ORDER = new WeakMap<object, string[]>();
+
+function keysOf(o: object): string[] {
+  return ORDER.get(o) ?? Object.keys(o);
+}
+
+/// `text`, which `JSON.parse` has read, read again with each object's keys
+/// recorded in order; a repeated key keeps its first place and last value.
+function parseOrdered(text: string): Json {
+  let at = 0;
+  const space = (): void => {
+    while (/\s/.test(text[at] ?? "")) {
+      at++;
+    }
+  };
+  const read = (): Json => {
+    space();
+    const c = text[at];
+    if (c === "{") {
+      at++;
+      const o: { [key: string]: Json } = {};
+      const keys: string[] = [];
+      space();
+      while (text[at] !== "}") {
+        const key = read() as string;
+        space();
+        at++; // the colon
+        const v = read();
+        if (!Object.prototype.hasOwnProperty.call(o, key)) {
+          keys.push(key);
+        }
+        Object.defineProperty(o, key, { value: v, enumerable: true, writable: true, configurable: true });
+        space();
+        if (text[at] === ",") {
+          at++;
+          space();
+        }
+      }
+      at++;
+      ORDER.set(o, keys);
+      return o;
+    }
+    if (c === "[") {
+      at++;
+      const items: Json[] = [];
+      space();
+      while (text[at] !== "]") {
+        items.push(read());
+        space();
+        if (text[at] === ",") {
+          at++;
+        }
+        space();
+      }
+      at++;
+      return items;
+    }
+    const token = c === '"' ? /"(?:[^"\\]|\\.)*"/y : /true|false|null|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
+    token.lastIndex = at;
+    const m = token.exec(text);
+    at += m?.[0].length ?? 1;
+    return JSON.parse(m?.[0] ?? "null") as Json;
+  };
+  return read();
+}
+
 /// A float atom's literal: `0n` for a null, `1f` for a whole number.
 function float(x: number | null): string {
   return x === null ? "0n" : x === Infinity ? "0w" : x === -Infinity ? "-0w" : floatText(x);
@@ -36,8 +104,8 @@ function sameKeys(items: Json[]): items is { [key: string]: Json }[] {
   if (!items.every((i) => i !== null && typeof i === "object" && !Array.isArray(i))) {
     return false;
   }
-  const first = Object.keys(items[0] as object).join("\u0000");
-  return Object.keys(items[0] as object).length > 0 && items.every((i) => Object.keys(i as object).join("\u0000") === first);
+  const first = keysOf(items[0] as object).join("\u0000");
+  return keysOf(items[0] as object).length > 0 && items.every((i) => keysOf(i as object).join("\u0000") === first);
 }
 
 /// A list's items as one q list: `enlist x` for one, `(x;y)` for more.
@@ -62,7 +130,7 @@ function array(items: Json[]): string {
     return items.length === 1 ? `enlist ${items[0] ? 1 : 0}b` : `${items.map((b) => (b ? 1 : 0)).join("")}b`;
   }
   if (sameKeys(items)) {
-    const keys = Object.keys(items[0]);
+    const keys = keysOf(items[0]);
     const columns = keys.map((k) => array(items.map((i) => i[k])));
     if (keys.every(plainName) && new Set(keys).size === keys.length) {
       return `([] ${keys.map((k, c) => `${k}:${columns[c]}`).join("; ")})`;
@@ -89,7 +157,7 @@ export function value(json: Json): string {
   if (Array.isArray(json)) {
     return array(json);
   }
-  const keys = Object.keys(json);
+  const keys = keysOf(json);
   if (keys.length === 0) {
     return "(`symbol$())!()";
   }
@@ -100,13 +168,13 @@ export function value(json: Json): string {
 /// JSON text as q, or why it is not JSON. A key repeated in an object keeps
 /// its last value, as JavaScript reads it.
 export function jsonToQ(text: string): { code: string } | { error: string } {
-  let parsed: Json;
+  const json = text.replace(/^﻿/, "");
   try {
-    parsed = JSON.parse(text.replace(/^﻿/, "")) as Json;
+    JSON.parse(json);
   } catch (error) {
     return { error: `the clipboard holds no JSON: ${error instanceof Error ? error.message : String(error)}` };
   }
-  return { code: value(parsed) };
+  return { code: value(parseOrdered(json)) };
 }
 
 /// The q that `.j.j`s an expression on a process: its value as JSON text.
