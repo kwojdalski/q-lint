@@ -241,6 +241,27 @@ test("a dashboard runs its tiles' read-only queries, keeps a timer only with an 
   assert.deepStrictEqual(tileContent({ ok: false, error: "type", trace: "" }, "table"), { kind: "error", text: "type" });
 });
 
+// A timer was set only when a tile had none: 5 s -> 300 s went on
+// querying every 5 s until the panel closed.
+test("changing a tile's refresh interval sets its timer again (#1123)", async (t) => {
+  capture();
+  const { live, context } = await setUp(t);
+  await context.workspaceState.update(SAVED_QUERIES_KEY, [{ name: "px", code: "select from trade" }]);
+  live.runApart = async () => ({ ok: true, type: -7, text: ["1"] });
+  const dashboards = new Dashboards(context, live);
+  stub.inputs.push("Desk");
+  stub.picks.push("$(add) New dashboard...");
+  const id = await stub.commands.get(DB_COMMANDS.addToDashboard)("px", undefined, "hdb");
+  await stub.commands.get(DB_COMMANDS.openDashboard)("Desk");
+  await dashboards.receive({ type: "refresh-interval", id, seconds: 5 });
+  assert.deepStrictEqual(dashboards.timerSeconds(), [5]);
+  await dashboards.receive({ type: "refresh-interval", id, seconds: 300 });
+  assert.deepStrictEqual(dashboards.timerSeconds(), [300]);
+  await dashboards.receive({ type: "view", id, view: "line" });
+  assert.deepStrictEqual(dashboards.timerSeconds(), [300]);
+  dashboards.close();
+});
+
 test("a chart is rendered from a file to the path given", async (t) => {
   capture();
   const { context, live } = await setUp(t);
