@@ -449,7 +449,10 @@ fn add_noqa_accepts_every_finding_and_a_second_run_changes_nothing() {
         err.contains("added 5 noqa directive(s) in 1 file(s)"),
         "{err}"
     );
-    assert!(err.contains("1 noqa directive(s) suppress nothing (QL003)"), "{err}");
+    assert!(
+        err.contains("1 noqa directive(s) suppress nothing (QL003)"),
+        "{err}"
+    );
     let after = fs::read_to_string(&path).unwrap();
     assert_eq!(
         after,

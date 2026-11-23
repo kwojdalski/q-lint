@@ -942,7 +942,11 @@ fn add_noqa(
             "qlinter: {stale} noqa directive(s) suppress nothing (QL003): remove them with --fix --unsafe-fixes"
         );
     }
-    Ok(if failed { 2 } else { u8::from(left + stale > 0) })
+    Ok(if failed {
+        2
+    } else {
+        u8::from(left + stale > 0)
+    })
 }
 
 /// `bytes` as text, each byte that is not UTF-8 read as one replacement

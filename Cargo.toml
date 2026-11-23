@@ -1,6 +1,6 @@
 [package]
 name = "q-lint-rs"
-version = "0.34.0"
+version = "0.35.0"
 edition = "2024"
 # The oldest compiler that builds it: `if let ... && let ...` chains, which
 # edition 2024 has only from 1.88. CI's msrv job builds with exactly this.
