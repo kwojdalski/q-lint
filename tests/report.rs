@@ -34,6 +34,8 @@ fn sarif_has_the_shape_code_scanning_requires_and_one_result_per_finding() {
     assert!(report["$schema"].as_str().unwrap().contains("sarif-2.1.0"));
     let runs = report["runs"].as_array().unwrap();
     assert_eq!(runs.len(), 1);
+    // Required for a run with results; the columns count UTF-16 units.
+    assert_eq!(runs[0]["columnKind"], "utf16CodeUnits");
     let driver = &runs[0]["tool"]["driver"];
     assert_eq!(driver["name"], "qlinter");
     let rules = driver["rules"].as_array().unwrap();
