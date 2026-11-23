@@ -95,3 +95,20 @@ test("a cell edit is an update of the table, its rows found by the row's values,
   assert.strictEqual(w.guessTable("select sum px by sym from trade"), "trade");
   assert.strictEqual(w.guessTable("1+1"), undefined);
 });
+
+test("an unwrapped grid's cell edit finds its row by a long past 2^53 exactly (#1276)", () => {
+  const { gridOfQ } = require("../out/qformat.js");
+  const grid = gridOfQ(
+    {
+      kind: "table",
+      attr: 0,
+      cols: ["id", "px"],
+      data: [
+        { kind: "vector", t: 7, attr: 0, v: [9007199254740993n, 9007199254740992n] },
+        { kind: "vector", t: 9, attr: 0, v: [1, 2] },
+      ],
+    },
+    100,
+  );
+  assert.strictEqual(w.editStatement(grid, 1, 0, "t", "99f").code, "update px:(99f) from `t where (id~\\:(9007199254740993)),(px~\\:(1f))");
+});
