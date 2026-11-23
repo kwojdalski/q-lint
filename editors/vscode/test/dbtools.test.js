@@ -80,7 +80,7 @@ test("the column manager checks an op against the table and writes a script the 
   assert.match(script, /\.qlint\.cm\.run\[`trade;\.qlint\.cm\.ren\[`px;`price\]\]/);
   assert.match(script, /system"l \."/);
   // A rename quotes both paths for the shell (#1083): run on a real q in dbtools_q.test.js.
-  assert.ok(HELPERS.some((h) => h.startsWith(".qlint.cm.mv:") && h.includes(`{"'",ssr[x;"'";"'\\\\''"],"'"}`) && h.includes('{"\\"",x,"\\""}')));
+  assert.ok(HELPERS.some((h) => h.startsWith(".qlint.cm.mvcmd:") && h.includes(`{"'",ssr[x;"'";"'\\\\''"],"'"}`) && h.includes('{"\\"",ssr[x;"/";"\\\\"],"\\""}')));
   assert.match(opText({ op: "attr", column: "sym", attr: "" }), /remove the attribute/);
   assert.match(columnScriptOf("t", [{ op: "delete", column: "a" }, { op: "reorder", order: ["b"] }], "p"), /step:2 from .*order\[enlist`b\]/);
   const settings = { enabled: true, tags: ["prod"] };
