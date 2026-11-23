@@ -99,13 +99,16 @@ export function markdownHtml(source: string, values: Record<string, LiveValue> =
       out.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`);
       continue;
     }
-    const heading = /^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line);
+    // A closing run of `#` only after a space: `# Using C#` keeps its `#`
+    // (CommonMark, #1237).
+    const heading = /^ {0,3}(#{1,6})\s+(.*?)\s*$/.exec(line);
     const item = /^ {0,3}([-*+]|\d{1,9}[.)])\s+(.*)$/.exec(line);
     if (line.trim() === "") {
       flush();
     } else if (heading !== null) {
       flush();
-      out.push(`<h${heading[1].length}>${inline(heading[2], values)}</h${heading[1].length}>`);
+      const text = heading[2].replace(/(^|\s+)#+$/, "");
+      out.push(`<h${heading[1].length}>${inline(text, values)}</h${heading[1].length}>`);
     } else if (/^ {0,3}([-*_])(\s*\1){2,}\s*$/.test(line)) {
       flush();
       out.push("<hr>");

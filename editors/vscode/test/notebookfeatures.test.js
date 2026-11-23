@@ -212,6 +212,13 @@ test("a Python notebook imports with its code as Python, a %%q cell as q, and it
   assert.throws(() => fromIpynb("[]"), /expected a JSON object with "cells"/);
 });
 
+test("a heading keeps a # that ends a word, and drops a closing run after a space (#1237)", () => {
+  assert.strictEqual(markdownHtml("# Using C#"), "<h1>Using C#</h1>");
+  assert.strictEqual(markdownHtml("## Title ##"), "<h2>Title</h2>");
+  assert.strictEqual(markdownHtml("# F# and C# #"), "<h1>F# and C#</h1>");
+  assert.strictEqual(markdownHtml("# ##"), "<h1></h1>");
+});
+
 test("a markdown or raw cell's attachments go back to Jupyter (#1234)", () => {
   const png = { "image/png": "iVBORw==" };
   const nb = {
