@@ -156,6 +156,14 @@ s:("`long$";`symbol$"abc")
 a:`symbol$("ab")
 b:`guid$("ab")
 
+=== clean | a char atom has one code, which is what the cast is for (KDB-X: `int$"a" is 97i, "I"$"a" is 0Ni; #1298)
+a:`int$"a"
+b:`long$"\n"
+c:`long$("a")
+
+=== QT032 profile: general | but symbol and guid refuse a char atom too (KDB-X: `symbol$"a" is 'type)
+s:`symbol$"a"
+
 === QT004 | and casts its codes alike (q 5: `long$("12") is 49 50)
 c:`long$("12")
 

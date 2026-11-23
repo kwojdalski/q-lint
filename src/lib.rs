@@ -9198,7 +9198,16 @@ fn lint_rules(
                     }
                     (i < b.len()).then_some(i + 1)
                 };
-                if in_code && close.is_some_and(|c| operand_ends(code, &v.comments, offset + c)) {
+                // A char atom has one code, and that is what the cast gives:
+                // `int$"a" is 97i where "I"$"a" is 0Ni (#1298). Symbol and
+                // guid refuse it all the same.
+                let open = dollar + 1 + literals[dollar + 1..].find('"').unwrap();
+                let atom = re!(r#"^"(?:[^"\\]|\\(?:[0-7]{3}|.))""#).is_match(&literals[open..])
+                    && m.get(1).is_some_and(|n| !matches!(n.as_str(), "symbol" | "guid"));
+                if in_code
+                    && !atom
+                    && close.is_some_and(|c| operand_ends(code, &v.comments, offset + c))
+                {
                     return Some(m);
                 }
                 at = start + 1;
