@@ -433,7 +433,7 @@ class QnbKernel {
       this.where.set(notebook, result.process);
       const [ok, parts, values] = result.value;
       if (values.length > 0) {
-        await keepLiveValues(notebook, markdown, values);
+        await keepLiveValues(notebook, markdown.map((j) => all[j]), values);
       }
       const done = await finish(ok, parts.map(toOutput));
       this.ran.fire(notebook);
@@ -451,17 +451,22 @@ class QnbKernel {
 }
 
 /// Keep each of `values` in the metadata of the Markdown cell at the same
-/// place in `indexes`, where the renderer reads it; the source is not
-/// changed.
-async function keepLiveValues(notebook: NotebookDocument, indexes: number[], values: Record<string, LiveValue>[]): Promise<void> {
+/// place in `cells`, where the renderer reads it; the source is not
+/// changed. Each goes where its cell is now, which a move during the run
+/// can have changed (#1091); a cell since deleted gets none.
+async function keepLiveValues(notebook: NotebookDocument, cells: NotebookCell[], values: Record<string, LiveValue>[]): Promise<void> {
+  const edits = cells.flatMap((cell, k) => {
+    if (cell.index < 0 || notebook.cellAt(cell.index) !== cell) {
+      return [];
+    }
+    const { [LIVE_KEY]: _old, ...rest } = cell.metadata ?? {};
+    return [NotebookEdit.updateCellMetadata(cell.index, { ...rest, [LIVE_KEY]: values[k] })];
+  });
+  if (edits.length === 0) {
+    return;
+  }
   const edit = new WorkspaceEdit();
-  edit.set(
-    notebook.uri,
-    indexes.map((j, k) => {
-      const { [LIVE_KEY]: _old, ...rest } = notebook.cellAt(j).metadata ?? {};
-      return NotebookEdit.updateCellMetadata(j, { ...rest, [LIVE_KEY]: values[k] });
-    }),
-  );
+  edit.set(notebook.uri, edits);
   await workspace.applyEdit(edit);
 }
 
