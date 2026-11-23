@@ -183,6 +183,17 @@ test("a baseline is named first in qlinter.toml, its count read, and its paths m
   assert.deepStrictEqual(writtenCount("qlinter: wrote 12 finding(s) in 3 file(s) to the baseline x"), { findings: 12, files: 3 });
   assert.strictEqual(writtenCount("nothing"), undefined);
   assert.strictEqual(rebased('{"code":"QS001","count":1,"line":"a","path":"/ws/src/a.q"}', "/ws"), '{"code":"QS001","count":1,"line":"a","path":"src/a.q"}');
+  // qlinter writes canonical, /-separated paths: a Windows folder, and a
+  // folder reached through a symlink, are matched in that form too (#1080).
+  const { win32, posix } = require("node:path");
+  const row = (p) => `{"code":"QS001","count":1,"line":"a","path":"${p}"}`;
+  const win = win32.join("C:\\proj");
+  assert.strictEqual(rebased(row("//?/C:/proj/src/a.q"), win), row("src/a.q"));
+  assert.strictEqual(rebased(row("C:/proj/src/a.q"), win32.join(win, "\\")), row("src/a.q"));
+  assert.strictEqual(rebased(row("c:/proj/src/a.q"), win), row("src/a.q"));
+  assert.strictEqual(rebased(row("C:/projx/a.q"), win), row("C:/projx/a.q"));
+  assert.strictEqual(rebased(row("/private/tmp/proj/src/a.q"), posix.join("/tmp", "proj"), "/private/tmp/proj"), row("src/a.q"));
+  assert.strictEqual(rebased(row("/other/a.q"), "/tmp/proj", "/private/tmp/proj"), row("/other/a.q"));
   const { context, restore } = setUp();
   try {
     let asked = 0;
