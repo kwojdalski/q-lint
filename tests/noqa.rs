@@ -433,7 +433,9 @@ fn add_noqa_accepts_every_finding_and_a_second_run_changes_nothing() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.q");
     // Two codes on line 2; line 3's noqa is joined, not doubled; a lambda's
-    // finding is accepted on the line it is reported on.
+    // finding is accepted on the line it is reported on. Line 3's QF016 is
+    // stale - QF001 is reported there instead - and its QL003 is never
+    // suppressed: it is said, and left for the fix that removes it.
     fs::write(
         &path,
         "my_var:1\nf:{[desc;dt;data] desc+dt}\ng:{[desc;data] 1} / noqa: QF016\nh:{[desc]\n  desc}\n",
@@ -441,10 +443,14 @@ fn add_noqa_accepts_every_finding_and_a_second_run_changes_nothing() {
     .unwrap();
     assert_eq!(cli(&path, &[]).status.code(), Some(1));
     let added = cli(&path, &["--add-noqa"]);
-    assert_eq!(added.status.code(), Some(0), "{added:?}");
+    assert_eq!(added.status.code(), Some(1), "{added:?}");
     let err = String::from_utf8_lossy(&added.stderr);
     assert!(
         err.contains("added 5 noqa directive(s) in 1 file(s)"),
+        "{err}"
+    );
+    assert!(
+        err.contains("1 noqa directive(s) suppress nothing (QL003)"),
         "{err}"
     );
     let after = fs::read_to_string(&path).unwrap();
@@ -453,11 +459,16 @@ fn add_noqa_accepts_every_finding_and_a_second_run_changes_nothing() {
         "my_var:1 / noqa: QS001\nf:{[desc;dt;data] desc+dt} / noqa: QF001, QF016\n\
          g:{[desc;data] 1} / noqa: QF016, QF001\nh:{[desc] / noqa: QF001\n  desc}\n"
     );
-    let clean = cli(&path, &[]);
-    assert_eq!(clean.status.code(), Some(0), "{clean:?}");
     let again = cli(&path, &["--add-noqa"]);
-    assert_eq!(again.status.code(), Some(0), "{again:?}");
+    assert_eq!(again.status.code(), Some(1), "{again:?}");
     assert_eq!(fs::read_to_string(&path).unwrap(), after);
+    let fixed = cli(&path, &["--fix", "--unsafe-fixes"]);
+    assert_eq!(fixed.status.code(), Some(0), "{fixed:?}");
+    assert!(
+        fs::read_to_string(&path)
+            .unwrap()
+            .contains("g:{[desc;data] 1} / noqa: QF001\n"),
+    );
 }
 
 #[test]
@@ -476,4 +487,101 @@ fn add_noqa_leaves_a_line_no_comment_can_follow_and_says_so() {
         fs::read_to_string(&path).unwrap(),
         "/\nnote\n\\\nmy_var:1 / noqa: QS001\n"
     );
+}
+
+#[test]
+fn an_unused_noqa_code_is_reported_and_a_used_one_is_not() {
+    // QF016 fires on line 1 and not on line 2 (#1170).
+    let source = "f:{[a;b] a} / noqa: QF016\ng:{[a] a} / noqa: QF016\n";
+    assert!(!has(source, 1, "QL003"));
+    assert!(has(source, 2, "QL003"));
+    // One finding for a directive, naming every unused code.
+    let both = lint(
+        "g:{[a] a} / noqa: QF016, QF017 reason\n",
+        "t.q",
+        Profile::Uqf,
+    );
+    let unused: Vec<&Finding> = both.iter().filter(|f| f.code == "QL003").collect();
+    assert_eq!(unused.len(), 1);
+    assert!(
+        unused[0]
+            .detail
+            .starts_with("Unused noqa codes: QF016, QF017;")
+    );
+    // A QE001 its noqa takes is used, though the early return dropped it.
+    assert!(!has("a:(1 / noqa: QE001\nb:2\n", 1, "QL003"));
+    // And QL003 named in the directive accepts the directive.
+    assert!(!has("g:{[a] a} / noqa: QF016, QL003\n", 1, "QL003"));
+}
+
+#[test]
+fn a_noqa_code_no_rule_of_this_run_could_report_is_not_reported() {
+    // Another tool's code, qls's, and a rule the profile turns off: QS001
+    // is styleq's, so under style it did not run, and may fire under styleq.
+    let style = |s: &str| lint(s, "t.q", Profile::Style);
+    for source in [
+        "g:{[a] a} / noqa: QX999\n",
+        "g:{[a] a} / noqa: QLS001\n",
+        "g:{[a] a} / noqa: QS001\n",
+    ] {
+        assert!(!style(source).iter().any(|f| f.code == "QL003"), "{source}");
+    }
+    // Nor a line inside a block comment, or after the end of the script.
+    assert!(!has("/\ng:{[a] a} / noqa: QF016\n\\\na:1\n", 2, "QL003"));
+    assert!(!has("a:1\n\\\ng:{[a] a} / noqa: QF016\n", 3, "QL003"));
+}
+
+#[test]
+fn a_noqa_for_a_rule_the_configuration_turns_off_is_kept_while_the_rule_would_fire() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("a.q");
+    // Line 1's QF016 fires and is ignored: the noqa is there for a run that
+    // turns it back on. Line 2's suppresses nothing in any run.
+    fs::write(
+        &path,
+        "f:{[a;b] a} / noqa: QF016\ng:{[a] a} / noqa: QF016\n",
+    )
+    .unwrap();
+    let out = cli(&path, &["--ignore", "QF016", "--format", "json"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    let found: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let lines: Vec<u64> = found
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["code"] == "QL003")
+        .map(|f| f["line"].as_u64().unwrap())
+        .collect();
+    assert_eq!(lines, [2], "{text}");
+}
+
+/// `source` with QL003's fix on `line` applied, if it has one.
+fn unused_fixed(source: &str, line: usize) -> Option<String> {
+    let found = lint(source, "t.q", Profile::Uqf);
+    let finding = found.iter().find(|f| f.code == "QL003" && f.line == line)?;
+    let fix = q_lint_rs::fix_for(finding, source)?;
+    assert!(!fix.batch_safe);
+    let mut out = source.to_string();
+    out.replace_range(fix.start..fix.end, &fix.replacement);
+    Some(out)
+}
+
+#[test]
+fn the_unused_noqa_fix_removes_the_code_or_the_directive() {
+    assert_eq!(
+        unused_fixed("g:{[a;b] a} / noqa: QF016, QB025, QF017\n", 1).as_deref(),
+        Some("g:{[a;b] a} / noqa: QF016\n")
+    );
+    assert_eq!(
+        unused_fixed("g:{[a] a}  / noqa: QF016 a reason\r\n", 1).as_deref(),
+        Some("g:{[a] a}\r\n")
+    );
+    // A note before the directive stays.
+    assert_eq!(
+        unused_fixed("g:{[a] a} / note / noqa: QF016\n", 1).as_deref(),
+        Some("g:{[a] a} / note\n")
+    );
+    // A comment line alone would be left blank, so it is only reported.
+    assert!(has("/ noqa: QF016\na:1\n", 1, "QL003"));
+    assert_eq!(unused_fixed("/ noqa: QF016\na:1\n", 1), None);
 }

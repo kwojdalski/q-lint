@@ -32,7 +32,9 @@ class Element {
   getAttribute(name) {
     return this.attributes?.[name] ?? null;
   }
-  focus() {}
+  focus() {
+    Element.focused = this;
+  }
   addEventListener(type, f) {
     (this.listeners[type] ??= []).push(f);
   }

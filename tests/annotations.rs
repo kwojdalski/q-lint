@@ -1160,3 +1160,203 @@ fn the_tests_reaching_the_functions_a_save_changed_are_listed() {
     );
     assert_eq!(reply["result"]["tests"], json!([]), "{reply}");
 }
+
+/// The edits a `workspace/willRenameFiles` reply makes, as
+/// `(file under dir, line, start, end, new text)`, in order.
+fn renamed(reply: &Value, dir: &Path) -> Vec<(String, u64, u64, u64, String)> {
+    let root = file_uri(dir);
+    let mut out = vec![];
+    for (uri, edits) in reply["result"]["changes"]
+        .as_object()
+        .unwrap_or_else(|| panic!("a workspace edit, not {reply}"))
+    {
+        let file = uri.strip_prefix(&format!("{root}/")).unwrap_or(uri);
+        for edit in edits.as_array().unwrap() {
+            let (line, start, end) = span(&edit["range"]);
+            let text = edit["newText"].as_str().unwrap().to_string();
+            out.push((file.to_string(), line, start, end, text));
+        }
+    }
+    out
+}
+
+fn rename_params(dir: &Path, moves: &[(&str, &str)]) -> Value {
+    let files: Vec<Value> = moves
+        .iter()
+        .map(|(old, new)| {
+            json!({"oldUri": file_uri(&dir.join(old)), "newUri": file_uri(&dir.join(new))})
+        })
+        .collect();
+    json!({"files": files})
+}
+
+#[test]
+fn renaming_a_file_rewrites_the_loads_that_name_it() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("lib")).unwrap();
+    std::fs::create_dir_all(dir.path().join("app")).unwrap();
+    let files = [
+        ("lib/a.q", "a:1\n"),
+        ("lib/other.q", "o:1\n"),
+        (
+            "main.q",
+            "\\l lib/a.q\n\\l lib/other.q\nsystem \"l lib/a.q\"\n",
+        ),
+        ("lib/near.q", "\\l a.q\n"),
+        ("app/up.q", "\\l ../lib/a.q\n"),
+    ];
+    let options = json!({"renameLoads": {"enable": true}});
+    let (mut server, reply) = Server::over(dir.path(), &files, client(), options);
+    let operations = &reply["result"]["capabilities"]["workspace"]["fileOperations"];
+    assert!(operations["willRename"]["filters"].is_array(), "{reply}");
+    let reply = server.request(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("lib/a.q", "lib/b.q")]),
+    );
+    assert_eq!(
+        renamed(&reply, dir.path()),
+        [
+            // Each from the base it was written against.
+            ("app/up.q".to_string(), 0, 3, 13, "../lib/b.q".to_string()),
+            ("lib/near.q".into(), 0, 3, 6, "b.q".into()),
+            ("main.q".into(), 0, 3, 10, "lib/b.q".into()),
+            ("main.q".into(), 2, 10, 17, "lib/b.q".into()),
+        ],
+        "{reply}"
+    );
+}
+
+#[test]
+fn renaming_a_folder_rewrites_the_loads_under_it_and_moving_a_loader_its_own() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("lib/sub")).unwrap();
+    let files = [
+        ("lib/sub/x.q", "x:1\n"),
+        // Inside the folder, and written from it: it moves with its target.
+        ("lib/sub/y.q", "\\l x.q\n"),
+        ("main.q", "\\l lib/sub/x.q\n\\l lib/sub/y.q\n"),
+    ];
+    let options = json!({"renameLoads": {"enable": true}});
+    let (mut server, _) = Server::over(dir.path(), &files, client(), options);
+    let reply = server.request(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("lib", "src")]),
+    );
+    assert_eq!(
+        renamed(&reply, dir.path()),
+        [
+            ("main.q".to_string(), 0, 3, 14, "src/sub/x.q".to_string()),
+            ("main.q".into(), 1, 3, 14, "src/sub/y.q".into()),
+        ],
+        "{reply}"
+    );
+    // A loader moved down a folder: its load from its own directory climbs.
+    std::fs::write(dir.path().join("lib/sub/z.q"), "\\l x.q\n").unwrap();
+    let reply = server.request(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("lib/sub/y.q", "lib/y.q")]),
+    );
+    let edits = renamed(&reply, dir.path());
+    assert!(
+        edits.contains(&("lib/sub/y.q".to_string(), 0, 3, 6, "sub/x.q".to_string())),
+        "{reply}"
+    );
+    assert!(
+        edits.contains(&("main.q".to_string(), 1, 3, 14, "lib/y.q".to_string())),
+        "{reply}"
+    );
+}
+
+#[test]
+fn rename_edits_are_not_announced_or_sent_unless_asked_for() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("lib")).unwrap();
+    let files = [("lib/a.q", "a:1\n"), ("main.q", "\\l lib/a.q\n")];
+    let (mut server, reply) = Server::over(dir.path(), &files, client(), Value::Null);
+    assert!(
+        reply["result"]["capabilities"]["workspace"]["fileOperations"].is_null(),
+        "{reply}"
+    );
+    let reply = server.request(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("lib/a.q", "lib/b.q")]),
+    );
+    assert_eq!(reply["result"], Value::Null, "{reply}");
+}
+
+/// The labels of a completion reply, in order.
+fn labels(reply: &Value) -> Vec<String> {
+    reply["result"]["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a completion list, not {reply}"))
+        .iter()
+        .map(|item| item["label"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn after_a_load_the_directories_and_scripts_complete() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("lib/deep")).unwrap();
+    std::fs::create_dir_all(dir.path().join("app")).unwrap();
+    std::fs::create_dir_all(dir.path().join(".git")).unwrap();
+    let files = [
+        ("lib/util.q", "u:1\n"),
+        ("lib/core.k", "c:1\n"),
+        ("lib/notes.txt", "\n"),
+        ("app/local.q", "l:1\n"),
+    ];
+    let options = json!({"loadPathCompletion": {"enable": true}});
+    let (mut server, reply) = Server::over(dir.path(), &files, client(), options);
+    assert_eq!(
+        reply["result"]["capabilities"]["completionProvider"]["triggerCharacters"],
+        json!(["/"]),
+        "{reply}"
+    );
+    let text = "\\l li\n\\l lib/\n\\l \nx:1\n";
+    let uri = server.open(dir.path(), "app/main.q", text);
+    let at =
+        |line: u64, character: u64| json!({"position": {"line": line, "character": character}});
+    let reply = server.whole("textDocument/completion", &uri, at(0, 5));
+    // The workspace folder's, and the file's own directory's; the client
+    // narrows by what is typed.
+    let found = labels(&reply);
+    assert!(found.contains(&"lib/".to_string()), "{reply}");
+    assert!(found.contains(&"local.q".to_string()), "{reply}");
+    assert!(!found.iter().any(|l| l.starts_with('.')), "{reply}");
+    let item = &reply["result"]["items"][found.iter().position(|l| l == "lib/").unwrap()];
+    assert_eq!(item["kind"], 19, "{item}");
+    assert_eq!(span(&item["textEdit"]["range"]), (0, 3, 5), "{item}");
+    // Inside lib/: its folder first, then its scripts, and nothing else.
+    let reply = server.whole("textDocument/completion", &uri, at(1, 7));
+    assert_eq!(labels(&reply), ["deep/", "core.k", "util.q"], "{reply}");
+    let item = &reply["result"]["items"][2];
+    assert_eq!(span(&item["textEdit"]["range"]), (1, 7, 7), "{item}");
+    // Off a load line, with name completion off, nothing.
+    let reply = server.whole("textDocument/completion", &uri, at(3, 1));
+    assert_eq!(reply["result"], Value::Null, "{reply}");
+}
+
+#[test]
+fn load_path_completion_is_off_unless_asked_for() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("lib")).unwrap();
+    let (mut server, reply) =
+        Server::over(dir.path(), &[("lib/a.q", "a:1\n")], client(), Value::Null);
+    assert!(reply["result"]["capabilities"]["completionProvider"].is_null());
+    let uri = server.open(dir.path(), "main.q", "\\l li\n");
+    let reply = server.whole(
+        "textDocument/completion",
+        &uri,
+        json!({"position": {"line": 0, "character": 5}}),
+    );
+    assert_eq!(reply["result"], Value::Null, "{reply}");
+    // With name completion on too, `/` joins its trigger characters.
+    let options = json!({"completion": {"enable": true}, "loadPathCompletion": {"enable": true}});
+    let (_, reply) = Server::over(dir.path(), &[], client(), options);
+    assert_eq!(
+        reply["result"]["capabilities"]["completionProvider"]["triggerCharacters"],
+        json!([".", "/"]),
+        "{reply}"
+    );
+}

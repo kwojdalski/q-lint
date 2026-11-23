@@ -64,6 +64,8 @@ test("the defaults start the server as it was started before settings", () => {
     selectionRange: { enable: true },
     relatedInformation: { enable: true },
     crossFileRefresh: { enable: true },
+    renameLoads: { enable: true },
+    loadPathCompletion: { enable: true },
     workspaceIndex: { enable: true, exclude: [] },
   });
 });
@@ -141,6 +143,8 @@ test("every editor-only setting reaches the server's options", () => {
       "selectionRange.enable": false,
       "relatedInformation.enable": false,
       "crossFileRefresh.enable": false,
+      "renameLoads.enable": false,
+      "loadPathCompletion.enable": false,
       "workspaceIndex.enable": false,
       "workspaceIndex.exclude": ["vendor/**"],
     }),
@@ -180,6 +184,8 @@ test("every editor-only setting reaches the server's options", () => {
     selectionRange: { enable: false },
     relatedInformation: { enable: false },
     crossFileRefresh: { enable: false },
+    renameLoads: { enable: false },
+    loadPathCompletion: { enable: false },
     workspaceIndex: { enable: false, exclude: ["vendor/**"] },
   });
 });

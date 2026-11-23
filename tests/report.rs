@@ -189,3 +189,30 @@ fn output_file_takes_the_report_and_leaves_the_exit_code() {
     assert_eq!(status, Some(2));
     assert!(err.contains("no/such/dir/r.out"), "{err}");
 }
+
+#[test]
+fn output_file_is_never_written_by_a_refused_run_or_over_an_input() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("a.q"), TWO).unwrap();
+    fs::write(d.join("rep.txt"), "precious\n").unwrap();
+    // A run refused for its arguments leaves the file as it was.
+    let (status, _, _) = run(
+        d,
+        &[
+            "--statistics",
+            "--format",
+            "sarif",
+            "--output-file",
+            "rep.txt",
+            "a.q",
+        ],
+    );
+    assert_eq!(status, Some(2));
+    assert_eq!(fs::read_to_string(d.join("rep.txt")).unwrap(), "precious\n");
+    // A file that is also an input is refused, and not truncated.
+    let (status, _, err) = run(d, &["a.q", "--output-file", "a.q"]);
+    assert_eq!(status, Some(2));
+    assert!(err.contains("one of the files to lint"), "{err}");
+    assert_eq!(fs::read_to_string(d.join("a.q")).unwrap(), TWO);
+}

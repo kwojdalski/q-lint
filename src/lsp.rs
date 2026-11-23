@@ -195,6 +195,7 @@ mod help;
 mod inventory;
 mod live;
 mod navigate;
+mod paths;
 mod relate;
 mod related;
 mod scope;
@@ -643,12 +644,14 @@ fn workspace_folders(params: &Value) -> Vec<(String, String)> {
 ///  "functionalForm": {"enable": true}, "qsqlExplain": {"enable": true},
 ///  "versionCheck": {"enable": true}, "baseline": {"enable": true},
 ///  "typeLints": {"enable": true}, "selectionRange": {"enable": false},
-///  "relatedInformation": {"enable": false}, "crossFileRefresh": {"enable": false}}
+///  "relatedInformation": {"enable": false}, "crossFileRefresh": {"enable": false},
+///  "renameLoads": {"enable": false}, "loadPathCompletion": {"enable": false}}
 /// ```
 ///
 /// `lint.select` and `lint.ignore` narrow the selection (see
 /// `Policy::narrow`); everything else here is the server's own behaviour,
 /// which no configuration file describes.
+#[derive(Debug)]
 struct Options {
     /// Lint on save rather than on every change. An open buffer's text is
     /// still kept current, for code actions and formatting.
@@ -757,6 +760,14 @@ struct Options {
     /// another file's definitions, or the reads a reference count counts,
     /// change - for a client that can be asked. Off unless asked for.
     cross_file_refresh: bool,
+    /// Answer `workspace/willRenameFiles` with the edits that keep each `\l`
+    /// naming the file or folder being renamed (`paths`). Off unless asked
+    /// for: accepting a rename then edits other files.
+    rename_loads: bool,
+    /// Complete the directories and scripts after `\l ` (`paths`). Off
+    /// unless asked for, as completion is; on alone, only a `\l` line is
+    /// answered.
+    load_path_completion: bool,
     /// Whether the client shows an action it cannot take with the reason
     /// (`codeAction.disabledSupport`): a capability, not a setting.
     disabled_actions: bool,
@@ -804,6 +815,8 @@ impl Default for Options {
             selection_range: false,
             related_information: false,
             cross_file_refresh: false,
+            rename_loads: false,
+            load_path_completion: false,
             disabled_actions: false,
             severity: vec![],
         }
@@ -858,6 +871,8 @@ impl Options {
                         "selectionRange",
                         "relatedInformation",
                         "crossFileRefresh",
+                        "renameLoads",
+                        "loadPathCompletion",
                     ]
                     .contains(&key.as_str())
                         && !value.is_object()
@@ -910,6 +925,8 @@ impl Options {
         options.type_lints = flag("/typeLints/enable", true);
         options.selection_range = flag("/selectionRange/enable", false);
         options.cross_file_refresh = flag("/crossFileRefresh/enable", false);
+        options.rename_loads = flag("/renameLoads/enable", false);
+        options.load_path_completion = flag("/loadPathCompletion/enable", false);
         options.related_information = flag("/relatedInformation/enable", false)
             && params
                 .pointer("/capabilities/textDocument/publishDiagnostics/relatedInformation")
@@ -1284,6 +1301,11 @@ pub fn serve(
                 }
                 help_client = help::Client::read(&params);
                 help::announce(&mut result["capabilities"], opts.help, opts.completion);
+                paths::announce(
+                    &mut result["capabilities"],
+                    opts.rename_loads,
+                    opts.load_path_completion,
+                );
                 relate::announce(&mut result["capabilities"], opts.call_hierarchy, opts.graph);
                 live::announce(&mut result["capabilities"]);
                 inventory::announce(&mut result["capabilities"]);
@@ -1555,6 +1577,20 @@ pub fn serve(
                     Err(panic) => send(writer, internal_error(id, &panic))?,
                 }
             }
+            ("workspace/willRenameFiles", Some(id)) => {
+                // Asked of a server that did not announce it, answered with
+                // no edit rather than refused.
+                let answer = guarded(|| {
+                    if !opts.rename_loads {
+                        return Value::Null;
+                    }
+                    paths::will_rename(&params, &navigate::Sources::new(&docs, &idx))
+                });
+                match answer {
+                    Ok(result) => send(writer, json!({"id": id, "result": result}))?,
+                    Err(panic) => send(writer, internal_error(id, &panic))?,
+                }
+            }
             ("textDocument/selectionRange", Some(id)) => {
                 // Asked of a server that did not announce it, answered with
                 // nothing rather than refused.
@@ -1582,7 +1618,7 @@ pub fn serve(
                 // Asked of a server that did not announce it, a request is
                 // answered with nothing rather than refused.
                 let on = match method.as_str() {
-                    "textDocument/completion" => opts.completion,
+                    "textDocument/completion" => opts.completion || opts.load_path_completion,
                     _ => opts.help,
                 };
                 let answer = guarded(|| {
@@ -1590,6 +1626,17 @@ pub fn serve(
                         return Value::Null;
                     }
                     let sources = navigate::Sources::new(&docs, &idx);
+                    if method == "textDocument/completion" && opts.load_path_completion {
+                        let path = sources
+                            .cursor(&params)
+                            .and_then(|cursor| paths::completion(&cursor, &sources));
+                        if let Some(items) = path {
+                            return items;
+                        }
+                    }
+                    if method == "textDocument/completion" && !opts.completion {
+                        return Value::Null;
+                    }
                     let more = help::More {
                         inferred_types: opts.inferred_types,
                         auto_load: opts.auto_load,
@@ -3390,5 +3437,97 @@ mod tests {
         assert_eq!(severity("error"), 1);
         assert_eq!(severity("warning"), 2);
         assert_eq!(severity("anything else"), 2);
+    }
+
+    /// The README's `initializationOptions` block, as JSON.
+    fn readme_options() -> Value {
+        // A Windows checkout may have turned the README's line ends to CRLF.
+        let readme = include_str!("../README.md").replace("\r\n", "\n");
+        let section = readme
+            .split("### Editor options: `initializationOptions`")
+            .nth(1)
+            .expect("README lost its initializationOptions section");
+        let block = section
+            .split("```json\n")
+            .nth(1)
+            .and_then(|rest| rest.split("\n```").next())
+            .expect("README lost its initializationOptions block");
+        serde_json::from_str(block).expect("the README's block is JSON")
+    }
+
+    /// Each leaf of `v` - a value that is not an object, or an empty one -
+    /// by its JSON pointer.
+    fn leaves(v: &Value, at: String, out: &mut Vec<(String, Value)>) {
+        match v {
+            Value::Object(map) if !map.is_empty() => {
+                for (k, v) in map {
+                    leaves(v, format!("{at}/{k}"), out);
+                }
+            }
+            _ => out.push((at, v.clone())),
+        }
+    }
+
+    fn read_options(init: Value) -> (String, Vec<String>) {
+        // The client capability `relatedInformation.enable` also needs.
+        let params = json!({"initializationOptions": init, "capabilities": {"textDocument":
+            {"publishDiagnostics": {"relatedInformation": true}}}});
+        let (options, layer, problems) = Options::read(&params);
+        (format!("{options:?} {layer:?}"), problems)
+    }
+
+    #[test]
+    fn the_readme_initialization_options_are_the_servers_defaults() {
+        let readme = readme_options();
+        let (defaults, problems) = read_options(Value::Null);
+        assert!(problems.is_empty(), "{problems:?}");
+        let (documented, problems) = read_options(readme.clone());
+        assert!(problems.is_empty(), "the README's block: {problems:?}");
+        assert_eq!(
+            documented, defaults,
+            "the README's block is not the defaults"
+        );
+        assert_eq!(
+            format!("{:?}", Options::default()),
+            format!("{:?}", Options::read(&json!({})).0)
+        );
+
+        // Each key in it is one the server reads: a value other than the one
+        // documented changes what it does.
+        let mut found = vec![];
+        leaves(&readme, String::new(), &mut found);
+        for (pointer, value) in &found {
+            let other = match value {
+                Value::Bool(b) => json!(!b),
+                Value::Number(_) => json!(81),
+                Value::String(s) if s == "onType" => json!("onSave"),
+                Value::String(s) if s == "open" => json!("workspace"),
+                Value::Array(_) if pointer.ends_with("exclude") => json!(["build/**"]),
+                Value::Array(_) => json!(["QS001"]),
+                Value::Object(_) => json!({"QS001": "hint"}),
+                other => panic!("{pointer}: no other value to try for {other}"),
+            };
+            let mut changed = readme.clone();
+            *changed.pointer_mut(pointer).unwrap() = other.clone();
+            let (read, problems) = read_options(changed);
+            assert!(problems.is_empty(), "{pointer} = {other}: {problems:?}");
+            assert_ne!(read, defaults, "{pointer} = {other} changed nothing");
+        }
+
+        // And each key the server reads is in it. The pointers are read
+        // from this file's source, where `Options::read` names them.
+        let source = include_str!("lsp.rs").replace("\r\n", "\n");
+        let body = &source[source.find("fn read(params: &Value)").unwrap()..];
+        let body = &body[..body.find("\n    }\n").unwrap()];
+        let mut read: Vec<String> = ["flag(\"", "init.pointer(\"", "strings(\""]
+            .iter()
+            .flat_map(|call| body.match_indices(call).map(move |(at, _)| at + call.len()))
+            .map(|at| body[at..at + body[at..].find('"').unwrap()].to_string())
+            .collect();
+        read.sort();
+        read.dedup();
+        let mut documented: Vec<String> = found.into_iter().map(|(p, _)| p).collect();
+        documented.sort();
+        assert_eq!(documented, read);
     }
 }

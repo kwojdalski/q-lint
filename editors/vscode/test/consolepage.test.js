@@ -137,3 +137,26 @@ test("Ctrl+R searches the history through the extension, and a key other than ty
   page.key("Enter");
   assert.deepStrictEqual(page.posted.at(-1), { type: "enter", code: "select from t" });
 });
+
+test("a finished run is announced in a polite live region, its lines and time or its error; off, there is none (#1188)", () => {
+  const page = load(true);
+  const region = () => page.find("div").find((d) => d.attributes["aria-live"] === "polite");
+  page.send({ type: "all", entries: [] });
+  assert.strictEqual(region(), undefined, "off unless the extension says on");
+  page.send({ type: "all", entries: [], announce: true });
+  assert.strictEqual(region().attributes.role, "status");
+  page.send({ type: "add", entry: { id: 1, code: "til 3", process: "dev", lines: [] } });
+  assert.strictEqual(region().textContent, "", "nothing while it runs");
+  page.send({ type: "update", entry: { id: 1, code: "til 3", process: "dev", millis: 4, ok: true, lines: ["0 1 2"] } });
+  assert.strictEqual(region().textContent, "1 line in 4 ms");
+  page.send({ type: "update", entry: { id: 2, code: "boom", millis: 1, ok: false, lines: ["", "'boom"] } });
+  assert.strictEqual(region().textContent, "Error in 1 ms: 'boom");
+  // Turned off without a reload: the region goes.
+  page.send({ type: "announce", on: false });
+  assert.strictEqual(region(), undefined);
+  page.send({ type: "update", entry: { id: 3, code: "1", ok: true, lines: ["1"] } });
+  assert.strictEqual(region(), undefined);
+  page.send({ type: "announce", on: true });
+  page.send({ type: "update", entry: { id: 3, code: "1", ok: true, lines: ["1", "2"] } });
+  assert.strictEqual(region().textContent, "2 lines");
+});

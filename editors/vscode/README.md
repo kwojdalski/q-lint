@@ -199,7 +199,12 @@ to a process you add and connect to, and sends only the code you run.
   Definition on the path in `\l path/file.q` opens that file - and the path
   is a link too, Ctrl/Cmd+click to open it, in `\l`, `system "l ..."` and a
   file symbol `` `:lib/x.q `` alike (`q-lint.documentLinks.enable`). A path
-  that reaches no file, or a directory, is no link. What only
+  that reaches no file, or a directory, is no link. Renaming or moving a
+  `.q` file or a folder in the Explorer rewrites the load paths that name
+  it, each from the base it was written against, and a moved file's own
+  (`q-lint.renameLoads.enable`); and after `\l ` the folders and `.q`/`.k`
+  scripts complete, from the file's directory and the workspace folder
+  (`q-lint.loadPathCompletion.enable`). What only
   running the code would tell - a name built at run time, `value "..."`,
   another process - is not found.
 - **Rename Symbol** (F2) for a lambda's parameters and locals, and for a
@@ -1597,11 +1602,23 @@ first, or pick a file or start a new one - and the chart goes beside it as
 a new SVG file in `<report>-images/`, never over one there. Before writing,
 it shows what it will write and asks.
 
+**With a screen reader.** The grid is a `grid` to assistive technology:
+its whole row and column counts are given though only the rows in view are
+drawn, each row says its index among them, and the column names are column
+headers. It has one tab stop; the arrow keys move it a cell at a time, Home
+and End to the row's ends, Ctrl+Home and Ctrl+End to the grid's first and
+last cell, Page Up and Page Down a page, scrolling as they go. Enter or
+Space on a header still sorts (`q-lint.results.accessibleGrid.enable`).
+A result is also announced as it arrives, politely and without taking the
+focus - `1,000 rows in 12 ms` - and so is each run in the Interactive
+Window and the q REPL: how many lines it answered and how long it took, or
+its error (`q-lint.results.announce.enable`).
+
 Each of these - the history, Compare, Stats, the heatmap, the tree, export,
 paging, the pivot, the new charts, drill-down, the Data Wrangler, cell edits,
 the plots, column formats, conditional formats, sparklines and data bars,
 the column layout, the depth chart, the map, linked panes, chart presets,
-correlation and Send to... - has its own `q-lint.results.<feature>.enable`
+correlation, Send to..., the accessible grid and the announcements - has its own `q-lint.results.<feature>.enable`
 setting, on by default but for paging.
 Turned off, its button and command are gone (the command, run anyway, says
 which setting turns it back on), and a change applies at once, without a
@@ -2559,6 +2576,8 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.selectionRange.enable` | `true` | Grow **Expand Selection** by q's brackets and statements. Off: VS Code's own word-and-bracket selection. | - |
 | `q-lint.relatedInformation.enable` | `true` | Link a duplicate parameter or column's problem to the first of the two. Off: the problem alone. | - |
 | `q-lint.crossFileRefresh.enable` | `true` | Redraw open files' code lenses and inlay hints when another file's definitions, or the reads a count counts, change. Off: only when the file itself is edited. | - |
+| `q-lint.renameLoads.enable` | `true` | Rewrite the `\l` paths that name a `.q`/`.k` file or folder renamed or moved in the Explorer. Off: a rename changes no other file. | - |
+| `q-lint.loadPathCompletion.enable` | `true` | Complete folders and `.q`/`.k` scripts after `\l `. Off: nothing after `\l`. | - |
 | `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines, up to 20,000 files or 500,000 directory entries. Off: only open files. | - |
 | `q-lint.workspaceIndex.exclude` | `[]` | Globs, relative to the workspace folder, the index does not read: `["vendor/**"]`. | `q-lang-server.sourceFiles.ignoreGlob` |
 | `q-lint.trace.server` | `off` | Log client-server traffic: `off`, `messages`, `verbose`. | `q-lang-server.trace.server` |
@@ -2588,7 +2607,8 @@ one the server's default is `style`, while the command line's is `uqf`, and
 the editor shows fewer findings than CI. `q-lint.profile`, `q-lint.configFile` and
 `q-lint.serverArgs` replace parts of the repository's configuration;
 `q-lint.lint.*` only narrows it. `q-lint.lint.severity` changes how a finding
-looks, not whether it is reported. Neither the configuration's `exclude` nor
+looks, not whether it is reported, and overrides the configuration's
+`[severity]` for you alone. Neither the configuration's `exclude` nor
 `q-lint.workspaceIndex.exclude` hides diagnostics on a file you open.
 
 ### Query settings
@@ -2633,6 +2653,8 @@ nothing.
 | `q-lint.results.chartPresets.enable` | `true` | Offer **Save with Query**, **Save Result Chart with Query** and **Forget Result Chart Preset**, and series colours; a saved query's chart is drawn again when it runs. | - |
 | `q-lint.results.correlation.enable` | `true` | Offer the **Correlation** view and **Show Result Correlation Matrix**. | - |
 | `q-lint.results.sendResult.enable` | `true` | Offer **Send to...**, **Send Result to Notebook** and **Append Result to Markdown Report...**, each showing what it writes first. | - |
+| `q-lint.results.accessibleGrid.enable` | `true` | Expose the result grid to screen readers: grid roles, row and column counts over the drawn rows, and arrow-key navigation with one tab stop. Off: a plain table, every header a tab stop. | - |
+| `q-lint.results.announce.enable` | `true` | Announce a result's rows and time, or a console run's outcome or error, in a polite live region. Off: nothing announced. | - |
 | `q-lint.query.progress.enable` | `true` | Count a running query's time in the status bar, and notify a long one's end. | - |
 | `q-lint.query.escapeAborts.enable` | `true` | Escape in a q editor aborts a running query. Off, Escape is VS Code's own. | - |
 | `q-lint.query.notifyAfter` | `10` | Seconds a query must run for its end to be notified while the window is not focused; `0` never. | - |
@@ -2957,6 +2979,14 @@ A `qlinter.toml` at the repository root (or `[tool.qlinter]` in
 file beneath it, the way Ruff's configuration does; editing it re-lints the
 open files. See the [configuration
 docs](https://github.com/kwojdalski/q-lint#configuration).
+
+With [Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tamasfe.even-better-toml)
+installed, `qlinter.toml` and `.qlinter.toml` get completion and validation
+from the JSON Schema this extension contributes (`schemas/qlinter.schema.json`):
+a key, rule option or severity qlinter would refuse is underlined as you type.
+The schema is a static file another extension reads; q-lint itself runs and
+sends nothing for it. A `pyproject.toml` `[tool.qlinter]` table is not
+covered.
 
 ## Troubleshooting
 

@@ -21,6 +21,7 @@ macro_rules! blank {
 }
 mod families;
 mod intrinsics;
+pub mod options;
 mod refusals;
 mod semantics;
 pub use semantics::TokenKind;
@@ -1266,6 +1267,10 @@ pub fn whole_edit(before: &str, after: &str) -> Option<Fix> {
 }
 
 fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
+    // A comment is what QL003 edits, so it passes the check below.
+    if finding.code == "QL003" {
+        return unused_noqa_fix(finding, source, v);
+    }
     let line = finding.line.checked_sub(1)?;
     let column = finding.column?.checked_sub(1)?;
     let line_start = if line == 0 {
@@ -1300,6 +1305,9 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         finding.code.as_str(),
         "QE002" | "QL002" | "QE005" | "QP005" | "QP007"
     ) && v.code.as_bytes().get(start) != source.as_bytes().get(start)
+        // QT004 by a type char is reported at its quote, and only where
+        // the `$` after it is code; its arm reads the rest.
+        && !(finding.code == "QT004" && source[start..].starts_with('"'))
     {
         return None;
     }
@@ -1711,6 +1719,17 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         // Both run, so which was meant is the author's to confirm.
         // `` `symbol$"ab" `` and `` `guid$".." `` are 'type; what was meant is
         // `` `$ `` and `"G"$`.
+        // `"j"$"12"` is the same cast by type char, and `"J"$` parses.
+        "QT004" if source[start..].starts_with('"') => {
+            let m = re!(r#"^"([bhijefpmdznuvt])"[ \t]*\$"#).captures(source.get(start..)?)?;
+            let letter = m[1].to_ascii_uppercase();
+            (
+                m.get(0)?.as_str(),
+                format!("\"{letter}\"$").into(),
+                format!("Parse the text with `\"{letter}\"$`").into(),
+                false,
+            )
+        }
         "QT004" | "QT032" => {
             let m = re!(r"^`([a-z]+)\s*\$").captures(source.get(start..)?)?;
             let letter = match &m[1] {
@@ -2409,6 +2428,230 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 true,
             )
         }
+        // `-x` becomes `neg x`: q 4 read a glyph applied to one argument,
+        // `-:x` too, as the monadic form, which q 5 spells only with its
+        // keyword - on KDB-X `(-:)x` and `neg x` parse alike, and `(,:)x`
+        // and `enlist x` give the same value. Not `<` and `>`: on an atom
+        // they are hopen and hclose, on a list a grade, which no one keyword
+        // is. Nor `-::a`, nor the file verbs.
+        "QE008" => {
+            let rest = v.code.get(start..)?;
+            let keyword = match rest.as_bytes().first()? {
+                b'+' => "flip",
+                b'-' => "neg",
+                b'*' => "first",
+                b'%' => "reciprocal",
+                b'!' => "key",
+                b'#' => "count",
+                b'$' => "string",
+                b'&' => "where",
+                b'|' => "reverse",
+                b'^' => "null",
+                b'=' => "group",
+                b'~' => "not",
+                b',' => "enlist",
+                b'@' => "type",
+                b'?' => "distinct",
+                b'.' => "value",
+                b'_' => "floor",
+                _ => return None,
+            };
+            if rest[1..].starts_with("::") {
+                return None;
+            }
+            let old = &source[start..start + 1 + usize::from(rest[1..].starts_with(':'))];
+            let after = &v.code[start + old.len()..];
+            let next = refusals::continued(after);
+            // An operand, not another glyph - `a%.%b` - unless one applied
+            // with brackets or a negative literal. A `%name%` template
+            // placeholder is no reciprocal anybody meant.
+            let glyph = next.starts_with(|c: char| "+-*%!#$&|^=<>~,@?._".contains(c))
+                && !re!(r"^\.[A-Za-z0-9]").is_match(next);
+            if glyph && !(next.as_bytes().get(1) == Some(&b'[') || re!(r"^-\.?\d").is_match(next))
+                || keyword == "reciprocal" && re!(r"^[A-Za-z0-9_]+%").is_match(next)
+                // `{[a]-1 2}`: whether q 4 read the literal is not certain.
+                || keyword == "neg"
+                    && v.code[..start].ends_with(']')
+                    && next.starts_with(|c: char| c.is_ascii_digit() || c == '.')
+            {
+                return None;
+            }
+            let gap = if after.starts_with([' ', '\t', '\r', '\n']) {
+                ""
+            } else {
+                " "
+            };
+            let lead = if ends_in_token(&source[..start]) {
+                " "
+            } else {
+                ""
+            };
+            (
+                old,
+                format!("{lead}{keyword}{gap}").into(),
+                format!("Write `{keyword}`, the monadic form q 5 keeps").into(),
+                true,
+            )
+        }
+        // `+/x` becomes `(+/)x`: q 4 applied the derived function to what
+        // follows, as the parentheses do in q 5 - `(+/)x+y` is `(+/)[x+y]`.
+        // The finding is on the last iterator; the operand is a glyph, its
+        // k form or a name. Not before `-`, which after `)` is minus, nor a
+        // glyph applied with brackets.
+        "QE009" => {
+            let c = v.code.as_bytes();
+            let it = re!(r"^(?:/:|\\:|':|/|\\|')").find(v.code.get(start..)?)?;
+            let end = start + it.end();
+            let mut run = start;
+            loop {
+                if run > 0 && b"/\\'".contains(&c[run - 1]) {
+                    run -= 1;
+                } else if run > 1 && c[run - 1] == b':' && b"/\\'".contains(&c[run - 2]) {
+                    run -= 2;
+                } else {
+                    break;
+                }
+            }
+            let glyph = |b: u8| b"+-*%!#$&|^=<>~,@?".contains(&b);
+            let operand = match run.checked_sub(1).map(|p| c[p])? {
+                b if glyph(b) => run - 1,
+                b':' if run > 1 && (glyph(c[run - 2]) || c[run - 2] == b'.') => run - 2,
+                b if b.is_ascii_alphanumeric() || b == b'_' || b == b'.' => {
+                    let s = v.code[..run]
+                        .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || "._".contains(ch)))
+                        .map_or(0, |p| p + 1);
+                    if !c[s].is_ascii_alphabetic() && c[s] != b'.' || !boundary(&v.code, s) {
+                        return None;
+                    }
+                    s
+                }
+                _ => return None,
+            };
+            if operand > 0 && c[operand - 1] == b'`' {
+                return None;
+            }
+            // A bare glyph under each or each-left/right, `(#')x`, is a
+            // projection on KDB-X, not the count each `#'x` meant.
+            let first = &v.code[run..];
+            if operand == run - 1
+                && glyph(c[operand])
+                && (first.starts_with('\'') && !first.starts_with("':")
+                    || first.starts_with("/:")
+                    || first.starts_with("\\:"))
+            {
+                return None;
+            }
+            let next = refusals::continued(&v.code[end..]);
+            if next.starts_with('-') || next.len() > 1 && glyph(c[c.len() - next.len()]) {
+                return None;
+            }
+            begin = operand;
+            let derived = &source[operand..end];
+            (
+                derived,
+                format!("({derived})").into(),
+                format!("Apply `({derived})` in parentheses").into(),
+                true,
+            )
+        }
+        // `cor each x` becomes `(cor) each x`: with nothing on its left q 4
+        // took the keyword as each's function, as it does `count each x`,
+        // and on KDB-X `(cor) each x` is `each[cor;x]`. With an operand on
+        // the left - `x in each y` - what q 4 made of it is not certain, so
+        // only in the editor. An iterator keyword before another, `f over
+        // each x`, wants `(f over)`, which is the author's to place.
+        "QE011" => {
+            let m = re!(
+                r"^(?:([a-z]+)[ \t]+|([-+*%!&|<>=~,^#$?@])[ \t]*)(each|peach|over|scan|prior)\b"
+            )
+            .captures(v.code.get(start..)?)?;
+            let word = m.get(1).or(m.get(2))?.as_str();
+            let iterator = &m[3];
+            if matches!(word, "each" | "peach" | "over" | "scan" | "prior") {
+                return None;
+            }
+            let line_start = v.code[..start].rfind('\n').map_or(0, |p| p + 1);
+            let line = &source[line_start..];
+            let prompt = if line.starts_with("q)") { 2 } else { 0 };
+            // Read in the source: `code` blanks a string, which is an operand.
+            let left = source
+                .get(line_start + timed_prefix(line).max(prompt)..start)?
+                .trim_end_matches([' ', '\t']);
+            // A signature is no operand: `{[x] cor each y}`.
+            let signature = left.ends_with(']')
+                && left
+                    .bytes()
+                    .rev()
+                    .scan(0i32, |depth, c| {
+                        *depth += i32::from(c == b']') - i32::from(c == b'[');
+                        Some(*depth)
+                    })
+                    .position(|depth| depth == 0)
+                    .is_some_and(|p| left[..left.len() - 1 - p].ends_with('{'));
+            let infix = !signature
+                && left.ends_with(|c: char| c.is_ascii_alphanumeric() || "_.)]}\"`".contains(c));
+            (
+                &source[start..start + word.len()],
+                format!("({word})").into(),
+                format!("Write `({word})`, the function {iterator} applies").into(),
+                !infix,
+            )
+        }
+        // `hopen `host:5000` takes the leading `:` a handle needs. The old
+        // call is 'type and the new one connects - a different program, so
+        // only in the editor.
+        "QT029" => {
+            let m = re!(r"^hopen[ \t]*(?:\[\s*)?`[A-Za-z0-9_.]").find(source.get(start..)?)?;
+            let old = &source[start..start + m.end() - 1];
+            (
+                old,
+                format!("{old}:").into(),
+                "Add the leading `:` of a handle".into(),
+                false,
+            )
+        }
+        // A look-alike pasted from a document becomes the ASCII it stands
+        // for: a no-break space a space, a dash or minus sign `-`, a curly
+        // quote a straight one. The line was 'char, so no working program
+        // changes. An opening double quote is a string only with its curly
+        // close on the line, and both are rewritten at once, or the close
+        // would be left inside the string.
+        "QE012" => {
+            let ch = source.get(start..)?.chars().next()?;
+            let ascii = match ch {
+                '\u{a0}' => " ",
+                '\u{2013}' | '\u{2014}' | '\u{2212}' => "-",
+                '\u{2018}' | '\u{2019}' => "'",
+                '\u{201c}' => "\"",
+                _ => return None,
+            };
+            let old = if ch == '\u{201c}' {
+                let body = start + ch.len_utf8();
+                let line =
+                    &source[body..source[body..].find('\n').map_or(source.len(), |p| body + p)];
+                let close = line.find('\u{201d}')?;
+                if line[..close].contains(['\\', '\u{201c}', '"']) {
+                    return None;
+                }
+                &source[start..body + close + '\u{201d}'.len_utf8()]
+            } else {
+                &source[start..start + ch.len_utf8()]
+            };
+            let replacement = if old.chars().count() > 1 {
+                format!(
+                    "\"{}\"",
+                    &old['\u{201c}'.len_utf8()..old.len() - '\u{201d}'.len_utf8()]
+                )
+            } else {
+                ascii.to_string()
+            };
+            (
+                old,
+                replacement.into(),
+                format!("Replace U+{:04X} with `{ascii}`", u32::from(ch)).into(),
+                true,
+            )
+        }
         _ => return None,
     };
     // An edit that leaves a `-` against a number makes it a negative
@@ -2449,9 +2692,10 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
     // which q 5 refuses with '- (#563). A blank keeps it a literal. Not
     // QP008's: its `-` follows an operand, where q 5 reads `a-2.5`, `1-2.5`
     // and `` `y-2.5 `` as minus, and a blank would be one F does not give
-    // back (#848).
+    // back (#848). Nor QE012's: a dash typed between operands, `1—2`, was
+    // meant as minus, which `1 -2` is not.
     let negative = next.starts_with('-') && numeric(&next[1..]);
-    let replacement = if finding.code != "QP008"
+    let replacement = if !matches!(finding.code.as_str(), "QP008" | "QE012")
         && (source[..begin].ends_with('-') && !numeric(&source[begin..]) && numeric(&next)
             || ends_in_token(&source[..begin]) && negative && !source[begin..].starts_with('-'))
     {
@@ -2757,6 +3001,36 @@ fn refused_atom_condition(raw: &str) -> bool {
             && !re!(r"^-?0[NW]$").is_match(raw)
 }
 
+/// A conditional's test as QB025 compares it: `comments`' text, its strings
+/// kept as written and each run of blanks outside them made one space, so
+/// `x>1` and `x>1 ` are one test and `s~"a  b"` and `s~"a b"` are two. A
+/// string is where `code` is blank and `comments` is not, from a quote.
+fn same_test(comments: &str, code: &str) -> String {
+    let (text, mask) = (comments.as_bytes(), code.as_bytes());
+    let mut out = Vec::with_capacity(text.len());
+    let (mut i, mut blank) = (0, false);
+    while i < text.len() {
+        if text[i] == b'"' && mask[i] == b' ' {
+            let mut j = i + 1;
+            while j < text.len() && text[j] != b'"' {
+                j += if text[j] == b'\\' { 2 } else { 1 };
+            }
+            let j = (j + 1).min(text.len());
+            out.extend_from_slice(&text[i..j]);
+            (i, blank) = (j, false);
+        } else if text[i].is_ascii_whitespace() {
+            if !blank {
+                out.push(b' ');
+            }
+            (i, blank) = (i + 1, true);
+        } else {
+            out.push(text[i]);
+            (i, blank) = (i + 1, false);
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// Whether a `$[...]` test is a literal q 5 refuses with 'type: an atom
 /// `refused_atom_condition` names, `()`, a boolean vector, a spaced numeric
 /// vector, a comparison of vectors, a general list or `enlist` of an item.
@@ -2804,7 +3078,11 @@ fn parenthesised(code: &str, start: usize, end: usize) -> Option<usize> {
     let before = code[..start].trim_end_matches([' ', '\t']);
     let open = before.strip_suffix('(').map(|b| b.len())?;
     let close = matching(code, open, b'(', b')')?;
-    code[end..close - 1].trim().is_empty().then_some(close)
+    // `get`: in `({[] count:1)}` the `)` closes inside the lambda, before
+    // its end, and the lambda is not what the parentheses hold.
+    code.get(end..close - 1)
+        .is_some_and(|s| s.trim().is_empty())
+        .then_some(close)
 }
 /// The bracket in a chain of them, from the one at `open` given a function
 /// of `rank`, that holds more arguments than what it is applied to takes:
@@ -4621,6 +4899,12 @@ pub(crate) fn signature<'a>(code: &'a str, raw: &str, brace: usize) -> Signature
             depth += 1;
         } else if b")]}".contains(&b) {
             depth -= 1;
+            // A closer that opened outside the brackets: in `{[a:x+1};b]`
+            // the `}` ends the lambda, and the `]` after it is no end of a
+            // parameter list - reading one put its body past the lambda.
+            if depth < 0 {
+                return implicit(vec![]);
+            }
         } else if b == b';' && depth == 0 {
             ranges.push((start, i));
             start = i + 1;
@@ -5014,6 +5298,147 @@ fn codes_in(list: &str) -> impl Iterator<Item = &str> {
     list.split([',', ' ', '\t']).filter(|c| !c.is_empty())
 }
 
+/// QL003, Ruff's RUF100: each line's `noqa` codes that suppress nothing - no
+/// finding of that code is reported on the line - as one finding per
+/// directive, at its list of codes. `found` is every finding the run made,
+/// before the profile or a `noqa` took any, and `qe001` the lines QE001
+/// reported on before its own early return.
+///
+/// Only a code whose rule `ran` in this run: a code this build does not
+/// know - another tool's, or a later release's - or one whose findings
+/// arrive from elsewhere (QLS001, QF006) is left alone, and so is one a
+/// profile turned off here, which may fire under another. A configuration
+/// lints with every rule and then selects (`Config::lint`), so there a
+/// `noqa` for a rule it deselects or ignores counts as used whenever that
+/// rule would fire on the line, being there for whoever turns it back on,
+/// and is reported only when the rule finds nothing there at all. Not
+/// QL003 itself, which a `noqa` names to keep a directive this run cannot
+/// see the need for. A line in a block comment or after the end of the
+/// script holds no directive, whatever it says.
+fn unused_noqa(
+    path: &str,
+    source: &str,
+    v: &Views,
+    found: &[Finding],
+    qe001: &[usize],
+    ran: impl Fn(&str) -> bool,
+) -> Vec<Finding> {
+    let mut fired: std::collections::HashSet<(usize, &str)> =
+        found.iter().map(|f| (f.line, f.code.as_str())).collect();
+    fired.extend(qe001.iter().map(|&line| (line, "QE001")));
+    let mut out = vec![];
+    let mut offset = 0;
+    for (n, line) in source.split_inclusive('\n').enumerate() {
+        let start = offset;
+        offset += line.len();
+        if v.in_block(start) || v.script_end.is_some_and(|end| start >= end) {
+            continue;
+        }
+        let Some(codes) = noqa_codes(source, &v.comments, start, offset) else {
+            continue;
+        };
+        let mut unused: Vec<&str> = vec![];
+        for code in codes_in(&source[codes.clone()]) {
+            if code != "QL003"
+                && ran(code)
+                && !fired.contains(&(n + 1, code))
+                && !unused.contains(&code)
+            {
+                unused.push(code);
+            }
+        }
+        if unused.is_empty() {
+            continue;
+        }
+        let (s, them) = if unused.len() == 1 {
+            ("", "it")
+        } else {
+            ("s", "them")
+        };
+        let mut finding = Finding::at(
+            path,
+            source,
+            codes.start,
+            "QL003",
+            format!(
+                "Unused noqa code{s}: {}; nothing on this line reports {them}, so the \
+                 directive suppresses nothing",
+                unused.join(", ")
+            ),
+        );
+        finding.end_column = finding.column.map(|c| c + codes.len());
+        out.push(finding);
+    }
+    out
+}
+
+/// The edit QL003 offers: its unused codes taken out of the directive's
+/// list, or the whole directive with the blanks before it when no code would
+/// be left. `None` where nothing else is on the line, which would be left
+/// blank, or where the edit would change anything but a comment. Not
+/// batch-safe: whether a rule fires on a line can turn on the files around
+/// it (QF018 reads the workspace), so a `noqa` one run finds unused another
+/// may need, and `--fix` does not delete it unattended.
+fn unused_noqa_fix(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
+    let unused: Vec<&str> = re!(r"^Unused noqa codes?: ([A-Z0-9, ]+);")
+        .captures(&finding.detail)?
+        .get(1)?
+        .as_str()
+        .split(", ")
+        .collect();
+    let row = finding.line.checked_sub(1)?;
+    let start = match row {
+        0 => 0,
+        _ => source.match_indices('\n').nth(row - 1)?.0 + 1,
+    };
+    let line = source[start..].split_inclusive('\n').next()?;
+    let text = line.trim_end_matches(['\n', '\r']);
+    let codes = noqa_codes(source, &v.comments, start, start + line.len())?;
+    let kept: Vec<&str> = codes_in(&source[codes.clone()])
+        .filter(|c| !unused.contains(c))
+        .collect();
+    let (at, end, replacement) = if kept.is_empty() {
+        // From the slashes that open the directive, and the blanks before.
+        let slashes = re!(r"/+[ \t]*(?i:noqa)[ \t]*:[ \t]*$")
+            .find(&source[start..codes.start])?
+            .start();
+        let at = start
+            + source[start..start + slashes]
+                .trim_end_matches([' ', '\t'])
+                .len();
+        if at == start {
+            return None;
+        }
+        (at, start + text.len(), String::new())
+    } else {
+        (codes.start, codes.end, kept.join(", "))
+    };
+    let mut edited = source.to_string();
+    edited.replace_range(at..end, &replacement);
+    let after = views(&edited);
+    let comment_only = |before: &str, after: &str| {
+        let (before, after) = (before.as_bytes(), after.as_bytes());
+        let added = at + replacement.len();
+        before[..at] == after[..at]
+            && before[at..end].iter().all(|&b| b == b' ')
+            && after[at..added].iter().all(|&b| b == b' ')
+            && before[end..] == after[added..]
+    };
+    (comment_only(&v.code, &after.code) && comment_only(&v.comments, &after.comments)).then(|| {
+        Fix {
+            start: at,
+            end,
+            replacement: replacement.into(),
+            title: if kept.is_empty() {
+                "Remove the unused noqa".into()
+            } else {
+                format!("Remove {} from the noqa", unused.join(", ")).into()
+            },
+            batch_safe: false,
+        }
+    })
+}
+
 /// The code lists of the file's `/ qlinter: noqa: CODE` directives, each as
 /// the span of the source that lists them. Only a whole comment line at the
 /// left margin, with a blank after its `/` - a bare `/` opens a block - and
@@ -5369,8 +5794,11 @@ fn lint_rules(
     let uqf = profile == Profile::Uqf;
     let _lines = LineScope::install(source);
     let mut v = views(source);
+    // The lines QE001 reports on, before a `noqa` takes any: QL003 asks.
+    let mut structure_lines = vec![];
     if structure_selected {
         let mut out = structure(path, source, &v);
+        structure_lines = out.iter().map(|f| f.line).collect();
         suppress(&mut out, source, &v);
         if !out.is_empty() {
             out.truncate(1);
@@ -5882,6 +6310,54 @@ fn lint_rules(
                         "`{raw}` as a later test of `$[...]` is 'type once it is reached: a test must be a boolean, integer, char or temporal atom"
                     ),
                 );
+            }
+        }
+        // QB025. A test written again later in the same conditional: if it
+        // held the first time, its earlier branch ran, so the later branch
+        // never runs - q 5 `$[x>1;`a;x>1;`b;`c]` is `c for 0 and `a for 2,
+        // never `b. Nothing runs between the two evaluations but the tests
+        // themselves, so only a test that could change its own value is left
+        // alone: one that assigns, applies with brackets or a lambda, deals
+        // (`?`), signals, or reads the clock, a random number or a handle.
+        // So is a literal test.
+        if n >= 4 {
+            let mut from = dollar + 2;
+            let mut tests: Vec<String> = vec![];
+            for (k, part) in parts.iter().enumerate() {
+                let start = from;
+                from += part.len() + 1;
+                if k % 2 != 0 || k + 1 >= n {
+                    continue;
+                }
+                // Delimited in `comments`, where a string at either end is
+                // still there to keep.
+                let raw = &v.comments[start..start + part.len()];
+                let at = start + raw.len() - raw.trim_start().len();
+                let end = at + raw.trim().len();
+                let test = &code[at..end];
+                // A test with no name in it is a constant, the same every
+                // time: `$[0b;1;0b;2]` is QA007's, and placeholder.
+                if !re!(r"(?:^|[^`A-Za-z0-9_.])[A-Za-z]").is_match(test)
+                    || test.contains([':', '[', '{', '?', '\''])
+                    || re!(r"\.z\.|\b(?:rand|value|get|read0|read1|system|hopen|hclose|eval|reval|getenv|neg)\b")
+                        .is_match(test)
+                {
+                    continue;
+                }
+                let text = same_test(&v.comments[at..end], &code[at..end]);
+                if tests.contains(&text) {
+                    add(
+                        at,
+                        "QB025",
+                        format!(
+                            "`{}` repeats an earlier test of this $[...]: when it holds, the \
+                             earlier branch runs, so this branch never does",
+                            v.comments[at..end].trim()
+                        ),
+                    );
+                } else {
+                    tests.push(text);
+                }
             }
         }
         if n == 2 {
@@ -8127,7 +8603,12 @@ fn lint_rules(
             let open = m.get(0).unwrap().end() - 1;
             let alone = matching(code, open, b'[', b']').is_some_and(|close| {
                 matching(code, paren.start(), b'(', b')')
-                    .is_some_and(|end| code[close..end - 1].trim().is_empty())
+                    // `get`: a `)` before the `]`, as in `a:(if[1b;2)]`,
+                    // closes before the bracket does, and is no paren round it.
+                    .is_some_and(|end| {
+                        code.get(close..end - 1)
+                            .is_some_and(|s| s.trim().is_empty())
+                    })
             });
             if !alone {
                 continue;
@@ -8684,6 +9165,39 @@ fn lint_rules(
             };
             add(offset + at, code, detail);
         }
+        // QT004 by a lowercase type char too: q 5 `"j"$"12"` is 49 50, the
+        // codes, and `"d"$"20"` two dates near 2000.02.20, where `"J"$"12"`
+        // is 12. A lowercase cast of a string is also how q gives a
+        // character's code - `"i"$"A"` is 65 - and of every character of a
+        // text, so only a literal of two characters or more that reads as a
+        // number or a temporal, which is text to parse, and only as the
+        // whole operand. Not `"c"` or `"x"`, which keep the characters, nor
+        // `"s"` and `"g"`, which q refuses (QT032).
+        for m in re!(
+            r#""([bhijefpmdznuvt])"[ \t]*\$[ \t]*(\([ \t]*)?"(-?[0-9][0-9.:DTeE+-]+)"([ \t]*\))?"#
+        )
+        .captures_iter(literals)
+        {
+            let whole = m.get(0).unwrap();
+            let dollar = m.get(1).unwrap().end() + 1;
+            let dollar = dollar + literals[dollar..].find('$').unwrap();
+            if line.as_bytes()[dollar] != b'$'
+                || m.get(2).is_some() != m.get(4).is_some()
+                || !operand_ends(code, &v.comments, offset + whole.end())
+            {
+                continue;
+            }
+            let letter = &m[1];
+            add(
+                offset + whole.start(),
+                "QT004",
+                format!(
+                    "\"{letter}\"$ on a string casts each character's code, not the text; \
+                     parsing text is \"{}\"$\"...\"",
+                    letter.to_ascii_uppercase()
+                ),
+            );
+        }
         // Equality against a string literal in a filter pairs each row with
         // one character. q 5: 'length whenever the row count differs from
         // the string's length, on any column; when they agree, 'type on a
@@ -8922,7 +9436,10 @@ fn lint_rules(
                 // comma (#215).
                 // Read from the phrase with each bracket kept as `_`: q 5 runs
                 // `a=1 2 3[0]`, since the index makes it the atom 1 (#627).
-                let groups = grouped(&line[w.end()..phrase_end(line, w.end())]);
+                // From the same text as `phrase`, so the two line up: the
+                // line alone is shorter when the statement runs on past it,
+                // and indexing it at `phrase`'s offsets panicked.
+                let groups = grouped(&query[w.end()..read_to]);
                 let mut reported = vec![];
                 for m in re!(r"(?:=|<>)\s*(?:-?\d[A-Za-z0-9.]*(?:\s+-?\d[A-Za-z0-9.]*)+|`[A-Za-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)+)")
                     .find_iter(&phrase)
@@ -9307,6 +9824,21 @@ fn lint_rules(
         }
         i += 1;
     }
+    // Before the profile filters anything, so a finding of a rule this
+    // profile leaves out still counts as one its `noqa` is there for.
+    // The QK rules run only for a configuration (`lint_every_rule`).
+    let ran = |code: &str| {
+        code == "QE001" && structure_selected
+            || code != "QE001"
+                && (opt_in || !code.starts_with("QK"))
+                && RULES.iter().find(|r| r.code == code).is_some_and(|r| {
+                    matches!(r.scope.as_str(), "builtin" | "style" | "styleq" | "uqf")
+                        && profile.allows(&r.scope)
+                        || opt_in && r.scope == "opt-in"
+                })
+    };
+    let unused = unused_noqa(path, source, &v, &out, &structure_lines, ran);
+    out.extend(unused);
     // One choke point: a rule states its scope in the taxonomy and the profile
     // decides whether that scope is wanted. Filtering here rather than guarding
     // sixty emission sites keeps the two from drifting apart.

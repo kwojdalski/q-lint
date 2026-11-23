@@ -772,3 +772,25 @@ c:til[3][0]
 r:til 12:00u
 s:til 12:00:00v
 t:til 12:00t
+
+=== QB026 | within given literal bounds high then low (q 5: 5 within 10 1 is 0b; #1167)
+a:x within 10 1
+b:within[x;10 1]
+c:x within (10 1)
+d:x within 2.5 1.5
+e:x within -5 -10
+f:x within 2024.01.10 2024.01.01
+g:x within 10:00 09:30
+h:select from t where px within 100 10f
+i:x within 2024.03 2024.01m
+
+=== clean | bounds in order, equal, of other widths, null or not literals (#1167)
+a:x within 1 10
+b:x within 5 5
+c:x within lo hi
+d:x within 10 1+y
+e:x within 10:00 9:30
+f:x within 0W 1
+g:x within `b`a
+h:x within (10;1)
+i:x within 2024.01.01 2024.01.10

@@ -1158,3 +1158,25 @@ d:{r:0#0; r:x; r~()}
 e:{x~(::)}
 f:{x~0#0}
 g:{d:x; d~()!()}
+
+=== QB008 | a filter continued onto an indented line: the index after the literal on the first line keeps it quiet, the bare literal on the second reports
+f:{select from t where a=1 2 3?b,
+  c>0}
+g:{select from t where c>0,
+  a=1 2 3}
+
+=== QB025 | a test written again in the same $[...] (q 5: $[x>1;`a;x>1;`b;`c] is never `b; #1166)
+a:{$[x>1;`a;x>1;`b;`c]}
+b:{$[x>1;`a;x<0;`b;x>1;`c;`d]}
+c:{$[x ~ "a  b";1;x ~ "a  b";2;3]}
+d:{$[null x;0;null  x;1;2]}
+
+=== clean | different tests, a test that could change between evaluations, or the else (#1166)
+a:{$[x>1;`a;x>2;`b;`c]}
+b:{$[0<n+:1;`a;0<n+:1;`b;`c]}
+c:{$[f[];`a;f[];`b;`c]}
+d:{$[1?2;`a;1?2;`b;`c]}
+e:{$[x;y;x]}
+f:{$[s~"a  b";1;s~"a b";2;3]}
+g:{$[.z.p>t;1;.z.p>t;2;3]}
+h:{$[x>1;x>1;x>1]}

@@ -2699,19 +2699,26 @@ pub fn check(
     // is code. A nested lambda's lines count toward the one around it: they
     // are read as part of it, inline, and moving a nested lambda out to a
     // name of its own is exactly the shortening this rule asks for.
+    // `[rules.QS006] max-lines` moves the threshold.
+    let max_lines = crate::options::current().max_lines;
     for scope in &scopes {
         let lines = comments[scope.start..(scope.end + 1).min(comments.len())]
             .lines()
             .filter(|line| !line.trim().is_empty())
             .count();
-        if lines > 25 {
+        if lines > max_lines {
+            let limit = if max_lines == 25 {
+                "twenty five".to_string()
+            } else {
+                max_lines.to_string()
+            };
             out.push(Finding::at(
                 path,
                 raw,
                 scope.start,
                 "QS006",
                 format!(
-                    "This lambda is {lines} lines of code; over twenty five is hard to hold in mind"
+                    "This lambda is {lines} lines of code; over {limit} is hard to hold in mind"
                 ),
             ));
         }
@@ -4690,6 +4697,86 @@ fn named_values(
                 column(at + 1, sym, table.as_str(), columns);
             }
             at += sym.len() + 1;
+        }
+    }
+    // QF023. In a qSQL phrase a column of the table wins over a local of the
+    // same name: q 5 `{[sym] select from ([]sym:`a`b) where sym=sym}` gives
+    // both rows for any argument, `sym=sym` comparing the column with itself.
+    // Reported only where the local is never read anywhere else in its
+    // lambda - every read is a phrase over a table known to have that column
+    // - so its value is lost, not just unused once: `{[px] t:([]px:px);
+    // select px from t}` reads the parameter to build the table, and means
+    // the column after. The table is a table literal written after `from`,
+    // or a name this file holds one in; a where phrase reads its statement's.
+    let mut phrase_columns: Vec<Option<Vec<String>>> = Vec::with_capacity(phrases.len());
+    for (i, &(a, b, table)) in phrases.iter().enumerate() {
+        let columns = if code[a..].starts_with("where") {
+            i.checked_sub(1).and_then(|j| phrase_columns[j].clone())
+        } else if let Some((t, e)) = table {
+            match global(&code[t..e], t) {
+                Some(Held::Table(columns, _)) => Some(columns.clone()),
+                _ => None,
+            }
+        } else if code.get(b..).is_some_and(|rest| rest.starts_with("from")) {
+            let open = crate::past_blanks(code, b + 4);
+            (code.as_bytes().get(open) == Some(&b'('))
+                .then(|| matching(code, open, b'(', b')'))
+                .flatten()
+                .filter(|&close| operand_ends(code, comments, close))
+                .and_then(|close| match held(&code[open..close], &raw[open..close]) {
+                    Some(Held::Table(columns, _)) => Some(columns),
+                    _ => None,
+                })
+        } else {
+            None
+        };
+        phrase_columns.push(columns);
+    }
+    for scope in scopes {
+        let mut reads: HashMap<&str, (usize, bool)> = HashMap::new();
+        for m in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&scope.direct) {
+            let at = scope.body + m.start();
+            let name = m.as_str();
+            let rest = scope.direct[m.end()..].trim_start_matches([' ', '\t']);
+            if name == "i"
+                || !scope.locals.contains(name)
+                || (!scope.named && matches!(name, "x" | "y" | "z"))
+                || !boundary(code, at)
+                || rest.starts_with([':', '.'])
+            {
+                continue;
+            }
+            let shadowed = owner
+                .get(at)
+                .filter(|&&p| p != u32::MAX)
+                .and_then(|&p| phrase_columns[p as usize].as_ref())
+                .is_some_and(|columns| columns.iter().any(|c| c == name));
+            let entry = reads.entry(name).or_insert((at, true));
+            entry.1 &= shadowed;
+        }
+        let mut lost: Vec<(usize, &str)> = reads
+            .into_iter()
+            .filter(|(_, (_, shadowed))| *shadowed)
+            .map(|(name, (at, _))| (at, name))
+            .collect();
+        lost.sort();
+        for (at, name) in lost {
+            let what = if scope.params.contains(name) {
+                "parameter"
+            } else {
+                "local"
+            };
+            out.push(Finding::at(
+                path,
+                raw,
+                at,
+                "QF023",
+                format!(
+                    "`{name}` is a column of the table this query reads, and in a qSQL phrase \
+                     the column wins, so the {what} `{name}` is never read in this lambda: \
+                     rename one of them"
+                ),
+            ));
         }
     }
     // QT026. lj, ij and pj join on the right table's key, so an unkeyed right

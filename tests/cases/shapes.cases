@@ -159,6 +159,24 @@ b:`guid$("ab")
 === QT004 | and casts its codes alike (q 5: `long$("12") is 49 50)
 c:`long$("12")
 
+=== QT004 | and by a lowercase type char, on text that reads as a number or a temporal (q 5: "j"$"12" is 49 50, "J"$"12" is 12; #1168)
+a:"j"$"12"
+b:"f"$"1.5"
+c:"d"$"2024.01.01"
+d:"j"$("12")
+e:{"b"$ "10"}
+f:"t"$"09:30"
+
+=== clean | a code by a lowercase cast, the char and byte casts, uppercase, or not the whole operand (#1168)
+a:"i"$"A"
+b:"j"$"5"
+c:"j"$"abc"
+d:"J"$"12"
+e:"c"$"12"
+f:"x"$"12"
+g:"j"$s
+h:"use \"j\"$ to cast"
+
 === clean | the uppercase-char cast parses text
 n:"J"$"123"
 

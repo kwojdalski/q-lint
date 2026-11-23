@@ -100,8 +100,9 @@ warning, with a tally on the summary line - and plain everywhere else: a pipe,
 a file, or anywhere `NO_COLOR` is set to a nonempty value. `--color always|never` overrides the
 guess in either direction. JSON output never carries colour.
 
-`qlinter --version` (or `-v`) reports the build, and `--stdio` is accepted and ignored
-so a client that appends it gets a server rather than an exit code.
+`qlinter --help` (or `-h`) lists every option, `--version` (or `-v`)
+reports the build, and `--stdio` is accepted and ignored so a client that
+appends it gets a server rather than an exit code.
 
 The CLI supports `--profile general|style|styleq|uqf`, `--format text|json|sarif|github`
 (see [Reports for CI](#reports-for-ci)),
@@ -187,6 +188,9 @@ another without parentheses of its own, whose table then takes the commas
 after it.
 
 ### Reports for CI
+
+`--format json` prints the findings as a list of objects, each field of
+which [docs/output.md](docs/output.md) describes.
 
 `--format sarif` prints SARIF 2.1.0, which GitHub code scanning and other
 SARIF readers take: one result per finding, its region, and the rules the
@@ -363,6 +367,44 @@ It takes comma-separated clauses of `==`, `!=`, `>=`, `<=`, `>`, `<` or `~=`
 (`~=0.33.1` is `>=0.33.1, <0.34`) and a version, or a version alone, which
 must match exactly; a value that is none of these is a configuration error.
 
+`[severity]` sets how a rule's findings are reported, by code or prefix, the
+longest winning: `error`, `warning`, `info` (or `information`) or `hint`.
+
+```toml
+[severity]
+QS = "info"          # every style rule, reported but not failing the run
+QS006 = "warning"    # except this one
+```
+
+The text, `json`, `sarif` and `github` reports and the language server all
+show it, and only an `error` or a `warning` fails the run (exit 1). It changes
+how a finding is reported, never whether: that is `select` and `ignore`. An
+editor's own `lint.severity` overrides it again, for that user.
+
+`[rules.<CODE>]` holds a rule's own options, for the few rules with a
+threshold or a word list of their own:
+
+```toml
+[rules.QS006]
+max-lines = 40                    # lines of code a lambda may have (default 25)
+
+[rules.QL001]
+markers = ["TODO", "FIXME"]       # the words reported in a comment (default TODO, FIXME, XXX, HACK)
+
+[rules.QX002]
+name-pattern = "(?:password|secret|dsn)$"  # case-insensitive, on the name's last part
+```
+
+An option a rule does not have, a rule with none, or a value of the wrong kind
+is a configuration error (exit 2), so a typo cannot quietly leave the default
+in force. Both tables may also go under `[lint]`, and a file that `extend`s
+another overrides the base's entries one at a time.
+
+The keys and the values each takes are also a JSON Schema,
+[`editors/vscode/schemas/qlinter.schema.json`](editors/vscode/schemas/qlinter.schema.json),
+which the VS Code extension hands Even Better TOML for completion and
+validation; a test keeps it equal to what qlinter reads.
+
 `exclude`, `extend-exclude`, `--exclude` and the keys of `per-file-ignores`
 are globs read the way Ruff reads them. A pattern with a `/` anywhere in it -
 `lib/`, `./lib`, `src/gen/*.q`, a trailing slash included - is anchored at the
@@ -425,13 +467,26 @@ accepts those codes on every line of its file, as Ruff's `# ruff: noqa:` does;
 inside a block comment or after the line that ends the script it is not read.
 The built-in rules honour both; findings from qls do not.
 
+A `noqa` code that suppresses nothing - no finding of it on its line - is
+QL003, Ruff's RUF100, in `style` and above; its Quick Fix (`--unsafe-fixes`
+on the command line, since whether a rule fires can turn on the files around
+it) takes the code out, or the whole directive when none is left. Only codes
+whose rule ran are judged: another tool's code, qls's, and a rule the profile
+leaves out are not. Every rule runs before a configuration selects, so a
+`noqa` for a rule `ignore` or `select` turns off still counts as used while
+the rule would fire on its line - it is there for whoever turns the rule back
+on - and is reported only when the rule finds nothing there. File directives
+are not checked.
+
 `qlinter --add-noqa src/` accepts every finding of the run where it is - the
 editor's Quick Fix, made for each: `/ noqa: CODE` appended to its line, or the
 code added to the `noqa` already there - so a tree can adopt a rule and keep
 new findings out, a second run reports nothing, and a third changes nothing.
 A line no comment can follow is left alone: one inside a string or a block
 comment, a block comment's own `/`, a system command, or any line of a file
-whose brackets do not close. It says how many it added, and exits 1 if any
+whose brackets do not close. A `noqa` that suppresses nothing (QL003) is not
+accepted either - naming QL003 in it would only hide it - but counted, for
+`--fix --unsafe-fixes` to remove. It says how many it added, and exits 1 if any
 such finding is left.
 
 Diagnostics carry a
@@ -947,31 +1002,121 @@ process only once the user adds it, connects and runs code - see the
 
 ### Other editors
 
-Neovim, with `nvim-lspconfig`:
+Any LSP client runs the server as `qlinter --lsp`. None of these name a
+profile: the server takes it, and every other rule setting, from the
+`qlinter.toml`, `.qlinter.toml` or `pyproject.toml` above each file, as the
+command line does, and uses `style` where none says. Add `--profile` to the
+arguments only to override that. Each snippet passes one
+[`initializationOptions`](#editor-options-initializationoptions) key -
+`lint.run`, to lint on save rather than on every change - to show where they
+go; leave it out for the defaults. Each was written against the editor's own
+documentation as of November 2026.
+
+**Neovim** 0.11 or later, with the built-in `vim.lsp.config` (no plugin
+needed; `init_options` is what Neovim sends as `initializationOptions`):
 
 ```lua
 vim.filetype.add({ extension = { q = "q" } })
-require("lspconfig.configs").qlint = {
-  default_config = {
-    cmd = { "qlinter", "--lsp", "--profile", "uqf" },
-    filetypes = { "q" },
-    root_dir = require("lspconfig.util").root_pattern("qlinter.toml", ".qlinter.toml", "pyproject.toml", ".git"),
-  },
-}
-require("lspconfig").qlint.setup({})
+vim.lsp.config("qlinter", {
+  cmd = { "qlinter", "--lsp" },
+  filetypes = { "q" },
+  root_markers = { "qlinter.toml", ".qlinter.toml", "pyproject.toml", ".git" },
+  init_options = { lint = { run = "onSave" } },
+})
+vim.lsp.enable("qlinter")
 ```
 
-Helix, in `languages.toml`:
+**Helix**, in `languages.toml` (`config` is sent as `initializationOptions`;
+`roots` are the files that mark a workspace root):
 
 ```toml
-[language-server.qlint]
+[language-server.qlinter]
 command = "qlinter"
-args = ["--lsp", "--profile", "uqf"]
+args = ["--lsp"]
+config = { lint = { run = "onSave" } }
 
 [[language]]
 name = "q"
+scope = "source.q"
 file-types = ["q"]
-language-servers = ["qlint"]
+roots = ["qlinter.toml", ".qlinter.toml", "pyproject.toml"]
+language-servers = ["qlinter"]
+```
+
+**Emacs** with **Eglot**, built in since Emacs 29. `q-mode` is the
+major mode from MELPA, or any mode of your own for `.q` files; the plist
+after `:initializationOptions` becomes the JSON object:
+
+```elisp
+(with-eval-after-load 'eglot
+  (add-to-list 'eglot-server-programs
+               '(q-mode . ("qlinter" "--lsp"
+                           :initializationOptions (:lint (:run "onSave"))))))
+```
+
+**Emacs** with **lsp-mode**:
+
+```elisp
+(with-eval-after-load 'lsp-mode
+  (add-to-list 'lsp-language-id-configuration '(q-mode . "q"))
+  (lsp-register-client
+   (make-lsp-client :new-connection (lsp-stdio-connection '("qlinter" "--lsp"))
+                    :activation-fn (lsp-activate-on "q")
+                    :initialization-options '(:lint (:run "onSave"))
+                    :server-id 'qlinter)))
+```
+
+**Sublime Text**, with the LSP package, in
+`Packages/User/LanguageServers.sublime-settings` (*Preferences: LSP Server
+Configurations*). `selector` needs a q syntax package installed whose base
+scope is `source.q`:
+
+```json
+{
+  "qlinter": {
+    "enabled": true,
+    "command": ["qlinter", "--lsp"],
+    "selector": "source.q",
+    "initialization_options": {"lint": {"run": "onSave"}}
+  }
+}
+```
+
+**Kakoune**, with kakoune-lsp, in `kakrc` after `eval %sh{kak-lsp}`.
+Kakoune has no q filetype of its own, so the first hook gives `.q` files
+one; kakoune-lsp sends the `settings_section` table as
+`initializationOptions`:
+
+```kak
+hook global BufCreate .*\.q %{ set-option buffer filetype q }
+hook -group lsp-filetype-q global BufSetOption filetype=q %{
+    set-option buffer lsp_servers %{
+        [qlinter]
+        command = "qlinter"
+        args = ["--lsp"]
+        root_globs = ["qlinter.toml", ".qlinter.toml", "pyproject.toml", ".git"]
+        settings_section = "_"
+        [qlinter.settings._]
+        lint = { run = "onSave" }
+    }
+}
+```
+
+**Zed** starts a language server only for a language an extension defines,
+and when this was written no Zed extension defined q. Once one does, its
+server is pointed at `qlinter` in `settings.json`, under the name the
+extension gives it (`qlinter` here); `initialization_options` is sent
+once, at startup:
+
+```json
+{
+  "lsp": {
+    "qlinter": {
+      "binary": {"path": "qlinter", "arguments": ["--lsp"]},
+      "initialization_options": {"lint": {"run": "onSave"}}
+    }
+  }
+}
 ```
 
 ### Editor options: `initializationOptions`
@@ -998,6 +1143,7 @@ Every key is optional, and these are the defaults:
  "versionCheck": {"enable": true}, "baseline": {"enable": true},
  "typeLints": {"enable": true}, "selectionRange": {"enable": false},
  "relatedInformation": {"enable": false}, "crossFileRefresh": {"enable": false},
+ "renameLoads": {"enable": false}, "loadPathCompletion": {"enable": false},
  "workspaceIndex": {"enable": true, "exclude": []}}
 ```
 
@@ -1005,7 +1151,8 @@ Every key is optional, and these are the defaults:
 configuration and the command line, and only turn rules off: a rule reports
 when the configuration selects it and they do too. `lint.run` is `onType` or
 `onSave`. `lint.severity` maps a code or prefix to `error`, `warning`,
-`information` or `hint`, the longest winning. `lint.scope` is `open` or
+`information` or `hint`, the longest winning, over the configuration's own
+`[severity]`. `lint.scope` is `open` or
 `workspace`: with `workspace`, every file the index reads reports too, open
 or not - read from disk and linted one at a time while no message is
 waiting, so none holds up the editor, at most 5,000 of them; again when it
@@ -1042,7 +1189,14 @@ sends `workspace/codeLens/refresh` and `workspace/inlayHint/refresh`, to a
 client that declares it takes them, when what the workspace defines
 changes, and the first also when the names a file reads change while
 reference lenses are on, as `workspace/semanticTokens/refresh` is sent for
-colours.
+colours. `renameLoads.enable: true` announces `workspace/willRenameFiles` for
+`.q`/`.k` files and folders, and answers it with the edits that keep each
+load naming what it named - written from the workspace folder or from the
+loading file's directory, whichever it was written from - including the
+loads of a file that moves. `loadPathCompletion.enable: true` completes the
+folders and `.q`/`.k` scripts after `\l `, with `/` as a trigger
+character; with `completion.enable` off, it announces completion and
+answers only on a `\l` line.
 `workspaceIndex.exclude`
 holds globs relative to each workspace folder that the index does not read.
 The index stops after 20,000 `.q` files or 500,000 directory entries of any
@@ -1104,6 +1258,10 @@ builds and publishes every platform.
 
 ## pre-commit and CI
 
+[docs/ci.md](docs/ci.md) is the guide: GitHub Actions with annotations or
+code scanning (SARIF), GitLab, pre-commit, and a baseline for adopting
+qlinter on a tree that has findings today. In short:
+
 A [pre-commit](https://pre-commit.com) hook lints the `.q` files a commit
 changes. `qlinter` builds the linter from this repository at `rev` with cargo,
 so it needs Rust; `qlinter-system` runs the `qlinter` already on `PATH`. `rev`
@@ -1147,6 +1305,7 @@ cargo test                                            # unit, CLI and LSP suites
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 cargo build --release                                 # the Python harness needs it
+cargo test --release --test never_panic -- --ignored  # no panic on any mutated q in the tree
 Q_LINT_TEST_QLS=qls uv run pytest tests                # black-box CLI checks
 python3 scripts/check_invariance.py target/release/qlinter examples tests/corpus tests/cases
                                                       # findings unmoved by CRLF, position, comments
@@ -1159,7 +1318,7 @@ language server driven over real LSP framing as a real process.
 
 ### Rule and multiline regression corpus
 
-The taxonomy contains 140 codes. Ten literal-call rules cover excess builtin
+The taxonomy contains 144 codes. Ten literal-call rules cover excess builtin
 arguments (QA010), invalid literal types/shapes (QT008–QT014), and negative
 `til`/`where` counts (QD001–QD002). These checks leave unknown expressions
 unresolved and account for projections, seeded scans and variadic `enlist`.
@@ -1168,7 +1327,7 @@ unresolved and account for projections, seeded scans and variadic `enlist`.
 `tests/showcase.rs` checks exact code/line pairs under every profile, including
 silence in the clean section. Together with the three companion examples -
 `syntax-error.q`, `byte-order-mark.q` and `query-injection.q`, each holding
-a rule that would hide or stop the others - it covers all 138 rules available
+a rule that would hide or stop the others - it covers all 142 rules available
 in this build; QF006 and QLS001 are excluded.
 
 Multiline fixtures cover nested lambdas, split argument lists, comments,

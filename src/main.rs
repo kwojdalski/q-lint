@@ -27,9 +27,22 @@ macro_rules! out {
     };
 }
 
-/// The file `--output-file` names, opened once: where the report goes
-/// instead of stdout.
-static OUTPUT: std::sync::OnceLock<fs::File> = std::sync::OnceLock::new();
+/// The file `--output-file` names: where the report goes instead of stdout.
+static OUTPUT_PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// That file, created on the first write - not before the arguments are
+/// checked and the sources read, so a refused run or a file that is also an
+/// input is never truncated. A file that cannot be created exits 2.
+fn output() -> Option<&'static fs::File> {
+    static OUTPUT: std::sync::OnceLock<fs::File> = std::sync::OnceLock::new();
+    let path = OUTPUT_PATH.get()?;
+    Some(OUTPUT.get_or_init(|| {
+        fs::File::create(path).unwrap_or_else(|e| {
+            eprintln!("qlinter: {}: {e}", path.display());
+            std::process::exit(2)
+        })
+    }))
+}
 
 /// Write to stdout, or the `--output-file`, ending the line when `newline`;
 /// see `out!`. Any other write error is reported and exits 2, as an output
@@ -40,13 +53,13 @@ fn emit(text: std::fmt::Arguments, newline: bool) {
         to.write_fmt(text)?;
         if newline { to.write_all(b"\n") } else { Ok(()) }
     }
-    let written = match OUTPUT.get() {
+    let written = match output() {
         Some(mut file) => write(&mut file, text, newline),
         None => write(&mut io::stdout().lock(), text, newline),
     };
     match written {
         Ok(()) => {}
-        Err(e) if e.kind() == io::ErrorKind::BrokenPipe && OUTPUT.get().is_none() => {
+        Err(e) if e.kind() == io::ErrorKind::BrokenPipe && OUTPUT_PATH.get().is_none() => {
             std::process::exit(0)
         }
         Err(e) => {
@@ -389,8 +402,7 @@ fn run(args: Args) -> Result<u8, String> {
         return lsp::serve(io::BufReader::new(io::stdin()), &mut stdout.lock(), &policy);
     }
     if let Some(file) = &args.output_file {
-        let opened = fs::File::create(file).map_err(|e| format!("{}: {e}", file.display()))?;
-        let _ = OUTPUT.set(opened);
+        let _ = OUTPUT_PATH.set(file.clone());
     }
     if args.rules || args.explain.is_some() {
         if args.fix || args.diff {
@@ -543,6 +555,15 @@ fn run(args: Args) -> Result<u8, String> {
     } else {
         let (files, missing) = discover(paths, &policy, args.force_exclude)?;
         failed |= missing;
+        if let Some(out) = OUTPUT_PATH.get() {
+            let out = config::absolute(out);
+            if files.iter().any(|f| config::absolute(f) == out) {
+                return Err(format!(
+                    "--output-file {}: it is one of the files to lint",
+                    out.display()
+                ));
+            }
+        }
         for path in files {
             // A file that cannot be read is reported and passed over, and the
             // run ends in exit 2, an input failure, whatever the others find.
@@ -883,7 +904,7 @@ fn add_noqa(
 ) -> Result<u8, String> {
     // More codes than this on one line is not a line anyone will read.
     const PASSES: usize = 64;
-    let (mut added, mut changed, mut left) = (0, 0, 0);
+    let (mut added, mut changed, mut left, mut stale) = (0, 0, 0, 0);
     let mut written = std::collections::HashSet::new();
     for (path, source) in sources.iter_mut() {
         if lossy.contains(path.as_str())
@@ -897,9 +918,12 @@ fn add_noqa(
         let mut found = policy.lint(&text, path, workspace)?;
         for _ in 0..PASSES {
             let mut lines = std::collections::HashSet::new();
+            // A stale noqa (QL003) is removed, never suppressed: naming it in
+            // the comment it complains about would only hide the comment.
             let mut edits: Vec<_> = found
                 .iter()
                 .zip(suppressions_for(&found, &text))
+                .filter(|(f, _)| f.code != "QL003")
                 .filter_map(|(f, edit)| edit.filter(|_| lines.insert(f.line)))
                 .collect();
             if edits.is_empty() {
@@ -914,7 +938,8 @@ fn add_noqa(
             here += edits.len();
             found = policy.lint(&text, path, workspace)?;
         }
-        left += found.len();
+        stale += found.iter().filter(|f| f.code == "QL003").count();
+        left += found.iter().filter(|f| f.code != "QL003").count();
         if here == 0 {
             continue;
         }
@@ -933,7 +958,16 @@ fn add_noqa(
             "qlinter: {left} finding(s) left: on a line no comment can follow, such as one inside a string or a block comment, or in a file whose brackets do not close"
         );
     }
-    Ok(if failed { 2 } else { u8::from(left > 0) })
+    if stale > 0 {
+        eprintln!(
+            "qlinter: {stale} noqa directive(s) suppress nothing (QL003): remove them with --fix --unsafe-fixes"
+        );
+    }
+    Ok(if failed {
+        2
+    } else {
+        u8::from(left + stale > 0)
+    })
 }
 
 /// `bytes` as text, each byte that is not UTF-8 read as one replacement
@@ -1277,7 +1311,11 @@ fn line_diff<'a>(old: &'a str, new: &'a str) -> Vec<(char, &'a str)> {
 
 fn main() -> ExitCode {
     match run(Args::parse()) {
-        Ok(code) => ExitCode::from(code),
+        Ok(code) => {
+            // A report with nothing in it is still a report: the file is made.
+            output();
+            ExitCode::from(code)
+        }
         Err(error) => {
             eprintln!("qlinter: {error}");
             ExitCode::from(2)
@@ -1309,7 +1347,7 @@ impl Paint {
             "never" => false,
             // A file is never a terminal, whatever stdout is.
             _ => auto_colour(
-                std::io::stdout().is_terminal() && OUTPUT.get().is_none(),
+                std::io::stdout().is_terminal() && OUTPUT_PATH.get().is_none(),
                 std::env::var_os("NO_COLOR").as_deref(),
             ),
         };

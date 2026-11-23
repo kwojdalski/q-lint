@@ -420,6 +420,13 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             false,
         ),
         ("QT004", "r:`int$\"12\"", "r:\"I\"$\"12\"", false),
+        ("QT004", "r:\"j\"$\"12\"", "r:\"J\"$\"12\"", false),
+        (
+            "QT004",
+            "r:\"d\"$ \"2024.01.01\"",
+            "r:\"D\"$ \"2024.01.01\"",
+            false,
+        ),
         ("QT032", "r:`symbol$\"ab\"", "r:`$\"ab\"", false),
         (
             "QT032",
@@ -678,6 +685,74 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             "t:([]price:1 2);r:select price from t",
             false,
         ),
+        // Each glyph's keyword: on KDB-X `(g:)x` and the keyword parse alike.
+        ("QE008", "r:-x", "r:neg x", true),
+        ("QE008", "r:#x", "r:count x", true),
+        ("QE008", "r:,x", "r:enlist x", true),
+        ("QE008", "r:~x", "r:not x", true),
+        ("QE008", "r:_x", "r:floor x", true),
+        ("QE008", "r:%x", "r:reciprocal x", true),
+        ("QE008", "r:!x", "r:key x", true),
+        ("QE008", "r:$x", "r:string x", true),
+        ("QE008", "r:&x", "r:where x", true),
+        ("QE008", "r:|x", "r:reverse x", true),
+        ("QE008", "r:^x", "r:null x", true),
+        ("QE008", "r:@x", "r:type x", true),
+        ("QE008", "r:?x", "r:distinct x", true),
+        ("QE008", "r:*x", "r:first x", true),
+        ("QE008", "r:+x", "r:flip x", true),
+        ("QE008", "r:.(x)", "r:value (x)", true),
+        ("QE008", "r:#:x", "r:count x", true),
+        ("QE008", "r:,-1", "r:enlist -1", true),
+        ("QE008", "r:*$[a;b;c]", "r:first $[a;b;c]", true),
+        ("QE008", "f:{[a]-x}", "f:{[a] neg x}", true),
+        ("QE008", "r:- x", "r:neg x", true),
+        // The derived function in parentheses: on KDB-X `(+/)x+y` parses as
+        // `+/[x+y]`, which is what q 4 applied it to.
+        ("QE009", "f:{+/x}", "f:{(+/)x}", true),
+        ("QE009", "f:{x/y}", "f:{(x/)y}", true),
+        ("QE009", "f:{count'x}", "f:{(count')x}", true),
+        ("QE009", "f:{sum/:x}", "f:{(sum/:)x}", true),
+        ("QE009", "f:{+/'x}", "f:{(+/')x}", true),
+        ("QE009", "f:{.:'x}", "f:{(.:')x}", true),
+        ("QE009", "f:{-':x}", "f:{(-':)x}", true),
+        ("QE009", "f:{.foo.f/x}", "f:{(.foo.f/)x}", true),
+        ("QE009", "f:{+/x+y}", "f:{(+/)x+y}", true),
+        // Each keyword in parentheses: on KDB-X `(cor) each x` is
+        // `each[cor;x]`, as `count each x` is. With an operand on the left
+        // what q 4 meant is not certain, so only in the editor.
+        ("QE011", "r:cor each x", "r:(cor) each x", true),
+        ("QE011", "r:1+mavg peach x", "r:1+(mavg) peach x", true),
+        ("QE011", "r:within over x", "r:(within) over x", true),
+        ("QE011", "r:xexp scan x", "r:(xexp) scan x", true),
+        ("QE011", "r:mod prior x", "r:(mod) prior x", true),
+        ("QE011", "r:+ each x", "r:(+) each x", true),
+        ("QE011", "f:{[x] cor each x}", "f:{[x] (cor) each x}", true),
+        ("QE011", "r:x in each y", "r:x (in) each y", false),
+        ("QE011", "r:x + each y", "r:x (+) each y", false),
+        ("QE011", "r:\"ab\" in each y", "r:\"ab\" (in) each y", false),
+        // 'type before, a connection after: only in the editor.
+        (
+            "QT029",
+            "h:hopen `localhost:5000",
+            "h:hopen `:localhost:5000",
+            false,
+        ),
+        ("QT029", "h:hopen[`db:5000]", "h:hopen[`:db:5000]", false),
+        // Each look-alike becomes its ASCII; the one in the string stays.
+        ("QE012", "r:1\u{a0}2", "r:1 2", true),
+        (
+            "QE012",
+            "r:\"\u{a0}\";s:1\u{a0}+2",
+            "r:\"\u{a0}\";s:1 +2",
+            true,
+        ),
+        ("QE012", "r:\u{2013}1", "r:-1", true),
+        ("QE012", "r:1\u{2014}2", "r:1-2", true),
+        ("QE012", "r:\u{2212}1", "r:-1", true),
+        ("QE012", "r:f\u{2018}x", "r:f'x", true),
+        ("QE012", "r:f\u{2019}x", "r:f'x", true),
+        ("QE012", "s:\u{201c}hi\u{201d}", "s:\"hi\"", true),
     ];
     for (code, source, expected, safe) in cases {
         let finding = lint(source, "probe.q", Profile::Uqf)
@@ -755,6 +830,27 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         // `:[x]` and `:'[x]` return a projection of `:`, not x (#770).
         ("QF015", "f:{return[x]}"),
         ("QF015", "f:{return'[x]}"),
+        // Hopen or a grade, by the argument: no one keyword (q 5: (<:)5 is hopen).
+        ("QE008", "r:<x"),
+        ("QE008", "r:>x"),
+        ("QE008", "f:{[a]-1 2}"),       // a literal, or neg of the vector
+        ("QE008", "r:.%name%.summary"), // a template placeholder
+        ("QE008", "r:a%.%b"),
+        ("QE009", "f:{+/-x}"),        // `(+/)-x` is minus
+        ("QE009", "f:{+/@[f;x;g]}"),  // a glyph applied with brackets
+        ("QE009", "f:{{x+y}/x}"),     // a lambda operand
+        ("QE009", "f:{(1;/x)}"),      // no derived function at all
+        ("QE009", "f:{#'x}"),         // `(#')x` is a projection on KDB-X
+        ("QE009", "f:{,/:x}"),        // so is `(,/:)x`
+        ("QE009", "f:{,\\:x}"),       // and `(,\:)x`
+        ("QE009", "f:{,/:'x}"),       // and `(,/:')x`
+        ("QE011", "r:f over each x"), // `(f over) each`, the author's to place
+        ("QT029", "h:hopen 1.5"),     // no handle it spells
+        ("QT029", "h:hopen -1"),
+        ("QT029", "h:hopen `"),
+        ("QE012", "s:\u{201c}hi"),            // no close on the line
+        ("QE012", "s:\u{201c}C:\\d\u{201d}"), // a backslash would be an escape
+        ("QE012", "a:`\u{e9}"),               // no ASCII it stands for
     ] {
         for finding in lint(source, "probe.q", Profile::Uqf)
             .iter()

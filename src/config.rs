@@ -34,6 +34,13 @@
 //! extend-select = ["QS001"]         # added to whatever is selected
 //! ignore = ["QF016"]
 //! per-file-ignores = { "tests/*" = ["QS"] }
+//!
+//! [severity]                        # by code or prefix; the longest decides
+//! QS = "info"                       # error | warning | info (information) | hint
+//! QS006 = "warning"
+//!
+//! [rules.QS006]                     # a rule's own options; `options::OPTIONS` lists them
+//! max-lines = 40
 //! ```
 //!
 //! Selection is resolved the way Ruff resolves it: within one file, the most
@@ -42,11 +49,19 @@
 //! `extend-select = ["QS001"]` keeps QS001 alone. A file that `extend`s
 //! another is applied after it, and the command line after both.
 //!
+//! `[severity]` and `[rules.<CODE>]` may also go under `[lint]`. A file that
+//! `extend`s another keeps the base's entries and overrides them one by one:
+//! a severity by its selector, an option by its key. A severity only changes
+//! how a finding is reported - and whether it fails the run, which only an
+//! error or a warning does - never whether it is.
+//!
 //! Nothing here reads q source; a configuration is TOML and is only parsed.
 
 use crate::baseline::Baseline;
 use q_lint_rs::{
-    Finding, Profile, RULES, Target, Workspace, lint_every_rule, version_reported_for,
+    Finding, Profile, RULES, Target, Workspace, lint_every_rule,
+    options::{self, OptionsScope, RuleOptions},
+    version_reported_for,
 };
 use std::{
     cell::RefCell,
@@ -70,8 +85,38 @@ const DEFAULT_EXCLUDE: [&str; 7] = [
     "dist",
     "target",
 ];
-const KEYS: &str = "profile, select, extend-select, ignore, per-file-ignores, exclude, \
-                    extend-exclude, extend, target-version, baseline, required-version and [lint]";
+/// Every key a configuration's top level may hold, and those `[lint]` may.
+/// The editor's JSON Schema, `editors/vscode/schemas/qlinter.schema.json`,
+/// is tested against both.
+pub const TOP_KEYS: [&str; 14] = [
+    "profile",
+    "select",
+    "extend-select",
+    "ignore",
+    "per-file-ignores",
+    "exclude",
+    "extend-exclude",
+    "extend",
+    "lint",
+    "target-version",
+    "baseline",
+    "required-version",
+    "severity",
+    "rules",
+];
+pub const LINT_KEYS: [&str; 6] = [
+    "select",
+    "extend-select",
+    "ignore",
+    "per-file-ignores",
+    "severity",
+    "rules",
+];
+/// What `profile` may be.
+pub const PROFILES: [&str; 4] = ["general", "style", "styleq", "uqf"];
+/// What `[severity]` may set a rule to: the names an editor shows, with
+/// `info` for `information`.
+pub const SEVERITIES: [&str; 5] = ["error", "warning", "info", "information", "hint"];
 
 /// One step of rule selection: a configuration file's, or the command line's.
 #[derive(Clone, Debug, Default)]
@@ -109,6 +154,11 @@ pub struct Settings {
     /// they are called - so a language server knows to re-read when a base
     /// changes (#419).
     sources: Vec<PathBuf>,
+    /// `[severity]`: a selector and the severity it reports with, `info`
+    /// spelled so; the longest selector that names a code decides.
+    severity: Vec<(String, String)>,
+    /// `[rules.<CODE>]`: what the rules with options are run with.
+    options: Rc<RuleOptions>,
 }
 
 /// What the command line says, which wins over any file.
@@ -451,7 +501,10 @@ impl Policy {
             }
             other => other.map(|()| false)?,
         };
-        let mut found = lint_every_rule(source, path, ws, structure);
+        let mut found = {
+            let _options = OptionsScope::install(settings.options.clone());
+            lint_every_rule(source, path, ws, structure)
+        };
         let target = self.target(&settings);
         found.retain(|f| {
             !(conflict && OPPOSITE.contains(&f.code.as_str()))
@@ -475,6 +528,11 @@ impl Policy {
                     }
                 }
                 Err(e) => return Err(e.clone()),
+            }
+        }
+        for f in &mut found {
+            if let Some(level) = severity_of(&settings, &f.code) {
+                f.severity = level.to_string();
             }
         }
         Ok(found)
@@ -610,6 +668,18 @@ fn apply(layer: &Layer, code: &str, on: bool) -> bool {
         (None, Some(_)) => false,
         (None, None) => on && layer.select.is_none(),
     }
+}
+
+/// The severity `settings` give `code`, if they give one: the longest
+/// selector that names it, the last written winning a tie.
+fn severity_of<'a>(settings: &'a Settings, code: &str) -> Option<&'a str> {
+    settings
+        .severity
+        .iter()
+        .rev()
+        .filter(|(s, _)| names(s, code))
+        .max_by_key(|(s, _)| if s == "ALL" { 0 } else { s.len() })
+        .map(|(_, level)| level.as_str())
 }
 
 /// The rules whose convention is the opposite of another's, each beside
@@ -782,24 +852,15 @@ fn load(
         .unwrap_or_default();
 
     for key in table.keys() {
-        if ![
-            "profile",
-            "select",
-            "extend-select",
-            "ignore",
-            "per-file-ignores",
-            "exclude",
-            "extend-exclude",
-            "extend",
-            "lint",
-            "target-version",
-            "baseline",
-            "required-version",
-        ]
-        .contains(&key.as_str())
-        {
+        if !TOP_KEYS.contains(&key.as_str()) {
             return Err(format!(
-                "{shown}: unknown key `{key}`; qlinter reads {KEYS}"
+                "{shown}: unknown key `{key}`; qlinter reads {} and [lint]",
+                TOP_KEYS
+                    .iter()
+                    .filter(|k| **k != "lint")
+                    .copied()
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ));
         }
     }
@@ -811,10 +872,10 @@ fn load(
             .clone(),
     };
     for key in lint.keys() {
-        if !["select", "extend-select", "ignore", "per-file-ignores"].contains(&key.as_str()) {
+        if !LINT_KEYS.contains(&key.as_str()) {
             return Err(format!(
-                "{shown}: unknown key `lint.{key}`; [lint] reads select, extend-select, ignore \
-                 and per-file-ignores"
+                "{shown}: unknown key `lint.{key}`; [lint] reads {}",
+                LINT_KEYS.join(", ")
             ));
         }
         if table.contains_key(key) {
@@ -843,10 +904,8 @@ fn load(
     if let Some(v) = table.get("profile") {
         let name = v
             .as_str()
-            .filter(|p| ["general", "style", "styleq", "uqf"].contains(p))
-            .ok_or_else(|| {
-                format!("{shown}: profile must be one of general, style, styleq, uqf")
-            })?;
+            .filter(|p| PROFILES.contains(p))
+            .ok_or_else(|| format!("{shown}: profile must be one of {}", PROFILES.join(", ")))?;
         settings.profile = Some(name.to_string());
     }
     let selectors = |key: &str| -> Result<Option<Vec<String>>, String> {
@@ -951,6 +1010,75 @@ fn load(
             rooted.negated = negated;
             settings.per_file_ignores.push((rooted, codes));
         }
+    }
+    if let Some(v) = get("severity") {
+        let map = v.as_table().ok_or_else(|| {
+            format!("{shown}: severity must be a table of code = \"error\" | \"warning\" | ...")
+        })?;
+        for (code, level) in map {
+            let code = selector("severity", code).map_err(|e| format!("{shown}: {e}"))?;
+            let level = level
+                .as_str()
+                .filter(|l| SEVERITIES.contains(l))
+                .ok_or_else(|| {
+                    format!(
+                        "{shown}: severity.{code} must be error, warning, info, information or \
+                         hint, not {level}"
+                    )
+                })?;
+            let level = if level == "information" {
+                "info"
+            } else {
+                level
+            };
+            // What this file says for a selector replaces what it extends.
+            settings.severity.retain(|(s, _)| *s != code);
+            settings.severity.push((code, level.to_string()));
+        }
+    }
+    if let Some(v) = get("rules") {
+        let map = v
+            .as_table()
+            .ok_or_else(|| format!("{shown}: rules must be a table of [rules.<CODE>] tables"))?;
+        let mut rules = (*settings.options).clone();
+        for (code, table) in map {
+            let table = table
+                .as_table()
+                .ok_or_else(|| format!("{shown}: rules.{code} must be a table"))?;
+            for (key, value) in table {
+                let bad = |what: &str| format!("{shown}: [rules.{code}] {key} must be {what}");
+                let kind = options::OPTIONS
+                    .iter()
+                    .find(|o| o.code == code && o.key == key)
+                    .map(|o| o.kind);
+                let value = match (kind, value) {
+                    (Some(options::Kind::Count), toml::Value::Integer(n)) => {
+                        options::Value::Count(*n)
+                    }
+                    (Some(options::Kind::Count), _) => return Err(bad("an integer")),
+                    (Some(options::Kind::Words), toml::Value::Array(items)) => {
+                        options::Value::Words(
+                            items
+                                .iter()
+                                .map(|w| w.as_str().map(str::to_string))
+                                .collect::<Option<_>>()
+                                .ok_or_else(|| bad("a list of strings"))?,
+                        )
+                    }
+                    (Some(options::Kind::Words), _) => return Err(bad("a list of strings")),
+                    (Some(options::Kind::Pattern), toml::Value::String(p)) => {
+                        options::Value::Pattern(p.clone())
+                    }
+                    (Some(options::Kind::Pattern), _) => return Err(bad("a string")),
+                    // Unknown: `set` says what the rule does read.
+                    (None, _) => options::Value::Count(0),
+                };
+                rules
+                    .set(code, key, value)
+                    .map_err(|e| format!("{shown}: {e}"))?;
+            }
+        }
+        settings.options = Rc::new(rules);
     }
     Ok(Some(settings))
 }
@@ -1187,7 +1315,93 @@ fn lexical(path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::version_matches;
+    use super::{LINT_KEYS, PROFILES, SEVERITIES, TOP_KEYS, version_matches};
+    use q_lint_rs::{
+        Target,
+        options::{Kind, OPTIONS},
+    };
+    use serde_json::Value;
+    use std::collections::BTreeSet;
+
+    fn read_json(relative: &str) -> Value {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(relative);
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap())
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    }
+
+    fn keys(object: &Value) -> BTreeSet<String> {
+        object.as_object().unwrap().keys().cloned().collect()
+    }
+
+    fn set(words: &[&str]) -> BTreeSet<String> {
+        words.iter().map(|w| w.to_string()).collect()
+    }
+
+    /// The editor's schema for `.qlinter.toml` (#1178) names exactly the keys
+    /// `load` reads - no fewer, so completion offers each, and no more, so
+    /// validation passes nothing qlinter would refuse - and the values each
+    /// may take.
+    #[test]
+    fn the_editor_schema_holds_exactly_the_keys_a_configuration_reads() {
+        let schema = read_json("editors/vscode/schemas/qlinter.schema.json");
+        let defs = &schema["definitions"];
+        let resolve = |v: &Value| -> Value {
+            match v["$ref"].as_str() {
+                Some(r) => defs[r.trim_start_matches("#/definitions/")].clone(),
+                None => v.clone(),
+            }
+        };
+        assert_eq!(schema["additionalProperties"], false);
+        assert_eq!(keys(&schema["properties"]), set(&TOP_KEYS));
+        let lint = &schema["properties"]["lint"];
+        assert_eq!(lint["additionalProperties"], false);
+        assert_eq!(keys(&lint["properties"]), set(&LINT_KEYS));
+        let enumerated = |v: &Value| -> BTreeSet<String> {
+            v["enum"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s.as_str().unwrap().to_string())
+                .collect()
+        };
+        assert_eq!(enumerated(&schema["properties"]["profile"]), set(&PROFILES));
+        assert_eq!(
+            enumerated(&schema["properties"]["target-version"]),
+            set(&Target::NAMES)
+        );
+        for at in [&schema["properties"], &lint["properties"]] {
+            let severity = resolve(&at["severity"]);
+            assert_eq!(
+                enumerated(&severity["additionalProperties"]),
+                set(&SEVERITIES)
+            );
+            let rules = resolve(&at["rules"]);
+            assert_eq!(rules["additionalProperties"], false);
+            let codes: Vec<&str> = OPTIONS.iter().map(|o| o.code).collect();
+            assert_eq!(keys(&rules["properties"]), set(&codes));
+            for (code, table) in rules["properties"].as_object().unwrap() {
+                assert_eq!(table["additionalProperties"], false, "{code}");
+                let options: Vec<_> = OPTIONS.iter().filter(|o| o.code == code).collect();
+                let names: Vec<&str> = options.iter().map(|o| o.key).collect();
+                assert_eq!(keys(&table["properties"]), set(&names), "{code}");
+                for option in options {
+                    let ty = &table["properties"][option.key]["type"];
+                    let want = match option.kind {
+                        Kind::Count => "integer",
+                        Kind::Words => "array",
+                        Kind::Pattern => "string",
+                    };
+                    assert_eq!(ty, want, "{code}.{}", option.key);
+                }
+            }
+        }
+        // Even Better TOML finds it through the extension's tomlValidation.
+        let package = read_json("editors/vscode/package.json");
+        let contributed = &package["contributes"]["tomlValidation"][0];
+        assert_eq!(contributed["url"], "./schemas/qlinter.schema.json");
+        let matched: Vec<_> = contributed["fileMatch"].as_array().unwrap().to_vec();
+        assert_eq!(matched, ["qlinter.toml", ".qlinter.toml"]);
+    }
 
     #[test]
     fn a_required_version_reads_ranges_exact_versions_and_compatible_releases() {

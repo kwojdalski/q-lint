@@ -492,7 +492,7 @@ test("every query setting is read, with the default package.json declares, and n
   assert.deepStrictEqual(resultView, {
     history: 10,
     heatmap: false,
-    enable: { history: true, diff: true, statistics: true, heatmap: true, tree: true, export: true, paging: false, pivot: true, charts: true, drilldown: true, wrangler: true, editCells: true, plots: true, columnFormats: true, conditionalFormats: true, cellCharts: true, columnLayout: true, depthChart: true, mapChart: true, linkedCharts: true, chartPresets: true, correlation: true, sendResult: true },
+    enable: { history: true, diff: true, statistics: true, heatmap: true, tree: true, export: true, paging: false, pivot: true, charts: true, drilldown: true, wrangler: true, editCells: true, plots: true, columnFormats: true, conditionalFormats: true, cellCharts: true, columnLayout: true, depthChart: true, mapChart: true, linkedCharts: true, chartPresets: true, correlation: true, sendResult: true, accessibleGrid: true, announce: true },
     drilldown: [],
   });
   const view = (values) => readResultView((key, fallback) => (key in values ? values[key] : fallback));

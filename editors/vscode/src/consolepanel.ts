@@ -3,7 +3,7 @@
 // pane (#959). The page (`media/console.js`) draws every text with
 // `textContent`, so nothing a process answers is read as HTML.
 import { randomBytes } from "node:crypto";
-import { Uri, ViewColumn, window, type Disposable, type ExtensionContext, type Webview, type WebviewPanel } from "vscode";
+import { Uri, ViewColumn, window, workspace, type Disposable, type ExtensionContext, type Webview, type WebviewPanel } from "vscode";
 
 /// One run in the pane.
 export interface ConsoleEntry {
@@ -41,6 +41,11 @@ function consoleHtml(webview: Webview, media: Uri, title: string, input: boolean
     `<script nonce="${nonce}" src="${file("console.js")}"></script>`,
     "</body></html>",
   ].join("\n");
+}
+
+/// Whether a finished run is announced to a screen reader (#1188).
+function announcing(): boolean {
+  return workspace.getConfiguration("q-lint").get<boolean>("results.announce.enable", true) !== false;
 }
 
 export class ConsolePanel {
@@ -93,11 +98,17 @@ export class ConsolePanel {
     const listeners: Disposable[] = [
       panel.webview.onDidReceiveMessage((message: PageMessage) => {
         if (message?.type === "ready") {
-          this.post({ type: "all", entries: this.list, ...(this.options.initial?.() ?? {}) });
+          this.post({ type: "all", entries: this.list, announce: announcing(), ...(this.options.initial?.() ?? {}) });
         } else if (message?.type === "clear") {
           this.clear();
         } else {
           this.options.onMessage?.(message);
+        }
+      }),
+      // Turned on or off without a reload.
+      workspace.onDidChangeConfiguration((event) => {
+        if (event.affectsConfiguration("q-lint.results.announce.enable")) {
+          this.post({ type: "announce", on: announcing() });
         }
       }),
     ];

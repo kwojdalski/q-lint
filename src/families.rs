@@ -176,7 +176,10 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
 /// non-empty literal: `passwordPrompt:"Enter password"` names a message, and
 /// `password:getenv`PASS` reads one from where it belongs.
 fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
-    let secret = re!(r"(?i)(?:password|passwd|pwd|secret|token|api_?key|credentials?)$");
+    let options = crate::options::current();
+    let secret = options.name_pattern.as_ref().unwrap_or(re!(
+        r"(?i)(?:password|passwd|pwd|secret|token|api_?key|credentials?)$"
+    ));
     let message = re!(
         r"(?i)prompt|msg|message|label|text|field|name|hint|key[s]?name|file|path|url|env|var|col"
     );
@@ -392,7 +395,9 @@ fn leftovers(path: &str, source: &str, comments: &str, foreign: &[usize], out: &
         comments.as_bytes()[at] == b' ' && source.as_bytes()[at] != b' ' && !foreign.contains(&line)
     };
     // QL001: a marker saying the work is unfinished.
-    for m in re!(r"\b(TODO|FIXME|XXX|HACK)\b").find_iter(source) {
+    // The words are `[rules.QL001] markers`, TODO, FIXME, XXX and HACK by default.
+    let options = crate::options::current();
+    for m in options.markers.find_iter(source) {
         // `.kdb.XXX` or `` `XXX `` is a placeholder name, not a marker.
         let named = source[..m.start()].ends_with(['.', '`']);
         if in_comment(m.start()) && !named {
