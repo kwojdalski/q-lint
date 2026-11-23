@@ -368,8 +368,8 @@ export class QueryModes {
       commands.registerCommand(RESULT_VIEW.saveChartPreset, (preset?: unknown) => this.enabled("chartPresets") && this.saveChartPreset(preset)),
       commands.registerCommand(RESULT_VIEW.forgetChartPreset, () => this.enabled("chartPresets") && this.forgetChartPreset()),
       commands.registerCommand(RESULT_VIEW.correlation, () => this.enabled("correlation") && this.showCorrelation()),
-      commands.registerCommand(RESULT_VIEW.toNotebook, (withChart?: boolean, notebook?: Uri) => this.enabled("sendResult") && this.toNotebook(undefined, withChart, notebook)),
-      commands.registerCommand(RESULT_VIEW.toReport, (target?: Uri, withChart?: boolean) => this.enabled("sendResult") && this.toReport(undefined, target, withChart)),
+      commands.registerCommand(RESULT_VIEW.toNotebook, (withChart?: boolean, notebook?: Uri) => this.enabled("sendResult") && this.toNotebook(this.order[settings().resultsLocation], withChart, notebook)),
+      commands.registerCommand(RESULT_VIEW.toReport, (target?: Uri, withChart?: boolean) => this.enabled("sendResult") && this.toReport(this.order[settings().resultsLocation], target, withChart)),
       window.registerWebviewViewProvider(RESULTS.view, { resolveWebviewView: (view) => this.resolveView(view) }),
       workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration("q-lint.query")) {

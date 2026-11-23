@@ -582,6 +582,25 @@ test("Save Result Chart run twice saves each chart to its own file; neither is l
   assert.strictEqual(dialogs, 0);
 });
 
+test("Append to Report from the palette sends the rows the grid shows, as Export As does (#1131)", async () => {
+  const fake = fakeVscode({ "query.resultsLocation": "editor" });
+  const modes = loadModes(fake);
+  modes.context.workspaceState = { get: () => undefined, update: async () => {} };
+  const { RESULT_VIEW } = require("../out/liveconfig.js");
+  modes.show(result([10, 20, 30]), live());
+  const page = fake.pages[0];
+  const id = page.posted.at(-1).id;
+  page.receive({ type: "rendered", id, rows: [2, 0], rendered: { view: "grid", rows: 2, held: 3, total: 3, columns: ["c"], first: [] } });
+  fake.vscode.workspace.fs.readFile = async () => {
+    throw new Error("none");
+  };
+  fake.vscode.window.showWarningMessage = async (_m, _o, go) => go;
+  await fake.vscode.commands[RESULT_VIEW.toReport](new fake.vscode.Uri("/r.md"), false);
+  const report = fake.written["/r.md"];
+  assert.match(report, /30[\s\S]*10/);
+  assert.doesNotMatch(report, /\b20\b/);
+});
+
 test("export, paging, pivot, charts and drill-down turned off: each command refuses, the page is offered none, and nothing is sent", async () => {
   const off = {
     "results.export.enable": false,
