@@ -299,6 +299,16 @@ test("the test data generator's q makes the rows asked for, and its CSV loads ba
   assert.strictEqual(loaded[3], true);
 });
 
+test("the test data generator's q takes symbols a bare symbol cannot write (#1279)", { skip }, async (t) => {
+  const { connection } = await connect(t, "");
+  const info = { kind: "table", rows: 0, bytes: null, partitions: null, keys: [], ncols: 1, columns: [{ name: "s", type: "s", fkey: "", attr: "" }] };
+  for (const symbols of [["a/b", "c:d/e", "_f", "g"], ["x/y"]]) {
+    const ran = readRun(await connection.call(RUN_SCRIPT, statements(testDataQ(info, "gen", { rows: 40, symbols, low: 0, high: 1, seed: 2 }))));
+    assert.ok(ran.ok, ran.error);
+    assert.deepStrictEqual([].concat(await connection.call("{string asc distinct exec s from gen}", 0)).flat().map(String), [...symbols].sort());
+  }
+});
+
 test("the test data CSV's bytes load back as the bytes written (#1278)", { skip }, async (t) => {
   const { connection, dir } = await connect(t, "");
   const info = { kind: "table", rows: 0, bytes: null, partitions: null, keys: [], ncols: 2, columns: [{ name: "b", type: "x", fkey: "", attr: "" }, { name: "j", type: "j", fkey: "", attr: "" }] };

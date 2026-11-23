@@ -9,6 +9,7 @@
 // same rows each time, and defines only the table. The CSV is drawn here
 // by a seeded generator, as q would read it back with `0:`: times as q
 // writes them, symbols bare, strings quoted when they need to be.
+import { qString, symbolLiteral } from "./qliteral";
 import type { TableInfo } from "./tableinfo";
 
 export interface TestDataOptions {
@@ -52,7 +53,11 @@ export function generator(type: string, o: TestDataOptions): string {
   const lo = o.low;
   const span = o.high - o.low;
   const whole = Math.max(1, Math.round(span));
-  const pool = o.symbols.length === 1 ? `enlist\`${o.symbols[0]}` : o.symbols.map((s) => `\`${s}`).join("");
+  // A symbol a bare one cannot write (`a/b` is `a` over `b`, '/) goes
+  // through `$ (#1279).
+  const bare = o.symbols.every((s) => symbolLiteral(s) === `\`${s}`);
+  const pool =
+    o.symbols.length === 1 ? `enlist${symbolLiteral(o.symbols[0])}` : bare ? o.symbols.map((s) => `\`${s}`).join("") : `\`$(${o.symbols.map(qString).join(";")})`;
   switch (type) {
     case "b": return "n?0b";
     case "g": return "n?0Ng";
