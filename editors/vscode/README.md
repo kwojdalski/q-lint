@@ -1045,7 +1045,8 @@ is sent; Escape sends nothing. A change is: assigning a global (`a:1`,
 `([] a:1 2)` is not one), `update` or `delete` from a table named by a
 symbol (`` from `t ``), `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`,
 `system`, `save`, `rsave`, `dsave`, `load`, `rload`, `.Q.dpft`, `.Q.dpfts`,
-`.Q.hdpf`, `.Q.en`, `.Q.chk`, `.Q.dsftg`, `0:` or `1:` to a file
+`.Q.hdpf`, `.Q.en`, `.Q.chk`, `.Q.dsftg` (each also by its `.q.` name,
+`.q.set`), `0:` or `1:` to a file
 handle (`` `:f ``, or one made with `hsym`), `2:`, replaying a log with `-11!` (not `-11!(-1;..)` or `(-2;..)`,
 which only count and check it), an amend in place (`` @[`t;i;:;v] ``) or
 a functional update or delete in place (`` ![`t;c;b;a] ``),

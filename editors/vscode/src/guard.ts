@@ -21,7 +21,8 @@
 // - `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`, `system`,
 //   `save`, `rsave`, `dsave`, `load`, `rload`, `.Q.dpft`, `.Q.dpfts`,
 //   `.Q.hdpf`, `.Q.en`, `.Q.chk` and `.Q.dsftg`, and `0:` or `1:` to a
-//   file handle (`` `:f 0: ``, `hsym[`f] 0:`, `(hsym `f) 1:`), and `2:`;
+//   file handle (`` `:f 0: ``, `hsym[`f] 0:`, `(hsym `f) 1:`), and `2:`,
+//   each also by its `.q.` name (`.q.set`);
 // - `-11!`, which replays a log through `upd`, except `-11!(-1;..)` and
 //   `-11!(-2;..)`, which only count and check one;
 // - `@[` or `.[` on a variable named by a symbol, with four arguments: an
@@ -29,7 +30,7 @@
 //   is not taken for one); `![` likewise, a functional update or delete;
 // - `value`, `get` or `eval` applied to a string, to `parse`, or to a
 //   tree headed by `:` or `::` (`eval(:;`t;())`), also through `[`,
-//   `each` or `'`;
+//   `each` or `'`, and by their `.q.` names;
 // - a system command (`\l`, `\cd x`, `\\`), except one that only reads a
 //   setting (`\c`, `\d`, `\P` without an argument) and `\t` or `\ts`, whose
 //   expression is read by these rules - but `\t 500`, a whole number with
@@ -183,6 +184,11 @@ function computedHandle(t: Token[], end: number): boolean {
   return t[open - 1]?.text === "hsym" || (t[open].text === "(" && (inside.some((k) => k.text === "hsym") || (inside.length === 1 && inside[0].kind === "sym" && inside[0].text.startsWith("`:"))));
 }
 
+/// `name` without the `.q.` that names a builtin as well: `.q.set` is `set`.
+function unqualified(name: string): string {
+  return name.startsWith(".q.") ? name.slice(3) : name;
+}
+
 /// What one statement does that the guard asks about, added to `found`.
 function readStatement(statement: string, found: Set<string>): void {
   const text = statement.trimStart();
@@ -258,11 +264,11 @@ function readStatement(statement: string, found: Set<string>): void {
         qsql = undefined;
         continue;
       }
-      if (WRITERS.has(k.text)) {
+      if (WRITERS.has(unqualified(k.text))) {
         found.add(`calls ${k.text}`);
         continue;
       }
-      if (k.text === "value" || k.text === "get" || k.text === "eval") {
+      if (["value", "get", "eval"].includes(unqualified(k.text))) {
         // What it is applied to, past brackets and `each` or `'`.
         let j = i + 1;
         while (t[j] !== undefined && (["[", "(", "each", "peach"].includes(t[j].text) || (t[j].kind === "op" && t[j].text === "'"))) {

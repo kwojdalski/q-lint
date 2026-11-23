@@ -218,3 +218,19 @@ test("a string given to a TorQ gateway's .gw.syncexec is read as code sent to it
   assert.deepStrictEqual(writes(".gw.syncexec[\"select from t\";`rdb]"), []);
   assert.deepStrictEqual(writes('.gw.syncexec[enlist "t";enlist `rdb]'), []);
 });
+
+test("a writer named through .q. is a change; a .q. reader is not (#1220)", () => {
+  const cases = {
+    ".q.set[`a;1]": ["calls .q.set"],
+    '.q.system "echo x"': ["calls .q.system"],
+    "`t .q.upsert (1;2)": ["calls .q.upsert"],
+    '.q.value "a:1"': ["evaluates a string with .q.value"],
+    // Reads stay reads.
+    ".q.count t": [],
+    ".q.get `:hdb/sym": [],
+    ".q.value `t": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
