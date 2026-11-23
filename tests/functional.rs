@@ -190,6 +190,20 @@ fn what_cannot_be_read_is_refused_with_the_reason() {
 }
 
 #[test]
+fn a_functional_form_whose_qsql_q_refuses_is_refused() {
+    // KDB-X runs the functional form, but `select sym:first sym by sym
+    // from t` is 'dup names for cols/groups (#1301). An update may.
+    let source = "r:?[t;();(enlist`sym)!enlist `sym;(enlist`sym)!enlist (first;`sym)]\n";
+    match functional_to_qsql(source, 3) {
+        Some(Err(e)) => assert!(e.contains("dup names"), "{e}"),
+        other => panic!("{other:?}"),
+    }
+    let source = "r:![t;();(enlist`sym)!enlist `sym;(enlist`sym)!enlist (first;`sym)]\n";
+    let got = functional_to_qsql(source, 3).unwrap().unwrap();
+    assert_eq!(got.text, "update first sym by sym from t");
+}
+
+#[test]
 fn the_cursor_can_be_anywhere_in_the_query() {
     let source = "f:{[x] r:select px from t where px>x; r}\n";
     let at = source.find("where").unwrap() + 2;
