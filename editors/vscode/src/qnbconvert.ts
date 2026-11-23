@@ -437,10 +437,12 @@ export function fromIpynb(raw: string): Qnb {
     const vscode = isObject(metadata.vscode) ? metadata.vscode : undefined;
     let language = typeof vscode?.languageId === "string" ? vscode.languageId.toLowerCase() : notebookLanguage;
     let code = source;
-    const magic = /^%%q[ \t]*(\r?\n|$)/.exec(source);
+    // `%%q --host h --port 5000` too (#1267): its options, which name where
+    // PyKX ran the cell, stay in view as the cell's first line, a q comment.
+    const magic = /^%%q(?:[ \t]+([^\r\n]*?))?[ \t]*(\r?\n|$)/.exec(source);
     if (magic !== null) {
       language = "q";
-      code = source.slice(magic[0].length);
+      code = (magic[1] ? `/ %%q ${magic[1]}\n` : "") + source.slice(magic[0].length);
     }
     if (vscode !== undefined) {
       const { languageId: _id, ...rest } = vscode;

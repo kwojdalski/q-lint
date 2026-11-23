@@ -460,3 +460,14 @@ test("a GFM table, as a result is written into a notebook, is a table (#1309)", 
   const md = resultMarkdown({ at: 0, process: "dev", code: "t", decimals: 2, payload: { count: 1, keys: 0, names: ["s"], types: [11], cells: [["<a>"]], raw: [[]], rank: [[0]] } }).text;
   assert.match(markdownHtml(md), /<table><thead><tr><th>s<\/th><\/tr><\/thead><tbody><tr><td>&lt;a&gt;<\/td><\/tr><\/tbody><\/table>/);
 });
+
+test("a PyKX %%q cell with options imports as q, its options a comment (#1267)", () => {
+  const cell = (source) => ({ cell_type: "code", metadata: {}, source, outputs: [] });
+  const nb = { nbformat: 4, metadata: { kernelspec: { language: "python" } }, cells: [cell("%%q --port 5000\ntil 3"), cell("%%q  \n1"), cell("%%qx\n1")] };
+  const qnb = fromIpynb(JSON.stringify(nb));
+  assert.deepStrictEqual(qnb.cells.map((c) => [c.language, c.source]), [
+    [undefined, "/ %%q --port 5000\ntil 3"],
+    [undefined, "1"],
+    ["python", "%%qx\n1"],
+  ]);
+});
