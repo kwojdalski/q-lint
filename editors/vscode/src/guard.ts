@@ -30,7 +30,8 @@
 //   each also by its `.q.` name (`.q.set`), by its symbol
 //   (`` `.q.set . (`a;1) ``) and indexed (`` .q[`set] ``) - `system` of a string literal
 //   is read as that command, so `system "c"` only reads; `hopen` of a file handle
-//   (`` hopen `:f ``), which creates the file to write through - of a
+//   (`` hopen `:f ``, `` hopen hsym `f ``, `` hopen `$":f" ``, `hopen ":f"`),
+//   which creates the file to write through - of a
 //   process (`` `:host:5000 ``, a port) it only connects, and what is sent
 //   over that handle is not read;
 // - `xasc`, `xdesc` or `xkey` on a table named by a symbol
@@ -480,8 +481,21 @@ function readStatement(statement: string, found: Set<string>): void {
         while (t[j] !== undefined && (t[j].text === "(" || t[j].text === "[")) {
           j++;
         }
-        if (t[j]?.kind === "sym" && isFileHandle(t[j].text)) {
-          found.add(`opens the file ${t[j].text} with ${k.text}`);
+        // The handle as written, made with `hsym`, cast from a string, or a
+        // string: `` hopen hsym `f ``, `` hopen `$":f" ``, `hopen ":f"`.
+        const hsym = t[j]?.text === "hsym" ? 1 : 0;
+        const at = t[j + hsym];
+        const text =
+          at?.kind === "sym" && at.text !== "`"
+            ? at.text.slice(1)
+            : castHandle(t, j + hsym)
+              ? qText(t[j + hsym + 2].text)
+              : at?.kind === "str" && !hsym
+                ? qText(at.text)
+                : undefined;
+        const handle = text === undefined ? undefined : text.startsWith(":") ? `\`${text}` : hsym ? `\`:${text}` : undefined;
+        if (handle !== undefined && isFileHandle(handle)) {
+          found.add(`opens the file ${handle} with ${k.text}`);
         }
         continue;
       }

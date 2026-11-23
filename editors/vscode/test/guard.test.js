@@ -611,3 +611,22 @@ test("0: and 1: applied, or to a handle cast from a string, write a file (#1327)
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("hopen of a file handle made with hsym, cast from a string or a string is a change (#1328)", () => {
+  const cases = {
+    "hopen hsym `nf": ["opens the file `:nf with hopen"],
+    '(hopen hsym `nf) "abc"': ["opens the file `:nf with hopen"],
+    'hopen `$":nf"': ["opens the file `:nf with hopen"],
+    'hopen ":nf"': ["opens the file `:nf with hopen"],
+    'hopen ":/tmp/x.txt"': ["opens the file `:/tmp/x.txt with hopen"],
+    // A connection, however its handle is made, is not.
+    "hopen hsym `$\"host:5000\"": [],
+    "hopen `:host:5000": [],
+    'hopen ":host:5000"': [],
+    'hopen `$":localhost:5000"': [],
+    "hopen hsym `host": ["opens the file `:host with hopen"],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
