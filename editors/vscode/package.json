@@ -5292,6 +5292,15 @@
         }
       }
     ],
+    "tomlValidation": [
+      {
+        "fileMatch": [
+          "qlinter.toml",
+          ".qlinter.toml"
+        ],
+        "url": "./schemas/qlinter.schema.json"
+      }
+    ],
     "problemMatchers": [
       {
         "name": "q",

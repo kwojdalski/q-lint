@@ -2959,6 +2959,14 @@ file beneath it, the way Ruff's configuration does; editing it re-lints the
 open files. See the [configuration
 docs](https://github.com/kwojdalski/q-lint#configuration).
 
+With [Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tamasfe.even-better-toml)
+installed, `qlinter.toml` and `.qlinter.toml` get completion and validation
+from the JSON Schema this extension contributes (`schemas/qlinter.schema.json`):
+a key, rule option or severity qlinter would refuse is underlined as you type.
+The schema is a static file another extension reads; q-lint itself runs and
+sends nothing for it. A `pyproject.toml` `[tool.qlinter]` table is not
+covered.
+
 ## Troubleshooting
 
 Open **Output → q-lint**: the first line names the server version and binary,

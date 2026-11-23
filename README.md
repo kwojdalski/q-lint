@@ -396,6 +396,11 @@ is a configuration error (exit 2), so a typo cannot quietly leave the default
 in force. Both tables may also go under `[lint]`, and a file that `extend`s
 another overrides the base's entries one at a time.
 
+The keys and the values each takes are also a JSON Schema,
+[`editors/vscode/schemas/qlinter.schema.json`](editors/vscode/schemas/qlinter.schema.json),
+which the VS Code extension hands Even Better TOML for completion and
+validation; a test keeps it equal to what qlinter reads.
+
 `exclude`, `extend-exclude`, `--exclude` and the keys of `per-file-ignores`
 are globs read the way Ruff reads them. A pattern with a `/` anywhere in it -
 `lib/`, `./lib`, `src/gen/*.q`, a trailing slash included - is anchored at the

@@ -112,6 +112,8 @@ pub const LINT_KEYS: [&str; 6] = [
     "severity",
     "rules",
 ];
+/// What `profile` may be.
+pub const PROFILES: [&str; 4] = ["general", "style", "styleq", "uqf"];
 /// What `[severity]` may set a rule to: the names an editor shows, with
 /// `info` for `information`.
 pub const SEVERITIES: [&str; 5] = ["error", "warning", "info", "information", "hint"];
@@ -902,10 +904,8 @@ fn load(
     if let Some(v) = table.get("profile") {
         let name = v
             .as_str()
-            .filter(|p| ["general", "style", "styleq", "uqf"].contains(p))
-            .ok_or_else(|| {
-                format!("{shown}: profile must be one of general, style, styleq, uqf")
-            })?;
+            .filter(|p| PROFILES.contains(p))
+            .ok_or_else(|| format!("{shown}: profile must be one of {}", PROFILES.join(", ")))?;
         settings.profile = Some(name.to_string());
     }
     let selectors = |key: &str| -> Result<Option<Vec<String>>, String> {
@@ -1315,7 +1315,93 @@ fn lexical(path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::version_matches;
+    use super::{LINT_KEYS, PROFILES, SEVERITIES, TOP_KEYS, version_matches};
+    use q_lint_rs::{
+        Target,
+        options::{Kind, OPTIONS},
+    };
+    use serde_json::Value;
+    use std::collections::BTreeSet;
+
+    fn read_json(relative: &str) -> Value {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(relative);
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap())
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    }
+
+    fn keys(object: &Value) -> BTreeSet<String> {
+        object.as_object().unwrap().keys().cloned().collect()
+    }
+
+    fn set(words: &[&str]) -> BTreeSet<String> {
+        words.iter().map(|w| w.to_string()).collect()
+    }
+
+    /// The editor's schema for `.qlinter.toml` (#1178) names exactly the keys
+    /// `load` reads - no fewer, so completion offers each, and no more, so
+    /// validation passes nothing qlinter would refuse - and the values each
+    /// may take.
+    #[test]
+    fn the_editor_schema_holds_exactly_the_keys_a_configuration_reads() {
+        let schema = read_json("editors/vscode/schemas/qlinter.schema.json");
+        let defs = &schema["definitions"];
+        let resolve = |v: &Value| -> Value {
+            match v["$ref"].as_str() {
+                Some(r) => defs[r.trim_start_matches("#/definitions/")].clone(),
+                None => v.clone(),
+            }
+        };
+        assert_eq!(schema["additionalProperties"], false);
+        assert_eq!(keys(&schema["properties"]), set(&TOP_KEYS));
+        let lint = &schema["properties"]["lint"];
+        assert_eq!(lint["additionalProperties"], false);
+        assert_eq!(keys(&lint["properties"]), set(&LINT_KEYS));
+        let enumerated = |v: &Value| -> BTreeSet<String> {
+            v["enum"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s.as_str().unwrap().to_string())
+                .collect()
+        };
+        assert_eq!(enumerated(&schema["properties"]["profile"]), set(&PROFILES));
+        assert_eq!(
+            enumerated(&schema["properties"]["target-version"]),
+            set(&Target::NAMES)
+        );
+        for at in [&schema["properties"], &lint["properties"]] {
+            let severity = resolve(&at["severity"]);
+            assert_eq!(
+                enumerated(&severity["additionalProperties"]),
+                set(&SEVERITIES)
+            );
+            let rules = resolve(&at["rules"]);
+            assert_eq!(rules["additionalProperties"], false);
+            let codes: Vec<&str> = OPTIONS.iter().map(|o| o.code).collect();
+            assert_eq!(keys(&rules["properties"]), set(&codes));
+            for (code, table) in rules["properties"].as_object().unwrap() {
+                assert_eq!(table["additionalProperties"], false, "{code}");
+                let options: Vec<_> = OPTIONS.iter().filter(|o| o.code == code).collect();
+                let names: Vec<&str> = options.iter().map(|o| o.key).collect();
+                assert_eq!(keys(&table["properties"]), set(&names), "{code}");
+                for option in options {
+                    let ty = &table["properties"][option.key]["type"];
+                    let want = match option.kind {
+                        Kind::Count => "integer",
+                        Kind::Words => "array",
+                        Kind::Pattern => "string",
+                    };
+                    assert_eq!(ty, want, "{code}.{}", option.key);
+                }
+            }
+        }
+        // Even Better TOML finds it through the extension's tomlValidation.
+        let package = read_json("editors/vscode/package.json");
+        let contributed = &package["contributes"]["tomlValidation"][0];
+        assert_eq!(contributed["url"], "./schemas/qlinter.schema.json");
+        let matched: Vec<_> = contributed["fileMatch"].as_array().unwrap().to_vec();
+        assert_eq!(matched, ["qlinter.toml", ".qlinter.toml"]);
+    }
 
     #[test]
     fn a_required_version_reads_ranges_exact_versions_and_compatible_releases() {
