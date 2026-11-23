@@ -132,6 +132,30 @@ test("a q error is explained from the catalogue, with the operation that failed"
   }
 });
 
+test("Explain q Error prefers the selection, and forgets a failure once a later query answers (#1231)", async () => {
+  const { context, restore } = setUp();
+  vscode.languages.registerCodeActionsProvider = () => ({ dispose() {} });
+  const history = [{ process: "p", code: "1+`a", outcome: "error" }];
+  const live = { lastFailure: { process: "p", code: "1+`a", error: "type", trace: "" }, history: () => history };
+  try {
+    stub.config.user["errorExplain.enable"] = true;
+    registerErrorExplainer(context, live);
+    const explain = () => stub.commands.get(LANGUAGE_COMMANDS.explainError)();
+    assert.match(await explain(), /'type/);
+    // A selection wins over the failure.
+    vscode.window.activeTextEditor = { selection: { isEmpty: false }, document: { getText: () => "'length" } };
+    assert.match(await explain(), /'length/);
+    vscode.window.activeTextEditor = undefined;
+    // A query that answered since: the failure is not explained, the box asks.
+    history.unshift({ process: "p", code: "1+1", outcome: "ok" });
+    stub.inputs.push("'rank");
+    assert.match(await explain(), /'rank/);
+  } finally {
+    vscode.window.activeTextEditor = undefined;
+    restore();
+  }
+});
+
 test("an error named after an Object.prototype member is an undefined name, not a crash (#1078)", () => {
   for (const name of ["constructor", "toString", "valueOf", "hasOwnProperty"]) {
     assert.match(explainError(`'${name}`), new RegExp(`\`${name}\` is not defined where it was read`), name);
@@ -144,7 +168,8 @@ test("Explain q Error refuses when off, and explains the last failure or the one
   const providers = [];
   vscode.languages.registerCodeActionsProvider = (_sel, provider) => (providers.push(provider), { dispose: () => providers.splice(providers.indexOf(provider), 1) });
   try {
-    const live = { lastFailure: { process: "p", code: "1+`a", error: "type", trace: "" } };
+    const history = [{ process: "p", code: "1+`a", outcome: "error" }];
+    const live = { lastFailure: { process: "p", code: "1+`a", error: "type", trace: "" }, history: () => history };
     stub.config.user["errorExplain.enable"] = false;
     const api = registerErrorExplainer(context, live);
     assert.strictEqual(api.registered(), false);
