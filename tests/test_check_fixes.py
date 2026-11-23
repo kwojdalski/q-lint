@@ -34,6 +34,10 @@ def test_a_lambda_in_a_query_column_is_compared_by_what_it_compiles_to(tmp_path)
             "update d:{[b] c:g[b]; c} each content from a",
         ],
         ["update d:{[b] b+1} each c from a", "update d:{[b] b+2} each c from a"],
+        # A string or long-vector constant is the program, not its source text.
+        ['f:{x,"ab"}', 'f:{x,"cd"}'],
+        ["f:{x+1 2 3}", "f:{x+4 5 6}"],
+        ['f:{x,"ab"}', 'f:{x,  "ab"}'],
     ]
     (tmp_path / "pairs.json").write_text(json.dumps(pairs))
     (tmp_path / "compare.q").write_text(check_fixes.COMPARE)
@@ -46,4 +50,10 @@ def test_a_lambda_in_a_query_column_is_compared_by_what_it_compiles_to(tmp_path)
         timeout=30,
         check=False,
     )
-    assert json.loads(run.stdout.strip().splitlines()[-1]) == ["same", "changed"]
+    assert json.loads(run.stdout.strip().splitlines()[-1]) == ["same", "changed", "changed", "changed", "same"]
+
+
+def test_only_a_slash_in_column_0_opens_a_block_comment():
+    # On KDB-X `a:1`,`  /`,`b:2` defines both: the indented slash is a comment.
+    assert check_fixes.statements("a:1\n  /\nb:2\n") == ["a:1\n  /", "b:2"]
+    assert check_fixes.statements("a:1\n/ \nb:2\n  \\\nc:3\n\\\nd:4\n") == ["a:1", "d:4"]

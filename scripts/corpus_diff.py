@@ -52,10 +52,13 @@ def findings(binary, files, profile):
             capture_output=True,
             text=True,
         )
-        try:
-            out.extend(json.loads(result.stdout or "[]"))
-        except json.JSONDecodeError:
-            print(f"  ! {binary} produced no JSON for a batch of {len(batch)}", file=sys.stderr)
+        # A crash is not "no findings": it would show as every finding lost.
+        if result.returncode not in (0, 1) or not result.stdout.strip():
+            sys.exit(
+                f"{binary} failed on a batch of {len(batch)} (exit {result.returncode}): "
+                f"{result.stderr.strip()[:500]}"
+            )
+        out.extend(json.loads(result.stdout))
     return out
 
 

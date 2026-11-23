@@ -770,6 +770,24 @@ fn one_file_under_two_names_is_fixed_once_with_both_names_fixes() {
 
 #[cfg(unix)]
 #[test]
+fn add_noqa_on_one_file_under_two_names_leaves_nothing() {
+    // The second name was linted against the text read before the first
+    // name's write: "1 finding(s) left" and exit 1 with nothing left (#1199).
+    let repo = Repo::new();
+    repo.write("a.q", "f:{x!=y}\n");
+    std::os::unix::fs::symlink("a.q", repo.path("l.q")).unwrap();
+    let out = run(
+        &repo.path("."),
+        &["--isolated", "--profile", "uqf", "--add-noqa", "a.q", "l.q"],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("in 1 file(s)"), "{stderr}");
+    assert!(!stderr.contains("left"), "{stderr}");
+}
+
+#[cfg(unix)]
+#[test]
 fn one_file_under_two_names_does_not_define_its_names_for_itself() {
     // Indexed once per name, each name found the file's own `a` defined
     // "elsewhere", and q 5's 'type on `f[]` went unreported (#527).
@@ -969,6 +987,36 @@ fn show_settings_lists_only_rules_the_backend_can_report() {
     assert_eq!(rules(&["--select", "QF006"]), Vec::<String>::new());
     assert_eq!(rules(&["--backend", "qls"]), ["QLS001"]);
     assert!(rules(&["--backend", "all"]).contains(&"QLS001".to_string()));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_file_whose_name_is_not_utf8_is_fixed_in_place() {
+    // Carried as its lossy name, `caf\xe9.q` was fixed into a new file
+    // `caf\u{FFFD}.q`, the original left as it was (#1194). macOS refuses
+    // such a name, so there is nothing to test there.
+    use std::os::unix::ffi::OsStrExt;
+    let dir = tempfile::tempdir().unwrap();
+    let name = std::ffi::OsStr::from_bytes(b"caf\xe9.q");
+    if fs::write(dir.path().join(name), "f:{x!=y}\n").is_err() {
+        return;
+    }
+    for flag in ["--fix", "--add-noqa"] {
+        fs::write(dir.path().join(name), "f:{x!=y}\n").unwrap();
+        let out = run(dir.path(), &["--isolated", "--profile", "uqf", flag, "."]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(0), "{flag}: {stderr}");
+        let names: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, [name], "{flag}");
+        assert_ne!(
+            fs::read_to_string(dir.path().join(name)).unwrap(),
+            "f:{x!=y}\n",
+            "{flag}"
+        );
+    }
 }
 
 #[test]
@@ -1304,6 +1352,14 @@ fn show_settings_describes_the_stdin_filename_and_refuses_fix() {
     // Windows prints the path with its own separator.
     assert!(text.replace('\\', "/").contains("tests/x.q"), "{text}");
     assert!(!text.contains("QE004"), "{text}");
+    // Ruff's form, with the buffer named `-`, describes the same file (#1198).
+    let out = run(
+        &repo.path("."),
+        &["--show-settings", "--stdin-filename", "tests/x.q", "-"],
+    );
+    let dash = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{dash}");
+    assert_eq!(dash, text);
     for flag in ["--fix", "--diff"] {
         let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
             .current_dir(repo.path("."))

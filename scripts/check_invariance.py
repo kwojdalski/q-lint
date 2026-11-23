@@ -57,15 +57,17 @@ def commented(text):
     out, block, ended, in_string = [], False, False, False
     for line in text.split("\n"):
         stripped = line.strip()
+        # Only a `/` or `\` in column 0 opens, closes or ends anything.
+        bare = line.rstrip()
         if ended:
             out.append(line)
             continue
-        if not block and not in_string and stripped == "\\":
+        if not block and not in_string and bare == "\\":
             ended = True
-        elif not in_string and stripped == "/":
+        elif not in_string and bare == "/":
             block = True
         elif block:
-            block = stripped != "\\"
+            block = bare != "\\"
         elif (
             in_string
             or '"' in line
