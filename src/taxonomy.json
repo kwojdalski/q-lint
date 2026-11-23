@@ -476,6 +476,13 @@
     "scope": "builtin"
   },
   {
+    "code": "QB022",
+    "name": "discarded-update",
+    "category": "correctness",
+    "summary": "An update or delete on a table value whose result is discarded changes nothing",
+    "scope": "style"
+  },
+  {
     "code": "QP001",
     "name": "bare-slash-block",
     "category": "policy",

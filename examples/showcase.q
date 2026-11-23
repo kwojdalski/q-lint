@@ -631,6 +631,13 @@ byapart:select top:max px by px from trades
 early:{[p] :p; p*2}
 early2:{[p] if[p<0;:0]; p*2}
 
+/ QB022: from book, not from `book, so the update changes a copy, and the
+/ copy is thrown away; by symbol, it lands.
+book:([]px:1 2)
+/ expect-next: QB022
+bump:{update px:px+1 from book; count book}
+bump2:{update px:px+1 from `book; count book}
+
 / QE008: q 5 has no monadic -, so -x does not parse; neg x does.
 / expect-next: QE008
 negated:{-x}

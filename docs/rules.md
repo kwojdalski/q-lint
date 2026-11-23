@@ -1,6 +1,6 @@
 # Rules
 
-All 134 rules, generated from `src/taxonomy.json` - the same data
+All 135 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -166,6 +166,7 @@ it, or `ALL`.
 | <a id="qb019"></a>`QB019` | duplicate-column | A table literal names a column twice; q renames the second, or keeps a key and a value column of one name, instead of refusing | `style` and above |
 | <a id="qb020"></a>`QB020` | unreachable-statement | A statement after a top-level return or signal in a lambda never runs | `style` and above |
 | <a id="qb021"></a>`QB021` | select-by-duplicate-name | A select or exec names a result column the same as a by group, which q refuses with 'dup names for cols/groups | every profile |
+| <a id="qb022"></a>`QB022` | discarded-update | An update or delete on a table value whose result is discarded changes nothing | `style` and above |
 
 ## Domain - literal arguments outside what a builtin accepts
 

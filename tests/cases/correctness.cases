@@ -1113,3 +1113,21 @@ r1:"ab" -1
 r2:10b -1
 r3:(1 2) -1
 r5:s:"x \"a\" -1"
+
+=== QB022 | an update or delete on a table value, its result discarded (q 5: t unchanged; #1139)
+t:([]a:1 2;b:3 4)
+f:{update a:1 from t;}
+g:{delete b from t; 1}
+h:{u:([]a:1 2); update a:2 from u; u}
+k:{update a:1 from ([]a:1 2); 1}
+
+=== clean | assigned, by symbol, returned, or from a name that may hold a symbol (#1139)
+t:([]a:1 2;b:3 4)
+s:`t
+f:{r:update a:1 from t; r}
+g:{update a:1 from `t;}
+h:{update a:1 from t}
+k:{[n] update a:1 from n;}
+m:{update a:1 from s; 1}
+n:{update a:1 from v; 1}
+p:{r:$[1b;update a:1 from t;t]; r}
