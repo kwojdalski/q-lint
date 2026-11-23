@@ -439,3 +439,11 @@ test("a backslash escapes any ASCII punctuation (#1310)", () => {
   assert.strictEqual(markdownHtml("\\<b\\> a\\|b \\& \\~ \\$ \\*x\\*"), "<p>&lt;b&gt; a|b &amp; ~ $ *x*</p>");
   assert.strictEqual(markdownHtml("a\\b"), "<p>a\\b</p>");
 });
+
+test("an ordered list keeps its start, and only a 1. or a bullet interrupts a paragraph (#1311)", () => {
+  assert.strictEqual(markdownHtml("3. c\n4. d"), '<ol start="3"><li>c</li><li>d</li></ol>');
+  assert.strictEqual(markdownHtml("0. z"), '<ol start="0"><li>z</li></ol>');
+  assert.strictEqual(markdownHtml("it ran in\n2024. and then"), "<p>it ran in<br>\n2024. and then</p>");
+  assert.strictEqual(markdownHtml("text\n1. one"), "<p>text</p>\n<ol><li>one</li></ol>");
+  assert.strictEqual(markdownHtml("text\n- one"), "<p>text</p>\n<ul><li>one</li></ul>");
+});

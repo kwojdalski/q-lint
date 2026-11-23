@@ -77,14 +77,15 @@ export function markdownHtml(source: string, values: Record<string, LiveValue> =
   const lines = source.split(/\r?\n/);
   const out: string[] = [];
   let paragraph: string[] = [];
-  let list: { tag: "ul" | "ol"; items: string[] } | undefined;
+  let list: { tag: "ul" | "ol"; start: number; items: string[] } | undefined;
   const flush = (): void => {
     if (paragraph.length > 0) {
       out.push(`<p>${paragraph.map((l) => inline(l, values)).join("<br>\n")}</p>`);
       paragraph = [];
     }
     if (list !== undefined) {
-      out.push(`<${list.tag}>${list.items.map((i) => `<li>${inline(i, values)}</li>`).join("")}</${list.tag}>`);
+      const start = list.tag === "ol" && list.start !== 1 ? ` start="${list.start}"` : "";
+      out.push(`<${list.tag}${start}>${list.items.map((i) => `<li>${inline(i, values)}</li>`).join("")}</${list.tag}>`);
       list = undefined;
     }
   };
@@ -126,7 +127,9 @@ export function markdownHtml(source: string, values: Record<string, LiveValue> =
       }
       i--;
       out.push(`<blockquote>${markdownHtml(quote.join("\n"), values)}</blockquote>`);
-    } else if (item !== null) {
+    } else if (item !== null && (paragraph.length === 0 || (item[2].trim() !== "" && /^([-*+]|0*1[.)])$/.test(item[1])))) {
+      // Only a bullet or a "1." with text interrupts a paragraph: "in
+      // 2024. it ran" goes on with it (CommonMark 5.2, #1311).
       if (paragraph.length > 0) {
         flush();
       }
@@ -134,7 +137,7 @@ export function markdownHtml(source: string, values: Record<string, LiveValue> =
       if (list !== undefined && list.tag !== tag) {
         flush();
       }
-      list ??= { tag, items: [] };
+      list ??= { tag, start: tag === "ol" ? parseInt(item[1], 10) : 1, items: [] };
       list.items.push(item[2]);
     } else if (list !== undefined && /^\s+\S/.test(line)) {
       list.items[list.items.length - 1] += ` ${line.trim()}`;
