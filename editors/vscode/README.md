@@ -1058,7 +1058,8 @@ symbol (`` `a xasc `t ``), extending an enumeration with `?` (`` `sym?`x ``), a 
 file to write through; opening a connection, `` hopen `:host:5000 ``, is
 not a change, and what is sent over it is not read), `0:` or `1:` to a file
 handle (`` `:f ``, or one made with `hsym`), `2:`, replaying a log with `-11!` (not `-11!(-1;..)` or `(-2;..)`,
-which only count and check it), compressing a file with `-19!`, an amend in place (`` @[`t;i;:;v] ``, `` .[(`t);i;f;v] ``) or
+which only count and check it), compressing a file with `-19!` (also spaced, `-19 !x`, or
+in parentheses, `(-19)!x`), an amend in place (`` @[`t;i;:;v] ``, `` .[(`t);i;f;v] ``) or
 a functional update or delete in place (`` ![`t;c;b;a] ``),
 `value`, `get`, `eval` or `-6!` of a string, of `parse` or `-5!`, of an assignment tree
 (`` eval(:;`t;()) ``, `` eval(+:;`a;1) ``), of a functional update or delete on a table by name

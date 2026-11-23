@@ -573,3 +573,22 @@ test("eval of a compound-assignment or ! tree, -6! and -5! evaluate (#1324)", ()
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("-19!, -11! and -6! spaced or with the number in parentheses are still changes (#1326)", () => {
+  const cases = {
+    "-19 !(`:tf;`:cz;17;2;6)": ["writes a compressed file with -19!"],
+    "(-19)!(`:tf;`:cz;17;2;6)": ["writes a compressed file with -19!"],
+    "-11 !`:tp.log": ["replays a log with -11!"],
+    "(-11)!`:tp.log": ["replays a log with -11!"],
+    "(-6)!(:;`a;1)": ["evaluates an assignment with -6!"],
+    "-6 !(:;`a;1)": ["evaluates an assignment with -6!"],
+    // Counting a log, a list ending in -19 made a dictionary, and a subtraction read.
+    "-11 !(-1;`:tp.log)": [],
+    "(-11)!(-2;`:tp.log)": [],
+    "1 -19!2 3": [],
+    "a-19!x": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

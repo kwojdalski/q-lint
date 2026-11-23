@@ -40,7 +40,8 @@
 //   process evaluates itself;
 // - `-11!`, which replays a log through `upd`, except `-11!(-1;..)` and
 //   `-11!(-2;..)`, which only count and check one; `-19!`, which
-//   compresses a file into another;
+//   compresses a file into another - each also spaced or with the number
+//   in parentheses (`-19 !x`, `(-19)!x`);
 // - `@[` or `.[` on a variable named by a symbol, alone or in
 //   parentheses (`` .[(`t);..] ``), with four arguments: an
 //   amend in place (three is as often a trap, `.[`f;args;handler]`, and
@@ -557,9 +558,20 @@ function readStatement(statement: string, found: Set<string>): void {
       found.add(`extends the enumeration ${k.text} with ?`);
       continue;
     }
+    // Where the `!` of an internal function `-N!` is, spaced or with the
+    // number in parentheses: `-19 !x`, `(-19)!x`. Not after a number, where
+    // it ends a list: `1 -19!x`.
+    const bang =
+      k.kind !== "num" || !k.text.startsWith("-") || t[i - 1]?.kind === "num"
+        ? -1
+        : next?.text === "!"
+          ? i + 1
+          : t[i - 1]?.text === "(" && next?.text === ")" && t[i + 2]?.text === "!"
+            ? i + 2
+            : -1;
     // `-6!` is `eval`.
-    if (k.kind === "num" && k.text === "-6" && next?.text === "!" && touching(k, next)) {
-      const what = evaluated(t, i + 2, false);
+    if (bang > 0 && k.text === "-6") {
+      const what = evaluated(t, bang + 1, false);
       if (what !== undefined) {
         found.add(`evaluates ${what.reason} with -6!`);
         i = what.at;
@@ -577,12 +589,12 @@ function readStatement(statement: string, found: Set<string>): void {
       }
     }
     // `-11!` replays a log; `-11!(-1;..)` and `(-2;..)` only count and check it.
-    if (k.kind === "num" && k.text === "-11" && next?.text === "!" && touching(k, next) && !(t[i + 2]?.text === "(" && /^-[12]$/.test(t[i + 3]?.text ?? ""))) {
+    if (bang > 0 && k.text === "-11" && !(t[bang + 1]?.text === "(" && /^-[12]$/.test(t[bang + 2]?.text ?? ""))) {
       found.add("replays a log with -11!");
       continue;
     }
     // `-19!` compresses a file into another one.
-    if (k.kind === "num" && k.text === "-19" && next?.text === "!" && touching(k, next)) {
+    if (bang > 0 && k.text === "-19") {
       found.add("writes a compressed file with -19!");
       continue;
     }
