@@ -1188,9 +1188,9 @@ configuration names. `selectionRange.enable: true` announces
 diagnostics that point at a second place. `crossFileRefresh.enable: true`
 sends `workspace/codeLens/refresh` and `workspace/inlayHint/refresh`, to a
 client that declares it takes them, when what the workspace defines
-changes, and the first also when the names a file reads change while
-reference lenses are on, as `workspace/semanticTokens/refresh` is sent for
-colours. `renameLoads.enable: true` announces `workspace/willRenameFiles` for
+changes, the first also when the names a file reads change while reference
+lenses are on, and the second also when a definition's parameters change, as
+`workspace/semanticTokens/refresh` is sent for colours. `renameLoads.enable: true` announces `workspace/willRenameFiles` for
 `.q`/`.k` files and folders, and answers it with the edits that keep each
 load naming what it named - written from the workspace folder or from the
 loading file's directory, whichever it was written from - including the

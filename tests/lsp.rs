@@ -3567,6 +3567,62 @@ fn a_definition_changed_asks_for_lenses_and_hints_again() {
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
+/// A parameter hint at a call is drawn from the signature another file
+/// holds, so renaming a parameter makes the hints stale though no name is
+/// defined or dropped (#1361). A body changed asks for nothing.
+#[test]
+fn a_signature_changed_asks_for_hints_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = file_uri(&dir.path().join("a.q"));
+    let mut server = Server::spawn(dir.path(), &["--lsp"]);
+    let mut capabilities = client_capabilities();
+    capabilities["workspace"] = json!({"codeLens": {"refreshSupport": true},
+                                       "inlayHint": {"refreshSupport": true}});
+    server.send(
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+        "capabilities": capabilities,
+        "initializationOptions": {"crossFileRefresh": {"enable": true}},
+        "workspaceFolders":[{"uri":file_uri(dir.path()),"name":"ws"}]}}),
+    );
+    server.receive();
+    server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    server.open(&a, "f:{[p;q] p+q}\n");
+    server.diagnostics_for(&a);
+    // The refreshes a change asks for, up to the answer to a request sent
+    // after it.
+    let after = |server: &mut Server, version: u64, text: &str| {
+        let marker = 50 + version;
+        server.send(json!({"jsonrpc":"2.0","method":"textDocument/didChange",
+            "params":{"textDocument":{"uri":a,"version":version},"contentChanges":[{"text":text}]}}));
+        server.send(
+            json!({"jsonrpc":"2.0","id":marker,"method":"textDocument/foldingRange",
+            "params":{"textDocument":{"uri":a}}}),
+        );
+        let mut seen = vec![];
+        loop {
+            let message = server.receive();
+            if message["id"] == marker {
+                break;
+            }
+            if let Some(method) = message["method"].as_str()
+                && method.ends_with("/refresh")
+            {
+                server.send(json!({"jsonrpc":"2.0","id":message["id"],"result":null}));
+                seen.push(method.to_string());
+            }
+        }
+        seen
+    };
+    // Whatever the open asked for is drained first.
+    after(&mut server, 2, "f:{[p;q] p+q}\n");
+    assert!(after(&mut server, 3, "f:{[p;q] p-q}\n").is_empty());
+    assert_eq!(
+        after(&mut server, 4, "f:{[left;right] left-right}\n"),
+        ["workspace/inlayHint/refresh"]
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
 /// With `lint.scope: "workspace"` a file nobody opened reports, one the
 /// index excludes does not, and one changed on disk reports again; with the
 /// default scope only an open file reports (#1160).
