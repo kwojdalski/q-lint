@@ -1057,7 +1057,8 @@ symbol (`` `a xasc `t ``), extending an enumeration with `?` (`` `sym?`x ``), a 
 `system "c"` only reads), `hopen` of a file handle (`` hopen `:f ``, which creates the
 file to write through; opening a connection, `` hopen `:host:5000 ``, is
 not a change, and what is sent over it is not read), `0:` or `1:` to a file
-handle (`` `:f ``, or one made with `hsym`), `2:`, replaying a log with `-11!` (not `-11!(-1;..)` or `(-2;..)`,
+handle (`` `:f ``, or one made with `hsym` or `` `$":f" ``, also applied:
+`` 0:[`:f;x] ``, `` .[0:;(`:f;x)] ``), `2:`, replaying a log with `-11!` (not `-11!(-1;..)` or `(-2;..)`,
 which only count and check it), compressing a file with `-19!` (also spaced, `-19 !x`, or
 in parentheses, `(-19)!x`), an amend in place (`` @[`t;i;:;v] ``, `` .[(`t);i;f;v] ``) or
 a functional update or delete in place (`` ![`t;c;b;a] ``),

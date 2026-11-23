@@ -25,7 +25,8 @@
 //   `.Q.dpfts`, `.Q.dpt`, `.Q.dpts`, `.Q.hdpf`, `.Q.en`, `.Q.ens`,
 //   `.Q.enx`, `.Q.enxs`, `.Q.chk`, `.Q.dsftg`, `.Q.view`, `.Q.l`, `.Q.lo`,
 //   `.Q.bv` and `.Q.opt` (which sets `.Q.x`), and `0:` or `1:` to a
-//   file handle (`` `:f 0: ``, `hsym[`f] 0:`, `(hsym `f) 1:`), and `2:`,
+//   file handle (`` `:f 0: ``, `hsym[`f] 0:`, `(hsym `f) 1:`,
+//   `` (`$":f") 0: ``, `` 0:[`:f;x] ``, `` .[0:;(`:f;x)] ``), and `2:`,
 //   each also by its `.q.` name (`.q.set`), by its symbol
 //   (`` `.q.set . (`a;1) ``) and indexed (`` .q[`set] ``) - `system` of a string literal
 //   is read as that command, so `system "c"` only reads; `hopen` of a file handle
@@ -206,7 +207,12 @@ function computedHandle(t: Token[], end: number): boolean {
     return false;
   }
   const inside = t.slice(open + 1, end);
-  return t[open - 1]?.text === "hsym" || (t[open].text === "(" && (inside.some((k) => k.text === "hsym") || (inside.length === 1 && inside[0].kind === "sym" && inside[0].text.startsWith("`:"))));
+  return t[open - 1]?.text === "hsym" || (t[open].text === "(" && (inside.some((k) => k.text === "hsym") || (inside.length === 1 && inside[0].kind === "sym" && inside[0].text.startsWith("`:")) || castHandle(inside, 0)));
+}
+
+/// Whether `t[i]` starts a handle cast from a string, `` `$":f" ``.
+function castHandle(t: Token[], i: number): boolean {
+  return t[i]?.text === "`" && t[i + 1]?.text === "$" && t[i + 2]?.kind === "str" && t[i + 2].text.startsWith('":');
 }
 
 /// `name` without the `.q.` that names a builtin as well: `.q.set` is `set`.
@@ -605,6 +611,17 @@ function readStatement(statement: string, found: Set<string>): void {
         found.add(`writes the file ${t[i - 1].text} with ${k.text}:`);
       } else if (computedHandle(t, i - 1)) {
         found.add(`writes a file with ${k.text}:`);
+      } else {
+        // Applied rather than infix: `` 0:[`:f;x] ``, `` (0:)[`:f;x] ``,
+        // `` .[0:;(`:f;x)] ``; its first argument is the handle.
+        let j = i + 2;
+        while (t[j]?.text === ")") j++;
+        if (t[j]?.text === ";") j++;
+        const first = t[j]?.kind === "open" && t[j].text !== "{" ? j + 1 : -1;
+        const handle = first < 0 ? undefined : t[first]?.kind === "sym" ? t[first].text : t[first]?.text === "hsym" && t[first + 1]?.kind === "sym" ? `\`:${t[first + 1].text.slice(1)}` : undefined;
+        if (handle !== undefined && isFileHandle(handle)) {
+          found.add(`writes the file ${handle} with ${k.text}:`);
+        }
       }
     }
   }

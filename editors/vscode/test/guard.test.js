@@ -592,3 +592,22 @@ test("-19!, -11! and -6! spaced or with the number in parentheses are still chan
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("0: and 1: applied, or to a handle cast from a string, write a file (#1327)", () => {
+  const cases = {
+    "1:[`:tf.bin;0x0102]": ["writes the file `:tf.bin with 1:"],
+    '0:[`:d.txt;("pp";"qq")]': ["writes the file `:d.txt with 0:"],
+    '(0:)[`:e.txt;("pp";"qq")]': ["writes the file `:e.txt with 0:"],
+    '.[0:;(`:g.txt;("pp";"qq"))]': ["writes the file `:g.txt with 0:"],
+    '0:[hsym `h;enlist "x"]': ["writes the file `:h with 0:"],
+    '(`$":c.txt") 0: ("pp";"qq")': ["writes a file with 0:"],
+    // A parse format, applied or infix, reads.
+    '0:[("SJ";",");`:f.csv]': [],
+    '.[0:;(("SJ";",");`:f.csv)]': [],
+    '("SJ";",") 0: `:f.csv': [],
+    "1:[(4#\"i\";4);`:f]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
