@@ -160,6 +160,22 @@ test("Start Process starts the definition, shows its output, and Stop Process en
   assert.strictEqual(stub.messages.at(-1)[1], "q-lint: bare was not started from here, so it is not stopped from here.");
 });
 
+test("Start Process run twice at once starts one process (#1249)", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-"));
+  fs.writeFileSync(path.join(dir, "fake.js"), FAKE);
+  const port = await freePort();
+  const { launcher, output, dispose } = await setUp(t, [proc("fake", port, { command: process.execPath, script: "fake.js", cwd: dir })]);
+  await Promise.all([stub.commands.get(LAUNCH_COMMANDS.start)("fake"), stub.commands.get(LAUNCH_COMMANDS.start)("fake")]);
+  for (let i = 0; i < 100 && !(await accepts(port)); i++) await sleep(50);
+  assert.strictEqual(launcher.running().length, 1);
+  assert.ok(stub.messages.some((m) => m[1] === "q-lint: fake is already running from here."), JSON.stringify(stub.messages));
+  // One command line in its output: the second was never spawned.
+  assert.strictEqual(output("fake").split("\n").filter((l) => l.startsWith("$ ")).length, 1);
+  dispose();
+  for (let i = 0; i < 100 && (await accepts(port)); i++) await sleep(50);
+  assert.strictEqual(await accepts(port), false);
+});
+
 test("what was started is stopped when VS Code closes, and when the launcher is turned off", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-"));
   fs.writeFileSync(path.join(dir, "fake.js"), FAKE);
