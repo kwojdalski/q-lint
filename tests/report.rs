@@ -159,3 +159,33 @@ fn statistics_counts_each_rule_across_files_most_first() {
     assert_eq!(status, Some(2));
     assert!(err.contains("--statistics prints text or json"), "{err}");
 }
+
+#[test]
+fn output_file_takes_the_report_and_leaves_the_exit_code() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("a.q"), TWO).unwrap();
+    for format in ["text", "json", "sarif", "github"] {
+        let (plain_status, plain, _) = run(d, &["--format", format, "a.q"]);
+        let (status, out, err) = run(
+            d,
+            &["--format", format, "--output-file", "report.out", "a.q"],
+        );
+        assert_eq!(status, plain_status, "{format}: {err}");
+        assert_eq!(out, "", "{format}");
+        let written = fs::read_to_string(d.join("report.out")).unwrap();
+        assert_eq!(written, plain, "{format}");
+    }
+    // A clean run still writes (an empty report), and exits 0.
+    fs::write(d.join("b.q"), "a:1\n").unwrap();
+    let (status, out, _) = run(
+        d,
+        &["--format", "json", "--output-file", "report.out", "b.q"],
+    );
+    assert_eq!((status, out.as_str()), (Some(0), ""));
+    assert_eq!(fs::read_to_string(d.join("report.out")).unwrap(), "[]\n");
+    // A file that cannot be written is the run's error.
+    let (status, _, err) = run(d, &["--output-file", "no/such/dir/r.out", "b.q"]);
+    assert_eq!(status, Some(2));
+    assert!(err.contains("no/such/dir/r.out"), "{err}");
+}

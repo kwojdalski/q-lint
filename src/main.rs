@@ -25,21 +25,28 @@ macro_rules! out {
     };
 }
 
-/// Write to stdout, ending the line when `newline`; see `out!`. Any other
-/// write error is reported and exits 2, as an output failure.
+/// The file `--output-file` names, opened once: where the report goes
+/// instead of stdout.
+static OUTPUT: std::sync::OnceLock<fs::File> = std::sync::OnceLock::new();
+
+/// Write to stdout, or the `--output-file`, ending the line when `newline`;
+/// see `out!`. Any other write error is reported and exits 2, as an output
+/// failure.
 fn emit(text: std::fmt::Arguments, newline: bool) {
     use std::io::Write;
-    let mut stdout = io::stdout().lock();
-    let written = stdout.write_fmt(text).and_then(|()| {
-        if newline {
-            stdout.write_all(b"\n")
-        } else {
-            Ok(())
-        }
-    });
+    fn write(to: &mut impl Write, text: std::fmt::Arguments, newline: bool) -> io::Result<()> {
+        to.write_fmt(text)?;
+        if newline { to.write_all(b"\n") } else { Ok(()) }
+    }
+    let written = match OUTPUT.get() {
+        Some(mut file) => write(&mut file, text, newline),
+        None => write(&mut io::stdout().lock(), text, newline),
+    };
     match written {
         Ok(()) => {}
-        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => std::process::exit(0),
+        Err(e) if e.kind() == io::ErrorKind::BrokenPipe && OUTPUT.get().is_none() => {
+            std::process::exit(0)
+        }
         Err(e) => {
             eprintln!("qlinter: writing output: {e}");
             std::process::exit(2);
@@ -130,6 +137,10 @@ struct Args {
     /// instead of the findings. A list of objects under `--format json`.
     #[arg(long, conflicts_with_all = ["diff", "write_baseline", "show_settings"])]
     statistics: bool,
+    /// Write the report to this file (replacing it) instead of stdout, in
+    /// whatever format; the exit code is the same.
+    #[arg(long)]
+    output_file: Option<PathBuf>,
     #[arg(long)]
     rules: bool,
     #[arg(long)]
@@ -158,7 +169,7 @@ struct Args {
     /// with the builtin backend alone, so `--backend` is one too (#544).
     #[arg(long, conflicts_with_all = ["paths", "rules", "explain", "fix", "diff", "show_settings",
         "stdin_filename", "format", "color", "force_exclude", "unsafe_fixes",
-        "backend", "qls_executable", "qls_timeout", "baseline", "write_baseline", "statistics"])]
+        "backend", "qls_executable", "qls_timeout", "baseline", "write_baseline", "statistics", "output_file"])]
     lsp: bool,
     /// Colour the text output: `auto` (a terminal, and NO_COLOR unset or empty),
     /// `always`, or `never`.
@@ -368,6 +379,10 @@ fn run(args: Args) -> Result<u8, String> {
         let policy = Policy::new(overrides(&args)?, true);
         let stdout = io::stdout();
         return lsp::serve(io::BufReader::new(io::stdin()), &mut stdout.lock(), &policy);
+    }
+    if let Some(file) = &args.output_file {
+        let opened = fs::File::create(file).map_err(|e| format!("{}: {e}", file.display()))?;
+        let _ = OUTPUT.set(opened);
     }
     if args.rules || args.explain.is_some() {
         if args.fix || args.diff {
@@ -1206,8 +1221,9 @@ impl Paint {
         let on = match flag {
             "always" => true,
             "never" => false,
+            // A file is never a terminal, whatever stdout is.
             _ => auto_colour(
-                std::io::stdout().is_terminal(),
+                std::io::stdout().is_terminal() && OUTPUT.get().is_none(),
                 std::env::var_os("NO_COLOR").as_deref(),
             ),
         };

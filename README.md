@@ -207,6 +207,11 @@ count, code and summary, the most frequent first - and under `--format json`
 the same as a list of `{"code", "count", "summary"}`. The exit code is the
 one the findings would give.
 
+`--output-file PATH` writes the report - in any format - to that file,
+replacing it, instead of standard output, which stays empty; the exit code is
+the one the run would give without it, and messages still go to standard
+error. Text written to a file is never coloured.
+
 ### The dependency graph: `qlinter analyze graph`
 
 ```sh
