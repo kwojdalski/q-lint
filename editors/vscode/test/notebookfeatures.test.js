@@ -424,3 +424,8 @@ test("package.json contributes the commands, the variables view and their menus"
     assert.ok(toolbar.includes(id), id);
   }
 });
+
+test("a line opening with a code span is text, not a fence (#1307)", () => {
+  assert.strictEqual(markdownHtml("```a``` is q\n\nnext"), "<p><code>a</code> is q</p>\n<p>next</p>");
+  assert.strictEqual(markdownHtml("```q\nx\n```"), "<pre><code>x</code></pre>");
+});

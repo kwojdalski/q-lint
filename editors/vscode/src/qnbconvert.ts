@@ -89,8 +89,10 @@ export function markdownHtml(source: string, values: Record<string, LiveValue> =
   };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const fence = /^ {0,3}(`{3,}|~{3,})\s*(\S*)/.exec(line);
-    if (fence !== null) {
+    // A backtick fence's info string holds no backtick: "```a``` b" is a
+    // line of text with a code span in it, not a fence (#1307).
+    const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (fence !== null && !(fence[1][0] === "`" && fence[2].includes("`"))) {
       flush();
       const code: string[] = [];
       for (i++; i < lines.length && !lines[i].trimStart().startsWith(fence[1]); i++) {
