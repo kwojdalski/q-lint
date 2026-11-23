@@ -66,7 +66,7 @@ test("each names the controls under a container by place and kind", () => {
 });
 
 /// The pages that redraw through refocus.js, by the script that makes their HTML.
-const PAGES = { "dashboardview.js": "dashboard.js" };
+const PAGES = { "dashboardview.js": "dashboard.js", "plotsview.js": "plots.js" };
 
 test("a page that redraws through refocus.js loads it before its own script", () => {
   const fs = require("node:fs");
@@ -111,5 +111,30 @@ test("a dashboard tile's control keeps the focus when the layout is drawn again 
   // A removed tile's button has nothing to hand the focus to.
   control(0, "Remove it from the dashboard").focus();
   page.send({ ...LAYOUT, tiles: [tile("c"), tile("a")] });
+  assert.strictEqual(page.active(), page.body);
+});
+
+test("the q Plots buttons keep the focus from one plot to the next (#1348)", () => {
+  const page = loadSmallPage(["refocus.js", "plots.js"]);
+  const plot = { kind: "line", process: "hdb", at: 0, code: "select from t", svg: "<svg/>" };
+  const button = (title) => page.find("button").filter((b) => b.title === title)[0];
+  page.send({ type: "plots", plot, index: 0, count: 3 });
+  const next = button("Next plot");
+  next.focus();
+  next.fire("click");
+  assert.deepStrictEqual(page.posted.at(-1), { type: "move", by: 1 });
+  page.send({ type: "plots", plot, index: 1, count: 3 });
+  assert.strictEqual(page.active(), button("Next plot"));
+  assert.notStrictEqual(page.active(), next);
+  // The last plot: Next is disabled, and Previous is the way on.
+  page.send({ type: "plots", plot, index: 2, count: 3 });
+  assert.strictEqual(button("Next plot").disabled, true);
+  assert.strictEqual(page.active(), button("Previous plot"));
+  // Remove shows another plot, with its own Remove.
+  button("Forget this plot").focus();
+  page.send({ type: "plots", plot, index: 1, count: 2 });
+  assert.strictEqual(page.active(), button("Forget this plot"));
+  // The last one removed: no button is left to hold the focus.
+  page.send({ type: "plots", index: -1, count: 0 });
   assert.strictEqual(page.active(), page.body);
 });
