@@ -326,6 +326,15 @@ fn simplifications(path: &str, source: &str, code: &str, comments: &str, out: &m
     ))
     .find_iter(code)
     {
+        // And applied: `({x}';1)` holds the derived function itself, a
+        // general list on KDB-X, not any argument (#1299).
+        let mut end = m.end();
+        if !m.as_str().ends_with("each") && !m.as_str().ends_with('\'') {
+            end -= code[..end].chars().next_back().map_or(0, char::len_utf8);
+        }
+        if crate::operand_ends(code, comments, end) || code[end..].trim_start().starts_with("::") {
+            continue;
+        }
         add(
             m.start(),
             "QR002",

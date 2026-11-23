@@ -109,6 +109,8 @@ const CASES: &[(&str, &str)] = &[
         "update m:max px by sym from t",
         "![t;();(enlist`sym)!enlist `sym;(enlist`m)!enlist (max;`px)]",
     ),
+    // q names a dotted column by its last part (KDB-X: `px`, #1300).
+    ("select t.px from t", "?[t;();0b;(enlist`px)!enlist `t.px]"),
     ("delete px, size from t", "![t;();0b;`px`size]"),
     // One column is enlisted: `![t;();0b;`px]` is 'type.
     ("delete px from t", "![t;();0b;enlist`px]"),
@@ -185,6 +187,20 @@ fn what_cannot_be_read_is_refused_with_the_reason() {
     assert_eq!(functional_to_qsql("a:1+2\n", 2), None);
     // A `?[` of other than four arguments is not a functional select.
     assert_eq!(functional_to_qsql("r:?[1b;2;3]\n", 4), None);
+}
+
+#[test]
+fn a_functional_form_whose_qsql_q_refuses_is_refused() {
+    // KDB-X runs the functional form, but `select sym:first sym by sym
+    // from t` is 'dup names for cols/groups (#1301). An update may.
+    let source = "r:?[t;();(enlist`sym)!enlist `sym;(enlist`sym)!enlist (first;`sym)]\n";
+    match functional_to_qsql(source, 3) {
+        Some(Err(e)) => assert!(e.contains("dup names"), "{e}"),
+        other => panic!("{other:?}"),
+    }
+    let source = "r:![t;();(enlist`sym)!enlist `sym;(enlist`sym)!enlist (first;`sym)]\n";
+    let got = functional_to_qsql(source, 3).unwrap().unwrap();
+    assert_eq!(got.text, "update first sym by sym from t");
 }
 
 #[test]

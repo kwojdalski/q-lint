@@ -393,7 +393,9 @@ pub(crate) enum Derived {
 pub(crate) fn derived(node: &Node) -> Derived {
     match node {
         Node::Name(n) if n == "i" => Derived::X,
-        Node::Name(n) => Derived::Name(n.clone()),
+        // A dotted name gives its last part: `select e.month from e` is
+        // `month` on KDB-X, as `.ns.v` is `v` (#1300).
+        Node::Name(n) => Derived::Name(n.rsplit('.').next().unwrap_or(n).to_string()),
         Node::Leaf(_) | Node::Sym(_) => Derived::X,
         Node::Verb(_) => Derived::Unknown,
         Node::List(items) => items.last().map_or(Derived::X, derived),
@@ -1020,6 +1022,20 @@ fn from_functional(verb: u8, args: &[&str]) -> Result<String, String> {
                 return Ok(format!("exec {cols}{} from {table}{tail}", by_text(&b)?));
             }
             let distinct = matches!(&b, Data::Leaf(l) if l == "1b");
+            // A column named as a group is 'dup names for cols/groups in a
+            // select, though the functional form runs (#1301).
+            if let (Data::Dict(..), Data::Dict(..)) = (&b, &a) {
+                let groups = dict_items(&b)?;
+                if let Some((dup, _)) = dict_items(&a)?
+                    .into_iter()
+                    .find(|(n, _)| groups.iter().any(|(g, _)| g == n))
+                {
+                    return Err(format!(
+                        "a column `{dup}` named as a group too, which a select refuses: \
+                         'dup names for cols/groups"
+                    ));
+                }
+            }
             let cols = match &a {
                 Data::List(items) if items.is_empty() => String::new(),
                 other => column_text(&dict_items(other)?)?,
