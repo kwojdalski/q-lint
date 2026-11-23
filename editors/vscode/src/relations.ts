@@ -54,6 +54,8 @@ export interface AffectedTests {
   tests: { uri: string; reaches: number[]; self?: number }[];
   changed: string[];
   unindexed: string[];
+  /// Test files not in `tests` that load by a path computed at run time.
+  dynamic: string[];
 }
 
 function isStrings(value: unknown): value is string[] {
@@ -104,7 +106,13 @@ export function asAffectedTests(answer: unknown): AffectedTests | undefined {
       reaches: t.reaches,
       ...(Number.isInteger(t.self) ? { self: t.self } : {}),
     }));
-  return { tests, changed: a.changed, unindexed: isStrings(a.unindexed) ? a.unindexed : [] };
+  return {
+    tests,
+    changed: a.changed,
+    unindexed: isStrings(a.unindexed) ? a.unindexed : [],
+    // An older server sends none.
+    dynamic: isStrings(a.dynamic) ? a.dynamic : [],
+  };
 }
 
 /// One row of the dependencies view. A row with a `uri` opens that file when
@@ -202,7 +210,7 @@ export interface Pick {
 const NAMED = 3;
 
 export function picks(result: AffectedTests, name: (uri: string) => string): Pick[] {
-  return result.tests.map((test) => {
+  const reaching = result.tests.map((test) => {
     // Which of the changed files is the test itself is the server's to say:
     // a test's `uri` is the server's spelling where the editor has not
     // opened the file, and `changed` is this client's, which differ as text
@@ -224,11 +232,20 @@ export function picks(result: AffectedTests, name: (uri: string) => string): Pic
       uri: test.uri,
     };
   });
+  // After them, the tests no edge places: listed, since one left out costs
+  // a regression.
+  const computed = result.dynamic.map((uri) => ({
+    label: name(uri),
+    description: "loads by a path computed at run time: may be affected",
+    uri,
+  }));
+  return [...reaching, ...computed];
 }
 
 /// One sentence over the list: how many tests reach how many changed q
 /// files, and - since a list that looked complete would mislead - how many
-/// changed q files the server could not follow, with why.
+/// changed q files the server could not follow, with why, and how many test
+/// files load by a path computed at run time, which no list can place.
 export function summary(result: AffectedTests): string {
   const tests = count(result.tests.length, "test file reaches", "test files reach");
   const changed = count(result.changed.length, "changed q file", "changed q files");
@@ -242,7 +259,13 @@ export function summary(result: AffectedTests): string {
       ? ""
       : ` ${n} changed q ${n === 1 ? "file is" : "files are"} not in the index` +
         ` (deleted or excluded): what depended on ${n === 1 ? "it" : "them"} is not listed.`;
-  return (result.changed.length === 0 ? "No indexed q file changed." : head) + gap;
+  const d = result.dynamic.length;
+  const computed =
+    d === 0
+      ? ""
+      : ` ${d} more test ${d === 1 ? "file loads" : "files load"} by a path computed at run` +
+        ` time and may be affected too.`;
+  return (result.changed.length === 0 ? "No indexed q file changed." : head) + gap + computed;
 }
 
 /// The names in the output of a git command run with `-z`: separated by NUL,

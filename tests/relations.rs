@@ -503,7 +503,7 @@ fn a_request_that_names_no_document_is_refused_and_one_with_nothing_to_say_is_em
     for params in [json!({}), Value::Null, json!({"changed": "main.q"})] {
         assert_eq!(
             server.result("q-lint/affectedTests", params),
-            json!({"tests": [], "changed": [], "unindexed": []})
+            json!({"tests": [], "changed": [], "unindexed": [], "dynamic": []})
         );
     }
     // No item, and an item that points nowhere.
@@ -1073,4 +1073,70 @@ fn a_workspace_opened_through_a_link_is_answered_in_the_links_spelling() {
             "{uri} in {answers:?}"
         );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_directory_load_is_followed_in_a_workspace_opened_through_a_link() {
+    // The index keys each file by its real path, and the directory a `\l db`
+    // is tried in was the folder as the editor spelled it: opened as `link`,
+    // a symlink to `real`, no script was found in `link/db` and the graph,
+    // the affected tests and the contexts lost the edge (#1366).
+    let top = tempfile::tempdir().unwrap();
+    let real = top.path().join("real");
+    std::fs::create_dir(&real).unwrap();
+    let link = top.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let files = [
+        ("main.q", "\\d .a\n\\l db\n"),
+        ("db/x.q", "xx:1\n"),
+        ("tests/test_main.q", "\\l main.q\n"),
+    ];
+    let mut server = Server::start(&link, &files);
+    let main = file_uri(&link.join("main.q"));
+    let x = file_uri(&link.join("db/x.q"));
+    let graph = server.graph(&main);
+    assert_eq!(graph["dependencies"], json!([x]), "{graph}");
+    let (tests, unindexed) = server.affected(&link, &["db/x.q"]);
+    assert_eq!(
+        tests,
+        [("tests/test_main.q".to_string(), vec!["db/x.q".to_string()])]
+    );
+    assert!(unindexed.is_empty(), "{unindexed:?}");
+    // Loaded under `\d .a`, x.q's `xx` is `.a.xx`.
+    let symbols = server.result("workspace/symbol", json!({"query": ".a.xx"}));
+    assert_eq!(symbols[0]["location"]["uri"], json!(x), "{symbols}");
+}
+
+#[test]
+fn a_test_that_loads_at_run_time_is_named_as_one_the_list_may_miss() {
+    // `system "l ",p` is no edge, so the test was left out and nothing in the
+    // answer said the list could be short (#1364). One already listed, or
+    // with nothing computed, is not named again.
+    let dir = tempfile::tempdir().unwrap();
+    let files = [
+        ("lib.q", "zz:1\n"),
+        ("tests/test_static.q", "\\l lib.q\n"),
+        (
+            "tests/test_dyn.q",
+            "p:\"lib.q\"\nsystem \"l \",p\ntest_a:{1}\n",
+        ),
+        ("tests/test_both.q", "\\l lib.q\nsystem \"l \",.z.x 0\n"),
+        ("tests/test_value.q", "test_b:{value \"1+1\"}\n"),
+        ("loader.q", "system \"l \",.z.x 0\n"),
+    ];
+    let mut server = Server::start(dir.path(), &files);
+    let changed = [file_uri(&dir.path().join("lib.q"))];
+    let result = server.result("q-lint/affectedTests", json!({"changed": changed}));
+    let tests: Vec<String> = result["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|test| server.name(&test["uri"]))
+        .collect();
+    assert_eq!(tests, ["tests/test_both.q", "tests/test_static.q"]);
+    assert_eq!(server.names(&result["dynamic"]), ["tests/test_dyn.q"]);
+    // Nothing changed, nothing to miss.
+    let result = server.result("q-lint/affectedTests", json!({"changed": []}));
+    assert_eq!(result["dynamic"], json!([]), "{result}");
 }
