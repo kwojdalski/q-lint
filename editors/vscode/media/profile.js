@@ -68,9 +68,14 @@
     const t = element("table", "stats");
     const head = element("tr");
     COLUMNS.forEach(function (col) {
-      const th = element("th", col.key === sortBy ? "sorted" : "", col.label + (col.key === sortBy ? (descending ? " ▼" : " ▲") : ""));
-      th.title = "Sort by " + col.label;
-      th.addEventListener("click", function () {
+      // A button in the header, so the keyboard reaches it and a screen
+      // reader hears the order (#1252); focus stays on it as it re-renders.
+      const th = element("th", col.key === sortBy ? "sorted" : "");
+      th.setAttribute("aria-sort", col.key !== sortBy ? "none" : descending ? "descending" : "ascending");
+      const button = element("button", "sort", col.label + (col.key === sortBy ? (descending ? " ▼" : " ▲") : ""));
+      button.type = "button";
+      button.title = "Sort by " + col.label;
+      button.addEventListener("click", function () {
         if (sortBy === col.key) {
           descending = !descending;
         } else {
@@ -78,7 +83,13 @@
           descending = col.key !== "fn";
         }
         render();
+        const again = document.querySelector('th button[data-key="' + col.key + '"]');
+        if (again) {
+          again.focus();
+        }
       });
+      button.setAttribute("data-key", col.key);
+      th.appendChild(button);
       head.appendChild(th);
     });
     t.appendChild(head);
