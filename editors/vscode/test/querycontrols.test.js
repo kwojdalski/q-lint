@@ -386,8 +386,8 @@ test("an unwrapped table shows each column as its own type, and its columns when
 test("an unwrapped lambda is shown as its text, which the process sends", async () => {
   // -8!{[x;y]\n  x+y}
   assert.deepStrictEqual((await unwrapped("0x010000001d00000064000a000d0000007b5b783b795d0a2020782b797d")).text, ["{[x;y]", "  x+y}"]);
-  // -8!(+): a primitive has no text to show.
-  assert.match((await unwrapped("0x010000000a0000006601")).text[0], /function/);
+  // -8!(+): a primitive is shown as q prints it (#1232).
+  assert.deepStrictEqual((await unwrapped("0x010000000a0000006601")).text, ["+"]);
 });
 
 test("an unwrapped grid has each column's own type, its rows' ranks shared by equal values, and a sorted dictionary", async () => {

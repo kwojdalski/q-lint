@@ -218,3 +218,83 @@ test("a string given to a TorQ gateway's .gw.syncexec is read as code sent to it
   assert.deepStrictEqual(writes(".gw.syncexec[\"select from t\";`rdb]"), []);
   assert.deepStrictEqual(writes('.gw.syncexec[enlist "t";enlist `rdb]'), []);
 });
+
+test("a writer named through .q. is a change; a .q. reader is not (#1220)", () => {
+  const cases = {
+    ".q.set[`a;1]": ["calls .q.set"],
+    '.q.system "echo x"': ["calls .q.system"],
+    "`t .q.upsert (1;2)": ["calls .q.upsert"],
+    '.q.value "a:1"': ["evaluates a string with .q.value"],
+    // Reads stay reads.
+    ".q.count t": [],
+    ".q.get `:hdb/sym": [],
+    ".q.value `t": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("value, get or eval of a list headed by a writer's symbol is a change (#1221)", () => {
+  const cases = {
+    "value(`.q.set;`a;1)": ["evaluates a call of .q.set with value"],
+    "eval(`.q.set;enlist`zz;7)": ["evaluates a call of .q.set with eval"],
+    "get(`.q.upsert;`t;(1;2))": ["evaluates a call of .q.upsert with get"],
+    // A list headed by a reader, or by a symbol that is data, reads.
+    "value(`.q.count;til 3)": [],
+    "eval(`f;1)": [],
+    "value `t": [],
+    "get `:hdb/sym": [],
+    "value(`t;`u)": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("a table symbol in parentheses after from or in an amend is a change (#1222)", () => {
+  const cases = {
+    "update a:1 from (`t)": ["updates `t in place"],
+    "delete from ((`t)) where a>1": ["deletes from `t in place"],
+    ".[(`t);();,;1]": ["amends `t in place"],
+    "@[(`t);0;:;1]": ["amends `t in place"],
+    "![(`t);();0b;enlist`a]": ["updates or deletes from `t in place with !"],
+    // A value in parentheses, or a list of symbols, is not the table by name.
+    "update a:1 from (t)": [],
+    "select from (`t)": [],
+    "exec a from (`t)": [],
+    "@[(`a;`b);0;:;1]": [],
+    ".[(t);();,;1]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("-19! compresses into a file and is a change (#1223)", () => {
+  assert.deepStrictEqual(writes("-19!(`:src;`:dst;17;2;6)"), ["writes a compressed file with -19!"]);
+  assert.deepStrictEqual(writes("x:-19!(`:src;`:dst;17;2;6)"), ["assigns x", "writes a compressed file with -19!"]);
+  // -21! reads compression stats; a subtraction is not -19!.
+  assert.deepStrictEqual(writes("-21!`:dst"), []);
+  assert.deepStrictEqual(writes("a-19"), []);
+});
+
+test("hopen of a file handle is a change; of a process handle it only connects (#1224)", () => {
+  const cases = {
+    '(hopen `:/tmp/hx.txt) "hello"': ["opens the file `:/tmp/hx.txt with hopen"],
+    "hopen `:hx.txt": ["opens the file `:hx.txt with hopen"],
+    "hopen[`:/tmp/x]": ["opens the file `:/tmp/x with hopen"],
+    ".q.hopen `:log.txt": ["opens the file `:log.txt with .q.hopen"],
+    // A connection is not a change by itself; what is sent over it is not read.
+    "hopen `:host:5000": [],
+    "hopen `::5000": [],
+    "hopen (`:localhost:5000:user:pass;1000)": [],
+    "hopen `:unix://5000": [],
+    "hopen `:tcps://host:5000": [],
+    "hopen 5000": [],
+    'h "select from t"': [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

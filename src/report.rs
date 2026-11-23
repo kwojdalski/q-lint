@@ -132,6 +132,9 @@ pub fn sarif(findings: &[Finding], sources: &[(String, String)], cwd: &Path) -> 
                 "rules": rules,
             }},
             "results": results,
+            // SARIF 2.1.0 requires it once there are results: a finding's
+            // columns count UTF-16 units, as an editor's do.
+            "columnKind": "utf16CodeUnits",
         }],
     })
 }

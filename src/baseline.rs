@@ -15,8 +15,8 @@
 //!  "findings": [{"path": "src/a.q", "code": "QS001", "line": "f:{x+1}", "count": 1}]}
 //! ```
 //!
-//! Paths are relative to the baseline file's directory, with `/`, so the
-//! file means the same in every checkout.
+//! Paths are relative to the baseline file's directory, with `/` - through
+//! `..` for a file outside it - so the file means the same in every checkout.
 use q_lint_rs::Finding;
 use serde_json::{Value, json};
 use std::{
@@ -53,6 +53,29 @@ pub(crate) fn relative(root: &Path, path: &Path) -> String {
         .unwrap_or(&full)
         .to_string_lossy()
         .replace('\\', "/")
+}
+
+/// `path` as a baseline in `root` names it: relative, with `/`, and through
+/// `..` where it is outside `root`, so the file means the same in another
+/// checkout. Absolute only where no relative path reaches it (another
+/// Windows drive).
+fn key_path(root: &Path, path: &Path) -> String {
+    let full = crate::config::absolute(path);
+    let root = crate::config::absolute(root);
+    let common = full
+        .components()
+        .zip(root.components())
+        .take_while(|(a, b)| a == b)
+        .count();
+    if common == 0 {
+        return full.to_string_lossy().replace('\\', "/");
+    }
+    let up = root.components().skip(common).map(|_| "..".to_string());
+    let down = full
+        .components()
+        .skip(common)
+        .map(|c| c.as_os_str().to_string_lossy().into_owned());
+    up.chain(down).collect::<Vec<_>>().join("/")
 }
 
 impl Baseline {
@@ -93,7 +116,7 @@ impl Baseline {
         if self.counts.is_empty() {
             return 0;
         }
-        let rel = relative(&self.root, Path::new(path));
+        let rel = key_path(&self.root, Path::new(path));
         let mut used: HashMap<(String, String), usize> = HashMap::new();
         let before = findings.len();
         // In line order, so the first ones are the ones passed over.
@@ -136,7 +159,7 @@ pub fn render(file: &Path, findings: &[Finding], sources: &[(String, String)]) -
     for f in findings {
         let source = text_of.get(f.path.as_str()).copied().unwrap_or("");
         let key = (
-            relative(&root, Path::new(&f.path)),
+            key_path(&root, Path::new(&f.path)),
             f.code.clone(),
             line_text(source, f.line),
         );

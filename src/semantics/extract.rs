@@ -209,6 +209,20 @@ pub fn extract(
                 .into(),
         );
     }
+    // `2 f/l` is `f/[2;l]`: with a value on its left, a term the selection
+    // starts with that an adverb modifies takes that value as an argument.
+    let adverbed = term_end(code, raw, comments, start, end)
+        .is_some_and(|i| code[i..end].starts_with(['\'', '/', '\\']));
+    let value_before = raw[..start]
+        .trim_end_matches([' ', '\t'])
+        .ends_with(|c: char| word(c) || ")]}\"`".contains(c));
+    if adverbed && value_before {
+        return Err(
+            "the selection starts with a term an adverb modifies, which takes the value on its \
+             left as an argument"
+                .into(),
+        );
+    }
     let ends_expression = ends_expression(code, raw, end);
     if !ends_expression && !single_term(code, raw, comments, start, end) {
         return Err(
@@ -300,6 +314,12 @@ fn ends_expression(code: &str, raw: &str, end: usize) -> bool {
 /// of them, a string, a symbol or a run of them - a bracketed group or a
 /// lambda, with any indexes after it.
 fn single_term(code: &str, raw: &str, comments: &str, start: usize, end: usize) -> bool {
+    term_end(code, raw, comments, start, end).is_some_and(|i| code[i..end].trim().is_empty())
+}
+
+/// Where the term starting at `start` ends, with its indexes, within
+/// `start..end`; `None` where none starts there.
+fn term_end(code: &str, raw: &str, comments: &str, start: usize, end: usize) -> Option<usize> {
     let b = raw.as_bytes();
     let in_string = |at: usize| code.as_bytes()[at] == b' ' && comments.as_bytes()[at] != b' ';
     let close = |open: usize| -> Option<usize> {
@@ -321,10 +341,7 @@ fn single_term(code: &str, raw: &str, comments: &str, start: usize, end: usize) 
     let mut i = start;
     let numeric = |c: u8| c.is_ascii_alphanumeric() || c == b'.' || c == b':';
     match b[i] {
-        b'(' | b'{' => match close(i) {
-            Some(after) => i = after,
-            None => return false,
-        },
+        b'(' | b'{' => i = close(i)?,
         b'"' => {
             while i < end && (in_string(i) || b[i] == b'"') {
                 i += 1;
@@ -356,25 +373,19 @@ fn single_term(code: &str, raw: &str, comments: &str, start: usize, end: usize) 
                 }
             }
         }
-        _ => match re!(&format!("^{NAME}")).find(&code[i..end]) {
-            Some(m) => i += m.end(),
-            None => return false,
-        },
+        _ => i += re!(&format!("^{NAME}")).find(&code[i..end])?.end(),
     }
     // Its indexes: `f[x]`, `t[`a][0]`.
     loop {
         let rest = &code[i..end];
         let skipped = rest.len() - rest.trim_start_matches([' ', '\t']).len();
         if code[i + skipped..end].starts_with('[') {
-            match close(i + skipped) {
-                Some(after) => i = after,
-                None => return false,
-            }
+            i = close(i + skipped)?;
         } else {
             break;
         }
     }
-    code[i..end].trim().is_empty()
+    Some(i)
 }
 
 /// Whether what follows `end` is `[...]:`, which assigns at an index of the

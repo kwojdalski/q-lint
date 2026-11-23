@@ -243,7 +243,7 @@ pub struct Place {
 /// Every global name `source` writes or reads, in order.
 pub fn mentions(source: &str) -> Vec<Mention> {
     let v = views(source);
-    semantics::navigate::mentions(&v.code, source)
+    semantics::navigate::mentions(&v.code, &v.comments, source)
 }
 
 /// The path of the load at byte `offset` of `source` - `\l path`,
@@ -395,6 +395,27 @@ pub fn load_paths(source: &str) -> Vec<(usize, usize)> {
         .collect()
 }
 
+/// `source` with its strings and comments blanked, byte for byte, as the
+/// rules read it: an offset in one is the same offset in the other.
+pub fn code_view(source: &str) -> String {
+    views(source).code
+}
+
+/// Whether the name ending at byte `end` of `code` (a code view) is amended
+/// through an index - `v[0]:2`, `v[i][j]+:1` - which writes it (KDB-X).
+pub fn amended_at(code: &str, end: usize) -> bool {
+    let after = code[end..].trim_start_matches([' ', '\t']);
+    let mut rest = after;
+    while rest.starts_with('[') {
+        let Some(close) = matching(code, code.len() - rest.len(), b'[', b']') else {
+            return false;
+        };
+        rest = code[close..].trim_start_matches([' ', '\t']);
+    }
+    rest.len() < after.len()
+        && (rest.starts_with(':') || re!(r"^[-+*%&|^=<>,#~!?@$]:").is_match(rest))
+}
+
 /// What a definition that is no lambda may still be called as: the name at
 /// byte `at` for `len` bytes, itself (`al:add`) or projected (`pr:add[;2;]`).
 /// `given` is `None` for the name itself, and for a projection says of each
@@ -476,6 +497,14 @@ pub fn typed_locals(source: &str) -> Vec<Typed> {
 pub fn completing(source: &str, offset: usize) -> Option<Completing> {
     let v = views(source);
     semantics::help::completing(&v.code, &v.comments, &v.string_starts, source, offset)
+}
+
+/// Where each context begins in `source`, the root's at 0 and then each
+/// `\d`'s, and its name, in order: what `Completing::namespace` is at any
+/// offset, for every offset at once.
+pub fn contexts(source: &str) -> Vec<(usize, String)> {
+    let v = views(source);
+    semantics::contexts(&v.code, source)
 }
 
 pub mod graph;
@@ -1511,8 +1540,10 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 false,
             )
         }
-        // Sorting adds no duplicates, and q 5 agrees on the value and the
-        // sorted attribute both.
+        // Sorting adds no duplicates, and q 5 agrees on the value and, for
+        // a list, the sorted attribute. Not unattended: for a table it does
+        // not - `attr distinct asc distinct t` is `` ` `` on KDB-X and
+        // `attr asc distinct t` is `` `s `` (#1201) - and x may be one.
         "QR003" => {
             let m = re!(concat!(
                 r"^distinct",
@@ -1526,7 +1557,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 m.as_str(),
                 "asc distinct".into(),
                 "Replace with `asc distinct`".into(),
-                true,
+                false,
             )
         }
         // `(a)` becomes `a`, where nothing around it reads differently
@@ -2054,6 +2085,12 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         "QT025" => {
             let m = re!(r"^'(\s*)(-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)")
                 .captures(source.get(start..)?)?;
+            // Only the whole operand: `'10 20` with its first item quoted would
+            // be `'"10" 20`, still 'stype, and `'1 2` would be `'enlist"1" 2`,
+            // 'type (#1200).
+            if !operand_ends(&v.code, &v.comments, start + m.get(0)?.end()) {
+                return None;
+            }
             // One digit in quotes is a char atom, still 'stype (#565).
             let list = if m[2].len() == 1 { "enlist" } else { "" };
             (
@@ -4739,7 +4776,7 @@ pub(crate) fn lambda_rank(code: &str, raw: &str, brace: usize, end: usize) -> us
             " ".repeat(m[0].len())
         })
         .into_owned();
-    let body = outside_query_phrases(&body);
+    let body = table_columns_blanked(&outside_query_phrases(&body));
     // Not as part of a dotted name: `.z.s` is the lambda itself, and
     // reading it says nothing about a third argument. After a drop it is a
     // read: `{x,1_y}` takes two (q 5, #339), while `a_y` is one name.
@@ -4758,6 +4795,32 @@ pub(crate) fn lambda_rank(code: &str, raw: &str, brace: usize, end: usize) -> us
         1
     }
 }
+/// `text` with the column names of each table literal blanked, `z` in
+/// `([]z:x)` and `([z:1]b:2)`: a column name reads nothing, while its value
+/// may - KDB-X `{([]z:x)}` takes one argument, `{([]a:y)}` two. A group
+/// assigned to, `([k;v]):d`, is a pattern and no literal. Same length.
+pub(crate) fn table_columns_blanked(text: &str) -> String {
+    let mut out = text.as_bytes().to_vec();
+    for (open, _) in text.match_indices('(') {
+        if !text[open + 1..].trim_start().starts_with('[') {
+            continue;
+        }
+        let Some(close) = matching(text, open, b'(', b')') else {
+            continue;
+        };
+        if re!(r"^\s*:([^:]|$)").is_match(&text[close..]) {
+            continue;
+        }
+        let inside = &text[open..close];
+        for m in re!(r"[A-Za-z][A-Za-z0-9_]*\s*:").find_iter(inside) {
+            if boundary(inside, m.start()) && !inside[m.end()..].starts_with(':') {
+                blank(&mut out[open + m.start()..open + m.end() - 1]);
+            }
+        }
+    }
+    String::from_utf8(out).unwrap_or_else(|_| text.to_string())
+}
+
 /// A lambda body with the column, by and where phrases of its queries
 /// blanked: q leaves the names there out of the implicit signature, so
 /// `{select from x where a=y}` takes one argument and `{select from y}` two
@@ -9105,7 +9168,21 @@ fn lint_rules(
                 } else {
                     line.as_bytes()[dollar] == b'$'
                 };
-                if in_code {
+                // The string has to be the whole operand: in
+                // `` `date$"I"$x `` it is the type of another cast, and q 5
+                // gives 2019.03.02 for x "7000" (#1202).
+                let whole = m.get(0).unwrap();
+                let close = if whole.as_str().ends_with(')') {
+                    Some(whole.end())
+                } else {
+                    let mut i = whole.end();
+                    let b = literals.as_bytes();
+                    while i < b.len() && b[i] != b'"' {
+                        i += if b[i] == b'\\' { 2 } else { 1 };
+                    }
+                    (i < b.len()).then_some(i + 1)
+                };
+                if in_code && close.is_some_and(|c| operand_ends(code, &v.comments, offset + c)) {
                     return Some(m);
                 }
                 at = start + 1;

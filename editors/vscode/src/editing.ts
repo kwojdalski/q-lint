@@ -11,9 +11,22 @@
 // closing line cannot tell which bracket it closes, and one that drops to
 // column 0 inside a lambda (`}` at the margin is a `'{` on KDB-X) breaks it.
 
-/// One level of brackets that close on the line, or a character that is
-/// neither a bracket nor a quote.
-const SETTLED = String.raw`(?:[^{}\[\]()"]|\[[^{}\[\]()"]*\]|\([^{}\[\]()"]*\)|\{[^{}\[\]()"]*\})`;
+/// A character that is neither a bracket nor a quote, or a whole string,
+/// whatever brackets it holds (`"("`).
+const PLAIN = String.raw`[^{}\[\]()"]|"(?:[^"\\]|\\.)*"`;
+
+/// What closes on the line: `PLAIN`, or brackets that open and close on it,
+/// nested up to `depth` deep (`a[b[1]]`, `(1;(2;3))`). A regular expression
+/// cannot count, and VS Code takes only one; four deep is past what a line
+/// that opens a lambda holds.
+function settled(depth: number): string {
+  if (depth === 0) {
+    return `(?:${PLAIN})`;
+  }
+  const inner = settled(depth - 1);
+  return String.raw`(?:${PLAIN}|\[${inner}*\]|\(${inner}*\)|\{${inner}*\})`;
+}
+const SETTLED = settled(4);
 
 /// A line, before the cursor, with a bracket left open: an opening bracket
 /// and nothing after it that closes it. `f:{[x]`, `select from t where x in (1;2`,

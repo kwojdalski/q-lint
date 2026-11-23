@@ -73,6 +73,25 @@ fn a_baseline_hides_todays_findings_and_shows_new_ones() {
 }
 
 #[test]
+fn a_baseline_names_a_file_outside_its_directory_through_dot_dot() {
+    // So it matches in another checkout, not only at today's absolute path.
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path().join("one");
+    fs::create_dir_all(d.join("sub")).unwrap();
+    fs::write(d.join("a.q"), OLD).unwrap();
+    let (_, _, err) = run(
+        &d,
+        &["--isolated", "--write-baseline", "sub/bl.json", "a.q"],
+    );
+    let written = fs::read_to_string(d.join("sub/bl.json")).unwrap();
+    assert!(written.contains("\"path\":\"../a.q\""), "{written}{err}");
+    let moved = dir.path().join("two");
+    fs::rename(&d, &moved).unwrap();
+    let (status, found, err) = run(&moved, &["--isolated", "--baseline", "sub/bl.json", "a.q"]);
+    assert_eq!((status, found), (Some(0), vec![]), "{err}");
+}
+
+#[test]
 fn a_missing_or_broken_baseline_is_an_error_not_silence() {
     let dir = tempfile::tempdir().unwrap();
     let d = dir.path();

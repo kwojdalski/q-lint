@@ -127,6 +127,10 @@ export class ConsolePanel {
     const added: ConsoleEntry = { ...entry, id: ++this.next, lines: entry.lines ?? [] };
     this.list.push(added);
     if (this.list.length > ENTRY_LIMIT) {
+      // The page drops them too, or its sections grow without bound (#1238).
+      for (const dropped of this.list.slice(0, -ENTRY_LIMIT)) {
+        this.post({ type: "remove", id: dropped.id });
+      }
       this.list = this.list.slice(-ENTRY_LIMIT);
     }
     this.post({ type: "add", entry: added });

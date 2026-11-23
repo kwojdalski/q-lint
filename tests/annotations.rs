@@ -310,6 +310,36 @@ fn a_top_level_function_has_a_run_lens_and_a_test_a_run_test_lens_too() {
     );
 }
 
+/// Hints and lenses over a file of N definitions, each calling the one
+/// before, take time in proportion to it: each read the whole file again
+/// for every definition, 63 s at 5,000 (#1216).
+#[test]
+fn hints_and_lenses_over_many_definitions_take_linear_time() {
+    let n = 1500;
+    let text: String = (0..n)
+        .map(|i| format!("f{i}:{{[a;b] a+f{}[b;a]}}\n", i.max(1) - 1))
+        .collect();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("chain.q"), &text).unwrap();
+    let options = json!({"codeLens": {"enable": true}, "referenceLens": {"enable": true}});
+    let (mut server, _) = Server::over(dir.path(), &[], client(), options);
+    let uri = server.open(dir.path(), "chain.q", &text);
+    let started = std::time::Instant::now();
+    let range = json!({"range": {"start": {"line": 0, "character": 0},
+                                 "end": {"line": n, "character": 0}}});
+    let hints = server.whole("textDocument/inlayHint", &uri, range);
+    let lenses = server.whole("textDocument/codeLens", &uri, json!({}));
+    let tests = server.request("q-lint/tests", json!({}));
+    let elapsed = started.elapsed();
+    assert_eq!(hints["result"].as_array().unwrap().len(), 2 * n as usize);
+    assert!(lenses["result"].as_array().unwrap().len() >= n as usize);
+    assert!(tests["result"].is_array(), "{tests}");
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "{n} definitions took {elapsed:?}"
+    );
+}
+
 #[test]
 fn code_lenses_are_off_unless_asked_for() {
     let dir = tempfile::tempdir().unwrap();
@@ -1263,6 +1293,34 @@ fn renaming_a_folder_rewrites_the_loads_under_it_and_moving_a_loader_its_own() {
     );
     assert!(
         edits.contains(&("main.q".to_string(), 1, 3, 14, "lib/y.q".to_string())),
+        "{reply}"
+    );
+}
+
+/// An absolute load written through a symlink (`/tmp` for `/private/tmp`)
+/// is followed to the file renamed, and keeps its spelling (#1219).
+#[cfg(unix)]
+#[test]
+fn an_absolute_load_through_a_symlink_is_rewritten_as_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let alias = elsewhere.path().join("alias");
+    std::os::unix::fs::symlink(dir.path(), &alias).unwrap();
+    std::fs::create_dir_all(dir.path().join("lib")).unwrap();
+    let load = format!("{}/lib/a.q", alias.display());
+    let main = format!("\\l {load}\n");
+    let files = [("lib/a.q", "a:1\n"), ("main.q", main.as_str())];
+    let options = json!({"renameLoads": {"enable": true}});
+    let (mut server, _) = Server::over(dir.path(), &files, client(), options);
+    let reply = server.request(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("lib/a.q", "lib/b.q")]),
+    );
+    let edits = renamed(&reply, dir.path());
+    assert_eq!(edits.len(), 1, "{reply}");
+    assert_eq!(
+        edits[0].4,
+        format!("{}/lib/b.q", alias.display()),
         "{reply}"
     );
 }

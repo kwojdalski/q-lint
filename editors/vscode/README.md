@@ -89,7 +89,8 @@ to a process you add and connect to, and sends only the code you run.
 - **Continuation indent on Enter**: after a line that leaves a bracket open -
   `f:{[x]`, `select from t where x in (1;2` - the new line is indented, so
   it continues the definition rather than ending it, as a line at column 0
-  does in a q script. A comment line is never indented after, a bracket in
+  does in a q script. A bracket in a string, or one closed on the line
+  (`f:{a[b[1]]`, up to four deep), leaves the open one open. A comment line is never indented after, a bracket in
   a trailing comment opens nothing, and nothing is ever outdented: a closing
   line cannot tell which bracket it closes, and a `}` at the margin is an
   error. `q-lint.editor.continuationIndent.enable` turns it off without a
@@ -362,8 +363,9 @@ Each has its own switch, listed in [Settings](#settings) and
   Deterministic and offline; no model is involved. `q-lint.qsqlExplain.enable`.
 - **q-lint: Explain q Error**: what a q error means, its likely causes and,
   from the backtrace of the last query that failed, the operation that
-  failed (`c:b+`x;` in `mid`, at `+`). It explains the last failure, the
-  selected text, or an error typed in; a problem whose message names a q
+  failed (`c:b+`x;` in `mid`, at `+`). It explains the selected text, the
+  last query when it failed (not once a later one has answered), or an
+  error typed in; a problem whose message names a q
   error (`'type`, `'length`, ...) gets a Quick Fix that explains it. The
   catalogue is offline; each example in it was run on KDB-X and PeachQ, and
   the few from the KX reference alone are marked so. `q-lint.errorExplain.enable`.
@@ -685,7 +687,7 @@ selection or the statement at the cursor, aimed at a process by its label
 placeholders left as written. Opening the link - from chat, a ticket, a
 wiki - opens the query in a new q editor bound to *your* process of that
 label, and asks before running it; run, it goes as a query from that
-editor goes, read by the read-only guard. A label not in your Processes
+editor goes, its placeholders asked for and read by the read-only guard. A label not in your Processes
 list opens the query unbound and runs nothing. Nothing in the link is a
 password. `q-lint.query.links.enable` off hides the command and stops
 opening links.
@@ -843,7 +845,9 @@ several go as `({last value each x};("s1";"s2"))`, which each server runs in
 order, answering with the last value, since q's `value` of one string takes
 neither a newline nor a trailing comment as the end of a statement. The
 history keeps the call as it was sent, and running it again does not wrap
-it twice. A query from a notebook, the Process Explorer or an agent goes to
+it twice. A dashboard tile, a scheduled query, **Query a Tag** and
+**Compare Query**, which each open a connection of their own, go through it
+too, to the process's own server types. A query from a notebook, the Process Explorer or an agent goes to
 the gateway as written. `q-lint.connection.torqGateway.enable` off sends
 every query as written and hides both commands.
 
@@ -871,7 +875,8 @@ it waiting.
 Escape in a q editor aborts too, while a query runs: the context key
 `q-lint.queryRunning` is set then, and only then. What Escape already does
 comes first - closing a suggestion list, parameter hints, a snippet, the
-find widget or a selection - and in a notebook it is left alone.
+find widget, a selection, a notification, the dirty diff, a breakpoint's
+widget, a message, accessibility help or a rename - and in a notebook it is left alone.
 `q-lint.query.escapeAborts.enable` turns it off.
 
 **Query a Tag**, on a tag row in Processes, in a q editor's context menu or
@@ -1043,14 +1048,18 @@ is sent; Escape sends nothing. A change is: assigning a global (`a:1`,
 `a+:1`, `t[0]:5`, `a::b` - and, inside a lambda, `a::` or a dotted
 `.ns.v:`, as q makes those global; a column named in `select a:x from t` or
 `([] a:1 2)` is not one), `update` or `delete` from a table named by a
-symbol (`` from `t ``), `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`,
+symbol (`` from `t `` or `` from (`t) ``), `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`,
 `system`, `save`, `rsave`, `dsave`, `load`, `rload`, `.Q.dpft`, `.Q.dpfts`,
-`.Q.hdpf`, `.Q.en`, `.Q.chk`, `.Q.dsftg`, `0:` or `1:` to a file
+`.Q.hdpf`, `.Q.en`, `.Q.chk`, `.Q.dsftg` (each also by its `.q.` name,
+`.q.set`), `hopen` of a file handle (`` hopen `:f ``, which creates the
+file to write through; opening a connection, `` hopen `:host:5000 ``, is
+not a change, and what is sent over it is not read), `0:` or `1:` to a file
 handle (`` `:f ``, or one made with `hsym`), `2:`, replaying a log with `-11!` (not `-11!(-1;..)` or `(-2;..)`,
-which only count and check it), an amend in place (`` @[`t;i;:;v] ``) or
+which only count and check it), compressing a file with `-19!`, an amend in place (`` @[`t;i;:;v] ``, `` .[(`t);i;f;v] ``) or
 a functional update or delete in place (`` ![`t;c;b;a] ``),
 `value`, `get` or `eval` of a string, of `parse` or of an assignment tree
-(`` eval(:;`t;()) ``), and a system command other than one that
+(`` eval(:;`t;()) ``) or of a list headed by a writer's symbol
+(`` value(`.q.set;`a;1) ``), and a system command other than one that
 reads a setting (`\c`, `\d`, `\P` alone) - `\t` and `\ts` are read for their
 expression, except `\t 500`, which sets the timer. It holds for every
 path that sends code: a query (line, selection, block, file, a Run lens, a
@@ -2958,7 +2967,10 @@ could run a program the folder chooses is held back there:
   `q-lint.connection.credentialCommand.enable`; and the read-only guard's
   `q-lint.processes.readOnlyGuard.enable` and
   `q-lint.processes.readOnlyGuard.tags`, so the folder cannot turn the
-  guard off for a process it names.
+  guard off for a process it names; and
+  `q-lint.testing.runAffectedOnSave.enable`, so it cannot send its tests to
+  a process at every save - which, on in your settings, sends nothing in a
+  folder that is not trusted either.
 - The folder's `.env` is not given to any q the extension starts, and
   **Select q Interpreter** does not offer, or run to read its version, a q
   binary inside the folder.

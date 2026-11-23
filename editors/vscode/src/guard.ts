@@ -16,20 +16,27 @@
 //   `name::` or a dotted `.ns.name:` inside a lambda, where q makes them
 //   global. A column named in `select a:x from t` or `([] a:1 2)` is not
 //   an assignment;
-// - `update` or `delete` from a table named by a symbol (`` from `t ``),
-//   which changes it in place;
+// - `update` or `delete` from a table named by a symbol (`` from `t ``,
+//   `` from (`t) ``), which changes it in place;
 // - `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`, `system`,
 //   `save`, `rsave`, `dsave`, `load`, `rload`, `.Q.dpft`, `.Q.dpfts`,
 //   `.Q.hdpf`, `.Q.en`, `.Q.chk` and `.Q.dsftg`, and `0:` or `1:` to a
-//   file handle (`` `:f 0: ``, `hsym[`f] 0:`, `(hsym `f) 1:`), and `2:`;
+//   file handle (`` `:f 0: ``, `hsym[`f] 0:`, `(hsym `f) 1:`), and `2:`,
+//   each also by its `.q.` name (`.q.set`); `hopen` of a file handle
+//   (`` hopen `:f ``), which creates the file to write through - of a
+//   process (`` `:host:5000 ``, a port) it only connects, and what is sent
+//   over that handle is not read;
 // - `-11!`, which replays a log through `upd`, except `-11!(-1;..)` and
-//   `-11!(-2;..)`, which only count and check one;
-// - `@[` or `.[` on a variable named by a symbol, with four arguments: an
+//   `-11!(-2;..)`, which only count and check one; `-19!`, which
+//   compresses a file into another;
+// - `@[` or `.[` on a variable named by a symbol, alone or in
+//   parentheses (`` .[(`t);..] ``), with four arguments: an
 //   amend in place (three is as often a trap, `.[`f;args;handler]`, and
 //   is not taken for one); `![` likewise, a functional update or delete;
 // - `value`, `get` or `eval` applied to a string, to `parse`, or to a
-//   tree headed by `:` or `::` (`eval(:;`t;())`), also through `[`,
-//   `each` or `'`;
+//   tree headed by `:` or `::` (`eval(:;`t;())`) or by the symbol of
+//   a writer above (`` value(`.q.set;`a;1) ``), also through `[`,
+//   `each` or `'`, and by their `.q.` names;
 // - a system command (`\l`, `\cd x`, `\\`), except one that only reads a
 //   setting (`\c`, `\d`, `\P` without an argument) and `\t` or `\ts`, whose
 //   expression is read by these rules - but `\t 500`, a whole number with
@@ -183,6 +190,37 @@ function computedHandle(t: Token[], end: number): boolean {
   return t[open - 1]?.text === "hsym" || (t[open].text === "(" && (inside.some((k) => k.text === "hsym") || (inside.length === 1 && inside[0].kind === "sym" && inside[0].text.startsWith("`:"))));
 }
 
+/// `name` without the `.q.` that names a builtin as well: `.q.set` is `set`.
+function unqualified(name: string): string {
+  return name.startsWith(".q.") ? name.slice(3) : name;
+}
+
+/// The symbol at `t[i]`, alone or in parentheses: `` `t `` and `` (`t) ``
+/// both name the table `t`.
+function symbolAt(t: Token[], i: number): string | undefined {
+  let open = 0;
+  while (t[i + open]?.text === "(" && t[i + open]?.kind === "open") {
+    open++;
+  }
+  const k = t[i + open];
+  if (k?.kind !== "sym") {
+    return undefined;
+  }
+  for (let n = 1; n <= open; n++) {
+    if (t[i + open + n]?.text !== ")") {
+      return undefined;
+    }
+  }
+  return k.text;
+}
+
+/// Whether the handle symbol `sym` names a file rather than a process:
+/// `` `:/tmp/x `` and `` `:x.txt `` do; `` `:host:5000 ``, `` `::5000 `` and
+/// `` `:unix://5000 `` do not.
+function isFileHandle(sym: string): boolean {
+  return sym.startsWith("`:") && !/^`:(unix:\/\/\d|tcps?:\/\/|[^:/]*:\d)/.test(sym);
+}
+
 /// What one statement does that the guard asks about, added to `found`.
 function readStatement(statement: string, found: Set<string>): void {
   const text = statement.trimStart();
@@ -222,7 +260,8 @@ function readStatement(statement: string, found: Set<string>): void {
       lambdas += kind === "lambda" ? 1 : 0;
       tables += kind === "table" ? 1 : 0;
       const amend = t[i - 1]?.kind === "op" ? t[i - 1].text : "";
-      if (k.text === "[" && (amend === "@" || amend === "." || amend === "!") && next?.kind === "sym" && next.text.length > 1) {
+      const target = symbolAt(t, i + 1);
+      if (k.text === "[" && (amend === "@" || amend === "." || amend === "!") && target !== undefined && target.length > 1) {
         // Count the arguments at this depth.
         let depth = 0;
         let args = 1;
@@ -235,7 +274,7 @@ function readStatement(statement: string, found: Set<string>): void {
         }
         // Three is a trap as often as an amend: `.[`f;args;handler]`.
         if (args >= 4) {
-          found.add(amend === "!" ? `updates or deletes from ${next.text} in place with !` : `amends ${next.text} in place`);
+          found.add(amend === "!" ? `updates or deletes from ${target} in place with !` : `amends ${target} in place`);
         }
       }
       continue;
@@ -252,17 +291,30 @@ function readStatement(statement: string, found: Set<string>): void {
         continue;
       }
       if (k.text === "from" && qsql !== undefined) {
-        if ((qsql === "update" || qsql === "delete") && next?.kind === "sym") {
-          found.add(next.text === "`." ? "deletes from the root namespace" : `${qsql === "update" ? "updates" : "deletes from"} ${next.text} in place`);
+        const table = symbolAt(t, i + 1);
+        if ((qsql === "update" || qsql === "delete") && table !== undefined) {
+          found.add(table === "`." ? "deletes from the root namespace" : `${qsql === "update" ? "updates" : "deletes from"} ${table} in place`);
         }
         qsql = undefined;
         continue;
       }
-      if (WRITERS.has(k.text)) {
+      if (WRITERS.has(unqualified(k.text))) {
         found.add(`calls ${k.text}`);
         continue;
       }
-      if (k.text === "value" || k.text === "get" || k.text === "eval") {
+      // `hopen` of a file handle creates the file, and writing through the
+      // handle it returns appends to it; of a `host:port` it only connects.
+      if (unqualified(k.text) === "hopen") {
+        let j = i + 1;
+        while (t[j] !== undefined && (t[j].text === "(" || t[j].text === "[")) {
+          j++;
+        }
+        if (t[j]?.kind === "sym" && isFileHandle(t[j].text)) {
+          found.add(`opens the file ${t[j].text} with ${k.text}`);
+        }
+        continue;
+      }
+      if (["value", "get", "eval"].includes(unqualified(k.text))) {
         // What it is applied to, past brackets and `each` or `'`.
         let j = i + 1;
         while (t[j] !== undefined && (["[", "(", "each", "peach"].includes(t[j].text) || (t[j].kind === "op" && t[j].text === "'"))) {
@@ -274,7 +326,9 @@ function readStatement(statement: string, found: Set<string>): void {
             ? "a parse tree"
             : t[j - 1]?.text === "(" && t[j - 1]?.kind === "open" && t[j]?.kind === "op" && t[j].text === ":"
               ? "an assignment"
-              : undefined;
+              : t[j - 1]?.text === "(" && t[j - 1]?.kind === "open" && t[j]?.kind === "sym" && WRITERS.has(unqualified(t[j].text.slice(1)))
+                ? `a call of ${t[j].text.slice(1)}`
+                : undefined;
         if (reason !== undefined) {
           found.add(`evaluates ${reason} with ${k.text}`);
           continue;
@@ -324,6 +378,11 @@ function readStatement(statement: string, found: Set<string>): void {
     // `-11!` replays a log; `-11!(-1;..)` and `(-2;..)` only count and check it.
     if (k.kind === "num" && k.text === "-11" && next?.text === "!" && touching(k, next) && !(t[i + 2]?.text === "(" && /^-[12]$/.test(t[i + 3]?.text ?? ""))) {
       found.add("replays a log with -11!");
+      continue;
+    }
+    // `-19!` compresses a file into another one.
+    if (k.kind === "num" && k.text === "-19" && next?.text === "!" && touching(k, next)) {
+      found.add("writes a compressed file with -19!");
       continue;
     }
     if (k.kind === "num" && (k.text === "0" || k.text === "1" || k.text === "2") && next?.text === ":" && touching(k, next)) {

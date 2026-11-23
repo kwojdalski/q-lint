@@ -85,6 +85,10 @@ test("an untrusted workspace cannot turn the read-only guard off or change its t
   }
 });
 
+test("an untrusted workspace cannot turn on running the affected tests at every save (#1228)", () => {
+  assert.ok(restricted.has("q-lint.testing.runAffectedOnSave.enable"));
+});
+
 test("a workspace that is not trusted gives q none of its .env", async (t) => {
   stub.reset();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-restricted-"));

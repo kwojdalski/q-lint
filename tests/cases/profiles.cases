@@ -162,6 +162,16 @@ r:add 1 2
 f:{x+z}
 r:f 1 2 3
 
+=== clean profile: uqf | a table literal's column names read nothing (#1241; KDB-X: {([]z:x)} takes one argument, k 1 2 is a table)
+k:{([]z:x)}
+j:{([y:1]b:x)}
+r:k 1 2
+s:j 1 2
+
+=== QP006 profile: uqf | while a column's value is read (KDB-X: {([]a:y)} takes two)
+k:{([]a:y)}
+r:k 1 2
+
 === clean profile: uqf | a function of one argument is the whole call either way (q 5: nsq 3 is 9)
 nsq:{x*x}
 f:{[a] a+1}

@@ -163,13 +163,22 @@ def findings(binary: str, profile: str, where: Path) -> list[dict]:
         text=True,
         check=False,  # findings are exit 1; the JSON is the answer either way
     )
-    if not run.stdout.strip():
-        return []  # no .q files, or nothing to say
+    if run.returncode == 2 and "No .q files found" in run.stderr:
+        return []
+    if run.returncode not in (0, 1) or not run.stdout.strip():
+        # A crash is not a clean run: read as no findings, `lint` would
+        # pass and `accept` would erase the repository's triaged baseline.
+        sys.exit(
+            f"{binary} failed on {where} (exit {run.returncode}): {run.stderr.strip()[:500]}"
+        )
     found = []
     for f in json.loads(run.stdout):
         path = Path(f["path"])
         try:
-            text = path.read_text(errors="replace").splitlines()[f["line"] - 1].strip()
+            # qlinter counts `\n` alone; splitlines() also breaks at a form
+            # feed, a lone `\r` and more, and would key the wrong line.
+            lines = path.read_bytes().decode(errors="replace").split("\n")
+            text = lines[f["line"] - 1].strip()
         except (OSError, IndexError):
             text = ""
         found.append(

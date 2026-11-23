@@ -162,8 +162,20 @@ fn rewritten(
     }
     let written = Path::new(load);
     if written.is_absolute() {
-        let target = moved(&lexical(written), renames)?;
-        return Some(target.to_string_lossy().replace('\\', "/"));
+        // The renames are of real paths: one written through a symlink
+        // (`/tmp` for `/private/tmp`) is followed to its file, and the
+        // part of it that still leads there is kept as written (#1219).
+        let written = lexical(written);
+        let target = moved(&written, renames)
+            .or_else(|| moved(Path::new(&file_key(&written.to_string_lossy())), renames))?;
+        let spelled = written
+            .ancestors()
+            .find_map(|dir| {
+                let rest = target.strip_prefix(file_key(&dir.to_string_lossy())).ok()?;
+                Some(dir.join(rest))
+            })
+            .unwrap_or(target);
+        return Some(spelled.to_string_lossy().replace('\\', "/"));
     }
     // The bases in the order q tries them, each with where it will be.
     let mut bases: Vec<(PathBuf, PathBuf)> = vec![];

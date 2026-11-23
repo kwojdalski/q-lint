@@ -804,6 +804,24 @@ fn a_request_whose_id_is_an_object_or_array_is_an_invalid_request() {
 }
 
 #[test]
+fn a_notification_after_shutdown_is_dropped() {
+    // LSP 3.17, Shutdown Request: after it the server only waits for
+    // `exit`, so a document opened then is neither linted nor kept (#1218).
+    let mut server = Server::start();
+    server.initialize();
+    server.send(json!({"jsonrpc":"2.0","id":2,"method":"shutdown"}));
+    assert_eq!(server.receive()["result"], Value::Null);
+    server.send(
+        json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":
+        {"uri":"file:///late.q","languageId":"q","version":1,"text":"f:{[a;a] a}\n"}}}),
+    );
+    server.send(json!({"jsonrpc":"2.0","method":"exit"}));
+    assert_eq!(server.child.wait().unwrap().code(), Some(0));
+    let late: Vec<Value> = server.messages.iter().collect();
+    assert!(late.is_empty(), "{late:?}");
+}
+
+#[test]
 fn a_second_shutdown_is_an_invalid_request() {
     // LSP 3.17, Shutdown Request: requests after it error with
     // InvalidRequest, and `shutdown` is a request like any other.
@@ -1293,6 +1311,16 @@ fn deleting_a_folder_forgets_every_definition_under_it() {
     );
     let found = codes_of(&server.diagnostics_for(&app));
     assert!(found.contains(&"QF018".to_string()), "{found:?}");
+    // And moved back, one event for the folder again: what it holds is
+    // read as the startup scan reads it (#1217).
+    std::fs::create_dir_all(sub.join("deeper")).unwrap();
+    std::fs::write(sub.join("deeper/def.q"), "helper:{x+1}\n").unwrap();
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+        "params":{"changes":[{"uri":file_uri(&sub),"type":1}]}}),
+    );
+    let found = codes_of(&server.diagnostics_for(&app));
+    assert!(!found.contains(&"QF018".to_string()), "{found:?}");
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
@@ -3364,7 +3392,10 @@ fn selection_ranges_grow_from_the_token_to_the_definition() {
 /// it and the setting asks for it; a column named twice carries both names.
 #[test]
 fn a_duplicate_declaration_points_at_the_first() {
-    let text = "f:{[a;b;a] a+b}\nt:([] c:1 2; d:3 4; c:5 6)\nr:select d by d from t\n";
+    // A name or a bracket in a string is none (#1213); the by group's
+    // duplicate is the column named, not a word its expression reads (#1214).
+    let text = "f:{[a;b;a] a+b}\nt:([] c:1 2; d:3 4; c:5 6)\nr:select d by d from t\n\
+                u:([] a:1 2; b:(\"a\";\")\"); a:3 4)\nw:select a:max a by a from t\n";
     let dir = tempfile::tempdir().unwrap();
     let uri = file_uri(&dir.path().join("dup.q"));
     let start = |options: Value, related: bool| {
@@ -3422,6 +3453,26 @@ fn a_duplicate_declaration_points_at_the_first() {
         [
             (2, 9, "`d` is first named here".to_string()),
             (2, 14, "and named again here".to_string()),
+        ]
+    );
+    let at_line = |code: &str, line: u64| {
+        diagnostics
+            .iter()
+            .find(|d| d["code"] == code && d["range"]["start"]["line"] == line)
+            .unwrap()
+    };
+    assert_eq!(
+        places(at_line("QB019", 3)),
+        [
+            (3, 6, "`a` is first named here".to_string()),
+            (3, 26, "and named again here".to_string()),
+        ]
+    );
+    assert_eq!(
+        places(at_line("QB021", 4)),
+        [
+            (4, 9, "`a` is first named here".to_string()),
+            (4, 20, "and named again here".to_string()),
         ]
     );
     assert_eq!(server.shutdown_and_exit(), 0);

@@ -64,9 +64,11 @@ function isKeyed(x: unknown): x is [Record<string, unknown>[], Record<string, un
 
 const pad2 = (n: number): string => String(n).padStart(2, "0");
 const pad3 = (n: number): string => String(n).padStart(3, "0");
+/// A year as q writes it, in four digits: `0001.01.01` (#1235).
+const pad4 = (n: number): string => String(n).padStart(4, "0");
 
 function ymd(d: Date): string {
-  return `${d.getUTCFullYear()}.${pad2(d.getUTCMonth() + 1)}.${pad2(d.getUTCDate())}`;
+  return `${pad4(d.getUTCFullYear())}.${pad2(d.getUTCMonth() + 1)}.${pad2(d.getUTCDate())}`;
 }
 
 function hms(d: Date): string {
@@ -80,7 +82,8 @@ function hms(d: Date): string {
 /// digits as give it back, as KDB-X writes one.
 export function floatText(x: number, precision = 7, real = false): string {
   if (x === 0 || !Number.isFinite(x)) {
-    return String(x);
+    // String(-0) is "0"; q writes `-0f` (#1236).
+    return Object.is(x, -0) ? "-0" : String(x);
   }
   let p = precision > 0 ? Math.min(precision, 17) : 17;
   if (real && precision <= 0) {
@@ -175,7 +178,7 @@ function temporalText(x: number | bigint | LongLike, t: number): string | undefi
   switch (t) {
     case 13: {
       const m = n + 24_000;
-      return `${Math.floor(m / 12)}.${pad2((m % 12) + 1)}`;
+      return `${pad4(Math.floor(m / 12))}.${pad2((m % 12) + 1)}`;
     }
     case 14:
       return ymd(new Date(EPOCH_MS + n * DAY_MS));
@@ -239,7 +242,7 @@ function itemText(x: unknown, t: number, precision = 7): string | undefined {
   switch (t) {
     case 13: {
       const m = monthsOf(x) + 24_000;
-      return `${Math.floor(m / 12)}.${pad2((m % 12) + 1)}`;
+      return `${pad4(Math.floor(m / 12))}.${pad2((m % 12) + 1)}`;
     }
     case 14:
       return ymd(x);
@@ -802,11 +805,12 @@ function itemsOf(q: QValue): QValue[] {
 /// Each row's place among the distinct values of a simple column sorted
 /// ascending, nulls first, as `GRID` ranks one: equal values share a place,
 /// so a sort either way keeps them in their order.
-function denseRanks(keys: (number | string)[]): number[] {
+function denseRanks(keys: (number | bigint | string | null)[]): number[] {
   const order = keys.map((_, i) => i).sort((a, b) => {
     const x = keys[a];
     const y = keys[b];
-    return x === y ? a - b : x < y ? -1 : 1;
+    // A null is below every value, -0w and -0W among them.
+    return x === y ? a - b : x === null ? -1 : y === null ? 1 : x < y ? -1 : 1;
   });
   const rank = new Array<number>(keys.length);
   let place = -1;
@@ -869,7 +873,9 @@ export function gridOfQ(q: QValue, limit: number): GridPayload | undefined {
       return [];
     }
     return denseRanks(
-      c.q.v.map((x) => (x === null ? (c.q.kind === "vector" && [2, 11].includes(c.q.t) ? "" : -Infinity) : typeof x === "boolean" ? Number(x) : typeof x === "bigint" ? Number(x) : x)),
+      // A long or a timestamp is ranked as the bigint it is: Number() would
+      // make neighbouring ones equal.
+      c.q.v.map((x) => (x === null ? (c.q.kind === "vector" && [2, 11].includes(c.q.t) ? "" : null) : typeof x === "boolean" ? Number(x) : x)),
     );
   });
   const tree = q.kind === "list" || (q.kind === "dict" && q.k.kind !== "table") ? treeOfQ(q) : undefined;

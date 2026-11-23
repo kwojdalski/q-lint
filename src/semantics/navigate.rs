@@ -65,7 +65,7 @@ fn written(code: &str, key: &str, value: usize) -> Option<(usize, usize)> {
 /// name: a reference too many is one more line to skip in a list, and one
 /// too few is a caller nobody was told about. A qualified symbol,
 /// `` `.ns.f ``, is a read of that name, as `references` has it.
-pub fn mentions(code: &str, raw: &str) -> Vec<Mention> {
+pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
     let (scopes, namespaces) = scopes(code, raw);
     let first_switch = first_switch(code, raw);
     let ns_at = |at: usize| {
@@ -113,7 +113,10 @@ pub fn mentions(code: &str, raw: &str) -> Vec<Mention> {
                 )
                 .map(|(start, text)| {
                     let lead = text.len() - text.trim_start().len();
-                    (start + lead, start + text.trim_end().len())
+                    // Its end in the view that keeps strings: a string the
+                    // statement ends in is part of it (#1215).
+                    let kept = &comments[*start..start + text.len()];
+                    (start + lead, start + kept.trim_end().len())
                 })
                 .filter(|&(start, end)| {
                     scope_at(&scopes, at).is_none() && start <= at && at + len <= end
@@ -231,10 +234,22 @@ fn local(code: &str, raw: &str, scopes: &[Scope], s: usize, name: &str) -> Local
         if assigned && declared.is_none() {
             declared = Some(places.len());
         }
+        // An indexed assignment amends the name, `a[0]:2` and `a[0]+:2`
+        // (KDB-X), without declaring it.
+        let mut amended = after;
+        while amended.starts_with('[') {
+            let open = direct.len() - amended.len();
+            let Some(close) = crate::matching(direct, open, b'[', b']') else {
+                break;
+            };
+            amended = direct[close..].trim_start_matches([' ', '\t']);
+        }
+        let amends = amended.len() < after.len()
+            && (amended.starts_with(':') || re!(r"^[-+*%&|^=<>,#~!?@$]:").is_match(amended));
         places.push(Place {
             at: scope.body + m.start(),
             len: m.len(),
-            write: assigned || re!(r"^[-+*%&|^=<>,#~!?@$]:").is_match(after),
+            write: assigned || amends || re!(r"^[-+*%&|^=<>,#~!?@$]:").is_match(after),
             column: phrases.as_bytes()[m.start()] == b' ',
         });
     }
@@ -276,7 +291,9 @@ pub fn name_at(code: &str, raw: &str, offset: usize) -> Option<Name> {
             .any(|p| p.at <= offset && offset <= p.at + p.len)
             .then_some(Name::Local(local));
     }
-    let mentions = mentions(code, raw);
+    // Only where each mention is: a definition's extent is not read, so
+    // the view that keeps strings is not needed for it.
+    let mentions = mentions(code, code, raw);
     let first = mentions
         .iter()
         .find(|m| m.at <= offset && offset <= m.at + m.len)?;

@@ -124,7 +124,7 @@ fn a_definition_just_after_a_character_of_more_than_one_byte_is_found() {
 
 #[test]
 fn a_definition_carries_its_kind_its_signature_and_its_statement() {
-    let source = "limit:10\nadd:{[a;b]\n  a+b}\nneg1:{neg x}\n";
+    let source = "limit:10\nadd:{[a;b]\n  a+b}\nneg1:{neg x}\ns:\"ab\";r:1\nm:\"a\n b\" / note\n";
     let all = mentions(source);
     let defined: Vec<_> = all
         .iter()
@@ -138,6 +138,10 @@ fn a_definition_carries_its_kind_its_signature_and_its_statement() {
             ("add", true, "[a;b]", "add:{[a;b]\n  a+b}"),
             // An implicit signature is not written, so there is none to show.
             ("neg1", true, "", "neg1:{neg x}"),
+            // A string the statement ends in is in it, a comment is not (#1215).
+            ("s", false, "", "s:\"ab\""),
+            ("r", false, "", "r:1"),
+            ("m", false, "", "m:\"a\n b\""),
         ]
     );
 }
@@ -195,6 +199,30 @@ fn a_multiple_assignment_declares_each_name_it_binds() {
     };
     assert_eq!(p.declared, Some(0));
     assert!(p.places[0].write && !p.places[1].write);
+}
+
+#[test]
+fn an_indexed_assignment_writes_the_local_without_declaring_it() {
+    // KDB-X: `{[a] a[0]:2; a} 1 2` is 2 2 - the assignment amends `a`
+    // (#1246), as do `a[0]+:2` and `a[0;1]:2`.
+    for source in [
+        "f:{[a] a[0]:2; a}\n",
+        "f:{[a] a[0]+:2; a}\n",
+        "f:{[a] a[0][1]:2; a}\n",
+    ] {
+        let Some(Name::Local(a)) = name_at(source, at(source, "a]", 0)) else {
+            panic!("a is a local in {source}");
+        };
+        let writes: Vec<bool> = a.places.iter().map(|p| p.write).collect();
+        assert_eq!(writes, [true, true, false], "{source}");
+        assert_eq!(a.declared, Some(0), "{source}");
+    }
+    // An index that is read is no write.
+    let source = "f:{[a] b:a[0]; b}\n";
+    let Some(Name::Local(a)) = name_at(source, at(source, "a]", 0)) else {
+        panic!("a is a local");
+    };
+    assert!(!a.places[1].write);
 }
 
 #[test]
@@ -892,6 +920,27 @@ fn highlights_mark_a_write_apart_from_a_read() {
         marks(&reply),
         [((1, 14, 15), 3), ((1, 19, 20), 3), ((1, 25, 26), 2)]
     );
+    // A global amended through an index is written, `v[0]:2` and
+    // `v[1]+:3` (KDB-X), and one only indexed is read (#1246).
+    let text = "v:1 2\nv[0]:2\nv[1]+:3\nw:v[0]\n";
+    let uri = server.open(dir.path(), "b.q", text);
+    let reply = server.ask(
+        "textDocument/documentHighlight",
+        &uri,
+        text,
+        "v:1",
+        0,
+        json!({}),
+    );
+    assert_eq!(
+        marks(&reply),
+        [
+            ((0, 0, 1), 3),
+            ((1, 0, 1), 3),
+            ((2, 0, 1), 3),
+            ((3, 2, 3), 2)
+        ]
+    );
 }
 
 #[test]
@@ -1456,6 +1505,35 @@ fn a_global_rename_is_refused_where_it_would_change_what_the_code_means() {
     assert!(
         reply["error"].is_object() || reply["result"].is_null(),
         "{reply}"
+    );
+    // A name read in a qSQL phrase is a column whenever the table has one
+    // (#1207); the table after `from` is a global, and is renamed.
+    let query = "foo:1\nr:select foo from t where foo>0\ntab:([] a:1 2)\ns:select from tab\n";
+    let quri = server.open(dir.path(), "query.q", query);
+    let reply = server.ask(
+        "textDocument/rename",
+        &quri,
+        query,
+        "foo:1",
+        0,
+        json!({"newName": "bar"}),
+    );
+    let why = refused(&reply);
+    assert!(why.contains("qSQL") && why.contains("query.q:2"), "{why}");
+    let reply = server.ask(
+        "textDocument/rename",
+        &quri,
+        query,
+        "tab:",
+        0,
+        json!({"newName": "tbl"}),
+    );
+    assert_eq!(
+        edits(&reply["result"]),
+        [
+            edit("query.q", 2, 0, 3, "tbl"),
+            edit("query.q", 3, 14, 17, "tbl")
+        ]
     );
     // A legal one goes through: lib.q's definition and both calls.
     let reply = ask(&mut server, "helper v", "bump");

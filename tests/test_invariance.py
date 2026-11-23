@@ -77,3 +77,11 @@ def test_the_tree_has_q_for_ci_to_check():
     found = check_invariance.sources([ROOT / "examples", ROOT / "tests" / "corpus", ROOT / "tests" / "cases"])
     assert len(found) > 1000
     assert {profile for _, profile, _ in found} <= set(check_invariance.PROFILES)
+
+
+def test_an_indented_slash_opens_no_block_comment():
+    # On KDB-X `  /` is a comment line and `  \` neither closes nor ends.
+    out = check_invariance.commented("a:1\n  /\nb:2\n").split("\n")
+    assert out == ["a:1 / note", "  /", "b:2 / note", ""]
+    out = check_invariance.commented("/\na:1\n  \\\nb:2\n\\\nc:3\n").split("\n")
+    assert out == ["/", "a:1", "  \\", "b:2", "\\", "c:3 / note", ""]
