@@ -2500,11 +2500,14 @@ pub fn check(
             continue;
         }
         let view = local_view(&scope.direct, false);
-        let assigned = re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*::")
+        // A dotted name is global with one colon too: q 5 with `-s 2`
+        // refuses `{.ns.a:x} peach 1 2` alike (#1204).
+        let assigned = re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*(::?)")
             .captures_iter(&view)
             .find(|m| {
                 let whole = m.get(0).unwrap();
-                boundary(&view, whole.start())
+                (&m[2] == "::" || m[1].starts_with('.'))
+                    && boundary(&view, whole.start())
                     && assigns_value(&view[whole.end()..])
                     && !scope.locals.contains(&m[1])
             })

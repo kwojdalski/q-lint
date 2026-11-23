@@ -1157,6 +1157,10 @@ r1:{g::1;x} peach 1 2
 r2:{`g set 1;x} peach 1 2
 r3:{.ns.g::1;x} peach 1 2
 
+=== QB024 | a dotted global assigned with one colon is a global too (q 5 -s 2: {.ns.a:x} peach 1 2 is 'noupdate; #1204)
+r1:{.ns.a:x} peach 1 2
+r2:{.ns.b : x;x} peach 1 2
+
 === clean | a peach lambda that writes only its locals, a file, or a nested lambda's global (#1144)
 r1:{a:1;a+x} peach 1 2
 r2:{`:f set x;x} peach 1 2
