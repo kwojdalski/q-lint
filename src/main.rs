@@ -507,6 +507,10 @@ fn run(args: Args) -> Result<u8, String> {
         args.paths
     };
     let mut sources = vec![];
+    // Each source's file, beside the name it is shown and configured by:
+    // a name that is not UTF-8 is shown lossily, and every read and write
+    // goes to the file itself, not to a file of the lossy name (#1194).
+    let mut disk: Vec<PathBuf> = vec![];
     let mut failed = false;
     // Files read lossily, which are linted and reported but never fixed.
     let mut lossy = std::collections::HashSet::new();
@@ -552,6 +556,7 @@ fn run(args: Args) -> Result<u8, String> {
                     lossy_text(e.as_bytes())
                 }
             };
+            disk.push(PathBuf::from(&name));
             sources.push((name, source));
         }
     } else {
@@ -583,7 +588,10 @@ fn run(args: Args) -> Result<u8, String> {
             // this linter could not read.
             match fs::read(&path) {
                 Ok(bytes) => match String::from_utf8(bytes) {
-                    Ok(source) => sources.push((path.to_string_lossy().into_owned(), source)),
+                    Ok(source) => {
+                        sources.push((path.to_string_lossy().into_owned(), source));
+                        disk.push(path);
+                    }
                     Err(e) => {
                         if args.fix || args.diff {
                             eprintln!(
@@ -600,6 +608,7 @@ fn run(args: Args) -> Result<u8, String> {
                         let name = path.to_string_lossy().into_owned();
                         lossy.insert(name.clone());
                         sources.push((name, source));
+                        disk.push(path);
                     }
                 },
                 Err(e) => {
@@ -642,8 +651,8 @@ fn run(args: Args) -> Result<u8, String> {
     };
     let mut workspace = Workspace::default();
     let mut indexed = std::collections::HashSet::new();
-    for ((name, source), placed) in sources.iter().zip(placed) {
-        if indexed.insert(fs::canonicalize(name).unwrap_or_else(|_| name.into())) {
+    for (((_, source), file), placed) in sources.iter().zip(&disk).zip(placed) {
+        if indexed.insert(fs::canonicalize(file).unwrap_or_else(|_| file.clone())) {
             let mut file = index(source);
             if let Some((placement, implicit)) = placed {
                 placement.apply(&mut file, &implicit);
@@ -652,7 +661,7 @@ fn run(args: Args) -> Result<u8, String> {
         }
     }
     if args.add_noqa {
-        return add_noqa(&mut sources, &lossy, &policy, &workspace, failed);
+        return add_noqa(&mut sources, &disk, &lossy, &policy, &workspace, failed);
     }
     if args.fix || args.diff {
         let mut fixed = 0;
@@ -666,9 +675,9 @@ fn run(args: Args) -> Result<u8, String> {
         // the second write would clobber the first and the second patch
         // would not apply after it (#761).
         let mut current: std::collections::HashMap<PathBuf, String> = Default::default();
-        let canonical = |path: &str| fs::canonicalize(path).unwrap_or_else(|_| path.into());
-        for (path, source) in &mut sources {
-            if let Some(text) = current.get(&canonical(path)) {
+        let canonical = |file: &PathBuf| fs::canonicalize(file).unwrap_or_else(|_| file.clone());
+        for ((path, source), file) in sources.iter_mut().zip(&disk) {
+            if let Some(text) = current.get(&canonical(file)) {
                 source.clone_from(text);
             }
             if lossy.contains(path.as_str()) {
@@ -703,7 +712,7 @@ fn run(args: Args) -> Result<u8, String> {
                 if let Some(whole) = whole_edit(source, &updated) {
                     print_diff(&diff_path(path), source, &[whole]);
                 }
-            } else if let Err(e) = fs::write(path.as_str(), &updated) {
+            } else if let Err(e) = fs::write(file, &updated) {
                 // As for a file that cannot be read: reported, the rest still
                 // fixed and linted - this one as it stands on disk - and the
                 // run ends in 2.
@@ -713,7 +722,7 @@ fn run(args: Args) -> Result<u8, String> {
             } else {
                 source.clone_from(&updated);
             }
-            current.insert(canonical(path), updated);
+            current.insert(canonical(file), updated);
             fixed += count;
             changed_files += 1;
         }
@@ -733,8 +742,8 @@ fn run(args: Args) -> Result<u8, String> {
         eprintln!("qlinter: fixed {fixed} finding(s) in {changed_files} file(s)");
         // A name fixed early is linted as the file ended up, after the
         // names that came later wrote to it.
-        for (path, source) in &mut sources {
-            if let Some(text) = current.get(&canonical(path)) {
+        for ((_, source), file) in sources.iter_mut().zip(&disk) {
+            if let Some(text) = current.get(&canonical(file)) {
                 source.clone_from(text);
             }
         }
@@ -899,6 +908,7 @@ fn run(args: Args) -> Result<u8, String> {
 /// comment on their line could accept, 2 when a file could not be written.
 fn add_noqa(
     sources: &mut [(String, String)],
+    disk: &[PathBuf],
     lossy: &std::collections::HashSet<String>,
     policy: &Policy,
     workspace: &Workspace,
@@ -910,8 +920,8 @@ fn add_noqa(
     // Each file as it is on disk once its first name is done: a later name
     // is linted against that, not the text read before the write (#1199).
     let mut written: std::collections::HashMap<PathBuf, String> = Default::default();
-    for (path, source) in sources.iter_mut() {
-        let file = fs::canonicalize(&*path).unwrap_or_else(|_| PathBuf::from(&*path));
+    for ((path, source), disk) in sources.iter_mut().zip(disk) {
+        let file = fs::canonicalize(disk).unwrap_or_else(|_| disk.clone());
         if let Some(text) = written.get(&file) {
             source.clone_from(text);
             let found = policy.lint(source, path, workspace)?;
@@ -954,7 +964,7 @@ fn add_noqa(
             written.insert(file, source.clone());
             continue;
         }
-        if let Err(e) = fs::write(path.as_str(), &text) {
+        if let Err(e) = fs::write(disk, &text) {
             eprintln!("qlinter: {path}: {e}, not changed");
             failed = true;
             written.insert(file, source.clone());

@@ -989,6 +989,36 @@ fn show_settings_lists_only_rules_the_backend_can_report() {
     assert!(rules(&["--backend", "all"]).contains(&"QLS001".to_string()));
 }
 
+#[cfg(unix)]
+#[test]
+fn a_file_whose_name_is_not_utf8_is_fixed_in_place() {
+    // Carried as its lossy name, `caf\xe9.q` was fixed into a new file
+    // `caf\u{FFFD}.q`, the original left as it was (#1194). macOS refuses
+    // such a name, so there is nothing to test there.
+    use std::os::unix::ffi::OsStrExt;
+    let dir = tempfile::tempdir().unwrap();
+    let name = std::ffi::OsStr::from_bytes(b"caf\xe9.q");
+    if fs::write(dir.path().join(name), "f:{x!=y}\n").is_err() {
+        return;
+    }
+    for flag in ["--fix", "--add-noqa"] {
+        fs::write(dir.path().join(name), "f:{x!=y}\n").unwrap();
+        let out = run(dir.path(), &["--isolated", "--profile", "uqf", flag, "."]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(0), "{flag}: {stderr}");
+        let names: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, [name], "{flag}");
+        assert_ne!(
+            fs::read_to_string(dir.path().join(name)).unwrap(),
+            "f:{x!=y}\n",
+            "{flag}"
+        );
+    }
+}
+
 #[test]
 fn stdin_that_is_not_utf8_is_linted_as_the_same_file_on_disk_is() {
     // q 5 loads `s:"caf\xe9"` (count 4). The file route lints it lossily;
