@@ -2567,6 +2567,19 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 !infix,
             )
         }
+        // `hopen `host:5000` takes the leading `:` a handle needs. The old
+        // call is 'type and the new one connects - a different program, so
+        // only in the editor.
+        "QT029" => {
+            let m = re!(r"^hopen[ \t]*(?:\[\s*)?`[A-Za-z0-9_.]").find(source.get(start..)?)?;
+            let old = &source[start..start + m.end() - 1];
+            (
+                old,
+                format!("{old}:").into(),
+                "Add the leading `:` of a handle".into(),
+                false,
+            )
+        }
         _ => return None,
     };
     // An edit that leaves a `-` against a number makes it a negative

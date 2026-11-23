@@ -724,6 +724,14 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QE011", "r:x in each y", "r:x (in) each y", false),
         ("QE011", "r:x + each y", "r:x (+) each y", false),
         ("QE011", "r:\"ab\" in each y", "r:\"ab\" (in) each y", false),
+        // 'type before, a connection after: only in the editor.
+        (
+            "QT029",
+            "h:hopen `localhost:5000",
+            "h:hopen `:localhost:5000",
+            false,
+        ),
+        ("QT029", "h:hopen[`db:5000]", "h:hopen[`:db:5000]", false),
     ];
     for (code, source, expected, safe) in cases {
         let finding = lint(source, "probe.q", Profile::Uqf)
@@ -812,6 +820,9 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QE009", "f:{{x+y}/x}"),     // a lambda operand
         ("QE009", "f:{(1;/x)}"),      // no derived function at all
         ("QE011", "r:f over each x"), // `(f over) each`, the author's to place
+        ("QT029", "h:hopen 1.5"),     // no handle it spells
+        ("QT029", "h:hopen -1"),
+        ("QT029", "h:hopen `"),
     ] {
         for finding in lint(source, "probe.q", Profile::Uqf)
             .iter()
