@@ -271,6 +271,14 @@ test("a schema migration's q turns one table into the other, in memory and on di
   assert.deepStrictEqual(await connection.call("{(cols trade;exec t from meta trade)}", 0), [["date", "sym", "px", "sz", "ex"], "dsjjs"]);
 });
 
+test("a schema migration parses text and symbols it casts to numbers (#1096)", { skip }, async (t) => {
+  const { connection } = await connect(t, 'a:([] x:("12";"3"); y:`4`5)\nb:([] x:`long$(); y:`long$())\n');
+  const info = async (n) => readTableInfo(await connection.call(TABLE_INFO, n, 100));
+  const ran = readRun(await connection.call(RUN_SCRIPT, statements(migrationScript("a", await info("a"), "a", await info("b"), "b", "p"))));
+  assert.ok(ran.ok, ran.error);
+  assert.deepStrictEqual(await connection.call("{(exec t from meta a;\"f\"$a`x;\"f\"$a`y)}", 0), ["jj", [12, 3], [4, 5]]);
+});
+
 test("the tickerplant log is read, paged, filtered, shown and replayed in a q of its own", { skip }, async (t) => {
   const log = [
     'f:hsym`$"$DIR/tp.log";',

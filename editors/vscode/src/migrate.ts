@@ -62,6 +62,9 @@ export function castOf(c: string, from: string, to: string): string {
   if (to === "s" && from === "C") return `\`$${c}`;
   if (to === "C") return `string ${c}`;
   if (to === "s") return `\`$string ${c}`;
+  // Text, or a symbol's text, to an atomic type is parsed: a cast would give
+  // the character codes, or 'type (#1096).
+  if ((from === "C" || from === "s") && to.length === 1 && to !== "c" && to === to.toLowerCase()) return `"${to.toUpperCase()}"$${from === "s" ? "string " : ""}${c}`;
   return `"${to}"$${c}`;
 }
 

@@ -210,6 +210,10 @@ test("a schema diff names adds, drops, casts and order, and the script turns one
   assert.strictEqual(nullOf("C"), '""');
   assert.strictEqual(nullOf("J"), "`long$()");
   assert.strictEqual(castOf("c", "C", "s"), "`$c");
+  // Text to a number is parsed, not cast to its character codes (#1096).
+  assert.strictEqual(castOf("c", "C", "j"), '"J"$c');
+  assert.strictEqual(castOf("c", "s", "j"), '"J"$string c');
+  assert.strictEqual(castOf("c", "s", "d"), '"D"$string c');
   assert.match(migrationScript("a", from, "a", from, "a", "p"), /the same: there is nothing to change/);
   const disk = migrationScript("trade", t("partitioned", [["date", "d"], ["sym", "s"], ["px", "f"]]), "trade", t("table", [["sym", "s"], ["px", "j"], ["ex", "s"]]), "t2", "hdb");
   assert.match(disk, /HDB column manager/);
