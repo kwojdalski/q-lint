@@ -104,5 +104,9 @@ fn the_documented_example_is_what_the_cli_prints() {
         format!("{}{}", &s[..start], &s[end..])
     };
     assert_eq!(path(example), path(printed.trim_end()));
-    assert!(printed.contains("/a.q\""), "{printed}");
+    // The path is the file's own, with the platform's separator.
+    assert!(
+        printed.contains("/a.q\"") || printed.contains("\\\\a.q\""),
+        "{printed}"
+    );
 }
