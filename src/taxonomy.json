@@ -231,6 +231,13 @@
     "scope": "style"
   },
   {
+    "code": "QF023",
+    "name": "local-shadowed-by-column",
+    "category": "names",
+    "summary": "A parameter or local read only in qSQL phrases over a table with a column of its name, where the column wins: its value is never read",
+    "scope": "style"
+  },
+  {
     "code": "QA001",
     "name": "parameter-limit",
     "category": "application",
@@ -318,7 +325,7 @@
     "code": "QT004",
     "name": "cast-by-name-on-string",
     "category": "types-and-shapes",
-    "summary": "Symbol-named cast on a string converts char codes, not text",
+    "summary": "Cast named by symbol or lowercase type char on a string converts char codes, not text",
     "scope": "style"
   },
   {
@@ -501,6 +508,20 @@
     "name": "peach-global-write",
     "category": "correctness",
     "summary": "A lambda applied with peach writes a global, which q refuses with 'noupdate when it runs on secondary threads",
+    "scope": "style"
+  },
+  {
+    "code": "QB025",
+    "name": "duplicate-conditional-test",
+    "category": "correctness",
+    "summary": "A $[...] test written again later in the same conditional: when it holds the earlier branch runs, so the later one never does",
+    "scope": "style"
+  },
+  {
+    "code": "QB026",
+    "name": "reversed-within-bounds",
+    "category": "correctness",
+    "summary": "within given literal bounds high then low, so nothing is within them and it is always false",
     "scope": "style"
   },
   {
@@ -943,6 +964,13 @@
     "category": "leftovers",
     "summary": "A lambda definition kept as a comment rather than deleted",
     "scope": "styleq"
+  },
+  {
+    "code": "QL003",
+    "name": "unused-noqa",
+    "category": "leftovers",
+    "summary": "A noqa naming a code nothing on its line reports, so it suppresses nothing",
+    "scope": "style"
   },
   {
     "code": "QK001",

@@ -101,6 +101,12 @@ dotted:{[t] t.c}
 capped:{[lim] lim::lim&100; lim}
 capped2:{[lim] `lim set lim&100; lim}
 
+/ QF023: in a qSQL phrase a column of the table wins over a local, so qty
+/ here is the column and the parameter is never read; one named apart is.
+/ expect-next: QF023
+scaled:{[qty] update q2:2*qty from ([]qty:1 5 9)}
+scaled2:{[k] update q2:k*qty from ([]qty:1 5 9)}
+
 / QF014: an assignment anywhere in a body makes the name local throughout,
 / so the read of `cfg` on the left is of an unset local, not the global,
 / and q refuses the lambda where it is defined, with 'cfg. Within one
@@ -361,6 +367,12 @@ num: `long$"123"
 / expect-next: QT004
 day: `date$"2024.01.01"
 
+/ QT004: the same by a lowercase type char - "j"$"12" is 49 50, the codes;
+/ "J"$ parses. "i"$"A", one character's code, is the idiom and is not this.
+/ expect-next: QT004
+qty: "j"$"12"
+letterA: "i"$"A"
+
 / QT005: a table literal in which every column is a scalar is a 'rank
 / error; a one-row table needs `enlist`. One vector column would do.
 / expect-next: QT005
@@ -586,6 +598,11 @@ done:1 / TODO check the empty case
 / expect-next: QL002
 / oldfill:{fills x}
 
+/ QL003: both parameters are read, so no QF016 is reported for the noqa to
+/ take and it suppresses nothing; a reason after the codes is free text.
+/ expect-next: QL003
+addtwo:{[a;b] a+b} / noqa: QF016 TorQ's fixed signature
+
 / QT024: an attribute the literal does not satisfy - 's-fail, checked.
 / expect-next: QT024
 sorted:`s#3 1 2
@@ -643,6 +660,18 @@ book:([]px:1 2)
 / expect-next: QB022
 bump:{update px:px+1 from book; count book}
 bump2:{update px:px+1 from `book; count book}
+
+/ QB025: the second x>100 is the first again, so when it holds the first
+/ branch has already run; the second test is meant to be another one.
+/ expect-next: QB025
+tier:{$[x>100;`large;x>100;`huge;`small]}
+tier2:{$[x>1000;`huge;x>100;`large;`small]}
+
+/ QB026: within takes low then high; 10 1 has nothing within it, so the
+/ filter keeps no row.
+/ expect-next: QB026
+mid:{select from x where px within 10 1}
+mid2:{select from x where px within 1 10}
 
 / QB023: where gives a typed list, empty or not, and () is the empty general
 / list, so the match is never true; count asks whether it is empty.

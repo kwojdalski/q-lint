@@ -1267,6 +1267,10 @@ pub fn whole_edit(before: &str, after: &str) -> Option<Fix> {
 }
 
 fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
+    // A comment is what QL003 edits, so it passes the check below.
+    if finding.code == "QL003" {
+        return unused_noqa_fix(finding, source, v);
+    }
     let line = finding.line.checked_sub(1)?;
     let column = finding.column?.checked_sub(1)?;
     let line_start = if line == 0 {
@@ -1301,6 +1305,9 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         finding.code.as_str(),
         "QE002" | "QL002" | "QE005" | "QP005" | "QP007"
     ) && v.code.as_bytes().get(start) != source.as_bytes().get(start)
+        // QT004 by a type char is reported at its quote, and only where
+        // the `$` after it is code; its arm reads the rest.
+        && !(finding.code == "QT004" && source[start..].starts_with('"'))
     {
         return None;
     }
@@ -1712,6 +1719,17 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         // Both run, so which was meant is the author's to confirm.
         // `` `symbol$"ab" `` and `` `guid$".." `` are 'type; what was meant is
         // `` `$ `` and `"G"$`.
+        // `"j"$"12"` is the same cast by type char, and `"J"$` parses.
+        "QT004" if source[start..].starts_with('"') => {
+            let m = re!(r#"^"([bhijefpmdznuvt])"[ \t]*\$"#).captures(source.get(start..)?)?;
+            let letter = m[1].to_ascii_uppercase();
+            (
+                m.get(0)?.as_str(),
+                format!("\"{letter}\"$").into(),
+                format!("Parse the text with `\"{letter}\"$`").into(),
+                false,
+            )
+        }
         "QT004" | "QT032" => {
             let m = re!(r"^`([a-z]+)\s*\$").captures(source.get(start..)?)?;
             let letter = match &m[1] {
@@ -2970,6 +2988,36 @@ fn refused_atom_condition(raw: &str) -> bool {
         || re!(r"^-?(?:\d+\.\d*|\.\d+|\d+(?:\.\d*)?[eE][+-]?\d+)[ef]?$|^-?\d+[ef]$|^0[nwNW][ef]?$|^-0[wW][ef]?$|^0Ng$")
             .is_match(raw)
             && !re!(r"^-?0[NW]$").is_match(raw)
+}
+
+/// A conditional's test as QB025 compares it: `comments`' text, its strings
+/// kept as written and each run of blanks outside them made one space, so
+/// `x>1` and `x>1 ` are one test and `s~"a  b"` and `s~"a b"` are two. A
+/// string is where `code` is blank and `comments` is not, from a quote.
+fn same_test(comments: &str, code: &str) -> String {
+    let (text, mask) = (comments.as_bytes(), code.as_bytes());
+    let mut out = Vec::with_capacity(text.len());
+    let (mut i, mut blank) = (0, false);
+    while i < text.len() {
+        if text[i] == b'"' && mask[i] == b' ' {
+            let mut j = i + 1;
+            while j < text.len() && text[j] != b'"' {
+                j += if text[j] == b'\\' { 2 } else { 1 };
+            }
+            let j = (j + 1).min(text.len());
+            out.extend_from_slice(&text[i..j]);
+            (i, blank) = (j, false);
+        } else if text[i].is_ascii_whitespace() {
+            if !blank {
+                out.push(b' ');
+            }
+            (i, blank) = (i + 1, true);
+        } else {
+            out.push(text[i]);
+            (i, blank) = (i + 1, false);
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Whether a `$[...]` test is a literal q 5 refuses with 'type: an atom
@@ -5239,6 +5287,147 @@ fn codes_in(list: &str) -> impl Iterator<Item = &str> {
     list.split([',', ' ', '\t']).filter(|c| !c.is_empty())
 }
 
+/// QL003, Ruff's RUF100: each line's `noqa` codes that suppress nothing - no
+/// finding of that code is reported on the line - as one finding per
+/// directive, at its list of codes. `found` is every finding the run made,
+/// before the profile or a `noqa` took any, and `qe001` the lines QE001
+/// reported on before its own early return.
+///
+/// Only a code whose rule `ran` in this run: a code this build does not
+/// know - another tool's, or a later release's - or one whose findings
+/// arrive from elsewhere (QLS001, QF006) is left alone, and so is one a
+/// profile turned off here, which may fire under another. A configuration
+/// lints with every rule and then selects (`Config::lint`), so there a
+/// `noqa` for a rule it deselects or ignores counts as used whenever that
+/// rule would fire on the line, being there for whoever turns it back on,
+/// and is reported only when the rule finds nothing there at all. Not
+/// QL003 itself, which a `noqa` names to keep a directive this run cannot
+/// see the need for. A line in a block comment or after the end of the
+/// script holds no directive, whatever it says.
+fn unused_noqa(
+    path: &str,
+    source: &str,
+    v: &Views,
+    found: &[Finding],
+    qe001: &[usize],
+    ran: impl Fn(&str) -> bool,
+) -> Vec<Finding> {
+    let mut fired: std::collections::HashSet<(usize, &str)> =
+        found.iter().map(|f| (f.line, f.code.as_str())).collect();
+    fired.extend(qe001.iter().map(|&line| (line, "QE001")));
+    let mut out = vec![];
+    let mut offset = 0;
+    for (n, line) in source.split_inclusive('\n').enumerate() {
+        let start = offset;
+        offset += line.len();
+        if v.in_block(start) || v.script_end.is_some_and(|end| start >= end) {
+            continue;
+        }
+        let Some(codes) = noqa_codes(source, &v.comments, start, offset) else {
+            continue;
+        };
+        let mut unused: Vec<&str> = vec![];
+        for code in codes_in(&source[codes.clone()]) {
+            if code != "QL003"
+                && ran(code)
+                && !fired.contains(&(n + 1, code))
+                && !unused.contains(&code)
+            {
+                unused.push(code);
+            }
+        }
+        if unused.is_empty() {
+            continue;
+        }
+        let (s, them) = if unused.len() == 1 {
+            ("", "it")
+        } else {
+            ("s", "them")
+        };
+        let mut finding = Finding::at(
+            path,
+            source,
+            codes.start,
+            "QL003",
+            format!(
+                "Unused noqa code{s}: {}; nothing on this line reports {them}, so the \
+                 directive suppresses nothing",
+                unused.join(", ")
+            ),
+        );
+        finding.end_column = finding.column.map(|c| c + codes.len());
+        out.push(finding);
+    }
+    out
+}
+
+/// The edit QL003 offers: its unused codes taken out of the directive's
+/// list, or the whole directive with the blanks before it when no code would
+/// be left. `None` where nothing else is on the line, which would be left
+/// blank, or where the edit would change anything but a comment. Not
+/// batch-safe: whether a rule fires on a line can turn on the files around
+/// it (QF018 reads the workspace), so a `noqa` one run finds unused another
+/// may need, and `--fix` does not delete it unattended.
+fn unused_noqa_fix(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
+    let unused: Vec<&str> = re!(r"^Unused noqa codes?: ([A-Z0-9, ]+);")
+        .captures(&finding.detail)?
+        .get(1)?
+        .as_str()
+        .split(", ")
+        .collect();
+    let row = finding.line.checked_sub(1)?;
+    let start = match row {
+        0 => 0,
+        _ => source.match_indices('\n').nth(row - 1)?.0 + 1,
+    };
+    let line = source[start..].split_inclusive('\n').next()?;
+    let text = line.trim_end_matches(['\n', '\r']);
+    let codes = noqa_codes(source, &v.comments, start, start + line.len())?;
+    let kept: Vec<&str> = codes_in(&source[codes.clone()])
+        .filter(|c| !unused.contains(c))
+        .collect();
+    let (at, end, replacement) = if kept.is_empty() {
+        // From the slashes that open the directive, and the blanks before.
+        let slashes = re!(r"/+[ \t]*(?i:noqa)[ \t]*:[ \t]*$")
+            .find(&source[start..codes.start])?
+            .start();
+        let at = start
+            + source[start..start + slashes]
+                .trim_end_matches([' ', '\t'])
+                .len();
+        if at == start {
+            return None;
+        }
+        (at, start + text.len(), String::new())
+    } else {
+        (codes.start, codes.end, kept.join(", "))
+    };
+    let mut edited = source.to_string();
+    edited.replace_range(at..end, &replacement);
+    let after = views(&edited);
+    let comment_only = |before: &str, after: &str| {
+        let (before, after) = (before.as_bytes(), after.as_bytes());
+        let added = at + replacement.len();
+        before[..at] == after[..at]
+            && before[at..end].iter().all(|&b| b == b' ')
+            && after[at..added].iter().all(|&b| b == b' ')
+            && before[end..] == after[added..]
+    };
+    (comment_only(&v.code, &after.code) && comment_only(&v.comments, &after.comments)).then(|| {
+        Fix {
+            start: at,
+            end,
+            replacement: replacement.into(),
+            title: if kept.is_empty() {
+                "Remove the unused noqa".into()
+            } else {
+                format!("Remove {} from the noqa", unused.join(", ")).into()
+            },
+            batch_safe: false,
+        }
+    })
+}
+
 /// The code lists of the file's `/ qlinter: noqa: CODE` directives, each as
 /// the span of the source that lists them. Only a whole comment line at the
 /// left margin, with a blank after its `/` - a bare `/` opens a block - and
@@ -5594,8 +5783,11 @@ fn lint_rules(
     let uqf = profile == Profile::Uqf;
     let _lines = LineScope::install(source);
     let mut v = views(source);
+    // The lines QE001 reports on, before a `noqa` takes any: QL003 asks.
+    let mut structure_lines = vec![];
     if structure_selected {
         let mut out = structure(path, source, &v);
+        structure_lines = out.iter().map(|f| f.line).collect();
         suppress(&mut out, source, &v);
         if !out.is_empty() {
             out.truncate(1);
@@ -6107,6 +6299,54 @@ fn lint_rules(
                         "`{raw}` as a later test of `$[...]` is 'type once it is reached: a test must be a boolean, integer, char or temporal atom"
                     ),
                 );
+            }
+        }
+        // QB025. A test written again later in the same conditional: if it
+        // held the first time, its earlier branch ran, so the later branch
+        // never runs - q 5 `$[x>1;`a;x>1;`b;`c]` is `c for 0 and `a for 2,
+        // never `b. Nothing runs between the two evaluations but the tests
+        // themselves, so only a test that could change its own value is left
+        // alone: one that assigns, applies with brackets or a lambda, deals
+        // (`?`), signals, or reads the clock, a random number or a handle.
+        // So is a literal test.
+        if n >= 4 {
+            let mut from = dollar + 2;
+            let mut tests: Vec<String> = vec![];
+            for (k, part) in parts.iter().enumerate() {
+                let start = from;
+                from += part.len() + 1;
+                if k % 2 != 0 || k + 1 >= n {
+                    continue;
+                }
+                // Delimited in `comments`, where a string at either end is
+                // still there to keep.
+                let raw = &v.comments[start..start + part.len()];
+                let at = start + raw.len() - raw.trim_start().len();
+                let end = at + raw.trim().len();
+                let test = &code[at..end];
+                // A test with no name in it is a constant, the same every
+                // time: `$[0b;1;0b;2]` is QA007's, and placeholder.
+                if !re!(r"(?:^|[^`A-Za-z0-9_.])[A-Za-z]").is_match(test)
+                    || test.contains([':', '[', '{', '?', '\''])
+                    || re!(r"\.z\.|\b(?:rand|value|get|read0|read1|system|hopen|hclose|eval|reval|getenv|neg)\b")
+                        .is_match(test)
+                {
+                    continue;
+                }
+                let text = same_test(&v.comments[at..end], &code[at..end]);
+                if tests.contains(&text) {
+                    add(
+                        at,
+                        "QB025",
+                        format!(
+                            "`{}` repeats an earlier test of this $[...]: when it holds, the \
+                             earlier branch runs, so this branch never does",
+                            v.comments[at..end].trim()
+                        ),
+                    );
+                } else {
+                    tests.push(text);
+                }
             }
         }
         if n == 2 {
@@ -8914,6 +9154,39 @@ fn lint_rules(
             };
             add(offset + at, code, detail);
         }
+        // QT004 by a lowercase type char too: q 5 `"j"$"12"` is 49 50, the
+        // codes, and `"d"$"20"` two dates near 2000.02.20, where `"J"$"12"`
+        // is 12. A lowercase cast of a string is also how q gives a
+        // character's code - `"i"$"A"` is 65 - and of every character of a
+        // text, so only a literal of two characters or more that reads as a
+        // number or a temporal, which is text to parse, and only as the
+        // whole operand. Not `"c"` or `"x"`, which keep the characters, nor
+        // `"s"` and `"g"`, which q refuses (QT032).
+        for m in re!(
+            r#""([bhijefpmdznuvt])"[ \t]*\$[ \t]*(\([ \t]*)?"(-?[0-9][0-9.:DTeE+-]+)"([ \t]*\))?"#
+        )
+        .captures_iter(literals)
+        {
+            let whole = m.get(0).unwrap();
+            let dollar = m.get(1).unwrap().end() + 1;
+            let dollar = dollar + literals[dollar..].find('$').unwrap();
+            if line.as_bytes()[dollar] != b'$'
+                || m.get(2).is_some() != m.get(4).is_some()
+                || !operand_ends(code, &v.comments, offset + whole.end())
+            {
+                continue;
+            }
+            let letter = &m[1];
+            add(
+                offset + whole.start(),
+                "QT004",
+                format!(
+                    "\"{letter}\"$ on a string casts each character's code, not the text; \
+                     parsing text is \"{}\"$\"...\"",
+                    letter.to_ascii_uppercase()
+                ),
+            );
+        }
         // Equality against a string literal in a filter pairs each row with
         // one character. q 5: 'length whenever the row count differs from
         // the string's length, on any column; when they agree, 'type on a
@@ -9540,6 +9813,21 @@ fn lint_rules(
         }
         i += 1;
     }
+    // Before the profile filters anything, so a finding of a rule this
+    // profile leaves out still counts as one its `noqa` is there for.
+    // The QK rules run only for a configuration (`lint_every_rule`).
+    let ran = |code: &str| {
+        code == "QE001" && structure_selected
+            || code != "QE001"
+                && (opt_in || !code.starts_with("QK"))
+                && RULES.iter().find(|r| r.code == code).is_some_and(|r| {
+                    matches!(r.scope.as_str(), "builtin" | "style" | "styleq" | "uqf")
+                        && profile.allows(&r.scope)
+                        || opt_in && r.scope == "opt-in"
+                })
+    };
+    let unused = unused_noqa(path, source, &v, &out, &structure_lines, ran);
+    out.extend(unused);
     // One choke point: a rule states its scope in the taxonomy and the profile
     // decides whether that scope is wanted. Filtering here rather than guarding
     // sixty emission sites keeps the two from drifting apart.

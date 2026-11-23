@@ -1,6 +1,6 @@
 # Rules
 
-All 140 rules, generated from `src/taxonomy.json` - the same data
+All 144 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -85,6 +85,7 @@ it, or `ALL`.
 | <a id="qf020"></a>`QF020` | unknown-column | A column a table literal does not have, in select, exec, update, a where phrase or xkey, and nothing defines it | every profile |
 | <a id="qf021"></a>`QF021` | dotted-local | name.member on a parameter or local reads a global, never the local | every profile |
 | <a id="qf022"></a>`QF022` | local-global-assignment | `::` on a parameter or local assigns the local, not a global of that name | `style` and above |
+| <a id="qf023"></a>`QF023` | local-shadowed-by-column | A parameter or local read only in qSQL phrases over a table with a column of its name, where the column wins: its value is never read | `style` and above |
 
 ## Application - how many arguments a thing takes and how it is called
 
@@ -111,7 +112,7 @@ it, or `ALL`.
 | <a id="qt001"></a>`QT001` | literal-dictionary-length | Literal dictionary key/value lengths differ | every profile |
 | <a id="qt002"></a>`QT002` | literal-argument-type | Symbol passed to a visible numeric function | every profile |
 | <a id="qt003"></a>`QT003` | symbol-arithmetic | Arithmetic on a symbol literal errors at runtime | every profile |
-| <a id="qt004"></a>`QT004` | cast-by-name-on-string | Symbol-named cast on a string converts char codes, not text | `style` and above |
+| <a id="qt004"></a>`QT004` | cast-by-name-on-string | Cast named by symbol or lowercase type char on a string converts char codes, not text | `style` and above |
 | <a id="qt005"></a>`QT005` | single-row-table | Table literal of scalars needs enlist and errors 'rank | every profile |
 | <a id="qt006"></a>`QT006` | vector-length-mismatch | Infix on two vectors of known, different lengths | every profile |
 | <a id="qt007"></a>`QT007` | string-function-on-symbol | ss or ssr given a symbol literal is a runtime type error | every profile |
@@ -172,6 +173,8 @@ it, or `ALL`.
 | <a id="qb022"></a>`QB022` | discarded-update | An update or delete on a table value whose result is discarded changes nothing | `style` and above |
 | <a id="qb023"></a>`QB023` | empty-general-list-match | x~() is false for every typed empty list - 0#0, `symbol$() and "" - so it does not test emptiness | `style` and above |
 | <a id="qb024"></a>`QB024` | peach-global-write | A lambda applied with peach writes a global, which q refuses with 'noupdate when it runs on secondary threads | `style` and above |
+| <a id="qb025"></a>`QB025` | duplicate-conditional-test | A $[...] test written again later in the same conditional: when it holds the earlier branch runs, so the later one never does | `style` and above |
+| <a id="qb026"></a>`QB026` | reversed-within-bounds | within given literal bounds high then low, so nothing is within them and it is always false | `style` and above |
 
 ## Domain - literal arguments outside what a builtin accepts
 
@@ -220,6 +223,7 @@ it, or `ALL`.
 |---|---|---|---|
 | <a id="ql001"></a>`QL001` | unfinished-marker | TODO, FIXME, XXX or HACK in a comment | `styleq` and above |
 | <a id="ql002"></a>`QL002` | commented-out-definition | A lambda definition kept as a comment rather than deleted | `styleq` and above |
+| <a id="ql003"></a>`QL003` | unused-noqa | A noqa naming a code nothing on its line reports, so it suppresses nothing | `style` and above |
 
 ## Policy - one repository's conventions
 
