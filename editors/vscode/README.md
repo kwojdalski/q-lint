@@ -1060,8 +1060,9 @@ not a change, and what is sent over it is not read), `0:` or `1:` to a file
 handle (`` `:f ``, or one made with `hsym` or `` `$":f" ``, also applied:
 `` 0:[`:f;x] ``, `` .[0:;(`:f;x)] ``), `2:`, replaying a log with `-11!` (not `-11!(-1;..)` or `(-2;..)`,
 which only count and check it), compressing a file with `-19!` (also spaced, `-19 !x`, or
-in parentheses, `(-19)!x`), an amend in place (`` @[`t;i;:;v] ``, `` .[(`t);i;f;v] ``) or
-a functional update or delete in place (`` ![`t;c;b;a] ``),
+in parentheses, `(-19)!x`), an amend in place (`` @[`t;i;:;v] ``, `` .[(`t);i;f;v] ``, `` @[`t;`c;`p#] ``,
+`` @[`t;`a;neg] ``, `` @[;`a;:;1] `. ``, `` .[@;(`.;`a;:;1)] ``) or
+a functional update or delete in place (`` ![`t;c;b;a] ``, `` .[!;(`t;c;b;a)] ``),
 `value`, `get`, `eval` or `-6!` of a string, of `parse` or `-5!`, of an assignment tree
 (`` eval(:;`t;()) ``, `` eval(+:;`a;1) ``), of a functional update or delete on a table by name
 (`` eval(!;enlist`t;..) ``, `` value(!;`t;..) ``) or of a list headed by a writer's symbol

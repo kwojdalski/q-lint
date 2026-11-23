@@ -630,3 +630,52 @@ test("hopen of a file handle made with hsym, cast from a string or a string is a
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("the amend or ! passed as a value and applied to a list headed by a symbol is a change (#1321)", () => {
+  const cases = {
+    ".[@;(`.;`a;:;1)]": ["amends `. in place"],
+    "(@) . (`.;`a;:;1)": ["amends `. in place"],
+    ".[.;(`t;();,;1)]": ["amends `t in place"],
+    ".[!;(`t;();0b;`symbol$())]": ["updates or deletes from `t in place with !"],
+    // On a value, or with too few items, it reads.
+    ".[@;(t;0;:;1)]": [],
+    ".[!;(`a`b;1 2)]": [],
+    "(@) . (x;0)": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("an amend projection with the target left out and applied to a symbol is a change (#1322)", () => {
+  const cases = {
+    "@[;`a;:;1] `.": ["amends `. in place"],
+    "@[;`a;:;1][`.]": ["amends `. in place"],
+    ".[;();:;5] `a": ["amends `a in place"],
+    // Applied to a value, it returns a copy.
+    "@[;`a;:;1] d": [],
+    ".[;();:;5]": [],
+    "@[;0;{x}] x": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("a three-argument amend with an attribute or a unary is a change (#1323)", () => {
+  const cases = {
+    "@[`t;`c;`p#]": ["amends `t in place"],
+    "@[`t;`a;`s#]": ["amends `t in place"],
+    "@[`t;`a;neg]": ["amends `t in place"],
+    ".[`t;(0;`a);neg]": ["amends `t in place"],
+    // A trap by name, or on a value, reads.
+    ".[`f;(1;2);{x}]": [],
+    "@[`f;x;::]": [],
+    "@[`f;x;`err]": [],
+    "@[t;`c;`p#]": [],
+    "![`t;();0b]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

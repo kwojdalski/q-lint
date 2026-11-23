@@ -47,7 +47,11 @@
 // - `@[` or `.[` on a variable named by a symbol, alone or in
 //   parentheses (`` .[(`t);..] ``), with four arguments: an
 //   amend in place (three is as often a trap, `.[`f;args;handler]`, and
-//   is not taken for one); `![` likewise, a functional update or delete;
+//   is not taken for one, unless the third is an attribute or a unary
+//   that maps the items, `` @[`t;`c;`p#] ``, `` @[`t;`a;neg] ``); `![`
+//   likewise, a functional update or delete. Also with the target left
+//   out and given after (`` @[;`a;:;1] `. ``), and the amend or `!`
+//   passed as a value (`` .[@;(`.;`a;:;1)] ``, `` (@) . (`.;..) ``);
 // - `value`, `get`, `eval` or `-6!` applied to a string, to `parse` or
 //   `-5!`, or to a tree headed by `:`, `::` or `+:` (`eval(:;`t;())`), by
 //   `!` on a table by name (`` eval(!;enlist`t;..) ``, `` value(!;`t;..) ``)
@@ -215,6 +219,35 @@ function computedHandle(t: Token[], end: number): boolean {
 function castHandle(t: Token[], i: number): boolean {
   return t[i]?.text === "`" && t[i + 1]?.text === "$" && t[i + 2]?.kind === "str" && t[i + 2].text.startsWith('":');
 }
+
+/// Where the items of the bracket or parenthesis that opens at `t[open]`
+/// start and end, `[start, end)` each, the last ending at its close.
+function items(t: Token[], open: number): [number, number][] {
+  const out: [number, number][] = [];
+  let start = open + 1;
+  let depth = 0;
+  for (let j = open + 1; j < t.length; j++) {
+    if (t[j].kind === "open") depth++;
+    else if (t[j].kind === "close") {
+      if (depth-- === 0) {
+        out.push([start, j]);
+        return out;
+      }
+    } else if (depth === 0 && t[j].text === ";") {
+      out.push([start, j]);
+      start = j + 1;
+    }
+  }
+  out.push([start, t.length]);
+  return out;
+}
+
+/// The unaries that, as an amend's third argument, change the items in place
+/// rather than handle an error: `` @[`t;`a;neg] ``.
+const UNARY = new Set([
+  "neg", "not", "abs", "reverse", "asc", "desc", "distinct", "floor", "ceiling", "sqrt", "exp", "log",
+  "reciprocal", "signum", "upper", "lower", "trim", "ltrim", "rtrim", "null", "fills", "sums", "deltas",
+]);
 
 /// `name` without the `.q.` that names a builtin as well: `.q.set` is `set`.
 function unqualified(name: string): string {
@@ -386,20 +419,26 @@ function readStatement(statement: string, found: Set<string>): void {
         }
       }
       const amend = t[i - 1]?.kind === "op" ? t[i - 1].text : "";
-      const target = symbolAt(t, i + 1);
-      if (k.text === "[" && (amend === "@" || amend === "." || amend === "!") && target !== undefined && target.length > 1) {
-        // Count the arguments at this depth.
-        let depth = 0;
-        let args = 1;
-        for (let j = i + 1; j < t.length; j++) {
-          if (t[j].kind === "open") depth++;
-          else if (t[j].kind === "close") {
-            if (depth === 0) break;
-            depth--;
-          } else if (depth === 0 && t[j].text === ";") args++;
-        }
-        // Three is a trap as often as an amend: `.[`f;args;handler]`.
-        if (args >= 4) {
+      if (k.text === "[" && (amend === "@" || amend === "." || amend === "!")) {
+        const args = items(t, i);
+        // The target, or with it left out, what the projection is applied
+        // to: `` @[;`a;:;1] `. ``, `` .[;();:;5][`a] ``.
+        const close = args.length > 0 ? args[args.length - 1][1] : -1;
+        const target =
+          args[0]?.[0] !== args[0]?.[1]
+            ? symbolAt(t, i + 1)
+            : t[close + 1]?.text === "[" && t[close + 1].kind === "open"
+              ? symbolAt(t, close + 2)
+              : symbolAt(t, close + 1);
+        // Three is a trap as often as an amend, `.[`f;args;handler]`, unless
+        // the third is a unary that sets an attribute or maps the items:
+        // `` @[`t;`c;`p#] ``, `` @[`t;`a;neg] ``.
+        const third = args.length === 3 ? t.slice(args[2][0], args[2][1]) : [];
+        const unary =
+          amend !== "!" &&
+          ((third.length === 2 && third[0].kind === "sym" && third[1].text === "#") ||
+            (third.length === 1 && third[0].kind === "name" && UNARY.has(third[0].text)));
+        if (target !== undefined && target.length > 1 && (args.length >= 4 || unary)) {
           found.add(amend === "!" ? `updates or deletes from ${target} in place with !` : `amends ${target} in place`);
         }
       }
@@ -570,6 +609,19 @@ function readStatement(statement: string, found: Set<string>): void {
     if (k.kind === "sym" && k.text.startsWith("`.") && WRITERS.has(unqualified(k.text.slice(1)))) {
       found.add(`calls ${k.text.slice(1)}`);
       continue;
+    }
+    // The amend or `!` passed as a value and applied to a list headed by a
+    // symbol: `` .[@;(`.;`a;:;1)] ``, `` (@) . (`.;`a;:;1) ``, `` .[!;(`t;..)] ``.
+    if (k.kind === "op" && ["@", ".", "!"].includes(k.text) && t[i - 1]?.kind === "open" && (next?.text === ";" || next?.text === ")")) {
+      let j = i + 1;
+      while (t[j] !== undefined && (t[j].text === ")" || t[j].text === ";" || (t[j].kind === "op" && (t[j].text === "." || t[j].text === "@")))) {
+        j++;
+      }
+      const target = t[j]?.text === "(" ? symbolAt(t, j + 1) : undefined;
+      if (target !== undefined && target.length > 1 && items(t, j).length >= 4) {
+        found.add(k.text === "!" ? `updates or deletes from ${target} in place with !` : `amends ${target} in place`);
+        continue;
+      }
     }
     // A symbol atom left of `?` extends the enumeration it names, and the
     // sym file when it is a handle: `` `sym?`x ``. A list, `` `a`b?`b ``,
