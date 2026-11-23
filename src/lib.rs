@@ -4625,6 +4625,12 @@ pub(crate) fn signature<'a>(code: &'a str, raw: &str, brace: usize) -> Signature
             depth += 1;
         } else if b")]}".contains(&b) {
             depth -= 1;
+            // A closer that opened outside the brackets: in `{[a:x+1};b]`
+            // the `}` ends the lambda, and the `]` after it is no end of a
+            // parameter list - reading one put its body past the lambda.
+            if depth < 0 {
+                return implicit(vec![]);
+            }
         } else if b == b';' && depth == 0 {
             ranges.push((start, i));
             start = i + 1;

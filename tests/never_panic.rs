@@ -368,6 +368,12 @@ const FOUND: &[(&str, &str)] = &[
         "tests/cases/shapes.cases:1089 #55",
         "f:{[a;b] a+b}\n(f;g):({[a;b;c] a+b+c};1)\nr:f[1;2;3]\nh:{[a;b] a+b}\n.[`h;();:;{[a;b;c] a+b+c}]\nr:h[1;2;3]\nk:{[a;b] a+b}\n@[`.;`k;:;{[a;b;c] a+b+c}]\nr:k[1;2;3]\np:{[a;b] a+b}\ninit:{(p;q)::({[a;b;c] a+b+c;1)}\ninit[]\nr:p[1;2;3]\n\n",
     ),
+    // A parameter list was read past the lambda's own `}`, which put the
+    // body after the lambda's end for QB020 and QB012 alike.
+    (
+        "tests/cases/names.cases:128 #63",
+        "k:{[a:`$;b] (a;b)}\nr:k[\"xy\";2]\ns:{[a:`$;b] (a;b)}[\"xy\";2]\nt:{[a:x+1};b] (a;b)}[1;2]\nu:{[a:neg;b] (a;b)}[1;2]\nv:{[a:`int$;b] (a;b)}[1;2]\nw:{[a:-7h;b] a}\nm:{[a:1] a}\n\n",
+    ),
 ];
 
 #[test]
