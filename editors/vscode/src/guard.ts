@@ -26,7 +26,8 @@
 //   `.Q.enx`, `.Q.enxs`, `.Q.chk`, `.Q.dsftg`, `.Q.view`, `.Q.l`, `.Q.lo`,
 //   `.Q.bv` and `.Q.opt` (which sets `.Q.x`), and `0:` or `1:` to a
 //   file handle (`` `:f 0: ``, `hsym[`f] 0:`, `(hsym `f) 1:`), and `2:`,
-//   each also by its `.q.` name (`.q.set`) - `system` of a string literal
+//   each also by its `.q.` name (`.q.set`), by its symbol
+//   (`` `.q.set . (`a;1) ``) and indexed (`` .q[`set] ``) - `system` of a string literal
 //   is read as that command, so `system "c"` only reads; `hopen` of a file handle
 //   (`` hopen `:f ``), which creates the file to write through - of a
 //   process (`` `:host:5000 ``, a port) it only connects, and what is sent
@@ -382,6 +383,14 @@ function readStatement(statement: string, found: Set<string>): void {
         qsql = undefined;
         continue;
       }
+      // A writer indexed out of its namespace: `` .q[`set][`b;2] ``.
+      if ((k.text === ".q" || k.text === ".Q") && next?.text === "[" && t[i + 2]?.kind === "sym") {
+        const name = `${k.text}.${t[i + 2].text.slice(1)}`;
+        if (WRITERS.has(unqualified(name))) {
+          found.add(`calls ${name}`);
+          continue;
+        }
+      }
       // `xasc`, `xdesc` and `xkey` on a table named by a symbol change it in
       // place: `` `a xasc `t ``, `` xasc[`a;`t] ``.
       if (["xasc", "xdesc", "xkey"].includes(unqualified(k.text))) {
@@ -451,6 +460,7 @@ function readStatement(statement: string, found: Set<string>): void {
                 : undefined;
         if (reason !== undefined) {
           found.add(`evaluates ${reason} with ${k.text}`);
+          i = j;
           continue;
         }
       }
@@ -501,6 +511,12 @@ function readStatement(statement: string, found: Set<string>): void {
       if (lambdas === 0 || global || k.text.includes(".") || outer) {
         found.add(`assigns ${k.text}`);
       }
+      continue;
+    }
+    // A writer named by its symbol is the function itself: `` `.q.set . (`a;1) ``,
+    // `` (get `.q.set)[`a;1] ``, `` `.q.system "x" ``.
+    if (k.kind === "sym" && k.text.startsWith("`.") && WRITERS.has(unqualified(k.text.slice(1)))) {
+      found.add(`calls ${k.text.slice(1)}`);
       continue;
     }
     // A symbol atom left of `?` extends the enumeration it names, and the

@@ -467,3 +467,37 @@ test("in a lambda, an indexed or compound assignment to a name not its own chang
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("a writer reached by indexing .q is a change (#1254)", () => {
+  const cases = {
+    ".q[`set][`b;2]": ["calls .q.set"],
+    ".Q[`dpft][`:db;2024.01.01;`sym;`t]": ["calls .Q.dpft"],
+    // A reader indexed out of .q reads.
+    ".q[`count] t": [],
+    ".Q[`s1] t": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("a writer named by its symbol and applied is a change (#1320)", () => {
+  const cases = {
+    "`.q.set . (`a;1)": ["calls .q.set"],
+    "(`.q.set)[`a;1]": ["calls .q.set"],
+    "(get `.q.set)[`a;1]": ["calls .q.set"],
+    "`.q.upsert . (`t;([]a:enlist 7))": ["calls .q.upsert"],
+    '`.q.system "cd /tmp"': ["calls .q.system"],
+    "(`.q.hdel) `:tf.txt": ["calls .q.hdel"],
+    "`.Q.dpft . (`:db;2024.01.01;`sym;`t)": ["calls .Q.dpft"],
+    // Said once when value applies it.
+    "value(`.q.set;`a;1)": ["evaluates a call of .q.set with value"],
+    // A reader's symbol, or a plain symbol, reads.
+    "`.q.count . enlist til 3": [],
+    "select from t where f=`set": [],
+    "`set`upsert": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

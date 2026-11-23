@@ -1053,7 +1053,7 @@ symbol (`` `a xasc `t ``), extending an enumeration with `?` (`` `sym?`x ``), a 
 `system`, `setenv`, `save`, `rsave`, `dsave`, `load`, `rload`, `.Q.dpft`, `.Q.dpfts`,
 `.Q.dpt`, `.Q.dpts`, `.Q.hdpf`, `.Q.en`, `.Q.ens`, `.Q.enx`, `.Q.enxs`, `.Q.chk`, `.Q.dsftg`,
 `.Q.view`, `.Q.l`, `.Q.lo`, `.Q.bv`, `.Q.opt` (each also by its `.q.` name,
-`.q.set`; `system` of a string literal is read as that command, so
+`.q.set`, its symbol, `` `.q.set . (`a;1) ``, and indexed, `` .q[`set] ``; `system` of a string literal is read as that command, so
 `system "c"` only reads), `hopen` of a file handle (`` hopen `:f ``, which creates the
 file to write through; opening a connection, `` hopen `:host:5000 ``, is
 not a change, and what is sent over it is not read), `0:` or `1:` to a file
