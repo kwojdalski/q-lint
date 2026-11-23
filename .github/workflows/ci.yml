@@ -54,6 +54,32 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release
       - run: cargo test
+  # The reusable action, run from this checkout as a user's workflow runs it:
+  # a clean file passes, and the examples' findings fail the step. Text, not
+  # the action's default github format, until a release has that (#1146);
+  # the pinned version is any published one, since only the action is new.
+  action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: printf 'f:{[a] a+1}\n' > "$RUNNER_TEMP/clean.q"
+      - uses: ./
+        with:
+          version: 0.33.2
+          format: text
+          paths: ${{ runner.temp }}/clean.q
+      - uses: ./
+        id: examples
+        continue-on-error: true
+        with:
+          version: 0.33.2
+          format: text
+          paths: examples
+      - name: The examples' findings fail the action
+        if: steps.examples.outcome != 'failure'
+        run: |
+          echo "qlinter passed examples/, which holds deliberate findings" >&2
+          exit 1
   extension:
     runs-on: ubuntu-latest
     defaults:

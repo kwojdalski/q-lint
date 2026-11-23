@@ -1,0 +1,71 @@
+name: qlinter
+description: Lint q/kdb+ source with qlinter, a linter that never executes what it reads.
+author: Krzysztof Wojdalski
+branding:
+  icon: check-circle
+  color: blue
+
+# A released binary, not a build: the action runs in seconds and needs no
+# Rust. The release is named by version, never "latest", so a run today and
+# a re-run next month lint with the same rules.
+inputs:
+  version:
+    description: The qlinter release to run, such as 0.34.0 (a leading v is accepted).
+    required: true
+  paths:
+    description: What to lint, space-separated; directories are walked.
+    default: .
+  format:
+    description: >-
+      Output format. `github` makes each finding an annotation on the
+      changed line; it needs a release that has it (#1146).
+    default: github
+  args:
+    description: Further options, such as `--profile style` or `--select QF`.
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Download qlinter
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        ver="v${VERSION#v}"
+        case "${RUNNER_OS}-${RUNNER_ARCH}" in
+          Linux-X64) target=x86_64-unknown-linux-gnu ext=tar.gz ;;
+          macOS-ARM64) target=aarch64-apple-darwin ext=tar.gz ;;
+          macOS-X64) target=x86_64-apple-darwin ext=tar.gz ;;
+          Windows-X64) target=x86_64-pc-windows-msvc ext=zip ;;
+          *) echo "::error::qlinter publishes no binary for ${RUNNER_OS} ${RUNNER_ARCH}"; exit 1 ;;
+        esac
+        name="qlinter-${ver}-${target}"
+        base="https://github.com/kwojdalski/q-lint/releases/download/${ver}"
+        dir="${RUNNER_TEMP}/qlinter-${ver}"
+        mkdir -p "$dir"
+        cd "$dir"
+        curl -fsSL --retry 3 -o "${name}.${ext}" "${base}/${name}.${ext}"
+        # Checked against the release's own SHA256SUMS where it has one;
+        # releases before #1153 publish none, and are run unverified.
+        if curl -fsL --retry 3 -o SHA256SUMS "${base}/SHA256SUMS"; then
+          grep "  ${name}.${ext}\$" SHA256SUMS > expected
+          if command -v sha256sum > /dev/null; then sha256sum -c expected; else shasum -a 256 -c expected; fi
+        else
+          echo "::warning::qlinter ${ver} publishes no SHA256SUMS; the download is unverified"
+        fi
+        if [ "$ext" = zip ]; then 7z x -y "${name}.zip" > /dev/null; else tar xzf "${name}.tar.gz"; fi
+        echo "${dir}/${name}" >> "$GITHUB_PATH"
+    - name: Run qlinter
+      shell: bash
+      env:
+        FORMAT: ${{ inputs.format }}
+        PATHS: ${{ inputs.paths }}
+        ARGS: ${{ inputs.args }}
+      run: |
+        set -euo pipefail
+        qlinter --version
+        # Split on spaces on purpose: each is a separate path or option.
+        # shellcheck disable=SC2086
+        qlinter --format "$FORMAT" $ARGS $PATHS

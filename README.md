@@ -1048,6 +1048,24 @@ Both pass `--force-exclude`, so the configuration's `exclude` holds for the
 files pre-commit names one by one; add `args: [--profile, style]` or any other
 option to the hook as usual.
 
+In a GitHub workflow, the action in this repository downloads the release
+`version` names - checked against its `SHA256SUMS` - and runs it, so the job
+needs neither Rust nor a build:
+
+```yaml
+- uses: actions/checkout@v4
+- uses: kwojdalski/q-lint@vX.Y.Z
+  with:
+    version: X.Y.Z         # the qlinter release to run; required
+    paths: src tests       # default: .
+    args: --profile style  # any other options
+```
+
+`format` defaults to `github`, which shows each finding as an annotation on
+the line it is about (#1146); `text` and `json` are the others. The step fails
+when there are findings, as `qlinter` exits 1. It runs on Linux and Windows
+x86-64 and on macOS, Intel or Apple Silicon.
+
 ## Validation and profiling
 
 ```sh

@@ -74,3 +74,35 @@ def test_the_release_publishes_sha256sums_beside_the_nine_assets():
     assert "sha256sum" in publish and "> SHA256SUMS" in publish
     assert '-eq 9' in publish
     assert re.search(r"\$\(cat assets\) SHA256SUMS\s*$", publish)
+
+
+def action():
+    return yaml.safe_load((ROOT / "action.yml").read_text())
+
+
+def test_the_action_downloads_a_pinned_release_and_lints_with_its_format():
+    found = action()
+    assert found["inputs"]["version"]["required"] is True
+    assert found["inputs"]["format"]["default"] == "github"
+    assert found["runs"]["using"] == "composite"
+    download, lint = found["runs"]["steps"]
+    # Each platform the release builds an archive for, by the name it has.
+    release = (ROOT / ".github" / "workflows" / "release.yml").read_text()
+    for target in re.findall(r"target: (\S+) \}", release):
+        if "-" in target:
+            assert target in download["run"], target
+    assert "releases/download/${ver}" in download["run"]
+    assert "SHA256SUMS" in download["run"]
+    assert "GITHUB_PATH" in download["run"]
+    assert 'qlinter --format "$FORMAT"' in lint["run"]
+    # Inputs reach the shell through the environment, never spliced into it.
+    for step in (download, lint):
+        assert "${{" not in step["run"]
+
+
+def test_ci_runs_the_action_from_the_checkout():
+    job = workflow("ci.yml")["jobs"]["action"]
+    runs = [s for s in job["steps"] if s.get("uses") == "./"]
+    assert len(runs) == 2
+    assert any(s.get("id") == "examples" and s["with"]["paths"] == "examples" for s in runs)
+    assert all(s["with"]["version"] for s in runs)
