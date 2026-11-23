@@ -98,7 +98,14 @@
   window.addEventListener("message", (event) => {
     const m = event.data;
     if (m.type === "log") {
+      // Another log: nothing of the last one stays picked or typed.
       log = m.log;
+      page = { offset: 0, size: page.size, total: 0, rows: [] };
+      picked = undefined;
+      [from, to, replayFrom, replayTo].forEach((i) => (i.value = ""));
+      detail.textContent = "";
+      status.textContent = "";
+      drawRows();
       summary.textContent =
         m.log.file + ": " + m.log.count + " messages" + (m.log.complete ? "" : ", read to the last whole one: " + (m.log.size - m.log.bytes) + " bytes at the end are cut short") + ". Read in a local q on port " + m.port + ".";
       table.textContent = "";

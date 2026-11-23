@@ -179,7 +179,8 @@ export class TickerplantLog {
     } else {
       this.panel.title = title;
       this.panel.reveal();
-      void this.post({ type: "log", log: this.log, port: this.local?.port });
+      // The page lists the new log from its start, not the last one's (#1258).
+      void this.received({ type: "ready" });
     }
   }
 

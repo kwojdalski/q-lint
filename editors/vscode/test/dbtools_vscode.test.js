@@ -441,3 +441,23 @@ test("Load Schema loads a q file whose path has a space, and the local q keeps i
   fs.writeFileSync(path.join(path.dirname(file), "cut.log"), b.subarray(0, b.length - 4));
   assert.strictEqual(await log.open(path.join(path.dirname(file), "cut.log")), "1 messages");
 });
+
+test("opening a second log lists its messages, not the first one's (#1258)", { skip: Q ? false : "QLINT_TEST_Q names no q binary" }, async (t) => {
+  capture();
+  stub.reset();
+  stub.config.user["terminal.qBinary"] = Q;
+  const context = stub.newContext();
+  const log = new TickerplantLog(context);
+  t.after(() => log.close());
+  const file = tpLogFile(t);
+  assert.strictEqual(await log.open(file), "2 messages");
+  await log.receive({ type: "ready" });
+  const b = fs.readFileSync(file);
+  const cut = path.join(path.dirname(file), "cut.log");
+  fs.writeFileSync(cut, b.subarray(0, b.length - 4));
+  log.posted.length = 0;
+  assert.strictEqual(await log.open(cut), "1 messages");
+  await new Promise((r) => setTimeout(r, 200));
+  assert.deepStrictEqual(log.posted.map((m) => m.type), ["log", "page"]);
+  assert.deepStrictEqual(log.posted[1].rows.map((r) => r.index), [0]);
+});
