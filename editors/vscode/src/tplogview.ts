@@ -90,12 +90,18 @@ export async function startLocalQ(binary: string, env: Record<string, string>, t
 
 export function stopLocalQ(local: LocalQ): void {
   local.connection?.abort();
+  const remove = (): void => {
+    try {
+      rmSync(local.dir, { recursive: true, force: true });
+    } catch {
+      // Left for the system's temporary directory to clear.
+    }
+  };
+  // On Windows a q's directory cannot be removed while the q runs, and a
+  // kill does not wait for it to exit: removed again once it has (#1287).
+  if (local.child.pid !== undefined && local.child.exitCode === null && local.child.signalCode === null) local.child.once("exit", remove);
   if (local.child.exitCode === null) local.child.kill("SIGKILL");
-  try {
-    rmSync(local.dir, { recursive: true, force: true });
-  } catch {
-    // Left for the system's temporary directory to clear.
-  }
+  remove();
 }
 
 export class TickerplantLog {
