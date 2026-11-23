@@ -3516,7 +3516,7 @@ mod tests {
 
         // And each key the server reads is in it. The pointers are read
         // from this file's source, where `Options::read` names them.
-        let source = include_str!("lsp.rs");
+        let source = include_str!("lsp.rs").replace("\r\n", "\n");
         let body = &source[source.find("fn read(params: &Value)").unwrap()..];
         let body = &body[..body.find("\n    }\n").unwrap()];
         let mut read: Vec<String> = ["flag(\"", "init.pointer(\"", "strings(\""]
