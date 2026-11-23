@@ -449,8 +449,11 @@ and clicking it switches. The commands:
   `{"processes": [{"label", "host", "port", "user"?, "tags"?, "tls"?}]}`,
   and any of `init`, `initFile`, `ssh`, `gateway` and `launch` (below).
   An import replaces processes of the same label, adds the rest, and says
-  which entries it skipped. A process it moves to another host, port or
-  user forgets its stored password, so that is never sent to the new one.
+  which entries it skipped. One that would take away a process's TLS, SSH
+  tunnel or a tag the read-only guard guards is asked about first. A process
+  it moves to another host, port or user, or reaches another way (TLS or a
+  tunnel changed), forgets its stored password, so that is never sent to
+  the new one.
 - **Set Connect Script**, on a process row: q code, or a q file, run on
   the process at every connect - the first, a reconnect after an abort, and
   an automatic reconnect - before any query is sent, as a query runs it

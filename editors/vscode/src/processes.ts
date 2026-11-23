@@ -318,16 +318,62 @@ export function merge(processes: Process[], incoming: Process[]): Process[] {
 }
 
 /// The labels of the processes `merge` replaces with one at another host,
-/// port or user: their stored password was given for the old one, and is
-/// not to be sent to the new.
+/// port or user, or reached another way - TLS or an SSH tunnel added or
+/// taken away (#1269): their stored password was given for the old one, and
+/// is not to be sent to the new.
 export function passwordsToForget(processes: Process[], incoming: Process[]): string[] {
   const byLabel = new Map(incoming.map((p) => [p.label, p]));
   return processes
     .filter((p) => {
       const next = byLabel.get(p.label);
-      return next !== undefined && (next.host !== p.host || next.port !== p.port || next.user !== p.user);
+      return (
+        next !== undefined &&
+        (next.host !== p.host || next.port !== p.port || next.user !== p.user || (next.tls === true) !== (p.tls === true) || next.ssh !== p.ssh)
+      );
     })
     .map((p) => p.label);
+}
+
+/// The processes in `incoming` that take away what protects the one of
+/// their label in `before`: its TLS, its SSH tunnel, or a tag of
+/// `guardTags` (the read-only guard's). An import asks before taking them,
+/// since a list written elsewhere drops them silently (#1269).
+export function protectionsRemoved(before: Process[], incoming: Process[], guardTags: string[]): { label: string; what: string[] }[] {
+  const had = new Map(before.map((p) => [p.label, p]));
+  return incoming
+    .map((p) => {
+      const old = had.get(p.label);
+      const what: string[] = [];
+      if (old?.tls === true && p.tls !== true) {
+        what.push("TLS");
+      }
+      if (old?.ssh !== undefined && p.ssh === undefined) {
+        what.push("SSH tunnel");
+      }
+      const kept = new Set(p.tags.map((t) => t.trim().toLowerCase()));
+      const tags = (old?.tags ?? []).filter((t) => guardTags.includes(t.trim().toLowerCase()) && !kept.has(t.trim().toLowerCase()));
+      if (tags.length > 0) {
+        what.push(`tag ${tags.join(", ")}`);
+      }
+      return { label: p.label, what };
+    })
+    .filter(({ what }) => what.length > 0);
+}
+
+/// `process` with the TLS, SSH tunnel and guarded tags `old` has and it
+/// does not: an import taken without removing them.
+export function withProtections<P extends Process>(process: P, old: Process | undefined, guardTags: string[]): P {
+  if (old === undefined) {
+    return process;
+  }
+  const kept = new Set(process.tags.map((t) => t.trim().toLowerCase()));
+  const tags = old.tags.filter((t) => guardTags.includes(t.trim().toLowerCase()) && !kept.has(t.trim().toLowerCase()));
+  return {
+    ...process,
+    ...(old.tls === true ? { tls: true } : {}),
+    ...(process.ssh === undefined && old.ssh !== undefined ? { ssh: old.ssh } : {}),
+    tags: [...process.tags, ...tags],
+  };
 }
 
 /// The view's top level: a group per tag, sorted, each holding its processes

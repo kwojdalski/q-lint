@@ -49,11 +49,13 @@ import {
   portProblem,
   processThemeColour,
   processTooltip,
+  protectionsRemoved,
   readProcessFile,
   sshDestination,
   serverTypes,
   tlsChoices,
   withExtras,
+  withProtections,
   type Process,
 } from "./processes";
 import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
@@ -782,7 +784,16 @@ export class Live {
         }
         await this.context.workspaceState.update(
           SHARED_SEEN_KEY,
-          read.processes.map(({ label, host, port, user }) => ({ label, host, port, ...(user !== undefined ? { user } : {}) })),
+          // With how it is reached, so a list that turns off TLS or a tunnel
+          // forgets the password too (#1269).
+          read.processes.map(({ label, host, port, user, tls, ssh }) => ({
+            label,
+            host,
+            port,
+            ...(user !== undefined ? { user } : {}),
+            ...(tls === true ? { tls } : {}),
+            ...(ssh !== undefined ? { ssh } : {}),
+          })),
         );
         if (run !== this.sharedRead) {
           return;
@@ -1362,6 +1373,30 @@ export class Live {
         processes = processes.map((p) => (labels.has(p.label) ? onConnectOf(p, old.get(p.label)) : p));
       }
     }
+    // Nor is what protects a process taken away unasked: its TLS, its SSH
+    // tunnel, a tag the read-only guard guards it by (#1269).
+    const guardTags = this.setting(readGuard).tags;
+    const removed = protectionsRemoved(before, processes, guardTags);
+    if (removed.length > 0) {
+      const keep = "Keep Them";
+      const drop = "Import as Written";
+      const listed = `${removed.slice(0, 5).map(({ label, what }) => `${label} (${what.join(", ")})`).join(", ")}${removed.length > 5 ? ", ..." : ""}`;
+      const answer = await window.showWarningMessage(
+        `${files[0].fsPath} takes from ${removed.length} process(es) what protects them - TLS, an SSH tunnel, a tag the read-only guard guards: ${listed}. Keep them?`,
+        { modal: true },
+        keep,
+        drop,
+      );
+      if (answer === undefined) {
+        return;
+      }
+      if (answer === keep) {
+        const old = new Map(before.map((p) => [p.label, p]));
+        const labels = new Set(removed.map(({ label }) => label));
+        processes = processes.map((p) => (labels.has(p.label) ? withProtections(p, old.get(p.label), guardTags) : p));
+      }
+    }
+    // Reached another way - TLS or a tunnel changed - its password is forgotten.
     for (const label of passwordsToForget(before, processes)) {
       await this.context.secrets.delete(passwordKey({ label }));
     }

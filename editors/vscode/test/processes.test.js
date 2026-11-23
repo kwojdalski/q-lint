@@ -88,6 +88,27 @@ test("an import that moves a process to another host or user forgets its passwor
   const saved = [p("a", "h1", "u"), p("b", "h1", "u"), p("c", "h1", "u"), p("d", "h1", "u"), p("e", "h1", "u")];
   const incoming = [p("a", "h1", "u"), p("b", "evil", "u"), p("c", "h1", "v"), p("d", "h1", "u", 6000), p("new", "h", "u")];
   assert.deepStrictEqual(passwordsToForget(saved, incoming), ["b", "c", "d"]);
+  // Reached another way - TLS or a tunnel on or off - is another host too (#1269).
+  const reached = [p("t", "h1", "u"), p("s", "h1", "u"), p("x", "h1", "u")].map((q, i) => (i === 0 ? { ...q, tls: true } : i === 1 ? { ...q, ssh: "jump" } : q));
+  assert.deepStrictEqual(passwordsToForget(reached, [p("t", "h1", "u"), p("s", "h1", "u"), { ...p("x", "h1", "u"), ssh: "other" }]), ["t", "s", "x"]);
+  assert.deepStrictEqual(passwordsToForget(reached, reached), []);
+});
+
+test("an import that takes away TLS, a tunnel or a guarded tag says what (#1269)", () => {
+  const { protectionsRemoved, withProtections } = require("../out/processes.js");
+  const guard = ["prod", "prd", "production"];
+  const before = [
+    { label: "a", host: "h", port: 1, tags: ["Prod", "eu"], tls: true, ssh: "jump" },
+    { label: "b", host: "h", port: 2, tags: ["dev"] },
+  ];
+  const incoming = [
+    { label: "a", host: "h", port: 1, tags: ["eu"] },
+    { label: "b", host: "h", port: 2, tags: [] },
+    { label: "n", host: "h", port: 3, tags: [] },
+  ];
+  assert.deepStrictEqual(protectionsRemoved(before, incoming, guard), [{ label: "a", what: ["TLS", "SSH tunnel", "tag Prod"] }]);
+  assert.deepStrictEqual(withProtections(incoming[0], before[0], guard), { label: "a", host: "h", port: 1, tags: ["eu", "Prod"], tls: true, ssh: "jump" });
+  assert.deepStrictEqual(protectionsRemoved(before, before, guard), []);
 });
 
 test("a console size of the wrong type, as settings.json allows, is no size instead of failing every query", () => {
