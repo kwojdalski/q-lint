@@ -108,6 +108,26 @@ test("Launcher.interrupt signals only a process it started and that still runs",
   for (const d of context.subscriptions) d.dispose?.();
 });
 
+test("on Windows Interrupt Query sends nothing: kill() there ends q (#1250)", async (t) => {
+  const platform = Object.getOwnPropertyDescriptor(process, "platform");
+  Object.defineProperty(process, "platform", { value: "win32" });
+  t.after(() => Object.defineProperty(process, "platform", platform));
+  stub.reset();
+  const context = stub.newContext();
+  const launcher = new Launcher(context, { launched: undefined, refreshProcesses() {} });
+  const sent = [];
+  launcher.started.set("mine", { child: { pid: 42, exitCode: null, signalCode: null, kill: (s) => sent.push(s) } });
+  assert.strictEqual(launcher.interrupt("mine"), undefined);
+  launcher.started.clear();
+  for (const d of context.subscriptions) d.dispose?.();
+  const { timeouts, live } = await setUp(t, [{ label: "a", host: "h", port: 1, tags: [] }], { interrupt: (l) => (sent.push(l), 1) });
+  live.activeProcess = () => ({ label: "a", host: "h", port: 1, tags: [] });
+  live.isBusy = () => true;
+  assert.strictEqual(timeouts.interrupt(), undefined);
+  assert.match(stub.messages.at(-1)[1], /cannot be interrupted on Windows.*Abort Current Query/);
+  assert.deepStrictEqual(sent, []);
+});
+
 test("Interrupt Query with nothing running, or a process not started here, sends no signal", async (t) => {
   const sent = [];
   const { timeouts, live } = await setUp(t, [{ label: "a", host: "h", port: 1, tags: [] }], { interrupt: (l) => (sent.push(l), undefined) });

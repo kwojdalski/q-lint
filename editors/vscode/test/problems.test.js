@@ -20,6 +20,17 @@ const noQlinter = fs.existsSync(QLINTER) ? false : "no qlinter built at target/r
 
 const F = (p, code, severity = "warning") => ({ path: p, code, rule: code.toLowerCase(), severity, category: "c" });
 
+test("a folder opened through a symlink counts its files under their folders, not \".\" (#1288)", () => {
+  // qlinter names each file by its real path; the folder is as it was opened.
+  const opened = path.resolve("/link");
+  const real = path.resolve("/proj");
+  const s = summarise([F(path.join(real, "src/a/x.q"), "QE004"), F(path.join(real, "top.q"), "QS001")], [opened, real]);
+  assert.deepStrictEqual(s.folders.map((f) => f.folder).sort(), [".", "src/a"]);
+  assert.strictEqual(folderOf(path.join(real, "src/a/x.q"), [opened, real]), "src/a");
+  assert.strictEqual(folderOf(path.join(opened, "src/x.q"), [opened, real]), "src");
+  assert.strictEqual(folderOf(path.resolve("/elsewhere/src/x.q"), [opened, real]), ".");
+});
+
 test("findings are counted by rule and by folder, with their files", () => {
   const root = path.resolve("/ws");
   const findings = [
@@ -144,6 +155,26 @@ function fakePanels() {
   };
   return panels;
 }
+
+test("the dashboard of a folder opened through a symlink, and with no qlinter to run", { skip: noQlinter }, async (t) => {
+  stub.reset();
+  fakePanels();
+  const real = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-dash-"));
+  fs.mkdirSync(path.join(real, "src", "x"), { recursive: true });
+  fs.writeFileSync(path.join(real, "src", "x", "a.q"), "f:{[x] x==1}\n");
+  const link = `${real}-link`;
+  fs.symlinkSync(real, link, "dir");
+  t.after(() => fs.rmSync(link, { force: true }));
+  const context = stub.newContext();
+  let command = QLINTER;
+  registerProblemsDashboard(context, () => ({ command, args: [] }));
+  t.after(() => context.subscriptions.forEach((d) => d.dispose?.()));
+  const view = await stub.commands.get(SHOW_PROBLEMS)(link);
+  assert.deepStrictEqual(view.summary.folders.map((f) => f.folder), ["src/x"]);
+  // None configured, bundled or on PATH (#1251): said, nothing run.
+  command = undefined;
+  assert.strictEqual(await stub.commands.get(SHOW_PROBLEMS)(link), "q-lint: no qlinter to run: set q-lint.serverPath, or put qlinter on PATH.");
+});
 
 test("off, the dashboard refuses and lints nothing; on, it shows the folder and keeps the commit", { skip: noQlinter }, async (t) => {
   stub.reset();

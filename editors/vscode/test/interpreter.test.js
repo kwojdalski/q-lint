@@ -88,6 +88,11 @@ test("discovery reads real directories: fake installs under a temporary home", (
   assert.deepStrictEqual(I.layoutEnv(path.join(home, ".kx", "bin", "q"), nodeFiles), { QHOME: path.join(home, ".kx", "q"), QLIC: path.join(home, ".kx") });
   assert.deepStrictEqual(I.layoutEnv("q", nodeFiles), {}, "a bare name has no layout");
   assert.deepStrictEqual(I.layoutEnv(path.join(home, "ws", "q"), nodeFiles), {});
+  // A Windows binary by drive letter, and on a UNC share (#1285).
+  assert.deepStrictEqual(I.layoutEnv("C:\\q\\w64\\q.exe", fake({ "C:\\q\\q.k": "f" })), { QHOME: "C:\\q" });
+  const share = fake({ "\\\\srv\\kdb\\.kx\\q": "d", "\\\\srv\\kdb\\.kx\\kc.lic": "f", "\\\\srv\\kdb\\q\\q.k": "f" });
+  assert.deepStrictEqual(I.layoutEnv("\\\\srv\\kdb\\.kx\\bin\\q.exe", share), { QHOME: "\\\\srv\\kdb\\.kx\\q", QLIC: "\\\\srv\\kdb\\.kx" });
+  assert.deepStrictEqual(I.layoutEnv("\\\\srv\\kdb\\q\\w64\\q.exe", share), { QHOME: "\\\\srv\\kdb\\q" });
 });
 
 test("the licence file is located by QLIC, QHOME, a KDB-X install and ~/q, kc.lic first, and never read", () => {

@@ -449,8 +449,11 @@ and clicking it switches. The commands:
   `{"processes": [{"label", "host", "port", "user"?, "tags"?, "tls"?}]}`,
   and any of `init`, `initFile`, `ssh`, `gateway` and `launch` (below).
   An import replaces processes of the same label, adds the rest, and says
-  which entries it skipped. A process it moves to another host, port or
-  user forgets its stored password, so that is never sent to the new one.
+  which entries it skipped. One that would take away a process's TLS, SSH
+  tunnel or a tag the read-only guard guards is asked about first. A process
+  it moves to another host, port or user, or reaches another way (TLS or a
+  tunnel changed), forgets its stored password, so that is never sent to
+  the new one.
 - **Set Connect Script**, on a process row: q code, or a q file, run on
   the process at every connect - the first, a reconnect after an abort, and
   an automatic reconnect - before any query is sent, as a query runs it
@@ -662,7 +665,8 @@ Process**, in the palette while connected, stops the running query on a
 process started from the Processes view (**Start Process**) by sending it
 SIGINT: q ends the query with `'stop` and the connection stays, ready for
 the next query, where Abort can only stop waiting and reconnect. For any
-other process it says so and sends nothing. Their switches are
+other process it says so and sends nothing, and on Windows, where a
+signal ends the process, it sends nothing at all. Their switches are
 `q-lint.query.processTimeout.enable` and `q-lint.query.cancelLocal.enable`.
 
 **Run Query Asynchronously**, in a q editor's context menu, sends the
@@ -2807,7 +2811,7 @@ reaches the language server.
 
 | Setting | Default | What it does | q-pro |
 | --- | --- | --- | --- |
-| `q-lint.terminal.qBinary` | `"q"` | The q binary a terminal starts: a name on `PATH` or a path, where a leading `~` is your home directory. It is quoted for the terminal's shell (POSIX, PowerShell or cmd), so it names one program, not a command with arguments. | `q-terminal.cfg.qBinary` |
+| `q-lint.terminal.qBinary` | `"q"` | The q binary a terminal starts: a name on `PATH` or a path, where a leading `~` is your home directory. It is quoted for the terminal's shell (POSIX, PowerShell or cmd), so it names one program, not a command with arguments. cmd has no quoting for `"` or `%`, so a line with either - in the binary, the file or an env file's value - is refused there. | `q-terminal.cfg.qBinary` |
 | `q-lint.terminal.envPath` | `""` | A file of `NAME=value` lines set for q, such as `QHOME` and `QLIC`. They go on the command line that starts q (`NAME=value q`, `$env:NAME=` in PowerShell, `set` in cmd), so they win over what your shell's startup files set, and show there. Relative to the workspace folder; a leading `~` is your home directory. It is read, not run as a shell script as q-pro's is: `#` lines are comments, `export ` is allowed, quotes around a value are dropped, and nothing is expanded: `$HOME` stays `$HOME`. | `q-terminal.cfg.envPath` |
 | `q-lint.terminal.runWithArguments.enable` | `true` | **Run File with Arguments...**: run the file in its q terminal with a saved or new set of `.z.x` words and console input. The sets are kept per workspace, never in settings. Off, the command is hidden and refuses. | - |
 

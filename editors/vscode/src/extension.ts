@@ -89,6 +89,7 @@ import { registerSql } from "./sqlview";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { onPath } from "./relations";
 import {
   CloseAction,
   ErrorAction,
@@ -140,6 +141,21 @@ function serverChanged(): void {
 /// was never on PATH. The platform-neutral build carries none, and falls back
 /// to the setting. An explicit `q-lint.serverPath` always wins: someone who
 /// named a binary meant that one.
+/// `qlinter` from PATH, the server of last resort. Off Windows the bare name,
+/// which only PATH is asked for. On Windows the file PATH holds it in: a bare
+/// name there is looked for first in the directory it is started in - the
+/// workspace folder - so an untrusted folder's qlinter.exe would run (#1251).
+/// Undefined where PATH holds none.
+function pathServer(): string | undefined {
+  return onPath("qlinter", process.env.PATH, (file) => {
+    try {
+      return statSync(file).isFile();
+    } catch {
+      return false;
+    }
+  });
+}
+
 function bundledServer(context: ExtensionContext): string | undefined {
   const name = process.platform === "win32" ? "qlinter.exe" : "qlinter";
   const path = join(context.extensionPath, "server", name);
@@ -290,7 +306,7 @@ export async function activate(
   // The tools' qlinter is the one the server is started from.
   const assistTools = registerAssistTools(context, live, () => {
     const { serverPath } = launch(workspace.getConfiguration("q-lint"), workspace.workspaceFolders?.[0]?.uri.fsPath);
-    return serverPath ? [serverPath] : [bundledServer(context), "qlinter"].filter((c): c is string => !!c);
+    return serverPath ? [serverPath] : [bundledServer(context), pathServer()].filter((c): c is string => !!c);
   });
   const chatParticipant = registerChat(context, live);
   registerQsqlDraft(context, live);
@@ -336,7 +352,7 @@ export async function activate(
   // profile and configuration file the settings give it.
   const problemsDashboard = registerProblemsDashboard(context, () => {
     const settings = launch(workspace.getConfiguration("q-lint"), workspace.workspaceFolders?.[0]?.uri.fsPath);
-    const command = settings.serverPath || bundledServer(context) || "qlinter";
+    const command = settings.serverPath || bundledServer(context) || pathServer();
     return { command, args: settings.args.filter((a) => a !== "--lsp") };
   });
   const dbTools = registerDbTools(context, live);
@@ -348,7 +364,7 @@ export async function activate(
   const errorExplainer = registerErrorExplainer(context, live);
   registerBaseline(context, () => {
     const settings = launch(workspace.getConfiguration("q-lint"), workspace.workspaceFolders?.[0]?.uri.fsPath);
-    const command = settings.serverPath || bundledServer(context) || "qlinter";
+    const command = settings.serverPath || bundledServer(context) || pathServer();
     return { command, args: settings.args.filter((a) => a !== "--lsp") };
   });
   registerDeadCode(context, live, running);
@@ -474,7 +490,7 @@ async function start(context: ExtensionContext): Promise<void> {
   // PATH still gets its turn before the user sees an error.
   const candidates = configured
     ? [configured]
-    : [bundledServer(context), "qlinter"].filter((c): c is string => !!c);
+    : [bundledServer(context), pathServer()].filter((c): c is string => !!c);
 
   const args = settings.args;
   const options: LanguageClientOptions = {
@@ -556,8 +572,8 @@ async function start(context: ExtensionContext): Promise<void> {
   }
 
   {
-    const error = started;
-    const command = candidates.join('", "');
+    const error = started ?? (candidates.length === 0 ? "qlinter is not on PATH." : undefined);
+    const command = candidates.join('", "') || "qlinter";
     if (client === undefined && configured) {
       // The user named this binary, so the advice is about that setting -
       // not to install one and set it, which they did.

@@ -12,6 +12,7 @@
 // Content-Security-Policy that allows no inline code and no network; every
 // name goes in as text.
 import { randomBytes } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { ProgressLocation, Uri, ViewColumn, commands, window, workspace, type ExtensionContext, type Webview, type WebviewPanel } from "vscode";
 import { head, history, lintCommit, lintTree, pointOf, readTrend, summarise, withPoint, type DashboardView, type Point } from "./problems";
 import { TOOLING_COMMANDS, toolingOff, toolingOn } from "./toolingfeatures";
@@ -33,8 +34,11 @@ export interface RenderedDashboard {
 }
 
 /// `qlinter` and the arguments the dashboard runs it with: the profile and
-/// configuration file the settings name, as the server is started with.
-export type Linter = () => { command: string; args: string[] };
+/// configuration file the settings name, as the server is started with. No
+/// command where none is configured, bundled or on PATH.
+export type Linter = () => { command: string | undefined; args: string[] };
+
+const NO_QLINTER = "q-lint: no qlinter to run: set q-lint.serverPath, or put qlinter on PATH.";
 
 export function registerProblemsDashboard(
   context: ExtensionContext,
@@ -70,6 +74,9 @@ export function registerProblemsDashboard(
       return say("q-lint: open a folder first: the dashboard lints a workspace folder.");
     }
     const { command, args } = linter();
+    if (command === undefined) {
+      return say(NO_QLINTER);
+    }
     let view: DashboardView;
     try {
       const findings = await lintTree(command, args, folder);
@@ -86,7 +93,7 @@ export function registerProblemsDashboard(
         at: new Date().toISOString(),
         ...(at !== undefined ? { commit: at.commit } : {}),
         clean: at?.clean ?? false,
-        summary: summarise(findings, folder),
+        summary: summarise(findings, [folder, realFolder(folder)]),
         trend: points,
       };
     } catch (error) {
@@ -118,6 +125,9 @@ export function registerProblemsDashboard(
       return "no count";
     }
     const { command, args } = linter();
+    if (command === undefined) {
+      return say(NO_QLINTER);
+    }
     try {
       const commits = await history(folder, count);
       let points = trend(folder);
@@ -230,5 +240,15 @@ class DashboardPanel {
     if (this.shown !== undefined) {
       void this.panel?.webview.postMessage({ type: "problems", ...this.shown });
     }
+  }
+}
+
+/// `folder` with its symlinks resolved, as qlinter names the files in it;
+/// itself where that cannot be read.
+function realFolder(folder: string): string {
+  try {
+    return realpathSync(folder);
+  } catch {
+    return folder;
   }
 }

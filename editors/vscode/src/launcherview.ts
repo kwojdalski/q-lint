@@ -36,6 +36,9 @@ function listening(port: number): Promise<boolean> {
 export class Launcher {
   private readonly started = new Map<string, Started>();
   private readonly channels = new Map<string, OutputChannel>();
+  /// The labels being started: held from before the first await, so a
+  /// second Start while one is on its way is refused, not spawned (#1249).
+  private readonly starting = new Set<string>();
 
   constructor(
     context: ExtensionContext,
@@ -63,10 +66,11 @@ export class Launcher {
 
   /// Interrupt what `label`, started from here, is running (#1036): SIGINT,
   /// which q answers by stopping the call it is in with 'stop and running
-  /// on. The pid sent it, or undefined when `label` is not running from here.
+  /// on. The pid sent it, or undefined when `label` is not running from here,
+  /// or on Windows, where kill() ends the process whatever the signal (#1250).
   interrupt(label: string): number | undefined {
     const child = this.started.get(label)?.child;
-    if (child === undefined || child.exitCode !== null || child.signalCode !== null || child.pid === undefined) {
+    if (globalThis.process.platform === "win32" || child === undefined || child.exitCode !== null || child.signalCode !== null || child.pid === undefined) {
       return undefined;
     }
     child.kill("SIGINT");
@@ -99,11 +103,17 @@ export class Launcher {
     if (process === undefined) {
       return;
     }
-    if (this.started.has(process.label)) {
+    if (this.started.has(process.label) || this.starting.has(process.label)) {
       void window.showInformationMessage(plainMessage(`q-lint: ${process.label} is already running from here.`));
       return;
     }
-    const problem = await this.launch(process);
+    this.starting.add(process.label);
+    let problem: string | undefined;
+    try {
+      problem = await this.launch(process);
+    } finally {
+      this.starting.delete(process.label);
+    }
     if (problem !== undefined) {
       void window.showErrorMessage(plainMessage(`q-lint: ${problem}`));
       return;
@@ -123,8 +133,17 @@ export class Launcher {
     if (!this.started.has(label) || process === undefined) {
       return `${label} was not started from here, so it is not restarted from here.`;
     }
-    await this.end(label);
-    const problem = await this.launch(process);
+    if (this.starting.has(label)) {
+      return `${label} is already being started.`;
+    }
+    this.starting.add(label);
+    let problem: string | undefined;
+    try {
+      await this.end(label);
+      problem = await this.launch(process);
+    } finally {
+      this.starting.delete(label);
+    }
     if (problem !== undefined) {
       return problem;
     }

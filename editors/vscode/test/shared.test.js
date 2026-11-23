@@ -186,6 +186,17 @@ test("the shared list is listed, watched, and its processes connect like a disco
   assert.deepStrictEqual(tree.getChildren().map((r) => r.kind), ["process"]);
 });
 
+test("a shared list that turns TLS off, or adds or drops a tunnel, forgets the password (#1269)", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-shared-"));
+  write(dir, [{ label: "a", host: "h", port: 1, tls: true }, { label: "b", host: "h", port: 2, ssh: "jump" }, { label: "c", host: "h", port: 3 }]);
+  const { context, changed } = await setUp(t, dir);
+  await sleep(50);
+  for (const l of ["a", "b", "c"]) context.secrets.all.set(`q-lint.discoveredPassword..qlint/${l}`, "pw");
+  write(dir, [{ label: "a", host: "h", port: 1 }, { label: "b", host: "h", port: 2 }, { label: "c", host: "h", port: 3 }]);
+  await changed();
+  assert.deepStrictEqual(["a", "b", "c"].map((l) => context.secrets.all.has(`q-lint.discoveredPassword..qlint/${l}`)), [false, false, true]);
+});
+
 test("in an untrusted workspace, a shared process brings no connect script, tunnel or launch", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-shared-"));
   write(dir, [{ label: "a", host: "localhost", port: 1, init: "evil[]", ssh: "jump", launch: { command: "rm" } }]);

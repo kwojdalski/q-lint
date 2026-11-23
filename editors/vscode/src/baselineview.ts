@@ -53,7 +53,7 @@ function runQlinter(command: string, args: string[], cwd: string): Promise<{ cod
   });
 }
 
-export function registerBaseline(context: ExtensionContext, qlinter: () => { command: string; args: string[] }): void {
+export function registerBaseline(context: ExtensionContext, qlinter: () => { command: string | undefined; args: string[] }): void {
   const on = (): boolean => languageOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "baseline");
   context.subscriptions.push(
     commands.registerCommand(LANGUAGE_COMMANDS.writeBaseline, async () => {
@@ -75,6 +75,10 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
       const dir = folder.uri.fsPath;
       const target = join(dir, BASELINE_FILE);
       const { command, args } = qlinter();
+      if (command === undefined) {
+        void window.showWarningMessage("q-lint: no qlinter to run: set q-lint.serverPath, or put qlinter on PATH.");
+        return undefined;
+      }
       const scratch = mkdtempSync(join(tmpdir(), "qlint-baseline-"));
       try {
         const draft = join(scratch, BASELINE_FILE);

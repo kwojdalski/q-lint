@@ -49,11 +49,13 @@ import {
   portProblem,
   processThemeColour,
   processTooltip,
+  protectionsRemoved,
   readProcessFile,
   sshDestination,
   serverTypes,
   tlsChoices,
   withExtras,
+  withProtections,
   type Process,
 } from "./processes";
 import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
@@ -400,7 +402,8 @@ export class QTerminals {
   /// `file` if one is given, with the variables of `q-lint.terminal.envPath`
   /// set for it. It starts in the workspace folder of `from`, so a script's
   /// relative `\l` reads as it does from a shell there. Undefined if the env
-  /// file cannot be read; `before` runs only once it can start.
+  /// file cannot be read, or cmd cannot pass the line; `before` runs only
+  /// once it can start.
   private async start(name: string, from: Uri | undefined, file?: string, before?: () => void, extraArgs: string[] = []): Promise<Terminal | undefined> {
     const configuration = workspace.getConfiguration("q-lint", from);
     const read = readTerminal((key, fallback) => configuration.get(key, fallback));
@@ -437,6 +440,15 @@ export class QTerminals {
     // its command line, where they would show; the layout's stay under the
     // env file's.
     const { shown, hidden } = terminalEnv(layoutEnvFor(read.qBinary, from), variables, await dotenvFor(from));
+    // A file inside the folder is named relative to it, as you would type it.
+    const relative = file !== undefined && cwd !== undefined ? path.relative(cwd, file) : "";
+    const inside = relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+    const args = file === undefined ? [] : [inside ? relative : file, ...extraArgs];
+    const line = commandLine(settings.qBinary, args, shellKind(env.shell), shown);
+    if (typeof line !== "string") {
+      void window.showErrorMessage(`q-lint: ${line.error}`);
+      return undefined;
+    }
     before?.();
     const terminal = window.createTerminal({ name, cwd, ...(Object.keys(hidden).length > 0 ? { env: hidden } : {}) });
     this.ours.add(terminal);
@@ -444,11 +456,7 @@ export class QTerminals {
       this.files.set(terminal, file);
     }
     this.last = terminal;
-    // A file inside the folder is named relative to it, as you would type it.
-    const relative = file !== undefined && cwd !== undefined ? path.relative(cwd, file) : "";
-    const inside = relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
-    const args = file === undefined ? [] : [inside ? relative : file, ...extraArgs];
-    terminal.sendText(commandLine(settings.qBinary, args, shellKind(env.shell), shown), true);
+    terminal.sendText(line, true);
     return terminal;
   }
 }
@@ -784,7 +792,16 @@ export class Live {
         }
         await this.context.workspaceState.update(
           SHARED_SEEN_KEY,
-          read.processes.map(({ label, host, port, user }) => ({ label, host, port, ...(user !== undefined ? { user } : {}) })),
+          // With how it is reached, so a list that turns off TLS or a tunnel
+          // forgets the password too (#1269).
+          read.processes.map(({ label, host, port, user, tls, ssh }) => ({
+            label,
+            host,
+            port,
+            ...(user !== undefined ? { user } : {}),
+            ...(tls === true ? { tls } : {}),
+            ...(ssh !== undefined ? { ssh } : {}),
+          })),
         );
         if (run !== this.sharedRead) {
           return;
@@ -1364,6 +1381,30 @@ export class Live {
         processes = processes.map((p) => (labels.has(p.label) ? onConnectOf(p, old.get(p.label)) : p));
       }
     }
+    // Nor is what protects a process taken away unasked: its TLS, its SSH
+    // tunnel, a tag the read-only guard guards it by (#1269).
+    const guardTags = this.setting(readGuard).tags;
+    const removed = protectionsRemoved(before, processes, guardTags);
+    if (removed.length > 0) {
+      const keep = "Keep Them";
+      const drop = "Import as Written";
+      const listed = `${removed.slice(0, 5).map(({ label, what }) => `${label} (${what.join(", ")})`).join(", ")}${removed.length > 5 ? ", ..." : ""}`;
+      const answer = await window.showWarningMessage(
+        `${files[0].fsPath} takes from ${removed.length} process(es) what protects them - TLS, an SSH tunnel, a tag the read-only guard guards: ${listed}. Keep them?`,
+        { modal: true },
+        keep,
+        drop,
+      );
+      if (answer === undefined) {
+        return;
+      }
+      if (answer === keep) {
+        const old = new Map(before.map((p) => [p.label, p]));
+        const labels = new Set(removed.map(({ label }) => label));
+        processes = processes.map((p) => (labels.has(p.label) ? withProtections(p, old.get(p.label), guardTags) : p));
+      }
+    }
+    // Reached another way - TLS or a tunnel changed - its password is forgotten.
     for (const label of passwordsToForget(before, processes)) {
       await this.context.secrets.delete(passwordKey({ label }));
     }

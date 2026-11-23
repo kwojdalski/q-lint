@@ -101,7 +101,8 @@ export function discover(where: Where, files: Files): Interpreter[] {
 /// `QLIC=<home>`, as KX's installer lays it out. Anything else: none, and q
 /// reads what the environment says.
 export function layoutEnv(binary: string, files: Files): Record<string, string> {
-  const p = /^[A-Za-z]:[\\/]/.test(binary) ? path.win32 : path.posix;
+  // A Windows path by drive letter or on a UNC share (\\server\share).
+  const p = /^([A-Za-z]:[\\/]|\\\\)/.test(binary) ? path.win32 : path.posix;
   if (!p.isAbsolute(binary)) {
     return {};
   }
