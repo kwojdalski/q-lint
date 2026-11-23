@@ -820,6 +820,24 @@ pub(crate) fn infix_text(n: &Node) -> Result<String, String> {
     })
 }
 
+/// `text` as one item of a qSQL list: in parentheses where a `,` outside
+/// any bracket or string would split it into two.
+fn one_item(text: String) -> String {
+    let (mut depth, mut string, mut escape) = (0i32, false, false);
+    for c in text.bytes() {
+        match c {
+            _ if escape => escape = false,
+            b'\\' if string => escape = true,
+            b'"' => string = !string,
+            b'(' | b'[' | b'{' if !string => depth += 1,
+            b')' | b']' | b'}' if !string => depth -= 1,
+            b',' if !string && depth == 0 => return format!("({text})"),
+            _ => {}
+        }
+    }
+    text
+}
+
 /// The trees a functional form's where argument lists.
 fn where_list(d: &Data) -> Result<Vec<Node>, String> {
     match d {
@@ -861,7 +879,7 @@ fn column_text(cols: &[(String, Node)]) -> Result<String, String> {
     let mut seen: Vec<String> = vec![];
     let mut out = vec![];
     for (name, n) in cols {
-        let text = infix_text(n)?;
+        let text = one_item(infix_text(n)?);
         let implied = match derived(n) {
             Derived::Name(n) => Some(n),
             Derived::X => Some("x".into()),
@@ -972,7 +990,7 @@ fn from_functional(verb: u8, args: &[&str]) -> Result<String, String> {
         .unwrap_or(table);
     let wheres = where_list(&data(args[1])?)?
         .iter()
-        .map(infix_text)
+        .map(|n| infix_text(n).map(one_item))
         .collect::<Result<Vec<_>, _>>()?;
     let b = data(args[2])?;
     let a = data(args[3])?;
@@ -997,7 +1015,7 @@ fn from_functional(verb: u8, args: &[&str]) -> Result<String, String> {
             if exec {
                 let cols = match &a {
                     Data::Dict(..) => column_text(&dict_items(&a)?)?,
-                    other => infix_text(&node(other)?)?,
+                    other => one_item(infix_text(&node(other)?)?),
                 };
                 return Ok(format!("exec {cols}{} from {table}{tail}", by_text(&b)?));
             }

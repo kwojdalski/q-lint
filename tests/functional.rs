@@ -117,6 +117,15 @@ const CASES: &[(&str, &str)] = &[
         "select e:enlist px from t",
         "?[t;();0b;(enlist`e)!enlist (enlist;`px)]",
     ),
+    // A `,` in a column or a constraint is bracketed, or it splits the list.
+    (
+        "select d:(px,px) from t",
+        "?[t;();0b;(enlist`d)!enlist (,;`px;`px)]",
+    ),
+    (
+        "select from t where size in (10,20)",
+        "?[t;enlist (in;`size;(,;10;20));0b;()]",
+    ),
     (
         "delete from t where px>2",
         "![t;enlist (>;`px;2);0b;`symbol$()]",
