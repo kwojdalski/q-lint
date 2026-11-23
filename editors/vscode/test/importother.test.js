@@ -40,6 +40,8 @@ test("qStudio's Copy Server List lines: names, folders, types; the password neve
 
 test("qStudio's <serverlist> XML: kdb servers only, entities read, the password never read", () => {
   assert.strictEqual(xmlUnescape("a &amp; &lt;b&gt; &#65;&#x42;"), "a & <b> AB");
+  // A number no character has is kept as written, not the whole import lost (#1273).
+  assert.strictEqual(xmlUnescape("a&#x110000;b&#99999999;c&#0;&#x10FFFF;"), "a&#x110000;b&#99999999;c&#0;\u{10FFFF}");
   const read = readQStudioXml(XML);
   assert.deepStrictEqual(read.processes, [
     { label: "rdb", host: "rdb.example.com", port: 5010, user: "me", tags: ["desk"] },
