@@ -17,7 +17,9 @@
 // A symbol default is enumerated against the root's `sym` file, which it
 // extends; a cast to `s` enumerates the same way. Setting an attribute, or
 // casting, reads the whole column of each partition and writes it back: the
-// script's header says so. Works on kdb+ (KDB-X) and PeachQ; held there by
+// script's header says so. A rename moves the column's files with the
+// shell's mv (move on Windows), each path quoted for that shell: q has no
+// rename of its own, and rewriting the column would read all of it. Works on kdb+ (KDB-X) and PeachQ; held there by
 // dbtools_q.test.js.
 
 export type ColumnOp =
@@ -110,7 +112,7 @@ export const HELPERS = [
   '.qlint.cm.nested:{[c] c,`$string[c],/:("#";"##")}',
   ".qlint.cm.add:{[c;v;d] cs:.qlint.cm.cols d; if[c in cs;:`$\"has \",string c]; (` sv d,c) set count[get ` sv d,first cs]#enlist .qlint.cm.enum v; (` sv d,`.d) set cs,c; `ok}",
   ".qlint.cm.del:{[c;d] cs:.qlint.cm.cols d; if[not c in cs;:`$\"no \",string c]; {if[not ()~key x;hdel x]} each ` sv' d,/:.qlint.cm.nested c; (` sv d,`.d) set cs except c; `ok}",
-  '.qlint.cm.mv:{[d;a;b] f:` sv d,a; if[not ()~key f; system $["w"=first string .z.o;"move ";"mv "],(1_string f)," ",1_string ` sv d,b]}',
+  '.qlint.cm.mv:{[d;a;b] f:` sv d,a; if[not ()~key f; w:"w"=first string .z.o; p:$[w;{"\\"",x,"\\""};{"\'",ssr[x;"\'";"\'\\\\\'\'"],"\'"}]; system $[w;"move ";"mv "],p[1_string f]," ",p 1_string ` sv d,b]}',
   ".qlint.cm.ren:{[o;n;d] cs:.qlint.cm.cols d; if[not o in cs;:`$\"no \",string o]; if[n in cs;:`$\"has \",string n]; .qlint.cm.mv[d]'[.qlint.cm.nested o;.qlint.cm.nested n]; (` sv d,`.d) set @[cs;cs?o;:;n]; `ok}",
   '.qlint.cm.cast:{[c;t;d] if[not c in .qlint.cm.cols d;:`$"no ",string c]; f:` sv d,c; v:get f; a:attr v; f set a#$["s"=t;.qlint.cm.enum`$string v;t$v]; `ok}',
   ".qlint.cm.attr:{[c;a;d] if[not c in .qlint.cm.cols d;:`$\"no \",string c]; f:` sv d,c; f set a#get f; `ok}",

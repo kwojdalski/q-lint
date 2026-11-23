@@ -130,6 +130,22 @@ test("the column manager's add with a list default gives every row that list (#1
   assert.strictEqual(await connection.call("{exec t from meta trade where c=`n}", 0), "j");
 });
 
+test("the column manager renames under a root with a space and a quote in its path (#1083)", { skip }, async (t) => {
+  const source = [
+    'r:hsym`$"$DIR/it\'s a db";',
+    "{[r;d] .Q.dd[r;d,`trade`] set .Q.en[r] ([] sym:`a`b;px:1 2f;s:(\"xa\";\"yb\"))}[r] each 2026.01.05 2026.01.06;",
+    'system "cd $DIR/it\'s a db";',
+    'system "l .";',
+    "",
+  ].join("\n");
+  const { connection } = await connect(t, source);
+  assert.match(await run(connection, columnScript("trade", { op: "rename", column: "px", to: "price" }, "hdb")), /changed 2 of 2 directories/);
+  assert.match(await run(connection, columnScript("trade", { op: "rename", column: "s", to: "note" }, "hdb")), /changed 2 of 2 directories/);
+  assert.deepStrictEqual(await connection.call("{exec c from meta trade}", 0), ["date", "sym", "price", "note"]);
+  assert.strictEqual(await connection.call("{exec t from meta trade where c=`note}", 0), "C");
+  assert.strictEqual(await connection.call("{\"f\"$count select from trade where note like \"[xy]?\"}", 0), 4);
+});
+
 test("the documenter reads tables, keys, foreign keys and functions", { skip }, async (t) => {
   const { connection } = await connect(t, HDB() + "\ns:([sym:`a`b] nm:(\"x\";\"y\"))\nf:([] sym:`s$`a`b`a; v:1 2 3)\nkt:([k:1 2] v:`p#`x`x)\n");
   const doc = readDoc(await connection.call(DOCUMENT, 100));
