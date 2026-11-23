@@ -414,6 +414,8 @@
   let heat = [];
   /// More rows were asked for, and have not come yet.
   let moreAsked = false;
+  /// The grid is being painted for a scroll to somewhere new.
+  let moved = false;
   /// What the chart last drew: its data and theme, for an image of it.
   let drawnChart = null;
   /// The linked panes' charts, while they are drawn.
@@ -995,10 +997,13 @@
       gridView.append(removedRows(result.diff.removed));
     }
     scroller.addEventListener("scroll", function () {
+      // Somewhere new, not the place a redraw put back.
+      moved = scroller.scrollTop !== state.top;
       // Kept, so a page reloaded - hidden and shown again - is back here.
       state.top = scroller.scrollTop;
       save();
       paint();
+      moved = false;
     });
     paint();
     if (state.top > 0) {
@@ -1337,8 +1342,10 @@
     body.replaceChildren.apply(body, out);
     dress = counts;
     rove();
-    // Near the end of the rows held: ask the process for the next page.
-    if (result.more && !moreAsked && rows.length > 0 && end >= rows.length - 10) {
+    // Near the end of the rows held: ask the process for the next page. With
+    // rows filtered out, only when scrolled there: few rows left by a filter
+    // are near their end as each page comes, and would fetch the whole result.
+    if (result.more && !moreAsked && rows.length > 0 && end >= rows.length - 10 && (moved || rows.length === rowCount(result.grid))) {
       moreAsked = true;
       vscode.postMessage({ type: "more", id: result.id });
     }

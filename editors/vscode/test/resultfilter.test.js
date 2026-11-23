@@ -74,3 +74,65 @@ test("visibleRows matches a cell's text or what `shown` says it shows (#1342)", 
   assert.deepStrictEqual(panel.visibleRows(grid, ["%", "B"], null, pct), [1]);
   assert.deepStrictEqual(panel.visibleRows(grid, ["%"], { column: 0, descending: false }, pct), [1, 0]);
 });
+
+/// `held` of a million rows, the process holding the rest.
+function paged(held) {
+  const cells = Array.from({ length: held }, (_, i) => "s" + i);
+  const m = result("s.1", [["sym", 11, cells]], { more: true, limit: 1000 });
+  m.grid.total = 1000000;
+  return m;
+}
+const scroller = (page) => page.body.all((e) => e.className === "scroller")[0];
+const scrollTo = (page, top) => {
+  scroller(page).scrollTop = top;
+  scroller(page).fire("scroll");
+};
+
+test("a filter that leaves few rows does not page the whole result in (#1343)", () => {
+  const page = loadPage(undefined);
+  const asked = () => page.posted.filter((m) => m.type === "more").length;
+  page.send(paged(1000));
+  assert.strictEqual(asked(), 0, "at the top of 1,000 rows");
+  // (A scroll that leaves the same rows drawn is not kept for the next paint.)
+  scrollTo(page, 3);
+  // One row matches: it is near the end of the rows shown, and nothing was scrolled.
+  type(filters(page)[0], "s999");
+  assert.strictEqual(page.rendered().rows, 1);
+  assert.strictEqual(asked(), 0);
+  // Load more still fetches a page, and the page that comes asks for no other.
+  page.button("Load more").fire("click");
+  assert.strictEqual(asked(), 1);
+  for (let k = 2; k <= 5; k++) {
+    page.send(paged(1000 * k));
+    // (A browser says the place put back after the redraw as a scroll.)
+    scroller(page).fire("scroll");
+  }
+  assert.strictEqual(page.rendered().rows, 1);
+  assert.strictEqual(asked(), 1);
+  assert.match(page.body.all((e) => e.className === "info")[0].textContent, /^1 shown, 5,000 of 1,000,000 rows/);
+});
+
+test("filtered or not, scrolling to the end of the rows shown asks for the next page, once a scroll (#1343)", () => {
+  const page = loadPage(undefined);
+  const asked = () => page.posted.filter((m) => m.type === "more").length;
+  page.send(paged(1000));
+  // "s1", "s10".."s19", "s100".."s199": 111 rows.
+  type(filters(page)[0], "s1");
+  assert.strictEqual(page.rendered().rows, 111);
+  scrollTo(page, 30 * 22);
+  assert.strictEqual(asked(), 0, "not at their end yet");
+  scrollTo(page, 111 * 22);
+  assert.strictEqual(asked(), 1);
+  // The next page comes, the grid is put back where it was: no scroll of the reader's.
+  page.send(paged(2000));
+  scroller(page).fire("scroll");
+  assert.strictEqual(asked(), 1);
+  // Scrolled on, to the end of what the filter now leaves: "s1000".."s1999" too.
+  assert.strictEqual(page.rendered().rows, 1111);
+  scrollTo(page, 1111 * 22);
+  assert.strictEqual(asked(), 2);
+  // Unfiltered, the rows held are near their end as soon as a short page is drawn.
+  const plain = loadPage(undefined);
+  plain.send(paged(5));
+  assert.strictEqual(plain.posted.filter((m) => m.type === "more").length, 1);
+});
