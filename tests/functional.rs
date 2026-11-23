@@ -112,6 +112,11 @@ const CASES: &[(&str, &str)] = &[
     ("delete px, size from t", "![t;();0b;`px`size]"),
     // One column is enlisted: `![t;();0b;`px]` is 'type.
     ("delete px from t", "![t;();0b;enlist`px]"),
+    // A one-item list is `enlist px`; `(px)` is the column itself.
+    (
+        "select e:enlist px from t",
+        "?[t;();0b;(enlist`e)!enlist (enlist;`px)]",
+    ),
     (
         "delete from t where px>2",
         "![t;enlist (>;`px;2);0b;`symbol$()]",

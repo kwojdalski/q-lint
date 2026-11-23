@@ -773,6 +773,8 @@ pub(crate) fn infix_text(n: &Node) -> Result<String, String> {
         Node::Name(n) => n.clone(),
         Node::Sym(s) => symbols(s),
         Node::Verb(v) => v.clone(),
+        // `(enlist;x)` is a one-item list, which `(x)` is not.
+        Node::List(items) if items.len() == 1 => format!("enlist {}", infix_text(&items[0])?),
         Node::List(items) => format!(
             "({})",
             items
@@ -784,11 +786,12 @@ pub(crate) fn infix_text(n: &Node) -> Result<String, String> {
         Node::Apply(f, args) => {
             let left = |x: &Node| -> Result<String, String> {
                 let t = infix_text(x)?;
-                Ok(if matches!(x, Node::Apply(..)) {
-                    format!("({t})")
-                } else {
-                    t
-                })
+                let wrap = match x {
+                    Node::Apply(..) => true,
+                    Node::List(items) => items.len() == 1,
+                    _ => false,
+                };
+                Ok(if wrap { format!("({t})") } else { t })
             };
             match (&**f, &args[..]) {
                 (Node::Verb(v), [x, y]) if v.bytes().all(|c| GLYPHS.contains(&c)) => {
