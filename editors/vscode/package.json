@@ -4210,6 +4210,18 @@
       ],
       "commandPalette": [
         {
+          "command": "q-lint.showDependencies",
+          "when": "q-lint.hasGraph"
+        },
+        {
+          "command": "q-lint.refreshDependencies",
+          "when": "q-lint.hasGraph"
+        },
+        {
+          "command": "q-lint.listAffectedTests",
+          "when": "q-lint.hasGraph"
+        },
+        {
           "command": "q-lint.previewProcessExplorerItem",
           "when": "false"
         },
