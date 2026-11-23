@@ -732,6 +732,20 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             false,
         ),
         ("QT029", "h:hopen[`db:5000]", "h:hopen[`:db:5000]", false),
+        // Each look-alike becomes its ASCII; the one in the string stays.
+        ("QE012", "r:1\u{a0}2", "r:1 2", true),
+        (
+            "QE012",
+            "r:\"\u{a0}\";s:1\u{a0}+2",
+            "r:\"\u{a0}\";s:1 +2",
+            true,
+        ),
+        ("QE012", "r:\u{2013}1", "r:-1", true),
+        ("QE012", "r:1\u{2014}2", "r:1-2", true),
+        ("QE012", "r:\u{2212}1", "r:-1", true),
+        ("QE012", "r:f\u{2018}x", "r:f'x", true),
+        ("QE012", "r:f\u{2019}x", "r:f'x", true),
+        ("QE012", "s:\u{201c}hi\u{201d}", "s:\"hi\"", true),
     ];
     for (code, source, expected, safe) in cases {
         let finding = lint(source, "probe.q", Profile::Uqf)
@@ -823,6 +837,9 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QT029", "h:hopen 1.5"),     // no handle it spells
         ("QT029", "h:hopen -1"),
         ("QT029", "h:hopen `"),
+        ("QE012", "s:\u{201c}hi"),            // no close on the line
+        ("QE012", "s:\u{201c}C:\\d\u{201d}"), // a backslash would be an escape
+        ("QE012", "a:`\u{e9}"),               // no ASCII it stands for
     ] {
         for finding in lint(source, "probe.q", Profile::Uqf)
             .iter()

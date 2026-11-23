@@ -2580,6 +2580,48 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 false,
             )
         }
+        // A look-alike pasted from a document becomes the ASCII it stands
+        // for: a no-break space a space, a dash or minus sign `-`, a curly
+        // quote a straight one. The line was 'char, so no working program
+        // changes. An opening double quote is a string only with its curly
+        // close on the line, and both are rewritten at once, or the close
+        // would be left inside the string.
+        "QE012" => {
+            let ch = source.get(start..)?.chars().next()?;
+            let ascii = match ch {
+                '\u{a0}' => " ",
+                '\u{2013}' | '\u{2014}' | '\u{2212}' => "-",
+                '\u{2018}' | '\u{2019}' => "'",
+                '\u{201c}' => "\"",
+                _ => return None,
+            };
+            let old = if ch == '\u{201c}' {
+                let body = start + ch.len_utf8();
+                let line =
+                    &source[body..source[body..].find('\n').map_or(source.len(), |p| body + p)];
+                let close = line.find('\u{201d}')?;
+                if line[..close].contains(['\\', '\u{201c}', '"']) {
+                    return None;
+                }
+                &source[start..body + close + '\u{201d}'.len_utf8()]
+            } else {
+                &source[start..start + ch.len_utf8()]
+            };
+            let replacement = if old.chars().count() > 1 {
+                format!(
+                    "\"{}\"",
+                    &old['\u{201c}'.len_utf8()..old.len() - '\u{201d}'.len_utf8()]
+                )
+            } else {
+                ascii.to_string()
+            };
+            (
+                old,
+                replacement.into(),
+                format!("Replace U+{:04X} with `{ascii}`", u32::from(ch)).into(),
+                true,
+            )
+        }
         _ => return None,
     };
     // An edit that leaves a `-` against a number makes it a negative
@@ -2620,9 +2662,10 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
     // which q 5 refuses with '- (#563). A blank keeps it a literal. Not
     // QP008's: its `-` follows an operand, where q 5 reads `a-2.5`, `1-2.5`
     // and `` `y-2.5 `` as minus, and a blank would be one F does not give
-    // back (#848).
+    // back (#848). Nor QE012's: a dash typed between operands, `1—2`, was
+    // meant as minus, which `1 -2` is not.
     let negative = next.starts_with('-') && numeric(&next[1..]);
-    let replacement = if finding.code != "QP008"
+    let replacement = if !matches!(finding.code.as_str(), "QP008" | "QE012")
         && (source[..begin].ends_with('-') && !numeric(&source[begin..]) && numeric(&next)
             || ends_in_token(&source[..begin]) && negative && !source[begin..].starts_with('-'))
     {
