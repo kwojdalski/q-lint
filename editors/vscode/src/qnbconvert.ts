@@ -269,14 +269,17 @@ function outputToJupyter(output: QnbOutput, order: number | undefined, last: boo
 /// The notebook as an nbformat 4.4 Jupyter notebook, as JSON text.
 export function toIpynb(qnb: Qnb): string {
   const cells = qnb.cells.map((cell): Json => {
+    // The attachments `fromIpynb` kept, which `![x](attachment:a.png)` in
+    // the cell's text names (#1234).
+    const attachments = cell.extra?.attachments !== undefined ? { attachments: cell.extra.attachments } : {};
     if (cell.kind === "markdown") {
-      return { cell_type: "markdown", metadata: cell.metadata ?? {}, source: jupyterLines(cell.source) };
+      return { cell_type: "markdown", metadata: cell.metadata ?? {}, source: jupyterLines(cell.source), ...attachments };
     }
     const language = cell.language ?? "q";
     // A Jupyter raw cell, which `fromIpynb` reads as a code cell in `raw`,
     // goes back as one (#1107).
     if (language === "raw") {
-      return { cell_type: "raw", metadata: cell.metadata ?? {}, source: jupyterLines(cell.source) };
+      return { cell_type: "raw", metadata: cell.metadata ?? {}, source: jupyterLines(cell.source), ...attachments };
     }
     const metadata: Json = { ...(cell.metadata ?? {}) };
     if (language !== "q") {
@@ -371,7 +374,7 @@ export function fromIpynb(raw: string): Qnb {
       return { kind: "markdown", source, ...kept, ...extra };
     }
     if (cell.cell_type === "raw") {
-      return { kind: "code", source, language: "raw", ...kept };
+      return { kind: "code", source, language: "raw", ...kept, ...extra };
     }
     const vscode = isObject(metadata.vscode) ? metadata.vscode : undefined;
     let language = typeof vscode?.languageId === "string" ? vscode.languageId.toLowerCase() : notebookLanguage;

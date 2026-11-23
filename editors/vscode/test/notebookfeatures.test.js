@@ -212,6 +212,21 @@ test("a Python notebook imports with its code as Python, a %%q cell as q, and it
   assert.throws(() => fromIpynb("[]"), /expected a JSON object with "cells"/);
 });
 
+test("a markdown or raw cell's attachments go back to Jupyter (#1234)", () => {
+  const png = { "image/png": "iVBORw==" };
+  const nb = {
+    nbformat: 4,
+    metadata: { kernelspec: { language: "q", name: "qpk" } },
+    cells: [
+      { cell_type: "markdown", metadata: {}, source: "![x](attachment:a.png)", attachments: { "a.png": png } },
+      { cell_type: "raw", metadata: {}, source: "r", attachments: { "b.png": png } },
+    ],
+  };
+  const back = JSON.parse(toIpynb(fromIpynb(JSON.stringify(nb))));
+  assert.deepStrictEqual(back.cells[0].attachments, { "a.png": png });
+  assert.deepStrictEqual(back.cells[1].attachments, { "b.png": png });
+});
+
 test("a jupyterq notebook's code cells are q", () => {
   const qnb = fromIpynb(JSON.stringify({ nbformat: 4, metadata: { kernelspec: { language: "q", name: "qpk" } }, cells: [{ cell_type: "code", source: "til 3", metadata: {}, outputs: [] }] }));
   assert.strictEqual(qnb.cells[0].language, undefined);
