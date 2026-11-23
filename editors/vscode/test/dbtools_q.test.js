@@ -303,6 +303,25 @@ test("a schema migration adds a mixed column to a table with rows (#1097)", { sk
   assert.strictEqual(await connection.call("{\"f\"$count select from a where 0=count each m}", 0), 2);
 });
 
+test("a tickerplant log's one-row messages, a list of atoms, have a time and are filtered by it (#1090)", { skip }, async (t) => {
+  const log = [
+    'f:hsym`$"$DIR/tp.log";',
+    ".[f;();:;()];",
+    "h:hopen f;",
+    "h enlist(`upd;`trade;(2026.01.05D09:00:00;`a;1f));",
+    "h enlist(`upd;`trade;(2026.01.05D11:00:00 2026.01.05D11:30:00;`b`c;2 3f));",
+    "hclose h;",
+    "",
+  ].join("\n");
+  const { connection, dir } = await connect(t, log + TPLOG_INIT + "\n");
+  readTpLog(await connection.call(".qlint.tp.load", path.join(dir, "tp.log")));
+  const all = readTpPage(await connection.call(".qlint.tp.page", "", NaN, NaN, 0, 100));
+  assert.deepStrictEqual(all.rows.map((r) => r.rows), [1, 2]);
+  assert.match(all.rows[0].time, /2026\.01\.05D09:00:00/);
+  const early = readTpPage(await connection.call(".qlint.tp.page", "", 8 * 3600000, 10 * 3600000, 0, 100));
+  assert.deepStrictEqual(early.rows.map((r) => r.index), [0]);
+});
+
 test("the tickerplant log is read, paged, filtered, shown and replayed in a q of its own", { skip }, async (t) => {
   const log = [
     'f:hsym`$"$DIR/tp.log";',
