@@ -20,7 +20,7 @@
 //   `` from (`t) ``), which changes it in place;
 // - `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`, `system`,
 //   `save`, `rsave`, `dsave`, `load`, `rload`, `.Q.dpft`, `.Q.dpfts`,
-//   `.Q.hdpf`, `.Q.en`, `.Q.chk` and `.Q.dsftg`, and `0:` or `1:` to a
+//   `.Q.hdpf`, `.Q.en`, `.Q.ens`, `.Q.chk` and `.Q.dsftg`, and `0:` or `1:` to a
 //   file handle (`` `:f 0: ``, `hsym[`f] 0:`, `(hsym `f) 1:`), and `2:`,
 //   each also by its `.q.` name (`.q.set`); `hopen` of a file handle
 //   (`` hopen `:f ``), which creates the file to write through - of a
@@ -89,7 +89,7 @@ const NAME = /[A-Za-z0-9_.]/;
 const OPERATORS = new Set([..."+-*%&|^=<>$,#_~!?@."]);
 const WRITERS = new Set([
   "set", "upsert", "insert", "hdel", "exit", "hclose", "system", "save", "rsave", "dsave", "load", "rload",
-  ".Q.dpft", ".Q.dpfts", ".Q.hdpf", ".Q.en", ".Q.chk", ".Q.dsftg",
+  ".Q.dpft", ".Q.dpfts", ".Q.hdpf", ".Q.en", ".Q.ens", ".Q.chk", ".Q.dsftg",
 ]);
 /// System commands that only read a setting when they are given no argument.
 const READS_BARE = new Set([..."abBcCdefgoOpPsSTvwWz", "cd"]);

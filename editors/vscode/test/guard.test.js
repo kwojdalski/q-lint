@@ -298,3 +298,7 @@ test("hopen of a file handle is a change; of a process handle it only connects (
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test(".Q.ens enumerates into a sym file and is a change (#1256)", () => {
+  assert.deepStrictEqual(writes(".Q.ens[`:db;([]s:`x`y);`sym]"), ["calls .Q.ens"]);
+});
