@@ -13,7 +13,7 @@
 import { execFile, spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative, sep } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 
 /// The part of a finding the dashboard reads.
 export interface Finding {
@@ -84,17 +84,23 @@ export interface Summary {
 }
 
 /// The folder a file is counted under: its directory relative to `root`, cut
-/// to `depth` parts, so a deep tree reads as its top folders.
-export function folderOf(path: string, root: string, depth = 2): string {
-  const rel = relative(root, path).split(sep).join("/");
-  const parts = rel.split("/").slice(0, -1);
-  if (parts.length === 0 || rel.startsWith("..")) {
-    return ".";
+/// to `depth` parts, so a deep tree reads as its top folders. `root` may be
+/// several spellings of one folder - as opened, and its real path, which is
+/// the one qlinter reports when it was opened through a symlink (#1288) -
+/// and the first the file is inside counts.
+export function folderOf(path: string, root: string | string[], depth = 2): string {
+  for (const r of typeof root === "string" ? [root] : root) {
+    const rel = relative(r, path).split(sep).join("/");
+    if (rel.startsWith("..") || isAbsolute(rel)) {
+      continue;
+    }
+    const parts = rel.split("/").slice(0, -1);
+    return parts.length === 0 ? "." : parts.slice(0, depth).join("/");
   }
-  return parts.slice(0, depth).join("/");
+  return ".";
 }
 
-export function summarise(findings: Finding[], root: string, depth = 2): Summary {
+export function summarise(findings: Finding[], root: string | string[], depth = 2): Summary {
   const rules = new Map<string, RuleCount & { paths: Set<string> }>();
   const folders = new Map<string, FolderCount & { paths: Set<string> }>();
   let errors = 0;

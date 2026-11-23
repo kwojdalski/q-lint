@@ -12,6 +12,7 @@
 // Content-Security-Policy that allows no inline code and no network; every
 // name goes in as text.
 import { randomBytes } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { ProgressLocation, Uri, ViewColumn, commands, window, workspace, type ExtensionContext, type Webview, type WebviewPanel } from "vscode";
 import { head, history, lintCommit, lintTree, pointOf, readTrend, summarise, withPoint, type DashboardView, type Point } from "./problems";
 import { TOOLING_COMMANDS, toolingOff, toolingOn } from "./toolingfeatures";
@@ -91,7 +92,7 @@ export function registerProblemsDashboard(
         at: new Date().toISOString(),
         ...(at !== undefined ? { commit: at.commit } : {}),
         clean: at?.clean ?? false,
-        summary: summarise(findings, folder),
+        summary: summarise(findings, [folder, realFolder(folder)]),
         trend: points,
       };
     } catch (error) {
@@ -238,5 +239,15 @@ class DashboardPanel {
     if (this.shown !== undefined) {
       void this.panel?.webview.postMessage({ type: "problems", ...this.shown });
     }
+  }
+}
+
+/// `folder` with its symlinks resolved, as qlinter names the files in it;
+/// itself where that cannot be read.
+function realFolder(folder: string): string {
+  try {
+    return realpathSync(folder);
+  } catch {
+    return folder;
   }
 }
