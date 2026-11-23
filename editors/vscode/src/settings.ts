@@ -119,6 +119,9 @@ function lineLength(value: unknown): number {
   return typeof value === "number" && Number.isInteger(value) && value >= 20 && value <= 400 ? value : 80;
 }
 
+/// The profiles qlinter takes: `q-lint.profile`'s enum.
+export const PROFILES = ["general", "style", "styleq", "uqf"] as const;
+
 /// `settings` as a launch. `folder` is the first workspace folder, which a
 /// relative `q-lint.configFile` is resolved against.
 export function launch(settings: Settings, folder: string | undefined): Launch {
@@ -128,9 +131,12 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
   // silently override the project's own `profile`. Left unset, the server
   // reads the repository's configuration, and uses `style` where there is
   // none - the same default this setting declares.
+  // One outside the setting's enum - hand-edited - is not passed: qlinter
+  // would refuse it and the server would not start (#1334).
   const profile = explicit<unknown>(settings, "profile");
-  if (typeof profile === "string" && profile.trim() !== "") {
-    args.push("--profile", profile.trim());
+  const named = typeof profile === "string" ? profile.trim().toLowerCase() : "";
+  if ((PROFILES as readonly string[]).includes(named)) {
+    args.push("--profile", named);
   }
   const setting = home(text(settings, "configFile"));
   const configFile = !setting
