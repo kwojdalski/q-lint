@@ -1408,3 +1408,15 @@ g:{[n;v] n set v}
 
 === QF005 profile: general | nor does it give an inner lambda the enclosing local (#837; q 5: 'cb)
 h:{[cb] {[x] string cb}[1]; cb set 2}
+
+=== QT036 | null of getenv tests each character (q 5: null getenv`UNSET is `boolean$(), and if on it is 'type; #1143)
+a:{$[null getenv`HOME;1;0]}
+b:null getenv`X
+c:null[getenv`X]
+d:{if[null getenv x; :0]; 1}
+
+=== clean | "" match, count, or all and any reducing the vector (#1143)
+a:""~getenv`X
+b:0=count getenv`X
+c:all null getenv`X
+d:any null getenv`X

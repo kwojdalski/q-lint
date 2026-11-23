@@ -3,7 +3,7 @@
   "displayName": "q-lint",
   "description": "q/kdb+ for VS Code: linting, Quick Fixes, navigation and help from the source, and connections to q processes to run code on.",
   "icon": "icon.png",
-  "version": "0.33.2",
+  "version": "0.34.0",
   "publisher": "wojdalski",
   "license": "MIT",
   "engines": {
@@ -20,6 +20,26 @@
     "onUri"
   ],
   "main": "./out/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Linting, Quick Fixes, navigation and colouring work in Restricted Mode: the linter reads q and never runs it. The settings that name a program, a command or the language server's arguments, and the read-only guard's, are taken from your user settings only, the workspace's .env is not given to q, q binaries in the workspace are not offered, and git is not run in it.",
+      "restrictedConfigurations": [
+        "q-lint.serverPath",
+        "q-lint.serverArgs",
+        "q-lint.profile",
+        "q-lint.configFile",
+        "q-lint.terminal.qBinary",
+        "q-lint.terminal.envPath",
+        "q-lint.env.enable",
+        "q-lint.env.file",
+        "q-lint.processes.launcher.enable",
+        "q-lint.connection.credentialCommand.enable",
+        "q-lint.processes.readOnlyGuard.enable",
+        "q-lint.processes.readOnlyGuard.tags"
+      ]
+    }
+  },
   "contributes": {
     "languages": [
       {
@@ -88,6 +108,18 @@
         "path": "./syntaxes/q-console.tmLanguage.json",
         "embeddedLanguages": {
           "meta.embedded.line.q": "q"
+        }
+      }
+   ,
+      {
+        "scopeName": "markdown.q.codeblock",
+        "path": "./syntaxes/markdown-q.tmLanguage.json",
+        "injectTo": [
+          "text.html.markdown"
+        ],
+        "embeddedLanguages": {
+          "meta.embedded.block.q": "q",
+          "meta.embedded.block.k": "k"
         }
       }
     ],
@@ -202,6 +234,12 @@
               "Lint when the file is opened and saved. Quick Fixes match the last saved lint, so they appear again after a save."
             ],
             "markdownDescription": "When to lint."
+          },
+          "q-lint.lint.workspaceScope.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 14,
+            "markdownDescription": "Show problems for every `.q` file the workspace index reads, not only the open ones: each is read from disk and linted while the editor is otherwise idle, at most 5,000 of them, and again when it changes on disk, or when a save or a change on disk changes what the workspace defines. Files `#q-lint.workspaceIndex.exclude#` or the configuration's `exclude` skip are not linted, and with `#q-lint.workspaceIndex.enable#` off there are none. Off, only open files show problems."
           },
           "q-lint.lint.severity": {
             "type": "object",
@@ -419,6 +457,24 @@
             "default": true,
             "order": 47,
             "markdownDescription": "Report the lints from inferred types (style profile): a local that is always a symbol compared with a string or number (QT033), lists of different types joined (QT034), arithmetic on a local that is always a symbol (QT035). Off, they are hidden as `#q-lint.lint.ignore#` would."
+          },
+          "q-lint.selectionRange.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 48,
+            "markdownDescription": "Grow **Expand Selection** by q's structure: the token, then each bracket around it - the `;`-separated item, the contents, the bracket, a call with its name - then the top-level statement. Read from the source, never from a running q. Off, q-lint announces none and VS Code's own word-and-bracket selection is used."
+          },
+          "q-lint.relatedInformation.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 49,
+            "markdownDescription": "Link a problem that points at a second place to that place, under the problem in the Problems panel and its hover: the first of two parameters of one name (QF008), the first of two columns of one name (QB019), the result column a `by` group repeats (QB021). Off, the problems are shown alone."
+          },
+          "q-lint.crossFileRefresh.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 50,
+            "markdownDescription": "Redraw the code lenses and inlay hints of every open q file when another file's definitions change - a parameter renamed, a function added - and the reference counts when the names a file reads change. Off, a file's lenses and hints are redrawn only when it is edited itself."
           }
         }
       },
@@ -862,6 +918,24 @@
             "default": true,
             "order": 145,
             "markdownDescription": "In `f[a;b;c]`, highlight the argument the cursor is in and name the parameter it is passed as, beside it, where no parameter inlay hint already does. Asks the language server only, never a process. Off, nothing listens and nothing is drawn."
+          },
+          "q-lint.editor.continuationIndent.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 147,
+            "markdownDescription": "Press Enter after a line that leaves a bracket open - `f:{[x]`, `select from t where x in (1;2` - and the new line is indented, so it continues the definition: q ends one at a line that starts at column 0. A comment line is never indented after, and nothing is outdented. Needs `editor.autoIndent` at `full` or `advanced`, its default. Off, Enter is VS Code's own."
+          },
+          "q-lint.editor.dottedNames.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 147,
+            "markdownDescription": "Take a dotted q name - `.ns.util.f`, `x.y`, `.z.p` - as one word, and a number as one (`1.5`, `2024.01.02`): **Add Selection to Next Find Match** (Ctrl/Cmd+D), the highlight of a word's other occurrences, and the word completion replaces. In `x+.y` the words are `x` and `.y`. Double-click and Ctrl/Cmd+Left/Right follow `editor.wordSeparators` instead, which this does not change: `\"[q]\": {\"editor.wordSeparators\": ...}` without `.` makes them agree. Off, a word is VS Code's own."
+          },
+          "q-lint.query.escapeAborts.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 147,
+            "markdownDescription": "Press Escape in a q editor while a query runs to **Abort Current Query**. Escape still closes a suggestion list, parameter hints, a snippet, the find widget or a selection first, and does nothing new in a notebook or while no query runs. Off, Escape is VS Code's own."
           },
           "q-lint.processSymbols.enable": {
             "type": "boolean",
@@ -4978,6 +5052,11 @@
         "command": "q-lint.queryBlock",
         "key": "ctrl+e",
         "when": "editorTextFocus && editorLangId == q"
+      },
+      {
+        "command": "q-lint.abortQuery",
+        "key": "escape",
+        "when": "editorTextFocus && editorLangId == q && q-lint.queryRunning && config.q-lint.query.escapeAborts.enable && !notebookEditorFocused && !suggestWidgetVisible && !parameterHintsVisible && !inSnippetMode && !findWidgetVisible && !editorHasSelection && !editorHasMultipleSelections && !inlineSuggestionVisible && !referenceSearchVisible && !markersNavigationVisible"
       },
       {
         "command": "q-lint.sendCurrentLineToTerminal",

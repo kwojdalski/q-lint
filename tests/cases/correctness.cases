@@ -1113,3 +1113,48 @@ r1:"ab" -1
 r2:10b -1
 r3:(1 2) -1
 r5:s:"x \"a\" -1"
+
+=== QB022 | an update or delete on a table value, its result discarded (q 5: t unchanged; #1139)
+t:([]a:1 2;b:3 4)
+f:{update a:1 from t;}
+g:{delete b from t; 1}
+h:{u:([]a:1 2); update a:2 from u; u}
+k:{update a:1 from ([]a:1 2); 1}
+
+=== clean | assigned, by symbol, returned, or from a name that may hold a symbol (#1139)
+t:([]a:1 2;b:3 4)
+s:`t
+f:{r:update a:1 from t; r}
+g:{update a:1 from `t;}
+h:{update a:1 from t}
+k:{[n] update a:1 from n;}
+m:{update a:1 from s; 1}
+n:{update a:1 from v; 1}
+p:{r:$[1b;update a:1 from t;t]; r}
+
+=== QB024 | a lambda given to peach writes a global (q 5 -s 2: 'noupdate; #1144)
+r1:{g::1;x} peach 1 2
+r2:{`g set 1;x} peach 1 2
+r3:{.ns.g::1;x} peach 1 2
+
+=== clean | a peach lambda that writes only its locals, a file, or a nested lambda's global (#1144)
+r1:{a:1;a+x} peach 1 2
+r2:{`:f set x;x} peach 1 2
+r3:{h:{g::1}; count h; x} peach 1 2
+r4:{g::1;x} each 1 2
+
+=== QB023 | () matched with a side that is always typed (q 5: ()~0#0, ()~`symbol$() and ()~"" are 0b; #1141)
+a:{()~where x}
+b:{(til x)~()}
+c:{r:0#0; r,:x; r~()}
+d:{s:`$(); s,:x; ()~s}
+e:{v:getenv x; v~()}
+
+=== clean | () matched with key, a parameter, an untyped local, (::) or ()!() (#1141)
+a:{()~key x}
+b:{x~()}
+c:{r:(); r,:x; r~()}
+d:{r:0#0; r:x; r~()}
+e:{x~(::)}
+f:{x~0#0}
+g:{d:x; d~()!()}

@@ -3,9 +3,12 @@ mod config;
 mod jsonrpc;
 mod lsp;
 mod qls;
+mod report;
 use clap::Parser;
 use config::{Layer, Overrides, Policy};
-use q_lint_rs::{RULES, Workspace, balanced, fix_all, fixes_for, index, whole_edit};
+use q_lint_rs::{
+    RULES, Workspace, balanced, fix_all, fixes_for, index, suppressions_for, whole_edit,
+};
 use std::{
     collections::BTreeSet,
     fs,
@@ -24,21 +27,28 @@ macro_rules! out {
     };
 }
 
-/// Write to stdout, ending the line when `newline`; see `out!`. Any other
-/// write error is reported and exits 2, as an output failure.
+/// The file `--output-file` names, opened once: where the report goes
+/// instead of stdout.
+static OUTPUT: std::sync::OnceLock<fs::File> = std::sync::OnceLock::new();
+
+/// Write to stdout, or the `--output-file`, ending the line when `newline`;
+/// see `out!`. Any other write error is reported and exits 2, as an output
+/// failure.
 fn emit(text: std::fmt::Arguments, newline: bool) {
     use std::io::Write;
-    let mut stdout = io::stdout().lock();
-    let written = stdout.write_fmt(text).and_then(|()| {
-        if newline {
-            stdout.write_all(b"\n")
-        } else {
-            Ok(())
-        }
-    });
+    fn write(to: &mut impl Write, text: std::fmt::Arguments, newline: bool) -> io::Result<()> {
+        to.write_fmt(text)?;
+        if newline { to.write_all(b"\n") } else { Ok(()) }
+    }
+    let written = match OUTPUT.get() {
+        Some(mut file) => write(&mut file, text, newline),
+        None => write(&mut io::stdout().lock(), text, newline),
+    };
     match written {
         Ok(()) => {}
-        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => std::process::exit(0),
+        Err(e) if e.kind() == io::ErrorKind::BrokenPipe && OUTPUT.get().is_none() => {
+            std::process::exit(0)
+        }
         Err(e) => {
             eprintln!("qlinter: writing output: {e}");
             std::process::exit(2);
@@ -68,7 +78,9 @@ struct Args {
     #[command(subcommand)]
     command: Option<Command>,
     paths: Vec<String>,
-    #[arg(long,default_value="text",value_parser=["text","json"])]
+    /// `text`, `json`, `sarif` (SARIF 2.1.0, for code scanning) or `github`
+    /// (workflow commands, which a GitHub Actions run shows as annotations).
+    #[arg(long,default_value="text",value_parser=["text","json","sarif","github"])]
     format: String,
     /// The rule set: `general` (what q refuses), `style`, `styleq` or `uqf`.
     /// Wins over `profile` in a configuration file. Without either, `uqf` -
@@ -123,6 +135,20 @@ struct Args {
     /// Repeatable or comma-separated, and applied after the configuration.
     #[arg(long, value_delimiter = ',')]
     ignore: Vec<String>,
+    /// Print how many findings each rule has, with its summary, most first,
+    /// instead of the findings. A list of objects under `--format json`.
+    #[arg(long, conflicts_with_all = ["diff", "write_baseline", "show_settings"])]
+    statistics: bool,
+    /// Write the report to this file (replacing it) instead of stdout, in
+    /// whatever format; the exit code is the same.
+    #[arg(long)]
+    output_file: Option<PathBuf>,
+    /// Accept every finding of this run where it is: append `/ noqa: CODE`
+    /// to its line, or add the code to the `noqa` already there - the
+    /// editor's Quick Fix, made for each. A line it would not be a comment
+    /// on (inside a string or a block comment) is left alone.
+    #[arg(long, conflicts_with_all = ["fix", "diff", "write_baseline", "show_settings", "statistics"])]
+    add_noqa: bool,
     #[arg(long)]
     rules: bool,
     #[arg(long)]
@@ -151,7 +177,7 @@ struct Args {
     /// with the builtin backend alone, so `--backend` is one too (#544).
     #[arg(long, conflicts_with_all = ["paths", "rules", "explain", "fix", "diff", "show_settings",
         "stdin_filename", "format", "color", "force_exclude", "unsafe_fixes",
-        "backend", "qls_executable", "qls_timeout", "baseline", "write_baseline"])]
+        "backend", "qls_executable", "qls_timeout", "baseline", "write_baseline", "statistics", "output_file", "add_noqa"])]
     lsp: bool,
     /// Colour the text output: `auto` (a terminal, and NO_COLOR unset or empty),
     /// `always`, or `never`.
@@ -362,9 +388,19 @@ fn run(args: Args) -> Result<u8, String> {
         let stdout = io::stdout();
         return lsp::serve(io::BufReader::new(io::stdin()), &mut stdout.lock(), &policy);
     }
+    if let Some(file) = &args.output_file {
+        let opened = fs::File::create(file).map_err(|e| format!("{}: {e}", file.display()))?;
+        let _ = OUTPUT.set(opened);
+    }
     if args.rules || args.explain.is_some() {
         if args.fix || args.diff {
             return Err("--fix and --diff require q source paths, not --rules or --explain".into());
+        }
+        if !matches!(args.format.as_str(), "text" | "json") {
+            return Err(format!(
+                "--format {} reports findings; --rules and --explain print text or json",
+                args.format
+            ));
         }
         let entries: Vec<_> = RULES
             .iter()
@@ -411,8 +447,20 @@ fn run(args: Args) -> Result<u8, String> {
     if (args.fix || args.diff) && args.backend == "qls" {
         return Err("--fix and --diff require the builtin backend".into());
     }
-    if args.diff && args.format == "json" {
-        return Err("--diff cannot be combined with --format json".into());
+    if args.add_noqa && args.backend == "qls" {
+        return Err("--add-noqa requires the builtin backend".into());
+    }
+    if args.diff && args.format != "text" {
+        return Err(format!(
+            "--diff cannot be combined with --format {}",
+            args.format
+        ));
+    }
+    if args.statistics && !matches!(args.format.as_str(), "text" | "json") {
+        return Err(format!(
+            "--statistics prints text or json, not --format {}",
+            args.format
+        ));
     }
     let policy = Policy::new(overrides(&args)?, false);
     if args.show_settings {
@@ -451,6 +499,9 @@ fn run(args: Args) -> Result<u8, String> {
     if stdin {
         if args.fix {
             return Err("--fix needs file paths; use --diff to preview stdin".into());
+        }
+        if args.add_noqa {
+            return Err("--add-noqa needs file paths".into());
         }
         // Refused rather than one of them quietly ignored: the paths, or
         // the buffer the flag names.
@@ -576,6 +627,9 @@ fn run(args: Args) -> Result<u8, String> {
             }
             workspace.add(&file);
         }
+    }
+    if args.add_noqa {
+        return add_noqa(&mut sources, &lossy, &policy, &workspace, failed);
     }
     if args.fix || args.diff {
         let mut fixed = 0;
@@ -706,8 +760,33 @@ fn run(args: Args) -> Result<u8, String> {
             policy.baselined.get()
         );
     }
-    if args.format == "json" {
+    if args.statistics {
+        let rows = report::statistics(&findings);
+        if args.format == "json" {
+            let rows: Vec<_> = rows
+                .iter()
+                .map(|(code, count, summary)| {
+                    serde_json::json!({"code": code, "count": count, "summary": summary})
+                })
+                .collect();
+            out!("{}", serde_json::to_string(&rows).unwrap());
+        } else {
+            let width = rows.first().map_or(1, |r| r.1.to_string().len());
+            for (code, count, summary) in &rows {
+                out!("{count:>width$}  {code:<6}  {summary}");
+            }
+        }
+    } else if args.format == "json" {
         out!("{}", serde_json::to_string(&findings).unwrap());
+    } else if args.format == "sarif" {
+        let cwd = config::absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
+        let report = report::sarif(&findings, &sources, &cwd);
+        out!("{}", serde_json::to_string_pretty(&report).unwrap());
+    } else if args.format == "github" {
+        let cwd = config::absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
+        for f in &findings {
+            out!("{}", report::github(f, &cwd));
+        }
     } else {
         let paint = Paint::for_stdout(&args.color);
         for f in &findings {
@@ -786,6 +865,75 @@ fn run(args: Args) -> Result<u8, String> {
     Ok(u8::from(findings.iter().any(|f| {
         matches!(f.severity.as_str(), "error" | "warning")
     })))
+}
+
+/// `--add-noqa`: each file rewritten with every finding accepted on its
+/// line, then a count on standard error. One code per line per pass, each
+/// pass linting what the last one wrote, so a second code on a line joins
+/// the `noqa` the first put there and every edit is checked as the editor's
+/// is. A file is written once, however many names it was linted under, and
+/// never when it is not valid UTF-8. Exit 1 when findings are left that no
+/// comment on their line could accept, 2 when a file could not be written.
+fn add_noqa(
+    sources: &mut [(String, String)],
+    lossy: &std::collections::HashSet<String>,
+    policy: &Policy,
+    workspace: &Workspace,
+    mut failed: bool,
+) -> Result<u8, String> {
+    // More codes than this on one line is not a line anyone will read.
+    const PASSES: usize = 64;
+    let (mut added, mut changed, mut left) = (0, 0, 0);
+    let mut written = std::collections::HashSet::new();
+    for (path, source) in sources.iter_mut() {
+        if lossy.contains(path.as_str())
+            || !written.insert(fs::canonicalize(&*path).unwrap_or_else(|_| PathBuf::from(&*path)))
+        {
+            left += policy.lint(source, path, workspace)?.len();
+            continue;
+        }
+        let mut text = source.clone();
+        let mut here = 0;
+        let mut found = policy.lint(&text, path, workspace)?;
+        for _ in 0..PASSES {
+            let mut lines = std::collections::HashSet::new();
+            let mut edits: Vec<_> = found
+                .iter()
+                .zip(suppressions_for(&found, &text))
+                .filter_map(|(f, edit)| edit.filter(|_| lines.insert(f.line)))
+                .collect();
+            if edits.is_empty() {
+                break;
+            }
+            // Each on a line of its own, applied from the end so the earlier
+            // offsets hold.
+            edits.sort_by_key(|e| std::cmp::Reverse(e.start));
+            for e in &edits {
+                text.replace_range(e.start..e.end, &e.replacement);
+            }
+            here += edits.len();
+            found = policy.lint(&text, path, workspace)?;
+        }
+        left += found.len();
+        if here == 0 {
+            continue;
+        }
+        if let Err(e) = fs::write(path.as_str(), &text) {
+            eprintln!("qlinter: {path}: {e}, not changed");
+            failed = true;
+            continue;
+        }
+        *source = text;
+        added += here;
+        changed += 1;
+    }
+    eprintln!("qlinter: added {added} noqa directive(s) in {changed} file(s)");
+    if left > 0 {
+        eprintln!(
+            "qlinter: {left} finding(s) left: on a line no comment can follow, such as one inside a string or a block comment, or in a file whose brackets do not close"
+        );
+    }
+    Ok(if failed { 2 } else { u8::from(left > 0) })
 }
 
 /// `bytes` as text, each byte that is not UTF-8 read as one replacement
@@ -1159,8 +1307,9 @@ impl Paint {
         let on = match flag {
             "always" => true,
             "never" => false,
+            // A file is never a terminal, whatever stdout is.
             _ => auto_colour(
-                std::io::stdout().is_terminal(),
+                std::io::stdout().is_terminal() && OUTPUT.get().is_none(),
                 std::env::var_os("NO_COLOR").as_deref(),
             ),
         };

@@ -1,6 +1,6 @@
 # Rules
 
-All 134 rules, generated from `src/taxonomy.json` - the same data
+All 140 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -84,6 +84,7 @@ it, or `ALL`.
 | <a id="qf019"></a>`QF019` | read-only-system-name | Assignment to a single-letter .z name, which q refuses with 'domain | every profile |
 | <a id="qf020"></a>`QF020` | unknown-column | A column a table literal does not have, in select, exec, update, a where phrase or xkey, and nothing defines it | every profile |
 | <a id="qf021"></a>`QF021` | dotted-local | name.member on a parameter or local reads a global, never the local | every profile |
+| <a id="qf022"></a>`QF022` | local-global-assignment | `::` on a parameter or local assigns the local, not a global of that name | `style` and above |
 
 ## Application - how many arguments a thing takes and how it is called
 
@@ -101,6 +102,7 @@ it, or `ALL`.
 | <a id="qa010"></a>`QA010` | builtin-excess-arguments | Excess arguments in a complete builtin call | every profile |
 | <a id="qa011"></a>`QA011` | cond-non-atom-condition | $[ ... ], if and while tests and the do count must be atoms; a vector or symbol is a type error, and in a later $[ ... ] test a symbol, string or float is | every profile |
 | <a id="qa012"></a>`QA012` | named-lambda-rank | More arguments than the named lambda takes | every profile |
+| <a id="qa013"></a>`QA013` | multiparam-trap-handler | The error handler of @[f;x;h] or .[f;x;h] is a lambda of rank 2 or more, so an error returns a projection of it instead of running it | `style` and above |
 
 ## Types and shapes - literals that cannot be what the operator needs
 
@@ -141,6 +143,7 @@ it, or `ALL`.
 | <a id="qt033"></a>`QT033` | inferred-symbol-comparison | A local that is always a symbol compared with a number, boolean, temporal, char or string, or one that is never a symbol compared with a symbol: 'type | `style` and above |
 | <a id="qt034"></a>`QT034` | inferred-mixed-join | Two lists of different types joined with `,`, one of them a typed local: the result is a general list, not a simple one | `style` and above |
 | <a id="qt035"></a>`QT035` | inferred-symbol-arithmetic | Arithmetic on a local that is always a symbol: 'type | `style` and above |
+| <a id="qt036"></a>`QT036` | null-getenv | null getenv tests each character of a string, giving a vector, which if and $[...] refuse with 'type | `style` and above |
 
 ## Correctness - q that runs and does the wrong thing
 
@@ -166,6 +169,9 @@ it, or `ALL`.
 | <a id="qb019"></a>`QB019` | duplicate-column | A table literal names a column twice; q renames the second, or keeps a key and a value column of one name, instead of refusing | `style` and above |
 | <a id="qb020"></a>`QB020` | unreachable-statement | A statement after a top-level return or signal in a lambda never runs | `style` and above |
 | <a id="qb021"></a>`QB021` | select-by-duplicate-name | A select or exec names a result column the same as a by group, which q refuses with 'dup names for cols/groups | every profile |
+| <a id="qb022"></a>`QB022` | discarded-update | An update or delete on a table value whose result is discarded changes nothing | `style` and above |
+| <a id="qb023"></a>`QB023` | empty-general-list-match | x~() is false for every typed empty list - 0#0, `symbol$() and "" - so it does not test emptiness | `style` and above |
+| <a id="qb024"></a>`QB024` | peach-global-write | A lambda applied with peach writes a global, which q refuses with 'noupdate when it runs on secondary threads | `style` and above |
 
 ## Domain - literal arguments outside what a builtin accepts
 

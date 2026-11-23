@@ -443,6 +443,15 @@ pub fn glyph_at(source: &str, offset: usize) -> Option<(usize, usize)> {
     semantics::help::glyph_at(&v.code, source, offset)
 }
 
+/// What Expand Selection grows through from byte `offset` of `source`,
+/// innermost first and each holding the last: the token, each bracket's
+/// item, contents and whole, and the top-level statement (`semantics::select`).
+pub fn selection_ranges(source: &str, offset: usize) -> Vec<(usize, usize)> {
+    let v = views(source);
+    let balanced = problems(source, &v).is_empty();
+    semantics::select::ranges(&v.code, source, &v.string_starts, balanced, offset)
+}
+
 /// The name at byte `offset`, a keyword included, as its start and length.
 pub fn word_at(source: &str, offset: usize) -> Option<(usize, usize)> {
     let v = views(source);
@@ -6750,6 +6759,50 @@ fn lint_rules(
                 format!(
                     "`{}` gives this rank-{rank} function {supplied} argument(s), so the result is \
                      a projection rather than a value, and the error handler never runs",
+                    &m.as_str()[..1]
+                ),
+            );
+        }
+    }
+    // The handler of a protected apply is given one argument, the error
+    // text, so a handler of rank 2 or more is projected, not run: q 5
+    // `@[{'`boom};1;{[e;z] e}]` is `{[e;z] e}["boom"]`, and so with `{x,y}`
+    // and with `.[f;args;h]`. Only a lambda written out as the whole third
+    // slot - a name may be bound to anything - and only where the first slot
+    // is a function rather than data, which makes the three-slot form an
+    // amend.
+    for m in re!(r"([@.])\[").find_iter(code) {
+        let open = m.end() - 1;
+        if !boundary(code, m.start())
+            && !code[..m.start()].ends_with([' ', '\t', '(', '[', ';', ':', '{'])
+        {
+            continue;
+        }
+        let Some(close) = matching(code, open, b'[', b']') else {
+            continue;
+        };
+        let parts = slots(&code[open + 1..close - 1]);
+        if parts.len() != 3 {
+            continue;
+        }
+        let f = parts[0].trim();
+        if !(f.starts_with('{') || re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*$").is_match(f)) {
+            continue;
+        }
+        let h = parts[2].trim();
+        let h_at = parts[2].as_ptr() as usize - code.as_ptr() as usize
+            + (parts[2].len() - parts[2].trim_start().len());
+        if !h.starts_with('{') || matching(code, h_at, b'{', b'}') != Some(h_at + h.len()) {
+            continue;
+        }
+        let rank = lambda_rank(code, source, h_at, h_at + h.len());
+        if rank >= 2 {
+            add(
+                h_at,
+                "QA013",
+                format!(
+                    "`{}` passes its error handler one argument, the error text; this handler \
+                     takes {rank}, so an error returns a projection of it rather than running it",
                     &m.as_str()[..1]
                 ),
             );

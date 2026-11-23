@@ -417,3 +417,63 @@ fn no_file_suppression_where_the_structure_is_broken() {
             .all(|f| file_suppression_for(f, broken).is_none())
     );
 }
+
+/// `qlinter --isolated --profile uqf` over `path`, with `args` before it.
+fn cli(path: &std::path::Path, args: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .args(["--isolated", "--profile", "uqf"])
+        .args(args)
+        .arg(path)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn add_noqa_accepts_every_finding_and_a_second_run_changes_nothing() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("a.q");
+    // Two codes on line 2; line 3's noqa is joined, not doubled; a lambda's
+    // finding is accepted on the line it is reported on.
+    fs::write(
+        &path,
+        "my_var:1\nf:{[desc;dt;data] desc+dt}\ng:{[desc;data] 1} / noqa: QF016\nh:{[desc]\n  desc}\n",
+    )
+    .unwrap();
+    assert_eq!(cli(&path, &[]).status.code(), Some(1));
+    let added = cli(&path, &["--add-noqa"]);
+    assert_eq!(added.status.code(), Some(0), "{added:?}");
+    let err = String::from_utf8_lossy(&added.stderr);
+    assert!(
+        err.contains("added 5 noqa directive(s) in 1 file(s)"),
+        "{err}"
+    );
+    let after = fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        after,
+        "my_var:1 / noqa: QS001\nf:{[desc;dt;data] desc+dt} / noqa: QF001, QF016\n\
+         g:{[desc;data] 1} / noqa: QF016, QF001\nh:{[desc] / noqa: QF001\n  desc}\n"
+    );
+    let clean = cli(&path, &[]);
+    assert_eq!(clean.status.code(), Some(0), "{clean:?}");
+    let again = cli(&path, &["--add-noqa"]);
+    assert_eq!(again.status.code(), Some(0), "{again:?}");
+    assert_eq!(fs::read_to_string(&path).unwrap(), after);
+}
+
+#[test]
+fn add_noqa_leaves_a_line_no_comment_can_follow_and_says_so() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("a.q");
+    // The bare `/` that opens a block comment stops opening one with a
+    // comment after it, so its QP001 is left, and the run is not clean.
+    let source = "/\nnote\n\\\nmy_var:1\n";
+    fs::write(&path, source).unwrap();
+    let added = cli(&path, &["--add-noqa"]);
+    assert_eq!(added.status.code(), Some(1), "{added:?}");
+    let err = String::from_utf8_lossy(&added.stderr);
+    assert!(err.contains("1 finding(s) left"), "{err}");
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "/\nnote\n\\\nmy_var:1 / noqa: QS001\n"
+    );
+}

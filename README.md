@@ -31,8 +31,9 @@ the Basic Multilingual Plane, such as an emoji in a string, the column is one
 more than a count of characters (and less than a count of bytes).
 
 The executable is independently deployable once built. Compilation uses the
-checked-in Cargo lockfile; this version was tested with Rust 1.98.1 on macOS
-ARM64.
+checked-in Cargo lockfile. The oldest Rust that builds it is 1.88 (the
+`rust-version` in `Cargo.toml`, which CI builds with on every commit); this
+version was tested with Rust 1.98.1 on macOS ARM64.
 
 A Python wheel is also available, for installing the binary into a virtual
 environment without Rust on the target machine —
@@ -102,7 +103,8 @@ guess in either direction. JSON output never carries colour.
 `qlinter --version` (or `-v`) reports the build, and `--stdio` is accepted and ignored
 so a client that appends it gets a server rather than an exit code.
 
-The CLI supports `--profile general|style|styleq|uqf`, `--format text|json`,
+The CLI supports `--profile general|style|styleq|uqf`, `--format text|json|sarif|github`
+(see [Reports for CI](#reports-for-ci)),
 `--exclude`, `--config`, stdin (`-`, `--stdin-filename`; the name alone reads
 stdin too, as in Ruff, either refuses other paths beside it, and a name that is
 not a `.q` file is refused as that file named outright is) and
@@ -183,6 +185,33 @@ that ends in an operator or `::` and so is a composition, an operator applied
 in brackets (`a*[b;c]+d`), and a template that opens inside the phrase of
 another without parentheses of its own, whose table then takes the commas
 after it.
+
+### Reports for CI
+
+`--format sarif` prints SARIF 2.1.0, which GitHub code scanning and other
+SARIF readers take: one result per finding, its region, and the rules the
+results name, each with its summary and a link to its row in
+[docs/rules.md](docs/rules.md). A result's fingerprint
+(`partialFingerprints."qlinterBaseline/v1"`) is the baseline's key for it -
+its file, code and line text - so a finding keeps its identity when lines are
+added above it and gets a new one when its own line is edited. Paths are
+relative to the directory qlinter runs in; run it from the repository root.
+
+`--format github` prints one GitHub Actions workflow command per finding -
+`::error`, `::warning` or `::notice` with its file, line, columns and the
+rule's code as the title - which a workflow run shows as annotations on the
+lines they name. `%`, CR and LF are escaped in the message, and `:` and `,` as
+well in the properties.
+
+`--statistics` prints, instead of the findings, how many each rule has - its
+count, code and summary, the most frequent first - and under `--format json`
+the same as a list of `{"code", "count", "summary"}`. The exit code is the
+one the findings would give.
+
+`--output-file PATH` writes the report - in any format - to that file,
+replacing it, instead of standard output, which stays empty; the exit code is
+the one the run would give without it, and messages still go to standard
+error. Text written to a file is never coloured.
 
 ### The dependency graph: `qlinter analyze graph`
 
@@ -327,6 +356,13 @@ Two more top-level keys, both opt-in: `target-version = "4.0"` (see
 `baseline = "qlinter-baseline.json"`, relative to the file (see
 [A lint baseline](#a-lint-baseline---write-baseline-and---baseline)).
 
+`required-version = ">=0.33, <0.34"` pins the qlinter a repository is linted
+with: a run under any other release is refused (exit 2), naming the version
+asked for and the one running, so CI and every checkout agree on the findings.
+It takes comma-separated clauses of `==`, `!=`, `>=`, `<=`, `>`, `<` or `~=`
+(`~=0.33.1` is `>=0.33.1, <0.34`) and a version, or a version alone, which
+must match exactly; a value that is none of these is a configuration error.
+
 `exclude`, `extend-exclude`, `--exclude` and the keys of `per-file-ignores`
 are globs read the way Ruff reads them. A pattern with a `/` anywhere in it -
 `lib/`, `./lib`, `src/gen/*.q`, a trailing slash included - is anchored at the
@@ -389,6 +425,15 @@ accepts those codes on every line of its file, as Ruff's `# ruff: noqa:` does;
 inside a block comment or after the line that ends the script it is not read.
 The built-in rules honour both; findings from qls do not.
 
+`qlinter --add-noqa src/` accepts every finding of the run where it is - the
+editor's Quick Fix, made for each: `/ noqa: CODE` appended to its line, or the
+code added to the `noqa` already there - so a tree can adopt a rule and keep
+new findings out, a second run reports nothing, and a third changes nothing.
+A line no comment can follow is left alone: one inside a string or a block
+comment, a block comment's own `/`, a system command, or any line of a file
+whose brackets do not close. It says how many it added, and exits 1 if any
+such finding is left.
+
 Diagnostics carry a
 code and a category; `qlinter --rules` lists them all and `qlinter --explain
 QF005` describes one. Exit codes are 0 (no error or warning), 1 (findings) and
@@ -437,6 +482,11 @@ formatting is not offered.
 
 Around those:
 
+- With `relatedInformation.enable: true`, and a client that takes it, a
+  diagnostic that points at a second place carries it as
+  `relatedInformation`: the first of two parameters of one name (QF008), of
+  two columns of one name (QB019), and the result column a by group repeats
+  (QB021), each with the repeat beside it.
 - Each diagnostic links its code to that rule's row in
   [docs/rules.md](docs/rules.md) (`codeDescription`), so the code is clickable
   wherever an editor shows it.
@@ -458,6 +508,12 @@ Around those:
   bracketed blocks and block comments that span lines, found in the masked
   text so that a bracket in a string or a comment folds nothing. A statement
   continued over indented lines with no bracket open is not a range.
+- `textDocument/selectionRange`, with `selectionRange.enable: true`, grows a
+  selection by q's structure: the token (a whole string literal in a string),
+  then each bracket around it from the inside out - the `;`-separated item,
+  the contents, the bracket, and a call with the name before its `[` - then
+  the top-level statement. A file whose brackets do not close gets the token
+  and the statement only.
 - While a bracket or a string is open - every keystroke of a call or a
   string being typed - a file reports only QE001, as the CLI does, placed at
   the bracket that is not closed rather than the closer it runs into. The
@@ -925,7 +981,7 @@ What only an editor has a use for is read from the `initialize` request's
 Every key is optional, and these are the defaults:
 
 ```json
-{"lint": {"select": [], "ignore": [], "run": "onType", "severity": {}},
+{"lint": {"select": [], "ignore": [], "run": "onType", "severity": {}, "scope": "open"},
  "fixes": {"unsafe": true}, "format": {"enable": true},
  "semanticTokens": {"enable": true}, "navigation": {"enable": true},
  "help": {"enable": true}, "completion": {"enable": false},
@@ -940,7 +996,8 @@ Every key is optional, and these are the defaults:
  "qsqlLayout": {"enable": true, "onFormat": false, "lineLength": 80},
  "functionalForm": {"enable": true}, "qsqlExplain": {"enable": true},
  "versionCheck": {"enable": true}, "baseline": {"enable": true},
- "typeLints": {"enable": true},
+ "typeLints": {"enable": true}, "selectionRange": {"enable": false},
+ "relatedInformation": {"enable": false}, "crossFileRefresh": {"enable": false},
  "workspaceIndex": {"enable": true, "exclude": []}}
 ```
 
@@ -948,7 +1005,15 @@ Every key is optional, and these are the defaults:
 configuration and the command line, and only turn rules off: a rule reports
 when the configuration selects it and they do too. `lint.run` is `onType` or
 `onSave`. `lint.severity` maps a code or prefix to `error`, `warning`,
-`information` or `hint`, the longest winning. `fixes.unsafe: false` offers
+`information` or `hint`, the longest winning. `lint.scope` is `open` or
+`workspace`: with `workspace`, every file the index reads reports too, open
+or not - read from disk and linted one at a time while no message is
+waiting, so none holds up the editor, at most 5,000 of them; again when it
+changes on disk or is closed, and all of them again when a save, a close or
+a change on disk changes what the workspace defines. Its files are the
+index's, so `workspaceIndex.exclude` and the configuration's `exclude` leave
+a file out, and with `workspaceIndex.enable: false` there are none.
+`fixes.unsafe: false` offers
 only the fixes `--fix` applies; `format.enable`, `semanticTokens.enable`,
 `navigation.enable` and `help.enable` (hover and signature help) set to
 `false` leave the capability unannounced - the last two for when another q
@@ -969,7 +1034,15 @@ query and its functional form, and `qsqlExplain.enable: false` the query in
 words on hover. `versionCheck.enable: false` ignores the QK rules and
 `typeLints.enable: false` QT033-QT035, as `lint.ignore` would;
 `baseline.enable: false` shows every finding, whatever baseline the
-configuration names.
+configuration names. `selectionRange.enable: true` announces
+`textDocument/selectionRange`; off, an editor keeps its own expansion.
+`relatedInformation.enable: true` adds `relatedInformation` to the
+diagnostics that point at a second place. `crossFileRefresh.enable: true`
+sends `workspace/codeLens/refresh` and `workspace/inlayHint/refresh`, to a
+client that declares it takes them, when what the workspace defines
+changes, and the first also when the names a file reads change while
+reference lenses are on, as `workspace/semanticTokens/refresh` is sent for
+colours.
 `workspaceIndex.exclude`
 holds globs relative to each workspace folder that the index does not read.
 The index stops after 20,000 `.q` files or 500,000 directory entries of any
@@ -1015,15 +1088,57 @@ python3 scripts/dist.py install 0.14.9     # install a release, downloading it i
 machine it runs on - it does not cross-compile; the release workflow builds
 every platform. A build of anything but a clean checkout of the tag `vX.Y.Z`
 lands in `dist/vX.Y.Z-dev/`, so it is never mistaken for the release. Each
-folder carries a `SHA256SUMS`. `install` puts `qlinter` in `~/.local/bin`
+folder carries a `SHA256SUMS`. A release publishes one too, and `download` checks
+every file it fetches against it: a file whose sha256 differs is deleted and
+the run refused. `install` puts `qlinter` in `~/.local/bin`
 (`--bin-dir` to change it) and the extension into VS Code; reload the window
 afterwards. Neither the archive nor the wheel needs Rust or Python to run, and
-`--backend qls` still needs a separately installed qls.
+`--backend qls` still needs a separately installed qls. CI packages the
+platform-neutral vsix and the wheel on every pull request and keeps both as
+workflow artifacts, so a packaging mistake fails there rather than at a tag.
 
 A release is a tag: `python3 scripts/dist.py bump X.Y.Z` sets the version in
 `Cargo.toml`, `Cargo.lock`, `pyproject.toml` and the extension, and refreshes
 its bundled server; commit, tag `vX.Y.Z` and push, and the release workflow
 builds and publishes every platform.
+
+## pre-commit and CI
+
+A [pre-commit](https://pre-commit.com) hook lints the `.q` files a commit
+changes. `qlinter` builds the linter from this repository at `rev` with cargo,
+so it needs Rust; `qlinter-system` runs the `qlinter` already on `PATH`. `rev`
+is a release tag, v0.34.0 or later (the first to carry
+`.pre-commit-hooks.yaml`):
+
+```yaml
+repos:
+  - repo: https://github.com/kwojdalski/q-lint
+    rev: v0.34.0
+    hooks:
+      - id: qlinter
+```
+
+Both pass `--force-exclude`, so the configuration's `exclude` holds for the
+files pre-commit names one by one; add `args: [--profile, style]` or any other
+option to the hook as usual.
+
+In a GitHub workflow, the action in this repository downloads the release
+`version` names - checked against its `SHA256SUMS` - and runs it, so the job
+needs neither Rust nor a build:
+
+```yaml
+- uses: actions/checkout@v4
+- uses: kwojdalski/q-lint@v0.34.0
+  with:
+    version: X.Y.Z         # the qlinter release to run; required
+    paths: src tests       # default: .
+    args: --profile style  # any other options
+```
+
+`format` defaults to `github`, which shows each finding as an annotation on
+the line it is about (#1146); `text` and `json` are the others. The step fails
+when there are findings, as `qlinter` exits 1. It runs on Linux and Windows
+x86-64 and on macOS, Intel or Apple Silicon.
 
 ## Validation and profiling
 
@@ -1033,6 +1148,8 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 cargo build --release                                 # the Python harness needs it
 Q_LINT_TEST_QLS=qls uv run pytest tests                # black-box CLI checks
+python3 scripts/check_invariance.py target/release/qlinter examples tests/corpus tests/cases
+                                                      # findings unmoved by CRLF, position, comments
 cargo build --release --example profile               # for profiling the analysis API
 ```
 
@@ -1042,7 +1159,7 @@ language server driven over real LSP framing as a real process.
 
 ### Rule and multiline regression corpus
 
-The taxonomy contains 134 codes. Ten literal-call rules cover excess builtin
+The taxonomy contains 140 codes. Ten literal-call rules cover excess builtin
 arguments (QA010), invalid literal types/shapes (QT008–QT014), and negative
 `til`/`where` counts (QD001–QD002). These checks leave unknown expressions
 unresolved and account for projections, seeded scans and variadic `enlist`.
@@ -1051,7 +1168,7 @@ unresolved and account for projections, seeded scans and variadic `enlist`.
 `tests/showcase.rs` checks exact code/line pairs under every profile, including
 silence in the clean section. Together with the three companion examples -
 `syntax-error.q`, `byte-order-mark.q` and `query-injection.q`, each holding
-a rule that would hide or stop the others - it covers all 132 rules available
+a rule that would hide or stop the others - it covers all 138 rules available
 in this build; QF006 and QLS001 are excluded.
 
 Multiline fixtures cover nested lambdas, split argument lists, comments,

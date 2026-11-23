@@ -56,6 +56,7 @@ Two more checks over the same corpus catch what a diff cannot:
 
 ```sh
 python3 scripts/check_invariance.py target/release/qlinter ~/q-corpus  # CRLF, position, comments
+python3 scripts/check_invariance.py target/release/qlinter examples tests/corpus tests/cases  # the same over this tree, as CI runs it
 python3 scripts/check_fixes.py target/release/qlinter ~/q-corpus      # every --fix keeps the program
 python3 scripts/check_fixes.py --unsafe target/release/qlinter ~/q-corpus  # editor-only fixes still parse
 ```

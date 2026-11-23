@@ -185,11 +185,21 @@ jobs:
           # what the thing IS and which of nine files to download, which a
           # list of commits never does.
           sed "s/VERSION/${GITHUB_REF_NAME}/g" .github/release-notes.md > notes.md
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.vsix' \) -print \
+            | sort > assets
+          # Nine: four archives, four platform vsix and the neutral one. Fewer
+          # is a leg that uploaded nothing, and SHA256SUMS would vouch for an
+          # incomplete release.
+          test "$(wc -l < assets)" -eq 9 || { cat assets; echo "expected 9 assets" >&2; exit 1; }
+          # A tenth asset: the sha256 of each of the nine, by the name it is
+          # published under, which `scripts/dist.py download` checks every
+          # download against and `sha256sum -c --ignore-missing` reads too.
+          xargs sha256sum < assets | sed 's|  .*/|  |' > SHA256SUMS
           gh release create "$GITHUB_REF_NAME" \
             --title "qlinter $GITHUB_REF_NAME" \
             --notes-file notes.md \
             --generate-notes \
-            $(find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.vsix' \) -print)
+            $(cat assets) SHA256SUMS
 
   marketplace:
     name: marketplace

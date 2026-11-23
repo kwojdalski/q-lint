@@ -78,6 +78,12 @@ u:{[x] cor each}
 v:a cor each
   b
 
+=== QE011 profile: general | and a comment before the line that continues it changes nothing (q 5: ' for each)
+v:a cor each / note
+  b
+w:a cor each /
+  b
+
 === QE011 profile: general | an iterator keyword before each or peach is refused the same way (q 5: ' for each, #659)
 f:{x+y}
 r:f over each (1 2;3 4)
@@ -681,3 +687,20 @@ r2:g[1] each 1 2
 === clean profile: uqf | a negative literal juxtaposed after the lambda is an argument too (#590; q 5: 1, type -7h)
 r:@[{[a;b] a+b} -1;2;{x}]
 s:@[{[a;b] a+b} -.5;2;{x}]
+
+=== QA013 | a protected apply's handler of rank 2 (q 5: @[{'`boom};1;{[e;z] e}] is {[e;z] e}["boom"]; #1142)
+f:{'`boom}
+r1:@[f;1;{[e;z] e,z}]
+r2:@[f;1;{x,y}]
+r3:.[f;1 2;{[e;z] e,z}]
+r4:@[value;`hook;{[d;p] d,p}]
+
+=== clean | a rank-1 or niladic handler, a projected one, a named one, or an amend (#1142)
+f:{'`boom}
+h:{[e;z] e,z}
+r1:@[f;1;{[e] e}]
+r2:@[f;1;{x}]
+r3:@[f;1;h]
+r4:@[f;1;{[e;z] e,z}[;0]]
+r5:@[f;1;{[] 0}]
+r6:@[1 2 3;0;{x+1}]

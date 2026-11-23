@@ -3259,3 +3259,328 @@ fn format_changed_lines_fixes_only_those_lines() {
     assert_eq!(ask(&mut server, json!([[0, 2]])), json!([]));
     assert_eq!(server.shutdown_and_exit(), 0);
 }
+
+/// Expand Selection from inside `(1;2)` grows through each bracket out to
+/// the definition, every range strictly holding the one before (#1157); off
+/// unless asked for, the capability is not announced.
+#[test]
+fn selection_ranges_grow_from_the_token_to_the_definition() {
+    let text = "f:{[x] g[x;(1;2)]}\nh:2\n";
+    let dir = tempfile::tempdir().unwrap();
+    let (mut server, reply) = start_with_options(
+        dir.path(),
+        &["--lsp"],
+        json!({"selectionRange": {"enable": true}}),
+        None,
+    );
+    assert_eq!(
+        reply["result"]["capabilities"]["selectionRangeProvider"],
+        true
+    );
+    let uri = "file:///tmp/select.q";
+    server.open(uri, text);
+    server.send(
+        json!({"jsonrpc":"2.0","id":40,"method":"textDocument/selectionRange",
+        "params":{"textDocument":{"uri":uri},"positions":[{"line":0,"character":12}]}}),
+    );
+    let reply = server.until(|m| m["id"] == 40);
+    let mut node = &reply["result"][0];
+    let mut spans = vec![];
+    while !node.is_null() {
+        let (start, end) = (&node["range"]["start"], &node["range"]["end"]);
+        assert_eq!(
+            (start["line"].as_u64(), end["line"].as_u64()),
+            (Some(0), Some(0))
+        );
+        let (a, b) = (
+            start["character"].as_u64().unwrap(),
+            end["character"].as_u64().unwrap(),
+        );
+        spans.push(&text[a as usize..b as usize]);
+        node = &node["parent"];
+    }
+    assert_eq!(
+        spans,
+        [
+            "1",
+            "1;2",
+            "(1;2)",
+            "x;(1;2)",
+            "[x;(1;2)]",
+            "g[x;(1;2)]",
+            "[x] g[x;(1;2)]",
+            "{[x] g[x;(1;2)]}",
+            "f:{[x] g[x;(1;2)]}",
+        ]
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+
+    let (mut server, reply) = start_with_options(dir.path(), &["--lsp"], json!({}), None);
+    assert!(reply["result"]["capabilities"]["selectionRangeProvider"].is_null());
+    server.open(uri, text);
+    server.send(
+        json!({"jsonrpc":"2.0","id":41,"method":"textDocument/selectionRange",
+        "params":{"textDocument":{"uri":uri},"positions":[{"line":0,"character":12}]}}),
+    );
+    assert_eq!(server.until(|m| m["id"] == 41)["result"], Value::Null);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// A parameter declared twice carries the first declaration's place, and
+/// the repeat's, as `relatedInformation` (#1158) - only when the client takes
+/// it and the setting asks for it; a column named twice carries both names.
+#[test]
+fn a_duplicate_declaration_points_at_the_first() {
+    let text = "f:{[a;b;a] a+b}\nt:([] c:1 2; d:3 4; c:5 6)\nr:select d by d from t\n";
+    let dir = tempfile::tempdir().unwrap();
+    let uri = file_uri(&dir.path().join("dup.q"));
+    let start = |options: Value, related: bool| {
+        let mut server = Server::spawn(dir.path(), &["--lsp", "--profile", "style"]);
+        let mut capabilities = client_capabilities();
+        capabilities["textDocument"]["publishDiagnostics"] = json!({"relatedInformation": related});
+        server.send(
+            json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+            "capabilities": capabilities, "initializationOptions": options}}),
+        );
+        server.receive();
+        server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+        server
+    };
+    let places = |d: &Value| -> Vec<(u64, u64, String)> {
+        d["relatedInformation"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|r| {
+                let start = &r["location"]["range"]["start"];
+                (
+                    start["line"].as_u64().unwrap(),
+                    start["character"].as_u64().unwrap(),
+                    r["message"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    };
+    let mut server = start(json!({"relatedInformation": {"enable": true}}), true);
+    server.open(&uri, text);
+    let diagnostics = server.diagnostics_for(&uri);
+    let duplicate = diagnostics.iter().find(|d| d["code"] == "QF008").unwrap();
+    assert_eq!(
+        places(duplicate),
+        [
+            (0, 4, "`a` is first declared here".to_string()),
+            (0, 8, "and declared again here".to_string()),
+        ]
+    );
+    let related = &duplicate["relatedInformation"][0]["location"];
+    assert_eq!(related["uri"], uri);
+    assert_eq!(related["range"]["end"]["character"], 5);
+    let column = diagnostics.iter().find(|d| d["code"] == "QB019").unwrap();
+    assert_eq!(
+        places(column),
+        [
+            (1, 6, "`c` is first named here".to_string()),
+            (1, 20, "and named again here".to_string()),
+        ]
+    );
+    let by = diagnostics.iter().find(|d| d["code"] == "QB021").unwrap();
+    assert_eq!(
+        places(by),
+        [
+            (2, 9, "`d` is first named here".to_string()),
+            (2, 14, "and named again here".to_string()),
+        ]
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+
+    for (options, related) in [
+        (json!({"relatedInformation": {"enable": true}}), false),
+        (json!({}), true),
+    ] {
+        let mut server = start(options, related);
+        server.open(&uri, text);
+        let diagnostics = server.diagnostics_for(&uri);
+        assert!(diagnostics.iter().any(|d| d["code"] == "QF008"));
+        assert!(
+            diagnostics
+                .iter()
+                .all(|d| d.get("relatedInformation").is_none())
+        );
+        assert_eq!(server.shutdown_and_exit(), 0);
+    }
+}
+
+/// Editing a file that defines a function asks a client that can be asked
+/// to fetch its code lenses and inlay hints again (#1159); with the setting
+/// left alone, it is not asked.
+#[test]
+fn a_definition_changed_asks_for_lenses_and_hints_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = file_uri(&dir.path().join("a.q"));
+    let start = |options: Value| {
+        let mut server = Server::spawn(dir.path(), &["--lsp"]);
+        let mut capabilities = client_capabilities();
+        capabilities["workspace"] = json!({"codeLens": {"refreshSupport": true},
+                                           "inlayHint": {"refreshSupport": true}});
+        server.send(
+            json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+            "capabilities": capabilities, "initializationOptions": options,
+            "workspaceFolders":[{"uri":file_uri(dir.path()),"name":"ws"}]}}),
+        );
+        server.receive();
+        server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+        server.open(&a, "g:1\n");
+        server.diagnostics_for(&a);
+        server
+    };
+    let mut server = start(json!({"crossFileRefresh": {"enable": true},
+                                  "referenceLens": {"enable": true}}));
+    // Drained: whatever the open sent, a marker request answered after it.
+    server.send(
+        json!({"jsonrpc":"2.0","id":50,"method":"textDocument/foldingRange",
+        "params":{"textDocument":{"uri":a}}}),
+    );
+    server.until(|m| m["id"] == 50);
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didChange",
+        "params":{"textDocument":{"uri":a,"version":2},"contentChanges":[{"text":"g:1\nf:{[p;q] p+q}\n"}]}}));
+    let mut seen = vec![];
+    while seen.len() < 2 {
+        let message = server.receive();
+        if let Some(method) = message["method"].as_str()
+            && method.ends_with("/refresh")
+        {
+            assert!(message["id"].is_string(), "{message}");
+            server.send(json!({"jsonrpc":"2.0","id":message["id"],"result":null}));
+            seen.push(method.to_string());
+        }
+    }
+    seen.sort();
+    assert_eq!(
+        seen,
+        ["workspace/codeLens/refresh", "workspace/inlayHint/refresh"]
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+
+    let mut server = start(json!({}));
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didChange",
+        "params":{"textDocument":{"uri":a,"version":2},"contentChanges":[{"text":"f:{[p;q] p+q}\n"}]}}));
+    server.send(
+        json!({"jsonrpc":"2.0","id":51,"method":"textDocument/foldingRange",
+        "params":{"textDocument":{"uri":a}}}),
+    );
+    loop {
+        let message = server.receive();
+        assert!(
+            !message["method"]
+                .as_str()
+                .is_some_and(|m| m.ends_with("/refresh")),
+            "{message}"
+        );
+        if message["id"] == 51 {
+            break;
+        }
+    }
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// With `lint.scope: "workspace"` a file nobody opened reports, one the
+/// index excludes does not, and one changed on disk reports again; with the
+/// default scope only an open file reports (#1160).
+#[test]
+fn the_workspace_scope_lints_files_nobody_opened() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir(root.join("skip")).unwrap();
+    for name in ["lib.q", "skip/x.q", "z.q"] {
+        std::fs::write(root.join(name), RESERVED_PARAM).unwrap();
+    }
+    let (lib, skip, z) = (
+        file_uri(&root.join("lib.q")),
+        file_uri(&root.join("skip/x.q")),
+        file_uri(&root.join("z.q")),
+    );
+    let options = json!({"lint": {"scope": "workspace"},
+                         "workspaceIndex": {"exclude": ["skip/**"]}});
+    let (mut server, _) = start_with_options(&root, &["--lsp"], options, Some(&root));
+    let mut reported = std::collections::HashMap::new();
+    while !reported.contains_key(&z) {
+        let message = server.receive();
+        if message["method"] == "textDocument/publishDiagnostics" {
+            let uri = message["params"]["uri"].as_str().unwrap().to_string();
+            reported.insert(
+                uri,
+                codes_of(message["params"]["diagnostics"].as_array().unwrap()),
+            );
+        }
+    }
+    assert_eq!(reported[&lib], ["QF001"]);
+    assert!(!reported.contains_key(&skip), "{reported:?}");
+    // Fixed on disk, and told so: the file reports nothing now.
+    std::fs::write(root.join("lib.q"), "f:{[d] 1+1}\n").unwrap();
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+        "params":{"changes":[{"uri":lib,"type":2}]}}),
+    );
+    assert_eq!(server.diagnostics_for(&lib), Vec::<Value>::new());
+    // Opened and closed, it reports as the disk has it rather than nothing.
+    std::fs::write(root.join("lib.q"), RESERVED_PARAM).unwrap();
+    server.open(&lib, RESERVED_PARAM);
+    assert_eq!(codes_of(&server.diagnostics_for(&lib)), ["QF001"]);
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didClose",
+        "params":{"textDocument":{"uri":lib}}}));
+    assert_eq!(codes_of(&server.diagnostics_for(&lib)), ["QF001"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+
+    let (mut server, _) = start_with_options(&root, &["--lsp"], json!({}), Some(&root));
+    let app = file_uri(&root.join("app.q"));
+    server.open(&app, "a:1\n");
+    server.send(
+        json!({"jsonrpc":"2.0","id":60,"method":"textDocument/foldingRange",
+        "params":{"textDocument":{"uri":app}}}),
+    );
+    loop {
+        let message = server.receive();
+        if message["method"] == "textDocument/publishDiagnostics" {
+            assert_eq!(message["params"]["uri"], app);
+        }
+        if message["id"] == 60 {
+            break;
+        }
+    }
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// The workspace's files are linted between messages, not before them: a
+/// request sent as the scan starts is answered before the last of dozens
+/// of files reports (#1160).
+#[test]
+fn the_workspace_scope_does_not_hold_up_a_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let files = 80;
+    for i in 0..files {
+        std::fs::write(root.join(format!("f{i:03}.q")), RESERVED_PARAM).unwrap();
+    }
+    let options = json!({"lint": {"scope": "workspace"}});
+    let (mut server, _) = start_with_options(&root, &["--lsp"], options, Some(&root));
+    server
+        .send(json!({"jsonrpc":"2.0","id":70,"method":"workspace/symbol","params":{"query":"f"}}));
+    let mut before = 0;
+    loop {
+        let message = server.receive();
+        if message["id"] == 70 {
+            break;
+        }
+        before += usize::from(message["method"] == "textDocument/publishDiagnostics");
+    }
+    assert!(
+        before < files,
+        "{before} files linted before the request was answered"
+    );
+    let mut after = 0;
+    while before + after < files {
+        let message = server.receive();
+        after += usize::from(message["method"] == "textDocument/publishDiagnostics");
+    }
+    assert_eq!(server.shutdown_and_exit(), 0);
+}

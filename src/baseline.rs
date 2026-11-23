@@ -35,7 +35,7 @@ pub struct Baseline {
 }
 
 /// The text a finding is matched on: its line, blanks trimmed.
-fn line_text(source: &str, line: usize) -> String {
+pub(crate) fn line_text(source: &str, line: usize) -> String {
     source
         .lines()
         .nth(line.saturating_sub(1))
@@ -45,9 +45,11 @@ fn line_text(source: &str, line: usize) -> String {
 }
 
 /// `path` relative to `root`, with `/`; as it is where it is not under it.
-fn relative(root: &Path, path: &Path) -> String {
+/// Both are made absolute the same way: on Windows that adds the `\\?\`
+/// prefix, which one side alone would keep from matching the other.
+pub(crate) fn relative(root: &Path, path: &Path) -> String {
     let full = crate::config::absolute(path);
-    full.strip_prefix(root)
+    full.strip_prefix(crate::config::absolute(root))
         .unwrap_or(&full)
         .to_string_lossy()
         .replace('\\', "/")

@@ -46,6 +46,7 @@ export interface InitializationOptions {
     ignore: string[];
     run: "onType" | "onSave";
     severity: Record<string, string>;
+    scope: "open" | "workspace";
   };
   fixes: { unsafe: boolean };
   format: { enable: boolean };
@@ -74,6 +75,9 @@ export interface InitializationOptions {
   versionCheck: { enable: boolean };
   baseline: { enable: boolean };
   typeLints: { enable: boolean };
+  selectionRange: { enable: boolean };
+  relatedInformation: { enable: boolean };
+  crossFileRefresh: { enable: boolean };
   workspaceIndex: { enable: boolean; exclude: string[] };
 }
 
@@ -149,6 +153,7 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
         ignore: strings(settings, "lint.ignore"),
         run,
         severity: severity && typeof severity === "object" ? { ...severity } : {},
+        scope: settings.get<unknown>("lint.workspaceScope.enable", false) === true ? "workspace" : "open",
       },
       fixes: { unsafe: settings.get<boolean>("fixes.unsafe", true) },
       format: { enable: settings.get<boolean>("format.enable", true) },
@@ -181,6 +186,9 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
       versionCheck: { enable: settings.get<boolean>("versionCheck.enable", true) },
       baseline: { enable: settings.get<boolean>("baseline.enable", true) },
       typeLints: { enable: settings.get<boolean>("typeLints.enable", true) },
+      selectionRange: { enable: settings.get<boolean>("selectionRange.enable", true) },
+      relatedInformation: { enable: settings.get<boolean>("relatedInformation.enable", true) },
+      crossFileRefresh: { enable: settings.get<boolean>("crossFileRefresh.enable", true) },
       workspaceIndex: {
         enable: settings.get<boolean>("workspaceIndex.enable", true),
         exclude: strings(settings, "workspaceIndex.exclude"),
@@ -226,6 +234,9 @@ const RESTARTING = [
   "versionCheck",
   "baseline",
   "typeLints",
+  "selectionRange",
+  "relatedInformation",
+  "crossFileRefresh",
 ];
 
 /// Whether a configuration change needs a new server.

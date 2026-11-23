@@ -19,6 +19,9 @@ pub fn check(
     duplicate_columns(path, source, code, &mut out);
     select_by_duplicate(path, source, code, &mut out);
     unreachable(path, source, code, comments, &mut out);
+    discarded_query(path, source, code, &mut out);
+    empty_match(path, source, code, comments, &mut out);
+    null_getenv(path, source, code, &mut out);
     performance(path, source, code, comments, &mut out);
     out
 }
@@ -997,6 +1000,325 @@ fn unreachable(path: &str, source: &str, code: &str, comments: &str, out: &mut V
                     "This statement follows a return or signal at the lambda's top level, so it never runs".into(),
                 ));
         }
+    }
+}
+
+/// QB022. An update or delete on a table *value* returns the changed copy
+/// and leaves the table alone: q 5 `{update a:a+1 from t;}[]` leaves `t` as
+/// it was. Only `` from `t `` changes the table in place. A statement whose
+/// value nothing takes - any but a lambda's last - has thrown the change away.
+///
+/// The operand has to be known to hold a table, because a name holding a
+/// symbol amends in place too: q 5 `{[n] update a:a+10 from n;}[`t]`
+/// changes `t`. So a parameter is never reported, a local only when each of
+/// its assignments in the lambda is a table, and a global only when each of
+/// its assignments in the file is - a table literal, a `flip`, a `select`,
+/// or an `update` or `delete` from something other than a symbol - and
+/// nothing `set`s it.
+fn discarded_query(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
+    if !re!(r"(?:update|delete)\b").is_match(code) {
+        return;
+    }
+    let mut verdicts: std::collections::HashMap<(Option<usize>, &str), bool> =
+        std::collections::HashMap::new();
+    for (brace, _) in code.match_indices('{') {
+        let Some(end) = matching(code, brace, b'{', b'}') else {
+            continue;
+        };
+        let sig = crate::signature(code, source, brace);
+        if sig.body > end - 1 {
+            continue;
+        }
+        let body = &code[sig.body..end - 1];
+        let statements = slots(body);
+        // The last statement is the lambda's value, and so not discarded.
+        for s in &statements[..statements.len() - 1] {
+            let t = s.trim_start();
+            let at = sig.body + (t.as_ptr() as usize - body.as_ptr() as usize);
+            let Some(kw) = re!(r"^(?:update|delete)\b").find(t) else {
+                continue;
+            };
+            let Some(from) = top_level_word(t, re!(r"\bfrom\b")) else {
+                continue;
+            };
+            let rest = &t[from.end()..];
+            let operand = top_level_word(rest, re!(r"\bwhere\b"))
+                .map_or(rest, |w| &rest[..w.start()])
+                .trim();
+            let name = if operand.starts_with("([")
+                && matching(operand, 0, b'(', b')') == Some(operand.len())
+            {
+                None
+            } else if re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*$").is_match(operand) && !reserved(operand) {
+                Some(operand)
+            } else {
+                continue;
+            };
+            if let Some(name) = name {
+                let params: Vec<&str> = if sig.named {
+                    sig.slots
+                        .iter()
+                        .flat_map(|p| crate::pattern_names(p))
+                        .collect()
+                } else {
+                    vec!["x", "y", "z"]
+                };
+                if params.contains(&name) {
+                    continue;
+                }
+                let local = !name.contains('.')
+                    && assignments(code, name, brace..end)
+                        .any(|(a, _)| crate::enclosing_brace(code, a) == Some(brace));
+                let scope = local.then_some((brace, end));
+                let table = *verdicts
+                    .entry((scope.map(|s| s.0), name))
+                    .or_insert_with(|| holds_table(code, name, scope));
+                if !table {
+                    continue;
+                }
+            }
+            let what = name.map_or("a table literal".to_string(), |n| format!("`{n}`"));
+            out.push(Finding::at(
+                path,
+                source,
+                at,
+                "QB022",
+                format!(
+                    "This {} changes a copy of {what} and the statement's value is discarded, \
+                     so nothing changes: assign the result, or name the table as a symbol to \
+                     change it in place",
+                    kw.as_str()
+                ),
+            ));
+        }
+    }
+}
+
+/// Each assignment of `name` in masked code `within` a range, `name:` or `name::`, outside a
+/// qSQL phrase - where `update name:1 from t` names a column - as the offset
+/// of the name and of the value after the colons.
+fn assignments<'a>(
+    code: &'a str,
+    name: &'a str,
+    within: std::ops::Range<usize>,
+) -> impl Iterator<Item = (usize, usize)> + 'a {
+    let start = within.start;
+    code[within].match_indices(name).filter_map(move |(at, _)| {
+        let at = start + at;
+        let after = &code[at + name.len()..];
+        let colons = after.trim_start_matches([' ', '\t']);
+        let value = colons.strip_prefix(':')?;
+        let value = value.strip_prefix(':').unwrap_or(value);
+        // `name:` is not `name::` read short, and a name runs on past it.
+        if !boundary(code, at)
+            || code[..at].ends_with('`')
+            || after.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+            || crate::in_qsql_phrase(code, at)
+        {
+            return None;
+        }
+        Some((at, code.len() - value.len()))
+    })
+}
+
+/// Whether every assignment of `name` gives it a table: in the lambda
+/// `scope` spans for a local, or at the file's root - or with `::` from
+/// anywhere - for a global. None at all, or a `` `name set ``, and it is
+/// not known.
+fn holds_table(code: &str, name: &str, scope: Option<(usize, usize)>) -> bool {
+    let brace = scope.map(|s| s.0);
+    let within = scope.map_or(0..code.len(), |(a, b)| a..b);
+    if brace.is_none()
+        && regex::Regex::new(&format!(r"`{}[ \t]+set\b", regex::escape(name)))
+            .is_ok_and(|r| r.is_match(code))
+    {
+        return false;
+    }
+    let mut any = false;
+    for (at, value) in assignments(code, name, within) {
+        let global = code[at + name.len()..value].contains("::");
+        let owner = crate::enclosing_brace(code, at);
+        if (brace.is_some() && owner != brace) || (brace.is_none() && owner.is_some() && !global) {
+            continue;
+        }
+        any = true;
+        let v = code[value..].trim_start_matches([' ', '\t']);
+        let table = v.starts_with("([")
+            || re!(r"^(?:select|flip)\b").is_match(v)
+            || re!(r"^(?:update|delete)\b[^;\n]*?\bfrom[ \t]+[^ \t`]").is_match(v);
+        if !table {
+            return false;
+        }
+    }
+    any
+}
+
+/// QB023. `()` is the empty *general* list, and match compares type as well
+/// as items: q 5 `()~0#0`, ``()~`symbol$()`` and `()~""` are each 0b. So
+/// `x~()` is true only when `x` is an untyped empty list, and `0=count x`
+/// is the test for empty.
+///
+/// Only where the other side cannot be untyped. `()~key p` is how q asks
+/// whether a path exists - `key` of a missing file is `()` - and a name
+/// set to `()` as a sentinel is rightly compared with it, so a name or an
+/// expression of unknown type is left alone. What is reported is `where`,
+/// `til`, `getenv` or `read1` - always a typed list - or a local of the
+/// lambda whose every assignment is one of those or a typed literal: a
+/// string, `` `$() ``, `` `long$() ``, `"j"$()` or `0#` of an atom.
+fn empty_match(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
+    let b = code.as_bytes();
+    let typed_start = re!(r"^(?:where|til|getenv|read1)(?:[^A-Za-z0-9_.]|$)");
+    for (at, _) in code.match_indices('~') {
+        // `()` read in `comments` too, where a string is still there:
+        // `("")~x` is no `()`. Nor is the key list of `()!()`.
+        let empty = |open: usize| {
+            b.get(open) == Some(&b'(')
+                && matching(code, open, b'(', b')').is_some_and(|close| {
+                    code[open + 1..close - 1].trim().is_empty()
+                        && comments[open + 1..close - 1].trim().is_empty()
+                        && !code[close..].trim_start().starts_with('!')
+                })
+        };
+        let left = code[..at].trim_end_matches([' ', '\t']);
+        let right_at = past_blanks_inline(code, at + 1);
+        // The other side: everything to the right of `()~`, or the one
+        // operand to the left of `~()` - a name, or a parenthesised group.
+        let (start, operand, operand_at) =
+            if left.ends_with(')') && left.len() >= 2 && empty(left.len() - 2) {
+                (left.len() - 2, &code[right_at..], right_at)
+            } else if empty(right_at) {
+                let inner = if left.ends_with(')') {
+                    left.bytes()
+                        .enumerate()
+                        .rev()
+                        .scan(0i32, |depth, (i, c)| {
+                            *depth += match c {
+                                b')' | b']' | b'}' => 1,
+                                b'(' | b'[' | b'{' => -1,
+                                _ => 0,
+                            };
+                            Some((i, *depth))
+                        })
+                        .find(|&(_, d)| d == 0)
+                        .map(|(open, _)| open + 1)
+                        .filter(|&o| matching(code, o - 1, b'(', b')') == Some(left.len()))
+                } else {
+                    None
+                };
+                match inner {
+                    Some(o) => (right_at, &code[o..left.len() - 1], o),
+                    None => {
+                        let Some(name) = re!(r"\.?[A-Za-z][A-Za-z0-9_.]*$").find(left) else {
+                            continue;
+                        };
+                        if !boundary(code, name.start()) {
+                            continue;
+                        }
+                        (right_at, name.as_str(), name.start())
+                    }
+                }
+            } else {
+                continue;
+            };
+        let operand = operand.trim_start();
+        let typed = typed_start.is_match(operand)
+            || re!(r"^[A-Za-z][A-Za-z0-9_]*")
+                .find(operand)
+                .filter(|n| {
+                    let rest = operand[n.end()..].trim_start_matches([' ', '\t']);
+                    rest.is_empty() || rest.starts_with([';', ')', ']', '}', '\n', '\r'])
+                })
+                .is_some_and(|n| typed_local(source, code, comments, operand_at, n.as_str()));
+        if !typed {
+            continue;
+        }
+        out.push(Finding::at(
+            path,
+            source,
+            start,
+            "QB023",
+            "`()` is the empty general list and match compares types, so this is false for \
+             a typed empty list - 0#0, `symbol$(), \"\" - and this side is always typed: \
+             `0=count x` tests emptiness"
+                .into(),
+        ));
+    }
+}
+
+/// Whether `name`, read at `at`, is a local of the lambda around it whose
+/// every assignment there gives it a typed list or atom - never `()`.
+fn typed_local(source: &str, code: &str, comments: &str, at: usize, name: &str) -> bool {
+    let Some(brace) = crate::enclosing_brace(code, at) else {
+        return false;
+    };
+    let Some(end) = matching(code, brace, b'{', b'}') else {
+        return false;
+    };
+    let sig = crate::signature(code, source, brace);
+    let params: Vec<&str> = if sig.named {
+        sig.slots
+            .iter()
+            .flat_map(|p| crate::pattern_names(p))
+            .collect()
+    } else {
+        vec!["x", "y", "z"]
+    };
+    if params.contains(&name) {
+        return false;
+    }
+    let mut any = false;
+    for (a, value) in assignments(code, name, brace..end) {
+        if crate::enclosing_brace(code, a) != Some(brace) {
+            continue;
+        }
+        if code[a + name.len()..value].contains("::") {
+            return false;
+        }
+        // The value to the end of its statement, strings kept.
+        let text = &comments[value..];
+        let stop = text.find([';', '\n', '}']).unwrap_or(text.len());
+        let v = text[..stop].trim();
+        if !re!(
+            r#"^(?:"(?:[^"\\]|\\.)*"|`[a-z]*\$\(\)|"[A-Za-z]"\$\(\)|0#(?:`[A-Za-z0-9_.]*|-?\d[A-Za-z0-9.]*|"(?:[^"\\]|\\.)*")|(?:where|til|getenv|read1)(?:[^A-Za-z0-9_.].*)?)$"#
+        )
+        .is_match(v)
+        {
+            return false;
+        }
+        any = true;
+    }
+    any
+}
+
+/// `at` moved past spaces and tabs.
+fn past_blanks_inline(text: &str, at: usize) -> usize {
+    at + (text[at..].len() - text[at..].trim_start_matches([' ', '\t']).len())
+}
+
+/// QT036. `getenv` gives a string, `""` when the variable is unset, and
+/// `null` of a string is a boolean vector, one item a character: q 5
+/// `null getenv`UNSET` is `` `boolean$() ``, and `if[null getenv`X;...]` is
+/// 'type whether or not X is set. `all null` or `any null` in front reduces
+/// it to an atom, and is left alone.
+fn null_getenv(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
+    for m in re!(r"null(?:[ \t]+|[ \t]*[\[(][ \t]*)getenv\b").find_iter(code) {
+        let before = code[..m.start()].trim_end_matches([' ', '\t']);
+        let reduced = ["all", "any"]
+            .iter()
+            .any(|w| before.ends_with(w) && boundary(code, before.len() - w.len()));
+        if !boundary(code, m.start()) || reduced {
+            continue;
+        }
+        out.push(Finding::at(
+            path,
+            source,
+            m.start(),
+            "QT036",
+            "getenv gives a string, so null tests each character and gives a vector - empty \
+             when the variable is unset - which if and $[...] refuse with 'type: \
+             `\"\"~getenv x` or `0=count getenv x` tests an unset variable"
+                .into(),
+        ));
     }
 }
 

@@ -95,6 +95,12 @@ ledger:([] first:1 2 3; qty:4 5 6)
 / expect-next: QF021
 dotted:{[t] t.c}
 
+/ QF022: `lim` is the lambda's parameter, so `lim::` sets that local and the
+/ global `lim` is never written; `` `lim set `` writes the global.
+/ expect-next: QF022
+capped:{[lim] lim::lim&100; lim}
+capped2:{[lim] `lim set lim&100; lim}
+
 / QF014: an assignment anywhere in a body makes the name local throughout,
 / so the read of `cfg` on the left is of an unset local, not the global,
 / and q refuses the lambda where it is defined, with 'cfg. Within one
@@ -631,6 +637,31 @@ byapart:select top:max px by px from trades
 early:{[p] :p; p*2}
 early2:{[p] if[p<0;:0]; p*2}
 
+/ QB022: from book, not from `book, so the update changes a copy, and the
+/ copy is thrown away; by symbol, it lands.
+book:([]px:1 2)
+/ expect-next: QB022
+bump:{update px:px+1 from book; count book}
+bump2:{update px:px+1 from `book; count book}
+
+/ QB023: where gives a typed list, empty or not, and () is the empty general
+/ list, so the match is never true; count asks whether it is empty.
+/ expect-next: QB023
+nohits:{[p] ()~where p>100}
+nohits2:{[p] 0=count where p>100}
+
+/ QT036: getenv gives a string, so null gives a vector - empty when unset -
+/ and $[...] refuses a vector with 'type; "" matched with it is an atom.
+/ expect-next: QT036
+port:{$[null getenv`PORT;5010;"J"$getenv`PORT]}
+port2:{$[""~getenv`PORT;5010;"J"$getenv`PORT]}
+
+/ QB024: under q -s, a global written from a peach lambda is 'noupdate;
+/ returning the value and assigning it after peach is not.
+/ expect-next: QB024
+doubled:{seen::x; 2*x} peach 1 2
+doubled2:2*{x} peach 1 2
+
 / QE008: q 5 has no monadic -, so -x does not parse; neg x does.
 / expect-next: QE008
 negated:{-x}
@@ -728,6 +759,13 @@ same:1=`a
 takesOne:{[a] a+1}
 / expect-next: QA012
 tooMany:takesOne[1;2]
+
+/ QA013: the handler is given one argument, the error text, so a handler of
+/ two returns a projection of itself instead of logging; one of one runs.
+risky:{'"boom"}
+/ expect-next: QA013
+caught:@[risky;1;{[n;e] -1 string[n]," failed: ",e}]
+caught2:@[risky;1;{[e] -1 "risky failed: ",e}]
 
 / ------------------------------------------------ multiline continuations
 

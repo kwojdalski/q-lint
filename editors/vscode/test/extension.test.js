@@ -108,6 +108,7 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./valuehoverview": { registerValueHover: () => ({ registered: () => false }) },
     "./undefinednamesview": { registerUndefinedNames: () => ({ registered: () => false }) },
     "./idiomsview": { registerIdioms: () => ({ registered: () => false }) },
+    "./editingview": { registerEditing: () => ({ registered: () => false }) },
     "./driftview": { Drift: class { hotReloadState() { return {}; } } },
     "./assisttools": { registerAssistTools: () => ({ registered: () => [] }) },
     "./chat": { registerChat: () => ({ registered: () => false }) },
