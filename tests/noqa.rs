@@ -434,8 +434,8 @@ fn add_noqa_accepts_every_finding_and_a_second_run_changes_nothing() {
     let path = directory.path().join("a.q");
     // Two codes on line 2; line 3's noqa is joined, not doubled; a lambda's
     // finding is accepted on the line it is reported on. Line 3's QF016 is
-    // stale - QF001 is reported there instead - and its QL003 is accepted
-    // like any other finding.
+    // stale - QF001 is reported there instead - and its QL003 is never
+    // suppressed: it is said, and left for the fix that removes it.
     fs::write(
         &path,
         "my_var:1\nf:{[desc;dt;data] desc+dt}\ng:{[desc;data] 1} / noqa: QF016\nh:{[desc]\n  desc}\n",
@@ -443,23 +443,29 @@ fn add_noqa_accepts_every_finding_and_a_second_run_changes_nothing() {
     .unwrap();
     assert_eq!(cli(&path, &[]).status.code(), Some(1));
     let added = cli(&path, &["--add-noqa"]);
-    assert_eq!(added.status.code(), Some(0), "{added:?}");
+    assert_eq!(added.status.code(), Some(1), "{added:?}");
     let err = String::from_utf8_lossy(&added.stderr);
     assert!(
-        err.contains("added 6 noqa directive(s) in 1 file(s)"),
+        err.contains("added 5 noqa directive(s) in 1 file(s)"),
         "{err}"
     );
+    assert!(err.contains("1 noqa directive(s) suppress nothing (QL003)"), "{err}");
     let after = fs::read_to_string(&path).unwrap();
     assert_eq!(
         after,
         "my_var:1 / noqa: QS001\nf:{[desc;dt;data] desc+dt} / noqa: QF001, QF016\n\
-         g:{[desc;data] 1} / noqa: QF016, QF001, QL003\nh:{[desc] / noqa: QF001\n  desc}\n"
+         g:{[desc;data] 1} / noqa: QF016, QF001\nh:{[desc] / noqa: QF001\n  desc}\n"
     );
-    let clean = cli(&path, &[]);
-    assert_eq!(clean.status.code(), Some(0), "{clean:?}");
     let again = cli(&path, &["--add-noqa"]);
-    assert_eq!(again.status.code(), Some(0), "{again:?}");
+    assert_eq!(again.status.code(), Some(1), "{again:?}");
     assert_eq!(fs::read_to_string(&path).unwrap(), after);
+    let fixed = cli(&path, &["--fix", "--unsafe-fixes"]);
+    assert_eq!(fixed.status.code(), Some(0), "{fixed:?}");
+    assert!(
+        fs::read_to_string(&path)
+            .unwrap()
+            .contains("g:{[desc;data] 1} / noqa: QF001\n"),
+    );
 }
 
 #[test]

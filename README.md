@@ -484,7 +484,9 @@ code added to the `noqa` already there - so a tree can adopt a rule and keep
 new findings out, a second run reports nothing, and a third changes nothing.
 A line no comment can follow is left alone: one inside a string or a block
 comment, a block comment's own `/`, a system command, or any line of a file
-whose brackets do not close. It says how many it added, and exits 1 if any
+whose brackets do not close. A `noqa` that suppresses nothing (QL003) is not
+accepted either - naming QL003 in it would only hide it - but counted, for
+`--fix --unsafe-fixes` to remove. It says how many it added, and exits 1 if any
 such finding is left.
 
 Diagnostics carry a

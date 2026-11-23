@@ -883,7 +883,7 @@ fn add_noqa(
 ) -> Result<u8, String> {
     // More codes than this on one line is not a line anyone will read.
     const PASSES: usize = 64;
-    let (mut added, mut changed, mut left) = (0, 0, 0);
+    let (mut added, mut changed, mut left, mut stale) = (0, 0, 0, 0);
     let mut written = std::collections::HashSet::new();
     for (path, source) in sources.iter_mut() {
         if lossy.contains(path.as_str())
@@ -897,9 +897,12 @@ fn add_noqa(
         let mut found = policy.lint(&text, path, workspace)?;
         for _ in 0..PASSES {
             let mut lines = std::collections::HashSet::new();
+            // A stale noqa (QL003) is removed, never suppressed: naming it in
+            // the comment it complains about would only hide the comment.
             let mut edits: Vec<_> = found
                 .iter()
                 .zip(suppressions_for(&found, &text))
+                .filter(|(f, _)| f.code != "QL003")
                 .filter_map(|(f, edit)| edit.filter(|_| lines.insert(f.line)))
                 .collect();
             if edits.is_empty() {
@@ -914,7 +917,8 @@ fn add_noqa(
             here += edits.len();
             found = policy.lint(&text, path, workspace)?;
         }
-        left += found.len();
+        stale += found.iter().filter(|f| f.code == "QL003").count();
+        left += found.iter().filter(|f| f.code != "QL003").count();
         if here == 0 {
             continue;
         }
@@ -933,7 +937,12 @@ fn add_noqa(
             "qlinter: {left} finding(s) left: on a line no comment can follow, such as one inside a string or a block comment, or in a file whose brackets do not close"
         );
     }
-    Ok(if failed { 2 } else { u8::from(left > 0) })
+    if stale > 0 {
+        eprintln!(
+            "qlinter: {stale} noqa directive(s) suppress nothing (QL003): remove them with --fix --unsafe-fixes"
+        );
+    }
+    Ok(if failed { 2 } else { u8::from(left + stale > 0) })
 }
 
 /// `bytes` as text, each byte that is not UTF-8 read as one replacement
