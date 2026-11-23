@@ -246,7 +246,8 @@ export class FunctionSources implements TextDocumentContentProvider {
       return false;
     }
     try {
-      const got = await borrowWhenFree(this.live, (connection) => connection.call(REDEFINE, copy.name, copy.was, text));
+      // Only on the process the question named (#1290).
+      const got = await borrowWhenFree(this.live, (connection) => connection.call(REDEFINE, copy.name, copy.was, text), undefined, copy.process);
       if (got === undefined) {
         void window.showInformationMessage(`q-lint: ${copy.process} is busy with a query; ${copy.name} was not redefined.`);
         return false;
