@@ -43,3 +43,27 @@ def test_ci_builds_with_the_declared_msrv():
     [toolchain] = [s for s in job["steps"] if s.get("uses", "").startswith("dtolnay/rust-toolchain")]
     assert str(toolchain["with"]["toolchain"]) == declared
     assert "cargo build --locked --all-targets" in steps(job)
+
+
+def hooks():
+    return {h["id"]: h for h in yaml.safe_load((ROOT / ".pre-commit-hooks.yaml").read_text())}
+
+
+def test_the_pre_commit_hooks_lint_q_and_only_q():
+    found = hooks()
+    assert set(found) == {"qlinter", "qlinter-system"}
+    assert found["qlinter"]["language"] == "rust"
+    assert found["qlinter-system"]["language"] == "system"
+    for hook in found.values():
+        assert hook["entry"] == "qlinter --force-exclude"
+        files = re.compile(hook["files"])
+        assert files.search("src/a.q") and files.search("deep/dir/b.q")
+        assert not files.search("a.k") and not files.search("a.qs") and not files.search("q/readme.md")
+
+
+def test_the_readme_pre_commit_example_names_a_real_hook():
+    readme = (ROOT / "README.md").read_text()
+    [example] = re.findall(r"```yaml\n(repos:.*?)```", readme, re.S)
+    [repo] = yaml.safe_load(example)["repos"]
+    assert repo["repo"] == "https://github.com/kwojdalski/q-lint"
+    assert {h["id"] for h in repo["hooks"]} <= set(hooks())

@@ -1,0 +1,19 @@
+# pre-commit hooks for repositories that lint q with qlinter. `qlinter`
+# builds it from this repository at the pinned rev with cargo; use
+# `qlinter-system` instead where a qlinter is already on PATH.
+#
+# --force-exclude: pre-commit names every changed file outright, and a file
+# named outright is otherwise linted whatever `exclude` says. Only `.q`: k is
+# a different language, and qlinter refuses a `.k` file named outright.
+- id: qlinter
+  name: qlinter
+  description: Lint q/kdb+ source without running it.
+  entry: qlinter --force-exclude
+  language: rust
+  files: \.q$
+- id: qlinter-system
+  name: qlinter (installed)
+  description: Lint q/kdb+ source with the qlinter already on PATH.
+  entry: qlinter --force-exclude
+  language: system
+  files: \.q$

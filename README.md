@@ -1026,6 +1026,26 @@ A release is a tag: `python3 scripts/dist.py bump X.Y.Z` sets the version in
 its bundled server; commit, tag `vX.Y.Z` and push, and the release workflow
 builds and publishes every platform.
 
+## pre-commit and CI
+
+A [pre-commit](https://pre-commit.com) hook lints the `.q` files a commit
+changes. `qlinter` builds the linter from this repository at `rev` with cargo,
+so it needs Rust; `qlinter-system` runs the `qlinter` already on `PATH`. `rev`
+is a release tag, from the first release that carries `.pre-commit-hooks.yaml`
+on:
+
+```yaml
+repos:
+  - repo: https://github.com/kwojdalski/q-lint
+    rev: v0.33.2
+    hooks:
+      - id: qlinter
+```
+
+Both pass `--force-exclude`, so the configuration's `exclude` holds for the
+files pre-commit names one by one; add `args: [--profile, style]` or any other
+option to the hook as usual.
+
 ## Validation and profiling
 
 ```sh
