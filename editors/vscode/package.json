@@ -869,6 +869,12 @@
             "order": 147,
             "markdownDescription": "Press Enter after a line that leaves a bracket open - `f:{[x]`, `select from t where x in (1;2` - and the new line is indented, so it continues the definition: q ends one at a line that starts at column 0. A comment line is never indented after, and nothing is outdented. Needs `editor.autoIndent` at `full` or `advanced`, its default. Off, Enter is VS Code's own."
           },
+          "q-lint.editor.dottedNames.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 147,
+            "markdownDescription": "Take a dotted q name - `.ns.util.f`, `x.y`, `.z.p` - as one word, and a number as one (`1.5`, `2024.01.02`): **Add Selection to Next Find Match** (Ctrl/Cmd+D), the highlight of a word's other occurrences, and the word completion replaces. In `x+.y` the words are `x` and `.y`. Double-click and Ctrl/Cmd+Left/Right follow `editor.wordSeparators` instead, which this does not change: `\"[q]\": {\"editor.wordSeparators\": ...}` without `.` makes them agree. Off, a word is VS Code's own."
+          },
           "q-lint.processSymbols.enable": {
             "type": "boolean",
             "default": false,

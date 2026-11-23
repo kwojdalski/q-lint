@@ -1,10 +1,10 @@
-// The language configuration q editors get at run time (#1161): the Enter
-// rules' patterns on sample lines, and the registration a setting makes and
-// takes back without a reload.
+// The language configuration q editors get at run time (#1161, #1162): the
+// Enter rules' and the word pattern's matches on sample lines, and the
+// registration each setting makes and takes back without a reload.
 const { stub, vscode } = require("./vscode_stub.js");
 const test = require("node:test");
 const assert = require("node:assert");
-const { OPENS, COMMENT, languageConfiguration } = require("../out/editing.js");
+const { OPENS, COMMENT, WORD, languageConfiguration, words } = require("../out/editing.js");
 const { registerEditing } = require("../out/editingview.js");
 const pkg = require("../package.json");
 
@@ -57,8 +57,23 @@ test("the patterns are linear: a long line is answered at once", () => {
   assert.ok(Date.now() - start < 1000, `${Date.now() - start} ms`);
 });
 
-test("nothing is added with the feature off", () => {
+test("a dotted name is one word, a number is one, and an operator splits them", () => {
+  assert.deepStrictEqual(words(".ns.util.f[x]"), [".ns.util.f", "x"]);
+  assert.deepStrictEqual(words("x.y"), ["x.y"]);
+  assert.deepStrictEqual(words("x+.y"), ["x", ".y"]);
+  assert.deepStrictEqual(words("a:1.5*x"), ["a", "1.5", "x"]);
+  assert.deepStrictEqual(words("1e-3 0x1f 12i 2024.01.02 0Nj"), ["1e-3", "0x1f", "12i", "2024.01.02", "0Nj"]);
+  assert.deepStrictEqual(words("f. .z.p,`sym.x"), ["f", ".z.p", "sym.x"]);
+  assert.deepStrictEqual(words("a_b:c2.d_e"), ["a_b", "c2.d_e"]);
+  assert.deepStrictEqual(words("{x+y}"), ["x", "y"]);
+  // VS Code warns of a word pattern that matches an empty string.
+  assert.ok(!WORD.test("") && !WORD.test(" +-*%"));
+});
+
+test("nothing is added with both features off, and each adds only its own", () => {
   assert.strictEqual(languageConfiguration({ continuation: false, dotted: false }), undefined);
+  assert.deepStrictEqual(Object.keys(languageConfiguration({ continuation: true, dotted: false })), ["onEnterRules"]);
+  assert.deepStrictEqual(Object.keys(languageConfiguration({ continuation: false, dotted: true })), ["wordPattern"]);
 });
 
 test("the setting registers the rules for q, and turning it off takes them back without a reload", (t) => {
@@ -84,6 +99,7 @@ test("the setting registers the rules for q, and turning it off takes them back 
   const live = () => registered.filter((r) => !r.disposed);
   assert.strictEqual(live().length, 1);
   assert.strictEqual(live()[0].language, "q");
+  assert.strictEqual(live()[0].configuration.wordPattern, WORD);
   assert.deepStrictEqual(
     live()[0].configuration.onEnterRules.map((r) => [r.beforeText, r.action.indentAction]),
     [
@@ -91,22 +107,32 @@ test("the setting registers the rules for q, and turning it off takes them back 
       [OPENS, 1],
     ],
   );
+  // The word pattern alone, then nothing, then both again.
   stub.config.user["editor.continuationIndent.enable"] = false;
   stub.changeConfig("q-lint.editor.continuationIndent.enable");
+  assert.strictEqual(live().length, 1);
+  assert.deepStrictEqual(Object.keys(live()[0].configuration), ["wordPattern"]);
+  stub.config.user["editor.dottedNames.enable"] = false;
+  stub.changeConfig("q-lint.editor.dottedNames.enable");
   assert.strictEqual(editing.registered(), false);
   assert.strictEqual(live().length, 0);
   stub.config.user["editor.continuationIndent.enable"] = true;
-  stub.changeConfig("q-lint.editor.continuationIndent.enable");
+  stub.config.user["editor.dottedNames.enable"] = true;
+  stub.changeConfig("q-lint.editor.dottedNames.enable");
+  assert.deepStrictEqual(Object.keys(live()[0].configuration).sort(), ["onEnterRules", "wordPattern"]);
   assert.strictEqual(live().length, 1);
   for (const d of context.subscriptions) d.dispose?.();
   assert.strictEqual(live().length, 0);
 });
 
-test("the switch is declared, on by default", () => {
+test("the switches are declared, on by default", () => {
   const props = Object.assign({}, ...pkg.contributes.configuration.map((c) => c.properties));
   assert.strictEqual(props["q-lint.editor.continuationIndent.enable"].default, true);
-  // The static file keeps no Enter rules: they would apply with the switch off.
+  assert.strictEqual(props["q-lint.editor.dottedNames.enable"].default, true);
+  // The static file keeps no Enter rules or word pattern: they would apply
+  // with the switches off.
   const config = require("../language-configuration.json");
   assert.strictEqual(config.onEnterRules, undefined);
   assert.strictEqual(config.indentationRules, undefined);
+  assert.strictEqual(config.wordPattern, undefined);
 });

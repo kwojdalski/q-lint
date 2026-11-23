@@ -88,6 +88,15 @@ to a process you add and connect to, and sends only the code you run.
   line cannot tell which bracket it closes, and a `}` at the margin is an
   error. `q-lint.editor.continuationIndent.enable` turns it off without a
   reload.
+- **Dotted names as one word**: `.ns.util.f`, `x.y` and `.z.p` are each one
+  word to **Add Selection to Next Find Match** (Ctrl/Cmd+D), to the
+  highlight of a word's other occurrences and to the word a completion
+  replaces, and so is a number (`1.5`, `1e-3`, `2024.01.02`); in `x+.y`
+  the words are `x` and `.y`. Double-click and Ctrl/Cmd+Left/Right go by
+  `editor.wordSeparators` instead, which an extension cannot switch: to
+  have them agree, take the `.` out of it for q,
+  ``"[q]": {"editor.wordSeparators": "`~!@#$%^&*()-=+[{]}\\|;:'\",<>/?"}``.
+  `q-lint.editor.dottedNames.enable` turns it off without a reload.
 - **Snippets** for the forms q is mostly written in: qSQL (`select`,
   `selectby`, `update`, `updateby`, `exec`, `execby`, `delete`,
   `deletecols`, and the functional `fselect` and `fupdate`), protected
@@ -2630,6 +2639,7 @@ nothing.
 | `q-lint.idiomSnippets.enable` | `true` | Offer the idiom snippets (joins, `.z` handlers, a TorQ process) in the completion list. | - |
 | `q-lint.argumentSlot.enable` | `true` | Highlight the argument of `f[a;b;c]` the cursor is in and name its parameter. Asks the language server only. Off, nothing listens or is drawn. | - |
 | `q-lint.editor.continuationIndent.enable` | `true` | Indent the line after one that leaves a bracket open, on Enter. Off, Enter is VS Code's own. | - |
+| `q-lint.editor.dottedNames.enable` | `true` | Take `.ns.f` and `x.y` as one word for Ctrl/Cmd+D, occurrence highlights and completion. Off, a word is VS Code's own. | - |
 | `q-lint.processSymbols.enable` | `false` | List the names only the connected process defines in **Go to Symbol in Workspace**, read while you search. Off, no provider is registered and nothing is sent. | - |
 | `q-lint.processExplorer.driftDetection.enable` | `false` | **Check Drift Against Process**: compare the workspace's function definitions with the connected process. Off, the command is hidden and reads nothing. | - |
 | `q-lint.query.lineTimings.enable` | `true` | **Time Lines on Process** and **Clear Line Timings**. Off, the commands are hidden and refuse, and the timings drawn are cleared. | - |

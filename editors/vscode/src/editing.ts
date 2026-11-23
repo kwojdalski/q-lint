@@ -1,7 +1,8 @@
 // The language configuration q editors get at run time rather than from
 // `language-configuration.json`, which VS Code reads once and offers no
-// switch for: the continuation indent on Enter (#1161). Free of any `vscode`
-// import, so node tests the patterns; `editingview.ts` registers what is on.
+// switch for: the continuation indent on Enter (#1161) and dotted names as
+// one word (#1162). Free of any `vscode` import, so node tests the patterns;
+// `editingview.ts` registers what is on.
 //
 // A q script ends a definition at a line that starts at column 0, so Enter
 // inside a lambda or an open bracket must never leave the cursor there: a
@@ -25,6 +26,12 @@ export const OPENS = new RegExp(String.raw`^(?:(?!\s/).)*[{\[(]${SETTLED}*(?:\s/
 /// opens a block comment, and the line after it is text, not q.
 export const COMMENT = /^\s*\//;
 
+/// A q name, dots and all - `.ns.util.f`, `x.y`, `.z.p` - or a number or
+/// temporal literal (`1.5`, `1e-3`, `0x1f`, `2024.01.02`). A dot that starts
+/// a name stays with it, so `x+.y` is `x` and `.y`; a dot that ends one does
+/// not, so `f.` is `f`.
+export const WORD = /(\d[\d.]*(?:e[+-]?\d+)?\w*)|(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)/;
+
 export interface EnterRule {
   beforeText: RegExp;
   action: "indent" | "none";
@@ -32,8 +39,10 @@ export interface EnterRule {
 
 /// What a q editor's language configuration adds, with each feature on or
 /// off; undefined when all are off, and VS Code's own behaviour is left.
-export function languageConfiguration(on: { continuation: boolean }): { onEnterRules?: EnterRule[] } | undefined {
-  if (!on.continuation) {
+export function languageConfiguration(on: { continuation: boolean; dotted: boolean }):
+  | { onEnterRules?: EnterRule[]; wordPattern?: RegExp }
+  | undefined {
+  if (!on.continuation && !on.dotted) {
     return undefined;
   }
   return {
@@ -46,5 +55,11 @@ export function languageConfiguration(on: { continuation: boolean }): { onEnterR
           ],
         }
       : {}),
+    ...(on.dotted ? { wordPattern: WORD } : {}),
   };
+}
+
+/// The words of `line` as `WORD` reads them, for a test.
+export function words(line: string): string[] {
+  return [...line.matchAll(new RegExp(WORD.source, "g"))].map((m) => m[0]);
 }
