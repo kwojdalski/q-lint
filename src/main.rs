@@ -126,6 +126,10 @@ struct Args {
     /// Repeatable or comma-separated, and applied after the configuration.
     #[arg(long, value_delimiter = ',')]
     ignore: Vec<String>,
+    /// Print how many findings each rule has, with its summary, most first,
+    /// instead of the findings. A list of objects under `--format json`.
+    #[arg(long, conflicts_with_all = ["diff", "write_baseline", "show_settings"])]
+    statistics: bool,
     #[arg(long)]
     rules: bool,
     #[arg(long)]
@@ -154,7 +158,7 @@ struct Args {
     /// with the builtin backend alone, so `--backend` is one too (#544).
     #[arg(long, conflicts_with_all = ["paths", "rules", "explain", "fix", "diff", "show_settings",
         "stdin_filename", "format", "color", "force_exclude", "unsafe_fixes",
-        "backend", "qls_executable", "qls_timeout", "baseline", "write_baseline"])]
+        "backend", "qls_executable", "qls_timeout", "baseline", "write_baseline", "statistics"])]
     lsp: bool,
     /// Colour the text output: `auto` (a terminal, and NO_COLOR unset or empty),
     /// `always`, or `never`.
@@ -423,6 +427,12 @@ fn run(args: Args) -> Result<u8, String> {
     if args.diff && args.format != "text" {
         return Err(format!(
             "--diff cannot be combined with --format {}",
+            args.format
+        ));
+    }
+    if args.statistics && !matches!(args.format.as_str(), "text" | "json") {
+        return Err(format!(
+            "--statistics prints text or json, not --format {}",
             args.format
         ));
     }
@@ -718,7 +728,23 @@ fn run(args: Args) -> Result<u8, String> {
             policy.baselined.get()
         );
     }
-    if args.format == "json" {
+    if args.statistics {
+        let rows = report::statistics(&findings);
+        if args.format == "json" {
+            let rows: Vec<_> = rows
+                .iter()
+                .map(|(code, count, summary)| {
+                    serde_json::json!({"code": code, "count": count, "summary": summary})
+                })
+                .collect();
+            out!("{}", serde_json::to_string(&rows).unwrap());
+        } else {
+            let width = rows.first().map_or(1, |r| r.1.to_string().len());
+            for (code, count, summary) in &rows {
+                out!("{count:>width$}  {code:<6}  {summary}");
+            }
+        }
+    } else if args.format == "json" {
         out!("{}", serde_json::to_string(&findings).unwrap());
     } else if args.format == "sarif" {
         let cwd = config::absolute(&std::env::current_dir().map_err(|e| e.to_string())?);

@@ -128,3 +128,34 @@ fn github_prints_one_workflow_command_per_finding() {
     );
     assert!(lines[1].contains(",title=QF001::"), "{out}");
 }
+
+#[test]
+fn statistics_counts_each_rule_across_files_most_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    // QS001 three times over two files, QF001 once.
+    fs::write(d.join("a.q"), TWO).unwrap();
+    fs::write(d.join("b.q"), "my_a:1\nmy_b:2\n").unwrap();
+    let (status, out, err) = run(d, &["--statistics", "a.q", "b.q"]);
+    assert_eq!(status, Some(1), "{err}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 2, "{out}");
+    assert!(lines[0].starts_with("3  QS001 "), "{out}");
+    assert!(lines[1].starts_with("1  QF001 "), "{out}");
+    assert!(lines[1].len() > "1  QF001  ".len(), "{out}");
+
+    let (status, out, _) = run(d, &["--statistics", "--format", "json", "a.q", "b.q"]);
+    assert_eq!(status, Some(1));
+    let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let rows = rows.as_array().unwrap();
+    let counts: Vec<(&str, u64)> = rows
+        .iter()
+        .map(|r| (r["code"].as_str().unwrap(), r["count"].as_u64().unwrap()))
+        .collect();
+    assert_eq!(counts, [("QS001", 3), ("QF001", 1)]);
+    assert!(!rows[0]["summary"].as_str().unwrap().is_empty());
+
+    let (status, _, err) = run(d, &["--statistics", "--format", "sarif", "a.q"]);
+    assert_eq!(status, Some(2));
+    assert!(err.contains("--statistics prints text or json"), "{err}");
+}

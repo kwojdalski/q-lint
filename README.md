@@ -202,6 +202,11 @@ rule's code as the title - which a workflow run shows as annotations on the
 lines they name. `%`, CR and LF are escaped in the message, and `:` and `,` as
 well in the properties.
 
+`--statistics` prints, instead of the findings, how many each rule has - its
+count, code and summary, the most frequent first - and under `--format json`
+the same as a list of `{"code", "count", "summary"}`. The exit code is the
+one the findings would give.
+
 ### The dependency graph: `qlinter analyze graph`
 
 ```sh

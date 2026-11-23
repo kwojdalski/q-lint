@@ -180,6 +180,28 @@ pub fn github(f: &Finding, cwd: &Path) -> String {
     )
 }
 
+/// `--statistics`: each code with its count and its rule's summary, the
+/// most frequent first and ties in code order.
+pub fn statistics(findings: &[Finding]) -> Vec<(String, usize, String)> {
+    let mut counts: BTreeMap<&str, (usize, &Finding)> = BTreeMap::new();
+    for f in findings {
+        counts.entry(f.code.as_str()).or_insert((0, f)).0 += 1;
+    }
+    let mut rows: Vec<_> = counts
+        .into_iter()
+        .map(|(code, (n, f))| {
+            let summary = RULES
+                .iter()
+                .find(|r| r.code == code)
+                .map_or(f.why.as_str(), |r| r.summary.as_str());
+            (code.to_string(), n, summary.to_string())
+        })
+        .collect();
+    // Stable, so codes that tie stay in the map's code order.
+    rows.sort_by_key(|r| std::cmp::Reverse(r.1));
+    rows
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
