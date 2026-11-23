@@ -293,6 +293,9 @@ test("SQL is sent to .s.e with its comments dropped, and a write is recognised",
   assert.strictEqual(sqlQuery("select sym, px -- the price\nfrom t\nwhere px > 1;"), '.s.e "select sym, px from t where px > 1"');
   assert.strictEqual(sqlQuery("select 'a--b' as s from t"), `.s.e "select 'a--b' as s from t"`);
   assert.strictEqual(sqlQuery('select "x" from t'), '.s.e "select \\"x\\" from t"');
+  // Double quotes hide a comment marker as single ones do, and an apostrophe in them opens nothing (#1099).
+  assert.strictEqual(sqlQuery('select "a--b" as x from t'), '.s.e "select \\"a--b\\" as x from t"');
+  assert.strictEqual(sqlQuery('select "it\'s" as x -- note\nfrom t'), `.s.e "select \\"it's\\" as x from t"`);
   assert.match(sqlQuery("select 1", true), /^\{if\[not `e in key `\.s;system "l s\.k_"\];\.s\.e x\} "select 1"$/);
   assert.deepStrictEqual(sqlWrites("select * from t"), []);
   assert.deepStrictEqual(sqlWrites("-- note\ninsert into t values (1); DELETE from t"), ["INSERT", "DELETE"]);
