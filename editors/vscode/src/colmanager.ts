@@ -108,7 +108,7 @@ export const HELPERS = [
   ".qlint.cm.cols:{[d] get ` sv d,`.d}",
   '.qlint.cm.enum:{$[11h=abs type x;(hsym`$system["cd"],"/sym")?x;x]}',
   '.qlint.cm.nested:{[c] c,`$string[c],/:("#";"##")}',
-  ".qlint.cm.add:{[c;v;d] cs:.qlint.cm.cols d; if[c in cs;:`$\"has \",string c]; (` sv d,c) set count[get ` sv d,first cs]#.qlint.cm.enum v; (` sv d,`.d) set cs,c; `ok}",
+  ".qlint.cm.add:{[c;v;d] cs:.qlint.cm.cols d; if[c in cs;:`$\"has \",string c]; (` sv d,c) set count[get ` sv d,first cs]#enlist .qlint.cm.enum v; (` sv d,`.d) set cs,c; `ok}",
   ".qlint.cm.del:{[c;d] cs:.qlint.cm.cols d; if[not c in cs;:`$\"no \",string c]; {if[not ()~key x;hdel x]} each ` sv' d,/:.qlint.cm.nested c; (` sv d,`.d) set cs except c; `ok}",
   '.qlint.cm.mv:{[d;a;b] f:` sv d,a; if[not ()~key f; system $["w"=first string .z.o;"move ";"mv "],(1_string f)," ",1_string ` sv d,b]}',
   ".qlint.cm.ren:{[o;n;d] cs:.qlint.cm.cols d; if[not o in cs;:`$\"no \",string o]; if[n in cs;:`$\"has \",string n]; .qlint.cm.mv[d]'[.qlint.cm.nested o;.qlint.cm.nested n]; (` sv d,`.d) set @[cs;cs?o;:;n]; `ok}",

@@ -121,6 +121,15 @@ test("the column manager's script changes every partition, reports, reloads and 
   assert.strictEqual(await connection.call("{`cm in key`.qlint}", 0), false);
 });
 
+test("the column manager's add with a list default gives every row that list (#1082)", { skip }, async (t) => {
+  const { connection } = await connect(t, HDB());
+  assert.match(await run(connection, columnScript("trade", { op: "add", column: "note", value: '""' }, "hdb")), /changed 3 of 3 directories/);
+  assert.strictEqual(await connection.call("{exec t from meta trade where c=`note}", 0), "C");
+  assert.strictEqual(await connection.call("{\"f\"$count select from trade where note~\\:\"\"}", 0), 18);
+  await run(connection, columnScript("trade", { op: "add", column: "n", value: "0" }, "hdb"));
+  assert.strictEqual(await connection.call("{exec t from meta trade where c=`n}", 0), "j");
+});
+
 test("the documenter reads tables, keys, foreign keys and functions", { skip }, async (t) => {
   const { connection } = await connect(t, HDB() + "\ns:([sym:`a`b] nm:(\"x\";\"y\"))\nf:([] sym:`s$`a`b`a; v:1 2 3)\nkt:([k:1 2] v:`p#`x`x)\n");
   const doc = readDoc(await connection.call(DOCUMENT, 100));
