@@ -150,9 +150,12 @@ export class TableStreams {
     this.streams.add(stream);
     panel.webview.html = streamHtml(panel.webview, media);
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // Closing the panel closes the connection, whose close handler would
+    // draw again: nothing touches the webview once it is disposed (#1272).
+    let disposed = false;
     const draw = (): void => {
       timer = undefined;
-      if (!stream.paused) {
+      if (!disposed && !stream.paused) {
         void panel.webview.postMessage({
           type: "rows",
           process: label,
@@ -167,7 +170,9 @@ export class TableStreams {
       }
     };
     const later = (): void => {
-      timer ??= setTimeout(draw, DRAW_MS);
+      if (!disposed) {
+        timer ??= setTimeout(draw, DRAW_MS);
+      }
     };
     connection.whenAsync((message) => {
       let rows: string[][] | undefined;
@@ -194,6 +199,7 @@ export class TableStreams {
       }
     });
     panel.onDidDispose(() => {
+      disposed = true;
       clearTimeout(timer);
       stream.closed ??= "closed";
       this.streams.delete(stream);
