@@ -3259,3 +3259,69 @@ fn format_changed_lines_fixes_only_those_lines() {
     assert_eq!(ask(&mut server, json!([[0, 2]])), json!([]));
     assert_eq!(server.shutdown_and_exit(), 0);
 }
+
+/// Expand Selection from inside `(1;2)` grows through each bracket out to
+/// the definition, every range strictly holding the one before (#1157); off
+/// unless asked for, the capability is not announced.
+#[test]
+fn selection_ranges_grow_from_the_token_to_the_definition() {
+    let text = "f:{[x] g[x;(1;2)]}\nh:2\n";
+    let dir = tempfile::tempdir().unwrap();
+    let (mut server, reply) = start_with_options(
+        dir.path(),
+        &["--lsp"],
+        json!({"selectionRange": {"enable": true}}),
+        None,
+    );
+    assert_eq!(
+        reply["result"]["capabilities"]["selectionRangeProvider"],
+        true
+    );
+    let uri = "file:///tmp/select.q";
+    server.open(uri, text);
+    server.send(
+        json!({"jsonrpc":"2.0","id":40,"method":"textDocument/selectionRange",
+        "params":{"textDocument":{"uri":uri},"positions":[{"line":0,"character":12}]}}),
+    );
+    let reply = server.until(|m| m["id"] == 40);
+    let mut node = &reply["result"][0];
+    let mut spans = vec![];
+    while !node.is_null() {
+        let (start, end) = (&node["range"]["start"], &node["range"]["end"]);
+        assert_eq!(
+            (start["line"].as_u64(), end["line"].as_u64()),
+            (Some(0), Some(0))
+        );
+        let (a, b) = (
+            start["character"].as_u64().unwrap(),
+            end["character"].as_u64().unwrap(),
+        );
+        spans.push(&text[a as usize..b as usize]);
+        node = &node["parent"];
+    }
+    assert_eq!(
+        spans,
+        [
+            "1",
+            "1;2",
+            "(1;2)",
+            "x;(1;2)",
+            "[x;(1;2)]",
+            "g[x;(1;2)]",
+            "[x] g[x;(1;2)]",
+            "{[x] g[x;(1;2)]}",
+            "f:{[x] g[x;(1;2)]}",
+        ]
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+
+    let (mut server, reply) = start_with_options(dir.path(), &["--lsp"], json!({}), None);
+    assert!(reply["result"]["capabilities"]["selectionRangeProvider"].is_null());
+    server.open(uri, text);
+    server.send(
+        json!({"jsonrpc":"2.0","id":41,"method":"textDocument/selectionRange",
+        "params":{"textDocument":{"uri":uri},"positions":[{"line":0,"character":12}]}}),
+    );
+    assert_eq!(server.until(|m| m["id"] == 41)["result"], Value::Null);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}

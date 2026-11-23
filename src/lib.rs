@@ -443,6 +443,15 @@ pub fn glyph_at(source: &str, offset: usize) -> Option<(usize, usize)> {
     semantics::help::glyph_at(&v.code, source, offset)
 }
 
+/// What Expand Selection grows through from byte `offset` of `source`,
+/// innermost first and each holding the last: the token, each bracket's
+/// item, contents and whole, and the top-level statement (`semantics::select`).
+pub fn selection_ranges(source: &str, offset: usize) -> Vec<(usize, usize)> {
+    let v = views(source);
+    let balanced = problems(source, &v).is_empty();
+    semantics::select::ranges(&v.code, source, &v.string_starts, balanced, offset)
+}
+
 /// The name at byte `offset`, a keyword included, as its start and length.
 pub fn word_at(source: &str, offset: usize) -> Option<(usize, usize)> {
     let v = views(source);

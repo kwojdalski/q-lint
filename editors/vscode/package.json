@@ -419,6 +419,12 @@
             "default": true,
             "order": 47,
             "markdownDescription": "Report the lints from inferred types (style profile): a local that is always a symbol compared with a string or number (QT033), lists of different types joined (QT034), arithmetic on a local that is always a symbol (QT035). Off, they are hidden as `#q-lint.lint.ignore#` would."
+          },
+          "q-lint.selectionRange.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 48,
+            "markdownDescription": "Grow **Expand Selection** by q's structure: the token, then each bracket around it - the `;`-separated item, the contents, the bracket, a call with its name - then the top-level statement. Read from the source, never from a running q. Off, q-lint announces none and VS Code's own word-and-bracket selection is used."
           }
         }
       },

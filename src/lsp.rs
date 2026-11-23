@@ -73,7 +73,8 @@
 //! accepted for its whole file with `/ qlinter: noqa: CODE`;
 //! `q-lint/formatChangedLines` formats only the lines a client says changed;
 //! and textDocument/foldingRange folds the brackets and block comments that
-//! span lines.
+//! span lines; textDocument/selectionRange, when asked for, grows a
+//! selection through the same brackets to the statement (`selection`).
 //!
 //! A workspace index: every `.q` file under the workspace folders is read at
 //! startup - never run - for the global names it defines and reads, and
@@ -191,6 +192,7 @@ mod inventory;
 mod live;
 mod navigate;
 mod relate;
+mod selection;
 
 /// Open documents, by URI. The editor is the authority on their contents from
 /// didOpen until didClose, so nothing here reads from disk.
@@ -626,7 +628,7 @@ fn workspace_folders(params: &Value) -> Vec<(String, String)> {
 ///  "qsqlLayout": {"enable": true, "onFormat": false, "lineLength": 80},
 ///  "functionalForm": {"enable": true}, "qsqlExplain": {"enable": true},
 ///  "versionCheck": {"enable": true}, "baseline": {"enable": true},
-///  "typeLints": {"enable": true}}
+///  "typeLints": {"enable": true}, "selectionRange": {"enable": false}}
 /// ```
 ///
 /// `lint.select` and `lint.ignore` narrow the selection (see
@@ -725,6 +727,10 @@ struct Options {
     /// Report the lints from inferred types, QT033-QT035. Off, they are
     /// ignored as `lint.ignore` would.
     type_lints: bool,
+    /// Answer textDocument/selectionRange: Expand Selection by the
+    /// brackets and statements of q. Off unless asked for, since an editor
+    /// told a server answers it stops using its own word-and-bracket guess.
+    selection_range: bool,
     /// Whether the client shows an action it cannot take with the reason
     /// (`codeAction.disabledSupport`): a capability, not a setting.
     disabled_actions: bool,
@@ -768,6 +774,7 @@ impl Default for Options {
             version_check: true,
             baseline: true,
             type_lints: true,
+            selection_range: false,
             disabled_actions: false,
             severity: vec![],
         }
@@ -819,6 +826,7 @@ impl Options {
                         "versionCheck",
                         "baseline",
                         "typeLints",
+                        "selectionRange",
                     ]
                     .contains(&key.as_str())
                         && !value.is_object()
@@ -869,6 +877,7 @@ impl Options {
         options.version_check = flag("/versionCheck/enable", true);
         options.baseline = flag("/baseline/enable", true);
         options.type_lints = flag("/typeLints/enable", true);
+        options.selection_range = flag("/selectionRange/enable", false);
         match init.pointer("/qsqlLayout/lineLength") {
             None | Some(Value::Null) => {}
             Some(n) => match n.as_u64().filter(|n| (20..=400).contains(n)) {
@@ -1208,6 +1217,7 @@ pub fn serve(
                 relate::announce(&mut result["capabilities"], opts.call_hierarchy, opts.graph);
                 live::announce(&mut result["capabilities"]);
                 inventory::announce(&mut result["capabilities"]);
+                selection::announce(&mut result["capabilities"], opts.selection_range);
                 annotate::announce(
                     &mut result["capabilities"],
                     opts.inlay_hints || opts.inferred_types,
@@ -1286,6 +1296,7 @@ pub fn serve(
                 | "textDocument/inlayHint"
                 | "textDocument/codeLens"
                 | "textDocument/documentLink"
+                | "textDocument/selectionRange"
                 | "q-lint/graph"
                 | "q-lint/globalAt"
                 | "q-lint/unresolvedNames"
@@ -1459,6 +1470,20 @@ pub fn serve(
                         writer,
                         json!({"id": id, "error": {"code": REQUEST_FAILED, "message": refusal}}),
                     )?,
+                    Err(panic) => send(writer, internal_error(id, &panic))?,
+                }
+            }
+            ("textDocument/selectionRange", Some(id)) => {
+                // Asked of a server that did not announce it, answered with
+                // nothing rather than refused.
+                let answer = guarded(|| {
+                    if !opts.selection_range {
+                        return Value::Null;
+                    }
+                    selection::answer(&params, &navigate::Sources::new(&docs, &idx))
+                });
+                match answer {
+                    Ok(result) => send(writer, json!({"id": id, "result": result}))?,
                     Err(panic) => send(writer, internal_error(id, &panic))?,
                 }
             }

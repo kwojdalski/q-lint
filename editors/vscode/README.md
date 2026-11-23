@@ -80,6 +80,9 @@ to a process you add and connect to, and sends only the code you run.
 - **Folding** of lambdas, parenthesised lists, bracketed blocks and block
   comments that span lines, read from the brackets and never from one inside
   a string or a comment. See [Folding](#folding) for what that replaces.
+- **Expand Selection** by q's structure: from the token out through each
+  bracket - its `;`-separated item, its contents, the bracket, a call with
+  its name - to the top-level statement. `q-lint.selectionRange.enable`.
 - **Snippets** for the forms q is mostly written in: qSQL (`select`,
   `selectby`, `update`, `updateby`, `exec`, `execby`, `delete`,
   `deletecols`, and the functional `fselect` and `fupdate`), protected
@@ -2519,6 +2522,7 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.versionCheck.enable` | `true` | Report the QK rules for a folder's `target-version`. Off: hidden as `q-lint.lint.ignore` would. | - |
 | `q-lint.baseline.enable` | `true` | Hide the findings in a folder's configured `baseline`, and offer **Write Lint Baseline**. Off: every finding shows. | - |
 | `q-lint.typeLints.enable` | `true` | Report QT033-QT035, the lints from inferred types. Off: hidden as `q-lint.lint.ignore` would. | - |
+| `q-lint.selectionRange.enable` | `true` | Grow **Expand Selection** by q's brackets and statements. Off: VS Code's own word-and-bracket selection. | - |
 | `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines, up to 20,000 files or 500,000 directory entries. Off: only open files. | - |
 | `q-lint.workspaceIndex.exclude` | `[]` | Globs, relative to the workspace folder, the index does not read: `["vendor/**"]`. | `q-lang-server.sourceFiles.ignoreGlob` |
 | `q-lint.trace.server` | `off` | Log client-server traffic: `off`, `messages`, `verbose`. | `q-lang-server.trace.server` |

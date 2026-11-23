@@ -458,6 +458,12 @@ Around those:
   bracketed blocks and block comments that span lines, found in the masked
   text so that a bracket in a string or a comment folds nothing. A statement
   continued over indented lines with no bracket open is not a range.
+- `textDocument/selectionRange`, with `selectionRange.enable: true`, grows a
+  selection by q's structure: the token (a whole string literal in a string),
+  then each bracket around it from the inside out - the `;`-separated item,
+  the contents, the bracket, and a call with the name before its `[` - then
+  the top-level statement. A file whose brackets do not close gets the token
+  and the statement only.
 - While a bracket or a string is open - every keystroke of a call or a
   string being typed - a file reports only QE001, as the CLI does, placed at
   the bracket that is not closed rather than the closer it runs into. The
@@ -940,7 +946,7 @@ Every key is optional, and these are the defaults:
  "qsqlLayout": {"enable": true, "onFormat": false, "lineLength": 80},
  "functionalForm": {"enable": true}, "qsqlExplain": {"enable": true},
  "versionCheck": {"enable": true}, "baseline": {"enable": true},
- "typeLints": {"enable": true},
+ "typeLints": {"enable": true}, "selectionRange": {"enable": false},
  "workspaceIndex": {"enable": true, "exclude": []}}
 ```
 
@@ -969,7 +975,8 @@ query and its functional form, and `qsqlExplain.enable: false` the query in
 words on hover. `versionCheck.enable: false` ignores the QK rules and
 `typeLints.enable: false` QT033-QT035, as `lint.ignore` would;
 `baseline.enable: false` shows every finding, whatever baseline the
-configuration names.
+configuration names. `selectionRange.enable: true` announces
+`textDocument/selectionRange`; off, an editor keeps its own expansion.
 `workspaceIndex.exclude`
 holds globs relative to each workspace folder that the index does not read.
 The index stops after 20,000 `.q` files or 500,000 directory entries of any

@@ -9,6 +9,7 @@ pub(crate) mod help;
 pub(crate) mod infer;
 pub(crate) mod layout;
 pub(crate) mod navigate;
+pub(crate) mod select;
 pub(crate) mod typelint;
 pub(crate) mod version;
 
