@@ -407,11 +407,15 @@ impl Index {
 
     /// The directory a relative `\l` is tried against first: the first
     /// workspace folder, which is where a q process over this tree is most
-    /// likely started, since the source does not say.
+    /// likely started, since the source does not say. By its real path, as
+    /// the files are keyed: a directory loaded, `\l db`, is found by the
+    /// files keyed under it, and a folder opened through a symlink named no
+    /// such directory (#1366).
     fn cwd(&self) -> std::path::PathBuf {
-        self.roots
-            .first()
-            .map_or_else(|| std::env::current_dir().unwrap_or_default(), Into::into)
+        self.roots.first().map_or_else(
+            || std::env::current_dir().unwrap_or_default(),
+            |root| file_key(root).into(),
+        )
     }
 
     /// Forget `path` and, when it was a directory, every file under it but

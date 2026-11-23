@@ -1074,3 +1074,36 @@ fn a_workspace_opened_through_a_link_is_answered_in_the_links_spelling() {
         );
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn a_directory_load_is_followed_in_a_workspace_opened_through_a_link() {
+    // The index keys each file by its real path, and the directory a `\l db`
+    // is tried in was the folder as the editor spelled it: opened as `link`,
+    // a symlink to `real`, no script was found in `link/db` and the graph,
+    // the affected tests and the contexts lost the edge (#1366).
+    let top = tempfile::tempdir().unwrap();
+    let real = top.path().join("real");
+    std::fs::create_dir(&real).unwrap();
+    let link = top.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let files = [
+        ("main.q", "\\d .a\n\\l db\n"),
+        ("db/x.q", "xx:1\n"),
+        ("tests/test_main.q", "\\l main.q\n"),
+    ];
+    let mut server = Server::start(&link, &files);
+    let main = file_uri(&link.join("main.q"));
+    let x = file_uri(&link.join("db/x.q"));
+    let graph = server.graph(&main);
+    assert_eq!(graph["dependencies"], json!([x]), "{graph}");
+    let (tests, unindexed) = server.affected(&link, &["db/x.q"]);
+    assert_eq!(
+        tests,
+        [("tests/test_main.q".to_string(), vec!["db/x.q".to_string()])]
+    );
+    assert!(unindexed.is_empty(), "{unindexed:?}");
+    // Loaded under `\d .a`, x.q's `xx` is `.a.xx`.
+    let symbols = server.result("workspace/symbol", json!({"query": ".a.xx"}));
+    assert_eq!(symbols[0]["location"]["uri"], json!(x), "{symbols}");
+}
