@@ -247,6 +247,17 @@ test("Redefine goes only to the process the function came from", async (t) => {
   assert.deepStrictEqual(calls(q, REDEFINE), []);
 });
 
+test("Redefine sends nothing when another process became active while it was asked (#1290)", async (t) => {
+  const { q, live } = await setUp(t);
+  const uri = await stub.commands.get("q-lint.openFunctionSource")(".ns.h");
+  const copy = await stub.commands.get("q-lint.editFunctionSource")(uri);
+  copy.text = "/ .ns.h on p, defined in .ns\n{[x] x+lim*2}\n";
+  stub.picks.push(async () => (await live.connectTo("other"), "Redefine"));
+  assert.strictEqual(await stub.commands.get("q-lint.redefineFunction")(), false);
+  assert.deepStrictEqual(calls(q, REDEFINE), []);
+  assert.ok(stub.messages.some(([, text]) => /was not redefined on p: p is no longer the active process; nothing was run/.test(text)), JSON.stringify(stub.messages));
+});
+
 test("Redefine on a process tagged prod says so in its confirmation", async (t) => {
   await setUp(t, ["prod"]);
   let asked;

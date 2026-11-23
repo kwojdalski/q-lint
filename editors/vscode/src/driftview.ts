@@ -230,7 +230,7 @@ export class Drift implements TextDocumentContentProvider {
     }
     let states: Map<string, ProcessState>;
     try {
-      const got = await borrowWhenFree(this.live, async (connection) => readDrift(await connection.call(DRIFT, names.join(" "))));
+      const got = await borrowWhenFree(this.live, async (connection) => readDrift(await connection.call(DRIFT, names.join(" "))), undefined, process.label);
       if (got === undefined) {
         void window.showInformationMessage(plainMessage(`q-lint: ${process.label} is busy with a query; ${namesList(names)} not reloaded.`));
         return done({ file, process: process.label, sent: [], already: [], skipped: [], failed: [], reason: "busy" });
@@ -266,7 +266,8 @@ export class Drift implements TextDocumentContentProvider {
       }
       for (const s of plan.send) {
         try {
-          const got = await borrowWhenFree(this.live, (connection) => connection.call(REDEFINE, s.name, s.held, s.text));
+          // Only on the process the question named (#1289).
+          const got = await borrowWhenFree(this.live, (connection) => connection.call(REDEFINE, s.name, s.held, s.text), undefined, process.label);
           if (got === undefined) {
             out.failed.push({ name: s.name, why: `${process.label} is busy with a query` });
           } else {

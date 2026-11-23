@@ -229,3 +229,33 @@ test("a tickerplant table streams into the grid, keeping its newest rows, and cl
   for (let i = 0; i < 50 && (await publisher.call('"i"$count .u.w`trade')) !== 0; i++) await sleep(20);
   assert.strictEqual(await publisher.call('"i"$count .u.w`trade'), 0);
 });
+
+test("closing the grid touches its webview no more: the connection's close draws nothing (#1272)", async (t) => {
+  const { fakeQ } = require("./fakeq.js");
+  const { SUBSCRIBE } = require("../out/stream.js");
+  const q = await fakeQ((m) => (Array.isArray(m) && m[0] === SUBSCRIBE ? ["trade", ["time", "sym", "px"]] : null));
+  t.after(() => q.close());
+  const { panels } = await setUp(t, [{ label: "tp", host: "127.0.0.1", port: q.port, tags: [] }]);
+  const vscode = require("vscode");
+  const made = vscode.window.createWebviewPanel;
+  // As VS Code's panel: its webview cannot be reached once disposed.
+  vscode.window.createWebviewPanel = (...args) => {
+    const panel = made(...args);
+    const webview = panel.webview;
+    let disposed = false;
+    const dispose = panel.dispose;
+    Object.defineProperty(panel, "webview", { get: () => (disposed ? (() => { throw new Error("Webview is disposed"); })() : webview) });
+    panel.dispose = () => ((disposed = true), dispose());
+    return panel;
+  };
+  const thrown = [];
+  const catcher = (error) => thrown.push(error.message);
+  process.on("uncaughtException", catcher);
+  t.after(() => process.off("uncaughtException", catcher));
+  stub.config.user["tickerplant.stream.enable"] = true;
+  await stub.commands.get(STREAM_COMMANDS.start)("tp", "trade");
+  assert.strictEqual(panels.length, 1);
+  panels[0].dispose();
+  await sleep(400);
+  assert.deepStrictEqual(thrown, []);
+});

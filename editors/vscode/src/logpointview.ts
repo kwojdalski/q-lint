@@ -136,15 +136,18 @@ export function registerLogpoints(
     }
   };
 
-  const removeOne = async (fn: string): Promise<void> => {
-    const done = await live.runOnActive(LOG_REMOVE, async (connection) => (await connection.call(LOG_REMOVE, fn)) === true);
+  /// Remove `fn`'s logpoint on `from`, the process it was listed on and
+  /// no other (#1294); whether it was sent.
+  const removeOne = async (fn: string, from: string): Promise<boolean> => {
+    const done = await live.runOnActive(LOG_REMOVE, async (connection) => (await connection.call(LOG_REMOVE, fn)) === true, "ask", from);
     if (done === undefined) {
-      return;
+      return false;
     }
     logged.get(done.process)?.delete(fn);
     if (!done.value) {
       void window.showWarningMessage(plainMessage(`q-lint: ${fn} was redefined on ${done.process} while it had a logpoint; it is left as it is now.`));
     }
+    return true;
   };
 
   const remove = async (name?: unknown): Promise<void> => {
@@ -170,7 +173,7 @@ export function registerLogpoints(
       return;
     }
     try {
-      await removeOne(fn);
+      await removeOne(fn, held.process);
     } catch (error) {
       void window.showErrorMessage(plainMessage(`q-lint: the logpoint on ${fn} was not removed: ${message(error)}`));
     }
@@ -185,15 +188,19 @@ export function registerLogpoints(
     if (held === undefined) {
       return;
     }
+    let removed = 0;
     for (const fn of held.names) {
       try {
-        await removeOne(fn);
+        removed += (await removeOne(fn, held.process)) ? 1 : 0;
       } catch (error) {
         void window.showErrorMessage(plainMessage(`q-lint: the logpoint on ${fn} was not removed: ${message(error)}`));
+        if (live.activeLabel() !== held.process) {
+          break;
+        }
       }
     }
     mark();
-    void window.showInformationMessage(plainMessage(`q-lint: ${held.names.length} logpoint${held.names.length === 1 ? "" : "s"} removed from ${held.process}.`));
+    void window.showInformationMessage(plainMessage(`q-lint: ${removed} logpoint${removed === 1 ? "" : "s"} removed from ${held.process}.`));
   };
 
   const hits = async (): Promise<void> => {

@@ -119,7 +119,8 @@ export function registerSystemSettings(
     }
     let ran: { process: string; value: unknown } | undefined;
     try {
-      ran = await live.runOnActive(code, (connection) => connection.call(SET_SETTING, setting.key, code.slice(setting.key.length + 2)));
+      // Only on the process the input box and the question named (#1291).
+      ran = await live.runOnActive(code, (connection) => connection.call(SET_SETTING, setting.key, code.slice(setting.key.length + 2)), "ask", process.label);
     } catch (error) {
       return say(`q-lint: \\${setting.key} was not set: ${message(error)}`);
     }

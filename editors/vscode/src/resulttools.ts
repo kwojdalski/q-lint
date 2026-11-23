@@ -434,7 +434,9 @@ export class ResultTools {
       run,
     );
     if (answer === run) {
-      await this.live.run(statement);
+      // On the process the question named, even if another became active
+      // while it was open (#1293).
+      await (process === undefined ? this.live.run(statement) : this.live.runOnProcess(statement, process, { what: "load statement" }));
     }
   }
 

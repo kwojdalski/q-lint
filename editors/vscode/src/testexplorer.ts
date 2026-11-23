@@ -418,7 +418,9 @@ class QTests {
     const run = this.controller.createTestRun(request, `q tests on ${process.label}`);
     this.outcomes = [];
     // Instrumented before the first test, and put back after the last.
-    const covering = coverage ? await this.coverStart(run).catch((error: unknown) => {
+    // Every call below goes to `process` and no other: a run does not
+    // follow a connection made while it is under way (#1283).
+    const covering = coverage ? await this.coverStart(run, process.label).catch((error: unknown) => {
       run.appendOutput(`Coverage not counted: ${error instanceof Error ? error.message : String(error)}\r\n`);
       return undefined;
     }) : undefined;
@@ -439,11 +441,13 @@ class QTests {
     }
     const prepared = new Set<K4Row[]>();
     const send = (statements: string[], mode: TestMode) =>
-      this.live.runOnActive(statements.join("\n"), async (connection) => readTestResult(await connection.call(TEST_RUN, statements, mode)));
+      this.live.runOnActive(statements.join("\n"), async (connection) => readTestResult(await connection.call(TEST_RUN, statements, mode)), "ask", process.label);
     try {
       for (const item of chosen) {
         const entry = this.entries.get(item)!;
-        if (token.isCancellationRequested) {
+        // Turned off mid-run is a cancel: what is still queued is not sent,
+        // and what was set up is still torn down (#1277).
+        if (token.isCancellationRequested || !on()) {
           run.skipped(item);
           outcome(item, "skipped");
           continue;
@@ -526,7 +530,7 @@ class QTests {
       }
     } finally {
       if (covering !== undefined) {
-        await this.coverEnd(run, covering).catch((error: unknown) =>
+        await this.coverEnd(run, covering, process.label).catch((error: unknown) =>
           run.appendOutput(`Coverage not read: ${error instanceof Error ? error.message : String(error)}\r\n`),
         );
       }
@@ -543,8 +547,11 @@ class QTests {
     started: number,
     outcome: (item: TestItem, state: TestOutcome["state"], message?: string) => void,
   ): Promise<void> {
-    const done = await this.live.runOnActive(snapshot.query, async (connection) =>
-      readAnswer(await connection.call(SNAPSHOT_RUN, statements(snapshot.query))),
+    const done = await this.live.runOnActive(
+      snapshot.query,
+      async (connection) => readAnswer(await connection.call(SNAPSHOT_RUN, statements(snapshot.query))),
+      "ask",
+      label,
     );
     const at = item.uri !== undefined ? new Location(item.uri, new Range(0, 0, 0, 0)) : undefined;
     if (done === undefined) {
@@ -586,7 +593,7 @@ class QTests {
   /// Instrument what the workspace defines and the process holds unchanged:
   /// what an interrupted run left there is put back first. Undefined when
   /// nothing was instrumented.
-  private async coverStart(run: TestRun): Promise<{ plan: CoveragePlan; installed: Set<string> } | undefined> {
+  private async coverStart(run: TestRun, label: string): Promise<{ plan: CoveragePlan; installed: Set<string> } | undefined> {
     const files = await this.sourceFiles();
     const names = definedNames(files);
     const install = installLambda("cov");
@@ -608,7 +615,7 @@ class QTests {
       const statuses = readInstalled(await connection.call(install, plan.names, plan.was, plan.src, plan.probes.length), plan.names.length);
       statuses.forEach((status, i) => status !== "ok" && run.appendOutput(`Not instrumented, ${plan.names[i]}: ${status}\r\n`));
       return { plan, installed: new Set(plan.names.filter((_, i) => statuses[i] === "ok")) };
-    });
+    }, "ask", label);
     if (done === undefined) {
       run.appendOutput("Coverage not counted: no connection, or a query is still running there.\r\n");
       return undefined;
@@ -624,9 +631,9 @@ class QTests {
   }
 
   /// Read the counts, put every function back, and show the coverage.
-  private async coverEnd(run: TestRun, covering: { plan: CoveragePlan; installed: Set<string> }): Promise<void> {
+  private async coverEnd(run: TestRun, covering: { plan: CoveragePlan; installed: Set<string> }, label: string): Promise<void> {
     const restore = restoreExpression("cov");
-    const done = await this.live.runOnActive(restore, async (connection) => readRestored(await connection.call(restore)));
+    const done = await this.live.runOnActive(restore, async (connection) => readRestored(await connection.call(restore)), "ask", label);
     if (done === undefined) {
       const text = `q-lint: the functions instrumented for coverage could not be put back (no connection, or a query is running). The next coverage run puts them back first.`;
       run.appendOutput(`${text}\r\n`);

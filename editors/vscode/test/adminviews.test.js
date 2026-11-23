@@ -219,3 +219,38 @@ test("Timers lists \\t and the TorQ jobs; a job is turned off and \\t set; on a 
   assert.strictEqual(await stub.commands.get(ADMIN_COMMANDS.setTimerInterval)(views.timers()[0], 0), true);
   assert.strictEqual(views.timers()[0].description, "off");
 });
+
+test("closing a handle and setting \\t send nothing when another process became active while asked (#1259)", async (t) => {
+  const { fakeQ, setUp } = require("./fakeq.js");
+  const { q, live, context } = await setUp(t, { answer: null, register: (c, l) => registerAdminViews(c, l) });
+  const other = await fakeQ(null);
+  t.after(() => other.close());
+  await context.globalState.update("q-lint.processes", [
+    { label: "dev-a", host: "127.0.0.1", port: q.port, tags: [] },
+    { label: "dev-b", host: "127.0.0.1", port: other.port, tags: [] },
+  ]);
+  live.refreshProcesses();
+  const sentCode = (fake) => fake.sent.filter((m) => typeof m === "string" || (Array.isArray(m) && typeof m[0] === "string")).map(String).join("\n");
+  await live.connectTo("dev-a");
+  stub.picks.push(async () => (await live.connectTo("dev-b"), "Close Handle"));
+  assert.strictEqual(await stub.commands.get(ADMIN_COMMANDS.closeClient)({ label: "handle 7", handle: 7, contextValue: "client" }), false);
+  assert.ok(stub.messages.some((m) => /dev-a is no longer the active process; nothing was run/.test(m.join(" "))), JSON.stringify(stub.messages));
+  await live.connectTo("dev-a");
+  stub.inputs.push(async () => (await live.connectTo("dev-b"), "500"));
+  assert.strictEqual(await stub.commands.get(ADMIN_COMMANDS.setTimerInterval)({ label: "q timer", interval: 0 }), false);
+  for (const fake of [q, other]) {
+    assert.doesNotMatch(sentCode(fake), /hclose|system "t/);
+  }
+});
+
+test("disconnected while asked, closing a handle connects to nothing and asks for no process (#1259)", async (t) => {
+  const { setUp } = require("./fakeq.js");
+  const { q, live } = await setUp(t, { register: (c, l) => registerAdminViews(c, l) });
+  await live.connectTo("rdb");
+  stub.picks.push(async () => (await stub.commands.get("q-lint.disconnectProcess")(), "Close Handle"));
+  assert.strictEqual(await stub.commands.get(ADMIN_COMMANDS.closeClient)({ label: "handle 7", handle: 7, contextValue: "client" }), false);
+  assert.strictEqual(stub.picks.length, 0);
+  assert.strictEqual(live.activeLabel(), undefined);
+  assert.ok(stub.messages.some((m) => /rdb is no longer the active process; nothing was run/.test(m.join(" "))), JSON.stringify(stub.messages));
+  assert.ok(!q.sent.some((m) => String(m).includes("hclose")));
+});

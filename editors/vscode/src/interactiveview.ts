@@ -67,6 +67,10 @@ export function registerInteractive(
   /// Run `code` into the Interactive Window under `title`: true when it ran
   /// and q gave no error.
   const runInto = async (code: string, uri: Uri, title?: string): Promise<boolean> => {
+    // A cell queued before cells were turned off is not sent (#1277).
+    if (!settings().cells) {
+      return false;
+    }
     if (statements(code).length === 0) {
       return true;
     }

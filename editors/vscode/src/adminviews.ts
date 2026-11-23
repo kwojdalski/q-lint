@@ -221,11 +221,12 @@ export function registerAdminViews(context: ExtensionContext, live: Live_): { cl
   const clients = new Switched("clientsView", () => new AdminView(ADMIN_VIEWS.clients, live, readClientNodes));
   const timers = new Switched("timerView", () => new AdminView(ADMIN_VIEWS.timers, live, readTimerNodes));
 
-  /// Send `code` through the guard; whether it ran without a q error.
-  const change = async (code: string, what: string): Promise<boolean> => {
+  /// Send `code` through the guard to `expect`, the process the user was
+  /// shown or asked about; whether it ran without a q error.
+  const change = async (code: string, what: string, expect: string): Promise<boolean> => {
     const { consoleSize } = readLive((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback));
     try {
-      const ran = await live.runOnActive(code, (connection) => connection.query(statements(code), consoleSize));
+      const ran = await live.runOnActive(code, (connection) => connection.query(statements(code), consoleSize), "ask", expect);
       if (ran === undefined) {
         return false;
       }
@@ -261,24 +262,26 @@ export function registerAdminViews(context: ExtensionContext, live: Live_): { cl
     if ((await window.showWarningMessage(plainMessage(`Close handle ${node.handle} on ${process.label}? The client it belongs to is disconnected.`), { modal: true }, yes)) !== yes) {
       return false;
     }
-    const done = await change(closeCode(node.handle), `close handle ${node.handle}`);
+    const done = await change(closeCode(node.handle), `close handle ${node.handle}`, process.label);
     await view.refresh();
     return done;
   };
 
   const toggleTimer = async (node?: AdminNode): Promise<boolean> => {
     const view = timers.live();
-    if (view === undefined || node?.job === undefined) {
+    const label = live.activeLabel();
+    if (view === undefined || node?.job === undefined || label === undefined) {
       return false;
     }
-    const done = await change(toggleCode(node.job.id, !node.job.active), `${node.job.active ? "turn off" : "turn on"} timer ${node.job.id}`);
+    const done = await change(toggleCode(node.job.id, !node.job.active), `${node.job.active ? "turn off" : "turn on"} timer ${node.job.id}`, label);
     await view.refresh();
     return done;
   };
 
   const setInterval_ = async (node?: AdminNode, given?: number): Promise<boolean> => {
     const view = timers.live();
-    if (view === undefined || live.activeLabel() === undefined) {
+    const label = live.activeLabel();
+    if (view === undefined || label === undefined) {
       if (view !== undefined) {
         void window.showInformationMessage("q-lint: connect to a q process first.");
       }
@@ -287,7 +290,7 @@ export function registerAdminViews(context: ExtensionContext, live: Live_): { cl
     let ms = given;
     if (typeof ms !== "number") {
       const text = await window.showInputBox({
-        title: `\\t on ${live.activeLabel()}`,
+        title: `\\t on ${label}`,
         value: node?.interval !== undefined ? String(node.interval) : "",
         prompt: "Milliseconds between .z.ts calls; 0 turns the timer off. Sent as system \"t N\", through the read-only guard.",
         validateInput: intervalProblem,
@@ -297,7 +300,7 @@ export function registerAdminViews(context: ExtensionContext, live: Live_): { cl
       }
       ms = Number(text.trim());
     }
-    const done = await change(intervalCode(ms), "set the timer");
+    const done = await change(intervalCode(ms), "set the timer", label);
     await view.refresh();
     return done;
   };

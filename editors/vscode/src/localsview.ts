@@ -82,6 +82,7 @@ export function registerLocalsAtError(
     const restore = restoreExpression("err");
     let done;
     try {
+      // Only on the process the question named (#1292).
       done = await live.runOnActive(`${failure.code}\n${install}`, async (connection) => {
         readRestored(await connection.call(restore));
         const state = readDrift(await connection.call(DRIFT, picked.name)).get(picked.name);
@@ -105,7 +106,7 @@ export function registerLocalsAtError(
         });
         const restored = readRestored(await connection.call(restore));
         return { captured, answer, restored, text: state.text };
-      });
+      }, "ask", failure.process);
     } catch (error) {
       void window.showErrorMessage(plainMessage(`q-lint: no locals captured: ${error instanceof Error ? error.message : String(error)}`));
       return;

@@ -105,3 +105,18 @@ test("with no failure, or turned off, nothing is sent", async () => {
   assert.match(stub.messages.at(-1)[1], /q-lint\.localsAtError\.enable to true/);
   assert.deepStrictEqual(s.sent, []);
 });
+
+test("Run Again sends nothing when another process became active while it was asked (#1292)", async (t) => {
+  const { setUp } = require("./fakeq.js");
+  const { registerLocalsAtError } = require("../out/localsview.js");
+  vscode.workspace.registerTextDocumentContentProvider = () => ({ dispose() {} });
+  const { q, live } = await setUp(t, { register: registerLocalsAtError, more: [{ label: "other" }] });
+  await live.connectTo("rdb");
+  live.lastFailure = { process: "rdb", code: ".ns.m[1;2]", error: "type", trace: TRACE };
+  stub.picks.push({ label: ".ns.m", frame: { name: ".ns.m", where: "/w/lib.q:5" } });
+  stub.picks.push(async () => (await live.connectTo("other"), "Run Again"));
+  const before = q.sent.length;
+  await stub.commands.get(CAPTURE_LOCALS)();
+  assert.strictEqual(q.sent.length, before);
+  assert.match(stub.messages.at(-1)[1], /no locals captured: rdb is no longer the active process; nothing was run/);
+});
