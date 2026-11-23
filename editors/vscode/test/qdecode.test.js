@@ -65,3 +65,26 @@ test("the unwrapped grid ranks longs and timestamps exactly, and a null below -0
   const fs = gridOfQ(decode(message(floats([1, -Infinity, NaN]))), 100);
   assert.deepStrictEqual(fs.rank[0], [2, 1, 0]);
 });
+
+function atom(t, size, put, x) {
+  const b = Buffer.alloc(1 + size);
+  b.writeInt8(t, 0);
+  put(b, x, 1);
+  return b;
+}
+const int = (t, x) => atom(t, 4, (b, v, at) => b.writeInt32LE(v, at), x);
+const float = (x) => atom(-9, 8, (b, v, at) => b.writeDoubleLE(v, at), x);
+
+test("a year before 1000 is written in four digits, as q writes it (#1235)", () => {
+  const { atomText } = require("../out/qformat.js");
+  // KDB-X: 0001.01.01 is day -730119, 0001.01m month -23988.
+  assert.strictEqual(shown(int(-14, -730119)), "0001.01.01");
+  assert.strictEqual(shown(int(-13, -23988)), "0001.01m");
+  assert.strictEqual(shown(vector(14, 4, (b, x, at) => b.writeInt32LE(x, at), [-693961, -365607])), "0099.12.31 0999.01.01");
+  assert.strictEqual(atomText(-730119, -14), "0001.01.01");
+  // A Date, as node-q decodes one: Date.UTC reads year 1 as 1901, so it is set.
+  const d = new Date(0);
+  d.setUTCFullYear(1, 0, 1);
+  assert.strictEqual(atomText(d, -14), "0001.01.01");
+  assert.strictEqual(atomText(d, -13), "0001.01m");
+});

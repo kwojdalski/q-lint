@@ -64,9 +64,11 @@ function isKeyed(x: unknown): x is [Record<string, unknown>[], Record<string, un
 
 const pad2 = (n: number): string => String(n).padStart(2, "0");
 const pad3 = (n: number): string => String(n).padStart(3, "0");
+/// A year as q writes it, in four digits: `0001.01.01` (#1235).
+const pad4 = (n: number): string => String(n).padStart(4, "0");
 
 function ymd(d: Date): string {
-  return `${d.getUTCFullYear()}.${pad2(d.getUTCMonth() + 1)}.${pad2(d.getUTCDate())}`;
+  return `${pad4(d.getUTCFullYear())}.${pad2(d.getUTCMonth() + 1)}.${pad2(d.getUTCDate())}`;
 }
 
 function hms(d: Date): string {
@@ -175,7 +177,7 @@ function temporalText(x: number | bigint | LongLike, t: number): string | undefi
   switch (t) {
     case 13: {
       const m = n + 24_000;
-      return `${Math.floor(m / 12)}.${pad2((m % 12) + 1)}`;
+      return `${pad4(Math.floor(m / 12))}.${pad2((m % 12) + 1)}`;
     }
     case 14:
       return ymd(new Date(EPOCH_MS + n * DAY_MS));
@@ -239,7 +241,7 @@ function itemText(x: unknown, t: number, precision = 7): string | undefined {
   switch (t) {
     case 13: {
       const m = monthsOf(x) + 24_000;
-      return `${Math.floor(m / 12)}.${pad2((m % 12) + 1)}`;
+      return `${pad4(Math.floor(m / 12))}.${pad2((m % 12) + 1)}`;
     }
     case 14:
       return ymd(x);
