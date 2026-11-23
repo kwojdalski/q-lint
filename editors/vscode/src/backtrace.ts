@@ -85,6 +85,12 @@ export function parseBacktrace(text: string): Frame[] {
       current.frame.failed = { index, column: Math.max(0, caret[1].length - (index === 0 ? current.prefix : 0)) };
       continue;
     }
+    if (line.trim() === "" && keepsBlank(lines, i)) {
+      // A lambda's own blank line: q prints it, and code or the `^` follows
+      // (#1124).
+      current.frame.code.push(line);
+      continue;
+    }
     if (line.trim() === "" || /^q\)+/.test(line) || /^'/.test(line)) {
       // A blank line, a console prompt or the next error ends the frame.
       current = undefined;
@@ -93,6 +99,16 @@ export function parseBacktrace(text: string): Frame[] {
     current.frame.code.push(line);
   }
   return frames;
+}
+
+/// Whether the blank line `i` is inside a frame: the next line that is not
+/// blank is indented code or a `^`, not a header, a prompt or an error.
+function keepsBlank(lines: string[], i: number): boolean {
+  let j = i + 1;
+  while (j < lines.length && lines[j].trim() === "") {
+    j++;
+  }
+  return j < lines.length && !HEADER.test(lines[j]) && (/^\s/.test(lines[j]) || CARET.test(lines[j]));
 }
 
 /// The line that failed, from 0, in the file a frame names, whose text is

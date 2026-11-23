@@ -7,7 +7,9 @@
 /// open: then Enter runs it, else it starts a new line, as the Julia REPL
 /// does. Brackets inside a string or a comment do not count: a string is
 /// `"..."` with `\` escapes, and a comment runs from a `/` at the start of
-/// a line, or after a space or a tab, to the line's end, as q reads it.
+/// a line, or after a space or a tab, to the line's end, as q reads it, or
+/// a block from a line of `/` alone, outside any bracket, to one of `\`
+/// alone.
 export function isComplete(text: string): boolean {
   const { depth, inString } = scan(text);
   return depth <= 0 && !inString;
@@ -19,13 +21,25 @@ function scan(text: string): { depth: number; inString: boolean } {
   let depth = 0;
   let inString = false;
   let inComment = false;
+  let inBlock = false;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
     if (ch === "\n") {
       inComment = false;
       continue;
     }
-    if (inComment) {
+    // A line of `/` alone opens a block comment, and one of `\` alone
+    // closes it (#1111).
+    if ((i === 0 || text[i - 1] === "\n") && !inString) {
+      const end = text.indexOf("\n", i);
+      const line = text.slice(i, end < 0 ? text.length : end).trimEnd();
+      if (inBlock ? line === "\\" : depth <= 0 && line === "/") {
+        inBlock = !inBlock;
+        inComment = true;
+        continue;
+      }
+    }
+    if (inComment || inBlock) {
       continue;
     }
     if (inString) {

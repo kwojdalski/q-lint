@@ -95,3 +95,18 @@ test("a path from another machine is matched by its trailing segments; a termina
   assert.strictEqual(headerLink("  [3]  (.Q.trp)"), undefined);
   assert.strictEqual(headerLink("x:1"), undefined);
 });
+
+test("a blank line inside a printed function stays in its frame, so the ^ is found (#1124)", () => {
+  // q keeps a lambda's blank lines when it prints it.
+  const file = ["mid:{[a]", "  b:a+1;", "", "  c:b+`x;", "  d}", ""].join("\n");
+  const text = ["  [4]  /w/lib.q:1: mid:{[a]", "  b:a+1;", "", "  c:b+`x;", "     ^", "", "  d}", "  [3]  /w/trp.q:2: {mid 1}", "                   ^", "", "q)"].join("\n");
+  const [mid, call] = parseBacktrace(text);
+  assert.deepStrictEqual(mid.code, ["mid:{[a]", "  b:a+1;", "", "  c:b+`x;", "", "  d}"]);
+  assert.deepStrictEqual(mid.failed, { index: 3, column: 5 });
+  assert.deepStrictEqual(failedAt(mid, file), { line: 3, character: 5 });
+  // A blank line before a header, a prompt or nothing still ends a frame.
+  assert.deepStrictEqual(call.code, ["{mid 1}"]);
+  assert.deepStrictEqual(parseBacktrace("  [2]  (.Q.trp)\n\n  x\n").map((f) => f.code), [["(.Q.trp)", "", "  x"]]);
+  assert.deepStrictEqual(parseBacktrace("  [2]  (.Q.trp)\n\nq)  x\n").map((f) => f.code), [["(.Q.trp)"]]);
+  assert.deepStrictEqual(parseBacktrace("  [2]  (.Q.trp)\n\nnext\n").map((f) => f.code), [["(.Q.trp)"]]);
+});

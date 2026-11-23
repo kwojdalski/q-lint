@@ -75,6 +75,20 @@ test("the history is exported as JSON, newest first, or as a q script, oldest fi
   assert.strictEqual(exportFormat("/x/h"), "json");
 });
 
+test("each entry of the exported script loads as it ran on its own (#1098)", () => {
+  const { statements } = require("../out/statements.js");
+  const entry = (code) => ({ process: "p", code, at, millis: 1, outcome: "ok" });
+  // Newest first, as kept: the script runs them oldest first.
+  const script = (...codes) => statements(historyScript(codes.reverse().map(entry)));
+  assert.deepStrictEqual(script("a:1", "  b:2"), ["a:1", "b:2"]);
+  assert.deepStrictEqual(script("a:1", "  f:{\n    x}"), ["a:1", "f:{\n    x}"]);
+  assert.deepStrictEqual(script("a:1", "/ note\n  b:2\n  c"), ["a:1", "b:2\n  c"]);
+  assert.deepStrictEqual(script("a:1", "b:2\n/\nhidden", "c:3"), ["a:1", "b:2", "c:3"]);
+  assert.deepStrictEqual(script("/\nx\n\\\ny:1", "z:2"), ["y:1", "z:2"]);
+  // A closed block comment, kept as written.
+  assert.match(historyScript([entry("/\nx\n\\\ny:1")]), /^\/\nx\n\\\ny:1\n$/m);
+});
+
 test("the filter is on the view's title bar, and Clear Filter only while filtered", () => {
   const title = pkg.contributes.menus["view/title"];
   const on = (command) => title.filter((m) => m.command === command).map((m) => m.when);

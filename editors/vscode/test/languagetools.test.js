@@ -132,6 +132,13 @@ test("a q error is explained from the catalogue, with the operation that failed"
   }
 });
 
+test("an error named after an Object.prototype member is an undefined name, not a crash (#1078)", () => {
+  for (const name of ["constructor", "toString", "valueOf", "hasOwnProperty"]) {
+    assert.match(explainError(`'${name}`), new RegExp(`\`${name}\` is not defined where it was read`), name);
+    assert.strictEqual(errorInMessage(`fails with '${name} here`), undefined, name);
+  }
+});
+
 test("Explain q Error refuses when off, and explains the last failure or the one given when on", async () => {
   const { context, shown, restore } = setUp();
   const providers = [];
@@ -176,6 +183,17 @@ test("a baseline is named first in qlinter.toml, its count read, and its paths m
   assert.deepStrictEqual(writtenCount("qlinter: wrote 12 finding(s) in 3 file(s) to the baseline x"), { findings: 12, files: 3 });
   assert.strictEqual(writtenCount("nothing"), undefined);
   assert.strictEqual(rebased('{"code":"QS001","count":1,"line":"a","path":"/ws/src/a.q"}', "/ws"), '{"code":"QS001","count":1,"line":"a","path":"src/a.q"}');
+  // qlinter writes canonical, /-separated paths: a Windows folder, and a
+  // folder reached through a symlink, are matched in that form too (#1080).
+  const { win32, posix } = require("node:path");
+  const row = (p) => `{"code":"QS001","count":1,"line":"a","path":"${p}"}`;
+  const win = win32.join("C:\\proj");
+  assert.strictEqual(rebased(row("//?/C:/proj/src/a.q"), win), row("src/a.q"));
+  assert.strictEqual(rebased(row("C:/proj/src/a.q"), win32.join(win, "\\")), row("src/a.q"));
+  assert.strictEqual(rebased(row("c:/proj/src/a.q"), win), row("src/a.q"));
+  assert.strictEqual(rebased(row("C:/projx/a.q"), win), row("C:/projx/a.q"));
+  assert.strictEqual(rebased(row("/private/tmp/proj/src/a.q"), posix.join("/tmp", "proj"), "/private/tmp/proj"), row("src/a.q"));
+  assert.strictEqual(rebased(row("/other/a.q"), "/tmp/proj", "/private/tmp/proj"), row("/other/a.q"));
   const { context, restore } = setUp();
   try {
     let asked = 0;
@@ -217,6 +235,33 @@ test("the dead code report refuses when off and asks nothing; on, it lists the s
     // The process is asked nothing unless checkProcess is on.
     assert.deepStrictEqual(calls, []);
   } finally {
+    restore();
+  }
+});
+
+test("the dead code report's file names are the decoded paths, relative to the workspace (#1093)", async () => {
+  const { fileURLToPath } = require("node:url");
+  const answer = {
+    functions: [
+      { name: "a", uri: "file:///ws/my%20proj/a.q", range: { start: { line: 0, character: 0 } } },
+      { name: "b", uri: "file:///c%3A/my%20proj/b.q", range: { start: { line: 0, character: 0 } } },
+    ],
+    dynamic: 0,
+  };
+  const { context, restore } = setUp();
+  const parse = vscode.Uri.parse;
+  // VS Code's Uri.parse decodes; asRelativePath is given a Uri, on either OS.
+  vscode.Uri.parse = (s) => ({ fsPath: fileURLToPath(s, { windows: /^file:\/\/\/[a-z]%3A/i.test(s) }) });
+  vscode.workspace.asRelativePath = (u) => (typeof u === "string" ? `unparsed ${u}` : u.fsPath.replace(/^\/ws\/|^c:\\/, ""));
+  try {
+    registerDeadCode(context, { activeLabel: () => undefined }, () => ({ sendRequest: async () => answer }));
+    stub.config.user["deadCode.enable"] = true;
+    const text = await stub.commands.get(LANGUAGE_COMMANDS.deadCode)();
+    // The headings; the links keep the URI. Markdown escapes the backslash.
+    const headings = text.split("\n").filter((l) => l.startsWith("## "));
+    assert.deepStrictEqual(headings, ["## my proj/a.q", "## my proj\\\\b.q"]);
+  } finally {
+    vscode.Uri.parse = parse;
     restore();
   }
 });
@@ -284,6 +329,60 @@ test("affected tests on save are off by default; on, a save runs the tests the s
     stub.config.user["testing.runAffectedOnSave.enable"] = false;
     stub.changeConfig("q-lint.testing.runAffectedOnSave.enable");
     assert.strictEqual(saves.length, 0);
+  } finally {
+    restore();
+  }
+});
+
+test("affected tests queued on save are not run once the setting is turned off (#1086)", async () => {
+  const { context, restore } = setUp();
+  const saves = [];
+  vscode.workspace.onDidSaveTextDocument = (l) => (saves.push(l), { dispose: () => saves.splice(saves.indexOf(l), 1) });
+  vscode.workspace.onDidOpenTextDocument = () => ({ dispose() {} });
+  vscode.workspace.onDidCloseTextDocument = () => ({ dispose() {} });
+  vscode.workspace.textDocuments = [];
+  try {
+    const sent = [];
+    const runs = [];
+    let release;
+    const gate = new Promise((r) => (release = r));
+    const server = { sendRequest: async () => (sent.push(1), await gate, { tests: [{ uri: "file:///t.q", name: "test_a" }] }) };
+    const tests = { discover: async () => {}, items: () => ["file:///t.q#test_a"], run: async (ids) => void runs.push(ids) };
+    stub.config.user["testing.runAffectedOnSave.enable"] = true;
+    const api = registerAffectedOnSave(context, () => server, tests);
+    const doc = { languageId: "q", uri: { scheme: "file", fsPath: "/w/lib.q", toString: () => "file:///w/lib.q" }, getText: () => "f:{x+1}\n" };
+    saves[0](doc);
+    saves[0](doc);
+    await new Promise((r) => setImmediate(r));
+    assert.strictEqual(sent.length, 1);
+    // Turned off while the first save's answer is awaited and the second waits.
+    stub.config.user["testing.runAffectedOnSave.enable"] = false;
+    stub.changeConfig("q-lint.testing.runAffectedOnSave.enable");
+    release();
+    await api.settled();
+    assert.deepStrictEqual(runs, []);
+    assert.strictEqual(sent.length, 1, "the queued save asks nothing");
+  } finally {
+    restore();
+  }
+});
+
+test("overlapping reads of the q Namespaces view keep the latest, whichever answers last (#1120)", async () => {
+  const def = (name) => ({ name, namespace: ".", kind: "variable", uri: "file:///a.q", range: { start: { line: 0, character: 0 } } });
+  const { context, restore } = setUp();
+  try {
+    const pending = [];
+    const server = { sendRequest: () => new Promise((resolve) => pending.push(resolve)) };
+    stub.config.user["namespaceTree.enable"] = true;
+    const api = registerNamespaces(context, () => server);
+    const older = api.refresh();
+    const newer = api.refresh();
+    // The newer read answers first; the older one, answering after, is stale.
+    pending.at(-1)([def("fresh")]);
+    await newer;
+    pending.at(-2)([def("stale")]);
+    await older;
+    assert.deepStrictEqual(api.groups()[0][1].map((d) => d.name), ["fresh"]);
   } finally {
     restore();
   }

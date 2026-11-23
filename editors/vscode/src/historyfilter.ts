@@ -113,7 +113,8 @@ export function historyJson(entries: Entry[]): string {
 /// The history as a q script, oldest first so it reads in the order it ran:
 /// each query after a comment line naming its process, time, duration and
 /// outcome, and its error under it. Its own block-comment or end-of-script
-/// lines (`/` or `\` alone) are kept, as they ran.
+/// lines (`/` or `\` alone) are kept, as they ran, and each entry loads as
+/// it ran on its own.
 export function historyScript(entries: Entry[]): string {
   const comment = (text: string): string => `/ ${text.replace(/\r?\n/g, " ")}`;
   return (
@@ -123,11 +124,35 @@ export function historyScript(entries: Entry[]): string {
         [
           comment(`${e.process}, ${e.at}, ${e.millis} ms, ${e.outcome}${e.agent ? ", run by an agent" : ""}`),
           ...(e.error !== undefined && e.outcome !== "ok" ? [comment(`'${e.error}`)] : []),
-          e.code.replace(/\r?\n$/, ""),
+          standalone(e.code.replace(/\r?\n$/, "")),
         ].join("\n"),
       )
       .join("\n\n") + "\n"
   );
+}
+
+/// `code` made to load in a script as it ran on its own (#1098): the line
+/// that starts its first statement unindented, so it does not continue the
+/// entry above, and a block comment it leaves open closed, so it does not
+/// hide the entries below. The rules are `statements.ts`'s.
+function standalone(code: string): string {
+  const lines = code.split("\n");
+  let inBlock = false;
+  let started = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].replace(/\s+$/, "");
+    if (inBlock) {
+      inBlock = line !== "\\";
+    } else if (line === "/") {
+      inBlock = true;
+    } else if (line === "\\") {
+      break;
+    } else if (!started && line.trim() !== "" && !line.startsWith("/")) {
+      lines[i] = lines[i].trimStart();
+      started = true;
+    }
+  }
+  return inBlock ? `${lines.join("\n")}\n\\` : lines.join("\n");
 }
 
 /// Which format a file is written in, from its name: a `.q` file the

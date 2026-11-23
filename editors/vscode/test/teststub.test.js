@@ -133,3 +133,26 @@ test("with no test file, a new one is made in tests/, never over one made meanwh
   assert.strictEqual(await run(vscode.Uri.file("/ws/src/lib.q"), 3), false);
   assert.match(stub.messages.at(-1)[1], /q-lint\.testStub\.enable to true/);
 });
+
+test("a new test file's path on Windows keeps the folder and the separator (#1094)", () => {
+  const { win32, posix } = require("node:path");
+  const src = win32.join("C:\\proj", "src", "a.q");
+  assert.strictEqual(newTestPath(src, "C:\\proj", true), win32.join("C:\\proj", "tests", "test_a.q"));
+  assert.strictEqual(newTestPath(src, "C:\\proj\\", true), win32.join("C:\\proj", "tests", "test_a.q"));
+  assert.strictEqual(newTestPath(src, "C:\\proj", false), win32.join("C:\\proj", "src", "test_a.q"));
+  assert.strictEqual(newTestPath(src, undefined, true), win32.join("C:\\proj", "src", "test_a.q"));
+  const psrc = posix.join("/ws", "src", "a.q");
+  assert.strictEqual(newTestPath(psrc, "/ws/", true), posix.join("/ws", "tests", "test_a.q"));
+  assert.strictEqual(newTestPath("a.q", undefined, false), "test_a.q");
+});
+
+test("the stub goes at the end of the open test file, unsaved edits included (#1076)", async () => {
+  const files = { "/ws/src/lib.q": SRC, "/ws/tests/test_lib.q": "a:1\nb:{[]\n  2}\nc:3\n" };
+  setup(files);
+  // files is the open document; the disk still has the first line only.
+  const fromDisk = vscode.workspace.fs.readFile;
+  vscode.workspace.fs.readFile = async (uri) => (uri.fsPath === "/ws/tests/test_lib.q" ? Buffer.from("a:1", "utf8") : fromDisk(uri));
+  stub.picks.push("Add Test");
+  assert.strictEqual(await stub.commands.get(TEST_STUB_COMMAND)(vscode.Uri.file("/ws/src/lib.q"), 6), true);
+  assert.strictEqual(files["/ws/tests/test_lib.q"], "a:1\nb:{[]\n  2}\nc:3\n\ntest_now:{[]\n  expected:(::); / TODO: what now[] should give\n  now[]~expected}\n");
+});

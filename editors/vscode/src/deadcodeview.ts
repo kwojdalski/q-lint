@@ -12,7 +12,7 @@
 // does, and those are moved to their own section - called by code that is
 // not in the workspace. Off (q-lint.deadCode.enable), the command refuses
 // and asks nothing.
-import { commands, window, workspace, type ExtensionContext } from "vscode";
+import { Uri, commands, window, workspace, type ExtensionContext } from "vscode";
 import type { Server } from "./editorfeatures";
 import { borrowWhenFree } from "./infoview";
 import { LANGUAGE_COMMANDS, languageOff, languageOn } from "./languagefeatures";
@@ -130,7 +130,7 @@ export function registerDeadCode(context: ExtensionContext, live: Live, server: 
           void window.showInformationMessage("q-lint: the active process was busy or did not answer; the report is from the workspace alone.");
         }
       }
-      const text = deadCodeReport(answer.functions, answer.dynamic, (uri) => workspace.asRelativePath(uri.replace(/^file:\/\//, "")), called);
+      const text = deadCodeReport(answer.functions, answer.dynamic, (uri) => workspace.asRelativePath(Uri.parse(uri)), called);
       const document = await workspace.openTextDocument({ language: "markdown", content: text });
       await window.showTextDocument(document, { preview: true });
       return text;

@@ -44,15 +44,16 @@ export function registerAffectedOnSave(
   let running: Promise<void> = Promise.resolve();
   let last: string[] = [];
   const affected = async (document: TextDocument, previous: string): Promise<void> => {
+    // Queued behind another run: turned off meanwhile, nothing is sent (#1086).
     const client = server();
-    if (client === undefined) {
+    if (!on() || client === undefined) {
       return;
     }
     const answer = await client.sendRequest(TESTS_REACHING, { textDocument: { uri: document.uri.toString() }, previous }).catch(() => undefined);
     await tests.discover();
     const ids = affectedIds(answer, tests.items());
     last = ids;
-    if (ids.length > 0) {
+    if (ids.length > 0 && on()) {
       window.setStatusBarMessage(`q-lint: running ${ids.length} affected test(s)`, 5000);
       await tests.run(ids);
     }
