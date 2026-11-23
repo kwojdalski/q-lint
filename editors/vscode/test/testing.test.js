@@ -442,3 +442,21 @@ test("a run stays on the process it started on: a connection made mid-run gets n
   assert.deepStrictEqual(explorer.results().map((r) => r.state), ["passed", "errored"]);
   assert.match(explorer.results()[1].message, /dev is no longer the active process; nothing was run/);
 });
+
+test("the Test Explorer turned off mid-run sends none of the tests still queued (#1277)", async () => {
+  stub.reset();
+  fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  const live = fakeLive();
+  const runOnActive = live.runOnActive.bind(live);
+  live.runOnActive = async (...args) => {
+    const done = await runOnActive(...args);
+    stub.config.user["testExplorer.enable"] = false;
+    stub.changeConfig("q-lint.testExplorer.enable");
+    return done;
+  };
+  const explorer = registerTestExplorer(stub.newContext(), live, () => ({ sendRequest: async () => LISTED }));
+  await explorer.discover();
+  await explorer.run();
+  assert.strictEqual(live.sent.length, 1);
+});

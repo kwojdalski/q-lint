@@ -368,3 +368,14 @@ test("not defined on connect while the setting is off, its default", async (t) =
   await sleep(50);
   assert.deepStrictEqual(q.queries, []);
 });
+
+test("cells turned off while Run All Cells is queued: the cells not yet run are not sent (#1277)", async (t) => {
+  const { q, live, editor } = await setUp(t);
+  assert.ok(await live.connectTo("dev"));
+  editor("/ %% one\na:1\n/ %% two\nb:2\n/ %% three\nc:3", 0);
+  const run = stub.commands.get(C.runAllCells)();
+  stub.config.user["cells.enable"] = false;
+  stub.changeConfig("q-lint.cells.enable");
+  await run;
+  assert.deepStrictEqual(q.queries, []);
+});
