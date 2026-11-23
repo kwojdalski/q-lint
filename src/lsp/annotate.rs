@@ -10,7 +10,7 @@
 //! on the path goes.
 use super::navigate::{Sources, range};
 use super::{Lines, file_key, path_of};
-use q_lint_rs::{Mention, bracket_calls, completing, load_paths, mentions, typed_locals};
+use q_lint_rs::{Mention, bracket_calls, load_paths, mentions, typed_locals};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 
@@ -182,6 +182,7 @@ fn inlay_hints(params: &Value, sources: &Sources) -> Value {
         at.entry(m.at).or_default().push(m);
     }
     let mut known: HashMap<Vec<String>, Option<Vec<String>>> = HashMap::new();
+    let mut read = HashMap::new();
     let mut hints = vec![];
     for call in bracket_calls(text) {
         if call.at < from || call.at > to {
@@ -203,7 +204,7 @@ fn inlay_hints(params: &Value, sources: &Sources) -> Value {
         names.dedup();
         let declared = known
             .entry(names)
-            .or_insert_with_key(|names| declared(sources, names, &key));
+            .or_insert_with_key(|names| declared(sources, names, &key, &mut read));
         let Some(declared) = declared else {
             continue;
         };
@@ -222,32 +223,59 @@ fn inlay_hints(params: &Value, sources: &Sources) -> Value {
     json!(hints)
 }
 
+/// Each definition in one file, by each name it answers to: the parameters
+/// its signature declares, or `None` for one with no signature or no lambda.
+type Declarations = HashMap<String, Vec<Option<Vec<String>>>>;
+
+/// The definitions of the file `key`, read once for every call that asks
+/// (`read` holds them): read again for each name, a file of N definitions
+/// took N passes over it (#1216).
+fn declarations<'r>(
+    sources: &Sources,
+    key: &str,
+    read: &'r mut HashMap<String, Option<Declarations>>,
+) -> Option<&'r Declarations> {
+    read.entry(key.to_string())
+        .or_insert_with(|| {
+            let (_, text) = sources.text(key)?;
+            let placement = sources.placement(key);
+            let mut out = Declarations::new();
+            for m in &mentions(&text) {
+                let Some(definition) = &m.definition else {
+                    continue;
+                };
+                let params = (definition.function && !definition.detail.is_empty())
+                    .then(|| definition.params.clone());
+                let mut names = sources.names(&text, m, &placement);
+                names.sort_unstable();
+                names.dedup();
+                for name in names {
+                    out.entry(name).or_default().push(params.clone());
+                }
+            }
+            Some(out)
+        })
+        .as_ref()
+}
+
 /// The parameters every definition of the global known by `names` declares
 /// in a signature, when there is at least one and they agree.
-fn declared(sources: &Sources, names: &[String], from: &str) -> Option<Vec<String>> {
+fn declared(
+    sources: &Sources,
+    names: &[String],
+    from: &str,
+    read: &mut HashMap<String, Option<Declarations>>,
+) -> Option<Vec<String>> {
     let wanted: HashSet<String> = names.iter().cloned().collect();
     let mut agreed: Option<Vec<String>> = None;
     for key in sources.definers(&wanted, from) {
-        let (_, text) = sources.text(key)?;
-        let placement = sources.placement(key);
-        for m in &mentions(&text) {
-            let Some(definition) = &m.definition else {
-                continue;
-            };
-            if !sources
-                .names(&text, m, &placement)
-                .iter()
-                .any(|name| wanted.contains(name))
-            {
-                continue;
-            }
-            if !definition.function || definition.detail.is_empty() {
-                return None;
-            }
+        let declarations = declarations(sources, key, read)?;
+        for params in names.iter().filter_map(|n| declarations.get(n)).flatten() {
+            let params = params.as_ref()?;
             match &agreed {
-                Some(params) if *params != definition.params => return None,
+                Some(agreed) if agreed != params => return None,
                 Some(_) => {}
-                None => agreed = Some(definition.params.clone()),
+                None => agreed = Some(params.clone()),
             }
         }
     }
@@ -280,6 +308,9 @@ pub(super) fn is_test(name: &str) -> bool {
 pub(super) fn runnables(text: &str) -> Vec<Runnable> {
     let mut out = vec![];
     let mut seen = HashSet::new();
+    // Read once: asked for each definition, the whole file was read again
+    // for each (#1216).
+    let contexts = q_lint_rs::contexts(text);
     for m in &mentions(text) {
         let Some(definition) = &m.definition else {
             continue;
@@ -293,8 +324,13 @@ pub(super) fn runnables(text: &str) -> Vec<Runnable> {
         }
         let spelled = &text[m.at..m.at + m.len];
         let statement = text[definition.start..definition.end].trim_end();
-        let context = completing(text, m.at)
-            .map(|c| c.namespace)
+        let context = contexts
+            .get(
+                contexts
+                    .partition_point(|(at, _)| *at <= m.at)
+                    .wrapping_sub(1),
+            )
+            .map(|(_, ns)| ns.clone())
             .filter(|ns| !ns.is_empty() && ns != ".");
         let code = match &context {
             Some(ns) => format!("\\d {ns}\n{statement}\n\\d ."),
@@ -381,6 +417,14 @@ fn reference_lenses(params: &Value, sources: &Sources) -> Vec<Value> {
         .iter()
         .flat_map(|(_, _, names)| names.iter().filter_map(|n| n.rsplit('.').next()))
         .collect();
+    // Each wanted name to the definitions it counts for: a mention is
+    // looked up by its names, not checked against every definition (#1216).
+    let mut by_name: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (i, (_, _, wanted)) in defined.iter().enumerate() {
+        for name in wanted {
+            by_name.entry(name.as_str()).or_default().push(i);
+        }
+    }
     let mut counts = vec![0usize; defined.len()];
     for file in sources.keys() {
         let Some((_, other)) = sources.text(file) else {
@@ -391,11 +435,17 @@ fn reference_lenses(params: &Value, sources: &Sources) -> Vec<Value> {
         }
         let placement = sources.placement(file);
         for m in mentions(&other).iter().filter(|m| m.definition.is_none()) {
-            let names = sources.names(&other, m, &placement);
-            for (i, (_, _, wanted)) in defined.iter().enumerate() {
-                if names.iter().any(|name| wanted.contains(name)) {
-                    counts[i] += 1;
-                }
+            let mut hit: Vec<usize> = sources
+                .names(&other, m, &placement)
+                .iter()
+                .filter_map(|name| by_name.get(name.as_str()))
+                .flatten()
+                .copied()
+                .collect();
+            hit.sort_unstable();
+            hit.dedup();
+            for i in hit {
+                counts[i] += 1;
             }
         }
     }

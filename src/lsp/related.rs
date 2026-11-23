@@ -18,9 +18,11 @@ pub(super) fn related(
     at: usize,
     uri: &str,
 ) -> Vec<Value> {
+    // Read with strings and comments blanked, so a name or a bracket in
+    // one is not taken for code.
     let places = match finding.code.as_str() {
-        "QF008" => parameters(finding, text, at),
-        "QB019" | "QB021" => columns(finding, text, at),
+        "QF008" => parameters(finding, &q_lint_rs::code_view(text), at),
+        "QB019" | "QB021" => columns(finding, &q_lint_rs::code_view(text), at),
         _ => vec![],
     };
     places
@@ -78,7 +80,11 @@ fn columns<'a>(finding: &'a Finding, text: &str, at: usize) -> Vec<(usize, &'a s
         let line = text[at..].find('\n').map_or(text.len(), |n| at + n);
         text[at..line].find(" from").map_or(line, |n| at + n)
     };
-    let found = words(text, at, end, name);
+    let found = if finding.code == "QB021" {
+        by_duplicate(text, at, end, name)
+    } else {
+        words(text, at, end, name)
+    };
     let [first, second, ..] = found.as_slice() else {
         return vec![];
     };
@@ -86,6 +92,73 @@ fn columns<'a>(finding: &'a Finding, text: &str, at: usize) -> Vec<(usize, &'a s
         (*first, name, format!("`{name}` is first named here")),
         (*second, name, "and named again here".to_string()),
     ]
+}
+
+/// QB021: where the query `text[at..end]` names its result column `name`
+/// and where its by list does - the name an item starts with, `name:e` or
+/// `name` alone, rather than a `name` an expression reads (`max a`). An
+/// unnamed column (`max a`) is named from the expression, so for it the
+/// first word is the place.
+fn by_duplicate(text: &str, at: usize, end: usize, name: &str) -> Vec<usize> {
+    let Some(by) = words(text, at, end, "by")
+        .into_iter()
+        .find(|&i| depth(&text[at..i]) == 0)
+    else {
+        return vec![];
+    };
+    // The list starts after the keyword and any `[n]` after it.
+    let mut list = at
+        + text[at..]
+            .find(|c: char| !c.is_ascii_alphabetic())
+            .unwrap_or(0);
+    if text[list..].starts_with('[') {
+        list = closer(text, list).map_or(by, |c| c + 1).min(by);
+    }
+    let named = |from: usize, to: usize, alone: bool| {
+        items(text, from, to).into_iter().find(|&i| {
+            let Some(rest) = text.get(i..to).and_then(|t| t.strip_prefix(name)) else {
+                return false;
+            };
+            let rest = rest.trim_start_matches([' ', '\t']);
+            words(text, i, i + name.len(), name) == [i]
+                && ((rest.starts_with(':') && !rest.starts_with("::"))
+                    || (alone && rest.is_empty()))
+        })
+    };
+    let first = named(list, by, false).or_else(|| words(text, list, by, name).first().copied());
+    let second =
+        named(by + 2, end, true).or_else(|| words(text, by + 2, end, name).first().copied());
+    first.into_iter().chain(second).collect()
+}
+
+/// Where each item of the comma-separated list `text[from..to]` starts,
+/// past its blanks: the commas at bracket depth 0 separate them.
+fn items(text: &str, from: usize, to: usize) -> Vec<usize> {
+    let mut starts = vec![from];
+    let mut depth = 0i32;
+    for (i, b) in text[from..to].bytes().enumerate() {
+        match b {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b',' if depth == 0 => starts.push(from + i + 1),
+            _ => {}
+        }
+    }
+    starts
+        .into_iter()
+        .map(|s| s + text[s..to].len() - text[s..to].trim_start().len())
+        .collect()
+}
+
+/// How many brackets `text` leaves open.
+fn depth(text: &str) -> i32 {
+    text.bytes()
+        .map(|b| match b {
+            b'(' | b'[' | b'{' => 1,
+            b')' | b']' | b'}' => -1,
+            _ => 0,
+        })
+        .sum()
 }
 
 /// Where `name` stands as a whole word between `from` and `to`: not part of

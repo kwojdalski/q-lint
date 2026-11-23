@@ -124,7 +124,7 @@ fn a_definition_just_after_a_character_of_more_than_one_byte_is_found() {
 
 #[test]
 fn a_definition_carries_its_kind_its_signature_and_its_statement() {
-    let source = "limit:10\nadd:{[a;b]\n  a+b}\nneg1:{neg x}\n";
+    let source = "limit:10\nadd:{[a;b]\n  a+b}\nneg1:{neg x}\ns:\"ab\";r:1\nm:\"a\n b\" / note\n";
     let all = mentions(source);
     let defined: Vec<_> = all
         .iter()
@@ -138,6 +138,10 @@ fn a_definition_carries_its_kind_its_signature_and_its_statement() {
             ("add", true, "[a;b]", "add:{[a;b]\n  a+b}"),
             // An implicit signature is not written, so there is none to show.
             ("neg1", true, "", "neg1:{neg x}"),
+            // A string the statement ends in is in it, a comment is not (#1215).
+            ("s", false, "", "s:\"ab\""),
+            ("r", false, "", "r:1"),
+            ("m", false, "", "m:\"a\n b\""),
         ]
     );
 }
@@ -1456,6 +1460,35 @@ fn a_global_rename_is_refused_where_it_would_change_what_the_code_means() {
     assert!(
         reply["error"].is_object() || reply["result"].is_null(),
         "{reply}"
+    );
+    // A name read in a qSQL phrase is a column whenever the table has one
+    // (#1207); the table after `from` is a global, and is renamed.
+    let query = "foo:1\nr:select foo from t where foo>0\ntab:([] a:1 2)\ns:select from tab\n";
+    let quri = server.open(dir.path(), "query.q", query);
+    let reply = server.ask(
+        "textDocument/rename",
+        &quri,
+        query,
+        "foo:1",
+        0,
+        json!({"newName": "bar"}),
+    );
+    let why = refused(&reply);
+    assert!(why.contains("qSQL") && why.contains("query.q:2"), "{why}");
+    let reply = server.ask(
+        "textDocument/rename",
+        &quri,
+        query,
+        "tab:",
+        0,
+        json!({"newName": "tbl"}),
+    );
+    assert_eq!(
+        edits(&reply["result"]),
+        [
+            edit("query.q", 2, 0, 3, "tbl"),
+            edit("query.q", 3, 14, 17, "tbl")
+        ]
     );
     // A legal one goes through: lib.q's definition and both calls.
     let reply = ask(&mut server, "helper v", "bump");

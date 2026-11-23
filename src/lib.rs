@@ -243,7 +243,7 @@ pub struct Place {
 /// Every global name `source` writes or reads, in order.
 pub fn mentions(source: &str) -> Vec<Mention> {
     let v = views(source);
-    semantics::navigate::mentions(&v.code, source)
+    semantics::navigate::mentions(&v.code, &v.comments, source)
 }
 
 /// The path of the load at byte `offset` of `source` - `\l path`,
@@ -395,6 +395,12 @@ pub fn load_paths(source: &str) -> Vec<(usize, usize)> {
         .collect()
 }
 
+/// `source` with its strings and comments blanked, byte for byte, as the
+/// rules read it: an offset in one is the same offset in the other.
+pub fn code_view(source: &str) -> String {
+    views(source).code
+}
+
 /// What a definition that is no lambda may still be called as: the name at
 /// byte `at` for `len` bytes, itself (`al:add`) or projected (`pr:add[;2;]`).
 /// `given` is `None` for the name itself, and for a projection says of each
@@ -476,6 +482,14 @@ pub fn typed_locals(source: &str) -> Vec<Typed> {
 pub fn completing(source: &str, offset: usize) -> Option<Completing> {
     let v = views(source);
     semantics::help::completing(&v.code, &v.comments, &v.string_starts, source, offset)
+}
+
+/// Where each context begins in `source`, the root's at 0 and then each
+/// `\d`'s, and its name, in order: what `Completing::namespace` is at any
+/// offset, for every offset at once.
+pub fn contexts(source: &str) -> Vec<(usize, String)> {
+    let v = views(source);
+    semantics::contexts(&v.code, source)
 }
 
 pub mod graph;

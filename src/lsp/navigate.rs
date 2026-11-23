@@ -991,6 +991,23 @@ fn rename_global(
                               "newText": new}),
             );
         }
+        // A bare name in a qSQL phrase is a column whenever the table has
+        // one of that name, which only the table says; the table after
+        // `from` is a global (#1207).
+        let clauses = q_lint_rs::query_clauses(&text, &bare);
+        if let Some((&at, _)) = bare
+            .iter()
+            .zip(&clauses)
+            .find(|(_, clause)| clause.is_some_and(|c| c != "from"))
+        {
+            let (line, _) = lines.position(at);
+            return Err(format!(
+                "`{old}` is read inside a qSQL phrase at {}:{}, where it is a column whenever \
+                 the table has one of that name - which only the table says",
+                Path::new(key).display(),
+                line + 1
+            ));
+        }
         if let Some(hidden) = q_lint_rs::shadowing(&text, new, &bare) {
             let (line, _) = lines.position(hidden);
             return Err(format!(

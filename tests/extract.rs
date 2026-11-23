@@ -183,6 +183,11 @@ fn a_selection_that_is_no_value_of_its_expression_is_refused() {
         ("g:{[a] a,`x`y}\n", "`y", "symbol"),
         ("g:{[a] a,\"xyz\"}\n", "yz", "string"),
         ("\\d .ns\n", "d .ns", "system command"),
+        // `2 {x*2}/l` is `{x*2}/[2;l]`: 2 is an argument of the adverb.
+        ("g:{[l] 2 {x*2}/l}\n", "{x*2}/l", "adverb"),
+        ("g:{[n] n f/0}\n", "f/0", "adverb"),
+        ("g:{[a;b] a {x,y}'b}\n", "{x,y}'b", "adverb"),
+        ("g:{[l] count {x+y}/l}\n", "{x+y}/l", "adverb"),
         (
             "g:{[a;b;c;d;e;f;h;i] a+b+c+d+e+f+h+i}\n",
             "a+b+c+d+e+f+h+i",

@@ -714,6 +714,10 @@ pub(crate) fn opens(code_line: &str, raw_line: &str) -> Option<String> {
     };
     Some(ns?.as_str().trim_end_matches('.').into())
 }
+/// The namespace in force from each offset on, as `scopes` reads it.
+pub(crate) fn contexts(code: &str, raw: &str) -> Vec<(usize, String)> {
+    scopes(code, raw).1
+}
 /// Every lambda in the file, with what it binds, and the namespace in force
 /// at each line. Shared by the checks and by the editor's semantic tokens,
 /// which have to agree about what a name in a body refers to.
