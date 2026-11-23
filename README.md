@@ -1036,6 +1036,7 @@ Every key is optional, and these are the defaults:
  "versionCheck": {"enable": true}, "baseline": {"enable": true},
  "typeLints": {"enable": true}, "selectionRange": {"enable": false},
  "relatedInformation": {"enable": false}, "crossFileRefresh": {"enable": false},
+ "renameLoads": {"enable": false}, "loadPathCompletion": {"enable": false},
  "workspaceIndex": {"enable": true, "exclude": []}}
 ```
 
@@ -1081,7 +1082,14 @@ sends `workspace/codeLens/refresh` and `workspace/inlayHint/refresh`, to a
 client that declares it takes them, when what the workspace defines
 changes, and the first also when the names a file reads change while
 reference lenses are on, as `workspace/semanticTokens/refresh` is sent for
-colours.
+colours. `renameLoads.enable: true` announces `workspace/willRenameFiles` for
+`.q`/`.k` files and folders, and answers it with the edits that keep each
+load naming what it named - written from the workspace folder or from the
+loading file's directory, whichever it was written from - including the
+loads of a file that moves. `loadPathCompletion.enable: true` completes the
+folders and `.q`/`.k` scripts after `\l `, with `/` as a trigger
+character; with `completion.enable` off, it announces completion and
+answers only on a `\l` line.
 `workspaceIndex.exclude`
 holds globs relative to each workspace folder that the index does not read.
 The index stops after 20,000 `.q` files or 500,000 directory entries of any

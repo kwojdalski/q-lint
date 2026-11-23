@@ -475,6 +475,18 @@
             "default": true,
             "order": 50,
             "markdownDescription": "Redraw the code lenses and inlay hints of every open q file when another file's definitions change - a parameter renamed, a function added - and the reference counts when the names a file reads change. Off, a file's lenses and hints are redrawn only when it is edited itself."
+          },
+          "q-lint.renameLoads.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 51,
+            "markdownDescription": "When a `.q` or `.k` file or a folder is renamed or moved in the Explorer, rewrite the `\\l` paths (and `system \"l ...\"` and `` `:file.q `` paths) that name it - or anything under the folder - so they still reach it, each from the base it was written against: the workspace folder, or the loading file's own directory. A moved file's own loads are rewritten too. Off, a rename changes no file."
+          },
+          "q-lint.loadPathCompletion.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 52,
+            "markdownDescription": "Complete the folders and `.q`/`.k` scripts after `\\l `, from the file's own directory and the workspace folder; a `/` lists the next folder's. Only a `\\l` line is answered unless `#q-lint.completion.enable#` is on too, so VS Code's word suggestions are kept everywhere else. Off, nothing is completed after `\\l`."
           }
         }
       },
@@ -719,6 +731,18 @@
             "default": true,
             "order": 130,
             "markdownDescription": "Offer **Send to...** on the result, **Send Result to Notebook** and **Append Result to Markdown Report...** (#1021): the query, the rows shown as a Markdown table and, if you like, the chart as an image, inserted into a q notebook as a Markdown cell or added to the end of a Markdown file, after showing what it will write. Off, they are hidden and nothing is written."
+          },
+          "q-lint.results.accessibleGrid.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "Expose the result grid to screen readers (#1187): a `grid` with its whole row and column counts though only the rows in view are drawn, each row's index among them, the column names as column headers, and one tab stop that the arrow keys move from cell to cell - Home and End to a row's ends, Ctrl+Home and Ctrl+End to the grid's, Page Up and Page Down a page, scrolling as they go; Enter or Space on a header still sorts. Off, the grid is a plain table and every header is a tab stop."
+          },
+          "q-lint.results.announce.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "Announce a query's outcome to a screen reader (#1188), politely, without moving the focus: `1,000 rows in 12 ms` when the result panel shows a result, and in the Interactive Window and the q REPL how many lines a run answered and how long it took, or its error. Off, nothing is announced and the live region is not in the page."
           },
           "q-lint.query.gridHeatmap": {
             "type": "boolean",
