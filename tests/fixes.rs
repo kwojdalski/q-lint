@@ -806,10 +806,12 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QT008", "r:til 2.5"),        // no long it spells
         ("QT008", "r:til 2e-1"),       // `til 2-1` (#389)
         ("QT008", "r:til 2e+1"),       // nor `til 2+1` (#389)
+        ("QT025", "f:{'10 20}"),       // only the first item would be quoted (#1200)
+        ("QT025", "f:{'1 2}"),
         ("QF020", "t:([]ab:1 2;ac:3 4);r:select a from t"), // two equally close
-        ("QA007", "f:{[c] $[c;1;2;3]}"), // no empty slot
-        ("QP002", "t:.z.z / old: 15h$x"), // the cast is in a comment
-        ("QP002", "t:.z.Z;s:\"0Nz\""), // and the null in a string
+        ("QA007", "f:{[c] $[c;1;2;3]}"),                    // no empty slot
+        ("QP002", "t:.z.z / old: 15h$x"),                   // the cast is in a comment
+        ("QP002", "t:.z.Z;s:\"0Nz\""),                      // and the null in a string
         (
             "QF005",
             "f:{[k] g:{[a;b;c;d;e;f;g;h] k+h}; g[1;2;3;4;5;6;7;8]}",

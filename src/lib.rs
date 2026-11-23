@@ -2054,6 +2054,12 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         "QT025" => {
             let m = re!(r"^'(\s*)(-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)")
                 .captures(source.get(start..)?)?;
+            // Only the whole operand: `'10 20` with its first item quoted would
+            // be `'"10" 20`, still 'stype, and `'1 2` would be `'enlist"1" 2`,
+            // 'type (#1200).
+            if !operand_ends(&v.code, &v.comments, start + m.get(0)?.end()) {
+                return None;
+            }
             // One digit in quotes is a char atom, still 'stype (#565).
             let list = if m[2].len() == 1 { "enlist" } else { "" };
             (
