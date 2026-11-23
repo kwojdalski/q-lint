@@ -39,7 +39,7 @@ import {
   type Level,
 } from "./logparse";
 import { readFrom, START, type Position } from "./logreader";
-import { plainMessage } from "./history";
+import { iconsEscaped, plainMessage } from "./history";
 
 /// How often a followed file is checked for new lines.
 const FOLLOW_MS = 500;
@@ -585,7 +585,7 @@ export class LogViewer {
       return;
     }
     const filter = filterText(view.filter);
-    this.status.text = `$(list-filter) ${filter || "all"} · ${view.entries.length} · ${view.follow ? "following" : "paused"}`;
+    this.status.text = `$(list-filter) ${iconsEscaped(filter) || "all"} · ${view.entries.length} · ${view.follow ? "following" : "paused"}`;
     this.status.tooltip = `${view.files.join("\n")}\nShowing the last ${view.max} entries that pass the filter. Click to filter by level.`;
     this.status.show();
   }

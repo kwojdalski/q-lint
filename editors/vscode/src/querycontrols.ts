@@ -20,6 +20,7 @@ import { decode, type QValue } from "./qdecode";
 import { TRAP, readAnswer, type Answer } from "./query";
 import type { GridAnswer } from "./grid";
 import { QError } from "./qclient";
+import { iconsEscaped } from "./history";
 
 export const CONTROL_COMMANDS = {
   queryFile: "q-lint.queryEntireFile",
@@ -205,7 +206,7 @@ export function flagsText(unlimited: boolean, unwrapped: boolean): string {
 /// What the status bar says of the active file's process: undefined when it
 /// has none, or it is the active connection.
 export function bindingText(bound: string | undefined, active: string | undefined): string | undefined {
-  return bound === undefined || bound === active ? undefined : `$(file-symlink-file) file: ${bound}`;
+  return bound === undefined || bound === active ? undefined : `$(file-symlink-file) file: ${iconsEscaped(bound)}`;
 }
 
 /// Run `expire` once `seconds` have passed, unless the function returned is

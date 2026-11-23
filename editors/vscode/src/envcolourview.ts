@@ -18,6 +18,7 @@ import {
 import { readAdmin } from "./admin";
 import { envColourOf, envPaint, readEnvColours } from "./envcolour";
 import type { Live } from "./live";
+import { iconsEscaped } from "./history";
 
 const Q_LANGUAGES = new Set(["q", "k", "quke"]);
 
@@ -101,7 +102,7 @@ export class EnvironmentColour {
     const paint = envPaint(found.colour);
     this.item ??= window.createStatusBarItem("q-lint.environment", StatusBarAlignment.Left, 49);
     this.item.name = "q-lint: environment colour";
-    this.item.text = `$(circle-large-filled) ${found.tag.toUpperCase()}`;
+    this.item.text = `$(circle-large-filled) ${iconsEscaped(found.tag.toUpperCase())}`;
     this.item.tooltip = `Connected to ${process.label}, tagged ${found.tag} (q-lint.processes.environmentColor).`;
     this.item.backgroundColor = paint.background === undefined ? undefined : new ThemeColor(paint.background);
     this.item.color = paint.background !== undefined ? undefined : paint.hex ?? (paint.theme === undefined ? undefined : new ThemeColor(paint.theme));

@@ -44,7 +44,7 @@ import { readTerminal } from "./liveconfig";
 import { mergeEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor, nodeFiles } from "./qenvironment";
 import { expandHome } from "./terminal";
-import { plainMessage } from "./history";
+import { iconsEscaped, plainMessage } from "./history";
 
 /// How long a binary has to answer the probe.
 export const PROBE_TIMEOUT_MS = 10_000;
@@ -181,7 +181,7 @@ export class Interpreters {
     const binary = this.binary();
     const file = resolveBinary(binary);
     const kept = file !== undefined ? this.kept()[file] : undefined;
-    this.item.text = `$(terminal) ${kept !== undefined ? versionText(kept) : path.basename(binary)}`;
+    this.item.text = `$(terminal) ${iconsEscaped(kept !== undefined ? versionText(kept) : path.basename(binary))}`;
     this.item.tooltip = `q interpreter: ${file ?? `${binary} (not found)`}\nSelect q Interpreter`;
     this.item.show();
   }
