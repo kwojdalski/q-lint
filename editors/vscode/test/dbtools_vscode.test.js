@@ -206,6 +206,24 @@ test("elsewhere the column manager shows its script and runs it only after Run",
   assert.ok(q.sent.slice(n).every((m) => m[0] === TABLE_INFO));
 });
 
+test("the column manager runs nothing when the active process changed while Run was asked (#1081)", async (t) => {
+  capture();
+  const { q, live, context } = await setUp(t);
+  const other = await fakeQ(answers);
+  t.after(() => other.close());
+  await context.globalState.update("q-lint.processes", [
+    { label: "hdb", host: "127.0.0.1", port: q.port, tags: [] },
+    { label: "other", host: "127.0.0.1", port: other.port, tags: [] },
+  ]);
+  live.refreshProcesses();
+  await live.connectTo("hdb");
+  stub.picks.push(async () => (await live.connectTo("other"), "Run"));
+  const said = await stub.commands.get(DB_COMMANDS.manageColumn)("trade", { op: "delete", column: "px" });
+  assert.match(said, /hdb is no longer the active process/);
+  assert.ok(!q.sent.some((m) => m[0] === RUN_SCRIPT));
+  assert.ok(!other.sent.some((m) => m[0] === RUN_SCRIPT));
+});
+
 test("a dashboard runs its tiles' read-only queries, keeps a timer only with an interval, and stops when turned off", async (t) => {
   const { panels } = capture();
   const { live, context } = await setUp(t);

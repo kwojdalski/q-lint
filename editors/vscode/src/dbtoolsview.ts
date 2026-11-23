@@ -150,7 +150,16 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
     if (answer !== run) return "not run";
     if (off("columnManager")) return dbOff("columnManager");
     try {
-      const ran = await live.runOnActive(script, (connection) => connection.call(RUN_SCRIPT, statements(script)), "refuse");
+      // The active process can have changed while Run was asked (#1081):
+      // the script runs only on the process the modal named.
+      const ran = await live.runOnActive(
+        script,
+        (connection) => {
+          if (live.activeLabel() !== process.label) throw new Error(`${process.label} is no longer the active process; nothing was run.`);
+          return connection.call(RUN_SCRIPT, statements(script));
+        },
+        "refuse",
+      );
       if (ran === undefined) return "not run";
       const outcome = readRun(ran.value);
       state.lastRun = outcome.ok ? outcome.text : outcome.error;
