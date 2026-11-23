@@ -55,7 +55,9 @@ export function quote(word: string, shell: Shell): string {
   }
   // cmd passes the line to the program, whose C runtime splits it: inside
   // double quotes a quote is escaped with a backslash, and backslashes
-  // before a quote - or before the closing one - are doubled.
+  // before a quote - or before the closing one - are doubled. cmd itself
+  // reads every quote as one, and `%NAME%` inside quotes too, so
+  // `commandLine` refuses a word with either before it gets here.
   return `"${word.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, "$1$1")}"`;
 }
 
@@ -63,9 +65,17 @@ export function quote(word: string, shell: Shell): string {
 /// for it. The variables are on the line rather than in the terminal's
 /// environment because the shell's startup files run in between: a
 /// `.zshrc` that exports `QHOME` would otherwise win over the env file.
-/// PowerShell runs a quoted command only through `&`. cmd cannot escape a
-/// `%` or a `"` in a value, so those reach q as cmd reads them.
-export function commandLine(binary: string, args: string[], shell: Shell, env: Record<string, string> = {}): string {
+/// PowerShell runs a quoted command only through `&`. cmd has no escape for
+/// a `"` or a `%` inside quotes - its `\"` ends the quoted part, so what
+/// follows is read as commands, and `%NAME%` is expanded (#1274) - so a
+/// word or value with either, or with a line break, is refused there.
+export function commandLine(binary: string, args: string[], shell: Shell, env: Record<string, string> = {}): string | { error: string } {
+  if (shell === "cmd") {
+    const bad = [binary, ...args, ...Object.entries(env).map(([n, v]) => `${n}=${v}`)].find((w) => /["%\r\n]/.test(w));
+    if (bad !== undefined) {
+      return { error: `cmd cannot pass ${JSON.stringify(bad)} to q as written: it reads a " or a % in it itself. Start q from a PowerShell or another terminal.` };
+    }
+  }
   const command = quote(binary, shell);
   let line = [command, ...args.map((a) => quote(a, shell))].join(" ");
   if (shell === "powershell" && command !== binary) {

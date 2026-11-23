@@ -400,7 +400,8 @@ export class QTerminals {
   /// `file` if one is given, with the variables of `q-lint.terminal.envPath`
   /// set for it. It starts in the workspace folder of `from`, so a script's
   /// relative `\l` reads as it does from a shell there. Undefined if the env
-  /// file cannot be read; `before` runs only once it can start.
+  /// file cannot be read, or cmd cannot pass the line; `before` runs only
+  /// once it can start.
   private async start(name: string, from: Uri | undefined, file?: string, before?: () => void, extraArgs: string[] = []): Promise<Terminal | undefined> {
     const configuration = workspace.getConfiguration("q-lint", from);
     const read = readTerminal((key, fallback) => configuration.get(key, fallback));
@@ -437,6 +438,15 @@ export class QTerminals {
     // its command line, where they would show; the layout's stay under the
     // env file's.
     const { shown, hidden } = terminalEnv(layoutEnvFor(read.qBinary, from), variables, await dotenvFor(from));
+    // A file inside the folder is named relative to it, as you would type it.
+    const relative = file !== undefined && cwd !== undefined ? path.relative(cwd, file) : "";
+    const inside = relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+    const args = file === undefined ? [] : [inside ? relative : file, ...extraArgs];
+    const line = commandLine(settings.qBinary, args, shellKind(env.shell), shown);
+    if (typeof line !== "string") {
+      void window.showErrorMessage(`q-lint: ${line.error}`);
+      return undefined;
+    }
     before?.();
     const terminal = window.createTerminal({ name, cwd, ...(Object.keys(hidden).length > 0 ? { env: hidden } : {}) });
     this.ours.add(terminal);
@@ -444,11 +454,7 @@ export class QTerminals {
       this.files.set(terminal, file);
     }
     this.last = terminal;
-    // A file inside the folder is named relative to it, as you would type it.
-    const relative = file !== undefined && cwd !== undefined ? path.relative(cwd, file) : "";
-    const inside = relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
-    const args = file === undefined ? [] : [inside ? relative : file, ...extraArgs];
-    terminal.sendText(commandLine(settings.qBinary, args, shellKind(env.shell), shown), true);
+    terminal.sendText(line, true);
     return terminal;
   }
 }

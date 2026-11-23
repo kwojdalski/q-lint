@@ -77,6 +77,21 @@ test("cmd gets double quotes, split as a C runtime splits them", () => {
   );
 });
 
+test("cmd is refused a quote, a % or a line break, which it reads itself (#1274)", () => {
+  // `\"` does not escape a quote for cmd: the quoted part ends and `& calc`
+  // would run. `%PATH%` is expanded inside quotes.
+  const refused = (r) => typeof r === "object" && /cmd cannot pass/.test(r.error);
+  assert.ok(refused(commandLine("q", ['a" & calc & "'], "cmd")));
+  assert.ok(refused(commandLine("q", ["100%PATH%.q"], "cmd")));
+  assert.ok(refused(commandLine("C:\\q\"x\\q.exe", [], "cmd")));
+  assert.ok(refused(commandLine("q", [], "cmd", { QINIT: 'x" & calc & "' })));
+  assert.ok(refused(commandLine("q", ["a\r\nb"], "cmd")));
+  // Other shells quote them, and cmd takes anything else.
+  assert.strictEqual(commandLine("q", ['a"b', "50%"], "posix"), "q 'a\"b' 50%");
+  assert.strictEqual(commandLine("q", ['a"b'], "powershell"), "q 'a\"b'");
+  assert.strictEqual(commandLine("q", ["my file.q", "a&b"], "cmd"), 'q "my file.q" "a&b"');
+});
+
 test("a command line is the binary and its arguments", () => {
   assert.strictEqual(commandLine("q", [], "posix"), "q");
   assert.strictEqual(commandLine("q", ["main.q"], "posix"), "q main.q");
