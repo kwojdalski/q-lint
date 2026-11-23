@@ -91,3 +91,67 @@ fn a_flag_removed_from_the_readme_is_caught() {
     assert!(names(&without, "--extend-select"));
     assert_eq!(undocumented(&help, &without), ["--select"]);
 }
+
+/// The body of each fenced block in the README's "Other editors" section.
+fn editor_snippets() -> Vec<String> {
+    section("### Other editors")
+        .split("```")
+        .skip(1)
+        .step_by(2)
+        .map(|block| {
+            block
+                .split_once('\n')
+                .map_or("", |(_, body)| body)
+                .to_string()
+        })
+        .collect()
+}
+
+#[test]
+fn every_editor_snippet_runs_the_server_with_no_profile() {
+    let snippets = editor_snippets();
+    // Neovim, Helix, Eglot, lsp-mode, Sublime, Kakoune and Zed.
+    assert_eq!(snippets.len(), 7, "{snippets:#?}");
+    for snippet in &snippets {
+        let words: Vec<String> = snippet
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+            .map(str::to_string)
+            .collect();
+        // The command is `qlinter`, its one argument `--lsp`: a profile in
+        // the editor would override every repository's own.
+        assert!(words.iter().any(|w| w == "qlinter"), "{snippet}");
+        assert!(words.iter().any(|w| w == "--lsp"), "{snippet}");
+        assert!(!snippet.contains("--profile"), "{snippet}");
+        assert!(!snippet.contains("--stdio"), "{snippet}");
+        // And the one option each passes is one the server reads.
+        assert!(snippet.contains("onSave"), "{snippet}");
+    }
+}
+
+#[test]
+fn the_server_command_line_in_the_snippets_is_accepted() {
+    // What every snippet runs, started and shut down as an editor would:
+    // a flag the server refuses would stop it before `initialize`.
+    use std::io::Write;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .args(["--lsp"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    for body in [
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{},"initializationOptions":{"lint":{"run":"onSave"}}}}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"shutdown"}"#,
+        r#"{"jsonrpc":"2.0","method":"exit"}"#,
+    ] {
+        write!(stdin, "Content-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+    }
+    drop(stdin);
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains(r#""capabilities""#), "{stdout}");
+    assert!(stdout.contains(r#""id":2"#), "{stdout}");
+}
