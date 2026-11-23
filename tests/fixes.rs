@@ -840,6 +840,10 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QE009", "f:{+/@[f;x;g]}"),  // a glyph applied with brackets
         ("QE009", "f:{{x+y}/x}"),     // a lambda operand
         ("QE009", "f:{(1;/x)}"),      // no derived function at all
+        ("QE009", "f:{#'x}"),         // `(#')x` is a projection on KDB-X
+        ("QE009", "f:{,/:x}"),        // so is `(,/:)x`
+        ("QE009", "f:{,\\:x}"),       // and `(,\:)x`
+        ("QE009", "f:{,/:'x}"),       // and `(,/:')x`
         ("QE011", "r:f over each x"), // `(f over) each`, the author's to place
         ("QT029", "h:hopen 1.5"),     // no handle it spells
         ("QT029", "h:hopen -1"),

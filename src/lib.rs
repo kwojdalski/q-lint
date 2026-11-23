@@ -2530,6 +2530,17 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             if operand > 0 && c[operand - 1] == b'`' {
                 return None;
             }
+            // A bare glyph under each or each-left/right, `(#')x`, is a
+            // projection on KDB-X, not the count each `#'x` meant.
+            let first = &v.code[run..];
+            if operand == run - 1
+                && glyph(c[operand])
+                && (first.starts_with('\'') && !first.starts_with("':")
+                    || first.starts_with("/:")
+                    || first.starts_with("\\:"))
+            {
+                return None;
+            }
             let next = refusals::continued(&v.code[end..]);
             if next.starts_with('-') || next.len() > 1 && glyph(c[c.len() - next.len()]) {
                 return None;
