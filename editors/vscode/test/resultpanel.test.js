@@ -598,8 +598,8 @@ test("Append to Report from the palette sends the rows the grid shows, as Export
   fake.vscode.window.showWarningMessage = async (_m, _o, go) => go;
   await fake.vscode.commands[RESULT_VIEW.toReport](new fake.vscode.Uri("/r.md"), false);
   const report = fake.written["/r.md"];
-  assert.match(report, /30[\s\S]*10/);
-  assert.doesNotMatch(report, /\b20\b/);
+  assert.match(report, /^\| 30 \|$[\s\S]*^\| 10 \|$/m);
+  assert.doesNotMatch(report, /^\| 20 \|$/m);
 });
 
 test("export, paging, pivot, charts and drill-down turned off: each command refuses, the page is offered none, and nothing is sent", async () => {
