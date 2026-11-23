@@ -424,6 +424,15 @@ accepts those codes on every line of its file, as Ruff's `# ruff: noqa:` does;
 inside a block comment or after the line that ends the script it is not read.
 The built-in rules honour both; findings from qls do not.
 
+`qlinter --add-noqa src/` accepts every finding of the run where it is - the
+editor's Quick Fix, made for each: `/ noqa: CODE` appended to its line, or the
+code added to the `noqa` already there - so a tree can adopt a rule and keep
+new findings out, a second run reports nothing, and a third changes nothing.
+A line no comment can follow is left alone: one inside a string or a block
+comment, a block comment's own `/`, a system command, or any line of a file
+whose brackets do not close. It says how many it added, and exits 1 if any
+such finding is left.
+
 Diagnostics carry a
 code and a category; `qlinter --rules` lists them all and `qlinter --explain
 QF005` describes one. Exit codes are 0 (no error or warning), 1 (findings) and
