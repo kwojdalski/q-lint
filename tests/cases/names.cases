@@ -663,11 +663,11 @@ r:port
 .cfg:1
 b:cfg
 
-=== QF018 | :: on a parameter assigns the parameter, not a global (q 5: g 1 is 7, then b is 'b)
+=== QF018 QF022 | :: on a parameter assigns the parameter, not a global (q 5: g 1 is 7, then b is 'b)
 g:{[b] b::7; b}
 r:b
 
-=== QF005 | nor does :: on a local make it a global for a nested lambda (q 5: h 1 is 'c)
+=== QF005 QF022 | nor does :: on a local make it a global for a nested lambda (q 5: h 1 is 'c)
 h:{[a] c:a; c::a+1; {c}[]}
 
 === clean | a global write inside another function supplies the name
@@ -1398,3 +1398,16 @@ count,:"a"
 
 === QF004 profile: general | and at the root (#592; q 5: 'assign)
 max,:"a"
+
+=== QF022 | `::` on a parameter or local sets the local (q 5: {[a] a::5; a}[1] is 5, no global a; #1140)
+f:{[a] a::5; a}
+g:{b:1; b::2; b}
+h:{x::3; x}
+k:{(b;c):1 2; b::5; b}
+
+=== clean | `::` on a name the lambda does not bind, in a nested lambda, or with nothing after it (#1140)
+f:{g::1}
+h:{b:1; {b::3}[]; b}
+k:{[d] r:d::; r}
+m:{[m;t] m t::}
+n:{.ns.a::1; a:2; a}

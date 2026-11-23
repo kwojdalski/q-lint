@@ -224,6 +224,13 @@
     "scope": "builtin"
   },
   {
+    "code": "QF022",
+    "name": "local-global-assignment",
+    "category": "names",
+    "summary": "`::` on a parameter or local assigns the local, not a global of that name",
+    "scope": "style"
+  },
+  {
     "code": "QA001",
     "name": "parameter-limit",
     "category": "application",

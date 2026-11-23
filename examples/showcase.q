@@ -95,6 +95,12 @@ ledger:([] first:1 2 3; qty:4 5 6)
 / expect-next: QF021
 dotted:{[t] t.c}
 
+/ QF022: `lim` is the lambda's parameter, so `lim::` sets that local and the
+/ global `lim` is never written; `` `lim set `` writes the global.
+/ expect-next: QF022
+capped:{[lim] lim::lim&100; lim}
+capped2:{[lim] `lim set lim&100; lim}
+
 / QF014: an assignment anywhere in a body makes the name local throughout,
 / so the read of `cfg` on the left is of an unset local, not the global,
 / and q refuses the lambda where it is defined, with 'cfg. Within one

@@ -412,6 +412,13 @@ fn with_from_clauses(direct: &str, tables: bool) -> String {
     }
     String::from_utf8(out).unwrap_or_default()
 }
+/// Whether the text after a `name::` is a value it assigns: not a third
+/// colon, and not the end of an expression - `f g::` composes with the
+/// identity and assigns nothing.
+fn assigns_value(rest: &str) -> bool {
+    let rest = rest.trim_start_matches([' ', '\t']);
+    !rest.is_empty() && !rest.starts_with([':', ';', ')', ']', '}', '\n', '\r'])
+}
 /// The innermost scope containing `at`.
 ///
 /// Scopes are pushed as their `{` is met, so they are ordered by `start` and
@@ -2437,6 +2444,41 @@ pub fn check(
                         .map(|k| format!("`{k}"))
                         .collect::<Vec<_>>()
                         .join(";")
+                ),
+            ));
+        }
+    }
+    // `a::v` in a lambda that binds `a` - as a parameter or with `a:`
+    // anywhere in its body - sets that local, not a global: q 5
+    // `{[a] a::5; a}[1]` is 5 and leaves no global `a`, as do `{b:1; b::2}`
+    // and `{(b;c):1 2; b::5}`. A name the lambda does not bind is the global
+    // write it looks like. Queries are blanked, where `a:` names a column.
+    // With nothing after it, `a::` is no assignment but `a` composed with
+    // the identity: q 5 `{[d] r:d::; r}[3]` is 3, and KX's ml writes
+    // `model transform::` for a composition.
+    for scope in &scopes {
+        let view = local_view(&scope.direct, true);
+        for m in re!(r"([A-Za-z][A-Za-z0-9_]*)[ \t]*::").captures_iter(&view) {
+            let (whole, name) = (m.get(0).unwrap(), &m[1]);
+            if !boundary(&view, whole.start())
+                || !assigns_value(&view[whole.end()..])
+                || !scope.locals.contains(name)
+            {
+                continue;
+            }
+            let what = if scope.params.contains(name) {
+                "a parameter"
+            } else {
+                "a local"
+            };
+            out.push(Finding::at(
+                path,
+                raw,
+                scope.body + whole.start(),
+                "QF022",
+                format!(
+                    "`{name}` is {what} of this lambda, so `{name}::` assigns the local, not \
+                     a global `{name}`: write the global with `set` and a symbol"
                 ),
             ));
         }
