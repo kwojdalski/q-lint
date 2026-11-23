@@ -167,16 +167,24 @@ pub fn extract(
     // A keyword q applies infix takes the value on its left as its own
     // argument: `{[b] mod b}` is refused by KDB-X (#1303). Called with
     // brackets, `mod[a;2]`, it is a value.
+    // An iterator likewise modifies the function on its left: `{[b] each
+    // b}` is no lambda KDB-X accepts (#1304).
     let lead = re!(r"^[A-Za-z_][A-Za-z0-9_]*").find(&raw[start..end]);
     if let Some(w) = lead
         && crate::semantics::INFIX.contains(&w.as_str())
-        && !ITERATORS.contains(&w.as_str())
         && !raw[start + w.end()..end].starts_with('[')
     {
-        return Err(format!(
-            "the selection starts with `{}`, which q applies infix to the value on its left",
-            w.as_str()
-        ));
+        return Err(if ITERATORS.contains(&w.as_str()) {
+            format!(
+                "the selection starts with `{}`, an iterator of the function on its left",
+                w.as_str()
+            )
+        } else {
+            format!(
+                "the selection starts with `{}`, which q applies infix to the value on its left",
+                w.as_str()
+            )
+        });
     }
     // A vector literal is one token: `2 3` of `1 2 3` is no value of it.
     let numeric = first.is_ascii_digit()

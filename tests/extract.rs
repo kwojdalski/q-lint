@@ -147,6 +147,12 @@ const ACCEPTED: &[(&str, &str, &str, &str)] = &[
         "extracted:{[a] mod[a;3]}\ng:{[a;b] b+extracted[a]}\n",
         "g[7;1]",
     ),
+    (
+        "g:{[a] 1+each[neg;a]}\n",
+        "each[neg;a]",
+        "extracted:{[a] each[neg;a]}\ng:{[a] 1+extracted[a]}\n",
+        "g 1 2",
+    ),
 ];
 
 #[test]
@@ -192,6 +198,10 @@ fn a_selection_that_is_no_value_of_its_expression_is_refused() {
         ("g:{[a;b] a mod b}\n", "mod b", "infix"),
         ("g:{[a;b] a xexp b}\n", "xexp b", "infix"),
         ("g:{[a;b] a in b}\n", "in b", "infix"),
+        // KDB-X refuses {[b] each b} (#1304); each[neg;a] is a value.
+        ("g:{[a] neg each a}\n", "each a", "iterator"),
+        ("g:{[a;b] a over b}\n", "over b", "iterator"),
+        ("g:{[a;b] a prior b}\n", "prior b", "iterator"),
         // KDB-X: d:`extracted[a] is a symbol indexed, s (#1302).
         ("g:{[x] `abc,x}\n", "abc,x", "symbol"),
         ("g:{[x] x,`.ns.v}\n", ".ns.v", "symbol"),
