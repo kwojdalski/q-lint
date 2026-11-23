@@ -75,6 +75,7 @@ const SERVER = [
   ".lib.cfg:3",
   ".lib.trades:([] p:1 2.)",
   ".e.x:1",
+  ".u.upd:{[t;x]}",
   "",
 ].join("\n");
 
@@ -90,9 +91,11 @@ test("a process's names are listed by kind, a view named and never run", { skip 
   assert.strictEqual(kind[".lib.add"], "function");
   assert.strictEqual(kind[".lib.cfg"], "variable");
   assert.strictEqual(kind[".lib.trades"], "table");
-  // A one-letter namespace is q's own, and left out.
-  assert.strictEqual(kind[".e.x"], undefined);
-  assert.ok(!names.some((n) => /^\.[a-zA-Z]\./.test(n.name)), JSON.stringify(names));
+  // q's own namespaces are left out by name; a one-letter one of the
+  // process's - .u, the tickerplant's - is listed (#1261).
+  assert.strictEqual(kind[".e.x"], "variable");
+  assert.strictEqual(kind[".u.upd"], "function");
+  assert.ok(!names.some((n) => /^\.[qQhjozms]\./.test(n.name)), JSON.stringify(names));
   // The view was not evaluated, and nothing was defined.
   assert.strictEqual(Number(await connection.call("{calls}", 0)), 0);
   assert.deepStrictEqual(await connection.call("{key `.}", 0), before);
