@@ -2153,12 +2153,16 @@ export class Live {
     guard: "ask" | "refuse" = "ask",
     expect?: string,
   ): Promise<{ process: string; value: T } | undefined> {
+    // Checked before `ready` would connect and before the guard asks: no
+    // question about a process nothing will be sent to. `stillReady` keeps
+    // it the same connection after.
+    if (expect !== undefined && this.activeLabel() !== expect) {
+      throw movedFrom(expect);
+    }
     let ready = await this.ready();
     if (ready === undefined) {
       return undefined;
     }
-    // Checked before the guard asks: no question about a process nothing
-    // will be sent to. `stillReady` keeps it the same connection after.
     if (expect !== undefined && ready.process.label !== expect) {
       throw movedFrom(expect);
     }

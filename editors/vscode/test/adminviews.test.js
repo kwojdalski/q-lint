@@ -242,3 +242,15 @@ test("closing a handle and setting \\t send nothing when another process became 
     assert.doesNotMatch(sentCode(fake), /hclose|system "t/);
   }
 });
+
+test("disconnected while asked, closing a handle connects to nothing and asks for no process (#1259)", async (t) => {
+  const { setUp } = require("./fakeq.js");
+  const { q, live } = await setUp(t, { register: (c, l) => registerAdminViews(c, l) });
+  await live.connectTo("rdb");
+  stub.picks.push(async () => (await stub.commands.get("q-lint.disconnectProcess")(), "Close Handle"));
+  assert.strictEqual(await stub.commands.get(ADMIN_COMMANDS.closeClient)({ label: "handle 7", handle: 7, contextValue: "client" }), false);
+  assert.strictEqual(stub.picks.length, 0);
+  assert.strictEqual(live.activeLabel(), undefined);
+  assert.ok(stub.messages.some((m) => /rdb is no longer the active process; nothing was run/.test(m.join(" "))), JSON.stringify(stub.messages));
+  assert.ok(!q.sent.some((m) => String(m).includes("hclose")));
+});
