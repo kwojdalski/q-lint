@@ -18,9 +18,11 @@ pub(super) fn related(
     at: usize,
     uri: &str,
 ) -> Vec<Value> {
+    // Read with strings and comments blanked, so a name or a bracket in
+    // one is not taken for code.
     let places = match finding.code.as_str() {
-        "QF008" => parameters(finding, text, at),
-        "QB019" | "QB021" => columns(finding, text, at),
+        "QF008" => parameters(finding, &q_lint_rs::code_view(text), at),
+        "QB019" | "QB021" => columns(finding, &q_lint_rs::code_view(text), at),
         _ => vec![],
     };
     places

@@ -395,6 +395,12 @@ pub fn load_paths(source: &str) -> Vec<(usize, usize)> {
         .collect()
 }
 
+/// `source` with its strings and comments blanked, byte for byte, as the
+/// rules read it: an offset in one is the same offset in the other.
+pub fn code_view(source: &str) -> String {
+    views(source).code
+}
+
 /// What a definition that is no lambda may still be called as: the name at
 /// byte `at` for `len` bytes, itself (`al:add`) or projected (`pr:add[;2;]`).
 /// `given` is `None` for the name itself, and for a projection says of each
