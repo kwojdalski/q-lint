@@ -18,7 +18,7 @@ import {
   type TreeView,
 } from "vscode";
 import { HDB, HDB_PARTITIONS, hdbTree, readHdb } from "./hdb";
-import type { Live } from "./live";
+import { movedFrom, type Live } from "./live";
 import { INFO, MONITOR, monitorTree, readMonitorInterval, type InfoNode } from "./monitor";
 import type { QConnection } from "./qclient";
 import type { Process } from "./processes";
@@ -28,14 +28,26 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /// Run `use` on the active connection as `Live.borrow` does, waiting up to
 /// `wait` ms for a query or another view's read to finish first. Undefined
-/// when not connected, or still busy after that.
+/// when not connected, or still busy after that. With `expect`, the label
+/// of the process a question asked about, it throws `movedFrom` rather than
+/// use any other (#1081).
 export async function borrowWhenFree<T>(
   live: Live,
   use: (connection: QConnection, process: Process) => Promise<T>,
   wait = 3000,
+  expect?: string,
 ): Promise<{ value: T } | undefined> {
+  const checked =
+    expect === undefined
+      ? use
+      : async (connection: QConnection, process: Process) => {
+          if (process.label !== expect) {
+            throw movedFrom(expect);
+          }
+          return use(connection, process);
+        };
   for (let waited = 0; ; waited += 100) {
-    const call = live.borrow(use);
+    const call = live.borrow(checked);
     if (call !== undefined) {
       return { value: await call };
     }

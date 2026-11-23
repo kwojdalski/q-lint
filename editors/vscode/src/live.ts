@@ -463,6 +463,14 @@ function targetOf(process: Process, password: string | undefined): Target {
   };
 }
 
+/// Why nothing was sent: a question asked about `expected`, and another
+/// process became active while it was open (#1081). Callers that send
+/// after a modal or an input box pass the label they asked about as
+/// `expect` to `Live.runOnActive` or `borrowWhenFree`, which throw this.
+export function movedFrom(expected: string): Error {
+  return new Error(`${expected} is no longer the active process; nothing was run.`);
+}
+
 export class Live {
   /// Run the active file in its q terminal with Run File with Arguments'
   /// extra words and input (#1005).
@@ -2137,10 +2145,13 @@ export class Live {
   /// Undefined when nothing was run; throws what `query` throws, and why
   /// the read-only guard did not let `code` be sent: asked and declined, or
   /// refused outright for a caller that cannot ask (`guard` "refuse").
+  /// With `expect`, the label of the process a question asked about, it
+  /// throws `movedFrom` instead of running on any other (#1081).
   async runOnActive<T>(
     code: string,
     query: (connection: QConnection) => Promise<T>,
     guard: "ask" | "refuse" = "ask",
+    expect?: string,
   ): Promise<{ process: string; value: T } | undefined> {
     let ready = await this.ready();
     if (ready === undefined) {
@@ -2159,6 +2170,9 @@ export class Live {
       if (ready === undefined) {
         return undefined;
       }
+    }
+    if (expect !== undefined && ready.process.label !== expect) {
+      throw movedFrom(expect);
     }
     const started = Date.now();
     this.running = { code, started };
