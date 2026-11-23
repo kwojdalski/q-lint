@@ -3019,7 +3019,11 @@ fn parenthesised(code: &str, start: usize, end: usize) -> Option<usize> {
     let before = code[..start].trim_end_matches([' ', '\t']);
     let open = before.strip_suffix('(').map(|b| b.len())?;
     let close = matching(code, open, b'(', b')')?;
-    code[end..close - 1].trim().is_empty().then_some(close)
+    // `get`: in `({[] count:1)}` the `)` closes inside the lambda, before
+    // its end, and the lambda is not what the parentheses hold.
+    code.get(end..close - 1)
+        .is_some_and(|s| s.trim().is_empty())
+        .then_some(close)
 }
 /// The bracket in a chain of them, from the one at `open` given a function
 /// of `rank`, that holds more arguments than what it is applied to takes:
@@ -4836,6 +4840,12 @@ pub(crate) fn signature<'a>(code: &'a str, raw: &str, brace: usize) -> Signature
             depth += 1;
         } else if b")]}".contains(&b) {
             depth -= 1;
+            // A closer that opened outside the brackets: in `{[a:x+1};b]`
+            // the `}` ends the lambda, and the `]` after it is no end of a
+            // parameter list - reading one put its body past the lambda.
+            if depth < 0 {
+                return implicit(vec![]);
+            }
         } else if b == b';' && depth == 0 {
             ranges.push((start, i));
             start = i + 1;
@@ -8342,7 +8352,12 @@ fn lint_rules(
             let open = m.get(0).unwrap().end() - 1;
             let alone = matching(code, open, b'[', b']').is_some_and(|close| {
                 matching(code, paren.start(), b'(', b')')
-                    .is_some_and(|end| code[close..end - 1].trim().is_empty())
+                    // `get`: a `)` before the `]`, as in `a:(if[1b;2)]`,
+                    // closes before the bracket does, and is no paren round it.
+                    .is_some_and(|end| {
+                        code.get(close..end - 1)
+                            .is_some_and(|s| s.trim().is_empty())
+                    })
             });
             if !alone {
                 continue;
@@ -9137,7 +9152,10 @@ fn lint_rules(
                 // comma (#215).
                 // Read from the phrase with each bracket kept as `_`: q 5 runs
                 // `a=1 2 3[0]`, since the index makes it the atom 1 (#627).
-                let groups = grouped(&line[w.end()..phrase_end(line, w.end())]);
+                // From the same text as `phrase`, so the two line up: the
+                // line alone is shorter when the statement runs on past it,
+                // and indexing it at `phrase`'s offsets panicked.
+                let groups = grouped(&query[w.end()..read_to]);
                 let mut reported = vec![];
                 for m in re!(r"(?:=|<>)\s*(?:-?\d[A-Za-z0-9.]*(?:\s+-?\d[A-Za-z0-9.]*)+|`[A-Za-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)+)")
                     .find_iter(&phrase)

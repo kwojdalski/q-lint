@@ -17,6 +17,9 @@ jobs:
       # The LSP suite spawns the binary, so it has to exist first.
       - run: cargo build --release
       - run: cargo test
+      # The full never-panic sweep over mutated q (#1179): too slow for the
+      # debug build above, which runs a sample of it.
+      - run: cargo test --release --test never_panic -- --ignored
       # The Python suite drives the release binary the way a user does. The
       # parts that need q skip themselves when it is not installed, which on
       # this runner it is not; the CLI tests run regardless. It went unrun

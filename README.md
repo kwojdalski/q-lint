@@ -100,8 +100,9 @@ warning, with a tally on the summary line - and plain everywhere else: a pipe,
 a file, or anywhere `NO_COLOR` is set to a nonempty value. `--color always|never` overrides the
 guess in either direction. JSON output never carries colour.
 
-`qlinter --version` (or `-v`) reports the build, and `--stdio` is accepted and ignored
-so a client that appends it gets a server rather than an exit code.
+`qlinter --help` (or `-h`) lists every option, `--version` (or `-v`)
+reports the build, and `--stdio` is accepted and ignored so a client that
+appends it gets a server rather than an exit code.
 
 The CLI supports `--profile general|style|styleq|uqf`, `--format text|json|sarif|github`
 (see [Reports for CI](#reports-for-ci)),
@@ -187,6 +188,9 @@ another without parentheses of its own, whose table then takes the commas
 after it.
 
 ### Reports for CI
+
+`--format json` prints the findings as a list of objects, each field of
+which [docs/output.md](docs/output.md) describes.
 
 `--format sarif` prints SARIF 2.1.0, which GitHub code scanning and other
 SARIF readers take: one result per finding, its region, and the rules the
@@ -985,31 +989,121 @@ process only once the user adds it, connects and runs code - see the
 
 ### Other editors
 
-Neovim, with `nvim-lspconfig`:
+Any LSP client runs the server as `qlinter --lsp`. None of these name a
+profile: the server takes it, and every other rule setting, from the
+`qlinter.toml`, `.qlinter.toml` or `pyproject.toml` above each file, as the
+command line does, and uses `style` where none says. Add `--profile` to the
+arguments only to override that. Each snippet passes one
+[`initializationOptions`](#editor-options-initializationoptions) key -
+`lint.run`, to lint on save rather than on every change - to show where they
+go; leave it out for the defaults. Each was written against the editor's own
+documentation as of November 2026.
+
+**Neovim** 0.11 or later, with the built-in `vim.lsp.config` (no plugin
+needed; `init_options` is what Neovim sends as `initializationOptions`):
 
 ```lua
 vim.filetype.add({ extension = { q = "q" } })
-require("lspconfig.configs").qlint = {
-  default_config = {
-    cmd = { "qlinter", "--lsp", "--profile", "uqf" },
-    filetypes = { "q" },
-    root_dir = require("lspconfig.util").root_pattern("qlinter.toml", ".qlinter.toml", "pyproject.toml", ".git"),
-  },
-}
-require("lspconfig").qlint.setup({})
+vim.lsp.config("qlinter", {
+  cmd = { "qlinter", "--lsp" },
+  filetypes = { "q" },
+  root_markers = { "qlinter.toml", ".qlinter.toml", "pyproject.toml", ".git" },
+  init_options = { lint = { run = "onSave" } },
+})
+vim.lsp.enable("qlinter")
 ```
 
-Helix, in `languages.toml`:
+**Helix**, in `languages.toml` (`config` is sent as `initializationOptions`;
+`roots` are the files that mark a workspace root):
 
 ```toml
-[language-server.qlint]
+[language-server.qlinter]
 command = "qlinter"
-args = ["--lsp", "--profile", "uqf"]
+args = ["--lsp"]
+config = { lint = { run = "onSave" } }
 
 [[language]]
 name = "q"
+scope = "source.q"
 file-types = ["q"]
-language-servers = ["qlint"]
+roots = ["qlinter.toml", ".qlinter.toml", "pyproject.toml"]
+language-servers = ["qlinter"]
+```
+
+**Emacs** with **Eglot**, built in since Emacs 29. `q-mode` is the
+major mode from MELPA, or any mode of your own for `.q` files; the plist
+after `:initializationOptions` becomes the JSON object:
+
+```elisp
+(with-eval-after-load 'eglot
+  (add-to-list 'eglot-server-programs
+               '(q-mode . ("qlinter" "--lsp"
+                           :initializationOptions (:lint (:run "onSave"))))))
+```
+
+**Emacs** with **lsp-mode**:
+
+```elisp
+(with-eval-after-load 'lsp-mode
+  (add-to-list 'lsp-language-id-configuration '(q-mode . "q"))
+  (lsp-register-client
+   (make-lsp-client :new-connection (lsp-stdio-connection '("qlinter" "--lsp"))
+                    :activation-fn (lsp-activate-on "q")
+                    :initialization-options '(:lint (:run "onSave"))
+                    :server-id 'qlinter)))
+```
+
+**Sublime Text**, with the LSP package, in
+`Packages/User/LanguageServers.sublime-settings` (*Preferences: LSP Server
+Configurations*). `selector` needs a q syntax package installed whose base
+scope is `source.q`:
+
+```json
+{
+  "qlinter": {
+    "enabled": true,
+    "command": ["qlinter", "--lsp"],
+    "selector": "source.q",
+    "initialization_options": {"lint": {"run": "onSave"}}
+  }
+}
+```
+
+**Kakoune**, with kakoune-lsp, in `kakrc` after `eval %sh{kak-lsp}`.
+Kakoune has no q filetype of its own, so the first hook gives `.q` files
+one; kakoune-lsp sends the `settings_section` table as
+`initializationOptions`:
+
+```kak
+hook global BufCreate .*\.q %{ set-option buffer filetype q }
+hook -group lsp-filetype-q global BufSetOption filetype=q %{
+    set-option buffer lsp_servers %{
+        [qlinter]
+        command = "qlinter"
+        args = ["--lsp"]
+        root_globs = ["qlinter.toml", ".qlinter.toml", "pyproject.toml", ".git"]
+        settings_section = "_"
+        [qlinter.settings._]
+        lint = { run = "onSave" }
+    }
+}
+```
+
+**Zed** starts a language server only for a language an extension defines,
+and when this was written no Zed extension defined q. Once one does, its
+server is pointed at `qlinter` in `settings.json`, under the name the
+extension gives it (`qlinter` here); `initialization_options` is sent
+once, at startup:
+
+```json
+{
+  "lsp": {
+    "qlinter": {
+      "binary": {"path": "qlinter", "arguments": ["--lsp"]},
+      "initialization_options": {"lint": {"run": "onSave"}}
+    }
+  }
+}
 ```
 
 ### Editor options: `initializationOptions`
@@ -1151,6 +1245,10 @@ builds and publishes every platform.
 
 ## pre-commit and CI
 
+[docs/ci.md](docs/ci.md) is the guide: GitHub Actions with annotations or
+code scanning (SARIF), GitLab, pre-commit, and a baseline for adopting
+qlinter on a tree that has findings today. In short:
+
 A [pre-commit](https://pre-commit.com) hook lints the `.q` files a commit
 changes. `qlinter` builds the linter from this repository at `rev` with cargo,
 so it needs Rust; `qlinter-system` runs the `qlinter` already on `PATH`. `rev`
@@ -1194,6 +1292,7 @@ cargo test                                            # unit, CLI and LSP suites
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 cargo build --release                                 # the Python harness needs it
+cargo test --release --test never_panic -- --ignored  # no panic on any mutated q in the tree
 Q_LINT_TEST_QLS=qls uv run pytest tests                # black-box CLI checks
 python3 scripts/check_invariance.py target/release/qlinter examples tests/corpus tests/cases
                                                       # findings unmoved by CRLF, position, comments

@@ -1158,3 +1158,9 @@ d:{r:0#0; r:x; r~()}
 e:{x~(::)}
 f:{x~0#0}
 g:{d:x; d~()!()}
+
+=== QB008 | a filter continued onto an indented line: the index after the literal on the first line keeps it quiet, the bare literal on the second reports
+f:{select from t where a=1 2 3?b,
+  c>0}
+g:{select from t where c>0,
+  a=1 2 3}
