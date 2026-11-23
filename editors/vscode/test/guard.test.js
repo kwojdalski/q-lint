@@ -234,3 +234,20 @@ test("a writer named through .q. is a change; a .q. reader is not (#1220)", () =
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("value, get or eval of a list headed by a writer's symbol is a change (#1221)", () => {
+  const cases = {
+    "value(`.q.set;`a;1)": ["evaluates a call of .q.set with value"],
+    "eval(`.q.set;enlist`zz;7)": ["evaluates a call of .q.set with eval"],
+    "get(`.q.upsert;`t;(1;2))": ["evaluates a call of .q.upsert with get"],
+    // A list headed by a reader, or by a symbol that is data, reads.
+    "value(`.q.count;til 3)": [],
+    "eval(`f;1)": [],
+    "value `t": [],
+    "get `:hdb/sym": [],
+    "value(`t;`u)": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

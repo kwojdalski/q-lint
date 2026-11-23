@@ -29,7 +29,8 @@
 //   amend in place (three is as often a trap, `.[`f;args;handler]`, and
 //   is not taken for one); `![` likewise, a functional update or delete;
 // - `value`, `get` or `eval` applied to a string, to `parse`, or to a
-//   tree headed by `:` or `::` (`eval(:;`t;())`), also through `[`,
+//   tree headed by `:` or `::` (`eval(:;`t;())`) or by the symbol of
+//   a writer above (`` value(`.q.set;`a;1) ``), also through `[`,
 //   `each` or `'`, and by their `.q.` names;
 // - a system command (`\l`, `\cd x`, `\\`), except one that only reads a
 //   setting (`\c`, `\d`, `\P` without an argument) and `\t` or `\ts`, whose
@@ -280,7 +281,9 @@ function readStatement(statement: string, found: Set<string>): void {
             ? "a parse tree"
             : t[j - 1]?.text === "(" && t[j - 1]?.kind === "open" && t[j]?.kind === "op" && t[j].text === ":"
               ? "an assignment"
-              : undefined;
+              : t[j - 1]?.text === "(" && t[j - 1]?.kind === "open" && t[j]?.kind === "sym" && WRITERS.has(unqualified(t[j].text.slice(1)))
+                ? `a call of ${t[j].text.slice(1)}`
+                : undefined;
         if (reason !== undefined) {
           found.add(`evaluates ${reason} with ${k.text}`);
           continue;
