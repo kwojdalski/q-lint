@@ -25,8 +25,9 @@
   /// text (ignoring case), sorted by `sort` ({column, descending}) when set.
   /// A column the process ranked sorts by its rank, as q's `xasc` or
   /// `xdesc` would, equal values kept in their order either way; one it
-  /// could not sort, by its text.
-  function visibleRows(grid, filters, sort) {
+  /// could not sort, by its text. `shown`, when given, is what a cell shows
+  /// in place of its text (column, row): a filter finds either.
+  function visibleRows(grid, filters, sort, shown) {
     const active = [];
     (filters || []).forEach(function (f, c) {
       if (f && c < grid.cells.length) {
@@ -35,7 +36,7 @@
     });
     const rows = [];
     for (let r = 0; r < rowCount(grid); r++) {
-      if (active.every(function (a) { return grid.cells[a[0]][r].toLowerCase().indexOf(a[1]) >= 0; })) {
+      if (active.every(function (a) { return grid.cells[a[0]][r].toLowerCase().indexOf(a[1]) >= 0 || (shown !== undefined && shown(a[0], r).toLowerCase().indexOf(a[1]) >= 0); })) {
         rows.push(r);
       }
     }
@@ -717,6 +718,15 @@
   let resizing = null;
   let resized = false;
 
+  /// What a cell of `grid` shows where its column's format (#1013) changes
+  /// q's text, by column and row: what a filter is typed from (#1342).
+  function shownAs(grid) {
+    const formats = feature("columnFormats") ? LOOK.columnFormats(grid) : [];
+    return function (c, r) {
+      return formats[c] && grid.columns[c].numeric ? LOOK.formatNumber(formats[c], grid.values[c][r], grid.cells[c][r]) : grid.cells[c][r];
+    };
+  }
+
   function dressGrid() {
     const grid = result.grid;
     const lay = layout();
@@ -848,7 +858,7 @@
         state.sort = !s || s.column !== i ? { column: i, descending: false } : s.descending ? null : { column: i, descending: true };
         state.top = 0;
         save();
-        rows = visibleRows(grid, state.filters, state.sort);
+        rows = visibleRows(grid, state.filters, state.sort, shownAs(grid));
         drawGrid();
         drawBar();
         rendered();
@@ -932,7 +942,7 @@
         state.filters[i] = input.value;
         state.top = 0;
         save();
-        rows = visibleRows(grid, state.filters, state.sort);
+        rows = visibleRows(grid, state.filters, state.sort, shownAs(grid));
         scroller.scrollTop = 0;
         paint();
         drawBar();
@@ -2080,7 +2090,7 @@
     result = m;
     moreAsked = false;
     announce(m);
-    rows = visibleRows(m.grid, state.filters, state.sort);
+    rows = visibleRows(m.grid, state.filters, state.sort, shownAs(m.grid));
     save();
     draw();
     if (image) {
