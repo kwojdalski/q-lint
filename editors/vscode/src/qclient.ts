@@ -73,6 +73,11 @@ function typeOf(message: Buffer): number | undefined {
   return message.length > 13 && (message.readUInt8(12) & 1) === 0 ? message.readInt8(13) : undefined;
 }
 
+/// The socket closed before the handshake was answered: how a process
+/// refuses a user - and all that is seen of a tunnel whose far end reached
+/// nothing, which `Live.dial` says in its own words (#1355).
+export class ClosedBeforeHandshake extends Error {}
+
 /// A connect's error with its reason in `message`. Node tries each address
 /// of a name in turn - `localhost` is `::1` and `127.0.0.1` - and when all
 /// fail gives an AggregateError whose own message is empty (#1352): the
@@ -141,7 +146,7 @@ export class QConnection {
       signal?.addEventListener("abort", cancelled);
       socket.once("error", (error: Error) => fail(withReason(error)));
       // A process that refuses the user closes the socket without a byte.
-      socket.once("close", () => fail(new Error(`${target.host}:${target.port} closed the connection: the user or password was refused`)));
+      socket.once("close", () => fail(new ClosedBeforeHandshake(`${target.host}:${target.port} closed the connection: the user or password was refused`)));
       socket.once(target.tls ? "secureConnect" : "connect", () => {
         const auth = target.user !== undefined ? `${target.user}:${target.password ?? ""}` : "";
         socket.write(Buffer.concat([Buffer.from(auth, "utf8"), Buffer.from([CAPABILITY, 0])]));

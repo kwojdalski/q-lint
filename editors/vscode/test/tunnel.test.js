@@ -35,7 +35,11 @@ const [, local, host, port] = /^127\\.0\\.0\\.1:(\\d+):\\[?([^\\]]*?)\\]?:(\\d+)
 const server = net.createServer((client) => {
   const upstream = net.connect(Number(port), host);
   client.pipe(upstream).pipe(client);
-  upstream.on("error", () => client.destroy());
+  upstream.on("error", () => {
+    // As ssh does when the far end refuses the forward.
+    process.stderr.write("channel 2: open failed: connect failed: Connection refused\\n");
+    client.destroy();
+  });
   client.on("error", () => upstream.destroy());
 });
 setTimeout(() => server.listen(Number(local), "127.0.0.1"), 200);
@@ -200,6 +204,35 @@ test("ssh dying closes the connection over it", async (t) => {
   process.kill(ssh.runs()[0].pid, "SIGTERM");
   for (let i = 0; i < 50 && live.activeLabel() !== undefined; i++) await sleep(50);
   assert.strictEqual(live.activeLabel(), undefined);
+});
+
+// The forward opens and reaches nothing: ssh closes the local socket, which
+// is also how a process refuses a user (#1355).
+test("no q behind the tunnel is said so, with the process's address and what ssh said", async (t) => {
+  const port = await new Promise((resolve) => {
+    const s = net.createServer().listen(0, "127.0.0.1", () => {
+      const { port } = s.address();
+      s.close(() => resolve(port));
+    });
+  });
+  const ssh = stubSsh(t);
+  const { live, context } = await setUp(t, [{ label: "far", host: "127.0.0.1", port, tags: [], ssh: "me@bastion" }]);
+  assert.strictEqual(await live.connectTo("far"), false);
+  const [kind, text] = stub.messages.at(-1);
+  const local = /^127\.0\.0\.1:(\d+):/.exec(ssh.runs()[0].args.at(-3))[1];
+  assert.strictEqual(kind, "error");
+  assert.strictEqual(
+    text,
+    `q-lint: could not connect to far (127.0.0.1:${port}): the connection through the SSH tunnel via me@bastion closed before the handshake: ` +
+      `no q process answers at 127.0.0.1:${port} as me@bastion reaches it, or the user or password was refused. ` +
+      "ssh said: channel 2: open failed: connect failed: Connection refused",
+  );
+  assert.ok(!text.includes(`:${local}`), "the tunnel's own port is not named");
+  for (let i = 0; i < 50 && alive(ssh.runs()[0].pid); i++) await sleep(50);
+  assert.strictEqual(alive(ssh.runs()[0].pid), false, "ssh stopped with the failed connect");
+  // What ssh said is in the message shown, and in nothing that is kept.
+  await assert.rejects(live.openSeparate(live.processes()[0]), (e) => /closed before the handshake/.test(e.message) && !/channel 2/.test(e.message));
+  assert.ok(!JSON.stringify([...context.globalState.keys()].map((k) => context.globalState.get(k))).includes("channel 2"));
 });
 
 test("with q-lint.connection.sshTunnel.enable off, no ssh runs and Set SSH Tunnel refuses", async (t) => {

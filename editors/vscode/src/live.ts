@@ -57,8 +57,8 @@ import {
   type Process,
 } from "./processes";
 import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
-import { QConnection, QError, type Target } from "./qclient";
-import { SshTunnel, TUNNEL_COMMANDS, readTunnel } from "./tunnel";
+import { ClosedBeforeHandshake, QConnection, QError, type Target } from "./qclient";
+import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, readTunnel } from "./tunnel";
 import { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, readGateway } from "./gateway";
 import { HEARTBEAT, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
 import { historyHeading, historyLabel, iconsEscaped } from "./history";
@@ -1666,10 +1666,12 @@ export class Live {
         });
         this.changed.fire("connected");
         return true;
-      } catch (error) {
+      } catch (failure) {
         if ((untilFree && this.reconnectStopped) || quiet || disconnects !== this.disconnects) {
           return false;
         }
+        // ssh's own words are shown here and kept nowhere (#1355).
+        const error = failure instanceof TunnelConnectError ? failure.shown() : failure;
         void window.showErrorMessage(
           `q-lint: could not connect to ${process.label} (${address(process.host, process.port)}): ${error instanceof Error ? error.message : String(error)}`,
         );
@@ -1712,8 +1714,23 @@ export class Live {
       tunnel.whenClosed(() => connection.abort());
       return connection;
     } catch (error) {
+      // The socket was the tunnel's loopback end, whose address means
+      // nothing to the user, and its closing before the handshake is as
+      // likely a forward that reached no q as a refused user (#1355).
+      const where = address(target.host, target.port);
+      let failure = error;
+      if (error instanceof ClosedBeforeHandshake) {
+        // What ssh says of a forward that failed can come just after the close.
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        failure = new TunnelConnectError(
+          `the connection through the SSH tunnel via ${process.ssh} closed before the handshake: no q process answers at ${where} as ${process.ssh} reaches it, or the user or password was refused`,
+          tunnel.said,
+        );
+      } else if (error instanceof Error) {
+        error.message = error.message.split(`127.0.0.1:${tunnel.localPort}`).join(where);
+      }
       tunnel.close();
-      throw error;
+      throw failure;
     }
   }
 

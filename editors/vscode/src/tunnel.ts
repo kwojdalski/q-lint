@@ -80,6 +80,24 @@ export interface TunnelOptions {
   signal?: AbortSignal;
 }
 
+/// A connect through a tunnel that closed before the handshake (#1355).
+/// What ssh printed about it is kept apart from `message`, in `sshSaid`:
+/// it can name hosts, so it is for a message shown to the user at once and
+/// never for a history, a notebook's output or anything else that is kept.
+export class TunnelConnectError extends Error {
+  constructor(
+    message: string,
+    readonly sshSaid: string,
+  ) {
+    super(message);
+  }
+
+  /// The failure with ssh's words after it, for that one message.
+  shown(): Error {
+    return this.sshSaid === "" ? this : new Error(`${this.message}. ssh said: ${this.sshSaid}`);
+  }
+}
+
 export class SshTunnel {
   private closed = false;
   private readonly onExit: ((why: string) => void)[] = [];
@@ -113,7 +131,15 @@ export class SshTunnel {
       // The last lines say why; a chatty banner is not kept whole.
       err = (err + chunk).slice(-2000);
     });
-    const said = (): string => err.trim().split(/\r?\n/).filter((l) => l.trim() !== "").slice(-3).join(" ");
+    // A line said again is said once: the probe below and the connect after
+    // it each make ssh report the same failed forward (#1355).
+    const said = (): string =>
+      err
+        .trim()
+        .split(/\r?\n/)
+        .filter((l, i, all) => l.trim() !== "" && l !== all[i - 1])
+        .slice(-3)
+        .join(" ");
     const tunnel = new SshTunnel(child, localPort, said);
     const timeoutMs = options.timeoutMs ?? TUNNEL_TIMEOUT_MS;
     const started = Date.now();
@@ -144,6 +170,11 @@ export class SshTunnel {
 
   get isOpen(): boolean {
     return !this.closed;
+  }
+
+  /// The last lines ssh has printed so far.
+  get said(): string {
+    return this.stderr();
   }
 
   /// The ssh process's id, for a test to see it stopped.
