@@ -140,6 +140,13 @@ const ACCEPTED: &[(&str, &str, &str, &str)] = &[
         "extracted:{[a] (::)~a}\ng:{[a] extracted[a]}\n",
         "(g[::];g 1)",
     ),
+    // Called with brackets, an infix keyword is a value (#1303).
+    (
+        "g:{[a;b] b+mod[a;3]}\n",
+        "mod[a;3]",
+        "extracted:{[a] mod[a;3]}\ng:{[a;b] b+extracted[a]}\n",
+        "g[7;1]",
+    ),
 ];
 
 #[test]
@@ -181,6 +188,10 @@ fn a_selection_that_is_no_value_of_its_expression_is_refused() {
         ("g:{[d;e] d[`a]:e; d}\n", "d[`a]", "assigned"),
         ("g:{[a] count a+1}\n", "count a", "not a value"),
         ("g:{[a] a,`x`y}\n", "`y", "symbol"),
+        // KDB-X refuses {[b] mod b} and {[b] in b} (#1303).
+        ("g:{[a;b] a mod b}\n", "mod b", "infix"),
+        ("g:{[a;b] a xexp b}\n", "xexp b", "infix"),
+        ("g:{[a;b] a in b}\n", "in b", "infix"),
         // KDB-X: d:`extracted[a] is a symbol indexed, s (#1302).
         ("g:{[x] `abc,x}\n", "abc,x", "symbol"),
         ("g:{[x] x,`.ns.v}\n", ".ns.v", "symbol"),

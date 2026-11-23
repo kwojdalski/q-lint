@@ -164,6 +164,20 @@ pub fn extract(
     if cut {
         return Err("the selection starts inside a name, a number or a symbol".into());
     }
+    // A keyword q applies infix takes the value on its left as its own
+    // argument: `{[b] mod b}` is refused by KDB-X (#1303). Called with
+    // brackets, `mod[a;2]`, it is a value.
+    let lead = re!(r"^[A-Za-z_][A-Za-z0-9_]*").find(&raw[start..end]);
+    if let Some(w) = lead
+        && crate::semantics::INFIX.contains(&w.as_str())
+        && !ITERATORS.contains(&w.as_str())
+        && !raw[start + w.end()..end].starts_with('[')
+    {
+        return Err(format!(
+            "the selection starts with `{}`, which q applies infix to the value on its left",
+            w.as_str()
+        ));
+    }
     // A vector literal is one token: `2 3` of `1 2 3` is no value of it.
     let numeric = first.is_ascii_digit()
         || (first == '.' && raw[start + 1..].starts_with(|c: char| c.is_ascii_digit()));
@@ -444,3 +458,7 @@ fn reads(code: &str, scopes: &[Scope], s: usize, start: usize, end: usize) -> Ve
     out.sort_by_key(|word| first(word));
     out
 }
+
+/// The keywords that are iterators: `each b` modifies the function on its
+/// left.
+const ITERATORS: [&str; 5] = ["each", "peach", "over", "scan", "prior"];
