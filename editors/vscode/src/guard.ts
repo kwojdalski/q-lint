@@ -13,9 +13,10 @@
 //
 // The rules, outside strings and comments:
 // - `name:`, `name::`, `name+:` and `name[i]:` at the top level, and
-//   `name::` or a dotted `.ns.name:` inside a lambda, where q makes them
-//   global. A column named in `select a:x from t` or `([] a:1 2)` is not
-//   an assignment, but one inside a column's expression (`([] c:g:1)`) is;
+//   `name::`, a dotted `.ns.name:`, or `name+:` or `name[i]:` to a name that
+//   is not one of its locals inside a lambda, where q makes them global.
+//   A column named in `select a:x from t` or `([] a:1 2)` is not an
+//   assignment, but one inside a column's expression (`([] c:g:1)`) is;
 //   `(a;b):x` assigns each name, by the same rules;
 // - `update` or `delete` from a table named by a symbol (`` from `t ``,
 //   `` from (`t) ``), which changes it in place;
@@ -233,6 +234,44 @@ function isFileHandle(sym: string): boolean {
   return sym.startsWith("`:") && !/^`:(unix:\/\/\d|tcps?:\/\/|[^:/]*:\d)/.test(sym);
 }
 
+/// The locals of the lambda that opens at `t[open]`: its parameters (`x`,
+/// `y` and `z` when it names none) and every name its body assigns with a
+/// plain `:`, outside the lambdas nested in it.
+function lambdaLocals(t: Token[], open: number, touching: (a: Token | undefined, b: Token | undefined) => boolean): Set<string> {
+  const out = new Set<string>();
+  let i = open + 1;
+  if (t[i]?.text === "[" && t[i].kind === "open") {
+    for (i++; i < t.length && t[i].text !== "]"; i++) {
+      if (t[i].kind === "name") out.add(t[i].text);
+    }
+    i++;
+  } else {
+    ["x", "y", "z"].forEach((n) => out.add(n));
+  }
+  let depth = 0;
+  let nested = 0;
+  for (; i < t.length; i++) {
+    const k = t[i];
+    if (k.kind === "open") {
+      depth++;
+      nested += nested > 0 || k.text === "{" ? 1 : 0;
+    } else if (k.kind === "close") {
+      if (depth-- === 0) break;
+      nested -= nested > 0 ? 1 : 0;
+    } else if (nested === 0 && k.kind === "name" && t[i + 1]?.kind === "op" && t[i + 1].text === ":" && !(t[i + 2]?.text === ":" && touching(t[i + 1], t[i + 2]))) {
+      out.add(k.text);
+    } else if (nested === 0 && k.kind === "name" && (t[i - 1]?.text === "(" || t[i - 1]?.text === ";")) {
+      // A name in a destructuring list, `(a;b):x`, is assigned as well.
+      let j = i;
+      while (t[j]?.kind === "name" && t[j + 1]?.text === ";") j += 2;
+      if (t[j]?.kind === "name" && t[j + 1]?.text === ")" && t[j + 2]?.text === ":" && t[j + 2].kind === "op") {
+        out.add(k.text);
+      }
+    }
+  }
+  return out;
+}
+
 /// What one statement does that the guard asks about, added to `found`.
 function readStatement(statement: string, found: Set<string>): void {
   const text = statement.trimStart();
@@ -261,6 +300,9 @@ function readStatement(statement: string, found: Set<string>): void {
   // `[`, or none of them.
   const stack: ("lambda" | "table" | "key" | "other")[] = [];
   let lambdas = 0;
+  // The locals of each lambda open around the token: its parameters and the
+  // names it assigns plainly anywhere in its body, as q compiles it.
+  const locals: Set<string>[] = [];
   // Between `select`, `exec`, `update` or `delete` and its `from`, a name
   // before `:` names a column.
   let qsql: string | undefined;
@@ -278,6 +320,9 @@ function readStatement(statement: string, found: Set<string>): void {
               : "other";
       stack.push(kind);
       lambdas += kind === "lambda" ? 1 : 0;
+      if (kind === "lambda") {
+        locals.push(lambdaLocals(t, i, touching));
+      }
       // `(a;b):x` assigns each name, globally at the top level.
       if (k.text === "(") {
         const names: string[] = [];
@@ -319,6 +364,9 @@ function readStatement(statement: string, found: Set<string>): void {
     if (k.kind === "close") {
       const kind = stack.pop();
       lambdas -= kind === "lambda" ? 1 : 0;
+      if (kind === "lambda") {
+        locals.pop();
+      }
       continue;
     }
     if (k.kind === "name") {
@@ -423,7 +471,8 @@ function readStatement(statement: string, found: Set<string>): void {
       }
       // An assignment: the name, an index, an operator, then `:`.
       let j = i + 1;
-      if (t[j]?.text === "[" && t[j]?.kind === "open") {
+      const indexed = t[j]?.text === "[" && t[j]?.kind === "open";
+      if (indexed) {
         let depth = 0;
         for (; j < t.length; j++) {
           if (t[j].kind === "open") depth++;
@@ -431,7 +480,8 @@ function readStatement(statement: string, found: Set<string>): void {
         }
         j++;
       }
-      if (t[j]?.kind === "op" && OPERATORS.has(t[j].text) && t[j + 1]?.text === ":" && touching(t[j], t[j + 1])) {
+      const compound = t[j]?.kind === "op" && OPERATORS.has(t[j].text) && t[j + 1]?.text === ":" && touching(t[j], t[j + 1]);
+      if (compound) {
         j++;
       }
       if (t[j]?.text !== ":" || t[j]?.kind !== "op") {
@@ -445,7 +495,10 @@ function readStatement(statement: string, found: Set<string>): void {
       if (column && !global) {
         continue;
       }
-      if (lambdas === 0 || global || k.text.includes(".")) {
+      // In a lambda, an indexed or compound assignment to a name that is not
+      // one of its locals changes the global: `{a+:1}`, `{t[0]:5}`.
+      const outer = (indexed || compound) && !(locals[locals.length - 1]?.has(k.text) ?? false);
+      if (lambdas === 0 || global || k.text.includes(".") || outer) {
         found.add(`assigns ${k.text}`);
       }
       continue;

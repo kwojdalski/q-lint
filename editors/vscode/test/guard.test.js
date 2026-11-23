@@ -445,3 +445,25 @@ test("a destructuring assignment assigns each name (#1318)", () => {
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("in a lambda, an indexed or compound assignment to a name not its own changes the global (#1319)", () => {
+  const cases = {
+    "{a+:1}[]": ["assigns a"],
+    "{a-:1}[]": ["assigns a"],
+    "{t[0]:5}[]": ["assigns t"],
+    "{t[0;`a]:99}[]": ["assigns t"],
+    "{[x] t,:([]a:enlist x)}[9]": ["assigns t"],
+    "f:{n+:1}": ["assigns f", "assigns n"],
+    // A parameter, or a name the lambda assigns anywhere, is local.
+    "{x+:1}[2]": [],
+    "{[a] a+:1}[2]": [],
+    "{l:1 2; l[0]:9; l}[]": [],
+    "{l+:1; l:2}[]": [],
+    "{(a;b):x; a+:1}[1 2]": [],
+    // A local of an outer lambda is not one of an inner one's.
+    "{a:1; {a+:1}[]}[]": ["assigns a"],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
