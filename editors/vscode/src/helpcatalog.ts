@@ -129,7 +129,7 @@ function fence(code: string, language = "q"): string {
 }
 
 /// An inline code span that holds `text` whatever backticks it has.
-function span(text: string): string {
+export function span(text: string): string {
   const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((m) => m.length));
   const f = "`".repeat(longest + 1);
   const pad = text.startsWith("`") || text.endsWith("`") ? " " : "";

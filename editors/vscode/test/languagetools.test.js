@@ -122,7 +122,10 @@ test("a q error is explained from the catalogue, with the operation that failed"
   const text = explainError("type", trace);
   assert.match(text, /# q error `'type`/);
   assert.match(text, /An argument is of a type the operation does not take/);
-  assert.match(text, /The operation that failed in `mid` \(\/w\/lib\.q, line 5\): `` c:b\+`x; ``, at `\+`\./);
+  assert.match(text, /The operation that failed in `mid` \(\/w\/lib\.q, line 5\): ``c:b\+`x;``, at `\+`\./);
+  // A run of two backticks is held by a longer run (#1312).
+  const pair = ["  [1]  /w/lib.q:2: f:{[a]", "    a,``b}", "     ^"].join("\n");
+  assert.match(failedAt(pair), /: ```a,``b}```, at `,`\./);
   assert.match(failedAt(trace), /at `\+`/);
   assert.match(explainError("undefinedname123"), /`undefinedname123` is not defined where it was read/);
   assert.match(explainError("x.csv. OS reports: No such file"), /operating system refused/);
