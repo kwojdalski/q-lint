@@ -144,3 +144,17 @@ def test_corpus_diff_refuses_a_linter_that_crashes(tmp_path):
     crashing.chmod(0o755)
     with pytest.raises(SystemExit, match="exit 101"):
         corpus_diff.findings(str(crashing), [str(tmp_path / "a.q")], "general")
+
+
+def test_a_findings_text_is_its_line_as_qlinter_counts_lines(tmp_path):
+    # qlinter counts `\n` alone; a form feed or a lone `\r` starts no line.
+    (tmp_path / "a.q").write_bytes(b"x:1 \x0c 2\ry:3\r\nz:BAD\n")
+    linter = tmp_path / "qlinter"
+    linter.write_text(
+        "#!/bin/sh\n"
+        f"echo '[{{\"path\": \"{tmp_path / 'a.q'}\", \"line\": 2, \"code\": \"QX001\", \"detail\": \"d\"}}]'\n"
+        "exit 1\n"
+    )
+    linter.chmod(0o755)
+    (found,) = corpus.findings(str(linter), "general", tmp_path)
+    assert found["text"] == "z:BAD"

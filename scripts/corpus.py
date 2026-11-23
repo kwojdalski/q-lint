@@ -175,7 +175,10 @@ def findings(binary: str, profile: str, where: Path) -> list[dict]:
     for f in json.loads(run.stdout):
         path = Path(f["path"])
         try:
-            text = path.read_text(errors="replace").splitlines()[f["line"] - 1].strip()
+            # qlinter counts `\n` alone; splitlines() also breaks at a form
+            # feed, a lone `\r` and more, and would key the wrong line.
+            lines = path.read_text(errors="replace", newline="").split("\n")
+            text = lines[f["line"] - 1].strip()
         except (OSError, IndexError):
             text = ""
         found.append(
