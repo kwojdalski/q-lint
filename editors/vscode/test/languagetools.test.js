@@ -289,6 +289,39 @@ test("affected tests on save are off by default; on, a save runs the tests the s
   }
 });
 
+test("affected tests queued on save are not run once the setting is turned off (#1086)", async () => {
+  const { context, restore } = setUp();
+  const saves = [];
+  vscode.workspace.onDidSaveTextDocument = (l) => (saves.push(l), { dispose: () => saves.splice(saves.indexOf(l), 1) });
+  vscode.workspace.onDidOpenTextDocument = () => ({ dispose() {} });
+  vscode.workspace.onDidCloseTextDocument = () => ({ dispose() {} });
+  vscode.workspace.textDocuments = [];
+  try {
+    const sent = [];
+    const runs = [];
+    let release;
+    const gate = new Promise((r) => (release = r));
+    const server = { sendRequest: async () => (sent.push(1), await gate, { tests: [{ uri: "file:///t.q", name: "test_a" }] }) };
+    const tests = { discover: async () => {}, items: () => ["file:///t.q#test_a"], run: async (ids) => void runs.push(ids) };
+    stub.config.user["testing.runAffectedOnSave.enable"] = true;
+    const api = registerAffectedOnSave(context, () => server, tests);
+    const doc = { languageId: "q", uri: { scheme: "file", fsPath: "/w/lib.q", toString: () => "file:///w/lib.q" }, getText: () => "f:{x+1}\n" };
+    saves[0](doc);
+    saves[0](doc);
+    await new Promise((r) => setImmediate(r));
+    assert.strictEqual(sent.length, 1);
+    // Turned off while the first save's answer is awaited and the second waits.
+    stub.config.user["testing.runAffectedOnSave.enable"] = false;
+    stub.changeConfig("q-lint.testing.runAffectedOnSave.enable");
+    release();
+    await api.settled();
+    assert.deepStrictEqual(runs, []);
+    assert.strictEqual(sent.length, 1, "the queued save asks nothing");
+  } finally {
+    restore();
+  }
+});
+
 test("SQL is sent to .s.e with its comments dropped, and a write is recognised", () => {
   assert.strictEqual(sqlQuery("select sym, px -- the price\nfrom t\nwhere px > 1;"), '.s.e "select sym, px from t where px > 1"');
   assert.strictEqual(sqlQuery("select 'a--b' as s from t"), `.s.e "select 'a--b' as s from t"`);
