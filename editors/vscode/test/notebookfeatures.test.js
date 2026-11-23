@@ -221,6 +221,12 @@ test("a parameters cell's assignments are its parameters", () => {
     { name: ".cfg.n", value: "10" },
     { name: "f", value: "{x}" },
   ]);
+  // A " /" inside a string is not a comment (#1118).
+  assert.deepStrictEqual(parametersOf('path:"/data /hdb"; / where\nq:"a\\" /b"\nn:1 ;'), [
+    { name: "path", value: '"/data /hdb"' },
+    { name: "q", value: '"a\\" /b"' },
+    { name: "n", value: "1" },
+  ]);
   const cells = [{ kind: "markdown", source: "/ @parameters" }, { kind: "code", source: "1" }, { kind: "code", source: "/ @parameters\nn:1" }];
   assert.strictEqual(parametersCell(cells), 2);
   assert.strictEqual(parametersCell([{ kind: "code", source: "/ @parameters", language: "python" }]), -1);

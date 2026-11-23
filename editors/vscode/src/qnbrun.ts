@@ -96,12 +96,32 @@ const NAME = /^\.?[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)*$/;
 export function parametersOf(source: string): { name: string; value: string }[] {
   const found: { name: string; value: string }[] = [];
   for (const line of source.split(/\r?\n/)) {
-    const m = /^(\.?[a-zA-Z][\w.]*)\s*:\s*(.*?)\s*(?:;\s*)?(?:\s\/.*)?$/.exec(line);
-    if (m !== null && NAME.test(m[1]) && m[2] !== "" && !m[2].startsWith(":")) {
-      found.push({ name: m[1], value: m[2].replace(/;$/, "") });
+    const m = /^(\.?[a-zA-Z][\w.]*)\s*:\s*(.*)$/.exec(line);
+    if (m === null) {
+      continue;
+    }
+    const value = withoutComment(m[2]).trim().replace(/;$/, "").trimEnd().replace(/;$/, "");
+    if (NAME.test(m[1]) && value !== "" && !value.startsWith(":")) {
+      found.push({ name: m[1], value });
     }
   }
   return found;
+}
+
+/// `text` up to its comment, a `/` after a blank outside a string (#1118):
+/// `"/data /hdb"` is a value, not a value and a comment.
+function withoutComment(text: string): string {
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    if (quoted && text[i] === "\\") {
+      i++;
+    } else if (text[i] === '"') {
+      quoted = !quoted;
+    } else if (!quoted && text[i] === "/" && i > 0 && /\s/.test(text[i - 1])) {
+      return text.slice(0, i);
+    }
+  }
+  return text;
 }
 
 /// Why `overrides` cannot be put in a cell, or undefined: a name must be a
