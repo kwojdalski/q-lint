@@ -2157,6 +2157,11 @@ export class Live {
     if (ready === undefined) {
       return undefined;
     }
+    // Checked before the guard asks: no question about a process nothing
+    // will be sent to. `stillReady` keeps it the same connection after.
+    if (expect !== undefined && ready.process.label !== expect) {
+      throw movedFrom(expect);
+    }
     const refused = this.guardRefuses(code, [ready.process]);
     if (refused !== undefined) {
       if (guard === "refuse") {
@@ -2170,9 +2175,6 @@ export class Live {
       if (ready === undefined) {
         return undefined;
       }
-    }
-    if (expect !== undefined && ready.process.label !== expect) {
-      throw movedFrom(expect);
     }
     const started = Date.now();
     this.running = { code, started };
