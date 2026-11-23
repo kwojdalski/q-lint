@@ -90,6 +90,19 @@
       const tr = element("tr", r.index === picked ? "picked" : "");
       [String(r.index), r.fn, r.table, String(r.rows), r.time].forEach((c) => tr.appendChild(element("td", "", c)));
       tr.addEventListener("click", () => pick(r.index));
+      // From the keyboard too: a tab stop, picked with Enter or Space. Picking
+      // draws the rows again, and the one made for this message takes the focus.
+      tr.tabIndex = 0;
+      if (r.index === picked) {
+        tr.setAttribute("aria-current", "true");
+      }
+      tr.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          pick(r.index);
+          list.children[1 + page.rows.indexOf(r)].focus();
+        }
+      });
       list.appendChild(tr);
     });
     pager.textContent = page.total === 0 ? "No message matches." : "Messages " + (page.offset + 1) + " to " + Math.min(page.total, page.offset + page.rows.length) + " of " + page.total + " matching.";
