@@ -930,8 +930,13 @@ pub fn tokens(code: &str, raw: &str, ws: &crate::Workspace) -> Vec<(usize, usize
     }
     for scope in scopes.iter().filter(|s| s.named) {
         let direct = &scope.direct;
+        // A column is no parameter: KDB-X's `{[n] select n from t}` and
+        // `{[a] update a:a+1 from t}` read t's columns, and `([]a:1 2)`
+        // names one (#1242).
+        let view = crate::table_columns_blanked(&crate::outside_query_phrases(direct));
         for m in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(direct) {
             if boundary(direct, m.start())
+                && view.as_bytes()[m.start()] != b' '
                 && !direct[m.end()..].starts_with('.')
                 && scope.params.contains(m.as_str())
             {
