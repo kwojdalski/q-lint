@@ -428,3 +428,20 @@ test("an assignment inside a table literal's column expression is a change (#131
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("a destructuring assignment assigns each name (#1318)", () => {
+  const cases = {
+    "(a;b):(1;2)": ["assigns a", "assigns b"],
+    "(a;b):1 2": ["assigns a", "assigns b"],
+    "(a;.ns.b):1 2": ["assigns a", "assigns .ns.b"],
+    // In a lambda the names are local, as q has it.
+    "{(a;b):x}[1 2]": [],
+    // A list of names that is not assigned reads.
+    "(a;b)": [],
+    "(a;b)~(1;2)": [],
+    "f[a;b]:1": ["assigns f"],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

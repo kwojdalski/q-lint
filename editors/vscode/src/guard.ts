@@ -16,6 +16,7 @@
 //   `name::` or a dotted `.ns.name:` inside a lambda, where q makes them
 //   global. A column named in `select a:x from t` or `([] a:1 2)` is not
 //   an assignment, but one inside a column's expression (`([] c:g:1)`) is;
+//   `(a;b):x` assigns each name, by the same rules;
 // - `update` or `delete` from a table named by a symbol (`` from `t ``,
 //   `` from (`t) ``), which changes it in place;
 // - `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`, `system`,
@@ -277,6 +278,24 @@ function readStatement(statement: string, found: Set<string>): void {
               : "other";
       stack.push(kind);
       lambdas += kind === "lambda" ? 1 : 0;
+      // `(a;b):x` assigns each name, globally at the top level.
+      if (k.text === "(") {
+        const names: string[] = [];
+        let j = i + 1;
+        while (t[j]?.kind === "name" && (t[j + 1]?.text === ";" || t[j + 1]?.text === ")")) {
+          names.push(t[j].text);
+          j += 2;
+          if (t[j - 1].text === ")") break;
+        }
+        if (names.length > 1 && t[j - 1]?.text === ")" && t[j]?.kind === "op" && t[j].text === ":" && qsql === undefined) {
+          const global = t[j + 1]?.text === ":" && touching(t[j], t[j + 1]);
+          for (const name of names) {
+            if (lambdas === 0 || global || name.includes(".")) {
+              found.add(`assigns ${name}`);
+            }
+          }
+        }
+      }
       const amend = t[i - 1]?.kind === "op" ? t[i - 1].text : "";
       const target = symbolAt(t, i + 1);
       if (k.text === "[" && (amend === "@" || amend === "." || amend === "!") && target !== undefined && target.length > 1) {
