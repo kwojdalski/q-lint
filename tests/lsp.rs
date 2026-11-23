@@ -3364,9 +3364,10 @@ fn selection_ranges_grow_from_the_token_to_the_definition() {
 /// it and the setting asks for it; a column named twice carries both names.
 #[test]
 fn a_duplicate_declaration_points_at_the_first() {
-    // A name or a bracket in a string is none (#1213).
+    // A name or a bracket in a string is none (#1213); the by group's
+    // duplicate is the column named, not a word its expression reads (#1214).
     let text = "f:{[a;b;a] a+b}\nt:([] c:1 2; d:3 4; c:5 6)\nr:select d by d from t\n\
-                u:([] a:1 2; b:(\"a\";\")\"); a:3 4)\n";
+                u:([] a:1 2; b:(\"a\";\")\"); a:3 4)\nw:select a:max a by a from t\n";
     let dir = tempfile::tempdir().unwrap();
     let uri = file_uri(&dir.path().join("dup.q"));
     let start = |options: Value, related: bool| {
@@ -3437,6 +3438,13 @@ fn a_duplicate_declaration_points_at_the_first() {
         [
             (3, 6, "`a` is first named here".to_string()),
             (3, 26, "and named again here".to_string()),
+        ]
+    );
+    assert_eq!(
+        places(at_line("QB021", 4)),
+        [
+            (4, 9, "`a` is first named here".to_string()),
+            (4, 20, "and named again here".to_string()),
         ]
     );
     assert_eq!(server.shutdown_and_exit(), 0);
