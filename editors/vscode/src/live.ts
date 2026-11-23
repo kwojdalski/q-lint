@@ -2297,7 +2297,7 @@ export class Live {
       return false;
     }
     void window.showInformationMessage(
-      `q-lint: a query is still running on ${ready.process.label}. q-lint: Abort Current Query stops waiting for it.`,
+      plainMessage(`q-lint: a query is still running on ${ready.process.label}. q-lint: Abort Current Query stops waiting for it.`),
     );
     return true;
   }

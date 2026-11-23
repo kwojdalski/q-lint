@@ -179,7 +179,7 @@ test("a tickerplant table streams into the grid, keeping its newest rows, and cl
   stub.config.user["tickerplant.stream.enable"] = true;
   stub.config.user["tickerplant.stream.rows"] = 4;
   // The table is picked from what .u.t lists.
-  stub.picks.push((o) => (assert.deepStrictEqual(o.items, ["trade"]), "trade"));
+  stub.picks.push((o) => (assert.deepStrictEqual(o.items, [{ label: "trade", table: "trade" }]), o.items[0]));
   await stub.commands.get(STREAM_COMMANDS.start)("tp");
   assert.strictEqual(panels.length, 1);
   assert.strictEqual(panels[0].title, "q: trade on tp");
