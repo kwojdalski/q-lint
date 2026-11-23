@@ -72,7 +72,9 @@ export function registerProblemsDashboard(
     let view: DashboardView;
     try {
       const findings = await lintTree(command, args, folder);
-      const at = await head(folder);
+      // No trend from git in a workspace that is not trusted: git reads the
+      // repository's configuration, which can name programs to run.
+      const at = workspace.isTrusted === false ? undefined : await head(folder);
       let points = trend(folder);
       if (at !== undefined && at.clean) {
         points = withPoint(points, pointOf(findings, at.commit, at.date, at.subject));
@@ -102,6 +104,9 @@ export function registerProblemsDashboard(
     const folder = await folderPath(given);
     if (folder === undefined) {
       return say("q-lint: open a folder first: the dashboard lints a workspace folder.");
+    }
+    if (workspace.isTrusted === false) {
+      return say("q-lint: linting earlier commits asks git for them, which is not done in a workspace that is not trusted.");
     }
     let count = givenCount;
     if (count === undefined) {

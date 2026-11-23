@@ -2910,6 +2910,31 @@ folding back for q:
 "[q]": {"editor.foldingStrategy": "indentation"}
 ```
 
+## Restricted Mode
+
+The linter reads q and never runs it, so linting, Quick Fixes, navigation
+and colouring work in a folder VS Code has not been told to trust. What
+could run a program the folder chooses is held back there:
+
+- These settings are read from your user settings only, never the
+  folder's: `q-lint.serverPath`, `q-lint.serverArgs`, `q-lint.profile` and
+  `q-lint.configFile` (the server's command line), `q-lint.terminal.qBinary`
+  and `q-lint.terminal.envPath`, `q-lint.env.enable` and `q-lint.env.file`,
+  `q-lint.processes.launcher.enable` and
+  `q-lint.connection.credentialCommand.enable`.
+- The folder's `.env` is not given to any q the extension starts, and
+  **Select q Interpreter** does not offer, or run to read its version, a q
+  binary inside the folder.
+- Git, which reads the repository's own configuration and can run what it
+  names there, is not run: formatting changed lines on save, the problems
+  dashboard's trend, **Lint Earlier Commits**, comparing a notebook with
+  git and setting up its filter, and listing affected tests all say so
+  instead.
+- A shared `.qlint/processes.json` loses its connect scripts, SSH jump hosts,
+  launch definitions and credential commands.
+
+Queries still go to the processes you saved, as they would anywhere.
+
 ## Repository settings
 
 A `qlinter.toml` at the repository root (or `[tool.qlinter]` in

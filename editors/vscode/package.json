@@ -20,6 +20,24 @@
     "onUri"
   ],
   "main": "./out/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Linting, Quick Fixes, navigation and colouring work in Restricted Mode: the linter reads q and never runs it. The settings that name a program, a command or the language server's arguments are taken from your user settings only, the workspace's .env is not given to q, q binaries in the workspace are not offered, and git is not run in it.",
+      "restrictedConfigurations": [
+        "q-lint.serverPath",
+        "q-lint.serverArgs",
+        "q-lint.profile",
+        "q-lint.configFile",
+        "q-lint.terminal.qBinary",
+        "q-lint.terminal.envPath",
+        "q-lint.env.enable",
+        "q-lint.env.file",
+        "q-lint.processes.launcher.enable",
+        "q-lint.connection.credentialCommand.enable"
+      ]
+    }
+  },
   "contributes": {
     "languages": [
       {

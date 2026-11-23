@@ -199,7 +199,10 @@ export class Interpreters {
       this.refuse("The q interpreter picker", "q-lint.interpreter.enable");
       return undefined;
     }
-    const folders = (workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath).filter((f) => typeof f === "string");
+    // A binary in a workspace that is not trusted is not offered, since
+    // listing one runs it to read its version (#1164).
+    const folders =
+      workspace.isTrusted === false ? [] : (workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath).filter((f) => typeof f === "string");
     const found = discover({ env: process.env, home: os.homedir(), platform: process.platform, folders }, nodeFiles);
     const current = resolveBinary(this.binary());
     const dotenv = await dotenvFor(workspace.workspaceFolders?.[0]?.uri);
