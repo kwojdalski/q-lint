@@ -33,6 +33,8 @@
 //   (`` `a xasc `t ``), which sorts or keys it in place;
 // - `?` with a symbol atom on its left (`` `sym?`x ``), which extends that
 //   enumeration, and the sym file when the symbol is a handle;
+// - a string sent to handle 0 (`0"a:1"`, `neg[0]"a:1"`), which the
+//   process evaluates itself;
 // - `-11!`, which replays a log through `upd`, except `-11!(-1;..)` and
 //   `-11!(-2;..)`, which only count and check one; `-19!`, which
 //   compresses a file into another;
@@ -427,6 +429,16 @@ function readStatement(statement: string, found: Set<string>): void {
     if (k.kind === "sym" && k.text.length > 1 && next?.kind === "op" && next.text === "?" && t[i - 1]?.kind !== "sym") {
       found.add(`extends the enumeration ${k.text} with ?`);
       continue;
+    }
+    // Handle 0 is the process itself: `0"a:1"`, `(0)"a:1"`, `neg[0]"a:1"`
+    // and `-0"a:1"` evaluate the string there.
+    if (k.kind === "num" && /^-?0[ihj]?$/.test(k.text) && t[i - 1]?.kind !== "num") {
+      const wrapped =
+        (t[i - 1]?.text === "(" && next?.text === ")") || (t[i - 2]?.text === "neg" && t[i - 1]?.text === "[" && next?.text === "]");
+      if ((wrapped ? t[i + 2] : next)?.kind === "str") {
+        found.add("evaluates a string on handle 0");
+        continue;
+      }
     }
     // `-11!` replays a log; `-11!(-1;..)` and `(-2;..)` only count and check it.
     if (k.kind === "num" && k.text === "-11" && next?.text === "!" && touching(k, next) && !(t[i + 2]?.text === "(" && /^-[12]$/.test(t[i + 3]?.text ?? ""))) {
