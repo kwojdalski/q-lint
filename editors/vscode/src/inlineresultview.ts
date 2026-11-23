@@ -4,7 +4,7 @@
 // Inline Results is run. It draws only what a query the user ran already
 // answered: it sends nothing. Off (q-lint.query.inlineResults.enable), the
 // decorations are cleared and their type and listeners disposed.
-import { Range, ThemeColor, commands, window, workspace, type Disposable, type ExtensionContext, type TextEditor, type TextEditorDecorationType } from "vscode";
+import { MarkdownString, Range, ThemeColor, commands, window, workspace, type Disposable, type ExtensionContext, type TextEditor, type TextEditorDecorationType } from "vscode";
 import { shiftLines, shortForm, type Answered } from "./inlineresult";
 import type { Live } from "./live";
 import { PROCESS_TOOL_COMMANDS, toolOff, toolOn } from "./processtools";
@@ -17,7 +17,7 @@ export function registerInlineResults(
   live: Pick<Live, "onDidAnswer">,
 ): { shown: (uri: string) => { line: number; text: string }[]; active: () => boolean; clear: () => string | undefined } {
   /// Each document's results: line to text.
-  const results = new Map<string, Map<number, { text: string; hover: string }>>();
+  const results = new Map<string, Map<number, { text: string; hover: MarkdownString }>>();
   let decoration: TextEditorDecorationType | undefined;
   let listeners: Disposable[] = [];
 
@@ -46,7 +46,11 @@ export function registerInlineResults(
   const answered = (a: Answered): void => {
     const lines = results.get(a.uri) ?? new Map();
     const text = shortForm(a.answer);
-    lines.set(a.line, { text, hover: `${a.process}, ${a.millis} ms: ${a.answer.ok ? a.answer.text.join("\n").slice(0, 2000) : a.answer.error}` });
+    // q's output as text in a code block: a "---" under a header row is no
+    // heading, a `*` no emphasis (#1264).
+    const hover = new MarkdownString().appendText(`${a.process}, ${a.millis} ms:`);
+    hover.appendCodeblock(a.answer.ok ? a.answer.text.join("\n").slice(0, 2000) : `'${a.answer.error}`, "text");
+    lines.set(a.line, { text, hover });
     results.set(a.uri, lines);
     drawAll(a.uri);
   };

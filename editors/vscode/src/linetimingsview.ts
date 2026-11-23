@@ -179,7 +179,9 @@ function decorations(editor: TextEditor, result: Timings): DecorationOptions[] {
         hover.appendText(t.bytes === undefined ? " (a system command: no memory figure)." : `, ${bytesText(t.bytes)} allocated by \\ts.`);
         hover.appendText(` The timing itself adds about ${durationText(result.overheadNs)}.`);
       } else {
-        hover.appendText(`Failed: ${t.error ?? "failed"}. The statements after it did not run.`);
+        // The error as text in a code block, whatever lines it holds (#1264).
+        hover.appendText("Failed; the statements after it did not run.");
+        hover.appendCodeblock(`'${t.error ?? "failed"}`, "text");
       }
       return { range: new Range(end, end), hoverMessage: hover, renderOptions: { after: { contentText: decorationText(t) } } };
     });
