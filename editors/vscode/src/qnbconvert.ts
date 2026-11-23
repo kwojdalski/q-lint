@@ -50,8 +50,9 @@ function inline(text: string, values: Record<string, LiveValue>): string {
   s = escapeHtml((s + text.slice(from)).replace(/\\([\\`*_{}[\]()#+\-.!])/g, (_m, c: string) => hold(escapeHtml(c))));
   s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, label: string, href: string) => {
     // `href` is escaped already: `&amp;` reads back as `&` in an attribute.
+    // The tags are held, so the emphasis below finds no `_` in the URL (#1105).
     const target = safeHref(href.replace(/&amp;/g, "&"));
-    return target === undefined ? m : `<a href="${escapeHtml(target)}">${label}</a>`;
+    return target === undefined ? m : `${hold(`<a href="${escapeHtml(target)}">`)}${label}${hold("</a>")}`;
   });
   s = s.replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, "<strong>$2</strong>");
   s = s.replace(/(^|[^\w*])([*_])(?=\S)([^*_]*?\S)\2(?!\w)/g, "$1<em>$3</em>");

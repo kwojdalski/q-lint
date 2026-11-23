@@ -137,6 +137,9 @@ test("an HTML export escapes everything from the notebook, copies no output HTML
 test("Markdown without a value shows its expression as written", () => {
   assert.strictEqual(markdownHtml("n is {{q: n}}"), "<p>n is <code>{{q: n}}</code></p>");
   assert.strictEqual(markdownHtml("> quoted *a*\n\n1. x\n2. y"), "<blockquote><p>quoted <em>a</em></p></blockquote>\n<ol><li>x</li><li>y</li></ol>");
+  // A link's URL is not read for emphasis; its label is (#1105).
+  assert.strictEqual(markdownHtml("[docs](https://code.kx.com/q/ref/_x_/)"), '<p><a href="https://code.kx.com/q/ref/_x_/">docs</a></p>');
+  assert.strictEqual(markdownHtml("[*a*](https://x.io/a*b*c) and *b*"), '<p><a href="https://x.io/a*b*c"><em>a</em></a> and <em>b</em></p>');
 });
 
 test("a Jupyter export is nbformat 4 with q's kernel, other languages and errors as Jupyter writes them", () => {
