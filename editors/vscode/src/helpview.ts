@@ -33,6 +33,7 @@ import {
 import { editorFeatureOff, editorFeatureOn, type EditorFeature } from "./editorfeatures";
 import { examplesMarkdown, HELP, html, HelpCatalog, nameAt, pageHtml } from "./helpcatalog";
 import type { Live } from "./live";
+import { plainMessage } from "./history";
 
 const on = (feature: EditorFeature): boolean => editorFeatureOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), feature);
 
@@ -107,7 +108,7 @@ export function registerHelp(context: ExtensionContext, live: Live): HelpApi {
 
   const show = async (given?: unknown): Promise<string | undefined> => {
     if (!on("helpPages")) {
-      void window.showInformationMessage(editorFeatureOff("helpPages"));
+      void window.showInformationMessage(plainMessage(editorFeatureOff("helpPages")));
       return undefined;
     }
     let name = typeof given === "string" ? given : undefined;
@@ -132,7 +133,7 @@ export function registerHelp(context: ExtensionContext, live: Live): HelpApi {
       return undefined;
     }
     if (!load().has(name)) {
-      void window.showInformationMessage(`q-lint: ${name} is not one of q's builtins, so it has no help page.`);
+      void window.showInformationMessage(plainMessage(`q-lint: ${name} is not one of q's builtins, so it has no help page.`));
       return undefined;
     }
     render(name);
@@ -161,7 +162,7 @@ export function registerHelp(context: ExtensionContext, live: Live): HelpApi {
     commands.registerCommand(HELP.show, show),
     commands.registerCommand(HELP.tryExample, async (code?: unknown) => {
       if (!on("tryExamples")) {
-        void window.showInformationMessage(editorFeatureOff("tryExamples"));
+        void window.showInformationMessage(plainMessage(editorFeatureOff("tryExamples")));
         return false;
       }
       if (typeof code !== "string" || code.trim() === "") {

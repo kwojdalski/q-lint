@@ -10,6 +10,7 @@ import { Uri, commands, env, window, workspace, type ExtensionContext } from "vs
 import { ADMIN_COMMANDS, adminOff, readAdmin } from "./admin";
 import { readKxExport, readKxServers, readQStudio, type Imported } from "./importother";
 import type { Live } from "./live";
+import { plainMessage } from "./history";
 
 const on = (): boolean => readAdmin((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback)).importOther;
 
@@ -51,7 +52,7 @@ export class ImportOther {
   /// Import qStudio's servers from `file`, or from where the user picks.
   async qStudio(file?: Uri): Promise<number> {
     if (!on()) {
-      void window.showInformationMessage(adminOff("importOther"));
+      void window.showInformationMessage(plainMessage(adminOff("importOther")));
       return 0;
     }
     let text: string;
@@ -88,7 +89,7 @@ export class ImportOther {
       }
       return await this.add(readQStudio(text), "qStudio", from);
     } catch (error) {
-      void window.showErrorMessage(`q-lint: could not read qStudio's servers: ${error instanceof Error ? error.message : String(error)}`);
+      void window.showErrorMessage(plainMessage(`q-lint: could not read qStudio's servers: ${error instanceof Error ? error.message : String(error)}`));
       return 0;
     }
   }
@@ -97,7 +98,7 @@ export class ImportOther {
   /// Code's settings or a file the user picks.
   async kx(file?: Uri): Promise<number> {
     if (!on()) {
-      void window.showInformationMessage(adminOff("importOther"));
+      void window.showInformationMessage(plainMessage(adminOff("importOther")));
       return 0;
     }
     try {
@@ -124,7 +125,7 @@ export class ImportOther {
       }
       return await this.add(readKxExport(JSON.parse(await readText(chosen))), "KX's extension", chosen.fsPath);
     } catch (error) {
-      void window.showErrorMessage(`q-lint: could not read KX's connections: ${error instanceof Error ? error.message : String(error)}`);
+      void window.showErrorMessage(plainMessage(`q-lint: could not read KX's connections: ${error instanceof Error ? error.message : String(error)}`));
       return 0;
     }
   }
@@ -138,13 +139,13 @@ export class ImportOther {
     const kept = read.processes.length - adding.length;
     const notes = [...read.skipped, ...(kept > 0 ? [`${kept} already in the list, kept as they are`] : [])];
     if (adding.length === 0) {
-      void window.showInformationMessage(`q-lint: ${from} names no new q process to import.${notes.length ? ` ${notes.slice(0, 5).join("; ")}.` : ""}`);
+      void window.showInformationMessage(plainMessage(`q-lint: ${from} names no new q process to import.${notes.length ? ` ${notes.slice(0, 5).join("; ")}.` : ""}`));
       return 0;
     }
     const yes = "Import";
     const names = adding.map((p) => p.label);
     const answer = await window.showInformationMessage(
-      `Import ${adding.length} q process(es) from ${tool} (${from})? ${names.slice(0, 8).join(", ")}${names.length > 8 ? ", ..." : ""}`,
+      plainMessage(`Import ${adding.length} q process(es) from ${tool} (${from})? ${names.slice(0, 8).join(", ")}${names.length > 8 ? ", ..." : ""}`),
       { modal: true, detail: `No password is imported: each is asked for on connect.${notes.length ? `\n\nNot imported: ${notes.slice(0, 10).join("; ")}.` : ""}` },
       yes,
     );
@@ -155,7 +156,7 @@ export class ImportOther {
     const latest = this.live.processes();
     const fresh = adding.filter((p) => !latest.some((q) => q.label === p.label));
     await this.live.saveProcesses([...latest, ...fresh]);
-    void window.showInformationMessage(`q-lint: imported ${fresh.length} q process(es) from ${tool}.`);
+    void window.showInformationMessage(plainMessage(`q-lint: imported ${fresh.length} q process(es) from ${tool}.`));
     return fresh.length;
   }
 }

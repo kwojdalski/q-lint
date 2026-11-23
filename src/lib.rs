@@ -9108,7 +9108,23 @@ fn lint_rules(
                 .ends_with(|c: char| c.is_alphanumeric() || ")]}".contains(c));
             projection && operand
         };
-        if let Some(m) = re!(r"[\d)]/\s*[\d(]").find_iter(&unsym).find(|m| !over(m)) {
+        // A digit that ends a name is no number: `0 add2/ 1 2 3` is over
+        // with `add2`, 6 on KDB-X (#1297).
+        let named = |m: &regex::Match| {
+            let b = unsym.as_bytes();
+            let mut i = m.start();
+            if !b[i].is_ascii_digit() {
+                return false;
+            }
+            while i > 0 && (b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_') {
+                i -= 1;
+            }
+            b[i].is_ascii_alphabetic() || b[i] == b'_'
+        };
+        if let Some(m) = re!(r"[\d)]/\s*[\d(]")
+            .find_iter(&unsym)
+            .find(|m| !over(m) && !named(m))
+        {
             add(
                 offset + m.start(),
                 "QB014",
@@ -9182,7 +9198,16 @@ fn lint_rules(
                     }
                     (i < b.len()).then_some(i + 1)
                 };
-                if in_code && close.is_some_and(|c| operand_ends(code, &v.comments, offset + c)) {
+                // A char atom has one code, and that is what the cast gives:
+                // `int$"a" is 97i where "I"$"a" is 0Ni (#1298). Symbol and
+                // guid refuse it all the same.
+                let open = dollar + 1 + literals[dollar + 1..].find('"').unwrap();
+                let atom = re!(r#"^"(?:[^"\\]|\\(?:[0-7]{3}|.))""#).is_match(&literals[open..])
+                    && m.get(1).is_some_and(|n| !matches!(n.as_str(), "symbol" | "guid"));
+                if in_code
+                    && !atom
+                    && close.is_some_and(|c| operand_ends(code, &v.comments, offset + c))
+                {
                     return Some(m);
                 }
                 at = start + 1;

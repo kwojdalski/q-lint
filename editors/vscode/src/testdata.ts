@@ -9,6 +9,7 @@
 // same rows each time, and defines only the table. The CSV is drawn here
 // by a seeded generator, as q would read it back with `0:`: times as q
 // writes them, symbols bare, strings quoted when they need to be.
+import { qString, symbolLiteral } from "./qliteral";
 import type { TableInfo } from "./tableinfo";
 
 export interface TestDataOptions {
@@ -52,7 +53,11 @@ export function generator(type: string, o: TestDataOptions): string {
   const lo = o.low;
   const span = o.high - o.low;
   const whole = Math.max(1, Math.round(span));
-  const pool = o.symbols.length === 1 ? `enlist\`${o.symbols[0]}` : o.symbols.map((s) => `\`${s}`).join("");
+  // A symbol a bare one cannot write (`a/b` is `a` over `b`, '/) goes
+  // through `$ (#1279).
+  const bare = o.symbols.every((s) => symbolLiteral(s) === `\`${s}`);
+  const pool =
+    o.symbols.length === 1 ? `enlist${symbolLiteral(o.symbols[0])}` : bare ? o.symbols.map((s) => `\`${s}`).join("") : `\`$(${o.symbols.map(qString).join(";")})`;
   switch (type) {
     case "b": return "n?0b";
     case "g": return "n?0Ng";
@@ -84,11 +89,14 @@ export function testDataQ(info: TableInfo, name: string, o: TestDataOptions): st
     return `${c.name}:${c.name === o.sorted ? `asc ${g}` : g}`;
   });
   const keys = info.keys.filter((k) => info.columns.some((c) => c.name === k));
+  const by = keys.map((k) => `\`${k}`).join("");
+  const rows = `([] ${cols.join("; ")})`;
   return [
-    `/ q-lint: ${o.rows.toLocaleString("en-US")} rows of test data shaped as ${name}. Run it on a local process.`,
+    `/ q-lint: ${keys.length > 0 ? "up to " : ""}${o.rows.toLocaleString("en-US")} rows of test data shaped as ${name}. Run it on a local process.`,
     `\\S ${o.seed}`,
     `n:${o.rows}`,
-    `${name}:${keys.length > 0 ? `${keys.map((k) => `\`${k}`).join("")} xkey ` : ""}([] ${cols.join("; ")})`,
+    // A keyed table keeps the first row of each key drawn: a key is one row (#1282).
+    `${name}:${keys.length > 0 ? `${by} xkey {x where(til count x)=k?k:((),y)#x}[${rows};${by}]` : rows}`,
     // A table named n is the count's name too: it stays (#1084).
     ...(name === "n" ? [] : [`delete n from \`.`]),
     "",
@@ -129,7 +137,8 @@ function csvValue(type: string, o: TestDataOptions, next: () => number): string 
   switch (type) {
     case "b": return r < 0.5 ? "0" : "1";
     case "g": return [8, 4, 4, 4, 12].map((w) => Array.from({ length: w }, () => Math.floor(next() * 16).toString(16)).join("")).join("-");
-    case "x": return `0x${Math.floor(r * 256).toString(16).padStart(2, "0")}`;
+    // Bare hex: `"X"$` reads `0x7b` as 0x00 (#1278).
+    case "x": return Math.floor(r * 256).toString(16).padStart(2, "0");
     case "h":
     case "i":
     case "j": return String(Math.round(lo) + Math.floor(r * Math.max(1, Math.round(span))));

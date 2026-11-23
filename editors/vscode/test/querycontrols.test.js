@@ -276,6 +276,8 @@ test("a file's connection is kept by URI, and shown only when it is not the acti
   assert.deepStrictEqual(withBinding(two, "file:///a.q", undefined), { "file:///b.q": "hdb" });
   assert.strictEqual(bindingText("rdb", "rdb"), undefined);
   assert.strictEqual(bindingText(undefined, "rdb"), undefined);
+  // A label's $(name) is text, not an icon (#1313).
+  assert.strictEqual(bindingText("a$(zap)", "rdb"), "$(file-symlink-file) file: a\\$(zap)");
   assert.match(bindingText("hdb", "rdb"), /file: hdb/);
   assert.match(bindingText("hdb", undefined), /file: hdb/);
 });

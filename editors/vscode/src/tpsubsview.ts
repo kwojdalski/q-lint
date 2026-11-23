@@ -11,6 +11,7 @@ import type { Live } from "./live";
 import { PROCESS_TOOL_COMMANDS, toolOff, toolOn } from "./processtools";
 import { ToolTree } from "./toolstree";
 import { SUBSCRIBERS, readSubscribers, subscriberTree, type Subscriber } from "./tpsubs";
+import { plainMessage } from "./history";
 
 export const SUBSCRIBERS_VIEW = "q-lint.tickerplantSubscribers";
 
@@ -23,7 +24,7 @@ export function registerTickerplantSubscribers(
   const refresh = async (): Promise<Subscriber[] | string> => {
     if (!on()) {
       const off = toolOff("tickerplantSubscribers");
-      void window.showInformationMessage(off);
+      void window.showInformationMessage(plainMessage(off));
       return off;
     }
     if (live.activeLabel() === undefined) {

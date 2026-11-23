@@ -53,6 +53,11 @@ r:{[p] {x} each p}
 === QR002 | spelled with the each adverb too
 r:{[p] {x}'[p]}
 
+=== clean | unapplied, {x}' is the derived function itself (KDB-X: type ({x}';1) is 0h; #1299)
+r:({x}';1)
+s:{x} each
+t:({x} each)
+
 === clean | each-prior is something else
 r:{[p] {x}':[p]}
 

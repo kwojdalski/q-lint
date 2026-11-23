@@ -287,7 +287,9 @@ test("the test data generator's q makes the rows asked for, and its CSV loads ba
   const ran = readRun(await connection.call(RUN_SCRIPT, statements(q)));
   assert.ok(ran.ok, ran.error);
   assert.deepStrictEqual(await connection.call("{exec t from meta gen}", 0), "spfjdC");
-  assert.strictEqual(await connection.call('{"f"$count gen}', 0), 50);
+  // Keyed by k, drawn from two symbols: one row a key, never two (#1282).
+  assert.strictEqual(await connection.call('{"f"$count gen}', 0), 2);
+  assert.strictEqual(await connection.call("{count[gen]=count distinct key gen}", 0), true);
   assert.strictEqual(await connection.call("{all 10<=exec px from gen}", 0), true);
   assert.strictEqual(await connection.call("{(exec time from gen)~asc exec time from gen}", 0), true);
   assert.deepStrictEqual(await connection.call("{asc distinct exec k from gen}", 0), ["AAPL", "MSFT"]);
@@ -297,6 +299,38 @@ test("the test data generator's q makes the rows asked for, and its CSV loads ba
   assert.strictEqual(loaded[1], "spfjdC");
   assert.strictEqual(loaded[2], true);
   assert.strictEqual(loaded[3], true);
+});
+
+test("the test data generator's q takes symbols a bare symbol cannot write (#1279)", { skip }, async (t) => {
+  const { connection } = await connect(t, "");
+  const info = { kind: "table", rows: 0, bytes: null, partitions: null, keys: [], ncols: 1, columns: [{ name: "s", type: "s", fkey: "", attr: "" }] };
+  for (const symbols of [["a/b", "c:d/e", "_f", "g"], ["x/y"]]) {
+    const ran = readRun(await connection.call(RUN_SCRIPT, statements(testDataQ(info, "gen", { rows: 40, symbols, low: 0, high: 1, seed: 2 }))));
+    assert.ok(ran.ok, ran.error);
+    assert.deepStrictEqual([].concat(await connection.call("{string asc distinct exec s from gen}", 0)).flat().map(String), [...symbols].sort());
+  }
+});
+
+test("the test data generator keys a table by distinct keys, of two columns too, in the sorted column's order (#1282)", { skip }, async (t) => {
+  const { connection } = await connect(t, "");
+  const col = (name, type) => ({ name, type, fkey: "", attr: "" });
+  const info = { kind: "keyed", rows: 0, bytes: null, partitions: null, keys: ["s", "j"], ncols: 3, columns: [col("s", "s"), col("j", "j"), col("t", "p")] };
+  const ran = readRun(await connection.call(RUN_SCRIPT, statements(testDataQ(info, "gen", { rows: 200, symbols: ["A", "B"], low: 0, high: 5, sorted: "t", seed: 4 }))));
+  assert.ok(ran.ok, ran.error);
+  assert.strictEqual(await connection.call('{"f"$count gen}', 0), 10);
+  assert.strictEqual(await connection.call("{(keys gen)~`s`j}", 0), true);
+  assert.strictEqual(await connection.call("{(exec t from gen)~asc exec t from gen}", 0), true);
+});
+
+test("the test data CSV's bytes load back as the bytes written (#1278)", { skip }, async (t) => {
+  const { connection, dir } = await connect(t, "");
+  const info = { kind: "table", rows: 0, bytes: null, partitions: null, keys: [], ncols: 2, columns: [{ name: "b", type: "x", fkey: "", attr: "" }, { name: "j", type: "j", fkey: "", attr: "" }] };
+  const csv = testDataCsv(info, { rows: 20, symbols: ["A"], low: 0, high: 10, seed: 5 });
+  fs.writeFileSync(path.join(dir, "bytes.csv"), csv);
+  const written = csv.trim().split("\n").slice(1).map((l) => l.split(",")[0]);
+  assert.ok(written.some((b) => b !== "00"));
+  const loaded = await connection.call(`{c:("${loadTypes(info)}";enlist",")0:\`:bytes.csv; string c\`b}`, 0);
+  assert.deepStrictEqual(loaded, written);
 });
 
 test("a schema migration's q turns one table into the other, in memory and on disk", { skip }, async (t) => {
@@ -348,6 +382,26 @@ test("a tickerplant log's one-row messages, a list of atoms, have a time and are
   assert.match(all.rows[0].time, /2026\.01\.05D09:00:00/);
   const early = readTpPage(await connection.call(".qlint.tp.page", "", 8 * 3600000, 10 * 3600000, 0, 100));
   assert.deepStrictEqual(early.rows.map((r) => r.index), [0]);
+});
+
+test("a tickerplant log whose first temporal column is a date or a month opens, with no time of day (#1248)", { skip }, async (t) => {
+  const log = [
+    'f:hsym`$"$DIR/tp.log";',
+    ".[f;();:;()];",
+    "h:hopen f;",
+    "h enlist(`upd;`eod;([]date:enlist 2026.01.05;sym:enlist`a));",
+    "h enlist(`upd;`mon;([]m:enlist 2026.01m;sym:enlist`b));",
+    "h enlist(`upd;`trade;([]time:enlist 2026.01.05D09:00:00;sym:enlist`c));",
+    "hclose h;",
+    "",
+  ].join("\n");
+  const { connection, dir } = await connect(t, log + TPLOG_INIT + "\n");
+  const summary = readTpLog(await connection.call(".qlint.tp.load", path.join(dir, "tp.log")));
+  assert.strictEqual(summary.count, 3);
+  const all = readTpPage(await connection.call(".qlint.tp.page", "", NaN, NaN, 0, 100));
+  assert.deepStrictEqual(all.rows.map((r) => r.time), ["2026.01.05", "2026.01", "2026.01.05D09:00:00.000000000"]);
+  const timed = readTpPage(await connection.call(".qlint.tp.page", "", 8 * 3600000, NaN, 0, 100));
+  assert.deepStrictEqual(timed.rows.map((r) => r.index), [2]);
 });
 
 test("the tickerplant log is read, paged, filtered, shown and replayed in a q of its own", { skip }, async (t) => {

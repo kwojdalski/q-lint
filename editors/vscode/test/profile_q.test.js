@@ -143,9 +143,23 @@ test("a namespace that is not one is refused before anything changes", { skip },
 test("the cleanup puts the originals back when a run stopped between", { skip }, async (t) => {
   const c = await connect(t, SERVER);
   // As PROFILE leaves the process mid-run: a wrapper in place, the original kept.
-  await c.evaluate(".qlint.prof.orig:(enlist `.foo.nil)!enlist .foo.nil; .foo.nil:{[] 0}");
+  await c.evaluate(".qlint.prof.orig:(enlist `.foo.nil)!enlist .foo.nil; .foo.nil:{[] 0}; .qlint.prof.wrapped:(enlist `.foo.nil)!enlist .foo.nil");
   assert.strictEqual(await same(c), false);
   await c.call(PROFILE_CLEANUP, 0);
   assert.ok(await same(c));
+  assert.ok(await noState(c));
+});
+
+test("a definition the profiled code made itself is kept, the others put back (#1271)", { skip }, async (t) => {
+  const c = await connect(t, SERVER);
+  const profile = readProfile(await c.call(PROFILE, "`.foo", [".foo.nil:{[] 43}", ".foo.top 3"]), ".foo");
+  await c.call(PROFILE_CLEANUP, 0);
+  assert.strictEqual(profile.error, "");
+  assert.strictEqual(String((await c.evaluate(".foo.nil[]")).value), "43");
+  assert.strictEqual((await c.evaluate("(.foo.top;.foo.fib;.foo.two;.foo.bad)~snap 1 2 4 5")).value, true);
+  // Nor does the cleanup of a stopped run undo one.
+  await c.evaluate(".qlint.prof.orig:(enlist `.foo.nil)!enlist {[] 1}; .qlint.prof.wrapped:(enlist `.foo.nil)!enlist {[] 0}");
+  await c.call(PROFILE_CLEANUP, 0);
+  assert.strictEqual(String((await c.evaluate(".foo.nil[]")).value), "43");
   assert.ok(await noState(c));
 });

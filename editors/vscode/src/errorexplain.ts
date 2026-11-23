@@ -11,6 +11,7 @@
 // were not produced here: running out of memory, or a process refusing a
 // write, is not something a test does to the machine it runs on.
 import { parseBacktrace } from "./backtrace";
+import { span } from "./helpcatalog";
 
 export interface QError {
   /// What it means, in a sentence.
@@ -193,10 +194,9 @@ export function errorName(text: string): string {
   return t.split(/\s/)[0] ?? "";
 }
 
-/// Markdown `code` that holds any backtick.
-function code(text: string): string {
-  return text.includes("`") ? `\`\` ${text} \`\`` : `\`${text}\``;
-}
+/// Markdown `code` that holds any backtick: fenced by a run longer than
+/// any in it, as the help hover's are (#1312).
+const code = span;
 
 /// What failed, from a backtrace: the innermost frame q marked with `^`,
 /// its line and the token under the caret.

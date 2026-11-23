@@ -25,6 +25,7 @@ import { editorFeatureOff, editorFeatureOn } from "./editorfeatures";
 import { borrowWhenFree } from "./infoview";
 import type { Live } from "./live";
 import { LOGPOINT_COMMANDS, LOG_ADD, LOG_LIST, LOG_REMOVE, hitLines, readLogpoints } from "./logpoint";
+import { plainMessage } from "./history";
 
 const on = (): boolean => editorFeatureOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "logpoints");
 
@@ -87,7 +88,7 @@ export function registerLogpoints(
   };
   const refuse = (): boolean => {
     if (!on()) {
-      void window.showInformationMessage(editorFeatureOff("logpoints"));
+      void window.showInformationMessage(plainMessage(editorFeatureOff("logpoints")));
       return true;
     }
     return false;
@@ -129,21 +130,24 @@ export function registerLogpoints(
       names.add(fn);
       logged.set(done.process, names);
       mark();
-      void window.showInformationMessage(`q-lint: each call of ${fn} on ${done.process} is printed there with 0N! until the logpoint is removed.`);
+      void window.showInformationMessage(plainMessage(`q-lint: each call of ${fn} on ${done.process} is printed there with 0N! until the logpoint is removed.`));
     } catch (error) {
-      void window.showErrorMessage(`q-lint: no logpoint on ${fn}: ${message(error)}`);
+      void window.showErrorMessage(plainMessage(`q-lint: no logpoint on ${fn}: ${message(error)}`));
     }
   };
 
-  const removeOne = async (fn: string): Promise<void> => {
-    const done = await live.runOnActive(LOG_REMOVE, async (connection) => (await connection.call(LOG_REMOVE, fn)) === true);
+  /// Remove `fn`'s logpoint on `from`, the process it was listed on and
+  /// no other (#1294); whether it was sent.
+  const removeOne = async (fn: string, from: string): Promise<boolean> => {
+    const done = await live.runOnActive(LOG_REMOVE, async (connection) => (await connection.call(LOG_REMOVE, fn)) === true, "ask", from);
     if (done === undefined) {
-      return;
+      return false;
     }
     logged.get(done.process)?.delete(fn);
     if (!done.value) {
-      void window.showWarningMessage(`q-lint: ${fn} was redefined on ${done.process} while it had a logpoint; it is left as it is now.`);
+      void window.showWarningMessage(plainMessage(`q-lint: ${fn} was redefined on ${done.process} while it had a logpoint; it is left as it is now.`));
     }
+    return true;
   };
 
   const remove = async (name?: unknown): Promise<void> => {
@@ -155,7 +159,7 @@ export function registerLogpoints(
       return;
     }
     if (held.names.length === 0) {
-      void window.showInformationMessage(`q-lint: no function on ${held.process} has a logpoint.`);
+      void window.showInformationMessage(plainMessage(`q-lint: no function on ${held.process} has a logpoint.`));
       return;
     }
     const wanted = typeof name === "string" ? name : nameAtCursor(window.activeTextEditor);
@@ -169,9 +173,9 @@ export function registerLogpoints(
       return;
     }
     try {
-      await removeOne(fn);
+      await removeOne(fn, held.process);
     } catch (error) {
-      void window.showErrorMessage(`q-lint: the logpoint on ${fn} was not removed: ${message(error)}`);
+      void window.showErrorMessage(plainMessage(`q-lint: the logpoint on ${fn} was not removed: ${message(error)}`));
     }
     mark();
   };
@@ -184,15 +188,19 @@ export function registerLogpoints(
     if (held === undefined) {
       return;
     }
+    let removed = 0;
     for (const fn of held.names) {
       try {
-        await removeOne(fn);
+        removed += (await removeOne(fn, held.process)) ? 1 : 0;
       } catch (error) {
-        void window.showErrorMessage(`q-lint: the logpoint on ${fn} was not removed: ${message(error)}`);
+        void window.showErrorMessage(plainMessage(`q-lint: the logpoint on ${fn} was not removed: ${message(error)}`));
+        if (live.activeLabel() !== held.process) {
+          break;
+        }
       }
     }
     mark();
-    void window.showInformationMessage(`q-lint: ${held.names.length} logpoint${held.names.length === 1 ? "" : "s"} removed from ${held.process}.`);
+    void window.showInformationMessage(plainMessage(`q-lint: ${removed} logpoint${removed === 1 ? "" : "s"} removed from ${held.process}.`));
   };
 
   const hits = async (): Promise<void> => {

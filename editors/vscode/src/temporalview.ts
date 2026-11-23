@@ -21,6 +21,7 @@ import {
 } from "vscode";
 import { editorFeatureOff, editorFeatureOn } from "./editorfeatures";
 import { CONVERT_TEMPORAL, convertText, hoverMarkdown, temporalAt } from "./temporal";
+import { plainMessage } from "./history";
 
 const on = (): boolean => editorFeatureOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "temporalHover");
 
@@ -62,7 +63,7 @@ export function registerTemporal(context: ExtensionContext): { registered: () =>
 /// conversion of it. The text put in, or undefined when nothing was.
 async function convert(target?: string): Promise<string | undefined> {
   if (!on()) {
-    void window.showInformationMessage(editorFeatureOff("temporalHover"));
+    void window.showInformationMessage(plainMessage(editorFeatureOff("temporalHover")));
     return undefined;
   }
   const editor = window.activeTextEditor;
@@ -96,7 +97,7 @@ async function convert(target?: string): Promise<string | undefined> {
         ).then((p) => p?.conversion);
   if (picked === undefined) {
     if (target !== undefined) {
-      void window.showInformationMessage(`q-lint: the ${found.what} has no conversion "${target}".`);
+      void window.showInformationMessage(plainMessage(`q-lint: the ${found.what} has no conversion "${target}".`));
     }
     return undefined;
   }

@@ -285,6 +285,33 @@ fn a_local_read_in_a_query_is_not_renamed_since_it_may_be_a_column() {
 }
 
 #[test]
+fn a_local_that_names_a_table_literal_column_is_not_renamed() {
+    // KDB-X: cols {[a] ([] a; b:3 4)} 1 2 is `a`b, and ([] a+1) and ([a] b)
+    // are named a too; renamed, the column would be too (#1305).
+    for source in [
+        "f:{[a] ([] a; b:3 4)}\n",
+        "f:{[a] ([] b:3 4; a+1)}\n",
+        "f:{[a] ([a] b:3 4)}\n",
+        "f:{[a] ([] c:1 2; g[a])}\n",
+    ] {
+        let why = refusal(source, "[a]", 1, "zz");
+        assert!(why.contains("table literal"), "{source}: {why}");
+    }
+    // A column with its own name keeps it.
+    for source in [
+        "f:{[a] ([] c:a; b:3 4)}\n",
+        "f:{[a] ([k:a] b:3 4)}\n",
+        "f:{[a] ([] b:3 4; c:g[a])}\n",
+    ] {
+        assert_eq!(
+            rename(source, at(source, "[a]", 1), "zz").unwrap().len(),
+            2,
+            "{source}"
+        );
+    }
+}
+
+#[test]
 fn a_new_name_has_to_be_one_the_lambda_can_take() {
     let source = "f:{[a;b] c:a+b; g c}\n";
     assert!(refusal(source, "[a;b]", 1, "1a").contains("not a name"));

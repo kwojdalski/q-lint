@@ -34,12 +34,14 @@ export interface Imported {
   skipped: string[];
 }
 
-/// XML text as written, its entities read.
+/// XML text as written, its entities read. A number no character has is
+/// left as written (#1273).
 export function xmlUnescape(text: string): string {
+  const char = (whole: string, code: number): string => (code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole);
   return text.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (whole, e: string) => {
     const k = e.toLowerCase();
-    if (k.startsWith("#x")) return String.fromCodePoint(parseInt(k.slice(2), 16));
-    if (k.startsWith("#")) return String.fromCodePoint(parseInt(k.slice(1), 10));
+    if (k.startsWith("#x")) return char(whole, parseInt(k.slice(2), 16));
+    if (k.startsWith("#")) return char(whole, parseInt(k.slice(1), 10));
     return ({ amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" } as Record<string, string>)[k] ?? whole;
   });
 }

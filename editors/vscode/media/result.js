@@ -25,8 +25,9 @@
   /// text (ignoring case), sorted by `sort` ({column, descending}) when set.
   /// A column the process ranked sorts by its rank, as q's `xasc` or
   /// `xdesc` would, equal values kept in their order either way; one it
-  /// could not sort, by its text.
-  function visibleRows(grid, filters, sort) {
+  /// could not sort, by its text. `shown`, when given, is what a cell shows
+  /// in place of its text (column, row): a filter finds either.
+  function visibleRows(grid, filters, sort, shown) {
     const active = [];
     (filters || []).forEach(function (f, c) {
       if (f && c < grid.cells.length) {
@@ -35,7 +36,7 @@
     });
     const rows = [];
     for (let r = 0; r < rowCount(grid); r++) {
-      if (active.every(function (a) { return grid.cells[a[0]][r].toLowerCase().indexOf(a[1]) >= 0; })) {
+      if (active.every(function (a) { return grid.cells[a[0]][r].toLowerCase().indexOf(a[1]) >= 0 || (shown !== undefined && shown(a[0], r).toLowerCase().indexOf(a[1]) >= 0); })) {
         rows.push(r);
       }
     }
@@ -393,6 +394,8 @@
   const LOOK = root.qlintLook;
   const MORE = root.qlintChartMore;
   const WORLD = root.qlintWorld;
+  /// refocus.js: a redraw replaces the controls, and the one in use keeps the focus.
+  const FOCUS = root.qlintFocus;
   const BASE_KINDS = ["line", "bar", "scatter", "histogram"];
   /// The kinds q-lint.results.charts.enable adds.
   const MORE_KINDS = ["area", "step", "candlestick"];
@@ -411,6 +414,8 @@
   let heat = [];
   /// More rows were asked for, and have not come yet.
   let moreAsked = false;
+  /// The grid is being painted for a scroll to somewhere new.
+  let moved = false;
   /// What the chart last drew: its data and theme, for an image of it.
   let drawnChart = null;
   /// The linked panes' charts, while they are drawn.
@@ -583,6 +588,7 @@
     const views = el("div", "views");
     Object.keys(VIEWS).filter(offered).forEach(function (v) {
       const b = el("button", v === state.view ? "on" : "", VIEWS[v]);
+      b.setAttribute("aria-pressed", v === state.view ? "true" : "false");
       b.addEventListener("click", function () {
         state.view = v;
         save();
@@ -671,6 +677,8 @@
       });
       tail.push(as);
     }
+    // By what each says: the button used is made again by the draw it asks for.
+    Array.from(views.children).concat(extras, tail).forEach(function (b) { FOCUS.name(b, "bar " + b.textContent); });
     bar.append.apply(bar, [views, info].concat(extras, tail));
     if (comparing()) {
       const d = result.diff;
@@ -711,6 +719,15 @@
   let dragFrom = null;
   let resizing = null;
   let resized = false;
+
+  /// What a cell of `grid` shows where its column's format (#1013) changes
+  /// q's text, by column and row: what a filter is typed from (#1342).
+  function shownAs(grid) {
+    const formats = feature("columnFormats") ? LOOK.columnFormats(grid) : [];
+    return function (c, r) {
+      return formats[c] && grid.columns[c].numeric ? LOOK.formatNumber(formats[c], grid.values[c][r], grid.cells[c][r]) : grid.cells[c][r];
+    };
+  }
 
   function dressGrid() {
     const grid = result.grid;
@@ -843,7 +860,7 @@
         state.sort = !s || s.column !== i ? { column: i, descending: false } : s.descending ? null : { column: i, descending: true };
         state.top = 0;
         save();
-        rows = visibleRows(grid, state.filters, state.sort);
+        rows = visibleRows(grid, state.filters, state.sort, shownAs(grid));
         drawGrid();
         drawBar();
         rendered();
@@ -927,7 +944,7 @@
         state.filters[i] = input.value;
         state.top = 0;
         save();
-        rows = visibleRows(grid, state.filters, state.sort);
+        rows = visibleRows(grid, state.filters, state.sort, shownAs(grid));
         scroller.scrollTop = 0;
         paint();
         drawBar();
@@ -980,10 +997,13 @@
       gridView.append(removedRows(result.diff.removed));
     }
     scroller.addEventListener("scroll", function () {
+      // Somewhere new, not the place a redraw put back.
+      moved = scroller.scrollTop !== state.top;
       // Kept, so a page reloaded - hidden and shown again - is back here.
       state.top = scroller.scrollTop;
       save();
       paint();
+      moved = false;
     });
     paint();
     if (state.top > 0) {
@@ -1094,7 +1114,7 @@
         state.open.push(path);
       }
       save();
-      drawTree();
+      FOCUS.over(drawTree);
     };
     const line = function (node, path, depth) {
       const li = el("li");
@@ -1109,6 +1129,7 @@
         twist.title = isOpen ? "Close" : "Open";
         twist.setAttribute("aria-label", (isOpen ? "Close " : "Open ") + (node.key || "the result"));
         twist.addEventListener("click", function () { toggle(path); });
+        FOCUS.name(twist, "tree " + path);
         row.append(twist);
       } else {
         row.append(el("span", "twist"));
@@ -1321,8 +1342,10 @@
     body.replaceChildren.apply(body, out);
     dress = counts;
     rove();
-    // Near the end of the rows held: ask the process for the next page.
-    if (result.more && !moreAsked && rows.length > 0 && end >= rows.length - 10) {
+    // Near the end of the rows held: ask the process for the next page. With
+    // rows filtered out, only when scrolled there: few rows left by a filter
+    // are near their end as each page comes, and would fetch the whole result.
+    if (result.more && !moreAsked && rows.length > 0 && end >= rows.length - 10 && (moved || rows.length === rowCount(result.grid))) {
       moreAsked = true;
       vscode.postMessage({ type: "more", id: result.id });
     }
@@ -1413,7 +1436,7 @@
       select.addEventListener("change", function () {
         spec[key] = key === "agg" ? select.value : Number(select.value);
         save();
-        drawPivot();
+        FOCUS.over(drawPivot);
       });
       box.append(select);
       controls.append(box);
@@ -1433,6 +1456,7 @@
       vscode.postMessage({ type: "copyText", id: result.id, text: lines.join("\n") + "\n" });
     });
     controls.append(copy);
+    FOCUS.each(controls, "pivot");
     pivotView.append(controls);
     let note = "Over the " + rows.length.toLocaleString("en-US") + " row" + (rows.length === 1 ? "" : "s") + " shown";
     if (grid.total > rowCount(grid)) {
@@ -1540,12 +1564,18 @@
   }
 
   function drawChart() {
+    FOCUS.over(drawChartNow);
+  }
+
+  function drawChartNow() {
     const grid = result.grid;
     chartView.replaceChildren();
     destroyCharts();
     const theme = C.theme(cssVar);
     const controls = el("div", "controls");
     const kind = el("select");
+    // Its options are its only text: a screen reader is told what they choose.
+    kind.setAttribute("aria-label", "Chart kind");
     const KINDS = kinds();
     if (KINDS.indexOf(state.kind) < 0) {
       state.kind = "line";
@@ -1669,6 +1699,7 @@
       });
       controls.append(keep);
     }
+    FOCUS.each(controls, "chart");
     chartView.append(controls);
     let data;
     let summary;
@@ -1952,6 +1983,10 @@
   }
 
   function draw() {
+    FOCUS.over(drawAll);
+  }
+
+  function drawAll() {
     if (!result) {
       return;
     }
@@ -2062,7 +2097,7 @@
     result = m;
     moreAsked = false;
     announce(m);
-    rows = visibleRows(m.grid, state.filters, state.sort);
+    rows = visibleRows(m.grid, state.filters, state.sort, shownAs(m.grid));
     save();
     draw();
     if (image) {

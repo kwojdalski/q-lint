@@ -38,11 +38,12 @@ import { DB_COMMANDS, dbOff, dbOn } from "./dbfeatures";
 import { toGrid, type GridAnswer } from "./grid";
 import type { Live } from "./live";
 import { parseSaved, SAVED_QUERIES_KEY, type SavedQuery } from "./savedqueries";
+import { plainMessage } from "./history";
 
 const on = (): boolean => dbOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "dashboards");
 
 function say(message: string): string {
-  void window.showInformationMessage(message);
+  void window.showInformationMessage(plainMessage(message));
   return message;
 }
 
@@ -70,6 +71,8 @@ export class Dashboards {
   private readonly running = new Set<string>();
   /// What each tile last showed, for tests.
   readonly contents = new Map<string, TileContent>();
+  /// When each of them was worked out, as its tile says it.
+  private readonly at = new Map<string, string>();
   /// Queries sent, by tile, for tests.
   runs = 0;
 
@@ -113,10 +116,14 @@ export class Dashboards {
     return [...this.timers.values()].map(({ every }) => every);
   }
 
-  /// Ask for a new dashboard's name; undefined on Escape.
-  private async create(): Promise<Dashboard | undefined> {
+  /// A new dashboard named `given`, or a name asked for when none is given
+  /// or it cannot be one (the box then holds it); undefined on Escape.
+  private async create(given?: string): Promise<Dashboard | undefined> {
     const taken = this.list().map((d) => d.name);
-    const name = await window.showInputBox({ title: "Name the new dashboard", validateInput: (v) => dashboardNameProblem(v, taken) });
+    const name =
+      given !== undefined && dashboardNameProblem(given, taken) === undefined
+        ? given
+        : await window.showInputBox({ title: "Name the new dashboard", value: given, validateInput: (v) => dashboardNameProblem(v, taken) });
     if (name === undefined || dashboardNameProblem(name, taken) !== undefined) return undefined;
     const d: Dashboard = { name: name.trim(), columns: 2, tiles: [] };
     await this.save(withDashboard(this.list(), d));
@@ -131,7 +138,8 @@ export class Dashboards {
       const fresh = "$(add) New dashboard...";
       const pick = name !== undefined ? undefined : await window.showQuickPick([...list.map((x) => x.name), fresh], { title: "Open which dashboard?" });
       if (pick === undefined && name === undefined) return "cancelled";
-      d = pick === fresh || pick === undefined ? await this.create() : list.find((x) => x.name === pick);
+      // A name that is no dashboard's makes one of that name (#1268).
+      d = pick === fresh || pick === undefined ? await this.create(name) : list.find((x) => x.name === pick);
     }
     if (d === undefined) return "cancelled";
     this.show(d);
@@ -239,7 +247,7 @@ export class Dashboards {
       }
       const content = this.contents.get(tile.id);
       if (runAll || content === undefined) void this.runTile(tile);
-      else void this.panel?.webview.postMessage({ type: "tile", id: tile.id, content });
+      else void this.panel?.webview.postMessage({ type: "tile", id: tile.id, content, at: this.at.get(tile.id) });
     }
   }
 
@@ -247,8 +255,10 @@ export class Dashboards {
   async runTile(tile: Tile): Promise<void> {
     if (!on() || this.running.has(tile.id)) return;
     const post = (content: TileContent) => {
+      const at = new Date().toLocaleTimeString();
       this.contents.set(tile.id, content);
-      void this.panel?.webview.postMessage({ type: "tile", id: tile.id, content, at: new Date().toLocaleTimeString() });
+      this.at.set(tile.id, at);
+      void this.panel?.webview.postMessage({ type: "tile", id: tile.id, content, at });
     };
     const query = this.saved().find((q) => q.name === tile.query);
     if (query === undefined) return post({ kind: "error", text: `There is no saved query ${tile.query} any more.` });
@@ -261,7 +271,9 @@ export class Dashboards {
     void this.panel?.webview.postMessage({ type: "running", id: tile.id });
     try {
       this.runs++;
-      post(tileContent(await this.live.runApart(process, query.code), tile.view));
+      const answer = await this.live.runApart(process, query.code);
+      // Shown as the tile is set now: its view can change while the run is out (#1339).
+      post(tileContent(answer, this.current()?.tiles.find((x) => x.id === tile.id)?.view ?? tile.view));
     } catch (error) {
       post({ kind: "error", text: error instanceof Error ? error.message : String(error) });
     } finally {
@@ -317,6 +329,7 @@ function dashboardHtml(webview: Webview, media: Uri): string {
     '<meta name="viewport" content="width=device-width, initial-scale=1.0">',
     `<link rel="stylesheet" href="${file("dashboard.css")}">`,
     "<title>q-lint: dashboard</title></head><body>",
+    `<script nonce="${nonce}" src="${file("refocus.js")}"></script>`,
     `<script nonce="${nonce}" src="${file("dashboard.js")}"></script>`,
     "</body></html>",
   ].join("\n");

@@ -32,3 +32,11 @@ export function historyHeading(entry: { process: string; millis: number; error?:
 export function iconsEscaped(text: string): string {
   return text.replace(/\$\(/g, "\\$(");
 }
+
+/// `text` as a notification shows it as written: VS Code makes
+/// `[label](command:...)` in a message a link that runs the command, so a
+/// q error or a process label could carry one. A zero-width space between
+/// `]` and `(` leaves it text (#1306).
+export function plainMessage(text: string): string {
+  return text.replace(/\]\(/g, "]\u200b(");
+}

@@ -20,7 +20,7 @@
 // the wizard lets each be changed, or the column skipped.
 import { basename } from "node:path";
 import { readDelimited } from "./pastetable";
-import { RESERVED, stringLiteral } from "./qliteral";
+import { RESERVED, qString, stringLiteral } from "./qliteral";
 
 /// The commands, as `resulttools.ts` registers them.
 export const DATA_FILES = {
@@ -203,8 +203,10 @@ export function fileHandle(path: string): string {
 
 /// The expression `0:` loads a delimited file with: `types` one letter per
 /// column, read from `source` - the file's handle, or a list of its lines.
+/// One column's types, and a one-character line, are enlisted: `"J"` is a
+/// char, and `0:` refuses it ('type, #1262).
 export function csvLoad(types: string[], delimiter: string, source: string): string {
-  return `(${stringLiteral(types.join(""))};enlist ${charLiteral(delimiter)})0:${source}`;
+  return `(${qString(types.join(""))};enlist ${charLiteral(delimiter)})0:${source}`;
 }
 
 /// Lines as a q list of strings, for a process that cannot read the file.
@@ -213,7 +215,7 @@ export function linesLiteral(text: string): string {
   while (lines.length > 0 && lines[lines.length - 1] === "") {
     lines.pop();
   }
-  return lines.length === 1 ? `enlist ${stringLiteral(lines[0])}` : `(${lines.map(stringLiteral).join(";")})`;
+  return lines.length === 1 ? `enlist ${qString(lines[0])}` : `(${lines.map(qString).join(";")})`;
 }
 
 /// The expression that loads a data file: by its path when the process

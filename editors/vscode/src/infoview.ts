@@ -18,24 +18,37 @@ import {
   type TreeView,
 } from "vscode";
 import { HDB, HDB_PARTITIONS, hdbTree, readHdb } from "./hdb";
-import type { Live } from "./live";
+import { movedFrom, type Live } from "./live";
 import { INFO, MONITOR, monitorTree, readMonitorInterval, type InfoNode } from "./monitor";
 import type { QConnection } from "./qclient";
 import type { Process } from "./processes";
 import { readInsight, turnedOff, type InsightFeature } from "./insightconfig";
+import { plainMessage } from "./history";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /// Run `use` on the active connection as `Live.borrow` does, waiting up to
 /// `wait` ms for a query or another view's read to finish first. Undefined
-/// when not connected, or still busy after that.
+/// when not connected, or still busy after that. With `expect`, the label
+/// of the process a question asked about, it throws `movedFrom` rather than
+/// use any other (#1081).
 export async function borrowWhenFree<T>(
   live: Live,
   use: (connection: QConnection, process: Process) => Promise<T>,
   wait = 3000,
+  expect?: string,
 ): Promise<{ value: T } | undefined> {
+  const checked =
+    expect === undefined
+      ? use
+      : async (connection: QConnection, process: Process) => {
+          if (process.label !== expect) {
+            throw movedFrom(expect);
+          }
+          return use(connection, process);
+        };
   for (let waited = 0; ; waited += 100) {
-    const call = live.borrow(use);
+    const call = live.borrow(checked);
     if (call !== undefined) {
       return { value: await call };
     }
@@ -110,7 +123,7 @@ class InfoView implements TreeDataProvider<InfoNode> {
       const got = await borrowWhenFree(this.live, async (connection, process) => ({ process: process.label, nodes: await this.read(connection, process) }));
       if (got === undefined) {
         if (asked && this.live.activeLabel() !== undefined) {
-          void window.showInformationMessage(`q-lint: ${this.live.activeLabel()} is busy with a query; refresh again when it is done.`);
+          void window.showInformationMessage(plainMessage(`q-lint: ${this.live.activeLabel()} is busy with a query; refresh again when it is done.`));
         }
         return;
       }
@@ -160,7 +173,7 @@ class Switched {
     private readonly make: () => InfoView,
   ) {
     context.subscriptions.push(
-      commands.registerCommand(refresh, () => (this.view === undefined ? void window.showInformationMessage(turnedOff(feature)) : this.view.refresh(true))),
+      commands.registerCommand(refresh, () => (this.view === undefined ? void window.showInformationMessage(plainMessage(turnedOff(feature))) : this.view.refresh(true))),
       { dispose: () => this.view?.dispose() },
     );
     this.apply();

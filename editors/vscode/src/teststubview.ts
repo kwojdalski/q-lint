@@ -25,6 +25,7 @@ import {
 } from "vscode";
 import { editorFeatureOff, editorFeatureOn } from "./editorfeatures";
 import { TEST_STUB_COMMAND, detectStyle, functionAt, newTestPath, stubText, testFilePatterns, testName, type Target } from "./teststub";
+import { plainMessage } from "./history";
 
 const on = (): boolean => editorFeatureOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "testStub");
 
@@ -89,7 +90,7 @@ async function testFile(source: Uri): Promise<{ uri: Uri; text: string | undefin
 /// Write the stub for the function at `line` of `uri`, once asked.
 export async function generateStub(uri?: Uri, line?: number): Promise<boolean> {
   if (!on()) {
-    void window.showInformationMessage(editorFeatureOff("testStub"));
+    void window.showInformationMessage(plainMessage(editorFeatureOff("testStub")));
     return false;
   }
   const editor = window.activeTextEditor;
@@ -111,7 +112,7 @@ export async function generateStub(uri?: Uri, line?: number): Promise<boolean> {
   const stub = stubText(target, name, style);
   const yes = "Add Test";
   const answer = await window.showInformationMessage(
-    `${file.text === undefined ? "Create" : "Add to"} ${workspace.asRelativePath(file.uri)}: ${name}?`,
+    plainMessage(`${file.text === undefined ? "Create" : "Add to"} ${workspace.asRelativePath(file.uri)}: ${name}?`),
     { modal: true, detail: stub },
     yes,
   );
@@ -122,7 +123,7 @@ export async function generateStub(uri?: Uri, line?: number): Promise<boolean> {
   if (file.text === undefined) {
     // Checked again just before: a file made meanwhile is not written over.
     if ((await read(file.uri)) !== undefined) {
-      void window.showWarningMessage(`q-lint: ${workspace.asRelativePath(file.uri)} exists now; nothing was written.`);
+      void window.showWarningMessage(plainMessage(`q-lint: ${workspace.asRelativePath(file.uri)} exists now; nothing was written.`));
       return false;
     }
     const content = `/ Tests for ${workspace.asRelativePath(source)}\n\n${stub}`;
@@ -136,7 +137,7 @@ export async function generateStub(uri?: Uri, line?: number): Promise<boolean> {
     const end = new Position(lines.length - 1, lines[lines.length - 1].length);
     edit.insert(file.uri, end, `${ends ? "" : "\n"}\n${stub}`);
     if (!(await workspace.applyEdit(edit))) {
-      void window.showErrorMessage(`q-lint: could not add the test to ${workspace.asRelativePath(file.uri)}.`);
+      void window.showErrorMessage(plainMessage(`q-lint: could not add the test to ${workspace.asRelativePath(file.uri)}.`));
       return false;
     }
     stubLine = lines.length + (ends ? 0 : 1);

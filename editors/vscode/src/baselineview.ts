@@ -10,9 +10,10 @@
 import { execFile } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { commands, window, workspace, type ExtensionContext } from "vscode";
 import { LANGUAGE_COMMANDS, languageOff, languageOn } from "./languagefeatures";
+import { plainMessage } from "./history";
 
 export const BASELINE_FILE = "qlinter-baseline.json";
 
@@ -52,12 +53,12 @@ function runQlinter(command: string, args: string[], cwd: string): Promise<{ cod
   });
 }
 
-export function registerBaseline(context: ExtensionContext, qlinter: () => { command: string; args: string[] }): void {
+export function registerBaseline(context: ExtensionContext, qlinter: () => { command: string | undefined; args: string[] }): void {
   const on = (): boolean => languageOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "baseline");
   context.subscriptions.push(
     commands.registerCommand(LANGUAGE_COMMANDS.writeBaseline, async () => {
       if (!on()) {
-        void window.showInformationMessage(languageOff("baseline"));
+        void window.showInformationMessage(plainMessage(languageOff("baseline")));
         return undefined;
       }
       const folders = (workspace.workspaceFolders ?? []).filter((f) => f.uri.scheme === "file");
@@ -74,19 +75,23 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
       const dir = folder.uri.fsPath;
       const target = join(dir, BASELINE_FILE);
       const { command, args } = qlinter();
+      if (command === undefined) {
+        void window.showWarningMessage("q-lint: no qlinter to run: set q-lint.serverPath, or put qlinter on PATH.");
+        return undefined;
+      }
       const scratch = mkdtempSync(join(tmpdir(), "qlint-baseline-"));
       try {
         const draft = join(scratch, BASELINE_FILE);
         const ran = await runQlinter(command, [...args, "--write-baseline", draft, "."], dir);
         const count = writtenCount(ran.stderr);
         if (count === undefined || !existsSync(draft)) {
-          void window.showWarningMessage(`q-lint: qlinter wrote no baseline: ${ran.stderr.trim() || `exit ${ran.code}`}`);
+          void window.showWarningMessage(plainMessage(`q-lint: qlinter wrote no baseline: ${ran.stderr.trim() || `exit ${ran.code}`}`));
           return undefined;
         }
         const exists = existsSync(target);
         const write = exists ? "Replace" : "Write";
         const answer = await window.showWarningMessage(
-          `${exists ? "Replace" : "Write"} ${BASELINE_FILE} in ${folder.name}?`,
+          plainMessage(`${exists ? "Replace" : "Write"} ${BASELINE_FILE} in ${folder.name}?`),
           {
             modal: true,
             detail:
@@ -98,9 +103,9 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
         if (answer !== write) {
           return undefined;
         }
-        // Rewritten to be relative to the folder, as the draft's paths were
-        // relative to the scratch directory.
-        const text = readFileSync(draft, "utf8");
+        // Rewritten to be relative to the folder: the draft's paths are
+        // relative to the scratch directory, through `..` (#1191, #1275).
+        const text = absolutePaths(readFileSync(draft, "utf8"), canonicalDir(scratch));
         writeFileSync(target, rebased(text, dir, canonicalDir(dir)));
         await offerConfiguration(dir);
         return target;
@@ -111,7 +116,17 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
   );
 }
 
-/// A baseline written from a scratch directory, whose paths are absolute,
+/// A baseline's `text` with each relative path - relative to `dir`, its
+/// directory, `../` included - resolved against `dir`, `/`-separated. A path
+/// already absolute (another Windows drive) is left as it is.
+export function absolutePaths(text: string, dir: string): string {
+  const base = dir.replace(/\\/g, "/").replace(/^\/\/\?\//, "");
+  return text.replace(/"path":"([^"]*)"/g, (whole, path: string) =>
+    /^(\/|[A-Za-z]:)/.test(path) ? whole : `"path":"${posix.normalize(`${base}/${path}`)}"`,
+  );
+}
+
+/// A baseline written from a scratch directory, its paths made absolute,
 /// with each path under one of `folders` (one folder's names: as opened,
 /// and with its symlinks resolved) made relative to it. qlinter writes
 /// canonical `/`-separated paths, `//?/C:/proj/a.q` on Windows, so both
@@ -142,12 +157,12 @@ async function offerConfiguration(dir: string): Promise<void> {
   const before = existsSync(config) ? readFileSync(config, "utf8") : "";
   const after = tomlWithBaseline(before);
   if (after === undefined) {
-    void window.showInformationMessage(`q-lint: wrote ${BASELINE_FILE}; ${config} already names a baseline.`);
+    void window.showInformationMessage(plainMessage(`q-lint: wrote ${BASELINE_FILE}; ${config} already names a baseline.`));
     return;
   }
   const add = "Add";
   const answer = await window.showInformationMessage(
-    `q-lint: wrote ${BASELINE_FILE}. Add \`baseline = "${BASELINE_FILE}"\` to ${existsSync(config) ? config : `a new ${config}`}, so the editor and qlinter use it?`,
+    plainMessage(`q-lint: wrote ${BASELINE_FILE}. Add \`baseline = "${BASELINE_FILE}"\` to ${existsSync(config) ? config : `a new ${config}`}, so the editor and qlinter use it?`),
     add,
   );
   if (answer === add) {

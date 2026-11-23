@@ -227,3 +227,43 @@ test("on a guarded process the run is held until confirmed, even for a query tha
   await stub.commands.get(PROFILE_FUNCTIONS)(".ns", "count trade");
   assert.deepStrictEqual(q.sent.slice(before).map((m) => m[0]), [PROFILE, PROFILE_CLEANUP]);
 });
+
+test("the profile table's sort headers are buttons with aria-sort, and keep the focus as they sort (#1252)", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const vm = require("node:vm");
+  const { Element } = require("./pagedom.js");
+  Element.prototype.appendChild = function (n) {
+    this.append(n);
+    return n;
+  };
+  const body = new Element("body");
+  // `textContent = ""` empties the page, as a browser's does.
+  Object.defineProperty(body, "textContent", { set: () => (body.children = []), get: () => "" });
+  const listeners = [];
+  const posted = [];
+  const sandbox = {
+    document: {
+      body,
+      createElement: (t) => new Element(t),
+      querySelector: (sel) => body.all((e) => e.tagName === "BUTTON" && sel.includes(`"${e.getAttribute("data-key")}"`))[0] ?? null,
+    },
+    window: { addEventListener: (_t, f) => listeners.push(f) },
+    acquireVsCodeApi: () => ({ postMessage: (m) => posted.push(m) }),
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "media", "profile.js"), "utf8"), sandbox);
+  const stat = (fn, calls) => ({ fn, calls, total: calls, self: calls, mean: 1, max: 1 });
+  const data = { type: "profile", id: 1, code: "f[]", process: "dev", namespace: ".ns", functions: 2, calls: 3, recorded: 3, total: 3, overheadPerCall: 1, overheadTotal: 3, stats: [stat(".ns.a", 1), stat(".ns.b", 2)], frames: [] };
+  listeners.forEach((f) => f({ data }));
+  const ths = () => body.all((e) => e.tagName === "TH");
+  assert.deepStrictEqual(ths().map((th) => th.getAttribute("aria-sort")), ["none", "none", "descending", "none", "none", "none"]);
+  const calls = ths()[1].children[0];
+  assert.strictEqual(calls.tagName, "BUTTON");
+  calls.fire("click");
+  assert.strictEqual(ths()[1].getAttribute("aria-sort"), "descending");
+  assert.strictEqual(Element.focused.getAttribute("data-key"), "calls");
+  assert.notStrictEqual(Element.focused, calls);
+  assert.strictEqual(posted.at(-1).rendered.sortedBy, "calls desc");
+  delete Element.prototype.appendChild;
+});

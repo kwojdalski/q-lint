@@ -92,3 +92,23 @@ test("off, every command refuses, nothing is sent, and the marks go", async () =
   }
   assert.strictEqual(s.sent.length, before);
 });
+
+test("Remove Logpoint removes only on the process it listed, not one connected while it asked (#1294)", async (t) => {
+  const { setUp, fakeQ, heads } = require("./fakeq.js");
+  vscode.window.createTextEditorDecorationType = () => ({ dispose() {} });
+  vscode.window.activeTextEditor = undefined;
+  const answer = (m) => ((Array.isArray(m) ? m[0] : m) === LOG_LIST ? { names: ["f", "g"], hits: [] } : true);
+  const { q, live, context } = await setUp(t, { answer, register: registerLogpoints });
+  const other = await fakeQ(answer);
+  t.after(() => other.close());
+  await context.globalState.update("q-lint.processes", [
+    { label: "a", host: "127.0.0.1", port: q.port, tags: [] },
+    { label: "b", host: "127.0.0.1", port: other.port, tags: [] },
+  ]);
+  live.refreshProcesses();
+  await live.connectTo("a");
+  stub.picks.push(async () => (await live.connectTo("b"), "g"));
+  await stub.commands.get(LOGPOINT_COMMANDS.remove)();
+  assert.ok(!heads(q.sent).includes(LOG_REMOVE) && !heads(other.sent).includes(LOG_REMOVE));
+  assert.ok(stub.messages.some(([, m]) => /the logpoint on g was not removed: a is no longer the active process/.test(m)), JSON.stringify(stub.messages));
+});

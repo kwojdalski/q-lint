@@ -89,22 +89,27 @@
     let marked = 0;
     c.rows.forEach(function (row) {
       const tr = element("tr");
-      const add = function (cells, other) {
+      // `here` and `there` are the two processes, `has` the columns the other has.
+      const add = function (cells, other, here, there, has) {
         c.columns.forEach(function (_, i) {
           if (cells === undefined) {
-            tr.appendChild(element("td", "missing"));
+            // Said as well as coloured: a background alone tells some readers nothing.
+            tr.appendChild(element("td", "missing")).title = "No such row on " + here;
             return;
           }
           const changed = other === undefined ? "only" : row.differs[i] ? "changed" : "";
           if (changed) {
             marked++;
           }
-          tr.appendChild(element("td", changed, cells[i]));
+          const td = tr.appendChild(element("td", changed, cells[i]));
+          if (changed) {
+            td.title = other === undefined ? "Only on " + here : "Differs from " + there + ": " + (!has[i] ? "no such column" : other[i] === "" ? "(null)" : other[i]);
+          }
         });
       };
-      add(row.left, row.right);
+      add(row.left, row.right, c.left.process, c.right.process, c.inRight);
       tr.appendChild(element("td", "gap"));
-      add(row.right, row.left);
+      add(row.right, row.left, c.right.process, c.left.process, c.inLeft);
       body.appendChild(tr);
     });
     t.appendChild(body);

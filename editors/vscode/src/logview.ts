@@ -39,6 +39,7 @@ import {
   type Level,
 } from "./logparse";
 import { readFrom, START, type Position } from "./logreader";
+import { iconsEscaped, plainMessage } from "./history";
 
 /// How often a followed file is checked for new lines.
 const FOLLOW_MS = 500;
@@ -229,6 +230,10 @@ export class LogViewer {
     await this.reload(view);
     const document = await workspace.openTextDocument(view.uri);
     const editor = await window.showTextDocument(document, { preview: false });
+    // Closed, or the viewer turned off, while it opened: nothing to follow (#1295).
+    if (this.views.get(id) !== view) {
+      return undefined;
+    }
     this.decorate(editor);
     this.reveal(view);
     this.watch(view);
@@ -267,7 +272,7 @@ export class LogViewer {
           try {
             view.positions.set(file, await readFrom(file, START, (line) => builder.push(line)));
           } catch (error) {
-            void window.showErrorMessage(`q-lint: could not read ${file}: ${error instanceof Error ? error.message : String(error)}`);
+            void window.showErrorMessage(plainMessage(`q-lint: could not read ${file}: ${error instanceof Error ? error.message : String(error)}`));
             view.positions.set(file, START);
           }
         }
@@ -584,7 +589,7 @@ export class LogViewer {
       return;
     }
     const filter = filterText(view.filter);
-    this.status.text = `$(list-filter) ${filter || "all"} · ${view.entries.length} · ${view.follow ? "following" : "paused"}`;
+    this.status.text = `$(list-filter) ${iconsEscaped(filter) || "all"} · ${view.entries.length} · ${view.follow ? "following" : "paused"}`;
     this.status.tooltip = `${view.files.join("\n")}\nShowing the last ${view.max} entries that pass the filter. Click to filter by level.`;
     this.status.show();
   }

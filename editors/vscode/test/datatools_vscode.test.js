@@ -249,7 +249,7 @@ test("the CSV load wizard shows the guessed types, takes a change, writes the st
   await run(DATA_FILES.wizard, vscode.Uri.file(csv));
   const statement = `tr:(" FF";enlist ",")0:${fileHandle(csv)}`;
   assert.match(opened.at(-1).content, new RegExp(`^/ Load trades\\.csv as tr, written by q-lint's CSV load wizard\\.\\n.*\\n${statement.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\n$`));
-  assert.deepStrictEqual(live.ran, [{ code: statement, mode: undefined }]);
+  assert.deepStrictEqual(live.ran, [{ code: statement, label: "rdb", options: { what: "load statement" } }]);
   // Not Run: written, not sent.
   stub.picks.push("$(check) Done", undefined);
   stub.inputs.push("tr");
@@ -263,6 +263,14 @@ test("the CSV load wizard shows the guessed types, takes a change, writes the st
   await run(DATA_FILES.wizard, vscode.Uri.file(csv));
   assert.match(infos().at(-1), /q-lint\.dataFiles\.loadWizard\.enable/);
   assert.deepStrictEqual(off.live.ran, []);
+});
+
+test("the CSV load wizard runs on the process it asked about, even when another became active meanwhile (#1293)", async () => {
+  const { live } = setUp();
+  stub.picks.push("$(check) Done", (options) => (assert.match(options.message ?? options, /on rdb\?/), (live.process = { label: "other", host: "localhost", port: 5001, tags: [] }), "Run"));
+  stub.inputs.push("tr");
+  await run(DATA_FILES.wizard, vscode.Uri.file(csv));
+  assert.deepStrictEqual(live.ran.map((r) => r.label), ["rdb"]);
 });
 
 const tableInfo = {

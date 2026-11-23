@@ -29,7 +29,9 @@ export const SYMBOLS_LIMIT = 200;
 export const PROCESS_NAMES = [
   "{[lim]",
   " lim:\"j\"$lim;",
-  " ns:{`$\".\",'string x where 1<count each string x} (key `) except `;",
+  // q's own namespaces are left out by name: `.u`, a one-letter one of the
+  // process's, is kept (#1261).
+  " ns:{`$\".\",'string x} (key `) except ``q`Q`h`j`o`z`m`s;",
   " a:system\"a\";",
   " r:(`name`kind!(();()));",
   " add:{[r;n;k] r[`name],:string n; r[`kind],:count[n]#enlist k; r};",

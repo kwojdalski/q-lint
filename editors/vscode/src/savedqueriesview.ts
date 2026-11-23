@@ -29,7 +29,7 @@ import {
   type TreeView,
 } from "vscode";
 import type { HistoryEntry, Live } from "./live";
-import { iconsEscaped } from "./history";
+import { iconsEscaped, plainMessage } from "./history";
 import {
   SAVED_QUERIES,
   SAVED_QUERIES_KEY,
@@ -151,7 +151,7 @@ export class SavedQueries implements TreeDataProvider<SavedQuery> {
     if (name !== undefined) {
       const found = list.find((q) => q.name === name);
       if (found === undefined) {
-        void window.showErrorMessage(`q-lint: no saved query is named "${name}".`);
+        void window.showErrorMessage(plainMessage(`q-lint: no saved query is named "${name}".`));
       }
       return found;
     }
@@ -196,11 +196,11 @@ export class SavedQueries implements TreeDataProvider<SavedQuery> {
     // Read again: the list may have changed while the box was open.
     const now = this.queries();
     if (nameProblem(name, now.map((q) => q.name)) !== undefined) {
-      void window.showErrorMessage(`q-lint: the name "${name}" was taken meanwhile; the query was not saved.`);
+      void window.showErrorMessage(plainMessage(`q-lint: the name "${name}" was taken meanwhile; the query was not saved.`));
       return;
     }
     await this.store(withQuery(now, { name, code }), [name]);
-    void window.showInformationMessage(`q-lint: saved the query "${name}".`);
+    void window.showInformationMessage(plainMessage(`q-lint: saved the query "${name}".`));
   }
 
   /// Run a saved query on the active connection, its placeholders asked for.
@@ -245,7 +245,7 @@ export class SavedQueries implements TreeDataProvider<SavedQuery> {
     }
     const now = this.queries();
     if (!now.some((q) => q.name === query.name) || nameProblem(name, now.map((q) => q.name).filter((n) => n !== query.name)) !== undefined) {
-      void window.showErrorMessage(`q-lint: the saved queries changed meanwhile; "${query.name}" was not renamed.`);
+      void window.showErrorMessage(plainMessage(`q-lint: the saved queries changed meanwhile; "${query.name}" was not renamed.`));
       return;
     }
     await this.store(renamed(now, query.name, name), [query.name, name]);
@@ -262,7 +262,7 @@ export class SavedQueries implements TreeDataProvider<SavedQuery> {
       return;
     }
     const yes = "Delete";
-    if ((await window.showWarningMessage(`Delete the saved query "${query.name}"?`, { modal: true }, yes)) !== yes) {
+    if ((await window.showWarningMessage(plainMessage(`Delete the saved query "${query.name}"?`), { modal: true }, yes)) !== yes) {
       return;
     }
     await this.store(this.queries().filter((q) => q.name !== query.name), [query.name]);

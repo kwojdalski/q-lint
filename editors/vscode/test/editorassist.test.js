@@ -136,6 +136,22 @@ test("the argument slot is highlighted, its name drawn where no hint draws it, a
   assert.strictEqual(asked.length, before);
 });
 
+test("the argument slot drawn in one editor is cleared when the focus moves to another (#1265)", async () => {
+  stub.reset();
+  const a = fakeEditor();
+  const bDrawn = new Map();
+  const b = { ...a.editor, document: { ...a.editor.document, uri: { scheme: "file", toString: () => "file:///ws/b.q" } }, setDecorations: (type, ranges) => bDrawn.set(a.types.indexOf(type), ranges) };
+  let answer = { range: { start: { line: 1, character: 14 }, end: { line: 1, character: 16 } }, index: 1, callee: ".lib.add", parameter: "b", hinted: false };
+  const slot = registerArgumentSlot(stub.newContext(), () => ({ sendRequest: async () => answer }));
+  await slot.update(a.editor);
+  assert.deepStrictEqual([a.drawn.get(0).length, a.drawn.get(1).length], [1, 1]);
+  answer = null;
+  await slot.update(b);
+  assert.deepStrictEqual([a.drawn.get(0), a.drawn.get(1)], [[], []]);
+  assert.deepStrictEqual(bDrawn.get(0), []);
+  assert.strictEqual(slot.shown(), undefined);
+});
+
 /// A workspace symbol API that records registrations.
 function fakeSymbols() {
   const registered = [];

@@ -60,6 +60,7 @@ import {
 import type { Live } from "./live";
 import { decodeItem, encodeItem, exportScript, NOTEBOOK, parseQnb, serializeQnb, type Qnb, type QnbCell, type QnbOutput } from "./qnb";
 import { statements } from "./statements";
+import { plainMessage } from "./history";
 
 /// Where the fields of a file, a cell or an output this extension does not
 /// know ride in VS Code's metadata between an open and a save; never written
@@ -234,7 +235,7 @@ export function requireFeature(feature: Feature): boolean {
   if (featureOn(feature)) {
     return true;
   }
-  void window.showInformationMessage(`q-lint: ${featureOff(feature)}`);
+  void window.showInformationMessage(plainMessage(`q-lint: ${featureOff(feature)}`));
   return false;
 }
 
@@ -261,7 +262,7 @@ export async function switchProcess(live: Live, label: string): Promise<string |
   if (isProduction(process)) {
     const go = "Connect and Run";
     const answer = await window.showWarningMessage(
-      `${process.label} is a production process (tagged ${process.tags.join(", ")}). Connect to it and run the cell there?`,
+      plainMessage(`${process.label} is a production process (tagged ${process.tags.join(", ")}). Connect to it and run the cell there?`),
       { modal: true, detail: `The cell says / @process ${label}. It runs on ${address(process.host, process.port)} as written, and later cells run there too.` },
       go,
     );
@@ -549,7 +550,7 @@ async function exportNotebook(source?: Uri, target?: Uri, format: ExportFormat =
         ? toHtml(await qnbOf(from), name)
         : toIpynb(await qnbOf(from));
   } catch (error) {
-    void window.showErrorMessage(`q-lint: could not read ${from.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+    void window.showErrorMessage(plainMessage(`q-lint: could not read ${from.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
     return;
   }
   const to =
@@ -566,11 +567,11 @@ async function exportNotebook(source?: Uri, target?: Uri, format: ExportFormat =
   try {
     await workspace.fs.writeFile(to, Buffer.from(text, "utf8"));
   } catch (error) {
-    void window.showErrorMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+    void window.showErrorMessage(plainMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
     return;
   }
   if (!(target instanceof Uri)) {
-    void window.showInformationMessage(`q-lint: exported the notebook to ${to.fsPath}.`);
+    void window.showInformationMessage(plainMessage(`q-lint: exported the notebook to ${to.fsPath}.`));
   }
 }
 
@@ -591,7 +592,7 @@ async function importIpynb(source?: Uri, target?: Uri): Promise<void> {
   try {
     qnb = fromIpynb(Buffer.from(await workspace.fs.readFile(from)).toString("utf8"));
   } catch (error) {
-    void window.showErrorMessage(`q-lint: could not import ${from.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+    void window.showErrorMessage(plainMessage(`q-lint: could not import ${from.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
     return;
   }
   const to =
@@ -608,7 +609,7 @@ async function importIpynb(source?: Uri, target?: Uri): Promise<void> {
   try {
     await workspace.fs.writeFile(to, Buffer.from(serializeQnb(qnb), "utf8"));
   } catch (error) {
-    void window.showErrorMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+    void window.showErrorMessage(plainMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
     return;
   }
   if (!(target instanceof Uri)) {

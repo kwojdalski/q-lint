@@ -49,6 +49,7 @@ import {
   type FilterOp,
   type Step,
 } from "./wrangle";
+import { iconsEscaped, plainMessage } from "./history";
 
 /// Wrangles kept, to go on from the result of one.
 const WRANGLES = 50;
@@ -101,7 +102,7 @@ export class ResultTools {
     if (config(readResultView).enable[feature]) {
       return true;
     }
-    void window.showInformationMessage(`q-lint: this result panel feature is turned off. Turn it on with the setting q-lint.results.${feature}.enable.`);
+    void window.showInformationMessage(plainMessage(`q-lint: this result panel feature is turned off. Turn it on with the setting q-lint.results.${feature}.enable.`));
     return false;
   }
 
@@ -109,7 +110,7 @@ export class ResultTools {
     if (config(readDataFiles)[feature]) {
       return true;
     }
-    void window.showInformationMessage(`q-lint: ${feature === "open" ? "Open Data File in Grid" : "the CSV load wizard"} is turned off. Turn it on with the setting q-lint.dataFiles.${feature}.enable.`);
+    void window.showInformationMessage(plainMessage(`q-lint: ${feature === "open" ? "Open Data File in Grid" : "the CSV load wizard"} is turned off. Turn it on with the setting q-lint.dataFiles.${feature}.enable.`));
     return false;
   }
 
@@ -135,7 +136,7 @@ export class ResultTools {
     }
     const wrangle = this.wrangleOf(shown);
     if (typeof wrangle === "string") {
-      void window.showInformationMessage(`q-lint: the result on show cannot be wrangled: ${wrangle}. Wrangle a result of a single expression, such as select from t.`);
+      void window.showInformationMessage(plainMessage(`q-lint: the result on show cannot be wrangled: ${wrangle}. Wrangle a result of a single expression, such as select from t.`));
       return;
     }
     const payload = shown.payload;
@@ -175,7 +176,7 @@ export class ResultTools {
     }
     const problem = columnProblem(payload.names[at]);
     if (problem !== undefined) {
-      void window.showWarningMessage(`q-lint: ${problem}.`);
+      void window.showWarningMessage(plainMessage(`q-lint: ${problem}.`));
       return;
     }
     const step = await this.askStep(picked.action, payload, at);
@@ -186,7 +187,7 @@ export class ResultTools {
 
   private async pickColumn(payload: GridPayload, what: string): Promise<number | undefined> {
     const picked = await window.showQuickPick(
-      payload.names.map((n, i) => ({ label: n, description: typeName(payload.types[i]) + (i < payload.keys ? " · key" : ""), at: i })),
+      payload.names.map((n, i) => ({ label: iconsEscaped(n), description: typeName(payload.types[i]) + (i < payload.keys ? " · key" : ""), at: i })),
       { title: `q-lint: ${what}: which column?` },
     );
     return picked?.at;
@@ -299,13 +300,13 @@ export class ResultTools {
     }
     const edit = editStatement(payload, column, row, table.trim(), value);
     if ("error" in edit) {
-      void window.showWarningMessage(`q-lint: the cell cannot be edited: ${edit.error}.`);
+      void window.showWarningMessage(plainMessage(`q-lint: the cell cannot be edited: ${edit.error}.`));
       return;
     }
     const run = "Run";
     const editor = "Open in Editor";
     const answer = await window.showWarningMessage(
-      `Update ${table.trim()} on ${process}?`,
+      plainMessage(`Update ${table.trim()} on ${process}?`),
       {
         modal: true,
         detail: `${edit.code}\n\nEvery row of ${table.trim()} whose ${edit.matchedBy.join(", ")} ${edit.matchedBy.length === 1 ? "is" : "are"} as in this one is changed. Nothing is sent unless you choose Run.`,
@@ -348,7 +349,7 @@ export class ResultTools {
     }
     const kind = dataKind(file.fsPath);
     if (kind === undefined) {
-      void window.showInformationMessage(`q-lint: ${basename(file.fsPath)} is not a CSV, TSV or JSON file, the formats Open Data File in Grid reads.`);
+      void window.showInformationMessage(plainMessage(`q-lint: ${basename(file.fsPath)} is not a CSV, TSV or JSON file, the formats Open Data File in Grid reads.`));
       return;
     }
     let process = this.live.activeProcess();
@@ -362,20 +363,20 @@ export class ResultTools {
     try {
       head = await this.head(file.fsPath);
     } catch (error) {
-      void window.showErrorMessage(`q-lint: could not read ${file.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+      void window.showErrorMessage(plainMessage(`q-lint: could not read ${file.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
       return;
     }
     const local = process.ssh === undefined && isLocalHost(process.host, hostname());
     if (!local && head.size > INLINE_BYTES) {
       void window.showWarningMessage(
-        `q-lint: ${process.label} runs on ${process.host}, so it cannot read ${basename(file.fsPath)} by its path, and the file is too large (${head.size.toLocaleString("en-US")} bytes, over ${INLINE_BYTES.toLocaleString("en-US")}) to send. Open it with a process on this machine.`,
+        plainMessage(`q-lint: ${process.label} runs on ${process.host}, so it cannot read ${basename(file.fsPath)} by its path, and the file is too large (${head.size.toLocaleString("en-US")} bytes, over ${INLINE_BYTES.toLocaleString("en-US")}) to send. Open it with a process on this machine.`),
       );
       return;
     }
     const text = local ? undefined : await readFile(file.fsPath, "utf8");
     const sample = kind.kind === "csv" ? sampleText(head.text, kind.delimiter, head.cut) : { types: [], delimiter: "" };
     if (kind.kind === "csv" && sample.types.length === 0) {
-      void window.showInformationMessage(`q-lint: ${basename(file.fsPath)} has no header line to name its columns.`);
+      void window.showInformationMessage(plainMessage(`q-lint: ${basename(file.fsPath)} has no header line to name its columns.`));
       return;
     }
     await this.live.run(loadExpression(kind.kind, file.fsPath, local, sample, text), undefined, undefined, "grid");
@@ -390,14 +391,14 @@ export class ResultTools {
     }
     const kind = dataKind(file.fsPath);
     if (kind?.kind !== "csv") {
-      void window.showInformationMessage(`q-lint: ${basename(file.fsPath)} is not a delimited text file (CSV, TSV, PSV or TXT).`);
+      void window.showInformationMessage(plainMessage(`q-lint: ${basename(file.fsPath)} is not a delimited text file (CSV, TSV, PSV or TXT).`));
       return;
     }
     let head;
     try {
       head = await this.head(file.fsPath);
     } catch (error) {
-      void window.showErrorMessage(`q-lint: could not read ${file.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+      void window.showErrorMessage(plainMessage(`q-lint: could not read ${file.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
       return;
     }
     let sample: Sample = sampleText(head.text, kind.delimiter, head.cut);
@@ -428,12 +429,14 @@ export class ResultTools {
     const process = this.live.activeLabel();
     const run = "Run";
     const answer = await window.showWarningMessage(
-      process === undefined ? "Run this load statement on a q process?" : `Run this load statement on ${process}?`,
+      plainMessage(process === undefined ? "Run this load statement on a q process?" : `Run this load statement on ${process}?`),
       { modal: true, detail: `${statement}\n\nIt assigns ${name.trim()} on the process. Nothing is sent unless you choose Run.` },
       run,
     );
     if (answer === run) {
-      await this.live.run(statement);
+      // On the process the question named, even if another became active
+      // while it was open (#1293).
+      await (process === undefined ? this.live.run(statement) : this.live.runOnProcess(statement, process, { what: "load statement" }));
     }
   }
 

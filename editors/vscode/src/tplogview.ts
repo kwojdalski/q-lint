@@ -13,7 +13,7 @@
 // off (q-lint.tickerplantLog.enable).
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -25,6 +25,7 @@ import { mergeEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import { expandHome } from "./terminal";
 import { TPLOG_INIT, rangeProblem, readReplayed, readTpLog, readTpPage, timeOfDay, type TpLog } from "./tplog";
+import { plainMessage } from "./history";
 
 const on = (): boolean => dbOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "tickerplantLog");
 
@@ -32,7 +33,7 @@ const on = (): boolean => dbOn((key, fallback) => workspace.getConfiguration("q-
 export const TPLOG_PAGE = 200;
 
 function say(message: string): string {
-  void window.showInformationMessage(message);
+  void window.showInformationMessage(plainMessage(message));
   return message;
 }
 
@@ -90,12 +91,18 @@ export async function startLocalQ(binary: string, env: Record<string, string>, t
 
 export function stopLocalQ(local: LocalQ): void {
   local.connection?.abort();
+  const remove = (): void => {
+    try {
+      rmSync(local.dir, { recursive: true, force: true });
+    } catch {
+      // Left for the system's temporary directory to clear.
+    }
+  };
+  // On Windows a q's directory cannot be removed while the q runs, and a
+  // kill does not wait for it to exit: removed again once it has (#1287).
+  if (local.child.pid !== undefined && local.child.exitCode === null && local.child.signalCode === null) local.child.once("exit", remove);
   if (local.child.exitCode === null) local.child.kill("SIGKILL");
-  try {
-    rmSync(local.dir, { recursive: true, force: true });
-  } catch {
-    // Left for the system's temporary directory to clear.
-  }
+  remove();
 }
 
 export class TickerplantLog {
@@ -130,10 +137,11 @@ export class TickerplantLog {
     if (file === undefined) return "cancelled";
     this.stop();
     const opening = this.generation;
-    const configuration = workspace.getConfiguration("q-lint");
+    // The folder's q binary, as the folder it starts in (#1333).
+    const folder = workspace.workspaceFolders?.[0]?.uri;
+    const configuration = workspace.getConfiguration("q-lint", folder);
     const { qBinary } = readTerminal((key, fallback) => configuration.get(key, fallback));
     const binary = expandHome(qBinary, os.homedir());
-    const folder = workspace.workspaceFolders?.[0]?.uri;
     let local: LocalQ | undefined;
     try {
       local = await startLocalQ(binary, mergeEnv(layoutEnvFor(binary, folder), await dotenvFor(folder)));
@@ -179,7 +187,8 @@ export class TickerplantLog {
     } else {
       this.panel.title = title;
       this.panel.reveal();
-      void this.post({ type: "log", log: this.log, port: this.local?.port });
+      // The page lists the new log from its start, not the last one's (#1258).
+      void this.received({ type: "ready" });
     }
   }
 
@@ -236,7 +245,14 @@ export class TickerplantLog {
         case "schema": {
           const file = (await window.showOpenDialog({ canSelectMany: false, filters: { q: ["q", "k"] }, title: "Load which q file into the local q first?" }))?.[0];
           if (file === undefined || this.local !== local) return;
-          await this.call(local, "{system\"l \",x}", file.fsPath);
+          // A name with a space in it cannot be `\l`ed even from its own
+          // directory: a copy of it under a plain name in the local q's is.
+          let [dir, name] = [path.dirname(file.fsPath), path.basename(file.fsPath)];
+          if (/\s/.test(name)) {
+            copyFileSync(file.fsPath, path.join(local.dir, "qlint_schema.q"));
+            [dir, name] = [local.dir, "qlint_schema.q"];
+          }
+          await this.call(local, ".qlint.tp.schema", dir, name);
           await this.post({ type: "status", text: `Loaded ${path.basename(file.fsPath)} into the local q.` });
           break;
         }
@@ -273,7 +289,7 @@ export class TickerplantLog {
     if (!confirmed) {
       const yes = "Replay";
       const answer = await window.showWarningMessage(
-        `Replay messages ${from} to ${to} into the local q on port ${local.port}?`,
+        plainMessage(`Replay messages ${from} to ${to} into the local q on port ${local.port}?`),
         { modal: true, detail: "Each runs as -11! would run it, in the q q-lint started for this log; nothing is sent to your processes. Without a schema loaded first, a table is made from its first message." },
         yes,
       );

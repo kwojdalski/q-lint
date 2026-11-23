@@ -411,3 +411,52 @@ test("a test run on a process the read-only guard guards goes through the guard:
   await explorer.run();
   assert.strictEqual(sent.length, 2);
 });
+
+test("a run stays on the process it started on: a connection made mid-run gets none of its tests (#1283)", async (t) => {
+  const { setUp, fakeQ } = require("./fakeq.js");
+  fakeTests();
+  const answer = { ok: true, failed: false, text: "1b" };
+  const { q, live, context } = await setUp(t, { answer, config: { "testExplorer.enable": true } });
+  fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  const other = await fakeQ(answer);
+  t.after(() => other.close());
+  await context.globalState.update("q-lint.processes", [
+    { label: "dev", host: "127.0.0.1", port: q.port, tags: [] },
+    { label: "prod", host: "127.0.0.1", port: other.port, tags: ["prod"] },
+  ]);
+  live.refreshProcesses();
+  await live.connectTo("dev");
+  // The user connects to prod once the first test has run.
+  const runOnActive = live.runOnActive.bind(live);
+  live.runOnActive = async (...args) => {
+    const done = await runOnActive(...args);
+    await live.connectTo("prod");
+    return done;
+  };
+  const explorer = registerTestExplorer(stub.newContext(), live, () => ({ sendRequest: async () => LISTED }));
+  await explorer.discover();
+  await explorer.run();
+  assert.strictEqual(q.sent.length, 1);
+  assert.deepStrictEqual(other.sent, []);
+  assert.deepStrictEqual(explorer.results().map((r) => r.state), ["passed", "errored"]);
+  assert.match(explorer.results()[1].message, /dev is no longer the active process; nothing was run/);
+});
+
+test("the Test Explorer turned off mid-run sends none of the tests still queued (#1277)", async () => {
+  stub.reset();
+  fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  const live = fakeLive();
+  const runOnActive = live.runOnActive.bind(live);
+  live.runOnActive = async (...args) => {
+    const done = await runOnActive(...args);
+    stub.config.user["testExplorer.enable"] = false;
+    stub.changeConfig("q-lint.testExplorer.enable");
+    return done;
+  };
+  const explorer = registerTestExplorer(stub.newContext(), live, () => ({ sendRequest: async () => LISTED }));
+  await explorer.discover();
+  await explorer.run();
+  assert.strictEqual(live.sent.length, 1);
+});

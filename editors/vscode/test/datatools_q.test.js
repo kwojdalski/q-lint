@@ -143,6 +143,9 @@ test("the q of the data tools against a real q process", { skip }, async (t) => 
     assert.strictEqual(out.grid.types[3], 9);
     const parsed = await grid(w.wrangleQuery("([] s:(\"1\";\"22\"))", [{ kind: "cast", column: "s", to: "j", strings: w.stringColumn(base.grid, 4) }]));
     assert.strictEqual(parsed.grid.types[0], 7);
+    // A column of strings cast to strings stays as it was, not split into characters (#1281).
+    const same = await grid(w.wrangleQuery("([] s:(\"1\";\"22\"))", [{ kind: "cast", column: "s", to: "*", strings: true }]));
+    assert.deepStrictEqual(cells(same, "s"), [',"1"', '"22"']);
     // The script form gives the same table, and assigns nothing.
     const script = w.wrangleScript("select from t", steps, "test");
     const viaScript = await grid(script);
@@ -197,5 +200,20 @@ test("the q of the data tools against a real q process", { skip }, async (t) => 
       assert.deepStrictEqual(out.grid.names, ["a", "b"]);
       assert.deepStrictEqual(cells(out, "a"), ["1", "2"]);
     }
+  });
+
+  await t.test("a one-column CSV loads by its path and from its text, its one-character lines too (#1262)", async () => {
+    const csv = path.join(q.dir, "one.csv");
+    const text = "x\n1\n22\n";
+    fs.writeFileSync(csv, text);
+    const sample = d.sampleText(text);
+    assert.deepStrictEqual(sample.types, ["J"]);
+    for (const local of [true, false]) {
+      const out = await grid(d.loadExpression("csv", csv, local, sample, local ? undefined : text));
+      assert.deepStrictEqual(out.grid.names, ["x"]);
+      assert.deepStrictEqual(cells(out, "x"), ["1", "22"]);
+    }
+    const header = await grid(d.loadExpression("csv", csv, false, sample, "x\n"));
+    assert.deepStrictEqual(header.grid.names, ["x"]);
   });
 });

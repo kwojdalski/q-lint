@@ -226,6 +226,24 @@ test("turned off, the commands refuse, the provider goes and following stops; on
   assert.ok(await stub.commands.get(LOG_COMMANDS.open)(vscode.Uri.file(file)));
 });
 
+test("turned off while a log is still opening, no file is left watched (#1295)", async (t) => {
+  const file = path.join(tmp(), "q.log");
+  fs.writeFileSync(file, "a\n");
+  const { viewer } = setUp(t);
+  const watched = new Set();
+  const [watchFile, unwatchFile] = [fs.watchFile, fs.unwatchFile];
+  fs.watchFile = (f, o, l) => (watched.add(l), watchFile(f, o, l));
+  fs.unwatchFile = (f, l) => (watched.delete(l), unwatchFile(f, l));
+  t.after(() => ([fs.watchFile, fs.unwatchFile] = [watchFile, unwatchFile]));
+  vscode.workspace.openTextDocument = async (uri) => {
+    stub.config.user["processes.logViewer.enable"] = false;
+    stub.changeConfig("q-lint.processes.logViewer.enable");
+    return { uri, lineCount: 1 };
+  };
+  assert.strictEqual(await viewer.open(vscode.Uri.file(file)), undefined);
+  assert.strictEqual(watched.size, 0);
+});
+
 test("a view follows the log a real q process writes (real q)", { skip }, async (t) => {
   const dir = tmp();
   const log = path.join(dir, "out_ticker1.log");

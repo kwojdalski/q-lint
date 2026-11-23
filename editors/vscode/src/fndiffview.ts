@@ -14,6 +14,7 @@ import { FUNCTION_TEXTS, compareTexts, nameProblem, readTexts, sideDocument, typ
 import type { Live, ProcessArg } from "./live";
 import type { Process } from "./processes";
 import { PROCESS_TOOL_COMMANDS, toolOff, toolOn } from "./processtools";
+import { plainMessage } from "./history";
 
 export const DIFF_SCHEME = "q-lint-fndiff";
 
@@ -21,7 +22,7 @@ const on = (): boolean => toolOn((key, fallback) => workspace.getConfiguration("
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 function say(text: string): string {
-  void window.showInformationMessage(text);
+  void window.showInformationMessage(plainMessage(text));
   return text;
 }
 

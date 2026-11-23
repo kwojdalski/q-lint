@@ -47,6 +47,7 @@ import { readInsight, turnedOff, type InsightFeature } from "./insightconfig";
 import type { Live } from "./live";
 import { guardedBy, readGuard } from "./guard";
 import type { Process } from "./processes";
+import { plainMessage } from "./history";
 
 export const SCHEME = "q-lint-source";
 /// Set while the active editor holds a copy Redefine can send.
@@ -82,7 +83,7 @@ export async function askRedefine(name: string, process: Process, yes: string[] 
   const asked = redefineConfirmation(name, process, guardedBy(process, readGuard((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback))));
   const detail = also === undefined ? asked.detail : `${asked.detail} ${also}`;
   // A modal VS Code refuses to show (as in its test host) is a No.
-  return Promise.resolve(window.showWarningMessage(asked.message, { modal: true, detail }, ...yes)).catch(() => undefined);
+  return Promise.resolve(window.showWarningMessage(plainMessage(asked.message), { modal: true, detail }, ...yes)).catch(() => undefined);
 }
 
 /// Whether `feature` is on; when it is not, says so.
@@ -91,7 +92,7 @@ function on(feature: InsightFeature): boolean {
   if (readInsight((key, fallback) => configuration.get(key, fallback))[feature]) {
     return true;
   }
-  void window.showInformationMessage(turnedOff(feature));
+  void window.showInformationMessage(plainMessage(turnedOff(feature)));
   return false;
 }
 
@@ -167,11 +168,11 @@ export class FunctionSources implements TextDocumentContentProvider {
         source: readSource(await connection.call(SOURCE, name)),
       }));
       if (got === undefined) {
-        void window.showInformationMessage(`q-lint: ${this.live.activeLabel()} is busy with a query; try again when it is done.`);
+        void window.showInformationMessage(plainMessage(`q-lint: ${this.live.activeLabel()} is busy with a query; try again when it is done.`));
       }
       return got?.value;
     } catch (error) {
-      void window.showErrorMessage(`q-lint: could not read ${name} from ${this.live.activeLabel() ?? "the process"}: ${message(error)}`);
+      void window.showErrorMessage(plainMessage(`q-lint: could not read ${name} from ${this.live.activeLabel() ?? "the process"}: ${message(error)}`));
       return undefined;
     }
   }
@@ -211,7 +212,7 @@ export class FunctionSources implements TextDocumentContentProvider {
       return undefined;
     }
     if (!editable(shown.source)) {
-      void window.showInformationMessage(`q-lint: ${shown.name} is not a lambda, so it has no text to edit.`);
+      void window.showInformationMessage(plainMessage(`q-lint: ${shown.name} is not a lambda, so it has no text to edit.`));
       return undefined;
     }
     const document = await workspace.openTextDocument({ language: "q", content: sourceDocument(shown.name, shown.process, shown.source) });
@@ -237,7 +238,7 @@ export class FunctionSources implements TextDocumentContentProvider {
     const process = this.live.activeProcess();
     if (process === undefined || process.label !== copy.process) {
       void window.showInformationMessage(
-        `q-lint: ${copy.name} was copied from ${copy.process}; connect to it to redefine it there${process === undefined ? "" : ` (connected to ${process.label})`}.`,
+        plainMessage(`q-lint: ${copy.name} was copied from ${copy.process}; connect to it to redefine it there${process === undefined ? "" : ` (connected to ${process.label})`}.`),
       );
       return false;
     }
@@ -246,13 +247,14 @@ export class FunctionSources implements TextDocumentContentProvider {
       return false;
     }
     try {
-      const got = await borrowWhenFree(this.live, (connection) => connection.call(REDEFINE, copy.name, copy.was, text));
+      // Only on the process the question named (#1290).
+      const got = await borrowWhenFree(this.live, (connection) => connection.call(REDEFINE, copy.name, copy.was, text), undefined, copy.process);
       if (got === undefined) {
-        void window.showInformationMessage(`q-lint: ${copy.process} is busy with a query; ${copy.name} was not redefined.`);
+        void window.showInformationMessage(plainMessage(`q-lint: ${copy.process} is busy with a query; ${copy.name} was not redefined.`));
         return false;
       }
     } catch (error) {
-      void window.showErrorMessage(`q-lint: ${copy.name} was not redefined on ${copy.process}: ${message(error)}`);
+      void window.showErrorMessage(plainMessage(`q-lint: ${copy.name} was not redefined on ${copy.process}: ${message(error)}`));
       return false;
     }
     copy.was = text;
@@ -261,7 +263,7 @@ export class FunctionSources implements TextDocumentContentProvider {
       shown.source = { ...shown.source, text };
       this.changed.fire(Uri.parse(copy.from));
     }
-    void window.showInformationMessage(`q-lint: redefined ${copy.name} on ${copy.process}.`);
+    void window.showInformationMessage(plainMessage(`q-lint: redefined ${copy.name} on ${copy.process}.`));
     return true;
   }
 
@@ -285,17 +287,17 @@ export class FunctionSources implements TextDocumentContentProvider {
         callers: readCallers(await connection.call(CALLERS, excludedNamespaces.join(" "), name, CALLER_NAMESPACES)),
       }));
     } catch (error) {
-      void window.showErrorMessage(`q-lint: could not read the callers of ${name}: ${message(error)}`);
+      void window.showErrorMessage(plainMessage(`q-lint: could not read the callers of ${name}: ${message(error)}`));
       return;
     }
     if (found === undefined) {
-      void window.showInformationMessage(`q-lint: ${this.live.activeLabel()} is busy with a query; try again when it is done.`);
+      void window.showInformationMessage(plainMessage(`q-lint: ${this.live.activeLabel()} is busy with a query; try again when it is done.`));
       return;
     }
     const { process, callers } = found.value;
     const unread = callers.more > 0 ? ` (${callers.more} namespaces not read)` : "";
     if (callers.callers.length === 0) {
-      void window.showInformationMessage(`q-lint: no function on ${process} calls ${name}, of ${callers.scanned} read${unread}.`);
+      void window.showInformationMessage(plainMessage(`q-lint: no function on ${process} calls ${name}, of ${callers.scanned} read${unread}.`));
       return;
     }
     const picked = await window.showQuickPick(

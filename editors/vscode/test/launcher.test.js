@@ -12,6 +12,7 @@ const net = require("node:net");
 const pkg = require("../package.json");
 const { LAUNCH_COMMANDS, commandText, isLocalHost, launchPlan, readLauncher } = require("../out/launcher.js");
 const { launchOf, parseProcesses, splitArgs } = require("../out/processes.js");
+const { onPath } = require("../out/relations.js");
 const { Live } = require("../out/live.js");
 const { Launcher } = require("../out/launcherview.js");
 
@@ -31,6 +32,20 @@ test("a launch definition starts its program with its script, -p and its argumen
   const own = launchPlan(proc("a", 1, { command: "~/q/m64/q", cwd: "~/torq", script: "x.q", args: ["-p", "6000"] }), "q", undefined, "/home/me");
   assert.deepStrictEqual(own, { command: "/home/me/q/m64/q", args: ["/home/me/torq/x.q", "-p", "6000"], cwd: "/home/me/torq", env: {} });
   assert.deepStrictEqual(launchPlan(proc("b", 7, {}), "q", undefined, "/home/me"), { command: "q", args: ["-p", "7"], cwd: "/home/me", env: {} });
+  // ~\ is home too, as Windows writes it (#1284), in the definition and in q-lint.qBinary.
+  const winHome = path.join("/home/me", "q\\w64\\q.exe");
+  assert.strictEqual(launchPlan(proc("w", 1, { command: "~\\q\\w64\\q.exe" }), "q", undefined, "/home/me").command, winHome);
+  assert.strictEqual(launchPlan(proc("w", 1, {}), "~\\q\\w64\\q.exe", undefined, "/home/me").command, winHome);
+  assert.strictEqual(launchPlan(proc("w", 1, {}), "~q", undefined, "/home/me").command, "~q");
+  // A bare program is the file PATH holds it in: on Windows the folder q
+  // starts in is never asked (#1286), and none on PATH is not started.
+  const on = (...files) => (file) => files.includes(file);
+  const find = (bin) => onPath(bin, ".;C:\\q\\w64", on("C:\\w\\q.exe", "q.exe", "C:\\q\\w64\\q.exe"), "win32");
+  assert.strictEqual(launchPlan(proc("w", 1, {}), "q", "C:\\w", "C:\\Users\\me", find).command, "C:\\q\\w64\\q.exe");
+  assert.strictEqual(launchPlan(proc("w", 1, { command: "C:\\w\\q.exe" }), "q", "C:\\w", "C:\\Users\\me", find).command, "C:\\w\\q.exe");
+  const none = (bin) => onPath(bin, ".;bin", on("q.exe", "bin\\q.exe"), "win32");
+  assert.strictEqual(launchPlan(proc("w", 1, {}), "q", "C:\\w", "C:\\Users\\me", none).error, "q is not on PATH, so w was not started: name the program by its path.");
+  assert.strictEqual(launchPlan(proc("w", 1, {}), "q", "/w", "/home/me", (bin) => onPath(bin, "", on(), "linux")).command, "q");
   assert.match(launchPlan(proc("c", 1), "q", "/w").error, /c has no launch definition/);
   assert.match(launchPlan({ ...proc("d", 1, {}), host: "rdb.example" }, "q", "/w").error, /only a local process can be started/);
   assert.match(launchPlan(proc("e", 1, { cwd: "rel" }), "q", undefined).error, /relative, and there is no workspace folder/);
@@ -143,6 +158,22 @@ test("Start Process starts the definition, shows its output, and Stop Process en
   // A process not started from here is not stopped from here.
   await stub.commands.get(LAUNCH_COMMANDS.stop)("bare");
   assert.strictEqual(stub.messages.at(-1)[1], "q-lint: bare was not started from here, so it is not stopped from here.");
+});
+
+test("Start Process run twice at once starts one process (#1249)", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-"));
+  fs.writeFileSync(path.join(dir, "fake.js"), FAKE);
+  const port = await freePort();
+  const { launcher, output, dispose } = await setUp(t, [proc("fake", port, { command: process.execPath, script: "fake.js", cwd: dir })]);
+  await Promise.all([stub.commands.get(LAUNCH_COMMANDS.start)("fake"), stub.commands.get(LAUNCH_COMMANDS.start)("fake")]);
+  for (let i = 0; i < 100 && !(await accepts(port)); i++) await sleep(50);
+  assert.strictEqual(launcher.running().length, 1);
+  assert.ok(stub.messages.some((m) => m[1] === "q-lint: fake is already running from here."), JSON.stringify(stub.messages));
+  // One command line in its output: the second was never spawned.
+  assert.strictEqual(output("fake").split("\n").filter((l) => l.startsWith("$ ")).length, 1);
+  dispose();
+  for (let i = 0; i < 100 && (await accepts(port)); i++) await sleep(50);
+  assert.strictEqual(await accepts(port), false);
 });
 
 test("what was started is stopped when VS Code closes, and when the launcher is turned off", async (t) => {

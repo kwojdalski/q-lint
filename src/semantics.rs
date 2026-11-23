@@ -1584,10 +1584,10 @@ fn value_of_symbols<'n>(
 /// and no `ff`. Inside a lambda the load runs wherever the lambda is called,
 /// taken to be the root.
 ///
-/// A relative path loaded after the script changes directory, `\cd lib` or
-/// `system "cd lib"`, is read from a directory the text does not settle: q 5
-/// loads lib/x.q for `\cd lib` then `\l x.q` (#763). Its offset goes in
-/// `moved` instead, for `dynamic` to list.
+/// A relative path loaded after the script changes directory, `\cd lib`,
+/// `system "cd lib"` or the load of a directory, is read from a directory
+/// the text does not settle: q 5 loads lib/x.q for `\cd lib` then `\l x.q`
+/// (#763). Its offset goes in `moved` instead, for `dynamic` to list.
 fn loads(
     code: &str,
     raw: &str,
@@ -1595,9 +1595,10 @@ fn loads(
     namespace_at: impl Fn(usize) -> String,
     moved: &mut Vec<usize>,
 ) -> Vec<(String, String)> {
-    let cd = changes_directory(raw, view);
+    let sites = load_sites(code, raw, view);
+    let cd = changes_directory(code, raw, view).min(loads_directory(raw, &sites));
     let mut loads = vec![];
-    for (at, path, symbol) in load_sites(code, raw, view) {
+    for (at, path, symbol) in sites {
         let path = &raw[path];
         if !symbol && at > cd && !path.starts_with('/') {
             moved.push(at);
@@ -1612,24 +1613,56 @@ fn loads(
 
 /// Where the script first changes directory, `\cd lib` or `system "cd lib"`,
 /// or past the end when it never does.
-fn changes_directory(raw: &str, view: &str) -> usize {
+fn changes_directory(code: &str, raw: &str, view: &str) -> usize {
     raw.split_inclusive('\n')
         .scan(0, |offset, line| {
             let at = *offset;
             *offset += line.len();
             Some((at, line))
         })
-        .find(|(_, line)| re!(r"^\\cd[ \t]+\S").is_match(line))
+        // Not one a block comment holds, which `code` has blank: KDB-X loads
+        // the b.q beside the script for `\l b.q` under such a comment (#1363).
+        .find(|(at, line)| {
+            re!(r"^\\cd[ \t]+\S").is_match(line) && code.as_bytes().get(*at) == Some(&b'\\')
+        })
         .map(|(at, _)| at)
         .into_iter()
         .chain(
             re!(r#"\bsystem\s*(?:\[\s*|@\s*)?"cd\s+\S"#)
                 .find_iter(raw)
                 .map(|m| m.start())
-                .filter(|&at| view[at..].starts_with("system")),
+                .filter(|&at| view[at..].starts_with("system") && boundary(view, at)),
         )
         .min()
         .unwrap_or(usize::MAX)
+}
+
+/// Where the script first loads what may be a directory, or past the end
+/// when it never does. q stays in a directory it loads: KDB-X, after `\l db`,
+/// loads db/helper.q for `\l helper.q` and fails where only the directory it
+/// started in has one (#1365). The text cannot tell a directory from a data
+/// file, which moves nowhere, so any last component without a dot counts;
+/// `\l .`, a database reloading itself, stays where it is.
+fn loads_directory(raw: &str, sites: &[(usize, Range<usize>, bool)]) -> usize {
+    let directory = |path: &str| {
+        let name = path.trim_end_matches(['/', '\\']);
+        let name = name.rsplit(['/', '\\']).next().unwrap_or(name);
+        name == ".." || !name.contains('.')
+    };
+    sites
+        .iter()
+        .filter(|(_, path, symbol)| !symbol && directory(&raw[path.clone()]))
+        .map(|&(at, ..)| at)
+        .min()
+        .unwrap_or(usize::MAX)
+}
+
+/// Whether what a load pattern found at `at` is q's `system` and not a name
+/// ending in it: after `.my.system:{-1 x}`, KDB-X's `.my.system "l b.q"`
+/// prints `l b.q` and loads nothing (#1362). A trap, `@[system;...]`, starts
+/// at its `@`.
+fn is_system(view: &str, at: usize) -> bool {
+    view[at..].starts_with('@') || boundary(view, at)
 }
 
 /// Each literal load `loads` reads: where its statement starts, the bytes of
@@ -1655,7 +1688,7 @@ fn load_sites(code: &str, raw: &str, view: &str) -> Vec<(usize, Range<usize>, bo
         let joined = raw[m.get(0).unwrap().end()..]
             .trim_start_matches([' ', '\t'])
             .starts_with(',');
-        if view[at..].starts_with(&raw[at..at + 2]) && !joined {
+        if view[at..].starts_with(&raw[at..at + 2]) && !joined && is_system(view, at) {
             sites.push((at, m.get(1).unwrap().range(), false));
         }
     }
@@ -1671,8 +1704,9 @@ fn load_sites(code: &str, raw: &str, view: &str) -> Vec<(usize, Range<usize>, bo
 /// navigation request on one follows to the file it names.
 pub fn load_paths(code: &str, raw: &str) -> Vec<Range<usize>> {
     let view = commands_blanked(code, raw);
-    let cd = changes_directory(raw, &view);
-    load_sites(code, raw, &view)
+    let sites = load_sites(code, raw, &view);
+    let cd = changes_directory(code, raw, &view).min(loads_directory(raw, &sites));
+    sites
         .into_iter()
         .filter(|(at, path, symbol)| *symbol || *at <= cd || raw[path.clone()].starts_with('/'))
         .map(|(_, path, _)| path)
@@ -1773,7 +1807,9 @@ fn dynamic(
     for m in
         re!(r#"(?:\bsystem\s*(?:\[\s*|@\s*)?|@\[\s*system\s*;\s*)"l\s[^"]*"\s*,"#).find_iter(raw)
     {
-        if view[m.start()..].starts_with(&raw[m.start()..m.start() + 2]) {
+        if view[m.start()..].starts_with(&raw[m.start()..m.start() + 2])
+            && is_system(view, m.start())
+        {
             push(m.start(), "load");
         }
     }

@@ -90,6 +90,19 @@
       const tr = element("tr", r.index === picked ? "picked" : "");
       [String(r.index), r.fn, r.table, String(r.rows), r.time].forEach((c) => tr.appendChild(element("td", "", c)));
       tr.addEventListener("click", () => pick(r.index));
+      // From the keyboard too: a tab stop, picked with Enter or Space. Picking
+      // draws the rows again, and the one made for this message takes the focus.
+      tr.tabIndex = 0;
+      if (r.index === picked) {
+        tr.setAttribute("aria-current", "true");
+      }
+      tr.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          pick(r.index);
+          list.children[1 + page.rows.indexOf(r)].focus();
+        }
+      });
       list.appendChild(tr);
     });
     pager.textContent = page.total === 0 ? "No message matches." : "Messages " + (page.offset + 1) + " to " + Math.min(page.total, page.offset + page.rows.length) + " of " + page.total + " matching.";
@@ -98,7 +111,14 @@
   window.addEventListener("message", (event) => {
     const m = event.data;
     if (m.type === "log") {
+      // Another log: nothing of the last one stays picked or typed.
       log = m.log;
+      page = { offset: 0, size: page.size, total: 0, rows: [] };
+      picked = undefined;
+      [from, to, replayFrom, replayTo].forEach((i) => (i.value = ""));
+      detail.textContent = "";
+      status.textContent = "";
+      drawRows();
       summary.textContent =
         m.log.file + ": " + m.log.count + " messages" + (m.log.complete ? "" : ", read to the last whole one: " + (m.log.size - m.log.bytes) + " bytes at the end are cut short") + ". Read in a local q on port " + m.port + ".";
       table.textContent = "";

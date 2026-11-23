@@ -12,6 +12,7 @@ import { readLive, readNotebook, rowsArgument } from "./liveconfig";
 import { featureOff, featureOn, qnbOf, requireFeature, switchProcess } from "./notebook";
 import { NOTEBOOK, type Qnb } from "./qnb";
 import { parametersCell, parametersOf, runNotebook, writeAs, type RunResult } from "./qnbrun";
+import { plainMessage } from "./history";
 
 /// Ask for each parameter's value, the notebook's own offered: those
 /// changed, by name, or undefined when the user pressed Escape.
@@ -57,7 +58,7 @@ export async function runWithParameters(live: Live, source?: Uri, target?: Uri, 
   try {
     qnb = await qnbOf(from);
   } catch (error) {
-    void window.showErrorMessage(`q-lint: could not read ${from.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+    void window.showErrorMessage(plainMessage(`q-lint: could not read ${from.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
     return undefined;
   }
   const given = overrides ?? (await askParameters(qnb));
@@ -111,13 +112,13 @@ export async function runWithParameters(live: Live, source?: Uri, target?: Uri, 
         ),
     );
   } catch (error) {
-    void window.showErrorMessage(`q-lint: could not run ${name}: ${error instanceof Error ? error.message : String(error)}`);
+    void window.showErrorMessage(plainMessage(`q-lint: could not run ${name}: ${error instanceof Error ? error.message : String(error)}`));
     return undefined;
   }
   try {
     await workspace.fs.writeFile(to, Buffer.from(writeAs(result.qnb, to.path, name), "utf8"));
   } catch (error) {
-    void window.showErrorMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+    void window.showErrorMessage(plainMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
     return result;
   }
   if (!(target instanceof Uri)) {
@@ -125,7 +126,7 @@ export async function runWithParameters(live: Live, source?: Uri, target?: Uri, 
       ? `q-lint: ran ${result.ran} cells of ${name}; wrote ${to.fsPath}.`
       : `q-lint: cell ${result.failed.cell} of ${name} failed (${result.failed.message}); wrote the run up to it to ${to.fsPath}.`;
     const open = "Open";
-    const answer = await (result.failed === undefined ? window.showInformationMessage(said, open) : window.showWarningMessage(said, open));
+    const answer = await (result.failed === undefined ? window.showInformationMessage(plainMessage(said), open) : window.showWarningMessage(plainMessage(said), open));
     if (answer === open) {
       if (/\.qnb$/i.test(to.path)) {
         await window.showNotebookDocument(await workspace.openNotebookDocument(to));

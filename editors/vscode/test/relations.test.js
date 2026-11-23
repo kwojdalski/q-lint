@@ -153,6 +153,7 @@ test("an answer that is not a list of tests is none", () => {
     tests: [],
     changed: [],
     unindexed: [],
+    dynamic: [],
   });
   // A test that does not say what it reaches is left out, not guessed at.
   const answer = asAffectedTests({
@@ -224,11 +225,41 @@ test("a test that only changed itself, and one reaching many, read plainly", () 
   assert.strictEqual(many.description, "reaches a.q, b.q, c.q and 2 more");
 });
 
+test("a test that loads at run time is listed as one that may be affected", () => {
+  // No edge places it, so it was left out and nothing said so (#1364).
+  const answer = asAffectedTests({
+    tests: [{ uri: uri("tests/test_a.q"), reaches: [0] }],
+    changed: [uri("src/a.q")],
+    unindexed: [],
+    dynamic: [uri("tests/test_dyn.q")],
+  });
+  assert.deepStrictEqual(picks(answer, name), [
+    { label: "tests/test_a.q", description: "reaches src/a.q", uri: uri("tests/test_a.q") },
+    {
+      label: "tests/test_dyn.q",
+      description: "loads by a path computed at run time: may be affected",
+      uri: uri("tests/test_dyn.q"),
+    },
+  ]);
+  assert.strictEqual(
+    summary(answer),
+    "1 test file reaches the 1 changed q file. 1 more test file loads by a path computed " +
+      "at run time and may be affected too.",
+  );
+  // What is not a list of URIs is none.
+  assert.deepStrictEqual(asAffectedTests({ tests: [], changed: [], dynamic: [1] }).dynamic, []);
+});
+
 test("the summary says what the list could not follow", () => {
-  const one = { tests: [{ uri: uri("t.q"), reaches: [0] }], changed: [uri("a.q")], unindexed: [] };
+  const one = {
+    tests: [{ uri: uri("t.q"), reaches: [0] }],
+    changed: [uri("a.q")],
+    unindexed: [],
+    dynamic: [],
+  };
   assert.strictEqual(summary(one), "1 test file reaches the 1 changed q file.");
   assert.strictEqual(
-    summary({ tests: [], changed: [uri("a.q"), uri("b.q")], unindexed: [] }),
+    summary({ tests: [], changed: [uri("a.q"), uri("b.q")], unindexed: [], dynamic: [] }),
     "No test file reaches the 2 changed q files.",
   );
   assert.strictEqual(
@@ -237,7 +268,7 @@ test("the summary says what the list could not follow", () => {
       "(deleted or excluded): what depended on it is not listed.",
   );
   assert.strictEqual(
-    summary({ tests: [], changed: [], unindexed: [uri("x.q"), uri("y.q")] }),
+    summary({ tests: [], changed: [], unindexed: [uri("x.q"), uri("y.q")], dynamic: [] }),
     "No indexed q file changed. 2 changed q files are not in the index " +
       "(deleted or excluded): what depended on them is not listed.",
   );
@@ -352,4 +383,11 @@ test("an unsaved file whose name starts with .. is inside its folder (#1101)", (
   const ws = `${sep}ws`;
   const dirty = [`${ws}${sep}..scratch.q`, `${ws}${sep}..${sep}up.q`, `${ws}${sep}sub${sep}...q`];
   assert.deepStrictEqual(unsavedIn(dirty, [ws]), [`${ws}${sep}..scratch.q`, `${ws}${sep}sub${sep}...q`]);
+});
+
+test("the graph's commands leave the palette with the graph (#1335)", () => {
+  for (const command of ["q-lint.showDependencies", "q-lint.refreshDependencies", "q-lint.listAffectedTests"]) {
+    const entry = pkg.contributes.menus.commandPalette.find((m) => m.command === command);
+    assert.strictEqual(entry?.when, "q-lint.hasGraph", command);
+  }
 });

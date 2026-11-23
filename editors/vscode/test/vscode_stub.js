@@ -220,7 +220,8 @@ class MarkdownString {
     this.value += v;
     return this;
   }
-  appendCodeblock(v) {
+  appendCodeblock(v, language) {
+    (this.blocks ??= []).push([language, v]);
     this.value += v;
     return this;
   }

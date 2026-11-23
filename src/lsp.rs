@@ -246,6 +246,12 @@ struct Index {
     /// Bumped whenever the names some file reads change, which is what
     /// makes a count of references stale.
     reads: u64,
+    /// Bumped whenever the parameters some definition declares change, which
+    /// is what makes a parameter hint at a call stale though no name is
+    /// defined or dropped (#1361). Only counted while `hinted`, when the
+    /// client redraws hints on request: it is one more reading of each file.
+    signatures: u64,
+    hinted: bool,
     /// What may be read from disk: `.q` files under these folders, less
     /// those `exclude` names - and nothing at all while `enabled` is off,
     /// when only open documents are indexed.
@@ -297,6 +303,8 @@ struct Indexed {
     /// is asked for one. Names and no positions, like the rest - and never
     /// compared, so a read added or dropped relints nothing.
     read: References,
+    /// The parameters each definition declares, kept while `Index::hinted`.
+    signed: Vec<(String, Vec<String>)>,
 }
 
 impl Index {
@@ -317,6 +325,14 @@ impl Index {
         self.stale |= old.as_ref().is_none_or(|old| old.loads != loads);
         if old.as_ref().is_none_or(|old| old.read.names != read.names) {
             self.reads += 1;
+        }
+        let signed = if self.hinted {
+            signatures(text)
+        } else {
+            vec![]
+        };
+        if old.as_ref().is_some_and(|old| old.signed != signed) {
+            self.signatures += 1;
         }
         let placement = old
             .as_ref()
@@ -339,6 +355,7 @@ impl Index {
             placement,
             placed,
             read,
+            signed,
         };
         self.files.insert(path, file);
         changed
@@ -407,11 +424,15 @@ impl Index {
 
     /// The directory a relative `\l` is tried against first: the first
     /// workspace folder, which is where a q process over this tree is most
-    /// likely started, since the source does not say.
+    /// likely started, since the source does not say. By its real path, as
+    /// the files are keyed: a directory loaded, `\l db`, is found by the
+    /// files keyed under it, and a folder opened through a symlink named no
+    /// such directory (#1366).
     fn cwd(&self) -> std::path::PathBuf {
-        self.roots
-            .first()
-            .map_or_else(|| std::env::current_dir().unwrap_or_default(), Into::into)
+        self.roots.first().map_or_else(
+            || std::env::current_dir().unwrap_or_default(),
+            |root| file_key(root).into(),
+        )
     }
 
     /// Forget `path` and, when it was a directory, every file under it but
@@ -1275,7 +1296,7 @@ pub fn serve(
                 is_change_to(later, params["textDocument"]["uri"].as_str().unwrap_or(""))
             });
 
-        let (generation, reads) = (idx.generation, idx.reads);
+        let (generation, reads, signatures) = (idx.generation, idx.reads, idx.signatures);
         match (method.as_str(), id) {
             // LSP 3.17: "The initialize request may only be sent once." A
             // second is refused and changes nothing - answered, its options
@@ -1311,6 +1332,7 @@ pub fn serve(
                 };
                 lens_refresh = refreshes("codeLens") && (opts.code_lens || opts.reference_lens);
                 hint_refresh = refreshes("inlayHint") && opts.inlay_hints;
+                idx.hinted = hint_refresh;
                 let watched = |key: &str| {
                     params
                         .pointer(&format!(
@@ -1894,7 +1916,10 @@ pub fn serve(
                     lens_refresh && (defined || counted),
                     "workspace/codeLens/refresh",
                 ),
-                (hint_refresh && defined, "workspace/inlayHint/refresh"),
+                (
+                    hint_refresh && (defined || idx.signatures != signatures),
+                    "workspace/inlayHint/refresh",
+                ),
             ] {
                 if asked {
                     next_request += 1;
@@ -2015,6 +2040,19 @@ fn guarded<T>(f: impl FnOnce() -> T) -> Result<T, String> {
 /// What `text` defines, or nothing when reading it panics.
 fn index(text: &str) -> FileIndex {
     guarded(|| q_lint_rs::index(text)).unwrap_or_default()
+}
+
+/// The parameters each definition in `text` declares in a signature, which
+/// is what an inlay hint at a call of it shows (`annotate::declarations`).
+fn signatures(text: &str) -> Vec<(String, Vec<String>)> {
+    guarded(|| q_lint_rs::mentions(text))
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|m| {
+            let d = m.definition?;
+            (d.function && !d.detail.is_empty()).then_some((m.name, d.params))
+        })
+        .collect()
 }
 
 /// The reply to a request whose handler panicked: JSON-RPC 2.0 §5.1's

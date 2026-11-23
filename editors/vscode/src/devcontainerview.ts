@@ -6,6 +6,7 @@
 import * as path from "node:path";
 import { Uri, commands, window, workspace, type ExtensionContext, type WorkspaceFolder } from "vscode";
 import { DEVCONTAINER_COMMAND, plan, previewText, readDevContainer, templateFiles } from "./devcontainer";
+import { plainMessage } from "./history";
 
 const exists = async (uri: Uri): Promise<boolean> => {
   try {
@@ -44,7 +45,7 @@ export async function addDevContainer(): Promise<string[]> {
   }
   const planned = plan(files, (p) => there.has(p));
   if (planned.write.length === 0) {
-    void window.showInformationMessage(`q-lint: ${folder.name} already has ${planned.skip.join(" and ")}; nothing was written.`);
+    void window.showInformationMessage(plainMessage(`q-lint: ${folder.name} already has ${planned.skip.join(" and ")}; nothing was written.`));
     return [];
   }
   const document = await workspace.openTextDocument({ language: "markdown", content: previewText(folder.name, planned) });
@@ -53,7 +54,7 @@ export async function addDevContainer(): Promise<string[]> {
   // A dialog that cannot be shown is no Write.
   const answer = await Promise.resolve(
     window.showInformationMessage(
-      `Write ${planned.write.map((f) => f.path).join(" and ")} into ${folder.name}?${skipped}`,
+      plainMessage(`Write ${planned.write.map((f) => f.path).join(" and ")} into ${folder.name}?${skipped}`),
       { modal: true, detail: "The preview shows what would be written." },
       "Write",
     ),
@@ -73,7 +74,7 @@ export async function addDevContainer(): Promise<string[]> {
     written.push(file.path);
   }
   void window.showInformationMessage(
-    `q-lint: wrote ${written.join(" and ") || "nothing"} into ${folder.name}. Reopen in Container (Dev Containers) or create a codespace to use it.`,
+    plainMessage(`q-lint: wrote ${written.join(" and ") || "nothing"} into ${folder.name}. Reopen in Container (Dev Containers) or create a codespace to use it.`),
   );
   return written;
 }

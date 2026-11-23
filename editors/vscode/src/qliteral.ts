@@ -163,7 +163,8 @@ export function atomLiteral(type: number, text: string, raw: unknown): { literal
     case 6:
       return ok(`${text}i`);
     case 7:
-      return ok(raw !== undefined && raw !== null ? String(raw) : text);
+      // A long past 2^53 is a rounded number in `raw`; its text is exact (#1276).
+      return ok(raw === undefined || raw === null || (typeof raw === "number" && !Number.isSafeInteger(raw)) ? text : String(raw));
     case 8:
     case 9: {
       const n = typeof raw === "number" ? numberText(raw) : text;

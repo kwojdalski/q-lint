@@ -14,6 +14,7 @@ import { Uri, commands, window, workspace, type ExtensionContext } from "vscode"
 import type { Live, ProcessArg } from "./live";
 import { PROCESS_TOOL_COMMANDS, toolOff, toolOn } from "./processtools";
 import { CONTROL_COMMANDS } from "./querycontrols";
+import { plainMessage } from "./history";
 
 /// The file a process's scratch buffer is kept in: its label made safe for
 /// a file name, and a short hash of the label so two labels that clean up
@@ -36,7 +37,7 @@ export function registerScratchBuffers(
   const open = async (row?: ProcessArg): Promise<{ path: string; label: string } | string> => {
     if (!toolOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "scratchBuffer")) {
       const off = toolOff("scratchBuffer");
-      void window.showInformationMessage(off);
+      void window.showInformationMessage(plainMessage(off));
       return off;
     }
     const process = await live.pick(row, "Open the scratch buffer of which q process?");
@@ -54,7 +55,7 @@ export function registerScratchBuffers(
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
         const message = `q-lint: could not create the scratch buffer of ${process.label}: ${error instanceof Error ? error.message : String(error)}`;
-        void window.showErrorMessage(message);
+        void window.showErrorMessage(plainMessage(message));
         return message;
       }
     }

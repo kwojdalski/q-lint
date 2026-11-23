@@ -9,7 +9,7 @@ const net = require("node:net");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { QConnection } = require("../out/qclient.js");
+const { QConnection, withReason } = require("../out/qclient.js");
 const { statements } = require("../out/statements.js");
 const { GATHER, LIMITS, explorerTree, previewCode, readGathered } = require("../out/explorer.js");
 const { toGrid } = require("../out/grid.js");
@@ -304,6 +304,18 @@ test("connecting to a port nobody listens on fails with why", { skip }, async ()
   await assert.rejects(QConnection.open({ host: "127.0.0.1", port }), /ECONNREFUSED/);
 });
 
+// Node tries `::1` and `127.0.0.1` for `localhost` and, when both refuse,
+// rejects with an AggregateError whose message is empty (#1352).
+test("a connect to a name with several addresses, none listening, still says why", async () => {
+  const port = await freePort();
+  await assert.rejects(QConnection.open({ host: "localhost", port }), (e) => /ECONNREFUSED/.test(e.message));
+  const both = new AggregateError([new Error("connect ECONNREFUSED ::1:5000"), new Error("connect ECONNREFUSED 127.0.0.1:5000")], "");
+  assert.strictEqual(withReason(Object.assign(both, { code: "ECONNREFUSED" })).message, "connect ECONNREFUSED ::1:5000; connect ECONNREFUSED 127.0.0.1:5000");
+  assert.strictEqual(withReason(Object.assign(new AggregateError([], ""), { code: "ETIMEDOUT" })).message, "ETIMEDOUT");
+  assert.strictEqual(withReason(new Error("")).message, "the connection failed");
+  assert.strictEqual(withReason(new Error("connect ECONNREFUSED 127.0.0.1:5000")).message, "connect ECONNREFUSED 127.0.0.1:5000");
+});
+
 test("a connect that gets no answer gives up", { skip }, async () => {
   // A socket that accepts and never answers the handshake.
   const silent = net.createServer(() => {}).listen(0, "127.0.0.1");
@@ -370,6 +382,8 @@ p:f[1];
 v:1 2 3f;
 .ns.g:{[a] a};
 .ns.sub.z:"abc";
+hits:0;
+vw::[hits+:1;select from t where a>1];
 .ns.sub.deep.w:42;
 {(\` sv \`.big,x) set 1} each \`$"n",/:string til 3000;
 `;
@@ -424,6 +438,16 @@ test("the explorer's call against a real q process", { skip }, async (t) => {
     assert.deepStrictEqual([entry(".ns.sub.deep", "w").type, entry(".ns.sub.deep", "w").count], [-7, 1]);
     // A nested namespace is a namespace, not a variable of its parent.
     assert.strictEqual(entry(".ns", "sub"), undefined);
+  });
+
+  await t.test("a view is a view with no parameters, and reading it does not evaluate it (#1354)", async () => {
+    assert.deepStrictEqual(entry(".", "vw"), {
+      ns: ".", name: "vw", kind: "function", type: 100, count: null, cols: [], keys: [], params: [], view: true, partitioned: false,
+    });
+    assert.strictEqual(entry(".", "f").view, undefined);
+    assert.strictEqual(await connection.call('"f"$hits'), 0);
+    const functions = explorerTree(g, []).find((n) => n.label === ".").children.find((c) => c.label === "Functions");
+    assert.strictEqual(functions.children.find((c) => c.label === "vw").description, "view");
   });
 
   await t.test("bounded: the first names of a large namespace, and its total", async () => {

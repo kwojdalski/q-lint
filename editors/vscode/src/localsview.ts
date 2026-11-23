@@ -15,6 +15,7 @@ import type { Live } from "./live";
 import { CAPTURE_LOCALS, localsDocument, namedFrames, readCapture } from "./locals";
 import { RUN, readAnswer } from "./query";
 import { statements } from "./statements";
+import { plainMessage } from "./history";
 
 const on = (): boolean => editorFeatureOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "localsAtError");
 
@@ -41,7 +42,7 @@ export function registerLocalsAtError(
   let last: string | undefined;
   const capture = async (): Promise<void> => {
     if (!on()) {
-      void window.showInformationMessage(editorFeatureOff("localsAtError"));
+      void window.showInformationMessage(plainMessage(editorFeatureOff("localsAtError")));
       return;
     }
     const failure = live.lastFailure;
@@ -50,12 +51,12 @@ export function registerLocalsAtError(
       return;
     }
     if (live.activeLabel() !== failure.process) {
-      void window.showInformationMessage(`q-lint: the last failed query ran on ${failure.process}; connect to it again to look into it.`);
+      void window.showInformationMessage(plainMessage(`q-lint: the last failed query ran on ${failure.process}; connect to it again to look into it.`));
       return;
     }
     const frames = namedFrames(failure.trace);
     if (frames.length === 0) {
-      void window.showInformationMessage(`q-lint: the backtrace of '${failure.error} names no function to look into.`);
+      void window.showInformationMessage(plainMessage(`q-lint: the backtrace of '${failure.error} names no function to look into.`));
       return;
     }
     const picked =
@@ -70,7 +71,7 @@ export function registerLocalsAtError(
     }
     const again = "Run Again";
     const sure = await window.showWarningMessage(
-      `Run the failed query again on ${failure.process}, with ${picked.name} keeping its arguments and locals?`,
+      plainMessage(`Run the failed query again on ${failure.process}, with ${picked.name} keeping its arguments and locals?`),
       { modal: true, detail: `${failure.code}\n\nIt runs again as written, and can change data again. ${picked.name} is replaced while it runs, and put back after.` },
       again,
     );
@@ -81,6 +82,7 @@ export function registerLocalsAtError(
     const restore = restoreExpression("err");
     let done;
     try {
+      // Only on the process the question named (#1292).
       done = await live.runOnActive(`${failure.code}\n${install}`, async (connection) => {
         readRestored(await connection.call(restore));
         const state = readDrift(await connection.call(DRIFT, picked.name)).get(picked.name);
@@ -104,9 +106,9 @@ export function registerLocalsAtError(
         });
         const restored = readRestored(await connection.call(restore));
         return { captured, answer, restored, text: state.text };
-      });
+      }, "ask", failure.process);
     } catch (error) {
-      void window.showErrorMessage(`q-lint: no locals captured: ${error instanceof Error ? error.message : String(error)}`);
+      void window.showErrorMessage(plainMessage(`q-lint: no locals captured: ${error instanceof Error ? error.message : String(error)}`));
       return;
     }
     if (done === undefined) {
@@ -114,7 +116,7 @@ export function registerLocalsAtError(
     }
     const { captured, answer, restored, text } = done.value;
     if (restored.kept.length > 0) {
-      void window.showWarningMessage(`q-lint: ${restored.kept.join(", ")} was redefined while the query ran, and is left as it is now.`);
+      void window.showWarningMessage(plainMessage(`q-lint: ${restored.kept.join(", ")} was redefined while the query ran, and is left as it is now.`));
     }
     last = localsDocument({
       name: picked.name,

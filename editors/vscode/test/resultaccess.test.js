@@ -151,6 +151,15 @@ test("off, the grid is the plain table it was: no roles, every header a tab stop
 });
 
 /// The page's live region, when it has one.
+test("the chart's kind select has a name: it is the one control there with no label (#1347)", () => {
+  const page = loadPage(undefined);
+  page.send(result("s.1", 5, { view: "chart" }));
+  const selects = page.body.all((e) => e.tagName === "SELECT" && e.parent?.className === "controls");
+  assert.strictEqual(selects.length, 1, "the kind, straight under the controls");
+  assert.deepStrictEqual(selects[0].children.slice(0, 2).map((o) => o.value), ["line", "bar"]);
+  assert.strictEqual(selects[0].getAttribute("aria-label"), "Chart kind");
+});
+
 const region = (page) => page.body.all((e) => e.attributes?.["aria-live"] === "polite")[0];
 
 test("a new result is announced once in a polite live region; off, there is none (#1188)", () => {

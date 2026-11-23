@@ -23,7 +23,8 @@ export interface Credentials {
 /// The credentials `output` gives, or why it gives none. `user` is the
 /// process's own, which a line does not override.
 export function parseCredentials(output: string, user?: string): Credentials | { problem: string } {
-  const text = output.replace(/^﻿/, "").trim();
+  const printed = output.replace(/^\uFEFF/, "");
+  const text = printed.trim();
   if (text === "") {
     return { problem: "it printed nothing" };
   }
@@ -42,12 +43,16 @@ export function parseCredentials(output: string, user?: string): Credentials | {
     const named = typeof j.user === "string" ? j.user : typeof j.username === "string" ? j.username : user;
     return { ...(named !== undefined && named !== "" ? { user: named } : {}), password };
   }
-  const line = text.split(/\r?\n/)[0];
+  // The line as printed, less only its line ending: spaces and tabs at
+  // either end of a password are part of it (#1358). Blank lines before
+  // it are skipped, as they always were.
+  const line = printed.split(/\r?\n/).find((l) => l.trim() !== "") ?? text;
   if (user !== undefined && user !== "") {
     return { user, password: line };
   }
   const colon = line.indexOf(":");
-  return colon > 0 ? { user: line.slice(0, colon), password: line.slice(colon + 1) } : { password: line };
+  const named = line.slice(0, colon).trim();
+  return colon > 0 && named !== "" ? { user: named, password: line.slice(colon + 1) } : { password: line };
 }
 
 /// Run `command` in a shell and give what it printed; reject with how it

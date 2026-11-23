@@ -300,10 +300,23 @@ const formulaText = (text: string): string => `"${text.replace(/"/g, '""')}"`;
 /// The rules as Excel conditional formatting for a sheet whose columns are
 /// `names` (their letters from `letter`) and whose rows are 2 to
 /// `last`: {dxfs, formatting}, the styles for styles.xml's `<dxfs>` and
-/// the `<conditionalFormatting>` elements, after `<sheetData>`. A rule on a
-/// column the sheet does not have, or with a comparison Excel would apply
-/// to a column of text as numbers, is left out.
-export function xlsxRules(rules: FormatRule[], names: string[], numeric: boolean[], letter: (i: number) => string, last: number): { dxfs: string[]; formatting: string[] } {
+/// the `<conditionalFormatting>` elements, after `<sheetData>`. `text`:
+/// whether a column's cells are written as Excel text. Each rule matches
+/// the cells the grid's does (#1266): a comparison of numbers skips an
+/// empty cell, which Excel takes for 0; `=` and `<>` on text are
+/// case-sensitive and `contains` is not, with no wildcards, none of them
+/// matching an empty cell. A rule on a column the sheet does not have, a
+/// comparison of numbers on text, `contains` on numbers (the grid reads
+/// their text as shown) and a text rule on dates, times and booleans,
+/// which Excel holds as numbers, are left out.
+export function xlsxRules(
+  rules: FormatRule[],
+  names: string[],
+  numeric: boolean[],
+  letter: (i: number) => string,
+  last: number,
+  text: boolean[] = numeric.map((n) => !n),
+): { dxfs: string[]; formatting: string[] } {
   const dxfs: string[] = [];
   const formatting: string[] = [];
   if (last < 2) {
@@ -312,7 +325,8 @@ export function xlsxRules(rules: FormatRule[], names: string[], numeric: boolean
   let priority = rules.length;
   rules.forEach((rule) => {
     const c = names.indexOf(rule.column);
-    if (c < 0 || (!numeric[c] && !TEXT_OPS.includes(rule.op))) {
+    const unusable = numeric[c] ? rule.op === "contains" || (rule.op !== "top" && rule.op !== "bottom" && !Number.isFinite(Number(rule.value))) : !TEXT_OPS.includes(rule.op) || !text[c];
+    if (c < 0 || unusable) {
       priority--;
       return;
     }
@@ -326,16 +340,17 @@ export function xlsxRules(rules: FormatRule[], names: string[], numeric: boolean
     const first = `${col}2`;
     // A later rule wins in the grid: in Excel, a higher priority (lower number).
     const at = ` dxfId="${dxf}" priority="${priority--}"`;
-    const ops: Record<string, string> = { ">": "greaterThan", ">=": "greaterThanOrEqual", "<": "lessThan", "<=": "lessThanOrEqual", "=": "equal", "<>": "notEqual" };
     let cf: string;
     if (rule.op === "top" || rule.op === "bottom") {
       cf = `<cfRule type="top10"${at} rank="${Number(rule.value)}"${rule.op === "bottom" ? ' bottom="1"' : ""}/>`;
-    } else if (rule.op === "contains") {
-      const text = String(rule.value);
-      cf = `<cfRule type="containsText"${at} operator="containsText" text="${xmlAttr(text)}"><formula>${xmlAttr(`NOT(ISERROR(SEARCH(${formulaText(text)},${first})))`)}</formula></cfRule>`;
     } else {
-      const value = numeric[c] ? String(Number(rule.value)) : formulaText(String(rule.value));
-      cf = `<cfRule type="cellIs"${at} operator="${ops[rule.op]}"><formula>${xmlAttr(value)}</formula></cfRule>`;
+      const want = formulaText(String(rule.value));
+      const formula = numeric[c]
+        ? `AND(ISNUMBER(${first}),${first}${rule.op}${Number(rule.value)})`
+        : rule.op === "contains"
+          ? `AND(LEN(${first})>0,ISNUMBER(FIND(LOWER(${want}),LOWER(${first}))))`
+          : `AND(LEN(${first})>0,${rule.op === "=" ? "" : "NOT("}EXACT(${first},${want})${rule.op === "=" ? "" : ")"})`;
+      cf = `<cfRule type="expression"${at}><formula>${xmlAttr(formula)}</formula></cfRule>`;
     }
     formatting.push(`<conditionalFormatting sqref="${range}">${cf}</conditionalFormatting>`);
   });

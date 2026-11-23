@@ -22,6 +22,7 @@ import {
 } from "vscode";
 import { readResultView } from "./liveconfig";
 import { PLOT_COMMANDS, plotFileName, PLOTS, type Plot } from "./plots";
+import { plainMessage } from "./history";
 
 /// How long Save Plot waits for the page to draw a PNG.
 const PNG_WAIT = 10_000;
@@ -53,6 +54,7 @@ function plotsHtml(webview: Webview, media: Uri): string {
     `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}'; img-src data:;">`,
     `<link rel="stylesheet" href="${file("plots.css")}">`,
     "<title>q Plots</title></head><body>",
+    `<script nonce="${nonce}" src="${file("refocus.js")}"></script>`,
     `<script nonce="${nonce}" src="${file("plots.js")}"></script>`,
     "</body></html>",
   ].join("\n");
@@ -207,7 +209,7 @@ export class PlotsView {
       return undefined;
     }
     await workspace.fs.writeFile(to, bytes);
-    void window.showInformationMessage(`q-lint: saved the plot to ${to.fsPath}.`);
+    void window.showInformationMessage(plainMessage(`q-lint: saved the plot to ${to.fsPath}.`));
     return to.fsPath;
   }
 }

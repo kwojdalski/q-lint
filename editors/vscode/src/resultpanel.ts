@@ -111,6 +111,7 @@ import { imagePath, linkTarget, resultMarkdown } from "./resultreport";
 import { SAVED_QUERIES, SAVED_QUERIES_KEY, parseSaved } from "./savedqueries";
 import { NOTEBOOK } from "./qnb";
 import type { Grid } from "./grid";
+import { iconsEscaped, plainMessage } from "./history";
 
 /// `media/gridlook.js`'s helpers the column commands use, as the page does.
 interface GridLookHelpers {
@@ -260,6 +261,7 @@ function resultHtml(webview: Webview, media: Uri, location: ResultsLocation): st
     `<script nonce="${nonce}" src="${file("gridlook.js")}"></script>`,
     `<script nonce="${nonce}" src="${file("worldoutline.js")}"></script>`,
     `<script nonce="${nonce}" src="${file("chartmore.js")}"></script>`,
+    `<script nonce="${nonce}" src="${file("refocus.js")}"></script>`,
     `<script nonce="${nonce}" src="${file("result.js")}"></script>`,
     "</body></html>",
   ].join("\n");
@@ -435,7 +437,7 @@ export class QueryModes {
       return false;
     }
     if (answer.gridError !== undefined) {
-      void window.showWarningMessage(`q-lint: the result could not be shown as a ${live.mode}: '${answer.gridError}. It is in the output.`);
+      void window.showWarningMessage(plainMessage(`q-lint: the result could not be shown as a ${live.mode}: '${answer.gridError}. It is in the output.`));
       return false;
     }
     if (answer.grid === undefined) {
@@ -517,7 +519,7 @@ export class QueryModes {
     if (this.viewSettings().enable[feature]) {
       return true;
     }
-    void window.showInformationMessage(`q-lint: this result panel feature is turned off. Turn it on with the setting q-lint.results.${feature}.enable.`);
+    void window.showInformationMessage(plainMessage(`q-lint: this result panel feature is turned off. Turn it on with the setting q-lint.results.${feature}.enable.`));
     return false;
   }
 
@@ -547,9 +549,9 @@ export class QueryModes {
     if (shown === undefined || !this.canPage() || this.pager === undefined) {
       if (asked) {
         void window.showInformationMessage(
-          shown === undefined
+          plainMessage(shown === undefined
             ? "q-lint: no result yet. Run a query in grid or chart mode first."
-            : "q-lint: the process holds no more of the result on show. A result is held only when it was cut at q-lint.query.gridLimit, and only until the next grid query replaces it.",
+            : "q-lint: the process holds no more of the result on show. A result is held only when it was cut at q-lint.query.gridLimit, and only until the next grid query replaces it."),
         );
       }
       return;
@@ -559,7 +561,7 @@ export class QueryModes {
     }
     const have = shown.payload.cells[0]?.length ?? 0;
     if (have >= MAX_PAGED_ROWS) {
-      void window.showInformationMessage(`q-lint: the grid holds ${MAX_PAGED_ROWS.toLocaleString("en-US")} rows, the most it pages to. Narrow the query to see the rest.`);
+      void window.showInformationMessage(plainMessage(`q-lint: the grid holds ${MAX_PAGED_ROWS.toLocaleString("en-US")} rows, the most it pages to. Narrow the query to see the rest.`));
       return;
     }
     this.paging = true;
@@ -567,7 +569,7 @@ export class QueryModes {
       const page = await this.pager(shown.process, have, Math.min(shown.limit, MAX_PAGED_ROWS - have));
       if (typeof page === "string") {
         shown.held = false;
-        void window.showWarningMessage(`q-lint: could not fetch more rows from ${shown.process}: ${page}`);
+        void window.showWarningMessage(plainMessage(`q-lint: could not fetch more rows from ${shown.process}: ${page}`));
       } else {
         shown.payload = appendPage(shown.payload, page);
         const now = shown.payload.cells[0]?.length ?? 0;
@@ -575,7 +577,7 @@ export class QueryModes {
       }
     } catch (error) {
       shown.held = false;
-      void window.showWarningMessage(`q-lint: could not fetch more rows from ${shown.process}: ${error instanceof Error ? error.message : String(error)}`);
+      void window.showWarningMessage(plainMessage(`q-lint: could not fetch more rows from ${shown.process}: ${error instanceof Error ? error.message : String(error)}`));
     } finally {
       this.paging = false;
     }
@@ -609,8 +611,8 @@ export class QueryModes {
     if (chosen === undefined) {
       const picked = await window.showQuickPick(
         [...this.history].reverse().map((h) => ({
-          label: oneLine(h.code),
-          description: `${h.process} · ${new Date(h.at).toLocaleTimeString()}`,
+          label: iconsEscaped(oneLine(h.code)),
+          description: iconsEscaped(`${h.process} · ${new Date(h.at).toLocaleTimeString()}`),
           detail: `${h.payload.count.toLocaleString("en-US")} row(s)${h === this.shown ? " · on show" : ""}`,
           id: h.id,
         })),
@@ -875,12 +877,12 @@ export class QueryModes {
       out = exportResult(chosen, shown.payload, settings().gridDecimals, this.rowsOf(rows), this.rulesOf(shown));
       await workspace.fs.writeFile(to, out.data);
     } catch (error) {
-      void window.showErrorMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+      void window.showErrorMessage(plainMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
       return;
     }
     const notes = out.notes.length > 0 ? ` Note: ${out.notes.join("; ")}.` : "";
     if (!(target instanceof Uri) || notes !== "") {
-      void window.showInformationMessage(`q-lint: exported ${out.rows} row(s) as ${info.label} to ${to.fsPath}.${notes}`);
+      void window.showInformationMessage(plainMessage(`q-lint: exported ${out.rows} row(s) as ${info.label} to ${to.fsPath}.${notes}`));
     }
   }
 
@@ -898,7 +900,7 @@ export class QueryModes {
     const out = exportResult(chosen, shown.payload, settings().gridDecimals, this.rowsOf(rows), this.rulesOf(shown));
     await env.clipboard.writeText(out.data.toString("utf8"));
     const notes = out.notes.length > 0 ? ` Note: ${out.notes.join("; ")}.` : "";
-    void window.showInformationMessage(`q-lint: copied ${out.rows} row(s) as ${FORMAT_INFO[chosen].label}.${notes}`);
+    void window.showInformationMessage(plainMessage(`q-lint: copied ${out.rows} row(s) as ${FORMAT_INFO[chosen].label}.${notes}`));
   }
 
   /// Ask the page for the chart as `format` (or one picked), and save it
@@ -976,11 +978,11 @@ export class QueryModes {
       try {
         await workspace.fs.writeFile(to, bytes);
       } catch (error) {
-        void window.showErrorMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+        void window.showErrorMessage(plainMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
         return;
       }
       if (!(request?.target instanceof Uri)) {
-        void window.showInformationMessage(`q-lint: saved the chart to ${to.fsPath}.`);
+        void window.showInformationMessage(plainMessage(`q-lint: saved the chart to ${to.fsPath}.`));
       }
     } finally {
       request?.resolve();
@@ -1002,7 +1004,7 @@ export class QueryModes {
     const templates = templatesFor(this.viewSettings().drilldown, name);
     if (templates.length === 0) {
       const open = await window.showInformationMessage(
-        `q-lint: no drill-down query for column ${name}. Add one to q-lint.results.drilldownTemplates, with {{value}} where the cell's value goes.`,
+        plainMessage(`q-lint: no drill-down query for column ${name}. Add one to q-lint.results.drilldownTemplates, with {{value}} where the cell's value goes.`),
         "Open Settings",
       );
       if (open === "Open Settings") {
@@ -1019,7 +1021,7 @@ export class QueryModes {
       return;
     }
     if ("error" in picked.filled) {
-      void window.showWarningMessage(`q-lint: ${picked.label} cannot run: ${picked.filled.error}.`);
+      void window.showWarningMessage(plainMessage(`q-lint: ${picked.label} cannot run: ${picked.filled.error}.`));
       return;
     }
     if (this.runner === undefined) {
@@ -1121,7 +1123,7 @@ export class QueryModes {
     }
     if (rule === undefined) {
       if (given !== undefined) {
-        void window.showWarningMessage(`q-lint: that is not a rule ${column.name} can take.`);
+        void window.showWarningMessage(plainMessage(`q-lint: that is not a rule ${column.name} can take.`));
         return;
       }
       const op = await window.showQuickPick(
@@ -1246,7 +1248,7 @@ export class QueryModes {
     }
     shown.look = { ...shown.look, chart: preset };
     await this.keepLook(shown, preset);
-    void window.showInformationMessage(`q-lint: the chart is kept with the saved query "${shown.saved}": running it draws this chart again.`);
+    void window.showInformationMessage(plainMessage(`q-lint: the chart is kept with the saved query "${shown.saved}": running it draws this chart again.`));
   }
 
   private async forgetChartPreset(): Promise<void> {
@@ -1259,7 +1261,7 @@ export class QueryModes {
     delete look.chart;
     shown.look = look;
     await this.keepLook(shown, null);
-    void window.showInformationMessage(`q-lint: forgot the chart kept with "${shown.saved}".`);
+    void window.showInformationMessage(plainMessage(`q-lint: forgot the chart kept with "${shown.saved}".`));
   }
 
   private showCorrelation(): void {
@@ -1350,7 +1352,7 @@ export class QueryModes {
     }
     if (notebook === undefined) {
       if (given !== undefined) {
-        void window.showInformationMessage(`q-lint: ${given.fsPath} is not an open q notebook.`);
+        void window.showInformationMessage(plainMessage(`q-lint: ${given.fsPath} is not an open q notebook.`));
       }
       return;
     }
@@ -1364,11 +1366,11 @@ export class QueryModes {
     const edit = new WorkspaceEdit();
     edit.set(notebook.uri, [NotebookEdit.insertCells(at, [new NotebookCellData(NotebookCellKind.Markup, text.text.replace(/\n+$/, "\n"), "markdown")])]);
     if (!(await workspace.applyEdit(edit))) {
-      void window.showErrorMessage(`q-lint: could not insert the result into ${notebook.uri.fsPath}.`);
+      void window.showErrorMessage(plainMessage(`q-lint: could not insert the result into ${notebook.uri.fsPath}.`));
       return;
     }
     const lost = chart && image === undefined ? " The chart was left out: the result draws none." : "";
-    void window.showInformationMessage(`q-lint: inserted ${text.rows} row(s) into ${notebook.uri.path.replace(/^.*\//, "")} as cell ${at + 1}.${lost}`);
+    void window.showInformationMessage(plainMessage(`q-lint: inserted ${text.rows} row(s) into ${notebook.uri.path.replace(/^.*\//, "")} as cell ${at + 1}.${lost}`));
   }
 
   /// Append the result on show to a Markdown report (#1021): `target`, or
@@ -1438,7 +1440,7 @@ export class QueryModes {
     const preview = lines.slice(0, 14).join("\n") + (lines.length > 14 ? `\n... ${lines.length - 14} more line(s)` : "");
     const go = existing === undefined ? "Create" : "Append";
     const asked = await window.showWarningMessage(
-      existing === undefined ? `Create ${name} with the result?` : `Append the result to ${name}?`,
+      plainMessage(existing === undefined ? `Create ${name} with the result?` : `Append the result to ${name}?`),
       {
         modal: true,
         detail: `${existing === undefined ? "A new file" : "Added after its last line; nothing in it is changed"}: ${text.rows} row(s) from ${shown.process}${relative !== undefined ? `, and the chart as a new file, ${relative}` : ""}.\n\n${preview}`,
@@ -1456,12 +1458,12 @@ export class QueryModes {
       }
       await workspace.fs.writeFile(to, Buffer.from(before + gap + text.text, "utf8"));
     } catch (error) {
-      void window.showErrorMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+      void window.showErrorMessage(plainMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
       return;
     }
     await this.context.workspaceState.update(LAST_REPORT_KEY, to.toString());
     const lost = chart && relative === undefined ? " The chart was left out: the result draws none." : "";
-    void window.showInformationMessage(`q-lint: ${existing === undefined ? "wrote" : "appended"} ${text.rows} row(s) to ${to.fsPath}.${lost}`);
+    void window.showInformationMessage(plainMessage(`q-lint: ${existing === undefined ? "wrote" : "appended"} ${text.rows} row(s) to ${to.fsPath}.${lost}`));
   }
 
   /// Send what is shown to `only`, or to every open page. A page still
@@ -1550,7 +1552,7 @@ export class QueryModes {
       return;
     }
     await env.clipboard.writeText(chosen.csv);
-    void window.showInformationMessage(`q-lint: copied ${chosen.count} row(s) as CSV.`);
+    void window.showInformationMessage(plainMessage(`q-lint: copied ${chosen.count} row(s) as CSV.`));
   }
 
   /// Write the rows shown as CSV to `target`, or to a file the user picks.
@@ -1575,11 +1577,11 @@ export class QueryModes {
     try {
       await workspace.fs.writeFile(to, Buffer.from(chosen.csv, "utf8"));
     } catch (error) {
-      void window.showErrorMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+      void window.showErrorMessage(plainMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
       return;
     }
     if (!(target instanceof Uri)) {
-      void window.showInformationMessage(`q-lint: exported ${chosen.count} row(s) to ${to.fsPath}.`);
+      void window.showInformationMessage(plainMessage(`q-lint: exported ${chosen.count} row(s) to ${to.fsPath}.`));
     }
   }
 }

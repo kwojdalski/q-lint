@@ -14,6 +14,7 @@ import type { Live, ProcessArg } from "./live";
 import { decode } from "./qdecode";
 import type { QConnection } from "./qclient";
 import { RowWindow, STREAM_COMMANDS, SUBSCRIBE, TABLES, readStream, readUpdate } from "./stream";
+import { iconsEscaped, plainMessage } from "./history";
 
 /// How often the grid is redrawn, at most.
 const DRAW_MS = 200;
@@ -90,7 +91,7 @@ export class TableStreams {
     if (isProduction(process) || guarded.length > 0) {
       const yes = "Subscribe";
       const sure = await window.showWarningMessage(
-        `${process.label} is ${isProduction(process) ? "a production process" : "read-only guarded"} (tagged ${process.tags.join(", ")}). Subscribing adds q-lint as a subscriber there: the tickerplant sends it every update of the table while the grid is open. Subscribe?`,
+        plainMessage(`${process.label} is ${isProduction(process) ? "a production process" : "read-only guarded"} (tagged ${process.tags.join(", ")}). Subscribing adds q-lint as a subscriber there: the tickerplant sends it every update of the table while the grid is open. Subscribe?`),
         { modal: true },
         yes,
       );
@@ -104,7 +105,7 @@ export class TableStreams {
         this.live.openSeparate(process),
       );
     } catch (error) {
-      void window.showErrorMessage(`q-lint: could not connect to ${process.label}: ${error instanceof Error ? error.message : String(error)}`);
+      void window.showErrorMessage(plainMessage(`q-lint: could not connect to ${process.label}: ${error instanceof Error ? error.message : String(error)}`));
       return;
     }
     let columns: string[];
@@ -115,7 +116,7 @@ export class TableStreams {
         const tables = (Array.isArray(listed) ? listed : [listed]).filter((t): t is string => typeof t === "string" && t !== "");
         name =
           tables.length > 0
-            ? (await window.showQuickPick(tables, { title: `Stream which table of ${process.label}?` }))
+            ? (await window.showQuickPick(tables.map((t) => ({ label: iconsEscaped(t), table: t })), { title: `Stream which table of ${process.label}?` }))?.table
             : await window.showInputBox({ title: `Stream which table of ${process.label}?`, prompt: "The table's name, as .u.sub takes it." });
         name = name?.trim().replace(/^`/, "");
       }
@@ -132,7 +133,7 @@ export class TableStreams {
       columns = (Array.isArray(cols) ? cols : [cols]).filter((c): c is string => typeof c === "string");
     } catch (error) {
       await connection.close();
-      void window.showErrorMessage(`q-lint: could not subscribe to ${table ?? "the table"} on ${process.label}: ${error instanceof Error ? error.message : String(error)}`);
+      void window.showErrorMessage(plainMessage(`q-lint: could not subscribe to ${table ?? "the table"} on ${process.label}: ${error instanceof Error ? error.message : String(error)}`));
       return;
     }
     this.open(process.label, table, columns, connection, settings.rows);
@@ -150,9 +151,12 @@ export class TableStreams {
     this.streams.add(stream);
     panel.webview.html = streamHtml(panel.webview, media);
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // Closing the panel closes the connection, whose close handler would
+    // draw again: nothing touches the webview once it is disposed (#1272).
+    let disposed = false;
     const draw = (): void => {
       timer = undefined;
-      if (!stream.paused) {
+      if (!disposed && !stream.paused) {
         void panel.webview.postMessage({
           type: "rows",
           process: label,
@@ -167,7 +171,9 @@ export class TableStreams {
       }
     };
     const later = (): void => {
-      timer ??= setTimeout(draw, DRAW_MS);
+      if (!disposed) {
+        timer ??= setTimeout(draw, DRAW_MS);
+      }
     };
     connection.whenAsync((message) => {
       let rows: string[][] | undefined;
@@ -194,6 +200,7 @@ export class TableStreams {
       }
     });
     panel.onDidDispose(() => {
+      disposed = true;
       clearTimeout(timer);
       stream.closed ??= "closed";
       this.streams.delete(stream);

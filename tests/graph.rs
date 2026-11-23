@@ -496,6 +496,73 @@ fn a_relative_load_after_a_change_of_directory_is_dynamic() {
 }
 
 #[test]
+fn a_relative_load_after_a_directory_load_is_dynamic() {
+    // KDB-X: `\l db` leaves the process in db, so the `\l helper.q` after it
+    // loads db/helper.q, and fails where only the directory it started in has
+    // one (#1365). `\l .` moves nowhere, and a load before the directory's is
+    // still an edge.
+    let g = graph(
+        &[
+            ("helper.q", "hh:`root\n"),
+            ("db/x.q", "xx:1\n"),
+            ("a.q", "\\l db\n\\l helper.q\n"),
+            ("b.q", "system \"l db/\"\n\\l helper.q\n"),
+            ("c.q", "\\l helper.q\n\\l db\n"),
+            ("sub/d.q", "\\l .\n\\l helper.q\n"),
+        ],
+        false,
+    );
+    for file in ["a.q", "b.q"] {
+        assert_eq!(deps(&g, file), ["x.q"], "{file}");
+        assert_eq!(kinds(&g, file), [(2, "load")], "{file}");
+    }
+    assert_eq!(deps(&g, "c.q"), ["x.q", "helper.q"]);
+    assert!(kinds(&g, "c.q").is_empty());
+    assert!(deps(&g, "sub/d.q").contains(&"helper.q".to_string()));
+    assert!(kinds(&g, "sub/d.q").is_empty());
+}
+
+#[test]
+fn a_cd_inside_a_block_comment_moves_nothing() {
+    // KDB-X: under a block comment holding `\cd lib`, `\l b.q` loads the
+    // b.q beside the script (#1363).
+    let g = graph(
+        &[("b.q", "who:`top\n"), ("a.q", "/\n\\cd lib\n\\\n\\l b.q\n")],
+        false,
+    );
+    assert_eq!(deps(&g, "a.q"), ["b.q"]);
+    assert!(kinds(&g, "a.q").is_empty());
+}
+
+#[test]
+fn a_function_of_ones_own_named_system_loads_nothing() {
+    // KDB-X: after `.a.system:{-1 x}`, `.a.system "l b.q"` prints `l b.q`
+    // and `bb` stays undefined; such a call with "cd elsewhere" moves nothing,
+    // so the `\l c.q` after it is c.q beside the script (#1362).
+    let g = graph(
+        &[
+            ("b.q", "bb:1\n"),
+            ("c.q", "cc:1\n"),
+            ("a.q", ".a.system:{-1 x}\n.a.system \"l b.q\"\n"),
+            (
+                "d.q",
+                ".d.system:{-1 x}\n.d.system \"cd elsewhere\"\n\\l c.q\n",
+            ),
+            ("e.q", ".e.system:{-1 x}\np:\"b.q\"\n.e.system \"l \",p\n"),
+            // q's own still loads, however it is applied.
+            ("f.q", "system \"l b.q\"\n@[system;\"l c.q\";{}]\n"),
+        ],
+        false,
+    );
+    assert!(deps(&g, "a.q").is_empty());
+    assert_eq!(deps(&g, "d.q"), ["c.q"]);
+    for file in ["a.q", "d.q", "e.q"] {
+        assert!(kinds(&g, file).is_empty(), "{file}");
+    }
+    assert_eq!(deps(&g, "f.q"), ["b.q", "c.q"]);
+}
+
+#[test]
 fn a_trailing_double_colon_composes_and_defines_nothing() {
     // q 5: `g:f[1] count::` composes, and `count` stays q's; `h:f lim::`
     // leaves no `lim`. A line that is only `a::` does define `a` (#764).

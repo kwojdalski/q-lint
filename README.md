@@ -637,7 +637,8 @@ symbol `` `:lib/x.q `` - Go to Definition opens the file and a hover names it.
 The path is followed as the dependency graph follows it: against the first
 workspace folder, then the loading file's own directory and each one above it;
 a directory loads the scripts directly in it. A load that reaches no file, or
-a relative one written after the script changes directory, goes nowhere.
+a relative one written after the script changes directory - a `\cd`, or the
+load of a directory, which q stays in - goes nowhere.
 `textDocument/documentLink` makes each such path a link to the file it
 reaches, found the same way, with the file under its workspace folder as the
 tooltip; a load that reaches no file, or a directory (several files), has
@@ -867,7 +868,7 @@ q-lint/graph          {"textDocument": {"uri": U}}
 q-lint/affectedTests  {"changed": [uri]}
                    -> {"tests": [{"uri": uri, "reaches": [index into "changed" below],
                                   "self": its own index there, or null}],
-                       "changed": [uri], "unindexed": [uri]}
+                       "changed": [uri], "unindexed": [uri], "dynamic": [uri]}
 ```
 
 Three more, also under `capabilities.experimental`, read the indexed files'
@@ -890,8 +891,8 @@ function by a computed name too; `.z` handlers and tests are never listed,
 and `dynamic` counts the places a name is reached by a value computed at run
 time, which make the list a list of candidates. `testsReaching` compares the
 document's top-level function statements with `previous`, and answers the
-ones that changed and every test whose body names one of them, or names a
-function that does, and so on.
+ones that changed, are new or are gone, and every test whose body names one of
+them, or names a function that does, and so on.
 
 `affectedTests` lists the test files that reach a changed file along the
 graph, a changed test among them. Which files changed is the client's to
@@ -900,7 +901,9 @@ extension sends what differs from `HEAD` and what is untracked. `changed`
 in the answer is the sent files the index holds, each once; `unindexed` is
 the sent `.q` files it does not hold - deleted, excluded, outside the
 workspace - whose dependents cannot be followed, so a client can say the
-list is short. A test file is a `.q` file named `test_*` or `*_test`, or
+list is short; `dynamic` is the test files not listed that load by a path
+computed at run time (`system "l ",p`), which may run a changed file all the
+same. A test file is a `.q` file named `test_*` or `*_test`, or
 under a directory named `test` or `tests` below its workspace folder, which
 is wide on purpose: a helper listed with the tests costs a glance, a test
 left out costs a regression. The limits are the graph's: an edge through a
@@ -1187,9 +1190,9 @@ configuration names. `selectionRange.enable: true` announces
 diagnostics that point at a second place. `crossFileRefresh.enable: true`
 sends `workspace/codeLens/refresh` and `workspace/inlayHint/refresh`, to a
 client that declares it takes them, when what the workspace defines
-changes, and the first also when the names a file reads change while
-reference lenses are on, as `workspace/semanticTokens/refresh` is sent for
-colours. `renameLoads.enable: true` announces `workspace/willRenameFiles` for
+changes, the first also when the names a file reads change while reference
+lenses are on, and the second also when a definition's parameters change, as
+`workspace/semanticTokens/refresh` is sent for colours. `renameLoads.enable: true` announces `workspace/willRenameFiles` for
 `.q`/`.k` files and folders, and answers it with the edits that keep each
 load naming what it named - written from the workspace folder or from the
 loading file's directory, whichever it was written from - including the

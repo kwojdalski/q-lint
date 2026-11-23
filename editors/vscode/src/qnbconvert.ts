@@ -36,6 +36,24 @@ const itemText = (item: QnbItem): string => item.text ?? Buffer.from(item.base64
 /// A link's target, when it is one a page may follow.
 const safeHref = (href: string): string | undefined => (/^(https?:|mailto:)/i.test(href.trim()) ? href.trim() : undefined);
 
+const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"' };
+
+/// The character an entity names (`lt`, `#60`, `#x3c`), if it names one.
+function entity(name: string): string | undefined {
+  if (!name.startsWith("#")) {
+    return ENTITIES[name];
+  }
+  const code = /^#[xX]/.test(name) ? parseInt(name.slice(2), 16) : parseInt(name.slice(1), 10);
+  return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : undefined;
+}
+
+/// A GFM table row's cells: split on the pipes not escaped, the outer ones
+/// dropped, an escaped pipe a pipe.
+function tableCells(line: string): string[] {
+  const row = line.trim().replace(/^\|/, "").replace(/(^|[^\\])\|$/, "$1");
+  return row.split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|"));
+}
+
 /// One line of Markdown's inline text as HTML: code spans as they are,
 /// live values as `liveHtml` writes them, everything escaped.
 function inline(text: string, values: Record<string, LiveValue>): string {
@@ -47,7 +65,13 @@ function inline(text: string, values: Record<string, LiveValue>): string {
     s += text.slice(from, span.start) + hold(span.kind === "code" ? `<code>${escapeHtml(span.expr.trim())}</code>` : liveHtml(span.expr, values[span.expr]));
     from = span.end;
   }
-  s = escapeHtml((s + text.slice(from)).replace(/\\([\\`*_{}[\]()#+\-.!])/g, (_m, c: string) => hold(escapeHtml(c))));
+  // A backslash escapes any ASCII punctuation (CommonMark 2.4, #1310).
+  s = escapeHtml(
+    (s + text.slice(from))
+      .replace(/\\([!-/:-@[-`{-~])/g, (_m, c: string) => hold(escapeHtml(c)))
+      // The entities a result's table is written with (#1309).
+      .replace(/&(amp|lt|gt|quot|#\d{1,7}|#[xX][0-9a-fA-F]{1,6});/g, (m, e: string) => hold(escapeHtml(entity(e) ?? m))),
+  );
   s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, label: string, href: string) => {
     // `href` is escaped already: `&amp;` reads back as `&` in an attribute.
     // The tags are held, so the emphasis below finds no `_` in the URL (#1105).
@@ -76,27 +100,55 @@ export function markdownHtml(source: string, values: Record<string, LiveValue> =
   const lines = source.split(/\r?\n/);
   const out: string[] = [];
   let paragraph: string[] = [];
-  let list: { tag: "ul" | "ol"; items: string[] } | undefined;
+  let list: { tag: "ul" | "ol"; start: number; items: string[] } | undefined;
   const flush = (): void => {
     if (paragraph.length > 0) {
       out.push(`<p>${paragraph.map((l) => inline(l, values)).join("<br>\n")}</p>`);
       paragraph = [];
     }
     if (list !== undefined) {
-      out.push(`<${list.tag}>${list.items.map((i) => `<li>${inline(i, values)}</li>`).join("")}</${list.tag}>`);
+      const start = list.tag === "ol" && list.start !== 1 ? ` start="${list.start}"` : "";
+      out.push(`<${list.tag}${start}>${list.items.map((i) => `<li>${inline(i, values)}</li>`).join("")}</${list.tag}>`);
       list = undefined;
     }
   };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const fence = /^ {0,3}(`{3,}|~{3,})\s*(\S*)/.exec(line);
-    if (fence !== null) {
+    // A backtick fence's info string holds no backtick: "```a``` b" is a
+    // line of text with a code span in it, not a fence (#1307).
+    const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (fence !== null && !(fence[1][0] === "`" && fence[2].includes("`"))) {
       flush();
+      // Closed only by a bare run of the same character, at least as long:
+      // a "```q" inside is code (#1308).
+      const close = new RegExp(`^ {0,3}${fence[1][0]}{${fence[1].length},}\\s*$`);
       const code: string[] = [];
-      for (i++; i < lines.length && !lines[i].trimStart().startsWith(fence[1]); i++) {
+      for (i++; i < lines.length && !close.test(lines[i]); i++) {
         code.push(lines[i]);
       }
       out.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`);
+      continue;
+    }
+    // A GFM table: a header row, a delimiter row of as many cells, then
+    // rows up to a blank line (#1309).
+    const delimiter = i + 1 < lines.length ? tableCells(lines[i + 1]) : [];
+    if (
+      line.includes("|") &&
+      /^ {0,3}\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/.test(lines[i + 1] ?? "") &&
+      tableCells(line).length === delimiter.length
+    ) {
+      flush();
+      const align = delimiter.map((d) => (d.endsWith(":") ? (d.startsWith(":") ? "center" : "right") : d.startsWith(":") ? "left" : ""));
+      const cell = (tag: string, text: string, at: number): string =>
+        `<${tag}${align[at] ? ` style="text-align:${align[at]}"` : ""}>${inline(text, values)}</${tag}>`;
+      const head = tableCells(line).map((c, at) => cell("th", c, at));
+      const body: string[] = [];
+      for (i += 2; i < lines.length && lines[i].trim() !== "" && !/^ {0,3}(`{3,}|~{3,}|#{1,6}\s|>)/.test(lines[i]); i++) {
+        const cells = tableCells(lines[i]);
+        body.push(`<tr>${align.map((_a, at) => cell("td", cells[at] ?? "", at)).join("")}</tr>`);
+      }
+      i--;
+      out.push(`<table><thead><tr>${head.join("")}</tr></thead>${body.length > 0 ? `<tbody>${body.join("")}</tbody>` : ""}</table>`);
       continue;
     }
     // A closing run of `#` only after a space: `# Using C#` keeps its `#`
@@ -120,7 +172,9 @@ export function markdownHtml(source: string, values: Record<string, LiveValue> =
       }
       i--;
       out.push(`<blockquote>${markdownHtml(quote.join("\n"), values)}</blockquote>`);
-    } else if (item !== null) {
+    } else if (item !== null && (paragraph.length === 0 || (item[2].trim() !== "" && /^([-*+]|0*1[.)])$/.test(item[1])))) {
+      // Only a bullet or a "1." with text interrupts a paragraph: "in
+      // 2024. it ran" goes on with it (CommonMark 5.2, #1311).
       if (paragraph.length > 0) {
         flush();
       }
@@ -128,7 +182,7 @@ export function markdownHtml(source: string, values: Record<string, LiveValue> =
       if (list !== undefined && list.tag !== tag) {
         flush();
       }
-      list ??= { tag, items: [] };
+      list ??= { tag, start: tag === "ol" ? parseInt(item[1], 10) : 1, items: [] };
       list.items.push(item[2]);
     } else if (list !== undefined && /^\s+\S/.test(line)) {
       list.items[list.items.length - 1] += ` ${line.trim()}`;
@@ -184,6 +238,7 @@ const PAGE_STYLE = [
   "pre.out{background:none;border-style:dashed}pre.error,.live.error{color:var(--err)}pre.stderr{color:var(--muted)}",
   ".live{font-family:ui-monospace,monospace;font-weight:600}img.out{max-width:100%}",
   "blockquote{border-left:3px solid var(--line);margin:0;padding-left:12px;color:var(--muted)}",
+  "table{border-collapse:collapse;margin:8px 0}th,td{border:1px solid var(--line);padding:4px 8px}",
 ].join("\n");
 
 /// The notebook as one HTML page: its cells in order, code with what it
@@ -382,10 +437,12 @@ export function fromIpynb(raw: string): Qnb {
     const vscode = isObject(metadata.vscode) ? metadata.vscode : undefined;
     let language = typeof vscode?.languageId === "string" ? vscode.languageId.toLowerCase() : notebookLanguage;
     let code = source;
-    const magic = /^%%q[ \t]*(\r?\n|$)/.exec(source);
+    // `%%q --host h --port 5000` too (#1267): its options, which name where
+    // PyKX ran the cell, stay in view as the cell's first line, a q comment.
+    const magic = /^%%q(?:[ \t]+([^\r\n]*?))?[ \t]*(\r?\n|$)/.exec(source);
     if (magic !== null) {
       language = "q";
-      code = source.slice(magic[0].length);
+      code = (magic[1] ? `/ %%q ${magic[1]}\n` : "") + source.slice(magic[0].length);
     }
     if (vscode !== undefined) {
       const { languageId: _id, ...rest } = vscode;

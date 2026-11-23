@@ -26,6 +26,7 @@ import { answerLines, runText } from "./consolerun";
 import { HAS_CELLS, INTERACTIVE_COMMANDS, readInteractive, turnedOff, type InteractiveSettings } from "./interactiveconfig";
 import type { Live } from "./live";
 import { blockAt, statements } from "./statements";
+import { plainMessage } from "./history";
 
 const settings = (): InteractiveSettings => readInteractive((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback));
 
@@ -66,6 +67,10 @@ export function registerInteractive(
   /// Run `code` into the Interactive Window under `title`: true when it ran
   /// and q gave no error.
   const runInto = async (code: string, uri: Uri, title?: string): Promise<boolean> => {
+    // A cell queued before cells were turned off is not sent (#1277).
+    if (!settings().cells) {
+      return false;
+    }
     if (statements(code).length === 0) {
       return true;
     }
@@ -151,7 +156,7 @@ export function registerInteractive(
   const runAround = (above: boolean, uri?: unknown, line?: unknown): Promise<void> | undefined => {
     const s = settings();
     if (!s.cells || !s.cellLenses) {
-      void window.showInformationMessage(s.cells ? LENSES_OFF : CELLS_OFF);
+      void window.showInformationMessage(plainMessage(s.cells ? LENSES_OFF : CELLS_OFF));
       return undefined;
     }
     const t = target(uri, line);

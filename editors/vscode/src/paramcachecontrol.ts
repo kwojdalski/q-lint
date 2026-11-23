@@ -4,6 +4,7 @@
 // cached lambda.
 import { commands, Range, StatusBarAlignment, window, workspace, type ExtensionContext, type StatusBarItem } from "vscode";
 import { PARAM_CACHE, cachedLambdas, cachedText, toggleAt } from "./paramcache";
+import { plainMessage } from "./history";
 
 export class ParameterCache {
   private readonly item: StatusBarItem;
@@ -64,7 +65,7 @@ export class ParameterCache {
     const document = editor.document;
     const toggle = toggleAt(document.getText(), document.offsetAt(editor.selection.active));
     if (toggle.kind === "refuse") {
-      void window.showInformationMessage(toggle.message);
+      void window.showInformationMessage(plainMessage(toggle.message));
       return;
     }
     const applied = await editor.edit((edit) => {

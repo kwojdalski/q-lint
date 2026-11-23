@@ -124,10 +124,11 @@ export function toJson(payload: GridPayload, rows?: number[]): string {
   return lines.length === 0 ? "[]\n" : `[\n${lines.join(",\n")}\n]\n`;
 }
 
-/// A cell as Markdown table text: its pipes and backslashes escaped, its
-/// line breaks spaces.
+/// A cell as Markdown table text, shown as written: what Markdown reads
+/// inline - code, emphasis, links, HTML, entities, strikethrough, math -
+/// and the pipe escaped (#1263), its line breaks spaces.
 export function markdownCell(text: string): string {
-  return text.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n|\r/g, " ");
+  return text.replace(/[\\`*_[\]<>~|&$]/g, "\\$&").replace(/\r?\n|\r/g, " ");
 }
 
 /// The rows as a Markdown table, the cells as the grid shows them with

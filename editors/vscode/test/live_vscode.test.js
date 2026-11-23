@@ -235,6 +235,8 @@ test("tagging or importing the connected process gives the connection its tags",
   assert.match(confirmation("1+1", live.activeProcess(), { connects: false }).message, /prod/i);
   const { vscode } = require("./vscode_stub.js");
   vscode.workspace.fs = { readFile: async () => Buffer.from(JSON.stringify([proc("a", a.port, { tags: ["uat"] })])) };
+  // Taking away a guarded tag is asked first (#1269).
+  stub.picks.push("Import as Written");
   await stub.commands.get("q-lint.importProcesses")(vscode.Uri.file("/list.json"));
   assert.deepStrictEqual(live.activeProcess().tags, ["uat"]);
 });

@@ -28,6 +28,7 @@ import {
 } from "vscode";
 import { bestSuffixMatch, failedAt, headerLink, parseBacktrace, type Frame } from "./backtrace";
 import { editorFeatureOn } from "./editorfeatures";
+import { plainMessage } from "./history";
 
 const on = (): boolean => editorFeatureOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "backtraceLinks");
 
@@ -126,7 +127,7 @@ export function registerBacktraceLinks(context: ExtensionContext): { registered:
           handleTerminalLink: async (link: TerminalLink & { file: string; at: number }) => {
             const uri = await localFile(link.file);
             if (uri === undefined) {
-              void window.showInformationMessage(`q-lint: ${link.file} is not in this workspace.`);
+              void window.showInformationMessage(plainMessage(`q-lint: ${link.file} is not in this workspace.`));
               return;
             }
             await window.showTextDocument(uri, { selection: new Range(link.at - 1, 0, link.at - 1, 0) });

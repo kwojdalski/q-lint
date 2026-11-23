@@ -72,6 +72,10 @@ test("on, an answer is drawn at its line until the line is edited", (t) => {
   ]);
   const last = drawn.at(-1);
   assert.deepStrictEqual(last.ranges.map((r) => r.renderOptions.after.contentText).sort(), [" => 'type", " => 42"]);
+  // q's output is a code block in the hover, not Markdown (#1264).
+  const hover = last.ranges.find((r) => r.renderOptions.after.contentText === " => 42").hoverMessage;
+  assert.ok(hover instanceof vscode.MarkdownString);
+  assert.deepStrictEqual(hover.blocks, [["text", "42"]]);
   // Typing on line 2 wipes its result.
   changes.fire({ document: editor.document, contentChanges: [{ range: { start: { line: 2 }, end: { line: 2 } }, text: "x" }] });
   assert.deepStrictEqual(feature.shown("file:///w/a.q"), [{ line: 0, text: "'type" }]);

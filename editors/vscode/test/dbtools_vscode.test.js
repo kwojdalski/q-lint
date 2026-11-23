@@ -259,6 +259,20 @@ test("a dashboard runs its tiles' read-only queries, keeps a timer only with an 
   assert.deepStrictEqual(tileContent({ ok: false, error: "type", trace: "" }, "table"), { kind: "error", text: "type" });
 });
 
+test("Open Dashboard with a name no dashboard has makes one of that name, asking nothing (#1268)", async (t) => {
+  capture();
+  const { live, context } = await setUp(t);
+  new Dashboards(context, live);
+  assert.strictEqual(await stub.commands.get(DB_COMMANDS.openDashboard)("Trading"), "Trading");
+  assert.deepStrictEqual(context.workspaceState.get(DASHBOARDS_KEY).map((d) => d.name), ["Trading"]);
+  assert.strictEqual(stub.inputs.length, 0);
+  // A name that cannot be one - taken, once trimmed - is offered in the box to change.
+  let value;
+  stub.inputs.push((o) => ((value = o.value), "Desk"));
+  assert.strictEqual(await stub.commands.get(DB_COMMANDS.openDashboard)("Trading "), "Desk");
+  assert.strictEqual(value, "Trading ");
+});
+
 // A timer was set only when a tile had none: 5 s -> 300 s went on
 // querying every 5 s until the panel closed.
 test("changing a tile's refresh interval sets its timer again (#1123)", async (t) => {
@@ -277,6 +291,54 @@ test("changing a tile's refresh interval sets its timer again (#1123)", async (t
   assert.deepStrictEqual(dashboards.timerSeconds(), [300]);
   await dashboards.receive({ type: "view", id, view: "line" });
   assert.deepStrictEqual(dashboards.timerSeconds(), [300]);
+  dashboards.close();
+});
+
+// The run kept the view it started with, and the rerun the change asked
+// for was skipped as "already running": a table under a select saying line.
+test("a tile whose view changes while its run is out is shown in the view chosen (#1339)", async (t) => {
+  const { panels } = capture();
+  const { live, context } = await setUp(t);
+  await context.workspaceState.update(SAVED_QUERIES_KEY, [{ name: "px", code: "select from trade" }]);
+  const answer = { ok: true, type: 98, text: [], grid: { count: 2, keys: 0, names: ["a", "b"], types: [7, 9], cells: [["1", "2"], ["3", "4"]], raw: [[1, 2], [3, 4]], rank: [[0, 1], [0, 1]] } };
+  let release;
+  live.runApart = () => new Promise((r) => (release = () => r(answer)));
+  const dashboards = new Dashboards(context, live);
+  stub.inputs.push("Desk");
+  stub.picks.push("$(add) New dashboard...");
+  const id = await stub.commands.get(DB_COMMANDS.addToDashboard)("px", undefined, "hdb");
+  await stub.commands.get(DB_COMMANDS.openDashboard)("Desk");
+  await new Promise((r) => setTimeout(r, 20));
+  await dashboards.receive({ type: "view", id, view: "line" });
+  release();
+  await new Promise((r) => setTimeout(r, 20));
+  assert.strictEqual(context.workspaceState.get(DASHBOARDS_KEY)[0].tiles[0].view, "line");
+  assert.strictEqual(dashboards.contents.get(id).kind, "chart");
+  assert.strictEqual(panels[0].posted.filter((m) => m.type === "tile").at(-1).content.kind, "chart");
+  dashboards.close();
+});
+
+// A layout change draws every tile again from what it last showed, and
+// sent that without its time: every "at 09:30:00" went blank.
+test("a tile drawn again after a layout change keeps the time it ran at (#1341)", async (t) => {
+  const { panels } = capture();
+  const { live, context } = await setUp(t);
+  await context.workspaceState.update(SAVED_QUERIES_KEY, [{ name: "px", code: "select from trade" }]);
+  let runs = 0;
+  live.runApart = async () => (runs++, { ok: true, type: -7, text: ["1"] });
+  const dashboards = new Dashboards(context, live);
+  stub.inputs.push("Desk");
+  stub.picks.push("$(add) New dashboard...");
+  await stub.commands.get(DB_COMMANDS.addToDashboard)("px", undefined, "hdb");
+  await stub.commands.get(DB_COMMANDS.openDashboard)("Desk");
+  await new Promise((r) => setTimeout(r, 20));
+  const ran = panels[0].posted.filter((m) => m.type === "tile").at(-1);
+  assert.match(ran.at, /\d/);
+  await dashboards.receive({ type: "columns", columns: 3 });
+  const again = panels[0].posted.filter((m) => m.type === "tile").at(-1);
+  assert.notStrictEqual(again, ran, "posted again");
+  assert.strictEqual(runs, 1, "not run again");
+  assert.strictEqual(again.at, ran.at);
   dashboards.close();
 });
 
@@ -408,4 +470,78 @@ test("the tickerplant log's page asks one thing at a time: a click during a page
   assert.deepStrictEqual(log.posted.filter((m) => m.failed), []);
   assert.deepStrictEqual(log.posted.map((m) => m.type), ["page", "message", "page"]);
   assert.deepStrictEqual(log.posted.at(-1).rows.map((r) => r.index), [1]);
+});
+
+test("Load Schema loads a q file whose path has a space, and the local q keeps its own directory (#1257)", { skip: Q ? false : "QLINT_TEST_Q names no q binary" }, async (t) => {
+  capture();
+  stub.reset();
+  stub.config.user["terminal.qBinary"] = Q;
+  const context = stub.newContext();
+  const log = new TickerplantLog(context);
+  t.after(() => log.close());
+  const file = tpLogFile(t);
+  assert.strictEqual(await log.open(file), "2 messages");
+  const spaced = path.join(path.dirname(file), "sch ema");
+  fs.mkdirSync(spaced);
+  fs.writeFileSync(path.join(spaced, "part.q"), "u:([]time:`timestamp$();x:`long$())\n");
+  fs.writeFileSync(path.join(spaced, "schema.q"), "\\l part.q\nt:u\n");
+  fs.writeFileSync(path.join(spaced, "my schema.q"), "t:([]time:`timestamp$();x:`long$();y:`float$())\n");
+  const dialog = vscode.window.showOpenDialog;
+  t.after(() => (vscode.window.showOpenDialog = dialog));
+  // A schema that loads another file by a path relative to its own.
+  vscode.window.showOpenDialog = async () => [vscode.Uri.file(path.join(spaced, "schema.q"))];
+  await log.receive({ type: "schema" });
+  assert.deepStrictEqual(log.posted.at(-1), { type: "status", text: "Loaded schema.q into the local q." });
+  stub.picks.push("Replay");
+  assert.match(await log.replay(0, 1), /Replayed 2 messages\. .* holds t 2 rows, u 0 rows/);
+  // A file name with a space in it.
+  vscode.window.showOpenDialog = async () => [vscode.Uri.file(path.join(spaced, "my schema.q"))];
+  await log.receive({ type: "schema" });
+  assert.deepStrictEqual(log.posted.at(-1), { type: "status", text: "Loaded my schema.q into the local q." });
+  // The local q still reads a cut log in its own directory.
+  const b = fs.readFileSync(file);
+  fs.writeFileSync(path.join(path.dirname(file), "cut.log"), b.subarray(0, b.length - 4));
+  assert.strictEqual(await log.open(path.join(path.dirname(file), "cut.log")), "1 messages");
+});
+
+test("opening a second log lists its messages, not the first one's (#1258)", { skip: Q ? false : "QLINT_TEST_Q names no q binary" }, async (t) => {
+  capture();
+  stub.reset();
+  stub.config.user["terminal.qBinary"] = Q;
+  const context = stub.newContext();
+  const log = new TickerplantLog(context);
+  t.after(() => log.close());
+  const file = tpLogFile(t);
+  assert.strictEqual(await log.open(file), "2 messages");
+  await log.receive({ type: "ready" });
+  const b = fs.readFileSync(file);
+  const cut = path.join(path.dirname(file), "cut.log");
+  fs.writeFileSync(cut, b.subarray(0, b.length - 4));
+  log.posted.length = 0;
+  assert.strictEqual(await log.open(cut), "1 messages");
+  await new Promise((r) => setTimeout(r, 200));
+  assert.deepStrictEqual(log.posted.map((m) => m.type), ["log", "page"]);
+  assert.deepStrictEqual(log.posted[1].rows.map((r) => r.index), [0]);
+});
+
+test("the local q's directory is removed once the q has exited, where it cannot be before (#1287)", { skip: process.platform === "win32" || process.getuid?.() === 0 ? "a read-only directory stands in for a running q on POSIX, as a non-root user" : false }, () => {
+  const { EventEmitter } = require("node:events");
+  const { stopLocalQ } = require("../out/tplogview.js");
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-tplog-test-"));
+  const dir = path.join(parent, "q");
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, "qlint_tplog.q"), "");
+  // As on Windows, where a running q's directory cannot be removed.
+  fs.chmodSync(parent, 0o555);
+  try {
+    const child = Object.assign(new EventEmitter(), { pid: 1, exitCode: null, signalCode: null, kill: () => true });
+    stopLocalQ({ child, dir, port: 0, connection: undefined, output: "" });
+    assert.strictEqual(fs.existsSync(dir), true);
+    fs.chmodSync(parent, 0o755);
+    child.emit("exit", null, "SIGKILL");
+    assert.strictEqual(fs.existsSync(dir), false);
+  } finally {
+    fs.chmodSync(parent, 0o755);
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
 });

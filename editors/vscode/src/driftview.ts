@@ -56,6 +56,7 @@ import { REDEFINE } from "./funcsource";
 import { askRedefine } from "./funcsourceview";
 import { borrowWhenFree } from "./infoview";
 import type { Live } from "./live";
+import { plainMessage } from "./history";
 
 export const DRIFT_SCHEME = "q-lint-drift";
 /// Files and definitions a drift check reads at most.
@@ -102,7 +103,7 @@ export class Drift implements TextDocumentContentProvider {
       workspace.registerTextDocumentContentProvider(DRIFT_SCHEME, this),
       commands.registerCommand(DRIFT_COMMANDS.check, () => {
         if (!setting("drift")) {
-          void window.showInformationMessage(assistOff("drift"));
+          void window.showInformationMessage(plainMessage(assistOff("drift")));
           return undefined;
         }
         return this.check();
@@ -223,20 +224,20 @@ export class Drift implements TextDocumentContentProvider {
     }
     if (bound !== undefined && bound !== process.label) {
       void window.showInformationMessage(
-        `q-lint: ${file} is bound to ${bound}, and the connection is to ${process.label}; ${namesList(names)} not reloaded.`,
+        plainMessage(`q-lint: ${file} is bound to ${bound}, and the connection is to ${process.label}; ${namesList(names)} not reloaded.`),
       );
       return done({ file, process: process.label, sent: [], already: [], skipped: [], failed: [], reason: `bound to ${bound}` });
     }
     let states: Map<string, ProcessState>;
     try {
-      const got = await borrowWhenFree(this.live, async (connection) => readDrift(await connection.call(DRIFT, names.join(" "))));
+      const got = await borrowWhenFree(this.live, async (connection) => readDrift(await connection.call(DRIFT, names.join(" "))), undefined, process.label);
       if (got === undefined) {
-        void window.showInformationMessage(`q-lint: ${process.label} is busy with a query; ${namesList(names)} not reloaded.`);
+        void window.showInformationMessage(plainMessage(`q-lint: ${process.label} is busy with a query; ${namesList(names)} not reloaded.`));
         return done({ file, process: process.label, sent: [], already: [], skipped: [], failed: [], reason: "busy" });
       }
       states = got.value;
     } catch (error) {
-      void window.showErrorMessage(`q-lint: hot reload could not read ${namesList(names)} from ${process.label}: ${message(error)}`);
+      void window.showErrorMessage(plainMessage(`q-lint: hot reload could not read ${namesList(names)} from ${process.label}: ${message(error)}`));
       return done({ file, process: process.label, sent: [], already: [], skipped: [], failed: [], reason: message(error) });
     }
     const plan = reloadPlan(changed, states);
@@ -265,7 +266,8 @@ export class Drift implements TextDocumentContentProvider {
       }
       for (const s of plan.send) {
         try {
-          const got = await borrowWhenFree(this.live, (connection) => connection.call(REDEFINE, s.name, s.held, s.text));
+          // Only on the process the question named (#1289).
+          const got = await borrowWhenFree(this.live, (connection) => connection.call(REDEFINE, s.name, s.held, s.text), undefined, process.label);
           if (got === undefined) {
             out.failed.push({ name: s.name, why: `${process.label} is busy with a query` });
           } else {
@@ -284,10 +286,10 @@ export class Drift implements TextDocumentContentProvider {
   private report(out: Reloaded): void {
     const notSent = [...out.skipped, ...out.failed].map((s) => `${s.name} (${s.why})`);
     if (out.sent.length > 0) {
-      void window.showInformationMessage(`q-lint: reloaded ${namesList(out.sent)} on ${out.process} from ${out.file}.`);
+      void window.showInformationMessage(plainMessage(`q-lint: reloaded ${namesList(out.sent)} on ${out.process} from ${out.file}.`));
     }
     if (notSent.length > 0) {
-      void window.showWarningMessage(`q-lint: hot reload did not send ${notSent.join("; ")} to ${out.process}.`);
+      void window.showWarningMessage(plainMessage(`q-lint: hot reload did not send ${notSent.join("; ")} to ${out.process}.`));
     }
   }
 
@@ -346,7 +348,7 @@ export class Drift implements TextDocumentContentProvider {
     ).then(
       (r) => r,
       (error: unknown) => {
-        void window.showErrorMessage(`q-lint: could not compare with ${process.label}: ${message(error)}`);
+        void window.showErrorMessage(plainMessage(`q-lint: could not compare with ${process.label}: ${message(error)}`));
         return null;
       },
     );
@@ -354,7 +356,7 @@ export class Drift implements TextDocumentContentProvider {
       return undefined;
     }
     if (read === undefined) {
-      void window.showInformationMessage(`q-lint: ${process.label} is busy with a query; try again when it is done.`);
+      void window.showInformationMessage(plainMessage(`q-lint: ${process.label} is busy with a query; try again when it is done.`));
       return undefined;
     }
     if (read.defs.length === 0) {
@@ -365,7 +367,7 @@ export class Drift implements TextDocumentContentProvider {
     const summary = driftSummary(rows, process.label);
     const drifted = rows.map((row, i) => ({ row, uri: read.defs[i].uri })).filter(({ row }) => row.status !== "same");
     if (drifted.length === 0) {
-      void window.showInformationMessage(`q-lint: ${summary}`);
+      void window.showInformationMessage(plainMessage(`q-lint: ${summary}`));
       return rows;
     }
     const what = { differs: "differs on the process", missing: "not defined on the process", other: "not a lambda on the process" };

@@ -27,8 +27,8 @@ export interface Target {
   user?: string;
   password?: string;
   tls?: boolean;
-  /// The name a TLS certificate is checked against, when `host` is not it:
-  /// a tunnel's loopback end (#908).
+  /// The name or address a TLS certificate is checked against, when `host`
+  /// is not it: a tunnel's loopback end (#908).
   servername?: string;
 }
 
@@ -73,6 +73,24 @@ function typeOf(message: Buffer): number | undefined {
   return message.length > 13 && (message.readUInt8(12) & 1) === 0 ? message.readInt8(13) : undefined;
 }
 
+/// The socket closed before the handshake was answered: how a process
+/// refuses a user - and all that is seen of a tunnel whose far end reached
+/// nothing, which `Live.dial` says in its own words (#1355).
+export class ClosedBeforeHandshake extends Error {}
+
+/// A connect's error with its reason in `message`. Node tries each address
+/// of a name in turn - `localhost` is `::1` and `127.0.0.1` - and when all
+/// fail gives an AggregateError whose own message is empty (#1352): the
+/// reasons are in its `errors`.
+export function withReason(error: Error): Error {
+  if (error.message === "") {
+    const inner = (error as { errors?: unknown }).errors;
+    const reasons = Array.isArray(inner) ? inner.map((e) => (e instanceof Error ? e.message : "")).filter((m) => m !== "") : [];
+    error.message = [...new Set(reasons)].join("; ") || (error as NodeJS.ErrnoException).code || "the connection failed";
+  }
+  return error;
+}
+
 export class QConnection {
   /// What has arrived of the messages not yet read, in the chunks it came
   /// in: joined only once a whole message is there, since joining each
@@ -103,8 +121,17 @@ export class QConnection {
   static open(target: Target, timeoutMs: number = CONNECT_TIMEOUT_MS, signal?: AbortSignal): Promise<QConnection> {
     return new Promise((resolve, reject) => {
       const options = { host: target.host, port: target.port };
+      // The name the certificate must be for. An IP address cannot be sent
+      // as the server name, and without one the check is against the host
+      // dialled: a tunnel's loopback end. So an address given as
+      // `servername` is checked here, against the certificate (#1356).
+      const name = target.servername ?? target.host;
       const socket = target.tls
-        ? tls.connect({ ...options, servername: target.servername ?? (net.isIP(target.host) ? undefined : target.host) })
+        ? tls.connect({
+            ...options,
+            servername: net.isIP(name) ? undefined : name,
+            ...(target.servername !== undefined && net.isIP(name) ? { checkServerIdentity: (_host: string, cert: tls.PeerCertificate) => tls.checkServerIdentity(name, cert) } : {}),
+          })
         : net.connect(options);
       let settled = false;
       const cancelled = (): void => fail(new Error(`the connect to ${target.host}:${target.port} was cancelled`));
@@ -126,9 +153,9 @@ export class QConnection {
         return;
       }
       signal?.addEventListener("abort", cancelled);
-      socket.once("error", fail);
+      socket.once("error", (error: Error) => fail(withReason(error)));
       // A process that refuses the user closes the socket without a byte.
-      socket.once("close", () => fail(new Error(`${target.host}:${target.port} closed the connection: the user or password was refused`)));
+      socket.once("close", () => fail(new ClosedBeforeHandshake(`${target.host}:${target.port} closed the connection: the user or password was refused`)));
       socket.once(target.tls ? "secureConnect" : "connect", () => {
         const auth = target.user !== undefined ? `${target.user}:${target.password ?? ""}` : "";
         socket.write(Buffer.concat([Buffer.from(auth, "utf8"), Buffer.from([CAPABILITY, 0])]));

@@ -8,6 +8,7 @@ import type { Live } from "./live";
 import { readLive } from "./liveconfig";
 import { render, type Answer } from "./query";
 import { statements } from "./statements";
+import { plainMessage } from "./history";
 
 /// One run, as a pane shows it.
 export interface Ran {
@@ -36,7 +37,7 @@ export async function runText(live: Live, code: string, uri?: Uri): Promise<Ran 
   if (bound !== undefined && bound !== live.activeLabel()) {
     if (live.isBusy()) {
       void window.showInformationMessage(
-        `q-lint: a query is still running on ${live.activeLabel()}; this file's code goes to ${bound}. q-lint: Abort Current Query stops waiting for it.`,
+        plainMessage(`q-lint: a query is still running on ${live.activeLabel()}; this file's code goes to ${bound}. q-lint: Abort Current Query stops waiting for it.`),
       );
       return undefined;
     }
@@ -53,7 +54,7 @@ export async function runText(live: Live, code: string, uri?: Uri): Promise<Ran 
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (message.startsWith("Not run:")) {
-      void window.showInformationMessage(`q-lint: ${message}`);
+      void window.showInformationMessage(plainMessage(`q-lint: ${message}`));
       return undefined;
     }
     const process = live.activeLabel() ?? "the process";

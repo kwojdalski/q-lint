@@ -53,6 +53,9 @@ test("each step is written as q over the step before, and the steps as a script 
   assert.strictEqual(w.wrangleQuery("select from t / note", [steps[1]]), "`px xasc (select from t)");
   assert.strictEqual(w.wrangleQuery('select from t where s like "a /b" / note\n  / more', [steps[1]]), '`px xasc (select from t where s like "a /b")');
   assert.match(w.wrangleScript("select from t / note", steps, "rdb"), /\n  w:select from t;\n/);
+  // A block comment, `/` to `\` alone on their lines, goes whole; so does what follows a `\` alone (#1280).
+  assert.strictEqual(w.wrangleQuery("select from t\n/\n a note (\n;\n\\\n  where px>0", [steps[1]]), "`px xasc (select from t\n  where px>0)");
+  assert.strictEqual(w.wrangleQuery("select from t\n\\\nexit 0", [steps[1]]), "`px xasc (select from t)");
   // Only a plain name can be a q-sql column.
   assert.strictEqual(w.columnProblem("px"), undefined);
   assert.match(w.columnProblem("a b"), /cannot be named in q-sql/);
@@ -94,4 +97,21 @@ test("a cell edit is an update of the table, its rows found by the row's values,
   assert.strictEqual(w.guessTable("select from .ns.trade where sym=`a"), ".ns.trade");
   assert.strictEqual(w.guessTable("select sum px by sym from trade"), "trade");
   assert.strictEqual(w.guessTable("1+1"), undefined);
+});
+
+test("an unwrapped grid's cell edit finds its row by a long past 2^53 exactly (#1276)", () => {
+  const { gridOfQ } = require("../out/qformat.js");
+  const grid = gridOfQ(
+    {
+      kind: "table",
+      attr: 0,
+      cols: ["id", "px"],
+      data: [
+        { kind: "vector", t: 7, attr: 0, v: [9007199254740993n, 9007199254740992n] },
+        { kind: "vector", t: 9, attr: 0, v: [1, 2] },
+      ],
+    },
+    100,
+  );
+  assert.strictEqual(w.editStatement(grid, 1, 0, "t", "99f").code, "update px:(99f) from `t where (id~\\:(9007199254740993)),(px~\\:(1f))");
 });
