@@ -45,8 +45,10 @@
 //   parentheses (`` .[(`t);..] ``), with four arguments: an
 //   amend in place (three is as often a trap, `.[`f;args;handler]`, and
 //   is not taken for one); `![` likewise, a functional update or delete;
-// - `value`, `get` or `eval` applied to a string, to `parse`, or to a
-//   tree headed by `:` or `::` (`eval(:;`t;())`) or by the symbol of
+// - `value`, `get`, `eval` or `-6!` applied to a string, to `parse` or
+//   `-5!`, or to a tree headed by `:`, `::` or `+:` (`eval(:;`t;())`), by
+//   `!` on a table by name (`` eval(!;enlist`t;..) ``, `` value(!;`t;..) ``)
+//   or by the symbol of
 //   a writer above (`` value(`.q.set;`a;1) ``), also through `[`,
 //   `each`, `'`, `@`, `.` or `enlist`, in parentheses (`(value)"a:1"`)
 //   and through a trap (`@[value;"a:1";h]`), and by their `.q.` names;
@@ -277,8 +279,11 @@ function lambdaLocals(t: Token[], open: number, touching: (a: Token | undefined,
 
 /// What an evaluator - `value`, `get`, `eval` - applied to what starts at
 /// `t[j]` would run that changes the process, and where that is; past
-/// brackets, `each`, `'`, `@`, `.` and `enlist`.
-function evaluated(t: Token[], j: number): { reason: string; at: number } | undefined {
+/// brackets, `each`, `'`, `@`, `.` and `enlist`. `byValue` when it is
+/// `value` or `get`, which take a list's items as they are, so a symbol in
+/// it names a table where `eval` would read the variable: `` value(!;`t;..) ``
+/// and `` eval(!;enlist`t;..) `` both update `t` in place.
+function evaluated(t: Token[], j: number, byValue: boolean): { reason: string; at: number } | undefined {
   while (
     t[j] !== undefined &&
     ((t[j].kind === "open" && t[j].text !== "{") ||
@@ -291,13 +296,15 @@ function evaluated(t: Token[], j: number): { reason: string; at: number } | unde
   const head = t[j - 1]?.text === "(" && t[j - 1]?.kind === "open";
   const reason = k?.kind === "str"
     ? "a string"
-    : k?.kind === "name" && k.text === "parse"
+    : (k?.kind === "name" && k.text === "parse") || (k?.text === "-5" && t[j + 1]?.text === "!")
       ? "a parse tree"
-      : head && k?.kind === "op" && k.text === ":"
+      : head && k?.kind === "op" && (k.text === ":" || (OPERATORS.has(k.text) && t[j + 1]?.text === ":"))
         ? "an assignment"
-        : head && k?.kind === "sym" && WRITERS.has(unqualified(k.text.slice(1)))
-          ? `a call of ${k.text.slice(1)}`
-          : undefined;
+        : head && k?.text === "!" && t[j + 1]?.text === ";" && (byValue ? t[j + 2] : t[j + 2]?.text === "enlist" ? t[j + 3] : undefined)?.kind === "sym"
+          ? "a functional update or delete"
+          : head && k?.kind === "sym" && WRITERS.has(unqualified(k.text.slice(1)))
+            ? `a call of ${k.text.slice(1)}`
+            : undefined;
   return reason === undefined ? undefined : { reason, at: j };
 }
 
@@ -477,7 +484,7 @@ function readStatement(statement: string, found: Set<string>): void {
         // Given to a trap, `@[value;"a:1";h]`, `.Q.trp[value;..;h]`, it is
         // applied to the argument after it.
         const trapped = t[i - 1]?.text === "[" && t[i - 1]?.kind === "open" && next?.text === ";";
-        const what = evaluated(t, i + (wrapped || trapped ? 2 : 1));
+        const what = evaluated(t, i + (wrapped || trapped ? 2 : 1), unqualified(k.text) !== "eval");
         if (what !== undefined) {
           found.add(`evaluates ${what.reason} with ${k.text}`);
           i = what.at;
@@ -549,6 +556,15 @@ function readStatement(statement: string, found: Set<string>): void {
     if (k.kind === "sym" && k.text.length > 1 && next?.kind === "op" && next.text === "?" && t[i - 1]?.kind !== "sym") {
       found.add(`extends the enumeration ${k.text} with ?`);
       continue;
+    }
+    // `-6!` is `eval`.
+    if (k.kind === "num" && k.text === "-6" && next?.text === "!" && touching(k, next)) {
+      const what = evaluated(t, i + 2, false);
+      if (what !== undefined) {
+        found.add(`evaluates ${what.reason} with -6!`);
+        i = what.at;
+        continue;
+      }
     }
     // Handle 0 is the process itself: `0"a:1"`, `(0)"a:1"`, `neg[0]"a:1"`
     // and `-0"a:1"` evaluate the string there.

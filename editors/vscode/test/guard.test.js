@@ -550,3 +550,26 @@ test("a string run through a trap is evaluated (#1253)", () => {
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("eval of a compound-assignment or ! tree, -6! and -5! evaluate (#1324)", () => {
+  const cases = {
+    "eval(+:;`a;1)": ["evaluates an assignment with eval"],
+    "eval(,:;`t;([]a:enlist 9))": ["evaluates an assignment with eval"],
+    "eval(!;enlist`t;();0b;`symbol$())": ["evaluates a functional update or delete with eval"],
+    "value(!;`t;();0b;`symbol$())": ["evaluates a functional update or delete with value"],
+    "-6!(:;`a;1)": ["evaluates an assignment with -6!"],
+    "-6!(+:;`a;5)": ["evaluates an assignment with -6!"],
+    '-6!parse "a:1"': ["evaluates a parse tree with -6!"],
+    'eval -5!"a:1"': ["evaluates a parse tree with eval"],
+    'value -5!"a:7"': ["evaluates a parse tree with value"],
+    // A tree that only computes, and -5! alone, read.
+    "eval(+;1;2)": [],
+    "-6!(+;1;2)": [],
+    "eval(!;`t;();0b;`symbol$())": [],
+    "value(!;enlist`t;();0b;`symbol$())": [],
+    '-5!"a:1"': [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

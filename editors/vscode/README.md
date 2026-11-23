@@ -1060,8 +1060,9 @@ not a change, and what is sent over it is not read), `0:` or `1:` to a file
 handle (`` `:f ``, or one made with `hsym`), `2:`, replaying a log with `-11!` (not `-11!(-1;..)` or `(-2;..)`,
 which only count and check it), compressing a file with `-19!`, an amend in place (`` @[`t;i;:;v] ``, `` .[(`t);i;f;v] ``) or
 a functional update or delete in place (`` ![`t;c;b;a] ``),
-`value`, `get` or `eval` of a string, of `parse` or of an assignment tree
-(`` eval(:;`t;()) ``) or of a list headed by a writer's symbol
+`value`, `get`, `eval` or `-6!` of a string, of `parse` or `-5!`, of an assignment tree
+(`` eval(:;`t;()) ``, `` eval(+:;`a;1) ``), of a functional update or delete on a table by name
+(`` eval(!;enlist`t;..) ``, `` value(!;`t;..) ``) or of a list headed by a writer's symbol
 (`` value(`.q.set;`a;1) ``), however it is applied (`value@"a:1"`,
 `(value)"a:1"`, through a trap: `@[value;"a:1";h]`), and a system command other than one that
 reads a setting (`\c`, `\d`, `\P`, `\_`, `\r`, `\E` alone, `\w 0`, `\w 1`) - `\t` and `\ts` are read for their
