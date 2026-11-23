@@ -1003,7 +1003,8 @@ is sent; Escape sends nothing. A change is: assigning a global (`a:1`,
 `.ns.v:`, as q makes those global; a column named in `select a:x from t` or
 `([] a:1 2)` is not one), `update` or `delete` from a table named by a
 symbol (`` from `t ``), `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`,
-`system`, `.Q.dpft`, `.Q.dpfts`, `.Q.hdpf`, `.Q.en`, `0:` or `1:` to a file
+`system`, `save`, `rsave`, `dsave`, `load`, `rload`, `.Q.dpft`, `.Q.dpfts`,
+`.Q.hdpf`, `.Q.en`, `.Q.chk`, `.Q.dsftg`, `0:` or `1:` to a file
 handle, `2:`, replaying a log with `-11!` (not `-11!(-1;..)` or `(-2;..)`,
 which only count and check it), an amend in place (`` @[`t;i;:;v] ``) or
 a functional update or delete in place (`` ![`t;c;b;a] ``),

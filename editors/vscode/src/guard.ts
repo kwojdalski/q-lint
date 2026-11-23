@@ -19,7 +19,8 @@
 // - `update` or `delete` from a table named by a symbol (`` from `t ``),
 //   which changes it in place;
 // - `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`, `system`,
-//   `.Q.dpft`, `.Q.dpfts`, `.Q.hdpf` and `.Q.en`, and `0:` or `1:` to a
+//   `save`, `rsave`, `dsave`, `load`, `rload`, `.Q.dpft`, `.Q.dpfts`,
+//   `.Q.hdpf`, `.Q.en`, `.Q.chk` and `.Q.dsftg`, and `0:` or `1:` to a
 //   file handle (`` `:f 0: ``), and `2:`;
 // - `-11!`, which replays a log through `upd`, except `-11!(-1;..)` and
 //   `-11!(-2;..)`, which only count and check one;
@@ -77,7 +78,10 @@ const NAME_START = /[A-Za-z.]/;
 const NAME = /[A-Za-z0-9_.]/;
 /// The characters that make a compound assignment with `:` after them.
 const OPERATORS = new Set([..."+-*%&|^=<>$,#_~!?@."]);
-const WRITERS = new Set(["set", "upsert", "insert", "hdel", "exit", "hclose", "system", ".Q.dpft", ".Q.dpfts", ".Q.hdpf", ".Q.en"]);
+const WRITERS = new Set([
+  "set", "upsert", "insert", "hdel", "exit", "hclose", "system", "save", "rsave", "dsave", "load", "rload",
+  ".Q.dpft", ".Q.dpfts", ".Q.hdpf", ".Q.en", ".Q.chk", ".Q.dsftg",
+]);
 /// System commands that only read a setting when they are given no argument.
 const READS_BARE = new Set([..."abBcCdefgoOpPsSTvwWz", "cd"]);
 

@@ -104,6 +104,28 @@ test("a functional update or delete on a global table is a change (#1064)", () =
   }
 });
 
+test("save, rsave, dsave, load, rload, .Q.chk and .Q.dsftg are changes (#1065)", () => {
+  const cases = {
+    "save `trade": ["calls save"],
+    "rsave `trade": ["calls rsave"],
+    "`:/tmp/db/ dsave `trade": ["calls dsave"],
+    "load `:trade": ["calls load"],
+    "rload `:trade": ["calls rload"],
+    ".Q.chk `:/hdb": ["calls .Q.chk"],
+    ".Q.dsftg[(`:db;2024.01.01;`trade);(`:src;0;0);`a`b!\"jf\"]": ["calls .Q.dsftg"],
+    // Reads stay reads.
+    "get `:hdb/sym": [],
+    "get `t": [],
+    "value `t": [],
+    "select from t where sym=`a": [],
+    "exec price from t": [],
+    ".my.load[`x]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
 test("system commands are changes, except bare reads of a setting; \\t is read for its expression", () => {
   const cases = {
     "\\l file.q": ["runs the system command \\l"],
