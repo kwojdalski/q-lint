@@ -920,6 +920,27 @@ fn highlights_mark_a_write_apart_from_a_read() {
         marks(&reply),
         [((1, 14, 15), 3), ((1, 19, 20), 3), ((1, 25, 26), 2)]
     );
+    // A global amended through an index is written, `v[0]:2` and
+    // `v[1]+:3` (KDB-X), and one only indexed is read (#1246).
+    let text = "v:1 2\nv[0]:2\nv[1]+:3\nw:v[0]\n";
+    let uri = server.open(dir.path(), "b.q", text);
+    let reply = server.ask(
+        "textDocument/documentHighlight",
+        &uri,
+        text,
+        "v:1",
+        0,
+        json!({}),
+    );
+    assert_eq!(
+        marks(&reply),
+        [
+            ((0, 0, 1), 3),
+            ((1, 0, 1), 3),
+            ((2, 0, 1), 3),
+            ((3, 2, 3), 2)
+        ]
+    );
 }
 
 #[test]

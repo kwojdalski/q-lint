@@ -491,6 +491,7 @@ fn highlights(params: &Value, sources: &Sources) -> Value {
         Some(Name::Global { at, .. }) => {
             let targets = sources.targets(&cursor, at);
             let placement = sources.placement(&cursor.key);
+            let code = q_lint_rs::code_view(cursor.text);
             mentions(cursor.text)
                 .iter()
                 .filter(|m| {
@@ -499,7 +500,11 @@ fn highlights(params: &Value, sources: &Sources) -> Value {
                         .iter()
                         .any(|name| targets.contains(name))
                 })
-                .map(|m| highlight(m.at, m.len, m.definition.is_some()))
+                .map(|m| {
+                    let write =
+                        m.definition.is_some() || q_lint_rs::amended_at(&code, m.at + m.len);
+                    highlight(m.at, m.len, write)
+                })
                 .collect()
         }
     }

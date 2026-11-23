@@ -401,6 +401,21 @@ pub fn code_view(source: &str) -> String {
     views(source).code
 }
 
+/// Whether the name ending at byte `end` of `code` (a code view) is amended
+/// through an index - `v[0]:2`, `v[i][j]+:1` - which writes it (KDB-X).
+pub fn amended_at(code: &str, end: usize) -> bool {
+    let after = code[end..].trim_start_matches([' ', '\t']);
+    let mut rest = after;
+    while rest.starts_with('[') {
+        let Some(close) = matching(code, code.len() - rest.len(), b'[', b']') else {
+            return false;
+        };
+        rest = code[close..].trim_start_matches([' ', '\t']);
+    }
+    rest.len() < after.len()
+        && (rest.starts_with(':') || re!(r"^[-+*%&|^=<>,#~!?@$]:").is_match(rest))
+}
+
 /// What a definition that is no lambda may still be called as: the name at
 /// byte `at` for `len` bytes, itself (`al:add`) or projected (`pr:add[;2;]`).
 /// `given` is `None` for the name itself, and for a projection says of each
