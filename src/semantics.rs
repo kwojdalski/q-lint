@@ -2483,6 +2483,53 @@ pub fn check(
             ));
         }
     }
+    // A lambda applied with peach runs on secondary threads under `-s`,
+    // where a global write is refused: q 5 with `-s 2` gives 'noupdate for
+    // `{g::1;x} peach 1 2`, `` {`g set 1;x} peach 1 2 `` and
+    // `{.ns.g::1;x} peach 1 2`, and runs `{b:0;b::1;b+x} peach 1 2`. Only a
+    // lambda written out as peach's left operand, and only its own body: a
+    // nested lambda may never be called. A file symbol, `` `:f set t ``,
+    // writes no global.
+    for scope in &scopes {
+        let after = code.get(scope.end + 1..).unwrap_or("");
+        let next = after.trim_start_matches([' ', '\t']);
+        if code.as_bytes().get(scope.end) != Some(&b'}')
+            || !re!(r"^peach(?:[^A-Za-z0-9_.]|$)").is_match(next)
+        {
+            continue;
+        }
+        let view = local_view(&scope.direct, false);
+        let assigned = re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*::")
+            .captures_iter(&view)
+            .find(|m| {
+                let whole = m.get(0).unwrap();
+                boundary(&view, whole.start())
+                    && assigns_value(&view[whole.end()..])
+                    && !scope.locals.contains(&m[1])
+            })
+            .map(|m| (m.get(0).unwrap().start(), m[1].to_string()));
+        let set = re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]+set(?:[^A-Za-z0-9_.]|$)")
+            .captures_iter(&scope.direct)
+            .find(|m| crate::boundary(&scope.direct, m.get(0).unwrap().start()))
+            .map(|m| (m.get(0).unwrap().start(), m[1].to_string()));
+        let first = match (assigned, set) {
+            (Some(a), Some(b)) => Some(if a.0 <= b.0 { a } else { b }),
+            (a, b) => a.or(b),
+        };
+        if let Some((at, name)) = first {
+            out.push(Finding::at(
+                path,
+                raw,
+                scope.body + at,
+                "QB024",
+                format!(
+                    "This lambda is applied with peach and writes the global `{name}`: on \
+                     secondary threads (q -s) q refuses that with 'noupdate; return the value \
+                     and assign it after peach"
+                ),
+            ));
+        }
+    }
     // A parameter the body never mentions. The caller is still required to
     // pass it, so this is usually a call site that changed and a signature
     // that did not.

@@ -490,6 +490,13 @@
     "scope": "style"
   },
   {
+    "code": "QB024",
+    "name": "peach-global-write",
+    "category": "correctness",
+    "summary": "A lambda applied with peach writes a global, which q refuses with 'noupdate when it runs on secondary threads",
+    "scope": "style"
+  },
+  {
     "code": "QP001",
     "name": "bare-slash-block",
     "category": "policy",

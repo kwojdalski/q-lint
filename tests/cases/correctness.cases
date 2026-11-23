@@ -1131,3 +1131,14 @@ k:{[n] update a:1 from n;}
 m:{update a:1 from s; 1}
 n:{update a:1 from v; 1}
 p:{r:$[1b;update a:1 from t;t]; r}
+
+=== QB024 | a lambda given to peach writes a global (q 5 -s 2: 'noupdate; #1144)
+r1:{g::1;x} peach 1 2
+r2:{`g set 1;x} peach 1 2
+r3:{.ns.g::1;x} peach 1 2
+
+=== clean | a peach lambda that writes only its locals, a file, or a nested lambda's global (#1144)
+r1:{a:1;a+x} peach 1 2
+r2:{`:f set x;x} peach 1 2
+r3:{h:{g::1}; count h; x} peach 1 2
+r4:{g::1;x} each 1 2

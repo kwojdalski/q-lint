@@ -1,6 +1,6 @@
 # Rules
 
-All 136 rules, generated from `src/taxonomy.json` - the same data
+All 137 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -168,6 +168,7 @@ it, or `ALL`.
 | <a id="qb020"></a>`QB020` | unreachable-statement | A statement after a top-level return or signal in a lambda never runs | `style` and above |
 | <a id="qb021"></a>`QB021` | select-by-duplicate-name | A select or exec names a result column the same as a by group, which q refuses with 'dup names for cols/groups | every profile |
 | <a id="qb022"></a>`QB022` | discarded-update | An update or delete on a table value whose result is discarded changes nothing | `style` and above |
+| <a id="qb024"></a>`QB024` | peach-global-write | A lambda applied with peach writes a global, which q refuses with 'noupdate when it runs on secondary threads | `style` and above |
 
 ## Domain - literal arguments outside what a builtin accepts
 

@@ -644,6 +644,12 @@ book:([]px:1 2)
 bump:{update px:px+1 from book; count book}
 bump2:{update px:px+1 from `book; count book}
 
+/ QB024: under q -s, a global written from a peach lambda is 'noupdate;
+/ returning the value and assigning it after peach is not.
+/ expect-next: QB024
+doubled:{seen::x; 2*x} peach 1 2
+doubled2:2*{x} peach 1 2
+
 / QE008: q 5 has no monadic -, so -x does not parse; neg x does.
 / expect-next: QE008
 negated:{-x}
