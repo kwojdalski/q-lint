@@ -475,6 +475,12 @@
             "default": true,
             "order": 50,
             "markdownDescription": "Redraw the code lenses and inlay hints of every open q file when another file's definitions change - a parameter renamed, a function added - and the reference counts when the names a file reads change. Off, a file's lenses and hints are redrawn only when it is edited itself."
+          },
+          "q-lint.renameLoads.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 51,
+            "markdownDescription": "When a `.q` or `.k` file or a folder is renamed or moved in the Explorer, rewrite the `\\l` paths (and `system \"l ...\"` and `` `:file.q `` paths) that name it - or anything under the folder - so they still reach it, each from the base it was written against: the workspace folder, or the loading file's own directory. A moved file's own loads are rewritten too. Off, a rename changes no file."
           }
         }
       },

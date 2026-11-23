@@ -78,6 +78,7 @@ export interface InitializationOptions {
   selectionRange: { enable: boolean };
   relatedInformation: { enable: boolean };
   crossFileRefresh: { enable: boolean };
+  renameLoads: { enable: boolean };
   workspaceIndex: { enable: boolean; exclude: string[] };
 }
 
@@ -189,6 +190,7 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
       selectionRange: { enable: settings.get<boolean>("selectionRange.enable", true) },
       relatedInformation: { enable: settings.get<boolean>("relatedInformation.enable", true) },
       crossFileRefresh: { enable: settings.get<boolean>("crossFileRefresh.enable", true) },
+      renameLoads: { enable: settings.get<boolean>("renameLoads.enable", true) },
       workspaceIndex: {
         enable: settings.get<boolean>("workspaceIndex.enable", true),
         exclude: strings(settings, "workspaceIndex.exclude"),
@@ -237,6 +239,7 @@ const RESTARTING = [
   "selectionRange",
   "relatedInformation",
   "crossFileRefresh",
+  "renameLoads",
 ];
 
 /// Whether a configuration change needs a new server.

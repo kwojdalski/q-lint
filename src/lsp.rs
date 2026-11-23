@@ -195,6 +195,7 @@ mod help;
 mod inventory;
 mod live;
 mod navigate;
+mod paths;
 mod relate;
 mod related;
 mod scope;
@@ -643,7 +644,8 @@ fn workspace_folders(params: &Value) -> Vec<(String, String)> {
 ///  "functionalForm": {"enable": true}, "qsqlExplain": {"enable": true},
 ///  "versionCheck": {"enable": true}, "baseline": {"enable": true},
 ///  "typeLints": {"enable": true}, "selectionRange": {"enable": false},
-///  "relatedInformation": {"enable": false}, "crossFileRefresh": {"enable": false}}
+///  "relatedInformation": {"enable": false}, "crossFileRefresh": {"enable": false},
+///  "renameLoads": {"enable": false}}
 /// ```
 ///
 /// `lint.select` and `lint.ignore` narrow the selection (see
@@ -757,6 +759,10 @@ struct Options {
     /// another file's definitions, or the reads a reference count counts,
     /// change - for a client that can be asked. Off unless asked for.
     cross_file_refresh: bool,
+    /// Answer `workspace/willRenameFiles` with the edits that keep each `\l`
+    /// naming the file or folder being renamed (`paths`). Off unless asked
+    /// for: accepting a rename then edits other files.
+    rename_loads: bool,
     /// Whether the client shows an action it cannot take with the reason
     /// (`codeAction.disabledSupport`): a capability, not a setting.
     disabled_actions: bool,
@@ -804,6 +810,7 @@ impl Default for Options {
             selection_range: false,
             related_information: false,
             cross_file_refresh: false,
+            rename_loads: false,
             disabled_actions: false,
             severity: vec![],
         }
@@ -858,6 +865,7 @@ impl Options {
                         "selectionRange",
                         "relatedInformation",
                         "crossFileRefresh",
+                        "renameLoads",
                     ]
                     .contains(&key.as_str())
                         && !value.is_object()
@@ -910,6 +918,7 @@ impl Options {
         options.type_lints = flag("/typeLints/enable", true);
         options.selection_range = flag("/selectionRange/enable", false);
         options.cross_file_refresh = flag("/crossFileRefresh/enable", false);
+        options.rename_loads = flag("/renameLoads/enable", false);
         options.related_information = flag("/relatedInformation/enable", false)
             && params
                 .pointer("/capabilities/textDocument/publishDiagnostics/relatedInformation")
@@ -1284,6 +1293,7 @@ pub fn serve(
                 }
                 help_client = help::Client::read(&params);
                 help::announce(&mut result["capabilities"], opts.help, opts.completion);
+                paths::announce(&mut result["capabilities"], opts.rename_loads);
                 relate::announce(&mut result["capabilities"], opts.call_hierarchy, opts.graph);
                 live::announce(&mut result["capabilities"]);
                 inventory::announce(&mut result["capabilities"]);
@@ -1552,6 +1562,20 @@ pub fn serve(
                         writer,
                         json!({"id": id, "error": {"code": REQUEST_FAILED, "message": refusal}}),
                     )?,
+                    Err(panic) => send(writer, internal_error(id, &panic))?,
+                }
+            }
+            ("workspace/willRenameFiles", Some(id)) => {
+                // Asked of a server that did not announce it, answered with
+                // no edit rather than refused.
+                let answer = guarded(|| {
+                    if !opts.rename_loads {
+                        return Value::Null;
+                    }
+                    paths::will_rename(&params, &navigate::Sources::new(&docs, &idx))
+                });
+                match answer {
+                    Ok(result) => send(writer, json!({"id": id, "result": result}))?,
                     Err(panic) => send(writer, internal_error(id, &panic))?,
                 }
             }

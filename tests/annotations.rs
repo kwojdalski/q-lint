@@ -1160,3 +1160,126 @@ fn the_tests_reaching_the_functions_a_save_changed_are_listed() {
     );
     assert_eq!(reply["result"]["tests"], json!([]), "{reply}");
 }
+
+/// The edits a `workspace/willRenameFiles` reply makes, as
+/// `(file under dir, line, start, end, new text)`, in order.
+fn renamed(reply: &Value, dir: &Path) -> Vec<(String, u64, u64, u64, String)> {
+    let root = file_uri(dir);
+    let mut out = vec![];
+    for (uri, edits) in reply["result"]["changes"]
+        .as_object()
+        .unwrap_or_else(|| panic!("a workspace edit, not {reply}"))
+    {
+        let file = uri.strip_prefix(&format!("{root}/")).unwrap_or(uri);
+        for edit in edits.as_array().unwrap() {
+            let (line, start, end) = span(&edit["range"]);
+            let text = edit["newText"].as_str().unwrap().to_string();
+            out.push((file.to_string(), line, start, end, text));
+        }
+    }
+    out
+}
+
+fn rename_params(dir: &Path, moves: &[(&str, &str)]) -> Value {
+    let files: Vec<Value> = moves
+        .iter()
+        .map(|(old, new)| {
+            json!({"oldUri": file_uri(&dir.join(old)), "newUri": file_uri(&dir.join(new))})
+        })
+        .collect();
+    json!({"files": files})
+}
+
+#[test]
+fn renaming_a_file_rewrites_the_loads_that_name_it() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("lib")).unwrap();
+    std::fs::create_dir_all(dir.path().join("app")).unwrap();
+    let files = [
+        ("lib/a.q", "a:1\n"),
+        ("lib/other.q", "o:1\n"),
+        (
+            "main.q",
+            "\\l lib/a.q\n\\l lib/other.q\nsystem \"l lib/a.q\"\n",
+        ),
+        ("lib/near.q", "\\l a.q\n"),
+        ("app/up.q", "\\l ../lib/a.q\n"),
+    ];
+    let options = json!({"renameLoads": {"enable": true}});
+    let (mut server, reply) = Server::over(dir.path(), &files, client(), options);
+    let operations = &reply["result"]["capabilities"]["workspace"]["fileOperations"];
+    assert!(operations["willRename"]["filters"].is_array(), "{reply}");
+    let reply = server.request(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("lib/a.q", "lib/b.q")]),
+    );
+    assert_eq!(
+        renamed(&reply, dir.path()),
+        [
+            // Each from the base it was written against.
+            ("app/up.q".to_string(), 0, 3, 13, "../lib/b.q".to_string()),
+            ("lib/near.q".into(), 0, 3, 6, "b.q".into()),
+            ("main.q".into(), 0, 3, 10, "lib/b.q".into()),
+            ("main.q".into(), 2, 10, 17, "lib/b.q".into()),
+        ],
+        "{reply}"
+    );
+}
+
+#[test]
+fn renaming_a_folder_rewrites_the_loads_under_it_and_moving_a_loader_its_own() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("lib/sub")).unwrap();
+    let files = [
+        ("lib/sub/x.q", "x:1\n"),
+        // Inside the folder, and written from it: it moves with its target.
+        ("lib/sub/y.q", "\\l x.q\n"),
+        ("main.q", "\\l lib/sub/x.q\n\\l lib/sub/y.q\n"),
+    ];
+    let options = json!({"renameLoads": {"enable": true}});
+    let (mut server, _) = Server::over(dir.path(), &files, client(), options);
+    let reply = server.request(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("lib", "src")]),
+    );
+    assert_eq!(
+        renamed(&reply, dir.path()),
+        [
+            ("main.q".to_string(), 0, 3, 14, "src/sub/x.q".to_string()),
+            ("main.q".into(), 1, 3, 14, "src/sub/y.q".into()),
+        ],
+        "{reply}"
+    );
+    // A loader moved down a folder: its load from its own directory climbs.
+    std::fs::write(dir.path().join("lib/sub/z.q"), "\\l x.q\n").unwrap();
+    let reply = server.request(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("lib/sub/y.q", "lib/y.q")]),
+    );
+    let edits = renamed(&reply, dir.path());
+    assert!(
+        edits.contains(&("lib/sub/y.q".to_string(), 0, 3, 6, "sub/x.q".to_string())),
+        "{reply}"
+    );
+    assert!(
+        edits.contains(&("main.q".to_string(), 1, 3, 14, "lib/y.q".to_string())),
+        "{reply}"
+    );
+}
+
+#[test]
+fn rename_edits_are_not_announced_or_sent_unless_asked_for() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("lib")).unwrap();
+    let files = [("lib/a.q", "a:1\n"), ("main.q", "\\l lib/a.q\n")];
+    let (mut server, reply) = Server::over(dir.path(), &files, client(), Value::Null);
+    assert!(
+        reply["result"]["capabilities"]["workspace"]["fileOperations"].is_null(),
+        "{reply}"
+    );
+    let reply = server.request(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("lib/a.q", "lib/b.q")]),
+    );
+    assert_eq!(reply["result"], Value::Null, "{reply}");
+}
