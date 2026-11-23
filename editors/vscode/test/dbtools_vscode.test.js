@@ -354,3 +354,21 @@ test("a log opened while another is starting stops the first one's q (#1074)", {
   assert.strictEqual(children[1].child.exitCode, null);
   log.close();
 });
+
+test("the tickerplant log's page asks one thing at a time: a click during a page load waits (#1112)", { skip: Q ? false : "QLINT_TEST_Q names no q binary" }, async (t) => {
+  capture();
+  stub.reset();
+  stub.config.user["terminal.qBinary"] = Q;
+  const context = stub.newContext();
+  const log = new TickerplantLog(context);
+  t.after(() => log.close());
+  assert.strictEqual(await log.open(tpLogFile(t)), "2 messages");
+  await Promise.all([
+    log.receive({ type: "page", table: "", from: "", to: "", offset: 0 }),
+    log.receive({ type: "show", index: 1 }),
+    log.receive({ type: "page", table: "t", from: "09:30", to: "", offset: 0 }),
+  ]);
+  assert.deepStrictEqual(log.posted.filter((m) => m.failed), []);
+  assert.deepStrictEqual(log.posted.map((m) => m.type), ["page", "message", "page"]);
+  assert.deepStrictEqual(log.posted.at(-1).rows.map((r) => r.index), [1]);
+});
