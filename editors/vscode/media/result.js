@@ -1419,7 +1419,7 @@
       select.addEventListener("change", function () {
         spec[key] = key === "agg" ? select.value : Number(select.value);
         save();
-        drawPivot();
+        FOCUS.over(drawPivot);
       });
       box.append(select);
       controls.append(box);
@@ -1439,6 +1439,7 @@
       vscode.postMessage({ type: "copyText", id: result.id, text: lines.join("\n") + "\n" });
     });
     controls.append(copy);
+    FOCUS.each(controls, "pivot");
     pivotView.append(controls);
     let note = "Over the " + rows.length.toLocaleString("en-US") + " row" + (rows.length === 1 ? "" : "s") + " shown";
     if (grid.total > rowCount(grid)) {
@@ -1546,6 +1547,10 @@
   }
 
   function drawChart() {
+    FOCUS.over(drawChartNow);
+  }
+
+  function drawChartNow() {
     const grid = result.grid;
     chartView.replaceChildren();
     destroyCharts();
@@ -1675,6 +1680,7 @@
       });
       controls.append(keep);
     }
+    FOCUS.each(controls, "chart");
     chartView.append(controls);
     let data;
     let summary;

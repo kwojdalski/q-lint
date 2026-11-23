@@ -213,3 +213,40 @@ test("a tree node opened or closed from the keyboard keeps the focus on its twis
   twist("Close b").fire("click");
   assert.strictEqual(activeIn(page.body), twist("Open b"));
 });
+
+test("a pivot or chart control changed from the keyboard keeps the focus (#1346)", () => {
+  const page = loadPage(undefined);
+  const controls = (tag) => page.body.all((e) => e.tagName === tag && [e.parent?.className, e.parent?.parent?.className].includes("controls"));
+  page.send(result("s.1", TABLE, { view: "pivot" }));
+  // The pivot's "columns" select, the second of four.
+  const columns = controls("SELECT")[1];
+  columns.focus();
+  columns.value = "0";
+  columns.fire("change");
+  assert.strictEqual(page.rendered().pivot.columns.length, 3, "pivoted by sym");
+  assert.strictEqual(activeIn(page.body), controls("SELECT")[1]);
+  assert.notStrictEqual(activeIn(page.body), columns, "the controls were drawn again");
+  // The chart: a series' checkbox, then the kind.
+  page.button("Chart").fire("click");
+  // (A ticked series has a colour box after it, which goes when it is unticked.)
+  const boxes = () => controls("INPUT").filter((i) => i.type === "checkbox");
+  const size = boxes()[1];
+  size.focus();
+  size.checked = false;
+  size.fire("change");
+  assert.strictEqual(activeIn(page.body), boxes()[1]);
+  assert.notStrictEqual(activeIn(page.body), size);
+  assert.strictEqual(activeIn(page.body).checked, false);
+  const kind = controls("SELECT")[0];
+  kind.focus();
+  kind.value = "histogram";
+  kind.fire("change");
+  assert.strictEqual(activeIn(page.body), controls("SELECT")[0]);
+  // The histogram's bins, a number box the other kinds do not have.
+  const bins = controls("INPUT").filter((i) => i.type === "number")[0];
+  bins.focus();
+  bins.value = "5";
+  bins.fire("change");
+  assert.strictEqual(activeIn(page.body), controls("INPUT").filter((i) => i.type === "number")[0]);
+  assert.notStrictEqual(activeIn(page.body), bins);
+});
