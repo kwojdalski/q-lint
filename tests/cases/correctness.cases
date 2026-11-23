@@ -1142,3 +1142,19 @@ r1:{a:1;a+x} peach 1 2
 r2:{`:f set x;x} peach 1 2
 r3:{h:{g::1}; count h; x} peach 1 2
 r4:{g::1;x} each 1 2
+
+=== QB023 | () matched with a side that is always typed (q 5: ()~0#0, ()~`symbol$() and ()~"" are 0b; #1141)
+a:{()~where x}
+b:{(til x)~()}
+c:{r:0#0; r,:x; r~()}
+d:{s:`$(); s,:x; ()~s}
+e:{v:getenv x; v~()}
+
+=== clean | () matched with key, a parameter, an untyped local, (::) or ()!() (#1141)
+a:{()~key x}
+b:{x~()}
+c:{r:(); r,:x; r~()}
+d:{r:0#0; r:x; r~()}
+e:{x~(::)}
+f:{x~0#0}
+g:{d:x; d~()!()}

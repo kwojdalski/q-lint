@@ -644,6 +644,12 @@ book:([]px:1 2)
 bump:{update px:px+1 from book; count book}
 bump2:{update px:px+1 from `book; count book}
 
+/ QB023: where gives a typed list, empty or not, and () is the empty general
+/ list, so the match is never true; count asks whether it is empty.
+/ expect-next: QB023
+nohits:{[p] ()~where p>100}
+nohits2:{[p] 0=count where p>100}
+
 / QB024: under q -s, a global written from a peach lambda is 'noupdate;
 / returning the value and assigning it after peach is not.
 / expect-next: QB024

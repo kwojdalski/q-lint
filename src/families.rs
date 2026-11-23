@@ -20,6 +20,7 @@ pub fn check(
     select_by_duplicate(path, source, code, &mut out);
     unreachable(path, source, code, comments, &mut out);
     discarded_query(path, source, code, &mut out);
+    empty_match(path, source, code, comments, &mut out);
     performance(path, source, code, comments, &mut out);
     out
 }
@@ -1149,6 +1150,148 @@ fn holds_table(code: &str, name: &str, scope: Option<(usize, usize)>) -> bool {
         }
     }
     any
+}
+
+/// QB023. `()` is the empty *general* list, and match compares type as well
+/// as items: q 5 `()~0#0`, ``()~`symbol$()`` and `()~""` are each 0b. So
+/// `x~()` is true only when `x` is an untyped empty list, and `0=count x`
+/// is the test for empty.
+///
+/// Only where the other side cannot be untyped. `()~key p` is how q asks
+/// whether a path exists - `key` of a missing file is `()` - and a name
+/// set to `()` as a sentinel is rightly compared with it, so a name or an
+/// expression of unknown type is left alone. What is reported is `where`,
+/// `til`, `getenv` or `read1` - always a typed list - or a local of the
+/// lambda whose every assignment is one of those or a typed literal: a
+/// string, `` `$() ``, `` `long$() ``, `"j"$()` or `0#` of an atom.
+fn empty_match(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
+    let b = code.as_bytes();
+    let typed_start = re!(r"^(?:where|til|getenv|read1)(?:[^A-Za-z0-9_.]|$)");
+    for (at, _) in code.match_indices('~') {
+        // `()` read in `comments` too, where a string is still there:
+        // `("")~x` is no `()`. Nor is the key list of `()!()`.
+        let empty = |open: usize| {
+            b.get(open) == Some(&b'(')
+                && matching(code, open, b'(', b')').is_some_and(|close| {
+                    code[open + 1..close - 1].trim().is_empty()
+                        && comments[open + 1..close - 1].trim().is_empty()
+                        && !code[close..].trim_start().starts_with('!')
+                })
+        };
+        let left = code[..at].trim_end_matches([' ', '\t']);
+        let right_at = past_blanks_inline(code, at + 1);
+        // The other side: everything to the right of `()~`, or the one
+        // operand to the left of `~()` - a name, or a parenthesised group.
+        let (start, operand, operand_at) =
+            if left.ends_with(')') && left.len() >= 2 && empty(left.len() - 2) {
+                (left.len() - 2, &code[right_at..], right_at)
+            } else if empty(right_at) {
+                let inner = if left.ends_with(')') {
+                    left.bytes()
+                        .enumerate()
+                        .rev()
+                        .scan(0i32, |depth, (i, c)| {
+                            *depth += match c {
+                                b')' | b']' | b'}' => 1,
+                                b'(' | b'[' | b'{' => -1,
+                                _ => 0,
+                            };
+                            Some((i, *depth))
+                        })
+                        .find(|&(_, d)| d == 0)
+                        .map(|(open, _)| open + 1)
+                        .filter(|&o| matching(code, o - 1, b'(', b')') == Some(left.len()))
+                } else {
+                    None
+                };
+                match inner {
+                    Some(o) => (right_at, &code[o..left.len() - 1], o),
+                    None => {
+                        let Some(name) = re!(r"\.?[A-Za-z][A-Za-z0-9_.]*$").find(left) else {
+                            continue;
+                        };
+                        if !boundary(code, name.start()) {
+                            continue;
+                        }
+                        (right_at, name.as_str(), name.start())
+                    }
+                }
+            } else {
+                continue;
+            };
+        let operand = operand.trim_start();
+        let typed = typed_start.is_match(operand)
+            || re!(r"^[A-Za-z][A-Za-z0-9_]*")
+                .find(operand)
+                .filter(|n| {
+                    let rest = operand[n.end()..].trim_start_matches([' ', '\t']);
+                    rest.is_empty() || rest.starts_with([';', ')', ']', '}', '\n', '\r'])
+                })
+                .is_some_and(|n| typed_local(source, code, comments, operand_at, n.as_str()));
+        if !typed {
+            continue;
+        }
+        out.push(Finding::at(
+            path,
+            source,
+            start,
+            "QB023",
+            "`()` is the empty general list and match compares types, so this is false for \
+             a typed empty list - 0#0, `symbol$(), \"\" - and this side is always typed: \
+             `0=count x` tests emptiness"
+                .into(),
+        ));
+    }
+}
+
+/// Whether `name`, read at `at`, is a local of the lambda around it whose
+/// every assignment there gives it a typed list or atom - never `()`.
+fn typed_local(source: &str, code: &str, comments: &str, at: usize, name: &str) -> bool {
+    let Some(brace) = crate::enclosing_brace(code, at) else {
+        return false;
+    };
+    let Some(end) = matching(code, brace, b'{', b'}') else {
+        return false;
+    };
+    let sig = crate::signature(code, source, brace);
+    let params: Vec<&str> = if sig.named {
+        sig.slots
+            .iter()
+            .flat_map(|p| crate::pattern_names(p))
+            .collect()
+    } else {
+        vec!["x", "y", "z"]
+    };
+    if params.contains(&name) {
+        return false;
+    }
+    let mut any = false;
+    for (a, value) in assignments(code, name, brace..end) {
+        if crate::enclosing_brace(code, a) != Some(brace) {
+            continue;
+        }
+        if code[a + name.len()..value].contains("::") {
+            return false;
+        }
+        // The value to the end of its statement, strings kept.
+        let text = &comments[value..];
+        let stop = text.find([';', '\n', '}']).unwrap_or(text.len());
+        let v = text[..stop].trim();
+        if !re!(
+            r#"^(?:"(?:[^"\\]|\\.)*"|`[a-z]*\$\(\)|"[A-Za-z]"\$\(\)|0#(?:`[A-Za-z0-9_.]*|-?\d[A-Za-z0-9.]*|"(?:[^"\\]|\\.)*")|(?:where|til|getenv|read1)(?:[^A-Za-z0-9_.].*)?)$"#
+        )
+        .is_match(v)
+        {
+            return false;
+        }
+        any = true;
+    }
+    any
+}
+
+/// `at` moved past spaces and tabs.
+fn past_blanks_inline(text: &str, at: usize) -> usize {
+    at + (text[at..].len() - text[at..].trim_start_matches([' ', '\t']).len())
 }
 
 /// The columns a kdb+ database is partitioned by: `.Q.pf` is one of these.
