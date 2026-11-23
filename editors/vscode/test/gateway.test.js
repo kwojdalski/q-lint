@@ -167,6 +167,15 @@ test("several statements go to each server as one lambda over their strings", { 
   assert.deepStrictEqual(live.history()[0], { ...live.history()[0], code: '.gw.syncexec[({last value each x};("n:count trade / rows";"n*10"));`rdb`hdb]', outcome: "ok" });
 });
 
+test("a query run apart - a dashboard tile, a scheduled export, Query a Tag - goes through the gateway too (#1230)", { skip }, async (t) => {
+  const gw = await torq(t);
+  const { live } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb", "hdb"] }]);
+  const answer = await live.runApart(live.processes()[0], "count trade");
+  assert.strictEqual(answer.ok, true, JSON.stringify(answer));
+  // Each server's count, joined; the gateway has no trade of its own.
+  assert.match(answer.text.join("\n"), /^(`s#)?2 3$/);
+});
+
 test("with q-lint.connection.torqGateway.enable off, a gateway's query goes as written and the commands refuse", { skip }, async (t) => {
   const gw = await torq(t);
   const { live, query } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb"] }]);

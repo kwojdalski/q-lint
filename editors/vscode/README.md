@@ -844,7 +844,9 @@ several go as `({last value each x};("s1";"s2"))`, which each server runs in
 order, answering with the last value, since q's `value` of one string takes
 neither a newline nor a trailing comment as the end of a statement. The
 history keeps the call as it was sent, and running it again does not wrap
-it twice. A query from a notebook, the Process Explorer or an agent goes to
+it twice. A dashboard tile, a scheduled query, **Query a Tag** and
+**Compare Query**, which each open a connection of their own, go through it
+too, to the process's own server types. A query from a notebook, the Process Explorer or an agent goes to
 the gateway as written. `q-lint.connection.torqGateway.enable` off sends
 every query as written and hides both commands.
 

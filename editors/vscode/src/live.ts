@@ -2271,8 +2271,9 @@ export class Live {
   /// alone: Query a Tag and Compare Query run here (#906, #907). Its
   /// connect script runs first. The answer is asked for as a grid-mode
   /// query asks, within the query controls (unlimited, unwrapped, the
-  /// timeout); `signal` stops waiting. Throws why there is no answer. The
-  /// caller asks the read-only guard first.
+  /// timeout); `signal` stops waiting. On a TorQ gateway it goes through
+  /// `.gw.syncexec` to the process's server types, as `run` sends it. Throws
+  /// why there is no answer. The caller asks the read-only guard first.
   async runApart(process: Process, code: string, signal?: AbortSignal): Promise<GridAnswer> {
     const commanded = process.credentialCommand !== undefined && this.setting(readAdmin).credentialCommand;
     if (!commanded && process.user && process.server !== undefined && (await this.context.secrets.get(passwordKey(process))) === undefined) {
@@ -2295,7 +2296,8 @@ export class Live {
       const settings = readLive((key, fallback) => configuration.get(key, fallback));
       const unlimited = this.controls.unlimited;
       const { consoleSize, gridLimit } = limits(settings, unlimited);
-      const cut = statements(code);
+      // On a TorQ gateway, through `.gw.syncexec`, as `run` sends it (#1230).
+      const cut = statements(this.throughGateway(code, process));
       return controls.unwrapped
         ? await runUnwrapped(connection, cut, { size: consoleSize, limit: gridLimit, unlimited, grid: true })
         : await connection.queryGrid(cut, consoleSize, gridLimit);
