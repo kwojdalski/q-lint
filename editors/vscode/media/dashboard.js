@@ -9,6 +9,8 @@
     return;
   }
   const vscode = acquireVsCodeApi();
+  /// refocus.js, loaded before this script: a layout replaces every control.
+  const focus = self.qlintFocus;
   const tiles = new Map();
 
   function element(tag, className, text) {
@@ -57,6 +59,7 @@
         vscode.postMessage({ type: "columns", columns: Number(v) }),
       ),
     );
+    Array.from(head.children).forEach((c) => focus.name(c, "head " + c.title));
     document.body.appendChild(head);
     if (m.tiles.length === 0) {
       document.body.appendChild(element("p", "note", "No tiles yet. Add Tile, or Add to Dashboard on a saved query, puts one here."));
@@ -82,6 +85,9 @@
         tools.appendChild(button("▶", "Move it later", { type: "move", id: t.id, by: 1 }));
       }
       tools.appendChild(button("✕", "Remove it from the dashboard", { type: "remove", id: t.id }));
+      // By tile and what it does: a moved tile's control keeps the focus, the other arrow at an end.
+      const other = { "Move it earlier": "Move it later", "Move it later": "Move it earlier" };
+      Array.from(tools.children).forEach((c) => focus.name(c, t.id + " " + c.title, t.id + " " + other[c.title]));
       bar.appendChild(tools);
       tile.appendChild(bar);
       const body = element("div", "body");
@@ -130,7 +136,7 @@
   window.addEventListener("message", (event) => {
     const m = event.data;
     if (m.type === "layout") {
-      layout(m);
+      focus.over(() => layout(m));
     } else if (m.type === "tile") {
       show(m.id, m.content, m.at);
     } else if (m.type === "running") {

@@ -113,6 +113,8 @@ test("the REPL's keys: Enter and Tab ask the extension, Up and Down walk the his
   page.send({ type: "completions", start: 2, caret: 5, items: [{ label: "count", detail: "q" }] });
   assert.strictEqual(input.value, "x:count");
   input.value = "x:co";
+  input.selectionStart = input.selectionEnd = 4;
+  page.key("Tab");
   page.send({ type: "completions", start: 2, caret: 4, items: [{ label: "cos", detail: "q" }, { label: "cols", detail: "q" }] });
   const list = page.find("ul")[0];
   assert.strictEqual(list.hidden, false);
@@ -120,6 +122,36 @@ test("the REPL's keys: Enter and Tab ask the extension, Up and Down walk the his
   page.key("Enter");
   assert.strictEqual(input.value, "x:cols");
   assert.strictEqual(list.hidden, true);
+});
+
+test("completions that arrive after the input ran or changed are dropped (#1337)", () => {
+  const page = load(true);
+  const input = page.find("textarea")[0];
+  const one = { type: "completions", start: 0, caret: 3, items: [{ label: "count", detail: "q" }] };
+  const tab = (text) => {
+    input.value = text;
+    input.selectionStart = input.selectionEnd = text.length;
+    page.key("Tab");
+  };
+  // Enter before the answer: the line ran and the box was cleared.
+  tab("cou");
+  page.key("Enter");
+  page.send({ type: "accepted", history: ["cou"] });
+  assert.strictEqual(input.value, "");
+  page.send(one);
+  assert.strictEqual(input.value, "", "nothing is typed into the cleared box");
+  // Typed on before the answer: its places are no longer this text's.
+  tab("cou");
+  input.value = "cou+1";
+  input.selectionStart = input.selectionEnd = 5;
+  page.send(one);
+  assert.strictEqual(input.value, "cou+1");
+  page.send({ ...one, items: [...one.items, { label: "cousin", detail: "dev" }] });
+  assert.strictEqual(page.find("ul")[0].hidden, true, "no list for an answer nobody is waiting for");
+  // An answer for the text as it stands still goes in.
+  tab("cou");
+  page.send(one);
+  assert.strictEqual(input.value, "count");
 });
 
 test("Ctrl+R searches the history through the extension, and a key other than typing keeps what it found", () => {

@@ -54,6 +54,7 @@ function plotsHtml(webview: Webview, media: Uri): string {
     `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}'; img-src data:;">`,
     `<link rel="stylesheet" href="${file("plots.css")}">`,
     "<title>q Plots</title></head><body>",
+    `<script nonce="${nonce}" src="${file("refocus.js")}"></script>`,
     `<script nonce="${nonce}" src="${file("plots.js")}"></script>`,
     "</body></html>",
   ].join("\n");

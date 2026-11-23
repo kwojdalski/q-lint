@@ -105,6 +105,8 @@
   let draft = "";
   let search;
   let offered;
+  // What Tab asked about: an answer is for that text and caret only.
+  let asked;
 
   function setValue(text) {
     input.value = text;
@@ -204,7 +206,8 @@
     }
     if (event.key === "Tab" && !event.shiftKey) {
       event.preventDefault();
-      vscode.postMessage({ type: "complete", text: input.value, caret: input.selectionStart });
+      asked = { text: input.value, caret: input.selectionStart };
+      vscode.postMessage({ type: "complete", text: asked.text, caret: asked.caret });
       return;
     }
     if (event.key === "Enter" && !event.shiftKey) {
@@ -286,7 +289,12 @@
       if (m.index >= 0) setValue(m.code);
       showSearch();
     } else if (m.type === "completions") {
-      if (m.items.length === 1) {
+      // The answer is slow (a process, the workspace): the input may have run or changed since.
+      const current = asked !== undefined && input.value === asked.text && input.selectionStart === asked.caret;
+      asked = undefined;
+      if (!current) {
+        // Nothing: the places in the answer are not this text's.
+      } else if (m.items.length === 1) {
         offered = { start: m.start, caret: m.caret, items: m.items, selected: 0 };
         accept(m.items[0]);
       } else if (m.items.length > 1) {

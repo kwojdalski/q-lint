@@ -5,6 +5,8 @@
 (function () {
   "use strict";
   const vscode = acquireVsCodeApi();
+  /// refocus.js, loaded before this script: every plot shown redraws the buttons.
+  const focus = self.qlintFocus;
   let shown = null;
 
   const el = (tag, cls, text) => {
@@ -29,6 +31,8 @@
       b.title = title;
       b.disabled = !!disabled;
       b.addEventListener("click", () => send(message));
+      // At the first or last plot an arrow is disabled: the other one takes its focus.
+      focus.name(b, title, { "Previous plot": "Next plot", "Next plot": "Previous plot" }[title]);
       bar.append(b);
     };
     button("←", "Previous plot", { type: "move", by: -1 }, m.index <= 0);
@@ -69,7 +73,7 @@
 
   window.addEventListener("message", (event) => {
     const m = event.data;
-    if (m.type === "plots") draw(m);
+    if (m.type === "plots") focus.over(() => draw(m));
     else if (m.type === "png") png(m.key);
   });
   send({ type: "ready" });

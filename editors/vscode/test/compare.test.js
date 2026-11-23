@@ -162,6 +162,41 @@ test("the page draws the two tables side by side, marks what differs, and puts e
   });
 });
 
+test("a cell the page marks says how it differs, not by its colour alone (#1349)", () => {
+  const page = loadPage();
+  // Lined up by place: the second rows differ in px, and only hdb has `size` and a third row.
+  const comparison = compareOutcomes(
+    side("rdb", table({ sym: [11, ["a", "b"]], px: [9, ["1", ""]] })),
+    side("hdb", table({ sym: [11, ["a", "b", "c"]], px: [9, ["1", "3", "4"]], size: [7, ["10", "20", "30"]] })),
+    -1,
+  );
+  page.send({ type: "compare", id: 1, code: "select from t", comparison });
+  const rows = page.body.all((e) => e.tagName === "TR").slice(2);
+  const said = (tr) => tr.children.filter((td) => td.className !== "gap").map((td) => [td.className, td.title ?? ""]);
+  assert.deepStrictEqual(said(rows[0]), [
+    ["", ""],
+    ["", ""],
+    ["changed", "Differs from hdb: 10"],
+    ["", ""],
+    ["", ""],
+    ["changed", "Differs from rdb: no such column"],
+  ]);
+  assert.deepStrictEqual(said(rows[1]).filter(([, title]) => title !== ""), [
+    ["changed", "Differs from hdb: 3"],
+    ["changed", "Differs from hdb: 20"],
+    ["changed", "Differs from rdb: (null)"],
+    ["changed", "Differs from rdb: no such column"],
+  ]);
+  assert.deepStrictEqual(said(rows[2]), [
+    ["missing", "No such row on rdb"],
+    ["missing", "No such row on rdb"],
+    ["missing", "No such row on rdb"],
+    ["only", "Only on hdb"],
+    ["only", "Only on hdb"],
+    ["only", "Only on hdb"],
+  ]);
+});
+
 test("the page shows two answers that are not tables as text, and says when they are the same", () => {
   const page = loadPage();
   const atom = (t) => ({ ok: true, type: -7, text: [t] });
