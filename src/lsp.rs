@@ -645,7 +645,7 @@ fn workspace_folders(params: &Value) -> Vec<(String, String)> {
 ///  "versionCheck": {"enable": true}, "baseline": {"enable": true},
 ///  "typeLints": {"enable": true}, "selectionRange": {"enable": false},
 ///  "relatedInformation": {"enable": false}, "crossFileRefresh": {"enable": false},
-///  "renameLoads": {"enable": false}}
+///  "renameLoads": {"enable": false}, "loadPathCompletion": {"enable": false}}
 /// ```
 ///
 /// `lint.select` and `lint.ignore` narrow the selection (see
@@ -763,6 +763,10 @@ struct Options {
     /// naming the file or folder being renamed (`paths`). Off unless asked
     /// for: accepting a rename then edits other files.
     rename_loads: bool,
+    /// Complete the directories and scripts after `\l ` (`paths`). Off
+    /// unless asked for, as completion is; on alone, only a `\l` line is
+    /// answered.
+    load_path_completion: bool,
     /// Whether the client shows an action it cannot take with the reason
     /// (`codeAction.disabledSupport`): a capability, not a setting.
     disabled_actions: bool,
@@ -811,6 +815,7 @@ impl Default for Options {
             related_information: false,
             cross_file_refresh: false,
             rename_loads: false,
+            load_path_completion: false,
             disabled_actions: false,
             severity: vec![],
         }
@@ -866,6 +871,7 @@ impl Options {
                         "relatedInformation",
                         "crossFileRefresh",
                         "renameLoads",
+                        "loadPathCompletion",
                     ]
                     .contains(&key.as_str())
                         && !value.is_object()
@@ -919,6 +925,7 @@ impl Options {
         options.selection_range = flag("/selectionRange/enable", false);
         options.cross_file_refresh = flag("/crossFileRefresh/enable", false);
         options.rename_loads = flag("/renameLoads/enable", false);
+        options.load_path_completion = flag("/loadPathCompletion/enable", false);
         options.related_information = flag("/relatedInformation/enable", false)
             && params
                 .pointer("/capabilities/textDocument/publishDiagnostics/relatedInformation")
@@ -1293,7 +1300,11 @@ pub fn serve(
                 }
                 help_client = help::Client::read(&params);
                 help::announce(&mut result["capabilities"], opts.help, opts.completion);
-                paths::announce(&mut result["capabilities"], opts.rename_loads);
+                paths::announce(
+                    &mut result["capabilities"],
+                    opts.rename_loads,
+                    opts.load_path_completion,
+                );
                 relate::announce(&mut result["capabilities"], opts.call_hierarchy, opts.graph);
                 live::announce(&mut result["capabilities"]);
                 inventory::announce(&mut result["capabilities"]);
@@ -1606,7 +1617,7 @@ pub fn serve(
                 // Asked of a server that did not announce it, a request is
                 // answered with nothing rather than refused.
                 let on = match method.as_str() {
-                    "textDocument/completion" => opts.completion,
+                    "textDocument/completion" => opts.completion || opts.load_path_completion,
                     _ => opts.help,
                 };
                 let answer = guarded(|| {
@@ -1614,6 +1625,17 @@ pub fn serve(
                         return Value::Null;
                     }
                     let sources = navigate::Sources::new(&docs, &idx);
+                    if method == "textDocument/completion" && opts.load_path_completion {
+                        let path = sources
+                            .cursor(&params)
+                            .and_then(|cursor| paths::completion(&cursor, &sources));
+                        if let Some(items) = path {
+                            return items;
+                        }
+                    }
+                    if method == "textDocument/completion" && !opts.completion {
+                        return Value::Null;
+                    }
                     let more = help::More {
                         inferred_types: opts.inferred_types,
                         auto_load: opts.auto_load,

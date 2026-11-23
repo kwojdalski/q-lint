@@ -1283,3 +1283,80 @@ fn rename_edits_are_not_announced_or_sent_unless_asked_for() {
     );
     assert_eq!(reply["result"], Value::Null, "{reply}");
 }
+
+/// The labels of a completion reply, in order.
+fn labels(reply: &Value) -> Vec<String> {
+    reply["result"]["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a completion list, not {reply}"))
+        .iter()
+        .map(|item| item["label"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn after_a_load_the_directories_and_scripts_complete() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("lib/deep")).unwrap();
+    std::fs::create_dir_all(dir.path().join("app")).unwrap();
+    std::fs::create_dir_all(dir.path().join(".git")).unwrap();
+    let files = [
+        ("lib/util.q", "u:1\n"),
+        ("lib/core.k", "c:1\n"),
+        ("lib/notes.txt", "\n"),
+        ("app/local.q", "l:1\n"),
+    ];
+    let options = json!({"loadPathCompletion": {"enable": true}});
+    let (mut server, reply) = Server::over(dir.path(), &files, client(), options);
+    assert_eq!(
+        reply["result"]["capabilities"]["completionProvider"]["triggerCharacters"],
+        json!(["/"]),
+        "{reply}"
+    );
+    let text = "\\l li\n\\l lib/\n\\l \nx:1\n";
+    let uri = server.open(dir.path(), "app/main.q", text);
+    let at =
+        |line: u64, character: u64| json!({"position": {"line": line, "character": character}});
+    let reply = server.whole("textDocument/completion", &uri, at(0, 5));
+    // The workspace folder's, and the file's own directory's; the client
+    // narrows by what is typed.
+    let found = labels(&reply);
+    assert!(found.contains(&"lib/".to_string()), "{reply}");
+    assert!(found.contains(&"local.q".to_string()), "{reply}");
+    assert!(!found.iter().any(|l| l.starts_with('.')), "{reply}");
+    let item = &reply["result"]["items"][found.iter().position(|l| l == "lib/").unwrap()];
+    assert_eq!(item["kind"], 19, "{item}");
+    assert_eq!(span(&item["textEdit"]["range"]), (0, 3, 5), "{item}");
+    // Inside lib/: its folder first, then its scripts, and nothing else.
+    let reply = server.whole("textDocument/completion", &uri, at(1, 7));
+    assert_eq!(labels(&reply), ["deep/", "core.k", "util.q"], "{reply}");
+    let item = &reply["result"]["items"][2];
+    assert_eq!(span(&item["textEdit"]["range"]), (1, 7, 7), "{item}");
+    // Off a load line, with name completion off, nothing.
+    let reply = server.whole("textDocument/completion", &uri, at(3, 1));
+    assert_eq!(reply["result"], Value::Null, "{reply}");
+}
+
+#[test]
+fn load_path_completion_is_off_unless_asked_for() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("lib")).unwrap();
+    let (mut server, reply) =
+        Server::over(dir.path(), &[("lib/a.q", "a:1\n")], client(), Value::Null);
+    assert!(reply["result"]["capabilities"]["completionProvider"].is_null());
+    let uri = server.open(dir.path(), "main.q", "\\l li\n");
+    let reply = server.whole(
+        "textDocument/completion",
+        &uri,
+        json!({"position": {"line": 0, "character": 5}}),
+    );
+    assert_eq!(reply["result"], Value::Null, "{reply}");
+    // With name completion on too, `/` joins its trigger characters.
+    let options = json!({"completion": {"enable": true}, "loadPathCompletion": {"enable": true}});
+    let (_, reply) = Server::over(dir.path(), &[], client(), options);
+    assert_eq!(
+        reply["result"]["capabilities"]["completionProvider"]["triggerCharacters"],
+        json!([".", "/"]),
+        "{reply}"
+    );
+}

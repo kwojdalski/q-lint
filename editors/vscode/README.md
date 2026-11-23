@@ -202,7 +202,9 @@ to a process you add and connect to, and sends only the code you run.
   that reaches no file, or a directory, is no link. Renaming or moving a
   `.q` file or a folder in the Explorer rewrites the load paths that name
   it, each from the base it was written against, and a moved file's own
-  (`q-lint.renameLoads.enable`). What only
+  (`q-lint.renameLoads.enable`); and after `\l ` the folders and `.q`/`.k`
+  scripts complete, from the file's directory and the workspace folder
+  (`q-lint.loadPathCompletion.enable`). What only
   running the code would tell - a name built at run time, `value "..."`,
   another process - is not found.
 - **Rename Symbol** (F2) for a lambda's parameters and locals, and for a
@@ -2563,6 +2565,7 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.relatedInformation.enable` | `true` | Link a duplicate parameter or column's problem to the first of the two. Off: the problem alone. | - |
 | `q-lint.crossFileRefresh.enable` | `true` | Redraw open files' code lenses and inlay hints when another file's definitions, or the reads a count counts, change. Off: only when the file itself is edited. | - |
 | `q-lint.renameLoads.enable` | `true` | Rewrite the `\l` paths that name a `.q`/`.k` file or folder renamed or moved in the Explorer. Off: a rename changes no other file. | - |
+| `q-lint.loadPathCompletion.enable` | `true` | Complete folders and `.q`/`.k` scripts after `\l `. Off: nothing after `\l`. | - |
 | `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines, up to 20,000 files or 500,000 directory entries. Off: only open files. | - |
 | `q-lint.workspaceIndex.exclude` | `[]` | Globs, relative to the workspace folder, the index does not read: `["vendor/**"]`. | `q-lang-server.sourceFiles.ignoreGlob` |
 | `q-lint.trace.server` | `off` | Log client-server traffic: `off`, `messages`, `verbose`. | `q-lang-server.trace.server` |

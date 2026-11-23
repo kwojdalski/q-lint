@@ -1,21 +1,40 @@
-//! The paths a load names, as files move: the `\l` lines a rename leaves
-//! pointing nowhere, rewritten before it happens (workspace/willRenameFiles).
+//! The paths a load names, as files move and as one is typed: the `\l`
+//! lines a rename leaves pointing nowhere, rewritten before it happens
+//! (workspace/willRenameFiles), and the directories and scripts that can
+//! follow `\l ` (completion).
 //!
-//! It reads names and nothing more: which files and directories exist,
+//! Both read names and nothing more: which files and directories exist,
 //! never what is in them, and the loads as the source spells them. A load
 //! is resolved as q resolves it, and as the dependency graph does (see
 //! `graph::loaded`): against the directory q is started in - here the first
 //! workspace folder - then the loading file's directory and each above it.
-use super::navigate::Sources;
+use super::navigate::{Cursor, Sources};
 use super::{Lines, file_key};
 use q_lint_rs::load_paths;
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Component, Path, PathBuf};
+
+/// LSP's `CompletionItemKind`s for a path.
+const FILE: u8 = 17;
+const FOLDER: u8 = 19;
+/// How many entries one path completion lists.
+const MAX_ITEMS: usize = 500;
 
 /// What the server adds to its capabilities: the renames it wants to hear of
 /// before they happen - a q or k script, and any folder, which may hold one.
-pub(super) fn announce(capabilities: &mut Value, rename_loads: bool) {
+/// And, for path completion, a `/` to open the next directory on - a
+/// completion provider of its own when name completion is off.
+pub(super) fn announce(capabilities: &mut Value, rename_loads: bool, load_paths: bool) {
+    if load_paths {
+        let provider = &mut capabilities["completionProvider"];
+        if provider.is_null() {
+            *provider = json!({"triggerCharacters": []});
+        }
+        if let Some(triggers) = provider["triggerCharacters"].as_array_mut() {
+            triggers.push(json!("/"));
+        }
+    }
     if rename_loads {
         capabilities["workspace"]["fileOperations"] = json!({"willRename": {"filters": [
             {"scheme": "file", "pattern": {"glob": "**/*.{q,k}", "matches": "file"}},
@@ -172,4 +191,76 @@ fn rewritten(
         _ => spelled,
     };
     (spelled != load && !spelled.is_empty()).then_some(spelled)
+}
+
+/// The path being typed after `\l ` at the cursor: where the part after the
+/// last `/` starts, and that last directory part, `lib/` of `\l lib/ut`.
+/// Nothing anywhere but the path of a `\l` line, or once a blank follows it.
+fn typing_load(text: &str, offset: usize) -> Option<(usize, &str)> {
+    let line_start = text[..offset].rfind('\n').map_or(0, |i| i + 1);
+    let typed = text[line_start..offset].strip_prefix("\\l ")?;
+    let typed = typed.trim_start_matches(' ');
+    if typed.contains(char::is_whitespace) {
+        return None;
+    }
+    let name_start = typed.rfind('/').map_or(0, |i| i + 1);
+    Some((offset - typed.len() + name_start, &typed[..name_start]))
+}
+
+/// `textDocument/completion` on a `\l` line: the directories, and the `.q`
+/// and `.k` scripts, under the part already typed - read from the loading
+/// file's directory and from the workspace folder, which are where q looks
+/// first. A hidden entry only once a `.` is typed. `None` off a `\l` line,
+/// so the caller answers as it would have.
+pub(super) fn completion(cursor: &Cursor, sources: &Sources) -> Option<Value> {
+    let (start, dir_part) = typing_load(cursor.text, cursor.offset)?;
+    let typed = &cursor.text[start..cursor.offset];
+    let from = Path::new(&cursor.key);
+    let mut bases: Vec<PathBuf> = vec![];
+    if Path::new(dir_part).is_absolute() {
+        bases.push(PathBuf::new());
+    } else {
+        bases.extend(from.parent().map(Path::to_path_buf));
+        bases.extend(root(sources));
+    }
+    let lines = Lines::new(cursor.text);
+    let span = json!({"start": lines.json(start), "end": lines.json(cursor.offset)});
+    // By label, so a directory both bases hold is listed once.
+    let mut items: HashMap<String, Value> = HashMap::new();
+    for base in bases {
+        let Ok(entries) = std::fs::read_dir(base.join(dir_part)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') && !typed.starts_with('.') {
+                continue;
+            }
+            if name.contains(char::is_whitespace) {
+                continue;
+            }
+            let is_dir = entry.path().is_dir();
+            let script = Path::new(&name)
+                .extension()
+                .is_some_and(|e| e == "q" || e == "k");
+            if !is_dir && !script {
+                continue;
+            }
+            let label = if is_dir { format!("{name}/") } else { name };
+            let item = json!({
+                "label": label,
+                "kind": if is_dir { FOLDER } else { FILE },
+                // Folders first, as a file picker lists them.
+                "sortText": format!("{}{label}", if is_dir { 0 } else { 1 }),
+                "filterText": label,
+                "textEdit": {"range": span, "newText": label},
+            });
+            items.entry(label).or_insert(item);
+        }
+    }
+    let mut items: Vec<Value> = items.into_values().collect();
+    items.sort_by(|a, b| a["sortText"].as_str().cmp(&b["sortText"].as_str()));
+    let incomplete = items.len() > MAX_ITEMS;
+    items.truncate(MAX_ITEMS);
+    Some(json!({"isIncomplete": incomplete, "items": items}))
 }

@@ -481,6 +481,12 @@
             "default": true,
             "order": 51,
             "markdownDescription": "When a `.q` or `.k` file or a folder is renamed or moved in the Explorer, rewrite the `\\l` paths (and `system \"l ...\"` and `` `:file.q `` paths) that name it - or anything under the folder - so they still reach it, each from the base it was written against: the workspace folder, or the loading file's own directory. A moved file's own loads are rewritten too. Off, a rename changes no file."
+          },
+          "q-lint.loadPathCompletion.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 52,
+            "markdownDescription": "Complete the folders and `.q`/`.k` scripts after `\\l `, from the file's own directory and the workspace folder; a `/` lists the next folder's. Only a `\\l` line is answered unless `#q-lint.completion.enable#` is on too, so VS Code's word suggestions are kept everywhere else. Off, nothing is completed after `\\l`."
           }
         }
       },

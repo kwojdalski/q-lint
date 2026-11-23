@@ -79,6 +79,7 @@ export interface InitializationOptions {
   relatedInformation: { enable: boolean };
   crossFileRefresh: { enable: boolean };
   renameLoads: { enable: boolean };
+  loadPathCompletion: { enable: boolean };
   workspaceIndex: { enable: boolean; exclude: string[] };
 }
 
@@ -191,6 +192,7 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
       relatedInformation: { enable: settings.get<boolean>("relatedInformation.enable", true) },
       crossFileRefresh: { enable: settings.get<boolean>("crossFileRefresh.enable", true) },
       renameLoads: { enable: settings.get<boolean>("renameLoads.enable", true) },
+      loadPathCompletion: { enable: settings.get<boolean>("loadPathCompletion.enable", true) },
       workspaceIndex: {
         enable: settings.get<boolean>("workspaceIndex.enable", true),
         exclude: strings(settings, "workspaceIndex.exclude"),
@@ -240,6 +242,7 @@ const RESTARTING = [
   "relatedInformation",
   "crossFileRefresh",
   "renameLoads",
+  "loadPathCompletion",
 ];
 
 /// Whether a configuration change needs a new server.
