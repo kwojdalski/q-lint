@@ -685,7 +685,7 @@ selection or the statement at the cursor, aimed at a process by its label
 placeholders left as written. Opening the link - from chat, a ticket, a
 wiki - opens the query in a new q editor bound to *your* process of that
 label, and asks before running it; run, it goes as a query from that
-editor goes, read by the read-only guard. A label not in your Processes
+editor goes, its placeholders asked for and read by the read-only guard. A label not in your Processes
 list opens the query unbound and runs nothing. Nothing in the link is a
 password. `q-lint.query.links.enable` off hides the command and stops
 opening links.

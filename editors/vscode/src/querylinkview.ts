@@ -2,7 +2,8 @@
 // to the editor's query, aimed at a process by its label, on the
 // clipboard; opening one shows the query in a new q editor bound to that
 // process and asks before running it. Run, it goes as a query from that
-// editor goes (`Live.queryCode`): the read-only guard reads it first. The
+// editor goes (`Live.queryFilledIn`): its placeholders asked for, and the
+// read-only guard reading it first. The
 // link handler is registered only while the feature is on.
 import { commands, env, window, workspace, type Disposable, type ExtensionContext, type Uri } from "vscode";
 import { ADMIN_COMMANDS, adminOff, readAdmin } from "./admin";
@@ -18,7 +19,7 @@ export class QueryLinks {
 
   constructor(
     context: ExtensionContext,
-    private readonly live: Pick<Live, "codeFromEditor" | "activeLabel" | "fileBinding" | "named" | "pick" | "queryCode">,
+    private readonly live: Pick<Live, "codeFromEditor" | "activeLabel" | "fileBinding" | "named" | "pick" | "queryFilledIn">,
   ) {
     this.extensionId = context.extension?.id ?? "wojdalski.q-lint";
     context.subscriptions.push(
@@ -104,7 +105,8 @@ export class QueryLinks {
     if (answer !== yes) {
       return false;
     }
-    await this.live.queryCode(read.code, document.uri);
+    // Its placeholders are asked for, as Query Current Block asks (#1225).
+    await this.live.queryFilledIn(read.code, document.uri);
     return true;
   }
 }
