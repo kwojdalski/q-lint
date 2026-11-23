@@ -231,6 +231,9 @@ test("test data: pools, ranges, a q generator per type, and CSV that sorts and r
   const info = { kind: "keyed", rows: 0, bytes: null, partitions: null, keys: ["k"], ncols: 3, columns: [{ name: "k", type: "s", fkey: "", attr: "" }, { name: "px", type: "f", fkey: "", attr: "" }, { name: "t", type: "p", fkey: "", attr: "" }] };
   const q = testDataQ(info, "gen", o);
   assert.match(q, /\\S 3\nn:20\ngen:`k xkey \(\[\] k:n\?enlist`A; px:asc 10\+n\?10f; t:2026\.01\.02D\+n\?1D\)/);
+  assert.match(q, /\ndelete n from `\.\n/);
+  // A table named n is not deleted by the script's own clean-up (#1084).
+  assert.doesNotMatch(testDataQ(info, "n", o), /delete n from/);
   const csv = testDataCsv(info, o);
   assert.strictEqual(csv, testDataCsv(info, o));
   const lines = csv.trim().split("\n");
