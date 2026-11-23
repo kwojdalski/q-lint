@@ -2933,7 +2933,10 @@ could run a program the folder chooses is held back there:
   `q-lint.configFile` (the server's command line), `q-lint.terminal.qBinary`
   and `q-lint.terminal.envPath`, `q-lint.env.enable` and `q-lint.env.file`,
   `q-lint.processes.launcher.enable` and
-  `q-lint.connection.credentialCommand.enable`.
+  `q-lint.connection.credentialCommand.enable`; and the read-only guard's
+  `q-lint.processes.readOnlyGuard.enable` and
+  `q-lint.processes.readOnlyGuard.tags`, so the folder cannot turn the
+  guard off for a process it names.
 - The folder's `.env` is not given to any q the extension starts, and
   **Select q Interpreter** does not offer, or run to read its version, a q
   binary inside the folder.
