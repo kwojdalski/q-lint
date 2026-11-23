@@ -2410,6 +2410,219 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 true,
             )
         }
+        // `-x` becomes `neg x`: q 4 read a glyph applied to one argument,
+        // `-:x` too, as the monadic form, which q 5 spells only with its
+        // keyword - on KDB-X `(-:)x` and `neg x` parse alike, and `(,:)x`
+        // and `enlist x` give the same value. Not `<` and `>`: on an atom
+        // they are hopen and hclose, on a list a grade, which no one keyword
+        // is. Nor `-::a`, nor the file verbs.
+        "QE008" => {
+            let rest = v.code.get(start..)?;
+            let keyword = match rest.as_bytes().first()? {
+                b'+' => "flip",
+                b'-' => "neg",
+                b'*' => "first",
+                b'%' => "reciprocal",
+                b'!' => "key",
+                b'#' => "count",
+                b'$' => "string",
+                b'&' => "where",
+                b'|' => "reverse",
+                b'^' => "null",
+                b'=' => "group",
+                b'~' => "not",
+                b',' => "enlist",
+                b'@' => "type",
+                b'?' => "distinct",
+                b'.' => "value",
+                b'_' => "floor",
+                _ => return None,
+            };
+            if rest[1..].starts_with("::") {
+                return None;
+            }
+            let old = &source[start..start + 1 + usize::from(rest[1..].starts_with(':'))];
+            let after = &v.code[start + old.len()..];
+            let next = refusals::continued(after);
+            // An operand, not another glyph - `a%.%b` - unless one applied
+            // with brackets or a negative literal. A `%name%` template
+            // placeholder is no reciprocal anybody meant.
+            let glyph = next.starts_with(|c: char| "+-*%!#$&|^=<>~,@?._".contains(c))
+                && !re!(r"^\.[A-Za-z0-9]").is_match(next);
+            if glyph && !(next.as_bytes().get(1) == Some(&b'[') || re!(r"^-\.?\d").is_match(next))
+                || keyword == "reciprocal" && re!(r"^[A-Za-z0-9_]+%").is_match(next)
+                // `{[a]-1 2}`: whether q 4 read the literal is not certain.
+                || keyword == "neg"
+                    && v.code[..start].ends_with(']')
+                    && next.starts_with(|c: char| c.is_ascii_digit() || c == '.')
+            {
+                return None;
+            }
+            let gap = if after.starts_with([' ', '\t', '\r', '\n']) {
+                ""
+            } else {
+                " "
+            };
+            let lead = if ends_in_token(&source[..start]) {
+                " "
+            } else {
+                ""
+            };
+            (
+                old,
+                format!("{lead}{keyword}{gap}").into(),
+                format!("Write `{keyword}`, the monadic form q 5 keeps").into(),
+                true,
+            )
+        }
+        // `+/x` becomes `(+/)x`: q 4 applied the derived function to what
+        // follows, as the parentheses do in q 5 - `(+/)x+y` is `(+/)[x+y]`.
+        // The finding is on the last iterator; the operand is a glyph, its
+        // k form or a name. Not before `-`, which after `)` is minus, nor a
+        // glyph applied with brackets.
+        "QE009" => {
+            let c = v.code.as_bytes();
+            let it = re!(r"^(?:/:|\\:|':|/|\\|')").find(v.code.get(start..)?)?;
+            let end = start + it.end();
+            let mut run = start;
+            loop {
+                if run > 0 && b"/\\'".contains(&c[run - 1]) {
+                    run -= 1;
+                } else if run > 1 && c[run - 1] == b':' && b"/\\'".contains(&c[run - 2]) {
+                    run -= 2;
+                } else {
+                    break;
+                }
+            }
+            let glyph = |b: u8| b"+-*%!#$&|^=<>~,@?".contains(&b);
+            let operand = match run.checked_sub(1).map(|p| c[p])? {
+                b if glyph(b) => run - 1,
+                b':' if run > 1 && (glyph(c[run - 2]) || c[run - 2] == b'.') => run - 2,
+                b if b.is_ascii_alphanumeric() || b == b'_' || b == b'.' => {
+                    let s = v.code[..run]
+                        .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || "._".contains(ch)))
+                        .map_or(0, |p| p + 1);
+                    if !c[s].is_ascii_alphabetic() && c[s] != b'.' || !boundary(&v.code, s) {
+                        return None;
+                    }
+                    s
+                }
+                _ => return None,
+            };
+            if operand > 0 && c[operand - 1] == b'`' {
+                return None;
+            }
+            let next = refusals::continued(&v.code[end..]);
+            if next.starts_with('-') || next.len() > 1 && glyph(c[c.len() - next.len()]) {
+                return None;
+            }
+            begin = operand;
+            let derived = &source[operand..end];
+            (
+                derived,
+                format!("({derived})").into(),
+                format!("Apply `({derived})` in parentheses").into(),
+                true,
+            )
+        }
+        // `cor each x` becomes `(cor) each x`: with nothing on its left q 4
+        // took the keyword as each's function, as it does `count each x`,
+        // and on KDB-X `(cor) each x` is `each[cor;x]`. With an operand on
+        // the left - `x in each y` - what q 4 made of it is not certain, so
+        // only in the editor. An iterator keyword before another, `f over
+        // each x`, wants `(f over)`, which is the author's to place.
+        "QE011" => {
+            let m = re!(
+                r"^(?:([a-z]+)[ \t]+|([-+*%!&|<>=~,^#$?@])[ \t]*)(each|peach|over|scan|prior)\b"
+            )
+            .captures(v.code.get(start..)?)?;
+            let word = m.get(1).or(m.get(2))?.as_str();
+            let iterator = &m[3];
+            if matches!(word, "each" | "peach" | "over" | "scan" | "prior") {
+                return None;
+            }
+            let line_start = v.code[..start].rfind('\n').map_or(0, |p| p + 1);
+            let line = &source[line_start..];
+            let prompt = if line.starts_with("q)") { 2 } else { 0 };
+            // Read in the source: `code` blanks a string, which is an operand.
+            let left = source
+                .get(line_start + timed_prefix(line).max(prompt)..start)?
+                .trim_end_matches([' ', '\t']);
+            // A signature is no operand: `{[x] cor each y}`.
+            let signature = left.ends_with(']')
+                && left
+                    .bytes()
+                    .rev()
+                    .scan(0i32, |depth, c| {
+                        *depth += i32::from(c == b']') - i32::from(c == b'[');
+                        Some(*depth)
+                    })
+                    .position(|depth| depth == 0)
+                    .is_some_and(|p| left[..left.len() - 1 - p].ends_with('{'));
+            let infix = !signature
+                && left.ends_with(|c: char| c.is_ascii_alphanumeric() || "_.)]}\"`".contains(c));
+            (
+                &source[start..start + word.len()],
+                format!("({word})").into(),
+                format!("Write `({word})`, the function {iterator} applies").into(),
+                !infix,
+            )
+        }
+        // `hopen `host:5000` takes the leading `:` a handle needs. The old
+        // call is 'type and the new one connects - a different program, so
+        // only in the editor.
+        "QT029" => {
+            let m = re!(r"^hopen[ \t]*(?:\[\s*)?`[A-Za-z0-9_.]").find(source.get(start..)?)?;
+            let old = &source[start..start + m.end() - 1];
+            (
+                old,
+                format!("{old}:").into(),
+                "Add the leading `:` of a handle".into(),
+                false,
+            )
+        }
+        // A look-alike pasted from a document becomes the ASCII it stands
+        // for: a no-break space a space, a dash or minus sign `-`, a curly
+        // quote a straight one. The line was 'char, so no working program
+        // changes. An opening double quote is a string only with its curly
+        // close on the line, and both are rewritten at once, or the close
+        // would be left inside the string.
+        "QE012" => {
+            let ch = source.get(start..)?.chars().next()?;
+            let ascii = match ch {
+                '\u{a0}' => " ",
+                '\u{2013}' | '\u{2014}' | '\u{2212}' => "-",
+                '\u{2018}' | '\u{2019}' => "'",
+                '\u{201c}' => "\"",
+                _ => return None,
+            };
+            let old = if ch == '\u{201c}' {
+                let body = start + ch.len_utf8();
+                let line =
+                    &source[body..source[body..].find('\n').map_or(source.len(), |p| body + p)];
+                let close = line.find('\u{201d}')?;
+                if line[..close].contains(['\\', '\u{201c}', '"']) {
+                    return None;
+                }
+                &source[start..body + close + '\u{201d}'.len_utf8()]
+            } else {
+                &source[start..start + ch.len_utf8()]
+            };
+            let replacement = if old.chars().count() > 1 {
+                format!(
+                    "\"{}\"",
+                    &old['\u{201c}'.len_utf8()..old.len() - '\u{201d}'.len_utf8()]
+                )
+            } else {
+                ascii.to_string()
+            };
+            (
+                old,
+                replacement.into(),
+                format!("Replace U+{:04X} with `{ascii}`", u32::from(ch)).into(),
+                true,
+            )
+        }
         _ => return None,
     };
     // An edit that leaves a `-` against a number makes it a negative
@@ -2450,9 +2663,10 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
     // which q 5 refuses with '- (#563). A blank keeps it a literal. Not
     // QP008's: its `-` follows an operand, where q 5 reads `a-2.5`, `1-2.5`
     // and `` `y-2.5 `` as minus, and a blank would be one F does not give
-    // back (#848).
+    // back (#848). Nor QE012's: a dash typed between operands, `1—2`, was
+    // meant as minus, which `1 -2` is not.
     let negative = next.starts_with('-') && numeric(&next[1..]);
-    let replacement = if finding.code != "QP008"
+    let replacement = if !matches!(finding.code.as_str(), "QP008" | "QE012")
         && (source[..begin].ends_with('-') && !numeric(&source[begin..]) && numeric(&next)
             || ends_in_token(&source[..begin]) && negative && !source[begin..].starts_with('-'))
     {
