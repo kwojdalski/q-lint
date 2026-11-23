@@ -158,7 +158,9 @@ pub fn extract(
     let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
     let cut = before.is_some_and(|c| word(c) && (word(first) || first == '.'))
         || (before == Some('.') && word(first))
-        || (first == '`' && before.is_some_and(|c| word(c) || ".`:".contains(c)));
+        || (first == '`' && before.is_some_and(|c| word(c) || ".`:".contains(c)))
+        // `` `a `` is one symbol: `` d:`extracted[a] `` indexes another (#1302).
+        || (before == Some('`') && (word(first) || first == '.'));
     if cut {
         return Err("the selection starts inside a name, a number or a symbol".into());
     }
