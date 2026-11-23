@@ -376,3 +376,20 @@ test("xasc, xdesc and xkey on a table named by a symbol change it in place (#133
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("? with a symbol atom on its left extends an enumeration (#1315)", () => {
+  const cases = {
+    "`s?`x`y": ["extends the enumeration `s with ?"],
+    "`:db/sym?`x`y": ["extends the enumeration `:db/sym with ?"],
+    "`.ns.e ? `p`q": ["extends the enumeration `.ns.e with ?"],
+    // A find in a list, a value or a functional select reads.
+    "`a`b`c?`b": [],
+    "s?`x": [],
+    "`s$`x": [],
+    "?[`t;();0b;()]": [],
+    "x?`a": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

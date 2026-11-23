@@ -31,6 +31,8 @@
 //   over that handle is not read;
 // - `xasc`, `xdesc` or `xkey` on a table named by a symbol
 //   (`` `a xasc `t ``), which sorts or keys it in place;
+// - `?` with a symbol atom on its left (`` `sym?`x ``), which extends that
+//   enumeration, and the sym file when the symbol is a handle;
 // - `-11!`, which replays a log through `upd`, except `-11!(-1;..)` and
 //   `-11!(-2;..)`, which only count and check one; `-19!`, which
 //   compresses a file into another;
@@ -417,6 +419,13 @@ function readStatement(statement: string, found: Set<string>): void {
       if (lambdas === 0 || global || k.text.includes(".")) {
         found.add(`assigns ${k.text}`);
       }
+      continue;
+    }
+    // A symbol atom left of `?` extends the enumeration it names, and the
+    // sym file when it is a handle: `` `sym?`x ``. A list, `` `a`b?`b ``,
+    // only finds.
+    if (k.kind === "sym" && k.text.length > 1 && next?.kind === "op" && next.text === "?" && t[i - 1]?.kind !== "sym") {
+      found.add(`extends the enumeration ${k.text} with ?`);
       continue;
     }
     // `-11!` replays a log; `-11!(-1;..)` and `(-2;..)` only count and check it.
