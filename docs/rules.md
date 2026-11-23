@@ -1,6 +1,6 @@
 # Rules
 
-All 140 rules, generated from `src/taxonomy.json` - the same data
+All 141 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -172,6 +172,7 @@ it, or `ALL`.
 | <a id="qb022"></a>`QB022` | discarded-update | An update or delete on a table value whose result is discarded changes nothing | `style` and above |
 | <a id="qb023"></a>`QB023` | empty-general-list-match | x~() is false for every typed empty list - 0#0, `symbol$() and "" - so it does not test emptiness | `style` and above |
 | <a id="qb024"></a>`QB024` | peach-global-write | A lambda applied with peach writes a global, which q refuses with 'noupdate when it runs on secondary threads | `style` and above |
+| <a id="qb025"></a>`QB025` | duplicate-conditional-test | A $[...] test written again later in the same conditional: when it holds the earlier branch runs, so the later one never does | `style` and above |
 
 ## Domain - literal arguments outside what a builtin accepts
 

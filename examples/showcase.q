@@ -644,6 +644,12 @@ book:([]px:1 2)
 bump:{update px:px+1 from book; count book}
 bump2:{update px:px+1 from `book; count book}
 
+/ QB025: the second x>100 is the first again, so when it holds the first
+/ branch has already run; the second test is meant to be another one.
+/ expect-next: QB025
+tier:{$[x>100;`large;x>100;`huge;`small]}
+tier2:{$[x>1000;`huge;x>100;`large;`small]}
+
 / QB023: where gives a typed list, empty or not, and () is the empty general
 / list, so the match is never true; count asks whether it is empty.
 / expect-next: QB023

@@ -2757,6 +2757,36 @@ fn refused_atom_condition(raw: &str) -> bool {
             && !re!(r"^-?0[NW]$").is_match(raw)
 }
 
+/// A conditional's test as QB025 compares it: `comments`' text, its strings
+/// kept as written and each run of blanks outside them made one space, so
+/// `x>1` and `x>1 ` are one test and `s~"a  b"` and `s~"a b"` are two. A
+/// string is where `code` is blank and `comments` is not, from a quote.
+fn same_test(comments: &str, code: &str) -> String {
+    let (text, mask) = (comments.as_bytes(), code.as_bytes());
+    let mut out = Vec::with_capacity(text.len());
+    let (mut i, mut blank) = (0, false);
+    while i < text.len() {
+        if text[i] == b'"' && mask[i] == b' ' {
+            let mut j = i + 1;
+            while j < text.len() && text[j] != b'"' {
+                j += if text[j] == b'\\' { 2 } else { 1 };
+            }
+            let j = (j + 1).min(text.len());
+            out.extend_from_slice(&text[i..j]);
+            (i, blank) = (j, false);
+        } else if text[i].is_ascii_whitespace() {
+            if !blank {
+                out.push(b' ');
+            }
+            (i, blank) = (i + 1, true);
+        } else {
+            out.push(text[i]);
+            (i, blank) = (i + 1, false);
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// Whether a `$[...]` test is a literal q 5 refuses with 'type: an atom
 /// `refused_atom_condition` names, `()`, a boolean vector, a spaced numeric
 /// vector, a comparison of vectors, a general list or `enlist` of an item.
@@ -5882,6 +5912,54 @@ fn lint_rules(
                         "`{raw}` as a later test of `$[...]` is 'type once it is reached: a test must be a boolean, integer, char or temporal atom"
                     ),
                 );
+            }
+        }
+        // QB025. A test written again later in the same conditional: if it
+        // held the first time, its earlier branch ran, so the later branch
+        // never runs - q 5 `$[x>1;`a;x>1;`b;`c]` is `c for 0 and `a for 2,
+        // never `b. Nothing runs between the two evaluations but the tests
+        // themselves, so only a test that could change its own value is left
+        // alone: one that assigns, applies with brackets or a lambda, deals
+        // (`?`), signals, or reads the clock, a random number or a handle.
+        // So is a literal test.
+        if n >= 4 {
+            let mut from = dollar + 2;
+            let mut tests: Vec<String> = vec![];
+            for (k, part) in parts.iter().enumerate() {
+                let start = from;
+                from += part.len() + 1;
+                if k % 2 != 0 || k + 1 >= n {
+                    continue;
+                }
+                // Delimited in `comments`, where a string at either end is
+                // still there to keep.
+                let raw = &v.comments[start..start + part.len()];
+                let at = start + raw.len() - raw.trim_start().len();
+                let end = at + raw.trim().len();
+                let test = &code[at..end];
+                // A test with no name in it is a constant, the same every
+                // time: `$[0b;1;0b;2]` is QA007's, and placeholder.
+                if !re!(r"(?:^|[^`A-Za-z0-9_.])[A-Za-z]").is_match(test)
+                    || test.contains([':', '[', '{', '?', '\''])
+                    || re!(r"\.z\.|\b(?:rand|value|get|read0|read1|system|hopen|hclose|eval|reval|getenv|neg)\b")
+                        .is_match(test)
+                {
+                    continue;
+                }
+                let text = same_test(&v.comments[at..end], &code[at..end]);
+                if tests.contains(&text) {
+                    add(
+                        at,
+                        "QB025",
+                        format!(
+                            "`{}` repeats an earlier test of this $[...]: when it holds, the \
+                             earlier branch runs, so this branch never does",
+                            v.comments[at..end].trim()
+                        ),
+                    );
+                } else {
+                    tests.push(text);
+                }
             }
         }
         if n == 2 {
