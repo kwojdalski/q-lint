@@ -77,6 +77,14 @@ test("every setting naming a program, a command or a q environment file is restr
   }
 });
 
+test("an untrusted workspace cannot turn the read-only guard off or change its tags", () => {
+  const guard = Object.keys(props).filter((key) => key.startsWith("q-lint.processes.readOnlyGuard."));
+  assert.deepStrictEqual(guard.sort(), ["q-lint.processes.readOnlyGuard.enable", "q-lint.processes.readOnlyGuard.tags"]);
+  for (const key of guard) {
+    assert.ok(restricted.has(key), key);
+  }
+});
+
 test("a workspace that is not trusted gives q none of its .env", async (t) => {
   stub.reset();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-restricted-"));
