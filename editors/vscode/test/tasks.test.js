@@ -184,6 +184,22 @@ test("the provider offers the detected tasks; a task runs q on its script with t
   assert.match((await run(own)).out, /args: .*x\.q -a b env: hello/);
 });
 
+test("a task closed before its q has started never starts it (#1085)", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-taskclose-"));
+  fs.writeFileSync(path.join(dir, ".env"), "FROM_ENV=hello\n");
+  // node stands in for q: the "script" leaves a mark when it runs.
+  fs.writeFileSync(path.join(dir, "mark.js"), `require("node:fs").writeFileSync(${JSON.stringify(path.join(dir, "ran"))}, "");\n`);
+  const { providers } = setUp(t, dir);
+  stub.config.user["terminal.qBinary"] = process.execPath;
+  const own = providers[0].provider.resolveTask({ definition: { type: "q", script: "mark.js" }, name: "mine", scope: vscode.workspace.workspaceFolders[0] });
+  const terminal = await own.execution.callback(own.definition);
+  // Closed while the .env file is still being read.
+  terminal.open();
+  terminal.close();
+  await new Promise((r) => setTimeout(r, 1000));
+  assert.strictEqual(fs.existsSync(path.join(dir, "ran")), false);
+});
+
 test("off: the provider is unregistered, offers and resolves nothing, and runs no q", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-tasksoff-"));
   const { providers, registered } = setUp(t, dir);

@@ -37,6 +37,7 @@ function runner(definition: QTaskDefinition, folder: WorkspaceFolder | undefined
   const write = new EventEmitter<string>();
   const close = new EventEmitter<number>();
   let child: ChildProcess | undefined;
+  let closed = false;
   return {
     onDidWrite: write.event,
     onDidClose: close.event,
@@ -47,6 +48,10 @@ function runner(definition: QTaskDefinition, folder: WorkspaceFolder | undefined
         const cwd = folder?.uri.fsPath ?? path.dirname(definition.script);
         const script = path.resolve(cwd, expandHome(definition.script, os.homedir()));
         const env = mergeEnv(layoutEnvFor(binary, folder?.uri), await dotenvFor(folder?.uri));
+        // Closed while the variables were read: q is not started (#1085).
+        if (closed) {
+          return;
+        }
         const args = [script, ...(definition.args ?? [])];
         write.fire(terminalText(`> ${[binary, ...args].join(" ")}\n`));
         try {
@@ -68,6 +73,7 @@ function runner(definition: QTaskDefinition, folder: WorkspaceFolder | undefined
       })();
     },
     close: () => {
+      closed = true;
       child?.kill();
     },
   };
