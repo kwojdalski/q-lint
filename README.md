@@ -363,6 +363,44 @@ It takes comma-separated clauses of `==`, `!=`, `>=`, `<=`, `>`, `<` or `~=`
 (`~=0.33.1` is `>=0.33.1, <0.34`) and a version, or a version alone, which
 must match exactly; a value that is none of these is a configuration error.
 
+`[severity]` sets how a rule's findings are reported, by code or prefix, the
+longest winning: `error`, `warning`, `info` (or `information`) or `hint`.
+
+```toml
+[severity]
+QS = "info"          # every style rule, reported but not failing the run
+QS006 = "warning"    # except this one
+```
+
+The text, `json`, `sarif` and `github` reports and the language server all
+show it, and only an `error` or a `warning` fails the run (exit 1). It changes
+how a finding is reported, never whether: that is `select` and `ignore`. An
+editor's own `lint.severity` overrides it again, for that user.
+
+`[rules.<CODE>]` holds a rule's own options, for the few rules with a
+threshold or a word list of their own:
+
+```toml
+[rules.QS006]
+max-lines = 40                    # lines of code a lambda may have (default 25)
+
+[rules.QL001]
+markers = ["TODO", "FIXME"]       # the words reported in a comment (default TODO, FIXME, XXX, HACK)
+
+[rules.QX002]
+name-pattern = "(?:password|secret|dsn)$"  # case-insensitive, on the name's last part
+```
+
+An option a rule does not have, a rule with none, or a value of the wrong kind
+is a configuration error (exit 2), so a typo cannot quietly leave the default
+in force. Both tables may also go under `[lint]`, and a file that `extend`s
+another overrides the base's entries one at a time.
+
+The keys and the values each takes are also a JSON Schema,
+[`editors/vscode/schemas/qlinter.schema.json`](editors/vscode/schemas/qlinter.schema.json),
+which the VS Code extension hands Even Better TOML for completion and
+validation; a test keeps it equal to what qlinter reads.
+
 `exclude`, `extend-exclude`, `--exclude` and the keys of `per-file-ignores`
 are globs read the way Ruff reads them. A pattern with a `/` anywhere in it -
 `lib/`, `./lib`, `src/gen/*.q`, a trailing slash included - is anchored at the
@@ -1005,7 +1043,8 @@ Every key is optional, and these are the defaults:
 configuration and the command line, and only turn rules off: a rule reports
 when the configuration selects it and they do too. `lint.run` is `onType` or
 `onSave`. `lint.severity` maps a code or prefix to `error`, `warning`,
-`information` or `hint`, the longest winning. `lint.scope` is `open` or
+`information` or `hint`, the longest winning, over the configuration's own
+`[severity]`. `lint.scope` is `open` or
 `workspace`: with `workspace`, every file the index reads reports too, open
 or not - read from disk and linted one at a time while no message is
 waiting, so none holds up the editor, at most 5,000 of them; again when it

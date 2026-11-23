@@ -1,0 +1,127 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/kwojdalski/q-lint/blob/master/editors/vscode/schemas/qlinter.schema.json",
+  "title": "qlinter configuration",
+  "description": "qlinter.toml and .qlinter.toml: which rules report on q source, and how. qlinter refuses any key not listed here.",
+  "type": "object",
+  "additionalProperties": false,
+  "definitions": {
+    "selectors": {
+      "type": "array",
+      "description": "Rule codes or prefixes (`QS`, `QF016`), or `ALL`. One that names no rule is refused.",
+      "items": { "$ref": "#/definitions/selector" }
+    },
+    "selector": {
+      "type": "string",
+      "pattern": "^\\s*(ALL|Q[A-Z0-9]*)\\s*$"
+    },
+    "perFileIgnores": {
+      "type": "object",
+      "description": "Glob = [codes]: rules that do not report on the files the glob matches. A leading `!` negates the glob.",
+      "additionalProperties": { "$ref": "#/definitions/selectors" }
+    },
+    "severity": {
+      "type": "object",
+      "description": "How a rule's findings are reported, by code or prefix; the longest that names a rule decides. Only an error or a warning fails the run. An editor's own q-lint.lint.severity overrides it for that user.",
+      "propertyNames": { "$ref": "#/definitions/selector" },
+      "additionalProperties": {
+        "enum": ["error", "warning", "info", "information", "hint"]
+      }
+    },
+    "rules": {
+      "type": "object",
+      "description": "A rule's own options, for the rules that have them. An unknown option is refused.",
+      "additionalProperties": false,
+      "properties": {
+        "QS006": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "max-lines": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 25,
+              "description": "Lines of code a lambda may have before QS006 reports it."
+            }
+          }
+        },
+        "QL001": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "markers": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "pattern": "^[A-Za-z0-9_]+$" },
+              "default": ["TODO", "FIXME", "XXX", "HACK"],
+              "description": "The words in a comment QL001 reports as unfinished work."
+            }
+          }
+        },
+        "QX002": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name-pattern": {
+              "type": "string",
+              "default": "(?:password|passwd|pwd|secret|token|api_?key|credentials?)$",
+              "description": "A case-insensitive regular expression the last part of a name must match for QX002 to read its string as a credential."
+            }
+          }
+        }
+      }
+    }
+  },
+  "properties": {
+    "profile": {
+      "enum": ["general", "style", "styleq", "uqf"],
+      "description": "The rules reported when nothing selects them: general, style, styleq or uqf, each a superset of the one before."
+    },
+    "select": { "$ref": "#/definitions/selectors" },
+    "extend-select": { "$ref": "#/definitions/selectors" },
+    "ignore": { "$ref": "#/definitions/selectors" },
+    "per-file-ignores": { "$ref": "#/definitions/perFileIgnores" },
+    "exclude": {
+      "type": "array",
+      "description": "Files and directories not linted, relative to this file; a pattern with no `/` matches a name at any depth. Replaces the default list.",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "extend-exclude": {
+      "type": "array",
+      "description": "Added to `exclude`, or to its default list.",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "extend": {
+      "type": "string",
+      "description": "Another configuration to inherit, relative to this file; what this file sets overrides it."
+    },
+    "target-version": {
+      "enum": ["3.6", "4.0", "4.1", "kdbx"],
+      "description": "The q release the QK rules report what does not run on."
+    },
+    "baseline": {
+      "type": "string",
+      "minLength": 1,
+      "description": "A findings file, relative to this file: only findings not in it are reported."
+    },
+    "required-version": {
+      "type": "string",
+      "description": "The qlinter releases this repository is linted with, such as \">=0.33, <0.34\"; any other refuses to run."
+    },
+    "severity": { "$ref": "#/definitions/severity" },
+    "rules": { "$ref": "#/definitions/rules" },
+    "lint": {
+      "type": "object",
+      "description": "The rule-selection keys, which may go here instead of at the top level (not both).",
+      "additionalProperties": false,
+      "properties": {
+        "select": { "$ref": "#/definitions/selectors" },
+        "extend-select": { "$ref": "#/definitions/selectors" },
+        "ignore": { "$ref": "#/definitions/selectors" },
+        "per-file-ignores": { "$ref": "#/definitions/perFileIgnores" },
+        "severity": { "$ref": "#/definitions/severity" },
+        "rules": { "$ref": "#/definitions/rules" }
+      }
+    }
+  }
+}

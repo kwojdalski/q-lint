@@ -2588,7 +2588,8 @@ one the server's default is `style`, while the command line's is `uqf`, and
 the editor shows fewer findings than CI. `q-lint.profile`, `q-lint.configFile` and
 `q-lint.serverArgs` replace parts of the repository's configuration;
 `q-lint.lint.*` only narrows it. `q-lint.lint.severity` changes how a finding
-looks, not whether it is reported. Neither the configuration's `exclude` nor
+looks, not whether it is reported, and overrides the configuration's
+`[severity]` for you alone. Neither the configuration's `exclude` nor
 `q-lint.workspaceIndex.exclude` hides diagnostics on a file you open.
 
 ### Query settings
@@ -2957,6 +2958,14 @@ A `qlinter.toml` at the repository root (or `[tool.qlinter]` in
 file beneath it, the way Ruff's configuration does; editing it re-lints the
 open files. See the [configuration
 docs](https://github.com/kwojdalski/q-lint#configuration).
+
+With [Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tamasfe.even-better-toml)
+installed, `qlinter.toml` and `.qlinter.toml` get completion and validation
+from the JSON Schema this extension contributes (`schemas/qlinter.schema.json`):
+a key, rule option or severity qlinter would refuse is underlined as you type.
+The schema is a static file another extension reads; q-lint itself runs and
+sends nothing for it. A `pyproject.toml` `[tool.qlinter]` table is not
+covered.
 
 ## Troubleshooting
 

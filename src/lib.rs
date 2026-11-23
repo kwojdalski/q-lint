@@ -21,6 +21,7 @@ macro_rules! blank {
 }
 mod families;
 mod intrinsics;
+pub mod options;
 mod refusals;
 mod semantics;
 pub use semantics::TokenKind;
