@@ -100,6 +100,16 @@ test("the view shows the plot on show, steps and saves it, and off is unregister
   receive({ type: "png", key: asked.key, data: "data:image/png;base64,iVBORw0KGgo=" });
   assert.strictEqual(await saving, "/p.png");
   assert.deepStrictEqual([...written["/p.png"].subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47]);
+  // Two PNGs asked for at once are each saved to their own file (#1092).
+  const one = stub.commands.get(PLOT_COMMANDS.save)("png", vscode.Uri.file("/1.png"));
+  await new Promise((r) => setImmediate(r));
+  const oneKey = posted.at(-1).key;
+  const two = stub.commands.get(PLOT_COMMANDS.save)("png", vscode.Uri.file("/2.png"));
+  await new Promise((r) => setImmediate(r));
+  const twoKey = posted.at(-1).key;
+  receive({ type: "png", key: twoKey, data: "data:image/png;base64,iVBORw0KGgo=" });
+  receive({ type: "png", key: oneKey, data: "data:image/png;base64,iVBORw0KGgo=" });
+  assert.deepStrictEqual(await Promise.all([one, two]), ["/1.png", "/2.png"]);
   receive({ type: "remove" });
   assert.strictEqual(PLOTS.list().length, 1);
   // Off: unregistered, the plots dropped, the commands refuse.
