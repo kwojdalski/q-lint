@@ -393,7 +393,9 @@ pub(crate) enum Derived {
 pub(crate) fn derived(node: &Node) -> Derived {
     match node {
         Node::Name(n) if n == "i" => Derived::X,
-        Node::Name(n) => Derived::Name(n.clone()),
+        // A dotted name gives its last part: `select e.month from e` is
+        // `month` on KDB-X, as `.ns.v` is `v` (#1300).
+        Node::Name(n) => Derived::Name(n.rsplit('.').next().unwrap_or(n).to_string()),
         Node::Leaf(_) | Node::Sym(_) => Derived::X,
         Node::Verb(_) => Derived::Unknown,
         Node::List(items) => items.last().map_or(Derived::X, derived),

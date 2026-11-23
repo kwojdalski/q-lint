@@ -109,6 +109,8 @@ const CASES: &[(&str, &str)] = &[
         "update m:max px by sym from t",
         "![t;();(enlist`sym)!enlist `sym;(enlist`m)!enlist (max;`px)]",
     ),
+    // q names a dotted column by its last part (KDB-X: `px`, #1300).
+    ("select t.px from t", "?[t;();0b;(enlist`px)!enlist `t.px]"),
     ("delete px, size from t", "![t;();0b;`px`size]"),
     // One column is enlisted: `![t;();0b;`px]` is 'type.
     ("delete px from t", "![t;();0b;enlist`px]"),
