@@ -33,10 +33,18 @@ export const MAX_ROWS = 10000;
 
 /// Rows of fields, read as RFC 4180 reads CSV: a field in double quotes may
 /// hold the delimiter, a newline and `""` for a quote. `delimiter` is a tab,
-/// comma or semicolon, whichever the first line has most of when not given.
+/// comma or semicolon, whichever the first record has most of outside its
+/// quotes when not given (#1100).
 export function readDelimited(text: string, delimiter?: string): { delimiter: string; rows: string[][] } {
   const body = text.replace(/^﻿/, "");
-  const first = body.split(/\r?\n/, 1)[0] ?? "";
+  let first = "";
+  for (let i = 0, quoted = false; i < body.length && (quoted || (body[i] !== "\n" && body[i] !== "\r")); i++) {
+    if (body[i] === '"') {
+      quoted = !quoted;
+    } else if (!quoted) {
+      first += body[i];
+    }
+  }
   const count = (c: string) => first.split(c).length - 1;
   const d = delimiter ?? (count("\t") > 0 ? "\t" : count(";") > count(",") ? ";" : ",");
   const rows: string[][] = [];

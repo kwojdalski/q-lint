@@ -16,6 +16,9 @@ test("CSV and TSV are read as a spreadsheet writes them", () => {
   assert.deepStrictEqual(p.readDelimited("a,b\r\n1,2\r\n"), { delimiter: ",", rows: [["a", "b"], ["1", "2"]] });
   assert.deepStrictEqual(p.readDelimited("a\tb\n1\t2").delimiter, "\t");
   assert.deepStrictEqual(p.readDelimited("a;b\n1,5;2").delimiter, ";");
+  // The delimiter is counted outside quotes only, over the whole first record (#1100).
+  assert.deepStrictEqual(p.readDelimited('"a;b;c",x\n1,2'), { delimiter: ",", rows: [["a;b;c", "x"], ["1", "2"]] });
+  assert.deepStrictEqual(p.readDelimited('"a\n;;",x\n1,2').delimiter, ",");
   // Quotes hold the delimiter, a newline and a doubled quote.
   assert.deepStrictEqual(p.readDelimited('x,y\n"a,b","say ""hi""\nthere"\n').rows, [["x", "y"], ["a,b", 'say "hi"\nthere']]);
   // A byte order mark and blank lines are no data.
