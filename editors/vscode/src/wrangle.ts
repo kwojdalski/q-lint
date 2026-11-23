@@ -120,7 +120,9 @@ export function stringColumn(payload: GridPayload, i: number): boolean {
 
 /// `base` without its comments: each line cut at a `/` after whitespace
 /// outside a string, so nesting it does not leave the `)` or `;` that
-/// follows in a comment (#1072). A line left empty is dropped.
+/// follows in a comment (#1072). A line left empty is dropped, and so is a
+/// block comment - `/` alone to `\` alone - and all after a `\` alone, as q
+/// reads a script (#1280).
 function uncommented(base: string): string {
   const cut = (line: string): string => {
     let quoted = false;
@@ -140,7 +142,21 @@ function uncommented(base: string): string {
     }
     return line.trimEnd();
   };
-  return base.trim().split(/\r?\n/).map(cut).filter((l) => l.trim() !== "").join("\n");
+  const lines: string[] = [];
+  let block = false;
+  for (const line of base.trim().split(/\r?\n/)) {
+    const bare = line.trimEnd();
+    if (block) {
+      block = bare !== "\\";
+    } else if (bare === "/") {
+      block = true;
+    } else if (bare === "\\") {
+      break;
+    } else {
+      lines.push(line);
+    }
+  }
+  return lines.map(cut).filter((l) => l.trim() !== "").join("\n");
 }
 
 /// The steps nested in one expression over `base`.
