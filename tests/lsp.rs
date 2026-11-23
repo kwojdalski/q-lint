@@ -3325,3 +3325,87 @@ fn selection_ranges_grow_from_the_token_to_the_definition() {
     assert_eq!(server.until(|m| m["id"] == 41)["result"], Value::Null);
     assert_eq!(server.shutdown_and_exit(), 0);
 }
+
+/// A parameter declared twice carries the first declaration's place, and
+/// the repeat's, as `relatedInformation` (#1158) - only when the client takes
+/// it and the setting asks for it; a column named twice carries both names.
+#[test]
+fn a_duplicate_declaration_points_at_the_first() {
+    let text = "f:{[a;b;a] a+b}\nt:([] c:1 2; d:3 4; c:5 6)\nr:select d by d from t\n";
+    let dir = tempfile::tempdir().unwrap();
+    let uri = file_uri(&dir.path().join("dup.q"));
+    let start = |options: Value, related: bool| {
+        let mut server = Server::spawn(dir.path(), &["--lsp", "--profile", "style"]);
+        let mut capabilities = client_capabilities();
+        capabilities["textDocument"]["publishDiagnostics"] = json!({"relatedInformation": related});
+        server.send(
+            json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+            "capabilities": capabilities, "initializationOptions": options}}),
+        );
+        server.receive();
+        server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+        server
+    };
+    let places = |d: &Value| -> Vec<(u64, u64, String)> {
+        d["relatedInformation"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|r| {
+                let start = &r["location"]["range"]["start"];
+                (
+                    start["line"].as_u64().unwrap(),
+                    start["character"].as_u64().unwrap(),
+                    r["message"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    };
+    let mut server = start(json!({"relatedInformation": {"enable": true}}), true);
+    server.open(&uri, text);
+    let diagnostics = server.diagnostics_for(&uri);
+    let duplicate = diagnostics.iter().find(|d| d["code"] == "QF008").unwrap();
+    assert_eq!(
+        places(duplicate),
+        [
+            (0, 4, "`a` is first declared here".to_string()),
+            (0, 8, "and declared again here".to_string()),
+        ]
+    );
+    let related = &duplicate["relatedInformation"][0]["location"];
+    assert_eq!(related["uri"], uri);
+    assert_eq!(related["range"]["end"]["character"], 5);
+    let column = diagnostics.iter().find(|d| d["code"] == "QB019").unwrap();
+    assert_eq!(
+        places(column),
+        [
+            (1, 6, "`c` is first named here".to_string()),
+            (1, 20, "and named again here".to_string()),
+        ]
+    );
+    let by = diagnostics.iter().find(|d| d["code"] == "QB021").unwrap();
+    assert_eq!(
+        places(by),
+        [
+            (2, 9, "`d` is first named here".to_string()),
+            (2, 14, "and named again here".to_string()),
+        ]
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+
+    for (options, related) in [
+        (json!({"relatedInformation": {"enable": true}}), false),
+        (json!({}), true),
+    ] {
+        let mut server = start(options, related);
+        server.open(&uri, text);
+        let diagnostics = server.diagnostics_for(&uri);
+        assert!(diagnostics.iter().any(|d| d["code"] == "QF008"));
+        assert!(
+            diagnostics
+                .iter()
+                .all(|d| d.get("relatedInformation").is_none())
+        );
+        assert_eq!(server.shutdown_and_exit(), 0);
+    }
+}

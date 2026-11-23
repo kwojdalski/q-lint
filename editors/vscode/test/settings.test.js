@@ -62,6 +62,7 @@ test("the defaults start the server as it was started before settings", () => {
     baseline: { enable: true },
     typeLints: { enable: true },
     selectionRange: { enable: true },
+    relatedInformation: { enable: true },
     workspaceIndex: { enable: true, exclude: [] },
   });
 });
@@ -136,6 +137,7 @@ test("every editor-only setting reaches the server's options", () => {
       "baseline.enable": false,
       "typeLints.enable": false,
       "selectionRange.enable": false,
+      "relatedInformation.enable": false,
       "workspaceIndex.enable": false,
       "workspaceIndex.exclude": ["vendor/**"],
     }),
@@ -173,6 +175,7 @@ test("every editor-only setting reaches the server's options", () => {
     baseline: { enable: false },
     typeLints: { enable: false },
     selectionRange: { enable: false },
+    relatedInformation: { enable: false },
     workspaceIndex: { enable: false, exclude: ["vendor/**"] },
   });
 });

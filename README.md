@@ -437,6 +437,11 @@ formatting is not offered.
 
 Around those:
 
+- With `relatedInformation.enable: true`, and a client that takes it, a
+  diagnostic that points at a second place carries it as
+  `relatedInformation`: the first of two parameters of one name (QF008), of
+  two columns of one name (QB019), and the result column a by group repeats
+  (QB021), each with the repeat beside it.
 - Each diagnostic links its code to that rule's row in
   [docs/rules.md](docs/rules.md) (`codeDescription`), so the code is clickable
   wherever an editor shows it.
@@ -947,6 +952,7 @@ Every key is optional, and these are the defaults:
  "functionalForm": {"enable": true}, "qsqlExplain": {"enable": true},
  "versionCheck": {"enable": true}, "baseline": {"enable": true},
  "typeLints": {"enable": true}, "selectionRange": {"enable": false},
+ "relatedInformation": {"enable": false},
  "workspaceIndex": {"enable": true, "exclude": []}}
 ```
 
@@ -977,6 +983,8 @@ words on hover. `versionCheck.enable: false` ignores the QK rules and
 `baseline.enable: false` shows every finding, whatever baseline the
 configuration names. `selectionRange.enable: true` announces
 `textDocument/selectionRange`; off, an editor keeps its own expansion.
+`relatedInformation.enable: true` adds `relatedInformation` to the
+diagnostics that point at a second place.
 `workspaceIndex.exclude`
 holds globs relative to each workspace folder that the index does not read.
 The index stops after 20,000 `.q` files or 500,000 directory entries of any

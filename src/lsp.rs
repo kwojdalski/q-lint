@@ -63,7 +63,9 @@
 //! in. The client runs and asks; this server reads.
 //!
 //! Around those: each diagnostic links its code to that rule's row in the
-//! reference (`codeDescription`); beside its fix, or without one, a finding
+//! reference (`codeDescription`), and one that points at a second place -
+//! the first of two names that collide - carries it when asked (`related`);
+//! beside its fix, or without one, a finding
 //! has a quick fix that accepts it with `/ noqa: CODE` on its line, offered
 //! only where the linter would read that comment (`suppression_for`);
 //! textDocument/codeAction also answers `source.fixAll.q-lint` with the
@@ -192,6 +194,7 @@ mod inventory;
 mod live;
 mod navigate;
 mod relate;
+mod related;
 mod selection;
 
 /// Open documents, by URI. The editor is the authority on their contents from
@@ -628,7 +631,8 @@ fn workspace_folders(params: &Value) -> Vec<(String, String)> {
 ///  "qsqlLayout": {"enable": true, "onFormat": false, "lineLength": 80},
 ///  "functionalForm": {"enable": true}, "qsqlExplain": {"enable": true},
 ///  "versionCheck": {"enable": true}, "baseline": {"enable": true},
-///  "typeLints": {"enable": true}, "selectionRange": {"enable": false}}
+///  "typeLints": {"enable": true}, "selectionRange": {"enable": false},
+///  "relatedInformation": {"enable": false}}
 /// ```
 ///
 /// `lint.select` and `lint.ignore` narrow the selection (see
@@ -731,6 +735,10 @@ struct Options {
     /// brackets and statements of q. Off unless asked for, since an editor
     /// told a server answers it stops using its own word-and-bracket guess.
     selection_range: bool,
+    /// Give a diagnostic that points at a second place - the first of two
+    /// parameters or columns of one name - that place as
+    /// `relatedInformation`, when the client takes it. Off unless asked for.
+    related_information: bool,
     /// Whether the client shows an action it cannot take with the reason
     /// (`codeAction.disabledSupport`): a capability, not a setting.
     disabled_actions: bool,
@@ -775,6 +783,7 @@ impl Default for Options {
             baseline: true,
             type_lints: true,
             selection_range: false,
+            related_information: false,
             disabled_actions: false,
             severity: vec![],
         }
@@ -827,6 +836,7 @@ impl Options {
                         "baseline",
                         "typeLints",
                         "selectionRange",
+                        "relatedInformation",
                     ]
                     .contains(&key.as_str())
                         && !value.is_object()
@@ -878,6 +888,11 @@ impl Options {
         options.baseline = flag("/baseline/enable", true);
         options.type_lints = flag("/typeLints/enable", true);
         options.selection_range = flag("/selectionRange/enable", false);
+        options.related_information = flag("/relatedInformation/enable", false)
+            && params
+                .pointer("/capabilities/textDocument/publishDiagnostics/relatedInformation")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
         match init.pointer("/qsqlLayout/lineLength") {
             None | Some(Value::Null) => {}
             Some(n) => match n.as_u64().filter(|n| (20..=400).contains(n)) {
@@ -2663,6 +2678,15 @@ fn diagnose(
             if let Some(level) = opts.severity_of(&f.code) {
                 d["severity"] = json!(level);
             }
+            if opts.related_information
+                && let Some(column) = f.column
+            {
+                let at = lines.q_offset(f.line.saturating_sub(1), column.saturating_sub(1));
+                let places = related::related(f, text, &lines, at, uri);
+                if !places.is_empty() {
+                    d["relatedInformation"] = json!(places);
+                }
+            }
             d
         })
         .collect();
@@ -2684,6 +2708,26 @@ fn diagnose(
                     let mut d = d.clone();
                     d["range"]["start"]["line"] = json!(start);
                     d["range"]["end"]["line"] = json!(end);
+                    // The places it points at move with it, or go.
+                    if let Some(places) = d.get_mut("relatedInformation") {
+                        let moved: Vec<Value> = places
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|place| {
+                                let range = &place["location"]["range"];
+                                let (start, end) = carry.lines(
+                                    range["start"]["line"].as_u64()? as usize,
+                                    range["end"]["line"].as_u64()? as usize,
+                                )?;
+                                let mut place = place.clone();
+                                place["location"]["range"]["start"]["line"] = json!(start);
+                                place["location"]["range"]["end"]["line"] = json!(end);
+                                Some(place)
+                            })
+                            .collect();
+                        *places = json!(moved);
+                    }
                     Some(d)
                 }));
             }

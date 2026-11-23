@@ -425,6 +425,12 @@
             "default": true,
             "order": 48,
             "markdownDescription": "Grow **Expand Selection** by q's structure: the token, then each bracket around it - the `;`-separated item, the contents, the bracket, a call with its name - then the top-level statement. Read from the source, never from a running q. Off, q-lint announces none and VS Code's own word-and-bracket selection is used."
+          },
+          "q-lint.relatedInformation.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 49,
+            "markdownDescription": "Link a problem that points at a second place to that place, under the problem in the Problems panel and its hover: the first of two parameters of one name (QF008), the first of two columns of one name (QB019), the result column a `by` group repeats (QB021). Off, the problems are shown alone."
           }
         }
       },

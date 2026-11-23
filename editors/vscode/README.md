@@ -28,6 +28,8 @@ to a process you add and connect to, and sends only the code you run.
   conventions, depending on the profile. A finding's code, in the Problems
   panel and on hover, links to that rule in the
   [rule reference](https://github.com/kwojdalski/q-lint/blob/master/docs/rules.md).
+  A duplicate parameter or column links to the first of the two, under the
+  problem. `q-lint.relatedInformation.enable`.
 - **Quick Fixes** for over forty rules, among them operators and keywords
   from other languages (`==`, `&&`, `+=`, `true`, `return`), invalid string
   escapes, symbols where q wants strings, `f(a;b)` calls, one-row tables,
@@ -2523,6 +2525,7 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.baseline.enable` | `true` | Hide the findings in a folder's configured `baseline`, and offer **Write Lint Baseline**. Off: every finding shows. | - |
 | `q-lint.typeLints.enable` | `true` | Report QT033-QT035, the lints from inferred types. Off: hidden as `q-lint.lint.ignore` would. | - |
 | `q-lint.selectionRange.enable` | `true` | Grow **Expand Selection** by q's brackets and statements. Off: VS Code's own word-and-bracket selection. | - |
+| `q-lint.relatedInformation.enable` | `true` | Link a duplicate parameter or column's problem to the first of the two. Off: the problem alone. | - |
 | `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines, up to 20,000 files or 500,000 directory entries. Off: only open files. | - |
 | `q-lint.workspaceIndex.exclude` | `[]` | Globs, relative to the workspace folder, the index does not read: `["vendor/**"]`. | `q-lang-server.sourceFiles.ignoreGlob` |
 | `q-lint.trace.server` | `off` | Log client-server traffic: `off`, `messages`, `verbose`. | `q-lang-server.trace.server` |
