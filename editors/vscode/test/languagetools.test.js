@@ -132,6 +132,13 @@ test("a q error is explained from the catalogue, with the operation that failed"
   }
 });
 
+test("an error named after an Object.prototype member is an undefined name, not a crash (#1078)", () => {
+  for (const name of ["constructor", "toString", "valueOf", "hasOwnProperty"]) {
+    assert.match(explainError(`'${name}`), new RegExp(`\`${name}\` is not defined where it was read`), name);
+    assert.strictEqual(errorInMessage(`fails with '${name} here`), undefined, name);
+  }
+});
+
 test("Explain q Error refuses when off, and explains the last failure or the one given when on", async () => {
   const { context, shown, restore } = setUp();
   const providers = [];
