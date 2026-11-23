@@ -2804,7 +2804,11 @@ fn parenthesised(code: &str, start: usize, end: usize) -> Option<usize> {
     let before = code[..start].trim_end_matches([' ', '\t']);
     let open = before.strip_suffix('(').map(|b| b.len())?;
     let close = matching(code, open, b'(', b')')?;
-    code[end..close - 1].trim().is_empty().then_some(close)
+    // `get`: in `({[] count:1)}` the `)` closes inside the lambda, before
+    // its end, and the lambda is not what the parentheses hold.
+    code.get(end..close - 1)
+        .is_some_and(|s| s.trim().is_empty())
+        .then_some(close)
 }
 /// The bracket in a chain of them, from the one at `open` given a function
 /// of `rank`, that holds more arguments than what it is applied to takes:
