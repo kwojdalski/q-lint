@@ -551,9 +551,45 @@ impl Index {
     }
 
     fn scan_within(&mut self, policy: &Policy, max_files: usize, max_entries: usize) {
-        let mut stack: Vec<(std::path::PathBuf, std::path::PathBuf)> =
-            self.roots.iter().map(|r| (r.into(), r.into())).collect();
-        let (mut seen, mut visited) = (0, 0);
+        let stack = self.roots.iter().map(|r| (r.into(), r.into())).collect();
+        self.walk(policy, stack, max_files, max_entries);
+    }
+
+    /// Read every `.q` file under the directory `path`, as the scan would
+    /// have: a watcher reports a folder created or moved in as one event for
+    /// the folder, not one per file inside it (#1217).
+    fn add_tree(&mut self, path: &str, policy: &Policy) -> bool {
+        let dir = std::path::PathBuf::from(path);
+        let Some(root) = self
+            .roots
+            .iter()
+            .map(std::path::PathBuf::from)
+            .find(|root| dir.starts_with(root))
+        else {
+            return false;
+        };
+        if !self.enabled
+            || dir
+                .ancestors()
+                .take_while(|p| *p != root)
+                .any(|p| skipped(policy, p) || self.excluded(&root, p))
+        {
+            return false;
+        }
+        let changed = self.walk(policy, vec![(root, dir)], MAX_FILES, MAX_ENTRIES);
+        changed | self.settle()
+    }
+
+    /// Read the `.q` files under each `(folder, directory)` of `stack`, and
+    /// whether that changed the index.
+    fn walk(
+        &mut self,
+        policy: &Policy,
+        mut stack: Vec<(std::path::PathBuf, std::path::PathBuf)>,
+        max_files: usize,
+        max_entries: usize,
+    ) -> bool {
+        let (mut seen, mut visited, mut changed) = (0, 0, false);
         while let Some((root, dir)) = stack.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else {
                 continue;
@@ -561,7 +597,7 @@ impl Index {
             for entry in entries.flatten() {
                 visited += 1;
                 if visited > max_entries {
-                    return;
+                    return changed;
                 }
                 let Ok(kind) = entry.file_type() else {
                     continue;
@@ -585,14 +621,15 @@ impl Index {
                 if kind.is_dir() {
                     stack.push((root.clone(), path));
                 } else {
-                    self.read(&path.to_string_lossy());
+                    changed |= self.read(&path.to_string_lossy());
                     seen += 1;
                     if seen >= max_files {
-                        return;
+                        return changed;
                     }
                 }
             }
         }
+        changed
     }
 }
 
@@ -1744,9 +1781,16 @@ pub fn serve(
                     if docs.contains_key(&uri) {
                         continue;
                     }
-                    closed.touch(file_key(&path));
+                    // A directory, not entered through a symlink, as the
+                    // scan does not.
+                    let folder = std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir());
+                    if !folder {
+                        closed.touch(file_key(&path));
+                    }
                     changed |= if change["type"].as_i64() == Some(3) {
                         idx.remove_tree(&path, &docs)
+                    } else if folder {
+                        idx.add_tree(&path, policy)
                     } else {
                         idx.reload(&path, policy)
                     };

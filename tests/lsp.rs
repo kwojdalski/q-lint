@@ -811,8 +811,10 @@ fn a_notification_after_shutdown_is_dropped() {
     server.initialize();
     server.send(json!({"jsonrpc":"2.0","id":2,"method":"shutdown"}));
     assert_eq!(server.receive()["result"], Value::Null);
-    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":
-        {"uri":"file:///late.q","languageId":"q","version":1,"text":"f:{[a;a] a}\n"}}}));
+    server.send(
+        json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":
+        {"uri":"file:///late.q","languageId":"q","version":1,"text":"f:{[a;a] a}\n"}}}),
+    );
     server.send(json!({"jsonrpc":"2.0","method":"exit"}));
     assert_eq!(server.child.wait().unwrap().code(), Some(0));
     let late: Vec<Value> = server.messages.iter().collect();
@@ -1309,6 +1311,16 @@ fn deleting_a_folder_forgets_every_definition_under_it() {
     );
     let found = codes_of(&server.diagnostics_for(&app));
     assert!(found.contains(&"QF018".to_string()), "{found:?}");
+    // And moved back, one event for the folder again: what it holds is
+    // read as the startup scan reads it (#1217).
+    std::fs::create_dir_all(sub.join("deeper")).unwrap();
+    std::fs::write(sub.join("deeper/def.q"), "helper:{x+1}\n").unwrap();
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+        "params":{"changes":[{"uri":file_uri(&sub),"type":1}]}}),
+    );
+    let found = codes_of(&server.diagnostics_for(&app));
+    assert!(!found.contains(&"QF018".to_string()), "{found:?}");
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
