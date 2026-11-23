@@ -149,6 +149,10 @@ export class NotebookDiff implements TextDocumentContentProvider {
     }
     try {
       if (typeof against === "string") {
+        if (workspace.isTrusted === false) {
+          void window.showInformationMessage("q-lint: comparing with git asks git for the committed notebook, which is not done in a workspace that is not trusted.");
+          return;
+        }
         if (from.scheme !== "file") {
           void window.showInformationMessage(`q-lint: ${name} is not a file in a git repository: save it first.`);
           return;
@@ -353,6 +357,10 @@ export class NotebookStrip {
   /// show what would be written, and write it once the user says yes.
   async setUp(folder?: Uri, where?: AttributesAt): Promise<void> {
     if (!requireFeature("stripOutputs")) {
+      return;
+    }
+    if (workspace.isTrusted === false) {
+      void window.showInformationMessage("q-lint: setting up the git filter runs git, which is not done in a workspace that is not trusted.");
       return;
     }
     const active = window.activeNotebookEditor?.notebook.uri;

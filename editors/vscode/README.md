@@ -86,6 +86,29 @@ to a process you add and connect to, and sends only the code you run.
 - **Expand Selection** by q's structure: from the token out through each
   bracket - its `;`-separated item, its contents, the bracket, a call with
   its name - to the top-level statement. `q-lint.selectionRange.enable`.
+- **Continuation indent on Enter**: after a line that leaves a bracket open -
+  `f:{[x]`, `select from t where x in (1;2` - the new line is indented, so
+  it continues the definition rather than ending it, as a line at column 0
+  does in a q script. A comment line is never indented after, a bracket in
+  a trailing comment opens nothing, and nothing is ever outdented: a closing
+  line cannot tell which bracket it closes, and a `}` at the margin is an
+  error. `q-lint.editor.continuationIndent.enable` turns it off without a
+  reload.
+- **Dotted names as one word**: `.ns.util.f`, `x.y` and `.z.p` are each one
+  word to **Add Selection to Next Find Match** (Ctrl/Cmd+D), to the
+  highlight of a word's other occurrences and to the word a completion
+  replaces, and so is a number (`1.5`, `1e-3`, `2024.01.02`); in `x+.y`
+  the words are `x` and `.y`. Double-click and Ctrl/Cmd+Left/Right go by
+  `editor.wordSeparators` instead, which an extension cannot switch: to
+  have them agree, take the `.` out of it for q,
+  ``"[q]": {"editor.wordSeparators": "`~!@#$%^&*()-=+[{]}\\|;:'\",<>/?"}``.
+  `q-lint.editor.dottedNames.enable` turns it off without a reload.
+- **q in Markdown**: a fenced block opened with ```` ```q ```` (or `kdb+`,
+  or `~~~q`) is coloured with the q grammar in a Markdown editor, and one
+  opened with ```` ```k ```` with the k grammar; another language's fence,
+  and prose, are Markdown's. It is a grammar injection, which VS Code reads
+  at startup and offers no switch for, so it has no setting; the Markdown
+  preview colours code with its own highlighter, which this does not reach.
 - **Snippets** for the forms q is mostly written in: qSQL (`select`,
   `selectby`, `update`, `updateby`, `exec`, `execby`, `delete`,
   `deletecols`, and the functional `fselect` and `fupdate`), protected
@@ -840,6 +863,11 @@ a query, so the connection is closed and opened again; the process goes on
 running the query, and the new connection is made once it is free, however
 long that takes. **Disconnect**, or connecting to another process, stops
 it waiting.
+Escape in a q editor aborts too, while a query runs: the context key
+`q-lint.queryRunning` is set then, and only then. What Escape already does
+comes first - closing a suggestion list, parameter hints, a snippet, the
+find widget or a selection - and in a notebook it is left alone.
+`q-lint.query.escapeAborts.enable` turns it off.
 
 **Query a Tag**, on a tag row in Processes, in a q editor's context menu or
 from the palette, runs one query on every saved and discovered process
@@ -2606,6 +2634,7 @@ nothing.
 | `q-lint.results.correlation.enable` | `true` | Offer the **Correlation** view and **Show Result Correlation Matrix**. | - |
 | `q-lint.results.sendResult.enable` | `true` | Offer **Send to...**, **Send Result to Notebook** and **Append Result to Markdown Report...**, each showing what it writes first. | - |
 | `q-lint.query.progress.enable` | `true` | Count a running query's time in the status bar, and notify a long one's end. | - |
+| `q-lint.query.escapeAborts.enable` | `true` | Escape in a q editor aborts a running query. Off, Escape is VS Code's own. | - |
 | `q-lint.query.notifyAfter` | `10` | Seconds a query must run for its end to be notified while the window is not focused; `0` never. | - |
 | `q-lint.query.placeholders.enable` | `true` | Ask for a value for each `{{name}}` in the code a query sends, and put it in place. | - |
 | `q-lint.query.tagQuery.enable` | `true` | **Query a Tag**: one query on every process with a tag, the answers as one table. | - |
@@ -2633,6 +2662,8 @@ nothing.
 | `q-lint.undefinedNames.enable` | `false` | Warn on globals a q file reads that neither the workspace nor the connected process defines, and offer **Check Undefined Names on Process**. Off, nothing is sent and the command is hidden. | - |
 | `q-lint.idiomSnippets.enable` | `true` | Offer the idiom snippets (joins, `.z` handlers, a TorQ process) in the completion list. | - |
 | `q-lint.argumentSlot.enable` | `true` | Highlight the argument of `f[a;b;c]` the cursor is in and name its parameter. Asks the language server only. Off, nothing listens or is drawn. | - |
+| `q-lint.editor.continuationIndent.enable` | `true` | Indent the line after one that leaves a bracket open, on Enter. Off, Enter is VS Code's own. | - |
+| `q-lint.editor.dottedNames.enable` | `true` | Take `.ns.f` and `x.y` as one word for Ctrl/Cmd+D, occurrence highlights and completion. Off, a word is VS Code's own. | - |
 | `q-lint.processSymbols.enable` | `false` | List the names only the connected process defines in **Go to Symbol in Workspace**, read while you search. Off, no provider is registered and nothing is sent. | - |
 | `q-lint.processExplorer.driftDetection.enable` | `false` | **Check Drift Against Process**: compare the workspace's function definitions with the connected process. Off, the command is hidden and reads nothing. | - |
 | `q-lint.query.lineTimings.enable` | `true` | **Time Lines on Process** and **Clear Line Timings**. Off, the commands are hidden and refuse, and the timings drawn are cleared. | - |
@@ -2890,6 +2921,31 @@ folding back for q:
 ```json
 "[q]": {"editor.foldingStrategy": "indentation"}
 ```
+
+## Restricted Mode
+
+The linter reads q and never runs it, so linting, Quick Fixes, navigation
+and colouring work in a folder VS Code has not been told to trust. What
+could run a program the folder chooses is held back there:
+
+- These settings are read from your user settings only, never the
+  folder's: `q-lint.serverPath`, `q-lint.serverArgs`, `q-lint.profile` and
+  `q-lint.configFile` (the server's command line), `q-lint.terminal.qBinary`
+  and `q-lint.terminal.envPath`, `q-lint.env.enable` and `q-lint.env.file`,
+  `q-lint.processes.launcher.enable` and
+  `q-lint.connection.credentialCommand.enable`.
+- The folder's `.env` is not given to any q the extension starts, and
+  **Select q Interpreter** does not offer, or run to read its version, a q
+  binary inside the folder.
+- Git, which reads the repository's own configuration and can run what it
+  names there, is not run: formatting changed lines on save, the problems
+  dashboard's trend, **Lint Earlier Commits**, comparing a notebook with
+  git and setting up its filter, and listing affected tests all say so
+  instead.
+- A shared `.qlint/processes.json` loses its connect scripts, SSH jump hosts,
+  launch definitions and credential commands.
+
+Queries still go to the processes you saved, as they would anywhere.
 
 ## Repository settings
 

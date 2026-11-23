@@ -44,9 +44,11 @@ export function layoutEnvFor(binary: string, from?: Uri): Record<string, string>
 /// The `.env` file `from`'s workspace folder names, if the feature is on
 /// and it can be read. A missing file is no file - most folders have none -
 /// and anything else wrong with it is said without a single value of it.
+/// None in a workspace that is not trusted (#1164): its variables
+/// (`LD_PRELOAD`, `QINIT`) can choose what a q started from it runs.
 export async function dotenvFor(from?: Uri): Promise<Record<string, string>> {
   const read = readEnvSettings(settings(from));
-  if (!read.enabled) {
+  if (!read.enabled || workspace.isTrusted === false) {
     return {};
   }
   const folder = (from && workspace.getWorkspaceFolder(from)) ?? workspace.workspaceFolders?.[0];

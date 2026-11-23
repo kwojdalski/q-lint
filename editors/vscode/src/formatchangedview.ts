@@ -58,7 +58,9 @@ export function registerFormatChanged(
   const sync = (): void => {
     if (on() && listener === undefined) {
       listener = workspace.onWillSaveTextDocument((event) => {
-        if (isQFile(event.document)) {
+        // Git reads the repository's own configuration, which can name
+        // programs for it to run: not in a workspace that is not trusted.
+        if (isQFile(event.document) && workspace.isTrusted !== false) {
           event.waitUntil(changedLineEdits(event.document, server()).catch(() => []));
         }
       });
@@ -78,6 +80,10 @@ export function registerFormatChanged(
       const editor = window.activeTextEditor;
       if (editor === undefined || !isQFile(editor.document)) {
         void window.showInformationMessage("q-lint: Format Changed Lines formats a saved .q file; open one first.");
+        return [];
+      }
+      if (workspace.isTrusted === false) {
+        void window.showInformationMessage("q-lint: Format Changed Lines asks git which lines changed, which is not done in a workspace that is not trusted.");
         return [];
       }
       if ((await committedText(editor.document.uri.fsPath)) === undefined) {

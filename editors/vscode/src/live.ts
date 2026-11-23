@@ -56,7 +56,7 @@ import {
   withExtras,
   type Process,
 } from "./processes";
-import { COMMANDS, CONNECTED, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
+import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
 import { QConnection, QError, type Target } from "./qclient";
 import { SshTunnel, TUNNEL_COMMANDS, readTunnel } from "./tunnel";
 import { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, readGateway } from "./gateway";
@@ -1013,6 +1013,7 @@ export class Live {
     // VS Code also shows a view's badge on its container's activity-bar icon.
     this.processesTree.badge = label === undefined ? undefined : { value: 1, tooltip: `Connected to ${label}` };
     void commands.executeCommand("setContext", CONNECTED, label !== undefined);
+    void commands.executeCommand("setContext", QUERY_RUNNING, this.running !== undefined && label !== undefined);
     this.controls?.refresh();
   }
 
