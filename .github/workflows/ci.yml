@@ -96,3 +96,33 @@ jobs:
       - run: npx tsc -p ./ --noEmit
       # The grammar, tokenized by VS Code's own engine against pinned scopes.
       - run: npm test
+      # Packaged on every PR, so a manifest or .vscodeignore mistake fails
+      # here rather than in the release a tag starts. The neutral build: no
+      # server inside, as the release's platform-neutral vsix has none.
+      - run: npm run compile
+      - run: npx --yes @vscode/vsce package --out qlinter-ci.vsix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: editors/vscode/qlinter-ci.vsix
+          if-no-files-found: error
+  # The Python wheel, built as pip builds it - through pyproject.toml's
+  # maturin backend - and checked to carry the executable, which is the
+  # whole of what it is for.
+  wheel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build
+      - run: python -m build --wheel --outdir dist
+      - run: unzip -l dist/*.whl | grep -E '\.data/scripts/qlinter$'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel
+          path: dist/*.whl
+          if-no-files-found: error

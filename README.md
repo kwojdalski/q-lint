@@ -1021,7 +1021,9 @@ every file it fetches against it: a file whose sha256 differs is deleted and
 the run refused. `install` puts `qlinter` in `~/.local/bin`
 (`--bin-dir` to change it) and the extension into VS Code; reload the window
 afterwards. Neither the archive nor the wheel needs Rust or Python to run, and
-`--backend qls` still needs a separately installed qls.
+`--backend qls` still needs a separately installed qls. CI packages the
+platform-neutral vsix and the wheel on every pull request and keeps both as
+workflow artifacts, so a packaging mistake fails there rather than at a tag.
 
 A release is a tag: `python3 scripts/dist.py bump X.Y.Z` sets the version in
 `Cargo.toml`, `Cargo.lock`, `pyproject.toml` and the extension, and refreshes

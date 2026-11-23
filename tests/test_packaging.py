@@ -106,3 +106,13 @@ def test_ci_runs_the_action_from_the_checkout():
     assert len(runs) == 2
     assert any(s.get("id") == "examples" and s["with"]["paths"] == "examples" for s in runs)
     assert all(s["with"]["version"] for s in runs)
+
+
+def test_ci_packages_the_vsix_and_the_wheel_and_keeps_them():
+    jobs = workflow("ci.yml")["jobs"]
+    for job, build in [("extension", "@vscode/vsce package"), ("wheel", "python -m build --wheel")]:
+        ran = steps(jobs[job])
+        assert any(build in s for s in ran), job
+        assert "actions/upload-artifact@v4" in ran, job
+        [upload] = [s for s in jobs[job]["steps"] if s.get("uses") == "actions/upload-artifact@v4"]
+        assert upload["with"]["if-no-files-found"] == "error", job
