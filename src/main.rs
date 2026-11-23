@@ -907,11 +907,19 @@ fn add_noqa(
     // More codes than this on one line is not a line anyone will read.
     const PASSES: usize = 64;
     let (mut added, mut changed, mut left, mut stale) = (0, 0, 0, 0);
-    let mut written = std::collections::HashSet::new();
+    // Each file as it is on disk once its first name is done: a later name
+    // is linted against that, not the text read before the write (#1199).
+    let mut written: std::collections::HashMap<PathBuf, String> = Default::default();
     for (path, source) in sources.iter_mut() {
-        if lossy.contains(path.as_str())
-            || !written.insert(fs::canonicalize(&*path).unwrap_or_else(|_| PathBuf::from(&*path)))
-        {
+        let file = fs::canonicalize(&*path).unwrap_or_else(|_| PathBuf::from(&*path));
+        if let Some(text) = written.get(&file) {
+            source.clone_from(text);
+            let found = policy.lint(source, path, workspace)?;
+            stale += found.iter().filter(|f| f.code == "QL003").count();
+            left += found.iter().filter(|f| f.code != "QL003").count();
+            continue;
+        }
+        if lossy.contains(path.as_str()) {
             left += policy.lint(source, path, workspace)?.len();
             continue;
         }
@@ -943,14 +951,17 @@ fn add_noqa(
         stale += found.iter().filter(|f| f.code == "QL003").count();
         left += found.iter().filter(|f| f.code != "QL003").count();
         if here == 0 {
+            written.insert(file, source.clone());
             continue;
         }
         if let Err(e) = fs::write(path.as_str(), &text) {
             eprintln!("qlinter: {path}: {e}, not changed");
             failed = true;
+            written.insert(file, source.clone());
             continue;
         }
         *source = text;
+        written.insert(file, source.clone());
         added += here;
         changed += 1;
     }

@@ -770,6 +770,24 @@ fn one_file_under_two_names_is_fixed_once_with_both_names_fixes() {
 
 #[cfg(unix)]
 #[test]
+fn add_noqa_on_one_file_under_two_names_leaves_nothing() {
+    // The second name was linted against the text read before the first
+    // name's write: "1 finding(s) left" and exit 1 with nothing left (#1199).
+    let repo = Repo::new();
+    repo.write("a.q", "f:{x!=y}\n");
+    std::os::unix::fs::symlink("a.q", repo.path("l.q")).unwrap();
+    let out = run(
+        &repo.path("."),
+        &["--isolated", "--profile", "uqf", "--add-noqa", "a.q", "l.q"],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("in 1 file(s)"), "{stderr}");
+    assert!(!stderr.contains("left"), "{stderr}");
+}
+
+#[cfg(unix)]
+#[test]
 fn one_file_under_two_names_does_not_define_its_names_for_itself() {
     // Indexed once per name, each name found the file's own `a` defined
     // "elsewhere", and q 5's 'type on `f[]` went unreported (#527).
