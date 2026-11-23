@@ -28,10 +28,16 @@ pub(super) fn parameters(code: &str, raw: &str, scopes: &[Scope], brace: usize) 
             slots => slots.iter().map(|slot| slot.trim().to_string()).collect(),
         }
     } else {
+        // A column name is no read: not in a query's phrases, nor before
+        // the `:` of a table literal's column (KDB-X: `{select z from x}`
+        // and `{([]z:x)}` take one argument).
         let direct = scopes
             .iter()
             .find(|scope| scope.start == brace)
-            .map_or("", |scope| scope.direct.as_str());
+            .map_or(String::new(), |scope| {
+                crate::table_columns_blanked(&super::with_from_clauses(&scope.direct, false))
+            });
+        let direct = direct.as_str();
         let reads = |name: &str| {
             re!(NAME)
                 .find_iter(direct)

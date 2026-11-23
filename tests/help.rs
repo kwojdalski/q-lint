@@ -195,6 +195,26 @@ fn a_function_takes_what_its_signature_names_or_what_its_body_reads() {
     );
 }
 
+// A column name is no read of x, y or z, in a query or a table literal:
+// KDB-X gives each of these rank 1 (#1240).
+#[test]
+fn a_column_named_y_or_z_is_not_an_implicit_parameter() {
+    let source = "lit:{t:([]z:1);x}\nsel:{select z from x}\nupd:{update y:z from x}\n\
+                  key:{([z:1]b:x)}\nval:{([]a:y)}\nwhr:{select from t where a=y}\n";
+    assert_eq!(
+        parameters(source),
+        [
+            takes("lit", &["x"]),
+            takes("sel", &["x"]),
+            takes("upd", &["x"]),
+            takes("key", &["x"]),
+            // A column's value is read: `{([]a:y)}` takes two.
+            takes("val", &["x", "y"]),
+            takes("whr", &[]),
+        ]
+    );
+}
+
 #[test]
 fn a_projection_takes_the_slots_it_leaves_open() {
     let source = "turn:{[g;n] g+n}[;7]\ninc:{[a;b] a+b}[1]\nmid:{[a;b;c] b}[1;;3]\nnext1:{x+y} 1\n";
