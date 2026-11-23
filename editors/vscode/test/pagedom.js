@@ -99,7 +99,7 @@ function loadPage(saved, globals = {}) {
   const body = new Element("body");
   const sandbox = {
     console,
-    document: { body, createElement: (t) => new Element(t), createTextNode: (t) => ({ textContent: t }) },
+    document: { body, createElement: (t) => new Element(t), createTextNode: (t) => ({ textContent: t }), get activeElement() { return activeIn(body); } },
     getComputedStyle: () => ({ getPropertyValue: () => "" }),
     MutationObserver: class {
       observe() {}
@@ -114,7 +114,7 @@ function loadPage(saved, globals = {}) {
   sandbox.self = sandbox;
   sandbox.window = { addEventListener: (type, f) => (windowListeners[type] ??= []).push(f) };
   vm.createContext(sandbox);
-  for (const file of ["chartspec.js", "gridlook.js", "worldoutline.js", "chartmore.js", "result.js"]) {
+  for (const file of ["chartspec.js", "gridlook.js", "worldoutline.js", "chartmore.js", "refocus.js", "result.js"]) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "media", file), "utf8"), sandbox, { filename: file });
   }
   page.body = body;

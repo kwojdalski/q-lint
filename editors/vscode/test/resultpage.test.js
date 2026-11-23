@@ -85,7 +85,7 @@ function loadPage(saved, globals = {}) {
   sandbox.self = sandbox;
   sandbox.window = { addEventListener: (type, f) => (windowListeners[type] ??= []).push(f) };
   vm.createContext(sandbox);
-  for (const file of ["chartspec.js", "gridlook.js", "worldoutline.js", "chartmore.js", "result.js"]) {
+  for (const file of ["chartspec.js", "gridlook.js", "worldoutline.js", "chartmore.js", "refocus.js", "result.js"]) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "media", file), "utf8"), sandbox, { filename: file });
   }
   page.body = body;

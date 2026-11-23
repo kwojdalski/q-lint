@@ -6,6 +6,7 @@ const assert = require("node:assert");
 
 const { keepFocus } = require("../media/refocus.js");
 const { loadSmallPage } = require("./smallpage.js");
+const { loadPage, activeIn } = require("./pagedom.js");
 
 /// A document of controls that are in the page while `page` holds them.
 function fakeDocument() {
@@ -40,6 +41,13 @@ test("the control redrawn under the name of the one that held the focus takes it
   const kept = document.activeElement;
   focus.over(() => document.page.push(focus.name(document.control({ title: "other" }), "other")));
   assert.strictEqual(document.activeElement, kept);
+  // A redraw that puts the focus somewhere itself keeps it there.
+  focus.over(() => {
+    draw(["previous", "next"])();
+    document.page[1].focus();
+  });
+  assert.strictEqual(document.activeElement.title, "next");
+  document.page[0].focus();
   // A control with no name, and one whose name nothing is drawn under.
   const plain = document.control();
   document.page.push(plain);
@@ -66,7 +74,7 @@ test("each names the controls under a container by place and kind", () => {
 });
 
 /// The pages that redraw through refocus.js, by the script that makes their HTML.
-const PAGES = { "dashboardview.js": "dashboard.js", "plotsview.js": "plots.js" };
+const PAGES = { "dashboardview.js": "dashboard.js", "plotsview.js": "plots.js", "resultpanel.js": "result.js" };
 
 test("a page that redraws through refocus.js loads it before its own script", () => {
   const fs = require("node:fs");
@@ -137,4 +145,51 @@ test("the q Plots buttons keep the focus from one plot to the next (#1348)", () 
   // The last one removed: no button is left to hold the focus.
   page.send({ type: "plots", index: -1, count: 0 });
   assert.strictEqual(page.active(), page.body);
+});
+
+const NUMERIC = [5, 6, 7, 8, 9];
+/// A result message of `columns`, each [name, q type, cells].
+function result(id, columns, extra = {}) {
+  return {
+    type: "result",
+    id,
+    view: "grid",
+    process: "hdb",
+    code: "t",
+    millis: 1,
+    limit: 10000,
+    grid: {
+      columns: columns.map(([name, type]) => ({ name, type, typeName: "t", key: false, numeric: NUMERIC.includes(type), temporal: false })),
+      cells: columns.map(([, , cells]) => cells),
+      rank: columns.map(([, , cells]) => cells.map((_, i) => i)),
+      values: columns.map(([, type, cells]) => (NUMERIC.includes(type) ? cells.map(Number) : null)),
+      total: columns[0][2].length,
+    },
+    ...extra,
+  };
+}
+const TABLE = [["sym", 11, ["a", "b", "a"]], ["px", 9, ["1", "2", "3"]], ["size", 7, ["10", "20", "30"]]];
+
+test("the result bar's buttons keep the focus when used, and a view button says it is the one on (#1344)", () => {
+  const page = loadPage(undefined);
+  const active = () => activeIn(page.body);
+  const diff = { process: "hdb", at: 0, matchedBy: "place", changes: [], changed: 0, addedRows: [], addedColumns: [], removedColumns: [], removed: { columns: [], rows: [], count: 0 } };
+  page.send(result("s.1", TABLE, { diff }));
+  const pressed = () => Object.fromEntries(["Grid", "Chart", "Stats", "Pivot"].map((v) => [v, page.button(v).getAttribute("aria-pressed")]));
+  assert.deepStrictEqual(pressed(), { Grid: "true", Chart: "false", Stats: "false", Pivot: "false" });
+  const stats = page.button("Stats");
+  stats.focus();
+  stats.fire("click");
+  assert.deepStrictEqual(pressed(), { Grid: "false", Chart: "false", Stats: "true", Pivot: "false" });
+  assert.strictEqual(active(), page.button("Stats"));
+  assert.notStrictEqual(active(), stats, "the bar was drawn again");
+  // Compare is drawn again too, pressed.
+  page.button("Compare").focus();
+  page.button("Compare").fire("click");
+  assert.strictEqual(active(), page.button("Compare"));
+  assert.strictEqual(active().getAttribute("aria-pressed"), "true");
+  // A result that arrives while a button is in use leaves the focus on it.
+  page.button("Copy as CSV").focus();
+  page.send(result("s.1", TABLE, { diff, millis: 2 }));
+  assert.strictEqual(active(), page.button("Copy as CSV"));
 });

@@ -260,6 +260,7 @@ function resultHtml(webview: Webview, media: Uri, location: ResultsLocation): st
     `<script nonce="${nonce}" src="${file("gridlook.js")}"></script>`,
     `<script nonce="${nonce}" src="${file("worldoutline.js")}"></script>`,
     `<script nonce="${nonce}" src="${file("chartmore.js")}"></script>`,
+    `<script nonce="${nonce}" src="${file("refocus.js")}"></script>`,
     `<script nonce="${nonce}" src="${file("result.js")}"></script>`,
     "</body></html>",
   ].join("\n");

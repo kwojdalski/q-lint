@@ -393,6 +393,8 @@
   const LOOK = root.qlintLook;
   const MORE = root.qlintChartMore;
   const WORLD = root.qlintWorld;
+  /// refocus.js: a redraw replaces the controls, and the one in use keeps the focus.
+  const FOCUS = root.qlintFocus;
   const BASE_KINDS = ["line", "bar", "scatter", "histogram"];
   /// The kinds q-lint.results.charts.enable adds.
   const MORE_KINDS = ["area", "step", "candlestick"];
@@ -583,6 +585,7 @@
     const views = el("div", "views");
     Object.keys(VIEWS).filter(offered).forEach(function (v) {
       const b = el("button", v === state.view ? "on" : "", VIEWS[v]);
+      b.setAttribute("aria-pressed", v === state.view ? "true" : "false");
       b.addEventListener("click", function () {
         state.view = v;
         save();
@@ -671,6 +674,8 @@
       });
       tail.push(as);
     }
+    // By what each says: the button used is made again by the draw it asks for.
+    Array.from(views.children).concat(extras, tail).forEach(function (b) { FOCUS.name(b, "bar " + b.textContent); });
     bar.append.apply(bar, [views, info].concat(extras, tail));
     if (comparing()) {
       const d = result.diff;
@@ -1952,6 +1957,10 @@
   }
 
   function draw() {
+    FOCUS.over(drawAll);
+  }
+
+  function drawAll() {
     if (!result) {
       return;
     }

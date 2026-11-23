@@ -53,7 +53,9 @@
       const held = document.activeElement;
       const key = held ? names.get(held) : undefined;
       const out = redraw();
-      if (key === undefined || document.activeElement === held) {
+      // Still there, or the redraw put the focus somewhere itself: left alone.
+      const now = document.activeElement;
+      if (key === undefined || (now && now !== document.body)) {
         return out;
       }
       let next = named.get(key);
