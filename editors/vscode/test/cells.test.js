@@ -106,6 +106,11 @@ test("Enter runs only a complete input: brackets closed, no string open", () => 
   assert.ok(!isComplete("f:{x / y}\n"), "the comment runs to the line's end, taking the }");
   assert.ok(isComplete("+/[1 2 3]"), "/ after a character is over, not a comment");
   assert.ok(isComplete("f:{x+\ny}"));
+  // A block comment, `/` alone to `\` alone, counts no bracket (#1111).
+  assert.ok(isComplete("/\n(\n\\\n1+1"));
+  assert.ok(isComplete("/ \n{\n\\ \n1+1"), "trailing blanks on the / and \\ lines");
+  assert.ok(!isComplete("/\n(\n\\\n1+("), "brackets after the block count");
+  assert.ok(!isComplete("f:{\n/\n(\n\\\n}"), "inside a bracket a / line is a continuation, not a block");
 });
 
 test("lines typed inside a bracket reach q as continuation lines", () => {
