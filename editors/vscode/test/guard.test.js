@@ -501,3 +501,17 @@ test("a writer named by its symbol and applied is a change (#1320)", () => {
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("a gateway call applied with . or @ is read inside its strings (#1255)", () => {
+  const cases = {
+    '.gw.syncexec . ("e:5";`rdb)': ["assigns e through .gw.syncexec"],
+    '.gw.asyncexec .("`t upsert 1";`rdb)': ["calls upsert through .gw.asyncexec"],
+    '.gw.syncexec["a:1";`rdb]; .gw.syncexec . ("b:2";`rdb)': ["assigns a through .gw.syncexec", "assigns b through .gw.syncexec"],
+    // A read, and a string after the call's expression, are not.
+    '.gw.syncexec . ("select from t";`rdb)': [],
+    '(.gw.syncexec . ("select from t";`rdb)); x:"a:1"': ["assigns x"],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

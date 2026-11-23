@@ -1076,7 +1076,8 @@ connection kept, when declined; also a result-grid drill-down query, a
 Data Wrangler step, a cell edit, a data file opened in the grid and a CSV
 load statement, a run from the Testing view (each test's definition), and a query to a TorQ
 gateway, read as written - and a `.gw.syncexec` or `.gw.asyncexec` call,
-such as one rerun from the history, is read inside its strings. A guarded
+such as one rerun from the history, is read inside its strings, in brackets
+or applied (`` .gw.syncexec . ("a:1";`rdb) ``). A guarded
 process holds no result for paging, since holding assigns `.qlint.held`;
 **Profile Functions on Process** asks first whatever the query, as it
 replaces the namespace's functions for the run; **Time Lines on Process**

@@ -55,7 +55,8 @@
 //   expression is read by these rules - but `\t 500`, a whole number with
 //   no `:N`, sets the timer;
 // - any of these in a string given to a TorQ gateway's `.gw.syncexec` or
-//   `.gw.asyncexec`, which runs it on the gateway's servers (#909).
+//   `.gw.asyncexec`, in brackets or applied (`.gw.syncexec . (q;`rdb)`),
+//   which runs it on the gateway's servers (#909).
 import type { Process } from "./processes";
 import { statements } from "./statements";
 
@@ -466,11 +467,15 @@ function readStatement(statement: string, found: Set<string>): void {
       }
       // A TorQ gateway runs the strings it is given on its servers (#909):
       // what they do is read as if they were sent directly.
-      if (GATEWAY_EXEC.test(k.text) && next?.text === "[") {
+      // Its arguments are in brackets, or what follows it to the end of the
+      // expression: `` .gw.syncexec . ("a:1";`rdb) ``.
+      if (GATEWAY_EXEC.test(k.text)) {
+        const bracket = next?.text === "[";
         let depth = 0;
         for (let j = i + 1; j < t.length; j++) {
           if (t[j].kind === "open") depth++;
-          else if (t[j].kind === "close" && --depth === 0) break;
+          else if (t[j].kind === "close" && ((--depth === 0 && bracket) || depth < 0)) break;
+          else if (!bracket && depth === 0 && t[j].text === ";") break;
           else if (t[j].kind === "str") {
             for (const reason of writes(qText(t[j].text))) {
               found.add(`${reason} through ${k.text}`);
