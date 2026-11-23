@@ -550,6 +550,23 @@ fn a_load_is_added_at_the_top_when_there_is_none_and_never_below_a_d() {
     );
 }
 
+/// A block comment is header to the end of its `\`, and a `\l` in one
+/// loads nothing; the load is written with the document's line end (#1208).
+#[test]
+fn a_load_goes_below_a_block_comment_with_the_files_line_end() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("util.q"), "helper:{[v] v+1}\n").unwrap();
+    let (mut server, _) = Server::over(dir.path(), &[], client(), auto_load());
+    let text = "/\r\nabout\r\n\\l old.q\r\n\\\r\nx:help";
+    let uri = server.open(dir.path(), "a.q", text);
+    let item = completed(&mut server, &uri, 4, 6, "helper");
+    assert_eq!(
+        item["additionalTextEdits"],
+        json!([{"range": {"start": {"line": 4, "character": 0}, "end": {"line": 4, "character": 0}},
+                "newText": "\\l util.q\r\n"}])
+    );
+}
+
 #[test]
 fn a_sibling_its_loader_brings_in_needs_no_load() {
     let dir = tempfile::tempdir().unwrap();

@@ -881,10 +881,16 @@ impl Loads {
         };
         let lines = Lines::new(cursor.text);
         let (offset, newline) = at;
-        let text = if newline {
-            format!("\n\\l {path}")
+        // The document's own line end.
+        let eol = if cursor.text.contains("\r\n") {
+            "\r\n"
         } else {
-            format!("\\l {path}\n")
+            "\n"
+        };
+        let text = if newline {
+            format!("{eol}\\l {path}")
+        } else {
+            format!("\\l {path}{eol}")
         };
         item["additionalTextEdits"] = json!([{
             "range": {"start": lines.json(offset), "end": lines.json(offset)},
@@ -932,6 +938,9 @@ fn load_line(text: &str, offset: usize) -> Option<(usize, bool)> {
     let cursor_line = text[..offset.min(text.len())]
         .rfind('\n')
         .map_or(0, |i| i + 1);
+    // Read with comments blanked: a `\l` in a block comment loads nothing,
+    // and a block comment, all of it, is part of the header (#1208).
+    let code = q_lint_rs::code_view(text);
     let mut after_header = 0;
     let mut header = true;
     let mut last_load: Option<usize> = None;
@@ -941,12 +950,17 @@ fn load_line(text: &str, offset: usize) -> Option<(usize, bool)> {
         if start >= cursor_line {
             break;
         }
-        let trimmed = line.trim_end();
+        let commented = line.trim_end();
+        let trimmed = code[start..end].trim_end();
         if trimmed.starts_with("\\d") {
             break;
         }
-        if header && (trimmed.starts_with('/') || trimmed.starts_with("#!") || trimmed.is_empty()) {
-            if !trimmed.is_empty() {
+        if header
+            && (commented.starts_with('/')
+                || commented.starts_with("#!")
+                || trimmed.trim().is_empty())
+        {
+            if !commented.is_empty() {
                 after_header = end;
             }
         } else {
