@@ -82,7 +82,8 @@ function hms(d: Date): string {
 /// digits as give it back, as KDB-X writes one.
 export function floatText(x: number, precision = 7, real = false): string {
   if (x === 0 || !Number.isFinite(x)) {
-    return String(x);
+    // String(-0) is "0"; q writes `-0f` (#1236).
+    return Object.is(x, -0) ? "-0" : String(x);
   }
   let p = precision > 0 ? Math.min(precision, 17) : 17;
   if (real && precision <= 0) {

@@ -88,3 +88,11 @@ test("a year before 1000 is written in four digits, as q writes it (#1235)", () 
   assert.strictEqual(atomText(d, -14), "0001.01.01");
   assert.strictEqual(atomText(d, -13), "0001.01m");
 });
+
+test("negative zero keeps its sign: KDB-X shows -0f (#1236)", () => {
+  const { atomText } = require("../out/qformat.js");
+  assert.strictEqual(shown(float(-0)), "-0f");
+  assert.strictEqual(shown(floats([1, -0])), "1 -0f");
+  assert.strictEqual(atomText(-0, -9), "-0f");
+  assert.strictEqual(shown(float(0)), "0f");
+});
