@@ -1046,7 +1046,9 @@ is sent; Escape sends nothing. A change is: assigning a global (`a:1`,
 symbol (`` from `t `` or `` from (`t) ``), `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`,
 `system`, `save`, `rsave`, `dsave`, `load`, `rload`, `.Q.dpft`, `.Q.dpfts`,
 `.Q.hdpf`, `.Q.en`, `.Q.chk`, `.Q.dsftg` (each also by its `.q.` name,
-`.q.set`), `0:` or `1:` to a file
+`.q.set`), `hopen` of a file handle (`` hopen `:f ``, which creates the
+file to write through; opening a connection, `` hopen `:host:5000 ``, is
+not a change, and what is sent over it is not read), `0:` or `1:` to a file
 handle (`` `:f ``, or one made with `hsym`), `2:`, replaying a log with `-11!` (not `-11!(-1;..)` or `(-2;..)`,
 which only count and check it), compressing a file with `-19!`, an amend in place (`` @[`t;i;:;v] ``, `` .[(`t);i;f;v] ``) or
 a functional update or delete in place (`` ![`t;c;b;a] ``),

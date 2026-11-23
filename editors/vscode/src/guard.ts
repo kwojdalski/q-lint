@@ -22,7 +22,10 @@
 //   `save`, `rsave`, `dsave`, `load`, `rload`, `.Q.dpft`, `.Q.dpfts`,
 //   `.Q.hdpf`, `.Q.en`, `.Q.chk` and `.Q.dsftg`, and `0:` or `1:` to a
 //   file handle (`` `:f 0: ``, `hsym[`f] 0:`, `(hsym `f) 1:`), and `2:`,
-//   each also by its `.q.` name (`.q.set`);
+//   each also by its `.q.` name (`.q.set`); `hopen` of a file handle
+//   (`` hopen `:f ``), which creates the file to write through - of a
+//   process (`` `:host:5000 ``, a port) it only connects, and what is sent
+//   over that handle is not read;
 // - `-11!`, which replays a log through `upd`, except `-11!(-1;..)` and
 //   `-11!(-2;..)`, which only count and check one; `-19!`, which
 //   compresses a file into another;
@@ -211,6 +214,13 @@ function symbolAt(t: Token[], i: number): string | undefined {
   return k.text;
 }
 
+/// Whether the handle symbol `sym` names a file rather than a process:
+/// `` `:/tmp/x `` and `` `:x.txt `` do; `` `:host:5000 ``, `` `::5000 `` and
+/// `` `:unix://5000 `` do not.
+function isFileHandle(sym: string): boolean {
+  return sym.startsWith("`:") && !/^`:(unix:\/\/\d|tcps?:\/\/|[^:/]*:\d)/.test(sym);
+}
+
 /// What one statement does that the guard asks about, added to `found`.
 function readStatement(statement: string, found: Set<string>): void {
   const text = statement.trimStart();
@@ -290,6 +300,18 @@ function readStatement(statement: string, found: Set<string>): void {
       }
       if (WRITERS.has(unqualified(k.text))) {
         found.add(`calls ${k.text}`);
+        continue;
+      }
+      // `hopen` of a file handle creates the file, and writing through the
+      // handle it returns appends to it; of a `host:port` it only connects.
+      if (unqualified(k.text) === "hopen") {
+        let j = i + 1;
+        while (t[j] !== undefined && (t[j].text === "(" || t[j].text === "[")) {
+          j++;
+        }
+        if (t[j]?.kind === "sym" && isFileHandle(t[j].text)) {
+          found.add(`opens the file ${t[j].text} with ${k.text}`);
+        }
         continue;
       }
       if (["value", "get", "eval"].includes(unqualified(k.text))) {

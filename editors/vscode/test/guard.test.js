@@ -278,3 +278,23 @@ test("-19! compresses into a file and is a change (#1223)", () => {
   assert.deepStrictEqual(writes("-21!`:dst"), []);
   assert.deepStrictEqual(writes("a-19"), []);
 });
+
+test("hopen of a file handle is a change; of a process handle it only connects (#1224)", () => {
+  const cases = {
+    '(hopen `:/tmp/hx.txt) "hello"': ["opens the file `:/tmp/hx.txt with hopen"],
+    "hopen `:hx.txt": ["opens the file `:hx.txt with hopen"],
+    "hopen[`:/tmp/x]": ["opens the file `:/tmp/x with hopen"],
+    ".q.hopen `:log.txt": ["opens the file `:log.txt with .q.hopen"],
+    // A connection is not a change by itself; what is sent over it is not read.
+    "hopen `:host:5000": [],
+    "hopen `::5000": [],
+    "hopen (`:localhost:5000:user:pass;1000)": [],
+    "hopen `:unix://5000": [],
+    "hopen `:tcps://host:5000": [],
+    "hopen 5000": [],
+    'h "select from t"': [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
