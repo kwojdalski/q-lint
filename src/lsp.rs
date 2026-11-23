@@ -1328,6 +1328,9 @@ pub fn serve(
                 json!({"id": id, "error": {"code": SERVER_NOT_INITIALIZED, "message": "server is not initialized"}}),
             )?,
             (_, None) if !initialized => {}
+            // After `shutdown` the server waits only for `exit`, handled
+            // above: a notification is dropped (#1218).
+            (_, None) if shutdown_requested => {}
             // Indexed once the client is ready rather than inside initialize,
             // so a large workspace does not hold up the handshake.
             ("initialized", None) => {

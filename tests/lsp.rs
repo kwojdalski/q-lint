@@ -804,6 +804,22 @@ fn a_request_whose_id_is_an_object_or_array_is_an_invalid_request() {
 }
 
 #[test]
+fn a_notification_after_shutdown_is_dropped() {
+    // LSP 3.17, Shutdown Request: after it the server only waits for
+    // `exit`, so a document opened then is neither linted nor kept (#1218).
+    let mut server = Server::start();
+    server.initialize();
+    server.send(json!({"jsonrpc":"2.0","id":2,"method":"shutdown"}));
+    assert_eq!(server.receive()["result"], Value::Null);
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":
+        {"uri":"file:///late.q","languageId":"q","version":1,"text":"f:{[a;a] a}\n"}}}));
+    server.send(json!({"jsonrpc":"2.0","method":"exit"}));
+    assert_eq!(server.child.wait().unwrap().code(), Some(0));
+    let late: Vec<Value> = server.messages.iter().collect();
+    assert!(late.is_empty(), "{late:?}");
+}
+
+#[test]
 fn a_second_shutdown_is_an_invalid_request() {
     // LSP 3.17, Shutdown Request: requests after it error with
     // InvalidRequest, and `shutdown` is a request like any other.
