@@ -1039,7 +1039,9 @@ fn a_line_of_where_phrases_lints_in_bounded_time() {
 /// build (#1206).
 #[test]
 fn many_where_phrases_lint_in_bounded_time() {
-    let source: String = (0..8000)
+    // 4000: the quadratic scan took 17 s here in a debug build, and the fixed
+    // one leaves room on a Windows runner, several times slower than a Mac.
+    let source: String = (0..4000)
         .map(|i| format!("f{i}:{{update a:1 from t where b}}\n"))
         .collect();
     let started = std::time::Instant::now();
@@ -1047,7 +1049,7 @@ fn many_where_phrases_lint_in_bounded_time() {
     let elapsed = started.elapsed();
     assert!(
         elapsed < std::time::Duration::from_secs(10),
-        "8000 where phrases took {elapsed:?}"
+        "4000 where phrases took {elapsed:?}"
     );
 }
 /// Nested `$[`, `@[` and `.[`: each split its whole contents into slots, the

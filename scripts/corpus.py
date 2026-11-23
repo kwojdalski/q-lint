@@ -177,7 +177,7 @@ def findings(binary: str, profile: str, where: Path) -> list[dict]:
         try:
             # qlinter counts `\n` alone; splitlines() also breaks at a form
             # feed, a lone `\r` and more, and would key the wrong line.
-            lines = path.read_text(errors="replace", newline="").split("\n")
+            lines = path.read_bytes().decode(errors="replace").split("\n")
             text = lines[f["line"] - 1].strip()
         except (OSError, IndexError):
             text = ""
