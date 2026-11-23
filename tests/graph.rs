@@ -496,6 +496,34 @@ fn a_relative_load_after_a_change_of_directory_is_dynamic() {
 }
 
 #[test]
+fn a_function_of_ones_own_named_system_loads_nothing() {
+    // KDB-X: after `.a.system:{-1 x}`, `.a.system "l b.q"` prints `l b.q`
+    // and `bb` stays undefined; such a call with "cd elsewhere" moves nothing,
+    // so the `\l c.q` after it is c.q beside the script (#1362).
+    let g = graph(
+        &[
+            ("b.q", "bb:1\n"),
+            ("c.q", "cc:1\n"),
+            ("a.q", ".a.system:{-1 x}\n.a.system \"l b.q\"\n"),
+            (
+                "d.q",
+                ".d.system:{-1 x}\n.d.system \"cd elsewhere\"\n\\l c.q\n",
+            ),
+            ("e.q", ".e.system:{-1 x}\np:\"b.q\"\n.e.system \"l \",p\n"),
+            // q's own still loads, however it is applied.
+            ("f.q", "system \"l b.q\"\n@[system;\"l c.q\";{}]\n"),
+        ],
+        false,
+    );
+    assert!(deps(&g, "a.q").is_empty());
+    assert_eq!(deps(&g, "d.q"), ["c.q"]);
+    for file in ["a.q", "d.q", "e.q"] {
+        assert!(kinds(&g, file).is_empty(), "{file}");
+    }
+    assert_eq!(deps(&g, "f.q"), ["b.q", "c.q"]);
+}
+
+#[test]
 fn a_trailing_double_colon_composes_and_defines_nothing() {
     // q 5: `g:f[1] count::` composes, and `count` stays q's; `h:f lim::`
     // leaves no `lim`. A line that is only `a::` does define `a` (#764).

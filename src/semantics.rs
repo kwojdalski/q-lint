@@ -1626,10 +1626,18 @@ fn changes_directory(raw: &str, view: &str) -> usize {
             re!(r#"\bsystem\s*(?:\[\s*|@\s*)?"cd\s+\S"#)
                 .find_iter(raw)
                 .map(|m| m.start())
-                .filter(|&at| view[at..].starts_with("system")),
+                .filter(|&at| view[at..].starts_with("system") && boundary(view, at)),
         )
         .min()
         .unwrap_or(usize::MAX)
+}
+
+/// Whether what a load pattern found at `at` is q's `system` and not a name
+/// ending in it: after `.my.system:{-1 x}`, KDB-X's `.my.system "l b.q"`
+/// prints `l b.q` and loads nothing (#1362). A trap, `@[system;...]`, starts
+/// at its `@`.
+fn is_system(view: &str, at: usize) -> bool {
+    view[at..].starts_with('@') || boundary(view, at)
 }
 
 /// Each literal load `loads` reads: where its statement starts, the bytes of
@@ -1655,7 +1663,7 @@ fn load_sites(code: &str, raw: &str, view: &str) -> Vec<(usize, Range<usize>, bo
         let joined = raw[m.get(0).unwrap().end()..]
             .trim_start_matches([' ', '\t'])
             .starts_with(',');
-        if view[at..].starts_with(&raw[at..at + 2]) && !joined {
+        if view[at..].starts_with(&raw[at..at + 2]) && !joined && is_system(view, at) {
             sites.push((at, m.get(1).unwrap().range(), false));
         }
     }
@@ -1773,7 +1781,9 @@ fn dynamic(
     for m in
         re!(r#"(?:\bsystem\s*(?:\[\s*|@\s*)?|@\[\s*system\s*;\s*)"l\s[^"]*"\s*,"#).find_iter(raw)
     {
-        if view[m.start()..].starts_with(&raw[m.start()..m.start() + 2]) {
+        if view[m.start()..].starts_with(&raw[m.start()..m.start() + 2])
+            && is_system(view, m.start())
+        {
             push(m.start(), "load");
         }
     }
