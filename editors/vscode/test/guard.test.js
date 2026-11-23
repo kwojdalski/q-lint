@@ -324,3 +324,20 @@ test("setenv and the .Q writers that save, enumerate, load or narrow an HDB are 
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("bare \\_, \\r and \\E, and \\w 0 or 1, only read (#1332)", () => {
+  const cases = {
+    "\\_": [],
+    "\\r": [],
+    "\\E": [],
+    "\\w 0": [],
+    "\\w 1": [],
+    // With an argument they change the process.
+    "\\_ x.q": ["runs the system command \\_"],
+    "\\r a b": ["runs the system command \\r"],
+    "\\w 1000000": ["runs the system command \\w"],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

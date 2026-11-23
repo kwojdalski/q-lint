@@ -40,7 +40,8 @@
 //   a writer above (`` value(`.q.set;`a;1) ``), also through `[`,
 //   `each` or `'`, and by their `.q.` names;
 // - a system command (`\l`, `\cd x`, `\\`), except one that only reads a
-//   setting (`\c`, `\d`, `\P` without an argument) and `\t` or `\ts`, whose
+//   setting (`\c`, `\d`, `\P`, `\_`, `\r`, `\E` without an argument, and
+//   `\w 0` or `\w 1`) and `\t` or `\ts`, whose
 //   expression is read by these rules - but `\t 500`, a whole number with
 //   no `:N`, sets the timer;
 // - any of these in a string given to a TorQ gateway's `.gw.syncexec` or
@@ -95,7 +96,7 @@ const WRITERS = new Set([
   ".Q.view", ".Q.l", ".Q.lo", ".Q.bv", ".Q.opt",
 ]);
 /// System commands that only read a setting when they are given no argument.
-const READS_BARE = new Set([..."abBcCdefgoOpPsSTvwWz", "cd"]);
+const READS_BARE = new Set([..."abBcCdeEfgoOpPrsSTvwWz_", "cd"]);
 
 /// The tokens of one statement: strings and symbols whole, a comment (a `/`
 /// after a space, to the end of its line) dropped.
@@ -235,7 +236,8 @@ function readStatement(statement: string, found: Set<string>): void {
       found.add("sets the timer with \\t");
     } else if (name === "t" || name === "ts") {
       readStatement(argument, found);
-    } else if (!(argument === "" && READS_BARE.has(name))) {
+    } else if (!(argument === "" && READS_BARE.has(name)) && !(name === "w" && /^[01]$/.test(argument))) {
+      // (`\w 0` and `\w 1` report the symbols; another number sets the limit.)
       found.add(`runs the system command \\${name}`);
     }
     return;
