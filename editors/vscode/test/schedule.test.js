@@ -158,6 +158,24 @@ test("a schedule never runs twice at once (#1089)", async (t) => {
   assert.ok(stub.messages.some(([, text]) => /is running/.test(text)), JSON.stringify(stub.messages));
 });
 
+test("turned off while a tick runs, the schedules still due wait (#1296)", async (t) => {
+  const { live, schedules, context } = await setUp(t, [{ label: "p", host: "h", port: 1, tags: [] }], [{ name: "q", code: "1+1" }]);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-schedule-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  let runs = 0;
+  live.runApart = async () => {
+    runs++;
+    stub.config.user["export.schedule.enable"] = false;
+    stub.changeConfig("q-lint.export.schedule.enable");
+    return { ok: true, type: -7, text: ["2"] };
+  };
+  const every = (id) => ({ id, query: "q", process: "p", format: "csv", path: path.join(dir, `${id}.csv`), every: 1, mode: "replace", since: 0 });
+  await context.workspaceState.update(SCHEDULES_KEY, [every("s1"), every("s2"), every("s3")]);
+  assert.deepStrictEqual(await schedules.tick(new Date(2026, 10, 22, 9, 30)), ["s1"]);
+  assert.strictEqual(runs, 1);
+  assert.strictEqual(schedules.ticking, false);
+});
+
 function freePort() {
   return new Promise((resolve) => {
     const s = net.createServer().listen(0, "127.0.0.1", () => {

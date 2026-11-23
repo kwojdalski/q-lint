@@ -88,6 +88,10 @@ export class ScheduledExports {
       if (s === undefined || !isDue(s, now) || this.running.has(id)) {
         continue;
       }
+      // Turned off while an earlier one ran: the rest wait (#1296).
+      if (!on()) {
+        break;
+      }
       await this.runOne(s, now);
       ran.push(id);
     }
