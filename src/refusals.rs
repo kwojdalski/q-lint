@@ -19,7 +19,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     cast_character(path, source, code, comments, &mut out);
     monadic_glyph(path, source, code, comments, &mut out);
     juxtaposed_derived(path, source, code, comments, &mut out);
-    keyword_each(path, source, &unsym, &mut out);
+    keyword_each(path, source, comments, &unsym, &mut out);
     numbers(path, source, code, comments, &unsym, &mut out);
     number_colon(path, source, code, &unsym, &mut out);
     non_ascii(path, source, code, &mut out);
@@ -1528,7 +1528,7 @@ fn derived_operand(
 /// `each each x` too (#659). The qSQL words have their own rule. Of the
 /// glyphs, `:` is left to assignment and `.` and `_` to names; `/`, `\` and
 /// `'` are iterators.
-fn keyword_each(path: &str, source: &str, unsym: &str, out: &mut Vec<Finding>) {
+fn keyword_each(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Vec<Finding>) {
     for m in re!(
         r"(?:\b(and|asof|bin|binr|cor|cov|cross|cut|div|dsave|each|ema|except|fby|ij|ijf|in|insert|inter|like|lj|ljf|lsq|mavg|mcount|mdev|mmax|mmin|mmu|mod|msum|or|over|peach|pj|prior|rotate|scan|scov|set|setenv|ss|sublist|sv|uj|ujf|union|upsert|vs|wavg|within|wsum|xasc|xbar|xcol|xcols|xdesc|xexp|xgroup|xkey|xlog|xprev|xrank)[ \t]+|([-+*%!&|<>=~,^#$?@])[ \t]*)(each|peach|over|scan|prior)\b"
     )
@@ -1565,8 +1565,10 @@ fn keyword_each(path: &str, source: &str, unsym: &str, out: &mut Vec<Finding>) {
             && left.ends_with(|c: char| c.is_ascii_alphanumeric() || "_.)]}\"`".contains(c));
         let it = m.get(3).unwrap().end();
         let derived = it + re!(r"^(?:[/\\']:?)*").find(&source[it..]).map_or(0, |d| d.end());
-        // A `/` after a blank opens a comment.
-        let rest = &source[crate::past_blanks(source, derived)..];
+        // Read past comments, which `comments` has blanked: `a cor each / x`
+        // over an indented `  b` is `a cor each b`, refused as the line
+        // without the comment is.
+        let rest = &comments[crate::past_blanks(comments, derived)..];
         if infix && (rest.is_empty() || rest.starts_with([';', ')', ']', '}', '\r', '\n', '[', '/']))
         {
             continue;

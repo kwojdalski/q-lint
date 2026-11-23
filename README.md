@@ -31,8 +31,9 @@ the Basic Multilingual Plane, such as an emoji in a string, the column is one
 more than a count of characters (and less than a count of bytes).
 
 The executable is independently deployable once built. Compilation uses the
-checked-in Cargo lockfile; this version was tested with Rust 1.98.1 on macOS
-ARM64.
+checked-in Cargo lockfile. The oldest Rust that builds it is 1.88 (the
+`rust-version` in `Cargo.toml`, which CI builds with on every commit); this
+version was tested with Rust 1.98.1 on macOS ARM64.
 
 A Python wheel is also available, for installing the binary into a virtual
 environment without Rust on the target machine —
@@ -1059,15 +1060,57 @@ python3 scripts/dist.py install 0.14.9     # install a release, downloading it i
 machine it runs on - it does not cross-compile; the release workflow builds
 every platform. A build of anything but a clean checkout of the tag `vX.Y.Z`
 lands in `dist/vX.Y.Z-dev/`, so it is never mistaken for the release. Each
-folder carries a `SHA256SUMS`. `install` puts `qlinter` in `~/.local/bin`
+folder carries a `SHA256SUMS`. A release publishes one too, and `download` checks
+every file it fetches against it: a file whose sha256 differs is deleted and
+the run refused. `install` puts `qlinter` in `~/.local/bin`
 (`--bin-dir` to change it) and the extension into VS Code; reload the window
 afterwards. Neither the archive nor the wheel needs Rust or Python to run, and
-`--backend qls` still needs a separately installed qls.
+`--backend qls` still needs a separately installed qls. CI packages the
+platform-neutral vsix and the wheel on every pull request and keeps both as
+workflow artifacts, so a packaging mistake fails there rather than at a tag.
 
 A release is a tag: `python3 scripts/dist.py bump X.Y.Z` sets the version in
 `Cargo.toml`, `Cargo.lock`, `pyproject.toml` and the extension, and refreshes
 its bundled server; commit, tag `vX.Y.Z` and push, and the release workflow
 builds and publishes every platform.
+
+## pre-commit and CI
+
+A [pre-commit](https://pre-commit.com) hook lints the `.q` files a commit
+changes. `qlinter` builds the linter from this repository at `rev` with cargo,
+so it needs Rust; `qlinter-system` runs the `qlinter` already on `PATH`. `rev`
+is a release tag, from the first release that carries `.pre-commit-hooks.yaml`
+on:
+
+```yaml
+repos:
+  - repo: https://github.com/kwojdalski/q-lint
+    rev: v0.33.2
+    hooks:
+      - id: qlinter
+```
+
+Both pass `--force-exclude`, so the configuration's `exclude` holds for the
+files pre-commit names one by one; add `args: [--profile, style]` or any other
+option to the hook as usual.
+
+In a GitHub workflow, the action in this repository downloads the release
+`version` names - checked against its `SHA256SUMS` - and runs it, so the job
+needs neither Rust nor a build:
+
+```yaml
+- uses: actions/checkout@v4
+- uses: kwojdalski/q-lint@vX.Y.Z
+  with:
+    version: X.Y.Z         # the qlinter release to run; required
+    paths: src tests       # default: .
+    args: --profile style  # any other options
+```
+
+`format` defaults to `github`, which shows each finding as an annotation on
+the line it is about (#1146); `text` and `json` are the others. The step fails
+when there are findings, as `qlinter` exits 1. It runs on Linux and Windows
+x86-64 and on macOS, Intel or Apple Silicon.
 
 ## Validation and profiling
 
@@ -1077,6 +1120,8 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 cargo build --release                                 # the Python harness needs it
 Q_LINT_TEST_QLS=qls uv run pytest tests                # black-box CLI checks
+python3 scripts/check_invariance.py target/release/qlinter examples tests/corpus tests/cases
+                                                      # findings unmoved by CRLF, position, comments
 cargo build --release --example profile               # for profiling the analysis API
 ```
 

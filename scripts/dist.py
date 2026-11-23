@@ -12,8 +12,9 @@ Artifacts go to `dist/vX.Y.Z/`, named exactly as the GitHub release names them
 ...). A build of the tagged commit and the downloaded release are the same
 version and share that folder. A build of anything else - uncommitted changes,
 or commits since the tag - goes to `dist/vX.Y.Z-dev/`, so an unreleased build
-is never mistaken for a release. Each folder gets a `SHA256SUMS`. `dist/` is
-ignored by Git.
+is never mistaken for a release. Each folder gets a `SHA256SUMS`. A download
+is first checked against the `SHA256SUMS` the release publishes, and a file
+that does not match is deleted and the run refused. `dist/` is ignored by Git.
 
 `install` puts the command-line tool in `~/.local/bin` (or `--bin-dir`) and the
 extension into VS Code with `code --install-extension`. Nothing here publishes:
@@ -133,6 +134,30 @@ def build(args) -> Path:
     return folder
 
 
+def verify(folder: Path, published: Path) -> None:
+    """Every file `published` (a release's SHA256SUMS) names that is in
+    `folder` has the sha256 it states, and at least one is there. A file that
+    does not is deleted, so a later `install` cannot take it, and the run
+    refused."""
+    want = {}
+    for line in published.read_text().splitlines():
+        if line.strip():
+            digest, name = line.split(maxsplit=1)
+            want[name.lstrip("*")] = digest.lower()
+    present = [name for name in want if (folder / name).is_file()]
+    if not present:
+        sys.exit(f"{published.name} names none of the files downloaded to {folder}")
+    bad = [
+        name for name in present
+        if hashlib.sha256((folder / name).read_bytes()).hexdigest() != want[name]
+    ]
+    for name in bad:
+        (folder / name).unlink()
+    if bad:
+        sys.exit(f"sha256 mismatch, deleted: {', '.join(bad)} - does not match {published.name}")
+    print(f"verified {len(present)} file(s) against the release's {published.name}")
+
+
 def download(args) -> Path:
     ver = args.version.removeprefix("v")
     folder = DIST / f"v{ver}"
@@ -141,9 +166,22 @@ def download(args) -> Path:
     patterns = (
         []
         if args.all_platforms
-        else ["--pattern", f"*{target}*", "--pattern", f"*-{VSCODE.get(target, target)}.vsix"]
+        else [
+            "--pattern", f"*{target}*",
+            "--pattern", f"*-{VSCODE.get(target, target)}.vsix",
+            "--pattern", "SHA256SUMS",
+        ]
     )
+    # The folder's own SHA256SUMS lists what was there before; only one the
+    # release itself publishes vouches for what was just downloaded.
+    sums = folder / "SHA256SUMS"
+    sums.unlink(missing_ok=True)
     run("gh", "release", "download", f"v{ver}", "--repo", REPO, "--dir", str(folder), "--clobber", *patterns)
+    if sums.exists():
+        verify(folder, sums)
+    else:
+        print(f"warning: v{ver} publishes no SHA256SUMS, as releases before #1153 do not; "
+              "the download is unverified", file=sys.stderr)
     checksums(folder)
     for p in sorted(folder.iterdir()):
         print(f"  {p.relative_to(ROOT)}")
