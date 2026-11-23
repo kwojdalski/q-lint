@@ -18,7 +18,7 @@ export class QueryLinks {
 
   constructor(
     context: ExtensionContext,
-    private readonly live: Pick<Live, "codeFromEditor" | "activeLabel" | "fileBinding" | "pick" | "processes" | "queryCode">,
+    private readonly live: Pick<Live, "codeFromEditor" | "activeLabel" | "fileBinding" | "named" | "pick" | "queryCode">,
   ) {
     this.extensionId = context.extension?.id ?? "wojdalski.q-lint";
     context.subscriptions.push(
@@ -88,7 +88,8 @@ export class QueryLinks {
       void window.showInformationMessage("q-lint: the link names no process; its query is open, to run where you choose.");
       return false;
     }
-    const known = this.live.processes().some((p) => p.label === read.process);
+    // Saved, discovered or shared, as Copy offered it (#1125).
+    const known = this.live.named(read.process) !== undefined;
     if (!known) {
       void window.showWarningMessage(`q-lint: the link is for a process labelled "${read.process}", which is not in your Processes list; its query is open, not bound or run.`);
       return false;
