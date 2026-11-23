@@ -3441,7 +3441,8 @@ mod tests {
 
     /// The README's `initializationOptions` block, as JSON.
     fn readme_options() -> Value {
-        let readme = include_str!("../README.md");
+        // A Windows checkout may have turned the README's line ends to CRLF.
+        let readme = include_str!("../README.md").replace("\r\n", "\n");
         let section = readme
             .split("### Editor options: `initializationOptions`")
             .nth(1)
