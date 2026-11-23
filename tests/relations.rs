@@ -503,7 +503,7 @@ fn a_request_that_names_no_document_is_refused_and_one_with_nothing_to_say_is_em
     for params in [json!({}), Value::Null, json!({"changed": "main.q"})] {
         assert_eq!(
             server.result("q-lint/affectedTests", params),
-            json!({"tests": [], "changed": [], "unindexed": []})
+            json!({"tests": [], "changed": [], "unindexed": [], "dynamic": []})
         );
     }
     // No item, and an item that points nowhere.
@@ -1106,4 +1106,37 @@ fn a_directory_load_is_followed_in_a_workspace_opened_through_a_link() {
     // Loaded under `\d .a`, x.q's `xx` is `.a.xx`.
     let symbols = server.result("workspace/symbol", json!({"query": ".a.xx"}));
     assert_eq!(symbols[0]["location"]["uri"], json!(x), "{symbols}");
+}
+
+#[test]
+fn a_test_that_loads_at_run_time_is_named_as_one_the_list_may_miss() {
+    // `system "l ",p` is no edge, so the test was left out and nothing in the
+    // answer said the list could be short (#1364). One already listed, or
+    // with nothing computed, is not named again.
+    let dir = tempfile::tempdir().unwrap();
+    let files = [
+        ("lib.q", "zz:1\n"),
+        ("tests/test_static.q", "\\l lib.q\n"),
+        (
+            "tests/test_dyn.q",
+            "p:\"lib.q\"\nsystem \"l \",p\ntest_a:{1}\n",
+        ),
+        ("tests/test_both.q", "\\l lib.q\nsystem \"l \",.z.x 0\n"),
+        ("tests/test_value.q", "test_b:{value \"1+1\"}\n"),
+        ("loader.q", "system \"l \",.z.x 0\n"),
+    ];
+    let mut server = Server::start(dir.path(), &files);
+    let changed = [file_uri(&dir.path().join("lib.q"))];
+    let result = server.result("q-lint/affectedTests", json!({"changed": changed}));
+    let tests: Vec<String> = result["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|test| server.name(&test["uri"]))
+        .collect();
+    assert_eq!(tests, ["tests/test_both.q", "tests/test_static.q"]);
+    assert_eq!(server.names(&result["dynamic"]), ["tests/test_dyn.q"]);
+    // Nothing changed, nothing to miss.
+    let result = server.result("q-lint/affectedTests", json!({"changed": []}));
+    assert_eq!(result["dynamic"], json!([]), "{result}");
 }

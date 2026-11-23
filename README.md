@@ -868,7 +868,7 @@ q-lint/graph          {"textDocument": {"uri": U}}
 q-lint/affectedTests  {"changed": [uri]}
                    -> {"tests": [{"uri": uri, "reaches": [index into "changed" below],
                                   "self": its own index there, or null}],
-                       "changed": [uri], "unindexed": [uri]}
+                       "changed": [uri], "unindexed": [uri], "dynamic": [uri]}
 ```
 
 Three more, also under `capabilities.experimental`, read the indexed files'
@@ -901,7 +901,9 @@ extension sends what differs from `HEAD` and what is untracked. `changed`
 in the answer is the sent files the index holds, each once; `unindexed` is
 the sent `.q` files it does not hold - deleted, excluded, outside the
 workspace - whose dependents cannot be followed, so a client can say the
-list is short. A test file is a `.q` file named `test_*` or `*_test`, or
+list is short; `dynamic` is the test files not listed that load by a path
+computed at run time (`system "l ",p`), which may run a changed file all the
+same. A test file is a `.q` file named `test_*` or `*_test`, or
 under a directory named `test` or `tests` below its workspace folder, which
 is wide on purpose: a helper listed with the tests costs a glance, a test
 left out costs a regression. The limits are the graph's: an edge through a

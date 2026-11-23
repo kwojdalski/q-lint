@@ -147,8 +147,10 @@ fn file_graph(params: &Value, sources: &Sources) -> Value {
 /// `unindexed` is each `.q` file of the request the index does not hold -
 /// deleted, excluded, outside the workspace - whose dependents therefore
 /// cannot be followed: a client says so, where a list that looked complete
-/// would not. What is not a `.q` file is passed over, a change to it being
-/// nothing this server reads.
+/// would not. `dynamic` is each test file not listed that loads by a path
+/// computed at run time, `system "l ",p`: it has no edge to follow, so it
+/// may run a changed file all the same (#1364). What is not a `.q` file is
+/// passed over, a change to it being nothing this server reads.
 fn affected_tests(params: &Value, sources: &Sources) -> Value {
     let graph = graph_of(sources);
     let mut changed: Vec<PathBuf> = vec![];
@@ -174,9 +176,21 @@ fn affected_tests(params: &Value, sources: &Sources) -> Value {
         .iter()
         .map(|root| file_key(root).into())
         .collect();
-    let tests: Vec<Value> = graph::reaching(&graph, &changed)
+    let reached = graph::reaching(&graph, &changed);
+    let is_test = |file: &Path| graph::is_test(&in_workspace(&roots, file));
+    let dynamic: Vec<String> = graph
         .iter()
-        .filter(|(file, _)| graph::is_test(&in_workspace(&roots, file)))
+        .filter(|(file, node)| {
+            !(spelled.is_empty() && unindexed.is_empty())
+                && !reached.contains_key(*file)
+                && node.dynamic.iter().any(|d| d.kind == "load")
+                && is_test(file)
+        })
+        .map(|(file, _)| uri_of(sources, file))
+        .collect();
+    let tests: Vec<Value> = reached
+        .iter()
+        .filter(|(file, _)| is_test(file))
         .map(|(file, reaches)| {
             json!({
                 "uri": uri_of(sources, file),
@@ -185,7 +199,7 @@ fn affected_tests(params: &Value, sources: &Sources) -> Value {
             })
         })
         .collect();
-    json!({"tests": tests, "changed": spelled, "unindexed": unindexed})
+    json!({"tests": tests, "changed": spelled, "unindexed": unindexed, "dynamic": dynamic})
 }
 
 /// `file` as `graph::is_test` wants it: below the workspace folder it is in,
