@@ -21,7 +21,7 @@
 // - `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`, `system`,
 //   `save`, `rsave`, `dsave`, `load`, `rload`, `.Q.dpft`, `.Q.dpfts`,
 //   `.Q.hdpf`, `.Q.en`, `.Q.chk` and `.Q.dsftg`, and `0:` or `1:` to a
-//   file handle (`` `:f 0: ``), and `2:`;
+//   file handle (`` `:f 0: ``, `hsym[`f] 0:`, `(hsym `f) 1:`), and `2:`;
 // - `-11!`, which replays a log through `upd`, except `-11!(-1;..)` and
 //   `-11!(-2;..)`, which only count and check one;
 // - `@[` or `.[` on a variable named by a symbol, with four arguments: an
@@ -158,6 +158,29 @@ function qText(literal: string): string {
     .replace(/\\([0-7]{3}|.)/g, (_, c: string) =>
       c.length === 3 ? String.fromCharCode(parseInt(c, 8)) : c === "n" ? "\n" : c === "r" ? "\r" : c === "t" ? "\t" : c,
     );
+}
+
+/// Whether the left argument of `0:` or `1:`, ending at `t[end]`, makes a
+/// file handle: `hsym `f`, `hsym[`f]`, `(hsym `f)` or `` (`:f) ``. A
+/// parse format, `("SJ";",")`, does not.
+function computedHandle(t: Token[], end: number): boolean {
+  if (t[end]?.kind === "sym") {
+    return t[end - 1]?.text === "hsym";
+  }
+  if (t[end]?.kind !== "close") {
+    return false;
+  }
+  let depth = 0;
+  let open = end;
+  for (; open >= 0; open--) {
+    if (t[open].kind === "close") depth++;
+    else if (t[open].kind === "open" && --depth === 0) break;
+  }
+  if (open < 0) {
+    return false;
+  }
+  const inside = t.slice(open + 1, end);
+  return t[open - 1]?.text === "hsym" || (t[open].text === "(" && (inside.some((k) => k.text === "hsym") || (inside.length === 1 && inside[0].kind === "sym" && inside[0].text.startsWith("`:"))));
 }
 
 /// What one statement does that the guard asks about, added to `found`.
@@ -306,8 +329,10 @@ function readStatement(statement: string, found: Set<string>): void {
     if (k.kind === "num" && (k.text === "0" || k.text === "1" || k.text === "2") && next?.text === ":" && touching(k, next)) {
       if (k.text === "2") {
         found.add("loads a shared object with 2:");
-      } else if (t[i - 1]?.kind === "sym" && t[i - 1].text.startsWith("`:")) {
+      } else if (t[i - 1]?.kind === "sym" && t[i - 1].text.startsWith("`:") && t[i - 2]?.text !== "hsym") {
         found.add(`writes the file ${t[i - 1].text} with ${k.text}:`);
+      } else if (computedHandle(t, i - 1)) {
+        found.add(`writes a file with ${k.text}:`);
       }
     }
   }

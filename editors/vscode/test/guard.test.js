@@ -144,6 +144,22 @@ test("get, eval of a parse tree and value through each or brackets are evaluatio
   }
 });
 
+test("0: and 1: to a computed file handle are file writes (#1067)", () => {
+  const cases = {
+    'hsym[`f] 0: enlist "x"': ["writes a file with 0:"],
+    "(hsym`f) 1: 0x00": ["writes a file with 1:"],
+    "hsym `f 1: 0x00": ["writes a file with 1:"],
+    '(`:f) 0: enlist "x"': ["writes a file with 0:"],
+    // A parse format before 0: or 1: reads.
+    '("SJ";enlist ",") 0: `:f.csv': [],
+    '("SJ";",") 0: hsym `f': [],
+    '(4#"i";4) 1: `:f': [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
 test("system commands are changes, except bare reads of a setting; \\t is read for its expression", () => {
   const cases = {
     "\\l file.q": ["runs the system command \\l"],
