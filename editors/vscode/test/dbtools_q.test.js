@@ -350,6 +350,26 @@ test("a tickerplant log's one-row messages, a list of atoms, have a time and are
   assert.deepStrictEqual(early.rows.map((r) => r.index), [0]);
 });
 
+test("a tickerplant log whose first temporal column is a date or a month opens, with no time of day (#1248)", { skip }, async (t) => {
+  const log = [
+    'f:hsym`$"$DIR/tp.log";',
+    ".[f;();:;()];",
+    "h:hopen f;",
+    "h enlist(`upd;`eod;([]date:enlist 2026.01.05;sym:enlist`a));",
+    "h enlist(`upd;`mon;([]m:enlist 2026.01m;sym:enlist`b));",
+    "h enlist(`upd;`trade;([]time:enlist 2026.01.05D09:00:00;sym:enlist`c));",
+    "hclose h;",
+    "",
+  ].join("\n");
+  const { connection, dir } = await connect(t, log + TPLOG_INIT + "\n");
+  const summary = readTpLog(await connection.call(".qlint.tp.load", path.join(dir, "tp.log")));
+  assert.strictEqual(summary.count, 3);
+  const all = readTpPage(await connection.call(".qlint.tp.page", "", NaN, NaN, 0, 100));
+  assert.deepStrictEqual(all.rows.map((r) => r.time), ["2026.01.05", "2026.01", "2026.01.05D09:00:00.000000000"]);
+  const timed = readTpPage(await connection.call(".qlint.tp.page", "", 8 * 3600000, NaN, 0, 100));
+  assert.deepStrictEqual(timed.rows.map((r) => r.index), [2]);
+});
+
 test("the tickerplant log is read, paged, filtered, shown and replayed in a q of its own", { skip }, async (t) => {
   const log = [
     'f:hsym`$"$DIR/tp.log";',

@@ -12,7 +12,8 @@
 // to the last whole message - a copy of those bytes, its header's count
 // set to theirs, in the local q's own directory - and the page says how
 // many bytes were left. A message's time is its first temporal column's
-// first item, or that column itself in a one-row message of atoms.
+// first item, or that column itself in a one-row message of atoms; a date
+// or a month has no time of day, so the time filter leaves it out.
 // A replay runs each message as `-11!` would, with an `upd` that inserts
 // into a table of that name, creating it from a first message that is a
 // table; a q file loaded first (the tickerplant's schema, its own `upd`)
@@ -33,7 +34,7 @@ export const TPLOG_INIT = [
   "  fn:{$[(0h=type x)&-11h=type first x;first x;`]}each m;",
   "  tb:{$[(0h=type x)&1<count x;$[-11h=type x 1;x 1;`];`]}each m;",
   "  rows:{\"f\"$$[98h=type x;count x;99h=type x;count x;0h=type x;$[count x;count first x;0];1]}each d;",
-  "  tod:{$[null x;0n;\"f\"$`time$x]}each tm;",
+  "  tod:{$[null x;0n;(abs type x)in 13 14h;0n;\"f\"$`time$x]}each tm;",
   "  tx:{$[null x;\"\";string x]}each tm);",
   " `count`bytes`size`complete`tables!(\"f\"$n;\"f\"$$[ok;hcount f;c 1];\"f\"$hcount f;ok;string asc distinct exec tb from .qlint.tp.s where not null tb)}",
   ".qlint.tp.page:{[tn;t0;t1;off;lim] s:.qlint.tp.s;",
