@@ -19,6 +19,7 @@
 // not. A column with no cell to go by is a string. The guess is a start:
 // the wizard lets each be changed, or the column skipped.
 import { basename } from "node:path";
+import { readDelimited } from "./pastetable";
 import { stringLiteral } from "./qliteral";
 
 /// The commands, as `resulttools.ts` registers them.
@@ -172,20 +173,18 @@ export function guessType(cells: string[]): string {
 
 /// The text's first lines as a table: the header, the rows and a guessed
 /// type for each column. `delimiter` "" guesses it from the header. `cut`:
-/// the text is the start of a longer file, so its last line can be partial.
+/// the text is the start of a longer file, so its last record can be
+/// partial. A quoted field may hold a newline, so records are read whole
+/// (#1114).
 export function sampleText(text: string, delimiter = "", cut = false): Sample {
-  const lines = text.replace(/^﻿/, "").split(/\r?\n/);
-  const header = lines[0] ?? "";
+  const header = text.replace(/^\ufeff/, "").split(/\r?\n/, 1)[0] ?? "";
   const d = delimiter === "" ? guessDelimiter(header) : delimiter;
-  const names = splitLine(header, d).map((n) => n.trim());
-  if (cut && lines.length > 2) {
-    lines.pop();
+  const records = readDelimited(text, d).rows;
+  const names = (records[0] ?? [""]).map((n) => n.trim());
+  if (cut && records.length > 2) {
+    records.pop();
   }
-  const body = lines.slice(1, SAMPLE_ROWS + 1).filter((l) => l.trim() !== "");
-  const rows = body.slice(0, SAMPLE_ROWS).map((l) => {
-    const f = splitLine(l, d);
-    return names.map((_, i) => f[i] ?? "");
-  });
+  const rows = records.slice(1, SAMPLE_ROWS + 1).map((f) => names.map((_, i) => f[i] ?? ""));
   const types = names.map((_, i) => guessType(rows.map((r) => r[i])));
   return { delimiter: d, names, rows, types };
 }

@@ -23,6 +23,10 @@ test("a data file's kind, delimiter and columns are read from its first lines, a
   assert.strictEqual(sample.rows.length, 2);
   // A cut sample's last line is left out: it can be partial.
   assert.strictEqual(d.sampleText(text + "IBM,3", "", true).rows.length, 2);
+  // A quoted field holding a newline is one field of one record (#1114).
+  const quoted = d.sampleText('id,comment,qty\n1,"two\nlines",5\n2,ok,6');
+  assert.deepStrictEqual(quoted.rows, [["1", "two\nlines", "5"], ["2", "ok", "6"]]);
+  assert.deepStrictEqual(quoted.types, ["J", "*", "J"]);
   assert.strictEqual(d.guessType(["", " "]), "*");
   assert.strictEqual(d.guessType(["a b", "a b", "a b", "c d"]), "S");
 });
