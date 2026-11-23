@@ -11,7 +11,8 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const net = require("node:net");
-const { spawn } = require("node:child_process");
+const tls = require("node:tls");
+const { spawn, spawnSync } = require("node:child_process");
 const pkg = require("../package.json");
 const { SshTunnel, TUNNEL_COMMANDS, readTunnel, sshArgs } = require("../out/tunnel.js");
 const { parseProcesses, readProcessFile, sshDestination, withExtras } = require("../out/processes.js");
@@ -22,6 +23,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // A stand-in ssh: records its arguments, then forwards the -L port to the
 // target until it is killed; with STUB_SSH_FAIL set, it says so and exits 255.
+// STUB_SSH_REACHES names the host the target's address is, seen from the jump
+// host: a process at an address this machine does not have.
 const STUB = `#!/usr/bin/env node
 const fs = require("fs");
 const net = require("net");
@@ -33,7 +36,7 @@ if (process.env.STUB_SSH_FAIL) {
 }
 const [, local, host, port] = /^127\\.0\\.0\\.1:(\\d+):\\[?([^\\]]*?)\\]?:(\\d+)$/.exec(args[args.indexOf("-L") + 1]);
 const server = net.createServer((client) => {
-  const upstream = net.connect(Number(port), host);
+  const upstream = net.connect(Number(port), process.env.STUB_SSH_REACHES || host);
   client.pipe(upstream).pipe(client);
   upstream.on("error", () => {
     // As ssh does when the far end refuses the forward.
@@ -50,7 +53,7 @@ function stubSsh(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-ssh-"));
   fs.writeFileSync(path.join(dir, "ssh"), STUB, { mode: 0o755 });
   const log = path.join(dir, "log");
-  const saved = { PATH: process.env.PATH, STUB_SSH_LOG: process.env.STUB_SSH_LOG, STUB_SSH_FAIL: process.env.STUB_SSH_FAIL };
+  const saved = { PATH: process.env.PATH, STUB_SSH_LOG: process.env.STUB_SSH_LOG, STUB_SSH_FAIL: process.env.STUB_SSH_FAIL, STUB_SSH_REACHES: process.env.STUB_SSH_REACHES };
   process.env.PATH = `${dir}${path.delimiter}${process.env.PATH}`;
   process.env.STUB_SSH_LOG = log;
   delete process.env.STUB_SSH_FAIL;
@@ -233,6 +236,52 @@ test("no q behind the tunnel is said so, with the process's address and what ssh
   // What ssh said is in the message shown, and in nothing that is kept.
   await assert.rejects(live.openSeparate(live.processes()[0]), (e) => /closed before the handshake/.test(e.message) && !/channel 2/.test(e.message));
   assert.ok(!JSON.stringify([...context.globalState.keys()].map((k) => context.globalState.get(k))).includes("channel 2"));
+});
+
+// A process addressed by IP, over TLS, through a tunnel: the socket goes to
+// the loopback end, and the certificate is for the process's address (#1356).
+// The certificate is made by openssl, and trusted by adding it to what
+// `tls.connect` is given; nothing turns the check off.
+const noOpenssl = spawnSync("openssl", ["version"]).status === 0 ? false : "no openssl on PATH to make a certificate";
+test("TLS through a tunnel checks the certificate against the process's own address", { skip: noOpenssl }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-tls-"));
+  const made = spawnSync(
+    "openssl",
+    ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "key.pem", "-out", "cert.pem", "-days", "2", "-subj", "/CN=q", "-addext", "subjectAltName=IP:10.0.0.5"],
+    { cwd: dir },
+  );
+  assert.strictEqual(made.status, 0, String(made.stderr));
+  const cert = fs.readFileSync(path.join(dir, "cert.pem"));
+  const server = tls.createServer({ key: fs.readFileSync(path.join(dir, "key.pem")), cert }, (socket) => {
+    socket.on("error", () => {});
+    socket.once("data", () => socket.write(Buffer.from([3])));
+  });
+  server.on("tlsClientError", () => {});
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const connect = tls.connect;
+  let trusted = true;
+  let checked = 0;
+  tls.connect = (options) => (checked++, connect({ ...options, ...(trusted ? { ca: cert } : {}) }));
+  const ssh = stubSsh(t);
+  process.env.STUB_SSH_REACHES = "127.0.0.1";
+  t.after(() => {
+    tls.connect = connect;
+    server.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  const far = (label, host) => ({ label, host, port: server.address().port, tags: [], tls: true, ssh: "bastion" });
+  const { live } = await setUp(t, [far("far", "10.0.0.5"), far("other", "10.0.0.6")]);
+  assert.strictEqual(await live.connectTo("far"), true, String(stub.messages.at(-1)));
+  assert.match(ssh.runs()[0].args.at(-3), new RegExp(`^127\\.0\\.0\\.1:\\d+:10\\.0\\.0\\.5:${server.address().port}$`));
+  // The check is still made: the same certificate is not another address's,
+  await stub.commands.get("q-lint.disconnectProcess")();
+  assert.strictEqual(await live.connectTo("other"), false);
+  assert.match(stub.messages.at(-1)[1], /IP: 10\.0\.0\.6 is not in the cert's list: 10\.0\.0\.5/);
+  // and one nothing vouches for is refused.
+  trusted = false;
+  assert.strictEqual(await live.connectTo("far"), false);
+  assert.match(stub.messages.at(-1)[1], /self[- ]signed certificate/);
+  assert.strictEqual(checked, 3);
 });
 
 test("with q-lint.connection.sshTunnel.enable off, no ssh runs and Set SSH Tunnel refuses", async (t) => {

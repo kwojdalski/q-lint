@@ -8,7 +8,6 @@
 // `processes.ts`'s; discovery servers, `discoveryservers.ts`'s; what a
 // terminal is sent, `terminal.ts`'s. This file is the VS Code around them.
 import * as os from "os";
-import * as net from "net";
 import * as path from "path";
 import {
   commands,
@@ -1705,7 +1704,7 @@ export class Live {
           ...target,
           host: "127.0.0.1",
           port: tunnel.localPort,
-          ...(target.tls ? { servername: net.isIP(target.host) ? undefined : target.host } : {}),
+          ...(target.tls ? { servername: target.host } : {}),
         },
         undefined,
         signal,

@@ -27,8 +27,8 @@ export interface Target {
   user?: string;
   password?: string;
   tls?: boolean;
-  /// The name a TLS certificate is checked against, when `host` is not it:
-  /// a tunnel's loopback end (#908).
+  /// The name or address a TLS certificate is checked against, when `host`
+  /// is not it: a tunnel's loopback end (#908).
   servername?: string;
 }
 
@@ -121,8 +121,17 @@ export class QConnection {
   static open(target: Target, timeoutMs: number = CONNECT_TIMEOUT_MS, signal?: AbortSignal): Promise<QConnection> {
     return new Promise((resolve, reject) => {
       const options = { host: target.host, port: target.port };
+      // The name the certificate must be for. An IP address cannot be sent
+      // as the server name, and without one the check is against the host
+      // dialled: a tunnel's loopback end. So an address given as
+      // `servername` is checked here, against the certificate (#1356).
+      const name = target.servername ?? target.host;
       const socket = target.tls
-        ? tls.connect({ ...options, servername: target.servername ?? (net.isIP(target.host) ? undefined : target.host) })
+        ? tls.connect({
+            ...options,
+            servername: net.isIP(name) ? undefined : name,
+            ...(target.servername !== undefined && net.isIP(name) ? { checkServerIdentity: (_host: string, cert: tls.PeerCertificate) => tls.checkServerIdentity(name, cert) } : {}),
+          })
         : net.connect(options);
       let settled = false;
       const cancelled = (): void => fail(new Error(`the connect to ${target.host}:${target.port} was cancelled`));
