@@ -8127,7 +8127,12 @@ fn lint_rules(
             let open = m.get(0).unwrap().end() - 1;
             let alone = matching(code, open, b'[', b']').is_some_and(|close| {
                 matching(code, paren.start(), b'(', b')')
-                    .is_some_and(|end| code[close..end - 1].trim().is_empty())
+                    // `get`: a `)` before the `]`, as in `a:(if[1b;2)]`,
+                    // closes before the bracket does, and is no paren round it.
+                    .is_some_and(|end| {
+                        code.get(close..end - 1)
+                            .is_some_and(|s| s.trim().is_empty())
+                    })
             });
             if !alone {
                 continue;

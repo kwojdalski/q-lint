@@ -355,6 +355,12 @@ const FOUND: &[(&str, &str)] = &[
         "examples/showcase.q:401-440 #162",
         "\n/ QF020: quotes has no size column, and nothing in this file defines one, so\n/ q raises 'size. The column it does have selects fine.\nquotes:([]px:1 2)\n/ expect-next: QF020\nsized:select size from quotes\npriced:select px fr$[om quotes\n/ The where phrase and xasc name columns too.\n/ expect-next: QF020\nbigones:select from quotes where size>100\n/ expect-next: QF020\nbysize:`size xasc quotes\n\n/ QT026: lj joins on the right table's key, so an unkeyed one is 'type.\n/ expect-next: QT026\njoined:quotes lj ([]px:1 2;venue:`a`b)\njoinedk:quotes lj ([px:1 2]venue:`a`b)\n\n/ QT027: insert takes one value per column, and quotes has one.\n/ expect-next: QT027\n`quotes insert (1;2)\n/ QT005: keyed is no different.\n/ expect-next: QT005\none2: ([k:1] v:2)\n\n/ QT006: two literal vectors under an infix must agree in length.\n/ expect-next: QT006\nbad3: 1 2 3+4 5\n\n/ QT006: symbol vectors under `=` likewise - two against three.\n/ expect-next: QT006\nbad4: `a`b=`a`b`c\n\n/ QT007: `ssr` is a string function and a symbol is a 'type error. `trim`\n/ and `lower` accept symbols, and stay quiet.\n/ expect-next: QT007\nsub: ssr[`abc;\"a\";\"b\"]\n\n/ QT007: infix `ss` with a symbol on the left.\n/ expect-next: QT007\n",
     ),
+    // QB011 (a control statement assigned) took the text between an `if[`'s `]`
+    // and the `)` before it.
+    (
+        "tests/cases/correctness.cases:386 #16",
+        "a:(if[1b;2)]\nb::if[1b;2]\n\n",
+    ),
 ];
 
 #[test]
