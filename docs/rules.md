@@ -1,6 +1,6 @@
 # Rules
 
-All 139 rules, generated from `src/taxonomy.json` - the same data
+All 140 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -143,6 +143,7 @@ it, or `ALL`.
 | <a id="qt033"></a>`QT033` | inferred-symbol-comparison | A local that is always a symbol compared with a number, boolean, temporal, char or string, or one that is never a symbol compared with a symbol: 'type | `style` and above |
 | <a id="qt034"></a>`QT034` | inferred-mixed-join | Two lists of different types joined with `,`, one of them a typed local: the result is a general list, not a simple one | `style` and above |
 | <a id="qt035"></a>`QT035` | inferred-symbol-arithmetic | Arithmetic on a local that is always a symbol: 'type | `style` and above |
+| <a id="qt036"></a>`QT036` | null-getenv | null getenv tests each character of a string, giving a vector, which if and $[...] refuse with 'type | `style` and above |
 
 ## Correctness - q that runs and does the wrong thing
 

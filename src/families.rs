@@ -21,6 +21,7 @@ pub fn check(
     unreachable(path, source, code, comments, &mut out);
     discarded_query(path, source, code, &mut out);
     empty_match(path, source, code, comments, &mut out);
+    null_getenv(path, source, code, &mut out);
     performance(path, source, code, comments, &mut out);
     out
 }
@@ -1292,6 +1293,33 @@ fn typed_local(source: &str, code: &str, comments: &str, at: usize, name: &str) 
 /// `at` moved past spaces and tabs.
 fn past_blanks_inline(text: &str, at: usize) -> usize {
     at + (text[at..].len() - text[at..].trim_start_matches([' ', '\t']).len())
+}
+
+/// QT036. `getenv` gives a string, `""` when the variable is unset, and
+/// `null` of a string is a boolean vector, one item a character: q 5
+/// `null getenv`UNSET` is `` `boolean$() ``, and `if[null getenv`X;...]` is
+/// 'type whether or not X is set. `all null` or `any null` in front reduces
+/// it to an atom, and is left alone.
+fn null_getenv(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
+    for m in re!(r"null(?:[ \t]+|[ \t]*[\[(][ \t]*)getenv\b").find_iter(code) {
+        let before = code[..m.start()].trim_end_matches([' ', '\t']);
+        let reduced = ["all", "any"]
+            .iter()
+            .any(|w| before.ends_with(w) && boundary(code, before.len() - w.len()));
+        if !boundary(code, m.start()) || reduced {
+            continue;
+        }
+        out.push(Finding::at(
+            path,
+            source,
+            m.start(),
+            "QT036",
+            "getenv gives a string, so null tests each character and gives a vector - empty \
+             when the variable is unset - which if and $[...] refuse with 'type: \
+             `\"\"~getenv x` or `0=count getenv x` tests an unset variable"
+                .into(),
+        ));
+    }
 }
 
 /// The columns a kdb+ database is partitioned by: `.Q.pf` is one of these.

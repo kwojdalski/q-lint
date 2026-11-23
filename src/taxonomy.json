@@ -840,6 +840,13 @@
     "scope": "style"
   },
   {
+    "code": "QT036",
+    "name": "null-getenv",
+    "category": "types-and-shapes",
+    "summary": "null getenv tests each character of a string, giving a vector, which if and $[...] refuse with 'type",
+    "scope": "style"
+  },
+  {
     "code": "QP006",
     "name": "juxtaposed-application",
     "category": "policy",

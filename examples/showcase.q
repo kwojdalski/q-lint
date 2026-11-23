@@ -650,6 +650,12 @@ bump2:{update px:px+1 from `book; count book}
 nohits:{[p] ()~where p>100}
 nohits2:{[p] 0=count where p>100}
 
+/ QT036: getenv gives a string, so null gives a vector - empty when unset -
+/ and $[...] refuses a vector with 'type; "" matched with it is an atom.
+/ expect-next: QT036
+port:{$[null getenv`PORT;5010;"J"$getenv`PORT]}
+port2:{$[""~getenv`PORT;5010;"J"$getenv`PORT]}
+
 / QB024: under q -s, a global written from a peach lambda is 'noupdate;
 / returning the value and assigning it after peach is not.
 / expect-next: QB024
