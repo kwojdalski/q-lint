@@ -39,6 +39,26 @@ test("a file is read from where the last read stopped, a line still being writte
   assert.deepStrictEqual(got.slice(-1), ["new"]);
 });
 
+test("the offset counts the file's bytes, a byte that is not UTF-8 and a character cut in two included (#1079)", async () => {
+  const file = path.join(tmp(), "latin1.log");
+  fs.writeFileSync(file, Buffer.from("caf\xE9 ok\nline2\n", "latin1"));
+  const got = [];
+  let at = await readFrom(file, START, (l) => got.push(l));
+  assert.strictEqual(at.offset, 14);
+  fs.appendFileSync(file, "line3\n");
+  at = await readFrom(file, at, (l) => got.push(l));
+  assert.deepStrictEqual(got.slice(1), ["line2", "line3"]);
+  assert.strictEqual(at.restarted, false);
+  // A two-byte character whose second byte is not written yet.
+  fs.appendFileSync(file, Buffer.from([0x62, 0xc3]));
+  at = await readFrom(file, at, (l) => got.push(l));
+  assert.deepStrictEqual([at.offset, at.partial], [21, "b"]);
+  fs.appendFileSync(file, Buffer.from([0xa9, 0x0a]));
+  at = await readFrom(file, at, (l) => got.push(l));
+  assert.deepStrictEqual(got.slice(-1), ["b\u00e9"]);
+  assert.strictEqual(at.offset, 24);
+});
+
 test("a large file is streamed: every line read, in pieces, and the heap does not hold it", async () => {
   const file = path.join(tmp(), "big.log");
   const line = `2026.11.07D00:00:00.000000000|h|rdb|rdb1|INFO|x|${"m".repeat(150)}\n`;
