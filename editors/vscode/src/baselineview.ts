@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import { commands, window, workspace, type ExtensionContext } from "vscode";
 import { LANGUAGE_COMMANDS, languageOff, languageOn } from "./languagefeatures";
+import { plainMessage } from "./history";
 
 export const BASELINE_FILE = "qlinter-baseline.json";
 
@@ -57,7 +58,7 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
   context.subscriptions.push(
     commands.registerCommand(LANGUAGE_COMMANDS.writeBaseline, async () => {
       if (!on()) {
-        void window.showInformationMessage(languageOff("baseline"));
+        void window.showInformationMessage(plainMessage(languageOff("baseline")));
         return undefined;
       }
       const folders = (workspace.workspaceFolders ?? []).filter((f) => f.uri.scheme === "file");
@@ -80,13 +81,13 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
         const ran = await runQlinter(command, [...args, "--write-baseline", draft, "."], dir);
         const count = writtenCount(ran.stderr);
         if (count === undefined || !existsSync(draft)) {
-          void window.showWarningMessage(`q-lint: qlinter wrote no baseline: ${ran.stderr.trim() || `exit ${ran.code}`}`);
+          void window.showWarningMessage(plainMessage(`q-lint: qlinter wrote no baseline: ${ran.stderr.trim() || `exit ${ran.code}`}`));
           return undefined;
         }
         const exists = existsSync(target);
         const write = exists ? "Replace" : "Write";
         const answer = await window.showWarningMessage(
-          `${exists ? "Replace" : "Write"} ${BASELINE_FILE} in ${folder.name}?`,
+          plainMessage(`${exists ? "Replace" : "Write"} ${BASELINE_FILE} in ${folder.name}?`),
           {
             modal: true,
             detail:
@@ -152,12 +153,12 @@ async function offerConfiguration(dir: string): Promise<void> {
   const before = existsSync(config) ? readFileSync(config, "utf8") : "";
   const after = tomlWithBaseline(before);
   if (after === undefined) {
-    void window.showInformationMessage(`q-lint: wrote ${BASELINE_FILE}; ${config} already names a baseline.`);
+    void window.showInformationMessage(plainMessage(`q-lint: wrote ${BASELINE_FILE}; ${config} already names a baseline.`));
     return;
   }
   const add = "Add";
   const answer = await window.showInformationMessage(
-    `q-lint: wrote ${BASELINE_FILE}. Add \`baseline = "${BASELINE_FILE}"\` to ${existsSync(config) ? config : `a new ${config}`}, so the editor and qlinter use it?`,
+    plainMessage(`q-lint: wrote ${BASELINE_FILE}. Add \`baseline = "${BASELINE_FILE}"\` to ${existsSync(config) ? config : `a new ${config}`}, so the editor and qlinter use it?`),
     add,
   );
   if (answer === add) {

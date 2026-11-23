@@ -22,6 +22,7 @@ import {
 } from "vscode";
 import { readResultView } from "./liveconfig";
 import { PLOT_COMMANDS, plotFileName, PLOTS, type Plot } from "./plots";
+import { plainMessage } from "./history";
 
 /// How long Save Plot waits for the page to draw a PNG.
 const PNG_WAIT = 10_000;
@@ -207,7 +208,7 @@ export class PlotsView {
       return undefined;
     }
     await workspace.fs.writeFile(to, bytes);
-    void window.showInformationMessage(`q-lint: saved the plot to ${to.fsPath}.`);
+    void window.showInformationMessage(plainMessage(`q-lint: saved the plot to ${to.fsPath}.`));
     return to.fsPath;
   }
 }

@@ -33,6 +33,7 @@ import {
 } from "./discovery";
 import { DISCOVERY_COMMANDS, readDiscovery } from "./liveconfig";
 import { passwordKey, type Process } from "./processes";
+import { plainMessage } from "./history";
 
 const SERVERS_KEY = "q-lint.discoveryServers";
 /// The discovered processes a password was given for, by server, as
@@ -217,7 +218,7 @@ export class DiscoveryServers {
     if (fields?.label !== undefined && fields.url !== undefined) {
       const bad = serverLabelProblem(fields.label, taken) ?? urlProblem(fields.url);
       if (bad !== undefined) {
-        void window.showErrorMessage(`q-lint: cannot add the discovery server: ${bad}`);
+        void window.showErrorMessage(plainMessage(`q-lint: cannot add the discovery server: ${bad}`));
         return;
       }
       answer = { label: fields.label.trim(), url: fields.url.trim(), secret: fields.secret ?? "" };
@@ -230,7 +231,7 @@ export class DiscoveryServers {
     // Read again: the list may have changed while the boxes were open.
     const now = this.servers();
     if (now.some((s) => s.label === answer.label)) {
-      void window.showErrorMessage(`q-lint: the label "${answer.label}" was taken meanwhile; the discovery server was not added.`);
+      void window.showErrorMessage(plainMessage(`q-lint: the label "${answer.label}" was taken meanwhile; the discovery server was not added.`));
       return;
     }
     const server = { label: answer.label, url: answer.url };
@@ -294,7 +295,7 @@ export class DiscoveryServers {
     if (typeof arg === "string") {
       const named = servers.find((s) => s.label === arg);
       if (named === undefined) {
-        void window.showErrorMessage(`q-lint: no discovery server is labelled "${arg}".`);
+        void window.showErrorMessage(plainMessage(`q-lint: no discovery server is labelled "${arg}".`));
       }
       return named;
     }
@@ -325,7 +326,7 @@ export class DiscoveryServers {
       answer = { label: (fields.label ?? old.label).trim(), url: (fields.url ?? old.url).trim(), secret: fields.secret };
       const bad = serverLabelProblem(answer.label, taken) ?? urlProblem(answer.url);
       if (bad !== undefined) {
-        void window.showErrorMessage(`q-lint: cannot change the discovery server: ${bad}`);
+        void window.showErrorMessage(plainMessage(`q-lint: cannot change the discovery server: ${bad}`));
         return;
       }
     } else {
@@ -341,7 +342,7 @@ export class DiscoveryServers {
         ? `the label "${answer.label}" was taken meanwhile`
         : undefined;
     if (problem !== undefined) {
-      void window.showErrorMessage(`q-lint: ${problem}; the discovery server was not changed.`);
+      void window.showErrorMessage(plainMessage(`q-lint: ${problem}; the discovery server was not changed.`));
       return;
     }
     const server = { label: answer.label, url: answer.url };
@@ -368,7 +369,7 @@ export class DiscoveryServers {
     }
     const yes = "Delete";
     const sure = await window.showWarningMessage(
-      `Delete the discovery server "${server.label}"? Processes downloaded from it stay in the list.`,
+      plainMessage(`Delete the discovery server "${server.label}"? Processes downloaded from it stay in the list.`),
       { modal: true },
       yes,
     );
@@ -395,7 +396,7 @@ export class DiscoveryServers {
     }
     const listed = this.states.get(server.label)?.processes ?? [];
     if (listed.length === 0) {
-      void window.showInformationMessage(`q-lint: ${server.label} lists no processes to download. Reload it first.`);
+      void window.showInformationMessage(plainMessage(`q-lint: ${server.label} lists no processes to download. Reload it first.`));
       return;
     }
     const saved = this.saved.list();
@@ -408,7 +409,7 @@ export class DiscoveryServers {
     }
     await this.saved.save([...saved, ...added]);
     const note = skipped.length ? ` Skipped ${skipped.length} whose label is taken: ${skipped.slice(0, 5).join(", ")}.` : "";
-    void window.showInformationMessage(`q-lint: saved ${added.length} process(es) from ${server.label}.${note}`);
+    void window.showInformationMessage(plainMessage(`q-lint: saved ${added.length} process(es) from ${server.label}.${note}`));
   }
 
   /// Drop what a server lists from the view, until it is reloaded.

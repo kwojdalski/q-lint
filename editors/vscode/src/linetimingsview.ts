@@ -23,6 +23,7 @@ import {
 import type { Live } from "./live";
 import { LINE_TIMINGS, bytesText, decorationText, durationText, readTimings, statementSpans, summary, type Timings } from "./linetimings";
 import { TOOLING_COMMANDS, toolingOff, toolingOn } from "./toolingfeatures";
+import { plainMessage } from "./history";
 
 export const TIME_LINES = TOOLING_COMMANDS.timeLines;
 export const CLEAR_LINE_TIMINGS = TOOLING_COMMANDS.clearLineTimings;
@@ -47,7 +48,7 @@ export function registerLineTimings(
   const time = async (given?: TextEditor): Promise<Timings | string> => {
     if (!on() || drawn === undefined) {
       const off = toolingOff("lineTimings");
-      void window.showInformationMessage(off);
+      void window.showInformationMessage(plainMessage(off));
       return off;
     }
     const editor = given ?? window.activeTextEditor;
@@ -87,14 +88,14 @@ export function registerLineTimings(
     }
     // Turned off while it ran: nothing is drawn.
     drawn?.show(editor, result);
-    void window.showInformationMessage(`q-lint: ${summary(result, ran.process)}`);
+    void window.showInformationMessage(plainMessage(`q-lint: ${summary(result, ran.process)}`));
     return result;
   };
   context.subscriptions.push(
     commands.registerCommand(TIME_LINES, () => time()),
     commands.registerCommand(CLEAR_LINE_TIMINGS, () => {
       if (!on() || drawn === undefined) {
-        void window.showInformationMessage(toolingOff("lineTimings"));
+        void window.showInformationMessage(plainMessage(toolingOff("lineTimings")));
         return;
       }
       drawn.clear();
@@ -106,7 +107,7 @@ export function registerLineTimings(
 }
 
 function say(message: string): string {
-  void window.showInformationMessage(message);
+  void window.showInformationMessage(plainMessage(message));
   return message;
 }
 

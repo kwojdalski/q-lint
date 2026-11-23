@@ -11,6 +11,7 @@ import { CodeAction, CodeActionKind, commands, languages, window, workspace, typ
 import { errorInMessage, explainError } from "./errorexplain";
 import { LANGUAGE_COMMANDS, languageOff, languageOn } from "./languagefeatures";
 import type { Live } from "./live";
+import { plainMessage } from "./history";
 
 const on = (): boolean => languageOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "errorExplain");
 
@@ -44,7 +45,7 @@ export function registerErrorExplainer(context: ExtensionContext, live: Pick<Liv
   context.subscriptions.push(
     commands.registerCommand(LANGUAGE_COMMANDS.explainError, async (given?: unknown) => {
       if (!on()) {
-        void window.showInformationMessage(languageOff("errorExplain"));
+        void window.showInformationMessage(plainMessage(languageOff("errorExplain")));
         return undefined;
       }
       let error: string | undefined;

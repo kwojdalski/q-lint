@@ -29,6 +29,7 @@ import { SEARCH, SEARCH_LIMIT, groupHits, patternProblem, readFound, type Found 
 import { PROCESS_TOOL_COMMANDS, toolOff, toolOn } from "./processtools";
 import { AT_ONCE, allTags, tagged } from "./tagquery";
 import { ToolTree, type ToolNode } from "./toolstree";
+import { plainMessage } from "./history";
 
 export const FIND_VIEW = "q-lint.findInProcesses";
 export const FOUND_SCHEME = "q-lint-found";
@@ -37,7 +38,7 @@ const on = (): boolean => toolOn((key, fallback) => workspace.getConfiguration("
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 function say(text: string): string {
-  void window.showInformationMessage(text);
+  void window.showInformationMessage(plainMessage(text));
   return text;
 }
 

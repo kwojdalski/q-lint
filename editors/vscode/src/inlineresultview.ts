@@ -8,6 +8,7 @@ import { Range, ThemeColor, commands, window, workspace, type Disposable, type E
 import { shiftLines, shortForm, type Answered } from "./inlineresult";
 import type { Live } from "./live";
 import { PROCESS_TOOL_COMMANDS, toolOff, toolOn } from "./processtools";
+import { plainMessage } from "./history";
 
 const on = (): boolean => toolOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "inlineResults");
 
@@ -91,7 +92,7 @@ export function registerInlineResults(
   const clear = (): string | undefined => {
     if (!on()) {
       const off = toolOff("inlineResults");
-      void window.showInformationMessage(off);
+      void window.showInformationMessage(plainMessage(off));
       return off;
     }
     const uris = [...results.keys()];

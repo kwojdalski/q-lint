@@ -38,11 +38,12 @@ import { DB_COMMANDS, dbOff, dbOn } from "./dbfeatures";
 import { toGrid, type GridAnswer } from "./grid";
 import type { Live } from "./live";
 import { parseSaved, SAVED_QUERIES_KEY, type SavedQuery } from "./savedqueries";
+import { plainMessage } from "./history";
 
 const on = (): boolean => dbOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "dashboards");
 
 function say(message: string): string {
-  void window.showInformationMessage(message);
+  void window.showInformationMessage(plainMessage(message));
   return message;
 }
 

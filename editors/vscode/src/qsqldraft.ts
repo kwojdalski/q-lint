@@ -26,6 +26,7 @@ import { assistOff, readAssist } from "./assistconfig";
 import { GATHER, LIMITS, readExplorer, readGathered } from "./explorer";
 import { borrowWhenFree } from "./infoview";
 import type { Live } from "./live";
+import { plainMessage } from "./history";
 
 const RUN = "Run";
 const INSERT = "Insert at Cursor";
@@ -70,7 +71,7 @@ async function ask(model: LanguageModelChat, prompt: string, token: Cancellation
 export async function draftQsql(live: Live, given?: string): Promise<Drafted | undefined> {
   const configuration = workspace.getConfiguration("q-lint");
   if (!readAssist((key, fallback) => configuration.get(key, fallback)).qsql) {
-    void window.showInformationMessage(assistOff("qsql"));
+    void window.showInformationMessage(plainMessage(assistOff("qsql")));
     return undefined;
   }
   const from: TextEditor | undefined = window.activeTextEditor?.document.languageId === "q" ? window.activeTextEditor : undefined;
@@ -102,7 +103,7 @@ export async function draftQsql(live: Live, given?: string): Promise<Drafted | u
       },
     );
   } catch (error) {
-    void window.showErrorMessage(`q-lint: the language model could not draft a query: ${message(error)}`);
+    void window.showErrorMessage(plainMessage(`q-lint: the language model could not draft a query: ${message(error)}`));
     return undefined;
   }
   if (code === "") {

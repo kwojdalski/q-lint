@@ -9,6 +9,7 @@ import { Uri, window, workspace } from "vscode";
 import { layoutEnv, readInterpreter, type Files } from "./interpreter";
 import { namesText, readDotenv, readEnvSettings } from "./qenv";
 import { expandHome } from "./terminal";
+import { plainMessage } from "./history";
 
 /// The machine's file system, as discovery reads it.
 export const nodeFiles: Files = {
@@ -64,15 +65,15 @@ export async function dotenvFor(from?: Uri): Promise<Record<string, string>> {
   } catch (error) {
     const code = (error as { code?: unknown }).code;
     if (code !== "FileNotFound" && code !== "ENOENT" && existsSync(full)) {
-      void window.showWarningMessage(`q-lint: could not read the .env file ${full}; none of it was used.`);
+      void window.showWarningMessage(plainMessage(`q-lint: could not read the .env file ${full}; none of it was used.`));
     }
     return {};
   }
   const { env, badLines } = readDotenv(text);
   if (badLines.length > 0) {
     void window.showWarningMessage(
-      `q-lint: skipped line${badLines.length === 1 ? "" : "s"} ${badLines.slice(0, 10).join(", ")} of ${full}: not NAME=value. ` +
-        `Used ${namesText(Object.keys(env))}.`,
+      plainMessage(`q-lint: skipped line${badLines.length === 1 ? "" : "s"} ${badLines.slice(0, 10).join(", ")} of ${full}: not NAME=value. ` +
+        `Used ${namesText(Object.keys(env))}.`),
     );
   }
   return env;

@@ -61,7 +61,7 @@ import { QConnection, QError, type Target } from "./qclient";
 import { SshTunnel, TUNNEL_COMMANDS, readTunnel } from "./tunnel";
 import { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, readGateway } from "./gateway";
 import { HEARTBEAT, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
-import { historyHeading, historyLabel, iconsEscaped } from "./history";
+import { historyHeading, historyLabel, iconsEscaped, plainMessage } from "./history";
 import { render } from "./query";
 import { QueryModes, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
@@ -156,11 +156,11 @@ function noEditor(): void {
 
 function nothingThere(from: From): void {
   void window.showInformationMessage(
-    from === "block"
+    plainMessage(from === "block"
       ? "q-lint: the cursor is on no statement (a blank line, a comment, or inside a block comment)."
       : from === "file"
         ? "q-lint: the file has no statement to run."
-        : "q-lint: nothing to run there: it is blank or a comment.",
+        : "q-lint: nothing to run there: it is blank or a comment."),
   );
 }
 
@@ -411,7 +411,7 @@ export class QTerminals {
     if (settings.envPath !== "") {
       if (!path.isAbsolute(settings.envPath) && folder === undefined) {
         void window.showErrorMessage(
-          `q-lint: q-lint.terminal.envPath "${settings.envPath}" is relative, and there is no workspace folder to read it from.`,
+          plainMessage(`q-lint: q-lint.terminal.envPath "${settings.envPath}" is relative, and there is no workspace folder to read it from.`),
         );
         return undefined;
       }
@@ -421,7 +421,7 @@ export class QTerminals {
         text = Buffer.from(await workspace.fs.readFile(Uri.file(envFile))).toString("utf8");
       } catch (error) {
         void window.showErrorMessage(
-          `q-lint: could not read the env file ${envFile}: ${error instanceof Error ? error.message : String(error)}`,
+          plainMessage(`q-lint: could not read the env file ${envFile}: ${error instanceof Error ? error.message : String(error)}`),
         );
         return undefined;
       }
@@ -429,7 +429,7 @@ export class QTerminals {
       variables = parsed.env;
       if (parsed.problems.length > 0) {
         void window.showWarningMessage(
-          `q-lint: skipped ${parsed.problems.length} line(s) of ${envFile}: ${parsed.problems.slice(0, 3).join("; ")}`,
+          plainMessage(`q-lint: skipped ${parsed.problems.length} line(s) of ${envFile}: ${parsed.problems.slice(0, 3).join("; ")}`),
         );
       }
     }
@@ -719,7 +719,7 @@ export class Live {
     }
     const folder = workspace.workspaceFolders?.[0];
     if (folder === undefined) {
-      void window.showInformationMessage(`q-lint: open a folder first: the shared process list is its ${SHARED_FILE}.`);
+      void window.showInformationMessage(plainMessage(`q-lint: open a folder first: the shared process list is its ${SHARED_FILE}.`));
       return;
     }
     const process = await this.chosen(row, "Share which q process with the repository?");
@@ -736,12 +736,12 @@ export class Live {
     try {
       await workspace.fs.writeFile(file, Buffer.from(withShared(text, process), "utf8"));
     } catch (error) {
-      void window.showErrorMessage(`q-lint: could not write ${file.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+      void window.showErrorMessage(plainMessage(`q-lint: could not write ${file.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
       return;
     }
     await this.loadShared();
     void window.showInformationMessage(
-      `q-lint: ${process.label} is in ${SHARED_FILE}, without its password${process.user !== undefined ? `: each user is asked for ${process.user}'s on connect` : ""}.`,
+      plainMessage(`q-lint: ${process.label} is in ${SHARED_FILE}, without its password${process.user !== undefined ? `: each user is asked for ${process.user}'s on connect` : ""}.`),
     );
   }
 
@@ -783,7 +783,7 @@ export class Live {
         }
         this.shared = { server, state: { processes: read.processes, problems: read.problems, loading: false, removed: false, fetchedAt: Date.now() } };
         if (read.secrets.length > 0) {
-          void window.showWarningMessage(secretsWarning(read.secrets));
+          void window.showWarningMessage(plainMessage(secretsWarning(read.secrets)));
         }
       } catch (error) {
         this.shared = { server, state: { processes: [], problems: [], loading: false, removed: false, error: `not JSON: ${error instanceof Error ? error.message : String(error)}` } };
@@ -944,7 +944,7 @@ export class Live {
   /// turn it on, for a command invoked anyway.
   private featureOn(enabled: boolean, feature: string, key: string): boolean {
     if (!enabled) {
-      void window.showInformationMessage(`q-lint: ${feature} is turned off. Set ${key} to true to turn it on.`);
+      void window.showInformationMessage(plainMessage(`q-lint: ${feature} is turned off. Set ${key} to true to turn it on.`));
     }
     return enabled;
   }
@@ -959,7 +959,7 @@ export class Live {
     }
     const { message, detail } = guardQuestion(check);
     const yes = "Run Anyway";
-    return (await window.showWarningMessage(what === undefined ? message : `${what}: ${message}`, { modal: true, detail }, yes)) === yes;
+    return (await window.showWarningMessage(plainMessage(what === undefined ? message : `${what}: ${message}`), { modal: true, detail }, yes)) === yes;
   }
 
   /// Why `code` is refused on `targets` to a caller that cannot ask the
@@ -1109,7 +1109,7 @@ export class Live {
     // Read again: the list may have changed while the boxes were open.
     const now = this.processes();
     if (now.some((p) => p.label === answer.process.label)) {
-      void window.showErrorMessage(`q-lint: the label "${answer.process.label}" was taken meanwhile; the process was not added.`);
+      void window.showErrorMessage(plainMessage(`q-lint: the label "${answer.process.label}" was taken meanwhile; the process was not added.`));
       return;
     }
     if (answer.password !== undefined) {
@@ -1126,7 +1126,7 @@ export class Live {
     if (typeof row === "string") {
       const named = this.processes().find((p) => p.label === row) ?? findDiscovered(listed, row);
       if (named === undefined) {
-        void window.showErrorMessage(`q-lint: no q process is labelled "${row}".`);
+        void window.showErrorMessage(plainMessage(`q-lint: no q process is labelled "${row}".`));
       }
       return named;
     }
@@ -1197,7 +1197,7 @@ export class Live {
         ? `the label "${process.label}" was taken meanwhile`
         : undefined;
     if (problem !== undefined) {
-      void window.showErrorMessage(`q-lint: ${problem}; the process was not changed.`);
+      void window.showErrorMessage(plainMessage(`q-lint: ${problem}; the process was not changed.`));
       return;
     }
     // A password left empty is kept, but not for another user, host or port:
@@ -1243,7 +1243,7 @@ export class Live {
       const moved = process.host !== host || process.port !== port || process.user !== user || (process.tls === true) !== (tls === true);
       if (moved && this.activeLabel() !== undefined) {
         void window.showInformationMessage(
-          `q-lint: still connected to ${process.label} at ${address(host, port)}. Connect to it again to use ${address(process.host, process.port)}.`,
+          plainMessage(`q-lint: still connected to ${process.label} at ${address(host, port)}. Connect to it again to use ${address(process.host, process.port)}.`),
         );
       }
     }
@@ -1255,7 +1255,7 @@ export class Live {
       return;
     }
     const yes = "Delete";
-    const sure = await window.showWarningMessage(`Delete the q process "${process.label}" from the list?`, { modal: true }, yes);
+    const sure = await window.showWarningMessage(plainMessage(`Delete the q process "${process.label}" from the list?`), { modal: true }, yes);
     if (sure !== yes) {
       return;
     }
@@ -1323,7 +1323,7 @@ export class Live {
     try {
       read = readProcessFile(Buffer.from(await workspace.fs.readFile(files[0])).toString("utf8"));
     } catch (error) {
-      void window.showErrorMessage(`q-lint: could not read ${files[0].fsPath}: ${String(error)}`);
+      void window.showErrorMessage(plainMessage(`q-lint: could not read ${files[0].fsPath}: ${String(error)}`));
       return;
     }
     const { problems } = read;
@@ -1340,9 +1340,9 @@ export class Live {
       const drop = scriptsOnly ? "Import without Scripts" : "Import without Them";
       const listed = `${brought.slice(0, 5).map(({ label, what }) => (scriptsOnly ? label : `${label} (${what.join(", ")})`)).join(", ")}${brought.length > 5 ? ", ..." : ""}`;
       const answer = await window.showWarningMessage(
-        scriptsOnly
+        plainMessage(scriptsOnly
           ? `${files[0].fsPath} gives ${brought.length} process(es) a connect script, q code run on the process at every connect: ${listed}. Keep the scripts?`
-          : `${files[0].fsPath} gives ${brought.length} process(es) what runs at every connect - a connect script runs q code on the process, a credential command or launch definition a command on this machine, and an SSH tunnel decides where the password goes: ${listed}. Keep them?`,
+          : `${files[0].fsPath} gives ${brought.length} process(es) what runs at every connect - a connect script runs q code on the process, a credential command or launch definition a command on this machine, and an SSH tunnel decides where the password goes: ${listed}. Keep them?`),
         { modal: true },
         keep,
         drop,
@@ -1362,7 +1362,7 @@ export class Live {
     await this.save(merge(before, processes));
     this.retagActive();
     const note = problems.length ? ` Skipped ${problems.length}: ${problems.slice(0, 3).join(" ")}` : "";
-    void window.showInformationMessage(`q-lint: imported ${processes.length} q process(es).${note}`);
+    void window.showInformationMessage(plainMessage(`q-lint: imported ${processes.length} q process(es).${note}`));
   }
 
   private async exportList(): Promise<void> {
@@ -1381,10 +1381,10 @@ export class Live {
     try {
       await workspace.fs.writeFile(file, Buffer.from(text, "utf8"));
     } catch (error) {
-      void window.showErrorMessage(`q-lint: could not write ${file.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+      void window.showErrorMessage(plainMessage(`q-lint: could not write ${file.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
       return;
     }
-    void window.showInformationMessage(`q-lint: exported ${processes.length} q process(es) to ${file.fsPath}.`);
+    void window.showInformationMessage(plainMessage(`q-lint: exported ${processes.length} q process(es) to ${file.fsPath}.`));
   }
 
   private insertLabel(): void {
@@ -1465,7 +1465,7 @@ export class Live {
     if (chosen !== undefined && isProduction(process)) {
       const yes = "Set Script";
       const sure = await window.showWarningMessage(
-        `${process.label} is a production process (tagged ${process.tags.join(", ")}). Its connect script runs there at every connect, as written, and can change or delete data. Set it?`,
+        plainMessage(`${process.label} is a production process (tagged ${process.tags.join(", ")}). Its connect script runs there at every connect, as written, and can change or delete data. Set it?`),
         { modal: true },
         yes,
       );
@@ -1475,7 +1475,7 @@ export class Live {
     }
     const now = this.processes();
     if (!now.some((p) => p.label === process.label)) {
-      void window.showErrorMessage(`q-lint: "${process.label}" was deleted meanwhile; its connect script was not set.`);
+      void window.showErrorMessage(plainMessage(`q-lint: "${process.label}" was deleted meanwhile; its connect script was not set.`));
       return;
     }
     await this.save(now.map((p) => (p.label === process.label ? withScript(p, chosen) : p)));
@@ -1483,9 +1483,9 @@ export class Live {
       this.active = withScript(this.active, chosen);
     }
     void window.showInformationMessage(
-      chosen === undefined
+      plainMessage(chosen === undefined
         ? `q-lint: ${process.label} runs nothing on connect.`
-        : `q-lint: ${process.label} runs its connect script (${scriptSummary(chosen)}) from the next connect.`,
+        : `q-lint: ${process.label} runs its connect script (${scriptSummary(chosen)}) from the next connect.`),
     );
   }
 
@@ -1498,7 +1498,7 @@ export class Live {
     }
     const failed = (why: string): void => {
       this.show([`# ${process.label} - connect script failed: ${why}`], false);
-      void window.showWarningMessage(`q-lint: the connect script of ${process.label} failed: ${why}`);
+      void window.showWarningMessage(plainMessage(`q-lint: the connect script of ${process.label} failed: ${why}`));
     };
     let code: string;
     if (script.kind === "code") {
@@ -1658,7 +1658,7 @@ export class Live {
             this.showStatus();
             this.processesView.refresh();
             this.changed.fire("disconnected");
-            void window.showWarningMessage(`q-lint: the connection to ${process.label} closed.${again ? " Reconnecting." : ""}`);
+            void window.showWarningMessage(plainMessage(`q-lint: the connection to ${process.label} closed.${again ? " Reconnecting." : ""}`));
             if (again) {
               void this.autoReconnect(process);
             }
@@ -1671,7 +1671,7 @@ export class Live {
           return false;
         }
         void window.showErrorMessage(
-          `q-lint: could not connect to ${process.label} (${address(process.host, process.port)}): ${error instanceof Error ? error.message : String(error)}`,
+          plainMessage(`q-lint: could not connect to ${process.label} (${address(process.host, process.port)}): ${error instanceof Error ? error.message : String(error)}`),
         );
         return false;
       } finally {
@@ -1739,7 +1739,7 @@ export class Live {
     const disarm = armTimeout(timeout, () => {
       timedOut = true;
       connection.abort();
-      void window.showInformationMessage(timeoutDropped(process, timeout, enabled));
+      void window.showInformationMessage(plainMessage(timeoutDropped(process, timeout, enabled)));
     });
     try {
       return await use(connection);
@@ -1796,19 +1796,19 @@ export class Live {
     }
     const ssh = given.trim() === "" ? undefined : sshDestination(given);
     if (given.trim() !== "" && ssh === undefined) {
-      void window.showErrorMessage(`q-lint: "${given}" is not an SSH destination; the tunnel was not set.`);
+      void window.showErrorMessage(plainMessage(`q-lint: "${given}" is not an SSH destination; the tunnel was not set.`));
       return;
     }
     const now = this.processes();
     if (!now.some((p) => p.label === process.label)) {
-      void window.showErrorMessage(`q-lint: "${process.label}" was deleted meanwhile; its tunnel was not set.`);
+      void window.showErrorMessage(plainMessage(`q-lint: "${process.label}" was deleted meanwhile; its tunnel was not set.`));
       return;
     }
     await this.save(now.map((p) => (p.label === process.label ? withExtras(p, { ...p, ssh }) : p)));
     void window.showInformationMessage(
-      ssh === undefined
+      plainMessage(ssh === undefined
         ? `q-lint: ${process.label} is connected to directly from the next connect.`
-        : `q-lint: ${process.label} is reached through an SSH tunnel via ${ssh} from the next connect.`,
+        : `q-lint: ${process.label} is reached through an SSH tunnel via ${ssh} from the next connect.`),
     );
   }
 
@@ -1833,13 +1833,13 @@ export class Live {
       if (connected) {
         this.reconnecting = undefined;
         this.showStatus();
-        void window.showInformationMessage(`q-lint: reconnected to ${process.label}.`);
+        void window.showInformationMessage(plainMessage(`q-lint: reconnected to ${process.label}.`));
         return;
       }
     }
     this.reconnecting = undefined;
     this.showStatus();
-    void window.showWarningMessage(`q-lint: could not reconnect to ${process.label} after ${reconnectAttempts} tries.`);
+    void window.showWarningMessage(plainMessage(`q-lint: could not reconnect to ${process.label} after ${reconnectAttempts} tries.`));
   }
 
   /// Stop an automatic reconnect, if one is under way.
@@ -1968,7 +1968,7 @@ export class Live {
     if (bound !== undefined && bound !== this.activeLabel()) {
       if (this.connection?.isBusy) {
         void window.showInformationMessage(
-          `q-lint: a query is still running on ${this.active?.label}; this file's queries go to ${bound}. q-lint: Abort Current Query stops waiting for it.`,
+          plainMessage(`q-lint: a query is still running on ${this.active?.label}; this file's queries go to ${bound}. q-lint: Abort Current Query stops waiting for it.`),
         );
         return;
       }
@@ -2021,7 +2021,7 @@ export class Live {
     const gateway = serverTypes(given);
     const now = this.processes();
     if (!now.some((p) => p.label === process.label)) {
-      void window.showErrorMessage(`q-lint: "${process.label}" was deleted meanwhile; it was not changed.`);
+      void window.showErrorMessage(plainMessage(`q-lint: "${process.label}" was deleted meanwhile; it was not changed.`));
       return;
     }
     await this.save(now.map((p) => (p.label === process.label ? withExtras(p, { ...p, gateway }) : p)));
@@ -2029,9 +2029,9 @@ export class Live {
       this.active = withExtras(this.active, { ...this.active, gateway });
     }
     void window.showInformationMessage(
-      gateway === undefined
+      plainMessage(gateway === undefined
         ? `q-lint: ${process.label} is no TorQ gateway; its queries go as written.`
-        : `q-lint: queries to ${process.label} go through .gw.syncexec to ${gateway.join(", ")}.`,
+        : `q-lint: queries to ${process.label} go through .gw.syncexec to ${gateway.join(", ")}.`),
     );
   }
 
@@ -2044,7 +2044,7 @@ export class Live {
     const process = this.activeProcess();
     if (process?.gateway === undefined) {
       void window.showInformationMessage(
-        `q-lint: ${process === undefined ? "not connected to a q process" : `${process.label} is not marked as a TorQ gateway`}. Set Gateway Server Types marks one.`,
+        plainMessage(`q-lint: ${process === undefined ? "not connected to a q process" : `${process.label} is not marked as a TorQ gateway`}. Set Gateway Server Types marks one.`),
       );
       return;
     }
@@ -2115,7 +2115,7 @@ export class Live {
       // Closed while the explorer's read was out: by Abort, which stopped
       // that read, or by the process.
       void window.showInformationMessage(
-        `q-lint: the connection to ${process?.label ?? "the process"} closed before the query was sent; it was not run.`,
+        plainMessage(`q-lint: the connection to ${process?.label ?? "the process"} closed before the query was sent; it was not run.`),
       );
       return undefined;
     }
@@ -2124,7 +2124,7 @@ export class Live {
     }
     if (connection.isBusy) {
       void window.showInformationMessage(
-        `q-lint: a query is still running on ${process.label}. q-lint: Abort Current Query stops waiting for it.`,
+        plainMessage(`q-lint: a query is still running on ${process.label}. q-lint: Abort Current Query stops waiting for it.`),
       );
       return undefined;
     }
@@ -2194,11 +2194,11 @@ export class Live {
   /// question asked since can have taken a while. Says why not.
   private stillReady(ready: { connection: QConnection; process: Process }): { connection: QConnection; process: Process } | undefined {
     if (ready.connection !== this.connection || !ready.connection.isOpen) {
-      void window.showInformationMessage(`q-lint: the connection to ${ready.process.label} closed while you were asked; nothing was run.`);
+      void window.showInformationMessage(plainMessage(`q-lint: the connection to ${ready.process.label} closed while you were asked; nothing was run.`));
       return undefined;
     }
     if (ready.connection.isBusy) {
-      void window.showInformationMessage(`q-lint: a query started on ${ready.process.label} while you were asked; nothing was run.`);
+      void window.showInformationMessage(plainMessage(`q-lint: a query started on ${ready.process.label} while you were asked; nothing was run.`));
       return undefined;
     }
     return ready;
@@ -2366,7 +2366,7 @@ export class Live {
     if (tags.length > 0 || isProduction(process)) {
       const yes = "Watch";
       const asked = await window.showWarningMessage(
-        `Watch the query on ${process.label}?`,
+        plainMessage(`Watch the query on ${process.label}?`),
         {
           modal: true,
           detail: `${process.label} is tagged ${process.tags.join(", ")}. The query runs there every ${seconds} s until you stop it.`,
@@ -2378,7 +2378,7 @@ export class Live {
       }
     }
     if (this.activeLabel() !== process.label) {
-      void window.showInformationMessage(`q-lint: the connection moved from ${process.label} while you were asked; nothing is watched.`);
+      void window.showInformationMessage(plainMessage(`q-lint: the connection moved from ${process.label} while you were asked; nothing is watched.`));
       return;
     }
     this.stopWatching();
@@ -2439,7 +2439,7 @@ export class Live {
     watched.status.dispose();
     void commands.executeCommand("setContext", WATCHING, false);
     if (why !== undefined) {
-      void window.showInformationMessage(`q-lint: stopped watching the query: ${why}.`);
+      void window.showInformationMessage(plainMessage(`q-lint: stopped watching the query: ${why}.`));
     }
   }
 
@@ -2583,7 +2583,7 @@ export class Live {
     if (process !== undefined && isProduction(process) && options.askProduction !== false) {
       const yes = "Run";
       const sure = await window.showWarningMessage(
-        `${process.label} is a production process (tagged ${process.tags.join(", ")}). Run this ${options.what ?? "drill-down query"} there?\n\n${code}`,
+        plainMessage(`${process.label} is a production process (tagged ${process.tags.join(", ")}). Run this ${options.what ?? "drill-down query"} there?\n\n${code}`),
         { modal: true },
         yes,
       );
@@ -2593,7 +2593,7 @@ export class Live {
     }
     if (this.activeLabel() !== label) {
       if (this.connection?.isBusy) {
-        void window.showInformationMessage(`q-lint: a query is still running on ${this.active?.label}; the ${options.what ?? "drill-down query"} goes to ${label}.`);
+        void window.showInformationMessage(plainMessage(`q-lint: a query is still running on ${this.active?.label}; the ${options.what ?? "drill-down query"} goes to ${label}.`));
         return;
       }
       if (!(await this.connectTo(label))) {
@@ -2613,9 +2613,9 @@ export class Live {
     }
     const text = finishedText(entry.process, entry.millis, entry.outcome, entry.error);
     if (entry.outcome === "ok") {
-      void window.showInformationMessage(text);
+      void window.showInformationMessage(plainMessage(text));
     } else {
-      void window.showWarningMessage(text);
+      void window.showWarningMessage(plainMessage(text));
     }
   }
 
@@ -2650,13 +2650,13 @@ export class Live {
     // with, and the command should not wait with it.
     void this.open(process, true).then((connected) => {
       if (connected) {
-        void window.showInformationMessage(`q-lint: reconnected to ${process.label}.`);
+        void window.showInformationMessage(plainMessage(`q-lint: reconnected to ${process.label}.`));
       }
     });
     void window.showInformationMessage(
-      this.aborted === undefined && timedOut === undefined
+      plainMessage(this.aborted === undefined && timedOut === undefined
         ? `q-lint: stopped the Process Explorer's read of ${process.label}, the only call running. q-lint reconnects once ${process.label} is free.`
-        : `q-lint: ${timedOut === undefined ? "stopped waiting for the query" : `the query ${timedOutError(timedOut)} (${source}), and was aborted`}. ${process.label} may still be running it; q-lint reconnects once it is free.`,
+        : `q-lint: ${timedOut === undefined ? "stopped waiting for the query" : `the query ${timedOutError(timedOut)} (${source}), and was aborted`}. ${process.label} may still be running it; q-lint reconnects once it is free.`),
     );
   }
 
@@ -2697,7 +2697,7 @@ export class Live {
     }
     const row = this.processesView.find(process);
     if (row === undefined) {
-      void window.showInformationMessage(`q-lint: ${process.label} is not in the Processes view.`);
+      void window.showInformationMessage(plainMessage(`q-lint: ${process.label} is not in the Processes view.`));
       return;
     }
     await this.processesTree.reveal(row, { select: true, focus: true, expand: true });
@@ -2788,7 +2788,7 @@ export class Live {
     const entries = this.shownHistory();
     if (entries.length === 0) {
       void window.showInformationMessage(
-        isFiltering(this.historyFilter) ? "q-lint: no query in the history matches the filter." : "q-lint: the query history is empty.",
+        plainMessage(isFiltering(this.historyFilter) ? "q-lint: no query in the history matches the filter." : "q-lint: the query history is empty."),
       );
       return;
     }
@@ -2807,9 +2807,9 @@ export class Live {
     try {
       await workspace.fs.writeFile(target, Buffer.from(text, "utf8"));
     } catch (error) {
-      void window.showErrorMessage(`q-lint: could not write ${target.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+      void window.showErrorMessage(plainMessage(`q-lint: could not write ${target.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
       return;
     }
-    void window.showInformationMessage(`q-lint: exported ${entries.length} quer${entries.length === 1 ? "y" : "ies"} to ${target.fsPath}.`);
+    void window.showInformationMessage(plainMessage(`q-lint: exported ${entries.length} quer${entries.length === 1 ? "y" : "ies"} to ${target.fsPath}.`));
   }
 }

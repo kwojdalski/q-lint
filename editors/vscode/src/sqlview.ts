@@ -31,6 +31,7 @@ import { LANGUAGE_COMMANDS, languageOff, languageOn } from "./languagefeatures";
 import type { Live } from "./live";
 import { CONTROL_COMMANDS } from "./querycontrols";
 import { HAS_SQL, LOAD_SQL, SQL_SCHEMA, readSchema, sqlCompletions, sqlQuery, sqlWrites } from "./sql";
+import { plainMessage } from "./history";
 
 export function registerSql(
   context: ExtensionContext,
@@ -83,7 +84,7 @@ export function registerSql(
   context.subscriptions.push(
     commands.registerCommand(LANGUAGE_COMMANDS.newSql, async (row?: unknown) => {
       if (!on()) {
-        void window.showInformationMessage(languageOff("sql"));
+        void window.showInformationMessage(plainMessage(languageOff("sql")));
         return undefined;
       }
       const process = await live.pick(row as never, "New SQL query for which q process?");
@@ -99,7 +100,7 @@ export function registerSql(
     }),
     commands.registerCommand(LANGUAGE_COMMANDS.runSql, async () => {
       if (!on()) {
-        void window.showInformationMessage(languageOff("sql"));
+        void window.showInformationMessage(plainMessage(languageOff("sql")));
         return undefined;
       }
       const editor = window.activeTextEditor;
@@ -120,7 +121,7 @@ export function registerSql(
       if (label === undefined && writes.length > 0) {
         // The guard reads q, not the SQL inside `.s.e "..."`: it can only be
         // asked before the query, about a process known now.
-        void window.showInformationMessage(`q-lint: connect to a process, or bind this editor to one, before running SQL that changes data (${writes.join(", ")}), so the read-only guard can check it.`);
+        void window.showInformationMessage(plainMessage(`q-lint: connect to a process, or bind this editor to one, before running SQL that changes data (${writes.join(", ")}), so the read-only guard can check it.`));
         return undefined;
       }
       // A saved process, the connected one as connected to, or a discovered
@@ -131,7 +132,7 @@ export function registerSql(
           (label === live.activeLabel() ? live.activeProcess() : undefined) ??
           findDiscovered([...live.discovery.discovered(), ...live.sharedList()], label);
       if (label !== undefined && process === undefined && writes.length > 0) {
-        void window.showInformationMessage(`q-lint: no q process is labelled "${label}", so the read-only guard cannot check this SQL that changes data (${writes.join(", ")}); nothing was run.`);
+        void window.showInformationMessage(plainMessage(`q-lint: no q process is labelled "${label}", so the read-only guard cannot check this SQL that changes data (${writes.join(", ")}); nothing was run.`));
         return undefined;
       }
       if (process !== undefined && writes.length > 0) {
@@ -150,7 +151,7 @@ export function registerSql(
           try {
             await live.runOnActive(LOAD_SQL, (connection) => connection.call(LOAD_SQL));
           } catch (error) {
-            void window.showWarningMessage(`q-lint: could not load KDB-X's SQL engine (s.k_): ${error instanceof Error ? error.message : String(error)}`);
+            void window.showWarningMessage(plainMessage(`q-lint: could not load KDB-X's SQL engine (s.k_): ${error instanceof Error ? error.message : String(error)}`));
             return undefined;
           }
         }

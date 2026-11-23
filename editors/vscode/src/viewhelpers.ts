@@ -10,6 +10,7 @@ import type { Live } from "./live";
 import { readLive } from "./liveconfig";
 import { readViewMessage, viewDefinition, type ViewKind } from "./qview";
 import { statements } from "./statements";
+import { plainMessage } from "./history";
 
 const settings = () => readInteractive((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback));
 const VIEW_OFF = turnedOff(".qlint.view and .qlint.plot", "q-lint.view.enable");
@@ -37,12 +38,12 @@ export function registerViewHelpers(
         const { kind, answer } = read;
         const name = `.qlint.${kind}`;
         if (!answer.ok) {
-          void window.showWarningMessage(`q-lint: ${name} on ${process.label} failed: '${answer.error}`);
+          void window.showWarningMessage(plainMessage(`q-lint: ${name} on ${process.label} failed: '${answer.error}`));
         } else if (answer.gridError !== undefined) {
-          void window.showWarningMessage(`q-lint: ${name} on ${process.label} could not shape the value: '${answer.gridError}`);
+          void window.showWarningMessage(plainMessage(`q-lint: ${name} on ${process.label} could not shape the value: '${answer.gridError}`));
         } else if (answer.grid === undefined) {
           void window.showInformationMessage(
-            `q-lint: ${name} on ${process.label} was given an atom, a string or a function, which has no rows to show: ${answer.text.join(" ").slice(0, 200)}`,
+            plainMessage(`q-lint: ${name} on ${process.label} was given an atom, a string or a function, which has no rows to show: ${answer.text.join(" ").slice(0, 200)}`),
           );
         } else {
           shown.push({ kind, process: process.label, rows: answer.grid.count });
@@ -74,16 +75,16 @@ export function registerViewHelpers(
         return false;
       }
       if (!ran.value.ok) {
-        void window.showErrorMessage(`q-lint: could not define .qlint.view and .qlint.plot on ${ran.process}: '${ran.value.error}`);
+        void window.showErrorMessage(plainMessage(`q-lint: could not define .qlint.view and .qlint.plot on ${ran.process}: '${ran.value.error}`));
         return false;
       }
       if (!quiet) {
-        void window.showInformationMessage(`q-lint: .qlint.view and .qlint.plot are defined on ${ran.process}: \`.qlint.view t\` opens t in the grid, \`.qlint.plot t\` as a chart.`);
+        void window.showInformationMessage(plainMessage(`q-lint: .qlint.view and .qlint.plot are defined on ${ran.process}: \`.qlint.view t\` opens t in the grid, \`.qlint.plot t\` as a chart.`));
       }
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      void window.showInformationMessage(`q-lint: .qlint.view and .qlint.plot were not defined: ${message}`);
+      void window.showInformationMessage(plainMessage(`q-lint: .qlint.view and .qlint.plot were not defined: ${message}`));
       return false;
     }
   };

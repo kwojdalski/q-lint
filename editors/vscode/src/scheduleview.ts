@@ -27,6 +27,7 @@ import {
   type ScheduleFormat,
   type ScheduledExport,
 } from "./schedule";
+import { plainMessage } from "./history";
 
 /// How often the timer looks for a schedule that is due.
 const TICK_MS = 30_000;
@@ -103,7 +104,7 @@ export class ScheduledExports {
       last = `wrote ${file} at ${now.toLocaleString()}`;
     } catch (error) {
       last = `failed at ${now.toLocaleString()}: ${error instanceof Error ? error.message : String(error)}`;
-      void window.showWarningMessage(`q-lint: the scheduled export ${scheduleText(s)} ${last}`);
+      void window.showWarningMessage(plainMessage(`q-lint: the scheduled export ${scheduleText(s)} ${last}`));
     } finally {
       this.running.delete(s.id);
     }
@@ -146,7 +147,7 @@ export class ScheduledExports {
   /// Make a schedule, asking for each part; the schedule made.
   async add(): Promise<ScheduledExport | undefined> {
     if (!on()) {
-      void window.showInformationMessage(adminOff("scheduledExports"));
+      void window.showInformationMessage(plainMessage(adminOff("scheduledExports")));
       return undefined;
     }
     const queries = parseSaved(this.context.workspaceState.get<unknown>(SAVED_QUERIES_KEY, []));
@@ -162,7 +163,7 @@ export class ScheduledExports {
       return undefined;
     }
     if (query.problem !== undefined) {
-      void window.showInformationMessage(`q-lint: ${query.label} cannot be scheduled: ${query.problem}. Only read-only queries are run on a schedule.`);
+      void window.showInformationMessage(plainMessage(`q-lint: ${query.label} cannot be scheduled: ${query.problem}. Only read-only queries are run on a schedule.`));
       return undefined;
     }
     const process = await window.showQuickPick(
@@ -224,14 +225,14 @@ export class ScheduledExports {
       since: Date.now(),
     };
     await this.save([...this.list(), schedule]);
-    void window.showInformationMessage(`q-lint: scheduled ${scheduleText(schedule)}, to ${target.fsPath}. It runs while VS Code is open.`);
+    void window.showInformationMessage(plainMessage(`q-lint: scheduled ${scheduleText(schedule)}, to ${target.fsPath}. It runs while VS Code is open.`));
     return schedule;
   }
 
   /// List the schedules; run one now, or remove it.
   async manage(): Promise<void> {
     if (!on()) {
-      void window.showInformationMessage(adminOff("scheduledExports"));
+      void window.showInformationMessage(plainMessage(adminOff("scheduledExports")));
       return;
     }
     const list = this.list();
@@ -253,16 +254,16 @@ export class ScheduledExports {
     }
     if (action === "Remove") {
       await this.save(this.list().filter((x) => x.id !== s.id));
-      void window.showInformationMessage(`q-lint: removed the scheduled export ${scheduleText(s)}.`);
+      void window.showInformationMessage(plainMessage(`q-lint: removed the scheduled export ${scheduleText(s)}.`));
       return;
     }
     if (this.running.has(s.id)) {
-      void window.showInformationMessage(`q-lint: ${scheduleText(s)} is running; it was not started again.`);
+      void window.showInformationMessage(plainMessage(`q-lint: ${scheduleText(s)} is running; it was not started again.`));
       return;
     }
     const last = await this.runOne(s, new Date());
     if (last.startsWith("wrote")) {
-      void window.showInformationMessage(`q-lint: ${scheduleText(s)}: ${last}.`);
+      void window.showInformationMessage(plainMessage(`q-lint: ${scheduleText(s)}: ${last}.`));
     }
   }
 }

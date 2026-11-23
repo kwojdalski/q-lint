@@ -13,6 +13,7 @@ import type { Live } from "./live";
 import { PROCESS_TOOL_COMMANDS, bytesText, toolOff, toolOn } from "./processtools";
 import { FILE_LIMIT, LIST_DIRECTORY, LIST_LIMIT, READ_FILE, WORKING_DIRECTORY, fileDocument, joinPath, readFileHead, readListing } from "./remotefiles";
 import { ToolTree, type ToolNode } from "./toolstree";
+import { plainMessage } from "./history";
 
 export const FILES_VIEW = "q-lint.processFiles";
 export const REMOTE_SCHEME = "q-lint-remote";
@@ -21,7 +22,7 @@ const on = (): boolean => toolOn((key, fallback) => workspace.getConfiguration("
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 function say(text: string): string {
-  void window.showInformationMessage(text);
+  void window.showInformationMessage(plainMessage(text));
   return text;
 }
 

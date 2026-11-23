@@ -16,12 +16,13 @@ import { TABLES, TABLE_SHAPE, readShape, suggestJoins, type Shape, type Suggesti
 import type { Live } from "./live";
 import { PROCESS_TOOL_COMMANDS, asCode, isString, listOf, toolOff, toolOn } from "./processtools";
 import { statements } from "./statements";
+import { plainMessage } from "./history";
 
 const on = (): boolean => toolOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "joinAssistant");
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 function say(text: string): string {
-  void window.showInformationMessage(text);
+  void window.showInformationMessage(plainMessage(text));
   return text;
 }
 

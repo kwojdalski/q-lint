@@ -15,6 +15,7 @@ import { elapsedText } from "./progress";
 import type { Live } from "./live";
 import { readLive } from "./liveconfig";
 import { statements } from "./statements";
+import { plainMessage } from "./history";
 
 const on = (): boolean => readAdmin((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback)).asyncQuery;
 
@@ -64,7 +65,7 @@ export class AsyncQueries {
         this.live.onAsyncMessage((message) => void this.arrive(message)),
         this.live.onDidChange((what) => {
           if (what === "disconnected" && this.pending.size > 0) {
-            void window.showWarningMessage(`q-lint: the connection closed; ${this.pending.size} asynchronous result(s) will not arrive.`);
+            void window.showWarningMessage(plainMessage(`q-lint: the connection closed; ${this.pending.size} asynchronous result(s) will not arrive.`));
             this.pending.clear();
             this.showCount();
           }
@@ -88,7 +89,7 @@ export class AsyncQueries {
   /// connection. The id it was sent under, or undefined when nothing was.
   async run(given?: string): Promise<number | undefined> {
     if (!on()) {
-      void window.showInformationMessage(adminOff("asyncQuery"));
+      void window.showInformationMessage(plainMessage(adminOff("asyncQuery")));
       return undefined;
     }
     const code = typeof given === "string" ? given : await this.live.codeFromEditor();
@@ -110,7 +111,7 @@ export class AsyncQueries {
         return id;
       });
     } catch (error) {
-      void window.showErrorMessage(`q-lint: ${error instanceof Error ? error.message : String(error)}`);
+      void window.showErrorMessage(plainMessage(`q-lint: ${error instanceof Error ? error.message : String(error)}`));
       return undefined;
     }
     if (sent === undefined) {
@@ -118,7 +119,7 @@ export class AsyncQueries {
     }
     this.pending.set(id, { id, process: sent.process, code, started: Date.now() });
     this.showCount();
-    void window.showInformationMessage(`q-lint: sent to ${sent.process} asynchronously; the result opens when it is ready.`);
+    void window.showInformationMessage(plainMessage(`q-lint: sent to ${sent.process} asynchronously; the result opens when it is ready.`));
     return id;
   }
 
@@ -138,7 +139,7 @@ export class AsyncQueries {
       this.arrived.push({ process: p.process, code: p.code, ok: true, rows: grid.count });
     } else {
       this.arrived.push({ process: p.process, code: p.code, ok: false });
-      void window.showWarningMessage(`q-lint: the asynchronous query on ${p.process} failed: '${answer.error}`);
+      void window.showWarningMessage(plainMessage(`q-lint: the asynchronous query on ${p.process} failed: '${answer.error}`));
     }
     await this.live.record({
       process: p.process,
@@ -166,7 +167,7 @@ export class AsyncQueries {
   /// List the queries still to answer; the one picked can be forgotten.
   async showPending(): Promise<void> {
     if (!on()) {
-      void window.showInformationMessage(adminOff("asyncQuery"));
+      void window.showInformationMessage(plainMessage(adminOff("asyncQuery")));
       return;
     }
     if (this.pending.size === 0) {
@@ -185,7 +186,7 @@ export class AsyncQueries {
       return;
     }
     const forget = "Forget Result";
-    if ((await window.showInformationMessage(`Forget the result of "${picked.label}"? q runs it to the end anyway: q cannot cancel a running query.`, { modal: true }, forget)) === forget) {
+    if ((await window.showInformationMessage(plainMessage(`Forget the result of "${picked.label}"? q runs it to the end anyway: q cannot cancel a running query.`), { modal: true }, forget)) === forget) {
       this.pending.delete(picked.id);
       this.showCount();
     }

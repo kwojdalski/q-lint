@@ -16,6 +16,7 @@ import { EventEmitter, Uri, commands, window, workspace, type Disposable, type E
 import { featureOn, qnbOf, requireFeature } from "./notebook";
 import { NOTEBOOK } from "./qnb";
 import { diffCells, diffSummary, hasOutputs, notebookJson, notebookText, stripQnb, type CellLike } from "./qnbgit";
+import { plainMessage } from "./history";
 
 /// The scheme of the read-only documents a comparison shows.
 export const CELLS_SCHEME = "q-lint-qnb-cells";
@@ -144,7 +145,7 @@ export class NotebookDiff implements TextDocumentContentProvider {
     try {
       right = (await qnbOf(from)).cells;
     } catch (error) {
-      void window.showErrorMessage(`q-lint: could not read ${from.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+      void window.showErrorMessage(plainMessage(`q-lint: could not read ${from.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
       return;
     }
     try {
@@ -154,7 +155,7 @@ export class NotebookDiff implements TextDocumentContentProvider {
           return;
         }
         if (from.scheme !== "file") {
-          void window.showInformationMessage(`q-lint: ${name} is not a file in a git repository: save it first.`);
+          void window.showInformationMessage(plainMessage(`q-lint: ${name} is not a file in a git repository: save it first.`));
           return;
         }
         const committed = notebookJson(await gitShow(from.fsPath, against));
@@ -169,7 +170,7 @@ export class NotebookDiff implements TextDocumentContentProvider {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      void window.showErrorMessage(`q-lint: could not read the notebook to compare with: ${message}`);
+      void window.showErrorMessage(plainMessage(`q-lint: could not read the notebook to compare with: ${message}`));
       return;
     }
     const summary = diffSummary(diffCells(left, right));
@@ -182,7 +183,7 @@ export class NotebookDiff implements TextDocumentContentProvider {
       this.document(rightText, `${name}.cells`),
       `${leftName} ↔ ${name} (cells)`,
     );
-    void window.showInformationMessage(`q-lint: ${leftName} against ${name}: ${summary}. Outputs, run numbers and metadata are not compared.`);
+    void window.showInformationMessage(plainMessage(`q-lint: ${leftName} against ${name}: ${summary}. Outputs, run numbers and metadata are not compared.`));
   }
 }
 
@@ -252,7 +253,7 @@ export class NotebookStrip {
   /// user chose `button`. A method, so a run without dialogs - the e2e
   /// harness - can answer in their place.
   async ask(message: string, detail: string, button: string): Promise<boolean> {
-    return (await window.showWarningMessage(message, { modal: true, detail }, button)) === button;
+    return (await window.showWarningMessage(plainMessage(message), { modal: true, detail }, button)) === button;
   }
 
   /// Clear the outputs, run numbers and live values of the `.qnb` files
@@ -277,7 +278,7 @@ export class NotebookStrip {
       try {
         text = Buffer.from(await workspace.fs.readFile(file)).toString("utf8");
       } catch (error) {
-        void window.showErrorMessage(`q-lint: could not read ${file.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+        void window.showErrorMessage(plainMessage(`q-lint: could not read ${file.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
         return;
       }
       if (hasOutputs(text)) {
@@ -289,7 +290,7 @@ export class NotebookStrip {
     const names = (list: Uri[]): string => list.map((u) => path.basename(u.fsPath)).join(", ");
     const unsavedNote = unsaved.length > 0 ? ` ${names(unsaved)} ${unsaved.length === 1 ? "has" : "have"} unsaved edits: save first.` : "";
     if (todo.length === 0) {
-      void window.showInformationMessage(`q-lint: no outputs to clear.${unsavedNote}`);
+      void window.showInformationMessage(plainMessage(`q-lint: no outputs to clear.${unsavedNote}`));
       return;
     }
     const go = "Clear Outputs";
@@ -305,12 +306,12 @@ export class NotebookStrip {
       try {
         await workspace.fs.writeFile(file, Buffer.from(stripQnb(text), "utf8"));
       } catch (error) {
-        void window.showErrorMessage(`q-lint: could not write ${file.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+        void window.showErrorMessage(plainMessage(`q-lint: could not write ${file.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
         return;
       }
     }
     void window.showInformationMessage(
-      `q-lint: cleared the outputs of ${todo.length} ${todo.length === 1 ? "notebook" : "notebooks"}${clean > 0 ? `; ${clean} had none` : ""}.${unsavedNote}`,
+      plainMessage(`q-lint: cleared the outputs of ${todo.length} ${todo.length === 1 ? "notebook" : "notebooks"}${clean > 0 ? `; ${clean} had none` : ""}.${unsavedNote}`),
     );
   }
 
@@ -387,7 +388,7 @@ export class NotebookStrip {
     }
     const plan = await this.plan(from, at);
     if ("error" in plan) {
-      void window.showErrorMessage(`q-lint: ${plan.error}`);
+      void window.showErrorMessage(plainMessage(`q-lint: ${plan.error}`));
       return;
     }
     this.lastPlan = plan;
@@ -402,7 +403,7 @@ export class NotebookStrip {
       steps.push(`Add the line "${ATTRIBUTE_LINE}" at the end of ${plan.attributes}.`);
     }
     if (steps.length === 0) {
-      void window.showInformationMessage(`q-lint: ${plan.top} strips notebook outputs on commit already.`);
+      void window.showInformationMessage(plainMessage(`q-lint: ${plan.top} strips notebook outputs on commit already.`));
       return;
     }
     const warning = plan.node ? "" : "\n\nnode was not found on PATH. Until it is, git cannot run the filter, and commits notebooks as they are.";
@@ -432,11 +433,11 @@ export class NotebookStrip {
         fs.appendFileSync(plan.attributes, `${before === "" || before.endsWith("\n") ? "" : "\n"}${ATTRIBUTE_LINE}\n`);
       }
     } catch (error) {
-      void window.showErrorMessage(`q-lint: could not set up the filter: ${error instanceof Error ? error.message : String(error)}`);
+      void window.showErrorMessage(plainMessage(`q-lint: could not set up the filter: ${error instanceof Error ? error.message : String(error)}`));
       return;
     }
     void window.showInformationMessage(
-      `q-lint: git in ${plan.top} now commits q notebooks without their outputs; the files keep them. A notebook committed before keeps its outputs in git until it is next committed.`,
+      plainMessage(`q-lint: git in ${plan.top} now commits q notebooks without their outputs; the files keep them. A notebook committed before keeps its outputs in git until it is next committed.`),
     );
   }
 }

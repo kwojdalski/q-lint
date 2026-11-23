@@ -13,13 +13,14 @@ import { EventEmitter, Uri, commands, window, workspace, type ExtensionContext, 
 import { EXPLAIN_AJ, explain, findAj, readMatch } from "./ajexplain";
 import type { Live } from "./live";
 import { PROCESS_TOOL_COMMANDS, asCode, toolOff, toolOn } from "./processtools";
+import { plainMessage } from "./history";
 
 export const AJ_SCHEME = "q-lint-aj";
 
 const on = (): boolean => toolOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "ajExplainer");
 
 function say(text: string): string {
-  void window.showInformationMessage(text);
+  void window.showInformationMessage(plainMessage(text));
   return text;
 }
 

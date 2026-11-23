@@ -11,6 +11,7 @@ import { mergeEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import type { Live, ProcessArg } from "./live";
 import { launchOf, splitArgs, withExtras, type Launch, type Process } from "./processes";
+import { plainMessage } from "./history";
 
 /// How long a process has to end after SIGTERM before it is killed.
 const STOP_GRACE_MS = 3000;
@@ -99,15 +100,15 @@ export class Launcher {
       return;
     }
     if (this.started.has(process.label)) {
-      void window.showInformationMessage(`q-lint: ${process.label} is already running from here.`);
+      void window.showInformationMessage(plainMessage(`q-lint: ${process.label} is already running from here.`));
       return;
     }
     const problem = await this.launch(process);
     if (problem !== undefined) {
-      void window.showErrorMessage(`q-lint: ${problem}`);
+      void window.showErrorMessage(plainMessage(`q-lint: ${problem}`));
       return;
     }
-    void window.showInformationMessage(`q-lint: started ${process.label} (pid ${this.started.get(process.label)?.child.pid ?? "?"}) on port ${process.port}.`);
+    void window.showInformationMessage(plainMessage(`q-lint: started ${process.label} (pid ${this.started.get(process.label)?.child.pid ?? "?"}) on port ${process.port}.`));
   }
 
   /// Stop `label`, which was started from here, start it again from its
@@ -182,7 +183,7 @@ export class Launcher {
     child.stderr?.on("data", (text: string) => channel.append(text));
     child.once("error", (error) => {
       channel.appendLine(`could not start: ${error.message}`);
-      void window.showErrorMessage(`q-lint: could not start ${process.label}: ${error.message}`);
+      void window.showErrorMessage(plainMessage(`q-lint: could not start ${process.label}: ${error.message}`));
     });
     child.once("close", (code, signal) => {
       if (this.started.get(process.label)?.child === child) {
@@ -214,7 +215,7 @@ export class Launcher {
       return;
     }
     if (!this.started.has(label)) {
-      void window.showInformationMessage(`q-lint: ${label} was not started from here, so it is not stopped from here.`);
+      void window.showInformationMessage(plainMessage(`q-lint: ${label} was not started from here, so it is not stopped from here.`));
       return;
     }
     await this.end(label);
@@ -300,12 +301,12 @@ export class Launcher {
     }
     const now = this.live.processes();
     if (!now.some((p) => p.label === process.label)) {
-      void window.showErrorMessage(`q-lint: "${process.label}" was deleted meanwhile; its launch definition was not set.`);
+      void window.showErrorMessage(plainMessage(`q-lint: "${process.label}" was deleted meanwhile; its launch definition was not set.`));
       return;
     }
     await this.live.saveProcesses(now.map((p) => (p.label === process.label ? withExtras(p, { ...p, launch }) : p)));
     void window.showInformationMessage(
-      launch === undefined ? `q-lint: ${process.label} has no launch definition.` : `q-lint: Start Process starts ${process.label}.`,
+      plainMessage(launch === undefined ? `q-lint: ${process.label} has no launch definition.` : `q-lint: Start Process starts ${process.label}.`),
     );
   }
 }

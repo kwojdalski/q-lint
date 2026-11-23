@@ -44,6 +44,7 @@ import { readTerminal } from "./liveconfig";
 import { mergeEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor, nodeFiles } from "./qenvironment";
 import { expandHome } from "./terminal";
+import { plainMessage } from "./history";
 
 /// How long a binary has to answer the probe.
 export const PROBE_TIMEOUT_MS = 10_000;
@@ -191,7 +192,7 @@ export class Interpreters {
   }
 
   private refuse(what: string, setting: string): void {
-    void window.showInformationMessage(`q-lint: ${what} is turned off. Set ${setting} to true to turn it on.`);
+    void window.showInformationMessage(plainMessage(`q-lint: ${what} is turned off. Set ${setting} to true to turn it on.`));
   }
 
   async select(): Promise<string | undefined> {
@@ -241,7 +242,7 @@ export class Interpreters {
       file = typed.trim();
       const resolved = resolveBinary(file);
       if (resolved === undefined || !nodeFiles.executable(resolved)) {
-        void window.showErrorMessage(`q-lint: ${file} is not a program this user can run; the q interpreter was not changed.`);
+        void window.showErrorMessage(plainMessage(`q-lint: ${file} is not a program this user can run; the q interpreter was not changed.`));
         return undefined;
       }
     }
@@ -264,13 +265,13 @@ export class Interpreters {
     const binary = this.binary();
     const file = resolveBinary(binary);
     if (file === undefined) {
-      void window.showErrorMessage(`q-lint: ${binary} was not found, so its licence could not be checked.`);
+      void window.showErrorMessage(plainMessage(`q-lint: ${binary} was not found, so its licence could not be checked.`));
       return undefined;
     }
     const env = mergeEnv(layoutEnvFor(file), await dotenvFor(workspace.workspaceFolders?.[0]?.uri));
     const answer = await probe(file, env);
     if (answer === undefined) {
-      void window.showWarningMessage(`q-lint: ${file} did not start and print its version, so its licence could not be checked.`);
+      void window.showWarningMessage(plainMessage(`q-lint: ${file} did not start and print its version, so its licence could not be checked.`));
       return undefined;
     }
     const kept = await this.keep(file, answer, env);
@@ -278,12 +279,12 @@ export class Interpreters {
     const days = kept.expiry !== undefined ? daysLeft(kept.expiry, new Date()) : undefined;
     if (kept.expiry === undefined || days === undefined) {
       const text = `q-lint: ${file} reports no licence expiry date (its .z.l is empty), so there is nothing to warn about.`;
-      void window.showInformationMessage(text);
+      void window.showInformationMessage(plainMessage(text));
       return text;
     }
     const warning = expiryWarning(file, kept.expiry, days, read.warningDays);
     const text = warning ?? `q-lint: the q licence used by ${file} expires on ${kept.expiry}, in ${days} days.`;
-    void (warning !== undefined ? window.showWarningMessage(text) : window.showInformationMessage(text));
+    void (warning !== undefined ? window.showWarningMessage(plainMessage(text)) : window.showInformationMessage(plainMessage(text)));
     return text;
   }
 
@@ -314,7 +315,7 @@ export class Interpreters {
       return undefined;
     }
     await this.context.globalState.update(WARNED_KEY, { ...(warned ?? {}), [file]: day });
-    void window.showWarningMessage(warning);
+    void window.showWarningMessage(plainMessage(warning));
     return warning;
   }
 }
