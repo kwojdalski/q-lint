@@ -31,8 +31,9 @@ the Basic Multilingual Plane, such as an emoji in a string, the column is one
 more than a count of characters (and less than a count of bytes).
 
 The executable is independently deployable once built. Compilation uses the
-checked-in Cargo lockfile; this version was tested with Rust 1.98.1 on macOS
-ARM64.
+checked-in Cargo lockfile. The oldest Rust that builds it is 1.88 (the
+`rust-version` in `Cargo.toml`, which CI builds with on every commit); this
+version was tested with Rust 1.98.1 on macOS ARM64.
 
 A Python wheel is also available, for installing the binary into a virtual
 environment without Rust on the target machine —

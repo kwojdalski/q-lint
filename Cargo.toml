@@ -2,7 +2,15 @@
 name = "q-lint-rs"
 version = "0.33.2"
 edition = "2024"
-description = "Native standalone q linter"
+# The oldest compiler that builds it: `if let ... && let ...` chains, which
+# edition 2024 has only from 1.88. CI's msrv job builds with exactly this.
+rust-version = "1.88"
+description = "A linter and language server for q/kdb+ source that never executes what it reads"
+license = "MIT"
+repository = "https://github.com/kwojdalski/q-lint"
+readme = "README.md"
+keywords = ["q", "kdb", "linter", "lsp", "static-analysis"]
+categories = ["development-tools", "command-line-utilities"]
 
 [[bin]]
 name = "qlinter"
