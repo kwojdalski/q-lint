@@ -342,7 +342,65 @@ fn renamable(code: &str, raw: &str, scopes: &[Scope], offset: usize) -> Result<L
              has one of that name - which only the table says"
         ));
     }
+    // A table literal names a column it is not told the name of after what
+    // it reads: `([] a; b:3 4)` has a column `a`, and renamed it would be
+    // `zz` (#1305).
+    if local
+        .places
+        .iter()
+        .any(|p| unnamed_table_column(code, p.at))
+    {
+        return Err(format!(
+            "`{name}` is read in a column of a table literal that has no name of its own, which \
+             q names after it: write it `{name}:...` first"
+        ));
+    }
     Ok(local)
+}
+
+/// Whether `at` is in a column of a table literal, `([k] c)`, written with
+/// no `name:` - which q names after what the column reads.
+fn unnamed_table_column(code: &str, at: usize) -> bool {
+    let b = code.as_bytes();
+    let mut child = at;
+    loop {
+        // The bracket around `child`, and the last top-level `;` before it.
+        let (mut depth, mut semi, mut open) = (0i32, None, None);
+        for i in (0..child).rev() {
+            match b[i] {
+                b')' | b']' | b'}' => depth += 1,
+                b'(' | b'[' | b'{' if depth > 0 => depth -= 1,
+                b'(' | b'[' | b'{' => {
+                    open = Some(i);
+                    break;
+                }
+                b';' if depth == 0 => {
+                    semi.get_or_insert(i);
+                }
+                _ => {}
+            }
+        }
+        let Some(o) = open else { return false };
+        let item_start = match b[o] {
+            b'{' => return false,
+            // The columns after the key list `[...]`.
+            b'(' if code[o + 1..].trim_start().starts_with('[') => {
+                let key = o + 1 + (code[o + 1..].len() - code[o + 1..].trim_start().len());
+                match crate::matching(code, key, b'[', b']') {
+                    Some(close) if close <= child => semi.map_or(close, |s| s.max(close)),
+                    _ => return false,
+                }
+            }
+            // The key columns.
+            b'[' if code[..o].trim_end().ends_with('(') => semi.unwrap_or(o + 1),
+            _ => {
+                child = o;
+                continue;
+            }
+        };
+        let item = code[item_start..].trim_start_matches([';', ' ', '\t', '\r', '\n']);
+        return !re!(r"^[A-Za-z][A-Za-z0-9_]*\s*:(?:[^:]|$)").is_match(item);
+    }
 }
 
 /// The range of the local at `offset`, when it can be renamed.
