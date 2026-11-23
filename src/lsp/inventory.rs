@@ -23,7 +23,7 @@
 use super::annotate::runnables;
 use super::navigate::{Sources, range};
 use super::{Lines, file_key, path_of};
-use q_lint_rs::mentions;
+use q_lint_rs::{Definition, Mention, mentions};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -203,15 +203,21 @@ fn dead_code(params: &Value, sources: &Sources) -> Value {
     json!({"functions": out, "dynamic": dynamic})
 }
 
+/// The statement of the top-level function `m` defines, when it defines
+/// one. A function assigned inside a lambda, `g::{x}`, spans its name alone
+/// and is part of the statement around it (#1360).
+fn top_level(m: &Mention) -> Option<&Definition> {
+    m.definition
+        .as_ref()
+        .filter(|d| d.function && m.at == d.start && d.end > m.at + m.len)
+}
+
 /// Each top-level function a text defines, by name, with its statements in
 /// order: every one, since q keeps the last of two (#1359).
 fn statements(text: &str) -> BTreeMap<String, Vec<String>> {
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for m in &mentions(text) {
-        if let Some(d) = &m.definition
-            && d.function
-            && m.at == d.start
-        {
+        if let Some(d) = top_level(m) {
             out.entry(m.name.clone())
                 .or_default()
                 .push(text[d.start..d.end].trim_end().to_string());
@@ -253,8 +259,10 @@ fn tests_reaching(params: &Value, sources: &Sources) -> Value {
         let all = mentions(&text);
         for m in &all {
             match &m.definition {
-                Some(d) if d.function && m.at == d.start => {
-                    span = Some((d.end, m.name.clone()));
+                Some(_) => {
+                    if let Some(d) = top_level(m) {
+                        span = Some((d.end, m.name.clone()));
+                    }
                 }
                 None => {
                     if let Some((end, caller)) = &span
@@ -269,7 +277,6 @@ fn tests_reaching(params: &Value, sources: &Sources) -> Value {
                         }
                     }
                 }
-                _ => {}
             }
         }
         for run in runnables(&text) {

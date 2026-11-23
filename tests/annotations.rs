@@ -1257,6 +1257,30 @@ fn a_function_gone_or_redefined_later_reaches_its_tests() {
     assert_eq!((changed, tests), (json!([]), vec![]));
 }
 
+#[test]
+fn a_function_assigned_inside_another_ends_no_statement() {
+    // `g::{x}` inside `f` was taken for the next top-level function, so the
+    // `helper` read after it was nobody's and `test_f` was not reached
+    // (#1360).
+    let dir = tempfile::tempdir().unwrap();
+    let lib = "helper:{x}\nf:{g::{x}; helper x}\n";
+    let files = [("lib.q", lib), ("test_lib.q", "test_f:{f 1}\n")];
+    let (mut server, _) = Server::over(dir.path(), &files, client(), Value::Null);
+    let now = "helper:{x+1}\nf:{g::{x}; helper x}\n";
+    let (changed, tests) = reaching(&mut server, dir.path(), "lib.q", lib, now);
+    assert_eq!((changed, tests), (json!(["helper"]), vec!["test_f".into()]));
+    // The function assigned inside is part of `f`'s statement, not one of
+    // its own.
+    let (changed, _) = reaching(
+        &mut server,
+        dir.path(),
+        "lib.q",
+        "helper:{x+1}\nf:{g::{y}; helper x}\n",
+        now,
+    );
+    assert_eq!(changed, json!(["f"]));
+}
+
 /// The edits a `workspace/willRenameFiles` reply makes, as
 /// `(file under dir, line, start, end, new text)`, in order.
 fn renamed(reply: &Value, dir: &Path) -> Vec<(String, u64, u64, u64, String)> {
