@@ -5,15 +5,18 @@
 //! server's own defaults by a unit test in `src/lsp.rs`, where they live.)
 use std::process::Command;
 
-const README: &str = include_str!("../README.md");
+/// The README with LF line ends, as a Windows checkout may have made them CRLF.
+static README: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| include_str!("../README.md").replace("\r\n", "\n"));
 
 /// The README from the heading `from` to the next heading of the same level.
 fn section(from: &str) -> &'static str {
-    let start = README
+    let readme: &'static str = &README;
+    let start = readme
         .find(&format!("\n{from}\n"))
         .unwrap_or_else(|| panic!("README lost its `{from}` heading"));
     let level = from.split(' ').next().unwrap();
-    let body = &README[start + from.len() + 2..];
+    let body = &readme[start + from.len() + 2..];
     let end = body.find(&format!("\n{level} ")).unwrap_or(body.len());
     &body[..end]
 }

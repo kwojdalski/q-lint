@@ -7,7 +7,7 @@ use std::process::Command;
 
 /// The first column of the table under the `<!-- {marker}: ... -->` line.
 fn documented(marker: &str) -> Vec<String> {
-    let doc = include_str!("../docs/output.md");
+    let doc = include_str!("../docs/output.md").replace("\r\n", "\n");
     let start = doc
         .find(&format!("<!-- {marker}:"))
         .unwrap_or_else(|| panic!("docs/output.md lost its {marker} table"));
@@ -91,7 +91,7 @@ fn the_documented_example_is_what_the_cli_prints() {
         .output()
         .unwrap();
     let printed = String::from_utf8(out.stdout).unwrap();
-    let doc = include_str!("../docs/output.md");
+    let doc = include_str!("../docs/output.md").replace("\r\n", "\n");
     let example = doc
         .split("```json\n")
         .nth(1)

@@ -5,11 +5,14 @@
 //! are checked against the action and the hooks by `tests/test_packaging.py`.
 use std::{path::Path, process::Command};
 
-const DOC: &str = include_str!("../docs/ci.md");
+/// The guide with LF line ends, as a Windows checkout may have made them CRLF.
+static DOC: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| include_str!("../docs/ci.md").replace("\r\n", "\n"));
 
 /// The bodies of the document's fenced blocks in `language`.
 fn blocks(language: &str) -> Vec<&'static str> {
-    DOC.split(&format!("```{language}\n"))
+    let doc: &'static str = &DOC;
+    doc.split(&format!("```{language}\n"))
         .skip(1)
         .map(|rest| rest.split("```").next().unwrap())
         .collect()
