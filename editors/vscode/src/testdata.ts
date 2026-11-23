@@ -129,7 +129,8 @@ function csvValue(type: string, o: TestDataOptions, next: () => number): string 
   switch (type) {
     case "b": return r < 0.5 ? "0" : "1";
     case "g": return [8, 4, 4, 4, 12].map((w) => Array.from({ length: w }, () => Math.floor(next() * 16).toString(16)).join("")).join("-");
-    case "x": return `0x${Math.floor(r * 256).toString(16).padStart(2, "0")}`;
+    // Bare hex: `"X"$` reads `0x7b` as 0x00 (#1278).
+    case "x": return Math.floor(r * 256).toString(16).padStart(2, "0");
     case "h":
     case "i":
     case "j": return String(Math.round(lo) + Math.floor(r * Math.max(1, Math.round(span))));

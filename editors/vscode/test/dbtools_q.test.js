@@ -299,6 +299,17 @@ test("the test data generator's q makes the rows asked for, and its CSV loads ba
   assert.strictEqual(loaded[3], true);
 });
 
+test("the test data CSV's bytes load back as the bytes written (#1278)", { skip }, async (t) => {
+  const { connection, dir } = await connect(t, "");
+  const info = { kind: "table", rows: 0, bytes: null, partitions: null, keys: [], ncols: 2, columns: [{ name: "b", type: "x", fkey: "", attr: "" }, { name: "j", type: "j", fkey: "", attr: "" }] };
+  const csv = testDataCsv(info, { rows: 20, symbols: ["A"], low: 0, high: 10, seed: 5 });
+  fs.writeFileSync(path.join(dir, "bytes.csv"), csv);
+  const written = csv.trim().split("\n").slice(1).map((l) => l.split(",")[0]);
+  assert.ok(written.some((b) => b !== "00"));
+  const loaded = await connection.call(`{c:("${loadTypes(info)}";enlist",")0:\`:bytes.csv; string c\`b}`, 0);
+  assert.deepStrictEqual(loaded, written);
+});
+
 test("a schema migration's q turns one table into the other, in memory and on disk", { skip }, async (t) => {
   const { connection } = await connect(t, HDB() + "\na:([k:1 2] x:1 2; y:`p`q; z:3 4f)\nb:([k:`long$()] z:`long$(); x:`float$(); w:`symbol$())\ntrade2:([] sym:`$(); px:`long$(); sz:`long$(); ex:`symbol$())\n");
   const info = async (n) => readTableInfo(await connection.call(TABLE_INFO, n, 100));
