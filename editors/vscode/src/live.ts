@@ -1489,8 +1489,10 @@ export class Live {
   }
 
   /// Run `process`'s connect script on `connection`, just opened, before any
-  /// query can be: its failure is said, and the connection kept.
-  private async runConnectScript(connection: QConnection, process: Process): Promise<void> {
+  /// query can be: its failure is said, and the connection kept. `stopped`
+  /// says the connect was given up - a disconnect - while the read-only
+  /// guard's question was open: nothing is sent then (#1357).
+  private async runConnectScript(connection: QConnection, process: Process, stopped: () => boolean = () => false): Promise<void> {
     const script = scriptOf(process);
     if (script === undefined || !this.setting(readConnectScript).enabled) {
       return;
@@ -1521,6 +1523,9 @@ export class Live {
     }
     if (!(await this.guardAllows(code, [process], `The connect script of ${process.label}`))) {
       this.show([`# ${process.label} - connect script not run: changing a read-only process was not confirmed`], false);
+      return;
+    }
+    if (stopped()) {
       return;
     }
     const configuration = workspace.getConfiguration("q-lint");
@@ -1634,7 +1639,7 @@ export class Live {
           await connection.close();
           return false;
         }
-        await this.runConnectScript(connection, process);
+        await this.runConnectScript(connection, process, stopped);
         if (stopped()) {
           await connection.close();
           return false;
