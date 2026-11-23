@@ -887,7 +887,7 @@ pub fn tokens(code: &str, raw: &str, ws: &crate::Workspace) -> Vec<(usize, usize
     // writes are `global_writes`', which a table column or a qSQL alias is
     // not: after `t:([] f:1 2)`, q 5's `f` is still the lambda (#365).
     let lambda: HashMap<String, bool> =
-        global_writes(code, raw, &scopes, &namespaces, qualify, true)
+        global_writes(code, raw, &scopes, &namespaces, resolved, true)
             .into_iter()
             .map(|(key, at)| (key, at.iter().all(|&at| assigns_lambda(code, raw, at))))
             .collect();
@@ -919,14 +919,15 @@ pub fn tokens(code: &str, raw: &str, ws: &crate::Workspace) -> Vec<(usize, usize
         {
             continue;
         }
-        let name = qualify(m.as_str(), ns_at(m.start()));
+        // Keyed as q resolves it: a root `f` is not `.f` (#1243).
+        let name = resolved(m.as_str(), ns_at(m.start()));
         // This file's own assignment decides; failing one, another file's
         // lambda of that name is the function a call here reaches - that
         // name and no other: q 5 does not fall back from `\d .ns` to a root
         // `f`, and `m:f 2` there is 'f (#366).
         let function = match lambda.get(&name) {
             Some(&is_lambda) => is_lambda,
-            None => ws.is_lambda(&resolved(m.as_str(), ns_at(m.start()))),
+            None => ws.is_lambda(&name),
         };
         if function {
             out.push((m.start(), m.len(), TokenKind::Function));
@@ -934,8 +935,13 @@ pub fn tokens(code: &str, raw: &str, ws: &crate::Workspace) -> Vec<(usize, usize
     }
     for scope in scopes.iter().filter(|s| s.named) {
         let direct = &scope.direct;
+        // A column is no parameter: KDB-X's `{[n] select n from t}` and
+        // `{[a] update a:a+1 from t}` read t's columns, and `([]a:1 2)`
+        // names one (#1242).
+        let view = crate::table_columns_blanked(&crate::outside_query_phrases(direct));
         for m in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(direct) {
             if boundary(direct, m.start())
+                && view.as_bytes()[m.start()] != b' '
                 && !direct[m.end()..].starts_with('.')
                 && scope.params.contains(m.as_str())
             {

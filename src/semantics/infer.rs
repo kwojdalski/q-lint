@@ -112,10 +112,21 @@ fn string_length(text: &str) -> Option<usize> {
 }
 
 /// How many symbols `` `a`b `` writes, when `text` is only backticks and
-/// the characters a symbol literal continues with.
+/// the characters a symbol literal continues with. A `/` continues one only
+/// after a `:` in it: KDB-X's `` `:a/b `` is a symbol, `` `a/ `` a derived
+/// function and `` `.a/b `` an error (#1245).
 fn symbols(text: &str) -> Option<usize> {
+    let mut colon = false;
     text.chars()
-        .all(|c| c == '`' || c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | ':' | '/'))
+        .all(|c| {
+            match c {
+                '`' => colon = false,
+                ':' => colon = true,
+                '/' => return colon,
+                _ => {}
+            }
+            c == '`' || c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | ':')
+        })
         .then(|| text.matches('`').count())
 }
 

@@ -357,6 +357,37 @@ fn a_name_in_a_query_phrase_is_not_coloured() {
     assert_eq!(functions("f:{x}\nr:select from f 1\n"), ["f"]);
 }
 
+/// The parameters `semantic_tokens` colours in `text`, by where they start.
+fn parameters(text: &str) -> Vec<usize> {
+    q_lint_rs::semantic_tokens(text)
+        .into_iter()
+        .filter(|t| t.2 == q_lint_rs::TokenKind::Parameter)
+        .map(|(at, _, _)| at)
+        .collect()
+}
+
+#[test]
+fn a_column_named_like_a_parameter_is_not_coloured_as_one() {
+    // KDB-X: in `{[a] update a:a+1 from t}` and `{[n] select n from t}` the
+    // names are t's columns, and `([]a:1 2)` names a column (#1242).
+    assert!(parameters("f:{[a] ([]a:1 2)}\n").is_empty());
+    assert!(parameters("f:{[a] update a:1 from t}\n").is_empty());
+    assert!(parameters("f:{[n] select n from t}\n").is_empty());
+    // The column's value, and the table a query reads, are the parameter.
+    assert_eq!(parameters("f:{[a] ([]b:a)}\n"), [12]);
+    assert_eq!(parameters("f:{[t] select from t}\n"), [19]);
+}
+
+#[test]
+fn a_root_name_and_a_dotted_name_are_not_the_same_function() {
+    // KDB-X: after `f:{x}`, `.f` is undefined, and after `.g:{x+1}`, `g 1`
+    // is 'g (#1243).
+    assert!(functions("f:{x}\nh:{.f}\n").is_empty());
+    assert!(functions(".g:{x+1}\nr:g 1\n").is_empty());
+    assert_eq!(functions("f:{x}\nh:{f 1}\n"), ["f"]);
+    assert_eq!(functions(".g:{x+1}\nr:.g 1\n"), [".g"]);
+}
+
 #[test]
 fn a_system_commands_argument_is_not_coloured() {
     // `\l f/a.q` loads a file under the directory `f` (#553); `\t` and
