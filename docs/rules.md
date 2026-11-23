@@ -1,6 +1,6 @@
 # Rules
 
-All 143 rules, generated from `src/taxonomy.json` - the same data
+All 144 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -223,6 +223,7 @@ it, or `ALL`.
 |---|---|---|---|
 | <a id="ql001"></a>`QL001` | unfinished-marker | TODO, FIXME, XXX or HACK in a comment | `styleq` and above |
 | <a id="ql002"></a>`QL002` | commented-out-definition | A lambda definition kept as a comment rather than deleted | `styleq` and above |
+| <a id="ql003"></a>`QL003` | unused-noqa | A noqa naming a code nothing on its line reports, so it suppresses nothing | `style` and above |
 
 ## Policy - one repository's conventions
 

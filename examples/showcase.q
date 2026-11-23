@@ -598,6 +598,11 @@ done:1 / TODO check the empty case
 / expect-next: QL002
 / oldfill:{fills x}
 
+/ QL003: both parameters are read, so no QF016 is reported for the noqa to
+/ take and it suppresses nothing; a reason after the codes is free text.
+/ expect-next: QL003
+addtwo:{[a;b] a+b} / noqa: QF016 TorQ's fixed signature
+
 / QT024: an attribute the literal does not satisfy - 's-fail, checked.
 / expect-next: QT024
 sorted:`s#3 1 2

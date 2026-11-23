@@ -425,6 +425,17 @@ accepts those codes on every line of its file, as Ruff's `# ruff: noqa:` does;
 inside a block comment or after the line that ends the script it is not read.
 The built-in rules honour both; findings from qls do not.
 
+A `noqa` code that suppresses nothing - no finding of it on its line - is
+QL003, Ruff's RUF100, in `style` and above; its Quick Fix (`--unsafe-fixes`
+on the command line, since whether a rule fires can turn on the files around
+it) takes the code out, or the whole directive when none is left. Only codes
+whose rule ran are judged: another tool's code, qls's, and a rule the profile
+leaves out are not. Every rule runs before a configuration selects, so a
+`noqa` for a rule `ignore` or `select` turns off still counts as used while
+the rule would fire on its line - it is there for whoever turns the rule back
+on - and is reported only when the rule finds nothing there. File directives
+are not checked.
+
 `qlinter --add-noqa src/` accepts every finding of the run where it is - the
 editor's Quick Fix, made for each: `/ noqa: CODE` appended to its line, or the
 code added to the `noqa` already there - so a tree can adopt a rule and keep
@@ -1159,7 +1170,7 @@ language server driven over real LSP framing as a real process.
 
 ### Rule and multiline regression corpus
 
-The taxonomy contains 143 codes. Ten literal-call rules cover excess builtin
+The taxonomy contains 144 codes. Ten literal-call rules cover excess builtin
 arguments (QA010), invalid literal types/shapes (QT008–QT014), and negative
 `til`/`where` counts (QD001–QD002). These checks leave unknown expressions
 unresolved and account for projections, seeded scans and variadic `enlist`.
@@ -1168,7 +1179,7 @@ unresolved and account for projections, seeded scans and variadic `enlist`.
 `tests/showcase.rs` checks exact code/line pairs under every profile, including
 silence in the clean section. Together with the three companion examples -
 `syntax-error.q`, `byte-order-mark.q` and `query-injection.q`, each holding
-a rule that would hide or stop the others - it covers all 141 rules available
+a rule that would hide or stop the others - it covers all 142 rules available
 in this build; QF006 and QLS001 are excluded.
 
 Multiline fixtures cover nested lambdas, split argument lists, comments,

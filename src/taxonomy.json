@@ -966,6 +966,13 @@
     "scope": "styleq"
   },
   {
+    "code": "QL003",
+    "name": "unused-noqa",
+    "category": "leftovers",
+    "summary": "A noqa naming a code nothing on its line reports, so it suppresses nothing",
+    "scope": "style"
+  },
+  {
     "code": "QK001",
     "name": "target-dictionary-literal",
     "category": "compatibility",
