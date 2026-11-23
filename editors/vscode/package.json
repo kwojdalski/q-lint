@@ -887,6 +887,12 @@
             "order": 147,
             "markdownDescription": "Take a dotted q name - `.ns.util.f`, `x.y`, `.z.p` - as one word, and a number as one (`1.5`, `2024.01.02`): **Add Selection to Next Find Match** (Ctrl/Cmd+D), the highlight of a word's other occurrences, and the word completion replaces. In `x+.y` the words are `x` and `.y`. Double-click and Ctrl/Cmd+Left/Right follow `editor.wordSeparators` instead, which this does not change: `\"[q]\": {\"editor.wordSeparators\": ...}` without `.` makes them agree. Off, a word is VS Code's own."
           },
+          "q-lint.query.escapeAborts.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 147,
+            "markdownDescription": "Press Escape in a q editor while a query runs to **Abort Current Query**. Escape still closes a suggestion list, parameter hints, a snippet, the find widget or a selection first, and does nothing new in a notebook or while no query runs. Off, Escape is VS Code's own."
+          },
           "q-lint.processSymbols.enable": {
             "type": "boolean",
             "default": false,
@@ -5002,6 +5008,11 @@
         "command": "q-lint.queryBlock",
         "key": "ctrl+e",
         "when": "editorTextFocus && editorLangId == q"
+      },
+      {
+        "command": "q-lint.abortQuery",
+        "key": "escape",
+        "when": "editorTextFocus && editorLangId == q && q-lint.queryRunning && config.q-lint.query.escapeAborts.enable && !notebookEditorFocused && !suggestWidgetVisible && !parameterHintsVisible && !inSnippetMode && !findWidgetVisible && !editorHasSelection && !editorHasMultipleSelections && !inlineSuggestionVisible && !referenceSearchVisible && !markersNavigationVisible"
       },
       {
         "command": "q-lint.sendCurrentLineToTerminal",

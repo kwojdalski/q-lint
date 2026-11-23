@@ -855,6 +855,11 @@ a query, so the connection is closed and opened again; the process goes on
 running the query, and the new connection is made once it is free, however
 long that takes. **Disconnect**, or connecting to another process, stops
 it waiting.
+Escape in a q editor aborts too, while a query runs: the context key
+`q-lint.queryRunning` is set then, and only then. What Escape already does
+comes first - closing a suggestion list, parameter hints, a snippet, the
+find widget or a selection - and in a notebook it is left alone.
+`q-lint.query.escapeAborts.enable` turns it off.
 
 **Query a Tag**, on a tag row in Processes, in a q editor's context menu or
 from the palette, runs one query on every saved and discovered process
@@ -2617,6 +2622,7 @@ nothing.
 | `q-lint.results.correlation.enable` | `true` | Offer the **Correlation** view and **Show Result Correlation Matrix**. | - |
 | `q-lint.results.sendResult.enable` | `true` | Offer **Send to...**, **Send Result to Notebook** and **Append Result to Markdown Report...**, each showing what it writes first. | - |
 | `q-lint.query.progress.enable` | `true` | Count a running query's time in the status bar, and notify a long one's end. | - |
+| `q-lint.query.escapeAborts.enable` | `true` | Escape in a q editor aborts a running query. Off, Escape is VS Code's own. | - |
 | `q-lint.query.notifyAfter` | `10` | Seconds a query must run for its end to be notified while the window is not focused; `0` never. | - |
 | `q-lint.query.placeholders.enable` | `true` | Ask for a value for each `{{name}}` in the code a query sends, and put it in place. | - |
 | `q-lint.query.tagQuery.enable` | `true` | **Query a Tag**: one query on every process with a tag, the answers as one table. | - |

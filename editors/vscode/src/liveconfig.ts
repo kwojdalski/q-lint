@@ -121,6 +121,10 @@ export type QueryMode = (typeof QUERY_MODES)[number];
 /// Set while a q process is connected.
 export const CONNECTED = "q-lint.connected";
 
+/// Set while a query runs on the active connection: Escape in a q editor
+/// aborts it then (#1165), with q-lint.query.escapeAborts.enable on.
+export const QUERY_RUNNING = "q-lint.queryRunning";
+
 export interface LiveSettings {
   consoleSize: [number, number];
   autoClear: boolean;
