@@ -27,6 +27,7 @@ import {
   type ExtensionContext,
   type QuickPickItem,
   type StatusBarItem,
+  type Uri,
 } from "vscode";
 import {
   INTERPRETER_COMMANDS,
@@ -58,7 +59,11 @@ interface Kept extends Probe {
   licence?: { file: string; mtime: number };
 }
 
-const get = <T>(key: string, fallback: T): T => workspace.getConfiguration("q-lint").get(key, fallback);
+/// The file the settings are read for: the active editor's, as a q terminal
+/// started from it reads them - in a multi-root workspace a folder may set
+/// its own q binary (#1333).
+const resource = (): Uri | undefined => window.activeTextEditor?.document.uri;
+const get = <T>(key: string, fallback: T): T => workspace.getConfiguration("q-lint", resource()).get(key, fallback);
 
 /// Run `binary` with the probe on its stdin, and read what it printed.
 export function probe(binary: string, env: Record<string, string>): Promise<Probe | undefined> {
@@ -249,8 +254,17 @@ export class Interpreters {
     if (file === undefined) {
       return undefined;
     }
-    const target = (workspace.workspaceFolders ?? []).length > 0 ? ConfigurationTarget.Workspace : ConfigurationTarget.Global;
-    await workspace.getConfiguration("q-lint").update("terminal.qBinary", file, target);
+    // Written where the value in force is set - a folder's own setting would
+    // hide one written above it - else in the workspace, else for the user.
+    const configuration = workspace.getConfiguration("q-lint", resource());
+    const set = configuration.inspect<string>("terminal.qBinary");
+    const target =
+      set?.workspaceFolderValue !== undefined
+        ? ConfigurationTarget.WorkspaceFolder
+        : set?.workspaceValue !== undefined || (workspace.workspaceFolders ?? []).length > 0
+          ? ConfigurationTarget.Workspace
+          : ConfigurationTarget.Global;
+    await configuration.update("terminal.qBinary", file, target);
     this.sync();
     return file;
   }

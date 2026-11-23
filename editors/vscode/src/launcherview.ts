@@ -145,7 +145,7 @@ export class Launcher {
   /// Start `process` from its launch definition. Why it could not, or
   /// undefined once it is spawned.
   private async launch(process: Process): Promise<string | undefined> {
-    const configuration = workspace.getConfiguration("q-lint");
+    const configuration = workspace.getConfiguration("q-lint", workspace.workspaceFolders?.[0]?.uri);
     const { qBinary } = readTerminal((key, fallback) => configuration.get(key, fallback));
     const plan = launchPlan(process, qBinary, workspace.workspaceFolders?.[0]?.uri.fsPath);
     if ("error" in plan) {

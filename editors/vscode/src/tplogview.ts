@@ -131,10 +131,11 @@ export class TickerplantLog {
     if (file === undefined) return "cancelled";
     this.stop();
     const opening = this.generation;
-    const configuration = workspace.getConfiguration("q-lint");
+    // The folder's q binary, as the folder it starts in (#1333).
+    const folder = workspace.workspaceFolders?.[0]?.uri;
+    const configuration = workspace.getConfiguration("q-lint", folder);
     const { qBinary } = readTerminal((key, fallback) => configuration.get(key, fallback));
     const binary = expandHome(qBinary, os.homedir());
-    const folder = workspace.workspaceFolders?.[0]?.uri;
     let local: LocalQ | undefined;
     try {
       local = await startLocalQ(binary, mergeEnv(layoutEnvFor(binary, folder), await dotenvFor(folder)));
