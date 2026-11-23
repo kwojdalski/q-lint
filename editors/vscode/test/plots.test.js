@@ -30,7 +30,14 @@ test("plots are kept one per result and kind, newest last, the oldest dropped pa
   assert.strictEqual(store.move(1).key, "r2/line");
   store.removeShown();
   assert.deepStrictEqual(store.list().map((p) => p.key), ["r1/bar", "r3/line"]);
+  // The next older is shown, not the next newer (#1260).
+  assert.strictEqual(store.shown().key, "r1/bar");
+  store.removeShown();
   assert.strictEqual(store.shown().key, "r3/line");
+  store.removeShown();
+  assert.deepStrictEqual([store.list().length, store.current], [0, -1]);
+  store.add(plot("r1/bar", "b"));
+  store.add(plot("r3/line", "e"));
   store.clear();
   assert.deepStrictEqual([store.list().length, store.current, store.shown()], [0, -1, undefined]);
   assert.strictEqual(store.move(1), undefined);

@@ -76,13 +76,14 @@ export class PlotStore {
     return this.shown();
   }
 
-  /// Forget the plot on show; the next older one is shown.
+  /// Forget the plot on show; the next older one is shown, or the oldest
+  /// left when it was the oldest (#1260).
   removeShown(): void {
     if (this.current < 0) {
       return;
     }
     this.plots.splice(this.current, 1);
-    this.current = Math.min(this.current, this.plots.length - 1);
+    this.current = this.plots.length === 0 ? -1 : Math.max(0, this.current - 1);
     this.fire();
   }
 
