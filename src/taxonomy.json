@@ -224,6 +224,13 @@
     "scope": "builtin"
   },
   {
+    "code": "QF022",
+    "name": "local-global-assignment",
+    "category": "names",
+    "summary": "`::` on a parameter or local assigns the local, not a global of that name",
+    "scope": "style"
+  },
+  {
     "code": "QA001",
     "name": "parameter-limit",
     "category": "application",
@@ -476,6 +483,27 @@
     "scope": "builtin"
   },
   {
+    "code": "QB022",
+    "name": "discarded-update",
+    "category": "correctness",
+    "summary": "An update or delete on a table value whose result is discarded changes nothing",
+    "scope": "style"
+  },
+  {
+    "code": "QB023",
+    "name": "empty-general-list-match",
+    "category": "correctness",
+    "summary": "x~() is false for every typed empty list - 0#0, `symbol$() and \"\" - so it does not test emptiness",
+    "scope": "style"
+  },
+  {
+    "code": "QB024",
+    "name": "peach-global-write",
+    "category": "correctness",
+    "summary": "A lambda applied with peach writes a global, which q refuses with 'noupdate when it runs on secondary threads",
+    "scope": "style"
+  },
+  {
     "code": "QP001",
     "name": "bare-slash-block",
     "category": "policy",
@@ -593,6 +621,13 @@
     "category": "application",
     "summary": "More arguments than the named lambda takes",
     "scope": "builtin"
+  },
+  {
+    "code": "QA013",
+    "name": "multiparam-trap-handler",
+    "category": "application",
+    "summary": "The error handler of @[f;x;h] or .[f;x;h] is a lambda of rank 2 or more, so an error returns a projection of it instead of running it",
+    "scope": "style"
   },
   {
     "code": "QT015",
@@ -802,6 +837,13 @@
     "name": "inferred-symbol-arithmetic",
     "category": "types-and-shapes",
     "summary": "Arithmetic on a local that is always a symbol: 'type",
+    "scope": "style"
+  },
+  {
+    "code": "QT036",
+    "name": "null-getenv",
+    "category": "types-and-shapes",
+    "summary": "null getenv tests each character of a string, giving a vector, which if and $[...] refuse with 'type",
     "scope": "style"
   },
   {

@@ -413,6 +413,13 @@ fn with_from_clauses(direct: &str, tables: bool) -> String {
     }
     String::from_utf8(out).unwrap_or_default()
 }
+/// Whether the text after a `name::` is a value it assigns: not a third
+/// colon, and not the end of an expression - `f g::` composes with the
+/// identity and assigns nothing.
+fn assigns_value(rest: &str) -> bool {
+    let rest = rest.trim_start_matches([' ', '\t']);
+    !rest.is_empty() && !rest.starts_with([':', ';', ')', ']', '}', '\n', '\r'])
+}
 /// The innermost scope containing `at`.
 ///
 /// Scopes are pushed as their `{` is met, so they are ordered by `start` and
@@ -2438,6 +2445,88 @@ pub fn check(
                         .map(|k| format!("`{k}"))
                         .collect::<Vec<_>>()
                         .join(";")
+                ),
+            ));
+        }
+    }
+    // `a::v` in a lambda that binds `a` - as a parameter or with `a:`
+    // anywhere in its body - sets that local, not a global: q 5
+    // `{[a] a::5; a}[1]` is 5 and leaves no global `a`, as do `{b:1; b::2}`
+    // and `{(b;c):1 2; b::5}`. A name the lambda does not bind is the global
+    // write it looks like. Queries are blanked, where `a:` names a column.
+    // With nothing after it, `a::` is no assignment but `a` composed with
+    // the identity: q 5 `{[d] r:d::; r}[3]` is 3, and KX's ml writes
+    // `model transform::` for a composition.
+    for scope in &scopes {
+        let view = local_view(&scope.direct, true);
+        for m in re!(r"([A-Za-z][A-Za-z0-9_]*)[ \t]*::").captures_iter(&view) {
+            let (whole, name) = (m.get(0).unwrap(), &m[1]);
+            if !boundary(&view, whole.start())
+                || !assigns_value(&view[whole.end()..])
+                || !scope.locals.contains(name)
+            {
+                continue;
+            }
+            let what = if scope.params.contains(name) {
+                "a parameter"
+            } else {
+                "a local"
+            };
+            out.push(Finding::at(
+                path,
+                raw,
+                scope.body + whole.start(),
+                "QF022",
+                format!(
+                    "`{name}` is {what} of this lambda, so `{name}::` assigns the local, not \
+                     a global `{name}`: write the global with `set` and a symbol"
+                ),
+            ));
+        }
+    }
+    // A lambda applied with peach runs on secondary threads under `-s`,
+    // where a global write is refused: q 5 with `-s 2` gives 'noupdate for
+    // `{g::1;x} peach 1 2`, `` {`g set 1;x} peach 1 2 `` and
+    // `{.ns.g::1;x} peach 1 2`, and runs `{b:0;b::1;b+x} peach 1 2`. Only a
+    // lambda written out as peach's left operand, and only its own body: a
+    // nested lambda may never be called. A file symbol, `` `:f set t ``,
+    // writes no global.
+    for scope in &scopes {
+        let after = code.get(scope.end + 1..).unwrap_or("");
+        let next = after.trim_start_matches([' ', '\t']);
+        if code.as_bytes().get(scope.end) != Some(&b'}')
+            || !re!(r"^peach(?:[^A-Za-z0-9_.]|$)").is_match(next)
+        {
+            continue;
+        }
+        let view = local_view(&scope.direct, false);
+        let assigned = re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*::")
+            .captures_iter(&view)
+            .find(|m| {
+                let whole = m.get(0).unwrap();
+                boundary(&view, whole.start())
+                    && assigns_value(&view[whole.end()..])
+                    && !scope.locals.contains(&m[1])
+            })
+            .map(|m| (m.get(0).unwrap().start(), m[1].to_string()));
+        let set = re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]+set(?:[^A-Za-z0-9_.]|$)")
+            .captures_iter(&scope.direct)
+            .find(|m| crate::boundary(&scope.direct, m.get(0).unwrap().start()))
+            .map(|m| (m.get(0).unwrap().start(), m[1].to_string()));
+        let first = match (assigned, set) {
+            (Some(a), Some(b)) => Some(if a.0 <= b.0 { a } else { b }),
+            (a, b) => a.or(b),
+        };
+        if let Some((at, name)) = first {
+            out.push(Finding::at(
+                path,
+                raw,
+                scope.body + at,
+                "QB024",
+                format!(
+                    "This lambda is applied with peach and writes the global `{name}`: on \
+                     secondary threads (q -s) q refuses that with 'noupdate; return the value \
+                     and assign it after peach"
                 ),
             ));
         }
