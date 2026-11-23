@@ -14,7 +14,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { QConnection } = require("../out/qclient.js");
 const { statements } = require("../out/statements.js");
-const { columnScript, RUN_SCRIPT, readRun } = require("../out/colmanager.js");
+const { columnScript, HELPERS, RUN_SCRIPT, readRun } = require("../out/colmanager.js");
 const { DOCUMENT, readDoc, docMarkdown } = require("../out/dbdoc.js");
 const { PARTITION_CHECK, readPartitions, partitionProblems } = require("../out/partcheck.js");
 
@@ -144,6 +144,34 @@ test("the column manager renames under a root with a space and a quote in its pa
   assert.deepStrictEqual(await connection.call("{exec c from meta trade}", 0), ["date", "sym", "price", "note"]);
   assert.strictEqual(await connection.call("{exec t from meta trade where c=`note}", 0), "C");
   assert.strictEqual(await connection.call("{\"f\"$count select from trade where note like \"[xy]?\"}", 0), 4);
+});
+
+test("the column manager parses string and symbol columns it casts to numbers (#1135)", { skip }, async (t) => {
+  const source = [
+    'r:hsym`$"$DIR/db";',
+    '{[r;d] .Q.dd[r;d,`trade`] set .Q.en[r] ([] sym:`a`b;q:("12";"3");p:`7`8;w:("ab";"c"))}[r] each 2026.01.05 2026.01.06;',
+    'system "cd $DIR/db";',
+    'system "l .";',
+    "",
+  ].join("\n");
+  const { connection } = await connect(t, source);
+  for (const [column, type] of [["q", "j"], ["p", "f"], ["w", "s"]]) {
+    assert.match(await run(connection, columnScript("trade", { op: "cast", column, type }, "hdb")), /changed 2 of 2 directories/);
+  }
+  assert.deepStrictEqual(await connection.call("{exec t from meta trade}", 0), "dsjfs");
+  assert.deepStrictEqual(await connection.call('{"f"$(select q from trade)`q}', 0), [12, 3, 12, 3]);
+  assert.deepStrictEqual(await connection.call("{(select p from trade)`p}", 0), [7, 8, 7, 8]);
+  assert.deepStrictEqual(await connection.call("{string (select w from trade)`w}", 0), ["ab", "c", "ab", "c"]);
+  // The string column's nested data file goes with it.
+  assert.strictEqual(await connection.call('{(`$"q#") in key .Q.par[hsym`$system"cd";first .Q.pv;`trade]}', 0), false);
+});
+
+test("the column manager's rename command quotes for sh, and for cmd with backslashes (#1137)", { skip }, async (t) => {
+  const { connection } = await connect(t, "");
+  const mvcmd = HELPERS.find((h) => h.startsWith(".qlint.cm.mvcmd:")).slice(".qlint.cm.mvcmd:".length);
+  const mv = (w, a, b) => connection.call(`{${mvcmd}[${w};hsym\`$"${a}";hsym\`$"${b}"]}`, 0);
+  assert.strictEqual(await mv("0b", "/d/it's a/px", "/d/it's a/price"), String.raw`mv '/d/it'\''s a/px' '/d/it'\''s a/price'`);
+  assert.strictEqual(await mv("1b", "C:/my db/trade/px", "C:/my db/trade/price"), String.raw`move "C:\my db\trade\px" "C:\my db\trade\price"`);
 });
 
 test("the documenter reads tables, keys, foreign keys and functions", { skip }, async (t) => {
