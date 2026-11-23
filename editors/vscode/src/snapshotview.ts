@@ -24,6 +24,7 @@ import {
   validName,
 } from "./snapshot";
 import { statements } from "./statements";
+import { plainMessage } from "./history";
 
 const on = (): boolean => editorFeatureOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "snapshotTests");
 
@@ -32,7 +33,7 @@ const on = (): boolean => editorFeatureOn((key, fallback) => workspace.getConfig
 export function registerSnapshots(context: ExtensionContext, live: Live, written: () => void): void {
   const refuse = (): boolean => {
     if (!on()) {
-      void window.showInformationMessage(editorFeatureOff("snapshotTests"));
+      void window.showInformationMessage(plainMessage(editorFeatureOff("snapshotTests")));
       return true;
     }
     return false;
@@ -58,7 +59,7 @@ async function result(live: Live, query: string): Promise<string | undefined> {
     return undefined;
   }
   if (!done.value.ok) {
-    void window.showErrorMessage(`q-lint: the query failed on ${done.process} ('${done.value.error}); no snapshot was written.`);
+    void window.showErrorMessage(plainMessage(`q-lint: the query failed on ${done.process} ('${done.value.error}); no snapshot was written.`));
     return undefined;
   }
   return done.value.text.join("\n");
@@ -76,7 +77,7 @@ async function existing(uri: Uri): Promise<string | undefined> {
 async function confirmWrite(uri: Uri, text: string, replacing: boolean): Promise<boolean> {
   const yes = replacing ? "Replace" : "Write";
   const answer = await window.showWarningMessage(
-    `${replacing ? "Replace the snapshot" : "Write a snapshot to"} ${workspace.asRelativePath(uri)}?`,
+    plainMessage(`${replacing ? "Replace the snapshot" : "Write a snapshot to"} ${workspace.asRelativePath(uri)}?`),
     { modal: true, detail: preview(text) },
     yes,
   );
@@ -115,7 +116,7 @@ async function record(live: Live): Promise<boolean> {
   const before = await existing(target);
   const old = before === undefined ? undefined : parseSnapshot(before);
   if (old !== undefined && old.query === query.trim() && sameResult(old.result, got)) {
-    void window.showInformationMessage(`q-lint: ${workspace.asRelativePath(target)} already holds this result.`);
+    void window.showInformationMessage(plainMessage(`q-lint: ${workspace.asRelativePath(target)} already holds this result.`));
     return false;
   }
   return confirmWrite(target, formatSnapshot({ query, result: got }), before !== undefined);
@@ -128,13 +129,13 @@ async function update(live: Live, arg: unknown): Promise<boolean> {
     (typeof given?.fsPath === "string" ? (given as Uri) : undefined) ??
     (window.activeTextEditor?.document.uri.fsPath.endsWith(SNAPSHOT_EXTENSION) ? window.activeTextEditor.document.uri : undefined);
   if (uri === undefined) {
-    void window.showInformationMessage(`q-lint: open a ${SNAPSHOT_EXTENSION} file, or choose a snapshot in the Testing view, to update it.`);
+    void window.showInformationMessage(plainMessage(`q-lint: open a ${SNAPSHOT_EXTENSION} file, or choose a snapshot in the Testing view, to update it.`));
     return false;
   }
   const text = await existing(uri);
   const snapshot = text === undefined ? undefined : parseSnapshot(text);
   if (snapshot === undefined) {
-    void window.showErrorMessage(`q-lint: ${workspace.asRelativePath(uri)} is not a q-lint snapshot.`);
+    void window.showErrorMessage(plainMessage(`q-lint: ${workspace.asRelativePath(uri)} is not a q-lint snapshot.`));
     return false;
   }
   const got = await result(live, snapshot.query);
@@ -142,7 +143,7 @@ async function update(live: Live, arg: unknown): Promise<boolean> {
     return false;
   }
   if (sameResult(snapshot.result, got)) {
-    void window.showInformationMessage(`q-lint: ${workspace.asRelativePath(uri)} already holds this result.`);
+    void window.showInformationMessage(plainMessage(`q-lint: ${workspace.asRelativePath(uri)} already holds this result.`));
     return false;
   }
   return confirmWrite(uri, formatSnapshot({ query: snapshot.query, result: got }), true);

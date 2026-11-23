@@ -15,6 +15,7 @@ import { randomBytes } from "node:crypto";
 import { ProgressLocation, Uri, ViewColumn, commands, window, workspace, type ExtensionContext, type Webview, type WebviewPanel } from "vscode";
 import { head, history, lintCommit, lintTree, pointOf, readTrend, summarise, withPoint, type DashboardView, type Point } from "./problems";
 import { TOOLING_COMMANDS, toolingOff, toolingOn } from "./toolingfeatures";
+import { plainMessage } from "./history";
 
 export const SHOW_PROBLEMS = TOOLING_COMMANDS.showProblems;
 export const LINT_HISTORY = TOOLING_COMMANDS.lintHistory;
@@ -148,7 +149,7 @@ export function registerProblemsDashboard(
 }
 
 function say(message: string): string {
-  void window.showInformationMessage(message);
+  void window.showInformationMessage(plainMessage(message));
   return message;
 }
 

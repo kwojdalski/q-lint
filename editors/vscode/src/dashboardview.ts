@@ -38,11 +38,12 @@ import { DB_COMMANDS, dbOff, dbOn } from "./dbfeatures";
 import { toGrid, type GridAnswer } from "./grid";
 import type { Live } from "./live";
 import { parseSaved, SAVED_QUERIES_KEY, type SavedQuery } from "./savedqueries";
+import { plainMessage } from "./history";
 
 const on = (): boolean => dbOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "dashboards");
 
 function say(message: string): string {
-  void window.showInformationMessage(message);
+  void window.showInformationMessage(plainMessage(message));
   return message;
 }
 
@@ -113,10 +114,14 @@ export class Dashboards {
     return [...this.timers.values()].map(({ every }) => every);
   }
 
-  /// Ask for a new dashboard's name; undefined on Escape.
-  private async create(): Promise<Dashboard | undefined> {
+  /// A new dashboard named `given`, or a name asked for when none is given
+  /// or it cannot be one (the box then holds it); undefined on Escape.
+  private async create(given?: string): Promise<Dashboard | undefined> {
     const taken = this.list().map((d) => d.name);
-    const name = await window.showInputBox({ title: "Name the new dashboard", validateInput: (v) => dashboardNameProblem(v, taken) });
+    const name =
+      given !== undefined && dashboardNameProblem(given, taken) === undefined
+        ? given
+        : await window.showInputBox({ title: "Name the new dashboard", value: given, validateInput: (v) => dashboardNameProblem(v, taken) });
     if (name === undefined || dashboardNameProblem(name, taken) !== undefined) return undefined;
     const d: Dashboard = { name: name.trim(), columns: 2, tiles: [] };
     await this.save(withDashboard(this.list(), d));
@@ -131,7 +136,8 @@ export class Dashboards {
       const fresh = "$(add) New dashboard...";
       const pick = name !== undefined ? undefined : await window.showQuickPick([...list.map((x) => x.name), fresh], { title: "Open which dashboard?" });
       if (pick === undefined && name === undefined) return "cancelled";
-      d = pick === fresh || pick === undefined ? await this.create() : list.find((x) => x.name === pick);
+      // A name that is no dashboard's makes one of that name (#1268).
+      d = pick === fresh || pick === undefined ? await this.create(name) : list.find((x) => x.name === pick);
     }
     if (d === undefined) return "cancelled";
     this.show(d);

@@ -28,6 +28,7 @@ import { editorFeatureOff, editorFeatureOn, type Server } from "./editorfeatures
 import { borrowWhenFree } from "./infoview";
 import type { Live } from "./live";
 import { CHECK_UNDEFINED, DEFINED, namesToAsk, readDefined, readUnresolved, undefinedMessage, undefinedOnProcess } from "./undefinednames";
+import { plainMessage } from "./history";
 
 export { CHECK_UNDEFINED };
 /// The server's request for the globals no workspace file defines.
@@ -59,7 +60,7 @@ export function registerUndefinedNames(
   context.subscriptions.push(
     commands.registerCommand(CHECK_UNDEFINED, async () => {
       if (!on() || running === undefined) {
-        void window.showInformationMessage(editorFeatureOff("undefinedNames"));
+        void window.showInformationMessage(plainMessage(editorFeatureOff("undefinedNames")));
         return undefined;
       }
       const document = window.activeTextEditor?.document;
@@ -69,7 +70,7 @@ export function registerUndefinedNames(
       }
       const problem = await running.check(document, true);
       if (problem !== undefined) {
-        void window.showInformationMessage(`q-lint: ${problem}`);
+        void window.showInformationMessage(plainMessage(`q-lint: ${problem}`));
       }
       return problem;
     }),
@@ -142,7 +143,7 @@ class Checker {
       }
       const go = "Check";
       const answer = await window.showWarningMessage(
-        `${process.label} is a production process (tagged ${process.tags.join(", ")}). Ask it which of this file's names it defines?`,
+        plainMessage(`${process.label} is a production process (tagged ${process.tags.join(", ")}). Ask it which of this file's names it defines?`),
         { modal: true, detail: "It reads each name's namespace with key; nothing is evaluated or changed." },
         go,
       );

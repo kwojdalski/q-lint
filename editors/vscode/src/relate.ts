@@ -50,6 +50,7 @@ import {
   type Git,
   type Row,
 } from "./relations";
+import { plainMessage } from "./history";
 
 /// How long the view waits after the last reason to refresh before asking.
 /// The server draws the whole workspace's graph for each request - a quarter
@@ -277,8 +278,8 @@ export class Relations implements TreeDataProvider<Row> {
   private async show(): Promise<void> {
     if (!this.has(GRAPH)) {
       void window.showWarningMessage(
-        "q-lint: no dependencies to show. The server is not running, is older than this " +
-          "extension, or q-lint.graph.enable is off.",
+        plainMessage("q-lint: no dependencies to show. The server is not running, is older than this " +
+          "extension, or q-lint.graph.enable is off."),
       );
       return;
     }
@@ -307,8 +308,8 @@ export class Relations implements TreeDataProvider<Row> {
     const client = this.client();
     if (client === undefined || !this.has(AFFECTED_TESTS)) {
       void window.showWarningMessage(
-        "q-lint: cannot list affected tests. The server is not running, is older than this " +
-          "extension, or q-lint.graph.enable is off.",
+        plainMessage("q-lint: cannot list affected tests. The server is not running, is older than this " +
+          "extension, or q-lint.graph.enable is off."),
       );
       return;
     }
@@ -317,8 +318,8 @@ export class Relations implements TreeDataProvider<Row> {
     // not trusted for that reason, and so does this.
     if (!workspace.isTrusted) {
       void window.showWarningMessage(
-        "q-lint: listing affected tests asks git which files changed, which is not done in " +
-          "a workspace that is not trusted.",
+        plainMessage("q-lint: listing affected tests asks git which files changed, which is not done in " +
+          "a workspace that is not trusted."),
       );
       return;
     }
@@ -333,7 +334,7 @@ export class Relations implements TreeDataProvider<Row> {
     const binary = onPath(named, process.env.PATH, isFile);
     if (binary === undefined) {
       void window.showWarningMessage(
-        `q-lint: could not ask git which files changed: ${named} is not on PATH.`,
+        plainMessage(`q-lint: could not ask git which files changed: ${named} is not on PATH.`),
       );
       return;
     }
@@ -358,7 +359,7 @@ export class Relations implements TreeDataProvider<Row> {
     );
     if (failed.length === folders.length) {
       void window.showWarningMessage(
-        `q-lint: could not ask git which files changed. ${failed.join(" ")}`,
+        plainMessage(`q-lint: could not ask git which files changed. ${failed.join(" ")}`),
       );
       return;
     }
@@ -375,7 +376,7 @@ export class Relations implements TreeDataProvider<Row> {
       .map((path) => client.code2ProtocolConverter.asUri(Uri.file(path)));
     const skipped = failed.length === 0 ? "" : ` Not asked of git: ${failed.join(" ")}`;
     if (changed.length === 0) {
-      void window.showInformationMessage(`q-lint: no q file differs from git HEAD.${skipped}`);
+      void window.showInformationMessage(plainMessage(`q-lint: no q file differs from git HEAD.${skipped}`));
       return;
     }
     let answer;
@@ -387,7 +388,7 @@ export class Relations implements TreeDataProvider<Row> {
         ),
       );
     } catch (error) {
-      void window.showWarningMessage(`q-lint: could not list affected tests: ${reason(error)}`);
+      void window.showWarningMessage(plainMessage(`q-lint: could not list affected tests: ${reason(error)}`));
       return;
     }
     if (answer === undefined) {
@@ -397,7 +398,7 @@ export class Relations implements TreeDataProvider<Row> {
     const said = summary(answer) + skipped;
     const lines = picks(answer, name);
     if (lines.length === 0) {
-      void window.showInformationMessage(`q-lint: ${said}`);
+      void window.showInformationMessage(plainMessage(`q-lint: ${said}`));
       return;
     }
     const chosen = await window.showQuickPick(lines, {

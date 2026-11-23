@@ -14,6 +14,7 @@ import { Range, TextEdit, commands, window, workspace, type ExtensionContext, ty
 import { changedLines, committedText, runGit, type Git } from "./changedlines";
 import type { Server } from "./editorfeatures";
 import { TOOLING_COMMANDS, toolingOff, toolingOn } from "./toolingfeatures";
+import { plainMessage } from "./history";
 
 export const FORMAT_CHANGED = "q-lint/formatChangedLines";
 export const FORMAT_CHANGED_NOW = TOOLING_COMMANDS.formatChangedLines;
@@ -74,7 +75,7 @@ export function registerFormatChanged(
     // The same edits without saving, for a person who wants to see them.
     commands.registerCommand(FORMAT_CHANGED_NOW, async () => {
       if (!on()) {
-        void window.showInformationMessage(toolingOff("formatChangedLines"));
+        void window.showInformationMessage(plainMessage(toolingOff("formatChangedLines")));
         return [];
       }
       const editor = window.activeTextEditor;

@@ -17,6 +17,7 @@ import type { Server } from "./editorfeatures";
 import { borrowWhenFree } from "./infoview";
 import { LANGUAGE_COMMANDS, languageOff, languageOn } from "./languagefeatures";
 import type { Live } from "./live";
+import { plainMessage } from "./history";
 
 export const DEAD_CODE = "q-lint/deadCode";
 
@@ -105,7 +106,7 @@ export function registerDeadCode(context: ExtensionContext, live: Live, server: 
   context.subscriptions.push(
     commands.registerCommand(LANGUAGE_COMMANDS.deadCode, async () => {
       if (!languageOn(get as never, "deadCode")) {
-        void window.showInformationMessage(languageOff("deadCode"));
+        void window.showInformationMessage(plainMessage(languageOff("deadCode")));
         return undefined;
       }
       const client = server();

@@ -424,3 +424,50 @@ test("package.json contributes the commands, the variables view and their menus"
     assert.ok(toolbar.includes(id), id);
   }
 });
+
+test("a line opening with a code span is text, not a fence (#1307)", () => {
+  assert.strictEqual(markdownHtml("```a``` is q\n\nnext"), "<p><code>a</code> is q</p>\n<p>next</p>");
+  assert.strictEqual(markdownHtml("```q\nx\n```"), "<pre><code>x</code></pre>");
+});
+
+test("a fence closes only on a bare run of its own character, at least as long (#1308)", () => {
+  assert.strictEqual(markdownHtml("````\n```q\nx\n```\n````\nafter"), "<pre><code>```q\nx\n```</code></pre>\n<p>after</p>");
+  assert.strictEqual(markdownHtml("```\n```q\n~~~\n```"), "<pre><code>```q\n~~~</code></pre>");
+});
+
+test("a backslash escapes any ASCII punctuation (#1310)", () => {
+  assert.strictEqual(markdownHtml("\\<b\\> a\\|b \\& \\~ \\$ \\*x\\*"), "<p>&lt;b&gt; a|b &amp; ~ $ *x*</p>");
+  assert.strictEqual(markdownHtml("a\\b"), "<p>a\\b</p>");
+});
+
+test("an ordered list keeps its start, and only a 1. or a bullet interrupts a paragraph (#1311)", () => {
+  assert.strictEqual(markdownHtml("3. c\n4. d"), '<ol start="3"><li>c</li><li>d</li></ol>');
+  assert.strictEqual(markdownHtml("0. z"), '<ol start="0"><li>z</li></ol>');
+  assert.strictEqual(markdownHtml("it ran in\n2024. and then"), "<p>it ran in<br>\n2024. and then</p>");
+  assert.strictEqual(markdownHtml("text\n1. one"), "<p>text</p>\n<ol><li>one</li></ol>");
+  assert.strictEqual(markdownHtml("text\n- one"), "<p>text</p>\n<ul><li>one</li></ul>");
+});
+
+test("a GFM table, as a result is written into a notebook, is a table (#1309)", () => {
+  assert.strictEqual(
+    markdownHtml("| a | n |\n| --- | ---: |\n| x\\|y | 1 |\n| &lt;b&gt; |\n\nafter"),
+    '<table><thead><tr><th>a</th><th style="text-align:right">n</th></tr></thead>' +
+      '<tbody><tr><td>x|y</td><td style="text-align:right">1</td></tr><tr><td>&lt;b&gt;</td><td style="text-align:right"></td></tr></tbody></table>\n<p>after</p>',
+  );
+  // Not a table: the delimiter row has a different count of cells.
+  assert.strictEqual(markdownHtml("a | b | c\n--- | ---"), "<p>a | b | c<br>\n--- | ---</p>");
+  const { resultMarkdown } = require("../out/resultreport.js");
+  const md = resultMarkdown({ at: 0, process: "dev", code: "t", decimals: 2, payload: { count: 1, keys: 0, names: ["s"], types: [11], cells: [["<a>"]], raw: [[]], rank: [[0]] } }).text;
+  assert.match(markdownHtml(md), /<table><thead><tr><th>s<\/th><\/tr><\/thead><tbody><tr><td>&lt;a&gt;<\/td><\/tr><\/tbody><\/table>/);
+});
+
+test("a PyKX %%q cell with options imports as q, its options a comment (#1267)", () => {
+  const cell = (source) => ({ cell_type: "code", metadata: {}, source, outputs: [] });
+  const nb = { nbformat: 4, metadata: { kernelspec: { language: "python" } }, cells: [cell("%%q --port 5000\ntil 3"), cell("%%q  \n1"), cell("%%qx\n1")] };
+  const qnb = fromIpynb(JSON.stringify(nb));
+  assert.deepStrictEqual(qnb.cells.map((c) => [c.language, c.source]), [
+    [undefined, "/ %%q --port 5000\ntil 3"],
+    [undefined, "1"],
+    ["python", "%%qx\n1"],
+  ]);
+});

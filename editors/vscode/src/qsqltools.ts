@@ -8,6 +8,7 @@
 // such action or words. Nothing here talks to a q process.
 import { CodeActionKind, MarkdownString, Range, commands, window, workspace, type CodeAction, type ExtensionContext, type Hover, type Position } from "vscode";
 import { LANGUAGE_COMMANDS, languageOff, languageOn, type LanguageFeature } from "./languagefeatures";
+import { plainMessage } from "./history";
 
 /// The server's titles for its two rewrites (`src/lsp.rs`).
 export const REWRITE_TITLES = {
@@ -22,7 +23,7 @@ const on = (feature: LanguageFeature): boolean =>
 /// there is none, with the reason the server gave where it gave one.
 async function rewrite(direction: keyof typeof REWRITE_TITLES): Promise<boolean> {
   if (!on("functionalForm")) {
-    void window.showInformationMessage(languageOff("functionalForm"));
+    void window.showInformationMessage(plainMessage(languageOff("functionalForm")));
     return false;
   }
   const editor = window.activeTextEditor;
@@ -43,7 +44,7 @@ async function rewrite(direction: keyof typeof REWRITE_TITLES): Promise<boolean>
   if (action?.edit === undefined) {
     const why = action?.disabled?.reason;
     const what = direction === "toFunctional" ? "a qSQL query" : "a functional form (?[t;c;b;a] or ![t;c;b;a])";
-    void window.showInformationMessage(why !== undefined ? `q-lint: ${why}` : `q-lint: the cursor is not in ${what} the language server can rewrite.`);
+    void window.showInformationMessage(plainMessage(why !== undefined ? `q-lint: ${why}` : `q-lint: the cursor is not in ${what} the language server can rewrite.`));
     return false;
   }
   return workspace.applyEdit(action.edit);
@@ -90,7 +91,7 @@ export function registerQsqlTools(context: ExtensionContext): void {
     commands.registerCommand(LANGUAGE_COMMANDS.toQsql, () => rewrite("toQsql")),
     commands.registerCommand(LANGUAGE_COMMANDS.explainQsql, async () => {
       if (!on("qsqlExplain")) {
-        void window.showInformationMessage(languageOff("qsqlExplain"));
+        void window.showInformationMessage(plainMessage(languageOff("qsqlExplain")));
         return false;
       }
       const editor = window.activeTextEditor;

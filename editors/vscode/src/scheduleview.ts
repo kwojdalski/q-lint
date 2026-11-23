@@ -27,6 +27,7 @@ import {
   type ScheduleFormat,
   type ScheduledExport,
 } from "./schedule";
+import { iconsEscaped, plainMessage } from "./history";
 
 /// How often the timer looks for a schedule that is due.
 const TICK_MS = 30_000;
@@ -103,7 +104,7 @@ export class ScheduledExports {
       last = `wrote ${file} at ${now.toLocaleString()}`;
     } catch (error) {
       last = `failed at ${now.toLocaleString()}: ${error instanceof Error ? error.message : String(error)}`;
-      void window.showWarningMessage(`q-lint: the scheduled export ${scheduleText(s)} ${last}`);
+      void window.showWarningMessage(plainMessage(`q-lint: the scheduled export ${scheduleText(s)} ${last}`));
     } finally {
       this.running.delete(s.id);
     }
@@ -146,7 +147,7 @@ export class ScheduledExports {
   /// Make a schedule, asking for each part; the schedule made.
   async add(): Promise<ScheduledExport | undefined> {
     if (!on()) {
-      void window.showInformationMessage(adminOff("scheduledExports"));
+      void window.showInformationMessage(plainMessage(adminOff("scheduledExports")));
       return undefined;
     }
     const queries = parseSaved(this.context.workspaceState.get<unknown>(SAVED_QUERIES_KEY, []));
@@ -155,18 +156,18 @@ export class ScheduledExports {
       return undefined;
     }
     const query = await window.showQuickPick(
-      queries.map((q) => ({ label: q.name, detail: q.code.split(/\r?\n/)[0], problem: scheduleProblem(q.code) })),
+      queries.map((q) => ({ label: iconsEscaped(q.name), detail: iconsEscaped(q.code.split(/\r?\n/)[0]), name: q.name, problem: scheduleProblem(q.code) })),
       { title: "Scheduled export (1 of 6): which saved query?" },
     );
     if (query === undefined) {
       return undefined;
     }
     if (query.problem !== undefined) {
-      void window.showInformationMessage(`q-lint: ${query.label} cannot be scheduled: ${query.problem}. Only read-only queries are run on a schedule.`);
+      void window.showInformationMessage(plainMessage(`q-lint: ${query.name} cannot be scheduled: ${query.problem}. Only read-only queries are run on a schedule.`));
       return undefined;
     }
     const process = await window.showQuickPick(
-      this.live.processes().map((p) => ({ label: p.label, description: `${p.host}:${p.port}` })),
+      this.live.processes().map((p) => ({ label: iconsEscaped(p.label), description: `${p.host}:${p.port}`, name: p.label })),
       { title: "Scheduled export (2 of 6): on which q process?" },
     );
     if (process === undefined) {
@@ -193,7 +194,7 @@ export class ScheduledExports {
     const folder = workspace.workspaceFolders?.[0]?.uri;
     const target = await window.showSaveDialog({
       title: "Scheduled export (5 of 6): write to",
-      defaultUri: folder === undefined ? undefined : Uri.joinPath(folder, `${query.label.replace(/[^\w.-]+/g, "_")}.${format.format}`),
+      defaultUri: folder === undefined ? undefined : Uri.joinPath(folder, `${query.name.replace(/[^\w.-]+/g, "_")}.${format.format}`),
       filters: { [FORMAT_LABELS[format.format]]: [format.format] },
     });
     if (target === undefined) {
@@ -215,8 +216,8 @@ export class ScheduledExports {
     }
     const schedule: ScheduledExport = {
       id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-      query: query.label,
-      process: process.label,
+      query: query.name,
+      process: process.name,
       format: format.format,
       path: target.fsPath,
       ...read,
@@ -224,14 +225,14 @@ export class ScheduledExports {
       since: Date.now(),
     };
     await this.save([...this.list(), schedule]);
-    void window.showInformationMessage(`q-lint: scheduled ${scheduleText(schedule)}, to ${target.fsPath}. It runs while VS Code is open.`);
+    void window.showInformationMessage(plainMessage(`q-lint: scheduled ${scheduleText(schedule)}, to ${target.fsPath}. It runs while VS Code is open.`));
     return schedule;
   }
 
   /// List the schedules; run one now, or remove it.
   async manage(): Promise<void> {
     if (!on()) {
-      void window.showInformationMessage(adminOff("scheduledExports"));
+      void window.showInformationMessage(plainMessage(adminOff("scheduledExports")));
       return;
     }
     const list = this.list();
@@ -240,29 +241,29 @@ export class ScheduledExports {
       return;
     }
     const picked = await window.showQuickPick(
-      list.map((s) => ({ label: scheduleText(s), description: s.path, detail: s.last ?? "not run yet", id: s.id })),
+      list.map((s) => ({ label: iconsEscaped(scheduleText(s)), description: iconsEscaped(s.path), detail: s.last ?? "not run yet", id: s.id, text: scheduleText(s) })),
       { title: "Scheduled exports" },
     );
     if (picked === undefined) {
       return;
     }
-    const action = await window.showQuickPick(["Run Now", "Remove"], { title: picked.label });
+    const action = await window.showQuickPick(["Run Now", "Remove"], { title: picked.text });
     const s = this.list().find((x) => x.id === picked.id);
     if (action === undefined || s === undefined) {
       return;
     }
     if (action === "Remove") {
       await this.save(this.list().filter((x) => x.id !== s.id));
-      void window.showInformationMessage(`q-lint: removed the scheduled export ${scheduleText(s)}.`);
+      void window.showInformationMessage(plainMessage(`q-lint: removed the scheduled export ${scheduleText(s)}.`));
       return;
     }
     if (this.running.has(s.id)) {
-      void window.showInformationMessage(`q-lint: ${scheduleText(s)} is running; it was not started again.`);
+      void window.showInformationMessage(plainMessage(`q-lint: ${scheduleText(s)} is running; it was not started again.`));
       return;
     }
     const last = await this.runOne(s, new Date());
     if (last.startsWith("wrote")) {
-      void window.showInformationMessage(`q-lint: ${scheduleText(s)}: ${last}.`);
+      void window.showInformationMessage(plainMessage(`q-lint: ${scheduleText(s)}: ${last}.`));
     }
   }
 }

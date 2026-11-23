@@ -71,6 +71,7 @@ import {
   type ServerTest,
   type TestMode,
 } from "./testing";
+import { plainMessage } from "./history";
 
 export { RERUN_FAILED } from "./testing";
 export const TEST_CONTROLLER = "q-lint.tests";
@@ -148,9 +149,9 @@ export function registerTestExplorer(
     { dispose: () => running?.dispose() },
     commands.registerCommand(RERUN_FAILED, async () => {
       if (!on()) {
-        void window.showInformationMessage(editorFeatureOff("testExplorer"));
+        void window.showInformationMessage(plainMessage(editorFeatureOff("testExplorer")));
       } else if (!featureOn("failedTests")) {
-        void window.showInformationMessage(editorFeatureOff("failedTests"));
+        void window.showInformationMessage(plainMessage(editorFeatureOff("failedTests")));
       } else if (running !== undefined) {
         await running.rerunFailed();
       }
@@ -401,7 +402,7 @@ class QTests {
     if (isProduction(process)) {
       const go = "Run Tests";
       const answer = await window.showWarningMessage(
-        `${process.label} is a production process (tagged ${process.tags.join(", ")}). Run ${chosen.length} test${chosen.length === 1 ? "" : "s"} there?`,
+        plainMessage(`${process.label} is a production process (tagged ${process.tags.join(", ")}). Run ${chosen.length} test${chosen.length === 1 ? "" : "s"} there?`),
         {
           modal: true,
           detail:
@@ -629,7 +630,7 @@ class QTests {
     if (done === undefined) {
       const text = `q-lint: the functions instrumented for coverage could not be put back (no connection, or a query is running). The next coverage run puts them back first.`;
       run.appendOutput(`${text}\r\n`);
-      void window.showWarningMessage(text);
+      void window.showWarningMessage(plainMessage(text));
       return;
     }
     if (done.value.kept.length > 0) {

@@ -125,6 +125,19 @@ test("Add Scheduled Export asks each part; a write query cannot be scheduled", a
   assert.deepStrictEqual(schedules.list(), []);
 });
 
+test("a saved query's and a process's $(name) are text in the picks, and the schedule keeps their own names (#1314)", async (t) => {
+  const { schedules } = await setUp(t, [{ label: "p$(zap)", host: "h", port: 1, tags: [] }], [{ name: "t$(bug)", code: "select from trade" }]);
+  vscode.window.showSaveDialog = async () => vscode.Uri.file("/tmp/out.csv");
+  const seen = [];
+  const pick = (want) => (o) => (seen.push(o.items.map((i) => (typeof i === "string" ? i : i.label))), o.items.find((i) => (typeof i === "string" ? i : i.label) === want));
+  stub.picks.push(pick("t\\$(bug)"), pick("p\\$(zap)"), "CSV", "Write a new file each run, named with its time");
+  stub.inputs.push("+30");
+  const made = await schedules.add();
+  assert.deepStrictEqual(seen, [["t\\$(bug)"], ["p\\$(zap)"]]);
+  assert.strictEqual(made.query, "t$(bug)");
+  assert.strictEqual(made.process, "p$(zap)");
+});
+
 // tick built its due list once: a run longer than the tick let the next
 // tick start a schedule the first then ran again, both writing one file;
 // Run Now never asked whether it was running.

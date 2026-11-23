@@ -8,7 +8,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const zlib = require("node:zlib");
 const { atomLiteral, tableLiteral, plainName, plainItem, stringLiteral, symbolLiteral, distinctNames } = require("../out/qliteral.js");
-const { toJson, toMarkdown, exportResult, EXPORT_FORMATS, FORMAT_INFO } = require("../out/resultexport.js");
+const { toJson, toMarkdown, markdownCell, exportResult, EXPORT_FORMATS, FORMAT_INFO } = require("../out/resultexport.js");
 const { crc32, zip, columnName, xmlText, temporalSerial, xlsxCell } = require("../out/xlsx.js");
 const { definitionLevels, planFor } = require("../out/parquet.js");
 const { appendPage, readPage } = require("../out/grid.js");
@@ -115,6 +115,8 @@ test("JSON writes numbers as numbers, every digit of a long, nulls as null, the 
 test("Markdown shows the cells as the grid does, escapes pipes, and aligns numbers right", () => {
   const md = toMarkdown({ count: 2, keys: 0, names: ["a|b", "x"], types: [11, 9], cells: [["p|q", "r"], ["1.23456", "2"]], raw: [[], [1.23456, 2]], rank: [[], []] }, 2);
   assert.strictEqual(md, "| a\\|b | x |\n| --- | ---: |\n| p\\|q | 1.23 |\n| r | 2.00 |\n");
+  // A cell is its text: `a`b keeps its backticks, *x* is no emphasis (#1263).
+  assert.strictEqual(markdownCell("`a`b *x* _y_ [l](u) <b> a&amp; ~s~ $m$ \\"), "\\`a\\`b \\*x\\* \\_y\\_ \\[l\\](u) \\<b\\> a\\&amp; \\~s\\~ \\$m\\$ \\\\");
 });
 
 test("every format is offered with its extension, and says how many rows the grid held of a cut result", () => {

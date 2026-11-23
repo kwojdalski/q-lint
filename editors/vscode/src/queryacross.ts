@@ -6,7 +6,7 @@
 import { ProgressLocation, commands, window, workspace, type ExtensionContext } from "vscode";
 import type { Row } from "./discovery";
 import type { GridPayload } from "./grid";
-import { iconsEscaped } from "./history";
+import { iconsEscaped, plainMessage } from "./history";
 import type { Live } from "./live";
 import type { Process } from "./processes";
 import { statements } from "./statements";
@@ -35,7 +35,7 @@ async function eachLimited<T, R>(items: T[], limit: number, f: (item: T) => Prom
 /// turn it on, for a command invoked anyway.
 function featureOn(enabled: boolean, feature: string, key: string): boolean {
   if (!enabled) {
-    void window.showInformationMessage(`q-lint: ${feature} is turned off. Set ${key} to true to turn it on.`);
+    void window.showInformationMessage(plainMessage(`q-lint: ${feature} is turned off. Set ${key} to true to turn it on.`));
   }
   return enabled;
 }
@@ -97,7 +97,7 @@ export class QueryAcross {
       return;
     }
     if (a.label === b.label) {
-      void window.showInformationMessage(`q-lint: Compare Query compares two processes; ${a.label} was chosen twice.`);
+      void window.showInformationMessage(plainMessage(`q-lint: Compare Query compares two processes; ${a.label} was chosen twice.`));
       return;
     }
     if (!(await this.live.guardAllows(code, [a, b]))) {
@@ -177,7 +177,7 @@ export class QueryAcross {
     }
     const processes = tagged(saved, discovered, tag);
     if (processes.length === 0) {
-      void window.showInformationMessage(`q-lint: no q process is tagged ${tag}.`);
+      void window.showInformationMessage(plainMessage(`q-lint: no q process is tagged ${tag}.`));
       return;
     }
     const code = typeof given === "string" ? given : await this.live.codeFromEditor();

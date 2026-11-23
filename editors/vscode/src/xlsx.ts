@@ -268,7 +268,10 @@ export function toXlsx(payload: GridPayload, order: number[], rules: FormatRule[
     });
     sheet.push(`<row r="${line}">${cells.join("")}</row>`);
   });
-  const formats = xlsxRules(rules, payload.names.slice(0, width), payload.types.slice(0, width).map((t) => t >= 5 && t <= 9), columnName, rows.length + 1);
+  const types = payload.types.slice(0, width);
+  // Booleans, bytes and the temporal types are written as Excel values, not text.
+  const text = types.map((t) => !(t === 1 || t === 4 || (t >= 5 && t <= 9) || (t >= 12 && t <= 19)));
+  const formats = xlsxRules(rules, payload.names.slice(0, width), types.map((t) => t >= 5 && t <= 9), columnName, rows.length + 1, text);
   sheet.push("</sheetData>", ...formats.formatting, "</worksheet>");
   const xml = (lines: string[]) => Buffer.from(lines.join(""), "utf8");
   const data = zip([

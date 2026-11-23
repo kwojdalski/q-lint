@@ -259,6 +259,20 @@ test("a dashboard runs its tiles' read-only queries, keeps a timer only with an 
   assert.deepStrictEqual(tileContent({ ok: false, error: "type", trace: "" }, "table"), { kind: "error", text: "type" });
 });
 
+test("Open Dashboard with a name no dashboard has makes one of that name, asking nothing (#1268)", async (t) => {
+  capture();
+  const { live, context } = await setUp(t);
+  new Dashboards(context, live);
+  assert.strictEqual(await stub.commands.get(DB_COMMANDS.openDashboard)("Trading"), "Trading");
+  assert.deepStrictEqual(context.workspaceState.get(DASHBOARDS_KEY).map((d) => d.name), ["Trading"]);
+  assert.strictEqual(stub.inputs.length, 0);
+  // A name that cannot be one - taken, once trimmed - is offered in the box to change.
+  let value;
+  stub.inputs.push((o) => ((value = o.value), "Desk"));
+  assert.strictEqual(await stub.commands.get(DB_COMMANDS.openDashboard)("Trading "), "Desk");
+  assert.strictEqual(value, "Trading ");
+});
+
 // A timer was set only when a tile had none: 5 s -> 300 s went on
 // querying every 5 s until the panel closed.
 test("changing a tile's refresh interval sets its timer again (#1123)", async (t) => {

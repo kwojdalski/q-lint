@@ -81,6 +81,16 @@ test("a declared profile default is not passed, a set one is", () => {
   ]);
 });
 
+test("a profile outside the setting's enum is not passed, so the server still starts (#1334)", () => {
+  const { PROFILES } = require("../out/settings.js");
+  const pkg = require("../package.json");
+  const declared = Object.assign({}, ...pkg.contributes.configuration.map((c) => c.properties))["q-lint.profile"].enum;
+  assert.deepStrictEqual([...PROFILES], declared);
+  assert.deepStrictEqual(launch(configuration({ profile: "nonsense" }), undefined).args, ["--lsp"]);
+  assert.deepStrictEqual(launch(configuration({ profile: 3 }), undefined).args, ["--lsp"]);
+  assert.deepStrictEqual(launch(configuration({ profile: " Style " }), undefined).args, ["--lsp", "--profile", "style"]);
+});
+
 test("the config file is resolved against the workspace folder", () => {
   const ws = path.resolve("/ws");
   assert.deepStrictEqual(launch(configuration({ configFile: "ci/qlinter.toml" }), ws).args, [

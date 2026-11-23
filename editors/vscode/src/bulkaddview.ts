@@ -8,6 +8,7 @@ import { ViewColumn, commands, window, workspace, type ExtensionContext, type We
 import { ADMIN_COMMANDS, adminOff, readAdmin } from "./admin";
 import { parseBulk, rowsHtml, toAdd } from "./bulkadd";
 import type { Live } from "./live";
+import { plainMessage } from "./history";
 
 const on = (): boolean => readAdmin((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback)).bulkAdd;
 
@@ -61,7 +62,7 @@ export class BulkAdd {
   /// Open the form, or show it if it is open.
   open(): void {
     if (!on()) {
-      void window.showInformationMessage(adminOff("bulkAdd"));
+      void window.showInformationMessage(plainMessage(adminOff("bulkAdd")));
       return;
     }
     if (this.panel !== undefined) {
@@ -92,7 +93,7 @@ export class BulkAdd {
   /// Add the processes `text` gives that are not duplicates; how many.
   async add(text: string): Promise<number> {
     if (!on()) {
-      void window.showInformationMessage(adminOff("bulkAdd"));
+      void window.showInformationMessage(plainMessage(adminOff("bulkAdd")));
       return 0;
     }
     // Read now: the list may have changed while the form was open.
@@ -101,11 +102,11 @@ export class BulkAdd {
     const adding = toAdd(rows);
     const skipped = rows.length - adding.length;
     if (adding.length === 0) {
-      void window.showInformationMessage(`q-lint: no process to add${skipped > 0 ? `: ${skipped} line(s) were duplicates or not processes` : ""}.`);
+      void window.showInformationMessage(plainMessage(`q-lint: no process to add${skipped > 0 ? `: ${skipped} line(s) were duplicates or not processes` : ""}.`));
       return 0;
     }
     await this.live.saveProcesses([...now, ...adding]);
-    void window.showInformationMessage(`q-lint: added ${adding.length} q process(es)${skipped > 0 ? `; skipped ${skipped} line(s)` : ""}.`);
+    void window.showInformationMessage(plainMessage(`q-lint: added ${adding.length} q process(es)${skipped > 0 ? `; skipped ${skipped} line(s)` : ""}.`));
     return adding.length;
   }
 }

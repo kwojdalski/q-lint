@@ -8,6 +8,7 @@
 // the server, which then offers no such action.
 import { CodeActionKind, Range, commands, window, workspace, type CodeAction, type ExtensionContext } from "vscode";
 import { TOOLING_COMMANDS, toolingOff, toolingOn } from "./toolingfeatures";
+import { plainMessage } from "./history";
 
 export const ORGANISE_LOADS = TOOLING_COMMANDS.organiseLoads;
 
@@ -15,7 +16,7 @@ export function registerOrganiseLoads(context: ExtensionContext): void {
   context.subscriptions.push(
     commands.registerCommand(ORGANISE_LOADS, async () => {
       if (!toolingOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "organiseLoads")) {
-        void window.showInformationMessage(toolingOff("organiseLoads"));
+        void window.showInformationMessage(plainMessage(toolingOff("organiseLoads")));
         return false;
       }
       const editor = window.activeTextEditor;

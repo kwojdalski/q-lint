@@ -205,6 +205,38 @@ test("the picker lists each q with its version, sets the workspace's qBinary, an
   assert.strictEqual(stub.updates.length, 1);
 });
 
+test("in a multi-root workspace the picker reads and writes the active file's folder's qBinary (#1333)", async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-scope-"));
+  const folderQ = fakeQ(path.join(home, "a", "bin", "q"), "QLINTVER|4.1|2024.01.01|m64|2035.01.01");
+  const kdbx = fakeQ(path.join(home, ".kx", "bin", "q"), "QLINTVER|5|2026.07.23|m64|2035.01.01");
+  const { interpreters, changeEditor } = setUp(t, home);
+  const A = { uri: vscode.Uri.file(path.join(home, "A")), name: "A", index: 0 };
+  const B = { uri: vscode.Uri.file(path.join(home, "B")), name: "B", index: 1 };
+  vscode.workspace.workspaceFolders = [A, B];
+  // Folder A's .vscode/settings.json sets its own q binary.
+  const folders = { [A.uri.fsPath]: { "terminal.qBinary": folderQ } };
+  const plain = vscode.workspace.getConfiguration;
+  vscode.workspace.getConfiguration = (section, resource) => {
+    const c = plain(section);
+    const own = resource && folders[[A, B].find((f) => resource.fsPath.startsWith(f.uri.fsPath))?.uri.fsPath];
+    return {
+      ...c,
+      get: (k, d) => (own && k in own ? own[k] : c.get(k, d)),
+      inspect: (k) => ({ ...c.inspect(k), ...(own && k in own ? { workspaceFolderValue: own[k] } : {}) }),
+      update: async (k, v, target) => (target === 3 && own ? ((own[k] = v), stub.updates.push({ key: k, value: v, target: "workspaceFolder" })) : c.update(k, v, target)),
+    };
+  };
+  t.after(() => ((vscode.workspace.getConfiguration = plain), (vscode.workspace.workspaceFolders = undefined)));
+  vscode.window.activeTextEditor = { document: { languageId: "q", uri: vscode.Uri.file(path.join(home, "A", "x.q")) } };
+  assert.strictEqual(interpreters.status(), "$(terminal) q", "the folder's a/bin/q, not yet probed");
+  stub.picks.push((o) => o.items.find((i) => i.file === kdbx));
+  assert.strictEqual(await stub.commands.get(I.INTERPRETER_COMMANDS.select)(), kdbx);
+  assert.deepStrictEqual(stub.updates, [{ key: "terminal.qBinary", value: kdbx, target: "workspaceFolder" }]);
+  assert.strictEqual(folders[A.uri.fsPath]["terminal.qBinary"], kdbx);
+  assert.strictEqual(interpreters.status(), "$(terminal) q 5 2026.07.23");
+  changeEditor("q");
+});
+
 test("off: the picker refuses, the item is removed, and no q is started", async (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-pickoff-"));
   const marker = path.join(home, "ran");

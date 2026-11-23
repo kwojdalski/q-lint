@@ -353,3 +353,10 @@ test("an unsaved file whose name starts with .. is inside its folder (#1101)", (
   const dirty = [`${ws}${sep}..scratch.q`, `${ws}${sep}..${sep}up.q`, `${ws}${sep}sub${sep}...q`];
   assert.deepStrictEqual(unsavedIn(dirty, [ws]), [`${ws}${sep}..scratch.q`, `${ws}${sep}sub${sep}...q`]);
 });
+
+test("the graph's commands leave the palette with the graph (#1335)", () => {
+  for (const command of ["q-lint.showDependencies", "q-lint.refreshDependencies", "q-lint.listAffectedTests"]) {
+    const entry = pkg.contributes.menus.commandPalette.find((m) => m.command === command);
+    assert.strictEqual(entry?.when, "q-lint.hasGraph", command);
+  }
+});

@@ -25,6 +25,7 @@ import { mergeEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import { expandHome } from "./terminal";
 import { TPLOG_INIT, rangeProblem, readReplayed, readTpLog, readTpPage, timeOfDay, type TpLog } from "./tplog";
+import { plainMessage } from "./history";
 
 const on = (): boolean => dbOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "tickerplantLog");
 
@@ -32,7 +33,7 @@ const on = (): boolean => dbOn((key, fallback) => workspace.getConfiguration("q-
 export const TPLOG_PAGE = 200;
 
 function say(message: string): string {
-  void window.showInformationMessage(message);
+  void window.showInformationMessage(plainMessage(message));
   return message;
 }
 
@@ -130,10 +131,11 @@ export class TickerplantLog {
     if (file === undefined) return "cancelled";
     this.stop();
     const opening = this.generation;
-    const configuration = workspace.getConfiguration("q-lint");
+    // The folder's q binary, as the folder it starts in (#1333).
+    const folder = workspace.workspaceFolders?.[0]?.uri;
+    const configuration = workspace.getConfiguration("q-lint", folder);
     const { qBinary } = readTerminal((key, fallback) => configuration.get(key, fallback));
     const binary = expandHome(qBinary, os.homedir());
-    const folder = workspace.workspaceFolders?.[0]?.uri;
     let local: LocalQ | undefined;
     try {
       local = await startLocalQ(binary, mergeEnv(layoutEnvFor(binary, folder), await dotenvFor(folder)));
@@ -273,7 +275,7 @@ export class TickerplantLog {
     if (!confirmed) {
       const yes = "Replay";
       const answer = await window.showWarningMessage(
-        `Replay messages ${from} to ${to} into the local q on port ${local.port}?`,
+        plainMessage(`Replay messages ${from} to ${to} into the local q on port ${local.port}?`),
         { modal: true, detail: "Each runs as -11! would run it, in the q q-lint started for this log; nothing is sent to your processes. Without a schema loaded first, a table is made from its first message." },
         yes,
       );

@@ -21,6 +21,7 @@ import {
 } from "vscode";
 import type { Server } from "./editorfeatures";
 import { LANGUAGE_COMMANDS, NAMESPACES_VIEW, languageOff, languageOn } from "./languagefeatures";
+import { plainMessage } from "./history";
 
 export const DEFINITIONS = "q-lint/definitions";
 
@@ -136,14 +137,14 @@ export function registerNamespaces(
   context.subscriptions.push(
     commands.registerCommand(LANGUAGE_COMMANDS.namespacesRefresh, async () => {
       if (shown === undefined) {
-        void window.showInformationMessage(languageOff("namespaceTree"));
+        void window.showInformationMessage(plainMessage(languageOff("namespaceTree")));
         return;
       }
       await shown.provider.read();
     }),
     commands.registerCommand(LANGUAGE_COMMANDS.namespacesOpen, async (d?: Definition) => {
       if (shown === undefined) {
-        void window.showInformationMessage(languageOff("namespaceTree"));
+        void window.showInformationMessage(plainMessage(languageOff("namespaceTree")));
         return;
       }
       if (d === undefined || typeof d.uri !== "string") {

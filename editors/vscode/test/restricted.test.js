@@ -42,8 +42,9 @@ test("the extension supports Restricted Mode in part, and says what is held back
 
 test("every setting that becomes the language server's command line is restricted, and no other server setting", () => {
   const server = pkg.contributes.configuration[0].properties;
+  // A value the setting takes: one of its enum when it has one (#1334).
   const sample = (spec) =>
-    spec.type === "boolean" ? !spec.default : spec.type === "array" ? ["--probe"] : spec.type === "object" ? { QS: "hint" } : spec.type === "integer" || spec.type === "number" ? 7 : "probe";
+    spec.enum ? spec.enum.find((v) => v !== spec.default) : spec.type === "boolean" ? !spec.default : spec.type === "array" ? ["--probe"] : spec.type === "object" ? { QS: "hint" } : spec.type === "integer" || spec.type === "number" ? 7 : "probe";
   const configuration = (user) => ({
     get: (key, fallback) => (key in user ? user[key] : (server[`q-lint.${key}`]?.default ?? fallback)),
     inspect: (key) => (key in user ? { globalValue: user[key] } : {}),

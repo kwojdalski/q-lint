@@ -48,8 +48,21 @@ td {
 }
 
 th {
-  cursor: pointer;
   user-select: none;
+}
+
+th button.sort {
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-align: inherit;
+}
+
+th button.sort:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
 }
 
 th.sorted {

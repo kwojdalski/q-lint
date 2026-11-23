@@ -10,6 +10,7 @@ import { ADMIN_COMMANDS, adminOff, readAdmin } from "./admin";
 import type { Live } from "./live";
 import { CONTROL_COMMANDS } from "./querycontrols";
 import { queryLink, readQueryLink } from "./querylink";
+import { plainMessage } from "./history";
 
 const on = (): boolean => readAdmin((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback)).queryLinks;
 
@@ -48,7 +49,7 @@ export class QueryLinks {
   /// connected one, or one picked. The link, for tests.
   async copy(): Promise<string | undefined> {
     if (!on()) {
-      void window.showInformationMessage(adminOff("queryLinks"));
+      void window.showInformationMessage(plainMessage(adminOff("queryLinks")));
       return undefined;
     }
     // Placeholders stay as written: whoever opens it is asked for them.
@@ -63,11 +64,11 @@ export class QueryLinks {
     }
     const made = queryLink(env.uriScheme ?? "vscode", this.extensionId, label, code);
     if ("problem" in made) {
-      void window.showInformationMessage(`q-lint: no link: ${made.problem}.`);
+      void window.showInformationMessage(plainMessage(`q-lint: no link: ${made.problem}.`));
       return undefined;
     }
     await env.clipboard.writeText(made.link);
-    void window.showInformationMessage(`q-lint: copied a link to the query on ${label}. Opening it shows the query and asks before running it.`);
+    void window.showInformationMessage(plainMessage(`q-lint: copied a link to the query on ${label}. Opening it shows the query and asks before running it.`));
     return made.link;
   }
 
@@ -75,12 +76,12 @@ export class QueryLinks {
   /// that is one here, and run only if the user says so. Whether it ran.
   async open(uri: Pick<Uri, "path" | "query">): Promise<boolean> {
     if (!on()) {
-      void window.showInformationMessage(adminOff("queryLinks"));
+      void window.showInformationMessage(plainMessage(adminOff("queryLinks")));
       return false;
     }
     const read = readQueryLink(uri.path, uri.query);
     if ("problem" in read) {
-      void window.showErrorMessage(`q-lint: cannot open the link: ${read.problem}.`);
+      void window.showErrorMessage(plainMessage(`q-lint: cannot open the link: ${read.problem}.`));
       return false;
     }
     const document = await workspace.openTextDocument({ language: "q", content: read.code });
@@ -92,13 +93,13 @@ export class QueryLinks {
     // Saved, discovered or shared, as Copy offered it (#1125).
     const known = this.live.named(read.process) !== undefined;
     if (!known) {
-      void window.showWarningMessage(`q-lint: the link is for a process labelled "${read.process}", which is not in your Processes list; its query is open, not bound or run.`);
+      void window.showWarningMessage(plainMessage(`q-lint: the link is for a process labelled "${read.process}", which is not in your Processes list; its query is open, not bound or run.`));
       return false;
     }
     await commands.executeCommand(CONTROL_COMMANDS.chooseFileConnection, read.process);
     const yes = "Run";
     const answer = await window.showWarningMessage(
-      `A link asks to run this query on ${read.process}. Run it?`,
+      plainMessage(`A link asks to run this query on ${read.process}. Run it?`),
       { modal: true, detail: read.code.length > 2000 ? `${read.code.slice(0, 2000)}\n...` : read.code },
       yes,
     );

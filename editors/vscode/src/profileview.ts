@@ -22,6 +22,7 @@ import type { Live } from "./live";
 import { PROFILE, PROFILE_CLEANUP, namespaceProblem, profileView, readProfile, type ProfileView } from "./profile";
 import { statements } from "./statements";
 import { TOOLING_COMMANDS, toolingOff, toolingOn } from "./toolingfeatures";
+import { plainMessage } from "./history";
 
 export const PROFILE_FUNCTIONS = TOOLING_COMMANDS.profileFunctions;
 
@@ -125,7 +126,7 @@ export function registerFunctionProfile(
 }
 
 function say(message: string): string {
-  void window.showInformationMessage(message);
+  void window.showInformationMessage(plainMessage(message));
   return message;
 }
 

@@ -19,6 +19,7 @@ import { borrowWhenFree } from "./infoview";
 import type { Live } from "./live";
 import { SCHEMA, SCHEMA_COLUMNS, SCHEMA_COMMANDS, SCHEMA_PANEL, SCHEMA_TABLES, readSchema, readSchemaTools, schemaLinks, schemaMermaid, schemaSvg, tableTemplates, type SchemaTable } from "./schema";
 import { TABLE_INFO, readTableInfo } from "./tableinfo";
+import { plainMessage } from "./history";
 
 /// Columns a template reads of a table: all a template writes out.
 const TEMPLATE_COLUMNS = 500;
@@ -70,7 +71,7 @@ export class SchemaTools {
       return true;
     }
     const key = feature === "templates" ? "tableTemplates" : "schemaDiagram";
-    void window.showInformationMessage(`q-lint: ${feature === "templates" ? "Table Templates" : "the schema diagram"} is turned off. Turn it on with the setting q-lint.processExplorer.${key}.enable.`);
+    void window.showInformationMessage(plainMessage(`q-lint: ${feature === "templates" ? "Table Templates" : "the schema diagram"} is turned off. Turn it on with the setting q-lint.processExplorer.${key}.enable.`));
     return false;
   }
 
@@ -84,11 +85,11 @@ export class SchemaTools {
     try {
       got = await borrowWhenFree(this.live, async (connection) => readTableInfo(await connection.call(TABLE_INFO, name, TEMPLATE_COLUMNS)), 5000);
     } catch (error) {
-      void window.showWarningMessage(`q-lint: could not read ${name}: ${error instanceof Error ? error.message : String(error)}`);
+      void window.showWarningMessage(plainMessage(`q-lint: could not read ${name}: ${error instanceof Error ? error.message : String(error)}`));
       return;
     }
     if (got === undefined) {
-      void window.showInformationMessage(`q-lint: could not read ${name}: not connected, or a query is still running. Try again once it ends.`);
+      void window.showInformationMessage(plainMessage(`q-lint: could not read ${name}: not connected, or a query is still running. Try again once it ends.`));
       return;
     }
     const picked = await window.showQuickPick(
@@ -126,11 +127,11 @@ export class SchemaTools {
         5000,
       );
     } catch (error) {
-      void window.showWarningMessage(`q-lint: could not read the tables of ${process}: ${error instanceof Error ? error.message : String(error)}`);
+      void window.showWarningMessage(plainMessage(`q-lint: could not read the tables of ${process}: ${error instanceof Error ? error.message : String(error)}`));
       return;
     }
     if (got === undefined) {
-      void window.showInformationMessage(`q-lint: could not read the tables of ${process}: a query is still running. Try again once it ends.`);
+      void window.showInformationMessage(plainMessage(`q-lint: could not read the tables of ${process}: a query is still running. Try again once it ends.`));
       return;
     }
     const { tables, failed } = got.value;
@@ -198,11 +199,11 @@ export class SchemaTools {
     try {
       await workspace.fs.writeFile(to, Buffer.from(svg, "utf8"));
     } catch (error) {
-      void window.showErrorMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+      void window.showErrorMessage(plainMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
       return;
     }
     if (!(target instanceof Uri)) {
-      void window.showInformationMessage(`q-lint: saved the schema diagram to ${to.fsPath}.`);
+      void window.showInformationMessage(plainMessage(`q-lint: saved the schema diagram to ${to.fsPath}.`));
     }
   }
 
@@ -213,7 +214,7 @@ export class SchemaTools {
       return;
     }
     await env.clipboard.writeText(schemaMermaid(shown.tables));
-    void window.showInformationMessage(`q-lint: copied the schema of ${shown.process} as a Mermaid diagram.`);
+    void window.showInformationMessage(plainMessage(`q-lint: copied the schema of ${shown.process} as a Mermaid diagram.`));
   }
 }
 

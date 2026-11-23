@@ -12,7 +12,7 @@ const { LANGUAGE_SETTINGS, LANGUAGE_COMMANDS, languageOn, languageOff, NAMESPACE
 const { registerQsqlTools, leadBefore, REWRITE_TITLES } = require("../out/qsqltools.js");
 const { ERRORS, errorName, explainError, errorInMessage, failedAt } = require("../out/errorexplain.js");
 const { registerErrorExplainer } = require("../out/errorexplainview.js");
-const { tomlWithBaseline, writtenCount, rebased, registerBaseline } = require("../out/baselineview.js");
+const { tomlWithBaseline, writtenCount, rebased, absolutePaths, registerBaseline } = require("../out/baselineview.js");
 const { readDeadCode, deadCodeReport, registerDeadCode, DEAD_CODE } = require("../out/deadcodeview.js");
 const { readDefinitions, byNamespace, registerNamespaces, DEFINITIONS } = require("../out/namespaceview.js");
 const { affectedIds, registerAffectedOnSave, TESTS_REACHING } = require("../out/affectedonsave.js");
@@ -59,6 +59,8 @@ test("every switch is declared with its default, read as declared, and hides its
 });
 
 // A context and a vscode with what these commands touch.
+const row1 = (p) => `{"code":"QS001","count":1,"line":"a","path":"${p}"}`;
+
 function setUp() {
   stub.reset();
   const context = stub.newContext();
@@ -120,7 +122,10 @@ test("a q error is explained from the catalogue, with the operation that failed"
   const text = explainError("type", trace);
   assert.match(text, /# q error `'type`/);
   assert.match(text, /An argument is of a type the operation does not take/);
-  assert.match(text, /The operation that failed in `mid` \(\/w\/lib\.q, line 5\): `` c:b\+`x; ``, at `\+`\./);
+  assert.match(text, /The operation that failed in `mid` \(\/w\/lib\.q, line 5\): ``c:b\+`x;``, at `\+`\./);
+  // A run of two backticks is held by a longer run (#1312).
+  const pair = ["  [1]  /w/lib.q:2: f:{[a]", "    a,``b}", "     ^"].join("\n");
+  assert.match(failedAt(pair), /: ```a,``b}```, at `,`\./);
   assert.match(failedAt(trace), /at `\+`/);
   assert.match(explainError("undefinedname123"), /`undefinedname123` is not defined where it was read/);
   assert.match(explainError("x.csv. OS reports: No such file"), /operating system refused/);
@@ -229,6 +234,42 @@ test("a baseline is named first in qlinter.toml, its count read, and its paths m
     assert.strictEqual(asked, 0);
   } finally {
     restore();
+  }
+});
+
+test("Write Lint Baseline keeps the findings: the draft's ../ paths are resolved before they are made relative (#1275)", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, realpathSync, rmSync } = require("node:fs");
+  const { join } = require("node:path");
+  const { tmpdir } = require("node:os");
+  assert.strictEqual(absolutePaths(row1("../../ws/src/a.q"), "/tmp/scratch/x"), row1("/tmp/ws/src/a.q"));
+  assert.strictEqual(absolutePaths(row1("/other/a.q"), "/tmp/x"), row1("/other/a.q"));
+  assert.strictEqual(absolutePaths(row1("D:/a.q"), "C:/x"), row1("D:/a.q"));
+  // qlinter >= #1191 writes each path relative to the baseline's own
+  // directory - the scratch one here - through `..`, as this fake does.
+  const ws = mkdtempSync(join(tmpdir(), "qlint-bl-ws-"));
+  const fake = join(ws, "..", `${require("node:path").basename(ws)}-fake.js`);
+  writeFileSync(
+    fake,
+    `const fs=require("fs"),p=require("path");const a=process.argv;const d=a[a.indexOf("--write-baseline")+1];` +
+      `const rel=p.relative(fs.realpathSync(p.dirname(d)),p.join(fs.realpathSync(process.cwd()),"src","a.q")).split(p.sep).join("/");` +
+      `fs.writeFileSync(d,JSON.stringify({"qlinter-baseline":1,findings:[{code:"QF004",count:1,line:"sum:1",path:rel}]}));` +
+      `process.stderr.write("qlinter: wrote 1 finding(s) in 1 file(s)");`,
+  );
+  mkdirSync(join(ws, "src"));
+  const { context, restore } = setUp();
+  try {
+    vscode.workspace.workspaceFolders = [{ uri: { scheme: "file", fsPath: ws }, name: "ws" }];
+    registerBaseline(context, () => ({ command: process.execPath, args: [fake] }));
+    stub.picks.push("Write", undefined);
+    const target = await stub.commands.get(LANGUAGE_COMMANDS.writeBaseline)();
+    assert.strictEqual(target, join(ws, "qlinter-baseline.json"));
+    assert.strictEqual(JSON.parse(readFileSync(target, "utf8")).findings[0].path, "src/a.q");
+    assert.ok(realpathSync(ws));
+  } finally {
+    vscode.workspace.workspaceFolders = undefined;
+    restore();
+    rmSync(ws, { recursive: true, force: true });
+    rmSync(fake, { force: true });
   }
 });
 

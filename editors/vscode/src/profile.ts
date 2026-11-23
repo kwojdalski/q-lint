@@ -8,7 +8,8 @@
 // `.ns.sub.f`) with a wrapper of the same rank that notes the time, by q's
 // own clock (`.z.p`), on entry and on exit - through an error too, which it
 // signals on - runs the statements, and puts every original back, the very
-// objects it took, whether the run succeeded or not. Its working state lives
+// objects it took, whether the run succeeded or not - but for a name the
+// run itself defined anew, which keeps its new definition. Its working state lives
 // in `.qlint.prof` for the run and is deleted after. What it cannot see: a
 // function reached by value rather than by name (one stored in a dictionary
 // or a callback set before the run keeps the original), a projection or
@@ -42,25 +43,28 @@ export const PROFILE = [
   "   r:.[.qlint.prof.orig name;args;{[done;e] done[]; 'e}[done]]; done[]; r};",
   " wrap:{[name;fn] ps:(value fn) 1; ps:$[ps~enlist `;enlist `x0;`$\"x\",/:string til count ps];",
   "   value \"{[\",(\";\" sv string ps),\"] .qlint.prof.call[\",(-3!name),\";\",$[1=count ps;\"enlist \",string first ps;\"(\",(\";\" sv string ps),\")\"],\"]}\"};",
-  " wrapped:wrap'[full;orig];",
+  " wrapped:wrap'[full;orig]; .qlint.prof.wrapped:full!wrapped;",
   " .qlint.prof.orig[`.qlint.prof.id]:{x}; idw:wrap[`.qlint.prof.id;{x}];",
   " t0:.z.p; do[1000;{x}1]; plain:.z.p-t0; t0:.z.p; do[1000;idw 1]; inst:.z.p-t0;",
   " .qlint.prof.log:0#.qlint.prof.log; .qlint.prof.n:0;",
   " t0:.z.p;",
   ' res:@[{[full;wrapped;stmts] full set\' wrapped; value each stmts; ""}[full;wrapped];stmts;{$[10h=type x;x;string x]}];',
   " total:.z.p-t0;",
-  " full set' orig;",
+  // Only a name still holding its wrapper is put back: one the run itself
+  // defined anew keeps its new value (#1271).
+  " {[n;w;o] if[w~@[get;n;{::}]; n set o]}'[full;wrapped;orig];",
   " l:.qlint.prof.log; n:.qlint.prof.n;",
   " (`float$total; `float$(inst-plain)%1000; res; `float$n; string full; `float$l`id; `float$l`parent; string l`fn; `float$l[`start]-t0; `float$l[`stop]-l`start)}",
 ].join("\n");
 
 /// The cleanup that runs after `PROFILE`, whatever became of it: its
-/// working state deleted, and the originals put back from it if the profile
-/// stopped between replacing them and putting them back - a process that
-/// went away mid-run cannot be helped.
+/// working state deleted, and the originals put back from it - where a
+/// name still holds its wrapper - if the profile stopped between replacing
+/// them and putting them back; a process that went away mid-run cannot be
+/// helped.
 export const PROFILE_CLEANUP = [
   "{[x]",
-  " if[`prof in key `.qlint; if[99h=type o:.qlint.prof`orig; {x set y}'[key o;value o]]];",
+  " if[`prof in key `.qlint; if[99h=type w:.qlint.prof`wrapped; {[n;w;o] if[w~@[get;n;{::}]; n set o]}'[key w;value w;.qlint.prof.orig key w]]];",
   " @[{delete prof from `.qlint};::;::]; ::}",
 ].join("\n");
 

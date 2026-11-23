@@ -23,6 +23,7 @@ import { INFO, MONITOR, monitorTree, readMonitorInterval, type InfoNode } from "
 import type { QConnection } from "./qclient";
 import type { Process } from "./processes";
 import { readInsight, turnedOff, type InsightFeature } from "./insightconfig";
+import { plainMessage } from "./history";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -110,7 +111,7 @@ class InfoView implements TreeDataProvider<InfoNode> {
       const got = await borrowWhenFree(this.live, async (connection, process) => ({ process: process.label, nodes: await this.read(connection, process) }));
       if (got === undefined) {
         if (asked && this.live.activeLabel() !== undefined) {
-          void window.showInformationMessage(`q-lint: ${this.live.activeLabel()} is busy with a query; refresh again when it is done.`);
+          void window.showInformationMessage(plainMessage(`q-lint: ${this.live.activeLabel()} is busy with a query; refresh again when it is done.`));
         }
         return;
       }
@@ -160,7 +161,7 @@ class Switched {
     private readonly make: () => InfoView,
   ) {
     context.subscriptions.push(
-      commands.registerCommand(refresh, () => (this.view === undefined ? void window.showInformationMessage(turnedOff(feature)) : this.view.refresh(true))),
+      commands.registerCommand(refresh, () => (this.view === undefined ? void window.showInformationMessage(plainMessage(turnedOff(feature))) : this.view.refresh(true))),
       { dispose: () => this.view?.dispose() },
     );
     this.apply();

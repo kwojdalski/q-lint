@@ -13,11 +13,12 @@ import { ViewColumn, commands, window, workspace, type ExtensionContext, type We
 import { BENCHMARK, DEFAULT_RUNS, benchmarkHtml, expressionProblem, guardCode, readRuns, readTimings, summarise, type Summary } from "./benchmark";
 import type { Live } from "./live";
 import { PROCESS_TOOL_COMMANDS, asCode, toolOff, toolOn } from "./processtools";
+import { plainMessage } from "./history";
 
 const on = (): boolean => toolOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "benchmark");
 
 function say(text: string): string {
-  void window.showInformationMessage(text);
+  void window.showInformationMessage(plainMessage(text));
   return text;
 }
 

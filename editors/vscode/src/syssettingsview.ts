@@ -15,6 +15,7 @@ import type { Live } from "./live";
 import { PROCESS_TOOL_COMMANDS, toolOff, toolOn } from "./processtools";
 import { READ_SETTINGS, SET_SETTING, SYSTEM_SETTINGS, memoryText, readSettings, settingCommand, valueProblem } from "./syssettings";
 import { ToolTree, type ToolNode } from "./toolstree";
+import { plainMessage } from "./history";
 
 export const SYSTEM_SETTINGS_VIEW = "q-lint.systemSettings";
 
@@ -22,7 +23,7 @@ const on = (): boolean => toolOn((key, fallback) => workspace.getConfiguration("
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 function say(text: string): string {
-  void window.showInformationMessage(text);
+  void window.showInformationMessage(plainMessage(text));
   return text;
 }
 
@@ -110,7 +111,7 @@ export function registerSystemSettings(
     if (live.guardRefuses(code, [process]) === undefined) {
       const yes = "Set";
       const picked = await Promise.resolve(
-        window.showWarningMessage(`Set ${code} on ${process.label}?`, { modal: true, detail: setting.note }, yes),
+        window.showWarningMessage(plainMessage(`Set ${code} on ${process.label}?`), { modal: true, detail: setting.note }, yes),
       ).catch(() => undefined);
       if (picked !== yes) {
         return "not confirmed";
@@ -125,7 +126,7 @@ export function registerSystemSettings(
     if (ran === undefined) {
       return "nothing was run";
     }
-    void window.showInformationMessage(`q-lint: \\${setting.key} on ${ran.process} is now ${String(ran.value)}.`);
+    void window.showInformationMessage(plainMessage(`q-lint: \\${setting.key} on ${ran.process} is now ${String(ran.value)}.`));
     if (tree.open) {
       await refresh();
     }

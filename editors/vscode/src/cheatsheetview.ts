@@ -22,6 +22,7 @@ import {
 } from "vscode";
 import { editorFeatureOff, editorFeatureOn } from "./editorfeatures";
 import { CHEAT_SHEET, readCheatSheet, type CheatItem, type CheatSection } from "./helpcatalog";
+import { plainMessage } from "./history";
 
 const on = (): boolean => editorFeatureOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "cheatSheet");
 
@@ -72,7 +73,7 @@ export function registerCheatSheet(context: ExtensionContext): { view: () => Tre
   context.subscriptions.push(
     commands.registerCommand(CHEAT_SHEET.insert, async (row?: CheatItem | string): Promise<string | undefined> => {
       if (!on()) {
-        void window.showInformationMessage(editorFeatureOff("cheatSheet"));
+        void window.showInformationMessage(plainMessage(editorFeatureOff("cheatSheet")));
         return undefined;
       }
       // By its label, from a keybinding or a test.
@@ -94,7 +95,7 @@ export function registerCheatSheet(context: ExtensionContext): { view: () => Tre
     }),
     commands.registerCommand(CHEAT_SHEET.show, async () => {
       if (!on()) {
-        void window.showInformationMessage(editorFeatureOff("cheatSheet"));
+        void window.showInformationMessage(plainMessage(editorFeatureOff("cheatSheet")));
         return;
       }
       await commands.executeCommand(`${CHEAT_SHEET.view}.focus`);

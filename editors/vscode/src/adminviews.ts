@@ -30,6 +30,7 @@ import type { Process } from "./processes";
 import type { QConnection } from "./qclient";
 import { statements } from "./statements";
 import { TIMERS, intervalCode, intervalProblem, readTimers, toggleCode } from "./timers";
+import { plainMessage } from "./history";
 
 /// A row of either view: what it shows, and what its commands act on.
 export interface AdminNode {
@@ -108,7 +109,7 @@ class AdminView implements TreeDataProvider<AdminNode> {
       const got = await borrowWhenFree(this.live as Live, async (connection, process) => ({ process: process.label, ...(await this.read(connection, process)) }));
       if (got === undefined) {
         if (asked && this.live.activeLabel() !== undefined) {
-          void window.showInformationMessage(`q-lint: ${this.live.activeLabel()} is busy with a query; refresh again when it is done.`);
+          void window.showInformationMessage(plainMessage(`q-lint: ${this.live.activeLabel()} is busy with a query; refresh again when it is done.`));
         }
         return;
       }
@@ -172,7 +173,7 @@ class Switched {
   /// The view, or undefined having said the feature is off.
   live(): AdminView | undefined {
     if (this.view === undefined) {
-      void window.showInformationMessage(adminOff(this.feature));
+      void window.showInformationMessage(plainMessage(adminOff(this.feature)));
     }
     return this.view;
   }
@@ -229,12 +230,12 @@ export function registerAdminViews(context: ExtensionContext, live: Live_): { cl
         return false;
       }
       if (!ran.value.ok) {
-        void window.showErrorMessage(`q-lint: could not ${what} on ${ran.process}: '${ran.value.error}`);
+        void window.showErrorMessage(plainMessage(`q-lint: could not ${what} on ${ran.process}: '${ran.value.error}`));
         return false;
       }
       return true;
     } catch (error) {
-      void window.showInformationMessage(`q-lint: ${error instanceof Error ? error.message : String(error)}`);
+      void window.showInformationMessage(plainMessage(`q-lint: ${error instanceof Error ? error.message : String(error)}`));
       return false;
     }
   };
@@ -252,12 +253,12 @@ export function registerAdminViews(context: ExtensionContext, live: Live_): { cl
     const guarded = guardedBy(process, readGuard((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback)));
     if (guarded.length > 0) {
       void window.showWarningMessage(
-        `q-lint: ${process.label} is read-only (tagged ${guarded.join(", ")}): its clients' handles are not closed from here. q-lint.processes.readOnlyGuard.tags names the tags it guards.`,
+        plainMessage(`q-lint: ${process.label} is read-only (tagged ${guarded.join(", ")}): its clients' handles are not closed from here. q-lint.processes.readOnlyGuard.tags names the tags it guards.`),
       );
       return false;
     }
     const yes = "Close Handle";
-    if ((await window.showWarningMessage(`Close handle ${node.handle} on ${process.label}? The client it belongs to is disconnected.`, { modal: true }, yes)) !== yes) {
+    if ((await window.showWarningMessage(plainMessage(`Close handle ${node.handle} on ${process.label}? The client it belongs to is disconnected.`), { modal: true }, yes)) !== yes) {
       return false;
     }
     const done = await change(closeCode(node.handle), `close handle ${node.handle}`);

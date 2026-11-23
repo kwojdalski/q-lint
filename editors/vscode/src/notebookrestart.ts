@@ -13,6 +13,7 @@ import type { Launcher } from "./launcherview";
 import type { Live } from "./live";
 import { requireFeature } from "./notebook";
 import { NOTEBOOK } from "./qnb";
+import { plainMessage } from "./history";
 
 export interface NotebookRuns {
   processOf: (notebook: NotebookDocument) => string | undefined;
@@ -39,7 +40,7 @@ export class NotebookRestart {
   /// user chose `button`. A method, so a run without dialogs - the e2e
   /// harness - can answer in their place.
   async ask(message: string, detail: string, button: string): Promise<boolean> {
-    return (await window.showWarningMessage(message, { modal: true, detail }, button)) === button;
+    return (await window.showWarningMessage(plainMessage(message), { modal: true, detail }, button)) === button;
   }
 
   private done(outcome: RestartOutcome, process?: string): void {
@@ -67,7 +68,7 @@ export class NotebookRestart {
       return this.done("refused");
     }
     if (this.live.isBusy()) {
-      void window.showInformationMessage(`q-lint: a query is still running on ${this.live.activeLabel()}. q-lint: Abort Current Query stops waiting for it.`);
+      void window.showInformationMessage(plainMessage(`q-lint: a query is still running on ${this.live.activeLabel()}. q-lint: Abort Current Query stops waiting for it.`));
       return this.done("refused", label);
     }
     const cells = notebook.getCells().filter((c) => c.kind === NotebookCellKind.Code && c.document.languageId === "q").length;
@@ -83,7 +84,7 @@ export class NotebookRestart {
       }
       const problem = await this.launcher.restart(label);
       if (problem !== undefined) {
-        void window.showErrorMessage(`q-lint: could not restart ${label}: ${problem}`);
+        void window.showErrorMessage(plainMessage(`q-lint: could not restart ${label}: ${problem}`));
         return this.done("refused", label);
       }
       if (!(await this.live.connectTo(label))) {

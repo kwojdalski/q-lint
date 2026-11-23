@@ -25,6 +25,7 @@ import { editorFeatureOff, editorFeatureOn } from "./editorfeatures";
 import { borrowWhenFree } from "./infoview";
 import type { Live } from "./live";
 import { LOGPOINT_COMMANDS, LOG_ADD, LOG_LIST, LOG_REMOVE, hitLines, readLogpoints } from "./logpoint";
+import { plainMessage } from "./history";
 
 const on = (): boolean => editorFeatureOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "logpoints");
 
@@ -87,7 +88,7 @@ export function registerLogpoints(
   };
   const refuse = (): boolean => {
     if (!on()) {
-      void window.showInformationMessage(editorFeatureOff("logpoints"));
+      void window.showInformationMessage(plainMessage(editorFeatureOff("logpoints")));
       return true;
     }
     return false;
@@ -129,9 +130,9 @@ export function registerLogpoints(
       names.add(fn);
       logged.set(done.process, names);
       mark();
-      void window.showInformationMessage(`q-lint: each call of ${fn} on ${done.process} is printed there with 0N! until the logpoint is removed.`);
+      void window.showInformationMessage(plainMessage(`q-lint: each call of ${fn} on ${done.process} is printed there with 0N! until the logpoint is removed.`));
     } catch (error) {
-      void window.showErrorMessage(`q-lint: no logpoint on ${fn}: ${message(error)}`);
+      void window.showErrorMessage(plainMessage(`q-lint: no logpoint on ${fn}: ${message(error)}`));
     }
   };
 
@@ -142,7 +143,7 @@ export function registerLogpoints(
     }
     logged.get(done.process)?.delete(fn);
     if (!done.value) {
-      void window.showWarningMessage(`q-lint: ${fn} was redefined on ${done.process} while it had a logpoint; it is left as it is now.`);
+      void window.showWarningMessage(plainMessage(`q-lint: ${fn} was redefined on ${done.process} while it had a logpoint; it is left as it is now.`));
     }
   };
 
@@ -155,7 +156,7 @@ export function registerLogpoints(
       return;
     }
     if (held.names.length === 0) {
-      void window.showInformationMessage(`q-lint: no function on ${held.process} has a logpoint.`);
+      void window.showInformationMessage(plainMessage(`q-lint: no function on ${held.process} has a logpoint.`));
       return;
     }
     const wanted = typeof name === "string" ? name : nameAtCursor(window.activeTextEditor);
@@ -171,7 +172,7 @@ export function registerLogpoints(
     try {
       await removeOne(fn);
     } catch (error) {
-      void window.showErrorMessage(`q-lint: the logpoint on ${fn} was not removed: ${message(error)}`);
+      void window.showErrorMessage(plainMessage(`q-lint: the logpoint on ${fn} was not removed: ${message(error)}`));
     }
     mark();
   };
@@ -188,11 +189,11 @@ export function registerLogpoints(
       try {
         await removeOne(fn);
       } catch (error) {
-        void window.showErrorMessage(`q-lint: the logpoint on ${fn} was not removed: ${message(error)}`);
+        void window.showErrorMessage(plainMessage(`q-lint: the logpoint on ${fn} was not removed: ${message(error)}`));
       }
     }
     mark();
-    void window.showInformationMessage(`q-lint: ${held.names.length} logpoint${held.names.length === 1 ? "" : "s"} removed from ${held.process}.`);
+    void window.showInformationMessage(plainMessage(`q-lint: ${held.names.length} logpoint${held.names.length === 1 ? "" : "s"} removed from ${held.process}.`));
   };
 
   const hits = async (): Promise<void> => {

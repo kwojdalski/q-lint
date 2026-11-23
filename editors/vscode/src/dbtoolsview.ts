@@ -30,12 +30,13 @@ import { statements } from "./statements";
 import { SYM_INSPECT, SYM_PARTITIONS, readSym, symReport } from "./syminspect";
 import { TABLE_INFO, readTableInfo, type TableInfo } from "./tableinfo";
 import { loadTypes, rangeOf, symbolPool, testDataCsv, testDataQ, type TestDataOptions } from "./testdata";
+import { plainMessage } from "./history";
 
 const settings = <T>(key: string, fallback: T): T => workspace.getConfiguration("q-lint").get(key, fallback);
 const on = (feature: DbFeature): boolean => dbOn(settings, feature);
 
 function say(message: string): string {
-  void window.showInformationMessage(message);
+  void window.showInformationMessage(plainMessage(message));
   return message;
 }
 
@@ -143,7 +144,7 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
     await openDocument(script, "q");
     const run = "Run";
     const answer = await window.showWarningMessage(
-      `Run the column manager on ${process.label}: ${opText(op)} in ${table}?`,
+      plainMessage(`Run the column manager on ${process.label}: ${opText(op)} in ${table}?`),
       { modal: true, detail: `It changes every ${info.kind === "partitioned" ? "partition of the table" : "file of the table"} on disk, then loads the database again. The script is open for review; edits to it are not what runs.` },
       run,
     );

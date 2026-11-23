@@ -10,6 +10,7 @@ import type { Launcher } from "./launcherview";
 import type { Live, ProcessArg } from "./live";
 import { timeoutOf, withExtras } from "./processes";
 import { timeoutProblem } from "./processtimeout";
+import { plainMessage } from "./history";
 
 const settings = () => readAdmin((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback));
 
@@ -29,7 +30,7 @@ export class ProcessTimeouts {
   /// keybinding or a test) sets it without asking, `null` or 0 clears it.
   async setTimeout(row?: ProcessArg, seconds?: number | null): Promise<void> {
     if (!settings().processTimeout) {
-      void window.showInformationMessage(adminOff("processTimeout"));
+      void window.showInformationMessage(plainMessage(adminOff("processTimeout")));
       return;
     }
     const process = await this.live.pick(row, "Set the query timeout of which q process?");
@@ -59,7 +60,7 @@ export class ProcessTimeouts {
     }
     const now = this.live.processes();
     if (!now.some((p) => p.label === process.label)) {
-      void window.showErrorMessage(`q-lint: "${process.label}" was deleted meanwhile; its timeout was not set.`);
+      void window.showErrorMessage(plainMessage(`q-lint: "${process.label}" was deleted meanwhile; its timeout was not set.`));
       return;
     }
     await this.live.saveProcesses(
@@ -73,7 +74,7 @@ export class ProcessTimeouts {
       }),
     );
     void window.showInformationMessage(
-      timeout === undefined ? `q-lint: queries on ${process.label} follow q-lint.query.timeout.` : `q-lint: a query on ${process.label} is dropped after ${timeout} s.`,
+      plainMessage(timeout === undefined ? `q-lint: queries on ${process.label} follow q-lint.query.timeout.` : `q-lint: a query on ${process.label} is dropped after ${timeout} s.`),
     );
   }
 
@@ -81,7 +82,7 @@ export class ProcessTimeouts {
   /// started from here. The pid signalled, for tests.
   interrupt(): number | undefined {
     if (!settings().cancelLocal) {
-      void window.showInformationMessage(adminOff("cancelLocal"));
+      void window.showInformationMessage(plainMessage(adminOff("cancelLocal")));
       return undefined;
     }
     const process = this.live.activeProcess();
@@ -92,11 +93,11 @@ export class ProcessTimeouts {
     const pid = process.server === undefined ? this.launcher.interrupt(process.label) : undefined;
     if (pid === undefined) {
       void window.showInformationMessage(
-        `q-lint: ${process.label} was not started from here (Start Process), so it cannot be interrupted from here. q-lint: Abort Current Query stops waiting for the query instead.`,
+        plainMessage(`q-lint: ${process.label} was not started from here (Start Process), so it cannot be interrupted from here. q-lint: Abort Current Query stops waiting for the query instead.`),
       );
       return undefined;
     }
-    void window.showInformationMessage(`q-lint: interrupted ${process.label} (pid ${pid}); its query stops with 'stop and the connection stays.`);
+    void window.showInformationMessage(plainMessage(`q-lint: interrupted ${process.label} (pid ${pid}); its query stops with 'stop and the connection stays.`));
     return pid;
   }
 }

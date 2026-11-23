@@ -97,6 +97,7 @@ import {
   type LanguageClientOptions,
   type ServerOptions,
 } from "vscode-languageclient/node";
+import { plainMessage } from "./history";
 
 let client: LanguageClient | undefined;
 /// The command a code lens of the server runs (`src/lsp/annotate.rs`).
@@ -561,18 +562,18 @@ async function start(context: ExtensionContext): Promise<void> {
       // The user named this binary, so the advice is about that setting -
       // not to install one and set it, which they did.
       window.showErrorMessage(
-        `q-lint: could not start "${configured}", the binary q-lint.serverPath names. ` +
-          `Check the path, or clear the setting to use the server bundled with the extension. ${error}`,
+        plainMessage(`q-lint: could not start "${configured}", the binary q-lint.serverPath names. ` +
+          `Check the path, or clear the setting to use the server bundled with the extension. ${error}`),
       );
     } else if (client === undefined) {
       // Name every binary that was tried. "Couldn't start the server" sends
       // someone to the logs; saying what was attempted, and that none of them
       // ran, tells them what to fix.
       window.showErrorMessage(
-        `q-lint: could not start "${command}". No server for ${process.platform}-` +
+        plainMessage(`q-lint: could not start "${command}". No server for ${process.platform}-` +
           `${process.arch} would run: install a release archive from ` +
           `github.com/kwojdalski/q-lint/releases and set q-lint.serverPath to the qlinter ` +
-          `binary, or put it on PATH. ${error}`,
+          `binary, or put it on PATH. ${error}`),
       );
     }
   }

@@ -6,6 +6,7 @@ import { commands, window, workspace, type ExtensionContext } from "vscode";
 import { ADMIN_COMMANDS, adminOff, readAdmin } from "./admin";
 import type { Live, ProcessArg } from "./live";
 import { credentialCommandOf, withExtras } from "./processes";
+import { plainMessage } from "./history";
 
 const on = (): boolean => readAdmin((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback)).credentialCommand;
 
@@ -23,7 +24,7 @@ export class CredentialCommands {
   /// keybinding or a test) sets it without asking, `""` or `null` clears it.
   async set(row?: ProcessArg, command?: string | null): Promise<void> {
     if (!on()) {
-      void window.showInformationMessage(adminOff("credentialCommand"));
+      void window.showInformationMessage(plainMessage(adminOff("credentialCommand")));
       return;
     }
     const process = await this.live.pick(row, "Set the credential command of which q process?");
@@ -50,7 +51,7 @@ export class CredentialCommands {
     const credentialCommand = credentialCommandOf(given);
     const now = this.live.processes();
     if (!now.some((p) => p.label === process.label)) {
-      void window.showErrorMessage(`q-lint: "${process.label}" was deleted meanwhile; its credential command was not set.`);
+      void window.showErrorMessage(plainMessage(`q-lint: "${process.label}" was deleted meanwhile; its credential command was not set.`));
       return;
     }
     await this.live.saveProcesses(
@@ -64,9 +65,9 @@ export class CredentialCommands {
       }),
     );
     void window.showInformationMessage(
-      credentialCommand === undefined
+      plainMessage(credentialCommand === undefined
         ? `q-lint: ${process.label} connects with its stored password.`
-        : `q-lint: ${process.label} runs its credential command at each connect.`,
+        : `q-lint: ${process.label} runs its credential command at each connect.`),
     );
   }
 }
