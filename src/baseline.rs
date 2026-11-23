@@ -35,7 +35,7 @@ pub struct Baseline {
 }
 
 /// The text a finding is matched on: its line, blanks trimmed.
-fn line_text(source: &str, line: usize) -> String {
+pub(crate) fn line_text(source: &str, line: usize) -> String {
     source
         .lines()
         .nth(line.saturating_sub(1))
@@ -45,7 +45,7 @@ fn line_text(source: &str, line: usize) -> String {
 }
 
 /// `path` relative to `root`, with `/`; as it is where it is not under it.
-fn relative(root: &Path, path: &Path) -> String {
+pub(crate) fn relative(root: &Path, path: &Path) -> String {
     let full = crate::config::absolute(path);
     full.strip_prefix(root)
         .unwrap_or(&full)

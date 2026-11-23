@@ -3,6 +3,7 @@ mod config;
 mod jsonrpc;
 mod lsp;
 mod qls;
+mod report;
 use clap::Parser;
 use config::{Layer, Overrides, Policy};
 use q_lint_rs::{RULES, Workspace, balanced, fix_all, fixes_for, index, whole_edit};
@@ -68,7 +69,9 @@ struct Args {
     #[command(subcommand)]
     command: Option<Command>,
     paths: Vec<String>,
-    #[arg(long,default_value="text",value_parser=["text","json"])]
+    /// `text`, `json`, `sarif` (SARIF 2.1.0, for code scanning) or `github`
+    /// (workflow commands, which a GitHub Actions run shows as annotations).
+    #[arg(long,default_value="text",value_parser=["text","json","sarif","github"])]
     format: String,
     /// The rule set: `general` (what q refuses), `style`, `styleq` or `uqf`.
     /// Wins over `profile` in a configuration file. Without either, `uqf` -
@@ -366,6 +369,12 @@ fn run(args: Args) -> Result<u8, String> {
         if args.fix || args.diff {
             return Err("--fix and --diff require q source paths, not --rules or --explain".into());
         }
+        if !matches!(args.format.as_str(), "text" | "json") {
+            return Err(format!(
+                "--format {} reports findings; --rules and --explain print text or json",
+                args.format
+            ));
+        }
         let entries: Vec<_> = RULES
             .iter()
             .filter(|r| args.explain.as_ref().is_none_or(|code| r.code == *code))
@@ -411,8 +420,11 @@ fn run(args: Args) -> Result<u8, String> {
     if (args.fix || args.diff) && args.backend == "qls" {
         return Err("--fix and --diff require the builtin backend".into());
     }
-    if args.diff && args.format == "json" {
-        return Err("--diff cannot be combined with --format json".into());
+    if args.diff && args.format != "text" {
+        return Err(format!(
+            "--diff cannot be combined with --format {}",
+            args.format
+        ));
     }
     let policy = Policy::new(overrides(&args)?, false);
     if args.show_settings {
@@ -708,6 +720,10 @@ fn run(args: Args) -> Result<u8, String> {
     }
     if args.format == "json" {
         out!("{}", serde_json::to_string(&findings).unwrap());
+    } else if args.format == "sarif" {
+        let cwd = config::absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
+        let report = report::sarif(&findings, &sources, &cwd);
+        out!("{}", serde_json::to_string_pretty(&report).unwrap());
     } else {
         let paint = Paint::for_stdout(&args.color);
         for f in &findings {

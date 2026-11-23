@@ -102,7 +102,8 @@ guess in either direction. JSON output never carries colour.
 `qlinter --version` (or `-v`) reports the build, and `--stdio` is accepted and ignored
 so a client that appends it gets a server rather than an exit code.
 
-The CLI supports `--profile general|style|styleq|uqf`, `--format text|json`,
+The CLI supports `--profile general|style|styleq|uqf`, `--format text|json|sarif|github`
+(see [Reports for CI](#reports-for-ci)),
 `--exclude`, `--config`, stdin (`-`, `--stdin-filename`; the name alone reads
 stdin too, as in Ruff, either refuses other paths beside it, and a name that is
 not a `.q` file is refused as that file named outright is) and
@@ -183,6 +184,17 @@ that ends in an operator or `::` and so is a composition, an operator applied
 in brackets (`a*[b;c]+d`), and a template that opens inside the phrase of
 another without parentheses of its own, whose table then takes the commas
 after it.
+
+### Reports for CI
+
+`--format sarif` prints SARIF 2.1.0, which GitHub code scanning and other
+SARIF readers take: one result per finding, its region, and the rules the
+results name, each with its summary and a link to its row in
+[docs/rules.md](docs/rules.md). A result's fingerprint
+(`partialFingerprints."qlinterBaseline/v1"`) is the baseline's key for it -
+its file, code and line text - so a finding keeps its identity when lines are
+added above it and gets a new one when its own line is edited. Paths are
+relative to the directory qlinter runs in; run it from the repository root.
 
 ### The dependency graph: `qlinter analyze graph`
 
