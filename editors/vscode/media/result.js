@@ -1557,6 +1557,8 @@
     const theme = C.theme(cssVar);
     const controls = el("div", "controls");
     const kind = el("select");
+    // Its options are its only text: a screen reader is told what they choose.
+    kind.setAttribute("aria-label", "Chart kind");
     const KINDS = kinds();
     if (KINDS.indexOf(state.kind) < 0) {
       state.kind = "line";
