@@ -1,9 +1,10 @@
-// The result grid to a screen reader (#1187): media/result.js under node
-// in pagedom.js's stand-in DOM. Also turned off: drawn as before.
+// The result grid to a screen reader (#1187) and a result announced
+// (#1188): media/result.js under node in pagedom.js's stand-in DOM. Each
+// also turned off: drawn and said as before.
 const test = require("node:test");
 const assert = require("node:assert");
 const { Element, loadPage } = require("./pagedom.js");
-const { gridMove } = require("../media/result.js");
+const { gridMove, announcement } = require("../media/result.js");
 
 /// A result of two columns over `count` rows: `n` 0 .. count-1 and `s`.
 function result(id, count, extra = {}) {
@@ -149,10 +150,38 @@ test("off, the grid is the plain table it was: no roles, every header a tab stop
   assert.strictEqual(table(page).attributes.role, "grid");
 });
 
-test("package.json contributes the setting, on by default (#1187)", () => {
+/// The page's live region, when it has one.
+const region = (page) => page.body.all((e) => e.attributes?.["aria-live"] === "polite")[0];
+
+test("a new result is announced once in a polite live region; off, there is none (#1188)", () => {
+  assert.strictEqual(announcement({ total: 1000, cells: [] }, 12), "1,000 rows in 12 ms");
+  assert.strictEqual(announcement({ total: 1, cells: [] }, 0), "1 row in 0 ms");
+  const page = loadPage(undefined);
+  assert.strictEqual(region(page), undefined, "nothing until a result");
+  page.send(result("s.1", 1000));
+  const live = region(page);
+  assert.strictEqual(live.attributes.role, "status");
+  assert.strictEqual(live.attributes["aria-atomic"], "true");
+  assert.strictEqual(live.textContent, "1,000 rows in 12 ms");
+  // The same result posted again - a setting changed, the page reloaded -
+  // is not said again.
+  live.textContent = "";
+  page.send(result("s.1", 1000));
+  assert.strictEqual(live.textContent, "");
+  page.send(result("s.2", 1, { millis: 3 }));
+  assert.strictEqual(live.textContent, "1 row in 3 ms");
+  page.send(result("s.3", 5, { features: { announce: false } }));
+  assert.strictEqual(live.hidden, true);
+  assert.strictEqual(live.textContent, "");
+  const off = loadPage(undefined);
+  off.send(result("s.1", 5, { features: { announce: false } }));
+  assert.strictEqual(region(off), undefined);
+});
+
+test("package.json contributes both settings, on by default (#1187, #1188)", () => {
   const pkg = require("../package.json");
   const props = Object.assign({}, ...pkg.contributes.configuration.map((c) => c.properties));
-  for (const f of ["accessibleGrid"]) {
+  for (const f of ["accessibleGrid", "announce"]) {
     const s = props[`q-lint.results.${f}.enable`];
     assert.deepStrictEqual([s?.type, s?.default], ["boolean", true], f);
   }

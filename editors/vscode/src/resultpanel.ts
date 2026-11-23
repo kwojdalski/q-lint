@@ -1513,6 +1513,7 @@ export class QueryModes {
         correlation: features.enable.correlation,
         sendResult: features.enable.sendResult,
         accessibleGrid: features.enable.accessibleGrid,
+        announce: features.enable.announce,
       },
       // The look of the features on, and the saved query it came from.
       look: lookParts(this.shown.look, this.lookOn(features)),

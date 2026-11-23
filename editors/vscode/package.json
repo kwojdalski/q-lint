@@ -738,6 +738,12 @@
             "order": 130,
             "markdownDescription": "Expose the result grid to screen readers (#1187): a `grid` with its whole row and column counts though only the rows in view are drawn, each row's index among them, the column names as column headers, and one tab stop that the arrow keys move from cell to cell - Home and End to a row's ends, Ctrl+Home and Ctrl+End to the grid's, Page Up and Page Down a page, scrolling as they go; Enter or Space on a header still sorts. Off, the grid is a plain table and every header is a tab stop."
           },
+          "q-lint.results.announce.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "Announce a query's outcome to a screen reader (#1188), politely, without moving the focus: `1,000 rows in 12 ms` when the result panel shows a result, and in the Interactive Window and the q REPL how many lines a run answered and how long it took, or its error. Off, nothing is announced and the live region is not in the page."
+          },
           "q-lint.query.gridHeatmap": {
             "type": "boolean",
             "default": false,

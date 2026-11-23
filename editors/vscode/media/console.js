@@ -19,6 +19,36 @@
   const main = document.createElement("main");
   document.body.append(header, main);
   const sections = new Map();
+  // The polite live region a finished run is announced in (#1188), in the
+  // page only while q-lint.results.announce.enable is on.
+  let live;
+
+  function setAnnounce(on) {
+    if (on && live === undefined) {
+      live = document.createElement("div");
+      live.className = "sr-only";
+      live.setAttribute("role", "status");
+      live.setAttribute("aria-live", "polite");
+      live.setAttribute("aria-atomic", "true");
+      document.body.append(live);
+    } else if (!on && live !== undefined) {
+      live.remove();
+      live = undefined;
+    }
+  }
+
+  /// Say a run that has just finished: its error's first line, or how many
+  /// lines it answered, and how long it took.
+  function announce(entry) {
+    if (live === undefined || entry.ok === undefined) {
+      return;
+    }
+    const took = entry.millis === undefined ? "" : ` in ${entry.millis} ms`;
+    const n = entry.lines.length;
+    live.textContent = entry.ok
+      ? `${n} line${n === 1 ? "" : "s"}${took}`
+      : `Error${took}: ${entry.lines.find((l) => l.trim() !== "") ?? "no message"}`;
+  }
 
   function draw(entry) {
     let section = sections.get(entry.id);
@@ -223,12 +253,18 @@
     if (!m || typeof m.type !== "string") {
       return;
     }
-    if (m.type === "all") {
+    if (m.type === "announce") {
+      setAnnounce(m.on === true);
+    } else if (m.type === "all") {
+      setAnnounce(m.announce === true);
       clearAll();
       for (const entry of m.entries) draw(entry);
       if (Array.isArray(m.history)) history = m.history;
     } else if (m.type === "add" || m.type === "update") {
       draw(m.entry);
+      if (m.type === "update") {
+        announce(m.entry);
+      }
     } else if (m.type === "remove") {
       sections.get(m.id)?.remove();
       sections.delete(m.id);

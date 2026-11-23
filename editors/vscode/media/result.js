@@ -352,9 +352,17 @@
     }
   }
 
+  /// What the live region says of a result (#1188): its rows and how long
+  /// the query took.
+  function announcement(grid, millis) {
+    const n = grid.total === undefined ? rowCount(grid) : grid.total;
+    return n.toLocaleString("en-US") + " row" + (n === 1 ? "" : "s") + " in " + millis + " ms";
+  }
+
   const helpers = {
     rowCount: rowCount,
     gridMove: gridMove,
+    announcement: announcement,
     HEAD_ROWS: HEAD_ROWS,
     pivot: pivot,
     defaultPivot: defaultPivot,
@@ -433,6 +441,13 @@
   const pivotView = el("main", "pivot-view");
   const corrView = el("main", "corr-view");
   document.body.append(tabs, bar, gridView, chartView, statsView, treeView, pivotView, corrView);
+  /// The polite live region a result is announced in (#1188), in the page
+  /// only while q-lint.results.announce.enable is on.
+  const live = el("div", "sr-only");
+  live.setAttribute("role", "status");
+  live.setAttribute("aria-live", "polite");
+  live.setAttribute("aria-atomic", "true");
+  let liveShown = false;
   // Until a result arrives: what fills the page, as a view's welcome would.
   gridView.append(el("p", "note", "No result yet. Run a query in grid or chart mode (q-lint: Switch Query Mode) to show it here."));
 
@@ -2046,6 +2061,7 @@
       : [];
     result = m;
     moreAsked = false;
+    announce(m);
     rows = visibleRows(m.grid, state.filters, state.sort);
     save();
     draw();
@@ -2053,6 +2069,24 @@
       sendImage(image.format, image.key);
     }
   });
+  /// Say a new result in the live region (#1188), once: not again when the
+  /// same result is posted after a setting changes or the page reloads.
+  function announce(m) {
+    const on = feature("announce");
+    if (on && !liveShown) {
+      document.body.append(live);
+      liveShown = true;
+    }
+    live.hidden = !on;
+    if (!on) {
+      live.textContent = "";
+      return;
+    }
+    if (state.announced !== m.id) {
+      state.announced = m.id;
+      live.textContent = announcement(m.grid, m.millis);
+    }
+  }
   window.addEventListener("resize", paint);
   // The editor marks a new theme on the body's class, and the chart's
   // colours are read from the theme when it is drawn: draw it again.

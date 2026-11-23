@@ -1609,12 +1609,16 @@ headers. It has one tab stop; the arrow keys move it a cell at a time, Home
 and End to the row's ends, Ctrl+Home and Ctrl+End to the grid's first and
 last cell, Page Up and Page Down a page, scrolling as they go. Enter or
 Space on a header still sorts (`q-lint.results.accessibleGrid.enable`).
+A result is also announced as it arrives, politely and without taking the
+focus - `1,000 rows in 12 ms` - and so is each run in the Interactive
+Window and the q REPL: how many lines it answered and how long it took, or
+its error (`q-lint.results.announce.enable`).
 
 Each of these - the history, Compare, Stats, the heatmap, the tree, export,
 paging, the pivot, the new charts, drill-down, the Data Wrangler, cell edits,
 the plots, column formats, conditional formats, sparklines and data bars,
 the column layout, the depth chart, the map, linked panes, chart presets,
-correlation, Send to... and the accessible grid - has its own `q-lint.results.<feature>.enable`
+correlation, Send to..., the accessible grid and the announcements - has its own `q-lint.results.<feature>.enable`
 setting, on by default but for paging.
 Turned off, its button and command are gone (the command, run anyway, says
 which setting turns it back on), and a change applies at once, without a
@@ -2649,6 +2653,7 @@ nothing.
 | `q-lint.results.correlation.enable` | `true` | Offer the **Correlation** view and **Show Result Correlation Matrix**. | - |
 | `q-lint.results.sendResult.enable` | `true` | Offer **Send to...**, **Send Result to Notebook** and **Append Result to Markdown Report...**, each showing what it writes first. | - |
 | `q-lint.results.accessibleGrid.enable` | `true` | Expose the result grid to screen readers: grid roles, row and column counts over the drawn rows, and arrow-key navigation with one tab stop. Off: a plain table, every header a tab stop. | - |
+| `q-lint.results.announce.enable` | `true` | Announce a result's rows and time, or a console run's outcome or error, in a polite live region. Off: nothing announced. | - |
 | `q-lint.query.progress.enable` | `true` | Count a running query's time in the status bar, and notify a long one's end. | - |
 | `q-lint.query.escapeAborts.enable` | `true` | Escape in a q editor aborts a running query. Off, Escape is VS Code's own. | - |
 | `q-lint.query.notifyAfter` | `10` | Seconds a query must run for its end to be notified while the window is not focused; `0` never. | - |
