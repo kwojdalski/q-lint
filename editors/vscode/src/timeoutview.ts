@@ -89,6 +89,14 @@ export class ProcessTimeouts {
       void window.showInformationMessage("q-lint: no query is running.");
       return undefined;
     }
+    // Node sends no SIGINT on Windows: kill() there ends the process
+    // whatever the signal, and q with it (#1250).
+    if (globalThis.process.platform === "win32") {
+      void window.showInformationMessage(
+        "q-lint: a q process cannot be interrupted on Windows: a signal there ends it. q-lint: Abort Current Query stops waiting for the query instead.",
+      );
+      return undefined;
+    }
     const pid = process.server === undefined ? this.launcher.interrupt(process.label) : undefined;
     if (pid === undefined) {
       void window.showInformationMessage(

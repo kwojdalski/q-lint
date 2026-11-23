@@ -65,10 +65,11 @@ export class Launcher {
 
   /// Interrupt what `label`, started from here, is running (#1036): SIGINT,
   /// which q answers by stopping the call it is in with 'stop and running
-  /// on. The pid sent it, or undefined when `label` is not running from here.
+  /// on. The pid sent it, or undefined when `label` is not running from here,
+  /// or on Windows, where kill() ends the process whatever the signal (#1250).
   interrupt(label: string): number | undefined {
     const child = this.started.get(label)?.child;
-    if (child === undefined || child.exitCode !== null || child.signalCode !== null || child.pid === undefined) {
+    if (globalThis.process.platform === "win32" || child === undefined || child.exitCode !== null || child.signalCode !== null || child.pid === undefined) {
       return undefined;
     }
     child.kill("SIGINT");

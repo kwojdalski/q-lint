@@ -662,7 +662,8 @@ Process**, in the palette while connected, stops the running query on a
 process started from the Processes view (**Start Process**) by sending it
 SIGINT: q ends the query with `'stop` and the connection stays, ready for
 the next query, where Abort can only stop waiting and reconnect. For any
-other process it says so and sends nothing. Their switches are
+other process it says so and sends nothing, and on Windows, where a
+signal ends the process, it sends nothing at all. Their switches are
 `q-lint.query.processTimeout.enable` and `q-lint.query.cancelLocal.enable`.
 
 **Run Query Asynchronously**, in a q editor's context menu, sends the
