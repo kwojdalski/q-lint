@@ -1198,6 +1198,10 @@ builds and publishes every platform.
 
 ## pre-commit and CI
 
+[docs/ci.md](docs/ci.md) is the guide: GitHub Actions with annotations or
+code scanning (SARIF), GitLab, pre-commit, and a baseline for adopting
+qlinter on a tree that has findings today. In short:
+
 A [pre-commit](https://pre-commit.com) hook lints the `.q` files a commit
 changes. `qlinter` builds the linter from this repository at `rev` with cargo,
 so it needs Rust; `qlinter-system` runs the `qlinter` already on `PATH`. `rev`

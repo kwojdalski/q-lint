@@ -128,3 +128,47 @@ def test_ci_checks_invariance_over_the_q_in_this_tree():
 def test_ci_runs_the_never_panic_sweep_in_release():
     ran = steps(workflow("ci.yml")["jobs"]["rust"])
     assert "cargo test --release --test never_panic -- --ignored" in ran
+
+
+def ci_doc_yaml():
+    text = (ROOT / "docs" / "ci.md").read_text()
+    return [yaml.safe_load(block) for block in re.findall(r"```yaml\n(.*?)```", text, re.S)]
+
+
+def test_the_ci_guide_uses_the_action_as_it_is():
+    inputs = set(action()["inputs"])
+    uses = []
+    for doc in ci_doc_yaml():
+        for job in (doc.get("jobs") or {}).values() if isinstance(doc, dict) else []:
+            uses.extend(job["steps"])
+    actions = [s for s in uses if s.get("uses", "").startswith("kwojdalski/q-lint@")]
+    assert len(actions) == 2
+    for step in actions:
+        assert set(step["with"]) <= inputs, step
+        assert step["with"]["version"], step
+        assert step["uses"] == f"kwojdalski/q-lint@v{step['with']['version']}"
+    # The SARIF job uploads the file it told qlinter to write, even when the
+    # findings failed the lint step.
+    [sarif] = [s for s in actions if s["with"].get("format") == "sarif"]
+    written = sarif["with"]["args"].split("--output-file")[1].split()[0]
+    [upload] = [s for s in uses if s.get("uses", "").startswith("github/codeql-action/upload-sarif@")]
+    assert upload["with"]["sarif_file"] == written
+    assert upload["if"] == "always()" and sarif["continue-on-error"] is True
+
+
+def test_the_ci_guide_names_real_hooks_and_a_real_release():
+    [precommit] = [d for d in ci_doc_yaml() if isinstance(d, dict) and "repos" in d]
+    [repo] = precommit["repos"]
+    assert {h["id"] for h in repo["hooks"]} <= set(hooks())
+    [gitlab] = [d for d in ci_doc_yaml() if isinstance(d, dict) and "qlinter" in d]
+    script = "\n".join(gitlab["qlinter"]["before_script"])
+    release = (ROOT / ".github" / "workflows" / "release.yml").read_text()
+    assert "x86_64-unknown-linux-gnu" in release and "x86_64-unknown-linux-gnu" in script
+    assert "sha256sum -c" in script
+    # Every version the guide pins is one release: the one this tree is.
+    pins = set(re.findall(r"\b0\.\d+\.\d+\b", (ROOT / "docs" / "ci.md").read_text()))
+    assert len(pins) == 1, pins
+
+
+def test_the_readme_links_the_ci_guide():
+    assert "(docs/ci.md)" in (ROOT / "README.md").read_text()
