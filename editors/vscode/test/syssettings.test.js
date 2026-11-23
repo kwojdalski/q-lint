@@ -99,3 +99,11 @@ test("on a guarded process the guard asks, and a decline holds the edit", async 
   assert.deepStrictEqual(q.sent[before], [SET_SETTING, "T", "5"]);
   assert.deepStrictEqual(heads(q.sent.slice(before + 1)), [READ_SETTINGS]);
 });
+
+test("an edit is not set when another process became active while it was asked (#1291)", async (t) => {
+  const { q, live } = await setUp(t, { answer, register: registerSystemSettings, more: [{ label: "other" }] });
+  await live.connectTo("rdb");
+  stub.picks.push(async () => (await live.connectTo("other"), "Set"));
+  assert.match(await stub.commands.get(PROCESS_TOOL_COMMANDS.editSystemSetting)("T", "30"), /\\T was not set: rdb is no longer the active process; nothing was run/);
+  assert.ok(!heads(q.sent).includes(SET_SETTING));
+});
