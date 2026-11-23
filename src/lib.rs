@@ -484,6 +484,14 @@ pub fn completing(source: &str, offset: usize) -> Option<Completing> {
     semantics::help::completing(&v.code, &v.comments, &v.string_starts, source, offset)
 }
 
+/// Where each context begins in `source`, the root's at 0 and then each
+/// `\d`'s, and its name, in order: what `Completing::namespace` is at any
+/// offset, for every offset at once.
+pub fn contexts(source: &str) -> Vec<(usize, String)> {
+    let v = views(source);
+    semantics::contexts(&v.code, source)
+}
+
 pub mod graph;
 
 /// The names in `source` an editor can colour by what they refer to, as byte

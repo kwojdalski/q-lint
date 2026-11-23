@@ -310,6 +310,36 @@ fn a_top_level_function_has_a_run_lens_and_a_test_a_run_test_lens_too() {
     );
 }
 
+/// Hints and lenses over a file of N definitions, each calling the one
+/// before, take time in proportion to it: each read the whole file again
+/// for every definition, 63 s at 5,000 (#1216).
+#[test]
+fn hints_and_lenses_over_many_definitions_take_linear_time() {
+    let n = 1500;
+    let text: String = (0..n)
+        .map(|i| format!("f{i}:{{[a;b] a+f{}[b;a]}}\n", i.max(1) - 1))
+        .collect();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("chain.q"), &text).unwrap();
+    let options = json!({"codeLens": {"enable": true}, "referenceLens": {"enable": true}});
+    let (mut server, _) = Server::over(dir.path(), &[], client(), options);
+    let uri = server.open(dir.path(), "chain.q", &text);
+    let started = std::time::Instant::now();
+    let range = json!({"range": {"start": {"line": 0, "character": 0},
+                                 "end": {"line": n, "character": 0}}});
+    let hints = server.whole("textDocument/inlayHint", &uri, range);
+    let lenses = server.whole("textDocument/codeLens", &uri, json!({}));
+    let tests = server.request("q-lint/tests", json!({}));
+    let elapsed = started.elapsed();
+    assert_eq!(hints["result"].as_array().unwrap().len(), 2 * n as usize);
+    assert!(lenses["result"].as_array().unwrap().len() >= n as usize);
+    assert!(tests["result"].is_array(), "{tests}");
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "{n} definitions took {elapsed:?}"
+    );
+}
+
 #[test]
 fn code_lenses_are_off_unless_asked_for() {
     let dir = tempfile::tempdir().unwrap();
