@@ -1411,3 +1411,25 @@ h:{b:1; {b::3}[]; b}
 k:{[d] r:d::; r}
 m:{[m;t] m t::}
 n:{.ns.a::1; a:2; a}
+
+=== QF023 QB001 | a parameter read only where a column of its name wins (q 5: {[sym] select from ([]sym:`a`b) where sym=sym}`a gives both rows; #1169)
+f:{[sym] select from ([]sym:`a`b) where sym=sym}
+
+=== QF023 | in a select list, an update and over a table a name holds (q 5: {[n] update m:n from ([]n:1 2)} 10 gives m 1 2; #1169)
+t:([]sym:`a`b;px:1 2)
+f:{[px] select from t where px>px+1}
+g:{[n] update m:n from ([]n:1 2)}
+h:{[s] select s from ([]s:`a`b)}
+k:{[sym] exec sym from t}
+m:{[sym] select from t where sym=`a}
+
+=== QB001 | the local read outside the query too, no column of its name, or the table unknown - QB001 alone, on sym=sym (#1169)
+t:([]sym:`a`b;px:1 2)
+a:{[px] u:([]px:px); select px from u}
+b:{[s] select from t where sym=s}
+c:{[sym;u] select from u where sym=sym}
+d:{[sym] r:select from t where sym=sym; r,sym}
+e:{select from ([]x:1 2) where x>1}
+g:{[px] select from ([]px:px) where px>1}
+h:{lim:10; exec px from t where px<lim}
+k:{[sym] select from (select from t) where sym=sym}

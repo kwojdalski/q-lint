@@ -1,6 +1,6 @@
 # Rules
 
-All 142 rules, generated from `src/taxonomy.json` - the same data
+All 143 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -85,6 +85,7 @@ it, or `ALL`.
 | <a id="qf020"></a>`QF020` | unknown-column | A column a table literal does not have, in select, exec, update, a where phrase or xkey, and nothing defines it | every profile |
 | <a id="qf021"></a>`QF021` | dotted-local | name.member on a parameter or local reads a global, never the local | every profile |
 | <a id="qf022"></a>`QF022` | local-global-assignment | `::` on a parameter or local assigns the local, not a global of that name | `style` and above |
+| <a id="qf023"></a>`QF023` | local-shadowed-by-column | A parameter or local read only in qSQL phrases over a table with a column of its name, where the column wins: its value is never read | `style` and above |
 
 ## Application - how many arguments a thing takes and how it is called
 

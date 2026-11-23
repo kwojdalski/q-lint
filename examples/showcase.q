@@ -101,6 +101,12 @@ dotted:{[t] t.c}
 capped:{[lim] lim::lim&100; lim}
 capped2:{[lim] `lim set lim&100; lim}
 
+/ QF023: in a qSQL phrase a column of the table wins over a local, so qty
+/ here is the column and the parameter is never read; one named apart is.
+/ expect-next: QF023
+scaled:{[qty] update q2:2*qty from ([]qty:1 5 9)}
+scaled2:{[k] update q2:k*qty from ([]qty:1 5 9)}
+
 / QF014: an assignment anywhere in a body makes the name local throughout,
 / so the read of `cfg` on the left is of an unset local, not the global,
 / and q refuses the lambda where it is defined, with 'cfg. Within one
