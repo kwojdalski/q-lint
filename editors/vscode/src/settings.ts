@@ -46,6 +46,7 @@ export interface InitializationOptions {
     ignore: string[];
     run: "onType" | "onSave";
     severity: Record<string, string>;
+    scope: "open" | "workspace";
   };
   fixes: { unsafe: boolean };
   format: { enable: boolean };
@@ -152,6 +153,7 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
         ignore: strings(settings, "lint.ignore"),
         run,
         severity: severity && typeof severity === "object" ? { ...severity } : {},
+        scope: settings.get<unknown>("lint.workspaceScope.enable", false) === true ? "workspace" : "open",
       },
       fixes: { unsafe: settings.get<boolean>("fixes.unsafe", true) },
       format: { enable: settings.get<boolean>("format.enable", true) },

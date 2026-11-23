@@ -33,7 +33,7 @@ test("the defaults start the server as it was started before settings", () => {
   assert.strictEqual(l.serverPath, "");
   assert.deepStrictEqual(l.args, ["--lsp"]);
   assert.deepStrictEqual(l.initializationOptions, {
-    lint: { select: [], ignore: [], run: "onType", severity: {} },
+    lint: { select: [], ignore: [], run: "onType", severity: {}, scope: "open" },
     fixes: { unsafe: true },
     format: { enable: true },
     semanticTokens: { enable: true },
@@ -108,6 +108,7 @@ test("every editor-only setting reaches the server's options", () => {
       "lint.ignore": ["QF016"],
       "lint.run": "onSave",
       "lint.severity": { QS: "hint" },
+      "lint.workspaceScope.enable": true,
       "fixes.unsafe": false,
       "format.enable": false,
       "semanticTokens.enable": false,
@@ -148,7 +149,7 @@ test("every editor-only setting reaches the server's options", () => {
   assert.strictEqual(l.enabled, false);
   assert.strictEqual(l.serverPath, "/opt/qlinter");
   assert.deepStrictEqual(l.initializationOptions, {
-    lint: { select: ["QF", "QE"], ignore: ["QF016"], run: "onSave", severity: { QS: "hint" } },
+    lint: { select: ["QF", "QE"], ignore: ["QF016"], run: "onSave", severity: { QS: "hint" }, scope: "workspace" },
     fixes: { unsafe: false },
     format: { enable: false },
     semanticTokens: { enable: false },

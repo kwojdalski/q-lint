@@ -81,7 +81,9 @@
 //! A workspace index: every `.q` file under the workspace folders is read at
 //! startup - never run - for the global names it defines and reads, and
 //! kept current from open buffers, closes, and
-//! workspace/didChangeWatchedFiles. A name
+//! workspace/didChangeWatchedFiles. With `lint.scope: "workspace"` its files
+//! report as the open ones do, linted while the client waits for nothing
+//! (`scope`). A name
 //! another file defines is not undefined here, a name two files assign is not
 //! tracked by value, and another file's function is coloured as one.
 //! The server registers the watchers itself (`watchers`), for a client that
@@ -195,6 +197,7 @@ mod live;
 mod navigate;
 mod relate;
 mod related;
+mod scope;
 mod selection;
 
 /// Open documents, by URI. The editor is the authority on their contents from
@@ -625,7 +628,8 @@ fn workspace_folders(params: &Value) -> Vec<(String, String)> {
 /// nothing - every editor but VS Code, unless configured - sees no change:
 ///
 /// ```json
-/// {"lint": {"select": [], "ignore": [], "run": "onType", "severity": {}},
+/// {"lint": {"select": [], "ignore": [], "run": "onType", "severity": {},
+///           "scope": "open"},
 ///  "fixes": {"unsafe": true}, "format": {"enable": true},
 ///  "semanticTokens": {"enable": true}, "navigation": {"enable": true},
 ///  "help": {"enable": true}, "completion": {"enable": false},
@@ -649,6 +653,9 @@ struct Options {
     /// Lint on save rather than on every change. An open buffer's text is
     /// still kept current, for code actions and formatting.
     on_save: bool,
+    /// `lint.scope: "workspace"`: publish diagnostics for every file the
+    /// index reads, not only the open ones (`scope`).
+    workspace_scope: bool,
     /// Offer the editor-only fixes as Quick Fixes, not just the batch-safe
     /// ones `--fix` applies.
     unsafe_fixes: bool,
@@ -762,6 +769,7 @@ impl Default for Options {
     fn default() -> Self {
         Options {
             on_save: false,
+            workspace_scope: false,
             unsafe_fixes: true,
             format: true,
             semantic_tokens: true,
@@ -928,6 +936,14 @@ impl Options {
                 "/lint/run must be \"onType\" or \"onSave\", not {other}"
             )),
         }
+        match init.pointer("/lint/scope") {
+            None | Some(Value::Null) => {}
+            Some(v) if v == "open" => {}
+            Some(v) if v == "workspace" => options.workspace_scope = true,
+            Some(other) => problems.push(format!(
+                "/lint/scope must be \"open\" or \"workspace\", not {other}"
+            )),
+        }
         let mut strings = |pointer: &str| -> Vec<String> {
             match init.pointer(pointer) {
                 None | Some(Value::Null) => vec![],
@@ -1069,6 +1085,7 @@ pub fn serve(
     let mut unsaved = Unsaved::new();
     let mut kept = Kept::new();
     let mut idx = Index::default();
+    let mut closed = scope::Closed::default();
     let mut opts = Options::default();
     let mut problems: Vec<String> = vec![];
     let mut initialized = false;
@@ -1098,6 +1115,18 @@ pub fn serve(
     loop {
         // Everything the client has sent so far, before the oldest of it is
         // handled: what is behind a message can make it moot.
+        // And while nothing has, a closed file of the workspace is linted,
+        // one at a time, so none of them holds up a message (`scope`).
+        if queue.is_empty() {
+            queue.extend(messages.try_iter());
+        }
+        if queue.is_empty()
+            && !shutdown_requested
+            && let Some(key) = closed.next()
+        {
+            closed.lint(writer, &key, &docs, &idx, policy, &opts)?;
+            continue;
+        }
         if queue.is_empty() {
             match messages.recv() {
                 Ok(next) => queue.push_back(next),
@@ -1293,6 +1322,8 @@ pub fn serve(
                 idx.enabled = opts.index;
                 idx.exclude = opts.index_exclude.clone();
                 idx.rebuild(policy, &docs);
+                closed.on = opts.workspace_scope;
+                closed.sync(writer, &idx, &docs, true)?;
                 ready = true;
             }
             // A request after shutdown is the one protocol error worth
@@ -1305,6 +1336,7 @@ pub fn serve(
             )?,
             ("shutdown", Some(id)) => {
                 shutdown_requested = true;
+                closed.stop();
                 docs.clear();
                 unsaved.clear();
                 kept.clear();
@@ -1420,6 +1452,7 @@ pub fn serve(
                         writer, &mut docs, &unsaved, &mut kept, &mut idx, uri, text, policy, &opts,
                     )?;
                 }
+                closed.sync(writer, &idx, &docs, false)?;
             }
             ("textDocument/didClose", None) => {
                 let uri = uri_of(&params["textDocument"]);
@@ -1435,12 +1468,20 @@ pub fn serve(
                 }
                 // An empty list, not silence: diagnostics are owned by the
                 // server until it says otherwise, so a closed file would keep
-                // its squiggles in the problems panel forever.
-                send(
-                    writer,
-                    json!({"method": "textDocument/publishDiagnostics",
-                           "params": {"uri": uri, "diagnostics": []}}),
-                )?;
+                // its squiggles in the problems panel forever. Unless every
+                // file the index reads reports, when it does as one on disk.
+                let key = file_key(&path_of(&uri));
+                if closed.on && idx.files.contains_key(&key) {
+                    closed.lint(writer, &key, &docs, &idx, policy, &opts)?;
+                }
+                if !closed.published(&key) {
+                    send(
+                        writer,
+                        json!({"method": "textDocument/publishDiagnostics",
+                               "params": {"uri": uri, "diagnostics": []}}),
+                    )?;
+                }
+                closed.sync(writer, &idx, &docs, false)?;
             }
             ("textDocument/semanticTokens/full", Some(id)) => {
                 let uri = uri_of(&params["textDocument"]);
@@ -1653,6 +1694,7 @@ pub fn serve(
                     if docs.contains_key(&uri) {
                         continue;
                     }
+                    closed.touch(file_key(&path));
                     changed |= if change["type"].as_i64() == Some(3) {
                         idx.remove_tree(&path, &docs)
                     } else {
@@ -1672,6 +1714,7 @@ pub fn serve(
                         writer, &docs, &unsaved, &mut kept, &idx, None, policy, &opts,
                     )?;
                 }
+                closed.sync(writer, &idx, &docs, config_changed)?;
             }
             // A folder added to or removed from a multi-root workspace (#797).
             ("workspace/didChangeWorkspaceFolders", None) => {
@@ -1690,6 +1733,7 @@ pub fn serve(
                         writer, &docs, &unsaved, &mut kept, &idx, None, policy, &opts,
                     )?;
                 }
+                closed.sync(writer, &idx, &docs, false)?;
             }
             // Every other REQUEST gets an error, because a client waiting on a
             // reply that never arrives looks like a hung server.

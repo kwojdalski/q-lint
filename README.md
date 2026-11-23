@@ -936,7 +936,7 @@ What only an editor has a use for is read from the `initialize` request's
 Every key is optional, and these are the defaults:
 
 ```json
-{"lint": {"select": [], "ignore": [], "run": "onType", "severity": {}},
+{"lint": {"select": [], "ignore": [], "run": "onType", "severity": {}, "scope": "open"},
  "fixes": {"unsafe": true}, "format": {"enable": true},
  "semanticTokens": {"enable": true}, "navigation": {"enable": true},
  "help": {"enable": true}, "completion": {"enable": false},
@@ -960,7 +960,15 @@ Every key is optional, and these are the defaults:
 configuration and the command line, and only turn rules off: a rule reports
 when the configuration selects it and they do too. `lint.run` is `onType` or
 `onSave`. `lint.severity` maps a code or prefix to `error`, `warning`,
-`information` or `hint`, the longest winning. `fixes.unsafe: false` offers
+`information` or `hint`, the longest winning. `lint.scope` is `open` or
+`workspace`: with `workspace`, every file the index reads reports too, open
+or not - read from disk and linted one at a time while no message is
+waiting, so none holds up the editor, at most 5,000 of them; again when it
+changes on disk or is closed, and all of them again when a save, a close or
+a change on disk changes what the workspace defines. Its files are the
+index's, so `workspaceIndex.exclude` and the configuration's `exclude` leave
+a file out, and with `workspaceIndex.enable: false` there are none.
+`fixes.unsafe: false` offers
 only the fixes `--fix` applies; `format.enable`, `semanticTokens.enable`,
 `navigation.enable` and `help.enable` (hover and signature help) set to
 `false` leave the capability unannounced - the last two for when another q
@@ -986,9 +994,10 @@ configuration names. `selectionRange.enable: true` announces
 `relatedInformation.enable: true` adds `relatedInformation` to the
 diagnostics that point at a second place. `crossFileRefresh.enable: true`
 sends `workspace/codeLens/refresh` and `workspace/inlayHint/refresh`, to a
-client that declares it takes them, when what the workspace defines changes
-- and the first also when the names a file reads change, while reference
-lenses are on - as `workspace/semanticTokens/refresh` is sent for colours.
+client that declares it takes them, when what the workspace defines
+changes, and the first also when the names a file reads change while
+reference lenses are on, as `workspace/semanticTokens/refresh` is sent for
+colours.
 `workspaceIndex.exclude`
 holds globs relative to each workspace folder that the index does not read.
 The index stops after 20,000 `.q` files or 500,000 directory entries of any

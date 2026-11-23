@@ -203,6 +203,12 @@
             ],
             "markdownDescription": "When to lint."
           },
+          "q-lint.lint.workspaceScope.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 14,
+            "markdownDescription": "Show problems for every `.q` file the workspace index reads, not only the open ones: each is read from disk and linted while the editor is otherwise idle, at most 5,000 of them, and again when it changes on disk, or when a save or a change on disk changes what the workspace defines. Files `#q-lint.workspaceIndex.exclude#` or the configuration's `exclude` skip are not linted, and with `#q-lint.workspaceIndex.enable#` off there are none. Off, only open files show problems."
+          },
           "q-lint.lint.severity": {
             "type": "object",
             "default": {},

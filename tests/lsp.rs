@@ -3482,3 +3482,105 @@ fn a_definition_changed_asks_for_lenses_and_hints_again() {
     }
     assert_eq!(server.shutdown_and_exit(), 0);
 }
+
+/// With `lint.scope: "workspace"` a file nobody opened reports, one the
+/// index excludes does not, and one changed on disk reports again; with the
+/// default scope only an open file reports (#1160).
+#[test]
+fn the_workspace_scope_lints_files_nobody_opened() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir(root.join("skip")).unwrap();
+    for name in ["lib.q", "skip/x.q", "z.q"] {
+        std::fs::write(root.join(name), RESERVED_PARAM).unwrap();
+    }
+    let (lib, skip, z) = (
+        file_uri(&root.join("lib.q")),
+        file_uri(&root.join("skip/x.q")),
+        file_uri(&root.join("z.q")),
+    );
+    let options = json!({"lint": {"scope": "workspace"},
+                         "workspaceIndex": {"exclude": ["skip/**"]}});
+    let (mut server, _) = start_with_options(&root, &["--lsp"], options, Some(&root));
+    let mut reported = std::collections::HashMap::new();
+    while !reported.contains_key(&z) {
+        let message = server.receive();
+        if message["method"] == "textDocument/publishDiagnostics" {
+            let uri = message["params"]["uri"].as_str().unwrap().to_string();
+            reported.insert(
+                uri,
+                codes_of(message["params"]["diagnostics"].as_array().unwrap()),
+            );
+        }
+    }
+    assert_eq!(reported[&lib], ["QF001"]);
+    assert!(!reported.contains_key(&skip), "{reported:?}");
+    // Fixed on disk, and told so: the file reports nothing now.
+    std::fs::write(root.join("lib.q"), "f:{[d] 1+1}\n").unwrap();
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+        "params":{"changes":[{"uri":lib,"type":2}]}}),
+    );
+    assert_eq!(server.diagnostics_for(&lib), Vec::<Value>::new());
+    // Opened and closed, it reports as the disk has it rather than nothing.
+    std::fs::write(root.join("lib.q"), RESERVED_PARAM).unwrap();
+    server.open(&lib, RESERVED_PARAM);
+    assert_eq!(codes_of(&server.diagnostics_for(&lib)), ["QF001"]);
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didClose",
+        "params":{"textDocument":{"uri":lib}}}));
+    assert_eq!(codes_of(&server.diagnostics_for(&lib)), ["QF001"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+
+    let (mut server, _) = start_with_options(&root, &["--lsp"], json!({}), Some(&root));
+    let app = file_uri(&root.join("app.q"));
+    server.open(&app, "a:1\n");
+    server.send(
+        json!({"jsonrpc":"2.0","id":60,"method":"textDocument/foldingRange",
+        "params":{"textDocument":{"uri":app}}}),
+    );
+    loop {
+        let message = server.receive();
+        if message["method"] == "textDocument/publishDiagnostics" {
+            assert_eq!(message["params"]["uri"], app);
+        }
+        if message["id"] == 60 {
+            break;
+        }
+    }
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// The workspace's files are linted between messages, not before them: a
+/// request sent as the scan starts is answered before the last of dozens
+/// of files reports (#1160).
+#[test]
+fn the_workspace_scope_does_not_hold_up_a_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let files = 80;
+    for i in 0..files {
+        std::fs::write(root.join(format!("f{i:03}.q")), RESERVED_PARAM).unwrap();
+    }
+    let options = json!({"lint": {"scope": "workspace"}});
+    let (mut server, _) = start_with_options(&root, &["--lsp"], options, Some(&root));
+    server
+        .send(json!({"jsonrpc":"2.0","id":70,"method":"workspace/symbol","params":{"query":"f"}}));
+    let mut before = 0;
+    loop {
+        let message = server.receive();
+        if message["id"] == 70 {
+            break;
+        }
+        before += usize::from(message["method"] == "textDocument/publishDiagnostics");
+    }
+    assert!(
+        before < files,
+        "{before} files linted before the request was answered"
+    );
+    let mut after = 0;
+    while before + after < files {
+        let message = server.receive();
+        after += usize::from(message["method"] == "textDocument/publishDiagnostics");
+    }
+    assert_eq!(server.shutdown_and_exit(), 0);
+}

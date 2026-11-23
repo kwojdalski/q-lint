@@ -29,7 +29,8 @@ to a process you add and connect to, and sends only the code you run.
   panel and on hover, links to that rule in the
   [rule reference](https://github.com/kwojdalski/q-lint/blob/master/docs/rules.md).
   A duplicate parameter or column links to the first of the two, under the
-  problem. `q-lint.relatedInformation.enable`.
+  problem. `q-lint.relatedInformation.enable`. Open files only, unless
+  `q-lint.lint.workspaceScope.enable` asks for every file in the workspace.
 - **Quick Fixes** for over forty rules, among them operators and keywords
   from other languages (`==`, `&&`, `+=`, `true`, `return`), invalid string
   escapes, symbols where q wants strings, `f(a;b)` calls, one-row tables,
@@ -2496,6 +2497,7 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.lint.select` | `[]` | Show only these rule codes or prefixes, among those the configuration turns on. Narrows, never widens. | - |
 | `q-lint.lint.ignore` | `[]` | Hide these rule codes or prefixes. | - |
 | `q-lint.lint.run` | `onType` | `onType` lints every change; `onSave` lints on open and save. | - |
+| `q-lint.lint.workspaceScope.enable` | `false` | Show problems for every `.q` file the workspace index reads, not only open ones: linted from disk while the editor is idle, at most 5,000, again when one changes on disk or a save changes what the workspace defines. Excluded files are skipped. | - |
 | `q-lint.lint.severity` | `{}` | The severity shown, by code or prefix, longest wins: `{"QS": "hint"}`. Display only. | - |
 | `q-lint.fixes.unsafe` | `true` | Offer the editor-only Quick Fixes (`--unsafe-fixes`) as well as those `--fix` applies. | - |
 | `q-lint.format.enable` | `true` | Register **Format Document** (the safe fixes). | - |
