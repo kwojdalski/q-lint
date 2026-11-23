@@ -8,7 +8,6 @@
 // `processes.ts`'s; discovery servers, `discoveryservers.ts`'s; what a
 // terminal is sent, `terminal.ts`'s. This file is the VS Code around them.
 import * as os from "os";
-import * as net from "net";
 import * as path from "path";
 import {
   commands,
@@ -59,8 +58,8 @@ import {
   type Process,
 } from "./processes";
 import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
-import { QConnection, QError, type Target } from "./qclient";
-import { SshTunnel, TUNNEL_COMMANDS, readTunnel } from "./tunnel";
+import { ClosedBeforeHandshake, QConnection, QError, type Target } from "./qclient";
+import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, readTunnel } from "./tunnel";
 import { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, readGateway } from "./gateway";
 import { HEARTBEAT, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
 import { historyHeading, historyLabel, iconsEscaped, plainMessage } from "./history";
@@ -1539,8 +1538,10 @@ export class Live {
   }
 
   /// Run `process`'s connect script on `connection`, just opened, before any
-  /// query can be: its failure is said, and the connection kept.
-  private async runConnectScript(connection: QConnection, process: Process): Promise<void> {
+  /// query can be: its failure is said, and the connection kept. `stopped`
+  /// says the connect was given up - a disconnect - while the read-only
+  /// guard's question was open: nothing is sent then (#1357).
+  private async runConnectScript(connection: QConnection, process: Process, stopped: () => boolean = () => false): Promise<void> {
     const script = scriptOf(process);
     if (script === undefined || !this.setting(readConnectScript).enabled) {
       return;
@@ -1571,6 +1572,9 @@ export class Live {
     }
     if (!(await this.guardAllows(code, [process], `The connect script of ${process.label}`))) {
       this.show([`# ${process.label} - connect script not run: changing a read-only process was not confirmed`], false);
+      return;
+    }
+    if (stopped()) {
       return;
     }
     const configuration = workspace.getConfiguration("q-lint");
@@ -1684,7 +1688,7 @@ export class Live {
           await connection.close();
           return false;
         }
-        await this.runConnectScript(connection, process);
+        await this.runConnectScript(connection, process, stopped);
         if (stopped()) {
           await connection.close();
           return false;
@@ -1715,10 +1719,12 @@ export class Live {
         });
         this.changed.fire("connected");
         return true;
-      } catch (error) {
+      } catch (failure) {
         if ((untilFree && this.reconnectStopped) || quiet || disconnects !== this.disconnects) {
           return false;
         }
+        // ssh's own words are shown here and kept nowhere (#1355).
+        const error = failure instanceof TunnelConnectError ? failure.shown() : failure;
         void window.showErrorMessage(
           plainMessage(`q-lint: could not connect to ${process.label} (${address(process.host, process.port)}): ${error instanceof Error ? error.message : String(error)}`),
         );
@@ -1752,7 +1758,7 @@ export class Live {
           ...target,
           host: "127.0.0.1",
           port: tunnel.localPort,
-          ...(target.tls ? { servername: net.isIP(target.host) ? undefined : target.host } : {}),
+          ...(target.tls ? { servername: target.host } : {}),
         },
         undefined,
         signal,
@@ -1761,8 +1767,23 @@ export class Live {
       tunnel.whenClosed(() => connection.abort());
       return connection;
     } catch (error) {
+      // The socket was the tunnel's loopback end, whose address means
+      // nothing to the user, and its closing before the handshake is as
+      // likely a forward that reached no q as a refused user (#1355).
+      const where = address(target.host, target.port);
+      let failure = error;
+      if (error instanceof ClosedBeforeHandshake) {
+        // What ssh says of a forward that failed can come just after the close.
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        failure = new TunnelConnectError(
+          `the connection through the SSH tunnel via ${process.ssh} closed before the handshake: no q process answers at ${where} as ${process.ssh} reaches it, or the user or password was refused`,
+          tunnel.said,
+        );
+      } else if (error instanceof Error) {
+        error.message = error.message.split(`127.0.0.1:${tunnel.localPort}`).join(where);
+      }
       tunnel.close();
-      throw error;
+      throw failure;
     }
   }
 
@@ -2221,6 +2242,9 @@ export class Live {
         return undefined;
       }
     }
+    if (this.overtaken(ready)) {
+      return undefined;
+    }
     const started = Date.now();
     this.running = { code, started };
     this.showStatus();
@@ -2263,6 +2287,19 @@ export class Live {
       return undefined;
     }
     return ready;
+  }
+
+  /// Whether a call that asked `ready` in the same turn has sent its query
+  /// since: both pass its check, made before either sends (#1353). Says so,
+  /// as `ready` does of a query it finds running.
+  private overtaken(ready: { connection: QConnection; process: Process }): boolean {
+    if (!ready.connection.isBusy) {
+      return false;
+    }
+    void window.showInformationMessage(
+      `q-lint: a query is still running on ${ready.process.label}. q-lint: Abort Current Query stops waiting for it.`,
+    );
+    return true;
   }
 
   /// The code a command takes from the active editor: the selection, or the
@@ -2526,6 +2563,9 @@ export class Live {
       if (ready === undefined) {
         return;
       }
+    }
+    if (this.overtaken(ready)) {
+      return;
     }
     const { connection, process } = ready;
     const code = this.throughGateway(written, process, serverTypes);

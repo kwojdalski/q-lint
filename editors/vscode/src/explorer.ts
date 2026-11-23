@@ -38,6 +38,11 @@
 // Works on kdb+ (KDB-X) and PeachQ, both of which have `.Q.qt`, `.Q.qp` and
 // `.Q.cn`; held there by qclient.test.js.
 
+// A view (`v::expr`) has a lambda's type, 100h, and `value` of it is not a
+// lambda's parts: its second item is the view's parse tree, where a lambda
+// has its parameters, a symbol list. So parameters are read only when they
+// are that, and anything else of type 100h is said to be a view (#1354).
+// `value` of a view does not evaluate it.
 export const GATHER = [
   "{[ex;lim]",
   " n:\"j\"$lim 0;m:\"j\"$lim 1;",
@@ -55,13 +60,14 @@ export const GATHER = [
   "  spaces,:enlist`ns`total!(ns;\"f\"$count k);",
   "  rows,:{[ns;n;nm;x]",
   "   t:type x;tb:$[98h=t;1b;.Q.qt x];fn:t within 100 112h;part:$[tb;1b~.Q.qp x;0b];",
-  "   `ns`name`kind`type`count`cols`keys`params`partitioned`ncols!(ns;nm;",
+  "   `ns`name`kind`type`count`cols`keys`params`partitioned`ncols`view!(ns;nm;",
   "    $[tb;`table;fn;`function;`variable];t;",
   "    \"f\"$$[fn;0N;part;@[{sum .Q.cn x};x;0n];count x];",
   "    $[tb;n sublist(),cols x;`$()];",
   "    $[tb&99h=t;(),keys x;`$()];",
-  "    $[100h=t;@[{(),(value x)1};x;{`$()}];`$()];",
-  "    part;\"f\"$$[tb;count cols x;0])}[ns;n]'[n sublist k;d n sublist k]];",
+  "    $[100h=t;@[{$[11h=type p:(value x)1;p;`$()]};x;{`$()}];`$()];",
+  "    part;\"f\"$$[tb;count cols x;0];",
+  "    $[100h=t;@[{not 11h=type(value x)1};x;0b];0b])}[ns;n]'[n sublist k;d n sublist k]];",
   " `rows`spaces`more!(rows;spaces;\"f\"$count todo)}",
 ].join("\n");
 
@@ -107,6 +113,8 @@ export interface Entry {
   cols: string[];
   keys: string[];
   params: string[];
+  /// A view, `v::expr`: among the functions by its type, with no parameters.
+  view?: true;
   partitioned: boolean;
   /// A table's columns in all, when that is more than `cols` holds.
   allCols?: number;
@@ -142,6 +150,7 @@ export function readGathered(raw: unknown): Gathered {
             cols: strings(row.cols),
             keys: strings(row.keys),
             params: strings(row.params),
+            ...(row.view === true ? { view: true as const } : {}),
             partitioned: row.partitioned === true,
             ...(number(row.ncols) !== null && number(row.ncols)! > strings(row.cols).length ? { allCols: number(row.ncols)! } : {}),
           },
@@ -246,12 +255,16 @@ function tableNode(e: Entry): Node {
   };
 }
 
+/// What a function is shown as: a lambda by its parameters, a view as one,
+/// any other by its type's name.
+const shape = (e: Entry): string => (e.view ? "view" : e.type === 100 ? `[${e.params.join(";")}]` : typeName(e.type));
+
 function functionNode(e: Entry): Node {
   return {
     kind: "function",
     label: e.name,
-    description: e.type === 100 ? `[${e.params.join(";")}]` : typeName(e.type),
-    tooltip: `${fullName(e)}${e.type === 100 ? `[${e.params.join(";")}]` : `: ${typeName(e.type)}`}`,
+    description: shape(e),
+    tooltip: `${fullName(e)}${e.type === 100 && !e.view ? shape(e) : `: ${shape(e)}`}`,
     name: fullName(e),
   };
 }
@@ -433,7 +446,7 @@ export function liveCompletions(g: Gathered, process: string, table?: string): C
       kind: e.kind,
       detail:
         e.kind === "function"
-          ? `${e.type === 100 ? `[${e.params.join(";")}]` : typeName(e.type)} (${process})`
+          ? `${shape(e)} (${process})`
           : e.kind === "table"
             ? `table, ${e.count === null ? "not counted" : plural(e.count, "row")} (${process})`
             : `${typeName(e.type)} (${process})`,

@@ -220,3 +220,38 @@ test("with q-lint.connection.connectScript.enable off, Set Connect Script refuse
   await new Promise((r) => setTimeout(r, 100));
   assert.deepStrictEqual(messages, [], "nothing was sent on connect");
 });
+
+// The guard's question about a connect script can be open for as long as
+// the user likes; a disconnect meanwhile gave the connect up, and "Run
+// Anyway" after it still sent the script (#1357).
+test("a connect script is not sent once the connect was given up while the read-only guard asked", async (t) => {
+  const { fakeQ } = require("./fakeq.js");
+  const q = await fakeQ(null);
+  t.after(() => q.close());
+  const { live } = await setUp(t, [{ label: "p", host: "127.0.0.1", port: q.port, tags: ["prod"], init: "secretTable:([]a:1 2)" }]);
+  t.after(() => stub.commands.get("q-lint.disconnectProcess")?.());
+  const scripts = () => q.sent.filter((m) => JSON.stringify(m).includes("secretTable")).length;
+  // Answers the guard's question only: a message from a test before this
+  // one (its connection closing) leaves the answer for the question.
+  const answer = (disconnectFirst) => {
+    const pick = async ({ message }) => {
+      if (!/connect script of p/i.test(message)) {
+        stub.picks.unshift(pick);
+        return undefined;
+      }
+      if (disconnectFirst) {
+        await stub.commands.get("q-lint.disconnectProcess")();
+      }
+      return "Run Anyway";
+    };
+    stub.picks.push(pick);
+  };
+  answer(true);
+  assert.strictEqual(await live.connectTo("p"), false);
+  await new Promise((r) => setTimeout(r, 100));
+  assert.strictEqual(scripts(), 0, "nothing was sent to a process the user disconnected from");
+  // Left to finish, the same answer sends it.
+  answer(false);
+  assert.strictEqual(await live.connectTo("p"), true);
+  assert.strictEqual(scripts(), 1);
+});

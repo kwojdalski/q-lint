@@ -36,6 +36,16 @@ test("what a command prints: JSON, user:password, a password for the process's u
   assert.deepStrictEqual(credentialEnv({ label: "a", host: "h", port: 1 }), { QLINT_PROCESS_LABEL: "a", QLINT_PROCESS_HOST: "h", QLINT_PROCESS_PORT: "1" });
 });
 
+test("a password keeps the spaces and tabs at its ends; only the line ending goes (#1358)", () => {
+  assert.deepStrictEqual(parseCredentials("  pa ss \t\r\n", "fixed"), { user: "fixed", password: "  pa ss \t" });
+  assert.deepStrictEqual(parseCredentials("me: pw \n"), { user: "me", password: " pw " });
+  assert.deepStrictEqual(parseCredentials(" tok \n"), { password: " tok " });
+  // A byte-order mark and blank lines before the line are still not part of it.
+  assert.deepStrictEqual(parseCredentials("\uFEFF\r\n\npw \nignored\n", "fixed"), { user: "fixed", password: "pw " });
+  assert.deepStrictEqual(parseCredentials(" me:pw"), { user: "me", password: "pw" });
+  assert.deepStrictEqual(parseCredentials(' {"password":" p "}\n'), { password: " p " });
+});
+
 test("a command's failure says how it ended, never what it printed", async () => {
   assert.strictEqual(await runCredentialCommand("printf 'me:%s' \"$QLINT_PROCESS_LABEL\"", { env: { QLINT_PROCESS_LABEL: "x" } }), "me:x");
   await assert.rejects(runCredentialCommand("echo topsecret; echo topsecret >&2; exit 3"), (e) => e.message === "the credential command failed with exit code 3");
