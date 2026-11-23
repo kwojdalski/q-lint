@@ -16,6 +16,11 @@ The first run found four rewrites that were wrong: `f g::` and `f X@\\:` are
 compositions, not calls, and `stop f/x` is the while form of over, whose
 bracketed rewrite does not parse. Requires `q` on PATH.
 
+A statement this q refuses and the fix makes parse is `repaired`, not a
+failure: it has no parse tree to keep. Those fixes - QE008's `-x` to
+`neg x`, QE009's `+/x` to `(+/)x` - write the q 4 reading in a form q 5
+takes, checked on KDB-X against that reading spelled `(-:)x` or `+/[x]`.
+
 With --unsafe the editor-only fixes are applied too. Those may change the
 program by design, so a `changed` verdict is expected there; `broken` - a
 rewrite q cannot parse - is still a failure.
@@ -35,7 +40,7 @@ p:.j.k raze read0 hsym`$getenv`PAIRS;
 norm:{$[100h=type x; .z.s each v where not (type each v:value x) in 7 10h; 0h=type x; .z.s each x;
   99h=type x; (.z.s key x)!.z.s value x; x]};
 r:{[x] a:@[parse;x 0;{`ERR}]; b:@[parse;x 1;{`ERR}];
-  $[(`ERR~a)&`ERR~b;`unparseable;`ERR~b;`broken;(norm a)~norm b;`same;`changed]} each p;
+  $[(`ERR~a)&`ERR~b;`unparseable;`ERR~b;`broken;`ERR~a;`repaired;(norm a)~norm b;`same;`changed]} each p;
 -1 .j.j r;
 exit 0
 """

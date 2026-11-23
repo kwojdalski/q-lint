@@ -2474,6 +2474,56 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 true,
             )
         }
+        // `+/x` becomes `(+/)x`: q 4 applied the derived function to what
+        // follows, as the parentheses do in q 5 - `(+/)x+y` is `(+/)[x+y]`.
+        // The finding is on the last iterator; the operand is a glyph, its
+        // k form or a name. Not before `-`, which after `)` is minus, nor a
+        // glyph applied with brackets.
+        "QE009" => {
+            let c = v.code.as_bytes();
+            let it = re!(r"^(?:/:|\\:|':|/|\\|')").find(v.code.get(start..)?)?;
+            let end = start + it.end();
+            let mut run = start;
+            loop {
+                if run > 0 && b"/\\'".contains(&c[run - 1]) {
+                    run -= 1;
+                } else if run > 1 && c[run - 1] == b':' && b"/\\'".contains(&c[run - 2]) {
+                    run -= 2;
+                } else {
+                    break;
+                }
+            }
+            let glyph = |b: u8| b"+-*%!#$&|^=<>~,@?".contains(&b);
+            let operand = match run.checked_sub(1).map(|p| c[p])? {
+                b if glyph(b) => run - 1,
+                b':' if run > 1 && (glyph(c[run - 2]) || c[run - 2] == b'.') => run - 2,
+                b if b.is_ascii_alphanumeric() || b == b'_' || b == b'.' => {
+                    let s = v.code[..run]
+                        .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || "._".contains(ch)))
+                        .map_or(0, |p| p + 1);
+                    if !c[s].is_ascii_alphabetic() && c[s] != b'.' || !boundary(&v.code, s) {
+                        return None;
+                    }
+                    s
+                }
+                _ => return None,
+            };
+            if operand > 0 && c[operand - 1] == b'`' {
+                return None;
+            }
+            let next = refusals::continued(&v.code[end..]);
+            if next.starts_with('-') || next.len() > 1 && glyph(c[c.len() - next.len()]) {
+                return None;
+            }
+            begin = operand;
+            let derived = &source[operand..end];
+            (
+                derived,
+                format!("({derived})").into(),
+                format!("Apply `({derived})` in parentheses").into(),
+                true,
+            )
+        }
         _ => return None,
     };
     // An edit that leaves a `-` against a number makes it a negative
