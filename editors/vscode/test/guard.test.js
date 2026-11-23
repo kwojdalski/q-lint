@@ -341,3 +341,21 @@ test("bare \\_, \\r and \\E, and \\w 0 or 1, only read (#1332)", () => {
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("system of a literal is read as the command it runs (#1331)", () => {
+  const cases = {
+    'system"c"': [],
+    'system "w"': [],
+    'system["P"]': [],
+    '.q.system "d"': [],
+    'x:system "c"': ["assigns x"],
+    // A command that changes, or one built at run time, is a change.
+    'system "c 20 200"': ["calls system"],
+    'system "l x.q"': ["calls system"],
+    'system "c ",string 20': ["calls system"],
+    "system cmd": ["calls system"],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

@@ -24,7 +24,8 @@
 //   `.Q.enx`, `.Q.enxs`, `.Q.chk`, `.Q.dsftg`, `.Q.view`, `.Q.l`, `.Q.lo`,
 //   `.Q.bv` and `.Q.opt` (which sets `.Q.x`), and `0:` or `1:` to a
 //   file handle (`` `:f 0: ``, `hsym[`f] 0:`, `(hsym `f) 1:`), and `2:`,
-//   each also by its `.q.` name (`.q.set`); `hopen` of a file handle
+//   each also by its `.q.` name (`.q.set`) - `system` of a string literal
+//   is read as that command, so `system "c"` only reads; `hopen` of a file handle
 //   (`` hopen `:f ``), which creates the file to write through - of a
 //   process (`` `:host:5000 ``, a port) it only connects, and what is sent
 //   over that handle is not read;
@@ -304,6 +305,22 @@ function readStatement(statement: string, found: Set<string>): void {
         continue;
       }
       if (WRITERS.has(unqualified(k.text))) {
+        // `system` of a literal is read as the command it runs: `system "c"`
+        // only reads, as `\c` does.
+        const bracket = next?.text === "[" && next.kind === "open" ? 1 : 0;
+        const literal = t[i + 1 + bracket];
+        const after = t[i + 2 + bracket];
+        if (
+          unqualified(k.text) === "system" &&
+          literal?.kind === "str" &&
+          (bracket ? after?.text === "]" : after === undefined || after.kind === "close" || after.text === ";")
+        ) {
+          const command = new Set<string>();
+          readStatement(`\\${qText(literal.text)}`, command);
+          if (command.size === 0) {
+            continue;
+          }
+        }
         found.add(`calls ${k.text}`);
         continue;
       }

@@ -1052,7 +1052,8 @@ symbol (`` from `t `` or `` from (`t) ``), `set`, `upsert`, `insert`, `hdel`, `e
 `system`, `setenv`, `save`, `rsave`, `dsave`, `load`, `rload`, `.Q.dpft`, `.Q.dpfts`,
 `.Q.dpt`, `.Q.dpts`, `.Q.hdpf`, `.Q.en`, `.Q.ens`, `.Q.enx`, `.Q.enxs`, `.Q.chk`, `.Q.dsftg`,
 `.Q.view`, `.Q.l`, `.Q.lo`, `.Q.bv`, `.Q.opt` (each also by its `.q.` name,
-`.q.set`), `hopen` of a file handle (`` hopen `:f ``, which creates the
+`.q.set`; `system` of a string literal is read as that command, so
+`system "c"` only reads), `hopen` of a file handle (`` hopen `:f ``, which creates the
 file to write through; opening a connection, `` hopen `:host:5000 ``, is
 not a change, and what is sent over it is not read), `0:` or `1:` to a file
 handle (`` `:f ``, or one made with `hsym`), `2:`, replaying a log with `-11!` (not `-11!(-1;..)` or `(-2;..)`,
