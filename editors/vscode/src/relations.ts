@@ -7,7 +7,7 @@
 // The server draws the graph and follows it. It does not know which files
 // changed, because it starts no process and so cannot ask git - that is done
 // here, on the client, and the answer is sent with the request.
-import { isAbsolute, join, relative, win32 } from "node:path";
+import { isAbsolute, join, relative, sep, win32 } from "node:path";
 
 /// What `package.json` contributes for this, by the names `relate.ts`
 /// registers them under. A test holds the two together: a command declared
@@ -283,7 +283,8 @@ export function unsavedIn(dirty: string[], folders: string[]): string[] {
   return dirty.filter((file) =>
     folders.some((folder) => {
       const rel = relative(folder, file);
-      return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+      // `..scratch.q` is a name in the folder, not a step out of it (#1101).
+      return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
     }),
   );
 }

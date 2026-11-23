@@ -346,3 +346,10 @@ test("an unsaved q file counts as changed only in a folder git answered for", ()
   assert.deepStrictEqual(unsavedIn(dirty, [ws, other]), [`${ws}${sep}a.q`, `${other}${sep}b.q`]);
   assert.deepStrictEqual(unsavedIn(dirty, []), []);
 });
+
+test("an unsaved file whose name starts with .. is inside its folder (#1101)", () => {
+  const sep = path.sep;
+  const ws = `${sep}ws`;
+  const dirty = [`${ws}${sep}..scratch.q`, `${ws}${sep}..${sep}up.q`, `${ws}${sep}sub${sep}...q`];
+  assert.deepStrictEqual(unsavedIn(dirty, [ws]), [`${ws}${sep}..scratch.q`, `${ws}${sep}sub${sep}...q`]);
+});
