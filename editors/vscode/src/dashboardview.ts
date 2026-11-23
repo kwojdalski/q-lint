@@ -70,6 +70,8 @@ export class Dashboards {
   private readonly running = new Set<string>();
   /// What each tile last showed, for tests.
   readonly contents = new Map<string, TileContent>();
+  /// When each of them was worked out, as its tile says it.
+  private readonly at = new Map<string, string>();
   /// Queries sent, by tile, for tests.
   runs = 0;
 
@@ -239,7 +241,7 @@ export class Dashboards {
       }
       const content = this.contents.get(tile.id);
       if (runAll || content === undefined) void this.runTile(tile);
-      else void this.panel?.webview.postMessage({ type: "tile", id: tile.id, content });
+      else void this.panel?.webview.postMessage({ type: "tile", id: tile.id, content, at: this.at.get(tile.id) });
     }
   }
 
@@ -247,8 +249,10 @@ export class Dashboards {
   async runTile(tile: Tile): Promise<void> {
     if (!on() || this.running.has(tile.id)) return;
     const post = (content: TileContent) => {
+      const at = new Date().toLocaleTimeString();
       this.contents.set(tile.id, content);
-      void this.panel?.webview.postMessage({ type: "tile", id: tile.id, content, at: new Date().toLocaleTimeString() });
+      this.at.set(tile.id, at);
+      void this.panel?.webview.postMessage({ type: "tile", id: tile.id, content, at });
     };
     const query = this.saved().find((q) => q.name === tile.query);
     if (query === undefined) return post({ kind: "error", text: `There is no saved query ${tile.query} any more.` });

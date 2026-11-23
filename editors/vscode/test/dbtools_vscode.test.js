@@ -304,6 +304,30 @@ test("a tile whose view changes while its run is out is shown in the view chosen
   dashboards.close();
 });
 
+// A layout change draws every tile again from what it last showed, and
+// sent that without its time: every "at 09:30:00" went blank.
+test("a tile drawn again after a layout change keeps the time it ran at (#1341)", async (t) => {
+  const { panels } = capture();
+  const { live, context } = await setUp(t);
+  await context.workspaceState.update(SAVED_QUERIES_KEY, [{ name: "px", code: "select from trade" }]);
+  let runs = 0;
+  live.runApart = async () => (runs++, { ok: true, type: -7, text: ["1"] });
+  const dashboards = new Dashboards(context, live);
+  stub.inputs.push("Desk");
+  stub.picks.push("$(add) New dashboard...");
+  await stub.commands.get(DB_COMMANDS.addToDashboard)("px", undefined, "hdb");
+  await stub.commands.get(DB_COMMANDS.openDashboard)("Desk");
+  await new Promise((r) => setTimeout(r, 20));
+  const ran = panels[0].posted.filter((m) => m.type === "tile").at(-1);
+  assert.match(ran.at, /\d/);
+  await dashboards.receive({ type: "columns", columns: 3 });
+  const again = panels[0].posted.filter((m) => m.type === "tile").at(-1);
+  assert.notStrictEqual(again, ran, "posted again");
+  assert.strictEqual(runs, 1, "not run again");
+  assert.strictEqual(again.at, ran.at);
+  dashboards.close();
+});
+
 // Add to Dashboard offers discovered and shared processes, but a tile ran
 // only on a saved one: "There is no saved process desk/rdb", every time.
 test("a tile on a discovered process runs on it (#1122)", async (t) => {
