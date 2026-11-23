@@ -83,7 +83,6 @@ test("in-place updates, writers, file writes and amends are changes", () => {
     "@[f;x;{y}]": [],
     'value "a:1"': ["evaluates a string with value"],
     "value d": [],
-    'eval parse "a:1"': [],
   };
   for (const [code, expected] of Object.entries(cases)) {
     assert.deepStrictEqual(writes(code), expected, code);
@@ -120,6 +119,25 @@ test("save, rsave, dsave, load, rload, .Q.chk and .Q.dsftg are changes (#1065)",
     "select from t where sym=`a": [],
     "exec price from t": [],
     ".my.load[`x]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("get, eval of a parse tree and value through each or brackets are evaluations (#1066)", () => {
+  const cases = {
+    'get "trade:()"': ["evaluates a string with get"],
+    'value["trade:()"]': ["evaluates a string with value"],
+    'value each ("a:1";"b:2")': ["evaluates a string with value"],
+    "value'[(\"a:1\";\"b:2\")]": ["evaluates a string with value"],
+    'eval parse "trade:()"': ["evaluates a parse tree with eval"],
+    "eval(:;`trade;())": ["evaluates an assignment with eval"],
+    "eval (::;`trade;())": ["evaluates an assignment with eval"],
+    // Still reads.
+    "eval (+;1;2)": [],
+    "value each d": [],
+    "get each `:a`:b": [],
   };
   for (const [code, expected] of Object.entries(cases)) {
     assert.deepStrictEqual(writes(code), expected, code);

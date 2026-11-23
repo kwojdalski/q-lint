@@ -1008,7 +1008,8 @@ symbol (`` from `t ``), `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`,
 handle, `2:`, replaying a log with `-11!` (not `-11!(-1;..)` or `(-2;..)`,
 which only count and check it), an amend in place (`` @[`t;i;:;v] ``) or
 a functional update or delete in place (`` ![`t;c;b;a] ``),
-`value` or `eval` of a string, and a system command other than one that
+`value`, `get` or `eval` of a string, of `parse` or of an assignment tree
+(`` eval(:;`t;()) ``), and a system command other than one that
 reads a setting (`\c`, `\d`, `\P` alone) - `\t` and `\ts` are read for their
 expression, except `\t 500`, which sets the timer. It holds for every
 path that sends code: a query (line, selection, block, file, a Run lens, a

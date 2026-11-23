@@ -27,7 +27,9 @@
 // - `@[` or `.[` on a variable named by a symbol, with four arguments: an
 //   amend in place (three is as often a trap, `.[`f;args;handler]`, and
 //   is not taken for one); `![` likewise, a functional update or delete;
-// - `value` or `eval` applied to a string;
+// - `value`, `get` or `eval` applied to a string, to `parse`, or to a
+//   tree headed by `:` or `::` (`eval(:;`t;())`), also through `[`,
+//   `each` or `'`;
 // - a system command (`\l`, `\cd x`, `\\`), except one that only reads a
 //   setting (`\c`, `\d`, `\P` without an argument) and `\t` or `\ts`, whose
 //   expression is read by these rules - but `\t 500`, a whole number with
@@ -237,9 +239,23 @@ function readStatement(statement: string, found: Set<string>): void {
         found.add(`calls ${k.text}`);
         continue;
       }
-      if ((k.text === "value" || k.text === "eval") && next?.kind === "str") {
-        found.add(`evaluates a string with ${k.text}`);
-        continue;
+      if (k.text === "value" || k.text === "get" || k.text === "eval") {
+        // What it is applied to, past brackets and `each` or `'`.
+        let j = i + 1;
+        while (t[j] !== undefined && (["[", "(", "each", "peach"].includes(t[j].text) || (t[j].kind === "op" && t[j].text === "'"))) {
+          j++;
+        }
+        const reason = t[j]?.kind === "str"
+          ? "a string"
+          : t[j]?.kind === "name" && t[j].text === "parse"
+            ? "a parse tree"
+            : t[j - 1]?.text === "(" && t[j - 1]?.kind === "open" && t[j]?.kind === "op" && t[j].text === ":"
+              ? "an assignment"
+              : undefined;
+        if (reason !== undefined) {
+          found.add(`evaluates ${reason} with ${k.text}`);
+          continue;
+        }
       }
       // A TorQ gateway runs the strings it is given on its servers (#909):
       // what they do is read as if they were sent directly.
