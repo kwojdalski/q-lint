@@ -193,3 +193,23 @@ test("the result bar's buttons keep the focus when used, and a view button says 
   page.send(result("s.1", TABLE, { diff, millis: 2 }));
   assert.strictEqual(active(), page.button("Copy as CSV"));
 });
+
+test("a tree node opened or closed from the keyboard keeps the focus on its twist (#1345)", () => {
+  const page = loadPage(undefined);
+  const leaf = (key, text) => ({ key, text, type: -7, count: 1, children: [] });
+  const tree = { key: "", text: "", type: 99, count: 2, children: [leaf("a", "1"), { key: "b", text: "", type: 0, count: 2, children: [leaf("0", "2"), { key: "1", text: "", type: 0, count: 1, children: [leaf("0", "3")] }] }] };
+  page.send(result("s.1", [["n", 7, ["0", "1"]]], { view: "tree", tree }));
+  const twist = (label) => page.body.all((e) => e.tagName === "BUTTON" && e.getAttribute("aria-label") === label)[0];
+  const open = twist("Open b");
+  open.focus();
+  open.fire("click");
+  assert.strictEqual(activeIn(page.body), twist("Close b"));
+  assert.notStrictEqual(activeIn(page.body), open, "the tree was drawn again");
+  // A node inside it, and closing the one above: each stays where the keys are.
+  twist("Open 1").focus();
+  twist("Open 1").fire("click");
+  assert.strictEqual(activeIn(page.body), twist("Close 1"));
+  twist("Close b").focus();
+  twist("Close b").fire("click");
+  assert.strictEqual(activeIn(page.body), twist("Open b"));
+});

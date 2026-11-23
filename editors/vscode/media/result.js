@@ -1099,7 +1099,7 @@
         state.open.push(path);
       }
       save();
-      drawTree();
+      FOCUS.over(drawTree);
     };
     const line = function (node, path, depth) {
       const li = el("li");
@@ -1114,6 +1114,7 @@
         twist.title = isOpen ? "Close" : "Open";
         twist.setAttribute("aria-label", (isOpen ? "Close " : "Open ") + (node.key || "the result"));
         twist.addEventListener("click", function () { toggle(path); });
+        FOCUS.name(twist, "tree " + path);
         row.append(twist);
       } else {
         row.append(el("span", "twist"));
