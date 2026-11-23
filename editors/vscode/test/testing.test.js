@@ -322,6 +322,34 @@ test("a k4unit suite's before rows run once before its tests, and its after rows
   );
 });
 
+test("a cancelled k4unit run still runs the after rows of a file it set up (#1095)", async () => {
+  stub.reset();
+  const made = fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  const csv = "action,ms,bytes,lang,code,repeat,minver,comment\nbefore,0,0,q,t:1,1,,\ntrue,0,0,q,t=1,1,,\nfail,0,0,q,bad,1,,\nafter,0,0,q,t:0,1,,\n";
+  vscode.workspace.findFiles = async () => [vscode.Uri.file("/ws/k.csv")];
+  vscode.workspace.fs = { readFile: async () => Buffer.from(csv) };
+  const live = fakeLive();
+  const explorer = registerTestExplorer(stub.newContext(), live, () => undefined);
+  await explorer.discover();
+  // Cancelled once the first test has been sent: the second is skipped.
+  const token = {
+    get isCancellationRequested() {
+      return live.sent.some((s) => s.mode === "true");
+    },
+  };
+  await made[0].profiles[0].handler(new vscode.TestRunRequest(undefined), token);
+  assert.deepStrictEqual(
+    live.sent.map((s) => [s.statements.join(";"), s.mode]),
+    [
+      ["t:1", "run"],
+      ["t=1", "true"],
+      ["t:0", "run"],
+    ],
+  );
+  assert.ok(made[0].runs[0].events.some(([e, id]) => e === "skipped" && id === "file:///ws/k.csv#3"));
+});
+
 test("a test run on a process the read-only guard guards goes through the guard: declined, the test's definition is not sent (#918)", async (t) => {
   const net = require("node:net");
   const { serialize, deserialize } = require("node-q/lib/c.js");
