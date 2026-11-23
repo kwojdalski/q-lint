@@ -496,6 +496,33 @@ fn a_relative_load_after_a_change_of_directory_is_dynamic() {
 }
 
 #[test]
+fn a_relative_load_after_a_directory_load_is_dynamic() {
+    // KDB-X: `\l db` leaves the process in db, so the `\l helper.q` after it
+    // loads db/helper.q, and fails where only the directory it started in has
+    // one (#1365). `\l .` moves nowhere, and a load before the directory's is
+    // still an edge.
+    let g = graph(
+        &[
+            ("helper.q", "hh:`root\n"),
+            ("db/x.q", "xx:1\n"),
+            ("a.q", "\\l db\n\\l helper.q\n"),
+            ("b.q", "system \"l db/\"\n\\l helper.q\n"),
+            ("c.q", "\\l helper.q\n\\l db\n"),
+            ("sub/d.q", "\\l .\n\\l helper.q\n"),
+        ],
+        false,
+    );
+    for file in ["a.q", "b.q"] {
+        assert_eq!(deps(&g, file), ["x.q"], "{file}");
+        assert_eq!(kinds(&g, file), [(2, "load")], "{file}");
+    }
+    assert_eq!(deps(&g, "c.q"), ["x.q", "helper.q"]);
+    assert!(kinds(&g, "c.q").is_empty());
+    assert!(deps(&g, "sub/d.q").contains(&"helper.q".to_string()));
+    assert!(kinds(&g, "sub/d.q").is_empty());
+}
+
+#[test]
 fn a_cd_inside_a_block_comment_moves_nothing() {
     // KDB-X: under a block comment holding `\cd lib`, `\l b.q` loads the
     // b.q beside the script (#1363).

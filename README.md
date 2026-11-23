@@ -637,7 +637,8 @@ symbol `` `:lib/x.q `` - Go to Definition opens the file and a hover names it.
 The path is followed as the dependency graph follows it: against the first
 workspace folder, then the loading file's own directory and each one above it;
 a directory loads the scripts directly in it. A load that reaches no file, or
-a relative one written after the script changes directory, goes nowhere.
+a relative one written after the script changes directory - a `\cd`, or the
+load of a directory, which q stays in - goes nowhere.
 `textDocument/documentLink` makes each such path a link to the file it
 reaches, found the same way, with the file under its workspace folder as the
 tooltip; a load that reaches no file, or a directory (several files), has

@@ -1584,10 +1584,10 @@ fn value_of_symbols<'n>(
 /// and no `ff`. Inside a lambda the load runs wherever the lambda is called,
 /// taken to be the root.
 ///
-/// A relative path loaded after the script changes directory, `\cd lib` or
-/// `system "cd lib"`, is read from a directory the text does not settle: q 5
-/// loads lib/x.q for `\cd lib` then `\l x.q` (#763). Its offset goes in
-/// `moved` instead, for `dynamic` to list.
+/// A relative path loaded after the script changes directory, `\cd lib`,
+/// `system "cd lib"` or the load of a directory, is read from a directory
+/// the text does not settle: q 5 loads lib/x.q for `\cd lib` then `\l x.q`
+/// (#763). Its offset goes in `moved` instead, for `dynamic` to list.
 fn loads(
     code: &str,
     raw: &str,
@@ -1595,9 +1595,10 @@ fn loads(
     namespace_at: impl Fn(usize) -> String,
     moved: &mut Vec<usize>,
 ) -> Vec<(String, String)> {
-    let cd = changes_directory(code, raw, view);
+    let sites = load_sites(code, raw, view);
+    let cd = changes_directory(code, raw, view).min(loads_directory(raw, &sites));
     let mut loads = vec![];
-    for (at, path, symbol) in load_sites(code, raw, view) {
+    for (at, path, symbol) in sites {
         let path = &raw[path];
         if !symbol && at > cd && !path.starts_with('/') {
             moved.push(at);
@@ -1632,6 +1633,26 @@ fn changes_directory(code: &str, raw: &str, view: &str) -> usize {
                 .map(|m| m.start())
                 .filter(|&at| view[at..].starts_with("system") && boundary(view, at)),
         )
+        .min()
+        .unwrap_or(usize::MAX)
+}
+
+/// Where the script first loads what may be a directory, or past the end
+/// when it never does. q stays in a directory it loads: KDB-X, after `\l db`,
+/// loads db/helper.q for `\l helper.q` and fails where only the directory it
+/// started in has one (#1365). The text cannot tell a directory from a data
+/// file, which moves nowhere, so any last component without a dot counts;
+/// `\l .`, a database reloading itself, stays where it is.
+fn loads_directory(raw: &str, sites: &[(usize, Range<usize>, bool)]) -> usize {
+    let directory = |path: &str| {
+        let name = path.trim_end_matches(['/', '\\']);
+        let name = name.rsplit(['/', '\\']).next().unwrap_or(name);
+        name == ".." || !name.contains('.')
+    };
+    sites
+        .iter()
+        .filter(|(_, path, symbol)| !symbol && directory(&raw[path.clone()]))
+        .map(|&(at, ..)| at)
         .min()
         .unwrap_or(usize::MAX)
 }
@@ -1683,8 +1704,9 @@ fn load_sites(code: &str, raw: &str, view: &str) -> Vec<(usize, Range<usize>, bo
 /// navigation request on one follows to the file it names.
 pub fn load_paths(code: &str, raw: &str) -> Vec<Range<usize>> {
     let view = commands_blanked(code, raw);
-    let cd = changes_directory(code, raw, &view);
-    load_sites(code, raw, &view)
+    let sites = load_sites(code, raw, &view);
+    let cd = changes_directory(code, raw, &view).min(loads_directory(raw, &sites));
+    sites
         .into_iter()
         .filter(|(at, path, symbol)| *symbol || *at <= cd || raw[path.clone()].starts_with('/'))
         .map(|(_, path, _)| path)
