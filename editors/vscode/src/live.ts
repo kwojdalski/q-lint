@@ -1669,10 +1669,10 @@ export class Live {
 
   /// Open a connection to `process` at `target`, through the SSH tunnel it
   /// names, if it names one (#908): the tunnel closes with the connection,
-  /// and the connection with the tunnel.
-  private async dial(process: Process, target: Target): Promise<QConnection> {
+  /// and the connection with the tunnel. `signal` stops the connect.
+  private async dial(process: Process, target: Target, signal?: AbortSignal): Promise<QConnection> {
     if (process.ssh === undefined) {
-      return QConnection.open(target);
+      return QConnection.open(target, undefined, signal);
     }
     if (!this.setting(readTunnel).enabled) {
       throw new Error(
@@ -1681,12 +1681,16 @@ export class Live {
     }
     const tunnel = await SshTunnel.open({ destination: process.ssh, host: target.host, port: target.port });
     try {
-      const connection = await QConnection.open({
-        ...target,
-        host: "127.0.0.1",
-        port: tunnel.localPort,
-        ...(target.tls ? { servername: net.isIP(target.host) ? undefined : target.host } : {}),
-      });
+      const connection = await QConnection.open(
+        {
+          ...target,
+          host: "127.0.0.1",
+          port: tunnel.localPort,
+          ...(target.tls ? { servername: net.isIP(target.host) ? undefined : target.host } : {}),
+        },
+        undefined,
+        signal,
+      );
       connection.whenClosed(() => tunnel.close());
       tunnel.whenClosed(() => connection.abort());
       return connection;
@@ -2256,8 +2260,8 @@ export class Live {
     if (!commanded && process.user && process.server !== undefined && (await this.context.secrets.get(passwordKey(process))) === undefined) {
       throw new Error(`no password is stored for ${process.user}: connect to ${process.label} once to give it`);
     }
-    const target = await this.targetFor(process);
-    const connection = await QConnection.open(target, undefined, signal);
+    // Through its tunnel, as any connect to it is (#1070).
+    const connection = await this.dial(process, await this.targetFor(process), signal);
     const stop = (): void => connection.abort();
     signal?.addEventListener("abort", stop);
     const controls = this.controls.settings();

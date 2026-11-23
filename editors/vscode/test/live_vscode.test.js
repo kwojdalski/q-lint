@@ -333,3 +333,16 @@ test("Edit Process forgets the password when the user, host or port change (#110
   await edit("a3", "elsewhere", "2", "bob");
   assert.deepStrictEqual([...secrets], []);
 });
+
+// runApart (Query a Tag, dashboards, scheduled queries) opened the process's
+// internal address directly, past its SSH tunnel, and even with tunnels
+// turned off, where a connect refuses.
+test("a query apart goes through the process's SSH tunnel, and refuses when tunnels are off (#1070)", async (t) => {
+  let reached = 0;
+  const a = await fakeQ(() => (reached++, 1));
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port, { ssh: "bastion" })]);
+  stub.config.user["connection.sshTunnel.enable"] = false;
+  await assert.rejects(live.runApart(live.processes()[0], "1"), /SSH tunnels are turned off/);
+  assert.strictEqual(reached, 0);
+});
