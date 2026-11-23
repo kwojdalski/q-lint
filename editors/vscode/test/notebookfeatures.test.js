@@ -429,3 +429,8 @@ test("a line opening with a code span is text, not a fence (#1307)", () => {
   assert.strictEqual(markdownHtml("```a``` is q\n\nnext"), "<p><code>a</code> is q</p>\n<p>next</p>");
   assert.strictEqual(markdownHtml("```q\nx\n```"), "<pre><code>x</code></pre>");
 });
+
+test("a fence closes only on a bare run of its own character, at least as long (#1308)", () => {
+  assert.strictEqual(markdownHtml("````\n```q\nx\n```\n````\nafter"), "<pre><code>```q\nx\n```</code></pre>\n<p>after</p>");
+  assert.strictEqual(markdownHtml("```\n```q\n~~~\n```"), "<pre><code>```q\n~~~</code></pre>");
+});

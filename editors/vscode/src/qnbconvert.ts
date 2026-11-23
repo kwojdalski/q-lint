@@ -94,8 +94,11 @@ export function markdownHtml(source: string, values: Record<string, LiveValue> =
     const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
     if (fence !== null && !(fence[1][0] === "`" && fence[2].includes("`"))) {
       flush();
+      // Closed only by a bare run of the same character, at least as long:
+      // a "```q" inside is code (#1308).
+      const close = new RegExp(`^ {0,3}${fence[1][0]}{${fence[1].length},}\\s*$`);
       const code: string[] = [];
-      for (i++; i < lines.length && !lines[i].trimStart().startsWith(fence[1]); i++) {
+      for (i++; i < lines.length && !close.test(lines[i]); i++) {
         code.push(lines[i]);
       }
       out.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`);
