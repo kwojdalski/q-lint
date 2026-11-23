@@ -1,0 +1,54 @@
+{
+  "$comment": "Injected into Markdown (#1163): a ```q or ```k fence is coloured with this extension's q or k grammar. The rules follow those of VS Code's own Markdown grammar for the languages it knows, and an L: selector tries them before its plain fenced block.",
+  "scopeName": "markdown.q.codeblock",
+  "injectionSelector": "L:text.html.markdown",
+  "fileTypes": [],
+  "patterns": [
+    { "include": "#fenced_code_block_q" },
+    { "include": "#fenced_code_block_k" }
+  ],
+  "repository": {
+    "fenced_code_block_q": {
+      "begin": "(^|\\G)(\\s*)(`{3,}|~{3,})\\s*(?i:(q|kdb\\+?)((\\s+|:|,|\\{|\\?)[^`]*)?$)",
+      "beginCaptures": {
+        "3": { "name": "punctuation.definition.markdown" },
+        "4": { "name": "fenced_code.block.language.markdown" },
+        "5": { "name": "fenced_code.block.language.attributes.markdown" }
+      },
+      "end": "(^|\\G)(\\2|\\s{0,3})(\\3)\\s*$",
+      "endCaptures": {
+        "3": { "name": "punctuation.definition.markdown" }
+      },
+      "name": "markup.fenced_code.block.markdown",
+      "patterns": [
+        {
+          "begin": "(^|\\G)(\\s*)(.*)",
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)",
+          "contentName": "meta.embedded.block.q",
+          "patterns": [{ "include": "source.q" }]
+        }
+      ]
+    },
+    "fenced_code_block_k": {
+      "begin": "(^|\\G)(\\s*)(`{3,}|~{3,})\\s*(?i:(k)((\\s+|:|,|\\{|\\?)[^`]*)?$)",
+      "beginCaptures": {
+        "3": { "name": "punctuation.definition.markdown" },
+        "4": { "name": "fenced_code.block.language.markdown" },
+        "5": { "name": "fenced_code.block.language.attributes.markdown" }
+      },
+      "end": "(^|\\G)(\\2|\\s{0,3})(\\3)\\s*$",
+      "endCaptures": {
+        "3": { "name": "punctuation.definition.markdown" }
+      },
+      "name": "markup.fenced_code.block.markdown",
+      "patterns": [
+        {
+          "begin": "(^|\\G)(\\s*)(.*)",
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)",
+          "contentName": "meta.embedded.block.k",
+          "patterns": [{ "include": "source.k" }]
+        }
+      ]
+    }
+  }
+}

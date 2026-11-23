@@ -97,6 +97,12 @@ to a process you add and connect to, and sends only the code you run.
   have them agree, take the `.` out of it for q,
   ``"[q]": {"editor.wordSeparators": "`~!@#$%^&*()-=+[{]}\\|;:'\",<>/?"}``.
   `q-lint.editor.dottedNames.enable` turns it off without a reload.
+- **q in Markdown**: a fenced block opened with ```` ```q ```` (or `kdb+`,
+  or `~~~q`) is coloured with the q grammar in a Markdown editor, and one
+  opened with ```` ```k ```` with the k grammar; another language's fence,
+  and prose, are Markdown's. It is a grammar injection, which VS Code reads
+  at startup and offers no switch for, so it has no setting; the Markdown
+  preview colours code with its own highlighter, which this does not reach.
 - **Snippets** for the forms q is mostly written in: qSQL (`select`,
   `selectby`, `update`, `updateby`, `exec`, `execby`, `delete`,
   `deletecols`, and the functional `fselect` and `fupdate`), protected

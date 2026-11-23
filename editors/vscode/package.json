@@ -90,6 +90,18 @@
           "meta.embedded.line.q": "q"
         }
       }
+   ,
+      {
+        "scopeName": "markdown.q.codeblock",
+        "path": "./syntaxes/markdown-q.tmLanguage.json",
+        "injectTo": [
+          "text.html.markdown"
+        ],
+        "embeddedLanguages": {
+          "meta.embedded.block.q": "q",
+          "meta.embedded.block.k": "k"
+        }
+      }
     ],
     "notebooks": [
       {
