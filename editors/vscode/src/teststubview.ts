@@ -51,13 +51,23 @@ async function read(uri: Uri): Promise<string | undefined> {
   }
 }
 
+/// The text of `uri` as the editor has it, unsaved edits included: the stub
+/// is inserted into that document, so its end is found there (#1076).
+async function open(uri: Uri): Promise<string | undefined> {
+  try {
+    return (await workspace.openTextDocument(uri)).getText();
+  } catch {
+    return undefined;
+  }
+}
+
 /// Where the stub for `source`'s function goes: an existing test file, or a
 /// new one, with the text the style is read from.
 async function testFile(source: Uri): Promise<{ uri: Uri; text: string | undefined; styleFrom: string }> {
   for (const pattern of testFilePatterns(source.fsPath)) {
     const found = (await workspace.findFiles(pattern, "**/node_modules/**", 20)).sort((a, b) => a.fsPath.length - b.fsPath.length);
     if (found.length > 0) {
-      const text = (await read(found[0])) ?? "";
+      const text = (await open(found[0])) ?? "";
       return { uri: found[0], text, styleFrom: text };
     }
   }
@@ -119,8 +129,9 @@ export async function generateStub(uri?: Uri, line?: number): Promise<boolean> {
     await workspace.fs.writeFile(file.uri, Buffer.from(content, "utf8"));
     stubLine = 2;
   } else {
-    const lines = file.text.split("\n");
-    const ends = file.text === "" || file.text.endsWith("\n");
+    const text = (await open(file.uri)) ?? file.text;
+    const lines = text.split("\n");
+    const ends = text === "" || text.endsWith("\n");
     const edit = new WorkspaceEdit();
     const end = new Position(lines.length - 1, lines[lines.length - 1].length);
     edit.insert(file.uri, end, `${ends ? "" : "\n"}\n${stub}`);

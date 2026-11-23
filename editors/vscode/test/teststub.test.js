@@ -145,3 +145,14 @@ test("a new test file's path on Windows keeps the folder and the separator (#109
   assert.strictEqual(newTestPath(psrc, "/ws/", true), posix.join("/ws", "tests", "test_a.q"));
   assert.strictEqual(newTestPath("a.q", undefined, false), "test_a.q");
 });
+
+test("the stub goes at the end of the open test file, unsaved edits included (#1076)", async () => {
+  const files = { "/ws/src/lib.q": SRC, "/ws/tests/test_lib.q": "a:1\nb:{[]\n  2}\nc:3\n" };
+  setup(files);
+  // files is the open document; the disk still has the first line only.
+  const fromDisk = vscode.workspace.fs.readFile;
+  vscode.workspace.fs.readFile = async (uri) => (uri.fsPath === "/ws/tests/test_lib.q" ? Buffer.from("a:1", "utf8") : fromDisk(uri));
+  stub.picks.push("Add Test");
+  assert.strictEqual(await stub.commands.get(TEST_STUB_COMMAND)(vscode.Uri.file("/ws/src/lib.q"), 6), true);
+  assert.strictEqual(files["/ws/tests/test_lib.q"], "a:1\nb:{[]\n  2}\nc:3\n\ntest_now:{[]\n  expected:(::); / TODO: what now[] should give\n  now[]~expected}\n");
+});
