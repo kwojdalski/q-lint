@@ -8,7 +8,7 @@
 // showing the line. Off (q-lint.baseline.enable), the command refuses and
 // the server shows every finding. Nothing is sent to a q process.
 import { execFile } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { commands, window, workspace, type ExtensionContext } from "vscode";
@@ -101,7 +101,7 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
         // Rewritten to be relative to the folder, as the draft's paths were
         // relative to the scratch directory.
         const text = readFileSync(draft, "utf8");
-        writeFileSync(target, rebased(text, dir));
+        writeFileSync(target, rebased(text, dir, canonicalDir(dir)));
         await offerConfiguration(dir);
         return target;
       } finally {
@@ -112,12 +112,26 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
 }
 
 /// A baseline written from a scratch directory, whose paths are absolute,
-/// with each path under `to` made relative to it.
-export function rebased(text: string, to: string): string {
-  const prefix = to.endsWith("/") ? to : `${to}/`;
-  return text.replace(/"path":"([^"]*)"/g, (whole, path: string) =>
-    path.startsWith(prefix) ? `"path":"${path.slice(prefix.length)}"` : whole,
-  );
+/// with each path under one of `folders` (one folder's names: as opened,
+/// and with its symlinks resolved) made relative to it. qlinter writes
+/// canonical `/`-separated paths, `//?/C:/proj/a.q` on Windows, so both
+/// sides are compared in that form, a drive letter in either case (#1080).
+export function rebased(text: string, ...folders: string[]): string {
+  const canonical = (p: string): string => p.replace(/\\/g, "/").replace(/^\/\/\?\//, "").replace(/^[a-z]:/, (d) => d.toUpperCase());
+  const prefixes = folders.map((f) => canonical(f).replace(/\/*$/, "/"));
+  return text.replace(/"path":"([^"]*)"/g, (whole, path: string) => {
+    const prefix = prefixes.find((p) => canonical(path).startsWith(p));
+    return prefix === undefined ? whole : `"path":"${canonical(path).slice(prefix.length)}"`;
+  });
+}
+
+/// `dir` with its symlinks resolved (`/tmp` is `/private/tmp` on macOS).
+function canonicalDir(dir: string): string {
+  try {
+    return realpathSync.native(dir);
+  } catch {
+    return dir;
+  }
 }
 
 /// Offer to name the baseline in the folder's `qlinter.toml`, showing the

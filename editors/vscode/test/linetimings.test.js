@@ -206,6 +206,24 @@ test("off, the command refuses and sends nothing; on, each statement is timed an
   assert.strictEqual(q.sent.length, sent);
 });
 
+test("a file edited while its lines are timed is not drawn on, its old lines being gone (#1119)", async (t) => {
+  const { drawn, editor } = fakeEditors();
+  const { live } = await setUp(t, [], ANSWER);
+  await live.connectTo("rdb");
+  const e = editor("x:til 10\ny:sum x");
+  let version = 1;
+  Object.defineProperty(e.document, "version", { get: () => version });
+  const run = live.runOnActive.bind(live);
+  live.runOnActive = async (...args) => {
+    const ran = await run(...args);
+    version++; // a line typed above while the answer was awaited
+    return ran;
+  };
+  const result = await stub.commands.get(TIME_LINES)();
+  assert.match(result, /changed while/);
+  assert.deepStrictEqual(drawn, []);
+});
+
 test("a write on a guarded process is held until confirmed; a read is not asked about", async (t) => {
   const { editor } = fakeEditors();
   const { q, live } = await setUp(t, ["prod"], ANSWER);

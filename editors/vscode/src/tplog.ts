@@ -11,7 +11,8 @@
 // log whose end is cut short (a tickerplant that died mid-write) is read up
 // to the last whole message - a copy of those bytes, its header's count
 // set to theirs, in the local q's own directory - and the page says how
-// many bytes were left.
+// many bytes were left. A message's time is its first temporal column's
+// first item, or that column itself in a one-row message of atoms.
 // A replay runs each message as `-11!` would, with an `upd` that inserts
 // into a table of that name, creating it from a first message that is a
 // table; a q file loaded first (the tickerplant's schema, its own `upd`)
@@ -26,7 +27,7 @@ export const TPLOG_INIT = [
   " m:$[0=n;();ok;get f;[b:(c 1)#read1 f;b[4+til 4]:reverse 0x0 vs\"i\"$n;p:`:qlintprefix.log;p 1:b;r:get p;hdel p;r]];",
   " m:(),m;",
   " d:{$[(0h=type x)&2<count x;x 2;::]}each m;",
-  " tm:{tv:$[98h=type x;value flip x;0h=type x;x;()];tv:tv where(type each tv)in 12 13 14 15 16 17 18 19h;$[count tv;first first tv;0Np]}each d;",
+  " tm:{tv:$[98h=type x;value flip x;0h=type x;x;()];tv:tv where(abs type each tv)within 12 19h;$[count tv;first first tv;0Np]}each d;",
   " .qlint.tp.m::m;",
   " .qlint.tp.s::([] i:til count m;",
   "  fn:{$[(0h=type x)&-11h=type first x;first x;`]}each m;",

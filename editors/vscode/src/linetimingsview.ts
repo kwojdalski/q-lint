@@ -65,6 +65,7 @@ export function registerLineTimings(
       return say(`q-lint: ${whole ? "the file" : "the selection"} has no statement to time.`);
     }
     const code = spans.map((s) => s.text).join("\n");
+    const version = editor.document.version;
     let ran: { process: string; value: unknown } | undefined;
     try {
       ran = await live.runOnActive(code, (connection) => connection.call(LINE_TIMINGS, spans.map((s) => s.text)));
@@ -79,6 +80,10 @@ export function registerLineTimings(
       result = readTimings(ran.value, spans);
     } catch (error) {
       return say(`q-lint: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    // Edited while it ran, the lines have moved: nothing is drawn (#1119).
+    if (editor.document.version !== version) {
+      return say("q-lint: the file changed while its lines were timed; time them again.");
     }
     // Turned off while it ran: nothing is drawn.
     drawn?.show(editor, result);

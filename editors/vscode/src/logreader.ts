@@ -27,18 +27,39 @@ export async function readFrom(file: string, from: Position, line: (text: string
   if (size === start.offset) {
     return { ...start, restarted };
   }
+  // Bytes, not decoded text, are counted and split on `\n`: a byte that is
+  // not UTF-8 decodes to U+FFFD, three bytes long (#1079).
   let partial = start.partial;
-  const stream = fs.createReadStream(file, { start: start.offset, end: size - 1, encoding: "utf8", highWaterMark: 256 * 1024 });
+  const stream = fs.createReadStream(file, { start: start.offset, end: size - 1, highWaterMark: 256 * 1024 });
   let read = 0;
-  for await (const chunk of stream as AsyncIterable<string>) {
-    read += Buffer.byteLength(chunk, "utf8");
-    const text = partial + chunk;
+  let rest: Buffer = Buffer.alloc(0);
+  for await (const chunk of stream as AsyncIterable<Buffer>) {
+    read += chunk.length;
+    const bytes = rest.length > 0 ? Buffer.concat([rest, chunk]) : chunk;
     let begin = 0;
-    for (let nl = text.indexOf("\n"); nl >= 0; nl = text.indexOf("\n", begin)) {
-      line(text.slice(begin, nl > begin && text[nl - 1] === "\r" ? nl - 1 : nl));
+    for (let nl = bytes.indexOf(0x0a); nl >= 0; nl = bytes.indexOf(0x0a, begin)) {
+      const text = partial + bytes.toString("utf8", begin, nl);
+      line(text.endsWith("\r") ? text.slice(0, -1) : text);
+      partial = "";
       begin = nl + 1;
     }
-    partial = text.slice(begin);
+    rest = bytes.subarray(begin);
   }
-  return { offset: start.offset + read, partial, restarted };
+  // A character cut in two at the end is left for the next read.
+  const held = cutCharacter(rest);
+  partial += rest.toString("utf8", 0, rest.length - held);
+  return { offset: start.offset + read - held, partial, restarted };
+}
+
+/// How many bytes at the end of `bytes` start a UTF-8 character that is
+/// not all there yet.
+function cutCharacter(bytes: Buffer): number {
+  for (let back = 1; back <= Math.min(3, bytes.length); back++) {
+    const b = bytes[bytes.length - back];
+    if ((b & 0xc0) !== 0x80) {
+      const length = b >= 0xf0 ? 4 : b >= 0xe0 ? 3 : b >= 0xc0 ? 2 : 1;
+      return length > back ? back : 0;
+    }
+  }
+  return 0;
 }

@@ -19,7 +19,8 @@
 // not. A column with no cell to go by is a string. The guess is a start:
 // the wizard lets each be changed, or the column skipped.
 import { basename } from "node:path";
-import { stringLiteral } from "./qliteral";
+import { readDelimited } from "./pastetable";
+import { RESERVED, stringLiteral } from "./qliteral";
 
 /// The commands, as `resulttools.ts` registers them.
 export const DATA_FILES = {
@@ -172,20 +173,18 @@ export function guessType(cells: string[]): string {
 
 /// The text's first lines as a table: the header, the rows and a guessed
 /// type for each column. `delimiter` "" guesses it from the header. `cut`:
-/// the text is the start of a longer file, so its last line can be partial.
+/// the text is the start of a longer file, so its last record can be
+/// partial. A quoted field may hold a newline, so records are read whole
+/// (#1114).
 export function sampleText(text: string, delimiter = "", cut = false): Sample {
-  const lines = text.replace(/^﻿/, "").split(/\r?\n/);
-  const header = lines[0] ?? "";
+  const header = text.replace(/^\ufeff/, "").split(/\r?\n/, 1)[0] ?? "";
   const d = delimiter === "" ? guessDelimiter(header) : delimiter;
-  const names = splitLine(header, d).map((n) => n.trim());
-  if (cut && lines.length > 2) {
-    lines.pop();
+  const records = readDelimited(text, d).rows;
+  const names = (records[0] ?? [""]).map((n) => n.trim());
+  if (cut && records.length > 2) {
+    records.pop();
   }
-  const body = lines.slice(1, SAMPLE_ROWS + 1).filter((l) => l.trim() !== "");
-  const rows = body.slice(0, SAMPLE_ROWS).map((l) => {
-    const f = splitLine(l, d);
-    return names.map((_, i) => f[i] ?? "");
-  });
+  const rows = records.slice(1, SAMPLE_ROWS + 1).map((f) => names.map((_, i) => f[i] ?? ""));
   const types = names.map((_, i) => guessType(rows.map((r) => r[i])));
   return { delimiter: d, names, rows, types };
 }
@@ -226,11 +225,12 @@ export function loadExpression(kind: DataKind, path: string, local: boolean, sam
   return csvLoad(sample.types, sample.delimiter, local ? fileHandle(path) : linesLiteral(text ?? ""));
 }
 
-/// A name for the table a file is loaded as: its base name, made a q name.
+/// A name for the table a file is loaded as: its base name, made a q name,
+/// with a `_` after a reserved word or builtin, which q will not assign (#1117).
 export function tableName(path: string): string {
   const base = basename(path.replace(/\\/g, "/")).replace(/\.[^.]*$/, "");
   const name = base.replace(/[^A-Za-z0-9_]/g, "_").replace(/^[^A-Za-z]+/, "");
-  return name === "" ? "t" : name;
+  return name === "" ? "t" : RESERVED.has(name) ? `${name}_` : name;
 }
 
 /// Whether a process at `host` (reached with no SSH tunnel) runs on this

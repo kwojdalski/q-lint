@@ -79,6 +79,8 @@ test("the column manager checks an op against the table and writes a script the 
   for (const h of HELPERS) assert.ok(script.includes(h));
   assert.match(script, /\.qlint\.cm\.run\[`trade;\.qlint\.cm\.ren\[`px;`price\]\]/);
   assert.match(script, /system"l \."/);
+  // A rename quotes both paths for the shell (#1083): run on a real q in dbtools_q.test.js.
+  assert.ok(HELPERS.some((h) => h.startsWith(".qlint.cm.mv:") && h.includes(`{"'",ssr[x;"'";"'\\\\''"],"'"}`) && h.includes('{"\\"",x,"\\""}')));
   assert.match(opText({ op: "attr", column: "sym", attr: "" }), /remove the attribute/);
   assert.match(columnScriptOf("t", [{ op: "delete", column: "a" }, { op: "reorder", order: ["b"] }], "p"), /step:2 from .*order\[enlist`b\]/);
   const settings = { enabled: true, tags: ["prod"] };
@@ -118,7 +120,7 @@ test("the documenter reads one table's answer, takes the qDoc above a definition
 test("the partition check finds weekday gaps, and each kind of problem in an answer", () => {
   assert.deepStrictEqual(missingWeekdays(["2026.01.02", "2026.01.06"]), ["2026.01.05"]);
   assert.deepStrictEqual(missingWeekdays(["2026.01.02"]), []);
-  const row = (partition, extra = {}) => ({ table: "t", partition, dir: true, dotd: true, columns: ["sym", "px"], missing: [], types: [20, 9], enums: ["sym", ""], maxIndex: null, rows: 100, ...extra });
+  const row = (partition, extra = {}) => ({ table: "t", partition, dir: true, dotd: true, columns: ["sym", "px"], missing: [], types: [20, 9], enums: ["sym", ""], maxIndexes: [], rows: 100, ...extra });
   const answer = {
     hdb: true,
     field: "date",
@@ -132,7 +134,7 @@ test("the partition check finds weekday gaps, and each kind of problem in an ans
       row("2026.01.06", { types: [20, 7] }),
       row("2026.01.07", { dir: false, dotd: false }),
       row("2026.01.08", { columns: ["sym", "px", "x"], types: [20, 9, 7], enums: ["sym", "", ""], rows: 0 }),
-      row("2026.01.12", { missing: ["px"], types: [20], enums: ["other"], maxIndex: 12, rows: 5000 }),
+      row("2026.01.12", { missing: ["px"], types: [20], enums: ["other"], maxIndexes: [12], rows: 5000 }),
     ],
   };
   const kinds = Object.groupBy(partitionProblems(answer), (p) => p.kind);
@@ -144,11 +146,20 @@ test("the partition check finds weekday gaps, and each kind of problem in an ans
   assert.ok(kinds.enumeration.some((p) => /against other/.test(p.what)));
   assert.ok(kinds["row count"].some((p) => p.partitions.includes("2026.01.08")));
   assert.ok(kinds["row count"].some((p) => p.partitions[0].startsWith("2026.01.12")));
+  // Each enumerated column's largest index is held to its own domain (#1103).
+  const two = (maxIndexes) => partitionProblems({ ...answer, all: ["2026.01.05"], domains: new Map([["sym", 1000], ["src", 3]]), rows: [row("2026.01.05", { columns: ["sym", "src"], types: [20, 21], enums: ["sym", "src"], maxIndexes })] }).filter((p) => p.kind === "enumeration");
+  assert.deepStrictEqual(two([500, 2]), []);
+  assert.deepStrictEqual(two([500, 3]).map((p) => p.what), ["t.src has a symbol index past the end of src"]);
+  assert.deepStrictEqual(two([1000, 2]).map((p) => p.what), ["t.sym has a symbol index past the end of sym"]);
   const report = partitionReport(answer, "hdb", false);
   assert.match(report, /A quick check/);
   assert.match(report, /\*\*missing dates\*\*/);
   assert.match(partitionReport({ hdb: false, root: "/x" }, "rdb", false), /no partitioned database/);
   assert.deepStrictEqual(readPartitions({ hdb: false, root: "/x" }), { hdb: false, root: "/x" });
+  // One table in one partition: each column of the answer is a one-item list (#1102).
+  const single = readPartitions({ hdb: true, pf: "date", root: "/db", all: ["2026.01.05"], checked: 1, tables: ["trade"], domains: ["sym"], domainsizes: [2], rows: { tbl: ["trade"], part: ["2026.01.05"], dir: [true], dotd: [true], cols: [["sym", "px"]], missing: [[]], types: [[20, 9]], enums: [["sym", ""]], maxidx: [[1, null]], rows: [2] } });
+  assert.deepStrictEqual(single.rows, [{ table: "trade", partition: "2026.01.05", dir: true, dotd: true, columns: ["sym", "px"], missing: [], types: [20, 9], enums: ["sym", ""], maxIndexes: [1, null], rows: 2 }]);
+  assert.deepStrictEqual(partitionProblems(single), []);
 });
 
 test("the sym report warns above the threshold and lists columns and growth", () => {
@@ -161,11 +172,17 @@ test("the sym report warns above the threshold and lists columns and growth", ()
   assert.match(text, /\| 2026\.01\.06 \| 2,000 \| 1,900 \|/);
   assert.doesNotMatch(symReport(a, "hdb", 5000), /Warning/);
   assert.match(symReport({ sym: false, root: "/x" }, "p", 1), /no sym file/);
+  // Int partitions grow in number order, not text order (#1128).
+  const ints = readSym({ sym: true, root: "/db", count: 300, bytes: 1, partitions: 3, sampled: 3, ctable: [], ccol: [], cdistinct: [], gpart: ["10", "8", "9"], gsize: [300, 100, 200] });
+  assert.deepStrictEqual(ints.growth.map((g) => g.partition), ["8", "9", "10"]);
 });
 
 test("the attribute advisor counts filters and suggests by shape, never for an unfiltered column", () => {
   const queries = ["select from trade where sym=`a", "select from trade where sym in `a`b, px>1", "?[trade;enlist(=;`id;1);0b;()]", "select from quote where sym=`a"];
   assert.deepStrictEqual(Object.fromEntries(filterCounts(queries, "trade", ["sym", "px", "id", "sz"])), { sym: 2, px: 1, id: 1, sz: 0 });
+  // A namespaced table is matched by its whole name, and not by its last part (#1113).
+  assert.deepStrictEqual(Object.fromEntries(filterCounts(["select from .ns.t where sym=`a", "select from t where px>1"], ".ns.t", ["sym", "px"])), { sym: 1, px: 0 });
+  assert.deepStrictEqual(Object.fromEntries(filterCounts(["select from .ns.t where sym=`a"], "t", ["sym"])), { sym: 0 });
   const s = readAttributeSample({
     kind: "table",
     rows: 1000,
@@ -208,6 +225,12 @@ test("a schema diff names adds, drops, casts and order, and the script turns one
   assert.strictEqual(nullOf("C"), '""');
   assert.strictEqual(nullOf("J"), "`long$()");
   assert.strictEqual(castOf("c", "C", "s"), "`$c");
+  // Text to a number is parsed, not cast to its character codes (#1096).
+  assert.strictEqual(castOf("c", "C", "j"), '"J"$c');
+  assert.strictEqual(castOf("c", "s", "j"), '"J"$string c');
+  assert.strictEqual(castOf("c", "s", "d"), '"D"$string c');
+  // A mixed column is added as an empty list a row (#1097).
+  assert.match(migrationScript("a", t("table", [["k", "j"]]), "a", t("table", [["k", "j"], ["m", ""]]), "b", "p"), /\na:update m:count\[i\]#enlist \(\) from a\n/);
   assert.match(migrationScript("a", from, "a", from, "a", "p"), /the same: there is nothing to change/);
   const disk = migrationScript("trade", t("partitioned", [["date", "d"], ["sym", "s"], ["px", "f"]]), "trade", t("table", [["sym", "s"], ["px", "j"], ["ex", "s"]]), "t2", "hdb");
   assert.match(disk, /HDB column manager/);
@@ -229,6 +252,9 @@ test("test data: pools, ranges, a q generator per type, and CSV that sorts and r
   const info = { kind: "keyed", rows: 0, bytes: null, partitions: null, keys: ["k"], ncols: 3, columns: [{ name: "k", type: "s", fkey: "", attr: "" }, { name: "px", type: "f", fkey: "", attr: "" }, { name: "t", type: "p", fkey: "", attr: "" }] };
   const q = testDataQ(info, "gen", o);
   assert.match(q, /\\S 3\nn:20\ngen:`k xkey \(\[\] k:n\?enlist`A; px:asc 10\+n\?10f; t:2026\.01\.02D\+n\?1D\)/);
+  assert.match(q, /\ndelete n from `\.\n/);
+  // A table named n is not deleted by the script's own clean-up (#1084).
+  assert.doesNotMatch(testDataQ(info, "n", o), /delete n from/);
   const csv = testDataCsv(info, o);
   assert.strictEqual(csv, testDataCsv(info, o));
   const lines = csv.trim().split("\n");
@@ -280,6 +306,9 @@ test("dashboards are parsed, changed, and take read-only queries without placeho
   assert.strictEqual(tileQueryProblem("select from trade"), undefined);
   assert.match(tileQueryProblem("t:select from trade"), /read-only queries only/);
   assert.match(tileQueryProblem("select from trade where sym={{s}}"), /placeholder/);
+  // A dotted name was let through and sent unfilled, read by q as a lambda (#1129).
+  assert.match(tileQueryProblem("select from trade where date={{.cfg.day}}"), /placeholder/);
+  assert.match(tileQueryProblem("select from trade where date={{cfg.day}}"), /placeholder/);
   assert.match(dashboardNameProblem(" a ", ["a"]), /already/);
   assert.deepStrictEqual(withDashboard([{ name: "x", columns: 1, tiles: [] }], { name: "x", columns: 3, tiles: [] }), [{ name: "x", columns: 3, tiles: [] }]);
 });
@@ -288,6 +317,11 @@ test("a chart is drawn from CSV and JSON tables, and the command line writes it"
   const g = gridFromCsv('day,a,"b, c"\nmon,1,10\ntue,,5\n');
   assert.deepStrictEqual(g.columns.map((c) => [c.name, c.numeric]), [["day", false], ["a", true], ["b, c", true]]);
   assert.deepStrictEqual(g.values[1], [1, null]);
+  // A quoted newline is inside one field of one record (#1115).
+  const quoted = gridFromCsv('label,v\n"two\nlines",1\nb,2');
+  assert.deepStrictEqual(quoted.cells, [["two\nlines", "b"], ["1", "2"]]);
+  assert.deepStrictEqual(quoted.values[1], [1, 2]);
+  assert.throws(() => gridFromCsv("\n  \n"), /no header row/);
   assert.deepStrictEqual(gridFromJson('[{"x":1,"y":2},{"x":2,"y":3}]').values[1], [2, 3]);
   assert.deepStrictEqual(gridFromJson('{"x":[1,2],"y":["a","b"]}').columns.map((c) => c.numeric), [true, false]);
   assert.throws(() => gridFromJson("3"), /not a table/);

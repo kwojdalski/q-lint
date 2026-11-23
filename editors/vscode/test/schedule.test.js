@@ -125,6 +125,39 @@ test("Add Scheduled Export asks each part; a write query cannot be scheduled", a
   assert.deepStrictEqual(schedules.list(), []);
 });
 
+// tick built its due list once: a run longer than the tick let the next
+// tick start a schedule the first then ran again, both writing one file;
+// Run Now never asked whether it was running.
+test("a schedule never runs twice at once (#1089)", async (t) => {
+  const { live, schedules, context } = await setUp(t, [{ label: "p", host: "h", port: 1, tags: [] }], [{ name: "q", code: "1+1" }]);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-schedule-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  let out = 0;
+  let most = 0;
+  const runs = [];
+  live.runApart = async (_p, code) => {
+    runs.push(code);
+    most = Math.max(most, ++out);
+    await sleep(60);
+    out--;
+    return { ok: true, type: -7, text: ["2"] };
+  };
+  const every = (id, minutes) => ({ id, query: "q", process: "p", format: "csv", path: path.join(dir, `${id}.csv`), every: minutes, mode: "replace", since: 0 });
+  await context.workspaceState.update(SCHEDULES_KEY, [every("s1", 1), every("s2", 2)]);
+  const at = new Date(2026, 10, 22, 9, 30);
+  const first = schedules.tick(at);
+  await sleep(20);
+  const second = schedules.tick(new Date(at.getTime() + 30_000));
+  // Run Now on a schedule that is running says so and runs nothing.
+  stub.picks.push(scheduleText(every("s2", 2)), "Run Now");
+  await sleep(50);
+  await schedules.manage();
+  assert.deepStrictEqual([await first, await second], [["s1"], ["s2"]]);
+  assert.strictEqual(runs.length, 2);
+  assert.strictEqual(most, 2);
+  assert.ok(stub.messages.some(([, text]) => /is running/.test(text)), JSON.stringify(stub.messages));
+});
+
 function freePort() {
   return new Promise((resolve) => {
     const s = net.createServer().listen(0, "127.0.0.1", () => {

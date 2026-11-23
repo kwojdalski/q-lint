@@ -90,11 +90,16 @@ export function stubText(target: Target, name: string, style: Style): string {
 
 /// Where a new test file for `source` (a path) goes: `tests/test_<name>.q`
 /// under the workspace folder when it has a `tests` folder, else beside it.
+/// Either separator is one: an `fsPath` on Windows uses `\` (#1094).
 export function newTestPath(source: string, folder: string | undefined, hasTests: boolean): string {
-  const parts = source.split("/");
-  const base = (parts.pop() ?? "x.q").replace(/\.q$/, "");
+  const cut = Math.max(source.lastIndexOf("/"), source.lastIndexOf("\\"));
+  const base = (source.slice(cut + 1) || "x.q").replace(/\.q$/, "");
   const name = `test_${base}.q`;
-  return folder !== undefined && hasTests ? `${folder.replace(/\/$/, "")}/tests/${name}` : [...parts, name].join("/");
+  if (folder !== undefined && hasTests) {
+    const sep = folder.includes("\\") ? "\\" : "/";
+    return `${folder.replace(/[\\/]$/, "")}${sep}tests${sep}${name}`;
+  }
+  return `${source.slice(0, cut + 1)}${name}`;
 }
 
 /// The test files that may already be `source`'s: `test_<name>.q` or

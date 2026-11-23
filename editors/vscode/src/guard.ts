@@ -19,14 +19,17 @@
 // - `update` or `delete` from a table named by a symbol (`` from `t ``),
 //   which changes it in place;
 // - `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`, `system`,
-//   `.Q.dpft`, `.Q.dpfts`, `.Q.hdpf` and `.Q.en`, and `0:` or `1:` to a
-//   file handle (`` `:f 0: ``), and `2:`;
+//   `save`, `rsave`, `dsave`, `load`, `rload`, `.Q.dpft`, `.Q.dpfts`,
+//   `.Q.hdpf`, `.Q.en`, `.Q.chk` and `.Q.dsftg`, and `0:` or `1:` to a
+//   file handle (`` `:f 0: ``, `hsym[`f] 0:`, `(hsym `f) 1:`), and `2:`;
 // - `-11!`, which replays a log through `upd`, except `-11!(-1;..)` and
 //   `-11!(-2;..)`, which only count and check one;
 // - `@[` or `.[` on a variable named by a symbol, with four arguments: an
 //   amend in place (three is as often a trap, `.[`f;args;handler]`, and
-//   is not taken for one);
-// - `value` or `eval` applied to a string;
+//   is not taken for one); `![` likewise, a functional update or delete;
+// - `value`, `get` or `eval` applied to a string, to `parse`, or to a
+//   tree headed by `:` or `::` (`eval(:;`t;())`), also through `[`,
+//   `each` or `'`;
 // - a system command (`\l`, `\cd x`, `\\`), except one that only reads a
 //   setting (`\c`, `\d`, `\P` without an argument) and `\t` or `\ts`, whose
 //   expression is read by these rules - but `\t 500`, a whole number with
@@ -77,7 +80,10 @@ const NAME_START = /[A-Za-z.]/;
 const NAME = /[A-Za-z0-9_.]/;
 /// The characters that make a compound assignment with `:` after them.
 const OPERATORS = new Set([..."+-*%&|^=<>$,#_~!?@."]);
-const WRITERS = new Set(["set", "upsert", "insert", "hdel", "exit", "hclose", "system", ".Q.dpft", ".Q.dpfts", ".Q.hdpf", ".Q.en"]);
+const WRITERS = new Set([
+  "set", "upsert", "insert", "hdel", "exit", "hclose", "system", "save", "rsave", "dsave", "load", "rload",
+  ".Q.dpft", ".Q.dpfts", ".Q.hdpf", ".Q.en", ".Q.chk", ".Q.dsftg",
+]);
 /// System commands that only read a setting when they are given no argument.
 const READS_BARE = new Set([..."abBcCdefgoOpPsSTvwWz", "cd"]);
 
@@ -154,6 +160,29 @@ function qText(literal: string): string {
     );
 }
 
+/// Whether the left argument of `0:` or `1:`, ending at `t[end]`, makes a
+/// file handle: `hsym `f`, `hsym[`f]`, `(hsym `f)` or `` (`:f) ``. A
+/// parse format, `("SJ";",")`, does not.
+function computedHandle(t: Token[], end: number): boolean {
+  if (t[end]?.kind === "sym") {
+    return t[end - 1]?.text === "hsym";
+  }
+  if (t[end]?.kind !== "close") {
+    return false;
+  }
+  let depth = 0;
+  let open = end;
+  for (; open >= 0; open--) {
+    if (t[open].kind === "close") depth++;
+    else if (t[open].kind === "open" && --depth === 0) break;
+  }
+  if (open < 0) {
+    return false;
+  }
+  const inside = t.slice(open + 1, end);
+  return t[open - 1]?.text === "hsym" || (t[open].text === "(" && (inside.some((k) => k.text === "hsym") || (inside.length === 1 && inside[0].kind === "sym" && inside[0].text.startsWith("`:"))));
+}
+
 /// What one statement does that the guard asks about, added to `found`.
 function readStatement(statement: string, found: Set<string>): void {
   const text = statement.trimStart();
@@ -192,7 +221,8 @@ function readStatement(statement: string, found: Set<string>): void {
       stack.push(kind);
       lambdas += kind === "lambda" ? 1 : 0;
       tables += kind === "table" ? 1 : 0;
-      if (k.text === "[" && (t[i - 1]?.text === "@" || t[i - 1]?.text === ".") && t[i - 1]?.kind === "op" && next?.kind === "sym" && next.text.length > 1) {
+      const amend = t[i - 1]?.kind === "op" ? t[i - 1].text : "";
+      if (k.text === "[" && (amend === "@" || amend === "." || amend === "!") && next?.kind === "sym" && next.text.length > 1) {
         // Count the arguments at this depth.
         let depth = 0;
         let args = 1;
@@ -205,7 +235,7 @@ function readStatement(statement: string, found: Set<string>): void {
         }
         // Three is a trap as often as an amend: `.[`f;args;handler]`.
         if (args >= 4) {
-          found.add(`amends ${next.text} in place`);
+          found.add(amend === "!" ? `updates or deletes from ${next.text} in place with !` : `amends ${next.text} in place`);
         }
       }
       continue;
@@ -232,9 +262,23 @@ function readStatement(statement: string, found: Set<string>): void {
         found.add(`calls ${k.text}`);
         continue;
       }
-      if ((k.text === "value" || k.text === "eval") && next?.kind === "str") {
-        found.add(`evaluates a string with ${k.text}`);
-        continue;
+      if (k.text === "value" || k.text === "get" || k.text === "eval") {
+        // What it is applied to, past brackets and `each` or `'`.
+        let j = i + 1;
+        while (t[j] !== undefined && (["[", "(", "each", "peach"].includes(t[j].text) || (t[j].kind === "op" && t[j].text === "'"))) {
+          j++;
+        }
+        const reason = t[j]?.kind === "str"
+          ? "a string"
+          : t[j]?.kind === "name" && t[j].text === "parse"
+            ? "a parse tree"
+            : t[j - 1]?.text === "(" && t[j - 1]?.kind === "open" && t[j]?.kind === "op" && t[j].text === ":"
+              ? "an assignment"
+              : undefined;
+        if (reason !== undefined) {
+          found.add(`evaluates ${reason} with ${k.text}`);
+          continue;
+        }
       }
       // A TorQ gateway runs the strings it is given on its servers (#909):
       // what they do is read as if they were sent directly.
@@ -285,8 +329,10 @@ function readStatement(statement: string, found: Set<string>): void {
     if (k.kind === "num" && (k.text === "0" || k.text === "1" || k.text === "2") && next?.text === ":" && touching(k, next)) {
       if (k.text === "2") {
         found.add("loads a shared object with 2:");
-      } else if (t[i - 1]?.kind === "sym" && t[i - 1].text.startsWith("`:")) {
+      } else if (t[i - 1]?.kind === "sym" && t[i - 1].text.startsWith("`:") && t[i - 2]?.text !== "hsym") {
         found.add(`writes the file ${t[i - 1].text} with ${k.text}:`);
+      } else if (computedHandle(t, i - 1)) {
+        found.add(`writes a file with ${k.text}:`);
       }
     }
   }

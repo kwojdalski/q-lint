@@ -133,6 +133,13 @@ test("the Monitor's interval is whole seconds, at least one, or never", () => {
   assert.deepStrictEqual([read(undefined), read(0), read(0.5), read(5), read(7.9), read("5"), read(-3)], [0, 0, 0, 5, 7, 0, 0]);
 });
 
+// A hand-edited interval of 2147484 s or more overflowed setInterval,
+// which Node then ran every millisecond.
+test("the Monitor's interval is at most an hour, as the setting declares (#1110)", () => {
+  const read = (v) => readMonitorInterval((key, fallback) => (key === "processMonitor.refreshInterval" ? v : fallback));
+  assert.deepStrictEqual([read(3600), read(3601), read(3000000), read(Infinity)], [3600, 3600, 3600, 0]);
+});
+
 test("the HDB browser's tree, newest partition first", () => {
   const h = readHdb({
     hdb: true,

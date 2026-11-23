@@ -514,6 +514,15 @@ class QTests {
           }
         }
       }
+      // A cancelled run skips a file's last tests, so its count never reaches
+      // 0: a file that was set up is torn down all the same (#1095).
+      for (const rows of prepared) {
+        if ((remaining.get(rows) ?? 0) > 0) {
+          for (const row of rows.filter((r) => r.action === "after")) {
+            await send([k4Statement(row)], "run").catch(() => undefined);
+          }
+        }
+      }
     } finally {
       if (covering !== undefined) {
         await this.coverEnd(run, covering).catch((error: unknown) =>

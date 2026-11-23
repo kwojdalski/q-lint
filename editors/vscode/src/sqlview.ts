@@ -25,6 +25,7 @@ import {
   type Disposable,
   type ExtensionContext,
 } from "vscode";
+import { findDiscovered } from "./discovery";
 import { borrowWhenFree } from "./infoview";
 import { LANGUAGE_COMMANDS, languageOff, languageOn } from "./languagefeatures";
 import type { Live } from "./live";
@@ -115,12 +116,22 @@ export function registerSql(
       // binding, else the active connection - never the process the editor
       // was opened for, once its binding is gone.
       const label = live.fileBinding(uri) ?? live.activeLabel();
-      const process = live.processes().find((p) => p.label === label);
       const writes = sqlWrites(sql);
       if (label === undefined && writes.length > 0) {
         // The guard reads q, not the SQL inside `.s.e "..."`: it can only be
         // asked before the query, about a process known now.
         void window.showInformationMessage(`q-lint: connect to a process, or bind this editor to one, before running SQL that changes data (${writes.join(", ")}), so the read-only guard can check it.`);
+        return undefined;
+      }
+      // A saved process, the connected one as connected to, or a discovered
+      // or shared one by its qualified label (#1104).
+      const process = label === undefined || writes.length === 0
+        ? undefined
+        : live.processes().find((p) => p.label === label) ??
+          (label === live.activeLabel() ? live.activeProcess() : undefined) ??
+          findDiscovered([...live.discovery.discovered(), ...live.sharedList()], label);
+      if (label !== undefined && process === undefined && writes.length > 0) {
+        void window.showInformationMessage(`q-lint: no q process is labelled "${label}", so the read-only guard cannot check this SQL that changes data (${writes.join(", ")}); nothing was run.`);
         return undefined;
       }
       if (process !== undefined && writes.length > 0) {

@@ -219,7 +219,8 @@ export function failedAt(trace: string): string | undefined {
 /// `trace` shows it.
 export function explainError(error: string, trace?: string): string {
   const name = errorName(error);
-  const entry = ERRORS[name];
+  // Own entries only: `'constructor` is not Object.prototype's (#1078).
+  const entry = Object.hasOwn(ERRORS, name) ? ERRORS[name] : undefined;
   const lines: string[] = [`# q error ${code(`'${name}`)}`, ""];
   if (name === "os") {
     lines.push("The operating system refused a file or network operation; its own message follows q's:", "", "> " + error.trim(), "");
@@ -261,7 +262,7 @@ export function explainError(error: string, trace?: string): string {
 /// catalogue has.
 export function errorInMessage(message: string): string | undefined {
   for (const m of message.matchAll(/'([A-Za-z][A-Za-z-]*)/g)) {
-    if (m[1] in ERRORS) {
+    if (Object.hasOwn(ERRORS, m[1])) {
       return m[1];
     }
   }

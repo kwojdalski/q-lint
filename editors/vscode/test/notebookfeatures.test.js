@@ -11,7 +11,8 @@ const pkg = require("../package.json");
 const { cellDirective } = require("../out/celldirectives.js");
 const { LIVE, LIVE_KEY, inlineSpans, liveExpressions, markdownAfter, readLiveValues, scanLive } = require("../out/livemarkdown.js");
 const { ERROR_MIME, fromIpynb, markdownHtml, toHtml, toIpynb, IpynbError } = require("../out/qnbconvert.js");
-const { INJECTED_KEY, cliProcess, injectParameters, parametersCell, parametersOf, parseArgs, passwordVariable, runNotebook, writeAs } = require("../out/qnbrun.js");
+const { INJECTED_KEY, cliProcess, guardedText, injectParameters, parametersCell, parametersOf, parseArgs, passwordVariable, runNotebook, writeAs } = require("../out/qnbrun.js");
+const { writes } = require("../out/guard.js");
 const { describeVariable, readVariables, bytesText, VARS } = require("../out/notebookvars.js");
 const { NOTEBOOK, parseQnb, serializeQnb } = require("../out/qnb.js");
 
@@ -137,6 +138,9 @@ test("an HTML export escapes everything from the notebook, copies no output HTML
 test("Markdown without a value shows its expression as written", () => {
   assert.strictEqual(markdownHtml("n is {{q: n}}"), "<p>n is <code>{{q: n}}</code></p>");
   assert.strictEqual(markdownHtml("> quoted *a*\n\n1. x\n2. y"), "<blockquote><p>quoted <em>a</em></p></blockquote>\n<ol><li>x</li><li>y</li></ol>");
+  // A link's URL is not read for emphasis; its label is (#1105).
+  assert.strictEqual(markdownHtml("[docs](https://code.kx.com/q/ref/_x_/)"), '<p><a href="https://code.kx.com/q/ref/_x_/">docs</a></p>');
+  assert.strictEqual(markdownHtml("[*a*](https://x.io/a*b*c) and *b*"), '<p><a href="https://x.io/a*b*c"><em>a</em></a> and <em>b</em></p>');
 });
 
 test("a Jupyter export is nbformat 4 with q's kernel, other languages and errors as Jupyter writes them", () => {
@@ -200,6 +204,8 @@ test("a Python notebook imports with its code as Python, a %%q cell as q, and it
   assert.strictEqual(qnb.cells[3].metadata, undefined);
   assert.strictEqual(JSON.parse(qnb.cells[3].outputs[0].items[0].text).stack, "red");
   assert.deepStrictEqual(qnb.cells[5].outputs[0].items[0], { mime: "image/png", base64: "iVBORw==" });
+  // A raw cell goes back to Jupyter as a raw cell (#1107).
+  assert.deepStrictEqual(JSON.parse(toIpynb(qnb)).cells[4], { cell_type: "raw", metadata: {}, source: ["raw text"] });
   // What is not a notebook is refused, with why.
   assert.throws(() => fromIpynb("{"), IpynbError);
   assert.throws(() => fromIpynb('{"nbformat": 3, "cells": []}'), /nbformat 3/);
@@ -219,6 +225,12 @@ test("a parameters cell's assignments are its parameters", () => {
     { name: "syms", value: "`EURUSD`GBPUSD" },
     { name: ".cfg.n", value: "10" },
     { name: "f", value: "{x}" },
+  ]);
+  // A " /" inside a string is not a comment (#1118).
+  assert.deepStrictEqual(parametersOf('path:"/data /hdb"; / where\nq:"a\\" /b"\nn:1 ;'), [
+    { name: "path", value: '"/data /hdb"' },
+    { name: "q", value: '"a\\" /b"' },
+    { name: "n", value: "1" },
   ]);
   const cells = [{ kind: "markdown", source: "/ @parameters" }, { kind: "code", source: "1" }, { kind: "code", source: "/ @parameters\nn:1" }];
   assert.strictEqual(parametersCell(cells), 2);
@@ -241,10 +253,13 @@ test("given values go in a cell after the parameters cell, replacing an earlier 
 /// recording the process each cell went to.
 function fakeExecutor(answer) {
   const sent = [];
+  const codes = [];
   return {
     sent,
+    codes,
     on: async (label, code, use) => {
       sent.push(label ?? "default");
+      codes.push(code);
       return use({
         query: async (cut) => answer(cut),
         call: async (lambda, arg) => (lambda.startsWith("{[es]") ? arg.map((e) => [true, `v(${e})`]) : answer(arg)),
@@ -282,6 +297,18 @@ test("a headless run numbers and runs the q cells, reads live values, and goes w
   assert.deepStrictEqual(cells[5], qnb.cells[4]);
   // The notebook given is not changed.
   assert.strictEqual(qnb.cells.length, 5);
+});
+
+test("the guard reads a cell's live values' expressions with its source (#1088)", async () => {
+  const markdown = ["Count {{q: count trade}}", "Gone {{q: delete from `trade}}", "Again {{q: count trade}}"];
+  assert.strictEqual(guardedText("/ just a note", markdown), "/ just a note\ncount trade\ndelete from `trade");
+  assert.deepStrictEqual(writes(guardedText("/ just a note", markdown)), ["deletes from `trade in place"]);
+  assert.strictEqual(guardedText("1+1", []), "1+1");
+  // A headless run hands the executor, which guards it, the same text.
+  const qnb = { cells: [{ kind: "code", source: "1" }, { kind: "markdown", source: markdown[1] }] };
+  const ex = fakeExecutor((cut) => ({ ok: true, type: -7, text: [cut.join(";")] }));
+  await runNotebook(qnb, ex, SETTINGS);
+  assert.deepStrictEqual(ex.codes, ["1\ndelete from `trade"]);
 });
 
 test("a headless run stops at the first cell that fails, and clears what the cells after it showed", async () => {

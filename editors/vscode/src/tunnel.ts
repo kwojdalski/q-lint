@@ -24,9 +24,12 @@ export const TUNNEL_TIMEOUT_MS = 20_000;
 /// The arguments ssh is run with: no command (`-N`), the forward from
 /// `localPort` on the loopback to `host:port` as the jump host sees it, and
 /// the destination after `--`, so nothing in it is read as an option. A
-/// `host:port` destination is given to ssh as `-p`.
+/// `host:port` or `[v6]:port` destination is given to ssh as `-p`; a bare
+/// IPv6 address has no port, its last group is not one (#1068).
 export function sshArgs(destination: string, localPort: number, host: string, port: number): string[] {
-  const m = /^(.*?)(?::(\d+))?$/.exec(destination)!;
+  const bracketed = /^([^@]*@)?\[([^\]]+)\](?::(\d+))?$/.exec(destination);
+  const plain = /^([^:]*):(\d+)$/.exec(destination);
+  const m = bracketed ? [destination, `${bracketed[1] ?? ""}${bracketed[2]}`, bracketed[3]] : plain ?? [destination, destination, undefined];
   const target = host.includes(":") ? `[${host}]` : host;
   return [
     "-N",

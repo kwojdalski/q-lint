@@ -83,7 +83,77 @@ test("in-place updates, writers, file writes and amends are changes", () => {
     "@[f;x;{y}]": [],
     'value "a:1"': ["evaluates a string with value"],
     "value d": [],
-    'eval parse "a:1"': [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("a functional update or delete on a global table is a change (#1064)", () => {
+  const cases = {
+    "![`trade;();0b;enlist`price]": ["updates or deletes from `trade in place with !"],
+    "![`trade;enlist(=;`sym;enlist`a);0b;`symbol$()]": ["updates or deletes from `trade in place with !"],
+    "f:{![`trade;();0b;`symbol$()]}": ["assigns f", "updates or deletes from `trade in place with !"],
+    // On a value it returns a new table; three arguments is not one.
+    "![trade;();0b;enlist`price]": [],
+    "![`trade;();0b]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("save, rsave, dsave, load, rload, .Q.chk and .Q.dsftg are changes (#1065)", () => {
+  const cases = {
+    "save `trade": ["calls save"],
+    "rsave `trade": ["calls rsave"],
+    "`:/tmp/db/ dsave `trade": ["calls dsave"],
+    "load `:trade": ["calls load"],
+    "rload `:trade": ["calls rload"],
+    ".Q.chk `:/hdb": ["calls .Q.chk"],
+    ".Q.dsftg[(`:db;2024.01.01;`trade);(`:src;0;0);`a`b!\"jf\"]": ["calls .Q.dsftg"],
+    // Reads stay reads.
+    "get `:hdb/sym": [],
+    "get `t": [],
+    "value `t": [],
+    "select from t where sym=`a": [],
+    "exec price from t": [],
+    ".my.load[`x]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("get, eval of a parse tree and value through each or brackets are evaluations (#1066)", () => {
+  const cases = {
+    'get "trade:()"': ["evaluates a string with get"],
+    'value["trade:()"]': ["evaluates a string with value"],
+    'value each ("a:1";"b:2")': ["evaluates a string with value"],
+    "value'[(\"a:1\";\"b:2\")]": ["evaluates a string with value"],
+    'eval parse "trade:()"': ["evaluates a parse tree with eval"],
+    "eval(:;`trade;())": ["evaluates an assignment with eval"],
+    "eval (::;`trade;())": ["evaluates an assignment with eval"],
+    // Still reads.
+    "eval (+;1;2)": [],
+    "value each d": [],
+    "get each `:a`:b": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("0: and 1: to a computed file handle are file writes (#1067)", () => {
+  const cases = {
+    'hsym[`f] 0: enlist "x"': ["writes a file with 0:"],
+    "(hsym`f) 1: 0x00": ["writes a file with 1:"],
+    "hsym `f 1: 0x00": ["writes a file with 1:"],
+    '(`:f) 0: enlist "x"': ["writes a file with 0:"],
+    // A parse format before 0: or 1: reads.
+    '("SJ";enlist ",") 0: `:f.csv': [],
+    '("SJ";",") 0: hsym `f': [],
+    '(4#"i";4) 1: `:f': [],
   };
   for (const [code, expected] of Object.entries(cases)) {
     assert.deepStrictEqual(writes(code), expected, code);

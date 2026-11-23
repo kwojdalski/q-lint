@@ -50,6 +50,13 @@ export async function cellAnswer(connection: QConnection, mode: CellMode, cut: s
   return [answer.ok, cellOutputs(mode, answer, settings.rowLimitFrom)];
 }
 
+/// What the read-only guard reads for a code cell `source` run with the
+/// Markdown cells `markdown` after it: the source and every live value's
+/// expression, each on a line of its own, since all of them are sent (#1088).
+export function guardedText(source: string, markdown: string[]): string {
+  return [source, ...new Set(markdown.flatMap(liveExpressions))].join("\n");
+}
+
 /// The live values of the Markdown `sources`, each cell's by expression,
 /// read on `connection` in one call; empty when they have none.
 export async function liveValues(connection: QConnection, sources: string[]): Promise<Record<string, LiveValue>[]> {
@@ -89,12 +96,32 @@ const NAME = /^\.?[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)*$/;
 export function parametersOf(source: string): { name: string; value: string }[] {
   const found: { name: string; value: string }[] = [];
   for (const line of source.split(/\r?\n/)) {
-    const m = /^(\.?[a-zA-Z][\w.]*)\s*:\s*(.*?)\s*(?:;\s*)?(?:\s\/.*)?$/.exec(line);
-    if (m !== null && NAME.test(m[1]) && m[2] !== "" && !m[2].startsWith(":")) {
-      found.push({ name: m[1], value: m[2].replace(/;$/, "") });
+    const m = /^(\.?[a-zA-Z][\w.]*)\s*:\s*(.*)$/.exec(line);
+    if (m === null) {
+      continue;
+    }
+    const value = withoutComment(m[2]).trim().replace(/;$/, "").trimEnd().replace(/;$/, "");
+    if (NAME.test(m[1]) && value !== "" && !value.startsWith(":")) {
+      found.push({ name: m[1], value });
     }
   }
   return found;
+}
+
+/// `text` up to its comment, a `/` after a blank outside a string (#1118):
+/// `"/data /hdb"` is a value, not a value and a comment.
+function withoutComment(text: string): string {
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    if (quoted && text[i] === "\\") {
+      i++;
+    } else if (text[i] === '"') {
+      quoted = !quoted;
+    } else if (!quoted && text[i] === "/" && i > 0 && /\s/.test(text[i - 1])) {
+      return text.slice(0, i);
+    }
+  }
+  return text;
 }
 
 /// Why `overrides` cannot be put in a cell, or undefined: a name must be a
@@ -193,7 +220,7 @@ export async function runNotebook(
     const cut = statements(cell.source);
     const after = hooks.liveValues === false ? [] : markdownAfter(cells, i).filter((j) => cells[j].kind === "markdown");
     try {
-      const [ok, parts, values] = await executor.on(directive.process, cell.source, async (connection) => {
+      const [ok, parts, values] = await executor.on(directive.process, guardedText(cell.source, after.map((j) => cells[j].source)), async (connection) => {
         const [ok, parts] = cut.length === 0 ? [true, []] : await cellAnswer(connection, directive, cut, settings);
         const values = ok ? await liveValues(connection, after.map((j) => cells[j].source)) : [];
         return [ok, parts, values] as const;

@@ -561,6 +561,46 @@ test("Save Result Chart asks the page for the chart and writes the image it send
   assert.strictEqual(fake.written["/x.svg"], undefined);
 });
 
+test("Save Result Chart run twice saves each chart to its own file; neither is left waiting (#1130)", async () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  const { RESULT_VIEW } = require("../out/liveconfig.js");
+  modes.show(result([1, 2]), live({ mode: "chart" }));
+  const page = fake.pages[0];
+  let dialogs = 0;
+  fake.vscode.window.showSaveDialog = async () => (dialogs++, undefined);
+  const first = fake.vscode.commands[RESULT_VIEW.saveChart]("svg", new fake.vscode.Uri("/a.svg"));
+  const firstKey = page.posted.at(-1).control.key;
+  const second = fake.vscode.commands[RESULT_VIEW.saveChart]("svg", new fake.vscode.Uri("/b.svg"));
+  const secondKey = page.posted.at(-1).control.key;
+  page.receive({ type: "image", id: page.posted.at(-1).id, format: "svg", data: "<svg>b</svg>", key: secondKey });
+  page.receive({ type: "image", id: page.posted.at(-1).id, format: "svg", data: "<svg>a</svg>", key: firstKey });
+  const settled = await Promise.race([Promise.all([first, second]).then(() => true), new Promise((r) => setTimeout(() => r(false), 500))]);
+  assert.strictEqual(settled, true);
+  assert.strictEqual(fake.written["/a.svg"], "<svg>a</svg>");
+  assert.strictEqual(fake.written["/b.svg"], "<svg>b</svg>");
+  assert.strictEqual(dialogs, 0);
+});
+
+test("Append to Report from the palette sends the rows the grid shows, as Export As does (#1131)", async () => {
+  const fake = fakeVscode({ "query.resultsLocation": "editor" });
+  const modes = loadModes(fake);
+  modes.context.workspaceState = { get: () => undefined, update: async () => {} };
+  const { RESULT_VIEW } = require("../out/liveconfig.js");
+  modes.show(result([10, 20, 30]), live());
+  const page = fake.pages[0];
+  const id = page.posted.at(-1).id;
+  page.receive({ type: "rendered", id, rows: [2, 0], rendered: { view: "grid", rows: 2, held: 3, total: 3, columns: ["c"], first: [] } });
+  fake.vscode.workspace.fs.readFile = async () => {
+    throw new Error("none");
+  };
+  fake.vscode.window.showWarningMessage = async (_m, _o, go) => go;
+  await fake.vscode.commands[RESULT_VIEW.toReport](new fake.vscode.Uri("/r.md"), false);
+  const report = fake.written["/r.md"];
+  assert.match(report, /30[\s\S]*10/);
+  assert.doesNotMatch(report, /\b20\b/);
+});
+
 test("export, paging, pivot, charts and drill-down turned off: each command refuses, the page is offered none, and nothing is sent", async () => {
   const off = {
     "results.export.enable": false,

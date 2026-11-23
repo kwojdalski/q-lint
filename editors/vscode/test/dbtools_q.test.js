@@ -121,6 +121,31 @@ test("the column manager's script changes every partition, reports, reloads and 
   assert.strictEqual(await connection.call("{`cm in key`.qlint}", 0), false);
 });
 
+test("the column manager's add with a list default gives every row that list (#1082)", { skip }, async (t) => {
+  const { connection } = await connect(t, HDB());
+  assert.match(await run(connection, columnScript("trade", { op: "add", column: "note", value: '""' }, "hdb")), /changed 3 of 3 directories/);
+  assert.strictEqual(await connection.call("{exec t from meta trade where c=`note}", 0), "C");
+  assert.strictEqual(await connection.call("{\"f\"$count select from trade where note~\\:\"\"}", 0), 18);
+  await run(connection, columnScript("trade", { op: "add", column: "n", value: "0" }, "hdb"));
+  assert.strictEqual(await connection.call("{exec t from meta trade where c=`n}", 0), "j");
+});
+
+test("the column manager renames under a root with a space and a quote in its path (#1083)", { skip }, async (t) => {
+  const source = [
+    'r:hsym`$"$DIR/it\'s a db";',
+    "{[r;d] .Q.dd[r;d,`trade`] set .Q.en[r] ([] sym:`a`b;px:1 2f;s:(\"xa\";\"yb\"))}[r] each 2026.01.05 2026.01.06;",
+    'system "cd $DIR/it\'s a db";',
+    'system "l .";',
+    "",
+  ].join("\n");
+  const { connection } = await connect(t, source);
+  assert.match(await run(connection, columnScript("trade", { op: "rename", column: "px", to: "price" }, "hdb")), /changed 2 of 2 directories/);
+  assert.match(await run(connection, columnScript("trade", { op: "rename", column: "s", to: "note" }, "hdb")), /changed 2 of 2 directories/);
+  assert.deepStrictEqual(await connection.call("{exec c from meta trade}", 0), ["date", "sym", "price", "note"]);
+  assert.strictEqual(await connection.call("{exec t from meta trade where c=`note}", 0), "C");
+  assert.strictEqual(await connection.call("{\"f\"$count select from trade where note like \"[xy]?\"}", 0), 4);
+});
+
 test("the documenter reads tables, keys, foreign keys and functions", { skip }, async (t) => {
   const { connection } = await connect(t, HDB() + "\ns:([sym:`a`b] nm:(\"x\";\"y\"))\nf:([] sym:`s$`a`b`a; v:1 2 3)\nkt:([k:1 2] v:`p#`x`x)\n");
   const doc = readDoc(await connection.call(DOCUMENT, 100));
@@ -157,6 +182,22 @@ test("the partition check finds missing dates, files, differing types and outlie
   assert.deepStrictEqual(kinds("different types")[0].partitions, ["2026.01.12"]);
   assert.match(kinds("row count")[0].partitions[0], /2026\.01\.14 \(5,000\)/);
   assert.strictEqual(kinds("enumeration").length, 0);
+  // Two enum domains of different sizes are each held to their own; an
+  // index past its domain's end is found (#1103).
+  const twoDomains = [
+    'r:hsym`$"$DIR/two";sym:`$string til 1000;src:`x`y`z;',
+    "(` sv r,`sym) set sym;(` sv r,`src) set src;",
+    "{[r;d] .Q.dd[r;d,`trade`] set ([] sym:`sym$`$string 999 1 2;src:`src$`x`y`z)}[r] each 2026.01.05 2026.01.06;",
+    ".Q.dd[r;2026.01.06,`trade`src] set `src!0 1 5;",
+    "\\l $DIR/two",
+    "",
+  ].join("\n");
+  const { connection: two } = await connect(t, twoDomains);
+  const enumerations = partitionProblems(readPartitions(await two.call(PARTITION_CHECK, 1000, true))).filter((p) => p.kind === "enumeration");
+  assert.deepStrictEqual(enumerations.map((p) => [p.what, p.partitions]), [["trade.src has a symbol index past the end of src", ["2026.01.06"]]]);
+  // One table in one partition is healthy (#1102).
+  const { connection: lone } = await connect(t, 'r:hsym`$"$DIR/one";\n.Q.dd[r;2026.01.05,`trade`] set .Q.en[r] ([] sym:`a`b;px:1 2f);\n\\l $DIR/one\n');
+  assert.deepStrictEqual(partitionProblems(readPartitions(await lone.call(PARTITION_CHECK, 1000, true))), []);
   // A process with no database says so.
   const { connection: plain } = await connect(t, "a:1\n");
   assert.strictEqual(readPartitions(await plain.call(PARTITION_CHECK, 1000, false)).hdb, false);
@@ -244,6 +285,41 @@ test("a schema migration's q turns one table into the other, in memory and on di
   assert.ok(done.ok, done.error);
   assert.match(done.text, /^changed (\d+) of \1 directories$/);
   assert.deepStrictEqual(await connection.call("{(cols trade;exec t from meta trade)}", 0), [["date", "sym", "px", "sz", "ex"], "dsjjs"]);
+});
+
+test("a schema migration parses text and symbols it casts to numbers (#1096)", { skip }, async (t) => {
+  const { connection } = await connect(t, 'a:([] x:("12";"3"); y:`4`5)\nb:([] x:`long$(); y:`long$())\n');
+  const info = async (n) => readTableInfo(await connection.call(TABLE_INFO, n, 100));
+  const ran = readRun(await connection.call(RUN_SCRIPT, statements(migrationScript("a", await info("a"), "a", await info("b"), "b", "p"))));
+  assert.ok(ran.ok, ran.error);
+  assert.deepStrictEqual(await connection.call("{(exec t from meta a;\"f\"$a`x;\"f\"$a`y)}", 0), ["jj", [12, 3], [4, 5]]);
+});
+
+test("a schema migration adds a mixed column to a table with rows (#1097)", { skip }, async (t) => {
+  const { connection } = await connect(t, "a:([] k:1 2)\nb:([] k:`long$(); m:())\n");
+  const info = async (n) => readTableInfo(await connection.call(TABLE_INFO, n, 100));
+  const ran = readRun(await connection.call(RUN_SCRIPT, statements(migrationScript("a", await info("a"), "a", await info("b"), "b", "p"))));
+  assert.ok(ran.ok, ran.error);
+  assert.strictEqual(await connection.call("{\"f\"$count select from a where 0=count each m}", 0), 2);
+});
+
+test("a tickerplant log's one-row messages, a list of atoms, have a time and are filtered by it (#1090)", { skip }, async (t) => {
+  const log = [
+    'f:hsym`$"$DIR/tp.log";',
+    ".[f;();:;()];",
+    "h:hopen f;",
+    "h enlist(`upd;`trade;(2026.01.05D09:00:00;`a;1f));",
+    "h enlist(`upd;`trade;(2026.01.05D11:00:00 2026.01.05D11:30:00;`b`c;2 3f));",
+    "hclose h;",
+    "",
+  ].join("\n");
+  const { connection, dir } = await connect(t, log + TPLOG_INIT + "\n");
+  readTpLog(await connection.call(".qlint.tp.load", path.join(dir, "tp.log")));
+  const all = readTpPage(await connection.call(".qlint.tp.page", "", NaN, NaN, 0, 100));
+  assert.deepStrictEqual(all.rows.map((r) => r.rows), [1, 2]);
+  assert.match(all.rows[0].time, /2026\.01\.05D09:00:00/);
+  const early = readTpPage(await connection.call(".qlint.tp.page", "", 8 * 3600000, 10 * 3600000, 0, 100));
+  assert.deepStrictEqual(early.rows.map((r) => r.index), [0]);
 });
 
 test("the tickerplant log is read, paged, filtered, shown and replayed in a q of its own", { skip }, async (t) => {

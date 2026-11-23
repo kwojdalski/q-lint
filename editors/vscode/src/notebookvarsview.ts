@@ -128,6 +128,8 @@ function startView(
   };
   let reading: Promise<void> | undefined;
   let disposed = false;
+  /// A refresh put off by a running query, made when it is done (#1077).
+  let deferred = false;
   const refresh = async (): Promise<void> => {
     if (disposed) {
       return;
@@ -150,6 +152,7 @@ function startView(
     if (read === undefined) {
       // A query is running: what it defines is read when it is done.
       view.message = `A query is running on ${label}; the view refreshes when it is done.`;
+      deferred = true;
       return;
     }
     try {
@@ -188,7 +191,8 @@ function startView(
     }),
     view.onDidChangeVisibility(() => whenShown()),
     live.onDidChange((what) => {
-      if (what === "disconnected") {
+      if (what === "disconnected" || (what === "queried" && deferred)) {
+        deferred = false;
         whenShown();
       }
     }),

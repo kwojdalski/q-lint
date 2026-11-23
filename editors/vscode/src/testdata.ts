@@ -89,7 +89,8 @@ export function testDataQ(info: TableInfo, name: string, o: TestDataOptions): st
     `\\S ${o.seed}`,
     `n:${o.rows}`,
     `${name}:${keys.length > 0 ? `${keys.map((k) => `\`${k}`).join("")} xkey ` : ""}([] ${cols.join("; ")})`,
-    `delete n from \`.`,
+    // A table named n is the count's name too: it stays (#1084).
+    ...(name === "n" ? [] : [`delete n from \`.`]),
     "",
   ].join("\n");
 }

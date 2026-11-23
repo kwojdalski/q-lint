@@ -69,3 +69,29 @@ test("off from the start, no view is created", () => {
   assert.strictEqual(stub.trees.length, 0);
   assert.strictEqual(api.registered(), false);
 });
+
+test("a refresh put off by a running query is made when the query is done (#1077)", async () => {
+  stub.reset();
+  const notebook = { notebookType: "q-lint-notebook" };
+  vscode.window.activeNotebookEditor = { notebook };
+  const live = fakeLive("rdb");
+  const listeners = [];
+  live.onDidChange = (l) => (listeners.push(l), { dispose() {} });
+  const free = live.borrow;
+  live.borrow = () => undefined; // a query is running
+  const runs = [];
+  const api = registerNotebookVariables(stub.newContext(), live, () => "rdb", (l) => (runs.push(l), { dispose() {} }));
+  runs[0](notebook);
+  await new Promise((r) => setTimeout(r, 10));
+  assert.match(api.message(), /refreshes when it is done/);
+  assert.strictEqual(live.calls, 0);
+  live.borrow = free;
+  for (const l of listeners) l("queried");
+  await new Promise((r) => setTimeout(r, 10));
+  assert.strictEqual(live.calls, 1);
+  assert.deepStrictEqual(api.variables().map((v) => v.name), ["t", "f"]);
+  // A query with no refresh put off reads nothing more.
+  for (const l of listeners) l("queried");
+  await new Promise((r) => setTimeout(r, 10));
+  assert.strictEqual(live.calls, 1);
+});

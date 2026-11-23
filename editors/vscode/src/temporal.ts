@@ -225,7 +225,8 @@ export function parse(text: string): Temporal | undefined {
       return undefined;
     }
     const n = BigInt(days) * NS_PER_DAY + secs * 1_000_000_000n + fraction(m[7], 9);
-    return n > -LONG_MAX && n <= LONG_MAX ? { type: "timestamp", n } : undefined;
+    // Written out in full, 0Wp and -0Wp are still the infinities (#1069).
+    return n >= -LONG_MAX && n <= LONG_MAX ? timestampOfLong(n) : undefined;
   }
   m = /^(\d{4})\.(\d{2})\.(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/.exec(text);
   if (m !== null) {

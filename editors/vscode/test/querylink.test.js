@@ -121,6 +121,18 @@ test("opening a link shows the query bound to the process and runs nothing when 
   assert.strictEqual(ran, 1);
 });
 
+// Copy offers discovered processes, but open accepted saved labels only:
+// a link to desk/rdb was refused even on the machine that made it.
+test("a link to a discovered process opens bound to it (#1125)", async (t) => {
+  const { live, links } = await setUp(t, []);
+  live.discovery.discovered = () => [{ server: { label: "desk", url: "http://x/" }, state: { processes: [{ label: "rdb", host: "h", port: 1, tags: [] }], problems: [], loading: false } }];
+  live.queryCode = async () => {};
+  stub.picks.push(undefined);
+  assert.strictEqual(await links.open(asUri(queryLink("vscode", "wojdalski.q-lint", "desk/rdb", "count t").link)), false);
+  assert.strictEqual(live.fileBinding(vscode.window.activeTextEditor.document.uri), "desk/rdb");
+  assert.ok(stub.messages.some(([kind, text]) => kind === "warning" && text === "A link asks to run this query on desk/rdb. Run it?"));
+});
+
 test("turned off, the handler is disposed, links are not opened and the command refuses; on again without a reload", async (t) => {
   const { links, handlers, opened } = await setUp(t, [{ label: "rdb", host: "h", port: 1, tags: [] }]);
   stub.config.user["query.links.enable"] = false;

@@ -62,7 +62,8 @@ export class PlotsView {
   private view: WebviewView | undefined;
   private provider: Disposable | undefined;
   private ready: (() => void)[] = [];
-  private png: { key: string; resolve: (data: string | undefined) => void } | undefined;
+  /// The page's PNGs asked for, by key: a second does not strand the first (#1092).
+  private readonly png = new Map<string, (data: string | undefined) => void>();
   private requests = 0;
 
   constructor(private readonly context: ExtensionContext) {
@@ -124,9 +125,10 @@ export class PlotsView {
       PLOTS.clear();
     } else if (message.type === "save") {
       void this.save(message.format, undefined);
-    } else if (message.type === "png" && this.png !== undefined && message.key === this.png.key) {
-      this.png.resolve(typeof message.data === "string" && message.data.startsWith("data:image/png;base64,") ? message.data : undefined);
-      this.png = undefined;
+    } else if (message.type === "png" && typeof message.key === "string" && this.png.has(message.key)) {
+      const resolve = this.png.get(message.key);
+      this.png.delete(message.key);
+      resolve?.(typeof message.data === "string" && message.data.startsWith("data:image/png;base64,") ? message.data : undefined);
     }
   }
 
@@ -152,8 +154,8 @@ export class PlotsView {
     }
     const key = `png-${++this.requests}`;
     const answer = new Promise<string | undefined>((resolve) => {
-      this.png = { key, resolve };
-      setTimeout(() => this.png?.key === key && (this.png.resolve(undefined), (this.png = undefined)), PNG_WAIT);
+      this.png.set(key, resolve);
+      setTimeout(() => this.png.delete(key) && resolve(undefined), PNG_WAIT);
     });
     void this.view.webview.postMessage({ type: "png", key });
     return answer;

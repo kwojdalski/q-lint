@@ -306,3 +306,62 @@ test("changing a server's auth header during a fetch fetches again with it", asy
   const [state] = live.api().discovered();
   assert.deepStrictEqual([state.error, state.processes.map((p) => p.label)], [undefined, ["rdb"]]);
 });
+
+// Edit Process with the password left empty kept the stored one even when
+// the user, host or port changed: bob was sent alice's password, or it went
+// to another host.
+test("Edit Process forgets the password when the user, host or port change (#1109)", async (t) => {
+  const { context, live } = await setUp(t, [proc("a", 1, { user: "alice" })]);
+  const secrets = context.secrets.all;
+  const edit = async (label, host, port, user) => {
+    stub.inputs = [label, host, port, user, "", ""];
+    stub.picks = ["No"];
+    await stub.commands.get("q-lint.editProcess")(live.processes()[0].label);
+  };
+  // The same user and address keep it, under a new label too.
+  secrets.set("q-lint.password.a", "pw");
+  await edit("a", "127.0.0.1", "1", "alice");
+  assert.strictEqual(secrets.get("q-lint.password.a"), "pw");
+  await edit("a2", "127.0.0.1", "1", "alice");
+  assert.deepStrictEqual([...secrets], [["q-lint.password.a2", "pw"]]);
+  await edit("a2", "127.0.0.1", "1", "bob");
+  assert.deepStrictEqual([...secrets], []);
+  secrets.set("q-lint.password.a2", "pw");
+  await edit("a3", "elsewhere", "1", "bob");
+  assert.deepStrictEqual([...secrets], []);
+  secrets.set("q-lint.password.a3", "pw");
+  await edit("a3", "elsewhere", "2", "bob");
+  assert.deepStrictEqual([...secrets], []);
+});
+
+// runApart (Query a Tag, dashboards, scheduled queries) opened the process's
+// internal address directly, past its SSH tunnel, and even with tunnels
+// turned off, where a connect refuses.
+test("a query apart goes through the process's SSH tunnel, and refuses when tunnels are off (#1070)", async (t) => {
+  let reached = 0;
+  const a = await fakeQ(() => (reached++, 1));
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port, { ssh: "bastion" })]);
+  stub.config.user["connection.sshTunnel.enable"] = false;
+  await assert.rejects(live.runApart(live.processes()[0], "1"), /SSH tunnels are turned off/);
+  assert.strictEqual(reached, 0);
+});
+
+// Disconnect while a connect waits for the handshake: the connect went on,
+// and the process - perhaps a production one - became the active one.
+test("Disconnect during a connect stops it (#1073)", async (t) => {
+  const a = await fakeQ(() => GATHERED, 300);
+  t.after(() => a.close());
+  const { live, events } = await setUp(t, [proc("a", a.port)]);
+  const connecting = live.connectTo("a");
+  await sleep(50);
+  await stub.commands.get("q-lint.disconnectProcess")();
+  assert.strictEqual(await connecting, false);
+  assert.strictEqual(live.activeLabel(), undefined);
+  assert.strictEqual(events.filter((e) => e === "connected").length, 0);
+  for (let i = 0; i < 50 && a.connections() > 0; i++) await sleep(10);
+  assert.strictEqual(a.connections(), 0);
+  assert.deepStrictEqual(stub.messages.filter(([level]) => level === "error"), []);
+  // A connect after it is not stopped.
+  assert.strictEqual(await live.connectTo("a"), true);
+});

@@ -69,9 +69,18 @@ class Namespaces implements TreeDataProvider<Node> {
 
   constructor(private readonly server: () => Server | undefined) {}
 
+  private reads = 0;
+
   async read(): Promise<void> {
+    // Only the latest read is shown: an older one answering after it is
+    // dropped (#1120).
+    const read = ++this.reads;
     const client = this.server();
-    this.groups = client === undefined ? [] : byNamespace(readDefinitions(await client.sendRequest(DEFINITIONS, {}).catch(() => [])));
+    const answer = client === undefined ? [] : await client.sendRequest(DEFINITIONS, {}).catch(() => []);
+    if (read !== this.reads) {
+      return;
+    }
+    this.groups = byNamespace(readDefinitions(answer));
     this.changed.fire();
   }
 

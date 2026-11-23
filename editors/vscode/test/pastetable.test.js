@@ -16,6 +16,9 @@ test("CSV and TSV are read as a spreadsheet writes them", () => {
   assert.deepStrictEqual(p.readDelimited("a,b\r\n1,2\r\n"), { delimiter: ",", rows: [["a", "b"], ["1", "2"]] });
   assert.deepStrictEqual(p.readDelimited("a\tb\n1\t2").delimiter, "\t");
   assert.deepStrictEqual(p.readDelimited("a;b\n1,5;2").delimiter, ";");
+  // The delimiter is counted outside quotes only, over the whole first record (#1100).
+  assert.deepStrictEqual(p.readDelimited('"a;b;c",x\n1,2'), { delimiter: ",", rows: [["a;b;c", "x"], ["1", "2"]] });
+  assert.deepStrictEqual(p.readDelimited('"a\n;;",x\n1,2').delimiter, ",");
   // Quotes hold the delimiter, a newline and a doubled quote.
   assert.deepStrictEqual(p.readDelimited('x,y\n"a,b","say ""hi""\nthere"\n').rows, [["x", "y"], ["a,b", 'say "hi"\nthere']]);
   // A byte order mark and blank lines are no data.
@@ -75,6 +78,11 @@ test("JSON is written as .j.k reads it", () => {
   assert.strictEqual(q('{"a b":[]}'), '(enlist `$"a b")!enlist ()');
   assert.strictEqual(q("1e400"), "0w");
   assert.match(jsonToQ("{oops").error, /^the clipboard holds no JSON/);
+  // Keys in the text's order, integer-like ones too, as .j.k keeps them (#1075).
+  assert.strictEqual(q('{"sym":"a","2024":1,"1":2}'), '(`sym`2024`1)!(enlist "a";1f;2f)');
+  assert.strictEqual(q('[{"b":1,"1":2},{"1":3,"b":4}]'), "((`b`1)!1 2f;(`1`b)!3 4f)");
+  assert.strictEqual(q('{"a":1,"b":2,"a":3}'), "(`a`b)!3 2f");
+  assert.strictEqual(q('{"__proto__":1}'), '(enlist `$"__proto__")!enlist 1f');
   assert.strictEqual(toJsonQuery('t:([] a:1); "x"'), '.j.j value "t:([] a:1); \\"x\\""');
 });
 

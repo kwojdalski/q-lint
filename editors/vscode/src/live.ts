@@ -88,7 +88,7 @@ import {
   normalised,
   type HistoryFilter,
 } from "./historyfilter";
-import { CONNECT_SCRIPT_COMMANDS, readConnectScript, scriptOf, scriptPath, scriptsBrought, scriptSummary, withScript, type ConnectScript } from "./connectscript";
+import { CONNECT_SCRIPT_COMMANDS, onConnectBrought, onConnectOf, readConnectScript, scriptOf, scriptPath, scriptSummary, withScript, type ConnectScript } from "./connectscript";
 import { isProduction } from "./agent";
 import { PAGE, readPage, type GridPage } from "./grid";
 import { PLACEHOLDER_VALUES_KEY, lastValue, placeholderNames, readPlaceholders, remembered, substitute } from "./placeholders";
@@ -482,6 +482,9 @@ export class Live {
   /// Set by Disconnect, or a connect to another process, to stop a
   /// reconnect after an abort from trying again.
   private reconnectStopped = false;
+  /// Counts Disconnects: a connect under way when it changes was
+  /// disconnected, and closes what it opens (#1073).
+  private disconnects = 0;
   private running: { code: string; started: number } | undefined;
   /// Redraws the status bar each second while a query runs, so its time
   /// counts up (#910).
@@ -1069,7 +1072,7 @@ export class Live {
         prompt:
           from.label === undefined
             ? "Stored in VS Code's SecretStorage, never in settings or an export. Leave empty for none."
-            : "Stored in VS Code's SecretStorage, never in settings or an export. Leave empty to keep the stored one.",
+            : "Stored in VS Code's SecretStorage, never in settings or an export. Leave empty to keep the stored one; a new user, host or port forgets it.",
       });
       if (password === undefined) {
         return undefined;
@@ -1165,6 +1168,13 @@ export class Live {
     return this.chosen(row, title, true);
   }
 
+  /// The process `label` names, as a connect to it finds it: a saved one
+  /// before a discovered or shared one, whose label is qualified. For a view
+  /// that keeps a label `pick` gave (#1122, #1125).
+  named(label: string): Process | undefined {
+    return this.processes().find((p) => p.label === label) ?? findDiscovered([...this.discovery.discovered(), ...this.sharedList()], label);
+  }
+
   private async edit(row?: ProcessArg): Promise<void> {
     const old = await this.chosen(row, "Edit which q process?");
     if (old === undefined) {
@@ -1189,15 +1199,20 @@ export class Live {
       void window.showErrorMessage(`q-lint: ${problem}; the process was not changed.`);
       return;
     }
+    // A password left empty is kept, but not for another user, host or port:
+    // it was given for the one it was stored with (#1109).
+    const moved = passwordsToForget([old], [{ ...process, label: old.label }]).length > 0;
     if (process.label !== old.label) {
       const kept = await this.context.secrets.get(passwordKey(old));
       await this.context.secrets.delete(passwordKey(old));
-      if (kept !== undefined && answer.password === undefined) {
+      if (kept !== undefined && answer.password === undefined && !moved) {
         await this.context.secrets.store(passwordKey(process), kept);
       }
     }
     if (answer.password !== undefined) {
       await this.context.secrets.store(passwordKey(process), answer.password);
+    } else if (moved) {
+      await this.context.secrets.delete(passwordKey(process));
     }
     if (process.user === undefined) {
       await this.context.secrets.delete(passwordKey(process));
@@ -1313,14 +1328,20 @@ export class Live {
     const { problems } = read;
     let { processes } = read;
     const before = this.processes();
-    // Code that runs on a process at every connect is not taken from a file
-    // unasked: someone else's list may hold it.
-    const brought = scriptsBrought(before, processes);
+    // Code that runs on a process, or on this machine, at every connect - a
+    // connect script, a credential command, a launch definition - and a
+    // tunnel the password is sent through are not taken from a file unasked:
+    // someone else's list may hold them (#1108).
+    const brought = onConnectBrought(before, processes);
     if (brought.length > 0) {
-      const keep = "Import with Scripts";
-      const drop = "Import without Scripts";
+      const scriptsOnly = brought.every(({ what }) => what.length === 1 && what[0] === "connect script");
+      const keep = scriptsOnly ? "Import with Scripts" : "Import with Them";
+      const drop = scriptsOnly ? "Import without Scripts" : "Import without Them";
+      const listed = `${brought.slice(0, 5).map(({ label, what }) => (scriptsOnly ? label : `${label} (${what.join(", ")})`)).join(", ")}${brought.length > 5 ? ", ..." : ""}`;
       const answer = await window.showWarningMessage(
-        `${files[0].fsPath} gives ${brought.length} process(es) a connect script, q code run on the process at every connect: ${brought.slice(0, 5).join(", ")}${brought.length > 5 ? ", ..." : ""}. Keep the scripts?`,
+        scriptsOnly
+          ? `${files[0].fsPath} gives ${brought.length} process(es) a connect script, q code run on the process at every connect: ${listed}. Keep the scripts?`
+          : `${files[0].fsPath} gives ${brought.length} process(es) what runs at every connect - a connect script runs q code on the process, a credential command or launch definition a command on this machine, and an SSH tunnel decides where the password goes: ${listed}. Keep them?`,
         { modal: true },
         keep,
         drop,
@@ -1330,7 +1351,8 @@ export class Live {
       }
       if (answer === drop) {
         const old = new Map(before.map((p) => [p.label, p]));
-        processes = processes.map((p) => (brought.includes(p.label) ? withScript(p, old.get(p.label) && scriptOf(old.get(p.label)!)) : p));
+        const labels = new Set(brought.map(({ label }) => label));
+        processes = processes.map((p) => (labels.has(p.label) ? onConnectOf(p, old.get(p.label)) : p));
       }
     }
     for (const label of passwordsToForget(before, processes)) {
@@ -1565,7 +1587,7 @@ export class Live {
   /// the handshake is still running the query it was left with, and is
   /// tried again until it does, or until the user disconnects or connects
   /// elsewhere.
-  private open(process: Process, untilFree = false, quiet = false): Promise<boolean> {
+  private open(process: Process, untilFree = false, quiet = false, disconnects = this.disconnects): Promise<boolean> {
     if (this.connecting !== undefined) {
       // A connect to another process - a reconnect after an abort, waiting
       // for that process to be free - is stopped and this one follows: its
@@ -1574,7 +1596,7 @@ export class Live {
         return this.connecting;
       }
       this.reconnectStopped = true;
-      return this.connecting.then(() => this.open(process));
+      return this.connecting.then(() => this.open(process, false, false, disconnects));
     }
     this.reconnectStopped = false;
     this.connectingTo = passwordKey(process);
@@ -1605,12 +1627,18 @@ export class Live {
           },
         );
         // Opened after deactivate (a reconnect after an abort), when nothing
-        // would close it, or after the reconnect was stopped.
-        if (this.disposed || ((untilFree || quiet) && this.reconnectStopped)) {
+        // would close it, after the reconnect was stopped, or after the user
+        // disconnected while it was opening.
+        const stopped = (): boolean => this.disposed || disconnects !== this.disconnects || ((untilFree || quiet) && this.reconnectStopped);
+        if (stopped()) {
           await connection.close();
           return false;
         }
         await this.runConnectScript(connection, process);
+        if (stopped()) {
+          await connection.close();
+          return false;
+        }
         this.connection = connection;
         this.active = process;
         connection.whenAsync((message) => {
@@ -1638,7 +1666,7 @@ export class Live {
         this.changed.fire("connected");
         return true;
       } catch (error) {
-        if ((untilFree && this.reconnectStopped) || quiet) {
+        if ((untilFree && this.reconnectStopped) || quiet || disconnects !== this.disconnects) {
           return false;
         }
         void window.showErrorMessage(
@@ -1657,10 +1685,10 @@ export class Live {
 
   /// Open a connection to `process` at `target`, through the SSH tunnel it
   /// names, if it names one (#908): the tunnel closes with the connection,
-  /// and the connection with the tunnel.
-  private async dial(process: Process, target: Target): Promise<QConnection> {
+  /// and the connection with the tunnel. `signal` stops the connect.
+  private async dial(process: Process, target: Target, signal?: AbortSignal): Promise<QConnection> {
     if (process.ssh === undefined) {
-      return QConnection.open(target);
+      return QConnection.open(target, undefined, signal);
     }
     if (!this.setting(readTunnel).enabled) {
       throw new Error(
@@ -1669,12 +1697,16 @@ export class Live {
     }
     const tunnel = await SshTunnel.open({ destination: process.ssh, host: target.host, port: target.port });
     try {
-      const connection = await QConnection.open({
-        ...target,
-        host: "127.0.0.1",
-        port: tunnel.localPort,
-        ...(target.tls ? { servername: net.isIP(target.host) ? undefined : target.host } : {}),
-      });
+      const connection = await QConnection.open(
+        {
+          ...target,
+          host: "127.0.0.1",
+          port: tunnel.localPort,
+          ...(target.tls ? { servername: net.isIP(target.host) ? undefined : target.host } : {}),
+        },
+        undefined,
+        signal,
+      );
       connection.whenClosed(() => tunnel.close());
       tunnel.whenClosed(() => connection.abort());
       return connection;
@@ -1874,6 +1906,7 @@ export class Live {
   }
 
   private async disconnect(): Promise<void> {
+    this.disconnects++;
     if (this.reconnecting !== undefined && this.connection === undefined) {
       // A try under way is closed once it opens.
       this.reconnectStopped = true;
@@ -2244,8 +2277,8 @@ export class Live {
     if (!commanded && process.user && process.server !== undefined && (await this.context.secrets.get(passwordKey(process))) === undefined) {
       throw new Error(`no password is stored for ${process.user}: connect to ${process.label} once to give it`);
     }
-    const target = await this.targetFor(process);
-    const connection = await QConnection.open(target, undefined, signal);
+    // Through its tunnel, as any connect to it is (#1070).
+    const connection = await this.dial(process, await this.targetFor(process), signal);
     const stop = (): void => connection.abort();
     signal?.addEventListener("abort", stop);
     const controls = this.controls.settings();

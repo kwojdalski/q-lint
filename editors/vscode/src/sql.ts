@@ -27,12 +27,13 @@ export const SQL_SCHEMA = "{t!cols each t:tables[]}[]";
 /// process not yet asked.
 export function sqlQuery(sql: string, load = false): string {
   const lines = sql.split(/\r?\n/).map((line) => {
-    let quoted = false;
+    // The quote a quoted text opened, `'` or `"`: the other is text in it.
+    let quote: string | undefined;
     for (let i = 0; i < line.length; i++) {
       const c = line[i];
-      if (c === "'") {
-        quoted = !quoted;
-      } else if (!quoted && c === "-" && line[i + 1] === "-") {
+      if (c === "'" || c === '"') {
+        quote = quote === undefined ? c : quote === c ? undefined : quote;
+      } else if (quote === undefined && c === "-" && line[i + 1] === "-") {
         return line.slice(0, i);
       }
     }

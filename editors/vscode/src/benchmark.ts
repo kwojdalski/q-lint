@@ -65,7 +65,8 @@ export interface Summary {
   /// bytes, the most a repeat used.
   space: number;
   /// mean against the first expression's; 1 for the first.
-  ratio: number;
+  /// Its mean over the first's; null when the first measured 0 ms (#1116).
+  ratio: number | null;
 }
 
 /// What `BENCHMARK` answered for `expressions`. Throws when it is not that.
@@ -101,7 +102,7 @@ export function summarise(timings: Timing[], n: number): Summary[] {
     };
   });
   const base = rows[0]?.mean ?? 0;
-  return rows.map((r) => ({ ...r, ratio: base > 0 ? r.mean / base : 1 }));
+  return rows.map((r, i) => ({ ...r, ratio: i === 0 ? 1 : base > 0 ? r.mean / base : null }));
 }
 
 /// A time in ms as a person reads it.
@@ -141,7 +142,7 @@ export function benchmarkHtml(summary: Summary[], process: string, n: number, k:
     "<table><thead><tr><th></th><th>expression</th><th>min</th><th>median</th><th>mean</th><th>max</th><th>space</th><th>vs first</th></tr></thead><tbody>",
     ...summary.map(
       (s, i) =>
-        `<tr><td><span class="key k${i % COLOURS.length}"></span></td><td><code>${escapeHtml(s.expression)}</code></td><td>${msText(s.min)}</td><td>${msText(s.median)}</td><td>${msText(s.mean)}</td><td>${msText(s.max)}</td><td>${escapeHtml(bytesText(s.space))}</td><td>${i === 0 ? "" : `${s.ratio.toFixed(2)}x`}</td></tr>`,
+        `<tr><td><span class="key k${i % COLOURS.length}"></span></td><td><code>${escapeHtml(s.expression)}</code></td><td>${msText(s.min)}</td><td>${msText(s.median)}</td><td>${msText(s.mean)}</td><td>${msText(s.max)}</td><td>${escapeHtml(bytesText(s.space))}</td><td>${i === 0 ? "" : s.ratio === null ? "-" : `${s.ratio.toFixed(2)}x`}</td></tr>`,
     ),
     "</tbody></table>",
   ].join("");

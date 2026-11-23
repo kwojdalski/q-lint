@@ -12,7 +12,7 @@ const path = require("node:path");
 const pkg = require("../package.json");
 const I = require("../out/interpreter.js");
 const { nodeFiles } = require("../out/qenvironment.js");
-const { Interpreters, probe } = require("../out/interpreterview.js");
+const { Interpreters, probe, resolveBinary } = require("../out/interpreterview.js");
 
 const Q = process.env.QLINT_TEST_Q;
 const skipQ = Q ? false : "QLINT_TEST_Q names no q binary";
@@ -282,4 +282,14 @@ test("the probe against a real q prints its version and, where .z.l has one, a d
   if (answer.expiry !== undefined) {
     assert.ok(I.daysLeft(answer.expiry, new Date()) !== undefined);
   }
+});
+
+test("a relative q binary is resolved against the workspace folder, not the extension host's cwd (#1132)", () => {
+  const folder = path.join(os.tmpdir(), "ws");
+  assert.strictEqual(resolveBinary(path.join(".", "bin", "q"), folder), path.join(folder, "bin", "q"));
+  assert.strictEqual(resolveBinary(path.join("..", "kx", "q"), folder), path.join(os.tmpdir(), "kx", "q"));
+  const absolute = path.join(os.tmpdir(), "elsewhere", "q");
+  assert.strictEqual(resolveBinary(absolute, folder), absolute);
+  // With no folder open, the working directory is all there is.
+  assert.strictEqual(resolveBinary(path.join(".", "bin", "q"), undefined), path.resolve("bin", "q"));
 });

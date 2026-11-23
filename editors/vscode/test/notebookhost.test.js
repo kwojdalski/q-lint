@@ -479,7 +479,8 @@ test("a code cell that runs reads the live values of the Markdown after it into 
   const api = load(fake, live);
   const notebook = notebookWith(fake, [["markdown", "top {{q: a}}"], ["code", "a:1"], ["markdown", "a is {{q: a}} and {{q: b}}"], ["code", "2"], ["markdown", "{{q: c}}"]]);
   await runCells(fake, notebook, [1]);
-  assert.deepStrictEqual(live.sent, ["a:1", "live a,b"]);
+  // What the guard reads is the cell and the expressions sent after it (#1088).
+  assert.deepStrictEqual(live.sent, ["a:1\na\nb", "live a,b"]);
   assert.deepStrictEqual(fake.edits[0].list, [
     { index: 0, metadata: { "q-lint.liveValues": { a: { text: "<a>" } } } },
     { index: 2, metadata: { "q-lint.liveValues": { a: { text: "<a>" }, b: { text: "<b>" } } } },
