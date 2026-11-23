@@ -1063,7 +1063,7 @@ a functional update or delete in place (`` ![`t;c;b;a] ``),
 `value`, `get` or `eval` of a string, of `parse` or of an assignment tree
 (`` eval(:;`t;()) ``) or of a list headed by a writer's symbol
 (`` value(`.q.set;`a;1) ``), however it is applied (`value@"a:1"`,
-`(value)"a:1"`), and a system command other than one that
+`(value)"a:1"`, through a trap: `@[value;"a:1";h]`), and a system command other than one that
 reads a setting (`\c`, `\d`, `\P`, `\_`, `\r`, `\E` alone, `\w 0`, `\w 1`) - `\t` and `\ts` are read for their
 expression, except `\t 500`, which sets the timer. It holds for every
 path that sends code: a query (line, selection, block, file, a Run lens, a

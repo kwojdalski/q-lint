@@ -48,8 +48,8 @@
 // - `value`, `get` or `eval` applied to a string, to `parse`, or to a
 //   tree headed by `:` or `::` (`eval(:;`t;())`) or by the symbol of
 //   a writer above (`` value(`.q.set;`a;1) ``), also through `[`,
-//   `each`, `'`, `@`, `.` or `enlist` and in parentheses (`(value)"a:1"`),
-//   and by their `.q.` names;
+//   `each`, `'`, `@`, `.` or `enlist`, in parentheses (`(value)"a:1"`)
+//   and through a trap (`@[value;"a:1";h]`), and by their `.q.` names;
 // - a system command (`\l`, `\cd x`, `\\`), except one that only reads a
 //   setting (`\c`, `\d`, `\P`, `\_`, `\r`, `\E` without an argument, and
 //   `\w 0` or `\w 1`) and `\t` or `\ts`, whose
@@ -474,7 +474,10 @@ function readStatement(statement: string, found: Set<string>): void {
       if (["value", "get", "eval"].includes(unqualified(k.text))) {
         // `(value)"a:1"` applies it as `value "a:1"` does.
         const wrapped = t[i - 1]?.text === "(" && next?.text === ")";
-        const what = evaluated(t, i + (wrapped ? 2 : 1));
+        // Given to a trap, `@[value;"a:1";h]`, `.Q.trp[value;..;h]`, it is
+        // applied to the argument after it.
+        const trapped = t[i - 1]?.text === "[" && t[i - 1]?.kind === "open" && next?.text === ";";
+        const what = evaluated(t, i + (wrapped || trapped ? 2 : 1));
         if (what !== undefined) {
           found.add(`evaluates ${what.reason} with ${k.text}`);
           i = what.at;

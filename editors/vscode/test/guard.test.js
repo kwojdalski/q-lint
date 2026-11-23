@@ -533,3 +533,20 @@ test("value, get or eval applied with @, . or in parentheses evaluates (#1325)",
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("a string run through a trap is evaluated (#1253)", () => {
+  const cases = {
+    '@[value;"c:3";::]': ["evaluates a string with value"],
+    '.[value;enlist "c:3";{x}]': ["evaluates a string with value"],
+    '.Q.trp[value;"c:3";{x}]': ["evaluates a string with value"],
+    '@[eval;parse "c:3";::]': ["evaluates a parse tree with eval"],
+    "@[eval;(:;`c;3);::]": ["evaluates an assignment with eval"],
+    // A value trapped, and a default that is a string, read.
+    "@[value;`t;::]": [],
+    '@[value;`t;""]': [],
+    "@[get;`:hdb/sym;()]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
