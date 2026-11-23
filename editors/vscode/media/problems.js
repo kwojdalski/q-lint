@@ -68,6 +68,11 @@
       return Math.max(m, p.total);
     }, 1);
     const chart = svg("svg", { viewBox: "0 0 " + width + " " + height, class: "trend", role: "img" });
+    // An image hides its dots' titles from a screen reader: it says the trend itself.
+    const counts = function (p) {
+      return p.total + (p.total === 1 ? " finding and " : " findings and ") + p.errors + (p.errors === 1 ? " error at " : " errors at ") + p.commit.slice(0, 8);
+    };
+    chart.setAttribute("aria-label", "Findings over " + points.length + (points.length === 1 ? " commit: " : " commits: from " + counts(points[0]) + " to ") + counts(points[points.length - 1]));
     const step = points.length > 1 ? (width - 2 * pad) / (points.length - 1) : 0;
     const x = function (i) {
       return points.length > 1 ? pad + i * step : width / 2;
