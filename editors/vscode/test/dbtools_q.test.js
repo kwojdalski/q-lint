@@ -182,6 +182,19 @@ test("the partition check finds missing dates, files, differing types and outlie
   assert.deepStrictEqual(kinds("different types")[0].partitions, ["2026.01.12"]);
   assert.match(kinds("row count")[0].partitions[0], /2026\.01\.14 \(5,000\)/);
   assert.strictEqual(kinds("enumeration").length, 0);
+  // Two enum domains of different sizes are each held to their own; an
+  // index past its domain's end is found (#1103).
+  const twoDomains = [
+    'r:hsym`$"$DIR/two";sym:`$string til 1000;src:`x`y`z;',
+    "(` sv r,`sym) set sym;(` sv r,`src) set src;",
+    "{[r;d] .Q.dd[r;d,`trade`] set ([] sym:`sym$`$string 999 1 2;src:`src$`x`y`z)}[r] each 2026.01.05 2026.01.06;",
+    ".Q.dd[r;2026.01.06,`trade`src] set `src!0 1 5;",
+    "\\l $DIR/two",
+    "",
+  ].join("\n");
+  const { connection: two } = await connect(t, twoDomains);
+  const enumerations = partitionProblems(readPartitions(await two.call(PARTITION_CHECK, 1000, true))).filter((p) => p.kind === "enumeration");
+  assert.deepStrictEqual(enumerations.map((p) => [p.what, p.partitions]), [["trade.src has a symbol index past the end of src", ["2026.01.06"]]]);
   // One table in one partition is healthy (#1102).
   const { connection: lone } = await connect(t, 'r:hsym`$"$DIR/one";\n.Q.dd[r;2026.01.05,`trade`] set .Q.en[r] ([] sym:`a`b;px:1 2f);\n\\l $DIR/one\n');
   assert.deepStrictEqual(partitionProblems(readPartitions(await lone.call(PARTITION_CHECK, 1000, true))), []);

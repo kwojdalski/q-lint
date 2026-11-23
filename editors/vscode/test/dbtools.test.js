@@ -120,7 +120,7 @@ test("the documenter reads one table's answer, takes the qDoc above a definition
 test("the partition check finds weekday gaps, and each kind of problem in an answer", () => {
   assert.deepStrictEqual(missingWeekdays(["2026.01.02", "2026.01.06"]), ["2026.01.05"]);
   assert.deepStrictEqual(missingWeekdays(["2026.01.02"]), []);
-  const row = (partition, extra = {}) => ({ table: "t", partition, dir: true, dotd: true, columns: ["sym", "px"], missing: [], types: [20, 9], enums: ["sym", ""], maxIndex: null, rows: 100, ...extra });
+  const row = (partition, extra = {}) => ({ table: "t", partition, dir: true, dotd: true, columns: ["sym", "px"], missing: [], types: [20, 9], enums: ["sym", ""], maxIndexes: [], rows: 100, ...extra });
   const answer = {
     hdb: true,
     field: "date",
@@ -134,7 +134,7 @@ test("the partition check finds weekday gaps, and each kind of problem in an ans
       row("2026.01.06", { types: [20, 7] }),
       row("2026.01.07", { dir: false, dotd: false }),
       row("2026.01.08", { columns: ["sym", "px", "x"], types: [20, 9, 7], enums: ["sym", "", ""], rows: 0 }),
-      row("2026.01.12", { missing: ["px"], types: [20], enums: ["other"], maxIndex: 12, rows: 5000 }),
+      row("2026.01.12", { missing: ["px"], types: [20], enums: ["other"], maxIndexes: [12], rows: 5000 }),
     ],
   };
   const kinds = Object.groupBy(partitionProblems(answer), (p) => p.kind);
@@ -146,14 +146,19 @@ test("the partition check finds weekday gaps, and each kind of problem in an ans
   assert.ok(kinds.enumeration.some((p) => /against other/.test(p.what)));
   assert.ok(kinds["row count"].some((p) => p.partitions.includes("2026.01.08")));
   assert.ok(kinds["row count"].some((p) => p.partitions[0].startsWith("2026.01.12")));
+  // Each enumerated column's largest index is held to its own domain (#1103).
+  const two = (maxIndexes) => partitionProblems({ ...answer, all: ["2026.01.05"], domains: new Map([["sym", 1000], ["src", 3]]), rows: [row("2026.01.05", { columns: ["sym", "src"], types: [20, 21], enums: ["sym", "src"], maxIndexes })] }).filter((p) => p.kind === "enumeration");
+  assert.deepStrictEqual(two([500, 2]), []);
+  assert.deepStrictEqual(two([500, 3]).map((p) => p.what), ["t.src has a symbol index past the end of src"]);
+  assert.deepStrictEqual(two([1000, 2]).map((p) => p.what), ["t.sym has a symbol index past the end of sym"]);
   const report = partitionReport(answer, "hdb", false);
   assert.match(report, /A quick check/);
   assert.match(report, /\*\*missing dates\*\*/);
   assert.match(partitionReport({ hdb: false, root: "/x" }, "rdb", false), /no partitioned database/);
   assert.deepStrictEqual(readPartitions({ hdb: false, root: "/x" }), { hdb: false, root: "/x" });
   // One table in one partition: each column of the answer is a one-item list (#1102).
-  const single = readPartitions({ hdb: true, pf: "date", root: "/db", all: ["2026.01.05"], checked: 1, tables: ["trade"], domains: ["sym"], domainsizes: [2], rows: { tbl: ["trade"], part: ["2026.01.05"], dir: [true], dotd: [true], cols: [["sym", "px"]], missing: [[]], types: [[20, 9]], enums: [["sym", ""]], maxidx: [1], rows: [2] } });
-  assert.deepStrictEqual(single.rows, [{ table: "trade", partition: "2026.01.05", dir: true, dotd: true, columns: ["sym", "px"], missing: [], types: [20, 9], enums: ["sym", ""], maxIndex: 1, rows: 2 }]);
+  const single = readPartitions({ hdb: true, pf: "date", root: "/db", all: ["2026.01.05"], checked: 1, tables: ["trade"], domains: ["sym"], domainsizes: [2], rows: { tbl: ["trade"], part: ["2026.01.05"], dir: [true], dotd: [true], cols: [["sym", "px"]], missing: [[]], types: [[20, 9]], enums: [["sym", ""]], maxidx: [[1, null]], rows: [2] } });
+  assert.deepStrictEqual(single.rows, [{ table: "trade", partition: "2026.01.05", dir: true, dotd: true, columns: ["sym", "px"], missing: [], types: [20, 9], enums: ["sym", ""], maxIndexes: [1, null], rows: 2 }]);
   assert.deepStrictEqual(partitionProblems(single), []);
 });
 
