@@ -496,6 +496,18 @@ fn a_relative_load_after_a_change_of_directory_is_dynamic() {
 }
 
 #[test]
+fn a_cd_inside_a_block_comment_moves_nothing() {
+    // KDB-X: under a block comment holding `\cd lib`, `\l b.q` loads the
+    // b.q beside the script (#1363).
+    let g = graph(
+        &[("b.q", "who:`top\n"), ("a.q", "/\n\\cd lib\n\\\n\\l b.q\n")],
+        false,
+    );
+    assert_eq!(deps(&g, "a.q"), ["b.q"]);
+    assert!(kinds(&g, "a.q").is_empty());
+}
+
+#[test]
 fn a_function_of_ones_own_named_system_loads_nothing() {
     // KDB-X: after `.a.system:{-1 x}`, `.a.system "l b.q"` prints `l b.q`
     // and `bb` stays undefined; such a call with "cd elsewhere" moves nothing,

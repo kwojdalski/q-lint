@@ -1595,7 +1595,7 @@ fn loads(
     namespace_at: impl Fn(usize) -> String,
     moved: &mut Vec<usize>,
 ) -> Vec<(String, String)> {
-    let cd = changes_directory(raw, view);
+    let cd = changes_directory(code, raw, view);
     let mut loads = vec![];
     for (at, path, symbol) in load_sites(code, raw, view) {
         let path = &raw[path];
@@ -1612,14 +1612,18 @@ fn loads(
 
 /// Where the script first changes directory, `\cd lib` or `system "cd lib"`,
 /// or past the end when it never does.
-fn changes_directory(raw: &str, view: &str) -> usize {
+fn changes_directory(code: &str, raw: &str, view: &str) -> usize {
     raw.split_inclusive('\n')
         .scan(0, |offset, line| {
             let at = *offset;
             *offset += line.len();
             Some((at, line))
         })
-        .find(|(_, line)| re!(r"^\\cd[ \t]+\S").is_match(line))
+        // Not one a block comment holds, which `code` has blank: KDB-X loads
+        // the b.q beside the script for `\l b.q` under such a comment (#1363).
+        .find(|(at, line)| {
+            re!(r"^\\cd[ \t]+\S").is_match(line) && code.as_bytes().get(*at) == Some(&b'\\')
+        })
         .map(|(at, _)| at)
         .into_iter()
         .chain(
@@ -1679,7 +1683,7 @@ fn load_sites(code: &str, raw: &str, view: &str) -> Vec<(usize, Range<usize>, bo
 /// navigation request on one follows to the file it names.
 pub fn load_paths(code: &str, raw: &str) -> Vec<Range<usize>> {
     let view = commands_blanked(code, raw);
-    let cd = changes_directory(raw, &view);
+    let cd = changes_directory(code, raw, &view);
     load_sites(code, raw, &view)
         .into_iter()
         .filter(|(at, path, symbol)| *symbol || *at <= cd || raw[path.clone()].starts_with('/'))
