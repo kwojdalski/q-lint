@@ -677,8 +677,10 @@ fn items_at_depth_zero(text: &str, byte: u8) -> bool {
 /// - a column names itself, and the virtual `i` and any literal are `x`;
 /// - `l+r`, `l-r`, `l*r`, `l%r`, `l&r`, `l|r`, `and`, `or` take the name of
 ///   their left operand, so `a+b` is `a` and `2+a` is `x`;
-/// - `= < > <> <= >= ^ # @ ?` and `mod xbar div cross except wavg within in
-///   xexp xlog` take the right one: `a=b` is `b`, `a mod 2` is `x`;
+/// - `= < > <> <= >= ^ # @ ? $ _ !` and `mod xbar div cross except wavg
+///   within in xexp xlog bin rotate vs cut xprev union inter wsum` take the
+///   right one: `a=b` is `b`, `a mod 2` is `x`, `` `int$a `` is `a`;
+/// - `f each a` and `f peach a` take `a`'s;
 /// - a function applied, `max a`, `f a`, `{x} a`, takes its argument's;
 /// - `f[a;b]` and `(a;b)` take their last item's: `g[1;a]` is `a`.
 ///
@@ -709,9 +711,12 @@ enum Tok<'a> {
 /// name it after the right: both lists are q 5's, measured, and nothing
 /// outside them is named.
 const LEFT_NAMED: &[&str] = &["+", "-", "*", "%", "&", "|", "and", "or"];
+// `$ _ ! bin rotate vs cut xprev union inter wsum`, and a function applied
+// with `each` or `peach`, measured on KDB-X (#1203).
 const RIGHT_NAMED: &[&str] = &[
     "=", "<", ">", "<>", "<=", ">=", "^", "#", "@", "?", "mod", "xbar", "div", "cross", "except",
-    "wavg", "within", "in", "xexp", "xlog",
+    "wavg", "within", "in", "xexp", "xlog", "$", "_", "!", "bin", "rotate", "vs", "cut", "xprev",
+    "union", "inter", "wsum", "each", "peach",
 ];
 
 fn tokens(s: &str) -> Option<Vec<Tok<'_>>> {
@@ -749,7 +754,8 @@ fn tokens(s: &str) -> Option<Vec<Tok<'_>>> {
         {
             let start = i;
             i += 1;
-            while i < b.len() && (b[i].is_ascii_alphanumeric() || b"._:".contains(&b[i])) {
+            // No `_`: `1_a` is a drop, not one number (#1203).
+            while i < b.len() && (b[i].is_ascii_alphanumeric() || b".:".contains(&b[i])) {
                 i += 1;
             }
             // `1 2` is one vector literal, not one number applied to another.
@@ -1774,14 +1780,21 @@ mod tests {
             ("a mod max b", "b"),
             ("count i", "x"),
             ("m:max a", "m"),
+            // #1203
+            ("`int$a", "a"),
+            ("b$a", "a"),
+            ("1_a", "a"),
+            ("b!a", "a"),
+            ("b bin a", "a"),
+            ("f each a", "a"),
+            ("{x} peach a", "a"),
+            ("b union a", "a"),
         ];
         for (expr, name) in measured {
             assert_eq!(column_name(expr), Some(name), "{expr}");
         }
         // Unmeasured, or adverbs: no name rather than a guess.
-        for expr in [
-            "f each a", "a+/b", "a$b", "a!b", "a like b", ".z.p", "a bin b", "-a",
-        ] {
+        for expr in ["a+/b", "a like b", ".z.p", "-a"] {
             assert_eq!(column_name(expr), None, "{expr}");
         }
     }

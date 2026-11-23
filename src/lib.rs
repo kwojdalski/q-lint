@@ -1511,8 +1511,10 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 false,
             )
         }
-        // Sorting adds no duplicates, and q 5 agrees on the value and the
-        // sorted attribute both.
+        // Sorting adds no duplicates, and q 5 agrees on the value and, for
+        // a list, the sorted attribute. Not unattended: for a table it does
+        // not - `attr distinct asc distinct t` is `` ` `` on KDB-X and
+        // `attr asc distinct t` is `` `s `` (#1201) - and x may be one.
         "QR003" => {
             let m = re!(concat!(
                 r"^distinct",
@@ -1526,7 +1528,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 m.as_str(),
                 "asc distinct".into(),
                 "Replace with `asc distinct`".into(),
-                true,
+                false,
             )
         }
         // `(a)` becomes `a`, where nothing around it reads differently
@@ -2054,6 +2056,12 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         "QT025" => {
             let m = re!(r"^'(\s*)(-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)")
                 .captures(source.get(start..)?)?;
+            // Only the whole operand: `'10 20` with its first item quoted would
+            // be `'"10" 20`, still 'stype, and `'1 2` would be `'enlist"1" 2`,
+            // 'type (#1200).
+            if !operand_ends(&v.code, &v.comments, start + m.get(0)?.end()) {
+                return None;
+            }
             // One digit in quotes is a char atom, still 'stype (#565).
             let list = if m[2].len() == 1 { "enlist" } else { "" };
             (
@@ -9105,7 +9113,21 @@ fn lint_rules(
                 } else {
                     line.as_bytes()[dollar] == b'$'
                 };
-                if in_code {
+                // The string has to be the whole operand: in
+                // `` `date$"I"$x `` it is the type of another cast, and q 5
+                // gives 2019.03.02 for x "7000" (#1202).
+                let whole = m.get(0).unwrap();
+                let close = if whole.as_str().ends_with(')') {
+                    Some(whole.end())
+                } else {
+                    let mut i = whole.end();
+                    let b = literals.as_bytes();
+                    while i < b.len() && b[i] != b'"' {
+                        i += if b[i] == b'\\' { 2 } else { 1 };
+                    }
+                    (i < b.len()).then_some(i + 1)
+                };
+                if in_code && close.is_some_and(|c| operand_ends(code, &v.comments, offset + c)) {
                     return Some(m);
                 }
                 at = start + 1;

@@ -2500,11 +2500,14 @@ pub fn check(
             continue;
         }
         let view = local_view(&scope.direct, false);
-        let assigned = re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*::")
+        // A dotted name is global with one colon too: q 5 with `-s 2`
+        // refuses `{.ns.a:x} peach 1 2` alike (#1204).
+        let assigned = re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*(::?)")
             .captures_iter(&view)
             .find(|m| {
                 let whole = m.get(0).unwrap();
-                boundary(&view, whole.start())
+                (&m[2] == "::" || m[1].starts_with('.'))
+                    && boundary(&view, whole.start())
                     && assigns_value(&view[whole.end()..])
                     && !scope.locals.contains(&m[1])
             })
@@ -4617,18 +4620,24 @@ fn named_values(
     // did not open: `(select from t where a>1),select ...` (#260), or a `;`
     // outside every bracket.
     let mut from = 0;
-    while let Some(m) = re!(r"(?:select|exec|update|delete)\b[^\n;]*?\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s+where\b([^\n]*)")
+    while let Some(m) = re!(r"(?:select|exec|update|delete)\b[^\n;]*?\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s+where\b")
         .captures_at(code, from)
     {
         if !boundary(code, m.get(0).unwrap().start()) {
             from = m.get(0).unwrap().start() + 1;
             continue;
         }
-        let phrase = m.get(2).unwrap();
-        let mut flat = phrase.as_str().as_bytes().to_vec();
+        // The rest of the line, read only as far as the phrase goes: a copy
+        // or a capture of the whole line for each phrase on it was quadratic
+        // in a line of many statements (#1205).
+        let start = m.get(0).unwrap().end();
+        let line_end = code[start..].find('\n').map_or(code.len(), |p| start + p);
+        let phrase = &code[start..line_end];
+        let mut flat = Vec::new();
         let (mut depth, mut lambda, mut nested) = (0i32, 0i32, None);
-        let mut end = flat.len();
-        for (i, &c) in phrase.as_str().as_bytes().iter().enumerate() {
+        let mut end = phrase.len();
+        for (i, &c) in phrase.as_bytes().iter().enumerate() {
+            flat.push(c);
             match c {
                 b'(' | b'[' => depth += 1,
                 b'{' => lambda += 1,
@@ -4639,6 +4648,7 @@ fn named_values(
                 // A `;` ends the statement only outside brackets: `where a
                 // within (1;c)` reads `c` too (#494).
                 b')' | b']' | b';' if depth == 0 && lambda == 0 => {
+                    flat.pop();
                     end = i;
                     break;
                 }
@@ -4650,10 +4660,9 @@ fn named_values(
             }
             if nested.is_none()
                 && phrase
-                    .as_str()
                     .get(i..)
                     .is_some_and(|rest| re!(r"^(?:select|exec|update|delete)\b").is_match(rest))
-                && boundary(code, phrase.start() + i)
+                && boundary(code, start + i)
             {
                 nested = Some(depth);
             }
@@ -4664,17 +4673,17 @@ fn named_values(
         flat.truncate(end);
         // A symbol names no column, and runs on through `:` and `/`:
         // `` `:db/quote `` and `` `a:zz `` are one symbol each (#341).
-        for sym in re!(r"`[A-Za-z0-9_./:]*").find_iter(&phrase.as_str()[..end]) {
+        for sym in re!(r"`[A-Za-z0-9_./:]*").find_iter(&phrase[..end]) {
             flat[sym.range()].fill(b' ');
         }
-        from = phrase.start() + end.max(1);
+        from = start + end.max(1);
         let flat = String::from_utf8_lossy(&flat).into_owned();
         let table = m.get(1).unwrap();
         let Some(Held::Table(columns, _)) = visible(table.as_str(), table.start()) else {
             continue;
         };
         for name in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&flat) {
-            let at = phrase.start() + name.start();
+            let at = start + name.start();
             if boundary(code, at) && !flat[name.end()..].starts_with('.') && is_free(name.as_str(), at, columns) {
                 column(at, name.as_str(), table.as_str(), columns);
             }
@@ -5084,6 +5093,10 @@ pub(crate) fn char_column_comparisons(code: &str, comments: &str) -> Vec<usize> 
     if re!(r#"(?m)^\\d\b|system\s*"d\b"#).is_match(comments) {
         return out;
     }
+    // A table's char columns, with the patterns that compare each, depend
+    // only on its name: worked out once per name, not once per where phrase,
+    // which rescanned the file for each and was quadratic in them (#1206).
+    let mut known: HashMap<&str, Vec<(regex::Regex, usize, usize, usize)>> = HashMap::new();
     for (start, end, table) in qsql_phrases(code) {
         let Some((t, e)) = table else {
             continue;
@@ -5092,67 +5105,80 @@ pub(crate) fn char_column_comparisons(code: &str, comments: &str) -> Vec<usize> 
             continue;
         }
         let name = &code[t..e];
-        let whole = |m: &regex::Match| {
-            !code[..m.start()].ends_with(|c: char| c.is_alphanumeric() || "_.".contains(c))
-                && !code[m.end()..].starts_with(|c: char| c.is_alphanumeric() || "_.".contains(c))
-        };
-        let uses: Vec<regex::Match> = regex::Regex::new(&regex::escape(name))
-            .unwrap()
-            .find_iter(code)
-            .filter(whole)
-            .collect();
-        let writes: Vec<&regex::Match> = uses
-            .iter()
-            .filter(|m| {
-                code[..m.start()].ends_with('`')
-                    || re!(r"^\s*(?:[,\[]|:(?:[^:]|$))").is_match(&code[m.end()..])
-            })
-            .collect();
-        let [only] = writes[..] else {
-            continue;
-        };
-        if only.start() != 0 && !code[..only.start()].ends_with('\n') {
-            continue;
-        }
-        let value = crate::past_blanks(code, only.end() + 1);
-        let Some(inner) = re!(r"^\(\s*\[\s*\]").find(&code[value..]) else {
-            continue;
-        };
-        let Some(close) = matching(code, value, b'(', b')') else {
-            continue;
-        };
-        let body = value + inner.end();
-        let mut columns = vec![];
-        let mut at = body;
-        for part in crate::slots(&code[body..close - 1]) {
-            if let Some(colon) = part.find(':') {
-                let column = part[..colon].trim();
-                let text = comments[at + colon + 1..at + part.len()].trim();
-                if let Some(chars) = re!(r#"^"((?:\\[0-7]{3}|\\.|[^"\\])*)"$"#).captures(text) {
-                    columns.push((column, crate::q_bytes(&chars[1]).len()));
-                }
-            }
-            at += part.len() + 1;
-        }
+        let patterns = known
+            .entry(name)
+            .or_insert_with(|| char_column_patterns(code, comments, name));
         let end = end.min(code.len());
-        for (column, n) in columns {
-            let column = regex::escape(column);
-            let string = r#""((?:\\[0-7]{3}|\\.|[^"\\])*)""#;
-            for (pattern, op, chars) in [
-                (format!(r"\b{column}[ \t]*(=|<>)[ \t]*{string}"), 1, 2),
-                (format!(r"{string}[ \t]*(=|<>)[ \t]*{column}\b"), 2, 1),
-            ] {
-                for m in regex::Regex::new(&pattern)
-                    .unwrap()
-                    .captures_iter(&comments[start..end])
-                {
-                    let (op, chars) = (m.get(op).unwrap(), m.get(chars).unwrap());
-                    if crate::q_bytes(chars.as_str()).len() == n {
-                        out.push(start + op.start());
-                    }
+        for (pattern, op, chars, n) in patterns.iter() {
+            for m in pattern.captures_iter(&comments[start..end]) {
+                let (op, chars) = (m.get(*op).unwrap(), m.get(*chars).unwrap());
+                if crate::q_bytes(chars.as_str()).len() == *n {
+                    out.push(start + op.start());
                 }
             }
         }
+    }
+    out
+}
+
+/// For `char_column_comparisons`: the patterns that compare a char column of
+/// the table `name` with a string, each with the group of its operator, the
+/// group of its string and the column's width. Empty where the file does not
+/// assign `name` a table literal exactly once, or nothing of it compares.
+fn char_column_patterns(
+    code: &str,
+    comments: &str,
+    name: &str,
+) -> Vec<(regex::Regex, usize, usize, usize)> {
+    let mut out = vec![];
+    let whole = |m: &regex::Match| {
+        !code[..m.start()].ends_with(|c: char| c.is_alphanumeric() || "_.".contains(c))
+            && !code[m.end()..].starts_with(|c: char| c.is_alphanumeric() || "_.".contains(c))
+    };
+    let uses: Vec<regex::Match> = regex::Regex::new(&regex::escape(name))
+        .unwrap()
+        .find_iter(code)
+        .filter(whole)
+        .collect();
+    let writes: Vec<&regex::Match> = uses
+        .iter()
+        .filter(|m| {
+            code[..m.start()].ends_with('`')
+                || re!(r"^\s*(?:[,\[]|:(?:[^:]|$))").is_match(&code[m.end()..])
+        })
+        .collect();
+    let [only] = writes[..] else {
+        return out;
+    };
+    if only.start() != 0 && !code[..only.start()].ends_with('\n') {
+        return out;
+    }
+    let value = crate::past_blanks(code, only.end() + 1);
+    let Some(inner) = re!(r"^\(\s*\[\s*\]").find(&code[value..]) else {
+        return out;
+    };
+    let Some(close) = matching(code, value, b'(', b')') else {
+        return out;
+    };
+    let body = value + inner.end();
+    let mut at = body;
+    for part in crate::slots(&code[body..close - 1]) {
+        if let Some(colon) = part.find(':') {
+            let column = part[..colon].trim();
+            let text = comments[at + colon + 1..at + part.len()].trim();
+            if let Some(chars) = re!(r#"^"((?:\\[0-7]{3}|\\.|[^"\\])*)"$"#).captures(text) {
+                let n = crate::q_bytes(&chars[1]).len();
+                let column = regex::escape(column);
+                let string = r#""((?:\\[0-7]{3}|\\.|[^"\\])*)""#;
+                for (pattern, op, chars) in [
+                    (format!(r"\b{column}[ \t]*(=|<>)[ \t]*{string}"), 1, 2),
+                    (format!(r"{string}[ \t]*(=|<>)[ \t]*{column}\b"), 2, 1),
+                ] {
+                    out.push((regex::Regex::new(&pattern).unwrap(), op, chars, n));
+                }
+            }
+        }
+        at += part.len() + 1;
     }
     out
 }
