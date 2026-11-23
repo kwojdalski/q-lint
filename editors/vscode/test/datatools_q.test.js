@@ -198,4 +198,19 @@ test("the q of the data tools against a real q process", { skip }, async (t) => 
       assert.deepStrictEqual(cells(out, "a"), ["1", "2"]);
     }
   });
+
+  await t.test("a one-column CSV loads by its path and from its text, its one-character lines too (#1262)", async () => {
+    const csv = path.join(q.dir, "one.csv");
+    const text = "x\n1\n22\n";
+    fs.writeFileSync(csv, text);
+    const sample = d.sampleText(text);
+    assert.deepStrictEqual(sample.types, ["J"]);
+    for (const local of [true, false]) {
+      const out = await grid(d.loadExpression("csv", csv, local, sample, local ? undefined : text));
+      assert.deepStrictEqual(out.grid.names, ["x"]);
+      assert.deepStrictEqual(cells(out, "x"), ["1", "22"]);
+    }
+    const header = await grid(d.loadExpression("csv", csv, false, sample, "x\n"));
+    assert.deepStrictEqual(header.grid.names, ["x"]);
+  });
 });
