@@ -36,7 +36,8 @@
         "q-lint.processes.launcher.enable",
         "q-lint.connection.credentialCommand.enable",
         "q-lint.processes.readOnlyGuard.enable",
-        "q-lint.processes.readOnlyGuard.tags"
+        "q-lint.processes.readOnlyGuard.tags",
+        "q-lint.testing.runAffectedOnSave.enable"
       ]
     }
   },

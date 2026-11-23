@@ -2963,7 +2963,10 @@ could run a program the folder chooses is held back there:
   `q-lint.connection.credentialCommand.enable`; and the read-only guard's
   `q-lint.processes.readOnlyGuard.enable` and
   `q-lint.processes.readOnlyGuard.tags`, so the folder cannot turn the
-  guard off for a process it names.
+  guard off for a process it names; and
+  `q-lint.testing.runAffectedOnSave.enable`, so it cannot send its tests to
+  a process at every save - which, on in your settings, sends nothing in a
+  folder that is not trusted either.
 - The folder's `.env` is not given to any q the extension starts, and
   **Select q Interpreter** does not offer, or run to read its version, a q
   binary inside the folder.

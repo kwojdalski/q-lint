@@ -367,6 +367,37 @@ test("affected tests queued on save are not run once the setting is turned off (
   }
 });
 
+test("in a workspace that is not trusted a save runs no affected test (#1228)", async () => {
+  const { context, restore } = setUp();
+  const saves = [];
+  const trusted = vscode.workspace.isTrusted;
+  vscode.workspace.onDidSaveTextDocument = (l) => (saves.push(l), { dispose: () => saves.splice(saves.indexOf(l), 1) });
+  vscode.workspace.onDidOpenTextDocument = () => ({ dispose() {} });
+  vscode.workspace.onDidCloseTextDocument = () => ({ dispose() {} });
+  vscode.workspace.textDocuments = [];
+  try {
+    const sent = [];
+    const runs = [];
+    const server = { sendRequest: async () => (sent.push(1), { tests: [{ uri: "file:///t.q", name: "test_a" }] }) };
+    const tests = { discover: async () => {}, items: () => ["file:///t.q#test_a"], run: async (ids) => void runs.push(ids) };
+    stub.config.user["testing.runAffectedOnSave.enable"] = true;
+    const api = registerAffectedOnSave(context, () => server, tests);
+    const doc = { languageId: "q", uri: { scheme: "file", fsPath: "/w/lib.q", toString: () => "file:///w/lib.q" }, getText: () => "f:{x+1}\n" };
+    vscode.workspace.isTrusted = false;
+    saves[0](doc);
+    await api.settled();
+    assert.deepStrictEqual([sent, runs], [[], []]);
+    // Trusted later: the next save runs them.
+    vscode.workspace.isTrusted = true;
+    saves[0](doc);
+    await api.settled();
+    assert.deepStrictEqual(runs, [["file:///t.q#test_a"]]);
+  } finally {
+    vscode.workspace.isTrusted = trusted;
+    restore();
+  }
+});
+
 test("overlapping reads of the q Namespaces view keep the latest, whichever answers last (#1120)", async () => {
   const def = (name) => ({ name, namespace: ".", kind: "variable", uri: "file:///a.q", range: { start: { line: 0, character: 0 } } });
   const { context, restore } = setUp();

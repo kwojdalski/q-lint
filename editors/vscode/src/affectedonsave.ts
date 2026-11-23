@@ -8,7 +8,9 @@
 //
 // Off unless asked for (q-lint.testing.runAffectedOnSave.enable), since it
 // sends code to a process at every save; off, nothing listens and nothing is
-// kept. It needs the Test Explorer on (q-lint.testExplorer.enable).
+// kept. It needs the Test Explorer on (q-lint.testExplorer.enable). Its
+// setting is restricted, and in a workspace that is not trusted a save
+// runs nothing (#1228).
 import { window, workspace, type Disposable, type ExtensionContext, type TextDocument } from "vscode";
 import type { Server } from "./editorfeatures";
 import { languageOn } from "./languagefeatures";
@@ -45,8 +47,10 @@ export function registerAffectedOnSave(
   let last: string[] = [];
   const affected = async (document: TextDocument, previous: string): Promise<void> => {
     // Queued behind another run: turned off meanwhile, nothing is sent (#1086).
+    // A folder that is not trusted runs nothing at a save, whatever its
+    // settings say (#1228).
     const client = server();
-    if (!on() || client === undefined) {
+    if (!on() || client === undefined || workspace.isTrusted === false) {
       return;
     }
     const answer = await client.sendRequest(TESTS_REACHING, { textDocument: { uri: document.uri.toString() }, previous }).catch(() => undefined);
