@@ -9,7 +9,7 @@ const net = require("node:net");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { QConnection } = require("../out/qclient.js");
+const { QConnection, withReason } = require("../out/qclient.js");
 const { statements } = require("../out/statements.js");
 const { GATHER, LIMITS, explorerTree, previewCode, readGathered } = require("../out/explorer.js");
 const { toGrid } = require("../out/grid.js");
@@ -302,6 +302,18 @@ test("grid and chart mode: what the process sends for a result", { skip }, async
 test("connecting to a port nobody listens on fails with why", { skip }, async () => {
   const port = await freePort();
   await assert.rejects(QConnection.open({ host: "127.0.0.1", port }), /ECONNREFUSED/);
+});
+
+// Node tries `::1` and `127.0.0.1` for `localhost` and, when both refuse,
+// rejects with an AggregateError whose message is empty (#1352).
+test("a connect to a name with several addresses, none listening, still says why", async () => {
+  const port = await freePort();
+  await assert.rejects(QConnection.open({ host: "localhost", port }), (e) => /ECONNREFUSED/.test(e.message));
+  const both = new AggregateError([new Error("connect ECONNREFUSED ::1:5000"), new Error("connect ECONNREFUSED 127.0.0.1:5000")], "");
+  assert.strictEqual(withReason(Object.assign(both, { code: "ECONNREFUSED" })).message, "connect ECONNREFUSED ::1:5000; connect ECONNREFUSED 127.0.0.1:5000");
+  assert.strictEqual(withReason(Object.assign(new AggregateError([], ""), { code: "ETIMEDOUT" })).message, "ETIMEDOUT");
+  assert.strictEqual(withReason(new Error("")).message, "the connection failed");
+  assert.strictEqual(withReason(new Error("connect ECONNREFUSED 127.0.0.1:5000")).message, "connect ECONNREFUSED 127.0.0.1:5000");
 });
 
 test("a connect that gets no answer gives up", { skip }, async () => {

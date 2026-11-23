@@ -73,6 +73,19 @@ function typeOf(message: Buffer): number | undefined {
   return message.length > 13 && (message.readUInt8(12) & 1) === 0 ? message.readInt8(13) : undefined;
 }
 
+/// A connect's error with its reason in `message`. Node tries each address
+/// of a name in turn - `localhost` is `::1` and `127.0.0.1` - and when all
+/// fail gives an AggregateError whose own message is empty (#1352): the
+/// reasons are in its `errors`.
+export function withReason(error: Error): Error {
+  if (error.message === "") {
+    const inner = (error as { errors?: unknown }).errors;
+    const reasons = Array.isArray(inner) ? inner.map((e) => (e instanceof Error ? e.message : "")).filter((m) => m !== "") : [];
+    error.message = [...new Set(reasons)].join("; ") || (error as NodeJS.ErrnoException).code || "the connection failed";
+  }
+  return error;
+}
+
 export class QConnection {
   /// What has arrived of the messages not yet read, in the chunks it came
   /// in: joined only once a whole message is there, since joining each
@@ -126,7 +139,7 @@ export class QConnection {
         return;
       }
       signal?.addEventListener("abort", cancelled);
-      socket.once("error", fail);
+      socket.once("error", (error: Error) => fail(withReason(error)));
       // A process that refuses the user closes the socket without a byte.
       socket.once("close", () => fail(new Error(`${target.host}:${target.port} closed the connection: the user or password was refused`)));
       socket.once(target.tls ? "secureConnect" : "connect", () => {
