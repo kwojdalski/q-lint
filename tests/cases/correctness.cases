@@ -512,6 +512,14 @@ a:3 (g)/1
 b:{x<100} ({x*2})/1
 c:3 (.ns.g)/1
 
+=== clean | a digit that ends a name is part of it: over with add2 (KDB-X: 0 add2/ 1 2 3 is 6; #1297)
+add2:+
+a:0 add2/ 1 2 3
+b:0 f_1/ 1 2
+
+=== QB014 QE009 | a number ending in letters is still a number beside the slash (q 5 refuses 10/2 at parse)
+r:1e2/2
+
 === QB014 QE009 | without the left operand q refuses it: (2*)/1 is '/
 r:(2*)/1
 

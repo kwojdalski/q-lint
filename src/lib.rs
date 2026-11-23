@@ -9108,7 +9108,23 @@ fn lint_rules(
                 .ends_with(|c: char| c.is_alphanumeric() || ")]}".contains(c));
             projection && operand
         };
-        if let Some(m) = re!(r"[\d)]/\s*[\d(]").find_iter(&unsym).find(|m| !over(m)) {
+        // A digit that ends a name is no number: `0 add2/ 1 2 3` is over
+        // with `add2`, 6 on KDB-X (#1297).
+        let named = |m: &regex::Match| {
+            let b = unsym.as_bytes();
+            let mut i = m.start();
+            if !b[i].is_ascii_digit() {
+                return false;
+            }
+            while i > 0 && (b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_') {
+                i -= 1;
+            }
+            b[i].is_ascii_alphabetic() || b[i] == b'_'
+        };
+        if let Some(m) = re!(r"[\d)]/\s*[\d(]")
+            .find_iter(&unsym)
+            .find(|m| !over(m) && !named(m))
+        {
             add(
                 offset + m.start(),
                 "QB014",
