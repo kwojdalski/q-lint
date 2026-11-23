@@ -77,13 +77,28 @@ fn words(n: &Node) -> String {
                     format!("{} each item of {}", monad(m).unwrap_or_default(), words(x))
                 }
                 (d, [x, y]) => match dyad(d) {
-                    Some(phrase) => format!("{} {phrase} {}", words(x), words(y)),
+                    Some(phrase) => format!("{} {phrase} {}", operand(x), operand(y)),
                     None => quoted(),
                 },
                 _ => quoted(),
             }
         }
         _ => quoted(),
+    }
+}
+
+/// An argument of a dyad in words, bracketed where it is itself a dyad
+/// said in words: q reads right to left, so `a>b and c<d` is
+/// `a>(b and c<d)`, and words read left to right would say otherwise.
+fn operand(n: &Node) -> String {
+    let w = words(n);
+    match n {
+        Node::Apply(f, args)
+            if args.len() == 2 && matches!(&**f, Node::Verb(v) if dyad(v).is_some()) =>
+        {
+            format!("({w})")
+        }
+        _ => w,
     }
 }
 
@@ -293,4 +308,28 @@ fn explain(p: &layout::Parts) -> String {
         lines.push(format!("{}. {s}", n + 1));
     }
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    fn words(source: &str) -> String {
+        crate::explain_qsql(source, 3).unwrap()
+    }
+
+    // q reads right to left: `a>b and c<d` is `a>(b and c<d)` (KDB-X keeps
+    // other rows than `(a>b) and c<d`), so a dyad inside a dyad is bracketed.
+    #[test]
+    fn a_dyad_inside_a_dyad_is_bracketed_as_q_reads_it() {
+        let w = words("r:select from t where a>b and c<d\n");
+        assert!(
+            w.contains("`a` is greater than (`b` and also (`c` is less than `d`))"),
+            "{w}"
+        );
+        let w = words("r:select from t where a+1=b\n");
+        assert!(w.contains("`a` plus (`1` equals `b`)"), "{w}");
+        let w = words("r:select from t where (a+1)=b\n");
+        assert!(w.contains("(`a` plus `1`) equals `b`"), "{w}");
+        let w = words("r:select from t where px>2\n");
+        assert!(w.contains("`px` is greater than `2`."), "{w}");
+    }
 }
