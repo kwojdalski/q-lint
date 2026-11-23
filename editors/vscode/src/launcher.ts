@@ -2,7 +2,9 @@
 // starts, and where. No `vscode` import, so node tests it; `launcherview.ts`
 // starts and stops the processes and shows their output.
 import * as os from "os";
+import { statSync } from "node:fs";
 import { scriptPath } from "./connectscript";
+import { onPath } from "./relations";
 import type { Launch, Process } from "./processes";
 
 export const LAUNCH_COMMANDS = {
@@ -34,8 +36,17 @@ export interface Plan {
 /// `-p <port>` unless its arguments set one, then its arguments; in its
 /// `cwd`, else the workspace folder, else the home directory. A leading `~`
 /// (`~/`, or `~\` as Windows writes it) is the home directory, and a
-/// relative script or cwd is from the folder. An error when it cannot be started here.
-export function launchPlan(process: Process, qBinary: string, folder: string | undefined, home: string = os.homedir()): Plan | { error: string } {
+/// relative script or cwd is from the folder. A bare program name is found
+/// by `find`: on Windows in PATH's directories, never in the one it starts
+/// in, which is the workspace folder (#1286). An error when it cannot be
+/// started here.
+export function launchPlan(
+  process: Process,
+  qBinary: string,
+  folder: string | undefined,
+  home: string = os.homedir(),
+  find: (binary: string) => string | undefined = (binary) => onPath(binary, globalThis.process.env.PATH, isFile),
+): Plan | { error: string } {
   const launch: Launch | undefined = process.launch;
   if (launch === undefined) {
     return { error: `${process.label} has no launch definition. Set Launch Definition gives it one.` };
@@ -52,13 +63,25 @@ export function launchPlan(process: Process, qBinary: string, folder: string | u
     script = scriptPath(launch.script, home, cwd);
   }
   const args = launch.args ?? [];
-  const command = launch.command ?? qBinary;
+  const named = launch.command ?? qBinary;
+  const command = /^~([\\/]|$)/.test(named) ? scriptPath(named, home, undefined)! : find(named);
+  if (command === undefined) {
+    return { error: `${named} is not on PATH, so ${process.label} was not started: name the program by its path.` };
+  }
   return {
-    command: /^~([\\/]|$)/.test(command) ? scriptPath(command, home, undefined)! : command,
+    command,
     args: [...(script !== undefined ? [script] : []), ...(args.includes("-p") ? [] : ["-p", String(process.port)]), ...args],
     cwd,
     env: launch.env ?? {},
   };
+}
+
+function isFile(file: string): boolean {
+  try {
+    return statSync(file).isFile();
+  } catch {
+    return false;
+  }
 }
 
 /// A command line as the output shows it: each argument with a space or a
