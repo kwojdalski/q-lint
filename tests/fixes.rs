@@ -711,6 +711,19 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QE009", "f:{-':x}", "f:{(-':)x}", true),
         ("QE009", "f:{.foo.f/x}", "f:{(.foo.f/)x}", true),
         ("QE009", "f:{+/x+y}", "f:{(+/)x+y}", true),
+        // Each keyword in parentheses: on KDB-X `(cor) each x` is
+        // `each[cor;x]`, as `count each x` is. With an operand on the left
+        // what q 4 meant is not certain, so only in the editor.
+        ("QE011", "r:cor each x", "r:(cor) each x", true),
+        ("QE011", "r:1+mavg peach x", "r:1+(mavg) peach x", true),
+        ("QE011", "r:within over x", "r:(within) over x", true),
+        ("QE011", "r:xexp scan x", "r:(xexp) scan x", true),
+        ("QE011", "r:mod prior x", "r:(mod) prior x", true),
+        ("QE011", "r:+ each x", "r:(+) each x", true),
+        ("QE011", "f:{[x] cor each x}", "f:{[x] (cor) each x}", true),
+        ("QE011", "r:x in each y", "r:x (in) each y", false),
+        ("QE011", "r:x + each y", "r:x (+) each y", false),
+        ("QE011", "r:\"ab\" in each y", "r:\"ab\" (in) each y", false),
     ];
     for (code, source, expected, safe) in cases {
         let finding = lint(source, "probe.q", Profile::Uqf)
@@ -794,10 +807,11 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QE008", "f:{[a]-1 2}"),       // a literal, or neg of the vector
         ("QE008", "r:.%name%.summary"), // a template placeholder
         ("QE008", "r:a%.%b"),
-        ("QE009", "f:{+/-x}"),       // `(+/)-x` is minus
-        ("QE009", "f:{+/@[f;x;g]}"), // a glyph applied with brackets
-        ("QE009", "f:{{x+y}/x}"),    // a lambda operand
-        ("QE009", "f:{(1;/x)}"),     // no derived function at all
+        ("QE009", "f:{+/-x}"),        // `(+/)-x` is minus
+        ("QE009", "f:{+/@[f;x;g]}"),  // a glyph applied with brackets
+        ("QE009", "f:{{x+y}/x}"),     // a lambda operand
+        ("QE009", "f:{(1;/x)}"),      // no derived function at all
+        ("QE011", "r:f over each x"), // `(f over) each`, the author's to place
     ] {
         for finding in lint(source, "probe.q", Profile::Uqf)
             .iter()

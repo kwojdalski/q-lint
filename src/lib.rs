@@ -2524,6 +2524,49 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 true,
             )
         }
+        // `cor each x` becomes `(cor) each x`: with nothing on its left q 4
+        // took the keyword as each's function, as it does `count each x`,
+        // and on KDB-X `(cor) each x` is `each[cor;x]`. With an operand on
+        // the left - `x in each y` - what q 4 made of it is not certain, so
+        // only in the editor. An iterator keyword before another, `f over
+        // each x`, wants `(f over)`, which is the author's to place.
+        "QE011" => {
+            let m = re!(
+                r"^(?:([a-z]+)[ \t]+|([-+*%!&|<>=~,^#$?@])[ \t]*)(each|peach|over|scan|prior)\b"
+            )
+            .captures(v.code.get(start..)?)?;
+            let word = m.get(1).or(m.get(2))?.as_str();
+            let iterator = &m[3];
+            if matches!(word, "each" | "peach" | "over" | "scan" | "prior") {
+                return None;
+            }
+            let line_start = v.code[..start].rfind('\n').map_or(0, |p| p + 1);
+            let line = &source[line_start..];
+            let prompt = if line.starts_with("q)") { 2 } else { 0 };
+            // Read in the source: `code` blanks a string, which is an operand.
+            let left = source
+                .get(line_start + timed_prefix(line).max(prompt)..start)?
+                .trim_end_matches([' ', '\t']);
+            // A signature is no operand: `{[x] cor each y}`.
+            let signature = left.ends_with(']')
+                && left
+                    .bytes()
+                    .rev()
+                    .scan(0i32, |depth, c| {
+                        *depth += i32::from(c == b']') - i32::from(c == b'[');
+                        Some(*depth)
+                    })
+                    .position(|depth| depth == 0)
+                    .is_some_and(|p| left[..left.len() - 1 - p].ends_with('{'));
+            let infix = !signature
+                && left.ends_with(|c: char| c.is_ascii_alphanumeric() || "_.)]}\"`".contains(c));
+            (
+                &source[start..start + word.len()],
+                format!("({word})").into(),
+                format!("Write `({word})`, the function {iterator} applies").into(),
+                !infix,
+            )
+        }
         _ => return None,
     };
     // An edit that leaves a `-` against a number makes it a negative
