@@ -1048,7 +1048,7 @@ symbol (`` from `t `` or `` from (`t) ``), `set`, `upsert`, `insert`, `hdel`, `e
 `.Q.hdpf`, `.Q.en`, `.Q.chk`, `.Q.dsftg` (each also by its `.q.` name,
 `.q.set`), `0:` or `1:` to a file
 handle (`` `:f ``, or one made with `hsym`), `2:`, replaying a log with `-11!` (not `-11!(-1;..)` or `(-2;..)`,
-which only count and check it), an amend in place (`` @[`t;i;:;v] ``, `` .[(`t);i;f;v] ``) or
+which only count and check it), compressing a file with `-19!`, an amend in place (`` @[`t;i;:;v] ``, `` .[(`t);i;f;v] ``) or
 a functional update or delete in place (`` ![`t;c;b;a] ``),
 `value`, `get` or `eval` of a string, of `parse` or of an assignment tree
 (`` eval(:;`t;()) ``) or of a list headed by a writer's symbol

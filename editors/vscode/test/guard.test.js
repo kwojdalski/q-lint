@@ -270,3 +270,11 @@ test("a table symbol in parentheses after from or in an amend is a change (#1222
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("-19! compresses into a file and is a change (#1223)", () => {
+  assert.deepStrictEqual(writes("-19!(`:src;`:dst;17;2;6)"), ["writes a compressed file with -19!"]);
+  assert.deepStrictEqual(writes("x:-19!(`:src;`:dst;17;2;6)"), ["assigns x", "writes a compressed file with -19!"]);
+  // -21! reads compression stats; a subtraction is not -19!.
+  assert.deepStrictEqual(writes("-21!`:dst"), []);
+  assert.deepStrictEqual(writes("a-19"), []);
+});

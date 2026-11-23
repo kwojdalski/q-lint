@@ -24,7 +24,8 @@
 //   file handle (`` `:f 0: ``, `hsym[`f] 0:`, `(hsym `f) 1:`), and `2:`,
 //   each also by its `.q.` name (`.q.set`);
 // - `-11!`, which replays a log through `upd`, except `-11!(-1;..)` and
-//   `-11!(-2;..)`, which only count and check one;
+//   `-11!(-2;..)`, which only count and check one; `-19!`, which
+//   compresses a file into another;
 // - `@[` or `.[` on a variable named by a symbol, alone or in
 //   parentheses (`` .[(`t);..] ``), with four arguments: an
 //   amend in place (three is as often a trap, `.[`f;args;handler]`, and
@@ -355,6 +356,11 @@ function readStatement(statement: string, found: Set<string>): void {
     // `-11!` replays a log; `-11!(-1;..)` and `(-2;..)` only count and check it.
     if (k.kind === "num" && k.text === "-11" && next?.text === "!" && touching(k, next) && !(t[i + 2]?.text === "(" && /^-[12]$/.test(t[i + 3]?.text ?? ""))) {
       found.add("replays a log with -11!");
+      continue;
+    }
+    // `-19!` compresses a file into another one.
+    if (k.kind === "num" && k.text === "-19" && next?.text === "!" && touching(k, next)) {
+      found.add("writes a compressed file with -19!");
       continue;
     }
     if (k.kind === "num" && (k.text === "0" || k.text === "1" || k.text === "2") && next?.text === ":" && touching(k, next)) {
