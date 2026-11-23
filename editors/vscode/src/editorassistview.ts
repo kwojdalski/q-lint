@@ -99,6 +99,9 @@ class SlotHighlight {
   /// Bumped with each ask, so an answer to an older one is dropped.
   private asked = 0;
   shown: { slot: Slot; label?: string } | undefined;
+  /// The editor the slot was last drawn in, cleared when another is
+  /// updated: a decoration stays until its own editor is told (#1265).
+  private drawnIn: TextEditor | undefined;
 
   constructor(private readonly server: () => Server | undefined) {
     this.slot = window.createTextEditorDecorationType({
@@ -128,6 +131,10 @@ class SlotHighlight {
 
   async update(editor: TextEditor): Promise<void> {
     const asked = ++this.asked;
+    if (this.drawnIn !== undefined && this.drawnIn !== editor) {
+      this.clear(this.drawnIn);
+    }
+    this.drawnIn = editor;
     const document = editor.document;
     const lsp = this.server();
     if (document.languageId !== "q" || document.uri.scheme !== "file" || !editor.selection.isEmpty || lsp === undefined) {
