@@ -251,3 +251,22 @@ test("value, get or eval of a list headed by a writer's symbol is a change (#122
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("a table symbol in parentheses after from or in an amend is a change (#1222)", () => {
+  const cases = {
+    "update a:1 from (`t)": ["updates `t in place"],
+    "delete from ((`t)) where a>1": ["deletes from `t in place"],
+    ".[(`t);();,;1]": ["amends `t in place"],
+    "@[(`t);0;:;1]": ["amends `t in place"],
+    "![(`t);();0b;enlist`a]": ["updates or deletes from `t in place with !"],
+    // A value in parentheses, or a list of symbols, is not the table by name.
+    "update a:1 from (t)": [],
+    "select from (`t)": [],
+    "exec a from (`t)": [],
+    "@[(`a;`b);0;:;1]": [],
+    ".[(t);();,;1]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

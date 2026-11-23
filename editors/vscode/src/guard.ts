@@ -16,8 +16,8 @@
 //   `name::` or a dotted `.ns.name:` inside a lambda, where q makes them
 //   global. A column named in `select a:x from t` or `([] a:1 2)` is not
 //   an assignment;
-// - `update` or `delete` from a table named by a symbol (`` from `t ``),
-//   which changes it in place;
+// - `update` or `delete` from a table named by a symbol (`` from `t ``,
+//   `` from (`t) ``), which changes it in place;
 // - `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`, `system`,
 //   `save`, `rsave`, `dsave`, `load`, `rload`, `.Q.dpft`, `.Q.dpfts`,
 //   `.Q.hdpf`, `.Q.en`, `.Q.chk` and `.Q.dsftg`, and `0:` or `1:` to a
@@ -25,7 +25,8 @@
 //   each also by its `.q.` name (`.q.set`);
 // - `-11!`, which replays a log through `upd`, except `-11!(-1;..)` and
 //   `-11!(-2;..)`, which only count and check one;
-// - `@[` or `.[` on a variable named by a symbol, with four arguments: an
+// - `@[` or `.[` on a variable named by a symbol, alone or in
+//   parentheses (`` .[(`t);..] ``), with four arguments: an
 //   amend in place (three is as often a trap, `.[`f;args;handler]`, and
 //   is not taken for one); `![` likewise, a functional update or delete;
 // - `value`, `get` or `eval` applied to a string, to `parse`, or to a
@@ -190,6 +191,25 @@ function unqualified(name: string): string {
   return name.startsWith(".q.") ? name.slice(3) : name;
 }
 
+/// The symbol at `t[i]`, alone or in parentheses: `` `t `` and `` (`t) ``
+/// both name the table `t`.
+function symbolAt(t: Token[], i: number): string | undefined {
+  let open = 0;
+  while (t[i + open]?.text === "(" && t[i + open]?.kind === "open") {
+    open++;
+  }
+  const k = t[i + open];
+  if (k?.kind !== "sym") {
+    return undefined;
+  }
+  for (let n = 1; n <= open; n++) {
+    if (t[i + open + n]?.text !== ")") {
+      return undefined;
+    }
+  }
+  return k.text;
+}
+
 /// What one statement does that the guard asks about, added to `found`.
 function readStatement(statement: string, found: Set<string>): void {
   const text = statement.trimStart();
@@ -229,7 +249,8 @@ function readStatement(statement: string, found: Set<string>): void {
       lambdas += kind === "lambda" ? 1 : 0;
       tables += kind === "table" ? 1 : 0;
       const amend = t[i - 1]?.kind === "op" ? t[i - 1].text : "";
-      if (k.text === "[" && (amend === "@" || amend === "." || amend === "!") && next?.kind === "sym" && next.text.length > 1) {
+      const target = symbolAt(t, i + 1);
+      if (k.text === "[" && (amend === "@" || amend === "." || amend === "!") && target !== undefined && target.length > 1) {
         // Count the arguments at this depth.
         let depth = 0;
         let args = 1;
@@ -242,7 +263,7 @@ function readStatement(statement: string, found: Set<string>): void {
         }
         // Three is a trap as often as an amend: `.[`f;args;handler]`.
         if (args >= 4) {
-          found.add(amend === "!" ? `updates or deletes from ${next.text} in place with !` : `amends ${next.text} in place`);
+          found.add(amend === "!" ? `updates or deletes from ${target} in place with !` : `amends ${target} in place`);
         }
       }
       continue;
@@ -259,8 +280,9 @@ function readStatement(statement: string, found: Set<string>): void {
         continue;
       }
       if (k.text === "from" && qsql !== undefined) {
-        if ((qsql === "update" || qsql === "delete") && next?.kind === "sym") {
-          found.add(next.text === "`." ? "deletes from the root namespace" : `${qsql === "update" ? "updates" : "deletes from"} ${next.text} in place`);
+        const table = symbolAt(t, i + 1);
+        if ((qsql === "update" || qsql === "delete") && table !== undefined) {
+          found.add(table === "`." ? "deletes from the root namespace" : `${qsql === "update" ? "updates" : "deletes from"} ${table} in place`);
         }
         qsql = undefined;
         continue;
