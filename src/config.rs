@@ -34,6 +34,10 @@
 //! extend-select = ["QS001"]         # added to whatever is selected
 //! ignore = ["QF016"]
 //! per-file-ignores = { "tests/*" = ["QS"] }
+//!
+//! [severity]                        # by code or prefix; the longest decides
+//! QS = "info"                       # error | warning | info (information) | hint
+//! QS006 = "warning"
 //! ```
 //!
 //! Selection is resolved the way Ruff resolves it: within one file, the most
@@ -41,6 +45,12 @@
 //! keeps every QF rule but one, and `ignore = ["QS"]` with
 //! `extend-select = ["QS001"]` keeps QS001 alone. A file that `extend`s
 //! another is applied after it, and the command line after both.
+//!
+//! `[severity]` may also go under `[lint]`. A file that `extend`s another
+//! keeps the base's entries and overrides them one by one, by selector. A
+//! severity only changes
+//! how a finding is reported - and whether it fails the run, which only an
+//! error or a warning does - never whether it is.
 //!
 //! Nothing here reads q source; a configuration is TOML and is only parsed.
 
@@ -70,8 +80,34 @@ const DEFAULT_EXCLUDE: [&str; 7] = [
     "dist",
     "target",
 ];
-const KEYS: &str = "profile, select, extend-select, ignore, per-file-ignores, exclude, \
-                    extend-exclude, extend, target-version, baseline, required-version and [lint]";
+/// Every key a configuration's top level may hold, and those `[lint]` may.
+/// The editor's JSON Schema, `editors/vscode/schemas/qlinter.schema.json`,
+/// is tested against both.
+pub const TOP_KEYS: [&str; 13] = [
+    "profile",
+    "select",
+    "extend-select",
+    "ignore",
+    "per-file-ignores",
+    "exclude",
+    "extend-exclude",
+    "extend",
+    "lint",
+    "target-version",
+    "baseline",
+    "required-version",
+    "severity",
+];
+pub const LINT_KEYS: [&str; 5] = [
+    "select",
+    "extend-select",
+    "ignore",
+    "per-file-ignores",
+    "severity",
+];
+/// What `[severity]` may set a rule to: the names an editor shows, with
+/// `info` for `information`.
+pub const SEVERITIES: [&str; 5] = ["error", "warning", "info", "information", "hint"];
 
 /// One step of rule selection: a configuration file's, or the command line's.
 #[derive(Clone, Debug, Default)]
@@ -109,6 +145,9 @@ pub struct Settings {
     /// they are called - so a language server knows to re-read when a base
     /// changes (#419).
     sources: Vec<PathBuf>,
+    /// `[severity]`: a selector and the severity it reports with, `info`
+    /// spelled so; the longest selector that names a code decides.
+    severity: Vec<(String, String)>,
 }
 
 /// What the command line says, which wins over any file.
@@ -477,6 +516,11 @@ impl Policy {
                 Err(e) => return Err(e.clone()),
             }
         }
+        for f in &mut found {
+            if let Some(level) = severity_of(&settings, &f.code) {
+                f.severity = level.to_string();
+            }
+        }
         Ok(found)
     }
 
@@ -610,6 +654,18 @@ fn apply(layer: &Layer, code: &str, on: bool) -> bool {
         (None, Some(_)) => false,
         (None, None) => on && layer.select.is_none(),
     }
+}
+
+/// The severity `settings` give `code`, if they give one: the longest
+/// selector that names it, the last written winning a tie.
+fn severity_of<'a>(settings: &'a Settings, code: &str) -> Option<&'a str> {
+    settings
+        .severity
+        .iter()
+        .rev()
+        .filter(|(s, _)| names(s, code))
+        .max_by_key(|(s, _)| if s == "ALL" { 0 } else { s.len() })
+        .map(|(_, level)| level.as_str())
 }
 
 /// The rules whose convention is the opposite of another's, each beside
@@ -782,24 +838,15 @@ fn load(
         .unwrap_or_default();
 
     for key in table.keys() {
-        if ![
-            "profile",
-            "select",
-            "extend-select",
-            "ignore",
-            "per-file-ignores",
-            "exclude",
-            "extend-exclude",
-            "extend",
-            "lint",
-            "target-version",
-            "baseline",
-            "required-version",
-        ]
-        .contains(&key.as_str())
-        {
+        if !TOP_KEYS.contains(&key.as_str()) {
             return Err(format!(
-                "{shown}: unknown key `{key}`; qlinter reads {KEYS}"
+                "{shown}: unknown key `{key}`; qlinter reads {} and [lint]",
+                TOP_KEYS
+                    .iter()
+                    .filter(|k| **k != "lint")
+                    .copied()
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ));
         }
     }
@@ -811,10 +858,10 @@ fn load(
             .clone(),
     };
     for key in lint.keys() {
-        if !["select", "extend-select", "ignore", "per-file-ignores"].contains(&key.as_str()) {
+        if !LINT_KEYS.contains(&key.as_str()) {
             return Err(format!(
-                "{shown}: unknown key `lint.{key}`; [lint] reads select, extend-select, ignore \
-                 and per-file-ignores"
+                "{shown}: unknown key `lint.{key}`; [lint] reads {}",
+                LINT_KEYS.join(", ")
             ));
         }
         if table.contains_key(key) {
@@ -950,6 +997,31 @@ fn load(
                 .map_err(|e| format!("{shown}: per-file-ignores: {e}"))?;
             rooted.negated = negated;
             settings.per_file_ignores.push((rooted, codes));
+        }
+    }
+    if let Some(v) = get("severity") {
+        let map = v.as_table().ok_or_else(|| {
+            format!("{shown}: severity must be a table of code = \"error\" | \"warning\" | ...")
+        })?;
+        for (code, level) in map {
+            let code = selector("severity", code).map_err(|e| format!("{shown}: {e}"))?;
+            let level = level
+                .as_str()
+                .filter(|l| SEVERITIES.contains(l))
+                .ok_or_else(|| {
+                    format!(
+                        "{shown}: severity.{code} must be error, warning, info, information or \
+                         hint, not {level}"
+                    )
+                })?;
+            let level = if level == "information" {
+                "info"
+            } else {
+                level
+            };
+            // What this file says for a selector replaces what it extends.
+            settings.severity.retain(|(s, _)| *s != code);
+            settings.severity.push((code, level.to_string()));
         }
     }
     Ok(Some(settings))

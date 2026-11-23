@@ -2588,7 +2588,8 @@ one the server's default is `style`, while the command line's is `uqf`, and
 the editor shows fewer findings than CI. `q-lint.profile`, `q-lint.configFile` and
 `q-lint.serverArgs` replace parts of the repository's configuration;
 `q-lint.lint.*` only narrows it. `q-lint.lint.severity` changes how a finding
-looks, not whether it is reported. Neither the configuration's `exclude` nor
+looks, not whether it is reported, and overrides the configuration's
+`[severity]` for you alone. Neither the configuration's `exclude` nor
 `q-lint.workspaceIndex.exclude` hides diagnostics on a file you open.
 
 ### Query settings

@@ -2008,6 +2008,39 @@ fn a_severity_setting_overrides_by_the_longest_prefix() {
 }
 
 #[test]
+fn a_configured_severity_is_mapped_and_the_editor_setting_still_wins() {
+    // The repository's `[severity]` is what CI reports; an editor's own
+    // `lint.severity` overrides it for that user, code by code (#1176).
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join(".qlinter.toml"),
+        "profile = \"styleq\"\n[severity]\nQF = \"hint\"\nQS001 = \"info\"\n",
+    )
+    .unwrap();
+    let uri = file_uri(&dir.path().join("a.q"));
+    let severities = |options: Value| {
+        let (mut server, _) = start_with_options(dir.path(), &["--lsp"], options, None);
+        server.open(&uri, TWO_FAMILIES);
+        let diagnostics = server.diagnostics_for(&uri);
+        let by_code = |code: &str| {
+            diagnostics
+                .iter()
+                .find(|d| d["code"] == code)
+                .unwrap_or_else(|| panic!("{code} in {diagnostics:?}"))["severity"]
+                .clone()
+        };
+        let found = (by_code("QF001"), by_code("QS001"));
+        assert_eq!(server.shutdown_and_exit(), 0);
+        found
+    };
+    assert_eq!(severities(json!({})), (json!(4), json!(3)));
+    assert_eq!(
+        severities(json!({"lint": {"severity": {"QS001": "error"}}})),
+        (json!(4), json!(1))
+    );
+}
+
+#[test]
 fn the_workspace_index_can_be_turned_off_or_narrowed() {
     // vendor/lib.q defines cfg. Indexed, app.q's read of it is defined; with
     // the index off, or vendor/ excluded from it, it is not.
