@@ -135,3 +135,94 @@ pub fn sarif(findings: &[Finding], sources: &[(String, String)], cwd: &Path) -> 
         }],
     })
 }
+
+/// A workflow command's message, escaped as the Actions runner reads it:
+/// `%`, CR and LF.
+fn command_data(text: &str) -> String {
+    text.replace('%', "%25")
+        .replace('\r', "%0D")
+        .replace('\n', "%0A")
+}
+
+/// A workflow command's property value: its data escaping, and `:` and `,`,
+/// which would otherwise end the value.
+fn command_property(text: &str) -> String {
+    command_data(text).replace(':', "%3A").replace(',', "%2C")
+}
+
+/// One GitHub Actions workflow command per finding - `::error`,
+/// `::warning` or `::notice` - which a run shows as an annotation on the
+/// line it names.
+pub fn github(f: &Finding, cwd: &Path) -> String {
+    let kind = match f.severity.as_str() {
+        "error" => "error",
+        "warning" => "warning",
+        _ => "notice",
+    };
+    let mut props = format!(
+        "file={},line={}",
+        command_property(&shown(cwd, &f.path)),
+        f.line
+    );
+    if let Some(c) = f.column {
+        props.push_str(&format!(",col={c}"));
+    }
+    if let Some(l) = f.end_line {
+        props.push_str(&format!(",endLine={l}"));
+    }
+    if let Some(c) = f.end_column {
+        props.push_str(&format!(",endColumn={c}"));
+    }
+    format!(
+        "::{kind} {props},title={}::{}",
+        command_property(&f.code),
+        command_data(&f.detail)
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn finding(path: &str, detail: &str) -> Finding {
+        Finding {
+            path: path.into(),
+            line: 3,
+            rule: "r".into(),
+            detail: detail.into(),
+            why: String::new(),
+            source: "q-lint".into(),
+            severity: "warning".into(),
+            column: Some(2),
+            end_line: Some(3),
+            end_column: Some(5),
+            code: "QS001".into(),
+            category: "style".into(),
+        }
+    }
+
+    #[test]
+    fn a_workflow_command_escapes_its_properties_and_its_message() {
+        let cwd = Path::new("/r");
+        let f = finding("/r/a:b,c%.q", "100% sure:\r\nnext, line");
+        assert_eq!(
+            github(&f, cwd),
+            "::warning file=a%3Ab%2Cc%25.q,line=3,col=2,endLine=3,endColumn=5,title=QS001\
+             ::100%25 sure:%0D%0Anext, line"
+        );
+        let mut error = finding("/r/a.q", "x");
+        error.severity = "error".into();
+        (error.column, error.end_line, error.end_column) = (None, None, None);
+        assert_eq!(
+            github(&error, cwd),
+            "::error file=a.q,line=3,title=QS001::x"
+        );
+        error.severity = "info".into();
+        assert!(github(&error, cwd).starts_with("::notice "));
+    }
+
+    #[test]
+    fn a_uri_keeps_its_path_and_encodes_the_rest() {
+        assert_eq!(uri("src/a b#1.q"), "src/a%20b%231.q");
+    }
+}

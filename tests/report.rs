@@ -111,3 +111,20 @@ fn a_clean_sarif_run_still_names_the_tool() {
     assert_eq!(report["runs"][0]["tool"]["driver"]["name"], "qlinter");
     assert_eq!(report["runs"][0]["results"], serde_json::json!([]));
 }
+
+#[test]
+fn github_prints_one_workflow_command_per_finding() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("a.q"), TWO).unwrap();
+    let (status, out, err) = run(dir.path(), &["--format", "github", "a.q"]);
+    assert_eq!(status, Some(1), "{err}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 2, "{out}");
+    assert!(lines[0].starts_with("::warning file=a.q,line=1"), "{out}");
+    assert!(lines[0].contains(",title=QS001::"), "{out}");
+    assert!(
+        lines[1].starts_with("::error file=a.q,line=2,col="),
+        "{out}"
+    );
+    assert!(lines[1].contains(",title=QF001::"), "{out}");
+}

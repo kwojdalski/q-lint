@@ -724,6 +724,11 @@ fn run(args: Args) -> Result<u8, String> {
         let cwd = config::absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
         let report = report::sarif(&findings, &sources, &cwd);
         out!("{}", serde_json::to_string_pretty(&report).unwrap());
+    } else if args.format == "github" {
+        let cwd = config::absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
+        for f in &findings {
+            out!("{}", report::github(f, &cwd));
+        }
     } else {
         let paint = Paint::for_stdout(&args.color);
         for f in &findings {

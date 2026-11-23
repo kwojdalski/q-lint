@@ -196,6 +196,12 @@ its file, code and line text - so a finding keeps its identity when lines are
 added above it and gets a new one when its own line is edited. Paths are
 relative to the directory qlinter runs in; run it from the repository root.
 
+`--format github` prints one GitHub Actions workflow command per finding -
+`::error`, `::warning` or `::notice` with its file, line, columns and the
+rule's code as the title - which a workflow run shows as annotations on the
+lines they name. `%`, CR and LF are escaped in the message, and `:` and `,` as
+well in the properties.
+
 ### The dependency graph: `qlinter analyze graph`
 
 ```sh
