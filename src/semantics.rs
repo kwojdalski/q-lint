@@ -2699,19 +2699,26 @@ pub fn check(
     // is code. A nested lambda's lines count toward the one around it: they
     // are read as part of it, inline, and moving a nested lambda out to a
     // name of its own is exactly the shortening this rule asks for.
+    // `[rules.QS006] max-lines` moves the threshold.
+    let max_lines = crate::options::current().max_lines;
     for scope in &scopes {
         let lines = comments[scope.start..(scope.end + 1).min(comments.len())]
             .lines()
             .filter(|line| !line.trim().is_empty())
             .count();
-        if lines > 25 {
+        if lines > max_lines {
+            let limit = if max_lines == 25 {
+                "twenty five".to_string()
+            } else {
+                max_lines.to_string()
+            };
             out.push(Finding::at(
                 path,
                 raw,
                 scope.start,
                 "QS006",
                 format!(
-                    "This lambda is {lines} lines of code; over twenty five is hard to hold in mind"
+                    "This lambda is {lines} lines of code; over {limit} is hard to hold in mind"
                 ),
             ));
         }

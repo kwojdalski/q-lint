@@ -38,6 +38,9 @@
 //! [severity]                        # by code or prefix; the longest decides
 //! QS = "info"                       # error | warning | info (information) | hint
 //! QS006 = "warning"
+//!
+//! [rules.QS006]                     # a rule's own options; `options::OPTIONS` lists them
+//! max-lines = 40
 //! ```
 //!
 //! Selection is resolved the way Ruff resolves it: within one file, the most
@@ -46,9 +49,9 @@
 //! `extend-select = ["QS001"]` keeps QS001 alone. A file that `extend`s
 //! another is applied after it, and the command line after both.
 //!
-//! `[severity]` may also go under `[lint]`. A file that `extend`s another
-//! keeps the base's entries and overrides them one by one, by selector. A
-//! severity only changes
+//! `[severity]` and `[rules.<CODE>]` may also go under `[lint]`. A file that
+//! `extend`s another keeps the base's entries and overrides them one by one:
+//! a severity by its selector, an option by its key. A severity only changes
 //! how a finding is reported - and whether it fails the run, which only an
 //! error or a warning does - never whether it is.
 //!
@@ -56,7 +59,9 @@
 
 use crate::baseline::Baseline;
 use q_lint_rs::{
-    Finding, Profile, RULES, Target, Workspace, lint_every_rule, version_reported_for,
+    Finding, Profile, RULES, Target, Workspace, lint_every_rule,
+    options::{self, OptionsScope, RuleOptions},
+    version_reported_for,
 };
 use std::{
     cell::RefCell,
@@ -83,7 +88,7 @@ const DEFAULT_EXCLUDE: [&str; 7] = [
 /// Every key a configuration's top level may hold, and those `[lint]` may.
 /// The editor's JSON Schema, `editors/vscode/schemas/qlinter.schema.json`,
 /// is tested against both.
-pub const TOP_KEYS: [&str; 13] = [
+pub const TOP_KEYS: [&str; 14] = [
     "profile",
     "select",
     "extend-select",
@@ -97,13 +102,15 @@ pub const TOP_KEYS: [&str; 13] = [
     "baseline",
     "required-version",
     "severity",
+    "rules",
 ];
-pub const LINT_KEYS: [&str; 5] = [
+pub const LINT_KEYS: [&str; 6] = [
     "select",
     "extend-select",
     "ignore",
     "per-file-ignores",
     "severity",
+    "rules",
 ];
 /// What `[severity]` may set a rule to: the names an editor shows, with
 /// `info` for `information`.
@@ -148,6 +155,8 @@ pub struct Settings {
     /// `[severity]`: a selector and the severity it reports with, `info`
     /// spelled so; the longest selector that names a code decides.
     severity: Vec<(String, String)>,
+    /// `[rules.<CODE>]`: what the rules with options are run with.
+    options: Rc<RuleOptions>,
 }
 
 /// What the command line says, which wins over any file.
@@ -490,7 +499,10 @@ impl Policy {
             }
             other => other.map(|()| false)?,
         };
-        let mut found = lint_every_rule(source, path, ws, structure);
+        let mut found = {
+            let _options = OptionsScope::install(settings.options.clone());
+            lint_every_rule(source, path, ws, structure)
+        };
         let target = self.target(&settings);
         found.retain(|f| {
             !(conflict && OPPOSITE.contains(&f.code.as_str()))
@@ -1023,6 +1035,50 @@ fn load(
             settings.severity.retain(|(s, _)| *s != code);
             settings.severity.push((code, level.to_string()));
         }
+    }
+    if let Some(v) = get("rules") {
+        let map = v
+            .as_table()
+            .ok_or_else(|| format!("{shown}: rules must be a table of [rules.<CODE>] tables"))?;
+        let mut rules = (*settings.options).clone();
+        for (code, table) in map {
+            let table = table
+                .as_table()
+                .ok_or_else(|| format!("{shown}: rules.{code} must be a table"))?;
+            for (key, value) in table {
+                let bad = |what: &str| format!("{shown}: [rules.{code}] {key} must be {what}");
+                let kind = options::OPTIONS
+                    .iter()
+                    .find(|o| o.code == code && o.key == key)
+                    .map(|o| o.kind);
+                let value = match (kind, value) {
+                    (Some(options::Kind::Count), toml::Value::Integer(n)) => {
+                        options::Value::Count(*n)
+                    }
+                    (Some(options::Kind::Count), _) => return Err(bad("an integer")),
+                    (Some(options::Kind::Words), toml::Value::Array(items)) => {
+                        options::Value::Words(
+                            items
+                                .iter()
+                                .map(|w| w.as_str().map(str::to_string))
+                                .collect::<Option<_>>()
+                                .ok_or_else(|| bad("a list of strings"))?,
+                        )
+                    }
+                    (Some(options::Kind::Words), _) => return Err(bad("a list of strings")),
+                    (Some(options::Kind::Pattern), toml::Value::String(p)) => {
+                        options::Value::Pattern(p.clone())
+                    }
+                    (Some(options::Kind::Pattern), _) => return Err(bad("a string")),
+                    // Unknown: `set` says what the rule does read.
+                    (None, _) => options::Value::Count(0),
+                };
+                rules
+                    .set(code, key, value)
+                    .map_err(|e| format!("{shown}: {e}"))?;
+            }
+        }
+        settings.options = Rc::new(rules);
     }
     Ok(Some(settings))
 }

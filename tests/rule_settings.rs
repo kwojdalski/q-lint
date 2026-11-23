@@ -1,5 +1,6 @@
-//! `[severity]` in a configuration: how a finding is reported in every
-//! output format (#1176).
+//! `[severity]` and `[rules.<CODE>]` in a configuration: how a finding is
+//! reported in every output format (#1176), and the thresholds and word
+//! lists a few rules read (#1177).
 
 use std::{fs, path::Path, process::Command};
 
@@ -57,7 +58,7 @@ fn codes(dir: &Path) -> Vec<String> {
 }
 
 #[test]
-fn without_a_severity_each_rule_reports_as_its_own() {
+fn without_options_the_built_in_thresholds_and_words_apply() {
     let dir = project("");
     let found = findings(dir.path());
     assert_eq!(
@@ -67,6 +68,64 @@ fn without_a_severity_each_rule_reports_as_its_own() {
     assert!(found[0].2.contains("TODO"), "{found:?}");
     assert!(found[1].2.contains("apiPassword"), "{found:?}");
     assert!(found.iter().all(|f| f.1 == "warning"));
+}
+
+#[test]
+fn qs006_max_lines_moves_the_threshold() {
+    let dir = project("[rules.QS006]\nmax-lines = 4\n");
+    let found = findings(dir.path());
+    let qs006: Vec<_> = found.iter().filter(|f| f.0 == "QS006").collect();
+    assert_eq!(qs006.len(), 1, "{found:?}");
+    assert!(qs006[0].2.contains("over 4"), "{found:?}");
+    let dir = project("[rules.QS006]\nmax-lines = 5\n");
+    assert!(!codes(dir.path()).contains(&"QS006".to_string()));
+}
+
+#[test]
+fn ql001_markers_replace_the_words_reported() {
+    let dir = project("[rules.QL001]\nmarkers = [\"NOTE\"]\n");
+    let found: Vec<_> = findings(dir.path())
+        .into_iter()
+        .filter(|f| f.0 == "QL001")
+        .collect();
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].2.contains("`NOTE`"), "{found:?}");
+}
+
+#[test]
+fn qx002_name_pattern_replaces_the_names_read_as_credentials() {
+    let dir = project("[lint.rules.QX002]\nname-pattern = \"cred$\"\n");
+    let found: Vec<_> = findings(dir.path())
+        .into_iter()
+        .filter(|f| f.0 == "QX002")
+        .collect();
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].2.contains("`dbcred`"), "{found:?}");
+}
+
+#[test]
+fn an_unknown_option_or_a_wrong_value_is_a_configuration_error() {
+    for (config, said) in [
+        (
+            "[rules.QS006]\nmax-line = 4\n",
+            "unknown option `max-line`; QS006 reads max-lines",
+        ),
+        ("[rules.QF001]\nx = 1\n", "QF001 has no options"),
+        ("[rules.QS006]\nmax-lines = 0\n", "an integer of at least 1"),
+        ("[rules.QS006]\nmax-lines = \"9\"\n", "must be an integer"),
+        ("[rules.QL001]\nmarkers = []\n", "nonempty list of words"),
+        (
+            "[rules.QL001]\nmarkers = [\"TO DO\"]\n",
+            "nonempty list of words",
+        ),
+        ("[rules.QX002]\nname-pattern = \"(\"\n", "name-pattern"),
+        ("rules = 1\n", "rules must be a table"),
+    ] {
+        let dir = project(config);
+        let (status, _, err) = run(dir.path(), &[]);
+        assert_eq!(status, Some(2), "{config}: {err}");
+        assert!(err.contains(said), "{config}: {err}");
+    }
 }
 
 #[test]
@@ -130,4 +189,33 @@ fn a_severity_must_name_a_rule_and_a_level() {
         assert_eq!(status, Some(2), "{config}: {err}");
         assert!(err.contains(said), "{config}: {err}");
     }
+}
+
+#[test]
+fn an_extending_file_overrides_severities_and_options_one_by_one() {
+    let dir = project(
+        "extend = \"base.toml\"\n[severity]\nQL001 = \"hint\"\n[rules.QS006]\nmax-lines = 4\n",
+    );
+    fs::write(
+        dir.path().join("base.toml"),
+        "[severity]\nQL001 = \"error\"\nQX002 = \"error\"\n\
+         [rules.QS006]\nmax-lines = 99\n[rules.QL001]\nmarkers = [\"NOTE\"]\n",
+    )
+    .unwrap();
+    let found = findings(dir.path());
+    let level = |code: &str| {
+        found
+            .iter()
+            .find(|f| f.0 == code)
+            .unwrap_or_else(|| panic!("{code} in {found:?}"))
+            .1
+            .clone()
+    };
+    assert_eq!(level("QL001"), "hint");
+    assert_eq!(level("QX002"), "error");
+    assert_eq!(level("QS006"), "warning");
+    assert!(
+        found.iter().any(|f| f.0 == "QL001" && f.2.contains("NOTE")),
+        "{found:?}"
+    );
 }
