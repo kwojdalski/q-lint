@@ -1005,7 +1005,8 @@ is sent; Escape sends nothing. A change is: assigning a global (`a:1`,
 symbol (`` from `t ``), `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`,
 `system`, `.Q.dpft`, `.Q.dpfts`, `.Q.hdpf`, `.Q.en`, `0:` or `1:` to a file
 handle, `2:`, replaying a log with `-11!` (not `-11!(-1;..)` or `(-2;..)`,
-which only count and check it), an amend in place (`` @[`t;i;:;v] ``),
+which only count and check it), an amend in place (`` @[`t;i;:;v] ``) or
+a functional update or delete in place (`` ![`t;c;b;a] ``),
 `value` or `eval` of a string, and a system command other than one that
 reads a setting (`\c`, `\d`, `\P` alone) - `\t` and `\ts` are read for their
 expression, except `\t 500`, which sets the timer. It holds for every

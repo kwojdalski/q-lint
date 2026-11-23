@@ -25,7 +25,7 @@
 //   `-11!(-2;..)`, which only count and check one;
 // - `@[` or `.[` on a variable named by a symbol, with four arguments: an
 //   amend in place (three is as often a trap, `.[`f;args;handler]`, and
-//   is not taken for one);
+//   is not taken for one); `![` likewise, a functional update or delete;
 // - `value` or `eval` applied to a string;
 // - a system command (`\l`, `\cd x`, `\\`), except one that only reads a
 //   setting (`\c`, `\d`, `\P` without an argument) and `\t` or `\ts`, whose
@@ -192,7 +192,8 @@ function readStatement(statement: string, found: Set<string>): void {
       stack.push(kind);
       lambdas += kind === "lambda" ? 1 : 0;
       tables += kind === "table" ? 1 : 0;
-      if (k.text === "[" && (t[i - 1]?.text === "@" || t[i - 1]?.text === ".") && t[i - 1]?.kind === "op" && next?.kind === "sym" && next.text.length > 1) {
+      const amend = t[i - 1]?.kind === "op" ? t[i - 1].text : "";
+      if (k.text === "[" && (amend === "@" || amend === "." || amend === "!") && next?.kind === "sym" && next.text.length > 1) {
         // Count the arguments at this depth.
         let depth = 0;
         let args = 1;
@@ -205,7 +206,7 @@ function readStatement(statement: string, found: Set<string>): void {
         }
         // Three is a trap as often as an amend: `.[`f;args;handler]`.
         if (args >= 4) {
-          found.add(`amends ${next.text} in place`);
+          found.add(amend === "!" ? `updates or deletes from ${next.text} in place with !` : `amends ${next.text} in place`);
         }
       }
       continue;

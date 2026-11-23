@@ -90,6 +90,20 @@ test("in-place updates, writers, file writes and amends are changes", () => {
   }
 });
 
+test("a functional update or delete on a global table is a change (#1064)", () => {
+  const cases = {
+    "![`trade;();0b;enlist`price]": ["updates or deletes from `trade in place with !"],
+    "![`trade;enlist(=;`sym;enlist`a);0b;`symbol$()]": ["updates or deletes from `trade in place with !"],
+    "f:{![`trade;();0b;`symbol$()]}": ["assigns f", "updates or deletes from `trade in place with !"],
+    // On a value it returns a new table; three arguments is not one.
+    "![trade;();0b;enlist`price]": [],
+    "![`trade;();0b]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
 test("system commands are changes, except bare reads of a setting; \\t is read for its expression", () => {
   const cases = {
     "\\l file.q": ["runs the system command \\l"],
