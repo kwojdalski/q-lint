@@ -89,7 +89,8 @@ to a process you add and connect to, and sends only the code you run.
 - **Continuation indent on Enter**: after a line that leaves a bracket open -
   `f:{[x]`, `select from t where x in (1;2` - the new line is indented, so
   it continues the definition rather than ending it, as a line at column 0
-  does in a q script. A comment line is never indented after, a bracket in
+  does in a q script. A bracket in a string, or one closed on the line
+  (`f:{a[b[1]]`, up to four deep), leaves the open one open. A comment line is never indented after, a bracket in
   a trailing comment opens nothing, and nothing is ever outdented: a closing
   line cannot tell which bracket it closes, and a `}` at the margin is an
   error. `q-lint.editor.continuationIndent.enable` turns it off without a
