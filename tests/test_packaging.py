@@ -67,3 +67,10 @@ def test_the_readme_pre_commit_example_names_a_real_hook():
     [repo] = yaml.safe_load(example)["repos"]
     assert repo["repo"] == "https://github.com/kwojdalski/q-lint"
     assert {h["id"] for h in repo["hooks"]} <= set(hooks())
+
+
+def test_the_release_publishes_sha256sums_beside_the_nine_assets():
+    [publish] = [s["run"] for s in workflow("release.yml")["jobs"]["release"]["steps"] if s.get("name") == "Publish"]
+    assert "sha256sum" in publish and "> SHA256SUMS" in publish
+    assert '-eq 9' in publish
+    assert re.search(r"\$\(cat assets\) SHA256SUMS\s*$", publish)

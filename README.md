@@ -1016,7 +1016,9 @@ python3 scripts/dist.py install 0.14.9     # install a release, downloading it i
 machine it runs on - it does not cross-compile; the release workflow builds
 every platform. A build of anything but a clean checkout of the tag `vX.Y.Z`
 lands in `dist/vX.Y.Z-dev/`, so it is never mistaken for the release. Each
-folder carries a `SHA256SUMS`. `install` puts `qlinter` in `~/.local/bin`
+folder carries a `SHA256SUMS`. A release publishes one too, and `download` checks
+every file it fetches against it: a file whose sha256 differs is deleted and
+the run refused. `install` puts `qlinter` in `~/.local/bin`
 (`--bin-dir` to change it) and the extension into VS Code; reload the window
 afterwards. Neither the archive nor the wheel needs Rust or Python to run, and
 `--backend qls` still needs a separately installed qls.

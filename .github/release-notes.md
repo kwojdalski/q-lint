@@ -24,3 +24,7 @@ qlinter src/           # lint a tree
 qlinter --rules        # the rule catalogue
 qlinter --explain QF001
 ```
+
+**Checking a download** — `SHA256SUMS` lists the sha256 of every file above:
+`sha256sum -c SHA256SUMS --ignore-missing` (or `shasum -a 256 -c` on macOS)
+in the folder you downloaded to.
