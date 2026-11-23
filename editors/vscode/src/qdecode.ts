@@ -73,6 +73,17 @@ const LONG_INF = 9223372036854775807n;
 /// Bytes each item of a simple list of type `t` takes; 0 for a symbol.
 const WIDTH = [0, 1, 16, 0, 1, 2, 4, 8, 4, 8, 1, 0, 8, 4, 4, 8, 8, 4, 4, 4];
 
+/// q's primitives by type (101 unary, 102 binary, 103 iterator) and index,
+/// as KDB-X prints each: `-9!0x010000000a000000650d` is `#:`.
+const PRIMITIVES: readonly (readonly string[])[] = [
+  ["::", "+:", "-:", "*:", "%:", "&:", "|:", "^:", "=:", "<:", ">:", "$:", ",:", "#:", "_:", "~:", "!:", "?:", "@:", ".:",
+    "0::", "1::", "2::", "avg", "last", "sum", "prd", "min", "max", "exit", "getenv", "abs", "sqrt", "log", "exp", "sin",
+    "asin", "cos", "acos", "tan", "atan", "enlist", "var", "dev", "hopen"],
+  [":", "+", "-", "*", "%", "&", "|", "^", "=", "<", ">", "$", ",", "#", "_", "~", "!", "?", "@", ".", "0:", "1:", "2:",
+    "in", "within", "like", "bin", "ss", "insert", "wsum", "wavg", "div", "xexp", "setenv", "binr", "cov", "cor"],
+  ["'", "/", "\\", "':", "/:", "\\:"],
+];
+
 /// The value a whole q message holds (its header included), with its types.
 /// Throws on what it cannot read, an error message included.
 export function decode(message: Buffer): QValue {
@@ -153,8 +164,10 @@ export function decode(message: Buffer): QValue {
       }
       if (t <= 103) {
         const index = b.readUInt8(pos++);
-        // (::), the generic null, is a unary primitive.
-        return { kind: "func", t: t === 101 && index === 0 ? 101 : t };
+        // A primitive is sent as its index in q's table: (::), the generic
+        // null, is unary 0 and keeps no text; `count` is unary 13, `#:`.
+        const text = index === 0 && t === 101 ? undefined : PRIMITIVES[t - 101][index];
+        return { kind: "func", t, ...(text !== undefined ? { text } : {}) };
       }
       if (t <= 105) {
         const n = b.readInt32LE(pos);
