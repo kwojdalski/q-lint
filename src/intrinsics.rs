@@ -161,6 +161,39 @@ fn literal(s: &str) -> Option<Literal> {
     None
 }
 
+/// QB026. A literal pair of bounds whose first item is above its second, as
+/// the two items written: q 5 `5 within 10 1` is 0b, and so is every value,
+/// since `within` asks for low <= x <= high. Only a pair of numbers, or of
+/// temporals spelt alike - `2024.01.10 2024.01.01`, `10:00 09:30` - whose
+/// fixed-width digits then order as their text does. A null or an
+/// infinity, a symbol, or anything not a literal is left alone.
+fn reversed_bounds(s: &str) -> Option<(&str, &str)> {
+    let mut s = s.trim();
+    while s.starts_with('(') && matching(s, 0, b'(', b')') == Some(s.len()) {
+        s = s[1..s.len() - 1].trim();
+    }
+    let items: Vec<&str> = s.split_whitespace().collect();
+    let [low, high] = items[..] else {
+        return None;
+    };
+    let number = re!(r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$");
+    let suffixed = high.strip_suffix(['h', 'i', 'j', 'e', 'f']).unwrap_or(high);
+    if number.is_match(low) && number.is_match(suffixed) {
+        let (a, b) = (low.parse::<f64>().ok()?, suffixed.parse::<f64>().ok()?);
+        return (a > b).then_some((low, high));
+    }
+    let temporal = re!(
+        r"^(?:\d{4}\.\d\d(?:\.\d\d(?:[DT](?:\d\d(?::\d\d(?::\d\d(?:\.\d*)?)?)?)?)?)?|\d\d:\d\d(?::\d\d(?:\.\d*)?)?|\d+D(?:\d\d(?::\d\d(?::\d\d(?:\.\d*)?)?)?)?)$"
+    );
+    let suffixed = high.strip_suffix(['m', 'u', 'v', 't']).unwrap_or(high);
+    let shape = |t: &str| t.replace(|c: char| c.is_ascii_digit(), "9");
+    (temporal.is_match(low)
+        && temporal.is_match(suffixed)
+        && shape(low) == shape(suffixed)
+        && low > suffixed)
+        .then_some((low, high))
+}
+
 /// A call to one of the checked builtins: where it starts, which builtin,
 /// and its argument text - the same shape whether it was written `til[1.5]`
 /// or `til 1.5`, so the rules below never learn which spelling they saw.
@@ -479,6 +512,15 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
                     &mut out,
                     "QT019",
                     "within needs a two-item list of bounds".into(),
+                );
+            } else if let Some((low, high)) = reversed_bounds(args[1]) {
+                report(
+                    &mut out,
+                    "QB026",
+                    format!(
+                        "within takes its bounds low then high, and {low} is above {high}, so \
+                         nothing is within them and this is always false: swap the two"
+                    ),
                 );
             }
             continue;

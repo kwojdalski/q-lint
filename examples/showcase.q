@@ -650,6 +650,12 @@ bump2:{update px:px+1 from `book; count book}
 tier:{$[x>100;`large;x>100;`huge;`small]}
 tier2:{$[x>1000;`huge;x>100;`large;`small]}
 
+/ QB026: within takes low then high; 10 1 has nothing within it, so the
+/ filter keeps no row.
+/ expect-next: QB026
+mid:{select from x where px within 10 1}
+mid2:{select from x where px within 1 10}
+
 / QB023: where gives a typed list, empty or not, and () is the empty general
 / list, so the match is never true; count asks whether it is empty.
 / expect-next: QB023

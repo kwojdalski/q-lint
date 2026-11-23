@@ -511,6 +511,13 @@
     "scope": "style"
   },
   {
+    "code": "QB026",
+    "name": "reversed-within-bounds",
+    "category": "correctness",
+    "summary": "within given literal bounds high then low, so nothing is within them and it is always false",
+    "scope": "style"
+  },
+  {
     "code": "QP001",
     "name": "bare-slash-block",
     "category": "policy",
