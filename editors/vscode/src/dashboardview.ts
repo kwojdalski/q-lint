@@ -261,7 +261,9 @@ export class Dashboards {
     void this.panel?.webview.postMessage({ type: "running", id: tile.id });
     try {
       this.runs++;
-      post(tileContent(await this.live.runApart(process, query.code), tile.view));
+      const answer = await this.live.runApart(process, query.code);
+      // Shown as the tile is set now: its view can change while the run is out (#1339).
+      post(tileContent(answer, this.current()?.tiles.find((x) => x.id === tile.id)?.view ?? tile.view));
     } catch (error) {
       post({ kind: "error", text: error instanceof Error ? error.message : String(error) });
     } finally {

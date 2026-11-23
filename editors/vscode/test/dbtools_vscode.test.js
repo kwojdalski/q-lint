@@ -280,6 +280,30 @@ test("changing a tile's refresh interval sets its timer again (#1123)", async (t
   dashboards.close();
 });
 
+// The run kept the view it started with, and the rerun the change asked
+// for was skipped as "already running": a table under a select saying line.
+test("a tile whose view changes while its run is out is shown in the view chosen (#1339)", async (t) => {
+  const { panels } = capture();
+  const { live, context } = await setUp(t);
+  await context.workspaceState.update(SAVED_QUERIES_KEY, [{ name: "px", code: "select from trade" }]);
+  const answer = { ok: true, type: 98, text: [], grid: { count: 2, keys: 0, names: ["a", "b"], types: [7, 9], cells: [["1", "2"], ["3", "4"]], raw: [[1, 2], [3, 4]], rank: [[0, 1], [0, 1]] } };
+  let release;
+  live.runApart = () => new Promise((r) => (release = () => r(answer)));
+  const dashboards = new Dashboards(context, live);
+  stub.inputs.push("Desk");
+  stub.picks.push("$(add) New dashboard...");
+  const id = await stub.commands.get(DB_COMMANDS.addToDashboard)("px", undefined, "hdb");
+  await stub.commands.get(DB_COMMANDS.openDashboard)("Desk");
+  await new Promise((r) => setTimeout(r, 20));
+  await dashboards.receive({ type: "view", id, view: "line" });
+  release();
+  await new Promise((r) => setTimeout(r, 20));
+  assert.strictEqual(context.workspaceState.get(DASHBOARDS_KEY)[0].tiles[0].view, "line");
+  assert.strictEqual(dashboards.contents.get(id).kind, "chart");
+  assert.strictEqual(panels[0].posted.filter((m) => m.type === "tile").at(-1).content.kind, "chart");
+  dashboards.close();
+});
+
 // Add to Dashboard offers discovered and shared processes, but a tile ran
 // only on a saved one: "There is no saved process desk/rdb", every time.
 test("a tile on a discovered process runs on it (#1122)", async (t) => {
