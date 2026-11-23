@@ -306,3 +306,30 @@ test("changing a server's auth header during a fetch fetches again with it", asy
   const [state] = live.api().discovered();
   assert.deepStrictEqual([state.error, state.processes.map((p) => p.label)], [undefined, ["rdb"]]);
 });
+
+// Edit Process with the password left empty kept the stored one even when
+// the user, host or port changed: bob was sent alice's password, or it went
+// to another host.
+test("Edit Process forgets the password when the user, host or port change (#1109)", async (t) => {
+  const { context, live } = await setUp(t, [proc("a", 1, { user: "alice" })]);
+  const secrets = context.secrets.all;
+  const edit = async (label, host, port, user) => {
+    stub.inputs = [label, host, port, user, "", ""];
+    stub.picks = ["No"];
+    await stub.commands.get("q-lint.editProcess")(live.processes()[0].label);
+  };
+  // The same user and address keep it, under a new label too.
+  secrets.set("q-lint.password.a", "pw");
+  await edit("a", "127.0.0.1", "1", "alice");
+  assert.strictEqual(secrets.get("q-lint.password.a"), "pw");
+  await edit("a2", "127.0.0.1", "1", "alice");
+  assert.deepStrictEqual([...secrets], [["q-lint.password.a2", "pw"]]);
+  await edit("a2", "127.0.0.1", "1", "bob");
+  assert.deepStrictEqual([...secrets], []);
+  secrets.set("q-lint.password.a2", "pw");
+  await edit("a3", "elsewhere", "1", "bob");
+  assert.deepStrictEqual([...secrets], []);
+  secrets.set("q-lint.password.a3", "pw");
+  await edit("a3", "elsewhere", "2", "bob");
+  assert.deepStrictEqual([...secrets], []);
+});

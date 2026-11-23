@@ -1069,7 +1069,7 @@ export class Live {
         prompt:
           from.label === undefined
             ? "Stored in VS Code's SecretStorage, never in settings or an export. Leave empty for none."
-            : "Stored in VS Code's SecretStorage, never in settings or an export. Leave empty to keep the stored one.",
+            : "Stored in VS Code's SecretStorage, never in settings or an export. Leave empty to keep the stored one; a new user, host or port forgets it.",
       });
       if (password === undefined) {
         return undefined;
@@ -1189,15 +1189,20 @@ export class Live {
       void window.showErrorMessage(`q-lint: ${problem}; the process was not changed.`);
       return;
     }
+    // A password left empty is kept, but not for another user, host or port:
+    // it was given for the one it was stored with (#1109).
+    const moved = passwordsToForget([old], [{ ...process, label: old.label }]).length > 0;
     if (process.label !== old.label) {
       const kept = await this.context.secrets.get(passwordKey(old));
       await this.context.secrets.delete(passwordKey(old));
-      if (kept !== undefined && answer.password === undefined) {
+      if (kept !== undefined && answer.password === undefined && !moved) {
         await this.context.secrets.store(passwordKey(process), kept);
       }
     }
     if (answer.password !== undefined) {
       await this.context.secrets.store(passwordKey(process), answer.password);
+    } else if (moved) {
+      await this.context.secrets.delete(passwordKey(process));
     }
     if (process.user === undefined) {
       await this.context.secrets.delete(passwordKey(process));
