@@ -482,6 +482,9 @@ export class Live {
   /// Set by Disconnect, or a connect to another process, to stop a
   /// reconnect after an abort from trying again.
   private reconnectStopped = false;
+  /// Counts Disconnects: a connect under way when it changes was
+  /// disconnected, and closes what it opens (#1073).
+  private disconnects = 0;
   private running: { code: string; started: number } | undefined;
   /// Redraws the status bar each second while a query runs, so its time
   /// counts up (#910).
@@ -1577,7 +1580,7 @@ export class Live {
   /// the handshake is still running the query it was left with, and is
   /// tried again until it does, or until the user disconnects or connects
   /// elsewhere.
-  private open(process: Process, untilFree = false, quiet = false): Promise<boolean> {
+  private open(process: Process, untilFree = false, quiet = false, disconnects = this.disconnects): Promise<boolean> {
     if (this.connecting !== undefined) {
       // A connect to another process - a reconnect after an abort, waiting
       // for that process to be free - is stopped and this one follows: its
@@ -1586,7 +1589,7 @@ export class Live {
         return this.connecting;
       }
       this.reconnectStopped = true;
-      return this.connecting.then(() => this.open(process));
+      return this.connecting.then(() => this.open(process, false, false, disconnects));
     }
     this.reconnectStopped = false;
     this.connectingTo = passwordKey(process);
@@ -1617,12 +1620,18 @@ export class Live {
           },
         );
         // Opened after deactivate (a reconnect after an abort), when nothing
-        // would close it, or after the reconnect was stopped.
-        if (this.disposed || ((untilFree || quiet) && this.reconnectStopped)) {
+        // would close it, after the reconnect was stopped, or after the user
+        // disconnected while it was opening.
+        const stopped = (): boolean => this.disposed || disconnects !== this.disconnects || ((untilFree || quiet) && this.reconnectStopped);
+        if (stopped()) {
           await connection.close();
           return false;
         }
         await this.runConnectScript(connection, process);
+        if (stopped()) {
+          await connection.close();
+          return false;
+        }
         this.connection = connection;
         this.active = process;
         connection.whenAsync((message) => {
@@ -1650,7 +1659,7 @@ export class Live {
         this.changed.fire("connected");
         return true;
       } catch (error) {
-        if ((untilFree && this.reconnectStopped) || quiet) {
+        if ((untilFree && this.reconnectStopped) || quiet || disconnects !== this.disconnects) {
           return false;
         }
         void window.showErrorMessage(
@@ -1890,6 +1899,7 @@ export class Live {
   }
 
   private async disconnect(): Promise<void> {
+    this.disconnects++;
     if (this.reconnecting !== undefined && this.connection === undefined) {
       // A try under way is closed once it opens.
       this.reconnectStopped = true;

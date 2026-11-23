@@ -346,3 +346,22 @@ test("a query apart goes through the process's SSH tunnel, and refuses when tunn
   await assert.rejects(live.runApart(live.processes()[0], "1"), /SSH tunnels are turned off/);
   assert.strictEqual(reached, 0);
 });
+
+// Disconnect while a connect waits for the handshake: the connect went on,
+// and the process - perhaps a production one - became the active one.
+test("Disconnect during a connect stops it (#1073)", async (t) => {
+  const a = await fakeQ(() => GATHERED, 300);
+  t.after(() => a.close());
+  const { live, events } = await setUp(t, [proc("a", a.port)]);
+  const connecting = live.connectTo("a");
+  await sleep(50);
+  await stub.commands.get("q-lint.disconnectProcess")();
+  assert.strictEqual(await connecting, false);
+  assert.strictEqual(live.activeLabel(), undefined);
+  assert.strictEqual(events.filter((e) => e === "connected").length, 0);
+  for (let i = 0; i < 50 && a.connections() > 0; i++) await sleep(10);
+  assert.strictEqual(a.connections(), 0);
+  assert.deepStrictEqual(stub.messages.filter(([level]) => level === "error"), []);
+  // A connect after it is not stopped.
+  assert.strictEqual(await live.connectTo("a"), true);
+});
