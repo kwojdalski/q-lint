@@ -1304,6 +1304,14 @@ fn show_settings_describes_the_stdin_filename_and_refuses_fix() {
     // Windows prints the path with its own separator.
     assert!(text.replace('\\', "/").contains("tests/x.q"), "{text}");
     assert!(!text.contains("QE004"), "{text}");
+    // Ruff's form, with the buffer named `-`, describes the same file (#1198).
+    let out = run(
+        &repo.path("."),
+        &["--show-settings", "--stdin-filename", "tests/x.q", "-"],
+    );
+    let dash = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{dash}");
+    assert_eq!(dash, text);
     for flag in ["--fix", "--diff"] {
         let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
             .current_dir(repo.path("."))

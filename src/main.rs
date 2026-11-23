@@ -476,8 +476,10 @@ fn run(args: Args) -> Result<u8, String> {
     }
     let policy = Policy::new(overrides(&args)?, false);
     if args.show_settings {
-        // The buffer an editor pipes is the file it asks about (#806).
-        let paths = if let (true, Some(name)) = (args.paths.is_empty(), &args.stdin_filename) {
+        // The buffer an editor pipes is the file it asks about (#806),
+        // named `-` or not, as Ruff's `--stdin-filename X -` names it.
+        let only_stdin = args.paths.is_empty() || args.paths == ["-"];
+        let paths = if let (true, Some(name)) = (only_stdin, &args.stdin_filename) {
             vec![name.clone()]
         } else if args.paths.is_empty() {
             vec![".".to_string()]
