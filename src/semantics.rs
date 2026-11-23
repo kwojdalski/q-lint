@@ -4620,18 +4620,24 @@ fn named_values(
     // did not open: `(select from t where a>1),select ...` (#260), or a `;`
     // outside every bracket.
     let mut from = 0;
-    while let Some(m) = re!(r"(?:select|exec|update|delete)\b[^\n;]*?\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s+where\b([^\n]*)")
+    while let Some(m) = re!(r"(?:select|exec|update|delete)\b[^\n;]*?\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s+where\b")
         .captures_at(code, from)
     {
         if !boundary(code, m.get(0).unwrap().start()) {
             from = m.get(0).unwrap().start() + 1;
             continue;
         }
-        let phrase = m.get(2).unwrap();
-        let mut flat = phrase.as_str().as_bytes().to_vec();
+        // The rest of the line, read only as far as the phrase goes: a copy
+        // or a capture of the whole line for each phrase on it was quadratic
+        // in a line of many statements (#1205).
+        let start = m.get(0).unwrap().end();
+        let line_end = code[start..].find('\n').map_or(code.len(), |p| start + p);
+        let phrase = &code[start..line_end];
+        let mut flat = Vec::new();
         let (mut depth, mut lambda, mut nested) = (0i32, 0i32, None);
-        let mut end = flat.len();
-        for (i, &c) in phrase.as_str().as_bytes().iter().enumerate() {
+        let mut end = phrase.len();
+        for (i, &c) in phrase.as_bytes().iter().enumerate() {
+            flat.push(c);
             match c {
                 b'(' | b'[' => depth += 1,
                 b'{' => lambda += 1,
@@ -4653,10 +4659,9 @@ fn named_values(
             }
             if nested.is_none()
                 && phrase
-                    .as_str()
                     .get(i..)
                     .is_some_and(|rest| re!(r"^(?:select|exec|update|delete)\b").is_match(rest))
-                && boundary(code, phrase.start() + i)
+                && boundary(code, start + i)
             {
                 nested = Some(depth);
             }
@@ -4667,17 +4672,17 @@ fn named_values(
         flat.truncate(end);
         // A symbol names no column, and runs on through `:` and `/`:
         // `` `:db/quote `` and `` `a:zz `` are one symbol each (#341).
-        for sym in re!(r"`[A-Za-z0-9_./:]*").find_iter(&phrase.as_str()[..end]) {
+        for sym in re!(r"`[A-Za-z0-9_./:]*").find_iter(&phrase[..end]) {
             flat[sym.range()].fill(b' ');
         }
-        from = phrase.start() + end.max(1);
+        from = start + end.max(1);
         let flat = String::from_utf8_lossy(&flat).into_owned();
         let table = m.get(1).unwrap();
         let Some(Held::Table(columns, _)) = visible(table.as_str(), table.start()) else {
             continue;
         };
         for name in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&flat) {
-            let at = phrase.start() + name.start();
+            let at = start + name.start();
             if boundary(code, at) && !flat[name.end()..].starts_with('.') && is_free(name.as_str(), at, columns) {
                 column(at, name.as_str(), table.as_str(), columns);
             }
