@@ -113,8 +113,9 @@ function loadModes(fake) {
   }
 }
 
-/// The grid and chart features of #1012-#1021, each on by default.
-const T_ON = { columnFormats: true, conditionalFormats: true, cellCharts: true, columnLayout: true, depthChart: true, mapChart: true, linkedCharts: true, chartPresets: true, correlation: true, sendResult: true };
+/// The grid and chart features of #1012-#1021, and the accessible grid
+/// (#1187), each on by default.
+const T_ON = { columnFormats: true, conditionalFormats: true, cellCharts: true, columnLayout: true, depthChart: true, mapChart: true, linkedCharts: true, chartPresets: true, correlation: true, sendResult: true, accessibleGrid: true };
 
 /// A GRID payload of one long column `c` holding `values`.
 const payload = (values, count = values.length) => ({

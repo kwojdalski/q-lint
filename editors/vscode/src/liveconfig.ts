@@ -170,6 +170,8 @@ export const RESULT_FEATURES = [
   "history", "diff", "statistics", "heatmap", "tree", "export", "paging", "pivot", "charts", "drilldown", "wrangler", "editCells", "plots",
   // The grid and charts of #1012-#1021.
   "columnFormats", "conditionalFormats", "cellCharts", "columnLayout", "depthChart", "mapChart", "linkedCharts", "chartPresets", "correlation", "sendResult",
+  // The grid to a screen reader (#1187).
+  "accessibleGrid",
 ] as const;
 export type ResultFeature = (typeof RESULT_FEATURES)[number];
 

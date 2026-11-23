@@ -1602,11 +1602,19 @@ first, or pick a file or start a new one - and the chart goes beside it as
 a new SVG file in `<report>-images/`, never over one there. Before writing,
 it shows what it will write and asks.
 
+**With a screen reader.** The grid is a `grid` to assistive technology:
+its whole row and column counts are given though only the rows in view are
+drawn, each row says its index among them, and the column names are column
+headers. It has one tab stop; the arrow keys move it a cell at a time, Home
+and End to the row's ends, Ctrl+Home and Ctrl+End to the grid's first and
+last cell, Page Up and Page Down a page, scrolling as they go. Enter or
+Space on a header still sorts (`q-lint.results.accessibleGrid.enable`).
+
 Each of these - the history, Compare, Stats, the heatmap, the tree, export,
 paging, the pivot, the new charts, drill-down, the Data Wrangler, cell edits,
 the plots, column formats, conditional formats, sparklines and data bars,
 the column layout, the depth chart, the map, linked panes, chart presets,
-correlation and Send to... - has its own `q-lint.results.<feature>.enable`
+correlation, Send to... and the accessible grid - has its own `q-lint.results.<feature>.enable`
 setting, on by default but for paging.
 Turned off, its button and command are gone (the command, run anyway, says
 which setting turns it back on), and a change applies at once, without a
@@ -2640,6 +2648,7 @@ nothing.
 | `q-lint.results.chartPresets.enable` | `true` | Offer **Save with Query**, **Save Result Chart with Query** and **Forget Result Chart Preset**, and series colours; a saved query's chart is drawn again when it runs. | - |
 | `q-lint.results.correlation.enable` | `true` | Offer the **Correlation** view and **Show Result Correlation Matrix**. | - |
 | `q-lint.results.sendResult.enable` | `true` | Offer **Send to...**, **Send Result to Notebook** and **Append Result to Markdown Report...**, each showing what it writes first. | - |
+| `q-lint.results.accessibleGrid.enable` | `true` | Expose the result grid to screen readers: grid roles, row and column counts over the drawn rows, and arrow-key navigation with one tab stop. Off: a plain table, every header a tab stop. | - |
 | `q-lint.query.progress.enable` | `true` | Count a running query's time in the status bar, and notify a long one's end. | - |
 | `q-lint.query.escapeAborts.enable` | `true` | Escape in a q editor aborts a running query. Off, Escape is VS Code's own. | - |
 | `q-lint.query.notifyAfter` | `10` | Seconds a query must run for its end to be notified while the window is not focused; `0` never. | - |

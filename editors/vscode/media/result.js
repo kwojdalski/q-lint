@@ -326,8 +326,36 @@
     return { row: row, column: -1, value: value, agg: value >= 0 ? "sum" : "count" };
   }
 
+  /// The header rows above the data in the accessible grid (#1187): the
+  /// names and the filters. A data row's aria-rowindex counts them.
+  const HEAD_ROWS = 2;
+
+  /// Where a key moves the focus in the accessible grid (#1187), from `at`
+  /// ({row, col}, row -1 the column headers) over `count` rows of `columns`
+  /// columns, `page` rows a page: the arrows a cell at a time, Home and End
+  /// to the row's ends, with Ctrl (or Cmd) to the grid's, Page Up and Page
+  /// Down a page. Null for any other key, which moves nothing.
+  function gridMove(at, key, ctrl, count, columns, page) {
+    const last = count - 1;
+    const row = function (r) { return Math.max(-1, Math.min(last, r)); };
+    const col = function (c) { return Math.max(0, Math.min(columns - 1, c)); };
+    switch (key) {
+      case "ArrowUp": return { row: row(at.row - 1), col: at.col };
+      case "ArrowDown": return { row: row(at.row + 1), col: at.col };
+      case "ArrowLeft": return { row: at.row, col: col(at.col - 1) };
+      case "ArrowRight": return { row: at.row, col: col(at.col + 1) };
+      case "Home": return ctrl ? { row: -1, col: 0 } : { row: at.row, col: 0 };
+      case "End": return ctrl ? { row: row(last), col: col(columns - 1) } : { row: at.row, col: col(columns - 1) };
+      case "PageUp": return { row: row(at.row - page), col: at.col };
+      case "PageDown": return { row: row(at.row + page), col: at.col };
+      default: return null;
+    }
+  }
+
   const helpers = {
     rowCount: rowCount,
+    gridMove: gridMove,
+    HEAD_ROWS: HEAD_ROWS,
     pivot: pivot,
     defaultPivot: defaultPivot,
     AGGREGATIONS: AGGREGATIONS,
@@ -651,6 +679,12 @@
   let painted = null;
   /// The column headers drawn, by place.
   let headers = [];
+  /// The accessible grid (#1187): the table, the rows paint() drew, and
+  /// the cell that holds the grid's one tab stop, {row, col} by place among
+  /// the rows and columns shown, row -1 the headers.
+  let gridTable = null;
+  let paintedRows = [];
+  let gridFocus = { row: -1, col: 0 };
 
   /// How the grid dresses the result on show (#1012-#1015): the columns
   /// drawn, in order; each column's format, rule styles and cell chart; the
@@ -720,6 +754,18 @@
     gridView.replaceChildren();
     scroller = el("div", "scroller");
     const table = el("table");
+    const accessible = feature("accessibleGrid");
+    gridTable = accessible ? table : null;
+    paintedRows = [];
+    gridFocus = {
+      row: Math.max(-1, Math.min(rows.length - 1, gridFocus.row)),
+      col: Math.max(0, Math.min(d.display.length - 1, gridFocus.col)),
+    };
+    if (accessible) {
+      table.setAttribute("role", "grid");
+      table.setAttribute("aria-label", "Query result");
+      table.setAttribute("aria-colcount", d.display.length);
+    }
     const cols = el("colgroup");
     const widths = [];
     const colEls = [];
@@ -746,6 +792,12 @@
     const head = el("thead");
     const names = el("tr");
     const filters = el("tr", "filters");
+    if (accessible) {
+      names.setAttribute("role", "row");
+      names.setAttribute("aria-rowindex", 1);
+      filters.setAttribute("role", "row");
+      filters.setAttribute("aria-rowindex", 2);
+    }
     headers = [];
     // A header's right-click menu: the Data Wrangler (#961), conditional
     // formats (#1013), data bars and sparklines (#1014), the layout (#1015).
@@ -762,8 +814,14 @@
       if (frozen) {
         th.style.left = d.lefts[k];
       }
-      // A keyboard sorts it too: Tab to it, then Enter or Space.
-      th.tabIndex = 0;
+      // A keyboard sorts it too: Tab to it, then Enter or Space. In the
+      // accessible grid only one cell is a tab stop, and the arrows move it.
+      th.tabIndex = accessible ? -1 : 0;
+      if (accessible) {
+        th.setAttribute("role", "columnheader");
+        th.setAttribute("aria-colindex", k + 1);
+        th.setAttribute("data-gr", -1);
+      }
       th.setAttribute("aria-sort", sorted === "" ? "none" : state.sort.descending ? "descending" : "ascending");
       const sort = function () {
         const s = state.sort;
@@ -839,9 +897,16 @@
       if (frozen) {
         ft.style.left = d.lefts[k];
       }
+      if (accessible) {
+        ft.setAttribute("role", "gridcell");
+        ft.setAttribute("aria-colindex", k + 1);
+      }
       const input = el("input");
       input.type = "search";
       input.placeholder = "filter";
+      if (accessible) {
+        input.setAttribute("aria-label", "Filter " + headerText(grid, i));
+      }
       input.value = state.filters[i] || "";
       input.addEventListener("input", function () {
         state.filters[i] = input.value;
@@ -864,6 +929,31 @@
         const r = td && td.getAttribute ? td.getAttribute("data-r") : null;
         if (r !== null) {
           vscode.postMessage({ type: "drill", id: result.id, column: Number(td.getAttribute("data-c")), row: Number(r) });
+        }
+      });
+    }
+    if (accessible) {
+      table.addEventListener("keydown", function (event) {
+        const target = event.target;
+        // The filter boxes keep their own arrows and Home and End.
+        if (target && target.tagName === "INPUT") {
+          return;
+        }
+        const page = Math.max(1, Math.floor((scroller.clientHeight || 600) / ROW) - HEAD_ROWS);
+        const next = gridMove(gridFocus, event.key, event.ctrlKey || event.metaKey, rows.length, d.display.length, page);
+        if (next) {
+          event.preventDefault();
+          focusCell(next);
+        }
+      });
+      // A cell clicked or tabbed to is where the arrows go on from.
+      table.addEventListener("focusin", function (event) {
+        const target = event.target;
+        const r = target && target.getAttribute ? target.getAttribute("data-gr") : null;
+        const k = target && target.getAttribute ? target.getAttribute("aria-colindex") : null;
+        if (r !== null && k !== null) {
+          gridFocus = { row: Number(r), col: Number(k) - 1 };
+          rove();
         }
       });
     }
@@ -1068,8 +1158,17 @@
       return;
     }
     painted = { rows: rows, start: start, end: end, before: at.before, after: at.after };
+    const accessible = gridTable !== null;
+    if (accessible) {
+      gridTable.setAttribute("aria-rowcount", rows.length + HEAD_ROWS);
+    }
+    paintedRows = [];
     const spacer = function (px) {
       const tr = el("tr", "spacer");
+      if (accessible) {
+        tr.setAttribute("role", "presentation");
+        tr.setAttribute("aria-hidden", "true");
+      }
       const td = el("td");
       td.colSpan = Math.max(1, d.display.length);
       td.style.height = px + "px";
@@ -1087,6 +1186,11 @@
     for (let i = start; i < end; i++) {
       const r = rows[i];
       const tr = el("tr");
+      if (accessible) {
+        tr.setAttribute("role", "row");
+        tr.setAttribute("aria-rowindex", i + HEAD_ROWS + 1);
+        paintedRows.push(tr);
+      }
       const added = marks && marks.rows.has(r);
       if (added) {
         tr.className = "added";
@@ -1127,6 +1231,12 @@
         td.title = was !== undefined ? raw + "\nwas: " + (was === "" ? "(null)" : was) : raw;
         if (k < d.frozen) {
           td.style.left = d.lefts[k];
+        }
+        if (accessible) {
+          td.setAttribute("role", "gridcell");
+          td.setAttribute("aria-colindex", k + 1);
+          td.setAttribute("data-gr", i);
+          td.tabIndex = -1;
         }
         if (cellMenu) {
           // Double-click, or right-click for the editor's menu, to drill down
@@ -1195,10 +1305,74 @@
     }
     body.replaceChildren.apply(body, out);
     dress = counts;
+    rove();
     // Near the end of the rows held: ask the process for the next page.
     if (result.more && !moreAsked && rows.length > 0 && end >= rows.length - 10) {
       moreAsked = true;
       vscode.postMessage({ type: "more", id: result.id });
+    }
+  }
+
+  /// Give the accessible grid its one tab stop (#1187): the focused cell,
+  /// or - while its row is scrolled out of the rows drawn - the header of
+  /// its column, so Tab still reaches the grid.
+  function rove() {
+    if (gridTable === null) {
+      return;
+    }
+    const start = painted ? painted.start : 0;
+    const row = gridFocus.row >= 0 && paintedRows[gridFocus.row - start] ? gridFocus.row : -1;
+    headers.forEach(function (th, k) {
+      th.tabIndex = row === -1 && k === gridFocus.col ? 0 : -1;
+    });
+    paintedRows.forEach(function (tr, j) {
+      Array.prototype.forEach.call(tr.children, function (td, k) {
+        td.tabIndex = row === start + j && k === gridFocus.col ? 0 : -1;
+      });
+    });
+  }
+
+  /// Scroll the grid so row `i` of those shown is in view, under the
+  /// sticky headers.
+  function scrollToRow(i) {
+    const height = scroller.clientHeight || 600;
+    const head = HEAD_ROWS * ROW;
+    let top = scroller.scrollTop;
+    if (rows.length * ROW <= MAX_HEIGHT) {
+      if (i * ROW < top) {
+        top = i * ROW;
+      } else if ((i + 1) * ROW + head > top + height) {
+        top = (i + 1) * ROW + head - height;
+      }
+    } else {
+      // Past MAX_HEIGHT the scrollbar is spread over the rows: span()'s map.
+      const visible = Math.ceil(height / ROW);
+      const range = Math.max(1, MAX_HEIGHT - height);
+      const spread = Math.max(1, rows.length - visible);
+      const first = Math.round(Math.max(0, Math.min(1, top / range)) * spread);
+      if (i < first || i >= first + visible - HEAD_ROWS) {
+        top = (Math.max(0, i - Math.floor(visible / 2)) / spread) * range;
+      }
+    }
+    if (top !== scroller.scrollTop) {
+      scroller.scrollTop = top;
+      state.top = top;
+      save();
+    }
+  }
+
+  /// Move the grid's focus to `at`, scrolling its row into view.
+  function focusCell(at) {
+    gridFocus = at;
+    if (at.row >= 0) {
+      scrollToRow(at.row);
+      paint();
+    }
+    rove();
+    const start = painted ? painted.start : 0;
+    const target = at.row < 0 ? headers[at.col] : paintedRows[at.row - start] && paintedRows[at.row - start].children[at.col];
+    if (target) {
+      target.focus();
     }
   }
 

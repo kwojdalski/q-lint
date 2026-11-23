@@ -1512,6 +1512,7 @@ export class QueryModes {
         chartPresets: features.enable.chartPresets,
         correlation: features.enable.correlation,
         sendResult: features.enable.sendResult,
+        accessibleGrid: features.enable.accessibleGrid,
       },
       // The look of the features on, and the saved query it came from.
       look: lookParts(this.shown.look, this.lookOn(features)),

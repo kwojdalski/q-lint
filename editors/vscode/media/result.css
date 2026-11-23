@@ -116,6 +116,12 @@ thead th {
   font-weight: 600;
 }
 
+/* The accessible grid's focused cell (#1187). */
+td[role="gridcell"]:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
 thead th:focus-visible {
   outline: 1px solid var(--vscode-focusBorder);
   outline-offset: -1px;
