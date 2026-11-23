@@ -359,3 +359,20 @@ test("system of a literal is read as the command it runs (#1331)", () => {
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("xasc, xdesc and xkey on a table named by a symbol change it in place (#1330)", () => {
+  const cases = {
+    "`a xasc `t": ["sorts `t in place with xasc"],
+    "`a xdesc `t": ["sorts `t in place with xdesc"],
+    "`a xkey `t": ["keys `t in place with xkey"],
+    "xasc[`a;`t]": ["sorts `t in place with xasc"],
+    // On a value they return a new table.
+    "`a xasc t": [],
+    "`a`b xdesc select from t": [],
+    "xasc[`a;t]": [],
+    "`a xkey t": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

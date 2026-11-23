@@ -1048,7 +1048,8 @@ is sent; Escape sends nothing. A change is: assigning a global (`a:1`,
 `a+:1`, `t[0]:5`, `a::b` - and, inside a lambda, `a::` or a dotted
 `.ns.v:`, as q makes those global; a column named in `select a:x from t` or
 `([] a:1 2)` is not one), `update` or `delete` from a table named by a
-symbol (`` from `t `` or `` from (`t) ``), `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`,
+symbol (`` from `t `` or `` from (`t) ``), `xasc`, `xdesc` or `xkey` on a table named by a
+symbol (`` `a xasc `t ``), `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`,
 `system`, `setenv`, `save`, `rsave`, `dsave`, `load`, `rload`, `.Q.dpft`, `.Q.dpfts`,
 `.Q.dpt`, `.Q.dpts`, `.Q.hdpf`, `.Q.en`, `.Q.ens`, `.Q.enx`, `.Q.enxs`, `.Q.chk`, `.Q.dsftg`,
 `.Q.view`, `.Q.l`, `.Q.lo`, `.Q.bv`, `.Q.opt` (each also by its `.q.` name,

@@ -29,6 +29,8 @@
 //   (`` hopen `:f ``), which creates the file to write through - of a
 //   process (`` `:host:5000 ``, a port) it only connects, and what is sent
 //   over that handle is not read;
+// - `xasc`, `xdesc` or `xkey` on a table named by a symbol
+//   (`` `a xasc `t ``), which sorts or keys it in place;
 // - `-11!`, which replays a log through `upd`, except `-11!(-1;..)` and
 //   `-11!(-2;..)`, which only count and check one; `-19!`, which
 //   compresses a file into another;
@@ -302,6 +304,26 @@ function readStatement(statement: string, found: Set<string>): void {
           found.add(table === "`." ? "deletes from the root namespace" : `${qsql === "update" ? "updates" : "deletes from"} ${table} in place`);
         }
         qsql = undefined;
+        continue;
+      }
+      // `xasc`, `xdesc` and `xkey` on a table named by a symbol change it in
+      // place: `` `a xasc `t ``, `` xasc[`a;`t] ``.
+      if (["xasc", "xdesc", "xkey"].includes(unqualified(k.text))) {
+        let table = symbolAt(t, i + 1);
+        if (next?.text === "[" && next.kind === "open") {
+          let depth = 0;
+          for (let j = i + 2; j < t.length; j++) {
+            if (t[j].kind === "open") depth++;
+            else if (t[j].kind === "close" && --depth < 0) break;
+            else if (depth === 0 && t[j].text === ";") {
+              table = symbolAt(t, j + 1);
+              break;
+            }
+          }
+        }
+        if (table !== undefined && table.length > 1) {
+          found.add(`${unqualified(k.text) === "xkey" ? "keys" : "sorts"} ${table} in place with ${k.text}`);
+        }
         continue;
       }
       if (WRITERS.has(unqualified(k.text))) {
