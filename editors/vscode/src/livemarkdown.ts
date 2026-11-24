@@ -17,6 +17,7 @@
 // stops: the text is `FULL_TEXT`'s (#1870).
 // Nothing is defined there.
 
+import { inlineTexts } from "./markdownblocks";
 import { FULL_TEXT } from "./qtext";
 
 /// Where a Markdown cell's values are kept in its metadata.
@@ -49,29 +50,9 @@ const BLANK_AFTER = /^[ \t]*\r?\n/;
 /// An expression as both sides key it: markdown-it hands the renderer a
 /// list item's lines without their indent, and CRLF as LF, so each
 /// continuation line starts with one space here (#1788). The key is not
-/// what is sent: that is `liveText`'s.
+/// what is sent: that is the text as written (`liveQueries`).
 export function liveKey(expr: string): string {
   return expr.replace(/\r?\n[ \t]*/g, "\n ");
-}
-
-/// A line's start up to its text: the markers of the blockquotes and list
-/// items it is in, each less than four columns in from the last.
-const MARKERS = /^(?: {0,3}(?:> ?|(?:[-*+]|\d{1,9}[.)])[ \t]))*/;
-
-/// How many blockquotes the line holding `text[at]` is in, by its markers.
-function quotesAt(text: string, at: number): number {
-  const line = text.slice(text.lastIndexOf("\n", at - 1) + 1, at);
-  return ((MARKERS.exec(line) as RegExpExecArray)[0].match(/>/g) ?? []).length;
-}
-
-/// An expression as written in a cell's source, begun in `quotes`
-/// blockquotes, less its continuation lines' blockquote markers, which
-/// markdown-it never hands the renderer: what the process is sent, every
-/// other character as written (#1993). A marker is the `>` of a quote the
-/// line is in, however far in it stands, and after those a `>` less than
-/// four columns in, which opens a quote; one further in is q's own.
-export function liveText(written: string, quotes = 0): string {
-  return written.trim().replace(new RegExp(String.raw`(\r?\n)(?:[ \t]*> ?){0,${quotes}}(?: {0,3}> ?)*`, "g"), "$1");
 }
 
 /// What `expr` stood in for, from text to its `}}`: the expression's start
@@ -105,7 +86,7 @@ export function scanLive(text: string, at: number): { expr: string; end: number 
         if (text[i + 1] !== "}") {
           return undefined;
         }
-        const expr = liveKey(liveText(text.slice(at + 4, i), quotesAt(text, at)));
+        const expr = liveKey(text.slice(at + 4, i).trim());
         return expr === "" ? undefined : { expr, end: i + 2 };
       }
       depth--;
@@ -114,8 +95,9 @@ export function scanLive(text: string, at: number): { expr: string; end: number 
   return undefined;
 }
 
-/// An HTML tag, open or closing, as CommonMark reads one inline.
-const TAG = /<[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:[^\s"'=<>`]+|'[^']*'|"[^"]*"))?)*\s*\/?>|<\/[A-Za-z][A-Za-z0-9-]*\s*>/y;
+/// An HTML tag, open or closing, as CommonMark reads one inline, or a
+/// comment, a processing instruction, a declaration or a CDATA section.
+const TAG = /<[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:[^\s"'=<>`]+|'[^']*'|"[^"]*"))?)*\s*\/?>|<\/[A-Za-z][A-Za-z0-9-]*\s*>|<!---?>|<!--(?:[^-]|-[^-]|--[^>])*-->|<\?[^]*?\?>|<![A-Za-z][^>]*>|<!\[CDATA\[[^]*?\]\]>/y;
 
 /// The live values, code spans and HTML tags of a line of Markdown's
 /// inline text, left to right, as markdown-it reads them: whichever starts
@@ -178,82 +160,6 @@ export function inlineSpans(text: string): { kind: "live" | "code" | "html"; sta
   return spans;
 }
 
-/// `text` with each indented code block (lines of four spaces or a tab in
-/// front, not under a paragraph line or a list item) made spaces.
-function blankIndented(text: string): string {
-  let paragraph = false;
-  let list = false;
-  let code = false;
-  return text
-    .split("\n")
-    .map((line) => {
-      if (line.trim() === "") {
-        paragraph = false;
-        return line;
-      }
-      const indented = /^(?: {4}|\t)/.test(line);
-      if (indented && (code || (!paragraph && !list))) {
-        code = true;
-        return " ".repeat(line.length);
-      }
-      code = false;
-      if (!indented) {
-        list = /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:\s|$)/.test(line);
-      }
-      // A heading, a rule or a setext underline ends what came before: an
-      // indented line after it is code (#1558). An underline is one only
-      // under a paragraph line; else `==` or `--` is a paragraph's (#1722).
-      const ends = /^ {0,3}(?:#{1,6}(?:\s|$)|([-*_])(?:\s*\1){2,}\s*$)/.test(line) || (paragraph && /^ {0,3}(?:=+|-+)\s*$/.test(line));
-      paragraph = indented || !ends;
-      return line;
-    })
-    .join("\n");
-}
-
-/// The block-level tags that open an HTML block, which a paragraph's line
-/// may too (CommonMark 4.6, kind 6).
-const BLOCK_TAGS = new Set(
-  ("address article aside base basefont blockquote body caption center col colgroup dd details dialog dir div dl dt fieldset figcaption figure " +
-    "footer form frame frameset h1 h2 h3 h4 h5 h6 head header hr html iframe legend li link main menu menuitem nav noframes ol optgroup option " +
-    "p param search section summary table tbody td tfoot th thead title tr track ul").split(" "),
-);
-
-/// `text` with each HTML block made spaces (#1557): one opened by `<pre`,
-/// `<script`, `<style` or `<textarea` to the line closing it, and one
-/// opened by a block-level tag, or by a tag alone on a line not under a
-/// paragraph line, to a blank line.
-function blankHtml(text: string): string {
-  const lines = text.split("\n");
-  let paragraph = false;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const raw = /^ {0,3}<(script|pre|style|textarea)(?:\s|>|$)/i.exec(line);
-    const name = /^ {0,3}<\/?([A-Za-z][A-Za-z0-9-]*)(?:\s|\/?>|$)/.exec(line)?.[1].toLowerCase();
-    TAG.lastIndex = line.indexOf("<");
-    const alone = !paragraph && /^ {0,3}</.test(line) && TAG.exec(line) !== null && line.slice(TAG.lastIndex).trim() === "";
-    if (raw !== null) {
-      const close = new RegExp(`</${raw[1]}>`, "i");
-      let j = i;
-      while (j < lines.length - 1 && !close.test(lines[j])) {
-        j++;
-      }
-      for (; i <= j; i++) {
-        lines[i] = " ".repeat(lines[i].length);
-      }
-      i--;
-      paragraph = false;
-    } else if ((name !== undefined && BLOCK_TAGS.has(name)) || alone) {
-      for (; i < lines.length && lines[i].trim() !== ""; i++) {
-        lines[i] = " ".repeat(lines[i].length);
-      }
-      paragraph = false;
-    } else {
-      paragraph = line.trim() !== "";
-    }
-  }
-  return lines.join("\n");
-}
-
 const AUTOLINK = /^<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^<>\x00-\x20]*|[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+)>/;
 
 /// The index after the `)` closing a link's destination and title, read
@@ -287,10 +193,10 @@ function linkTargetEnd(text: string, from: number): number | undefined {
 }
 
 /// `text` with what markdown-it reads as a link's target, never through its
-/// inline rules, made spaces (#1827): a link reference definition's line
-/// (and the line after one whose destination or title goes on), an inline
-/// link's or image's destination and title, a reference link's `[ref]`,
-/// an image's alt text, and an autolink. The renderer never draws a live value in one, so none is run.
+/// inline rules, made spaces (#1827): an inline link's or image's
+/// destination and title, a reference link's `[ref]`, an image's alt text,
+/// and an autolink. The renderer never draws a live value in one, so none
+/// is run. (A link reference definition is no inline text: `inlineTexts`.)
 /// Over-reading here only leaves a value shown as written, never runs one.
 function blankLinkTargets(text: string): string {
   const out = text.split("");
@@ -301,22 +207,6 @@ function blankLinkTargets(text: string): string {
       }
     }
   };
-  // Definitions: `[label]:` at a line's start, in a quote or list too.
-  const definition = /^(?:[ \t]*>)*[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?\[(?:[^\]\\\n]|\\.)+\]:([^\n]*)$/gm;
-  for (let m; (m = definition.exec(text)) !== null; ) {
-    let end = m.index + m[0].length;
-    const rest = m[1].trim();
-    // The destination on the next line, or a title opened and not closed.
-    const quote = /^(?:<[^>]*>|\S+)\s+(["'(])/.exec(rest)?.[1];
-    const open = quote !== undefined && !new RegExp(`[${quote === "(" ? ")" : quote}]\\s*$`).test(rest.slice(rest.indexOf(quote) + 1));
-    const after = text.slice(end + 1, text.indexOf("\n", end + 1) < 0 ? undefined : text.indexOf("\n", end + 1)).trim();
-    if (rest === "" || open || (/^(?:<[^>]*>|\S+)$/.test(rest) && /^["'(]/.test(after))) {
-      const next = text.indexOf("\n", end + 1);
-      const close = open ? text.slice(end).search(new RegExp(`[${quote === "(" ? ")" : quote}]`)) : -1;
-      end = open && close >= 0 ? end + close + 1 : next < 0 ? text.length : next;
-    }
-    blank(m.index, end);
-  }
   // Autolinks, links and images, left to right as markdown-it reads them: a
   // live value, a code span or a tag met first is that, and is skipped whole.
   const spans = new Map(inlineSpans(text).map((sp) => [sp.start, sp.end]));
@@ -358,16 +248,16 @@ function blankLinkTargets(text: string): string {
 /// `key` its value is kept and shown by, and the `expr` sent to the process
 /// for it (#1993). Ones in a code block, a code span, an HTML comment, an
 /// HTML block, a tag or a link's target are text, as the renderer shows
-/// them (#1429, #1557, #1827).
+/// them (#1429, #1557, #1827) - in a blockquote or a list item too (#2000):
+/// each block's inline text is read as `inlineTexts` finds it.
 export function liveQueries(source: string): { key: string; expr: string }[] {
-  // A fence closes at a line of its character, at least as many, and
-  // blanks only after them (#1469): "``` text" inside is content.
-  const fenced = source.replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^ {0,3}\1(?:(?<=`)`|(?<=~)~)*[ \t]*\r?$|(?![\s\S]))/gm, (m) => " ".repeat(m.length));
-  const prose = blankLinkTargets(blankHtml(blankIndented(fenced)).replace(/<!--[\s\S]*?(?:-->|(?![\s\S]))/g, (m) => m.replace(/[^\n]/g, " ")));
   const found: { key: string; expr: string }[] = [];
-  for (const span of inlineSpans(prose)) {
-    if (span.kind === "live" && !found.some((f) => f.key === span.expr)) {
-      found.push({ key: span.expr, expr: liveText(prose.slice(span.start + 4, span.end - 2), quotesAt(prose, span.start)) });
+  for (const block of inlineTexts(source)) {
+    const prose = blankLinkTargets(block.text);
+    for (const span of inlineSpans(prose)) {
+      if (span.kind === "live" && !found.some((f) => f.key === span.expr)) {
+        found.push({ key: span.expr, expr: block.written(span.start + 4, span.end - 2).trim() });
+      }
     }
   }
   return found;
