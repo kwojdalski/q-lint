@@ -29,7 +29,8 @@
 //          one past ASCII and `0b` where not, its cells read from them
 //          (#2083). For a
 //          general column, each float or real item as a float, which `-3!`
-//          writes to `\P` digits, and `0b` for any other item (not a null,
+//          writes to `\P` digits - a table column's rows too (#2085) -
+//          and `0b` for any other item (not a null,
 //          which the codec makes of `` ` ``) but one with floats or reals
 //          inside: `("F";v)` or `("E";v)` for a list of them (a real as its
 //          float), and `("l";v)` for a general list of at most 200, each
@@ -87,7 +88,7 @@ const COLUMN_LINES = [
   "            {[e;x]$[10h=type x;$[1=count x;\",\";\"\"],\"\\\"\",raze[e\"i\"$200 sublist x],\"\\\"\";-3!x]}[e] each x]}[e] each c;",
   "          {[c]u:type c;$[u in 12 16h;\"j\"$c;u in 13 14 17 18 19h;\"i\"$c;u=15h;\"f\"$c;u=10h;\"x\"$c;u in 2 5 6 7 8 9h;c;",
   "            u=11h;$[any 127<\"i\"$\"x\"$raze s:string c;{$[any 127<\"i\"$\"x\"$x;\"x\"$x;0b]} each s;()];",
-  "            (u=0h)|u within 77 97h;{[g;x]$[-9h=t:type x;$[null x;0b;x];-8h=t;$[null x;0b;\"f\"$x];g x]}[{$[-9h=t:type x;(\"f\";x);-8h=t;(\"e\";\"f\"$x);",
+  "            (u=0h)|u within 77 98h;{[g;x]$[-9h=t:type x;$[null x;0b;x];-8h=t;$[null x;0b;\"f\"$x];g x]}[{$[-9h=t:type x;(\"f\";x);-8h=t;(\"e\";\"f\"$x);",
   "              (t in 8 9h)&200>=count x;($[t=9h;\"F\";\"E\"];\"f\"$x);(0h=t)&200>=count x;",
   "              $[all 0b~/:r:.z.s each x;0b;(\"l\";@[r;w;:;-3!'x w:where 0b~/:r])];",
   "              99h=t;$[0b~r:.z.s(key x;value x);0b;(\"d\";r 1)];98h=t;$[0b~r:.z.s flip x;0b;(\"t\";r)];",

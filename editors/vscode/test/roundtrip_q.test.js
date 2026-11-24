@@ -132,11 +132,6 @@ function values() {
   ]);
 }
 
-/// The classes not yet written back, each by the issue that holds it.
-const PENDING = [
-  [2085, (c) => /\(\[\] x:|t:\(\[\]/.test(c)],
-];
-
 test("a result exported is read back as the value it is, on a real q", { skip }, async (t) => {
   const q = await startQ(SERVER);
   t.after(() => q.stop());
@@ -146,7 +141,7 @@ test("a result exported is read back as the value it is, on a real q", { skip },
 
   await t.test("Copy as q writes every value so that q reads it back as the value (#2081-#2085, #2089)", async () => {
     const bad = [];
-    for (const code of values().filter((c) => !PENDING.some(([, held]) => held(c)))) {
+    for (const code of values()) {
       const answer = await connection.queryGrid(statements(code), SIZE, 1000);
       if (answer.grid === undefined) {
         bad.push(`${code}: no grid ${answer.gridError ?? answer.error ?? ""}`);

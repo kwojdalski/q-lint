@@ -308,12 +308,13 @@ export function atomLiteral(type: number, text: string, raw: unknown): { literal
       }
       // A float or real item, sent as its float: every digit, not the
       // `\P` that `-3!` writes (#1485).
-      if (type === 0 && typeof raw === "number" && Number.isFinite(raw)) {
+      if ((type === 0 || type === 98) && typeof raw === "number" && Number.isFinite(raw)) {
         const real = text.endsWith("e");
         return ok(`${numberText(real ? Number(realValue(raw)) : raw)}${real ? "e" : "f"}`);
       }
-      // An item with floats or reals inside, sent as they are (#1502).
-      if (type === 0 && Array.isArray(raw)) {
+      // An item with floats or reals inside, sent as they are (#1502); a
+      // table column's row too (#2085).
+      if ((type === 0 || type === 98) && Array.isArray(raw)) {
         const exact = exactLiteral(raw);
         if (exact !== undefined) {
           return exact;
