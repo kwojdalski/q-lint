@@ -496,6 +496,8 @@ export class Live {
   /// The connection `open` is running the connect script on, before it is
   /// the active one: what Disconnect closes then.
   private opening: QConnection | undefined;
+  /// The connections `openSeparate` handed out and still open: a stream's.
+  private readonly separate = new Set<{ connection: QConnection; process: Process }>();
   /// Stops the reconnect after an abort that waits for the process to be free.
   private untilFree: AbortController | undefined;
   /// A connect in progress, so a second one waits for it instead of opening
@@ -666,9 +668,13 @@ export class Live {
         if (event.affectsConfiguration("q-lint.processes.shared")) {
           this.watchShared();
         }
-        // Turned off, a connection through a tunnel closes with its tunnel.
-        if (event.affectsConfiguration("q-lint.connection.sshTunnel") && !this.setting(readTunnel).enabled && this.active?.ssh !== undefined && this.connection !== undefined) {
-          void this.disconnect();
+        // Turned off, a connection through a tunnel closes with its tunnel,
+        // a stream's apart too (#1517).
+        if (event.affectsConfiguration("q-lint.connection.sshTunnel") && !this.setting(readTunnel).enabled) {
+          this.closeSeparate((p) => p.ssh !== undefined);
+          if (this.active?.ssh !== undefined && this.connection !== undefined) {
+            void this.disconnect();
+          }
         }
       }),
       this.changed.event((what) => {
@@ -721,6 +727,7 @@ export class Live {
       if (had) {
         this.processesView.refresh();
       }
+      this.closeSeparate((p) => p.server === SHARED_SOURCE);
       if (this.active?.server === SHARED_SOURCE && this.connection !== undefined) {
         void this.disconnect();
       }
@@ -1838,7 +1845,20 @@ export class Live {
       connection.abort();
       throw error;
     }
+    const kept = { connection, process };
+    this.separate.add(kept);
+    connection.whenClosed(() => this.separate.delete(kept));
     return connection;
+  }
+
+  /// Close the connections apart to the processes `which` picks: a setting
+  /// that reached them was turned off.
+  private closeSeparate(which: (process: Process) => boolean): void {
+    for (const { connection, process } of [...this.separate]) {
+      if (which(process)) {
+        connection.abort();
+      }
+    }
   }
 
   /// `use` over a connection of its own to `process` (`openSeparate`),

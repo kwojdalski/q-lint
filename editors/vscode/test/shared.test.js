@@ -264,3 +264,20 @@ test("with q-lint.processes.shared.enable off, the file is not read, nor listed,
   assert.strictEqual(live.api().sharedProcesses(), undefined);
   assert.strictEqual(live.activeLabel(), undefined);
 });
+
+// Turned off, only the active connection to a shared process closed: a
+// stream's own connection kept receiving updates (#1517).
+test("turning the shared list off closes a connection apart to one of its processes", async (t) => {
+  const q = await someQ(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-shared-"));
+  write(dir, [{ label: "a", host: "127.0.0.1", port: q.port }]);
+  const { live } = await setUp(t, dir);
+  await sleep(50);
+  const connection = await live.openSeparate(live.named(".qlint/a"));
+  t.after(() => connection.abort());
+  assert.strictEqual(connection.isOpen, true);
+  stub.config.user["processes.shared.enable"] = false;
+  stub.changeConfig("q-lint.processes.shared.enable");
+  await sleep(50);
+  assert.strictEqual(connection.isOpen, false);
+});

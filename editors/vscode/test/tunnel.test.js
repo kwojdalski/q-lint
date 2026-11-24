@@ -323,3 +323,20 @@ test("Set SSH Tunnel sets and clears a saved process's jump host, and Edit keeps
   await stub.commands.get(TUNNEL_COMMANDS.set)("a", null);
   assert.strictEqual(live.processes()[0].ssh, undefined);
 });
+
+// Turned off, only the active connection through a tunnel closed: a
+// stream's own connection and its ssh kept running (#1517).
+test("turning tunnels off closes a connection apart through one, and its ssh", async (t) => {
+  const q = await someQ(t);
+  const ssh = stubSsh(t);
+  const { live } = await setUp(t, [{ label: "far", host: "127.0.0.1", port: q.port, tags: [], ssh: "bastion" }]);
+  const connection = await live.openSeparate(live.processes()[0]);
+  t.after(() => connection.abort());
+  const [run] = ssh.runs();
+  assert.ok(alive(run.pid));
+  stub.config.user["connection.sshTunnel.enable"] = false;
+  stub.changeConfig("q-lint.connection.sshTunnel.enable");
+  assert.strictEqual(connection.isOpen, false);
+  for (let i = 0; i < 50 && alive(run.pid); i++) await sleep(50);
+  assert.strictEqual(alive(run.pid), false);
+});
