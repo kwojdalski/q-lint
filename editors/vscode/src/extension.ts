@@ -46,6 +46,7 @@ import { registerUndefinedNames } from "./undefinednamesview";
 import { registerIdioms } from "./idiomsview";
 import { Drift } from "./driftview";
 import { registerAssistTools } from "./assisttools";
+import { launchable } from "./batch";
 import { registerChat } from "./chat";
 import { registerQsqlDraft } from "./qsqldraft";
 import { Interpreters } from "./interpreterview";
@@ -489,7 +490,15 @@ function restart(context: ExtensionContext, asked = false): Promise<void> {
 
 /// Whether `command --version` runs and succeeds.
 function answersVersion(command: string): boolean {
-  return spawnSync(command, ["--version"], { stdio: "ignore", timeout: 10_000, windowsHide: true }).status === 0;
+  const run = launchable(command, ["--version"]);
+  return spawnSync(run.command, run.args, { stdio: "ignore", timeout: 10_000, windowsHide: true, shell: run.shell }).status === 0;
+}
+
+/// The language client's executable for `command`: through a shell for a
+/// Windows batch wrapper.
+function executable(command: string, args: string[]): { command: string; args: string[]; options?: { shell: boolean } } {
+  const run = launchable(command, args);
+  return run.shell ? { command: run.command, args: run.args, options: { shell: true } } : { command, args };
 }
 
 function stop(): Promise<void> {
@@ -556,8 +565,10 @@ async function start(context: ExtensionContext): Promise<void> {
       // No `transport` field. stdio is already the default for an executable,
       // and naming it explicitly makes the client append `--stdio` to argv -
       // a flag qlinter does not accept, so it exits 2 before the handshake.
-      run: { command, args },
-      debug: { command, args },
+      // A .cmd or .bat wrapper is started through a shell, which Node
+      // requires of one (#1610).
+      run: executable(command, args),
+      debug: executable(command, args),
     };
     // A server given up on must not be restarted by its own client when it
     // is killed: the default handler restarts a server that closes.

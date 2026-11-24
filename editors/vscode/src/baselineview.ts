@@ -12,6 +12,7 @@ import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileS
 import { tmpdir } from "node:os";
 import { basename, dirname, join, posix, relative, sep } from "node:path";
 import { commands, window, workspace, type ExtensionContext } from "vscode";
+import { launchable } from "./batch";
 import { LANGUAGE_COMMANDS, languageOff, languageOn } from "./languagefeatures";
 import { plainMessage } from "./history";
 
@@ -66,7 +67,9 @@ export function governingConfiguration(stdout: string): string | undefined {
 
 function runQlinter(command: string, args: string[], cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { cwd, timeout: 300_000, maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
+    // A .cmd wrapper through a shell, as Node starts one (#1610).
+    const run = launchable(command, args);
+    execFile(run.command, run.args, { cwd, timeout: 300_000, maxBuffer: 64 * 1024 * 1024, windowsHide: true, shell: run.shell }, (error, stdout, stderr) => {
       const failed = error as (Error & { code?: unknown }) | null;
       if (failed && typeof failed.code === "string") {
         reject(new Error(`${command} could not be run: ${failed.message}`));

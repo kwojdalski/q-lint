@@ -21,6 +21,7 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
   class LanguageClient {
     constructor(id, name, server, options) {
       this.command = server.run.command;
+      this.server = server;
       this.outputChannel = options.outputChannel;
       this.clientOptions = options;
       this.stopped = false;
@@ -242,6 +243,17 @@ test("off Windows too, PATH holding no qlinter is said, not run as a bare name (
   assert.match(w.errors.join("\n"), /qlinter is not on PATH\./);
   assert.strictEqual(w.linter().command, undefined);
   assert.strictEqual(w.baseline().command, undefined);
+  await w.extension.deactivate();
+});
+
+test("on Windows a serverPath naming a .cmd wrapper is started through a shell, quoted (#1610)", async (t) => {
+  const platform = Object.getOwnPropertyDescriptor(process, "platform");
+  Object.defineProperty(process, "platform", { value: "win32" });
+  t.after(() => Object.defineProperty(process, "platform", platform));
+  const w = load({ settings: { serverPath: "C:\\my tools\\qlinter.cmd" } });
+  await w.extension.activate(w.context);
+  await sleep(100);
+  assert.deepStrictEqual(w.clients[0].server.run, { command: '"C:\\my tools\\qlinter.cmd"', args: ['"--lsp"'], options: { shell: true } });
   await w.extension.deactivate();
 });
 
