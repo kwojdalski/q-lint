@@ -10,9 +10,14 @@
 // pulled into memory. The expression is the user's, so it is sent through
 // the read-only guard. Works on kdb+ (KDB-X) and PeachQ; held there by
 // processtools_q.test.js.
+import { qName } from "./explorer";
 import { isString, listOf } from "./processtools";
 
 export const TABLES = "{[x] string asc tables[]}";
+
+/// A table picked from `TABLES` as the expression that reads it: its name,
+/// or `` get`$"my trade" `` for one q would not parse as a name (#1572).
+export const tableExpression = (name: string): string => qName(name);
 
 export const TABLE_SHAPE = [
   "{[e]",
