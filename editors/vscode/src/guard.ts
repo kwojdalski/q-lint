@@ -42,8 +42,8 @@
 // - `?` with a symbol atom on its left (`` `sym?`x ``, `` (`sym)?`x ``,
 //   `` ?[`sym;`x] ``), which extends that enumeration, and the sym file
 //   when the symbol is a handle;
-// - a string sent to handle 0 (`0"a:1"`, `neg[0]"a:1"`), which the
-//   process evaluates itself;
+// - a string or a list sent to handle 0 (`0"a:1"`, `neg[0]"a:1"`,
+//   `0(@;`b;0;:;9)`), which the process evaluates itself as `value` would;
 // - `-11!`, which replays a log through `upd`, except `-11!(-1;..)` and
 //   `-11!(-2;..)`, which only count and check one; `-19!`, which
 //   compresses a file into another - each also spaced or with the number
@@ -959,18 +959,22 @@ function readStatement(statement: string, found: Set<string>): void {
     // Handle 0 is the process itself: `0"a:1"`, `(0)"a:1"`, `neg[0]"a:1"`,
     // `(neg 0)"a:1"` and `-0"a:1"` evaluate the string there, as do
     // `0("a:1")`, `0@"a:1"`, `0 . enlist "a:1"` (#1424) and `0["a:1"]` (#1724).
+    // Read as `value` reads them: a list is a tree, `0(@;`b;0;:;9)`, and
+    // a call, `0(value;"a:1")` (#1768), and a string that only reads, reads.
     if (k.kind === "num" && /^-?0[ihj]?$/.test(k.text) && t[i - 1]?.kind !== "num") {
       const wrapped =
         (t[i - 1]?.text === "(" && next?.text === ")") ||
         (t[i - 2]?.text === "neg" && t[i - 1]?.text === "[" && next?.text === "]") ||
         (t[i - 2]?.text === "(" && t[i - 1]?.text === "neg" && next?.text === ")");
-      let j = wrapped ? i + 2 : i + 1;
-      while (t[j]?.text === "(" || t[j]?.text === "[" || (t[j]?.kind === "op" && ["@", "."].includes(t[j].text)) || (t[j]?.kind === "name" && t[j].text === "enlist")) {
-        j++;
-      }
-      if (t[j]?.kind === "str") {
-        found.add("evaluates a string on handle 0");
-        continue;
+      const last = wrapped ? i + 1 : i;
+      const first = t[last + 1];
+      if (first?.kind === "str" || first?.text === "(" || first?.text === "[" || (first?.kind === "op" && ["@", "."].includes(first.text)) || (first?.kind === "name" && first.text === "enlist")) {
+        const what = evaluates(t, last, true);
+        if (what !== undefined) {
+          found.add(`evaluates ${what.reason} on handle 0`);
+          i = what.at;
+          continue;
+        }
       }
     }
     // `-11!` replays a log; `-11!(-1;..)` and `(-2;..)` only count and check it.

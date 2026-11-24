@@ -1205,3 +1205,24 @@ test("value or eval of a list headed by what changes the process is a change (#1
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("a list sent to handle 0 is evaluated as value evaluates it (#1768)", () => {
+  const cases = {
+    '0(value;"a:9")': ["evaluates a call of value on handle 0"],
+    "0(@;`b;0;:;9)": ["evaluates an amend on handle 0"],
+    "0(!;`t;();0b;(enlist`a)!enlist 9)": ["evaluates a functional update or delete on handle 0"],
+    "0(:;`a;9)": ["evaluates an assignment on handle 0"],
+    "neg[0](:;`a;9)": ["evaluates an assignment on handle 0"],
+    '0((get@);"a:9")': ["evaluates a call of (get@) on handle 0"],
+    // One that reads, or 0 as a number, reads.
+    "0(count;`t)": [],
+    '0"count t"': [],
+    "@[`b;0]": [],
+    "b[0]": [],
+    "0 1 2": [],
+    "(0;1)": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
