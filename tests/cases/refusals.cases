@@ -857,6 +857,25 @@ k:0x1g 1c
 === QE010 profile: general | a string still refuses an uppercase exponent's sign (#445; q 5: '1E)
 l:1E-3 1c
 
+=== QE010 profile: general | a sign straight after an e is the exponent's whatever follows, so q reads the letters after it into the number (#2099; q 5: -4!"1e-y" is one token, and '1e-y, '1e-, '2e-y, '1e-1e-1, '0x1e-3, '12:00e-1)
+y:2
+a:1e-y
+b:1e-
+c:2e-y+1
+d:3-1e-y
+e:1e-1e-1
+f:0x1e-3
+g:12:00e-1
+h:0Ne-3
+
+=== clean profile: general | a float's signed exponent, and the letters of one in a string, are no names (#2099; q 5: 0.001, 0.001e, 1000f, " 1")
+y:2
+a:1e-3
+b:1e-3e
+c:1e+3f
+d:1e-y 1c
+e:2*y-1e-3
+
 === clean profile: general | a time or date suffix among items of its shape (#446; q 5: 12:00 12:30, 12:00:00 13:00:00, 12:00:00 12:30:00, 0W 2000.01.01)
 m:12:00u 12:30
 n:12:00:00t 13:00:00

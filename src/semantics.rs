@@ -651,7 +651,7 @@ fn shape(s: &str) -> Option<usize> {
     // `0W 1` two, as q 5's 'length on `` `a`b`c!0N 0N `` and `0W 1+1 2 3` shows.
     // A type suffix ends the run: q 5 parses `1 2h` as one vector, but `1h 2`
     // does not parse and `1 0b` is the atom `1` applied to `0b` (#496).
-    if re!(r"^(?:-?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|0[nNwW])\s+)*-?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[hijef]?|0[nNwW][a-z]?)$")
+    if re!(r"^(?:-?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+|E\d+)?|0[nNwW])\s+)*-?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+|E\d+)?[hijef]?|0[nNwW][a-z]?)$")
         .is_match(s)
     {
         return Some(s.split_whitespace().count());
@@ -2116,11 +2116,11 @@ pub fn check(
     // least two items, or a parenthesised list or vector. `shape` decides the length of
     // each; this pattern only has to find them.
     for m in re!(concat!(
-        r#"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*\)|"(?:[^"\\\n]|\\.)*")"#,
+        r#"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*\)|"(?:[^"\\\n]|\\.)*")"#,
         blank!(),
         r"*(?P<op>(?:<>|<=|>=|[+*%&|=<>^-]|\b(?:and|or|mod|div|xexp|xlog)\b)'?|,')",
         blank!(),
-        r#"*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*\)|"(?:[^"\\\n]|\\.)*")"#
+        r#"*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*\)|"(?:[^"\\\n]|\\.)*")"#
     ))
     .captures_iter(comments)
     {
@@ -2267,7 +2267,7 @@ pub fn check(
             .get(&start)
             .map(|&i| &scopes[i])
             .filter(|s| s.params.len() == 1 || !s.named)
-            && let Some(m)=re!(r"^\s*([A-Za-z][A-Za-z0-9_]*)\s*[+*%\-]\s*-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[bhijef]?\s*;?\s*$").captures(&scope.direct)
+            && let Some(m)=re!(r"^\s*([A-Za-z][A-Za-z0-9_]*)\s*[+*%\-]\s*-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+|E\d+)?[bhijef]?\s*;?\s*$").captures(&scope.direct)
                 // An implicit signature is rank 1 only when the body reads
                 // `x` alone: `{x+1}[`a]` is 'type, `{y+1}[`a]` a projection.
                 && if scope.named { scope.params.contains(&m[1]) } else { &m[1] == "x" } {numeric.insert(name.clone());}
@@ -4358,7 +4358,7 @@ fn named_values(
     // Two vectors of known, different lengths under an operator that pairs
     // items - QT006 for a name rather than a literal. `,` and `~` take any
     // lengths and are not in the set.
-    let vector = r"-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|(?:`[A-Za-z0-9_.]*){2,}|\([^()]*;[^()]*\)";
+    let vector = r"-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?[A-Za-z0-9.]*)+|(?:`[A-Za-z0-9_.]*){2,}|\([^()]*;[^()]*\)";
     // The statement's blanks around the operator: `bump:v+` and then a
     // column-0 `1 2` are two statements (#742).
     let pair = regex::Regex::new(&format!(

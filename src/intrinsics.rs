@@ -147,7 +147,7 @@ fn literal(s: &str) -> Option<Literal> {
         });
     }
     let float = re!(
-        r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?(?:\s+-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)*[ef]?$"
+        r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+|E\d+)?(?:\s+-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+|E\d+)?)*[ef]?$"
     );
     if float.is_match(s) && (s.contains(['.', 'e', 'E']) || s.ends_with('f')) {
         return Some(Literal {
@@ -176,7 +176,7 @@ fn reversed_bounds(s: &str) -> Option<(&str, &str)> {
     let [low, high] = items[..] else {
         return None;
     };
-    let number = re!(r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$");
+    let number = re!(r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+|E\d+)?$");
     let suffixed = high.strip_suffix(['h', 'i', 'j', 'e', 'f']).unwrap_or(high);
     if number.is_match(low) && number.is_match(suffixed) {
         let (a, b) = (low.parse::<f64>().ok()?, suffixed.parse::<f64>().ok()?);
@@ -285,7 +285,7 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
     // continues it, past any blank or comment lines (#193, #676).
     const GAP: &str = blank!();
     for call in re!(&format!(
-        r#"\b({BUILTINS}){GAP}+((?:-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:{GAP}+-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*)|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*"|\((?:[^()"\n]|"(?:\\.|[^"\\])*")*\)|enlist{GAP}+(?:-?\.?\d[A-Za-z0-9.:]*(?:[ \t]+-?\.?\d[A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*"))"#
+        r#"\b({BUILTINS}){GAP}+((?:-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*(?:{GAP}+-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*)*)|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*"|\((?:[^()"\n]|"(?:\\.|[^"\\])*")*\)|enlist{GAP}+(?:-?\.?\d[A-Za-z0-9.:]*(?:[ \t]+-?\.?\d[A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*"))"#
     ))
     .captures_iter(comments)
     {

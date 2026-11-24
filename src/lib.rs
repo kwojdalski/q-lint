@@ -2091,8 +2091,8 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         }
         // A number signalled is 'stype; signal it as a string.
         "QT025" => {
-            let m = re!(r"^'(\s*)(-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)")
-                .captures(source.get(start..)?)?;
+            let m =
+                re!(r"^'(\s*)(-?\d(?:e-|e\+\d|[A-Za-z0-9.:])*)").captures(source.get(start..)?)?;
             // Only the whole operand: `'10 20` with its first item quoted would
             // be `'"10" 20`, still 'stype, and `'1 2` would be `'enlist"1" 2`,
             // 'type (#1200).
@@ -2940,6 +2940,9 @@ fn boundary(s: &str, at: usize) -> bool {
         // `(x)_ns`. Verified with parse in q 5: "3_ns" is (_;3;`ns), and so
         // are "1.5_ns", "0x01_ns" and "3j_ns", while "x_ns" is `x_ns.
         Some('_') => !ends_in_name(&before[..before.len() - 1]),
+        // Nor after a number's exponent sign, which q reads on past: the `y`
+        // of `1e-y` is no name, since `-4!"1e-y"` is one token (#2099).
+        Some('-' | '+') => !in_number(s, at - 1),
         Some(c) => !c.is_alphanumeric() && !".`".contains(c),
     }
 }
@@ -3041,7 +3044,7 @@ fn refused_atom_condition(raw: &str) -> bool {
         // An hsym runs on over `/`: `` `:db/t `` is one symbol (q 5).
         || re!(r"^(?:`(?::[A-Za-z0-9_.:/]*|[A-Za-z0-9_.:]*))+$").is_match(raw)
         || re!(r"^0x(?:[0-9a-fA-F]{2}){2,}$").is_match(raw)
-        || re!(r"^-?(?:\d+\.\d*|\.\d+|\d+(?:\.\d*)?[eE][+-]?\d+)[ef]?$|^-?\d+[ef]$|^0[nwNW][ef]?$|^-0[wW][ef]?$|^0Ng$")
+        || re!(r"^-?(?:\d+\.\d*|\.\d+|\d+(?:\.\d*)?(?:e[+-]?\d+|E\d+))[ef]?$|^-?\d+[ef]$|^0[nwNW][ef]?$|^-0[wW][ef]?$|^0Ng$")
             .is_match(raw)
             && !re!(r"^-?0[NW]$").is_match(raw)
 }
@@ -3664,6 +3667,52 @@ fn phrase_end(code: &str, from: usize) -> usize {
     }
     code.len()
 }
+/// Where the number q's tokenizer reads from `at` ends: `text[at..]` starts
+/// with a digit, or a point and a digit. It runs on over letters, digits,
+/// points and a colon before a digit, and takes a sign only as q does (`-4!`
+/// on KDB-X 5): a `-` straight after a lower-case `e` always (`1e-3`, and
+/// `1e-` and `1e-y` too), a `+` there only before a digit (`1e+x` is `1e`,
+/// `+`, `x`), and none after an upper-case `E` - `1E-3` is `1E`, `-`, `3`
+/// (#2057, #2099). The regex patterns that scan a number spell its sign the
+/// same way, `e-|e\+\d`.
+pub(crate) fn number_end(text: &str, at: usize) -> usize {
+    re!(r"^\.?\d(?:e-|e\+\d|:\d|[0-9A-Za-z.])*")
+        .find(&text[at..])
+        .map_or(at, |m| at + m.end())
+}
+/// Whether the `+` or `-` at `i` is part of the number written before it:
+/// its exponent's sign, as `number_end` reads one. The token is read from the
+/// start of the run of letters, digits, points and colons it ends, left to
+/// right as q reads it: in `c3:1e-y` the run holds the name `c3`, the `:`
+/// and the number `1e-y`.
+fn in_number(text: &str, i: usize) -> bool {
+    let b = text.as_bytes();
+    let mut p = b[..i]
+        .iter()
+        .rposition(|c| !(c.is_ascii_alphanumeric() || b"._:".contains(c)))
+        .map_or(0, |p| p + 1);
+    if p > 0 && b[p - 1] == b'`' {
+        return false;
+    }
+    while p < i {
+        let c = b[p];
+        if c.is_ascii_digit() || c == b'.' && b.get(p + 1).is_some_and(u8::is_ascii_digit) {
+            let end = number_end(text, p);
+            if end > i {
+                return true;
+            }
+            p = end;
+        } else if c.is_ascii_alphabetic() {
+            p += b[p..i]
+                .iter()
+                .take_while(|c| c.is_ascii_alphanumeric() || b"._".contains(c))
+                .count();
+        } else {
+            p += 1;
+        }
+    }
+    false
+}
 /// Whether a top-level statement mixes `*`/`%` with a binary `+`/`-` - the
 /// pair whose right-to-left order readers most often get wrong. A `-` is
 /// binary only when it does not introduce a token: `a -b` applies `a` to
@@ -3742,18 +3791,9 @@ fn infix_runs(line: &str) -> Vec<Vec<(usize, bool)>> {
                 let introduces = c == b'-'
                     && spaced
                     && (digit(i + 1) || b.get(i + 1) == Some(&b'.') && digit(i + 2));
-                // The sign of a float's exponent: `1e-9` is one number.
-                let exponent = i > 1 && matches!(b[i - 1], b'e' | b'E') && {
-                    let mantissa = b[..i - 1]
-                        .iter()
-                        .rev()
-                        .take_while(|c| c.is_ascii_digit() || **c == b'.')
-                        .count();
-                    let before = b[..i - 1 - mantissa].last();
-                    mantissa > 0
-                        && b[i - 1 - mantissa].is_ascii_digit()
-                        && !before.is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_')
-                };
+                // The sign of a float's exponent: `1e-9` is one number, and
+                // `1E-9` is three tokens to q (#2099).
+                let exponent = in_number(line, i);
                 if operand && !introduces && !exponent {
                     open.last_mut().unwrap().push((i, false));
                 }
@@ -6741,7 +6781,7 @@ fn lint_rules(
         let sym = r"(?:`(?:\.?[A-Za-z][A-Za-z0-9_.:]*|:[A-Za-z0-9_.:/]*))+";
         // An exponent's sign is part of its number: `1e-3` is one float.
         let num =
-            r"-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*";
+            r"-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*(?:[ \t]+-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*)*";
         let string = r#""(?:[^"\\]|\\.)*""#;
         let op = r"(?:<=|>=|<>|<|>|=|\bin\b)";
         // A string literal is blanks by the time `code` is built, so the
@@ -8051,11 +8091,13 @@ fn lint_rules(
             // Only the last item takes a type suffix, and never `b`: `1 0b` is
             // the atom `1` applied to `0b`, and `1h 2` does not parse (q 5, #496).
             let suffixed = |item: &str| {
-                re!(r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[a-mo-vx-zA-MO-VX-Z]$|^-?0[nNwW][a-z]$")
+                re!(r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+|E\d+)?[a-mo-vx-zA-MO-VX-Z]$|^-?0[nNwW][a-z]$")
                     .is_match(item)
             };
-            if re!(r"^-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:\s+-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)+$")
-                .is_match(v)
+            if re!(
+                r"^-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*(?:\s+-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*)+$"
+            )
+            .is_match(v)
             {
                 let items: Vec<&str> = v.split_whitespace().collect();
                 let (last, init) = items.split_last().expect("two items or more");
@@ -8067,7 +8109,7 @@ fn lint_rules(
             if v == "()" {
                 return Some(Shape::Vector(Some(0)));
             }
-            if re!(r"^[01]b$|^0x[0-9a-fA-F]{1,2}$|^-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*$|^`[A-Za-z0-9_.]*$")
+            if re!(r"^[01]b$|^0x[0-9a-fA-F]{1,2}$|^-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*$|^`[A-Za-z0-9_.]*$")
                 .is_match(v)
             {
                 return Some(Shape::Atom);
@@ -10117,4 +10159,122 @@ fn lint_rules(
         (&a.path, a.line, &a.rule, &a.detail).cmp(&(&b.path, b.line, &b.rule, &b.detail))
     });
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::number_end;
+
+    /// `text` in tokens, blanks left out: a number as `number_end` reads it
+    /// (with a `-` before it at the start, after a blank or after an
+    /// operator, as q joins a negative literal), a name, or one character.
+    fn tokens(text: &str) -> Vec<&str> {
+        let b = text.as_bytes();
+        let (mut out, mut i) = (vec![], 0);
+        let digit = |at: usize| {
+            b.get(at).is_some_and(u8::is_ascii_digit)
+                || b.get(at) == Some(&b'.') && b.get(at + 1).is_some_and(u8::is_ascii_digit)
+        };
+        while i < b.len() {
+            let start = i;
+            if b[i] == b' ' {
+                i += 1;
+                continue;
+            }
+            if digit(i) {
+                i = number_end(text, i);
+            } else if b[i] == b'-'
+                && digit(i + 1)
+                && (b.get(i.wrapping_sub(1)) == Some(&b' ')
+                    || out.last().is_none_or(|t: &&str| {
+                        t.len() == 1 && !t.as_bytes()[0].is_ascii_alphanumeric()
+                    }))
+            {
+                i = number_end(text, i + 1);
+            } else if b[i].is_ascii_alphabetic() {
+                i += b[i..]
+                    .iter()
+                    .take_while(|c| c.is_ascii_alphanumeric() || **c == b'_' || **c == b'.')
+                    .count();
+            } else {
+                i += 1;
+            }
+            out.push(&text[start..i]);
+        }
+        out
+    }
+
+    /// A number's tokens are q's own: each literal here with the tokens
+    /// `-4!` gives for it on KDB-X 5, blanks left out (#2057, #2099).
+    #[test]
+    fn a_number_ends_where_q_tokenizes_it() {
+        let cases: &[(&str, &[&str])] = &[
+            ("1e-3", &["1e-3"]),
+            ("1E-3", &["1E", "-", "3"]),
+            ("1e+3", &["1e+3"]),
+            ("1E+3", &["1E", "+", "3"]),
+            ("1E3", &["1E3"]),
+            ("1.5E-3", &["1.5E", "-", "3"]),
+            ("1.5e-3", &["1.5e-3"]),
+            (".5E-3", &[".5E", "-", "3"]),
+            (".5e-3", &[".5e-3"]),
+            ("1.E-3", &["1.E", "-", "3"]),
+            ("1.e-3", &["1.e-3"]),
+            ("2E", &["2E"]),
+            ("1E", &["1E"]),
+            ("1E+", &["1E", "+"]),
+            ("1Ef", &["1Ef"]),
+            ("2E3f", &["2E3f"]),
+            ("1E03", &["1E03"]),
+            ("1e-03", &["1e-03"]),
+            ("1e-3f", &["1e-3f"]),
+            ("1e-3e", &["1e-3e"]),
+            ("1e-3e-2", &["1e-3e-2"]),
+            ("1e1e-1", &["1e1e-1"]),
+            ("2e-3j", &["2e-3j"]),
+            ("1e-", &["1e-"]),
+            ("1e+", &["1e", "+"]),
+            ("1e+x", &["1e", "+", "x"]),
+            ("1e-x", &["1e-x"]),
+            ("1e-y+1", &["1e-y", "+", "1"]),
+            ("1e--3", &["1e-", "-", "3"]),
+            ("1e+-3", &["1e", "+", "-3"]),
+            ("1e-+3", &["1e-", "+", "3"]),
+            ("1e+.5", &["1e", "+", ".5"]),
+            ("1e3-2", &["1e3", "-", "2"]),
+            ("1e-3-1", &["1e-3", "-", "1"]),
+            ("3-1e-3", &["3", "-", "1e-3"]),
+            ("x-1E-3", &["x", "-", "1E", "-", "3"]),
+            ("x*1e-3", &["x", "*", "1e-3"]),
+            ("px-1e-3", &["px", "-", "1e-3"]),
+            ("x-2e", &["x", "-", "2e"]),
+            ("x -1E-3", &["x", "-1E", "-", "3"]),
+            ("1f-3", &["1f", "-", "3"]),
+            ("1b-3", &["1b", "-", "3"]),
+            ("1d-3", &["1d", "-", "3"]),
+            ("1he-2", &["1he-2"]),
+            ("0x1e-3", &["0x1e-3"]),
+            ("0x1E-3", &["0x1E", "-", "3"]),
+            ("0x1e", &["0x1e"]),
+            ("0Ne-3", &["0Ne-3"]),
+            ("0we-1", &["0we-1"]),
+            ("0NE-3", &["0NE", "-", "3"]),
+            ("12:00e-1", &["12:00e-1"]),
+            ("12:00E-1", &["12:00E", "-", "1"]),
+            ("2012.01.01e-3", &["2012.01.01e-3"]),
+            ("1E-3 1c", &["1E", "-", "3", "1c"]),
+            ("1 2E-3", &["1", "2E", "-", "3"]),
+            ("1E5 2.5", &["1E5", "2.5"]),
+            ("1e-3 2", &["1e-3", "2"]),
+            ("10e-1", &["10e-1"]),
+            ("2e10", &["2e10"]),
+            ("2e+10", &["2e+10"]),
+            ("1.5e-2 1e-1 3", &["1.5e-2", "1e-1", "3"]),
+            ("-1e-3", &["-1e-3"]),
+            ("-2.5e+2", &["-2.5e+2"]),
+        ];
+        for (text, want) in cases {
+            assert_eq!(tokens(text), *want, "{text}");
+        }
+    }
 }

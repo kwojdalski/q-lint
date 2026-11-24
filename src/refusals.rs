@@ -37,9 +37,9 @@ fn attributes(path: &str, source: &str, code: &str, comments: &str, out: &mut Ve
     // A vector's items may run on across the indented line that continues
     // it: q 5 `w:`s#1` over `  1e-3` is 's-fail (#689).
     for m in re!(concat!(
-        r#"`([spu])#[ \t]*((?:`[A-Za-z0-9_.]*){2,}|\(\s*-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)+\s*\)|-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:"#,
+        r#"`([spu])#[ \t]*((?:`[A-Za-z0-9_.]*){2,}|\(\s*-?\d(?:e-|e\+\d|[A-Za-z0-9.:])*(?:[ \t]+-?\d(?:e-|e\+\d|[A-Za-z0-9.:])*)+\s*\)|-?\d(?:e-|e\+\d|[A-Za-z0-9.:])*(?:"#,
         blank!(),
-        r#"+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)+|[01]{2,}b|0x[0-9a-fA-F]{4,}|"(?:[^"\\]|\\.)+")"#
+        r#"+-?\d(?:e-|e\+\d|[A-Za-z0-9.:])*)+|[01]{2,}b|0x[0-9a-fA-F]{4,}|"(?:[^"\\]|\\.)+")"#
     ))
     .captures_iter(comments)
     {
@@ -690,7 +690,7 @@ fn signals(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<F
     // `'2026.01.01D12:00` and `'1e-3` are each 'stype. So are a number
     // strand and an enlisted number or symbol, `'1 2` and `'enlist 1`, which
     // are lists (#612); `'enlist "a"` is the string "a" and signals 'a.
-    for m in re!(r#"(')(enlist[ \t]+(?:-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*|`[A-Za-z0-9_.:]*)|-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*|"(?:\\[0-7]{3}|\\.|[^"\\])+"|\(\s*\)|\(\s*-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*\s*\)|\([^()"]*;[^()]*\)|(?:`[A-Za-z0-9_.]*){2,})"#).captures_iter(comments) {
+    for m in re!(r#"(')(enlist[ \t]+(?:-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*|`[A-Za-z0-9_.:]*)|-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*(?:[ \t]+-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*)*|"(?:\\[0-7]{3}|\\.|[^"\\])+"|\(\s*\)|\(\s*-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*\s*\)|\([^()"]*;[^()]*\)|(?:`[A-Za-z0-9_.]*){2,})"#).captures_iter(comments) {
         let quote = m.get(1).unwrap();
         let value = m.get(2).unwrap();
         if code.as_bytes()[quote.start()] != b'\'' {
@@ -1870,7 +1870,7 @@ fn numbers(
     // A colon joins only a digit: before a name it is the I/O verb, and q 5
     // parses `x 0:y 1` as `(0:;`x;(`y;1))` (#665).
     let tokens: Vec<regex::Match> =
-        crate::boundary_captures(re!(r"\.?\d(?:[eE][+-]\d|:\d|[0-9A-Za-z.])*"), unsym, code)
+        crate::boundary_captures(re!(r"\.?\d(?:e-|e\+\d|:\d|[0-9A-Za-z.])*"), unsym, code)
             .into_iter()
             .map(|c| c.get(0).unwrap())
             .filter(|m| !command_argument(source, m.start()))
@@ -1907,8 +1907,9 @@ fn numbers(
         // any number before it as chars: `1h 2c` is " 2", and `1.5j 2c`,
         // `1y 2c`, `0Nh 1c` and `-0N 1c` all parse. Only what q refuses as it
         // reads the token is still refused there: a `b` it cannot read as a
-        // boolean (`2b 1c`, `0Nb 1c`), a byte (`0x1g 1c`), and an uppercase
-        // exponent's sign (`1E-3 1c`).
+        // boolean (`2b 1c`, `0Nb 1c`) and a byte (`0x1g 1c`). `1E-3 1c` is
+        // refused too, but not in the vector: an uppercase `E` takes no
+        // sign, so `1E` is a token of its own before the `-` (#2099).
         let string = last.ends_with('c') && !last.starts_with("0x");
         let mut reported = false;
         for (k, t) in run.iter().enumerate() {
@@ -1979,7 +1980,7 @@ fn numbers(
                     "`{text}`: an uppercase `E` exponent on an integer makes no number \
                      unless another item makes the vector float; write `e`"
                 ))
-            } else if re!(r"^\d+(?:\.\d*)?(?:[eE][+-]?\d+)?[hij]$").is_match(text)
+            } else if re!(r"^\d+(?:\.\d*)?(?:e[+-]?\d+|E\d+)?[hij]$").is_match(text)
                 && !re!(r"^\d+[hij]$").is_match(text)
             {
                 // `1e3j` too: an exponent makes a float, whatever it equals.
@@ -1987,7 +1988,7 @@ fn numbers(
                     "`{text}`: an integer type takes no fractional part or exponent"
                 ))
             } else if re!(r"^\d*[2-9]\d*b$").is_match(text)
-                || (re!(r"^\d+(?:\.\d*)?(?:[eE][+-]?\d+)?b$").is_match(text)
+                || (re!(r"^\d+(?:\.\d*)?(?:e[+-]?\d+|E\d+)?b$").is_match(text)
                     && !re!(r"^\d+b$").is_match(text))
             {
                 Some(format!("`{text}`: a boolean is written with 0 and 1 only"))
@@ -2139,7 +2140,7 @@ fn numbers(
                     "`{text}`: a time in a vector literal takes only times or nulls after it"
                 ))
             } else if k + 1 < run.len()
-                && (text.contains('.') || re!(r"^\d+[eE][+-]?\d+$").is_match(text))
+                && (text.contains('.') || re!(r"^\d+(?:e[+-]?\d+|E\d+)$").is_match(text))
                 && !text.contains(':')
                 && re!(r"^(?:\d+|0[nNwW])[hij]$").is_match(last)
             {
@@ -2185,16 +2186,25 @@ fn numbers(
                     "`{text}`: letters written against a number are part of it; put a blank \
                      between the number and the word"
                 ))
+            } else if re!(r"e-|e\+\d").is_match(text)
+                && !re!(r"^(?:\d+\.?\d*|\.\d+)e[+-]\d+[ef]?$").is_match(text)
+            {
+                // A `-` straight after a lower-case `e` is an exponent's sign
+                // whatever follows it, and a `+` before a digit, so q reads
+                // on to the token's end: `-4!"1e-y"` is one token, and q 5
+                // refuses `1e-y`, `1e-`, `2e-y+1`, `1e1e-1`, `0x1e-3` and
+                // `12:00e-1` with it, while `1e-3`, `1e-3e` and `1e-3f` are
+                // floats (#2099).
+                Some(format!(
+                    "`{text}`: a sign straight after an `e` is an exponent's, so q reads \
+                     all of `{text}` as one number"
+                ))
             } else {
                 date_among_numbers(run, k, text)
             };
             // In a string only what q refuses as it reads the token.
-            let detail = detail.filter(|_| {
-                !in_string
-                    || text.ends_with('b')
-                    || text.starts_with("0x")
-                    || re!(r"E[+-]").is_match(text)
-            });
+            let detail =
+                detail.filter(|_| !in_string || text.ends_with('b') || text.starts_with("0x"));
             if let Some(detail) = detail
                 && !reported
             {
