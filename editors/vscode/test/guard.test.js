@@ -1513,3 +1513,8 @@ test("! passed as a value with -11 or -19 replays a log or writes a compressed f
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("\\t and \\ts nested deep are read in a loop, not one call each", () => {
+  assert.deepStrictEqual(writes(`${"\\ts ".repeat(2000)}a:1`), ["assigns a"]);
+  assert.deepStrictEqual(writes(`${"\\t ".repeat(2000)}count t`), []);
+});

@@ -1033,15 +1033,19 @@ function gateway(t: Token[], i: number, found: Set<string>): void {
 function readStatement(statement: string, found: Set<string>): void {
   // A language prefix, `q)` or `k)`, as many as are written, `q)k)`, is
   // not what it runs: `k)\l f.q` loads the script (#2034).
-  const text = statement.trimStart().replace(/^(?:[qk]\)\s*)+/, "");
-  if (text.startsWith("\\")) {
+  let text = statement.trimStart().replace(/^(?:[qk]\)\s*)+/, "");
+  // `\t` and `\ts` time the expression after them, read in their place, as
+  // many as are written.
+  while (text.startsWith("\\")) {
     const command = /^\\(\\|[A-Za-z_]+)(?::\d+)?\s*([\s\S]*)$/.exec(text);
     const name = command?.[1] ?? "";
     const argument = (command?.[2] ?? "").trim();
     if (name === "t" && !text.startsWith("\\t:") && /^\d+$/.test(argument)) {
       found.add("sets the timer with \\t");
     } else if (name === "t" || name === "ts") {
-      readStatement(argument, found);
+      statement = argument;
+      text = argument.trimStart().replace(/^(?:[qk]\)\s*)+/, "");
+      continue;
     } else if (!(argument === "" && READS_BARE.has(name)) && !(name === "w" && /^[01]$/.test(argument))) {
       // (`\w 0` and `\w 1` report the symbols; another number sets the limit.)
       found.add(`runs the system command \\${name}`);
