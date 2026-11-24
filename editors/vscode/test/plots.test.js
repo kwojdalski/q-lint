@@ -52,6 +52,14 @@ test("only chartSvg's plain SVG is kept: no script, handler or link", () => {
   }
 });
 
+test("a label that reads like a handler or link is text, and the plot is kept (#1475)", () => {
+  for (const label of ["status online=1", "see href=x", "javascript: tips"]) {
+    assert.strictEqual(plainSvg(svg(`<text x="1">${label}</text>`)), true, label);
+  }
+  assert.strictEqual(plainSvg(svg('<text x="1">a</text><a href="x">b</a>')), false);
+  assert.strictEqual(plainSvg(svg('<text x="1" onclick="x()">a</text>')), false);
+});
+
 test("the switch is declared, on by default, and the view and commands are hidden when off", () => {
   const props = Object.assign({}, ...pkg.contributes.configuration.map((c) => c.properties));
   assert.strictEqual(props["q-lint.results.plots.enable"].default, true);
