@@ -70,7 +70,7 @@ import { ClosedBeforeHandshake, QConnection, QError, type Target } from "./qclie
 import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, TunnelHandshakeError, readTunnel } from "./tunnel";
 import { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, readGateway } from "./gateway";
 import { HEARTBEAT, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
-import { historyHeading, historyLabel, iconsEscaped, mergedHistory, plainMessage } from "./history";
+import { clearedStamp, historyHeading, historyLabel, iconsEscaped, mergedHistory, plainMessage } from "./history";
 import { render } from "./query";
 import { QueryModes, type PageLater, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
@@ -1103,8 +1103,14 @@ export class Live {
   }
 
   history(): HistoryEntry[] {
-    this.queries = mergedHistory(undefined, this.queries, this.storedHistory(), this.context.globalState.get<string>(HISTORY_CLEARED_KEY), HISTORY_LIMIT);
+    this.queries = mergedHistory(undefined, this.queries, this.storedHistory(), this.historyCleared(), HISTORY_LIMIT);
     return this.queries;
+  }
+
+  /// When Clear History was last run, in any window.
+  private historyCleared(): string | undefined {
+    const stored = this.context.globalState.get<unknown>(HISTORY_CLEARED_KEY);
+    return typeof stored === "string" ? stored : undefined;
   }
 
   private storedHistory(): HistoryEntry[] {
@@ -3173,7 +3179,13 @@ export class Live {
   }
 
   async record(entry: HistoryEntry): Promise<void> {
-    this.queries = mergedHistory(entry, this.queries, this.storedHistory(), this.context.globalState.get<string>(HISTORY_CLEARED_KEY), HISTORY_LIMIT);
+    // A Clear stamped by a clock that was ahead would drop this query at
+    // the next merge, and every one after it (#1882).
+    const cleared = clearedStamp(this.historyCleared(), entry.at, new Date());
+    if (cleared !== this.historyCleared()) {
+      await this.context.globalState.update(HISTORY_CLEARED_KEY, cleared);
+    }
+    this.queries = mergedHistory(entry, this.queries, this.storedHistory(), this.historyCleared(), HISTORY_LIMIT);
     this.refreshHistory();
     await this.context.globalState.update(HISTORY_KEY, this.queries);
   }

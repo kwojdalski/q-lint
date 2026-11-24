@@ -228,3 +228,37 @@ test("two windows recording queries keep each other's, and Clear in one holds in
   assert.deepStrictEqual(one.globalState.get("q-lint.queryHistory").map((e) => e.code), ["after clear"]);
   assert.deepStrictEqual(a.history().map((e) => e.code), ["after clear"]);
 });
+
+// Clear run while the clock was ahead stamped a moment still to come: every
+// query sent after the clock was put right was "at or before" it (#1882).
+test("a Clear stamp from a clock that was ahead does not drop the queries sent since", async (t) => {
+  const { clearedStamp } = require("../out/history.js");
+  const now = new Date("2026-11-24T10:00:00.000Z");
+  // A stamp that is not after now is as stored; none is none.
+  assert.strictEqual(clearedStamp("2026-11-24T09:00:00.000Z", "2026-11-24T09:59:59.000Z", now), "2026-11-24T09:00:00.000Z");
+  assert.strictEqual(clearedStamp("2026-11-24T10:00:00.000Z", "2026-11-24T09:59:59.000Z", now), "2026-11-24T10:00:00.000Z");
+  assert.strictEqual(clearedStamp(undefined, "2026-11-24T09:59:59.000Z", now), undefined);
+  assert.strictEqual(clearedStamp(7, "2026-11-24T09:59:59.000Z", now), undefined);
+  // One after now is the moment before the entry: it is kept, what was sent before it is not.
+  assert.strictEqual(clearedStamp("2027-03-01T10:00:00.000Z", "2026-11-24T09:59:59.000Z", now), "2026-11-24T09:59:58.999Z");
+  assert.strictEqual(clearedStamp("2027-03-01T10:00:00.000Z", "not a date", now), "2026-11-24T09:59:59.999Z");
+  assert.strictEqual(clearedStamp("2027-03-01T10:00:00.000Z", "2026-12-01T00:00:00.000Z", now), "2026-11-24T09:59:59.999Z");
+
+  stub.reset();
+  const context = stub.newContext();
+  const live = new Live(context);
+  t.after(() => context.subscriptions.forEach((d) => d.dispose?.()));
+  const entry = (code, ago) => ({ process: "p", code, at: new Date(Date.now() - ago).toISOString(), millis: 1, outcome: "ok" });
+  // Cleared "next year"; another window still holds a query from before it.
+  await context.globalState.update("q-lint.queryHistoryCleared", new Date(Date.now() + 365 * 86_400_000).toISOString());
+  await context.globalState.update("q-lint.queryHistory", [entry("before the clear", 3_600_000)]);
+  await live.record(entry("a", 300));
+  await live.record(entry("b", 200));
+  await live.record(entry("c", 100));
+  assert.deepStrictEqual(live.history().map((e) => e.code), ["c", "b", "a"]);
+  assert.deepStrictEqual(context.globalState.get("q-lint.queryHistory").map((e) => e.code), ["c", "b", "a"]);
+  assert.ok(context.globalState.get("q-lint.queryHistoryCleared") < new Date().toISOString());
+  // Clear still clears.
+  await live.clearHistory();
+  assert.deepStrictEqual(live.history(), []);
+});

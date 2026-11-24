@@ -32,6 +32,24 @@ export function mergedHistory<T extends { at: string; process: string; code: str
   return out.sort((a, b) => (a === entry ? -1 : b === entry ? 1 : a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).slice(0, limit);
 }
 
+/// When Clear was last run, as a window recording a query sent at `at`
+/// reads the `stored` stamp at `now`; undefined when none is stored. A
+/// stamp after `now` was written while the clock was ahead: every query
+/// sent since it was put right is "at or before" that Clear, so the history
+/// held only the last one until the date passed the stamp (#1882). Such a
+/// stamp is read as the moment before the query, and the caller stores
+/// that in its place: what was cleared stays cleared, and the query is kept.
+export function clearedStamp(stored: unknown, at: string, now: Date): string | undefined {
+  if (typeof stored !== "string") {
+    return undefined;
+  }
+  if (!(stored > now.toISOString())) {
+    return stored;
+  }
+  const sent = Date.parse(at);
+  return new Date(Math.min(Number.isNaN(sent) ? Infinity : sent, now.getTime()) - 1).toISOString();
+}
+
 /// A query's label: its first line that is not blank, without the CR of a
 /// CRLF file, cut to `LABEL_LIMIT` characters - never inside a surrogate
 /// pair, which would show a replacement character.
