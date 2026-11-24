@@ -322,16 +322,40 @@ export class QTerminals {
   private last: Terminal | undefined;
   /// The terminal a send is starting, so a second send waits for it.
   private starting: Promise<Terminal | undefined> | undefined;
+  /// Those whose q has ended, leaving the shell: code is not typed into it.
+  private readonly ended = new WeakSet<Terminal>();
 
   constructor(context: ExtensionContext) {
     context.subscriptions.push(
       window.onDidCloseTerminal((terminal) => {
         this.ours.delete(terminal);
         if (terminal === this.last) {
-          this.last = [...this.ours].pop();
+          this.last = this.latest();
         }
       }),
     );
+    // Shell integration (VS Code 1.93) tells when the command a terminal
+    // ran - its q - has ended: from then on its shell would read the q
+    // code sent to it, so it is no longer where code goes (#1675).
+    // Older VS Code has none.
+    const ends: typeof window.onDidEndTerminalShellExecution | undefined = window.onDidEndTerminalShellExecution;
+    if (typeof ends === "function") {
+      context.subscriptions.push(
+        ends((event) => {
+          if (this.ours.has(event.terminal)) {
+            this.ended.add(event.terminal);
+            if (event.terminal === this.last) {
+              this.last = this.latest();
+            }
+          }
+        }),
+      );
+    }
+  }
+
+  /// The last q terminal started of those open whose q still runs.
+  private latest(): Terminal | undefined {
+    return [...this.ours].filter((t) => !this.ended.has(t)).pop();
   }
 
   /// Run the active file - or `document`, the one whose Run button was
