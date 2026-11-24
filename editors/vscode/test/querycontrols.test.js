@@ -558,3 +558,13 @@ test("a subnormal float or real is written as a zero of its sign, as KDB-X write
   assert.strictEqual(floatText(2.2250738585072014e-308), "2.225074e-308");
   assert.strictEqual(atomText(Math.fround(1.1754944e-38), -8), "1.175494e-38e");
 });
+
+test("an unwrapped minute, second or time of 100 hours or more writes its hours as **, as KDB-X does (#1762)", () => {
+  // KDB-X: "u"$-5940 -6000 5999 6000 -> -99:00 -**:00 99:59 **:00.
+  assert.strictEqual(vectorText([-5940, -6000, 5999, 6000], 17), "-99:00 -**:00 99:59 **:00");
+  // "v"$359999 360000 -360000 -> 99:59:59 **:00:00 -**:00:00.
+  assert.strictEqual(vectorText([359999, 360000, -360000], 18), "99:59:59 **:00:00 -**:00:00");
+  // "t"$359999999 -2147483646 -> 99:59:59.999 -**:31:23.646.
+  assert.strictEqual(vectorText([359999999, -2147483646], 19), "99:59:59.999 -**:31:23.646");
+  assert.strictEqual(atomText(2147483646, -18), "**:14:06");
+});

@@ -150,7 +150,8 @@ function significant(x: number, p: number): [string, number] {
 }
 
 /// A time of day, or a span, from milliseconds or nanoseconds: `hh:mm`,
-/// `hh:mm:ss` or `hh:mm:ss.mmm`, the hours past 23 when there are more.
+/// `hh:mm:ss` or `hh:mm:ss.mmm`, the hours past 23 when there are more and
+/// `**` past 99, as KDB-X writes them (#1762).
 function clock(total: number, unit: "minute" | "second" | "milli"): string {
   const sign = total < 0 ? "-" : "";
   let t = Math.abs(Math.round(total));
@@ -158,10 +159,11 @@ function clock(total: number, unit: "minute" | "second" | "milli"): string {
   if (unit === "milli") {
     t = Math.floor(t / 1000);
   }
+  const hours = (h: number): string => (h > 99 ? "**" : pad2(h));
   if (unit === "minute") {
-    return `${sign}${pad2(Math.floor(t / 60))}:${pad2(t % 60)}`;
+    return `${sign}${hours(Math.floor(t / 60))}:${pad2(t % 60)}`;
   }
-  const text = `${sign}${pad2(Math.floor(t / 3600))}:${pad2(Math.floor(t / 60) % 60)}:${pad2(t % 60)}`;
+  const text = `${sign}${hours(Math.floor(t / 3600))}:${pad2(Math.floor(t / 60) % 60)}:${pad2(t % 60)}`;
   return unit === "milli" ? `${text}.${pad3(ms)}` : text;
 }
 
