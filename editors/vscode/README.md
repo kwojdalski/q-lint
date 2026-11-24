@@ -2134,7 +2134,8 @@ checks it against what the setting takes - digits, a sign, `0N` and spaces
 only ever reach `system` - and asks before sending `\x value`; on a process
 the read-only guard guards, the guard asks instead, with its warning. `\w`
 is shown, not edited: kdb+ changes the limit only for a process started
-with `-w`, and PeachQ not at all. `q-lint.processes.systemSettings.enable`
+with `-w`, and PeachQ not at all. Nor is `\s`: q changes its secondary
+threads from its own console only, never over a connection. `q-lint.processes.systemSettings.enable`
 off removes the view and its commands.
 
 **Process Files**, a view in the q-lint panel, browses the q host's
