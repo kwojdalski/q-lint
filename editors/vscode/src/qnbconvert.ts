@@ -387,7 +387,9 @@ function outputFromJupyter(raw: unknown): QnbOutput | undefined {
     case "display_data": {
       const data = isObject(raw.data) ? raw.data : {};
       const items = Object.entries(data).map(([mime, value]): QnbItem => {
-        if (isJsonMime(mime) && typeof value !== "string" && !Array.isArray(value)) {
+        // A JSON mime's value is the JSON itself, an array or a string too
+        // (#1545): never Jupyter's lines of text.
+        if (isJsonMime(mime)) {
           return { mime, text: JSON.stringify(value) };
         }
         const text = joined(value);

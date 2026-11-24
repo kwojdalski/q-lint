@@ -515,3 +515,10 @@ test("a failed run drops the live values of the Markdown after the cells it did 
   assert.deepStrictEqual(run.qnb.cells[4].metadata, {});
   assert.doesNotMatch(toHtml(run.qnb, "n"), /from last week/);
 });
+
+test("a JSON output that is an array or a string comes back from Jupyter as the same JSON (#1545)", () => {
+  for (const text of ["[1,2]", '"abc"', '{"a":[1]}', "3"]) {
+    const qnb = { cells: [{ kind: "code", source: "1", outputs: [{ items: [{ mime: "application/json", text }] }] }] };
+    assert.strictEqual(fromIpynb(toIpynb(qnb)).cells[0].outputs[0].items[0].text, text);
+  }
+});
