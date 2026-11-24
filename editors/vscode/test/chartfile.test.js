@@ -31,3 +31,13 @@ test("a CSV holding only an empty quoted field has no header row, and says so (#
   // A quoted name is a header, with no rows under it.
   assert.deepStrictEqual(gridFromCsv('"a"\n').columns.map((c) => c.name), ["a"]);
 });
+
+test("a JSON file that starts with a UTF-8 byte order mark is read as a CSV with one is (#1940)", async () => {
+  const rows = '﻿[{"t":1,"v":2},{"t":2,"v":4}]';
+  assert.deepStrictEqual(gridFromJson(rows).values, [[1, 2], [2, 4]]);
+  assert.deepStrictEqual(gridFromFile("a.JSON", '﻿{"t":[1,2],"v":[2,4]}').values, [[1, 2], [2, 4]]);
+  assert.match((await cli("bom.json", rows)).said, /^wrote .*out\.svg\n$/);
+  assert.match((await cli("bom.csv", "﻿t,v\n1,2\n2,4\n")).said, /^wrote .*out\.svg\n$/);
+  // Only at the start: elsewhere it is not JSON, as before.
+  assert.throws(() => gridFromJson('[﻿{"t":1}]'), SyntaxError);
+});
