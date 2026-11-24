@@ -179,3 +179,41 @@ test("a read that lands after another notebook became active is not shown under 
     vscode.window.onDidChangeActiveNotebookEditor = watch;
   }
 });
+
+test("connected again to the notebook's process, the view reads its globals without a cell run (#1953)", async () => {
+  stub.reset();
+  const notebook = { notebookType: "q-lint-notebook" };
+  vscode.window.activeNotebookEditor = { notebook };
+  let label = "rdb";
+  const live = fakeLive("rdb");
+  live.activeLabel = () => label;
+  const listeners = [];
+  live.onDidChange = (l) => (listeners.push(l), { dispose() {} });
+  const runs = [];
+  const api = registerNotebookVariables(stub.newContext(), live, () => "rdb", (l) => (runs.push(l), { dispose() {} }));
+  runs[0](notebook);
+  await tick();
+  assert.deepStrictEqual(api.variables().map((v) => v.name), ["t", "f"]);
+  label = undefined;
+  for (const l of listeners) l("disconnected");
+  await tick();
+  assert.deepStrictEqual(api.variables(), []);
+  assert.match(api.message(), /ran on rdb, which is not the active connection/);
+  label = "rdb";
+  for (const l of listeners) l("connected");
+  await tick();
+  assert.deepStrictEqual(api.variables().map((v) => v.name), ["t", "f"]);
+  assert.strictEqual(api.message(), undefined);
+  assert.strictEqual(live.calls, 2);
+  // A switch to another process, which closes no connection first, says so too.
+  label = "hdb";
+  for (const l of listeners) l("connected");
+  await tick();
+  assert.deepStrictEqual(api.variables(), []);
+  assert.match(api.message(), /ran on rdb, which is not the active connection/);
+  // What changes nothing the view shows reads nothing.
+  for (const l of listeners) l("edited");
+  for (const l of listeners) l("queried");
+  await tick();
+  assert.strictEqual(live.calls, 2);
+});

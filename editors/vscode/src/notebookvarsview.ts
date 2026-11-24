@@ -2,8 +2,9 @@
 // the process the active q notebook's cells ran on, each with its type,
 // count and size (`notebookvars.ts`). Read through `Live.borrow`, as the
 // Process Explorer reads, so it never waits behind or in front of a query:
-// it reads when a cell has run, when another notebook becomes active, and on
-// Refresh, and only while the view is on show.
+// it reads when a cell has run, when another notebook becomes active, when a
+// connection opens or closes, and on Refresh, and only while the view is on
+// show.
 import {
   EventEmitter,
   MarkdownString,
@@ -214,7 +215,8 @@ function startView(
     window.onDidChangeActiveNotebookEditor(() => whenShown()),
     view.onDidChangeVisibility(() => whenShown()),
     live.onDidChange((what) => {
-      if (what === "disconnected" || (what === "queried" && deferred)) {
+      // "connected": to the notebook's process again, or to another (#1953).
+      if (what === "connected" || what === "disconnected" || (what === "queried" && deferred)) {
         deferred = false;
         whenShown();
       }
