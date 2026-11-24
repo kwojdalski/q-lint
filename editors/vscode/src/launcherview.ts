@@ -6,7 +6,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import * as net from "node:net";
 import * as os from "node:os";
 import { commands, window, workspace, type ExtensionContext, type OutputChannel } from "vscode";
-import { LAUNCH_COMMANDS, argsFromText, argsText, commandText, fromWorkspace, launchPlan, listenAddress, probeHost, readLauncher, spawnPlan } from "./launcher";
+import { LAUNCH_COMMANDS, argsFromText, argsText, commandText, fromWorkspace, isLocalHost, launchPlan, listenAddress, probeHost, readLauncher, spawnPlan } from "./launcher";
 import { readTerminal } from "./liveconfig";
 import { qBinaryFrom, relativeBinaryProblem } from "./terminal";
 import { mergeEnv } from "./qenv";
@@ -80,12 +80,16 @@ export class Launcher {
     return [...this.started].map(([label, s]) => ({ label, pid: s.child.pid, port: s.port }));
   }
 
-  /// Interrupt what `label`, started from here, is running (#1036): SIGINT,
+  /// Interrupt what `process`, started from here, is running (#1036): SIGINT,
   /// which q answers by stopping the call it is in with 'stop and running
-  /// on. The pid sent it, or undefined when `label` is not running from here,
-  /// or on Windows, where kill() ends the process whatever the signal (#1250).
-  interrupt(label: string): number | undefined {
-    const child = this.started.get(label)?.child;
+  /// on. The pid sent it, or undefined when its label is not running from
+  /// here, or on Windows, where kill() ends the process whatever the signal
+  /// (#1250). Only when `process` - the connection - is to the one started:
+  /// on this machine, directly, at its port. Edited elsewhere, the label's
+  /// q is another process than the one running the query (#2125).
+  interrupt(process: Pick<Process, "label" | "host" | "port" | "ssh">): number | undefined {
+    const started = this.started.get(process.label);
+    const child = started !== undefined && process.ssh === undefined && isLocalHost(process.host) && process.port === started.port ? started.child : undefined;
     if (globalThis.process.platform === "win32" || child === undefined || child.pid === undefined || ((child.exitCode !== null || child.signalCode !== null) && !groupAlive(child))) {
       return undefined;
     }
