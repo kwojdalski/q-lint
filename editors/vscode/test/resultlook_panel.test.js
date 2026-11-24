@@ -550,3 +550,21 @@ test("Copy as CSV and the exports write the columns drawn, in the order drawn, a
   await fake.vscode.commands["q-lint.exportResultsAs"]("json", new fake.vscode.Uri("/out.json"));
   assert.match(fake.files["/out.json"].toString(), /^\[\n  \{"px": 1, "sym": "a", "ret_PCT": 0\.0123\}/);
 });
+
+test("Freeze Columns past the most frozen says so, rather than freezing what a resize then undoes (#1641)", async () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  const info = [];
+  fake.vscode.window.showInformationMessage = async (m) => info.push(m);
+  const cols = Array.from({ length: 60 }, (_, i) => ["c" + i, 7, ["1"], [1]]);
+  modes.show(result("wide", cols), live);
+  await fake.vscode.commands["q-lint.freezeResultColumns"]({ column: 54 });
+  assert.match(info.at(-1), /at most 50 columns are frozen; this column is number 55/);
+  assert.strictEqual(last(fake).look.layout?.frozen ?? 0, 0);
+  await fake.vscode.commands["q-lint.freezeResultColumns"]({ column: 49 });
+  assert.strictEqual(last(fake).look.layout.frozen, 50);
+  fake.pages[0].receive({ type: "look", id: last(fake).id, layout: { ...last(fake).look.layout, widths: { c0: 2400 } } });
+  await tick();
+  modes.show(result("wide", cols), live);
+  assert.deepStrictEqual([last(fake).look.layout.frozen, last(fake).look.layout.widths], [50, { c0: 2000 }]);
+});

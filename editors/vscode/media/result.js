@@ -1083,7 +1083,8 @@
   /// A resized column follows the mouse, and its width is kept once let go.
   window.addEventListener("mousemove", function (event) {
     if (resizing) {
-      resizing.width = Math.max(24, resizing.from + event.clientX - resizing.start);
+      // The widths a layout keeps (resultlook.ts's COLUMN_WIDTHS, #1641).
+      resizing.width = Math.min(2000, Math.max(24, resizing.from + event.clientX - resizing.start));
       resizing.col.style.width = resizing.width + "px";
     }
   });

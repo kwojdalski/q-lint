@@ -175,7 +175,7 @@ test("a stored look keeps only what it can hold, and moves with a renamed saved 
     trades: {
       rules: [{ column: "px", op: ">", value: 1, style: { background: "red" } }, { column: "px", op: "top", value: 1.5, style: { bold: true } }, { column: "px", op: "~", value: 1, style: { bold: true } }, { column: "px", op: "=", value: 1, style: { background: "url(x)" } }],
       cellCharts: { px: "bar", v: "spark", w: "pie" },
-      layout: { order: ["b", 1], hidden: ["c"], widths: { a: 120, b: 3, c: "9" }, frozen: 2 },
+      layout: { order: ["b", 1], hidden: ["c"], widths: { a: 120, b: 3, c: "9", d: 2400 }, frozen: 2 },
       chart: { kind: "line", series: ["px"], colours: { px: "#ff0000", qty: "red" }, bins: 900 },
     },
     junk: "x",
@@ -185,7 +185,9 @@ test("a stored look keeps only what it can hold, and moves with a renamed saved 
   assert.deepStrictEqual(Object.keys(looks), ["trades"]);
   assert.deepStrictEqual(looks.trades.rules, [{ column: "px", op: ">", value: 1, style: { background: "red" } }]);
   assert.deepStrictEqual(looks.trades.cellCharts, { px: "bar", v: "spark" });
-  assert.deepStrictEqual(looks.trades.layout, { order: ["b"], hidden: ["c"], widths: { a: 120 }, frozen: 2 });
+  // A width past the bounds is brought to them, not dropped (#1641).
+  assert.deepStrictEqual(looks.trades.layout, { order: ["b"], hidden: ["c"], widths: { a: 120, b: 24, d: 2000 }, frozen: 2 });
+  assert.strictEqual(look.parseLayout({ frozen: 55 }).frozen, 50);
   assert.deepStrictEqual(looks.trades.chart, { kind: "line", series: ["px"], colours: { px: "#ff0000" } });
   const renamed = look.renamedLook(looks, "trades", "fills");
   assert.deepStrictEqual(Object.keys(renamed), ["fills"]);

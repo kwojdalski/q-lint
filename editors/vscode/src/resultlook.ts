@@ -101,6 +101,11 @@ export function parseRule(x: unknown): FormatRule | undefined {
   return { column: x.column, op: x.op as RuleOp, value, style };
 }
 
+/// The narrowest and widest a column is kept, and the most columns frozen:
+/// a layout past them is brought to them, not dropped (#1641).
+export const COLUMN_WIDTHS = { min: 24, max: 2000 } as const;
+export const MAX_FROZEN = 50;
+
 /// A layout as stored, or undefined when it is not one.
 export function parseLayout(x: unknown): ColumnLayout | undefined {
   if (!isObject(x)) {
@@ -109,12 +114,12 @@ export function parseLayout(x: unknown): ColumnLayout | undefined {
   const widths: Record<string, number> = {};
   if (isObject(x.widths)) {
     for (const [name, w] of Object.entries(x.widths)) {
-      if (typeof w === "number" && Number.isFinite(w) && w >= 24 && w <= 2000) {
-        widths[name] = Math.round(w);
+      if (typeof w === "number" && Number.isFinite(w)) {
+        widths[name] = Math.round(Math.min(COLUMN_WIDTHS.max, Math.max(COLUMN_WIDTHS.min, w)));
       }
     }
   }
-  const frozen = typeof x.frozen === "number" && Number.isInteger(x.frozen) && x.frozen >= 0 && x.frozen <= 50 ? x.frozen : 0;
+  const frozen = typeof x.frozen === "number" && Number.isInteger(x.frozen) && x.frozen >= 0 ? Math.min(x.frozen, MAX_FROZEN) : 0;
   return { order: strings(x.order), hidden: strings(x.hidden), widths, frozen };
 }
 

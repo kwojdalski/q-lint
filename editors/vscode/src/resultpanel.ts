@@ -85,6 +85,7 @@ import { EXPORT_FORMATS, exportResult, FORMAT_INFO, shownGrid, type ExportFormat
 import { plainSvg, PLOTS } from "./plots";
 import {
   lookParts,
+  MAX_FROZEN,
   parseLayout,
   parseLooks,
   parsePreset,
@@ -1268,7 +1269,10 @@ export class QueryModes {
       return;
     }
     const place = GRID_LOOK.displayColumns(at.grid, at.shown.look.layout).indexOf(at.column);
-    if (place >= 0) {
+    if (place >= MAX_FROZEN) {
+      // Said, not frozen at MAX_FROZEN and undone later (#1641).
+      void window.showInformationMessage(plainMessage(`q-lint: at most ${MAX_FROZEN} columns are frozen; this column is number ${place + 1}. Move it nearer the left, or freeze fewer.`));
+    } else if (place >= 0) {
       await this.changeLayout((l) => ({ ...l, frozen: place + 1 }));
     }
   }
