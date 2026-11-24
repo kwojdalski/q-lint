@@ -14,7 +14,7 @@ const net = require("node:net");
 const tls = require("node:tls");
 const { spawn, spawnSync } = require("node:child_process");
 const pkg = require("../package.json");
-const { SshTunnel, TUNNEL_COMMANDS, readTunnel, sshArgs } = require("../out/tunnel.js");
+const { SshTunnel, TUNNEL_COMMANDS, readTunnel, shownError, sshArgs } = require("../out/tunnel.js");
 const { parseProcesses, readProcessFile, sshDestination, withExtras } = require("../out/processes.js");
 const { Live } = require("../out/live.js");
 
@@ -172,6 +172,10 @@ test("a tunnel that ssh cannot open says what ssh said, and leaves nothing runni
   assert.strictEqual(failure.message, "the SSH tunnel through me@bastion did not open");
   assert.match(failure.shown().message, /the SSH tunnel through me@bastion did not open\. ssh said: banner me@bastion: Permission denied \(publickey\)\./);
   assert.strictEqual(alive(ssh.runs()[0].pid), false);
+  // Stream Table, Diff Function and Find in Processes show it at once (#1721).
+  assert.strictEqual(shownError(failure), failure.shown().message);
+  assert.strictEqual(shownError(new Error("plain")), "plain");
+  assert.strictEqual(shownError("text"), "text");
   delete process.env.STUB_SSH_FAIL;
   await assert.rejects(SshTunnel.open({ destination: "x", host: "h", port: 1, ssh: "/nonexistent/ssh" }), /no ssh program \(\/nonexistent\/ssh\) on PATH/);
 });

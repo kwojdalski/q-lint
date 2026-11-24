@@ -15,6 +15,7 @@ import { decode } from "./qdecode";
 import type { QConnection } from "./qclient";
 import { RowWindow, STREAM_COMMANDS, SUBSCRIBE, TABLES, readStream, readUpdate } from "./stream";
 import { iconsEscaped, plainMessage } from "./history";
+import { shownError } from "./tunnel";
 
 /// How often the grid is redrawn, at most.
 const DRAW_MS = 200;
@@ -105,7 +106,7 @@ export class TableStreams {
         this.live.openSeparate(process),
       );
     } catch (error) {
-      void window.showErrorMessage(plainMessage(`q-lint: could not connect to ${process.label}: ${error instanceof Error ? error.message : String(error)}`));
+      void window.showErrorMessage(plainMessage(`q-lint: could not connect to ${process.label}: ${shownError(error)}`));
       return;
     }
     let columns: string[];

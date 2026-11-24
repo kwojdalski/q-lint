@@ -15,11 +15,13 @@ import type { Live, ProcessArg } from "./live";
 import type { Process } from "./processes";
 import { PROCESS_TOOL_COMMANDS, toolOff, toolOn } from "./processtools";
 import { plainMessage } from "./history";
+import { shownError } from "./tunnel";
 
 export const DIFF_SCHEME = "q-lint-fndiff";
 
 const on = (): boolean => toolOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "functionDiff");
-const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+// ssh's words for a tunnel that did not open are shown, not kept (#1721).
+const message = shownError;
 
 function say(text: string): string {
   void window.showInformationMessage(plainMessage(text));
