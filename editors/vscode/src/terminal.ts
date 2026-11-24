@@ -68,12 +68,22 @@ export function quote(word: string, shell: Shell): string {
 /// PowerShell runs a quoted command only through `&`. cmd has no escape for
 /// a `"` or a `%` inside quotes - its `\"` ends the quoted part, so what
 /// follows is read as commands, and `%NAME%` is expanded (#1274) - so a
-/// word or value with either, or with a line break, is refused there.
+/// word or value with either, or with a line break, is refused there; and
+/// PowerShell is refused a word with a `"`.
 export function commandLine(binary: string, args: string[], shell: Shell, env: Record<string, string> = {}): string | { error: string } {
   if (shell === "cmd") {
     const bad = [binary, ...args, ...Object.entries(env).map(([n, v]) => `${n}=${v}`)].find((w) => /["%\r\n]/.test(w));
     if (bad !== undefined) {
       return { error: `cmd cannot pass ${JSON.stringify(bad)} to q as written: it reads a " or a % in it itself. Start q from a PowerShell or another terminal.` };
+    }
+  }
+  if (shell === "powershell") {
+    // Windows PowerShell 5.1 (and pwsh before 7.3) passes a word to a
+    // program in double quotes without escaping a " in it, so q's C runtime
+    // splits it (#1420); a variable is set by PowerShell itself, unharmed.
+    const bad = [binary, ...args].find((w) => w.includes('"'));
+    if (bad !== undefined) {
+      return { error: `PowerShell cannot pass ${JSON.stringify(bad)} to q as written: Windows PowerShell does not escape the " in it for q. Start q from another terminal, or leave the " out.` };
     }
   }
   const command = quote(binary, shell);

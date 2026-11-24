@@ -30,7 +30,7 @@ import { borrowWhenFree } from "./infoview";
 import { LANGUAGE_COMMANDS, languageOff, languageOn } from "./languagefeatures";
 import type { Live } from "./live";
 import { CONTROL_COMMANDS } from "./querycontrols";
-import { HAS_SQL, LOAD_SQL, SQL_SCHEMA, readSchema, sqlCompletions, sqlQuery, sqlWrites } from "./sql";
+import { HAS_SQL, LOAD_SQL, SQL_SCHEMA, readSchema, sqlCompletions, sqlQuery, sqlText, sqlWrites } from "./sql";
 import { plainMessage } from "./history";
 
 export function registerSql(
@@ -117,7 +117,9 @@ export function registerSql(
       // binding, else the active connection - never the process the editor
       // was opened for, once its binding is gone.
       const label = live.fileBinding(uri) ?? live.activeLabel();
-      const writes = sqlWrites(sql);
+      // The text sent, not the text typed: dropping a comment can move a
+      // quote and bring a write out of it (#1408).
+      const writes = sqlWrites(sqlText(sql));
       if (label === undefined && writes.length > 0) {
         // The guard reads q, not the SQL inside `.s.e "..."`: it can only be
         // asked before the query, about a process known now.

@@ -87,6 +87,8 @@ test("a k4unit suite is read from its CSV, quoted code and all", () => {
   assert.strictEqual(k4Label({ code: "a:1;\n  b:2" }), "a:1; b:2");
   // A field over two lines; any other CSV is no suite.
   assert.strictEqual(parseK4unit('action,ms,lang,code\ntrue,0,q,"1b\n  "\n')[0].line, 1);
+  // A quote opens quoting only at a field's start, as q's 0: reads it (#1410).
+  assert.strictEqual(parseK4unit('action,ms,bytes,lang,code,repeat,minver,comment\ntrue,0,0,q,s~"abc",1,,\n')[0].code, 's~"abc"');
   assert.strictEqual(parseK4unit("a,b,c\n1,2,3\n"), undefined);
   assert.strictEqual(parseK4unit(""), undefined);
 });

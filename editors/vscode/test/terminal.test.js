@@ -88,7 +88,11 @@ test("cmd is refused a quote, a % or a line break, which it reads itself (#1274)
   assert.ok(refused(commandLine("q", ["a\r\nb"], "cmd")));
   // Other shells quote them, and cmd takes anything else.
   assert.strictEqual(commandLine("q", ['a"b', "50%"], "posix"), "q 'a\"b' 50%");
-  assert.strictEqual(commandLine("q", ['a"b'], "powershell"), "q 'a\"b'");
+  // Windows PowerShell 5.1 does not escape a " it passes to a program, whose
+  // C runtime then splits the word: refused there too (#1420).
+  assert.ok(typeof commandLine("q", ["-name", 'say "hi" now'], "powershell") === "object");
+  assert.match(commandLine("q", ['a"b'], "powershell").error, /PowerShell cannot pass "a\\"b" to q as written/);
+  assert.strictEqual(commandLine("q", [], "powershell", { QINIT: 'a"b' }), "$env:QINIT='a\"b'; q");
   assert.strictEqual(commandLine("q", ["my file.q", "a&b"], "cmd"), 'q "my file.q" "a&b"');
 });
 

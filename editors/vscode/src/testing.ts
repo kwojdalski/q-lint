@@ -209,7 +209,9 @@ export interface K4Row {
 }
 
 /// The fields of each CSV record in `text`, with the line each starts on: a
-/// field in double quotes may hold commas, line breaks and `""`.
+/// field in double quotes may hold commas, line breaks and `""`. A quote
+/// opens quoting only at a field's start: elsewhere it is text, as q's `0:`
+/// reads `s~"abc"` (#1410).
 function csv(text: string): { fields: string[]; line: number }[] {
   const records: { fields: string[]; line: number }[] = [];
   let fields: string[] = [];
@@ -232,7 +234,7 @@ function csv(text: string): { fields: string[]; line: number }[] {
         }
         field += c;
       }
-    } else if (c === '"') {
+    } else if (c === '"' && field === "" && (i === 0 || text[i - 1] === "," || text[i - 1] === "\n" || text[i - 1] === "\r")) {
       quoted = true;
       any = true;
     } else if (c === ",") {

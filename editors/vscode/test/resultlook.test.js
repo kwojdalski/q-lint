@@ -158,6 +158,12 @@ test("the correlation matrix is Pearson's over the rows where both values are th
   assert.strictEqual(pairs.at(-1).r, null);
 });
 
+test("a column that does not vary has no correlation even when its mean is off by rounding (#1386)", () => {
+  const g = grid([["fee", 9, ["0.1", "0.1", "0.1"]], ["rate", 9, ["0.7", "0.7", "0.7"]], ["sq", 9, ["0", "1", "4"]]]);
+  const c = L.correlation(g, [0, 1, 2]);
+  assert.deepStrictEqual(c.r, [[null, null, null], [null, null, null], [null, null, 1]]);
+});
+
 test("a stored look keeps only what it can hold, and moves with a renamed saved query (#1013-#1015, #1019)", () => {
   const stored = {
     trades: {
@@ -259,6 +265,19 @@ test("Excel's conditional formats match the cells the grid's rules do (#1266)", 
   ]);
 });
 
+test("a text rule on a general list of strings is left out of Excel, which holds the strings without their quotes (#1411)", () => {
+  const strings = { count: 2, keys: 0, names: ["s", "m"], types: [0, 0], cells: [['"abc"', '"x"'], ["1", "`a"]], raw: [[], []], rank: [[0, 1], [0, 1]] };
+  const grid = { columns: [col("s", 0), col("m", 0)], cells: strings.cells, rank: [null, null], values: [null, null], total: 2 };
+  const rules = [{ column: "s", op: "=", value: '"abc"', style: { bold: true } }, { column: "m", op: "=", value: "1", style: { bold: true } }];
+  // The grid matches the text as shown, quotes and all.
+  assert.deepStrictEqual([...L.ruleStyles(grid, rules)[0].keys()], [0]);
+  const sheet = unzip(exportResult("xlsx", strings, -1, undefined, rules).data)["xl/worksheets/sheet1.xml"];
+  assert.match(sheet, /<t xml:space="preserve">abc<\/t>/);
+  // Only the rule on the column Excel holds as shown is kept.
+  assert.strictEqual((sheet.match(/<conditionalFormatting /g) || []).length, 1);
+  assert.match(sheet, /<conditionalFormatting sqref="B2:B3">/);
+});
+
 test("the HTML export is one escaped table, the cells a rule matches styled as the grid styles them (#1013)", () => {
   const html = toHtml(PAYLOAD, -1, [2, 1], [{ column: "px", op: ">", value: 4, style: { background: "red", bold: true } }]);
   assert.match(html, /^<!DOCTYPE html>/);
@@ -287,4 +306,5 @@ test("a result sent to a notebook or a report is its query in a fence it cannot 
   const taken = new Set(["daily-images/chart-20261122-093005.svg"]);
   assert.strictEqual(report.imagePath("/r/daily.md", Date.UTC(2026, 10, 22, 9, 30, 5), (p) => taken.has(p)), "daily-images/chart-20261122-093005-2.svg");
   assert.strictEqual(report.linkTarget("a b/(c).svg"), "a%20b/%28c%29.svg");
+  assert.strictEqual(report.linkTarget("Q#1 report-images/chart?.svg"), "Q%231%20report-images/chart%3F.svg");
 });

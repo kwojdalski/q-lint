@@ -2670,6 +2670,12 @@ export class Live {
     return readPage(await connection.call(PAGE, offset, count));
   }
 
+  /// The saved query `from` was renamed `to`, or deleted: the results it
+  /// gave follow it (#1413).
+  savedRenamed(from: string, to: string | undefined): void {
+    this.modes.savedRenamed(from, to);
+  }
+
   /// The result the panel shows, with the process and code it came from.
   resultOnShow(): { process: string; code: string; payload: GridPayload } | undefined {
     return this.modes.current();
@@ -2680,7 +2686,8 @@ export class Live {
   /// editor is run, read by the guard, after asking when it is a production
   /// one (unless `askProduction` is false: the caller asked already).
   async runOnProcess(code: string, label: string, options: { what?: string; mode?: QueryMode; askProduction?: boolean } = {}): Promise<void> {
-    const process = this.processes().find((p) => p.label === label) ?? (this.active?.label === label ? this.active : undefined);
+    // `named` also finds a discovered or shared process (#1425).
+    const process = this.named(label) ?? (this.active?.label === label ? this.active : undefined);
     if (process !== undefined && isProduction(process) && options.askProduction !== false) {
       const yes = "Run";
       const sure = await window.showWarningMessage(

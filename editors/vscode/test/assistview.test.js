@@ -207,6 +207,38 @@ test("Lint q Code: qlinter's findings on the code given as standard input", asyn
   assert.deepStrictEqual(await realTools.lint.run({ code: "f:{[x] x+1}\n" }), { findings: [], count: 0 });
 });
 
+test("Lint q Code reads qlinter's output whole, a character split across chunks too (#1380)", async () => {
+  const { runWith } = require("../out/assisttools.js");
+  const script = 'process.stdout.write("a".repeat(65535) + "\u00e9".repeat(10))';
+  const ran = await runWith(process.execPath, ["-e", script], "", undefined, 10);
+  assert.strictEqual(ran.stdout.slice(65535), "\u00e9".repeat(10));
+});
+
+test("Lint q Code cancelled stops: the next qlinter is not started (#1381)", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-lintcancel-"));
+  const log = path.join(dir, "ran");
+  const fake = (n) => {
+    const f = path.join(dir, `qlinter${n}`);
+    fs.writeFileSync(f, `#!/bin/sh\necho ${n} >> ${log}\nsleep 2\necho []\n`, { mode: 0o755 });
+    return f;
+  };
+  const { live, context } = setup();
+  const tools = registerAssistTools(context, live, () => [fake(1), fake(2)]);
+  const listeners = [];
+  const cancelling = { isCancellationRequested: false, onCancellationRequested: (f) => (listeners.push(f), { dispose() {} }) };
+  // Cancelled once the first has started.
+  const started = setInterval(() => {
+    if (fs.existsSync(log)) {
+      clearInterval(started);
+      cancelling.isCancellationRequested = true;
+      listeners.forEach((f) => f());
+    }
+  }, 20);
+  assert.deepStrictEqual(await tools.lint.run({ code: "x:1" }, cancelling), { error: "Linting was cancelled." });
+  assert.deepStrictEqual(fs.readFileSync(log, "utf8").trim().split("\n"), ["1"]);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test("the tools turned off: unregistered at once, and a call on its way is told so and sends nothing", async () => {
   const { live, context } = setup({ "agent.schemaTool.enable": false });
   const tools = registerAssistTools(context, live, () => []);
@@ -271,6 +303,17 @@ test("@q /error explains the last failed query, or the error typed", async () =>
   const model = fakeModel([[new LanguageModelTextPart("A type error.")]]);
   await chat.participant.handle({ prompt: "", command: "error", model }, {}, { markdown() {}, progress() {} }, token);
   assert.match(model.sent[0].messages[0].content, /Explain this q error and how to fix it: `'type`[\s\S]*run on dev:\n```q\n1\+`a\n```/);
+  // A query that failed on another process: its names are not described
+  // from the active one under its label (#1377).
+  const other = setup({}, { history: [{ process: "rdb", code: "f 1", outcome: "error", error: "type", at: "", millis: 1 }] });
+  const m3 = fakeModel([[new LanguageModelTextPart("A type error.")]]);
+  await registerChat(other.context, other.live).participant.handle({ prompt: "", command: "error", model: m3 }, {}, { markdown() {}, progress() {} }, token);
+  assert.deepStrictEqual(other.live.sent, []);
+  assert.doesNotMatch(m3.sent[0].messages[0].content, /\{x\*2\}/);
+  const same = setup({}, { history: [{ process: "dev", code: "f 1", outcome: "error", error: "type", at: "", millis: 1 }] });
+  const m4 = fakeModel([[new LanguageModelTextPart("A type error.")]]);
+  await registerChat(same.context, same.live).participant.handle({ prompt: "", command: "error", model: m4 }, {}, { markdown() {}, progress() {} }, token);
+  assert.match(m4.sent[0].messages[0].content, /\{x\*2\}/);
   const empty = setup({}, { history: [] });
   const said = [];
   const m2 = fakeModel([]);

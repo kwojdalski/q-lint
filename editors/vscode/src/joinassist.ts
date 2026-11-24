@@ -101,12 +101,16 @@ export function suggestJoins(left: Shape, right: Shape): Suggestion[] {
     const by = common.filter((c) => c !== time && type(left, c) === "s" && type(right, c) === "s");
     const cs = symbols([...by, time]);
     // aj finds the row by binary search: the right table in time order within
-    // each symbol, which a sorted or grouped column says it already is.
-    const ordered = right.where === "partitioned" || (by.length === 0 ? attr(right, time) === "s" : ["p", "g"].includes(attr(right, by[0])) || attr(right, by[0]) === "s");
+    // each symbol. A sorted, grouped or parted symbol column is taken as the
+    // sign of a table kept so, but orders no time: the why says so (#1435).
+    const byAttr = by.length === 0 ? "" : attr(right, by[0]);
+    const ordered = right.where === "partitioned" || (by.length === 0 ? attr(right, time) === "s" : ["p", "g", "s"].includes(byAttr));
     const sorted = ordered ? r : `${cs} xasc ${r}`;
-    const sortWhy = ordered
-      ? ""
-      : ` ${right.expression.trim()} is sorted by ${[...by, time].join(", ")} first: aj looks rows up by binary search, so it must be in time order${by.length > 0 ? ` within each ${by[0]}` : ""} (or have \`g# or \`p# on ${by[0] ?? "its key"}).`;
+    const sortWhy = !ordered
+      ? ` ${right.expression.trim()} is sorted by ${[...by, time].join(", ")} first: aj looks rows up by binary search, so it must be in time order${by.length > 0 ? ` within each ${by[0]}` : ""} (or have \`g# or \`p# on ${by[0] ?? "its key"}).`
+      : right.where !== "partitioned" && by.length > 0
+        ? ` \`${byAttr}# on ${by[0]} does not order ${time}: this takes ${right.expression.trim()} to be in ${time} order within each ${by[0]} already, as a tickerplant's table is; if it is not, use ${cs} xasc ${r}, or aj returns the wrong rows.`
+        : "";
     out.push({
       join: "aj",
       expression: `aj[${cs};${l};${sorted}]`,

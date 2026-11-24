@@ -42,7 +42,7 @@ export function registerAffectedOnSave(
   tests: Tests,
 ): { registered: () => boolean; lastRun: () => string[]; settled: () => Promise<void> } {
   const on = (): boolean => languageOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "affectedTestsOnSave");
-  let listening: { listeners: Disposable[]; seen: Map<string, string> } | undefined;
+  let listening: { listeners: Disposable[]; seen: Map<string, string | Promise<string>> } | undefined;
   let running: Promise<void> = Promise.resolve();
   let last: string[] = [];
   const affected = async (document: TextDocument, previous: string): Promise<void> => {
@@ -64,9 +64,18 @@ export function registerAffectedOnSave(
   };
   const sync = (): void => {
     if (on() && listening === undefined) {
-      const seen = new Map<string, string>();
+      const seen = new Map<string, string | Promise<string>>();
+      // A document already edited when listening starts compares against
+      // its file on disk: its buffer holds edits no save has run tests for.
+      const baseline = (d: TextDocument): string | Promise<string> =>
+        d.isDirty
+          ? Promise.resolve(workspace.fs.readFile(d.uri)).then(
+              (bytes) => new TextDecoder().decode(bytes),
+              () => "",
+            )
+          : d.getText();
       for (const d of workspace.textDocuments.filter(isQFile)) {
-        seen.set(d.uri.toString(), d.getText());
+        seen.set(d.uri.toString(), baseline(d));
       }
       const listeners = [
         workspace.onDidOpenTextDocument((d) => isQFile(d) && !seen.has(d.uri.toString()) && void seen.set(d.uri.toString(), d.getText())),
@@ -78,7 +87,7 @@ export function registerAffectedOnSave(
           const key = d.uri.toString();
           const previous = seen.get(key) ?? "";
           seen.set(key, d.getText());
-          running = running.then(() => affected(d, previous)).catch(() => undefined);
+          running = running.then(async () => affected(d, await previous)).catch(() => undefined);
         }),
       ];
       listening = { listeners, seen };

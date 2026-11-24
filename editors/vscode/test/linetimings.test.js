@@ -54,6 +54,11 @@ test("times and sizes read as a person writes them", () => {
   assert.strictEqual(durationText(120e9), "120.0 s");
   assert.strictEqual(bytesText(816), "816 B");
   assert.strictEqual(bytesText(8388928), "8.0 MB");
+  // Just under a unit's end, rounding moves it on to the next unit (#1437).
+  assert.strictEqual(durationText(999_999), "1.00 ms");
+  assert.strictEqual(durationText(59_999_999_999), "60.0 s");
+  assert.strictEqual(bytesText(1_048_575), "1.0 MB");
+  assert.strictEqual(bytesText(1023), "1023 B");
   assert.strictEqual(decorationText({ ok: true, ns: 2_340_000, bytes: 8388928 }), "  ⏱ 2.34 ms · 8.0 MB");
   assert.strictEqual(decorationText({ ok: true, ns: 1000 }), "  ⏱ 1.0 µs");
   assert.strictEqual(decorationText({ ok: false, ns: 0, error: "type" }), "  ✗ type");

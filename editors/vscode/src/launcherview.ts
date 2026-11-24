@@ -5,12 +5,12 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import * as net from "node:net";
 import { commands, window, workspace, type ExtensionContext, type OutputChannel } from "vscode";
-import { LAUNCH_COMMANDS, commandText, launchPlan, readLauncher } from "./launcher";
+import { LAUNCH_COMMANDS, argsFromText, argsText, commandText, launchPlan, readLauncher } from "./launcher";
 import { readTerminal } from "./liveconfig";
 import { mergeEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import type { Live, ProcessArg } from "./live";
-import { launchOf, splitArgs, withExtras, type Launch, type Process } from "./processes";
+import { launchOf, withExtras, type Launch, type Process } from "./processes";
 import { iconsEscaped, plainMessage } from "./history";
 
 /// How long a process has to end after SIGTERM before it is killed.
@@ -39,6 +39,8 @@ export class Launcher {
   /// The labels being started: held from before the first await, so a
   /// second Start while one is on its way is refused, not spawned (#1249).
   private readonly starting = new Set<string>();
+  /// Set when VS Code closes: a Start still on its way spawns nothing.
+  private disposed = false;
 
   constructor(
     context: ExtensionContext,
@@ -55,7 +57,7 @@ export class Launcher {
           this.stopAll();
         }
       }),
-      { dispose: () => this.stopAll() },
+      { dispose: () => ((this.disposed = true), this.stopAll()) },
     );
   }
 
@@ -178,6 +180,11 @@ export class Launcher {
     // then the definition's own; the output shows none of their values.
     const folder = workspace.workspaceFolders?.[0]?.uri;
     const env = mergeEnv(layoutEnvFor(plan.command, folder), await dotenvFor(folder), plan.env);
+    // Turned off, or VS Code closing, while it waited: stopAll has run over
+    // what was started, and would not stop this one (#1434).
+    if (this.disposed || !this.enabled()) {
+      return `the process launcher was turned off; ${process.label} was not started.`;
+    }
     const channel = this.channel(process.label);
     channel.appendLine(`$ ${commandText(plan)}    (in ${plan.cwd})`);
     channel.show(true);
@@ -262,10 +269,16 @@ export class Launcher {
     });
   }
 
+  /// Stop everything started from here, and close the output channels once
+  /// each has ended, so their last lines are in them first (#1433).
   private stopAll(): void {
-    for (const label of [...this.started.keys()]) {
-      void this.end(label);
-    }
+    const channels = [...this.channels.values()];
+    this.channels.clear();
+    void Promise.all([...this.started.keys()].map((label) => this.end(label))).then(() => {
+      for (const channel of channels) {
+        channel.dispose();
+      }
+    });
   }
 
   /// Give a saved process a launch definition, or remove it. `launch` (from
@@ -309,14 +322,14 @@ export class Launcher {
       }
       const args = await window.showInputBox({
         title: `Launch ${process.label} (3 of 3): arguments`,
-        value: (current.args ?? []).map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(" "),
+        value: argsText(current.args ?? []),
         prompt: `Arguments after the script; -p ${process.port} is added unless they set -p. For TorQ: -proctype rdb -procname rdb1 -load code/processes/rdb.q`,
         ignoreFocusOut: true,
       });
       if (args === undefined) {
         return;
       }
-      launch = launchOf({ ...current, command, script, args: splitArgs(args) });
+      launch = launchOf({ ...current, command, script, args: argsFromText(args, current.args ?? []) });
     }
     const now = this.live.processes();
     if (!now.some((p) => p.label === process.label)) {

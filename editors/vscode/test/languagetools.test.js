@@ -16,7 +16,7 @@ const { tomlWithBaseline, writtenCount, rebased, absolutePaths, registerBaseline
 const { readDeadCode, deadCodeReport, registerDeadCode, DEAD_CODE } = require("../out/deadcodeview.js");
 const { readDefinitions, byNamespace, registerNamespaces, DEFINITIONS } = require("../out/namespaceview.js");
 const { affectedIds, registerAffectedOnSave, TESTS_REACHING } = require("../out/affectedonsave.js");
-const { sqlQuery, sqlWrites, readSchema, sqlCompletions } = require("../out/sql.js");
+const { sqlQuery, sqlText, sqlWrites, readSchema, sqlCompletions } = require("../out/sql.js");
 const { registerSql } = require("../out/sqlview.js");
 const { launch } = require("../out/settings.js");
 
@@ -111,6 +111,8 @@ test("Explain qSQL finds where the query starts", () => {
   assert.strictEqual(leadBefore(f, f.indexOf("px")), 2);
   // A name ending in a query word is no query.
   assert.strictEqual(leadBefore("x:.my.select 1\n", 10), undefined);
+  // An empty first line above an indented one ends the walk (#1396).
+  assert.strictEqual(leadBefore("\n  select from t", 10), 3);
 });
 
 test("a q error is explained from the catalogue, with the operation that failed", () => {
@@ -305,6 +307,25 @@ test("the dead code report refuses when off and asks nothing; on, it lists the s
   }
 });
 
+test("the dead code report's process check failing leaves the report to the workspace (#1370)", async () => {
+  const answer = { functions: [{ name: "lonely", uri: "file:///ws/b.q", range: { start: { line: 3, character: 0 } } }], dynamic: 0 };
+  const { context, shown, restore } = setUp();
+  try {
+    const live = { activeLabel: () => "dev", borrow: () => Promise.reject(new Error("'f: closed")) };
+    registerDeadCode(context, live, () => ({ sendRequest: async () => answer }));
+    stub.config.user["deadCode.enable"] = true;
+    stub.config.user["deadCode.checkProcess"] = true;
+    stub.messages = [];
+    const text = await stub.commands.get(LANGUAGE_COMMANDS.deadCode)();
+    assert.match(text, /lonely/);
+    assert.strictEqual(shown.length, 1);
+    assert.ok(stub.messages.some(([, m]) => /the report is from the workspace alone/.test(m)), JSON.stringify(stub.messages));
+  } finally {
+    delete stub.config.user["deadCode.checkProcess"];
+    restore();
+  }
+});
+
 test("the dead code report's file names are the decoded paths, relative to the workspace (#1093)", async () => {
   const { fileURLToPath } = require("node:url");
   const answer = {
@@ -396,6 +417,36 @@ test("affected tests on save are off by default; on, a save runs the tests the s
     stub.changeConfig("q-lint.testing.runAffectedOnSave.enable");
     assert.strictEqual(saves.length, 0);
   } finally {
+    restore();
+  }
+});
+
+test("a document already edited when affected tests turn on compares its first save against the file on disk (#1394)", async () => {
+  const { context, restore } = setUp();
+  const saves = [];
+  const fs = vscode.workspace.fs;
+  vscode.workspace.onDidSaveTextDocument = (l) => (saves.push(l), { dispose: () => saves.splice(saves.indexOf(l), 1) });
+  vscode.workspace.onDidOpenTextDocument = () => ({ dispose() {} });
+  vscode.workspace.onDidCloseTextDocument = () => ({ dispose() {} });
+  const uri = (p) => ({ scheme: "file", fsPath: p, toString: () => `file://${p}` });
+  const dirty = { languageId: "q", uri: uri("/w/lib.q"), isDirty: true, getText: () => "f:{x+2}\n" };
+  const clean = { languageId: "q", uri: uri("/w/other.q"), isDirty: false, getText: () => "g:{x}\n" };
+  vscode.workspace.textDocuments = [dirty, clean];
+  vscode.workspace.fs = { readFile: async (u) => new TextEncoder().encode(u.fsPath === "/w/lib.q" ? "f:{x+1}\n" : "never read") };
+  try {
+    const sent = [];
+    const server = { sendRequest: async (_method, params) => (sent.push([params.textDocument.uri, params.previous]), { tests: [] }) };
+    const tests = { discover: async () => {}, items: () => [], run: async () => {} };
+    stub.config.user["testing.runAffectedOnSave.enable"] = true;
+    const api = registerAffectedOnSave(context, () => server, tests);
+    saves[0](dirty);
+    saves[0](clean);
+    await api.settled();
+    assert.deepStrictEqual(sent, [["file:///w/lib.q", "f:{x+1}\n"], ["file:///w/other.q", "g:{x}\n"]]);
+    stub.config.user["testing.runAffectedOnSave.enable"] = false;
+    stub.changeConfig("q-lint.testing.runAffectedOnSave.enable");
+  } finally {
+    vscode.workspace.fs = fs;
     restore();
   }
 });
@@ -505,6 +556,11 @@ test("SQL is sent to .s.e with its comments dropped, and a write is recognised",
   assert.deepStrictEqual(sqlWrites("select 'it''s; delete' from t"), []);
   assert.deepStrictEqual(sqlWrites("select replace(s, 'a', 'b') from t"), []);
   assert.deepStrictEqual(sqlWrites("replace into t values (1)"), ["REPLACE"]);
+  // A `--` inside a quote that runs across lines is dropped from what is
+  // sent, which moves the quote: the write check judges the sent text (#1408).
+  const hidden = "select 'a\n--'\n' as c from t; insert into t values (1) -- '";
+  assert.strictEqual(sqlQuery(hidden), `.s.e "${sqlText(hidden)}"`);
+  assert.deepStrictEqual(sqlWrites(sqlText(hidden)), ["INSERT"]);
   const schema = readSchema({ trade: ["sym", "px"], quote: ["sym", "bid"] });
   assert.deepStrictEqual([...schema.keys()], ["trade", "quote"]);
   assert.deepStrictEqual(sqlCompletions(schema, "select trade.").map((c) => c.label), ["sym", "px"]);
@@ -560,6 +616,11 @@ test("a SQL write on a guarded process is held until confirmed", async () => {
     vscode.window.activeTextEditor = { document: { languageId: "sql", uri: { toString: () => "untitled:2" }, getText: () => "insert into t values (1)" }, selection: { isEmpty: true } };
     assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.runSql)(), undefined);
     assert.deepStrictEqual(asked, [["`t insert ()", "prod1", "This SQL statement (INSERT)"]]);
+    assert.deepStrictEqual(sent, []);
+    // A write that only the sent text shows is held too (#1408).
+    vscode.window.activeTextEditor.document.getText = () => "select 'a\n--'\n' as c from t; insert into t values (1) -- '";
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.runSql)(), undefined);
+    assert.strictEqual(asked.length, 2);
     assert.deepStrictEqual(sent, []);
   } finally {
     restore();

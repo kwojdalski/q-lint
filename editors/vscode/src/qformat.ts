@@ -604,7 +604,9 @@ export function consoleLines(q: QValue, size: [number, number], value?: unknown,
     const count = q.kind === "dict" ? countOf(q.k) : countOf(q);
     more = count > n;
     if (more) {
-      shown = q.kind === "dict" ? { ...q, k: firstOf(q.k, n - 1), v: firstOf(q.v, n - 1) } : firstOf(q, n - 1);
+      // At a height of 1 or 2, n - 1 is -1, which slice reads as "all but one" (#1405).
+      const m = Math.max(0, n - 1);
+      shown = q.kind === "dict" ? { ...q, k: firstOf(q.k, m), v: firstOf(q.v, m) } : firstOf(q, m);
     }
   }
   const lines = formatQ(shown, value, type);
@@ -682,24 +684,30 @@ function rawNumber(x: unknown, t: number): number | null {
 
 const RAW_TYPES = new Set([5, 6, 7, 8, 9, 12, 13, 14, 15, 16, 17, 18, 19]);
 
-/// Each row's place when `values` is sorted ascending, nulls first, as
-/// `iasc iasc` gives it; empty when the values cannot be compared.
+/// Each row's place when `values` is sorted ascending, nulls first, equal
+/// values sharing one place as `denseRanks` gives them (#1406); empty when
+/// the values cannot be compared.
 function ranks(values: unknown[], raw: (number | null)[] | undefined): number[] {
   const keys: (number | string)[] = raw
     ? raw.map((x) => (x === null ? -Infinity : x))
     : values.map((x) => (x === null || x === undefined ? "" : typeof x === "boolean" ? Number(x) : cellText(x)));
-  const order = keys.map((_, i) => i).sort((a, b) => {
+  const compare = (a: number, b: number): number => {
     const x = keys[a];
     const y = keys[b];
     if (typeof x === "number" && typeof y === "number") {
-      return x === y ? a - b : x < y ? -1 : 1;
+      return x === y ? 0 : x < y ? -1 : 1;
     }
     const sx = String(x);
     const sy = String(y);
-    return sx === sy ? a - b : sx < sy ? -1 : 1;
-  });
+    return sx === sy ? 0 : sx < sy ? -1 : 1;
+  };
+  const order = keys.map((_, i) => i).sort((a, b) => compare(a, b) || a - b);
   const rank = new Array<number>(keys.length);
-  order.forEach((row, place) => {
+  let place = -1;
+  order.forEach((row, i) => {
+    if (i === 0 || compare(order[i - 1], row) !== 0) {
+      place++;
+    }
     rank[row] = place;
   });
   return rank;
@@ -860,9 +868,11 @@ export function gridOfQ(q: QValue, limit: number): GridPayload | undefined {
         }),
   );
   // The numbers of a numeric, temporal or guid column, as `GRID` sends them.
+  // A long, timestamp or timespan past 2^53 keeps its digits as a string,
+  // as `GRID`'s Long does: Number() would round it (#1398).
   const raw = shown.map((c, i): unknown[] =>
     c.q.kind === "vector" && [2, 5, 6, 7, 8, 9, 12, 13, 14, 15, 16, 17, 18, 19].includes(types[i])
-      ? c.q.v.map((x) => (typeof x === "bigint" ? Number(x) : x))
+      ? c.q.v.map((x) => (typeof x === "bigint" ? (Number.isSafeInteger(Number(x)) ? Number(x) : x.toString()) : x))
       : [],
   );
   const rank = shown.map((c) => {

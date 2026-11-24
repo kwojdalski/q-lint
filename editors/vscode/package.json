@@ -4016,7 +4016,7 @@
         },
         {
           "command": "q-lint.renderChartFromFile",
-          "when": "resourceExtname =~ /^\\.(csv|tsv|json)$/ && config.q-lint.charts.commandLine.enable",
+          "when": "resourceExtname =~ /^\\.(csv|tsv|json)$/i && config.q-lint.charts.commandLine.enable",
           "group": "q-lint@20"
         }
       ],

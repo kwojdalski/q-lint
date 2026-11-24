@@ -127,3 +127,14 @@ test("the switch and the line cap", () => {
   assert.deepStrictEqual(readLogViewer((k, f) => (k.endsWith("enable") ? false : f)).enabled, false);
   assert.deepStrictEqual(LEVELS, ["ERROR", "WARN", "INFO", "DEBUG"]);
 });
+
+test("an impossible date or time is no time, and no filter bound (#1436)", () => {
+  assert.strictEqual(timeOf("2026.02.30D25:61:00"), undefined);
+  assert.strictEqual(timeOf("2026.02.28D23:59:60"), undefined);
+  assert.strictEqual(timeOf("2026.13.01"), undefined);
+  assert.strictEqual(validBound("2026.13.45"), false);
+  assert.strictEqual(validBound("2026.02.30"), false);
+  // A leap day is a day.
+  assert.strictEqual(new Date(timeOf("2028.02.29D23:59:59.5")).toISOString(), "2028-02-29T23:59:59.500Z");
+  assert.strictEqual(validBound("2026.02.28"), true);
+});

@@ -291,13 +291,23 @@ export function distinctNames(names: string[]): string[] {
 
 /// An item of a general list as plain text: a string's characters, its
 /// escapes undone, for a format with strings of its own; any other item
-/// (and a string cut at 200 characters) as q wrote it.
+/// (and a string cut at 200 characters) as q wrote it. A run of octal
+/// escapes is the string's UTF-8 bytes, decoded as such; bytes that are
+/// not UTF-8 keep one character each.
 export function plainItem(text: string): string {
   const m = /^"((?:[^"\\]|\\.)*)"$/s.exec(text);
   if (m === null) {
     return text;
   }
-  return m[1].replace(/\\([0-7]{3}|.)/gs, (_, e: string) =>
-    e.length === 3 ? String.fromCharCode(parseInt(e, 8)) : e === "n" ? "\n" : e === "r" ? "\r" : e === "t" ? "\t" : e,
-  );
+  return m[1].replace(/((?:\\[0-7]{3})+)|\\(.)/gs, (_, run: string | undefined, e: string) => {
+    if (run === undefined) {
+      return e === "n" ? "\n" : e === "r" ? "\r" : e === "t" ? "\t" : e;
+    }
+    const bytes = Buffer.from(run.match(/[0-7]{3}/g)!.map((o) => parseInt(o, 8)));
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+      return bytes.toString("latin1");
+    }
+  });
 }

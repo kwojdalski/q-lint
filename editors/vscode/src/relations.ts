@@ -7,6 +7,7 @@
 // The server draws the graph and follows it. It does not know which files
 // changed, because it starts no process and so cannot ask git - that is done
 // here, on the client, and the answer is sent with the request.
+import { statSync } from "node:fs";
 import { isAbsolute, join, relative, sep, win32 } from "node:path";
 
 /// What `package.json` contributes for this, by the names `relate.ts`
@@ -346,6 +347,19 @@ export function onPath(
     }
   }
   return undefined;
+}
+
+/// `binary` as `onPath` finds it on this process's `PATH`, with the files
+/// on disk: what to spawn git, tar or node as from a workspace folder
+/// (#1407). Undefined where `PATH` holds none.
+export function onProcessPath(binary: string, platform: string = process.platform): string | undefined {
+  return onPath(binary, process.env.PATH, (file) => {
+    try {
+      return statSync(file).isFile();
+    } catch {
+      return false;
+    }
+  }, platform);
 }
 
 /// Whether a path is one the server reads: a `.q` file.

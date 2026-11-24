@@ -10,7 +10,7 @@ const os = require("node:os");
 const path = require("node:path");
 const net = require("node:net");
 const pkg = require("../package.json");
-const { LAUNCH_COMMANDS, commandText, isLocalHost, launchPlan, readLauncher } = require("../out/launcher.js");
+const { LAUNCH_COMMANDS, argsFromText, argsText, commandText, isLocalHost, launchPlan, readLauncher } = require("../out/launcher.js");
 const { launchOf, parseProcesses, splitArgs } = require("../out/processes.js");
 const { onPath } = require("../out/relations.js");
 const { Live } = require("../out/live.js");
@@ -93,10 +93,12 @@ async function setUp(t, processes) {
   stub.reset();
   const vscode = require("vscode");
   const channels = {};
+  const closed = new Set();
   const make = vscode.window.createOutputChannel;
   vscode.window.createOutputChannel = (name) => {
     const lines = (channels[name] = []);
-    return { append: (x) => lines.push(x), appendLine: (x) => lines.push(`${x}\n`), clear() {}, show() {}, dispose() {} };
+    closed.delete(name);
+    return { append: (x) => lines.push(x), appendLine: (x) => lines.push(`${x}\n`), clear() {}, show() {}, dispose: () => closed.add(name) };
   };
   t.after(() => (vscode.window.createOutputChannel = make));
   const context = stub.newContext();
@@ -114,7 +116,7 @@ async function setUp(t, processes) {
     await stub.commands.get("q-lint.disconnectProcess")?.();
     dispose();
   });
-  return { live, launcher, channels, dispose, output: (label) => (channels[`q: ${label}`] ?? []).join("") };
+  return { live, launcher, channels, closed, dispose, output: (label) => (channels[`q: ${label}`] ?? []).join("") };
 }
 
 // A process standing in for q: listens on the port after -p, says so, and
@@ -206,6 +208,42 @@ test("what was started is stopped when VS Code closes, and when the launcher is 
   assert.strictEqual(await accepts(b), false);
 });
 
+test("turned off, or VS Code closing, the launcher's output channels go too (#1433)", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-"));
+  fs.writeFileSync(path.join(dir, "fake.js"), FAKE);
+  const [a, b] = [await freePort(), await freePort()];
+  const { closed, dispose, output } = await setUp(t, [proc("a", a, { command: process.execPath, script: "fake.js", cwd: dir }), proc("b", b, { command: process.execPath, script: "fake.js", cwd: dir })]);
+  await stub.commands.get(LAUNCH_COMMANDS.start)("a");
+  for (let i = 0; i < 100 && !(await accepts(a)); i++) await sleep(50);
+  stub.config.user["processes.launcher.enable"] = false;
+  stub.changeConfig("q-lint.processes.launcher.enable");
+  for (let i = 0; i < 100 && !closed.has("q: a"); i++) await sleep(50);
+  assert.ok(closed.has("q: a"));
+  // It ended before its channel went: its end is in it.
+  assert.match(output("a"), /\[a ended: /);
+  stub.config.user["processes.launcher.enable"] = true;
+  await stub.commands.get(LAUNCH_COMMANDS.start)("b");
+  for (let i = 0; i < 100 && !(await accepts(b)); i++) await sleep(50);
+  dispose();
+  for (let i = 0; i < 100 && !closed.has("q: b"); i++) await sleep(50);
+  assert.ok(closed.has("q: b"));
+});
+
+test("turned off while a Start is on its way, nothing is spawned (#1434)", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-"));
+  fs.writeFileSync(path.join(dir, "fake.js"), FAKE);
+  const port = await freePort();
+  const { launcher, output } = await setUp(t, [proc("a", port, { command: process.execPath, script: "fake.js", cwd: dir })]);
+  const started = stub.commands.get(LAUNCH_COMMANDS.start)("a");
+  stub.config.user["processes.launcher.enable"] = false;
+  stub.changeConfig("q-lint.processes.launcher.enable");
+  await started;
+  await sleep(300);
+  assert.deepStrictEqual(launcher.running(), []);
+  assert.strictEqual(await accepts(port), false);
+  assert.ok(!output("a").includes("$ "), output("a"));
+});
+
 test("Set Launch Definition asks for the program, script and arguments", async (t) => {
   const { live } = await setUp(t, [proc("rdb", 5010, undefined, { tags: ["dev"] })]);
   stub.inputs.push("", "torq.q", '-proctype rdb -procname "rdb 1"');
@@ -243,4 +281,12 @@ test("a real q process is started, connected to, and stopped", { skip: Q ? false
   assert.strictEqual(await accepts(port), false);
   for (let i = 0; i < 50 && live.activeLabel() !== undefined; i++) await sleep(20);
   assert.strictEqual(live.activeLabel(), undefined);
+});
+
+test("the Arguments box gives back the arguments it was filled with (#1430)", () => {
+  const args = ["-e", "", 'say "hi" now', "-p", "5000"];
+  assert.deepStrictEqual(argsFromText(argsText(args), args), args);
+  // An empty argument is shown quoted, so splitting the box keeps it.
+  assert.strictEqual(argsText(["-e", "", "a b"]), '-e "" "a b"');
+  assert.deepStrictEqual(argsFromText('-e "" "a b" -x', ["-e", "", "a b"]), ["-e", "", "a b", "-x"]);
 });

@@ -126,10 +126,40 @@ export function inlineSpans(text: string): { kind: "live" | "code"; start: numbe
   return spans;
 }
 
+/// `text` with each indented code block (lines of four spaces or a tab in
+/// front, not under a paragraph line or a list item) made spaces.
+function blankIndented(text: string): string {
+  let paragraph = false;
+  let list = false;
+  let code = false;
+  return text
+    .split("\n")
+    .map((line) => {
+      if (line.trim() === "") {
+        paragraph = false;
+        return line;
+      }
+      const indented = /^(?: {4}|\t)/.test(line);
+      if (indented && (code || (!paragraph && !list))) {
+        code = true;
+        return " ".repeat(line.length);
+      }
+      code = false;
+      if (!indented) {
+        list = /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:\s|$)/.test(line);
+      }
+      paragraph = true;
+      return line;
+    })
+    .join("\n");
+}
+
 /// The expressions in a Markdown cell's `source`, each once, in order. Ones
-/// in a code block or a code span are text, as the renderer shows them.
+/// in a code block, a code span or an HTML comment are text, as the
+/// renderer shows them (#1429).
 export function liveExpressions(source: string): string[] {
-  const prose = source.replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^ {0,3}\1[^\n]*$|(?![\s\S]))/gm, (m) => " ".repeat(m.length));
+  const fenced = source.replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^ {0,3}\1[^\n]*$|(?![\s\S]))/gm, (m) => " ".repeat(m.length));
+  const prose = blankIndented(fenced).replace(/<!--[\s\S]*?(?:-->|(?![\s\S]))/g, (m) => m.replace(/[^\n]/g, " "));
   const found: string[] = [];
   for (const span of inlineSpans(prose)) {
     if (span.kind === "live" && !found.includes(span.expr)) {

@@ -14,6 +14,7 @@ import { execFile, spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, sep } from "node:path";
+import { onProcessPath } from "./relations";
 
 /// The part of a finding the dashboard reads.
 export interface Finding {
@@ -172,28 +173,40 @@ export function readTrend(raw: unknown): Point[] {
   ) as unknown as Point[];
 }
 
-/// Run a program; resolves with its stdout and exit code, or rejects when
-/// it cannot be started.
-export function run(command: string, args: string[], cwd: string, timeout = 300_000): Promise<{ stdout: string; code: number | null }> {
+/// Run a program; resolves with its stdout, stderr and exit code (null when
+/// a signal or the timeout stopped it), or rejects when it cannot be started.
+export function run(command: string, args: string[], cwd: string, timeout = 300_000): Promise<{ stdout: string; stderr: string; code: number | null }> {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { cwd, timeout, maxBuffer: 256 * 1024 * 1024, windowsHide: true }, (error, stdout) => {
+    // On Windows a bare name is looked for in `cwd` before PATH (#1407).
+    const binary = onProcessPath(command);
+    if (binary === undefined) {
+      reject(new Error(`${command} could not be run: it is not on PATH`));
+      return;
+    }
+    execFile(binary, args, { cwd, timeout, maxBuffer: 256 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
       const failed = error as (Error & { code?: unknown }) | null;
       if (failed && typeof failed.code === "string") {
         reject(new Error(`${command} could not be run: ${failed.message}`));
         return;
       }
-      resolve({ stdout, code: failed ? (typeof failed.code === "number" ? failed.code : 1) : 0 });
+      resolve({ stdout, stderr, code: failed ? (typeof failed.code === "number" ? failed.code : null) : 0 });
     });
   });
 }
 
 /// The findings under `dir`: `qlinter --format json .` there, with `args`
 /// (a profile, a configuration file) before it. Exit 1 means findings; a
-/// file that could not be read (exit 2) still lets the rest be read.
+/// file that could not be read (exit 2) still lets the rest be read. A run
+/// stopped before it finished, or one that printed no list (a configuration
+/// error exits 2 too), is an error, not "no findings" (#1399).
 export async function lintTree(qlinter: string, args: string[], dir: string): Promise<Finding[]> {
-  const { stdout, code } = await run(qlinter, [...args, "--format", "json", "."], dir);
-  if (code !== 0 && code !== 1 && code !== 2) {
-    throw new Error(`qlinter exited with ${code}`);
+  const { stdout, stderr, code } = await run(qlinter, [...args, "--format", "json", "."], dir);
+  const why = stderr.trim() === "" ? "" : `: ${stderr.trim().slice(0, 500)}`;
+  if (code === null) {
+    throw new Error(`qlinter was stopped before it finished${why}`);
+  }
+  if ((code !== 0 && code !== 1 && code !== 2) || (code !== 0 && stdout.trim() === "")) {
+    throw new Error(`qlinter exited with ${code}${why}`);
   }
   return readFindings(stdout.trim() === "" ? "[]" : stdout);
 }
@@ -235,14 +248,30 @@ export async function lintCommit(qlinter: string, args: string[], dir: string, c
   const out = await mkdtemp(join(tmpdir(), "qlint-trend-"));
   try {
     await new Promise<void>((resolve, reject) => {
-      const archive = spawn("git", ["archive", "--format=tar", commit], { cwd: dir, windowsHide: true });
-      const tar = spawn("tar", ["-x", "-f", "-", "-C", out], { windowsHide: true });
+      const [git, tarBinary] = [onProcessPath("git"), onProcessPath("tar")];
+      if (git === undefined || tarBinary === undefined) {
+        reject(new Error(`git archive ${commit} failed: ${git === undefined ? "git" : "tar"} is not on PATH`));
+        return;
+      }
+      const archive = spawn(git, ["archive", "--format=tar", commit], { cwd: dir, windowsHide: true });
+      const tar = spawn(tarBinary, ["-x", "-f", "-", "-C", out], { windowsHide: true });
       archive.stdout.pipe(tar.stdin);
       let failed = "";
       archive.stderr.on("data", (d) => (failed += d));
       archive.on("error", reject);
       tar.on("error", reject);
-      tar.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`git archive ${commit} failed: ${failed || `tar exited ${code}`}`))));
+      // Both must succeed: tar can exit 0 on the empty stream of a git
+      // archive that failed (#1400).
+      let closed = 0;
+      const done = (what: string) => (code: number | null) => {
+        if (code !== 0) {
+          reject(new Error(`git archive ${commit} failed: ${failed.trim() || `${what} exited ${code}`}`));
+        } else if (++closed === 2) {
+          resolve();
+        }
+      };
+      archive.on("close", done("git archive"));
+      tar.on("close", done("tar"));
     });
     return await lintTree(qlinter, args, out);
   } finally {

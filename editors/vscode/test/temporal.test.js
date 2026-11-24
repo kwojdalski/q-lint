@@ -105,6 +105,11 @@ test("a hover finds the literal under the cursor, and nothing in a string, a com
   assert.strictEqual(at("/ 2024.01.02", 5), undefined);
   assert.strictEqual(at("x: 1 / 2024.01.02", 10), undefined);
   assert.strictEqual(at("v2024", 3), undefined);
+  // A symbol or a file handle is no literal (#1417).
+  assert.strictEqual(at("x:`2024.01.01", 5), undefined);
+  assert.strictEqual(at("f `:1700000000", 6), undefined);
+  assert.strictEqual(at("f `:/data/1700000000", 12), undefined);
+  assert.strictEqual(at("x:1700000000", 5), "1700000000");
   // A short number is no time.
   assert.strictEqual(at("x:12345", 3), undefined);
   const md = t.hoverMarkdown(t.temporalAt("x:2024.01.02", 4));

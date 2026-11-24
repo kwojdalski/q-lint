@@ -42,6 +42,20 @@ export function bodyStatements(text: string, lambda: Lambda, mask: boolean[] = c
   };
   for (let i = lambda.bodyStart; i < lambda.close; i++) {
     if (!mask[i]) {
+      // A string literal is not code to the mask but is part of its
+      // statement: its opening quote is the first non-code character after
+      // code, where a comment's first is `/` or `\`.
+      if (text[i] === '"' && (i === 0 || mask[i - 1])) {
+        if (start < 0) {
+          start = i;
+        }
+        let j = i + 1;
+        while (j < lambda.close && text[j] !== '"') {
+          j += text[j] === "\\" ? 2 : 1;
+        }
+        end = Math.min(j + 1, lambda.close);
+        i = end - 1;
+      }
       continue;
     }
     const c = text[i];

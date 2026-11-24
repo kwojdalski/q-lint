@@ -394,7 +394,8 @@ export function inCode(text: string, offset: number): boolean {
 /// are no keyword, and a `;` in a string ends nothing.
 export function qsqlTable(text: string, offset: number): string | undefined {
   const kinds = charKinds(text);
-  const code = [...text].map((ch, i) => (kinds[i] === "c" ? ch : " ")).join("");
+  // By UTF-16 unit, as `kinds` and `offset` count: an emoji is two (#1372).
+  const code = text.split("").map((ch, i) => (kinds[i] === "c" ? ch : " ")).join("");
   const keywords = [...code.slice(0, offset).matchAll(/(?<![\w.])(select|exec|update|delete)(?![\w.])/g)];
   for (const keyword of keywords.reverse()) {
     const start = keyword.index + keyword[0].length;

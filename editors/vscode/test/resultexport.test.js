@@ -10,7 +10,8 @@ const zlib = require("node:zlib");
 const { atomLiteral, tableLiteral, plainName, plainItem, stringLiteral, symbolLiteral, distinctNames } = require("../out/qliteral.js");
 const { toJson, toMarkdown, markdownCell, exportResult, EXPORT_FORMATS, FORMAT_INFO } = require("../out/resultexport.js");
 const { crc32, zip, columnName, xmlText, temporalSerial, xlsxCell } = require("../out/xlsx.js");
-const { definitionLevels, planFor } = require("../out/parquet.js");
+const { definitionLevels, planFor, toParquet } = require("../out/parquet.js");
+const { gridOfQ } = require("../out/qformat.js");
 const { appendPage, readPage } = require("../out/grid.js");
 const { fillDrilldown, templatesFor } = require("../out/drilldown.js");
 const { readDrilldown } = require("../out/liveconfig.js");
@@ -97,6 +98,9 @@ test("a table's q literal: ([k:...] v:...) for plain names, n!flip for a reserve
 test("a general list's string item is its characters where a format has strings of its own", () => {
   assert.strictEqual(plainItem('"say \\"hi\\"\\n\\001"'), 'say "hi"\n\u0001');
   assert.strictEqual(plainItem("`x`y"), "`x`y");
+  // A run of escapes is UTF-8, not one character per byte (#1397).
+  assert.strictEqual(plainItem('"caf\\303\\251 \\344\\275\\240"'), "café 你");
+  assert.strictEqual(plainItem('"\\\\101 \\377"'), "\\101 \u00ff");
   assert.deepStrictEqual(distinctNames(["a", "a", "", "a_1"]), ["a", "a_1", "column3", "a_1_1"]);
 });
 
@@ -361,3 +365,22 @@ test("the xlsx opens in openpyxl and the Parquet file in pyarrow and DuckDB, wit
   assert.deepStrictEqual(out.duck[1], ["b", "None", "None"]);
 });
 
+
+test("an unwrapped result's longs and timestamps reach Parquet exactly (#1398)", () => {
+  const longs = gridOfQ({ kind: "vector", t: 7, attr: 0, v: [9007199254740993n, 9223372036854775806n, 5n] }, 10);
+  assert.deepStrictEqual(longs.raw[0], ["9007199254740993", "9223372036854775806", 5]);
+  const has = (data, n) => {
+    for (let k = 0; k + 8 <= data.length; k++) {
+      if (data.readBigInt64LE(k) === n) {
+        return true;
+      }
+    }
+    return false;
+  };
+  const data = toParquet(longs, [0, 1, 2]).data;
+  assert.ok(has(data, 9007199254740993n));
+  assert.ok(has(data, 9223372036854775806n));
+  // A timestamp is always past 2^53 ns: 2024.12.31D22:40:00.123456789.
+  const ts = gridOfQ({ kind: "vector", t: 12, attr: 0, v: [789000000123456789n] }, 10);
+  assert.ok(has(toParquet(ts, [0]).data, 789000000123456789n + 946684800000000000n));
+});

@@ -335,7 +335,8 @@ export class Drift implements TextDocumentContentProvider {
         const states = new Map<string, ProcessState>();
         for (let i = 0; i < names.length; i += DRIFT_BATCH) {
           const batch = names.slice(i, i + DRIFT_BATCH);
-          const got = await borrowWhenFree(this.live, async (connection) => readDrift(await connection.call(DRIFT, batch.join(" "))));
+          // Every batch from the process the check began on (#1378).
+          const got = await borrowWhenFree(this.live, async (connection) => readDrift(await connection.call(DRIFT, batch.join(" "))), undefined, process.label);
           if (got === undefined) {
             return undefined;
           }

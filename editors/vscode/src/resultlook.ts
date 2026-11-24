@@ -307,8 +307,9 @@ const formulaText = (text: string): string => `"${text.replace(/"/g, '""')}"`;
 /// case-sensitive and `contains` is not, with no wildcards, none of them
 /// matching an empty cell. A rule on a column the sheet does not have, a
 /// comparison of numbers on text, `contains` on numbers (the grid reads
-/// their text as shown) and a text rule on dates, times and booleans,
-/// which Excel holds as numbers, are left out.
+/// their text as shown), a text rule on dates, times and booleans,
+/// which Excel holds as numbers, and one on a general list whose strings
+/// Excel holds without their quotes (#1411), are left out.
 export function xlsxRules(
   rules: FormatRule[],
   names: string[],

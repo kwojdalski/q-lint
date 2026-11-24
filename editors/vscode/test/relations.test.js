@@ -21,6 +21,7 @@ const {
   isQ,
   names,
   onPath,
+  onProcessPath,
   picks,
   rows,
   summary,
@@ -321,6 +322,18 @@ test("the git that runs is VS Code's when one is set", () => {
   assert.strictEqual(gitBinary(" /opt/git/bin/git "), "/opt/git/bin/git");
   assert.strictEqual(gitBinary(["/first/git", "/second/git"]), "/first/git");
   assert.strictEqual(gitBinary([]), "git");
+});
+
+test("git, tar and node are spawned as this process's PATH finds them (#1407)", () => {
+  assert.strictEqual(onProcessPath("git", "linux"), "git");
+  assert.strictEqual(onProcessPath("/usr/bin/tar", "win32"), "/usr/bin/tar");
+  const saved = process.env.PATH;
+  process.env.PATH = "";
+  try {
+    assert.strictEqual(onProcessPath("git", "win32"), undefined);
+  } finally {
+    process.env.PATH = saved;
+  }
 });
 
 test("on Windows a bare git is found on PATH, never in the folder it runs in", () => {

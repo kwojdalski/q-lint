@@ -82,7 +82,7 @@ export function extend(md, seen = () => {}) {
     const expr = tokens[idx].meta.expr;
     const metadata = env && env.outputItem && env.outputItem.metadata;
     const values = metadata && typeof metadata[LIVE_KEY] === "object" ? metadata[LIVE_KEY] : undefined;
-    seen(expr, values ? values[expr] : undefined);
+    seen(expr, values && Object.prototype.hasOwnProperty.call(values, expr) ? values[expr] : undefined);
     return liveHtml(expr, values);
   };
 }

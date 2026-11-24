@@ -57,6 +57,16 @@ test("expressions are found once each, never in code; a q symbol's backtick open
   assert.deepStrictEqual(inlineSpans("a `x` {{q: 1}}").map((s) => s.kind), ["code", "live"]);
 });
 
+test("an indented code block or an HTML comment holds no live value (#1429)", () => {
+  assert.deepStrictEqual(liveExpressions("Para\n\n    {{q: indented}}\n"), []);
+  assert.deepStrictEqual(liveExpressions("    {{q: first}}\n\tand {{q: tab}}\n\nAfter {{q: a}}"), ["a"]);
+  assert.deepStrictEqual(liveExpressions("<!-- {{q: hidden}} -->"), []);
+  assert.deepStrictEqual(liveExpressions("A <!--\n{{q: hidden}}\n--> and {{q: b}}"), ["b"]);
+  // Indented under a paragraph line or a list item it is text, and live.
+  assert.deepStrictEqual(liveExpressions("Para\n    {{q: lazy}}"), ["lazy"]);
+  assert.deepStrictEqual(liveExpressions("- item\n\n    {{q: in list}}"), ["in list"]);
+});
+
 test("the Markdown after a code cell is read when it runs; the first code cell reads what is above it", () => {
   const cells = ["markdown", "markdown", "code", "markdown", "code", "code", "markdown"].map((kind) => ({ kind }));
   assert.deepStrictEqual(markdownAfter(cells, 2), [0, 1, 3]);
@@ -90,6 +100,18 @@ test("the renderer reads expressions as the extension does, and escapes every va
   assert.strictEqual(r.liveHtml('<x">', {}), '<code title="Runs when the code cell above this one runs">{{q: &lt;x&quot;&gt;}}</code>');
   // A prototype's name is no value.
   assert.match(r.liveHtml("constructor", {}), /^<code/);
+});
+
+test("the renderer reports a prototype's name as having no value, which postMessage can clone (#1391)", async () => {
+  const r = await renderer();
+  const rules = {};
+  const md = { inline: { ruler: { before: (_at, _name, rule) => (rules.inline = rule) } }, renderer: { rules } };
+  const heard = [];
+  r.extend(md, (expr, value) => heard.push(structuredClone({ expr, value: value ?? null })));
+  const env = { outputItem: { metadata: { "q-lint.liveValues": { a: { text: "1" } } } } };
+  const html = ["constructor", "toString", "a"].map((expr) => rules.qlint_live([{ meta: { expr } }], 0, {}, env));
+  assert.deepStrictEqual(heard, [{ expr: "constructor", value: null }, { expr: "toString", value: null }, { expr: "a", value: { text: "1" } }]);
+  assert.match(html[0], /^<code/);
 });
 
 test("package.json contributes the live values renderer as an extension of the Markdown renderer", () => {
@@ -382,6 +404,9 @@ test("the command line names a process by host:port or by a listed label, and re
   assert.deepStrictEqual(cliProcess("[::1]:5001", [], "me", true), { label: "[::1]:5001", host: "::1", port: 5001, tags: [], user: "me", tls: true });
   assert.match(cliProcess("rdb", []).error, /pass --processes/);
   assert.match(cliProcess("hdb", listed).error, /The labels are: rdb/);
+  // A tunnelled or scripted process is refused, not dialled at its host (#1401).
+  assert.match(cliProcess("t", [{ label: "t", host: "localhost", port: 5000, tags: [], ssh: "bastion" }]).error, /t needs an SSH tunnel \(ssh\), which qnbrun does not run/);
+  assert.match(cliProcess("s", [{ label: "s", host: "h", port: 1, tags: [], initFile: "c.q" }]).error, /a connect script/);
   assert.strictEqual(passwordVariable("desk/rdb-1"), "QLINT_Q_PASSWORD_DESK_RDB_1");
 });
 

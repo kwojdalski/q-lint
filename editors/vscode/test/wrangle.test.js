@@ -34,6 +34,9 @@ test("each step is written as q over the step before, and the steps as a script 
   assert.strictEqual(w.stepCode({ kind: "filter", column: "s", op: "like", value: '"AB*"' }, "t"), 'select from t where s like "AB*"');
   assert.strictEqual(w.stepCode({ kind: "filter", column: "s", op: "in", value: ",`a" }, "t"), "select from t where s in enlist `a");
   assert.strictEqual(w.stepCode({ kind: "filter", column: "s", op: "not null", value: "" }, "t"), "select from t where not null s");
+  // q-sql splits a where clause at its commas: a value with one is one test (#1412).
+  assert.strictEqual(w.stepCode({ kind: "filter", column: "s", op: "in", value: "`a,`b" }, "t"), "select from t where s in (`a,`b)");
+  assert.strictEqual(w.stepCode({ kind: "filter", column: "px", op: "<", value: "10,20" }, "t"), "select from t where px<(10,20)");
   assert.strictEqual(w.stepCode({ kind: "sort", column: "px", descending: true }, "t"), "`px xdesc t");
   assert.strictEqual(w.stepCode({ kind: "rename", column: "px", to: "price" }, "t"), "(enlist[`px]!enlist `price) xcol t");
   assert.strictEqual(w.stepCode({ kind: "cast", column: "q", to: "f" }, "t"), 'update q:"f"$q from t');

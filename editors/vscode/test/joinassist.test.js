@@ -51,6 +51,12 @@ test("a shared time column gives aj and wj, sorted unless the right table alread
   // Grouped on sym, it is not sorted again.
   const grouped = shape("quote", ["sym", "time", "bid"], "stf", [], ["g", "", ""]);
   assert.strictEqual(Object.fromEntries(suggestJoins(trade, grouped).map((x) => [x.join, x])).aj.expression, "aj[`sym`time;trade;quote]");
+  // But no attribute orders time within each sym: the why says it is taken
+  // as already so, and how to sort it when not (#1435).
+  for (const attribute of ["g", "p", "s"]) {
+    const aj = suggestJoins(trade, shape("quote", ["sym", "time", "bid"], "stf", [], [attribute, "", ""])).find((x) => x.join === "aj");
+    assert.match(aj.why, new RegExp(`\`${attribute}# on sym does not order time: this takes quote to be in time order within each sym already, as a tickerplant's table is; if it is not, use \`sym\`time xasc quote`), attribute);
+  }
   // A partitioned right table is told to pick a date.
   const hdb = shape("quote", ["date", "sym", "time", "bid"], "dstf", [], ["", "p", "", ""], "partitioned");
   assert.match(suggestJoins(trade, hdb).find((x) => x.join === "aj").why, /partitioned: select one date first/);

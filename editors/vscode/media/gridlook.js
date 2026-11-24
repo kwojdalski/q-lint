@@ -437,10 +437,22 @@
         let k = 0;
         let sx = 0;
         let sy = 0;
+        // Whether either column varies over these rows: the mean of one
+        // that does not is off by rounding, which leaves cxx a hair above 0.
+        let x0 = null;
+        let y0 = null;
+        let vx = false;
+        let vy = false;
         rows.forEach(function (row) {
           const x = xs[row];
           const y = ys[row];
           if (x !== null && y !== null) {
+            if (k === 0) {
+              x0 = x;
+              y0 = y;
+            }
+            vx = vx || x !== x0;
+            vy = vy || y !== y0;
             k++;
             sx += x;
             sy += y;
@@ -462,7 +474,7 @@
               cyy += (y - my) * (y - my);
             }
           });
-          value = cxx > 0 && cyy > 0 ? Math.max(-1, Math.min(1, cxy / Math.sqrt(cxx * cyy))) : null;
+          value = vx && vy && cxx > 0 && cyy > 0 ? Math.max(-1, Math.min(1, cxy / Math.sqrt(cxx * cyy))) : null;
         }
         r[a][b] = r[b][a] = value;
         n[a][b] = n[b][a] = k;

@@ -100,6 +100,14 @@ export class LogViewer {
       workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration("q-lint.processes.logViewer")) {
           this.apply();
+          // A new maxLines reads each open view again with it (#1432).
+          const { enabled, maxLines } = this.settings();
+          for (const view of enabled ? this.views.values() : []) {
+            if (view.max !== maxLines) {
+              view.max = maxLines;
+              void this.reload(view);
+            }
+          }
         }
       }),
       { dispose: () => this.unregister() },
@@ -254,7 +262,7 @@ export class LogViewer {
       text: view.text,
       processes: [...view.processes.keys()].sort(),
       levels: LEVELS.filter((l) => view.levels.has(l)),
-      entries: view.entries.length,
+      entries: Math.min(view.entries.length, view.max),
     };
   }
 
@@ -348,7 +356,8 @@ export class LogViewer {
     const open = [...view.builders.values()].map((b) => b.open).filter((e): e is Entry => e !== undefined && matches(e, view.filter));
     const lines: string[] = [];
     const infos: LineInfo[] = [];
-    for (const entry of [...view.entries, ...open]) {
+    // `keep` trims a tenth at a time: only the last `max` are shown (#1431).
+    for (const entry of [...view.entries.slice(-view.max), ...open]) {
       // Several files at once: a line that names no process says which.
       const prefix = many && entry.kind === "q" ? `[${entry.process}] ` : "";
       entry.lines.forEach((line, i) => {
@@ -589,7 +598,7 @@ export class LogViewer {
       return;
     }
     const filter = filterText(view.filter);
-    this.status.text = `$(list-filter) ${iconsEscaped(filter) || "all"} · ${view.entries.length} · ${view.follow ? "following" : "paused"}`;
+    this.status.text = `$(list-filter) ${iconsEscaped(filter) || "all"} · ${Math.min(view.entries.length, view.max)} · ${view.follow ? "following" : "paused"}`;
     this.status.tooltip = `${view.files.join("\n")}\nShowing the last ${view.max} entries that pass the filter. Click to filter by level.`;
     this.status.show();
   }

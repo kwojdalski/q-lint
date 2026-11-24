@@ -58,7 +58,9 @@ export function leadBefore(text: string, offset: number): number | undefined {
   // The statement: back to a line that starts at column 0.
   let start = text.lastIndexOf("\n", Math.max(0, offset - 1)) + 1;
   while (start > 0 && /^[ \t]/.test(text.slice(start))) {
-    start = text.lastIndexOf("\n", start - 2) + 1;
+    // At 1 the previous line is the empty one at 0: lastIndexOf would
+    // clamp start - 2 to 0 and find the same newline again.
+    start = start <= 1 ? 0 : text.lastIndexOf("\n", start - 2) + 1;
   }
   const end = Math.min(text.length, offset + 8);
   const lead = /(?<![A-Za-z0-9_.`])(select|exec|update|delete)(?![A-Za-z0-9_])|[?!](?=\[)/g;

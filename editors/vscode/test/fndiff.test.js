@@ -26,6 +26,8 @@ test("an answer is read, one function as strings, and two sides compared", () =>
     { name: ".l.k", status: "only in second" },
     { name: ".l.f", status: "same" },
   ]);
+  // Trailing blanks on a line are not a difference (#1379).
+  assert.deepStrictEqual(compareTexts(new Map([[".l.f", "{x+1 \n }"]]), new Map([[".l.f", "{x+1\n }"]])), [{ name: ".l.f", status: "same" }]);
   assert.strictEqual(sideDocument(".l.f", "rdb", undefined), "/ .l.f is not defined on rdb\n");
   assert.strictEqual(sideDocument(".l.f", "rdb", "{x}"), "{x}\n");
   assert.strictEqual(nameProblem(".lib.f"), undefined);
