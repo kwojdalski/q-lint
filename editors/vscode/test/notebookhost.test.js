@@ -101,7 +101,7 @@ function fakeVscode() {
     },
     notebooks: {
       createNotebookController: () => {
-        const controller = { dispose() {}, createNotebookCellExecution: (cell) => fakeExecution(cell) };
+        const controller = { dispose() {}, onDidChangeSelectedNotebooks: () => disposable, createNotebookCellExecution: (cell) => fakeExecution(cell) };
         registered.controller = controller;
         return controller;
       },
@@ -518,6 +518,72 @@ test("a code cell that runs reads the live values of the Markdown after it into 
   await runCells(fake, notebook, [1]);
   assert.deepStrictEqual(live.sent, ["a:1"]);
   assert.strictEqual(fake.edits.length, 1);
+});
+
+test("a code cell with no statement still reads the live values of the Markdown after it, as a headless run does (#1996)", async () => {
+  const fake = fakeVscode();
+  const live = recordingLive(PROCESSES, "dev1");
+  load(fake, live);
+  const notebook = notebookWith(fake, [["code", "/ a title, nothing to run"], ["markdown", "Rows: {{q: count trade}}"], ["code", "/ no value under this one"], ["code", "1"]]);
+  const [e] = await runCells(fake, notebook, [0]);
+  assert.deepStrictEqual([e.success, e.outputs], [true, []]);
+  // The guard reads what is sent: the expressions, and no statement of the cell's.
+  assert.deepStrictEqual(live.sent, ["/ a title, nothing to run\ncount trade", "live count trade"]);
+  assert.deepStrictEqual(fake.edits.flatMap((x) => x.list), [{ index: 1, metadata: { "q-lint.liveValues": { "count trade": { text: "<count trade>" } } } }]);
+  // With no live value to read, nothing is sent and no process is asked for.
+  live.sent = [];
+  live.runOnActive = async () => assert.fail("nothing to send");
+  const [none] = await runCells(fake, notebook, [2]);
+  assert.deepStrictEqual([none.success, none.outputs, live.sent, fake.edits.length], [true, [], [], 1]);
+});
+
+test("Markdown edited while its cell runs: only the expressions the guard read are sent (#1997)", async () => {
+  const fake = fakeVscode();
+  const live = recordingLive(PROCESSES, "dev1");
+  const guarded = [];
+  const sent = [];
+  let notebook;
+  live.runOnActive = async (code, query) => {
+    guarded.push(...code);
+    const connection = {
+      // The Markdown is edited while the cell's own query is out.
+      query: async () => ((notebook.cells[1].document.getText = () => "Rows: {{q: delete from `trade}}"), { ok: true, type: -7, text: ["1"] }),
+      call: async (lambda, exprs) => (sent.push(...exprs), exprs.map((e) => [true, `<${e}>`])),
+    };
+    return { process: "dev1", value: await query(connection) };
+  };
+  load(fake, live);
+  notebook = notebookWith(fake, [["code", "system \"sleep 5\""], ["markdown", "Rows: {{q: count trade}}"]]);
+  const [e] = await runCells(fake, notebook, [0]);
+  assert.strictEqual(e.success, true);
+  assert.deepStrictEqual([guarded, sent], [["system \"sleep 5\"", "count trade"], ["count trade"]]);
+});
+
+test("Interrupt once a cell's query has answered aborts nothing; while it is out, it aborts (#1998)", async () => {
+  const fake = fakeVscode();
+  const live = recordingLive(PROCESSES, "dev1");
+  let during = () => {};
+  let aborts = 0;
+  live.abort = async () => void aborts++;
+  live.runOnActive = async (code, query) => ({ process: "dev1", value: await query({ query: async () => (during(), { ok: true, type: -7, text: ["2"] }) }) });
+  load(fake, live);
+  const notebook = notebookWith(fake, [["code", "1+1"]]);
+  const create = fake.registered.controller.createNotebookCellExecution;
+  const hooked = (hook) => {
+    fake.registered.controller.createNotebookCellExecution = (cell) => hook(create(cell));
+  };
+  // Interrupted while the output is written: the query is no longer running.
+  hooked((e) => {
+    const replace = e.replaceOutput;
+    e.replaceOutput = async (outputs) => (e.cancel(), replace(outputs));
+    return e;
+  });
+  await fake.registered.controller.executeHandler(notebook.cells, notebook);
+  assert.strictEqual(aborts, 0);
+  // Interrupted while the query is out: aborted, as Abort Current Query.
+  hooked((e) => ((during = () => e.cancel()), e));
+  await fake.registered.controller.executeHandler(notebook.cells, notebook);
+  assert.strictEqual(aborts, 1);
 });
 
 test("a code cell that fails drops the live values kept for the Markdown after it (#1544)", async () => {

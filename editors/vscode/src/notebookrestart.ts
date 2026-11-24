@@ -17,6 +17,8 @@ import { plainMessage } from "./history";
 
 export interface NotebookRuns {
   processOf: (notebook: NotebookDocument) => string | undefined;
+  /// Whether VS Code lets a cell of the notebook run: its kernel is selected.
+  canRun: (notebook: NotebookDocument) => boolean;
   runAll: (notebook: NotebookDocument) => Promise<void>;
 }
 
@@ -47,6 +49,32 @@ export class NotebookRestart {
     this.last = { outcome, process };
   }
 
+  /// Whether the q cells of `notebook` can run, saying why not when they
+  /// cannot: VS Code runs no cell of a notebook with no kernel selected, as
+  /// one no cell of was run in this workspace yet. Found out before the
+  /// process is stopped, not after (#1994).
+  private runnable(notebook: NotebookDocument, cells: number): boolean {
+    if (cells === 0 || this.runs.canRun(notebook)) {
+      return true;
+    }
+    void window.showInformationMessage(
+      "q-lint: nothing was restarted or run: VS Code has no kernel selected for this notebook, so its cells cannot run. Run a cell, or choose q (active connection) with Select Kernel, then try again.",
+    );
+    return false;
+  }
+
+  /// Run all of `notebook`'s q cells: whether they were run. A run VS Code
+  /// refuses is said, after `what` was done before it, not thrown.
+  private async runAll(notebook: NotebookDocument, what: string): Promise<boolean> {
+    try {
+      await this.runs.runAll(notebook);
+      return true;
+    } catch (e) {
+      void window.showErrorMessage(plainMessage(`q-lint: ${what}: ${e instanceof Error ? e.message : String(e)}`));
+      return false;
+    }
+  }
+
   /// Restart the process of `notebook` - the active q notebook when not
   /// given - when q-lint started it and the user agrees, then run all its
   /// q cells.
@@ -72,6 +100,9 @@ export class NotebookRestart {
       return this.done("refused", label);
     }
     const cells = notebook.getCells().filter((c) => c.kind === NotebookCellKind.Code && c.document.languageId === "q").length;
+    if (!this.runnable(notebook, cells)) {
+      return this.done("refused", label);
+    }
     if (this.live.launched(label)) {
       const go = "Restart and Run All";
       const confirmed = await this.ask(
@@ -83,7 +114,7 @@ export class NotebookRestart {
         return this.done("declined", label);
       }
       // Turned off at the question: nothing is stopped or run (#1453).
-      if (!requireFeature("restartRunAll")) {
+      if (!requireFeature("restartRunAll") || !this.runnable(notebook, cells)) {
         return this.done("refused", label);
       }
       const problem = await this.launcher.restart(label);
@@ -94,8 +125,7 @@ export class NotebookRestart {
       if (!(await this.live.connectTo(label))) {
         return this.done("refused", label);
       }
-      await this.runs.runAll(notebook);
-      return this.done("restarted", label);
+      return this.done((await this.runAll(notebook, `${label} was restarted, but no cell ran`)) ? "restarted" : "refused", label);
     }
     const go = "Run All Without Restart";
     const confirmed = await this.ask(
@@ -106,14 +136,13 @@ export class NotebookRestart {
     if (!confirmed) {
       return this.done("declined", label);
     }
-    if (!requireFeature("restartRunAll")) {
+    if (!requireFeature("restartRunAll") || !this.runnable(notebook, cells)) {
       return this.done("refused", label);
     }
     // The cells go where they last ran, not wherever the connection is now.
     if (this.live.activeLabel() !== label && !(await this.live.connectTo(label))) {
       return this.done("refused", label);
     }
-    await this.runs.runAll(notebook);
-    return this.done("ran", label);
+    return this.done((await this.runAll(notebook, `no cell ran on ${label}`)) ? "ran" : "refused", label);
   }
 }

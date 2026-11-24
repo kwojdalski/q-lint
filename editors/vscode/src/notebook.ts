@@ -31,6 +31,7 @@ import {
   window,
   workspace,
   type CancellationToken,
+  type Disposable,
   type ExtensionContext,
   type NotebookCell,
   type NotebookCellExecution,
@@ -285,6 +286,10 @@ class QnbKernel {
   private queue: Promise<void> = Promise.resolve();
   /// The process each notebook's cells last ran on, by its label.
   private readonly where = new WeakMap<NotebookDocument, string>();
+  /// The notebooks VS Code has selected this kernel for, by URI, as it
+  /// keeps them: only a cell of one of these can be run.
+  private readonly selected = new Set<string>();
+  private readonly selection: Disposable;
   private readonly ran = new EventEmitter<NotebookDocument>();
   /// Fired when a cell has run on a process: what the variables view
   /// refreshes on.
@@ -296,11 +301,21 @@ class QnbKernel {
     this.controller.supportedLanguages = ["q"];
     this.controller.supportsExecutionOrder = true;
     this.controller.executeHandler = (cells, notebook) => this.execute(cells, notebook);
+    this.selection = this.controller.onDidChangeSelectedNotebooks(({ notebook, selected }) => {
+      this.selected[selected ? "add" : "delete"](notebook.uri.toString());
+    });
   }
 
   dispose(): void {
+    this.selection.dispose();
     this.controller.dispose();
     this.ran.dispose();
+  }
+
+  /// Whether a cell of `notebook` can run: VS Code refuses one of a
+  /// notebook this kernel is not selected for (#1994).
+  canRun(notebook: NotebookDocument): boolean {
+    return this.selected.has(notebook.uri.toString());
   }
 
   /// The label of the process `notebook`'s cells last ran on.
@@ -396,16 +411,23 @@ class QnbKernel {
       }
     }
     const cut = statements(source);
-    if (cut.length === 0) {
-      return finish(true, []);
-    }
     // The Markdown cells after this one with live values, read once it has run.
     const notebook = execution.cell.notebook;
     const all = notebook.getCells();
     const kinds = all.map((c) => ({ kind: c.kind === NotebookCellKind.Code ? ("code" as const) : ("markdown" as const) }));
-    const markdown = !featureOn("liveValues") ? [] : markdownAfter(kinds, execution.cell.index ?? all.indexOf(execution.cell)).filter(
-      (j) => kinds[j].kind === "markdown" && liveExpressions(all[j].document.getText()).length > 0,
-    );
+    // Each one's text is read once, here: what the guard is asked about is
+    // then what is sent, though the Markdown is edited while the cell runs
+    // (#1997).
+    const markdown = !featureOn("liveValues") ? [] : markdownAfter(kinds, execution.cell.index ?? all.indexOf(execution.cell))
+      .filter((j) => kinds[j].kind === "markdown")
+      .map((j) => ({ cell: all[j], text: all[j].document.getText() }))
+      .filter((m) => liveExpressions(m.text).length > 0);
+    const texts = markdown.map((m) => m.text);
+    // A cell with no statement sends nothing of its own, but the live
+    // values under it are still read, as a headless run reads them (#1996).
+    if (cut.length === 0 && markdown.length === 0) {
+      return finish(true, []);
+    }
     const configuration = workspace.getConfiguration("q-lint");
     const { consoleSize } = readLive((key, fallback) => configuration.get(key, fallback));
     const limit = readNotebook((key, fallback) => configuration.get(key, fallback));
@@ -420,18 +442,22 @@ class QnbKernel {
     });
     try {
       // The guard reads the live values' expressions too: they are sent.
-      const result = await this.live.runOnActive(guardedText(source, markdown.map((j) => all[j].document.getText())), async (connection): Promise<[boolean, OutputPart[], Record<string, LiveValue>[]] | undefined> => {
+      const result = await this.live.runOnActive(guardedText(source, texts), async (connection): Promise<[boolean, OutputPart[], Record<string, LiveValue>[]] | undefined> => {
         if (execution.token.isCancellationRequested) {
           // Interrupted while connecting, before anything was sent.
           return undefined;
         }
         running = true;
-        const [ok, parts] = await cellAnswer(connection, directive, cut, settings);
-        // A value that cannot be read leaves the cell's output as it is.
-        const values = ok && markdown.length > 0
-          ? await liveValues(connection, markdown.map((j) => all[j].document.getText())).catch(() => [])
-          : [];
-        return [ok, parts, values];
+        try {
+          const [ok, parts]: [boolean, OutputPart[]] = cut.length === 0 ? [true, []] : await cellAnswer(connection, directive, cut, settings);
+          // A value that cannot be read leaves the cell's output as it is.
+          const values = ok && markdown.length > 0 ? await liveValues(connection, texts).catch(() => []) : [];
+          return [ok, parts, values];
+        } finally {
+          // Answered: an Interrupt from here on has no query of the cell's
+          // to abort (#1998).
+          running = false;
+        }
       });
       if (result === undefined) {
         return finish(false, [notice("Not run: no q process is connected, or a query is still running on it.")]);
@@ -442,7 +468,7 @@ class QnbKernel {
       this.where.set(notebook, result.process);
       const [ok, parts, values] = result.value;
       if (values.length > 0) {
-        await keepLiveValues(notebook, markdown.map((j) => all[j]), values);
+        await keepLiveValues(notebook, markdown.map((m) => m.cell), values);
       }
       const done = await finish(ok, parts.map(toOutput));
       this.ran.fire(notebook);
@@ -804,6 +830,7 @@ export function registerNotebooks(
   liveValues: () => RenderedLiveValue[];
   processOf: (notebook: NotebookDocument) => string | undefined;
   onDidRun: QnbKernel["onDidRun"];
+  canRun: (notebook: NotebookDocument) => boolean;
   runAll: (notebook: NotebookDocument) => Promise<void>;
 } {
   // By output, the last drawing of each, in the order last drawn.
@@ -841,6 +868,7 @@ export function registerNotebooks(
     liveValues: () => [...shown],
     processOf: (notebook) => kernel.processOf(notebook),
     onDidRun: kernel.onDidRun,
+    canRun: (notebook) => kernel.canRun(notebook),
     runAll: (notebook) => kernel.runAll(notebook),
   };
 }

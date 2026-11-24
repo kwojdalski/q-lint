@@ -145,6 +145,31 @@ test("unlimited, unwrapped and timed-out queries against a real q process", { sk
     assert.strictEqual(whole.text.at(-1).trimEnd(), "19999 y");
   });
 
+  await t.test("unlimited: a cell, an item, a dictionary's value and an atom are whole whatever the process's \\c, which is left as it was (#1995)", async () => {
+    const width = async () => (await connection.query(['system"c"'], SIZE)).text[0];
+    assert.strictEqual(await width(), "25 80i");
+    const text = async (code) => {
+      const answer = readUnlimited(await connection.call(UNLIMITED, [code], UNLIMITED_SIZE));
+      assert.strictEqual(answer.ok, true, code);
+      return answer.text;
+    };
+    const x = "x".repeat(300);
+    const n = Array.from({ length: 300 }, (_, i) => i).join(" ");
+    assert.deepStrictEqual(await text('`$300#"a"'), ["`" + "a".repeat(300)]);
+    assert.deepStrictEqual((await text('([]a:enlist 300#"x")')).map((l) => l.trimEnd()), ["a", "-".repeat(302), `"${x}"`]);
+    assert.deepStrictEqual(await text("(1;til 300)"), ["1", n]);
+    assert.deepStrictEqual((await text('`a`b!(300#"x";1)')).map((l) => l.trimEnd()), [`a| "${x}"`, "b| 1"]);
+    assert.deepStrictEqual((await text('([k:`a`b]v:(til 300;"y"))')).map((l) => l.trimEnd()), ["k| v", "-| " + "-".repeat(n.length), `a| ${n}`, 'b| "y"']);
+    // A value nothing cut is the process's own .Q.S, two dots and all.
+    assert.deepStrictEqual(await text('("a..b";`c)'), ['"a..b"', "`c"]);
+    assert.deepStrictEqual((await text("((1;\"ab\");(2;\"cd\"))")).map((l) => l.trimEnd()), ['1 "ab"', '2 "cd"']);
+    assert.deepStrictEqual(await text("()"), []);
+    assert.strictEqual(await width(), "25 80i");
+    // And an error inside leaves it too.
+    assert.strictEqual(readUnlimited(await connection.call(UNLIMITED, ['(1;til 300);\'"stop"'], UNLIMITED_SIZE)).error, "stop");
+    assert.strictEqual(await width(), "25 80i");
+  });
+
   await t.test("unlimited: a grid is sent every row", async () => {
     const answer = await connection.queryGrid(["big"], UNLIMITED_SIZE, UNLIMITED_ROWS);
     assert.strictEqual(answer.grid.count, 20000);
