@@ -689,7 +689,8 @@ that last part. `rename.enable: false` leaves renaming unannounced, and the
 rest of navigation on. The rename is refused for a name in a one-letter namespace
 (`.z.pg`, `.q.f`, which q keeps for itself), a name no indexed file assigns
 (q's own, or defined where the server cannot read), a new name that is not
-one q takes, is reserved or is already assigned, and one that is a
+one q takes, is reserved or is already assigned, one with a `_` where a
+`k)` line names the global (k would read it as its drop), and one that is a
 parameter or local of a lambda reading the global without its namespace,
 where it would hide the renamed global. It is also refused, naming the line,
 where a use cannot be told from something else or cannot be rewritten: `ta.c`

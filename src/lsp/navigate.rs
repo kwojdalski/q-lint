@@ -1049,6 +1049,7 @@ fn rename_global(
         let mut bare = vec![];
         let mut columns = vec![];
         let mut done = HashSet::new();
+        let mut edited = vec![];
         let all = mentions(&text);
         for m in &all {
             if done.contains(&m.at) {
@@ -1061,6 +1062,7 @@ fn rename_global(
                 continue;
             };
             done.insert(m.at);
+            edited.push(m.at);
             let spelling = &text[m.at..m.at + part];
             let place = || {
                 let (line, _) = lines.position(m.at);
@@ -1140,6 +1142,20 @@ fn rename_global(
             return Err(format!(
                 "`{old}` is read inside a qSQL phrase at {}:{}, where it is a column whenever \
                  the table has one of that name - which only the table says",
+                Path::new(key).display(),
+                line + 1
+            ));
+        }
+        // k reads `_` as its drop, no part of a name: KDB-X 5 refuses
+        // `k)gk:f_k+1` with 'k, where `k)gk:fk+1` read the global (#2044).
+        // No spelling of the new name is one k reads as it.
+        if new.contains('_')
+            && let Some(at) = q_lint_rs::on_k_line(&text, &edited)
+        {
+            let (line, _) = lines.position(at);
+            return Err(format!(
+                "`{new}` has a `_`, which the `k)` line at {}:{} would read as k's drop, \
+                 no part of a name",
                 Path::new(key).display(),
                 line + 1
             ));

@@ -2034,6 +2034,41 @@ fn a_global_is_followed_onto_a_k_line() {
 }
 
 #[test]
+fn a_name_with_an_underscore_is_refused_where_a_k_line_reads_it() {
+    // #2044. k reads `_` as its drop: KDB-X 5 runs `fk:2`, `k)gk:fk+1` and
+    // gk is 3, and refuses `f_k:2`, `k)gk:f_k+1` with 'k. Where no k line
+    // names it, `_` is a name's own.
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "fk:2\nk)gk:fk+1\nshow gk\nhq:1\nshow hq\n";
+    let uri = server.open(dir.path(), "a.q", text);
+    for (at, new) in [("fk:", "f_k"), ("gk:", "g_k")] {
+        let reply = server.ask(
+            "textDocument/rename",
+            &uri,
+            text,
+            at,
+            0,
+            json!({"newName": new}),
+        );
+        let why = refused(&reply);
+        assert!(why.contains("a.q:2") && why.contains("drop"), "{why}");
+    }
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        text,
+        "hq:",
+        0,
+        json!({"newName": "h_q"}),
+    );
+    assert_eq!(
+        edits(&reply["result"]),
+        [edit("a.q", 3, 0, 2, "h_q"), edit("a.q", 4, 5, 7, "h_q")]
+    );
+}
+
+#[test]
 fn a_block_comment_after_a_k_line_is_no_k() {
     // #2042. KDB-X 5 runs `fk:1`, `k)gk:2`, `/`, ` fk in a comment`, `\`,
     // `show fk` and prints 1: the bare `/` opens a block comment after the k

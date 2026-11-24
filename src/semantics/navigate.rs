@@ -803,6 +803,16 @@ pub fn rename(
     Ok(local.places.iter().map(|p| (p.at, p.len)).collect())
 }
 
+/// The first of `offsets` where a `k)` line names a global or a symbol, where
+/// k, not q, reads the name.
+pub fn on_k_line(code: &str, raw: &str, offsets: &[usize]) -> Option<usize> {
+    let k = k_lines(code, raw);
+    offsets.iter().copied().find(|&at| {
+        k.globals.iter().any(|&(place, _, _)| place == at)
+            || k.symbols.iter().any(|(place, _)| *place == at)
+    })
+}
+
 /// The first of `offsets` inside a lambda with a parameter or local called
 /// `name`, where a global written `name` would read the local instead.
 pub fn shadowing(code: &str, raw: &str, name: &str, offsets: &[usize]) -> Option<usize> {

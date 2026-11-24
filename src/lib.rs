@@ -293,6 +293,13 @@ pub fn shadowing(source: &str, name: &str, offsets: &[usize]) -> Option<usize> {
     semantics::navigate::shadowing(&v.code, source, name, offsets)
 }
 
+/// The first of `offsets` of `source` on a `k)` line, where k reads the
+/// name: see `semantics::navigate::on_k_line`.
+pub fn on_k_line(source: &str, offsets: &[usize]) -> Option<usize> {
+    let v = views(source);
+    semantics::navigate::on_k_line(&v.code, source, offsets)
+}
+
 /// What Extract Function writes for a selection: see `extract`.
 pub use semantics::extract::{Extraction, fresh_name};
 
