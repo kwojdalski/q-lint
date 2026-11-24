@@ -482,3 +482,14 @@ test("an unlimited float list is written to the process's \\P, as its console wr
   assert.strictEqual(floats([1 / 3], 7), ",0.3333333");
   assert.strictEqual(readUnlimited({ ok: true, type: 9, text: [], value: [1 / 3] }).text[0], ",0.3333333");
 });
+
+test("a temporal list of only nulls and infinities ends with its type's letter, as q writes it (#1491)", () => {
+  assert.strictEqual(vectorText([null, null], 14), "0N 0Nd");
+  assert.strictEqual(vectorText([null], 12), ",0Np");
+  assert.strictEqual(vectorText([Infinity, null], 19), "0W 0Nt");
+  assert.strictEqual(vectorText([-Infinity, null], 12), "-0W 0Np");
+  assert.strictEqual(vectorText([Infinity], 15), ",0wz");
+  assert.strictEqual(vectorText([null, null], 17), "0N 0Nu");
+  assert.strictEqual(vectorText([null, null], 13), "0N 0Nm");
+  assert.strictEqual(vectorText([day(2026, 11, 20), null], 14), "2026.11.20 0N");
+});

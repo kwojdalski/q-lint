@@ -265,6 +265,7 @@ function nullText(t: number): string {
 }
 
 const SUFFIX: Record<number, string> = { 5: "h", 6: "i", 8: "e", 13: "m" };
+const TEMPORAL_LETTERS: Record<number, string> = { 12: "p", 14: "d", 15: "z", 16: "n", 17: "u", 18: "v", 19: "t" };
 const NAMES: Record<number, string> = {
   1: "boolean", 2: "guid", 4: "byte", 5: "short", 6: "int", 7: "long", 8: "real", 9: "float", 10: "char",
   11: "symbol", 12: "timestamp", 13: "month", 14: "date", 15: "datetime", 16: "timespan", 17: "minute",
@@ -331,6 +332,11 @@ function listText(values: unknown, t: number, precision: number): string {
   let suffix = SUFFIX[t] ?? "";
   if (t === 9 && texts.every((s) => /^-?\d+$/.test(s))) {
     suffix = "f";
+  }
+  // A temporal list of only nulls and infinities shows no type of its
+  // own, so q writes the letter: `0N 0Nd`, `,0Np` (#1491).
+  if (TEMPORAL_LETTERS[t] && texts.every((s) => /^-?0[NWw]$/.test(s))) {
+    suffix = TEMPORAL_LETTERS[t];
   }
   return `${one}${texts.join(" ")}${suffix}`;
 }
