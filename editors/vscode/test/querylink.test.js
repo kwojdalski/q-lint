@@ -121,6 +121,19 @@ test("opening a link shows the query bound to the process and runs nothing when 
   assert.strictEqual(ran, 1);
 });
 
+test("a link longer than its Run prompt can show is opened, not offered to run (#1620)", async (t) => {
+  const { live, links, opened } = await setUp(t, [{ label: "rdb", host: "h", port: 1, tags: [] }]);
+  let ran = 0;
+  live.queryCode = async () => void ran++;
+  const code = `/${" ".repeat(2000)}\ndelete from \`t`;
+  stub.picks.push("Run");
+  assert.strictEqual(await links.open(asUri(queryLink("vscode", "wojdalski.q-lint", "rdb", code).link)), false);
+  assert.deepStrictEqual(opened, [{ language: "q", content: code }]);
+  assert.ok(!stub.messages.some(([, text]) => /Run it\?/.test(text)));
+  assert.match(stub.messages.at(-1)[1], /longer than 2000 characters/);
+  assert.strictEqual(ran, 0);
+});
+
 test("a link run with {{placeholders}} asks for them and sends the query filled in (#1225)", async (t) => {
   const { live, links } = await setUp(t, [{ label: "rdb", host: "h", port: 1, tags: [] }]);
   const sent = [];

@@ -12,6 +12,9 @@ import { CONTROL_COMMANDS } from "./querycontrols";
 import { queryLink, readQueryLink } from "./querylink";
 import { plainMessage } from "./history";
 
+/// The longest query a link's Run prompt shows, whole.
+const PROMPT_LIMIT = 2000;
+
 const on = (): boolean => readAdmin((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback)).queryLinks;
 
 export class QueryLinks {
@@ -97,12 +100,16 @@ export class QueryLinks {
       return false;
     }
     await commands.executeCommand(CONTROL_COMMANDS.chooseFileConnection, read.process);
+    // Run is offered only on a query the prompt shows whole: what follows a
+    // cut would run unseen (#1620).
+    if (read.code.length > PROMPT_LIMIT) {
+      void window.showWarningMessage(
+        plainMessage(`q-lint: the link's query is longer than ${PROMPT_LIMIT} characters, too long to show whole before it runs; it is open, bound to ${read.process}, to read and run from the editor.`),
+      );
+      return false;
+    }
     const yes = "Run";
-    const answer = await window.showWarningMessage(
-      plainMessage(`A link asks to run this query on ${read.process}. Run it?`),
-      { modal: true, detail: read.code.length > 2000 ? `${read.code.slice(0, 2000)}\n...` : read.code },
-      yes,
-    );
+    const answer = await window.showWarningMessage(plainMessage(`A link asks to run this query on ${read.process}. Run it?`), { modal: true, detail: read.code }, yes);
     if (answer !== yes) {
       return false;
     }
