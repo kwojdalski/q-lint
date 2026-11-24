@@ -166,6 +166,18 @@ test("an untitled file or a notebook cell is asked to be saved, and nothing is w
   assert.deepStrictEqual(s.writes, []);
 });
 
+// A write that fails escaped as a raw command error (#1536).
+test("a test file that cannot be written is said, and the command ends", async () => {
+  const files = { "/ws/src/lib.q": SRC, "/ws/tests/other.q": "" };
+  setup(files);
+  vscode.workspace.fs.writeFile = async () => {
+    throw new Error("EACCES: permission denied");
+  };
+  stub.picks.push("Add Test");
+  assert.strictEqual(await stub.commands.get(TEST_STUB_COMMAND)(vscode.Uri.file("/ws/src/lib.q"), 3), false);
+  assert.deepStrictEqual(stub.messages.at(-1), ["error", "q-lint: could not write /ws/tests/test_lib.q: EACCES: permission denied"]);
+});
+
 test("a new test file's path on Windows keeps the folder and the separator (#1094)", () => {
   const { win32, posix } = require("node:path");
   const src = win32.join("C:\\proj", "src", "a.q");

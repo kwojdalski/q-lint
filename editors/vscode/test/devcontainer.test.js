@@ -131,6 +131,21 @@ test("a repository with a dev container configuration elsewhere gets nothing wri
   }
 });
 
+// The second file failing escaped as a raw error, the first left written
+// unsaid (#1536).
+test("a file that cannot be written is said, with what was written before it", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-dcfail-"));
+  setUp(t, dir);
+  const write = vscode.workspace.fs.writeFile;
+  vscode.workspace.fs.writeFile = async (uri, data) => {
+    if (uri.fsPath.endsWith(".sh")) throw new Error("EROFS: read-only file system");
+    return write(uri, data);
+  };
+  stub.picks.push("Write");
+  assert.deepStrictEqual(await addDevContainer(), [".devcontainer/devcontainer.json"]);
+  assert.match(stub.messages.at(-1)[1], /^q-lint: could not write .*install-kdbx\.sh: EROFS: read-only file system\. \.devcontainer\/devcontainer\.json was written\.$/);
+});
+
 test("off: the command is hidden, refuses, and writes nothing", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-dcoff-"));
   const { previews } = setUp(t, dir);

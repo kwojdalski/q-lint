@@ -79,8 +79,14 @@ export async function addDevContainer(): Promise<string[]> {
     if (await exists(uri)) {
       continue;
     }
-    await workspace.fs.createDirectory(Uri.joinPath(root, ...path.posix.dirname(file.path).split("/")));
-    await workspace.fs.writeFile(uri, Buffer.from(file.content, "utf8"));
+    try {
+      await workspace.fs.createDirectory(Uri.joinPath(root, ...path.posix.dirname(file.path).split("/")));
+      await workspace.fs.writeFile(uri, Buffer.from(file.content, "utf8"));
+    } catch (error) {
+      const done = written.length > 0 ? ` ${written.join(" and ")} ${written.length === 1 ? "was" : "were"} written.` : "";
+      void window.showErrorMessage(plainMessage(`q-lint: could not write ${uri.fsPath}: ${error instanceof Error ? error.message : String(error)}.${done}`));
+      return written;
+    }
     written.push(file.path);
   }
   void window.showInformationMessage(

@@ -330,7 +330,11 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
     const target =
       out instanceof Uri ? out : typeof out === "string" ? Uri.file(out) : await window.showSaveDialog({ defaultUri: Uri.file(input.fsPath.replace(/\.[^./\\]*$/, "") + ".svg"), filters: { SVG: ["svg"] }, title: "Save the chart as" });
     if (target === undefined) return "cancelled";
-    await workspace.fs.writeFile(target, new TextEncoder().encode(svg));
+    try {
+      await workspace.fs.writeFile(target, new TextEncoder().encode(svg));
+    } catch (error) {
+      return say(`q-lint: could not write ${target.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+    }
     say(`q-lint: wrote ${target.fsPath}.`);
     return svg;
   };
