@@ -162,6 +162,10 @@ to a process you add and connect to, and sends only the code you run.
   type's null; otherwise symbols, or strings once a cell holds a space. The
   first row is taken for the column names unless it reads as data, and the
   names are made q names (`x y` becomes `x_y`, `count` becomes `count_`).
+  Cells are a tab apart where the first row holds one; else a comma or a
+  semicolon apart, where the first row holds it and no row has more cells
+  than the first; else the text is one column, whose cells may hold commas
+  (`Smith, John`, `1,234`).
   Each cell is read as q's `0:` reads the same text with the same type
   letter, so the literal is the table `0:` would load. At most 10,000 rows;
   the message says what was left out (`q-lint.pasteTable.enable`).

@@ -29,6 +29,50 @@ test("CSV and TSV are read as a spreadsheet writes them", () => {
   assert.strictEqual(p.pasteTable("v\n1\n\n3").code, "([] v:1 0N 3)");
 });
 
+// One spreadsheet column is copied with no tab in it, and its cells may hold
+// commas: they were cut in two, and the header, one cell wide, read as a row
+// (#1986).
+test("a paste of one column is one column, commas in its cells or not (#1986)", () => {
+  assert.deepStrictEqual(p.readDelimited("name\nSmith, John\nDoe, Jane").rows, [["name"], ["Smith, John"], ["Doe, Jane"]]);
+  const names = p.pasteTable("name\nSmith, John\nDoe, Jane");
+  assert.deepStrictEqual([names.code, names.names, names.kinds, names.rows, names.header], ['([] name:("Smith, John";"Doe, Jane"))', ["name"], ["string"], 2, true]);
+  const grouped = p.pasteTable("v\n1,234\n5,678\n");
+  assert.deepStrictEqual([grouped.code, grouped.names, grouped.rows, grouped.header], ['([] v:(`$"1,234";`$"5,678"))', ["v"], 2, true]);
+  // No header: a later cell holds more commas than the first, so they are no columns.
+  assert.deepStrictEqual(p.readDelimited("1 Main St, Springfield\n22 Oak Ave, Apt 4, Boston").rows, [["1 Main St, Springfield"], ["22 Oak Ave, Apt 4, Boston"]]);
+  // Semicolons the same, and a quoted cell's are its text.
+  assert.deepStrictEqual(p.readDelimited("note\nfirst; second\nthird").rows, [["note"], ["first; second"], ["third"]]);
+  assert.deepStrictEqual(p.readDelimited('note\n"a, ""b"""\nc, d').rows, [["note"], ['a, "b"'], ["c, d"]]);
+  // A blank line between its rows is still an empty cell (#1404).
+  assert.deepStrictEqual(p.readDelimited("name\n\nSmith, John\n").rows, [["name"], [""], ["Smith, John"]]);
+  // A tab in a later cell is its text, as it was: the first record says how cells are apart.
+  assert.deepStrictEqual(p.readDelimited("note\nz\ntab\there"), { delimiter: "", rows: [["note"], ["z"], ["tab\there"]] });
+  // A delimiter given is used, whatever the text holds.
+  assert.deepStrictEqual(p.readDelimited("name\nSmith, John", ",").rows, [["name"], ["Smith", " John"]]);
+});
+
+test("CSV text is still read by its commas or semicolons, short rows and quoted cells too (#1986)", () => {
+  const rows = (text) => p.readDelimited(text);
+  // Rows shorter than the header, and cells left empty.
+  assert.deepStrictEqual(rows("a,b,c\n1,2\n3,4,5"), { delimiter: ",", rows: [["a", "b", "c"], ["1", "2"], ["3", "4", "5"]] });
+  assert.deepStrictEqual(rows("a,b,c\n1,,\n,,\n"), { delimiter: ",", rows: [["a", "b", "c"], ["1", "", ""], ["", "", ""]] });
+  // A quoted cell's commas and newline are no fields of their own.
+  assert.deepStrictEqual(rows('name,note\r\n"Smith, John","a, b,\nc"\r\nDoe,x\r\n'), { delimiter: ",", rows: [["name", "note"], ["Smith, John", "a, b,\nc"], ["Doe", "x"]] });
+  // A blank line first, or between records, is none.
+  assert.deepStrictEqual(rows("\n\na,b\n\n1,2\n"), { delimiter: ",", rows: [["a", "b"], ["1", "2"]] });
+  // Semicolons, with a decimal comma in the cells.
+  assert.deepStrictEqual(rows("name;price\nx;1,5\ny;2,25"), { delimiter: ";", rows: [["name", "price"], ["x", "1,5"], ["y", "2,25"]] });
+  // Both in the first record: the one it has more of, where the text is a table by it.
+  assert.strictEqual(rows("a;b;c,d\n1;2;3,4").delimiter, ";");
+  assert.strictEqual(rows("a;b,c\n1;2,3").delimiter, ",");
+  assert.deepStrictEqual(rows("a;b;c,d\n1;2;3;4,5"), { delimiter: ",", rows: [["a;b;c", "d"], ["1;2;3;4", "5"]] });
+  // One record, and a header alone.
+  assert.deepStrictEqual(rows("1,2,3").rows, [["1", "2", "3"]]);
+  assert.strictEqual(p.pasteTable("a,b\n1,2\n3,4").code, "([] a:1 3; b:2 4)");
+  // A tab in the first record is the delimiter, as before, and commas beside it are text.
+  assert.deepStrictEqual(rows("name\tcity\nSmith, John\tAustin, TX").rows, [["name", "city"], ["Smith, John", "Austin, TX"]]);
+});
+
 test("each column's type is the first that reads every cell, an empty cell its null", () => {
   assert.strictEqual(p.inferKind(["true", "FALSE"]), "boolean");
   assert.strictEqual(p.inferKind(["1", "", "-3"]), "long");
