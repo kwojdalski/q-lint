@@ -524,15 +524,18 @@ function readStatement(statement: string, found: Set<string>): void {
         }
       }
       // `xasc`, `xdesc` and `xkey` on a table named by a symbol change it in
-      // place: `` `a xasc `t ``, `` xasc[`a;`t] ``.
+      // place: `` `a xasc `t ``, `` xasc[`a;`t] ``, and projected on the
+      // columns, `` xasc[`a]`t `` and `` xasc[`a][`t] `` (#1447).
       if (["xasc", "xdesc", "xkey"].includes(unqualified(k.text))) {
         let table = symbolAt(t, i + 1);
         if (next?.text === "[" && next.kind === "open") {
           let depth = 0;
           for (let j = i + 2; j < t.length; j++) {
             if (t[j].kind === "open") depth++;
-            else if (t[j].kind === "close" && --depth < 0) break;
-            else if (depth === 0 && t[j].text === ";") {
+            else if (t[j].kind === "close" && --depth < 0) {
+              table = t[j + 1]?.text === "[" && t[j + 1].kind === "open" ? symbolAt(t, j + 2) : symbolAt(t, j + 1);
+              break;
+            } else if (depth === 0 && t[j].text === ";") {
               table = symbolAt(t, j + 1);
               break;
             }

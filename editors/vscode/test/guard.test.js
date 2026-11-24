@@ -840,3 +840,21 @@ test("value or eval of an amend tree on a variable by name is a change (#1446)",
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("xasc, xdesc and xkey projected on the columns, then applied to a table by name, are changes (#1447)", () => {
+  const cases = {
+    "xasc[`a]`t": ["sorts `t in place with xasc"],
+    "xdesc[`a] `t": ["sorts `t in place with xdesc"],
+    "xkey[`a]`t": ["keys `t in place with xkey"],
+    "xasc[`a][`t]": ["sorts `t in place with xasc"],
+    "xasc[`a;`t]": ["sorts `t in place with xasc"],
+    // Applied to a table's value, or not applied, it reads.
+    "xasc[`a] t": [],
+    "xasc[`a]": [],
+    "f:xasc[`a]": ["assigns f"],
+    "xasc[`a;t]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
