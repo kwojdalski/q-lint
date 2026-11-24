@@ -28,6 +28,7 @@ import {
   type OutputChannel,
   type StatusBarItem,
   type Terminal,
+  type TextDocument,
   type TextEditor,
   type TreeDataProvider,
   type TreeView,
@@ -52,11 +53,13 @@ import {
   readProcessFile,
   sshDestination,
   serverTypes,
+  givenServerTypes,
   tlsChoices,
   withExtras,
   withProtections,
   type Process,
 } from "./processes";
+import { clickedEditor, unsavedIn } from "./clicked";
 import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
 import { ClosedBeforeHandshake, QConnection, QError, type Target } from "./qclient";
 import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, readTunnel } from "./tunnel";
@@ -66,7 +69,7 @@ import { historyHeading, historyLabel, iconsEscaped, plainMessage } from "./hist
 import { render } from "./query";
 import { QueryModes, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
-import { commandLine, expandHome, parseEnv, replLines, shellKind } from "./terminal";
+import { commandLine, expandHome, parseEnv, replLines, shellKind, terminalCwd } from "./terminal";
 import { terminalEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import type { RunExtra } from "./runargs";
@@ -98,7 +101,7 @@ import type { GridAnswer, GridPayload } from "./grid";
 import { WATCH, WATCHING, intervalProblem, readWatch, watchText } from "./watch";
 import { guardedBy, openTags } from "./guard";
 import { readAdmin } from "./admin";
-import { credentialEnv, parseCredentials, runCredentialCommand } from "./credentials";
+import { credentialCwd, credentialEnv, parseCredentials, runCredentialCommand } from "./credentials";
 import { effectiveTimeout, ownTimeout, timeoutDropped, timeoutSource } from "./processtimeout";
 import type { Answered } from "./inlineresult";
 
@@ -148,6 +151,12 @@ function codeAt(editor: TextEditor, from: From): string | undefined {
     return block === undefined ? undefined : lines.slice(block.start, block.end + 1).join("\n");
   }
   return document.lineAt(line).text;
+}
+
+/// The editor a command is for: the one showing `uri`, a Uri a title-bar
+/// button handed in, else the active one (#1523).
+function clicked(uri: unknown): TextEditor | undefined {
+  return clickedEditor(uri, window.visibleTextEditors ?? [], window.activeTextEditor);
 }
 
 /// What a command that reads the active editor says when there is none.
@@ -321,13 +330,13 @@ export class QTerminals {
     );
   }
 
-  /// Run the active file in a terminal named after it, saving it first. The
+  /// Run the active file - or `document`, the one whose Run button was
+  /// clicked - in a terminal named after it, saving it first. The
   /// terminal it ran in before is closed: running the file again starts a
   /// fresh q. Another file of the same name keeps its own. `extra`: Run File
   /// with Arguments' words after the file (`.z.x`) and lines typed into q
   /// once it starts.
-  async runFile(extra?: RunExtra): Promise<void> {
-    const document = window.activeTextEditor?.document;
+  async runFile(extra?: RunExtra, document = window.activeTextEditor?.document): Promise<void> {
     if (document === undefined || document.uri.scheme !== "file") {
       void window.showInformationMessage("q-lint: open a q file saved on disk to run it.");
       return;
@@ -399,16 +408,17 @@ export class QTerminals {
 
   /// A terminal named `name` that starts `q-lint.terminal.qBinary`, on
   /// `file` if one is given, with the variables of `q-lint.terminal.envPath`
-  /// set for it. It starts in the workspace folder of `from`, so a script's
-  /// relative `\l` reads as it does from a shell there. Undefined if the env
-  /// file cannot be read, or cmd cannot pass the line; `before` runs only
-  /// once it can start.
+  /// set for it. It starts in the workspace folder of `from` (else the
+  /// file's directory), so a script's relative `\l` reads as it does from a
+  /// shell there. Undefined if the env file cannot be read, or cmd cannot
+  /// pass the line; `before` runs only once it can start.
   private async start(name: string, from: Uri | undefined, file?: string, before?: () => void, extraArgs: string[] = []): Promise<Terminal | undefined> {
     const configuration = workspace.getConfiguration("q-lint", from);
     const read = readTerminal((key, fallback) => configuration.get(key, fallback));
     const settings = { qBinary: expandHome(read.qBinary, os.homedir()), envPath: expandHome(read.envPath, os.homedir()) };
-    const folder = (from && workspace.getWorkspaceFolder(from)) ?? workspace.workspaceFolders?.[0];
-    const cwd = folder?.uri.fsPath ?? (file !== undefined ? path.dirname(file) : undefined);
+    const own = from && workspace.getWorkspaceFolder(from);
+    const folder = own ?? workspace.workspaceFolders?.[0];
+    const cwd = terminalCwd(own?.uri.fsPath, folder?.uri.fsPath, file, path.dirname);
     let variables: Record<string, string> = {};
     if (settings.envPath !== "") {
       if (!path.isAbsolute(settings.envPath) && folder === undefined) {
@@ -481,7 +491,7 @@ export function movedFrom(expected: string): Error {
 export class Live {
   /// Run the active file in its q terminal with Run File with Arguments'
   /// extra words and input (#1005).
-  readonly runFileWith: (extra: RunExtra) => Promise<void>;
+  readonly runFileWith: (extra: RunExtra, document?: TextDocument) => Promise<void>;
   private connection: QConnection | undefined;
   /// The query history, newest first. Kept here and written through to
   /// `globalState`, never rebuilt from it: a read of `globalState` straight
@@ -584,7 +594,7 @@ export class Live {
     this.discovery = new DiscoveryServers(context, { list: () => this.processes(), save: (processes) => this.save(processes) });
     const terminals = new QTerminals(context);
     this.terminals = terminals;
-    this.runFileWith = (extra) => terminals.runFile(extra);
+    this.runFileWith = (extra, document) => terminals.runFile(extra, document);
     this.modes = new QueryModes(context);
     this.modes.setPager((label, offset, count) => this.pageHeld(label, offset, count));
     this.modes.setRunner((code, label) => this.runOnProcess(code, label));
@@ -610,16 +620,16 @@ export class Live {
       c(COMMANDS.refresh, () => this.processesView.refresh()),
       c(COMMANDS.insertLabel, () => this.insertLabel()),
       c(COMMANDS.queryLine, () => this.queryFrom("line")),
-      c(COMMANDS.querySelection, () => this.queryFrom("selection")),
-      c(COMMANDS.queryBlock, () => this.queryFrom("block")),
+      c(COMMANDS.querySelection, (uri?: unknown) => this.queryFrom("selection", undefined, uri)),
+      c(COMMANDS.queryBlock, (uri?: unknown) => this.queryFrom("block", undefined, uri)),
       c(COMMANDS.abort, () => this.abort()),
       c(COMMANDS.rerun, (entry?: HistoryEntry) => this.rerun(entry)),
       c(COMMANDS.clearHistory, () => this.clearHistory()),
-      c(COMMANDS.runInTerminal, () => terminals.runFile()),
+      c(COMMANDS.runInTerminal, (uri?: unknown) => terminals.runFile(undefined, clicked(uri)?.document)),
       c(COMMANDS.sendLine, () => terminals.send("line")),
       c(COMMANDS.sendSelection, () => terminals.send("selection")),
       c(COMMANDS.sendBlock, () => terminals.send("block")),
-      c(CONTROL_COMMANDS.queryFile, () => this.queryFrom("file")),
+      c(CONTROL_COMMANDS.queryFile, (uri?: unknown) => this.queryFrom("file", undefined, uri)),
       c(CONTROL_COMMANDS.startRepl, () => terminals.repl()),
       c(CONTROL_COMMANDS.copyQuery, (entry?: HistoryEntry) => this.copyQuery(entry)),
       c(CONTROL_COMMANDS.revealProcess, () => this.revealProcess()),
@@ -627,7 +637,7 @@ export class Live {
       c(TUNNEL_COMMANDS.set, (row?: ProcessArg, destination?: string | null) => this.setSshTunnel(row, destination)),
       c(SHARED_COMMANDS.add, (row?: ProcessArg) => this.addToShared(row)),
       c(GATEWAY_COMMANDS.set, (row?: ProcessArg, types?: string | string[] | null) => this.setGateway(row, types)),
-      c(GATEWAY_COMMANDS.queryWith, (types?: string | string[]) => this.queryGatewayWith(types)),
+      c(GATEWAY_COMMANDS.queryWith, (types?: unknown) => this.queryGatewayWith(givenServerTypes(types))),
       c(HISTORY_COMMANDS.filter, (filter?: HistoryFilter) => this.filterHistory(filter)),
       c(HISTORY_COMMANDS.clearFilter, () => this.setHistoryFilter({})),
       c(HISTORY_COMMANDS.export, (file?: Uri) => this.exportHistory(file)),
@@ -738,11 +748,36 @@ export class Live {
       void window.showInformationMessage(plainMessage(`q-lint: open a folder first: the shared process list is its ${SHARED_FILE}.`));
       return;
     }
-    const process = await this.chosen(row, "Share which q process with the repository?");
-    if (process === undefined) {
+    const chosen = await this.chosen(row, "Share which q process with the repository?");
+    if (chosen === undefined) {
       return;
     }
+    // What runs or reaches somewhere at connect can hold a secret - a
+    // password in a connect script, a launch's environment - and the file
+    // is committed: it is shown and asked about first (#1528).
+    let process = chosen;
+    const extras = onConnectBrought([], [chosen])[0]?.what ?? [];
+    if (extras.length > 0) {
+      const all = "Share All";
+      const without = "Share Without Them";
+      const { init, initFile, credentialCommand, launch, ssh } = chosen;
+      const answer = await window.showWarningMessage(
+        plainMessage(`${chosen.label} has a ${extras.join(", ")}. ${SHARED_FILE} is committed with the code: everyone who clones it reads what is written there, as shown below. Share them too?`),
+        { modal: true, detail: JSON.stringify({ init, initFile, credentialCommand, launch, ssh }, null, 2) },
+        all,
+        without,
+      );
+      if (answer === undefined) {
+        return;
+      }
+      process = answer === all ? chosen : onConnectOf(chosen, undefined);
+    }
     const file = Uri.joinPath(folder.uri, SHARED_FILE);
+    // Written under unsaved edits, the next save conflicts (#1531).
+    if (unsavedIn(file, workspace.textDocuments ?? [])) {
+      void window.showWarningMessage(plainMessage(`q-lint: ${SHARED_FILE} has unsaved changes; save it, then share ${process.label} again. Nothing was written.`));
+      return;
+    }
     let text: string | undefined;
     try {
       text = Buffer.from(await workspace.fs.readFile(file)).toString("utf8");
@@ -1510,10 +1545,10 @@ export class Live {
         if (files === undefined || files.length === 0) {
           return;
         }
-        // Inside the workspace folder it is kept relative, so the list
-        // reads the same on a colleague's machine.
-        const relative = folder === undefined ? undefined : path.relative(folder.fsPath, files[0].fsPath);
-        chosen = { kind: "file", file: relative !== undefined && relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative) ? relative : files[0].fsPath };
+        // Kept whole: a saved process is every window's, and a path
+        // relative to this folder read another workspace's file of that
+        // name when connected from there (#1527).
+        chosen = { kind: "file", file: files[0].fsPath };
       }
     }
     if (chosen !== undefined && isProduction(process)) {
@@ -1560,6 +1595,12 @@ export class Live {
     if (script.kind === "code") {
       code = script.code;
     } else {
+      // A relative file is the opened folder's: in one not trusted, that is
+      // the repository's q code, run on the process (#1527).
+      if (workspace.isTrusted === false && scriptPath(script.file, os.homedir(), undefined) === undefined) {
+        failed(`${script.file} is relative to the workspace folder, which is not trusted: it was not run. Name the file by its full path.`);
+        return;
+      }
       const file = scriptPath(script.file, os.homedir(), workspace.workspaceFolders?.[0]?.uri.fsPath);
       if (file === undefined) {
         failed(`${script.file} is relative, and there is no workspace folder to read it from.`);
@@ -1837,7 +1878,7 @@ export class Live {
       return targetOf(process, password);
     }
     const output = await runCredentialCommand(process.credentialCommand, {
-      cwd: workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir(),
+      cwd: credentialCwd(workspace.isTrusted !== false, workspace.workspaceFolders?.[0]?.uri.fsPath, os.homedir()),
       env: credentialEnv(process),
     });
     const given = parseCredentials(output, process.user);
@@ -2010,8 +2051,8 @@ export class Live {
 
   // --- queries
 
-  private async queryFrom(from: From, serverTypes?: string[]): Promise<void> {
-    const editor = window.activeTextEditor;
+  private async queryFrom(from: From, serverTypes?: string[], uri?: unknown): Promise<void> {
+    const editor = clicked(uri);
     if (editor === undefined) {
       noEditor();
       return;

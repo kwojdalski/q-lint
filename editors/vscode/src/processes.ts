@@ -210,6 +210,13 @@ export function sshDestination(value: unknown): string | undefined {
   return d !== "" && !d.startsWith("-") && !/[\s'"`$;|&<>\\]/.test(d) ? d : undefined;
 }
 
+/// What a command was handed as server types: a string or a list, or
+/// undefined for anything else - the editor's Uri a context menu hands in
+/// is none, and the user is asked (#1522).
+export function givenServerTypes(value: unknown): string | string[] | undefined {
+  return typeof value === "string" || Array.isArray(value) ? value : undefined;
+}
+
 /// Server types as written: a list, or a string split as tags are, each a
 /// q name (`rdb`, `hdb`, `my_rdb`), lower case not forced.
 export function serverTypes(value: unknown): string[] | undefined {

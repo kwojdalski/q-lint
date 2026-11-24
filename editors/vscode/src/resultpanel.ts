@@ -112,6 +112,7 @@ import { SAVED_QUERIES, SAVED_QUERIES_KEY, parseSaved } from "./savedqueries";
 import { NOTEBOOK } from "./qnb";
 import type { Grid } from "./grid";
 import { iconsEscaped, plainMessage } from "./history";
+import { unsavedIn } from "./clicked";
 
 /// `media/gridlook.js`'s helpers the column commands use, as the page does.
 interface GridLookHelpers {
@@ -1449,6 +1450,12 @@ export class QueryModes {
     }
     const chart = await this.askChart(withChart, "the report");
     if (chart === undefined) {
+      return;
+    }
+    // Written under an editor with unsaved edits, the save that follows
+    // conflicts, and one side is lost (#1531).
+    if (unsavedIn(to, workspace.textDocuments ?? [])) {
+      void window.showWarningMessage(plainMessage(`q-lint: ${to.path.replace(/^.*\//, "")} has unsaved changes; save it, then send the result again. Nothing was written.`));
       return;
     }
     let existing: Uint8Array | undefined;

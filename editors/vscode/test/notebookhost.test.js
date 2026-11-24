@@ -531,6 +531,42 @@ test("Export as HTML and as Jupyter write the notebook with its outputs; off, th
   assert.match(fake.messages.at(-1), /set q-lint\.notebook\.export\.enable to true/);
 });
 
+// Three selected in the Explorer: only the one clicked was exported, and a
+// save dialog opened for it (#1541).
+test("Export and Import from an Explorer multi-selection do each one, beside itself, once asked; one there already is left", async () => {
+  const fake = fakeVscode();
+  load(fake);
+  const { Uri } = fake.vscode;
+  fake.vscode.workspace.fs.stat = async (uri) => {
+    if (!fake.written.has(uri.path)) throw new Error("ENOENT");
+    return {};
+  };
+  const nb = Buffer.from(JSON.stringify({ qnb: 1, cells: [{ kind: "code", source: ["1+1"] }] }));
+  for (const n of ["a", "b", "c"]) fake.written.set(`/ws/${n}.qnb`, nb);
+  fake.written.set("/ws/c.html", Buffer.from("mine"));
+  const selection = ["a", "b", "c"].map((n) => Uri.file(`/ws/${n}.qnb`));
+  // Cancelled: nothing written.
+  await fake.registered.commands["q-lint.exportNotebookHtml"](selection[0], selection);
+  assert.match(fake.messages.at(-1), /^Export 2 notebooks as html, each beside itself\?$/);
+  assert.match(fake.warnings.at(-1)[0].detail, /a\.qnb -> a\.html\nb\.qnb -> b\.html\n\nAlready there, and left as they are: c\.html\./);
+  assert.ok(!fake.written.has("/ws/a.html"));
+  fake.answer = "Export";
+  await fake.registered.commands["q-lint.exportNotebookHtml"](selection[0], selection);
+  assert.ok(fake.written.has("/ws/a.html") && fake.written.has("/ws/b.html"));
+  assert.strictEqual(fake.written.get("/ws/c.html").toString(), "mine");
+  assert.strictEqual(fake.messages.at(-1), "q-lint: wrote a.html, b.html.");
+  assert.strictEqual(fake.dialogs.length, 0, "no save dialog");
+  // Import, likewise.
+  await fake.registered.commands["q-lint.exportNotebookIpynb"](selection[0], selection.slice(0, 2));
+  fake.answer = "Import";
+  await fake.registered.commands["q-lint.importIpynb"](Uri.file("/ws/a.ipynb"), [Uri.file("/ws/a.ipynb"), Uri.file("/ws/b.ipynb"), Uri.file("/ws/a.qnb")]);
+  assert.match(fake.messages.at(-1), /a\.qnb, b\.qnb are there already; nothing was written/);
+  fake.written.delete("/ws/b.qnb");
+  await fake.registered.commands["q-lint.importIpynb"](Uri.file("/ws/a.ipynb"), [Uri.file("/ws/a.ipynb"), Uri.file("/ws/b.ipynb")]);
+  assert.strictEqual(fake.messages.at(-1), "q-lint: wrote b.qnb.");
+  assert.strictEqual(JSON.parse(fake.written.get("/ws/b.qnb").toString()).cells[0].source[0], "1+1");
+});
+
 /// `src/notebookrun.ts` loaded against `fake`, beside `src/notebook.ts`.
 function loadRun(fake, live) {
   load(fake, live);
