@@ -324,10 +324,15 @@ test("test data: pools, ranges, a q generator per type, and CSV that sorts and r
   assert.strictEqual(generator("f", o), "10+n?10f");
   const info = { kind: "keyed", rows: 0, bytes: null, partitions: null, keys: ["k"], ncols: 3, columns: [{ name: "k", type: "s", fkey: "", attr: "" }, { name: "px", type: "f", fkey: "", attr: "" }, { name: "t", type: "p", fkey: "", attr: "" }] };
   const q = testDataQ(info, "gen", o);
-  assert.match(q, /\\S 3\nn:20\ngen:`k xkey \{x where\(til count x\)=k\?k:\(\(\),y\)#x\}\[\(\[\] k:n\?enlist`A; px:asc 10\+n\?10f; t:2026\.01\.02D\+n\?1D\);`k\]/);
-  assert.match(q, /\ndelete n from `\.\n/);
-  // A table named n is not deleted by the script's own clean-up (#1084).
-  assert.doesNotMatch(testDataQ(info, "n", o), /delete n from/);
+  // The count is a lambda's parameter: the script sets no global `n`, and
+  // deletes none (#2016).
+  assert.strictEqual(q.split("\n").slice(1).join("\n"), "\\S 3\ngen:`k xkey {x where(til count x)=k?k:((),y)#x}[{[n] ([] k:n?enlist`A; px:asc 10+n?10f; t:2026.01.02D+n?1D)}[20];`k]\n");
+  // A table named n is the lambda's answer, as any other (#1084).
+  assert.strictEqual(testDataQ({ ...info, keys: [] }, "n", o).split("\n")[2], "n:{[n] ([] k:n?enlist`A; px:asc 10+n?10f; t:2026.01.02D+n?1D)}[20]");
+  // A lambda holds so many columns: a wider table's are joined from several.
+  const column = (i) => ({ name: `c${i}`, type: "j", fkey: "", attr: "" });
+  const wide = testDataQ({ ...info, keys: [], ncols: 201, columns: Array.from({ length: 201 }, (_, i) => column(i)) }, "w", o).split("\n")[2];
+  assert.match(wide, /^w:flip \(flip \{\[n\] \(\[\] c0:[^}]*; c99:10\+n\?10\)\}\[20\]\),\(flip \{\[n\] \(\[\] c100:[^}]*; c199:10\+n\?10\)\}\[20\]\),\(flip \{\[n\] \(\[\] c200:10\+n\?10\)\}\[20\]\)$/);
   const csv = testDataCsv(info, o);
   assert.strictEqual(csv, testDataCsv(info, o));
   const lines = csv.trim().split("\n");

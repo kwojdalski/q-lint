@@ -459,6 +459,52 @@ test("the test data generator's q makes the rows asked for, and its CSV loads ba
   assert.strictEqual(loaded[3], true);
 });
 
+// The script set a global `n` to the row count and deleted it at its end:
+// a process's own `n` was gone once the script had run.
+test("the test data generator's q defines the table and no other name, however wide the table (#2016)", { skip }, async (t) => {
+  const { connection } = await connect(t, "n:`precious`data\nkt:([k:`symbol$(); j:`long$()] v:`float$())\n");
+  const col = (name, type) => ({ name, type, fkey: "", attr: "" });
+  const wide = (count, types = "bgxhijefcspmdznuvtC") => ({ kind: "table", rows: 0, bytes: null, partitions: null, keys: [], ncols: count, columns: Array.from({ length: count }, (_, i) => col(`c${i}`, types[i % types.length])) });
+  const o = { rows: 30, symbols: ["A", "B"], low: 0, high: 5, seed: 4 };
+  const state = "{(n;asc key `.;asc system \"v\";asc system \"f\")}";
+  const before = await connection.call(state, 0);
+  const made = [];
+  const run = async (info, name, options) => {
+    const ran = readRun(await connection.call(RUN_SCRIPT, statements(testDataQ(info, name, options))));
+    assert.ok(ran.ok, `${name}: ${ran.error}`);
+    made.push(name);
+  };
+  await run(readTableInfo(await connection.call(TABLE_INFO, "kt", 100)), "gen", { ...o, sorted: "v" });
+  assert.deepStrictEqual(await connection.call('{(keys gen;"f"$count gen;exec t from meta gen;v~asc v:exec v from gen)}', 0), [["k", "j"], 10, "sjf", true]);
+  // A lambda holds some 250 columns at most: a wider table is still made,
+  // each column of its type, with the rows asked for.
+  for (const count of [1, 100, 101, 250, 1000]) {
+    const info = wide(count);
+    await run(info, `w${count}`, { ...o, sorted: "c12" });
+    const got = await connection.call(`{t:get x; (cols[t]~\`$"c",/:string til ${count};exec t from meta t;"f"$count t;\`s=attr t\`c12)}`, `w${count}`);
+    assert.deepStrictEqual(got, [true, info.columns.map((c) => c.type).join(""), 30, count > 12], `w${count}`);
+  }
+  // Strings, each column's drawn by a lambda of its own.
+  await run(wide(300, "C"), "strs", o);
+  assert.deepStrictEqual(await connection.call('{(distinct exec t from meta strs;"f"$count cols strs;"f"$count strs)}', 0), ["C", 300, 30]);
+  // Names q cannot parse, and a column named as the count is.
+  const odd = { ...wide(150), columns: wide(150).columns.map((c, i) => (i === 0 ? col("n", "j") : i === 149 ? col("px bid", "f") : c)) };
+  await run(odd, "my t", o);
+  assert.deepStrictEqual(await connection.call('{t:get`$"my t"; (2#cols t;last cols t;"f"$count t;"f"$count cols t)}', 0), [["n", "c1"], "px bid", 30, 150]);
+  const after = await connection.call(state, 0);
+  assert.deepStrictEqual(after[0], ["precious", "data"]);
+  assert.deepStrictEqual(after[1], [...before[1], ...made].sort());
+  assert.deepStrictEqual(after.slice(2), [[...before[2], ...made].sort(), before[3]]);
+  // The same seed, the same rows.
+  const first = await connection.call("{-8!w250}", 0);
+  await run(wide(250), "w250", { ...o, sorted: "c12" });
+  made.pop();
+  assert.deepStrictEqual(await connection.call("{-8!w250}", 0), first);
+  // A table named as the count was is the table (#1084).
+  await run(wide(3), "n", o);
+  assert.deepStrictEqual(await connection.call('{(exec t from meta n;"f"$count n)}', 0), ["bgx", 30]);
+});
+
 test("the test data generator's q takes symbols a bare symbol cannot write (#1279)", { skip }, async (t) => {
   const { connection } = await connect(t, "");
   const info = { kind: "table", rows: 0, bytes: null, partitions: null, keys: [], ncols: 1, columns: [{ name: "s", type: "s", fkey: "", attr: "" }] };
