@@ -282,12 +282,16 @@
     const legend = [];
     if (colour >= 0 && grid.columns[colour].numeric) {
       const span = range(colour);
+      // One value alone is the legend's one entry, and drawn in its colour:
+      // there is no range for it to be the middle of (#1948).
       colourOf = function (r) {
         const v = grid.values[colour][r];
-        return v === null ? "#808080" : blend(palette[0], palette[3], span.hi > span.lo ? (v - span.lo) / (span.hi - span.lo) : 0.5);
+        return v === null ? "#808080" : span.hi > span.lo ? blend(palette[0], palette[3], (v - span.lo) / (span.hi - span.lo)) : palette[0];
       };
       if (span.lo <= span.hi) {
         legend.push({ label: grid.columns[colour].name + " " + grid.cells[colour][kept.find(function (r) { return grid.values[colour][r] === span.lo; })], colour: palette[0] });
+      }
+      if (span.lo < span.hi) {
         legend.push({ label: grid.columns[colour].name + " " + grid.cells[colour][kept.find(function (r) { return grid.values[colour][r] === span.hi; })], colour: blend(palette[0], palette[3], 1) });
       }
     } else if (colour >= 0) {

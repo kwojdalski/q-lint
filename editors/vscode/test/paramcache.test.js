@@ -221,3 +221,22 @@ test("a number followed by _ ends at it: 1_x drops from x, and reads x", () => {
   // A name keeps its `_`: `x_y` is one name, not x drop y.
   assert.deepStrictEqual(paramsAt("f:{|x_y;z_1;y}"), ["x", "y"]);
 });
+
+test("a parameter list with a comment in it is still the lambda's parameters (#1949)", () => {
+  assert.deepStrictEqual(paramsAt("f:{[a; / first\n b] a+|b}"), ["a", "b"]);
+  assert.deepStrictEqual(paramsAt("f:{[a; / the [first], \"quoted\"; one\n b / and } the last\n ] a+|b}"), ["a", "b"]);
+  assert.deepStrictEqual(paramsAt("f:{[ / none yet\n ] 4|2}"), []);
+  // The statement goes after the list, not before it.
+  const one = toggled("f:{[a; / first\n b] x+a+|b}");
+  assert.strictEqual(one.toggle.kind, "insert");
+  assert.deepStrictEqual(one.toggle.params, ["a", "b"]);
+  assert.strictEqual(one.after, "f:{[a; / first\n b].qlint.cache.p1a2b3c:(a;b);`a`b set'.qlint.cache.p1a2b3c; x+a+b}");
+  // And comes out again, byte for byte.
+  const back = apply(one.after, one.after.indexOf("x+a"));
+  assert.strictEqual(back.toggle.kind, "remove");
+  assert.strictEqual(back.after, one.text);
+  // What is no list of names is none still: a string, or an index.
+  assert.deepStrictEqual(paramsAt('f:{["a" b] |x}'), ["x"]);
+  assert.deepStrictEqual(paramsAt("f:{[a 1] |x}"), ["x"]);
+  assert.deepStrictEqual(paramsAt("f:{[a; / b]\n 1] |x}"), ["x"]);
+});

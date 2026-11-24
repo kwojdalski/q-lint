@@ -136,9 +136,10 @@ export function shownCode(code: string, cell: Pick<Cell, "marker">): string {
 
 /// A cell's name for the Interactive Window and a lens's tooltip: its
 /// title, else "Cell n" (1-based, counting the lines above the first
-/// marker when they are one).
+/// marker when they are one). The cell is found by where it starts, so one
+/// from another reading of the same lines has its number too (#1937).
 export function cellName(all: Cell[], cell: Cell): string {
-  return cell.title !== "" ? cell.title : `Cell ${all.indexOf(cell) + 1}`;
+  return cell.title !== "" ? cell.title : `Cell ${all.findIndex((c) => c.start === cell.start) + 1}`;
 }
 
 /// The first line after `after` that starts a statement, as q reads the

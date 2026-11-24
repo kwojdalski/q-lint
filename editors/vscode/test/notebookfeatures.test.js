@@ -554,7 +554,7 @@ test("a backslash escapes any ASCII punctuation (#1310)", () => {
 test("an ordered list keeps its start, and only a 1. or a bullet interrupts a paragraph (#1311)", () => {
   assert.strictEqual(markdownHtml("3. c\n4. d"), '<ol start="3"><li>c</li><li>d</li></ol>');
   assert.strictEqual(markdownHtml("0. z"), '<ol start="0"><li>z</li></ol>');
-  assert.strictEqual(markdownHtml("it ran in\n2024. and then"), "<p>it ran in<br>\n2024. and then</p>");
+  assert.strictEqual(markdownHtml("it ran in\n2024. and then"), "<p>it ran in\n2024. and then</p>");
   assert.strictEqual(markdownHtml("text\n1. one"), "<p>text</p>\n<ol><li>one</li></ol>");
   assert.strictEqual(markdownHtml("text\n- one"), "<p>text</p>\n<ul><li>one</li></ul>");
 });
@@ -566,7 +566,7 @@ test("a GFM table, as a result is written into a notebook, is a table (#1309)", 
       '<tbody><tr><td>x|y</td><td style="text-align:right">1</td></tr><tr><td>&lt;b&gt;</td><td style="text-align:right"></td></tr></tbody></table>\n<p>after</p>',
   );
   // Not a table: the delimiter row has a different count of cells.
-  assert.strictEqual(markdownHtml("a | b | c\n--- | ---"), "<p>a | b | c<br>\n--- | ---</p>");
+  assert.strictEqual(markdownHtml("a | b | c\n--- | ---"), "<p>a | b | c\n--- | ---</p>");
   const { resultMarkdown } = require("../out/resultreport.js");
   const md = resultMarkdown({ at: 0, process: "dev", code: "t", decimals: 2, payload: { count: 1, keys: 0, names: ["s"], types: [11], cells: [["<a>"]], raw: [[]], rank: [[0]] } }).text;
   assert.match(markdownHtml(md), /<table><thead><tr><th>s<\/th><\/tr><\/thead><tbody><tr><td>&lt;a&gt;<\/td><\/tr><\/tbody><\/table>/);
@@ -660,7 +660,7 @@ test("an HTML export shows an indented code block as code, as the cell and live 
   assert.strictEqual(markdownHtml("text\n\n    f:{x+1}\n\n      g:2\n\nafter"), "<p>text</p>\n<pre><code>f:{x+1}\n\n  g:2</code></pre>\n<p>after</p>");
   assert.strictEqual(markdownHtml("# T\n\tt:1 <b>"), "<h1>T</h1>\n<pre><code>t:1 &lt;b&gt;</code></pre>");
   // Under a paragraph line or a list item it is not code.
-  assert.strictEqual(markdownHtml("text\n    more"), "<p>text<br>\nmore</p>");
+  assert.strictEqual(markdownHtml("text\n    more"), "<p>text\nmore</p>");
   assert.strictEqual(markdownHtml("- a\n    b"), "<ul><li>a b</li></ul>");
 });
 
@@ -743,4 +743,127 @@ test("a password variable two listed processes would share is refused, not sent 
   assert.strictEqual(passwordOf(listed[4], env, false, listed), "g");
   // HOST:PORT given on the command line is checked against the list too.
   assert.throws(() => passwordOf(p("rdb:1"), env, true, [p("rdb_1")]), /rdb:1 and rdb_1/);
+});
+
+test("an HTML export writes a link's URL as it was written: an entity, an escape or a {{q:}} in it is no placeholder (#1942)", () => {
+  assert.strictEqual(markdownHtml("[x](https://host/?a=1&amp;b=2)"), '<p><a href="https://host/?a=1&amp;b=2">x</a></p>');
+  assert.strictEqual(markdownHtml("[x](https://host/a\\_b\\(1\\)) and *y*"), '<p><a href="https://host/a_b(1)">x</a> and <em>y</em></p>');
+  assert.strictEqual(markdownHtml("[open](https://host/{{q:id}}/`a`)"), '<p><a href="https://host/{{q:id}}/`a`">open</a></p>');
+  assert.strictEqual(markdownHtml("[x](https://host/&copy;&#x41;)"), '<p><a href="https://host/&amp;copy;A">x</a></p>');
+  assert.strictEqual(markdownHtml("![logo](https://x.io/l.png?a=1&amp;b=2)"), '<p><a href="https://x.io/l.png?a=1&amp;b=2">logo</a></p>');
+  // No placeholder, and so no NUL, is left in any of them.
+  for (const source of ["[x](https://host/?a=1&amp;b=2)", "[open](https://host/{{q: id}})", "[x](https://h/<b>)", "[x](\\https://h)"]) {
+    assert.doesNotMatch(markdownHtml(source, { id: { text: "7" } }), /\u0000/, source);
+  }
+  // What an entity or an escape spells is still checked and escaped: no
+  // script URL, and no quote that would end the attribute.
+  assert.strictEqual(markdownHtml("[x](&#106;avascript:alert(1))"), "<p>[x](javascript:alert(1))</p>");
+  assert.strictEqual(markdownHtml("[x](java\\script:alert(1))"), "<p>[x](java\\script:alert(1))</p>");
+  assert.strictEqual(markdownHtml("[x](https://h/&quot;onmouseover=&quot;a&lt;b)"), '<p><a href="https://h/&quot;onmouseover=&quot;a&lt;b">x</a></p>');
+  // A destination with a blank in it is no link, as CommonMark reads it.
+  assert.strictEqual(markdownHtml("[open](https://host/{{q: id}})"), "<p>[open](https://host/<code>{{q: id}}</code>)</p>");
+});
+
+test("an HTML export nests a list written under an item, as the notebook shows it (#1943)", () => {
+  assert.strictEqual(markdownHtml("- a\n  - b\n- c"), "<ul><li>a<ul><li>b</li></ul></li><li>c</li></ul>");
+  assert.strictEqual(markdownHtml("- a\n    - b\n- c"), "<ul><li>a<ul><li>b</li></ul></li><li>c</li></ul>");
+  assert.strictEqual(markdownHtml("1. a\n   - b\n2. c"), "<ol><li>a<ul><li>b</li></ul></li><li>c</li></ol>");
+  // Deeper, a numbered one under a bullet, and an item's own next line.
+  assert.strictEqual(markdownHtml("- a\n  - b\n    - c\n  - d\n- e"), "<ul><li>a<ul><li>b<ul><li>c</li></ul></li><li>d</li></ul></li><li>e</li></ul>");
+  assert.strictEqual(markdownHtml("* a\n  3. b\n  4. c\n     more"), '<ul><li>a<ol start="3"><li>b</li><li>c more</li></ol></li></ul>');
+  assert.strictEqual(markdownHtml("- a\n\t- b"), "<ul><li>a<ul><li>b</li></ul></li></ul>");
+  // Under the item's text, not under its marker: a sibling, as before.
+  assert.strictEqual(markdownHtml("- a\n - b"), "<ul><li>a</li><li>b</li></ul>");
+  assert.strictEqual(markdownHtml("- a\n  b\n  c"), "<ul><li>a b c</li></ul>");
+  // What is nested is text still: escaped, and its live value read.
+  assert.strictEqual(
+    markdownHtml("- a\n  - <b>x</b> {{q: n}} [l](javascript:alert(1))", { n: { text: "<7>" } }),
+    '<ul><li>a<ul><li>&lt;b&gt;x&lt;/b&gt; <span class="live" title="q: n">&lt;7&gt;</span> [l](javascript:alert(1))</li></ul></li></ul>',
+  );
+});
+
+test("an HTML export keeps a link's title, as the tip the notebook shows (#1944)", () => {
+  assert.strictEqual(markdownHtml('[text](https://x.com "title")'), '<p><a href="https://x.com" title="title">text</a></p>');
+  assert.strictEqual(markdownHtml("[text](https://x.com 'the title') and [b](https://y.io (in brackets))"), '<p><a href="https://x.com" title="the title">text</a> and <a href="https://y.io" title="in brackets">b</a></p>');
+  assert.strictEqual(markdownHtml('![logo](https://x.io/l.png "the logo")'), '<p><a href="https://x.io/l.png" title="the logo">logo</a></p>');
+  assert.strictEqual(markdownHtml('![c](data:image/png;base64,AAAA "a chart")'), '<p><img alt="c" src="data:image/png;base64,AAAA" title="a chart"></p>');
+  // A title is text: nothing in it is markup, a value or the attribute's end.
+  assert.strictEqual(
+    markdownHtml('[t](https://x.com "a <b> &amp; \\"q\\" `c` *e* {{q: n}}")', { n: { text: "7" } }),
+    '<p><a href="https://x.com" title="a &lt;b&gt; &amp; &quot;q&quot; `c` *e* {{q: n}}">t</a></p>',
+  );
+  assert.strictEqual(markdownHtml("[t](https://x.com 'a\" onmouseover=\"b')"), '<p><a href="https://x.com" title="a&quot; onmouseover=&quot;b">t</a></p>');
+  // A title makes no link of a target that is none.
+  assert.strictEqual(markdownHtml('[x](javascript:alert(1) "t")'), "<p>[x](javascript:alert(1) &quot;t&quot;)</p>");
+  assert.strictEqual(markdownHtml('[x](https://x.com "t" more)'), "<p>[x](https://x.com &quot;t&quot; more)</p>");
+});
+
+test("an HTML export breaks a paragraph's line only where the notebook does: after two spaces or a backslash (#1945)", () => {
+  // A cell wrapped at a column is one paragraph, a newline in it a space.
+  assert.strictEqual(markdownHtml("line one\nline two\nline three"), "<p>line one\nline two\nline three</p>");
+  assert.strictEqual(markdownHtml("line one  \nline two"), "<p>line one<br>\nline two</p>");
+  assert.strictEqual(markdownHtml("line one\\\nline two   \nline three"), "<p>line one<br>\nline two<br>\nline three</p>");
+  // One space is none, an escaped backslash is a backslash, and a
+  // paragraph's last line has nothing to break before.
+  assert.strictEqual(markdownHtml("a \nb"), "<p>a\nb</p>");
+  assert.strictEqual(markdownHtml("a\\\\\nb"), "<p>a\\\nb</p>");
+  assert.strictEqual(markdownHtml("end  "), "<p>end</p>");
+  assert.strictEqual(markdownHtml("end\\\n\nnext"), "<p>end\\</p>\n<p>next</p>");
+  assert.strictEqual(markdownHtml("Title  \n==="), "<h1>Title</h1>");
+  assert.strictEqual(markdownHtml("a <b>  \n*c*"), "<p>a &lt;b&gt;<br>\n<em>c</em></p>");
+});
+
+/// A Python notebook as Jupyter saves one: a figure shown, a value with
+/// what was printed after it, a `%%q` cell, and a cell not run.
+const PYTHON_NOTEBOOK = {
+  cells: [
+    { cell_type: "code", execution_count: 1, metadata: {}, outputs: [{ output_type: "display_data", data: { "image/png": "AAAA", "text/plain": ["<Figure>"] }, metadata: {} }], source: ["import matplotlib\n", "plot()"] },
+    {
+      cell_type: "code",
+      execution_count: 2,
+      metadata: {},
+      outputs: [
+        { output_type: "execute_result", execution_count: 2, data: { "text/plain": ["1"] }, metadata: {} },
+        { output_type: "stream", name: "stdout", text: ["x\n"] },
+      ],
+      source: ["1"],
+    },
+    { cell_type: "code", execution_count: 3, metadata: {}, outputs: [{ output_type: "display_data", data: { "text/plain": ["a"] }, metadata: {} }, { output_type: "display_data", data: { "text/plain": ["b"] }, metadata: {} }], source: ["%%q\n", "show 1"] },
+    { cell_type: "code", execution_count: null, metadata: { collapsed: true }, outputs: [], source: [] },
+    { cell_type: "markdown", metadata: {}, source: ["# T"] },
+  ],
+  metadata: { kernelspec: { display_name: "Python 3", language: "python", name: "python3" }, language_info: { name: "python", version: "3.11" } },
+  nbformat: 4,
+  nbformat_minor: 4,
+};
+
+test("a Jupyter notebook imported and exported keeps each output's type: a figure is no Out[n] value (#1946)", () => {
+  const back = JSON.parse(toIpynb(fromIpynb(JSON.stringify(PYTHON_NOTEBOOK))));
+  const types = (notebook) => notebook.cells.map((c) => (c.outputs ?? []).map((o) => o.output_type));
+  assert.deepStrictEqual(types(back), [["display_data"], ["execute_result", "stream"], ["display_data", "display_data"], [], []]);
+  assert.deepStrictEqual(back.cells.map((c) => c.outputs), PYTHON_NOTEBOOK.cells.map((c) => c.outputs));
+  // The type is the output's own through a save of the .qnb as well.
+  const saved = JSON.parse(toIpynb(parseQnb(serializeQnb(fromIpynb(JSON.stringify(PYTHON_NOTEBOOK))))));
+  assert.deepStrictEqual(types(saved), types(PYTHON_NOTEBOOK));
+  // An output made here has none: the last one of a cell that ran is its value.
+  const made = JSON.parse(toIpynb({ cells: [{ kind: "code", source: "1", execution: { order: 4 }, outputs: [{ items: [{ mime: "text/plain", text: "a" }] }, { items: [{ mime: "text/plain", text: "1" }] }] }] }));
+  assert.deepStrictEqual(made.cells[0].outputs.map((o) => [o.output_type, o.execution_count]), [["display_data", undefined], ["execute_result", 4]]);
+  // A value's number is its cell's, and nothing but the two types is taken from the file.
+  const odd = { cells: [{ kind: "code", source: "1", outputs: [{ items: [{ mime: "text/plain", text: "1" }], extra: { output_type: "execute_result" } }, { items: [{ mime: "text/plain", text: "2" }], extra: { output_type: "<script>" } }] }] };
+  assert.deepStrictEqual(JSON.parse(toIpynb(odd)).cells[0].outputs.map((o) => [o.output_type, o.execution_count]), [["execute_result", null], ["display_data", undefined]]);
+});
+
+test("a Python notebook imported and exported is the notebook it was: no cell is tagged with the notebook's own language (#1947)", () => {
+  const back = JSON.parse(toIpynb(fromIpynb(JSON.stringify(PYTHON_NOTEBOOK))));
+  assert.deepStrictEqual(back.cells.map((c) => c.metadata), PYTHON_NOTEBOOK.cells.map((c) => c.metadata));
+  // And so are its cells' outputs and their types: all of it.
+  assert.deepStrictEqual(back, PYTHON_NOTEBOOK);
+  // A cell in another language than the notebook's is tagged, as VS Code tags one.
+  const mixed = { ...PYTHON_NOTEBOOK, cells: [{ cell_type: "code", execution_count: null, metadata: { vscode: { languageId: "sql" } }, outputs: [], source: ["select 1"] }, PYTHON_NOTEBOOK.cells[3]] };
+  assert.deepStrictEqual(JSON.parse(toIpynb(fromIpynb(JSON.stringify(mixed)))), mixed);
+  const q = JSON.parse(toIpynb({ cells: [{ kind: "code", source: "print(1)", language: "python" }, { kind: "code", source: "1+1" }] }));
+  assert.deepStrictEqual(q.cells.map((c) => c.metadata), [{ vscode: { languageId: "python" } }, {}]);
+  // With only a kernelspec's language to go by, too.
+  const spec = { ...PYTHON_NOTEBOOK, metadata: { kernelspec: { display_name: "Python 3", language: "python", name: "python3" } } };
+  assert.deepStrictEqual(JSON.parse(toIpynb(fromIpynb(JSON.stringify(spec)))), spec);
 });

@@ -138,6 +138,20 @@ test("a cached lambda's body lines run on their own with the call's arguments, o
     assert.strictEqual(await run("u*10"), "20");
   });
 
+  await t.test("a parameter list with a comment in it: q takes its names, and so does the cache (#1949)", async () => {
+    const source = "wtot:{[p; / the prices\n  q0] / and the sizes\n  p wsum q0}";
+    // q's own reading of the list, before anything is inserted.
+    await run(source);
+    assert.strictEqual(await run("(value wtot) 1"), "`p`q0");
+    const { text, id } = instrument(source, "p wsum");
+    assert.ok(text.includes(`  q0].qlint.cache.${id}:(p;q0);`), JSON.stringify(text));
+    await run(text);
+    assert.strictEqual(await run("(value wtot) 1"), "`p`q0");
+    assert.strictEqual(await run("wtot[1 2;3 4]"), "11f");
+    assert.strictEqual(await run("  p wsum q0"), "11f");
+    assert.strictEqual(await run(`.qlint.cache.${id}`), "1 2\n3 4");
+  });
+
   await t.test("a script with tabs, loaded by q's own \\l, still reads", async () => {
     const source = "/ a script\nscale:{[w;f]\t\n\t\tr:w*f;\n\n\t\tr+1}\n";
     const { text } = instrument(source, "r+1");
