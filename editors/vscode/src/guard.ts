@@ -68,6 +68,8 @@
 //   a writer above (`` value(`.q.set;`a;1) ``), also through `[`,
 //   `each`, `'`, `@`, `.` or `enlist`, in parentheses (`(value)"a:1"`)
 //   and through a trap (`@[value;"a:1";h]`), and by their `.q.` names;
+//   passed as a value, through an adverb or a composition (`value/["a:1"]`,
+//   `'[value;::]"a:1"`), each string in the expression around it (#1766);
 // - a system command (`\l`, `\cd x`, `\\`), except one that only reads a
 //   setting (`\c`, `\d`, `\P`, `\_`, `\r`, `\E` without an argument, and
 //   `\w 0` or `\w 1`) and `\t` or `\ts`, whose
@@ -482,6 +484,24 @@ function argumentEnd(t: Token[], last: number): number {
   return t.length;
 }
 
+/// Where the expression `t[i]` is in ends: at the next `;` outside every
+/// bracket around it, or the end of the lambda or statement it is in.
+function expressionEnd(t: Token[], i: number): number {
+  let depth = 0;
+  for (let p = i - 1, inner = 0; p >= 0; p--) {
+    if (t[p].kind === "close") inner++;
+    else if (t[p].kind === "open" && inner > 0) inner--;
+    else if (t[p].kind === "open" && t[p].text === "{") break;
+    else if (t[p].kind === "open") depth++;
+  }
+  for (let p = i + 1; p < t.length; p++) {
+    if (t[p].kind === "open") depth++;
+    else if (t[p].kind === "close" && depth-- === 0) return p;
+    else if (depth === 0 && t[p].text === ";") return p;
+  }
+  return t.length;
+}
+
 /// What the strings an evaluator ending at `t[last]` is applied to run, up
 /// to `t[end]`: each is read as the code it is (#1776), so `value "count t"`
 /// reads, as a gateway's string does. One that is built, `value "a",":1"`,
@@ -519,12 +539,12 @@ function strings(t: Token[], last: number, end: number, kCode: boolean): string 
 
 /// What an evaluator ending at `t[last]` runs that changes the process: a
 /// tree `evaluated` reads, or a string `strings` does.
-function evaluates(t: Token[], last: number, byValue: boolean, kCode = false): { reason: string; at: number } | undefined {
+function evaluates(t: Token[], last: number, byValue: boolean, kCode = false, end = argumentEnd(t, last)): { reason: string; at: number } | undefined {
   const what = evaluated(t, last + 1, byValue);
   if (what !== undefined) {
     return what;
   }
-  const reason = strings(t, last, argumentEnd(t, last), kCode);
+  const reason = strings(t, last, end, kCode);
   return reason === undefined ? undefined : { reason, at: last };
 }
 
@@ -753,7 +773,13 @@ function readStatement(statement: string, found: Set<string>): void {
         // Given to a trap, `@[value;"a:1";h]`, `.Q.trp[value;..;h]`, it is
         // applied to the argument after it.
         const trapped = t[i - 1]?.text === "[" && t[i - 1]?.kind === "open" && next?.text === ";";
-        const what = evaluates(t, i + (wrapped || trapped ? 1 : 0), unqualified(k.text) !== "eval" && unqualified(k.text) !== "reval");
+        // Passed as a value instead - `value/["a:1"]`, `(value@)"a:1"`,
+        // `'[value;::]"a:1"`, `@[(value);"a:1";h]` (#1766) - it runs what the
+        // expression around it gives it: each string there is read.
+        let n = i + 1;
+        while (t[n]?.kind === "op" && ["@", ".", "'"].includes(t[n].text)) n++;
+        const applied = t[n] !== undefined && (["str", "name", "sym", "num"].includes(t[n].kind) || (t[n].kind === "open" && t[n].text !== "{"));
+        const what = evaluates(t, i + (wrapped || trapped ? 1 : 0), unqualified(k.text) !== "eval" && unqualified(k.text) !== "reval", false, applied ? undefined : expressionEnd(t, i));
         if (what !== undefined) {
           found.add(`evaluates ${what.reason} with ${k.text}`);
           i = what.at;

@@ -1154,3 +1154,28 @@ test("a string literal an evaluator runs is read as the code it is (#1776)", () 
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("value or get passed as a value evaluates the strings around it (#1766)", () => {
+  const cases = {
+    'value/["a:9"]': ["evaluates a string with value"],
+    'get\\["a:9"]': ["evaluates a string with get"],
+    '(value@)"a:9"': ["evaluates a string with value"],
+    '((get)@)"a:9"': ["evaluates a string with get"],
+    "'[value;::]\"a:9\"": ["evaluates a string with value"],
+    "'[::;(get@)]\"a:9\"": ["evaluates a string with get"],
+    '@[(value);"a:9";{x}]': ["evaluates a string with value"],
+    '((value).)enlist"a:9"': ["evaluates a string with value"],
+    '(get@)\'[enlist "a:9"]': ["evaluates a string with get"],
+    '.Q.trp[(value);"a:9";{x}]': ["evaluates a string with value"],
+    // On a read, a value, or a string beside it in another expression, it reads.
+    'value/["count t"]': [],
+    "'[value;::]`t": [],
+    '@[(value);"count t";{x}]': [],
+    "(value@)x": [],
+    'f:{value/[x]};"a:b"': ["assigns f"],
+    'f:{(value@)x}': ["assigns f"],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
