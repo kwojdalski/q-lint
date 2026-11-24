@@ -385,6 +385,31 @@ test("renaming or deleting a process carries its dashboard tiles and scheduled e
   assert.deepStrictEqual(context.workspaceState.get("q-lint.scheduledExports").map((x) => x.id), ["s2"]);
 });
 
+test("a workspace not open when a process was renamed or deleted retargets its tiles and schedules when it opens (#1749)", async (t) => {
+  const q = await fakeQ(() => OK);
+  t.after(() => q.close());
+  const { context } = await setUp(t, [proc("rdb", q.port), proc("hdb", q.port)]);
+  editAnswers("rdb-ny", "127.0.0.1", q.port);
+  await stub.commands.get("q-lint.editProcess")("rdb");
+  stub.picks.push("Delete");
+  await stub.commands.get("q-lint.deleteProcess")("hdb");
+  // Another workspace: the same processes, its own tiles and schedules.
+  const other = stub.newContext();
+  other.globalState = context.globalState;
+  const state = new Map([
+    ["q-lint.dashboards", [{ name: "Desk", columns: 2, tiles: [{ id: "1", query: "v", process: "rdb", view: "table", refresh: 0 }, { id: "2", query: "v", process: "hdb", view: "table", refresh: 0 }]}]],
+    ["q-lint.scheduledExports", [{ id: "s1", query: "v", process: "rdb", format: "csv", path: "/o.csv", every: 5, mode: "replace", since: 0 }]],
+  ]);
+  other.workspaceState = { get: (k, d) => (state.has(k) ? structuredClone(state.get(k)) : d), update: async (k, v) => void state.set(k, structuredClone(v)), keys: () => [...state.keys()] };
+  new Live(other);
+  t.after(() => { for (const d of other.subscriptions) d.dispose?.(); });
+  for (let i = 0; i < 50 && state.get("q-lint.scheduledExports")[0].process === "rdb"; i++) await sleep(10);
+  assert.deepStrictEqual(state.get("q-lint.dashboards")[0].tiles.map((x) => x.process), ["rdb-ny"]);
+  assert.deepStrictEqual(state.get("q-lint.scheduledExports").map((x) => x.process), ["rdb-ny"]);
+  // Applied once: a process named rdb again later keeps its own tiles.
+  assert.strictEqual(state.get("q-lint.processRelabelsApplied"), 2);
+});
+
 // Disconnect from the command palette with nothing connected did nothing
 // and said nothing, where Abort, Reveal Process and Insert Label say there
 // is no connection.
