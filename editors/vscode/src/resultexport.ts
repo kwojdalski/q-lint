@@ -167,7 +167,7 @@ export function exportResult(format: ExportFormat, payload: GridPayload, decimal
     case "q": {
       const table = tableLiteral(payload, order);
       if (table.cut > 0) {
-        notes.push(`${table.cut} cell(s) were cut at 200 characters and are not their whole value`);
+        notes.push(`${table.cut} cell(s) were cut at 200 characters or at the process's \\c width and are not their whole value`);
       }
       return { data: Buffer.from(`${table.code}\n`, "utf8"), rows: order.length, notes };
     }

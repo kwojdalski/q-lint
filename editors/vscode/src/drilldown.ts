@@ -16,7 +16,7 @@ function literalAt(payload: GridPayload, column: number, row: number): { literal
   const raw = rawColumn(payload, column);
   const atom = atomLiteral(payload.types[column], payload.cells[column][row] ?? "", raw === undefined ? undefined : raw[row]);
   if (atom.cut) {
-    return { error: `the cell in ${payload.names[column]} was cut at 200 characters, so its value is not known here` };
+    return { error: `the cell in ${payload.names[column]} was cut at 200 characters or at the process's \\c width, so its value is not known here` };
   }
   return { literal: atom.literal };
 }

@@ -62,6 +62,10 @@ test("a cell's q literal keeps its type: suffixes, typed nulls and infinities, s
   // A general list's item is q already, unless it was cut.
   assert.deepStrictEqual(atomLiteral(0, "`a`b", undefined), { literal: "`a`b", cut: false });
   assert.strictEqual(atomLiteral(0, `"${"x".repeat(196)}...`, undefined).cut, true);
+  // Cut by -3! at \c (#1484). KDB-X at \c 25 80: -3!til 40 is "0 1 ... 28 ..".
+  const wide = `${Array.from({ length: 29 }, (_, i) => i).join(" ")} ..`;
+  assert.strictEqual(atomLiteral(0, wide, undefined).cut, true);
+  assert.strictEqual(tableLiteral({ count: 1, keys: 0, names: ["a"], types: [0], cells: [[wide]], raw: [[]], rank: [[]] }).cut, 1);
   assert.strictEqual(stringLiteral("a\nb\t\u0001"), '"a\\nb\\t\\001"');
   assert.strictEqual(symbolLiteral("x.y_1"), "`x.y_1");
   // What `-3!` writes and q will not read back (the 0.29.0 bug; real q in

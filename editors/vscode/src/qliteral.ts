@@ -10,7 +10,8 @@
 // (a space, or a leading `_`), `` `$"a b" ``; a guid `"G"$"..."`. An item
 // of a general list is `-3!` of it made readable (`readable`): `-3!` writes
 // a one-item list `,x`, which q refuses, and a symbol starting with `_` bare.
-// An item cut at 200 characters is not its value - `cut` says so. An
+// An item cut at 200 characters (`...`), or by `-3!` at the process's `\c`
+// width (`..`), is not its value - `cut` says so. An
 // enumerated column is written as its symbols, without its domain.
 //
 // These are the extension's one writer of q strings and symbols: Paste as q
@@ -143,7 +144,8 @@ export function plainName(name: string): boolean {
 
 /// One cell's literal. `text` is q's text of it, as `GRID` sent it;
 /// `raw` its number, when `GRID` sent one (undefined when it did not).
-/// `cut`: the text was cut at 200 characters, so the literal is not the value.
+/// `cut`: the text was cut at 200 characters or at `\c`, so the literal is
+/// not the value.
 export function atomLiteral(type: number, text: string, raw: unknown): { literal: string; cut: boolean } {
   const ok = (literal: string) => ({ literal, cut: false });
   if (raw === null && NULLS[type] !== undefined) {
@@ -201,7 +203,9 @@ export function atomLiteral(type: number, text: string, raw: unknown): { literal
       }
       // A general list's item: `-3!` of it, or a string written as one,
       // made readable.
-      return { literal: text === "" ? "()" : readable(text), cut: text.length >= 200 && text.endsWith("...") };
+      // Cut, it ends `...` or `..`, as no whole item does but a symbol
+      // ending in dots, which is taken as cut too (#1484).
+      return { literal: text === "" ? "()" : readable(text), cut: text.endsWith("..") };
   }
 }
 
@@ -236,7 +240,7 @@ export interface QTable {
   /// Rows written, and rows the result had.
   rows: number;
   total: number;
-  /// Cells cut at 200 characters, whose literal is not their value.
+  /// Cells cut at 200 characters or at `\c`, whose literal is not their value.
   cut: number;
 }
 
