@@ -89,10 +89,14 @@ test("q writes, casts and converts every temporal value as temporal.ts does", { 
   for (const v of all) {
     const lit = t.format(v);
     assert.ok(lit !== undefined, `${v.type} ${v.n} has a literal`);
-    // temporal.ts reads its own literal back as the same value.
-    assert.deepStrictEqual(t.parse(lit), v.special === undefined ? { type: v.type, n: v.n } : v, lit);
     // Where KDB-X writes a timestamp it does not read back, `"p"$` of its long.
     const readable = t.timestampText(v);
+    // temporal.ts reads its own literal back as the same value, and refuses
+    // one KDB-X refuses (#2068).
+    assert.deepStrictEqual(t.parse(lit), readable !== lit ? undefined : v.special === undefined ? { type: v.type, n: v.n } : v, lit);
+    if (readable !== lit) {
+      check(`"error ${lit}"~string @[value;${JSON.stringify(lit)};{\`$"error ",x}]`);
+    }
     check(`(-3!${readable})~${JSON.stringify(lit)}`);
     for (const c of t.conversions(v)) {
       if (/^long/.test(c.label)) {

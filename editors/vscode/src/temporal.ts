@@ -225,9 +225,12 @@ export function parse(text: string): Temporal | undefined {
     if (days === undefined || secs === undefined || Number(m[4] ?? 0) > 23) {
       return undefined;
     }
-    const n = BigInt(days) * NS_PER_DAY + secs * 1_000_000_000n + fraction(m[7], 9);
-    // Written out in full, 0Wp and -0Wp are still the infinities (#1069).
-    return n >= -LONG_MAX && n <= LONG_MAX ? timestampOfLong(n) : undefined;
+    // KDB-X refuses a timestamp literal outside 1709.01.01-2290.12.31, even
+    // 0Wp written out in full (#2068).
+    if (days < LITERAL_DAYS[0] || days >= LITERAL_DAYS[1]) {
+      return undefined;
+    }
+    return timestampOfLong(BigInt(days) * NS_PER_DAY + secs * 1_000_000_000n + fraction(m[7], 9));
   }
   m = /^(\d{4})\.(\d{2})\.(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/.exec(text);
   if (m !== null) {

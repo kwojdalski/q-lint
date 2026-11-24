@@ -52,10 +52,13 @@ test("nulls and infinities are each type's own, and convert as q's casts do", ()
   assert.deepStrictEqual(t.parse("0wz"), { type: "datetime", special: "inf", n: 0n });
   assert.deepStrictEqual(texts("0Np"), ["0N", "0Nd"]);
   assert.deepStrictEqual(texts("0Wp"), ["0W", "0Wd"]);
-  // 0Wp written out in full is still the infinity, not a date in 2292 (#1069).
-  assert.deepStrictEqual(t.parse("2292.04.10D23:47:16.854775807"), { type: "timestamp", special: "inf", n: 0n });
-  assert.deepStrictEqual(texts("2292.04.10D23:47:16.854775807"), ["0W", "0Wd"]);
-  assert.deepStrictEqual(t.parse("2292.04.10D23:47:16.854775806").special, undefined);
+  // KDB-X reads a timestamp literal only from 1709.01.01 to 2290.12.31: not
+  // even 0Wp written out in full (#2068).
+  for (const bad of ["2292.04.10D23:47:16.854775807", "2291.01.01D00:00:00", "2292.01.14D00:09:18.123", "1708.12.31D23:59:59", "1707.09.22D00:12:43.145224193"]) {
+    assert.strictEqual(t.parse(bad), undefined, bad);
+  }
+  assert.strictEqual(t.parse("2290.12.31D23:59:59.999999999").type, "timestamp");
+  assert.strictEqual(t.parse("1709.01.01D00:00:00").type, "timestamp");
   assert.deepStrictEqual(texts("-0Wd"), ["-0Wi", "-0Wp"]);
   assert.deepStrictEqual(texts("0Nt"), ["0Ni"]);
   assert.strictEqual(t.format({ type: "datetime", special: "-inf", n: 0n }), "-0wz");
