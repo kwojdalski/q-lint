@@ -238,3 +238,9 @@ test("block comments nest, as KDB-X reads them: every reader skips to the matchi
   const entry = (code) => ({ process: "p", code, at, millis: 1, outcome: "ok" });
   assert.deepStrictEqual(statements(historyScript([entry("c:3"), entry("a:1\n/\n/\nx")])), ["a:1", "c:3"]);
 });
+
+test("a marker with a block comment between it and a continuation line is a comment in the statement (#1464)", () => {
+  const lines = L("f:{x+\n/ %% two\n/\nnote\n\\\n  y}\n/ %% three\ng:1");
+  assert.deepStrictEqual(statements(lines.join("\n")), ["f:{x+\n  y}", "g:1"]);
+  assert.deepStrictEqual(markers(lines), [6]);
+});

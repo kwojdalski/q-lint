@@ -81,9 +81,10 @@ export function markers(lines: string[]): number[] {
       continue;
     }
     // A marker inside a statement - an indented line follows it, past
-    // blanks and comments - is a comment in the statement, not a cell.
+    // blanks, comments and block comments - is a comment in the statement,
+    // not a cell.
     let next = i + 1;
-    while (next < lines.length && (kind[next] === "blank" || kind[next] === "comment")) {
+    while (next < lines.length && (kind[next] === "blank" || kind[next] === "comment" || kind[next] === "commented")) {
       next++;
     }
     if (next < lines.length && kind[next] === "continues") {
