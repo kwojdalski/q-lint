@@ -96,7 +96,7 @@ import { PLACEHOLDER_VALUES_KEY, lastValue, placeholderNames, readPlaceholders, 
 import { guardCheck, guardQuestion, guardRefusal, readGuard } from "./guard";
 import type { GridAnswer, GridPayload } from "./grid";
 import { WATCH, WATCHING, intervalProblem, readWatch, watchText } from "./watch";
-import { guardedBy } from "./guard";
+import { guardedBy, openTags } from "./guard";
 import { readAdmin } from "./admin";
 import { credentialEnv, parseCredentials, runCredentialCommand } from "./credentials";
 import { effectiveTimeout, ownTimeout, timeoutDropped, timeoutSource } from "./processtimeout";
@@ -1249,11 +1249,12 @@ export class Live {
     const active = this.active;
     if (active?.label === old.label && active.server === undefined) {
       // The connection is still to where it was opened: it takes the new
-      // label and tags, and keeps its address until connected again.
+      // label and tags, and keeps its address until connected again - and,
+      // moved, its old tags as well (#1443).
       const { host, port, user, tls } = active;
       this.active = withExtras(
         withScript(
-          { label: process.label, host, port, ...(user !== undefined ? { user } : {}), tags: process.tags, ...(tls ? { tls } : {}) },
+          { label: process.label, host, port, ...(user !== undefined ? { user } : {}), tags: openTags(active, process), ...(tls ? { tls } : {}) },
           scriptOf(process),
         ),
         // The tunnel it was opened through stays until connected again.
@@ -1325,11 +1326,12 @@ export class Live {
   }
 
   /// Give the connected process, when it is a saved one, its saved tags: an
-  /// agent's query warns by them.
+  /// agent's query warns by them. Saved at another address, it keeps its
+  /// own as well until connected again (#1443).
   private retagActive(): void {
     const saved = this.active?.server === undefined ? this.processes().find((p) => p.label === this.active?.label) : undefined;
     if (this.active !== undefined && saved !== undefined) {
-      this.active = { ...this.active, tags: saved.tags };
+      this.active = { ...this.active, tags: openTags(this.active, saved) };
     }
   }
 

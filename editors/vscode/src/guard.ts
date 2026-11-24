@@ -102,6 +102,17 @@ export function guardedBy(process: Pick<Process, "tags">, settings: GuardSetting
   return process.tags.filter((tag) => settings.tags.includes(tag.trim().toLowerCase()));
 }
 
+type Address = Pick<Process, "host" | "port" | "user" | "tls" | "tags">;
+
+/// The tags an open connection goes by when its saved process is changed to
+/// `saved`: the new ones, and while the connection is still to another
+/// address - host, port, user or TLS changed - its old ones too, so one to
+/// a guarded process stays guarded until it is connected again (#1443).
+export function openTags(open: Address, saved: Address): string[] {
+  const moved = saved.host !== open.host || saved.port !== open.port || saved.user !== open.user || (saved.tls === true) !== (open.tls === true);
+  return moved ? [...new Set([...open.tags, ...saved.tags])] : saved.tags;
+}
+
 type Kind = "name" | "sym" | "str" | "num" | "op" | "open" | "close" | "space";
 interface Token {
   kind: Kind;

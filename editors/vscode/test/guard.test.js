@@ -3,7 +3,7 @@
 // drives every path that sends code through it.
 const test = require("node:test");
 const assert = require("node:assert");
-const { DEFAULT_GUARD_TAGS, guardCheck, guardQuestion, guardRefusal, guardedBy, readGuard, writes } = require("../out/guard.js");
+const { DEFAULT_GUARD_TAGS, guardCheck, guardQuestion, guardRefusal, guardedBy, openTags, readGuard, writes } = require("../out/guard.js");
 
 const settings = (values = {}) => readGuard((key, fallback) => (key in values ? values[key] : fallback));
 
@@ -768,4 +768,22 @@ test("0:, 1: and hopen to a handle built with ` sv, .Q.dd or hsym of a cast are 
   for (const [code, expected] of Object.entries(cases)) {
     assert.deepStrictEqual(writes(code), expected, code);
   }
+});
+
+test("a connection still to the old address of an edited process keeps its old tags (#1443)", () => {
+  const open = { host: "prodhost", port: 5000, tags: ["prod"] };
+  // Moved: still connected to prodhost, so still guarded.
+  for (const saved of [
+    { host: "devhost", port: 5000, tags: ["dev"] },
+    { host: "prodhost", port: 5001, tags: [] },
+    { host: "prodhost", port: 5000, user: "me", tags: ["dev"] },
+    { host: "prodhost", port: 5000, tls: true, tags: ["dev"] },
+  ]) {
+    const tags = openTags(open, saved);
+    assert.deepStrictEqual(guardedBy({ tags }, settings()), ["prod"], JSON.stringify(saved));
+    assert.ok(saved.tags.every((t) => tags.includes(t)));
+  }
+  // At the same address, the new tags are its own: untagging unguards it.
+  assert.deepStrictEqual(openTags(open, { host: "prodhost", port: 5000, tags: ["dev"] }), ["dev"]);
+  assert.deepStrictEqual(openTags({ ...open, tags: ["dev"] }, { host: "prodhost", port: 5000, tags: ["prod"] }), ["prod"]);
 });
