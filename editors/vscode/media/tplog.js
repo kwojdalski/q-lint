@@ -133,6 +133,11 @@
       });
     } else if (m.type === "page") {
       page = m;
+      // The filter listed: an error a refused one left goes (#1793).
+      if (status.className === "status failed") {
+        status.textContent = "";
+        status.className = "status";
+      }
       drawRows();
     } else if (m.type === "message") {
       detail.textContent = "Message " + m.index + "\n" + m.text;

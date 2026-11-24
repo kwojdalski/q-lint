@@ -37,6 +37,15 @@ test("a message in the list is a tab stop, picked with Enter or Space, and keeps
   assert.strictEqual(prevented, 2);
 });
 
+test("a page that lists clears the error a refused filter left (#1793)", () => {
+  const page = loadSmallPage(["tplog.js"]);
+  page.send({ type: "log", port: 5001, log: LOG });
+  page.send({ type: "status", text: "A time of day is HH:MM, HH:MM:SS or HH:MM:SS.mmm.", failed: true });
+  page.send({ type: "page", table: "", from: "09:00", to: "", offset: 0, size: 200, total: 3, rows: ROWS });
+  const status = page.find("p").find((p) => String(p.className).startsWith("status"));
+  assert.deepStrictEqual([status.textContent, status.className], ["", "status"]);
+});
+
 test("the pager pages the filter last applied, not one typed since (#1395)", () => {
   const page = loadSmallPage(["tplog.js"]);
   page.send({ type: "log", port: 5001, log: { ...LOG, tables: ["trade", "quote"] } });
