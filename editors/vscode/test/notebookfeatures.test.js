@@ -562,3 +562,9 @@ test("an HTML export reads a setext heading, under a paragraph only (#1551)", ()
   assert.strictEqual(markdownHtml("text\n\n---"), "<p>text</p>\n<hr>");
   assert.strictEqual(markdownHtml("- item\n---"), "<ul><li>item</li></ul>\n<hr>");
 });
+
+test("an HTML export keeps a named entity, which the page shows as its character (#1552)", () => {
+  assert.strictEqual(markdownHtml("a&nbsp;b &copy; 2024 &lt;x&gt; &amp;"), "<p>a&nbsp;b &copy; 2024 &lt;x&gt; &amp;</p>");
+  // Not an entity: escaped.
+  assert.strictEqual(markdownHtml("a & b &x y; &<b>;"), "<p>a &amp; b &amp;x y; &amp;&lt;b&gt;;</p>");
+});

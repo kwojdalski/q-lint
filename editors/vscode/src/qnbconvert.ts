@@ -70,7 +70,10 @@ function inline(text: string, values: Record<string, LiveValue>): string {
     (s + text.slice(from))
       .replace(/\\([!-/:-@[-`{-~])/g, (_m, c: string) => hold(escapeHtml(c)))
       // The entities a result's table is written with (#1309).
-      .replace(/&(amp|lt|gt|quot|#\d{1,7}|#[xX][0-9a-fA-F]{1,6});/g, (m, e: string) => hold(escapeHtml(entity(e) ?? m))),
+      .replace(/&(amp|lt|gt|quot|#\d{1,7}|#[xX][0-9a-fA-F]{1,6});/g, (m, e: string) => hold(escapeHtml(entity(e) ?? m)))
+      // Any other named one as it is, which the page shows as its
+      // character, or as written when HTML has no such name (#1552).
+      .replace(/&[A-Za-z][A-Za-z0-9]{1,31};/g, (m) => hold(m)),
   );
   s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, label: string, href: string) => {
     // `href` is escaped already: `&amp;` reads back as `&` in an attribute.
