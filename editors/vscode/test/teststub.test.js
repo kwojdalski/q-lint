@@ -134,6 +134,19 @@ test("with no test file, a new one is made in tests/, never over one made meanwh
   assert.match(stub.messages.at(-1)[1], /q-lint\.testStub\.enable to true/);
 });
 
+// An untitled file's stub went to /test_Untitled-1.q, a notebook cell's
+// beside the notebook (#1525): only a file on disk gets one.
+test("an untitled file or a notebook cell is asked to be saved, and nothing is written", async () => {
+  const files = { "/ws/src/lib.q": SRC };
+  const s = setup(files);
+  const run = stub.commands.get(TEST_STUB_COMMAND);
+  for (const uri of [{ scheme: "untitled", fsPath: "Untitled-1" }, { scheme: "vscode-notebook-cell", fsPath: "/ws/nb.qnb" }]) {
+    assert.strictEqual(await run(uri, 3), false);
+    assert.match(stub.messages.at(-1)[1], /save the file first/);
+  }
+  assert.deepStrictEqual(s.writes, []);
+});
+
 test("a new test file's path on Windows keeps the folder and the separator (#1094)", () => {
   const { win32, posix } = require("node:path");
   const src = win32.join("C:\\proj", "src", "a.q");
