@@ -246,6 +246,10 @@ export class FunctionSources implements TextDocumentContentProvider {
     if ((await askRedefine(copy.name, process)) !== "Redefine") {
       return false;
     }
+    // Turned off at the question: nothing is sent (#1453).
+    if (!on("functionSource")) {
+      return false;
+    }
     try {
       // Only on the process the question named (#1290).
       const got = await borrowWhenFree(this.live, (connection) => connection.call(REDEFINE, copy.name, copy.was, text), undefined, copy.process);

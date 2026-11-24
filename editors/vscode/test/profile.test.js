@@ -267,3 +267,18 @@ test("the profile table's sort headers are buttons with aria-sort, and keep the 
   assert.strictEqual(posted.at(-1).rendered.sortedBy, "calls desc");
   delete Element.prototype.appendChild;
 });
+
+test("turned off while it asks for the namespace, no wrapper is installed (#1453)", async (t) => {
+  const panels = fakePanels();
+  const { q, live } = await setUp(t, [], { "query.functionProfile.enable": true });
+  await live.connectTo("rdb");
+  const before = q.sent.length;
+  stub.inputs.push(() => {
+    stub.config.user["query.functionProfile.enable"] = false;
+    stub.changeConfig("q-lint.query.functionProfile.enable");
+    return ".ns";
+  });
+  assert.match(await stub.commands.get(PROFILE_FUNCTIONS)(undefined, ".ns.top[]"), /The function profile is turned off/);
+  assert.deepStrictEqual(q.sent.slice(before), []);
+  assert.strictEqual(panels.length, 0);
+});

@@ -129,3 +129,24 @@ test("a production process is not asked, and a busy one shows nothing", async ()
   const busy = { activeProcess: () => ({ label: "dev", tags: [] }), activeLabel: () => undefined, borrow: () => undefined };
   assert.strictEqual(await registerValueHover(stub.newContext(), busy, () => server).hover(document, position), undefined);
 });
+
+test("a production process connected while the server answered is not read (#1456)", async () => {
+  stub.reset();
+  stub.config.user["liveValueHover.enable"] = true;
+  let active = { label: "dev", tags: [] };
+  const asked = [];
+  const live = {
+    activeProcess: () => active,
+    activeLabel: () => active.label,
+    borrow: (use) => use({ call: async () => (asked.push(active.label), {}) }, active),
+  };
+  let release;
+  const lsp = { sendRequest: async () => (await new Promise((r) => (release = r)), { names: ["t"], range: null }) };
+  const r = registerValueHover(stub.newContext(), live, () => lsp);
+  const hover = r.hover({ uri: vscode.Uri.file("/a.q") }, { line: 0, character: 0 });
+  await new Promise((r) => setImmediate(r));
+  active = { label: "prodrdb", tags: ["prod"] };
+  release();
+  assert.strictEqual(await hover, undefined);
+  assert.deepStrictEqual(asked, []);
+});

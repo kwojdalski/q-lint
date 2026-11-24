@@ -84,6 +84,9 @@ export function registerLogpoints(
       decoration.dispose();
       decoration = undefined;
       marked = [];
+      // And the hits shown, which would stay in the Output list (#1461).
+      output?.dispose();
+      output = undefined;
     }
   };
   const refuse = (): boolean => {
@@ -122,8 +125,9 @@ export function registerLogpoints(
     }
     const fn = target.trim();
     try {
-      const done = await live.runOnActive(LOG_ADD, async (connection) => String(await connection.call(LOG_ADD, fn)));
-      if (done === undefined) {
+      // Turned off at the name box, the pick or the guard: nothing is wrapped (#1453).
+      const done = await live.runOnActive(LOG_ADD, async (connection) => (refuse() ? undefined : String(await connection.call(LOG_ADD, fn))));
+      if (done === undefined || done.value === undefined) {
         return;
       }
       const names = logged.get(done.process) ?? new Set<string>();

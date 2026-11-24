@@ -104,9 +104,13 @@ export class AsyncQueries {
     const configuration = workspace.getConfiguration("q-lint");
     const { consoleSize, gridLimit } = readLive((key, fallback) => configuration.get(key, fallback));
     const id = this.next++;
-    let sent: { process: string; value: number } | undefined;
+    let sent: { process: string; value: number | undefined } | undefined;
     try {
       sent = await this.live.runOnActive(code, async (connection) => {
+        // Turned off at the pick or the guard: nothing is sent (#1454).
+        if (!on()) {
+          return undefined;
+        }
         connection.sendAsync(ASYNC, id, cut, consoleSize, Number.isFinite(gridLimit) ? gridLimit : 0);
         return id;
       });
@@ -115,6 +119,10 @@ export class AsyncQueries {
       return undefined;
     }
     if (sent === undefined) {
+      return undefined;
+    }
+    if (sent.value === undefined) {
+      void window.showInformationMessage(plainMessage(adminOff("asyncQuery")));
       return undefined;
     }
     this.pending.set(id, { id, process: sent.process, code, started: Date.now() });

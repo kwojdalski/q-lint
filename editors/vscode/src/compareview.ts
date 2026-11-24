@@ -46,6 +46,12 @@ export class CompareView {
     context.subscriptions.push({ dispose: () => this.panel?.dispose() });
   }
 
+  /// Close the panel: Compare Query was turned off (#1458).
+  close(): void {
+    this.panel?.dispose();
+    this.panel = undefined;
+  }
+
   lastRendered(): RenderedComparison | undefined {
     return this.rendered;
   }
