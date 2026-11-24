@@ -144,6 +144,32 @@ test("turned off while it asked, nothing is sent and no status item is left (#14
   assert.strictEqual(items.filter((i) => i.shown).length, 0);
 });
 
+// A selection that starts at the end of the line before it begins with a
+// newline: its first line as written is empty, and was the row's label.
+test("a pending query whose code starts with a blank line is listed by its first line of code (#1933)", async () => {
+  stub.reset();
+  const live = {
+    runOnActive: async (_code, query) => ({ process: "rdb", value: await query({ sendAsync() {} }) }),
+    onAsyncMessage: () => ({ dispose() {} }),
+    onDidChange: () => ({ dispose() {} }),
+    codeFromEditor: async () => undefined,
+  };
+  const context = stub.newContext();
+  const queries = new AsyncQueries(context, live);
+  await queries.run("\nselect from trade\n where sym=`a");
+  await queries.run("  \r\n\t\n  count $(x)  \r\nmore");
+  await queries.run("1+1\n2+2");
+  let labels;
+  stub.picks.push((o) => ((labels = o.items.map((i) => i.label)), o.items[0]), () => "Forget Result");
+  await stub.commands.get(ADMIN_COMMANDS.pendingAsync)();
+  // Forgotten is the one picked; what is recorded and shown is the code as sent.
+  const left = queries.state().pending.map((p) => p.code);
+  for (const d of context.subscriptions) d.dispose?.();
+  assert.deepStrictEqual(labels, ["select from trade", "count \\$(x)", "1+1"]);
+  assert.match(stub.messages.at(-1)[1], /^Forget the result of "select from trade"\? q runs it to the end anyway/);
+  assert.deepStrictEqual(left, ["  \r\n\t\n  count $(x)  \r\nmore", "1+1\n2+2"]);
+});
+
 test("a query sent async leaves the connection free; its table, value and error arrive (real q)", { skip }, async (t) => {
   const port = await freePort();
   const q = await startQ(port);

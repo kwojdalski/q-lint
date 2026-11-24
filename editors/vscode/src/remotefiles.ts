@@ -28,12 +28,22 @@ export const LIST_DIRECTORY = [
   " (string k;isf;\"f\"$sz;\"f\"$n)}",
 ].join("\n");
 
+/// A file's first `cap` bytes at most. A cut that falls inside a UTF-8
+/// character - a lead byte in the last four that promises more bytes than
+/// were read - ends before it, so the text shown ends with a character
+/// the file holds (#1930).
 export const READ_FILE = [
   "{[p;cap]",
   " f:hsym`$(),p;",
   " if[not -11h=type key f;'\"not a file\"];",
   " n:hcount f; m:(`long$cap)&n;",
-  " (\"f\"$n;$[m=0;\"\";\"c\"$read1(f;0;m)];m<n;\"f\"$m)}",
+  " b:$[m=0;`byte$();read1(f;0;m)];",
+  " if[m<n;",
+  "  t:`long$-4 sublist b; w:where not 2=t div 64;",
+  "  if[0<count w;",
+  "   i:last w; l:t i;",
+  "   if[((count t)-i)<$[l<192;1;l<224;2;l<240;3;l<248;4;1]; b:(i-count t)_b]]];",
+  " (\"f\"$n;\"c\"$b;m<n;\"f\"$count b)}",
 ].join("\n");
 
 export interface Entry {

@@ -278,6 +278,38 @@ test("Open Dashboard with a name no dashboard has makes one of that name, asking
   assert.strictEqual(value, "Trading ");
 });
 
+// Names went to the picks as plain strings beside "$(add) New dashboard...",
+// and the pick was told from it by its text: a name with $(trash) drew an
+// icon, and a dashboard named as that item could never be opened.
+test("a dashboard's and a saved query's $(name) are text in the picks, and any name can be picked (#1929)", async (t) => {
+  capture();
+  const { live, context } = await setUp(t);
+  const fresh = "$(add) New dashboard...";
+  await context.workspaceState.update(SAVED_QUERIES_KEY, [{ name: "px $(zap)", code: "select from trade" }]);
+  await context.workspaceState.update(DASHBOARDS_KEY, [
+    { name: "$(trash) x", columns: 2, tiles: [] },
+    { name: fresh, columns: 2, tiles: [] },
+  ]);
+  live.runApart = async () => ({ ok: true, type: -7, text: ["1"] });
+  const dashboards = new Dashboards(context, live);
+  const labels = (o) => o.items.map((i) => (typeof i === "string" ? i : i.label));
+  let offered;
+  stub.picks.push((o) => ((offered = labels(o)), o.items[1]));
+  assert.strictEqual(await stub.commands.get(DB_COMMANDS.openDashboard)(), fresh);
+  assert.deepStrictEqual(offered, ["\\$(trash) x", "\\$(add) New dashboard...", fresh]);
+  assert.strictEqual(stub.inputs.length, 0);
+  assert.strictEqual(context.workspaceState.get(DASHBOARDS_KEY).length, 2);
+  // Add to Dashboard: the saved query by its own name, onto the dashboard picked.
+  const seen = [];
+  stub.picks.push((o) => (seen.push(labels(o)), o.items[0]), (o) => (seen.push(labels(o)), o.items[1]));
+  const id = await stub.commands.get(DB_COMMANDS.addToDashboard)(undefined, undefined, "hdb");
+  assert.deepStrictEqual(seen, [["px \\$(zap)"], ["\\$(trash) x", "\\$(add) New dashboard...", fresh]]);
+  const saved = context.workspaceState.get(DASHBOARDS_KEY);
+  assert.deepStrictEqual(saved.map((d) => d.tiles.map((x) => x.query)), [[], ["px $(zap)"]]);
+  assert.strictEqual(saved[1].tiles[0].id, id);
+  dashboards.close();
+});
+
 // A timer was set only when a tile had none: 5 s -> 300 s went on
 // querying every 5 s until the panel closed.
 test("changing a tile's refresh interval sets its timer again (#1123)", async (t) => {
@@ -320,6 +352,47 @@ test("a tile whose view changes while its run is out is shown in the view chosen
   assert.strictEqual(context.workspaceState.get(DASHBOARDS_KEY)[0].tiles[0].view, "line");
   assert.strictEqual(dashboards.contents.get(id).kind, "chart");
   assert.strictEqual(panels[0].posted.filter((m) => m.type === "tile").at(-1).content.kind, "chart");
+  dashboards.close();
+});
+
+// The answer of the run before the failed one was still held, so a view
+// change drew it over the error, under the failed run's time.
+test("a tile whose refresh failed still shows the failure after its view changes (#1925)", async (t) => {
+  const { panels } = capture();
+  const { live, context } = await setUp(t);
+  await context.workspaceState.update(SAVED_QUERIES_KEY, [{ name: "px", code: "select from trade" }]);
+  let fails = false;
+  let runs = 0;
+  live.runApart = async () => {
+    runs++;
+    if (fails) throw new Error("connect ECONNREFUSED 127.0.0.1:5010");
+    return { ok: true, type: 98, text: [], grid: { count: 2, keys: 0, names: ["a", "b"], types: [7, 9], cells: [["1", "2"], ["3", "4"]], raw: [[1, 2], [3, 4]], rank: [[0, 1], [0, 1]] } };
+  };
+  const dashboards = new Dashboards(context, live);
+  stub.inputs.push("Desk");
+  stub.picks.push("$(add) New dashboard...");
+  const id = await stub.commands.get(DB_COMMANDS.addToDashboard)("px", undefined, "hdb");
+  await stub.commands.get(DB_COMMANDS.openDashboard)("Desk");
+  await new Promise((r) => setTimeout(r, 20));
+  assert.strictEqual(dashboards.contents.get(id).kind, "table");
+  fails = true;
+  await dashboards.receive({ type: "refresh", id });
+  const failure = { kind: "error", text: "connect ECONNREFUSED 127.0.0.1:5010" };
+  assert.deepStrictEqual(dashboards.contents.get(id), failure);
+  await dashboards.receive({ type: "view", id, view: "line" });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepStrictEqual(dashboards.contents.get(id), failure);
+  assert.deepStrictEqual(panels[0].posted.filter((m) => m.type === "tile").at(-1).content, failure);
+  assert.strictEqual(runs, 2);
+  // The saved query gone is a failure of the same kind: nothing older is drawn.
+  fails = false;
+  await dashboards.receive({ type: "refresh", id });
+  assert.strictEqual(dashboards.contents.get(id).kind, "chart");
+  await context.workspaceState.update(SAVED_QUERIES_KEY, []);
+  await dashboards.receive({ type: "refresh", id });
+  await dashboards.receive({ type: "view", id, view: "table" });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepStrictEqual(dashboards.contents.get(id), { kind: "error", text: "There is no saved query px any more." });
   dashboards.close();
 });
 

@@ -221,6 +221,11 @@ export class TableStreams {
     connection.whenAsync(update);
     connection.whenClosed(() => {
       stream.closed ??= `the connection to ${label} closed`;
+      // Said by itself, at once: a paused grid is sent no rows to say it
+      // with, and would read as a stream merely held back (#1932).
+      if (!disposed) {
+        void panel.webview.postMessage({ type: "closed", closed: stream.closed });
+      }
       later();
     });
     panel.webview.onDidReceiveMessage((message: { type?: string; paused?: unknown }) => {

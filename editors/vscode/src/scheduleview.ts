@@ -212,8 +212,8 @@ export class ScheduledExports {
     }
     const mode = await window.showQuickPick(
       [
-        { label: "Replace the file each run", detail: target.fsPath, mode: "replace" as const },
-        { label: "Write a new file each run, named with its time", detail: outputPath(target.fsPath, "timestamped", new Date()), mode: "timestamped" as const },
+        { label: "Replace the file each run", detail: iconsEscaped(target.fsPath), mode: "replace" as const },
+        { label: "Write a new file each run, named with its time", detail: iconsEscaped(outputPath(target.fsPath, "timestamped", new Date())), mode: "timestamped" as const },
       ],
       { title: "Scheduled export (6 of 6): each run" },
     );
@@ -251,7 +251,7 @@ export class ScheduledExports {
       return;
     }
     const picked = await window.showQuickPick(
-      list.map((s) => ({ label: iconsEscaped(scheduleText(s)), description: iconsEscaped(s.path), detail: s.last ?? "not run yet", id: s.id, text: scheduleText(s) })),
+      list.map((s) => ({ label: iconsEscaped(scheduleText(s)), description: iconsEscaped(s.path), detail: iconsEscaped(s.last ?? "not run yet"), id: s.id, text: scheduleText(s) })),
       { title: "Scheduled exports" },
     );
     if (picked === undefined) {

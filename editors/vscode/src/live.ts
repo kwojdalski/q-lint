@@ -578,6 +578,11 @@ export class Stopped extends Error {
   }
 }
 
+/// What `Live.runApart` throws when it is cancelled before its connection
+/// opens: nothing was sent to the process, so its caller records no run.
+/// Its message is the connect's own (#1926).
+export class NotSent extends Error {}
+
 export class Live {
   /// Run the active file in its q terminal with Run File with Arguments'
   /// extra words and input (#1005).
@@ -2828,8 +2833,11 @@ export class Live {
     if (!commanded && process.user && process.server !== undefined && (await this.context.secrets.get(this.passwordKey(process))) === undefined) {
       throw new Error(`no password is stored for ${process.user}: connect to ${process.label} once to give it`);
     }
-    // Through its tunnel, as any connect to it is (#1070).
-    const connection = await this.dial(process, await this.targetFor(process), signal);
+    // Through its tunnel, as any connect to it is (#1070). Cancelled while
+    // it opens, nothing was sent, and the error says so (#1926).
+    const connection = await this.dial(process, await this.targetFor(process), signal).catch((error: unknown) => {
+      throw signal?.aborted && error instanceof Error ? new NotSent(error.message) : error;
+    });
     const stop = (): void => connection.abort();
     signal?.addEventListener("abort", stop);
     const controls = this.controls.settings();

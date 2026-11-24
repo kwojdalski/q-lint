@@ -36,3 +36,32 @@ test("directories are listed and files read, capped", { skip }, async (t) => {
   assert.deepStrictEqual(fs.readdirSync(dir).sort(), ["empty.q", "f.txt", "server.q", "sub dir"]);
   assert.deepStrictEqual(await connection.call("{[x] key `.}", 0), ["a"]);
 });
+
+// read1 stops at a byte, and the bytes of a character begun but not ended
+// came back with the rest: the text shown ended in U+FFFD, a character the
+// file does not hold.
+test("a file cut inside a UTF-8 character ends at the character before it (#1930)", { skip }, async (t) => {
+  const { connection, dir } = await connect(t, "a:1\n");
+  const head = async (bytes, cap) => {
+    fs.writeFileSync(path.join(dir, "cut.txt"), bytes);
+    return readFileHead(await connection.call(READ_FILE, path.join(dir, "cut.txt"), cap));
+  };
+  const text = (s) => Buffer.from(s, "utf8");
+  // Two, three and four bytes long, cut after each byte of theirs.
+  assert.deepStrictEqual(await head(text("abé and more"), 3), { size: 13, text: "ab", cut: true, shown: 2 });
+  assert.deepStrictEqual(await head(text("abé and more"), 4), { size: 13, text: "abé", cut: true, shown: 4 });
+  for (const cap of [3, 4]) assert.deepStrictEqual(await head(text("ab€ and"), cap), { size: 9, text: "ab", cut: true, shown: 2 });
+  assert.deepStrictEqual(await head(text("ab€ and"), 5), { size: 9, text: "ab€", cut: true, shown: 5 });
+  for (const cap of [3, 4, 5]) assert.deepStrictEqual(await head(text("ab😀 and"), cap), { size: 10, text: "ab", cut: true, shown: 2 });
+  assert.deepStrictEqual(await head(text("ab😀 and"), 6), { size: 10, text: "ab😀", cut: true, shown: 6 });
+  // Nothing but the start of one: no text, and still cut.
+  assert.deepStrictEqual(await head(text("€uro"), 2), { size: 6, text: "", cut: true, shown: 0 });
+  // A whole file ending mid-character is shown as it is: nothing was cut.
+  assert.strictEqual((await head(Buffer.from([0x61, 0xe2, 0x82]), 100)).shown, 3);
+  // Bytes that are no UTF-8 - four that continue nothing - are left alone.
+  assert.strictEqual((await head(Buffer.from([0x61, 0x80, 0x80, 0x80, 0x80, 0x62]), 5)).shown, 5);
+  // At the cap of a megabyte, as the issue has it.
+  const { FILE_LIMIT } = require("../out/remotefiles.js");
+  const big = await head(Buffer.concat([Buffer.alloc(FILE_LIMIT - 1, 0x61), text("é and more")]), FILE_LIMIT);
+  assert.deepStrictEqual([big.size, big.shown, big.cut, big.text.length, big.text.slice(-2)], [FILE_LIMIT + 10, FILE_LIMIT - 1, true, FILE_LIMIT - 1, "aa"]);
+});

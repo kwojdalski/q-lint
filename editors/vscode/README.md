@@ -712,7 +712,9 @@ daily at given times (`09:00, 17:30`) or every N minutes (`+15`), its
 result written as CSV, Parquet or Excel to the file you choose - replaced
 each run, or written anew with the run's time in its name, as you choose
 then. Each runs while VS Code is open, on a connection of its own, so the
-connected process and your queries are left alone. The grid's row limit
+connected process and your queries are left alone. A time that passed
+while VS Code was closed or the machine asleep is run once when it is next
+open, however many days went by. The grid's row limit
 (`q-lint.query.gridLimit`) does not apply: every row of the result is
 fetched into VS Code and written, however many there are, so a query over
 a large table moves all of it - filter or cap it in the query itself

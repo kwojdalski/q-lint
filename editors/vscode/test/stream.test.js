@@ -293,6 +293,39 @@ test("closing the grid touches its webview no more: the connection's close draws
   assert.deepStrictEqual(thrown, []);
 });
 
+// Paused, the grid is sent no rows - and was sent nothing when its
+// connection closed either, so it went on reading as a stream merely held
+// back until Resume was pressed.
+test("a paused grid is told at once that its connection closed, and sent no rows with it (#1932)", async (t) => {
+  const { fakeQ } = require("./fakeq.js");
+  const { SUBSCRIBE } = require("../out/stream.js");
+  const q = await fakeQ((m) => (Array.isArray(m) && m[0] === SUBSCRIBE ? ["trade", ["time", "sym", "px"]] : null));
+  t.after(() => q.close());
+  const { panels, streams } = await setUp(t, [{ label: "tp", host: "127.0.0.1", port: q.port, tags: [] }]);
+  stub.config.user["tickerplant.stream.enable"] = true;
+  await stub.commands.get(STREAM_COMMANDS.start)("tp", "trade");
+  panels[0].send({ type: "pause", paused: true });
+  const sent = panels[0].posted.length;
+  q.close();
+  for (let i = 0; i < 50 && streams.state()[0].closed === undefined; i++) await sleep(20);
+  await sleep(400);
+  assert.deepStrictEqual(panels[0].posted.slice(sent), [{ type: "closed", closed: "the connection to tp closed" }]);
+  // Resumed, the rows' message says it too, as it did.
+  panels[0].send({ type: "pause", paused: false });
+  assert.strictEqual(panels[0].posted.at(-1).type, "rows");
+  assert.strictEqual(panels[0].posted.at(-1).closed, "the connection to tp closed");
+  // The page writes it beside the Resume button, its rows and status as they were.
+  const page = streamPage();
+  page.listener({ data: { type: "rows", process: "tp", table: "trade", columns: ["sym"], limit: 10, reset: true, rows: [["a"]], kept: 1, total: 1, at: "now" } });
+  const [, status, , closed] = page.body.children[0].children;
+  assert.strictEqual(closed.textContent, "");
+  page.listener({ data: { type: "closed", closed: "the connection to tp closed" } });
+  assert.strictEqual(closed.textContent, "Stopped: the connection to tp closed.");
+  assert.strictEqual(status.textContent, "1 of 1 rows received (last 10 kept), updated now");
+  assert.strictEqual(page.body.children[1].children[0].children[1].children.length, 1);
+  panels[0].dispose();
+});
+
 // The grid listened for updates only once .u.sub had answered: an update
 // a tickerplant published at once, in the same packet as the answer, was
 // dispatched to no listener and lost.
@@ -356,14 +389,17 @@ test("the grid is sent only the rows since it last drew, and all of them when no
   assert.deepStrictEqual(big.rows().at(-1), ["99999"]);
 });
 
-test("the stream page adds the rows that came above its own and drops the oldest, not every row again (#1861)", () => {
-  let made = 0;
+/// media/stream.js run over a document of plain nodes: its body, what the
+/// page listens to messages with, and how many nodes were made (`made`,
+/// which a test may set).
+function streamPage() {
+  const page = { made: 0 };
   class Node {
     constructor(tag) {
       this.tagName = tag;
       this.children = [];
       this.textContent = "";
-      made++;
+      page.made++;
     }
     append(...nodes) {
       for (const n of nodes) {
@@ -399,14 +435,19 @@ test("the stream page adds the rows that came above its own and drops the oldest
       return this.children.length;
     }
   }
-  let listener;
-  const body = new Node("body");
+  page.body = new Node("body");
   const context = {
     acquireVsCodeApi: () => ({ postMessage() {} }),
-    document: { body, createElement: (t) => new Node(t), createDocumentFragment: () => new Node("#fragment") },
-    window: { addEventListener: (_t, f) => (listener = f) },
+    document: { body: page.body, createElement: (t) => new Node(t), createDocumentFragment: () => new Node("#fragment") },
+    window: { addEventListener: (_t, f) => (page.listener = f) },
   };
   require("node:vm").runInNewContext(fs.readFileSync(path.join(__dirname, "..", "media", "stream.js"), "utf8"), context);
+  return page;
+}
+
+test("the stream page adds the rows that came above its own and drops the oldest, not every row again (#1861)", () => {
+  const page = streamPage();
+  const { body, listener } = page;
   const w = new RowWindow(10_000);
   let seen = -1;
   const send = () => {
@@ -420,10 +461,10 @@ test("the stream page adds the rows that came above its own and drops the oldest
   send();
   assert.strictEqual(tbody().children.length, 10_000);
   // A batch of five makes five rows' nodes, not ten thousand.
-  made = 0;
+  page.made = 0;
   w.push(Array.from({ length: 5 }, (_, i) => ["b", String(10_000 + i)]));
   send();
-  assert.ok(made <= 5 * 3 + 1, String(made));
+  assert.ok(page.made <= 5 * 3 + 1, String(page.made));
   assert.strictEqual(tbody().children.length, 10_000);
   // Newest first, the oldest dropped: as a full redraw would show them.
   assert.deepStrictEqual(shown(), w.rows().slice().reverse());

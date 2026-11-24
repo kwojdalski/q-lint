@@ -46,6 +46,56 @@ test("a run is due once a time has come since the last, or the interval has pass
   assert.strictEqual(isDue({ times: ["09:00"], since: ahead }, at(12, 0)), true);
 });
 
+// Only today's times were looked at, so a time missed before midnight -
+// the laptop asleep, VS Code closed - was never run, while one missed
+// earlier the same day was.
+test("a time missed overnight is due the next day, once (#1928)", () => {
+  const day = (d, h, m, s = 0) => new Date(2026, 10, d, h, m, s);
+  const nightly = { times: ["23:30"], since: day(23, 18, 0).getTime() };
+  assert.strictEqual(isDue(nightly, day(23, 23, 29)), false);
+  assert.strictEqual(isDue(nightly, day(23, 23, 45)), true);
+  assert.strictEqual(isDue(nightly, day(24, 0, 0, 20)), true);
+  assert.strictEqual(isDue(nightly, day(24, 8, 0)), true);
+  // Days missed, a weekend asleep: still due, and once it has run, not again until tonight.
+  assert.strictEqual(isDue(nightly, day(27, 8, 0)), true);
+  const ran = { ...nightly, since: day(27, 8, 0).getTime() };
+  assert.strictEqual(isDue(ran, day(27, 8, 0, 30)), false);
+  assert.strictEqual(isDue(ran, day(27, 23, 29)), false);
+  assert.strictEqual(isDue(ran, day(27, 23, 30)), true);
+  // A time before the schedule was made is not one it missed.
+  assert.strictEqual(isDue({ times: ["23:30"], since: day(24, 0, 10).getTime() }, day(24, 8, 0)), false);
+  // The month's first day looks back into the month before.
+  assert.strictEqual(isDue({ times: ["23:30"], since: new Date(2026, 10, 30, 18, 0).getTime() }, new Date(2026, 11, 1, 7, 0)), true);
+});
+
+test("a missed export is run once when noticed, and not when deleted or turned off meanwhile (#1928)", async (t) => {
+  const { live, schedules, context } = await setUp(t, [{ label: "p", host: "h", port: 1, tags: [] }], [{ name: "q", code: "1+1" }]);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-schedule-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  let runs = 0;
+  // The first to run deletes the other, as the user might while it runs.
+  live.runApart = async () => {
+    runs++;
+    await context.workspaceState.update(SCHEDULES_KEY, parseSchedules(context.workspaceState.get(SCHEDULES_KEY)).filter((x) => x.id !== "gone"));
+    return { ok: true, type: -7, text: ["2"] };
+  };
+  const nightly = (id) => ({ id, query: "q", process: "p", format: "csv", path: path.join(dir, `${id}.csv`), times: ["23:30"], mode: "timestamped", since: new Date(2026, 10, 20, 18, 0).getTime() });
+  await context.workspaceState.update(SCHEDULES_KEY, [nightly("s1"), nightly("gone")]);
+  // Asleep from the 20th to the 24th: four nights missed, one run.
+  const woke = new Date(2026, 10, 24, 8, 0);
+  assert.deepStrictEqual(await schedules.tick(woke), ["s1"]);
+  assert.deepStrictEqual(await schedules.tick(new Date(woke.getTime() + 30_000)), []);
+  assert.deepStrictEqual(await schedules.tick(new Date(2026, 10, 24, 23, 29)), []);
+  assert.strictEqual(runs, 1);
+  assert.deepStrictEqual(fs.readdirSync(dir), ["s1-20261124-080000.csv"]);
+  // Turned off, a missed one waits.
+  await context.workspaceState.update(SCHEDULES_KEY, [nightly("s2")]);
+  stub.config.user["export.schedule.enable"] = false;
+  stub.changeConfig("q-lint.export.schedule.enable");
+  assert.deepStrictEqual(await schedules.tick(woke), []);
+  assert.strictEqual(runs, 1);
+});
+
 test("the file a run writes, and which queries may be scheduled", () => {
   const now = new Date(2026, 0, 2, 3, 4, 5);
   assert.strictEqual(outputPath("/x/out.csv", "replace", now), "/x/out.csv");
@@ -150,6 +200,25 @@ test("a saved query's and a process's $(name) are text in the picks, and the sch
   assert.deepStrictEqual(seen, [["t\\$(bug)"], ["p\\$(zap)"]]);
   assert.strictEqual(made.query, "t$(bug)");
   assert.strictEqual(made.process, "p$(zap)");
+});
+
+// A quick pick draws $(name) in a detail as it does in a label: the two
+// file paths of step 6 and a schedule's last outcome went in as written.
+test("a path's and a last outcome's $(name) are text in the picks' details (#1929)", async (t) => {
+  const { schedules, context } = await setUp(t, [{ label: "p", host: "h", port: 1, tags: [] }], [{ name: "trades", code: "select from trade" }]);
+  vscode.window.showSaveDialog = async () => vscode.Uri.file("/data/$(pwd)/out.csv");
+  let details;
+  stub.picks.push("trades", "p", "CSV", (o) => ((details = o.items.map((i) => i.detail)), o.items[0]));
+  stub.inputs.push("+30");
+  const made = await schedules.add();
+  assert.strictEqual(made.path, "/data/$(pwd)/out.csv");
+  assert.strictEqual(details[0], "/data/\\$(pwd)/out.csv");
+  assert.match(details[1], /^\/data\/\\\$\(pwd\)\/out-\d{8}-\d{6}.*\.csv$/);
+  await context.workspaceState.update(SCHEDULES_KEY, [{ ...made, last: "failed at 09:00: p answered '$(flame) is not a table" }]);
+  let listed;
+  stub.picks.push((o) => ((listed = o.items.map((i) => i.detail)), undefined));
+  await schedules.manage();
+  assert.deepStrictEqual(listed, ["failed at 09:00: p answered '\\$(flame) is not a table"]);
 });
 
 // tick built its due list once: a run longer than the tick let the next
@@ -264,7 +333,8 @@ test("due schedules run on their process and write CSV, Parquet and Excel; a wri
     { id: "csv", query: "trades", process: "p", format: "csv", path: out("t.csv"), times: ["09:00"], mode: "replace", since: new Date(2026, 10, 22, 8).getTime() },
     { id: "pq", query: "trades", process: "p", format: "parquet", path: out("t.parquet"), every: 5, mode: "timestamped", since: 0 },
     { id: "xl", query: "trades", process: "p", format: "xlsx", path: out("t.xlsx"), every: 5, mode: "replace", since: 0 },
-    { id: "later", query: "trades", process: "p", format: "csv", path: out("later.csv"), times: ["10:00"], mode: "replace", since: 0 },
+    // Made this morning: its time has not come since (one never run is owed yesterday's, #1928).
+    { id: "later", query: "trades", process: "p", format: "csv", path: out("later.csv"), times: ["10:00"], mode: "replace", since: new Date(2026, 10, 22, 8).getTime() },
     { id: "bad", query: "sneaky", process: "p", format: "csv", path: out("bad.csv"), every: 1, mode: "replace", since: 0 },
   ]);
   assert.deepStrictEqual(await schedules.tick(now), ["csv", "pq", "xl", "bad"]);
