@@ -408,6 +408,25 @@ test("a schema migration's q turns one table into the other, in memory and on di
   assert.deepStrictEqual(await connection.call("{(cols trade;exec t from meta trade)}", 0), [["date", "sym", "px", "sz", "ex"], "dsjjs"]);
 });
 
+// A list column to an atom one, or back, is no cast: not written, and the
+// script runs; a symbol to a char is its first character (#1578).
+test("a schema migration writes no list-atom cast, in memory or on disk", { skip }, async (t) => {
+  const extra = '{[r;d] .Q.dd[r;d,`book`] set .Q.en[r] ([] sym:`a`b;sz:(1 2;3 4 5);px:1 2f)}[r] each 2026.01.05 2026.01.06 2026.01.07;';
+  const { connection } = await connect(t, HDB(extra) + '\na:([] c:("ab";"c"); z:(1 2;3); s:`xy`z; n:1 2)\nb:([] c:"ab"; z:1 2; s:"xz"; n:(1 2;3))\nbook2:([] sym:`$(); sz:`long$(); px:`float$())\n');
+  const info = async (n) => readTableInfo(await connection.call(TABLE_INFO, n, 100));
+  const script = migrationScript("a", await info("a"), "a", await info("b"), "b", "p");
+  assert.match(script, /not written: a cast of c from C to c/);
+  const ran = readRun(await connection.call(RUN_SCRIPT, statements(script)));
+  assert.ok(ran.ok, ran.error);
+  assert.deepStrictEqual(await connection.call("{exec t from meta a}", 0), "CJcj");
+  assert.deepStrictEqual(await connection.call("{a`s}", 0), "xz");
+  const disk = migrationScript("book", await info("book"), "book", await info("book2"), "book2", "p");
+  assert.match(disk, /not written: a cast of sz from J to j/);
+  const done = readRun(await connection.call(RUN_SCRIPT, statements(disk)));
+  assert.ok(done.ok, done.error);
+  assert.doesNotMatch(done.text, /left as they were/);
+});
+
 test("a schema migration parses text and symbols it casts to numbers (#1096)", { skip }, async (t) => {
   const { connection } = await connect(t, 'a:([] x:("12";"3"); y:`4`5)\nb:([] x:`long$(); y:`long$())\n');
   const info = async (n) => readTableInfo(await connection.call(TABLE_INFO, n, 100));

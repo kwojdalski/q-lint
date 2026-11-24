@@ -57,8 +57,25 @@ export function nullOf(type: string): string {
 const typeNameOf = (t: string) =>
   ({ b: "boolean", g: "guid", x: "byte", h: "short", i: "int", j: "long", e: "real", f: "float", c: "char", s: "symbol", p: "timestamp", m: "month", d: "date", z: "datetime", n: "timespan", u: "minute", v: "second", t: "time" })[t] ?? t;
 
+const listType = (t: string) => t !== "" && t === t.toUpperCase();
+
+/// Why a cast from `from` to `to` is not written, or undefined when it is:
+/// a list column's items are not atoms, nor an atom column's lists, so a
+/// cast between them does nothing or fails - but for text, parsed or made
+/// symbols (`C` to an atom type but `c`), and anything made text (`C`).
+/// A symbol to a char, its first character, is made in memory only (#1578).
+export function castProblem(from: string, to: string, onDisk: boolean): string | undefined {
+  if (from === "" || to === "") return undefined;
+  if (to === "C") return listType(from) && from !== "C" ? "a list column made text is not a column of strings" : undefined;
+  if (from === "C") return listType(to) || to === "c" ? "a column of strings holds lists, not chars" : undefined;
+  if (listType(from) || listType(to)) return "a list column's items are lists, an atom column's are not";
+  if (from === "s" && to === "c" && onDisk) return "the column manager makes no symbol into a char";
+  return undefined;
+}
+
 /// The expression that casts column `c` from type `from` to type `to`.
 export function castOf(c: string, from: string, to: string): string {
+  if (to === "c" && from === "s") return `first each string ${c}`;
   if (to === "s" && from === "C") return `\`$${c}`;
   if (to === "C") return `string ${c}`;
   if (to === "s") return `\`$string ${c}`;
@@ -93,14 +110,16 @@ export function migrationScript(name: string, fromInfo: TableInfo, fromWhere: st
     const ops: ColumnOp[] = [
       ...d.drop.map((column): ColumnOp => ({ op: "delete", column })),
       ...d.add.map((a): ColumnOp => ({ op: "add", column: a.name, value: nullOf(a.type) })),
-      ...d.cast.filter((c) => c.to.length === 1 && c.to === c.to.toLowerCase()).map((c): ColumnOp => ({ op: "cast", column: c.name, type: c.to })),
+      ...d.cast.filter((c) => c.to.length === 1 && c.to === c.to.toLowerCase() && castProblem(c.from, c.to, true) === undefined).map((c): ColumnOp => ({ op: "cast", column: c.name, type: c.to })),
       ...d.attrs.map((c): ColumnOp => ({ op: "attr", column: c.name, attr: c.to as "" | "s" | "u" | "p" | "g" })),
       ...(d.order ? [{ op: "reorder", order: d.order } as ColumnOp] : []),
     ];
     const skipped = d.cast.filter((c) => !(c.to.length === 1 && c.to === c.to.toLowerCase()));
+    const refused = d.cast.filter((c) => !skipped.includes(c) && castProblem(c.from, c.to, true) !== undefined);
     return [
       ...head,
       ...skipped.map((c) => `/ not written: a cast of ${c.name} to the nested type ${c.to}, which the column manager does not make on disk`),
+      ...refused.map((c) => `/ not written: a cast of ${c.name} from ${c.from} to ${c.to}: ${castProblem(c.from, c.to, true)}`),
       columnScriptOf(name, ops, process, `migrate ${name} to the schema of ${toWhere}`),
     ].join("\n") + "\n";
   }
@@ -111,7 +130,10 @@ export function migrationScript(name: string, fromInfo: TableInfo, fromWhere: st
   for (const c of d.drop) lines.push(`${t}:delete ${c} from ${t}`);
   // A nested or mixed column takes its empty item once a row: `m:()` is 'length (#1097).
   for (const a of d.add) lines.push(a.type === a.type.toUpperCase() ? `${t}:update ${a.name}:count[i]#enlist ${nullOf(a.type)} from ${t}` : `${t}:update ${a.name}:${nullOf(a.type)} from ${t}`);
-  for (const c of d.cast) lines.push(`${t}:update ${c.name}:${castOf(c.name, c.from, c.to)} from ${t}`);
+  for (const c of d.cast) {
+    const problem = castProblem(c.from, c.to, false);
+    lines.push(problem === undefined ? `${t}:update ${c.name}:${castOf(c.name, c.from, c.to)} from ${t}` : `/ not written: a cast of ${c.name} from ${c.from} to ${c.to}: ${problem}`);
+  }
   for (const c of d.attrs) lines.push(`${t}:update ${c.name}:${c.to ? `\`${c.to}#` : "`#"}${c.name} from ${t}`);
   if (d.order) lines.push(`${t}:${d.order.map((c) => `\`${c}`).join("")} xcols ${t}`);
   const keys = to.keys.filter((k) => to.columns.some((c) => c.name === k));
