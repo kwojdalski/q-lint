@@ -747,3 +747,25 @@ test("an in-place update whose column holds a subquery is a change (#1439)", () 
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("0:, 1: and hopen to a handle built with ` sv, .Q.dd or hsym of a cast are changes (#1440)", () => {
+  const cases = {
+    "(` sv `:a`b) 1: 0x00": ["writes a file with 1:"],
+    "(` sv dir,`f.csv) 0: lines": ["writes a file with 0:"],
+    "(.Q.dd[`:a;`b]) 0: x": ["writes a file with 0:"],
+    ".Q.dd[`:a;`b] 0: x": ["writes a file with 0:"],
+    "hopen ` sv `:a`b": ["opens a file with hopen"],
+    "hopen .Q.dd[`:a;`b]": ["opens a file with hopen"],
+    'hopen hsym `$"/tmp/f"': ["opens the file `:/tmp/f with hopen"],
+    // A parse format left of 0: on a built path, and a built connection, read.
+    '("SJ";",") 0: ` sv `:a`b.csv': [],
+    '("SJ";",") 0: .Q.dd[`:a;`b]': [],
+    'hopen hsym `$"host:5000"': [],
+    "hopen ` sv `:host:5000`x": [],
+    "` sv `:a`b": [],
+    "read0 ` sv `:a`b": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

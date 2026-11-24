@@ -193,9 +193,21 @@ function qText(literal: string): string {
     );
 }
 
+/// Whether `inside` builds a file handle: with `hsym`, `` ` sv `` or
+/// `.Q.dd`, or holds a file's `` `:f ``: `` ` sv `:d`f ``, `` .Q.dd[`:d;`f] ``.
+function buildsHandle(inside: Token[]): boolean {
+  return inside.some(
+    (k, n) =>
+      (k.kind === "name" && (k.text === "hsym" || k.text === ".Q.dd")) ||
+      (k.text === "`" && inside[n + 1]?.text === "sv") ||
+      (k.kind === "sym" && k.text.length > 2 && isFileHandle(k.text)),
+  );
+}
+
 /// Whether the left argument of `0:` or `1:`, ending at `t[end]`, makes a
-/// file handle: `hsym `f`, `hsym[`f]`, `(hsym `f)` or `` (`:f) ``. A
-/// parse format, `("SJ";",")`, does not.
+/// file handle: `hsym `f`, `hsym[`f]`, `(hsym `f)`, `` (`:f) ``,
+/// `` (` sv `:d`f) `` or `` .Q.dd[`:d;`f] ``. A parse format, `("SJ";",")`,
+/// does not.
 function computedHandle(t: Token[], end: number): boolean {
   if (t[end]?.kind === "sym") {
     return t[end - 1]?.text === "hsym";
@@ -213,7 +225,7 @@ function computedHandle(t: Token[], end: number): boolean {
     return false;
   }
   const inside = t.slice(open + 1, end);
-  return t[open - 1]?.text === "hsym" || (t[open].text === "(" && (inside.some((k) => k.text === "hsym") || (inside.length === 1 && inside[0].kind === "sym" && inside[0].text.startsWith("`:")) || castHandle(inside, 0)));
+  return t[open - 1]?.text === "hsym" || t[open - 1]?.text === ".Q.dd" || (t[open].text === "(" && (buildsHandle(inside) || (inside.length === 1 && inside[0].kind === "sym" && inside[0].text.startsWith("`:")) || castHandle(inside, 0)));
 }
 
 /// Whether `t[i]` starts a handle cast from a string, `` `$":f" ``.
@@ -523,13 +535,15 @@ function readStatement(statement: string, found: Set<string>): void {
           j++;
         }
         // The handle as written, made with `hsym`, cast from a string, or a
-        // string: `` hopen hsym `f ``, `` hopen `$":f" ``, `hopen ":f"`.
+        // string: `` hopen hsym `f ``, `` hopen `$":f" ``, `hopen ":f"`,
+        // `` hopen hsym `$"/tmp/f" ``.
         const hsym = t[j]?.text === "hsym" ? 1 : 0;
         const at = t[j + hsym];
+        const cast = at?.text === "`" && t[j + hsym + 1]?.text === "$" && t[j + hsym + 2]?.kind === "str";
         const text =
           at?.kind === "sym" && at.text !== "`"
             ? at.text.slice(1)
-            : castHandle(t, j + hsym)
+            : castHandle(t, j + hsym) || (hsym && cast)
               ? qText(t[j + hsym + 2].text)
               : at?.kind === "str" && !hsym
                 ? qText(at.text)
@@ -537,6 +551,13 @@ function readStatement(statement: string, found: Set<string>): void {
         const handle = text === undefined ? undefined : text.startsWith(":") ? `\`${text}` : hsym ? `\`:${text}` : undefined;
         if (handle !== undefined && isFileHandle(handle)) {
           found.add(`opens the file ${handle} with ${k.text}`);
+        } else if (handle === undefined && ((at?.text === "`" && t[j + 1]?.text === "sv") || at?.text === ".Q.dd")) {
+          // Joined into a path: `` hopen ` sv `:d`f ``, `` hopen .Q.dd[`:d;`f] ``;
+          // of a process when the first handle in it is one.
+          const first = t.slice(j).find((k) => k.kind === "sym" && k.text.startsWith("`:"));
+          if (first === undefined || isFileHandle(first.text)) {
+            found.add(`opens a file with ${k.text}`);
+          }
         }
         continue;
       }
