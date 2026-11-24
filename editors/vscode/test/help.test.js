@@ -72,6 +72,12 @@ test("a hover's examples carry Try it with the code as the command's argument", 
   assert.strictEqual(h.nameAt('"til 3"', 2), undefined);
 });
 
+test("the slash that starts a comment is no name, the slash of Over is", () => {
+  assert.strictEqual(h.nameAt("a:1 / note", 4), undefined);
+  assert.strictEqual(h.nameAt("/ note", 0), undefined);
+  assert.deepStrictEqual(h.nameAt("10 2/ 3", 4), { name: "/", start: 4, end: 5 });
+});
+
 test("the cheat sheet has its four sections, each item with an example and result", () => {
   const sheet = h.readCheatSheet(read("help", "cheatsheet.json"));
   assert.deepStrictEqual(sheet.map((s) => s.section), ["Iterators", "Joins", "Temporal casts", "Attributes"]);

@@ -185,7 +185,8 @@ export function nameAt(line: string, character: number): { name: string; start: 
     const start = m.index ?? 0;
     const end = start + m[0].length;
     if (character >= start && character <= end) {
-      return inStringOrComment(line, start) ? undefined : { name: m[0], start, end };
+      // Through `start` itself: a `/` after a blank starts a comment.
+      return inStringOrComment(line, start + 1) ? undefined : { name: m[0], start, end };
     }
   }
   return undefined;
