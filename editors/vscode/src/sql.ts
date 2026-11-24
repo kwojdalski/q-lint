@@ -49,6 +49,15 @@ export function sqlQuery(sql: string, load = false): string {
 /// first word is not enough.
 const WRITE_WORDS = ["INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "TRUNCATE", "MERGE"];
 
+/// The engine's functions that run q text handed to them (#2006), which
+/// can do anything q can: `qt('<q>')`, a table the compiler evaluates, and
+/// `q('<type>', '<q>', ...)` of the function table `.s.F`, which evaluates
+/// its second argument and applies it to the rest. Of the 178 named
+/// functions of `.s.F` in s.k_ 1.1 and of every other name tried on KDB-X 5
+/// these two alone do; `languagetools_q` asks the q under test again. The
+/// q text may be a column's or a cast's, so the call itself is the write.
+export const RUNS_Q = ["Q", "QT"];
+
 /// KDB-X's SQL lexer, the state machine `.s.P.w` runs over the text `.s.e`
 /// is given: read from `.s.P.w0` and `.s.P.ww` of s.k_ 1.1 on KDB-X 5, and
 /// compared with the tables of the q under test by `languagetools_q`.
@@ -142,11 +151,40 @@ function bareByLine(sql: string): string {
   return out;
 }
 
+/// The names called in quotes, `"qt"(...)`: each quoted token of KDB-X's
+/// lexer that an opening bracket follows, with only blanks and comments
+/// between. The engine reads a name in double quotes as it reads a bare
+/// one, in any case and trimmed of blanks.
+function quotedCalls(sql: string): string[] {
+  const read = lex(sql);
+  const names: string[] = [];
+  for (let i = 0; i < sql.length; i++) {
+    if (read[i] !== "'") {
+      continue;
+    }
+    // To the token's closing quote: a doubled one is text.
+    let end = i + 1;
+    while (end < sql.length && !(sql[end] === sql[i] && sql[end + 1] !== sql[i])) {
+      end += sql[end] === sql[i] ? 2 : 1;
+    }
+    let after = end + 1;
+    while (" *-".includes(read[after] ?? ".")) {
+      after++;
+    }
+    if (sql[after] === "(") {
+      names.push(sql.slice(i + 1, end));
+    }
+    i = end;
+  }
+  return names;
+}
+
 /// The words in `sql` that change data or schema, upper-cased, once each:
-/// a write word anywhere outside comments and quotes, and `REPLACE` where
-/// it starts a statement (elsewhere it is the string function). Where the
-/// two readings of comments and quotes differ, a word either shows counts:
-/// the read-only guard is asked rather than not.
+/// a write word anywhere outside comments and quotes, `REPLACE` where it
+/// starts a statement (elsewhere it is the string function), and a call of
+/// a function that runs q (`RUNS_Q`), given as `QT()`. Where the two
+/// readings of comments and quotes differ, a word either shows counts: the
+/// read-only guard is asked rather than not.
 export function sqlWrites(sql: string): string[] {
   const words = new Set<string>();
   for (const text of [bare(sql), bareByLine(sql)]) {
@@ -155,9 +193,23 @@ export function sqlWrites(sql: string): string[] {
       if (WRITE_WORDS.includes(w)) {
         words.add(w);
       }
+      // A call whatever stands before the name (`-q(`, `1+q(`, `m.q(`) and
+      // whatever the lexer takes for a blank between it and the bracket:
+      // any control character, and a backslash.
+      if (RUNS_Q.includes(w) && /^[\x00-\x20\\]*\(/.test(text.slice(m.index + m[0].length))) {
+        words.add(`${w}()`);
+      }
     }
     if (/(?:^|[;(])\s*replace\b/i.test(text)) {
       words.add("REPLACE");
+    }
+  }
+  for (const name of quotedCalls(sql)) {
+    // More than the engine trims (a tab, a CR and a blank), in either kind
+    // of quote: asked about rather than not.
+    const w = name.replace(/[\x00-\x20]/g, "").toUpperCase();
+    if (RUNS_Q.includes(w)) {
+      words.add(`${w}()`);
     }
   }
   return [...words];

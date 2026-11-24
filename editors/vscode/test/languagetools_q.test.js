@@ -4,7 +4,7 @@
 // holds names, and the SQL tab's query runs on KDB-X's SQL engine (PeachQ's
 // own `.s.e`, backed by DuckDB, refuses it with 'duckdb where DuckDB is not
 // installed). Needs a q binary, so it runs only when QLINT_TEST_Q names one.
-require("./vscode_stub.js");
+const { stub, vscode } = require("./vscode_stub.js");
 const test = require("node:test");
 const assert = require("node:assert");
 const { spawn } = require("node:child_process");
@@ -15,7 +15,10 @@ const path = require("node:path");
 const { QConnection } = require("../out/qclient.js");
 const { ERRORS, errorName } = require("../out/errorexplain.js");
 const { CALLED } = require("../out/deadcodeview.js");
-const { HAS_SQL, LOAD_SQL, LEX_CLASS, LEX_MOVES, SQL_SCHEMA, readSchema, sqlQuery, sqlText, sqlWrites } = require("../out/sql.js");
+const { HAS_SQL, LOAD_SQL, LEX_CLASS, LEX_MOVES, RUNS_Q, SQL_SCHEMA, readSchema, sqlQuery, sqlText, sqlWrites } = require("../out/sql.js");
+const { registerSql } = require("../out/sqlview.js");
+const { LANGUAGE_COMMANDS } = require("../out/languagefeatures.js");
+const { guardCheck, readGuard } = require("../out/guard.js");
 
 const Q = process.env.QLINT_TEST_Q;
 const skip = Q ? false : "QLINT_TEST_Q names no q binary";
@@ -208,4 +211,183 @@ test("the SQL write check reads comments and quotes as KDB-X's lexer does", { sk
     });
   }
   assert.ok(read > 1000, `${read} texts read`);
+});
+
+// #2006: the engine runs q text handed to `qt(...)` and `q(...)`. On the q
+// under test: which functions of the engine's own table run q, each way of
+// writing a call held by the read-only guard on a production-tagged
+// process and a write once let through, and for generated text no call
+// that ran q unasked.
+const SET = "`gz set 99";
+const ENGINE = 'm:([] a:1 2 3)\nst:([] c:("`gz set 99; 1";"`gz set 99; 1"))\ngz:0\n';
+
+async function engine(t) {
+  const c = await connect(t, ENGINE);
+  try {
+    await c.call(LOAD_SQL);
+    await c.call(".s.P.w0");
+    return c;
+  } catch {
+    // PeachQ: no s.k_, and an engine of DuckDB's.
+    return undefined;
+  }
+}
+
+test("of the engine's function table only q runs q text, and qt beside it (#2006)", { skip }, async (t) => {
+  const c = await engine(t);
+  if (c === undefined) {
+    return;
+  }
+  // Each named function with q text in each place of its arguments, a
+  // literal's and a column's, wherever an expression or a table stands.
+  const ran = [
+    "{[n]",
+    ` t:"'${SET}; 1'";`,
+    ' a:(t;t,",",t;t,",",t,",",t;"\'j\',",t;"1,",t;t,",1";"c";"\'j\',c";"\'j\',\'value\',c";"c,",t);',
+    ' f:raze {[n;a] ("select ",n,"(",a,")";"select ",n,"(",a,") from st";"select * from ",n,"(",a,")";"select * from st where 1 = ",n,"(",a,")")}[n] each a;',
+    " any {`gz set 0; @[.s.e;x;{x}]; 99=gz} each f}",
+  ].join("");
+  const names = [...(await c.call("{string k where -11h=type each k:key .s.F}[]"))].map((n) => (Array.isArray(n) ? n.join("") : String(n)));
+  assert.ok(names.includes("q") && names.length > 100, `${names.length} functions`);
+  const running = [];
+  for (const name of [...names, "qt"]) {
+    if (await c.call(ran, name)) {
+      running.push(name.toUpperCase());
+    }
+  }
+  assert.deepStrictEqual(running.sort(), [...RUNS_Q].sort());
+  assert.strictEqual(Number(await c.call("count m")), 3);
+});
+
+test("SQL that runs q is held on a production-tagged process, and is a write once let through (#2006)", { skip }, async (t) => {
+  const c = await engine(t);
+  if (c === undefined) {
+    return;
+  }
+  stub.reset();
+  vscode.languages.registerCompletionItemProvider = () => ({ dispose() {} });
+  t.after(() => (vscode.window.activeTextEditor = undefined));
+  const settings = readGuard((key, fallback) => fallback);
+  const prod = { label: "prod1", tags: ["prod"] };
+  const asked = [];
+  let confirm = false;
+  const live = {
+    activeLabel: () => undefined,
+    fileBinding: () => "prod1",
+    processes: () => [prod],
+    // The guard itself, the user answering `confirm`.
+    guardAllows: async (code, targets, what) => guardCheck(code, targets, settings) === undefined || (asked.push(what), confirm),
+    queryCode: async (code) => void (await c.call(code).catch(() => undefined)),
+  };
+  registerSql(stub.newContext(), live);
+  const run = async (sql) => {
+    vscode.window.activeTextEditor = { document: { languageId: "sql", uri: { toString: () => "untitled:2006" }, getText: () => sql }, selection: { isEmpty: true } };
+    await c.call("gz::0");
+    await stub.commands.get(LANGUAGE_COMMANDS.runSql)();
+    return Number(await c.call("gz"));
+  };
+  const table = `('${SET}; m')`;
+  const value = `('j', '${SET}; 1')`;
+  const forms = [
+    // The issue's own, then the name in any case, with blanks, comments and
+    // the lexer's other blanks before the bracket, and in double quotes.
+    [`select * from qt${table}`, "QT()"],
+    [`select * from QT${table}`, "QT()"],
+    [`select * from Qt \t ${table}`, "QT()"],
+    [`select * from qt\n${table}`, "QT()"],
+    [`select * from qt/* c */${table}`, "QT()"],
+    [`select * from qt -- c\n${table}`, "QT()"],
+    [`select * from qt\f${table}`, "QT()"],
+    [`select * from qt\\${table}`, "QT()"],
+    [`select * from "qt"${table}`, "QT()"],
+    [`select * from "QT" /* c */ ${table}`, "QT()"],
+    [`select * from " qt\t"${table}`, "QT()"],
+    [`select*from(qt${table})`, "QT()"],
+    [`select * from m, qt${table}`, "QT()"],
+    [`with z as (select * from qt${table}) select 1`, "QT()"],
+    [`select a from m where exists (select 1 from qt${table})`, "QT()"],
+    [`select q${value}`, "Q()"],
+    [`select Q ${value} from m`, "Q()"],
+    [`select q/* c */\t${value}`, "Q()"],
+    [`select q -- c\n ${value}`, "Q()"],
+    [`select q\\${value}`, "Q()"],
+    [`select "q"${value}`, "Q()"],
+    [`select " Q " ${value}`, "Q()"],
+    [`select -q${value}`, "Q()"],
+    [`select 1+q${value}`, "Q()"],
+    [`select a from m where a in (q('J', '${SET}; 1 2'))`, "Q()"],
+    [`select a from m where 1 = "q"${value}`, "Q()"],
+    [`select a from m order by q${value}`, "Q()"],
+    [`select count(*) from m group by q${value}`, "Q()"],
+    [`select cast(q${value} as int)`, "Q()"],
+    [`select 1 union select q${value}`, "Q()"],
+    // q text that is no literal of the call: a cast's, and a column's.
+    [`select q('j', cast('${SET}; 1' as text))`, "Q()"],
+    ["select q('j', 'value', c) from st", "Q()"],
+  ];
+  for (const [sql, word] of forms) {
+    confirm = false;
+    const before = asked.length;
+    assert.strictEqual(await run(sql), 0, `ran unasked: ${JSON.stringify(sql)}`);
+    assert.deepStrictEqual(asked.slice(before), [`This SQL statement (${word})`], JSON.stringify(sql));
+    confirm = true;
+    assert.strictEqual(await run(sql), 99, `no write once confirmed: ${JSON.stringify(sql)}`);
+  }
+  // A plain read is sent unasked.
+  const before = asked.length;
+  vscode.window.activeTextEditor = undefined;
+  assert.strictEqual(await run("select q, qt from (select a as q, a as qt from m) z"), 0);
+  assert.strictEqual(asked.length, before);
+  assert.strictEqual(Number(await c.call("count m")), 3);
+});
+
+test("no generated SQL runs q without the write check seeing a call (#2006)", { skip }, async (t) => {
+  const c = await engine(t);
+  if (c === undefined) {
+    return;
+  }
+  // A call as `qt` is made and as `q` is, then what may stand before the
+  // name, the name's own spellings and what may stand before the bracket.
+  const made = [
+    [["select * from ", "select * from m, ", "select*from(", "select 1; select * from "], ["qt", "QT", "Qt", '"qt"', '" QT\t"'], [`('${SET}; m')`, `('${SET}; m') z`, `('${SET}; m'))`]],
+    [["select ", "select -", "select 1+", "select a from m where 1 = ", "select (", "select 1,"], ["q", "Q", '"q"', '" Q "', '"q\r"'], [`('j','${SET}; 1')`, `('J','${SET}; 1 2')`, "('j','value',c) from st", `('j','${SET}; 1') from m`, `('j','${SET}; 1'))`]],
+  ];
+  const lead = ["select 1", "select m.", "select _", "select 'x'", "select /* ", "select -- ", "select '", "select \"x\" ", "select * from (", "", "x"];
+  const name = ['"q\n"', "'q'", "'qt'", '"q""t"', '"q"t', "qq", "q_", "q1", "q.q", "q.", "1q", '""q', "q''"];
+  const gap = ["", "", "", " ", "\t", "\n", "\r", "\f", "\u0001", "\\", "/* c */", "/* ' */", "/* -- */", "-- c\n", "-- c\f", "-- c\t", "-- '\n", "''", '""', "x", ".", "-", ";", "("];
+  const tail = [`'${SET}; m'`, `(('${SET}; m'))`];
+  // The generator's high bits: its low ones repeat every few draws.
+  let seed = 2006;
+  const next = (n) => Math.floor(((seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) / 4294967296) * n);
+  const one = (from, others) => (next(4) > 0 ? from[next(from.length)] : others[next(others.length)]);
+  const texts = [];
+  for (let i = 0; i < 2500; i++) {
+    const [leads, names, tails] = made[next(2)];
+    const all = made.flat();
+    const text = one(leads, [...lead, ...all[0], ...all[3]]) + one(names, [...name, ...all[1], ...all[4]]) + Array.from({ length: next(3) }, () => gap[next(gap.length)]).join("") + one(tails, [...tail, ...all[2], ...all[5]]);
+    texts.push(text, sqlText(text));
+  }
+  const corpus = [...new Set(texts)].filter((x) => x !== "");
+  const ran = "{`gz set 0; @[.s.e;x;{x}]; 99=gz}";
+  let wrote = 0;
+  let unasked = 0;
+  for (let i = 0; i < corpus.length; i += 50) {
+    const chunk = corpus.slice(i, i + 50);
+    const answer = await c.call(`${ran} each (${chunk.map((x) => `"c"$(),0x${Buffer.from(x, "utf8").toString("hex")}`).join(";")};"")`);
+    chunk.forEach((text, k) => {
+      const calls = sqlWrites(text).filter((w) => w.endsWith("()"));
+      if (answer[k]) {
+        wrote++;
+        assert.ok(calls.length > 0, `${JSON.stringify(text)} ran q, and the check gives ${JSON.stringify(sqlWrites(text))}`);
+      } else if (calls.length === 0) {
+        unasked++;
+      }
+    });
+  }
+  // Enough of them ran q for that to mean something, and it is no check
+  // that asks about everything.
+  assert.ok(wrote > 300, `${wrote} texts ran q`);
+  assert.ok(unasked > 300, `${unasked} texts not asked about`);
+  assert.strictEqual(Number(await c.call("count m")), 3);
+  assert.deepStrictEqual([...(await c.call("key `."))].map(String).sort(), ["gz", "m", "st"]);
 });

@@ -890,6 +890,106 @@ test("a SQL write to a discovered or shared process is guarded, and refused when
   }
 });
 
+// #2006: the engine runs q text handed to `qt(...)` and `q(...)`, so a
+// SELECT calling either can do anything q can.
+test("a call of the engine's q-running functions is a write, however the name is written (#2006)", () => {
+  const set = "'`gz set 99; m'";
+  const ran = (sql) => sqlWrites(sqlText(sql));
+  for (const sql of [
+    `select * from qt(${set})`,
+    `select * from QT(${set})`,
+    `select * from Qt (${set})`,
+    `select * from qt\t\n (${set})`,
+    `select * from qt/* c */(${set})`,
+    `select * from qt -- c\n(${set})`,
+    `select * from qt\f(${set})`,
+    `select * from qt\\(${set})`,
+    `select * from m, qt(${set})`,
+    `select*from(qt(${set}))`,
+    `with z as (select * from qt(${set})) select 1`,
+    `select 1; select * from qt(${set})`,
+    `select * from "qt"(${set})`,
+    `select * from "QT" (${set})`,
+    `select * from " qt\t"/* c */(${set})`,
+  ]) {
+    assert.deepStrictEqual(ran(sql), ["QT()"], JSON.stringify(sql));
+  }
+  for (const sql of [
+    `select q('j', ${set})`,
+    `select Q ('j', ${set}) from m`,
+    `select -q('j', ${set})`,
+    `select 1+q('j', ${set})`,
+    `select 1q('j', ${set})`,
+    `select * from m where a in (q('J', ${set}))`,
+    `select 1 from m order by q/* c */('j', ${set})`,
+    // The q text need not be a literal: a column's, or a cast's.
+    "select q('j', 'value', c) from st",
+    `select q('j', cast(${set} as text))`,
+    `select "q"('j', ${set})`,
+    `select " Q "('j', ${set})`,
+    `select 1 where 'a'="q"('C', ${set})`,
+    // Not calls the engine makes, and asked about all the same.
+    `select m.q('j', ${set})`,
+    `select 'q'('j', ${set})`,
+  ]) {
+    assert.deepStrictEqual(ran(sql), ["Q()"], JSON.stringify(sql));
+  }
+  assert.deepStrictEqual(ran(`insert into t select * from qt(${set}) where q('b', '1b')`), ["INSERT", "QT()", "Q()"]);
+  // A name that only holds one, a column of that name, and the same in
+  // quoted text or a comment: no call.
+  for (const sql of [
+    "select q, qt from t",
+    "select qt.a from qt where q in (1, 2)",
+    "select qty(a), freq(a), _q(a), q_(a), q1(a) from t",
+    "select 'qt(' from t",
+    "select \"qty\"(a), \"q\" from t",
+    "select 1 /* qt('x') */ from t",
+    "select 1 -- q('j', 'x')\nfrom t",
+  ]) {
+    assert.deepStrictEqual(ran(sql), [], JSON.stringify(sql));
+  }
+});
+
+test("SQL that runs q on a guarded process is held until confirmed (#2006)", async () => {
+  const { context, restore } = setUp();
+  vscode.languages.registerCompletionItemProvider = () => ({ dispose() {} });
+  try {
+    const sent = [];
+    const asked = [];
+    const process = { label: "prod1", tags: ["prod"] };
+    let allow = false;
+    const live = {
+      activeLabel: () => undefined,
+      fileBinding: () => "prod1",
+      processes: () => [process],
+      guardAllows: async (code, targets, what) => (asked.push([code, targets[0].label, what]), allow),
+      queryCode: async (c) => void sent.push(c),
+    };
+    registerSql(context, live);
+    const sql = "select * from qt('`gz set 99; m')";
+    vscode.window.activeTextEditor = { document: { languageId: "sql", uri: { toString: () => "untitled:6" }, getText: () => sql }, selection: { isEmpty: true } };
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.runSql)(), undefined);
+    assert.deepStrictEqual(asked, [["`t insert ()", "prod1", "This SQL statement (QT())"]]);
+    assert.deepStrictEqual(sent, []);
+    vscode.window.activeTextEditor.document.getText = () => "select \"q\" /* c */ ('j', '`gz set 99; 1')";
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.runSql)(), undefined);
+    assert.deepStrictEqual(asked[1], ["`t insert ()", "prod1", "This SQL statement (Q())"]);
+    assert.deepStrictEqual(sent, []);
+    // Confirmed, it is sent as typed.
+    allow = true;
+    vscode.window.activeTextEditor.document.getText = () => sql;
+    await stub.commands.get(LANGUAGE_COMMANDS.runSql)();
+    assert.deepStrictEqual(sent, [sqlQuery(sql, true)]);
+    // With no process to ask about, it is refused.
+    live.fileBinding = () => undefined;
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.runSql)(), undefined);
+    assert.match(stub.messages.at(-1)[1], /before running SQL that changes data \(QT\(\)\)/);
+    assert.strictEqual(sent.length, 1);
+  } finally {
+    restore();
+  }
+});
+
 test("the q the SQL tab shows the guard is one the guard reads as a write", () => {
   const { writes } = require("../out/guard.js");
   assert.ok(writes("`t insert ()").length > 0);
