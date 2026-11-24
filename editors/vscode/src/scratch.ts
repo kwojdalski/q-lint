@@ -15,13 +15,20 @@ import type { Live, ProcessArg } from "./live";
 import { PROCESS_TOOL_COMMANDS, toolOff, toolOn } from "./processtools";
 import { CONTROL_COMMANDS } from "./querycontrols";
 import { plainMessage } from "./history";
+import { SHARED_SOURCE } from "./discovery";
+import { sharedScope } from "./processes";
 
 /// The file a process's scratch buffer is kept in: its label made safe for
 /// a file name, and a short hash of the label so two labels that clean up
-/// alike stay apart.
-export function scratchFileName(label: string): string {
+/// alike stay apart. A shared-list process's is hashed with its `scope`
+/// too, the folder and address: another repository's `.qlint/rdb` is
+/// another process, and is not given this one's buffer (#1824).
+export function scratchFileName(label: string, scope?: string): string {
   const safe = label.replace(/[^A-Za-z0-9_.-]+/g, "_").replace(/^[._]+/, "").slice(0, 60) || "process";
-  const hash = createHash("sha256").update(label).digest("hex").slice(0, 8);
+  const hash = createHash("sha256")
+    .update(scope === undefined ? label : `${label}\n${scope}`)
+    .digest("hex")
+    .slice(0, 8);
   return `${safe}-${hash}.q`;
 }
 
@@ -45,7 +52,8 @@ export function registerScratchBuffers(
       return "no process";
     }
     const dir = join(context.globalStorageUri.fsPath, "scratch");
-    const path = join(dir, scratchFileName(process.label));
+    const scope = process.server === SHARED_SOURCE ? sharedScope(process, workspace.workspaceFolders?.[0]?.uri.toString() ?? "") : undefined;
+    const path = join(dir, scratchFileName(process.label, scope));
     try {
       mkdirSync(dir, { recursive: true });
       if (!existsSync(path)) {
