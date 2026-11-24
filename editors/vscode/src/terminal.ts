@@ -93,7 +93,15 @@ export function quote(word: string, shell: Shell): string {
 /// word or value with either, or with a line break, is refused there; and
 /// PowerShell is refused a word with a `"`, an empty word, and a spaced
 /// one ending in a backslash.
-export function commandLine(binary: string, args: string[], shell: Shell, env: Record<string, string> = {}): string | { error: string } {
+/// `refs` sets each of its names from the variable it maps it to, which the
+/// terminal's environment holds, so the value is not on the line.
+export function commandLine(
+  binary: string,
+  args: string[],
+  shell: Shell,
+  env: Record<string, string> = {},
+  refs: Record<string, string> = {},
+): string | { error: string } {
   if (shell === "cmd") {
     const bad = [binary, ...args, ...Object.entries(env).map(([n, v]) => `${n}=${v}`)].find((w) => /["%\r\n]/.test(w));
     if (bad !== undefined) {
@@ -121,23 +129,24 @@ export function commandLine(binary: string, args: string[], shell: Shell, env: R
     line = `& ${line}`;
   }
   const names = Object.keys(env);
-  if (names.length === 0) {
+  const byRef = Object.keys(refs);
+  if (names.length === 0 && byRef.length === 0) {
     return line;
   }
   if (shell === "posix") {
     // Set for q alone, as `NAME=value q` sets it.
-    return [...names.map((n) => `${n}=${quote(env[n], "posix")}`), line].join(" ");
+    return [...byRef.map((n) => `${n}="$${refs[n]}"`), ...names.map((n) => `${n}=${quote(env[n], "posix")}`), line].join(" ");
   }
   if (shell === "csh") {
     // csh has no `NAME=value q`: env sets them for q alone (#1683).
-    return ["env", ...names.map((n) => `${n}=${quote(env[n], "csh")}`), line].join(" ");
+    return ["env", ...byRef.map((n) => `${n}="$${refs[n]}"`), ...names.map((n) => `${n}=${quote(env[n], "csh")}`), line].join(" ");
   }
   if (shell === "powershell") {
     // Always quoted: the right of an assignment is an expression, where a
     // bare `/opt/q` is a division.
-    return [...names.map((n) => `$env:${n}=${powershellLiteral(env[n])}`), line].join("; ");
+    return [...byRef.map((n) => `$env:${n}=$env:${refs[n]}`), ...names.map((n) => `$env:${n}=${powershellLiteral(env[n])}`), line].join("; ");
   }
-  return [...names.map((n) => `set "${n}=${env[n]}"`), line].join(" && ");
+  return [...byRef.map((n) => `set "${n}=%${refs[n]}%"`), ...names.map((n) => `set "${n}=${env[n]}"`), line].join(" && ");
 }
 
 /// `file` with a leading `~` read as `home`, as a shell reads it: a q

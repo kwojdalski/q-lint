@@ -176,6 +176,14 @@ test("a string that runs onto the next line keeps its newline as \\n", () => {
   assert.strictEqual(replLine('s:("ab\n  cd";\n  1)'), 's:("ab\\n  cd"; 1)');
 });
 
+test("a name set by reference is read from the terminal's environment on each shell (#1684)", () => {
+  const refs = { QHOME: "QLINT_DOTENV_QHOME" };
+  assert.strictEqual(commandLine("q", [], "posix", { QLIC: "/k" }, refs), 'QHOME="$QLINT_DOTENV_QHOME" QLIC=/k q');
+  assert.strictEqual(commandLine("q", [], "csh", {}, refs), 'env QHOME="$QLINT_DOTENV_QHOME" q');
+  assert.strictEqual(commandLine("q", [], "powershell", {}, refs), "$env:QHOME=$env:QLINT_DOTENV_QHOME; q");
+  assert.strictEqual(commandLine("q", [], "cmd", {}, refs), 'set "QHOME=%QLINT_DOTENV_QHOME%" && q');
+});
+
 test("an env file's inline comment is not part of the value (#1686)", () => {
   const { env } = parseEnv('QHOME=/opt/q # kdb home\nQLIC="/opt/lic" # licence\nS=\'a # b\' # c\nHASH=a#b\nNONE= # nothing\nQ="say # hi"');
   assert.deepStrictEqual(env, { QHOME: "/opt/q", QLIC: "/opt/lic", S: "a # b", HASH: "a#b", NONE: "", Q: "say # hi" });
