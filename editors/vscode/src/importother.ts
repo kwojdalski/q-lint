@@ -19,13 +19,15 @@
 // in the user settings: `kdb.servers`, an object of
 // `{ serverAlias, serverName (the host), serverPort (a string), tls, auth }`,
 // and `kdb.labelsConnectionMap`, a list of `{ labelName, connections: [alias] }`
-// - read here as tags. Its **Export Connections** writes
+// - read here as tags, a label of several words as one (`labelTags`). Its
+// **Export Connections** writes
 // `{ "connections": { "KDB": [...], "Insights": [...] } }`, a KDB entry
 // holding a `username` and `password` when auth was included. Insights
 // connections are not q processes, and are not taken. Its user name is
 // kept with the password in its secret storage, so `kdb.servers` gives
 // none.
 import { inflateSync } from "node:zlib";
+import { DEFAULT_GUARD_TAGS } from "./guard";
 import { hostProblem, parseTags, plainHost, portProblem, type Process } from "./processes";
 
 export interface Imported {
@@ -197,7 +199,32 @@ export function readQStudio(text: string): Imported {
 }
 
 /// The tags `kdb.labelsConnectionMap` gives each alias.
-function kxLabels(map: unknown): Map<string, string[]> {
+/// A word that says the one after it is not so: `Non Prod` is not production.
+const NEGATES = new Set(["non", "not"]);
+
+/// A KX label as tags (#1985). A label of one word is that tag. One of
+/// several is one tag too, its words joined by `-` as `folderTags` joins a
+/// qStudio folder's: `Non Prod` is `non-prod`, and never `non` and `prod`,
+/// which coloured a UAT process red and guarded it as production.
+///
+/// A word the read-only guard guards (`guarded`, and the three it guards by
+/// default) stays a tag of its own beside that one, so `Prod EU` - `prod-eu`
+/// and `prod` - is guarded as it was. Only `non` or `not` right before the
+/// word drops it: any other label holding it (`Pre Prod`, `NO Prod`,
+/// `Non Prod and Prod`) may be production, and is left guarded.
+export function labelTags(label: string, guarded: readonly string[] = DEFAULT_GUARD_TAGS): string[] {
+  const words = label
+    .toLowerCase()
+    .split(/[\s,]+/)
+    .filter((w) => w !== "");
+  if (words.length < 2) {
+    return words;
+  }
+  const production = new Set([...DEFAULT_GUARD_TAGS, ...guarded.map((g) => g.trim().toLowerCase())]);
+  return [words.join("-"), ...words.filter((w, i) => production.has(w) && !NEGATES.has(words[i - 1]))];
+}
+
+function kxLabels(map: unknown, guarded?: readonly string[]): Map<string, string[]> {
   const out = new Map<string, string[]>();
   if (!Array.isArray(map)) {
     return out;
@@ -209,7 +236,7 @@ function kxLabels(map: unknown): Map<string, string[]> {
     }
     for (const alias of e.connections) {
       if (typeof alias === "string") {
-        out.set(alias, [...(out.get(alias) ?? []), e.labelName]);
+        out.set(alias, [...(out.get(alias) ?? []), ...labelTags(e.labelName, guarded)]);
       }
     }
   }
@@ -218,10 +245,11 @@ function kxLabels(map: unknown): Map<string, string[]> {
 
 /// KX's kdb connections: entries of `kdb.servers` or of an export's
 /// `connections.KDB`, with `kdb.labelsConnectionMap`'s labels as tags.
-export function readKxServers(servers: unknown, labelMap?: unknown): Imported {
+/// `guarded`: the read-only guard's tags, which `labelTags` reads a label by.
+export function readKxServers(servers: unknown, labelMap?: unknown, guarded?: readonly string[]): Imported {
   const out: Imported = { processes: [], skipped: [] };
   const seen = new Set<string>();
-  const labels = kxLabels(labelMap);
+  const labels = kxLabels(labelMap, guarded);
   const entries = Array.isArray(servers) ? servers : typeof servers === "object" && servers !== null ? Object.values(servers) : [];
   for (const entry of entries) {
     const e = entry as Record<string, unknown> | null;

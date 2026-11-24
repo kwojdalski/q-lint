@@ -103,6 +103,67 @@ test("KX's kdb.servers with its labels as tags, and its export file; Insights le
   assert.throws(() => readKxExport([]), /connections/);
 });
 
+// A KX label of several words is one tag, not one a word (#1985): `Non Prod`
+// was read as `non` and `prod`, and a UAT process guarded as production.
+test("a KX label of several words is one tag; a guarded word in it stays one unless the label says non (#1985)", () => {
+  const { guardedBy } = require("../out/guard.js");
+  const guard = { enabled: true, tags: ["prod", "prd", "production"] };
+  const tags = (labelName, guarded) => {
+    const read = readKxServers({ a: { serverName: "h", serverPort: "5000", serverAlias: "p" } }, [{ labelName, connections: ["p"] }], guarded);
+    return read.processes[0].tags;
+  };
+  // Not production, said outright: one tag, as qStudio's folder of the same name gives, and not guarded.
+  assert.deepStrictEqual(tags("Non Prod"), ["non-prod"]);
+  assert.deepStrictEqual(readQStudioXml('<ServerConfig name="uat1" host="h" port="5000" folder="Non Prod"/>').processes[0].tags, ["non-prod"]);
+  assert.deepStrictEqual(tags("  Not   Production "), ["not-production"]);
+  assert.deepStrictEqual(tags("Non Prod EU"), ["non-prod-eu"]);
+  for (const label of ["Non Prod", "Not Production", "Non Prod EU", "non-prod"]) {
+    assert.deepStrictEqual(guardedBy({ tags: tags(label) }, guard), [], label);
+  }
+  // No guarded word: the one tag.
+  assert.deepStrictEqual(tags("London Desk"), ["london-desk"]);
+  assert.deepStrictEqual(tags("FX, Spot"), ["fx-spot"]);
+  // Production, or what may be: the guarded word stays a tag, and the process guarded.
+  assert.deepStrictEqual(tags("Prod EU"), ["prod-eu", "prod"]);
+  assert.deepStrictEqual(tags("EU Production"), ["eu-production", "production"]);
+  assert.deepStrictEqual(tags("Pre Prod"), ["pre-prod", "prod"]);
+  assert.deepStrictEqual(tags("Prod Non Critical"), ["prod-non-critical", "prod"]);
+  assert.deepStrictEqual(tags("Non Prod and Prod"), ["non-prod-and-prod", "prod"]);
+  assert.deepStrictEqual(tags("NO Prod"), ["no-prod", "prod"]);
+  for (const label of ["Prod", "Prod EU", "EU Production", "Pre Prod", "Prod Non Critical", "Non Prod and Prod", "NO Prod", "PRD 2"]) {
+    assert.deepStrictEqual(guardedBy({ tags: tags(label) }, guard).length, 1, label);
+  }
+  // The guard's own tags say which words those are, beside the usual three.
+  assert.deepStrictEqual(tags("Live EU"), ["live-eu"]);
+  assert.deepStrictEqual(tags("Live EU", ["Live"]), ["live-eu", "live"]);
+  assert.deepStrictEqual(tags("Non Live", ["live"]), ["non-live"]);
+  assert.deepStrictEqual(tags("Prod EU", ["live"]), ["prod-eu", "prod"]);
+  // One word, and several labels, as before.
+  assert.deepStrictEqual(tags("Prod"), ["prod"]);
+  assert.deepStrictEqual(tags("   "), []);
+  const both = readKxServers({ a: { serverName: "h", serverPort: "5000", serverAlias: "p" } }, [
+    { labelName: "Prod EU", connections: ["p"] },
+    { labelName: "prod", connections: ["p"] },
+  ]);
+  assert.deepStrictEqual(both.processes[0].tags, ["prod-eu", "prod"]);
+});
+
+test("Import Connections from KX Extension reads a label's guarded words by q-lint.processes.readOnlyGuard.tags (#1985)", async (t) => {
+  const { live } = await setUp(t);
+  stub.config.user["processes.readOnlyGuard.tags"] = ["live"];
+  stub.config.user["kdb.servers"] = {
+    a: { serverName: "localhost", serverPort: "6000", serverAlias: "kxa" },
+    b: { serverName: "localhost", serverPort: "6001", serverAlias: "kxb" },
+  };
+  stub.config.user["kdb.labelsConnectionMap"] = [
+    { labelName: "Live EU", connections: ["kxa"] },
+    { labelName: "Non Live", connections: ["kxb"] },
+  ];
+  stub.picks.push("From this VS Code's settings", "Import");
+  assert.strictEqual(await stub.commands.get(ADMIN_COMMANDS.importKx)(), 2);
+  assert.deepStrictEqual(live.processes().slice(-2).map((p) => [p.label, p.tags]), [["kxa", ["live-eu", "live"]], ["kxb", ["non-live"]]]);
+});
+
 test("the switch: on by default, contributed, its commands hidden while off", () => {
   assert.strictEqual(readAdmin((_k, f) => f).importOther, true);
   const section = pkg.contributes.configuration.find((c) => c.title === "q-lint: process admin");

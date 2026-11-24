@@ -8,6 +8,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Uri, commands, env, window, workspace, type ExtensionContext } from "vscode";
 import { ADMIN_COMMANDS, adminOff, readAdmin } from "./admin";
+import { readGuard } from "./guard";
 import { readKxExport, readKxServers, readQStudio, type Imported } from "./importother";
 import type { Live } from "./live";
 import { plainMessage } from "./history";
@@ -116,7 +117,8 @@ export class ImportOther {
         }
         if (picked.id === "settings") {
           const kdb = workspace.getConfiguration("kdb");
-          return await this.add(readKxServers(kdb.get<unknown>("servers"), kdb.get<unknown>("labelsConnectionMap")), "KX's extension", "kdb.servers");
+          const guarded = readGuard((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback)).tags;
+          return await this.add(readKxServers(kdb.get<unknown>("servers"), kdb.get<unknown>("labelsConnectionMap"), guarded), "KX's extension", "kdb.servers");
         }
         chosen = (await window.showOpenDialog({ title: "KX connections export", canSelectMany: false, filters: { JSON: ["json"] } }))?.[0];
         if (chosen === undefined) {
