@@ -47,10 +47,12 @@ export function namespaceIn(code: string): string | undefined {
   return undefined;
 }
 
-/// The code the guard reads for a run: the statements, and a write to the
-/// namespace, which the run makes whatever they do.
+/// The code the guard reads for a run: a write to the namespace, which the
+/// run makes whatever they do, and the statements. The write goes first:
+/// code ending the script (`\`) or opening a comment (`/`) would hide what
+/// came after it from the guard (#1441).
 export function guardedCode(namespace: string, code: string): string {
-  return `${code}\n\`${namespace} set get \`${namespace}`;
+  return `\`${namespace} set get \`${namespace}\n${code}`;
 }
 
 export function registerFunctionProfile(
