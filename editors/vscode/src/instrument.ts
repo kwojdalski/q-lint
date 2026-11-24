@@ -17,7 +17,9 @@
 // function's own body; the locals capture keeps the call's arguments as the
 // parameter cache (#892) does, which statement it is on, and each local as
 // a statement at the top of the body assigns it.
+import type { Live } from "./live";
 import { codeMask, lambdas, parameters, type Lambda } from "./paramcache";
+import type { Process } from "./processes";
 import { FULL_TEXT } from "./qtext";
 
 /// One statement of a lambda's own body: offsets of its first code
@@ -254,4 +256,59 @@ export function readInstalled(raw: unknown, count: number): string[] {
     throw new Error(`the process answered ${out.length} statuses for ${count} functions`);
   }
   return out;
+}
+
+/// How long a restore over a connection of its own waits for the process,
+/// in ms: it is tried at the end of a run whose own restore could not be
+/// sent, often because the process is busy, and the run does not wait on
+/// that for long.
+export const RESTORE_WAIT = 10_000;
+
+/// Whether `message` is `Live.runOnActive`'s for the read-only guard's
+/// question declined: the user said not to send it, so no other way is tried.
+export const guardDeclined = (message: string): boolean => /was not confirmed\.?$/.test(message);
+
+/// Put back what a run left instrumented on `process` - the one INSTALL
+/// went to, whichever is active now - over a connection of its own, closed
+/// after: the run's own restore could not be sent (another process became
+/// active, the query timed out, the connection closed). The read-only
+/// guard is asked about it as it is about the run's own. Throws why
+/// nothing was put back, within `wait` ms.
+export async function restoreApart(
+  live: Pick<Live, "guardAllows" | "openSeparate">,
+  process: Process,
+  ns: "cov" | "err",
+  what: string,
+  wait = RESTORE_WAIT,
+): Promise<Restored> {
+  const restore = restoreExpression(ns);
+  if (!(await live.guardAllows(restore, [process], what))) {
+    throw new Error(`changing the read-only process ${process.label} was not confirmed`);
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${process.label} did not answer within ${wait / 1000} s`)), wait);
+  });
+  const opening = live.openSeparate(process);
+  try {
+    const connection = await Promise.race([opening, late]);
+    return readRestored(await Promise.race([connection.call(restore), late]));
+  } finally {
+    clearTimeout(timer);
+    // Closed whether it answered or not: a connection a busy process
+    // accepts only later sends nothing then, into some other run.
+    void opening.then(
+      (connection) => connection.abort(),
+      () => undefined,
+    );
+  }
+}
+
+/// What the user is told when the functions a run instrumented could not
+/// be put back: which they are, by name, where, why, and what puts them
+/// back (`next`, "coverage run"). `names` are those INSTALL was sent.
+export function leftInstrumented(names: readonly string[], process: string, why: string, next: string, most = 10): string {
+  const shown = names.slice(0, most).join(", ") + (names.length > most ? ` and ${names.length - most} more` : "");
+  const they = names.length === 1 ? "it" : "them";
+  return `q-lint: ${shown} may still be instrumented on ${process}: ${names.length === 1 ? "it" : "they"} could not be put back (${why.replace(/\.$/, "")}). The next ${next} on ${process} puts ${they} back first.`;
 }

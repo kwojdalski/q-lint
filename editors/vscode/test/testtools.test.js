@@ -265,6 +265,115 @@ test("coverage of a file with unsaved edits is drawn on the lines its editor hol
   assert.ok(made.length > 0);
 });
 
+/// As `fakeLive`, with the run's last restore on the active connection
+/// failing as `end` says (a throw, or undefined for nothing sent), and a
+/// connection of its own to a process answering as `apart` does.
+function fakeLiveLeft(end, apart, allowed = true) {
+  const live = fakeLive((lambda, ...args) => {
+    if (lambda === DRIFT) {
+      return { name: ["f", "g"], state: ["lambda", "lambda"], text: ["{[a]\n  b:a+1;\n  $[b>2;g b;b]}", "{x*2}"] };
+    }
+    if (lambda === installLambda("cov")) {
+      return args[0].map(() => "ok");
+    }
+    if (lambda === restoreExpression("cov")) {
+      return { kept: [], d: [] };
+    }
+    return { ok: true, failed: false, text: "1b" };
+  });
+  const runOnActive = live.runOnActive.bind(live);
+  live.runOnActive = async (code, query, guard, expect) => (code === restoreExpression("cov") ? end() : runOnActive(code, query, guard, expect));
+  live.apart = [];
+  live.asked = [];
+  live.guardAllows = async (code, targets, what) => (live.asked.push([code, targets.map((p) => p.label), what]), allowed);
+  live.openSeparate = async (process) => ({
+    call: async (lambda) => (live.apart.push([process.label, lambda]), apart()),
+    abort() {},
+  });
+  return live;
+}
+
+test("a coverage run whose restore cannot be sent puts the functions back over a connection to the process it instrumented, or says which are left (#1892)", async () => {
+  const moved = () => {
+    throw new Error("dev is no longer the active process; nothing was run.");
+  };
+  const start = async (live) => {
+    stub.reset();
+    const made = fakeVscode({ "/ws/lib.q": LIB });
+    stub.config.user["testExplorer.coverage.enable"] = true;
+    const explorer = registerTestExplorer(stub.newContext(), live, () => ({ sendRequest: async () => TESTS }));
+    await explorer.discover();
+    await explorer.run(undefined, false, true);
+    return { explorer, run: made[0].runs.at(-1) };
+  };
+  // Another process became active before the run ended: the restore goes
+  // to dev all the same, and its counts are the coverage.
+  let live = fakeLiveLeft(moved, () => ({ kept: [], d: [1, 1, 0] }));
+  let s = await start(live);
+  assert.deepStrictEqual(live.apart, [["dev", restoreExpression("cov")]]);
+  assert.deepStrictEqual(live.asked, [[restoreExpression("cov"), ["dev"], "Putting back the functions instrumented for coverage"]]);
+  assert.match(s.run.output, /Coverage: 2 of 3 statements run/);
+  assert.deepStrictEqual(stub.messages, []);
+  // Nothing sent (no connection, a query running): the same.
+  live = fakeLiveLeft(() => undefined, () => ({ kept: [], d: [1, 1, 0] }));
+  s = await start(live);
+  assert.deepStrictEqual(live.apart, [["dev", restoreExpression("cov")]]);
+  assert.deepStrictEqual(stub.messages, []);
+  // That fails too: the user is told which functions, and where.
+  live = fakeLiveLeft(moved, () => {
+    throw new Error("the connection is closed");
+  });
+  s = await start(live);
+  const left =
+    "q-lint: f, g may still be instrumented on dev: they could not be put back (dev is no longer the active process; nothing was run; nor over a connection of its own: the connection is closed). The next coverage run on dev puts them back first.";
+  assert.deepStrictEqual(stub.messages, [["warning", left]]);
+  assert.ok(s.run.output.includes(left), s.run.output);
+  assert.deepStrictEqual(s.run.events.at(-1), ["end"]);
+  // Declined at the guard's question: nothing is sent another way.
+  live = fakeLiveLeft(() => {
+    throw new Error("Not run: changing the read-only process dev was not confirmed.");
+  }, () => ({ kept: [], d: [] }));
+  s = await start(live);
+  assert.deepStrictEqual([live.apart, live.asked], [[], []]);
+  assert.match(stub.messages.at(-1)[1], /^q-lint: f, g may still be instrumented on dev: they could not be put back \(Not run: changing the read-only process dev was not confirmed\)\./);
+  // Asked by the connection of its own, and declined there.
+  live = fakeLiveLeft(moved, () => ({ kept: [], d: [] }), false);
+  s = await start(live);
+  assert.deepStrictEqual(live.apart, []);
+  assert.match(stub.messages.at(-1)[1], /f, g may still be instrumented on dev/);
+});
+
+test("a coverage run that fails once the functions were replaced puts them back too (#1892)", async () => {
+  stub.reset();
+  const made = fakeVscode({ "/ws/lib.q": LIB });
+  const apart = [];
+  const live = fakeLive((lambda) => {
+    if (lambda === DRIFT) {
+      return { name: ["f", "g"], state: ["lambda", "lambda"], text: ["{[a]\n  b:a+1;\n  $[b>2;g b;b]}", "{x*2}"] };
+    }
+    if (lambda === installLambda("cov")) {
+      // One status for two functions: not an answer INSTALL gives.
+      return ["ok"];
+    }
+    if (lambda === restoreExpression("cov")) {
+      return { kept: [], d: [] };
+    }
+    return { ok: true, failed: false, text: "1b" };
+  });
+  live.guardAllows = async () => true;
+  live.openSeparate = async (process) => ({ call: async (lambda) => (apart.push([process.label, lambda]), { kept: [], d: [0, 0, 0] }), abort() {} });
+  stub.config.user["testExplorer.coverage.enable"] = true;
+  const explorer = registerTestExplorer(stub.newContext(), live, () => ({ sendRequest: async () => TESTS }));
+  await explorer.discover();
+  await explorer.run(undefined, false, true);
+  assert.deepStrictEqual(apart, [["dev", restoreExpression("cov")]]);
+  const run = made[0].runs.at(-1);
+  assert.match(run.output, /Coverage not counted: the process answered 1 statuses for 2 functions/);
+  // The tests ran all the same, and nothing is left to put back at the end.
+  assert.deepStrictEqual(live.sent.map((x) => x.lambda), [restoreExpression("cov"), DRIFT, installLambda("cov"), TEST_RUN, TEST_RUN]);
+  assert.deepStrictEqual(stub.messages, []);
+});
+
 test("a failed assertion's two sides are a diff, and Re-run Failed runs only those that failed; off, neither", async () => {
   stub.reset();
   fakeVscode({ "/ws/suite.csv": "action,ms,bytes,lang,code,repeat,minver,comment\ntrue,0,0,q,f[1]~3,1,,\ntrue,0,0,q,count t,1,,\n" });

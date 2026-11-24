@@ -772,10 +772,14 @@ A function changed on the process since it was loaded, or not loaded, is
 left alone, and the run's output names those; one redefined while the tests
 ran is left as it is then. `.qlint.cov` holds the counts and the originals
 meanwhile, and is deleted after; `.qlint` itself stays, empty when nothing
-else of q-lint's is in it, as q cannot remove a namespace. A run
-interrupted before the functions were put back (the connection lost, say)
-is put right first thing in the next coverage run. The replacing goes
-through the read-only guard. A statement is
+else of q-lint's is in it, as q cannot remove a namespace. When the
+functions cannot be put back over the active connection - another process
+became active, the query timed out, the connection was lost - they are put
+back over a connection of its own to the process the run instrumented,
+waited for for 10 seconds; failing that, a warning names the functions that
+may still be instrumented and the process, and the next coverage run there
+puts them right first thing. The replacing and the putting back go through
+the read-only guard; declined there, nothing more is sent. A statement is
 counted, not each line inside it: an `if[...]` or a nested lambda counts
 as part of the statement it is in. `q-lint.testExplorer.coverage.enable`
 removes the profile.
