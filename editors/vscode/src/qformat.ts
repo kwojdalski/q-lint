@@ -500,6 +500,13 @@ export function formatValue(value: unknown, type?: number): string[] {
   return [cellText(value)];
 }
 
+/// A cell's or a tree node's text, cut past 200 characters - by code point,
+/// never inside a surrogate pair (#1807), as inlineresult cuts (#1428).
+function cutCell(text: string): string {
+  const chars = text.length > 200 ? Array.from(text) : [];
+  return chars.length > 200 ? `${chars.slice(0, 197).join("")}...` : text;
+}
+
 /// A value decoded with its types on one line, as q's `-3!` writes it:
 /// `` `a`b!1 2 ``, `(1;`a)`, `,1 2`.
 function oneLine(q: QValue): string {
@@ -891,8 +898,7 @@ export function gridOfQ(q: QValue, limit: number): GridPayload | undefined {
     c.q.kind === "vector" || c.q.kind === "chars"
       ? nested(c.q)
       : itemsOf(c.q).map((x) => {
-          const text = oneLine(x);
-          return text.length > 200 ? `${text.slice(0, 197)}...` : text;
+          return cutCell(oneLine(x));
         }),
   );
   // The numbers of a numeric, temporal or guid column, as `GRID` sends them.
@@ -967,14 +973,13 @@ export function treeOfQ(q: QValue, budget = TREE_NODES, key = ""): TreeNode {
   const shown = open ? Math.min(count, Math.max(0, budget - 1)) : 0;
   const share = shown > 0 ? Math.floor((budget - 1) / shown) : 0;
   const type = q.kind === "list" ? 0 : q.kind === "chars" ? 10 : q.kind === "table" ? 98 : q.kind === "dict" ? 99 : q.t;
-  const cut = (text: string): string => (text.length > 200 ? `${text.slice(0, 197)}...` : text);
-  const text = open || q.kind === "table" || q.kind === "dict" ? "" : cut(oneLine(q));
+  const text = open || q.kind === "table" || q.kind === "dict" ? "" : cutCell(oneLine(q));
   let children: TreeNode[] = [];
   if (shown > 0) {
     const items = itemsOf(firstOf(q.kind === "dict" ? q.v : q, shown));
     const keys =
       q.kind === "dict"
-        ? itemsOf(firstOf(q.k, shown)).map((k) => (k.kind === "atom" && k.t === -11 ? String(k.v ?? "") : cut(oneLine(k))))
+        ? itemsOf(firstOf(q.k, shown)).map((k) => (k.kind === "atom" && k.t === -11 ? String(k.v ?? "") : cutCell(oneLine(k))))
         : items.map((_, i) => String(i));
     children = items.slice(0, shown).map((item, i) => treeOfQ(item, share, keys[i]));
   }

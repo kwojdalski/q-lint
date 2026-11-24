@@ -135,3 +135,19 @@ test("a decoded result ranks text in code point order, as q sorts it: an emoji a
   assert.deepStrictEqual(gridOfQ({ kind: "table", attr: 0, cols: ["s"], data: [{ kind: "vector", t: 11, attr: 0, v: syms }] }, 100).rank, [[2, 1, 0]]);
   assert.deepStrictEqual(gridOf(syms, 11, 100).rank, [[2, 1, 0]]);
 });
+
+test("a long symbol in a general list is cut by code point in the grid and the tree (#1807)", () => {
+  const { gridOfQ, treeOfQ } = require("../out/qformat.js");
+  const lone = (s) => /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(s);
+  const texts = (n) => [n.text, ...(n.children ?? []).flatMap(texts)];
+  for (const k of [193, 194, 195, 196]) {
+    const sym = { kind: "atom", t: -11, v: "a".repeat(k) + "😀😀😀😀" };
+    const list = { kind: "list", attr: 0, v: [sym, { kind: "list", attr: 0, v: [sym] }] };
+    const cells = gridOfQ(list, 10).cells[0];
+    assert.ok(cells.every((c) => !lone(c)), String(k));
+    assert.ok(texts(treeOfQ(list)).every((t) => !lone(t)), String(k));
+  }
+  // Counted by code point: 200 characters of which some are emoji are not cut.
+  const short = { kind: "atom", t: -11, v: "😀".repeat(150) };
+  assert.ok(!treeOfQ({ kind: "list", attr: 0, v: [short] }).children[0].text.endsWith("..."));
+});
