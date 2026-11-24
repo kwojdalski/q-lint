@@ -4,9 +4,11 @@
 // only a process the user gave a definition, and asked to start, is.
 import { spawn, type ChildProcess } from "node:child_process";
 import * as net from "node:net";
+import * as os from "node:os";
 import { commands, window, workspace, type ExtensionContext, type OutputChannel } from "vscode";
 import { LAUNCH_COMMANDS, argsFromText, argsText, commandText, fromWorkspace, launchPlan, readLauncher } from "./launcher";
 import { readTerminal } from "./liveconfig";
+import { qBinaryFrom } from "./terminal";
 import { mergeEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import type { Live, ProcessArg } from "./live";
@@ -171,7 +173,13 @@ export class Launcher {
     if (workspace.isTrusted === false && process.launch !== undefined && fromWorkspace(process.launch)) {
       return `${process.label}'s working directory or script is relative to the workspace folder, which is not trusted: it was not started. Name them by their full paths.`;
     }
-    const plan = launchPlan(process, qBinary, workspace.workspaceFolders?.[0]?.uri.fsPath);
+    // A relative q binary is the folder's, as in the terminals, not the
+    // launch's working directory's (#1540).
+    const binary = process.launch?.command !== undefined ? qBinary : qBinaryFrom(qBinary, workspace.workspaceFolders?.[0]?.uri.fsPath, os.homedir());
+    if (binary === undefined) {
+      return `q-lint.terminal.qBinary ${qBinary} is relative, and there is no workspace folder to read it from; ${process.label} was not started.`;
+    }
+    const plan = launchPlan(process, binary, workspace.workspaceFolders?.[0]?.uri.fsPath);
     if ("error" in plan) {
       return plan.error;
     }

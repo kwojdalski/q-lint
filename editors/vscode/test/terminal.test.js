@@ -5,8 +5,9 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const { spawnSync } = require("node:child_process");
+const path = require("node:path");
 const pkg = require("../package.json");
-const { commandLine, parseEnv, quote, replLine, replLines, shellKind, terminalCwd } = require("../out/terminal.js");
+const { commandLine, parseEnv, quote, replLine, qBinaryFrom, replLines, shellKind, terminalCwd } = require("../out/terminal.js");
 const { COMMANDS, readTerminal } = require("../out/liveconfig.js");
 const { needsRestart } = require("../out/settings.js");
 
@@ -243,4 +244,15 @@ test("a file outside every folder starts q in its own directory; the REPL in the
   assert.strictEqual(terminalCwd(undefined, "/ws/a", "/tmp/scratch/a.q", dirname), "/tmp/scratch");
   assert.strictEqual(terminalCwd(undefined, "/ws/a", undefined, dirname), "/ws/a");
   assert.strictEqual(terminalCwd(undefined, undefined, undefined, dirname), undefined);
+});
+
+// ./kdb/m64/q worked in the terminals, started in the folder, but the
+// Tickerplant Log started it in a temporary directory and the launcher in
+// the launch's (#1540).
+test("a relative q binary is the workspace folder's; a bare name is left for PATH", () => {
+  assert.strictEqual(qBinaryFrom("./kdb/m64/q", "/ws", "/home/u"), path.resolve("/ws", "kdb/m64/q"));
+  assert.strictEqual(qBinaryFrom("./kdb/m64/q", undefined, "/home/u"), undefined);
+  assert.strictEqual(qBinaryFrom("q", "/ws", "/home/u"), "q");
+  assert.strictEqual(qBinaryFrom("~/q/m64/q", undefined, "/home/u"), "/home/u/q/m64/q");
+  assert.strictEqual(qBinaryFrom("/opt/kx/q", undefined, "/home/u"), "/opt/kx/q");
 });
