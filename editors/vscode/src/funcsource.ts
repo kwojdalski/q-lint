@@ -27,6 +27,7 @@
 // Works on kdb+ (KDB-X) and PeachQ; held there by funcsource_q.test.js.
 import { isProduction } from "./agent";
 import type { Process } from "./processes";
+import { FULL_TEXT, TEXT_LIMIT } from "./qtext";
 
 export const SOURCE_COMMANDS = {
   open: "q-lint.openFunctionSource",
@@ -41,7 +42,7 @@ export const SOURCE = [
   " f:get`$(),nm;t:type f;",
   " if[not t within 100 112h;'\"not a function\"];",
   " v:$[100h=t;value f;()];",
-  " `type`text`ctx`params!(\"f\"$t;$[100h=t;last v;-3!f];$[100h=t;string first v 3;\"\"];$[100h=t;(),v 1;`$()])}",
+  ` \`type\`text\`ctx\`params!("f"$t;$[100h=t;last v;${FULL_TEXT}[${TEXT_LIMIT};f]];$[100h=t;string first v 3;""];$[100h=t;(),v 1;\`$()])}`,
 ].join("\n");
 
 export const REDEFINE = [

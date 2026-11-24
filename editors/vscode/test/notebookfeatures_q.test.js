@@ -107,11 +107,20 @@ test("notebook features against a real q process", { skip }, async (t) => {
     assert.ok(values["til 1000"].text.length <= 200);
     assert.strictEqual(readLiveValues(["300#\"x\""], await connection.call(LIVE, ["300#\"x\""]))["300#\"x\""].text.length, 200);
     assert.deepStrictEqual(values['"c"'], { text: "c" });
+    // Cut at the 200 characters asked for, not at the console's 80 (#1870).
+    assert.strictEqual(values["til 1000"].text, Array.from({ length: 1000 }, (_, i) => i).join(" ").slice(0, 200));
+    const wide = ["(til 50;`a`b)", "{x+y}[til 50]", "`a`b!(til 50;til 50)", "([] a:til 50)", "50#`alpha", "50#1.5"];
+    const whole = readLiveValues(wide, await connection.call(LIVE, wide));
+    wide.forEach((e) => assert.doesNotMatch(whole[e].text, /\.\./, e));
+    assert.strictEqual(whole["{x+y}[til 50]"].text, `{x+y}[${Array.from({ length: 50 }, (_, i) => i).join(" ")}]`);
+    assert.strictEqual(whole["([] a:til 50)"].text, `+(,\`a)!,${Array.from({ length: 50 }, (_, i) => i).join(" ")}`);
+    assert.deepStrictEqual(Array.from((await connection.evaluate("system\"c\"")).value, Number), [25, 80]);
     // A big table or dictionary is written from its first items, its text
-    // as the old unbounded -3! of the same value wrote it (#1559).
+    // as the old unbounded -3! of the same value wrote it (#1559) on a
+    // console wide enough to write 200 characters.
     const big = ["([] a:til 1000000; b:1000000#`x)", "(til 1000000)!til 1000000", "1000000#0b", "(1000000#enlist 1 2)", "([k:til 1000000] v:1000000#`x)", "`s#til 300", "`u#til 300", "([]time:`s#til 300;x:300#1)", "([k:`u#til 300]x:300#1)", "(`s#til 300)!300#1"];
     const got = readLiveValues(big, await connection.call(LIVE, big));
-    const want = readLiveValues(big, await connection.call("{{(1b;200 sublist -3!value x)} each x}", big));
+    const want = readLiveValues(big, await connection.call('{c:system"c";system"c 2000 2000";r:{(1b;200 sublist -3!value x)} each x;system"c "," "sv string c;r}', big));
     big.forEach((e) => {
       assert.strictEqual(typeof want[e].text, "string", e);
       assert.strictEqual(got[e].text, want[e].text, e);

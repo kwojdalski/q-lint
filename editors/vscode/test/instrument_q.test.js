@@ -96,3 +96,16 @@ test("the locals capture keeps the arguments and locals up to the error", { skip
   // Back in its own context, and nothing of q-lint's left.
   assert.deepStrictEqual(await value(c, "(`ns~first(value .ns.m)3;`qlint in key`.)"), [true, false]);
 });
+
+test("a captured local is text to 2000 characters, whatever the process's \\c (#1870)", { skip }, async (t) => {
+  const { connection: c, dir } = await connect(t, "\\l lib.q\n\\c 25 40\n", { "lib.q": "\\d .ns\nw:{[a;b]\n  c:til a;\n  d:([] x:c; y:b);\n  d+`x}\n\\d .\n" });
+  const [def] = definitions(fs.readFileSync(path.join(dir, "lib.q"), "utf8"));
+  const was = await value(c, "last value .ns.w");
+  assert.deepStrictEqual(readInstalled(await c.call(installLambda("err"), [def.name], [was], [localsText(def.text).text], 0), 1), ["ok"]);
+  assert.strictEqual(readAnswer(await c.call(RUN, [".ns.w[60;`sym]"], [25, 40])).ok, false);
+  const { d } = readRestored(await c.call(restoreExpression("err")));
+  const n = Array.from({ length: 60 }, (_, i) => i).join(" ");
+  assert.deepStrictEqual(d.args, { a: "60", b: "`sym" });
+  assert.deepStrictEqual(d.locals, { c: n, d: `+\`x\`y!(${n};${Array(60).fill("`sym").join("")})` });
+  assert.deepStrictEqual(await value(c, "(system\"c\";`qlint in key`.)"), [[25, 40], false]);
+});

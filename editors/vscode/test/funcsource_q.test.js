@@ -310,3 +310,14 @@ test("the Timers view keeps each job's one-character description", { skip }, asy
   const c = await connect(t, '.timer.timer:([id:1 2i]period:0D00:01 0D00:05;active:10b;nextrun:2#.z.P;lastrun:2#.z.P;description:("a";"b");funcparam:2#enlist({x};1));\n');
   assert.deepStrictEqual(readTimers(await c.call(TIMERS, null)).jobs.map((j) => j.description), ["a", "b"]);
 });
+
+test("a projection's text is whole, whatever the process's \\c (#1870)", { skip }, async (t) => {
+  const p = "{[a;b;c] a+b+c}[\"a fairly long string argument to make the projection long\";`and_a_symbol_too]";
+  const c = await connect(t, `p:${p}\nq:{x+y}[til 60]\n`);
+  for (const console of ["25 80", "25 40"]) {
+    await c.evaluate(`system "c ${console}"`);
+    assert.deepStrictEqual(readSource(await c.call(SOURCE, "p")), { type: 104, text: p, ctx: "", params: [] });
+    assert.strictEqual(readSource(await c.call(SOURCE, "q")).text, `{x+y}[${Array.from({ length: 60 }, (_, i) => i).join(" ")}]`);
+    assert.strictEqual((await c.evaluate("-3!system\"c\"")).value, `${console}i`);
+  }
+});

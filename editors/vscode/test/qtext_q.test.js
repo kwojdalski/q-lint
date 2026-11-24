@@ -146,6 +146,10 @@ test("FULL_TEXT writes no more of a long vector than it was asked for", { skip }
   const text = (await c.evaluate(`${FULL_TEXT}[200;til 1000000]`)).value;
   assert.ok(text.startsWith("0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23"), text);
   assert.ok(text.length >= 200 && text.length < 2000, String(text.length));
+  // What was left out is marked as q marks it, in a vector and in a list.
+  assert.ok(text.endsWith(" 198 199.."), text.slice(-20));
+  assert.strictEqual((await c.evaluate(`${FULL_TEXT}[30;(til 20;til 20;til 20)]`)).value, "(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19;..)");
+  assert.strictEqual((await c.evaluate(`${FULL_TEXT}[30;30#"ab"]`)).value, `"${"ab".repeat(15)}"`);
 });
 
 test("LAID_OUT shows every row and each cell to its end on a narrow console", { skip }, async (t) => {
