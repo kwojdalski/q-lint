@@ -127,3 +127,9 @@ test("timestamps and longs nanoseconds apart rank apart, exactly (#1127)", () =>
   ]);
   assert.deepStrictEqual(merged.rank[1], [1, 0]);
 });
+
+test("Query a Tag ranks text in code point order, as q sorts it: an emoji after U+FF21 (#1747)", () => {
+  const syms = ["\u{1F600}", "Ａ", "b"];
+  const merged = mergeOutcomes([{ process: "p", answer: ok({ count: 3, keys: 0, names: ["s"], types: [11], cells: [syms], raw: [[]], rank: [[2, 1, 0]] }) }]);
+  assert.deepStrictEqual(merged.rank[merged.names.indexOf("s")], [2, 1, 0]);
+});

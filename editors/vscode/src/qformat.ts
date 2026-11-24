@@ -21,7 +21,7 @@
 // - A lambda arrives with its text, which an unwrapped query shows. Any
 //   other function arrives as the word "func".
 // - An empty table arrives with no columns, so they cannot be shown.
-import { TREE_NODES, realValue, type GridPayload, type TreeNode } from "./grid";
+import { TREE_NODES, codePointOrder, realValue, type GridPayload, type TreeNode } from "./grid";
 import type { QValue } from "./qdecode";
 
 /// q's generic null, `(::)`.
@@ -717,9 +717,8 @@ function ranks(values: unknown[], raw: (number | null)[] | undefined): number[] 
     if (typeof x === "number" && typeof y === "number") {
       return x === y ? 0 : x < y ? -1 : 1;
     }
-    const sx = String(x);
-    const sy = String(y);
-    return sx === sy ? 0 : sx < sy ? -1 : 1;
+    // In code point order, as q sorts text (#1747).
+    return codePointOrder(String(x), String(y));
   };
   const order = keys.map((_, i) => i).sort((a, b) => compare(a, b) || a - b);
   const rank = new Array<number>(keys.length);
@@ -837,8 +836,9 @@ function denseRanks(keys: (number | bigint | string | null)[]): number[] {
   const order = keys.map((_, i) => i).sort((a, b) => {
     const x = keys[a];
     const y = keys[b];
-    // A null is below every value, -0w and -0W among them.
-    return x === y ? a - b : x === null ? -1 : y === null ? 1 : x < y ? -1 : 1;
+    // A null is below every value, -0w and -0W among them; text in code
+    // point order, as q sorts it (#1747).
+    return x === y ? a - b : x === null ? -1 : y === null ? 1 : typeof x === "string" && typeof y === "string" ? codePointOrder(x, y) : x < y ? -1 : 1;
   });
   const rank = new Array<number>(keys.length);
   let place = -1;

@@ -112,3 +112,11 @@ test("negative zero keeps its sign: KDB-X shows -0f (#1236)", () => {
   assert.strictEqual(atomText(-0, -9), "-0f");
   assert.strictEqual(shown(float(0)), "0f");
 });
+
+test("a decoded result ranks text in code point order, as q sorts it: an emoji after U+FF21 (#1747)", () => {
+  const { gridOf, gridOfQ } = require("../out/qformat.js");
+  const syms = ["\u{1F600}", "Ａ", "b"];
+  // q: iasc of them is 2 1 0.
+  assert.deepStrictEqual(gridOfQ({ kind: "table", attr: 0, cols: ["s"], data: [{ kind: "vector", t: 11, attr: 0, v: syms }] }, 100).rank, [[2, 1, 0]]);
+  assert.deepStrictEqual(gridOf(syms, 11, 100).rank, [[2, 1, 0]]);
+});
