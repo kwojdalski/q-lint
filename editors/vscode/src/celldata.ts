@@ -75,8 +75,10 @@ export interface Table {
 
 export type CellData = Answer | { ok: true; table: Table };
 
+// A null symbol arrives as null, and is the empty name or text q shows for
+// it - not the word "null", which is another column's name (#1981).
 const strings = (v: unknown): string[] =>
-  Array.isArray(v) ? v.map((x) => (typeof x === "string" ? x : String(x))) : typeof v === "string" ? [v] : [];
+  Array.isArray(v) ? v.map((x) => (typeof x === "string" ? x : x === null || x === undefined ? "" : String(x))) : typeof v === "string" ? [v] : [];
 
 /// A q long as a number: the IPC client decodes one as a `Long`.
 const long = (v: unknown): number | undefined =>

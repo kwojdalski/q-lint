@@ -172,6 +172,18 @@ test("a table answer is read; anything else is refused", () => {
   assert.throws(() => readCellData({ ok: true, table: true, columns: ["a"], data: [] }), /0 columns of data for 1 column names/);
 });
 
+// A column named by the null symbol - what an empty csv header gives -
+// arrives as null. It has no name: it is not the column `null` (#1981).
+test("a column named by the null symbol has an empty name, not the word null (#1981)", () => {
+  const read = readCellData({ ok: true, table: true, columns: ["a", null, "b"], types: [7, 7, 7], keys: 0, data: [["1", "2"], ["3", "4"], ["5", "6"]], total: 2 });
+  assert.deepStrictEqual(read.table.columns, ["a", "", "b"]);
+  assert.deepStrictEqual(tableText(read.table), ["a   b", "-----", "1 3 5", "2 4 6"]);
+  assert.ok(tableHtml(read.table).includes('<th class="n">a</th><th class="n"></th><th class="n">b</th>'), tableHtml(read.table));
+  assert.doesNotMatch(tableHtml(read.table), /null/);
+  // A column that is named null keeps its name.
+  assert.deepStrictEqual(readCellData({ ok: true, table: true, columns: ["null"], types: [7], keys: 0, data: [["1"]], total: 1 }).table.columns, ["null"]);
+});
+
 test("every name and value in the grid is escaped, and it holds no script", () => {
   assert.strictEqual(escapeHtml(`<a href="x">'&'</a>`), "&lt;a href=&quot;x&quot;&gt;&#39;&amp;&#39;&lt;/a&gt;");
   const evil = { columns: ["<script>alert(1)</script>"], types: [11], keys: 0, data: [["<img src=x onerror=alert(1)>"]], total: 1 };
