@@ -43,6 +43,13 @@ test("each step is written as q over the step before, and the steps as a script 
   assert.strictEqual(w.stepCode({ kind: "cast", column: "q", to: "j", strings: true }, "t"), 'update q:"J"$q from t');
   assert.strictEqual(w.stepCode({ kind: "cast", column: "q", to: "s", strings: true }, "t"), "update q:`$q from t");
   assert.strictEqual(w.stepCode({ kind: "cast", column: "q", to: "*" }, "t"), "update q:string q from t");
+  // A symbol or enum is parsed from its text, and anything made symbols from its text (#1571).
+  assert.strictEqual(w.stepCode({ kind: "cast", column: "s", to: "j", type: 11 }, "t"), 'update s:"J"$string s from t');
+  assert.strictEqual(w.stepCode({ kind: "cast", column: "e", to: "i", type: 20 }, "t"), 'update e:"I"$string e from t');
+  assert.strictEqual(w.stepCode({ kind: "cast", column: "e", to: "s", type: 20 }, "t"), "update e:`$string e from t");
+  assert.strictEqual(w.stepCode({ kind: "cast", column: "n", to: "s", type: 7 }, "t"), "update n:`$string n from t");
+  assert.strictEqual(w.stepCode({ kind: "cast", column: "s", to: "s", type: 11 }, "t"), "update s:s from t");
+  assert.strictEqual(w.stepCode({ kind: "cast", column: "n", to: "f", type: 7 }, "t"), 'update n:"f"$n from t');
   assert.strictEqual(w.stepCode({ kind: "drop", column: "note" }, "t"), "delete note from t");
   const steps = [
     { kind: "filter", column: "px", op: ">", value: "1" },

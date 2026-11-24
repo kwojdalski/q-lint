@@ -30,7 +30,8 @@ export type Step =
   | { kind: "sort"; column: string; descending: boolean }
   | { kind: "rename"; column: string; to: string }
   /// `strings`: the column holds strings, which are parsed rather than cast.
-  | { kind: "cast"; column: string; to: string; strings?: boolean }
+  /// `type`: the column's q type, so a symbol or enum is parsed too (#1571).
+  | { kind: "cast"; column: string; to: string; strings?: boolean; type?: number }
   | { kind: "drop"; column: string };
 
 /// The types a column can be cast to, by the letter `$` takes; `*` is a
@@ -96,7 +97,7 @@ export function stepCode(step: Step, x: string): string {
     case "rename":
       return `(enlist[${symbolLiteral(c)}]!enlist ${symbolLiteral(step.to)}) xcol ${x}`;
     case "cast":
-      return `update ${c}:${castCode(c, step.to, step.strings === true)} from ${x}`;
+      return `update ${c}:${castCode(c, step.to, step.strings === true, step.type)} from ${x}`;
     case "drop":
       return `delete ${c} from ${x}`;
   }
@@ -105,15 +106,22 @@ export function stepCode(step: Step, x: string): string {
 /// A cast of column `c` to `letter`. A column of strings is parsed, by the
 /// letter in upper case (`"J"$c`), and made symbols with `` `$c ``; any other
 /// is cast (`"j"$c`). `*` writes each item as a string: a string is left as
-/// it is, which `string` would split into characters (#1281).
-export function castCode(c: string, letter: string, strings = false): string {
+/// it is, which `string` would split into characters (#1281). A symbol or
+/// enumerated column (`type` 11, 20-76) is parsed from its text, as a cast
+/// fails with 'type or gives an enum's indexes; and any column is made
+/// symbols from its text, which `"s"$` refuses (#1571).
+export function castCode(c: string, letter: string, strings = false, type?: number): string {
   if (letter === "*") {
     return strings ? `{$[10h=type x;x;string x]}each ${c}` : `string ${c}`;
   }
   if (strings) {
     return letter === "s" ? `\`$${c}` : `"${letter.toUpperCase()}"$${c}`;
   }
-  return `"${letter}"$${c}`;
+  const symbols = type !== undefined && (Math.abs(type) === 11 || (type >= 20 && type <= 76));
+  if (letter === "s") {
+    return type === 11 ? c : `\`$string ${c}`;
+  }
+  return symbols ? `"${letter.toUpperCase()}"$string ${c}` : `"${letter}"$${c}`;
 }
 
 /// Whether column `i` of the payload holds strings: a general column whose
