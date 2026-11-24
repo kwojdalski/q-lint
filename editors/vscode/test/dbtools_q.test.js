@@ -395,6 +395,11 @@ test("the test data generator and a migration in memory write names with a space
   const ran = readRun(await connection.call(RUN_SCRIPT, statements(migrationScript("my t", await info("my t"), "my t", await info("tgt"), "tgt", "p"))));
   assert.ok(ran.ok, ran.error);
   assert.deepStrictEqual(await connection.call('{cols get`$"my t"}', 0), ["a", "b"]);
+  // An added column q-sql cannot name, then ordered and keyed by (#1719).
+  await connection.call('{w3::(`$"new c") xkey flip(`$("new c";"a"))!(`long$();`long$())}', 0);
+  const added = readRun(await connection.call(RUN_SCRIPT, statements(migrationScript("my t", await info("my t"), "my t", await info("w3"), "w3", "p"))));
+  assert.ok(added.ok, added.error);
+  assert.deepStrictEqual(await connection.call('{(cols get`$"my t";keys get`$"my t";"f"$count get`$"my t")}', 0), [["new c", "a"], ["new c"], 3]);
   const dropped = readRun(await connection.call(RUN_SCRIPT, statements(migrationScript("w", await info("w"), "w", await info("tgt"), "tgt", "p"))));
   assert.ok(dropped.ok, dropped.error);
   assert.deepStrictEqual(await connection.call("{cols w}", 0), ["a", "b"]);
