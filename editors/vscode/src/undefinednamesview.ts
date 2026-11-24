@@ -161,7 +161,8 @@ class Checker {
     let defined = new Map<string, boolean>();
     if (names.length > 0) {
       try {
-        const got = await borrowWhenFree(this.live, (connection) => connection.call(DEFINED, names.join(" ")), asked ? 3000 : 0);
+        // Only the process checked (and asked about) above (#1456).
+        const got = await borrowWhenFree(this.live, (connection) => connection.call(DEFINED, names.join(" ")), asked ? 3000 : 0, process.label);
         if (got === undefined) {
           return `a query is running on ${process.label}; the file is checked when it is done.`;
         }
