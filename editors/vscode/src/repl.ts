@@ -67,16 +67,21 @@ function scan(text: string): { depth: number; inString: boolean } {
 /// `text` as a script q reads the way it was typed: a line that starts
 /// inside an open bracket or string continues the statement above, so it
 /// is indented - in a script a line at column 0 starts a new statement,
-/// and `f:{x+` then `y}` would be two. Lines outside any bracket are left
-/// as they are, each its own statement.
+/// and `f:{x+` then `y}` would be two. A line that starts inside a string
+/// is joined to the one above with the newline as `\n`, since an indent
+/// would be in the string (#1678). Lines outside any bracket are left as
+/// they are, each its own statement.
 export function replScript(text: string): string {
   const lines = text.split(/\r?\n/);
   const out: string[] = [];
   let sofar = "";
   for (const [i, line] of lines.entries()) {
     const { depth, inString } = i === 0 ? { depth: 0, inString: false } : scan(sofar);
-    const inside = depth > 0 || inString;
-    out.push(inside && line !== "" && !line.startsWith(" ") && !line.startsWith("\t") ? ` ${line}` : line);
+    if (inString) {
+      out[out.length - 1] += `\\n${line}`;
+    } else {
+      out.push(depth > 0 && line !== "" && !line.startsWith(" ") && !line.startsWith("\t") ? ` ${line}` : line);
+    }
     sofar += (i === 0 ? "" : "\n") + line;
   }
   return out.join("\n");
