@@ -4,7 +4,7 @@
 // asks before code that would change a guarded process, and Abort Current
 // Query stops waiting - and recorded in Query History as a query is.
 import { window, workspace, type Uri } from "vscode";
-import type { Live } from "./live";
+import { Stopped, type Live } from "./live";
 import { readLive } from "./liveconfig";
 import { render, type Answer } from "./query";
 import { statements } from "./statements";
@@ -49,17 +49,26 @@ export async function runText(live: Live, code: string, uri?: Uri): Promise<Ran 
   const { consoleSize } = readLive((key, fallback) => configuration.get(key, fallback));
   const started = Date.now();
   let ran: { process: string; value: Answer } | undefined;
+  // The process it is sent to, read as it is sent: a query that fails has
+  // closed the connection, and `activeLabel` names none then (#1872).
+  let sentTo = live.activeLabel();
   try {
-    ran = await live.runOnActive(code, (connection) => connection.query(cut, consoleSize));
+    ran = await live.runOnActive(code, (connection) => {
+      sentTo = live.activeLabel() ?? sentTo;
+      return connection.query(cut, consoleSize);
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (message.startsWith("Not run:")) {
       void window.showInformationMessage(plainMessage(`q-lint: ${message}`));
       return undefined;
     }
-    const process = live.activeLabel() ?? "the process";
-    const answer: Answer = { ok: false, error: message, trace: "" };
-    await live.record({ process, code, at: new Date(started).toISOString(), millis: Date.now() - started, outcome: "error", error: message });
+    const process = sentTo ?? "the process";
+    // Aborted or timed out is kept as that, as a query from the editor is.
+    const outcome = error instanceof Stopped ? error.outcome : "error";
+    const said = outcome === "aborted" ? "aborted" : message;
+    const answer: Answer = { ok: false, error: said, trace: "" };
+    await live.record({ process, code, at: new Date(started).toISOString(), millis: Date.now() - started, outcome, error: said });
     return { process, code, millis: Date.now() - started, answer };
   }
   if (ran === undefined) {
