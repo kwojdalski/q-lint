@@ -963,6 +963,12 @@
             "order": 147,
             "markdownDescription": "Take a dotted q name - `.ns.util.f`, `x.y`, `.z.p` - as one word, and a number as one (`1.5`, `2024.01.02`): **Add Selection to Next Find Match** (Ctrl/Cmd+D), the highlight of a word's other occurrences, and the word completion replaces. In `x+.y` the words are `x` and `.y`. Double-click and Ctrl/Cmd+Left/Right follow `editor.wordSeparators` instead, which this does not change: `\"[q]\": {\"editor.wordSeparators\": ...}` without `.` makes them agree. Off, a word is VS Code's own."
           },
+          "q-lint.editor.blankLineComment.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 147,
+            "markdownDescription": "**Toggle Line Comment** on a blank line of a q or k file writes `/ .` and selects the `.`, so the comment typed next replaces it; toggled back, the line is blank again. VS Code alone writes a lone `/ `, which q reads as the opening of a block comment: everything below it stops running, with no error. A `/` you type yourself is left as typed, and so is the toggle with `editor.comments.insertSpace` off. Off, nothing listens and the toggle is VS Code's own."
+          },
           "q-lint.editor.parameterCache.enable": {
             "type": "boolean",
             "default": true,

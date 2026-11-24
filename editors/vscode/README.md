@@ -107,6 +107,15 @@ to a process you add and connect to, and sends only the code you run.
   have them agree, take the `.` out of it for q,
   ``"[q]": {"editor.wordSeparators": "`~!@#$%^&*()-=+[{]}\\|;:'\",<>/?"}``.
   `q-lint.editor.dottedNames.enable` turns it off without a reload.
+- **Comment toggle on a blank line**: **Toggle Line Comment** on a blank
+  line of a q or k file writes `/ .` with the `.` selected, so the comment
+  typed next replaces it, and toggling back leaves the line blank. VS Code
+  alone writes a lone `/ `, which q reads as the opening of a block comment:
+  every line below it, to a lone `\` or the end of the file, stops running
+  with no error. Only the toggle's own edit is answered: a `/` typed on a
+  blank line is left as typed, and so is the toggle with
+  `editor.comments.insertSpace` off, which writes that same lone `/`.
+  `q-lint.editor.blankLineComment.enable` turns it off without a reload.
 - **q in Markdown**: a fenced block opened with ```` ```q ```` (or `kdb+`,
   or `~~~q`) is coloured with the q grammar in a Markdown editor, and one
   opened with ```` ```k ```` with the k grammar; another language's fence,
@@ -2763,6 +2772,7 @@ nothing.
 | `q-lint.argumentSlot.enable` | `true` | Highlight the argument of `f[a;b;c]` the cursor is in and name its parameter. Asks the language server only. Off, nothing listens or is drawn. | - |
 | `q-lint.editor.continuationIndent.enable` | `true` | Indent the line after one that leaves a bracket open, on Enter. Off, Enter is VS Code's own. | - |
 | `q-lint.editor.dottedNames.enable` | `true` | Take `.ns.f` and `x.y` as one word for Ctrl/Cmd+D, occurrence highlights and completion. Off, a word is VS Code's own. | - |
+| `q-lint.editor.blankLineComment.enable` | `true` | Write `/ .` where **Toggle Line Comment** on a blank line would leave a lone `/ `, the opening of a block comment. Off, the toggle is VS Code's own. | - |
 | `q-lint.editor.parameterCache.enable` | `true` | **Toggle Parameter Cache** and its status bar item. Off, the command is hidden and refuses and the item is hidden. | - |
 | `q-lint.processSymbols.enable` | `false` | List the names only the connected process defines in **Go to Symbol in Workspace**, read while you search. Off, no provider is registered and nothing is sent. | - |
 | `q-lint.processExplorer.driftDetection.enable` | `false` | **Check Drift Against Process**: compare the workspace's function definitions with the connected process. Off, the command is hidden and reads nothing. | - |
