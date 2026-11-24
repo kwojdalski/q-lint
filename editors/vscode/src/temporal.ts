@@ -206,15 +206,15 @@ function hms(h: string | undefined, m: string | undefined, s: string | undefined
 /// timestamp, month, date, datetime, timespan, minute, second or time, or
 /// one of their nulls and infinities.
 export function parse(text: string): Temporal | undefined {
-  const special = /^(-?)0([NWw])([pmdznuvt])$/.exec(text);
+  const special = /^(-?)0([NnWw])([pmdznuvt])$/.exec(text);
   if (special !== null) {
     const type = (Object.keys(LETTER) as TemporalType[]).find((k) => LETTER[k] === special[3]) as TemporalType;
-    // q writes a datetime's infinity 0wz, every other 0W; a null has no sign.
-    const w = type === "datetime" ? "w" : "W";
-    if (special[2] === "N") {
+    // q reads 0n and 0N, 0w and 0W alike for every temporal type (#2069),
+    // though it writes 0wz and 0W; a null has no sign.
+    if (special[2] === "N" || special[2] === "n") {
       return special[1] === "" ? { type, special: "null", n: 0n } : undefined;
     }
-    return special[2] === w ? { type, special: special[1] === "-" ? "-inf" : "inf", n: 0n } : undefined;
+    return { type, special: special[1] === "-" ? "-inf" : "inf", n: 0n };
   }
   // q has no year 0: 0000.01.01 and 0000.01m are refused (#1784).
   const day = (y: string, m: string, d: string) => (Number(y) < 1 ? undefined : daysFrom(Number(y), Number(m), Number(d)));

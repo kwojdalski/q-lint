@@ -41,7 +41,7 @@ test("each literal reads to the integer q holds, and is written back as q writes
   assert.strictEqual(t.parse("0001.01.01T10:00").type, "datetime");
   // No such day, minute or month.
   // Nor a year 0, which q refuses (#1784); year 1 it reads.
-  for (const bad of ["2023.02.29", "2024.13m", "09:60", "2024.01.02D24:00", "12:00:00.1234", "0Nx", "-0Np", "0wp", "0Wz", "0000.01m", "0000.01.01", "0000.12.31T10:00"]) {
+  for (const bad of ["2023.02.29", "2024.13m", "09:60", "2024.01.02D24:00", "12:00:00.1234", "0Nx", "-0Np", "-0np", "0000.01m", "0000.01.01", "0000.12.31T10:00"]) {
     assert.strictEqual(t.parse(bad), undefined, bad);
   }
 });
@@ -50,6 +50,14 @@ test("nulls and infinities are each type's own, and convert as q's casts do", ()
   assert.deepStrictEqual(t.parse("0Np"), { type: "timestamp", special: "null", n: 0n });
   assert.deepStrictEqual(t.parse("-0Wd"), { type: "date", special: "-inf", n: 0n });
   assert.deepStrictEqual(t.parse("0wz"), { type: "datetime", special: "inf", n: 0n });
+  // q reads either case for every type, though it writes 0wz and 0W (#2069).
+  assert.deepStrictEqual(t.parse("0wp"), { type: "timestamp", special: "inf", n: 0n });
+  assert.deepStrictEqual(t.parse("0Wz"), { type: "datetime", special: "inf", n: 0n });
+  assert.deepStrictEqual(t.parse("-0wd"), { type: "date", special: "-inf", n: 0n });
+  assert.deepStrictEqual(t.parse("-0Wz"), { type: "datetime", special: "-inf", n: 0n });
+  assert.deepStrictEqual(t.parse("0nt"), { type: "time", special: "null", n: 0n });
+  assert.strictEqual(t.format(t.parse("0wp")), "0Wp");
+  assert.strictEqual(t.format(t.parse("0Wz")), "0wz");
   assert.deepStrictEqual(texts("0Np"), ["0N", "0Nd"]);
   assert.deepStrictEqual(texts("0Wp"), ["0W", "0Wd"]);
   // KDB-X reads a timestamp literal only from 1709.01.01 to 2290.12.31: not
