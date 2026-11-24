@@ -272,3 +272,16 @@ test("renaming the connected process keeps its results its own: paging and drill
   assert.deepStrictEqual(stub.messages.filter(([kind]) => kind === "error"), []);
   assert.ok(a.sent.length > sent);
 });
+
+test("renaming the connected process keeps its Watch Query running (#1707)", async (t) => {
+  const a = await fakeQ(() => 1);
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)], { "query.watch.enable": true });
+  await live.connectTo("a");
+  await stub.commands.get("q-lint.watchQuery")("1+1", 1);
+  await editProcess("a", "a2", a.port, "");
+  await sleep(1300);
+  assert.strictEqual(live.api().watching()?.label, "a2");
+  assert.ok(live.api().watching().runs >= 2);
+  assert.ok(!stub.messages.some(([, m]) => /stopped watching/.test(m)), JSON.stringify(stub.messages));
+});

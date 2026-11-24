@@ -1369,6 +1369,12 @@ export class Live {
       await this.rebind(old.label, process.label);
       this.modes.processRenamed(old.label, process.label);
     }
+    // A query watched on it, on the same connection, goes on under the new label (#1707).
+    const watched = this.watching;
+    if (watched !== undefined && watched.label === old.label && process.label !== old.label && this.active?.label === old.label && this.active.server === undefined) {
+      watched.label = process.label;
+      watched.status.tooltip = `Watching on ${process.label} every ${watched.every} s:\n${watched.code}\nClick to stop.`;
+    }
     // One being connected to is connected to as it is now (#1700).
     if (this.connectingAs?.label === old.label && this.connectingAs.server === undefined) {
       this.connectingAs = stillOpen(this.connectingAs, process);
