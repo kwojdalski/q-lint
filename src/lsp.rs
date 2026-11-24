@@ -2195,29 +2195,51 @@ fn is_config_path(path: &str) -> bool {
 /// searched for in - a configuration above the folder, an `extend`ed base
 /// beside it, the user-level file - which no workspace pattern reaches and
 /// whose change the server otherwise never heard of (#554).
+///
+/// A file the settings came from that is neither `.q` nor `.toml` - a
+/// baseline, a `--config` by another name - is watched by its own pattern.
+/// Inside the workspace a client without relative patterns takes it as a
+/// glob relative to the folder: with none, a baseline rewritten in place
+/// matched no watcher, a change being no create or delete, and its old
+/// findings stayed hidden until a restart (#2111).
 fn watchers(roots: &[String], policy: &Policy, relative: bool) -> Vec<Value> {
     let mut out = vec![
         json!({"globPattern": "**/*.q"}),
         json!({"globPattern": "**/*.toml"}),
         json!({"globPattern": "**/*", "kind": 5}),
     ];
-    if !relative {
-        return out;
-    }
     let roots: Vec<std::path::PathBuf> = roots.iter().map(|r| file_key(r).into()).collect();
     // Both sides as keys: a real path is verbatim on Windows, and
     // `C:\a` does not start with `\\?\C:\a` (#554).
-    let outside = |p: &std::path::Path| {
-        let p = std::path::PathBuf::from(file_key(&p.to_string_lossy()));
-        !roots.iter().any(|r| p.starts_with(r))
-    };
+    let key = |p: &std::path::Path| std::path::PathBuf::from(file_key(&p.to_string_lossy()));
+    let outside = |p: &std::path::Path| !roots.iter().any(|r| key(p).starts_with(r));
     let (files, dirs) = policy.watched();
+    let toml = |p: &std::path::Path| p.extension().is_some_and(|e| e == "toml");
+    if !relative {
+        let mut globs: Vec<String> = files
+            .iter()
+            .filter(|f| !toml(f))
+            .filter_map(|f| {
+                let f = key(f);
+                let root = roots.iter().find(|r| f.starts_with(r))?;
+                let within = f
+                    .strip_prefix(root)
+                    .ok()?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                Some(glob_literal(&within))
+            })
+            .collect();
+        globs.sort();
+        globs.dedup();
+        out.extend(globs.into_iter().map(|g| json!({"globPattern": g})));
+        return out;
+    }
     let names = format!("{{{}}}", FILES.join(","));
     for dir in dirs.iter().filter(|d| outside(d)) {
         out.push(json!({"globPattern": {"baseUri": path_uri(dir), "pattern": names}}));
     }
     // `--config` names a file by any name, which `**/*.toml` may not match.
-    let toml = |p: &std::path::Path| p.extension().is_some_and(|e| e == "toml");
     for file in files.iter().filter(|f| outside(f) || !toml(f)) {
         if let (Some(dir), Some(name)) = (file.parent(), file.file_name()) {
             out.push(json!({"globPattern":
@@ -2225,6 +2247,17 @@ fn watchers(roots: &[String], policy: &Policy, relative: bool) -> Vec<Value> {
         }
     }
     out
+}
+
+/// `text` as a glob that matches it alone: each character a glob reads as
+/// syntax put in brackets, where it stands for itself.
+fn glob_literal(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            '*' | '?' | '[' | ']' | '{' | '}' => format!("[{c}]"),
+            c => c.to_string(),
+        })
+        .collect()
 }
 
 /// A filesystem path as a `file:` URI, `path_of` undone.

@@ -1243,6 +1243,10 @@ client that registers watchers for three: `**/*.q`, `**/*.toml`, and `**/*`
 for a path created or deleted (`kind` 5) - the last because a folder
 renamed, moved or deleted is one event for the folder and none for the
 files in it, which stands for every `.q` file and configuration it holds.
+A baseline, or another file the settings were read from by a name those
+miss, is watched by its own pattern too: rooted at its directory for a
+client that takes relative patterns, and otherwise as a glob relative to
+the workspace folder that holds it.
 A value the server cannot read is reported with `window/showMessage` and its
 default used.
 

@@ -2612,6 +2612,55 @@ fn a_client_that_waits_for_registration_is_asked_to_watch_files() {
 }
 
 #[test]
+fn a_baseline_is_watched_by_a_client_without_relative_patterns() {
+    // A client that registers watchers but takes no pattern rooted
+    // elsewhere (Helix) was asked for `**/*.q`, `**/*.toml` and every path
+    // created or deleted: a baseline rewritten in place matched none, and
+    // what it hid stayed hidden, or shown, until a restart (#2111).
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir(root.join("ci")).unwrap();
+    std::fs::write(root.join("qlinter.toml"), "baseline = \"ci/base.json\"\n").unwrap();
+    let hidden = "{\"qlinter-baseline\": 1, \"findings\": [\n  {\"code\":\"QF001\",\
+                  \"count\":1,\"line\":\"f:{[desc] 1+1}\",\"path\":\"../a.q\"}\n]}\n";
+    std::fs::write(root.join("ci/base.json"), hidden).unwrap();
+    let mut server = Server::spawn(&root, &["--lsp"]);
+    let mut capabilities = client_capabilities();
+    capabilities["workspace"] = json!({"didChangeWatchedFiles": {"dynamicRegistration": true}});
+    server.send(
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+        "capabilities": capabilities,
+        "workspaceFolders":[{"uri":file_uri(&root),"name":"ws"}]}}),
+    );
+    server.receive();
+    server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    let uri = file_uri(&root.join("a.q"));
+    server.open(&uri, RESERVED_PARAM);
+    assert!(server.diagnostics_for(&uri).is_empty(), "baselined");
+    // Registered once the baseline has been read for the document, for
+    // every kind of event.
+    let wanted = json!({"globPattern": "ci/base.json"});
+    server.until(|m| {
+        m["method"] == "client/registerCapability"
+            && m["params"]["registrations"][0]["registerOptions"]["watchers"]
+                .as_array()
+                .unwrap()
+                .contains(&wanted)
+    });
+    std::fs::write(
+        root.join("ci/base.json"),
+        "{\"qlinter-baseline\": 1, \"findings\": []}\n",
+    )
+    .unwrap();
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+        "params":{"changes":[{"uri":file_uri(&root.join("ci/base.json")),"type":2}]}}),
+    );
+    assert_eq!(codes_of(&server.diagnostics_for(&uri)), ["QF001"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn the_workspace_index_reads_a_file_however_large() {
     // The CLI indexes a 5 MB file like any other; the server skipped one over
     // 4 MiB, so a name only it defines was undefined in the editor alone (#794).
