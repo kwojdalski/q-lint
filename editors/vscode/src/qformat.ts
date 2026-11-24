@@ -604,7 +604,9 @@ export function consoleLines(q: QValue, size: [number, number], value?: unknown,
     const count = q.kind === "dict" ? countOf(q.k) : countOf(q);
     more = count > n;
     if (more) {
-      shown = q.kind === "dict" ? { ...q, k: firstOf(q.k, n - 1), v: firstOf(q.v, n - 1) } : firstOf(q, n - 1);
+      // At a height of 1 or 2, n - 1 is -1, which slice reads as "all but one" (#1405).
+      const m = Math.max(0, n - 1);
+      shown = q.kind === "dict" ? { ...q, k: firstOf(q.k, m), v: firstOf(q.v, m) } : firstOf(q, m);
     }
   }
   const lines = formatQ(shown, value, type);
