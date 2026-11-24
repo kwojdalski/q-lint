@@ -120,7 +120,7 @@ test("hot reload sends an edited definition, parsed in its context, and it then 
   const plan = reloadPlan(changed, await states(c, now));
   assert.deepStrictEqual(plan.send.map((s) => s.name), ["f", ".ns.h"]);
   for (const s of plan.send) {
-    assert.strictEqual(await c.call(REDEFINE, s.name, s.held, s.text), s.name);
+    assert.strictEqual(await c.call(REDEFINE, s.name, s.held, s.text), s.text);
   }
   assert.strictEqual((await c.evaluate('"f"$f 1')).value, 6);
   // `k` is `.ns.k`: parsed in .ns.
