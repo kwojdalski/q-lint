@@ -207,6 +207,35 @@ test("a task closed before its q has started never starts it (#1085)", async (t)
   assert.strictEqual(fs.existsSync(path.join(dir, "ran")), false);
 });
 
+test("Windows: a q.cmd wrapper is run by cmd.exe, as the launcher runs it, not spawned itself (#1814)", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-taskcmd-"));
+  const { providers } = setUp(t, dir);
+  stub.config.user["terminal.qBinary"] = "C:\\q\\q.cmd";
+  const cp = require("node:child_process");
+  const { spawn } = cp;
+  const platform = Object.getOwnPropertyDescriptor(process, "platform");
+  const spawned = [];
+  cp.spawn = (command, args, options) => {
+    spawned.push({ command, args, verbatim: options.windowsVerbatimArguments });
+    const child = new (require("node:events").EventEmitter)();
+    child.kill = () => {};
+    setImmediate(() => child.emit("close", 0));
+    return child;
+  };
+  Object.defineProperty(process, "platform", { value: "win32" });
+  t.after(() => {
+    cp.spawn = spawn;
+    Object.defineProperty(process, "platform", platform);
+  });
+  const own = providers[0].provider.resolveTask({ definition: { type: "q", script: "x.q" }, name: "mine", scope: vscode.workspace.workspaceFolders[0] });
+  assert.strictEqual((await run(own)).code, 0);
+  assert.strictEqual(spawned.length, 1);
+  assert.match(spawned[0].command, /cmd\.exe$/i);
+  assert.deepStrictEqual(spawned[0].args.slice(0, 3), ["/d", "/s", "/c"]);
+  assert.match(spawned[0].args[3], /^"C:\\q\\q\.cmd .*x\.q"$/);
+  assert.strictEqual(spawned[0].verbatim, true);
+});
+
 test("off: the provider is unregistered, offers and resolves nothing, and runs no q", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-tasksoff-"));
   const { providers, registered } = setUp(t, dir);

@@ -23,12 +23,16 @@
     return e;
   }
 
+  // linetimings.ts durationText, kept identical (profile.test.js runs both):
+  // the unit picked as rounded, so 999.9 µs is 1.00 ms (#1437).
   function duration(ns) {
-    if (ns < 1e6) {
-      return (ns / 1e3).toFixed(ns < 1e4 ? 1 : 0) + " µs";
+    const us = (ns / 1e3).toFixed(ns < 1e4 ? 1 : 0);
+    if (ns < 1e6 && Number(us) < 1000) {
+      return us + " µs";
     }
-    if (ns < 6e10) {
-      return (ns / 1e6).toFixed(ns < 1e7 ? 2 : ns < 1e8 ? 1 : 0) + " ms";
+    const ms = (ns / 1e6).toFixed(ns < 1e7 ? 2 : ns < 1e8 ? 1 : 0);
+    if (ns < 6e10 && Number(ms) < 60000) {
+      return ms + " ms";
     }
     return (ns / 1e9).toFixed(1) + " s";
   }

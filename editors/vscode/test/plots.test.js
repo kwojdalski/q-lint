@@ -8,6 +8,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const { stub, vscode } = require("./vscode_stub");
 const { PlotStore, PLOTS, PLOT_COMMANDS, plainSvg, plotFileName } = require("../out/plots.js");
+const { loadSmallPage } = require("./smallpage.js");
 const pkg = require("../package.json");
 
 const svg = (label) => `<svg xmlns="http://www.w3.org/2000/svg" width="8" height="4"><text>${label}</text></svg>`;
@@ -156,4 +157,14 @@ test("the view shows the plot on show, steps and saves it, and off is unregister
   stub.changeConfig("q-lint.results.plots.enable");
   assert.strictEqual(view.registered(), true);
   for (const d of context.subscriptions) d.dispose?.();
+});
+
+test("the page cuts a plot's long code by code point, never through an emoji (#1809)", () => {
+  const page = loadSmallPage(["refocus.js", "plots.js"]);
+  const code = `${"x:".padEnd(299, "a")}😀 rest`;
+  page.send({ type: "plots", plot: { kind: "line", process: "hdb", at: 0, code, svg: "<svg/>" }, index: 0, count: 1 });
+  const shown = page.find("pre")[0].textContent;
+  assert.strictEqual(shown, `${"x:".padEnd(299, "a")}😀...`);
+  page.send({ type: "plots", plot: { kind: "line", process: "hdb", at: 0, code: "😀".repeat(300), svg: "<svg/>" }, index: 0, count: 1 });
+  assert.strictEqual(page.find("pre")[0].textContent, "😀".repeat(300));
 });

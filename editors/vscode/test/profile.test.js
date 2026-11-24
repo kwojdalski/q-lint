@@ -14,6 +14,8 @@ const { PROFILE, PROFILE_CLEANUP, namespaceProblem, readProfile, functionStats, 
 const { registerFunctionProfile, PROFILE_FUNCTIONS, namespaceIn, guardedCode } = require("../out/profileview.js");
 const { guardCheck } = require("../out/guard.js");
 const { Live } = require("../out/live.js");
+const { durationText } = require("../out/linetimings.js");
+const { loadSmallPage } = require("./smallpage.js");
 const pkg = require("../package.json");
 
 // top(1) calls a(2) and b(3); a calls a(4), recursively; b calls a(5).
@@ -77,6 +79,21 @@ test("the flame chart merges calls by their path of callers, widest first", () =
   const view = profileView(readProfile(RAW, ".ns"), "dev", ".ns.top[]");
   assert.strictEqual(view.overheadTotal, 1700 * 5);
   assert.strictEqual(view.functions, 3);
+});
+
+test("the page writes a time as linetimings does, the unit picked as rounded (#1804)", () => {
+  const page = loadSmallPage(["profile.js"]);
+  const shown = (ns) => {
+    page.send({ type: "profile", id: 1, namespace: ".ns", process: "dev", code: "f[]", total: ns, overheadPerCall: 0, overheadTotal: 0, error: "", calls: 1, recorded: 1, functions: 1, stats: [], frames: [] });
+    return page.posted.at(-1).rendered.summary.match(/ in (.*?)\.$/)[1];
+  };
+  assert.strictEqual(shown(999600), "1.00 ms");
+  assert.strictEqual(shown(59999999999), "60.0 s");
+  const edges = [999.96e3, 9999.5e3, 99999.5e3, 6e10 - 1, 1e4 - 1, 1e7 - 1, 1e8 - 1];
+  for (let i = 0; i < 3000; i++) {
+    const ns = i < edges.length ? edges[i] : Math.floor(Math.random() ** 4 * 2e11);
+    assert.strictEqual(shown(ns), durationText(ns), String(ns));
+  }
 });
 
 test("the guard reads every run as a write to the namespace", () => {

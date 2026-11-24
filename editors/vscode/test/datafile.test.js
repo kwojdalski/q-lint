@@ -49,4 +49,9 @@ test("a data file is loaded by its path, or from its text for a process elsewher
   assert.strictEqual(d.isLocalHost("LOCALHOST", "mac"), true);
   assert.strictEqual(d.isLocalHost("Mac", "mac"), true);
   assert.strictEqual(d.isLocalHost("db1", "mac"), false);
+  // The launcher's loopback: any 127.x, 0.0.0.0 - 127.0.1.1 is Debian's hostname address (#1812).
+  for (const host of ["127.0.1.1", "127.0.0.2", "0.0.0.0", "::1", ""]) {
+    assert.strictEqual(d.isLocalHost(host, "mac"), true, host);
+  }
+  assert.strictEqual(d.isLocalHost("128.0.0.1", "mac"), false);
 });

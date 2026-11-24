@@ -559,3 +559,9 @@ test("an unwrapped result's longs and timestamps reach Parquet exactly (#1398)",
   const ts = gridOfQ({ kind: "vector", t: 12, attr: 0, v: [789000000123456789n] }, 10);
   assert.ok(has(toParquet(ts, [0]).data, 789000000123456789n + 946684800000000000n));
 });
+
+test("an xlsx cell past Excel's 32767 is cut before an emoji, not through it (#1811)", () => {
+  assert.strictEqual(xlsxCell(10, `${"a".repeat(32766)}😀`).t, "a".repeat(32766));
+  assert.strictEqual(xlsxCell(10, `${"a".repeat(32765)}😀b`).t, `${"a".repeat(32765)}😀`);
+  assert.strictEqual(xlsxCell(10, "a".repeat(40000)).t.length, 32767);
+});

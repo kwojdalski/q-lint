@@ -149,7 +149,8 @@ export function parseBulk(text: string, processes: Pick<Process, "label" | "host
       } else if (pasted.has(got.label)) {
         row.duplicate = "pasted";
       } else {
-        const same = processes.find((p) => p.host === got.host && p.port === got.port);
+        // A host name is one host in any case, as qnbrun compares it (#1813).
+        const same = processes.find((p) => p.host.toLowerCase() === got.host.toLowerCase() && p.port === got.port);
         if (same !== undefined) {
           row.sameAddressAs = same.label;
         }

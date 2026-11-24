@@ -44,7 +44,9 @@
     button("Clear", "Forget every plot", { type: "clear" });
     const about = el("div", "about");
     about.append(el("span", "kind", shown.kind), document.createTextNode(" " + shown.process + ", " + new Date(shown.at).toLocaleTimeString()));
-    const code = el("pre", "code", shown.code.length > 300 ? shown.code.slice(0, 300) + "..." : shown.code);
+    // Cut by code point, never inside a surrogate pair (#1809).
+    const chars = Array.from(shown.code);
+    const code = el("pre", "code", chars.length > 300 ? chars.slice(0, 300).join("") + "..." : shown.code);
     const img = el("img", "plot");
     img.alt = shown.kind + " chart of " + shown.code;
     img.src = svgUrl(shown.svg);

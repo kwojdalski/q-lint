@@ -25,6 +25,8 @@ import {
   type TaskDefinition,
   type WorkspaceFolder,
 } from "vscode";
+import { spawnPlan } from "./launcher";
+import { signalGroup } from "./lifeline";
 import { readTerminal } from "./liveconfig";
 import { mergeEnv } from "./qenv";
 import { onPath } from "./relations";
@@ -77,8 +79,15 @@ function runner(definition: QTaskDefinition, folder: WorkspaceFolder | undefined
           close.fire(1);
           return;
         }
+        // A q.cmd wrapper is run by cmd.exe, as the launcher runs it (#1814).
+        const run = spawnPlan(command, args);
+        if ("error" in run) {
+          write.fire(terminalText(`could not start ${binary}: ${run.error}\n`));
+          close.fire(1);
+          return;
+        }
         try {
-          child = spawn(command, args, { cwd, env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+          child = spawn(run.command, run.args, { cwd, env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true, windowsVerbatimArguments: run.verbatim });
         } catch (error) {
           write.fire(terminalText(`could not start ${binary}: ${error instanceof Error ? error.message : String(error)}\n`));
           close.fire(1);
@@ -97,7 +106,8 @@ function runner(definition: QTaskDefinition, folder: WorkspaceFolder | undefined
     },
     close: () => {
       closed = true;
-      child?.kill();
+      // q.exe too, under q.cmd's cmd.exe (#1745).
+      if (child !== undefined) signalGroup(child, "SIGTERM");
     },
   };
 }

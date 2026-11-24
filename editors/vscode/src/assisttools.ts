@@ -30,6 +30,7 @@ import {
 } from "vscode";
 import { notConnected } from "./agent";
 import { lintArgs, readLint, schemaOf, tablesOf, type LintFinding } from "./assist";
+import { launchable } from "./batch";
 import { ASSIST_SETTINGS, assistOff, readAssist, type AssistFeature } from "./assistconfig";
 import { GATHER, LIMITS, readExplorer, readGathered } from "./explorer";
 import { borrowWhenFree } from "./infoview";
@@ -123,7 +124,7 @@ export class ListTablesTool implements LanguageModelTool<TablesInput> {
     }
     const active = this.live.activeLabel();
     if (active === undefined) {
-      return { error: notConnected(this.live.processes(), this.live.discovery.discovered()) };
+      return { error: notConnected(this.live.processes(), [...this.live.discovery.discovered(), ...this.live.sharedList()]) };
     }
     const named = given(input.process);
     const table = given(input.table);
@@ -181,7 +182,9 @@ export interface LintInput {
 /// exit status. Rejects when it cannot be run or takes over `seconds`.
 export function runWith(command: string, args: string[], input: string, cwd: string | undefined, seconds: number, token?: CancellationToken): Promise<{ status: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, windowsHide: true });
+    // A .cmd wrapper through a shell, as the language server starts one (#1816).
+    const run = launchable(command, args);
+    const child = spawn(run.command, run.args, { cwd, windowsHide: true, shell: run.shell });
     let stdout = "";
     let stderr = "";
     const timer = setTimeout(() => {

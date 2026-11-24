@@ -17,6 +17,7 @@
 // reads 0.
 
 import { blockDepth, stringOpen } from "./statements";
+import { bytes } from "./tableinfo";
 
 /// The lambda: given the statements, it answers the overhead per
 /// statement in ns, then for each statement run whether it ran, its time in
@@ -172,18 +173,10 @@ export function durationText(ns: number): string {
   return `${(ns / 1e9).toFixed(1)} s`;
 }
 
-/// Bytes as the decoration shows them, in powers of 1024.
-export function bytesText(bytes: number): string {
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = bytes;
-  let unit = 0;
-  const shown = (): string => (unit === 0 ? String(value) : value.toFixed(value < 10 ? 1 : 0));
-  // As rounded: 1023.99 KB is 1.0 MB (#1437).
-  while (Number(shown()) >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit++;
-  }
-  return `${shown()} ${units[unit]}`;
+/// Bytes as the decoration shows them, in powers of 1024: tableinfo's
+/// `bytes`, so 10239 B is 10 KB as everywhere else, not 10.0 KB (#1806).
+export function bytesText(n: number): string {
+  return bytes(n);
 }
 
 /// The text drawn after a statement's last line.

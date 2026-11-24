@@ -41,6 +41,16 @@ test("a keyed right table gives lj and ij on its keys", () => {
   ]);
 });
 
+test("shared columns that are not plain names are written as q reads them back (#1818)", () => {
+  const left = shape("t", ["trade id", "_x", "px"], "ssf", [], ["", "", ""]);
+  const right = shape("u", ["trade id", "_x", "qty"], "ssj", [], ["", "", ""]);
+  const by = Object.fromEntries(suggestJoins(left, right).map((x) => [x.join, x]));
+  assert.strictEqual(by.lj.expression, 't lj (`$"trade id";`$"_x") xkey u');
+  assert.strictEqual(by.ij.expression, 't ij (`$"trade id";`$"_x") xkey u');
+  const one = Object.fromEntries(suggestJoins(shape("t", ["_x", "px"], "sf", [], ["", ""]), shape("u", ["_x", "qty"], "sj", [], ["", ""])).map((x) => [x.join, x]));
+  assert.strictEqual(one.lj.expression, 't lj (`$"_x") xkey u');
+});
+
 test("a shared time column gives aj and wj, sorted unless the right table already is", () => {
   const s = suggestJoins(trade, quote);
   const by = Object.fromEntries(s.map((x) => [x.join, x]));

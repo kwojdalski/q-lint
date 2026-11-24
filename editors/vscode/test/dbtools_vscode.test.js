@@ -595,3 +595,28 @@ test("the local q's directory is removed once the q has exited, where it cannot 
     fs.rmSync(parent, { recursive: true, force: true });
   }
 });
+
+test("Windows: the log's local q runs a q.cmd wrapper by cmd.exe, as the launcher does (#1815)", async (t) => {
+  const { EventEmitter } = require("node:events");
+  const { startLocalQ } = require("../out/tplogview.js");
+  const cp = require("node:child_process");
+  const { spawn } = cp;
+  const platform = Object.getOwnPropertyDescriptor(process, "platform");
+  const spawned = [];
+  // A q that has exited at once, with no pid: nothing is signalled.
+  cp.spawn = (command, args, options) => {
+    spawned.push({ command, args, verbatim: options.windowsVerbatimArguments });
+    return Object.assign(new EventEmitter(), { pid: undefined, exitCode: 1, signalCode: null, kill: () => true });
+  };
+  Object.defineProperty(process, "platform", { value: "win32" });
+  t.after(() => {
+    cp.spawn = spawn;
+    Object.defineProperty(process, "platform", platform);
+  });
+  await assert.rejects(startLocalQ("C:\\q\\q.cmd", {}, 1000), /did not start/);
+  assert.strictEqual(spawned.length, 1);
+  assert.match(spawned[0].command, /cmd\.exe$/i);
+  assert.deepStrictEqual(spawned[0].args.slice(0, 3), ["/d", "/s", "/c"]);
+  assert.match(spawned[0].args[3], /^"C:\\q\\q\.cmd .*qlint_tplog\.q -p 127\.0\.0\.1:\d+"$/);
+  assert.strictEqual(spawned[0].verbatim, true);
+});
