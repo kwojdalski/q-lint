@@ -21,7 +21,7 @@
 // - A lambda arrives with its text, which an unwrapped query shows. Any
 //   other function arrives as the word "func".
 // - An empty table arrives with no columns, so they cannot be shown.
-import { TREE_NODES, type GridPayload, type TreeNode } from "./grid";
+import { TREE_NODES, realValue, type GridPayload, type TreeNode } from "./grid";
 import type { QValue } from "./qdecode";
 
 /// q's generic null, `(::)`.
@@ -892,7 +892,7 @@ export function gridOfQ(q: QValue, limit: number): GridPayload | undefined {
   // as `GRID`'s Long does: Number() would round it (#1398).
   const raw = shown.map((c, i): unknown[] =>
     c.q.kind === "vector" && [2, 5, 6, 7, 8, 9, 12, 13, 14, 15, 16, 17, 18, 19].includes(types[i])
-      ? c.q.v.map((x) => (typeof x === "bigint" ? (Number.isSafeInteger(Number(x)) ? Number(x) : x.toString()) : x))
+      ? c.q.v.map((x) => (typeof x === "bigint" ? (Number.isSafeInteger(Number(x)) ? Number(x) : x.toString()) : types[i] === 8 ? realValue(x) : x))
       : [],
   );
   const rank = shown.map((c) => {

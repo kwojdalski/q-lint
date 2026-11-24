@@ -179,6 +179,28 @@ export type GridAnswer = Answer & {
 /// reads `RUN`'s, and throws as it does; a `grid` that is not one - `()`
 /// for a value that is not tabular - is dropped, so the result is shown as
 /// text.
+/// A real's raw number as the shortest decimal that reads back as the same
+/// float32. The codec widens a real's four bytes to the nearest double, so
+/// 0.1e arrives as 0.10000000149011612 - a number q neither holds nor
+/// prints, which an export would write and an `=` rule never match (#1488).
+export function realValue(x: unknown): unknown {
+  if (typeof x !== "number" || !Number.isFinite(x)) {
+    return x;
+  }
+  for (let digits = 1; digits < 9; digits++) {
+    const n = Number(x.toPrecision(digits));
+    if (Math.fround(n) === x) {
+      return n;
+    }
+  }
+  return x;
+}
+
+/// Each column's raw numbers, a real column's made `realValue`s.
+function rawColumns(raw: unknown[][], types: number[]): unknown[][] {
+  return raw.map((c, i) => (types[i] === 8 ? c.map(realValue) : c));
+}
+
 export function readGridAnswer(raw: unknown): GridAnswer {
   const answer: GridAnswer = readAnswer(raw);
   const grid = (raw as Record<string, unknown>).grid;
@@ -213,7 +235,7 @@ export function readGridAnswer(raw: unknown): GridAnswer {
       names: names.map((n) => (n === null ? "" : String(n))),
       types: types.map(Number),
       cells: (cells as unknown[][]).map((c) => c.map((x) => (typeof x === "string" ? x : String(x)))),
-      raw: perColumn(g.raw),
+      raw: rawColumns(perColumn(g.raw), types.map(Number)),
       rank: perColumn(g.rank) as number[][],
       ...(tree !== undefined ? { tree } : {}),
     },
@@ -396,12 +418,13 @@ export function readPage(raw: unknown): GridPage | string {
   }
   const names = (g.names as unknown[]).map((n) => (n === null ? "" : String(n)));
   const perColumn = (x: unknown): unknown[][] => names.map((_, i) => (Array.isArray(x) && Array.isArray(x[i]) ? x[i] : []));
+  const types = Array.isArray(g.types) ? g.types.map(Number) : [];
   return {
     count: typeof g.count === "number" ? g.count : 0,
     names,
-    types: Array.isArray(g.types) ? g.types.map(Number) : [],
+    types,
     cells: perColumn(g.cells).map((c) => c.map((x) => (typeof x === "string" ? x : String(x)))),
-    raw: perColumn(g.raw),
+    raw: rawColumns(perColumn(g.raw), types),
     rank: perColumn(g.rank) as number[][],
   };
 }
