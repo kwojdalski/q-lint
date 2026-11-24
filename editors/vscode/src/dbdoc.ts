@@ -9,7 +9,8 @@
 // partitioned one's reads its last partition's schema), its rows counted as
 // the explorer counts them (`.Q.cn` for a partitioned table), and the
 // functions of the root and of every namespace that is not q's own, at most
-// `lim` of each. Works on kdb+ (KDB-X) and PeachQ; held there by
+// `lim` of each. Only a lambda has parameters of its own: `(value f)1` of a
+// projection is its bound argument, of a composition a part (#1575). Works on kdb+ (KDB-X) and PeachQ; held there by
 // dbtools_q.test.js.
 import { definitions } from "./definitions";
 
@@ -30,7 +31,7 @@ export const DOCUMENT = [
   "  $[@[{0<count .Q.pv};::;0b];string .Q.pf;\"\"];",
   "  \"f\"$@[{count .Q.pv};::;0];",
   "  one each ts;",
-  "  string fs;{@[{string(value get x)1};x;()]}each fs)}",
+  "  string fs;{@[{f:get x;$[100h=type f;string(value f)1;()]};x;()]}each fs)}",
 ].join("\n");
 
 /// Tables and functions a document covers at most.

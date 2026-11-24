@@ -213,6 +213,14 @@ test("the documenter reads tables, keys, foreign keys and functions", { skip }, 
   assert.match(text, /### \.lib\.add\[a;b\]\n\nAdds\./);
 });
 
+// Only a lambda's parameters are its own: a projection's bound argument or
+// a composition's part is none (#1575).
+test("the documenter gives a projection and a composition no parameters", { skip }, async (t) => {
+  const { connection } = await connect(t, "add:{[a;b] a+b}\nprj:{x+y}[100]\ncmp:neg abs::\n");
+  const params = Object.fromEntries(readDoc(await connection.call(DOCUMENT, 100)).functions.map((f) => [f.name, f.params]));
+  assert.deepStrictEqual([params.add, params.prj, params.cmp], [["a", "b"], [], []]);
+});
+
 test("the partition check finds missing dates, files, differing types and outliers", { skip }, async (t) => {
   const extra = [
     "mk[r;;6] each 2026.01.12 2026.01.13;",
