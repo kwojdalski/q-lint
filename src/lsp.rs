@@ -3459,22 +3459,46 @@ fn file_path(uri: &str) -> Option<String> {
         .get(..5)
         .filter(|s| s.eq_ignore_ascii_case("file:"))?
         .len()..];
+    // The host, when the URI names one but this machine: a file on a
+    // network share, which Windows names `\\host\share\...` and VS Code
+    // `file://host/share/...`. Dropped, the share was read as a folder
+    // `/host/share` on the current drive (#2112).
+    let mut host = "";
     let rest = match rest.strip_prefix("//") {
         // Strip the empty authority: file:///a/b has a host of "", so the
         // path begins at the third slash. RFC 8089 makes `localhost` the
         // same host, and file://localhost/a/b the same file (#425).
-        Some(rest) => match rest.get(..10) {
-            Some(host) if host.eq_ignore_ascii_case("localhost/") => &rest[10..],
-            _ => rest.strip_prefix('/').unwrap_or(rest),
-        },
+        Some(rest) => {
+            let (authority, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
+            if !authority.is_empty() && !authority.eq_ignore_ascii_case("localhost") {
+                host = authority;
+            }
+            path.strip_prefix('/').unwrap_or(path)
+        }
         // RFC 8089's form with no authority at all: file:/a/b (#546).
         None => rest.strip_prefix('/')?,
     };
+    let decoded = decode(rest);
+    // A share's path is `//host/...`, which Windows reads as `\\host\...`
+    // and `path_uri` gives back as the URI it came from.
+    Some(if !host.is_empty() {
+        format!("//{}/{decoded}", decode(host))
+    } else if re_drive(&decoded) {
+        // A Windows path is a drive letter, not a root: VS Code sends
+        // `file:///c%3A/Users/...`, and `/c:/Users/...` is no path at all.
+        decoded
+    } else {
+        format!("/{decoded}")
+    })
+}
+
+/// `text` with its percent-escapes decoded.
+fn decode(text: &str) -> String {
     // Percent-escapes decode to bytes, and the bytes are UTF-8: `%C3%A9` is
     // one `é`. Pushing each byte as a char read it as two Latin-1 ones, and
     // a workspace under a folder with a non-ASCII name lost every path.
-    let mut bytes = Vec::with_capacity(rest.len());
-    let raw = rest.as_bytes();
+    let mut bytes = Vec::with_capacity(text.len());
+    let raw = text.as_bytes();
     let mut i = 0;
     // An escape is `%` and two hex digits, read as bytes: slicing the str
     // there panicked when a multi-byte character followed the `%`, and a
@@ -3494,14 +3518,7 @@ fn file_path(uri: &str) -> Option<String> {
         bytes.push(raw[i]);
         i += 1;
     }
-    let decoded = String::from_utf8_lossy(&bytes).into_owned();
-    // A Windows path is a drive letter, not a root: VS Code sends
-    // `file:///c%3A/Users/...`, and `/c:/Users/...` is no path at all.
-    Some(if re_drive(&decoded) {
-        decoded
-    } else {
-        format!("/{decoded}")
-    })
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 fn re_drive(path: &str) -> bool {
@@ -3582,6 +3599,19 @@ mod tests {
         assert_eq!(path_uri(p(r"\\?\C:\a b\c")), "file:///C:/a%20b/c");
         assert_eq!(path_uri(p(r"\\?\UNC\host\share\c")), "file://host/share/c");
         assert_eq!(path_uri(p("/tmp/a b")), "file:///tmp/a%20b");
+        // A share keeps its host, and gives its URI back (#2112).
+        assert_eq!(
+            path_of("file://server/share/proj/a.q"),
+            "//server/share/proj/a.q"
+        );
+        assert_eq!(
+            path_of("file://Ser%20ver/sh%20are/a.q"),
+            "//Ser ver/sh are/a.q"
+        );
+        for uri in ["file://host/share/c", "file://host/a%20b/c.q"] {
+            assert_eq!(path_uri(p(&path_of(uri))), uri);
+        }
+        assert_eq!(path_of("file://host"), "//host/");
         // No authority, and the scheme in any case, are the same file (#546).
         assert_eq!(path_of("file:/tmp/plain.q"), "/tmp/plain.q");
         assert_eq!(path_of("FILE:///tmp/plain.q"), "/tmp/plain.q");
