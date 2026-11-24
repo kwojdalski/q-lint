@@ -46,11 +46,10 @@
 //   compresses a file into another - each also spaced or with the number
 //   in parentheses (`-19 !x`, `(-19)!x`);
 // - `@[` or `.[` on a variable named by a symbol, alone or in
-//   parentheses (`` .[(`t);..] ``), with four arguments: an
-//   amend in place (three is as often a trap, `.[`f;args;handler]`, and
-//   is not taken for one, unless the third is an attribute or a unary
-//   that maps the items, `` @[`t;`c;`p#] ``, `` @[`t;`a;neg] ``); `![`
-//   likewise, a functional update or delete. Also with the target left
+//   parentheses (`` .[(`t);..] ``), with three arguments or four: an
+//   amend in place - on a symbol it is never a trap, `.[`f;args;h]`
+//   amends `f` or fails (#1763); `![` with four likewise, a functional
+//   update or delete. Also with the target left
 //   out and given after (`` @[;`a;:;1] `. ``), and the amend or `!`
 //   passed as a value (`` .[@;(`.;`a;:;1)] ``, `` (@) . (`.;..) ``);
 // - `value`, `get`, `eval` or `-6!`, or in k code a monadic `.`
@@ -269,12 +268,11 @@ function items(t: Token[], open: number): [number, number][] {
   return out;
 }
 
-/// The unaries that, as an amend's third argument, change the items in place
-/// rather than handle an error: `` @[`t;`a;neg] ``.
-const UNARY = new Set([
-  "neg", "not", "abs", "reverse", "asc", "desc", "distinct", "floor", "ceiling", "sqrt", "exp", "log",
-  "reciprocal", "signum", "upper", "lower", "trim", "ltrim", "rtrim", "null", "fills", "sums", "deltas",
-]);
+/// The fewest arguments with which `@` and `.` amend a variable by name -
+/// three, with a unary, `` @[`t;`c;neg] `` - and `!` updates or deletes.
+function minimum(amend: string): number {
+  return amend === "!" ? 4 : 3;
+}
 
 /// `name` without the `.q.` that names a builtin as well: `.q.set` is `set`.
 function unqualified(name: string): string {
@@ -387,7 +385,7 @@ function evaluated(t: Token[], j: number, byValue: boolean): { reason: string; a
   // variable after it: `` value(@[;`a;:;2];`.) `` (#1727).
   const projection = head && (k?.text === "@" || k?.text === ".") && t[j + 1]?.text === "[" ? items(t, j + 1) : [];
   const projected =
-    projection.length >= 4 && projection[0][0] === projection[0][1] && named(projection[projection.length - 1][1] + 1)?.kind === "sym" && (named(projection[projection.length - 1][1] + 1)?.text.length ?? 0) > 1;
+    projection.length > 0 && projection.length >= minimum(k?.text ?? "") && projection[0][0] === projection[0][1] && named(projection[projection.length - 1][1] + 1)?.kind === "sym" && (named(projection[projection.length - 1][1] + 1)?.text.length ?? 0) > 1;
   const reason = k?.kind === "str"
     ? "a string"
     : (k?.kind === "name" && k.text === "parse") || (k?.text === "-5" && t[j + 1]?.text === "!")
@@ -400,7 +398,7 @@ function evaluated(t: Token[], j: number, byValue: boolean): { reason: string; a
             ? `a call of ${k.text.slice(1)}`
             : // An amend on a variable by name: `` value(@;`.;`a;:;1) ``,
               // `` eval(@;enlist`.;enlist`a;:;1) `` (#1446).
-              (head && (k?.text === "@" || k?.text === ".") && named(j + 1 + wrap)?.kind === "sym" && (named(j + 1 + wrap)?.text.length ?? 0) > 1 && items(t, j - 1 - wrap).length >= 4) || projected
+              (head && (k?.text === "@" || k?.text === ".") && named(j + 1 + wrap)?.kind === "sym" && (named(j + 1 + wrap)?.text.length ?? 0) > 1 && items(t, j - 1 - wrap).length > minimum(k?.text ?? "")) || projected
               ? "an amend"
               : undefined;
   return reason === undefined ? undefined : { reason, at: j };
@@ -491,19 +489,16 @@ function readStatement(statement: string, found: Set<string>): void {
         const close = args.length > 0 ? args[args.length - 1][1] : -1;
         const target =
           args[0]?.[0] !== args[0]?.[1]
-            ? symbolAt(t, i + 1)
+            ? // The symbol alone, not indexed: `` @[(`t)[0];..] `` is a value.
+              t.slice(args[0][0], args[0][1]).filter((k) => k.text !== "(" && k.text !== ")").length === 1
+              ? symbolAt(t, i + 1)
+              : undefined
             : t[close + 1]?.text === "[" && t[close + 1].kind === "open"
               ? symbolAt(t, close + 2)
               : symbolAt(t, close + 1);
-        // Three is a trap as often as an amend, `.[`f;args;handler]`, unless
-        // the third is a unary that sets an attribute or maps the items:
-        // `` @[`t;`c;`p#] ``, `` @[`t;`a;neg] ``.
-        const third = args.length === 3 ? t.slice(args[2][0], args[2][1]) : [];
-        const unary =
-          amend !== "!" &&
-          ((third.length === 2 && third[0].kind === "sym" && third[1].text === "#") ||
-            (third.length === 1 && third[0].kind === "name" && UNARY.has(third[0].text)));
-        if (target !== undefined && target.length > 1 && (args.length >= 4 || unary)) {
+        // Three is an amend too, with a unary, `` @[`t;`c;{x*2}] ``: on a
+        // symbol it is never a trap (#1763). `!` takes four.
+        if (target !== undefined && target.length > 1 && args.length >= minimum(amend)) {
           found.add(amend === "!" ? `updates or deletes from ${target} in place with !` : `amends ${target} in place`);
         }
       }
@@ -731,7 +726,7 @@ function readStatement(statement: string, found: Set<string>): void {
         j++;
       }
       const target = t[j]?.text === "(" ? symbolAt(t, j + 1) : undefined;
-      if (target !== undefined && target.length > 1 && items(t, j).length >= 4) {
+      if (target !== undefined && target.length > 1 && items(t, j).length >= minimum(k.text)) {
         found.add(k.text === "!" ? `updates or deletes from ${target} in place with !` : `amends ${target} in place`);
         continue;
       }

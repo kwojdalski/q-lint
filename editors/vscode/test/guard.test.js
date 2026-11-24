@@ -78,8 +78,8 @@ test("in-place updates, writers, file writes and amends are changes", () => {
     "f:`lib 2:(`f;1)": ["assigns f", "loads a shared object with 2:"],
     "@[`t;0;:;1]": ["amends `t in place"],
     ".[`t;(0;`a);:;1]": ["amends `t in place"],
-    // A trap by name is not an amend.
-    ".[`f;(1;2);{x}]": [],
+    // On a symbol three arguments amend too; on a value it is a trap.
+    ".[`f;(1;2);{x}]": ["amends `f in place"],
     "@[f;x;{y}]": [],
     'value "a:1"': ["evaluates a string with value"],
     "value d": [],
@@ -682,16 +682,38 @@ test("an amend projection with the target left out and applied to a symbol is a 
   }
 });
 
+test("a three-argument amend on a symbol, with any function, is a change (#1763)", () => {
+  const cases = {
+    "@[`b;0;{9}]": ["amends `b in place"],
+    ".[`b;();{9}]": ["amends `b in place"],
+    "@[`b;::;1+]": ["amends `b in place"],
+    "@[`t;`price;{x*2}]": ["amends `t in place"],
+    ".[@;(`b;0;{9})]": ["amends `b in place"],
+    "(@) . (`b;::;1+)": ["amends `b in place"],
+    "value(@;`b;0;{9})": ["evaluates an amend with value"],
+    // On a value, an index, or ! with three, it reads.
+    "@[b;0;{9}]": [],
+    ".[f;(1;2);{x}]": [],
+    "@[`.;`a]": [],
+    ".[@;(b;0;{9})]": [],
+    "@[(`t)[0];1;{x}]": [],
+    "@[(`d)`a;0;neg]": [],
+    "![`t;();0b]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
 test("a three-argument amend with an attribute or a unary is a change (#1323)", () => {
   const cases = {
     "@[`t;`c;`p#]": ["amends `t in place"],
     "@[`t;`a;`s#]": ["amends `t in place"],
     "@[`t;`a;neg]": ["amends `t in place"],
     ".[`t;(0;`a);neg]": ["amends `t in place"],
-    // A trap by name, or on a value, reads.
-    ".[`f;(1;2);{x}]": [],
-    "@[`f;x;::]": [],
-    "@[`f;x;`err]": [],
+    // On a value it reads; on a symbol it is never a trap (#1763).
+    ".[`f;(1;2);{x}]": ["amends `f in place"],
+    "@[`f;x;::]": ["amends `f in place"],
     "@[t;`c;`p#]": [],
     "![`t;();0b]": [],
   };
@@ -835,7 +857,7 @@ test("an amend or ! in parentheses applied in brackets is a change (#1445)", () 
     "(@)[`t;`c;`p#]": ["amends `t in place"],
     // On a value, or a trap, it reads.
     "(@)[t;0;:;1]": [],
-    "(.)[`f;(1;2);{x}]": [],
+    "(.)[f;(1;2);{x}]": [],
     "(@)[f;x;{y}]": [],
     "(!)[t;();0b;`a]": [],
     "(x+1)[0]": [],
@@ -890,6 +912,7 @@ test("value of an amend tree with the head in parentheses or projected is a chan
     "value((@);t;0;:;1)": [],
     "value(@[;0;:;2];t)": [],
     "value(@[;0];`t)": [],
+    "value(@[;0;{9}];`b)": ["evaluates an amend with value"],
     "value(@[f;0];`t)": [],
   };
   for (const [code, expected] of Object.entries(cases)) {
