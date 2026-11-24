@@ -303,9 +303,9 @@ const trimEnd = (line: string): string => line.replace(/\s+$/, "");
 
 /// A code cell as a script runs it the way the cell runs: q reads a script
 /// as `statements.ts` reads a cell, but across cells, so what one cell leaves
-/// open would change the next. An indented first line would continue the
-/// cell above, and is unindented - a lone `/` or `\` there made a line
-/// comment; a block comment the cell leaves open is
+/// open would change the next. An indented first code line would continue
+/// the cell above, and is unindented, as are the comments over it - a lone
+/// `/` or `\` there made a line comment; a block comment the cell leaves open is
 /// closed; a lone `\`, which ends the cell's code, would end the script, and
 /// opens a block comment over the rest of the cell instead. Block comments
 /// nest, in a cell as in KDB-X (#1462), so each level the cell leaves open is
@@ -339,6 +339,12 @@ function scriptCell(source: string): string[] {
         // Unindented, a lone `/` would open a block comment and a lone `\`
         // end the script, losing every later cell (#1563): a line comment.
         out.push(`/ ${unindented}`);
+        continue;
+      }
+      if (unindented.startsWith("/")) {
+        // A comment, not the cell's first code line: that one is still to
+        // come, and left indented would continue the cell above (#1935).
+        out.push(unindented);
         continue;
       }
       first = false;

@@ -487,3 +487,12 @@ test("export: a cell that ends in another namespace is followed by \\d ., as the
   assert.strictEqual(exportScript([code("\\d .foo\na:1\n\\d .\nb:2")]), "\\d .foo\na:1\n\\d .\nb:2\n");
   assert.strictEqual(exportScript([code("/ \\d .foo\n\\d\na:1")]), "/ \\d .foo\n\\d\na:1\n");
 });
+
+test("export: an indented comment opening a cell is not its first code line; the line under it is unindented (#1935)", () => {
+  const { statements } = require("../out/statements.js");
+  const script = exportScript([{ kind: "code", source: "f:{x+1}" }, { kind: "code", source: " / note\n g:3" }]);
+  assert.strictEqual(script, "f:{x+1}\n\n/ note\ng:3\n");
+  assert.deepStrictEqual(statements(script), ["f:{x+1}", "g:3"]);
+  // A second indented statement still starts at column 0 only by being first.
+  assert.strictEqual(exportScript([{ kind: "code", source: "  / a\n  / b\n  g:3\n   +1" }]), "/ a\n/ b\ng:3\n   +1\n");
+});

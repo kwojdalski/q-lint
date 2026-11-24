@@ -364,3 +364,14 @@ test("an exported notebook defines a name where its cell does: a cell's \\d ends
     assert.strictEqual(ran[0].replace(/\s/g, ""), "011b");
   }
 });
+
+test("an exported cell that opens with an indented comment does not continue the cell above (#1935)", { skip }, async (t) => {
+  for (const cells of [
+    ["f:{x+1}", " / note\n g:3"],
+    ["f:{x+1}", "\t/ one\n  / two\n\n  g:3"],
+  ]) {
+    const { cells: ran, script } = await ranAndLoaded(t, cells, "(-3!f;g)");
+    assert.deepStrictEqual(script, ran, JSON.stringify(cells));
+    assert.deepStrictEqual(ran, ['"{x+1}"', "3"]);
+  }
+});
