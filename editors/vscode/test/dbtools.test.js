@@ -14,7 +14,7 @@ const path = require("node:path");
 const pkg = require("../package.json");
 const { DB_SETTINGS, DB_COMMANDS, dbOn, dbOff } = require("../out/dbfeatures.js");
 const { opProblem, opText, columnScript, columnScriptOf, readRun, HELPERS } = require("../out/colmanager.js");
-const { readDoc, qdocs, docMarkdown, docHtml, typeName } = require("../out/dbdoc.js");
+const { readDoc, qdocs, docMarkdown, docHtml, typeName, workspaceDocs } = require("../out/dbdoc.js");
 const { missingWeekdays, partitionProblems, partitionReport, readPartitions } = require("../out/partcheck.js");
 const { readSym, symReport } = require("../out/syminspect.js");
 const { advise, filterCounts, adviceReport, readAttributeSample } = require("../out/attradvice.js");
@@ -404,4 +404,16 @@ test("a menu that matches a file's extension matches it in any case (#1382)", ()
   const clauses = whens.flatMap((w) => [...w.matchAll(/resourceExtname =~ (\/\S*)/g)].map((m) => m[1]));
   assert.ok(clauses.length > 0);
   for (const c of clauses) assert.match(c, /\/i$/, c);
+});
+
+// One file that cannot be read - permission denied, a dangling symlink -
+// ended the reading, and the files after it went undocumented (#1542).
+test("a workspace file that cannot be read is skipped, and the files after it still documented", async () => {
+  const files = { "a.q": "/ adds one\nf:{x+1}\n", "b.q": null, "c.q": "/ doubles\ng:{2*x}\n/ not this one\nf:{x}\n" };
+  const read = async (f) => {
+    if (files[f] === null) throw new Error("EACCES");
+    return files[f];
+  };
+  const docs = await workspaceDocs(Object.keys(files), read);
+  assert.deepStrictEqual([...docs], [["f", "adds one"], ["g", "doubles"]]);
 });
