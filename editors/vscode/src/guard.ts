@@ -34,7 +34,8 @@
 //   `("SJ";",") 0: f`): `1:` takes a plain symbol for a file, and a name
 //   may hold a handle (#2032) - and `2:`,
 //   each also by its `.q.` name (`.q.set`), by its symbol
-//   (`` `.q.set . (`a;1) ``) and picked from `.q` by any index
+//   (`` `.q.set . (`a;1) ``), one cast from a string too (`` (`$".q.set") ``,
+//   #2037), and picked from `.q` by any index
 //   (`` .q[`set] ``, `` (get`.q)`set ``, #1765) - as are `value`,
 //   `get`, `eval`, `reval`, `hopen`, `xasc`, `xdesc` and `xkey`, whose
 //   arguments are then not read (#1764) - `system` of a string literal
@@ -180,7 +181,16 @@ function tokens(code: string): Token[] {
       while (j < code.length && code[j] !== '"') {
         j += code[j] === "\\" ? 2 : 1;
       }
-      out.push({ kind: "str", text: code.slice(i, j + 1), pos: i });
+      const text = code.slice(i, j + 1);
+      // A symbol cast from a string, `` `$".q.set" ``, is that symbol (#2037).
+      const tail = out.filter((k, n) => n >= out.length - 4 && k.kind !== "space");
+      const cast = tail.length >= 2 && tail[tail.length - 1].text === "$" && tail[tail.length - 2].kind === "sym" && tail[tail.length - 2].text === "`";
+      if (cast) {
+        const start = out.lastIndexOf(tail[tail.length - 2]);
+        out.splice(start, out.length - start, { kind: "sym", text: `\`${qText(text)}`, pos: tail[tail.length - 2].pos });
+      } else {
+        out.push({ kind: "str", text, pos: i });
+      }
       i = j + 1;
     } else if (c === "/" && (i === 0 || /\s/.test(code[i - 1]))) {
       while (i < code.length && code[i] !== "\n") {

@@ -175,3 +175,10 @@ test("? passed as a value is held, and extends the enumeration once let through 
   await heldThenWrites(send, read, ".[?;(`sym;`x2)]", "`x2 in sym");
   await heldThenWrites(send, read, "?/[`sym;`x3]", "`x3 in sym");
 });
+
+test("a writer named by a cast symbol is held, and writes once let through (#2037)", { skip }, async (t) => {
+  const q = await startQ(t, "\n");
+  const { send, read } = await setUp(t, q.port);
+  await heldThenWrites(send, read, '(`$".q.set") . (`zz1;1)', "`zz1 in key `.");
+  await heldThenWrites(send, read, '(`$".q.value") "p8:1"', "`p8 in key `.");
+});

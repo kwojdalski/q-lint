@@ -1422,3 +1422,19 @@ test("? passed as a value, in parentheses, through an adverb or to . or @, exten
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("a writer named by a symbol cast from a string is the writer: (`$\".q.set\") . (`a;1) (#2037)", () => {
+  const cases = {
+    '(`$".q.set") . (`zz1;1)': ["calls .q.set"],
+    '(`$".q.value") "p8:1"': ["calls .q.value"],
+    '`$ ".q.set" . (`a;1)': ["calls .q.set"],
+    '(get `$".q.upsert")[`t;()]': ["calls .q.upsert"],
+    '.q`$"set"': ["calls .q.set"],
+    // A cast to another name reads.
+    '`$"abc"': [],
+    '(`$".q.count") 1 2': [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
