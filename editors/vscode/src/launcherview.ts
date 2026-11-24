@@ -5,12 +5,12 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import * as net from "node:net";
 import { commands, window, workspace, type ExtensionContext, type OutputChannel } from "vscode";
-import { LAUNCH_COMMANDS, commandText, launchPlan, readLauncher } from "./launcher";
+import { LAUNCH_COMMANDS, argsFromText, argsText, commandText, launchPlan, readLauncher } from "./launcher";
 import { readTerminal } from "./liveconfig";
 import { mergeEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import type { Live, ProcessArg } from "./live";
-import { launchOf, splitArgs, withExtras, type Launch, type Process } from "./processes";
+import { launchOf, withExtras, type Launch, type Process } from "./processes";
 import { iconsEscaped, plainMessage } from "./history";
 
 /// How long a process has to end after SIGTERM before it is killed.
@@ -309,14 +309,14 @@ export class Launcher {
       }
       const args = await window.showInputBox({
         title: `Launch ${process.label} (3 of 3): arguments`,
-        value: (current.args ?? []).map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(" "),
+        value: argsText(current.args ?? []),
         prompt: `Arguments after the script; -p ${process.port} is added unless they set -p. For TorQ: -proctype rdb -procname rdb1 -load code/processes/rdb.q`,
         ignoreFocusOut: true,
       });
       if (args === undefined) {
         return;
       }
-      launch = launchOf({ ...current, command, script, args: splitArgs(args) });
+      launch = launchOf({ ...current, command, script, args: argsFromText(args, current.args ?? []) });
     }
     const now = this.live.processes();
     if (!now.some((p) => p.label === process.label)) {

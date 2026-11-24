@@ -5,7 +5,7 @@ import * as os from "os";
 import { statSync } from "node:fs";
 import { scriptPath } from "./connectscript";
 import { onPath } from "./relations";
-import type { Launch, Process } from "./processes";
+import { splitArgs, type Launch, type Process } from "./processes";
 
 export const LAUNCH_COMMANDS = {
   set: "q-lint.setLaunchDefinition",
@@ -88,4 +88,16 @@ function isFile(file: string): boolean {
 /// quote in double quotes.
 export function commandText(plan: Pick<Plan, "command" | "args">): string {
   return [plan.command, ...plan.args].map((a) => (/[\s"']/.test(a) || a === "" ? `"${a.replace(/"/g, '\\"')}"` : a)).join(" ");
+}
+
+/// The arguments as Set Launch Definition's Arguments box shows them: one
+/// with a space, or empty, in double quotes.
+export function argsText(args: string[]): string {
+  return args.map((a) => (/\s/.test(a) || a === "" ? `"${a}"` : a)).join(" ");
+}
+
+/// The arguments the box's `text` gives: `args` as they were when it is the
+/// text they were shown as, so one holding a quote is not split (#1430).
+export function argsFromText(text: string, args: string[]): string[] {
+  return text === argsText(args) ? args : splitArgs(text);
 }

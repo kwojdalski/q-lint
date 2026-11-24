@@ -10,7 +10,7 @@ const os = require("node:os");
 const path = require("node:path");
 const net = require("node:net");
 const pkg = require("../package.json");
-const { LAUNCH_COMMANDS, commandText, isLocalHost, launchPlan, readLauncher } = require("../out/launcher.js");
+const { LAUNCH_COMMANDS, argsFromText, argsText, commandText, isLocalHost, launchPlan, readLauncher } = require("../out/launcher.js");
 const { launchOf, parseProcesses, splitArgs } = require("../out/processes.js");
 const { onPath } = require("../out/relations.js");
 const { Live } = require("../out/live.js");
@@ -243,4 +243,12 @@ test("a real q process is started, connected to, and stopped", { skip: Q ? false
   assert.strictEqual(await accepts(port), false);
   for (let i = 0; i < 50 && live.activeLabel() !== undefined; i++) await sleep(20);
   assert.strictEqual(live.activeLabel(), undefined);
+});
+
+test("the Arguments box gives back the arguments it was filled with (#1430)", () => {
+  const args = ["-e", "", 'say "hi" now', "-p", "5000"];
+  assert.deepStrictEqual(argsFromText(argsText(args), args), args);
+  // An empty argument is shown quoted, so splitting the box keeps it.
+  assert.strictEqual(argsText(["-e", "", "a b"]), '-e "" "a b"');
+  assert.deepStrictEqual(argsFromText('-e "" "a b" -x', ["-e", "", "a b"]), ["-e", "", "a b", "-x"]);
 });
