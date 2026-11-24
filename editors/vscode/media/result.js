@@ -2086,7 +2086,8 @@
   }
 
   /// What is kept of a result's page when another is chosen from the tabs.
-  const PER_RESULT = ["view", "sort", "filters", "columns", "top", "open", "names", "pivot", "y2", "colours", "mapSize", "mapColour", "zoom"];
+  /// Its chart kind, bins and Compare too, so it is drawn as it was (#1638).
+  const PER_RESULT = ["view", "sort", "filters", "columns", "top", "open", "names", "pivot", "y2", "colours", "mapSize", "mapColour", "zoom", "kind", "bins", "compare"];
 
   window.addEventListener("message", function (event) {
     const m = event.data;

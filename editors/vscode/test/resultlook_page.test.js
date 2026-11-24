@@ -291,3 +291,25 @@ test("going back to a result's tab restores its own filter, not one typed on ano
   page.send(result("s.2", cols, { history: hist(["s.1", "s.2"]) }));
   assert.strictEqual(page.body.all((e) => e.tagName === "INPUT")[0].value, "an");
 });
+
+test("a result chosen from the tabs is drawn with its own chart kind and bins, not the last tab's (#1638)", () => {
+  const page = loadPage(undefined, { Chart: FakeChart });
+  const hist = (ids) => ids.map((id) => ({ id, process: "p", code: id, at: 0, rows: 3 }));
+  const colsA = [["x", 9, ["1", "2", "3"]], ["y", 9, ["4", "5", "6"]]];
+  const colsB = [["a", 9, ["1", "2", "3"]], ["b", 9, ["4", "5", "6"]]];
+  page.send(result("s.1", colsA, { view: "chart", history: hist(["s.1"]) }));
+  const kind = page.body.all((e) => e.tagName === "SELECT")[0];
+  kind.value = "histogram";
+  kind.fire("change");
+  const bins = page.body.all((e) => e.tagName === "INPUT" && e.type === "number")[0];
+  bins.value = "7";
+  bins.fire("change");
+  page.send(result("s.2", colsB, { view: "chart", history: hist(["s.1", "s.2"]) }));
+  const other = page.body.all((e) => e.tagName === "SELECT")[0];
+  other.value = "bar";
+  other.fire("change");
+  assert.strictEqual(page.rendered().chart.kind, "bar");
+  page.send(result("s.1", colsA, { view: "chart", history: hist(["s.1", "s.2"]) }));
+  assert.strictEqual(page.rendered().chart.kind, "histogram");
+  assert.strictEqual(page.state.bins, 7);
+});
