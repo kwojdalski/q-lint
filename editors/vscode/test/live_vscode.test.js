@@ -389,3 +389,23 @@ test("a query on a discovered production process asks before it connects (#1425)
   assert.match(stub.messages.at(-1)?.[1] ?? "", /desk\/rdb is a production process/);
   assert.deepStrictEqual(did, []);
 });
+
+// Edit Process on the connected process, its label kept, fired nothing: the
+// environment colour went on showing the tag it had (#1460).
+test("editing the connected process's tags says so, and it takes them", async (t) => {
+  const a = await fakeQ();
+  t.after(() => a.close());
+  const { live, events } = await setUp(t, [proc("a", a.port, { tags: ["prod"] })]);
+  assert.strictEqual(await live.connectTo("a"), true);
+  events.length = 0;
+  stub.inputs = ["a", "127.0.0.1", String(a.port), "", "dev"];
+  stub.picks = ["No"];
+  await stub.commands.get("q-lint.editProcess")("a");
+  assert.deepStrictEqual(live.activeProcess().tags, ["dev"]);
+  assert.deepStrictEqual(events, ["edited"]);
+  // Saved again as it is: nothing to redraw.
+  stub.inputs = ["a", "127.0.0.1", String(a.port), "", "dev"];
+  stub.picks = ["No"];
+  await stub.commands.get("q-lint.editProcess")("a");
+  assert.deepStrictEqual(events, ["edited"]);
+});

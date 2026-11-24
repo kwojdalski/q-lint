@@ -530,9 +530,10 @@ export class Live {
   private borrowed: Promise<unknown> | undefined;
   /// Set on deactivate: a connection opened after it is closed at once.
   private disposed = false;
-  private readonly changed = new EventEmitter<"connected" | "disconnected" | "queried">();
+  private readonly changed = new EventEmitter<"connected" | "disconnected" | "queried" | "edited">();
   /// Fired when a connection opens or closes, and when a query has finished:
-  /// what the process explorer refreshes on.
+  /// what the process explorer refreshes on. "edited": the connected
+  /// process kept its label and took new tags (#1460).
   readonly onDidChange = this.changed.event;
   /// Fired with the answer to a query run from an editor's line or
   /// selection, and where it came from: what inline results (#1047) draw.
@@ -1263,6 +1264,9 @@ export class Live {
       // The explorer keeps what it read under the label it read it for.
       if (process.label !== old.label && this.activeLabel() !== undefined) {
         this.changed.fire("connected");
+      } else if (process.tags.join(",") !== active.tags.join(",") && this.activeLabel() !== undefined) {
+        // What is drawn by its tags, as the environment colour, is redrawn.
+        this.changed.fire("edited");
       }
       const moved = process.host !== host || process.port !== port || process.user !== user || (process.tls === true) !== (tls === true);
       if (moved && this.activeLabel() !== undefined) {
