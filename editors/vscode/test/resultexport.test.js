@@ -62,6 +62,10 @@ test("a cell's q literal keeps its type: suffixes, typed nulls and infinities, s
   // A general list's item is q already, unless it was cut.
   assert.deepStrictEqual(atomLiteral(0, "`a`b", undefined), { literal: "`a`b", cut: false });
   assert.strictEqual(atomLiteral(0, `"${"x".repeat(196)}...`, undefined).cut, true);
+  // Cut by -3! at \c (#1484). KDB-X at \c 25 80: -3!til 40 is "0 1 ... 28 ..".
+  const wide = `${Array.from({ length: 29 }, (_, i) => i).join(" ")} ..`;
+  assert.strictEqual(atomLiteral(0, wide, undefined).cut, true);
+  assert.strictEqual(tableLiteral({ count: 1, keys: 0, names: ["a"], types: [0], cells: [[wide]], raw: [[]], rank: [[]] }).cut, 1);
   assert.strictEqual(stringLiteral("a\nb\t\u0001"), '"a\\nb\\t\\001"');
   assert.strictEqual(symbolLiteral("x.y_1"), "`x.y_1");
   // What `-3!` writes and q will not read back (the 0.29.0 bug; real q in
@@ -210,11 +214,75 @@ test("a Parquet file starts and ends with PAR1, its footer's length before the l
   for (const name of ["schema", "s", "b", "j", "f", "d", "p", "l", "q-lint"]) {
     assert.ok(meta.includes(name), name);
   }
-  assert.match(out.notes.join(), /1 infinite date\(s\) or timestamp\(s\) were written as null/);
+  assert.match(out.notes.join(), /1 infinite or out-of-range date\(s\) or timestamp\(s\) were written as null/);
   assert.deepStrictEqual([1, 5, 7, 9, 12, 14, 11].map((t) => planFor(t).type), [0, 1, 2, 5, 2, 1, 6]);
   assert.deepStrictEqual([1, 4, 10, 7].map((t) => planFor(t).optional), [false, false, false, true]);
   // Runs of definition levels after their length: three present, one null.
   assert.deepStrictEqual([...definitionLevels([true, true, true, false])], [4, 0, 0, 0, 6, 1, 2, 0]);
+});
+
+test("a Parquet timestamp or date past what its type holds is a null, counted in the notes, not a RangeError (#1483)", () => {
+  // KDB-X: 2263.01.06D19:33:20 is 8300000000000000000 nanoseconds since 2000.
+  const ts = { count: 2, keys: 0, names: ["t"], types: [12], cells: [["2263.01.06D19:33:20.000000000", "2000.01.01D00:00:00.000000000"]], raw: [[8300000000000000000n, 0n]], rank: [[1, 0]] };
+  assert.match(toParquet(ts, [0, 1]).notes.join(), /^1 infinite or out-of-range/);
+  const d = { count: 1, keys: 0, names: ["d"], types: [14], cells: [["0000.00.00"]], raw: [[2147483000]], rank: [[0]] };
+  assert.match(toParquet(d, [0]).notes.join(), /^1 infinite or out-of-range/);
+  const z = { count: 1, keys: 0, names: ["z"], types: [15], cells: [["0000.00.00T00:00:00.000"]], raw: [[1e300]], rank: [[0]] };
+  assert.match(toParquet(z, [0]).notes.join(), /^1 infinite or out-of-range/);
+});
+
+test("a datetime finer than its millisecond text is written as its float of days (#1494)", () => {
+  // KDB-X: string "z"$1.123456789 is 2000.01.02T02:57:46.666, 6.6e-9 days short.
+  assert.strictEqual(atomLiteral(15, "2000.01.02T02:57:46.666", 1.123456789).literal, '"z"$1.123456789');
+  // KDB-X: "z"$9497.425 is 2026.01.01T10:12:00.000, which reads back exactly.
+  assert.strictEqual(atomLiteral(15, "2026.01.01T10:12:00.000", 9497.425).literal, "2026.01.01T10:12:00.000");
+  assert.strictEqual(atomLiteral(15, "", null).literal, "0Nz");
+});
+
+test("a char cell's literal is written from its byte: one past ASCII as its octal escape (#1489)", () => {
+  // GRID's cells of "\303\251" decode as U+FFFD; its raw is the bytes.
+  assert.strictEqual(atomLiteral(10, "\ufffd", 0xc3).literal, '"\\303"');
+  assert.strictEqual(atomLiteral(10, "a", 97).literal, '"a"');
+  assert.strictEqual(atomLiteral(10, " ", 32).literal, '" "');
+  assert.strictEqual(atomLiteral(10, '"', 34).literal, '"\\""');
+  assert.strictEqual(atomLiteral(10, "\n", 10).literal, '"\\n"');
+  // Unwrapped, the decoded bytes are sent the same way.
+  const g = gridOfQ({ kind: "table", attr: 0, cols: ["c"], data: [{ kind: "chars", attr: 0, v: Buffer.from([0xc3, 0xa9]) }] }, 100);
+  assert.deepStrictEqual(g.raw[0], [0xc3, 0xa9]);
+  assert.strictEqual(tableLiteral(g).code, '([] c:("\\303";"\\251"))');
+});
+
+test("a general-list item's symbol holding a space, / or - is written through `$ (#1486)", () => {
+  // Each read back by KDB-X to what -3! wrote.
+  const lit = (t) => atomLiteral(0, t, undefined).literal;
+  assert.strictEqual(lit("(`a b;1)"), '(`$"a b";1)');
+  assert.strictEqual(lit("`a b`c"), '`$("a b";enlist "c")');
+  assert.strictEqual(lit(",`a b"), 'enlist `$"a b"');
+  assert.strictEqual(lit("`a/b"), '`$"a/b"');
+  assert.strictEqual(lit("`x y!,1"), '(`$"x y")!enlist 1');
+  assert.strictEqual(lit("`s#`a b`c"), '`s#`$("a b";enlist "c")');
+  // What can be bare stays bare, a string's or a lambda's text untouched.
+  assert.strictEqual(lit("`a``b"), "`a``b");
+  assert.strictEqual(lit("`a`b!(1;\"x\")"), '`a`b!(1;"x")');
+  assert.strictEqual(lit('("`x y";`p)'), '("`x y";`p)');
+  assert.strictEqual(lit("{`a b}"), "{`a b}");
+  // The table literal does the same.
+  const t = { count: 1, keys: 0, names: ["a"], types: [0], cells: [["`x y"]], raw: [[]], rank: [[]] };
+  assert.strictEqual(tableLiteral(t).code, '([] a:enlist `$"x y")');
+});
+
+test("a float or real item of a general list is written with every digit, not -3!'s \\P 7 text (#1485)", () => {
+  // GRID's raw for a general column: each float or real item as a float, 0b for the rest.
+  const p = { count: 3, keys: 0, names: ["a"], types: [0], cells: [["1.234568", "`x", "0.1e"]], raw: [[1.23456789, false, Math.fround(0.1)]], rank: [[]] };
+  assert.strictEqual(tableLiteral(p).code, "([] a:(1.23456789f;`x;0.1e))");
+  assert.match(toJson(p), /"a": 1\.23456789\}.*"a": "`x"\}.*"a": 0\.1\}/s);
+  assert.strictEqual(atomLiteral(0, "0w", Infinity).literal, "0w");
+  assert.strictEqual(atomLiteral(0, "2f", 2).literal, "2f");
+  // Unwrapped, from the decoded items.
+  const list = { kind: "list", attr: 0, v: [{ kind: "atom", t: -9, v: 1.23456789 }, { kind: "atom", t: -11, v: "x" }, { kind: "atom", t: -9, v: null }] };
+  const g = gridOfQ({ kind: "table", attr: 0, cols: ["a"], data: [list] }, 100);
+  assert.deepStrictEqual(g.raw[0], [1.23456789, false, false]);
+  assert.strictEqual(tableLiteral(g).code, "([] a:(1.23456789f;`x;0n))");
 });
 
 test("a page of rows is added after the grid's, ranked again over both, and a page of another result is refused", () => {
@@ -278,6 +346,27 @@ test("a pivot groups by two columns in q's order and aggregates a third", () => 
   assert.match(page.pivot(g, rows, { row: 0, column: -1, value: 1, agg: "max" }).note, /numeric column/);
   assert.match(page.pivot(g, rows, { row: 1, column: 0, value: 2, agg: "min" }, 2).note, /first 2 of 3 values of sym/);
   assert.deepStrictEqual(page.defaultPivot(g), { row: 0, column: -1, value: 2, agg: "sum" });
+});
+
+test("a pivot's aggregates keep every digit of a long: 123456789012345 is not 123456789012000 (#1487)", () => {
+  const g = grid([["s", 11], ["q", 7]], [["a", "a"], ["123456789012345", "1"]], [null, [123456789012345, 1]]);
+  const cells = (agg) => page.pivot(g, [0, 1], { row: 0, column: -1, value: 1, agg }).cells;
+  assert.deepStrictEqual(cells("max"), [["123456789012345"]]);
+  assert.deepStrictEqual(cells("min"), [["1"]]);
+  assert.deepStrictEqual(cells("sum"), [["123456789012346"]]);
+  assert.deepStrictEqual(cells("avg"), [["61728394506173"]]);
+  assert.strictEqual(page.columnStats(g, [0, 1])[1].mean, "61728394506173");
+});
+
+test("a mean of finite values that overflow their sum is finite, and a sum past the largest float is 0w (#1492)", () => {
+  const g = grid([["s", 11], ["f", 9]], [["a", "a"], ["1e+308", "1e+308"]], [null, [1e308, 1e308]]);
+  assert.strictEqual(page.columnStats(g, [0, 1])[1].mean, "1e+308");
+  const cells = (agg) => page.pivot(g, [0, 1], { row: 0, column: -1, value: 1, agg }).cells;
+  assert.deepStrictEqual(cells("avg"), [["1e+308"]]);
+  // KDB-X: sum 1e308 1e308 is 0w.
+  assert.deepStrictEqual(cells("sum"), [["0w"]]);
+  const h = grid([["s", 11], ["f", 9]], [["a", "a"], ["1e+308", "-1e+308"]], [null, [1e308, -1e308]]);
+  assert.strictEqual(page.columnStats(h, [0, 1])[1].mean, "0");
 });
 
 const look = { colours: ["#111111", "#222222"], foreground: "#000", border: "#ccc", font: "sans-serif", up: "#0f0", down: "#f00" };

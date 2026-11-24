@@ -47,12 +47,29 @@ export function rangeOf(text: string): [number, number] | undefined {
 
 const DAY = "2026.01.02";
 
+/// The largest finite short and int: one more is the type's infinity, and
+/// past that `"H"$` and `"I"$` read a number as a null (#1499).
+const WHOLE_LIMIT: Record<string, number> = { h: 32766, i: 2147483646 };
+
+/// The first whole number a column of type `type` takes from `o`'s range
+/// and how many follow it: the range rounded, and for a short or an int
+/// cut to the values the type holds, so the q and the CSV draw alike.
+export function wholeRange(type: string, o: TestDataOptions): [number, number] {
+  let lo = Math.round(o.low);
+  let hi = lo + Math.max(1, Math.round(o.high - o.low));
+  const m = WHOLE_LIMIT[type];
+  if (m !== undefined) {
+    lo = Math.min(Math.max(lo, -m), m);
+    hi = Math.min(Math.max(hi, lo + 1), m + 1);
+  }
+  return [lo, hi - lo];
+}
+
 /// The q expression of `n` random values of type `type` (a meta type
 /// character), with `o`'s pool and range.
 export function generator(type: string, o: TestDataOptions): string {
   const lo = o.low;
   const span = o.high - o.low;
-  const whole = Math.max(1, Math.round(span));
   // A symbol a bare one cannot write (`a/b` is `a` over `b`, '/) goes
   // through `$ (#1279).
   const bare = o.symbols.every((s) => symbolLiteral(s) === `\`${s}`);
@@ -62,9 +79,12 @@ export function generator(type: string, o: TestDataOptions): string {
     case "b": return "n?0b";
     case "g": return "n?0Ng";
     case "x": return "`byte$n?256";
-    case "h": return `"h"$${Math.round(lo)}+n?${Math.min(whole, 32767)}`;
-    case "i": return `"i"$${Math.round(lo)}+n?${whole}`;
-    case "j": return `${Math.round(lo)}+n?${whole}`;
+    case "h":
+    case "i":
+    case "j": {
+      const [from, count] = wholeRange(type, o);
+      return `${type === "j" ? "" : `"${type}"$`}${from}+n?${count}`;
+    }
     case "e": return `"e"$${lo}+n?${span}e`;
     case "f": return `${lo}+n?${span}f`;
     case "c": return "n?.Q.a";
@@ -141,7 +161,10 @@ function csvValue(type: string, o: TestDataOptions, next: () => number): string 
     case "x": return Math.floor(r * 256).toString(16).padStart(2, "0");
     case "h":
     case "i":
-    case "j": return String(Math.round(lo) + Math.floor(r * Math.max(1, Math.round(span))));
+    case "j": {
+      const [from, count] = wholeRange(type, o);
+      return String(from + Math.floor(r * count));
+    }
     case "e":
     case "f": return String(+(lo + r * span).toFixed(6));
     case "c": return String.fromCharCode(97 + Math.floor(r * 26));

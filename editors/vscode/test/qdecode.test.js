@@ -89,6 +89,22 @@ test("a year before 1000 is written in four digits, as q writes it (#1235)", () 
   assert.strictEqual(atomText(d, -13), "0001.01m");
 });
 
+test("a date or datetime outside years 1 to 9999 is 0000.00.00, as KDB-X writes it (#1498)", () => {
+  const { atomText } = require("../out/qformat.js");
+  // KDB-X: "d"$1700000000i and "d"$2921940i are 0000.00.00; 2921939 is 9999.12.31.
+  assert.strictEqual(shown(int(-14, 1700000000)), "0000.00.00");
+  assert.strictEqual(shown(int(-14, -348563124)), "0000.00.00");
+  assert.strictEqual(shown(int(-14, 2921940)), "0000.00.00");
+  assert.strictEqual(shown(int(-14, 2921939)), "9999.12.31");
+  assert.strictEqual(shown(int(-14, -730120)), "0000.00.00");
+  assert.strictEqual(atomText(1700000000, -14), "0000.00.00");
+  // KDB-X: "z"$1e8 is 0000.00.00T00:00:00.000.
+  const datetime = (x) => atom(-15, 8, (b, v, at) => b.writeDoubleLE(v, at), x);
+  assert.strictEqual(shown(datetime(1e8)), "0000.00.00T00:00:00.000");
+  assert.strictEqual(shown(datetime(3000000.25)), "0000.00.00T00:00:00.000");
+  assert.strictEqual(shown(datetime(2921939.5)), "9999.12.31T12:00:00.000");
+});
+
 test("negative zero keeps its sign: KDB-X shows -0f (#1236)", () => {
   const { atomText } = require("../out/qformat.js");
   assert.strictEqual(shown(float(-0)), "-0f");

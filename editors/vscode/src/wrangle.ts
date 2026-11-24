@@ -243,7 +243,7 @@ export function editStatement(payload: GridPayload, column: number, row: number,
     const type = payload.types[i];
     const atom = atomLiteral(type, payload.cells[i][row] ?? "", raw === undefined ? undefined : raw[row]);
     if (atom.cut) {
-      return { error: `the cell in ${names[i]} was cut at 200 characters, so the row cannot be found by it` };
+      return { error: `the cell in ${names[i]} was cut at 200 characters or at the process's \\c width, so the row cannot be found by it` };
     }
     const enumerated = type === 11 || (type >= 20 && type <= 76);
     tests.push(enumerated ? `(${names[i]}=${atom.literal})` : `(${names[i]}~\\:(${readable(atom.literal)}))`);
