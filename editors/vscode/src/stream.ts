@@ -32,8 +32,9 @@ export function readStream(get: <T>(key: string, fallback: T) => T): StreamSetti
   };
 }
 
-/// What subscribes to one table: the table's name back, and its columns.
-export const SUBSCRIBE = "{r:.u.sub[x;`]; (r 0; cols r 1)}";
+/// What subscribes to one table: the table's name back, its columns and
+/// their types.
+export const SUBSCRIBE = "{r:.u.sub[x;`]; (r 0; cols r 1; exec t from meta r 1)}";
 
 /// What lists the tables a tickerplant publishes: an expression, sent as a
 /// string for the process to evaluate.
@@ -42,8 +43,11 @@ export const TABLES = "$[`t in key `.u; .u.t; tables`.]";
 /// The rows an update of `table` carries, each a row of q's text of its
 /// cells in `columns` order, or undefined when `q` is not an update of
 /// `table`. The data is a table, a list of columns, or one row as a list of
-/// atoms, each in the order `columns` names.
-export function readUpdate(q: QValue, table: string, columns: string[]): string[][] | undefined {
+/// atoms, each in the order `columns` names. Items all strings are one row
+/// of string columns unless the columns are chars (`types`, meta's letters,
+/// when the subscription said) or, untold, they are lists of one length
+/// (#1582).
+export function readUpdate(q: QValue, table: string, columns: string[], types?: string): string[][] | undefined {
   if (q.kind !== "list" || q.v.length !== 3) {
     return undefined;
   }
@@ -54,7 +58,7 @@ export function readUpdate(q: QValue, table: string, columns: string[]): string[
   let shaped: QValue;
   if (data.kind === "table") {
     shaped = data;
-  } else if (data.kind === "list" && data.v.length === columns.length && data.v.every((c) => c.kind === "vector" || c.kind === "list" || c.kind === "chars")) {
+  } else if (data.kind === "list" && data.v.length === columns.length && data.v.every((c) => c.kind === "vector" || c.kind === "list" || c.kind === "chars") && asColumns(data.v, types)) {
     shaped = { kind: "table", attr: 0, cols: columns, data: data.v };
   } else if (data.kind === "list" && data.v.length === columns.length) {
     // One row: each atom made a one-item column.
@@ -73,6 +77,15 @@ export function readUpdate(q: QValue, table: string, columns: string[]): string[
   }
   const at = columns.map((c) => grid.names.indexOf(c));
   return Array.from({ length: grid.count }, (_, r) => at.map((i) => (i < 0 ? "" : (grid.cells[i][r] ?? ""))));
+}
+
+/// Whether lists of a list update are its columns, not one row's cells.
+function asColumns(items: QValue[], types: string | undefined): boolean {
+  const length = (x: QValue): number => (x.kind === "chars" ? x.v.length : x.kind === "vector" || x.kind === "list" ? x.v.length : -1);
+  if (!items.every((x) => length(x) === length(items[0]))) {
+    return false;
+  }
+  return !items.every((x) => x.kind === "chars") || types === undefined || types.length !== items.length || [...types].every((t) => t === "c");
 }
 
 /// The last `limit` rows received, and how many came in all.

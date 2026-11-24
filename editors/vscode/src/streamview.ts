@@ -109,6 +109,7 @@ export class TableStreams {
       return;
     }
     let columns: string[];
+    let types: string | undefined;
     try {
       let name = typeof table === "string" ? table.trim().replace(/^`/, "") : undefined;
       if (name === undefined) {
@@ -136,6 +137,7 @@ export class TableStreams {
       const answer = await connection.call(SUBSCRIBE, `\`${name}`);
       const cols = Array.isArray(answer) ? answer[1] : undefined;
       columns = (Array.isArray(cols) ? cols : [cols]).filter((c): c is string => typeof c === "string");
+      types = Array.isArray(answer) && typeof answer[2] === "string" ? answer[2] : undefined;
     } catch (error) {
       await connection.close();
       void window.showErrorMessage(plainMessage(`q-lint: could not subscribe to ${table ?? "the table"} on ${process.label}: ${error instanceof Error ? error.message : String(error)}`));
@@ -146,10 +148,10 @@ export class TableStreams {
       await connection.close();
       return;
     }
-    this.open(process.label, table, columns, connection, settings.rows);
+    this.open(process.label, table, columns, connection, settings.rows, types);
   }
 
-  private open(label: string, table: string, columns: string[], connection: QConnection, limit: number): void {
+  private open(label: string, table: string, columns: string[], connection: QConnection, limit: number, types?: string): void {
     const media = Uri.joinPath(this.live.extensionUri, "media");
     const panel = window.createWebviewPanel(
       "q-lint.stream",
@@ -188,7 +190,7 @@ export class TableStreams {
     connection.whenAsync((message) => {
       let rows: string[][] | undefined;
       try {
-        rows = readUpdate(decode(message), table, columns);
+        rows = readUpdate(decode(message), table, columns, types);
       } catch {
         rows = undefined;
       }
