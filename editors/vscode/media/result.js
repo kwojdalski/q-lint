@@ -898,8 +898,10 @@
       } else {
         let width = headerText(grid, i).length + 2;
         const cells = grid.cells[i];
+        // As the cells show: a format's text is wider than q's (#1655).
+        const shownText = d.formats[i] && c.numeric ? shownAs(grid) : null;
         for (let r = 0; r < Math.min(cells.length, 500); r++) {
-          width = Math.max(width, cells[r].length);
+          width = Math.max(width, shownText ? shownText(i, r).length : cells[r].length);
         }
         css = Math.min(width + 2, 60) + "ch";
       }

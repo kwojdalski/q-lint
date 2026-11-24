@@ -340,3 +340,11 @@ test("a row colour column fills the cells another colour column paints too, unde
   assert.deepStrictEqual([fg.style.backgroundColor, fg.style.color], ["yellow", "red"]);
   assert.strictEqual(qty.style.backgroundColor, "yellow");
 });
+
+test("a formatted column's auto width fits the text its cells show, not q's (#1655)", () => {
+  const page = loadPage(undefined);
+  page.send(result("s.1", [["n_CCY", 9, ["-9876543.25"]], ["r_BPS", 9, ["1"]]]));
+  const widths = page.body.all((e) => e.tagName === "COL").map((c) => c.style.width);
+  // -9,876,543.25 is 13 characters, 10000.0 bp 10: each and its padding.
+  assert.deepStrictEqual(widths, ["15ch", "12ch"]);
+});
