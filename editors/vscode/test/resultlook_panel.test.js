@@ -534,3 +534,19 @@ test("package.json contributes each setting, command and menu, hidden while its 
   assert.match(contextMenu.get("q-lint.toggleResultDataBar"), /columnKind == 'numeric'/);
   assert.match(contextMenu.get("q-lint.toggleResultSparkline"), /columnKind == 'list'/);
 });
+
+test("Copy as CSV and the exports write the columns drawn, in the order drawn, as their formats show the cells (#1639)", async () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  modes.show(result("select from t", [...COLUMNS, ["ret_PCT", 9, ["0.0123", "0.5", "1"], [0.0123, 0.5, 1]]]), live);
+  const id = last(fake).id;
+  fake.pages[0].receive({ type: "look", id, layout: { order: ["px", "sym", "v"], hidden: ["v"], widths: {}, frozen: 0 } });
+  await tick();
+  await fake.vscode.commands["q-lint.exportResults"](new fake.vscode.Uri("/out.csv"));
+  assert.strictEqual(fake.files["/out.csv"].toString(), "px,sym,ret_PCT\n1,a,1.23%\n5,b,50.00%\n9,c,100.00%\n");
+  await fake.vscode.commands["q-lint.exportResultsAs"]("markdown", new fake.vscode.Uri("/out.md"));
+  assert.match(fake.files["/out.md"].toString(), /^\| px \| sym \| ret\\_PCT \|\n.*\n\| 1 \| a \| 1\.23% \|/);
+  // Typed formats keep the value, in the columns and order drawn.
+  await fake.vscode.commands["q-lint.exportResultsAs"]("json", new fake.vscode.Uri("/out.json"));
+  assert.match(fake.files["/out.json"].toString(), /^\[\n  \{"px": 1, "sym": "a", "ret_PCT": 0\.0123\}/);
+});

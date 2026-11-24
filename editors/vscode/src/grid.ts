@@ -402,6 +402,18 @@ export function toCsv(grid: Grid, rows?: number[]): string {
   return lines.join("\n") + "\n";
 }
 
+/// `payload` with only the columns at `columns`, in that order: what the
+/// grid draws under its layout, for an export of it (#1639). The key
+/// columns stay keys while they lead.
+export function pickColumns(payload: GridPayload, columns: number[]): GridPayload {
+  let keys = 0;
+  while (keys < columns.length && columns[keys] < payload.keys) {
+    keys++;
+  }
+  const pick = <T>(of: T[][]): T[][] => columns.map((i) => of[i] ?? []);
+  return { ...payload, keys, names: columns.map((i) => payload.names[i]), types: columns.map((i) => payload.types[i]), cells: pick(payload.cells), raw: pick(payload.raw), rank: pick(payload.rank) };
+}
+
 /// A page `PAGE` sent: the rows held, and the page's columns as `GRID`'s.
 export interface GridPage {
   count: number;

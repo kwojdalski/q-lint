@@ -78,10 +78,10 @@ import {
   type ResultViewSettings,
   type ResultsLocation,
 } from "./liveconfig";
-import { appendPage, rowCount, toCsv, toGrid, type GridAnswer, type GridPage, type GridPayload } from "./grid";
+import { appendPage, pickColumns, rowCount, toCsv, toGrid, type GridAnswer, type GridPage, type GridPayload } from "./grid";
 import { diffGrids, type GridDiff } from "./resultdiff";
 import { fillDrilldown, templatesFor } from "./drilldown";
-import { EXPORT_FORMATS, exportResult, FORMAT_INFO, type ExportFormat } from "./resultexport";
+import { EXPORT_FORMATS, exportResult, FORMAT_INFO, shownGrid, type ExportFormat } from "./resultexport";
 import { plainSvg, PLOTS } from "./plots";
 import {
   lookParts,
@@ -866,6 +866,22 @@ export class QueryModes {
     return Array.isArray(rows) ? rows.filter((r) => Number.isInteger(r) && r >= 0 && r < held) : undefined;
   }
 
+  /// What an export of `shown` writes, as the grid draws it (#1639): the
+  /// columns its layout shows, in that order, while the layout is on.
+  private exportPayload(shown: Shown): GridPayload {
+    if (!this.viewSettings().enable.columnLayout) {
+      return shown.payload;
+    }
+    const names = { columns: shown.payload.names.map((name) => ({ name })) } as unknown as Grid;
+    return pickColumns(shown.payload, GRID_LOOK.displayColumns(names, shown.look.layout));
+  }
+
+  /// Whether an export writes the cells as their columns' formats show
+  /// them: while column formats are on.
+  private formatsOn(): boolean {
+    return this.viewSettings().enable.columnFormats;
+  }
+
   /// The conditional formats an export of `shown` keeps: none while they
   /// are off (#1013).
   private rulesOf(shown: Shown): FormatRule[] {
@@ -899,7 +915,7 @@ export class QueryModes {
     }
     let out;
     try {
-      out = exportResult(chosen, shown.payload, settings().gridDecimals, this.rowsOf(rows, shown), this.rulesOf(shown));
+      out = exportResult(chosen, this.exportPayload(shown), settings().gridDecimals, this.rowsOf(rows, shown), this.rulesOf(shown), this.formatsOn());
       await workspace.fs.writeFile(to, out.data);
     } catch (error) {
       void window.showErrorMessage(plainMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
@@ -922,7 +938,7 @@ export class QueryModes {
     if (chosen === undefined) {
       return;
     }
-    const out = exportResult(chosen, shown.payload, settings().gridDecimals, this.rowsOf(rows, shown), this.rulesOf(shown));
+    const out = exportResult(chosen, this.exportPayload(shown), settings().gridDecimals, this.rowsOf(rows, shown), this.rulesOf(shown), this.formatsOn());
     await env.clipboard.writeText(out.data.toString("utf8"));
     const notes = out.notes.length > 0 ? ` Note: ${out.notes.join("; ")}.` : "";
     void window.showInformationMessage(plainMessage(`q-lint: copied ${out.rows} row(s) as ${FORMAT_INFO[chosen].label}.${notes}`));
@@ -1418,7 +1434,7 @@ export class QueryModes {
     if (chart && !this.stillShown(shown)) {
       return;
     }
-    const text = resultMarkdown({ process: shown.process, code: shown.code, at: shown.at, payload: shown.payload, rows: this.rowsOf(rows, shown), decimals: settings().gridDecimals }, image !== undefined && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(image) ? image : undefined);
+    const text = resultMarkdown({ process: shown.process, code: shown.code, at: shown.at, payload: this.exportPayload(shown), rows: this.rowsOf(rows, shown), decimals: settings().gridDecimals, formats: this.formatsOn() }, image !== undefined && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(image) ? image : undefined);
     const at = editor !== undefined && editor.selections.length > 0 ? Math.min(editor.selections[editor.selections.length - 1].end, notebook.cellCount) : notebook.cellCount;
     const edit = new WorkspaceEdit();
     edit.set(notebook.uri, [NotebookEdit.insertCells(at, [new NotebookCellData(NotebookCellKind.Markup, text.text.replace(/\n+$/, "\n"), "markdown")])]);
@@ -1495,7 +1511,7 @@ export class QueryModes {
       }
       relative = imagePath(to.path, Date.now(), (r) => names.includes(r));
     }
-    const text = resultMarkdown({ process: shown.process, code: shown.code, at: shown.at, payload: shown.payload, rows: this.rowsOf(rows, shown), decimals: settings().gridDecimals }, relative === undefined ? undefined : linkTarget(relative));
+    const text = resultMarkdown({ process: shown.process, code: shown.code, at: shown.at, payload: this.exportPayload(shown), rows: this.rowsOf(rows, shown), decimals: settings().gridDecimals, formats: this.formatsOn() }, relative === undefined ? undefined : linkTarget(relative));
     const before = existing === undefined ? "" : Buffer.from(existing).toString("utf8");
     const gap = before === "" || before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
     const name = to.path.replace(/^.*\//, "");
@@ -1606,7 +1622,10 @@ export class QueryModes {
     if (this.shown === undefined) {
       return undefined;
     }
-    const grid = toGrid(this.shown.payload, settings().gridDecimals);
+    // As the grid shows them: its columns, in its order, as their formats
+    // show the cells (#1639).
+    const values = toGrid(this.exportPayload(this.shown), settings().gridDecimals);
+    const grid = this.formatsOn() ? shownGrid(values) : values;
     const order = Array.isArray(rows) ? rows.filter((r) => Number.isInteger(r) && r >= 0 && r < rowCount(grid)) : undefined;
     return { csv: toCsv(grid, order), count: order?.length ?? rowCount(grid) };
   }
