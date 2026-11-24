@@ -119,12 +119,12 @@ def grammar():
                 "beginCaptures": {"0": {"name": "punctuation.definition.comment.begin.q"}},
             },
             "foreign": {
-                "comment": "p) and k) lines, and the indented lines that continue them.",
+                "comment": "p) and k) lines, and the indented lines that continue them, across blank lines as q reads them.",
                 "patterns": [
                     {
                         "name": "meta.embedded.block.python.q",
                         "begin": r"^(p\))",
-                        "end": r"^(?=\S|\s*$)",
+                        "end": r"^(?=\S)",
                         "beginCaptures": {"1": {"name": "keyword.other.language-prefix.q"}},
                         "contentName": "source.python",
                         "patterns": [{"include": "source.python"}],
@@ -132,7 +132,7 @@ def grammar():
                     {
                         "name": "meta.embedded.block.k.q",
                         "begin": r"^(k\))",
-                        "end": r"^(?=\S|\s*$)",
+                        "end": r"^(?=\S)",
                         "beginCaptures": {"1": {"name": "keyword.other.language-prefix.q"}},
                         "contentName": "source.k",
                         "patterns": [{"include": "source.k"}],
