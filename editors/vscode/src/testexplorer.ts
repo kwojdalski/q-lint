@@ -362,16 +362,17 @@ class QTests {
     return this.run(new TestRunRequest(found), { isCancellationRequested: false } as CancellationToken, ask, coverage);
   }
 
-  /// The tests a request runs, in the Testing view's order.
+  /// The tests a request runs, in the Testing view's order: each once, a
+  /// file and one of its tests both chosen (#1596).
   private chosen(request: TestRunRequest): TestItem[] {
     const excluded = new Set(request.exclude ?? []);
-    const out: TestItem[] = [];
+    const out = new Set<TestItem>();
     const add = (item: TestItem): void => {
       if (excluded.has(item)) {
         return;
       }
       if (this.entries.has(item)) {
-        out.push(item);
+        out.add(item);
         return;
       }
       item.children.forEach(add);
@@ -381,7 +382,7 @@ class QTests {
     } else {
       this.controller.items.forEach(add);
     }
-    return out;
+    return [...out];
   }
 
   private async run(request: TestRunRequest, token: CancellationToken, ask: boolean, coverage = false): Promise<void> {

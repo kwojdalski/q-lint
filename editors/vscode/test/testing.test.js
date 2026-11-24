@@ -549,3 +549,16 @@ test("a k4unit row keeps its id when a row is inserted above it: Re-run Failed r
   await stub.commands.get("q-lint.rerunFailedTests")();
   assert.deepStrictEqual(live.sent.map((s) => s.statements.join(";")), ["bad=1"]);
 });
+
+test("a run whose selection holds a file and one of its tests runs that test once (#1596)", async () => {
+  stub.reset();
+  const made = fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  const live = fakeLive();
+  const explorer = registerTestExplorer(stub.newContext(), live, () => ({ sendRequest: async () => LISTED }));
+  await explorer.discover();
+  const file = made[0].items.list[0];
+  const good = file.children.list[0];
+  await made[0].profiles[0].handler(new vscode.TestRunRequest([file, good]), { isCancellationRequested: false });
+  assert.deepStrictEqual(live.sent.map((s) => s.statements.at(-1)), [".t.test_good[]", ".t.test_bad[]"]);
+});
