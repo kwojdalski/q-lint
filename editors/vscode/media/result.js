@@ -2060,10 +2060,17 @@
 
   // --- correlation (#1020)
 
+  /// The last correlation worked out, kept while the grid and its rows
+  /// are the same: a redraw - a tab switch, a bar action - does not read
+  /// every row again (#1857).
+  let corrKept = null;
+
   function drawCorr() {
     const grid = result.grid;
     corrView.replaceChildren();
-    const corr = LOOK.correlation(grid, rows);
+    const same = corrKept && corrKept.grid === grid && corrKept.rows.length === rows.length && corrKept.rows.every(function (r, k) { return r === rows[k]; });
+    const corr = same ? corrKept.corr : LOOK.correlation(grid, rows);
+    corrKept = { grid: grid, rows: rows.slice(), corr: corr };
     const fixed = function (r) { return r === null ? "" : r.toFixed(3); };
     const controls = el("div", "controls");
     const copy = el("button", "", "Copy Matrix");
@@ -2075,6 +2082,9 @@
     controls.append(copy);
     corrView.append(controls);
     corrView.append(el("p", "note", "Pearson correlation of the numeric columns over the " + rows.length.toLocaleString("en-US") + " row" + (rows.length === 1 ? "" : "s") + " shown; each pair over the rows where both are not null. Key columns are left out."));
+    if (corr.step > 1) {
+      corrView.append(el("p", "note", "Over every " + corr.step.toLocaleString("en-US") + "th of those rows, " + corr.used.toLocaleString("en-US") + " in all, evenly through them: every pair over all " + corr.of.toLocaleString("en-US") + " would hold the panel for seconds. Filter the grid to fewer rows for an exact figure."));
+    }
     const scroll = el("div", "scroller");
     const matrix = el("table", "corr");
     const head = el("tr");

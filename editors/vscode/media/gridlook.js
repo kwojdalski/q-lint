@@ -445,13 +445,26 @@
   /// where both values are there (nulls and infinities left out), `n[i][j]`
   /// counts them; null where there are fewer than two, or a column does not
   /// vary over them. Keys are left out, as an id is no measure.
-  function correlation(grid, rows) {
+  ///
+  /// Each pair is two passes over the rows, so the work is rows x columns^2:
+  /// past `budget` (CORR_BUDGET) row-pairs it is taken over every `step`-th
+  /// row, evenly through them, and `used`/`step` say so; the page says it
+  /// too (#1857). As the grid draws only the rows in view, this reads only
+  /// as many rows as keep the panel answering.
+  function correlation(grid, rows, budget) {
     const columns = [];
     grid.columns.forEach(function (c, i) {
       if (c.numeric && !c.key && grid.values[i]) {
         columns.push(i);
       }
     });
+    const pairs = columns.length * (columns.length + 1) / 2;
+    const limit = budget === undefined ? CORR_BUDGET : budget;
+    const step = pairs > 0 && rows.length * pairs > limit ? Math.ceil(rows.length * pairs / limit) : 1;
+    const all = rows;
+    if (step > 1) {
+      rows = rows.filter(function (_, k) { return k % step === 0; });
+    }
     const r = columns.map(function () { return columns.map(function () { return null; }); });
     const n = columns.map(function () { return columns.map(function () { return 0; }); });
     for (let a = 0; a < columns.length; a++) {
@@ -504,8 +517,11 @@
         n[a][b] = n[b][a] = k;
       }
     }
-    return { columns: columns, names: columns.map(function (c) { return grid.columns[c].name; }), r: r, n: n };
+    return { columns: columns, names: columns.map(function (c) { return grid.columns[c].name; }), r: r, n: n, used: rows.length, of: all.length, step: step };
   }
+
+  /// The row-pairs one correlation() reads at most: about half a second.
+  const CORR_BUDGET = 20000000;
 
   /// The pairs of a correlation(), each once, strongest first: {a, b, r, n}
   /// by name; pairs with no correlation last.
@@ -544,6 +560,7 @@
     frozenOffsets: frozenOffsets,
     correlation: correlation,
     correlationPairs: correlationPairs,
+    CORR_BUDGET: CORR_BUDGET,
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = helpers;
