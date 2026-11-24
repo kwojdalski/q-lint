@@ -180,7 +180,8 @@ export function failureText(result: TestResult, mode: TestMode): string {
 /// A k4unit `true` row's `a~b` as the two sides, when `a` is one term - a
 /// name, literal, string, symbol, or bracketed group, with any indexes
 /// after it - so that q reads the row as `a ~ b`; undefined otherwise.
-/// Sent as `(a;b)`, which q evaluates in the same order: `b` first.
+/// Sent as `(a;b)`, which q evaluates in the same order: `b` first. A `~`
+/// with an adverb or `:` after it (`1~'1`, `x~/:y`) is no `a ~ b` (#2101).
 export function splitMatch(code: string): { left: string; right: string } | undefined {
   const text = code.trim();
   if (text.includes("\n") || text.startsWith("k)")) {
@@ -207,6 +208,9 @@ export function splitMatch(code: string): { left: string; right: string } | unde
     } else if (")]}".includes(c)) {
       depth--;
     } else if (depth === 0 && c === "~" && at < 0) {
+      if ("'/\\:".includes(text[i + 1] ?? "")) {
+        return undefined;
+      }
       at = i;
     } else if (depth === 0 && c === ";") {
       return undefined;
@@ -239,13 +243,15 @@ const TERM = new RegExp(
 
 /// One row of a k4unit suite: what to do (`before`, `after`, `true`,
 /// `fail`, `run`, ...), the language (`q` or `k`), the code, the line it
-/// is on, from 0, and the least `.z.K` it is run on (0: any).
+/// is on, from 0, the least `.z.K` it is run on (0: any), and how many
+/// times it is run (#2100).
 export interface K4Row {
   action: string;
   lang: string;
   code: string;
   line: number;
   minver: number;
+  repeat?: number;
 }
 
 /// The fields of each CSV record in `text`, with the line each starts on: a
@@ -313,7 +319,7 @@ export function parseK4unit(text: string): K4Row[] | undefined {
   const records = csv(text);
   const header = records[0]?.fields.map((f) => f.trim().toLowerCase());
   const at = (name: string) => header?.indexOf(name) ?? -1;
-  const [action, lang, code, minver] = [at("action"), at("lang"), at("code"), at("minver")];
+  const [action, lang, code, minver, repeat] = [at("action"), at("lang"), at("code"), at("minver"), at("repeat")];
   if (action !== 0 || lang < 0 || code < 0 || at("ms") < 0) {
     return undefined;
   }
@@ -325,6 +331,8 @@ export function parseK4unit(text: string): K4Row[] | undefined {
       code: fields[code] ?? "",
       line,
       minver: Number.parseFloat(minver < 0 ? "" : (fields[minver] ?? "")) || 0,
+      // As KUltf reads it: `1|repeat`, an int.
+      repeat: Math.max(1, Math.trunc(Number.parseInt(repeat < 0 ? "" : (fields[repeat] ?? ""), 10) || 1)),
     }))
     .filter((row) => row.action !== "" && row.code.trim() !== "" && !row.action.startsWith("comment"));
 }
@@ -347,9 +355,13 @@ export function k4Mode(row: K4Row): TestMode {
   return row.action === "true" ? "true" : row.action === "fail" ? "fail" : "run";
 }
 
-/// The statement a row sends: k code through `k)`.
+/// The statement a row sends: k code through `k)`, and a row repeated
+/// `n` times as `do[n;code]`, as k4unit's KUpexec sends it (#2100) - so a
+/// `true` row repeated answers `::` and fails there as here.
 export function k4Statement(row: K4Row): string {
-  return row.lang === "k" ? `k)${row.code}` : row.code;
+  const n = row.repeat ?? 1;
+  const code = n > 1 ? `do[${n};${row.code}]` : row.code;
+  return row.lang === "k" ? `k)${code}` : code;
 }
 
 /// Each test row's part of its Test Explorer id: its action and code, and

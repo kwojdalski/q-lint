@@ -270,6 +270,13 @@ test("a baseline is named first in qlinter.toml, its count read, and its paths m
   assert.strictEqual(rebased(row("C:/projx/a.q"), win), row("C:/projx/a.q"));
   assert.strictEqual(rebased(row("/private/tmp/proj/src/a.q"), posix.join("/tmp", "proj"), "/private/tmp/proj"), row("src/a.q"));
   assert.strictEqual(rebased(row("/other/a.q"), "/tmp/proj", "/private/tmp/proj"), row("/other/a.q"));
+  // A UNC folder: qlinter writes \\?\UNC\server\share as //?/UNC/server/share,
+  // the folder's own spelling \\server\share, and either is the other (#2105).
+  const unc = win32.join("\\\\server\\share\\proj");
+  assert.strictEqual(rebased(absolutePaths(row("//?/UNC/server/share/proj/a.q"), "C:/Users/me/AppData/Local/Temp/qlint-xyz"), unc), row("a.q"));
+  assert.strictEqual(rebased(row("//server/share/proj/src/a.q"), unc), row("src/a.q"));
+  assert.strictEqual(rebased(row("//?/UNC/server/share/proj/a.q"), "\\\\?\\UNC\\server\\share\\proj"), row("a.q"));
+  assert.strictEqual(rebased(row("//?/UNC/server/share/projx/a.q"), unc), row("//?/UNC/server/share/projx/a.q"));
   // A folder named with a quote or a backslash: its path as JSON escapes it (#1604).
   assert.strictEqual(rebased(row('/ws/my \\"proj\\"/a.q'), '/ws/my "proj"'), row("a.q"));
   assert.strictEqual(absolutePaths(row('../my \\"proj\\"/a\\\\b.q'), "/ws/x"), row('/ws/my \\"proj\\"/a\\\\b.q'));

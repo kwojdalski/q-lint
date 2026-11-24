@@ -849,6 +849,67 @@ fn a_qunit_test_runs_inside_its_namespace_fixtures() {
     assert_eq!(tests[1]["call"], ".other.testfoo[]");
 }
 
+/// A qUnit test is timed as `.qunit.runTest` times it, and fails over what
+/// its namespace's `qunitConfig` allows it (#2103): the config is sent with
+/// it, and read where it runs.
+#[test]
+fn a_qunit_test_fails_over_its_qunit_config_max_time_or_mem() {
+    let dir = tempfile::tempdir().unwrap();
+    let suite = "\\d .mytest\nqunitConfig:``testSlow!(::;`maxTime`maxMem!(5;0Wj))\n\
+                 testSlow:{do[3000000;sqrt 2.0];.qunit.assertTrue[1b;\"slow\"]}\n\\d .\n";
+    let mut server = Server::start(dir.path(), &[("suite.q", suite)]);
+    let reply = server.request("q-lint/tests", json!({}));
+    let tests = reply["result"][0]["tests"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"));
+    assert_eq!(tests.len(), 1, "{reply}");
+    assert_eq!(
+        tests[0]["code"],
+        "\\d .mytest\nqunitConfig:``testSlow!(::;`maxTime`maxMem!(5;0Wj))\n\\d .\n\
+         \\d .mytest\ntestSlow:{do[3000000;sqrt 2.0];.qunit.assertTrue[1b;\"slow\"]}\n\\d ."
+    );
+    assert_eq!(
+        tests[0]["call"],
+        "{[] t:.Q.ts[{@[{(1b;x[])};x;{(0b;x)}]};enlist .mytest.testSlow]; r:t 1; \
+         c:@[{.[`.mytest;`qunitConfig`testSlow]};::;``!``]; \
+         c:(`maxTime`maxMem!0W 0W),$[99h~type c;c;()!()]; \
+         if[r[0]&any t[0]>c`maxTime`maxMem;r:(0b;\"exceeded max config time/mem\")]; \
+         $[r 0;r 1;'r 1]}[]"
+    );
+}
+
+/// A namespace's `parameters*` runs each of its tests once for each value
+/// it gives, `.ns.parameter` set to it, as `.qunit.runNsTests` does
+/// (#2104): it, `beforeParameters*` and `afterParameters*` are sent with
+/// the test, and the first failure is the test's.
+#[test]
+fn a_qunit_test_runs_once_for_each_of_its_namespace_parameters() {
+    let dir = tempfile::tempdir().unwrap();
+    let suite = "\\d .mytest\nbeforeParameters:{`.mytest.n set 0}\nparameters:{1 2 3}\n\
+                 setUp:{`.mytest.n set n+1}\n\
+                 testParam:{.qunit.assertTrue[parameter in 1 2 3;\"param\"]}\n\\d .\n";
+    let mut server = Server::start(dir.path(), &[("suite.q", suite)]);
+    let reply = server.request("q-lint/tests", json!({}));
+    let tests = reply["result"][0]["tests"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"));
+    assert_eq!(tests.len(), 1, "{reply}");
+    assert_eq!(
+        tests[0]["code"],
+        "\\d .mytest\nbeforeParameters:{`.mytest.n set 0}\n\\d .\n\
+         \\d .mytest\nparameters:{1 2 3}\n\\d .\n\
+         \\d .mytest\nsetUp:{`.mytest.n set n+1}\n\\d .\n\
+         \\d .mytest\ntestParam:{.qunit.assertTrue[parameter in 1 2 3;\"param\"]}\n\\d ."
+    );
+    assert_eq!(
+        tests[0]["call"],
+        "{[] .mytest.beforeParameters[]; p:@[{x[]};.mytest.parameters;()]; i:0; f:(1b;::); \
+         do[max 1,count p; @[`.mytest;`parameter;:;p i]; .mytest.setUp[]; \
+         r:@[{(1b;x[])};.mytest.testParam;{(0b;x)}]; if[f 0;f:r]; i+:1]; \
+         $[f 0;f 1;'f 1]}[]"
+    );
+}
+
 /// Outside a file that uses qUnit, a `setUp*` or `tearDown*` is the
 /// file's own: never sent with a test or called around it (#1743).
 #[test]

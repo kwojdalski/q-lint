@@ -19,6 +19,7 @@ import { diffCells, diffSummary, hasOutputs, notebookJson, notebookText, stripQn
 import { plainMessage } from "./history";
 import { onProcessPath } from "./relations";
 import { selectedMany } from "./clicked";
+import { gitName, runGit } from "./changedlines";
 
 /// The scheme of the read-only documents a comparison shows.
 export const CELLS_SCHEME = "q-lint-qnb-cells";
@@ -27,9 +28,14 @@ export const HEAD = "HEAD";
 /// How many comparisons' texts are kept for their documents.
 const KEPT = 20;
 
-/// `git show <ref>:<file>` from the file's folder: the file as committed.
-/// Throws git's message when it cannot.
-export function gitShow(file: string, ref: string = HEAD): Promise<string> {
+/// `git show <ref>:<file>`: the file as committed, named as git names it -
+/// from the repository's top, spelled as the disk spells it, so that a
+/// notebook opened in another case is found (#2106) - or, outside one, from
+/// the file's folder, for git to say why not. Throws git's message when it
+/// cannot.
+export async function gitShow(file: string, ref: string = HEAD): Promise<string> {
+  const top = (await runGit(["rev-parse", "--show-toplevel"], path.dirname(file)))?.trim();
+  const [spec, cwd] = top ? [`${ref}:${gitName(top, file)}`, top] : [`${ref}:./${path.basename(file)}`, path.dirname(file)];
   return new Promise((resolve, reject) => {
     // Found on PATH, not in the notebook's folder as Windows would (#1407).
     const git = onProcessPath("git");
@@ -37,11 +43,8 @@ export function gitShow(file: string, ref: string = HEAD): Promise<string> {
       reject(new Error("git is not on PATH"));
       return;
     }
-    execFile(
-      git,
-      ["show", `${ref}:./${path.basename(file)}`],
-      { cwd: path.dirname(file), maxBuffer: 256 * 1024 * 1024, encoding: "utf8" },
-      (error, stdout, stderr) => (error ? reject(new Error((stderr || error.message).trim())) : resolve(stdout)),
+    execFile(git, ["show", spec], { cwd, maxBuffer: 256 * 1024 * 1024, encoding: "utf8" }, (error, stdout, stderr) =>
+      error ? reject(new Error((stderr || error.message).trim())) : resolve(stdout),
     );
   });
 }

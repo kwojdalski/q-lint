@@ -492,8 +492,31 @@ class QTests {
       }
     }
     const prepared = new Set<K4Row[]>();
+    // Stop while a query of the run is out stops waiting for it, as Abort
+    // Current Query does (#2102): the connection is dropped, and Live
+    // reconnects once the process is free. Nothing more is sent then - a
+    // tear-down would wait for the very query that was stopped.
+    let out = false;
+    let stopped = false;
+    const stop = (): void => {
+      if (out && !stopped) {
+        stopped = true;
+        void this.live.abort();
+      }
+    };
+    const watches = [token, run.token].map((t) => t.onCancellationRequested?.(stop));
+    const sending = async <T>(send: () => Promise<T>): Promise<T> => {
+      out = true;
+      try {
+        return await send();
+      } finally {
+        out = false;
+      }
+    };
     const send = (statements: string[], mode: TestMode) =>
-      this.live.runOnActive(testRunGuardCode(statements), async (connection) => readTestResult(await connection.call(TEST_RUN, statements, mode)), "ask", process.label);
+      sending(() =>
+        this.live.runOnActive(testRunGuardCode(statements), async (connection) => readTestResult(await connection.call(TEST_RUN, statements, mode)), "ask", process.label),
+      );
     // A row whose minver is above the process's .z.K is not run, as KUltf
     // does not load it (#1594): asked once, when a row of the run has one.
     let version = Infinity;
@@ -513,6 +536,9 @@ class QTests {
       }
     };
     const tearDown = async (rows: K4Row[]): Promise<void> => {
+      if (stopped) {
+        return;
+      }
       for (const row of rows) {
         await send([k4Statement(row)], "run").catch(() => undefined);
       }
@@ -542,7 +568,7 @@ class QTests {
           let statements: string[];
           let mode: TestMode;
           if (entry.kind === "snapshot") {
-            await this.runSnapshot(run, item, entry.snapshot, process.label, started, outcome);
+            await sending(() => this.runSnapshot(run, item, entry.snapshot, process.label, started, outcome));
             if (this.outcomes.at(-1)?.message?.startsWith("Not run:")) {
               unreachable = this.outcomes.at(-1)?.message;
             }
@@ -567,7 +593,8 @@ class QTests {
             statements = [k4Statement(entry.row)];
             mode = k4Mode(entry.row);
             // A true row `a~b` is sent as `(a;b)`, for both sides (#980).
-            const sides = mode === "true" && entry.row.lang !== "k" && featureOn("failedTests") ? splitMatch(entry.row.code) : undefined;
+            const sides =
+              mode === "true" && entry.row.lang !== "k" && (entry.row.repeat ?? 1) === 1 && featureOn("failedTests") ? splitMatch(entry.row.code) : undefined;
             if (sides !== undefined) {
               statements = [`(${sides.left};${sides.right})`];
               mode = "match";
@@ -595,7 +622,11 @@ class QTests {
           }
           run.appendOutput(`${item.label}: ${done === undefined ? "not run" : done.value.passed ? "passed" : "failed"} on ${done?.process ?? process.label}\r\n`);
         } catch (error) {
-          const text = error instanceof Error ? error.message : String(error);
+          const text = stopped
+            ? `Stopped while it ran: ${process.label} may still be running it; q-lint reconnects once it is free.`
+            : error instanceof Error
+              ? error.message
+              : String(error);
           run.errored(item, new TestMessage(text));
           outcome(item, "errored", text);
         } finally {
@@ -618,8 +649,17 @@ class QTests {
       if (prepared.size > 0) {
         await tearDown(everywhere("afterall"));
       }
+      if (stopped) {
+        run.appendOutput(
+          `Stopped: the query running on ${process.label} was stopped waiting for, and nothing more was sent there` +
+            (prepared.size > 0 ? " - no k4unit after rows were run" : "") +
+            (covering !== undefined ? "; the functions instrumented for coverage are put back at the next coverage run" : "") +
+            ".\r\n",
+        );
+      }
     } finally {
-      if (covering !== undefined) {
+      watches.forEach((w) => w?.dispose());
+      if (covering !== undefined && !stopped) {
         await this.coverEnd(run, covering, process).catch((error: unknown) =>
           run.appendOutput(`Coverage not read: ${error instanceof Error ? error.message : String(error)}\r\n`),
         );

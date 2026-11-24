@@ -15,6 +15,7 @@ const {
   k4Mode,
   k4Statement,
   k4Label,
+  splitMatch,
 } = require("../out/testing.js");
 const { guardText, writes } = require("../out/guard.js");
 const { registerTestExplorer, TESTS_REQUEST } = require("../out/testexplorer.js");
@@ -95,6 +96,36 @@ test("a k4unit suite is read from its CSV, quoted code and all", () => {
   assert.strictEqual(parseK4unit('action,ms,bytes,lang,code,repeat,minver,comment\ntrue,0,0,q,s~"abc",1,,\n')[0].code, 's~"abc"');
   assert.strictEqual(parseK4unit("a,b,c\n1,2,3\n"), undefined);
   assert.strictEqual(parseK4unit(""), undefined);
+});
+
+test("a k4unit row is run its repeat times, as KUpexec runs it: do[n;code] (#2100)", () => {
+  const rows = parseK4unit(
+    [
+      "action,ms,bytes,lang,code,repeat,minver,comment",
+      "before,0,0,q,cnt+:1,3,,",
+      "true,0,0,q,cnt=3,1,,",
+      "run,0,0,k,x+:1,2,,",
+      "true,0,0,q,1b,,,",
+      "true,0,0,q,1b,-4,,",
+      "",
+    ].join("\n"),
+  );
+  assert.deepStrictEqual(
+    rows.map((r) => r.repeat),
+    [3, 1, 2, 1, 1],
+  );
+  assert.deepStrictEqual(rows.map(k4Statement), ["do[3;cnt+:1]", "cnt=3", "k)do[2;x+:1]", "1b", "1b"]);
+  // A row built without one is run once.
+  assert.strictEqual(k4Statement({ action: "true", lang: "q", code: "1b", line: 0, minver: 0 }), "1b");
+});
+
+test("a true row's ~ with an adverb or : after it is not split into two sides (#2101)", () => {
+  for (const code of ["1~'1", "x~/:y", "x~\\:y", "a~:b"]) {
+    assert.strictEqual(splitMatch(code), undefined, code);
+  }
+  assert.deepStrictEqual(splitMatch("f[1]~3"), { left: "f[1]", right: "3" });
+  // An adverb after the right side's first term is the right side's own.
+  assert.deepStrictEqual(splitMatch("x~1+'2"), { left: "x", right: "1+'2" });
 });
 
 test("the switch is declared, on by default, and named in what a refusal says", () => {
@@ -332,6 +363,27 @@ test("a k4unit suite's before rows run once before its tests, and its after rows
   );
 });
 
+test("a repeated k4unit row is sent as do[n;code], a true row's a~b too: not split into its sides (#2100)", async () => {
+  stub.reset();
+  fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  const csv = "action,ms,bytes,lang,code,repeat,minver,comment\nbefore,0,0,q,cnt+:1,3,,\ntrue,0,0,q,cnt~3,1,,\ntrue,0,0,q,cnt~3,2,,\n";
+  vscode.workspace.findFiles = async () => [vscode.Uri.file("/ws/k.csv")];
+  vscode.workspace.fs = { readFile: async () => Buffer.from(csv) };
+  const live = fakeLive();
+  const explorer = registerTestExplorer(stub.newContext(), live, () => undefined);
+  await explorer.discover();
+  await explorer.run();
+  assert.deepStrictEqual(
+    live.sent.map((s) => [s.statements.join(";"), s.mode]),
+    [
+      ["do[3;cnt+:1]", "run"],
+      ["(cnt;3)", "match"],
+      ["do[2;cnt~3]", "true"],
+    ],
+  );
+});
+
 test("a cancelled k4unit run still runs the after rows of a file it set up (#1095)", async () => {
   stub.reset();
   const made = fakeTests();
@@ -358,6 +410,58 @@ test("a cancelled k4unit run still runs the after rows of a file it set up (#109
     ],
   );
   assert.ok(made[0].runs[0].events.some(([e, id]) => e === "skipped" && id === "file:///ws/k.csv#fail:bad"));
+});
+
+test("Stop while a test runs stops waiting for it, as Abort does: the test errors, the rest are skipped, nothing more is sent (#2102)", async () => {
+  stub.reset();
+  const made = fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  const csv = "action,ms,bytes,lang,code,repeat,minver,comment\nbefore,0,0,q,t:1,1,,\nrun,0,0,q,hang[],1,,\ntrue,0,0,q,t=1,1,,\nafter,0,0,q,t:0,1,,\n";
+  vscode.workspace.findFiles = async () => [vscode.Uri.file("/ws/k.csv")];
+  vscode.workspace.fs = { readFile: async () => Buffer.from(csv) };
+  // A process that never answers hang[]: only an abort ends the wait.
+  const live = fakeLive();
+  let fail;
+  live.aborts = 0;
+  live.abort = async () => {
+    live.aborts++;
+    fail?.(new Error("connection closed"));
+  };
+  const answer = live.runOnActive.bind(live);
+  live.runOnActive = (code, query) => {
+    if (code !== "hang[]") return answer(code, query);
+    live.sent.push({ statements: [code], mode: "run" });
+    return new Promise((_, reject) => (fail = reject));
+  };
+  const listeners = [];
+  const token = {
+    isCancellationRequested: false,
+    onCancellationRequested(f) {
+      listeners.push(f);
+      return { dispose: () => listeners.splice(listeners.indexOf(f), 1) };
+    },
+  };
+  const explorer = registerTestExplorer(stub.newContext(), live, () => undefined);
+  await explorer.discover();
+  const ran = made[0].profiles[0].handler(new vscode.TestRunRequest(undefined), token);
+  while (!live.sent.some((s) => s.statements[0] === "hang[]")) await new Promise((r) => setImmediate(r));
+  token.isCancellationRequested = true;
+  listeners.forEach((f) => f());
+  const ended = await Promise.race([ran.then(() => true), new Promise((r) => setTimeout(() => r(false), 2000))]);
+  assert.strictEqual(ended, true, "the run ends once stopped");
+  assert.strictEqual(live.aborts, 1);
+  assert.deepStrictEqual(
+    live.sent.map((s) => s.statements.join(";")),
+    ["t:1", "hang[]"],
+  );
+  const states = explorer.results().map((r) => [r.id.split("#")[1], r.state]);
+  assert.deepStrictEqual(states, [
+    ["run:hang[]", "errored"],
+    ["true:t=1", "skipped"],
+  ]);
+  assert.match(explorer.results()[0].message, /^Stopped while it ran/);
+  assert.deepStrictEqual(listeners, [], "the run stops listening once it ends");
+  assert.ok(made[0].runs[0].events.some(([e]) => e === "end"));
 });
 
 test("a test run on a process the read-only guard guards goes through the guard: declined, the test's definition is not sent (#918)", async (t) => {

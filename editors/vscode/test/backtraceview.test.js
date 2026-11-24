@@ -68,7 +68,8 @@ test("a frame links to the line that failed, in the file or the workspace's copy
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-bt-"));
   const file = path.join(dir, "lib.q");
   fs.writeFileSync(file, LIB);
-  vscode.workspace.findFiles = async (glob) => (glob === "**/lib.q" ? [vscode.Uri.file(file)] : []);
+  // Asked for in any case: q prints a file as it was loaded (#2107).
+  vscode.workspace.findFiles = async (glob) => (glob === "**/[lL][iI][bB].[qQ]" ? [vscode.Uri.file(file)] : []);
   const provider = new BacktraceLinks();
   // PeachQ's frame, from this machine.
   const peachq = `'type\n  [4]  ${file}:3: mid:{[a]\n  b:a+1;\n  c:b+\`x;\n     ^\n  d:c*2;\n  d}\n  [3]  mid 1\n       ^\n`;
@@ -84,6 +85,12 @@ test("a frame links to the line that failed, in the file or the workspace's copy
   await provider.resolveDocumentLink(remote);
   assert.strictEqual(remote.target.fsPath, file);
   assert.strictEqual(remote.target.fragment, "L5,6");
+  // Loaded as Lib.q: the workspace's lib.q where the disk ignores case, and
+  // no file where it does not (#2107).
+  const [loaded] = provider.provideDocumentLinks(documentOf("  [5]  sub/Lib.q:5: mid:\n  b:a+1;\n"));
+  await provider.resolveDocumentLink(loaded);
+  const insensitive = fs.existsSync(path.join(dir, "LIB.Q"));
+  assert.strictEqual(loaded.target?.fsPath, insensitive ? file : undefined);
   // Not in the workspace: no target.
   const [nowhere] = provider.provideDocumentLinks(documentOf("  [2]  /srv/other.q:1: f:{x}\n"));
   await provider.resolveDocumentLink(nowhere);
