@@ -124,6 +124,36 @@ test("the REPL's keys: Enter and Tab ask the extension, Up and Down walk the his
   assert.strictEqual(list.hidden, true);
 });
 
+test("a run from the editor is added to the history and leaves what is typed in the input (#1922)", () => {
+  const page = load(true);
+  const input = page.find("textarea")[0];
+  page.send({ type: "all", entries: [], history: ["newest", "older"] });
+  input.value = "r:select from trade where\n  sym=`AAPL,";
+  input.selectionStart = input.selectionEnd = input.value.length;
+  page.send({ type: "history", history: ["til 3", "newest", "older"] });
+  assert.strictEqual(input.value, "r:select from trade where\n  sym=`AAPL,");
+  // Up from its first line walks the history given, and Down comes back to it.
+  input.selectionStart = input.selectionEnd = 0;
+  page.key("ArrowUp");
+  assert.strictEqual(input.value, "til 3");
+  input.selectionStart = input.selectionEnd = 0;
+  page.key("ArrowUp");
+  assert.strictEqual(input.value, "newest");
+  // While walking: the place kept is the entry on show, wherever it now is.
+  page.send({ type: "history", history: ["1+1", "til 3", "newest", "older"] });
+  assert.strictEqual(input.value, "newest");
+  input.selectionStart = input.selectionEnd = 0;
+  page.key("ArrowUp");
+  assert.strictEqual(input.value, "older");
+  page.key("ArrowDown");
+  page.key("ArrowDown");
+  page.key("ArrowDown");
+  page.key("ArrowDown");
+  assert.strictEqual(input.value, "r:select from trade where\n  sym=`AAPL,", "back to the draft");
+  // The Interactive Window has no input to keep.
+  load(false).send({ type: "history", history: ["x"] });
+});
+
 test("completions that arrive after the input ran or changed are dropped (#1337)", () => {
   const page = load(true);
   const input = page.find("textarea")[0];
