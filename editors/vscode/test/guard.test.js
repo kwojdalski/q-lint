@@ -939,6 +939,25 @@ test("in k code, a monadic . evaluates as value does (#1448)", () => {
   }
 });
 
+test("a monadic . in parentheses evaluates as value does, in k code and in q (#1728)", () => {
+  const cases = {
+    'k)(.)"a:1"': ["evaluates a string with k's ."],
+    'k)(.:)"a:1"': ["evaluates a string with k's ."],
+    '(.)"a:1"': ["evaluates a string with (.)"],
+    '(.:)"a:1"': ["evaluates a string with (.)"],
+    'x:(.)"a:1"': ["assigns x", "evaluates a string with (.)"],
+    // Applied in brackets, or infix, it is dyadic; alone it is not applied.
+    "k)(.)[f;1 2]": [],
+    "(.)[f;1 2]": [],
+    "k)(.)": [],
+    "(.)": [],
+    'f . ("a:1";1)': [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
 test("a writer taken out of .q or .Q by juxtaposition is a change (#1449)", () => {
   const cases = {
     "(.q`set)[`a;1]": ["calls .q.set"],

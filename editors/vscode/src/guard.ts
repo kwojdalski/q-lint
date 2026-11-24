@@ -702,11 +702,17 @@ function readStatement(statement: string, found: Set<string>): void {
       }
       continue;
     }
-    // In k, `.` with nothing on its left is `value`: `` k)."a:1" ``, `k).:"a:1"`.
-    if (kCode && k.kind === "op" && k.text === "." && i >= 2 && (t[i - 1].kind === "op" || t[i - 1].kind === "open" || i === 2 || t[i - 1].text === ";")) {
-      const what = evaluated(t, next?.text === ":" && touching(k, next) ? i + 2 : i + 1, true);
+    // In k, `.` with nothing on its left is `value`: `` k)."a:1" ``, `k).:"a:1"`,
+    // and in parentheses, `k)(.)"a:1"`, `k)(.:)"a:1"` (#1728), which q
+    // applies the same way: `(.)"a:1"`.
+    const unaryDot = k.kind === "op" && k.text === "." && t[i - 1]?.text === "(" && t[i - 1].kind === "open";
+    let after = next?.text === ":" && touching(k, next) ? i + 2 : i + 1;
+    const parenthesised = unaryDot && t[after]?.text === ")";
+    if (parenthesised || (kCode && k.kind === "op" && k.text === "." && i >= 2 && (t[i - 1].kind === "op" || t[i - 1].kind === "open" || i === 2 || t[i - 1].text === ";"))) {
+      after += parenthesised ? 1 : 0;
+      const what = evaluated(t, after, true);
       if (what !== undefined) {
-        found.add(`evaluates ${what.reason} with k's .`);
+        found.add(`evaluates ${what.reason} with ${kCode ? "k's ." : "(.)"}`);
         i = what.at;
         continue;
       }
