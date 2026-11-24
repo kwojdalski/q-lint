@@ -697,3 +697,28 @@ test("adding a page to many held rows costs far less than ranking them all again
   // Before, one page re-ranked both columns (about 2 x all).
   assert.ok(append < all / 2, `append ${append / 1e6} ms vs one full ranking ${all / 1e6} ms`);
 });
+
+test("a chart past PLOT_POINTS is not built as SVG for q Plots: its SVG would be past the 20 MB the view keeps (#1856)", () => {
+  const { plainSvg } = require("../out/plots.js");
+  const make = (rows, columns) => ({
+    columns: [...Array(columns)].map((_, i) => ({ name: "c" + i, numeric: true, key: false, type: 9, temporal: false })),
+    values: [...Array(columns)].map((_, c) => Array.from({ length: rows }, (_, i) => i * (c + 1) * 0.37)),
+    cells: [...Array(columns)].map(() => Array.from({ length: rows }, (_, i) => String(i))),
+    rank: [...Array(columns)].map(() => null),
+  });
+  // Just past the bound, the SVG is already more than plainSvg keeps.
+  const rows = Math.ceil(panel.PLOT_POINTS / 2) + 1;
+  const grid = make(rows, 3);
+  const data = charts.chartData(grid, [...Array(rows).keys()], "line", [1, 2], 20);
+  assert.ok(panel.chartPoints(data) > panel.PLOT_POINTS);
+  const svg = charts.chartSvg(grid, [...Array(rows).keys()], "line", data, { colours: ["#f00", "#0f0"] }, {});
+  assert.ok(svg.length >= 20_000_000, String(svg.length));
+  assert.strictEqual(plainSvg(svg), false);
+  // Counting is cheap next to building it: a million rows of nine series.
+  const big = { datasets: [...Array(9)].map(() => ({ data: new Array(1_000_000).fill(1) })) };
+  const t = process.hrtime.bigint();
+  assert.strictEqual(panel.chartPoints(big), 9_000_000);
+  assert.ok(Number(process.hrtime.bigint() - t) / 1e6 < 100);
+  assert.strictEqual(panel.chartPoints({ panes: [{ data: [1, 2] }, { data: [3] }] }), 3);
+  assert.strictEqual(panel.chartPoints({}), 0);
+});

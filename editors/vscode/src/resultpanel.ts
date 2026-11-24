@@ -300,6 +300,8 @@ interface PageMessage {
   data?: string;
   /// "image": the command's request it answers, if any.
   key?: string;
+  /// "image": why no image could be made of the chart drawn.
+  error?: string;
   /// "drill": the cell, by column and row of the grid.
   column?: number;
   row?: number;
@@ -1034,7 +1036,9 @@ export class QueryModes {
     }
     try {
       if (format === undefined || bytes === undefined) {
-        if (request !== undefined) {
+        if (typeof message.error === "string") {
+          void window.showErrorMessage(plainMessage(`q-lint: could not save the chart: ${message.error}`));
+        } else if (request !== undefined) {
           void window.showInformationMessage("q-lint: the result on show draws no chart, so there is nothing to save. Its Chart view says why.");
         }
         return;

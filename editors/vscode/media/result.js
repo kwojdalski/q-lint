@@ -432,8 +432,27 @@
     return map && Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined;
   }
 
+  /// The points a chart's data draws: each dataset's or linked pane's.
+  function chartPoints(data) {
+    let n = 0;
+    [data && data.datasets, data && data.panes].forEach(function (sets) {
+      (Array.isArray(sets) ? sets : []).forEach(function (d) {
+        n += d && Array.isArray(d.data) ? d.data.length : 0;
+      });
+    });
+    return n;
+  }
+
+  /// Past this many points a chart's SVG is more than the 20 MB the q Plots
+  /// view keeps (plots.ts's plainSvg), at the ten or more characters each
+  /// point takes: the page does not build one to have it thrown away
+  /// (#1856).
+  const PLOT_POINTS = 2000000;
+
   const helpers = {
     rowCount: rowCount,
+    chartPoints: chartPoints,
+    PLOT_POINTS: PLOT_POINTS,
     ownValue: ownValue,
     csvCell: csvCell,
     gridMove: gridMove,
@@ -1881,22 +1900,24 @@
   /// Keep the chart drawn in the q Plots view (#970), as the SVG Save SVG
   /// writes.
   function plotted() {
-    if (!feature("plots") || !drawnChart) {
+    if (!feature("plots") || !drawnChart || chartPoints(drawnChart.data) > PLOT_POINTS) {
       return;
     }
     const canvas = drawnChart.canvas;
-    vscode.postMessage({
-      type: "plotted",
-      id: result.id,
-      format: state.kind,
+    let data;
+    try {
       // At least 640 by 360: a plot drawn in a narrow panel is still one
       // to read, and to save.
-      data: svgOf(drawnChart, {
+      data = svgOf(drawnChart, {
         width: Math.max(640, Math.round(canvas.clientWidth || 800)),
         height: Math.max(360, Math.round(canvas.clientHeight || 450)),
         background: cssVar("--vscode-editor-background", "#ffffff"),
-      }),
-    });
+      });
+    } catch (e) {
+      // Too big a string to make: the chart is drawn all the same.
+      return;
+    }
+    vscode.postMessage({ type: "plotted", id: result.id, format: state.kind, data: data });
   }
 
   /// Linked panes (#1018): one chart per series, stacked on one x axis. A
@@ -2001,6 +2022,7 @@
   /// the command's request it answers.
   function sendImage(format, key) {
     let data = "";
+    let error;
     if (drawnChart && drawnChart.canvas) {
       const background = cssVar("--vscode-editor-background", "#ffffff");
       const canvases = drawnChart.canvases && drawnChart.canvases.length ? drawnChart.canvases : [drawnChart.canvas];
@@ -2019,14 +2041,21 @@
         });
         data = out.toDataURL("image/png");
       } else {
-        data = svgOf(drawnChart, {
-          width: Math.round(canvas.clientWidth || 800),
-          height: Math.round(canvases.reduce(function (h, c) { return h + (c.clientHeight || 0); }, 0) || 450),
-          background: background,
-        });
+        try {
+          data = svgOf(drawnChart, {
+            width: Math.round(canvas.clientWidth || 800),
+            height: Math.round(canvases.reduce(function (h, c) { return h + (c.clientHeight || 0); }, 0) || 450),
+            background: background,
+          });
+        } catch (e) {
+          // A chart of millions of points is more SVG than a string holds:
+          // answer with why, not silence (#1856).
+          data = "";
+          error = "the chart's " + chartPoints(drawnChart.data).toLocaleString("en-US") + " points are too much SVG to make (" + (e && e.message ? e.message : String(e)) + "). Save it as PNG instead.";
+        }
       }
     }
-    vscode.postMessage({ type: "image", id: result.id, format: format, data: data, key: key });
+    vscode.postMessage({ type: "image", id: result.id, format: format, data: data, key: key, error: error });
   }
 
   // --- correlation (#1020)
