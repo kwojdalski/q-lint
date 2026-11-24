@@ -704,6 +704,8 @@ function picked(t: Token[], at: number, root: string): string | undefined {
 /// name, or not written, which could name a global or a file:
 /// `` {.[x;();:;1]} v `` amends whatever `v` names.
 const WITNESSES = ["(`g)", "(`:g)"];
+/// The most items of an iterated argument a lambda is read again with.
+const ITEMS = 8;
 /// The names after a lambda that apply it to each item of what follows.
 const ITERATORS = new Set(["each", "peach", "over", "scan", "prior"]);
 /// How deep `writes` is called in itself, and how many lambdas it has read
@@ -712,14 +714,23 @@ const ITERATORS = new Set(["each", "peach", "over", "scan", "prior"]);
 let nesting = 0;
 let rereads = 0;
 const REREADS = 2000;
-/// What `writes` found in a lambda read again, by its text.
+/// What `writes` found in a text read again, by the text, kept from one
+/// call to the next - it depends on the text alone - up to `KEPT`
+/// characters of them.
 const reread = new Map<string, string[]>();
+const KEPT = 4_000_000;
+let kept = 0;
 
 function rereadOf(text: string): string[] {
   let found = reread.get(text);
   if (found === undefined) {
     rereads++;
     found = writes(text);
+    if (kept + text.length > KEPT) {
+      reread.clear();
+      kept = 0;
+    }
+    kept += text.length;
     reread.set(text, found);
   }
   return found;
@@ -837,25 +848,31 @@ function throughParameters(t: Token[], all: Token[], index: Map<Token, number>, 
     return out.join("");
   };
   const base = rereadOf(text(new Map()));
-  // What each parameter may be: its argument, each item of it when it is
-  // iterated, and the witnesses for one that is not a literal.
+  // Read with every argument in place, with the first item of each when it
+  // is iterated, and with a symbol for each one that is a name or not
+  // written: a few readings, whatever the count of parameters.
   // A name may hold a global's symbol; what a call returns is read as the
   // call, `{@[x;0;3_]} read0 f` as `@[(read0 f);0;3_]`.
-  const held = (a: number, b: number): boolean => b - a === 1 && t[a].kind === "name";
-  const choices = params.map((_, n) => {
-    const arg = args[n];
-    if (arg === undefined) return WITNESSES;
-    const written = [`(${joined(t, arg[0], arg[1])})`, ...(iterated ? itemsOf(t, arg[0], arg[1]).map((i) => `(${i})`) : [])];
-    return held(arg[0], arg[1]) ? [...written, ...WITNESSES] : written;
-  });
-  // One reading for each choice at a time, the others their first.
-  for (let n = 0; n < params.length; n++) {
-    for (const choice of choices[n]) {
-      const given = new Map(params.map((p, m) => [p, m === n ? choice : choices[m][0]]));
-      for (const reason of rereadOf(text(given))) {
-        if (!base.includes(reason)) {
-          found.add(WITNESSES.includes(choice) || given.size > 0 && [...given.values()].some((v) => WITNESSES.includes(v)) ? "applies a lambda that may change the process through what it is given" : reason);
-        }
+  const written = params.map((_, n) => (args[n] === undefined ? undefined : `(${joined(t, args[n][0], args[n][1])})`));
+  const held = params.map((_, n) => args[n] === undefined || (args[n][1] - args[n][0] === 1 && t[args[n][0]].kind === "name"));
+  const readings: [Map<string, string>, boolean][] = [];
+  if (written.some((w) => w !== undefined)) {
+    readings.push([new Map(params.flatMap((p, n): [string, string][] => (written[n] === undefined ? [] : [[p, written[n]]]))), false]);
+    // Item by item, the first few.
+    const each = iterated ? params.map((_, n) => (args[n] === undefined ? [] : itemsOf(t, args[n][0], args[n][1]))) : [];
+    for (let m = 0; m < Math.min(ITEMS, Math.max(0, ...each.map((i) => i.length))); m++) {
+      readings.push([new Map(params.flatMap((p, n): [string, string][] => (written[n] === undefined ? [] : [[p, each[n][m] === undefined ? written[n] : `(${each[n][m]})`]]))), false]);
+    }
+  }
+  if (held.some((h) => h)) {
+    for (const witness of WITNESSES) {
+      readings.push([new Map(params.flatMap((p, n): [string, string][] => (held[n] ? [[p, witness]] : written[n] === undefined ? [] : [[p, written[n]]]))), true]);
+    }
+  }
+  for (const [given, guessed] of readings) {
+    for (const reason of rereadOf(text(given))) {
+      if (!base.includes(reason)) {
+        found.add(guessed ? "applies a lambda that may change the process through what it is given" : reason);
       }
     }
   }
@@ -1368,7 +1385,6 @@ export function guardText(code: GuardCode): string {
 export function writes(code: GuardCode): string[] {
   if (nesting++ === 0) {
     rereads = 0;
-    reread.clear();
   }
   try {
     const found = new Set<string>();
