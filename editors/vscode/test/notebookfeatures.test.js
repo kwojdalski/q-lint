@@ -292,6 +292,10 @@ test("a parameters cell's assignments are its parameters", () => {
   ]);
   // One in a block comment, or a line of a multi-line string, is none (#1470).
   assert.deepStrictEqual(parametersOf('/ @parameters\n/\nold:5\n\\\nn:10\ns:"a\n  b:2"'), [{ name: "n", value: "10" }]);
+  // An indented comment line after a parameter leaves it one (#1732); in a
+  // string, or after a line that continues, it does not.
+  assert.deepStrictEqual(parametersOf("a:1\n  / note\nb:2"), [{ name: "a", value: "1" }, { name: "b", value: "2" }]);
+  assert.deepStrictEqual(parametersOf('s:"x\n  / y"\nc:1\n  +2\n  / z\nd:3'), [{ name: "d", value: "3" }]);
   const cells = [{ kind: "markdown", source: "/ @parameters" }, { kind: "code", source: "1" }, { kind: "code", source: "/ @parameters\nn:1" }];
   assert.strictEqual(parametersCell(cells), 2);
   assert.strictEqual(parametersCell([{ kind: "code", source: "/ @parameters", language: "python" }]), -1);
