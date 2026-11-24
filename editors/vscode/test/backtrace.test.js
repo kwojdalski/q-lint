@@ -110,3 +110,38 @@ test("a blank line inside a printed function stays in its frame, so the ^ is fou
   assert.deepStrictEqual(parseBacktrace("  [2]  (.Q.trp)\n\nq)  x\n").map((f) => f.code), [["(.Q.trp)"]]);
   assert.deepStrictEqual(parseBacktrace("  [2]  (.Q.trp)\n\nnext\n").map((f) => f.code), [["(.Q.trp)"]]);
 });
+
+// q writes the ^ after as many spaces as there are BYTES before the token
+// that failed - of the header's path and of the code - and an editor
+// counts characters. Each frame is as KDB-X 5.0 printed it (#1982).
+test("the ^ is read as bytes of the line above it, so text that is not ASCII does not move the column (#1982)", () => {
+  const frame = (lines) => parseBacktrace(lines.join("\n"))[0];
+  const plus = (f) => f.code[f.failed.index].slice(f.failed.column, f.failed.column + 1);
+  // A later line of the function: two bytes an é, three the arrow.
+  const later = frame(["  [8]  /w/lib.q:2: uni:{[a]", '  s:"ééé→";b:a+`x;', `${" ".repeat(19)}^`, "  b}"]);
+  assert.deepStrictEqual(later.failed, { index: 1, column: 14 });
+  assert.strictEqual(plus(later), "+");
+  assert.deepStrictEqual(failedAt(later, 'uni:{[a]\n  s:"ééé→";b:a+`x;\n  b}\n'), { line: 1, character: 14 });
+  // The header's own line.
+  const header = frame(['  [8]  /w/lib.q:15: one:{[a] "é",a+`x}', `${" ".repeat(35)}^`]);
+  assert.deepStrictEqual(header.failed, { index: 0, column: 14 });
+  assert.strictEqual(plus(header), "+");
+  // A character outside the basic plane is four bytes, and two of a line's units.
+  const emoji = frame(['  [8]  /w/lib.q:17: emoji:{[a] "😀",a+`x}', `${" ".repeat(39)}^`]);
+  assert.deepStrictEqual(emoji.failed, { index: 0, column: 17 });
+  assert.strictEqual(plus(emoji), "+");
+  // The path's bytes are counted too.
+  const path = frame(['  [8]  /w/dé/libé.q:1: pone:{[a] "é",a+`x}', `${" ".repeat(41)}^`]);
+  assert.deepStrictEqual([path.file, path.failed], ["/w/dé/libé.q", { index: 0, column: 15 }]);
+  assert.strictEqual(plus(path), "+");
+  // A frame with no file.
+  const bare = frame(['  [8]  {[a] "é",a+`y}', `${" ".repeat(18)}^`]);
+  assert.deepStrictEqual(bare.failed, { index: 0, column: 10 });
+  assert.strictEqual(plus(bare), "+");
+  // A tab is one byte and one character: the ^ line carries it.
+  const tabbed = frame(["  [8]  /w/lib.q:5: tabbed:{[a]", "\tb:a+1;\tc:b+`x;", "       \t   ^", "\tc}"]);
+  assert.deepStrictEqual(tabbed.failed, { index: 1, column: 11 });
+  assert.strictEqual(plus(tabbed), "+");
+  // A ^ past the end of the line above it is that far past it.
+  assert.deepStrictEqual(frame(["  [8]  /w/lib.q:2: f:{[a]", "  é", "      ^"]).failed, { index: 1, column: 5 });
+});
