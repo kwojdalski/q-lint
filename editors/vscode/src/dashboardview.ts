@@ -240,19 +240,21 @@ export class Dashboards {
         this.timers.set(tile.id, {
           timer: setInterval(() => {
             const now = this.current()?.tiles.find((x) => x.id === tile.id);
-            if (now !== undefined && on()) void this.runTile(now);
+            if (now !== undefined && on()) void this.runTile(now, true);
           }, tile.refresh * 1000),
           every: tile.refresh,
         });
       }
       const content = this.contents.get(tile.id);
-      if (runAll || content === undefined) void this.runTile(tile);
+      if (runAll || content === undefined) void this.runTile(tile, true);
       else void this.panel?.webview.postMessage({ type: "tile", id: tile.id, content, at: this.at.get(tile.id) });
     }
   }
 
   /// Run one tile and post what it shows. Skipped while its last run is out.
-  async runTile(tile: Tile): Promise<void> {
+  /// Run `tile` and show its answer. `unattended`: not on the user's
+  /// Refresh - on open or its interval - so nothing modal is asked (#1618).
+  async runTile(tile: Tile, unattended = false): Promise<void> {
     if (!on() || this.running.has(tile.id)) return;
     const post = (content: TileContent) => {
       const at = new Date().toLocaleTimeString();
@@ -271,7 +273,7 @@ export class Dashboards {
     void this.panel?.webview.postMessage({ type: "running", id: tile.id });
     try {
       this.runs++;
-      const answer = await this.live.runApart(process, query.code);
+      const answer = await this.live.runApart(process, query.code, undefined, { unattended });
       // Shown as the tile is set now: its view can change while the run is out (#1339).
       post(tileContent(answer, this.current()?.tiles.find((x) => x.id === tile.id)?.view ?? tile.view));
     } catch (error) {

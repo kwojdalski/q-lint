@@ -255,3 +255,17 @@ test("a connect script is not sent once the connect was given up while the read-
   assert.strictEqual(await live.connectTo("p"), true);
   assert.strictEqual(scripts(), 1);
 });
+
+// A tile's timer or a due schedule asked the guard's modal question about a
+// connect script with nobody there, and waited on it (#1618).
+test("a run from a timer asks nothing about a connect script: one the guard holds fails the run, unsent", async (t) => {
+  const { fakeQ } = require("./fakeq.js");
+  const q = await fakeQ(null);
+  t.after(() => q.close());
+  const { live } = await setUp(t, [{ label: "p", host: "127.0.0.1", port: q.port, tags: ["prod"], init: "secretTable:([]a:1 2)" }]);
+  const asked = stub.messages.length;
+  await assert.rejects(live.runApart(live.processes()[0], "1+1", undefined, { unattended: true }), /connect script of p was not run, and nothing was/);
+  assert.strictEqual(stub.messages.slice(asked).filter(([, text]) => /connect script/i.test(text)).length, 0, JSON.stringify(stub.messages.slice(asked)));
+  assert.strictEqual(q.sent.filter((m) => JSON.stringify(m).includes("secretTable")).length, 0);
+  assert.strictEqual(q.sent.filter((m) => JSON.stringify(m).includes("1+1")).length, 0);
+});

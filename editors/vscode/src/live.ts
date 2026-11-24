@@ -1546,13 +1546,18 @@ export class Live {
   /// Run `process`'s connect script on `connection`, just opened, before any
   /// query can be: its failure is said, and the connection kept. `stopped`
   /// says the connect was given up - a disconnect - while the read-only
-  /// guard's question was open: nothing is sent then (#1357).
-  private async runConnectScript(connection: QConnection, process: Process, stopped: () => boolean = () => false): Promise<void> {
+  /// guard's question was open: nothing is sent then (#1357). `unattended`:
+  /// run from a timer, with nobody to ask - a script the guard holds is not
+  /// run, and that or a failure throws for the caller to report (#1618).
+  private async runConnectScript(connection: QConnection, process: Process, stopped: () => boolean = () => false, unattended = false): Promise<void> {
     const script = scriptOf(process);
     if (script === undefined || !this.setting(readConnectScript).enabled) {
       return;
     }
     const failed = (why: string): void => {
+      if (unattended) {
+        throw new Error(`the connect script of ${process.label} failed: ${why}`);
+      }
       this.show([`# ${process.label} - connect script failed: ${why}`], false);
       void window.showWarningMessage(plainMessage(`q-lint: the connect script of ${process.label} failed: ${why}`));
     };
@@ -1576,7 +1581,11 @@ export class Live {
     if (cut.length === 0) {
       return;
     }
-    if (!(await this.guardAllows(code, [process], `The connect script of ${process.label}`))) {
+    const refused = unattended ? this.guardRefuses(code, [process]) : undefined;
+    if (refused !== undefined) {
+      throw new Error(`the connect script of ${process.label} was not run, and nothing was: ${refused}`);
+    }
+    if (!unattended && !(await this.guardAllows(code, [process], `The connect script of ${process.label}`))) {
       this.show([`# ${process.label} - connect script not run: changing a read-only process was not confirmed`], false);
       return;
     }
@@ -1600,6 +1609,9 @@ export class Live {
       }
       this.output.appendLine(`# ${process.label} - connect script ran (${Date.now() - started} ms)`);
     } catch (error) {
+      if (unattended && error instanceof Error && error.message.startsWith(`the connect script of ${process.label} failed`)) {
+        throw error;
+      }
       failed(error instanceof Error ? error.message : String(error));
     }
   }
@@ -2381,7 +2393,9 @@ export class Live {
   /// why there is no answer. The caller asks the read-only guard first.
   /// `whole`: every row and the whole text, whatever the limits - a
   /// scheduled export writes the result, not its first page (#1613).
-  async runApart(process: Process, code: string, signal?: AbortSignal, options: { whole?: boolean } = {}): Promise<GridAnswer> {
+  /// `unattended`: run from a timer - a tile's refresh, a schedule - so the
+  /// connect script asks nobody and its failure is thrown (#1618).
+  async runApart(process: Process, code: string, signal?: AbortSignal, options: { whole?: boolean; unattended?: boolean } = {}): Promise<GridAnswer> {
     const commanded = process.credentialCommand !== undefined && this.setting(readAdmin).credentialCommand;
     if (!commanded && process.user && process.server !== undefined && (await this.context.secrets.get(passwordKey(process))) === undefined) {
       throw new Error(`no password is stored for ${process.user}: connect to ${process.label} once to give it`);
@@ -2398,7 +2412,7 @@ export class Live {
       connection.abort();
     });
     try {
-      await this.runConnectScript(connection, process);
+      await this.runConnectScript(connection, process, undefined, options.unattended === true);
       const configuration = workspace.getConfiguration("q-lint");
       const settings = readLive((key, fallback) => configuration.get(key, fallback));
       const unlimited = this.controls.unlimited || options.whole === true;

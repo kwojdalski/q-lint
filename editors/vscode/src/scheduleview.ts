@@ -132,7 +132,7 @@ export class ScheduledExports {
     if (process === undefined) {
       throw new Error(`there is no q process labelled ${s.process}`);
     }
-    const answer = await this.live.runApart(process, saved.code, undefined, { whole: true });
+    const answer = await this.live.runApart(process, saved.code, undefined, { whole: true, unattended: true });
     if (!answer.ok) {
       throw new Error(`${s.process} answered '${answer.error}`);
     }

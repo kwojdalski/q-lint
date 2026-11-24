@@ -195,7 +195,7 @@ test("a scheduled export asks for the whole result, and writes nothing when rows
   const file = path.join(dir, "out.csv");
   await context.workspaceState.update(SCHEDULES_KEY, [{ id: "s1", query: "q", process: "p", format: "csv", path: file, every: 1, mode: "replace", since: 0 }]);
   await schedules.tick(new Date(2026, 10, 22, 9, 30));
-  assert.deepStrictEqual(asked, [{ whole: true }]);
+  assert.deepStrictEqual(asked, [{ whole: true, unattended: true }]);
   assert.strictEqual(fs.existsSync(file), false);
   assert.match(parseSchedules(context.workspaceState.get(SCHEDULES_KEY))[0].last, /failed .*nothing was written: only 2 of its 250000 rows came back/);
   assert.strictEqual(incomplete({ count: 2, cells: [["1", "2"]] }), undefined);
