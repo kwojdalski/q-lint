@@ -514,6 +514,20 @@ export function tableParts(payload: GridPayload, rows?: number[]): Omit<QTable, 
   return { parts, rows: order.length, total: payload.count, cut };
 }
 
+/// The cells of `rows` cut at 200 characters or at `\c`, whose text is not
+/// their whole value: what every export says it wrote (#2087).
+export function cutCells(payload: GridPayload, rows?: number[]): number {
+  const order = rows ?? [...Array(payload.cells[0]?.length ?? 0).keys()];
+  let cut = 0;
+  payload.types.forEach((type, i) => {
+    if (type === 0 || type === 98) {
+      const raw = payload.raw[i]?.length === payload.cells[i].length ? payload.raw[i] : undefined;
+      cut += order.filter((r) => atomLiteral(type, payload.cells[i][r] ?? "", raw === undefined ? undefined : raw[r]).cut).length;
+    }
+  });
+  return cut;
+}
+
 /// Whether a cell holds q's null of a type sent without raw numbers.
 export function textNull(type: number, text: string): boolean {
   return (type === 11 && text === "") || (type === 2 && (text === "" || text === NULL_GUID)) || (type >= 20 && type <= 76 && text === "");
@@ -581,7 +595,25 @@ export function itemValue(text: string, raw: unknown): ItemValue {
 export function plainItem(text: string): string {
   const m = /^(?:"((?:[^"\\]|\\.)*)"|,"([^"\\]|\\[0-7]{3}|\\.)")$/s.exec(text);
   if (m === null) {
-    return text;
+    // A string cut at 200 characters: its characters up to the cut, less an
+    // escape or a UTF-8 character it cut inside, and the `...` (#2087).
+    const cut = /^"((?:[^"\\]|\\[0-7]{3}|\\[^0-7])*)(?:\\[0-7]{0,2})?\.\.\.$/s.exec(text);
+    if (cut === null) {
+      return text;
+    }
+    const whole = cut[1].replace(/((?:\\[0-7]{3})+)$/, (run: string) => {
+      const bytes = run.match(/[0-7]{3}/g)!.map((o) => parseInt(o, 8));
+      // The last byte that leads a character, and whether all of it is here.
+      let lead = bytes.length - 1;
+      while (lead > 0 && bytes[lead] >= 0x80 && bytes[lead] < 0xc0 && bytes.length - lead < 4) {
+        lead--;
+      }
+      const b = bytes[lead];
+      const need = b >= 0xf0 ? 4 : b >= 0xe0 ? 3 : b >= 0xc0 ? 2 : 1;
+      const kept = need > bytes.length - lead ? bytes.slice(0, lead) : bytes;
+      return kept.map((x) => `\\${x.toString(8).padStart(3, "0")}`).join("");
+    });
+    return `${plainItem(`"${whole}"`)}...`;
   }
   return (m[1] ?? m[2]).replace(/((?:\\[0-7]{3})+)|\\(.)/gs, (_, run: string | undefined, e: string) => {
     if (run === undefined) {

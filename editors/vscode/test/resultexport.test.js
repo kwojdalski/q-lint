@@ -421,6 +421,21 @@ test("a float or real item of a general list is written with every digit, not -3
   assert.strictEqual(tableLiteral(g).code, "([] a:(1.23456789f;`x;0n))");
 });
 
+test("a string cut at 200 characters is written as its characters up to the cut, and every format says so (#2087)", () => {
+  // KDB-X: GRID's cells of ([] s:(300#"a";"b";"caf\303\251",300#"\303\251")).
+  const long = `"${"a".repeat(196)}...`;
+  const utf = `"caf\\303\\251${"\\303\\251".repeat(23)}\\...`;
+  assert.strictEqual(utf.length, 200);
+  const p = { count: 3, keys: 0, names: ["s"], types: [0], cells: [[long, '"b"', utf]], raw: [[false, false, false]], rank: [[]] };
+  assert.deepStrictEqual(JSON.parse(toJson(p)).map((r) => r.s), [`${"a".repeat(196)}...`, "b", `café${"é".repeat(23)}...`]);
+  for (const format of EXPORT_FORMATS) {
+    assert.ok(exportResult(format, p, -1).notes.includes("2 cell(s) were cut at 200 characters or at the process's \\c width and are not their whole value"), format);
+  }
+  assert.deepStrictEqual(exportResult("json", p, -1, [1]).notes, []);
+  // Cut inside an escape, or inside a character's bytes: neither is kept.
+  assert.deepStrictEqual(['"caf\\303\\251 \\303...', '"\\346\\227\\245\\346\\227...', '"ab\\30...', '"x\\"...', '"ab\\\\...'].map(plainItem), ["café ...", "日...", "ab...", 'x"...', "ab\\..."]);
+});
+
 test("JSON writes a general list's integers, booleans and nulls as JSON's own, as it does a float's (#2086)", () => {
   // KDB-X -3! of each item of ([] a:(1;0n;2.5;0Nj;1b;0x01;`a;"x";enlist "y";1 2;0Wh;-0we;0Ni;`;-7i;9007199254740993)).
   const cells = ["1", "0n", "2.5", "0N", "1b", "0x01", "`a", '"x"', ',"y"', "1 2", "0Wh", "-0we", "0Ni", "`", "-7i", "9007199254740993"];

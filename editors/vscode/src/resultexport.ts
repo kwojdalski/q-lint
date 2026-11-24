@@ -15,7 +15,7 @@
 // the grid colours them - by `media/gridlook.js`, which the page runs too.
 import { charText, realValue, textBuffer, toGrid, type Grid, type GridPayload } from "./grid";
 import type { FormatRule } from "./resultlook";
-import { distinctNames, itemValue, rawColumn, tableParts, textNull } from "./qliteral";
+import { cutCells, distinctNames, itemValue, rawColumn, tableParts, textNull } from "./qliteral";
 import { toParquet } from "./parquet";
 import { toXlsx } from "./xlsx";
 
@@ -212,6 +212,11 @@ export function exportResult(format: ExportFormat, payload: GridPayload, decimal
   if (payload.count > (payload.cells[0]?.length ?? 0)) {
     notes.push(`the grid held ${(payload.cells[0]?.length ?? 0).toLocaleString("en-US")} of the result's ${payload.count.toLocaleString("en-US")} rows`);
   }
+  // Every format writes such a cell as far as it was sent (#2087).
+  const cut = cutCells(payload, order);
+  if (cut > 0) {
+    notes.push(`${cut} cell(s) were cut at 200 characters or at the process's \\c width and are not their whole value`);
+  }
   switch (format) {
     case "json":
       return { data: textBuffer(jsonParts(payload, order)), rows: order.length, notes };
@@ -219,9 +224,6 @@ export function exportResult(format: ExportFormat, payload: GridPayload, decimal
       return { data: textBuffer(markdownParts(payload, decimals, order, formats)), rows: order.length, notes };
     case "q": {
       const table = tableParts(payload, order);
-      if (table.cut > 0) {
-        notes.push(`${table.cut} cell(s) were cut at 200 characters or at the process's \\c width and are not their whole value`);
-      }
       return { data: textBuffer([...table.parts, "\n"]), rows: order.length, notes };
     }
     case "xlsx": {
