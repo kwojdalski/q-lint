@@ -606,6 +606,26 @@ test("a real's raw number is the shortest decimal its float32 reads back as, for
   assert.deepStrictEqual(gridOfQ({ kind: "vector", t: 8, attr: 0, v: [wide, null] }, 100).raw, [[0.1, null]]);
 });
 
+test("a real that needs nine digits to read back is its nine-digit decimal, not the widened double (#1734)", () => {
+  const { realValue } = require("../out/grid.js");
+  const { toJson } = require("../out/resultexport.js");
+  const x = 0.10993709415197372;
+  assert.strictEqual(Math.fround(x), x);
+  assert.strictEqual(realValue(x), 0.109937094);
+  assert.strictEqual(Math.fround(0.109937094), x);
+  const { grid } = readGridAnswer({ ok: true, type: 98, text: [], grid: { count: 1, keys: 0, names: ["r"], types: [8], cells: [["0.1099371"]], raw: [[x]], rank: [[0]] } });
+  assert.match(toJson(grid), /"r": 0\.109937094\}/);
+  // Shorter still where fewer digits do.
+  assert.strictEqual(realValue(Math.fround(0.1)), 0.1);
+  assert.strictEqual(realValue(Math.fround(1.5)), 1.5);
+  // Every float32 now reads back from what it gives.
+  for (let i = 0; i < 20000; i++) {
+    const r = Math.fround((Math.random() - 0.5) * 10 ** Math.floor(Math.random() * 20 - 10));
+    assert.strictEqual(Math.fround(realValue(r)), r, String(r));
+    assert.strictEqual(Number(realValue(r).toPrecision(9)), realValue(r), String(r));
+  }
+});
+
 test("a page added to a symbol column ranks it in code point order, as q sorts by UTF-8 bytes; the page's text sort too (#1642)", () => {
   const first = { count: 3, keys: 0, names: ["s"], types: [11], cells: [["\uff21"]], raw: [[]], rank: [[0]] };
   const page = { count: 3, names: ["s"], types: [11], cells: [["\u{1f600}", "z"]], raw: [[]], rank: [[1, 0]] };

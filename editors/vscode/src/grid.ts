@@ -200,7 +200,8 @@ export function realValue(x: unknown): unknown {
   if (typeof x !== "number" || !Number.isFinite(x)) {
     return x;
   }
-  for (let digits = 1; digits < 9; digits++) {
+  // Nine digits are always enough for a float32 (#1734).
+  for (let digits = 1; digits <= 9; digits++) {
     const n = Number(x.toPrecision(digits));
     if (Math.fround(n) === x) {
       return n;
@@ -335,7 +336,9 @@ export function cellText(type: number, text: string, raw: unknown, decimals: num
   if (raw === null) {
     return type === 2 ? NULL_GUID : "";
   }
-  if (raw === Infinity || raw === -Infinity) {
+  // A general list's item is a float or a real, which q's text already
+  // writes as 0w or -0we (#1733).
+  if ((raw === Infinity || raw === -Infinity) && type !== 0) {
     return `${raw < 0 ? "-" : ""}0${FLOATING.has(type) ? "w" : "W"}`;
   }
   if ((type === 8 || type === 9) && decimals >= 0 && typeof raw === "number") {

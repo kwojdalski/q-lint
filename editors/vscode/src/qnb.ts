@@ -25,6 +25,8 @@
 // A file that is not one is refused with what is wrong with it, never read as
 // an empty notebook that a save would then write over it.
 
+import { blockDepth } from "./statements";
+
 /// The format this extension writes, and the newest it reads.
 export const QNB_VERSION = 1;
 
@@ -305,12 +307,12 @@ const trimEnd = (line: string): string => line.replace(/\s+$/, "");
 /// cell above, and is unindented - a lone `/` or `\` there made a line
 /// comment; a block comment the cell leaves open is
 /// closed; a lone `\`, which ends the cell's code, would end the script, and
-/// opens a block comment over the rest of the cell instead. A lone `/`
-/// inside a comment is indented: KDB-X opens a second block comment there,
-/// which the cell's one `\` would leave open.
+/// opens a block comment over the rest of the cell instead. Block comments
+/// nest, in a cell as in KDB-X (#1462), so each level the cell leaves open is
+/// closed by a `\` of its own (#1731).
 function scriptCell(source: string): string[] {
   const out: string[] = [];
-  let inBlock = false;
+  let depth = 0;
   let ended = false;
   let first = true;
   for (const line of source.split(/\r?\n/)) {
@@ -320,13 +322,13 @@ function scriptCell(source: string): string[] {
       out.push(text === "\\" || text === "/" ? ` ${line}` : line);
       continue;
     }
-    if (inBlock) {
-      inBlock = text !== "\\";
-      out.push(text === "/" ? ` ${line}` : line);
+    if (depth > 0) {
+      depth = blockDepth(depth, text);
+      out.push(line);
       continue;
     }
     if (text === "/") {
-      inBlock = true;
+      depth = 1;
     } else if (text === "\\") {
       ended = true;
       out.push("/");
@@ -345,7 +347,7 @@ function scriptCell(source: string): string[] {
     }
     out.push(line);
   }
-  if (inBlock || ended) {
+  for (let level = depth + (ended ? 1 : 0); level > 0; level--) {
     out.push("\\");
   }
   return out;

@@ -25,7 +25,7 @@ import { address, readProcessFile, type Process } from "./processes";
 import { QConnection } from "./qclient";
 import { parseQnb, serializeQnb, type Qnb, type QnbCell, type QnbOutput } from "./qnb";
 import { ERROR_MIME, toHtml, toIpynb } from "./qnbconvert";
-import { statements } from "./statements";
+import { statements, stringOpen } from "./statements";
 
 /// What marks the cell a run put its parameters in.
 export const INJECTED_KEY = "q-lint.injectedParameters";
@@ -94,10 +94,11 @@ const NAME = /^\.?[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)*$/;
 /// The parameters a parameters cell assigns, in order, by name: each line
 /// `name:value`, a trailing `;` and comment left off. Other lines are not
 /// parameters, and the lines are q's statements: one in a block comment or
-/// a string, or a statement of more than one line, is none (#1470).
+/// a string, or a statement of more than one line, is none (#1470). An
+/// indented comment line after one is no part of it (#1732).
 export function parametersOf(source: string): { name: string; value: string }[] {
   const found: { name: string; value: string }[] = [];
-  for (const line of statements(source).filter((s) => !s.includes("\n"))) {
+  for (const line of statements(source).map(withoutCommentLines).filter((s) => !s.includes("\n"))) {
     const m = /^(\.?[a-zA-Z][\w.]*)\s*:\s*(.*)$/.exec(line);
     if (m === null) {
       continue;
@@ -108,6 +109,20 @@ export function parametersOf(source: string): { name: string; value: string }[] 
     }
   }
   return found;
+}
+
+/// A statement without its continuation lines that are only a comment, as
+/// q reads them; a line in a string is kept.
+function withoutCommentLines(statement: string): string {
+  let quoted = false;
+  return statement
+    .split("\n")
+    .filter((line, i) => {
+      const keep = i === 0 || quoted || !line.trimStart().startsWith("/");
+      quoted = stringOpen(quoted, line);
+      return keep;
+    })
+    .join("\n");
 }
 
 /// `text` up to its comment, a `/` after a blank outside a string (#1118):
@@ -436,7 +451,9 @@ export function cliProcess(name: string, listed: Process[], user?: string, tls =
   if (m !== null && Number(m[2]) >= 1 && Number(m[2]) <= 65535) {
     const host = m[1].replace(/^\[(.*)\]$/, "$1");
     const port = Number(m[2]);
-    const tags = [...new Set(listed.filter((p) => p.host.toLowerCase() === host.toLowerCase() && p.port === port).flatMap((p) => p.tags))];
+    // The loopback is one host however it is named: localhost, 127.x, ::1 (#1739).
+    const same = (h: string): string => (/^(localhost|127(\.\d{1,3}){3}|::1|\[::1\])$/i.test(h) ? "localhost" : h.toLowerCase());
+    const tags = [...new Set(listed.filter((p) => same(p.host) === same(host) && p.port === port).flatMap((p) => p.tags))];
     return { label: name, host, port, tags, ...(user !== undefined ? { user } : {}), ...(tls ? { tls: true } : {}) };
   }
   return {

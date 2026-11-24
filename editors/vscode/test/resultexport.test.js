@@ -106,6 +106,10 @@ test("a general list's string item is its characters where a format has strings 
   // A run of escapes is UTF-8, not one character per byte (#1397).
   assert.strictEqual(plainItem('"caf\\303\\251 \\344\\275\\240"'), "café 你");
   assert.strictEqual(plainItem('"\\\\101 \\377"'), "\\101 \u00ff");
+  // A byte that is not UTF-8 spoils none of the run's characters (#1737).
+  assert.strictEqual(plainItem('"caf\\303\\251\\377"'), "café\u00ff");
+  assert.strictEqual(plainItem('"\\377\\344\\275\\240\\303"'), "\u00ff你\u00c3");
+  assert.strictEqual(plainItem('"\\303\\303\\251"'), "\u00c3é");
   assert.deepStrictEqual(distinctNames(["a", "a", "", "a_1"]), ["a", "a_1", "column3", "a_1_1"]);
 });
 
@@ -325,6 +329,21 @@ test("a float or real item of a general list is written with every digit, not -3
   assert.strictEqual(tableLiteral(g).code, "([] a:(1.23456789f;`x;0n))");
 });
 
+test("a float infinity in a general list is shown, sent to an agent and exported as q writes it, not as a long's 0W (#1733)", () => {
+  const { toGrid } = require("../out/grid.js");
+  const { jsonCell } = require("../out/agent.js");
+  const p = { count: 3, keys: 0, names: ["a"], types: [0], cells: [["0w", "`a", "-0we"]], raw: [[Infinity, false, -Infinity]], rank: [[]] };
+  assert.deepStrictEqual(toGrid(p, -1).cells[0], ["0w", "`a", "-0we"]);
+  assert.strictEqual(jsonCell(0, "0w", Infinity), "0w");
+  assert.strictEqual(jsonCell(0, "-0we", -Infinity), "-0we");
+  assert.deepStrictEqual(xlsxCell(0, "-0we", -Infinity), { t: "-0we" });
+  // A float, a real and a long column still write their own infinities.
+  assert.strictEqual(jsonCell(9, "0w", Infinity), "0w");
+  assert.strictEqual(jsonCell(7, "0W", Infinity), "0W");
+  assert.deepStrictEqual(xlsxCell(8, "-0we", -Infinity), { t: "-0w" });
+  assert.deepStrictEqual(xlsxCell(7, "0W", Infinity), { t: "0W" });
+});
+
 test("a page of rows is added after the grid's, ranked again over both, and a page of another result is refused", () => {
   const first = { count: 4, keys: 0, names: ["v", "s"], types: [9, 11], cells: [["3", "1"], ["b", "a"]], raw: [[3, 1], []], rank: [[1, 0], [1, 0]] };
   const next = readPage({ count: 4, names: ["v", "s"], types: [9, 11], cells: [["", "2"], ["a", "c"]], raw: [[null, 2], []], rank: [[0, 1], [0, 1]] });
@@ -409,6 +428,18 @@ test("a mean of finite values that overflow their sum is finite, and a sum past 
   assert.deepStrictEqual(cells("sum"), [["0w"]]);
   const h = grid([["s", 11], ["f", 9]], [["a", "a"], ["1e+308", "-1e+308"]], [null, [1e308, -1e308]]);
   assert.strictEqual(page.columnStats(h, [0, 1])[1].mean, "0");
+});
+
+test("a mean of large values is the sum over the count, as q's avg, not a running mean an ulp off (#1735)", () => {
+  const xs = [9846345813163, 9846345813140, 9846345813100, 9846345813120, 9846345813090, 9846345813091, 9846345813113];
+  const g = grid([["s", 11], ["f", 9]], [xs.map(() => "a"), xs.map(String)], [null, xs]);
+  const rows = xs.map((_, i) => i);
+  // KDB-X: avg gives 9846345813116.7148 (\P 0), the double 9846345813116.715.
+  assert.strictEqual(page.columnStats(g, rows)[1].mean, "9846345813116.715");
+  assert.deepStrictEqual(page.pivot(g, rows, { row: 0, column: -1, value: 1, agg: "avg" }).cells, [["9846345813116.715"]]);
+  // Small values as before.
+  const small = grid([["s", 11], ["f", 9]], [["a", "a"], ["1", "2"]], [null, [1, 2]]);
+  assert.strictEqual(page.columnStats(small, [0, 1])[1].mean, "1.5");
 });
 
 const look = { colours: ["#111111", "#222222"], foreground: "#000", border: "#ccc", font: "sans-serif", up: "#0f0", down: "#f00" };

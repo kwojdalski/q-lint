@@ -201,7 +201,7 @@ export function xlsxCell(type: number, text: string, raw: unknown): Cell {
   if (raw === null || textNull(type, text)) {
     return undefined;
   }
-  if (raw === Infinity || raw === -Infinity) {
+  if ((raw === Infinity || raw === -Infinity) && type !== 0) {
     return { t: `${raw < 0 ? "-" : ""}0${type === 8 || type === 9 || type === 15 ? "w" : "W"}` };
   }
   if (type === 1) {

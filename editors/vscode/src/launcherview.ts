@@ -247,7 +247,8 @@ export class Launcher {
       return `could not start ${process.label}: ${failed.message}`;
     }
     child.on("error", (error) => channel.appendLine(error.message));
-    if (this.disposed) {
+    // Turned off while it spawned, too: stopAll has run already (#1740).
+    if (this.disposed || !this.enabled()) {
       signalGroup(child, "SIGKILL");
       return `the process launcher was turned off; ${process.label} was not started.`;
     }

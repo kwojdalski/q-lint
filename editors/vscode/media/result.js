@@ -156,6 +156,13 @@
     return Math.abs(x) >= 1e12 ? String(x) : String(Number(x.toPrecision(12)));
   }
 
+  /// A mean as q's avg gives it, the sum over the count: the running mean
+  /// gathers an ulp of error that shows at 1e12 and more (#1735). The
+  /// running mean only when the sum is past the largest float.
+  function average(sum, running, n) {
+    return Number.isFinite(sum) ? sum / n : running;
+  }
+
   /// Each column's statistics over `rows`, the rows shown: {name, type,
   /// count, nulls, distinct, min, max, mean}. Distinct counts a null as
   /// one value, as q's `count distinct` does. Min and max are by the
@@ -172,6 +179,7 @@
       let lo = -1;
       let hi = -1;
       let mean = 0;
+      let sum = 0;
       let n = 0;
       rows.forEach(function (r) {
         const text = cells[r];
@@ -189,9 +197,10 @@
           }
         }
         if (values && values[r] !== null) {
-          // A running mean, which finite values cannot overflow as their
-          // sum can (#1492).
+          // The sum, divided as q's avg does; and a running mean, which
+          // finite values cannot overflow as their sum can (#1492).
           n++;
+          sum += values[r];
           mean += values[r] / n - mean / n;
         }
       });
@@ -203,7 +212,7 @@
         distinct: seen.size,
         min: lo < 0 ? "" : cells[lo],
         max: hi < 0 ? "" : cells[hi],
-        mean: n > 0 ? meanText(mean) : "",
+        mean: n > 0 ? meanText(average(sum, mean, n)) : "",
       };
     });
   }
@@ -357,7 +366,7 @@
       if (a.n === 0) {
         return "";
       }
-      return meanText(agg === "sum" ? a.sum : agg === "avg" ? a.mean : agg === "min" ? a.min : a.max);
+      return meanText(agg === "sum" ? a.sum : agg === "avg" ? average(a.sum, a.mean, a.n) : agg === "min" ? a.min : a.max);
     };
     const out = { rows: across.order, columns: spec.column >= 0 ? shown : [agg], cells: across.order.map(function (k) { return (acc.get(k) || shown.map(function () { return { n: 0, sum: 0, min: Infinity, max: -Infinity }; })).map(text); }) };
     if (down.order.length > shown.length) {

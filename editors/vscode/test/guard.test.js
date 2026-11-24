@@ -412,6 +412,10 @@ test("a string sent to handle 0 is evaluated by the process (#1316)", () => {
     '0 . enlist "a:1"': ["evaluates a string on handle 0"],
     '(neg 0)"a:1"': ["evaluates a string on handle 0"],
     '(0)@"a:1"': ["evaluates a string on handle 0"],
+    // Applied in brackets (#1724).
+    '0["a:1"]': ["evaluates a string on handle 0"],
+    '(0)["a:1"]': ["evaluates a string on handle 0"],
+    'neg[0]["a:1"]': ["evaluates a string on handle 0"],
     // Writing to stdout, a read of a file, or a number reads.
     '1"hello"': [],
     '-1 "hello"': [],
@@ -420,6 +424,9 @@ test("a string sent to handle 0 is evaluated by the process (#1316)", () => {
     'x[0]"a"': [],
     "0(1;2)": [],
     'x[0]("a")': [],
+    'x[0]["a"]': [],
+    '1["hello"]': [],
+    "0[1]": [],
   };
   for (const [code, expected] of Object.entries(cases)) {
     assert.deepStrictEqual(writes(code), expected, code);
@@ -770,6 +777,21 @@ test("0:, 1: and hopen to a handle built with ` sv, .Q.dd or hsym of a cast are 
   }
 });
 
+test("hopen of hsym applied in brackets to a file is a change (#1729)", () => {
+  const cases = {
+    'hopen hsym[`$"/tmp/f"]': ["opens the file `:/tmp/f with hopen"],
+    "hopen hsym[`f]": ["opens the file `:f with hopen"],
+    "h:hopen hsym[`f]": ["assigns h", "opens the file `:f with hopen"],
+    // Of a process it only connects.
+    'hopen hsym[`$"host:5000"]': [],
+    "hopen hsym[`$\":host:5000\"]": [],
+    "hopen hsym[x]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
 test("a connection still to the old address of an edited process keeps its old tags (#1443)", () => {
   const open = { host: "prodhost", port: 5000, tags: ["prod"] };
   // Moved: still connected to prodhost, so still guarded.
@@ -823,6 +845,21 @@ test("an amend or ! in parentheses applied in brackets is a change (#1445)", () 
   }
 });
 
+test("an amend in any number of parentheses applied in brackets is a change (#1730)", () => {
+  const cases = {
+    "((@))[`.;`a;:;1]": ["amends `. in place"],
+    "(((.)))[`a;();:;1]": ["amends `a in place"],
+    "((!))[`t;();0b;`a]": ["updates or deletes from `t in place with !"],
+    // On a value, unbalanced, or not an amend, it reads.
+    "((@))[t;0;:;1]": [],
+    "(f(@))[`.;`a;:;1]": [],
+    "((x))[0]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
 test("value or eval of an amend tree on a variable by name is a change (#1446)", () => {
   const cases = {
     "value(@;`.;`a;:;1)": ["evaluates an amend with value"],
@@ -835,6 +872,25 @@ test("value or eval of an amend tree on a variable by name is a change (#1446)",
     "eval(@;`t;0;:;1)": [],
     "value@(`t)": [],
     "value(.;d;enlist`a)": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("value of an amend tree with the head in parentheses or projected is a change (#1727)", () => {
+  const cases = {
+    "value((@);`a;();:;1)": ["evaluates an amend with value"],
+    "value((.);`a;();:;1)": ["evaluates an amend with value"],
+    "value(@[;`a;:;2];`.)": ["evaluates an amend with value"],
+    "value(.[;();:;5];`a)": ["evaluates an amend with value"],
+    "eval((@);enlist`.;enlist`a;:;1)": ["evaluates an amend with eval"],
+    // An index, an amend of a value, or a projection not on a name reads.
+    "value((@);`t;0)": [],
+    "value((@);t;0;:;1)": [],
+    "value(@[;0;:;2];t)": [],
+    "value(@[;0];`t)": [],
+    "value(@[f;0];`t)": [],
   };
   for (const [code, expected] of Object.entries(cases)) {
     assert.deepStrictEqual(writes(code), expected, code);
@@ -859,6 +915,27 @@ test("xasc, xdesc and xkey projected on the columns, then applied to a table by 
   }
 });
 
+test("xasc projected with a trailing ;, applied with @, or as (`a xasc) on a table by name is a change (#1725)", () => {
+  const cases = {
+    "xasc[`a;]`t": ["sorts `t in place with xasc"],
+    "xasc[`a]@`t": ["sorts `t in place with xasc"],
+    "@[xasc[`a];`t]": ["sorts `t in place with xasc"],
+    "(`a xasc)`t": ["sorts `t in place with xasc"],
+    "(`a xdesc)@`t": ["sorts `t in place with xdesc"],
+    "xkey[`a;][`t]": ["keys `t in place with xkey"],
+    // On a table's value, or not applied, they read.
+    "xasc[`a;]t": [],
+    "xasc[`a]@t": [],
+    "@[xasc[`a];t]": [],
+    "(`a xasc)t": [],
+    "(`a xasc)": [],
+    "xasc[`a;]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
 test("in k code, a monadic . evaluates as value does (#1448)", () => {
   const cases = {
     'k)."a:1"': ["evaluates a string with k's ."],
@@ -877,6 +954,25 @@ test("in k code, a monadic . evaluates as value does (#1448)", () => {
   }
 });
 
+test("a monadic . in parentheses evaluates as value does, in k code and in q (#1728)", () => {
+  const cases = {
+    'k)(.)"a:1"': ["evaluates a string with k's ."],
+    'k)(.:)"a:1"': ["evaluates a string with k's ."],
+    '(.)"a:1"': ["evaluates a string with (.)"],
+    '(.:)"a:1"': ["evaluates a string with (.)"],
+    'x:(.)"a:1"': ["assigns x", "evaluates a string with (.)"],
+    // Applied in brackets, or infix, it is dyadic; alone it is not applied.
+    "k)(.)[f;1 2]": [],
+    "(.)[f;1 2]": [],
+    "k)(.)": [],
+    "(.)": [],
+    'f . ("a:1";1)': [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
 test("a writer taken out of .q or .Q by juxtaposition is a change (#1449)", () => {
   const cases = {
     "(.q`set)[`a;1]": ["calls .q.set"],
@@ -887,6 +983,21 @@ test("a writer taken out of .q or .Q by juxtaposition is a change (#1449)", () =
     "(.Q`dd)[`:a;`b]": [],
     "(.q`count) t": [],
     "key .q": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("a writer taken out of .q with @ or . enlist is a change (#1726)", () => {
+  const cases = {
+    "(.q@`set)[`b;2]": ["calls .q.set"],
+    "(.q . enlist`set)[`b;2]": ["calls .q.set"],
+    ".Q@`dpft": ["calls .Q.dpft"],
+    // What is not a writer reads.
+    "(.q@`count) 1 2": [],
+    "(.q . enlist`count) 1 2": [],
+    "(.Q@`dd)[`:a;`b]": [],
   };
   for (const [code, expected] of Object.entries(cases)) {
     assert.deepStrictEqual(writes(code), expected, code);

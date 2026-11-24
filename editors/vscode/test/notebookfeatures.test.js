@@ -292,6 +292,10 @@ test("a parameters cell's assignments are its parameters", () => {
   ]);
   // One in a block comment, or a line of a multi-line string, is none (#1470).
   assert.deepStrictEqual(parametersOf('/ @parameters\n/\nold:5\n\\\nn:10\ns:"a\n  b:2"'), [{ name: "n", value: "10" }]);
+  // An indented comment line after a parameter leaves it one (#1732); in a
+  // string, or after a line that continues, it does not.
+  assert.deepStrictEqual(parametersOf("a:1\n  / note\nb:2"), [{ name: "a", value: "1" }, { name: "b", value: "2" }]);
+  assert.deepStrictEqual(parametersOf('s:"x\n  / y"\nc:1\n  +2\n  / z\nd:3'), [{ name: "d", value: "3" }]);
   const cells = [{ kind: "markdown", source: "/ @parameters" }, { kind: "code", source: "1" }, { kind: "code", source: "/ @parameters\nn:1" }];
   assert.strictEqual(parametersCell(cells), 2);
   assert.strictEqual(parametersCell([{ kind: "code", source: "/ @parameters", language: "python" }]), -1);
@@ -436,6 +440,16 @@ test("the command line names a process by host:port or by a listed label, and re
   assert.strictEqual(isProduction(cliProcess("db1:5000", prod)), true);
   assert.strictEqual(isProduction(cliProcess("db1:5001", prod)), false);
   assert.deepStrictEqual(cliProcess("db2:5000", prod).tags, []);
+  // A process listed on the loopback is the same one by any loopback name (#1739).
+  const local = [{ label: "lp", host: "localhost", port: 5000, tags: ["prod"] }, { label: "lq", host: "127.0.0.1", port: 5002, tags: ["prod"] }];
+  for (const name of ["localhost:5000", "LOCALHOST:5000", "127.0.0.1:5000", "127.1.2.3:5000", "[::1]:5000"]) {
+    assert.deepStrictEqual(cliProcess(name, local).tags, ["prod"], name);
+  }
+  assert.deepStrictEqual(cliProcess("localhost:5002", local).tags, ["prod"]);
+  // Another host, or another port, is not it.
+  assert.deepStrictEqual(cliProcess("127.0.0.1:5001", local).tags, []);
+  assert.deepStrictEqual(cliProcess("10.0.0.1:5000", local).tags, []);
+  assert.deepStrictEqual(cliProcess("localhostx:5000", local).tags, []);
 });
 
 // --- the variables view's data
