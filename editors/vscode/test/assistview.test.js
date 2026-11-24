@@ -117,6 +117,7 @@ function fakeLive({ connected = true, history = [] } = {}) {
     activeProcess: () => (connected ? dev : undefined),
     processes: () => [dev],
     discovery: { discovered: () => [] },
+    sharedList: () => [],
     history: () => history,
     queryCode: async (code, uri) => void live.queried.push([code, uri.toString()]),
     borrow: (use) =>

@@ -69,7 +69,8 @@ class RunQueryTool implements LanguageModelTool<AgentInput> {
   /// connects to it first. An error when there is neither.
   private target(input: AgentInput): { process: Process; connects: boolean } | { error: string } {
     const saved = this.live.processes();
-    const discovered = this.live.discovery.discovered();
+    // The shared list too, as Connect and the notebooks do (#1819).
+    const discovered = [...this.live.discovery.discovered(), ...this.live.sharedList()];
     const active = this.live.activeLabel();
     const named = label(input);
     if (named !== undefined && typeof named !== "string") {

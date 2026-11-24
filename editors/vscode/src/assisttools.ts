@@ -124,7 +124,7 @@ export class ListTablesTool implements LanguageModelTool<TablesInput> {
     }
     const active = this.live.activeLabel();
     if (active === undefined) {
-      return { error: notConnected(this.live.processes(), this.live.discovery.discovered()) };
+      return { error: notConnected(this.live.processes(), [...this.live.discovery.discovered(), ...this.live.sharedList()]) };
     }
     const named = given(input.process);
     const table = given(input.table);
