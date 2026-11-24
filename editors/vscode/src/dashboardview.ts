@@ -57,7 +57,7 @@ export function tileContent(answer: GridAnswer, view: TileView): TileContent {
     return { kind: "table", columns: grid.columns.map((c) => c.name), rows: [...Array(n).keys()].map((r) => grid.cells.map((c) => c[r] ?? "")), total: grid.total };
   }
   try {
-    return { kind: "chart", svg: chartFromGrid(grid, { kind: view, width: 640, height: 320, background: "#ffffff" }), total: grid.total };
+    return { kind: "chart", svg: chartFromGrid(grid, { kind: view, width: 640, height: 320, background: "#ffffff" }), total: grid.total, drawn: grid.cells[0]?.length ?? 0 };
   } catch (error) {
     return { kind: "error", text: error instanceof Error ? error.message : String(error) };
   }

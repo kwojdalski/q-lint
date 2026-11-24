@@ -259,6 +259,9 @@ test("a dashboard runs its tiles' read-only queries, keeps a timer only with an 
   await dashboards.runTile({ id, query: "px", process: "hdb", view: "table", refresh: 0 });
   assert.strictEqual(runs, before);
   assert.deepStrictEqual(tileContent({ ok: false, error: "type", trace: "" }, "table"), { kind: "error", text: "type" });
+  // A chart of the rows fetched says how many of the answer's it draws (#1792).
+  const cut = tileContent({ ok: true, type: 98, text: [], grid: { count: 1000000, keys: 0, names: ["a", "b"], types: [7, 9], cells: [["1", "2"], ["3", "4"]], raw: [[1, 2], [3, 4]], rank: [[0, 1], [0, 1]] } }, "line");
+  assert.deepStrictEqual([cut.kind, cut.total, cut.drawn], ["chart", 1000000, 2]);
 });
 
 test("Open Dashboard with a name no dashboard has makes one of that name, asking nothing (#1268)", async (t) => {
