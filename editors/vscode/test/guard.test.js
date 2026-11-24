@@ -777,6 +777,21 @@ test("0:, 1: and hopen to a handle built with ` sv, .Q.dd or hsym of a cast are 
   }
 });
 
+test("hopen of hsym applied in brackets to a file is a change (#1729)", () => {
+  const cases = {
+    'hopen hsym[`$"/tmp/f"]': ["opens the file `:/tmp/f with hopen"],
+    "hopen hsym[`f]": ["opens the file `:f with hopen"],
+    "h:hopen hsym[`f]": ["assigns h", "opens the file `:f with hopen"],
+    // Of a process it only connects.
+    'hopen hsym[`$"host:5000"]': [],
+    "hopen hsym[`$\":host:5000\"]": [],
+    "hopen hsym[x]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
 test("a connection still to the old address of an edited process keeps its old tags (#1443)", () => {
   const open = { host: "prodhost", port: 5000, tags: ["prod"] };
   // Moved: still connected to prodhost, so still guarded.

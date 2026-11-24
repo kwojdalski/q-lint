@@ -611,8 +611,8 @@ function readStatement(statement: string, found: Set<string>): void {
         }
         // The handle as written, made with `hsym`, cast from a string, or a
         // string: `` hopen hsym `f ``, `` hopen `$":f" ``, `hopen ":f"`,
-        // `` hopen hsym `$"/tmp/f" ``.
-        const hsym = t[j]?.text === "hsym" ? 1 : 0;
+        // `` hopen hsym `$"/tmp/f" ``, and in brackets, `` hopen hsym[`f] `` (#1729).
+        const hsym = t[j]?.text === "hsym" ? (t[j + 1]?.text === "[" && t[j + 1].kind === "open" ? 2 : 1) : 0;
         const at = t[j + hsym];
         const cast = at?.text === "`" && t[j + hsym + 1]?.text === "$" && t[j + hsym + 2]?.kind === "str";
         const text =
