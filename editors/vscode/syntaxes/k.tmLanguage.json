@@ -4,6 +4,11 @@
   "scopeName": "source.k",
   "comment": "k, the language q is written in: the .k files q loads. Lexically q's: a `/` opens a comment at the start of a line or after whitespace and is an adverb after a value; a lone `/` opens a block a lone `\\` closes; a lone `\\` outside one ends the script; a line opening with `\\` is a system command. k has no named builtins and no q keywords, so it has no rules for them. Written by hand: there is no list to generate it from.",
   "patterns": [
+    {
+      "comment": "q skips a script's first line when it opens #!. Only the first: on any other line it is code.",
+      "match": "\\A#!.*$",
+      "name": "comment.line.shebang.k"
+    },
     { "include": "#block-comment" },
     { "include": "#end-of-script" },
     { "include": "#system-command" },

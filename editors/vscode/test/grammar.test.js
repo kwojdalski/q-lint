@@ -245,3 +245,21 @@ test("a quote before a bracket or a closing parenthesis is the iterator, not a s
   assert.deepStrictEqual(await scopesOf("f:{$[x;'`bad;1]}", "'"), ["keyword.control.flow.signal.q"]);
   assert.deepStrictEqual(await scopesOf("f:('`bad)", "'"), ["keyword.control.flow.signal.q"]);
 });
+
+// On KDB-X a script of "#!/usr/bin/env q" then "sh1:1" loads and sh1 is 1,
+// a .k one the same; with the #! line second the load fails with '#.
+test("a script's #! first line is a comment, and only the first line (#1974)", async () => {
+  const script = "#!/usr/bin/env q\nsh1:1 / set";
+  assert.deepStrictEqual(await scopesOf(script, "#!/usr/bin/env q"), ["comment.line.shebang.q"]);
+  assert.deepStrictEqual(await scopesOf(script, "bin"), []);
+  assert.deepStrictEqual(await scopesOf(script, "sh1"), ["variable.other.definition.q"]);
+  // Anywhere else q reads it as code, so it is coloured as code.
+  const second = "sh2:1\n#!/usr/bin/env q";
+  assert.deepStrictEqual(await scopesOf(second, "#!/usr/bin/env q"), []);
+  assert.deepStrictEqual(await scopesOf(second, "bin"), ["support.function.builtin.q"]);
+  assert.deepStrictEqual(await scopesOf("r:1#!/usr", "#!/usr"), []);
+  // The same in a k file.
+  assert.deepStrictEqual(await scopesOf("#!/bin/k\nsh4:1", "#!/bin/k", true), ["comment.line.shebang.k"]);
+  assert.deepStrictEqual(await scopesOf("#!/bin/k\nsh4:1", "sh4", true), ["variable.other.k"]);
+  assert.deepStrictEqual(await scopesOf("sh4:1\n#!/bin/k", "#!/bin/k", true), []);
+});
