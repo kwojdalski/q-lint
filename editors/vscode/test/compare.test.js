@@ -197,6 +197,23 @@ test("a cell the page marks says how it differs, not by its colour alone (#1349)
   ]);
 });
 
+test("answers that came back cut are never called the same (#1614)", () => {
+  const cut = (rows) => {
+    const t = table({ v: [7, ["1", "2"]] });
+    t.grid.count = rows;
+    return t;
+  };
+  const c = compareOutcomes(side("p1", cut(20000)), side("p2", cut(20000)), -1);
+  assert.deepStrictEqual([c.same, c.partial, c.differing], [false, true, 0]);
+  const whole = compareOutcomes(side("p1", cut(2)), side("p2", cut(2)), -1);
+  assert.deepStrictEqual([whole.same, whole.partial], [true, false]);
+  const atom = (t) => ({ ok: true, type: 0, text: ["a", ".."] });
+  assert.deepStrictEqual([compareOutcomes(side("a", atom()), side("b", atom()), -1).same, compareOutcomes(side("a", atom()), side("b", atom()), -1).partial], [false, true]);
+  const page = loadPage();
+  page.send({ type: "compare", id: 4, code: "x", comparison: c });
+  assert.match(page.posted.at(-1).rendered.summary, /^The rows held are the same\. Not every row came back/);
+});
+
 test("the page shows two answers that are not tables as text, and says when they are the same", () => {
   const page = loadPage();
   const atom = (t) => ({ ok: true, type: -7, text: [t] });

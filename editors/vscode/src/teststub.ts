@@ -77,16 +77,36 @@ export function testName(target: Target, style: Style, taken: string): string {
   return name;
 }
 
-/// The stub: a test of `target` named `name`.
-export function stubText(target: Target, name: string, style: Style): string {
-  const call = `${target.name}[${target.params.join(";")}]`;
+/// The stub: a test of `target` named `name`. The expected value's local
+/// is named apart from the arguments: one named `expected` is not
+/// overwritten by it (#1601).
+///
+/// `context` is the `\d` the stub is appended under: under one that is not
+/// the root, a root function is called as `` `.[`f] ``, since a lambda's
+/// globals resolve in the context it is defined in (#1599).
+export function stubText(target: Target, name: string, style: Style, context = "."): string {
+  const callee = context !== "." && !target.name.startsWith(".") ? `\`.[\`${target.name}]` : target.name;
+  const call = `${callee}[${target.params.join(";")}]`;
+  let expected = "expected";
+  while (target.params.includes(expected)) {
+    expected += "_";
+  }
   const lines = [`${name}:{[]`];
   if (target.params.length > 0) {
     lines.push(`  ${target.params.map((p) => `${p}:(::);`).join(" ")} / TODO: the arguments`);
   }
-  lines.push(`  expected:(::); / TODO: what ${call} should give`);
-  lines.push(style.qunitAsserts ? `  .qunit.assertEquals[${call};expected;"${target.name}"]}` : `  ${call}~expected}`);
+  lines.push(`  ${expected}:(::); / TODO: what ${call} should give`);
+  lines.push(style.qunitAsserts ? `  .qunit.assertEquals[${call};${expected};"${target.name}"]}` : `  ${call}~${expected}}`);
   return `${lines.join("\n")}\n`;
+}
+
+/// The context a script's text ends in: its last `\d .ns`, or `.`.
+export function endContext(text: string): string {
+  let context = ".";
+  for (const m of text.matchAll(/^\\d[ \t]+(\S+)[ \t]*$/gm)) {
+    context = m[1];
+  }
+  return context;
 }
 
 /// Where a new test file for `source` (a path) goes: `tests/test_<name>.q`

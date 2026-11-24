@@ -46,6 +46,7 @@ import { registerUndefinedNames } from "./undefinednamesview";
 import { registerIdioms } from "./idiomsview";
 import { Drift } from "./driftview";
 import { registerAssistTools } from "./assisttools";
+import { launchable } from "./batch";
 import { registerChat } from "./chat";
 import { registerQsqlDraft } from "./qsqldraft";
 import { Interpreters } from "./interpreterview";
@@ -87,8 +88,8 @@ import { registerNamespaces } from "./namespaceview";
 import { registerAffectedOnSave } from "./affectedonsave";
 import { registerSql } from "./sqlview";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { accessSync, chmodSync, constants, existsSync, statSync } from "node:fs";
+import { delimiter, isAbsolute, join } from "node:path";
 import { onPath } from "./relations";
 import {
   CloseAction,
@@ -141,19 +142,50 @@ function serverChanged(): void {
 /// was never on PATH. The platform-neutral build carries none, and falls back
 /// to the setting. An explicit `q-lint.serverPath` always wins: someone who
 /// named a binary meant that one.
-/// `qlinter` from PATH, the server of last resort. Off Windows the bare name,
-/// which only PATH is asked for. On Windows the file PATH holds it in: a bare
-/// name there is looked for first in the directory it is started in - the
-/// workspace folder - so an untrusted folder's qlinter.exe would run (#1251).
-/// Undefined where PATH holds none.
+/// `qlinter` from PATH, the server of last resort: the file PATH holds it
+/// in. On Windows a bare name is looked for first in the directory it is
+/// started in - the workspace folder - so an untrusted folder's qlinter.exe
+/// would run (#1251). Undefined where PATH holds none, on every platform:
+/// off Windows the bare name was given back whatever PATH held, and "no
+/// qlinter" was never said (#1611).
 function pathServer(): string | undefined {
-  return onPath("qlinter", process.env.PATH, (file) => {
+  if (process.platform === "win32") {
+    return onPath("qlinter", process.env.PATH, (file) => {
+      try {
+        return statSync(file).isFile();
+      } catch {
+        return false;
+      }
+    });
+  }
+  for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+    const file = join(dir, "qlinter");
     try {
-      return statSync(file).isFile();
+      if (dir !== "" && isAbsolute(dir) && statSync(file).isFile()) {
+        accessSync(file, constants.X_OK);
+        return file;
+      }
     } catch {
-      return false;
+      // Not there, or not executable: the next entry.
     }
-  });
+  }
+  return undefined;
+}
+
+/// The server binary start() last launched, for the dashboard and the
+/// baseline to run too.
+let launched: string | undefined;
+
+/// The qlinter the dashboard and the baseline run, with no serverPath: the
+/// one the server was started from, or with none started, the first of the
+/// bundled one and PATH's that runs here. A bundled binary built for another
+/// platform falls through to PATH, as it does for the server (#1608).
+function serverBinary(context: ExtensionContext): string | undefined {
+  if (launched !== undefined) {
+    return launched;
+  }
+  const candidates = [bundledServer(context), pathServer()].filter((c): c is string => !!c);
+  return candidates.find((c, i) => i === candidates.length - 1 || answersVersion(c));
 }
 
 function bundledServer(context: ExtensionContext): string | undefined {
@@ -352,7 +384,7 @@ export async function activate(
   // profile and configuration file the settings give it.
   const problemsDashboard = registerProblemsDashboard(context, () => {
     const settings = launch(workspace.getConfiguration("q-lint"), workspace.workspaceFolders?.[0]?.uri.fsPath);
-    const command = settings.serverPath || bundledServer(context) || pathServer();
+    const command = settings.serverPath || serverBinary(context);
     return { command, args: settings.args.filter((a) => a !== "--lsp") };
   });
   const dbTools = registerDbTools(context, live);
@@ -364,7 +396,7 @@ export async function activate(
   const errorExplainer = registerErrorExplainer(context, live);
   registerBaseline(context, () => {
     const settings = launch(workspace.getConfiguration("q-lint"), workspace.workspaceFolders?.[0]?.uri.fsPath);
-    const command = settings.serverPath || bundledServer(context) || pathServer();
+    const command = settings.serverPath || serverBinary(context);
     return { command, args: settings.args.filter((a) => a !== "--lsp") };
   });
   registerDeadCode(context, live, running);
@@ -458,7 +490,15 @@ function restart(context: ExtensionContext, asked = false): Promise<void> {
 
 /// Whether `command --version` runs and succeeds.
 function answersVersion(command: string): boolean {
-  return spawnSync(command, ["--version"], { stdio: "ignore", timeout: 10_000, windowsHide: true }).status === 0;
+  const run = launchable(command, ["--version"]);
+  return spawnSync(run.command, run.args, { stdio: "ignore", timeout: 10_000, windowsHide: true, shell: run.shell }).status === 0;
+}
+
+/// The language client's executable for `command`: through a shell for a
+/// Windows batch wrapper.
+function executable(command: string, args: string[]): { command: string; args: string[]; options?: { shell: boolean } } {
+  const run = launchable(command, args);
+  return run.shell ? { command: run.command, args: run.args, options: { shell: true } } : { command, args };
 }
 
 function stop(): Promise<void> {
@@ -474,6 +514,7 @@ async function start(context: ExtensionContext): Promise<void> {
     workspace.getConfiguration("q-lint"),
     workspace.workspaceFolders?.[0]?.uri.fsPath,
   );
+  launched = undefined;
   if (!settings.enabled) {
     return;
   }
@@ -524,8 +565,10 @@ async function start(context: ExtensionContext): Promise<void> {
       // No `transport` field. stdio is already the default for an executable,
       // and naming it explicitly makes the client append `--stdio` to argv -
       // a flag qlinter does not accept, so it exits 2 before the handshake.
-      run: { command, args },
-      debug: { command, args },
+      // A .cmd or .bat wrapper is started through a shell, which Node
+      // requires of one (#1610).
+      run: executable(command, args),
+      debug: executable(command, args),
     };
     // A server given up on must not be restarted by its own client when it
     // is killed: the default handler restarts a server that closes.
@@ -560,6 +603,7 @@ async function start(context: ExtensionContext): Promise<void> {
       // this line there was no way to tell from inside the editor.
       const version = client.initializeResult?.serverInfo?.version ?? "unknown version";
       client.outputChannel.appendLine(`q-lint ${version} from ${command}`);
+      launched = configured ? undefined : command;
       break;
     } catch (error) {
       clearTimeout(timer);

@@ -45,6 +45,7 @@ import {
   type TestRun,
   type TestRunProfile,
 } from "vscode";
+import { open } from "node:fs/promises";
 import { isProduction } from "./agent";
 import { coverageByFile, coveragePlan, coverageSummary, definedNames, type CoveragePlan, type SourceFile } from "./coverage";
 import { DRIFT, DRIFT_BATCH, readDrift, type ProcessState } from "./definitions";
@@ -58,7 +59,10 @@ import {
   RERUN_FAILED,
   TEST_RUN,
   failureText,
+  functionTestId,
   isK4Test,
+  isK4unitHeader,
+  k4Keys,
   k4Label,
   k4Mode,
   k4Statement,
@@ -174,6 +178,8 @@ class QTests {
   private readonly disposables: { dispose(): unknown }[];
   private discovering: Promise<void> | undefined;
   private again = false;
+  /// Whether the CSV cap was said once already.
+  private capped = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private readonly runProfiles: TestRunProfile[] = [];
   private coverageProfile: TestRunProfile | undefined;
@@ -283,7 +289,7 @@ class QTests {
         const uri = Uri.parse(file.uri);
         const parent = this.controller.createTestItem(file.uri, workspace.asRelativePath(uri), uri);
         for (const test of file.tests) {
-          const item = this.controller.createTestItem(`${file.uri}#${test.name}`, test.name, uri);
+          const item = this.controller.createTestItem(functionTestId(file.uri, test), test.name, uri);
           item.range = new Range(test.range.start.line, test.range.start.character, test.range.end.line, test.range.end.character);
           this.entries.set(item, { kind: "function", test });
           parent.children.add(item);
@@ -291,9 +297,19 @@ class QTests {
         items.push(parent);
       }
     }
-    for (const uri of await workspace.findFiles("**/*.csv", "**/node_modules/**", MAX_CSV)) {
+    const csvs = await workspace.findFiles("**/*.csv", "**/node_modules/**", MAX_CSV);
+    if (csvs.length >= MAX_CSV && !this.capped) {
+      this.capped = true;
+      void window.showInformationMessage(
+        plainMessage(`The workspace holds ${MAX_CSV} CSV files or more: the Test Explorer looks for k4unit suites in the first ${MAX_CSV} only.`),
+      );
+    }
+    for (const uri of csvs) {
       let rows: K4Row[] | undefined;
       try {
+        if (!isK4unitHeader(await this.head(uri))) {
+          continue;
+        }
         rows = parseK4unit(Buffer.from(await workspace.fs.readFile(uri)).toString("utf8"));
       } catch {
         continue;
@@ -304,8 +320,9 @@ class QTests {
       }
       const id = uri.toString();
       const parent = this.controller.createTestItem(id, workspace.asRelativePath(uri), uri);
-      for (const row of tested) {
-        const item = this.controller.createTestItem(`${id}#${row.line}`, `${row.action}: ${k4Label(row)}`, uri);
+      const keys = k4Keys(tested);
+      for (const [i, row] of tested.entries()) {
+        const item = this.controller.createTestItem(`${id}#${keys[i]}`, `${row.action}: ${k4Label(row)}`, uri);
         item.range = new Range(row.line, 0, row.line, 0);
         this.entries.set(item, { kind: "k4unit", rows, row });
         parent.children.add(item);
@@ -331,6 +348,24 @@ class QTests {
       }
     }
     this.controller.items.replace(items);
+  }
+
+  /// The first few KB of a file: from disk when it is there, else the
+  /// whole file as VS Code reads it.
+  private async head(uri: Uri): Promise<string> {
+    if (uri.scheme === "file") {
+      const file = await open(uri.fsPath).catch(() => undefined);
+      if (file !== undefined) {
+        try {
+          const buffer = Buffer.alloc(4096);
+          const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+          return buffer.subarray(0, bytesRead).toString("utf8");
+        } finally {
+          await file.close();
+        }
+      }
+    }
+    return Buffer.from(await workspace.fs.readFile(uri)).toString("utf8");
   }
 
   /// Every test's id, in order.
@@ -359,16 +394,17 @@ class QTests {
     return this.run(new TestRunRequest(found), { isCancellationRequested: false } as CancellationToken, ask, coverage);
   }
 
-  /// The tests a request runs, in the Testing view's order.
+  /// The tests a request runs, in the Testing view's order: each once, a
+  /// file and one of its tests both chosen (#1596).
   private chosen(request: TestRunRequest): TestItem[] {
     const excluded = new Set(request.exclude ?? []);
-    const out: TestItem[] = [];
+    const out = new Set<TestItem>();
     const add = (item: TestItem): void => {
       if (excluded.has(item)) {
         return;
       }
       if (this.entries.has(item)) {
-        out.push(item);
+        out.add(item);
         return;
       }
       item.children.forEach(add);
@@ -378,10 +414,21 @@ class QTests {
     } else {
       this.controller.items.forEach(add);
     }
-    return out;
+    return [...out];
   }
 
-  private async run(request: TestRunRequest, token: CancellationToken, ask: boolean, coverage = false): Promise<void> {
+  /// One run at a time (#1598): a run asked for while another is under way -
+  /// an affected-on-save run during a Run - waits for it, rather than find
+  /// the connection busy at every test.
+  private queue: Promise<void> = Promise.resolve();
+
+  private run(request: TestRunRequest, token: CancellationToken, ask: boolean, coverage = false): Promise<void> {
+    const next = this.queue.then(() => this.runNow(request, token, ask, coverage));
+    this.queue = next.catch(() => undefined);
+    return next;
+  }
+
+  private async runNow(request: TestRunRequest, token: CancellationToken, ask: boolean, coverage = false): Promise<void> {
     if (!on() || (coverage && !featureOn("testCoverage"))) {
       return;
     }
@@ -430,8 +477,11 @@ class QTests {
     for (const item of chosen) {
       run.enqueued(item);
     }
-    // A k4unit file's `before` rows run once, before its first test, and its
-    // `after` rows once its last test has run.
+    // As k4unit's KUrt runs a suite (#1593): the run's `beforeany` rows once,
+    // before its first k4unit test, and its `afterall` rows once at the end;
+    // a file's `before` rows - after the run's `beforeeach` ones - before its
+    // first test, and its `after` rows, then the run's `aftereach` ones,
+    // once its last test has run.
     const remaining = new Map<K4Row[], number>();
     for (const item of chosen) {
       const entry = this.entries.get(item);
@@ -442,12 +492,44 @@ class QTests {
     const prepared = new Set<K4Row[]>();
     const send = (statements: string[], mode: TestMode) =>
       this.live.runOnActive(statements.join("\n"), async (connection) => readTestResult(await connection.call(TEST_RUN, statements, mode)), "ask", process.label);
+    // A row whose minver is above the process's .z.K is not run, as KUltf
+    // does not load it (#1594): asked once, when a row of the run has one.
+    let version = Infinity;
+    if ([...remaining.keys()].some((rows) => rows.some((r) => r.minver > 0))) {
+      const k = await send([".z.K"], "run").catch(() => undefined);
+      version = k?.value.passed ? Number.parseFloat(k.value.text) || Infinity : Infinity;
+    }
+    const runs = (row: K4Row): boolean => row.minver <= version;
+    const phase = (rows: K4Row[], action: string): K4Row[] => rows.filter((r) => r.action === action && runs(r));
+    const everywhere = (action: string): K4Row[] => [...remaining.keys()].flatMap((rows) => phase(rows, action));
+    const setUp = async (rows: K4Row[]): Promise<void> => {
+      for (const row of rows) {
+        const done = await send([k4Statement(row)], "run");
+        if (done !== undefined && !done.value.passed) {
+          run.appendOutput(`${row.action} (line ${row.line + 1}) failed: ${done.value.text}\r\n`);
+        }
+      }
+    };
+    const tearDown = async (rows: K4Row[]): Promise<void> => {
+      for (const row of rows) {
+        await send([k4Statement(row)], "run").catch(() => undefined);
+      }
+    };
+    // Once a test finds no connection, or a query still running there, the
+    // rest are not sent: each would say so again (#1598).
+    let unreachable: string | undefined;
     try {
       for (const item of chosen) {
         const entry = this.entries.get(item)!;
+        if (unreachable !== undefined) {
+          run.errored(item, new TestMessage(unreachable));
+          outcome(item, "errored", unreachable);
+          continue;
+        }
         // Turned off mid-run is a cancel: what is still queued is not sent,
-        // and what was set up is still torn down (#1277).
-        if (token.isCancellationRequested || !on()) {
+        // and what was set up is still torn down (#1277). Stop cancels the
+        // run's own token, the one a run VS Code did not start has (#1597).
+        if (token.isCancellationRequested || run.token.isCancellationRequested || !on()) {
           run.skipped(item);
           outcome(item, "skipped");
           continue;
@@ -459,20 +541,26 @@ class QTests {
           let mode: TestMode;
           if (entry.kind === "snapshot") {
             await this.runSnapshot(run, item, entry.snapshot, process.label, started, outcome);
+            if (this.outcomes.at(-1)?.message?.startsWith("Not run:")) {
+              unreachable = this.outcomes.at(-1)?.message;
+            }
             continue;
           }
           if (entry.kind === "function") {
             statements = testStatements(entry.test);
             mode = "test";
           } else {
+            if (!runs(entry.row)) {
+              run.skipped(item);
+              outcome(item, "skipped", `needs kdb+ ${entry.row.minver}`);
+              continue;
+            }
             if (!prepared.has(entry.rows)) {
-              prepared.add(entry.rows);
-              for (const row of entry.rows.filter((r) => r.action === "before")) {
-                const done = await send([k4Statement(row)], "run");
-                if (done !== undefined && !done.value.passed) {
-                  run.appendOutput(`before (line ${row.line + 1}) failed: ${done.value.text}\r\n`);
-                }
+              if (prepared.size === 0) {
+                await setUp(everywhere("beforeany"));
               }
+              prepared.add(entry.rows);
+              await setUp([...everywhere("beforeeach"), ...phase(entry.rows, "before")]);
             }
             statements = [k4Statement(entry.row)];
             mode = k4Mode(entry.row);
@@ -489,6 +577,7 @@ class QTests {
             const text = `Not run: no connection to ${process.label}, or a query is still running there.`;
             run.errored(item, new TestMessage(text));
             outcome(item, "errored", text);
+            unreachable = text;
           } else if (done.value.passed) {
             run.passed(item, duration);
             outcome(item, "passed");
@@ -511,10 +600,8 @@ class QTests {
           if (entry.kind === "k4unit") {
             const left = (remaining.get(entry.rows) ?? 1) - 1;
             remaining.set(entry.rows, left);
-            if (left === 0) {
-              for (const row of entry.rows.filter((r) => r.action === "after")) {
-                await send([k4Statement(row)], "run").catch(() => undefined);
-              }
+            if (left === 0 && prepared.has(entry.rows)) {
+              await tearDown([...phase(entry.rows, "after"), ...everywhere("aftereach")]);
             }
           }
         }
@@ -523,10 +610,11 @@ class QTests {
       // 0: a file that was set up is torn down all the same (#1095).
       for (const rows of prepared) {
         if ((remaining.get(rows) ?? 0) > 0) {
-          for (const row of rows.filter((r) => r.action === "after")) {
-            await send([k4Statement(row)], "run").catch(() => undefined);
-          }
+          await tearDown([...phase(rows, "after"), ...everywhere("aftereach")]);
         }
+      }
+      if (prepared.size > 0) {
+        await tearDown(everywhere("afterall"));
       }
     } finally {
       if (covering !== undefined) {
@@ -577,12 +665,15 @@ class QTests {
     run.appendOutput(`${item.label}: ${done === undefined ? "not run" : this.outcomes.at(-1)?.state} on ${done?.process ?? label}\r\n`);
   }
 
-  /// The workspace's q files, for coverage.
+  /// The workspace's q files, for coverage: an open file with unsaved
+  /// edits as its editor holds it, the text its coverage is drawn on (#1609).
   private async sourceFiles(): Promise<SourceFile[]> {
     const out: SourceFile[] = [];
+    const dirty = new Map(workspace.textDocuments.filter((d) => d.isDirty).map((d) => [d.uri.toString(), d]));
     for (const uri of await workspace.findFiles("**/*.q", "**/node_modules/**", MAX_CSV)) {
       try {
-        out.push({ uri: uri.toString(), text: Buffer.from(await workspace.fs.readFile(uri)).toString("utf8") });
+        const open = dirty.get(uri.toString());
+        out.push({ uri: uri.toString(), text: open !== undefined ? open.getText() : Buffer.from(await workspace.fs.readFile(uri)).toString("utf8") });
       } catch {
         // Gone since it was listed.
       }

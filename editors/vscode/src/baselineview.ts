@@ -10,8 +10,9 @@
 import { execFile } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, posix } from "node:path";
+import { basename, dirname, join, posix, relative, sep } from "node:path";
 import { commands, window, workspace, type ExtensionContext } from "vscode";
+import { launchable } from "./batch";
 import { LANGUAGE_COMMANDS, languageOff, languageOn } from "./languagefeatures";
 import { plainMessage } from "./history";
 
@@ -40,15 +41,41 @@ export function writtenCount(stderr: string): { findings: number; files: number 
   return m ? { findings: Number(m[1]), files: Number(m[2]) } : undefined;
 }
 
-function runQlinter(command: string, args: string[], cwd: string): Promise<{ code: number; stderr: string }> {
+/// `text`, a `pyproject.toml`, with `baseline = "<file>"` first in its
+/// `[tool.qlinter]` table, or undefined when that table names one already
+/// or there is no such table.
+export function pyprojectWithBaseline(text: string, file = BASELINE_FILE): string | undefined {
+  const lines = text.split("\n");
+  const at = lines.findIndex((l) => /^\s*\[\s*tool\.qlinter\s*\]\s*(#.*)?$/.test(l));
+  if (at < 0) {
+    return undefined;
+  }
+  const end = lines.findIndex((l, i) => i > at && /^\s*\[/.test(l));
+  if (lines.slice(at + 1, end < 0 ? undefined : end).some((l) => /^\s*baseline\s*=/.test(l))) {
+    return undefined;
+  }
+  lines.splice(at + 1, 0, `baseline = "${file}"`);
+  return lines.join("\n");
+}
+
+/// The configuration file `qlinter --show-settings` says governs a folder,
+/// or undefined for none (its built-in defaults).
+export function governingConfiguration(stdout: string): string | undefined {
+  const m = /^configuration: (.+)$/m.exec(stdout);
+  return m === null || /^none\b/.test(m[1].trim()) ? undefined : m[1].trim();
+}
+
+function runQlinter(command: string, args: string[], cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { cwd, timeout: 300_000, maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (error, _stdout, stderr) => {
+    // A .cmd wrapper through a shell, as Node starts one (#1610).
+    const run = launchable(command, args);
+    execFile(run.command, run.args, { cwd, timeout: 300_000, maxBuffer: 64 * 1024 * 1024, windowsHide: true, shell: run.shell }, (error, stdout, stderr) => {
       const failed = error as (Error & { code?: unknown }) | null;
       if (failed && typeof failed.code === "string") {
         reject(new Error(`${command} could not be run: ${failed.message}`));
         return;
       }
-      resolve({ code: failed ? (typeof failed.code === "number" ? failed.code : 1) : 0, stderr: String(stderr) });
+      resolve({ code: failed ? (typeof failed.code === "number" ? failed.code : 1) : 0, stdout: String(stdout), stderr: String(stderr) });
     });
   });
 }
@@ -82,7 +109,15 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
       const scratch = mkdtempSync(join(tmpdir(), "qlint-baseline-"));
       try {
         const draft = join(scratch, BASELINE_FILE);
-        const ran = await runQlinter(command, [...args, "--write-baseline", draft, "."], dir);
+        // One that cannot be started is said, not left to VS Code's
+        // "Running the contributed command failed" (#1611).
+        const ran = await runQlinter(command, [...args, "--write-baseline", draft, "."], dir).catch((error: unknown) => {
+          void window.showWarningMessage(plainMessage(`q-lint: ${error instanceof Error ? error.message : String(error)}`));
+          return undefined;
+        });
+        if (ran === undefined) {
+          return undefined;
+        }
         const count = writtenCount(ran.stderr);
         if (count === undefined || !existsSync(draft)) {
           void window.showWarningMessage(plainMessage(`q-lint: qlinter wrote no baseline: ${ran.stderr.trim() || `exit ${ran.code}`}`));
@@ -112,7 +147,7 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
           void window.showErrorMessage(plainMessage(`q-lint: could not write ${target}: ${error instanceof Error ? error.message : String(error)}`));
           return undefined;
         }
-        await offerConfiguration(dir);
+        await offerConfiguration(dir, target, command, args);
         return target;
       } finally {
         rmSync(scratch, { recursive: true, force: true });
@@ -126,9 +161,22 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
 /// already absolute (another Windows drive) is left as it is.
 export function absolutePaths(text: string, dir: string): string {
   const base = dir.replace(/\\/g, "/").replace(/^\/\/\?\//, "");
-  return text.replace(/"path":"([^"]*)"/g, (whole, path: string) =>
-    /^(\/|[A-Za-z]:)/.test(path) ? whole : `"path":"${posix.normalize(`${base}/${path}`)}"`,
-  );
+  return mapPaths(text, (path) => (/^(\/|[A-Za-z]:)/.test(path) ? path : posix.normalize(`${base}/${path}`)));
+}
+
+/// `text` with each finding's `"path"` - a JSON string, its escapes read
+/// and written back, so that a folder named with a `"` or `\` is one path
+/// (#1604) - replaced with what `f` makes of it.
+function mapPaths(text: string, f: (path: string) => string): string {
+  return text.replace(/"path":("(?:[^"\\]|\\.)*")/g, (whole, quoted: string) => {
+    let path: unknown;
+    try {
+      path = JSON.parse(quoted);
+    } catch {
+      return whole;
+    }
+    return typeof path === "string" ? `"path":${JSON.stringify(f(path))}` : whole;
+  });
 }
 
 /// A baseline written from a scratch directory, its paths made absolute,
@@ -139,9 +187,9 @@ export function absolutePaths(text: string, dir: string): string {
 export function rebased(text: string, ...folders: string[]): string {
   const canonical = (p: string): string => p.replace(/\\/g, "/").replace(/^\/\/\?\//, "").replace(/^[a-z]:/, (d) => d.toUpperCase());
   const prefixes = folders.map((f) => canonical(f).replace(/\/*$/, "/"));
-  return text.replace(/"path":"([^"]*)"/g, (whole, path: string) => {
+  return mapPaths(text, (path) => {
     const prefix = prefixes.find((p) => canonical(path).startsWith(p));
-    return prefix === undefined ? whole : `"path":"${canonical(path).slice(prefix.length)}"`;
+    return prefix === undefined ? path : canonical(path).slice(prefix.length);
   });
 }
 
@@ -154,20 +202,36 @@ function canonicalDir(dir: string): string {
   }
 }
 
-/// Offer to name the baseline in the folder's `qlinter.toml`, showing the
-/// line, and write it only when asked.
-async function offerConfiguration(dir: string): Promise<void> {
-  const candidates = [".qlinter.toml", "qlinter.toml"].map((n) => join(dir, n));
-  const config = candidates.find((p) => existsSync(p)) ?? join(dir, "qlinter.toml");
+/// Offer to name the baseline in the configuration that governs the folder
+/// - as `qlinter --show-settings` finds it: a `.qlinter.toml` above it, a
+/// `pyproject.toml`'s `[tool.qlinter]` - showing the line, and write it
+/// only when asked. A new `qlinter.toml` only where none governs: one beside
+/// another would hide it (#1602). Under q-lint.configFile (`--config`) the
+/// line is only shown: that file is the user's to change.
+async function offerConfiguration(dir: string, target: string, command: string, args: string[]): Promise<void> {
+  const shown = await runQlinter(command, [...args, "--show-settings", "."], dir).catch(() => undefined);
+  const governing = shown === undefined ? undefined : governingConfiguration(shown.stdout);
+  const config = governing ?? join(dir, "qlinter.toml");
+  // Named from the configuration's own directory, as qlinter reads it.
+  const file = relative(canonicalDir(dirname(config)), join(canonicalDir(dirname(target)), basename(target))).split(sep).join("/");
+  if (args.includes("--config")) {
+    void window.showInformationMessage(
+      plainMessage(`q-lint: wrote ${BASELINE_FILE}. q-lint.configFile names the configuration: add \`baseline = "${file}"\` to ${config} for the editor and qlinter to use it.`),
+    );
+    return;
+  }
   const before = existsSync(config) ? readFileSync(config, "utf8") : "";
-  const after = tomlWithBaseline(before);
+  const pyproject = basename(config) === "pyproject.toml";
+  const after = pyproject ? pyprojectWithBaseline(before, file) : tomlWithBaseline(before, file);
   if (after === undefined) {
     void window.showInformationMessage(plainMessage(`q-lint: wrote ${BASELINE_FILE}; ${config} already names a baseline.`));
     return;
   }
   const add = "Add";
   const answer = await window.showInformationMessage(
-    plainMessage(`q-lint: wrote ${BASELINE_FILE}. Add \`baseline = "${BASELINE_FILE}"\` to ${existsSync(config) ? config : `a new ${config}`}, so the editor and qlinter use it?`),
+    plainMessage(
+      `q-lint: wrote ${BASELINE_FILE}. Add \`baseline = "${file}"\` to ${existsSync(config) ? `${config}${pyproject ? "'s [tool.qlinter]" : ""}` : `a new ${config}`}, so the editor and qlinter use it?`,
+    ),
     add,
   );
   if (answer === add) {

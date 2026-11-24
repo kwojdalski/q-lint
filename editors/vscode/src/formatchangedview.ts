@@ -10,7 +10,7 @@
 // VS Code gives a save's edits a few seconds; git and the server answer well
 // within that, and an edit that comes too late is dropped by VS Code, not
 // applied to a file already saved.
-import { Range, TextEdit, commands, window, workspace, type ExtensionContext, type TextDocument } from "vscode";
+import { Range, TextDocumentSaveReason, TextEdit, commands, window, workspace, type ExtensionContext, type TextDocument } from "vscode";
 import { changedLines, committedText, runGit, type Git } from "./changedlines";
 import type { Server } from "./editorfeatures";
 import { TOOLING_COMMANDS, toolingOff, toolingOn } from "./toolingfeatures";
@@ -61,7 +61,9 @@ export function registerFormatChanged(
       listener = workspace.onWillSaveTextDocument((event) => {
         // Git reads the repository's own configuration, which can name
         // programs for it to run: not in a workspace that is not trusted.
-        if (isQFile(event.document) && workspace.isTrusted !== false) {
+        // Not at a delayed auto-save either, mid-typing, as VS Code's own
+        // formatOnSave is not (#1607).
+        if (isQFile(event.document) && workspace.isTrusted !== false && event.reason !== TextDocumentSaveReason.AfterDelay) {
           event.waitUntil(changedLineEdits(event.document, server()).catch(() => []));
         }
       });

@@ -7,7 +7,8 @@
 // for it, so a float compares to the decimals `q-lint.query.gridDecimals`
 // asks for, and a timestamp to its nanosecond. Only the rows each grid holds
 // are compared: a result cut at `q-lint.query.gridLimit` is compared as far
-// as it was sent.
+// as it was sent, and a row the other side's cut may have left out is
+// neither added nor removed, only counted as not compared (#1640).
 import { rowCount, type Grid } from "./grid";
 
 /// The most changed cells, and removed rows, a diff lists: the rest are
@@ -32,6 +33,9 @@ export interface GridDiff {
   /// Rows the previous result had that this one has not: its columns, and
   /// the first DIFF_REMOVED_ROWS rows as their cells showed them.
   removed: { columns: string[]; rows: string[][]; count: number };
+  /// Rows of either result with no match in the other, which was cut, so
+  /// may have held it past its cut: not called added or removed.
+  uncompared: number;
 }
 
 /// A row's key: the text of its key columns, joined by a character no cell
@@ -54,6 +58,10 @@ export function diffGrids(before: Grid, after: Grid): GridDiff {
     keys > 0 && keys === keyCount(before) && after.columns.slice(0, keys).every((c, i) => c.name === before.columns[i].name);
   const was = rowCount(before);
   const now = rowCount(after);
+  // Either was cut: a row with no match may be past the cut.
+  const wasCut = before.total > was;
+  const nowCut = after.total > now;
+  let uncompared = 0;
   // The previous row each row of `after` matches, or -1. Two rows with one
   // key (a dictionary can have them) are matched in their order.
   const match = new Array<number>(now).fill(-1);
@@ -113,20 +121,25 @@ export function diffGrids(before: Grid, after: Grid): GridDiff {
   const gone: string[][] = [];
   let count = 0;
   for (let r = 0; r < was; r++) {
-    if (!used[r]) {
+    if (!used[r] && nowCut) {
+      uncompared++;
+    } else if (!used[r]) {
       count++;
       if (gone.length < DIFF_REMOVED_ROWS) {
         gone.push(before.cells.map((column) => column[r]));
       }
     }
   }
+  const addedRows = match.flatMap((m, r) => (m < 0 && !wasCut ? [r] : []));
+  uncompared += wasCut ? match.filter((m) => m < 0).length : 0;
   return {
     matchedBy: byKey ? "key" : "place",
     changes,
     changed,
-    addedRows: match.flatMap((m, r) => (m < 0 ? [r] : [])),
+    addedRows,
     addedColumns: columnIn.flatMap((b, c) => (b < 0 ? [c] : [])),
     removedColumns: before.columns.filter((_, i) => !kept.has(i)).map((c) => c.name),
     removed: { columns: before.columns.map((c) => c.name), rows: gone, count },
+    uncompared,
   };
 }

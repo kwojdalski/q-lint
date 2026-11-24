@@ -29,6 +29,14 @@
     if (c.same) {
       return l + " and " + r + " gave the same answer.";
     }
+    // Only the part that came back was compared (#1614).
+    const cutNote = " Not every row came back, so only the rows held were compared: raise q-lint.query.gridLimit or turn on Unlimited to compare them all.";
+    if (c.partial && c.columns.length === 0 && c.left.kind === c.right.kind && c.left.text === c.right.text) {
+      return "The part of each answer that came back is the same; the text was cut at the console size, so the rest was not compared.";
+    }
+    if (c.partial && c.columns.length > 0 && c.differing === 0 && c.onlyLeft === 0 && c.onlyRight === 0) {
+      return "The rows held are the same." + cutNote;
+    }
     if (c.columns.length === 0) {
       return l + " and " + r + " gave different answers.";
     }

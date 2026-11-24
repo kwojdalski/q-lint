@@ -134,12 +134,17 @@ export class QueryAcross {
           return await eachLimited(processes, AT_ONCE, async (process): Promise<Outcome> => {
             const at = Date.now();
             let outcome: Outcome;
+            // Cancelled before its turn: never sent, so not recorded (#1629).
+            const sent = !stop.signal.aborted;
             try {
-              outcome = stop.signal.aborted ? { process: process.label, error: "cancelled" } : { process: process.label, answer: await this.live.runApart(process, code, stop.signal) };
+              outcome = !sent ? { process: process.label, error: "cancelled" } : { process: process.label, answer: await this.live.runApart(process, code, stop.signal) };
             } catch (error) {
               outcome = { process: process.label, error: message(error) };
             }
             progress.report({ message: `${++done} of ${processes.length}`, increment: 100 / processes.length });
+            if (!sent) {
+              return outcome;
+            }
             const failed = "error" in outcome ? outcome.error : outcome.answer.ok ? undefined : outcome.answer.error;
             await this.live.record({
               process: process.label,

@@ -14,17 +14,23 @@
 import { window, workspace, type Disposable, type ExtensionContext, type TextDocument } from "vscode";
 import type { Server } from "./editorfeatures";
 import { languageOn } from "./languagefeatures";
+import { functionTestId } from "./testing";
 
 export const TESTS_REACHING = "q-lint/testsReaching";
 
 /// The Test Explorer ids of the tests the server answered, among `listed`:
-/// a function test's id is its file's URI, `#`, and its name.
+/// a function test's id is its file's URI, `#`, and the name q defines it
+/// by (`functionTestId`).
 export function affectedIds(answer: unknown, listed: string[]): string[] {
   const a = answer as { tests?: unknown } | null | undefined;
   if (!a || !Array.isArray(a.tests)) {
     return [];
   }
-  const ids = a.tests.flatMap((t: { uri?: unknown; name?: unknown }) => (typeof t?.uri === "string" && typeof t.name === "string" ? [`${t.uri}#${t.name}`] : []));
+  const ids = a.tests.flatMap((t: { uri?: unknown; name?: unknown; qualified?: unknown }) =>
+    typeof t?.uri === "string" && typeof t.name === "string"
+      ? [functionTestId(t.uri, { name: t.name, ...(typeof t.qualified === "string" ? { qualified: t.qualified } : {}) })]
+      : [],
+  );
   return [...new Set(ids)].filter((id) => listed.includes(id));
 }
 

@@ -751,6 +751,60 @@ fn the_workspace_tests_are_listed_with_the_code_that_runs_them() {
     assert_eq!(span(&tests[0]["range"]), (2, 0, 8));
 }
 
+/// A file that uses qUnit has every `test*` of a namespace run, as
+/// `.qunit.runNsTests` does (#1591).
+#[test]
+fn qunit_tests_are_listed_as_qunit_finds_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let suite = "\\d .testCalc\ntestfoo:{[] .qunit.assertEquals[1;1;\"one\"]}\ntest1:{[] 1b}\n\
+                 helper:{x}\n\\d .\n";
+    let mut server = Server::start(
+        dir.path(),
+        &[("suite.q", suite), ("bare.q", "testlower:{[] 1b}\n")],
+    );
+    let reply = server.request("q-lint/tests", json!({}));
+    let files = reply["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"));
+    assert_eq!(files.len(), 1, "{reply}");
+    let calls: Vec<&str> = files[0]["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["call"].as_str().unwrap())
+        .collect();
+    assert_eq!(calls, [".testCalc.testfoo[]", ".testCalc.test1[]"]);
+}
+
+/// A qUnit test runs inside the `beforeNamespace*`, `setUp*`, `tearDown*`
+/// and `afterNamespace*` its namespace defines, as `.qunit.runTest` runs it
+/// (#1590): they are sent with it and called around it.
+#[test]
+fn a_qunit_test_runs_inside_its_namespace_fixtures() {
+    let dir = tempfile::tempdir().unwrap();
+    let suite = "\\d .testCalc\nsetUp:{[] `.testCalc.t set ([] a:1 2 3)}\n\
+                 testfoo:{[] .qunit.assertEquals[count t;3;\"rows\"]}\n\
+                 tearDown:{[] delete t from `.testCalc}\n\\d .other\ntestfoo:{[] 1b}\n\\d .\n";
+    let mut server = Server::start(dir.path(), &[("suite.q", suite)]);
+    let reply = server.request("q-lint/tests", json!({}));
+    let tests = reply["result"][0]["tests"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"));
+    assert_eq!(
+        tests[0]["code"],
+        "\\d .testCalc\nsetUp:{[] `.testCalc.t set ([] a:1 2 3)}\n\\d .\n\
+         \\d .testCalc\ntearDown:{[] delete t from `.testCalc}\n\\d .\n\
+         \\d .testCalc\ntestfoo:{[] .qunit.assertEquals[count t;3;\"rows\"]}\n\\d ."
+    );
+    assert_eq!(
+        tests[0]["call"],
+        "{[] .testCalc.setUp[]; r:@[{(1b;x[])};.testCalc.testfoo;{(0b;x)}]; .testCalc.tearDown[]; $[r 0;r 1;'r 1]}[]"
+    );
+    // A namespace without fixtures: the test alone.
+    assert_eq!(tests[1]["code"], "\\d .other\ntestfoo:{[] 1b}\n\\d .");
+    assert_eq!(tests[1]["call"], ".other.testfoo[]");
+}
+
 #[test]
 fn the_global_at_a_position_is_named_as_q_resolves_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -1189,6 +1243,33 @@ fn the_tests_reaching_the_functions_a_save_changed_are_listed() {
         json!({"textDocument": {"uri": uri}, "previous": edited}),
     );
     assert_eq!(reply["result"]["tests"], json!([]), "{reply}");
+}
+
+/// Two tests of one name in two namespaces of a file are told apart by the
+/// name q gives each, in the list and in the tests a save reaches (#1592).
+#[test]
+fn a_test_carries_the_name_q_defines_it_by() {
+    let dir = tempfile::tempdir().unwrap();
+    let suite = "\\d .a\ntest_x:{[] f 1}\n\\d .b\ntest_x:{[] 0b}\n\\d .\nf:{x}\n";
+    let (mut server, _) = Server::over(dir.path(), &[("t.q", suite)], client(), Value::Null);
+    let reply = server.request("q-lint/tests", json!({}));
+    let qualified: Vec<&str> = reply["result"][0]["tests"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"))
+        .iter()
+        .map(|t| t["qualified"].as_str().unwrap())
+        .collect();
+    assert_eq!(qualified, [".a.test_x", ".b.test_x"]);
+    let uri = server.open(dir.path(), "t.q", &suite.replace("f:{x}", "f:{x+1}"));
+    let reply = server.request(
+        "q-lint/testsReaching",
+        json!({"textDocument": {"uri": uri}, "previous": suite}),
+    );
+    assert_eq!(
+        reply["result"]["tests"],
+        json!([{"uri": uri, "name": "test_x", "qualified": ".a.test_x"}]),
+        "{reply}"
+    );
 }
 
 /// `q-lint/testsReaching` for `name`, saved as `now` over `previous`: the

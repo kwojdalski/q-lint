@@ -21,16 +21,35 @@
     return grid.cells.length === 0 ? 0 : grid.cells[0].length;
   }
 
+  /// Two texts in code point order, as q sorts them: grid.ts's
+  /// codePointOrder (#1642).
+  function textOrder(a, b) {
+    const n = Math.min(a.length, b.length);
+    for (let i = 0; i < n; i++) {
+      const x = a.charCodeAt(i);
+      const y = b.charCodeAt(i);
+      if (x !== y) {
+        const sx = x >= 0xd800 && x <= 0xdfff;
+        const sy = y >= 0xd800 && y <= 0xdfff;
+        return sx !== sy ? (sx ? 1 : -1) : x < y ? -1 : 1;
+      }
+    }
+    return a.length < b.length ? -1 : a.length > b.length ? 1 : 0;
+  }
+
   /// The rows to show, in order: those whose cells hold each column's filter
   /// text (ignoring case), sorted by `sort` ({column, descending}) when set.
   /// A column the process ranked sorts by its rank, as q's `xasc` or
   /// `xdesc` would, equal values kept in their order either way; one it
   /// could not sort, by its text. `shown`, when given, is what a cell shows
-  /// in place of its text (column, row): a filter finds either.
-  function visibleRows(grid, filters, sort, shown) {
+  /// in place of its text (column, row): a filter finds either. `drawn`,
+  /// when given, is the columns drawn: a hidden column's filter and sort,
+  /// with no box or arrow left to see them by, are not in force (#1633).
+  function visibleRows(grid, filters, sort, shown, drawn) {
     const active = [];
+    const isDrawn = function (c) { return drawn === undefined || drawn.indexOf(c) >= 0; };
     (filters || []).forEach(function (f, c) {
-      if (f && c < grid.cells.length) {
+      if (f && c < grid.cells.length && isDrawn(c)) {
         active.push([c, String(f).toLowerCase()]);
       }
     });
@@ -40,12 +59,12 @@
         rows.push(r);
       }
     }
-    if (sort && sort.column < grid.cells.length) {
+    if (sort && sort.column < grid.cells.length && isDrawn(sort.column)) {
       const rank = grid.rank[sort.column];
       const cells = grid.cells[sort.column];
       const up = rank
         ? function (a, b) { return rank[a] - rank[b]; }
-        : function (a, b) { return cells[a] < cells[b] ? -1 : cells[a] > cells[b] ? 1 : 0; };
+        : function (a, b) { return textOrder(cells[a], cells[b]); };
       rows.sort(function (a, b) { return (sort.descending ? up(b, a) : up(a, b)) || a - b; });
     }
     return rows;
@@ -95,6 +114,27 @@
     // the last row ends where the rows do.
     const before = Math.max(0, Math.min(scrollTop - (first - start) * ROW, MAX_HEIGHT - (end - start) * ROW));
     return { start: start, end: end, before: before, after: Math.max(0, MAX_HEIGHT - before - (end - start) * ROW) };
+  }
+
+  /// The row at the top of the view for a scroll position: span's first.
+  function firstRow(scrollTop, height, count) {
+    if (count * ROW <= MAX_HEIGHT) {
+      return Math.floor(scrollTop / ROW);
+    }
+    const range = Math.max(1, MAX_HEIGHT - height);
+    return Math.round(Math.max(0, Math.min(1, scrollTop / range)) * Math.max(0, count - Math.ceil(height / ROW)));
+  }
+
+  /// The scroll position that puts row `first` at the top of the view: so
+  /// a page added to a grid spread over the scrollbar keeps the rows in
+  /// view, not the scrollbar's place, which is now another row (#1635).
+  function scrollFor(first, height, count) {
+    if (count * ROW <= MAX_HEIGHT) {
+      return first * ROW;
+    }
+    const range = Math.max(1, MAX_HEIGHT - height);
+    const n = Math.max(0, count - Math.ceil(height / ROW));
+    return n === 0 ? 0 : Math.min(range, (first / n) * range);
   }
 
   const NULL_GUID = "00000000-0000-0000-0000-000000000000";
@@ -275,7 +315,7 @@
         if (rank) {
           return rank[first.get(a)] - rank[first.get(b)];
         }
-        return a < b ? -1 : a > b ? 1 : 0;
+        return textOrder(a, b);
       });
       return { of: function (r) { return cells[r]; }, order: order };
     };
@@ -394,9 +434,12 @@
     defaultPivot: defaultPivot,
     AGGREGATIONS: AGGREGATIONS,
     visibleRows: visibleRows,
+    textOrder: textOrder,
     chartColumns: chartColumns,
     binsFrom: binsFrom,
     span: span,
+    firstRow: firstRow,
+    scrollFor: scrollFor,
     columnStats: columnStats,
     heatLevels: heatLevels,
     heatColour: heatColour,
@@ -627,7 +670,10 @@
     if (grid.total > held) {
       count = result.more
         ? fmt(held) + " of " + fmt(grid.total) + " rows: more as the grid scrolls"
-        : fmt(held) + " of " + fmt(grid.total) + " rows: cut at q-lint.query.gridLimit (" + fmt(result.limit) + ")";
+        : held > result.limit
+          // Paged past the limit, then stopped (#1644).
+          ? fmt(held) + " of " + fmt(grid.total) + " rows: no more were fetched"
+          : fmt(held) + " of " + fmt(grid.total) + " rows: cut at q-lint.query.gridLimit (" + fmt(result.limit) + ")";
     }
     if (rows.length !== held) {
       count = fmt(rows.length) + " shown, " + count;
@@ -675,12 +721,15 @@
       });
       extras.push(heatmap);
     }
-    const hidden = layout().hidden.filter(function (name) { return grid.columns.some(function (c) { return c.name === name; }); });
+    const drawn = drawnColumns(grid);
+    const hidden = layout().hidden.filter(function (name) { return grid.columns.some(function (c, i) { return c.name === name && drawn.indexOf(i) < 0; }); });
     if (state.view === "grid" && hidden.length > 0) {
       const show = el("button", "", hidden.length + " hidden");
       show.title = "Show the hidden columns: " + hidden.join(", ");
       show.addEventListener("click", function () {
         setLayout(Object.assign({}, layout(), { hidden: [] }));
+        // Their filters and sort are in force again.
+        rows = shownRows(grid);
         draw();
       });
       extras.push(show);
@@ -708,6 +757,10 @@
     if (comparing()) {
       const d = result.diff;
       const parts = [d.changed + " changed", d.addedRows.length + " added", d.removed.count + " removed"];
+      if (d.uncompared > 0) {
+        // Past one run's cut at gridLimit: not known to be added or removed (#1640).
+        parts.push(d.uncompared + " not compared (a run was cut at q-lint.query.gridLimit)");
+      }
       if (d.addedColumns.length) {
         parts.push("new column" + (d.addedColumns.length === 1 ? " " : "s ") + d.addedColumns.map(function (c) { return grid.columns[c].name; }).join(", "));
       }
@@ -754,16 +807,27 @@
     };
   }
 
+  /// The columns of `grid` drawn, by place, in the order drawn.
+  function drawnColumns(grid) {
+    return feature("columnLayout") ? LOOK.displayColumns(grid, layout()) : grid.columns.map(function (_, i) { return i; });
+  }
+
+  /// The rows the grid shows: the filters and sort of the columns drawn.
+  function shownRows(grid) {
+    return visibleRows(grid, state.filters, state.sort, shownAs(grid), drawnColumns(grid));
+  }
+
   function dressGrid() {
     const grid = result.grid;
     const lay = layout();
-    const display = feature("columnLayout") ? LOOK.displayColumns(grid, lay) : grid.columns.map(function (_, i) { return i; });
+    const display = drawnColumns(grid);
     const formats = feature("columnFormats") ? LOOK.columnFormats(grid) : grid.columns.map(function () { return null; });
-    const rules = feature("conditionalFormats") ? LOOK.ruleStyles(grid, look().rules || []) : grid.columns.map(function () { return null; });
+    const rules = feature("conditionalFormats") ? LOOK.ruleStyles(grid, look().rules || [], shownAs(grid)) : grid.columns.map(function () { return null; });
     const charts = look().cellCharts || {};
     const cells = grid.columns.map(function (c, i) {
       const f = formats[i];
-      if ((feature("cellCharts") && c.numeric && charts[c.name] === "bar") || (f && f.kind === "bar")) {
+      // A *_BAR column's bar, unless toggled off as text (#1651).
+      if ((feature("cellCharts") && c.numeric && charts[c.name] === "bar") || (f && f.kind === "bar" && charts[c.name] !== "text")) {
         return { kind: "bar", levels: LOOK.barLevels(grid.values[i]) };
       }
       if (feature("cellCharts") && charts[c.name] !== "text" && LOOK.isNumericList(grid, i)) {
@@ -834,8 +898,10 @@
       } else {
         let width = headerText(grid, i).length + 2;
         const cells = grid.cells[i];
+        // As the cells show: a format's text is wider than q's (#1655).
+        const shownText = d.formats[i] && c.numeric ? shownAs(grid) : null;
         for (let r = 0; r < Math.min(cells.length, 500); r++) {
-          width = Math.max(width, cells[r].length);
+          width = Math.max(width, shownText ? shownText(i, r).length : cells[r].length);
         }
         css = Math.min(width + 2, 60) + "ch";
       }
@@ -885,7 +951,7 @@
         state.sort = !s || s.column !== i ? { column: i, descending: false } : s.descending ? null : { column: i, descending: true };
         state.top = 0;
         save();
-        rows = visibleRows(grid, state.filters, state.sort, shownAs(grid));
+        rows = shownRows(grid);
         drawGrid();
         drawBar();
         rendered();
@@ -969,7 +1035,7 @@
         state.filters[i] = input.value;
         state.top = 0;
         save();
-        rows = visibleRows(grid, state.filters, state.sort, shownAs(grid));
+        rows = shownRows(grid);
         scroller.scrollTop = 0;
         paint();
         drawBar();
@@ -1040,7 +1106,8 @@
   /// A resized column follows the mouse, and its width is kept once let go.
   window.addEventListener("mousemove", function (event) {
     if (resizing) {
-      resizing.width = Math.max(24, resizing.from + event.clientX - resizing.start);
+      // The widths a layout keeps (resultlook.ts's COLUMN_WIDTHS, #1641).
+      resizing.width = Math.min(2000, Math.max(24, resizing.from + event.clientX - resizing.start));
       resizing.col.style.width = resizing.width + "px";
     }
   });
@@ -1094,7 +1161,7 @@
       note += " (the grid's filters apply)";
     }
     if (grid.total > held) {
-      note += "; the result had " + grid.total.toLocaleString("en-US") + ", cut at q-lint.query.gridLimit";
+      note += "; the result had " + grid.total.toLocaleString("en-US") + (held > result.limit ? ", of which no more were fetched" : ", cut at q-lint.query.gridLimit");
     }
     statsView.append(el("p", "note", note + "."));
     const scroll = el("div", "scroller");
@@ -1324,7 +1391,9 @@
             td.style.fontWeight = "bold";
           }
         }
-        const given = painting[ci] || painting[-1];
+        // The cell's own colours over the row's: a row's _BG still fills a
+        // cell another column colours the text of (#1653).
+        const given = painting[ci] || painting[-1] ? Object.assign({}, painting[-1], painting[ci]) : undefined;
         if (given) {
           if (given.bg && !filled && !marked) {
             td.style.backgroundColor = given.bg;
@@ -1370,7 +1439,9 @@
     // Near the end of the rows held: ask the process for the next page. With
     // rows filtered out, only when scrolled there: few rows left by a filter
     // are near their end as each page comes, and would fetch the whole result.
-    if (result.more && !moreAsked && rows.length > 0 && end >= rows.length - 10 && (moved || rows.length === rowCount(result.grid))) {
+    // So too once a page could not be fetched for now (#1634): asking again
+    // at once would only be refused again.
+    if (result.more && !moreAsked && rows.length > 0 && end >= rows.length - 10 && (moved || (!result.paused && rows.length === rowCount(result.grid)))) {
       moreAsked = true;
       vscode.postMessage({ type: "more", id: result.id });
     }
@@ -2045,7 +2116,8 @@
   }
 
   /// What is kept of a result's page when another is chosen from the tabs.
-  const PER_RESULT = ["view", "sort", "filters", "columns", "top", "open", "names", "pivot", "y2", "colours", "mapSize", "mapColour", "zoom"];
+  /// Its chart kind, bins and Compare too, so it is drawn as it was (#1638).
+  const PER_RESULT = ["view", "sort", "filters", "columns", "top", "open", "names", "pivot", "y2", "colours", "mapSize", "mapColour", "zoom", "kind", "bins", "compare"];
 
   window.addEventListener("message", function (event) {
     const m = event.data;
@@ -2056,13 +2128,16 @@
     const kept = (m.history || []).map(function (h) { return h.id; });
     if (m.id !== state.id) {
       // The page of the result left, to go back to from its tab.
+      // Copies, both ways: a filter, pivot or colour changed on one result
+      // is not changed on the other (#1637).
+      const copyOf = function (v) { return v === undefined ? undefined : JSON.parse(JSON.stringify(v)); };
       const mine = {};
-      PER_RESULT.forEach(function (k) { mine[k] = state[k]; });
+      PER_RESULT.forEach(function (k) { mine[k] = copyOf(state[k]); });
       state.saved[state.id] = mine;
       const back = state.saved[m.id];
       if (back) {
         // A result chosen again from the tabs: as it was left.
-        Object.assign(state, back);
+        Object.assign(state, copyOf(back));
       } else {
         // A new result: the view its mode asks for; the sort, filters and
         // chosen columns only if it has the same columns.
@@ -2117,10 +2192,16 @@
     heat = m.heatmap
       ? m.grid.columns.map(function (c, i) { return c.numeric && !c.key ? heatLevels(m.grid.values[i]) : null; })
       : [];
+    // The same result again - a page added - keeps the row at the top.
+    const height = scroller ? scroller.clientHeight || 600 : 0;
+    const first = result && result.id === m.id && scroller ? firstRow(state.top, height, rows.length) : -1;
     result = m;
     moreAsked = false;
     announce(m);
-    rows = visibleRows(m.grid, state.filters, state.sort, shownAs(m.grid));
+    rows = shownRows(m.grid);
+    if (first >= 0) {
+      state.top = scrollFor(first, height, rows.length);
+    }
     save();
     draw();
     if (image) {

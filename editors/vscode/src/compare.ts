@@ -8,7 +8,9 @@
 // table's order first. A cell is compared by the text the grid shows, so a
 // float compares to `q-lint.query.gridDecimals`. Anything else - a value
 // that is not tabular, an error, a process not reached - is compared as
-// the text each side gave.
+// the text each side gave. Only what came back is compared: when a side
+// held fewer rows than its result has, or its text was cut at the console
+// size, the answers are never called the same (#1614).
 import { toGrid, type Grid } from "./grid";
 import type { Outcome } from "./tagquery";
 
@@ -66,7 +68,13 @@ export interface Comparison {
   onlyRight: number;
   /// Whether the two answers are the same.
   same: boolean;
+  /// Whether either side came back cut - fewer rows than its result has,
+  /// or console text cut - so only its first part was compared.
+  partial: boolean;
 }
+
+/// Whether console text was cut at the console size: q ends it with `..`.
+const textCut = (text: string): boolean => /\.\.$/.test(text.trimEnd());
 
 function side(outcome: Outcome): { side: Side } {
   if ("error" in outcome) {
@@ -97,7 +105,8 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number)
     const text = (o: Outcome, s: Side): string => s.text ?? ("answer" in o && o.answer.ok ? o.answer.text.join("\n") : "");
     const sa = { ...a.side, text: text(left, a.side) };
     const sb = { ...b.side, text: text(right, b.side) };
-    return { left: sa, right: sb, columns: [], inLeft: [], inRight: [], matchedBy: "place", rows: [], lined: 0, differing: 0, onlyLeft: 0, onlyRight: 0, same: sa.kind === sb.kind && sa.text === sb.text };
+    const partial = (sa.kind === "text" && textCut(sa.text)) || (sb.kind === "text" && textCut(sb.text));
+    return { left: sa, right: sb, columns: [], inLeft: [], inRight: [], matchedBy: "place", rows: [], lined: 0, differing: 0, onlyLeft: 0, onlyRight: 0, same: !partial && sa.kind === sb.kind && sa.text === sb.text, partial };
   }
   const namesA = ga.columns.map((c) => c.name);
   const namesB = gb.columns.map((c) => c.name);
@@ -157,6 +166,7 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number)
     }
   }
   const sameColumns = namesA.length === namesB.length && namesA.every((n, i) => n === namesB[i]);
+  const partial = countA < ga.total || countB < gb.total;
   return {
     left: a.side,
     right: b.side,
@@ -169,6 +179,7 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number)
     differing,
     onlyLeft,
     onlyRight,
-    same: sameColumns && differing === 0 && onlyLeft === 0 && onlyRight === 0 && ga.total === gb.total,
+    same: !partial && sameColumns && differing === 0 && onlyLeft === 0 && onlyRight === 0 && ga.total === gb.total,
+    partial,
   };
 }

@@ -39,6 +39,12 @@ test("a column's suffix names its format, in any case, with decimals, and the ba
   assert.strictEqual(L.formatNumber(f("x_BPS"), 0.0123, "0.0123"), "123.0 bp");
   assert.strictEqual(L.formatNumber(f("x_CCY"), -1234567.891, "-1234567.891"), "-1,234,567.89");
   assert.strictEqual(L.formatNumber(f("x_NUM"), 1234567, "1234567"), "1,234,567");
+  // A long past 2^53 from q's text, not its double; a float past 1e21 not in exponent form (#1647).
+  assert.strictEqual(L.formatNumber(f("x_CCY"), 123456789012345678, "123456789012345678"), "123,456,789,012,345,678.00");
+  assert.strictEqual(L.formatNumber(f("x_NUM2"), -123456789012345678, "-123456789012345678"), "-123,456,789,012,345,678.00");
+  assert.strictEqual(L.formatNumber(f("x_NUM0"), 123456789012345678, "123456789012345678"), "123,456,789,012,345,678");
+  assert.strictEqual(L.formatNumber(f("x_CCY"), 1e21, "1e+21"), "1,000,000,000,000,000,000,000.00");
+  assert.strictEqual(L.formatNumber(f("x_CCY"), 1.5, "1.5"), "1.50");
   // As q wrote it, digit for digit: a long past 2^53 keeps its digits.
   assert.strictEqual(L.formatNumber(f("x_NUM"), 9007199254740993, "9007199254740993"), "9,007,199,254,740,993");
   assert.strictEqual(L.formatNumber(f("x_NUM2"), 1234.5, "1234.5"), "1,234.50");
@@ -140,6 +146,12 @@ test("the layout orders, hides and freezes columns by name, a name twice taking 
   assert.deepStrictEqual(L.frozenOffsets(["10ch"], 0), []);
 });
 
+test("a layout that would hide every column draws them all: a new run of only hidden columns is not a grid of none (#1652)", () => {
+  const g = grid([["a", 7, ["1"]], ["a", 7, ["1"]]]);
+  assert.deepStrictEqual(L.displayColumns(g, { order: [], hidden: ["a"] }), [0, 1]);
+  assert.deepStrictEqual(L.displayColumns(grid([["a", 7, ["1"]], ["b", 7, ["1"]]]), { order: [], hidden: ["a"] }), [1]);
+});
+
 test("the correlation matrix is Pearson's over the rows where both values are there, keys left out (#1020)", () => {
   const g = grid([["x", 9, ["1", "2", "3", "4"]], ["y", 9, ["2", "4", "6", "9"]], ["z", 9, ["4", "3", "", "1"]], ["k", 9, ["1", "1", "1", "1"]], ["s", 11, ["a", "b", "c", "d"]]]);
   const c = L.correlation(g, [0, 1, 2, 3]);
@@ -169,7 +181,7 @@ test("a stored look keeps only what it can hold, and moves with a renamed saved 
     trades: {
       rules: [{ column: "px", op: ">", value: 1, style: { background: "red" } }, { column: "px", op: "top", value: 1.5, style: { bold: true } }, { column: "px", op: "~", value: 1, style: { bold: true } }, { column: "px", op: "=", value: 1, style: { background: "url(x)" } }],
       cellCharts: { px: "bar", v: "spark", w: "pie" },
-      layout: { order: ["b", 1], hidden: ["c"], widths: { a: 120, b: 3, c: "9" }, frozen: 2 },
+      layout: { order: ["b", 1], hidden: ["c"], widths: { a: 120, b: 3, c: "9", d: 2400 }, frozen: 2 },
       chart: { kind: "line", series: ["px"], colours: { px: "#ff0000", qty: "red" }, bins: 900 },
     },
     junk: "x",
@@ -179,7 +191,9 @@ test("a stored look keeps only what it can hold, and moves with a renamed saved 
   assert.deepStrictEqual(Object.keys(looks), ["trades"]);
   assert.deepStrictEqual(looks.trades.rules, [{ column: "px", op: ">", value: 1, style: { background: "red" } }]);
   assert.deepStrictEqual(looks.trades.cellCharts, { px: "bar", v: "spark" });
-  assert.deepStrictEqual(looks.trades.layout, { order: ["b"], hidden: ["c"], widths: { a: 120 }, frozen: 2 });
+  // A width past the bounds is brought to them, not dropped (#1641).
+  assert.deepStrictEqual(looks.trades.layout, { order: ["b"], hidden: ["c"], widths: { a: 120, b: 24, d: 2000 }, frozen: 2 });
+  assert.strictEqual(look.parseLayout({ frozen: 55 }).frozen, 50);
   assert.deepStrictEqual(looks.trades.chart, { kind: "line", series: ["px"], colours: { px: "#ff0000" } });
   const renamed = look.renamedLook(looks, "trades", "fills");
   assert.deepStrictEqual(Object.keys(renamed), ["fills"]);
@@ -235,7 +249,8 @@ test("the Excel export writes each rule as Excel's own conditional formatting, t
   const sheet = files["xl/worksheets/sheet1.xml"];
   // An empty cell is no number: Excel would take it for 0 (#1266).
   assert.match(sheet, /<\/sheetData><conditionalFormatting sqref="B2:B4"><cfRule type="expression" dxfId="0" priority="5"><formula>AND\(ISNUMBER\(B2\),B2&gt;4\)<\/formula><\/cfRule><\/conditionalFormatting>/);
-  assert.match(sheet, /<cfRule type="top10" dxfId="1" priority="4" rank="1" bottom="1"\/>/);
+  // Bottom 1 of every row the grid holds, not only of those written (#1648).
+  assert.match(sheet, /<cfRule type="expression" dxfId="1" priority="4"><formula>AND\(ISNUMBER\(B2\),B2&lt;=1\)<\/formula><\/cfRule>/);
   // contains: in any case, with no wildcards, never an empty cell (#1266).
   assert.match(sheet, /<conditionalFormatting sqref="A2:A4"><cfRule type="expression" dxfId="2" priority="3"><formula>AND\(LEN\(A2\)&gt;0,ISNUMBER\(FIND\(LOWER\(&quot;b&quot;&quot;&lt;&quot;\),LOWER\(A2\)\)\)\)<\/formula>/);
   assert.strictEqual((sheet.match(/<conditionalFormatting /g) || []).length, 3, "a comparison of numbers on text, and a missing column, are left out");
@@ -303,8 +318,35 @@ test("a result sent to a notebook or a report is its query in a fence it cannot 
   const cut = report.resultMarkdown({ process: "p", code: "t", at: 0, payload: many, decimals: -1 });
   assert.strictEqual(cut.rows, report.MAX_ROWS);
   assert.match(cut.text, /_The first 500 of 600 rows\._/);
+  // Rows a filter picked are not the first of the result (#1649).
+  const held = { ...PAYLOAD, count: 1000, cells: [["a", "b", "c", "d", "e"], ["1", "2", "3", "4", "5"]], raw: [[], [1, 2, 3, 4, 5]] };
+  assert.match(report.resultMarkdown({ process: "p", code: "t", at: 0, payload: held, rows: [4, 3], decimals: -1 }).text, /_The 2 rows the grid's filters show, of the 5 held; the result has 1,000\._/);
+  const many1 = { ...many, count: 700 };
+  assert.match(report.resultMarkdown({ process: "p", code: "t", at: 0, payload: many1, rows: [...Array(550).keys()], decimals: -1 }).text, /_The first 500 of the 550 rows the grid's filters show, of the 600 held; the result has 700\._/);
   const taken = new Set(["daily-images/chart-20261122-093005.svg"]);
   assert.strictEqual(report.imagePath("/r/daily.md", Date.UTC(2026, 10, 22, 9, 30, 5), (p) => taken.has(p)), "daily-images/chart-20261122-093005-2.svg");
   assert.strictEqual(report.linkTarget("a b/(c).svg"), "a%20b/%28c%29.svg");
   assert.strictEqual(report.linkTarget("Q#1 report-images/chart?.svg"), "Q%231%20report-images/chart%3F.svg");
+});
+
+test("a rule compares 0w and -0w as the infinities they are; only a null matches nothing (#1645)", () => {
+  const g = grid([["px", 9, ["5", "0w", "-0w", ""]]]);
+  g.values[0] = [5, null, null, null];
+  const rows = (op, value) => [...L.ruleRows(g, { column: "px", op, value, style: { bold: true } })];
+  assert.deepStrictEqual(rows(">", 1), [0, 1]);
+  assert.deepStrictEqual(rows("<", 1), [2]);
+  assert.deepStrictEqual(rows("top", 1), [1]);
+  assert.deepStrictEqual(rows("bottom", 1), [2]);
+  assert.deepStrictEqual(rows("<>", 5), [1, 2]);
+});
+
+test("Excel's top and bottom N rank every row the grid holds, not only the filtered rows written (#1648)", () => {
+  const top = [{ column: "px", op: "top", value: 1, style: { bold: true } }];
+  // Filtered to px < 9: the grid colours no cell shown, 9 being the top.
+  const sheet = unzip(exportResult("xlsx", PAYLOAD, -1, [0, 1], top).data)["xl/worksheets/sheet1.xml"];
+  assert.match(sheet, /<formula>AND\(ISNUMBER\(B2\),B2&gt;=9\)<\/formula>/);
+  assert.ok(!/top10/.test(sheet));
+  // 0w is the top: no number in Excel matches.
+  const infinite = { ...PAYLOAD, cells: [["a", "b", "c"], ["1", "0w", "9"]], raw: [[], [1, Infinity, 9]] };
+  assert.ok(!/conditionalFormatting/.test(unzip(exportResult("xlsx", infinite, -1, undefined, top).data)["xl/worksheets/sheet1.xml"]));
 });

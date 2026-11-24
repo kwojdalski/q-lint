@@ -1,7 +1,9 @@
 // The language-model tool (#886) and Copy Label for Agent Query: the VS Code
 // around `agent.ts`. An agent's query runs on the active connection as a
 // notebook cell's does - the status bar shows it, Abort Current Query stops
-// it - and goes into Query History marked as the agent's.
+// it - and goes into Query History marked as the agent's. Turned off
+// (`q-lint.agent.queryTool.enable`, #1624), the tool is unregistered and a
+// call already on its way is refused.
 import {
   commands,
   env,
@@ -12,6 +14,7 @@ import {
   window,
   workspace,
   type CancellationToken,
+  type Disposable,
   type ExtensionContext,
   type LanguageModelTool,
   type LanguageModelToolInvocationOptions,
@@ -29,6 +32,7 @@ import {
   type AgentInput,
   type AgentResult,
 } from "./agent";
+import { ASSIST_SETTINGS, assistOff, readAssist } from "./assistconfig";
 import type { Row } from "./discovery";
 import type { Live } from "./live";
 import { readLive } from "./liveconfig";
@@ -36,6 +40,11 @@ import { address, type Process } from "./processes";
 import { statements } from "./statements";
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+const on = (): boolean => {
+  const configuration = workspace.getConfiguration("q-lint");
+  return readAssist((key, fallback) => configuration.get(key, fallback), ["queryTool"]).queryTool;
+};
 
 /// A call as `prepareInvocation` and `invoke` both see it: each is handed
 /// its own copy of the input.
@@ -120,6 +129,9 @@ class RunQueryTool implements LanguageModelTool<AgentInput> {
 
   /// Run the query `input` asks for, and answer with what the agent is given.
   async run(input: AgentInput, token: CancellationToken): Promise<AgentResult> {
+    if (!on()) {
+      return { error: assistOff("queryTool").replace(/^q-lint: /, "") };
+    }
     if (typeof input.query !== "string") {
       return { error: `"query" must be q code, a string, not ${JSON.stringify(input.query ?? null)}.` };
     }
@@ -243,14 +255,34 @@ async function copyLabel(live: Live, row?: Row | string): Promise<void> {
   window.setStatusBarMessage(`q-lint: copied "${label}"`, 3000);
 }
 
-/// Register the tool and Copy Label for Agent Query. The tool needs VS Code
-/// 1.95's `lm.registerTool`; before it, only the command is there. Returns
-/// what the tool asks the user before a query, for the read-only API.
-export function registerAgentTool(context: ExtensionContext, live: Live): RunQueryTool["confirm"] {
+/// Register Copy Label for Agent Query, and the tool while
+/// `q-lint.agent.queryTool.enable` is on. The tool needs VS Code 1.95's
+/// `lm.registerTool`; before it, only the command is there. Returns what
+/// the tool asks the user before a query, for the read-only API, and
+/// whether the tool is registered, for tests.
+export function registerAgentTool(context: ExtensionContext, live: Live): RunQueryTool["confirm"] & { registered: () => boolean } {
   const tool = new RunQueryTool(live);
-  context.subscriptions.push(commands.registerCommand(AGENT.copyLabel, (row?: Row | string) => copyLabel(live, row)));
-  if (typeof lm?.registerTool === "function") {
-    context.subscriptions.push(lm.registerTool(AGENT.tool, tool));
-  }
-  return (input) => tool.confirm(input);
+  let registered: Disposable | undefined;
+  const sync = (): void => {
+    if (typeof lm?.registerTool !== "function") {
+      return;
+    }
+    if (on() && registered === undefined) {
+      registered = lm.registerTool(AGENT.tool, tool);
+    } else if (!on() && registered !== undefined) {
+      registered.dispose();
+      registered = undefined;
+    }
+  };
+  sync();
+  context.subscriptions.push(
+    commands.registerCommand(AGENT.copyLabel, (row?: Row | string) => copyLabel(live, row)),
+    workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration(`q-lint.${ASSIST_SETTINGS.queryTool.key}`)) {
+        sync();
+      }
+    }),
+    { dispose: () => registered?.dispose() },
+  );
+  return Object.assign((input: AgentInput) => tool.confirm(input), { registered: () => registered !== undefined });
 }

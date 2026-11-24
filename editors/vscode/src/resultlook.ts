@@ -13,6 +13,7 @@
 // runs; the HTML export requires the same file, so a rule colours the same
 // cells in the grid and in the file. The Excel export writes each rule as
 // Excel's own conditional formatting instead, so it stays live in the sheet.
+import type { GridPayload } from "./grid";
 
 /// Where the looks of saved queries are kept: `workspaceState`, by name.
 export const SAVED_LOOKS_KEY = "q-lint.savedQueryLooks";
@@ -101,6 +102,11 @@ export function parseRule(x: unknown): FormatRule | undefined {
   return { column: x.column, op: x.op as RuleOp, value, style };
 }
 
+/// The narrowest and widest a column is kept, and the most columns frozen:
+/// a layout past them is brought to them, not dropped (#1641).
+export const COLUMN_WIDTHS = { min: 24, max: 2000 } as const;
+export const MAX_FROZEN = 50;
+
 /// A layout as stored, or undefined when it is not one.
 export function parseLayout(x: unknown): ColumnLayout | undefined {
   if (!isObject(x)) {
@@ -109,12 +115,12 @@ export function parseLayout(x: unknown): ColumnLayout | undefined {
   const widths: Record<string, number> = {};
   if (isObject(x.widths)) {
     for (const [name, w] of Object.entries(x.widths)) {
-      if (typeof w === "number" && Number.isFinite(w) && w >= 24 && w <= 2000) {
-        widths[name] = Math.round(w);
+      if (typeof w === "number" && Number.isFinite(w)) {
+        widths[name] = Math.round(Math.min(COLUMN_WIDTHS.max, Math.max(COLUMN_WIDTHS.min, w)));
       }
     }
   }
-  const frozen = typeof x.frozen === "number" && Number.isInteger(x.frozen) && x.frozen >= 0 && x.frozen <= 50 ? x.frozen : 0;
+  const frozen = typeof x.frozen === "number" && Number.isInteger(x.frozen) && x.frozen >= 0 ? Math.min(x.frozen, MAX_FROZEN) : 0;
   return { order: strings(x.order), hidden: strings(x.hidden), widths, frozen };
 }
 
@@ -297,6 +303,20 @@ const argb = (hex: string): string => `FF${hex.slice(1).toUpperCase()}`;
 /// Text as an Excel formula's string literal.
 const formulaText = (text: string): string => `"${text.replace(/"/g, '""')}"`;
 
+/// A top or bottom N rule's Nth greatest or least value of column `c` over
+/// every row `payload` holds, ties included, as the grid's rule ranks them;
+/// undefined when the column holds no number.
+export function rankEdge(payload: GridPayload, c: number, rule: FormatRule): number | undefined {
+  const raw = payload.raw[c];
+  const n = Math.floor(Number(rule.value));
+  if (raw === undefined || raw.length !== payload.cells[c]?.length || !(n >= 1)) {
+    return undefined;
+  }
+  const values = raw.filter((x) => x !== null && x !== undefined).map((x) => Number(x)).filter((x) => !Number.isNaN(x));
+  values.sort((a, b) => (rule.op === "top" ? b - a : a - b));
+  return values.length === 0 ? undefined : values[Math.min(n, values.length) - 1];
+}
+
 /// The rules as Excel conditional formatting for a sheet whose columns are
 /// `names` (their letters from `letter`) and whose rows are 2 to
 /// `last`: {dxfs, formatting}, the styles for styles.xml's `<dxfs>` and
@@ -309,7 +329,10 @@ const formulaText = (text: string): string => `"${text.replace(/"/g, '""')}"`;
 /// comparison of numbers on text, `contains` on numbers (the grid reads
 /// their text as shown), a text rule on dates, times and booleans,
 /// which Excel holds as numbers, and one on a general list whose strings
-/// Excel holds without their quotes (#1411), are left out.
+/// Excel holds without their quotes (#1411), are left out. `edge`, when
+/// given, is a top or bottom N rule's Nth value over every row the grid
+/// holds, as the grid ranks them: the rule is written as a comparison with
+/// it, not ranked over only the rows written (#1648).
 export function xlsxRules(
   rules: FormatRule[],
   names: string[],
@@ -317,6 +340,7 @@ export function xlsxRules(
   letter: (i: number) => string,
   last: number,
   text: boolean[] = numeric.map((n) => !n),
+  edge?: (rule: FormatRule, column: number) => number | undefined,
 ): { dxfs: string[]; formatting: string[] } {
   const dxfs: string[] = [];
   const formatting: string[] = [];
@@ -331,18 +355,29 @@ export function xlsxRules(
       priority--;
       return;
     }
+    const col = letter(c);
+    const first = `${col}2`;
+    // The Nth value: an infinity is no number in Excel, which then matches
+    // every number, or none.
+    const nth = (rule.op === "top" || rule.op === "bottom") && edge !== undefined ? edge(rule, c) : undefined;
+    const ranked = (rule.op === "top" || rule.op === "bottom") && edge !== undefined;
+    if (ranked && (nth === undefined || nth === (rule.op === "top" ? Infinity : -Infinity))) {
+      priority--;
+      return;
+    }
     const s = rule.style;
     const font = s.color !== undefined || s.bold ? `<font>${s.bold ? "<b/>" : ""}${s.color !== undefined ? `<color rgb="${argb(PALETTE[s.color])}"/>` : ""}</font>` : "";
     const fill = s.background !== undefined ? `<fill><patternFill patternType="solid"><bgColor rgb="${argb(PALETTE[s.background])}"/></patternFill></fill>` : "";
     const dxf = dxfs.length;
     dxfs.push(`<dxf>${font}${fill}</dxf>`);
-    const col = letter(c);
     const range = `${col}2:${col}${last}`;
-    const first = `${col}2`;
     // A later rule wins in the grid: in Excel, a higher priority (lower number).
     const at = ` dxfId="${dxf}" priority="${priority--}"`;
     let cf: string;
-    if (rule.op === "top" || rule.op === "bottom") {
+    if (ranked && nth !== undefined) {
+      const formula = Number.isFinite(nth) ? `AND(ISNUMBER(${first}),${first}${rule.op === "top" ? ">=" : "<="}${nth})` : `ISNUMBER(${first})`;
+      cf = `<cfRule type="expression"${at}><formula>${xmlAttr(formula)}</formula></cfRule>`;
+    } else if (rule.op === "top" || rule.op === "bottom") {
       cf = `<cfRule type="top10"${at} rank="${Number(rule.value)}"${rule.op === "bottom" ? ' bottom="1"' : ""}/>`;
     } else {
       const want = formulaText(String(rule.value));

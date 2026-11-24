@@ -9,6 +9,7 @@ const Module = require("node:module");
 // The few parts of `vscode` agenttool.ts touches, and the tool it registers.
 let tool;
 let settings = {};
+const configListeners = [];
 const vscode = {
   commands: { registerCommand: () => ({ dispose() {} }) },
   lm: {
@@ -17,7 +18,10 @@ const vscode = {
       return { dispose() {} };
     },
   },
-  workspace: { getConfiguration: () => ({ get: (key, fallback) => settings[key] ?? fallback }) },
+  workspace: {
+    getConfiguration: () => ({ get: (key, fallback) => settings[key] ?? fallback }),
+    onDidChangeConfiguration: (f) => (configListeners.push(f), { dispose() {} }),
+  },
   window: { showInformationMessage() {}, setStatusBarMessage() {} },
   env: { clipboard: { writeText: async () => {} } },
   MarkdownString: class {
@@ -245,4 +249,21 @@ test("a query that would change a read-only process is refused, unasked and unse
   const off = fakeLive({ active: prod });
   const t3 = register(off);
   assert.ok(t3.prepareInvocation({ input }).confirmationMessages);
+});
+
+test("turned off, the tool is unregistered and a call on its way runs nothing (#1624)", async () => {
+  settings = { "agent.queryTool.enable": false };
+  const live = fakeLive({ active: dev });
+  tool = undefined;
+  const handle = registerAgentTool({ subscriptions: [] }, live);
+  assert.strictEqual(tool, undefined);
+  assert.strictEqual(handle.registered(), false);
+  settings = {};
+  configListeners.forEach((f) => f({ affectsConfiguration: (k) => k === "q-lint.agent.queryTool.enable" }));
+  assert.strictEqual(handle.registered(), true);
+  settings = { "agent.queryTool.enable": false };
+  configListeners.forEach((f) => f({ affectsConfiguration: (k) => k === "q-lint.agent.queryTool.enable" }));
+  assert.strictEqual(handle.registered(), false);
+  assert.match((await tool.run({ query: "1+1" }, token())).error, /Run q Query agent tool is turned off\. Set q-lint\.agent\.queryTool\.enable to true/);
+  assert.deepStrictEqual(live.ran, []);
 });

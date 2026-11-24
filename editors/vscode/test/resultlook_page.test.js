@@ -243,3 +243,108 @@ test("Send to... sends the rows shown to the extension, while on (#1021)", () =>
   page.send(result("s.2", [["x", 9, ["1"]]], { features: { sendResult: false } }));
   assert.strictEqual(page.button("Send to..."), undefined);
 });
+
+test("a hidden column's filter and sort are not in force, and are again once it is shown (#1633)", () => {
+  const page = loadPage(undefined);
+  const cols = [["sym", 11, ["b", "a", "c"]], ["px", 9, ["1", "2", "3"]]];
+  page.send(result("s.1", cols));
+  page.headers()[0].fire("click");
+  const input = page.body.all((e) => e.tagName === "INPUT")[0];
+  input.value = "a";
+  input.fire("input");
+  assert.strictEqual(page.rendered().rows, 1);
+  page.send(result("s.1", cols, { look: { layout: { order: [], hidden: ["sym"], widths: {}, frozen: 0 } } }));
+  assert.deepStrictEqual(page.headers().map((h) => h.textContent), ["px"]);
+  assert.strictEqual(page.rendered().rows, 3, "no box is left to see the filter by");
+  assert.deepStrictEqual(page.rows().map((tr) => tr.children[0].textContent), ["1", "2", "3"], "nor the sort");
+  page.button("1 hidden").fire("click");
+  assert.strictEqual(page.rendered().rows, 1);
+});
+
+test("a new run whose columns are all in the kept hidden list draws them, and offers no hidden ones to show (#1652)", () => {
+  const page = loadPage(undefined);
+  const lay = { order: [], hidden: ["a"], widths: {}, frozen: 0 };
+  page.send(result("s.1", [["a", 7, ["1"]], ["b", 7, ["2"]]], { look: { layout: lay } }));
+  assert.deepStrictEqual(page.headers().map((h) => h.textContent), ["b"]);
+  page.send(result("s.2", [["a", 7, ["1", "2"]]], { look: { layout: lay } }));
+  assert.deepStrictEqual(page.headers().map((h) => h.textContent), ["a"]);
+  assert.strictEqual(page.rows()[0].children.length, 1);
+  assert.strictEqual(page.button("1 hidden"), undefined);
+});
+
+test("going back to a result's tab restores its own filter, not one typed on another run of the same columns (#1637)", () => {
+  const page = loadPage(undefined);
+  const hist = (ids) => ids.map((id) => ({ id, process: "p", code: "q", at: 0, rows: 3 }));
+  const cols = [["sym", 11, ["apple", "banana", "cherry"]], ["px", 9, ["1", "2", "3"]]];
+  const filter = (text) => {
+    const box = page.body.all((e) => e.tagName === "INPUT")[0];
+    box.value = text;
+    box.fire("input");
+  };
+  page.send(result("s.1", cols, { history: hist(["s.1"]) }));
+  filter("apple");
+  page.send(result("s.2", cols, { history: hist(["s.1", "s.2"]) }));
+  filter("an");
+  page.send(result("s.1", cols, { history: hist(["s.1", "s.2"]) }));
+  assert.strictEqual(page.body.all((e) => e.tagName === "INPUT")[0].value, "apple");
+  assert.strictEqual(page.rendered().rows, 1);
+  page.send(result("s.2", cols, { history: hist(["s.1", "s.2"]) }));
+  assert.strictEqual(page.body.all((e) => e.tagName === "INPUT")[0].value, "an");
+});
+
+test("a result chosen from the tabs is drawn with its own chart kind and bins, not the last tab's (#1638)", () => {
+  const page = loadPage(undefined, { Chart: FakeChart });
+  const hist = (ids) => ids.map((id) => ({ id, process: "p", code: id, at: 0, rows: 3 }));
+  const colsA = [["x", 9, ["1", "2", "3"]], ["y", 9, ["4", "5", "6"]]];
+  const colsB = [["a", 9, ["1", "2", "3"]], ["b", 9, ["4", "5", "6"]]];
+  page.send(result("s.1", colsA, { view: "chart", history: hist(["s.1"]) }));
+  const kind = page.body.all((e) => e.tagName === "SELECT")[0];
+  kind.value = "histogram";
+  kind.fire("change");
+  const bins = page.body.all((e) => e.tagName === "INPUT" && e.type === "number")[0];
+  bins.value = "7";
+  bins.fire("change");
+  page.send(result("s.2", colsB, { view: "chart", history: hist(["s.1", "s.2"]) }));
+  const other = page.body.all((e) => e.tagName === "SELECT")[0];
+  other.value = "bar";
+  other.fire("change");
+  assert.strictEqual(page.rendered().chart.kind, "bar");
+  page.send(result("s.1", colsA, { view: "chart", history: hist(["s.1", "s.2"]) }));
+  assert.strictEqual(page.rendered().chart.kind, "histogram");
+  assert.strictEqual(page.state.bins, 7);
+});
+
+test("a 'contains' rule on a formatted column matches the text the cell shows, as the filter does (#1646)", () => {
+  const page = loadPage(undefined);
+  const look = { rules: [{ column: "ret_PCT", op: "contains", value: "1.23%", style: { bold: true } }] };
+  page.send(result("s.1", [["ret_PCT", 9, ["0.0123", "0.5"]]], { look }));
+  assert.strictEqual(page.rows()[0].children[0].textContent, "1.23%");
+  assert.strictEqual(page.rows()[0].children[0].style.fontWeight, "bold");
+  assert.strictEqual(page.rows()[1].children[0].style.fontWeight, undefined);
+});
+
+test("a *_BAR column toggled to text draws no bar (#1651)", () => {
+  const page = loadPage(undefined);
+  const cols = [["px_BAR", 9, ["1", "5"]]];
+  page.send(result("s.1", cols));
+  assert.strictEqual(page.rendered().dressed.bars, 2);
+  page.send(result("s.1", cols, { look: { cellCharts: { px_BAR: "text" } } }));
+  assert.strictEqual(page.rendered().dressed.bars, 0);
+});
+
+test("a row colour column fills the cells another colour column paints too, under their own colour (#1653)", () => {
+  const page = loadPage(undefined);
+  page.send(result("s.1", [["px", 9, ["1"]], ["px_FG", 11, ["red"]], ["status_BG", 11, ["yellow"]], ["qty", 9, ["2"]]]));
+  const [px, fg, , qty] = page.rows()[0].children;
+  assert.deepStrictEqual([px.style.backgroundColor, px.style.color], ["yellow", "red"]);
+  assert.deepStrictEqual([fg.style.backgroundColor, fg.style.color], ["yellow", "red"]);
+  assert.strictEqual(qty.style.backgroundColor, "yellow");
+});
+
+test("a formatted column's auto width fits the text its cells show, not q's (#1655)", () => {
+  const page = loadPage(undefined);
+  page.send(result("s.1", [["n_CCY", 9, ["-9876543.25"]], ["r_BPS", 9, ["1"]]]));
+  const widths = page.body.all((e) => e.tagName === "COL").map((c) => c.style.width);
+  // -9,876,543.25 is 13 characters, 10000.0 bp 10: each and its padding.
+  assert.deepStrictEqual(widths, ["15ch", "12ch"]);
+});

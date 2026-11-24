@@ -50,12 +50,21 @@ export const RERUN_FAILED = "q-lint.rerunFailedTests";
 export type TestMode = "test" | "true" | "fail" | "run" | "match";
 
 /// One test the language server lists: its name as written, where, the code
-/// that defines it under its `\d`, and the call that runs it.
+/// that defines it under its `\d`, the call that runs it, and the name q
+/// defines it by (`.a.test_x`).
 export interface ServerTest {
   name: string;
   range: { start: { line: number; character: number }; end: { line: number; character: number } };
   code: string;
   call: string;
+  qualified?: string;
+}
+
+/// A function test's Test Explorer id: its file's URI, `#`, and the name q
+/// defines it by, so that two of one name under two `\d`s are two tests
+/// (#1592) - the name as written from a server that does not say.
+export function functionTestId(uri: string, test: { name: string; qualified?: string }): string {
+  return `${uri}#${test.qualified ?? test.name}`;
 }
 
 export interface ServerTestFile {
@@ -89,7 +98,10 @@ export function readServerTests(raw: unknown): ServerTestFile[] {
         position((t.range as { end?: unknown } | undefined)?.end),
     );
     if (tests.length > 0) {
-      files.push({ uri: file.uri, tests: tests.map(({ name, range, code, call }) => ({ name, range, code, call })) });
+      files.push({
+        uri: file.uri,
+        tests: tests.map(({ name, range, code, call, qualified }) => ({ name, range, code, call, ...(typeof qualified === "string" ? { qualified } : {}) })),
+      });
     }
   }
   return files;
@@ -209,13 +221,14 @@ const TERM = new RegExp(
 // --- k4unit
 
 /// One row of a k4unit suite: what to do (`before`, `after`, `true`,
-/// `fail`, `run`, ...), the language (`q` or `k`), the code, and the line it
-/// is on, from 0.
+/// `fail`, `run`, ...), the language (`q` or `k`), the code, the line it
+/// is on, from 0, and the least `.z.K` it is run on (0: any).
 export interface K4Row {
   action: string;
   lang: string;
   code: string;
   line: number;
+  minver: number;
 }
 
 /// The fields of each CSV record in `text`, with the line each starts on: a
@@ -283,7 +296,7 @@ export function parseK4unit(text: string): K4Row[] | undefined {
   const records = csv(text);
   const header = records[0]?.fields.map((f) => f.trim().toLowerCase());
   const at = (name: string) => header?.indexOf(name) ?? -1;
-  const [action, lang, code] = [at("action"), at("lang"), at("code")];
+  const [action, lang, code, minver] = [at("action"), at("lang"), at("code"), at("minver")];
   if (action !== 0 || lang < 0 || code < 0 || at("ms") < 0) {
     return undefined;
   }
@@ -294,8 +307,17 @@ export function parseK4unit(text: string): K4Row[] | undefined {
       lang: (fields[lang] ?? "").trim().toLowerCase() || "q",
       code: fields[code] ?? "",
       line,
+      minver: Number.parseFloat(minver < 0 ? "" : (fields[minver] ?? "")) || 0,
     }))
     .filter((row) => row.action !== "" && row.code.trim() !== "" && !row.action.startsWith("comment"));
+}
+
+/// Whether `start`, the first line of a CSV or more, is a k4unit header:
+/// read before the whole file, so that a workspace's data CSVs are not read
+/// in full to be turned down (#1606).
+export function isK4unitHeader(start: string): boolean {
+  const end = start.search(/\r?\n/);
+  return parseK4unit(end < 0 ? start : start.slice(0, end)) !== undefined;
 }
 
 /// Whether a row is a test of its own: the others set up and tear down.
@@ -311,6 +333,20 @@ export function k4Mode(row: K4Row): TestMode {
 /// The statement a row sends: k code through `k)`.
 export function k4Statement(row: K4Row): string {
   return row.lang === "k" ? `k)${row.code}` : row.code;
+}
+
+/// Each test row's part of its Test Explorer id: its action and code, and
+/// for a second row of both, which one - not its line, so that a row
+/// inserted above keeps Re-run Failed and VS Code's history on the row
+/// that failed (#1595).
+export function k4Keys(rows: K4Row[]): string[] {
+  const seen = new Map<string, number>();
+  return rows.map((row) => {
+    const key = `${row.action}:${row.code.trim()}`;
+    const n = (seen.get(key) ?? 0) + 1;
+    seen.set(key, n);
+    return n === 1 ? key : `${key}#${n}`;
+  });
 }
 
 /// What a test's label is: a k4unit row is its code, cut to one line of 80

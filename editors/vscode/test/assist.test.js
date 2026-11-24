@@ -5,6 +5,8 @@ const test = require("node:test");
 const assert = require("node:assert");
 const {
   namesIn,
+  codeOffset,
+  cut,
   readDescribed,
   tablesOf,
   schemaOf,
@@ -114,7 +116,28 @@ test("the qSQL prompt names the tables, and the draft round-trips", () => {
   assert.strictEqual(extractCode("Here:\n```q\nselect last px by sym from trade\n```\nDone."), "select last px by sym from trade");
   assert.strictEqual(extractCode("select from t"), "select from t");
   assert.strictEqual(extractCode("```\nexec 1 from t\n```"), "exec 1 from t");
+  // #1627: a one-line block, and backticks inside the code.
+  assert.strictEqual(extractCode("```q select from trade```"), "select from trade");
+  assert.strictEqual(extractCode("```select from trade```"), "select from trade");
+  assert.strictEqual(extractCode("```q\nselect from t where sym in ```a\n```"), "select from t where sym in ```a");
+  assert.strictEqual(extractCode("```q\nselect from t where sym in ```a`b\n```\nThat filters."), "select from t where sym in ```a`b");
   const doc = draftDocument("last px\nby sym", "Fake", "select last px by sym from trade");
   assert.match(doc, /^\/ Drafted by Fake from: last px by sym\n\/ Review it: nothing has run\./);
   assert.strictEqual(draftCode(doc), "select last px by sym from trade");
+});
+
+test("codeOffset finds a name written as code, past a comment or string (#1631)", () => {
+  for (const [text, at] of [["/ uses vwap\nvwap[t]", 12], ['"vwap";vwap 1', 7], ["vwap", 0], ['"vwap"', -1], ["avwap", -1]]) {
+    assert.strictEqual(codeOffset(text, charKinds(text), "vwap"), at, text);
+  }
+  assert.strictEqual(codeOffset("x.f;.ns.f 1", charKinds("x.f;.ns.f 1"), ".ns.f"), 4);
+});
+
+test("a prompt's cut never splits a surrogate pair (#1622)", () => {
+  const text = "a".repeat(3999) + "\u{1F600} tail";
+  const out = cut(text);
+  assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(out), JSON.stringify(out.slice(3990, 4010)));
+  assert.match(out, /^a{3999}\n\.\.\. \(7 more characters\)$/);
+  assert.strictEqual(cut("abc"), "abc");
+  assert.ok(explainPrompt({ expression: text, hovers: [], diagnostics: [], described: [] }, "").isWellFormed?.() ?? true);
 });
