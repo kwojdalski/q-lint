@@ -79,6 +79,25 @@ test("each step is written as q over the step before, and the steps as a script 
   assert.strictEqual(w.stringColumn(payload(), 0), false);
 });
 
+// `b="xy"` compares character by character - 'length against a string of
+// any other length - and `null b` asks each character, 'type in a where.
+test("a filter on a column of strings matches the whole string, and offers no ordering (#2014)", () => {
+  const f = (op, value) => w.stepCode({ kind: "filter", column: "b", op, value, strings: true }, "t");
+  assert.strictEqual(f("=", '"xy"'), 'select from t where b~\\:"xy"');
+  assert.strictEqual(f("<>", '"xy"'), 'select from t where not b~\\:"xy"');
+  assert.strictEqual(f("null", ""), "select from t where 0=count each b");
+  assert.strictEqual(f("not null", ""), "select from t where 0<count each b");
+  assert.strictEqual(f("like", '"x*"'), 'select from t where b like "x*"');
+  assert.strictEqual(f("in", '("yy";"xy")'), 'select from t where b in ("yy";"xy")');
+  // A one-character string is the list the grid shows it as, and a comma is kept in one test (#1412).
+  assert.strictEqual(f("=", ',"x"'), 'select from t where b~\\:enlist "x"');
+  assert.strictEqual(f("=", '"x","y"'), 'select from t where b~\\:("x","y")');
+  assert.deepStrictEqual(w.filterOps(true), ["=", "<>", "like", "in", "null", "not null"]);
+  assert.deepStrictEqual(w.filterOps(false), [...w.FILTER_OPS]);
+  // Any other column is filtered as it was.
+  assert.strictEqual(w.stepCode({ kind: "filter", column: "b", op: "=", value: "1", strings: false }, "t"), "select from t where b=1");
+});
+
 test("a cell edit is an update of the table, its rows found by the row's values, null-safe; enumerations by = (#964)", () => {
   const edit = w.editStatement(payload(), 1, 1, "t", "9.5");
   assert.deepStrictEqual(edit, {

@@ -18,6 +18,7 @@ const { readDefinitions, byNamespace, registerNamespaces, DEFINITIONS } = requir
 const { affectedIds, registerAffectedOnSave, TESTS_REACHING } = require("../out/affectedonsave.js");
 const { sqlQuery, sqlText, sqlWrites, readSchema, sqlCompletions } = require("../out/sql.js");
 const { registerSql } = require("../out/sqlview.js");
+const { statements } = require("../out/statements.js");
 const { launch } = require("../out/settings.js");
 
 const props = Object.assign({}, ...pkg.contributes.configuration.map((c) => c.properties));
@@ -118,6 +119,29 @@ test("Explain qSQL finds where the query starts", () => {
   assert.strictEqual(leadBefore(s, s.length), 0);
   const c = "exec price from trade / then delete it";
   assert.strictEqual(leadBefore(c, c.length), 0);
+});
+
+// q loads `r:select a`, `  from t`, a blank or a `/ note` line, `  where b>1`
+// as one statement (languagetools_q.test.js holds that): the walk back to
+// the statement's start stopped at the blank or the comment line.
+test("Explain qSQL finds the query through a blank or a comment line inside it (#2015)", () => {
+  const at = (text, marker) => leadBefore(text, text.indexOf(marker));
+  assert.strictEqual(at("r:select a\n  from t\n  where b>1\n", "where"), 2);
+  assert.strictEqual(at("r:select a\n  from t\n\n  where b>1\n", "where"), 2);
+  assert.strictEqual(at("r:select a\n  from t\n/ only rows of today\n  where b>1\n", "where"), 2);
+  assert.strictEqual(at("r:select a\r\n  from t\r\n\r\n  where b>1\r\n", "where"), 2);
+  assert.strictEqual(at("r:select a\n  from t\n \t\n/ one\n\n/ two\n  where b>1\n", "where"), 2);
+  // A block comment inside it, whatever its lines start with.
+  assert.strictEqual(at("a:1\nr:select a\n  from t\n/\nb:2 delete\n\\\n  where b>1\n", "where"), 6);
+  assert.strictEqual(at("f:{[d]\n  x:1;\n\n  select from t where date=d}\n", "where"), 17);
+  // The statement above ends where an unindented line starts another.
+  assert.strictEqual(at("r:select a from t\n\nb:2\n\n  +1\n", "+1"), undefined);
+  assert.strictEqual(at("r:select a from t\n/ note\nb:2\n", "b:2"), undefined);
+  // On a comment line, or in a block comment, the cursor is in no query.
+  assert.strictEqual(at("r:select a\n/ select b\n  from t\n", "select b"), undefined);
+  assert.strictEqual(at("/\nselect a from t\n\\\nb:2\n", "from"), undefined);
+  // After `\\` alone q reads nothing.
+  assert.strictEqual(at("a:1\n\\\nselect a from t\n", "from"), undefined);
 });
 
 test("a q error is explained from the catalogue, with the operation that failed", () => {
@@ -686,6 +710,27 @@ test("overlapping reads of the q Namespaces view keep the latest, whichever answ
   }
 });
 
+test("quoted SQL text that spans lines is sent as typed; only what is outside it is joined and trimmed (#2009)", () => {
+  // The row holding "a\n   b" is asked for, not the one holding "a b".
+  assert.strictEqual(sqlText("select n from m\n  where s = 'a\n   b';  \n\n"), "select n from m where s = 'a\n   b'");
+  assert.strictEqual(sqlText("select n -- c\n  from m where s = '  a  \r\n\n\t b  ' -- d\n  and n > 0;"), "select n from m where s = '  a  \r\n\n\t b  ' and n > 0");
+  assert.strictEqual(sqlText('select "a\n  b" from\n  m'), 'select "a\n  b" from m');
+  // A `;` or a blank that ends the text inside a quote left open is text.
+  assert.strictEqual(sqlText("  select 'a;\n "), "select 'a;\n ");
+  // A doubled quote, and a quote within the other kind, close nothing.
+  assert.strictEqual(sqlText("select 'it''s\n  so', \"x'\n y\"\n  from t"), "select 'it''s\n  so', \"x'\n y\" from t");
+  // Outside quoted text, as before: each line trimmed, the empty ones dropped, the last `;` too.
+  assert.strictEqual(sqlText("\n  select 1 ;  \n\n ;\n"), "select 1 ; ");
+  assert.strictEqual(sqlText("select  a,\tb\n\n\n   from t /* x\n   y */ ;"), "select  a,\tb from t /* x y */ ");
+  assert.strictEqual(sqlText(" \n "), "");
+  // The q string stays on one line: a statement of ours is cut by lines.
+  assert.strictEqual(sqlQuery("select n from m\nwhere s = 'a\r\n   b'"), `.s.e "select n from m where s = 'a\\r\\n   b'"`);
+  assert.deepStrictEqual(statements(sqlQuery("select n from m\nwhere s = 'a\n   b'")), [`.s.e "select n from m where s = 'a\\n   b'"`]);
+  // The write check reads the text sent: a write on a later line of what only looks quoted is seen.
+  assert.deepStrictEqual(sqlWrites(sqlText("select a.-\n' ;\n insert into t values (1) '")), ["INSERT"]);
+  assert.deepStrictEqual(sqlWrites(sqlText("select 'a\n; insert into t values (1)\n' from t")), []);
+});
+
 test("SQL is sent to .s.e with its comments dropped, and a write is recognised", () => {
   assert.strictEqual(sqlQuery("select sym, px -- the price\nfrom t\nwhere px > 1;"), '.s.e "select sym, px from t where px > 1"');
   assert.strictEqual(sqlQuery("select 'a--b' as s from t"), `.s.e "select 'a--b' as s from t"`);
@@ -716,7 +761,7 @@ test("SQL is sent to .s.e with its comments dropped, and a write is recognised",
   // Quoted text runs across lines, so the `--` in this one is text and stays;
   // #1408's own example is no write as typed or as sent (checked on KDB-X 5).
   const quoted = "select 'a\n--'\n' as c from t; insert into t values (1) -- '";
-  assert.strictEqual(sqlText(quoted), "select 'a --' ' as c from t; insert into t values (1) -- '");
+  assert.strictEqual(sqlText(quoted), "select 'a\n--' ' as c from t; insert into t values (1) -- '");
   assert.deepStrictEqual(sqlWrites(sqlText(quoted)), []);
   // A `--` inside a block comment is part of it, on one line or several, and
   // a quote inside one opens nothing (#1956).
@@ -885,6 +930,106 @@ test("a SQL write to a discovered or shared process is guarded, and refused when
     assert.match(stub.messages.at(-1)[1], /no q process is labelled "gone\/rdb"/);
     assert.strictEqual(asked.length, 2);
     assert.deepStrictEqual(sent, []);
+  } finally {
+    restore();
+  }
+});
+
+// #2006: the engine runs q text handed to `qt(...)` and `q(...)`, so a
+// SELECT calling either can do anything q can.
+test("a call of the engine's q-running functions is a write, however the name is written (#2006)", () => {
+  const set = "'`gz set 99; m'";
+  const ran = (sql) => sqlWrites(sqlText(sql));
+  for (const sql of [
+    `select * from qt(${set})`,
+    `select * from QT(${set})`,
+    `select * from Qt (${set})`,
+    `select * from qt\t\n (${set})`,
+    `select * from qt/* c */(${set})`,
+    `select * from qt -- c\n(${set})`,
+    `select * from qt\f(${set})`,
+    `select * from qt\\(${set})`,
+    `select * from m, qt(${set})`,
+    `select*from(qt(${set}))`,
+    `with z as (select * from qt(${set})) select 1`,
+    `select 1; select * from qt(${set})`,
+    `select * from "qt"(${set})`,
+    `select * from "QT" (${set})`,
+    `select * from " qt\t"/* c */(${set})`,
+  ]) {
+    assert.deepStrictEqual(ran(sql), ["QT()"], JSON.stringify(sql));
+  }
+  for (const sql of [
+    `select q('j', ${set})`,
+    `select Q ('j', ${set}) from m`,
+    `select -q('j', ${set})`,
+    `select 1+q('j', ${set})`,
+    `select 1q('j', ${set})`,
+    `select * from m where a in (q('J', ${set}))`,
+    `select 1 from m order by q/* c */('j', ${set})`,
+    // The q text need not be a literal: a column's, or a cast's.
+    "select q('j', 'value', c) from st",
+    `select q('j', cast(${set} as text))`,
+    `select "q"('j', ${set})`,
+    `select " Q "('j', ${set})`,
+    `select 1 where 'a'="q"('C', ${set})`,
+    // Not calls the engine makes, and asked about all the same.
+    `select m.q('j', ${set})`,
+    `select 'q'('j', ${set})`,
+  ]) {
+    assert.deepStrictEqual(ran(sql), ["Q()"], JSON.stringify(sql));
+  }
+  assert.deepStrictEqual(ran(`insert into t select * from qt(${set}) where q('b', '1b')`), ["INSERT", "QT()", "Q()"]);
+  // A name that only holds one, a column of that name, and the same in
+  // quoted text or a comment: no call.
+  for (const sql of [
+    "select q, qt from t",
+    "select qt.a from qt where q in (1, 2)",
+    "select qty(a), freq(a), _q(a), q_(a), q1(a) from t",
+    "select 'qt(' from t",
+    "select \"qty\"(a), \"q\" from t",
+    "select 1 /* qt('x') */ from t",
+    "select 1 -- q('j', 'x')\nfrom t",
+  ]) {
+    assert.deepStrictEqual(ran(sql), [], JSON.stringify(sql));
+  }
+});
+
+test("SQL that runs q on a guarded process is held until confirmed (#2006)", async () => {
+  const { context, restore } = setUp();
+  vscode.languages.registerCompletionItemProvider = () => ({ dispose() {} });
+  try {
+    const sent = [];
+    const asked = [];
+    const process = { label: "prod1", tags: ["prod"] };
+    let allow = false;
+    const live = {
+      activeLabel: () => undefined,
+      fileBinding: () => "prod1",
+      processes: () => [process],
+      guardAllows: async (code, targets, what) => (asked.push([code, targets[0].label, what]), allow),
+      queryCode: async (c) => void sent.push(c),
+    };
+    registerSql(context, live);
+    const sql = "select * from qt('`gz set 99; m')";
+    vscode.window.activeTextEditor = { document: { languageId: "sql", uri: { toString: () => "untitled:6" }, getText: () => sql }, selection: { isEmpty: true } };
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.runSql)(), undefined);
+    assert.deepStrictEqual(asked, [["`t insert ()", "prod1", "This SQL statement (QT())"]]);
+    assert.deepStrictEqual(sent, []);
+    vscode.window.activeTextEditor.document.getText = () => "select \"q\" /* c */ ('j', '`gz set 99; 1')";
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.runSql)(), undefined);
+    assert.deepStrictEqual(asked[1], ["`t insert ()", "prod1", "This SQL statement (Q())"]);
+    assert.deepStrictEqual(sent, []);
+    // Confirmed, it is sent as typed.
+    allow = true;
+    vscode.window.activeTextEditor.document.getText = () => sql;
+    await stub.commands.get(LANGUAGE_COMMANDS.runSql)();
+    assert.deepStrictEqual(sent, [sqlQuery(sql, true)]);
+    // With no process to ask about, it is refused.
+    live.fileBinding = () => undefined;
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.runSql)(), undefined);
+    assert.match(stub.messages.at(-1)[1], /before running SQL that changes data \(QT\(\)\)/);
+    assert.strictEqual(sent.length, 1);
   } finally {
     restore();
   }

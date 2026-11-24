@@ -10,6 +10,7 @@ import { CodeActionKind, MarkdownString, Range, commands, window, workspace, typ
 import { LANGUAGE_COMMANDS, languageOff, languageOn, type LanguageFeature } from "./languagefeatures";
 import { charKinds } from "./explorer";
 import { plainMessage } from "./history";
+import { blockAt, blockDepth } from "./statements";
 
 /// The server's titles for its two rewrites (`src/lsp.rs`).
 export const REWRITE_TITLES = {
@@ -57,18 +58,27 @@ async function rewrite(direction: keyof typeof REWRITE_TITLES): Promise<boolean>
 /// string or a comment is no lead (#1466). Undefined when the statement
 /// holds none.
 export function leadBefore(text: string, offset: number): number | undefined {
-  // The statement: back to a line that starts at column 0.
-  let start = text.lastIndexOf("\n", Math.max(0, offset - 1)) + 1;
-  while (start > 0 && /^[ \t]/.test(text.slice(start))) {
-    // At 1 the previous line is the empty one at 0: lastIndexOf would
-    // clamp start - 2 to 0 and find the same newline again.
-    start = start <= 1 ? 0 : text.lastIndexOf("\n", start - 2) + 1;
+  // The statement, as q cuts a script into them: back to the line that
+  // starts it, past the blank and comment lines inside it (#2015).
+  const lines = text.split("\n");
+  const block = blockAt(lines, text.slice(0, offset).split("\n").length - 1);
+  if (block === undefined) {
+    return undefined;
   }
+  const start = lines.slice(0, block.start).reduce((n, l) => n + l.length + 1, 0);
   const end = Math.min(text.length, offset + 8);
   const lead = /(?<![A-Za-z0-9_.`])(select|exec|update|delete)(?![A-Za-z0-9_])|[?!](?=\[)/g;
-  const kinds = charKinds(text.slice(start, end));
+  // A block comment inside the statement is read as blanks: it holds no lead.
+  let depth = 0;
+  const read = lines.slice(block.start).map((l) => {
+    const inside = depth > 0 || l.trimEnd() === "/";
+    depth = blockDepth(depth, l.trimEnd());
+    return inside ? " ".repeat(l.length) : l;
+  });
+  const code = read.join("\n").slice(0, end - start);
+  const kinds = charKinds(code);
   let found: number | undefined;
-  for (const m of text.slice(start, end).matchAll(lead)) {
+  for (const m of code.matchAll(lead)) {
     if (start + (m.index ?? 0) <= offset && kinds[m.index ?? 0] === "c") {
       found = start + (m.index ?? 0);
     }

@@ -65,3 +65,35 @@ test("a file cut inside a UTF-8 character ends at the character before it (#1930
   const big = await head(Buffer.concat([Buffer.alloc(FILE_LIMIT - 1, 0x61), text("é and more")]), FILE_LIMIT);
   assert.deepStrictEqual([big.size, big.shown, big.cut, big.text.length, big.text.slice(-2)], [FILE_LIMIT + 10, FILE_LIMIT - 1, true, FILE_LIMIT - 1, "aa"]);
 });
+
+// q's cast to a symbol trims the blanks at both ends of a text, and so
+// does ` sv of symbols: the path asked about was another one, so the file
+// was listed as a folder, and neither it nor a folder so named opened.
+test("a file or a folder whose name ends in a blank is listed and read as what it is (#2011)", { skip }, async (t) => {
+  const { connection, dir } = await connect(t, "a:1\n", { "trail ": "x", plain: "n" });
+  fs.mkdirSync(path.join(dir, "dir ", "sub"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "dir ", "in "), "yy");
+  fs.writeFileSync(path.join(dir, "dir ", "sub", "deep"), "zzz");
+  fs.mkdirSync(path.join(dir, " lead"));
+  fs.writeFileSync(path.join(dir, " lead", " f "), "q");
+  const list = async (...names) => readListing(await connection.call(LIST_DIRECTORY, path.join(dir, ...names), 1000)).entries.filter((e) => e.name !== "server.q");
+  const read = async (...names) => readFileHead(await connection.call(READ_FILE, path.join(dir, ...names), 100)).text;
+  assert.deepStrictEqual(await list(), [
+    { name: " lead", file: false, size: -1 },
+    { name: "dir ", file: false, size: -1 },
+    { name: "plain", file: true, size: 1 },
+    { name: "trail ", file: true, size: 1 },
+  ]);
+  assert.deepStrictEqual([await read("trail "), await read("plain")], ["x", "n"]);
+  // The folder, with and without the `/` a path may end in, and what is under it.
+  const inside = [{ name: "in ", file: true, size: 2 }, { name: "sub", file: false, size: -1 }];
+  assert.deepStrictEqual([await list("dir "), readListing(await connection.call(LIST_DIRECTORY, `${path.join(dir, "dir ")}/`, 1000)).entries], [inside, inside]);
+  assert.deepStrictEqual([await read("dir ", "in "), await read("dir ", "sub", "deep"), await list("dir ", "sub")], ["yy", "zzz", [{ name: "deep", file: true, size: 3 }]]);
+  assert.deepStrictEqual([await list(" lead"), await read(" lead", " f ")], [[{ name: " f ", file: true, size: 1 }], "q"]);
+  // The name without its blank is another path, and is not there.
+  await assert.rejects(connection.call(READ_FILE, path.join(dir, "trail"), 100), /not a file/);
+  await assert.rejects(connection.call(LIST_DIRECTORY, path.join(dir, "dir"), 10), /no such directory/);
+  // Nothing was written or assigned: no file was made of a name read wrongly.
+  assert.deepStrictEqual(fs.readdirSync(dir).sort(), [" lead", "dir ", "plain", "server.q", "trail "]);
+  assert.deepStrictEqual(await connection.call("{[x] key `.}", 0), ["a"]);
+});

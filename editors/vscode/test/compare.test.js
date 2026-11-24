@@ -129,6 +129,26 @@ test("a column of another type is not the same answer, and the page says which (
   assert.strictEqual(page.posted.at(-1).rendered.summary, "px is float (f) on prod and long (j) on uat (rows lined up by place).");
 });
 
+test("tables that are not keyed by the same columns are not the same answer, and the page says how each is keyed (#2008)", () => {
+  // ([k:1 2] v:10 20) and ([] k:1 2; v:10 20): the same cells, and not the same value.
+  const t = (keys) => table({ k: [7, ["1", "2"], [1, 2]], j: [7, ["3", "4"], [3, 4]], v: [7, ["10", "20"], [10, 20]] }, keys);
+  const c = compareOutcomes(side("prod", t(1)), side("uat", t(0)), -1);
+  assert.deepStrictEqual([c.same, c.differing, c.onlyLeft, c.onlyRight, c.matchedBy, c.rekeyed], [false, 0, 0, 0, "place", { left: ["k"], right: [] }]);
+  const page = loadPage();
+  page.send({ type: "compare", id: 1, code: "t", comparison: c });
+  assert.strictEqual(page.posted.at(-1).rendered.summary, "the table is keyed by k on prod and not keyed on uat (rows lined up by place).");
+  const two = compareOutcomes(side("prod", t(2)), side("uat", t(1)), -1);
+  assert.deepStrictEqual([two.same, two.rekeyed], [false, { left: ["k", "j"], right: ["k"] }]);
+  page.send({ type: "compare", id: 2, code: "t", comparison: two });
+  assert.strictEqual(page.posted.at(-1).rendered.summary, "the table is keyed by k, j on prod and by k on uat (rows lined up by place).");
+  // Keyed alike, or neither keyed: nothing to say.
+  assert.deepStrictEqual([0, 1, 2, 3].map((k) => [compareOutcomes(side("a", t(k)), side("b", t(k)), -1).same, compareOutcomes(side("a", t(k)), side("b", t(k)), -1).rekeyed]), [[true, undefined], [true, undefined], [true, undefined], [true, undefined]]);
+  // Beside a cell that differs.
+  const other = table({ k: [7, ["1", "2"], [1, 2]], j: [7, ["3", "4"], [3, 4]], v: [7, ["10", "21"], [10, 21]] }, 0);
+  page.send({ type: "compare", id: 3, code: "t", comparison: compareOutcomes(side("prod", t(1)), side("uat", other), -1) });
+  assert.strictEqual(page.posted.at(-1).rendered.summary, "1 cell differs, the table is keyed by k on prod and not keyed on uat (rows lined up by place).");
+});
+
 test("what was compared only as far as it is shown is not called the same (#1963)", () => {
   // A cell cut at 200 characters: the rest was never sent.
   const long = `"${"a".repeat(196)}...`;
@@ -147,6 +167,35 @@ test("what was compared only as far as it is shown is not called the same (#1963
   // A long's text is the long, and differing text is not the same to any digits.
   assert.deepStrictEqual([compareOutcomes(side("a", atom(-7, "100")), side("b", atom(-7, "100")), -1).digits, compareOutcomes(side("a", atom(-9, "1")), side("b", atom(-9, "2")), -1).digits], [false, false]);
   assert.strictEqual(compareOutcomes(side("a", atom(-9, "1")), { process: "b", error: "down" }, -1).digits, false);
+});
+
+test("a text that only ends in .. is whole: a cut is told by how long it left the text (#2010)", () => {
+  const twice = (answer, width) => {
+    const c = compareOutcomes(side("a", answer), side("b", answer), -1, width);
+    return [c.same, c.partial, c.cut];
+  };
+  const text = (type, ...lines) => ({ ok: true, type, text: lines });
+  // `:../.. and `$"a..", at a console 160 wide: each is all of its value.
+  assert.deepStrictEqual([twice(text(-11, "`:../.."), 160), twice(text(-11, "`a.."), 160)], [[true, false, 0], [true, false, 0]]);
+  // -3! stops one short of the process's \c, which is never under 10: 9 characters may be a cut.
+  assert.deepStrictEqual([twice(text(-11, "`aaaaa.."), 160), twice(text(-11, "`aaaaaa.."), 160)], [[true, false, 0], [false, true, 0]]);
+  assert.deepStrictEqual(twice(text(-11, `\`${"a".repeat(76)}..`), 160), [false, true, 0]);
+  // .Q.S cuts a line at the console's width, whichever line it is; a function's line is cut nowhere else.
+  const fn = (line) => text(100, "{[a]", line, " a}");
+  assert.deepStrictEqual([twice(fn(" a / and more.."), 40), twice(fn(" a / and more.."), 15), twice(fn(" a.."), 4)], [[true, false, 0], [false, true, 0], [false, true, 0]]);
+  // At a width of 1 it leaves a line's last character, then the two dots.
+  assert.deepStrictEqual([twice(text(-11, "a.."), 1), twice(text(-11, "`a.."), 1)], [[false, true, 0], [true, false, 0]]);
+  // Rows cut at the console's height are one last line of two dots.
+  assert.deepStrictEqual([twice(text(0, "1", "`a..", ".."), 160), twice(text(0, "1", "..", "`a.."), 160)], [[false, true, 0], [true, false, 0]]);
+  // With no width given, any line that ends so may be one the console cut.
+  assert.deepStrictEqual(twice(text(-11, "`a..")), [false, true, 0]);
+  // A general column's cell, and a dictionary's key: whole under 9 characters, and possibly cut from there.
+  const cells = (...items) => table({ key: [0, items, items.map(() => false)], value: [7, items.map(() => "1"), items.map(() => 1)] }, 1);
+  assert.deepStrictEqual(twice(cells("1", "`:../..", "`p`q..", "`x.."), 160), [true, false, 0]);
+  assert.deepStrictEqual(twice(cells("1", "`:../..", "`aaaaaa..", `0 1 2 ${"3 ".repeat(35)}..`), 160), [false, false, 2]);
+  const page = loadPage();
+  page.send({ type: "compare", id: 1, code: "`:../..", comparison: compareOutcomes(side("a", text(-11, "`:../..")), side("b", text(-11, "`:../..")), -1, 160) });
+  assert.strictEqual(page.posted.at(-1).rendered.summary, "a and b gave the same answer.");
 });
 
 test("a value that is not tabular, an error or a process not reached is compared as text", () => {
