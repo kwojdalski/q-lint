@@ -956,6 +956,12 @@
             "order": 147,
             "markdownDescription": "Take a dotted q name - `.ns.util.f`, `x.y`, `.z.p` - as one word, and a number as one (`1.5`, `2024.01.02`): **Add Selection to Next Find Match** (Ctrl/Cmd+D), the highlight of a word's other occurrences, and the word completion replaces. In `x+.y` the words are `x` and `.y`. Double-click and Ctrl/Cmd+Left/Right follow `editor.wordSeparators` instead, which this does not change: `\"[q]\": {\"editor.wordSeparators\": ...}` without `.` makes them agree. Off, a word is VS Code's own."
           },
+          "q-lint.editor.parameterCache.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 147,
+            "markdownDescription": "**Toggle Parameter Cache** (`ctrl+shift+'`, and in a q editor's context menu): insert or remove the statement that makes a lambda keep its arguments as globals, and the status bar item that shows a file holds one. Edits the file only. Off, the command is hidden and refuses and the status bar item is hidden."
+          },
           "q-lint.query.escapeAborts.enable": {
             "type": "boolean",
             "default": true,
@@ -1208,6 +1214,12 @@
             "minimum": 0,
             "order": 500,
             "markdownDescription": "Seconds a query run by an agent through the **Run q Query** tool may take. A query that takes longer is aborted, as **Abort Current Query** aborts one, and the agent is told it timed out. `0` sets no limit."
+          },
+          "q-lint.agent.queryTool.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 501,
+            "markdownDescription": "The **Run q Query** language-model tool (`#qQuery`): runs q code an agent wrote on a q process, after you confirm each call, past the read-only guard. Off, the tool is unregistered and a call already on its way is refused."
           },
           "q-lint.agent.schemaTool.enable": {
             "type": "boolean",
@@ -4048,7 +4060,7 @@
         },
         {
           "command": "q-lint.toggleParameterCache",
-          "when": "editorLangId == q",
+          "when": "editorLangId == q && config.q-lint.editor.parameterCache.enable",
           "group": "q-lint@6"
         },
         {
@@ -4209,6 +4221,10 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "q-lint.toggleParameterCache",
+          "when": "config.q-lint.editor.parameterCache.enable"
+        },
         {
           "command": "q-lint.showDependencies",
           "when": "q-lint.hasGraph"
@@ -5118,7 +5134,7 @@
       {
         "command": "q-lint.toggleParameterCache",
         "key": "ctrl+shift+'",
-        "when": "editorTextFocus && editorLangId == q"
+        "when": "editorTextFocus && editorLangId == q && config.q-lint.editor.parameterCache.enable"
       },
       {
         "command": "q-lint.runCell",
@@ -5134,6 +5150,7 @@
     "languageModelTools": [
       {
         "name": "q-lint_runQuery",
+        "when": "config.q-lint.agent.queryTool.enable",
         "displayName": "Run q Query",
         "toolReferenceName": "qQuery",
         "canBeReferencedInPrompt": true,

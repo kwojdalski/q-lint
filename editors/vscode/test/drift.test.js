@@ -100,7 +100,7 @@ test("hot reload sends only what the save changed, and only over the text the fi
 
 test("every switch is read with its default, and package.json declares it", () => {
   const defaults = readAssist((_k, fallback) => fallback);
-  assert.deepStrictEqual(defaults, { drift: false, hotReload: false, schemaTool: true, lintTool: true, chat: true, qsql: true });
+  assert.deepStrictEqual(defaults, { drift: false, hotReload: false, queryTool: true, schemaTool: true, lintTool: true, chat: true, qsql: true });
   assert.deepStrictEqual(readAssist((k, f) => (k === "hotReload.enable" ? "yes" : f)).hotReload, false);
   const props = Object.assign({}, ...pkg.contributes.configuration.map((c) => c.properties));
   for (const [feature, { key, fallback }] of Object.entries(ASSIST_SETTINGS)) {

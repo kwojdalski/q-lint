@@ -34,6 +34,7 @@ export const EDITOR_SETTINGS = {
   continuationIndent: { key: "editor.continuationIndent.enable", fallback: true, name: "The continuation indent on Enter" },
   dottedNames: { key: "editor.dottedNames.enable", fallback: true, name: "Dotted names as one word" },
   escapeAborts: { key: "query.escapeAborts.enable", fallback: true, name: "Escape aborting a running query" },
+  parameterCache: { key: "editor.parameterCache.enable", fallback: true, name: "Toggle Parameter Cache" },
 } as const;
 
 export type EditorFeature = keyof typeof EDITOR_SETTINGS;

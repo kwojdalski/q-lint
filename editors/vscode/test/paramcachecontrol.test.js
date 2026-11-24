@@ -7,7 +7,8 @@ const Module = require("node:module");
 
 /// A stand-in `vscode` with one editor on `text` in `languageId`.
 function fakeVscode(text, languageId) {
-  const listeners = { active: [], change: [], open: [] };
+  const listeners = { active: [], change: [], open: [], config: [] };
+  const settings = {};
   const messages = [];
   const item = { visible: false, text: "", show() { this.visible = true; }, hide() { this.visible = false; }, dispose() {} };
   const document = {
@@ -43,9 +44,11 @@ function fakeVscode(text, languageId) {
     workspace: {
       onDidChangeTextDocument: (f) => { listeners.change.push(f); return disposable; },
       onDidOpenTextDocument: (f) => { listeners.open.push(f); return disposable; },
+      onDidChangeConfiguration: (f) => { listeners.config.push(f); return disposable; },
+      getConfiguration: () => ({ get: (key, fallback) => settings[key] ?? fallback }),
     },
   };
-  return { vscode, editor, document, item, listeners, messages, commands };
+  return { vscode, editor, document, item, listeners, messages, commands, settings };
 }
 
 function load(fake) {
@@ -97,4 +100,17 @@ test("the status bar follows the active document's language when it is changed",
   fake.document.languageId = "q";
   for (const f of fake.listeners.open) f(fake.document);
   assert.strictEqual(cache.cached(), 1);
+});
+
+test("turned off, Toggle Parameter Cache refuses and its status bar item hides (#1624)", async () => {
+  const fake = fakeVscode(CACHED, "q");
+  const cache = load(fake);
+  assert.strictEqual(fake.item.visible, true);
+  fake.settings["editor.parameterCache.enable"] = false;
+  for (const f of fake.listeners.config) f({ affectsConfiguration: (k) => k === "q-lint.editor.parameterCache" });
+  assert.strictEqual(fake.item.visible, false);
+  assert.strictEqual(cache.cached(), 0);
+  await fake.commands["q-lint.toggleParameterCache"]();
+  assert.strictEqual(fake.document.text, CACHED);
+  assert.match(fake.messages.join("\n"), /Toggle Parameter Cache is turned off\. Set q-lint\.editor\.parameterCache\.enable to true/);
 });

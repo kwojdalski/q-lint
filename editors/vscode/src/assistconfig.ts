@@ -1,5 +1,5 @@
-// The switches for drift detection (#933), hot reload (#934), the schema
-// and lint agent tools (#951), the @q chat participant (#952) and English
+// The switches for drift detection (#933), hot reload (#934), the query
+// (#1624), schema and lint agent tools (#951), the @q chat participant (#952) and English
 // to qSQL (#953): each has its own `enable` setting. Free of any `vscode`
 // import, so node tests it. A feature turned off has its commands hidden
 // (package.json's `when`) and refusing, its listener, tool or participant
@@ -12,6 +12,7 @@
 export const ASSIST_SETTINGS = {
   drift: { key: "processExplorer.driftDetection.enable", fallback: false, name: "Drift detection" },
   hotReload: { key: "hotReload.enable", fallback: false, name: "Hot reload on save" },
+  queryTool: { key: "agent.queryTool.enable", fallback: true, name: "The Run q Query agent tool" },
   schemaTool: { key: "agent.schemaTool.enable", fallback: true, name: "The List q Tables agent tool" },
   lintTool: { key: "agent.lintTool.enable", fallback: true, name: "The Lint q Code agent tool" },
   chat: { key: "chat.participant.enable", fallback: true, name: "The @q chat participant" },
@@ -23,13 +24,13 @@ export type AssistFeature = keyof typeof ASSIST_SETTINGS;
 /// The features whose settings are listed with the queries' and with the
 /// agents' in package.json.
 export const QUERY_FEATURES = ["drift", "hotReload"] as const;
-export const AGENT_FEATURES = ["schemaTool", "lintTool", "chat", "qsql"] as const;
+export const AGENT_FEATURES = ["queryTool", "schemaTool", "lintTool", "chat", "qsql"] as const;
 
 /// Which features are on, read with `get` as `readExplorer` reads its
 /// settings. Anything but a boolean is the default.
 /// `only` reads just those features' settings, and leaves the rest false.
 export function readAssist(get: <T>(key: string, fallback: T) => T, only?: readonly AssistFeature[]): Record<AssistFeature, boolean> {
-  const out = { drift: false, hotReload: false, schemaTool: false, lintTool: false, chat: false, qsql: false } as Record<AssistFeature, boolean>;
+  const out = { drift: false, hotReload: false, queryTool: false, schemaTool: false, lintTool: false, chat: false, qsql: false } as Record<AssistFeature, boolean>;
   for (const [feature, { key, fallback }] of Object.entries(ASSIST_SETTINGS)) {
     if (only !== undefined && !only.includes(feature as AssistFeature)) {
       continue;
