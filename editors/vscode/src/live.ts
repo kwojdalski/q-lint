@@ -75,7 +75,7 @@ import { clearedStamp, historyHeading, historyLabel, iconsEscaped, mergedHistory
 import { render } from "./query";
 import { QueryModes, type PageLater, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
-import { assertWritable } from "./workspacewrite";
+import { assertWritable, relativeInside } from "./workspacewrite";
 import { commandLine, expandHome, qBinaryFrom, relativeBinaryProblem, replLines, shellKind, terminalCwd } from "./terminal";
 import { readDotenv, terminalEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
@@ -513,9 +513,8 @@ export class QTerminals {
     const layout = layoutEnvFor(qBinaryFrom(settings.qBinary, folder?.uri.fsPath, os.homedir()) ?? settings.qBinary, from);
     const { shown, hidden, refs } = terminalEnv(layout, variables, await dotenvFor(from));
     // A file inside the folder is named relative to it, as you would type it.
-    const relative = file !== undefined && cwd !== undefined ? path.relative(cwd, file) : "";
-    const inside = relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
-    const args = file === undefined ? [] : [inside ? relative : file, ...extraArgs];
+    const relative = file !== undefined && cwd !== undefined ? relativeInside(cwd, file) : undefined;
+    const args = file === undefined ? [] : [relative ?? file, ...extraArgs];
     // A relative q is the folder's, as in the launcher, also for a file
     // outside every folder, whose terminal starts elsewhere (#1716).
     const binary = cwd === folder?.uri.fsPath ? settings.qBinary : (qBinaryFrom(settings.qBinary, folder?.uri.fsPath, os.homedir()) ?? settings.qBinary);

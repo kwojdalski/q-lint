@@ -149,6 +149,15 @@ test("Run File with Arguments starts its q with the .env file's variables and th
   assert.strictEqual(off.terminals[0].sent[0], `${binary} a.q x`);
 });
 
+test("a file under a folder whose name starts with two dots is named relative to the workspace folder, as any inside it (#2002)", async () => {
+  for (const [file, named] of [["/ws/..lib/a.q", "..lib/a.q"], ["/ws/.../a.q", ".../a.q"], ["/ws/lib/a.q", "lib/a.q"]]) {
+    const fake = fakeVscode({}, {});
+    fake.vscode.window.activeTextEditor.document.uri = fake.vscode.Uri.file(file);
+    await loadTerminals(fake).runFile({ args: [], input: [] });
+    assert.strictEqual(fake.terminals[0].sent[0], `q ${named}`, file);
+  }
+});
+
 test("a workspace-relative KDB-X qBinary gets its layout's QHOME and QLIC in a terminal, as in the launcher (#1839)", async (t) => {
   const ws = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-kxrel-"));
   t.after(() => fs.rmSync(ws, { recursive: true, force: true }));

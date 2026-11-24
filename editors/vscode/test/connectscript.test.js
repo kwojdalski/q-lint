@@ -406,6 +406,9 @@ test("a connect script file inside the folder is shared relative to it", () => {
   const p = proc("a", { initFile: "/Users/me/repo/q/init.q", user: "u" });
   assert.deepStrictEqual(sharedEntry(p, true, "/Users/me/repo"), { ...p, initFile: "q/init.q" });
   assert.deepStrictEqual(sharedEntry(p, true, "/Users/me/other"), p);
+  // A folder named with two dots first is a folder inside, not the way out (#2002).
+  assert.deepStrictEqual(sharedEntry(proc("a", { initFile: "/Users/me/repo/..q/init.q" }), true, "/Users/me/repo"), proc("a", { initFile: "..q/init.q" }));
+  assert.deepStrictEqual(sharedEntry(proc("a", { initFile: "/Users/me/init.q" }), true, "/Users/me/repo"), proc("a", { initFile: "/Users/me/init.q" }));
   assert.deepStrictEqual(sharedEntry(proc("a", { initFile: "~/init.q" }), true, "/Users/me/repo"), proc("a", { initFile: "~/init.q" }));
   assert.deepStrictEqual(sharedEntry(p, false, "/Users/me/repo"), proc("a", { user: "u" }));
   // The list a clone reads runs it from its own folder.
