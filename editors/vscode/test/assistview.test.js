@@ -251,6 +251,29 @@ test("Lint q Code reads qlinter's output whole, a character split across chunks 
   assert.strictEqual(ran.stdout.slice(65535), "\u00e9".repeat(10));
 });
 
+test("Windows: Lint q Code runs a qlinter.cmd serverPath through a shell, as the server is started (#1816)", async (t) => {
+  const { EventEmitter } = require("node:events");
+  const { PassThrough } = require("node:stream");
+  const { runWith } = require("../out/assisttools.js");
+  const cp = require("node:child_process");
+  const { spawn } = cp;
+  const platform = Object.getOwnPropertyDescriptor(process, "platform");
+  const spawned = [];
+  cp.spawn = (command, args, options) => {
+    spawned.push({ command, args, shell: options.shell });
+    const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough(), stdin: new PassThrough(), kill: () => true });
+    setImmediate(() => child.emit("close", 0));
+    return child;
+  };
+  Object.defineProperty(process, "platform", { value: "win32" });
+  t.after(() => {
+    cp.spawn = spawn;
+    Object.defineProperty(process, "platform", platform);
+  });
+  assert.strictEqual((await runWith("C:\\bin\\qlinter.cmd", ["--format", "json", "-"], "1", undefined, 10)).status, 0);
+  assert.deepStrictEqual(spawned, [{ command: '"C:\\bin\\qlinter.cmd"', args: ['"--format"', '"json"', '"-"'], shell: true }]);
+});
+
 test("Lint q Code cancelled stops: the next qlinter is not started (#1381)", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-lintcancel-"));
   const log = path.join(dir, "ran");
