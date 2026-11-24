@@ -282,7 +282,7 @@ export function tableTemplates(name: string, info: TableInfo, limit = 100): Tabl
     out.push({
       label: "Insert template",
       detail: "a row of typed nulls to fill in, opened in an editor",
-      code: [`/ One row for ${name}: replace each null, then run the statement.`, `${symbolLiteral(name)} insert (`, ...rows, ""].join("\n"),
+      code: [`/ One row for ${name}: replace each null, then run the statement.`, `${/^`\$/.test(symbolLiteral(name)) ? `(${symbolLiteral(name)})` : symbolLiteral(name)} insert (`, ...rows, ""].join("\n"),
       runs: false,
     });
   }
