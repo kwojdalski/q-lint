@@ -121,6 +121,29 @@ test("Explain qSQL finds where the query starts", () => {
   assert.strictEqual(leadBefore(c, c.length), 0);
 });
 
+// q loads `r:select a`, `  from t`, a blank or a `/ note` line, `  where b>1`
+// as one statement (languagetools_q.test.js holds that): the walk back to
+// the statement's start stopped at the blank or the comment line.
+test("Explain qSQL finds the query through a blank or a comment line inside it (#2015)", () => {
+  const at = (text, marker) => leadBefore(text, text.indexOf(marker));
+  assert.strictEqual(at("r:select a\n  from t\n  where b>1\n", "where"), 2);
+  assert.strictEqual(at("r:select a\n  from t\n\n  where b>1\n", "where"), 2);
+  assert.strictEqual(at("r:select a\n  from t\n/ only rows of today\n  where b>1\n", "where"), 2);
+  assert.strictEqual(at("r:select a\r\n  from t\r\n\r\n  where b>1\r\n", "where"), 2);
+  assert.strictEqual(at("r:select a\n  from t\n \t\n/ one\n\n/ two\n  where b>1\n", "where"), 2);
+  // A block comment inside it, whatever its lines start with.
+  assert.strictEqual(at("a:1\nr:select a\n  from t\n/\nb:2 delete\n\\\n  where b>1\n", "where"), 6);
+  assert.strictEqual(at("f:{[d]\n  x:1;\n\n  select from t where date=d}\n", "where"), 17);
+  // The statement above ends where an unindented line starts another.
+  assert.strictEqual(at("r:select a from t\n\nb:2\n\n  +1\n", "+1"), undefined);
+  assert.strictEqual(at("r:select a from t\n/ note\nb:2\n", "b:2"), undefined);
+  // On a comment line, or in a block comment, the cursor is in no query.
+  assert.strictEqual(at("r:select a\n/ select b\n  from t\n", "select b"), undefined);
+  assert.strictEqual(at("/\nselect a from t\n\\\nb:2\n", "from"), undefined);
+  // After `\\` alone q reads nothing.
+  assert.strictEqual(at("a:1\n\\\nselect a from t\n", "from"), undefined);
+});
+
 test("a q error is explained from the catalogue, with the operation that failed", () => {
   assert.strictEqual(errorName("'type"), "type");
   assert.strictEqual(errorName("2026.11.22T19:23:04.352 length"), "length");

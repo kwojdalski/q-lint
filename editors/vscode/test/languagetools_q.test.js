@@ -74,6 +74,22 @@ test("every example in the error catalogue raises the error it explains", { skip
   }
 });
 
+// What Explain qSQL takes as one statement is what q loads as one: a blank
+// line, a comment line or a block comment inside a query does not end it.
+test("q loads a query with a blank or a comment line inside it as one statement (#2015)", { skip }, async (t) => {
+  const { leadBefore } = require("../out/qsqltools.js");
+  const queries = [
+    "r1:select a\n  from tq\n\n  where b>1\n",
+    "r2:select a\n  from tq\n/ only these\n  where b>1\n",
+    "r3:select a\n  from tq\n/\nb:2 delete\n\\\n  where b>1\n",
+  ];
+  const c = await connect(t, `tq:([] a:1 2 3; b:0 1 2)\n${queries.join("")}`);
+  // Each holds the one row its where keeps, so the where line was part of it.
+  assert.deepStrictEqual(await c.call("{(r1;r2;r3)~3#enlist ([] a:enlist 3)}", 0), true);
+  assert.deepStrictEqual(await c.call("{`b in key `.}", 0), false);
+  for (const text of queries) assert.strictEqual(leadBefore(text, text.indexOf("where")), 3, text);
+});
+
 test("the dead code report's process check finds what a function the process holds names", { skip }, async (t) => {
   const c = await connect(t, ["\\d .util", "helper:{x+1}", "caller:{helper x}", "other:{x}", "\\d .", "top:{x}", "usesTop:{top 1}", "alone:{x}", "f:{x}", "runner:{.util.other x}", ".cfg:42", ""].join("\n"));
   const got = await c.call(CALLED, ".util.helper .util.other top alone nothere f");
