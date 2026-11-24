@@ -25,6 +25,14 @@ const XML =
 // PreferenceHelper.encode: XXX_ENCODED_XXX + base64(DeflaterOutputStream).
 const encoded = (text) => "XXX_ENCODED_XXX" + zlib.deflateSync(Buffer.from(text, "utf8")).toString("base64");
 
+test("a qStudio name repeated in another folder keeps its folder in its label (#1687)", () => {
+  const lines = readQStudioLines("desk1/rdb@h1:5000\ndesk2/rdb@h2:5000\nrdb@h3:1");
+  assert.deepStrictEqual(lines.processes.map((p) => [p.label, p.host]), [["rdb", "h1"], ["desk2/rdb", "h2"]]);
+  assert.deepStrictEqual(lines.skipped, ["rdb: repeats a label"], "with no folder to tell it apart, still skipped");
+  const xml = readQStudioXml('<ServerConfig name="rdb" folder="a" host="h" port="1"/><ServerConfig name="rdb" folder="b" host="h2" port="1"/>');
+  assert.deepStrictEqual(xml.processes.map((p) => [p.label, p.host]), [["rdb", "h"], ["b/rdb", "h2"]]);
+});
+
 test("qStudio's Copy Server List lines: names, folders, types; the password never read", () => {
   const read = readQStudioLines("rdb@localhost:5001:me:secret\r\nfolder/hdb@h2:5002\nh3:5003\nfx/tick:5004\npg@POSTGRES#db:5432\nKDB#h5:5005\nbad");
   assert.deepStrictEqual(read.processes, [
