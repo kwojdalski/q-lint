@@ -826,7 +826,8 @@
     const charts = look().cellCharts || {};
     const cells = grid.columns.map(function (c, i) {
       const f = formats[i];
-      if ((feature("cellCharts") && c.numeric && charts[c.name] === "bar") || (f && f.kind === "bar")) {
+      // A *_BAR column's bar, unless toggled off as text (#1651).
+      if ((feature("cellCharts") && c.numeric && charts[c.name] === "bar") || (f && f.kind === "bar" && charts[c.name] !== "text")) {
         return { kind: "bar", levels: LOOK.barLevels(grid.values[i]) };
       }
       if (feature("cellCharts") && charts[c.name] !== "text" && LOOK.isNumericList(grid, i)) {

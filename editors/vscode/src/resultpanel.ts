@@ -117,6 +117,7 @@ import { iconsEscaped, plainMessage } from "./history";
 /// `media/gridlook.js`'s helpers the column commands use, as the page does.
 interface GridLookHelpers {
   isNumericList(grid: Grid, column: number): boolean;
+  columnFormat(name: string): { kind: string } | null;
   displayColumns(grid: Grid, layout: ColumnLayout | undefined): number[];
 }
 const GRID_LOOK = require("../media/gridlook.js") as GridLookHelpers;
@@ -1227,7 +1228,9 @@ export class QueryModes {
     }
     const name = at.grid.columns[at.column].name;
     const now = at.shown.look.cellCharts?.[name];
-    const next = chart === "bar" ? (now === "bar" ? undefined : "bar") : now === "text" ? undefined : "text";
+    // A *_BAR column draws its bar by its name: toggled off as text (#1651).
+    const named = chart === "bar" && this.viewSettings().enable.columnFormats && GRID_LOOK.columnFormat(name)?.kind === "bar";
+    const next = named ? (now === "text" ? undefined : "text") : chart === "bar" ? (now === "bar" ? undefined : "bar") : now === "text" ? undefined : "text";
     await this.relook(at.shown, withCellChart(at.shown.look, name, next));
   }
 

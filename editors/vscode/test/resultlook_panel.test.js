@@ -568,3 +568,13 @@ test("Freeze Columns past the most frozen says so, rather than freezing what a r
   modes.show(result("wide", cols), live);
   assert.deepStrictEqual([last(fake).look.layout.frozen, last(fake).look.layout.widths], [50, { c0: 2000 }]);
 });
+
+test("Toggle Data Bar turns off, and on again, the bar a *_BAR column draws by its name (#1651)", async () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  modes.show(result("q", [["sym", 11, ["a", "b"]], ["px_BAR", 9, ["1", "5"], [1, 5]]]), live);
+  await fake.vscode.commands["q-lint.toggleResultDataBar"]({ column: 1 });
+  assert.deepStrictEqual(last(fake).look.cellCharts, { px_BAR: "text" });
+  await fake.vscode.commands["q-lint.toggleResultDataBar"]({ column: 1 });
+  assert.strictEqual(last(fake).look.cellCharts, undefined);
+});

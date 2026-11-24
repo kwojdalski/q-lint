@@ -322,3 +322,12 @@ test("a 'contains' rule on a formatted column matches the text the cell shows, a
   assert.strictEqual(page.rows()[0].children[0].style.fontWeight, "bold");
   assert.strictEqual(page.rows()[1].children[0].style.fontWeight, undefined);
 });
+
+test("a *_BAR column toggled to text draws no bar (#1651)", () => {
+  const page = loadPage(undefined);
+  const cols = [["px_BAR", 9, ["1", "5"]]];
+  page.send(result("s.1", cols));
+  assert.strictEqual(page.rendered().dressed.bars, 2);
+  page.send(result("s.1", cols, { look: { cellCharts: { px_BAR: "text" } } }));
+  assert.strictEqual(page.rendered().dressed.bars, 0);
+});
