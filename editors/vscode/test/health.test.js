@@ -178,6 +178,25 @@ test("a dropped connection is reconnected when autoReconnect is on, and never ot
   assert.deepStrictEqual(stub.messages.at(-1), ["info", "q-lint: reconnected to p."]);
 });
 
+// Read once per reconnect, a lowered count went on trying the old one: at
+// 100 tries of 30 s, 50 minutes.
+test("connection.reconnectAttempts lowered during a reconnect stops it at the new count (#1850)", async (t) => {
+  const q = await fakeQ();
+  const live = await setUp(t, q.port);
+  stub.config.user["connection.autoReconnect.enable"] = true;
+  stub.config.user["connection.reconnectAttempts"] = 4;
+  assert.strictEqual(await live.connectTo("p"), true);
+  await q.close();
+  for (let i = 0; i < 100 && !live.status.text.includes("reconnecting"); i++) await sleep(10);
+  assert.match(live.status.text, /\(1 of 4\)/);
+  stub.config.user["connection.reconnectAttempts"] = 1;
+  stub.changeConfig("q-lint.connection.reconnectAttempts");
+  const t0 = Date.now();
+  for (let i = 0; i < 200 && !stub.messages.some(([, m]) => m.includes("could not reconnect")); i++) await sleep(25);
+  assert.ok(Date.now() - t0 < 2500, `gave up after ${Date.now() - t0} ms`);
+  assert.deepStrictEqual(stub.messages.at(-1), ["warning", "q-lint: could not reconnect to p after 1 try."]);
+});
+
 test("a reconnect backs off and gives up after its tries, and Disconnect stops one", async (t) => {
   const q = await fakeQ();
   const port = q.port;

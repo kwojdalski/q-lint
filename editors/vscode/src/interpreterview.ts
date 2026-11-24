@@ -46,6 +46,7 @@ import { mergeEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor, nodeFiles } from "./qenvironment";
 import { spawnPlan } from "./launcher";
 import { signalGroup } from "./lifeline";
+import { pathExtensions } from "./relations";
 import { qBinaryFrom } from "./terminal";
 import { iconsEscaped, plainMessage } from "./history";
 
@@ -123,7 +124,8 @@ export function resolveBinary(binary: string, folder: string | undefined = folde
   if (file === undefined || path.isAbsolute(file)) {
     return file !== undefined && nodeFiles.executable(file) ? file : undefined;
   }
-  const names = process.platform === "win32" && !/\.exe$/i.test(file) ? [file, `${file}.exe`] : [file];
+  // A q.cmd or q.bat on PATH is a q too: probe runs it through spawnPlan (#1844).
+  const names = process.platform === "win32" && path.extname(file) === "" ? [file, ...pathExtensions(process.env.PATHEXT ?? "").map((e) => file + e)] : [file];
   for (const entry of (process.env.PATH ?? "").split(path.delimiter)) {
     // A Windows entry may be quoted, as libuv reads it too (#1681).
     const dir = process.platform === "win32" ? entry.replace(/"/g, "") : entry;

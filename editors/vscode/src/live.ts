@@ -654,7 +654,7 @@ export class Live {
   /// often, how many runs so far, its timer and status bar item, and
   /// whether a run is out.
   private watching:
-    | { code: string; label: string; every: number; runs: number; timer: ReturnType<typeof setInterval>; status: StatusBarItem; running: boolean }
+    | { code: string; label: string; every: number; runs: number; timer: ReturnType<typeof setInterval>; status: StatusBarItem; running: boolean; asked: { write: boolean; tagged: boolean } }
     | undefined;
   /// The workspace's shared process list as last read (#955), when it is
   /// on and the file is there, and the watcher on the file.
@@ -2201,16 +2201,21 @@ export class Live {
   /// user connects elsewhere or disconnects (#917).
   private async autoReconnect(dropped: Process): Promise<void> {
     const run = ++this.reconnectRun;
-    const configuration = workspace.getConfiguration("q-lint");
-    const { reconnectAttempts } = readHealth((key, fallback) => configuration.get(key, fallback));
+    // Read before each try: lowered meanwhile, the tries stop there (#1850).
+    const attempts = (): number => readHealth((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback)).reconnectAttempts;
     let process = dropped;
-    for (let attempt = 1; attempt <= reconnectAttempts; attempt++) {
-      this.reconnecting = { label: process.label, attempt, of: reconnectAttempts };
+    let tried = 0;
+    for (let attempt = 1; attempt <= attempts(); attempt++) {
+      this.reconnecting = { label: process.label, attempt, of: attempts() };
       this.showStatus();
       await new Promise((resolve) => setTimeout(resolve, backoffDelay(attempt)));
       if (run !== this.reconnectRun || this.connection !== undefined) {
         return;
       }
+      if (attempt > attempts()) {
+        break;
+      }
+      tried = attempt;
       // Each try connects to it as it is now - renamed, tagged, given a
       // connect script meanwhile - and a saved one as saved (#1699).
       const now = this.active ?? process;
@@ -2234,7 +2239,7 @@ export class Live {
     }
     this.reconnecting = undefined;
     this.showStatus();
-    void window.showWarningMessage(plainMessage(`q-lint: could not reconnect to ${process.label} after ${reconnectAttempts} tries.`));
+    void window.showWarningMessage(plainMessage(`q-lint: could not reconnect to ${process.label} after ${tried} ${tried === 1 ? "try" : "tries"}.`));
   }
 
   /// Stop an automatic reconnect, if one is under way.
@@ -2769,7 +2774,8 @@ export class Live {
   /// every `every` seconds (one given, or asked for), refreshing its result
   /// in place, until stopped, disconnected, or connected elsewhere. A run
   /// due while a query is out is skipped. The read-only guard asks once, at
-  /// the start, as does a guarded or production process.
+  /// the start, as does a guarded or production process; one it would ask
+  /// later, the process guarded meanwhile, stops the watch.
   async watch(given?: string, every?: number): Promise<void> {
     if (!this.featureOn(this.setting(readWatch).enabled, "Watch Query", "q-lint.query.watch.enable")) {
       return;
@@ -2800,6 +2806,7 @@ export class Live {
       return;
     }
     const { process } = ready;
+    const write = this.guardRefuses(code, [process]) !== undefined;
     if (!(await this.guardAllows(code, [process]))) {
       return;
     }
@@ -2842,6 +2849,7 @@ export class Live {
       timer: setInterval(() => void this.watchRun(), seconds * 1000),
       status,
       running: false,
+      asked: { write, tagged: tags.length > 0 || isProduction(process) },
     };
     void commands.executeCommand("setContext", WATCHING, true);
     status.show();
@@ -2858,6 +2866,19 @@ export class Live {
     if (this.activeLabel() !== watched.label) {
       this.stopWatching(`the connection is no longer to ${watched.label}`);
       return;
+    }
+    // A question the start did not ask, because the process was not guarded
+    // then - the guard's tags changed, or the process was retagged - stops
+    // the watch rather than sending it unasked (#1847).
+    const now = this.activeProcess();
+    const process = now === undefined || now.server !== undefined ? now : (this.processes().find((p) => p.label === now.label) ?? now);
+    if (process !== undefined) {
+      const write = !watched.asked.write && this.guardRefuses(watched.code, [process]) !== undefined;
+      const tagged = !watched.asked.tagged && (guardedBy(process, this.setting(readGuard)).length > 0 || isProduction(process));
+      if (write || tagged) {
+        this.stopWatching(`${watched.label} is now ${write ? "read-only" : "guarded"} (q-lint.processes.readOnlyGuard); Watch Query again to be asked`);
+        return;
+      }
     }
     if (this.connection?.isBusy || this.borrowed !== undefined) {
       return;

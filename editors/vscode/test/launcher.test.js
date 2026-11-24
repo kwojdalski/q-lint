@@ -61,6 +61,21 @@ test("on Windows a q.cmd or q.bat wrapper is run by cmd.exe, which Node needs fo
   assert.deepStrictEqual(spawnPlan("/opt/q.cmd", ["-q"], "linux", cmd), { command: "/opt/q.cmd", args: ["-q"], verbatim: false });
 });
 
+test("on Windows a bare q is found as the q.cmd or q.bat PATH holds, in PATHEXT's order, where it is started through spawnPlan (#1844)", () => {
+  const on = (...files) => (file) => files.includes(file);
+  // Only a q.cmd on PATH: found with PATHEXT, missed without (git, node and tar, run by execFile, cannot start one).
+  assert.strictEqual(onPath("q", "C:\\kx", on("C:\\kx\\q.cmd"), "win32", ".COM;.EXE;.BAT;.CMD"), "C:\\kx\\q.cmd");
+  assert.strictEqual(onPath("q", "C:\\kx", on("C:\\kx\\q.cmd"), "win32"), undefined);
+  // An empty PATHEXT is Windows' default; within one directory the order is PATHEXT's.
+  assert.strictEqual(onPath("q", "C:\\kx", on("C:\\kx\\q.bat", "C:\\kx\\q.exe"), "win32", ""), "C:\\kx\\q.exe");
+  assert.strictEqual(onPath("q", "C:\\kx", on("C:\\kx\\q.bat", "C:\\kx\\q.exe"), "win32", ".BAT;.EXE"), "C:\\kx\\q.bat");
+  // launchPlan's own find uses PATHEXT, and spawnPlan runs the wrapper by cmd.exe.
+  const find = (bin) => onPath(bin, "C:\\kx", on("C:\\kx\\q.cmd"), "win32", "");
+  const plan = launchPlan(proc("w", 1, {}), "q", "C:\\w", "C:\\Users\\me", find);
+  assert.strictEqual(plan.command, "C:\\kx\\q.cmd");
+  assert.strictEqual(spawnPlan(plan.command, plan.args, "win32", "cmd.exe").command, "cmd.exe");
+});
+
 test("a launch definition starts its program with its script, -p and its arguments", () => {
   const p = proc("rdb", 5010, { script: "torq.q", args: ["-proctype", "rdb", "-procname", "rdb1"], env: { KDBCODE: "code" } });
   assert.deepStrictEqual(launchPlan(p, "q", "/w", "/home/me"), {

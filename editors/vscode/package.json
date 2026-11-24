@@ -821,7 +821,7 @@
             "markdownDescription": "**Filter Query History** and **Export Query History**. Off: their buttons and commands are hidden, and a filter set is cleared."
           },
           "q-lint.processMonitor.refreshInterval": {
-            "type": "number",
+            "type": "integer",
             "default": 0,
             "minimum": 0,
             "maximum": 3600,

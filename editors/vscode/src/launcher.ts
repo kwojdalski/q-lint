@@ -92,7 +92,8 @@ export function launchPlan(
   qBinary: string,
   folder: string | undefined,
   home: string = os.homedir(),
-  find: (binary: string) => string | undefined = (binary) => onPath(binary, globalThis.process.env.PATH, isFile),
+  // q.cmd too: what is found is started through spawnPlan (#1844).
+  find: (binary: string) => string | undefined = (binary) => onPath(binary, globalThis.process.env.PATH, isFile, globalThis.process.platform, globalThis.process.env.PATHEXT ?? ""),
 ): Plan | { error: string } {
   const launch: Launch | undefined = process.launch;
   if (launch === undefined) {

@@ -157,6 +157,25 @@ test("on a guarded or production process a watch asks first; code that would cha
   assert.deepStrictEqual(q.queries(), ["count t"]);
 });
 
+// The guard asked only at the start: a process guarded after went on
+// taking the write every interval, unasked (#1847).
+test("a watch its process becomes guarded under stops, not sent unasked; one confirmed at the start goes on (#1847)", async (t) => {
+  const { q, live, api } = await setUp(t, { "query.watch.enable": true }, ["uat"]);
+  await live.connectTo("rdb");
+  await stub.commands.get("q-lint.watchQuery")("n+:1", 1);
+  assert.deepStrictEqual(q.queries(), ["n+:1"]);
+  stub.config.user["processes.readOnlyGuard.tags"] = ["prod", "uat"];
+  stub.changeConfig("q-lint.processes.readOnlyGuard.tags");
+  await sleep(1300);
+  assert.deepStrictEqual([api.watching(), q.queries()], [undefined, ["n+:1"]]);
+  assert.ok(stub.messages.some(([, m]) => m === "q-lint: stopped watching the query: rdb is now read-only (q-lint.processes.readOnlyGuard); Watch Query again to be asked."), JSON.stringify(stub.messages));
+  // Asked and confirmed at the start: the guard has nothing new to ask.
+  stub.picks.push("Watch");
+  await stub.commands.get("q-lint.watchQuery")("count t", 1);
+  await sleep(1300);
+  assert.ok(api.watching() !== undefined && q.queries().filter((x) => x === "count t").length >= 2, JSON.stringify(q.queries()));
+});
+
 test("off (the default), Watch Query refuses, makes no status item and sends nothing; turned off, a watch stops", async (t) => {
   const { q, live, api, watchItem } = await setUp(t, {});
   await live.connectTo("rdb");

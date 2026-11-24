@@ -271,3 +271,18 @@ test("a view is shown as a view, not as a lambda with its parse tree for paramet
   assert.ok(GATHER.includes("`partitioned`ncols`view!"), GATHER);
   assert.ok(GATHER.includes("$[11h=type p:(value x)1;p;`$()]"), GATHER);
 });
+
+// A limit of 1e21 or more was written into q code as JavaScript writes it,
+// `1e+21`: a float, which `til` (and `#`) refuse with 'type.
+test("a very large row limit reaches q code as digits, at most 2^53-1 (#1852)", () => {
+  const { readLive, readNotebook } = require("../out/liveconfig.js");
+  const { viewDefinition } = require("../out/qview.js");
+  const from = (key, v) => (k, fallback) => (k === key ? v : fallback);
+  const preview = readExplorer(from("processExplorer.previewLimit", 1e21)).previewLimit;
+  assert.strictEqual(preview, Number.MAX_SAFE_INTEGER);
+  assert.strictEqual(previewCode({ kind: "table", name: "t", partitioned: true }, preview), ".Q.ind[t;til 9007199254740991&count t]");
+  const grid = readLive(from("query.gridLimit", 1e21)).gridLimit;
+  assert.strictEqual(grid, Number.MAX_SAFE_INTEGER);
+  assert.match(viewDefinition([50, 160], grid), /;9007199254740991f\]/);
+  assert.strictEqual(readNotebook(from("notebook.rowLimit", 1e21)).rowLimit, Number.MAX_SAFE_INTEGER);
+});

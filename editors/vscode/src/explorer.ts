@@ -98,7 +98,8 @@ export function readExplorer(get: <T>(key: string, fallback: T) => T): ExplorerS
     excludedNamespaces: Array.isArray(excluded)
       ? excluded.map((n) => String(n).trim().replace(/^\./, "")).filter((n) => n !== "" && !/\s/.test(n))
       : [],
-    previewLimit: typeof limit === "number" && Number.isInteger(limit) && limit > 0 ? limit : 5,
+    // At most 2^53-1: 1e21 is written `1e+21`, which `til` refuses (#1852).
+    previewLimit: typeof limit === "number" && Number.isInteger(limit) && limit > 0 ? Math.min(limit, Number.MAX_SAFE_INTEGER) : 5,
     autoRefresh: get<unknown>("processExplorer.autoRefresh", false) === true,
   };
 }
