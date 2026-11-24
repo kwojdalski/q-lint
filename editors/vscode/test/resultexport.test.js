@@ -227,6 +227,14 @@ test("a Parquet timestamp or date past what its type holds is a null, counted in
   assert.match(toParquet(z, [0]).notes.join(), /^1 infinite or out-of-range/);
 });
 
+test("a datetime finer than its millisecond text is written as its float of days (#1494)", () => {
+  // KDB-X: string "z"$1.123456789 is 2000.01.02T02:57:46.666, 6.6e-9 days short.
+  assert.strictEqual(atomLiteral(15, "2000.01.02T02:57:46.666", 1.123456789).literal, '"z"$1.123456789');
+  // KDB-X: "z"$9497.425 is 2026.01.01T10:12:00.000, which reads back exactly.
+  assert.strictEqual(atomLiteral(15, "2026.01.01T10:12:00.000", 9497.425).literal, "2026.01.01T10:12:00.000");
+  assert.strictEqual(atomLiteral(15, "", null).literal, "0Nz");
+});
+
 test("a page of rows is added after the grid's, ranked again over both, and a page of another result is refused", () => {
   const first = { count: 4, keys: 0, names: ["v", "s"], types: [9, 11], cells: [["3", "1"], ["b", "a"]], raw: [[3, 1], []], rank: [[1, 0], [1, 0]] };
   const next = readPage({ count: 4, names: ["v", "s"], types: [9, 11], cells: [["", "2"], ["a", "c"]], raw: [[null, 2], []], rank: [[0, 1], [0, 1]] });

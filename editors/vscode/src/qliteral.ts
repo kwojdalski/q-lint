@@ -177,9 +177,19 @@ export function atomLiteral(type: number, text: string, raw: unknown): { literal
       return ok(symbolLiteral(text));
     case 13:
       return ok(`${text}m`);
+    case 15:
+      // A datetime is a float of days, which `string` writes to the
+      // millisecond: one with a finer fraction is written as its float
+      // (#1494).
+      if (typeof raw === "number") {
+        const ms = raw * 864e5;
+        if (Math.abs(ms - Math.round(ms)) > 1e-3) {
+          return ok(`"z"$${numberText(raw)}`);
+        }
+      }
+      return ok(text);
     case 12:
     case 14:
-    case 15:
     case 16:
     case 17:
     case 18:
