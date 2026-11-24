@@ -115,7 +115,7 @@ function fakeVscode() {
         warnings.push(rest);
         return fake.answer;
       },
-      withProgress: async (_o, task) => task({ report() {} }, { isCancellationRequested: false }),
+      withProgress: async (_o, task) => task({ report() {} }, { isCancellationRequested: false, onCancellationRequested: () => disposable }),
       showErrorMessage: async (m) => void messages.push(m),
       showSaveDialog: async (options) => {
         dialogs.push(options);
@@ -437,6 +437,17 @@ test("/ @process connects to the process it names before the cell runs, and the 
   assert.match(outputText(second), /No q process is labelled \\"nope\\"/);
 });
 
+test("a cell of only / @process switches process, as a headless run does (#1546)", async () => {
+  const fake = fakeVscode();
+  const live = recordingLive(PROCESSES, "other");
+  load(fake, live);
+  const notebook = notebookWith(fake, [["code", "/ @process dev1"], ["code", "til 3"]]);
+  const [first, second] = await runCells(fake, notebook, [0, 1]);
+  assert.strictEqual(first.success, true);
+  assert.deepStrictEqual(live.connected, ["dev1"]);
+  assert.match(outputText(second), /^dev1: til 3$/);
+});
+
 test("/ @process names a process from the workspace's shared list (#1426)", async () => {
   const fake = fakeVscode();
   const live = recordingLive(PROCESSES, "dev1");
@@ -507,6 +518,18 @@ test("a code cell that runs reads the live values of the Markdown after it into 
   await runCells(fake, notebook, [1]);
   assert.deepStrictEqual(live.sent, ["a:1"]);
   assert.strictEqual(fake.edits.length, 1);
+});
+
+test("a code cell that fails drops the live values kept for the Markdown after it (#1544)", async () => {
+  const fake = fakeVscode();
+  const live = recordingLive(PROCESSES, "dev1");
+  live.runOnActive = async (code, query) => ({ process: "dev1", value: await query({ query: async () => ({ ok: false, error: "boom", trace: "" }) }) });
+  load(fake, live);
+  const notebook = notebookWith(fake, [["code", "'boom"], ["markdown", "y is {{q: y}}"]]);
+  notebook.cells[1].metadata = { keep: 1, "q-lint.liveValues": { y: { text: "999 (from last week)" } } };
+  const [e] = await runCells(fake, notebook, [0]);
+  assert.strictEqual(e.success, false);
+  assert.deepStrictEqual(fake.edits.flatMap((x) => x.list), [{ index: 1, metadata: { keep: 1 } }]);
 });
 
 test("Export as HTML and as Jupyter write the notebook with its outputs; off, they refuse and write nothing", async () => {
@@ -580,6 +603,44 @@ function loadRun(fake, live) {
     Module._load = original;
   }
 }
+
+test("Run with Parameters on an untitled notebook offers to save the run on disk (#1549)", async () => {
+  const fake = fakeVscode();
+  const live = recordingLive(PROCESSES, "dev1");
+  const { runWithParameters } = loadRun(fake, live);
+  const uri = new fake.vscode.Uri("Untitled-1.qnb", "untitled");
+  const notebook = { uri, notebookType: "q-lint-notebook", metadata: {}, getCells: () => [{ kind: 2, document: { getText: () => "til 3", languageId: "q" }, outputs: [], metadata: {} }] };
+  fake.vscode.workspace.notebookDocuments.push(notebook);
+  fake.vscode.window.activeNotebookEditor = { notebook };
+  fake.vscode.workspace.workspaceFolders = [{ uri: fake.vscode.Uri.file("/ws") }];
+  await runWithParameters(live, undefined, undefined, {});
+  const offered = fake.dialogs[0].defaultUri;
+  assert.strictEqual(`${offered.scheme}:${offered.path}`, "file:/ws/Untitled-1-run.qnb");
+});
+
+test("cancelling Run with Parameters aborts the query of the cell running (#1564)", async () => {
+  const fake = fakeVscode();
+  const live = recordingLive(PROCESSES, "dev1");
+  const { runWithParameters } = loadRun(fake, live);
+  const { Uri } = fake.vscode;
+  fake.written.set("/ws/p.qnb", Buffer.from(JSON.stringify({ qnb: 1, cells: [{ kind: "code", source: ["long[]"] }, { kind: "code", source: ["2"] }] })));
+  let release;
+  const token = { isCancellationRequested: false, listeners: [], onCancellationRequested: (f) => (token.listeners.push(f), { dispose() {} }) };
+  fake.vscode.window.withProgress = async (_o, task) => task({ report() {} }, token);
+  live.aborted = 0;
+  live.abort = async () => {
+    live.aborted++;
+    release({ ok: false, error: "abort", trace: "" });
+  };
+  live.runOnActive = async (code, query) => ({ process: "dev1", value: await query({ query: () => new Promise((r) => (release = r)) }) });
+  const run = runWithParameters(live, Uri.file("/ws/p.qnb"), Uri.file("/ws/p-run.qnb"), {});
+  await new Promise((r) => setImmediate(r));
+  token.isCancellationRequested = true;
+  token.listeners.forEach((f) => f());
+  const result = await run;
+  assert.strictEqual(live.aborted, 1);
+  assert.strictEqual(result.failed.cell, 1);
+});
 
 test("Run Notebook with Parameters runs the notebook on the active connection and writes the run; off, it refuses", async () => {
   const fake = fakeVscode();

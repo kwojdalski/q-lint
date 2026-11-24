@@ -8,6 +8,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const zlib = require("node:zlib");
 const { atomLiteral, tableLiteral, plainName, plainItem, stringLiteral, symbolLiteral, distinctNames } = require("../out/qliteral.js");
+const { liveExpressions } = require("../out/livemarkdown.js");
 const { toJson, toMarkdown, markdownCell, exportResult, EXPORT_FORMATS, FORMAT_INFO } = require("../out/resultexport.js");
 const { crc32, zip, columnName, xmlText, temporalSerial, xlsxCell } = require("../out/xlsx.js");
 const { definitionLevels, planFor, toParquet } = require("../out/parquet.js");
@@ -125,6 +126,10 @@ test("Markdown shows the cells as the grid does, escapes pipes, and aligns numbe
   assert.strictEqual(md, "| a\\|b | x |\n| --- | ---: |\n| p\\|q | 1.23 |\n| r | 2.00 |\n");
   // A cell is its text: `a`b keeps its backticks, *x* is no emphasis (#1263).
   assert.strictEqual(markdownCell("`a`b *x* _y_ [l](u) <b> a&amp; ~s~ $m$ \\"), "\\`a\\`b \\*x\\* \\_y\\_ \\[l\\](u) \\<b\\> a\\&amp; \\~s\\~ \\$m\\$ \\\\");
+  // Data never becomes a live value the notebook runs (#1543).
+  const md2 = toMarkdown({ count: 1, keys: 0, names: ["{{q: n}}"], types: [0], cells: [['{{q: system "touch /tmp/x"}}']], raw: [[]], rank: [[]] }, 2);
+  assert.deepStrictEqual(liveExpressions(md2), []);
+  assert.strictEqual(markdownCell("{{q: x}}"), "\\{\\{q: x\\}\\}");
 });
 
 test("every format is offered with its extension, and says how many rows the grid held of a cut result", () => {

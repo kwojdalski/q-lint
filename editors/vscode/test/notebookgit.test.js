@@ -495,3 +495,40 @@ test("Clear Notebook Outputs and the setup are contributed with their setting in
     for (const m of menus) assert.match(m.when, /config\.q-lint\.notebook\.stripOutputs\.enable/, command);
   }
 });
+
+test("the clean filter gives back bytes that are not UTF-8, or not a notebook, as they are (#1560)", () => {
+  const { spawnSync } = require("node:child_process");
+  for (const input of [Buffer.from("not json caf\xe9 \xff\n", "latin1"), Buffer.from('{"qnb":1,"cells":[],"x":"\xe9"}', "latin1"), Buffer.from("﻿plain\r\n")]) {
+    const run = spawnSync(process.execPath, [QNBGIT, "--strip"], { input });
+    assert.strictEqual(run.status, 0);
+    assert.deepStrictEqual(run.stdout, input);
+  }
+  // A notebook is still stripped.
+  const run = spawnSync(process.execPath, [QNBGIT, "--strip"], { input: qnb([code("1", ran(1, "1"))]) });
+  assert.doesNotMatch(run.stdout.toString(), /outputs/);
+});
+
+test("the setup asks git whether *.qnb goes through the filter: a later line turning it off is read (#1561)", async () => {
+  const { dir, git } = repo({ "README": "r\n" });
+  const fake = fakeVscode();
+  load(fake);
+  const folder = fake.vscode.Uri.file(dir);
+  fake.answers.push("Write");
+  await fake.commands["q-lint.setUpNotebookStripFilter"](folder, "gitattributes");
+  fs.appendFileSync(path.join(dir, ".gitattributes"), "*.qnb -filter\n");
+  assert.match(git("check-attr", "filter", "--", "a.qnb"), /filter: unset/);
+  fake.answers.push("Write");
+  await fake.commands["q-lint.setUpNotebookStripFilter"](folder, "gitattributes");
+  assert.doesNotMatch(fake.messages.at(-1), /already/);
+  assert.match(git("check-attr", "filter", "--", "a.qnb"), /filter: qnb-strip/);
+});
+
+test("an integer too big for a number is saved and stripped as written (#1562)", () => {
+  const raw = '{"qnb":1,"cells":[{"kind":"code","source":["1"],"metadata":{"id":-98765432109876543210}}],"metadata":{"t":1700000000123456789,"f":0.5,"n":12}}';
+  const saved = serializeQnb(parseQnb(raw));
+  assert.match(saved, /"t": 1700000000123456789,/);
+  assert.match(saved, /"id": -98765432109876543210/);
+  assert.match(saved, /"f": 0\.5/);
+  assert.strictEqual(serializeQnb(parseQnb(saved)), saved);
+  assert.match(stripQnb(raw), /"t": 1700000000123456789,/);
+});

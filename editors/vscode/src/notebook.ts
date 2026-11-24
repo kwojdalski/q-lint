@@ -118,7 +118,7 @@ class QnbSerializer implements NotebookSerializer {
   deserializeNotebook(content: Uint8Array, _token: CancellationToken): NotebookData {
     // A file that is not a notebook throws here, and the editor says why
     // instead of opening an empty notebook a save would write over it.
-    const qnb = parseQnb(Buffer.from(content).toString("utf8"));
+    const qnb = parseQnb(Buffer.from(content).toString("utf8"), false);
     const data = new NotebookData(
       qnb.cells.map((cell) => {
         const code = cell.kind === "code";
@@ -334,6 +334,7 @@ class QnbKernel {
         execution.start();
         if (fresh) {
           void execution.clearOutput();
+          void dropLiveValues(execution.cell);
         }
         execution.end(undefined);
       }
@@ -370,6 +371,9 @@ class QnbKernel {
       if (outputs.length > 0) {
         await execution.replaceOutput(outputs);
       }
+      if (!success) {
+        await dropLiveValues(execution.cell);
+      }
       execution.end(success, Date.now());
       return success;
     };
@@ -383,15 +387,17 @@ class QnbKernel {
     if (off !== undefined) {
       return finish(false, [toOutput({ kind: "error", name: "cell directive", message: featureOff(off), stack: "" })]);
     }
-    const cut = statements(source);
-    if (cut.length === 0) {
-      return finish(true, []);
-    }
+    // Before the empty cell returns: a cell of only `/ @process x` switches,
+    // as a headless run's does (#1546).
     if (directive.process !== undefined) {
       const problem = await switchProcess(this.live, directive.process);
       if (problem !== undefined) {
         return finish(false, [problem.startsWith("Not run") ? notice(problem) : toOutput({ kind: "error", name: "@process", message: problem, stack: "" })]);
       }
+    }
+    const cut = statements(source);
+    if (cut.length === 0) {
+      return finish(true, []);
     }
     // The Markdown cells after this one with live values, read once it has run.
     const notebook = execution.cell.notebook;
@@ -473,6 +479,28 @@ async function keepLiveValues(notebook: NotebookDocument, cells: NotebookCell[],
   await workspace.applyEdit(edit);
 }
 
+/// Drop the values kept for the Markdown the code cell `cell` reads: it
+/// failed or was not run, so what they showed was another run's (#1544).
+async function dropLiveValues(cell: NotebookCell): Promise<void> {
+  if (!featureOn("liveValues") || cell.index < 0) {
+    return;
+  }
+  const all = cell.notebook.getCells();
+  const kinds = all.map((c) => ({ kind: c.kind === NotebookCellKind.Code ? ("code" as const) : ("markdown" as const) }));
+  const edits = markdownAfter(kinds, cell.index)
+    .filter((j) => kinds[j].kind === "markdown" && all[j].metadata?.[LIVE_KEY] !== undefined)
+    .map((j) => {
+      const { [LIVE_KEY]: _old, ...rest } = all[j].metadata;
+      return NotebookEdit.updateCellMetadata(j, rest);
+    });
+  if (edits.length === 0) {
+    return;
+  }
+  const edit = new WorkspaceEdit();
+  edit.set(cell.notebook.uri, edits);
+  await workspace.applyEdit(edit);
+}
+
 /// The notebook at `uri` as the file keeps it, outputs and all: the open
 /// document, unsaved edits and all, or the file.
 export async function qnbOf(uri: Uri): Promise<Qnb> {
@@ -509,14 +537,14 @@ async function cellsOf(uri: Uri): Promise<QnbCell[]> {
   return parseQnb(Buffer.from(await workspace.fs.readFile(uri)).toString("utf8")).cells;
 }
 
-/// Where Export Notebook offers to write `notebook`'s script: beside it, or,
-/// for an untitled notebook (New q Notebook's), in the first workspace
-/// folder - a save dialog cannot browse `untitled:`, and nothing can be
+/// Where Export Notebook offers to write `notebook`'s script, and Run with
+/// Parameters its run: beside it, or, for an untitled notebook (New q
+/// Notebook's), in the first workspace folder - a save dialog cannot browse `untitled:`, and nothing can be
 /// written there.
-function scriptBeside(notebook: Uri, extension = ".q"): Uri {
-  const name = path.posix.basename(notebook.path).replace(/\.qnb$/i, extension);
+export function scriptBeside(notebook: Uri, extension = ".q"): Uri {
+  const name = path.posix.basename(notebook.path).replace(/(\.qnb)?$/i, extension);
   if (notebook.scheme !== "untitled") {
-    return notebook.with({ path: notebook.path.replace(/\.qnb$/i, extension) });
+    return notebook.with({ path: notebook.path.replace(/(\.qnb)?$/i, extension) });
   }
   const folder = workspace.workspaceFolders?.[0]?.uri ?? Uri.file(os.homedir());
   return Uri.joinPath(folder, name);
