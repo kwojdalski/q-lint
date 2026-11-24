@@ -226,7 +226,7 @@
   {"name": ".Q.hg", "kind": "function", "syntax": ".Q.hg[x]", "params": ["x"], "summary": "The body of the reply to an HTTP GET of URL x, as a string.", "page": "dotq"},
   {"name": ".Q.host", "kind": "function", "syntax": ".Q.host[x]", "params": ["x"], "summary": "The name of the host at IP address x, an integer, as a symbol.", "page": "dotq"},
   {"name": ".Q.hp", "kind": "function", "syntax": ".Q.hp[x;y;z]", "params": ["x", "y", "z"], "summary": "The body of the reply to an HTTP POST to URL x of the string z, sent with content type y.", "page": "dotq"},
-  {"name": ".Q.id", "kind": "function", "syntax": ".Q.id[x]", "params": ["x"], "summary": "The symbol x, or the column names of table x, with the characters no q name may hold removed.", "page": "dotq"},
+  {"name": ".Q.id", "kind": "function", "syntax": ".Q.id[x]", "params": ["x"], "summary": "The symbol x, or the column names of table x, without the characters no q name may hold, and an a put before a leading digit or _: .Q.id`$\"1a b\" is `a1ab. A reserved word as a column name gets a 1 after it.", "page": "dotq"},
   {"name": ".Q.ind", "kind": "function", "syntax": ".Q.ind[x;y]", "params": ["x", "y"], "summary": "The rows of partitioned table x at the row numbers y, counted across all its partitions.", "page": "dotq"},
   {"name": ".Q.j10", "kind": "function", "syntax": ".Q.j10[x]", "params": ["x"], "summary": "The string x, at most 10 characters of .Q.b6, encoded as a long; .Q.x10 decodes it.", "page": "dotq"},
   {"name": ".Q.j12", "kind": "function", "syntax": ".Q.j12[x]", "params": ["x"], "summary": "The string x, at most 12 characters of .Q.nA, encoded as a long; .Q.x12 decodes it.", "page": "dotq"},
