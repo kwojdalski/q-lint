@@ -412,6 +412,10 @@ test("a string sent to handle 0 is evaluated by the process (#1316)", () => {
     '0 . enlist "a:1"': ["evaluates a string on handle 0"],
     '(neg 0)"a:1"': ["evaluates a string on handle 0"],
     '(0)@"a:1"': ["evaluates a string on handle 0"],
+    // Applied in brackets (#1724).
+    '0["a:1"]': ["evaluates a string on handle 0"],
+    '(0)["a:1"]': ["evaluates a string on handle 0"],
+    'neg[0]["a:1"]': ["evaluates a string on handle 0"],
     // Writing to stdout, a read of a file, or a number reads.
     '1"hello"': [],
     '-1 "hello"': [],
@@ -420,6 +424,9 @@ test("a string sent to handle 0 is evaluated by the process (#1316)", () => {
     'x[0]"a"': [],
     "0(1;2)": [],
     'x[0]("a")': [],
+    'x[0]["a"]': [],
+    '1["hello"]': [],
+    "0[1]": [],
   };
   for (const [code, expected] of Object.entries(cases)) {
     assert.deepStrictEqual(writes(code), expected, code);

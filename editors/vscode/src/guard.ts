@@ -728,14 +728,14 @@ function readStatement(statement: string, found: Set<string>): void {
     }
     // Handle 0 is the process itself: `0"a:1"`, `(0)"a:1"`, `neg[0]"a:1"`,
     // `(neg 0)"a:1"` and `-0"a:1"` evaluate the string there, as do
-    // `0("a:1")`, `0@"a:1"` and `0 . enlist "a:1"` (#1424).
+    // `0("a:1")`, `0@"a:1"`, `0 . enlist "a:1"` (#1424) and `0["a:1"]` (#1724).
     if (k.kind === "num" && /^-?0[ihj]?$/.test(k.text) && t[i - 1]?.kind !== "num") {
       const wrapped =
         (t[i - 1]?.text === "(" && next?.text === ")") ||
         (t[i - 2]?.text === "neg" && t[i - 1]?.text === "[" && next?.text === "]") ||
         (t[i - 2]?.text === "(" && t[i - 1]?.text === "neg" && next?.text === ")");
       let j = wrapped ? i + 2 : i + 1;
-      while (t[j]?.text === "(" || (t[j]?.kind === "op" && ["@", "."].includes(t[j].text)) || (t[j]?.kind === "name" && t[j].text === "enlist")) {
+      while (t[j]?.text === "(" || t[j]?.text === "[" || (t[j]?.kind === "op" && ["@", "."].includes(t[j].text)) || (t[j]?.kind === "name" && t[j].text === "enlist")) {
         j++;
       }
       if (t[j]?.kind === "str") {
