@@ -303,6 +303,17 @@ test("@q /error explains the last failed query, or the error typed", async () =>
   const model = fakeModel([[new LanguageModelTextPart("A type error.")]]);
   await chat.participant.handle({ prompt: "", command: "error", model }, {}, { markdown() {}, progress() {} }, token);
   assert.match(model.sent[0].messages[0].content, /Explain this q error and how to fix it: `'type`[\s\S]*run on dev:\n```q\n1\+`a\n```/);
+  // A query that failed on another process: its names are not described
+  // from the active one under its label (#1377).
+  const other = setup({}, { history: [{ process: "rdb", code: "f 1", outcome: "error", error: "type", at: "", millis: 1 }] });
+  const m3 = fakeModel([[new LanguageModelTextPart("A type error.")]]);
+  await registerChat(other.context, other.live).participant.handle({ prompt: "", command: "error", model: m3 }, {}, { markdown() {}, progress() {} }, token);
+  assert.deepStrictEqual(other.live.sent, []);
+  assert.doesNotMatch(m3.sent[0].messages[0].content, /\{x\*2\}/);
+  const same = setup({}, { history: [{ process: "dev", code: "f 1", outcome: "error", error: "type", at: "", millis: 1 }] });
+  const m4 = fakeModel([[new LanguageModelTextPart("A type error.")]]);
+  await registerChat(same.context, same.live).participant.handle({ prompt: "", command: "error", model: m4 }, {}, { markdown() {}, progress() {} }, token);
+  assert.match(m4.sent[0].messages[0].content, /\{x\*2\}/);
   const empty = setup({}, { history: [] });
   const said = [];
   const m2 = fakeModel([]);
