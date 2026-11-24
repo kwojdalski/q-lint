@@ -299,3 +299,13 @@ test("starting a Watch Query says nothing of there being none to stop (#1708)", 
   await stub.commands.get("q-lint.stopWatchingQuery")();
   assert.deepStrictEqual(stub.messages.at(-1), ["info", "q-lint: no query is watched."]);
 });
+
+test("Abort names the call it stopped: a heartbeat is not the explorer's read (#1709)", async (t) => {
+  const a = await fakeQ((sent) => (sent === "::" ? undefined : 1));
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)], { "connection.heartbeat.enable": true, "connection.heartbeatInterval": 1 });
+  await live.connectTo("a");
+  await until(() => live.isBusy());
+  await stub.commands.get("q-lint.abortQuery")();
+  assert.match(stub.messages.at(-1)[1], /^q-lint: stopped the heartbeat of a, the only call running\./);
+});

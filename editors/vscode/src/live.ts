@@ -601,8 +601,9 @@ export class Live {
   private readonly controls: QueryControls;
   private readonly parameterCache: ParameterCache;
   /// The process explorer's call on the connection, if one is out: a query
-  /// waits for it (`borrow`).
+  /// waits for it (`borrow`). `borrower` says whose it is, for Abort (#1709).
   private borrowed: Promise<unknown> | undefined;
+  private borrower = "";
   /// Set on deactivate: a connection opened after it is closed at once.
   private disposed = false;
   private readonly changed = new EventEmitter<"connected" | "disconnected" | "queried" | "edited">();
@@ -1036,8 +1037,8 @@ export class Live {
 
   /// Run `use` on the active connection now, if there is one and no query
   /// is running on it; undefined otherwise. A query sent meanwhile waits for
-  /// it instead of being refused.
-  borrow<T>(use: (connection: QConnection, process: Process) => Promise<T>): Promise<T> | undefined {
+  /// it instead of being refused. `what` names the call, as Abort says it.
+  borrow<T>(use: (connection: QConnection, process: Process) => Promise<T>, what = "a background read"): Promise<T> | undefined {
     const connection = this.connection;
     const process = this.active;
     if (connection === undefined || process === undefined || !connection.isOpen || connection.isBusy) {
@@ -1050,6 +1051,7 @@ export class Live {
       }
     });
     this.borrowed = settled;
+    this.borrower = what;
     return call;
   }
 
@@ -2203,7 +2205,7 @@ export class Live {
         }
       }
       return connection;
-    });
+    }, "the heartbeat");
     if (call === undefined) {
       return;
     }
@@ -3027,7 +3029,7 @@ export class Live {
     });
     void window.showInformationMessage(
       plainMessage(this.aborted === undefined && timedOut === undefined
-        ? `q-lint: stopped the Process Explorer's read of ${process.label}, the only call running. q-lint reconnects once ${process.label} is free.`
+        ? `q-lint: stopped ${this.borrowed !== undefined ? this.borrower : "a background read"} of ${process.label}, the only call running. q-lint reconnects once ${process.label} is free.`
         : `q-lint: ${timedOut === undefined ? "stopped waiting for the query" : `the query ${timedOutError(timedOut)} (${source}), and was aborted`}. ${process.label} may still be running it; q-lint reconnects once it is free.`),
     );
   }
