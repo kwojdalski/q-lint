@@ -519,8 +519,16 @@ function readStatement(statement: string, found: Set<string>): void {
         continue;
       }
       // A writer indexed out of its namespace: `` .q[`set][`b;2] ``, and by
-      // juxtaposition, `` (.q`set)[`b;2] `` (#1449).
-      const index = next?.text === "[" && t[i + 2]?.kind === "sym" ? t[i + 2] : next?.kind === "sym" ? next : undefined;
+      // juxtaposition, `` (.q`set)[`b;2] `` (#1449), and with @ or .,
+      // `` (.q@`set)[`b;2] ``, `` (.q . enlist`set)[`b;2] `` (#1726).
+      const index =
+        (next?.text === "[" || (next?.kind === "op" && next.text === "@")) && t[i + 2]?.kind === "sym"
+          ? t[i + 2]
+          : next?.kind === "op" && next.text === "." && t[i + 2]?.text === "enlist" && t[i + 3]?.kind === "sym"
+            ? t[i + 3]
+            : next?.kind === "sym"
+              ? next
+              : undefined;
       if ((k.text === ".q" || k.text === ".Q") && index !== undefined) {
         const name = `${k.text}.${index.text.slice(1)}`;
         if (WRITERS.has(unqualified(name))) {

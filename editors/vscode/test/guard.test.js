@@ -920,3 +920,18 @@ test("a writer taken out of .q or .Q by juxtaposition is a change (#1449)", () =
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("a writer taken out of .q with @ or . enlist is a change (#1726)", () => {
+  const cases = {
+    "(.q@`set)[`b;2]": ["calls .q.set"],
+    "(.q . enlist`set)[`b;2]": ["calls .q.set"],
+    ".Q@`dpft": ["calls .Q.dpft"],
+    // What is not a writer reads.
+    "(.q@`count) 1 2": [],
+    "(.q . enlist`count) 1 2": [],
+    "(.Q@`dd)[`:a;`b]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
