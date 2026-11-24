@@ -647,7 +647,7 @@ export class Live {
   /// often, how many runs so far, its timer and status bar item, and
   /// whether a run is out.
   private watching:
-    | { code: string; label: string; every: number; runs: number; timer: ReturnType<typeof setInterval>; status: StatusBarItem; running: boolean }
+    | { code: string; label: string; every: number; runs: number; timer: ReturnType<typeof setInterval>; status: StatusBarItem; running: boolean; asked: { write: boolean; tagged: boolean } }
     | undefined;
   /// The workspace's shared process list as last read (#955), when it is
   /// on and the file is there, and the watcher on the file.
@@ -2735,7 +2735,8 @@ export class Live {
   /// every `every` seconds (one given, or asked for), refreshing its result
   /// in place, until stopped, disconnected, or connected elsewhere. A run
   /// due while a query is out is skipped. The read-only guard asks once, at
-  /// the start, as does a guarded or production process.
+  /// the start, as does a guarded or production process; one it would ask
+  /// later, the process guarded meanwhile, stops the watch.
   async watch(given?: string, every?: number): Promise<void> {
     if (!this.featureOn(this.setting(readWatch).enabled, "Watch Query", "q-lint.query.watch.enable")) {
       return;
@@ -2766,6 +2767,7 @@ export class Live {
       return;
     }
     const { process } = ready;
+    const write = this.guardRefuses(code, [process]) !== undefined;
     if (!(await this.guardAllows(code, [process]))) {
       return;
     }
@@ -2808,6 +2810,7 @@ export class Live {
       timer: setInterval(() => void this.watchRun(), seconds * 1000),
       status,
       running: false,
+      asked: { write, tagged: tags.length > 0 || isProduction(process) },
     };
     void commands.executeCommand("setContext", WATCHING, true);
     status.show();
@@ -2824,6 +2827,19 @@ export class Live {
     if (this.activeLabel() !== watched.label) {
       this.stopWatching(`the connection is no longer to ${watched.label}`);
       return;
+    }
+    // A question the start did not ask, because the process was not guarded
+    // then - the guard's tags changed, or the process was retagged - stops
+    // the watch rather than sending it unasked (#1847).
+    const now = this.activeProcess();
+    const process = now === undefined || now.server !== undefined ? now : (this.processes().find((p) => p.label === now.label) ?? now);
+    if (process !== undefined) {
+      const write = !watched.asked.write && this.guardRefuses(watched.code, [process]) !== undefined;
+      const tagged = !watched.asked.tagged && (guardedBy(process, this.setting(readGuard)).length > 0 || isProduction(process));
+      if (write || tagged) {
+        this.stopWatching(`${watched.label} is now ${write ? "read-only" : "guarded"} (q-lint.processes.readOnlyGuard); Watch Query again to be asked`);
+        return;
+      }
     }
     if (this.connection?.isBusy || this.borrowed !== undefined) {
       return;
