@@ -112,6 +112,8 @@ test("the view shows the plot on show, steps and saves it, and off is unregister
   await new Promise((r) => setImmediate(r));
   const asked = posted.at(-1);
   assert.strictEqual(asked.type, "png");
+  // The ask carries the plot picked, for the page to draw that one (#1482).
+  assert.strictEqual(asked.svg, svg("b"));
   receive({ type: "png", key: asked.key, data: "data:image/png;base64,iVBORw0KGgo=" });
   assert.strictEqual(await saving, "/p.png");
   assert.deepStrictEqual([...written["/p.png"].subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47]);
