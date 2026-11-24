@@ -84,6 +84,10 @@ test("a definition is read from the saved list and an import, never from a disco
   assert.deepStrictEqual(parseProcesses([entry], true).processes[0].launch, { command: "q", script: "s.q", args: ["-t", "1000", "x y"], env: { A: "1" } });
   assert.strictEqual(parseProcesses([entry]).processes[0].launch, undefined);
   assert.deepStrictEqual(splitArgs('-a "b c" d'), ["-a", "b c", "d"]);
+  // A quote groups anywhere in a word, as a shell's does (#1695).
+  assert.deepStrictEqual(splitArgs('-name="a b" -x "" c'), ["-name=a b", "-x", "", "c"]);
+  assert.deepStrictEqual(splitArgs('  a"b c"d  e" '), ["ab cd", 'e"']);
+  assert.deepStrictEqual(splitArgs(""), []);
   assert.deepStrictEqual(launchOf({}), {});
   assert.strictEqual(launchOf("q"), undefined);
 });

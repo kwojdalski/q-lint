@@ -256,9 +256,31 @@ export function launchOf(value: unknown): Launch | undefined {
 }
 
 /// Arguments as typed in one box: split at spaces, a pair of double quotes
-/// keeping one with spaces together.
+/// keeping what is between them together, as a shell does: anywhere in a
+/// word (`-name="a b"` is `-name=a b`, #1695), and taken off. A quote with
+/// no pair is kept as it is.
 export function splitArgs(text: string): string[] {
-  return [...text.matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2]);
+  const words: string[] = [];
+  let word: string | undefined;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (/\s/.test(c)) {
+      if (word !== undefined) {
+        words.push(word);
+        word = undefined;
+      }
+    } else if (c === '"' && text.indexOf('"', i + 1) !== -1) {
+      const end = text.indexOf('"', i + 1);
+      word = (word ?? "") + text.slice(i + 1, end);
+      i = end;
+    } else {
+      word = (word ?? "") + c;
+    }
+  }
+  if (word !== undefined) {
+    words.push(word);
+  }
+  return words;
 }
 
 /// A credential command as written (#1034), or undefined when it is none.
