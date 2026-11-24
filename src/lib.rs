@@ -528,13 +528,18 @@ pub mod graph;
 /// offset, byte length and kind - in order, and never inside a string or a
 /// comment, since those are blank in the view this reads.
 pub fn semantic_tokens(source: &str) -> Vec<(usize, usize, TokenKind)> {
-    semantic_tokens_in(source, &Workspace::default())
+    semantic_tokens_in(source, &Workspace::default(), &graph::Placement::default())
 }
 
-/// The same, with the functions other files in `ws` define coloured too.
-pub fn semantic_tokens_in(source: &str, ws: &Workspace) -> Vec<(usize, usize, TokenKind)> {
+/// The same, with the functions other files in `ws` define coloured too,
+/// for a file its loaders put where `placement` says.
+pub fn semantic_tokens_in(
+    source: &str,
+    ws: &Workspace,
+    placement: &graph::Placement,
+) -> Vec<(usize, usize, TokenKind)> {
     let v = views(source);
-    semantics::tokens(&v.code, source, ws)
+    semantics::tokens(&v.code, source, ws, placement)
 }
 
 #[derive(Debug, Deserialize, Serialize)]

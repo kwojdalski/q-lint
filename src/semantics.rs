@@ -870,8 +870,18 @@ pub enum TokenKind {
 /// The same limits as the checks. A function defined in another file, or by
 /// `\l`, is not known here; and q has no closures, so a name read in a nested
 /// lambda is that lambda's own, never the parameter of the one around it.
-pub fn tokens(code: &str, raw: &str, ws: &crate::Workspace) -> Vec<(usize, usize, TokenKind)> {
+///
+/// `placement` is where the file's loaders put it: a name read bare before
+/// its first `\d` is looked up in each context it is loaded in, as the
+/// file's own definitions are placed there (#2053).
+pub fn tokens(
+    code: &str,
+    raw: &str,
+    ws: &crate::Workspace,
+    placement: &crate::graph::Placement,
+) -> Vec<(usize, usize, TokenKind)> {
     let (scopes, namespaces) = scopes(code, raw);
+    let first = first_switch(code, raw);
     let ns_at = |at: usize| {
         namespaces[namespaces
             .partition_point(|(p, _)| *p <= at)
@@ -927,6 +937,12 @@ pub fn tokens(code: &str, raw: &str, ws: &crate::Workspace) -> Vec<(usize, usize
         // `f`, and `m:f 2` there is 'f (#366).
         let function = match lambda.get(&name) {
             Some(&is_lambda) => is_lambda,
+            None if !m.as_str().starts_with('.') && m.start() < first => placement
+                .contexts
+                .iter()
+                .map(|ns| format!("{ns}.{name}"))
+                .chain(placement.root.then(|| name.clone()))
+                .any(|placed| ws.is_lambda(&placed)),
             None => ws.is_lambda(&name),
         };
         if function {

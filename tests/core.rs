@@ -443,7 +443,34 @@ fn a_root_lambda_is_not_coloured_inside_a_context() {
     ws.add(&index(text));
     ws.add(&index("g:{x}\n"));
     assert!(
-        !semantic_tokens_in(text, &ws)
+        !semantic_tokens_in(text, &ws, &Default::default())
+            .iter()
+            .any(|t| t.2 == TokenKind::Function)
+    );
+}
+
+#[test]
+fn a_function_of_the_context_a_file_is_loaded_in_is_coloured() {
+    use q_lint_rs::graph::Placement;
+    use q_lint_rs::{TokenKind, Workspace, index, semantic_tokens_in};
+    // #2053. q 5 loads lib.q and b.q under `\d .aa`: `.aa.gg` calls
+    // `.aa.fz`, so b.q's `fz` is a function where it is read before any
+    // `\d` of its own, and not after `\d .bb`.
+    let text = "gg:{fz x}\nhh:fz 2\n\\d .bb\nkk:fz 3\n";
+    let mut ws = Workspace::default();
+    ws.add(&index(".aa.fz:{x+1}\n"));
+    let placement = Placement {
+        contexts: [".aa".to_string()].into(),
+        root: false,
+    };
+    let functions: Vec<usize> = semantic_tokens_in(text, &ws, &placement)
+        .iter()
+        .filter(|t| t.2 == TokenKind::Function)
+        .map(|t| t.0)
+        .collect();
+    assert_eq!(functions, [4, 13]);
+    assert!(
+        !semantic_tokens_in(text, &ws, &Placement::default())
             .iter()
             .any(|t| t.2 == TokenKind::Function)
     );

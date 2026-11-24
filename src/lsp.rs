@@ -1576,7 +1576,14 @@ pub fn serve(
                 let data = guarded(|| {
                     docs.get(&uri)
                         .filter(|_| opts.semantic_tokens && is_q_uri(&uri))
-                        .map_or_else(Vec::new, |text| encode_tokens(text, &idx.ws))
+                        .map_or_else(Vec::new, |text| {
+                            let placement = idx
+                                .files
+                                .get(&file_key(&path_of(&uri)))
+                                .map(|file| file.placement.clone())
+                                .unwrap_or_default();
+                            encode_tokens(text, &idx.ws, &placement)
+                        })
                 });
                 match data {
                     Ok(data) => send(writer, json!({"id": id, "result": {"data": data}}))?,
@@ -2031,11 +2038,11 @@ const TOKEN_TYPES: [&str; 2] = ["function", "parameter"];
 /// Semantic tokens in the protocol's packed form: five integers per token -
 /// line delta, start delta (from the previous token when on the same line),
 /// length, type and modifiers - with positions in UTF-16 code units.
-fn encode_tokens(source: &str, ws: &Workspace) -> Vec<u32> {
+fn encode_tokens(source: &str, ws: &Workspace, placement: &Placement) -> Vec<u32> {
     let mut data = vec![];
     let (mut prev_line, mut prev_start) = (0usize, 0usize);
     let lines = Lines::new(source);
-    for (at, len, kind) in semantic_tokens_in(source, ws) {
+    for (at, len, kind) in semantic_tokens_in(source, ws, placement) {
         let (line, start) = lines.position(at);
         let delta_start = if line == prev_line {
             start - prev_start
@@ -3541,7 +3548,7 @@ mod tests {
         // inside a lambda whose own parameter is also named f, so that read
         // is the parameter, not the function.
         let source = "f:{[a] a+1}\nr:f[1]\ng:{[f;b] f+b}\n";
-        let data = encode_tokens(source, &Workspace::default());
+        let data = encode_tokens(source, &Workspace::default(), &Placement::default());
         let tokens: Vec<&[u32]> = data.chunks(5).collect();
         assert_eq!(
             tokens,
