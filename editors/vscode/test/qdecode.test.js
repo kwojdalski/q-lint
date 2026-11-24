@@ -135,3 +135,25 @@ test("a decoded result ranks text in code point order, as q sorts it: an emoji a
   assert.deepStrictEqual(gridOfQ({ kind: "table", attr: 0, cols: ["s"], data: [{ kind: "vector", t: 11, attr: 0, v: syms }] }, 100).rank, [[2, 1, 0]]);
   assert.deepStrictEqual(gridOf(syms, 11, 100).rank, [[2, 1, 0]]);
 });
+
+test("a decoded general column is ranked as q's iasc sorts it and differ splits it (#1756)", () => {
+  const { gridOfQ } = require("../out/qformat.js");
+  const chars = (s) => ({ kind: "chars", attr: 0, v: Buffer.from(s, "latin1") });
+  const atom = (t, v) => ({ kind: "atom", t, v });
+  const rank = (...items) => gridOfQ({ kind: "list", attr: 0, v: items }, 100).rank[0];
+  // KDB-X: iasc ("bb";enlist "a";"ab") is 1 2 0, so the ranks are 2 0 1.
+  assert.deepStrictEqual(rank(chars("bb"), chars("a"), chars("ab")), [2, 0, 1]);
+  // Atoms before lists, atoms by type before value: iasc (10;2;3.5) is 1 0 2.
+  assert.deepStrictEqual(rank(atom(-7, 10n), atom(-7, 2n), atom(-9, 3.5)), [1, 0, 2]);
+  // (3;2.5;1i;7h;0x01;1b;2e): 1b 0x01 7h 1i 3 2e 2.5.
+  assert.deepStrictEqual(rank(atom(-7, 3n), atom(-9, 2.5), atom(-6, 1), atom(-5, 7), atom(-4, 1), atom(-1, true), atom(-8, 2)), [4, 6, 3, 2, 1, 0, 5]);
+  // A shorter list that starts the other first; a char atom before any list.
+  assert.deepStrictEqual(rank(chars("abc"), chars("ab"), atom(-10, 98), chars("")), [3, 2, 0, 1]);
+  // differ holds the first to its type's null: (0N;0Nd) ranks -1 0, and
+  // enlist "" -1; equal items share a place.
+  assert.deepStrictEqual(rank(atom(-7, null), atom(-14, null)), [-1, 0]);
+  assert.deepStrictEqual(rank(chars("")), [-1]);
+  assert.deepStrictEqual(rank(chars("a"), atom(-11, "x"), chars("a")), [1, 0, 1]);
+  // iasc (`x;1) is a type error, so GRID sends no ranks.
+  assert.deepStrictEqual(rank(atom(-11, "x"), atom(-7, 1n)), []);
+});

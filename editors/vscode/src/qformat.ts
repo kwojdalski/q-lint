@@ -22,7 +22,7 @@
 //   other function arrives as the word "func".
 // - An empty table arrives with no columns, so they cannot be shown.
 import { TREE_NODES, codePointOrder, realValue, type GridPayload, type TreeNode } from "./grid";
-import type { QValue } from "./qdecode";
+import type { Item, QValue } from "./qdecode";
 
 /// q's generic null, `(::)`.
 const NULL_TYPE = 101;
@@ -90,31 +90,68 @@ function hms(d: Date): string {
 /// A float as q writes it at a `\P` of `precision` significant digits (7,
 /// q's default, unless given): C's `%.{P}g`, an exponent (of two digits at
 /// least) from 10^P up and below 1e-4, trailing zeros dropped. `\P 0` is
-/// every digit a float holds, `%.17g`; a real (`real`) at `\P 0` is as few
-/// digits as give it back, as KDB-X writes one.
+/// every digit a float holds, `%.17g`, and a real (`real`) `%.8g`, as
+/// KDB-X writes one: 0.3e is 0.30000001e (#1759). A subnormal is written
+/// as a zero of its sign, as KDB-X writes one (#1760).
 export function floatText(x: number, precision = 7, real = false): string {
-  if (x === 0 || !Number.isFinite(x)) {
+  if (x === 0 || !Number.isFinite(x) || Math.abs(x) < (real ? 1.1754943508222875e-38 : 2.2250738585072014e-308)) {
     // String(-0) is "0"; q writes `-0f` (#1236).
-    return Object.is(x, -0) ? "-0" : String(x);
+    return Number.isFinite(x) ? (x < 0 || Object.is(x, -0) ? "-0" : "0") : String(x);
   }
-  let p = precision > 0 ? Math.min(precision, 17) : 17;
-  if (real && precision <= 0) {
-    p = 1;
-    while (p < 9 && Math.fround(Number(x.toPrecision(p))) !== Math.fround(x)) {
-      p++;
-    }
-  }
-  const [mantissa, e] = x.toExponential(p - 1).split("e");
-  const exponent = Number(e);
-  const trim = (digits: string): string => (digits.includes(".") ? digits.replace(/\.?0+$/, "") : digits);
+  const p = precision > 0 ? Math.min(precision, 17) : real ? 8 : 17;
+  const [digits, exponent] = significant(Math.abs(x), p);
+  const sign = x < 0 ? "-" : "";
+  const trim = (text: string): string => text.replace(/\.?0*$/, "");
   if (exponent < -4 || exponent >= p) {
-    return `${trim(mantissa)}e${exponent < 0 ? "-" : "+"}${String(Math.abs(exponent)).padStart(2, "0")}`;
+    return `${sign}${trim(`${digits[0]}.${digits.slice(1)}`)}e${exponent < 0 ? "-" : "+"}${String(Math.abs(exponent)).padStart(2, "0")}`;
   }
-  return trim(x.toFixed(p - 1 - exponent));
+  const text = exponent < 0 ? `0.${"0".repeat(-exponent - 1)}${digits}` : `${digits.slice(0, exponent + 1)}.${digits.slice(exponent + 1)}`;
+  return sign + trim(text);
+}
+
+/// The first `p` significant digits of `x` (positive, finite) and the power
+/// of ten of the first, rounded as C's printf rounds: from the exact binary
+/// value, a tie to even (#1758). JavaScript's toExponential takes a tie
+/// away from zero, and is used only where no tie can be: a tie has at most
+/// 18 significant digits, and a value of more than 2^±64 has more.
+function significant(x: number, p: number): [string, number] {
+  const view = new DataView(new ArrayBuffer(8));
+  view.setFloat64(0, x);
+  const bits = view.getBigUint64(0);
+  const biased = Number((bits >> 52n) & 0x7ffn);
+  let m = (bits & 0xfffffffffffffn) | (biased === 0 ? 0n : 1n << 52n);
+  let e = (biased === 0 ? 1 : biased) - 1075;
+  while (e < 0 && (m & 1n) === 0n) {
+    m >>= 1n;
+    e++;
+  }
+  if (Math.abs(e) > 64) {
+    const [mantissa, power] = x.toExponential(p - 1).split("e");
+    return [mantissa.replace(".", ""), Number(power)];
+  }
+  // x is exactly `all` times 10^`shift`.
+  const all = (e >= 0 ? m << BigInt(e) : m * 5n ** BigInt(-e)).toString();
+  const shift = Math.min(e, 0);
+  let exponent = all.length - 1 + shift;
+  if (all.length <= p) {
+    return [all.padEnd(p, "0"), exponent];
+  }
+  let head = BigInt(all.slice(0, p));
+  const rest = all.slice(p);
+  if (rest[0] > "5" || (rest[0] === "5" && (/[1-9]/.test(rest.slice(1)) || (head & 1n) === 1n))) {
+    head++;
+  }
+  let digits = head.toString();
+  if (digits.length > p) {
+    digits = digits.slice(0, p);
+    exponent++;
+  }
+  return [digits, exponent];
 }
 
 /// A time of day, or a span, from milliseconds or nanoseconds: `hh:mm`,
-/// `hh:mm:ss` or `hh:mm:ss.mmm`, the hours past 23 when there are more.
+/// `hh:mm:ss` or `hh:mm:ss.mmm`, the hours past 23 when there are more and
+/// `**` past 99, as KDB-X writes them (#1762).
 function clock(total: number, unit: "minute" | "second" | "milli"): string {
   const sign = total < 0 ? "-" : "";
   let t = Math.abs(Math.round(total));
@@ -122,10 +159,11 @@ function clock(total: number, unit: "minute" | "second" | "milli"): string {
   if (unit === "milli") {
     t = Math.floor(t / 1000);
   }
+  const hours = (h: number): string => (h > 99 ? "**" : pad2(h));
   if (unit === "minute") {
-    return `${sign}${pad2(Math.floor(t / 60))}:${pad2(t % 60)}`;
+    return `${sign}${hours(Math.floor(t / 60))}:${pad2(t % 60)}`;
   }
-  const text = `${sign}${pad2(Math.floor(t / 3600))}:${pad2(Math.floor(t / 60) % 60)}:${pad2(t % 60)}`;
+  const text = `${sign}${hours(Math.floor(t / 3600))}:${pad2(Math.floor(t / 60) % 60)}:${pad2(t % 60)}`;
   return unit === "milli" ? `${text}.${pad3(ms)}` : text;
 }
 
@@ -205,7 +243,9 @@ function temporalText(x: number | bigint | LongLike, t: number): string | undefi
     case 14:
       return ymd(new Date(EPOCH_MS + n * DAY_MS));
     case 15: {
-      return ymdhms(new Date(EPOCH_MS + Math.round(n * DAY_MS)));
+      // KDB-X rounds the float days to the microsecond and cuts that to the
+      // millisecond: 0.99999999999 is 23:59:59.999, not the next day (#1757).
+      return ymdhms(new Date(EPOCH_MS + Math.floor(Math.round(n * DAY_MS * 1000) / 1000)));
     }
     case 17:
       return clock(n, "minute");
@@ -646,7 +686,9 @@ export function consoleLines(q: QValue, size: [number, number], value?: unknown,
 /// one `..` line.
 export function cutLines(lines: string[], size: [number, number]): string[] {
   const [height, width] = size;
-  const cut = lines.map((l) => (l.length > width ? `${l.slice(0, Math.max(0, width - 2))}..` : l));
+  // A cut inside an astral character drops its first half too (#1761).
+  const head = (l: string, n: number): string => (/[\ud800-\udbff]/.test(l[n - 1] ?? "") ? l.slice(0, n - 1) : l.slice(0, n));
+  const cut = lines.map((l) => (l.length > width ? `${head(l, Math.max(0, width - 2))}..` : l));
   return cut.length > height ? [...cut.slice(0, Math.max(0, height - 1)), ".."] : cut;
 }
 
@@ -859,6 +901,99 @@ function denseRanks(keys: (number | bigint | string | null)[]): number[] {
   return rank;
 }
 
+/// Two items of one simple type in q's order: a null first, text in code
+/// point order.
+function itemOrder(x: Item, y: Item): number {
+  if (x === y) {
+    return 0;
+  }
+  if (x === null || y === null) {
+    return x === null ? -1 : 1;
+  }
+  if (typeof x === "string" && typeof y === "string") {
+    return codePointOrder(x, y);
+  }
+  return x < y ? -1 : x > y ? 1 : 0;
+}
+
+/// Two values in the order q's `iasc` sorts a general list (#1756): every
+/// atom before every list, atoms by type (`1b` before `0x01` before `2`
+/// before `2.5`) and then value, lists by type and then item by item, a
+/// shorter one first when it is the other's start; a dictionary and a table
+/// by their values alone. A function is equal to any other.
+function qOrder(a: QValue, b: QValue): number {
+  const typeOf = (q: QValue): number => (q.kind === "atom" ? q.t - 1000 : q.kind === "func" ? q.t : columnTypeOf(q));
+  const ta = typeOf(a);
+  const tb = typeOf(b);
+  if (ta !== tb) {
+    return a.kind === "atom" && b.kind === "atom" ? tb - ta : ta - tb;
+  }
+  if (a.kind === "atom" && b.kind === "atom") {
+    return itemOrder(a.v, b.v);
+  }
+  if (a.kind === "dict" && b.kind === "dict") {
+    return qOrder(a.v, b.v);
+  }
+  if (a.kind === "func" || b.kind === "func" || a.kind === "dict" || b.kind === "dict") {
+    return 0;
+  }
+  const xs = a.kind === "table" ? a.data : itemsOf(a);
+  const ys = b.kind === "table" ? b.data : itemsOf(b);
+  for (let i = 0; i < Math.min(xs.length, ys.length); i++) {
+    const order = qOrder(xs[i], ys[i]);
+    if (order !== 0) {
+      return order;
+    }
+  }
+  return xs.length - ys.length;
+}
+
+/// Whether two values are the same to q's `~`, given they are equal in
+/// `qOrder`: a dictionary's keys, a table's names and a lambda's text too.
+function same(a: QValue, b: QValue): boolean {
+  if (a.kind === "dict" && b.kind === "dict") {
+    return same(a.k, b.k) && same(a.v, b.v);
+  }
+  if (a.kind === "table" && b.kind === "table") {
+    return a.cols.join("\u0000") === b.cols.join("\u0000") && a.data.every((c, i) => same(c, b.data[i]));
+  }
+  if (a.kind === "func" && b.kind === "func") {
+    return a.text !== undefined && a.text === b.text;
+  }
+  if (a.kind === "list" && b.kind === "list") {
+    return a.v.every((x, i) => same(x, b.v[i]));
+  }
+  return qOrder(a, b) === 0;
+}
+
+/// The ranks `GRID` gives a general column: its items sorted as `iasc`
+/// sorts them, a new place wherever one `differ`s from the one before. The
+/// first is held to its type's null, as `differ` holds it, so a first null
+/// or empty item, or a general list of them, ranks -1. None for a symbol and a long, which `iasc`
+/// refuses with `type`, as an enumeration's parts.
+function listRanks(items: QValue[]): number[] {
+  const [x, y] = items;
+  if (items.length === 2 && x.kind === "atom" && x.t === -11 && y.kind === "atom" && y.t === -7) {
+    return [];
+  }
+  const order = items.map((_, i) => i).sort((a, b) => qOrder(items[a], items[b]) || a - b);
+  const rank = new Array<number>(items.length);
+  const empty = (q: QValue): boolean =>
+    q.kind === "atom"
+      ? q.v === null || q.v === false || q.v === "" || (q.v === 0 && q.t === -4) || (q.v === 32 && q.t === -10)
+      : q.kind === "list"
+        ? q.v.every(empty)
+        : countOf(q) === 0;
+  let place = -1;
+  order.forEach((row, i) => {
+    if (i === 0 ? !empty(items[row]) : qOrder(items[order[i - 1]], items[row]) !== 0 || !same(items[order[i - 1]], items[row])) {
+      place++;
+    }
+    rank[row] = place;
+  });
+  return rank;
+}
+
 /// The rows the result panel shows for a value decoded with its types, as
 /// `GRID` would send them for the same value: a table (keyed: its keys
 /// marked), a dictionary as `key` and `value` columns (keyed by a table, its
@@ -913,6 +1048,9 @@ export function gridOfQ(q: QValue, limit: number): GridPayload | undefined {
   const rank = shown.map((c) => {
     if (c.q.kind === "chars") {
       return denseRanks([...c.q.v]);
+    }
+    if (c.q.kind === "list") {
+      return listRanks(c.q.v);
     }
     if (c.q.kind !== "vector") {
       return [];

@@ -475,8 +475,9 @@ test("an unlimited float list is written to the process's \\P, as its console wr
   assert.strictEqual(floats([1 / 3, 2], 10), "0.3333333333 2");
   assert.strictEqual(floats([1234.5, 0.000123], 3), "1.23e+03 0.000123");
   assert.strictEqual(floats([123456789012.5], 10), ",1.23456789e+11");
-  // A real at \P 0 is as few digits as give it back; at \P 10, ten.
+  // A real at \P 0 is %.8g, as KDB-X writes it (#1759); at \P 10, ten.
   assert.strictEqual(floats([Math.fround(1.1), Math.fround(2.2)], 0, 8), "1.1 2.2e");
+  assert.strictEqual(floats([Math.fround(0.3), Math.fround(0.052670188)], 0, 8), "0.30000001 0.052670188e");
   assert.strictEqual(floats([Math.fround(1.1)], 10, 8), ",1.100000024e");
   // q's default, and an answer with no precision.
   assert.strictEqual(floats([1 / 3], 7), ",0.3333333");
@@ -521,4 +522,57 @@ test("a file saved from a bound untitled editor is matched by its text, recently
   // A file this window opened long ago is not one just saved as (#1723).
   assert.strictEqual(savedFrom("a:1", [{ label: "prod", text: "a:1", at: now }], now, 5000, now - 60000), undefined);
   assert.strictEqual(savedFrom("a:1", [{ label: "prod", text: "a:1", at: now }], now, 5000, now - 10), "prod");
+});
+
+test("an unwrapped datetime is cut to the millisecond as KDB-X cuts it, not rounded (#1757)", () => {
+  // KDB-X: "z"$0.99999999999 -1e-9, 0.5 and 1.5 ms, and 1561.428 (stored as
+  // 1561.4279999999999), which a plain floor writes as .199.
+  assert.strictEqual(atomText(0.99999999999, -15), "2000.01.01T23:59:59.999");
+  assert.strictEqual(atomText(-1e-9, -15), "1999.12.31T23:59:59.999");
+  assert.strictEqual(vectorText([0.5 / 86400000, 1.5 / 86400000], 15), "2000.01.01T00:00:00.000 2000.01.01T00:00:00.001");
+  assert.strictEqual(atomText(1561.4279999999999, -15), "2004.04.10T10:16:19.200");
+});
+
+test("a float at an exact decimal tie rounds to even, as C's %g in KDB-X does (#1758)", () => {
+  // KDB-X: 100.03125 -> 100.0312, 2345678.5 -> 2345678f, 0.125 at \P 2 -> 0.12,
+  // and at \P 17 182394159939530.125 -> 182394159939530.12.
+  assert.strictEqual(floatText(100.03125), "100.0312");
+  assert.strictEqual(floatText(100.03135), "100.0314");
+  assert.strictEqual(floatText(2345678.5), "2345678");
+  assert.strictEqual(floatText(2345679.5), "2345680");
+  assert.strictEqual(floatText(0.125, 2), "0.12");
+  assert.strictEqual(floatText(182394159939530.125, 17), "182394159939530.12");
+  assert.strictEqual(floatText(-979628008118440.5, 15), "-979628008118440");
+  assert.strictEqual(vectorText([1, 2, 100.03125], 9), "1 2 100.0312");
+  // Not a tie: the nearest decimal, as before.
+  assert.strictEqual(floatText(0.1 + 0.2, 17), "0.30000000000000004");
+  assert.strictEqual(floatText(9999999.6), "1e+07");
+});
+
+test("a subnormal float or real is written as a zero of its sign, as KDB-X writes it (#1760)", () => {
+  // KDB-X: 1e-310 -1e-310 1e-308 5e-324 -> 0 -0 0 0f; -3.08e-39e -> -0e.
+  assert.strictEqual(vectorText([1e-310, -1e-310, 1e-308, 5e-324], 9), "0 -0 0 0f");
+  assert.strictEqual(floatText(1e-310, 0), "0");
+  assert.strictEqual(atomText(Math.fround(-3.08e-39), -8), "-0e");
+  // The smallest normal ones are still written: 2.225074e-308, 1.175494e-38e.
+  assert.strictEqual(floatText(2.2250738585072014e-308), "2.225074e-308");
+  assert.strictEqual(atomText(Math.fround(1.1754944e-38), -8), "1.175494e-38e");
+});
+
+test("an unwrapped minute, second or time of 100 hours or more writes its hours as **, as KDB-X does (#1762)", () => {
+  // KDB-X: "u"$-5940 -6000 5999 6000 -> -99:00 -**:00 99:59 **:00.
+  assert.strictEqual(vectorText([-5940, -6000, 5999, 6000], 17), "-99:00 -**:00 99:59 **:00");
+  // "v"$359999 360000 -360000 -> 99:59:59 **:00:00 -**:00:00.
+  assert.strictEqual(vectorText([359999, 360000, -360000], 18), "99:59:59 **:00:00 -**:00:00");
+  // "t"$359999999 -2147483646 -> 99:59:59.999 -**:31:23.646.
+  assert.strictEqual(vectorText([359999999, -2147483646], 19), "99:59:59.999 -**:31:23.646");
+  assert.strictEqual(atomText(2147483646, -18), "**:14:06");
+});
+
+test("an unwrapped line cut at the width never ends in half an astral character (#1761)", () => {
+  const smile = "\u{1F600}";
+  // 77 a's and two emoji at 80: the cut at 78 would end inside the first.
+  assert.deepStrictEqual(cutLines(["a".repeat(77) + smile + smile], [25, 80]), ["a".repeat(77) + ".."]);
+  assert.deepStrictEqual(cutLines(["a".repeat(76) + smile + smile + "b"], [25, 80]), ["a".repeat(76) + smile + ".."]);
+  assert.deepStrictEqual(cutLines(["a".repeat(78) + smile], [25, 80]), ["a".repeat(78) + smile]);
 });
