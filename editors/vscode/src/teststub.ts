@@ -76,15 +76,21 @@ export function testName(target: Target, style: Style, taken: string): string {
   return name;
 }
 
-/// The stub: a test of `target` named `name`.
+/// The stub: a test of `target` named `name`. The expected value's local
+/// is named apart from the arguments: one named `expected` is not
+/// overwritten by it (#1601).
 export function stubText(target: Target, name: string, style: Style): string {
   const call = `${target.name}[${target.params.join(";")}]`;
+  let expected = "expected";
+  while (target.params.includes(expected)) {
+    expected += "_";
+  }
   const lines = [`${name}:{[]`];
   if (target.params.length > 0) {
     lines.push(`  ${target.params.map((p) => `${p}:(::);`).join(" ")} / TODO: the arguments`);
   }
-  lines.push(`  expected:(::); / TODO: what ${call} should give`);
-  lines.push(style.qunitAsserts ? `  .qunit.assertEquals[${call};expected;"${target.name}"]}` : `  ${call}~expected}`);
+  lines.push(`  ${expected}:(::); / TODO: what ${call} should give`);
+  lines.push(style.qunitAsserts ? `  .qunit.assertEquals[${call};${expected};"${target.name}"]}` : `  ${call}~${expected}}`);
   return `${lines.join("\n")}\n`;
 }
 

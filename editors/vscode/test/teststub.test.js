@@ -156,3 +156,11 @@ test("the stub goes at the end of the open test file, unsaved edits included (#1
   assert.strictEqual(await stub.commands.get(TEST_STUB_COMMAND)(vscode.Uri.file("/ws/src/lib.q"), 6), true);
   assert.strictEqual(files["/ws/tests/test_lib.q"], "a:1\nb:{[]\n  2}\nc:3\n\ntest_now:{[]\n  expected:(::); / TODO: what now[] should give\n  now[]~expected}\n");
 });
+
+test("a parameter named expected is not overwritten by the expected value (#1601)", () => {
+  const target = functionAt("g:{[actual;expected] actual~expected}\n", 0);
+  assert.strictEqual(
+    stubText(target, "test_g", detectStyle("")),
+    "test_g:{[]\n  actual:(::); expected:(::); / TODO: the arguments\n  expected_:(::); / TODO: what g[actual;expected] should give\n  g[actual;expected]~expected_}\n",
+  );
+});
