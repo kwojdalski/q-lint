@@ -119,6 +119,37 @@ test("a folder and an earlier commit are linted, the working tree left as it is"
   await assert.rejects(lintCommit(QLINTER, [], dir, "not-a-commit"), /not a commit/);
 });
 
+test("a qlinter that fails or is stopped is an error, not an empty dashboard (#1399)", async (t) => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "qlint-problems-")));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // Stand-ins run as `node <script> --format json .`.
+  const linter = (name, body) => {
+    const file = path.join(dir, `${name}.js`);
+    fs.writeFileSync(file, body);
+    return file;
+  };
+  const config = linter("config", 'process.stderr.write("No such file or directory"); process.exit(2);');
+  await assert.rejects(lintTree(process.execPath, [config], dir), /exited with 2: No such file or directory/);
+  const killed = linter("killed", 'process.kill(process.pid, "SIGKILL");');
+  await assert.rejects(lintTree(process.execPath, [killed], dir), /stopped before it finished/);
+  // An unreadable file (exit 2) with the rest read still gives the findings.
+  const partial = linter("partial", 'console.log(JSON.stringify([{ path: "a.q", code: "QE004" }])); process.exit(2);');
+  assert.deepStrictEqual((await lintTree(process.execPath, [partial], dir)).map((f) => f.code), ["QE004"]);
+});
+
+test("an earlier commit git cannot export is an error, not 0 findings (#1400)", async (t) => {
+  const { dir, git } = repo(t);
+  fs.writeFileSync(path.join(dir, "a.q"), "a:1\n");
+  git("add", ".");
+  git("commit", "-qm", "one");
+  // The linter is never reached: a stand-in that would report nothing.
+  const linter = path.join(dir, "none.js");
+  fs.writeFileSync(linter, 'console.log("[]");');
+  await assert.rejects(lintCommit(process.execPath, [linter], dir, "deadbeefdeadbeef"), /git archive deadbeefdeadbeef failed/);
+  const at = git("rev-parse", "HEAD").trim();
+  assert.deepStrictEqual(await lintCommit(process.execPath, [linter], dir, at), []);
+});
+
 test("the switches are declared, and the commands only where they can run", () => {
   const props = Object.assign({}, ...pkg.contributes.configuration.map((c) => c.properties));
   assert.strictEqual(props["q-lint.problemsDashboard.enable"].default, true);

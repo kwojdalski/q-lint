@@ -48,6 +48,8 @@ export function readDelimited(text: string, delimiter?: string): { delimiter: st
   const count = (c: string) => first.split(c).length - 1;
   const d = delimiter ?? (count("\t") > 0 ? "\t" : count(";") > count(",") ? ";" : ",");
   const rows: string[][] = [];
+  // Whether each row is a single unquoted empty field.
+  const blank: boolean[] = [];
   let row: string[] = [];
   let field = "";
   let quoted = false;
@@ -76,6 +78,7 @@ export function readDelimited(text: string, delimiter?: string): { delimiter: st
       }
       row.push(field);
       rows.push(row);
+      blank.push(row.length === 1 && field === "" && !wasQuoted);
       row = [];
       field = "";
       wasQuoted = false;
@@ -86,9 +89,17 @@ export function readDelimited(text: string, delimiter?: string): { delimiter: st
   if (field !== "" || row.length > 0 || wasQuoted) {
     row.push(field);
     rows.push(row);
+    blank.push(row.length === 1 && field === "" && !wasQuoted);
   }
-  // A blank line, such as the one a spreadsheet ends its copy with, is no row.
-  return { delimiter: d, rows: rows.filter((r) => r.length > 1 || r[0] !== "") };
+  // A blank line, such as the one a spreadsheet ends its copy with, is no
+  // row. One between rows is an empty cell of a one-column paste, and a
+  // quoted "" always is (#1404).
+  let end = rows.length;
+  while (end > 0 && blank[end - 1]) {
+    end--;
+  }
+  const oneColumn = rows.slice(0, end).every((r) => r.length === 1);
+  return { delimiter: d, rows: rows.slice(0, end).filter((_, i) => oneColumn || !blank[i]) };
 }
 
 const LONG = /^-?\d+$/;
@@ -230,7 +241,8 @@ export function pasteTable(text: string, delimiter?: string): PastedTable | { er
   if (all.length === 0) {
     return { error: "the clipboard holds no rows." };
   }
-  const width = Math.max(...all.map((r) => r.length));
+  // A loop, not Math.max(...): a spread of a large paste overflows the stack (#1403).
+  const width = all.reduce((w, r) => Math.max(w, r.length), 0);
   const header = hasHeader(all, width);
   const data = header ? all.slice(1) : all;
   const kept = data.slice(0, MAX_ROWS);

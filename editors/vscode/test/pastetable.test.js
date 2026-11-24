@@ -22,7 +22,11 @@ test("CSV and TSV are read as a spreadsheet writes them", () => {
   // Quotes hold the delimiter, a newline and a doubled quote.
   assert.deepStrictEqual(p.readDelimited('x,y\n"a,b","say ""hi""\nthere"\n').rows, [["x", "y"], ["a,b", 'say "hi"\nthere']]);
   // A byte order mark and blank lines are no data.
-  assert.deepStrictEqual(p.readDelimited("﻿a\n\n1\n\n").rows, [["a"], ["1"]]);
+  assert.deepStrictEqual(p.readDelimited("﻿a,b\n\n1,2\n\n").rows, [["a", "b"], ["1", "2"]]);
+  // In one column, a blank line between rows is an empty cell, and a quoted "" always is (#1404).
+  assert.deepStrictEqual(p.readDelimited("a\n\n1\n\n").rows, [["a"], [""], ["1"]]);
+  assert.deepStrictEqual(p.readDelimited('1\n""\n3').rows, [["1"], [""], ["3"]]);
+  assert.strictEqual(p.pasteTable("v\n1\n\n3").code, "([] v:1 0N 3)");
 });
 
 test("each column's type is the first that reads every cell, an empty cell its null", () => {
@@ -62,6 +66,9 @@ test("a paste is a ([] ...) literal: names from a header, vectors where q reads 
   assert.deepStrictEqual(p.pasteTable(""), { error: "the clipboard holds no rows." });
   const many = p.pasteTable(`a\n${"1\n".repeat(p.MAX_ROWS + 5)}`);
   assert.deepStrictEqual([many.rows, many.dropped], [p.MAX_ROWS, 5]);
+  // A paste too large to spread into Math.max still keeps the first rows (#1403).
+  const huge = p.pasteTable(`a,b\n${"1,2\n".repeat(300000)}`);
+  assert.deepStrictEqual([huge.rows, huge.dropped], [p.MAX_ROWS, 300000 - p.MAX_ROWS]);
 });
 
 test("JSON is written as .j.k reads it", () => {

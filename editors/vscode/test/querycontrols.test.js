@@ -6,7 +6,7 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const Long = require("long");
-const { atomText, cellText, cutLines, floatText, formatValue, gridOf, vectorText } = require("../out/qformat.js");
+const { atomText, cellText, consoleLines, cutLines, floatText, formatValue, gridOf, vectorText } = require("../out/qformat.js");
 const {
   UNLIMITED,
   UNLIMITED_ROWS,
@@ -183,6 +183,11 @@ test("text is cut at the console size as .Q.S cuts it", () => {
   assert.deepStrictEqual(cutLines(["abcdefgh", "ab"], [5, 6]), ["abcd..", "ab"]);
   assert.deepStrictEqual(cutLines(["1", "2", "3", "4"], [3, 80]), ["1", "2", ".."]);
   assert.deepStrictEqual(cutLines(["1", "2", "3"], [3, 80]), ["1", "2", "3"]);
+  // An unwrapped table at a height of 1 or 2 shows no rows, not all but one (#1405).
+  const t = { kind: "table", attr: 0, cols: ["a"], data: [{ kind: "vector", t: 7, attr: 0, v: [1n, 2n, 3n, 4n, 5n] }] };
+  for (const h of [1, 2]) {
+    assert.deepStrictEqual(consoleLines(t, [h, 80]), ["a", "-", ".."]);
+  }
 });
 
 test("a decoded table, dictionary or list becomes grid rows the panel can sort and chart", () => {
@@ -215,6 +220,9 @@ test("a decoded table, dictionary or list becomes grid rows the panel can sort a
   const list = gridOf([1, 2, 3], 6, 10);
   assert.deepStrictEqual(list.types, [6]);
   assert.deepStrictEqual(list.cells, [["1", "2", "3"]]);
+  // Equal values share a place, as GRID ranks them (#1406).
+  assert.deepStrictEqual(gridOf([1, 1, 2], 0, 10).rank, [[0, 0, 1]]);
+  assert.deepStrictEqual(gridOf(["b", "a", "b"], 0, 10).rank, [[1, 0, 1]]);
   assert.strictEqual(gridOf("abc", 10, 10), undefined);
   assert.strictEqual(gridOf(Long.fromInt(1), -7, 10), undefined);
 });
