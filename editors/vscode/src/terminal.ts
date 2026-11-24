@@ -205,15 +205,18 @@ function untab(code: string, inString: boolean): string {
   return out;
 }
 
-/// One statement as one line of q's console. A system command (`\d .ns`,
-/// `\cd /tmp`) is left as it is: q does not read comments in one.
+/// One statement as one line of q's console. A system command's line
+/// (`\d .ns`, `\cd /tmp`) is left as it is - q does not read comments in
+/// one - and its continuation lines (`\t {x+` then `  1}[2]`) joined to it
+/// as any statement's are: a newline sent would run each line alone (#1674).
 export function replLine(statement: string): string {
-  if (statement.startsWith("\\")) {
-    return statement;
-  }
+  const lines = statement.split("\n");
   let out = "";
+  if (statement.startsWith("\\")) {
+    out = lines.shift()!.replace(/\t/g, " ");
+  }
   let inString = false;
-  for (const line of statement.split("\n")) {
+  for (const line of lines) {
     if (inString) {
       // The newline and the indentation are part of the string.
       const { code, inString: still } = cut(line, true);

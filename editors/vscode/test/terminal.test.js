@@ -169,6 +169,11 @@ test("no tab reaches q's console, which reads one as completion (#1673)", () => 
   assert.deepStrictEqual(replLines('s:"q\\"\tz"'), ['s:"q\\"\\tz"']);
 });
 
+test("a system command's continuation lines join it, never a newline sent (#1674)", () => {
+  assert.deepStrictEqual(replLines("\\t {x+\n  1}[2]"), ["\\t {x+ 1}[2]"]);
+  assert.deepStrictEqual(replLines("\\t:10 {x+\n  / a comment line\n  1}[2]"), ["\\t:10 {x+ 1}[2]"]);
+});
+
 test("a system command is sent as it is, and comments and \\ follow the query rules", () => {
   assert.deepStrictEqual(replLines("\\d .lib\nadd:{x+y}\n\\cd /tmp\n\\d ."), ["\\d .lib", "add:{x+y}", "\\cd /tmp", "\\d ."]);
   // `/` alone opens a block comment that `\` alone closes; `\` alone outside
