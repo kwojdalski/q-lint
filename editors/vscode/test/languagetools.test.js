@@ -400,6 +400,36 @@ test("affected tests on save are off by default; on, a save runs the tests the s
   }
 });
 
+test("a document already edited when affected tests turn on compares its first save against the file on disk (#1394)", async () => {
+  const { context, restore } = setUp();
+  const saves = [];
+  const fs = vscode.workspace.fs;
+  vscode.workspace.onDidSaveTextDocument = (l) => (saves.push(l), { dispose: () => saves.splice(saves.indexOf(l), 1) });
+  vscode.workspace.onDidOpenTextDocument = () => ({ dispose() {} });
+  vscode.workspace.onDidCloseTextDocument = () => ({ dispose() {} });
+  const uri = (p) => ({ scheme: "file", fsPath: p, toString: () => `file://${p}` });
+  const dirty = { languageId: "q", uri: uri("/w/lib.q"), isDirty: true, getText: () => "f:{x+2}\n" };
+  const clean = { languageId: "q", uri: uri("/w/other.q"), isDirty: false, getText: () => "g:{x}\n" };
+  vscode.workspace.textDocuments = [dirty, clean];
+  vscode.workspace.fs = { readFile: async (u) => new TextEncoder().encode(u.fsPath === "/w/lib.q" ? "f:{x+1}\n" : "never read") };
+  try {
+    const sent = [];
+    const server = { sendRequest: async (_method, params) => (sent.push([params.textDocument.uri, params.previous]), { tests: [] }) };
+    const tests = { discover: async () => {}, items: () => [], run: async () => {} };
+    stub.config.user["testing.runAffectedOnSave.enable"] = true;
+    const api = registerAffectedOnSave(context, () => server, tests);
+    saves[0](dirty);
+    saves[0](clean);
+    await api.settled();
+    assert.deepStrictEqual(sent, [["file:///w/lib.q", "f:{x+1}\n"], ["file:///w/other.q", "g:{x}\n"]]);
+    stub.config.user["testing.runAffectedOnSave.enable"] = false;
+    stub.changeConfig("q-lint.testing.runAffectedOnSave.enable");
+  } finally {
+    vscode.workspace.fs = fs;
+    restore();
+  }
+});
+
 test("affected tests queued on save are not run once the setting is turned off (#1086)", async () => {
   const { context, restore } = setUp();
   const saves = [];
