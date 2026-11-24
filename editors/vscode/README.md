@@ -2001,8 +2001,9 @@ menu, asks a language model for a query that does what you describe, given
 the connected process's tables and columns, and opens the draft in a new q
 editor. Nothing runs: the notification offers **Run**, which runs the
 draft as it then stands, edited or not, as a query from an editor runs,
-and **Insert at Cursor**, which puts it in the editor you started from.
-Close it, and nothing happens. `q-lint.chat.englishToQsql.enable` off hides
+and **Insert at Cursor**, which puts it in the editor you started from,
+shown again when its tab was switched away from or closed since.
+Close the notification, and nothing happens. `q-lint.chat.englishToQsql.enable` off hides
 the command. Both need a language model in VS Code, such as GitHub
 Copilot's; without one they say so.
 
