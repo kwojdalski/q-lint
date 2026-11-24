@@ -213,9 +213,15 @@ function mapPaths(text: string, f: (path: string) => string): string {
 /// with each path under one of `folders` (one folder's names: as opened,
 /// and with its symlinks resolved) made relative to it. qlinter writes
 /// canonical `/`-separated paths, `//?/C:/proj/a.q` on Windows, so both
-/// sides are compared in that form, a drive letter in either case (#1080).
+/// sides are compared in that form, a drive letter in either case (#1080),
+/// and a UNC share's `//?/UNC/server/share` as `//server/share` (#2105).
 export function rebased(text: string, ...folders: string[]): string {
-  const canonical = (p: string): string => p.replace(/\\/g, "/").replace(/^\/\/\?\//, "").replace(/^[a-z]:/, (d) => d.toUpperCase());
+  const canonical = (p: string): string =>
+    p
+      .replace(/\\/g, "/")
+      .replace(/^\/\/\?\/UNC\//i, "//")
+      .replace(/^\/\/\?\//, "")
+      .replace(/^[a-z]:/, (d) => d.toUpperCase());
   const prefixes = folders.map((f) => canonical(f).replace(/\/*$/, "/"));
   return mapPaths(text, (path) => {
     const prefix = prefixes.find((p) => canonical(path).startsWith(p));
