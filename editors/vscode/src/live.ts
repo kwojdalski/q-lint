@@ -101,7 +101,7 @@ import type { GridAnswer, GridPayload } from "./grid";
 import { WATCH, WATCHING, intervalProblem, readWatch, watchText } from "./watch";
 import { guardedBy } from "./guard";
 import { readAdmin } from "./admin";
-import { credentialEnv, parseCredentials, runCredentialCommand } from "./credentials";
+import { credentialCwd, credentialEnv, parseCredentials, runCredentialCommand } from "./credentials";
 import { effectiveTimeout, ownTimeout, timeoutDropped, timeoutSource } from "./processtimeout";
 import type { Answered } from "./inlineresult";
 
@@ -1871,7 +1871,7 @@ export class Live {
       return targetOf(process, password);
     }
     const output = await runCredentialCommand(process.credentialCommand, {
-      cwd: workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir(),
+      cwd: credentialCwd(workspace.isTrusted !== false, workspace.workspaceFolders?.[0]?.uri.fsPath, os.homedir()),
       env: credentialEnv(process),
     });
     const given = parseCredentials(output, process.user);

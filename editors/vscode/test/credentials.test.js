@@ -14,7 +14,7 @@ const path = require("node:path");
 const pkg = require("../package.json");
 const { Live } = require("../out/live.js");
 const { ADMIN_COMMANDS, adminOff, readAdmin } = require("../out/admin.js");
-const { credentialEnv, parseCredentials, runCredentialCommand } = require("../out/credentials.js");
+const { credentialCwd, credentialEnv, parseCredentials, runCredentialCommand } = require("../out/credentials.js");
 const { CredentialCommands } = require("../out/credentialview.js");
 const { parseProcesses } = require("../out/processes.js");
 const { readSharedFile } = require("../out/shared.js");
@@ -170,4 +170,13 @@ test("a process whose command prints the right credentials connects, and nothing
   // Turned off, the command is not run: the stored password (none) is sent.
   stub.config.user["connection.credentialCommand.enable"] = false;
   assert.strictEqual(await live.connectTo("good"), false);
+});
+
+// A saved process's credential command ran in the opened folder even when
+// it was not trusted: `./creds.sh`, or on Windows a bare `vault`, was the
+// repository's (#1537).
+test("a credential command runs in the workspace folder only when it is trusted, else in the home directory", () => {
+  assert.strictEqual(credentialCwd(true, "/ws", "/home/u"), "/ws");
+  assert.strictEqual(credentialCwd(false, "/ws", "/home/u"), "/home/u");
+  assert.strictEqual(credentialCwd(true, undefined, "/home/u"), "/home/u");
 });
