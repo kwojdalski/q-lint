@@ -1217,7 +1217,10 @@ lenses are on, and the second also when a definition's parameters change, as
 `.q`/`.k` files and folders, and answers it with the edits that keep each
 load naming what it named - written from the workspace folder or from the
 loading file's directory, whichever it was written from - including the
-loads of a file that moves. `loadPathCompletion.enable: true` completes the
+loads of a file that moves. A load the new path cannot be written in (a
+blank after `\l` or in `system "l ..."`, which q has no spelling for, or
+anything a file symbol cannot hold) gets no edit, and one
+`window/showMessage` lists those lines. `loadPathCompletion.enable: true` completes the
 folders and `.q`/`.k` scripts after `\l `, with `/` as a trigger
 character; with `completion.enable` off, it announces completion and
 answers only on a `\l` line. A request the `/` itself triggered is answered

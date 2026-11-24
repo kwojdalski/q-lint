@@ -1644,12 +1644,24 @@ pub fn serve(
                 // no edit rather than refused.
                 let answer = guarded(|| {
                     if !opts.rename_loads {
-                        return Value::Null;
+                        return (Value::Null, None);
                     }
                     paths::will_rename(&params, &navigate::Sources::new(&docs, &idx))
                 });
                 match answer {
-                    Ok(result) => send(writer, json!({"id": id, "result": result}))?,
+                    Ok((result, told)) => {
+                        // The loads the new name cannot be written in: the
+                        // rename goes ahead whatever is answered, so the
+                        // user is told which lines it leaves behind.
+                        if let Some(message) = told {
+                            send(
+                                writer,
+                                json!({"method": "window/showMessage",
+                                       "params": {"type": 2, "message": message}}),
+                            )?;
+                        }
+                        send(writer, json!({"id": id, "result": result}))?
+                    }
                     Err(panic) => send(writer, internal_error(id, &panic))?,
                 }
             }

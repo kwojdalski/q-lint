@@ -109,16 +109,25 @@ impl Server {
 
     /// The reply to a request, past the diagnostics pushed meanwhile.
     fn request(&mut self, method: &str, params: Value) -> Value {
+        self.told(method, params).0
+    }
+
+    /// The reply to a request, and each `window/showMessage` sent before it.
+    fn told(&mut self, method: &str, params: Value) -> (Value, Vec<String>) {
         let id = self.next_id;
         self.next_id += 1;
         self.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}));
+        let mut shown = vec![];
         loop {
             let message = self
                 .messages
                 .recv_timeout(Duration::from_secs(30))
                 .expect("the server answers");
             if message["id"] == id {
-                return message;
+                return (message, shown);
+            }
+            if message["method"] == "window/showMessage" {
+                shown.push(message["params"]["message"].as_str().unwrap().to_string());
             }
         }
     }
@@ -1545,6 +1554,70 @@ fn an_absolute_load_through_a_symlink_is_rewritten_as_written() {
         format!("{}/lib/b.q", alias.display()),
         "{reply}"
     );
+}
+
+/// A new name the load could not be written with is not written (#2026):
+/// KDB-X 5 answers `\l lib/my util.q` and `system "l lib/my util.q"` with
+/// 'nyi - quoted, or with the blank escaped, too - so no form of a load
+/// reaches a path with a blank in it, and `` `:lib/my-util.q `` is the
+/// symbol `` `:lib/my `` less `util.q`. Checked by loading a real file of
+/// each name on a q started for it.
+#[test]
+fn a_load_is_not_rewritten_into_one_q_cannot_read() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("lib")).unwrap();
+    let files = [
+        ("lib/util.q", "u:1\n"),
+        (
+            "main.q",
+            "\\l lib/util.q\nsystem \"l lib/util.q\"\np:`:lib/util.q\n",
+        ),
+        ("lib/near.q", "\\l util.q\n"),
+    ];
+    let options = json!({"renameLoads": {"enable": true}});
+    let (mut server, _) = Server::over(dir.path(), &files, client(), options);
+    // A blank: no load can hold it, so none is edited, and the user is told
+    // which lines still name the old path.
+    let (reply, shown) = server.told(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("lib/util.q", "lib/my util.q")]),
+    );
+    assert_eq!(reply["result"], Value::Null, "{reply}");
+    assert_eq!(shown.len(), 1, "{shown:?}");
+    for part in [
+        "lib/my util.q",
+        "my util.q",
+        "lib/near.q:1",
+        "main.q:1",
+        "main.q:2",
+        "main.q:3",
+    ] {
+        assert!(shown[0].contains(part), "{part} in {}", shown[0]);
+    }
+    // A `-`: a path after `\l` or in a string holds one, a symbol does not.
+    let (reply, shown) = server.told(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("lib/util.q", "lib/my-util.q")]),
+    );
+    assert_eq!(
+        renamed(&reply, dir.path()),
+        [
+            ("lib/near.q".to_string(), 0, 3, 9, "my-util.q".to_string()),
+            ("main.q".into(), 0, 3, 13, "lib/my-util.q".into()),
+            ("main.q".into(), 1, 10, 20, "lib/my-util.q".into()),
+        ],
+        "{reply}"
+    );
+    assert_eq!(shown.len(), 1, "{shown:?}");
+    assert!(shown[0].contains("main.q:3"), "{}", shown[0]);
+    assert!(!shown[0].contains("main.q:1"), "{}", shown[0]);
+    // A name every form can hold: all three, and nothing to say.
+    let (reply, shown) = server.told(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("lib/util.q", "lib/util2.q")]),
+    );
+    assert_eq!(renamed(&reply, dir.path()).len(), 4, "{reply}");
+    assert!(shown.is_empty(), "{shown:?}");
 }
 
 #[test]

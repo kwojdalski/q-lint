@@ -102,7 +102,11 @@ fn moved(path: &Path, renames: &[(PathBuf, PathBuf)]) -> Option<PathBuf> {
 /// stays so, one written from the loading file's directory (or one above
 /// it) is written from that directory's new place. A load that reaches
 /// nothing on disk, or still reaches the same path, is left alone.
-pub(super) fn will_rename(params: &Value, sources: &Sources) -> Value {
+///
+/// So is one the new path cannot be written in (`reads_back`): the second
+/// value says which, for the user, who is otherwise left with a line q
+/// cannot run and nothing to say so (#2026).
+pub(super) fn will_rename(params: &Value, sources: &Sources) -> (Value, Option<String>) {
     let renames: Vec<(PathBuf, PathBuf)> = params["files"]
         .as_array()
         .into_iter()
@@ -114,10 +118,11 @@ pub(super) fn will_rename(params: &Value, sources: &Sources) -> Value {
         })
         .collect();
     if renames.is_empty() {
-        return Value::Null;
+        return (Value::Null, None);
     }
     let root = root(sources);
     let mut changes: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    let mut left: Vec<String> = vec![];
     for key in sources.keys() {
         if sources.idx.files[key].loads.is_empty() {
             continue;
@@ -135,16 +140,55 @@ pub(super) fn will_rename(params: &Value, sources: &Sources) -> Value {
             let Some(edit) = rewritten(load, root.as_deref(), dir, new_dir, &renames) else {
                 continue;
             };
+            if !reads_back(&text, at, len, &edit) {
+                let file = root.as_deref().and_then(|r| from.strip_prefix(r).ok());
+                let file = file.unwrap_or(from).to_string_lossy().replace('\\', "/");
+                let line = text[..at].matches('\n').count() + 1;
+                left.push(format!("{file}:{line} (`{edit}`)"));
+                continue;
+            }
             changes.entry(uri.clone()).or_default().push(json!({
                 "range": super::navigate::range(&lines, at, len),
                 "newText": edit,
             }));
         }
     }
+    let told = (!left.is_empty()).then(|| {
+        left.sort();
+        let count = match left.len() {
+            1 => "1 load is".to_string(),
+            n => format!("{n} loads are"),
+        };
+        let more = left.len().saturating_sub(MAX_TOLD);
+        left.truncate(MAX_TOLD);
+        let mut places = left.join(", ");
+        if more > 0 {
+            places.push_str(&format!(" and {more} more"));
+        }
+        format!(
+            "q-lint: {count} left naming the old path, which q could not read rewritten: \
+             {places}. No load holds a blank, and a file symbol holds only letters, digits, \
+             `_`, `.` and `/`."
+        )
+    });
     if changes.is_empty() {
-        return Value::Null;
+        return (Value::Null, told);
     }
-    json!({"changes": changes})
+    (json!({"changes": changes}), told)
+}
+
+/// How many loads left as written one message lists.
+const MAX_TOLD: usize = 8;
+
+/// Whether the load at `at`, written as `new`, is still a load of `new`: a
+/// path is read up to a blank after `\l` and in `system "l ..."`, and a
+/// file symbol ends at the first character a symbol cannot hold. KDB-X has
+/// no spelling for the rest - `\l my util.q` is 'nyi quoted, escaped or
+/// bare - so an edit that fails this would write a line that loads nothing
+/// and that no later rename finds again.
+fn reads_back(text: &str, at: usize, len: usize, new: &str) -> bool {
+    let edited = format!("{}{new}{}", &text[..at], &text[at + len..]);
+    load_paths(&edited).contains(&(at, new.len()))
 }
 
 /// The new spelling of `load`, written in a file whose directory is `dir`

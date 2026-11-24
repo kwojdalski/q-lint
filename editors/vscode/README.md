@@ -208,7 +208,9 @@ to a process you add and connect to, and sends only the code you run.
   that reaches no file, or a directory, is no link. Renaming or moving a
   `.q` file or a folder in the Explorer rewrites the load paths that name
   it, each from the base it was written against, and a moved file's own
-  (`q-lint.renameLoads.enable`); and after `\l ` the folders and `.q`/`.k`
+  (`q-lint.renameLoads.enable`) - but not into a load q cannot read: a new
+  name with a blank in it has no spelling after `\l`, so those lines are
+  left and a message lists them; and after `\l ` the folders and `.q`/`.k`
   scripts complete, from the file's directory and the workspace folder
   (`q-lint.loadPathCompletion.enable`). What only
   running the code would tell - a name built at run time, `value "..."`,
