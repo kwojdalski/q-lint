@@ -781,3 +781,19 @@ test("an HTML export nests a list written under an item, as the notebook shows i
     '<ul><li>a<ul><li>&lt;b&gt;x&lt;/b&gt; <span class="live" title="q: n">&lt;7&gt;</span> [l](javascript:alert(1))</li></ul></li></ul>',
   );
 });
+
+test("an HTML export keeps a link's title, as the tip the notebook shows (#1944)", () => {
+  assert.strictEqual(markdownHtml('[text](https://x.com "title")'), '<p><a href="https://x.com" title="title">text</a></p>');
+  assert.strictEqual(markdownHtml("[text](https://x.com 'the title') and [b](https://y.io (in brackets))"), '<p><a href="https://x.com" title="the title">text</a> and <a href="https://y.io" title="in brackets">b</a></p>');
+  assert.strictEqual(markdownHtml('![logo](https://x.io/l.png "the logo")'), '<p><a href="https://x.io/l.png" title="the logo">logo</a></p>');
+  assert.strictEqual(markdownHtml('![c](data:image/png;base64,AAAA "a chart")'), '<p><img alt="c" src="data:image/png;base64,AAAA" title="a chart"></p>');
+  // A title is text: nothing in it is markup, a value or the attribute's end.
+  assert.strictEqual(
+    markdownHtml('[t](https://x.com "a <b> &amp; \\"q\\" `c` *e* {{q: n}}")', { n: { text: "7" } }),
+    '<p><a href="https://x.com" title="a &lt;b&gt; &amp; &quot;q&quot; `c` *e* {{q: n}}">t</a></p>',
+  );
+  assert.strictEqual(markdownHtml("[t](https://x.com 'a\" onmouseover=\"b')"), '<p><a href="https://x.com" title="a&quot; onmouseover=&quot;b">t</a></p>');
+  // A title makes no link of a target that is none.
+  assert.strictEqual(markdownHtml('[x](javascript:alert(1) "t")'), "<p>[x](javascript:alert(1) &quot;t&quot;)</p>");
+  assert.strictEqual(markdownHtml('[x](https://x.com "t" more)'), "<p>[x](https://x.com &quot;t&quot; more)</p>");
+});

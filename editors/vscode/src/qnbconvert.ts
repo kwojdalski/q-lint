@@ -93,20 +93,28 @@ function inline(text: string, values: Record<string, LiveValue>): string {
   /// A target a page may follow: `safeHref`'s, and with no blank in it,
   /// which a held piece may bring: a destination with a blank is no link.
   const followed = (href: string): string | undefined => (/\s/.test(url(href).trim()) ? undefined : safeHref(url(href)));
+  // A title after the target, in either quote or in brackets: the tip
+  // the notebook shows, and text as the URL is (#1944).
+  const TITLE = String.raw`(?:\s+(?:&quot;(.*?)&quot;|&#39;(.*?)&#39;|\(([^()]*)\)))?`;
+  const titled = (...titles: (string | undefined)[]): string => {
+    const title = titles.find((t) => t !== undefined);
+    return title === undefined ? "" : ` title="${escapeHtml(url(title))}"`;
+  };
   // An image: one in the page as a data: URL is shown, as Send to
   // Notebook's chart is; another is a link to it, or its alt text (#1555).
-  s = s.replace(/!\[([^\]]*)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/g, (_m, alt: string, src: string) => {
+  s = s.replace(new RegExp(String.raw`!\[([^\]]*)\]\(((?:[^()\s]|\([^()\s]*\))+)${TITLE}\)`, "g"), (m, alt: string, src: string, a?: string, b?: string, c?: string) => {
     if (/^data:image\/(png|jpeg|gif);base64,[A-Za-z0-9+/=]+$/.test(src)) {
-      return hold(`<img alt="${alt.replace(/\u0000\d+\u0000/g, "")}" src="${src}">`);
+      return hold(`<img alt="${alt.replace(/\u0000\d+\u0000/g, "")}" src="${src}"${titled(a, b, c)}>`);
     }
     const target = followed(src);
-    return target === undefined ? alt : `${hold(`<a href="${escapeHtml(target)}">`)}${alt}${hold("</a>")}`;
+    // Its alt text alone, or with a title all of it as written.
+    return target === undefined ? (titled(a, b, c) === "" ? alt : m) : `${hold(`<a href="${escapeHtml(target)}"${titled(a, b, c)}>`)}${alt}${hold("</a>")}`;
   });
   // A URL may hold balanced parentheses, as Wikipedia's do (#1554).
-  s = s.replace(/\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/g, (m, label: string, href: string) => {
+  s = s.replace(new RegExp(String.raw`\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)${TITLE}\)`, "g"), (m, label: string, href: string, a?: string, b?: string, c?: string) => {
     // The tags are held, so the emphasis below finds no `_` in the URL (#1105).
     const target = followed(href);
-    return target === undefined ? m : `${hold(`<a href="${escapeHtml(target)}">`)}${label}${hold("</a>")}`;
+    return target === undefined ? m : `${hold(`<a href="${escapeHtml(target)}"${titled(a, b, c)}>`)}${label}${hold("</a>")}`;
   });
   // A run of three first, so its tags nest (#1550). An underscore run
   // inside a word is text (#1556), as `_` is below.
