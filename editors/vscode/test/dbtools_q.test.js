@@ -221,6 +221,12 @@ test("the documenter gives a projection and a composition no parameters", { skip
   assert.deepStrictEqual([params.add, params.prj, params.cmp], [["a", "b"], [], []]);
 });
 
+// KDB-X's own .s namespace (its SQL) is not the process's (#1576).
+test("the documenter leaves out q's own namespaces, .s too", { skip }, async (t) => {
+  const { connection } = await connect(t, "x:1\n");
+  assert.deepStrictEqual(readDoc(await connection.call(DOCUMENT, 100)).functions.filter((f) => /^\.[qQhjozms]\./.test(f.name)), []);
+});
+
 test("the partition check finds missing dates, files, differing types and outliers", { skip }, async (t) => {
   const extra = [
     "mk[r;;6] each 2026.01.12 2026.01.13;",

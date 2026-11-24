@@ -8,7 +8,8 @@
 // One read, defining nothing: `meta` of each table in the root (a
 // partitioned one's reads its last partition's schema), its rows counted as
 // the explorer counts them (`.Q.cn` for a partitioned table), and the
-// functions of the root and of every namespace that is not q's own, at most
+// functions of the root and of every namespace that is not q's own (KDB-X's
+// SQL `.s` among them, #1576), at most
 // `lim` of each. Only a lambda has parameters of its own: `(value f)1` of a
 // projection is its bound argument, of a composition a part (#1575). Works on kdb+ (KDB-X) and PeachQ; held there by
 // dbtools_q.test.js.
@@ -24,7 +25,7 @@ export const DOCUMENT = [
   "   \"f\"$$[part;@[{sum .Q.cn x};v;0n];count v];",
   "   string$[99h=type v;(),keys v;`$()];",
   "   string mt`c;{$[null x;enlist\" \";enlist x]}each mt`t;string mt`f;string mt`a)};",
-  " ns:(key`)except`q`Q`h`j`o`z`m`qlint;",
+  " ns:(key`)except`q`Q`h`j`o`s`z`m`qlint;",
   " ns:ns where not null ns;ns:ns where{99h=type get` sv`,x}each ns;",
   " fs:m sublist(system\"f\"),raze{` sv'(` sv`,x),/:system\"f \",string` sv`,x}each ns;",
   " `pf`parts`tables`fnames`fparams!(",
