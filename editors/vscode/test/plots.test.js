@@ -60,6 +60,15 @@ test("a label that reads like a handler or link is text, and the plot is kept (#
   assert.strictEqual(plainSvg(svg('<text x="1" onclick="x()">a</text>')), false);
 });
 
+test("a handler after a > in an attribute value is still a handler, and the plot is refused (#1738)", () => {
+  for (const bad of ['<image x=">" href="x" onerror="alert(1)"/>', "<image x='>' onerror='alert(1)'/>", '<g a=">"><text x=">" onclick="x()">a</text></g>', '<text x=">">a</text><a href="x">b</a>', '<image x="a>b onerror=alert(1) />']) {
+    assert.strictEqual(plainSvg(svg(bad)), false, bad);
+  }
+  // A > in a value or a label, with no handler, is kept.
+  assert.strictEqual(plainSvg(svg('<text x="1" data-a=">">a > b, onload=1</text>')), true);
+  assert.strictEqual(plainSvg(svg('<text x="1">x &gt; href=2</text>')), true);
+});
+
 test("the switch is declared, on by default, and the view and commands are hidden when off", () => {
   const props = Object.assign({}, ...pkg.contributes.configuration.map((c) => c.properties));
   assert.strictEqual(props["q-lint.results.plots.enable"].default, true);

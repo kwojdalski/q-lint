@@ -6,7 +6,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import * as net from "node:net";
 import * as os from "node:os";
 import { commands, window, workspace, type ExtensionContext, type OutputChannel } from "vscode";
-import { LAUNCH_COMMANDS, argsFromText, argsText, commandText, fromWorkspace, launchPlan, listenAddress, readLauncher, spawnPlan } from "./launcher";
+import { LAUNCH_COMMANDS, argsFromText, argsText, commandText, fromWorkspace, launchPlan, listenAddress, probeHost, readLauncher, spawnPlan } from "./launcher";
 import { readTerminal } from "./liveconfig";
 import { qBinaryFrom } from "./terminal";
 import { mergeEnv } from "./qenv";
@@ -14,7 +14,7 @@ import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import type { Live, ProcessArg } from "./live";
 import { launchOf, withExtras, type Launch, type Process } from "./processes";
 import { iconsEscaped, plainMessage } from "./history";
-import { lifeline, signalGroup } from "./lifeline";
+import { groupAlive, lifeline, signalGroup } from "./lifeline";
 
 /// How long a process has to end after SIGTERM before it is killed.
 const STOP_GRACE_MS = 3000;
@@ -25,10 +25,11 @@ interface Started {
   port: number;
 }
 
-/// Whether something accepts connections on `port` of the loopback.
-function listening(port: number): Promise<boolean> {
+/// Whether something accepts connections on `port` of `host`'s loopback
+/// address (probeHost).
+function listening(port: number, host: string): Promise<boolean> {
   return new Promise((resolve) => {
-    const socket = net.connect(port, "127.0.0.1", () => {
+    const socket = net.connect(port, probeHost(host), () => {
       socket.destroy();
       resolve(true);
     });
@@ -85,7 +86,7 @@ export class Launcher {
   /// or on Windows, where kill() ends the process whatever the signal (#1250).
   interrupt(label: string): number | undefined {
     const child = this.started.get(label)?.child;
-    if (globalThis.process.platform === "win32" || child === undefined || child.exitCode !== null || child.signalCode !== null || child.pid === undefined) {
+    if (globalThis.process.platform === "win32" || child === undefined || child.pid === undefined || ((child.exitCode !== null || child.signalCode !== null) && !groupAlive(child))) {
       return undefined;
     }
     signalGroup(child, "SIGINT");
@@ -164,7 +165,7 @@ export class Launcher {
     }
     const child = this.started.get(label)?.child;
     const until = Date.now() + timeoutMs;
-    while (!(await listening(process.port))) {
+    while (!(await listening(process.port, process.host))) {
       if (child === undefined || child.exitCode !== null || child.signalCode !== null || this.started.get(label)?.child !== child) {
         return `${label} ended before it listened on port ${process.port}: its output is in the "q: ${label}" output channel.`;
       }
@@ -195,7 +196,7 @@ export class Launcher {
       return plan.error;
     }
     // A process already on the port would make this one fail to listen.
-    if (await listening(process.port)) {
+    if (await listening(process.port, process.host)) {
       return `something already listens on port ${process.port}; ${process.label} was not started.`;
     }
     // The binary's layout's variables, then the workspace's .env file's,
@@ -247,7 +248,8 @@ export class Launcher {
       return `could not start ${process.label}: ${failed.message}`;
     }
     child.on("error", (error) => channel.appendLine(error.message));
-    if (this.disposed) {
+    // Turned off while it spawned, too: stopAll has run already (#1740).
+    if (this.disposed || !this.enabled()) {
       signalGroup(child, "SIGKILL");
       return `the process launcher was turned off; ${process.label} was not started.`;
     }
@@ -304,7 +306,8 @@ export class Launcher {
     }
     const { child } = started;
     return new Promise((resolve) => {
-      if (child.exitCode !== null || child.signalCode !== null) {
+      // An exited wrapper may have left its q in its group (#1744).
+      if ((child.exitCode !== null || child.signalCode !== null) && !groupAlive(child)) {
         resolve();
         return;
       }
@@ -385,7 +388,7 @@ export class Launcher {
       const args = await window.showInputBox({
         title: `Launch ${process.label} (3 of 3): arguments`,
         value: argsText(current.args ?? []),
-        prompt: `Arguments after the script; -p ${listenAddress(process.host, process.port)} is added unless they set -p. For TorQ: -proctype rdb -procname rdb1 -load code/processes/rdb.q`,
+        prompt: `Arguments after the script; -p ${listenAddress(process.host, process.port)} (a bare port for TorQ) is added unless they set -p. For TorQ: -proctype rdb -procname rdb1 -load code/processes/rdb.q`,
         ignoreFocusOut: true,
       });
       if (args === undefined) {

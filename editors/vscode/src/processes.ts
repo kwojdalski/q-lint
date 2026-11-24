@@ -542,3 +542,32 @@ export function consoleSize(text: unknown): [number, number] | undefined {
   const [h, w] = parts.map(Number);
   return h > 0 && w > 0 ? [h, w] : undefined;
 }
+
+/// A process renamed (`to` its new label) or deleted (`to` null), logged
+/// in every window's state with a number one past the last: dashboard
+/// tiles and scheduled exports are each workspace's, named by label, and
+/// one not open at the time follows when it next opens (#1749).
+export interface Relabel {
+  n: number;
+  from: string;
+  to: string | null;
+}
+
+/// The relabels a stored value holds, skipping anything else.
+export function parseRelabels(value: unknown): Relabel[] {
+  return Array.isArray(value)
+    ? value.filter((r): r is Relabel => typeof r === "object" && r !== null && Number.isInteger(r.n) && typeof r.from === "string" && (typeof r.to === "string" || r.to === null))
+    : [];
+}
+
+/// `log` with `from` relabelled `to` after it: its last `keep` entries.
+export function withRelabel(log: Relabel[], from: string, to: string | undefined, keep = 100): Relabel[] {
+  const n = (log.length > 0 ? log[log.length - 1].n : 0) + 1;
+  return [...log, { n, from, to: to ?? null }].slice(-keep);
+}
+
+/// The relabels a workspace that applied those to `applied` has still to
+/// apply, in order.
+export function relabelsAfter(log: Relabel[], applied: number): Relabel[] {
+  return log.filter((r) => r.n > applied);
+}

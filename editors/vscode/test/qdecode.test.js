@@ -105,10 +105,33 @@ test("a date or datetime outside years 1 to 9999 is 0000.00.00, as KDB-X writes 
   assert.strictEqual(shown(datetime(2921939.5)), "9999.12.31T12:00:00.000");
 });
 
+test("a month outside years 1 to 9999 is written as KDB-X writes it (#1736)", () => {
+  const { atomText, vectorText } = require("../out/qformat.js");
+  // KDB-X: .Q.s1 "m"$200000 -30000 is "**66.09 0+00.01m".
+  assert.strictEqual(vectorText([200000, -30000], 13), "**66.09 0+00.01m");
+  const kdbx = {
+    95988: "9999.01m", 96000: "**00.01m", 100000: "**33.05m", 2147483646: "**)0.0'm",
+    "-23988": "0001.01m", "-23989": "0000.12m", "-24001": "0000.00m", "-24011": "0000./0m",
+    "-24012": "000/.01m", "-25000": "00(-.0-m", "-100000": "*---.0-m", 0: "2000.01m", "-1": "1999.12m",
+  };
+  for (const [m, text] of Object.entries(kdbx)) {
+    assert.strictEqual(atomText(Number(m), -13), text, m);
+    assert.strictEqual(shown(int(-13, Number(m))), text, m);
+  }
+});
+
 test("negative zero keeps its sign: KDB-X shows -0f (#1236)", () => {
   const { atomText } = require("../out/qformat.js");
   assert.strictEqual(shown(float(-0)), "-0f");
   assert.strictEqual(shown(floats([1, -0])), "1 -0f");
   assert.strictEqual(atomText(-0, -9), "-0f");
   assert.strictEqual(shown(float(0)), "0f");
+});
+
+test("a decoded result ranks text in code point order, as q sorts it: an emoji after U+FF21 (#1747)", () => {
+  const { gridOf, gridOfQ } = require("../out/qformat.js");
+  const syms = ["\u{1F600}", "Ａ", "b"];
+  // q: iasc of them is 2 1 0.
+  assert.deepStrictEqual(gridOfQ({ kind: "table", attr: 0, cols: ["s"], data: [{ kind: "vector", t: 11, attr: 0, v: syms }] }, 100).rank, [[2, 1, 0]]);
+  assert.deepStrictEqual(gridOf(syms, 11, 100).rank, [[2, 1, 0]]);
 });

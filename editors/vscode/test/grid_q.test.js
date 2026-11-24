@@ -108,6 +108,15 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
     assert.strictEqual(tableLiteral(answer.grid).code, "([] a:(1.23456789f;`x;0n;0.1e;1 2))");
   });
 
+  await t.test("a general column's float infinity is shown as q writes it, not as 0W (#1733)", async () => {
+    const { toGrid } = require("../out/grid.js");
+    const answer = await connection.queryGrid(statements("([]a:(0w;`a;-0we;1.5))"), SIZE, 10);
+    assert.strictEqual(answer.gridError, undefined, answer.gridError);
+    assert.deepStrictEqual(toGrid(answer.grid, -1).cells[0], ["0w", "`a", "-0we", "1.5"]);
+    const floats = await connection.queryGrid(statements("([]a:0w -0w 1.5)"), SIZE, 10);
+    assert.deepStrictEqual(toGrid(floats.grid, -1).cells[0], ["0w", "-0w", "1.5"]);
+  });
+
   await t.test("a dictionary or a nested list comes with its tree, as unwrapped mode makes it (#928)", async () => {
     const { runUnwrapped } = require("../out/querycontrols.js");
     const { TREE_NODES } = require("../out/grid.js");
@@ -206,6 +215,8 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
       // Floats and reals nested in a general column's items (#1502).
       '([] f:(1.23456789012 2.5;(1;2.1234567891234;`a;0.1 0N -0w 0we);enlist 0.1 0n;(enlist 3.14159265358979;"x");`float$();enlist(1.5;0n)))',
       '([] t:(([]a:`p`r);([k:1 2]v:3 4);enlist ([]a:1 2);flip(`$"a b";`c)!(1 2;3 4);1))',
+      // Floats in a dictionary or a table in a general column's items (#1746).
+      '([] d:(`a`b!1.123456789 2;([]a:1.123456789 2);([k:1 2]v:0.1234567891 3);(1;`a`b!1.5 2.123456789);`a`b!1 2;1))',
     ];
     for (const code of tables) {
       const grid = (await connection.queryGrid(statements(code), SIZE, 100)).grid;

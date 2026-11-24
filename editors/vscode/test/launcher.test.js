@@ -10,7 +10,7 @@ const os = require("node:os");
 const path = require("node:path");
 const net = require("node:net");
 const pkg = require("../package.json");
-const { LAUNCH_COMMANDS, argsFromText, argsText, commandText, fromWorkspace, isLocalHost, launchPlan, listenAddress, readLauncher, spawnPlan } = require("../out/launcher.js");
+const { LAUNCH_COMMANDS, argsFromText, argsText, commandText, fromWorkspace, inStack, isLocalHost, launchPlan, listenAddress, probeHost, readLauncher, spawnPlan } = require("../out/launcher.js");
 const { launchOf, parseProcesses, splitArgs } = require("../out/processes.js");
 const { onPath } = require("../out/relations.js");
 const { Live } = require("../out/live.js");
@@ -34,6 +34,19 @@ test("a process defined on a loopback host listens on the loopback only, not on 
   assert.deepStrictEqual(launchPlan({ ...proc("l", 1, { args: ["-p", "5001"] }), host: "localhost" }, "q", undefined, "/home/me").args, ["-p", "5001"]);
 });
 
+test("a TorQ process on a loopback host listens on a bare port, where its stack reaches it by .z.h; its probe is its own address (#1742)", () => {
+  const plan = (launch) => launchPlan({ ...proc("t", 47127, launch), host: "localhost" }, "q", undefined, "/home/me").args;
+  assert.deepStrictEqual(plan({ script: "/opt/torq/torq.q", args: ["-load", "code/processes/rdb.q"] }), ["/opt/torq/torq.q", "-p", "47127", "-load", "code/processes/rdb.q"]);
+  assert.deepStrictEqual(plan({ args: ["-proctype", "rdb", "-procname", "rdb1"] }), ["-p", "47127", "-proctype", "rdb", "-procname", "rdb1"]);
+  // A lone q stays on the loopback.
+  assert.deepStrictEqual(plan({ script: "/opt/tick.q" }), ["/opt/tick.q", "-p", "127.0.0.1:47127"]);
+  assert.strictEqual(inStack("C:\\torq\\TORQ.q", []), true);
+  assert.strictEqual(inStack("notorq.q", []), false);
+  assert.strictEqual(probeHost("127.0.0.2"), "127.0.0.2");
+  assert.strictEqual(probeHost("localhost"), "127.0.0.1");
+  assert.strictEqual(probeHost("box"), "127.0.0.1");
+});
+
 test("on Windows a q.cmd or q.bat wrapper is run by cmd.exe, which Node needs for one (#1680)", () => {
   const cmd = "C:\\Windows\\system32\\cmd.exe";
   assert.deepStrictEqual(spawnPlan("C:\\kdb\\q.cmd", ["C:\\my dir\\x.q", "-p", "127.0.0.1:5000", ""], "win32", cmd), {
@@ -52,7 +65,7 @@ test("a launch definition starts its program with its script, -p and its argumen
   const p = proc("rdb", 5010, { script: "torq.q", args: ["-proctype", "rdb", "-procname", "rdb1"], env: { KDBCODE: "code" } });
   assert.deepStrictEqual(launchPlan(p, "q", "/w", "/home/me"), {
     command: "q",
-    args: ["/w/torq.q", "-p", "127.0.0.1:5010", "-proctype", "rdb", "-procname", "rdb1"],
+    args: ["/w/torq.q", "-p", "5010", "-proctype", "rdb", "-procname", "rdb1"],
     cwd: "/w",
     env: { KDBCODE: "code" },
   });
@@ -298,6 +311,35 @@ test("turned off while a Start is on its way, nothing is spawned (#1434)", async
   assert.ok(!output("a").includes("$ "), output("a"));
 });
 
+test("turned off while a Start waits for the spawn, the process is stopped, not kept (#1740)", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-"));
+  fs.writeFileSync(path.join(dir, "fake.js"), FAKE);
+  const port = await freePort();
+  const { launcher } = await setUp(t, [proc("a", port, { command: process.execPath, script: "fake.js", cwd: dir })]);
+  // Turned off just as the command line is written: past the check before
+  // the spawn, while it waits for the spawn event.
+  const vscode = require("vscode");
+  const make = vscode.window.createOutputChannel;
+  vscode.window.createOutputChannel = (name) => {
+    const channel = make(name);
+    const appendLine = channel.appendLine;
+    channel.appendLine = (x) => {
+      appendLine(x);
+      if (x.startsWith("$ ")) {
+        stub.config.user["processes.launcher.enable"] = false;
+        stub.changeConfig("q-lint.processes.launcher.enable");
+      }
+    };
+    return channel;
+  };
+  t.after(() => (vscode.window.createOutputChannel = make));
+  await stub.commands.get(LAUNCH_COMMANDS.start)("a");
+  await sleep(500);
+  assert.deepStrictEqual(launcher.running(), []);
+  assert.strictEqual(await accepts(port), false);
+  assert.match(stub.messages.at(-1)?.[1] ?? "", /launcher was turned off; a was not started/, JSON.stringify(stub.messages));
+});
+
 test("Set Launch Definition asks for the program, script and arguments", async (t) => {
   const { live } = await setUp(t, [proc("rdb", 5010, undefined, { tags: ["dev"] })]);
   stub.inputs.push("", "torq.q", '-proctype rdb -procname "rdb 1"');
@@ -357,6 +399,22 @@ test("Stop Process ends what a wrapper script started too, and frees its port (#
   assert.ok(await accepts(port));
   const stopped = stub.commands.get(LAUNCH_COMMANDS.stop)("w").then(() => true);
   assert.strictEqual(await Promise.race([stopped, sleep(5000).then(() => false)]), true);
+  assert.deepStrictEqual(launcher.running(), []);
+  assert.strictEqual(await accepts(port), false);
+});
+
+test("Stop Process ends what a wrapper left running after it exited (#1744)", { skip: process.platform === "win32" ? "no process groups" : false }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-"));
+  fs.writeFileSync(path.join(dir, "fake.js"), FAKE);
+  // Starts its program in the background and exits, as `q tick.q &` does.
+  fs.writeFileSync(path.join(dir, "bg.sh"), `#!/bin/sh\n"${process.execPath}" "$@" &\nexit 0\n`, { mode: 0o755 });
+  const port = await freePort();
+  const { launcher } = await setUp(t, [proc("bg", port, { command: path.join(dir, "bg.sh"), script: "fake.js", cwd: dir })]);
+  await stub.commands.get(LAUNCH_COMMANDS.start)("bg");
+  for (let i = 0; i < 100 && !(await accepts(port)); i++) await sleep(50);
+  assert.ok(await accepts(port));
+  const stopped = stub.commands.get(LAUNCH_COMMANDS.stop)("bg").then(() => true);
+  assert.strictEqual(await Promise.race([stopped, sleep(8000).then(() => false)]), true);
   assert.deepStrictEqual(launcher.running(), []);
   assert.strictEqual(await accepts(port), false);
 });

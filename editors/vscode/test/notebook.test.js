@@ -403,13 +403,27 @@ test("a title on a cell whose /@chart a later /@grid replaces does not say it ha
   assert.match(cellDirective("/ @chart bar\n/ @console\n/ @height 400\nt").problem, /`\/ @console` after its `\/ @chart` draws none/);
 });
 
-test("export: a lone / inside a comment is indented, so no q nests a block comment there", () => {
+test("export: a lone / in a markdown cell or after a cell's end is indented; in a code cell's comment it nests", () => {
   const script = exportScript([
     { kind: "markdown", source: "a path:\n/\nthe root" },
     { kind: "code", source: "a:1\n/\nnot code\n/ \n\\" },
     { kind: "code", source: "b:2\n\\\n/" },
   ]);
-  assert.strictEqual(script, "/\na path:\n /\nthe root\n\\\n\na:1\n/\nnot code\n / \n\\\n\nb:2\n/\n /\n\\\n");
+  // The code cell nests a second comment, as it runs (#1462): one `\\` more closes it.
+  assert.strictEqual(script, "/\na path:\n /\nthe root\n\\\n\na:1\n/\nnot code\n/ \n\\\n\\\n\nb:2\n/\n /\n\\\n");
+});
+
+test("export: block comments nest as the cell nests them, so the script runs what the cell runs (#1731)", () => {
+  const { statements } = require("../out/statements.js");
+  const cells = [
+    { kind: "code", source: "/\n/\n\\\na:1\n\\\nb:2" },
+    { kind: "code", source: "c:3\n/\nx\n/\ny\n\\" },
+    { kind: "code", source: "d:4" },
+  ];
+  const script = exportScript(cells);
+  assert.deepStrictEqual(statements(cells[0].source), ["b:2"]);
+  assert.deepStrictEqual(statements(script), cells.flatMap((c) => statements(c.source)));
+  assert.deepStrictEqual(statements(script), ["b:2", "c:3", "d:4"]);
 });
 
 test("fields this extension does not know are kept on an output, an item and a run too", () => {

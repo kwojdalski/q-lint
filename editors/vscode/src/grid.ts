@@ -76,7 +76,8 @@ const COLUMN_LINES = [
   "          {[c]u:type c;$[u in 12 16h;\"j\"$c;u in 13 14 17 18 19h;\"i\"$c;u=15h;\"f\"$c;u=10h;\"x\"$c;u in 2 5 6 7 8 9h;c;",
   "            u=0h;{[g;x]$[-9h=t:type x;$[null x;0b;x];-8h=t;$[null x;0b;\"f\"$x];g x]}[{$[-9h=t:type x;(\"f\";x);-8h=t;(\"e\";\"f\"$x);",
   "              (t in 8 9h)&200>=count x;($[t=9h;\"F\";\"E\"];\"f\"$x);(0h=t)&200>=count x;",
-  "              $[all 0b~/:r:.z.s each x;0b;(\"l\";@[r;w;:;-3!'x w:where 0b~/:r])];0b]}] each c;()]} each c;",
+  "              $[all 0b~/:r:.z.s each x;0b;(\"l\";@[r;w;:;-3!'x w:where 0b~/:r])];",
+  "              99h=t;$[0b~r:.z.s(key x;value x);0b;(\"d\";r 1)];98h=t;$[0b~r:.z.s flip x;0b;(\"t\";r)];0b]}] each c;()]} each c;",
   "          {@[{i:iasc x;\"i\"$@[count[x]#0;i;:;-1+sums differ x i]};x;{[e]()}]} each c;",
 ];
 
@@ -200,7 +201,8 @@ export function realValue(x: unknown): unknown {
   if (typeof x !== "number" || !Number.isFinite(x)) {
     return x;
   }
-  for (let digits = 1; digits < 9; digits++) {
+  // Nine digits are always enough for a float32 (#1734).
+  for (let digits = 1; digits <= 9; digits++) {
     const n = Number(x.toPrecision(digits));
     if (Math.fround(n) === x) {
       return n;
@@ -335,7 +337,9 @@ export function cellText(type: number, text: string, raw: unknown, decimals: num
   if (raw === null) {
     return type === 2 ? NULL_GUID : "";
   }
-  if (raw === Infinity || raw === -Infinity) {
+  // A general list's item is a float or a real, which q's text already
+  // writes as 0w or -0we (#1733).
+  if ((raw === Infinity || raw === -Infinity) && type !== 0) {
     return `${raw < 0 ? "-" : ""}0${FLOATING.has(type) ? "w" : "W"}`;
   }
   if ((type === 8 || type === 9) && decimals >= 0 && typeof raw === "number") {

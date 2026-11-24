@@ -369,12 +369,25 @@ function evaluated(t: Token[], j: number, byValue: boolean): { reason: string; a
     t[j] !== undefined &&
     ((t[j].kind === "open" && t[j].text !== "{") ||
       (t[j].kind === "name" && ["each", "peach", "enlist"].includes(t[j].text)) ||
-      (t[j].kind === "op" && ["'", "@", "."].includes(t[j].text) && !(t[j - 1]?.text === "(" && t[j + 1]?.text === ";")))
+      (t[j].kind === "op" &&
+        ["'", "@", "."].includes(t[j].text) &&
+        !(t[j - 1]?.text === "(" && (t[j + 1]?.text === ";" || t[j + 1]?.text === "[" || (t[j - 2]?.text === "(" && t[j + 1]?.text === ")" && t[j + 2]?.text === ";")))))
   ) {
     j++;
   }
   const k = t[j];
-  const head = t[j - 1]?.text === "(" && t[j - 1]?.kind === "open";
+  // The amend at the head in parentheses of its own, `` value((@);`a;();:;1) ``
+  // (#1727): what follows it is read past the `)`.
+  const wrap = k?.kind === "op" && t[j + 1]?.text === ")" && t[j - 2]?.text === "(" ? 1 : 0;
+  const head = t[j - 1 - wrap]?.text === "(" && t[j - 1 - wrap]?.kind === "open";
+  // The item after `t[at]`'s `;`, the variable an amend names: as it is for
+  // `value`, `enlist`ed for `eval`.
+  const named = (at: number): Token | undefined => (t[at]?.text !== ";" ? undefined : byValue ? t[at + 1] : t[at + 1]?.text === "enlist" ? t[at + 2] : undefined);
+  // An amend projected on all but its target, at the head and applied to the
+  // variable after it: `` value(@[;`a;:;2];`.) `` (#1727).
+  const projection = head && (k?.text === "@" || k?.text === ".") && t[j + 1]?.text === "[" ? items(t, j + 1) : [];
+  const projected =
+    projection.length >= 4 && projection[0][0] === projection[0][1] && named(projection[projection.length - 1][1] + 1)?.kind === "sym" && (named(projection[projection.length - 1][1] + 1)?.text.length ?? 0) > 1;
   const reason = k?.kind === "str"
     ? "a string"
     : (k?.kind === "name" && k.text === "parse") || (k?.text === "-5" && t[j + 1]?.text === "!")
@@ -387,7 +400,7 @@ function evaluated(t: Token[], j: number, byValue: boolean): { reason: string; a
             ? `a call of ${k.text.slice(1)}`
             : // An amend on a variable by name: `` value(@;`.;`a;:;1) ``,
               // `` eval(@;enlist`.;enlist`a;:;1) `` (#1446).
-              head && (k?.text === "@" || k?.text === ".") && t[j + 1]?.text === ";" && ((byValue ? t[j + 2] : t[j + 2]?.text === "enlist" ? t[j + 3] : undefined)?.text.length ?? 0) > 1 && (byValue ? t[j + 2] : t[j + 3])?.kind === "sym" && items(t, j - 1).length >= 4
+              (head && (k?.text === "@" || k?.text === ".") && named(j + 1 + wrap)?.kind === "sym" && (named(j + 1 + wrap)?.text.length ?? 0) > 1 && items(t, j - 1 - wrap).length >= 4) || projected
               ? "an amend"
               : undefined;
   return reason === undefined ? undefined : { reason, at: j };
@@ -465,13 +478,12 @@ function readStatement(statement: string, found: Set<string>): void {
           }
         }
       }
-      // Also in parentheses, `` (@)[`.;`a;:;1] `` (#1445).
-      const amend =
-        t[i - 1]?.kind === "op"
-          ? t[i - 1].text
-          : t[i - 1]?.text === ")" && t[i - 2]?.kind === "op" && t[i - 3]?.text === "(" && t[i - 3].kind === "open"
-            ? t[i - 2].text
-            : "";
+      // Also in parentheses, `` (@)[`.;`a;:;1] `` (#1445), as many pairs
+      // as are written: `` ((@))[`.;`a;:;1] `` (#1730).
+      let parens = 0;
+      while (t[i - 1 - parens]?.text === ")") parens++;
+      const wrapped = Array.from({ length: parens }, (_, n) => t[i - 2 - parens - n]).every((o) => o?.text === "(" && o.kind === "open");
+      const amend = t[i - 1 - parens]?.kind === "op" && wrapped ? t[i - 1 - parens].text : "";
       if (k.text === "[" && (amend === "@" || amend === "." || amend === "!")) {
         const args = items(t, i);
         // The target, or with it left out, what the projection is applied
@@ -519,8 +531,16 @@ function readStatement(statement: string, found: Set<string>): void {
         continue;
       }
       // A writer indexed out of its namespace: `` .q[`set][`b;2] ``, and by
-      // juxtaposition, `` (.q`set)[`b;2] `` (#1449).
-      const index = next?.text === "[" && t[i + 2]?.kind === "sym" ? t[i + 2] : next?.kind === "sym" ? next : undefined;
+      // juxtaposition, `` (.q`set)[`b;2] `` (#1449), and with @ or .,
+      // `` (.q@`set)[`b;2] ``, `` (.q . enlist`set)[`b;2] `` (#1726).
+      const index =
+        (next?.text === "[" || (next?.kind === "op" && next.text === "@")) && t[i + 2]?.kind === "sym"
+          ? t[i + 2]
+          : next?.kind === "op" && next.text === "." && t[i + 2]?.text === "enlist" && t[i + 3]?.kind === "sym"
+            ? t[i + 3]
+            : next?.kind === "sym"
+              ? next
+              : undefined;
       if ((k.text === ".q" || k.text === ".Q") && index !== undefined) {
         const name = `${k.text}.${index.text.slice(1)}`;
         if (WRITERS.has(unqualified(name))) {
@@ -530,18 +550,29 @@ function readStatement(statement: string, found: Set<string>): void {
       }
       // `xasc`, `xdesc` and `xkey` on a table named by a symbol change it in
       // place: `` `a xasc `t ``, `` xasc[`a;`t] ``, and projected on the
-      // columns, `` xasc[`a]`t `` and `` xasc[`a][`t] `` (#1447).
+      // columns, `` xasc[`a]`t `` and `` xasc[`a][`t] `` (#1447), also
+      // `` xasc[`a;]`t ``, `` xasc[`a]@`t ``, `` @[xasc[`a];`t] `` and
+      // `` (`a xasc)`t `` (#1725).
       if (["xasc", "xdesc", "xkey"].includes(unqualified(k.text))) {
-        let table = symbolAt(t, i + 1);
+        // The table a projection ending at `t[close]` is applied to.
+        const applied = (close: number): string | undefined =>
+          t[close + 1]?.text === "[" && t[close + 1].kind === "open"
+            ? symbolAt(t, close + 2)
+            : t[close + 1]?.kind === "op" && t[close + 1].text === "@"
+              ? symbolAt(t, close + 2)
+              : t[close + 1]?.text === ";" && t[i - 1]?.text === "[" && t[i - 2]?.kind === "op" && t[i - 2].text === "@"
+                ? symbolAt(t, close + 2)
+                : symbolAt(t, close + 1);
+        let table = t[i - 1]?.kind === "sym" && t[i - 2]?.text === "(" && next?.text === ")" ? applied(i + 1) : symbolAt(t, i + 1);
         if (next?.text === "[" && next.kind === "open") {
           let depth = 0;
           for (let j = i + 2; j < t.length; j++) {
             if (t[j].kind === "open") depth++;
             else if (t[j].kind === "close" && --depth < 0) {
-              table = t[j + 1]?.text === "[" && t[j + 1].kind === "open" ? symbolAt(t, j + 2) : symbolAt(t, j + 1);
+              table = applied(j);
               break;
             } else if (depth === 0 && t[j].text === ";") {
-              table = symbolAt(t, j + 1);
+              table = t[j + 1]?.text === "]" ? applied(j + 1) : symbolAt(t, j + 1);
               break;
             }
           }
@@ -580,8 +611,8 @@ function readStatement(statement: string, found: Set<string>): void {
         }
         // The handle as written, made with `hsym`, cast from a string, or a
         // string: `` hopen hsym `f ``, `` hopen `$":f" ``, `hopen ":f"`,
-        // `` hopen hsym `$"/tmp/f" ``.
-        const hsym = t[j]?.text === "hsym" ? 1 : 0;
+        // `` hopen hsym `$"/tmp/f" ``, and in brackets, `` hopen hsym[`f] `` (#1729).
+        const hsym = t[j]?.text === "hsym" ? (t[j + 1]?.text === "[" && t[j + 1].kind === "open" ? 2 : 1) : 0;
         const at = t[j + hsym];
         const cast = at?.text === "`" && t[j + hsym + 1]?.text === "$" && t[j + hsym + 2]?.kind === "str";
         const text =
@@ -671,11 +702,17 @@ function readStatement(statement: string, found: Set<string>): void {
       }
       continue;
     }
-    // In k, `.` with nothing on its left is `value`: `` k)."a:1" ``, `k).:"a:1"`.
-    if (kCode && k.kind === "op" && k.text === "." && i >= 2 && (t[i - 1].kind === "op" || t[i - 1].kind === "open" || i === 2 || t[i - 1].text === ";")) {
-      const what = evaluated(t, next?.text === ":" && touching(k, next) ? i + 2 : i + 1, true);
+    // In k, `.` with nothing on its left is `value`: `` k)."a:1" ``, `k).:"a:1"`,
+    // and in parentheses, `k)(.)"a:1"`, `k)(.:)"a:1"` (#1728), which q
+    // applies the same way: `(.)"a:1"`.
+    const unaryDot = k.kind === "op" && k.text === "." && t[i - 1]?.text === "(" && t[i - 1].kind === "open";
+    let after = next?.text === ":" && touching(k, next) ? i + 2 : i + 1;
+    const parenthesised = unaryDot && t[after]?.text === ")";
+    if (parenthesised || (kCode && k.kind === "op" && k.text === "." && i >= 2 && (t[i - 1].kind === "op" || t[i - 1].kind === "open" || i === 2 || t[i - 1].text === ";"))) {
+      after += parenthesised ? 1 : 0;
+      const what = evaluated(t, after, true);
       if (what !== undefined) {
-        found.add(`evaluates ${what.reason} with k's .`);
+        found.add(`evaluates ${what.reason} with ${kCode ? "k's ." : "(.)"}`);
         i = what.at;
         continue;
       }
@@ -728,14 +765,14 @@ function readStatement(statement: string, found: Set<string>): void {
     }
     // Handle 0 is the process itself: `0"a:1"`, `(0)"a:1"`, `neg[0]"a:1"`,
     // `(neg 0)"a:1"` and `-0"a:1"` evaluate the string there, as do
-    // `0("a:1")`, `0@"a:1"` and `0 . enlist "a:1"` (#1424).
+    // `0("a:1")`, `0@"a:1"`, `0 . enlist "a:1"` (#1424) and `0["a:1"]` (#1724).
     if (k.kind === "num" && /^-?0[ihj]?$/.test(k.text) && t[i - 1]?.kind !== "num") {
       const wrapped =
         (t[i - 1]?.text === "(" && next?.text === ")") ||
         (t[i - 2]?.text === "neg" && t[i - 1]?.text === "[" && next?.text === "]") ||
         (t[i - 2]?.text === "(" && t[i - 1]?.text === "neg" && next?.text === ")");
       let j = wrapped ? i + 2 : i + 1;
-      while (t[j]?.text === "(" || (t[j]?.kind === "op" && ["@", "."].includes(t[j].text)) || (t[j]?.kind === "name" && t[j].text === "enlist")) {
+      while (t[j]?.text === "(" || t[j]?.text === "[" || (t[j]?.kind === "op" && ["@", "."].includes(t[j].text)) || (t[j]?.kind === "name" && t[j].text === "enlist")) {
         j++;
       }
       if (t[j]?.kind === "str") {

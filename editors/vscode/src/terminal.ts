@@ -189,8 +189,10 @@ export function parseEnv(text: string): { env: Record<string, string>; problems:
     }
     const value = match[2].trim();
     // A ` # comment` after the value, or after its closing quote, is not
-    // part of it, as dotenv and the shells read it (#1686).
-    const quoted = /^(["'])(.*)\1$/.exec(value) ?? /^(["'])(.*?)\1\s+#.*$/.exec(value);
+    // part of it, as dotenv and the shells read it (#1686): a quoted value
+    // ends at its first closing quote that only a comment follows, even a
+    // comment ending in a quote (#1748).
+    const quoted = /^(["'])(.*?)\1(?:\s+#.*)?$/.exec(value);
     env[match[1]] = quoted ? quoted[2] : value.replace(/(^|\s+)#.*$/, "");
   });
   return { env, problems };
