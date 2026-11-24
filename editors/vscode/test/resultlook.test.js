@@ -316,3 +316,14 @@ test("a result sent to a notebook or a report is its query in a fence it cannot 
   assert.strictEqual(report.linkTarget("a b/(c).svg"), "a%20b/%28c%29.svg");
   assert.strictEqual(report.linkTarget("Q#1 report-images/chart?.svg"), "Q%231%20report-images/chart%3F.svg");
 });
+
+test("a rule compares 0w and -0w as the infinities they are; only a null matches nothing (#1645)", () => {
+  const g = grid([["px", 9, ["5", "0w", "-0w", ""]]]);
+  g.values[0] = [5, null, null, null];
+  const rows = (op, value) => [...L.ruleRows(g, { column: "px", op, value, style: { bold: true } })];
+  assert.deepStrictEqual(rows(">", 1), [0, 1]);
+  assert.deepStrictEqual(rows("<", 1), [2]);
+  assert.deepStrictEqual(rows("top", 1), [1]);
+  assert.deepStrictEqual(rows("bottom", 1), [2]);
+  assert.deepStrictEqual(rows("<>", 5), [1, 2]);
+});

@@ -113,8 +113,8 @@
   /// column the comparisons are of numbers, and top or bottom N are the
   /// rows holding the N greatest or least values, ties included; on any
   /// other, `=` and `<>` compare the cell's text and `contains` finds it in
-  /// any case. A null matches nothing. An empty Set for a rule its column
-  /// cannot take.
+  /// any case. A null matches nothing; an infinity (0w, -0w) compares as
+  /// one (#1645). An empty Set for a rule its column cannot take.
   function ruleRows(grid, rule) {
     const out = new Set();
     const c = grid.columns.findIndex(function (col) { return col.name === rule.column; });
@@ -140,7 +140,11 @@
       });
       return out;
     }
-    const values = grid.values[c];
+    // grid.ts writes an infinity's value as null, as a null's: its text
+    // tells them apart.
+    const values = grid.values[c].map(function (v, r) {
+      return v !== null ? v : /^-0[wW]$/.test(cells[r]) ? -Infinity : /^0[wW]$/.test(cells[r]) ? Infinity : null;
+    });
     if (rule.op === "contains") {
       const lower = String(rule.value).toLowerCase();
       cells.forEach(function (text, r) {
