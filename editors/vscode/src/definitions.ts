@@ -148,11 +148,12 @@ export function definitions(source: string): Definition[] {
 }
 
 /// A lambda's text as compared: without trailing blanks on any line, nor a
-/// carriage return.
+/// carriage return, and a tab starting a line after the first read as the
+/// blank q turns it into when it loads the file (checked on KDB-X).
 export function normalized(text: string): string {
   return text
     .split("\n")
-    .map((l) => l.replace(/\s+$/, ""))
+    .map((l, i) => (i > 0 && l.startsWith("\t") ? ` ${l.slice(1)}` : l).replace(/\s+$/, ""))
     .join("\n");
 }
 

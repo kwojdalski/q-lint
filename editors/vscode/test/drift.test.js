@@ -67,6 +67,17 @@ test("texts compare without trailing blanks", () => {
   assert.strictEqual(normalized("{[x]   \n  x \t\n }"), "{[x]\n  x\n }");
 });
 
+test("a tab starting a continuation line compares as the blank q turns it into", () => {
+  // KDB-X, after \l of this file, holds "{[x]\n \ta:x;\t/c\n / note\n\n b:\"\t\";\n  \ta}".
+  const [def] = definitions('g1:{[x]\n\t\ta:x;\t/c\n\t/ note\n\n\tb:"\t";\n  \ta}\n');
+  const held = '{[x]\n \ta:x;\t/c\n / note\n\n b:"\t";\n  \ta}';
+  assert.strictEqual(normalized(def.text), normalized(held));
+  assert.deepStrictEqual(driftRows([{ file: "a.q", def }], readDrift({ name: "g1", state: "lambda", text: held })).map((r) => r.status), ["same"]);
+  // Only the first character of a line after the first: a tab inside one, or on the first, stays.
+  assert.notStrictEqual(normalized("{[x]\n a;\tb}"), normalized("{[x]\n a; b}"));
+  assert.notStrictEqual(normalized("{\t[x]\n a}"), normalized("{ [x]\n a}"));
+});
+
 test("drift rows and their summary", () => {
   const states = readDrift({ name: ["f", "g", "h", "p"], state: ["lambda", "lambda", "missing", "other"], text: ["{x}  ", "{y}", "", ""] });
   const defs = definitions("f:{x}\ng:{x}\nh:{x}\np:{x}\nq:{x}\n").map((def) => ({ file: "a.q", def }));
