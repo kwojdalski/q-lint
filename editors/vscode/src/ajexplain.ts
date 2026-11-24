@@ -13,6 +13,7 @@
 // A row and a time are written by `FULL_TEXT`, up to 2000 characters:
 // `.Q.s1` cuts a wide row at the process's `\c` width, short of the columns
 // the match turns on (#1908).
+import { charKinds } from "./explorer";
 import { FULL_TEXT } from "./qtext";
 
 export const EXPLAIN_AJ = [
@@ -67,10 +68,15 @@ function args(code: string, open: number): { parts: string[]; end: number } | un
 }
 
 /// The first `aj[cols;left;right]` or `aj0[...]` call in `code`, its
-/// arguments as written; undefined when there is none.
+/// arguments as written; undefined when there is none. One written in a
+/// comment or a string is not a call (#1914).
 export function findAj(code: string): AjCall | undefined {
+  const kinds = charKinds(code);
   for (const m of code.matchAll(/(?:^|[^A-Za-z0-9_.`])(aj0?)\s*\[/g)) {
     const open = m.index! + m[0].length - 1;
+    if (kinds[open] !== "c") {
+      continue;
+    }
     const got = args(code, open);
     if (got !== undefined && got.parts.length === 3 && got.parts.every((p) => p !== "")) {
       return { fn: m[1] as AjCall["fn"], columns: got.parts[0], left: got.parts[1], right: got.parts[2] };

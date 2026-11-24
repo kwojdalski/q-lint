@@ -26,6 +26,17 @@ test("the aj call is found, its arguments as written", () => {
   assert.strictEqual(findAj("lj[a;b;c]"), undefined);
 });
 
+test("a call in a comment or a string is not the call explained (#1914)", () => {
+  const live = { fn: "aj", columns: "`sym`time", left: "t", right: "q" };
+  assert.deepStrictEqual(findAj("/ aj[`sym`time;a;b]\naj[`sym`time;t;q]"), live);
+  assert.deepStrictEqual(findAj("r:1 / was aj[`a;b;c]\nr:aj[`sym`time;t;q]"), live);
+  assert.deepStrictEqual(findAj('x:"aj[`a;b;c]"; aj[`sym`time;t;q]'), live);
+  assert.strictEqual(findAj("/ aj[`sym`time;a;b]"), undefined);
+  assert.strictEqual(findAj('x:"aj[`a;b;c]"'), undefined);
+  // A string or a comment mark inside the call's own arguments is the call's.
+  assert.deepStrictEqual(findAj('aj[`sym`time;t;select from q where src like "a/ b"]'), { ...live, right: 'select from q where src like "a/ b"' });
+});
+
 const call = { fn: "aj", columns: "`sym`time", left: "trade", right: "quote" };
 const match = (over) => ({ row: "`sym`time!(`a;09:02)", candidates: 2, missedKey: "", missedValue: "", matched: 1, matchedRow: "`sym`time`bid!(`a;09:01;11f)", earliest: "08:59", time: "09:02", sorted: true, timeColumn: "time", rightRows: 3, ...over });
 
