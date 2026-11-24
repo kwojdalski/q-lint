@@ -21,11 +21,14 @@ export const DOCUMENT = [
   " m:\"j\"$lim;",
   " ts:m sublist tables`.;",
   " one:{[t] v:get t;p:.Q.qp v;part:1b~p;disk:part|0b~p;mt:0!meta v;",
-  "  `name`kind`rows`keys`cols`types`fkeys`attrs!(string t;",
+  "  `name`kind`rows`keys`cols`types`fkeys`attrs`error!(string t;",
   "   string$[part;`partitioned;disk;`splayed;99h=type v;`keyed;`table];",
   "   \"f\"$$[part;@[{sum .Q.cn x};v;0n];count v];",
   "   string$[99h=type v;(),keys v;`$()];",
-  "   string mt`c;{$[null x;enlist\" \";enlist x]}each mt`t;string mt`f;string mt`a)};",
+  "   string mt`c;{$[null x;enlist\" \";enlist x]}each mt`t;string mt`f;string mt`a;\"\")};",
+  // A table `meta` refuses - its enumeration domain gone, say - is an entry
+  // with q's error, as SCHEMA's is, and not the end of the document (#1868).
+  " bad:{[t;e] `name`kind`rows`keys`cols`types`fkeys`attrs`error!(string t;\"\";0n;();();();();();$[10h=type e;e;string e])};",
   " ns:(key`)except`q`Q`h`j`o`s`z`m`qlint;",
   " ns:ns where not null ns;ns:ns where{99h=type get` sv`,x}each ns;",
   // A dictionary held at a dotted name is listed among the namespaces, and
@@ -34,7 +37,7 @@ export const DOCUMENT = [
   " `pf`parts`tables`fnames`fparams!(",
   "  $[@[{0<count .Q.pv};::;0b];string .Q.pf;\"\"];",
   "  \"f\"$@[{count .Q.pv};::;0];",
-  "  one each ts;",
+  "  {[one;bad;t] @[one;t;bad t]}[one;bad] each ts;",
   "  string fs;{@[{f:get x;$[100h=type f;string(value f)1;()]};x;()]}each fs)}",
 ].join("\n");
 
@@ -47,6 +50,8 @@ export interface DocTable {
   rows: number | null;
   keys: string[];
   columns: { name: string; type: string; fkey: string; attr: string }[];
+  /// q's error, when the process could not describe the table.
+  error?: string;
 }
 
 export interface DbDoc {
@@ -74,12 +79,14 @@ export function readDoc(raw: unknown): DbDoc {
     const types = strings(t.types);
     const fkeys = strings(t.fkeys);
     const attrs = strings(t.attrs);
+    const error = strings(t.error).join("");
     return {
       name: strings(t.name).join(""),
       kind: strings(t.kind).join(""),
       rows: number(t.rows),
       keys: strings(t.keys),
       columns: names.map((name, i) => ({ name, type: (types[i] ?? "").trim(), fkey: fkeys[i] ?? "", attr: attrs[i] ?? "" })),
+      ...(error === "" ? {} : { error }),
     };
   });
   const fnames = strings(r.fnames);
@@ -152,6 +159,10 @@ export function docMarkdown(doc: DbDoc, process: string, at: string, docs: Map<s
   out.push("## Tables", "");
   if (doc.tables.length === 0) out.push("No tables.", "");
   for (const t of doc.tables) {
+    if (t.error !== undefined) {
+      out.push(`### ${md(t.name)}`, "", `Not read: ${md(t.error)}.`, "");
+      continue;
+    }
     out.push(`### ${md(t.name)}`, "", `${md(t.kind)}, ${rowsText(t.rows)} rows${t.keys.length ? `, keyed by ${t.keys.map(md).join(", ")}` : ""}.`, "");
     out.push("| column | type | attribute | foreign key |", "| --- | --- | --- | --- |");
     for (const c of t.columns) {
@@ -185,6 +196,10 @@ export function docHtml(doc: DbDoc, process: string, at: string, docs: Map<strin
   out.push("<h2>Tables</h2>");
   if (doc.tables.length === 0) out.push("<p>No tables.</p>");
   for (const t of doc.tables) {
+    if (t.error !== undefined) {
+      out.push(`<h3 id="t-${html(t.name)}">${html(t.name)}</h3>`, `<p>Not read: ${html(t.error)}.</p>`);
+      continue;
+    }
     out.push(`<h3 id="t-${html(t.name)}">${html(t.name)}</h3>`, `<p>${html(t.kind)}, ${rowsText(t.rows)} rows${t.keys.length ? `, keyed by ${t.keys.map(html).join(", ")}` : ""}.</p>`);
     out.push("<table><tr><th>column</th><th>type</th><th>attribute</th><th>foreign key</th></tr>");
     for (const c of t.columns) {

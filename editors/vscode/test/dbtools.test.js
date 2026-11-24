@@ -118,6 +118,12 @@ test("the documenter reads one table's answer, takes the qDoc above a definition
   assert.doesNotMatch(html, /<script>/);
   assert.match(html, /rdb&lt;script&gt;/);
   assert.throws(() => readDoc(1), /tables/);
+  // A table the process could not describe is named with q's error (#1868).
+  const bad = { name: "e<m>", kind: "", rows: null, keys: [], cols: [], types: [], fkeys: [], attrs: [], error: "..sym" };
+  const mixed = readDoc({ ...raw, tables: [{ ...raw.tables, error: "" }, bad] });
+  assert.deepStrictEqual(mixed.tables.map((x) => x.error), [undefined, "..sym"]);
+  assert.match(docMarkdown(mixed, "rdb", "now"), /### e\\<m\\>\n\nNot read: \.\.sym\.\n\n## Functions/);
+  assert.match(docHtml(mixed, "rdb", "now"), /<h3 id="t-e&lt;m&gt;">e&lt;m&gt;<\/h3>\n<p>Not read: \.\.sym\.<\/p>\n<h2>Functions/);
 });
 
 test("the partition check finds weekday gaps, and each kind of problem in an answer", () => {

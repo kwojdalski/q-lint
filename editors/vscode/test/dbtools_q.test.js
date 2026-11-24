@@ -239,6 +239,22 @@ test("the documenter survives a plain dictionary at a dotted top-level name (#18
   assert.deepStrictEqual((await connection.evaluate("(.dd~`x`y!1 2;key`.)")).value, [true, ["t", "add"]]);
 });
 
+// A table whose enumeration domain is gone cannot be described: meta of it
+// signals. It costs that table's entry, as in the schema diagram (#1868).
+test("the documenter says which table it could not read, and documents the rest (#1868)", { skip }, async (t) => {
+  const { connection } = await connect(t, "t:([] a:1 2)\nsym2:`a`b\nem:([] s:`sym2$`a`b`a)\nkt:([k:1 2] v:3 4)\ndelete sym2 from `.\nadd:{[a;b] a+b}\n");
+  const doc = readDoc(await connection.call(DOCUMENT, 100));
+  assert.deepStrictEqual(doc.tables.map((x) => [x.name, x.error ?? ""]), [["em", "..sym2"], ["kt", ""], ["t", ""]]);
+  assert.deepStrictEqual(doc.tables[0].columns, []);
+  assert.deepStrictEqual(doc.tables[2].columns, [{ name: "a", type: "j", fkey: "", attr: "" }]);
+  assert.deepStrictEqual(doc.functions, [{ name: "add", params: ["a", "b"] }]);
+  assert.match(docMarkdown(doc, "rdb", "now"), /### em\n\nNot read: \.\.sym2\.\n\n### kt\n/);
+  // Every table unreadable is still a document, and one alone still a list.
+  await connection.evaluate("delete t,kt from `.");
+  const alone = readDoc(await connection.call(DOCUMENT, 100));
+  assert.deepStrictEqual(alone.tables.map((x) => [x.name, x.error]), [["em", "..sym2"]]);
+});
+
 test("the partition check finds missing dates, files, differing types and outliers", { skip }, async (t) => {
   const extra = [
     "mk[r;;6] each 2026.01.12 2026.01.13;",
