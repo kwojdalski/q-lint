@@ -5,11 +5,13 @@
 //
 // Unlimited: console text is not cut at `q-lint.output.consoleSize`, and a
 // grid or chart is sent every row. q's own formatting still cuts in one
-// place: KDB-X's `-3!`, which `.Q.S` writes an atom or a simple list with,
-// stops at the process's `\c` width whatever size is asked for, and `\c` is
-// the process's to set, not ours. So `UNLIMITED` sends a simple list itself,
+// place: KDB-X's `-3!`, which `.Q.S` writes an atom, a simple list, an item
+// of a list, a nested cell and a dictionary's value with, stops at the
+// process's `\c` width whatever size is asked for, and `\c` is the
+// process's to set, not ours. So `UNLIMITED` sends a simple list itself,
 // and it is written here (`qformat.ts`); everything else is the process's
-// `.Q.S` at a size nothing reaches.
+// `.Q.S` at a size nothing reaches, and a value that leaves cut is laid out
+// again by `LAID_OUT`, which reads `\c` and never sets it (#1995).
 //
 // Unwrapped: the code is sent as a plain string, statement by statement, for
 // a gateway that refuses a lambda. The process evaluates each as it
@@ -21,6 +23,7 @@ import { TRAP, readAnswer, type Answer } from "./query";
 import type { GridAnswer } from "./grid";
 import { QError } from "./qclient";
 import { iconsEscaped } from "./history";
+import { FULL_TEXT, LAID_OUT } from "./qtext";
 
 export const CONTROL_COMMANDS = {
   queryFile: "q-lint.queryEntireFile",
@@ -80,7 +83,10 @@ export function limits(
 /// the sign of a date's infinity. A string comes as its bytes, which the
 /// codec would read as UTF-8, losing any that are not. Its attribute comes as
 /// `attr`, and the process's `\P` as `precision`, the digits a float is
-/// written to. Like `RUN` it defines nothing on the process.
+/// written to. Any other value is `.Q.S`'s lines; when one of them may have
+/// been cut at the process's `\c` width - it is that long and holds `..` -
+/// the value is `LAID_OUT`'s instead, every row and each cell to its end
+/// (#1995). Like `RUN` it defines nothing on the process.
 export const UNLIMITED = [
   "{[s;size]",
   ...TRAP,
@@ -89,7 +95,7 @@ export const UNLIMITED = [
   " $[r 0;",
   "   $[t within 1 19h;`ok`type`text`value`attr`precision!(1b;t;();$[t within 12 19h;\"jiifjiii\"[t-12h]$r 1;t=10h;\"x\"$r 1;r 1];attr r 1;system\"P\");",
   "     (t within 20 76h)&type[e] within 1 19h;`ok`type`text`value`attr`vtype`domain`eattr`precision!(1b;t;();$[type[e] within 12 19h;\"jiifjiii\"[type[e]-12h]$e;e];attr e;type e;key r 1;attr r 1;system\"P\");",
-  "     `ok`type`text!(1b;t;.Q.S[\"j\"$size;0j] r 1)];",
+  `     \`ok\`type\`text!(1b;t;{[s;x]$[any(s like"*..*")&(-1+last system"c")<=count each s;"\\n"vs -1_${LAID_OUT}[${FULL_TEXT};0W;x];s]}[.Q.S["j"$size;0j] r 1;r 1])];`,
   "   `ok`error`trace!(0b;r 1;r 2)]}",
 ].join("\n");
 
