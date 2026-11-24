@@ -80,6 +80,17 @@ const WORDS = new Set(
   ).split(" "),
 );
 
+/// Where `name` is first written as code in `text` - not in a string or a
+/// comment (#1631); -1 when it is not.
+export function codeOffset(text: string, kinds: string, name: string): number {
+  for (const m of text.matchAll(new RegExp(`(?<![\\w.])${name.replace(/\./g, "\\.")}(?![\\w])`, "g"))) {
+    if (kinds[m.index] === "c") {
+      return m.index;
+    }
+  }
+  return -1;
+}
+
 /// The names `expression` uses that the process could hold: written as
 /// code, not in a string, a symbol or a comment, and not one of q's common
 /// words. At most `DESCRIBE_LIMIT`, in order of first use.

@@ -36,7 +36,7 @@ import {
   type LanguageModelChatTool,
   type TextDocument,
 } from "vscode";
-import { DESCRIBE, errorPrompt, explainPrompt, namesIn, readDescribed, type Described } from "./assist";
+import { DESCRIBE, codeOffset, errorPrompt, explainPrompt, namesIn, readDescribed, type Described } from "./assist";
 import { ASSIST_SETTINGS, assistOff, readAssist } from "./assistconfig";
 import { charKinds } from "./explorer";
 import { borrowWhenFree } from "./infoview";
@@ -87,8 +87,9 @@ export class QParticipant {
     const text = document.getText(range);
     const start = document.offsetAt(range.start);
     const hovers: { name: string; text: string }[] = [];
+    const kinds = charKinds(text);
     for (const name of names.slice(0, HOVERS)) {
-      const at = text.search(new RegExp(`(?<![\\w.])${name.replace(/\./g, "\\.")}(?![\\w])`));
+      const at = codeOffset(text, kinds, name);
       if (at < 0) {
         continue;
       }

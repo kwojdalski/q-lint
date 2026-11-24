@@ -5,6 +5,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const {
   namesIn,
+  codeOffset,
   readDescribed,
   tablesOf,
   schemaOf,
@@ -117,4 +118,11 @@ test("the qSQL prompt names the tables, and the draft round-trips", () => {
   const doc = draftDocument("last px\nby sym", "Fake", "select last px by sym from trade");
   assert.match(doc, /^\/ Drafted by Fake from: last px by sym\n\/ Review it: nothing has run\./);
   assert.strictEqual(draftCode(doc), "select last px by sym from trade");
+});
+
+test("codeOffset finds a name written as code, past a comment or string (#1631)", () => {
+  for (const [text, at] of [["/ uses vwap\nvwap[t]", 12], ['"vwap";vwap 1', 7], ["vwap", 0], ['"vwap"', -1], ["avwap", -1]]) {
+    assert.strictEqual(codeOffset(text, charKinds(text), "vwap"), at, text);
+  }
+  assert.strictEqual(codeOffset("x.f;.ns.f 1", charKinds("x.f;.ns.f 1"), ".ns.f"), 4);
 });
