@@ -578,3 +578,42 @@ test("Toggle Data Bar turns off, and on again, the bar a *_BAR column draws by i
   await fake.vscode.commands["q-lint.toggleResultDataBar"]({ column: 1 });
   assert.strictEqual(last(fake).look.cellCharts, undefined);
 });
+
+test("a format or layout added while a watched query refreshes goes to the refreshed result and stays (#1752)", async () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  modes.show(result(), live);
+  // The first pick waits; the watched query's next run lands meanwhile.
+  let release;
+  const gate = new Promise((r) => (release = r));
+  const pick = fake.vscode.window.showQuickPick;
+  let first = true;
+  fake.vscode.window.showQuickPick = async (items, options) => {
+    if (first) {
+      first = false;
+      await gate;
+    }
+    return pick(items, options);
+  };
+  fake.answers.picks.push(">", "Red background");
+  fake.answers.inputs.push("4");
+  const adding = fake.vscode.commands["q-lint.addResultConditionalFormat"]({ column: 1 });
+  await tick();
+  modes.show(result(), live, true);
+  release();
+  await adding;
+  const rule = { column: "px", op: ">", value: 4, style: { background: "red" } };
+  assert.deepStrictEqual(last(fake).look.rules, [rule]);
+  modes.show(result(), live, true);
+  assert.deepStrictEqual(last(fake).look.rules, [rule]);
+  // Hide Column picked from one result, while another arrives: it hides
+  // the column of the one it was picked from, not the other's.
+  fake.vscode.window.showQuickPick = async (items) => {
+    modes.show(result("select from u", [["x", 7, ["1"], [1]], ["y", 7, ["2"], [2]]]), live);
+    return (await items).find((i) => i.label === "sym");
+  };
+  await fake.vscode.commands["q-lint.hideResultColumn"]();
+  assert.strictEqual(last(fake).look.layout, undefined);
+  modes.show(result(), live);
+  assert.deepStrictEqual(last(fake).look.layout.hidden, ["sym"]);
+});

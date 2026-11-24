@@ -1171,11 +1171,20 @@ export class QueryModes {
     return { shown, grid, column };
   }
 
-  /// Change the look of the result on show, keep it, and draw it again.
-  private async relook(shown: Shown, look: ResultLook): Promise<void> {
-    shown.look = look;
-    await this.keepLook(shown);
-    if (shown === this.shown) {
+  /// `shown` as the history holds it now: a watched query's next run,
+  /// landed while a command awaited its picks, put a new one under its id
+  /// (#1752).
+  private nowHeld(shown: Shown): Shown {
+    return this.history.find((h) => h.id === shown.id) ?? shown;
+  }
+
+  /// Change the look of a result - as the history holds it now - keep it,
+  /// and draw it again.
+  private async relook(shown: Shown, change: (look: ResultLook) => ResultLook): Promise<void> {
+    const target = this.nowHeld(shown);
+    target.look = change(target.look);
+    await this.keepLook(target);
+    if (target === this.shown) {
       this.post();
     }
   }
@@ -1219,7 +1228,8 @@ export class QueryModes {
       }
       rule = { column: column.name, op: op.op, value: ruleValue(op.op, text, numeric), style: style.style };
     }
-    await this.relook(at.shown, withRule(at.shown.look, rule));
+    const made = rule;
+    await this.relook(at.shown, (look) => withRule(look, made));
   }
 
   /// Drop a column's conditional formats.
@@ -1228,7 +1238,7 @@ export class QueryModes {
     const ruled = (grid: Grid, c: number): boolean => (shown?.look.rules ?? []).some((r) => r.column === grid.columns[c].name);
     const at = await this.columnOf(cell, "Clear the conditional formats of which column?", ruled);
     if (at !== undefined) {
-      await this.relook(at.shown, withoutRules(at.shown.look, at.grid.columns[at.column].name));
+      await this.relook(at.shown, (look) => withoutRules(look, at.grid.columns[at.column].name));
     }
   }
 
@@ -1245,25 +1255,26 @@ export class QueryModes {
     // A *_BAR column draws its bar by its name: toggled off as text (#1651).
     const named = chart === "bar" && this.viewSettings().enable.columnFormats && GRID_LOOK.columnFormat(name)?.kind === "bar";
     const next = named ? (now === "text" ? undefined : "text") : chart === "bar" ? (now === "bar" ? undefined : "bar") : now === "text" ? undefined : "text";
-    await this.relook(at.shown, withCellChart(at.shown.look, name, next));
+    await this.relook(at.shown, (look) => withCellChart(look, name, next));
   }
 
-  /// Change the column layout of the result on show (#1015); undefined
-  /// drops it.
-  private async changeLayout(change: (layout: ColumnLayout) => ColumnLayout | undefined): Promise<void> {
-    const shown = this.shown;
+  /// Change the column layout of `shown`, the result on show unless given
+  /// (#1015); undefined drops it.
+  private async changeLayout(change: (layout: ColumnLayout) => ColumnLayout | undefined, shown = this.shown): Promise<void> {
     if (shown === undefined) {
       void window.showInformationMessage("q-lint: no result yet. Run a query in grid or chart mode first.");
       return;
     }
-    const next = change(shown.look.layout ?? { order: [], hidden: [], widths: {}, frozen: 0 });
-    const look = { ...shown.look };
-    if (next === undefined) {
-      delete look.layout;
-    } else {
-      look.layout = next;
-    }
-    await this.relook(shown, look);
+    await this.relook(shown, (before) => {
+      const next = change(before.layout ?? { order: [], hidden: [], widths: {}, frozen: 0 });
+      const look = { ...before };
+      if (next === undefined) {
+        delete look.layout;
+      } else {
+        look.layout = next;
+      }
+      return look;
+    });
   }
 
   private async hideColumn(cell: CellContext | string | undefined): Promise<void> {
@@ -1277,7 +1288,8 @@ export class QueryModes {
       return;
     }
     const name = at.grid.columns[at.column].name;
-    await this.changeLayout((l) => ({ ...l, hidden: l.hidden.includes(name) ? l.hidden : [...l.hidden, name] }));
+    // The result the column was picked from, not one shown since.
+    await this.changeLayout((l) => ({ ...l, hidden: l.hidden.includes(name) ? l.hidden : [...l.hidden, name] }), at.shown);
   }
 
   /// Freeze the columns drawn up to and with this one.
@@ -1291,7 +1303,7 @@ export class QueryModes {
       // Said, not frozen at MAX_FROZEN and undone later (#1641).
       void window.showInformationMessage(plainMessage(`q-lint: at most ${MAX_FROZEN} columns are frozen; this column is number ${place + 1}. Move it nearer the left, or freeze fewer.`));
     } else if (place >= 0) {
-      await this.changeLayout((l) => ({ ...l, frozen: place + 1 }));
+      await this.changeLayout((l) => ({ ...l, frozen: place + 1 }), at.shown);
     }
   }
 
@@ -1299,7 +1311,7 @@ export class QueryModes {
   /// passes it - with the saved query the result came from (#1019); a
   /// result of no saved query is offered Save Query first.
   private async saveChartPreset(given?: unknown): Promise<void> {
-    const shown = this.shown;
+    let shown = this.shown;
     if (shown === undefined) {
       void window.showInformationMessage("q-lint: no result yet. Run a query in grid or chart mode first.");
       return;
@@ -1321,6 +1333,7 @@ export class QueryModes {
       if (added === undefined) {
         return;
       }
+      shown = this.nowHeld(shown);
       shown.saved = added;
     }
     shown.look = { ...shown.look, chart: preset };
