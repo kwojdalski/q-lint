@@ -7,7 +7,7 @@ import { ProgressLocation, commands, window, workspace, type ExtensionContext } 
 import type { Row } from "./discovery";
 import type { GridPayload } from "./grid";
 import { iconsEscaped, plainMessage } from "./history";
-import type { Live } from "./live";
+import { NotSent, type Live } from "./live";
 import type { Process } from "./processes";
 import { statements } from "./statements";
 import { AT_ONCE, TAG_QUERY, allTags, mergeOutcomes, readTagQuery, tagged, type Outcome } from "./tagquery";
@@ -134,12 +134,14 @@ export class QueryAcross {
           return await eachLimited(processes, AT_ONCE, async (process): Promise<Outcome> => {
             const at = Date.now();
             let outcome: Outcome;
-            // Cancelled before its turn: never sent, so not recorded (#1629).
-            const sent = !stop.signal.aborted;
+            // Cancelled before its turn, or while it was still connecting:
+            // never sent, so not recorded (#1629, #1926).
+            let sent = !stop.signal.aborted;
             try {
               outcome = !sent ? { process: process.label, error: "cancelled" } : { process: process.label, answer: await this.live.runApart(process, code, stop.signal) };
             } catch (error) {
-              outcome = { process: process.label, error: message(error) };
+              sent = !(error instanceof NotSent);
+              outcome = { process: process.label, error: sent ? message(error) : "cancelled" };
             }
             progress.report({ message: `${++done} of ${processes.length}`, increment: 100 / processes.length });
             if (!sent) {
