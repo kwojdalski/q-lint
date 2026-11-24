@@ -3171,7 +3171,7 @@ export class Live {
   }
 
   /// The result the panel shows, with the process and code it came from.
-  resultOnShow(): { process: string; code: string; payload: GridPayload } | undefined {
+  resultOnShow(): { process: string; code: string; payload: GridPayload; run: number } | undefined {
     return this.modes.current();
   }
 

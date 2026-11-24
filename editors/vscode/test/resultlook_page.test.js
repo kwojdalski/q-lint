@@ -199,6 +199,21 @@ test("linked panes read every series at the crosshair, zoom together on a drag a
   assert.ok(!page.body.all((e) => e.tagName === "SELECT")[0].children.some((o) => o.value === "linked"));
 });
 
+test("a series named __proto__ keeps the colour picked for it and the one its preset holds (#2079)", () => {
+  const page = loadPage(undefined);
+  const columns = [["t", 7, ["1", "2"]], ["__proto__", 9, ["3", "4"]]];
+  const chart = { kind: "bar", series: ["__proto__"], colours: JSON.parse('{"__proto__":"#ff0000"}'), bins: 7 };
+  page.send(result("s.1", columns, { look: { chart }, saved: "q1" }));
+  assert.strictEqual(page.body.all((e) => e.className === "swatch")[0].value, "#ff0000");
+  assert.strictEqual(JSON.stringify(page.rendered().preset.colours), '{"__proto__":"#ff0000"}');
+  const swatch = page.body.all((e) => e.className === "swatch")[0];
+  swatch.value = "#00ff00";
+  swatch.fire("change");
+  assert.strictEqual(page.body.all((e) => e.className === "swatch")[0].value, "#00ff00");
+  page.button("Save with Query").fire("click");
+  assert.strictEqual(JSON.stringify(page.posted.at(-1).preset.colours), '{"__proto__":"#00ff00"}');
+});
+
 test("a chart preset kept with a saved query draws the same chart again; Save with Query sends the chart drawn (#1019)", () => {
   const page = loadPage(undefined);
   const columns = [["t", 7, ["1", "2"]], ["a", 9, ["1", "2"]], ["b", 9, ["3", "4"]]];

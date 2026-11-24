@@ -18,7 +18,7 @@
 // Nothing is defined there.
 
 import { inlineTexts } from "./markdownblocks";
-import { FULL_TEXT } from "./qtext";
+import { ESCAPE_CUT, FULL_TEXT, UTF8_CUT } from "./qtext";
 
 /// Where a Markdown cell's values are kept in its metadata.
 export const LIVE_KEY = "q-lint.liveValues";
@@ -39,7 +39,8 @@ export const LIVE = [
   // the same. A list `sublist` refuses, such as a partitioned table, whole.
   // `sublist` drops an attribute, so the cut list, a table's columns and a
   // dictionary's keys and values get theirs back (#1718).
-  `  (1b;${VALUE_LIMIT} sublist $[10h=abs type v;(),v;-11h=type v;string v;${FULL_TEXT}[${VALUE_LIMIT};$[(type v) within 0 99h;{@[${ATTR}x;y;y]}[v] @[${VALUE_LIMIT} sublist;v;v];v]]])} each es}`,
+  // Cut on a character, never inside a UTF-8 one or an escape (#2071).
+  `  (1b;$[10h=abs type v;${UTF8_CUT}[${VALUE_LIMIT};(),v];-11h=type v;${UTF8_CUT}[${VALUE_LIMIT};string v];${ESCAPE_CUT}[${VALUE_LIMIT};${FULL_TEXT}[${VALUE_LIMIT};$[(type v) within 0 99h;{@[${ATTR}x;y;y]}[v] @[${VALUE_LIMIT} sublist;v;v];v]]]])} each es}`,
 ].join("\n");
 
 export type LiveValue = { text: string } | { error: string };

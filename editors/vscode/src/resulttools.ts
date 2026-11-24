@@ -50,6 +50,7 @@ import {
   type Step,
 } from "./wrangle";
 import { iconsEscaped, plainMessage } from "./history";
+import { staleMenu } from "./resultpanel";
 
 /// Wrangles kept, to go on from the result of one.
 const WRANGLES = 50;
@@ -64,6 +65,7 @@ interface Wrangle {
 interface Context {
   column?: unknown;
   row?: unknown;
+  run?: unknown;
 }
 
 const TYPE_NAMES: Record<number, string> = {
@@ -91,7 +93,7 @@ export class ResultTools {
     context.subscriptions.push(
       commands.registerCommand(RESULT_VIEW.wrangle, () => this.on("wrangler") && this.wrangle()),
       commands.registerCommand(RESULT_VIEW.wrangleColumn, (at?: Context) => this.on("wrangler") && this.wrangle(typeof at?.column === "number" ? at.column : undefined)),
-      commands.registerCommand(RESULT_VIEW.editCell, (at?: Context) => this.on("editCells") && this.editCell(at?.column, at?.row)),
+      commands.registerCommand(RESULT_VIEW.editCell, (at?: Context) => this.on("editCells") && this.editCell(at?.column, at?.row, at?.run)),
       commands.registerCommand(DATA_FILES.open, (uri?: Uri) => this.dataOn("open") && this.openDataFile(uri)),
       commands.registerCommand(DATA_FILES.wizard, (uri?: Uri) => this.dataOn("loadWizard") && this.loadWizard(uri)),
     );
@@ -273,8 +275,12 @@ export class ResultTools {
 
   /// Write the update that sets a cell of the result on show, show it, and
   /// send it on the user's word.
-  private async editCell(column: unknown, row: unknown): Promise<void> {
+  private async editCell(column: unknown, row: unknown, menuRun?: unknown): Promise<void> {
     const shown = this.live.resultOnShow();
+    // The row right-clicked, not one of a result shown since (#2076).
+    if (shown !== undefined && staleMenu(menuRun, shown.run)) {
+      return;
+    }
     if (shown === undefined || typeof column !== "number" || typeof row !== "number" || shown.payload.names[column] === undefined) {
       void window.showInformationMessage("q-lint: right-click a cell of the result grid and choose Edit Cell to change it on its process.");
       return;

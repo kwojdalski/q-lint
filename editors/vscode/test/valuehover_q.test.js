@@ -79,6 +79,8 @@ const SERVER = [
   "v::calls+::1",
   "s:5000#\"ab\"",
   "x:7",
+  "u:`$600#enlist \"\\303\\251\\303\\251\\303\\251\"",
+  "tt:([]a:u)",
   "",
 ].join("\n");
 
@@ -86,7 +88,7 @@ const preview = async (c, names) => readPreview(await c.call(VALUE_PREVIEW, prev
 
 test("the first name the process defines is read, as the console prints it, within the limit", { skip }, async (t) => {
   const c = await connect(t, SERVER);
-  assert.deepStrictEqual(await preview(c, [".lib.r", "r"]), { found: true, name: ".lib.r", type: -7, count: 1, text: "2\n" });
+  assert.deepStrictEqual(await preview(c, [".lib.r", "r"]), { found: true, name: ".lib.r", type: -7, count: 1, text: "2\n", cut: false });
   // Under \\d .lib a bare `r` may be `.lib.r` or a root `r`: the first defined wins.
   assert.strictEqual((await preview(c, [".nope.r", "rate"])).name, "rate");
   const f = await preview(c, [".lib.f"]);
@@ -106,6 +108,20 @@ test("the first name the process defines is read, as the console prints it, with
   const cut = readPreview(await c.call(VALUE_PREVIEW, "s", 50));
   assert.strictEqual(cut.text.length, 50);
   assert.match(previewMarkdown(cut, "dev", 50), /The first 50 characters\.$/);
+  // Cut on a character, never inside a UTF-8 one (#2071).
+  for (const name of ["u", "tt"]) {
+    const p = await preview(c, [name]);
+    assert.doesNotMatch(p.text, /\uFFFD/, name);
+  }
+  const utf = readPreview(await c.call(VALUE_PREVIEW, "tt", 52));
+  assert.strictEqual(utf.text, `a     \n------\n${"ééé\n".repeat(5)}é`);
+  // Said to be cut though its text is shorter than the bytes cut at (#2072).
+  await c.evaluate('system"c 2000 80"');
+  const many = await preview(c, ["tt"]);
+  await c.evaluate('system"c 25 80"');
+  assert.ok(many.text.length < PREVIEW_LIMIT);
+  assert.match(previewMarkdown(many, "dev"), /The first 2,000 characters\.$/);
+  assert.strictEqual((await preview(c, ["kt"])).cut, false);
   // A view is named and not evaluated: it would count its calls.
   assert.deepStrictEqual(await preview(c, ["v"]), { found: true, name: "v", view: true });
   assert.strictEqual(String((await c.evaluate("calls")).value), "0");

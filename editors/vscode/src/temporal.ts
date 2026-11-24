@@ -206,15 +206,15 @@ function hms(h: string | undefined, m: string | undefined, s: string | undefined
 /// timestamp, month, date, datetime, timespan, minute, second or time, or
 /// one of their nulls and infinities.
 export function parse(text: string): Temporal | undefined {
-  const special = /^(-?)0([NWw])([pmdznuvt])$/.exec(text);
+  const special = /^(-?)0([NnWw])([pmdznuvt])$/.exec(text);
   if (special !== null) {
     const type = (Object.keys(LETTER) as TemporalType[]).find((k) => LETTER[k] === special[3]) as TemporalType;
-    // q writes a datetime's infinity 0wz, every other 0W; a null has no sign.
-    const w = type === "datetime" ? "w" : "W";
-    if (special[2] === "N") {
+    // q reads 0n and 0N, 0w and 0W alike for every temporal type (#2069),
+    // though it writes 0wz and 0W; a null has no sign.
+    if (special[2] === "N" || special[2] === "n") {
       return special[1] === "" ? { type, special: "null", n: 0n } : undefined;
     }
-    return special[2] === w ? { type, special: special[1] === "-" ? "-inf" : "inf", n: 0n } : undefined;
+    return { type, special: special[1] === "-" ? "-inf" : "inf", n: 0n };
   }
   // q has no year 0: 0000.01.01 and 0000.01m are refused (#1784).
   const day = (y: string, m: string, d: string) => (Number(y) < 1 ? undefined : daysFrom(Number(y), Number(m), Number(d)));
@@ -225,9 +225,12 @@ export function parse(text: string): Temporal | undefined {
     if (days === undefined || secs === undefined || Number(m[4] ?? 0) > 23) {
       return undefined;
     }
-    const n = BigInt(days) * NS_PER_DAY + secs * 1_000_000_000n + fraction(m[7], 9);
-    // Written out in full, 0Wp and -0Wp are still the infinities (#1069).
-    return n >= -LONG_MAX && n <= LONG_MAX ? timestampOfLong(n) : undefined;
+    // KDB-X refuses a timestamp literal outside 1709.01.01-2290.12.31, even
+    // 0Wp written out in full (#2068).
+    if (days < LITERAL_DAYS[0] || days >= LITERAL_DAYS[1]) {
+      return undefined;
+    }
+    return timestampOfLong(BigInt(days) * NS_PER_DAY + secs * 1_000_000_000n + fraction(m[7], 9));
   }
   m = /^(\d{4})\.(\d{2})\.(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/.exec(text);
   if (m !== null) {

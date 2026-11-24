@@ -18,7 +18,7 @@
 // 16,384 columns; a grid with more is cut there, and the notes say so.
 import { deflateRawSync } from "node:zlib";
 import { charText, textBuffer, type GridPayload } from "./grid";
-import { plainItem, rawColumn, textNull } from "./qliteral";
+import { itemValue, plainItem, rawColumn, textNull } from "./qliteral";
 import { rankEdge, xlsxRules, type FormatRule } from "./resultlook";
 
 /// One file of a zip: its name and its bytes.
@@ -218,9 +218,26 @@ export function xlsxCell(type: number, text: string, raw: unknown): Cell {
   if (type >= 12 && type <= 19 && raw !== undefined) {
     return temporalSerial(type, Number(raw)) ?? { t: text };
   }
+  // A general list's number as a number, every digit of a float, its
+  // boolean and its null Excel's own, as JSON writes them (#2088); a long
+  // Excel would round keeps its digits as text.
+  let plain = type === 10 ? charText(text, raw) : text;
+  if (type === 0) {
+    const item = itemValue(text, raw);
+    if ("number" in item) {
+      const n = Number(item.number);
+      return /[.e]/.test(item.number) || Number.isSafeInteger(n) ? { n } : { t: item.number };
+    }
+    if ("boolean" in item) {
+      return { b: item.boolean };
+    }
+    if ("null" in item) {
+      return undefined;
+    }
+    plain = item.text;
+  }
   // Excel's limit on a cell's text, one unit less when the cut would split
   // a surrogate pair (#1811), as assist's cut does.
-  const plain = type === 0 ? plainItem(text) : type === 10 ? charText(text, raw) : text;
   const end = /[\uD800-\uDBFF]/.test(plain[32766] ?? "") ? 32766 : 32767;
   return { t: plain.length > 32767 ? plain.slice(0, end) : plain };
 }
@@ -230,7 +247,7 @@ function cellXml(ref: string, cell: Cell): string {
     return "";
   }
   if ("n" in cell) {
-    return `<c r="${ref}"${cell.s ? ` s="${cell.s}"` : ""}><v>${String(cell.n).replace("e+", "E+").replace("e-", "E-")}</v></c>`;
+    return `<c r="${ref}"${cell.s ? ` s="${cell.s}"` : ""}><v>${(Object.is(cell.n, -0) ? "-0" : String(cell.n)).replace("e+", "E+").replace("e-", "E-")}</v></c>`;
   }
   if ("b" in cell) {
     return `<c r="${ref}" t="b"><v>${cell.b ? 1 : 0}</v></c>`;
@@ -276,7 +293,11 @@ export function toXlsx(payload: GridPayload, order: number[], rules: FormatRule[
   // the text the grid's rules read (#1411).
   const text = types.map((t, i) => !(t === 1 || t === 4 || (t >= 5 && t <= 9) || (t >= 12 && t <= 19)) &&
     !(t === 0 && rows.some((r) => plainItem(payload.cells[i][r] ?? "") !== (payload.cells[i][r] ?? ""))));
-  const formats = xlsxRules(rules, payload.names.slice(0, width), types.map((t) => t >= 5 && t <= 9), columnName, rows.length + 1, text, (rule, c) => rankEdge(payload, c, rule));
+  const formats = xlsxRules(rules, payload.names.slice(0, width), types.map((t) => t >= 5 && t <= 9), columnName, rows.length + 1, text, (rule, c) => rankEdge(payload, c, rule), (c) => {
+    // The infinities among the rows written, which are text in the sheet.
+    const raw = raws[c];
+    return { pos: raw !== undefined && rows.some((r) => raw[r] === Infinity), neg: raw !== undefined && rows.some((r) => raw[r] === -Infinity) };
+  });
   sheet.push("</sheetData>", ...formats.formatting, "</worksheet>");
   const xml = (lines: string[]) => Buffer.from(lines.join(""), "utf8");
   const data = zip([

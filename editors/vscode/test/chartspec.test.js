@@ -84,3 +84,22 @@ test("a notebook chart's height is a number in / @height's range, or the default
   }
   assert.match(require("node:fs").readFileSync(require.resolve("../media/chartrenderer.js"), "utf8"), /height:\$\{C\.chartHeight\(spec\.height, HEIGHT\)\}px/);
 });
+
+test("a range across zero ticks 0 itself, not the residue of adding the step (#2074)", () => {
+  assert.deepStrictEqual(C.ticks(-0.3, 0.2).values, [-0.3, -0.2, -0.1, 0, 0.1, 0.2]);
+  assert.ok(C.ticks(-0.0317, -0.0027).values.includes(0));
+  const grid = { columns: [{ name: "i", numeric: false }, { name: "pnl", numeric: true }], cells: [["a", "b", "c"], ["-0.3", "-0.1", "0.2"]], values: [null, [-0.3, -0.1, 0.2]] };
+  const svg = C.chartSvg(grid, [0, 1, 2], "line", C.chartData(grid, [0, 1, 2], "line", [1], 20), { colours: ["#f00"] }, {});
+  assert.doesNotMatch(svg, />-?[\d.]+e-\d+</, svg);
+  // Over many ranges, a tick near zero is zero.
+  let seed = 2074;
+  const next = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+  for (let i = 0; i < 20000; i++) {
+    const a = (next() - 0.7) * Math.pow(10, Math.floor(next() * 8) - 4);
+    const b = a + next() * Math.abs(a) * 3;
+    const t = C.ticks(a, b);
+    for (const v of t.values) {
+      assert.ok(v === 0 || Math.abs(v) > t.step * 1e-6, `${a} ${b}: ${v}`);
+    }
+  }
+});

@@ -51,6 +51,16 @@ export const FULL_TEXT = [
   "   r};(.z.s;r;n;x);{[r;e]r}[r]]}",
 ].join("\n");
 
+/// `UTF8_CUT[n;s]` is `n sublist s` for a string of UTF-8 bytes, less a
+/// character it would cut inside: the codec reads such a tail as U+FFFD
+/// (#2071).
+export const UTF8_CUT =
+  '{[n;s]if[n>=count s;:s];s:n#s;b:"i"$"x"$(0|count[s]-4)_s;i:last where not b within 128 191;$[null i;s;($[b[i]>=240;4;b[i]>=224;3;b[i]>=192;2;1])>(count b)-i;(i-count b)_s;s]}';
+
+/// `ESCAPE_CUT[n;s]` is `UTF8_CUT[n;s]` for the text of `-3!`, less an
+/// escape it would cut inside: `"\346\2` (#2071).
+export const ESCAPE_CUT = `{[n;s]c:count s;s:${UTF8_CUT}[n;s];if[c=count s;:s];o:0|count[s]-3;p:o+last where"\\\\"=o _s;if[null p;:s];if[not all((1+p)_s)in"01234567";:s];r:p-last -1,where not"\\\\"=p#s;$[r mod 2;p#s;s]}`;
+
 /// The items of a vector, and about the characters of a list, that a
 /// function's text is written to: a projection may hold a table of any size.
 export const TEXT_LIMIT = 100000;
@@ -61,7 +71,9 @@ export const TEXT_LIMIT = 100000;
 // anything else on one line. A simple column or key is written with
 // `string`, as `.Q.s` writes it, and every other cell by `FULL_TEXT` - so
 // an item of a list keeps the `(1;`a)` or `1 2f` that `.Q.s` drops, and a
-// matrix is not aligned. A value it cannot lay out is on one line.
+// matrix is not aligned. A value it cannot lay out is on one line. Facing
+// a table, the other side of a dictionary gets a blank line and a rule as
+// wide as its first item, as `.Q.t0` gives it (#2070).
 export const LAID_OUT = [
   "{[F;n;x]",
   " if[(::)~x;:\"\"];",
@@ -72,6 +84,6 @@ export const LAID_OUT = [
   "   t:type x;x:$[t in 0 98 99h;(1+n div 2)sublist x;x];",
   "   ` sv$[t=98h;T x;t=0h;$[count x;F each x;enlist F x];t<>99h;enlist F x;",
   "    [p:98h=type each(k:key x;v:value x);",
-  "     l:$[p 0;T k;((2*p 1)#(\"\";\"\")),C k];j:$[p 1;T v;((2*p 0)#(\"\";\"\")),C v];",
+  "     R:{[p;s]$[p;((count first s)#'\" -\"),s;s]};l:$[p 0;T k;R[p 1]C k];j:$[p 1;T v;R[p 0]C v];",
   "     ((max 0,count each l)$/:l),'\"| \",/:j]]};(F;n;x);{[F;n;x;e]F[n;x],\"\\n\"}[F;n;x]]}",
 ].join("\n");

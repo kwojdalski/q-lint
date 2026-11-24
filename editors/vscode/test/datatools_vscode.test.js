@@ -188,6 +188,11 @@ test("Edit Cell writes the update, shows it, and sends it only on Run, past no p
   stub.inputs.push(undefined);
   await run(RESULT_VIEW.editCell, { column: 1, row: 0 });
   assert.strictEqual(live.ran.length, 1);
+  // A menu opened on a result shown before this one edits nothing (#2076).
+  live.shown = { ...live.shown, run: 2 };
+  await run(RESULT_VIEW.editCell, { webviewSection: "cell", column: 1, row: 1, run: 1 });
+  assert.match(infos().at(-1), /the result changed while its menu was open/);
+  assert.strictEqual(live.ran.length, 1);
   const off = setUp({ "results.editCells.enable": false });
   await run(RESULT_VIEW.editCell, { column: 1, row: 0 });
   assert.match(infos().at(-1), /q-lint\.results\.editCells\.enable/);

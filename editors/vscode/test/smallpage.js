@@ -35,6 +35,8 @@ function loadSmallPage(files, globals = {}) {
       createElement: (tag) => new PageElement(tag),
       createElementNS: (_ns, tag) => new PageElement(tag),
       createTextNode: (text) => ({ textContent: text }),
+      // Finds nothing: a page that refocuses after drawing again does not here.
+      querySelector: () => null,
       get activeElement() {
         return activeIn(body);
       },

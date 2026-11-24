@@ -11,7 +11,7 @@ const url = require("node:url");
 const pkg = require("../package.json");
 const { cellDirective } = require("../out/celldirectives.js");
 const { LIVE, LIVE_KEY, inlineSpans, liveExpressions, liveQueries, markdownAfter, readLiveValues, scanLive } = require("../out/livemarkdown.js");
-const { FULL_TEXT } = require("../out/qtext.js");
+const { ESCAPE_CUT, FULL_TEXT, UTF8_CUT } = require("../out/qtext.js");
 const { ERROR_MIME, fromIpynb, markdownHtml, toHtml, toIpynb, IpynbError } = require("../out/qnbconvert.js");
 const { INJECTED_KEY, cliProcess, guardedText, injectParameters, parametersCell, parametersOf, parseArgs, passwordOf, passwordVariable, runNotebook, writeAs } = require("../out/qnbrun.js");
 const { isProduction } = require("../out/agent.js");
@@ -118,9 +118,9 @@ test("the live lambda's answer is read by expression; anything else is refused",
   assert.throws(() => readLiveValues(["a"], { ok: 1 }), /1 live values/);
   // One lambda, nothing assigned on the process.
   assert.match(LIVE, /^\{\[es\]/);
-  // FULL_TEXT has locals of its own: qtext_q.test.js holds that it defines nothing.
+  // FULL_TEXT and the cuts have locals of their own: qtext_q.test.js holds that they define nothing.
   assert.ok(LIVE.includes(FULL_TEXT));
-  assert.doesNotMatch(LIVE.replace(FULL_TEXT, "").replace(/\b[rv]:/g, ""), /[a-zA-Z_.]+::?[^:]/);
+  assert.doesNotMatch(LIVE.replace(FULL_TEXT, "").split(ESCAPE_CUT).join("").split(UTF8_CUT).join("").replace(/\b[rv]:/g, ""), /[a-zA-Z_.]+::?[^:]/);
 });
 
 /// media/livemarkdown.js, the renderer's extension, as the editor loads it:

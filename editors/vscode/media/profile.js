@@ -9,8 +9,11 @@
   }
   const vscode = acquireVsCodeApi();
   let shown;
-  let sortBy = "total";
-  let descending = true;
+  // The sort chosen, kept in the page's state: the panel does not keep its
+  // page while hidden, and shown again it reloads (#2080).
+  const kept = vscode.getState() || {};
+  let sortBy = ["fn", "calls", "total", "self", "mean", "max"].indexOf(kept.sortBy) >= 0 ? kept.sortBy : "total";
+  let descending = typeof kept.descending === "boolean" ? kept.descending : true;
 
   function element(tag, className, text) {
     const e = document.createElement(tag);
@@ -86,6 +89,7 @@
           sortBy = col.key;
           descending = col.key !== "fn";
         }
+        vscode.setState({ sortBy: sortBy, descending: descending });
         render();
         const again = document.querySelector('th button[data-key="' + col.key + '"]');
         if (again) {
