@@ -351,7 +351,7 @@ export class NotebookStrip {
     }
     const theirs = readText(script);
     // Forward slashes: git runs the command through a POSIX shell.
-    const clean = `node "${script.replace(/\\/g, "/")}" --strip`;
+    const clean = `node ${shellQuoted(script.replace(/\\/g, "/"))} --strip`;
     const set = await git(["config", "--local", "--get", `filter.${FILTER}.clean`], root);
     const current = set.code === 0 ? set.stdout.trim() : undefined;
     if (current !== undefined && current !== clean) {
@@ -464,6 +464,13 @@ export class NotebookStrip {
 /// Register Compare Notebook Cells - its command, which says when the
 /// setting is off, and its documents' provider, only while it is on - and
 /// Clear Notebook Outputs and Set Up Git to Strip Notebook Outputs.
+/// `text` in double quotes as a POSIX shell reads them: `$`, a backquote,
+/// `"` and `\` escaped, which the shell git runs a filter with expands - a
+/// repository under `/me/$work` ran a script that is not there (#1534).
+export function shellQuoted(text: string): string {
+  return `"${text.replace(/["$`\\]/g, "\\$&")}"`;
+}
+
 export function registerNotebookGit(context: ExtensionContext): { diff: NotebookDiff; strip: NotebookStrip } {
   return { diff: new NotebookDiff(context), strip: new NotebookStrip(context) };
 }

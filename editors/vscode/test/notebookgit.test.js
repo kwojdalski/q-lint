@@ -357,6 +357,28 @@ test("Set Up Git to Strip Notebook Outputs shows what it writes, writes it on Wr
   assert.match(fake.messages.at(-1), /strips notebook outputs on commit already/);
 });
 
+// git runs the filter through sh: inside double quotes `$work` and
+// backquotes were expanded, node ran a script that is not there, and the
+// notebook was committed with its outputs (#1534).
+test("the filter runs for a repository whose path holds $, a backquote or a double quote", async () => {
+  const { shellQuoted } = require("../out/notebookgit.js");
+  assert.strictEqual(shellQuoted('/a/$w/`x`/"q"/b'), '"/a/\\$w/\\`x\\`/\\"q\\"/b"');
+  assert.strictEqual(shellQuoted("/plain/path"), '"/plain/path"');
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "qnbgit-$work-"));
+  const dir = path.join(parent, 'r`id`"q"');
+  fs.mkdirSync(dir);
+  const git = (...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], { cwd: dir, encoding: "utf8" });
+  git("init", "-q");
+  const fake = fakeVscode();
+  load(fake);
+  fake.answers.push("Write");
+  await fake.commands["q-lint.setUpNotebookStripFilter"](fake.vscode.Uri.file(dir), "info");
+  assert.match(fake.messages.at(-1), /now commits q notebooks without their outputs/);
+  fs.writeFileSync(path.join(dir, "a.qnb"), withOutputs());
+  git("add", "a.qnb");
+  assert.strictEqual(git("show", ":a.qnb"), stripQnb(withOutputs()));
+});
+
 test("in a linked worktree the setup writes the attributes git reads and the script under the common directory (#1270)", async () => {
   const { dir, git } = repo({ README: "r\n" });
   const linked = fs.mkdtempSync(path.join(os.tmpdir(), "qnbgit-wt-"));
