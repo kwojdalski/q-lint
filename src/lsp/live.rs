@@ -133,7 +133,7 @@ fn tests(params: &Value, sources: &Sources) -> Value {
                 Some(json!({
                     "name": &text[run.at..run.at + run.len],
                     "range": range(&lines, run.at, run.len),
-                    "code": run.code,
+                    "code": format!("{}{}", run.fixtures, run.code),
                     "call": call,
                 }))
             })

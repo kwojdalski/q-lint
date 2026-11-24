@@ -286,13 +286,15 @@ fn declared(
 /// it: the name as written at `at` for `len` bytes, the name q gives it
 /// once defined, the code that defines it (the statement, wrapped in
 /// `\d .ns` and `\d .` when it is written under `\d .ns`) and, for a test,
-/// the call that runs it once defined.
+/// the call that runs it once defined and the code that defines the qUnit
+/// fixtures that call runs around it (#1590).
 pub(super) struct Runnable {
     pub(super) at: usize,
     pub(super) len: usize,
     pub(super) name: String,
     pub(super) code: String,
     pub(super) test: Option<String>,
+    pub(super) fixtures: String,
 }
 
 /// Whether a function named `name` is a test: its last part starts
@@ -312,6 +314,12 @@ fn namespace_of(name: &str) -> Option<(&str, &str)> {
     name.rsplit_once('.')
         .filter(|(ns, _)| ns.len() > 1 && ns.starts_with('.'))
 }
+
+/// qUnit's fixtures (#1590), in the order `.qunit.runTest` runs them around
+/// each test of their namespace: `beforeNamespace*` and `setUp*` before it,
+/// `tearDown*` and `afterNamespace*` after.
+const FIXTURES_BEFORE: [&str; 2] = ["beforeNamespace", "setUp"];
+const FIXTURES_AFTER: [&str; 2] = ["tearDown", "afterNamespace"];
 
 /// Each function a statement at column 0 of `text` defines, in order.
 pub(super) fn runnables(text: &str) -> Vec<Runnable> {
@@ -360,7 +368,50 @@ pub(super) fn runnables(text: &str) -> Vec<Runnable> {
             name: name.to_string(),
             test: (is_test(spelled) || qunit_test).then(|| format!("{name}[]")),
             code,
+            fixtures: String::new(),
         });
+    }
+    // A test in a namespace that defines qUnit fixtures runs inside them:
+    // they are defined with it, and called around it, the test's error
+    // signalled again once its `tearDown*` has run.
+    let wrapped: Vec<(usize, String, String)> = out
+        .iter()
+        .enumerate()
+        .filter_map(|(i, run)| {
+            let (ns, _) = namespace_of(&run.name).filter(|_| run.test.is_some())?;
+            let of = |kinds: &[&str]| -> Vec<&Runnable> {
+                kinds
+                    .iter()
+                    .flat_map(|k| {
+                        out.iter().filter(move |r| {
+                            namespace_of(&r.name)
+                                .is_some_and(|(n, leaf)| n == ns && leaf.starts_with(k))
+                        })
+                    })
+                    .collect()
+            };
+            let (before, after) = (of(&FIXTURES_BEFORE), of(&FIXTURES_AFTER));
+            if before.is_empty() && after.is_empty() {
+                return None;
+            }
+            let calls = |rs: &[&Runnable]| -> String {
+                rs.iter().map(|r| format!("{}[]; ", r.name)).collect()
+            };
+            let mut defined: Vec<&Runnable> = before.iter().chain(&after).copied().collect();
+            defined.sort_by_key(|r| r.at);
+            let fixtures = defined.iter().map(|r| format!("{}\n", r.code)).collect();
+            let call = format!(
+                "{{[] {}r:@[{{(1b;x[])}};{};{{(0b;x)}}]; {}$[r 0;r 1;'r 1]}}[]",
+                calls(&before),
+                run.name,
+                calls(&after),
+            );
+            Some((i, fixtures, call))
+        })
+        .collect();
+    for (i, fixtures, call) in wrapped {
+        out[i].fixtures = fixtures;
+        out[i].test = Some(call);
     }
     out
 }
@@ -387,7 +438,10 @@ fn code_lenses(params: &Value, sources: &Sources) -> Value {
         };
         lenses.push(lens("Run", run.code.clone()));
         if let Some(call) = &run.test {
-            lenses.push(lens("Run test", format!("{}\n{call}", run.code)));
+            lenses.push(lens(
+                "Run test",
+                format!("{}{}\n{call}", run.fixtures, run.code),
+            ));
         }
     }
     json!(lenses)

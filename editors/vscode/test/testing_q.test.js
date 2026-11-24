@@ -170,3 +170,15 @@ test("a qUnit test that ran an assertion is judged by qUnit's flag, not a false 
   // A test with no assertion is judged by its value, as before.
   assert.strictEqual((await run(c, ["test_k:{[] 0b}", "test_k[]"])).passed, false);
 });
+
+test("a qUnit test runs inside the setUp and tearDown the server sends with it (#1590)", { skip }, async (t) => {
+  const c = await connect(t, QUNIT_FLAG);
+  const fixtures = "\\d .testCalc\nsetUp:{[] `.testCalc.t set ([] a:1 2 3)}\n\\d .\n\\d .testCalc\ntearDown:{[] delete t from `.testCalc}\n\\d .\n";
+  const call = (name) => `{[] .testCalc.setUp[]; r:@[{(1b;x[])};.testCalc.${name};{(0b;x)}]; .testCalc.tearDown[]; $[r 0;r 1;'r 1]}[]`;
+  const good = { code: `${fixtures}\\d .testCalc\ntestCount:{[] .qunit.assertThat[count t;=;3;\"rows\"]}\n\\d .`, call: call("testCount") };
+  assert.deepStrictEqual(await run(c, testStatements(good)), { passed: true, text: "3", errored: false });
+  const bad = { code: `${fixtures}\\d .testCalc\ntestFour:{[] .qunit.assertThat[count t;=;4;\"rows\"]}\n\\d .`, call: call("testFour") };
+  assert.strictEqual((await run(c, testStatements(bad))).text, "assertThatFAIL");
+  // tearDown ran, the test failing or not.
+  assert.strictEqual((await c.evaluate("`t in key `.testCalc")).value, false);
+});
