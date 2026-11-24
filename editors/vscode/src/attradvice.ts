@@ -23,6 +23,7 @@ import { bytes } from "./tableinfo";
 
 export const ATTRIBUTE_SAMPLE = [
   "{[nm;lim]",
+  " if[(`$nm)in views[];'\"a view, not a table\"];",
   " t:get`$nm;if[not .Q.qt t;'\"not a table\"];",
   " p:.Q.qp t;part:1b~p;m:\"j\"$lim;",
   " n:\"f\"$$[part;@[{sum .Q.cn x};t;0n];count t];",

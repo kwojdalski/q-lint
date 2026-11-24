@@ -4,13 +4,15 @@
 // it; `notebookvarsview.ts` is the view.
 //
 // `VARS` is sent as one lambda and defines nothing. A name that cannot be
-// read (a view that fails, say) answers with its type as 101h (`::`), and a
-// count or size that cannot be had answers null. A size is `-22!`'s, the
+// read answers with its type as 101h (`::`), and a count or size that
+// cannot be had answers null. A view (`v::expr`) is not read at all -
+// `value` of its name would evaluate it after every cell - and answers as a
+// view, with its own type, 100h, and no count or size (#1865). A size is `-22!`'s, the
 // bytes the value takes serialized; a function and a partitioned table -
 // whose `-22!` would read every partition - have none. At most `limit`
 // names are sent, with how many there are.
 //
-//   `names`types`counts`sizes`total!(names;types;counts;sizes;count of all)
+//   `names`types`counts`sizes`total`views!(names;types;counts;sizes;count of all;which are views)
 import { typeName } from "./grid";
 
 /// The most globals the view lists.
@@ -20,10 +22,11 @@ export const VARS = [
   "{[lim]",
   " a:(key `.) except `;",
   " n:(\"j\"$lim) sublist a;",
-  " v:{@[value;x;{(::)}]} each n;",
+  " w:n in views[];",
+  " v:{[x;w] $[w;(::);@[value;x;{(::)}]]}'[n;w];",
   " qp:{$[`qp in key `.Q;@[.Q.qp;x;{0b}];0b]} each v;",
   " sz:{[x;p] $[(99h<type x)|1b~p;0N;@[-22!;x;{0N}]]}'[v;qp];",
-  " `names`types`counts`sizes`total!(n;type each v;{@[count;x;{0N}]} each v;sz;count a)}",
+  " `names`types`counts`sizes`total`views!(n;@[type each v;where w;:;100h];@[{@[count;x;{0N}]} each v;where w;:;0N];sz;count a;w)}",
 ].join("\n");
 
 export interface Variable {
@@ -33,6 +36,8 @@ export interface Variable {
   count?: number;
   /// Bytes, serialized; undefined for a function or a partitioned table.
   size?: number;
+  /// A view, which was not evaluated: it has no count and no size.
+  view?: true;
 }
 
 /// A q long as a number, or undefined for a null: the IPC client decodes
@@ -54,10 +59,11 @@ export function readVariables(raw: unknown): { variables: Variable[]; total: num
   const types = list(r.types);
   const counts = list(r.counts);
   const sizes = list(r.sizes);
+  const views = list(r.views);
   const variables = names.map((name, i): Variable => {
     const count = long(counts[i]);
     const size = long(sizes[i]);
-    return { name, type: long(types[i]) ?? 0, ...(count !== undefined ? { count } : {}), ...(size !== undefined ? { size } : {}) };
+    return { name, type: long(types[i]) ?? 0, ...(count !== undefined ? { count } : {}), ...(size !== undefined ? { size } : {}), ...(views[i] === true ? { view: true as const } : {}) };
   });
   return { variables, total: long(r.total) ?? variables.length };
 }
@@ -79,8 +85,12 @@ export function bytesText(bytes: number): string {
   return `${shown()} ${units[u]}`;
 }
 
-/// What a variable's kind is called: q's type name, a table, a function.
-export function kindText(type: number): string {
+/// What a variable's kind is called: q's type name, a table, a function, a
+/// view.
+export function kindText(type: number, view = false): string {
+  if (view) {
+    return "view";
+  }
   if (type === 98) {
     return "table";
   }
@@ -101,7 +111,7 @@ export function kindText(type: number): string {
 /// A variable's line in the view, after its name: its kind, count and size.
 export function describeVariable(v: Variable): string {
   return [
-    kindText(v.type),
+    kindText(v.type, v.view),
     ...(v.count !== undefined && v.type >= 0 && v.type < 100 ? [`${v.count.toLocaleString("en")} ${v.type === 98 ? "rows" : "items"}`] : []),
     ...(v.size !== undefined ? [bytesText(v.size)] : []),
   ].join(" · ");

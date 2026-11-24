@@ -11,7 +11,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { QConnection } = require("../out/qclient.js");
-const { VARS, readVariables } = require("../out/notebookvars.js");
+const { VARS, readVariables, describeVariable } = require("../out/notebookvars.js");
 const { LIVE, readLiveValues } = require("../out/livemarkdown.js");
 
 const Q = process.env.QLINT_TEST_Q;
@@ -53,6 +53,28 @@ const cli = (args, env = {}) =>
       resolve({ code: error ? error.code : 0, stdout, stderr }),
     );
   });
+
+// A view is listed as one, with nothing read of it: `value` of its name
+// would evaluate it after every cell (#1865).
+test("the variables lambda lists a view as a view, and does not evaluate it (#1865)", { skip }, async (t) => {
+  const q = await startQ("t:([] a:1 2)\nspy::select from t\nbad::1+`a\n");
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.close());
+  const pending = () => connection.call('{[x] string system"B"}', 0);
+  const { variables, total } = readVariables(await connection.call(VARS, 1000));
+  assert.deepStrictEqual(variables, [
+    { name: "t", type: 98, count: 2, size: variables[0].size },
+    { name: "spy", type: 100, view: true },
+    { name: "bad", type: 100, view: true },
+  ]);
+  assert.deepStrictEqual(variables.map(describeVariable), [`table · 2 rows · ${variables[0].size} B`, "view", "view"]);
+  assert.strictEqual(total, 3);
+  assert.deepStrictEqual(await pending(), ["bad", "spy"]);
+  // No view among the names sent, and no name at all: the same shape.
+  assert.deepStrictEqual(readVariables(await connection.call(VARS, 1)).variables.map((v) => v.name), ["t"]);
+  assert.deepStrictEqual(readVariables(await connection.call(VARS, 0)), { variables: [], total: 3 });
+});
 
 test("notebook features against a real q process", { skip }, async (t) => {
   const a = await startQ('t:([] i:til 3; s:("a";"<b>";"c"));f:{x+1};d:2024.01.01;sp:get (hsym `$":db/sp/") set ([] n:1 2 3)\n');

@@ -147,6 +147,20 @@ test("callers are read from what q parsed: globals in context, nested lambdas, a
   assert.deepStrictEqual(all.callers.find((x) => x.name === "m").params, ["x"]);
 });
 
+// A view named to a reader is refused by its name, in `views[]`, before
+// `get` would evaluate it (#1865).
+test("a view named to Function Source, Redefine or a table's details is refused, not evaluated (#1865)", { skip }, async (t) => {
+  const c = await connect(t, "t:([] a:1 2)\nspy::select from t\nbad::1+`a\nfv::{x+1}\n");
+  const pending = () => c.call('{[x] string system"B"}', 0);
+  await assert.rejects(c.call(SOURCE, "spy"), /a view, not a function/);
+  await assert.rejects(c.call(SOURCE, "fv"), /a view, not a function/);
+  await assert.rejects(c.call(REDEFINE, "fv", "{x+1}", "{x+2}"), /not a lambda on the process/);
+  await assert.rejects(c.call(TABLE_INFO, "spy", 30), /a view, not a table/);
+  await assert.rejects(c.call(TABLE_INFO, "bad", 30), /a view, not a table/);
+  assert.deepStrictEqual(await pending(), ["bad", "fv", "spy"]);
+  assert.strictEqual(readTableInfo(await c.call(TABLE_INFO, "t", 30)).rows, 2);
+});
+
 // A view has a lambda's type, 100h, and `get` of its name evaluates it: it
 // is not read as a caller, and one that signals does not fail the read
 // (#1864).

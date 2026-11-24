@@ -352,6 +352,12 @@ test("the attribute advisor leaves a sorted column of the table without s# (#186
   assert.deepStrictEqual(await connection.call(state, 0), before);
 });
 
+test("the attribute advisor refuses a view by its name, and does not evaluate it (#1865)", { skip }, async (t) => {
+  const { connection } = await connect(t, "m:([] id:til 3)\nspy::select from m\n");
+  await assert.rejects(connection.call(ATTRIBUTE_SAMPLE, "spy", 100000), /a view, not a table/);
+  assert.deepStrictEqual(await connection.call('{[x] string system"B"}', 0), ["spy"]);
+});
+
 test("the test data generator's q makes the rows asked for, and its CSV loads back", { skip }, async (t) => {
   const { connection, dir } = await connect(t, "t:([k:`symbol$()] time:`timestamp$(); px:`float$(); qty:`long$(); d:`date$(); note:())\n");
   const info = readTableInfo(await connection.call(TABLE_INFO, "t", 100));

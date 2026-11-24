@@ -3,6 +3,7 @@
 // the bytes it would take serialized (`-22!`). Free of any `vscode` import,
 // so node tests it; the explorer's tooltip and the editor's hover ask for it.
 //
+// A view is refused by its name: `get` would evaluate it (#1865).
 // Nothing is loaded whole. A partitioned table is counted by `.Q.cn`, as the
 // explorer counts it, and its `meta` reads the last partition's schema; a
 // splayed table is counted by `count`, which maps one column. Neither gets
@@ -13,6 +14,7 @@ import { markdownText } from "./history";
 
 export const TABLE_INFO = [
   "{[nm;lim]",
+  " if[(`$(),nm)in views[];'\"a view, not a table\"];",
   " t:get`$(),nm;",
   " if[not .Q.qt t;'\"not a table\"];",
   " p:.Q.qp t;part:1b~p;disk:part|0b~p;",

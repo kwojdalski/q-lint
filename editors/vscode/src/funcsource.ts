@@ -37,6 +37,7 @@ export const SOURCE_COMMANDS = {
 
 export const SOURCE = [
   "{[nm]",
+  " if[(`$(),nm)in views[];'\"a view, not a function\"];",
   " f:get`$(),nm;t:type f;",
   " if[not t within 100 112h;'\"not a function\"];",
   " v:$[100h=t;value f;()];",
@@ -45,7 +46,7 @@ export const SOURCE = [
 
 export const REDEFINE = [
   "{[nm;was;src]",
-  " nm:`$(),nm;old:get nm;src:(),src;",
+  " nm:`$(),nm;if[nm in views[];'\"not a lambda on the process\"];old:get nm;src:(),src;",
   " if[not 10h=type src;'\"the text is not a string\"];",
   " if[not 100h=type old;'\"not a lambda on the process\"];",
   " if[not((),was)~last value old;'\"changed on the process since it was opened\"];",

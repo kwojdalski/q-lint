@@ -23,3 +23,13 @@ test("definitions are answered as written, a namespace's every function", { skip
   assert.strictEqual((await read(".nope")).kind, "missing");
   assert.strictEqual((await read(".lib.v")).kind, "other");
 });
+
+// A view is not a function, and asking does not evaluate it (#1865).
+test("a view is answered as neither a function nor a namespace, and is not evaluated (#1865)", { skip }, async (t) => {
+  const { connection } = await connect(t, SERVER + "t:([] a:1 2)\nspy::select from t\nbad::1+`a\n");
+  const pending = () => connection.call('{[x] string system"B"}', 0);
+  for (const name of ["spy", "bad"]) {
+    assert.strictEqual(readTexts(await connection.call(FUNCTION_TEXTS, name)).kind, "other");
+  }
+  assert.deepStrictEqual(await pending(), ["bad", "spy"]);
+});

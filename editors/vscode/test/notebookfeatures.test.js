@@ -500,6 +500,11 @@ test("the variables lambda's answer is read, nulls as nothing", () => {
   ]);
   assert.deepStrictEqual(readVariables({ names: "a", types: 7, counts: 2, sizes: 30, total: 1 }).variables, [{ name: "a", type: 7, count: 2, size: 30 }]);
   assert.throws(() => readVariables("x"), /globals/);
+  // A view was not evaluated: it has neither count nor size (#1865).
+  assert.deepStrictEqual(readVariables({ names: ["t", "v"], types: [98, 100], counts: [3, null], sizes: [138, null], total: 2, views: [false, true] }).variables, [
+    { name: "t", type: 98, count: 3, size: 138 },
+    { name: "v", type: 100, view: true },
+  ]);
   assert.match(VARS, /^\{\[lim\]/);
 });
 
@@ -509,6 +514,7 @@ test("a variable is described by its kind, count and size", () => {
   assert.strictEqual(describeVariable({ name: "s", type: -11, count: 1, size: 13 }), "symbol · 13 B");
   assert.strictEqual(describeVariable({ name: "b", type: 10, count: 3, size: 17 }), "string · 3 items · 17 B");
   assert.strictEqual(describeVariable({ name: "f", type: 100, count: 1 }), "function");
+  assert.strictEqual(describeVariable({ name: "v", type: 100, view: true }), "view");
   assert.strictEqual(bytesText(5 * 1024 * 1024 * 1024), "5.0 GB");
 });
 
