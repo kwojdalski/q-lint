@@ -161,3 +161,12 @@ test("a qUnit failure does not fail the next test, and a failure ignoreAllExcept
   assert.strictEqual(quiet.passed, false);
   assert.deepStrictEqual(quiet.diff, { expected: "2\n", actual: "1\n" });
 });
+
+test("a qUnit test that ran an assertion is judged by qUnit's flag, not a false last value (#1589)", { skip }, async (t) => {
+  const c = await connect(t, QUNIT_FLAG);
+  // assertFalse returns the 0b it checked: passed, as qUnit says.
+  assert.strictEqual((await run(c, ["testOff:{[] .qunit.assertFalse[0b;\"off\"]}", "testOff[]"])).passed, true);
+  assert.strictEqual((await run(c, ["testBits:{[] .qunit.assertThat[0101b;~;0101b;\"bits\"]}", "testBits[]"])).passed, true);
+  // A test with no assertion is judged by its value, as before.
+  assert.strictEqual((await run(c, ["test_k:{[] 0b}", "test_k[]"])).passed, false);
+});

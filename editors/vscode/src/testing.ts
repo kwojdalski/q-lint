@@ -23,8 +23,10 @@
 //
 // On a process with qUnit, its `failFlag` and `ar` are cleared before the
 // statements run, as `.qunit.runTest` clears them: the flag is sticky, and
-// left set every later assertion signals (#1588). A flag set with
-// `ignoreAllExceptions`, where a failed assertion does not signal, fails it.
+// left set every later assertion signals (#1588). A test that ran an
+// assertion is judged as qUnit judges it, by the flag and errors alone - an
+// assertion returns the value it checked, so a false last value is no
+// verdict (#1589) - and a flag set with `ignoreAllExceptions` fails it.
 
 export const TEST_RUN = [
   "{[s;mode]",
@@ -34,9 +36,9 @@ export const TEST_RUN = [
   " r:@[{(1b;last value each x)};s;{(0b;x)}];",
   " system \"d \",string d;",
   " ok:r 0; v:r 1; m:();",
-  " ff:qu&1b~@[get;`.qunit.failFlag;0b];",
+  " ff:qu&1b~@[get;`.qunit.failFlag;0b]; qt:ok&(mode~`test)&ff|qu&not e~@[get;`.qunit.ar;e];",
   " if[ok&mode~`match;m:v;v:$[2=count m;(~). m;0b];mode:`true];",
-  " failed:$[mode~`fail;ok;not ok;1b;ff;1b;mode~`true;not 1b~v;mode~`run;0b;-1h=type v;not v;1h=type v;not all v;0b];",
+  " failed:$[mode~`fail;ok;not ok;1b;qt;ff;mode~`true;not 1b~v;mode~`run;0b;-1h=type v;not v;1h=type v;not all v;0b];",
   " q:$[ok;$[ff;@[get;`.qunit.ar;()];()];\"assertThatFAIL\"~v;@[get;`.qunit.ar;()];()];",
   " diff:{20000 sublist .Q.s x} each $[not failed;();2=count m;m 1 0;not 99h=type q;();all`actual`expected in key q;q`expected`actual;()];",
   " `ok`failed`text`diff!(ok;failed;$[ok;300 sublist .Q.s1 v;v];diff)}",
