@@ -166,6 +166,29 @@ test("the column manager parses string and symbol columns it casts to numbers (#
   assert.strictEqual(await connection.call('{(`$"q#") in key .Q.par[hsym`$system"cd";first .Q.pv;`trade]}', 0), false);
 });
 
+// A table or column whose name is no plain name is written as `$"..." (#1569).
+test("the column manager changes a table and columns whose names have a space", { skip }, async (t) => {
+  const source = [
+    'r:hsym`$"$DIR/db";',
+    '{[r;d] .Q.dd[r;d,(`$"my trade"),`] set .Q.en[r] flip(`sym;`$"px bid";`$"sz ask")!(`a`b;1 2f;3 4)}[r] each 2026.01.05 2026.01.06;',
+    'system "cd $DIR/db";',
+    'system "l .";',
+    "",
+  ].join("\n");
+  const { connection } = await connect(t, source);
+  const ops = [
+    { op: "cast", column: "sz ask", type: "f" },
+    { op: "attr", column: "sym", attr: "g" },
+    { op: "reorder", order: ["sz ask", "px bid", "sym"] },
+    { op: "delete", column: "px bid" },
+  ];
+  for (const op of ops) {
+    assert.match(await run(connection, columnScript("my trade", op, "hdb")), /changed 2 of 2 directories/, JSON.stringify(op));
+  }
+  assert.deepStrictEqual(await connection.call('{exec c from meta get`$"my trade"}', 0), ["date", "sz ask", "sym"]);
+  assert.deepStrictEqual(await connection.call('{exec t from meta get`$"my trade"}', 0), "dfs");
+});
+
 test("the column manager's rename command quotes for sh, and for cmd with backslashes (#1137)", { skip }, async (t) => {
   const { connection } = await connect(t, "");
   const mvcmd = HELPERS.find((h) => h.startsWith(".qlint.cm.mvcmd:")).slice(".qlint.cm.mvcmd:".length);

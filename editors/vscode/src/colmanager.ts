@@ -25,6 +25,8 @@
 // rename of its own, and rewriting the column would read all of it. Works on kdb+ (KDB-X) and PeachQ; held there by
 // dbtools_q.test.js.
 
+import { symbolLiteral } from "./qliteral";
+
 export type ColumnOp =
   | { op: "add"; column: string; value: string }
   | { op: "delete"; column: string }
@@ -86,7 +88,12 @@ export function opText(op: ColumnOp): string {
   }
 }
 
-const sym = (name: string) => `\`${name}`;
+/// A name as a symbol: `` `a ``, or `` (`$"a b") `` for one a bare symbol
+/// cannot write, parenthesised so it is one operand (#1569).
+const sym = (name: string) => {
+  const s = symbolLiteral(name);
+  return s.startsWith("`$") ? `(${s})` : s;
+};
 
 /// The helper an op calls, applied to its arguments: a function of one
 /// table directory.
@@ -103,7 +110,7 @@ function call(op: ColumnOp): string {
     case "attr":
       return `.qlint.cm.attr[${sym(op.column)};${op.attr === "" ? "`" : sym(op.attr)}]`;
     case "reorder":
-      return `.qlint.cm.order[${op.order.length === 1 ? `enlist${sym(op.order[0])}` : op.order.map(sym).join("")}]`;
+      return `.qlint.cm.order[${op.order.length === 1 ? `enlist${sym(op.order[0])}` : op.order.every((c) => !sym(c).startsWith("(")) ? op.order.map(sym).join("") : `(${op.order.map(sym).join(";")})`}]`;
   }
 }
 
