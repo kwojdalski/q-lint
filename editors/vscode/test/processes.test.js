@@ -58,6 +58,17 @@ test("a host with colons is accepted only when it is an IPv6 address", () => {
   assert.strictEqual(hostProblem("rdb-host:5000:rdb"), "A host only: the port is asked for next.");
 });
 
+// Only a colon, a space or a slash was refused: brackets with no IPv6
+// address in them, an ssh-style user@, a # or ? or , or a NUL went through.
+test("a host is a name or an IP address, nothing else (#1781)", () => {
+  for (const ok of ["rdb", "rdb-1.example.com", "rdb.example.com.", "my_host", "10.0.0.1", "[fe80::1]"]) {
+    assert.strictEqual(hostProblem(ok), undefined, ok);
+  }
+  for (const bad of ["[rdb]", "me@rdb", "rdb#1", "rdb?x=1", "rdb,hdb", "a\u0000b", "-rdb", "rdb-", ".rdb", "[]"]) {
+    assert.strictEqual(hostProblem(bad), "A host is a name of letters, digits, '.', '-' and '_', or an IP address.", JSON.stringify(bad));
+  }
+});
+
 // A discovery server, an import or the shared list was never checked for a
 // host the Add box would refuse: it was listed, then failed at connect.
 test("a listed process with a host the Add box would refuse is skipped", () => {
