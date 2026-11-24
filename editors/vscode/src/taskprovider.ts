@@ -27,7 +27,7 @@ import {
 import { readTerminal } from "./liveconfig";
 import { mergeEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
-import { EXCLUDE, TASK_TYPE, TEST_RUNNERS, detectedTasks, readTaskDefinition, readTasks, terminalText, type QTaskDefinition } from "./tasks";
+import { EXCLUDE, TASK_TYPE, TEST_RUNNERS, detectedTasks, readTaskDefinition, readTasks, taskPaths, terminalText, type QTaskDefinition } from "./tasks";
 import { expandHome } from "./terminal";
 
 const on = (): boolean => readTasks((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback)).enabled;
@@ -45,8 +45,13 @@ function runner(definition: QTaskDefinition, folder: WorkspaceFolder | undefined
       void (async () => {
         const configuration = workspace.getConfiguration("q-lint", folder?.uri);
         const binary = expandHome(readTerminal((key, fallback) => configuration.get(key, fallback)).qBinary, os.homedir());
-        const cwd = folder?.uri.fsPath ?? path.dirname(definition.script);
-        const script = path.resolve(cwd, expandHome(definition.script, os.homedir()));
+        const paths = taskPaths(expandHome(definition.script, os.homedir()), folder?.uri.fsPath, workspace.workspaceFolders?.[0]?.uri.fsPath);
+        if (paths === undefined) {
+          write.fire(terminalText(`the script ${definition.script} is relative, and there is no workspace folder to find it in\n`));
+          close.fire(1);
+          return;
+        }
+        const { cwd, script } = paths;
         const env = mergeEnv(layoutEnvFor(binary, folder?.uri), await dotenvFor(folder?.uri));
         // Closed while the variables were read: q is not started (#1085).
         if (closed) {
