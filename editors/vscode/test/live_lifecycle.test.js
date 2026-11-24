@@ -156,3 +156,19 @@ test("deleting a process while auto-reconnect waits between tries stops the reco
   assert.strictEqual(live.activeLabel(), undefined);
   assert.ok(!stub.messages.some(([, m]) => /reconnected/.test(m)), JSON.stringify(stub.messages));
 });
+
+test("Abort says the connection went, though the reconnect after it fails (#1702)", async (t) => {
+  const a = await fakeQ(() => undefined);
+  t.after(() => a.close());
+  const { live, events } = await setUp(t, [proc("a", a.port)]);
+  await live.connectTo("a");
+  events.length = 0;
+  const running = live.run("hang[]");
+  await sleep(100);
+  a.close();
+  await stub.commands.get("q-lint.abortQuery")();
+  await running;
+  await until(() => stub.messages.some(([, m]) => /could not connect/.test(m)));
+  assert.strictEqual(live.activeLabel(), undefined);
+  assert.ok(events.includes("disconnected"), JSON.stringify(events));
+});

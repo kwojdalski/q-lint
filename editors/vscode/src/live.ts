@@ -2988,6 +2988,9 @@ export class Live {
     this.connection = undefined;
     connection.abort();
     this.showStatus();
+    // Said now: the reconnect may fail, and fires nothing then (#1702).
+    this.processesView.refresh();
+    this.changed.fire("disconnected");
     // Not awaited: q runs one message at a time, so the new connection's
     // handshake waits until the process has finished the query it was left
     // with, and the command should not wait with it.
