@@ -220,6 +220,9 @@ test("a decoded table, dictionary or list becomes grid rows the panel can sort a
   const list = gridOf([1, 2, 3], 6, 10);
   assert.deepStrictEqual(list.types, [6]);
   assert.deepStrictEqual(list.cells, [["1", "2", "3"]]);
+  // Equal values share a place, as GRID ranks them (#1406).
+  assert.deepStrictEqual(gridOf([1, 1, 2], 0, 10).rank, [[0, 0, 1]]);
+  assert.deepStrictEqual(gridOf(["b", "a", "b"], 0, 10).rank, [[1, 0, 1]]);
   assert.strictEqual(gridOf("abc", 10, 10), undefined);
   assert.strictEqual(gridOf(Long.fromInt(1), -7, 10), undefined);
 });

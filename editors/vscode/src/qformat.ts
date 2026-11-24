@@ -684,24 +684,30 @@ function rawNumber(x: unknown, t: number): number | null {
 
 const RAW_TYPES = new Set([5, 6, 7, 8, 9, 12, 13, 14, 15, 16, 17, 18, 19]);
 
-/// Each row's place when `values` is sorted ascending, nulls first, as
-/// `iasc iasc` gives it; empty when the values cannot be compared.
+/// Each row's place when `values` is sorted ascending, nulls first, equal
+/// values sharing one place as `denseRanks` gives them (#1406); empty when
+/// the values cannot be compared.
 function ranks(values: unknown[], raw: (number | null)[] | undefined): number[] {
   const keys: (number | string)[] = raw
     ? raw.map((x) => (x === null ? -Infinity : x))
     : values.map((x) => (x === null || x === undefined ? "" : typeof x === "boolean" ? Number(x) : cellText(x)));
-  const order = keys.map((_, i) => i).sort((a, b) => {
+  const compare = (a: number, b: number): number => {
     const x = keys[a];
     const y = keys[b];
     if (typeof x === "number" && typeof y === "number") {
-      return x === y ? a - b : x < y ? -1 : 1;
+      return x === y ? 0 : x < y ? -1 : 1;
     }
     const sx = String(x);
     const sy = String(y);
-    return sx === sy ? a - b : sx < sy ? -1 : 1;
-  });
+    return sx === sy ? 0 : sx < sy ? -1 : 1;
+  };
+  const order = keys.map((_, i) => i).sort((a, b) => compare(a, b) || a - b);
   const rank = new Array<number>(keys.length);
-  order.forEach((row, place) => {
+  let place = -1;
+  order.forEach((row, i) => {
+    if (i === 0 || compare(order[i - 1], row) !== 0) {
+      place++;
+    }
     rank[row] = place;
   });
   return rank;
