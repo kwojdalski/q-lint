@@ -22,6 +22,9 @@ export const LIVE_KEY = "q-lint.liveValues";
 /// The most characters of one value the process sends.
 export const VALUE_LIMIT = 200;
 
+/// `y`, cut from `x`, with the attributes `x` has.
+const ATTR = "{$[98h=type x;flip .z.s'[flip x;flip y];99h=type x;.z.s[key x;key y]!.z.s[value x;value y];(attr x)#y]}";
+
 export const LIVE = [
   "{[es]",
   " {r:@[{(1b;value x)};x;{(0b;x)}];",
@@ -30,7 +33,9 @@ export const LIVE = [
   // `-3!` of the first VALUE_LIMIT items only, never of a whole table
   // (#1559): each item writes at least one character, so the text kept is
   // the same. A list `sublist` refuses, such as a partitioned table, whole.
-  `  (1b;${VALUE_LIMIT} sublist $[10h=abs type v;(),v;-11h=type v;string v;-3!$[(type v) within 0 99h;@[${VALUE_LIMIT} sublist;v;v];v]])} each es}`,
+  // `sublist` drops an attribute, so the cut list, a table's columns and a
+  // dictionary's keys and values get theirs back (#1718).
+  `  (1b;${VALUE_LIMIT} sublist $[10h=abs type v;(),v;-11h=type v;string v;-3!$[(type v) within 0 99h;{@[${ATTR}x;y;y]}[v] @[${VALUE_LIMIT} sublist;v;v];v]])} each es}`,
 ].join("\n");
 
 export type LiveValue = { text: string } | { error: string };
