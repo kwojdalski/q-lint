@@ -362,8 +362,10 @@ def grammar():
                         "captures": {"1": {"name": "keyword.control.flow.return.q"}},
                     },
                     {
-                        "comment": "`'x` signals. A space does not decide it - `{x} '[1 2]` is each.",
-                        "match": r"(?:^|\G|(?<=[\[(;{:]))\s*(')(?![:/\\])",
+                        "comment": "`'x` signals. A space does not decide it - `{x} '[1 2]` is each. "
+                        "Before a bracket or a closing parenthesis it is the iterator itself: "
+                        "'[f;g] and (')[f;g] compose, and {'[`bad]} returns each of `bad, raising nothing.",
+                        "match": r"(?:^|\G|(?<=[\[(;{:]))\s*(')(?![:/\\\[)])",
                         "captures": {"1": {"name": "keyword.control.flow.signal.q"}},
                     },
                 ],

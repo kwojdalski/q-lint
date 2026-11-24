@@ -225,3 +225,23 @@ test("a string's escapes are the ones q takes: a slash is one, an octal past 377
   assert.deepStrictEqual(await scopesOf('u:"a\\/b"', "\\/", true), ["constant.character.escape.k"]);
   assert.deepStrictEqual(await scopesOf('s:"a\\400b"', "\\4", true), ["invalid.illegal.escape.k"]);
 });
+
+// On KDB-X ('[neg;count]) 1 2 3 and (')[neg;count] 1 2 3 are -3, '[neg;count]
+// opens a line or a lambda the same way, and {'[`bad]} 1 returns `bad' - a
+// quote before a bracket never raises. {'(`bad)} and {' `bad} do.
+test("a quote before a bracket or a closing parenthesis is the iterator, not a signal (#1973)", async () => {
+  const iterator = (await scopesOf("r:{x} '[1 2]", "'"))[0];
+  assert.match(iterator, /iterator/);
+  assert.deepStrictEqual(await scopesOf("h:('[neg;count]) 1 2", "'"), [iterator]);
+  assert.deepStrictEqual(await scopesOf("i:(')[neg;count]", "'"), [iterator]);
+  assert.deepStrictEqual(await scopesOf("'[neg;count] 1 2 3", "'"), [iterator]);
+  assert.deepStrictEqual(await scopesOf("j:{'[neg;count] x}", "'"), [iterator]);
+  assert.deepStrictEqual(await scopesOf("k:{[f;g] '[f;g]}", "'"), [iterator]);
+  // What is composed keeps its own colours.
+  assert.deepStrictEqual(await scopesOf("h:('[neg;count]) 1 2", "neg"), ["support.function.builtin.q"]);
+  // A signal is still one, a parenthesised operand included.
+  assert.deepStrictEqual(await scopesOf("f:{'(`bad)}", "'"), ["keyword.control.flow.signal.q"]);
+  assert.deepStrictEqual(await scopesOf("f:{' `bad}", "'"), ["keyword.control.flow.signal.q"]);
+  assert.deepStrictEqual(await scopesOf("f:{$[x;'`bad;1]}", "'"), ["keyword.control.flow.signal.q"]);
+  assert.deepStrictEqual(await scopesOf("f:('`bad)", "'"), ["keyword.control.flow.signal.q"]);
+});
