@@ -917,9 +917,19 @@ export class Live {
     } catch {
       text = undefined;
     }
+    // A file there that is not JSON is the problem, not the write (#1876).
+    let next: string;
+    try {
+      next = withShared(text, process);
+    } catch (error) {
+      void window.showErrorMessage(
+        plainMessage(`q-lint: ${file.fsPath} is not JSON: ${error instanceof Error ? error.message : String(error)}. Correct it, then share ${process.label} again. Nothing was written.`),
+      );
+      return;
+    }
     try {
       assertWritable(folder.uri.fsPath, file.fsPath);
-      await workspace.fs.writeFile(file, Buffer.from(withShared(text, process), "utf8"));
+      await workspace.fs.writeFile(file, Buffer.from(next, "utf8"));
     } catch (error) {
       void window.showErrorMessage(plainMessage(`q-lint: could not write ${file.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
       return;

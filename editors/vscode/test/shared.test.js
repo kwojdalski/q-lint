@@ -268,6 +268,23 @@ test("Add to Shared Process List writes a saved process there, without its passw
   assert.match(stub.messages.at(-1)[1], /gw is in \.qlint\/processes\.json, without its password: each user is asked for me's on connect\./);
 });
 
+test("Add to Shared on a list that is not JSON says so, not that it could not be written (#1876)", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-shared-"));
+  // A trailing comma.
+  const broken = '{ "processes": [ {"label":"hdb","host":"h","port":1}, ] }\n';
+  write(dir, broken);
+  await setUp(t, dir, { saved: [{ label: "rdb", host: "h", port: 5001, tags: [] }] });
+  await sleep(50);
+  stub.messages.length = 0;
+  await stub.commands.get(SHARED_COMMANDS.add)("rdb");
+  const errors = stub.messages.filter(([kind]) => kind === "error");
+  assert.strictEqual(errors.length, 1, JSON.stringify(stub.messages));
+  assert.match(errors[0][1], /^q-lint: .*processes\.json is not JSON: .+\. Correct it, then share rdb again\. Nothing was written\.$/s);
+  assert.doesNotMatch(errors[0][1], /could not write/);
+  assert.strictEqual(fs.readFileSync(path.join(dir, SHARED_FILE), "utf8"), broken);
+  assert.ok(!stub.messages.some(([, m]) => /rdb is in/.test(m)), JSON.stringify(stub.messages));
+});
+
 // Every field went into the committed file unasked: a launch's env, a
 // connect script's password, the credential command (#1528).
 test("Add to Shared asks before writing a connect script, credential command, launch or tunnel, and can leave them out", async (t) => {
