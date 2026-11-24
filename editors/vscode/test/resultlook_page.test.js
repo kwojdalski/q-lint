@@ -331,3 +331,12 @@ test("a *_BAR column toggled to text draws no bar (#1651)", () => {
   page.send(result("s.1", cols, { look: { cellCharts: { px_BAR: "text" } } }));
   assert.strictEqual(page.rendered().dressed.bars, 0);
 });
+
+test("a row colour column fills the cells another colour column paints too, under their own colour (#1653)", () => {
+  const page = loadPage(undefined);
+  page.send(result("s.1", [["px", 9, ["1"]], ["px_FG", 11, ["red"]], ["status_BG", 11, ["yellow"]], ["qty", 9, ["2"]]]));
+  const [px, fg, , qty] = page.rows()[0].children;
+  assert.deepStrictEqual([px.style.backgroundColor, px.style.color], ["yellow", "red"]);
+  assert.deepStrictEqual([fg.style.backgroundColor, fg.style.color], ["yellow", "red"]);
+  assert.strictEqual(qty.style.backgroundColor, "yellow");
+});

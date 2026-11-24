@@ -1389,7 +1389,9 @@
             td.style.fontWeight = "bold";
           }
         }
-        const given = painting[ci] || painting[-1];
+        // The cell's own colours over the row's: a row's _BG still fills a
+        // cell another column colours the text of (#1653).
+        const given = painting[ci] || painting[-1] ? Object.assign({}, painting[-1], painting[ci]) : undefined;
         if (given) {
           if (given.bg && !filled && !marked) {
             td.style.backgroundColor = given.bg;
