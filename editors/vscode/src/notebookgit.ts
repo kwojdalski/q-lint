@@ -17,6 +17,7 @@ import { featureOn, qnbOf, requireFeature } from "./notebook";
 import { NOTEBOOK } from "./qnb";
 import { diffCells, diffSummary, hasOutputs, notebookJson, notebookText, stripQnb, type CellLike } from "./qnbgit";
 import { plainMessage } from "./history";
+import { onProcessPath } from "./relations";
 
 /// The scheme of the read-only documents a comparison shows.
 export const CELLS_SCHEME = "q-lint-qnb-cells";
@@ -29,8 +30,14 @@ const KEPT = 20;
 /// Throws git's message when it cannot.
 export function gitShow(file: string, ref: string = HEAD): Promise<string> {
   return new Promise((resolve, reject) => {
+    // Found on PATH, not in the notebook's folder as Windows would (#1407).
+    const git = onProcessPath("git");
+    if (git === undefined) {
+      reject(new Error("git is not on PATH"));
+      return;
+    }
     execFile(
-      "git",
+      git,
       ["show", `${ref}:./${path.basename(file)}`],
       { cwd: path.dirname(file), maxBuffer: 256 * 1024 * 1024, encoding: "utf8" },
       (error, stdout, stderr) => (error ? reject(new Error((stderr || error.message).trim())) : resolve(stdout)),
@@ -202,7 +209,12 @@ export type AttributesAt = "info" | "gitattributes";
 /// Run git in `cwd`: its exit code and output.
 function git(args: string[], cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    execFile("git", args, { cwd, encoding: "utf8" }, (error, stdout, stderr) => {
+    const binary = onProcessPath("git");
+    if (binary === undefined) {
+      resolve({ code: -1, stdout: "", stderr: "git is not on PATH" });
+      return;
+    }
+    execFile(binary, args, { cwd, encoding: "utf8" }, (error, stdout, stderr) => {
       const code = error === null ? 0 : typeof (error as { code?: unknown }).code === "number" ? (error as { code: number }).code : -1;
       resolve({ code, stdout, stderr: stderr || (error?.message ?? "") });
     });
@@ -211,7 +223,8 @@ function git(args: string[], cwd: string): Promise<{ code: number; stdout: strin
 
 /// Whether `node` runs from PATH, as git will run the filter.
 function nodeOnPath(): Promise<boolean> {
-  return new Promise((resolve) => execFile("node", ["--version"], (error) => resolve(error === null)));
+  const node = onProcessPath("node");
+  return node === undefined ? Promise.resolve(false) : new Promise((resolve) => execFile(node, ["--version"], (error) => resolve(error === null)));
 }
 
 const readText = (file: string): string | undefined => {

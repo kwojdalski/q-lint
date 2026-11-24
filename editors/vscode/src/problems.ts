@@ -14,6 +14,7 @@ import { execFile, spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, sep } from "node:path";
+import { onProcessPath } from "./relations";
 
 /// The part of a finding the dashboard reads.
 export interface Finding {
@@ -176,7 +177,13 @@ export function readTrend(raw: unknown): Point[] {
 /// a signal or the timeout stopped it), or rejects when it cannot be started.
 export function run(command: string, args: string[], cwd: string, timeout = 300_000): Promise<{ stdout: string; stderr: string; code: number | null }> {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { cwd, timeout, maxBuffer: 256 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
+    // On Windows a bare name is looked for in `cwd` before PATH (#1407).
+    const binary = onProcessPath(command);
+    if (binary === undefined) {
+      reject(new Error(`${command} could not be run: it is not on PATH`));
+      return;
+    }
+    execFile(binary, args, { cwd, timeout, maxBuffer: 256 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
       const failed = error as (Error & { code?: unknown }) | null;
       if (failed && typeof failed.code === "string") {
         reject(new Error(`${command} could not be run: ${failed.message}`));
@@ -241,8 +248,13 @@ export async function lintCommit(qlinter: string, args: string[], dir: string, c
   const out = await mkdtemp(join(tmpdir(), "qlint-trend-"));
   try {
     await new Promise<void>((resolve, reject) => {
-      const archive = spawn("git", ["archive", "--format=tar", commit], { cwd: dir, windowsHide: true });
-      const tar = spawn("tar", ["-x", "-f", "-", "-C", out], { windowsHide: true });
+      const [git, tarBinary] = [onProcessPath("git"), onProcessPath("tar")];
+      if (git === undefined || tarBinary === undefined) {
+        reject(new Error(`git archive ${commit} failed: ${git === undefined ? "git" : "tar"} is not on PATH`));
+        return;
+      }
+      const archive = spawn(git, ["archive", "--format=tar", commit], { cwd: dir, windowsHide: true });
+      const tar = spawn(tarBinary, ["-x", "-f", "-", "-C", out], { windowsHide: true });
       archive.stdout.pipe(tar.stdin);
       let failed = "";
       archive.stderr.on("data", (d) => (failed += d));
