@@ -6,7 +6,8 @@
 //
 // Each lambda only reads: none writes a file, assigns a global or runs a
 // system command (the working directory is `system"cd"` with no argument,
-// which reads it). Paths arrive as strings and are made symbols there.
+// which reads it). Paths arrive as strings and are made symbols there
+// (`AS_FILE`), each character kept.
 // Works on kdb+ (KDB-X) and PeachQ; held there by processtools_q.test.js.
 import { isBoolean, isNumber, isString, listOf } from "./processtools";
 
@@ -17,12 +18,18 @@ export const FILE_LIMIT = 1024 * 1024;
 
 export const WORKING_DIRECTORY = "{[x] system\"cd\"}";
 
+/// A path's text as a file symbol. q's cast trims the blanks at both ends
+/// of a text, and `` ` sv `` of symbols does too, so a name it would change
+/// - one `key` answered that ends in a blank - is read as a symbol off the
+/// wire is (`-9!`), which keeps every character (#2011).
+const AS_FILE = '{[t]s:`$t;hsym $[t~string s;s;-9!0x01000000,(reverse 0x0 vs "i"$10+count t),0xf5,("x"$t),0x00]}';
+
 export const LIST_DIRECTORY = [
   "{[p;lim]",
-  " p:(),p; k:key hsym`$p;",
+  ` y:${AS_FILE}; p:(),p; k:key y p;`,
   " if[not 11h=type k;'$[()~k;\"no such directory\";\"not a directory\"]];",
   " n:count k; k:(`long$lim) sublist asc k;",
-  " f:hsym each `$($[\"/\"=last p;p;p,\"/\"]),/:string k;",
+  " f:y each ($[\"/\"=last p;p;p,\"/\"]),/:string k;",
   " isf:{@[{-11h=type key x};x;0b]} each f;",
   " sz:{@[{$[-11h=type key x;hcount x;-1]};x;-2]} each f;",
   " (string k;isf;\"f\"$sz;\"f\"$n)}",
@@ -34,7 +41,7 @@ export const LIST_DIRECTORY = [
 /// the file holds (#1930).
 export const READ_FILE = [
   "{[p;cap]",
-  " f:hsym`$(),p;",
+  ` f:${AS_FILE}(),p;`,
   " if[not -11h=type key f;'\"not a file\"];",
   " n:hcount f; m:(`long$cap)&n;",
   " b:$[m=0;`byte$();read1(f;0;m)];",
