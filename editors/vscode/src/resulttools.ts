@@ -241,7 +241,7 @@ export class ResultTools {
           CAST_TYPES.map((t) => ({ label: t.name, description: t.letter === "*" ? "string" : `"${strings ? t.letter.toUpperCase() : t.letter}"$`, letter: t.letter })),
           { title: `q-lint: ${strings ? "parse" : "cast"} ${column} (${typeName(payload.types[at])}) to` },
         );
-        return to === undefined ? undefined : { kind, column, to: to.letter, ...(strings ? { strings } : {}) };
+        return to === undefined ? undefined : { kind, column, to: to.letter, type: payload.types[at], ...(strings ? { strings } : {}) };
       }
       case "drop":
         return { kind, column };

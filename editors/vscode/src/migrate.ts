@@ -12,6 +12,7 @@
 // column that is in both but renamed reads as one dropped and one added:
 // the metas cannot tell a rename from that.
 import { columnScriptOf, type ColumnOp } from "./colmanager";
+import { plainName, symbolLiteral } from "./qliteral";
 import type { TableInfo } from "./tableinfo";
 
 export interface SchemaDiff {
@@ -21,6 +22,8 @@ export interface SchemaDiff {
   /// The target's order, when the columns kept are in another one.
   order: string[] | undefined;
   attrs: { name: string; from: string; to: string }[];
+  /// The target's keys, when a table in memory is keyed otherwise (#1579).
+  keys: string[] | undefined;
 }
 
 /// What changes `from` into `to`. Key columns count as columns.
@@ -38,10 +41,13 @@ export function schemaDiff(from: TableInfo, to: TableInfo): SchemaDiff {
   // After adding at the end and dropping, is the order the target's?
   const after = [...from.columns.map((c) => c.name).filter((n) => toCols.has(n)), ...add.map((a) => a.name)];
   const want = to.columns.map((c) => c.name);
-  return { add, drop, cast, order: after.join(" ") === want.join(" ") ? undefined : want, attrs };
+  // A table on disk is never keyed: its keys are not compared.
+  const onDisk = from.kind === "partitioned" || from.kind === "splayed";
+  const keys = !onDisk && from.keys.join(" ") !== to.keys.join(" ") ? to.keys : undefined;
+  return { add, drop, cast, order: after.join(" ") === want.join(" ") ? undefined : want, attrs, keys };
 }
 
-export const sameSchema = (d: SchemaDiff): boolean => d.add.length + d.drop.length + d.cast.length + d.attrs.length === 0 && d.order === undefined;
+export const sameSchema = (d: SchemaDiff): boolean => d.add.length + d.drop.length + d.cast.length + d.attrs.length === 0 && d.order === undefined && d.keys === undefined;
 
 const NULLS: Record<string, string> = {
   b: "0b", g: "0Ng", x: "0x00", h: "0Nh", i: "0Ni", j: "0N", e: "0Ne", f: "0n", c: '" "', s: "`",
@@ -57,8 +63,25 @@ export function nullOf(type: string): string {
 const typeNameOf = (t: string) =>
   ({ b: "boolean", g: "guid", x: "byte", h: "short", i: "int", j: "long", e: "real", f: "float", c: "char", s: "symbol", p: "timestamp", m: "month", d: "date", z: "datetime", n: "timespan", u: "minute", v: "second", t: "time" })[t] ?? t;
 
+const listType = (t: string) => t !== "" && t === t.toUpperCase();
+
+/// Why a cast from `from` to `to` is not written, or undefined when it is:
+/// a list column's items are not atoms, nor an atom column's lists, so a
+/// cast between them does nothing or fails - but for text, parsed or made
+/// symbols (`C` to an atom type but `c`), and anything made text (`C`).
+/// A symbol to a char, its first character, is made in memory only (#1578).
+export function castProblem(from: string, to: string, onDisk: boolean): string | undefined {
+  if (from === "" || to === "") return undefined;
+  if (to === "C") return listType(from) && from !== "C" ? "a list column made text is not a column of strings" : undefined;
+  if (from === "C") return listType(to) || to === "c" ? "a column of strings holds lists, not chars" : undefined;
+  if (listType(from) || listType(to)) return "a list column's items are lists, an atom column's are not";
+  if (from === "s" && to === "c" && onDisk) return "the column manager makes no symbol into a char";
+  return undefined;
+}
+
 /// The expression that casts column `c` from type `from` to type `to`.
 export function castOf(c: string, from: string, to: string): string {
+  if (to === "c" && from === "s") return `first each string ${c}`;
   if (to === "s" && from === "C") return `\`$${c}`;
   if (to === "C") return `string ${c}`;
   if (to === "s") return `\`$string ${c}`;
@@ -85,6 +108,7 @@ export function migrationScript(name: string, fromInfo: TableInfo, fromWhere: st
     ...d.cast.map((c) => `/ cast   ${c.name} from ${c.from || "mixed"} to ${c.to || "mixed"}`),
     ...d.attrs.map((c) => `/ attr   ${c.name} from ${c.from ? `${c.from}#` : "none"} to ${c.to ? `${c.to}#` : "none"}`),
     ...(d.order ? [`/ order  ${d.order.join(" ")}`] : []),
+    ...(d.keys ? [`/ keys   ${d.keys.length > 0 ? d.keys.join(" ") : "none"}`] : []),
   ];
   if (sameSchema(d)) {
     return [...head, "/ The two schemas are the same: there is nothing to change."].join("\n") + "\n";
@@ -93,29 +117,44 @@ export function migrationScript(name: string, fromInfo: TableInfo, fromWhere: st
     const ops: ColumnOp[] = [
       ...d.drop.map((column): ColumnOp => ({ op: "delete", column })),
       ...d.add.map((a): ColumnOp => ({ op: "add", column: a.name, value: nullOf(a.type) })),
-      ...d.cast.filter((c) => c.to.length === 1 && c.to === c.to.toLowerCase()).map((c): ColumnOp => ({ op: "cast", column: c.name, type: c.to })),
+      ...d.cast.filter((c) => c.to.length === 1 && c.to === c.to.toLowerCase() && castProblem(c.from, c.to, true) === undefined).map((c): ColumnOp => ({ op: "cast", column: c.name, type: c.to })),
       ...d.attrs.map((c): ColumnOp => ({ op: "attr", column: c.name, attr: c.to as "" | "s" | "u" | "p" | "g" })),
       ...(d.order ? [{ op: "reorder", order: d.order } as ColumnOp] : []),
     ];
     const skipped = d.cast.filter((c) => !(c.to.length === 1 && c.to === c.to.toLowerCase()));
+    const refused = d.cast.filter((c) => !skipped.includes(c) && castProblem(c.from, c.to, true) !== undefined);
     return [
       ...head,
       ...skipped.map((c) => `/ not written: a cast of ${c.name} to the nested type ${c.to}, which the column manager does not make on disk`),
+      ...refused.map((c) => `/ not written: a cast of ${c.name} from ${c.from} to ${c.to}: ${castProblem(c.from, c.to, true)}`),
       columnScriptOf(name, ops, process, `migrate ${name} to the schema of ${toWhere}`),
     ].join("\n") + "\n";
   }
-  const t = name;
+  // A table q cannot parse by name (`my t`) is read with get and assigned
+  // with set; a column q-sql cannot name is dropped functionally, and left
+  // as a comment otherwise (#1583).
+  const t = plainName(name) ? name : `get${symbolLiteral(name)}`;
+  const assign = (e: string) => (plainName(name) ? `${name}:${e}` : `(${symbolLiteral(name)}) set ${e}`);
+  const symbols = (names: string[]) => {
+    const each = names.map(symbolLiteral);
+    return each.every((s) => !s.startsWith("`$")) ? each.join("") : `(${each.join(";")})`;
+  };
+  const odd = (c: string, what: string) => `/ not written: ${what} ${c}, whose name q-sql cannot write`;
   const keyed = from.keys.length > 0;
   const lines = [...head];
-  if (keyed) lines.push(`${t}:0!${t}`);
-  for (const c of d.drop) lines.push(`${t}:delete ${c} from ${t}`);
+  if (keyed) lines.push(assign(`0!${t}`));
+  for (const c of d.drop) lines.push(plainName(c) ? assign(`delete ${c} from ${t}`) : assign(`![${t};();0b;enlist ${symbolLiteral(c)}]`));
   // A nested or mixed column takes its empty item once a row: `m:()` is 'length (#1097).
-  for (const a of d.add) lines.push(a.type === a.type.toUpperCase() ? `${t}:update ${a.name}:count[i]#enlist ${nullOf(a.type)} from ${t}` : `${t}:update ${a.name}:${nullOf(a.type)} from ${t}`);
-  for (const c of d.cast) lines.push(`${t}:update ${c.name}:${castOf(c.name, c.from, c.to)} from ${t}`);
-  for (const c of d.attrs) lines.push(`${t}:update ${c.name}:${c.to ? `\`${c.to}#` : "`#"}${c.name} from ${t}`);
-  if (d.order) lines.push(`${t}:${d.order.map((c) => `\`${c}`).join("")} xcols ${t}`);
+  for (const a of d.add)
+    lines.push(!plainName(a.name) ? odd(a.name, "the add of") : a.type === a.type.toUpperCase() ? assign(`update ${a.name}:count[i]#enlist ${nullOf(a.type)} from ${t}`) : assign(`update ${a.name}:${nullOf(a.type)} from ${t}`));
+  for (const c of d.cast) {
+    const problem = castProblem(c.from, c.to, false);
+    lines.push(!plainName(c.name) ? odd(c.name, "the cast of") : problem === undefined ? assign(`update ${c.name}:${castOf(c.name, c.from, c.to)} from ${t}`) : `/ not written: a cast of ${c.name} from ${c.from} to ${c.to}: ${problem}`);
+  }
+  for (const c of d.attrs) lines.push(!plainName(c.name) ? odd(c.name, "the attribute of") : assign(`update ${c.name}:${c.to ? `\`${c.to}#` : "`#"}${c.name} from ${t}`));
+  if (d.order) lines.push(assign(`${symbols(d.order)} xcols ${t}`));
   const keys = to.keys.filter((k) => to.columns.some((c) => c.name === k));
-  if (keys.length > 0) lines.push(`${t}:${keys.map((k) => `\`${k}`).join("")} xkey ${t}`);
-  else if (keyed) lines.push(`/ ${t} was keyed by ${from.keys.join(", ")}; the target is not, so it is left unkeyed`);
+  if (keys.length > 0) lines.push(assign(`${symbols(keys)} xkey ${t}`));
+  else if (keyed) lines.push(`/ ${name} was keyed by ${from.keys.join(", ")}; the target is not, so it is left unkeyed`);
   return lines.join("\n") + "\n";
 }

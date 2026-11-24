@@ -282,3 +282,22 @@ test("due schedules run on their process and write CSV, Parquet and Excel; a wri
   const answer = await live.runApart({ label: "p", host: "127.0.0.1", port, tags: [] }, "sum exec px from trade");
   assert.deepStrictEqual(answer.text, ["7.5"]);
 });
+
+// Replaced in place, a reader saw an empty or half export, and a write that
+// failed lost the last good one (#1539).
+test("an export is written whole beside the file and renamed over it; a failed write leaves the old one", async () => {
+  const { writeWhole } = require("../out/schedule.js");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-whole-"));
+  const file = path.join(dir, "out.csv");
+  fs.writeFileSync(file, "old\n");
+  await writeWhole(file, Buffer.from("new\n"));
+  assert.strictEqual(fs.readFileSync(file, "utf8"), "new\n");
+  assert.deepStrictEqual(fs.readdirSync(dir), ["out.csv"], "no file left beside it");
+  // The rename fails (a folder where the file is): the old one stays, the
+  // temporary file goes.
+  const blocked = path.join(dir, "blocked.csv");
+  fs.mkdirSync(path.join(blocked, "x"), { recursive: true });
+  await assert.rejects(writeWhole(blocked, Buffer.from("x")));
+  assert.ok(fs.statSync(blocked).isDirectory());
+  assert.deepStrictEqual(fs.readdirSync(dir).sort(), ["blocked.csv", "out.csv"]);
+});

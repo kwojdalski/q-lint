@@ -327,6 +327,7 @@ test("a relative q binary is resolved against the workspace folder, not the exte
   assert.strictEqual(resolveBinary(path.join("..", "kx", "q"), folder), path.join(os.tmpdir(), "kx", "q"));
   const absolute = path.join(os.tmpdir(), "elsewhere", "q");
   assert.strictEqual(resolveBinary(absolute, folder), absolute);
-  // With no folder open, the working directory is all there is.
-  assert.strictEqual(resolveBinary(path.join(".", "bin", "q"), undefined), path.resolve("bin", "q"));
+  // With no folder open, there is none to read it from: the extension
+  // host's working directory is often / on macOS (#1540).
+  assert.strictEqual(resolveBinary(path.join(".", "bin", "q"), undefined), undefined);
 });

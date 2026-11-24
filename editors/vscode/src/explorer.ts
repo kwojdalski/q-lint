@@ -37,6 +37,7 @@
 //
 // Works on kdb+ (KDB-X) and PeachQ, both of which have `.Q.qt`, `.Q.qp` and
 // `.Q.cn`; held there by qclient.test.js.
+import { RESERVED } from "./qliteral";
 
 // A view (`v::expr`) has a lambda's type, 100h, and `value` of it is not a
 // lambda's parts: its second item is the view's parse tree, where a lambda
@@ -332,9 +333,11 @@ export function previewCode(node: Pick<Node, "kind" | "name" | "partitioned">, l
 }
 
 /// `name` as q code reads it: as written when q parses it as a name, else
-/// by its symbol - `set` makes a name of any symbol, `café` or `a b`.
+/// by its symbol - `set` makes a name of any symbol, `café` or `a b` - and
+/// so is one of q's words, which as written is the builtin (`count`) or
+/// q-sql (`select`), not the name (#1587).
 export function qName(name: string): string {
-  return /^\.?[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*$/.test(name)
+  return /^\.?[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*$/.test(name) && !RESERVED.has(name)
     ? name
     : `get\`$"${name.replace(/[\\"]/g, (c) => `\\${c}`)}"`;
 }

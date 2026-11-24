@@ -19,7 +19,7 @@ import { ATTRIBUTE_ROWS, ATTRIBUTE_SAMPLE, adviceReport, advise, filterCounts, r
 import { CHART_KINDS, chartFromGrid, gridFromFile, type ChartKind } from "./chartfile";
 import { CAST_TYPES, RUN_SCRIPT, columnScript, opProblem, opText, readRun, type ColumnOp } from "./colmanager";
 import { DB_COMMANDS, dbOff, dbOn, type DbFeature } from "./dbfeatures";
-import { DOCUMENT, DOCUMENT_LIMIT, docHtml, docMarkdown, qdocs, readDoc } from "./dbdoc";
+import { DOCUMENT, DOCUMENT_LIMIT, docHtml, docMarkdown, readDoc, workspaceDocs } from "./dbdoc";
 import { borrowWhenFree } from "./infoview";
 import type { Live } from "./live";
 import { migrationScript, sameSchema, schemaDiff } from "./migrate";
@@ -170,15 +170,9 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
     if (as === undefined) return "cancelled";
     const got = await read(live, DOCUMENT, DOCUMENT_LIMIT);
     if (got === undefined) return "not read";
-    const docs = new Map<string, string>();
-    try {
-      for (const uri of await workspace.findFiles("**/*.q", "**/node_modules/**", 2000)) {
-        const text = new TextDecoder().decode(await workspace.fs.readFile(uri));
-        for (const [name, doc] of qdocs(text)) if (!docs.has(name)) docs.set(name, doc);
-      }
-    } catch {
-      // No workspace, or a file that cannot be read: the functions go undocumented.
-    }
+    // No workspace: the functions go undocumented.
+    const files = await Promise.resolve(workspace.findFiles("**/*.q", "**/node_modules/**", 2000)).catch(() => []);
+    const docs = await workspaceDocs(files, async (uri) => new TextDecoder().decode(await workspace.fs.readFile(uri)));
     try {
       const doc = readDoc(got.value);
       const at = new Date().toISOString().replace("T", " ").slice(0, 16);
@@ -330,7 +324,11 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
     const target =
       out instanceof Uri ? out : typeof out === "string" ? Uri.file(out) : await window.showSaveDialog({ defaultUri: Uri.file(input.fsPath.replace(/\.[^./\\]*$/, "") + ".svg"), filters: { SVG: ["svg"] }, title: "Save the chart as" });
     if (target === undefined) return "cancelled";
-    await workspace.fs.writeFile(target, new TextEncoder().encode(svg));
+    try {
+      await workspace.fs.writeFile(target, new TextEncoder().encode(svg));
+    } catch (error) {
+      return say(`q-lint: could not write ${target.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+    }
     say(`q-lint: wrote ${target.fsPath}.`);
     return svg;
   };

@@ -2,6 +2,8 @@
 // them is read from a file, and how the Processes view groups them. Nothing
 // here talks to a process or to VS Code, so all of it is tested with node.
 
+import { isIPv6 } from "net";
+
 export interface Process {
   /// Unique among the processes; what the view and the status bar show.
   label: string;
@@ -78,8 +80,9 @@ export function hostProblem(host: string): string | undefined {
   if (h === "") {
     return "A host is needed.";
   }
-  // One colon is a port or a scheme; an IPv6 address has two or more.
-  if (h.split(":").length === 2) {
+  // A colon is a port or a scheme unless the whole is an IPv6 address:
+  // `[::1]:5000` and `host:5000:rdb` have two and are neither.
+  if (h.includes(":") && !isIPv6(h)) {
     return "A host only: the port is asked for next.";
   }
   return /[\s/\\]/.test(h) ? "A host has no spaces or slashes." : undefined;
@@ -165,7 +168,7 @@ export function parseProcesses(json: unknown, scripts = false): { processes: Pro
       problems.push(`${where} (${label}) has no host.`);
       return;
     }
-    const bad = portProblem(port);
+    const bad = hostProblem(host) ?? portProblem(port);
     if (bad !== undefined) {
       problems.push(`${where} (${label}): ${bad}`);
       return;
@@ -208,6 +211,13 @@ export function sshDestination(value: unknown): string | undefined {
   }
   const d = value.trim();
   return d !== "" && !d.startsWith("-") && !/[\s'"`$;|&<>\\]/.test(d) ? d : undefined;
+}
+
+/// What a command was handed as server types: a string or a list, or
+/// undefined for anything else - the editor's Uri a context menu hands in
+/// is none, and the user is asked (#1522).
+export function givenServerTypes(value: unknown): string | string[] | undefined {
+  return typeof value === "string" || Array.isArray(value) ? value : undefined;
 }
 
 /// Server types as written: a list, or a string split as tags are, each a

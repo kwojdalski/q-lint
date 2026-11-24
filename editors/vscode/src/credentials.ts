@@ -42,7 +42,9 @@ export function parseCredentials(output: string, user?: string): Credentials | {
     if (password === undefined) {
       return { problem: "its JSON has no password or token string" };
     }
-    const named = typeof j.user === "string" ? j.user : typeof j.username === "string" ? j.username : user;
+    // An empty name is no name (a vault template's unset field), as null is.
+    const given = (v: unknown) => (typeof v === "string" && v !== "" ? v : undefined);
+    const named = given(j.user) ?? given(j.username) ?? user;
     return { ...(named !== undefined && named !== "" ? { user: named } : {}), password };
   }
   // The line as printed, less only its line ending: spaces and tabs at
@@ -69,7 +71,9 @@ export function runCredentialCommand(
       command,
       {
         cwd: options.cwd,
-        env: { ...process.env, ...options.env },
+        // cmd.exe looks for a bare name (`vault`) in the folder it runs in
+        // before PATH; this turns that off (#1537).
+        env: { ...process.env, ...(process.platform === "win32" ? { NoDefaultCurrentDirectoryInExePath: "1" } : {}), ...options.env },
         timeout: options.timeoutMs ?? CREDENTIAL_TIMEOUT_MS,
         maxBuffer: 64 * 1024,
         windowsHide: true,
@@ -94,6 +98,14 @@ export function runCredentialCommand(
       },
     );
   });
+}
+
+/// Where a credential command runs: the workspace folder only when it is
+/// trusted, else the home directory. A saved process is every window's, and
+/// a relative command (`./creds.sh`) run in a folder not trusted is that
+/// repository's (#1537).
+export function credentialCwd(trusted: boolean, folder: string | undefined, home: string): string {
+  return trusted && folder !== undefined ? folder : home;
 }
 
 /// The variables a credential command is given, so one script serves many

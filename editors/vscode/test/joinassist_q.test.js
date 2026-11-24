@@ -6,7 +6,7 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const { connect, skip } = require("./qserver.js");
-const { TABLES, TABLE_SHAPE, readShape, suggestJoins } = require("../out/joinassist.js");
+const { TABLES, TABLE_SHAPE, readShape, suggestJoins, tableExpression } = require("../out/joinassist.js");
 const { asCode } = require("../out/processtools.js");
 
 const SERVER = [
@@ -40,8 +40,21 @@ test("shapes are read, and every join suggested runs and answers a table", { ski
     for (const s of suggestJoins(l, r)) {
       const isTable = await connection.call(`{[x] 98h=type 0!value x}`, asCode(s.expression));
       assert.strictEqual(isTable, true, s.expression);
+      // No two columns of one name: wj's max and min are told apart (#1573).
+      assert.strictEqual(await connection.call(`{[x] c~distinct c:cols value x}`, asCode(s.expression)), true, s.expression);
       ran++;
     }
   }
   assert.ok(ran >= 9, `${ran} joins run`);
+});
+
+// A picked name q would not parse is read by its symbol, in the joins too (#1572).
+test("a picked table whose name has a space is read and joined", { skip }, async (t) => {
+  const { connection } = await connect(t, SERVER + '(`$"my trade") set trade;\n');
+  const shape = async (e) => readShape(await connection.call(TABLE_SHAPE, asCode(e)), e);
+  const mine = await shape(tableExpression("my trade"));
+  assert.deepStrictEqual(mine.columns, ["sym", "time", "px"]);
+  for (const s of suggestJoins(mine, await shape("ref"))) {
+    assert.strictEqual(await connection.call(`{[x] 98h=type 0!value x}`, asCode(s.expression)), true, s.expression);
+  }
 });

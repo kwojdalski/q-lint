@@ -243,6 +243,11 @@ test("Compare Notebook Cells with another notebook, and what it says when there 
   fake.opened.push([Uri.file(path.join(dir, "a.qnb"))]);
   await fake.commands["q-lint.diffNotebook"](Uri.file(path.join(dir, "b.qnb")), [Uri.file(path.join(dir, "b.qnb"))]);
   assert.match(fake.messages.at(-1), /a\.qnb against b\.qnb: 0 cells changed, 1 added/);
+  // Two selected: compared with each other, nothing asked (#1541).
+  const asked = fake.offered;
+  await fake.commands["q-lint.diffNotebook"](Uri.file(path.join(dir, "b.qnb")), [Uri.file(path.join(dir, "a.qnb")), Uri.file(path.join(dir, "b.qnb"))]);
+  assert.match(fake.messages.at(-1), /a\.qnb against b\.qnb: 0 cells changed, 1 added/);
+  assert.strictEqual(fake.offered, asked, "no pick was shown");
   // Escape at the pick compares nothing.
   const before = fake.diffs.length;
   await fake.commands["q-lint.diffNotebook"](Uri.file(path.join(dir, "a.qnb")));
@@ -357,6 +362,28 @@ test("Set Up Git to Strip Notebook Outputs shows what it writes, writes it on Wr
   assert.match(fake.messages.at(-1), /strips notebook outputs on commit already/);
 });
 
+// git runs the filter through sh: inside double quotes `$work` and
+// backquotes were expanded, node ran a script that is not there, and the
+// notebook was committed with its outputs (#1534).
+test("the filter runs for a repository whose path holds $, a backquote or a double quote", async () => {
+  const { shellQuoted } = require("../out/notebookgit.js");
+  assert.strictEqual(shellQuoted('/a/$w/`x`/"q"/b'), '"/a/\\$w/\\`x\\`/\\"q\\"/b"');
+  assert.strictEqual(shellQuoted("/plain/path"), '"/plain/path"');
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "qnbgit-$work-"));
+  const dir = path.join(parent, 'r`id`"q"');
+  fs.mkdirSync(dir);
+  const git = (...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], { cwd: dir, encoding: "utf8" });
+  git("init", "-q");
+  const fake = fakeVscode();
+  load(fake);
+  fake.answers.push("Write");
+  await fake.commands["q-lint.setUpNotebookStripFilter"](fake.vscode.Uri.file(dir), "info");
+  assert.match(fake.messages.at(-1), /now commits q notebooks without their outputs/);
+  fs.writeFileSync(path.join(dir, "a.qnb"), withOutputs());
+  git("add", "a.qnb");
+  assert.strictEqual(git("show", ":a.qnb"), stripQnb(withOutputs()));
+});
+
 test("in a linked worktree the setup writes the attributes git reads and the script under the common directory (#1270)", async () => {
   const { dir, git } = repo({ README: "r\n" });
   const linked = fs.mkdtempSync(path.join(os.tmpdir(), "qnbgit-wt-"));
@@ -467,4 +494,41 @@ test("Clear Notebook Outputs and the setup are contributed with their setting in
     assert.ok(menus.length >= 2, command);
     for (const m of menus) assert.match(m.when, /config\.q-lint\.notebook\.stripOutputs\.enable/, command);
   }
+});
+
+test("the clean filter gives back bytes that are not UTF-8, or not a notebook, as they are (#1560)", () => {
+  const { spawnSync } = require("node:child_process");
+  for (const input of [Buffer.from("not json caf\xe9 \xff\n", "latin1"), Buffer.from('{"qnb":1,"cells":[],"x":"\xe9"}', "latin1"), Buffer.from("﻿plain\r\n")]) {
+    const run = spawnSync(process.execPath, [QNBGIT, "--strip"], { input });
+    assert.strictEqual(run.status, 0);
+    assert.deepStrictEqual(run.stdout, input);
+  }
+  // A notebook is still stripped.
+  const run = spawnSync(process.execPath, [QNBGIT, "--strip"], { input: qnb([code("1", ran(1, "1"))]) });
+  assert.doesNotMatch(run.stdout.toString(), /outputs/);
+});
+
+test("the setup asks git whether *.qnb goes through the filter: a later line turning it off is read (#1561)", async () => {
+  const { dir, git } = repo({ "README": "r\n" });
+  const fake = fakeVscode();
+  load(fake);
+  const folder = fake.vscode.Uri.file(dir);
+  fake.answers.push("Write");
+  await fake.commands["q-lint.setUpNotebookStripFilter"](folder, "gitattributes");
+  fs.appendFileSync(path.join(dir, ".gitattributes"), "*.qnb -filter\n");
+  assert.match(git("check-attr", "filter", "--", "a.qnb"), /filter: unset/);
+  fake.answers.push("Write");
+  await fake.commands["q-lint.setUpNotebookStripFilter"](folder, "gitattributes");
+  assert.doesNotMatch(fake.messages.at(-1), /already/);
+  assert.match(git("check-attr", "filter", "--", "a.qnb"), /filter: qnb-strip/);
+});
+
+test("an integer too big for a number is saved and stripped as written (#1562)", () => {
+  const raw = '{"qnb":1,"cells":[{"kind":"code","source":["1"],"metadata":{"id":-98765432109876543210}}],"metadata":{"t":1700000000123456789,"f":0.5,"n":12}}';
+  const saved = serializeQnb(parseQnb(raw));
+  assert.match(saved, /"t": 1700000000123456789,/);
+  assert.match(saved, /"id": -98765432109876543210/);
+  assert.match(saved, /"f": 0\.5/);
+  assert.strictEqual(serializeQnb(parseQnb(saved)), saved);
+  assert.match(stripQnb(raw), /"t": 1700000000123456789,/);
 });

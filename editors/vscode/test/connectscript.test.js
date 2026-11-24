@@ -269,3 +269,91 @@ test("a run from a timer asks nothing about a connect script: one the guard hold
   assert.strictEqual(q.sent.filter((m) => JSON.stringify(m).includes("secretTable")).length, 0);
   assert.strictEqual(q.sent.filter((m) => JSON.stringify(m).includes("1+1")).length, 0);
 });
+
+// A saved process is every window's: a script file kept relative to the
+// first folder ran another workspace's file of that name, and in one not
+// trusted that was the repository's q code on the user's process (#1527).
+test("a connect script file is kept by its full path, and a relative one is not run in a workspace not trusted", async (t) => {
+  const vscode = require("vscode");
+  const { fakeQ } = require("./fakeq.js");
+  const q = await fakeQ(null);
+  t.after(() => q.close());
+  const { live, run } = await setUp(t, [proc("a"), { label: "p", host: "127.0.0.1", port: q.port, tags: [], initFile: "init.q" }]);
+  t.after(() => stub.commands.get("q-lint.disconnectProcess")?.());
+  const saved = { folders: vscode.workspace.workspaceFolders, dialog: vscode.window.showOpenDialog, trusted: vscode.workspace.isTrusted, fs: vscode.workspace.fs };
+  t.after(() => {
+    vscode.workspace.workspaceFolders = saved.folders;
+    vscode.window.showOpenDialog = saved.dialog;
+    vscode.workspace.isTrusted = saved.trusted;
+    vscode.workspace.fs = saved.fs;
+  });
+  vscode.workspace.workspaceFolders = [{ uri: vscode.Uri.file("/proj/a") }];
+  vscode.window.showOpenDialog = async () => [vscode.Uri.file("/proj/a/init.q")];
+  stub.picks.push("q File");
+  await run("a");
+  assert.deepStrictEqual(scriptOf(live.processes()[0]), { kind: "file", file: "/proj/a/init.q" });
+  // Connected from a workspace not trusted, the relative one is not read.
+  let read = 0;
+  vscode.workspace.fs = { readFile: async () => (read++, Buffer.from("fromRepo:1")) };
+  vscode.workspace.isTrusted = false;
+  assert.strictEqual(await live.connectTo("p"), true);
+  assert.strictEqual(read, 0);
+  assert.deepStrictEqual(q.sent.filter((m) => JSON.stringify(m).includes("fromRepo")), []);
+  assert.match(stub.messages.find((m) => /connect script of p failed/.test(m[1]))[1], /not trusted: it was not run/);
+});
+
+// Diff Function, Find in Processes, table info and streams opened their own
+// connection with no connect script, so they queried a session it never
+// prepared: another namespace, a login not made (#1509).
+test("a connection apart runs the process's connect script before its query", async (t) => {
+  const { fakeQ, heads } = require("./fakeq.js");
+  const q = await fakeQ(1);
+  t.after(() => q.close());
+  const { live } = await setUp(t, [{ label: "p", host: "127.0.0.1", port: q.port, tags: [], init: "setUp:1" }]);
+  await live.callSeparate(live.processes()[0], (c) => c.call("{x}", 1));
+  assert.strictEqual(q.sent.length, 2);
+  assert.ok(JSON.stringify(q.sent[0]).includes("setUp:1"), JSON.stringify(q.sent[0]));
+  assert.strictEqual(heads(q.sent)[1], "{x}");
+});
+
+// A connect script that never answered held the connect for ever: Disconnect
+// closed nothing, and every connect and query after it waited (#1505).
+test("a connect script that blocks is closed by Disconnect, and times out", async (t) => {
+  const net = require("node:net");
+  const { serialize } = require("node-q/lib/c.js");
+  // Answers anything but the script.
+  const sockets = new Set();
+  const server = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.on("error", () => {});
+    let shook = false;
+    socket.on("data", (chunk) => {
+      if (!shook) {
+        shook = true;
+        socket.write(Buffer.from([3]));
+      } else if (!chunk.includes("block")) {
+        const out = serialize(1);
+        out.writeUInt8(2, 1);
+        socket.write(out);
+      }
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  t.after(() => (sockets.forEach((s) => s.destroy()), server.close()));
+  const q = { port: server.address().port };
+  const { live } = await setUp(t, [
+    { label: "p", host: "127.0.0.1", port: q.port, tags: [], init: "block[]" },
+    { label: "b", host: "127.0.0.1", port: q.port, tags: [] },
+    { label: "t", host: "127.0.0.1", port: q.port, tags: [], init: "block[]", timeout: 1 },
+  ]);
+  t.after(() => stub.commands.get("q-lint.disconnectProcess")?.());
+  const connecting = live.connectTo("p");
+  await new Promise((r) => setTimeout(r, 200));
+  await stub.commands.get("q-lint.disconnectProcess")();
+  assert.strictEqual(await connecting, false);
+  assert.strictEqual(live.activeLabel(), undefined);
+  assert.strictEqual(await live.connectTo("b"), true);
+  // With a timeout, it is given up when the timeout passes, and said.
+  assert.strictEqual(await live.connectTo("t"), false);
+  assert.match(stub.messages.filter(([k]) => k === "warning").at(-1)[1], /the connect script of t failed: .*1 s/);
+});

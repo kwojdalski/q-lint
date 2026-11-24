@@ -8,8 +8,10 @@
 // One read, defining nothing: `meta` of each table in the root (a
 // partitioned one's reads its last partition's schema), its rows counted as
 // the explorer counts them (`.Q.cn` for a partitioned table), and the
-// functions of the root and of every namespace that is not q's own, at most
-// `lim` of each. Works on kdb+ (KDB-X) and PeachQ; held there by
+// functions of the root and of every namespace that is not q's own (KDB-X's
+// SQL `.s` among them, #1576), at most
+// `lim` of each. Only a lambda has parameters of its own: `(value f)1` of a
+// projection is its bound argument, of a composition a part (#1575). Works on kdb+ (KDB-X) and PeachQ; held there by
 // dbtools_q.test.js.
 import { definitions } from "./definitions";
 
@@ -23,14 +25,14 @@ export const DOCUMENT = [
   "   \"f\"$$[part;@[{sum .Q.cn x};v;0n];count v];",
   "   string$[99h=type v;(),keys v;`$()];",
   "   string mt`c;{$[null x;enlist\" \";enlist x]}each mt`t;string mt`f;string mt`a)};",
-  " ns:(key`)except`q`Q`h`j`o`z`m`qlint;",
+  " ns:(key`)except`q`Q`h`j`o`s`z`m`qlint;",
   " ns:ns where not null ns;ns:ns where{99h=type get` sv`,x}each ns;",
   " fs:m sublist(system\"f\"),raze{` sv'(` sv`,x),/:system\"f \",string` sv`,x}each ns;",
   " `pf`parts`tables`fnames`fparams!(",
   "  $[@[{0<count .Q.pv};::;0b];string .Q.pf;\"\"];",
   "  \"f\"$@[{count .Q.pv};::;0];",
   "  one each ts;",
-  "  string fs;{@[{string(value get x)1};x;()]}each fs)}",
+  "  string fs;{@[{f:get x;$[100h=type f;string(value f)1;()]};x;()]}each fs)}",
 ].join("\n");
 
 /// Tables and functions a document covers at most.
@@ -190,4 +192,22 @@ export function docHtml(doc: DbDoc, process: string, at: string, docs: Map<strin
   }
   out.push("</body></html>");
   return out.join("\n");
+}
+
+/// The qdoc of every function in `files`, each read by `read`, the first
+/// file to document a name winning. A file that cannot be read is skipped,
+/// and only it: one unreadable file ended the reading, and every file after
+/// it went undocumented (#1542).
+export async function workspaceDocs<F>(files: readonly F[], read: (file: F) => Promise<string>): Promise<Map<string, string>> {
+  const docs = new Map<string, string>();
+  for (const file of files) {
+    let text: string;
+    try {
+      text = await read(file);
+    } catch {
+      continue;
+    }
+    for (const [name, doc] of qdocs(text)) if (!docs.has(name)) docs.set(name, doc);
+  }
+  return docs;
 }

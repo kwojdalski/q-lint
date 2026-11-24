@@ -427,6 +427,29 @@ function tpLogFile(t) {
   return path.join(dir, "tp.log");
 }
 
+// The local q runs code: only the extension, with its one-time password,
+// may connect to it, not another local user (#1574).
+test("the tickerplant log's local q refuses a connection without its password", { skip: Q ? false : "QLINT_TEST_Q names no q binary" }, async (t) => {
+  capture();
+  stub.reset();
+  stub.config.user["terminal.qBinary"] = Q;
+  const context = stub.newContext();
+  const log = new TickerplantLog(context);
+  t.after(() => context.subscriptions.forEach((d) => d.dispose?.()));
+  assert.strictEqual(await log.open(tpLogFile(t)), "2 messages");
+  const { QConnection } = require("../out/qclient.js");
+  for (const target of [{}, { user: "qlint", password: "guess" }, { user: process.env.USER ?? "u", password: "" }]) {
+    await assert.rejects(
+      QConnection.open({ host: "127.0.0.1", port: log.port, ...target }, 2000).then((c) => c.call("{system\"echo hi\"}", 0)),
+      /refused|closed/,
+      JSON.stringify(target),
+    );
+  }
+  // The extension's own connection still works.
+  await log.receive({ type: "ready" });
+  assert.deepStrictEqual(log.posted.find((m) => m.type === "page").rows.map((r) => r.table), ["t", "t"]);
+});
+
 test("a log opened while another is starting stops the first one's q (#1074)", { skip: Q ? false : "QLINT_TEST_Q names no q binary" }, async (t) => {
   capture();
   stub.reset();

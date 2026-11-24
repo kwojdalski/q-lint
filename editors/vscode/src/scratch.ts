@@ -59,9 +59,9 @@ export function registerScratchBuffers(
         return message;
       }
     }
-    await window.showTextDocument(await workspace.openTextDocument(Uri.file(path)));
-    // The file connection binds the active editor, which this one now is.
-    await commands.executeCommand(CONTROL_COMMANDS.chooseFileConnection, process.label);
+    const document = await workspace.openTextDocument(Uri.file(path));
+    await window.showTextDocument(document);
+    await commands.executeCommand(CONTROL_COMMANDS.chooseFileConnection, process.label, document.uri);
     return { path, label: process.label };
   };
   context.subscriptions.push(commands.registerCommand(PROCESS_TOOL_COMMANDS.openScratch, (row?: ProcessArg) => open(row)));

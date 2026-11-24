@@ -99,7 +99,7 @@ export class QueryLinks {
       void window.showWarningMessage(plainMessage(`q-lint: the link is for a process labelled "${read.process}", which is not in your Processes list; its query is open, not bound or run.`));
       return false;
     }
-    await commands.executeCommand(CONTROL_COMMANDS.chooseFileConnection, read.process);
+    await commands.executeCommand(CONTROL_COMMANDS.chooseFileConnection, read.process, document.uri);
     // Run is offered only on a query the prompt shows whole: what follows a
     // cut would run unseen (#1620).
     if (read.code.length > PROMPT_LIMIT) {

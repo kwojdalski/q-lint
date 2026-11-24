@@ -8,6 +8,9 @@
 // placeholder, which nobody is there to fill in. The file is replaced each
 // run, or a new one written with the run's time in its name - chosen when
 // the schedule is made, which is the asking.
+import { randomBytes } from "node:crypto";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { writes } from "./guard";
 import { placeholderNames } from "./placeholders";
 
@@ -172,4 +175,19 @@ export function scheduleProblem(code: string): string | undefined {
 export function scheduleText(s: Pick<ScheduledExport, "query" | "process" | "format" | "times" | "every">): string {
   const when = s.every !== undefined ? `every ${s.every} min` : `daily at ${(s.times ?? []).join(", ")}`;
   return `${s.query} on ${s.process}, ${when}, as ${s.format}`;
+}
+
+/// Write `data` to `file` whole or not at all: into a file beside it, then
+/// renamed over it. Written in place, a reader saw an empty or half file,
+/// and a write that failed (a full disk, Excel holding it) left the last
+/// good export lost (#1539). Throws why not, the old file as it was.
+export async function writeWhole(file: string, data: Uint8Array): Promise<void> {
+  const temp = path.join(path.dirname(file), `.${path.basename(file)}.${randomBytes(4).toString("hex")}.tmp`);
+  try {
+    await fs.writeFile(temp, data);
+    await fs.rename(temp, file);
+  } catch (error) {
+    await fs.rm(temp, { force: true });
+    throw error;
+  }
 }

@@ -31,8 +31,7 @@ export class NewQuery {
     }
     const document = await workspace.openTextDocument({ language: "q", content: "" });
     await window.showTextDocument(document);
-    // The file connection binds the active editor, which this one now is.
-    await commands.executeCommand(CONTROL_COMMANDS.chooseFileConnection, process.label);
+    await commands.executeCommand(CONTROL_COMMANDS.chooseFileConnection, process.label, document.uri);
     return { uri: document.uri, label: process.label };
   }
 }

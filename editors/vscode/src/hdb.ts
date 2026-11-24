@@ -9,7 +9,9 @@
 // it in `.Q.pn` - as the explorer counts a partitioned table, and as `count`
 // would - so a second look costs nothing. The sym file's size is `hcount`,
 // of the file in the directory the database was loaded from. Only the
-// newest `lim` partitions' counts are sent; the totals cover them all.
+// newest `lim` partitions' counts are sent; the totals cover them all. A
+// table missing from a partition fails `.Q.cn`: its counts are null, and
+// so is its total, not the 0 `sum` makes of nulls (#1566).
 //
 // A process with no partitions and no partitioned tables has loaded no
 // partitioned database - kdb+ has no `.Q.pv` then, PeachQ an empty one - and
@@ -31,7 +33,7 @@ export const HDB = [
   "  @[{string distinct .Q.PD};::;()];",
   "  \"f\"$@[hcount;`:sym;0n];",
   "  \"f\"$count pv;string(neg m)sublist pv;",
-  "  string pt;(neg m)sublist'c;sum each c;",
+  "  string pt;(neg m)sublist'c;{$[all null x;0n;sum x]}each c;",
   "  string o;\"f\"${@[{count get x};x;0n]}each o)}",
 ].join("\n");
 

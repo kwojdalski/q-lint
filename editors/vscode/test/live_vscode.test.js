@@ -177,6 +177,34 @@ test("Disconnect stops a reconnect after Abort", async (t) => {
   assert.strictEqual(events.filter((e) => e === "connected").length, 1);
 });
 
+// A connect elsewhere after Abort waited for the abandoned reconnect's
+// handshake to run out - up to the connect timeout, 10 s (#1510).
+test("a connect elsewhere after Abort does not wait for the abandoned reconnect", async (t) => {
+  let busyUntil = 0;
+  const a = await fakeQ(
+    (message) => {
+      if (isGather(message)) return GATHERED;
+      busyUntil = Date.now() + 3000;
+      return undefined;
+    },
+    () => Math.max(0, busyUntil - Date.now()),
+  );
+  t.after(() => a.close());
+  const b = await fakeQ(() => GATHERED);
+  t.after(() => b.close());
+  const { live } = await setUp(t, [proc("a", a.port), proc("b", b.port)]);
+  assert.strictEqual(await live.connectTo("a"), true);
+  await sleep(50);
+  void live.runOnActive("slow", (c) => c.call("slow")).catch(() => {});
+  await sleep(50);
+  await live.abort();
+  await sleep(100);
+  const started = Date.now();
+  assert.strictEqual(await live.connectTo("b"), true);
+  assert.ok(Date.now() - started < 1500, `${Date.now() - started} ms`);
+  assert.strictEqual(live.activeLabel(), "b");
+});
+
 // Add and Edit read the list before their input boxes and saved it back
 // after them: a process saved meanwhile - Download Processes, an import, or
 // another window, which shares the list - was lost, and a label taken
@@ -268,6 +296,102 @@ test("deleting a discovery server, or changing its URL, forgets its processes' p
   secrets.set("q-lint.discoveredPassword.desk/rdb", "pw");
   await stub.commands.get("q-lint.editDiscoveryServer")("desk", { secret: "Bearer x" });
   assert.strictEqual(secrets.get("q-lint.discoveredPassword.desk/rdb"), "pw");
+});
+
+// A discovery server that lists a process elsewhere kept its password, and
+// the next connect sent it there unasked - after a reload too (#1503).
+test("a discovered process listed at another host or port forgets its password, after a reload too", async (t) => {
+  const http = require("node:http");
+  const q = await fakeQ(() => GATHERED);
+  t.after(() => q.close());
+  let port = q.port;
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify([{ label: "rdb", host: "127.0.0.1", port, user: "u" }, { label: "hdb", host: "127.0.0.1", port: q.port, user: "u" }]));
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  t.after(() => server.close());
+  const { context, live } = await setUp(t, []);
+  const secrets = context.secrets.all;
+  await stub.commands.get("q-lint.addDiscoveryServer")({ label: "desk", url: `http://127.0.0.1:${server.address().port}/` });
+  for (const l of ["rdb", "hdb"]) {
+    stub.inputs.push(() => "pw");
+    assert.strictEqual(await live.connectTo(`desk/${l}`), true);
+  }
+  // Listed at another port: rdb's password is forgotten, hdb's kept.
+  port = q.port + 1;
+  await stub.commands.get("q-lint.reloadDiscoveryServer")("desk");
+  assert.strictEqual(secrets.has("q-lint.discoveredPassword.desk/rdb"), false);
+  assert.strictEqual(secrets.get("q-lint.discoveredPassword.desk/hdb"), "pw");
+  // Back where it was, a password given, then a reload: nothing is in
+  // memory of where it was, and a move still forgets it.
+  port = q.port;
+  await stub.commands.get("q-lint.reloadDiscoveryServer")("desk");
+  stub.inputs.push(() => "pw");
+  assert.strictEqual(await live.connectTo("desk/rdb"), true);
+  await stub.commands.get("q-lint.disconnectProcess")();
+  for (const d of context.subscriptions.splice(0)) d.dispose?.();
+  port = q.port + 1;
+  const again = new Live(context);
+  t.after(() => {
+    for (const d of context.subscriptions) d.dispose?.();
+  });
+  await stub.commands.get("q-lint.reloadDiscoveryServer")("desk");
+  assert.strictEqual(secrets.has("q-lint.discoveredPassword.desk/rdb"), false);
+  assert.strictEqual(secrets.get("q-lint.discoveredPassword.desk/hdb"), "pw");
+  void again;
+});
+
+// Any failed connect forgot the password just given - a host down or
+// restarting as well as a refused one (#1511).
+test("a discovered process's password is forgotten when it is refused, not when the host is down", async (t) => {
+  const http = require("node:http");
+  const down = await deadPort();
+  // Closes the socket on the handshake, as q refuses a user.
+  const refusing = net.createServer((s) => s.on("data", () => s.destroy()));
+  await new Promise((r) => refusing.listen(0, "127.0.0.1", r));
+  t.after(() => refusing.close());
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify([{ label: "down", host: "127.0.0.1", port: down, user: "u" }, { label: "refused", host: "127.0.0.1", port: refusing.address().port, user: "u" }]));
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  t.after(() => server.close());
+  const { context, live } = await setUp(t, []);
+  await stub.commands.get("q-lint.addDiscoveryServer")({ label: "desk", url: `http://127.0.0.1:${server.address().port}/` });
+  for (const l of ["down", "refused"]) {
+    stub.inputs.push(() => "pw");
+    assert.strictEqual(await live.connectTo(`desk/${l}`), false);
+  }
+  assert.strictEqual(context.secrets.all.get("q-lint.discoveredPassword.desk/down"), "pw");
+  assert.strictEqual(context.secrets.all.has("q-lint.discoveredPassword.desk/refused"), false);
+});
+
+// A click on the connected row ran Connect again, which closed the
+// connection and dropped the query running on it as aborted (#1506).
+test("clicking the connected process's row does not reconnect", async (t) => {
+  const a = await fakeQ(() => GATHERED);
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port), proc("b", a.port)]);
+  assert.strictEqual(await live.connectTo("a"), true);
+  const tree = stub.trees.find((v) => v.id === "q-lint.processes").options.treeDataProvider;
+  const items = tree.getChildren().map((r) => tree.getTreeItem(r));
+  assert.deepStrictEqual(items.map((i) => [i.label, i.command?.command]), [["a", undefined], ["b", "q-lint.connectProcess"]]);
+});
+
+// Delete during a connect disconnected only a process already connected:
+// the connect went on, and the deleted process became the active one (#1519).
+test("deleting a process while it is being connected to stops the connect", async (t) => {
+  const a = await fakeQ(() => GATHERED, 300);
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)]);
+  const connecting = live.connectTo("a");
+  await sleep(50);
+  stub.picks = ["Delete"];
+  await stub.commands.get("q-lint.deleteProcess")("a");
+  assert.strictEqual(await connecting, false);
+  assert.strictEqual(live.activeLabel(), undefined);
+  assert.deepStrictEqual(live.processes(), []);
 });
 
 // A file Export cannot write (a read-only folder, a full disk) rejected the

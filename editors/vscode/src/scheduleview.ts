@@ -25,6 +25,7 @@ import {
   parseWhen,
   scheduleProblem,
   scheduleText,
+  writeWhole,
   type ScheduleFormat,
   type ScheduledExport,
 } from "./schedule";
@@ -149,7 +150,7 @@ export class ScheduledExports {
     const data = s.format === "csv" ? Buffer.from(toCsv(toGrid(payload, gridDecimals)), "utf8") : exportResult(s.format, payload, gridDecimals).data;
     const file = outputPath(s.path, s.mode, now);
     await fs.mkdir(path.dirname(file), { recursive: true });
-    await fs.writeFile(file, data);
+    await writeWhole(file, data);
     return file;
   }
 

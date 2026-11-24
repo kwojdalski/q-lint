@@ -9,7 +9,7 @@ import { ProgressLocation, Uri, window, workspace } from "vscode";
 import * as path from "node:path";
 import type { Live } from "./live";
 import { readLive, readNotebook, rowsArgument } from "./liveconfig";
-import { featureOff, featureOn, qnbOf, requireFeature, switchProcess } from "./notebook";
+import { featureOff, featureOn, qnbOf, requireFeature, scriptBeside, switchProcess } from "./notebook";
 import { NOTEBOOK, type Qnb } from "./qnb";
 import { parametersCell, parametersOf, runNotebook, writeAs, type RunResult } from "./qnbrun";
 import { plainMessage } from "./history";
@@ -71,7 +71,8 @@ export async function runWithParameters(live: Live, source?: Uri, target?: Uri, 
       ? target
       : await window.showSaveDialog({
           title: "Write the run's notebook, with its outputs, to",
-          defaultUri: from.with({ path: from.path.replace(/(\.qnb)?$/i, "-run.qnb") }),
+          // On disk, for an untitled notebook too (#1549).
+          defaultUri: scriptBeside(from, "-run.qnb"),
           filters: { "q notebook": ["qnb"], HTML: ["html"], "Jupyter notebook": ["ipynb"] },
         });
   if (to === undefined) {
@@ -85,31 +86,51 @@ export async function runWithParameters(live: Live, source?: Uri, target?: Uri, 
   try {
     result = await window.withProgress(
       { location: ProgressLocation.Notification, title: `q-lint: running ${name}`, cancellable: true },
-      (progress, token) =>
-        runNotebook(
-          qnb,
-          {
-            on: async (label, code, use) => {
-              if (label !== undefined) {
-                if (!featureOn("processDirective")) {
-                  throw new Error(featureOff("processDirective"));
+      async (progress, token) => {
+        // As the kernel's interrupt: Cancel stops the query of the cell
+        // running, not only the cells after it (#1564).
+        let running = false;
+        const stop = token.onCancellationRequested(() => {
+          if (running) {
+            void live.abort();
+          }
+        });
+        try {
+          return await runNotebook(
+            qnb,
+            {
+              on: async (label, code, use) => {
+                if (label !== undefined) {
+                  if (!featureOn("processDirective")) {
+                    throw new Error(featureOff("processDirective"));
+                  }
+                  const problem = await switchProcess(live, label);
+                  if (problem !== undefined) {
+                    throw new Error(problem);
+                  }
                 }
-                const problem = await switchProcess(live, label);
-                if (problem !== undefined) {
-                  throw new Error(problem);
+                const ran = await live.runOnActive(code, async (connection) => {
+                  running = true;
+                  try {
+                    return await use(connection);
+                  } finally {
+                    running = false;
+                  }
+                });
+                if (ran === undefined) {
+                  throw new Error("Not run: no q process is connected, or a query is still running on it.");
                 }
-              }
-              const ran = await live.runOnActive(code, use);
-              if (ran === undefined) {
-                throw new Error("Not run: no q process is connected, or a query is still running on it.");
-              }
-              return ran.value;
+                return ran.value;
+              },
             },
-          },
-          settings,
-          given,
-          { progress: (cell, of) => progress.report({ message: `cell ${cell} of ${of}` }), cancelled: () => token.isCancellationRequested, liveValues: featureOn("liveValues") },
-        ),
+            settings,
+            given,
+            { progress: (cell, of) => progress.report({ message: `cell ${cell} of ${of}` }), cancelled: () => token.isCancellationRequested, liveValues: featureOn("liveValues") },
+          );
+        } finally {
+          stop.dispose();
+        }
+      },
     );
   } catch (error) {
     void window.showErrorMessage(plainMessage(`q-lint: could not run ${name}: ${error instanceof Error ? error.message : String(error)}`));

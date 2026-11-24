@@ -28,6 +28,7 @@ import {
   type OutputChannel,
   type StatusBarItem,
   type Terminal,
+  type TextDocument,
   type TextEditor,
   type TreeDataProvider,
   type TreeView,
@@ -52,21 +53,23 @@ import {
   readProcessFile,
   sshDestination,
   serverTypes,
+  givenServerTypes,
   tlsChoices,
   withExtras,
   withProtections,
   type Process,
 } from "./processes";
+import { clickedEditor, unsavedIn } from "./clicked";
 import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
 import { ClosedBeforeHandshake, QConnection, QError, type Target } from "./qclient";
-import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, readTunnel } from "./tunnel";
+import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, TunnelHandshakeError, readTunnel } from "./tunnel";
 import { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, readGateway } from "./gateway";
 import { HEARTBEAT, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
 import { historyHeading, historyLabel, iconsEscaped, mergedHistory, plainMessage } from "./history";
 import { render } from "./query";
 import { QueryModes, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
-import { commandLine, expandHome, parseEnv, replLines, shellKind } from "./terminal";
+import { commandLine, expandHome, parseEnv, replLines, shellKind, terminalCwd } from "./terminal";
 import { terminalEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import type { RunExtra } from "./runargs";
@@ -100,7 +103,7 @@ import type { GridAnswer, GridPayload } from "./grid";
 import { WATCH, WATCHING, intervalProblem, readWatch, watchText } from "./watch";
 import { guardedBy, openTags } from "./guard";
 import { readAdmin } from "./admin";
-import { credentialEnv, parseCredentials, runCredentialCommand } from "./credentials";
+import { credentialCwd, credentialEnv, parseCredentials, runCredentialCommand } from "./credentials";
 import { effectiveTimeout, ownTimeout, timeoutDropped, timeoutSource } from "./processtimeout";
 import type { Answered } from "./inlineresult";
 
@@ -151,6 +154,12 @@ function codeAt(editor: TextEditor, from: From): string | undefined {
     return block === undefined ? undefined : lines.slice(block.start, block.end + 1).join("\n");
   }
   return document.lineAt(line).text;
+}
+
+/// The editor a command is for: the one showing `uri`, a Uri a title-bar
+/// button handed in, else the active one (#1523).
+function clicked(uri: unknown): TextEditor | undefined {
+  return clickedEditor(uri, window.visibleTextEditors ?? [], window.activeTextEditor);
 }
 
 /// What a command that reads the active editor says when there is none.
@@ -263,8 +272,12 @@ class ProcessesView implements TreeDataProvider<Row> {
     item.tooltip = new MarkdownString(processTooltip(process, from));
     const kind = from === undefined ? "process" : "discovered";
     item.contextValue = active ? `${kind}.connected` : kind;
-    // A click connects: the row is the process, and connecting is what it is for.
-    item.command = { command: COMMANDS.connect, title: "Connect", arguments: [row] };
+    // A click connects: the row is the process, and connecting is what it is
+    // for. Not the connected row's: it would reconnect, dropping a query
+    // running there (#1506).
+    if (!active) {
+      item.command = { command: COMMANDS.connect, title: "Connect", arguments: [row] };
+    }
     return item;
   }
 }
@@ -324,13 +337,13 @@ export class QTerminals {
     );
   }
 
-  /// Run the active file in a terminal named after it, saving it first. The
+  /// Run the active file - or `document`, the one whose Run button was
+  /// clicked - in a terminal named after it, saving it first. The
   /// terminal it ran in before is closed: running the file again starts a
   /// fresh q. Another file of the same name keeps its own. `extra`: Run File
   /// with Arguments' words after the file (`.z.x`) and lines typed into q
   /// once it starts.
-  async runFile(extra?: RunExtra): Promise<void> {
-    const document = window.activeTextEditor?.document;
+  async runFile(extra?: RunExtra, document = window.activeTextEditor?.document): Promise<void> {
     if (document === undefined || document.uri.scheme !== "file") {
       void window.showInformationMessage("q-lint: open a q file saved on disk to run it.");
       return;
@@ -402,16 +415,17 @@ export class QTerminals {
 
   /// A terminal named `name` that starts `q-lint.terminal.qBinary`, on
   /// `file` if one is given, with the variables of `q-lint.terminal.envPath`
-  /// set for it. It starts in the workspace folder of `from`, so a script's
-  /// relative `\l` reads as it does from a shell there. Undefined if the env
-  /// file cannot be read, or cmd cannot pass the line; `before` runs only
-  /// once it can start.
+  /// set for it. It starts in the workspace folder of `from` (else the
+  /// file's directory), so a script's relative `\l` reads as it does from a
+  /// shell there. Undefined if the env file cannot be read, or cmd cannot
+  /// pass the line; `before` runs only once it can start.
   private async start(name: string, from: Uri | undefined, file?: string, before?: () => void, extraArgs: string[] = []): Promise<Terminal | undefined> {
     const configuration = workspace.getConfiguration("q-lint", from);
     const read = readTerminal((key, fallback) => configuration.get(key, fallback));
     const settings = { qBinary: expandHome(read.qBinary, os.homedir()), envPath: expandHome(read.envPath, os.homedir()) };
-    const folder = (from && workspace.getWorkspaceFolder(from)) ?? workspace.workspaceFolders?.[0];
-    const cwd = folder?.uri.fsPath ?? (file !== undefined ? path.dirname(file) : undefined);
+    const own = from && workspace.getWorkspaceFolder(from);
+    const folder = own ?? workspace.workspaceFolders?.[0];
+    const cwd = terminalCwd(own?.uri.fsPath, folder?.uri.fsPath, file, path.dirname);
     let variables: Record<string, string> = {};
     if (settings.envPath !== "") {
       if (!path.isAbsolute(settings.envPath) && folder === undefined) {
@@ -484,7 +498,7 @@ export function movedFrom(expected: string): Error {
 export class Live {
   /// Run the active file in its q terminal with Run File with Arguments'
   /// extra words and input (#1005).
-  readonly runFileWith: (extra: RunExtra) => Promise<void>;
+  readonly runFileWith: (extra: RunExtra, document?: TextDocument) => Promise<void>;
   private connection: QConnection | undefined;
   /// The query history, newest first. Kept here and written through to
   /// `globalState`, never rebuilt from it alone: a read of `globalState`
@@ -493,6 +507,21 @@ export class Live {
   /// read, since every window writes it (#1619).
   private queries: HistoryEntry[] = [];
   private active: Process | undefined;
+  /// The connection `open` is running the connect script on, before it is
+  /// the active one: what Disconnect closes then.
+  private opening: QConnection | undefined;
+  /// The SSH tunnels open, stopped now when the extension host goes: one
+  /// left to its connection's close outlives a host that exits first (#1518).
+  private readonly tunnels = new Set<SshTunnel>();
+  private readonly closeTunnels = (): void => {
+    for (const tunnel of this.tunnels) {
+      tunnel.close();
+    }
+  };
+  /// The connections `openSeparate` handed out and still open: a stream's.
+  private readonly separate = new Set<{ connection: QConnection; process: Process }>();
+  /// Stops the reconnect after an abort that waits for the process to be free.
+  private untilFree: AbortController | undefined;
   /// A connect in progress, so a second one waits for it instead of opening
   /// another.
   private connecting: Promise<boolean> | undefined;
@@ -588,7 +617,7 @@ export class Live {
     this.discovery = new DiscoveryServers(context, { list: () => this.processes(), save: (processes) => this.save(processes) });
     const terminals = new QTerminals(context);
     this.terminals = terminals;
-    this.runFileWith = (extra) => terminals.runFile(extra);
+    this.runFileWith = (extra, document) => terminals.runFile(extra, document);
     this.modes = new QueryModes(context);
     this.modes.setPager((label, offset, count) => this.pageHeld(label, offset, count));
     this.modes.setRunner((code, label) => this.runOnProcess(code, label));
@@ -614,16 +643,16 @@ export class Live {
       c(COMMANDS.refresh, () => this.processesView.refresh()),
       c(COMMANDS.insertLabel, () => this.insertLabel()),
       c(COMMANDS.queryLine, () => this.queryFrom("line")),
-      c(COMMANDS.querySelection, () => this.queryFrom("selection")),
-      c(COMMANDS.queryBlock, () => this.queryFrom("block")),
+      c(COMMANDS.querySelection, (uri?: unknown) => this.queryFrom("selection", undefined, uri)),
+      c(COMMANDS.queryBlock, (uri?: unknown) => this.queryFrom("block", undefined, uri)),
       c(COMMANDS.abort, () => this.abort()),
       c(COMMANDS.rerun, (entry?: HistoryEntry) => this.rerun(entry)),
       c(COMMANDS.clearHistory, () => this.clearHistory()),
-      c(COMMANDS.runInTerminal, () => terminals.runFile()),
+      c(COMMANDS.runInTerminal, (uri?: unknown) => terminals.runFile(undefined, clicked(uri)?.document)),
       c(COMMANDS.sendLine, () => terminals.send("line")),
       c(COMMANDS.sendSelection, () => terminals.send("selection")),
       c(COMMANDS.sendBlock, () => terminals.send("block")),
-      c(CONTROL_COMMANDS.queryFile, () => this.queryFrom("file")),
+      c(CONTROL_COMMANDS.queryFile, (uri?: unknown) => this.queryFrom("file", undefined, uri)),
       c(CONTROL_COMMANDS.startRepl, () => terminals.repl()),
       c(CONTROL_COMMANDS.copyQuery, (entry?: HistoryEntry) => this.copyQuery(entry)),
       c(CONTROL_COMMANDS.revealProcess, () => this.revealProcess()),
@@ -631,7 +660,7 @@ export class Live {
       c(TUNNEL_COMMANDS.set, (row?: ProcessArg, destination?: string | null) => this.setSshTunnel(row, destination)),
       c(SHARED_COMMANDS.add, (row?: ProcessArg) => this.addToShared(row)),
       c(GATEWAY_COMMANDS.set, (row?: ProcessArg, types?: string | string[] | null) => this.setGateway(row, types)),
-      c(GATEWAY_COMMANDS.queryWith, (types?: string | string[]) => this.queryGatewayWith(types)),
+      c(GATEWAY_COMMANDS.queryWith, (types?: unknown) => this.queryGatewayWith(givenServerTypes(types))),
       c(HISTORY_COMMANDS.filter, (filter?: HistoryFilter) => this.filterHistory(filter)),
       c(HISTORY_COMMANDS.clearFilter, () => this.setHistoryFilter({})),
       c(HISTORY_COMMANDS.export, (file?: Uri) => this.exportHistory(file)),
@@ -662,9 +691,13 @@ export class Live {
         if (event.affectsConfiguration("q-lint.processes.shared")) {
           this.watchShared();
         }
-        // Turned off, a connection through a tunnel closes with its tunnel.
-        if (event.affectsConfiguration("q-lint.connection.sshTunnel") && !this.setting(readTunnel).enabled && this.active?.ssh !== undefined && this.connection !== undefined) {
-          void this.disconnect();
+        // Turned off, a connection through a tunnel closes with its tunnel,
+        // a stream's apart too (#1517).
+        if (event.affectsConfiguration("q-lint.connection.sshTunnel") && !this.setting(readTunnel).enabled) {
+          this.closeSeparate((p) => p.ssh !== undefined);
+          if (this.active?.ssh !== undefined && this.connection !== undefined) {
+            void this.disconnect();
+          }
         }
       }),
       this.changed.event((what) => {
@@ -687,11 +720,14 @@ export class Live {
           // A reconnect after an abort stops trying.
           this.reconnectStopped = true;
           void this.connection?.close();
+          this.closeTunnels();
+          globalThis.process.off("exit", this.closeTunnels);
           this.sharedWatcher?.dispose();
         },
       },
       workspace.onDidGrantWorkspaceTrust(() => void this.loadShared()),
     );
+    globalThis.process.on("exit", this.closeTunnels);
     this.showStatus();
     this.status.show();
     this.watchShared();
@@ -717,6 +753,7 @@ export class Live {
       if (had) {
         this.processesView.refresh();
       }
+      this.closeSeparate((p) => p.server === SHARED_SOURCE);
       if (this.active?.server === SHARED_SOURCE && this.connection !== undefined) {
         void this.disconnect();
       }
@@ -742,11 +779,36 @@ export class Live {
       void window.showInformationMessage(plainMessage(`q-lint: open a folder first: the shared process list is its ${SHARED_FILE}.`));
       return;
     }
-    const process = await this.chosen(row, "Share which q process with the repository?");
-    if (process === undefined) {
+    const chosen = await this.chosen(row, "Share which q process with the repository?");
+    if (chosen === undefined) {
       return;
     }
+    // What runs or reaches somewhere at connect can hold a secret - a
+    // password in a connect script, a launch's environment - and the file
+    // is committed: it is shown and asked about first (#1528).
+    let process = chosen;
+    const extras = onConnectBrought([], [chosen])[0]?.what ?? [];
+    if (extras.length > 0) {
+      const all = "Share All";
+      const without = "Share Without Them";
+      const { init, initFile, credentialCommand, launch, ssh } = chosen;
+      const answer = await window.showWarningMessage(
+        plainMessage(`${chosen.label} has a ${extras.join(", ")}. ${SHARED_FILE} is committed with the code: everyone who clones it reads what is written there, as shown below. Share them too?`),
+        { modal: true, detail: JSON.stringify({ init, initFile, credentialCommand, launch, ssh }, null, 2) },
+        all,
+        without,
+      );
+      if (answer === undefined) {
+        return;
+      }
+      process = answer === all ? chosen : onConnectOf(chosen, undefined);
+    }
     const file = Uri.joinPath(folder.uri, SHARED_FILE);
+    // Written under unsaved edits, the next save conflicts (#1531).
+    if (unsavedIn(file, workspace.textDocuments ?? [])) {
+      void window.showWarningMessage(plainMessage(`q-lint: ${SHARED_FILE} has unsaved changes; save it, then share ${process.label} again. Nothing was written.`));
+      return;
+    }
     let text: string | undefined;
     try {
       text = Buffer.from(await workspace.fs.readFile(file)).toString("utf8");
@@ -1301,7 +1363,9 @@ export class Live {
     if (sure !== yes) {
       return;
     }
-    if (this.activeLabel() === process.label && this.active?.server === undefined) {
+    // Or being connected to: it would become the active one once deleted.
+    const connecting = this.connecting !== undefined && this.connectingTo === passwordKey(process);
+    if ((this.activeLabel() === process.label && this.active?.server === undefined) || connecting) {
       await this.disconnect();
     }
     await this.context.secrets.delete(passwordKey(process));
@@ -1527,10 +1591,10 @@ export class Live {
         if (files === undefined || files.length === 0) {
           return;
         }
-        // Inside the workspace folder it is kept relative, so the list
-        // reads the same on a colleague's machine.
-        const relative = folder === undefined ? undefined : path.relative(folder.fsPath, files[0].fsPath);
-        chosen = { kind: "file", file: relative !== undefined && relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative) ? relative : files[0].fsPath };
+        // Kept whole: a saved process is every window's, and a path
+        // relative to this folder read another workspace's file of that
+        // name when connected from there (#1527).
+        chosen = { kind: "file", file: files[0].fsPath };
       }
     }
     if (chosen !== undefined && isProduction(process)) {
@@ -1582,6 +1646,12 @@ export class Live {
     if (script.kind === "code") {
       code = script.code;
     } else {
+      // A relative file is the opened folder's: in one not trusted, that is
+      // the repository's q code, run on the process (#1527).
+      if (workspace.isTrusted === false && scriptPath(script.file, os.homedir(), undefined) === undefined) {
+        failed(`${script.file} is relative to the workspace folder, which is not trusted: it was not run. Name the file by its full path.`);
+        return;
+      }
       const file = scriptPath(script.file, os.homedir(), workspace.workspaceFolders?.[0]?.uri.fsPath);
       if (file === undefined) {
         failed(`${script.file} is relative, and there is no workspace folder to read it from.`);
@@ -1612,11 +1682,20 @@ export class Live {
     const configuration = workspace.getConfiguration("q-lint");
     const { consoleSize } = readLive((key, fallback) => configuration.get(key, fallback));
     const started = Date.now();
+    // A script that blocks holds the connect, and every one after it: it
+    // times out as a query does, and a disconnect closes it (#1505).
+    const controls = this.controls.settings();
+    const timeout = effectiveTimeout(process, controls.timeout, this.setting(readAdmin).processTimeout);
+    let timedOut = false;
+    const disarm = armTimeout(timeout, () => {
+      timedOut = true;
+      connection.abort();
+    });
     try {
       const answer = await window.withProgress(
         { location: { viewId: VIEWS.processes }, title: `Running the connect script of ${process.label}` },
         () =>
-          this.controls.settings().unwrapped
+          controls.unwrapped
             ? runUnwrapped(connection, cut, { size: consoleSize, limit: 0, unlimited: false, grid: false })
             : connection.query(cut, consoleSize),
       );
@@ -1629,7 +1708,11 @@ export class Live {
       if (unattended && error instanceof Error && error.message.startsWith(`the connect script of ${process.label} failed`)) {
         throw error;
       }
-      failed(error instanceof Error ? error.message : String(error));
+      if (!stopped()) {
+        failed(timedOut ? timedOutError(timeout) : error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      disarm();
     }
   }
 
@@ -1661,10 +1744,12 @@ export class Live {
       // Kept, so deleting the server forgets it even after a reload.
       await this.discovery.passwordGiven(process.server!, process.label.slice(process.server!.length + 1));
     }
-    const connected = await this.open(process);
-    // A discovered process cannot be edited, so a password that did not
-    // connect is forgotten: the next connect asks for it again.
-    if (!connected && !saved && process.user && !commanded) {
+    const outcome: { refused?: boolean } = {};
+    const connected = await this.open(process, false, false, this.disconnects, outcome);
+    // A discovered process cannot be edited, so a password that was refused
+    // is forgotten: the next connect asks for it again. One that met a host
+    // down or a timeout is kept (#1511).
+    if (!connected && outcome.refused === true && !saved && process.user && !commanded) {
       await this.context.secrets.delete(passwordKey(process));
       await this.discovery.passwordGiven(process.server!, process.label.slice(process.server!.length + 1), false);
     }
@@ -1676,7 +1761,9 @@ export class Live {
   /// the handshake is still running the query it was left with, and is
   /// tried again until it does, or until the user disconnects or connects
   /// elsewhere.
-  private open(process: Process, untilFree = false, quiet = false, disconnects = this.disconnects): Promise<boolean> {
+  /// `outcome.refused` is set when the process closed before the handshake:
+  /// how it refuses a user or password.
+  private open(process: Process, untilFree = false, quiet = false, disconnects = this.disconnects, outcome: { refused?: boolean } = {}): Promise<boolean> {
     if (this.connecting !== undefined) {
       // A connect to another process - a reconnect after an abort, waiting
       // for that process to be free - is stopped and this one follows: its
@@ -1685,9 +1772,13 @@ export class Live {
         return this.connecting;
       }
       this.reconnectStopped = true;
-      return this.connecting.then(() => this.open(process, false, false, disconnects));
+      this.untilFree?.abort();
+      return this.connecting.then(() => this.open(process, false, false, disconnects, outcome));
     }
     this.reconnectStopped = false;
+    // A wait for a busy process is cut short, not run out, when it stops (#1510).
+    const free = untilFree ? new AbortController() : undefined;
+    this.untilFree = free;
     this.connectingTo = passwordKey(process);
     this.connecting = (async () => {
       if (this.connection !== undefined) {
@@ -1705,7 +1796,7 @@ export class Live {
             const target = await this.targetFor(process);
             for (;;) {
               try {
-                return await this.dial(process, target);
+                return await this.dial(process, target, free?.signal);
               } catch (error) {
                 const busy = error instanceof Error && error.message.startsWith("no answer from ");
                 if (!untilFree || !busy || this.reconnectStopped) {
@@ -1723,8 +1814,13 @@ export class Live {
           await connection.close();
           return false;
         }
-        await this.runConnectScript(connection, process, stopped);
-        if (stopped()) {
+        this.opening = connection;
+        try {
+          await this.runConnectScript(connection, process, stopped);
+        } finally {
+          this.opening = undefined;
+        }
+        if (stopped() || !connection.isOpen) {
           await connection.close();
           return false;
         }
@@ -1755,6 +1851,7 @@ export class Live {
         this.changed.fire("connected");
         return true;
       } catch (failure) {
+        outcome.refused = failure instanceof ClosedBeforeHandshake || failure instanceof TunnelHandshakeError;
         if ((untilFree && this.reconnectStopped) || quiet || disconnects !== this.disconnects) {
           return false;
         }
@@ -1788,6 +1885,8 @@ export class Live {
     }
     // Cancelled while ssh opens the forward: stop waiting for it too (#1459).
     const tunnel = await SshTunnel.open({ destination: process.ssh, host: target.host, port: target.port, signal });
+    this.tunnels.add(tunnel);
+    tunnel.whenClosed(() => this.tunnels.delete(tunnel));
     try {
       const connection = await QConnection.open(
         {
@@ -1811,7 +1910,7 @@ export class Live {
       if (error instanceof ClosedBeforeHandshake) {
         // What ssh says of a forward that failed can come just after the close.
         await new Promise((resolve) => setTimeout(resolve, 100));
-        failure = new TunnelConnectError(
+        failure = new TunnelHandshakeError(
           `the connection through the SSH tunnel via ${process.ssh} closed before the handshake: no q process answers at ${where} as ${process.ssh} reaches it, or the user or password was refused`,
           tunnel.said,
         );
@@ -1827,8 +1926,29 @@ export class Live {
   /// its stored password and through its tunnel; the caller closes it. No
   /// timeout: a stream's subscription holds it open. A call that should end
   /// goes through `callSeparate`.
+  /// Its connect script runs first, as on every connect (#1509).
   async openSeparate(process: Process): Promise<QConnection> {
-    return this.dial(process, await this.targetFor(process));
+    const connection = await this.dial(process, await this.targetFor(process));
+    try {
+      await this.runConnectScript(connection, process);
+    } catch (error) {
+      connection.abort();
+      throw error;
+    }
+    const kept = { connection, process };
+    this.separate.add(kept);
+    connection.whenClosed(() => this.separate.delete(kept));
+    return connection;
+  }
+
+  /// Close the connections apart to the processes `which` picks: a setting
+  /// that reached them was turned off.
+  private closeSeparate(which: (process: Process) => boolean): void {
+    for (const { connection, process } of [...this.separate]) {
+      if (which(process)) {
+        connection.abort();
+      }
+    }
   }
 
   /// `use` over a connection of its own to `process` (`openSeparate`),
@@ -1866,7 +1986,7 @@ export class Live {
       return targetOf(process, password);
     }
     const output = await runCredentialCommand(process.credentialCommand, {
-      cwd: workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir(),
+      cwd: credentialCwd(workspace.isTrusted !== false, workspace.workspaceFolders?.[0]?.uri.fsPath, os.homedir()),
       env: credentialEnv(process),
     });
     const given = parseCredentials(output, process.user);
@@ -2014,6 +2134,8 @@ export class Live {
 
   private async disconnect(): Promise<void> {
     this.disconnects++;
+    // One running its connect script, which may never answer (#1505).
+    this.opening?.abort();
     if (this.reconnecting !== undefined && this.connection === undefined) {
       // A try under way is closed once it opens.
       this.reconnectStopped = true;
@@ -2026,6 +2148,7 @@ export class Live {
       return;
     }
     this.reconnectStopped = true;
+    this.untilFree?.abort();
     const connection = this.connection;
     this.connection = undefined;
     // A query running on it was stopped by the user, as Abort stops one.
@@ -2039,8 +2162,8 @@ export class Live {
 
   // --- queries
 
-  private async queryFrom(from: From, serverTypes?: string[]): Promise<void> {
-    const editor = window.activeTextEditor;
+  private async queryFrom(from: From, serverTypes?: string[], uri?: unknown): Promise<void> {
+    const editor = clicked(uri);
     if (editor === undefined) {
       noEditor();
       return;

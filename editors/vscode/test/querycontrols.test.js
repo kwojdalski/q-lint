@@ -507,3 +507,15 @@ test("an unwrapped dictionary with a table on either side counts its header line
   assert.strictEqual(byTable.length, 10);
   assert.strictEqual(byTable[8].trimEnd(), "6| 6");
 });
+
+// The untitled editor a saved file came from, by its text (#1529).
+test("a file saved from a bound untitled editor is matched by its text, recently, and only one way", () => {
+  const { savedFrom } = require("../out/querycontrols.js");
+  const now = 100000;
+  assert.strictEqual(savedFrom("a:1", [{ label: "prod", text: "a:1", at: now - 10 }], now), "prod");
+  assert.strictEqual(savedFrom("a:1", [{ label: "prod", text: "a:1", at: now - 60000 }], now), undefined);
+  assert.strictEqual(savedFrom("a:2", [{ label: "prod", text: "a:1", at: now }], now), undefined);
+  assert.strictEqual(savedFrom("  ", [{ label: "prod", text: "  ", at: now }], now), undefined);
+  assert.strictEqual(savedFrom("a:1", [{ label: "prod", text: "a:1", at: now }, { label: "dev", text: "a:1", at: now }], now), undefined);
+  assert.strictEqual(savedFrom("a:1", [{ label: "prod", text: "a:1", at: now }, { label: "prod", text: "a:1", at: now }], now), "prod");
+});
