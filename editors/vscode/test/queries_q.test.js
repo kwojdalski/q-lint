@@ -161,6 +161,37 @@ test("Compare Query lines up two real q processes' keyed tables by key (#907)", 
   assert.deepStrictEqual([across.state().comparison.left.text, across.state().comparison.right.text, across.state().comparison.same], ["6", "16", false]);
 });
 
+test("Compare Query compares two real q processes' values, not the digits they write, and their types (#1963)", { skip }, async (t) => {
+  const fx = (px, n, far, more) => `fx:([] sym:\`eurusd\`gbpusd; px:${px} 1.5; n:${n}; l:(1 ${far};\`x))\n${more}`;
+  const a = await startQ(t, fx("1.23456781", "1 2", "100.00000001", ""));
+  const b = await startQ(t, fx("1.23456789", "1 2f", "100.00000002", ""));
+  // As a, writing ten digits where a writes seven.
+  const wide = await startQ(t, fx("1.23456781", "1 2", "100.00000001", "\\P 10\n"));
+  const { across } = await setUp(t, [proc("a", a.port), proc("b", b.port), proc("wide", wide.port)]);
+  const compare = async (code, left, right) => {
+    await stub.commands.get("q-lint.compareQuery")(code, left, right);
+    return across.state().comparison;
+  };
+  // Both write 1.234568: the cells differ, and are shown in full.
+  const px = await compare("select sym, px from fx", "a", "b");
+  assert.deepStrictEqual([px.same, px.differing], [false, 1]);
+  assert.deepStrictEqual(px.rows.map((r) => [r.left.join(" "), r.right.join(" "), r.differs.map(Number).join("")]), [["eurusd 1.23456781f", "eurusd 1.23456789f", "01"], ["gbpusd 1.5", "gbpusd 1.5", "00"]]);
+  // A long and a float of the same numbers.
+  const n = await compare("select n from fx", "a", "b");
+  assert.deepStrictEqual([n.same, n.differing, n.retyped], [false, 0, [{ column: "n", left: "long (j)", right: "float (f)" }]]);
+  // A float inside a general list's item.
+  const l = await compare("select l from fx", "a", "b");
+  assert.deepStrictEqual([l.same, l.differing, l.rows[0].left, l.rows[0].right], [false, 1, ["1 100.00000001"], ["1 100.00000002"]]);
+  // The same values written to different digits are the same.
+  const same = await compare("fx", "a", "wide");
+  assert.deepStrictEqual([same.rows[0].left[1], same.rows[0].right[1], same.same, same.differing], ["1.234568", "1.23456781", true, 0]);
+  // An atom is its console text: the same to the digits written, and said so; in a list it is its value.
+  const atom = await compare("first exec px from fx", "a", "b");
+  assert.deepStrictEqual([atom.left.text, atom.right.text, atom.same, atom.digits], ["1.234568", "1.234568", true, true]);
+  assert.strictEqual((await compare("enlist first exec px from fx", "a", "b")).same, false);
+  assert.deepStrictEqual([(await compare("count fx", "a", "b")).same, across.state().comparison.digits], [true, false]);
+});
+
 test("a saved query runs on a real q process, its placeholder asked for (#912)", { skip }, async (t) => {
   const q = await startQ(t, "trade:([] sym:`a`b`a; px:1 2 3f)\n");
   const { live, saved, editor, last } = await setUp(t, [proc("rdb", q.port)]);

@@ -5,13 +5,19 @@
 // Two tables are lined up as Compare with Previous Run lines up two runs
 // (`resultdiff.ts`): by their key when both are keyed by the same columns,
 // and otherwise by their place. Columns are matched by name, the first
-// table's order first. A cell is compared by the text the grid shows, so a
-// float compares to `q-lint.query.gridDecimals`. Anything else - a value
-// that is not tabular, an error, a process not reached - is compared as
-// the text each side gave. Only what came back is compared: when a side
-// held fewer rows than its result has, or its text was cut at the console
-// size, the answers are never called the same (#1614).
-import { toGrid, type Grid } from "./grid";
+// table's order first. A cell is compared by its value where `GRID` sent
+// one - a number, a temporal, a char, the floats in a general list's item -
+// and by q's text of it where that is the whole value; the text the grid
+// shows, floats to `q-lint.query.gridDecimals`, is only what is drawn, and
+// two columns of one name are the same only if their types are (#1963).
+// Anything else - a value that is not tabular, an error, a process not
+// reached - is compared as the text each side gave, which holds a float
+// only to its process's `\P`: `digits` says so. Only what came back is
+// compared: when a side held fewer rows than its result has, or its text
+// was cut at the console size, the answers are never called the same
+// (#1614), nor when a cell's text was cut at 200 characters.
+import { toGrid, typeName, type Grid, type GridPayload } from "./grid";
+import { atomLiteral, rawColumn } from "./qliteral";
 import type { Outcome } from "./tagquery";
 
 export const COMPARE = {
@@ -66,6 +72,15 @@ export interface Comparison {
   differing: number;
   onlyLeft: number;
   onlyRight: number;
+  /// The columns both tables have whose type is not the same, with each
+  /// side's: a float 1 and a long 1 are not the same answer.
+  retyped: { column: string; left: string; right: string }[];
+  /// Cells that are the same as far as their text goes, which was cut at
+  /// 200 characters: the rest of each was not compared.
+  cut: number;
+  /// Whether the answers are text that holds a float only to the digits
+  /// its process writes, so that `same` is the same to those digits.
+  digits: boolean;
   /// Whether the two answers are the same.
   same: boolean;
   /// Whether either side came back cut - fewer rows than its result has,
@@ -90,24 +105,60 @@ function side(outcome: Outcome): { side: Side } {
   return { side: { process: outcome.process, kind: "grid", total: answer.grid.count } };
 }
 
-/// A row's key: its key columns' text, joined by a character no cell shows.
-const keyOf = (grid: Grid, keys: number, row: number): string => grid.cells.slice(0, keys).map((c) => c[row]).join("\u0000");
+/// The types whose console text is the whole value: every atom but a
+/// float, a real and a datetime, a string, and a function.
+const exactText = (type: number): boolean => type === 10 || type >= 100 || (type < 0 && ![-8, -9, -15].includes(type));
+
+/// Whether two values `GRID` sent are the same: a long by its digits,
+/// however it was decoded, and a general list's item part by part.
+function sameValue(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, i) => sameValue(x, b[i]));
+  }
+  return a === null || b === null ? a === b : String(a) === String(b);
+}
+
+/// One side's table: what the grid shows of it, and what `GRID` sent.
+interface Held {
+  grid: Grid;
+  payload: GridPayload;
+  raw: (unknown[] | undefined)[];
+}
+
+const held = (payload: GridPayload, decimals: number): Held => ({ grid: toGrid(payload, decimals), payload, raw: payload.names.map((_, i) => rawColumn(payload, i)) });
+
+/// A row's key: its key columns' values, or their text where none was
+/// sent, joined by a character no cell shows.
+const keyOf = (side: Held, keys: number, row: number): string =>
+  side.grid.cells
+    .slice(0, keys)
+    .map((c, i) => {
+      const value = side.payload.types[i] === 0 ? undefined : side.raw[i]?.[row];
+      return value === undefined || value === null ? c[row] : String(value);
+    })
+    .join("\u0000");
 
 /// `left` and `right` lined up, floats to `decimals` places (`-1`: as the
 /// process wrote them).
 export function compareOutcomes(left: Outcome, right: Outcome, decimals: number): Comparison {
   const a = side(left);
   const b = side(right);
-  const ga = "answer" in left && left.answer.ok && left.answer.grid !== undefined ? toGrid(left.answer.grid, decimals) : undefined;
-  const gb = "answer" in right && right.answer.ok && right.answer.grid !== undefined ? toGrid(right.answer.grid, decimals) : undefined;
-  if (ga === undefined || gb === undefined) {
+  const ha = "answer" in left && left.answer.ok && left.answer.grid !== undefined ? held(left.answer.grid, decimals) : undefined;
+  const hb = "answer" in right && right.answer.ok && right.answer.grid !== undefined ? held(right.answer.grid, decimals) : undefined;
+  if (ha === undefined || hb === undefined) {
     // Not two tables: the text each gave, a table as the console writes it.
     const text = (o: Outcome, s: Side): string => s.text ?? ("answer" in o && o.answer.ok ? o.answer.text.join("\n") : "");
     const sa = { ...a.side, text: text(left, a.side) };
     const sb = { ...b.side, text: text(right, b.side) };
     const partial = (sa.kind === "text" && textCut(sa.text)) || (sb.kind === "text" && textCut(sb.text));
-    return { left: sa, right: sb, columns: [], inLeft: [], inRight: [], matchedBy: "place", rows: [], lined: 0, differing: 0, onlyLeft: 0, onlyRight: 0, same: !partial && sa.kind === sb.kind && sa.text === sb.text, partial };
+    const same = !partial && sa.kind === sb.kind && sa.text === sb.text;
+    // Two values' text, not two errors': the same to the digits written,
+    // unless the text of their type is the whole value.
+    const digits = same && sa.kind === "text" && [left, right].some((o) => "answer" in o && o.answer.ok && !exactText(o.answer.type));
+    return { left: sa, right: sb, columns: [], inLeft: [], inRight: [], matchedBy: "place", rows: [], lined: 0, differing: 0, onlyLeft: 0, onlyRight: 0, retyped: [], cut: 0, digits, same, partial };
   }
+  const ga = ha.grid;
+  const gb = hb.grid;
   const namesA = ga.columns.map((c) => c.name);
   const namesB = gb.columns.map((c) => c.name);
   const columns = [...namesA, ...namesB.filter((n) => !namesA.includes(n))];
@@ -123,7 +174,7 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number)
   if (byKey) {
     const waiting = new Map<string, number[]>();
     for (let r = 0; r < countB; r++) {
-      const k = keyOf(gb, keysB, r);
+      const k = keyOf(hb, keysB, r);
       const list = waiting.get(k);
       if (list === undefined) {
         waiting.set(k, [r]);
@@ -136,7 +187,7 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number)
     const taken = new Map<string, number>();
     const used = new Set<number>();
     for (let r = 0; r < countA; r++) {
-      const k = keyOf(ga, keysA, r);
+      const k = keyOf(ha, keysA, r);
       const next = taken.get(k) ?? 0;
       const match = waiting.get(k)?.[next];
       if (match !== undefined) {
@@ -157,20 +208,52 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number)
   }
   const cells = (grid: Grid, index: number[], row: number | undefined): string[] | undefined =>
     row === undefined ? undefined : index.map((i) => (i < 0 ? "" : (grid.cells[i][row] ?? "")));
+  // Each column's type on either side, by its name: an enumeration's
+  // number is its process's own.
+  const typeA = indexA.map((i) => (i < 0 ? "" : typeName(ha.payload.types[i])));
+  const typeB = indexB.map((i) => (i < 0 ? "" : typeName(hb.payload.types[i])));
+  const retyped = columns.flatMap((column, i) => (indexA[i] >= 0 && indexB[i] >= 0 && typeA[i] !== typeB[i] ? [{ column, left: typeA[i], right: typeB[i] }] : []));
+  // q's text of a cell and the value sent for it, if one was.
+  const sent = (side: Held, i: number, row: number): [string, unknown] => [side.payload.cells[i][row] ?? "", side.raw[i]?.[row]];
+  // Whether a cell both sides have differs: by its value where both sent
+  // one - `false` is a general list's item whose text is all of it - and
+  // by q's text otherwise. Two types of one text and number, a minute and
+  // a second, are two values.
+  const cellDiffers = (i: number, ra: number, rb: number): boolean => {
+    const [ta, va] = sent(ha, indexA[i], ra);
+    const [tb, vb] = sent(hb, indexB[i], rb);
+    if (va === undefined || vb === undefined) {
+      return ta !== tb;
+    }
+    return !sameValue(va, vb) || ((va === false || typeA[i] !== typeB[i]) && ta !== tb);
+  };
   let differing = 0;
   let onlyLeft = 0;
   let onlyRight = 0;
+  let cut = 0;
   const rows: ComparedRow[] = [];
   for (const [ra, rb] of pairs) {
     const l = cells(ga, indexA, ra);
     const r = cells(gb, indexB, rb);
-    const differs = columns.map((_, i) => l === undefined || r === undefined || indexA[i] < 0 || indexB[i] < 0 || l[i] !== r[i]);
-    if (l === undefined) {
+    const differs = columns.map((_, i) => ra === undefined || rb === undefined || indexA[i] < 0 || indexB[i] < 0 || cellDiffers(i, ra, rb));
+    if (l === undefined || ra === undefined) {
       onlyRight++;
-    } else if (r === undefined) {
+    } else if (r === undefined || rb === undefined) {
       onlyLeft++;
     } else {
       differing += differs.filter(Boolean).length;
+      columns.forEach((_, i) => {
+        if (indexA[i] < 0 || indexB[i] < 0) {
+          return;
+        }
+        if (differs[i] && l[i] === r[i]) {
+          // The difference is past what the grid shows: each in full.
+          l[i] = atomLiteral(ha.payload.types[indexA[i]], ...sent(ha, indexA[i], ra)).literal;
+          r[i] = atomLiteral(hb.payload.types[indexB[i]], ...sent(hb, indexB[i], rb)).literal;
+        } else if (!differs[i] && ha.payload.types[indexA[i]] === 0 && l[i].endsWith("..")) {
+          cut++;
+        }
+      });
     }
     if (rows.length < COMPARE_ROWS) {
       rows.push({ ...(l !== undefined ? { left: l } : {}), ...(r !== undefined ? { right: r } : {}), differs });
@@ -190,7 +273,10 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number)
     differing,
     onlyLeft,
     onlyRight,
-    same: !partial && sameColumns && differing === 0 && onlyLeft === 0 && onlyRight === 0 && ga.total === gb.total,
+    retyped,
+    cut,
+    digits: false,
+    same: !partial && sameColumns && retyped.length === 0 && cut === 0 && differing === 0 && onlyLeft === 0 && onlyRight === 0 && ga.total === gb.total,
     partial,
   };
 }

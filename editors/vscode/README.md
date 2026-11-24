@@ -916,12 +916,17 @@ columns, then the second's, each pair of rows on one line. Two tables are
 lined up as **Compare with Previous Run** lines up two runs: by their key
 when both are keyed by the same columns, otherwise by their place.
 Columns are matched by name (one only a side has is struck through on the
-other), and cells by the text the grid shows, so floats compare to
-`q-lint.query.gridDecimals`. A cell that differs is marked, a row only one
-side has is marked on that side and hatched on the other, and a line above
-says how many cells differ, how many rows only each side has, or that the
-answers are the same. Anything that is not two tables - an atom, a list, a
-q error, a process not reached - is shown as the two texts side by side.
+other), and cells by their values, not by the digits the grid shows: two
+floats that `q-lint.query.gridDecimals` or `\P` write alike still differ,
+and are then drawn in full, and a column that is a float on one side and a
+long on the other is named as such. A cell that differs is marked, a row
+only one side has is marked on that side and hatched on the other, and a
+line above says how many cells differ, how many rows only each side has,
+or that the answers are the same. Anything that is not two tables - an
+atom, a q error, a process not reached - is shown as the two texts side by
+side; a float atom's text holds only the digits its process writes, so the
+line then says the same to the digits shown (compare `enlist` of it for
+every digit).
 The first 5000 rows lined up are drawn; the counts are of all of them.
 Both runs land in Query History. `q-lint.query.compare.enable` off hides
 and refuses it.
