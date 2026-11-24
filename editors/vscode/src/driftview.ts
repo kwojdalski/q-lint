@@ -43,6 +43,7 @@ import {
   definitions,
   driftDocument,
   driftRows,
+  lastInFile,
   driftSummary,
   lastByName,
   namesList,
@@ -374,9 +375,11 @@ export class Drift implements TextDocumentContentProvider {
       void window.showInformationMessage("q-lint: no q file in the workspace defines a function.");
       return [];
     }
-    const rows = driftRows(read.defs, read.states);
+    // A row for the last definition of a name in each file (#1927).
+    const compared = lastInFile(read.defs);
+    const rows = driftRows(compared, read.states);
     const summary = driftSummary(rows, process.label);
-    const drifted = rows.map((row, i) => ({ row, uri: read.defs[i].uri })).filter(({ row }) => row.status !== "same");
+    const drifted = rows.map((row, i) => ({ row, uri: compared[i].uri })).filter(({ row }) => row.status !== "same");
     if (drifted.length === 0) {
       void window.showInformationMessage(plainMessage(`q-lint: ${summary}`));
       return rows;

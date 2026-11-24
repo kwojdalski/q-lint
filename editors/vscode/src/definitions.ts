@@ -219,12 +219,28 @@ export interface DriftRow {
   processText: string;
 }
 
-/// Each workspace definition against what the process holds.
+/// The definitions of `defs` that loading their file leaves: the last of
+/// each name in each file, in their order. The ones `driftRows` compares,
+/// in step with its rows.
+export function lastInFile<T extends { file: string; def: Definition }>(defs: T[]): T[] {
+  const last = new Map<string, T>();
+  for (const d of defs) {
+    last.set(`${d.def.name}\n${d.file}`, d);
+  }
+  return defs.filter((d) => last.get(`${d.def.name}\n${d.file}`) === d);
+}
+
+/// Each workspace definition against what the process holds: a name's
+/// last in a file, which is what loading the file leaves (#1927). The
+/// order the files load in is not known here, so a name several files
+/// define is the same when the process holds what any of them leaves.
 export function driftRows(defs: { file: string; def: Definition }[], states: Map<string, ProcessState>): DriftRow[] {
-  return defs.map(({ file, def }) => {
-    const held = states.get(def.name) ?? { state: "missing", text: "" };
-    const status: DriftStatus =
-      held.state !== "lambda" ? held.state : normalized(held.text) === normalized(def.text) ? "same" : "differs";
+  const left = lastInFile(defs);
+  const none: ProcessState = { state: "missing", text: "" };
+  const matched = new Set(left.filter(({ def }) => normalized((states.get(def.name) ?? none).text) === normalized(def.text)).map(({ def }) => def.name));
+  return left.map(({ file, def }) => {
+    const held = states.get(def.name) ?? none;
+    const status: DriftStatus = held.state !== "lambda" ? held.state : matched.has(def.name) ? "same" : "differs";
     return { name: def.name, file, line: def.line, status, text: def.text, processText: held.text };
   });
 }
