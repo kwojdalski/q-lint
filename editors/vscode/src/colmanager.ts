@@ -28,7 +28,7 @@
 // rename of its own, and rewriting the column would read all of it. Works on kdb+ (KDB-X) and PeachQ; held there by
 // dbtools_q.test.js.
 
-import { symbolLiteral } from "./qliteral";
+import { RESERVED, symbolLiteral } from "./qliteral";
 
 export type ColumnOp =
   | { op: "add"; column: string; value: string }
@@ -43,6 +43,17 @@ export const CAST_TYPES = "bxhijefcspmdznuvt";
 
 const NAME = /^[A-Za-z][A-Za-z0-9_]*$/;
 
+/// Why a new column cannot be named `name`; undefined when it can. A q
+/// keyword or builtin is a column no query can name (`select type from t`
+/// is 'rank), and `i` is hidden by q-sql's row index; undoing either means
+/// rewriting every partition again (#1960).
+function nameProblem(name: string): string | undefined {
+  if (!NAME.test(name)) return `${name || "an empty name"} is not a column name q can use`;
+  if (RESERVED.has(name)) return `${name} is a q keyword or builtin, which a query cannot name as a column`;
+  if (name === "i") return "i is the row index in a query, which would hide a column of that name";
+  return undefined;
+}
+
 /// Why `op` cannot be applied to a table of `columns` partitioned by
 /// `field` (empty for a splayed one); undefined when it can.
 export function opProblem(op: ColumnOp, columns: string[], field = ""): string | undefined {
@@ -56,14 +67,16 @@ export function opProblem(op: ColumnOp, columns: string[], field = ""): string |
     return `${field} is the partition field, which is not a column on disk`;
   }
   if (op.op === "add") {
-    if (!NAME.test(op.column)) return `${op.column || "an empty name"} is not a column name q can use`;
+    const bad = nameProblem(op.column);
+    if (bad !== undefined) return bad;
     if (has(op.column)) return `the table already has a column ${op.column}`;
     if (op.value.trim() === "" || /[\r\n]/.test(op.value)) return "the default is one q value on one line: 0n, 0, `, \"\" or 0Np";
     return undefined;
   }
   if (!has(op.column)) return `the table has no column ${op.column}`;
   if (op.op === "rename") {
-    if (!NAME.test(op.to)) return `${op.to || "an empty name"} is not a column name q can use`;
+    const bad = nameProblem(op.to);
+    if (bad !== undefined) return bad;
     if (has(op.to)) return `the table already has a column ${op.to}`;
     if (op.to === field) return `${op.to} is the partition field`;
   }

@@ -67,6 +67,19 @@ test("the column manager checks an op against the table and writes a script the 
   assert.match(opProblem({ op: "add", column: "px", value: "0n" }, cols, "date"), /already has a column px/);
   assert.match(opProblem({ op: "add", column: "1x", value: "0n" }, cols, "date"), /not a column name/);
   assert.match(opProblem({ op: "add", column: "x", value: "" }, cols, "date"), /one q value/);
+  // A keyword, a builtin or `i` as a new name is refused with why (#1960).
+  for (const name of ["type", "select", "count", "by", "xasc"]) {
+    assert.strictEqual(opProblem({ op: "add", column: name, value: "0n" }, cols, "date"), `${name} is a q keyword or builtin, which a query cannot name as a column`);
+    assert.strictEqual(opProblem({ op: "rename", column: "px", to: name }, cols, "date"), `${name} is a q keyword or builtin, which a query cannot name as a column`);
+  }
+  assert.match(opProblem({ op: "add", column: "i", value: "0n" }, cols, "date"), /^i is the row index in a query/);
+  assert.match(opProblem({ op: "rename", column: "px", to: "i" }, cols, ""), /^i is the row index in a query/);
+  assert.match(opProblem({ op: "rename", column: "px", to: "a b" }, cols, "date"), /not a column name/);
+  // Names that only start like one, and a column that has such a name already, are not.
+  assert.strictEqual(opProblem({ op: "add", column: "types", value: "0n" }, cols, "date"), undefined);
+  assert.strictEqual(opProblem({ op: "rename", column: "px", to: "ii" }, cols, "date"), undefined);
+  assert.strictEqual(opProblem({ op: "rename", column: "type", to: "kind" }, [...cols, "type"], "date"), undefined);
+  assert.strictEqual(opProblem({ op: "delete", column: "i" }, [...cols, "i"], "date"), undefined);
   assert.match(opProblem({ op: "delete", column: "date" }, cols, "date"), /partition field/);
   assert.match(opProblem({ op: "delete", column: "nope" }, cols, "date"), /no column nope/);
   assert.match(opProblem({ op: "rename", column: "px", to: "sym" }, cols, "date"), /already has a column sym/);
