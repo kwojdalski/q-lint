@@ -411,6 +411,58 @@ test("a cancelled k4unit run still runs the after rows of a file it set up (#109
   assert.ok(made[0].runs[0].events.some(([e, id]) => e === "skipped" && id === "file:///ws/k.csv#fail:bad"));
 });
 
+test("Stop while a test runs stops waiting for it, as Abort does: the test errors, the rest are skipped, nothing more is sent (#2102)", async () => {
+  stub.reset();
+  const made = fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  const csv = "action,ms,bytes,lang,code,repeat,minver,comment\nbefore,0,0,q,t:1,1,,\nrun,0,0,q,hang[],1,,\ntrue,0,0,q,t=1,1,,\nafter,0,0,q,t:0,1,,\n";
+  vscode.workspace.findFiles = async () => [vscode.Uri.file("/ws/k.csv")];
+  vscode.workspace.fs = { readFile: async () => Buffer.from(csv) };
+  // A process that never answers hang[]: only an abort ends the wait.
+  const live = fakeLive();
+  let fail;
+  live.aborts = 0;
+  live.abort = async () => {
+    live.aborts++;
+    fail?.(new Error("connection closed"));
+  };
+  const answer = live.runOnActive.bind(live);
+  live.runOnActive = (code, query) => {
+    if (code !== "hang[]") return answer(code, query);
+    live.sent.push({ statements: [code], mode: "run" });
+    return new Promise((_, reject) => (fail = reject));
+  };
+  const listeners = [];
+  const token = {
+    isCancellationRequested: false,
+    onCancellationRequested(f) {
+      listeners.push(f);
+      return { dispose: () => listeners.splice(listeners.indexOf(f), 1) };
+    },
+  };
+  const explorer = registerTestExplorer(stub.newContext(), live, () => undefined);
+  await explorer.discover();
+  const ran = made[0].profiles[0].handler(new vscode.TestRunRequest(undefined), token);
+  while (!live.sent.some((s) => s.statements[0] === "hang[]")) await new Promise((r) => setImmediate(r));
+  token.isCancellationRequested = true;
+  listeners.forEach((f) => f());
+  const ended = await Promise.race([ran.then(() => true), new Promise((r) => setTimeout(() => r(false), 2000))]);
+  assert.strictEqual(ended, true, "the run ends once stopped");
+  assert.strictEqual(live.aborts, 1);
+  assert.deepStrictEqual(
+    live.sent.map((s) => s.statements.join(";")),
+    ["t:1", "hang[]"],
+  );
+  const states = explorer.results().map((r) => [r.id.split("#")[1], r.state]);
+  assert.deepStrictEqual(states, [
+    ["run:hang[]", "errored"],
+    ["true:t=1", "skipped"],
+  ]);
+  assert.match(explorer.results()[0].message, /^Stopped while it ran/);
+  assert.deepStrictEqual(listeners, [], "the run stops listening once it ends");
+  assert.ok(made[0].runs[0].events.some(([e]) => e === "end"));
+});
+
 test("a test run on a process the read-only guard guards goes through the guard: declined, the test's definition is not sent (#918)", async (t) => {
   const net = require("node:net");
   const { serialize, deserialize } = require("node-q/lib/c.js");
