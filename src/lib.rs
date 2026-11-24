@@ -3467,6 +3467,63 @@ fn edit_distance(a: &str, b: &str) -> usize {
     }
     row[b.len()]
 }
+/// Every expression q reads on its own: a statement, and each
+/// `;`-separated slot of a bracket, parenthesis or lambda, at every depth. A
+/// top-level statement ends at a newline the next line does not continue by
+/// indenting; inside a bracket a newline is nothing to q. Each comes as its
+/// own text - a nested group kept as its two brackets and nothing between,
+/// as `flat_filter` would blank it - beside the offset into `code` of each
+/// byte, and where it starts. One pass, so a deep nest costs no more than a
+/// flat file.
+fn bare_segments(code: &str, source: &str) -> Vec<(usize, String, Vec<usize>)> {
+    let b = code.as_bytes();
+    let src = source.as_bytes();
+    let mut out = vec![];
+    // Each open group: where it starts, its own bytes and their offsets.
+    let mut frames: Vec<(usize, Vec<u8>, Vec<usize>)> = vec![(0, vec![], vec![])];
+    let emit = |frame: (usize, Vec<u8>, Vec<usize>), out: &mut Vec<_>| {
+        if let Ok(text) = String::from_utf8(frame.1)
+            && !text.trim().is_empty()
+        {
+            out.push((frame.0, text, frame.2));
+        }
+    };
+    for (i, &c) in b.iter().enumerate() {
+        match c {
+            b'(' | b'[' | b'{' => {
+                let top = frames.last_mut().unwrap();
+                top.1.push(c);
+                top.2.push(i);
+                frames.push((i + 1, vec![], vec![]));
+            }
+            b')' | b']' | b'}' if frames.len() > 1 => {
+                emit(frames.pop().unwrap(), &mut out);
+                let top = frames.last_mut().unwrap();
+                top.1.push(c);
+                top.2.push(i);
+            }
+            b';' => {
+                let done = std::mem::replace(frames.last_mut().unwrap(), (i + 1, vec![], vec![]));
+                emit(done, &mut out);
+            }
+            b'\n' if frames.len() == 1 && !matches!(src.get(i + 1), Some(b' ' | b'\t')) => {
+                emit(
+                    std::mem::replace(&mut frames[0], (i + 1, vec![], vec![])),
+                    &mut out,
+                );
+            }
+            _ => {
+                let top = frames.last_mut().unwrap();
+                top.1.push(c);
+                top.2.push(i);
+            }
+        }
+    }
+    for frame in frames {
+        emit(frame, &mut out);
+    }
+    out
+}
 /// QB006's logic: the words only. `&` and `|` read the same way, but they
 /// are min and max as often as and and or, and there the right-to-left
 /// reading is the point: `n>=4|.00002*count text`, `0<x&y`.
@@ -3477,6 +3534,18 @@ static LOGIC: LazyLock<regex::Regex> =
 static COMPARISON: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(r"[<>=~]|\b(?:in|within|like)(?:[^A-Za-z0-9_.\[]|$)").unwrap()
 });
+/// Whether a comparison sits left of an `and`/`or` in `clause`, one bracket
+/// depth flattened: QB006's trap. A symbol is no word - `` `in`or `` names
+/// two symbols - and an iterated `and/:\:` or `or'` is a derived function
+/// someone applied on purpose, so neither counts.
+fn comparison_swallowed(clause: &str) -> bool {
+    let clause =
+        re!(r"`[\w.:/]*").replace_all(clause, |m: &regex::Captures| " ".repeat(m[0].len()));
+    LOGIC
+        .find_iter(&clause)
+        .find(|logic| !clause[logic.end()..].starts_with(['\'', '/', '\\']))
+        .is_some_and(|logic| COMPARISON.is_match(&clause[..logic.start()]))
+}
 /// The comparisons in a where phrase that an `and`/`or` to their right
 /// swallows, as byte ranges into `flat` - a phrase `flat_filter` has
 /// flattened. Each is an operand left of an `and`/`or` in its clause; q reads
@@ -8651,11 +8720,7 @@ fn lint_rules(
         if parts.len() < 2 || (m.as_str() == "$[" && parts.len() < 3) {
             continue;
         }
-        let condition = flat_filter(parts[0]);
-        if LOGIC
-            .find(&condition)
-            .is_some_and(|logic| COMPARISON.is_match(&condition[..logic.start()]))
-        {
+        if comparison_swallowed(&flat_filter(parts[0])) {
             add(
                 m.start(),
                 "QB006",
@@ -8663,6 +8728,40 @@ fn lint_rules(
                  it reads `a=1 and b=0` as `a=(1 and b=0)`, not `(a=1) and b=0`"
                     .into(),
             );
+        }
+    }
+    // QB006 everywhere else: an assigned, returned or bracketed boolean
+    // reads the same way. q 5: `{[a;b] ok:a>0 and b>0; ok}[1;-1]` is 1b,
+    // since it reads `a>(0 and b>0)` (#2092). A condition slot and a where
+    // phrase are reported above and below, so they are left to those.
+    let conditions: std::collections::HashSet<usize> = re!(r"(?:\b(?:if|while)|\$)\[")
+        .find_iter(code)
+        .filter(|m| m.as_str() == "$[" || boundary(code, m.start()))
+        .map(|m| m.end())
+        .collect();
+    for (start, mut flat, at) in bare_segments(code, source) {
+        if conditions.contains(&start) || flat.trim_start().starts_with('\\') {
+            continue;
+        }
+        if let Some(w) = re!(r"\bwhere\b").find(&flat) {
+            flat.truncate(w.start());
+        }
+        let mut clause_start = 0;
+        for clause in flat.split(',') {
+            if comparison_swallowed(clause) {
+                // At the expression, past a lambda's signature `[]`.
+                let body = clause.trim_start();
+                let body = body.strip_prefix("[]").unwrap_or(body).trim_start();
+                add(
+                    at[clause_start + clause.len() - body.len()],
+                    "QB006",
+                    "Comparison left of and/or without parentheses: q evaluates right to left, \
+                     so it reads `a=1 and b=0` as `a=(1 and b=0)`, not `(a=1) and b=0`"
+                        .into(),
+                );
+                break;
+            }
+            clause_start += clause.len() + 1;
         }
     }
     // `if`, `while` and `do` are statements: each returns `::`, so
@@ -9500,11 +9599,7 @@ fn lint_rules(
                 // next are not the trap - TorQ's torq.q pairs them that way.
                 // Parenthesised groups are blank in `phrase`, so a comma
                 // left in it is a top-level one.
-                if phrase.split(',').any(|clause| {
-                    LOGIC
-                        .find(clause)
-                        .is_some_and(|logic| COMPARISON.is_match(&clause[..logic.start()]))
-                }) {
+                if phrase.split(',').any(comparison_swallowed) {
                     // Quote the reader's own clause where it is short enough
                     // to read: `a=1 and b=3` reads as `a=(1 and b=3)`.
                     let raw_phrase = &source[start + w.end()..];
