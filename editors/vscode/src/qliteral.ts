@@ -285,8 +285,9 @@ function floatText(x: unknown, real: boolean): string {
 
 /// The literal of a general list's item that `GRID` sent with its floats
 /// and reals: `("f";x)` or `("e";x)` for one, `("F";v)` or `("E";v)` for a
-/// list of them (a real as its float), and `("l";v)` for a general list,
-/// each item its own such pair or, holding none, its `-3!` text. Undefined
+/// list of them (a real as its float), `("l";v)` for a general list,
+/// each item its own such pair or, holding none, its `-3!` text,
+/// `("d";(k;v))` for a dictionary and `("t";d)` for a table. Undefined
 /// for anything else.
 export function exactLiteral(raw: unknown[]): { literal: string; cut: boolean } | undefined {
   const [tag, v] = raw;
@@ -319,6 +320,19 @@ export function exactLiteral(raw: unknown[]): { literal: string; cut: boolean } 
       items.push(item.literal);
     }
     return { literal: items.length === 1 ? `enlist ${items[0]}` : `(${items.join(";")})`, cut };
+  }
+  // A dictionary, its keys in parentheses unless they are one already, and
+  // a table as its dictionary flipped (#1746).
+  if (tag === "d" && Array.isArray(v) && v.length === 2) {
+    const [k, w] = v.map((x) => (Array.isArray(x) ? exactLiteral(x) : typeof x === "string" ? atomLiteral(0, x, false) : undefined));
+    if (k === undefined || w === undefined) {
+      return undefined;
+    }
+    return { literal: `${/^\(.*\)$/.test(k.literal) ? k.literal : `(${k.literal})`}!${w.literal}`, cut: k.cut || w.cut };
+  }
+  if (tag === "t" && Array.isArray(v)) {
+    const d = exactLiteral(v);
+    return d === undefined ? undefined : { literal: `flip ${d.literal}`, cut: d.cut };
   }
   return undefined;
 }
