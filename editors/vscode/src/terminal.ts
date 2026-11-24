@@ -10,6 +10,17 @@
 // the next line keeps the newline as `\n`.
 import { statements } from "./statements";
 
+/// Where a q terminal starts: the workspace folder holding `file`, else the
+/// file's own directory - a file outside every folder started in the first,
+/// and its relative `\l` read another folder's (#1535) - and with no file
+/// (the REPL), `first`, the first folder.
+export function terminalCwd(own: string | undefined, first: string | undefined, file: string | undefined, dirname: (p: string) => string): string | undefined {
+  if (own !== undefined) {
+    return own;
+  }
+  return file !== undefined ? dirname(file) : first;
+}
+
 /// How the shell in the terminal reads a command line.
 export type Shell = "posix" | "powershell" | "cmd";
 

@@ -69,7 +69,7 @@ import { historyHeading, historyLabel, iconsEscaped, plainMessage } from "./hist
 import { render } from "./query";
 import { QueryModes, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
-import { commandLine, expandHome, parseEnv, replLines, shellKind } from "./terminal";
+import { commandLine, expandHome, parseEnv, replLines, shellKind, terminalCwd } from "./terminal";
 import { terminalEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import type { RunExtra } from "./runargs";
@@ -408,16 +408,17 @@ export class QTerminals {
 
   /// A terminal named `name` that starts `q-lint.terminal.qBinary`, on
   /// `file` if one is given, with the variables of `q-lint.terminal.envPath`
-  /// set for it. It starts in the workspace folder of `from`, so a script's
-  /// relative `\l` reads as it does from a shell there. Undefined if the env
-  /// file cannot be read, or cmd cannot pass the line; `before` runs only
-  /// once it can start.
+  /// set for it. It starts in the workspace folder of `from` (else the
+  /// file's directory), so a script's relative `\l` reads as it does from a
+  /// shell there. Undefined if the env file cannot be read, or cmd cannot
+  /// pass the line; `before` runs only once it can start.
   private async start(name: string, from: Uri | undefined, file?: string, before?: () => void, extraArgs: string[] = []): Promise<Terminal | undefined> {
     const configuration = workspace.getConfiguration("q-lint", from);
     const read = readTerminal((key, fallback) => configuration.get(key, fallback));
     const settings = { qBinary: expandHome(read.qBinary, os.homedir()), envPath: expandHome(read.envPath, os.homedir()) };
-    const folder = (from && workspace.getWorkspaceFolder(from)) ?? workspace.workspaceFolders?.[0];
-    const cwd = folder?.uri.fsPath ?? (file !== undefined ? path.dirname(file) : undefined);
+    const own = from && workspace.getWorkspaceFolder(from);
+    const folder = own ?? workspace.workspaceFolders?.[0];
+    const cwd = terminalCwd(own?.uri.fsPath, folder?.uri.fsPath, file, path.dirname);
     let variables: Record<string, string> = {};
     if (settings.envPath !== "") {
       if (!path.isAbsolute(settings.envPath) && folder === undefined) {

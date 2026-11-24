@@ -6,7 +6,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const { spawnSync } = require("node:child_process");
 const pkg = require("../package.json");
-const { commandLine, parseEnv, quote, replLine, replLines, shellKind } = require("../out/terminal.js");
+const { commandLine, parseEnv, quote, replLine, replLines, shellKind, terminalCwd } = require("../out/terminal.js");
 const { COMMANDS, readTerminal } = require("../out/liveconfig.js");
 const { needsRestart } = require("../out/settings.js");
 
@@ -233,4 +233,14 @@ test("the terminal settings are read per workspace folder, so they are declared 
     assert.match(props[key].markdownDescription, /Start q REPL/, key);
     assert.match(props[key].markdownDescription, /`~`/, key);
   }
+});
+
+// /tmp/scratch/a.q, opened from outside the workspace, started q in its
+// first folder: its relative \l read that folder's files (#1535).
+test("a file outside every folder starts q in its own directory; the REPL in the first folder", () => {
+  const { dirname } = require("node:path");
+  assert.strictEqual(terminalCwd("/ws/b", "/ws/a", "/ws/b/x.q", dirname), "/ws/b");
+  assert.strictEqual(terminalCwd(undefined, "/ws/a", "/tmp/scratch/a.q", dirname), "/tmp/scratch");
+  assert.strictEqual(terminalCwd(undefined, "/ws/a", undefined, dirname), "/ws/a");
+  assert.strictEqual(terminalCwd(undefined, undefined, undefined, dirname), undefined);
 });
