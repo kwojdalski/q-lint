@@ -106,6 +106,8 @@ export function markdownHtml(source: string, values: Record<string, LiveValue> =
   const out: string[] = [];
   let paragraph: string[] = [];
   let list: { tag: "ul" | "ol"; start: number; items: string[] } | undefined;
+  // Whether the last line not indented was a list item's.
+  let listed = false;
   const flush = (): void => {
     if (paragraph.length > 0) {
       out.push(`<p>${paragraph.map((l) => inline(l, values)).join("<br>\n")}</p>`);
@@ -133,6 +135,25 @@ export function markdownHtml(source: string, values: Record<string, LiveValue> =
       }
       out.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`);
       continue;
+    }
+    // An indented code block, where `liveExpressions` reads one: not under
+    // a paragraph line or a list item (#1553). Blank lines inside it are
+    // its; those after it are not.
+    if (/^(?: {4}|\t)/.test(line) && line.trim() !== "" && paragraph.length === 0 && !listed) {
+      flush();
+      const code: string[] = [];
+      for (; i < lines.length && (/^(?: {4}|\t)/.test(lines[i]) || lines[i].trim() === ""); i++) {
+        code.push(lines[i].replace(/^(?: {4}|\t)/, ""));
+      }
+      while (code[code.length - 1].trim() === "") {
+        code.pop();
+      }
+      i--;
+      out.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`);
+      continue;
+    }
+    if (line.trim() !== "" && !/^(?: {4}|\t)/.test(line)) {
+      listed = /^ {0,3}([-*+]|\d{1,9}[.)])(?:\s|$)/.test(line);
     }
     // A GFM table: a header row, a delimiter row of as many cells, then
     // rows up to a blank line (#1309).

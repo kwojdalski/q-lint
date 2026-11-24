@@ -568,3 +568,12 @@ test("an HTML export keeps a named entity, which the page shows as its character
   // Not an entity: escaped.
   assert.strictEqual(markdownHtml("a & b &x y; &<b>;"), "<p>a &amp; b &amp;x y; &amp;&lt;b&gt;;</p>");
 });
+
+test("an HTML export shows an indented code block as code, as the cell and live values read it (#1553)", () => {
+  assert.strictEqual(markdownHtml("    indented code"), "<pre><code>indented code</code></pre>");
+  assert.strictEqual(markdownHtml("text\n\n    f:{x+1}\n\n      g:2\n\nafter"), "<p>text</p>\n<pre><code>f:{x+1}\n\n  g:2</code></pre>\n<p>after</p>");
+  assert.strictEqual(markdownHtml("# T\n\tt:1 <b>"), "<h1>T</h1>\n<pre><code>t:1 &lt;b&gt;</code></pre>");
+  // Under a paragraph line or a list item it is not code.
+  assert.strictEqual(markdownHtml("text\n    more"), "<p>text<br>\nmore</p>");
+  assert.strictEqual(markdownHtml("- a\n    b"), "<ul><li>a b</li></ul>");
+});
