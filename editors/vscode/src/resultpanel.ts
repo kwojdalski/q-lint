@@ -1302,6 +1302,13 @@ export class QueryModes {
       return;
     }
     const name = at.grid.columns[at.column].name;
+    // A layout keeps columns by name: hiding one of several of a name would
+    // hide them all (#1754).
+    const named = at.grid.columns.filter((c) => c.name === name).length;
+    if (named > 1) {
+      void window.showInformationMessage(plainMessage(`q-lint: ${named} columns of the result are named ${name}, so one cannot be hidden alone; it is not hidden. Rename them in the query (xcol) to hide one.`));
+      return;
+    }
     // The result the column was picked from, not one shown since.
     await this.changeLayout((l) => ({ ...l, hidden: l.hidden.includes(name) ? l.hidden : [...l.hidden, name] }), at.shown);
   }

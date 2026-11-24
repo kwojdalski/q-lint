@@ -635,3 +635,15 @@ test("only the saved query's own run takes its look, not another result whose co
   assert.ok(!savedRun(gatewayStatement(["select from t where sym=`a"], ["rdb"]), "select from t"));
   assert.ok(!savedRun("count t", "t"));
 });
+
+test("Hide Column refuses a name several columns share, and says so (#1754)", async () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  // q allows them: `a`a xcol t.
+  modes.show(result("t", [["a", 7, ["1", "2"], [1, 2]], ["a", 7, ["3", "4"], [3, 4]], ["b", 7, ["5", "6"], [5, 6]]]), live);
+  await fake.vscode.commands["q-lint.hideResultColumn"]({ column: 1 });
+  assert.strictEqual(last(fake).look.layout, undefined);
+  assert.match(fake.said.at(-1), /2 columns of the result are named a.*not hidden/);
+  await fake.vscode.commands["q-lint.hideResultColumn"]({ column: 2 });
+  assert.deepStrictEqual(last(fake).look.layout.hidden, ["b"]);
+});
