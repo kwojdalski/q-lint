@@ -270,6 +270,50 @@ test("deleting a discovery server, or changing its URL, forgets its processes' p
   assert.strictEqual(secrets.get("q-lint.discoveredPassword.desk/rdb"), "pw");
 });
 
+// A discovery server that lists a process elsewhere kept its password, and
+// the next connect sent it there unasked - after a reload too (#1503).
+test("a discovered process listed at another host or port forgets its password, after a reload too", async (t) => {
+  const http = require("node:http");
+  const q = await fakeQ(() => GATHERED);
+  t.after(() => q.close());
+  let port = q.port;
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify([{ label: "rdb", host: "127.0.0.1", port, user: "u" }, { label: "hdb", host: "127.0.0.1", port: q.port, user: "u" }]));
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  t.after(() => server.close());
+  const { context, live } = await setUp(t, []);
+  const secrets = context.secrets.all;
+  await stub.commands.get("q-lint.addDiscoveryServer")({ label: "desk", url: `http://127.0.0.1:${server.address().port}/` });
+  for (const l of ["rdb", "hdb"]) {
+    stub.inputs.push(() => "pw");
+    assert.strictEqual(await live.connectTo(`desk/${l}`), true);
+  }
+  // Listed at another port: rdb's password is forgotten, hdb's kept.
+  port = q.port + 1;
+  await stub.commands.get("q-lint.reloadDiscoveryServer")("desk");
+  assert.strictEqual(secrets.has("q-lint.discoveredPassword.desk/rdb"), false);
+  assert.strictEqual(secrets.get("q-lint.discoveredPassword.desk/hdb"), "pw");
+  // Back where it was, a password given, then a reload: nothing is in
+  // memory of where it was, and a move still forgets it.
+  port = q.port;
+  await stub.commands.get("q-lint.reloadDiscoveryServer")("desk");
+  stub.inputs.push(() => "pw");
+  assert.strictEqual(await live.connectTo("desk/rdb"), true);
+  await stub.commands.get("q-lint.disconnectProcess")();
+  for (const d of context.subscriptions.splice(0)) d.dispose?.();
+  port = q.port + 1;
+  const again = new Live(context);
+  t.after(() => {
+    for (const d of context.subscriptions) d.dispose?.();
+  });
+  await stub.commands.get("q-lint.reloadDiscoveryServer")("desk");
+  assert.strictEqual(secrets.has("q-lint.discoveredPassword.desk/rdb"), false);
+  assert.strictEqual(secrets.get("q-lint.discoveredPassword.desk/hdb"), "pw");
+  void again;
+});
+
 // A file Export cannot write (a read-only folder, a full disk) rejected the
 // command: VS Code said only that running it failed.
 test("Export Processes says why it could not write the file", async (t) => {

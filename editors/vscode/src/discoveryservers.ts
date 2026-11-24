@@ -32,7 +32,7 @@ import {
   type ServerState,
 } from "./discovery";
 import { DISCOVERY_COMMANDS, readDiscovery } from "./liveconfig";
-import { passwordKey, type Process } from "./processes";
+import { parseProcesses, passwordKey, passwordsToForget, type Process } from "./processes";
 import { iconsEscaped, plainMessage } from "./history";
 
 const SERVERS_KEY = "q-lint.discoveryServers";
@@ -40,6 +40,10 @@ const SERVERS_KEY = "q-lint.discoveryServers";
 /// `{ [server]: label[] }`: kept, so a server deleted after a reload, before
 /// it has listed anything, still forgets them.
 const PASSWORDS_KEY = "q-lint.discoveredPasswords";
+/// Where each process a password was given for was listed, by server, as
+/// `{ [server]: process[] }`: kept, so one listed elsewhere after a reload
+/// still forgets its password.
+const SEEN_KEY = "q-lint.discoveredSeen";
 const secretKey = (label: string): string => `q-lint.discovery.auth.${label}`;
 
 /// What a server command is given: its row, its label, or nothing - then the
@@ -154,6 +158,9 @@ export class DiscoveryServers {
       // and one whose processes were removed meanwhile stays so.
       const now = this.servers().find((s) => s.label === server.label);
       if (now?.url === server.url && (this.removals.get(server.label) ?? 0) === removals) {
+        if (state.error === undefined) {
+          await this.forgetMoved(server.label, before.processes, state.processes);
+        }
         this.set(server.label, state);
       }
     })().finally(() => this.inFlight.delete(server.label));
@@ -251,6 +258,49 @@ export class DiscoveryServers {
     }
     delete given[label];
     await this.context.globalState.update(PASSWORDS_KEY, given);
+    await this.keepSeen(label, []);
+  }
+
+  /// Forget the password of each process `label` now lists at another
+  /// host, port, user or without TLS than where it was given (#1503): it
+  /// would be sent there unasked. `before`: what it listed, when nothing
+  /// was kept of where.
+  private async forgetMoved(label: string, before: Process[], processes: Process[]): Promise<void> {
+    const kept = this.seen()[label] ?? [];
+    const seen = [...kept, ...before.filter((p) => !kept.some((k) => k.label === p.label))];
+    for (const process of passwordsToForget(seen, processes)) {
+      await this.context.secrets.delete(passwordKey({ label: qualified(label, process), server: label }));
+      await this.passwordGiven(label, process, false);
+    }
+    await this.keepSeen(label, processes);
+  }
+
+  /// What `SEEN_KEY` holds, read as a list is.
+  private seen(): Record<string, Process[]> {
+    const stored = this.context.globalState.get<unknown>(SEEN_KEY, {});
+    const out: Record<string, Process[]> = Object.create(null);
+    if (typeof stored === "object" && stored !== null) {
+      for (const [server, list] of Object.entries(stored)) {
+        out[server] = parseProcesses(Array.isArray(list) ? list : []).processes;
+      }
+    }
+    return out;
+  }
+
+  /// Keep where each process of `server` a password was given for is
+  /// listed: in `listed`, or where it was last.
+  private async keepSeen(server: string, listed: Process[]): Promise<void> {
+    const all = this.seen();
+    const given = new Set(this.given()[server] ?? []);
+    const next = [...listed, ...(all[server] ?? []).filter((p) => !listed.some((l) => l.label === p.label))]
+      .filter((p) => given.has(p.label))
+      .map(({ label, host, port, user, tls }) => ({ label, host, port, tags: [], ...(user !== undefined ? { user } : {}), ...(tls ? { tls } : {}) }));
+    if (next.length > 0) {
+      all[server] = next;
+    } else {
+      delete all[server];
+    }
+    await this.context.globalState.update(SEEN_KEY, all);
   }
 
   /// What `PASSWORDS_KEY` holds, entries that are not lists of labels dropped.
@@ -277,6 +327,7 @@ export class DiscoveryServers {
       delete given[server];
     }
     await this.context.globalState.update(PASSWORDS_KEY, given);
+    await this.keepSeen(server, (this.states.get(server)?.processes ?? []).filter((p) => p.label === label));
   }
 
   private async keepSecret(label: string, secret: string | undefined): Promise<void> {
