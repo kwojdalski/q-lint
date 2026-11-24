@@ -55,3 +55,19 @@ test("JSON columns of unequal length keep every value: the short ones are padded
   assert.strictEqual(bars(short) - bars(gridFromJson('{"t":[1],"b":[5]}')), 2);
   assert.strictEqual(gridFromJson('{"t":[],"b":[]}').total, 0);
 });
+
+test("a column of hex, binary or octal ids is text, not the numbers JavaScript reads them as (#1954)", () => {
+  const ids = gridFromCsv("id,v\n0x1F,1\n0x20,2\n0b11,3\n0o17,4\n");
+  assert.deepStrictEqual(ids.columns.map((c) => c.numeric), [false, true]);
+  assert.deepStrictEqual(ids.values, [null, [1, 2, 3, 4]]);
+  assert.deepStrictEqual(ids.cells[0], ["0x1F", "0x20", "0b11", "0o17"]);
+  // One such cell among numbers makes the column text, as any other word does.
+  assert.deepStrictEqual(gridFromCsv("a\n1\n0x10\n").columns[0].numeric, false);
+  // Every way of writing a decimal number is one still, blanks around it or not.
+  const decimal = gridFromCsv("a\n1\n-2.5\n+3\n.5\n4.\n1e3\n2.5E-1\n 7 \n\n");
+  assert.strictEqual(decimal.columns[0].numeric, true);
+  assert.deepStrictEqual(decimal.values[0].filter((v) => v !== null), [1, -2.5, 3, 0.5, 4, 1000, 0.25, 7]);
+  for (const word of ["Infinity", "1e", "e5", ".", "1.2.3", "--1", "1 2"]) {
+    assert.strictEqual(gridFromCsv(`a\n1\n${word}\n`).columns[0].numeric, false, word);
+  }
+});

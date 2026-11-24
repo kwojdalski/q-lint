@@ -26,7 +26,10 @@ const charts = require("../media/chartspec.js") as {
 export const CHART_KINDS = ["line", "area", "step", "bar", "scatter", "histogram", "candlestick"] as const;
 export type ChartKind = (typeof CHART_KINDS)[number];
 
-const isNumber = (s: string) => s.trim() !== "" && Number.isFinite(Number(s));
+/// A decimal number as a file writes one. `Number` alone also reads 0x1F,
+/// 0b11 and 0o17, which in a table are ids, not quantities (#1954).
+const DECIMAL = /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
+const isNumber = (s: string) => DECIMAL.test(s.trim()) && Number.isFinite(Number(s));
 
 /// A grid of named columns of text cells: numeric where every non-empty
 /// cell is a number.
