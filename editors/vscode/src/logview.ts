@@ -361,7 +361,10 @@ export class LogViewer {
     const lines: string[] = [];
     const infos: LineInfo[] = [];
     // `keep` trims a tenth at a time: only the last `max` are shown (#1431).
-    for (const entry of [...view.entries.slice(-view.max), ...open]) {
+    const shown = [...view.entries.slice(-view.max), ...open];
+    // Several files: merged by time, as a full read is, the entries
+    // followed and each file's open one included (#1778).
+    for (const entry of many ? merge(view.files.map((f) => shown.filter((e) => e.file === f))) : shown) {
       // Several files at once: a line that names no process says which.
       const prefix = many && entry.kind === "q" ? `[${entry.process}] ` : "";
       entry.lines.forEach((line, i) => {

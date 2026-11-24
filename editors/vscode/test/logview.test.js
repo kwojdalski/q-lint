@@ -150,15 +150,15 @@ test("a log opens in a view, and filters by level, process, time and text read i
   assert.deepStrictEqual(state.processes, ["hdb1", "rdb1"]);
   assert.deepStrictEqual(state.levels, ["ERROR", "INFO"]);
   // Merged by time (a line with none before any that has one), each file's
-  // last entry - still open, since a line could continue it - at the end;
+  // last entry - still open, since a line could continue it - too (#1778);
   // a line of the plain file names its process.
   assert.strictEqual(
     text(),
-    ["[hdb1] plain q line", torq("10:00:00", "rdb1", "INFO", "started"), torq("10:05:00", "rdb1", "ERROR", "boom"), "  [1] backtrace", "[hdb1] 'type", "[hdb1]   [2] f:{x+`a}"].join("\n"),
+    ["[hdb1] plain q line", "[hdb1] 'type", "[hdb1]   [2] f:{x+`a}", torq("10:00:00", "rdb1", "INFO", "started"), torq("10:05:00", "rdb1", "ERROR", "boom"), "  [1] backtrace"].join("\n"),
   );
   stub.picks.push((o) => o.items.filter((i) => i.label === "ERROR"));
   await stub.commands.get(LOG_COMMANDS.levels)();
-  assert.strictEqual(text(), [torq("10:05:00", "rdb1", "ERROR", "boom"), "  [1] backtrace", "[hdb1] 'type", "[hdb1]   [2] f:{x+`a}"].join("\n"));
+  assert.strictEqual(text(), ["[hdb1] 'type", "[hdb1]   [2] f:{x+`a}", torq("10:05:00", "rdb1", "ERROR", "boom"), "  [1] backtrace"].join("\n"));
   stub.picks.push((o) => o.items.filter((i) => i.label === "rdb1"));
   await stub.commands.get(LOG_COMMANDS.processes)();
   assert.strictEqual(text(), [torq("10:05:00", "rdb1", "ERROR", "boom"), "  [1] backtrace"].join("\n"));
@@ -228,6 +228,25 @@ test("a followed view shows appended lines once they end, the last entry before 
   assert.strictEqual(text(), "first\n'boom\n  [0] trace");
   await stub.commands.get(LOG_COMMANDS.follow)();
   assert.strictEqual(text(), "first\n'boom\n  [0] trace\nhalf done\nlater");
+});
+
+// Each file's open entry was shown after the rest, and followed entries
+// were added file by file, never merged (#1778).
+test("several files followed stay in time order, each file's open entry and appended lines merged in", async (t) => {
+  const dir = tmp();
+  const a = path.join(dir, "out_a.log");
+  const b = path.join(dir, "out_b.log");
+  const line = (time, proc) => torq(time, proc, "INFO", proc + time.slice(-1));
+  fs.writeFileSync(a, [line("12:00:00", "a"), line("12:00:04", "a"), ""].join("\n"));
+  fs.writeFileSync(b, [line("12:00:01", "b"), line("12:00:03", "b"), ""].join("\n"));
+  const { text } = setUp(t);
+  await stub.commands.get(LOG_COMMANDS.open)(vscode.Uri.file(a), [vscode.Uri.file(a), vscode.Uri.file(b)]);
+  const order = () => text().split("\n").map((l) => l.split("|").pop());
+  assert.deepStrictEqual(order(), ["a0", "b1", "b3", "a4"]);
+  fs.appendFileSync(a, [line("12:00:06", "a"), line("12:00:08", "a"), ""].join("\n"));
+  fs.appendFileSync(b, [line("12:00:05", "b"), line("12:00:07", "b"), ""].join("\n"));
+  for (let i = 0; i < 60 && !text().includes("b7"); i++) await sleep(50);
+  assert.deepStrictEqual(order(), ["a0", "b1", "b3", "a4", "b5", "a6", "b7", "a8"]);
 });
 
 test("only the last maxLines entries that pass are kept", async (t) => {
