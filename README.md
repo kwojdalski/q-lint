@@ -1220,7 +1220,8 @@ loading file's directory, whichever it was written from - including the
 loads of a file that moves. `loadPathCompletion.enable: true` completes the
 folders and `.q`/`.k` scripts after `\l `, with `/` as a trigger
 character; with `completion.enable` off, it announces completion and
-answers only on a `\l` line.
+answers only on a `\l` line. A request the `/` itself triggered is answered
+on a load path only: anywhere else it is q's `over`, and no list of names.
 `workspaceIndex.exclude`
 holds globs relative to each workspace folder that the index does not read.
 The index stops after 20,000 `.q` files or 500,000 directory entries of any

@@ -1696,7 +1696,13 @@ pub fn serve(
                             return items;
                         }
                     }
-                    if method == "textDocument/completion" && !opts.completion {
+                    // A `/` is announced as a trigger for the next directory
+                    // of a load and is q's `over` everywhere else: a request
+                    // the character itself raised, off a load path, is for
+                    // no list of names (#2021).
+                    let slash = params["context"]["triggerKind"] == 2
+                        && params["context"]["triggerCharacter"] == "/";
+                    if method == "textDocument/completion" && (!opts.completion || slash) {
                         return Value::Null;
                     }
                     let more = help::More {

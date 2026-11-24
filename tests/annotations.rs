@@ -1583,6 +1583,47 @@ fn after_a_load_the_directories_and_scripts_complete() {
 }
 
 #[test]
+fn a_slash_opens_the_list_on_a_load_path_and_nowhere_else() {
+    // #2021: `/` is a trigger character for the next directory of a load,
+    // and q's commonest adverb everywhere else. A request the `/` itself
+    // triggered, off a load path, was answered with every name there is:
+    // typing `r:+/` opened a list of hundreds with nothing typed.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("lib")).unwrap();
+    let options = json!({"completion": {"enable": true}, "loadPathCompletion": {"enable": true}});
+    let (mut server, _) = Server::over(dir.path(), &[("lib/util.q", "u:1\n")], client(), options);
+    let text = "v:1 2 3\nr:+/\ns:(v%/)\n\\l lib/\nt:v\n";
+    let uri = server.open(dir.path(), "main.q", text);
+    let typed = |line: u64, character: u64, context: Value| json!({"position": {"line": line, "character": character}, "context": context});
+    let slash = json!({"triggerKind": 2, "triggerCharacter": "/"});
+    for (line, character) in [(1, 4), (2, 6)] {
+        let reply = server.whole(
+            "textDocument/completion",
+            &uri,
+            typed(line, character, slash.clone()),
+        );
+        assert_eq!(reply["result"], Value::Null, "{line}: {reply}");
+    }
+    // On a load it lists the directory.
+    let reply = server.whole("textDocument/completion", &uri, typed(3, 7, slash));
+    assert_eq!(labels(&reply), ["util.q"], "{reply}");
+    // Asked for there (Ctrl+Space), or triggered by a dot, names complete
+    // as they did.
+    let reply = server.whole(
+        "textDocument/completion",
+        &uri,
+        typed(1, 4, json!({"triggerKind": 1})),
+    );
+    assert!(labels(&reply).contains(&"v".to_string()), "{reply}");
+    let reply = server.whole(
+        "textDocument/completion",
+        &uri,
+        typed(4, 3, json!({"triggerKind": 2, "triggerCharacter": "."})),
+    );
+    assert!(reply["result"]["items"].is_array(), "{reply}");
+}
+
+#[test]
 fn load_path_completion_is_off_unless_asked_for() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("lib")).unwrap();
