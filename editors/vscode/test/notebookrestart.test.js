@@ -110,7 +110,8 @@ function fakeLive({ label = "rdb", launched = false, busy = false } = {}) {
     connectTo: async (l) => (live.connected.push(l), true),
     abort: async () => {},
     runOnActive: async (code, query) => {
-      live.sent.push(code);
+      // A cell's guard pieces (#1442), as one text.
+      live.sent.push(typeof code === "string" ? code : code.join("\n"));
       return {
         process: label,
         value: await query({ query: async (cut) => (cut[0] === "fail" ? { ok: false, error: "fail", trace: "" } : { ok: true, type: -7, text: [`ran ${cut.join(";")}`] }) }),

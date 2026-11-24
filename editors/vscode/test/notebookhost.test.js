@@ -266,7 +266,9 @@ function slowLive() {
   const waiting = new Map();
   return {
     release: (code) => waiting.get(code)?.(),
-    runOnActive: async (code, query) => {
+    // The guard's pieces, a cell's source and its live values (#1442), as one text.
+    runOnActive: async (pieces, query) => {
+      const code = typeof pieces === "string" ? pieces : pieces.join("\n");
       await new Promise((resolve) => waiting.set(code, resolve));
       return { process: "p", value: await query({ query: async () => ({ ok: true, type: -7, text: ["1"] }) }) };
     },
@@ -388,7 +390,7 @@ function recordingLive(processes, active) {
       return true;
     },
     runOnActive: async (code, query) => {
-      live.sent.push(code);
+      live.sent.push(typeof code === "string" ? code : code.join("\n"));
       const connection = {
         query: async (cut) => ({ ok: true, type: -7, text: [`${live.active}: ${cut.join(";")}`] }),
         call: async (lambda, arg) => {
