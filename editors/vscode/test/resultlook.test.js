@@ -39,6 +39,12 @@ test("a column's suffix names its format, in any case, with decimals, and the ba
   assert.strictEqual(L.formatNumber(f("x_BPS"), 0.0123, "0.0123"), "123.0 bp");
   assert.strictEqual(L.formatNumber(f("x_CCY"), -1234567.891, "-1234567.891"), "-1,234,567.89");
   assert.strictEqual(L.formatNumber(f("x_NUM"), 1234567, "1234567"), "1,234,567");
+  // A long past 2^53 from q's text, not its double; a float past 1e21 not in exponent form (#1647).
+  assert.strictEqual(L.formatNumber(f("x_CCY"), 123456789012345678, "123456789012345678"), "123,456,789,012,345,678.00");
+  assert.strictEqual(L.formatNumber(f("x_NUM2"), -123456789012345678, "-123456789012345678"), "-123,456,789,012,345,678.00");
+  assert.strictEqual(L.formatNumber(f("x_NUM0"), 123456789012345678, "123456789012345678"), "123,456,789,012,345,678");
+  assert.strictEqual(L.formatNumber(f("x_CCY"), 1e21, "1e+21"), "1,000,000,000,000,000,000,000.00");
+  assert.strictEqual(L.formatNumber(f("x_CCY"), 1.5, "1.5"), "1.50");
   // As q wrote it, digit for digit: a long past 2^53 keeps its digits.
   assert.strictEqual(L.formatNumber(f("x_NUM"), 9007199254740993, "9007199254740993"), "9,007,199,254,740,993");
   assert.strictEqual(L.formatNumber(f("x_NUM2"), 1234.5, "1234.5"), "1,234.50");

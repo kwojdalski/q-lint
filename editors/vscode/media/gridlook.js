@@ -50,6 +50,20 @@
     return m ? m[1] + m[2].replace(/\B(?=(\d{3})+(?!\d))/g, ",") + m[3] : text;
   }
 
+  /// A number to `digits` decimals, every digit of its whole part: an
+  /// integer from q's text (`text`), which a long past 2^53 is exact in and
+  /// its double is not; a float past 1e21 not in exponent form (#1647).
+  function fixed(value, digits, text) {
+    const zeros = digits > 0 ? "." + "0".repeat(digits) : "";
+    if (/^-?\d+$/.test(text)) {
+      return text + zeros;
+    }
+    if (Math.abs(value) >= 1e21) {
+      return BigInt(value).toString() + zeros;
+    }
+    return value.toFixed(digits);
+  }
+
   /// What a cell of a numeric column shows under format `f`: `text`, q's,
   /// for a null or an infinity (`value` null) and for a format that is no
   /// number format.
@@ -63,9 +77,9 @@
       case "bps":
         return (value * 10000).toFixed(f.digits) + " bp";
       case "ccy":
-        return grouped(value.toFixed(f.digits));
+        return grouped(fixed(value, f.digits, text));
       case "num":
-        return f.digits >= 0 ? grouped(value.toFixed(f.digits)) : grouped(text);
+        return f.digits >= 0 ? grouped(fixed(value, f.digits, text)) : grouped(text);
       default:
         return text;
     }
