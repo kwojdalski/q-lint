@@ -554,7 +554,7 @@ test("a backslash escapes any ASCII punctuation (#1310)", () => {
 test("an ordered list keeps its start, and only a 1. or a bullet interrupts a paragraph (#1311)", () => {
   assert.strictEqual(markdownHtml("3. c\n4. d"), '<ol start="3"><li>c</li><li>d</li></ol>');
   assert.strictEqual(markdownHtml("0. z"), '<ol start="0"><li>z</li></ol>');
-  assert.strictEqual(markdownHtml("it ran in\n2024. and then"), "<p>it ran in<br>\n2024. and then</p>");
+  assert.strictEqual(markdownHtml("it ran in\n2024. and then"), "<p>it ran in\n2024. and then</p>");
   assert.strictEqual(markdownHtml("text\n1. one"), "<p>text</p>\n<ol><li>one</li></ol>");
   assert.strictEqual(markdownHtml("text\n- one"), "<p>text</p>\n<ul><li>one</li></ul>");
 });
@@ -566,7 +566,7 @@ test("a GFM table, as a result is written into a notebook, is a table (#1309)", 
       '<tbody><tr><td>x|y</td><td style="text-align:right">1</td></tr><tr><td>&lt;b&gt;</td><td style="text-align:right"></td></tr></tbody></table>\n<p>after</p>',
   );
   // Not a table: the delimiter row has a different count of cells.
-  assert.strictEqual(markdownHtml("a | b | c\n--- | ---"), "<p>a | b | c<br>\n--- | ---</p>");
+  assert.strictEqual(markdownHtml("a | b | c\n--- | ---"), "<p>a | b | c\n--- | ---</p>");
   const { resultMarkdown } = require("../out/resultreport.js");
   const md = resultMarkdown({ at: 0, process: "dev", code: "t", decimals: 2, payload: { count: 1, keys: 0, names: ["s"], types: [11], cells: [["<a>"]], raw: [[]], rank: [[0]] } }).text;
   assert.match(markdownHtml(md), /<table><thead><tr><th>s<\/th><\/tr><\/thead><tbody><tr><td>&lt;a&gt;<\/td><\/tr><\/tbody><\/table>/);
@@ -660,7 +660,7 @@ test("an HTML export shows an indented code block as code, as the cell and live 
   assert.strictEqual(markdownHtml("text\n\n    f:{x+1}\n\n      g:2\n\nafter"), "<p>text</p>\n<pre><code>f:{x+1}\n\n  g:2</code></pre>\n<p>after</p>");
   assert.strictEqual(markdownHtml("# T\n\tt:1 <b>"), "<h1>T</h1>\n<pre><code>t:1 &lt;b&gt;</code></pre>");
   // Under a paragraph line or a list item it is not code.
-  assert.strictEqual(markdownHtml("text\n    more"), "<p>text<br>\nmore</p>");
+  assert.strictEqual(markdownHtml("text\n    more"), "<p>text\nmore</p>");
   assert.strictEqual(markdownHtml("- a\n    b"), "<ul><li>a b</li></ul>");
 });
 
@@ -796,4 +796,19 @@ test("an HTML export keeps a link's title, as the tip the notebook shows (#1944)
   // A title makes no link of a target that is none.
   assert.strictEqual(markdownHtml('[x](javascript:alert(1) "t")'), "<p>[x](javascript:alert(1) &quot;t&quot;)</p>");
   assert.strictEqual(markdownHtml('[x](https://x.com "t" more)'), "<p>[x](https://x.com &quot;t&quot; more)</p>");
+});
+
+test("an HTML export breaks a paragraph's line only where the notebook does: after two spaces or a backslash (#1945)", () => {
+  // A cell wrapped at a column is one paragraph, a newline in it a space.
+  assert.strictEqual(markdownHtml("line one\nline two\nline three"), "<p>line one\nline two\nline three</p>");
+  assert.strictEqual(markdownHtml("line one  \nline two"), "<p>line one<br>\nline two</p>");
+  assert.strictEqual(markdownHtml("line one\\\nline two   \nline three"), "<p>line one<br>\nline two<br>\nline three</p>");
+  // One space is none, an escaped backslash is a backslash, and a
+  // paragraph's last line has nothing to break before.
+  assert.strictEqual(markdownHtml("a \nb"), "<p>a\nb</p>");
+  assert.strictEqual(markdownHtml("a\\\\\nb"), "<p>a\\\nb</p>");
+  assert.strictEqual(markdownHtml("end  "), "<p>end</p>");
+  assert.strictEqual(markdownHtml("end\\\n\nnext"), "<p>end\\</p>\n<p>next</p>");
+  assert.strictEqual(markdownHtml("Title  \n==="), "<h1>Title</h1>");
+  assert.strictEqual(markdownHtml("a <b>  \n*c*"), "<p>a &lt;b&gt;<br>\n<em>c</em></p>");
 });

@@ -150,7 +150,13 @@ export function markdownHtml(source: string, values: Record<string, LiveValue> =
   let listed = false;
   const flush = (): void => {
     if (paragraph.length > 0) {
-      out.push(`<p>${paragraph.map((l) => inline(l, values)).join("<br>\n")}</p>`);
+      // A line's end is a space, as the notebook shows it: a break only
+      // after two spaces or a backslash not itself escaped (#1945).
+      const text = paragraph.map((l, at) => {
+        const hard = at < paragraph.length - 1 && /(?: {2,}|(?<!\\)\\(?:\\\\)*)$/.test(l);
+        return hard ? `${inline(l.endsWith("\\") ? l.slice(0, -1) : l.trimEnd(), values)}<br>` : inline(l.trimEnd(), values);
+      });
+      out.push(`<p>${text.join("\n")}</p>`);
       paragraph = [];
     }
     if (list !== undefined) {
@@ -240,7 +246,7 @@ export function markdownHtml(source: string, values: Record<string, LiveValue> =
     } else if (paragraph.length > 0 && /^ {0,3}(=+|-+)\s*$/.test(line)) {
       // A setext heading: the paragraph above a line of = or - (#1551).
       const level = line.trim()[0] === "=" ? 1 : 2;
-      out.push(`<h${level}>${paragraph.map((l) => inline(l, values)).join("\n")}</h${level}>`);
+      out.push(`<h${level}>${paragraph.map((l) => inline(l.trimEnd(), values)).join("\n")}</h${level}>`);
       paragraph = [];
     } else if (heading !== null) {
       flush();
@@ -275,7 +281,7 @@ export function markdownHtml(source: string, values: Record<string, LiveValue> =
       if (list !== undefined) {
         flush();
       }
-      paragraph.push(line.trim());
+      paragraph.push(line.trimStart());
     }
   }
   flush();
