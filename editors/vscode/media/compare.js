@@ -37,7 +37,8 @@
     if (c.partial && c.columns.length === 0 && c.left.kind === c.right.kind && c.left.text === c.right.text) {
       return "The part of each answer that came back is the same; the text was cut at the console size, so the rest was not compared.";
     }
-    if (c.partial && c.columns.length > 0 && c.differing === 0 && c.onlyLeft === 0 && c.onlyRight === 0) {
+    // Unless a column's type, the keys or a cut cell differ (#2075).
+    if (c.partial && c.columns.length > 0 && c.differing === 0 && c.onlyLeft === 0 && c.onlyRight === 0 && (c.retyped || []).length === 0 && !c.rekeyed && !(c.cut > 0)) {
       return "The rows held are the same." + cutNote;
     }
     if (c.columns.length === 0) {
@@ -67,7 +68,7 @@
     if (parts.length === 0) {
       parts.push("the rows held are the same, the columns or row counts are not");
     }
-    return parts.join(", ") + " (rows lined up by " + (c.matchedBy === "key" ? "key" : "place") + ").";
+        return parts.join(", ") + " (rows lined up by " + (c.matchedBy === "key" ? "key" : "place") + ")." + (c.partial ? cutNote : "");
   }
 
   function textSides(c) {
