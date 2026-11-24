@@ -158,8 +158,10 @@ to a process you add and connect to, and sends only the code you run.
   dictionary from symbols, an array of objects with the same keys as a
   table. **Copy Value as JSON** sends the selection, or the statement at the
   cursor, to the connected process as `.j.j value "..."` and copies the JSON
-  it answers; it goes as a query does, so the read-only guard holds one that
-  would change a guarded process (`q-lint.jsonConversion.enable`).
+  it answers; a selection of several statements runs each in turn, as Run
+  Selection does, and copies the last one's value. It goes as a query does,
+  so the read-only guard holds one that would change a guarded process
+  (`q-lint.jsonConversion.enable`).
 - **Show Help for q Builtin** opens a page beside the editor for the
   builtin under the cursor, or one picked from the list: its syntax, what it
   gives, examples with their results, related builtins as links to their own

@@ -11,6 +11,7 @@
 // the double nearest, and written so q reads the same double back.
 import { plainName, qString, stringLiteral, symbolLiteral } from "./qliteral";
 import { floatText } from "./pastetable";
+import { statements } from "./statements";
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 
@@ -179,7 +180,11 @@ export function jsonToQ(text: string): { code: string } | { error: string } {
 
 /// The q that `.j.j`s an expression on a process: its value as JSON text.
 /// The expression goes as a string to `value`, so it runs in the root
-/// context as typed, its assignments global and `x` no parameter.
+/// context as typed, its assignments global and `x` no parameter. Several
+/// statements go each as its own string, cut as a query's are, and the
+/// last one's value is the answer: to `value` a newline is a blank, and
+/// `bb:1` over `2 3` would be `bb:1 2 3` (#1969).
 export function toJsonQuery(expression: string): string {
-  return `.j.j value ${stringLiteral(expression)}`;
+  const all = statements(expression);
+  return all.length < 2 ? `.j.j value ${stringLiteral(all[0] ?? "")}` : `.j.j last value each (${all.map(qString).join(";")})`;
 }
