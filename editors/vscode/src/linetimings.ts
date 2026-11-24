@@ -16,6 +16,8 @@
 // `.z.p` advances in microseconds there, so a statement faster than that
 // reads 0.
 
+import { blockDepth } from "./statements";
+
 /// The lambda: given the statements, it answers the overhead per
 /// statement in ns, then for each statement run whether it ran, its time in
 /// ns, its memory in bytes (null for a system command or a failure), and
@@ -65,7 +67,7 @@ export interface Timings {
 export function statementSpans(text: string, firstLine = 0): Span[] {
   const out: Span[] = [];
   let current: { lines: string[]; start: number; end: number } | undefined;
-  let inBlock = false;
+  let depth = 0;
   const end = (): void => {
     if (current !== undefined) {
       out.push({ text: current.lines.join("\n"), start: current.start, end: current.end });
@@ -78,12 +80,8 @@ export function statementSpans(text: string, firstLine = 0): Span[] {
     if (i === 0 && line.startsWith("#!")) {
       continue;
     }
-    if (inBlock) {
-      inBlock = line !== "\\";
-      continue;
-    }
-    if (line === "/") {
-      inBlock = true;
+    if (depth > 0 || line === "/") {
+      depth = blockDepth(depth, line);
       continue;
     }
     if (line === "\\") {

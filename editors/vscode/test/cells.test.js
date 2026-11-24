@@ -213,3 +213,28 @@ test("the switches: on by default but Smart Send and defining on connect", () =>
   assert.match(keys.find((k) => k.command === "q-lint.smartSend").when, /config\.q-lint\.smartSend\.enable/);
   assert.match(keys.find((k) => k.command === "q-lint.runCell").when, /q-lint\.hasCells/);
 });
+
+test("block comments nest, as KDB-X reads them: every reader skips to the matching \\ (#1462)", () => {
+  const { definitions } = require("../out/definitions.js");
+  const { statementSpans } = require("../out/linetimings.js");
+  const { codeMask } = require("../out/paramcache.js");
+  const { placeholderNames } = require("../out/placeholders.js");
+  const { historyScript } = require("../out/historyfilter.js");
+  const w = require("../out/wrangle.js");
+  // KDB-X runs only a:1 and b:3 of this: the inner `/` opens a second block.
+  const src = "a:1\n/\n/\n\\\n`t set 2\nf:{x+{{p}}}\n/ %% hidden\n\\\nb:3";
+  assert.deepStrictEqual(statements(src), ["a:1", "b:3"]);
+  assert.deepStrictEqual(statementSpans(src).map((s) => s.text), ["a:1", "b:3"]);
+  assert.strictEqual(blockAt(L(src), 4), undefined);
+  assert.deepStrictEqual(blockAt(L(src), 8), { start: 8, end: 8 });
+  assert.deepStrictEqual(definitions(src), []);
+  assert.deepStrictEqual(markers(L(src)), []);
+  assert.strictEqual(codeMask(src)[src.indexOf("`t set")], false);
+  assert.strictEqual(codeMask(src)[src.indexOf("b:3")], true);
+  assert.deepStrictEqual(placeholderNames(src), []);
+  assert.strictEqual(w.wrangleQuery("select from t\n/\n/\n\\\n  where a\n\\\n  where b", []), "select from t\n  where b");
+  // An entry that leaves two blocks open closes both, so the next one loads.
+  const at = "2026-01-01T00:00:00Z";
+  const entry = (code) => ({ process: "p", code, at, millis: 1, outcome: "ok" });
+  assert.deepStrictEqual(statements(historyScript([entry("c:3"), entry("a:1\n/\n/\nx")])), ["a:1", "c:3"]);
+});

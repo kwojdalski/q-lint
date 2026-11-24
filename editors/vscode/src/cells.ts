@@ -13,6 +13,8 @@
 // without ending the statement (`f:{x+` / `/ %%` / `  y}` defines f), and a
 // cell cut there would send half a statement.
 
+import { blockDepth } from "./statements";
+
 /// The text after `%%` names the cell: `/ %% load the trades`.
 const MARKER = /^\/\s*%%(.*)$/;
 
@@ -33,19 +35,16 @@ type LineKind = "commented" | "comment" | "blank" | "continues" | "starts";
 
 function kinds(lines: string[]): LineKind[] {
   const out: LineKind[] = [];
-  let inBlock = false;
+  let depth = 0;
   let ended = false;
   let open = false;
   for (const [i, raw] of lines.entries()) {
     const line = trimEnd(raw);
     if (ended || (i === 0 && line.startsWith("#!"))) {
       out.push("commented");
-    } else if (inBlock) {
+    } else if (depth > 0 || line === "/") {
       out.push("commented");
-      inBlock = line !== "\\";
-    } else if (line === "/") {
-      out.push("commented");
-      inBlock = true;
+      depth = blockDepth(depth, line);
     } else if (line === "\\") {
       out.push("commented");
       ended = true;

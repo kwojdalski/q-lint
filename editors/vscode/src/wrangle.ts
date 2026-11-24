@@ -20,7 +20,7 @@
 // symbol under `~`. Every row with those values is changed.
 import type { GridPayload } from "./grid";
 import { atomLiteral, plainName, rawColumn, readable, symbolLiteral } from "./qliteral";
-import { statements } from "./statements";
+import { blockDepth, statements } from "./statements";
 
 export const FILTER_OPS = ["=", "<>", "<", ">", "<=", ">=", "like", "in", "null", "not null"] as const;
 export type FilterOp = (typeof FILTER_OPS)[number];
@@ -147,13 +147,11 @@ function uncommented(base: string): string {
     return line.trimEnd();
   };
   const lines: string[] = [];
-  let block = false;
+  let depth = 0;
   for (const line of base.trim().split(/\r?\n/)) {
     const bare = line.trimEnd();
-    if (block) {
-      block = bare !== "\\";
-    } else if (bare === "/") {
-      block = true;
+    if (depth > 0 || bare === "/") {
+      depth = blockDepth(depth, bare);
     } else if (bare === "\\") {
       break;
     } else {
