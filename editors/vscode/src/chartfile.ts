@@ -81,7 +81,10 @@ export function gridFromJson(json: string): Grid {
   if (v !== null && typeof v === "object") {
     const cols = Object.entries(v as Record<string, unknown>).filter(([, c]) => Array.isArray(c)) as [string, unknown[]][];
     if (cols.length === 0) throw new Error("the JSON is not an object of column arrays");
-    return gridOf(cols.map(([n]) => n), cols.map(([, c]) => c.map(text)));
+    // As long as the longest: a shorter column ends in empty cells, so no
+    // value is dropped for sitting past the first column's end (#1941).
+    const rows = Math.max(...cols.map(([, c]) => c.length));
+    return gridOf(cols.map(([n]) => n), cols.map(([, c]) => Array.from({ length: rows }, (_, i) => text(c[i]))));
   }
   throw new Error("the JSON is not a table: an array of objects or an object of arrays");
 }

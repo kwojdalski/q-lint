@@ -41,3 +41,17 @@ test("a JSON file that starts with a UTF-8 byte order mark is read as a CSV with
   // Only at the start: elsewhere it is not JSON, as before.
   assert.throws(() => gridFromJson('[﻿{"t":1}]'), SyntaxError);
 });
+
+test("JSON columns of unequal length keep every value: the short ones are padded with empty cells (#1941)", () => {
+  const short = gridFromJson('{"t":[1],"b":[5,6,7]}');
+  assert.strictEqual(short.total, 3);
+  assert.deepStrictEqual(short.cells, [["1", "", ""], ["5", "6", "7"]]);
+  assert.deepStrictEqual(short.values, [[1, null, null], [5, 6, 7]]);
+  // Whichever column is the short one, by key order.
+  const other = gridFromJson('{"b":[5,6,7],"t":[1]}');
+  assert.deepStrictEqual([other.total, other.cells], [3, [["5", "6", "7"], ["1", "", ""]]]);
+  // Every value of the long column is drawn: a bar each.
+  const bars = (grid) => (chartFromGrid(grid, { kind: "bar", x: "t" }).match(/<rect /g) ?? []).length;
+  assert.strictEqual(bars(short) - bars(gridFromJson('{"t":[1],"b":[5]}')), 2);
+  assert.strictEqual(gridFromJson('{"t":[],"b":[]}').total, 0);
+});
