@@ -402,3 +402,42 @@ test("Run Cell, Run Above and Run Below title an untitled cell by its number, as
   await stub.commands.get(C.runBelow)("file:///w/a.q", 2);
   assert.deepStrictEqual(titles().slice(3), ["Cell 2", "Cell 3"]);
 });
+
+test("Run Cell above the first cell says where the cursor is, not that the file has no cells (#1938)", async (t) => {
+  const { q, live, editor } = await setUp(t);
+  assert.ok(await live.connectTo("dev"));
+  for (const line of [0, 1]) {
+    stub.messages.length = 0;
+    editor("/ header\n\n/ %% a\na:1", line);
+    await stub.commands.get(C.runCell)();
+    assert.ok(said(/the cursor is above the file's first cell/), JSON.stringify(stub.messages));
+    assert.ok(!said(/has no cells/));
+    await stub.commands.get(C.runBelow)();
+    assert.strictEqual(stub.messages.filter(([, text]) => /above the file's first cell/.test(text)).length, 2);
+  }
+  assert.deepStrictEqual(q.queries, []);
+  // In the cell it runs, as before.
+  editor("/ header\n\n/ %% a\na:1", 2);
+  await stub.commands.get(C.runCell)();
+  assert.deepStrictEqual(q.queries, ["a:1"]);
+});
+
+test("Ctrl+Enter's context is on only for a file that has a cell: a marker inside a block comment is none (#1938)", async (t) => {
+  const { editor } = await setUp(t);
+  const contexts = [];
+  const executeCommand = vscode.commands.executeCommand;
+  vscode.commands.executeCommand = async (name, ...args) => (name === "setContext" ? void contexts.push(args) : executeCommand(name, ...args));
+  t.after(() => (vscode.commands.executeCommand = executeCommand));
+  const { HAS_CELLS } = require("../out/interactiveconfig.js");
+  // A change to the cells' settings reads the active editor again.
+  const read = () => stub.changeConfig("q-lint.cells.codeLens.enable");
+  editor("/\n/ %% not a cell\n\\\na:1");
+  read();
+  assert.deepStrictEqual(contexts, []);
+  editor("/ %% a cell\na:1");
+  read();
+  assert.deepStrictEqual(contexts, [[HAS_CELLS, true]]);
+  editor("/\n/ %% not a cell\n\\\na:1");
+  read();
+  assert.deepStrictEqual(contexts.at(-1), [HAS_CELLS, false]);
+});

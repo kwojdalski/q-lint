@@ -114,8 +114,16 @@ export function registerInteractive(
     return { document, line: at };
   };
 
-  const noCells = (): void =>
-    void window.showInformationMessage("q-lint: the file has no cells. A line starting `/ %%` at column 0 starts one.");
+  /// Why no cell is at the line: the file has none, or it has, and the line
+  /// is among the comments above the first (#1938).
+  const noCells = (all: Cell[] = []): void =>
+    void window.showInformationMessage(
+      plainMessage(
+        all.length > 0
+          ? "q-lint: the cursor is above the file's first cell. Put it in a cell: on its `/ %%` line or under it."
+          : "q-lint: the file has no cells. A line starting `/ %%` at column 0 starts one.",
+      ),
+    );
 
   const runCell = (uri?: unknown, line?: unknown): Promise<void> | undefined => {
     if (!settings().cells) {
@@ -129,7 +137,7 @@ export function registerInteractive(
     const all = cells(t.document.getText().split(/\r?\n/));
     const cell = cellAt(all, t.line);
     if (cell === undefined) {
-      noCells();
+      noCells(all);
       return undefined;
     }
     return runCells(t.document, () => [cell]);
@@ -166,7 +174,7 @@ export function registerInteractive(
     const all = cells(t.document.getText().split(/\r?\n/));
     const cell = cellAt(all, t.line);
     if (cell === undefined) {
-      noCells();
+      noCells(all);
       return undefined;
     }
     const at = all.indexOf(cell);
@@ -201,11 +209,14 @@ export function registerInteractive(
   let lensProvider: Disposable | undefined;
   const provider: CodeLensProvider = { onDidChangeCodeLenses: lensesChanged.event, provideCodeLenses: (document) => lenses(document) };
 
-  // Ctrl+Enter's context: whether the active q editor has a marker line.
+  // Ctrl+Enter's context: whether the active q editor has a cell. A line
+  // that reads as a marker is the cheap test; inside a block comment or
+  // after the script's end it starts none, and `cells` says so (#1938).
   let hasCells = false;
   const setHasCells = (): void => {
     const document = window.activeTextEditor?.document;
-    const now = settings().cells && document?.languageId === "q" && document.getText().split(/\r?\n/).some(looksLikeMarker);
+    const lines = settings().cells && document?.languageId === "q" ? document.getText().split(/\r?\n/) : [];
+    const now = lines.some(looksLikeMarker) && cells(lines).length > 0;
     if (now !== hasCells) {
       hasCells = now;
       void commands.executeCommand("setContext", HAS_CELLS, now);
