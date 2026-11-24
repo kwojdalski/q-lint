@@ -286,6 +286,8 @@ test("a parameters cell's assignments are its parameters", () => {
     { name: "q", value: '"a\\" /b"' },
     { name: "n", value: "1" },
   ]);
+  // One in a block comment, or a line of a multi-line string, is none (#1470).
+  assert.deepStrictEqual(parametersOf('/ @parameters\n/\nold:5\n\\\nn:10\ns:"a\n  b:2"'), [{ name: "n", value: "10" }]);
   const cells = [{ kind: "markdown", source: "/ @parameters" }, { kind: "code", source: "1" }, { kind: "code", source: "/ @parameters\nn:1" }];
   assert.strictEqual(parametersCell(cells), 2);
   assert.strictEqual(parametersCell([{ kind: "code", source: "/ @parameters", language: "python" }]), -1);
