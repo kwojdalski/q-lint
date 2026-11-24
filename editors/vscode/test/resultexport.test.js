@@ -210,11 +210,21 @@ test("a Parquet file starts and ends with PAR1, its footer's length before the l
   for (const name of ["schema", "s", "b", "j", "f", "d", "p", "l", "q-lint"]) {
     assert.ok(meta.includes(name), name);
   }
-  assert.match(out.notes.join(), /1 infinite date\(s\) or timestamp\(s\) were written as null/);
+  assert.match(out.notes.join(), /1 infinite or out-of-range date\(s\) or timestamp\(s\) were written as null/);
   assert.deepStrictEqual([1, 5, 7, 9, 12, 14, 11].map((t) => planFor(t).type), [0, 1, 2, 5, 2, 1, 6]);
   assert.deepStrictEqual([1, 4, 10, 7].map((t) => planFor(t).optional), [false, false, false, true]);
   // Runs of definition levels after their length: three present, one null.
   assert.deepStrictEqual([...definitionLevels([true, true, true, false])], [4, 0, 0, 0, 6, 1, 2, 0]);
+});
+
+test("a Parquet timestamp or date past what its type holds is a null, counted in the notes, not a RangeError (#1483)", () => {
+  // KDB-X: 2263.01.06D19:33:20 is 8300000000000000000 nanoseconds since 2000.
+  const ts = { count: 2, keys: 0, names: ["t"], types: [12], cells: [["2263.01.06D19:33:20.000000000", "2000.01.01D00:00:00.000000000"]], raw: [[8300000000000000000n, 0n]], rank: [[1, 0]] };
+  assert.match(toParquet(ts, [0, 1]).notes.join(), /^1 infinite or out-of-range/);
+  const d = { count: 1, keys: 0, names: ["d"], types: [14], cells: [["0000.00.00"]], raw: [[2147483000]], rank: [[0]] };
+  assert.match(toParquet(d, [0]).notes.join(), /^1 infinite or out-of-range/);
+  const z = { count: 1, keys: 0, names: ["z"], types: [15], cells: [["0000.00.00T00:00:00.000"]], raw: [[1e300]], rank: [[0]] };
+  assert.match(toParquet(z, [0]).notes.join(), /^1 infinite or out-of-range/);
 });
 
 test("a page of rows is added after the grid's, ranked again over both, and a page of another result is refused", () => {
