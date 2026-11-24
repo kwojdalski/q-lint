@@ -17,7 +17,7 @@ const { opProblem, opText, columnScript, columnScriptOf, readRun, HELPERS } = re
 const { readDoc, qdocs, docMarkdown, docHtml, typeName, workspaceDocs } = require("../out/dbdoc.js");
 const { missingWeekdays, partitionProblems, partitionReport, readPartitions } = require("../out/partcheck.js");
 const { readSym, symReport } = require("../out/syminspect.js");
-const { advise, filterCounts, adviceReport, readAttributeSample } = require("../out/attradvice.js");
+const { advise, filterCounts, adviceReport, readAttributeSample, ATTRIBUTE_SAMPLE } = require("../out/attradvice.js");
 const { schemaDiff, migrationScript, nullOf, castOf } = require("../out/migrate.js");
 const { symbolPool, rangeOf, generator, testDataQ, testDataCsv, loadTypes, random } = require("../out/testdata.js");
 const { headNames, timeOfDay, rangeProblem, readTpPage, readTpLog, readReplayed } = require("../out/tplog.js");
@@ -118,6 +118,12 @@ test("the documenter reads one table's answer, takes the qDoc above a definition
   assert.doesNotMatch(html, /<script>/);
   assert.match(html, /rdb&lt;script&gt;/);
   assert.throws(() => readDoc(1), /tables/);
+  // A table the process could not describe is named with q's error (#1868).
+  const bad = { name: "e<m>", kind: "", rows: null, keys: [], cols: [], types: [], fkeys: [], attrs: [], error: "..sym" };
+  const mixed = readDoc({ ...raw, tables: [{ ...raw.tables, error: "" }, bad] });
+  assert.deepStrictEqual(mixed.tables.map((x) => x.error), [undefined, "..sym"]);
+  assert.match(docMarkdown(mixed, "rdb", "now"), /### e\\<m\\>\n\nNot read: \.\.sym\.\n\n## Functions/);
+  assert.match(docHtml(mixed, "rdb", "now"), /<h3 id="t-e&lt;m&gt;">e&lt;m&gt;<\/h3>\n<p>Not read: \.\.sym\.<\/p>\n<h2>Functions/);
 });
 
 test("the partition check finds weekday gaps, and each kind of problem in an answer", () => {
@@ -181,6 +187,8 @@ test("the sym report warns above the threshold and lists columns and growth", ()
 });
 
 test("the attribute advisor counts filters and suggests by shape, never for an unfiltered column", () => {
+  // Order is asked of a copy: `asc` would mark the table's own column s# (#1863).
+  assert.deepStrictEqual(ATTRIBUTE_SAMPLE.match(/[^;\[]*\basc [^\])]*/g), ["{x~asc x}x til count x"]);
   const queries = ["select from trade where sym=`a", "select from trade where sym in `a`b, px>1", "?[trade;enlist(=;`id;1);0b;()]", "select from quote where sym=`a"];
   assert.deepStrictEqual(Object.fromEntries(filterCounts(queries, "trade", ["sym", "px", "id", "sz"])), { sym: 2, px: 1, id: 1, sz: 0 });
   // A namespaced table is matched by its whole name, and not by its last part (#1113).

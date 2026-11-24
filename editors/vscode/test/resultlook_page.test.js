@@ -88,6 +88,18 @@ test("a column of numeric lists draws sparklines, a numeric column a data bar wh
   assert.strictEqual(page.rows()[1].children[1].style.backgroundImage, undefined);
 });
 
+test("a column named __proto__ resized sends its width back as the widths' own entry (#1884)", () => {
+  const page = loadPage(undefined);
+  page.send(result("s.1", [["__proto__", 7, ["1", "2"]], ["b", 7, ["3", "4"]]]));
+  const handle = page.headers()[0].children.find((c) => c.className === "resize");
+  handle.fire("mousedown", { clientX: 100 });
+  page.fireWindow("mousemove", { clientX: 150 });
+  page.fireWindow("mouseup", {});
+  const sent = page.posted.filter((m) => m.type === "look").at(-1);
+  assert.deepStrictEqual(Object.keys(sent.layout.widths), ["__proto__"]);
+  assert.strictEqual(typeof sent.layout.widths["__proto__"], "number");
+});
+
 test("the layout orders, hides, sizes and freezes columns; moving or resizing one is sent back to be kept (#1015)", () => {
   const page = loadPage(undefined);
   const columns = [["a", 7, ["1", "2"]], ["b", 7, ["3", "4"]], ["c", 7, ["5", "6"]]];

@@ -14,6 +14,10 @@
 //   ---
 //   2 y
 //
+// A line of the query that is `// result` itself is written `//\ result`
+// (and `//\ result` with one more backslash), so the first `// result`
+// line is always where the result starts (#1885).
+//
 // The result is the value as the process prints it - `.Q.S` at a fixed
 // 2000 by 2000 console, so `\c` does not change it, but `\P` does. KDB-X
 // prints no wider than `\c` whatever `.Q.S` is asked, so SNAPSHOT_RUN sets
@@ -49,9 +53,17 @@ export interface Snapshot {
   result: string;
 }
 
+/// A query line that is the result's marker, with any backslashes after
+/// its slashes: written with one more, read back with one fewer (#1885).
+const MARKER_LINE = /^\/\/(\\*) result$/;
+
 /// The file a snapshot is written as.
 export function formatSnapshot(snapshot: Snapshot): string {
-  return [HEADER, QUERY, snapshotQuery(snapshot.query), RESULT, trimmed(snapshot.result), ""].join("\n");
+  const query = snapshotQuery(snapshot.query)
+    .split("\n")
+    .map((l) => (MARKER_LINE.test(l) ? `//\\${l.slice(2)}` : l))
+    .join("\n");
+  return [HEADER, QUERY, query, RESULT, trimmed(snapshot.result), ""].join("\n");
 }
 
 /// `query` as a snapshot file holds it and `parseSnapshot` reads it back:
@@ -71,7 +83,11 @@ export function parseSnapshot(text: string): Snapshot | undefined {
   if (at < 0) {
     return undefined;
   }
-  const query = lines.slice(2, at).join("\n").trim();
+  const query = lines
+    .slice(2, at)
+    .map((l) => (MARKER_LINE.test(l) ? `//${l.slice(3)}` : l))
+    .join("\n")
+    .trim();
   return query === "" ? undefined : { query, result: trimmed(lines.slice(at + 1).join("\n")) };
 }
 

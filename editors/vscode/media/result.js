@@ -1151,7 +1151,8 @@
       return;
     }
     const widths = Object.assign({}, layout().widths);
-    widths[resizing.name] = Math.round(resizing.width);
+    // Its own entry even for a column named __proto__ (#1884).
+    Object.defineProperty(widths, resizing.name, { value: Math.round(resizing.width), enumerable: true, writable: true, configurable: true });
     resizing = null;
     resized = true;
     setLayout(Object.assign({}, layout(), { widths: widths }));

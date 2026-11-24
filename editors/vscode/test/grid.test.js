@@ -43,6 +43,16 @@ test("the grid lambda keeps nothing on the process, and runs code as RUN does", 
   }
 });
 
+// `iasc` marks a vector already in order `s#` where it is, so the column it
+// is given is a copy: the user's own is left as it was (#1863; held against
+// q by grid_q.test.js).
+test("the grid ranks a copy of each column, in a page too (#1863)", () => {
+  const { GRID_TREE, PAGE, gridLambda } = require("../out/grid.js");
+  for (const lambda of [GRID, GRID_TREE, PAGE, gridLambda(false, true)]) {
+    assert.deepStrictEqual(lambda.match(/iasc [^;]*/g), ["iasc x:x til count x"], lambda);
+  }
+});
+
 test("the tree is in GRID_TREE only: the lambda sent unless the result panel asks for a tree has none (#928)", () => {
   const { GRID_TREE } = require("../out/grid.js");
   assert.ok(!GRID.includes("g:{[g;e;b;k;v]"), GRID);

@@ -272,6 +272,13 @@ test("the REPL: Enter inside a bracket starts a new line; a complete input runs,
   assert.deepStrictEqual(context.globalState.get("q-lint.replHistory"), ["count trades", "x:1", "f:{x+\ny}\nf[1;2]"]);
   assert.deepStrictEqual(repl.search("f[", 0), { index: 2, code: "f:{x+\ny}\nf[1;2]" });
   assert.deepStrictEqual(repl.search("zzz", 0), { index: -1, code: "" });
+  // A stored history that is no list of strings: a run and a search do not throw (#1888).
+  await context.globalState.update("q-lint.replHistory", [null, "x:1", 3]);
+  assert.deepStrictEqual(repl.search("x", 0), { index: 0, code: "x:1" });
+  await context.globalState.update("q-lint.replHistory", { not: "a list" });
+  assert.deepStrictEqual(repl.search("x", 0), { index: -1, code: "" });
+  assert.strictEqual(await repl.enter("1+1"), "ran");
+  assert.deepStrictEqual(context.globalState.get("q-lint.replHistory"), ["1+1"]);
 });
 
 test("the REPL's Tab offers q's words, the language server's symbols and the process's names", async (t) => {

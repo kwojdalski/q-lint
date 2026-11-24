@@ -201,8 +201,24 @@ export class SavedQueries implements TreeDataProvider<SavedQuery> {
       void window.showErrorMessage(plainMessage(`q-lint: the name "${name}" was taken meanwhile; the query was not saved.`));
       return;
     }
+    const left = await this.vacate(name);
     await this.store(withQuery(now, { name, code }), [name]);
-    void window.showInformationMessage(plainMessage(`q-lint: saved the query "${name}".`));
+    void window.showInformationMessage(plainMessage(`q-lint: saved the query "${name}".${left}`));
+  }
+
+  /// Delete what a query once named `name` left, before another takes the
+  /// name: v0.36 deleted and renamed a query and kept its scheduled exports
+  /// and dashboard tiles, which then ran the next one of that name (#1879).
+  /// Gives what to say of it, nothing when nothing was left.
+  private async vacate(name: string): Promise<string> {
+    const scheduled = this.schedules().filter((s) => s.query === name).length;
+    const tiles = tilesOf(this.dashboards(), name);
+    if (scheduled + tiles === 0) {
+      return "";
+    }
+    await this.context.workspaceState.update(SCHEDULES_KEY, renamedSchedules(this.schedules(), name, undefined));
+    await this.context.workspaceState.update(DASHBOARDS_KEY, renamedTileQuery(this.dashboards(), name, undefined));
+    return ` The ${scheduled} scheduled export(s) and ${tiles} dashboard tile(s) an earlier query of that name left were deleted.`;
   }
 
   /// Run a saved query on the active connection, its placeholders asked for.
@@ -249,6 +265,10 @@ export class SavedQueries implements TreeDataProvider<SavedQuery> {
     if (!now.some((q) => q.name === query.name) || nameProblem(name, now.map((q) => q.name).filter((n) => n !== query.name)) !== undefined) {
       void window.showErrorMessage(plainMessage(`q-lint: the saved queries changed meanwhile; "${query.name}" was not renamed.`));
       return;
+    }
+    const left = await this.vacate(name);
+    if (left !== "") {
+      void window.showInformationMessage(plainMessage(`q-lint: renamed the query "${query.name}" to "${name}".${left}`));
     }
     await this.store(renamed(now, query.name, name), [query.name, name]);
     // Its result's look (#1015, #1019) goes with it.

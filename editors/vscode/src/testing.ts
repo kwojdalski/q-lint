@@ -19,7 +19,12 @@
 //
 // The two sides of a failure are those of a `match` row, or a qUnit
 // assertion's: `.qunit.assertEquals` and `assertThat` keep them in
-// `.qunit.ar` before they signal `assertThatFAIL`.
+// `.qunit.ar` before they signal `assertThatFAIL`. They are laid out whole
+// (`LAID_OUT`, every row and each cell to its end, up to 20000 characters),
+// not to the process's `\c`: `.Q.s` shows 25 rows of 80 characters, and two
+// values that differ past them read alike (#1866). Two sides that differ
+// and still read alike - `1 2` and `1 2i` in a column - are each given as
+// `-3!` writes them, which tells the types apart.
 //
 // On a process with qUnit, its `failFlag` and `ar` are cleared before the
 // statements run, as `.qunit.runTest` clears them: the flag is sticky, and
@@ -27,6 +32,8 @@
 // assertion is judged as qUnit judges it, by the flag and errors alone - an
 // assertion returns the value it checked, so a false last value is no
 // verdict (#1589) - and a flag set with `ignoreAllExceptions` fails it.
+
+import { FULL_TEXT, LAID_OUT } from "./qtext";
 
 export const TEST_RUN = [
   "{[s;mode]",
@@ -40,8 +47,10 @@ export const TEST_RUN = [
   " if[ok&mode~`match;m:v;v:$[2=count m;(~). m;0b];mode:`true];",
   " failed:$[mode~`fail;ok;not ok;1b;qt;ff;mode~`true;not 1b~v;mode~`run;0b;-1h=type v;not v;1h=type v;not all v;0b];",
   " q:$[ok;$[ff;@[get;`.qunit.ar;()];()];\"assertThatFAIL\"~v;@[get;`.qunit.ar;()];()];",
-  " diff:{20000 sublist .Q.s x} each $[not failed;();2=count m;m 1 0;not 99h=type q;();all`actual`expected in key q;q`expected`actual;()];",
-  " `ok`failed`text`diff!(ok;failed;$[ok;300 sublist .Q.s1 v;v];diff)}",
+  " b:$[not failed;();2=count m;m 1 0;not 99h=type q;();all`actual`expected in key q;q`expected`actual;()];",
+  ` F:${FULL_TEXT}; diff:${LAID_OUT}[F;20000] each b;`,
+  " if[2=count b;if[(diff[0]~diff 1)&not b[0]~b 1;diff:{[F;x] 20000 sublist F[20000;x],\"\\n\"}[F] each b]];",
+  " `ok`failed`text`diff!(ok;failed;$[ok;300 sublist F[300;v];v];diff)}",
 ].join("\n");
 
 /// The command that runs again the tests the last run failed (#980).

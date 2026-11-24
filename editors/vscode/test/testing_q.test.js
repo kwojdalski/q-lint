@@ -149,6 +149,36 @@ const QUNIT_FLAG = [
   "",
 ].join("\n");
 
+test("the two sides of a failure are whole on a narrow console, and its \\c is left alone (#1866)", { skip }, async (t) => {
+  // 25 rows of 80 characters is q's own default: the sides below differ in
+  // the last item, the last row and the last character, past all of it.
+  const c = await connect(t, "a:til 100;b:@[til 100;99;:;-1]\nta:([]x:til 40);tb:([]x:@[til 40;39;:;-1])\ns1:200#\"a\";s2:(199#\"a\"),\"b\"\nd1:(til 40)!til 40;d2:(til 40)!@[til 40;39;:;-1]\n");
+  const names = (await c.evaluate("(key`.;key`)")).value;
+  for (const console of ["25 80", "10 30"]) {
+    await c.evaluate(`system "c ${console}"`);
+    const vector = await run(c, ["(a;b)"], "match");
+    assert.strictEqual(vector.passed, false);
+    assert.strictEqual(vector.diff.actual, `${Array.from({ length: 100 }, (_, i) => i).join(" ")}\n`);
+    assert.ok(vector.diff.expected.endsWith(" 97 98 -1\n"), vector.diff.expected);
+    const table = await run(c, ["(ta;tb)"], "match");
+    assert.strictEqual(table.diff.actual.split("\n").length, 43);
+    assert.ok(table.diff.actual.endsWith("\n38\n39\n") && table.diff.expected.endsWith("\n38\n-1\n"), table.diff.expected);
+    const text = await run(c, ["(s1;s2)"], "match");
+    assert.deepStrictEqual(text.diff, { expected: `"${"a".repeat(199)}b"\n`, actual: `"${"a".repeat(200)}"\n` });
+    const dict = await run(c, ["(d1;d2)"], "match");
+    assert.ok(dict.diff.actual.endsWith("\n38| 38\n39| 39\n") && dict.diff.expected.endsWith("\n38| 38\n39| -1\n"), dict.diff.expected);
+    // A passing result is cut at the 300 characters asked for, not at \c.
+    assert.strictEqual((await run(c, ["til 100"], "run")).text, Array.from({ length: 100 }, (_, i) => i).join(" "));
+    assert.strictEqual((await run(c, ["til 1000"], "run")).text.length, 300);
+    assert.strictEqual((await c.evaluate("-3!system\"c\"")).value, `${console}i`);
+  }
+  // Two sides that read alike laid out are told apart as -3! writes them.
+  const typed = await run(c, ["(([]x:1 2);([]x:1 2i))"], "match");
+  assert.deepStrictEqual(typed.diff, { expected: "+(,`x)!,1 2i\n", actual: "+(,`x)!,1 2\n" });
+  // And nothing was defined to do it.
+  assert.deepStrictEqual((await c.evaluate("(key`.;key`)")).value, names);
+});
+
 test("a qUnit failure does not fail the next test, and a failure ignoreAllExceptions hides still fails (#1588)", { skip }, async (t) => {
   const c = await connect(t, QUNIT_FLAG);
   const failed = await run(c, ["testA:{[] .qunit.assertThat[1;=;2;\"a\"]}", "testA[]"]);

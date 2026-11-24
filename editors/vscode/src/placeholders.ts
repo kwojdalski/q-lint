@@ -16,6 +16,9 @@ import { blockDepth } from "./statements";
 export const PLACEHOLDER_VALUES_KEY = "q-lint.placeholderValues";
 /// The most names remembered: the oldest is forgotten first.
 export const REMEMBERED_LIMIT = 100;
+/// The most text the values remembered hold between them, in characters
+/// (#1880): a value is typed or pasted, and of any length.
+export const REMEMBERED_CHARS = 100_000;
 
 export interface PlaceholderSettings {
   enabled: boolean;
@@ -111,7 +114,9 @@ export function substitute(code: string, values: Record<string, string>): string
 }
 
 /// What `globalState` holds once `given` are remembered over `stored`: the
-/// names just given last, so the oldest go first past `REMEMBERED_LIMIT`.
+/// names just given last, so the oldest go first past `REMEMBERED_LIMIT`
+/// and past `REMEMBERED_CHARS` between them. A value longer than that by
+/// itself is not remembered, and nor is the one given for its name before.
 export function remembered(stored: unknown, given: Record<string, string>): Record<string, string> {
   const kept: [string, string][] = [];
   if (typeof stored === "object" && stored !== null && !Array.isArray(stored)) {
@@ -121,7 +126,13 @@ export function remembered(stored: unknown, given: Record<string, string>): Reco
       }
     }
   }
-  const all = [...kept, ...Object.entries(given)].slice(-REMEMBERED_LIMIT);
+  const fitting = [...kept, ...Object.entries(given)].filter(([, value]) => value.length <= REMEMBERED_CHARS).slice(-REMEMBERED_LIMIT);
+  let room = REMEMBERED_CHARS;
+  let from = fitting.length;
+  while (from > 0 && (room -= fitting[from - 1][1].length) >= 0) {
+    from--;
+  }
+  const all = fitting.slice(from);
   const out: Record<string, string> = {};
   for (const [name, value] of all) {
     Object.defineProperty(out, name, { value, enumerable: true, writable: true, configurable: true });

@@ -17,10 +17,12 @@ import {
 } from "vscode";
 import {
   EMPTY_STATE,
+  SHARED_SOURCE,
   downloadedPasswords,
   fetchProcesses,
   parseServers,
   qualified,
+  relabelledServers,
   serverDescription,
   serverLabelProblem,
   serverTooltip,
@@ -74,7 +76,7 @@ export class DiscoveryServers {
 
   constructor(
     private readonly context: ExtensionContext,
-    private readonly saved: { list: () => Process[]; save: (processes: Process[]) => Promise<void> },
+    private readonly saved: { list: () => Process[]; save: (processes: Process[], given: string[]) => Promise<void> },
   ) {
     const c = (name: string, run: (...args: never[]) => unknown) => commands.registerCommand(name, run);
     context.subscriptions.push(
@@ -93,6 +95,31 @@ export class DiscoveryServers {
       { dispose: () => clearInterval(this.timer) },
     );
     this.schedule(true);
+    void this.relabel();
+  }
+
+  /// Give a stored server labelled as the shared list is another label
+  /// (#1889), as Edit would: its auth header goes with it, to the URL it
+  /// was given for, and the passwords given for its processes are forgotten.
+  private async relabel(): Promise<void> {
+    const relabelled = relabelledServers(this.context.globalState.get<unknown>(SERVERS_KEY, []));
+    if (relabelled === undefined) {
+      return;
+    }
+    await this.forgetPasswords(SHARED_SOURCE);
+    const kept = await this.context.secrets.get(secretKey(SHARED_SOURCE));
+    await this.context.secrets.delete(secretKey(SHARED_SOURCE));
+    if (kept !== undefined) {
+      await this.context.secrets.store(secretKey(relabelled.to), kept);
+    }
+    await this.context.globalState.update(SERVERS_KEY, relabelled.servers);
+    this.changed.fire();
+    this.schedule(true);
+    void window.showInformationMessage(
+      plainMessage(
+        `q-lint: the discovery server "${SHARED_SOURCE}" is now "${relabelled.to}": ${SHARED_SOURCE} names the workspace's shared process list. The passwords given for its processes are asked for again.`,
+      ),
+    );
   }
 
   servers(): DiscoveryServer[] {
@@ -268,11 +295,15 @@ export class DiscoveryServers {
   /// Forget the password of each process `label` now lists at another
   /// host, port, user or without TLS than where it was given (#1503): it
   /// would be sent there unasked. `before`: what it listed, when nothing
-  /// was kept of where.
+  /// was kept of where. One with neither - a password kept by a version
+  /// before 0.37, which recorded nothing of where - is forgotten too, and
+  /// asked for again: what is listed now may not be where it was given
+  /// (#1878).
   private async forgetMoved(label: string, before: Process[], processes: Process[]): Promise<void> {
     const kept = this.seen()[label] ?? [];
     const seen = [...kept, ...before.filter((p) => !kept.some((k) => k.label === p.label))];
-    for (const process of passwordsToForget(seen, processes)) {
+    const unplaced = (this.given()[label] ?? []).filter((g) => processes.some((p) => p.label === g) && !seen.some((s) => s.label === g));
+    for (const process of [...passwordsToForget(seen, processes), ...unplaced]) {
       await this.context.secrets.delete(passwordKey({ label: qualified(label, process), server: label }));
       await this.passwordGiven(label, process, false);
     }
@@ -456,13 +487,16 @@ export class DiscoveryServers {
     }
     const saved = this.saved.list();
     const { added, skipped } = toDownload(saved, listed);
-    for (const [from, to] of downloadedPasswords(server.label, added)) {
+    // The labels a password was copied for: no other is kept for one (#1887).
+    const given: string[] = [];
+    for (const [from, to, label] of downloadedPasswords(server.label, added)) {
       const password = await this.context.secrets.get(from);
       if (password !== undefined) {
         await this.context.secrets.store(to, password);
+        given.push(label);
       }
     }
-    await this.saved.save([...saved, ...added]);
+    await this.saved.save([...saved, ...added], given);
     const note = skipped.length ? ` Skipped ${skipped.length} whose label is taken: ${skipped.slice(0, 5).join(", ")}.` : "";
     void window.showInformationMessage(plainMessage(`q-lint: saved ${added.length} process(es) from ${server.label}.${note}`));
   }

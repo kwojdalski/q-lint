@@ -119,14 +119,17 @@ export function secretsWarning(labels: string[]): string {
 /// The list's text with `process` in it, in place of an entry of its label
 /// or after the rest, written as an export writes one: a saved process holds
 /// no password. `text` undefined: a new file. Throws a SyntaxError when the
-/// text there is not JSON.
+/// text there is not JSON, and an Error when it is JSON that holds no list
+/// to add to - a `processes` that is not a list, or no object at all - so
+/// what the file does hold is not written over (#1886). An object with no
+/// `processes` gets one, beside its other fields.
 export function withShared(text: string | undefined, process: Process): string {
   const json: unknown = text === undefined || text.trim() === "" ? { processes: [] } : JSON.parse(text.replace(/^\uFEFF/, ""));
-  const holder: { processes: unknown[] } & Record<string, unknown> = Array.isArray(json)
-    ? { processes: json }
-    : typeof json === "object" && json !== null && Array.isArray((json as { processes?: unknown }).processes)
-      ? (json as { processes: unknown[] } & Record<string, unknown>)
-      : { processes: [] };
+  const fields = typeof json === "object" && json !== null && !Array.isArray(json) ? (json as Record<string, unknown>) : undefined;
+  if (!Array.isArray(json) && (fields === undefined || ("processes" in fields && !Array.isArray(fields.processes)))) {
+    throw new Error("it holds no list of processes: a list, or an object with a `processes` list, is expected. Nothing was written.");
+  }
+  const holder: { processes: unknown[] } & Record<string, unknown> = Array.isArray(json) ? { processes: json } : { ...fields, processes: (fields?.processes as unknown[] | undefined) ?? [] };
   const { server: _server, ...entry } = process;
   void _server;
   // Trimmed, as the list is read: `"rdb "` is listed as rdb.

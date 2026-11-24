@@ -70,7 +70,7 @@ import { ClosedBeforeHandshake, QConnection, QError, type Target } from "./qclie
 import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, TunnelHandshakeError, readTunnel } from "./tunnel";
 import { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, readGateway } from "./gateway";
 import { HEARTBEAT, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
-import { historyHeading, historyLabel, iconsEscaped, mergedHistory, plainMessage } from "./history";
+import { clearedStamp, historyHeading, historyLabel, iconsEscaped, mergedHistory, plainMessage } from "./history";
 import { render } from "./query";
 import { QueryModes, type PageLater, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
@@ -279,7 +279,7 @@ class ProcessesView implements TreeDataProvider<Row> {
     const active = connected?.server === from && connected?.label === (from === undefined ? process.label : qualified(from, process.label));
     const item = new TreeItem(process.label, TreeItemCollapsibleState.None);
     const running = from === undefined && this.live.launched(process.label);
-    item.description = `${address(process.host, process.port)}${active ? " - connected" : ""}${running ? " - running" : ""}`;
+    item.description = `${address(process.host, process.port)}${hostProblem(process.host) !== undefined ? " - not a host" : ""}${active ? " - connected" : ""}${running ? " - running" : ""}`;
     item.iconPath = new ThemeIcon(active ? "vm-active" : "server-process", colourOf(process.tags));
     item.tooltip = new MarkdownString(processTooltip(process, from));
     const kind = from === undefined ? "process" : "discovered";
@@ -705,7 +705,7 @@ export class Live {
     this.historyView = new HistoryView(this);
     this.processesTree = window.createTreeView(VIEWS.processes, { treeDataProvider: this.processesView });
     this.historyTree = window.createTreeView(VIEWS.history, { treeDataProvider: this.historyView });
-    this.discovery = new DiscoveryServers(context, { list: () => this.processes(), save: (processes) => this.save(processes) });
+    this.discovery = new DiscoveryServers(context, { list: () => this.processes(), save: (processes, given) => this.save(processes, given) });
     const terminals = new QTerminals(context);
     this.terminals = terminals;
     this.runFileWith = (extra, document) => terminals.runFile(extra, document);
@@ -1101,7 +1101,7 @@ export class Live {
   }
 
   processes(): Process[] {
-    return parseProcesses(this.context.globalState.get<unknown>(PROCESSES_KEY, []), true).processes;
+    return parseProcesses(this.context.globalState.get<unknown>(PROCESSES_KEY, []), true, true).processes;
   }
 
   activeLabel(): string | undefined {
@@ -1126,8 +1126,14 @@ export class Live {
   }
 
   history(): HistoryEntry[] {
-    this.queries = mergedHistory(undefined, this.queries, this.storedHistory(), this.context.globalState.get<string>(HISTORY_CLEARED_KEY), HISTORY_LIMIT);
+    this.queries = mergedHistory(undefined, this.queries, this.storedHistory(), this.historyCleared(), HISTORY_LIMIT);
     return this.queries;
+  }
+
+  /// When Clear History was last run, in any window.
+  private historyCleared(): string | undefined {
+    const stored = this.context.globalState.get<unknown>(HISTORY_CLEARED_KEY);
+    return typeof stored === "string" ? stored : undefined;
   }
 
   private storedHistory(): HistoryEntry[] {
@@ -1178,9 +1184,48 @@ export class Live {
     return this.save(processes);
   }
 
-  private async save(processes: Process[]): Promise<void> {
+  /// Save `processes` as the list. One new to it starts with no password
+  /// but its own - `given`: the labels one was just stored for. What is
+  /// under a new label's key was another's: a discovered process's, kept
+  /// there up to 0.26, and it was sent for this one unasked (#1887).
+  private async save(processes: Process[], given: string[] = []): Promise<void> {
+    const before = new Set(this.processes().map((p) => p.label));
+    const fresh = processes.map((p) => p.label).filter((label) => !before.has(label));
+    for (const label of fresh) {
+      if (!given.includes(label)) {
+        await this.context.secrets.delete(this.passwordKey({ label }));
+      }
+      await this.vacate(label, fresh.length === 1);
+    }
     await this.context.globalState.update(PROCESSES_KEY, processes);
     this.processesView.refresh();
+  }
+
+  /// Delete what a process once labelled `label` left, before another takes
+  /// the label: v0.36 deleted a process and kept its scheduled exports and
+  /// dashboard tiles, which then ran on the next one of that label (#1879).
+  /// Not the tiles and files of a discovered or shared process that answers
+  /// to the label. `logged` for the workspaces not open, as a deletion is: a
+  /// list downloaded or imported is not, the log keeping its last hundred.
+  private async vacate(label: string, logged: boolean): Promise<void> {
+    const schedules = parseSchedules(this.context.workspaceState.get<unknown>(SCHEDULES_KEY, []));
+    const scheduled = schedules.filter((s) => s.process === label).length;
+    let tiles = 0;
+    if (findDiscovered([...this.discovery.discovered(), ...this.sharedList()], label) !== undefined) {
+      // A scheduled export runs on a saved process only.
+      if (scheduled > 0) {
+        await this.context.workspaceState.update(SCHEDULES_KEY, retargetedSchedules(schedules, label, undefined));
+      }
+    } else {
+      const dashboards = parseDashboards(this.context.workspaceState.get<unknown>(DASHBOARDS_KEY, []));
+      tiles = dashboards.reduce((n, d) => n + d.tiles.filter((t) => t.process === label).length, 0);
+      await (logged ? this.rebind(label, undefined) : this.retarget(label, undefined));
+    }
+    if (scheduled + tiles > 0) {
+      void window.showInformationMessage(
+        plainMessage(`q-lint: the ${scheduled} scheduled export(s) and ${tiles} dashboard tile(s) an earlier process labelled "${label}" left were deleted.`),
+      );
+    }
   }
 
   /// A setting group read with `read`, as configured now.
@@ -1364,7 +1409,7 @@ export class Live {
     if (answer.password !== undefined) {
       await this.context.secrets.store(this.passwordKey(answer.process), answer.password);
     }
-    await this.save([...now, answer.process]);
+    await this.save([...now, answer.process], answer.password !== undefined ? [answer.process.label] : []);
   }
 
   /// The process a command was given from a view row, or one the user picks.
@@ -1455,6 +1500,8 @@ export class Live {
     if (process.label !== old.label) {
       const kept = await this.context.secrets.get(this.passwordKey(old));
       await this.context.secrets.delete(this.passwordKey(old));
+      // What is under the new label's key is not this process's (#1887).
+      await this.context.secrets.delete(this.passwordKey(process));
       if (kept !== undefined && answer.password === undefined && !moved) {
         await this.context.secrets.store(this.passwordKey(process), kept);
       }
@@ -1471,7 +1518,7 @@ export class Live {
       // Before the redraw, so its row is still shown running (#1692).
       this.relabelled(old.label, process.label);
     }
-    await this.save(now.map((p) => (p.label === old.label ? process : p)));
+    await this.save(now.map((p) => (p.label === old.label ? process : p)), [process.label]);
     if (process.label !== old.label) {
       await this.rebind(old.label, process.label);
       this.modes.processRenamed(old.label, process.label);
@@ -3202,7 +3249,13 @@ export class Live {
   }
 
   async record(entry: HistoryEntry): Promise<void> {
-    this.queries = mergedHistory(entry, this.queries, this.storedHistory(), this.context.globalState.get<string>(HISTORY_CLEARED_KEY), HISTORY_LIMIT);
+    // A Clear stamped by a clock that was ahead would drop this query at
+    // the next merge, and every one after it (#1882).
+    const cleared = clearedStamp(this.historyCleared(), entry.at, new Date());
+    if (cleared !== this.historyCleared()) {
+      await this.context.globalState.update(HISTORY_CLEARED_KEY, cleared);
+    }
+    this.queries = mergedHistory(entry, this.queries, this.storedHistory(), this.historyCleared(), HISTORY_LIMIT);
     this.refreshHistory();
     await this.context.globalState.update(HISTORY_KEY, this.queries);
   }

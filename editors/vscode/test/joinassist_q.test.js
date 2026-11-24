@@ -58,3 +58,15 @@ test("a picked table whose name has a space is read and joined", { skip }, async
     assert.strictEqual(await connection.call(`{[x] 98h=type 0!value x}`, asCode(s.expression)), true, s.expression);
   }
 });
+
+// A view's name is not evaluated to see whether it is a table (#1865); a
+// query over one is the user's own, and runs.
+test("a view named as a table is refused, not evaluated (#1865)", { skip }, async (t) => {
+  const { connection } = await connect(t, SERVER + "spy::select from trade\nbad::1+`a\n");
+  const pending = () => connection.call('{[x] string system"B"}', 0);
+  for (const name of ["spy", "bad"]) {
+    await assert.rejects(connection.call(TABLE_SHAPE, asCode(name)), /a view, not a table/);
+  }
+  assert.deepStrictEqual(await pending(), ["bad", "spy"]);
+  assert.deepStrictEqual(readShape(await connection.call(TABLE_SHAPE, asCode("select from spy")), "q").columns, ["sym", "time", "px"]);
+});

@@ -11,7 +11,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { QConnection } = require("../out/qclient.js");
-const { VARS, readVariables } = require("../out/notebookvars.js");
+const { VARS, readVariables, describeVariable } = require("../out/notebookvars.js");
 const { LIVE, readLiveValues } = require("../out/livemarkdown.js");
 
 const Q = process.env.QLINT_TEST_Q;
@@ -54,6 +54,28 @@ const cli = (args, env = {}) =>
     );
   });
 
+// A view is listed as one, with nothing read of it: `value` of its name
+// would evaluate it after every cell (#1865).
+test("the variables lambda lists a view as a view, and does not evaluate it (#1865)", { skip }, async (t) => {
+  const q = await startQ("t:([] a:1 2)\nspy::select from t\nbad::1+`a\n");
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.close());
+  const pending = () => connection.call('{[x] string system"B"}', 0);
+  const { variables, total } = readVariables(await connection.call(VARS, 1000));
+  assert.deepStrictEqual(variables, [
+    { name: "t", type: 98, count: 2, size: variables[0].size },
+    { name: "spy", type: 100, view: true },
+    { name: "bad", type: 100, view: true },
+  ]);
+  assert.deepStrictEqual(variables.map(describeVariable), [`table · 2 rows · ${variables[0].size} B`, "view", "view"]);
+  assert.strictEqual(total, 3);
+  assert.deepStrictEqual(await pending(), ["bad", "spy"]);
+  // No view among the names sent, and no name at all: the same shape.
+  assert.deepStrictEqual(readVariables(await connection.call(VARS, 1)).variables.map((v) => v.name), ["t"]);
+  assert.deepStrictEqual(readVariables(await connection.call(VARS, 0)), { variables: [], total: 3 });
+});
+
 test("notebook features against a real q process", { skip }, async (t) => {
   const a = await startQ('t:([] i:til 3; s:("a";"<b>";"c"));f:{x+1};d:2024.01.01;sp:get (hsym `$":db/sp/") set ([] n:1 2 3)\n');
   const b = await startQ("");
@@ -85,11 +107,20 @@ test("notebook features against a real q process", { skip }, async (t) => {
     assert.ok(values["til 1000"].text.length <= 200);
     assert.strictEqual(readLiveValues(["300#\"x\""], await connection.call(LIVE, ["300#\"x\""]))["300#\"x\""].text.length, 200);
     assert.deepStrictEqual(values['"c"'], { text: "c" });
+    // Cut at the 200 characters asked for, not at the console's 80 (#1870).
+    assert.strictEqual(values["til 1000"].text, Array.from({ length: 1000 }, (_, i) => i).join(" ").slice(0, 200));
+    const wide = ["(til 50;`a`b)", "{x+y}[til 50]", "`a`b!(til 50;til 50)", "([] a:til 50)", "50#`alpha", "50#1.5"];
+    const whole = readLiveValues(wide, await connection.call(LIVE, wide));
+    wide.forEach((e) => assert.doesNotMatch(whole[e].text, /\.\./, e));
+    assert.strictEqual(whole["{x+y}[til 50]"].text, `{x+y}[${Array.from({ length: 50 }, (_, i) => i).join(" ")}]`);
+    assert.strictEqual(whole["([] a:til 50)"].text, `+(,\`a)!,${Array.from({ length: 50 }, (_, i) => i).join(" ")}`);
+    assert.deepStrictEqual(Array.from((await connection.evaluate("system\"c\"")).value, Number), [25, 80]);
     // A big table or dictionary is written from its first items, its text
-    // as the old unbounded -3! of the same value wrote it (#1559).
+    // as the old unbounded -3! of the same value wrote it (#1559) on a
+    // console wide enough to write 200 characters.
     const big = ["([] a:til 1000000; b:1000000#`x)", "(til 1000000)!til 1000000", "1000000#0b", "(1000000#enlist 1 2)", "([k:til 1000000] v:1000000#`x)", "`s#til 300", "`u#til 300", "([]time:`s#til 300;x:300#1)", "([k:`u#til 300]x:300#1)", "(`s#til 300)!300#1"];
     const got = readLiveValues(big, await connection.call(LIVE, big));
-    const want = readLiveValues(big, await connection.call("{{(1b;200 sublist -3!value x)} each x}", big));
+    const want = readLiveValues(big, await connection.call('{c:system"c";system"c 2000 2000";r:{(1b;200 sublist -3!value x)} each x;system"c "," "sv string c;r}', big));
     big.forEach((e) => {
       assert.strictEqual(typeof want[e].text, "string", e);
       assert.strictEqual(got[e].text, want[e].text, e);

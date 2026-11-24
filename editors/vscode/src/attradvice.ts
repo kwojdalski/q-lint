@@ -9,6 +9,9 @@
 // table in memory or of a splayed one, and of a partitioned table the
 // first rows of its last partition, mapped from its directory (`.Q.par`) so
 // the partition is not read whole. The current attributes are `meta`'s.
+// Whether a column is in order is asked of a copy of it (`x til count x`):
+// `asc` marks a vector already in order `s#` where it is, and a table read
+// whole is sampled as its own columns (#1863).
 // Works on kdb+ (KDB-X) and PeachQ; held there by dbtools_q.test.js.
 //
 // The costs are KX's figures for the structures an attribute keeps, in
@@ -20,13 +23,14 @@ import { bytes } from "./tableinfo";
 
 export const ATTRIBUTE_SAMPLE = [
   "{[nm;lim]",
+  " if[(`$nm)in views[];'\"a view, not a table\"];",
   " t:get`$nm;if[not .Q.qt t;'\"not a table\"];",
   " p:.Q.qp t;part:1b~p;m:\"j\"$lim;",
   " n:\"f\"$$[part;@[{sum .Q.cn x};t;0n];count t];",
   " s:$[part;m sublist get .Q.par[hsym`$system\"cd\";last .Q.pv;`$nm];m sublist 0!t];",
   " mt:0!meta t;cs:(cols s)except$[part;.Q.pf;`$()];",
   " one:{[x] nested:0h=type x;",
-  "  `d`runs`sorted!(\"f\"$count distinct x;\"f\"$$[nested;0n;sum differ x];$[nested;0b;x~asc x])};",
+  "  `d`runs`sorted!(\"f\"$count distinct x;\"f\"$$[nested;0n;sum differ x];$[nested;0b;{x~asc x}x til count x])};",
   " st:one each s cs;",
   " `kind`rows`sampled`partitions`cols`types`attrs`distinct`runs`sorted!(",
   "  string$[part;`partitioned;0b~p;`splayed;99h=type t;`keyed;`table];n;\"f\"$count s;",

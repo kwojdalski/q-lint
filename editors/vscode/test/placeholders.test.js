@@ -5,6 +5,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const {
   PLACEHOLDER_VALUES_KEY,
+  REMEMBERED_CHARS,
   REMEMBERED_LIMIT,
   lastValue,
   placeholderNames,
@@ -62,6 +63,22 @@ test("values are remembered newest last, at most REMEMBERED_LIMIT, and read back
   assert.strictEqual(Object.keys(kept).at(-1), "last");
   assert.ok(!("n0" in kept));
   assert.strictEqual(Object.getPrototypeOf(remembered({}, { __proto__x: "1", ["__proto__"]: "2" })), Object.prototype);
+});
+
+test("the values remembered fit a size between them, the newest kept; one too long alone is not remembered (#1880)", () => {
+  const long = "x".repeat(REMEMBERED_CHARS / 4);
+  let kept = {};
+  for (const name of ["a", "b", "c", "d", "e"]) {
+    kept = remembered(kept, { [name]: long });
+  }
+  assert.deepStrictEqual(Object.keys(kept), ["b", "c", "d", "e"]);
+  assert.ok(Object.values(kept).every((v) => v === long));
+  // Pasted past the size: neither it nor the value given before is kept for the name.
+  const after = remembered({ a: "1", b: "2" }, { a: "y".repeat(REMEMBERED_CHARS + 1), c: "3" });
+  assert.deepStrictEqual(after, { b: "2", c: "3" });
+  assert.strictEqual(lastValue(after, "a"), undefined);
+  // One stored before, past the size, goes at the next value given.
+  assert.deepStrictEqual(remembered({ big: "z".repeat(REMEMBERED_CHARS + 1), b: "2" }, { c: "3" }), { b: "2", c: "3" });
 });
 
 test("placeholders are on unless the setting is false", () => {

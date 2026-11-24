@@ -168,11 +168,12 @@ export function lastByName(defs: Definition[]): Map<string, Definition> {
 
 /// Asks the process what each of `nms` (one string, names split by
 /// spaces) holds: `missing`, a lambda and its text, or `other` - a
-/// projection, a builtin, data. Reads only; works on KDB-X and PeachQ.
+/// projection, a builtin, data, a view (which `get` would evaluate, so it is
+/// told by its name, #1865). Reads only; works on KDB-X and PeachQ.
 export const DRIFT = [
   "{[nms]",
   " n:\" \" vs(),nms;",
-  " r:{x:@[{(1b;get x)};`$x;{(0b;x)}];$[not first x;(`missing;\"\");100h<>type last x;(`other;\"\");(`lambda;last value last x)]}each n;",
+  " r:{[w;x]if[(`$x)in w;:(`other;\"\")];x:@[{(1b;get x)};`$x;{(0b;x)}];$[not first x;(`missing;\"\");100h<>type last x;(`other;\"\");(`lambda;last value last x)]}[views[]]each n;",
   " `name`state`text!(n;r[;0];r[;1])}",
 ].join("\n");
 
