@@ -331,6 +331,9 @@ test("a chart is drawn from CSV and JSON tables, and the command line writes it"
   assert.throws(() => gridFromCsv("\n  \n"), /no header row/);
   assert.deepStrictEqual(gridFromJson('[{"x":1,"y":2},{"x":2,"y":3}]').values[1], [2, 3]);
   assert.deepStrictEqual(gridFromJson('{"x":[1,2],"y":["a","b"]}').columns.map((c) => c.numeric), [true, false]);
+  const proto = gridFromJson('[{"t":1,"valueOf":5,"constructor":"a"},{"t":2,"valueOf":6},{"t":3}]');
+  assert.deepStrictEqual(proto.cells.slice(1), [["5", "6", ""], ["a", "", ""]]);
+  assert.strictEqual(proto.columns[1].numeric, true);
   assert.throws(() => gridFromJson("3"), /not a table/);
   const svg = chartFromGrid(g, { kind: "bar", title: "T <1>", y: ["a"] });
   assert.ok(svg.startsWith("<svg") && svg.endsWith("</svg>"));
