@@ -22,7 +22,7 @@ import {
   SAMPLE_BYTES,
   csvLoad,
   dataKind,
-  fileHandle,
+  fileSource,
   isLocalHost,
   loadExpression,
   readDataFiles,
@@ -417,7 +417,7 @@ export class ResultTools {
     if (name === undefined) {
       return;
     }
-    const statement = `${name.trim()}:${csvLoad(types, sample.delimiter, fileHandle(file.fsPath))}`;
+    const statement = `${name.trim()}:${csvLoad(types, sample.delimiter, fileSource(file.fsPath, sample.bom))}`;
     await openQ(
       [
         `/ Load ${basename(file.fsPath)} as ${name.trim()}, written by q-lint's CSV load wizard.`,

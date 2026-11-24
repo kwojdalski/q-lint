@@ -206,6 +206,29 @@ test("the q of the data tools against a real q process", { skip }, async (t) => 
     }
   });
 
+  await t.test("a CSV that starts with a byte order mark loads with the names its sample showed, by its path as from its text (#1966)", async () => {
+    const csv = path.join(q.dir, "excel.csv");
+    for (const [text, names] of [["\ufeffa,b\n1,2\n", ["a", "b"]], ['\ufeff"a",b\n1,2\n', ["a", "b"]], ["\ufeffa\n1\n", ["a"]]]) {
+      fs.writeFileSync(csv, text);
+      const sample = d.sampleText(text);
+      assert.deepStrictEqual([sample.names, sample.bom], [names, true]);
+      for (const local of [true, false]) {
+        const out = await grid(d.loadExpression("csv", csv, local, sample, local ? undefined : text));
+        assert.deepStrictEqual([out.grid.names, cells(out, "a")], [names, ["1"]], `${JSON.stringify(text)} ${local}`);
+      }
+      // The wizard's statement, its first column kept or skipped.
+      await run(`marked:${d.csvLoad(sample.types, ",", d.fileSource(csv, sample.bom))}`);
+      assert.deepStrictEqual((await grid("select a from marked")).grid.names, ["a"]);
+      if (names.length > 1) {
+        await run(`marked:${d.csvLoad([" ", "J"], ",", d.fileSource(csv, sample.bom))}`);
+        assert.deepStrictEqual((await grid("marked")).grid.names, ["b"]);
+      }
+    }
+    // The mark gone from the file since it was sampled: the statement still loads it.
+    fs.writeFileSync(csv, "a,b\n1,2\n");
+    assert.deepStrictEqual((await grid(d.loadExpression("csv", csv, true, { types: ["J", "J"], delimiter: ",", bom: true }))).grid.names, ["a", "b"]);
+  });
+
   await t.test("a one-column CSV loads by its path and from its text, its one-character lines too (#1262)", async () => {
     const csv = path.join(q.dir, "one.csv");
     const text = "x\n1\n22\n";

@@ -136,6 +136,8 @@ export interface Sample {
   rows: string[][];
   /// Each column's guessed letter.
   types: string[];
+  /// The text starts with a byte order mark, which the names are read without.
+  bom: boolean;
 }
 
 const LONG = /^[-+]?\d+$/;
@@ -187,7 +189,7 @@ export function sampleText(text: string, delimiter = "", cut = false): Sample {
   }
   const rows = records.slice(1, SAMPLE_ROWS + 1).map((f) => names.map((_, i) => f[i] ?? ""));
   const types = names.map((_, i) => guessType(rows.map((r) => r[i])));
-  return { delimiter: d, names, rows, types };
+  return { delimiter: d, names, rows, types, bom: text.startsWith("\ufeff") };
 }
 
 /// A delimiter as a q char.
@@ -200,6 +202,15 @@ function charLiteral(d: string): string {
 export function fileHandle(path: string): string {
   const p = path.replace(/\\/g, "/");
   return /^[A-Za-z0-9_./:]+$/.test(p) ? `\`:${p}` : `\`$${stringLiteral(`:${p}`)}`;
+}
+
+/// What `0:` reads a file the process can open from: its handle, or, when
+/// the file starts with a UTF-8 byte order mark (`bom`), its lines with the
+/// mark dropped. `0:` keeps the three bytes in the first column's name,
+/// which then looks right and is not the name the sample showed (#1966).
+export function fileSource(path: string, bom: boolean): string {
+  const handle = fileHandle(path);
+  return bom ? `{$["\\357\\273\\277"~3#first x;@[x;0;3_];x]}read0 ${handle}` : handle;
 }
 
 /// The expression `0:` loads a delimited file with: `types` one letter per
@@ -221,11 +232,11 @@ export function linesLiteral(text: string): string {
 
 /// The expression that loads a data file: by its path when the process
 /// can read it (`local`), or else from its text, which must then be given.
-export function loadExpression(kind: DataKind, path: string, local: boolean, sample: Pick<Sample, "types" | "delimiter">, text?: string): string {
+export function loadExpression(kind: DataKind, path: string, local: boolean, sample: Pick<Sample, "types" | "delimiter"> & { bom?: boolean }, text?: string): string {
   if (kind === "json") {
     return local ? `.j.k raze read0 ${fileHandle(path)}` : `.j.k ${stringLiteral((text ?? "").replace(/\r?\n/g, " "))}`;
   }
-  return csvLoad(sample.types, sample.delimiter, local ? fileHandle(path) : linesLiteral(text ?? ""));
+  return csvLoad(sample.types, sample.delimiter, local ? fileSource(path, sample.bom === true) : linesLiteral(text ?? ""));
 }
 
 /// A name for the table a file is loaded as: its base name, made a q name,
