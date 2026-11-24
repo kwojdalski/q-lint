@@ -661,3 +661,15 @@ test("Run Notebook with Parameters runs the notebook on the active connection an
   assert.strictEqual(fake.written.has("/ws/p-off.qnb"), false);
   assert.match(fake.messages.at(-1), /q-lint\.notebook\.parameters\.enable/);
 });
+
+test("a notebook chart that fails on a redraw is no longer reported as drawn (#1795)", () => {
+  const { chartReported } = require("../out/notebook.js");
+  const drawn = new Map();
+  chartReported(drawn, { type: "rendered", id: "a", chart: { kind: "line", datasets: [], width: 600, height: 300, painted: 900 } });
+  chartReported(drawn, { type: "rendered", id: "b", chart: { kind: "bar", datasets: [] } });
+  assert.deepStrictEqual([...drawn.keys()], ["a", "b"]);
+  chartReported(drawn, { type: "failed", id: "a", error: "Error: no canvas" });
+  assert.deepStrictEqual([...drawn.keys()], ["b"]);
+  chartReported(drawn, { type: "rendered", id: "c", chart: { kind: "bar", datasets: [] } }, 1);
+  assert.deepStrictEqual([...drawn.keys()], ["c"]);
+});
