@@ -573,6 +573,103 @@ test("a schema migration writes no list-atom cast, in memory or on disk", { skip
   assert.doesNotMatch(done.text, /left as they were/);
 });
 
+// Every type a meta names, cast to every other one, on a real q: what q's
+// own cast makes of a column is asked of it here, so the casts the script
+// leaves out (`castProblem`) cannot drift from what q does. A cast that is
+// written runs and gives the type; one left out is one q's cast does not
+// make, and says so (#2012).
+const SAMPLE = {
+  b: "101b", g: "3?0Ng", x: "0x010203", h: "1 2 3h", i: "1 2 3i", j: "1 2 3", e: "1 2 3e", f: "1.5 2.5 3.5", c: '"abc"', s: "`a`b`c",
+  p: "2024.01.01D0+1 2 3", m: "2024.01 2024.02 2024.03m", d: "2024.01.01 2024.01.02 2024.01.03", z: "2024.01.01T00:00:00.000+1 2 3",
+  n: "0D00:00:01 0D00:00:02 0D00:00:03", u: "00:01 00:02 00:03", v: "00:00:01 00:00:02 00:00:03", t: "00:00:00.001 00:00:00.002 00:00:00.003",
+};
+const ATOMS = Object.keys(SAMPLE);
+const isList = (type) => type !== "" && type === type.toUpperCase();
+const sampleOf = (type) => (type === "" ? '(1;`a;"x")' : isList(type) ? `{(2#x;1#x;0#x)}[${SAMPLE[type.toLowerCase()]}]` : SAMPLE[type]);
+/// The type q's own cast of mgA's column to `t` gives, or the error.
+const OWN_CAST = "{[t] @[{[t] string first exec t from meta ([] c:t$mgA`c)};$[1=count t;first t;t];{\"'\",x}]}";
+
+/// A table whose column `c` is of every type in turn, migrated in memory to
+/// the schema of one whose `c` is of every other: `each(from, to, script,
+/// own)` is told the script and what q's own cast gives, after checking
+/// that a script with a cast in it ran and made the column the target's.
+async function everyCast(t, types, each) {
+  const { connection } = await connect(t, types.map((type, i) => `mg${i}:([] k:1 2 3; c:${sampleOf(type)})`).join("\n") + "\n");
+  const infos = [];
+  for (let i = 0; i < types.length; i++) infos.push(readTableInfo(await connection.call(TABLE_INFO, `mg${i}`, 100)));
+  assert.deepStrictEqual(infos.map((info) => info.columns[1].type), types);
+  for (let a = 0; a < types.length; a++) {
+    for (let b = 0; b < types.length; b++) {
+      if (a === b) continue;
+      const [from, to] = [types[a], types[b]];
+      await connection.call("{[a] `mgA set get a;}", `mg${a}`);
+      const script = migrationScript("mgA", infos[a], "A", infos[b], "B", "p");
+      const own = String(await connection.call(OWN_CAST, to.toLowerCase())).trim();
+      if (!/\n\/ not written/.test(script)) {
+        const ran = readRun(await connection.call(RUN_SCRIPT, statements(script)));
+        assert.ok(ran.ok, `${from} to ${to}: ${script}${ran.error}`);
+        const same = await connection.call("{[b;n] b:get b; (meta[mgA]~meta b;(type each mgA`c)~type each b`c;n|(count each mgA`c)~count each b`c)}", `mg${b}`, !(isList(from) && isList(to)));
+        assert.deepStrictEqual(same, [true, true, true], `${from} to ${to}: ${script}`);
+      }
+      each(from, to, script, own);
+    }
+  }
+  return connection;
+}
+
+test("a schema migration writes the casts q makes between atom columns, and no other (#2012)", { skip }, async (t) => {
+  const written = [];
+  const connection = await everyCast(t, ATOMS, (from, to, script, own) => {
+    const left = script.match(/\n\/ not written: a cast of c from (\S+) to (\S+): (.*)\n/);
+    if (left === null) return written.push(`${from}${to}`);
+    // What is left out is what q's own cast refuses, by its name.
+    assert.deepStrictEqual([left[1], left[2], own], [from, to, "'type"], script);
+    assert.match(left[3], /^q has no cast from \w+ to \w+$/, script);
+  });
+  // 57 of the 306 are no cast of q's: a guid's but to and from text, a
+  // date's or a month's to a time of day, and a time of day's to a date.
+  assert.strictEqual(written.length, 306 - 57);
+  for (const pair of ["jg", "gj", "bg", "dt", "dn", "mz", "nd", "tp", "um", "vz"]) assert.ok(!written.includes(pair), pair);
+  for (const pair of ["gs", "sg", "jf", "dp", "md", "pd", "zt", "pn", "tn", "sc", "cs"]) assert.ok(written.includes(pair), pair);
+  // No cast makes a typed column a mixed one, and none is written.
+  await connection.call('{`mgA set ([] k:1 2 3; c:1 2 3); `mgM set ([] k:1 2 3; c:(1;`a;"x"));}', 0);
+  const info = async (n) => readTableInfo(await connection.call(TABLE_INFO, n, 100));
+  const mixed = migrationScript("mgA", await info("mgA"), "A", await info("mgM"), "M", "p");
+  assert.match(mixed, /\n\/ not written: a cast of c from j to mixed: no cast makes a mixed column\n$/);
+  assert.match(String(await connection.call(OWN_CAST, "")), /^'/);
+  // A mixed column's cast is written, as an empty table's untyped column is one.
+  for (const to of ATOMS) {
+    await connection.call("{`mgA set ([] k:`long$(); c:());}", 0);
+    const ran = readRun(await connection.call(RUN_SCRIPT, statements(migrationScript("mgA", await info("mgA"), "A", await info(`mg${ATOMS.indexOf(to)}`), "B", "p"))));
+    assert.ok(ran.ok, `mixed to ${to}: ${ran.error}`);
+    assert.strictEqual(await connection.call("{[t] first[t]~first exec t from meta mgA where c=`c}", to), true, to);
+  }
+});
+
+test("a schema migration casts on disk what the column manager casts, and no other (#2012)", { skip }, async (t) => {
+  const cols = [...ATOMS.map((a) => `c${a}:${SAMPLE[a]}`), 'sC:("12";"2024.01.01";"x")', "lJ:(1 2;3 4;5 6)"].join("; ");
+  const { connection } = await connect(t, [
+    'r:hsym`$"$DIR/hdb";',
+    `{[r;n] .Q.dd[r;2026.01.05,n,\`] set .Q.en[r] ([] k:1 2 3; ${cols})}[r] each \`$"mg",/:"${ATOMS.join("")}";`,
+    "\\l $DIR/hdb",
+    "",
+  ].join("\n"));
+  const { castProblem } = require("../out/migrate.js");
+  for (const to of ATOMS) {
+    const from = readTableInfo(await connection.call(TABLE_INFO, `mg${to}`, 100));
+    assert.strictEqual(from.columns.map((c) => c.type).join(""), `dj${ATOMS.join("")}CJ`);
+    const target = { ...from, kind: "table", columns: from.columns.map((c) => (c.name === "date" || c.name === "k" ? c : { ...c, type: to })) };
+    const script = migrationScript(`mg${to}`, from, "disk", target, "B", "p");
+    const done = readRun(await connection.call(RUN_SCRIPT, statements(script)));
+    assert.ok(done.ok, done.error);
+    // Every cast written was made: no directory was left as it was.
+    assert.match(done.text, /^changed (\d+) of \1 directories$/, `to ${to}: ${done.text}`);
+    const kept = from.columns.slice(2).map((c) => (c.type === to || castProblem(c.type, to, true) === undefined ? to : c.type));
+    assert.strictEqual(await connection.call("{[n] exec t from meta get n}", `mg${to}`), `dj${kept.join("")}`, `to ${to}`);
+    for (const c of from.columns.slice(2)) assert.strictEqual(script.includes(`/ not written: a cast of ${c.name} from ${c.type} to ${to}: `), kept[from.columns.indexOf(c) - 2] !== to, `${c.name} to ${to}`);
+  }
+});
+
 test("a schema migration parses text and symbols it casts to numbers (#1096)", { skip }, async (t) => {
   const { connection } = await connect(t, 'a:([] x:("12";"3"); y:`4`5)\nb:([] x:`long$(); y:`long$())\n');
   const info = async (n) => readTableInfo(await connection.call(TABLE_INFO, n, 100));
