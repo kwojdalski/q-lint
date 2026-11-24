@@ -13,7 +13,7 @@ const { toJson, toMarkdown, markdownCell, exportResult, EXPORT_FORMATS, FORMAT_I
 const { crc32, zip, columnName, xmlText, temporalSerial, xlsxCell } = require("../out/xlsx.js");
 const { definitionLevels, planFor, toParquet } = require("../out/parquet.js");
 const { gridOfQ } = require("../out/qformat.js");
-const { appendPage, readPage } = require("../out/grid.js");
+const { appendPage, readPage, toGrid } = require("../out/grid.js");
 const { fillDrilldown, templatesFor } = require("../out/drilldown.js");
 const { readDrilldown } = require("../out/liveconfig.js");
 const page = require("../media/result.js");
@@ -110,6 +110,11 @@ test("a general list's string item is its characters where a format has strings 
   assert.strictEqual(plainItem('"caf\\303\\251\\377"'), "café\u00ff");
   assert.strictEqual(plainItem('"\\377\\344\\275\\240\\303"'), "\u00ff你\u00c3");
   assert.strictEqual(plainItem('"\\303\\303\\251"'), "\u00c3é");
+  // A string of one character, which q writes with a comma (#1961); a
+  // list of one string is no string.
+  assert.deepStrictEqual([',"x"', ',"\\n"', ',"\\""', ',"\\351"', ',"ab"', ',""', ',,"x"'].map(plainItem), ["x", "\n", '"', "\u00e9", ',"ab"', ',""', ',,"x"']);
+  const flags = { count: 3, keys: 0, names: ["a"], types: [0], cells: [['"ab"', '""', ',"x"']], raw: [[false, false, false]], rank: [[]] };
+  assert.deepStrictEqual(JSON.parse(toJson(flags)), [{ a: "ab" }, { a: "" }, { a: "x" }]);
   assert.deepStrictEqual(distinctNames(["a", "a", "", "a_1"]), ["a", "a_1", "column3", "a_1_1"]);
 });
 
@@ -248,6 +253,48 @@ test("a datetime finer than its millisecond text is written as its float of days
   assert.strictEqual(atomLiteral(15, "", null).literal, "0Nz");
 });
 
+test("a minute, second or time of 100 hours or more is cast from its count: q cannot read the ** it writes (#1967)", () => {
+  // KDB-X: "u"$6000 is **:00, "v"$-360000 is -**:00:00, "t"$360000001 is **:00:00.001.
+  assert.strictEqual(atomLiteral(17, "**:00", 6000).literal, '"u"$6000');
+  assert.strictEqual(atomLiteral(18, "-**:00:00", -360000).literal, '"v"$-360000');
+  assert.strictEqual(atomLiteral(19, "**:00:00.001", 360000001).literal, '"t"$360000001');
+  // Up to 99 hours the text is the literal, as it was.
+  assert.deepStrictEqual([atomLiteral(17, "99:59", 5999).literal, atomLiteral(18, "-99:59:59", -359999).literal, atomLiteral(19, "00:00:00.059", 59).literal], ["99:59", "-99:59:59", "00:00:00.059"]);
+  assert.deepStrictEqual([atomLiteral(17, "", null).literal, atomLiteral(17, "0W", Infinity).literal], ["0Nu", "0Wu"]);
+  const minutes = { count: 2, keys: 0, names: ["c0"], types: [17], cells: [["", "**:00"]], raw: [[null, 6000]], rank: [[0, 1]] };
+  assert.strictEqual(tableLiteral(minutes).code, '([] c0:(0Nu;"u"$6000))');
+});
+
+test("a lone item that is no noun, the generic null or an operator, is enlisted in parentheses (#1968)", () => {
+  // KDB-X: enlist :: is enlist itself, and enlist + a 'rank.
+  const one = (type, cell, raw) => tableLiteral({ count: 1, keys: 0, names: ["c"], types: [type], cells: [[cell]], raw: [[raw]], rank: [[0]] }).code;
+  assert.strictEqual(one(0, "::", false), "([] c:enlist(::))");
+  assert.deepStrictEqual(["+", "+/", "-:", "#:", "'", ":"].map((v) => one(0, v, false)), ["+", "+/", "-:", "#:", "'", ":"].map((v) => `([] c:enlist(${v}))`));
+  // A noun is written as it was.
+  assert.deepStrictEqual([one(0, '"ab"', false), one(0, "1 2", false), one(0, "{x+1}", false), one(6, "0N", null), one(7, "-1", -1), one(9, "-0w", -Infinity), one(11, "a", undefined)], [
+    '([] c:enlist "ab")',
+    "([] c:enlist 1 2)",
+    "([] c:enlist {x+1})",
+    "([] c:enlist 0Ni)",
+    "([] c:enlist -1)",
+    "([] c:enlist -0w)",
+    "([] c:enlist `a)",
+  ]);
+  // One enlisted inside an item, as -3! writes it with a comma.
+  assert.deepStrictEqual([",::", ",,::", "(,::;1)", ",+", ",-:", "(,`a)!,::", ",-1", ",:"].map((v) => atomLiteral(0, v, false).literal), [
+    "enlist(::)",
+    "enlist enlist(::)",
+    "(enlist(::);1)",
+    "enlist(+)",
+    "enlist(-:)",
+    "(enlist `a)!enlist(::)",
+    "enlist -1",
+    "enlist :",
+  ]);
+  assert.strictEqual(atomLiteral(0, "(1.5;,::)", ["l", [["f", 1.5], ",::"]]).literal, "(1.5f;enlist(::))");
+  assert.strictEqual(atomLiteral(0, ",::", ["l", ["::"]]).literal, "enlist(::)");
+});
+
 test("a char cell's literal is written from its byte: one past ASCII as its octal escape (#1489)", () => {
   // GRID's cells of "\303\251" decode as U+FFFD; its raw is the bytes.
   assert.strictEqual(atomLiteral(10, "\ufffd", 0xc3).literal, '"\\303"');
@@ -259,6 +306,22 @@ test("a char cell's literal is written from its byte: one past ASCII as its octa
   const g = gridOfQ({ kind: "table", attr: 0, cols: ["c"], data: [{ kind: "chars", attr: 0, v: Buffer.from([0xc3, 0xa9]) }] }, 100);
   assert.deepStrictEqual(g.raw[0], [0xc3, 0xa9]);
   assert.strictEqual(tableLiteral(g).code, '([] c:("\\303";"\\251"))');
+});
+
+test("a char cell past ASCII is exported, and shown, as the character its byte is, not as U+FFFD (#1962)", () => {
+  // GRID's cells of "a\351\303" decode as U+FFFD twice; its raw is the bytes.
+  const chars = { count: 3, keys: 0, names: ["c"], types: [10], cells: [["a", "\ufffd", "\ufffd"]], raw: [[97, 0xe9, 0xc3]], rank: [[]] };
+  assert.deepStrictEqual(JSON.parse(toJson(chars)), [{ c: "a" }, { c: "\u00e9" }, { c: "\u00c3" }]);
+  assert.strictEqual(toMarkdown(chars, 2), "| c |\n| --- |\n| a |\n| \u00e9 |\n| \u00c3 |\n");
+  assert.match(exportResult("html", chars, 2).data.toString("utf8"), /<td>a<\/td><\/tr>\n<tr><td>\u00e9<\/td><\/tr>\n<tr><td>\u00c3<\/td>/);
+  assert.deepStrictEqual(toGrid(chars, 2).cells, [["a", "\u00e9", "\u00c3"]]);
+  const parquet = toParquet(chars, [0, 1, 2]).data;
+  assert.ok(parquet.includes(Buffer.from("\u00e9")) && parquet.includes(Buffer.from("\u00c3")) && !parquet.includes(Buffer.from("\ufffd")));
+  assert.deepStrictEqual([xlsxCell(10, "\ufffd", 0xe9), xlsxCell(10, "a", 97)], [{ t: "\u00e9" }, { t: "a" }]);
+  // The same from an unwrapped result, and the q literal is still the byte.
+  const g = gridOfQ({ kind: "table", attr: 0, cols: ["c"], data: [{ kind: "chars", attr: 0, v: Buffer.from([97, 0xe9, 0xc3]) }] }, 100);
+  assert.deepStrictEqual(JSON.parse(toJson(g)), JSON.parse(toJson(chars)));
+  assert.strictEqual(tableLiteral(chars).code, '([] c:("a";"\\351";"\\303"))');
 });
 
 test("a general-list item's symbol holding a space, / or - is written through `$ (#1486)", () => {

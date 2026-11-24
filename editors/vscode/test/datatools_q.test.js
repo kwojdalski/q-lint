@@ -61,7 +61,8 @@ async function startQ(source) {
 }
 
 // A keyed table, a table with a foreign key into it, one with a link column,
-// a table in a namespace, and an HDB of two date partitions.
+// a table in a namespace, a foreign key over a long key there, and an HDB of
+// two date partitions.
 const SERVER = (dir) => `
 {[d] .Q.dd[hsym \`$"${dir}/hdb";d,\`p\`] set .Q.en[hsym \`$"${dir}/hdb"] ([] sym:\`a\`b\`c; px:1 2 3f)} each 2026.01.01 2026.01.02;
 \\l ${dir}/hdb
@@ -69,6 +70,8 @@ s:([sym:\`a\`b\`c] nm:("Aa";"Bb";"Cc"));
 t:([] time:2026.01.01D10:00 2026.01.02D11:00 2026.01.02D12:00; sym:\`s$\`a\`b\`a; px:1.5 0n 2.5; qty:1 2 3; note:("x y";enlist"z";"w"));
 u:([] x:1 2; l:\`t!0 2);
 .ns.v:([] a:1 2);
+.ns.k:([k:1 2 3] w:10 20 30);
+.ns.f:([] c:\`.ns.k$1 2 2);
 `;
 
 const cells = (answer, name) => answer.grid.cells[answer.grid.names.indexOf(name)];
@@ -100,7 +103,8 @@ test("the q of the data tools against a real q process", { skip }, async (t) => 
     }
     assert.strictEqual(tables.find((x) => x.name === "p").info.kind, "partitioned");
     const links = s.schemaLinks(tables).map((l) => `${l.from}.${l.column}->${l.to} ${l.kind}`);
-    assert.deepStrictEqual(links.sort(), ["t.sym->s foreign key", "u.l->t link"]);
+    // `meta` shows `j` for the key over longs as for the link (#1957).
+    assert.deepStrictEqual(links.sort(), [".ns.f.c->.ns.k foreign key", "t.sym->s foreign key", "u.l->t link"]);
     assert.match(s.schemaSvg(tables), /class="edge link"/);
   });
 
@@ -200,6 +204,29 @@ test("the q of the data tools against a real q process", { skip }, async (t) => 
       assert.deepStrictEqual(out.grid.names, ["a", "b"]);
       assert.deepStrictEqual(cells(out, "a"), ["1", "2"]);
     }
+  });
+
+  await t.test("a CSV that starts with a byte order mark loads with the names its sample showed, by its path as from its text (#1966)", async () => {
+    const csv = path.join(q.dir, "excel.csv");
+    for (const [text, names] of [["\ufeffa,b\n1,2\n", ["a", "b"]], ['\ufeff"a",b\n1,2\n', ["a", "b"]], ["\ufeffa\n1\n", ["a"]]]) {
+      fs.writeFileSync(csv, text);
+      const sample = d.sampleText(text);
+      assert.deepStrictEqual([sample.names, sample.bom], [names, true]);
+      for (const local of [true, false]) {
+        const out = await grid(d.loadExpression("csv", csv, local, sample, local ? undefined : text));
+        assert.deepStrictEqual([out.grid.names, cells(out, "a")], [names, ["1"]], `${JSON.stringify(text)} ${local}`);
+      }
+      // The wizard's statement, its first column kept or skipped.
+      await run(`marked:${d.csvLoad(sample.types, ",", d.fileSource(csv, sample.bom))}`);
+      assert.deepStrictEqual((await grid("select a from marked")).grid.names, ["a"]);
+      if (names.length > 1) {
+        await run(`marked:${d.csvLoad([" ", "J"], ",", d.fileSource(csv, sample.bom))}`);
+        assert.deepStrictEqual((await grid("marked")).grid.names, ["b"]);
+      }
+    }
+    // The mark gone from the file since it was sampled: the statement still loads it.
+    fs.writeFileSync(csv, "a,b\n1,2\n");
+    assert.deepStrictEqual((await grid(d.loadExpression("csv", csv, true, { types: ["J", "J"], delimiter: ",", bom: true }))).grid.names, ["a", "b"]);
   });
 
   await t.test("a one-column CSV loads by its path and from its text, its one-character lines too (#1262)", async () => {

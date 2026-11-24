@@ -80,6 +80,23 @@ test("each JSON pasted as q is what .j.k reads from it", { skip }, () => {
   });
   // Copy as JSON: the query gives .j.j of the expression's value.
   lines.push(`ck[1000;${JSON.stringify(`(.j.j ([] a:1 2; b:\`x\`y))~${toJsonQuery("([] a:1 2; b:`x`y)")}`)}]`);
+  // Several statements run one after the other, as Run Selection runs
+  // them, and the last one's value is copied (#1969).
+  const copies = [
+    ["bb:1\n2 3", "2 3"],
+    ["tt:([] a:1 2 3)\nselect from tt where a>1", "([] a:2 3)"],
+    ["aa:1\naa+1", "2"],
+    ["ff:{[u]\n u+1}\nff 2", "3"],
+    ["/ a note\n1+1 / and another", "2"],
+    ["w:7", "(::)"],
+    ["w", "7"],
+    ["w\n", "7"],
+    ["`a`b!1 2", "`a`b!1 2"],
+    ["`a\n`b", "`b"],
+    ["1\n\"x\"", '"x"'],
+  ];
+  copies.forEach(([code, expected], i) => lines.push(`ck[${1001 + i};${JSON.stringify(`(.j.j ${expected})~${toJsonQuery(code)}`)}]`));
+  lines.push('ck[1100;"1~bb"]');
   lines.push('-1 "DONE";', "exit 0");
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-json-"));
   const script = path.join(dir, "json.q");

@@ -121,6 +121,30 @@ test("the column manager's script changes every partition, reports, reloads and 
   assert.strictEqual(await connection.call("{`cm in key`.qlint}", 0), false);
 });
 
+test("under a .Q.view the column manager changes no partition and says why; the view cleared, it changes them all (#1959)", { skip }, async (t) => {
+  const { connection } = await connect(t, HDB());
+  const dotd = () => connection.call("{string get each ` sv'(hsym each `$string .Q.PV),\\:`trade`.d}", 0);
+  const before = await dotd();
+  assert.deepStrictEqual(await connection.call("{.Q.view 2026.01.06; string .Q.pv}", 0), ["2026.01.06"]);
+  // An add, and a migration's steps, stop before the first change.
+  for (const op of [{ op: "add", column: "extra", value: "0n" }, { op: "delete", column: "sz" }]) {
+    const refused = readRun(await connection.call(RUN_SCRIPT, statements(columnScript("trade", op, "hdb"))));
+    assert.strictEqual(refused.ok, false, JSON.stringify(refused));
+    assert.match(refused.error, /^\.Q\.view is in force, showing 1 of 3 partitions: nothing was changed\. .*clear it with \.Q\.view\[\] and run again$/);
+  }
+  assert.deepStrictEqual(await dotd(), before);
+  // The view is still the process's, the helpers gone, and every partition selects.
+  assert.deepStrictEqual(await connection.call("{string .Q.pv}", 0), ["2026.01.06"]);
+  assert.strictEqual(await connection.call("{`cm in key`.qlint}", 0), false);
+  assert.strictEqual(await connection.call('{.Q.view[]; "f"$count select from trade}', 0), 18);
+  const say = await run(connection, columnScript("trade", { op: "add", column: "extra", value: "0n" }, "hdb"));
+  assert.match(say, /changed 3 of 3 directories/);
+  assert.strictEqual(await connection.call('{"f"$count select extra from trade where date in 2026.01.05 2026.01.07}', 0), 12);
+  // A splayed table is under no view: it changes as before.
+  const { connection: flat } = await connect(t, 'r:hsym`$"$DIR/sp";\n(` sv r,`one`) set .Q.en[r] ([] sym:`a`b; px:1 2f);\n\\l $DIR/sp\n');
+  assert.match(await run(flat, columnScript("one", { op: "add", column: "extra", value: "0n" }, "sp")), /changed 1 of 1 directories/);
+});
+
 test("the column manager's add with a list default gives every row that list (#1082)", { skip }, async (t) => {
   const { connection } = await connect(t, HDB());
   assert.match(await run(connection, columnScript("trade", { op: "add", column: "note", value: '""' }, "hdb")), /changed 3 of 3 directories/);
@@ -292,6 +316,14 @@ test("the partition check finds missing dates, files, differing types and outlie
   const { connection: nested } = await connect(t, HDB('{[r;d] .Q.dd[r;d,`book`] set .Q.en[r] ([] sym:`a`b;sz:(1 2;3 4 5))}[r] each 2026.01.05 2026.01.06 2026.01.07;\nhdel .Q.dd[r;2026.01.06,`book,`$"sz#"];'));
   const gone = partitionProblems(readPartitions(await nested.call(PARTITION_CHECK, 1000, false))).filter((p) => p.table === "book");
   assert.deepStrictEqual(gone.map((p) => [p.kind, p.what, p.partitions]), [["missing column file", "book.sz has no sz# data file", ["2026.01.06"]]]);
+  // A .Q.view hides no partition from the check: the file gone from one it
+  // does not show is found, and every partition on disk is counted (#1959).
+  await connection.call("{.Q.view 2026.01.05 2026.01.06}", 0);
+  const viewed = readPartitions(await connection.call(PARTITION_CHECK, 1000, false));
+  assert.strictEqual(await connection.call('{"f"$count .Q.pv}', 0), 2);
+  assert.deepStrictEqual([viewed.all.length, viewed.checked], [6, 6]);
+  assert.deepStrictEqual(partitionProblems(viewed).filter((p) => p.kind === "missing column file").map((p) => p.partitions), [["2026.01.13"]]);
+  assert.deepStrictEqual([...viewed.domains.keys()], ["sym"]);
   // One table in one partition is healthy (#1102).
   const { connection: lone } = await connect(t, 'r:hsym`$"$DIR/one";\n.Q.dd[r;2026.01.05,`trade`] set .Q.en[r] ([] sym:`a`b;px:1 2f);\n\\l $DIR/one\n');
   assert.deepStrictEqual(partitionProblems(readPartitions(await lone.call(PARTITION_CHECK, 1000, true))), []);

@@ -6,9 +6,10 @@
 // Both work from `tableinfo.ts`'s TABLE_INFO, which reads `meta`: its `f`
 // column names the table a column points into, for a foreign key (a column
 // enumerated over a keyed table) and for a link column (indices into a
-// table, `` `t!i ``) alike - told apart here by the column's type, a link
-// being integers. SCHEMA asks for every table's details in one call; a
-// table it cannot read is left out with q's error.
+// table, `` `t!i ``) alike - told apart here by the table pointed into, a
+// keyed one being a foreign key's (over a long key the two are the same
+// value, and `meta` shows `j` for both). SCHEMA asks for every table's
+// details in one call; a table it cannot read is left out with q's error.
 //
 // The templates read and write nothing on their own. Select, meta and count
 // by date are reads, run as the explorer's Preview is; the insert template
@@ -95,12 +96,16 @@ export interface SchemaLink {
 }
 
 /// The links among `tables`: every column whose `meta` names a table,
-/// whether that table is drawn or not.
+/// whether that table is drawn or not. A column into a keyed table is a
+/// foreign key and one into any other table a link (#1957); into a table
+/// not read, the column's type is the guess: a link is integers.
 export function schemaLinks(tables: SchemaTable[]): SchemaLink[] {
+  const kinds = new Map(tables.map((t) => [t.name, t.info.kind]));
+  const link = (c: TableInfo["columns"][number]) => (kinds.has(c.fkey) ? kinds.get(c.fkey) !== "keyed" : /^[hij]$/.test(c.type));
   return tables.flatMap((t) =>
     t.info.columns
       .filter((c) => c.fkey !== "")
-      .map((c): SchemaLink => ({ from: t.name, column: c.name, to: c.fkey, kind: /^[hij]$/.test(c.type) ? "link" : "foreign key" })),
+      .map((c): SchemaLink => ({ from: t.name, column: c.name, to: c.fkey, kind: link(c) ? "link" : "foreign key" })),
   );
 }
 

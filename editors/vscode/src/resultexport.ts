@@ -13,7 +13,7 @@
 // HTML is for reading too: a page of one table, the cells as the grid shows
 // them, coloured by the result's conditional formatting rules (#1013) as
 // the grid colours them - by `media/gridlook.js`, which the page runs too.
-import { realValue, textBuffer, toGrid, type Grid, type GridPayload } from "./grid";
+import { charText, realValue, textBuffer, toGrid, type Grid, type GridPayload } from "./grid";
 import type { FormatRule } from "./resultlook";
 import { distinctNames, plainItem, rawColumn, tableParts, textNull } from "./qliteral";
 import { toParquet } from "./parquet";
@@ -149,7 +149,7 @@ function jsonParts(payload: GridPayload, rows?: number[]): string[] {
         // A float or real item as a number, not `-3!`'s `\P` text (#1485).
         return String(text.endsWith("e") ? realValue(value) : value);
       }
-      return JSON.stringify(type === 0 ? plainItem(text) : text);
+      return JSON.stringify(type === 0 ? plainItem(text) : type === 10 ? charText(text, value) : text);
     };
   });
   const order = rowOrder(payload, rows);

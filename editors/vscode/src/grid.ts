@@ -329,12 +329,23 @@ export interface Grid {
   total: number;
 }
 
+/// A char column's cell from its byte when sent: one past ASCII is no UTF-8
+/// character alone, so its decoded text is U+FFFD whatever the byte was.
+/// It is the Latin-1 character, as `plainItem` reads such a byte (#1962).
+export function charText(text: string, raw: unknown): string {
+  return typeof raw === "number" && raw >= 128 && raw <= 255 ? String.fromCharCode(raw) : text;
+}
+
 /// What one cell shows: q's text, except that a null or an infinity is
-/// written as kdb+ writes it in a table, and a float or real with the
-/// decimals asked for (`decimals` < 0: as q wrote it).
+/// written as kdb+ writes it in a table, a char past ASCII is its own
+/// character, and a float or real has the decimals asked for (`decimals`
+/// < 0: as q wrote it).
 export function cellText(type: number, text: string, raw: unknown, decimals: number): string {
   if (raw === undefined) {
     return text;
+  }
+  if (type === 10) {
+    return charText(text, raw);
   }
   if (raw === null) {
     return type === 2 ? NULL_GUID : "";

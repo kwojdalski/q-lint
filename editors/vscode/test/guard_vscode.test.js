@@ -281,7 +281,7 @@ test("the 0.30 paths that change a process hand the guard code it holds: logpoin
   assert.strictEqual(calls, 0, "declined, none is sent");
   assert.deepStrictEqual(q.queries(), []);
   // Reads go through unasked: Show Logpoint Hits, a wrangle step, a data file.
-  for (const code of [LOG_LIST, wrangleQuery("select from t", [{ kind: "filter", column: "px", op: ">", value: "1" }]), loadExpression("csv", "/d/t.csv", true, { types: ["S", "F"], delimiter: "," })]) {
+  for (const code of [LOG_LIST, wrangleQuery("select from t", [{ kind: "filter", column: "px", op: ">", value: "1" }]), loadExpression("csv", "/d/t.csv", true, { types: ["S", "F"], delimiter: "," }), loadExpression("csv", "/d/t.csv", true, { types: ["S", "F"], delimiter: ",", bom: true })]) {
     assert.strictEqual(live.guardRefuses(code, prod), undefined, code);
   }
 });
