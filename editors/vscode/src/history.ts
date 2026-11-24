@@ -11,16 +11,33 @@ export function markdownText(text: string): string {
 /// The longest label a history row or Run Again's pick shows, in characters.
 export const LABEL_LIMIT = 80;
 
+/// The most code the query history holds, in characters, over all its
+/// entries: it is written to `globalState` whole at every query and read at
+/// every start, and 200 runs of a 1 MB file were over 200 MB there (#1880).
+export const HISTORY_CHARS = 500_000;
+
 /// The query history as a window shows and writes it (#1619): `entry`
 /// first, then what `kept` - this window's copy, which a read just after a
 /// write can be ahead of - and `stored` - the shared list, which every
 /// window writes - hold between them, each entry once, newest first, none
 /// sent at or before `cleared` (when Clear was last run, in any window), at
-/// most `limit`.
-export function mergedHistory<T extends { at: string; process: string; code: string }>(entry: T | undefined, kept: readonly T[], stored: readonly T[], cleared: string | undefined, limit: number): T[] {
+/// most `limit`, and no more than `chars` characters of code between them:
+/// the newest that fit. A query longer than `chars` by itself is left out,
+/// never kept cut - Run Again would run something else (#1880).
+export function mergedHistory<T extends { at: string; process: string; code: string }>(
+  entry: T | undefined,
+  kept: readonly T[],
+  stored: readonly T[],
+  cleared: string | undefined,
+  limit: number,
+  chars = HISTORY_CHARS,
+): T[] {
   const seen = new Set<string>();
   const out: T[] = [];
   for (const e of [...(entry === undefined ? [] : [entry]), ...kept, ...stored]) {
+    if (e.code.length > chars) {
+      continue;
+    }
     const key = `${e.at}\u0000${e.process}\u0000${e.code}`;
     if (seen.has(key) || (cleared !== undefined && e.at <= cleared && e !== entry)) {
       continue;
@@ -29,7 +46,10 @@ export function mergedHistory<T extends { at: string; process: string; code: str
     out.push(e);
   }
   // Stable: entries sent at the same moment keep their order.
-  return out.sort((a, b) => (a === entry ? -1 : b === entry ? 1 : a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).slice(0, limit);
+  out.sort((a, b) => (a === entry ? -1 : b === entry ? 1 : a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+  let room = chars;
+  const fits = out.findIndex((e) => (room -= e.code.length) < 0);
+  return out.slice(0, Math.min(limit, fits < 0 ? out.length : fits));
 }
 
 /// When Clear was last run, as a window recording a query sent at `at`

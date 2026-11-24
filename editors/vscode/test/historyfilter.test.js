@@ -262,3 +262,38 @@ test("a Clear stamp from a clock that was ahead does not drop the queries sent s
   await live.clearHistory();
   assert.deepStrictEqual(live.history(), []);
 });
+
+// The history was capped by count only: 200 runs of a 1 MB file put over
+// 200 MB in globalState, written again at every query (#1880).
+test("the history keeps the newest queries whose code fits a size between them, each whole", async (t) => {
+  const { HISTORY_CHARS, mergedHistory } = require("../out/history.js");
+  const entry = (code, sec) => ({ process: "p", code, at: new Date(Date.UTC(2026, 10, 24, 10, 0, sec)).toISOString(), millis: 1, outcome: "ok" });
+  const codes = (list) => list.map((e) => (e.code.length > 20 ? `${e.code.slice(0, 2)}x${e.code.length}` : e.code));
+  // Newest first until the next does not fit; one too long alone is left out, not cut, and ends nothing.
+  const held = [entry("d".repeat(40), 4), entry("c".repeat(101), 3), entry("b".repeat(40), 2), entry("a".repeat(40), 1), entry("old", 0)];
+  assert.deepStrictEqual(codes(mergedHistory(undefined, held, [], undefined, 200, 100)), ["ddx40", "bbx40"]);
+  assert.deepStrictEqual(codes(mergedHistory(entry("e".repeat(30), 5), held, [], undefined, 200, 100)), ["eex30", "ddx40"]);
+  assert.deepStrictEqual(codes(mergedHistory(entry("e".repeat(101), 5), held, [], undefined, 200, 100)), ["ddx40", "bbx40"]);
+  assert.deepStrictEqual(codes(mergedHistory(undefined, held, [], undefined, 200)), ["ddx40", "ccx101", "bbx40", "aax40", "old"]);
+
+  stub.reset();
+  const context = stub.newContext();
+  const live = new Live(context);
+  t.after(() => context.subscriptions.forEach((d) => d.dispose?.()));
+  const file = "t:([]a:til 10);\n".repeat(Math.ceil(HISTORY_CHARS / 4 / 16)).slice(0, HISTORY_CHARS / 4);
+  await live.record(entry("select from t", 0));
+  for (let i = 1; i <= 12; i++) {
+    await live.record(entry(`${file}/${String(i).padStart(2, "0")}`, i));
+  }
+  const stored = context.globalState.get("q-lint.queryHistory");
+  assert.ok(JSON.stringify(stored).length < HISTORY_CHARS * 1.1, `${JSON.stringify(stored).length} characters stored`);
+  // The newest three, as they were sent: Run Again runs the whole of each.
+  assert.deepStrictEqual(stored.map((e) => e.code.slice(-3)), ["/12", "/11", "/10"]);
+  assert.ok(stored.every((e) => e.code.startsWith(file) && e.code.length === file.length + 3));
+  assert.deepStrictEqual(live.history(), stored);
+  // A query longer than the whole size is not kept, and the rest stay.
+  await live.record(entry("x".repeat(HISTORY_CHARS + 1), 20));
+  assert.deepStrictEqual(context.globalState.get("q-lint.queryHistory").map((e) => e.code.slice(-3)), ["/12", "/11", "/10"]);
+  await live.record(entry("count t", 21));
+  assert.deepStrictEqual(live.history().map((e) => e.code.slice(-3)), ["t t", "/12", "/11", "/10"]);
+});

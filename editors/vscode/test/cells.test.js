@@ -9,7 +9,7 @@ const assert = require("node:assert");
 const { serialize } = require("node-q/lib/c.js");
 const { markers, cells, cellAt, cellCode, cellName, nextStatement, smartStep, looksLikeMarker, shownCode } = require("../out/cells.js");
 const { blockAt, statements } = require("../out/statements.js");
-const { isComplete, replScript, wordAt, completionsFor, parseHistory, pushHistory, searchHistory } = require("../out/repl.js");
+const { isComplete, replScript, wordAt, completionsFor, parseHistory, pushHistory, searchHistory, HISTORY_CHARS } = require("../out/repl.js");
 const { viewDefinition, readViewMessage } = require("../out/qview.js");
 const { readInteractive, SMART_SEND_TARGETS } = require("../out/interactiveconfig.js");
 const pkg = require("../package.json");
@@ -171,6 +171,22 @@ test("a stored REPL history that is no list of strings is read as the strings it
   const mixed = parseHistory([null, "a", 3, ["b"], "", "ab"]);
   assert.deepStrictEqual(mixed, ["a", "ab"]);
   assert.strictEqual(searchHistory(mixed, "b"), 1);
+});
+
+test("the REPL history keeps the newest inputs that fit a size between them, each whole (#1880)", () => {
+  let h = [];
+  for (const code of ["a".repeat(40), "b".repeat(40), "c".repeat(40)]) {
+    h = pushHistory(h, code, 500, 100);
+  }
+  assert.deepStrictEqual(h, ["c".repeat(40), "b".repeat(40)]);
+  // One too long to keep alone is not kept, nor cut, and the rest stay.
+  assert.deepStrictEqual(pushHistory(h, "d".repeat(101), 500, 100), h);
+  assert.deepStrictEqual(pushHistory(["old"], "x".repeat(HISTORY_CHARS + 1)), ["old"]);
+  // A history stored before, past the size, is cut to it by the next input.
+  const before = Array.from({ length: 500 }, (_, i) => `${i}:${"y".repeat(HISTORY_CHARS / 100)}`);
+  const after = pushHistory(before, "1+1");
+  assert.ok(after.join("").length <= HISTORY_CHARS);
+  assert.deepStrictEqual(after.slice(0, 2), ["1+1", before[0]]);
 });
 
 test("the .qlint.view definition is four statements, sized as asked", () => {

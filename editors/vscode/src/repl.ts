@@ -159,14 +159,23 @@ export function parseHistory(stored: unknown): string[] {
   return Array.isArray(stored) ? stored.filter((h): h is string => typeof h === "string" && h !== "") : [];
 }
 
+/// The most text they hold between them, in characters: the history is
+/// written to `globalState` whole at every input (#1880).
+export const HISTORY_CHARS = 200_000;
+
 /// `history` (newest first) with `code` added at the front: once, so
-/// running the same line again does not fill the history with it.
-export function pushHistory(history: string[], code: string, limit = HISTORY_LIMIT): string[] {
+/// running the same line again does not fill the history with it. At most
+/// `limit` inputs and `chars` characters between them, the newest that
+/// fit; an input longer than `chars` by itself is not kept, nor kept cut.
+export function pushHistory(history: string[], code: string, limit = HISTORY_LIMIT, chars = HISTORY_CHARS): string[] {
   const trimmed = code.replace(/\s+$/, "");
-  if (trimmed === "") {
+  if (trimmed === "" || trimmed.length > chars) {
     return history;
   }
-  return [trimmed, ...history.filter((h) => h !== trimmed)].slice(0, limit);
+  const all = [trimmed, ...history.filter((h) => h !== trimmed && h.length <= chars)];
+  let room = chars;
+  const fits = all.findIndex((h) => (room -= h.length) < 0);
+  return all.slice(0, Math.min(limit, fits < 0 ? all.length : fits));
 }
 
 /// The index of the first entry of `history` (newest first) from `from`
