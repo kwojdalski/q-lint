@@ -1482,3 +1482,16 @@ test("a gateway query the guard cannot read as strings, where the call is, is ta
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("a guard tag with a blank in it is read as process tags are, a tag for each word (#2040)", () => {
+  const { readKxServers } = require("../out/importother.js");
+  const blank = settings({ "processes.readOnlyGuard.tags": ["live desk", "UAT,Desk"] });
+  assert.deepStrictEqual(blank.tags, ["live", "desk", "uat"]);
+  // A KX connection labelled Live Desk is guarded, and a process tagged a word of it.
+  const kx = readKxServers({ a: { serverAlias: "a", serverName: "h", serverPort: "5000" } }, [{ labelName: "Live Desk", connections: ["a"] }], blank.tags);
+  assert.deepStrictEqual(guardedBy(kx.processes[0], blank), ["live", "desk"]);
+  assert.deepStrictEqual(guardedBy({ tags: ["live"] }, blank), ["live"]);
+  // A process tag saved with a blank is read by its words too.
+  assert.deepStrictEqual(guardedBy({ tags: ["Live Desk"] }, settings({ "processes.readOnlyGuard.tags": ["desk"] })), ["Live Desk"]);
+  assert.deepStrictEqual(guardedBy({ tags: ["dev"] }, blank), []);
+});

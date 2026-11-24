@@ -58,11 +58,13 @@ async function startQ(t, body, files = {}) {
   throw new Error("q did not start listening");
 }
 
-/// A Live connected to the q at `port` as the process `prod`, tagged prod.
-async function setUp(t, port) {
+/// A Live connected to the q at `port` as the process `prod`, tagged `tags`,
+/// with the settings `config`.
+async function setUp(t, port, tags = ["prod"], config = {}) {
   stub.reset();
+  Object.assign(stub.config.user, config);
   const context = stub.newContext();
-  await context.globalState.update("q-lint.processes", [{ label: "prod", host: "127.0.0.1", port, tags: ["prod"] }]);
+  await context.globalState.update("q-lint.processes", [{ label: "prod", host: "127.0.0.1", port, tags }]);
   const live = new Live(context);
   t.after(async () => {
     vscode.window.activeTextEditor = undefined;
@@ -199,4 +201,15 @@ test("a gateway query that is a list, projected or built is held, and runs once 
   await heldThenWrites(send, read, '.gw.syncexec[;`rdb] "y4:1"', "`y4 in key `.");
   await heldThenWrites(send, read, '(.gw.syncexec)["y5:1";`rdb]', "`y5 in key `.");
   await heldThenWrites(send, read, '.gw.syncexec["y6",":1";`rdb]', "`y6 in key `.");
+});
+
+test("a process imported as Live Desk is guarded by the guard tag live desk, and written once let through (#2040)", { skip }, async (t) => {
+  const { readKxServers } = require("../out/importother.js");
+  const { readGuard } = require("../out/guard.js");
+  const config = { "processes.readOnlyGuard.tags": ["live desk"] };
+  const guard = readGuard((key, fallback) => (key in config ? config[key] : fallback));
+  const q = await startQ(t, "\n");
+  const kx = readKxServers({ a: { serverAlias: "a", serverName: "127.0.0.1", serverPort: String(q.port) } }, [{ labelName: "Live Desk", connections: ["a"] }], guard.tags);
+  const { send, read } = await setUp(t, q.port, kx.processes[0].tags, config);
+  await heldThenWrites(send, read, "a1:1", "`a1 in key `.");
 });

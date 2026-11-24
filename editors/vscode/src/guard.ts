@@ -101,7 +101,7 @@
 //   which runs it on the gateway's servers (#909), and a query there that
 //   is not strings written in the call - a list the servers evaluate, a
 //   name, one built or given later, `.gw.syncexec[;`rdb] "a:1"` (#2039).
-import type { Process } from "./processes";
+import { parseTags, type Process } from "./processes";
 import { statements } from "./statements";
 
 export interface GuardSettings {
@@ -114,25 +114,27 @@ export const DEFAULT_GUARD_TAGS = ["prod", "prd", "production"];
 
 /// The settings read as `readLive` reads the query ones, at each send. A
 /// tag list that is not a list of strings is the default one; an empty
-/// list guards nothing.
+/// list guards nothing. Each tag is read as a process's tags are, by
+/// `parseTags`: one with a blank or a comma in it is a tag for each word,
+/// since no process can carry it whole - `live desk` guards a process
+/// tagged `live` and one tagged `desk` (#2040).
 export function readGuard(get: <T>(key: string, fallback: T) => T): GuardSettings {
   const tags = get<unknown>("processes.readOnlyGuard.tags", DEFAULT_GUARD_TAGS);
   return {
     enabled: get<unknown>("processes.readOnlyGuard.enable", true) !== false,
-    tags:
-      Array.isArray(tags) && tags.every((t) => typeof t === "string")
-        ? [...new Set(tags.map((t: string) => t.trim().toLowerCase()).filter((t) => t !== ""))]
-        : DEFAULT_GUARD_TAGS,
+    tags: Array.isArray(tags) && tags.every((t) => typeof t === "string") ? parseTags(tags.join(" ")) : DEFAULT_GUARD_TAGS,
   };
 }
 
 /// The tags of `process` the guard guards it by; empty when it is not
-/// guarded, or the guard is off.
+/// guarded, or the guard is off. A tag is read as `readGuard` reads the
+/// setting's, so one that holds a blank, `Live Desk`, is guarded by either
+/// word.
 export function guardedBy(process: Pick<Process, "tags">, settings: GuardSettings): string[] {
   if (!settings.enabled) {
     return [];
   }
-  return process.tags.filter((tag) => settings.tags.includes(tag.trim().toLowerCase()));
+  return process.tags.filter((tag) => parseTags(tag).some((word) => settings.tags.includes(word)));
 }
 
 type Address = Pick<Process, "host" | "port" | "user" | "tls" | "tags">;
