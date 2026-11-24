@@ -18,9 +18,10 @@
 // unkeyed one, compared with `~\:` (so a null finds a null) - but a symbol
 // or an enumerated column with `=`, as an enumeration does not match its
 // symbol under `~`. Every row with those values is changed.
+import { charKinds } from "./explorer";
 import type { GridPayload } from "./grid";
 import { atomLiteral, plainName, rawColumn, readable, symbolLiteral } from "./qliteral";
-import { statements } from "./statements";
+import { blockDepth, statements } from "./statements";
 
 export const FILTER_OPS = ["=", "<>", "<", ">", "<=", ">=", "like", "in", "null", "not null"] as const;
 export type FilterOp = (typeof FILTER_OPS)[number];
@@ -155,13 +156,11 @@ function uncommented(base: string): string {
     return line.trimEnd();
   };
   const lines: string[] = [];
-  let block = false;
+  let depth = 0;
   for (const line of base.trim().split(/\r?\n/)) {
     const bare = line.trimEnd();
-    if (block) {
-      block = bare !== "\\";
-    } else if (bare === "/") {
-      block = true;
+    if (depth > 0 || bare === "/") {
+      depth = blockDepth(depth, bare);
     } else if (bare === "\\") {
       break;
     } else {
@@ -207,13 +206,15 @@ export function stepText(step: Step): string {
 }
 
 /// The table a query reads, when it plainly reads one: a name alone, or
-/// the name after `from` in a select, exec, update or delete.
+/// the name after `from` in a select, exec, update or delete. Strings and
+/// comments are read as blanks: a `from` in one names nothing (#1467).
 export function guessTable(code: string): string | undefined {
   const parts = statements(code);
   if (parts.length !== 1) {
     return undefined;
   }
-  const only = parts[0].trim();
+  const kinds = charKinds(parts[0]);
+  const only = parts[0].split("").map((ch, i) => (kinds[i] === "s" || kinds[i] === "m" ? " " : ch)).join("").trim();
   const name = /^(\.?[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)*)$/.exec(only) ?? /\bfrom\s+(\.?[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)*)\s*(?:where\b|$)/.exec(only);
   return name?.[1];
 }
@@ -251,7 +252,7 @@ export function editStatement(payload: GridPayload, column: number, row: number,
     const type = payload.types[i];
     const atom = atomLiteral(type, payload.cells[i][row] ?? "", raw === undefined ? undefined : raw[row]);
     if (atom.cut) {
-      return { error: `the cell in ${names[i]} was cut at 200 characters, so the row cannot be found by it` };
+      return { error: `the cell in ${names[i]} was cut at 200 characters or at the process's \\c width, so the row cannot be found by it` };
     }
     const enumerated = type === 11 || (type >= 20 && type <= 76);
     tests.push(enumerated ? `(${names[i]}=${atom.literal})` : `(${names[i]}~\\:(${readable(atom.literal)}))`);

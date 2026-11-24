@@ -3,7 +3,8 @@
 // typed into q's console once it starts - then the file runs in its q
 // terminal exactly as Run Code from Terminal runs it, with them added. The
 // sets are kept per workspace, newest first; nothing runs but on the pick.
-import { commands, window, workspace, type ExtensionContext, type QuickPickItem } from "vscode";
+import { commands, window, workspace, type ExtensionContext, type QuickPickItem, type TextDocument } from "vscode";
+import { clickedEditor } from "./clicked";
 import {
   RUN_ARGS_COMMAND,
   RUN_ARGS_KEY,
@@ -24,20 +25,21 @@ type Item = QuickPickItem & { set?: ArgSet; action?: "new" | "forget" };
 export class RunWithArguments {
   constructor(
     private readonly context: ExtensionContext,
-    private readonly run: (extra: RunExtra) => Promise<void>,
+    private readonly run: (extra: RunExtra, document?: TextDocument) => Promise<void>,
   ) {
     context.subscriptions.push(commands.registerCommand(RUN_ARGS_COMMAND, (given?: unknown) => this.pick(given)));
   }
 
   /// Ask for a set - or take `given`, a keybinding's argument - and run the
-  /// active file with it; the set run, for tests.
+  /// active file with it - or the file of `given`, the Uri a title-bar
+  /// button hands in (#1523); the set run, for tests.
   async pick(given?: unknown): Promise<ArgSet | undefined> {
     const configuration = workspace.getConfiguration("q-lint");
     if (!readRunArgs((key, fallback) => configuration.get(key, fallback)).enabled) {
       void window.showInformationMessage(RUN_ARGS_OFF);
       return undefined;
     }
-    const document = window.activeTextEditor?.document;
+    const document = clickedEditor(given, window.visibleTextEditors ?? [], window.activeTextEditor)?.document;
     if (document === undefined || document.uri.scheme !== "file") {
       void window.showInformationMessage("q-lint: open a q file saved on disk to run it.");
       return undefined;
@@ -45,9 +47,7 @@ export class RunWithArguments {
     const file = document.uri.toString();
     const set = givenSet(given);
     if (set !== undefined) {
-      await this.context.workspaceState.update(RUN_ARGS_KEY, withSet(this.context.workspaceState.get(RUN_ARGS_KEY), file, set));
-      await this.run(extraOf(set));
-      return set;
+      return this.runWith(document, set);
     }
     const sets = setsFor(this.context.workspaceState.get(RUN_ARGS_KEY), file);
     const items: Item[] = [
@@ -73,7 +73,14 @@ export class RunWithArguments {
     if (picked === undefined) {
       return undefined;
     }
-    return this.pick(picked);
+    return this.runWith(document, picked);
+  }
+
+  /// Run `document` with `set`, remembered for its file.
+  private async runWith(document: TextDocument, set: ArgSet): Promise<ArgSet> {
+    await this.context.workspaceState.update(RUN_ARGS_KEY, withSet(this.context.workspaceState.get(RUN_ARGS_KEY), document.uri.toString(), set));
+    await this.run(extraOf(set), document);
+    return set;
   }
 
   /// A new set: the arguments, then input a line at a time until an empty

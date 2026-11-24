@@ -22,7 +22,9 @@
 // Every column but a boolean, a byte and a char is OPTIONAL, so q's nulls are
 // Parquet's. An integer's or a float's infinity is the value q holds for
 // it (`0W` is 2^63-1); an infinite date or timestamp, which Parquet's types
-// cannot hold, is written as a null, and the notes say how many were.
+// cannot hold, is written as a null, and the notes say how many were - as
+// is one past what they hold: a timestamp after 2262.04.11, whose Unix
+// nanoseconds pass 2^63, or a date past 2^31 Unix days.
 import type { GridPayload } from "./grid";
 import { distinctNames, plainItem, rawColumn, textNull } from "./qliteral";
 
@@ -218,13 +220,27 @@ function valueOf(type: number, text: string, raw: unknown, lost: { n: number }):
         lost.n += infinite ? 1 : 0;
         return infinite ? null : text;
       }
-      if (type === 14) {
-        return Number(raw) + EPOCH_DAYS;
+      {
+        // Past what the Parquet type holds it is a null too (#1483).
+        const past = (): null => {
+          lost.n++;
+          return null;
+        };
+        if (type === 14) {
+          const days = Number(raw) + EPOCH_DAYS;
+          return days >= -INT32_MAX - 1 && days <= INT32_MAX ? days : past();
+        }
+        if (type === 12) {
+          const nanos = BigInt(String(raw)) + EPOCH_NANOS;
+          return nanos >= -INT64_MAX - 1n && nanos <= INT64_MAX ? nanos : past();
+        }
+        const ms = Math.round(Number(raw) * 864e5);
+        if (!Number.isFinite(ms)) {
+          return past();
+        }
+        const millis = BigInt(ms) + EPOCH_MILLIS;
+        return millis >= -INT64_MAX - 1n && millis <= INT64_MAX ? millis : past();
       }
-      if (type === 12) {
-        return BigInt(String(raw)) + EPOCH_NANOS;
-      }
-      return BigInt(Math.round(Number(raw) * 864e5)) + EPOCH_MILLIS;
     case 0:
       return plainItem(text);
     default:
@@ -379,6 +395,6 @@ export function toParquet(payload: GridPayload, order: number[]): { data: Buffer
   const length = Buffer.alloc(4);
   length.writeUInt32LE(footer.length, 0);
   parts.push(footer, length, Buffer.from("PAR1"));
-  const notes = lost.n > 0 ? [`${lost.n} infinite date(s) or timestamp(s) were written as null: Parquet's types cannot hold them`] : [];
+  const notes = lost.n > 0 ? [`${lost.n} infinite or out-of-range date(s) or timestamp(s) were written as null: Parquet's types cannot hold them`] : [];
   return { data: Buffer.concat(parts), notes };
 }

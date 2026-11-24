@@ -107,6 +107,9 @@ test("a cell edit is an update of the table, its rows found by the row's values,
   assert.strictEqual(w.guessTable("select from .ns.trade where sym=`a"), ".ns.trade");
   assert.strictEqual(w.guessTable("select sum px by sym from trade"), "trade");
   assert.strictEqual(w.guessTable("1+1"), undefined);
+  // A from in a comment or a string names no table (#1467).
+  assert.strictEqual(w.guessTable("select from trade / was from quote"), "trade");
+  assert.strictEqual(w.guessTable('select from trade where s like "from quote"'), "trade");
 });
 
 test("an unwrapped grid's cell edit finds its row by a long past 2^53 exactly (#1276)", () => {

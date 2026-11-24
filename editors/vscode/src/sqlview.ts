@@ -25,6 +25,7 @@ import {
   type Disposable,
   type ExtensionContext,
 } from "vscode";
+import { clickedEditor } from "./clicked";
 import { findDiscovered } from "./discovery";
 import { borrowWhenFree } from "./infoview";
 import { LANGUAGE_COMMANDS, languageOff, languageOn } from "./languagefeatures";
@@ -47,7 +48,14 @@ export function registerSql(
     if (live.activeLabel() !== label) {
       return;
     }
-    const got = await borrowWhenFree(live, async (connection) => readSchema(await connection.call(SQL_SCHEMA)));
+    let got;
+    try {
+      // Kept under `label`: only that process's schema (#1457).
+      got = await borrowWhenFree(live, async (connection) => readSchema(await connection.call(SQL_SCHEMA)), undefined, label);
+    } catch {
+      // Moved elsewhere while it waited, or not read: no completions from it.
+      return;
+    }
     if (got !== undefined) {
       schemas.set(label, got.value);
     }
@@ -93,17 +101,18 @@ export function registerSql(
       }
       const document = await workspace.openTextDocument({ language: "sql", content: `-- SQL for ${process.label} (KDB-X .s.e); q-lint: Run SQL runs it\n` });
       await window.showTextDocument(document);
-      await commands.executeCommand(CONTROL_COMMANDS.chooseFileConnection, process.label);
+      await commands.executeCommand(CONTROL_COMMANDS.chooseFileConnection, process.label, document.uri);
       editors.set(document.uri.toString(), process.label);
       await readSchemaOf(process.label);
       return { uri: document.uri.toString(), label: process.label };
     }),
-    commands.registerCommand(LANGUAGE_COMMANDS.runSql, async () => {
+    // From the title bar, `clicked` is the editor clicked, not always the active one (#1523).
+    commands.registerCommand(LANGUAGE_COMMANDS.runSql, async (clicked?: unknown) => {
       if (!on()) {
         void window.showInformationMessage(plainMessage(languageOff("sql")));
         return undefined;
       }
-      const editor = window.activeTextEditor;
+      const editor = clickedEditor(clicked, window.visibleTextEditors ?? [], window.activeTextEditor);
       if (editor === undefined || editor.document.languageId !== "sql") {
         void window.showInformationMessage("q-lint: Run SQL runs a .sql editor; open one with q-lint: New SQL Query for Process.");
         return undefined;

@@ -12,6 +12,7 @@ const { cellDirective } = require("../out/celldirectives.js");
 const { LIVE, LIVE_KEY, inlineSpans, liveExpressions, markdownAfter, readLiveValues, scanLive } = require("../out/livemarkdown.js");
 const { ERROR_MIME, fromIpynb, markdownHtml, toHtml, toIpynb, IpynbError } = require("../out/qnbconvert.js");
 const { INJECTED_KEY, cliProcess, guardedText, injectParameters, parametersCell, parametersOf, parseArgs, passwordVariable, runNotebook, writeAs } = require("../out/qnbrun.js");
+const { isProduction } = require("../out/agent.js");
 const { writes } = require("../out/guard.js");
 const { describeVariable, readVariables, bytesText, VARS } = require("../out/notebookvars.js");
 const { NOTEBOOK, parseQnb, serializeQnb } = require("../out/qnb.js");
@@ -42,6 +43,11 @@ test("a live value's expression runs to its }}, braces and q strings balanced", 
   assert.strictEqual(scanLive("{{q: 1+1}", 0), undefined);
   assert.strictEqual(scanLive("{{q:   }}", 0), undefined);
   assert.strictEqual(scanLive("{{q: a\n\nb}}", 0), undefined);
+  // A line of blanks, or a CRLF blank line, ends the paragraph too (#1468).
+  assert.strictEqual(scanLive("{{q: a\n \t\nb}}", 0), undefined);
+  assert.strictEqual(scanLive("{{q: a\r\n\r\nb}}", 0), undefined);
+  assert.deepStrictEqual(liveExpressions("a {{q: 1+\n \n2}} b"), []);
+  assert.deepStrictEqual(scanLive("{{q: a\r\nb}}", 0), { expr: "a\r\nb", end: 11 });
 });
 
 test("expressions are found once each, never in code; a q symbol's backtick opens no code span", () => {
@@ -59,6 +65,11 @@ test("expressions are found once each, never in code; a q symbol's backtick open
 
 test("an indented code block or an HTML comment holds no live value (#1429)", () => {
   assert.deepStrictEqual(liveExpressions("Para\n\n    {{q: indented}}\n"), []);
+  // A fence closes only at a line of the fence alone, blanks after (#1469).
+  assert.deepStrictEqual(liveExpressions("```\n``` not a closer\n{{q: secret}}\n```\n"), []);
+  assert.deepStrictEqual(liveExpressions("~~~\n~~~x\n{{q: secret}}\n~~~\n"), []);
+  assert.deepStrictEqual(liveExpressions("```\n~~~\n{{q: in}}\n````  \n{{q: out}}"), ["out"]);
+  assert.deepStrictEqual(liveExpressions("```\r\ncode\r\n```\r\n{{q: out}}"), ["out"]);
   assert.deepStrictEqual(liveExpressions("    {{q: first}}\n\tand {{q: tab}}\n\nAfter {{q: a}}"), ["a"]);
   assert.deepStrictEqual(liveExpressions("<!-- {{q: hidden}} -->"), []);
   assert.deepStrictEqual(liveExpressions("A <!--\n{{q: hidden}}\n--> and {{q: b}}"), ["b"]);
@@ -162,6 +173,9 @@ test("Markdown without a value shows its expression as written", () => {
   assert.strictEqual(markdownHtml("> quoted *a*\n\n1. x\n2. y"), "<blockquote><p>quoted <em>a</em></p></blockquote>\n<ol><li>x</li><li>y</li></ol>");
   // A link's URL is not read for emphasis; its label is (#1105).
   assert.strictEqual(markdownHtml("[docs](https://code.kx.com/q/ref/_x_/)"), '<p><a href="https://code.kx.com/q/ref/_x_/">docs</a></p>');
+  // A quote or angle bracket in the URL is escaped once, not twice (#1476).
+  assert.strictEqual(markdownHtml("see [docs](https://en.wikipedia.org/wiki/Hoare's_logic) now"), '<p>see <a href="https://en.wikipedia.org/wiki/Hoare&#39;s_logic">docs</a> now</p>');
+  assert.match(markdownHtml("[q](https://x.io/?q=a<b)"), /href="https:\/\/x\.io\/\?q=a&lt;b"/);
   assert.strictEqual(markdownHtml("[*a*](https://x.io/a*b*c) and *b*"), '<p><a href="https://x.io/a*b*c"><em>a</em></a> and <em>b</em></p>');
 });
 
@@ -276,6 +290,8 @@ test("a parameters cell's assignments are its parameters", () => {
     { name: "q", value: '"a\\" /b"' },
     { name: "n", value: "1" },
   ]);
+  // One in a block comment, or a line of a multi-line string, is none (#1470).
+  assert.deepStrictEqual(parametersOf('/ @parameters\n/\nold:5\n\\\nn:10\ns:"a\n  b:2"'), [{ name: "n", value: "10" }]);
   const cells = [{ kind: "markdown", source: "/ @parameters" }, { kind: "code", source: "1" }, { kind: "code", source: "/ @parameters\nn:1" }];
   assert.strictEqual(parametersCell(cells), 2);
   assert.strictEqual(parametersCell([{ kind: "code", source: "/ @parameters", language: "python" }]), -1);
@@ -345,14 +361,19 @@ test("a headless run numbers and runs the q cells, reads live values, and goes w
 
 test("the guard reads a cell's live values' expressions with its source (#1088)", async () => {
   const markdown = ["Count {{q: count trade}}", "Gone {{q: delete from `trade}}", "Again {{q: count trade}}"];
-  assert.strictEqual(guardedText("/ just a note", markdown), "/ just a note\ncount trade\ndelete from `trade");
+  assert.deepStrictEqual(guardedText("/ just a note", markdown), ["/ just a note", "count trade", "delete from `trade"]);
   assert.deepStrictEqual(writes(guardedText("/ just a note", markdown)), ["deletes from `trade in place"]);
-  assert.strictEqual(guardedText("1+1", []), "1+1");
+  assert.deepStrictEqual(guardedText("1+1", []), ["1+1"]);
+  // Each is read on its own: a cell ending the script or a `/` expression
+  // does not hide what comes after it (#1442), and reads stay reads.
+  assert.deepStrictEqual(writes(guardedText("count t\n\\", ["{{q: a:1}}"])), ["assigns a"]);
+  assert.deepStrictEqual(writes(guardedText("count t", ["Rows {{q: /}} and {{q: a:1}}"])), ["assigns a"]);
+  assert.deepStrictEqual(writes(guardedText("count t\n\\", ["Rows {{q: /}} and {{q: count t}}"])), []);
   // A headless run hands the executor, which guards it, the same text.
   const qnb = { cells: [{ kind: "code", source: "1" }, { kind: "markdown", source: markdown[1] }] };
   const ex = fakeExecutor((cut) => ({ ok: true, type: -7, text: [cut.join(";")] }));
   await runNotebook(qnb, ex, SETTINGS);
-  assert.deepStrictEqual(ex.codes, ["1\ndelete from `trade"]);
+  assert.deepStrictEqual(ex.codes, [["1", "delete from `trade"]]);
 });
 
 test("a headless run stops at the first cell that fails, and clears what the cells after it showed", async () => {
@@ -408,6 +429,13 @@ test("the command line names a process by host:port or by a listed label, and re
   assert.match(cliProcess("t", [{ label: "t", host: "localhost", port: 5000, tags: [], ssh: "bastion" }]).error, /t needs an SSH tunnel \(ssh\), which qnbrun does not run/);
   assert.match(cliProcess("s", [{ label: "s", host: "h", port: 1, tags: [], initFile: "c.q" }]).error, /a connect script/);
   assert.strictEqual(passwordVariable("desk/rdb-1"), "QLINT_Q_PASSWORD_DESK_RDB_1");
+  // By its address, a listed process keeps its tags, and so its production
+  // check (#1450); another address, or another port, has none.
+  const prod = [{ label: "prdb", host: "db1", port: 5000, tags: ["prod"] }, { label: "x", host: "DB1", port: 5000, tags: ["eu"] }];
+  assert.deepStrictEqual(cliProcess("db1:5000", prod).tags, ["prod", "eu"]);
+  assert.strictEqual(isProduction(cliProcess("db1:5000", prod)), true);
+  assert.strictEqual(isProduction(cliProcess("db1:5001", prod)), false);
+  assert.deepStrictEqual(cliProcess("db2:5000", prod).tags, []);
 });
 
 // --- the variables view's data
@@ -495,4 +523,14 @@ test("a PyKX %%q cell with options imports as q, its options a comment (#1267)",
     [undefined, "1"],
     ["python", "%%qx\n1"],
   ]);
+});
+
+test("a variable's size takes the next unit when it rounds up to 1024 (#1495)", () => {
+  assert.strictEqual(bytesText(512), "512 B");
+  assert.strictEqual(bytesText(1023), "1023 B");
+  assert.strictEqual(bytesText(1536), "1.5 KB");
+  assert.strictEqual(bytesText(10239), "10 KB");
+  assert.strictEqual(bytesText(1048575), "1.0 MB");
+  assert.strictEqual(bytesText(1073741823), "1.0 GB");
+  assert.strictEqual(bytesText(5 * 1024 * 1024 * 1024 * 1024 * 1024), "5120 TB");
 });

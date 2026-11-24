@@ -389,9 +389,11 @@
     };
   }
 
-  /// Text as SVG character data.
+  /// Text as SVG character data. A control character XML 1.0 forbids (FIX's
+  /// SOH separator, say) becomes U+FFFD, or no parser reads the file.
   function xml(text) {
-    return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    return String(text).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, "\uFFFD")
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
 
   /// About five round steps from `lo` to `hi`: the ticks of an axis.

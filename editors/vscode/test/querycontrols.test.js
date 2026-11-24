@@ -482,3 +482,40 @@ test("an unlimited float list is written to the process's \\P, as its console wr
   assert.strictEqual(floats([1 / 3], 7), ",0.3333333");
   assert.strictEqual(readUnlimited({ ok: true, type: 9, text: [], value: [1 / 3] }).text[0], ",0.3333333");
 });
+
+test("a temporal list of only nulls and infinities ends with its type's letter, as q writes it (#1491)", () => {
+  assert.strictEqual(vectorText([null, null], 14), "0N 0Nd");
+  assert.strictEqual(vectorText([null], 12), ",0Np");
+  assert.strictEqual(vectorText([Infinity, null], 19), "0W 0Nt");
+  assert.strictEqual(vectorText([-Infinity, null], 12), "-0W 0Np");
+  assert.strictEqual(vectorText([Infinity], 15), ",0wz");
+  assert.strictEqual(vectorText([null, null], 17), "0N 0Nu");
+  assert.strictEqual(vectorText([null, null], 13), "0N 0Nm");
+  assert.strictEqual(vectorText([day(2026, 11, 20), null], 14), "2026.11.20 0N");
+});
+
+test("an unwrapped dictionary with a table on either side counts its header lines, as the console does (#1497)", () => {
+  // KDB-X console at \c 10 80: (`$"s",/:string til 30)!([]x:til 30) and
+  // ([]k:til 30)!til 30 each show 10 lines, the 8th row then "..".
+  const longs = (n) => ({ kind: "vector", t: 7, attr: 0, v: Array.from({ length: n }, (_, i) => i) });
+  const table = (name, n) => ({ kind: "table", attr: 0, cols: [name], data: [longs(n)] });
+  const syms = { kind: "vector", t: 11, attr: 0, v: Array.from({ length: 30 }, (_, i) => `s${i}`) };
+  const bySym = consoleLines({ kind: "dict", sorted: false, k: syms, v: table("x", 30) }, [10, 80]);
+  assert.strictEqual(bySym.length, 10);
+  assert.deepStrictEqual([bySym[0], bySym[2], bySym[8], bySym[9]], ["  | x", "s0| 0", "s6| 6", ".."]);
+  const byTable = consoleLines({ kind: "dict", sorted: false, k: table("k", 30), v: longs(30) }, [10, 80]);
+  assert.strictEqual(byTable.length, 10);
+  assert.strictEqual(byTable[8].trimEnd(), "6| 6");
+});
+
+// The untitled editor a saved file came from, by its text (#1529).
+test("a file saved from a bound untitled editor is matched by its text, recently, and only one way", () => {
+  const { savedFrom } = require("../out/querycontrols.js");
+  const now = 100000;
+  assert.strictEqual(savedFrom("a:1", [{ label: "prod", text: "a:1", at: now - 10 }], now), "prod");
+  assert.strictEqual(savedFrom("a:1", [{ label: "prod", text: "a:1", at: now - 60000 }], now), undefined);
+  assert.strictEqual(savedFrom("a:2", [{ label: "prod", text: "a:1", at: now }], now), undefined);
+  assert.strictEqual(savedFrom("  ", [{ label: "prod", text: "  ", at: now }], now), undefined);
+  assert.strictEqual(savedFrom("a:1", [{ label: "prod", text: "a:1", at: now }, { label: "dev", text: "a:1", at: now }], now), undefined);
+  assert.strictEqual(savedFrom("a:1", [{ label: "prod", text: "a:1", at: now }, { label: "prod", text: "a:1", at: now }], now), "prod");
+});

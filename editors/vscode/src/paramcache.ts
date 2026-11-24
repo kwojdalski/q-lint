@@ -16,6 +16,8 @@
 // and a scan by q's own script rules (those `statements.ts` cuts code by) is
 // all the question needs. It never runs the code.
 
+import { blockDepth } from "./statements";
+
 /// The command, for `package.json`'s manifest test.
 export const PARAM_CACHE = {
   toggle: "q-lint.toggleParameterCache",
@@ -44,7 +46,7 @@ export interface Lambda {
 /// lone `\` that ends the script.
 export function codeMask(text: string): boolean[] {
   const mask: boolean[] = new Array(text.length).fill(false);
-  let inBlock = false;
+  let depth = 0;
   let ended = false;
   let inString = false;
   let at = 0;
@@ -55,12 +57,8 @@ export function codeMask(text: string): boolean[] {
     const line = raw.replace(/\s+$/, "");
     if (inString) {
       // A string runs on until its closing quote, whatever the line holds.
-    } else if (inBlock) {
-      inBlock = line !== "\\";
-      at = end + 1;
-      continue;
-    } else if (line === "/") {
-      inBlock = true;
+    } else if (depth > 0 || line === "/") {
+      depth = blockDepth(depth, line);
       at = end + 1;
       continue;
     } else if (line === "\\") {

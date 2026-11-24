@@ -167,6 +167,7 @@ const workspace = new Proxy(
       return new Disposable(() => (stub.configListeners = stub.configListeners.filter((l) => l !== listener)));
     },
     workspaceFolders: undefined,
+    textDocuments: [],
   },
   { get: (t, key) => (key in t ? t[key] : (t[key] = anything())) },
 );

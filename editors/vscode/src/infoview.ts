@@ -66,6 +66,9 @@ class InfoView implements TreeDataProvider<InfoNode> {
   private kept: { process: string; nodes: InfoNode[] } | undefined;
   /// The read out, which a second refresh waits for.
   private reading: Promise<void> | undefined;
+  /// The process `reading` is for: a refresh for another waits for it, then
+  /// reads its own (#1455).
+  private readingFor: string | undefined;
   private readonly disposables: { dispose(): unknown }[];
 
   constructor(
@@ -114,11 +117,22 @@ class InfoView implements TreeDataProvider<InfoNode> {
     if (this.live.activeLabel() === undefined) {
       return Promise.resolve();
     }
-    this.reading ??= this.readNow(asked).finally(() => (this.reading = undefined));
+    const label = this.live.activeLabel();
+    if (this.reading === undefined || this.readingFor !== label) {
+      const next: Promise<void> = (this.reading === undefined ? this.readNow(asked) : this.reading.then(() => this.readNow(asked))).finally(() => {
+        if (this.reading === next) {
+          this.reading = undefined;
+          this.readingFor = undefined;
+        }
+      });
+      this.reading = next;
+      this.readingFor = label;
+    }
     return this.reading;
   }
 
   private async readNow(asked: boolean): Promise<void> {
+    const label = this.live.activeLabel();
     try {
       const got = await borrowWhenFree(this.live, async (connection, process) => ({ process: process.label, nodes: await this.read(connection, process) }));
       if (got === undefined) {
@@ -131,7 +145,7 @@ class InfoView implements TreeDataProvider<InfoNode> {
       this.view.message = undefined;
     } catch (error) {
       this.kept = undefined;
-      this.view.message = `Could not read ${this.live.activeLabel() ?? "the process"}: ${error instanceof Error ? error.message : String(error)}`;
+      this.view.message = `Could not read ${label ?? "the process"}: ${error instanceof Error ? error.message : String(error)}`;
     } finally {
       this.show();
     }

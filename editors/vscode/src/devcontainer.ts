@@ -103,6 +103,14 @@ export function templateFiles(): TemplateFile[] {
   ];
 }
 
+/// Where a dev container configuration the repository has already is, as Dev
+/// Containers look beside the template's own: `.devcontainer.json` at the
+/// root, or `.devcontainer/<folder>/devcontainer.json`. The template's
+/// would shadow or join it (#1532). `subfolders`: `.devcontainer`'s.
+export function otherConfigs(subfolders: readonly string[]): string[] {
+  return [".devcontainer.json", ...subfolders.map((f) => `.devcontainer/${f}/devcontainer.json`)];
+}
+
 /// The files of `files` to write, and those left because `exists` says
 /// they are already there: nothing is ever written over.
 export function plan(files: TemplateFile[], exists: (relative: string) => boolean): { write: TemplateFile[]; skip: string[] } {

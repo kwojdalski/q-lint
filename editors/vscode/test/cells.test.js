@@ -212,4 +212,48 @@ test("the switches: on by default but Smart Send and defining on connect", () =>
   const keys = pkg.contributes.keybindings;
   assert.match(keys.find((k) => k.command === "q-lint.smartSend").when, /config\.q-lint\.smartSend\.enable/);
   assert.match(keys.find((k) => k.command === "q-lint.runCell").when, /q-lint\.hasCells/);
+  // In a q notebook's cell, Shift+Enter and Ctrl+Enter are the notebook's:
+  // an extension's binding outranks them (#1533).
+  for (const command of ["q-lint.smartSend", "q-lint.runCell"]) {
+    assert.match(keys.find((k) => k.command === command).when, /!notebookEditorFocused/, command);
+  }
+});
+
+test("block comments nest, as KDB-X reads them: every reader skips to the matching \\ (#1462)", () => {
+  const { definitions } = require("../out/definitions.js");
+  const { statementSpans } = require("../out/linetimings.js");
+  const { codeMask } = require("../out/paramcache.js");
+  const { placeholderNames } = require("../out/placeholders.js");
+  const { historyScript } = require("../out/historyfilter.js");
+  const w = require("../out/wrangle.js");
+  // KDB-X runs only a:1 and b:3 of this: the inner `/` opens a second block.
+  const src = "a:1\n/\n/\n\\\n`t set 2\nf:{x+{{p}}}\n/ %% hidden\n\\\nb:3";
+  assert.deepStrictEqual(statements(src), ["a:1", "b:3"]);
+  assert.deepStrictEqual(statementSpans(src).map((s) => s.text), ["a:1", "b:3"]);
+  assert.strictEqual(blockAt(L(src), 4), undefined);
+  assert.deepStrictEqual(blockAt(L(src), 8), { start: 8, end: 8 });
+  assert.deepStrictEqual(definitions(src), []);
+  assert.deepStrictEqual(markers(L(src)), []);
+  assert.strictEqual(codeMask(src)[src.indexOf("`t set")], false);
+  assert.strictEqual(codeMask(src)[src.indexOf("b:3")], true);
+  assert.deepStrictEqual(placeholderNames(src), []);
+  assert.strictEqual(w.wrangleQuery("select from t\n/\n/\n\\\n  where a\n\\\n  where b", []), "select from t\n  where b");
+  // An entry that leaves two blocks open closes both, so the next one loads.
+  const at = "2026-01-01T00:00:00Z";
+  const entry = (code) => ({ process: "p", code, at, millis: 1, outcome: "ok" });
+  assert.deepStrictEqual(statements(historyScript([entry("c:3"), entry("a:1\n/\n/\nx")])), ["a:1", "c:3"]);
+});
+
+test("a marker with a block comment between it and a continuation line is a comment in the statement (#1464)", () => {
+  const lines = L("f:{x+\n/ %% two\n/\nnote\n\\\n  y}\n/ %% three\ng:1");
+  assert.deepStrictEqual(statements(lines.join("\n")), ["f:{x+\n  y}", "g:1"]);
+  assert.deepStrictEqual(markers(lines), [6]);
+});
+
+test("a blank line in a multi-line string is part of the string, as q reads it (#1465)", () => {
+  const { statementSpans } = require("../out/linetimings.js");
+  const src = 's:"line one\n\n  line three"\nt:"a\\"\n   \n  b"\nu:1 / "\n\n  +2';
+  const want = ['s:"line one\n\n  line three"', 't:"a\\"\n\n  b"', 'u:1 / "\n  +2'];
+  assert.deepStrictEqual(statements(src), want);
+  assert.deepStrictEqual(statementSpans(src).map((s) => [s.text, s.start, s.end]), [[want[0], 0, 2], [want[1], 3, 5], [want[2], 6, 8]]);
 });

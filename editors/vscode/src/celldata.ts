@@ -180,12 +180,16 @@ export function tableHtml(table: Table): string {
   ].join("");
 }
 
+/// A cell on one line: a newline, return or tab escaped as q writes it in a
+/// string, `"a\nb"`, so a value does not break its row (#1496).
+const oneLine = (value: string): string => clip(value).replace(/[\n\r\t]/g, (c) => (c === "\n" ? "\\n" : c === "\r" ? "\\r" : "\\t"));
+
 /// A table as text laid out as q's console lays it out: the names, a rule,
 /// the rows, a `|` after a keyed table's key columns.
 export function tableText(table: Table): string[] {
   const rows = rowCount(table);
   // A loop, not `Math.max(...)`: every row is more than a call takes arguments.
-  const widths = table.columns.map((c, i) => table.data[i].reduce((w, v) => Math.max(w, clip(v).length), c.length));
+  const widths = table.columns.map((c, i) => table.data[i].reduce((w, v) => Math.max(w, oneLine(v).length), c.length));
   const line = (cell: (i: number) => string): string =>
     table.columns
       .map((_, i) => cell(i).padEnd(widths[i]) + (i === table.keys - 1 && i < table.columns.length - 1 ? "|" : ""))
@@ -197,7 +201,7 @@ export function tableText(table: Table): string[] {
   const rule = keyed ? `${"-".repeat(keyWidth)}| ${"-".repeat(header.length - keyWidth - 2)}` : "-".repeat(header.length);
   const lines = [header.trimEnd(), rule];
   for (let r = 0; r < rows; r++) {
-    lines.push(line((i) => clip(table.data[i][r] ?? "")).trimEnd());
+    lines.push(line((i) => oneLine(table.data[i][r] ?? "")).trimEnd());
   }
   const note = cutNote(table);
   return note === undefined ? lines : [...lines, note];

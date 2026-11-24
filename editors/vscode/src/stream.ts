@@ -61,13 +61,15 @@ export function readUpdate(q: QValue, table: string, columns: string[], types?: 
   } else if (data.kind === "list" && data.v.length === columns.length && data.v.every((c) => c.kind === "vector" || c.kind === "list" || c.kind === "chars") && asColumns(data.v, types)) {
     shaped = { kind: "table", attr: 0, cols: columns, data: data.v };
   } else if (data.kind === "list" && data.v.length === columns.length) {
-    // One row: each atom made a one-item column.
-    shaped = {
-      kind: "table",
-      attr: 0,
-      cols: columns,
-      data: data.v.map((x): QValue => (x.kind === "atom" ? { kind: "vector", t: -x.t, attr: 0, v: [x.v] } : { kind: "list", attr: 0, v: [x] })),
-    };
+    // One row: each atom made a one-item column, a char one a string of
+    // its byte, as a char column arrives (#1490).
+    const column = (x: QValue): QValue =>
+      x.kind !== "atom"
+        ? { kind: "list", attr: 0, v: [x] }
+        : x.t === -10
+          ? { kind: "chars", attr: 0, v: Buffer.from([Number(x.v)]) }
+          : { kind: "vector", t: -x.t, attr: 0, v: [x.v] };
+    shaped = { kind: "table", attr: 0, cols: columns, data: data.v.map(column) };
   } else {
     return undefined;
   }

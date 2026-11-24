@@ -8,7 +8,19 @@
 // as nothing on one of them depends on the end of the line: a trailing
 // comment would swallow the rest, so it is cut, and a string that runs onto
 // the next line keeps the newline as `\n`.
+import * as path from "node:path";
 import { statements } from "./statements";
+
+/// Where a q terminal starts: the workspace folder holding `file`, else the
+/// file's own directory - a file outside every folder started in the first,
+/// and its relative `\l` read another folder's (#1535) - and with no file
+/// (the REPL), `first`, the first folder.
+export function terminalCwd(own: string | undefined, first: string | undefined, file: string | undefined, dirname: (p: string) => string): string | undefined {
+  if (own !== undefined) {
+    return own;
+  }
+  return file !== undefined ? dirname(file) : first;
+}
 
 /// How the shell in the terminal reads a command line.
 export type Shell = "posix" | "powershell" | "cmd";
@@ -112,6 +124,19 @@ export function commandLine(binary: string, args: string[], shell: Shell, env: R
 /// otherwise look for a folder named `~`.
 export function expandHome(file: string, home: string): string {
   return file === "~" || /^~[\\/]/.test(file) ? home + file.slice(1) : file;
+}
+
+/// `qBinary` as a program to start from any directory: `~` expanded, and a
+/// relative path (`./kdb/m64/q`) made whole against `folder`, where the
+/// terminals start - started in a temporary or a launch's directory it was
+/// another file, or none (#1540). A bare name is left for `PATH`. Undefined
+/// for a relative path with no folder to read it from.
+export function qBinaryFrom(qBinary: string, folder: string | undefined, home: string): string | undefined {
+  const file = expandHome(qBinary, home);
+  if (path.isAbsolute(file) || !/[\\/]/.test(file)) {
+    return file;
+  }
+  return folder === undefined ? undefined : path.resolve(folder, file);
 }
 
 /// The variables of an env file - one `NAME=value` a line, `#` comments and

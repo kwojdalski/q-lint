@@ -303,8 +303,9 @@ export function k4Statement(row: K4Row): string {
   return row.lang === "k" ? `k)${row.code}` : row.code;
 }
 
-/// What a test's label is: a k4unit row is its code, cut to one line.
+/// What a test's label is: a k4unit row is its code, cut to one line of 80
+/// characters - by code point, never inside a surrogate pair (#1473).
 export function k4Label(row: K4Row): string {
-  const one = row.code.replace(/\s+/g, " ").trim();
-  return one.length > 80 ? `${one.slice(0, 79)}…` : one;
+  const one = Array.from(row.code.replace(/\s+/g, " ").trim());
+  return one.length > 80 ? `${one.slice(0, 79).join("")}…` : one.join("");
 }

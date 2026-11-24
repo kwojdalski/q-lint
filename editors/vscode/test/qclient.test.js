@@ -696,3 +696,38 @@ test("a message whose header gives a length shorter than itself closes the conne
   await assert.rejects(connection.evaluate("1+1"), /length/);
   assert.strictEqual(connection.isOpen, false);
 });
+
+// A service that speaks first was taken as q: its banner's first byte as
+// the capability, the rest as a message whose length never arrived, so the
+// connect said connected and every query waited for ever.
+test("a port where a non-q service speaks first is refused at the handshake", async (t) => {
+  for (const banner of ["SSH-2.0-OpenSSH_9.6\r\n", "220 mail ESMTP\r\n", "\u0003SSH"]) {
+    const server = net.createServer((s) => {
+      s.on("error", () => {});
+      s.write(banner);
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    t.after(() => server.close());
+    await assert.rejects(QConnection.open({ host: "127.0.0.1", port: server.address().port }, 2000), /not as a q process does/);
+  }
+});
+
+// The codec reads an empty error text as null, so signalling the empty
+// symbol showed as 'null, as signalling `null does.
+test("a q error with empty text is an empty QError, not 'null'", async (t) => {
+  const error = (text) => {
+    const body = Buffer.concat([Buffer.from([0x80]), Buffer.from(text, "utf8"), Buffer.from([0])]);
+    const header = Buffer.from([1, 2, 0, 0, 0, 0, 0, 0]);
+    header.writeUInt32LE(8 + body.length, 4);
+    return Buffer.concat([header, body]);
+  };
+  const texts = ["", "null", "type"];
+  const fake = await fakeProcess((_, socket) => socket.write(error(texts.shift())));
+  t.after(() => fake.close());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: fake.port });
+  t.after(() => connection.abort());
+  const { QError } = require("../out/qclient.js");
+  for (const expected of ["", "null", "type"]) {
+    await assert.rejects(connection.evaluate("'`"), (e) => e instanceof QError && e.message === expected);
+  }
+});

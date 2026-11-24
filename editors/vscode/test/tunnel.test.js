@@ -30,6 +30,12 @@ const fs = require("fs");
 const net = require("net");
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.STUB_SSH_LOG, JSON.stringify({ pid: process.pid, args }) + "\\n");
+if (process.env.STUB_SSH_NEVER) {
+  // A forward that never opens: ssh still connecting to a far jump host.
+  process.on("SIGTERM", () => process.exit(0));
+  setInterval(() => {}, 1000);
+  return;
+}
 if (process.env.STUB_SSH_FAIL) {
   process.stderr.write("banner\\nme@bastion: Permission denied (publickey).\\n");
   process.exit(255);
@@ -53,7 +59,7 @@ function stubSsh(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-ssh-"));
   fs.writeFileSync(path.join(dir, "ssh"), STUB, { mode: 0o755 });
   const log = path.join(dir, "log");
-  const saved = { PATH: process.env.PATH, STUB_SSH_LOG: process.env.STUB_SSH_LOG, STUB_SSH_FAIL: process.env.STUB_SSH_FAIL, STUB_SSH_REACHES: process.env.STUB_SSH_REACHES };
+  const saved = { PATH: process.env.PATH, STUB_SSH_LOG: process.env.STUB_SSH_LOG, STUB_SSH_FAIL: process.env.STUB_SSH_FAIL, STUB_SSH_REACHES: process.env.STUB_SSH_REACHES, STUB_SSH_NEVER: process.env.STUB_SSH_NEVER };
   process.env.PATH = `${dir}${path.delimiter}${process.env.PATH}`;
   process.env.STUB_SSH_LOG = log;
   delete process.env.STUB_SSH_FAIL;
@@ -160,10 +166,11 @@ test("the setting is on by default, and hides Set SSH Tunnel when off", () => {
 test("a tunnel that ssh cannot open says what ssh said, and leaves nothing running", async (t) => {
   const ssh = stubSsh(t);
   process.env.STUB_SSH_FAIL = "1";
-  await assert.rejects(
-    SshTunnel.open({ destination: "me@bastion", host: "rdb", port: 5010, timeoutMs: 5000 }),
-    /the SSH tunnel through me@bastion did not open: banner me@bastion: Permission denied \(publickey\)\./,
-  );
+  // ssh's words can name hosts: they are kept apart from the message, which
+  // a history keeps, for the one message shown at once (#1508).
+  const failure = await SshTunnel.open({ destination: "me@bastion", host: "rdb", port: 5010, timeoutMs: 5000 }).catch((e) => e);
+  assert.strictEqual(failure.message, "the SSH tunnel through me@bastion did not open");
+  assert.match(failure.shown().message, /the SSH tunnel through me@bastion did not open\. ssh said: banner me@bastion: Permission denied \(publickey\)\./);
   assert.strictEqual(alive(ssh.runs()[0].pid), false);
   delete process.env.STUB_SSH_FAIL;
   await assert.rejects(SshTunnel.open({ destination: "x", host: "h", port: 1, ssh: "/nonexistent/ssh" }), /no ssh program \(\/nonexistent\/ssh\) on PATH/);
@@ -197,6 +204,22 @@ test("a process with a jump host is connected to through ssh, which stops when i
   await stub.commands.get("q-lint.disconnectProcess")();
   for (let i = 0; i < 50 && alive(run.pid); i++) await sleep(50);
   assert.strictEqual(alive(run.pid), false, "ssh stopped with the connection");
+});
+
+test("a run apart cancelled while its tunnel opens stops at once, and stops ssh (#1459)", async (t) => {
+  const ssh = stubSsh(t);
+  process.env.STUB_SSH_NEVER = "1";
+  const far = { label: "far", host: "127.0.0.1", port: 1, tags: [], ssh: "bastion" };
+  const { live } = await setUp(t, [far]);
+  const stop = new AbortController();
+  const started = Date.now();
+  const run = live.runApart(far, "1", stop.signal);
+  await sleep(300);
+  stop.abort();
+  await assert.rejects(run, /the SSH tunnel through bastion was cancelled/);
+  assert.ok(Date.now() - started < 3000, `took ${Date.now() - started} ms`);
+  for (let i = 0; i < 50 && alive(ssh.runs()[0].pid); i++) await sleep(50);
+  assert.strictEqual(alive(ssh.runs()[0].pid), false);
 });
 
 test("ssh dying closes the connection over it", async (t) => {
@@ -321,4 +344,39 @@ test("Set SSH Tunnel sets and clears a saved process's jump host, and Edit keeps
   assert.deepStrictEqual(live.processes()[0], { label: "a", host: "h2", port: 1, tags: [], ssh: "me@jump" });
   await stub.commands.get(TUNNEL_COMMANDS.set)("a", null);
   assert.strictEqual(live.processes()[0].ssh, undefined);
+});
+
+// Turned off, only the active connection through a tunnel closed: a
+// stream's own connection and its ssh kept running (#1517).
+test("turning tunnels off closes a connection apart through one, and its ssh", async (t) => {
+  const q = await someQ(t);
+  const ssh = stubSsh(t);
+  const { live } = await setUp(t, [{ label: "far", host: "127.0.0.1", port: q.port, tags: [], ssh: "bastion" }]);
+  const connection = await live.openSeparate(live.processes()[0]);
+  t.after(() => connection.abort());
+  const [run] = ssh.runs();
+  assert.ok(alive(run.pid));
+  stub.config.user["connection.sshTunnel.enable"] = false;
+  stub.changeConfig("q-lint.connection.sshTunnel.enable");
+  assert.strictEqual(connection.isOpen, false);
+  for (let i = 0; i < 50 && alive(run.pid); i++) await sleep(50);
+  assert.strictEqual(alive(run.pid), false);
+});
+
+// ssh was stopped only from the socket's later close: an extension host
+// that exited first left ssh running, reparented, its forward open (#1518).
+test("deactivating stops ssh at once, not on the connection's later close", async (t) => {
+  const q = await someQ(t);
+  stubSsh(t);
+  const { live, context } = await setUp(t, [{ label: "far", host: "127.0.0.1", port: q.port, tags: [], ssh: "bastion" }]);
+  assert.strictEqual(await live.connectTo("far"), true);
+  const closes = [];
+  const close = SshTunnel.prototype.close;
+  SshTunnel.prototype.close = function () {
+    closes.push(this.pid);
+    return close.call(this);
+  };
+  t.after(() => (SshTunnel.prototype.close = close));
+  for (const d of context.subscriptions) d.dispose?.();
+  assert.strictEqual(closes.length, 1);
 });

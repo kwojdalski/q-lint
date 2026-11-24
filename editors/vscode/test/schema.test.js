@@ -72,3 +72,9 @@ test("the schema diagram: foreign keys and links found by meta, every name escap
   assert.throws(() => s.readSchema({}), /something other than its tables/);
   assert.match(s.SCHEMA, /^\{\[ex;lim;nc\]/);
 });
+
+test("schema diagram: a control character in a name is replaced, so the SVG still parses (#1474)", () => {
+  const svg = s.schemaSvg([{ name: "fix\u0001msg", info: info({ columns: [{ name: "c\u0002", type: "s", fkey: "", attr: "" }] }) }]);
+  assert.ok(!/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(svg), svg);
+  assert.match(svg, /fix�msg/);
+});

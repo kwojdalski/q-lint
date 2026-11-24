@@ -5123,12 +5123,12 @@
       {
         "command": "q-lint.runCell",
         "key": "ctrl+enter",
-        "when": "editorTextFocus && editorLangId == q && q-lint.hasCells && config.q-lint.cells.enable"
+        "when": "editorTextFocus && editorLangId == q && !notebookEditorFocused && q-lint.hasCells && config.q-lint.cells.enable"
       },
       {
         "command": "q-lint.smartSend",
         "key": "shift+enter",
-        "when": "editorTextFocus && editorLangId == q && !suggestWidgetVisible && !inlineSuggestionVisible && config.q-lint.smartSend.enable"
+        "when": "editorTextFocus && editorLangId == q && !notebookEditorFocused && !suggestWidgetVisible && !inlineSuggestionVisible && config.q-lint.smartSend.enable"
       }
     ],
     "languageModelTools": [

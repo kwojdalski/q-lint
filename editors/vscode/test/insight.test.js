@@ -51,6 +51,8 @@ test("where a caller uses a name: as code, not in a string or a comment, or by i
   // Named by symbol only.
   assert.strictEqual(at("{value(`f;x)}", "f"), 7);
   assert.strictEqual(at("{x}", "f"), -1);
+  // .ns.f.g is a longer name, not a use of .ns.f (#1472).
+  assert.strictEqual(at("{a:.ns.f.g[x]; b:.ns.f[x]}", ".ns.f"), 17);
 });
 
 test("a source document names its function, and an edit is read back without the header", () => {

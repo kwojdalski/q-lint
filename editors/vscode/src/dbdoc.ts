@@ -193,3 +193,21 @@ export function docHtml(doc: DbDoc, process: string, at: string, docs: Map<strin
   out.push("</body></html>");
   return out.join("\n");
 }
+
+/// The qdoc of every function in `files`, each read by `read`, the first
+/// file to document a name winning. A file that cannot be read is skipped,
+/// and only it: one unreadable file ended the reading, and every file after
+/// it went undocumented (#1542).
+export async function workspaceDocs<F>(files: readonly F[], read: (file: F) => Promise<string>): Promise<Map<string, string>> {
+  const docs = new Map<string, string>();
+  for (const file of files) {
+    let text: string;
+    try {
+      text = await read(file);
+    } catch {
+      continue;
+    }
+    for (const [name, doc] of qdocs(text)) if (!docs.has(name)) docs.set(name, doc);
+  }
+  return docs;
+}

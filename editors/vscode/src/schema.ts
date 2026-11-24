@@ -104,7 +104,9 @@ export function schemaLinks(tables: SchemaTable[]): SchemaLink[] {
   );
 }
 
-const escape = (s: string): string => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+// A control character XML 1.0 forbids becomes U+FFFD, or the SVG will not parse.
+const escape = (s: string): string =>
+  s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, "\uFFFD").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 const CHAR = 7.2;
 const LINE = 18;

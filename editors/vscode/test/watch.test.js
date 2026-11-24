@@ -174,3 +174,18 @@ test("off (the default), Watch Query refuses, makes no status item and sends not
   await sleep(1200);
   assert.deepStrictEqual(q.queries(), ["count t"]);
 });
+
+test("turned off while the interval box is open, nothing is watched or sent (#1451)", async (t) => {
+  const { q, live, api, watchItem } = await setUp(t);
+  assert.strictEqual(await live.connectTo("rdb"), true);
+  stub.inputs.push(() => {
+    stub.config.user["query.watch.enable"] = false;
+    stub.changeConfig("q-lint.query.watch.enable");
+    return "1";
+  });
+  await stub.commands.get("q-lint.watchQuery")("count t");
+  await sleep(1200);
+  assert.strictEqual(api.watching(), undefined);
+  assert.strictEqual(watchItem(), undefined);
+  assert.deepStrictEqual(q.queries(), []);
+});

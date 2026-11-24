@@ -14,7 +14,7 @@ const path = require("node:path");
 const pkg = require("../package.json");
 const { DB_SETTINGS, DB_COMMANDS, dbOn, dbOff } = require("../out/dbfeatures.js");
 const { opProblem, opText, columnScript, columnScriptOf, readRun, HELPERS } = require("../out/colmanager.js");
-const { readDoc, qdocs, docMarkdown, docHtml, typeName } = require("../out/dbdoc.js");
+const { readDoc, qdocs, docMarkdown, docHtml, typeName, workspaceDocs } = require("../out/dbdoc.js");
 const { missingWeekdays, partitionProblems, partitionReport, readPartitions } = require("../out/partcheck.js");
 const { readSym, symReport } = require("../out/syminspect.js");
 const { advise, filterCounts, adviceReport, readAttributeSample } = require("../out/attradvice.js");
@@ -280,6 +280,18 @@ test("test data: pools, ranges, a q generator per type, and CSV that sorts and r
   assert.notStrictEqual(random(1)(), random(2)());
 });
 
+test("test data: a short's or an int's range is cut to the finite values it holds, in the q and the CSV (#1499)", () => {
+  const o = { rows: 200, symbols: ["A"], low: 0, high: 5e9, seed: 7 };
+  assert.strictEqual(generator("h", o), '"h"$0+n?32767');
+  assert.strictEqual(generator("i", o), '"i"$0+n?2147483647');
+  assert.strictEqual(generator("j", o), "0+n?5000000000");
+  assert.strictEqual(generator("h", { ...o, low: -40000, high: -39000 }), '"h"$-32766+n?1');
+  assert.strictEqual(generator("h", { ...o, low: 10, high: 20 }), '"h"$10+n?10');
+  const info = { kind: "table", rows: 0, bytes: null, partitions: null, keys: [], ncols: 2, columns: [{ name: "h", type: "h", fkey: "", attr: "" }, { name: "i", type: "i", fkey: "", attr: "" }] };
+  const rows = testDataCsv(info, o).trim().split("\n").slice(1).map((l) => l.split(",").map(Number));
+  assert.ok(rows.every(([h, i]) => h >= 0 && h <= 32766 && i >= 0 && i <= 2147483646), JSON.stringify(rows.slice(0, 3)));
+});
+
 test("the tickerplant log's readers, times of day and ranges", () => {
   assert.strictEqual(timeOfDay(""), null);
   assert.strictEqual(timeOfDay("09:30"), 34_200_000);
@@ -336,6 +348,9 @@ test("a chart is drawn from CSV and JSON tables, and the command line writes it"
   assert.throws(() => gridFromCsv("\n  \n"), /no header row/);
   assert.deepStrictEqual(gridFromJson('[{"x":1,"y":2},{"x":2,"y":3}]').values[1], [2, 3]);
   assert.deepStrictEqual(gridFromJson('{"x":[1,2],"y":["a","b"]}').columns.map((c) => c.numeric), [true, false]);
+  const proto = gridFromJson('[{"t":1,"valueOf":5,"constructor":"a"},{"t":2,"valueOf":6},{"t":3}]');
+  assert.deepStrictEqual(proto.cells.slice(1), [["5", "6", ""], ["a", "", ""]]);
+  assert.strictEqual(proto.columns[1].numeric, true);
   assert.throws(() => gridFromJson("3"), /not a table/);
   const svg = chartFromGrid(g, { kind: "bar", title: "T <1>", y: ["a"] });
   assert.ok(svg.startsWith("<svg") && svg.endsWith("</svg>"));
@@ -409,4 +424,16 @@ test("a menu that matches a file's extension matches it in any case (#1382)", ()
   const clauses = whens.flatMap((w) => [...w.matchAll(/resourceExtname =~ (\/\S*)/g)].map((m) => m[1]));
   assert.ok(clauses.length > 0);
   for (const c of clauses) assert.match(c, /\/i$/, c);
+});
+
+// One file that cannot be read - permission denied, a dangling symlink -
+// ended the reading, and the files after it went undocumented (#1542).
+test("a workspace file that cannot be read is skipped, and the files after it still documented", async () => {
+  const files = { "a.q": "/ adds one\nf:{x+1}\n", "b.q": null, "c.q": "/ doubles\ng:{2*x}\n/ not this one\nf:{x}\n" };
+  const read = async (f) => {
+    if (files[f] === null) throw new Error("EACCES");
+    return files[f];
+  };
+  const docs = await workspaceDocs(Object.keys(files), read);
+  assert.deepStrictEqual([...docs], [["f", "adds one"], ["g", "doubles"]]);
 });

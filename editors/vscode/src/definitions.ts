@@ -18,6 +18,7 @@
 // the process still holds the exact text it was told it holds, and only
 // when that text is what the file had before the edit.
 import { charKinds } from "./explorer";
+import { blockDepth } from "./statements";
 
 export const DRIFT_COMMANDS = {
   check: "q-lint.checkDrift",
@@ -89,7 +90,7 @@ export function definitions(source: string): Definition[] {
   // Blank and comment lines after the statement's last line: kept only if
   // a continuation line follows, as q keeps them in the lambda's text.
   let pending: string[] = [];
-  let inBlock = false;
+  let depth = 0;
   const end = (): void => {
     if (current !== undefined) {
       const first = current.lines[0];
@@ -112,13 +113,14 @@ export function definitions(source: string): Definition[] {
     if (i === 0 && bare.startsWith("#!")) {
       continue;
     }
-    if (inBlock) {
-      inBlock = bare !== "\\";
-      continue;
-    }
-    if (bare === "/") {
-      end();
-      inBlock = true;
+    if (depth > 0 || bare === "/") {
+      // A block comment does not end the statement around it (#1463). q
+      // keeps it in the lambda's text as comment lines: `/` and `\` alone
+      // as `/`, any other line with a `/` before it (checked on KDB-X).
+      if (current !== undefined) {
+        pending.push(bare === "/" || bare === "\\" ? "/" : `/${line}`);
+      }
+      depth = blockDepth(depth, bare);
       continue;
     }
     if (bare === "\\") {

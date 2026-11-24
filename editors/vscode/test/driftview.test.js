@@ -290,3 +290,29 @@ test("Check Drift switched to another process between batches reads nothing more
   assert.ok(stub.messages.some(([, m]) => /could not compare with dev: dev is no longer the active process/.test(m)), JSON.stringify(stub.messages));
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test("turned off at the Reload question, nothing is sent, kept or remembered as always (#1452)", async () => {
+  const held = { f: "{x}" };
+  const { live, drift } = setup(held);
+  const doc = documentOf("/w/a.q", "f:{x}\n");
+  listeners.open.forEach((l) => l(doc));
+  doc.text = "f:{x+1}\n";
+  stub.picks = [
+    () => {
+      stub.config.user["hotReload.enable"] = false;
+      stub.changeConfig("q-lint.hotReload.enable");
+      return "Reload on Every Save";
+    },
+  ];
+  assert.strictEqual((await drift.reload(doc)).reason, "hot reload was turned off");
+  assert.deepStrictEqual(live.sent.map((s) => s[0]), ["DRIFT"]);
+  assert.strictEqual(held.f, "{x}");
+  assert.deepStrictEqual(drift.hotReloadState(), { listening: false, files: [], last: drift.hotReloadState().last });
+  // On again, the next save asks rather than reloading on its own.
+  stub.config.user["hotReload.enable"] = true;
+  stub.changeConfig("q-lint.hotReload.enable");
+  listeners.open.forEach((l) => l(documentOf("/w/a.q", "f:{x}\n")));
+  doc.text = "f:{x+2}\n";
+  stub.picks = [undefined];
+  assert.strictEqual((await drift.reload(doc)).reason, "not confirmed");
+});

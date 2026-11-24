@@ -18,6 +18,7 @@ import { NOTEBOOK } from "./qnb";
 import { diffCells, diffSummary, hasOutputs, notebookJson, notebookText, stripQnb, type CellLike } from "./qnbgit";
 import { plainMessage } from "./history";
 import { onProcessPath } from "./relations";
+import { selectedMany } from "./clicked";
 
 /// The scheme of the read-only documents a comparison shows.
 export const CELLS_SCHEME = "q-lint-qnb-cells";
@@ -125,8 +126,11 @@ export class NotebookDiff implements TextDocumentContentProvider {
       return;
     }
     // From the Explorer, the second argument is the selection, not a
-    // notebook: anything but a Uri or HEAD is asked for (#1336).
-    let against = other instanceof Uri || other === HEAD ? other : undefined;
+    // notebook: two selected are compared with each other (#1541), and
+    // anything else but a Uri or HEAD is asked for (#1336).
+    const pair = selectedMany<Uri>(other);
+    const selected = pair?.length === 2 ? pair.find((u) => u.toString() !== from.toString()) : undefined;
+    let against = other instanceof Uri || other === HEAD ? other : selected;
     if (against === undefined) {
       const picked = await window.showQuickPick(
         [
@@ -351,7 +355,7 @@ export class NotebookStrip {
     }
     const theirs = readText(script);
     // Forward slashes: git runs the command through a POSIX shell.
-    const clean = `node "${script.replace(/\\/g, "/")}" --strip`;
+    const clean = `node ${shellQuoted(script.replace(/\\/g, "/"))} --strip`;
     const set = await git(["config", "--local", "--get", `filter.${FILTER}.clean`], root);
     const current = set.code === 0 ? set.stdout.trim() : undefined;
     if (current !== undefined && current !== clean) {
@@ -464,6 +468,13 @@ export class NotebookStrip {
 /// Register Compare Notebook Cells - its command, which says when the
 /// setting is off, and its documents' provider, only while it is on - and
 /// Clear Notebook Outputs and Set Up Git to Strip Notebook Outputs.
+/// `text` in double quotes as a POSIX shell reads them: `$`, a backquote,
+/// `"` and `\` escaped, which the shell git runs a filter with expands - a
+/// repository under `/me/$work` ran a script that is not there (#1534).
+export function shellQuoted(text: string): string {
+  return `"${text.replace(/["$`\\]/g, "\\$&")}"`;
+}
+
 export function registerNotebookGit(context: ExtensionContext): { diff: NotebookDiff; strip: NotebookStrip } {
   return { diff: new NotebookDiff(context), strip: new NotebookStrip(context) };
 }
