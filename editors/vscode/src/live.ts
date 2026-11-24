@@ -558,8 +558,10 @@ export class Live {
   };
   /// The connections `openSeparate` handed out and still open: a stream's.
   private readonly separate = new Set<{ connection: QConnection; process: Process }>();
-  /// Stops the reconnect after an abort that waits for the process to be free.
-  private untilFree: AbortController | undefined;
+  /// Stops the connect under way: a reconnect after an abort that waits for
+  /// the process to be free, or any connect Disconnect or a connect
+  /// elsewhere replaces (#1704).
+  private stopConnect: AbortController | undefined;
   /// A connect in progress, so a second one waits for it instead of opening
   /// another.
   private connecting: Promise<boolean> | undefined;
@@ -1828,13 +1830,16 @@ export class Live {
         return this.connecting;
       }
       this.reconnectStopped = true;
-      this.untilFree?.abort();
+      this.stopConnect?.abort();
+      // One running its connect script, which may never answer.
+      this.opening?.abort();
       return this.connecting.then(() => this.open(process, false, false, disconnects, outcome));
     }
     this.reconnectStopped = false;
-    // A wait for a busy process is cut short, not run out, when it stops (#1510).
-    const free = untilFree ? new AbortController() : undefined;
-    this.untilFree = free;
+    // A wait for a busy process is cut short, not run out, when it stops
+    // (#1510), and so is any connect replaced by another or by Disconnect (#1704).
+    const cut = new AbortController();
+    this.stopConnect = cut;
     this.connectingTo = passwordKey(process);
     this.connectingAs = process;
     this.connecting = (async () => {
@@ -1853,10 +1858,10 @@ export class Live {
             const target = await this.targetFor(process);
             for (;;) {
               try {
-                return await this.dial(process, target, free?.signal);
+                return await this.dial(process, target, cut.signal);
               } catch (error) {
                 const busy = error instanceof Error && error.message.startsWith("no answer from ");
-                if (!untilFree || !busy || this.reconnectStopped) {
+                if (!untilFree || !busy || this.reconnectStopped || cut.signal.aborted) {
                   throw error;
                 }
               }
@@ -1865,8 +1870,8 @@ export class Live {
         );
         // Opened after deactivate (a reconnect after an abort), when nothing
         // would close it, after the reconnect was stopped, or after the user
-        // disconnected while it was opening.
-        const stopped = (): boolean => this.disposed || disconnects !== this.disconnects || ((untilFree || quiet) && this.reconnectStopped);
+        // disconnected while it was opening, or connected elsewhere.
+        const stopped = (): boolean => this.disposed || disconnects !== this.disconnects || cut.signal.aborted || ((untilFree || quiet) && this.reconnectStopped);
         if (stopped()) {
           await connection.close();
           return false;
@@ -1912,7 +1917,7 @@ export class Live {
         return true;
       } catch (failure) {
         outcome.refused = failure instanceof ClosedBeforeHandshake || failure instanceof TunnelHandshakeError;
-        if ((untilFree && this.reconnectStopped) || quiet || disconnects !== this.disconnects) {
+        if ((untilFree && this.reconnectStopped) || quiet || disconnects !== this.disconnects || cut.signal.aborted) {
           return false;
         }
         // ssh's own words are shown here and kept nowhere (#1355).
@@ -2220,7 +2225,7 @@ export class Live {
       return;
     }
     this.reconnectStopped = true;
-    this.untilFree?.abort();
+    this.stopConnect?.abort();
     const connection = this.connection;
     this.connection = undefined;
     // A query running on it was stopped by the user, as Abort stops one.

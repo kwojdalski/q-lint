@@ -194,3 +194,34 @@ test("Tag Process and Import Processes retagging the connected process say so (#
   assert.deepStrictEqual(live.activeProcess().tags, ["prod", "uat"]);
   assert.deepStrictEqual(events, ["edited"]);
 });
+
+test("Disconnect during a slow connect cuts it short: the next connect does not wait for it (#1704)", async (t) => {
+  const a = await fakeQ(() => null, 3000);
+  const b = await fakeQ();
+  t.after(() => (a.close(), b.close()));
+  const { live } = await setUp(t, [proc("a", a.port), proc("b", b.port)]);
+  const toA = live.connectTo("a");
+  await sleep(100);
+  await stub.commands.get("q-lint.disconnectProcess")();
+  const started = Date.now();
+  assert.strictEqual(await live.connectTo("b"), true);
+  assert.ok(Date.now() - started < 1500, `waited ${Date.now() - started} ms`);
+  assert.strictEqual(await toA, false);
+  assert.strictEqual(live.activeLabel(), "b");
+});
+
+test("a connect elsewhere stops the one under way: its connect script never runs (#1704)", async (t) => {
+  const a = await fakeQ(() => [], 800);
+  const b = await fakeQ();
+  t.after(() => (a.close(), b.close()));
+  const { live, events } = await setUp(t, [proc("a", a.port, { init: "setupA[]" }), proc("b", b.port)]);
+  const toA = live.connectTo("a");
+  await sleep(50);
+  const started = Date.now();
+  assert.strictEqual(await live.connectTo("b"), true);
+  assert.ok(Date.now() - started < 700, `waited ${Date.now() - started} ms`);
+  assert.strictEqual(await toA, false);
+  assert.deepStrictEqual(a.sent, []);
+  assert.deepStrictEqual(events, ["connected"]);
+  assert.strictEqual(live.activeLabel(), "b");
+});
