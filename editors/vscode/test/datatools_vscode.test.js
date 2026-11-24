@@ -339,6 +339,20 @@ test("Show Schema Diagram draws the tables and links in a panel with no script; 
   await run(SCHEMA_COMMANDS.mermaid);
   assert.match(infos().at(-1), /the schema diagram is turned off\. Turn it on with the setting q-lint\.processExplorer\.schemaDiagram\.enable/);
   assert.strictEqual(live.sent.length, sent);
+  // Turned off while the tables are read: no panel opens (#1479).
+  const late = setUp();
+  const opened = panels.length;
+  Object.defineProperty(late.live.answers, "SCHEMA", {
+    get: () => {
+      stub.config.user["processExplorer.schemaDiagram.enable"] = false;
+      stub.changeConfig("q-lint.processExplorer.schemaDiagram.enable");
+      return [["t"], [tableInfo]];
+    },
+  });
+  await run(SCHEMA_COMMANDS.diagram);
+  assert.strictEqual(late.schema.state(), undefined);
+  assert.strictEqual(panels.length, opened);
+  assert.match(infos().at(-1), /the schema diagram is turned off/);
   // Not connected: says so, reads nothing.
   const none = setUp({}, { process: undefined });
   await run(SCHEMA_COMMANDS.diagram);
