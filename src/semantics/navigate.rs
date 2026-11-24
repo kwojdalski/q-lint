@@ -216,7 +216,11 @@ fn k_lines(code: &str, raw: &str) -> KLines {
     for line in raw.split_inclusive('\n') {
         let end = offset + line.len();
         let blanked = code[offset..end].trim().is_empty();
-        if line.starts_with("k)") && blanked {
+        // A `k)\d .ns` is a command, its context `opens`' to read, and
+        // names nothing.
+        if line.starts_with("k)\\") {
+            k = false;
+        } else if line.starts_with("k)") && blanked {
             k = true;
             view[offset + 2..end].copy_from_slice(&raw.as_bytes()[offset + 2..end]);
             let lead = line[2..].len() - line[2..].trim_start().len();

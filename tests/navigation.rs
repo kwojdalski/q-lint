@@ -2221,6 +2221,35 @@ fn a_global_a_k_line_assigns_is_defined_there() {
 }
 
 #[test]
+fn a_context_switched_on_a_k_line_is_followed() {
+    // #2056. KDB-X 5 runs `k)\d .ns`, `ff:1`, `\d .`, and `key `.ns` is
+    // ``ff: k's `\d` is q's context.
+    let dir = tempfile::tempdir().unwrap();
+    let a = "k)\\d .ns\nff:1\n\\d .\ngg:2\n";
+    let b = "\\l a.q\nr:.ns.ff+gg\n";
+    let mut server = Server::start(dir.path(), &[("a.q", a), ("b.q", b)]);
+    let reply = server.request("workspace/symbol", json!({"query": ""}));
+    let mut names: Vec<&str> = reply["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"))
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    names.sort();
+    assert_eq!(names, [".ns.ff", "gg", "r"], "{reply}");
+    let uri = server.open(dir.path(), "b.q", b);
+    let reply = server.ask("textDocument/definition", &uri, b, ".ns.ff", 0, json!({}));
+    assert_eq!(places(&reply["result"]), [place("a.q", 1, 0, 2)], "{reply}");
+    // The command names no global: `d` and `.ns` on it are no reads.
+    let uri = server.open(dir.path(), "a.q", a);
+    let reply = server.ask("textDocument/references", &uri, a, "ff", 0, json!({}));
+    assert_eq!(
+        places(&reply["result"]),
+        [place("a.q", 1, 0, 2), place("b.q", 1, 2, 8)]
+    );
+}
+
+#[test]
 fn a_block_comment_after_a_k_line_is_no_k() {
     // #2042. KDB-X 5 runs `fk:1`, `k)gk:2`, `/`, ` fk in a comment`, `\`,
     // `show fk` and prints 1: the bare `/` opens a block comment after the k

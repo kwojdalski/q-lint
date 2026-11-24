@@ -696,8 +696,13 @@ fn string_items(s: &str) -> Option<usize> {
 /// context in force is left as it was rather than guessed.
 pub(crate) fn opens(code_line: &str, raw_line: &str) -> Option<String> {
     // q reads `q)\d .foo` as `\d .foo`; `views` has blanked the prompt (#315).
+    // k has `\d` too, and its context is q's: KDB-X 5 runs `k)\d .ns`,
+    // `ff:1`, `\d .` and `key `.ns` is ``ff (#2056). The views blank the
+    // whole k line, so it is read from the source.
     let code_line = if raw_line.starts_with("q)") {
         &code_line[2..]
+    } else if raw_line.starts_with("k)\\") && code_line.trim().is_empty() {
+        &raw_line[2..]
     } else {
         code_line
     };
