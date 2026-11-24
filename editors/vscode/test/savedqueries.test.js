@@ -247,6 +247,21 @@ test("Rename and Delete Saved Query take its scheduled exports with it (#1413)",
   assert.deepStrictEqual(context.workspaceState.get(SCHEDULES_KEY).map((s) => s.id), ["2"]);
 });
 
+test("Rename and Delete Saved Query take its dashboard tiles with it (#1616)", async (t) => {
+  const { context } = await setUp(t);
+  const { DASHBOARDS_KEY } = require("../out/dashboard.js");
+  await stub.commands.get("q-lint.saveQuery")({ name: "vwap", code: "count t" });
+  await stub.commands.get("q-lint.saveQuery")({ name: "b", code: "count u" });
+  const tile = (id, query) => ({ id, query, process: "rdb", view: "table", refresh: 0 });
+  await context.workspaceState.update(DASHBOARDS_KEY, [{ name: "Desk", columns: 2, tiles: [tile("1", "vwap"), tile("2", "b"), tile("3", "vwap")] }]);
+  await stub.commands.get("q-lint.renameSavedQuery")("vwap", "vwap daily");
+  assert.deepStrictEqual(context.workspaceState.get(DASHBOARDS_KEY)[0].tiles.map((x) => x.query), ["vwap daily", "b", "vwap daily"]);
+  stub.picks.push("Delete");
+  await stub.commands.get("q-lint.deleteSavedQuery")("vwap daily");
+  assert.ok(stub.messages.some(([, m]) => /Its 2 dashboard tile\(s\) are removed with it\./.test(m)));
+  assert.deepStrictEqual(context.workspaceState.get(DASHBOARDS_KEY)[0].tiles.map((x) => x.id), ["2"]);
+});
+
 test("turned off, the view and its documents are gone, the commands refuse and send nothing; on again, they are back", async (t) => {
   const { q, live, saved, providers, view } = await setUp(t);
   await stub.commands.get("q-lint.saveQuery")({ name: "a", code: "count t" });
