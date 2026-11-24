@@ -7,7 +7,7 @@ const assert = require("node:assert");
 const { spawnSync } = require("node:child_process");
 const path = require("node:path");
 const pkg = require("../package.json");
-const { commandLine, parseEnv, quote, replLine, qBinaryFrom, replLines, shellKind, terminalCwd } = require("../out/terminal.js");
+const { commandLine, parseEnv, quote, replLine, qBinaryFrom, relativeBinaryProblem, replLines, shellKind, terminalCwd } = require("../out/terminal.js");
 const { COMMANDS, readTerminal } = require("../out/liveconfig.js");
 const { needsRestart } = require("../out/settings.js");
 
@@ -304,4 +304,12 @@ test("a relative q binary is the workspace folder's; a bare name is left for PAT
   assert.strictEqual(qBinaryFrom("q", "/ws", "/home/u"), "q");
   assert.strictEqual(qBinaryFrom("~/q/m64/q", undefined, "/home/u"), "/home/u/q/m64/q");
   assert.strictEqual(qBinaryFrom("/opt/kx/q", undefined, "/home/u"), "/opt/kx/q");
+});
+
+test("a relative q binary is not the folder's when the folder is not trusted (#1825)", () => {
+  assert.strictEqual(qBinaryFrom("./kdb/m64/q", "/ws", "/home/u", false), undefined);
+  assert.strictEqual(qBinaryFrom("q", "/ws", "/home/u", false), "q");
+  assert.strictEqual(qBinaryFrom("~/q/m64/q", "/ws", "/home/u", false), "/home/u/q/m64/q");
+  assert.match(relativeBinaryProblem("bin/q", false), /relative to the workspace folder, which is not trusted: name it by its full path$/);
+  assert.match(relativeBinaryProblem("bin/q", true), /no workspace folder to read it from$/);
 });

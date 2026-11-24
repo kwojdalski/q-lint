@@ -160,13 +160,22 @@ export function expandHome(file: string, home: string): string {
 /// relative path (`./kdb/m64/q`) made whole against `folder`, where the
 /// terminals start - started in a temporary or a launch's directory it was
 /// another file, or none (#1540). A bare name is left for `PATH`. Undefined
-/// for a relative path with no folder to read it from.
-export function qBinaryFrom(qBinary: string, folder: string | undefined, home: string): string | undefined {
+/// for a relative path with no folder to read it from, or whose folder is
+/// not `trusted`: the program would be the repository's (#1825).
+export function qBinaryFrom(qBinary: string, folder: string | undefined, home: string, trusted = true): string | undefined {
   const file = expandHome(qBinary, home);
   if (path.isAbsolute(file) || !/[\\/]/.test(file)) {
     return file;
   }
-  return folder === undefined ? undefined : path.resolve(folder, file);
+  return folder === undefined || !trusted ? undefined : path.resolve(folder, file);
+}
+
+/// Why a relative `q-lint.terminal.qBinary` gave no program: no folder to
+/// read it from, or a folder that is not trusted (#1825).
+export function relativeBinaryProblem(qBinary: string, trusted: boolean): string {
+  return trusted
+    ? `q-lint.terminal.qBinary ${qBinary} is relative, and there is no workspace folder to read it from`
+    : `q-lint.terminal.qBinary ${qBinary} is relative to the workspace folder, which is not trusted: name it by its full path`;
 }
 
 /// The variables of an env file - one `NAME=value` a line, `#` comments and

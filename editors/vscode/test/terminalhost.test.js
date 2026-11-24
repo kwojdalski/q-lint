@@ -140,6 +140,30 @@ test("a relative q binary is the folder's, also for a file outside every folder"
   }
 });
 
+// A user setting of ".env.q" or "bin/q" was read from whatever folder was
+// open: in Restricted Mode, the repository's file on q's command line and
+// its program run (#1825).
+test("in an untrusted folder a relative q binary or env file is refused, a full path is not", async () => {
+  for (const [config, refused] of [
+    [{ "terminal.envPath": ".qenv" }, /q-lint\.terminal\.envPath "\.qenv" is relative to the workspace folder, which is not trusted/],
+    [{ "terminal.qBinary": "./kdb/m64/q" }, /q-lint\.terminal\.qBinary \.\/kdb\/m64\/q is relative to the workspace folder, which is not trusted/],
+  ]) {
+    const fake = fakeVscode(config, { "/ws/.qenv": "LD_PRELOAD=./x.so\n" });
+    fake.vscode.workspace.isTrusted = false;
+    const terminals = load(fake);
+    fake.vscode.window.activeTextEditor = { document: fake.document("/ws/a.q", "1+1") };
+    await terminals.repl();
+    assert.strictEqual(fake.terminals.length, 0, JSON.stringify(config));
+    assert.match(fake.messages.join("\n"), refused);
+  }
+  const fake = fakeVscode({ "terminal.envPath": "/ws/.qenv", "terminal.qBinary": "q" }, { "/ws/.qenv": "QHOME=/opt/q\n" });
+  fake.vscode.workspace.isTrusted = false;
+  const terminals = load(fake);
+  fake.vscode.window.activeTextEditor = { document: fake.document("/ws/a.q", "1+1") };
+  await terminals.repl();
+  assert.strictEqual(fake.terminals[0].sent[0], "QHOME=/opt/q q");
+});
+
 test("an env file's bad line is named by its number, never its text (#1685)", async () => {
   const fake = fakeVscode({ "terminal.envPath": "/ws/.qenv" }, { "/ws/.qenv": "QHOME=/opt/q\nKX_TOKEN hunter2-secret\n" });
   const terminals = load(fake);

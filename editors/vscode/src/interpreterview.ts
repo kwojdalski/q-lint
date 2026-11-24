@@ -112,7 +112,8 @@ export function probe(binary: string, env: Record<string, string>): Promise<Prob
 /// extension host's working directory (#1132). Undefined when it is not a
 /// program this user can run, a path as much as a name (#1691).
 export function resolveBinary(binary: string, folder: string | undefined = workspace.workspaceFolders?.[0]?.uri.fsPath): string | undefined {
-  const file = qBinaryFrom(binary, folder, os.homedir());
+  // Not the untrusted folder's program, as the interpreter picker (#1825).
+  const file = qBinaryFrom(binary, folder, os.homedir(), workspace.isTrusted !== false);
   if (file === undefined || path.isAbsolute(file)) {
     return file !== undefined && nodeFiles.executable(file) ? file : undefined;
   }

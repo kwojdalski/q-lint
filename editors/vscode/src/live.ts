@@ -73,7 +73,7 @@ import { historyHeading, historyLabel, iconsEscaped, mergedHistory, plainMessage
 import { render } from "./query";
 import { QueryModes, type PageLater, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
-import { commandLine, expandHome, qBinaryFrom, replLines, shellKind, terminalCwd } from "./terminal";
+import { commandLine, expandHome, qBinaryFrom, relativeBinaryProblem, replLines, shellKind, terminalCwd } from "./terminal";
 import { readDotenv, terminalEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import type { RunExtra } from "./runargs";
@@ -459,7 +459,20 @@ export class QTerminals {
     const folder = own ?? workspace.workspaceFolders?.[0];
     const cwd = terminalCwd(own?.uri.fsPath, folder?.uri.fsPath, file, path.dirname);
     let variables: Record<string, string> = {};
+    // The folder's own program or env file, in a folder that is not trusted,
+    // is the repository's: refused, as dotenvFor and the launcher do (#1825).
+    const trusted = workspace.isTrusted !== false;
+    if (qBinaryFrom(settings.qBinary, folder?.uri.fsPath ?? "", os.homedir(), trusted) === undefined) {
+      void window.showErrorMessage(plainMessage(`q-lint: ${relativeBinaryProblem(settings.qBinary, trusted)}.`));
+      return undefined;
+    }
     if (settings.envPath !== "") {
+      if (!path.isAbsolute(settings.envPath) && !trusted) {
+        void window.showErrorMessage(
+          plainMessage(`q-lint: q-lint.terminal.envPath "${settings.envPath}" is relative to the workspace folder, which is not trusted: name it by its full path.`),
+        );
+        return undefined;
+      }
       if (!path.isAbsolute(settings.envPath) && folder === undefined) {
         void window.showErrorMessage(
           plainMessage(`q-lint: q-lint.terminal.envPath "${settings.envPath}" is relative, and there is no workspace folder to read it from.`),

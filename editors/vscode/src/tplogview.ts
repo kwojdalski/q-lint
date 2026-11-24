@@ -23,7 +23,7 @@ import { readTerminal } from "./liveconfig";
 import { QConnection } from "./qclient";
 import { mergeEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
-import { qBinaryFrom } from "./terminal";
+import { qBinaryFrom, relativeBinaryProblem } from "./terminal";
 import { TPLOG_INIT, rangeProblem, readReplayed, readTpLog, readTpPage, timeOfDay, type TpLog } from "./tplog";
 import { plainMessage } from "./history";
 import { lifeline } from "./lifeline";
@@ -156,9 +156,10 @@ export class TickerplantLog {
     const folder = workspace.workspaceFolders?.[0]?.uri;
     const configuration = workspace.getConfiguration("q-lint", folder);
     const { qBinary } = readTerminal((key, fallback) => configuration.get(key, fallback));
-    const binary = qBinaryFrom(qBinary, folder?.fsPath, os.homedir());
+    const trusted = workspace.isTrusted !== false;
+    const binary = qBinaryFrom(qBinary, folder?.fsPath, os.homedir(), trusted);
     if (binary === undefined) {
-      return say(`q-lint: q-lint.terminal.qBinary ${qBinary} is relative, and there is no workspace folder to read it from.`);
+      return say(`q-lint: ${relativeBinaryProblem(qBinary, trusted)}.`);
     }
     let local: LocalQ | undefined;
     try {
