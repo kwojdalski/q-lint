@@ -55,6 +55,8 @@
 //   passed as a value (`` .[@;(`.;`a;:;1)] ``, `` (@) . (`.;..) ``);
 // - `value`, `get`, `eval` or `-6!` applied to a string, to `parse` or
 //   `-5!`, or to a tree headed by `:`, `::` or `+:` (`eval(:;`t;())`), by
+//   an amend `@` or `.` of four items or more on a variable by name
+//   (`` value(@;`.;`a;:;1) ``, `` eval(@;enlist`.;enlist`a;:;1) ``), by
 //   `!` on a table by name (`` eval(!;enlist`t;..) ``, `` value(!;`t;..) ``)
 //   or by the symbol of
 //   a writer above (`` value(`.q.set;`a;1) ``), also through `[`,
@@ -366,7 +368,7 @@ function evaluated(t: Token[], j: number, byValue: boolean): { reason: string; a
     t[j] !== undefined &&
     ((t[j].kind === "open" && t[j].text !== "{") ||
       (t[j].kind === "name" && ["each", "peach", "enlist"].includes(t[j].text)) ||
-      (t[j].kind === "op" && ["'", "@", "."].includes(t[j].text)))
+      (t[j].kind === "op" && ["'", "@", "."].includes(t[j].text) && !(t[j - 1]?.text === "(" && t[j + 1]?.text === ";")))
   ) {
     j++;
   }
@@ -382,7 +384,11 @@ function evaluated(t: Token[], j: number, byValue: boolean): { reason: string; a
           ? "a functional update or delete"
           : head && k?.kind === "sym" && WRITERS.has(unqualified(k.text.slice(1)))
             ? `a call of ${k.text.slice(1)}`
-            : undefined;
+            : // An amend on a variable by name: `` value(@;`.;`a;:;1) ``,
+              // `` eval(@;enlist`.;enlist`a;:;1) `` (#1446).
+              head && (k?.text === "@" || k?.text === ".") && t[j + 1]?.text === ";" && ((byValue ? t[j + 2] : t[j + 2]?.text === "enlist" ? t[j + 3] : undefined)?.text.length ?? 0) > 1 && (byValue ? t[j + 2] : t[j + 3])?.kind === "sym" && items(t, j - 1).length >= 4
+              ? "an amend"
+              : undefined;
   return reason === undefined ? undefined : { reason, at: j };
 }
 

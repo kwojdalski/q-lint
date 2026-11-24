@@ -822,3 +822,21 @@ test("an amend or ! in parentheses applied in brackets is a change (#1445)", () 
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("value or eval of an amend tree on a variable by name is a change (#1446)", () => {
+  const cases = {
+    "value(@;`.;`a;:;1)": ["evaluates an amend with value"],
+    "value(.;`.;enlist`a;:;1)": ["evaluates an amend with value"],
+    "eval(@;enlist`.;enlist`a;:;1)": ["evaluates an amend with eval"],
+    "-6!(@;enlist`t;0;:;1)": ["evaluates an amend with -6!"],
+    // An index, or an amend of a value, reads.
+    "value(@;`t;0)": [],
+    "value(@;t;0;:;1)": [],
+    "eval(@;`t;0;:;1)": [],
+    "value@(`t)": [],
+    "value(.;d;enlist`a)": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
