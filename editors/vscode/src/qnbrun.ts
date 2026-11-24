@@ -397,7 +397,9 @@ export const passwordVariable = (label: string): string => `QLINT_Q_PASSWORD_${l
 /// The process `name` names: `host:port`, or a label in `listed`. A listed
 /// process reached through an SSH tunnel or set up by a connect script is
 /// refused: the command line opens neither, and dialling its host and
-/// port straight would reach another process (#1401).
+/// port straight would reach another process (#1401). A `host:port` takes
+/// the tags of every listed process at that address, so a production one
+/// is still one by its address (#1450).
 export function cliProcess(name: string, listed: Process[], user?: string, tls = false): Process | { error: string } {
   const found = listed.find((p) => p.label === name);
   if (found !== undefined) {
@@ -409,7 +411,9 @@ export function cliProcess(name: string, listed: Process[], user?: string, tls =
   const m = /^(.+):(\d{1,5})$/.exec(name);
   if (m !== null && Number(m[2]) >= 1 && Number(m[2]) <= 65535) {
     const host = m[1].replace(/^\[(.*)\]$/, "$1");
-    return { label: name, host, port: Number(m[2]), tags: [], ...(user !== undefined ? { user } : {}), ...(tls ? { tls: true } : {}) };
+    const port = Number(m[2]);
+    const tags = [...new Set(listed.filter((p) => p.host.toLowerCase() === host.toLowerCase() && p.port === port).flatMap((p) => p.tags))];
+    return { label: name, host, port, tags, ...(user !== undefined ? { user } : {}), ...(tls ? { tls: true } : {}) };
   }
   return {
     error: listed.length === 0

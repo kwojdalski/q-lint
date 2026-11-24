@@ -12,6 +12,7 @@ const { cellDirective } = require("../out/celldirectives.js");
 const { LIVE, LIVE_KEY, inlineSpans, liveExpressions, markdownAfter, readLiveValues, scanLive } = require("../out/livemarkdown.js");
 const { ERROR_MIME, fromIpynb, markdownHtml, toHtml, toIpynb, IpynbError } = require("../out/qnbconvert.js");
 const { INJECTED_KEY, cliProcess, guardedText, injectParameters, parametersCell, parametersOf, parseArgs, passwordVariable, runNotebook, writeAs } = require("../out/qnbrun.js");
+const { isProduction } = require("../out/agent.js");
 const { writes } = require("../out/guard.js");
 const { describeVariable, readVariables, bytesText, VARS } = require("../out/notebookvars.js");
 const { NOTEBOOK, parseQnb, serializeQnb } = require("../out/qnb.js");
@@ -413,6 +414,13 @@ test("the command line names a process by host:port or by a listed label, and re
   assert.match(cliProcess("t", [{ label: "t", host: "localhost", port: 5000, tags: [], ssh: "bastion" }]).error, /t needs an SSH tunnel \(ssh\), which qnbrun does not run/);
   assert.match(cliProcess("s", [{ label: "s", host: "h", port: 1, tags: [], initFile: "c.q" }]).error, /a connect script/);
   assert.strictEqual(passwordVariable("desk/rdb-1"), "QLINT_Q_PASSWORD_DESK_RDB_1");
+  // By its address, a listed process keeps its tags, and so its production
+  // check (#1450); another address, or another port, has none.
+  const prod = [{ label: "prdb", host: "db1", port: 5000, tags: ["prod"] }, { label: "x", host: "DB1", port: 5000, tags: ["eu"] }];
+  assert.deepStrictEqual(cliProcess("db1:5000", prod).tags, ["prod", "eu"]);
+  assert.strictEqual(isProduction(cliProcess("db1:5000", prod)), true);
+  assert.strictEqual(isProduction(cliProcess("db1:5001", prod)), false);
+  assert.deepStrictEqual(cliProcess("db2:5000", prod).tags, []);
 });
 
 // --- the variables view's data
