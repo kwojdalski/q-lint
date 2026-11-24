@@ -487,3 +487,24 @@ test("two tests of one name under two \\d's in a file are two tests, each run (#
   await explorer.run();
   assert.deepStrictEqual(live.sent.map((s) => s.statements.at(-1)), [".a.test_x[]", ".b.test_x[]"]);
 });
+
+test("k4unit's beforeany, beforeeach, aftereach and afterall rows run as KUrt runs them (#1593)", async () => {
+  stub.reset();
+  fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  const head = "action,ms,bytes,lang,code,repeat,minver,comment\n";
+  const files = {
+    "/ws/a.csv": head + "beforeany,0,0,q,once:1,1,,\nbeforeeach,0,0,q,each:1,1,,\nbefore,0,0,q,a:1,1,,\ntrue,0,0,q,a=1,1,,\nafter,0,0,q,a:0,1,,\naftereach,0,0,q,each:0,1,,\nafterall,0,0,q,once:0,1,,\n",
+    "/ws/b.csv": head + "true,0,0,q,b=1,1,,\n",
+  };
+  vscode.workspace.findFiles = async () => Object.keys(files).map((f) => vscode.Uri.file(f));
+  vscode.workspace.fs = { readFile: async (uri) => Buffer.from(files[uri.fsPath]) };
+  const live = fakeLive();
+  const explorer = registerTestExplorer(stub.newContext(), live, () => undefined);
+  await explorer.discover();
+  await explorer.run();
+  assert.deepStrictEqual(
+    live.sent.map((s) => s.statements.join(";")),
+    ["once:1", "each:1", "a:1", "a=1", "a:0", "each:0", "each:1", "b=1", "each:0", "once:0"],
+  );
+});

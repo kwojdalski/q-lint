@@ -431,8 +431,11 @@ class QTests {
     for (const item of chosen) {
       run.enqueued(item);
     }
-    // A k4unit file's `before` rows run once, before its first test, and its
-    // `after` rows once its last test has run.
+    // As k4unit's KUrt runs a suite (#1593): the run's `beforeany` rows once,
+    // before its first k4unit test, and its `afterall` rows once at the end;
+    // a file's `before` rows - after the run's `beforeeach` ones - before its
+    // first test, and its `after` rows, then the run's `aftereach` ones,
+    // once its last test has run.
     const remaining = new Map<K4Row[], number>();
     for (const item of chosen) {
       const entry = this.entries.get(item);
@@ -443,6 +446,21 @@ class QTests {
     const prepared = new Set<K4Row[]>();
     const send = (statements: string[], mode: TestMode) =>
       this.live.runOnActive(statements.join("\n"), async (connection) => readTestResult(await connection.call(TEST_RUN, statements, mode)), "ask", process.label);
+    const phase = (rows: K4Row[], action: string): K4Row[] => rows.filter((r) => r.action === action);
+    const everywhere = (action: string): K4Row[] => [...remaining.keys()].flatMap((rows) => phase(rows, action));
+    const setUp = async (rows: K4Row[]): Promise<void> => {
+      for (const row of rows) {
+        const done = await send([k4Statement(row)], "run");
+        if (done !== undefined && !done.value.passed) {
+          run.appendOutput(`${row.action} (line ${row.line + 1}) failed: ${done.value.text}\r\n`);
+        }
+      }
+    };
+    const tearDown = async (rows: K4Row[]): Promise<void> => {
+      for (const row of rows) {
+        await send([k4Statement(row)], "run").catch(() => undefined);
+      }
+    };
     try {
       for (const item of chosen) {
         const entry = this.entries.get(item)!;
@@ -467,13 +485,11 @@ class QTests {
             mode = "test";
           } else {
             if (!prepared.has(entry.rows)) {
-              prepared.add(entry.rows);
-              for (const row of entry.rows.filter((r) => r.action === "before")) {
-                const done = await send([k4Statement(row)], "run");
-                if (done !== undefined && !done.value.passed) {
-                  run.appendOutput(`before (line ${row.line + 1}) failed: ${done.value.text}\r\n`);
-                }
+              if (prepared.size === 0) {
+                await setUp(everywhere("beforeany"));
               }
+              prepared.add(entry.rows);
+              await setUp([...everywhere("beforeeach"), ...phase(entry.rows, "before")]);
             }
             statements = [k4Statement(entry.row)];
             mode = k4Mode(entry.row);
@@ -512,10 +528,8 @@ class QTests {
           if (entry.kind === "k4unit") {
             const left = (remaining.get(entry.rows) ?? 1) - 1;
             remaining.set(entry.rows, left);
-            if (left === 0) {
-              for (const row of entry.rows.filter((r) => r.action === "after")) {
-                await send([k4Statement(row)], "run").catch(() => undefined);
-              }
+            if (left === 0 && prepared.has(entry.rows)) {
+              await tearDown([...phase(entry.rows, "after"), ...everywhere("aftereach")]);
             }
           }
         }
@@ -524,10 +538,11 @@ class QTests {
       // 0: a file that was set up is torn down all the same (#1095).
       for (const rows of prepared) {
         if ((remaining.get(rows) ?? 0) > 0) {
-          for (const row of rows.filter((r) => r.action === "after")) {
-            await send([k4Statement(row)], "run").catch(() => undefined);
-          }
+          await tearDown([...phase(rows, "after"), ...everywhere("aftereach")]);
         }
+      }
+      if (prepared.size > 0) {
+        await tearDown(everywhere("afterall"));
       }
     } finally {
       if (covering !== undefined) {
