@@ -135,6 +135,8 @@ function startView(
     view.description = description;
   };
   let reading: Promise<void> | undefined;
+  /// A refresh asked for while one was reading, made when it ends (#1952).
+  let again = false;
   let disposed = false;
   /// A refresh put off by a running query, made when it is done (#1077).
   let deferred = false;
@@ -163,24 +165,42 @@ function startView(
       deferred = true;
       return;
     }
+    // Shown only while its notebook is still the one in view: another's
+    // globals are not this one's (#1952).
+    const current = (): boolean => !disposed && active() === notebook;
     try {
       const { variables, total } = readVariables(await read);
+      if (!current()) {
+        return;
+      }
       show(
         variables,
         variables.length === 0 ? `No globals in the root namespace of ${label}.` : total > variables.length ? `The first ${variables.length} of ${total} globals.` : undefined,
         label,
       );
     } catch (error) {
-      show([], `Could not read the globals on ${label}: ${error instanceof Error ? error.message : String(error)}`, label);
+      if (current()) {
+        show([], `Could not read the globals on ${label}: ${error instanceof Error ? error.message : String(error)}`, label);
+      }
     }
   };
-  /// Refresh, once at a time, and only while the view is on show.
+  /// Refresh, once at a time, and only while the view is on show. One asked
+  /// for during a read is made after it: the read may be of another
+  /// notebook, or from before the cell that asked ran.
   const whenShown = (): void => {
-    if (!view.visible || reading !== undefined) {
+    if (!view.visible) {
+      return;
+    }
+    if (reading !== undefined) {
+      again = true;
       return;
     }
     reading = refresh().finally(() => {
       reading = undefined;
+      if (again) {
+        again = false;
+        whenShown();
+      }
     });
   };
   const disposables = [

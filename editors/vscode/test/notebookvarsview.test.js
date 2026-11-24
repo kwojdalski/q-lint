@@ -117,3 +117,65 @@ test("q-lint.notebookActive follows the active editor with the view off, for Res
     vscode.window.onDidChangeActiveNotebookEditor = watch;
   }
 });
+
+/// A stand-in Live on rdb whose reads are held: `release[i](names)` answers
+/// the i-th one.
+function heldLive() {
+  const live = fakeLive("rdb");
+  live.release = [];
+  live.borrow = (use) =>
+    use({
+      call: () =>
+        new Promise((resolve) => {
+          live.calls++;
+          live.release.push((names) => resolve({ names, types: names.map(() => 98), counts: names.map(() => 3), sizes: names.map(() => 138), total: names.length }));
+        }),
+    });
+  return live;
+}
+const tick = () => new Promise((r) => setTimeout(r, 10));
+
+test("a read that lands after another notebook became active is not shown under it, and what was asked for meanwhile is read (#1952)", async () => {
+  stub.reset();
+  const a = { notebookType: "q-lint-notebook" };
+  const b = { notebookType: "q-lint-notebook" };
+  vscode.window.activeNotebookEditor = { notebook: a };
+  const editors = [];
+  const watch = vscode.window.onDidChangeActiveNotebookEditor;
+  vscode.window.onDidChangeActiveNotebookEditor = (l) => (editors.push(l), { dispose() {} });
+  try {
+    const live = heldLive();
+    const runs = [];
+    // A ran on rdb; B has run no cell.
+    const api = registerNotebookVariables(stub.newContext(), live, (n) => (n === a ? "rdb" : undefined), (l) => (runs.push(l), { dispose() {} }));
+    runs[0](a);
+    await tick();
+    assert.strictEqual(live.calls, 1);
+    vscode.window.activeNotebookEditor = { notebook: b };
+    for (const l of editors) l();
+    await tick();
+    live.release[0](["onlyInA"]);
+    await tick();
+    assert.deepStrictEqual(api.variables(), []);
+    assert.match(api.message(), /Run a cell of this notebook/);
+    // Back on A, a cell that finishes while its globals are being read is
+    // read for when that read ends: its names are the view's.
+    vscode.window.activeNotebookEditor = { notebook: a };
+    for (const l of editors) l();
+    await tick();
+    assert.strictEqual(live.calls, 2);
+    runs[0](a);
+    runs[0](a);
+    await tick();
+    assert.strictEqual(live.calls, 2);
+    live.release[1](["before"]);
+    await tick();
+    assert.strictEqual(live.calls, 3);
+    live.release[2](["before", "after"]);
+    await tick();
+    assert.deepStrictEqual(api.variables().map((v) => v.name), ["before", "after"]);
+    assert.strictEqual(live.calls, 3);
+  } finally {
+    vscode.window.onDidChangeActiveNotebookEditor = watch;
+  }
+});
