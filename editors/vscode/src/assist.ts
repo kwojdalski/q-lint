@@ -341,10 +341,16 @@ export function qsqlPrompt(description: string, tables: TableSummary[], process:
 }
 
 /// The q code in a model's reply: its first fenced block, or all of it
-/// when it has none.
+/// when it has none. A block closes only at a fence starting a line, so
+/// backticks in the code (```a, a symbol list) stay in it; a block on one
+/// line - ```q select from t``` - loses its fences too (#1627).
 export function extractCode(reply: string): string {
-  const m = /(`{3,})[ \t]*([\w+-]*)[^\n]*\n([\s\S]*?)\n?\1/.exec(reply);
-  return (m === null ? reply : m[3]).trim();
+  const block = /(`{3,})[^\n`]*\n([\s\S]*?)^[ \t]*\1[ \t]*$/m.exec(reply);
+  if (block !== null) {
+    return block[2].trim();
+  }
+  const line = /(`{3,})(?:(?:q|k|kdb|qsql)(?=[ \t]))?[ \t]*([^\n]*?)[ \t]*\1(?!`)/.exec(reply);
+  return (line !== null && line[2] !== "" ? line[2] : reply).trim();
 }
 
 /// The draft a qSQL preview shows: a comment saying where it came from,

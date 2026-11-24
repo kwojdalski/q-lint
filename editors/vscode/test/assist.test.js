@@ -116,6 +116,11 @@ test("the qSQL prompt names the tables, and the draft round-trips", () => {
   assert.strictEqual(extractCode("Here:\n```q\nselect last px by sym from trade\n```\nDone."), "select last px by sym from trade");
   assert.strictEqual(extractCode("select from t"), "select from t");
   assert.strictEqual(extractCode("```\nexec 1 from t\n```"), "exec 1 from t");
+  // #1627: a one-line block, and backticks inside the code.
+  assert.strictEqual(extractCode("```q select from trade```"), "select from trade");
+  assert.strictEqual(extractCode("```select from trade```"), "select from trade");
+  assert.strictEqual(extractCode("```q\nselect from t where sym in ```a\n```"), "select from t where sym in ```a");
+  assert.strictEqual(extractCode("```q\nselect from t where sym in ```a`b\n```\nThat filters."), "select from t where sym in ```a`b");
   const doc = draftDocument("last px\nby sym", "Fake", "select last px by sym from trade");
   assert.match(doc, /^\/ Drafted by Fake from: last px by sym\n\/ Review it: nothing has run\./);
   assert.strictEqual(draftCode(doc), "select last px by sym from trade");
