@@ -770,7 +770,9 @@ namespace as Redefine defines it; after the last test, every one is put
 back and the counts show in the editor's gutter and the Test Coverage view.
 A function changed on the process since it was loaded, or not loaded, is
 left alone, and the run's output names those; one redefined while the tests
-ran is left as it is then. `.qlint.cov` holds the counts and the originals
+ran is left as it is then. A call made where q refuses a global write
+(under `reval`, in a secondary thread of `peach`) answers as before and is
+not counted. `.qlint.cov` holds the counts and the originals
 meanwhile, and is deleted after; `.qlint` itself stays, empty when nothing
 else of q-lint's is in it, as q cannot remove a namespace. When the
 functions cannot be put back over the active connection - another process
@@ -1286,7 +1288,9 @@ without editing its file: the function is replaced there by a wrapper of
 the same parameters that prints `(name; arguments)` with `0N!`, to the
 process's console or log (a launched process's output channel), keeps the
 last 1000 calls as text in `.qlint.log.hits`, and calls the original, kept
-in `.qlint.log.orig`. The editor marks the definition `logpoint on
+in `.qlint.log.orig`. Where q refuses a global write - a call made under
+`reval`, or in a secondary thread of `peach` - the call is printed but not
+kept, and the function answers as before. The editor marks the definition `logpoint on
 <process>`. **Show Logpoint Hits** reads the calls kept, **Remove
 Logpoint** puts one function back, and **Remove All Logpoints** all of
 them; a function redefined while it had a logpoint is left as it is. With

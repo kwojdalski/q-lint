@@ -13,8 +13,11 @@
 // `.qlint.<ns>` there: the caller restores first, so a run that was
 // interrupted is put right before another starts.
 //
-// Coverage puts `.qlint.cov.d[k]+:1;` in front of each statement of a
-// function's own body; the locals capture keeps the call's arguments as the
+// Coverage puts `.qlint.cov.hit k;` in front of each statement of a
+// function's own body: INSTALL defines it to add 1 to `.qlint.cov.d[k]`
+// under a trap, so a caller q refuses a global write to (`reval`, a
+// secondary thread of `peach`) still gets the function's answer, uncounted
+// (#1894). The locals capture keeps the call's arguments as the
 // parameter cache (#892) does, which statement it is on, and each local as
 // a statement at the top of the body assigns it.
 import type { Live } from "./live";
@@ -126,7 +129,7 @@ export interface Covered {
   statements: BodyStatement[];
 }
 
-/// `text` (a lambda, `{` to `}`) with `.qlint.cov.d[k]+:1;` in front of each
+/// `text` (a lambda, `{` to `}`) with `.qlint.cov.hit k;` in front of each
 /// of its body's statements, `k` counting from `first`. Undefined when it is
 /// not one lambda or has no statement.
 export function coverageText(text: string, first: number): Covered | undefined {
@@ -142,7 +145,7 @@ export function coverageText(text: string, first: number): Covered | undefined {
   return {
     text: inserted(
       text,
-      statements.map((s, k) => ({ offset: s.start, text: `.qlint.cov.d[${first + k}]+:1;` })),
+      statements.map((s, k) => ({ offset: s.start, text: `.qlint.cov.hit ${first + k};` })),
     ),
     statements,
   };
@@ -208,7 +211,8 @@ export function restoreExpression(ns: "cov" | "err"): string {
 
 /// Replaces each of `nms` (strings) whose text on the process is `was` with
 /// `src`, defined in its own context, keeping what it held. `d` is how many
-/// probes coverage counts (`.qlint.cov.d`, longs); the locals capture starts
+/// probes coverage counts (`.qlint.cov.d`, longs, through `.qlint.cov.hit`);
+/// the locals capture starts
 /// `.qlint.err.d` empty. Answers, for each name, `ok`, `missing`,
 /// `changed` or the error defining it gave; when none is `ok`,
 /// `.qlint.<ns>` is deleted again.
@@ -217,7 +221,7 @@ export function installLambda(ns: "cov" | "err"): string {
   return [
     "{[nms;was;src;d]",
     ` ${n}.saved:(\`$())!();${n}.inst:(\`$())!();`,
-    ns === "cov" ? ' .qlint.cov.d:("j"$d)#0j;' : " .qlint.err.d:`args`locals`at!((`$())!();(`$())!();0N);",
+    ns === "cov" ? ' .qlint.cov.d:("j"$d)#0j;.qlint.cov.hit:{@[{.qlint.cov.d[x]+:1};x;{}]};' : " .qlint.err.d:`args`locals`at!((`$())!();(`$())!();0N);",
     " r:{[nm;w;s]",
     "  nm:`$nm;old:@[get;nm;{::}];",
     "  if[not 100h=type old;:\"missing\"];",

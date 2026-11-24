@@ -7,7 +7,9 @@
 // same parameters that prints the call's arguments with `0N!` - to the
 // process's own console or log - keeps the last 1000 calls, as one line of
 // text each, in `.qlint.log.hits`, and then calls the function it replaced,
-// kept in `.qlint.log.orig`. Removing it puts that back, unless `f` was
+// kept in `.qlint.log.orig`. The keeping is trapped: where q refuses a
+// global write - under `reval`, in a secondary thread of `peach` - the call
+// is not kept and the function still answers (#1894). Removing it puts that back, unless `f` was
 // redefined meanwhile, which is left as it is; when the last logpoint goes,
 // `.qlint.log` goes too. `.qlint` itself stays, empty when nothing else of
 // q-lint's is in it: q has no call that removes a context, and
@@ -32,7 +34,7 @@ export const LOG_ADD = [
   " if[nm in key@[get;`.qlint.log.orig;{(`$())!()}];'\"it has a logpoint already\"];",
   " p:(value f)1;if[p~enlist`;p:`$()];",
   " s:\";\"sv string p;a:$[0=count p;\"enlist(::)\";1=count p;\"enlist \",s;\"(\",s,\")\"];n:\"`\",string nm;",
-  " w:value\"{[\",s,\"] 0N!(\",n,\";\",a,\");.qlint.log.hits:-1000 sublist .qlint.log.hits,enlist(.z.p;\",n,\";300 sublist -3!\",a,\");.qlint.log.orig[\",n,\"] . \",a,\"}\";",
+  " w:value\"{[\",s,\"] 0N!(\",n,\";\",a,\");@[{.qlint.log.hits:-1000 sublist .qlint.log.hits,enlist x};(.z.p;\",n,\";300 sublist -3!\",a,\");{}];.qlint.log.orig[\",n,\"] . \",a,\"}\";",
   " if[not`log in key`.qlint;.qlint.log.orig:(`$())!();.qlint.log.wrap:(`$())!();.qlint.log.hits:()];",
   " .qlint.log.orig[nm]:f;.qlint.log.wrap[nm]:w;",
   " nm set w;string nm}",

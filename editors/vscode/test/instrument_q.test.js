@@ -87,6 +87,23 @@ test("a function that changed on the process, or is not there, is not replaced",
   assert.strictEqual(await value(c, "last value f"), "{x+1}");
 });
 
+test("a coverage probe leaves its function callable where q refuses a global write: under reval it is not counted, and still answers (#1894)", { skip }, async (t) => {
+  const { connection: c } = await connect(t, "sq:{[x] y:x*x; y}\nbad:{[x] x+`a}\n");
+  const call = "reval(`sq;3)";
+  assert.strictEqual(Number(await value(c, call)), 9);
+  const covered = [coverageText("{[x] y:x*x; y}", 0), coverageText("{[x] x+`a}", 2)];
+  assert.deepStrictEqual(readInstalled(await c.call(installLambda("cov"), ["sq", "bad"], ["{[x] y:x*x; y}", "{[x] x+`a}"], covered.map((x) => x.text), 3), 2), ["ok", "ok"]);
+  // A gateway's read-only evaluation: the probe's own write is refused
+  // ('noupdate), and that is not the caller's error.
+  assert.strictEqual(Number(await value(c, call)), 9);
+  // Where it can write it counts, and the function's own error is still its error.
+  assert.strictEqual(Number(await value(c, "sq 4")), 16);
+  await assert.rejects(value(c, "bad 1"), /type/);
+  const restored = readRestored(await c.call(restoreExpression("cov")));
+  assert.deepStrictEqual(restored.d.map(Number), [1, 1, 1]);
+  assert.deepStrictEqual(await value(c, "(last value sq;key[`.qlint]~enlist`)"), ["{[x] y:x*x; y}", true]);
+});
+
 test("the locals capture keeps the arguments and locals up to the error", { skip }, async (t) => {
   const { connection: c, dir } = await connect(t, "\\l lib.q\n", { "lib.q": "\\d .ns\nm:{[a;b]\n  c:a+b;\n  d:c*2;\n  d+`x}\n\\d .\n" });
   const [def] = definitions(fs.readFileSync(path.join(dir, "lib.q"), "utf8"));
