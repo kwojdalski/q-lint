@@ -25,6 +25,9 @@
 //! cases, each compared with `~` against the qSQL it came from in KDB-X.
 //! PeachQ refuses one shape KDB-X runs: a where clause that is a bare name
 //! (`where flag`, `enlist`flag`).
+//!
+//! A functional form says more than qSQL can: where one has no qSQL - a
+//! column named with a word of q's own (`column`) - it is refused too.
 use super::layout;
 
 /// A rewrite of the query at the cursor: the bytes `start..end` replaced by
@@ -815,10 +818,32 @@ fn data_tokens(text: &str) -> Result<Vec<Tok>, String> {
     tokens(&t)
 }
 
+/// `name` as a column qSQL can name. A functional form names one with any
+/// symbol; qSQL reads a word of q's own as that word wherever it stands -
+/// `select count:px from t` is 'assign, and `where count>1` compares the
+/// function - and a symbol that is no name has no spelling there (#2023).
+fn column(name: &str) -> Result<String, String> {
+    if keyword(name) {
+        return Err(format!(
+            "a column named `{name}`, which qSQL reads as q's own `{name}`"
+        ));
+    }
+    let b = name.as_bytes();
+    let spelt = b
+        .first()
+        .is_some_and(|c| c.is_ascii_alphabetic() || *c == b'.')
+        && b.iter()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.'));
+    if !spelt {
+        return Err(format!("a column named `{name}`, which qSQL cannot spell"));
+    }
+    Ok(name.to_string())
+}
+
 /// A tree from functional-form data.
 fn node(d: &Data) -> Result<Node, String> {
     Ok(match d {
-        Data::Sym(s) if s.len() == 1 => Node::Name(s[0].clone()),
+        Data::Sym(s) if s.len() == 1 => Node::Name(column(&s[0])?),
         Data::Sym(_) => return Err("a symbol vector where a tree was expected".into()),
         Data::Enlist(inner) => match &**inner {
             Data::Sym(s) => Node::Sym(s.clone()),
@@ -975,9 +1000,16 @@ fn dict_items(d: &Data) -> Result<Vec<(String, Node)>, String> {
         },
         _ => return Err("dictionary keys that are not symbols".into()),
     };
+    let keys = keys
+        .iter()
+        .map(|k| column(k))
+        .collect::<Result<Vec<_>, _>>()?;
     let vals: Vec<Node> = match &**v {
         Data::Enlist(one) => vec![node(one)?],
-        Data::Sym(s) => s.iter().map(|s| Node::Name(s.clone())).collect(),
+        Data::Sym(s) => s
+            .iter()
+            .map(|s| column(s).map(Node::Name))
+            .collect::<Result<_, _>>()?,
         Data::List(items) => items.iter().map(node).collect::<Result<_, _>>()?,
         _ => return Err("dictionary values that are not a list".into()),
     };
@@ -1127,7 +1159,7 @@ fn written(verb: u8, table: &str, c: &Data, b: &Data, a: &Data) -> Result<String
         Ok(match b {
             Data::Leaf(l) if l == "0b" => String::new(),
             Data::List(items) if items.is_empty() => String::new(),
-            Data::Sym(s) if s.len() == 1 => format!(" by {}", s[0]),
+            Data::Sym(s) if s.len() == 1 => format!(" by {}", column(&s[0])?),
             other => format!(" by {}", column_text(&dict_items(other)?)?),
         })
     };
@@ -1173,12 +1205,15 @@ fn written(verb: u8, table: &str, c: &Data, b: &Data, a: &Data) -> Result<String
         }
         _ => match &a {
             Data::NoSymbols => Ok(format!("delete from {table}{tail}")),
-            Data::Sym(s) if wheres.is_empty() => Ok(format!("delete {} from {table}", s.join(","))),
+            Data::Sym(s) if wheres.is_empty() => {
+                let names = s.iter().map(|n| column(n)).collect::<Result<Vec<_>, _>>()?;
+                Ok(format!("delete {} from {table}", names.join(",")))
+            }
             Data::Enlist(one)
                 if wheres.is_empty() && matches!(&**one, Data::Sym(s) if s.len() == 1) =>
             {
                 let Data::Sym(s) = &**one else { unreachable!() };
-                Ok(format!("delete {} from {table}", s[0]))
+                Ok(format!("delete {} from {table}", column(&s[0])?))
             }
             Data::Dict(..) => Ok(format!(
                 "update {}{} from {table}{tail}",

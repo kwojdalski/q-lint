@@ -367,7 +367,9 @@ Each has its own switch, listed in [Settings](#settings) and
   in parentheses inside another as its own tree (``(?;`u;();();enlist `c)``) -
   and an unnamed column gets the name q would give it. What the rewrite cannot read
   (an adverb, a projection, `select[n]`, a glyph used as a monad) is refused,
-  and **Refactor...** says why. Every case in the tests was run both ways on
+  and so is a functional form with no qSQL - one whose column is named with
+  a word of q's own (`` `count ``, `` `select ``), which qSQL reads as that
+  word - and **Refactor...** says why. Every case in the tests was run both ways on
   KDB-X and PeachQ and compared with `~`. `q-lint.functionalForm.enable`.
 - **The qSQL explainer**: hover over a query's `select`, `exec`, `update` or
   `delete` (or a functional form's `?`/`!`) to read it in words - what it

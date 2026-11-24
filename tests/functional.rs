@@ -248,6 +248,51 @@ fn a_functional_form_whose_qsql_q_refuses_is_refused() {
 }
 
 #[test]
+fn a_column_named_with_a_word_of_q_is_not_written_as_qsql() {
+    // #2023. A functional form names a column with any symbol; qSQL reads a
+    // word of q's own as that word. On KDB-X 5 each form here runs, and its
+    // qSQL does not: `select count:px from t` is 'assign, `select
+    // select:px from t` 'from, `select px by max:sym from t` 'assign,
+    // `update asc:px from t` 'assign; and with a column `count` in the
+    // table, `select from u where count>1` is 'type (parse reads `#:`),
+    // `select v:count from u` 'rank, `exec sym by count from u` 'length,
+    // `delete count from u` 'type, and `exec count from u` returns the
+    // function.
+    for form in [
+        "?[t;();0b;(enlist`count)!enlist `px]",
+        "?[t;();0b;(enlist`select)!enlist `px]",
+        "?[t;();0b;`a`max!(`px;`size)]",
+        "?[t;();(enlist`by)!enlist `sym;(enlist`px)!enlist (max;`px)]",
+        "?[t;();(enlist`sym)!enlist `sym;(enlist`xbar)!enlist (max;`px)]",
+        "![t;();0b;(enlist`asc)!enlist `px]",
+        "?[t;();();`from`b!(`px;`size)]",
+        "?[t;enlist (>;`count;1);0b;()]",
+        "?[t;();0b;(enlist`v)!enlist `count]",
+        "?[t;();0b;`a`b!`px`max]",
+        "?[t;();0b;(enlist`v)!enlist (+;`lj;1)]",
+        "?[t;();`count;`sym]",
+        "?[t;();();`count]",
+        "![t;();0b;enlist`count]",
+        "![t;();0b;`px`count]",
+    ] {
+        match functional_to_qsql(&format!("r:{form}\n"), 3) {
+            Some(Err(e)) => assert!(e.contains("q's own"), "{form}: {e}"),
+            other => panic!("{form}: {other:?}"),
+        }
+    }
+    // A symbol q reads as no name at all is no column either.
+    match functional_to_qsql("r:?[t;();0b;(enlist`a:b)!enlist `px]\n", 3) {
+        Some(Err(e)) => assert!(e.contains("cannot spell"), "{e}"),
+        other => panic!("{other:?}"),
+    }
+    // `i` and `x` are names like any other: `select i:px from t` runs.
+    let got = functional_to_qsql("r:?[t;();0b;`i`x!(`px;`size)]\n", 3)
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.text, "select i:px, x:size from t");
+}
+
+#[test]
 fn the_cursor_can_be_anywhere_in_the_query() {
     let source = "f:{[x] r:select px from t where px>x; r}\n";
     let at = source.find("where").unwrap() + 2;
