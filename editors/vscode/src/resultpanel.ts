@@ -114,6 +114,8 @@ import { NOTEBOOK } from "./qnb";
 import type { Grid } from "./grid";
 import { iconsEscaped, plainMessage } from "./history";
 import { unsavedIn } from "./clicked";
+import { gatewayStatement } from "./gateway";
+import { statements } from "./statements";
 
 /// `media/gridlook.js`'s helpers the column commands use, as the page does.
 interface GridLookHelpers {
@@ -316,6 +318,18 @@ interface CellContext {
   row?: unknown;
 }
 
+/// Whether a result of `code` is the run of the saved query whose filled-in
+/// code is `expected`: that code, or that code sent through a TorQ gateway
+/// to any server types. Not any code that holds it (#1753).
+export function savedRun(code: string, expected: string): boolean {
+  if (code === expected) {
+    return true;
+  }
+  const cut = statements(expected);
+  const via = gatewayStatement(cut, []).slice(0, -1);
+  return cut.length > 0 && code.startsWith(via) && /^(enlist )?(`[^`\]]*)+\]$/.test(code.slice(via.length));
+}
+
 export class QueryModes {
   private panel: WebviewPanel | undefined;
   private view: WebviewView | undefined;
@@ -465,7 +479,7 @@ export class QueryModes {
     const onShow = replaced === undefined || replaced === this.shown;
     // A saved query's result keeps its look; any other starts from the
     // last run of its code.
-    const saved = replaced?.saved ?? (this.expecting !== undefined && result.code.includes(this.expecting.code) ? this.expecting.name : undefined);
+    const saved = replaced?.saved ?? (this.expecting !== undefined && savedRun(result.code, this.expecting.code) ? this.expecting.name : undefined);
     const look = replaced?.look ?? (saved !== undefined ? this.savedLooks()[saved] : undefined) ?? this.looks.get(result.code) ?? {};
     const shown: Shown = {
       process: result.process,

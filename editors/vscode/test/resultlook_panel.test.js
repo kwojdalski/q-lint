@@ -617,3 +617,21 @@ test("a format or layout added while a watched query refreshes goes to the refre
   modes.show(result(), live);
   assert.deepStrictEqual(last(fake).look.layout.hidden, ["sym"]);
 });
+
+test("only the saved query's own run takes its look, not another result whose code holds its code (#1753)", async () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  modes.expectSaved("trades", "t");
+  // A watched query that lands while the saved query runs.
+  modes.show(result("select from t where sym=`a"), live);
+  assert.strictEqual(last(fake).saved, undefined);
+  modes.show(result("t"), live);
+  assert.strictEqual(last(fake).saved, "trades");
+  // Its run through a TorQ gateway is still the saved query's.
+  const { savedRun } = require("../out/resultpanel.js");
+  const { gatewayStatement } = require("../out/gateway.js");
+  assert.ok(savedRun(gatewayStatement(["select from t"], ["rdb"]), "select from t"));
+  assert.ok(savedRun(gatewayStatement(["a:1", "a"], ["rdb", "hdb"]), "a:1\na"));
+  assert.ok(!savedRun(gatewayStatement(["select from t where sym=`a"], ["rdb"]), "select from t"));
+  assert.ok(!savedRun("count t", "t"));
+});
