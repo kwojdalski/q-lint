@@ -73,6 +73,8 @@ const SERVER = [
   "\\d .",
   ".q.myq:{x}",
   "t:([] a:til 100000; b:100000#`x`y)",
+  "kt:([k:1 2 3] v:4 5 6)",
+  "dict:`a`b!1 2",
   "calls:0",
   "v::calls+::1",
   "s:5000#\"ab\"",
@@ -95,6 +97,8 @@ test("the first name the process defines is read, as the console prints it, with
   assert.match(table.text, /^a +b\n-+\n0 +x\n/);
   assert.ok(table.text.length < 5000, "the console's rows bound a table");
   assert.match(previewMarkdown(table, "dev"), /table, 100,000 rows/);
+  assert.match(previewMarkdown(await preview(c, ["kt"]), "dev"), /: keyed table, 3 rows\n/);
+  assert.match(previewMarkdown(await preview(c, ["dict"]), "dev"), /: dictionary, 2 items\n/);
   // A one-character name, which reaches q as a char.
   assert.strictEqual((await preview(c, ["x"])).text, "7\n");
   // The console's width bounds a long string; the limit cuts what is left.
