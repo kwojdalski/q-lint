@@ -18,7 +18,7 @@ const { QConnection } = require("../out/qclient.js");
 const { ADMIN_COMMANDS, ADMIN_VIEWS, adminOff, readAdmin } = require("../out/admin.js");
 const { clientDescription, closeCode, readClients } = require("../out/clients.js");
 const { intervalCode, intervalProblem, readTimers, toggleCode } = require("../out/timers.js");
-const { registerAdminViews } = require("../out/adminviews.js");
+const { AdminView, registerAdminViews } = require("../out/adminviews.js");
 
 const Q = process.env.QLINT_TEST_Q;
 const skip = Q ? false : "QLINT_TEST_Q names no q binary";
@@ -253,4 +253,29 @@ test("disconnected while asked, closing a handle connects to nothing and asks fo
   assert.strictEqual(live.activeLabel(), undefined);
   assert.ok(stub.messages.some((m) => /rdb is no longer the active process; nothing was run/.test(m.join(" "))), JSON.stringify(stub.messages));
   assert.ok(!q.sent.some((m) => String(m).includes("hclose")));
+});
+
+test("a view connected to another process mid-read reads that one, not the first's answer (#1390)", async () => {
+  stub.reset();
+  let active = "dev-a";
+  const pending = new Map();
+  const live = {
+    activeLabel: () => active,
+    borrow: (use) => use({}, { label: active }),
+    onDidChange: () => ({ dispose() {} }),
+  };
+  const read = (_connection, process) => new Promise((resolve, reject) => pending.set(process.label, { resolve, reject }));
+  const view = new AdminView("q-lint.test", live, read);
+  // dev-a's read is in flight when dev-b connects.
+  active = "dev-b";
+  const second = view.refresh();
+  pending.get("dev-a").reject(new Error("closed"));
+  await new Promise((r) => setImmediate(r));
+  assert.ok(pending.has("dev-b"), "dev-b is read once dev-a's read is done");
+  pending.get("dev-b").resolve({ nodes: [{ label: "handle 9" }] });
+  await second;
+  assert.deepStrictEqual(view.rows().map((n) => n.label), ["handle 9"]);
+  assert.strictEqual(view.view.description, "dev-b");
+  assert.strictEqual(view.view.message, undefined);
+  view.dispose();
 });

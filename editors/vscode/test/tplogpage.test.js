@@ -36,3 +36,27 @@ test("a message in the list is a tab stop, picked with Enter or Space, and keeps
   assert.deepStrictEqual(shown(), [1, 2]);
   assert.strictEqual(prevented, 2);
 });
+
+test("the pager pages the filter last applied, not one typed since (#1395)", () => {
+  const page = loadSmallPage(["tplog.js"]);
+  page.send({ type: "log", port: 5001, log: { ...LOG, tables: ["trade", "quote"] } });
+  const button = (text) => page.find("button").find((b) => b.textContent === text);
+  const [table] = page.find("select");
+  const [from, to] = page.find("input");
+  table.value = "trade";
+  from.value = "09:00";
+  button("Filter").fire("click");
+  page.send({ type: "page", offset: 0, size: 200, total: 500, rows: ROWS });
+  // Changed, but Filter not pressed: the pages are still trade's from 09:00.
+  table.value = "quote";
+  from.value = "10:00";
+  to.value = "11:00";
+  button("Page ▶").fire("click");
+  page.send({ type: "page", offset: 200, size: 200, total: 500, rows: ROWS });
+  button("◀ Page").fire("click");
+  const asked = page.posted.filter((m) => m.type === "page").map(({ table, from, to, offset }) => [table, from, to, offset]);
+  assert.deepStrictEqual(asked, [["trade", "09:00", "", 0], ["trade", "09:00", "", 200], ["trade", "09:00", "", 0]]);
+  // Filter applies what the boxes hold.
+  button("Filter").fire("click");
+  assert.deepStrictEqual(page.posted.at(-1), { type: "page", table: "quote", from: "10:00", to: "11:00", offset: 0 });
+});

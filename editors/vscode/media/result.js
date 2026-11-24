@@ -360,8 +360,24 @@
     return n.toLocaleString("en-US") + " row" + (n === 1 ? "" : "s") + " in " + millis + " ms";
   }
 
+  /// One CSV field of a copy, as grid.ts's csvField(csvText(t)) writes it:
+  /// quoted where it must be, and text a spreadsheet would run as a formula
+  /// (=, +, -, @, tab or CR first, and no number) behind a '.
+  function csvCell(t) {
+    const text = /^[=+\-@\t\r]/.test(t) && !/^-?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(t) ? "'" + t : t;
+    return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+  }
+
+  /// `map[key]` when `map` has it of its own: a column named constructor
+  /// or valueOf is not one of Object's.
+  function ownValue(map, key) {
+    return map && Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined;
+  }
+
   const helpers = {
     rowCount: rowCount,
+    ownValue: ownValue,
+    csvCell: csvCell,
     gridMove: gridMove,
     announcement: announcement,
     HEAD_ROWS: HEAD_ROWS,
@@ -804,8 +820,8 @@
     d.display.forEach(function (i) {
       const c = grid.columns[i];
       let css;
-      if (feature("columnLayout") && lay.widths && lay.widths[c.name]) {
-        css = lay.widths[c.name] + "px";
+      if (feature("columnLayout") && ownValue(lay.widths, c.name)) {
+        css = ownValue(lay.widths, c.name) + "px";
       } else {
         let width = headerText(grid, i).length + 2;
         const cells = grid.cells[i];
@@ -1450,9 +1466,8 @@
     const copy = el("button", "", "Copy Pivot");
     copy.title = "The pivot as CSV";
     const head = [grid.columns[spec.row] ? grid.columns[spec.row].name : ""].concat(p.columns);
-    const csv = function (t) { return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
     copy.addEventListener("click", function () {
-      const lines = [head.map(csv).join(",")].concat(p.rows.map(function (k, i) { return [k].concat(p.cells[i]).map(csv).join(","); }));
+      const lines = [head.map(csvCell).join(",")].concat(p.rows.map(function (k, i) { return [k].concat(p.cells[i]).map(csvCell).join(","); }));
       vscode.postMessage({ type: "copyText", id: result.id, text: lines.join("\n") + "\n" });
     });
     controls.append(copy);
@@ -1491,7 +1506,7 @@
   function seriesColours(grid, datasets, theme) {
     return datasets.map(function (d, i) {
       const name = d.column !== undefined && grid.columns[d.column] ? grid.columns[d.column].name : null;
-      return (feature("chartPresets") && name && state.colours[name]) || theme.colours[i % theme.colours.length];
+      return (feature("chartPresets") && name && ownValue(state.colours, name)) || theme.colours[i % theme.colours.length];
     });
   }
 
@@ -1504,8 +1519,8 @@
     const series = state.kind === "depth" || state.kind === "map" ? [] : picked.map(name);
     const colours = {};
     series.forEach(function (n) {
-      if (state.colours[n]) {
-        colours[n] = state.colours[n];
+      if (ownValue(state.colours, n)) {
+        colours[n] = ownValue(state.colours, n);
       }
     });
     const out = { kind: state.kind, series: series, bins: state.bins, colours: colours };
@@ -1616,7 +1631,7 @@
         const colour = el("input", "swatch");
         colour.type = "color";
         colour.title = "The colour of " + name;
-        colour.value = state.colours[name] || (/^#[0-9a-f]{6}$/i.test(theme.colours[picked.indexOf(c) % theme.colours.length]) ? theme.colours[picked.indexOf(c) % theme.colours.length] : "#3794ff");
+        colour.value = ownValue(state.colours, name) || (/^#[0-9a-f]{6}$/i.test(theme.colours[picked.indexOf(c) % theme.colours.length]) ? theme.colours[picked.indexOf(c) % theme.colours.length] : "#3794ff");
         colour.addEventListener("change", function () {
           state.colours[name] = colour.value;
           save();
@@ -1935,9 +1950,8 @@
     const controls = el("div", "controls");
     const copy = el("button", "", "Copy Matrix");
     copy.title = "The correlation matrix as CSV";
-    const csv = function (t) { return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
     copy.addEventListener("click", function () {
-      const lines = [[""].concat(corr.names).map(csv).join(",")].concat(corr.names.map(function (n, i) { return [n].concat(corr.r[i].map(function (r) { return r === null ? "" : String(r); })).map(csv).join(","); }));
+      const lines = [[""].concat(corr.names).map(csvCell).join(",")].concat(corr.names.map(function (n, i) { return [n].concat(corr.r[i].map(function (r) { return r === null ? "" : String(r); })).map(csvCell).join(","); }));
       vscode.postMessage({ type: "copyText", id: result.id, text: lines.join("\n") + "\n" });
     });
     controls.append(copy);

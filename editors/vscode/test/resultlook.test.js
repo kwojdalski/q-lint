@@ -158,6 +158,12 @@ test("the correlation matrix is Pearson's over the rows where both values are th
   assert.strictEqual(pairs.at(-1).r, null);
 });
 
+test("a column that does not vary has no correlation even when its mean is off by rounding (#1386)", () => {
+  const g = grid([["fee", 9, ["0.1", "0.1", "0.1"]], ["rate", 9, ["0.7", "0.7", "0.7"]], ["sq", 9, ["0", "1", "4"]]]);
+  const c = L.correlation(g, [0, 1, 2]);
+  assert.deepStrictEqual(c.r, [[null, null, null], [null, null, null], [null, null, 1]]);
+});
+
 test("a stored look keeps only what it can hold, and moves with a renamed saved query (#1013-#1015, #1019)", () => {
   const stored = {
     trades: {

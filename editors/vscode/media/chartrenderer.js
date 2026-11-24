@@ -93,6 +93,8 @@ export function activate(context) {
         });
       }, 50);
     } catch (error) {
+      // Its own spec, so a theme change does not redraw the last output's.
+      shown.set(id, { chart: null, again: () => render(id, spec, element) });
       element.textContent = `q-lint could not draw this chart: ${error instanceof Error ? error.message : String(error)}`;
       report({ type: "failed", id, error: String(error) });
     }

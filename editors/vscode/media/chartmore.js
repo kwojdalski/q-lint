@@ -99,7 +99,8 @@
       return { mode: "lists", row: r, bids: bids, asks: asks };
     }
     rows.forEach(function (r) {
-      const side = grid.cells[cols.side][r].replace(/^`/, "");
+      // A symbol shows as buy or `buy, a string as "buy" (one character ,"b").
+      const side = grid.cells[cols.side][r].replace(/^`/, "").replace(/^,?"(.*)"$/, "$1");
       add(BUY.test(side) ? bids : SELL.test(side) ? asks : [], v(cols.price, r), v(cols.size, r));
     });
     return { mode: "sides", bids: bids, asks: asks };
@@ -138,7 +139,8 @@
     // Each side runs on past its last level at its whole size, so the last
     // step shows: a twentieth of the prices' range further out, or the spread.
     const prices = bids.concat(asks).map(function (p) { return p[0]; });
-    const range = Math.max.apply(null, prices) - Math.min.apply(null, prices);
+    // A loop, not Math.max.apply: a book of 65k+ prices overflows the stack.
+    const range = prices.reduce(function (m, p) { return Math.max(m, p); }, -Infinity) - prices.reduce(function (m, p) { return Math.min(m, p); }, Infinity);
     const out = range > 0 ? range / 20 : Math.abs(best.bid !== null && best.ask !== null ? best.ask - best.bid : 0) || Math.abs(prices[0]) / 100 || 1;
     const bidLine = bids.length ? [[bids[bids.length - 1][0] - out, bids[bids.length - 1][1]]].concat(bids.slice().reverse()) : [];
     const askLine = asks.length ? asks.concat([[asks[asks.length - 1][0] + out, asks[asks.length - 1][1]]]) : [];
@@ -172,8 +174,10 @@
     return {
       type: "line",
       data: {
+        // `stepped` is in the SVG's sense ("before": rise, then run on);
+        // Chart.js reads each name the other way round.
         datasets: data.datasets.map(function (d) {
-          return Object.assign({}, d, { borderColor: colour[d.side], backgroundColor: translucent(colour[d.side]), fill: "origin", pointRadius: 0, borderWidth: 1.5 });
+          return Object.assign({}, d, { stepped: d.stepped === "before" ? "after" : "before", borderColor: colour[d.side], backgroundColor: translucent(colour[d.side]), fill: "origin", pointRadius: 0, borderWidth: 1.5 });
         }),
       },
       options: {
@@ -587,8 +591,9 @@
     };
     const xr = extent(function (p) { return p.x; }, spec.xRange, false);
     const yr = extent(function (p) { return p.y; }, spec.yRange, spec.series.some(function (s) { return s.area; }));
-    const X = function (v) { return left + (xr.hi === xr.lo ? pw / 2 : ((v - xr.lo) / (xr.hi - xr.lo)) * pw); };
-    const Y = function (v) { return top + ph - (yr.hi === yr.lo ? ph / 2 : ((v - yr.lo) / (yr.hi - yr.lo)) * ph); };
+    // Halved, so a span past the largest double does not overflow.
+    const X = function (v) { return left + (xr.hi === xr.lo ? pw / 2 : ((v / 2 - xr.lo / 2) / (xr.hi / 2 - xr.lo / 2)) * pw); };
+    const Y = function (v) { return top + ph - (yr.hi === yr.lo ? ph / 2 : ((v / 2 - yr.lo / 2) / (yr.hi / 2 - yr.lo / 2)) * ph); };
     const f = function (v) { return v.toFixed(1); };
     out.push('<clipPath id="plot' + (opts.at || 0) + '"><rect x="' + left + '" y="' + top + '" width="' + pw + '" height="' + ph + '"/></clipPath>');
     const yt = C.ticks(yr.lo, yr.hi);
