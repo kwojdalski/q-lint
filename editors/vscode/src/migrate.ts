@@ -21,6 +21,8 @@ export interface SchemaDiff {
   /// The target's order, when the columns kept are in another one.
   order: string[] | undefined;
   attrs: { name: string; from: string; to: string }[];
+  /// The target's keys, when a table in memory is keyed otherwise (#1579).
+  keys: string[] | undefined;
 }
 
 /// What changes `from` into `to`. Key columns count as columns.
@@ -38,10 +40,13 @@ export function schemaDiff(from: TableInfo, to: TableInfo): SchemaDiff {
   // After adding at the end and dropping, is the order the target's?
   const after = [...from.columns.map((c) => c.name).filter((n) => toCols.has(n)), ...add.map((a) => a.name)];
   const want = to.columns.map((c) => c.name);
-  return { add, drop, cast, order: after.join(" ") === want.join(" ") ? undefined : want, attrs };
+  // A table on disk is never keyed: its keys are not compared.
+  const onDisk = from.kind === "partitioned" || from.kind === "splayed";
+  const keys = !onDisk && from.keys.join(" ") !== to.keys.join(" ") ? to.keys : undefined;
+  return { add, drop, cast, order: after.join(" ") === want.join(" ") ? undefined : want, attrs, keys };
 }
 
-export const sameSchema = (d: SchemaDiff): boolean => d.add.length + d.drop.length + d.cast.length + d.attrs.length === 0 && d.order === undefined;
+export const sameSchema = (d: SchemaDiff): boolean => d.add.length + d.drop.length + d.cast.length + d.attrs.length === 0 && d.order === undefined && d.keys === undefined;
 
 const NULLS: Record<string, string> = {
   b: "0b", g: "0Ng", x: "0x00", h: "0Nh", i: "0Ni", j: "0N", e: "0Ne", f: "0n", c: '" "', s: "`",
@@ -102,6 +107,7 @@ export function migrationScript(name: string, fromInfo: TableInfo, fromWhere: st
     ...d.cast.map((c) => `/ cast   ${c.name} from ${c.from || "mixed"} to ${c.to || "mixed"}`),
     ...d.attrs.map((c) => `/ attr   ${c.name} from ${c.from ? `${c.from}#` : "none"} to ${c.to ? `${c.to}#` : "none"}`),
     ...(d.order ? [`/ order  ${d.order.join(" ")}`] : []),
+    ...(d.keys ? [`/ keys   ${d.keys.length > 0 ? d.keys.join(" ") : "none"}`] : []),
   ];
   if (sameSchema(d)) {
     return [...head, "/ The two schemas are the same: there is nothing to change."].join("\n") + "\n";

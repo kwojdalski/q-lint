@@ -239,6 +239,11 @@ test("a schema diff names adds, drops, casts and order, and the script turns one
   // A mixed column is added as an empty list a row (#1097).
   assert.match(migrationScript("a", t("table", [["k", "j"]]), "a", t("table", [["k", "j"], ["m", ""]]), "b", "p"), /\na:update m:count\[i\]#enlist \(\) from a\n/);
   assert.match(migrationScript("a", from, "a", from, "a", "p"), /the same: there is nothing to change/);
+  // Only the keys differ: keyed, or unkeyed (#1579).
+  const ua = t("table", [["s", "s"], ["p", "f"]]);
+  const ka = t("keyed", [["s", "s"], ["p", "f"]], ["s"]);
+  assert.match(migrationScript("ua", ua, "ua", ka, "ka", "p"), /\/ keys {3}s\nua:`s xkey ua\n$/);
+  assert.match(migrationScript("ka", ka, "ka", ua, "ua", "p"), /\/ keys {3}none\nka:0!ka\n/);
   const disk = migrationScript("trade", t("partitioned", [["date", "d"], ["sym", "s"], ["px", "f"]]), "trade", t("table", [["sym", "s"], ["px", "j"], ["ex", "s"]]), "t2", "hdb");
   assert.match(disk, /HDB column manager/);
   assert.match(disk, /\.qlint\.cm\.add\[`ex;`\]/);
