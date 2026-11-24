@@ -318,6 +318,11 @@ test("a result sent to a notebook or a report is its query in a fence it cannot 
   const cut = report.resultMarkdown({ process: "p", code: "t", at: 0, payload: many, decimals: -1 });
   assert.strictEqual(cut.rows, report.MAX_ROWS);
   assert.match(cut.text, /_The first 500 of 600 rows\._/);
+  // Rows a filter picked are not the first of the result (#1649).
+  const held = { ...PAYLOAD, count: 1000, cells: [["a", "b", "c", "d", "e"], ["1", "2", "3", "4", "5"]], raw: [[], [1, 2, 3, 4, 5]] };
+  assert.match(report.resultMarkdown({ process: "p", code: "t", at: 0, payload: held, rows: [4, 3], decimals: -1 }).text, /_The 2 rows the grid's filters show, of the 5 held; the result has 1,000\._/);
+  const many1 = { ...many, count: 700 };
+  assert.match(report.resultMarkdown({ process: "p", code: "t", at: 0, payload: many1, rows: [...Array(550).keys()], decimals: -1 }).text, /_The first 500 of the 550 rows the grid's filters show, of the 600 held; the result has 700\._/);
   const taken = new Set(["daily-images/chart-20261122-093005.svg"]);
   assert.strictEqual(report.imagePath("/r/daily.md", Date.UTC(2026, 10, 22, 9, 30, 5), (p) => taken.has(p)), "daily-images/chart-20261122-093005-2.svg");
   assert.strictEqual(report.linkTarget("a b/(c).svg"), "a%20b/%28c%29.svg");
