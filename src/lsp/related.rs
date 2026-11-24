@@ -77,8 +77,13 @@ fn columns<'a>(finding: &'a Finding, text: &str, at: usize) -> Vec<(usize, &'a s
     let end = if text[at..].starts_with('(') {
         closer(text, at).unwrap_or(text.len())
     } else {
-        let line = text[at..].find('\n').map_or(text.len(), |n| at + n);
-        text[at..line].find(" from").map_or(line, |n| at + n)
+        // The statement, over the indented lines that go on with it (#2055),
+        // to the `from` of the query itself, not one in a bracket.
+        let statement = statement_end(text, at);
+        words(text, at, statement, "from")
+            .into_iter()
+            .find(|&i| depth(&text[at..i]) == 0 && text[..i].ends_with(char::is_whitespace))
+            .unwrap_or(statement)
     };
     let found = if finding.code == "QB021" {
         by_duplicate(text, at, end, name)
@@ -159,6 +164,29 @@ fn depth(text: &str) -> i32 {
             _ => 0,
         })
         .sum()
+}
+
+/// Where the statement with `at` in its first line ends: past each line
+/// after it that is indented, which q reads as going on with it, a blank
+/// line between them included.
+fn statement_end(text: &str, at: usize) -> usize {
+    let mut end = text[at..].find('\n').map_or(text.len(), |n| at + n);
+    let mut next = end;
+    while next < text.len() {
+        let start = next + 1;
+        let line_end = text[start..].find('\n').map_or(text.len(), |n| start + n);
+        let line = &text[start..line_end];
+        if line.trim().is_empty() {
+            next = line_end;
+            continue;
+        }
+        if !line.starts_with([' ', '\t']) {
+            break;
+        }
+        end = line_end;
+        next = line_end;
+    }
+    end
 }
 
 /// Where `name` stands as a whole word between `from` and `to`: not part of

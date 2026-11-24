@@ -147,6 +147,24 @@ fn language_prefixes_preserve_following_q_diagnostics() {
     assert!(lint("a)x:1\n", "t.q", Profile::Style).is_empty());
 }
 
+#[test]
+fn a_bare_slash_after_a_foreign_line_opens_a_block_comment() {
+    // #2042. q 5 hands `t)c`, `/`, `  zz`, `\`, `show 1` to `.t.e` as `c`
+    // alone: the bare `/` opens a block comment, the `\` closes it, and q
+    // runs on. Read as part of the foreign statement, the `\` ended the
+    // script and the unclosed paren after it went unreported.
+    for prefix in ["p)", "k)"] {
+        let text = format!("fk:1\n{prefix}gk:2\n/\n zz\n\\\nshow fk\nx:(1;2\n");
+        let findings = lint(&text, "t.q", Profile::Style);
+        assert!(
+            findings.iter().any(|f| f.code == "QE001" && f.line == 7),
+            "{prefix}: {findings:?}"
+        );
+    }
+    // A `/ note` line is still carried over, as q carries it.
+    assert!(lint("k)gk:2\n/ note\n  (\n", "t.q", Profile::Style).is_empty());
+}
+
 /// The cases here were settled by running each one through a real q 4.x and
 /// asking it what the lambda's parameters actually are (`value value`), not by
 /// reading the reference manual. q accepts more in a parameter list than one
@@ -425,7 +443,34 @@ fn a_root_lambda_is_not_coloured_inside_a_context() {
     ws.add(&index(text));
     ws.add(&index("g:{x}\n"));
     assert!(
-        !semantic_tokens_in(text, &ws)
+        !semantic_tokens_in(text, &ws, &Default::default())
+            .iter()
+            .any(|t| t.2 == TokenKind::Function)
+    );
+}
+
+#[test]
+fn a_function_of_the_context_a_file_is_loaded_in_is_coloured() {
+    use q_lint_rs::graph::Placement;
+    use q_lint_rs::{TokenKind, Workspace, index, semantic_tokens_in};
+    // #2053. q 5 loads lib.q and b.q under `\d .aa`: `.aa.gg` calls
+    // `.aa.fz`, so b.q's `fz` is a function where it is read before any
+    // `\d` of its own, and not after `\d .bb`.
+    let text = "gg:{fz x}\nhh:fz 2\n\\d .bb\nkk:fz 3\n";
+    let mut ws = Workspace::default();
+    ws.add(&index(".aa.fz:{x+1}\n"));
+    let placement = Placement {
+        contexts: [".aa".to_string()].into(),
+        root: false,
+    };
+    let functions: Vec<usize> = semantic_tokens_in(text, &ws, &placement)
+        .iter()
+        .filter(|t| t.2 == TokenKind::Function)
+        .map(|t| t.0)
+        .collect();
+    assert_eq!(functions, [4, 13]);
+    assert!(
+        !semantic_tokens_in(text, &ws, &Placement::default())
             .iter()
             .any(|t| t.2 == TokenKind::Function)
     );

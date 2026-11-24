@@ -189,6 +189,43 @@ impl<'a> Sources<'a> {
             .collect()
     }
 
+    /// The global at byte `at` of the cursor's document, as `targets` has
+    /// it, with how much of the mention spells it - or, for a dotted read
+    /// no file defines, the global it reads through, `ta` of `ta.c` for a
+    /// table `ta`, and that part. q reads the column of the global: KDB-X 5
+    /// `ta:([]c:1 2 3)`, then `sum ta.c` is 6 (#2017, #2048). Go to
+    /// Definition goes there too.
+    pub(super) fn global_at(&self, cursor: &Cursor, at: usize) -> (HashSet<String>, usize) {
+        let all = mentions(cursor.text);
+        let Some(m) = all.iter().find(|m| m.at == at) else {
+            return (HashSet::new(), 0);
+        };
+        let targets = self.targets(cursor, at);
+        if targets.iter().any(|name| self.idx.ws.defines(name)) {
+            return (targets, m.len);
+        }
+        let holders: Vec<(String, usize)> = targets
+            .iter()
+            .filter_map(|name| {
+                let (dot, _) = name
+                    .match_indices('.')
+                    .filter(|&(dot, _)| dot > 0)
+                    .rfind(|&(dot, _)| self.idx.ws.defines(&name[..dot]))?;
+                Some((
+                    name[..dot].to_string(),
+                    m.len.checked_sub(name.len() - dot)?,
+                ))
+            })
+            .filter(|&(_, part)| part > 0 && cursor.text.as_bytes()[at + part] == b'.')
+            .collect();
+        match holders.first() {
+            Some(&(_, part)) if holders.iter().all(|(_, p)| *p == part) => {
+                (holders.into_iter().map(|(name, _)| name).collect(), part)
+            }
+            _ => (targets, m.len),
+        }
+    }
+
     /// The files the index has defining one of `names`, best first for a
     /// reader in the file `from` - see `ranked`.
     pub(super) fn definers(&self, names: &HashSet<String>, from: &str) -> Vec<&'a str> {
@@ -294,7 +331,9 @@ impl<'a> Sources<'a> {
                 .map(str::to_string)
                 .collect()
         };
-        graph::loaded(Path::new(from), load, &self.idx.cwd(), indexed, scripts_in)
+        let cwds = self.idx.cwds();
+        let cwd = graph::start_dir(&cwds, Path::new(from));
+        graph::loaded(Path::new(from), load, cwd, indexed, scripts_in)
     }
 
     /// The path of the load under the cursor, as its start and length, with
@@ -518,7 +557,7 @@ fn references(params: &Value, sources: &Sources) -> Value {
             .map(|(_, place)| location(cursor.uri, &lines, place.at, place.len))
             .collect(),
         Some(Name::Global { at, .. }) => sources
-            .mentioned(&sources.targets(&cursor, at))
+            .mentioned(&sources.global_at(&cursor, at).0)
             .into_iter()
             .filter(|(_, write)| declarations || !write)
             .map(|(location, _)| location)
@@ -542,17 +581,19 @@ fn highlights(params: &Value, sources: &Sources) -> Value {
             .map(|place| highlight(place.at, place.len, place.write))
             .collect(),
         Some(Name::Global { at, .. }) => {
-            let targets = sources.targets(&cursor, at);
+            let (targets, _) = sources.global_at(&cursor, at);
             let placement = sources.placement(&cursor.key);
             let code = q_lint_rs::code_view(cursor.text);
+            let changed = q_lint_rs::changed_by_name(cursor.text);
             mentions(cursor.text)
                 .iter()
                 .filter_map(|m| {
                     let part = sources
                         .spelt(cursor.text, m, &placement, &targets)
                         .filter(|&part| part > 0)?;
-                    let write =
-                        m.definition.is_some() || q_lint_rs::amended_at(&code, m.at + m.len);
+                    let write = m.definition.is_some()
+                        || q_lint_rs::amended_at(&code, m.at + m.len)
+                        || changed.contains(&m.at);
                     Some(highlight(m.at, part, write))
                 })
                 .collect()
@@ -906,8 +947,8 @@ fn prepare_rename(params: &Value, sources: &Sources) -> Result<Value, String> {
         return Ok(Value::Null);
     };
     let (at, len) = match name_at(cursor.text, cursor.offset) {
-        Some(Name::Global { at, len, .. }) => {
-            renamable_global(sources, &cursor, at)?;
+        Some(Name::Global { at, .. }) => {
+            let (_, len) = renamable_global(sources, &cursor, at)?;
             let leaf = leaf(&cursor.text[at..at + len]);
             (at + len - leaf.len(), leaf.len())
         }
@@ -927,8 +968,8 @@ fn rename(params: &Value, sources: &Sources) -> Result<Value, String> {
         return Ok(Value::Null);
     };
     let new = params["newName"].as_str().unwrap_or_default();
-    if let Some(Name::Global { at, len, .. }) = name_at(cursor.text, cursor.offset) {
-        return rename_global(sources, &cursor, at, len, new);
+    if let Some(Name::Global { at, .. }) = name_at(cursor.text, cursor.offset) {
+        return rename_global(sources, &cursor, at, new);
     }
     let lines = Lines::new(cursor.text);
     let edits: Vec<Value> = q_lint_rs::rename(cursor.text, cursor.offset, new)?
@@ -964,8 +1005,17 @@ fn renamable_global(
     sources: &Sources,
     cursor: &Cursor,
     at: usize,
-) -> Result<HashSet<String>, String> {
-    let targets = sources.targets(cursor, at);
+) -> Result<(HashSet<String>, usize), String> {
+    // With the index off only the open documents are read, and a closed
+    // file that names the global would keep the old name (#2051).
+    if !sources.idx.enabled {
+        return Err(
+            "the workspace index is off (`workspaceIndex.enable`), so the files that are not \
+             open, which may name this global, are not read: a rename could not be complete"
+                .into(),
+        );
+    }
+    let (targets, len) = sources.global_at(cursor, at);
     let mut sorted: Vec<&String> = targets.iter().collect();
     sorted.sort_unstable();
     let Some(shown) = sorted.first() else {
@@ -988,11 +1038,11 @@ fn renamable_global(
              q-lint cannot read, so the places it is named cannot all be found"
         ));
     }
-    Ok(targets)
+    Ok((targets, len))
 }
 
-/// The edits that rename the global written at `at..at + len` of the
-/// cursor's document to `new` - its last part only, as `g` or as the whole
+/// The edits that rename the global written at `at` of the cursor's
+/// document to `new` - its last part only, as `g` or as the whole
 /// name with the same namespace written before it (`.ns.g` for `.ns.f`) -
 /// in every indexed file that names it.
 ///
@@ -1003,15 +1053,22 @@ fn rename_global(
     sources: &Sources,
     cursor: &Cursor,
     at: usize,
-    len: usize,
     new: &str,
 ) -> Result<Value, String> {
-    let targets = renamable_global(sources, cursor, at)?;
+    let (targets, len) = renamable_global(sources, cursor, at)?;
     let spelled = &cursor.text[at..at + len];
     let old = leaf(spelled);
     let written = &spelled[..spelled.len() - old.len()];
+    // The namespace may be the one the name resolves to and not one written
+    // there: `add` under `\d .lib` is `.lib.add`, and `.lib.plus` names the
+    // same namespace (#2049).
+    let resolved = targets.iter().find_map(|name| {
+        let namespace = name.strip_suffix(old).filter(|ns| ns.ends_with('.'))?;
+        new.strip_prefix(namespace)
+    });
     let new = match new.strip_prefix(written) {
         Some(rest) if !written.is_empty() => rest,
+        _ if let Some(rest) = resolved => rest,
         _ if new.contains('.') => {
             return Err(format!(
                 "q-lint renames the last part of a name only: `{spelled}` can become \
@@ -1029,6 +1086,7 @@ fn rename_global(
     if new == old {
         return Ok(json!({"changes": {}}));
     }
+    let targets = in_every_context(sources, targets, old);
     let mut renamed: Vec<String> = targets.iter().map(|name| releafed(name, new)).collect();
     renamed.sort_unstable();
     if let Some(taken) = renamed.iter().find(|name| sources.idx.ws.defines(name)) {
@@ -1048,6 +1106,7 @@ fn rename_global(
         let mut bare = vec![];
         let mut columns = vec![];
         let mut done = HashSet::new();
+        let mut edited = vec![];
         let all = mentions(&text);
         for m in &all {
             if done.contains(&m.at) {
@@ -1060,6 +1119,7 @@ fn rename_global(
                 continue;
             };
             done.insert(m.at);
+            edited.push(m.at);
             let spelling = &text[m.at..m.at + part];
             let place = || {
                 let (line, _) = lines.position(m.at);
@@ -1143,6 +1203,20 @@ fn rename_global(
                 line + 1
             ));
         }
+        // k reads `_` as its drop, no part of a name: KDB-X 5 refuses
+        // `k)gk:f_k+1` with 'k, where `k)gk:fk+1` read the global (#2044).
+        // No spelling of the new name is one k reads as it.
+        if new.contains('_')
+            && let Some(at) = q_lint_rs::on_k_line(&text, &edited)
+        {
+            let (line, _) = lines.position(at);
+            return Err(format!(
+                "`{new}` has a `_`, which the `k)` line at {}:{} would read as k's drop, \
+                 no part of a name",
+                Path::new(key).display(),
+                line + 1
+            ));
+        }
         if let Some(hidden) = q_lint_rs::shadowing(&text, new, &bare) {
             let (line, _) = lines.position(hidden);
             return Err(format!(
@@ -1157,6 +1231,55 @@ fn rename_global(
         }
     }
     Ok(json!({"changes": changes}))
+}
+
+/// `targets` with every other name a rewritten mention answers to: a file
+/// loaded under two `\d` contexts defines `.aa.ff` and `.bb.ff` with one
+/// `ff:`, so renaming that text renames both, and each use of either has to
+/// follow. KDB-X 5 runs `\d .aa`, `\l b.q`, `\d .bb`, `\l b.q` with b.q's
+/// `ff:{1}`, and `.bb.ff[]` is 1 (#2043). Followed until nothing is added, a
+/// mention through the head of a dotted read (`ta` of `ta.c`) included.
+fn in_every_context(sources: &Sources, mut targets: HashSet<String>, old: &str) -> HashSet<String> {
+    let texts: Vec<_> = sources
+        .keys()
+        .into_iter()
+        .filter_map(|key| {
+            let (_, text) = sources.text(key)?;
+            text.contains(old).then_some((key, text))
+        })
+        .collect();
+    loop {
+        let mut added = vec![];
+        for (key, text) in &texts {
+            let placement = &sources.idx.files[*key].placement;
+            for m in mentions(text) {
+                let names = sources.names(text, &m, placement);
+                // How much of each name is after the part a rename rewrites.
+                let rest = names.iter().find_map(|name| {
+                    if targets.contains(name) {
+                        return Some(0);
+                    }
+                    name.match_indices('.')
+                        .rfind(|&(dot, _)| dot > 0 && targets.contains(&name[..dot]))
+                        .map(|(dot, _)| name.len() - dot)
+                });
+                let Some(rest) = rest else {
+                    continue;
+                };
+                added.extend(
+                    names
+                        .iter()
+                        .filter(|name| name.len() > rest)
+                        .map(|name| name[..name.len() - rest].to_string())
+                        .filter(|name| !targets.contains(name)),
+                );
+            }
+        }
+        if added.is_empty() {
+            return targets;
+        }
+        targets.extend(added);
+    }
 }
 
 /// Whether `name` is one q takes for a name, with no dot in it.

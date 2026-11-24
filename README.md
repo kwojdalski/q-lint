@@ -499,7 +499,8 @@ These are heuristics over source text, not a proof: a clean lint means no rule
 matched, which is weaker than "this code is correct".
 Column-zero `p)`/`k)` blocks and their indented continuations are opaque to
 built-in q checks; Python/K syntax is not validated. Normal q analysis resumes
-on the next nonblank, unindented q line, and `q)` bodies are checked normally.
+on the next nonblank, unindented q line - a bare `/` among them, which opens a
+block comment as it does anywhere - and `q)` bodies are checked normally.
 The Python-only repository hook's embedded-q-in-Python check is outside the
 standalone q analyzers' scope.
 
@@ -605,7 +606,8 @@ transcript.
 running it: `textDocument/documentSymbol` (the outline; nested or flat, as
 the client declares), `workspace/symbol`, `textDocument/definition`,
 `textDocument/references`, `textDocument/documentHighlight` (a write told
-from a read), and `textDocument/prepareRename`/`textDocument/rename`.
+from a read - an assignment, an amend, and a table changed in place by its
+name, `` update .. from `t ``, `` `c xasc `t ``, `@[`t;..]`), and `textDocument/prepareRename`/`textDocument/rename`.
 
 The nested outline puts each name under the namespace it is in, the whole of
 the name before its last dot: `.qetl.io.read` is `read` under `.qetl.io`,
@@ -637,8 +639,10 @@ ignored.
 
 On the path of a load - `\l src/init.q`, `system "l src/init.q"`, or a file
 symbol `` `:lib/x.q `` - Go to Definition opens the file and a hover names it.
-The path is followed as the dependency graph follows it: against the first
-workspace folder, then the loading file's own directory and each one above it;
+The path is followed as the dependency graph follows it: against the
+workspace folder the loading file is in (the first, for a file in none) -
+each folder is the root of its own loads - then the loading file's own
+directory and each one above it;
 a directory loads the scripts directly in it. A load that reaches no file, or
 a relative one written after the script changes directory - a `\cd`, or the
 load of a directory, which q stays in - goes nowhere.
@@ -681,12 +685,16 @@ loaded in - and only its last part changes: `.lib.add` and `add` under
 in another namespace is refused. A dotted read through the global is one of
 those places, and only the global's part of it changes: `ta.c` for a table
 `ta` (q reads column `c` of the global), `.cfg.port` for a `.cfg` assigned
-whole. `prepareRename` answers with the range of
+whole. A file loaded under two contexts defines the name in both with one
+assignment, so both are renamed, and the uses of each with them.
+`prepareRename` answers with the range of
 that last part. `rename.enable: false` leaves renaming unannounced, and the
-rest of navigation on. The rename is refused for a name in a one-letter namespace
+rest of navigation on. The rename is refused while `workspaceIndex.enable` is
+`false`, since a file that is not open is then not read, for a name in a one-letter namespace
 (`.z.pg`, `.q.f`, which q keeps for itself), a name no indexed file assigns
 (q's own, or defined where the server cannot read), a new name that is not
-one q takes, is reserved or is already assigned, and one that is a
+one q takes, is reserved or is already assigned, one with a `_` where a
+`k)` line names the global (k would read it as its drop), and one that is a
 parameter or local of a lambda reading the global without its namespace,
 where it would hide the renamed global. It is also refused, naming the line,
 where a use cannot be told from something else or cannot be rewritten: `ta.c`
@@ -852,7 +860,7 @@ written only when the item is accepted; its `detail` says `adds \l
 lib/util.q`. "Can already see" is the document itself, every file it loads
 directly or through another, and every file loaded by a file that loads it -
 a sibling its loader brings in - so a load already there is never added
-twice. The path is written from the first workspace folder, or else from the
+twice. The path is written from the document's workspace folder, or else from the
 document's own directory, whichever the dependency graph follows to that
 file. The line goes after the last `\l` line above the cursor and above the
 file's first `\d`, keeping the loads' order; with none, after a leading
@@ -908,6 +916,8 @@ q-lint/testsReaching  {"textDocument": {"uri": U}, "previous": "the text before 
                    -> {"changed": [name], "tests": [{"uri": uri, "name": N}]}
 ```
 
+All three name a global as q does where its file is loaded: `ff:` in a
+file loaded under `\d .aa` is `.aa.ff`, in the `.aa` namespace.
 `deadCode` lists the functions no indexed file reads. A name counts as read
 when a file reads it as code, and also when its last part is spelled in a
 symbol or a string anywhere (`` `f ``, `value "f[]"`), since q reaches a

@@ -394,8 +394,8 @@ impl Index {
                 .iter()
                 .map(|k| self.files[k].loads.as_slice())
                 .collect();
-            let cwd = self.cwd();
-            guarded(|| q_lint_rs::graph::placements(&paths, &loads, &cwd))
+            let cwds = self.cwds();
+            guarded(|| q_lint_rs::graph::placements(&paths, &loads, &cwds))
                 .unwrap_or_else(|_| vec![Placement::default(); keys.len()])
         } else {
             vec![Placement::default(); keys.len()]
@@ -422,17 +422,21 @@ impl Index {
         changed
     }
 
-    /// The directory a relative `\l` is tried against first: the first
+    /// The directories a relative `\l` may be tried against first: each
     /// workspace folder, which is where a q process over this tree is most
-    /// likely started, since the source does not say. By its real path, as
-    /// the files are keyed: a directory loaded, `\l db`, is found by the
-    /// files keyed under it, and a folder opened through a symlink named no
-    /// such directory (#1366).
-    fn cwd(&self) -> std::path::PathBuf {
-        self.roots.first().map_or_else(
-            || std::env::current_dir().unwrap_or_default(),
-            |root| file_key(root).into(),
-        )
+    /// likely started, since the source does not say - a file's own folder
+    /// for a file in one (`graph::start_dir`, #2045), the current directory
+    /// with none. By their real paths, as the files are keyed: a directory
+    /// loaded, `\l db`, is found by the files keyed under it, and a folder
+    /// opened through a symlink named no such directory (#1366).
+    fn cwds(&self) -> Vec<std::path::PathBuf> {
+        if self.roots.is_empty() {
+            return vec![std::env::current_dir().unwrap_or_default()];
+        }
+        self.roots
+            .iter()
+            .map(|root| file_key(root).into())
+            .collect()
     }
 
     /// Forget `path` and, when it was a directory, every file under it but
@@ -1572,7 +1576,14 @@ pub fn serve(
                 let data = guarded(|| {
                     docs.get(&uri)
                         .filter(|_| opts.semantic_tokens && is_q_uri(&uri))
-                        .map_or_else(Vec::new, |text| encode_tokens(text, &idx.ws))
+                        .map_or_else(Vec::new, |text| {
+                            let placement = idx
+                                .files
+                                .get(&file_key(&path_of(&uri)))
+                                .map(|file| file.placement.clone())
+                                .unwrap_or_default();
+                            encode_tokens(text, &idx.ws, &placement)
+                        })
                 });
                 match data {
                     Ok(data) => send(writer, json!({"id": id, "result": {"data": data}}))?,
@@ -2027,11 +2038,11 @@ const TOKEN_TYPES: [&str; 2] = ["function", "parameter"];
 /// Semantic tokens in the protocol's packed form: five integers per token -
 /// line delta, start delta (from the previous token when on the same line),
 /// length, type and modifiers - with positions in UTF-16 code units.
-fn encode_tokens(source: &str, ws: &Workspace) -> Vec<u32> {
+fn encode_tokens(source: &str, ws: &Workspace, placement: &Placement) -> Vec<u32> {
     let mut data = vec![];
     let (mut prev_line, mut prev_start) = (0usize, 0usize);
     let lines = Lines::new(source);
-    for (at, len, kind) in semantic_tokens_in(source, ws) {
+    for (at, len, kind) in semantic_tokens_in(source, ws, placement) {
         let (line, start) = lines.position(at);
         let delta_start = if line == prev_line {
             start - prev_start
@@ -3537,7 +3548,7 @@ mod tests {
         // inside a lambda whose own parameter is also named f, so that read
         // is the parameter, not the function.
         let source = "f:{[a] a+1}\nr:f[1]\ng:{[f;b] f+b}\n";
-        let data = encode_tokens(source, &Workspace::default());
+        let data = encode_tokens(source, &Workspace::default(), &Placement::default());
         let tokens: Vec<&[u32]> = data.chunks(5).collect();
         assert_eq!(
             tokens,

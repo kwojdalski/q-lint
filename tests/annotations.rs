@@ -1332,6 +1332,51 @@ fn a_test_carries_the_name_q_defines_it_by() {
     );
 }
 
+#[test]
+fn the_inventories_name_a_function_where_its_file_is_loaded() {
+    // #2046. q 5 loads b.q's `ff:{1}` under `\d .aa` as `.aa.ff`, which
+    // main.q calls and test_x's test reaches; test_y's bare `ff` is a root
+    // ff nothing defines.
+    let dir = tempfile::tempdir().unwrap();
+    let files = [
+        ("main.q", "\\d .aa\n\\l b.q\n\\d .\nshow .aa.ff[]\n"),
+        ("b.q", "ff:{1}\n"),
+        ("test_x.q", "\\l main.q\ntest_ff:{.aa.ff[]~1}\n"),
+        ("test_y.q", "\\l main.q\ntest_gg:{ff[]~1}\n"),
+    ];
+    let (mut server, _) = Server::over(dir.path(), &files, client(), Value::Null);
+    let reply = server.request("q-lint/definitions", json!({}));
+    let ff: Vec<(&str, &str)> = reply["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"))
+        .iter()
+        .filter(|d| d["uri"].as_str().unwrap().ends_with("/b.q"))
+        .map(|d| {
+            (
+                d["name"].as_str().unwrap(),
+                d["namespace"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(ff, [(".aa.ff", ".aa")], "{reply}");
+    let reply = server.request("q-lint/deadCode", json!({}));
+    let dead: Vec<&str> = reply["result"]["functions"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"))
+        .iter()
+        .map(|d| d["name"].as_str().unwrap())
+        .collect();
+    assert!(
+        !dead.contains(&".aa.ff") && !dead.contains(&"ff"),
+        "{reply}"
+    );
+    let (changed, tests) = reaching(&mut server, dir.path(), "b.q", "ff:{2}\n", "ff:{1}\n");
+    assert_eq!(
+        (changed, tests),
+        (json!([".aa.ff"]), vec!["test_ff".into()])
+    );
+}
+
 /// `q-lint/testsReaching` for `name`, saved as `now` over `previous`: the
 /// changed names and the tests reached, sorted.
 fn reaching(
@@ -1524,6 +1569,92 @@ fn renaming_a_folder_rewrites_the_loads_under_it_and_moving_a_loader_its_own() {
     );
     assert!(
         edits.contains(&("main.q".to_string(), 1, 3, 14, "lib/y.q".to_string())),
+        "{reply}"
+    );
+}
+
+#[test]
+fn each_workspace_folder_is_the_root_of_its_own_relative_loads() {
+    // #2045. Folders A and B each hold main.q (`\l lib.q`) and lib.q. A q
+    // started in B loads B's lib.q, so B's main.q leads there, and renaming
+    // one folder's lib.q rewrites that folder's load alone.
+    let dir = tempfile::tempdir().unwrap();
+    for folder in ["A", "B"] {
+        std::fs::create_dir_all(dir.path().join(folder)).unwrap();
+        std::fs::write(dir.path().join(folder).join("main.q"), "\\l lib.q\n").unwrap();
+        std::fs::write(dir.path().join(folder).join("lib.q"), "ff:{1}\n").unwrap();
+    }
+    let options = json!({"renameLoads": {"enable": true}});
+    let (mut server, _) = Server::over(&dir.path().join("A"), &[], client(), options);
+    let b = file_uri(&dir.path().join("B"));
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWorkspaceFolders",
+        "params":{"event":{"added":[{"uri":b,"name":"B"}],"removed":[]}}}),
+    );
+    let main = file_uri(&dir.path().join("B/main.q"));
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didOpen",
+        "params":{"textDocument":{"uri":main,"languageId":"q","version":1,"text":"\\l lib.q\n"}}}));
+    let reply = server.request(
+        "textDocument/definition",
+        json!({"textDocument":{"uri":main},"position":{"line":0,"character":4}}),
+    );
+    let targets: Vec<&str> = reply["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"))
+        .iter()
+        .map(|l| l["uri"].as_str().unwrap())
+        .collect();
+    assert_eq!(targets, [file_uri(&dir.path().join("B/lib.q"))], "{reply}");
+    for folder in ["A", "B"] {
+        let (old, new) = (format!("{folder}/lib.q"), format!("{folder}/util.q"));
+        let reply = server.request(
+            "workspace/willRenameFiles",
+            rename_params(dir.path(), &[(&old, &new)]),
+        );
+        assert_eq!(
+            renamed(&reply, dir.path()),
+            [(format!("{folder}/main.q"), 0, 3, 8, "util.q".to_string())],
+            "{reply}"
+        );
+    }
+}
+
+#[test]
+fn a_load_spelled_in_another_case_is_rewritten_on_a_disk_that_ignores_case() {
+    // #2050. Where the disk ignores case, q loads lib/u.q for `\l Lib/U.q`,
+    // so renaming lib/u.q, or the folder, moves what that load reaches.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("lib")).unwrap();
+    std::fs::write(dir.path().join("lib/u.q"), "u:1\n").unwrap();
+    if !dir.path().join("LIB/U.Q").exists() {
+        return;
+    }
+    let files = [("main.q", "\\l Lib/U.q\n\\l LIB/u.q\n")];
+    let options = json!({"renameLoads": {"enable": true}});
+    let (mut server, _) = Server::over(dir.path(), &files, client(), options);
+    let reply = server.request(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("lib/u.q", "lib/w.q")]),
+    );
+    // The part that still leads there keeps the case it was written in.
+    assert_eq!(
+        renamed(&reply, dir.path()),
+        [
+            ("main.q".to_string(), 0, 3, 10, "Lib/w.q".to_string()),
+            ("main.q".into(), 1, 3, 10, "LIB/w.q".into()),
+        ],
+        "{reply}"
+    );
+    let reply = server.request(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("lib", "core")]),
+    );
+    assert_eq!(
+        renamed(&reply, dir.path()),
+        [
+            ("main.q".to_string(), 0, 3, 10, "core/U.q".to_string()),
+            ("main.q".into(), 1, 3, 10, "core/u.q".into()),
+        ],
         "{reply}"
     );
 }
