@@ -132,6 +132,50 @@ const CASES: &[(&str, &str)] = &[
         "delete from t where px>2",
         "![t;enlist (>;`px;2);0b;`symbol$()]",
     ),
+    // A query in parentheses inside another is its own tree, each argument
+    // as `parse` holds it: what the functional form takes, enlisted unless
+    // `eval` leaves it as it is (#2022). On KDB-X 5,
+    // parse "select from t where sym in (exec sym from t where px>3)" is
+    // (?;`t;,,(in;`sym;(?;`t;,,(>;`px;3);();,`sym));0b;()), and so on down:
+    // each of these was compared there with `parse` of its query, argument
+    // by argument as q displays them, as well as by what it returns. They
+    // were not run on PeachQ.
+    (
+        "select from t where sym in (exec sym from t where px>3)",
+        "?[t;enlist (in;`sym;(?;`t;enlist enlist (>;`px;3);();enlist `sym));0b;()]",
+    ),
+    (
+        "select from t where px>(exec max px from t where sym=`a, size>10)",
+        "?[t;enlist (>;`px;(?;`t;enlist ((=;`sym;enlist`a);(>;`size;10));();enlist (max;`px)));0b;()]",
+    ),
+    (
+        "select from t where px<(count select px, size by sym from t)",
+        "?[t;enlist (<;`px;(count;(?;`t;();(enlist`sym)!enlist `sym;`px`size!(`px;`size))));0b;()]",
+    ),
+    (
+        "select from t where px<(count select distinct sym from t)",
+        "?[t;enlist (<;`px;(count;(?;`t;();1b;(enlist`sym)!enlist `sym)));0b;()]",
+    ),
+    (
+        "select from t where px<(count exec sum px by sym from t)",
+        "?[t;enlist (<;`px;(count;(?;`t;();enlist `sym;enlist (sum;`px))));0b;()]",
+    ),
+    (
+        "select from t where size in (exec size from (delete from t where px>2))",
+        "?[t;enlist (in;`size;(?;(!;`t;enlist enlist (>;`px;2);0b;`symbol$());();();enlist `size));0b;()]",
+    ),
+    (
+        "select from t where size in (exec size from (delete px from t))",
+        "?[t;enlist (in;`size;(?;(!;`t;();0b;enlist enlist`px);();();enlist `size));0b;()]",
+    ),
+    (
+        "select from t where px in (exec px from (update px:2*px from t where sym=`a))",
+        "?[t;enlist (in;`px;(?;(!;`t;enlist enlist (=;`sym;enlist`a);0b;(enlist`px)!enlist (*;2;`px));();();enlist `px));0b;()]",
+    ),
+    (
+        "select from t where sym in (exec a:sym, b:px from t)[`a]",
+        "?[t;enlist (in;`sym;((?;`t;();();`a`b!(`sym;`px));enlist`a));0b;()]",
+    ),
 ];
 
 /// qSQL that is not rewritten, and why.

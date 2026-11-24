@@ -363,8 +363,9 @@ Each has its own switch, listed in [Settings](#settings) and
   `select n:count i by sym from t where px>2` becomes
   `?[t;enlist (>;`px;2);(enlist`sym)!enlist `sym;(enlist`n)!enlist (count;`i)]`
   and back. Each column, constraint and grouping is written as the tree
-  q's `parse` gives - a name as a symbol, a symbol literal enlisted - and an
-  unnamed column gets the name q would give it. What the rewrite cannot read
+  q's `parse` gives - a name as a symbol, a symbol literal enlisted, a query
+  in parentheses inside another as its own tree (``(?;`u;();();enlist `c)``) -
+  and an unnamed column gets the name q would give it. What the rewrite cannot read
   (an adverb, a projection, `select[n]`, a glyph used as a monad) is refused,
   and **Refactor...** says why. Every case in the tests was run both ways on
   KDB-X and PeachQ and compared with `~`. `q-lint.functionalForm.enable`.
