@@ -324,46 +324,64 @@ function outputToJupyter(output: QnbOutput, order: number | undefined, last: boo
     : { output_type: "display_data", data, metadata: output.metadata ?? {} };
 }
 
-/// The notebook as an nbformat 4.4 Jupyter notebook, as JSON text.
+/// The kernel and language a q notebook is written with, when it names none.
+const Q_KERNEL = { display_name: "q (kdb+)", language: "q", name: "qpk" };
+const Q_LANGUAGE = { name: "q", file_extension: ".q", mimetype: "text/x-q" };
+
+/// The language of the kernel a Jupyter notebook's `metadata` names.
+const kernelLanguage = (meta: Json): string =>
+  String((isObject(meta.language_info) ? meta.language_info.name : undefined) ?? (isObject(meta.kernelspec) ? meta.kernelspec.language : undefined) ?? "q").toLowerCase();
+
+/// The notebook as an nbformat 4 Jupyter notebook, as JSON text: 4.5, with
+/// the cells' ids, when every cell has the id `fromIpynb` kept.
 export function toIpynb(qnb: Qnb): string {
+  const meta = qnb.metadata ?? {};
+  // A kernel the notebook names is kept (#1548): on another language's, a q
+  // cell goes back with the `%%q` magic `fromIpynb` took off.
+  const magic = kernelLanguage(meta) !== "q";
+  const ids = qnb.cells.length > 0 && qnb.cells.every((c) => typeof c.extra?.id === "string");
   const cells = qnb.cells.map((cell): Json => {
-    // The attachments `fromIpynb` kept, which `![x](attachment:a.png)` in
-    // the cell's text names (#1234).
-    const attachments = cell.extra?.attachments !== undefined ? { attachments: cell.extra.attachments } : {};
-    if (cell.kind === "markdown") {
-      return { cell_type: "markdown", metadata: cell.metadata ?? {}, source: jupyterLines(cell.source), ...attachments };
-    }
-    const language = cell.language ?? "q";
-    // A Jupyter raw cell, which `fromIpynb` reads as a code cell in `raw`,
-    // goes back as one (#1107).
-    if (language === "raw") {
-      return { cell_type: "raw", metadata: cell.metadata ?? {}, source: jupyterLines(cell.source), ...attachments };
-    }
-    const metadata: Json = { ...(cell.metadata ?? {}) };
-    if (language !== "q") {
-      metadata.vscode = { ...(isObject(metadata.vscode) ? metadata.vscode : {}), languageId: language };
-    }
-    const order = cell.execution?.order;
-    const outputs = cell.outputs ?? [];
-    return {
-      cell_type: "code",
-      execution_count: order ?? null,
-      metadata,
-      outputs: outputs.map((o, i) => outputToJupyter(o, order, i === outputs.length - 1)),
-      source: jupyterLines(cell.source),
-    };
+    const json = convertCell(cell, magic);
+    return ids ? { id: cell.extra?.id, ...json } : json;
   });
   const notebook = {
     cells,
-    metadata: {
-      ...(qnb.metadata ?? {}),
-      kernelspec: { display_name: "q (kdb+)", language: "q", name: "qpk" },
-      language_info: { name: "q", file_extension: ".q", mimetype: "text/x-q" },
-    },
+    metadata: { ...meta, ...(meta.kernelspec === undefined ? { kernelspec: Q_KERNEL, language_info: Q_LANGUAGE } : {}) },
     nbformat: 4,
-    nbformat_minor: 4,
+    nbformat_minor: ids ? 5 : 4,
   };
   return JSON.stringify(notebook, null, 1) + "\n";
+}
+
+/// One cell as Jupyter writes it; `magic`: a q cell takes `%%q`.
+function convertCell(cell: QnbCell, magic: boolean): Json {
+  // The attachments `fromIpynb` kept, which `![x](attachment:a.png)` in
+  // the cell's text names (#1234).
+  const attachments = cell.extra?.attachments !== undefined ? { attachments: cell.extra.attachments } : {};
+  if (cell.kind === "markdown") {
+    return { cell_type: "markdown", metadata: cell.metadata ?? {}, source: jupyterLines(cell.source), ...attachments };
+  }
+  const language = cell.language ?? "q";
+  // A Jupyter raw cell, which `fromIpynb` reads as a code cell in `raw`,
+  // goes back as one (#1107).
+  if (language === "raw") {
+    return { cell_type: "raw", metadata: cell.metadata ?? {}, source: jupyterLines(cell.source), ...attachments };
+  }
+  const metadata: Json = { ...(cell.metadata ?? {}) };
+  if (language !== "q") {
+    metadata.vscode = { ...(isObject(metadata.vscode) ? metadata.vscode : {}), languageId: language };
+  }
+  const order = cell.execution?.order;
+  const outputs = cell.outputs ?? [];
+  const options = /^\/ %%q ([^\r\n]*)(\r?\n|$)/.exec(cell.source);
+  const source = !magic || language !== "q" ? cell.source : options !== null ? `%%q ${options[1]}\n${cell.source.slice(options[0].length)}` : `%%q\n${cell.source}`;
+  return {
+    cell_type: "code",
+    execution_count: order ?? null,
+    metadata,
+    outputs: outputs.map((o, i) => outputToJupyter(o, order, i === outputs.length - 1)),
+    source: jupyterLines(source),
+  };
 }
 
 export class IpynbError extends Error {}
@@ -421,14 +439,15 @@ export function fromIpynb(raw: string): Qnb {
   const meta = isObject(json.metadata) ? json.metadata : {};
   const info = isObject(meta.language_info) ? meta.language_info : {};
   const spec = isObject(meta.kernelspec) ? meta.kernelspec : {};
-  const notebookLanguage = String(info.name ?? spec.language ?? "q").toLowerCase();
+  const notebookLanguage = kernelLanguage(meta);
   const cells = json.cells.map((cell, i): QnbCell => {
     if (!isObject(cell)) {
       throw new IpynbError(`cell ${i + 1} is not an object`);
     }
     const source = joined(cell.source);
     const metadata = isObject(cell.metadata) ? { ...cell.metadata } : {};
-    const extra = cell.attachments !== undefined ? { extra: { attachments: cell.attachments } } : {};
+    const fields = { ...(typeof cell.id === "string" ? { id: cell.id } : {}), ...(cell.attachments !== undefined ? { attachments: cell.attachments } : {}) };
+    const extra = Object.keys(fields).length > 0 ? { extra: fields } : {};
     const kept = Object.keys(metadata).length > 0 ? { metadata } : {};
     if (cell.cell_type === "markdown") {
       return { kind: "markdown", source, ...kept, ...extra };
@@ -463,8 +482,13 @@ export function fromIpynb(raw: string): Qnb {
       ...(outputs.length > 0 ? { outputs } : {}),
       ...(order !== undefined ? { execution: { order } } : {}),
       ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
+      ...extra,
     };
   });
-  return { cells };
+  // The notebook's metadata is kept (#1548), less the q kernel `toIpynb`
+  // writes for a notebook that names none.
+  const { kernelspec: _k, language_info: _l, ...rest } = meta;
+  const own = JSON.stringify(spec) === JSON.stringify(Q_KERNEL) && JSON.stringify(info) === JSON.stringify(Q_LANGUAGE) ? rest : meta;
+  return { cells, ...(Object.keys(own).length > 0 ? { metadata: own } : {}) };
 }
 

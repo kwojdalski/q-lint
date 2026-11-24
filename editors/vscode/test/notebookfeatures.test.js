@@ -522,3 +522,30 @@ test("a JSON output that is an array or a string comes back from Jupyter as the 
     assert.strictEqual(fromIpynb(toIpynb(qnb)).cells[0].outputs[0].items[0].text, text);
   }
 });
+
+test("a Jupyter notebook keeps its metadata, kernel and cell ids through import and export (#1548)", () => {
+  const nb = {
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: { author: "me", kernelspec: { language: "python", name: "python3", display_name: "Python 3" }, language_info: { name: "python" } },
+    cells: [
+      { id: "m1", cell_type: "markdown", metadata: {}, source: "# T" },
+      { id: "c1", cell_type: "code", execution_count: null, metadata: {}, source: "import pykx", outputs: [] },
+      { id: "c2", cell_type: "code", execution_count: null, metadata: {}, source: "%%q --port 5000\ntil 3", outputs: [] },
+      { id: "c3", cell_type: "code", execution_count: null, metadata: {}, source: "%%q\n1+1", outputs: [] },
+    ],
+  };
+  const qnb = fromIpynb(JSON.stringify(nb));
+  assert.strictEqual(qnb.metadata.author, "me");
+  assert.strictEqual(qnb.cells[1].extra.id, "c1");
+  const back = JSON.parse(toIpynb(qnb));
+  assert.deepStrictEqual(back.metadata, nb.metadata);
+  assert.strictEqual(back.nbformat_minor, 5);
+  assert.deepStrictEqual(back.cells.map((c) => c.id), ["m1", "c1", "c2", "c3"]);
+  // On a Python kernel a q cell goes back with its %%q magic.
+  assert.deepStrictEqual(back.cells.map((c) => c.source.join("")), ["# T", "import pykx", "%%q --port 5000\ntil 3", "%%q\n1+1"]);
+  // A q notebook's own kernel is not kept as metadata of its .qnb.
+  const q = { cells: [{ kind: "code", source: "1" }] };
+  assert.strictEqual(fromIpynb(toIpynb(q)).metadata, undefined);
+  assert.strictEqual(JSON.parse(toIpynb(q)).metadata.kernelspec.name, "qpk");
+});
