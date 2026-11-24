@@ -914,6 +914,8 @@ q-lint/testsReaching  {"textDocument": {"uri": U}, "previous": "the text before 
                    -> {"changed": [name], "tests": [{"uri": uri, "name": N}]}
 ```
 
+All three name a global as q does where its file is loaded: `ff:` in a
+file loaded under `\d .aa` is `.aa.ff`, in the `.aa` namespace.
 `deadCode` lists the functions no indexed file reads. A name counts as read
 when a file reads it as code, and also when its last part is spelled in a
 symbol or a string anywhere (`` `f ``, `value "f[]"`), since q reaches a

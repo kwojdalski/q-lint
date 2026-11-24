@@ -1332,6 +1332,51 @@ fn a_test_carries_the_name_q_defines_it_by() {
     );
 }
 
+#[test]
+fn the_inventories_name_a_function_where_its_file_is_loaded() {
+    // #2046. q 5 loads b.q's `ff:{1}` under `\d .aa` as `.aa.ff`, which
+    // main.q calls and test_x's test reaches; test_y's bare `ff` is a root
+    // ff nothing defines.
+    let dir = tempfile::tempdir().unwrap();
+    let files = [
+        ("main.q", "\\d .aa\n\\l b.q\n\\d .\nshow .aa.ff[]\n"),
+        ("b.q", "ff:{1}\n"),
+        ("test_x.q", "\\l main.q\ntest_ff:{.aa.ff[]~1}\n"),
+        ("test_y.q", "\\l main.q\ntest_gg:{ff[]~1}\n"),
+    ];
+    let (mut server, _) = Server::over(dir.path(), &files, client(), Value::Null);
+    let reply = server.request("q-lint/definitions", json!({}));
+    let ff: Vec<(&str, &str)> = reply["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"))
+        .iter()
+        .filter(|d| d["uri"].as_str().unwrap().ends_with("/b.q"))
+        .map(|d| {
+            (
+                d["name"].as_str().unwrap(),
+                d["namespace"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(ff, [(".aa.ff", ".aa")], "{reply}");
+    let reply = server.request("q-lint/deadCode", json!({}));
+    let dead: Vec<&str> = reply["result"]["functions"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"))
+        .iter()
+        .map(|d| d["name"].as_str().unwrap())
+        .collect();
+    assert!(
+        !dead.contains(&".aa.ff") && !dead.contains(&"ff"),
+        "{reply}"
+    );
+    let (changed, tests) = reaching(&mut server, dir.path(), "b.q", "ff:{2}\n", "ff:{1}\n");
+    assert_eq!(
+        (changed, tests),
+        (json!([".aa.ff"]), vec!["test_ff".into()])
+    );
+}
+
 /// `q-lint/testsReaching` for `name`, saved as `now` over `previous`: the
 /// changed names and the tests reached, sorted.
 fn reaching(

@@ -65,24 +65,29 @@ fn definitions(sources: &Sources) -> Value {
             continue;
         };
         let lines = Lines::new(&text);
+        let placement = sources.placement(key);
         let mut seen = HashSet::new();
         for m in &mentions(&text) {
             let Some(d) = &m.definition else {
                 continue;
             };
-            if !seen.insert(m.name.clone()) {
-                continue;
+            // As q names it where the file is loaded: `ff:` in a file
+            // loaded under `\d .aa` is `.aa.ff` (#2046).
+            for name in sources.names(&text, m, &placement) {
+                if !seen.insert(name.clone()) {
+                    continue;
+                }
+                out.insert(
+                    (namespace(&name).to_string(), name.clone(), uri.clone()),
+                    json!({
+                        "name": name,
+                        "namespace": namespace(&name),
+                        "kind": if d.function { "function" } else { "variable" },
+                        "uri": uri,
+                        "range": range(&lines, m.at, m.len),
+                    }),
+                );
             }
-            out.insert(
-                (namespace(&m.name).to_string(), m.name.clone(), uri.clone()),
-                json!({
-                    "name": m.name,
-                    "namespace": namespace(&m.name),
-                    "kind": if d.function { "function" } else { "variable" },
-                    "uri": uri,
-                    "range": range(&lines, m.at, m.len),
-                }),
-            );
         }
     }
     json!(out.into_values().collect::<Vec<_>>())
@@ -153,17 +158,24 @@ fn dead_code(params: &Value, sources: &Sources) -> Value {
             continue;
         };
         let lines = Lines::new(&text);
+        let placement = sources.placement(key);
         for m in &mentions(&text) {
+            // Each name as q has it where the file is loaded (#2046).
+            let names = sources.names(&text, m, &placement);
             match &m.definition {
-                Some(d) if d.function => defined.push((
-                    key.to_string(),
-                    uri.clone(),
-                    m.name.clone(),
-                    range(&lines, m.at, m.len),
-                )),
+                Some(d) if d.function => {
+                    defined.extend(names.into_iter().map(|name| {
+                        (
+                            key.to_string(),
+                            uri.clone(),
+                            name,
+                            range(&lines, m.at, m.len),
+                        )
+                    }));
+                }
                 Some(_) => {}
                 None => {
-                    read.insert(m.name.clone());
+                    read.extend(names);
                     // Written without a dot, it may be read in a context
                     // the file is loaded in, or in `.q`.
                     let spelled = &text[m.at..m.at + m.len];
@@ -214,13 +226,17 @@ fn top_level(m: &Mention) -> Option<&Definition> {
 
 /// Each top-level function a text defines, by name, with its statements in
 /// order: every one, since q keeps the last of two (#1359).
-fn statements(text: &str) -> BTreeMap<String, Vec<String>> {
+/// Named as q has them where the file `key` is loaded (#2046).
+fn statements(text: &str, sources: &Sources, key: &str) -> BTreeMap<String, Vec<String>> {
+    let placement = sources.placement(key);
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for m in &mentions(text) {
         if let Some(d) = top_level(m) {
-            out.entry(m.name.clone())
-                .or_default()
-                .push(text[d.start..d.end].trim_end().to_string());
+            for name in sources.names(text, m, &placement) {
+                out.entry(name)
+                    .or_default()
+                    .push(text[d.start..d.end].trim_end().to_string());
+            }
         }
     }
     out
@@ -231,11 +247,15 @@ fn statements(text: &str) -> BTreeMap<String, Vec<String>> {
 /// functions whose statements differ, are new or are gone, and every test
 /// that reaches one of them, the changed tests themselves included.
 fn tests_reaching(params: &Value, sources: &Sources) -> Value {
-    let Some((_, now)) = sources.document(params) else {
+    let Some((uri, now)) = sources.document(params) else {
         return Value::Null;
     };
+    let key = file_key(&path_of(uri));
     let previous = params["previous"].as_str().unwrap_or("");
-    let (before, after) = (statements(previous), statements(now));
+    let (before, after) = (
+        statements(previous, sources, &key),
+        statements(now, sources, &key),
+    );
     // One deleted, or made a value, is in `before` alone, and what called
     // it now fails.
     let changed: Vec<String> = before
@@ -248,32 +268,33 @@ fn tests_reaching(params: &Value, sources: &Sources) -> Value {
         .collect();
     // Who names whom: each name read inside a top-level function's
     // statement is an edge from that function to it, the name as q
-    // resolves it and as written.
+    // resolves it where the file is loaded, and as written - a bare read
+    // in a lambda is looked up at the root too.
     let mut callers: BTreeMap<String, HashSet<String>> = BTreeMap::new();
-    let mut tests: Vec<(String, String, String, String)> = vec![];
+    let mut tests: Vec<(String, String, Vec<String>, String)> = vec![];
     for key in sources.keys() {
         let Some((uri, text)) = sources.text(key) else {
             continue;
         };
-        let mut span: Option<(usize, String)> = None;
+        let placement = sources.placement(key);
+        let mut span: Option<(usize, Vec<String>)> = None;
         let all = mentions(&text);
         for m in &all {
             match &m.definition {
                 Some(_) => {
                     if let Some(d) = top_level(m) {
-                        span = Some((d.end, m.name.clone()));
+                        span = Some((d.end, sources.names(&text, m, &placement)));
                     }
                 }
                 None => {
                     if let Some((end, caller)) = &span
                         && m.at < *end
                     {
-                        let spelled = &text[m.at..m.at + m.len];
-                        for callee in [m.name.as_str(), spelled] {
-                            callers
-                                .entry(callee.to_string())
-                                .or_default()
-                                .insert(caller.clone());
+                        let spelled = text[m.at..m.at + m.len].to_string();
+                        let mut callees = sources.names(&text, m, &placement);
+                        callees.push(spelled);
+                        for callee in callees {
+                            callers.entry(callee).or_default().extend(caller.clone());
                         }
                     }
                 }
@@ -282,10 +303,10 @@ fn tests_reaching(params: &Value, sources: &Sources) -> Value {
         for run in runnables(&text) {
             if run.test.is_some() {
                 let spelled = text[run.at..run.at + run.len].to_string();
-                let resolved = all
-                    .iter()
-                    .find(|m| m.at == run.at)
-                    .map_or(spelled.clone(), |m| m.name.clone());
+                let resolved = all.iter().find(|m| m.at == run.at).map_or_else(
+                    || vec![spelled.clone()],
+                    |m| sources.names(&text, m, &placement),
+                );
                 tests.push((uri.clone(), spelled, resolved, run.name));
             }
         }
@@ -295,18 +316,17 @@ fn tests_reaching(params: &Value, sources: &Sources) -> Value {
     let mut reached: HashSet<String> = changed.iter().cloned().collect();
     let mut queue: Vec<String> = changed.clone();
     while let Some(name) = queue.pop() {
-        let leaf = name.rsplit('.').next().unwrap_or(&name).to_string();
-        for key in [name, leaf] {
-            for caller in callers.get(&key).into_iter().flatten() {
-                if reached.insert(caller.clone()) {
-                    queue.push(caller.clone());
-                }
+        for caller in callers.get(&name).into_iter().flatten() {
+            if reached.insert(caller.clone()) {
+                queue.push(caller.clone());
             }
         }
     }
     let found: Vec<Value> = tests
         .into_iter()
-        .filter(|(_, spelled, resolved, _)| reached.contains(resolved) || reached.contains(spelled))
+        .filter(|(_, spelled, resolved, _)| {
+            resolved.iter().any(|name| reached.contains(name)) || reached.contains(spelled)
+        })
         .map(|(uri, name, _, qualified)| json!({"uri": uri, "name": name, "qualified": qualified}))
         .collect();
     json!({"changed": changed, "tests": found})
