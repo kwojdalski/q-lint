@@ -11,6 +11,7 @@
 // the read-only guard. Works on kdb+ (KDB-X) and PeachQ; held there by
 // processtools_q.test.js.
 import { qName } from "./explorer";
+import { valued, type GuardCode } from "./guard";
 import { isString, listOf } from "./processtools";
 import { symbolLiteral } from "./qliteral";
 
@@ -39,6 +40,12 @@ export interface Shape {
 }
 
 /// What `TABLE_SHAPE` answered for `expression`.
+/// What the read-only guard reads for the shapes of `expressions`: each
+/// one `value`d whole by `TABLE_SHAPE`, so read as `value` reads it (#2033).
+export function shapeGuardCode(expressions: string[]): GuardCode {
+  return expressions.map(valued);
+}
+
 export function readShape(raw: unknown, expression: string): Shape {
   const p = raw as unknown[];
   const bad = (): never => {

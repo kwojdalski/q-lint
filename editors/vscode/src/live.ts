@@ -105,7 +105,7 @@ import { CONNECT_SCRIPT_COMMANDS, onConnectBrought, onConnectOf, readConnectScri
 import { isProduction } from "./agent";
 import { PAGE, readPage, type GridPage } from "./grid";
 import { PLACEHOLDER_VALUES_KEY, lastValue, placeholderNames, readPlaceholders, remembered, substitute } from "./placeholders";
-import { guardCheck, guardQuestion, guardRefusal, readGuard } from "./guard";
+import { guardCheck, guardQuestion, guardRefusal, guardText, readGuard, type GuardCode } from "./guard";
 import type { GridAnswer, GridPayload } from "./grid";
 import { WATCH, WATCHING, intervalProblem, readWatch, watchText } from "./watch";
 import { guardedBy, openTags } from "./guard";
@@ -1262,7 +1262,7 @@ export class Live {
   /// Whether `code` may be sent to `targets`: when the read-only guard
   /// (#918) finds it would change a guarded one, the user is asked first.
   /// `what` names the code in the question, when it is not a query.
-  async guardAllows(code: string | readonly string[], targets: Process[], what?: string): Promise<boolean> {
+  async guardAllows(code: GuardCode, targets: Process[], what?: string): Promise<boolean> {
     const check = guardCheck(code, targets, this.setting(readGuard));
     if (check === undefined) {
       return true;
@@ -1274,7 +1274,7 @@ export class Live {
 
   /// Why `code` is refused on `targets` to a caller that cannot ask the
   /// user, an agent; undefined when the guard lets it be sent.
-  guardRefuses(code: string | readonly string[], targets: Process[]): string | undefined {
+  guardRefuses(code: GuardCode, targets: Process[]): string | undefined {
     const check = guardCheck(code, targets, this.setting(readGuard));
     return check === undefined ? undefined : guardRefusal(check);
   }
@@ -2667,7 +2667,7 @@ export class Live {
   /// With `expect`, the label of the process a question asked about, it
   /// throws `movedFrom` instead of running on any other (#1081).
   async runOnActive<T>(
-    code: string | readonly string[],
+    code: GuardCode,
     query: (connection: QConnection) => Promise<T>,
     guard: "ask" | "refuse" = "ask",
     expect?: string,
@@ -2703,7 +2703,7 @@ export class Live {
       return undefined;
     }
     const started = Date.now();
-    this.running = { code: typeof code === "string" ? code : code.join("\n"), started };
+    this.running = { code: guardText(code), started };
     this.showStatus();
     // The process's own timeout (#1036), while it is on, as in `run`: the
     // connection is dropped as Abort drops it, and the user told.

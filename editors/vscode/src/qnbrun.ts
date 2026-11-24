@@ -19,6 +19,7 @@ import * as path from "node:path";
 import { isProduction } from "./agent";
 import { cellOutputs, chartCellOutputs, DATA, readCellData, type OutputPart } from "./celldata";
 import { cellDirective, type CellMode } from "./celldirectives";
+import { valued, type GuardCode } from "./guard";
 import { LIVE, LIVE_KEY, liveQueries, markdownAfter, readLiveValues, type LiveValue } from "./livemarkdown";
 import type { RowLimitFrom } from "./liveconfig";
 import { address, readProcessFile, type Process } from "./processes";
@@ -54,8 +55,9 @@ export async function cellAnswer(connection: QConnection, mode: CellMode, cut: s
 /// Markdown cells `markdown` after it: the source and every live value's
 /// expression, since all of them are sent (#1088), each read on its own as
 /// each is sent: joined, a `\` or `/` line would hide what came after (#1442).
-export function guardedText(source: string, markdown: string[]): string[] {
-  return [source, ...new Set(markdown.flatMap(liveQueries).map((q) => q.expr))];
+/// `LIVE` values an expression whole, so it is read as `value` reads it (#2033).
+export function guardedText(source: string, markdown: string[]): GuardCode {
+  return [source, ...[...new Set(markdown.flatMap(liveQueries).map((q) => q.expr))].map(valued)];
 }
 
 /// The live values of the Markdown `sources`, each cell's by its key, read
@@ -177,7 +179,7 @@ export function injectParameters(cells: QnbCell[], overrides: Record<string, str
 /// Where a run sends a cell: `use` on the process `label` names, or on the
 /// run's own when it is undefined. Throws, with why, when it cannot.
 export interface Executor {
-  on<T>(label: string | undefined, code: string | readonly string[], use: (connection: QConnection) => Promise<T>): Promise<T>;
+  on<T>(label: string | undefined, code: GuardCode, use: (connection: QConnection) => Promise<T>): Promise<T>;
 }
 
 export interface RunResult {

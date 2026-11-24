@@ -3,6 +3,7 @@
 // stand-in for `Live`. Run after `tsc`; nothing here needs an editor or a q.
 const test = require("node:test");
 const assert = require("node:assert");
+const { guardText } = require("../out/guard.js");
 const Module = require("node:module");
 
 /// A stand-in `vscode`, fresh for each test.
@@ -268,7 +269,7 @@ function slowLive() {
     release: (code) => waiting.get(code)?.(),
     // The guard's pieces, a cell's source and its live values (#1442), as one text.
     runOnActive: async (pieces, query) => {
-      const code = typeof pieces === "string" ? pieces : pieces.join("\n");
+      const code = guardText(pieces);
       await new Promise((resolve) => waiting.set(code, resolve));
       return { process: "p", value: await query({ query: async () => ({ ok: true, type: -7, text: ["1"] }) }) };
     },
@@ -390,7 +391,7 @@ function recordingLive(processes, active) {
       return true;
     },
     runOnActive: async (code, query) => {
-      live.sent.push(typeof code === "string" ? code : code.join("\n"));
+      live.sent.push(guardText(code));
       const connection = {
         query: async (cut) => ({ ok: true, type: -7, text: [`${live.active}: ${cut.join(";")}`] }),
         call: async (lambda, arg) => {
@@ -544,7 +545,7 @@ test("Markdown edited while its cell runs: only the expressions the guard read a
   const sent = [];
   let notebook;
   live.runOnActive = async (code, query) => {
-    guarded.push(...code);
+    guarded.push(...code.map((p) => guardText([p])));
     const connection = {
       // The Markdown is edited while the cell's own query is out.
       query: async () => ((notebook.cells[1].document.getText = () => "Rows: {{q: delete from `trade}}"), { ok: true, type: -7, text: ["1"] }),

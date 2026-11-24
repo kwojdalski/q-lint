@@ -1317,3 +1317,204 @@ test("xkey or xdesc applied in parentheses, with . or an adverb, or composed key
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("0: and 1: to any handle but a parse or prepare format write a file: 1: takes a plain symbol (#2032)", () => {
+  const cases = {
+    "`a 1: 0x00": ["writes the file `a with 1:"],
+    "1:[`b1;0x00]": ["writes the file `b1 with 1:"],
+    ".[1:;(`b2;0x00)]": ["writes the file `b2 with 1:"],
+    "(`b6) 1: 0x01": ["writes a file with 1:"],
+    '`b0 0: enlist "x"': ["writes the file `b0 with 0:"],
+    // A name, an index or an argument not written may hold a handle.
+    "f 1: 0x00": ["writes a file with 1:"],
+    "x[0] 0: y": ["writes a file with 0:"],
+    "0:/[`a;y]": ["writes a file with 0:"],
+    ".[1:;args]": ["writes a file with 1:"],
+    // A format reads: a string, or a list headed by one.
+    '"," 0: t': [],
+    '"S=;" 0: "a=1;b=2"': [],
+    '(1#"x";1) 1: `:a': [],
+    '(enlist ",") 0: t': [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("text q values whole is read as value reads it: a / line is a comment to its end, not a block (#2033)", () => {
+  const { valued } = require("../out/guard.js");
+  assert.deepStrictEqual(writes([valued("(1;\n/\nd6:9)")]), ["assigns d6"]);
+  assert.deepStrictEqual(writes([valued("1\n/ note\nd1:9")]), ["assigns d1"]);
+  assert.deepStrictEqual(writes([valued("count t\n/\ncount u")]), []);
+  assert.deepStrictEqual(writes([valued("\\l f.q")]), ["runs the system command \\l"]);
+  // A script's text keeps a script's rules: there the / opens a block.
+  assert.deepStrictEqual(writes("(1;\n/\nd6:9)"), []);
+  assert.deepStrictEqual(writes(["count t", valued("(1;\n/\nd6:9)")]), ["assigns d6"]);
+});
+
+test("a language prefix, repeated or nested, hides neither a system command nor k's . (#2034)", () => {
+  const cases = {
+    "k)\\l ld.q": ["runs the system command \\l"],
+    "k)\\cd sub": ["runs the system command \\cd"],
+    "q)\\cd sub": ["runs the system command \\cd"],
+    "q)q)\\cd sub": ["runs the system command \\cd"],
+    "q)k)\\t 500": ["sets the timer with \\t"],
+    'q)k)."i5:1"': ["evaluates a string with k's ."],
+    'k)k)."i9:1"': ["evaluates a string with k's ."],
+    // A setting read, or q code, after the prefix still reads.
+    "k)\\c": [],
+    "q)count t": [],
+    "q)\\t count t": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("a lambda applied where it is written changes what its arguments name: {.[x;();:;1]}`a (#2035)", () => {
+  const cases = {
+    '{value x}"s1:1"': ["evaluates a string with value"],
+    '{value x}["s1:1"]': ["evaluates a string with value"],
+    '{value y}[0;"s6:1"]': ["evaluates a string with value"],
+    '{value x}@"s7:1"': ["evaluates a string with value"],
+    '{value x} each enlist "s2:1"': ["evaluates a string with value"],
+    "{eval x}(:;`s3;1)": ["evaluates an assignment with eval"],
+    "{.[x;();:;1]}`u1": ["amends `u1 in place"],
+    "({@[x;();:;1]})`u2": ["amends `u2 in place"],
+    "{update a:9 from x}`t": ["updates `t in place"],
+    "{x 1: 0x00}`:u5": ["writes a file with 1:"],
+    "{hclose hopen x}`:u4": ["opens the file `:u4 with hopen", "calls hclose"],
+    "{.[x;();:;1]} each `v2`v3": ["amends `v2 in place", "amends `v3 in place"],
+    "@[{.[x;();:;1]};`a;h]": ["amends `a in place"],
+    // A name may hold a global's symbol, and an argument not written may be one.
+    "{.[x;();:;1]} v": ["applies a lambda that may change the process through what it is given"],
+    "{.[x;();:;1]} . enlist `a": ["applies a lambda that may change the process through what it is given"],
+    // Applied to what it only reads, defined, or left as a value, it reads.
+    '{value x}"count t"': [],
+    "{x+1} each 1 2 3": [],
+    "{select from x where a>1}`t": [],
+    "{x} v": [],
+    "{value x}": [],
+    "{x 1}{value x}": [],
+    "({value x};1)": [],
+    "f:{value x}": ["assigns f"],
+    "{@[x;0;3_]} read0 `:f": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("? passed as a value, in parentheses, through an adverb or to . or @, extends an enumeration (#2036)", () => {
+  const cases = {
+    "(?)[`sym;`x1]": ["extends the enumeration `sym with ?"],
+    ".[?;(`sym;`x2)]": ["extends the enumeration `sym with ?"],
+    "?/[`sym;`x3]": ["extends the enumeration `sym with ?"],
+    "?'[`sym`sym;`x4`x5]": ["extends the enumeration `sym with ?"],
+    ".[(?);(`sym;`x6)]": ["extends the enumeration `sym with ?"],
+    "(?) . (`sym;`x7)": ["extends the enumeration `sym with ?"],
+    // On a list, or a functional select, it finds or selects.
+    "(?)[`a`b;`b]": [],
+    "(?)[1 2 3;2]": [],
+    ".[?;(t;();0b;())]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("a writer named by a symbol cast from a string is the writer: (`$\".q.set\") . (`a;1) (#2037)", () => {
+  const cases = {
+    '(`$".q.set") . (`zz1;1)': ["calls .q.set"],
+    '(`$".q.value") "p8:1"': ["calls .q.value"],
+    '`$ ".q.set" . (`a;1)': ["calls .q.set"],
+    '(get `$".q.upsert")[`t;()]': ["calls .q.upsert"],
+    '.q`$"set"': ["calls .q.set"],
+    // A cast to another name reads.
+    '`$"abc"': [],
+    '(`$".q.count") 1 2': [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("an amend projected on all but its target, in parentheses or applied some way, amends the target (#2038)", () => {
+  const cases = {
+    "(.[;();:;1]) `q8": ["amends `q8 in place"],
+    "(@[;();:;1]) `u8": ["amends `u8 in place"],
+    "(.[;();:;1])[`u9]": ["amends `u9 in place"],
+    "((.[;();:;1])) `v1": ["amends `v1 in place"],
+    "(.[;();:;1]) each `v2`v3": ["amends `v2 in place"],
+    "(@[;`a;:;1]) `.": ["amends `. in place"],
+    "(.[;();:;1])@`w1": ["amends `w1 in place"],
+    "(.[;();:;1]) . enlist `w2": ["amends `w2 in place"],
+    ".[;();:;1]/:[`w3]": ["amends `w3 in place"],
+    // On a value it is a value.
+    "(.[;();:;1]) t": [],
+    "(@[;0;+;1]) 1 2": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("a gateway query the guard cannot read as strings, where the call is, is taken for a change (#2039)", () => {
+  const cannot = (name = ".gw.syncexec") => `runs a query the guard cannot read through ${name}`;
+  const cases = {
+    ".gw.syncexec[(@;`.;`a;:;1);`rdb]": [cannot()],
+    ".gw.syncexec[(:;`a;1);`rdb]": [cannot()],
+    ".gw.syncexec[;`rdb] \"a:1\"": [cannot()],
+    '(.gw.syncexec)["a:1";`rdb]': [cannot()],
+    '`.gw.syncexec . ("a:1";`rdb)': ["assigns a through .gw.syncexec"],
+    '.gw.syncexec["a",":1";`rdb]': [cannot()],
+    ".gw.syncexec[q;`rdb]": [cannot()],
+    '.gw.asyncexec[(`.q.set;`a;1);`rdb]': [cannot(".gw.asyncexec"), "calls .q.set"],
+    // A string, strings, the extension's own wrap of them, or the name alone read.
+    '.gw.syncexec["select from t";`rdb]': [],
+    '.gw.syncexec[("count t";"count u");`rdb]': [],
+    '.gw.syncexec[({last value each x};("count t";"count u"));enlist `rdb]': [],
+    '.gw.syncexecj["select from t";`rdb`hdb;raze]': [],
+    ".gw.syncexec": [],
+    "`.gw.syncexec": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("a guard tag with a blank in it is read as process tags are, a tag for each word (#2040)", () => {
+  const { readKxServers } = require("../out/importother.js");
+  const blank = settings({ "processes.readOnlyGuard.tags": ["live desk", "UAT,Desk"] });
+  assert.deepStrictEqual(blank.tags, ["live", "desk", "uat"]);
+  // A KX connection labelled Live Desk is guarded, and a process tagged a word of it.
+  const kx = readKxServers({ a: { serverAlias: "a", serverName: "h", serverPort: "5000" } }, [{ labelName: "Live Desk", connections: ["a"] }], blank.tags);
+  assert.deepStrictEqual(guardedBy(kx.processes[0], blank), ["live", "desk"]);
+  assert.deepStrictEqual(guardedBy({ tags: ["live"] }, blank), ["live"]);
+  // A process tag saved with a blank is read by its words too.
+  assert.deepStrictEqual(guardedBy({ tags: ["Live Desk"] }, settings({ "processes.readOnlyGuard.tags": ["desk"] })), ["Live Desk"]);
+  assert.deepStrictEqual(guardedBy({ tags: ["dev"] }, blank), []);
+});
+
+test("! passed as a value with -11 or -19 replays a log or writes a compressed file (#2041)", () => {
+  const cases = {
+    "(!)[-11;`:lg]": ["replays a log with -11!"],
+    ".[!;(-11;`:lg)]": ["replays a log with -11!"],
+    "!/[-11;`:lg]": ["replays a log with -11!"],
+    ".[!;(-19;(`:lg;`:lgz;17;2;6))]": ["writes a compressed file with -19!"],
+    "(!)[-6;(:;`a;1)]": ["evaluates an assignment with -6!"],
+    // Counting a log, a dictionary, or another internal function reads.
+    "(!)[-11;(-1;`:lg)]": [],
+    "(!)[`a`b;1 2]": [],
+    "(!) . (`a`b;1 2)": [],
+    '(!)[-4;"x"]': [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("\\t and \\ts nested deep are read in a loop, not one call each", () => {
+  assert.deepStrictEqual(writes(`${"\\ts ".repeat(2000)}a:1`), ["assigns a"]);
+  assert.deepStrictEqual(writes(`${"\\t ".repeat(2000)}count t`), []);
+});
