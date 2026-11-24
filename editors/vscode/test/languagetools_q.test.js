@@ -71,11 +71,12 @@ test("every example in the error catalogue raises the error it explains", { skip
 });
 
 test("the dead code report's process check finds what a function the process holds names", { skip }, async (t) => {
-  const c = await connect(t, ["\\d .util", "helper:{x+1}", "caller:{helper x}", "other:{x}", "\\d .", "top:{x}", "usesTop:{top 1}", "alone:{x}", "f:{x}", "runner:{.util.other x}", ""].join("\n"));
+  const c = await connect(t, ["\\d .util", "helper:{x+1}", "caller:{helper x}", "other:{x}", "\\d .", "top:{x}", "usesTop:{top 1}", "alone:{x}", "f:{x}", "runner:{.util.other x}", ".cfg:42", ""].join("\n"));
   const got = await c.call(CALLED, ".util.helper .util.other top alone nothere f");
   const names = (Array.isArray(got) ? got : [got]).map(String).sort();
   // `alone` and `f` are named by no other function; `nothere` by none;
-  // `.util.other` only by its whole name (#1227).
+  // `.util.other` only by its whole name (#1227). `.cfg`, a root name that
+  // is no namespace, lists nothing and fails nothing (#1370).
   assert.deepStrictEqual(names, [".util.helper", ".util.other", "top"]);
 });
 

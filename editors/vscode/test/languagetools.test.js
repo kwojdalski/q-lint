@@ -305,6 +305,25 @@ test("the dead code report refuses when off and asks nothing; on, it lists the s
   }
 });
 
+test("the dead code report's process check failing leaves the report to the workspace (#1370)", async () => {
+  const answer = { functions: [{ name: "lonely", uri: "file:///ws/b.q", range: { start: { line: 3, character: 0 } } }], dynamic: 0 };
+  const { context, shown, restore } = setUp();
+  try {
+    const live = { activeLabel: () => "dev", borrow: () => Promise.reject(new Error("'f: closed")) };
+    registerDeadCode(context, live, () => ({ sendRequest: async () => answer }));
+    stub.config.user["deadCode.enable"] = true;
+    stub.config.user["deadCode.checkProcess"] = true;
+    stub.messages = [];
+    const text = await stub.commands.get(LANGUAGE_COMMANDS.deadCode)();
+    assert.match(text, /lonely/);
+    assert.strictEqual(shown.length, 1);
+    assert.ok(stub.messages.some(([, m]) => /the report is from the workspace alone/.test(m)), JSON.stringify(stub.messages));
+  } finally {
+    delete stub.config.user["deadCode.checkProcess"];
+    restore();
+  }
+});
+
 test("the dead code report's file names are the decoded paths, relative to the workspace (#1093)", async () => {
   const { fileURLToPath } = require("node:url");
   const answer = {
