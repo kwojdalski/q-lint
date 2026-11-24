@@ -46,12 +46,15 @@ export interface AdminNode {
 
 type Live_ = Pick<Live, "activeLabel" | "activeProcess" | "borrow" | "onDidChange" | "runOnActive">;
 
-class AdminView implements TreeDataProvider<AdminNode> {
+export class AdminView implements TreeDataProvider<AdminNode> {
   private readonly changed = new EventEmitter<void>();
   readonly onDidChangeTreeData = this.changed.event;
   readonly view: TreeView<AdminNode>;
   private kept: { process: string; nodes: AdminNode[]; message?: string } | undefined;
   private reading: Promise<void> | undefined;
+  /// The process `reading` is for: a refresh for another waits for it, then
+  /// reads its own.
+  private readingFor: string | undefined;
   private readonly disposables: { dispose(): unknown }[];
 
   constructor(
@@ -100,11 +103,22 @@ class AdminView implements TreeDataProvider<AdminNode> {
       }
       return Promise.resolve();
     }
-    this.reading ??= this.readNow(asked).finally(() => (this.reading = undefined));
+    const label = this.live.activeLabel();
+    if (this.reading === undefined || this.readingFor !== label) {
+      const next: Promise<void> = (this.reading === undefined ? this.readNow(asked) : this.reading.then(() => this.readNow(asked))).finally(() => {
+        if (this.reading === next) {
+          this.reading = undefined;
+          this.readingFor = undefined;
+        }
+      });
+      this.reading = next;
+      this.readingFor = label;
+    }
     return this.reading;
   }
 
   private async readNow(asked: boolean): Promise<void> {
+    const label = this.live.activeLabel();
     try {
       const got = await borrowWhenFree(this.live as Live, async (connection, process) => ({ process: process.label, ...(await this.read(connection, process)) }));
       if (got === undefined) {
@@ -115,7 +129,7 @@ class AdminView implements TreeDataProvider<AdminNode> {
       }
       this.kept = got.value;
     } catch (error) {
-      this.kept = { process: this.live.activeLabel() ?? "", nodes: [], message: `Could not read ${this.live.activeLabel() ?? "the process"}: ${error instanceof Error ? error.message : String(error)}` };
+      this.kept = { process: label ?? "", nodes: [], message: `Could not read ${label ?? "the process"}: ${error instanceof Error ? error.message : String(error)}` };
     } finally {
       this.show();
     }
