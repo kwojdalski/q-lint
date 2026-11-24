@@ -108,6 +108,15 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
     assert.strictEqual(tableLiteral(answer.grid).code, "([] a:(1.23456789f;`x;0n;0.1e;1 2))");
   });
 
+  await t.test("a general column's float infinity is shown as q writes it, not as 0W (#1733)", async () => {
+    const { toGrid } = require("../out/grid.js");
+    const answer = await connection.queryGrid(statements("([]a:(0w;`a;-0we;1.5))"), SIZE, 10);
+    assert.strictEqual(answer.gridError, undefined, answer.gridError);
+    assert.deepStrictEqual(toGrid(answer.grid, -1).cells[0], ["0w", "`a", "-0we", "1.5"]);
+    const floats = await connection.queryGrid(statements("([]a:0w -0w 1.5)"), SIZE, 10);
+    assert.deepStrictEqual(toGrid(floats.grid, -1).cells[0], ["0w", "-0w", "1.5"]);
+  });
+
   await t.test("a dictionary or a nested list comes with its tree, as unwrapped mode makes it (#928)", async () => {
     const { runUnwrapped } = require("../out/querycontrols.js");
     const { TREE_NODES } = require("../out/grid.js");

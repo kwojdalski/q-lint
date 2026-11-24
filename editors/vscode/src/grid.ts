@@ -335,7 +335,9 @@ export function cellText(type: number, text: string, raw: unknown, decimals: num
   if (raw === null) {
     return type === 2 ? NULL_GUID : "";
   }
-  if (raw === Infinity || raw === -Infinity) {
+  // A general list's item is a float or a real, which q's text already
+  // writes as 0w or -0we (#1733).
+  if ((raw === Infinity || raw === -Infinity) && type !== 0) {
     return `${raw < 0 ? "-" : ""}0${FLOATING.has(type) ? "w" : "W"}`;
   }
   if ((type === 8 || type === 9) && decimals >= 0 && typeof raw === "number") {
