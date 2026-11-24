@@ -48,6 +48,22 @@ test("a diff by place marks changed cells with what they were, and rows past the
   assert.deepStrictEqual(shorter.removed, { columns: ["a"], rows: [["2"], ["3"]], count: 2 });
 });
 
+test("a row past the other run's cut at gridLimit is not compared: neither added nor removed (#1640)", () => {
+  const cut = (columns, total, keys = 0) => ({ ...grid(columns, keys), total });
+  const d = diffGrids(cut({ id: [1, 2], v: [10, 20] }, 4), grid({ id: [1, 2, 3, 4], v: [10, 20, 30, 40] }));
+  assert.deepStrictEqual(d.addedRows, []);
+  assert.strictEqual(d.changed, 0);
+  assert.strictEqual(d.uncompared, 2);
+  const back = diffGrids(grid({ id: [1, 2, 3, 4], v: [10, 20, 30, 40] }), cut({ id: [1, 2], v: [10, 20] }, 4));
+  assert.strictEqual(back.removed.count, 0);
+  assert.strictEqual(back.uncompared, 2);
+  const keyed = diffGrids(cut({ id: [1, 2], v: [10, 20] }, 4, 1), grid({ id: [3, 1, 2, 4], v: [30, 10, 20, 40] }, 1));
+  assert.deepStrictEqual(keyed.addedRows, []);
+  assert.strictEqual(keyed.uncompared, 2);
+  // Neither cut: added and removed as before.
+  assert.strictEqual(diffGrids(grid({ a: [1] }), grid({ a: [1, 2] })).uncompared, 0);
+});
+
 test("a keyed result is matched by its key, so a row that moved is not a change", () => {
   const before = grid({ k: ["a", "b", "c"], v: [1, 2, 3] }, 1, { k: 11 });
   const after = grid({ k: ["c", "a", "d"], v: [3, 9, 4] }, 1, { k: 11 });

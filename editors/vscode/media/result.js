@@ -737,6 +737,10 @@
     if (comparing()) {
       const d = result.diff;
       const parts = [d.changed + " changed", d.addedRows.length + " added", d.removed.count + " removed"];
+      if (d.uncompared > 0) {
+        // Past one run's cut at gridLimit: not known to be added or removed (#1640).
+        parts.push(d.uncompared + " not compared (a run was cut at q-lint.query.gridLimit)");
+      }
       if (d.addedColumns.length) {
         parts.push("new column" + (d.addedColumns.length === 1 ? " " : "s ") + d.addedColumns.map(function (c) { return grid.columns[c].name; }).join(", "));
       }
