@@ -127,13 +127,18 @@ export function isDue(s: Pick<ScheduledExport, "times" | "every" | "since">, now
 }
 
 /// The file a run at `now` writes: `path`, or with `-YYYYMMDD-HHMMSS`
-/// before its extension.
+/// before its extension. Within an hour of a change of UTC offset - when
+/// clocks go back, a wall time comes twice - the stamp ends with the
+/// offset, `-0400`, so the second run does not replace the first (#1626).
 export function outputPath(path: string, mode: ScheduledExport["mode"], now: Date): string {
   if (mode === "replace") {
     return path;
   }
   const two = (n: number): string => String(n).padStart(2, "0");
-  const stamp = `${now.getFullYear()}${two(now.getMonth() + 1)}${two(now.getDate())}-${two(now.getHours())}${two(now.getMinutes())}${two(now.getSeconds())}`;
+  const offset = now.getTimezoneOffset();
+  const changing = [-3_600_000, 3_600_000].some((d) => new Date(now.getTime() + d).getTimezoneOffset() !== offset);
+  const zone = changing ? `${offset > 0 ? "-" : "+"}${two(Math.floor(Math.abs(offset) / 60))}${two(Math.abs(offset) % 60)}` : "";
+  const stamp = `${now.getFullYear()}${two(now.getMonth() + 1)}${two(now.getDate())}-${two(now.getHours())}${two(now.getMinutes())}${two(now.getSeconds())}${zone}`;
   const slash = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   const dot = path.lastIndexOf(".");
   return dot > slash + 1 ? `${path.slice(0, dot)}-${stamp}${path.slice(dot)}` : `${path}-${stamp}`;

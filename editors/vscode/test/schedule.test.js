@@ -59,6 +59,16 @@ test("the file a run writes, and which queries may be scheduled", () => {
   assert.deepStrictEqual(parseSchedules([{ id: "a" }, 3, { id: "b", query: "q", process: "p", format: "csv", path: "/f", times: ["9:00"], since: 1 }]).map((s) => [s.id, s.times, s.mode]), [["b", ["09:00"], "replace"]]);
 });
 
+test("a timestamped file in the hour clocks go back is not overwritten by the repeat (#1626)", (t) => {
+  const was = process.env.TZ;
+  process.env.TZ = "America/New_York";
+  t.after(() => (was === undefined ? delete process.env.TZ : (process.env.TZ = was)));
+  const first = outputPath("/x/out.csv", "timestamped", new Date("2026-11-01T05:30:00Z"));
+  const second = outputPath("/x/out.csv", "timestamped", new Date("2026-11-01T06:30:00Z"));
+  assert.deepStrictEqual([first, second], ["/x/out-20261101-013000-0400.csv", "/x/out-20261101-013000-0500.csv"]);
+  assert.strictEqual(outputPath("/x/out.csv", "timestamped", new Date("2026-07-01T12:00:00Z")), "/x/out-20260701-080000.csv");
+});
+
 test("the switch: off by default, contributed, commands hidden while off", () => {
   assert.strictEqual(readAdmin((_k, f) => f).scheduledExports, false);
   const section = pkg.contributes.configuration.find((c) => c.title === "q-lint: process admin");
