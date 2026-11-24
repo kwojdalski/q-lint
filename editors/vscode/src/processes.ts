@@ -85,7 +85,14 @@ export function hostProblem(host: string): string | undefined {
   if (h.includes(":") && !isIPv6(h)) {
     return "A host only: the port is asked for next.";
   }
-  return /[\s/\\]/.test(h) ? "A host has no spaces or slashes." : undefined;
+  if (/[\s/\\]/.test(h)) {
+    return "A host has no spaces or slashes.";
+  }
+  // Else a name: `[rdb]`, `me@rdb`, `rdb#1` or `rdb,hdb` was saved, then
+  // failed on every connect (#1781).
+  return isIPv6(h) || /^[A-Za-z0-9_]([A-Za-z0-9_.-]*[A-Za-z0-9_])?\.?$/.test(h)
+    ? undefined
+    : "A host is a name of letters, digits, '.', '-' and '_', or an IP address.";
 }
 
 /// `host:port` as it is shown, an IPv6 host in brackets so the port is not
@@ -187,7 +194,8 @@ export function parseProcesses(json: unknown, scripts = false): { processes: Pro
       label,
       host,
       port: Number(port),
-      ...(typeof e.user === "string" && e.user !== "" ? { user: e.user } : {}),
+      // Trimmed, as Add Process trims it: a space would go in the handshake (#1782).
+      ...(typeof e.user === "string" && e.user.trim() !== "" ? { user: e.user.trim() } : {}),
       tags,
       ...(e.tls === true ? { tls: true } : {}),
       ...(scripts && typeof e.init === "string" && e.init.trim() !== "" ? { init: e.init } : {}),

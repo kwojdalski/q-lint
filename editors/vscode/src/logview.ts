@@ -240,6 +240,10 @@ export class LogViewer {
     };
     this.views.set(id, view);
     await this.reload(view);
+    // Turned off while it was read: no provider to open the view with (#1785).
+    if (this.views.get(id) !== view) {
+      return undefined;
+    }
     const document = await workspace.openTextDocument(view.uri);
     const editor = await window.showTextDocument(document, { preview: false });
     // Closed, or the viewer turned off, while it opened: nothing to follow (#1295).
@@ -361,7 +365,10 @@ export class LogViewer {
     const lines: string[] = [];
     const infos: LineInfo[] = [];
     // `keep` trims a tenth at a time: only the last `max` are shown (#1431).
-    for (const entry of [...view.entries.slice(-view.max), ...open]) {
+    const shown = [...view.entries.slice(-view.max), ...open];
+    // Several files: merged by time, as a full read is, the entries
+    // followed and each file's open one included (#1778).
+    for (const entry of many ? merge(view.files.map((f) => shown.filter((e) => e.file === f))) : shown) {
       // Several files at once: a line that names no process says which.
       const prefix = many && entry.kind === "q" ? `[${entry.process}] ` : "";
       entry.lines.forEach((line, i) => {
@@ -374,7 +381,7 @@ export class LogViewer {
         });
       });
     }
-    const text = lines.length > 0 ? lines.join("\n") : view.filter === NO_FILTER ? "(empty)" : "(nothing passes the filter)";
+    const text = lines.length > 0 ? lines.join("\n") : filterText(view.filter) === "" ? "(empty)" : "(nothing passes the filter)";
     view.lines = infos;
     if (text !== view.text) {
       view.text = text;

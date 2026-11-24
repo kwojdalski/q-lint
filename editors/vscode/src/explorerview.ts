@@ -96,6 +96,8 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
   private refreshing = false;
   /// The editor's table hover, while q-lint.processExplorer.editorTableHover.enable is on.
   private hoverProvider: { dispose(): unknown } | undefined;
+  /// Live completion, while q-lint.processExplorer.liveCompletion.enable is on (#1779).
+  private completionProvider: { dispose(): unknown } | undefined;
   /// A refresh asked for while a query ran or another refresh was out,
   /// made once the connection is free.
   private owed = false;
@@ -135,12 +137,12 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
           this.show();
         }
       }),
-      // VS Code merges this provider's items with the language server's.
-      languages.registerCompletionItemProvider({ language: "q" }, { provideCompletionItems: (d, p) => this.complete(d, p) }, "."),
       workspace.onDidChangeConfiguration((event) => event.affectsConfiguration("q-lint.processExplorer.editorTableHover") && this.switchHover()),
-      { dispose: () => this.hoverProvider?.dispose() },
+      workspace.onDidChangeConfiguration((event) => event.affectsConfiguration("q-lint.processExplorer.liveCompletion") && this.switchCompletion()),
+      { dispose: () => (this.hoverProvider?.dispose(), this.completionProvider?.dispose()) },
     );
     this.switchHover();
+    this.switchCompletion();
     this.show();
   }
 
@@ -230,6 +232,17 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
     } else if (!on && this.hoverProvider !== undefined) {
       this.hoverProvider.dispose();
       this.hoverProvider = undefined;
+    }
+  }
+
+  private switchCompletion(): void {
+    const on = insight().liveCompletion;
+    if (on && this.completionProvider === undefined) {
+      // VS Code merges this provider's items with the language server's.
+      this.completionProvider = languages.registerCompletionItemProvider({ language: "q" }, { provideCompletionItems: (d, p) => this.complete(d, p) }, ".");
+    } else if (!on && this.completionProvider !== undefined) {
+      this.completionProvider.dispose();
+      this.completionProvider = undefined;
     }
   }
 

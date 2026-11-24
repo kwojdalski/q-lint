@@ -150,15 +150,15 @@ test("a log opens in a view, and filters by level, process, time and text read i
   assert.deepStrictEqual(state.processes, ["hdb1", "rdb1"]);
   assert.deepStrictEqual(state.levels, ["ERROR", "INFO"]);
   // Merged by time (a line with none before any that has one), each file's
-  // last entry - still open, since a line could continue it - at the end;
+  // last entry - still open, since a line could continue it - too (#1778);
   // a line of the plain file names its process.
   assert.strictEqual(
     text(),
-    ["[hdb1] plain q line", torq("10:00:00", "rdb1", "INFO", "started"), torq("10:05:00", "rdb1", "ERROR", "boom"), "  [1] backtrace", "[hdb1] 'type", "[hdb1]   [2] f:{x+`a}"].join("\n"),
+    ["[hdb1] plain q line", "[hdb1] 'type", "[hdb1]   [2] f:{x+`a}", torq("10:00:00", "rdb1", "INFO", "started"), torq("10:05:00", "rdb1", "ERROR", "boom"), "  [1] backtrace"].join("\n"),
   );
   stub.picks.push((o) => o.items.filter((i) => i.label === "ERROR"));
   await stub.commands.get(LOG_COMMANDS.levels)();
-  assert.strictEqual(text(), [torq("10:05:00", "rdb1", "ERROR", "boom"), "  [1] backtrace", "[hdb1] 'type", "[hdb1]   [2] f:{x+`a}"].join("\n"));
+  assert.strictEqual(text(), ["[hdb1] 'type", "[hdb1]   [2] f:{x+`a}", torq("10:05:00", "rdb1", "ERROR", "boom"), "  [1] backtrace"].join("\n"));
   stub.picks.push((o) => o.items.filter((i) => i.label === "rdb1"));
   await stub.commands.get(LOG_COMMANDS.processes)();
   assert.strictEqual(text(), [torq("10:05:00", "rdb1", "ERROR", "boom"), "  [1] backtrace"].join("\n"));
@@ -228,6 +228,40 @@ test("a followed view shows appended lines once they end, the last entry before 
   assert.strictEqual(text(), "first\n'boom\n  [0] trace");
   await stub.commands.get(LOG_COMMANDS.follow)();
   assert.strictEqual(text(), "first\n'boom\n  [0] trace\nhalf done\nlater");
+});
+
+// Each file's open entry was shown after the rest, and followed entries
+// were added file by file, never merged (#1778).
+test("several files followed stay in time order, each file's open entry and appended lines merged in", async (t) => {
+  const dir = tmp();
+  const a = path.join(dir, "out_a.log");
+  const b = path.join(dir, "out_b.log");
+  const line = (time, proc) => torq(time, proc, "INFO", proc + time.slice(-1));
+  fs.writeFileSync(a, [line("12:00:00", "a"), line("12:00:04", "a"), ""].join("\n"));
+  fs.writeFileSync(b, [line("12:00:01", "b"), line("12:00:03", "b"), ""].join("\n"));
+  const { text } = setUp(t);
+  await stub.commands.get(LOG_COMMANDS.open)(vscode.Uri.file(a), [vscode.Uri.file(a), vscode.Uri.file(b)]);
+  const order = () => text().split("\n").map((l) => l.split("|").pop());
+  assert.deepStrictEqual(order(), ["a0", "b1", "b3", "a4"]);
+  fs.appendFileSync(a, [line("12:00:06", "a"), line("12:00:08", "a"), ""].join("\n"));
+  fs.appendFileSync(b, [line("12:00:05", "b"), line("12:00:07", "b"), ""].join("\n"));
+  for (let i = 0; i < 60 && !text().includes("b7"); i++) await sleep(50);
+  assert.deepStrictEqual(order(), ["a0", "b1", "b3", "a4", "b5", "a6", "b7", "a8"]);
+});
+
+// A filter of no levels is a new object, not NO_FILTER, though it filters
+// nothing (#1786).
+test("an empty log with nothing filtered says it is empty, a filter of none picked included", async (t) => {
+  const file = path.join(tmp(), "empty.log");
+  fs.writeFileSync(file, "");
+  const { text } = setUp(t);
+  await stub.commands.get(LOG_COMMANDS.open)(vscode.Uri.file(file));
+  assert.strictEqual(text(), "(empty)");
+  stub.picks.push(() => []);
+  await stub.commands.get(LOG_COMMANDS.levels)();
+  assert.strictEqual(text(), "(empty)");
+  await stub.commands.get(LOG_COMMANDS.levels)(["ERROR"]);
+  assert.strictEqual(text(), "(nothing passes the filter)");
 });
 
 test("only the last maxLines entries that pass are kept", async (t) => {
@@ -310,6 +344,26 @@ test("turned off while a log is still opening, no file is left watched (#1295)",
   };
   assert.strictEqual(await viewer.open(vscode.Uri.file(file)), undefined);
   assert.strictEqual(watched.size, 0);
+});
+
+test("turned off while a large log is still read, Open Log File returns without opening the closed view (#1785)", async (t) => {
+  const file = path.join(tmp(), "big.log");
+  fs.writeFileSync(file, "a\n");
+  const { viewer, providers } = setUp(t);
+  // Large enough for a progress notification; turned off while it shows.
+  const [stat, withProgress] = [fs.promises.stat, vscode.window.withProgress];
+  fs.promises.stat = async (f) => ({ ...(await stat(f)), size: 32 * 1024 * 1024 });
+  vscode.window.withProgress = async (options, task) => {
+    stub.config.user["processes.logViewer.enable"] = false;
+    stub.changeConfig("q-lint.processes.logViewer.enable");
+    return withProgress(options, task);
+  };
+  t.after(() => ([fs.promises.stat, vscode.window.withProgress] = [stat, withProgress]));
+  vscode.workspace.openTextDocument = async (uri) => {
+    if (!providers.has(uri.scheme)) throw new Error(`no provider for ${uri.scheme}`);
+    return { uri, lineCount: 1 };
+  };
+  assert.strictEqual(await viewer.open(vscode.Uri.file(file)), undefined);
 });
 
 test("a view follows the log a real q process writes (real q)", { skip }, async (t) => {

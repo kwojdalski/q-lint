@@ -79,8 +79,13 @@ async function convert(target?: string): Promise<string | undefined> {
     range = new Range(at.line, token?.start ?? at.character, at.line, token?.end ?? at.character);
     found = token;
   } else {
-    range = new Range(editor.selection.start, editor.selection.end);
-    found = convertText(editor.document.getText(range));
+    const document = editor.document;
+    const text = document.getText(new Range(editor.selection.start, editor.selection.end));
+    found = convertText(text);
+    // What is converted is the trimmed text: only it is replaced, the
+    // spaces a drag takes around it kept (#1783).
+    const start = document.offsetAt(editor.selection.start) + text.length - text.trimStart().length;
+    range = new Range(document.positionAt(start), document.positionAt(start + text.trim().length));
   }
   if (found === undefined || found.conversions.length === 0) {
     void window.showInformationMessage(
