@@ -218,7 +218,8 @@ export type GridAnswer = Answer & {
 /// 0.1e arrives as 0.10000000149011612 - a number q neither holds nor
 /// prints, which an export would write and an `=` rule never match (#1488).
 export function realValue(x: unknown): unknown {
-  if (typeof x !== "number" || !Number.isFinite(x)) {
+  // -0 too keeps its sign, which `toPrecision` drops (#2089).
+  if (typeof x !== "number" || !Number.isFinite(x) || x === 0) {
     return x;
   }
   // Nine digits are always enough for a float32 (#1734).

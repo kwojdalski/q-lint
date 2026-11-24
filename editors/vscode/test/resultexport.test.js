@@ -436,6 +436,18 @@ test("a string cut at 200 characters is written as its characters up to the cut,
   assert.deepStrictEqual(['"caf\\303\\251 \\303...', '"\\346\\227\\245\\346\\227...', '"ab\\30...', '"x\\"...', '"ab\\\\...'].map(plainItem), ["café ...", "日...", "ab...", 'x"...', "ab\\..."]);
 });
 
+test("-0 keeps its sign in every export, a real's too (#2089)", () => {
+  const { realValue } = require("../out/grid.js");
+  assert.ok(Object.is(realValue(-0), -0));
+  const p = { count: 2, keys: 0, names: ["e", "f"], types: [8, 9], cells: [["-0", "1"], ["-0", "1"]], raw: [[-0, 1], [-0, 1]], rank: [[0, 1], [0, 1]] };
+  assert.match(toJson(p), /"e": -0, "f": -0\}/);
+  assert.strictEqual(tableLiteral(p).code, "([] e:(-0e;1e);f:(-0f;1f))");
+  assert.match(unzip(exportResult("xlsx", p, -1).data)["xl/worksheets/sheet1.xml"], /<c r="A2"><v>-0<\/v><\/c><c r="B2"><v>-0<\/v><\/c>/);
+  const file = toParquet(p, [0, 1]).data;
+  assert.ok(file.includes(Buffer.from([0, 0, 0, 0x80, 0, 0, 0x80, 0x3f])), "the real -0's float bytes");
+  assert.ok(file.includes(Buffer.from([0, 0, 0, 0, 0, 0, 0, 0x80])), "the float -0's");
+});
+
 test("Excel and Parquet write a general list's float with every digit, as JSON does (#2088)", () => {
   // GRID's payload of ([] l:(acos -1;0n;"x";1b;7;9007199254740993)).
   assert.deepStrictEqual(xlsxCell(0, "3.141593", Math.PI), { n: Math.PI });

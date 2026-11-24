@@ -109,8 +109,8 @@ function jsonNumber(type: number, text: string, raw: unknown): string {
   if (raw === undefined) {
     return /^-?\d+$/.test(text) ? text : JSON.stringify(text);
   }
-  // A Long writes its every digit.
-  return String(raw);
+  // A Long writes its every digit, and -0 its sign (#2089).
+  return Object.is(raw, -0) ? "-0" : String(raw);
 }
 
 /// The rows to write: `rows` when given, and otherwise all of them.

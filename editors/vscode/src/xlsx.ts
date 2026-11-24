@@ -247,7 +247,7 @@ function cellXml(ref: string, cell: Cell): string {
     return "";
   }
   if ("n" in cell) {
-    return `<c r="${ref}"${cell.s ? ` s="${cell.s}"` : ""}><v>${String(cell.n).replace("e+", "E+").replace("e-", "E-")}</v></c>`;
+    return `<c r="${ref}"${cell.s ? ` s="${cell.s}"` : ""}><v>${(Object.is(cell.n, -0) ? "-0" : String(cell.n)).replace("e+", "E+").replace("e-", "E-")}</v></c>`;
   }
   if ("b" in cell) {
     return `<c r="${ref}" t="b"><v>${cell.b ? 1 : 0}</v></c>`;

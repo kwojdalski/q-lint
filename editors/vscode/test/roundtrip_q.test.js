@@ -166,6 +166,18 @@ test("a result exported is read back as the value it is, on a real q", { skip },
     assert.deepStrictEqual(bad, []);
   });
 
+  await t.test("-0 keeps its sign: in Copy as q, a real's too, and in JSON (#2089)", async () => {
+    for (const code of ["([] a:-0 1e)", "([] f:-0.0 1)", "([] a:(-0e;1))", "([] a:(-0f;1))", "([] a:enlist -0 1e)", "([] a:(1;-0 0f))"]) {
+      const literal = tableLiteral(await grid(code)).code;
+      // ~ holds -0 and 0 alike: their bytes do not.
+      const same = await connection.query(statements(`(-8!${code})~-8!${literal}`), SIZE);
+      assert.deepStrictEqual(same.text, ["1b"], `${code} written ${literal}`);
+    }
+    // JSON's -0, which KDB-X's .j.k reads as 0 but JSON.parse as -0.
+    const json = JSON.parse(exportResult("json", await grid("([] f:-0.0 1; e:-0 1e; l:(-0f;1))"), -1).data.toString("utf8"));
+    assert.deepStrictEqual([json[0].f, json[0].e, json[0].l].map((x) => Object.is(x, -0)), [true, true, true]);
+  });
+
   await t.test("a mapped table's nested columns export as the general lists they are (#2084)", async () => {
     const g = await grid("sp");
     assert.deepStrictEqual(g.types, [0, 0, 7]);
