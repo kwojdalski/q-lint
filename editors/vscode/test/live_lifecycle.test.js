@@ -141,3 +141,18 @@ test("Tag Process during a connect gives the connection its tags (#1700)", async
   assert.strictEqual(await connecting, true);
   assert.deepStrictEqual(live.activeProcess().tags, ["prod"]);
 });
+
+test("deleting a process while auto-reconnect waits between tries stops the reconnect (#1701)", async (t) => {
+  const a = await fakeQ();
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)], { "connection.autoReconnect.enable": true });
+  await live.connectTo("a");
+  a.drop();
+  await until(() => /reconnecting to a/.test(live.api().statusText()));
+  stub.picks.push("Delete");
+  await stub.commands.get("q-lint.deleteProcess")("a");
+  assert.doesNotMatch(live.api().statusText(), /reconnecting/);
+  await sleep(1500);
+  assert.strictEqual(live.activeLabel(), undefined);
+  assert.ok(!stub.messages.some(([, m]) => /reconnected/.test(m)), JSON.stringify(stub.messages));
+});

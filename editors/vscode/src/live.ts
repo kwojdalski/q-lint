@@ -1408,8 +1408,10 @@ export class Live {
       return;
     }
     // Or being connected to: it would become the active one once deleted.
+    // Or reconnected to after a drop, between tries too (#1701).
     const connecting = this.connecting !== undefined && this.connectingTo === passwordKey(process);
-    if ((this.activeLabel() === process.label && this.active?.server === undefined) || connecting) {
+    const reconnecting = this.reconnecting?.label === process.label && this.connection === undefined && this.active?.server === undefined;
+    if ((this.activeLabel() === process.label && this.active?.server === undefined) || connecting || reconnecting) {
       await this.disconnect();
     }
     await this.context.secrets.delete(passwordKey(process));
