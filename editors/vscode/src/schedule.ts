@@ -119,8 +119,12 @@ export function retargetedSchedules(list: ScheduledExport[], from: string, to: s
 }
 
 /// Whether `s` is due at `now`: its interval has passed since it last ran,
-/// or one of today's times has come since then. A last run after `now` was
-/// stamped by a clock since put back: it runs once, to restart (#1625).
+/// or one of its times has come since then, today or yesterday - a time
+/// missed overnight, the machine asleep or VS Code closed, is due the next
+/// day as one missed earlier the same day is (#1928). However many days
+/// were missed it is due once: a run stamps `since`, which no time before
+/// it is after. A last run after `now` was stamped by a clock since put
+/// back: it runs once, to restart (#1625).
 export function isDue(s: Pick<ScheduledExport, "times" | "every" | "since">, now: Date): boolean {
   if (s.since > now.getTime()) {
     return true;
@@ -130,8 +134,10 @@ export function isDue(s: Pick<ScheduledExport, "times" | "every" | "since">, now
   }
   return (s.times ?? []).some((t) => {
     const [h, m] = t.split(":").map(Number);
-    const at = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m).getTime();
-    return at <= now.getTime() && at > s.since;
+    return [0, 1].some((ago) => {
+      const at = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ago, h, m).getTime();
+      return at <= now.getTime() && at > s.since;
+    });
   });
 }
 
