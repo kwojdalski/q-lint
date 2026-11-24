@@ -144,10 +144,12 @@ export class PlotsView {
     });
   }
 
-  /// The page's PNG of `plot`, the view opened first if need be. The plot is
-  /// sent with the ask: the one on show may have moved on (#1482).
+  /// The page's PNG of `plot`, the view opened first if need be - or shown
+  /// again: hidden behind another panel tab it has no page to ask until it
+  /// is back and says it is ready (#1936). The plot is sent with the ask: the
+  /// one on show may have moved on (#1482).
   private async pngOf(plot: Plot): Promise<string | undefined> {
-    if (this.view === undefined) {
+    if (this.view === undefined || !this.view.visible) {
       const shown = new Promise<void>((resolve) => this.ready.push(resolve));
       await commands.executeCommand(`${PLOT_COMMANDS.view}.focus`);
       await Promise.race([shown, new Promise((resolve) => setTimeout(resolve, PNG_WAIT))]);
