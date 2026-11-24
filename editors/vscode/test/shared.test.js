@@ -239,6 +239,18 @@ test("Add to Shared asks before writing a connect script, credential command, la
   assert.strictEqual(JSON.parse(read()).processes[0].credentialCommand, "vault read x");
 });
 
+// Written under the open list's unsaved edits, its next save conflicted (#1531).
+test("Add to Shared refuses while the list is open with unsaved edits", async (t) => {
+  const vscode = require("vscode");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-shared-"));
+  await setUp(t, dir, { saved: [{ label: "a", host: "h", port: 1, tags: [] }] });
+  vscode.workspace.textDocuments = [{ uri: vscode.Uri.joinPath(vscode.Uri.file(dir), SHARED_FILE), isDirty: true }];
+  t.after(() => (vscode.workspace.textDocuments = []));
+  await stub.commands.get(SHARED_COMMANDS.add)("a");
+  assert.ok(!fs.existsSync(path.join(dir, SHARED_FILE)));
+  assert.match(stub.messages.at(-1)[1], /processes\.json has unsaved changes; save it, then share a again/);
+});
+
 test("with q-lint.processes.shared.enable off, the file is not read, nor listed, and the command refuses", async (t) => {
   const q = await someQ(t);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-shared-"));

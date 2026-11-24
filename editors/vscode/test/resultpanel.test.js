@@ -644,6 +644,28 @@ test("Append to Report from the palette sends the rows the grid shows, as Export
   assert.doesNotMatch(report, /^\| 20 \|$/m);
 });
 
+// Written under unsaved edits, the save after conflicted: Overwrite lost
+// the result, Revert the user's edits (#1531).
+test("Send to Report refuses a report open with unsaved edits, and writes nothing", async () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  modes.context.workspaceState = { get: () => undefined, update: async () => {} };
+  const { RESULT_VIEW } = require("../out/liveconfig.js");
+  modes.show(result([1, 2]), live({ mode: "grid" }));
+  const to = new fake.vscode.Uri("/r.md");
+  fake.vscode.workspace.textDocuments = [{ uri: new fake.vscode.Uri("/r.md"), isDirty: true }];
+  fake.vscode.workspace.fs.readFile = async () => Buffer.from("# mine\n");
+  const warned = [];
+  fake.vscode.window.showWarningMessage = async (m, _o, go) => (warned.push(m), go);
+  await fake.vscode.commands[RESULT_VIEW.toReport](to, false);
+  assert.deepStrictEqual(Object.keys(fake.written), []);
+  assert.match(warned.at(-1), /r\.md has unsaved changes; save it/);
+  // Saved: appended.
+  fake.vscode.workspace.textDocuments = [{ uri: new fake.vscode.Uri("/r.md"), isDirty: false }];
+  await fake.vscode.commands[RESULT_VIEW.toReport](to, false);
+  assert.match(fake.written["/r.md"], /^# mine\n/);
+});
+
 test("export, paging, pivot, charts and drill-down turned off: each command refuses, the page is offered none, and nothing is sent", async () => {
   const off = {
     "results.export.enable": false,

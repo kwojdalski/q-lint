@@ -59,7 +59,7 @@ import {
   withProtections,
   type Process,
 } from "./processes";
-import { clickedEditor } from "./clicked";
+import { clickedEditor, unsavedIn } from "./clicked";
 import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
 import { ClosedBeforeHandshake, QConnection, QError, type Target } from "./qclient";
 import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, readTunnel } from "./tunnel";
@@ -771,6 +771,11 @@ export class Live {
       process = answer === all ? chosen : onConnectOf(chosen, undefined);
     }
     const file = Uri.joinPath(folder.uri, SHARED_FILE);
+    // Written under unsaved edits, the next save conflicts (#1531).
+    if (unsavedIn(file, workspace.textDocuments ?? [])) {
+      void window.showWarningMessage(plainMessage(`q-lint: ${SHARED_FILE} has unsaved changes; save it, then share ${process.label} again. Nothing was written.`));
+      return;
+    }
     let text: string | undefined;
     try {
       text = Buffer.from(await workspace.fs.readFile(file)).toString("utf8");

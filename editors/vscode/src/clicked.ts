@@ -21,3 +21,10 @@ export function clickedEditor<E extends Shown>(given: unknown, visible: readonly
   }
   return visible.find((e) => e.document.uri.toString() === uri) ?? active;
 }
+
+/// Whether `uri` is open in an editor with unsaved edits: a file written
+/// under it conflicts with the next save, and one side is lost (#1531).
+export function unsavedIn(uri: { toString(): string }, documents: readonly { uri: { toString(): string }; isDirty: boolean }[]): boolean {
+  const key = uri.toString();
+  return documents.some((d) => d.isDirty && d.uri.toString() === key);
+}
