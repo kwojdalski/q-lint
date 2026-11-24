@@ -6,6 +6,7 @@ const assert = require("node:assert");
 const {
   namesIn,
   codeOffset,
+  cut,
   readDescribed,
   tablesOf,
   schemaOf,
@@ -125,4 +126,13 @@ test("codeOffset finds a name written as code, past a comment or string (#1631)"
     assert.strictEqual(codeOffset(text, charKinds(text), "vwap"), at, text);
   }
   assert.strictEqual(codeOffset("x.f;.ns.f 1", charKinds("x.f;.ns.f 1"), ".ns.f"), 4);
+});
+
+test("a prompt's cut never splits a surrogate pair (#1622)", () => {
+  const text = "a".repeat(3999) + "\u{1F600} tail";
+  const out = cut(text);
+  assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(out), JSON.stringify(out.slice(3990, 4010)));
+  assert.match(out, /^a{3999}\n\.\.\. \(7 more characters\)$/);
+  assert.strictEqual(cut("abc"), "abc");
+  assert.ok(explainPrompt({ expression: text, hovers: [], diagnostics: [], described: [] }, "").isWellFormed?.() ?? true);
 });

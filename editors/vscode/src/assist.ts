@@ -233,7 +233,15 @@ export function fence(text: string, language = "q"): string {
 /// The longest text of one item the model is given: a function's source,
 /// an error's code.
 const CUT = 4000;
-const cut = (text: string): string => (text.length > CUT ? `${text.slice(0, CUT)}\n... (${text.length - CUT} more characters)` : text);
+/// `text` cut to `CUT` UTF-16 units, one less when the cut would split a
+/// surrogate pair and send half a character (#1622).
+export const cut = (text: string): string => {
+  if (text.length <= CUT) {
+    return text;
+  }
+  const end = /[\uD800-\uDBFF]/.test(text[CUT - 1]) ? CUT - 1 : CUT;
+  return `${text.slice(0, end)}\n... (${text.length - end} more characters)`;
+};
 
 /// What the language server and the process say about an expression.
 export interface ExplainContext {
