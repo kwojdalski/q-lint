@@ -130,7 +130,19 @@ fn tokens(text: &str) -> Result<Vec<Tok>, String> {
         if number_start {
             let start = i;
             i += 1;
-            while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'.' || b[i] == b':') {
+            // A sign straight after a lower-case `e` is the exponent's, as
+            // q's tokenizer reads it (`-4!` on KDB-X 5): `1e-3` and `1e+1`
+            // are one number each. A `-` there always is (`1e-` too), a
+            // `+` only before a digit (`1e+x` is `1e`, `+`, `x`), and
+            // `1E-3` is three tokens.
+            while i < b.len()
+                && (b[i].is_ascii_alphanumeric()
+                    || b[i] == b'.'
+                    || b[i] == b':'
+                    || (b[i - 1] == b'e'
+                        && (b[i] == b'-'
+                            || (b[i] == b'+' && b.get(i + 1).is_some_and(u8::is_ascii_digit)))))
+            {
                 i += 1;
             }
             let atom = text[start..i].to_string();
@@ -454,37 +466,42 @@ fn named(item: &str) -> (Option<String>, &str) {
     (None, item)
 }
 
+/// The name q gives the next column of a list whose columns so far were
+/// written with (or implied) the names `bases`, when this one's is `base`:
+/// `base` itself the first time, then `base` and the number of times it
+/// came before, whether written or implied - and whatever the other names
+/// are. On KDB-X, `select a:px, a:size, a1:sym from t` has the columns
+/// `` `a`a1`a1 ``, and `select px, px, px1, px from t` `` `px`px1`px1`px2 ``.
+fn q_name(bases: &[String], base: &str) -> String {
+    match bases.iter().filter(|b| *b == base).count() {
+        0 => base.to_string(),
+        n => format!("{base}{n}"),
+    }
+}
+
 /// The columns of a select, by or update list: each one's name and tree,
 /// named as q names them.
 fn columns(items: &[String]) -> Result<Vec<(String, Node)>, String> {
     let mut out: Vec<(String, Node)> = vec![];
-    let mut seen: Vec<String> = vec![];
+    let mut bases: Vec<String> = vec![];
     for item in items {
         let (name, expr) = named(item);
         let node = tree(expr)?;
-        let name = match name {
+        // A name written repeats as one implied does (#2062).
+        let base = match name {
             Some(name) => name,
-            None => {
-                let base = match derived(&node) {
-                    Derived::Name(n) => n,
-                    Derived::X => "x".into(),
-                    Derived::Unknown => {
-                        return Err(format!(
-                            "a column with no name whose name q would choose is not certain here: write it `name:{expr}`"
-                        ));
-                    }
-                };
-                let mut name = base.clone();
-                let mut n = 0;
-                while seen.contains(&name) {
-                    n += 1;
-                    name = format!("{base}{n}");
+            None => match derived(&node) {
+                Derived::Name(n) => n,
+                Derived::X => "x".into(),
+                Derived::Unknown => {
+                    return Err(format!(
+                        "a column with no name whose name q would choose is not certain here: write it `name:{expr}`"
+                    ));
                 }
-                name
-            }
+            },
         };
-        seen.push(name.clone());
-        out.push((name, node));
+        out.push((q_name(&bases, &base), node));
+        bases.push(base);
     }
     Ok(out)
 }
@@ -655,7 +672,7 @@ fn form(p: &layout::Parts) -> Result<Form, String> {
         "exec" => {
             let b = match &by[..] {
                 [] => constant("()".to_string()),
-                [one] => evaluated(match tree(one)? {
+                [one] if named(one).0.is_none() => evaluated(match tree(one)? {
                     Node::Name(n) => format!("`{n}"),
                     other => functional(&other),
                 }),
@@ -990,7 +1007,20 @@ pub(crate) fn infix_text(n: &Node) -> Result<String, String> {
             };
             match (&**f, &args[..]) {
                 (Node::Verb(v), [x, y]) if v.bytes().all(|c| GLYPHS.contains(&c)) => {
-                    format!("{}{v}{}", left(x)?, infix_text(y)?)
+                    let (x, y) = (left(x)?, infix_text(y)?);
+                    // Some glyphs join what is on either side into one
+                    // token: q reads `px_1` and `f.s2` as names, `1.2` as
+                    // a float, and `1e-1` and `1e+1` as one number where
+                    // the tree holds the real `1e` (`-4!` on KDB-X 5). So
+                    // `_` and `.` always stand apart, and so does a sign
+                    // after a number ending in `e` (#2060).
+                    let number_e = x.ends_with('e')
+                        && x.starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '.');
+                    if v == "_" || v == "." || (number_e && (v == "-" || v == "+")) {
+                        format!("{x} {v} {y}")
+                    } else {
+                        format!("{x}{v}{y}")
+                    }
                 }
                 (Node::Verb(v), [x, y]) if infix(v) => {
                     format!("{} {v} {}", left(x)?, infix_text(y)?)
@@ -1078,9 +1108,12 @@ fn dict_items(d: &Data) -> Result<Vec<(String, Node)>, String> {
 }
 
 /// Column items written back: `n:e`, or `e` alone where q would name it
-/// `n` anyway.
+/// `n` anyway. q renames a repeated name (`q_name`), so each column is
+/// written with a name that q turns into its own: `` `a`a1`a1 `` is
+/// `a:px, a1:size, a:sym`. Where no name does - `` `a`a ``, which q's
+/// renaming never gives - nothing is written (#2062).
 fn column_text(cols: &[(String, Node)]) -> Result<String, String> {
-    let mut seen: Vec<String> = vec![];
+    let mut bases: Vec<String> = vec![];
     let mut out = vec![];
     for (name, n) in cols {
         let text = one_item(infix_text(n)?);
@@ -1089,12 +1122,28 @@ fn column_text(cols: &[(String, Node)]) -> Result<String, String> {
             Derived::X => Some("x".into()),
             Derived::Unknown => None,
         };
-        if implied.as_ref() == Some(name) && !seen.contains(name) {
-            out.push(text);
-        } else {
-            out.push(format!("{name}:{text}"));
+        // The names q would turn into `name` here: itself, or what comes
+        // before a count of how often it was written before.
+        let mut candidates: Vec<String> = vec![name.clone()];
+        let stem = name.trim_end_matches(|c: char| c.is_ascii_digit());
+        for cut in stem.len()..name.len() {
+            if !name[cut..].starts_with('0') && cut > 0 {
+                candidates.push(name[..cut].to_string());
+            }
         }
-        seen.push(name.clone());
+        let gives = |b: &String| q_name(&bases, b) == *name && column(b).is_ok();
+        let base = if let Some(i) = implied.as_ref().filter(|i| gives(i)) {
+            out.push(text);
+            i.clone()
+        } else if let Some(b) = candidates.iter().find(|b| gives(b)) {
+            out.push(format!("{b}:{text}"));
+            b.clone()
+        } else {
+            return Err(format!(
+                "a column named `{name}` again, which q's qSQL would rename"
+            ));
+        };
+        bases.push(base);
     }
     Ok(out.join(", "))
 }
@@ -1102,7 +1151,41 @@ fn column_text(cols: &[(String, Node)]) -> Result<String, String> {
 /// The functional form around byte `at` as qSQL; `None` where there is no
 /// `?[...]` or `![...]` of four arguments around it, and the reason where
 /// one cannot be written as qSQL.
+///
+/// The qSQL is in parentheses where the text around it would otherwise
+/// join it: a name just before it fuses with the lead word
+/// (`count?[t;..]` is not `countselect from t`, which q reads as one
+/// name), and anything after it on the line, but a closing bracket or a
+/// `;`, is read into its last clause (`?[..][`px]` is not
+/// `select from t where px>2[`px]`, and `?[..],u` not
+/// `select from t,u`) (#2061).
 pub(crate) fn to_qsql_at(
+    code: &str,
+    source: &str,
+    at: usize,
+) -> Option<Result<Conversion, String>> {
+    let b = code.as_bytes();
+    Some(bare_qsql_at(code, source, at)?.map(|mut c| {
+        let before = c.start.checked_sub(1).map(|i| b[i]);
+        let after = b[c.end..]
+            .iter()
+            .find(|c| !matches!(c, b' ' | b'\t'))
+            .copied();
+        let joined_before =
+            before.is_some_and(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.'));
+        let joined_after = !matches!(
+            after,
+            None | Some(b'\n' | b'\r' | b';' | b')' | b']' | b'}')
+        );
+        if joined_before || joined_after {
+            c.text = format!("({})", c.text);
+        }
+        c
+    }))
+}
+
+/// As `to_qsql_at`, the qSQL alone, whatever is around it.
+pub(crate) fn bare_qsql_at(
     code: &str,
     source: &str,
     at: usize,
@@ -1187,10 +1270,21 @@ fn from_functional(verb: u8, args: &[&str]) -> Result<String, String> {
     if table.is_empty() {
         return Err("a functional form with no table".into());
     }
+    // `(t)` is the table `t`, but the parentheses around anything more are
+    // the query's: `select from select from t where px>1 where size>20`
+    // is 'type, where `select from (select ...) where size>20` runs (#2058).
     let table = table
         .strip_prefix('(')
         .and_then(|t| t.strip_suffix(')'))
-        .filter(|t| !t.contains(['(', ')']))
+        .map(str::trim)
+        .filter(|t| {
+            let name = t.strip_prefix('`').unwrap_or(t);
+            !name.is_empty()
+                && !keyword(name)
+                && name
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b':' | b'/'))
+        })
         .unwrap_or(table);
     written(
         verb,
@@ -1231,7 +1325,19 @@ fn written(verb: u8, table: &str, c: &Data, b: &Data, a: &Data) -> Result<String
                     Data::Dict(..) => column_text(&dict_items(a)?)?,
                     other => one_item(infix_text(&node(other)?)?),
                 };
-                return Ok(format!("exec {cols}{} from {table}{tail}", by_text(b)?));
+                // An exec's one group unnamed is the list itself, `,`sym`,
+                // which keys the result by its values; named, it is the
+                // dictionary `(,`sym)!,`sym`, which keys it by a table. So
+                // a dictionary of one group is written with its name, even
+                // where it is the one q would give it (#2059).
+                let by = match b {
+                    Data::Dict(..) => match &dict_items(b)?[..] {
+                        [(name, n)] => format!(" by {name}:{}", one_item(infix_text(n)?)),
+                        _ => by_text(b)?,
+                    },
+                    _ => by_text(b)?,
+                };
+                return Ok(format!("exec {cols}{by} from {table}{tail}"));
             }
             let distinct = matches!(&b, Data::Leaf(l) if l == "1b");
             // A column named as a group is 'dup names for cols/groups in a
@@ -1280,5 +1386,75 @@ fn written(verb: u8, table: &str, c: &Data, b: &Data, a: &Data) -> Result<String
             )),
             _ => Err("a `![...]` that is neither an update nor a delete".into()),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Tok, tokens};
+
+    /// A number's tokens are q's own: each literal here with the tokens
+    /// `-4!` gives for it on KDB-X 5, blanks left out (#2057).
+    #[test]
+    fn a_number_is_read_as_q_tokenizes_it() {
+        let cases: &[(&str, &[&str])] = &[
+            ("1e-3", &["1e-3"]),
+            ("2.5e-1", &["2.5e-1"]),
+            ("1e+1", &["1e+1"]),
+            ("1e3", &["1e3"]),
+            ("2e10", &["2e10"]),
+            ("2e+10", &["2e+10"]),
+            ("1.e-3", &["1.e-3"]),
+            (".5e-3", &[".5e-3"]),
+            ("-1e-3", &["-1e-3"]),
+            ("-2.5e+2", &["-2.5e+2"]),
+            ("10e-1", &["10e-1"]),
+            ("1e-3e", &["1e-3e"]),
+            ("1e-3e-2", &["1e-3e-2"]),
+            ("1e-3f", &["1e-3f"]),
+            ("1E-3", &["1E", "-", "3"]),
+            ("1E3", &["1E3"]),
+            ("1e--3", &["1e-", "-", "3"]),
+            ("1e+-3", &["1e", "+", "-3"]),
+            ("1e-", &["1e-"]),
+            ("1e+", &["1e", "+"]),
+            ("1e+x", &["1e", "+", "x"]),
+            ("1e+.5", &["1e", "+", ".5"]),
+            ("1e-+3", &["1e-", "+", "3"]),
+            ("1e3-2", &["1e3", "-", "2"]),
+            ("1f-3", &["1f", "-", "3"]),
+            ("1b-3", &["1b", "-", "3"]),
+            ("1d-3", &["1d", "-", "3"]),
+            ("0x1e-3", &["0x1e-3"]),
+            ("0Ne-3", &["0Ne-3"]),
+            ("0we-1", &["0we-1"]),
+            ("x*1e-3", &["x", "*", "1e-3"]),
+            ("px>1e-3", &["px", ">", "1e-3"]),
+            ("1e-3-2", &["1e-3", "-", "2"]),
+            ("3-1e-3", &["3", "-", "1e-3"]),
+            ("1e-3*2", &["1e-3", "*", "2"]),
+            ("1e-3+1e+3", &["1e-3", "+", "1e+3"]),
+            ("px-1e-3", &["px", "-", "1e-3"]),
+            ("x-2e", &["x", "-", "2e"]),
+            ("1e1e-1", &["1e1e-1"]),
+            ("2e-3j", &["2e-3j"]),
+            ("1he-2", &["1he-2"]),
+            ("2012.01.01e-3", &["2012.01.01e-3"]),
+            // q's tokens for a vector are its items; here they are one
+            // literal, as `parse` holds them.
+            ("1.5e-2 1e-1 3", &["1.5e-2 1e-1 3"]),
+            ("1e-3 2", &["1e-3 2"]),
+        ];
+        for (text, want) in cases {
+            let got: Vec<String> = tokens(text)
+                .unwrap_or_else(|e| panic!("{text}: {e}"))
+                .into_iter()
+                .map(|t| match t {
+                    Tok::Leaf(s) | Tok::Name(s) | Tok::Op(s) => s,
+                    other => panic!("{text}: {other:?}"),
+                })
+                .collect();
+            assert_eq!(got, *want, "{text}");
+        }
     }
 }

@@ -6,7 +6,7 @@
 //! are the ones its definition spells, a call is the name written before an
 //! open bracket, and a completion is a name the source already holds: all of
 //! it read from the text, and none of it from running the script.
-use super::{Scope, scope_at, scopes};
+use super::{Scope, scope_around, scopes};
 use crate::{Applied, BracketCall, Call, Completing, boundary, ends_in_name, matching, signature};
 
 const NAME: &str = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*";
@@ -347,10 +347,10 @@ pub fn completing(
         return None;
     }
     let (scopes, namespaces) = scopes(code, raw);
-    // At the very end of a file, the cursor is in the lambda still open
-    // there, which runs to the last byte.
-    let within = start.min(code.len().saturating_sub(1));
-    let mut locals: Vec<String> = scope_at(&scopes, within)
+    // The lambda around the gap the typing starts at, which a lambda's
+    // closing brace right after the cursor does not end; one still open
+    // at the end of the file runs to it.
+    let mut locals: Vec<String> = scope_around(&scopes, start)
         .map(|s| scopes[s].locals.iter().cloned().collect())
         .unwrap_or_default();
     locals.sort_unstable();

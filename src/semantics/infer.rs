@@ -82,8 +82,10 @@ fn lambda(text: &str) -> bool {
     false
 }
 
-/// How many characters the string literal `text` holds, when `text` is one
-/// string and nothing more, with only the escapes q reads.
+/// How many characters the string literal `text` holds, as q counts them:
+/// in bytes, so `"é"` is two and a string, not a char (KDB-X: `type "é"`
+/// is 10h, #2063). `None` unless `text` is one string and nothing more,
+/// with only the escapes q reads.
 fn string_length(text: &str) -> Option<usize> {
     let body = text.strip_prefix('"')?;
     let mut chars = body.chars();
@@ -106,7 +108,7 @@ fn string_length(text: &str) -> Option<usize> {
                 n += 1;
             }
             '\n' | '\r' => return None,
-            _ => n += 1,
+            c => n += c.len_utf8(),
         }
     }
 }
