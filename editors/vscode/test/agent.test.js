@@ -104,6 +104,17 @@ test("a real is the number q wrote, not its float32 widened to a double", () => 
     const f = Math.fround(x);
     assert.strictEqual(Math.fround(jsonCell(8, "", f)), f, String(x));
   }
+  // One that needs nine digits to read back is its nine-digit decimal, not
+  // the widened double (#1911), as the grid's is (#1734).
+  assert.strictEqual(jsonCell(8, "1.355131e+11", 135513055232), 1.35513055e11);
+  assert.strictEqual(jsonCell(8, "1.309362e-20", Math.fround(1.30936204e-20)), 1.30936204e-20);
+  assert.strictEqual(jsonCell(8, "0.1099371", 0.10993709415197372), 0.109937094);
+  for (let i = 0; i < 20000; i++) {
+    const r = Math.fround((Math.random() - 0.5) * 10 ** Math.floor(Math.random() * 20 - 10));
+    const got = jsonCell(8, "", r);
+    assert.strictEqual(Math.fround(got), r, String(r));
+    assert.strictEqual(Number(got.toPrecision(9)), got, String(r));
+  }
 });
 
 const saved = [
