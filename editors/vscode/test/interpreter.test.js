@@ -317,6 +317,32 @@ test("the licence warning: from what a probe kept, once a day, not after the lic
   assert.strictEqual(fs.existsSync(path.join(home, "ran")), false);
 });
 
+// The probe found q's licence nowhere it looks (a q outside any layout),
+// so nothing was kept to tell a renewal by: the old date was warned of once
+// a day after a new licence was in place (#1883).
+test("the licence warning: not from a kept date once q would read another licence file than the probe's", async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-lic-none-"));
+  const q = fakeQ(path.join(home, "tools", "q"), "QLINTVER|4.1|2024.10.16|m64|2026.12.01");
+  const { interpreters, context } = setUp(t, home);
+  process.env.PATH = path.join(home, "tools");
+  await stub.commands.get(I.INTERPRETER_COMMANDS.checkLicence)();
+  assert.deepStrictEqual(context.globalState.get("q-lint.interpreter.probes")[q], { major: "4.1", release: "2024.10.16", os: "m64", expiry: "2026.12.01" });
+  // No licence file to be found still: the date is the probe's, and warned of.
+  assert.match(await interpreters.warnFromKept(new Date(2026, 10, 25)), /in 6 days/);
+  // Renewed, where q reads it: the kept date is no longer trusted.
+  fs.mkdirSync(path.join(home, "q"));
+  fs.writeFileSync(path.join(home, "q", "k4.lic"), "binary, never read");
+  assert.strictEqual(await interpreters.warnFromKept(new Date(2026, 10, 26)), undefined);
+  assert.strictEqual(await interpreters.warnFromKept(new Date(2026, 11, 5)), undefined);
+  // Probed again with it, the warning is of that probe's date; a licence q
+  // prefers to it, put beside it since, and it is not.
+  await stub.commands.get(I.INTERPRETER_COMMANDS.checkLicence)();
+  assert.strictEqual(context.globalState.get("q-lint.interpreter.probes")[q].licence.file, path.join(home, "q", "k4.lic"));
+  assert.match(await interpreters.warnFromKept(new Date(2026, 10, 27)), /in 4 days/);
+  fs.writeFileSync(path.join(home, "q", "kc.lic"), "binary, never read");
+  assert.strictEqual(await interpreters.warnFromKept(new Date(2026, 10, 28)), undefined);
+});
+
 test("a q reporting no expiry date is not guessed at", async (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-nolic-"));
   fakeQ(path.join(home, "bin", "q"), "QLINTVER|5|2026.11.16|m64|");
