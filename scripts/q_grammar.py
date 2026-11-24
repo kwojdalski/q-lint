@@ -39,6 +39,17 @@ AFTER = r"(?![A-Za-z0-9_])"
 # Where a number, temporal or null ends: `1_x` is 1, drop, x, since no
 # literal holds an underscore.
 LITERAL_END = r"(?![A-Za-z0-9])"
+# Where a number or a temporal ends. q reads digits, letters and dots as one
+# token, and colons with them once it is shaped like a time, and then refuses
+# what is no literal - 1.5i, 1.2.3, 2024.01.02t, 12:34z - so nothing short of
+# the whole token is a number. One digit before a colon is still a number:
+# 0:, 1: and 2: are the file operators, as in `:f 0:x.
+NUMBER_END = r"(?![A-Za-z0-9.]|(?<=\d\d):\d)"
+TEMPORAL_END = r"(?![A-Za-z0-9.:])"
+# The clock of a timestamp, datetime or timespan, and what follows the hours
+# of a time: 12, 12:34, 12:34:56, 12:34:56.789.
+MINUTES = r":\d{2}(?::\d{2}(?:\.\d*)?)?"
+CLOCK = r"\d{2}(?:" + MINUTES + r")?"
 NAME = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*"
 # A dotted name split in two: the namespace `.ns.sub` and the member `.f`.
 # The first group is empty for a name with no leading dot, so `a.b` and `f`
@@ -292,24 +303,32 @@ def grammar():
             "number": {
                 "patterns": [
                     {
+                        "comment": "Each shape with the type letters q reads as part of it, so "
+                        "12:34:56.789p and 2024.01.02n are one literal. As KDB-X takes them; "
+                        "what q refuses (2024.01.02t, 12:34z, 1Dt) is left uncoloured.",
                         "name": "constant.numeric.temporal.q",
                         "match": BEFORE
                         + "(?:"
                         + "|".join(
                             [
-                                # timestamp and datetime
-                                r"\d{4}\.\d{2}\.\d{2}[DT](?:\d{2}(?::\d{2}(?::\d{2}(?:\.\d*)?)?)?)?[pz]?",
-                                # month, date, and a date as a timestamp (p) or datetime (z)
-                                r"\d{4}\.\d{2}(?:\.\d{2}[dpz]?|m)",
-                                # timespan
-                                r"\d+D(?:\d{2}(?::\d{2}(?::\d{2}(?:\.\d*)?)?)?)?n?",
+                                # timestamp: a timespan (n), date (d) or datetime (z) on request
+                                r"\d{4}\.\d{2}\.\d{2}D(?:" + CLOCK + r")?[npdz]?",
+                                # datetime: n and p only once it has minutes
+                                r"\d{4}\.\d{2}\.\d{2}T(?:\d{2}" + MINUTES + r"[npdz]?|(?:\d{2})?[dz]?)",
+                                # date, as itself or a timestamp (p), datetime (z), month (m)
+                                # or timespan (n); and a month
+                                r"\d{4}\.\d{2}(?:\.\d{2}[npdzm]?|m)",
+                                # timespan, or the timestamp that far past 2000 (p)
+                                r"\d+D(?:" + CLOCK + r")?[np]?",
                                 # time, minute, second: a fraction of any length, and
                                 # past three places a timespan (12:00:00.123456789)
-                                r"\d{2,}:\d{2}(?::\d{2}(?:\.\d*)?)?[tuvn]?",
+                                r"\d{2}" + MINUTES + r"[nuvtp]?",
+                                # past 99 hours: no timespan or timestamp
+                                r"\d{3,}" + MINUTES + r"[uvt]?",
                             ]
                         )
                         + ")"
-                        + LITERAL_END,
+                        + TEMPORAL_END,
                     },
                     {
                         "comment": "A typed null or infinity. None is of symbol (the null symbol "
@@ -320,9 +339,17 @@ def grammar():
                     {"name": "constant.language.boolean.q", "match": BEFORE + r"[01]+b" + LITERAL_END},
                     {"name": "constant.numeric.byte.q", "match": BEFORE + r"0x[0-9a-fA-F]*" + LITERAL_END},
                     {
-                        "comment": "With p, a number is a timestamp that many hours past 2000: 1p.",
+                        "comment": "With p, a number is a timestamp that many hours past 2000: 1p. "
+                        "As KDB-X reads them: a fraction takes e, f, n, t and p but no integer "
+                        "letter (1.5i is an error); an exponent is a lower-case e, or an "
+                        "unsigned upper-case one after a fraction (1.5E3, not 1E5 or 1.5E-3), "
+                        "and takes only e or f after it. With c anything is a char, not a "
+                        "number: 3c is \"3\".",
                         "name": "constant.numeric.q",
-                        "match": BEFORE + r"(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[hijefcnuvtp]?" + LITERAL_END,
+                        "match": BEFORE
+                        + r"(?:(?:\d+\.\d*|\.\d+)(?:(?:e[+-]?\d+|E\d+)[ef]?|[efntp])?"
+                        + r"|\d+(?:e[+-]?\d+[ef]?|[hijefnuvtp])?)"
+                        + NUMBER_END,
                     },
                 ],
             },
