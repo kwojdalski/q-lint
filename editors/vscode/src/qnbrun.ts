@@ -425,12 +425,20 @@ export const passwordVariable = (label: string): string => `QLINT_Q_PASSWORD_${l
 
 /// The password for `target`, which has a user: its own variable's, or,
 /// for `--process` alone (`given`), QLINT_Q_PASSWORD's - never sent to
-/// another process a cell names (#1547).
-export function passwordOf(target: Process, env: Record<string, string | undefined>, given: boolean): string | undefined {
+/// another process a cell names (#1547). Throws when another process of
+/// `listed` with a user reads the same variable - rdb-1 and rdb_1, Prod
+/// and prod - since whichever it was set for, the other would be sent it
+/// (#1833).
+export function passwordOf(target: Process, env: Record<string, string | undefined>, given: boolean, listed: Process[] = []): string | undefined {
   if (!target.user) {
     return undefined;
   }
-  return env[passwordVariable(target.label)] ?? (given ? env.QLINT_Q_PASSWORD : undefined) ?? "";
+  const variable = passwordVariable(target.label);
+  const other = listed.find((p) => p.label !== target.label && p.user && passwordVariable(p.label) === variable);
+  if (other !== undefined) {
+    throw new Error(`${target.label} and ${other.label} both read their password from ${variable}: relabel one of them in the process list`);
+  }
+  return env[variable] ?? (given ? env.QLINT_Q_PASSWORD : undefined) ?? "";
 }
 
 /// The process `name` names: `host:port`, or a label in `listed`. A listed
@@ -504,7 +512,7 @@ export async function main(
         if (isProduction(target) && !options.allowProduction) {
           throw new Error(`${target.label} is a production process (tagged ${target.tags.join(", ")}); pass --allow-production to run the notebook there`);
         }
-        const password = passwordOf(target, env, label === undefined);
+        const password = passwordOf(target, env, label === undefined, listed);
         return QConnection.open({
           host: target.host,
           port: target.port,

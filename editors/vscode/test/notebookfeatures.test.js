@@ -720,3 +720,18 @@ test("QLINT_Q_PASSWORD is --process's alone, never sent to another listed proces
   assert.strictEqual(passwordOf(target("rdb"), env, false), "r");
   assert.strictEqual(passwordOf(target("rdb", ""), env, true), undefined);
 });
+
+// rdb-1, rdb_1, rdb.1 and "RDB 1" all read QLINT_Q_PASSWORD_RDB_1: one
+// password was sent to every one a notebook named (#1833).
+test("a password variable two listed processes would share is refused, not sent to both", () => {
+  const p = (label, user = "u") => ({ label, host: label, port: 1, tags: [], user });
+  const listed = [p("rdb-1"), p("rdb_1"), p("Prod"), p("prod", ""), p("gw")];
+  const env = { QLINT_Q_PASSWORD_RDB_1: "one", QLINT_Q_PASSWORD_PROD: "pr", QLINT_Q_PASSWORD_GW: "g" };
+  assert.throws(() => passwordOf(listed[0], env, false, listed), /^Error: rdb-1 and rdb_1 both read their password from QLINT_Q_PASSWORD_RDB_1: relabel one/);
+  assert.throws(() => passwordOf(listed[1], env, false, listed), /rdb_1 and rdb-1/);
+  // A process with no user is asked for no password, so shares nothing.
+  assert.strictEqual(passwordOf(listed[2], env, false, listed), "pr");
+  assert.strictEqual(passwordOf(listed[4], env, false, listed), "g");
+  // HOST:PORT given on the command line is checked against the list too.
+  assert.throws(() => passwordOf(p("rdb:1"), env, true, [p("rdb_1")]), /rdb:1 and rdb_1/);
+});
