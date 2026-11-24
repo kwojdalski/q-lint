@@ -648,3 +648,52 @@ test("a page added to a string column ranks a cell GRID cut at 197 characters by
   assert.strictEqual(sortText('"ab..."'), "ab...");
   assert.strictEqual(sortText('"ab\\...'), "ab");
 });
+
+test("paging ranks every column exactly as ranking all rows at once does (#1854)", () => {
+  const { denseRank } = require("../out/grid.js");
+  let seed = 7;
+  const rnd = (n) => (seed = (seed * 1103515245 + 12345) % 2147483648) % n;
+  const mk = (n) => {
+    const nums = Array.from({ length: n }, () => (rnd(10) === 0 ? null : rnd(40) - 20));
+    const syms = Array.from({ length: n }, () => ["b", "a", "\u{1f600}", "Ａ", "aa"][rnd(5)]);
+    return {
+      count: 1000, names: ["x", "s"], types: [7, 11],
+      cells: [nums.map((v) => (v === null ? "0N" : String(v))), syms],
+      raw: [nums, []],
+      rank: [nums.map((_, i) => i), syms.map((_, i) => i)],
+    };
+  };
+  let grid = { ...mk(30), keys: 0 };
+  for (let page = 0; page < 12; page++) {
+    grid = appendPage(grid, mk(1 + rnd(40)));
+    const raw = grid.raw[0];
+    const key = (v) => (v === null ? -Infinity : v);
+    assert.deepStrictEqual(grid.rank[0], denseRank(raw.length, (a, b) => (key(raw[a]) < key(raw[b]) ? -1 : key(raw[a]) > key(raw[b]) ? 1 : 0)));
+    const s = grid.cells[1];
+    assert.deepStrictEqual(grid.rank[1], denseRank(s.length, (a, b) => codePointOrder(s[a], s[b])));
+  }
+});
+
+test("adding a page to many held rows costs far less than ranking them all again (#1854)", () => {
+  const { denseRank } = require("../out/grid.js");
+  const held = 400_000;
+  const column = (off, n) => Array.from({ length: n }, (_, i) => ((off + i) * 7919) % 1000003);
+  const page = (off, n) => {
+    const raw = column(off, n);
+    const syms = raw.map((v) => "s" + v);
+    return { count: 2_000_000, keys: 0, names: ["x", "s"], types: [7, 11], cells: [raw.map(String), syms], raw: [raw, []], rank: [raw.map((_, i) => i), raw.map((_, i) => i)] };
+  };
+  let grid = appendPage({ ...page(0, 0) }, page(0, held));
+  const next = page(held, 5_000);
+  let t = process.hrtime.bigint();
+  for (let k = 0; k < 3; k++) {
+    grid = appendPage(grid, next);
+  }
+  const append = Number(process.hrtime.bigint() - t) / 3;
+  const s = grid.cells[1];
+  t = process.hrtime.bigint();
+  denseRank(s.length, (a, b) => codePointOrder(s[a], s[b]));
+  const all = Number(process.hrtime.bigint() - t);
+  // Before, one page re-ranked both columns (about 2 x all).
+  assert.ok(append < all / 2, `append ${append / 1e6} ms vs one full ranking ${all / 1e6} ms`);
+});
