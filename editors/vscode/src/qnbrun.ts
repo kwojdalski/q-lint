@@ -441,7 +441,9 @@ export function cliProcess(name: string, listed: Process[], user?: string, tls =
   if (m !== null && Number(m[2]) >= 1 && Number(m[2]) <= 65535) {
     const host = m[1].replace(/^\[(.*)\]$/, "$1");
     const port = Number(m[2]);
-    const tags = [...new Set(listed.filter((p) => p.host.toLowerCase() === host.toLowerCase() && p.port === port).flatMap((p) => p.tags))];
+    // The loopback is one host however it is named: localhost, 127.x, ::1 (#1739).
+    const same = (h: string): string => (/^(localhost|127(\.\d{1,3}){3}|::1|\[::1\])$/i.test(h) ? "localhost" : h.toLowerCase());
+    const tags = [...new Set(listed.filter((p) => same(p.host) === same(host) && p.port === port).flatMap((p) => p.tags))];
     return { label: name, host, port, tags, ...(user !== undefined ? { user } : {}), ...(tls ? { tls: true } : {}) };
   }
   return {

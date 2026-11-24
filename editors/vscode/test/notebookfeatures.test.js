@@ -440,6 +440,16 @@ test("the command line names a process by host:port or by a listed label, and re
   assert.strictEqual(isProduction(cliProcess("db1:5000", prod)), true);
   assert.strictEqual(isProduction(cliProcess("db1:5001", prod)), false);
   assert.deepStrictEqual(cliProcess("db2:5000", prod).tags, []);
+  // A process listed on the loopback is the same one by any loopback name (#1739).
+  const local = [{ label: "lp", host: "localhost", port: 5000, tags: ["prod"] }, { label: "lq", host: "127.0.0.1", port: 5002, tags: ["prod"] }];
+  for (const name of ["localhost:5000", "LOCALHOST:5000", "127.0.0.1:5000", "127.1.2.3:5000", "[::1]:5000"]) {
+    assert.deepStrictEqual(cliProcess(name, local).tags, ["prod"], name);
+  }
+  assert.deepStrictEqual(cliProcess("localhost:5002", local).tags, ["prod"]);
+  // Another host, or another port, is not it.
+  assert.deepStrictEqual(cliProcess("127.0.0.1:5001", local).tags, []);
+  assert.deepStrictEqual(cliProcess("10.0.0.1:5000", local).tags, []);
+  assert.deepStrictEqual(cliProcess("localhostx:5000", local).tags, []);
 });
 
 // --- the variables view's data
