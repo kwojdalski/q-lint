@@ -249,7 +249,8 @@ test("the Excel export writes each rule as Excel's own conditional formatting, t
   const sheet = files["xl/worksheets/sheet1.xml"];
   // An empty cell is no number: Excel would take it for 0 (#1266).
   assert.match(sheet, /<\/sheetData><conditionalFormatting sqref="B2:B4"><cfRule type="expression" dxfId="0" priority="5"><formula>AND\(ISNUMBER\(B2\),B2&gt;4\)<\/formula><\/cfRule><\/conditionalFormatting>/);
-  assert.match(sheet, /<cfRule type="top10" dxfId="1" priority="4" rank="1" bottom="1"\/>/);
+  // Bottom 1 of every row the grid holds, not only of those written (#1648).
+  assert.match(sheet, /<cfRule type="expression" dxfId="1" priority="4"><formula>AND\(ISNUMBER\(B2\),B2&lt;=1\)<\/formula><\/cfRule>/);
   // contains: in any case, with no wildcards, never an empty cell (#1266).
   assert.match(sheet, /<conditionalFormatting sqref="A2:A4"><cfRule type="expression" dxfId="2" priority="3"><formula>AND\(LEN\(A2\)&gt;0,ISNUMBER\(FIND\(LOWER\(&quot;b&quot;&quot;&lt;&quot;\),LOWER\(A2\)\)\)\)<\/formula>/);
   assert.strictEqual((sheet.match(/<conditionalFormatting /g) || []).length, 3, "a comparison of numbers on text, and a missing column, are left out");
@@ -332,4 +333,15 @@ test("a rule compares 0w and -0w as the infinities they are; only a null matches
   assert.deepStrictEqual(rows("top", 1), [1]);
   assert.deepStrictEqual(rows("bottom", 1), [2]);
   assert.deepStrictEqual(rows("<>", 5), [1, 2]);
+});
+
+test("Excel's top and bottom N rank every row the grid holds, not only the filtered rows written (#1648)", () => {
+  const top = [{ column: "px", op: "top", value: 1, style: { bold: true } }];
+  // Filtered to px < 9: the grid colours no cell shown, 9 being the top.
+  const sheet = unzip(exportResult("xlsx", PAYLOAD, -1, [0, 1], top).data)["xl/worksheets/sheet1.xml"];
+  assert.match(sheet, /<formula>AND\(ISNUMBER\(B2\),B2&gt;=9\)<\/formula>/);
+  assert.ok(!/top10/.test(sheet));
+  // 0w is the top: no number in Excel matches.
+  const infinite = { ...PAYLOAD, cells: [["a", "b", "c"], ["1", "0w", "9"]], raw: [[], [1, Infinity, 9]] };
+  assert.ok(!/conditionalFormatting/.test(unzip(exportResult("xlsx", infinite, -1, undefined, top).data)["xl/worksheets/sheet1.xml"]));
 });
