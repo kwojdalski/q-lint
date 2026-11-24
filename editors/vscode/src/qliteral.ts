@@ -17,7 +17,7 @@
 // These are the extension's one writer of q strings and symbols: Paste as q
 // Table, the JSON conversion, the gateway's statements and the grid's cell
 // edits all use `qString` and `symbolLiteral`.
-import type { GridPayload } from "./grid";
+import { realValue, type GridPayload } from "./grid";
 
 const NULL_GUID = "00000000-0000-0000-0000-000000000000";
 
@@ -243,6 +243,12 @@ export function atomLiteral(type: number, text: string, raw: unknown): { literal
     default:
       if (type >= 20 && type <= 76) {
         return ok(symbolLiteral(text));
+      }
+      // A float or real item, sent as its float: every digit, not the
+      // `\P` that `-3!` writes (#1485).
+      if (type === 0 && typeof raw === "number" && Number.isFinite(raw)) {
+        const real = text.endsWith("e");
+        return ok(`${numberText(real ? Number(realValue(raw)) : raw)}${real ? "e" : "f"}`);
       }
       // A general list's item: `-3!` of it, or a string written as one,
       // made readable.

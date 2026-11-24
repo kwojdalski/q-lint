@@ -22,8 +22,10 @@
 //   raw    the column itself, made its underlying number - `"j"$` of a
 //          timestamp, `"i"$` of a date - for the numeric, temporal and guid
 //          types, and a char column's bytes (`"x"$`): its cells are
-//          decoded as UTF-8, which a byte past ASCII alone is not; `()` for
-//          the rest
+//          decoded as UTF-8, which a byte past ASCII alone is not. For a
+//          general column, each float or real item as a float, which `-3!`
+//          writes to `\P` digits, and `0b` for any other item (not a null,
+//          which the codec makes of `` ` ``); `()` for the rest
 //   rank   each row's value's place among the column's distinct values,
 //          sorted by q (`iasc`), so equal values share one; `()` where q
 //          cannot sort it
@@ -67,7 +69,8 @@ export const HELD = ".qlint.held";
 const COLUMN_LINES = [
   "          {[e;x]$[type[x] within 1 76h;string x;{$[200<count x;(197#x),\"...\";x]} each",
   "            {[e;x]$[10h=type x;$[1=count x;\",\";\"\"],\"\\\"\",raze[e\"i\"$200 sublist x],\"\\\"\";-3!x]}[e] each x]}[e] each c;",
-  "          {[c]u:type c;$[u in 12 16h;\"j\"$c;u in 13 14 17 18 19h;\"i\"$c;u=15h;\"f\"$c;u=10h;\"x\"$c;u in 2 5 6 7 8 9h;c;()]} each c;",
+  "          {[c]u:type c;$[u in 12 16h;\"j\"$c;u in 13 14 17 18 19h;\"i\"$c;u=15h;\"f\"$c;u=10h;\"x\"$c;u in 2 5 6 7 8 9h;c;",
+  "            u=0h;{$[-9h=t:type x;$[null x;0b;x];-8h=t;$[null x;0b;\"f\"$x];0b]} each c;()]} each c;",
   "          {@[{i:iasc x;\"i\"$@[count[x]#0;i;:;-1+sums differ x i]};x;{[e]()}]} each c;",
 ];
 

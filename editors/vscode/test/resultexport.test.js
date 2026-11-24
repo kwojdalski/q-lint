@@ -271,6 +271,20 @@ test("a general-list item's symbol holding a space, / or - is written through `$
   assert.strictEqual(tableLiteral(t).code, '([] a:enlist `$"x y")');
 });
 
+test("a float or real item of a general list is written with every digit, not -3!'s \\P 7 text (#1485)", () => {
+  // GRID's raw for a general column: each float or real item as a float, 0b for the rest.
+  const p = { count: 3, keys: 0, names: ["a"], types: [0], cells: [["1.234568", "`x", "0.1e"]], raw: [[1.23456789, false, Math.fround(0.1)]], rank: [[]] };
+  assert.strictEqual(tableLiteral(p).code, "([] a:(1.23456789f;`x;0.1e))");
+  assert.match(toJson(p), /"a": 1\.23456789\}.*"a": "`x"\}.*"a": 0\.1\}/s);
+  assert.strictEqual(atomLiteral(0, "0w", Infinity).literal, "0w");
+  assert.strictEqual(atomLiteral(0, "2f", 2).literal, "2f");
+  // Unwrapped, from the decoded items.
+  const list = { kind: "list", attr: 0, v: [{ kind: "atom", t: -9, v: 1.23456789 }, { kind: "atom", t: -11, v: "x" }, { kind: "atom", t: -9, v: null }] };
+  const g = gridOfQ({ kind: "table", attr: 0, cols: ["a"], data: [list] }, 100);
+  assert.deepStrictEqual(g.raw[0], [1.23456789, false, false]);
+  assert.strictEqual(tableLiteral(g).code, "([] a:(1.23456789f;`x;0n))");
+});
+
 test("a page of rows is added after the grid's, ranked again over both, and a page of another result is refused", () => {
   const first = { count: 4, keys: 0, names: ["v", "s"], types: [9, 11], cells: [["3", "1"], ["b", "a"]], raw: [[3, 1], []], rank: [[1, 0], [1, 0]] };
   const next = readPage({ count: 4, names: ["v", "s"], types: [9, 11], cells: [["", "2"], ["a", "c"]], raw: [[null, 2], []], rank: [[0, 1], [0, 1]] });
