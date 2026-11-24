@@ -7,8 +7,9 @@
 // naming each problem's partitions. Free of any `vscode` import, so node
 // tests it; `dbtoolsview.ts` asks the process and opens the report.
 //
-// One read, defining nothing. Each table directory of the newest `lim`
-// partitions is looked at through its `.d` and its column files' headers
+// One read, defining nothing. The partitions are those on disk (`.Q.PV`):
+// a `.Q.view` hides none of them from the check (#1959). Each table
+// directory of the newest `lim` is looked at through its `.d` and its column files' headers
 // (`type get`, which maps the file and reads none of its data) and counted
 // by its first column's header. Only a full check (`deep`) reads data: the
 // largest index of every symbol column, to find one past its own domain's
@@ -20,8 +21,8 @@
 export const PARTITION_CHECK = [
   "{[lim;deep]",
   " if[not@[{0<count .Q.pv};::;0b];:`hdb`root!(0b;system\"cd\")];",
-  " r:hsym`$system\"cd\";pv:(neg\"j\"$lim)sublist .Q.pv;pt:(),.Q.pt;",
-  " fs:((key r)except`$string .Q.pv)except`par.txt;",
+  " r:hsym`$system\"cd\";av:@[get;`.Q.PV;{.Q.pv}];pv:(neg\"j\"$lim)sublist av;pt:(),.Q.pt;",
+  " fs:((key r)except`$string av)except`par.txt;",
   " dom:fs!{@[{$[11h=type v:get x;count v;0N]};x;0N]}each` sv'r,/:fs;dom:(where not null dom)#dom;",
   " one:{[r;deep;t;p] d:.Q.par[r;p;t];k:key d;",
   "  e:`tbl`part`dir`dotd`cols`missing`types`enums`maxidx`rows!(string t;string p;0b;0b;();();`short$();();`float$();0n);",
@@ -36,7 +37,7 @@ export const PARTITION_CHECK = [
   "  nh:{`$string[x],\"#\"}each have;nh:nh where(not nh in k)&(ty>=77h)|null ty;",
   "  @[e;`dir`dotd`cols`missing`types`enums`maxidx`rows;:;(1b;1b;string cs;string(cs except have),nh;\"h\"$ty;string en;mx;n)]};",
   " rows:raze{[one;r;deep;pt;p]one[r;deep;;p]each pt}[one;r;deep;pt]each pv;",
-  " `hdb`pf`root`all`checked`tables`domains`domainsizes`rows!(1b;string .Q.pf;system\"cd\";string .Q.pv;\"f\"$count pv;string pt;",
+  " `hdb`pf`root`all`checked`tables`domains`domainsizes`rows!(1b;string .Q.pf;system\"cd\";string av;\"f\"$count pv;string pt;",
   "  string key dom;\"f\"$value dom;$[count rows;flip rows;()])}",
 ].join("\n");
 

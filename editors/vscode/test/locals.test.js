@@ -44,20 +44,28 @@ test("a backtrace's named functions, and what is shown of a capture", () => {
   );
 });
 
-function setup(failure) {
+/// `run` is what the query run again does in place of answering 'type.
+function setup(failure, run) {
   stub.reset();
   const sent = [];
+  const apart = [];
   const process = { label: "dev", tags: [] };
   const text = "{[a;b]\n  c:a+b;\n  d+`x}";
   const live = {
     lastFailure: failure,
     guarded: [],
     activeLabel: () => "dev",
+    activeProcess: () => process,
+    guardAllows: async () => true,
+    // A connection of its own, as #1892's restore opens.
+    openSeparate: async (to) => ({ call: async (lambda) => (apart.push([to.label, lambda]), { kept: [], d: null }), abort() {} }),
     async runOnActive(code, query) {
       this.guarded.push(code);
       const connection = {
         call: async (lambda, ...args) => {
+          if (this.dropped) throw new Error("connection closed");
           sent.push(lambda);
+          if (lambda === RUN && run !== undefined) return run(this);
           if (lambda === restoreExpression("err")) return sent.filter((l) => l === lambda).length === 1 ? { kept: [], d: null } : { kept: [], d: { args: { a: "1", b: "2" }, locals: { c: "3" }, at: 1 } };
           if (lambda === DRIFT) return { name: [args[0]], state: ["lambda"], text: [text] };
           if (lambda === installLambda("err")) return ["ok"];
@@ -75,7 +83,7 @@ function setup(failure) {
   vscode.Uri.from = ({ path }) => vscode.Uri.file(path);
   const { registerLocalsAtError } = require("../out/localsview.js");
   const api = registerLocalsAtError(stub.newContext(), live);
-  return { sent, live, api, shown: () => shownText };
+  return { sent, apart, live, api, shown: () => shownText };
 }
 
 test("Capture Locals at Last Error asks, instruments, runs again and puts the function back", async () => {
@@ -93,6 +101,45 @@ test("Capture Locals at Last Error asks, instruments, runs again and puts the fu
   assert.ok(s.live.guarded[0].endsWith("\n.ns.m[1;2]"), "the guard reads the replacing and the query");
   assert.match(s.api.last(), /signalled 'type; \.ns\.m was at statement 2 of 2: d\+`x/);
   assert.match(s.api.last(), /\nc: 3\n/);
+});
+
+test("a run again that drops the connection puts the function back on the process it was replaced on, or says it is left (#1903)", async () => {
+  const again = () => {
+    stub.picks.push({ label: ".ns.m", frame: { name: ".ns.m", where: "/w/lib.q:5" } });
+    stub.picks.push("Run Again");
+    return stub.commands.get(CAPTURE_LOCALS)();
+  };
+  // The process's timeout: the connection is dropped, and another process
+  // is the active one by the time the run is given up.
+  const timeOut = (live) => {
+    live.dropped = true;
+    live.activeProcess = () => ({ label: "other", tags: [] });
+    throw new Error("Query timed out after 1 s");
+  };
+  const s = setup({ process: "dev", code: ".ns.m[1;2]", error: "type", trace: TRACE }, timeOut);
+  await again();
+  assert.deepStrictEqual(s.sent, [restoreExpression("err"), DRIFT, installLambda("err"), RUN]);
+  assert.deepStrictEqual(s.apart, [["dev", restoreExpression("err")]]);
+  assert.deepStrictEqual(stub.messages.at(-1), ["error", "q-lint: no locals captured: Query timed out after 1 s. .ns.m was put back on dev."]);
+  // Not reachable either: said by name, with the process.
+  const left = setup({ process: "dev", code: ".ns.m[1;2]", error: "type", trace: TRACE }, timeOut);
+  left.live.openSeparate = async () => {
+    throw new Error("connect ECONNREFUSED 127.0.0.1:5010");
+  };
+  await again();
+  const told = stub.messages.map(([, text]) => text).join("\n");
+  assert.match(told, /no locals captured: Query timed out after 1 s/);
+  assert.match(
+    told,
+    /q-lint: \.ns\.m may still be instrumented on dev: it could not be put back \(Query timed out after 1 s; nor over a connection of its own: connect ECONNREFUSED 127\.0\.0\.1:5010\)\. The next locals capture on dev puts it back first\./,
+  );
+  // An answer that cannot be read, on a connection that still holds: put back there.
+  const odd = setup({ process: "dev", code: ".ns.m[1;2]", error: "type", trace: TRACE }, () => 42);
+  await again();
+  assert.deepStrictEqual(odd.sent, [restoreExpression("err"), DRIFT, installLambda("err"), RUN, restoreExpression("err")]);
+  assert.deepStrictEqual(odd.apart, []);
+  assert.match(stub.messages.at(-1)[1], /no locals captured: the process answered something other than a query result/);
+  assert.doesNotMatch(stub.messages.map(([, text]) => text).join("\n"), /may still be instrumented/);
 });
 
 test("the guard reads the replacing when the failed query ends the script or opens a comment (#1422)", async () => {

@@ -14,6 +14,7 @@ const {
   PROCESS_NAMES,
   lensTarget,
   matching,
+  processOnly,
   processSymbolDocument,
   readProcessNames,
   readSlot,
@@ -232,6 +233,41 @@ test("process names join a workspace search only while turned on, without the wo
   assert.strictEqual(registered[0].disposed, true);
   assert.deepStrictEqual(await symbols.search(""), []);
   assert.strictEqual(live.sent.length, 1);
+});
+
+test("the names the workspace defines are dropped before the list is cut, not after (#1918)", async () => {
+  const pad = (i) => String(i).padStart(3, "0");
+  // 250 names the workspace defines too, and 5 only the process has that
+  // sort after them.
+  const names = [
+    ...Array.from({ length: 250 }, (_, i) => ({ name: `.app.f${pad(i)}`, kind: "function" })),
+    ...Array.from({ length: 5 }, (_, i) => ({ name: `.app.only_process_${i}`, kind: "variable" })),
+  ];
+  const asked = [];
+  const defined = async (some) => (asked.push(some.length), some.map((n) => n.startsWith(".app.f")));
+  assert.deepStrictEqual((await processOnly(names, ".app", defined)).map((n) => n.name), [0, 1, 2, 3, 4].map((i) => `.app.only_process_${i}`));
+  // A page at a time, and no more once the list is full.
+  assert.deepStrictEqual(asked, [200, 55]);
+  asked.length = 0;
+  assert.deepStrictEqual((await processOnly(names, ".app", defined, 2)).map((n) => n.name), [".app.only_process_0", ".app.only_process_1"]);
+  assert.deepStrictEqual(asked, [2, 4, 8, 16, 32, 64, 128]);
+  asked.length = 0;
+  assert.strictEqual((await processOnly(names, "", async (some) => (asked.push(some.length), some.map(() => false)))).length, 200);
+  assert.deepStrictEqual(asked, [200]);
+  assert.deepStrictEqual(await processOnly(names, "nothing", defined), []);
+  // A server that does not answer drops nothing.
+  assert.strictEqual((await processOnly(names, ".app", async () => Promise.reject(new Error("stopped")), 3)).length, 3);
+  assert.strictEqual((await processOnly(names, ".app", async () => "odd", 3)).length, 3);
+
+  // And through the view.
+  stub.reset();
+  fakeSymbols();
+  stub.config.user["processSymbols.enable"] = true;
+  const server = { sendRequest: async (method, params) => params.names.map((n) => n.startsWith(".app.f")) };
+  const live = fakeLive();
+  live.borrow = (use) => use({ call: async () => ({ name: names.map((n) => n.name), kind: names.map((n) => n.kind) }) }, { label: "dev", tags: [] });
+  const found = await registerProcessSymbols(stub.newContext(), live, () => server).search(".app");
+  assert.deepStrictEqual(found.map((s) => s.name), [0, 1, 2, 3, 4].map((i) => `.app.only_process_${i}`));
 });
 
 test("a process the read-only guard guards by a tag of its own is still read: the names are a fixed read-only call", async () => {

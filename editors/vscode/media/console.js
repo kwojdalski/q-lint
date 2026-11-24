@@ -159,6 +159,11 @@
   }
 
   function onKey(event) {
+    // An input method's own key while it composes: the Enter that takes a
+    // candidate is not a line to run (#1923).
+    if (event.isComposing || event.keyCode === 229) {
+      return;
+    }
     if (offered !== undefined) {
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
@@ -284,6 +289,11 @@
       pointer = -1;
       draft = "";
       setValue("");
+    } else if (m.type === "history") {
+      // A run from the editor: what is typed here stays (#1922), and a
+      // walk through the history stays on the entry it shows.
+      history = Array.isArray(m.history) ? m.history : history;
+      if (pointer >= 0) pointer = history.indexOf(input.value);
     } else if (m.type === "found" && search !== undefined) {
       search.index = m.index;
       if (m.index >= 0) setValue(m.code);

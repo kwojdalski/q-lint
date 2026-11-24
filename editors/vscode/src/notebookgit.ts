@@ -205,6 +205,21 @@ export const FILTER = "qnb-strip";
 /// The line that sends `*.qnb` through it.
 export const ATTRIBUTE_LINE = `*.qnb filter=${FILTER}`;
 
+/// Whether an attributes file's own `text` sends `*.qnb` through the filter:
+/// its last line for `*.qnb` that says anything of `filter` says ours.
+export function setsFilter(text: string): boolean {
+  let set = false;
+  for (const line of text.split(/\r?\n/)) {
+    const [pattern, ...attributes] = line.trim().split(/\s+/);
+    for (const attribute of pattern === "*.qnb" ? attributes : []) {
+      if (/^[-!]?filter(=|$)/.test(attribute)) {
+        set = attribute === `filter=${FILTER}`;
+      }
+    }
+  }
+  return set;
+}
+
 /// Where the attribute goes: this clone's `.git/info/attributes`, or the
 /// repository's `.gitattributes`, committed for everyone who clones it.
 export type AttributesAt = "info" | "gitattributes";
@@ -363,9 +378,11 @@ export class NotebookStrip {
       };
     }
     const attributes = where === "info" ? path.resolve(folder, info.stdout.trim()) : path.join(root, ".gitattributes");
-    // As git reads it, its last matching line winning (#1561): a later
-    // "*.qnb -filter" turns the filter off.
-    const attr = await git(["check-attr", "filter", "--", "notebook.qnb"], folder);
+    // The line is the chosen file's own to have (#1950): another file's -
+    // this clone's, when the committed one is asked for, or a subfolder's -
+    // says nothing of it. Then as git reads it from the top, its last
+    // matching line winning (#1561): a later "*.qnb -filter" turns it off.
+    const attr = await git(["check-attr", "filter", "--", "notebook.qnb"], root);
     return {
       top: root,
       script,
@@ -373,7 +390,7 @@ export class NotebookStrip {
       clean,
       cleanSet: current !== undefined,
       attributes,
-      attributeSet: attr.code === 0 && attr.stdout.trim().endsWith(`: filter: ${FILTER}`),
+      attributeSet: setsFilter(readText(attributes) ?? "") && attr.code === 0 && attr.stdout.trim().endsWith(`: filter: ${FILTER}`),
       node: await nodeOnPath(),
     };
   }

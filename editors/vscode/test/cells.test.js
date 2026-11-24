@@ -308,3 +308,10 @@ test("replScript reads a long script once: twice the lines take about twice the 
   // What each line is given is as before: the block's lines inside brackets indented, the string's joined.
   assert.strictEqual(replScript(block.join("\n")), 'f:{[x;y]\n  a:x+y; / a comment (\n  b:"a string with { and \\" in it";\n  c:(1 2\n   3 4);\n  a*b}\n/\na block ( comment\n\\\ng:f[1;2]\ns:"two\\nlines"');
 });
+
+test("an untitled cell is numbered by its place, whichever reading of the file it came from (#1937)", () => {
+  const lines = L("/ %%\na:1\n/ %%\nb:2");
+  // Run Cell picks the cell from one reading and names it from another.
+  assert.strictEqual(cellName(cells(lines), cellAt(cells(lines), 3)), "Cell 2");
+  assert.strictEqual(cellName(cells(lines), cellAt(cells(lines), 0)), "Cell 1");
+});

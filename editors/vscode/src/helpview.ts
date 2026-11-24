@@ -110,7 +110,8 @@ export function registerHelp(context: ExtensionContext, live: Live): HelpApi {
       "</body></html>",
     ].join("\n");
     shown = { name, html: body };
-    panel.reveal(ViewColumn.Beside, true);
+    // Where it is: "beside" here is beside the page when a link in it was clicked (#1919).
+    panel.reveal(undefined, true);
   };
 
   const show = async (given?: unknown): Promise<string | undefined> => {

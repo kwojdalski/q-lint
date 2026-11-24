@@ -26,6 +26,17 @@ test("the aj call is found, its arguments as written", () => {
   assert.strictEqual(findAj("lj[a;b;c]"), undefined);
 });
 
+test("a call in a comment or a string is not the call explained (#1914)", () => {
+  const live = { fn: "aj", columns: "`sym`time", left: "t", right: "q" };
+  assert.deepStrictEqual(findAj("/ aj[`sym`time;a;b]\naj[`sym`time;t;q]"), live);
+  assert.deepStrictEqual(findAj("r:1 / was aj[`a;b;c]\nr:aj[`sym`time;t;q]"), live);
+  assert.deepStrictEqual(findAj('x:"aj[`a;b;c]"; aj[`sym`time;t;q]'), live);
+  assert.strictEqual(findAj("/ aj[`sym`time;a;b]"), undefined);
+  assert.strictEqual(findAj('x:"aj[`a;b;c]"'), undefined);
+  // A string or a comment mark inside the call's own arguments is the call's.
+  assert.deepStrictEqual(findAj('aj[`sym`time;t;select from q where src like "a/ b"]'), { ...live, right: 'select from q where src like "a/ b"' });
+});
+
 const call = { fn: "aj", columns: "`sym`time", left: "trade", right: "quote" };
 const match = (over) => ({ row: "`sym`time!(`a;09:02)", candidates: 2, missedKey: "", missedValue: "", matched: 1, matchedRow: "`sym`time`bid!(`a;09:01;11f)", earliest: "08:59", time: "09:02", sorted: true, timeColumn: "time", rightRows: 3, ...over });
 
@@ -38,6 +49,10 @@ test("the answer is read and the explanation worded for each outcome", () => {
   assert.match(explain(call, 3, "rdb", match({ candidates: 0, missedKey: "sym", missedValue: "`c", matched: -1 })), /none of the 3 rows of quote has sym = `c/);
   assert.match(explain(call, 4, "rdb", match({ matched: -1, time: "08:00" })), /earliest, at time = 08:59, is after this row's time = 08:00/);
   assert.match(explain(call, 2, "rdb", match({ sorted: false })), /not in time order/);
+  // An empty right table has no row to be earliest and no key to miss (#1909).
+  const empty = explain(call, 0, "rdb", match({ candidates: 0, matched: -1, matchedRow: "", earliest: "", rightRows: 0 }));
+  assert.match(empty, /No match: quote has no rows\./);
+  assert.ok(!/same keys|earliest|time = ,/.test(empty), empty);
   assert.ok(!/Warning/.test(explain(call, 2, "rdb", match({}))));
 });
 

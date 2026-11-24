@@ -100,6 +100,17 @@ test("the file a process loaded compares the same, name by name", { skip }, asyn
   assert.deepStrictEqual([...one.entries()], [["g", { state: "lambda", text: "{x+1}" }]]);
 });
 
+// The process holds a name's last definition, as the file leaves it: one
+// row, the same, where every definition compared gave a "differs" (#1927).
+test("a name the file defines twice compares the same on the process that loaded it (#1927)", { skip }, async (t) => {
+  const twice = "w:{x+1}\nv:{x}\nw:{x+2}\n";
+  const c = await connect(t, twice);
+  const defs = definitions(twice);
+  assert.deepStrictEqual(defs.map((d) => d.name), ["w", "v", "w"]);
+  const rows = driftRows(defs.map((def) => ({ file: "a.q", def })), await states(c, defs));
+  assert.deepStrictEqual(rows.map((r) => `${r.name}:${r.status}:${r.processText}`), ["v:same:{x}", "w:same:{x+2}"]);
+});
+
 // A view is held, and is no lambda: one that would signal is not "missing",
 // and asking evaluates neither (#1865).
 test("a view compares as something other than a lambda, and is not evaluated (#1865)", { skip }, async (t) => {
@@ -120,7 +131,7 @@ test("hot reload sends an edited definition, parsed in its context, and it then 
   const plan = reloadPlan(changed, await states(c, now));
   assert.deepStrictEqual(plan.send.map((s) => s.name), ["f", ".ns.h"]);
   for (const s of plan.send) {
-    assert.strictEqual(await c.call(REDEFINE, s.name, s.held, s.text), s.name);
+    assert.strictEqual(await c.call(REDEFINE, s.name, s.held, s.text), s.text);
   }
   assert.strictEqual((await c.evaluate('"f"$f 1')).value, 6);
   // `k` is `.ns.k`: parsed in .ns.

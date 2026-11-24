@@ -91,6 +91,12 @@ test("JSON is written as .j.k reads it", () => {
   assert.strictEqual(q('{"a":1,"b":2,"a":3}'), "(`a`b)!3 2f");
   assert.strictEqual(q('{"__proto__":1}'), '(enlist `$"__proto__")!enlist 1f');
   assert.strictEqual(toJsonQuery('t:([] a:1); "x"'), '.j.j value "t:([] a:1); \\"x\\""');
+  // The statements of a selection, each run as Run Selection runs it: a
+  // newline is a blank to value, so bb:1 over 2 3 would be bb:1 2 3 (#1969).
+  assert.strictEqual(toJsonQuery("bb:1\n2 3"), '.j.j last value each ("bb:1";"2 3")');
+  assert.strictEqual(toJsonQuery("ff:{[u]\n u+1}\nx\n"), '.j.j last value each ("ff:{[u]\\n u+1}";enlist "x")');
+  assert.strictEqual(toJsonQuery("/ a note\n1+1 / and another\n"), '.j.j value "1+1 / and another"');
+  assert.deepStrictEqual([toJsonQuery("t\n"), toJsonQuery("")], ['.j.j value "t"', '.j.j value ""']);
 });
 
 test("the switches are declared, on by default, and hide the commands when off", () => {
@@ -141,6 +147,9 @@ test("the pastes write at the selection; Copy Value as JSON asks the process thr
   assert.strictEqual(await stub.commands.get(p.PASTE.copyJson)(), '[{"a":1},{"a":2}]');
   assert.deepStrictEqual(sent, ["([] a:1 2)", '.j.j value "([] a:1 2)"']);
   assert.strictEqual(clipboard, '[{"a":1},{"a":2}]');
+  // Two statements: the guard is shown the text as selected, the process each statement (#1969).
+  await stub.commands.get(p.PASTE.copyJson)("bb:1\n2 3");
+  assert.deepStrictEqual(sent.slice(2), ["bb:1\n2 3", '.j.j last value each ("bb:1";"2 3")']);
   // A guard that declines: runOnActive throws, nothing is copied.
   live.runOnActive = async () => {
     throw new Error("Not run: changing the read-only process dev was not confirmed.");

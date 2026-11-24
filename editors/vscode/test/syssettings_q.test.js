@@ -27,6 +27,9 @@ test("a setting it does not edit, or a value it does not send, is refused", { sk
   const { connection } = await connect(t, "a:1\n");
   await assert.rejects(connection.call(SET_SETTING, "w", "100"), /not a setting this view edits/);
   await assert.rejects(connection.call(SET_SETTING, "l", "x.q"), /not a setting this view edits/);
+  // \s among them (#1916): KDB-X takes it "from handle 0 only", so the
+  // view's own refusal is what is said, and `system` never sees it.
+  await assert.rejects(connection.call(SET_SETTING, "s", "0"), /not a setting this view edits/);
   await assert.rejects(connection.call(SET_SETTING, "P", "1;exit 0"), /not a value this view sends/);
   assert.strictEqual(await connection.call("{[x] \"f\"$a}", 0), 1);
 });

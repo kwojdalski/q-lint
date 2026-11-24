@@ -131,9 +131,19 @@ function paramList(text: string, mask: boolean[], open: number, close: number): 
     i++;
   }
   if (text[i] === "[" && mask[i]) {
-    const end = text.indexOf("]", i);
-    if (end !== -1 && end < close) {
-      const inside = text.slice(i + 1, end);
+    // Up to the `]` q reads as one, less each comment on the way: a list
+    // may hold one, and a `]` in it closes nothing (#1949).
+    let inside = "";
+    let end = i + 1;
+    for (; end < close && !(text[end] === "]" && mask[end]); end++) {
+      if (mask[end] || text[end] !== "/") {
+        inside += text[end];
+      } else {
+        const nl = text.indexOf("\n", end);
+        end = (nl === -1 ? close : nl) - 1;
+      }
+    }
+    if (end < close) {
       const names = inside.trim() === "" ? [] : inside.split(";").map((n) => n.trim());
       if (names.every((n) => NAME.test(n))) {
         return { bodyStart: end + 1, explicit: names };

@@ -62,3 +62,22 @@ test("the last logpoint off leaves .qlint empty, and a root variable named qlint
   assert.strictEqual(await c.call(LOG_REMOVE, "sq"), true);
   assert.strictEqual(await value(c, "(key[`.qlint]~enlist`)&qlint~7"), true);
 });
+
+test("a logpoint leaves its function callable where q refuses a global write: under reval the call is not kept, and still answers (#1894)", { skip }, async (t) => {
+  const { connection: c } = await connect(t, SRC);
+  const call = "reval(`sq;3)";
+  assert.strictEqual(Number(await value(c, call)), 9);
+  assert.strictEqual(await c.call(LOG_ADD, "sq"), "sq");
+  // A gateway's read-only evaluation: the wrapper's own write is refused
+  // ('noupdate), and that is not the caller's error.
+  assert.strictEqual(Number(await value(c, call)), 9);
+  assert.strictEqual(Number(await value(c, "reval(`.fx.mid;1f;2f)")), 1.5);
+  assert.deepStrictEqual(readLogpoints(await c.call(LOG_LIST)).hits, []);
+  // Where it can write, the call is kept as before.
+  assert.strictEqual(Number(await value(c, "sq 4")), 16);
+  assert.deepStrictEqual(readLogpoints(await c.call(LOG_LIST)).hits.map((h) => [h.name, h.args]), [["sq", ",4"]]);
+  // What the function itself signals still reaches the caller.
+  await assert.rejects(value(c, "sq`a"), /type/);
+  assert.strictEqual(await c.call(LOG_REMOVE, "sq"), true);
+  assert.strictEqual(await value(c, "key[`.qlint]~enlist`"), true);
+});

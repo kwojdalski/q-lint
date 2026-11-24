@@ -8,6 +8,7 @@ const {
   normalized,
   readDrift,
   driftRows,
+  lastInFile,
   driftSummary,
   changedSince,
   reloadPlan,
@@ -93,6 +94,28 @@ test("drift rows and their summary", () => {
   // One name: atoms rather than lists.
   assert.deepStrictEqual([...readDrift({ name: "f", state: "lambda", text: "{x}" }).entries()], [["f", { state: "lambda", text: "{x}" }]]);
   assert.throws(() => readDrift(42), /something other/);
+});
+
+// Every definition was compared, so a name defined twice had one row the
+// same and one that "differs": a drift no reload could clear.
+test("a name defined twice is compared as the files leave it (#1927)", () => {
+  const twice = definitions("f:{x+1}\ng:{x}\nf:{x+2}\n").map((def) => ({ file: "a.q", def }));
+  const held = (text) => readDrift({ name: ["f", "g"], state: ["lambda", "lambda"], text: [text, "{x}"] });
+  // One row for it, at its last definition in the file.
+  const rows = driftRows(twice, held("{x+2}"));
+  assert.deepStrictEqual(rows.map((r) => `${r.name}@${r.line}:${r.status}`), ["g@1:same", "f@2:same"]);
+  assert.strictEqual(driftSummary(rows, "rdb"), "2 workspace definitions against rdb: 0 differ, 0 not defined there, 2 the same.");
+  // The earlier one is not what loading the file leaves: holding it is a drift.
+  assert.deepStrictEqual(driftRows(twice, held("{x+1}")).map((r) => `${r.name}:${r.status}:${r.text}`), ["g:same:{x}", "f:differs:{x+2}"]);
+  // A default in one file and an override in another: the order they load
+  // in is not known here, so holding either's is the same.
+  const two = [...definitions("f:{x+1}\n").map((def) => ({ file: "default.q", def })), ...definitions("f:{x+2}\n").map((def) => ({ file: "override.q", def }))];
+  const f = (text) => readDrift({ name: "f", state: "lambda", text });
+  assert.deepStrictEqual(driftRows(two, f("{x+2}")).map((r) => `${r.file}:${r.status}`), ["default.q:same", "override.q:same"]);
+  assert.deepStrictEqual(driftRows(two, f("{x+1}")).map((r) => r.status), ["same", "same"]);
+  assert.deepStrictEqual(driftRows(two, f("{x+3}")).map((r) => r.status), ["differs", "differs"]);
+  // The definitions compared, in step with their rows.
+  assert.deepStrictEqual(lastInFile(twice).map((d) => d.def.line), [1, 2]);
 });
 
 test("hot reload sends only what the save changed, and only over the text the file had", () => {

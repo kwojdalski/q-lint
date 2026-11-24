@@ -111,7 +111,7 @@ test("Redefine parses the new text in the lambda's context and leaves the proces
   const was = "{[x] x+lim}";
   const edited = editedText("/ .ns.h on p, defined in .ns\n{[x] x+lim*2}\n");
   assert.strictEqual(edited, "{[x] x+lim*2}");
-  assert.strictEqual(await c.call(REDEFINE, ".ns.h", was, edited), ".ns.h");
+  assert.strictEqual(await c.call(REDEFINE, ".ns.h", was, edited), edited);
   // `lim` is `.ns.lim`: the new text was parsed in .ns.
   assert.strictEqual((await c.evaluate("\"f\"$.ns.h 1")).value, 11);
   assert.strictEqual((await c.evaluate("system\"d\"")).value, ".");
@@ -123,7 +123,7 @@ test("Redefine parses the new text in the lambda's context and leaves the proces
   assert.strictEqual((await c.evaluate("\"f\"$.ns.h 1")).value, 11);
   assert.strictEqual((await c.evaluate("system\"d\"")).value, ".");
   // A root lambda, over several lines.
-  assert.strictEqual(await c.call(REDEFINE, "multi", "{[x]\n  y:x+1;\n  g y}", "{[x]\n  y:x+2;\n  g y}"), "multi");
+  assert.strictEqual(await c.call(REDEFINE, "multi", "{[x]\n  y:x+1;\n  g y}", "{[x]\n  y:x+2;\n  g y}"), "{[x]\n  y:x+2;\n  g y}");
   assert.strictEqual((await c.evaluate("\"f\"$multi 1")).value, 6);
   await assert.rejects(c.call(REDEFINE, "p", "", "{x}"), /not a lambda/);
 });
@@ -149,6 +149,21 @@ test("callers are read from what q parsed: globals in context, nested lambdas, a
 
 // A view named to a reader is refused by its name, in `views[]`, before
 // `get` would evaluate it (#1865).
+test("Redefine answers the text the process holds, which a second Redefine is checked against (#1895)", { skip }, async (t) => {
+  const c = await connect(t, FUNCTIONS);
+  // q keeps the lambda, `{` to `}`: not the blank before it, nor a comment after.
+  for (const edited of ["{x+2} / was x+1", "\n{x+2}", " {x+2}", "{x+2}\n/ trailing note"]) {
+    await c.evaluate("fa:{x+1}");
+    const text = editedText(sourceDocument("fa", "p", { type: 100, ctx: "", text: edited }));
+    const held = await c.call(REDEFINE, "fa", "{x+1}", text);
+    assert.strictEqual(held, "{x+2}", JSON.stringify(edited));
+    assert.strictEqual(held, (await c.evaluate("last value fa")).value);
+    // The edit goes on from there.
+    assert.strictEqual(await c.call(REDEFINE, "fa", held, "{x+3}"), "{x+3}");
+    assert.strictEqual((await c.evaluate('"f"$fa 1')).value, 4);
+  }
+});
+
 test("a view named to Function Source, Redefine or a table's details is refused, not evaluated (#1865)", { skip }, async (t) => {
   const c = await connect(t, "t:([] a:1 2)\nspy::select from t\nbad::1+`a\nfv::{x+1}\n");
   const pending = () => c.call('{[x] string system"B"}', 0);

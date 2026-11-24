@@ -27,7 +27,10 @@
     const l = c.left.process;
     const r = c.right.process;
     if (c.same) {
-      return l + " and " + r + " gave the same answer.";
+      // Text holds a float only to the digits its process writes (#1963).
+      return c.digits
+        ? l + " and " + r + " gave the same answer to the digits shown. A float that is not in a list or a table is compared as each console writes it: compare enlist of it to compare its every digit."
+        : l + " and " + r + " gave the same answer.";
     }
     // Only the part that came back was compared (#1614).
     const cutNote = " Not every row came back, so only the rows held were compared: raise q-lint.query.gridLimit or turn on Unlimited to compare them all.";
@@ -49,6 +52,12 @@
     }
     if (c.onlyRight > 0) {
       parts.push(plural(c.onlyRight, "row", "rows") + " only on " + r);
+    }
+    (c.retyped || []).forEach(function (t) {
+      parts.push(t.column + " is " + t.left + " on " + l + " and " + t.right + " on " + r);
+    });
+    if (c.cut > 0) {
+      parts.push(plural(c.cut, "cell is", "cells are") + " the same as far as shown, cut at 200 characters, and no further compared");
     }
     if (parts.length === 0) {
       parts.push("the rows held are the same, the columns or row counts are not");

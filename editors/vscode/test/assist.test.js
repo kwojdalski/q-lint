@@ -6,6 +6,7 @@ const assert = require("node:assert");
 const {
   namesIn,
   codeOffset,
+  findingsIn,
   cut,
   readDescribed,
   tablesOf,
@@ -121,6 +122,18 @@ test("the qSQL prompt names the tables, and the draft round-trips", () => {
   assert.strictEqual(extractCode("```select from trade```"), "select from trade");
   assert.strictEqual(extractCode("```q\nselect from t where sym in ```a\n```"), "select from t where sym in ```a");
   assert.strictEqual(extractCode("```q\nselect from t where sym in ```a`b\n```\nThat filters."), "select from t where sym in ```a`b");
+  // #1913: a reply cut before its closing fence, a closing fence with text
+  // after it on its line, and a ~~~ fence all lose their fence lines.
+  assert.strictEqual(extractCode("```q\nselect from t"), "select from t");
+  assert.strictEqual(extractCode("Here:\n```q\nselect from t\n  where a>1"), "select from t\n  where a>1");
+  assert.strictEqual(extractCode("```q\nselect from t\n``` done"), "select from t");
+  assert.strictEqual(extractCode("~~~q\nselect from t\n~~~"), "select from t");
+  assert.strictEqual(extractCode("~~~\nselect from t where a~b\n~~~ done"), "select from t where a~b");
+  assert.strictEqual(extractCode("~~~q\nselect from t"), "select from t");
+  assert.strictEqual(extractCode("```q\r\nselect from t\r\n```\r\n"), "select from t");
+  // A line of symbols is still code, not a fence.
+  assert.strictEqual(extractCode("```q\nselect from t where sym in\n ```a`b\n```"), "select from t where sym in\n ```a`b");
+  assert.strictEqual(extractCode("select from t where sym in\n ```a`b"), "select from t where sym in\n ```a`b");
   const doc = draftDocument("last px\nby sym", "Fake", "select last px by sym from trade");
   assert.match(doc, /^\/ Drafted by Fake from: last px by sym\n\/ Review it: nothing has run\./);
   assert.strictEqual(draftCode(doc), "select last px by sym from trade");
@@ -131,6 +144,34 @@ test("codeOffset finds a name written as code, past a comment or string (#1631)"
     assert.strictEqual(codeOffset(text, charKinds(text), "vwap"), at, text);
   }
   assert.strictEqual(codeOffset("x.f;.ns.f 1", charKinds("x.f;.ns.f 1"), ".ns.f"), 4);
+  // Nor is a name found at the head of a dotted one, which namesIn reads
+  // as another name (#1912): the hover of a.b is not a's.
+  for (const [text, name, at] of [["a.b+a", "a", 4], ["x.y:1;x", "x", 6], ["t.c+t", "t", 4], ["a.b", "a", -1], ["a.b+a", "a.b", 0], ["x.a+a", "a", 4], ["a.1+a", "a", 0]]) {
+    assert.strictEqual(codeOffset(text, charKinds(text), name), at, `${name} in ${text}`);
+  }
+  assert.deepStrictEqual(namesIn("a.b+a", charKinds("a.b+a")), ["a.b", "a"]);
+});
+
+test("the findings a selection is explained with are q-lint's, on it, and numbered from its first line (#1917)", () => {
+  const R = (sl, sc, el, ec) => ({ start: { line: sl, character: sc }, end: { line: el, character: ec } });
+  const d = (range, code, message, source = "q-lint") => ({ range, code, message, source });
+  // Line 5 selected whole: the selection ends at column 0 of line 6, which
+  // a finding there only touches.
+  const whole = R(5, 0, 6, 0);
+  assert.deepStrictEqual(
+    findingsIn([d(R(4, 0, 4, 3), "QS001", "above"), d(R(6, 0, 6, 3), "QF005", "below"), d(R(5, 2, 5, 4), "QF001", "on it"), d(R(5, 0, 5, 0), "QB001", "no width, on it"), d(R(6, 0, 6, 0), "QB002", "no width, below")], whole),
+    ["line 1: QF001 on it", "line 1: QB001 no width, on it"],
+  );
+  // One that starts above the selection is on its first line, not line -2.
+  assert.deepStrictEqual(findingsIn([d(R(2, 0, 9, 1), "QS010", "a long function")], R(5, 0, 8, 0)), ["line 1: QS010 a long function"]);
+  assert.deepStrictEqual(findingsIn([d(R(6, 1, 6, 2), { value: "QF005", target: "u" }, "second line")], R(5, 0, 8, 0)), ["line 2: QF005 second line"]);
+  assert.deepStrictEqual(findingsIn([d(R(5, 0, 5, 1), undefined, "no code")], whole), ["line 1: no code"]);
+  // The server's two engines and the process warnings are q-lint's;
+  // another extension's findings on the file are not.
+  assert.deepStrictEqual(
+    findingsIn([d(R(5, 0, 5, 1), "a", "A", "qls"), d(R(5, 0, 5, 1), "b", "B", "q-lint (process)"), d(R(5, 0, 5, 1), "c", "C", "cSpell"), { range: R(5, 0, 5, 1), code: "e", message: "E" }], whole),
+    ["line 1: a A", "line 1: b B"],
+  );
 });
 
 test("a prompt's cut never splits a surrogate pair (#1622)", () => {

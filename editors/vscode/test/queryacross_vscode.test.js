@@ -259,3 +259,33 @@ test("cancelling Query a Tag records only the runs that were sent", async (t) =>
   assert.ok(sent > 0 && sent < 12, String(sent));
   assert.strictEqual(live.history().length, sent);
 });
+
+// One still connecting when the cancel came - its handshake not answered -
+// was recorded as an 'error' run, though nothing had been sent to it (#1926).
+test("cancelling Query a Tag while a process connects records no run for it", async (t) => {
+  const a = await fakeQ(table([1]));
+  const held = new Set();
+  const silent = net.createServer((socket) => void held.add(socket.on("error", () => {})));
+  await new Promise((r) => silent.listen(0, "127.0.0.1", r));
+  t.after(() => {
+    a.close();
+    for (const s of held) s.destroy();
+    silent.close();
+  });
+  const { live, across } = await setUp(t, [proc("a", a.port, ["eu"]), proc("slow", silent.address().port, ["eu"])]);
+  const listeners = [];
+  const token = { isCancellationRequested: false, onCancellationRequested: (f) => (listeners.push(f), { dispose() {} }) };
+  const withProgress = vscode.window.withProgress;
+  vscode.window.withProgress = async (_o, task) => task({ report() {} }, token);
+  t.after(() => (vscode.window.withProgress = withProgress));
+  const running = stub.commands.get("q-lint.queryTag")("eu", "select from t");
+  for (let i = 0; i < 100 && (live.history().length < 1 || held.size < 1); i++) await new Promise((r) => setTimeout(r, 20));
+  token.isCancellationRequested = true;
+  listeners.forEach((f) => f());
+  await running;
+  assert.deepStrictEqual(live.history().map((h) => `${h.process} ${h.outcome}`), ["a ok"]);
+  // It is listed as the ones never started are: cancelled.
+  const { payload } = across.state().tag;
+  assert.deepStrictEqual(payload.cells[0], ["a", "slow"]);
+  assert.strictEqual(payload.cells[payload.names.indexOf("error")][1], "cancelled");
+});

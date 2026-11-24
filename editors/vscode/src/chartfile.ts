@@ -26,7 +26,10 @@ const charts = require("../media/chartspec.js") as {
 export const CHART_KINDS = ["line", "area", "step", "bar", "scatter", "histogram", "candlestick"] as const;
 export type ChartKind = (typeof CHART_KINDS)[number];
 
-const isNumber = (s: string) => s.trim() !== "" && Number.isFinite(Number(s));
+/// A decimal number as a file writes one. `Number` alone also reads 0x1F,
+/// 0b11 and 0o17, which in a table are ids, not quantities (#1954).
+const DECIMAL = /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
+const isNumber = (s: string) => DECIMAL.test(s.trim()) && Number.isFinite(Number(s));
 
 /// A grid of named columns of text cells: numeric where every non-empty
 /// cell is a number.
@@ -54,6 +57,10 @@ export function gridFromCsv(text: string): Grid {
   }
   const sep = first.includes("\t") && !first.includes(",") ? "\t" : ",";
   const records = readDelimited(text, sep).rows.filter((r) => r.length > 1 || r[0].trim() !== "");
+  if (records.length === 0) {
+    // Lines, but no record: an empty quoted field is all there is (#1939).
+    throw new Error("the file has no header row");
+  }
   const names = records[0].map((n) => n.trim());
   const rows = records.slice(1);
   return gridOf(names, names.map((_, i) => rows.map((r) => r[i] ?? "")));
@@ -62,9 +69,10 @@ export function gridFromCsv(text: string): Grid {
 const text = (v: unknown) => (v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
 
 /// A JSON table - an array of row objects, or an object of column arrays -
-/// as a grid.
+/// as a grid. A byte order mark before it, as some tools write a UTF-8
+/// file, is not part of the JSON (#1940).
 export function gridFromJson(json: string): Grid {
-  const v: unknown = JSON.parse(json);
+  const v: unknown = JSON.parse(json.replace(/^\uFEFF/, ""));
   if (Array.isArray(v)) {
     const rows = v.filter((r): r is Record<string, unknown> => r !== null && typeof r === "object" && !Array.isArray(r));
     if (rows.length === 0) throw new Error("the JSON is not an array of objects");
@@ -76,7 +84,10 @@ export function gridFromJson(json: string): Grid {
   if (v !== null && typeof v === "object") {
     const cols = Object.entries(v as Record<string, unknown>).filter(([, c]) => Array.isArray(c)) as [string, unknown[]][];
     if (cols.length === 0) throw new Error("the JSON is not an object of column arrays");
-    return gridOf(cols.map(([n]) => n), cols.map(([, c]) => c.map(text)));
+    // As long as the longest: a shorter column ends in empty cells, so no
+    // value is dropped for sitting past the first column's end (#1941).
+    const rows = Math.max(...cols.map(([, c]) => c.length));
+    return gridOf(cols.map(([n]) => n), cols.map(([, c]) => Array.from({ length: rows }, (_, i) => text(c[i]))));
   }
   throw new Error("the JSON is not a table: an array of objects or an object of arrays");
 }

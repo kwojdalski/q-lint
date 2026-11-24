@@ -97,12 +97,40 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
     assert.deepStrictEqual(cells.slice(1), ['"b\\"c\\n"', '"caf\\303\\251"', ',"x"', '""'], own);
   });
 
+  await t.test("a string column exported as JSON is read back by q as the strings it held, one of a single character too (#1961)", async () => {
+    const { exportResult } = require("../out/resultexport.js");
+    const grid = (await connection.queryGrid(statements("1_strs"), SIZE, 10)).grid;
+    const json = exportResult("json", grid, -1).data.toString("utf8");
+    assert.deepStrictEqual(JSON.parse(json).map((r) => r.s), ['b"c\n', "café", "x", ""]);
+    const same = await connection.query(statements(`(1_strs)~{([] s:{$[10h=type x;x;enlist x]} each x\`s)} .j.k ${JSON.stringify(json)}`), SIZE);
+    assert.deepStrictEqual(same.text, ["1b"], json);
+  });
+
   await t.test("a char column's raw is its bytes, so a byte past ASCII is written back as itself (#1489)", async () => {
     const { atomLiteral } = require("../out/qliteral.js");
     const answer = await connection.queryGrid(statements('([]c:"a\\303\\251")'), SIZE, 10);
     assert.strictEqual(answer.gridError, undefined, answer.gridError);
     assert.deepStrictEqual(answer.grid.raw[0], [97, 0xc3, 0xa9]);
     assert.deepStrictEqual(answer.grid.cells[0].map((c, r) => atomLiteral(10, c, answer.grid.raw[0][r]).literal), ['"a"', '"\\303"', '"\\251"']);
+  });
+
+  await t.test("a char column's bytes past ASCII are exported as the characters they are, each its own (#1962)", async () => {
+    const { exportResult } = require("../out/resultexport.js");
+    const { toGrid } = require("../out/grid.js");
+    const code = '([]c:" a\\"\\351\\303\\251\\377")';
+    const grid = (await connection.queryGrid(statements(code), SIZE, 10)).grid;
+    const bytes = (await connection.query(statements(`"j"$(${code})\`c`), SIZE)).text.join("").split(" ").map(Number);
+    assert.deepStrictEqual(bytes, [32, 97, 34, 0xe9, 0xc3, 0xa9, 0xff]);
+    const codes = (cells) => cells.map((c) => c.charCodeAt(0));
+    assert.deepStrictEqual(codes(JSON.parse(exportResult("json", grid, -1).data.toString("utf8")).map((r) => r.c)), bytes);
+    assert.deepStrictEqual(codes(toGrid(grid, -1).cells[0]), bytes);
+    // The Parquet file holds each as UTF-8, and no replacement character.
+    const parquet = exportResult("parquet", grid, -1).data;
+    assert.ok(parquet.includes(Buffer.from("\u00e9\u00c3")) || (parquet.includes(Buffer.from("\u00e9")) && parquet.includes(Buffer.from("\u00ff"))));
+    assert.ok(!parquet.includes(Buffer.from("\ufffd")));
+    // Export as q is the table itself.
+    const literal = exportResult("q", grid, -1).data.toString("utf8");
+    assert.deepStrictEqual((await connection.query(statements(`(${code})~${literal}`), SIZE)).text, ["1b"], literal);
   });
 
   await t.test("a general column's float and real items come with every digit, for a literal (#1485)", async () => {
@@ -198,6 +226,40 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
     }
     const filled = fillDrilldown(`exec i from 0!(${code}) where k={{value}}, d={{row.d}}`, grid, 0, 2);
     assert.deepStrictEqual((await connection.query(statements(filled.code), SIZE)).text, [",2"]);
+  });
+
+  await t.test("an exported q literal rebuilds a minute, second or time of 100 hours or more, which q writes as ** (#1967)", async () => {
+    const { tableLiteral } = require("../out/qliteral.js");
+    const { fillDrilldown } = require("../out/drilldown.js");
+    const tables = [
+      '([] c0:"u"$0N 6000)',
+      '([] u:"u"$0N 6000 -6000 5999 0W -0W 59; v:"v"$0N 360000 -360000 359999 0W -0W 59; t:"t"$0N 360000000 -360000000 359999999 0W -0W 59)',
+      '([k:"u"$6000 1] v:"v"$2147483646 1)',
+      '([] t:1#"t"$-2147483646)',
+    ];
+    for (const code of tables) {
+      const grid = (await connection.queryGrid(statements(code), SIZE, 100)).grid;
+      const literal = tableLiteral(grid).code;
+      const same = await connection.query(statements(`(${code})~${literal}`), SIZE);
+      assert.deepStrictEqual(same.text, ["1b"], `${code}\nwritten as\n${literal}`);
+    }
+    const grid = (await connection.queryGrid(statements(tables[1]), SIZE, 100)).grid;
+    assert.deepStrictEqual(grid.cells[0].slice(1, 3), ["**:00", "-**:00"]);
+    const filled = fillDrilldown(`exec i from ${tables[1]} where u={{value}}, t={{row.t}}`, grid, 0, 2);
+    assert.deepStrictEqual((await connection.query(statements(filled.code), SIZE)).text, [",2"]);
+  });
+
+  await t.test("an exported q literal rebuilds a lone generic null or operator, which enlist alone would not take (#1968)", async () => {
+    const { tableLiteral } = require("../out/qliteral.js");
+    const items = ["(::)", "(+)", "(+/)", "(+:)", "(-:)", "(#:)", "(-)", "(%)", "(.)", "(@)", "enlist(::)", "enlist enlist(::)", "(enlist(::);1)", "enlist(+)", "enlist(-:)", "(1.5;enlist(::))", "enlist(1.5;(::))", "(enlist`a)!enlist(::)", "(1 2!3 4;::)", "{x+1}", "+[1]", "-1", "-0w"];
+    // Not enlist (:) or enlist (') inside an item: -3! writes them ,: and ,' as it writes the monadic comma and join-each.
+    const tables = ["([] c0:enlist 0Nh; c1:enlist (::); c2:enlist 0Nd; c3:enlist 0w)", "([] c:enlist (:))", "([] c:((:);1))", "([] c:enlist ('))", "([] c:((');1))", ...items.flatMap((v) => [`([] c:enlist ${v})`, `([] c:(${v};1))`, `([] c:enlist enlist ${v})`])];
+    for (const code of tables) {
+      const grid = (await connection.queryGrid(statements(code), SIZE, 100)).grid;
+      const literal = tableLiteral(grid).code;
+      const same = await connection.query(statements(`(${code})~${literal}`), SIZE);
+      assert.deepStrictEqual(same.text, ["1b"], `${code}\nwritten as\n${literal}`);
+    }
   });
 
   await t.test("an exported q literal rebuilds a one-character string in a list, a symbol starting with _ and the other awkward cells (0.29.0 bug)", async () => {

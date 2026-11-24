@@ -75,8 +75,33 @@ test("a function that changed on the process, or is not there, is not replaced",
   );
   assert.deepStrictEqual(statuses.slice(0, 2), ["changed", "missing"]);
   assert.notStrictEqual(statuses[2], "ok", "text that does not parse is reported, not defined");
+  // Nothing was replaced, so nothing is kept to put back with: .qlint.cov
+  // is gone already, whether or not a restore follows (#1893).
+  assert.strictEqual(await value(c, "key[`.qlint]~enlist`"), true);
+  assert.deepStrictEqual(readInstalled(await c.call(installLambda("err"), ["g"], ["{x}"], ["{x}"], 0), 1), ["missing"]);
+  assert.strictEqual(await value(c, "key[`.qlint]~enlist`"), true);
+  // One replaced of two: kept until the restore.
+  assert.deepStrictEqual(readInstalled(await c.call(installLambda("cov"), ["f", "g"], ["{x+1}", "{x}"], ["{x+1}", "{x}"], 0), 2), ["ok", "missing"]);
+  assert.strictEqual(await value(c, "key[`.qlint]~``cov"), true);
   readRestored(await c.call(restoreExpression("cov")));
   assert.strictEqual(await value(c, "last value f"), "{x+1}");
+});
+
+test("a coverage probe leaves its function callable where q refuses a global write: under reval it is not counted, and still answers (#1894)", { skip }, async (t) => {
+  const { connection: c } = await connect(t, "sq:{[x] y:x*x; y}\nbad:{[x] x+`a}\n");
+  const call = "reval(`sq;3)";
+  assert.strictEqual(Number(await value(c, call)), 9);
+  const covered = [coverageText("{[x] y:x*x; y}", 0), coverageText("{[x] x+`a}", 2)];
+  assert.deepStrictEqual(readInstalled(await c.call(installLambda("cov"), ["sq", "bad"], ["{[x] y:x*x; y}", "{[x] x+`a}"], covered.map((x) => x.text), 3), 2), ["ok", "ok"]);
+  // A gateway's read-only evaluation: the probe's own write is refused
+  // ('noupdate), and that is not the caller's error.
+  assert.strictEqual(Number(await value(c, call)), 9);
+  // Where it can write it counts, and the function's own error is still its error.
+  assert.strictEqual(Number(await value(c, "sq 4")), 16);
+  await assert.rejects(value(c, "bad 1"), /type/);
+  const restored = readRestored(await c.call(restoreExpression("cov")));
+  assert.deepStrictEqual(restored.d.map(Number), [1, 1, 1]);
+  assert.deepStrictEqual(await value(c, "(last value sq;key[`.qlint]~enlist`)"), ["{[x] y:x*x; y}", true]);
 });
 
 test("the locals capture keeps the arguments and locals up to the error", { skip }, async (t) => {

@@ -42,7 +42,7 @@ import {
   NAMES_LIMIT,
   PROCESS_NAMES,
   PROCESS_SYMBOL_SCHEME,
-  matching,
+  processOnly,
   processSymbolDocument,
   readProcessNames,
   readSlot,
@@ -274,20 +274,10 @@ class ProcessSymbols {
     if (found === undefined) {
       return [];
     }
-    const candidates = matching(found.names, query);
     const lsp = this.server();
-    let defined: unknown[] = [];
-    if (lsp !== undefined && candidates.length > 0) {
-      try {
-        const answer = await lsp.sendRequest(DEFINED_IN_WORKSPACE, { names: candidates.map((c) => c.name) });
-        defined = Array.isArray(answer) ? answer : [];
-      } catch {
-        defined = [];
-      }
-    }
+    const candidates = await processOnly(found.names, query, async (names) => lsp?.sendRequest(DEFINED_IN_WORKSPACE, { names }));
     const process = found.process;
     return candidates
-      .filter((_, i) => defined[i] !== true)
       .map((c) => {
         const uri = Uri.from({ scheme: PROCESS_SYMBOL_SCHEME, path: `/${c.name}`, query: new URLSearchParams({ kind: c.kind, process }).toString() });
         const kind = c.kind === "function" ? SymbolKind.Function : c.kind === "table" ? SymbolKind.Struct : SymbolKind.Variable;

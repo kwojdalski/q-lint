@@ -61,7 +61,8 @@ export function registerRepl(
     try {
       const kept = pushHistory(past(), code);
       await context.globalState.update(HISTORY_KEY, kept);
-      panel.post({ type: "accepted", history: kept });
+      // The input is cleared for a line it sent, not under a run from the editor (#1922).
+      panel.post({ type: uri === undefined ? "accepted" : "history", history: kept });
       const id = panel.add({ code });
       const ran = await runText(live, replScript(code), uri);
       names = undefined;

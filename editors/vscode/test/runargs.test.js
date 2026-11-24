@@ -47,6 +47,8 @@ test("a set is the words after the file and the lines typed after", () => {
   assert.deepStrictEqual(inputLines("a\r\nb"), ["a", "b"]);
   assert.deepStrictEqual(describe({ args: "", input: "" }), { label: "(no arguments)", description: "" });
   assert.deepStrictEqual(describe({ args: "1 2", input: "a\nb" }), { label: "1 2", description: "then 2 lines of input" });
+  // Listed as written: a quick pick would draw $(flame) as an icon and $(pwd) as nothing (#1929).
+  assert.strictEqual(describe({ args: "-data $(pwd)/hdb -env $(flame)", input: "" }).label, "-data \\$(pwd)/hdb -env \\$(flame)");
 });
 
 test("the command is on by default, contributed, and hidden while off", () => {

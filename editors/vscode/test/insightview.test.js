@@ -156,7 +156,8 @@ function answers([code, ...args]) {
     return args[0] === ".ns.h" ? { type: 100, text: "{[x] x+lim}", ctx: "ns", params: ["x"] } : { type: 100, text: "{[a] .ns.h a}", ctx: "", params: ["a"] };
   }
   if (code === REDEFINE) {
-    return args[0];
+    // The text q keeps for the lambda: `{` to its `}`.
+    return args[2].slice(args[2].indexOf("{"), args[2].lastIndexOf("}") + 1);
   }
   if (code === CALLERS) {
     return { rows: [{ name: "f", params: ["a"], how: "calls" }], scanned: 2, more: 0 };
@@ -234,6 +235,22 @@ test("Open Function Source shows the process's text read-only; Edit and Redefine
   await stub.commands.get("q-lint.redefineFunction")();
   assert.strictEqual(calls(q, REDEFINE)[1][1], "{[x] x+lim*2}");
   assert.strictEqual(sources.state().copies.length, 1);
+});
+
+test("a second Redefine is checked against the text the process kept, not the one the editor sent (#1895)", async (t) => {
+  const { q } = await setUp(t);
+  const uri = await stub.commands.get("q-lint.openFunctionSource")(".ns.h");
+  const copy = await stub.commands.get("q-lint.editFunctionSource")(uri);
+  // q keeps the lambda alone: neither the blank line nor the comment.
+  copy.text = "/ .ns.h on p, defined in .ns\n\n{[x] x+lim*2} / was x+lim\n";
+  stub.picks.push("Redefine");
+  assert.strictEqual(await stub.commands.get("q-lint.redefineFunction")(), true);
+  assert.deepStrictEqual(calls(q, REDEFINE), [[".ns.h", "{[x] x+lim}", "\n{[x] x+lim*2} / was x+lim"]]);
+  assert.strictEqual(providers.content.provideTextDocumentContent(uri), "/ .ns.h on p, defined in .ns\n{[x] x+lim*2}\n");
+  copy.text = "/ .ns.h on p, defined in .ns\n{[x] x+lim*3}\n";
+  stub.picks.push("Redefine");
+  assert.strictEqual(await stub.commands.get("q-lint.redefineFunction")(), true);
+  assert.deepStrictEqual(calls(q, REDEFINE)[1], [".ns.h", "{[x] x+lim*2}", "{[x] x+lim*3}"]);
 });
 
 test("Redefine goes only to the process the function came from", async (t) => {

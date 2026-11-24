@@ -67,6 +67,19 @@ test("the column manager checks an op against the table and writes a script the 
   assert.match(opProblem({ op: "add", column: "px", value: "0n" }, cols, "date"), /already has a column px/);
   assert.match(opProblem({ op: "add", column: "1x", value: "0n" }, cols, "date"), /not a column name/);
   assert.match(opProblem({ op: "add", column: "x", value: "" }, cols, "date"), /one q value/);
+  // A keyword, a builtin or `i` as a new name is refused with why (#1960).
+  for (const name of ["type", "select", "count", "by", "xasc"]) {
+    assert.strictEqual(opProblem({ op: "add", column: name, value: "0n" }, cols, "date"), `${name} is a q keyword or builtin, which a query cannot name as a column`);
+    assert.strictEqual(opProblem({ op: "rename", column: "px", to: name }, cols, "date"), `${name} is a q keyword or builtin, which a query cannot name as a column`);
+  }
+  assert.match(opProblem({ op: "add", column: "i", value: "0n" }, cols, "date"), /^i is the row index in a query/);
+  assert.match(opProblem({ op: "rename", column: "px", to: "i" }, cols, ""), /^i is the row index in a query/);
+  assert.match(opProblem({ op: "rename", column: "px", to: "a b" }, cols, "date"), /not a column name/);
+  // Names that only start like one, and a column that has such a name already, are not.
+  assert.strictEqual(opProblem({ op: "add", column: "types", value: "0n" }, cols, "date"), undefined);
+  assert.strictEqual(opProblem({ op: "rename", column: "px", to: "ii" }, cols, "date"), undefined);
+  assert.strictEqual(opProblem({ op: "rename", column: "type", to: "kind" }, [...cols, "type"], "date"), undefined);
+  assert.strictEqual(opProblem({ op: "delete", column: "i" }, [...cols, "i"], "date"), undefined);
   assert.match(opProblem({ op: "delete", column: "date" }, cols, "date"), /partition field/);
   assert.match(opProblem({ op: "delete", column: "nope" }, cols, "date"), /no column nope/);
   assert.match(opProblem({ op: "rename", column: "px", to: "sym" }, cols, "date"), /already has a column sym/);
@@ -305,6 +318,21 @@ test("test data: a short's or an int's range is cut to the finite values it hold
   const info = { kind: "table", rows: 0, bytes: null, partitions: null, keys: [], ncols: 2, columns: [{ name: "h", type: "h", fkey: "", attr: "" }, { name: "i", type: "i", fkey: "", attr: "" }] };
   const rows = testDataCsv(info, o).trim().split("\n").slice(1).map((l) => l.split(",").map(Number));
   assert.ok(rows.every(([h, i]) => h >= 0 && h <= 32766 && i >= 0 && i <= 2147483646), JSON.stringify(rows.slice(0, 3)));
+});
+
+test("test data: a long's range is cut to the whole numbers a JavaScript number holds, in the q and the CSV (#1904)", () => {
+  const o = { rows: 200, symbols: ["A"], low: 0, high: 1e19, seed: 7 };
+  // 2^52 either way: past 2^63 q cannot read the count, and 1e21 prints as a float.
+  assert.strictEqual(generator("j", o), "0+n?4503599627370497");
+  assert.strictEqual(generator("j", { ...o, high: 1e21 }), "0+n?4503599627370497");
+  assert.strictEqual(generator("j", { ...o, low: -1e21, high: 1e21 }), "-4503599627370496+n?9007199254740992");
+  assert.strictEqual(generator("j", { ...o, low: 1e25, high: 1e26 }), "4503599627370496+n?1");
+  assert.strictEqual(generator("j", { ...o, high: 5e9 }), "0+n?5000000000");
+  const info = { kind: "table", rows: 0, bytes: null, partitions: null, keys: [], ncols: 1, columns: [{ name: "j", type: "j", fkey: "", attr: "" }] };
+  for (const [low, high] of [[0, 1e19], [0, 1e21], [-1e21, 1e21]]) {
+    const cells = testDataCsv(info, { ...o, low, high }).trim().split("\n").slice(1);
+    assert.ok(cells.every((c) => /^-?\d+$/.test(c) && Math.abs(Number(c)) <= 2 ** 52), JSON.stringify(cells.slice(0, 3)));
+  }
 });
 
 test("the tickerplant log's readers, times of day and ranges", () => {

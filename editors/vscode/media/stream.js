@@ -45,6 +45,11 @@
   // costs the rows that came, not every row kept (#1861).
   window.addEventListener("message", (event) => {
     const m = event.data;
+    // The connection closed: said even while paused, when no rows come (#1932).
+    if (m && m.type === "closed") {
+      closed.textContent = `Stopped: ${m.closed}.`;
+      return;
+    }
     if (!m || m.type !== "rows") {
       return;
     }

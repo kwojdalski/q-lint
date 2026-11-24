@@ -90,13 +90,16 @@ export interface ExplorerSettings {
 }
 
 /// The explorer's settings, read with `get` as `readLive` reads the query
-/// settings. A preview limit that is not a positive whole number is 5.
+/// settings. A preview limit that is not a positive whole number is 5. A
+/// namespace is its bare name, written `.zz` or as the symbol `` `zz `` too:
+/// the names are sent joined, and the IPC client sends text that starts
+/// with a backtick as a symbol, which the lambdas cannot cut (#1965).
 export function readExplorer(get: <T>(key: string, fallback: T) => T): ExplorerSettings {
   const excluded = get<unknown>("processExplorer.excludedNamespaces", ["q", "Q", "h", "j", "o", "s"]);
   const limit = get<unknown>("processExplorer.previewLimit", 5);
   return {
     excludedNamespaces: Array.isArray(excluded)
-      ? excluded.map((n) => String(n).trim().replace(/^\./, "")).filter((n) => n !== "" && !/\s/.test(n))
+      ? excluded.map((n) => String(n).trim().replace(/^`*\.?/, "")).filter((n) => n !== "" && !/\s/.test(n))
       : [],
     // At most 2^53-1: 1e21 is written `1e+21`, which `til` refuses (#1852).
     previewLimit: typeof limit === "number" && Number.isInteger(limit) && limit > 0 ? Math.min(limit, Number.MAX_SAFE_INTEGER) : 5,

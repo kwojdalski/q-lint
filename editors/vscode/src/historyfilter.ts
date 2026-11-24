@@ -134,8 +134,8 @@ export function historyScript(entries: Entry[]): string {
 }
 
 /// `code` made to load in a script as it ran on its own (#1098): the line
-/// that starts its first statement unindented, so it does not continue the
-/// entry above, and a block comment it leaves open closed, so it does not
+/// that starts its first statement unindented, as the comments above it
+/// are, so it does not continue the entry above, and a block comment it leaves open closed, so it does not
 /// hide the entries below. The rules are `statements.ts`'s.
 function standalone(code: string): string {
   const lines = code.split("\n");
@@ -149,9 +149,15 @@ function standalone(code: string): string {
       // The end of the script ended this entry when it ran, and would end
       // the export here: it and the rest of the entry become comments (#1136).
       return lines.map((l, j) => (j < i || l.trim() === "" ? l : `/ ${l}`)).join("\n");
-    } else if (!started && line.trim() !== "" && !line.startsWith("/")) {
-      lines[i] = lines[i].trimStart();
-      started = true;
+    } else if (!started && line.trim() !== "") {
+      // An indented comment is not the statement, which is under it
+      // (#1924). `/` alone stays indented, a comment as it ran: at the
+      // margin it would open a block comment over every entry below.
+      const text = line.trimStart();
+      if (text !== "/") {
+        lines[i] = lines[i].trimStart();
+      }
+      started = !text.startsWith("/");
     }
   }
   return depth > 0 ? `${lines.join("\n")}\n${"\\\n".repeat(depth - 1)}\\` : lines.join("\n");

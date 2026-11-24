@@ -91,6 +91,13 @@ test("each entry of the exported script loads as it ran on its own (#1098)", () 
   assert.match(historyScript([entry("b:2\n\\\nnever:1")]), /^b:2\n\/ \\\n\/ never:1$/m);
   // A closed block comment, kept as written.
   assert.match(historyScript([entry("/\nx\n\\\ny:1")]), /^\/\nx\n\\\ny:1\n$/m);
+  // An indented comment is not the entry's first statement (#1924): the
+  // statement under it is the line unindented.
+  assert.deepStrictEqual(script("a:1", "  / note\n\t/ more\n  b:a+1\n  c"), ["a:1", "b:a+1\n  c"]);
+  assert.match(historyScript([entry("  / note\n  b:a+1")]), /^\/ note\nb:a\+1$/m);
+  // And `/` alone, indented, is a comment that at the margin would open a
+  // block comment over every entry below: it stays where it is.
+  assert.match(historyScript([entry("c:3"), entry("  /  \n  b:1"), entry("a:2")]), /^a:2\n\n\/ p, .*\n  \/  \nb:1\n\n\/ p, .*\nc:3\n$/m);
 });
 
 test("the filter is on the view's title bar, and Clear Filter only while filtered", () => {

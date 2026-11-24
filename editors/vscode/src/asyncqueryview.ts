@@ -183,13 +183,17 @@ export class AsyncQueries {
       return;
     }
     const picked = await window.showQuickPick(
-      [...this.pending.values()].map((p) => ({
-        // By code point, never inside a surrogate pair (#1473).
-        line: Array.from(p.code.split(/\r?\n/)[0]).slice(0, 80).join(""),
-        label: iconsEscaped(Array.from(p.code.split(/\r?\n/)[0]).slice(0, 80).join("")),
-        description: iconsEscaped(`${p.process}, ${elapsedText(Date.now() - p.started)}`),
-        id: p.id,
-      })),
+      [...this.pending.values()].map((p) => {
+        // Its first line of code, not a blank one the selection began with
+        // (#1933); by code point, never inside a surrogate pair (#1473).
+        const line = Array.from(p.code.trim().split(/\r?\n/)[0].trimEnd()).slice(0, 80).join("");
+        return {
+          line,
+          label: iconsEscaped(line),
+          description: iconsEscaped(`${p.process}, ${elapsedText(Date.now() - p.started)}`),
+          id: p.id,
+        };
+      }),
       { title: "Asynchronous queries waiting for their result: pick one to forget it" },
     );
     if (picked === undefined) {

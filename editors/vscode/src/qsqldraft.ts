@@ -4,8 +4,9 @@
 // editor for review. Nothing runs unless the user says so: the draft's
 // notification offers Run, which runs the editor's text as it then stands -
 // edited or not - as Query from the editor would run it, and Insert at
-// Cursor, which puts it into the editor the command started from. The VS
-// Code around `assist.ts`; turned off (`q-lint.chat.englishToQsql.enable`)
+// Cursor, which puts it into the editor the command started from - shown
+// again when its tab was switched away from or closed meanwhile (#1906).
+// The VS Code around `assist.ts`; turned off (`q-lint.chat.englishToQsql.enable`)
 // the command is hidden and refuses, and asks neither model nor process.
 import {
   LanguageModelChatMessage,
@@ -69,6 +70,23 @@ async function ask(model: LanguageModelChat, prompt: string, token: Cancellation
   return text;
 }
 
+/// Put `text` at the cursor of `from`, the editor the command started
+/// from. One whose tab is no longer shown is closed to VS Code, and its
+/// `edit` throws: its document is shown again, at the cursor it had.
+/// Throws why nothing was inserted.
+async function insertAt(from: TextEditor, text: string): Promise<void> {
+  let done: boolean;
+  try {
+    done = await from.edit((edit) => edit.replace(from.selection, text));
+  } catch {
+    const again = await window.showTextDocument(from.document, { viewColumn: from.viewColumn, selection: from.selection });
+    done = await again.edit((edit) => edit.replace(again.selection, text));
+  }
+  if (done === false) {
+    throw new Error("the editor did not take the edit");
+  }
+}
+
 export async function draftQsql(live: Live, given?: string): Promise<Drafted | undefined> {
   const configuration = workspace.getConfiguration("q-lint");
   if (!readAssist((key, fallback) => configuration.get(key, fallback)).qsql) {
@@ -123,7 +141,11 @@ export async function draftQsql(live: Live, given?: string): Promise<Drafted | u
   if (picked === RUN && now !== "") {
     await live.queryCode(now, document.uri);
   } else if (picked === INSERT && from !== undefined && now !== "") {
-    await from.edit((edit) => edit.replace(from.selection, now));
+    try {
+      await insertAt(from, now);
+    } catch (error) {
+      void window.showErrorMessage(plainMessage(`q-lint: the draft was not inserted: ${message(error)}. It is still in its own editor.`));
+    }
   }
   return { document, code, ...(picked !== undefined ? { picked } : {}) };
 }

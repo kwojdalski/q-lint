@@ -532,3 +532,38 @@ test("an integer too big for a number is saved and stripped as written (#1562)",
   assert.strictEqual(serializeQnb(parseQnb(saved)), saved);
   assert.match(stripQnb(raw), /"t": 1700000000123456789,/);
 });
+
+test("the setup adds the line to the file chosen, whatever another attributes file says already (#1950)", async () => {
+  const { setsFilter } = require("../out/notebookgit.js");
+  assert.strictEqual(setsFilter("*.png binary\n*.qnb filter=qnb-strip\n"), true);
+  assert.strictEqual(setsFilter("# *.qnb filter=qnb-strip\r\n  *.qnb\ttext  filter=qnb-strip  \r\n*.qnb eol=lf\r\n"), true);
+  // Its last line for *.qnb wins, as in git; no line, or another's, is none.
+  for (const text of ["", "*.png binary\n", "*.qnb filter=qnb-strip\n*.qnb -filter\n", "*.qnb filter=qnb-strip\n*.qnb !filter\n", "*.qnb filter=other\n", "*.qnbx filter=qnb-strip\n", "sub/*.qnb filter=qnb-strip\n"]) {
+    assert.strictEqual(setsFilter(text), false, JSON.stringify(text));
+  }
+  const fake = fakeVscode();
+  load(fake);
+  const { Uri } = fake.vscode;
+  const setUp = fake.commands["q-lint.setUpNotebookStripFilter"];
+  // Set up for this clone, then for everyone: the committed file has no line yet.
+  const one = repo({ "README": "r\n" });
+  fake.answers.push("Write");
+  await setUp(Uri.file(one.dir), "info");
+  assert.match(one.git("check-attr", "filter", "--", "a.qnb"), /filter: qnb-strip/);
+  fake.answers.push("Write");
+  await setUp(Uri.file(one.dir), "gitattributes");
+  assert.match(fake.details.at(-1), /^1\. Add the line "\*\.qnb filter=qnb-strip" at the end of .*[\\/]\.gitattributes\.\n\nNo hook/);
+  assert.strictEqual(fs.readFileSync(path.join(one.dir, ".gitattributes"), "utf8"), "*.qnb filter=qnb-strip\n");
+  await setUp(Uri.file(one.dir), "gitattributes");
+  assert.match(fake.messages.at(-1), /strips notebook outputs on commit already/);
+  // From a subfolder whose own .gitattributes has the line: the root's has
+  // none, and a notebook elsewhere in the repository is not filtered.
+  const two = repo({ "README": "r\n" });
+  fs.mkdirSync(path.join(two.dir, "sub"));
+  fs.writeFileSync(path.join(two.dir, "sub", ".gitattributes"), "*.qnb filter=qnb-strip\n");
+  assert.match(two.git("check-attr", "filter", "--", "a.qnb"), /filter: unspecified/);
+  fake.answers.push("Write");
+  await setUp(Uri.file(path.join(two.dir, "sub")), "gitattributes");
+  assert.strictEqual(fs.readFileSync(path.join(two.dir, ".gitattributes"), "utf8"), "*.qnb filter=qnb-strip\n");
+  assert.match(two.git("check-attr", "filter", "--", "a.qnb"), /filter: qnb-strip/);
+});

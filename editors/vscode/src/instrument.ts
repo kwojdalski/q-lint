@@ -13,11 +13,16 @@
 // `.qlint.<ns>` there: the caller restores first, so a run that was
 // interrupted is put right before another starts.
 //
-// Coverage puts `.qlint.cov.d[k]+:1;` in front of each statement of a
-// function's own body; the locals capture keeps the call's arguments as the
+// Coverage puts `.qlint.cov.hit k;` in front of each statement of a
+// function's own body: INSTALL defines it to add 1 to `.qlint.cov.d[k]`
+// under a trap, so a caller q refuses a global write to (`reval`, a
+// secondary thread of `peach`) still gets the function's answer, uncounted
+// (#1894). The locals capture keeps the call's arguments as the
 // parameter cache (#892) does, which statement it is on, and each local as
 // a statement at the top of the body assigns it.
+import type { Live } from "./live";
 import { codeMask, lambdas, parameters, type Lambda } from "./paramcache";
+import type { Process } from "./processes";
 import { FULL_TEXT } from "./qtext";
 
 /// One statement of a lambda's own body: offsets of its first code
@@ -124,7 +129,7 @@ export interface Covered {
   statements: BodyStatement[];
 }
 
-/// `text` (a lambda, `{` to `}`) with `.qlint.cov.d[k]+:1;` in front of each
+/// `text` (a lambda, `{` to `}`) with `.qlint.cov.hit k;` in front of each
 /// of its body's statements, `k` counting from `first`. Undefined when it is
 /// not one lambda or has no statement.
 export function coverageText(text: string, first: number): Covered | undefined {
@@ -140,7 +145,7 @@ export function coverageText(text: string, first: number): Covered | undefined {
   return {
     text: inserted(
       text,
-      statements.map((s, k) => ({ offset: s.start, text: `.qlint.cov.d[${first + k}]+:1;` })),
+      statements.map((s, k) => ({ offset: s.start, text: `.qlint.cov.hit ${first + k};` })),
     ),
     statements,
   };
@@ -206,16 +211,18 @@ export function restoreExpression(ns: "cov" | "err"): string {
 
 /// Replaces each of `nms` (strings) whose text on the process is `was` with
 /// `src`, defined in its own context, keeping what it held. `d` is how many
-/// probes coverage counts (`.qlint.cov.d`, longs); the locals capture starts
+/// probes coverage counts (`.qlint.cov.d`, longs, through `.qlint.cov.hit`);
+/// the locals capture starts
 /// `.qlint.err.d` empty. Answers, for each name, `ok`, `missing`,
-/// `changed` or the error defining it gave.
+/// `changed` or the error defining it gave; when none is `ok`,
+/// `.qlint.<ns>` is deleted again.
 export function installLambda(ns: "cov" | "err"): string {
   const n = `.qlint.${ns}`;
   return [
     "{[nms;was;src;d]",
     ` ${n}.saved:(\`$())!();${n}.inst:(\`$())!();`,
-    ns === "cov" ? ' .qlint.cov.d:("j"$d)#0j;' : " .qlint.err.d:`args`locals`at!((`$())!();(`$())!();0N);",
-    " {[nm;w;s]",
+    ns === "cov" ? ' .qlint.cov.d:("j"$d)#0j;.qlint.cov.hit:{@[{.qlint.cov.d[x]+:1};x;{}]};' : " .qlint.err.d:`args`locals`at!((`$())!();(`$())!();0N);",
+    " r:{[nm;w;s]",
     "  nm:`$nm;old:@[get;nm;{::}];",
     "  if[not 100h=type old;:\"missing\"];",
     "  if[not w~last value old;:\"changed\"];",
@@ -226,7 +233,11 @@ export function installLambda(ns: "cov" | "err"): string {
     "  if[not first r;:last r];",
     "  if[not 100h=type last r;:\"not a lambda\"];",
     `  ${n}.saved[nm]:old;${n}.inst[nm]:last r;`,
-    "  nm set last r;\"ok\"}'[{(),x}each(),nms;{(),x}each(),was;{(),x}each(),src]}",
+    "  nm set last r;\"ok\"}'[{(),x}each(),nms;{(),x}each(),was;{(),x}each(),src];",
+    // Nothing replaced: nothing is kept for a restore the caller has no
+    // reason to send (#1893).
+    ` if[0=count ${n}.saved;.qlint:(enlist\`${ns})_.qlint];`,
+    " r}",
   ].join("\n");
 }
 
@@ -254,4 +265,59 @@ export function readInstalled(raw: unknown, count: number): string[] {
     throw new Error(`the process answered ${out.length} statuses for ${count} functions`);
   }
   return out;
+}
+
+/// How long a restore over a connection of its own waits for the process,
+/// in ms: it is tried at the end of a run whose own restore could not be
+/// sent, often because the process is busy, and the run does not wait on
+/// that for long.
+export const RESTORE_WAIT = 10_000;
+
+/// Whether `message` is `Live.runOnActive`'s for the read-only guard's
+/// question declined: the user said not to send it, so no other way is tried.
+export const guardDeclined = (message: string): boolean => /was not confirmed\.?$/.test(message);
+
+/// Put back what a run left instrumented on `process` - the one INSTALL
+/// went to, whichever is active now - over a connection of its own, closed
+/// after: the run's own restore could not be sent (another process became
+/// active, the query timed out, the connection closed). The read-only
+/// guard is asked about it as it is about the run's own. Throws why
+/// nothing was put back, within `wait` ms.
+export async function restoreApart(
+  live: Pick<Live, "guardAllows" | "openSeparate">,
+  process: Process,
+  ns: "cov" | "err",
+  what: string,
+  wait = RESTORE_WAIT,
+): Promise<Restored> {
+  const restore = restoreExpression(ns);
+  if (!(await live.guardAllows(restore, [process], what))) {
+    throw new Error(`changing the read-only process ${process.label} was not confirmed`);
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${process.label} did not answer within ${wait / 1000} s`)), wait);
+  });
+  const opening = live.openSeparate(process);
+  try {
+    const connection = await Promise.race([opening, late]);
+    return readRestored(await Promise.race([connection.call(restore), late]));
+  } finally {
+    clearTimeout(timer);
+    // Closed whether it answered or not: a connection a busy process
+    // accepts only later sends nothing then, into some other run.
+    void opening.then(
+      (connection) => connection.abort(),
+      () => undefined,
+    );
+  }
+}
+
+/// What the user is told when the functions a run instrumented could not
+/// be put back: which they are, by name, where, why, and what puts them
+/// back (`next`, "coverage run"). `names` are those INSTALL was sent.
+export function leftInstrumented(names: readonly string[], process: string, why: string, next: string, most = 10): string {
+  const shown = names.slice(0, most).join(", ") + (names.length > most ? ` and ${names.length - most} more` : "");
+  const they = names.length === 1 ? "it" : "them";
+  return `q-lint: ${shown} may still be instrumented on ${process}: ${names.length === 1 ? "it" : "they"} could not be put back (${why.replace(/\.$/, "")}). The next ${next} on ${process} puts ${they} back first.`;
 }

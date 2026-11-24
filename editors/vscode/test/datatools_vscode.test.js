@@ -41,7 +41,7 @@ vscode.ViewColumn = { Active: -1 };
 const { ResultTools } = require("../out/resulttools.js");
 const { SchemaTools } = require("../out/schemaview.js");
 const { RESULT_VIEW } = require("../out/liveconfig.js");
-const { DATA_FILES, INLINE_BYTES, fileHandle } = require("../out/datafile.js");
+const { DATA_FILES, INLINE_BYTES, fileHandle, fileSource } = require("../out/datafile.js");
 const { SCHEMA, SCHEMA_COMMANDS } = require("../out/schema.js");
 const { TABLE_INFO } = require("../out/tableinfo.js");
 
@@ -224,6 +224,23 @@ test("Open Data File in Grid loads a file by its path on a process here, by its 
   await run(DATA_FILES.open, vscode.Uri.file(csv));
   assert.match(infos().at(-1), /Open Data File in Grid is turned off\. Turn it on with the setting q-lint\.dataFiles\.open\.enable/);
   assert.deepStrictEqual(off.live.ran, []);
+});
+
+test("a file that starts with a byte order mark, as Excel's CSV UTF-8 does, is loaded by its lines with the mark dropped (#1966)", async () => {
+  const { live } = setUp();
+  const marked = path.join(tmp, "marked.csv");
+  fs.writeFileSync(marked, "\ufeffsym,px\nAAPL,1.5\n");
+  await run(DATA_FILES.open, vscode.Uri.file(marked));
+  assert.deepStrictEqual(live.ran, [{ code: `("SF";enlist ",")0:${fileSource(marked, true)}`, mode: "grid" }]);
+  live.process = { label: "far", host: "db1", port: 5000, tags: [] };
+  await run(DATA_FILES.open, vscode.Uri.file(marked));
+  assert.deepStrictEqual(live.ran.at(-1), { code: '("SF";enlist ",")0:("sym,px";"AAPL,1.5")', mode: "grid" });
+  // The wizard's statement reads the file where the process is: the same lines.
+  stub.picks.push("$(check) Done", undefined);
+  stub.inputs.push("tr");
+  await run(DATA_FILES.wizard, vscode.Uri.file(marked));
+  assert.strictEqual(opened.at(-1).content.split("\n")[2], `tr:("SF";enlist ",")0:${fileSource(marked, true)}`);
+  assert.strictEqual(live.ran.length, 2);
 });
 
 test("the CSV load wizard shows the guessed types, takes a change, writes the statement, and runs it only on Run (#963)", async () => {

@@ -11,7 +11,7 @@ const os = require("node:os");
 const path = require("node:path");
 const pkg = require("../package.json");
 const { readFrom, START } = require("../out/logreader.js");
-const { LOG_COMMANDS, LOG_VIEWER_OFF } = require("../out/logparse.js");
+const { LOG_COMMANDS, LOG_VIEWER_OFF, parseLine } = require("../out/logparse.js");
 const { LogViewer } = require("../out/logview.js");
 
 const Q = process.env.QLINT_TEST_Q;
@@ -70,6 +70,29 @@ test("the offset counts the file's bytes, a byte that is not UTF-8 and a charact
   at = await readFrom(file, at, (l) => got.push(l));
   assert.deepStrictEqual(got.slice(-1), ["b\u00e9"]);
   assert.strictEqual(at.offset, 24);
+});
+
+test("a byte order mark at the head of a log is no part of its first line (#1958)", async () => {
+  const file = path.join(tmp(), "bom.log");
+  const first = "2026.11.07D00:00:00.266014000|host|rdb|rdb1|ERR|x|first message";
+  fs.writeFileSync(file, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(`${first}\n\ufeffsecond\npart`)]));
+  const got = [];
+  let at = await readFrom(file, START, (l) => got.push(l));
+  // Only the file's first three bytes are one: a U+FEFF further on is text.
+  assert.deepStrictEqual(got, [first, "\ufeffsecond"]);
+  assert.deepStrictEqual([parseLine(got[0]).kind, parseLine(got[0]).level], ["torq", "ERROR"]);
+  assert.deepStrictEqual([at.offset, at.partial], [fs.statSync(file).size, "part"]);
+  // Written a byte at a time, the mark is held until it is whole, and a
+  // first line with no end yet starts after it.
+  fs.writeFileSync(file, Buffer.from([0xef, 0xbb]));
+  at = await readFrom(file, START, (l) => got.push(l));
+  assert.deepStrictEqual([at.offset, at.partial], [0, ""]);
+  fs.appendFileSync(file, Buffer.from([0xbf, 0x61]));
+  at = await readFrom(file, at, (l) => got.push(l));
+  assert.deepStrictEqual([at.offset, at.partial], [4, "a"]);
+  fs.appendFileSync(file, "b\n");
+  at = await readFrom(file, at, (l) => got.push(l));
+  assert.deepStrictEqual(got.slice(2), ["ab"]);
 });
 
 test("a large file is streamed: every line read, in pieces, and the heap does not hold it", async () => {

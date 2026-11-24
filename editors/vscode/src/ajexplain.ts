@@ -9,10 +9,17 @@
 // process, so the lambda is sent through the read-only guard with the call
 // as the code it reads. It assigns nothing. Works on kdb+ (KDB-X) and
 // PeachQ; held there by processtools_q.test.js.
+//
+// A row and a time are written by `FULL_TEXT`, up to 2000 characters:
+// `.Q.s1` cuts a wide row at the process's `\c` width, short of the columns
+// the match turns on (#1908).
+import { charKinds } from "./explorer";
+import { FULL_TEXT } from "./qtext";
 
 export const EXPLAIN_AJ = [
   "{[c;l;r;i]",
   " c:(),value c; L:0!value l; R:0!value r; i:`long$i;",
+  ` F:{2000 sublist x y}${FULL_TEXT}[2000];`,
   " if[not i within(0;-1+count L);'\"no row \",string[i],\" in the left table, which has \",string[count L],\" rows\"];",
   " if[not all c in cols L;'\"the left table has no column \",string first c except cols L];",
   " if[not all c in cols R;'\"the right table has no column \",string first c except cols R];",
@@ -20,7 +27,7 @@ export const EXPLAIN_AJ = [
   " w:til count R; miss:`; k:0;",
   " while[(k<count ks)&0<count w; w:w where(R[ks k] w)=row ks k; if[0=count w;miss:ks k]; k+:1];",
   " tm:R[tc] w; j:$[count w;tm bin row tc;-1];",
-  " (.Q.s1 row;\"f\"$count w;string miss;$[null miss;\"\";.Q.s1 row miss];$[j<0;-1f;\"f\"$w j];$[j<0;\"\";.Q.s1 R w j];$[count w;.Q.s1 first tm;\"\"];.Q.s1 row tc;tm~asc tm;string tc;\"f\"$count R)}",
+  " (F row;\"f\"$count w;string miss;$[null miss;\"\";F row miss];$[j<0;-1f;\"f\"$w j];$[j<0;\"\";F R w j];$[count w;F first tm;\"\"];F row tc;tm~asc tm;string tc;\"f\"$count R)}",
 ].join("\n");
 
 export interface AjCall {
@@ -61,10 +68,15 @@ function args(code: string, open: number): { parts: string[]; end: number } | un
 }
 
 /// The first `aj[cols;left;right]` or `aj0[...]` call in `code`, its
-/// arguments as written; undefined when there is none.
+/// arguments as written; undefined when there is none. One written in a
+/// comment or a string is not a call (#1914).
 export function findAj(code: string): AjCall | undefined {
+  const kinds = charKinds(code);
   for (const m of code.matchAll(/(?:^|[^A-Za-z0-9_.`])(aj0?)\s*\[/g)) {
     const open = m.index! + m[0].length - 1;
+    if (kinds[open] !== "c") {
+      continue;
+    }
     const got = args(code, open);
     if (got !== undefined && got.parts.length === 3 && got.parts.every((p) => p !== "")) {
       return { fn: m[1] as AjCall["fn"], columns: got.parts[0], left: got.parts[1], right: got.parts[2] };
@@ -110,7 +122,10 @@ export function readMatch(raw: unknown): AjMatch {
 /// The explanation, as plain text lines.
 export function explain(call: AjCall, index: number, process: string, m: AjMatch): string {
   const lines = [`/ ${call.fn}[${call.columns};${call.left};${call.right}] on ${process}: row ${index} of ${call.left}`, "", `left row ${index}: ${m.row}`, ""];
-  if (m.missedKey !== "") {
+  if (m.rightRows === 0) {
+    // No row to be the earliest and no key that missed (#1909).
+    lines.push(`No match: ${call.right} has no rows.`, `${call.fn} leaves the right table's columns null in this row${call.fn === "aj0" ? "" : ", keeping the left row's own"}.`);
+  } else if (m.missedKey !== "") {
     lines.push(
       `No match: none of the ${m.rightRows} rows of ${call.right} has ${m.missedKey} = ${m.missedValue}.`,
       `${call.fn} leaves the right table's columns null in this row${call.fn === "aj0" ? "" : ", keeping the left row's own"}.`,

@@ -28,6 +28,12 @@ test("each edit is checked against what the setting takes, and \\w is never edit
   assert.match(valueProblem("P", "1;exit 0"), /takes/);
   assert.match(valueProblem("w", "100"), /not a setting this view edits/);
   assert.match(valueProblem("l", "x"), /not a setting/);
+  // \s is shown, not edited: q changes it from its own console only, so
+  // no value sent over a connection is ever taken (#1916).
+  assert.match(valueProblem("s", "0"), /not a setting this view edits/);
+  assert.strictEqual(SYSTEM_SETTINGS.find((s) => s.key === "s").readOnly, true);
+  assert.match(SYSTEM_SETTINGS.find((s) => s.key === "s").note, /Read only here: q changes it from its own console only/);
+  assert.ok(SET_SETTING.includes('enlist each "cPTgoz"'), SET_SETTING);
   assert.strictEqual(settingCommand("c", " 30   100 "), "\\c 30 100");
   assert.ok(SYSTEM_SETTINGS.every((s) => s.note.length > 20));
 });
@@ -38,7 +44,9 @@ test("the answer is read, \\w is named, and every edit is a write to the guard",
   assert.throws(() => readSettings(["cs", ["1"]]), /something other than its settings/);
   assert.match(memoryText(VALUES[7]), /^used 0\.5 MB, heap 64\.0 MB, peak 64\.0 MB, limit none$/);
   const rows = settingRows(values);
-  assert.deepStrictEqual(rows.map((r) => r.contextValue), [...Array(7).fill("systemSetting"), "systemSetting.readOnly"]);
+  // \s and \w have no pencil.
+  assert.deepStrictEqual(rows.filter((r) => r.contextValue === "systemSetting.readOnly").map((r) => r.data.key), ["s", "w"]);
+  assert.deepStrictEqual(rows.filter((r) => r.contextValue === "systemSetting").length, 6);
   const prod = { label: "p", tags: ["prod"] };
   assert.notStrictEqual(guardCheck(settingCommand("P", "10"), [prod], { enabled: true, tags: ["prod"] }), undefined);
 });
@@ -78,8 +86,10 @@ test("off, nothing is sent; on, Refresh reads and a confirmed edit is sent", asy
   assert.strictEqual(await stub.commands.get(PROCESS_TOOL_COMMANDS.editSystemSetting)("P", "10"), "10");
   assert.deepStrictEqual(q.sent.slice(before + 1, before + 2), [[SET_SETTING, "P", "10"]]);
   assert.deepStrictEqual(heads(q.sent.slice(before + 2)), [READ_SETTINGS]);
-  // A value it does not take is refused before anything is sent.
+  // A value it does not take is refused before anything is sent, and so
+  // is \s, whatever the value.
   const sent = q.sent.length;
+  assert.match(await stub.commands.get(PROCESS_TOOL_COMMANDS.editSystemSetting)("s", "0"), /\\s is not a setting this view edits/);
   assert.match(await stub.commands.get(PROCESS_TOOL_COMMANDS.editSystemSetting)("P", "1;exit 0"), /takes a whole number/);
   assert.strictEqual(q.sent.length, sent);
 });

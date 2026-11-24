@@ -324,3 +324,54 @@ test("an exported notebook whose comments hold a lone / loads to its end", { ski
   assert.strictEqual(loaded.ok, true, JSON.stringify(loaded));
   assert.deepStrictEqual((await connection.query(["(a;b;e;c;`z in key `.)"], SIZE)).text, ["1", "2", "5", "8", "0b"]);
 });
+
+/// `probe` after the cells ran as the notebook runs them - each cell one
+/// call, in a process that starts clean - and after q loaded their export.
+async function ranAndLoaded(t, cells, probe) {
+  const sources = cells.map((source) => ({ kind: "code", source }));
+  const answers = [];
+  for (const way of ["cells", "script"]) {
+    const q = await startQ("");
+    t.after(() => q.stop());
+    const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+    t.after(() => connection.close());
+    if (way === "cells") {
+      for (const cell of cells) {
+        const ran = readCellData(await connection.call(DATA, statements(cell), 10, SIZE));
+        assert.strictEqual(ran.ok, true, JSON.stringify(ran));
+      }
+    } else {
+      const file = path.join(q.dir, "exported.q");
+      fs.writeFileSync(file, exportScript(sources));
+      const loaded = await connection.query([`system "l ${file}"`], SIZE);
+      assert.strictEqual(loaded.ok, true, JSON.stringify(loaded));
+    }
+    answers.push((await connection.query([probe], SIZE)).text);
+  }
+  return { cells: answers[0], script: answers[1] };
+}
+
+test("an exported notebook defines a name where its cell does: a cell's \\d ends with the cell (#1934)", { skip }, async (t) => {
+  const where = "(`a`b`c in key `.;`a`b`c in key `.foo)";
+  for (const cells of [
+    ["\\d .foo\na:1", "b:2", "c:3"],
+    ['system "d .foo"\na:1', "b:2\n\\\nnot code", "c:3"],
+    // Back in the root by the cell's end: nothing to undo.
+    ["\\d .foo\na:1\n\\d .\nb:2", "c:3"],
+  ]) {
+    const { cells: ran, script } = await ranAndLoaded(t, cells, where);
+    assert.deepStrictEqual(script, ran, JSON.stringify(cells));
+    assert.strictEqual(ran[0].replace(/\s/g, ""), "011b");
+  }
+});
+
+test("an exported cell that opens with an indented comment does not continue the cell above (#1935)", { skip }, async (t) => {
+  for (const cells of [
+    ["f:{x+1}", " / note\n g:3"],
+    ["f:{x+1}", "\t/ one\n  / two\n\n  g:3"],
+  ]) {
+    const { cells: ran, script } = await ranAndLoaded(t, cells, "(-3!f;g)");
+    assert.deepStrictEqual(script, ran, JSON.stringify(cells));
+    assert.deepStrictEqual(ran, ['"{x+1}"', "3"]);
+  }
+});

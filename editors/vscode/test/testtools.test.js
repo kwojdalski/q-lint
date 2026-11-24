@@ -163,7 +163,7 @@ test("coverage plans only the functions the process holds as the file has them",
   const plan = coveragePlan(files, states);
   assert.deepStrictEqual(plan.names, ["f"]);
   assert.deepStrictEqual(plan.skipped, [{ name: "g", why: "changed" }]);
-  assert.strictEqual(plan.src[0], "{[a]\n  .qlint.cov.d[0]+:1;b:a+1;\n  .qlint.cov.d[1]+:1;$[b>2;g b;b]}");
+  assert.strictEqual(plan.src[0], "{[a]\n  .qlint.cov.hit 0;b:a+1;\n  .qlint.cov.hit 1;$[b>2;g b;b]}");
   assert.deepStrictEqual(
     plan.probes.map((p) => [p.start, p.end]),
     [
@@ -178,6 +178,20 @@ test("coverage plans only the functions the process holds as the file has them",
   assert.strictEqual(coverageByFile(plan, [3, 0], new Set()).size, 0);
   // Missing on the process.
   assert.deepStrictEqual(coveragePlan(files, new Map()).skipped.map((s) => s.why), ["missing", "missing"]);
+});
+
+test("coverage of a lambda that opens below its name is placed on the lambda's lines (#1900)", () => {
+  const marked = (text) => {
+    const lines = text.split("\n");
+    const states = new Map([["f", { state: "lambda", text: text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1) }]]);
+    return coveragePlan([{ uri: "file:///ws/a.q", text }], states).probes.map((p) => [p.start.line, lines[p.start.line].slice(p.start.character, p.end.line === p.start.line ? p.end.character : undefined)]);
+  };
+  assert.deepStrictEqual(marked("f:\n {x+1}\n"), [[1, "x+1"]]);
+  assert.deepStrictEqual(marked("a:1\nf:\n\n   {[x] y:x+1; y}\n"), [[3, "y:x+1"], [3, "y"]]);
+  assert.deepStrictEqual(marked("f:\n {[x]\n  y:x+1;\n  y*2}\n"), [[2, "y:x+1"], [3, "y*2"]]);
+  // On the name's line, as before.
+  assert.deepStrictEqual(marked("f : {x+1}\n"), [[0, "x+1"]]);
+  assert.deepStrictEqual(marked("f:{[x]\n y:x+1;\n y}\n"), [[1, "y:x+1"], [2, "y"]]);
 });
 
 test("the Coverage profile instruments, runs the tests, puts the functions back and shows the counts; off, it is not offered", async () => {
@@ -263,6 +277,152 @@ test("coverage of a file with unsaved edits is drawn on the lines its editor hol
   await explorer.run(undefined, false, true);
   assert.deepStrictEqual(explorer.coverage(), [{ uri: "file:///ws/lib.q", covered: 2, total: 3, hit: [4, 5], missed: [6] }]);
   assert.ok(made.length > 0);
+});
+
+test("a coverage run says so when it measures only the first 500 q files of the workspace (#1907)", async () => {
+  const cover = async (count) => {
+    stub.reset();
+    const files = { "/ws/lib.q": LIB };
+    for (let i = 0; i < count; i++) {
+      files[`/ws/more/m${i}.q`] = `m${i}:{x}\n`;
+    }
+    const made = fakeVscode(files);
+    // As VS Code's: no more than it is asked for.
+    const all = vscode.workspace.findFiles;
+    const asked = [];
+    vscode.workspace.findFiles = async (glob, exclude, most) => (asked.push([glob, most]), (await all(glob)).slice(0, most));
+    const live = fakeLive((lambda, ...args) => {
+      if (lambda === DRIFT) {
+        return { name: ["f", "g"], state: ["lambda", "lambda"], text: ["{[a]\n  b:a+1;\n  $[b>2;g b;b]}", "{x*2}"] };
+      }
+      if (lambda === installLambda("cov")) {
+        return args[0].map(() => "ok");
+      }
+      if (lambda === restoreExpression("cov")) {
+        return { kept: [], d: [1, 1, 0] };
+      }
+      return { ok: true, failed: false, text: "1b" };
+    });
+    stub.config.user["testExplorer.coverage.enable"] = true;
+    const explorer = registerTestExplorer(stub.newContext(), live, () => ({ sendRequest: async () => TESTS }));
+    await explorer.discover();
+    await explorer.run(undefined, false, true);
+    assert.deepStrictEqual(asked.filter(([glob]) => glob === "**/*.q"), [["**/*.q", 500]]);
+    return made[0].runs.at(-1).output;
+  };
+  const capped = await cover(600);
+  assert.match(capped, /Coverage: the workspace holds 500 q files or more; only the first 500 found are measured, and a function defined in another shows no coverage\./);
+  assert.match(capped, /Coverage: 2 of 3 statements run/);
+  assert.doesNotMatch(await cover(3), /only the first 500/);
+});
+
+/// As `fakeLive`, with the run's last restore on the active connection
+/// failing as `end` says (a throw, or undefined for nothing sent), and a
+/// connection of its own to a process answering as `apart` does.
+function fakeLiveLeft(end, apart, allowed = true) {
+  const live = fakeLive((lambda, ...args) => {
+    if (lambda === DRIFT) {
+      return { name: ["f", "g"], state: ["lambda", "lambda"], text: ["{[a]\n  b:a+1;\n  $[b>2;g b;b]}", "{x*2}"] };
+    }
+    if (lambda === installLambda("cov")) {
+      return args[0].map(() => "ok");
+    }
+    if (lambda === restoreExpression("cov")) {
+      return { kept: [], d: [] };
+    }
+    return { ok: true, failed: false, text: "1b" };
+  });
+  const runOnActive = live.runOnActive.bind(live);
+  live.runOnActive = async (code, query, guard, expect) => (code === restoreExpression("cov") ? end() : runOnActive(code, query, guard, expect));
+  live.apart = [];
+  live.asked = [];
+  live.guardAllows = async (code, targets, what) => (live.asked.push([code, targets.map((p) => p.label), what]), allowed);
+  live.openSeparate = async (process) => ({
+    call: async (lambda) => (live.apart.push([process.label, lambda]), apart()),
+    abort() {},
+  });
+  return live;
+}
+
+test("a coverage run whose restore cannot be sent puts the functions back over a connection to the process it instrumented, or says which are left (#1892)", async () => {
+  const moved = () => {
+    throw new Error("dev is no longer the active process; nothing was run.");
+  };
+  const start = async (live) => {
+    stub.reset();
+    const made = fakeVscode({ "/ws/lib.q": LIB });
+    stub.config.user["testExplorer.coverage.enable"] = true;
+    const explorer = registerTestExplorer(stub.newContext(), live, () => ({ sendRequest: async () => TESTS }));
+    await explorer.discover();
+    await explorer.run(undefined, false, true);
+    return { explorer, run: made[0].runs.at(-1) };
+  };
+  // Another process became active before the run ended: the restore goes
+  // to dev all the same, and its counts are the coverage.
+  let live = fakeLiveLeft(moved, () => ({ kept: [], d: [1, 1, 0] }));
+  let s = await start(live);
+  assert.deepStrictEqual(live.apart, [["dev", restoreExpression("cov")]]);
+  assert.deepStrictEqual(live.asked, [[restoreExpression("cov"), ["dev"], "Putting back the functions instrumented for coverage"]]);
+  assert.match(s.run.output, /Coverage: 2 of 3 statements run/);
+  assert.deepStrictEqual(stub.messages, []);
+  // Nothing sent (no connection, a query running): the same.
+  live = fakeLiveLeft(() => undefined, () => ({ kept: [], d: [1, 1, 0] }));
+  s = await start(live);
+  assert.deepStrictEqual(live.apart, [["dev", restoreExpression("cov")]]);
+  assert.deepStrictEqual(stub.messages, []);
+  // That fails too: the user is told which functions, and where.
+  live = fakeLiveLeft(moved, () => {
+    throw new Error("the connection is closed");
+  });
+  s = await start(live);
+  const left =
+    "q-lint: f, g may still be instrumented on dev: they could not be put back (dev is no longer the active process; nothing was run; nor over a connection of its own: the connection is closed). The next coverage run on dev puts them back first.";
+  assert.deepStrictEqual(stub.messages, [["warning", left]]);
+  assert.ok(s.run.output.includes(left), s.run.output);
+  assert.deepStrictEqual(s.run.events.at(-1), ["end"]);
+  // Declined at the guard's question: nothing is sent another way.
+  live = fakeLiveLeft(() => {
+    throw new Error("Not run: changing the read-only process dev was not confirmed.");
+  }, () => ({ kept: [], d: [] }));
+  s = await start(live);
+  assert.deepStrictEqual([live.apart, live.asked], [[], []]);
+  assert.match(stub.messages.at(-1)[1], /^q-lint: f, g may still be instrumented on dev: they could not be put back \(Not run: changing the read-only process dev was not confirmed\)\./);
+  // Asked by the connection of its own, and declined there.
+  live = fakeLiveLeft(moved, () => ({ kept: [], d: [] }), false);
+  s = await start(live);
+  assert.deepStrictEqual(live.apart, []);
+  assert.match(stub.messages.at(-1)[1], /f, g may still be instrumented on dev/);
+});
+
+test("a coverage run that fails once the functions were replaced puts them back too (#1892)", async () => {
+  stub.reset();
+  const made = fakeVscode({ "/ws/lib.q": LIB });
+  const apart = [];
+  const live = fakeLive((lambda) => {
+    if (lambda === DRIFT) {
+      return { name: ["f", "g"], state: ["lambda", "lambda"], text: ["{[a]\n  b:a+1;\n  $[b>2;g b;b]}", "{x*2}"] };
+    }
+    if (lambda === installLambda("cov")) {
+      // One status for two functions: not an answer INSTALL gives.
+      return ["ok"];
+    }
+    if (lambda === restoreExpression("cov")) {
+      return { kept: [], d: [] };
+    }
+    return { ok: true, failed: false, text: "1b" };
+  });
+  live.guardAllows = async () => true;
+  live.openSeparate = async (process) => ({ call: async (lambda) => (apart.push([process.label, lambda]), { kept: [], d: [0, 0, 0] }), abort() {} });
+  stub.config.user["testExplorer.coverage.enable"] = true;
+  const explorer = registerTestExplorer(stub.newContext(), live, () => ({ sendRequest: async () => TESTS }));
+  await explorer.discover();
+  await explorer.run(undefined, false, true);
+  assert.deepStrictEqual(apart, [["dev", restoreExpression("cov")]]);
+  const run = made[0].runs.at(-1);
+  assert.match(run.output, /Coverage not counted: the process answered 1 statuses for 2 functions/);
+  // The tests ran all the same, and nothing is left to put back at the end.
+  assert.deepStrictEqual(live.sent.map((x) => x.lambda), [restoreExpression("cov"), DRIFT, installLambda("cov"), TEST_RUN, TEST_RUN]);
+  assert.deepStrictEqual(stub.messages, []);
 });
 
 test("a failed assertion's two sides are a diff, and Re-run Failed runs only those that failed; off, neither", async () => {

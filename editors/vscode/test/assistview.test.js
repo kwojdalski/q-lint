@@ -67,7 +67,12 @@ vscode.chat = {
 let hovers = {};
 const execute = vscode.commands.executeCommand;
 vscode.commands.executeCommand = async (name, ...args) => (name === "vscode.executeHoverProvider" ? hovers[args[1].offset] ?? [] : execute(name, ...args));
-vscode.languages.getDiagnostics = () => [{ range: { start: { line: 0 } }, code: "QF001", message: "a builtin as a parameter" }];
+vscode.languages.getDiagnostics = () => [
+  { range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } }, code: "QF001", source: "q-lint", message: "a builtin as a parameter" },
+  // Another extension's, and one on the line after the selection (#1917).
+  { range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } }, code: "spell", source: "cSpell", message: "an unknown word" },
+  { range: { start: { line: 1, character: 0 }, end: { line: 1, character: 2 } }, code: "QF005", source: "q-lint", message: "on the next line" },
+];
 const documents = [];
 vscode.workspace.openTextDocument = async ({ content, language }) => {
   let text = content;
@@ -321,7 +326,7 @@ test("@q explains a selection with the server's hovers and findings and the proc
   assert.strictEqual(participants.length, 1);
   assert.strictEqual(participants[0].id, "q-lint.q");
   const text = "f 3";
-  const selection = { isEmpty: false, start: { line: 0 }, intersection: () => ({}) };
+  const selection = { isEmpty: false, start: { line: 0, character: 0 }, end: { line: 1, character: 0 }, intersection: () => ({}) };
   vscode.window.activeTextEditor = {
     selection,
     document: { languageId: "q", uri: "file:///a.q", getText: () => text, offsetAt: () => 0, positionAt: (offset) => ({ offset }) },
@@ -345,6 +350,7 @@ test("@q explains a selection with the server's hovers and findings and the proc
   assert.match(prompt, /```q\nf 3\n```/);
   assert.match(prompt, /- `f`: \*\*f\*\*\[x\]: doubles x/);
   assert.match(prompt, /- line 1: QF001 a builtin as a parameter/);
+  assert.ok(!/an unknown word|on the next line/.test(prompt), prompt);
   assert.match(prompt, /On the connected q process dev:\n- `f`: a function defined on the process as:\n```q\n\{x\*2\}\n```/);
   // Only q-lint's tools are offered; the call went through VS Code, with the chat's token, which asks the user to confirm.
   assert.deepStrictEqual(model.sent[0].options.tools.map((t) => t.name), ["q-lint_runQuery", "q-lint_listTables"]);
@@ -457,6 +463,47 @@ test("Draft qSQL shows the draft for review and runs nothing until Run, then run
   assert.deepStrictEqual(stub.offered, ["Run", "Insert at Cursor"]);
   assert.deepStrictEqual(edits, [["SEL", "exec 1 from t"]]);
   assert.deepStrictEqual(second.live.queried, []);
+});
+
+test("Insert at Cursor shows the source document again when its editor was closed meanwhile, and says when it cannot (#1906)", async (t) => {
+  const { live, context } = setup();
+  registerQsqlDraft(context, live);
+  const show = vscode.window.showTextDocument;
+  t.after(() => ((vscode.window.showTextDocument = show), (vscode.window.activeTextEditor = undefined)));
+  // The editor the command started from, its tab no longer shown: VS Code's own refusal.
+  const source = { languageId: "q", uri: { toString: () => "file:///w/a.q" } };
+  const closed = {
+    document: source,
+    selection: "SEL",
+    viewColumn: 2,
+    edit: () => {
+      throw new Error("TextEditor#edit not possible on closed editors");
+    },
+  };
+  const edits = [];
+  const shown = [];
+  vscode.window.showTextDocument = async (d, options) => {
+    if (d !== source) return show(d, options);
+    shown.push(options);
+    return { document: d, selection: options.selection, edit: async (f) => (f({ replace: (at, text) => edits.push([at, text]) }), true) };
+  };
+  const insert = async () => {
+    vscode.window.activeTextEditor = closed;
+    models = [fakeModel([[new LanguageModelTextPart("exec 1 from t")]])];
+    stub.picks = ["Insert at Cursor"];
+    return stub.commands.get("q-lint.draftQsql")("one");
+  };
+  assert.strictEqual((await insert()).picked, "Insert at Cursor");
+  assert.deepStrictEqual(shown, [{ viewColumn: 2, selection: "SEL" }]);
+  assert.deepStrictEqual(edits, [["SEL", "exec 1 from t"]]);
+  // The document is gone too: said, not thrown.
+  vscode.window.showTextDocument = async (d, options) => {
+    if (d !== source) return show(d, options);
+    throw new Error("cannot open file:///w/a.q");
+  };
+  assert.strictEqual((await insert()).picked, "Insert at Cursor");
+  assert.deepStrictEqual(stub.messages.at(-1), ["error", "q-lint: the draft was not inserted: cannot open file:///w/a.q. It is still in its own editor."]);
+  assert.strictEqual(edits.length, 1);
 });
 
 test("@q explain and Draft qSQL read nothing from a process switched to mid-request (#1621)", async () => {

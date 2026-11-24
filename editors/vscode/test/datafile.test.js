@@ -38,6 +38,13 @@ test("a data file is loaded by its path, or from its text for a process elsewher
   assert.strictEqual(d.loadExpression("csv", "C:\\d\\t.csv", true, sample), '("SF ";enlist ",")0:`:C:/d/t.csv');
   assert.strictEqual(d.loadExpression("csv", "x", false, { types: ["S", "J"], delimiter: "\t" }, 'a\tb\n"x"\t1\n'), '("SJ";enlist "\\t")0:("a\\tb";"\\"x\\"\\t1")');
   assert.strictEqual(d.loadExpression("json", "/d/t.json", true, sample), ".j.k raze read0 `:/d/t.json");
+  // A file that starts with a byte order mark is read by its lines, the
+  // mark dropped: 0: would keep it in the first column's name (#1966).
+  const marked = d.sampleText("\ufeffa,b\n1,2\n");
+  assert.deepStrictEqual([marked.names, marked.types, marked.bom, d.sampleText("a,b\n1,2\n").bom], [["a", "b"], ["J", "J"], true, false]);
+  assert.strictEqual(d.loadExpression("csv", "/d/t.csv", true, marked), '("JJ";enlist ",")0:{$["\\357\\273\\277"~3#first x;@[x;0;3_];x]}read0 `:/d/t.csv');
+  assert.strictEqual(d.loadExpression("csv", "/d/t.csv", false, marked, "\ufeffa,b\n1,2\n"), '("JJ";enlist ",")0:("a,b";"1,2")');
+  assert.strictEqual(d.fileSource("/d/t.csv", false), "`:/d/t.csv");
   assert.strictEqual(d.loadExpression("json", "x", false, sample, '[{"a":1},\n{"a":2}]'), '.j.k "[{\\"a\\":1}, {\\"a\\":2}]"');
   assert.strictEqual(d.linesLiteral("only\n"), 'enlist "only"');
   assert.strictEqual(d.tableName("/x/2024 trades-v2.csv"), "trades_v2");

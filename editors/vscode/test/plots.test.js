@@ -99,6 +99,7 @@ test("the view shows the plot on show, steps and saves it, and off is unregister
   const posted = [];
   let receive;
   const page = {
+    visible: true,
     webview: { options: {}, html: "", cspSource: "vscode-resource:", asWebviewUri: (u) => u, postMessage: async (m) => void posted.push(m), onDidReceiveMessage: (f) => (receive = f) },
     onDidDispose: () => {},
   };
@@ -157,6 +158,69 @@ test("the view shows the plot on show, steps and saves it, and off is unregister
   stub.changeConfig("q-lint.results.plots.enable");
   assert.strictEqual(view.registered(), true);
   for (const d of context.subscriptions) d.dispose?.();
+});
+
+test("Save Plot as PNG shows a view that was opened and is now hidden, and asks its page once it is back (#1936)", async () => {
+  stub.reset();
+  const providers = [];
+  vscode.window.registerWebviewViewProvider = (id, provider) => {
+    const entry = { id, provider, dispose() {} };
+    providers.push(entry);
+    return entry;
+  };
+  const written = {};
+  vscode.workspace.fs = { writeFile: async (uri, bytes) => void (written[uri.fsPath] = Buffer.from(bytes)) };
+  const { PlotsView } = require("../out/plotsview.js");
+  const context = stub.newContext();
+  new PlotsView(context);
+  // Another panel tab is on show: the view is still there, its page is not,
+  // so nothing posted to it is delivered until the view is shown again.
+  let receive;
+  const page = {
+    visible: false,
+    webview: {
+      options: {},
+      html: "",
+      cspSource: "vscode-resource:",
+      asWebviewUri: (u) => u,
+      postMessage: async (m) => {
+        if (page.visible && m.type === "png") {
+          receive({ type: "png", key: m.key, data: "data:image/png;base64,iVBORw0KGgo=" });
+        }
+        return page.visible;
+      },
+      onDidReceiveMessage: (f) => (receive = f),
+    },
+    onDidDispose: () => {},
+  };
+  providers[0].provider.resolveWebviewView(page);
+  const focused = [];
+  const executeCommand = vscode.commands.executeCommand;
+  vscode.commands.executeCommand = async (name, ...args) => {
+    if (name === `${PLOT_COMMANDS.view}.focus`) {
+      focused.push(name);
+      page.visible = true;
+      // The page loads again, and says so.
+      setImmediate(() => receive({ type: "ready" }));
+      return undefined;
+    }
+    return executeCommand(name, ...args);
+  };
+  try {
+    PLOTS.add(plot("r1/line", "a"));
+    const started = Date.now();
+    assert.strictEqual(await stub.commands.get(PLOT_COMMANDS.save)("png", vscode.Uri.file("/hidden.png")), "/hidden.png");
+    assert.ok(Date.now() - started < 2000, "did not wait out the PNG timeout");
+    assert.deepStrictEqual(focused, [`${PLOT_COMMANDS.view}.focus`]);
+    assert.deepStrictEqual([...written["/hidden.png"].subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47]);
+    // On show already: asked at once, not focused again.
+    assert.strictEqual(await stub.commands.get(PLOT_COMMANDS.save)("png", vscode.Uri.file("/shown.png")), "/shown.png");
+    assert.strictEqual(focused.length, 1);
+  } finally {
+    vscode.commands.executeCommand = executeCommand;
+    PLOTS.clear();
+    for (const d of context.subscriptions) d.dispose?.();
+  }
 });
 
 test("the page cuts a plot's long code by code point, never through an emoji (#1809)", () => {

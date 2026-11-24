@@ -218,3 +218,17 @@ test("Set Gateway Server Types marks and unmarks a saved process", async (t) => 
   await stub.commands.get(GATEWAY_COMMANDS.queryWith)("rdb");
   assert.match(stub.messages.at(-1)[1], /not connected to a q process\. Set Gateway Server Types marks one\./);
 });
+
+test("a gateway call under a comment, or after another statement, is still one: it is not wrapped twice (#1951)", () => {
+  assert.ok(isGatewayCall('/ all of today\n.gw.syncexec["select from trade";`rdb]'));
+  assert.ok(isGatewayCall('/\na block\n\\\n\n  .gw.asyncexecjpt["q";`rdb;raze;();0D00:01] / the day'));
+  assert.ok(isGatewayCall('t:`trade\n.gw.syncexec[({select from x};t);`rdb`hdb]'));
+  assert.ok(isGatewayCall('\n\n.gw.syncexec["1";`rdb]'));
+  // A comment or a string that names one is no call, and neither is one
+  // inside another statement.
+  assert.ok(!isGatewayCall('/ .gw.syncexec["1";`rdb]\nselect from trade'));
+  assert.ok(!isGatewayCall('s:"\n .gw.syncexec[1]"'));
+  assert.ok(!isGatewayCall('r:.gw.syncexec["1";`rdb]'));
+  assert.ok(!isGatewayCall("/ nothing to run"));
+  assert.ok(!isGatewayCall(""));
+});

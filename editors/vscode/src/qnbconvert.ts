@@ -58,43 +58,63 @@ function tableCells(line: string): string[] {
 /// live values as `liveHtml` writes them, everything escaped.
 function inline(text: string, values: Record<string, LiveValue>): string {
   const held: string[] = [];
-  const hold = (html: string): string => `\u0000${held.push(html) - 1}\u0000`;
+  // What each held piece is as plain text, for a link's target: a URL is
+  // text, and none of the page's HTML (#1942).
+  const plain: string[] = [];
+  const hold = (html: string, text = ""): string => {
+    plain.push(text);
+    return `\u0000${held.push(html) - 1}\u0000`;
+  };
   let s = "";
   let from = 0;
   for (const span of inlineSpans(text)) {
     // A tag is shown as written, as the page shows no HTML of the notebook's.
     const html = span.kind === "code" ? `<code>${escapeHtml(span.expr.trim())}</code>` : span.kind === "html" ? escapeHtml(span.expr) : liveHtml(span.expr, values[span.expr]);
-    s += text.slice(from, span.start) + hold(html);
+    s += text.slice(from, span.start) + hold(html, text.slice(span.start, span.end));
     from = span.end;
   }
   // A backslash escapes any ASCII punctuation (CommonMark 2.4, #1310).
   s = escapeHtml(
     (s + text.slice(from))
-      .replace(/\\([!-/:-@[-`{-~])/g, (_m, c: string) => hold(escapeHtml(c)))
+      .replace(/\\([!-/:-@[-`{-~])/g, (_m, c: string) => hold(escapeHtml(c), c))
       // The entities a result's table is written with (#1309).
-      .replace(/&(amp|lt|gt|quot|#\d{1,7}|#[xX][0-9a-fA-F]{1,6});/g, (m, e: string) => hold(escapeHtml(entity(e) ?? m)))
+      .replace(/&(amp|lt|gt|quot|#\d{1,7}|#[xX][0-9a-fA-F]{1,6});/g, (m, e: string) => hold(escapeHtml(entity(e) ?? m), entity(e) ?? m))
       // Any other named one as it is, which the page shows as its
       // character, or as written when HTML has no such name (#1552).
-      .replace(/&[A-Za-z][A-Za-z0-9]{1,31};/g, (m) => hold(m)),
+      .replace(/&[A-Za-z][A-Za-z0-9]{1,31};/g, (m) => hold(m, m)),
   );
   // `href` is escaped already: read it back to the URL written, or it is
-  // escaped twice (`'` as `&amp;#39;`, #1476).
+  // escaped twice (`'` as `&amp;#39;`, #1476). What was held in it - an
+  // entity, an escaped character, a `{{q: }}` - goes back as the text it
+  // stands for, before the URL is checked and escaped (#1942).
   const unescaped = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'" } as Record<string, string>;
-  const url = (href: string): string => href.replace(/&(amp|lt|gt|quot|#39);/g, (e) => unescaped[e]);
+  const url = (href: string): string =>
+    href.replace(/&(amp|lt|gt|quot|#39);/g, (e) => unescaped[e]).replace(/\u0000(\d+)\u0000/g, (_m, i: string) => plain[Number(i)] ?? "");
+  /// A target a page may follow: `safeHref`'s, and with no blank in it,
+  /// which a held piece may bring: a destination with a blank is no link.
+  const followed = (href: string): string | undefined => (/\s/.test(url(href).trim()) ? undefined : safeHref(url(href)));
+  // A title after the target, in either quote or in brackets: the tip
+  // the notebook shows, and text as the URL is (#1944).
+  const TITLE = String.raw`(?:\s+(?:&quot;(.*?)&quot;|&#39;(.*?)&#39;|\(([^()]*)\)))?`;
+  const titled = (...titles: (string | undefined)[]): string => {
+    const title = titles.find((t) => t !== undefined);
+    return title === undefined ? "" : ` title="${escapeHtml(url(title))}"`;
+  };
   // An image: one in the page as a data: URL is shown, as Send to
   // Notebook's chart is; another is a link to it, or its alt text (#1555).
-  s = s.replace(/!\[([^\]]*)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/g, (_m, alt: string, src: string) => {
+  s = s.replace(new RegExp(String.raw`!\[([^\]]*)\]\(((?:[^()\s]|\([^()\s]*\))+)${TITLE}\)`, "g"), (m, alt: string, src: string, a?: string, b?: string, c?: string) => {
     if (/^data:image\/(png|jpeg|gif);base64,[A-Za-z0-9+/=]+$/.test(src)) {
-      return hold(`<img alt="${alt.replace(/\u0000\d+\u0000/g, "")}" src="${src}">`);
+      return hold(`<img alt="${alt.replace(/\u0000\d+\u0000/g, "")}" src="${src}"${titled(a, b, c)}>`);
     }
-    const target = safeHref(url(src));
-    return target === undefined ? alt : `${hold(`<a href="${escapeHtml(target)}">`)}${alt}${hold("</a>")}`;
+    const target = followed(src);
+    // Its alt text alone, or with a title all of it as written.
+    return target === undefined ? (titled(a, b, c) === "" ? alt : m) : `${hold(`<a href="${escapeHtml(target)}"${titled(a, b, c)}>`)}${alt}${hold("</a>")}`;
   });
   // A URL may hold balanced parentheses, as Wikipedia's do (#1554).
-  s = s.replace(/\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/g, (m, label: string, href: string) => {
+  s = s.replace(new RegExp(String.raw`\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)${TITLE}\)`, "g"), (m, label: string, href: string, a?: string, b?: string, c?: string) => {
     // The tags are held, so the emphasis below finds no `_` in the URL (#1105).
-    const target = safeHref(url(href));
-    return target === undefined ? m : `${hold(`<a href="${escapeHtml(target)}">`)}${label}${hold("</a>")}`;
+    const target = followed(href);
+    return target === undefined ? m : `${hold(`<a href="${escapeHtml(target)}"${titled(a, b, c)}>`)}${label}${hold("</a>")}`;
   });
   // A run of three first, so its tags nest (#1550). An underscore run
   // inside a word is text (#1556), as `_` is below.
@@ -123,22 +143,44 @@ export function markdownHtml(source: string, values: Record<string, LiveValue> =
   const lines = source.split(/\r?\n/);
   const out: string[] = [];
   let paragraph: string[] = [];
-  let list: { tag: "ul" | "ol"; start: number; items: string[] } | undefined;
+  // An item: its text, the column that text starts at, and the lines
+  // written under it from that column on - a list of its own (#1943).
+  let list: { tag: "ul" | "ol"; start: number; items: { text: string; column: number; under: string[] }[] } | undefined;
   // Whether the last line not indented was a list item's.
   let listed = false;
   const flush = (): void => {
     if (paragraph.length > 0) {
-      out.push(`<p>${paragraph.map((l) => inline(l, values)).join("<br>\n")}</p>`);
+      // A line's end is a space, as the notebook shows it: a break only
+      // after two spaces or a backslash not itself escaped (#1945).
+      const text = paragraph.map((l, at) => {
+        const hard = at < paragraph.length - 1 && /(?: {2,}|(?<!\\)\\(?:\\\\)*)$/.test(l);
+        return hard ? `${inline(l.endsWith("\\") ? l.slice(0, -1) : l.trimEnd(), values)}<br>` : inline(l.trimEnd(), values);
+      });
+      out.push(`<p>${text.join("\n")}</p>`);
       paragraph = [];
     }
     if (list !== undefined) {
       const start = list.tag === "ol" && list.start !== 1 ? ` start="${list.start}"` : "";
-      out.push(`<${list.tag}${start}>${list.items.map((i) => `<li>${inline(i, values)}</li>`).join("")}</${list.tag}>`);
+      const item = (i: { text: string; under: string[] }): string =>
+        `<li>${inline(i.text, values)}${i.under.length > 0 ? markdownHtml(i.under.join("\n"), values) : ""}</li>`;
+      out.push(`<${list.tag}${start}>${list.items.map(item).join("")}</${list.tag}>`);
       list = undefined;
     }
   };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    // A list under the last item: a line indented to the item's text that
+    // starts an item, and what follows it there. It is that item's own
+    // Markdown, as a quote's lines are the quote's (#1943).
+    const last = list?.items[list.items.length - 1];
+    const indent = (/^[ \t]*/.exec(line) as RegExpExecArray)[0].replace(/\t/g, "    ");
+    if (last !== undefined && line.trim() !== "" && indent.length >= last.column) {
+      const under = indent.slice(last.column) + line.trimStart();
+      if (last.under.length > 0 || /^ {0,3}([-*+]|\d{1,9}[.)])(?:\s|$)/.test(under)) {
+        last.under.push(under);
+        continue;
+      }
+    }
     // A backtick fence's info string holds no backtick: "```a``` b" is a
     // line of text with a code span in it, not a fence (#1307).
     const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
@@ -204,7 +246,7 @@ export function markdownHtml(source: string, values: Record<string, LiveValue> =
     } else if (paragraph.length > 0 && /^ {0,3}(=+|-+)\s*$/.test(line)) {
       // A setext heading: the paragraph above a line of = or - (#1551).
       const level = line.trim()[0] === "=" ? 1 : 2;
-      out.push(`<h${level}>${paragraph.map((l) => inline(l, values)).join("\n")}</h${level}>`);
+      out.push(`<h${level}>${paragraph.map((l) => inline(l.trimEnd(), values)).join("\n")}</h${level}>`);
       paragraph = [];
     } else if (heading !== null) {
       flush();
@@ -232,14 +274,14 @@ export function markdownHtml(source: string, values: Record<string, LiveValue> =
         flush();
       }
       list ??= { tag, start: tag === "ol" ? parseInt(item[1], 10) : 1, items: [] };
-      list.items.push(item[2]);
+      list.items.push({ text: item[2], column: line.length - item[2].length, under: [] });
     } else if (list !== undefined && /^\s+\S/.test(line)) {
-      list.items[list.items.length - 1] += ` ${line.trim()}`;
+      list.items[list.items.length - 1].text += ` ${line.trim()}`;
     } else {
       if (list !== undefined) {
         flush();
       }
-      paragraph.push(line.trim());
+      paragraph.push(line.trimStart());
     }
   }
   flush();
@@ -367,9 +409,12 @@ function outputToJupyter(output: QnbOutput, order: number | undefined, last: boo
       data[item.mime] = jupyterLines(item.text ?? "");
     }
   }
-  // The last output of a cell that ran is its value, as Jupyter numbers one.
-  return last && order !== undefined
-    ? { output_type: "execute_result", execution_count: order, data, metadata: output.metadata ?? {} }
+  // An output read from a Jupyter notebook is of the type it had there
+  // (#1946). Of those made here, the last one of a cell that ran is its
+  // value, as Jupyter numbers one.
+  const type = output.extra?.output_type;
+  return type === "execute_result" || (type !== "display_data" && last && order !== undefined)
+    ? { output_type: "execute_result", execution_count: order ?? null, data, metadata: output.metadata ?? {} }
     : { output_type: "display_data", data, metadata: output.metadata ?? {} };
 }
 
@@ -387,10 +432,11 @@ export function toIpynb(qnb: Qnb): string {
   const meta = qnb.metadata ?? {};
   // A kernel the notebook names is kept (#1548): on another language's, a q
   // cell goes back with the `%%q` magic `fromIpynb` took off.
-  const magic = kernelLanguage(meta) !== "q";
+  const language = kernelLanguage(meta);
+  const magic = language !== "q";
   const ids = qnb.cells.length > 0 && qnb.cells.every((c) => typeof c.extra?.id === "string");
   const cells = qnb.cells.map((cell): Json => {
-    const json = convertCell(cell, magic);
+    const json = convertCell(cell, magic, language);
     return ids ? { id: cell.extra?.id, ...json } : json;
   });
   const notebook = {
@@ -402,8 +448,9 @@ export function toIpynb(qnb: Qnb): string {
   return JSON.stringify(notebook, null, 1) + "\n";
 }
 
-/// One cell as Jupyter writes it; `magic`: a q cell takes `%%q`.
-function convertCell(cell: QnbCell, magic: boolean): Json {
+/// One cell as Jupyter writes it; `magic`: a q cell takes `%%q`. `notebook`
+/// is the language of the notebook's kernel.
+function convertCell(cell: QnbCell, magic: boolean, notebook: string): Json {
   // The attachments `fromIpynb` kept, which `![x](attachment:a.png)` in
   // the cell's text names (#1234).
   const attachments = cell.extra?.attachments !== undefined ? { attachments: cell.extra.attachments } : {};
@@ -417,7 +464,9 @@ function convertCell(cell: QnbCell, magic: boolean): Json {
     return { cell_type: "raw", metadata: cell.metadata ?? {}, source: jupyterLines(cell.source), ...attachments };
   }
   const metadata: Json = { ...(cell.metadata ?? {}) };
-  if (language !== "q") {
+  // Tagged as VS Code tags one: only a cell in another language than the
+  // notebook's, or a round trip rewrites every cell (#1947).
+  if (language !== "q" && language !== notebook) {
     metadata.vscode = { ...(isObject(metadata.vscode) ? metadata.vscode : {}), languageId: language };
   }
   const order = cell.execution?.order;
@@ -463,7 +512,9 @@ function outputFromJupyter(raw: unknown): QnbOutput | undefined {
         // Jupyter keeps an image's bytes as base64 text.
         return mime.startsWith("image/") && mime !== "image/svg+xml" ? { mime, base64: text.replace(/\s/g, "") } : { mime, text };
       });
-      return items.length === 0 ? undefined : { items, ...(isObject(raw.metadata) && Object.keys(raw.metadata).length > 0 ? { metadata: raw.metadata } : {}) };
+      // Which of the two it is goes with it, for `toIpynb` (#1946).
+      const kept = { extra: { output_type: raw.output_type } };
+      return items.length === 0 ? undefined : { items, ...(isObject(raw.metadata) && Object.keys(raw.metadata).length > 0 ? { metadata: raw.metadata } : {}), ...kept };
     }
     default:
       return undefined;

@@ -36,6 +36,7 @@ import {
 } from "./dashboard";
 import { DB_COMMANDS, dbOff, dbOn } from "./dbfeatures";
 import { toGrid, type GridAnswer } from "./grid";
+import { iconsEscaped } from "./history";
 import type { Live } from "./live";
 import { parseSaved, SAVED_QUERIES_KEY, type SavedQuery } from "./savedqueries";
 import { plainMessage } from "./history";
@@ -133,16 +134,23 @@ export class Dashboards {
     return d;
   }
 
+  /// The dashboard picked from the list, by name; `name` undefined for a
+  /// new one; undefined on Escape. A name is shown as written, and the
+  /// new one is told by its item, not its text: a dashboard may be named
+  /// as that item is labelled (#1929).
+  private pickDashboard(title: string): Thenable<{ name?: string } | undefined> {
+    return window.showQuickPick<{ label: string; name?: string }>([...this.list().map((x) => ({ label: iconsEscaped(x.name), name: x.name })), { label: "$(add) New dashboard..." }], { title });
+  }
+
   async open(name?: string): Promise<string> {
     if (!on()) return say(dbOff("dashboards"));
     const list = this.list();
     let d = name === undefined ? undefined : list.find((x) => x.name === name);
     if (d === undefined) {
-      const fresh = "$(add) New dashboard...";
-      const pick = name !== undefined ? undefined : await window.showQuickPick([...list.map((x) => x.name), fresh], { title: "Open which dashboard?" });
+      const pick = name !== undefined ? undefined : await this.pickDashboard("Open which dashboard?");
       if (pick === undefined && name === undefined) return "cancelled";
       // A name that is no dashboard's makes one of that name (#1268).
-      d = pick === fresh || pick === undefined ? await this.create(name) : list.find((x) => x.name === pick);
+      d = pick?.name === undefined ? await this.create(name) : list.find((x) => x.name === pick.name);
     }
     if (d === undefined) return "cancelled";
     this.show(d);
@@ -152,7 +160,10 @@ export class Dashboards {
   async add(query?: SavedQuery | string, dashboard?: string, processLabel?: string): Promise<string> {
     if (!on()) return say(dbOff("dashboards"));
     const saved = this.saved();
-    const name = typeof query === "string" ? query : query?.name ?? (await window.showQuickPick(saved.map((q) => q.name), { title: "Add which saved query?" }));
+    const name =
+      typeof query === "string"
+        ? query
+        : query?.name ?? (await window.showQuickPick(saved.map((q) => ({ label: iconsEscaped(q.name), name: q.name })), { title: "Add which saved query?" }))?.name;
     if (name === undefined) return "cancelled";
     const found = saved.find((q) => q.name === name);
     if (found === undefined) return say(`q-lint: there is no saved query ${name}.`);
@@ -166,10 +177,9 @@ export class Dashboards {
       d = { name: dashboard.trim(), columns: 2, tiles: [] };
     }
     if (d === undefined) {
-      const fresh = "$(add) New dashboard...";
-      const pick = await window.showQuickPick([...this.list().map((x) => x.name), fresh], { title: `Add ${name} to which dashboard?` });
+      const pick = await this.pickDashboard(`Add ${name} to which dashboard?`);
       if (pick === undefined) return "cancelled";
-      d = pick === fresh ? await this.create() : this.list().find((x) => x.name === pick);
+      d = pick.name === undefined ? await this.create() : this.list().find((x) => x.name === pick.name);
     }
     if (d === undefined) return "cancelled";
     const process = processLabel ?? (await this.live.pick(undefined, `Run ${name} on which process?`))?.label;
@@ -266,13 +276,19 @@ export class Dashboards {
       this.at.set(tile.id, at);
       void this.panel?.webview.postMessage({ type: "tile", id: tile.id, content, at });
     };
+    // A run that fails holds no answer: a view change then draws the
+    // failure again, not the answer of the run before it (#1925).
+    const failed = (text: string) => {
+      this.answers.delete(tile.id);
+      post({ kind: "error", text });
+    };
     const query = this.saved().find((q) => q.name === tile.query);
-    if (query === undefined) return post({ kind: "error", text: `There is no saved query ${tile.query} any more.` });
+    if (query === undefined) return failed(`There is no saved query ${tile.query} any more.`);
     const problem = tileQueryProblem(query.code);
-    if (problem !== undefined) return post({ kind: "error", text: `Not run: ${problem}.` });
+    if (problem !== undefined) return failed(`Not run: ${problem}.`);
     // Saved, discovered or shared, as Add to Dashboard offered it (#1122).
     const process = this.live.named(tile.process);
-    if (process === undefined) return post({ kind: "error", text: `There is no q process ${tile.process}.` });
+    if (process === undefined) return failed(`There is no q process ${tile.process}.`);
     this.running.add(tile.id);
     void this.panel?.webview.postMessage({ type: "running", id: tile.id });
     try {
@@ -282,7 +298,7 @@ export class Dashboards {
       // Shown as the tile is set now: its view can change while the run is out (#1339).
       post(tileContent(answer, this.current()?.tiles.find((x) => x.id === tile.id)?.view ?? tile.view));
     } catch (error) {
-      post({ kind: "error", text: error instanceof Error ? error.message : String(error) });
+      failed(error instanceof Error ? error.message : String(error));
     } finally {
       this.running.delete(tile.id);
     }
