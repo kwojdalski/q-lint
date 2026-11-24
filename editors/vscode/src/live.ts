@@ -1664,13 +1664,15 @@ export class Live {
   /// guard's question was open: nothing is sent then (#1357). `unattended`:
   /// run from a timer, with nobody to ask - a script the guard holds is not
   /// run, and that or a failure throws for the caller to report (#1618).
-  private async runConnectScript(connection: QConnection, process: Process, stopped: () => boolean = () => false, unattended = false): Promise<void> {
+  /// `throws`: a failure throws rather than being said - a connection apart
+  /// is not handed out unprepared, or closed by a timeout (#1713).
+  private async runConnectScript(connection: QConnection, process: Process, stopped: () => boolean = () => false, unattended = false, throws = unattended): Promise<void> {
     const script = scriptOf(process);
     if (script === undefined || !this.setting(readConnectScript).enabled) {
       return;
     }
     const failed = (why: string): void => {
-      if (unattended) {
+      if (throws) {
         throw new Error(`the connect script of ${process.label} failed: ${why}`);
       }
       this.show([`# ${process.label} - connect script failed: ${why}`], false);
@@ -1739,7 +1741,7 @@ export class Live {
       }
       this.output.appendLine(`# ${process.label} - connect script ran (${Date.now() - started} ms)`);
     } catch (error) {
-      if (unattended && error instanceof Error && error.message.startsWith(`the connect script of ${process.label} failed`)) {
+      if (throws && error instanceof Error && error.message.startsWith(`the connect script of ${process.label} failed`)) {
         throw error;
       }
       if (!stopped()) {
@@ -1966,7 +1968,7 @@ export class Live {
   async openSeparate(process: Process): Promise<QConnection> {
     const connection = await this.dial(process, await this.targetFor(process));
     try {
-      await this.runConnectScript(connection, process);
+      await this.runConnectScript(connection, process, undefined, false, true);
     } catch (error) {
       connection.abort();
       throw error;

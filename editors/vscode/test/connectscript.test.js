@@ -307,7 +307,7 @@ test("a connect script file is kept by its full path, and a relative one is not 
 // prepared: another namespace, a login not made (#1509).
 test("a connection apart runs the process's connect script before its query", async (t) => {
   const { fakeQ, heads } = require("./fakeq.js");
-  const q = await fakeQ(1);
+  const q = await fakeQ((m) => (heads([m])[0] === "{x}" ? 1 : { ok: true, type: -7, text: ["1"] }));
   t.after(() => q.close());
   const { live } = await setUp(t, [{ label: "p", host: "127.0.0.1", port: q.port, tags: [], init: "setUp:1" }]);
   await live.callSeparate(live.processes()[0], (c) => c.call("{x}", 1));
@@ -381,3 +381,21 @@ test("connecting elsewhere closes a connect script that blocks", async (t) => {
   assert.strictEqual(live.activeLabel(), "b");
 });
 
+// A connection apart whose script timed out or failed was handed out closed,
+// or unprepared, with only a warning (#1713).
+test("a connection apart whose connect script fails or times out is not handed out", async (t) => {
+  const q = await blockingQ(t);
+  const { live } = await setUp(t, [
+    { label: "t", host: "127.0.0.1", port: q.port, tags: [], init: "block[]", timeout: 1 },
+  ]);
+  await assert.rejects(live.openSeparate(live.processes()[0]), /the connect script of t failed: .*1 s/);
+  let used = false;
+  await assert.rejects(live.callSeparate(live.processes()[0], async () => (used = true)), /the connect script of t failed/);
+  assert.strictEqual(used, false);
+  assert.deepStrictEqual(stub.messages.filter(([k, m]) => k === "warning" && /connect script of t/.test(m)), []);
+  const { fakeQ } = require("./fakeq.js");
+  const e = await fakeQ(1);
+  t.after(() => e.close());
+  const failing = { label: "e", host: "127.0.0.1", port: e.port, tags: [], initFile: "/nowhere/init.q" };
+  await assert.rejects(live.openSeparate(failing), /the connect script of e failed: could not read/);
+});
