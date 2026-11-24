@@ -559,6 +559,33 @@ test("Markdown edited while its cell runs: only the expressions the guard read a
   assert.deepStrictEqual([guarded, sent], [["system \"sleep 5\"", "count trade"], ["count trade"]]);
 });
 
+test("Interrupt once a cell's query has answered aborts nothing; while it is out, it aborts (#1998)", async () => {
+  const fake = fakeVscode();
+  const live = recordingLive(PROCESSES, "dev1");
+  let during = () => {};
+  let aborts = 0;
+  live.abort = async () => void aborts++;
+  live.runOnActive = async (code, query) => ({ process: "dev1", value: await query({ query: async () => (during(), { ok: true, type: -7, text: ["2"] }) }) });
+  load(fake, live);
+  const notebook = notebookWith(fake, [["code", "1+1"]]);
+  const create = fake.registered.controller.createNotebookCellExecution;
+  const hooked = (hook) => {
+    fake.registered.controller.createNotebookCellExecution = (cell) => hook(create(cell));
+  };
+  // Interrupted while the output is written: the query is no longer running.
+  hooked((e) => {
+    const replace = e.replaceOutput;
+    e.replaceOutput = async (outputs) => (e.cancel(), replace(outputs));
+    return e;
+  });
+  await fake.registered.controller.executeHandler(notebook.cells, notebook);
+  assert.strictEqual(aborts, 0);
+  // Interrupted while the query is out: aborted, as Abort Current Query.
+  hooked((e) => ((during = () => e.cancel()), e));
+  await fake.registered.controller.executeHandler(notebook.cells, notebook);
+  assert.strictEqual(aborts, 1);
+});
+
 test("a code cell that fails drops the live values kept for the Markdown after it (#1544)", async () => {
   const fake = fakeVscode();
   const live = recordingLive(PROCESSES, "dev1");

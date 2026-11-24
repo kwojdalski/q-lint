@@ -448,10 +448,16 @@ class QnbKernel {
           return undefined;
         }
         running = true;
-        const [ok, parts]: [boolean, OutputPart[]] = cut.length === 0 ? [true, []] : await cellAnswer(connection, directive, cut, settings);
-        // A value that cannot be read leaves the cell's output as it is.
-        const values = ok && markdown.length > 0 ? await liveValues(connection, texts).catch(() => []) : [];
-        return [ok, parts, values];
+        try {
+          const [ok, parts]: [boolean, OutputPart[]] = cut.length === 0 ? [true, []] : await cellAnswer(connection, directive, cut, settings);
+          // A value that cannot be read leaves the cell's output as it is.
+          const values = ok && markdown.length > 0 ? await liveValues(connection, texts).catch(() => []) : [];
+          return [ok, parts, values];
+        } finally {
+          // Answered: an Interrupt from here on has no query of the cell's
+          // to abort (#1998).
+          running = false;
+        }
       });
       if (result === undefined) {
         return finish(false, [notice("Not run: no q process is connected, or a query is still running on it.")]);
