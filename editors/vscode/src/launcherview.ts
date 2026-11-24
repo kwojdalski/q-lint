@@ -5,7 +5,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import * as net from "node:net";
 import { commands, window, workspace, type ExtensionContext, type OutputChannel } from "vscode";
-import { LAUNCH_COMMANDS, argsFromText, argsText, commandText, launchPlan, readLauncher } from "./launcher";
+import { LAUNCH_COMMANDS, argsFromText, argsText, commandText, fromWorkspace, launchPlan, readLauncher } from "./launcher";
 import { readTerminal } from "./liveconfig";
 import { mergeEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
@@ -168,6 +168,9 @@ export class Launcher {
   private async launch(process: Process): Promise<string | undefined> {
     const configuration = workspace.getConfiguration("q-lint", workspace.workspaceFolders?.[0]?.uri);
     const { qBinary } = readTerminal((key, fallback) => configuration.get(key, fallback));
+    if (workspace.isTrusted === false && process.launch !== undefined && fromWorkspace(process.launch)) {
+      return `${process.label}'s working directory or script is relative to the workspace folder, which is not trusted: it was not started. Name them by their full paths.`;
+    }
     const plan = launchPlan(process, qBinary, workspace.workspaceFolders?.[0]?.uri.fsPath);
     if ("error" in plan) {
       return plan.error;

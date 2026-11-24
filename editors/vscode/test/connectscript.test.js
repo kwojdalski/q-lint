@@ -255,3 +255,35 @@ test("a connect script is not sent once the connect was given up while the read-
   assert.strictEqual(await live.connectTo("p"), true);
   assert.strictEqual(scripts(), 1);
 });
+
+// A saved process is every window's: a script file kept relative to the
+// first folder ran another workspace's file of that name, and in one not
+// trusted that was the repository's q code on the user's process (#1527).
+test("a connect script file is kept by its full path, and a relative one is not run in a workspace not trusted", async (t) => {
+  const vscode = require("vscode");
+  const { fakeQ } = require("./fakeq.js");
+  const q = await fakeQ(null);
+  t.after(() => q.close());
+  const { live, run } = await setUp(t, [proc("a"), { label: "p", host: "127.0.0.1", port: q.port, tags: [], initFile: "init.q" }]);
+  t.after(() => stub.commands.get("q-lint.disconnectProcess")?.());
+  const saved = { folders: vscode.workspace.workspaceFolders, dialog: vscode.window.showOpenDialog, trusted: vscode.workspace.isTrusted, fs: vscode.workspace.fs };
+  t.after(() => {
+    vscode.workspace.workspaceFolders = saved.folders;
+    vscode.window.showOpenDialog = saved.dialog;
+    vscode.workspace.isTrusted = saved.trusted;
+    vscode.workspace.fs = saved.fs;
+  });
+  vscode.workspace.workspaceFolders = [{ uri: vscode.Uri.file("/proj/a") }];
+  vscode.window.showOpenDialog = async () => [vscode.Uri.file("/proj/a/init.q")];
+  stub.picks.push("q File");
+  await run("a");
+  assert.deepStrictEqual(scriptOf(live.processes()[0]), { kind: "file", file: "/proj/a/init.q" });
+  // Connected from a workspace not trusted, the relative one is not read.
+  let read = 0;
+  vscode.workspace.fs = { readFile: async () => (read++, Buffer.from("fromRepo:1")) };
+  vscode.workspace.isTrusted = false;
+  assert.strictEqual(await live.connectTo("p"), true);
+  assert.strictEqual(read, 0);
+  assert.deepStrictEqual(q.sent.filter((m) => JSON.stringify(m).includes("fromRepo")), []);
+  assert.match(stub.messages.find((m) => /connect script of p failed/.test(m[1]))[1], /not trusted: it was not run/);
+});

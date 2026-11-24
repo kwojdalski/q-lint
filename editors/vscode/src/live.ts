@@ -1513,10 +1513,10 @@ export class Live {
         if (files === undefined || files.length === 0) {
           return;
         }
-        // Inside the workspace folder it is kept relative, so the list
-        // reads the same on a colleague's machine.
-        const relative = folder === undefined ? undefined : path.relative(folder.fsPath, files[0].fsPath);
-        chosen = { kind: "file", file: relative !== undefined && relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative) ? relative : files[0].fsPath };
+        // Kept whole: a saved process is every window's, and a path
+        // relative to this folder read another workspace's file of that
+        // name when connected from there (#1527).
+        chosen = { kind: "file", file: files[0].fsPath };
       }
     }
     if (chosen !== undefined && isProduction(process)) {
@@ -1563,6 +1563,12 @@ export class Live {
     if (script.kind === "code") {
       code = script.code;
     } else {
+      // A relative file is the opened folder's: in one not trusted, that is
+      // the repository's q code, run on the process (#1527).
+      if (workspace.isTrusted === false && scriptPath(script.file, os.homedir(), undefined) === undefined) {
+        failed(`${script.file} is relative to the workspace folder, which is not trusted: it was not run. Name the file by its full path.`);
+        return;
+      }
       const file = scriptPath(script.file, os.homedir(), workspace.workspaceFolders?.[0]?.uri.fsPath);
       if (file === undefined) {
         failed(`${script.file} is relative, and there is no workspace folder to read it from.`);
