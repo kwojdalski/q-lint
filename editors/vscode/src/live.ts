@@ -59,7 +59,7 @@ import {
 } from "./processes";
 import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
 import { ClosedBeforeHandshake, QConnection, QError, type Target } from "./qclient";
-import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, readTunnel } from "./tunnel";
+import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, TunnelHandshakeError, readTunnel } from "./tunnel";
 import { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, readGateway } from "./gateway";
 import { HEARTBEAT, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
 import { historyHeading, historyLabel, iconsEscaped, plainMessage } from "./history";
@@ -1626,10 +1626,12 @@ export class Live {
       // Kept, so deleting the server forgets it even after a reload.
       await this.discovery.passwordGiven(process.server!, process.label.slice(process.server!.length + 1));
     }
-    const connected = await this.open(process);
-    // A discovered process cannot be edited, so a password that did not
-    // connect is forgotten: the next connect asks for it again.
-    if (!connected && !saved && process.user && !commanded) {
+    const outcome: { refused?: boolean } = {};
+    const connected = await this.open(process, false, false, this.disconnects, outcome);
+    // A discovered process cannot be edited, so a password that was refused
+    // is forgotten: the next connect asks for it again. One that met a host
+    // down or a timeout is kept (#1511).
+    if (!connected && outcome.refused === true && !saved && process.user && !commanded) {
       await this.context.secrets.delete(passwordKey(process));
       await this.discovery.passwordGiven(process.server!, process.label.slice(process.server!.length + 1), false);
     }
@@ -1641,7 +1643,9 @@ export class Live {
   /// the handshake is still running the query it was left with, and is
   /// tried again until it does, or until the user disconnects or connects
   /// elsewhere.
-  private open(process: Process, untilFree = false, quiet = false, disconnects = this.disconnects): Promise<boolean> {
+  /// `outcome.refused` is set when the process closed before the handshake:
+  /// how it refuses a user or password.
+  private open(process: Process, untilFree = false, quiet = false, disconnects = this.disconnects, outcome: { refused?: boolean } = {}): Promise<boolean> {
     if (this.connecting !== undefined) {
       // A connect to another process - a reconnect after an abort, waiting
       // for that process to be free - is stopped and this one follows: its
@@ -1650,7 +1654,7 @@ export class Live {
         return this.connecting;
       }
       this.reconnectStopped = true;
-      return this.connecting.then(() => this.open(process, false, false, disconnects));
+      return this.connecting.then(() => this.open(process, false, false, disconnects, outcome));
     }
     this.reconnectStopped = false;
     this.connectingTo = passwordKey(process);
@@ -1720,6 +1724,7 @@ export class Live {
         this.changed.fire("connected");
         return true;
       } catch (failure) {
+        outcome.refused = failure instanceof ClosedBeforeHandshake || failure instanceof TunnelHandshakeError;
         if ((untilFree && this.reconnectStopped) || quiet || disconnects !== this.disconnects) {
           return false;
         }
@@ -1775,7 +1780,7 @@ export class Live {
       if (error instanceof ClosedBeforeHandshake) {
         // What ssh says of a forward that failed can come just after the close.
         await new Promise((resolve) => setTimeout(resolve, 100));
-        failure = new TunnelConnectError(
+        failure = new TunnelHandshakeError(
           `the connection through the SSH tunnel via ${process.ssh} closed before the handshake: no q process answers at ${where} as ${process.ssh} reaches it, or the user or password was refused`,
           tunnel.said,
         );

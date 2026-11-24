@@ -314,6 +314,31 @@ test("a discovered process listed at another host or port forgets its password, 
   void again;
 });
 
+// Any failed connect forgot the password just given - a host down or
+// restarting as well as a refused one (#1511).
+test("a discovered process's password is forgotten when it is refused, not when the host is down", async (t) => {
+  const http = require("node:http");
+  const down = await deadPort();
+  // Closes the socket on the handshake, as q refuses a user.
+  const refusing = net.createServer((s) => s.on("data", () => s.destroy()));
+  await new Promise((r) => refusing.listen(0, "127.0.0.1", r));
+  t.after(() => refusing.close());
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify([{ label: "down", host: "127.0.0.1", port: down, user: "u" }, { label: "refused", host: "127.0.0.1", port: refusing.address().port, user: "u" }]));
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  t.after(() => server.close());
+  const { context, live } = await setUp(t, []);
+  await stub.commands.get("q-lint.addDiscoveryServer")({ label: "desk", url: `http://127.0.0.1:${server.address().port}/` });
+  for (const l of ["down", "refused"]) {
+    stub.inputs.push(() => "pw");
+    assert.strictEqual(await live.connectTo(`desk/${l}`), false);
+  }
+  assert.strictEqual(context.secrets.all.get("q-lint.discoveredPassword.desk/down"), "pw");
+  assert.strictEqual(context.secrets.all.has("q-lint.discoveredPassword.desk/refused"), false);
+});
+
 // A file Export cannot write (a read-only folder, a full disk) rejected the
 // command: VS Code said only that running it failed.
 test("Export Processes says why it could not write the file", async (t) => {

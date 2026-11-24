@@ -99,6 +99,10 @@ export class TunnelConnectError extends Error {
   }
 }
 
+/// A connect through an open tunnel that closed before the handshake: as
+/// likely a refused user as a forward that reached no q.
+export class TunnelHandshakeError extends TunnelConnectError {}
+
 export class SshTunnel {
   private closed = false;
   private readonly onExit: ((why: string) => void)[] = [];
