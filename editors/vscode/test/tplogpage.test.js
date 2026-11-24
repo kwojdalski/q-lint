@@ -46,6 +46,25 @@ test("a page that lists clears the error a refused filter left (#1793)", () => {
   assert.deepStrictEqual([status.textContent, status.className], ["", "status"]);
 });
 
+test("a refused filter is not what the pager pages: it keeps the filter its rows came from (#1794)", () => {
+  const page = loadSmallPage(["tplog.js"]);
+  page.send({ type: "log", port: 5001, log: LOG });
+  const button = (text) => page.find("button").find((b) => b.textContent === text);
+  const [table] = page.find("select");
+  const [from, to] = page.find("input");
+  table.value = "";
+  from.value = "09:00";
+  button("Filter").fire("click");
+  page.send({ type: "page", table: "", from: "09:00", to: "", offset: 0, size: 200, total: 500, rows: ROWS });
+  to.value = "25:99";
+  button("Filter").fire("click");
+  // The extension refuses it with a status and sends no page.
+  page.send({ type: "status", text: "A time of day is HH:MM, HH:MM:SS or HH:MM:SS.mmm.", failed: true });
+  button("Page ▶").fire("click");
+  const asked = page.posted.filter((m) => m.type === "page").map(({ table, from, to, offset }) => [table, from, to, offset]);
+  assert.deepStrictEqual(asked, [["", "09:00", "", 0], ["", "09:00", "25:99", 0], ["", "09:00", "", 200]]);
+});
+
 test("the pager pages the filter last applied, not one typed since (#1395)", () => {
   const page = loadSmallPage(["tplog.js"]);
   page.send({ type: "log", port: 5001, log: { ...LOG, tables: ["trade", "quote"] } });
@@ -55,13 +74,13 @@ test("the pager pages the filter last applied, not one typed since (#1395)", () 
   table.value = "trade";
   from.value = "09:00";
   button("Filter").fire("click");
-  page.send({ type: "page", offset: 0, size: 200, total: 500, rows: ROWS });
+  page.send({ type: "page", table: "trade", from: "09:00", to: "", offset: 0, size: 200, total: 500, rows: ROWS });
   // Changed, but Filter not pressed: the pages are still trade's from 09:00.
   table.value = "quote";
   from.value = "10:00";
   to.value = "11:00";
   button("Page ▶").fire("click");
-  page.send({ type: "page", offset: 200, size: 200, total: 500, rows: ROWS });
+  page.send({ type: "page", table: "trade", from: "09:00", to: "", offset: 200, size: 200, total: 500, rows: ROWS });
   button("◀ Page").fire("click");
   const asked = page.posted.filter((m) => m.type === "page").map(({ table, from, to, offset }) => [table, from, to, offset]);
   assert.deepStrictEqual(asked, [["trade", "09:00", "", 0], ["trade", "09:00", "", 200], ["trade", "09:00", "", 0]]);
