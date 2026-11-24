@@ -188,6 +188,11 @@ export async function converse(
     // The last round offers no tools: a call made in it would run with its
     // result never sent back (#1615).
     const last = round === ROUNDS - 1;
+    // Turned off mid-request: nothing more is sent (#1632).
+    if (round > 0 && !on()) {
+      stream.markdown(`\n\n${assistOff("chat")}`);
+      return;
+    }
     const response = await model.sendRequest(messages, tools.length > 0 && !last ? { tools } : {}, token);
     const calls: LanguageModelToolCallPart[] = [];
     const said: LanguageModelTextPart[] = [];
@@ -214,6 +219,10 @@ export async function converse(
     }
     messages.push(LanguageModelChatMessage.Assistant([...said, ...calls]));
     for (const call of calls) {
+      if (!on()) {
+        stream.markdown(`\n\n${assistOff("chat")}`);
+        return;
+      }
       let content: unknown[];
       try {
         const result = await lm.invokeTool(call.name, { input: call.input, toolInvocationToken }, token);

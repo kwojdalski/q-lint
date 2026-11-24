@@ -342,6 +342,23 @@ test("@q offers no tools in its last round and runs none of that round's calls (
   assert.match(said.join(""), /Stopped after 5 rounds of tool calls/);
 });
 
+test("@q turned off mid-request sends no more requests and runs no more tools (#1632)", async () => {
+  setup();
+  const call = () => [new LanguageModelToolCallPart("c", "q-lint_runQuery", { query: "1" })];
+  const model = fakeModel([call(), call(), call()]);
+  const send = model.sendRequest;
+  model.sendRequest = async (...args) => {
+    const r = await send(...args);
+    stub.config.user["chat.participant.enable"] = false;
+    return r;
+  };
+  const said = [];
+  await converse(model, "p", { markdown: (m) => said.push(m) }, token, "TOKEN");
+  assert.strictEqual(model.sent.length, 1);
+  assert.strictEqual(invoked.length, 0);
+  assert.match(said.join(""), /turned off/);
+});
+
 test("@q /error explains the last failed query, or the error typed", async () => {
   const history = [
     { process: "dev", code: "1+`a", outcome: "error", error: "type", at: "", millis: 1 },
