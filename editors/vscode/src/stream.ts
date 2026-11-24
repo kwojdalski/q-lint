@@ -43,7 +43,8 @@ export const TABLES = "$[`t in key `.u; .u.t; tables`.]";
 /// The rows an update of `table` carries, each a row of q's text of its
 /// cells in `columns` order, or undefined when `q` is not an update of
 /// `table`. The data is a table, a list of columns, or one row as a list of
-/// atoms, each in the order `columns` names. Items all strings are one row
+/// atoms (a simple list, when they are of one type), each in the order
+/// `columns` names. Items all strings are one row
 /// of string columns unless the columns are chars (`types`, meta's letters,
 /// when the subscription said) or, untold, they are lists of one length
 /// (#1582).
@@ -70,6 +71,14 @@ export function readUpdate(q: QValue, table: string, columns: string[], types?: 
           ? { kind: "chars", attr: 0, v: Buffer.from([Number(x.v)]) }
           : { kind: "vector", t: -x.t, attr: 0, v: [x.v] };
     shaped = { kind: "table", attr: 0, cols: columns, data: data.v.map(column) };
+  } else if ((data.kind === "vector" || data.kind === "chars") && data.v.length === columns.length) {
+    // One row of atoms of one type, which q makes a simple list (#1921):
+    // of any other length it is no row, and q's own insert refuses it.
+    const cells: QValue[] =
+      data.kind === "chars"
+        ? Array.from(data.v, (byte) => ({ kind: "chars", attr: 0, v: Buffer.from([byte]) }))
+        : data.v.map((item) => ({ kind: "vector", t: data.t, attr: 0, v: [item] }));
+    shaped = { kind: "table", attr: 0, cols: columns, data: cells };
   } else {
     return undefined;
   }

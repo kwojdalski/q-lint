@@ -104,6 +104,17 @@ test("a real is the number q wrote, not its float32 widened to a double", () => 
     const f = Math.fround(x);
     assert.strictEqual(Math.fround(jsonCell(8, "", f)), f, String(x));
   }
+  // One that needs nine digits to read back is its nine-digit decimal, not
+  // the widened double (#1911), as the grid's is (#1734).
+  assert.strictEqual(jsonCell(8, "1.355131e+11", 135513055232), 1.35513055e11);
+  assert.strictEqual(jsonCell(8, "1.309362e-20", Math.fround(1.30936204e-20)), 1.30936204e-20);
+  assert.strictEqual(jsonCell(8, "0.1099371", 0.10993709415197372), 0.109937094);
+  for (let i = 0; i < 20000; i++) {
+    const r = Math.fround((Math.random() - 0.5) * 10 ** Math.floor(Math.random() * 20 - 10));
+    const got = jsonCell(8, "", r);
+    assert.strictEqual(Math.fround(got), r, String(r));
+    assert.strictEqual(Number(got.toPrecision(9)), got, String(r));
+  }
 });
 
 const saved = [
@@ -160,6 +171,10 @@ test("the confirmation names the process, shows the query, and warns of producti
   assert.match(confirmation("1", saved[1], { connects: true }).message, /connecting to it first:/);
   // A query holding backticks is fenced by more of them.
   assert.match(confirmation("a:```x", saved[1]).message, /````q\na:```x\n````$/);
+  // A query of half a million characters, a symbol every four, is fenced
+  // too: its runs of backticks are not spread into one call (#1915).
+  const many = `select from t where sym in \`a${" ,\`b".repeat(200000)}`;
+  assert.ok(confirmation(many, saved[1]).message.endsWith(`\`\`\`q\n${many}\n\`\`\``));
   assert.ok(isProduction({ label: "x", host: "h", port: 1, tags: ["eu", "PRD"] }));
   assert.ok(!isProduction({ label: "x", host: "h", port: 1, tags: ["uat"] }));
 });

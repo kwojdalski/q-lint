@@ -8,7 +8,7 @@ const { stub, vscode } = require("./vscode_stub.js");
 const test = require("node:test");
 const assert = require("node:assert");
 const { setUp } = require("./fakeq.js");
-const { TABLE_SHAPE, operand, readShape, suggestJoins } = require("../out/joinassist.js");
+const { TABLE_SHAPE, lastSelectedLine, operand, readShape, suggestJoins } = require("../out/joinassist.js");
 const { registerJoinAssistant } = require("../out/joinassistview.js");
 const { PROCESS_TOOL_COMMANDS } = require("../out/processtools.js");
 const pkg = require("../package.json");
@@ -112,7 +112,7 @@ test("off, nothing is sent; on, the shapes are read and the join written after t
   const inserted = [];
   vscode.window.activeTextEditor = {
     document: { languageId: "q", uri: vscode.Uri.file("/w/a.q"), lineAt: () => ({ range: { end: { character: 9 } } }) },
-    selection: { isEmpty: false, end: { line: 4 } },
+    selection: { isEmpty: false, start: { line: 2, character: 0 }, end: { line: 4, character: 3 } },
     edit: async (f) => f({ insert: (at, text) => inserted.push([at, text]), replace: () => assert.fail("never over the selection") }),
   };
   t.after(() => (vscode.window.activeTextEditor = undefined));
@@ -125,6 +125,24 @@ test("off, nothing is sent; on, the shapes are read and the join written after t
   assert.strictEqual(inserted.length, 1);
   assert.strictEqual(inserted[0][1], "\ntrade lj ref");
   assert.deepStrictEqual([inserted[0][0].line, inserted[0][0].character], [4, 9]);
+
+  // A whole line selected ends at the next line's column 0: the join goes
+  // after the line selected, not into the function the next one opens (#1920).
+  const lines = ["t:select from trade", "r:{[x]", " x+1}"];
+  vscode.window.activeTextEditor.document.lineAt = (i) => ({ range: { end: { character: lines[i].length } } });
+  vscode.window.activeTextEditor.selection = { isEmpty: false, start: { line: 0, character: 0 }, end: { line: 1, character: 0 } };
+  await stub.commands.get(PROCESS_TOOL_COMMANDS.joinAssistant)("trade", "ref", "lj");
+  assert.deepStrictEqual([inserted[1][0].line, inserted[1][0].character, inserted[1][1]], [0, 19, "\ntrade lj ref"]);
+});
+
+test("the last line a selection has text on", () => {
+  const sel = (sl, sc, el, ec) => ({ start: { line: sl, character: sc }, end: { line: el, character: ec } });
+  assert.strictEqual(lastSelectedLine(sel(0, 0, 1, 0)), 0);
+  assert.strictEqual(lastSelectedLine(sel(2, 3, 5, 0)), 4);
+  assert.strictEqual(lastSelectedLine(sel(2, 3, 5, 1)), 5);
+  assert.strictEqual(lastSelectedLine(sel(2, 0, 2, 4)), 2);
+  // Nothing selected is the line it is on.
+  assert.strictEqual(lastSelectedLine(sel(3, 0, 3, 0)), 3);
 });
 
 test("on a guarded process a query that would change it is held", async (t) => {

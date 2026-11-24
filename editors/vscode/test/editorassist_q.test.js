@@ -71,6 +71,12 @@ const SERVER = [
   "t:([] a:1 2)",
   "calls:0",
   "v::calls+::1",
+  ".lib.io.read:{[p] p}",
+  ".lib.io.cache:([] k:1 2)",
+  ".lib.io.deep.depth:3",
+  ".lib.io.deep.mk:{x}",
+  ".lib.opts:`a`b!1 2",
+  ".lib.odd:(``a)!1 2",
   ".lib.add:{[a;b] a+b}",
   ".lib.cfg:3",
   ".lib.trades:([] p:1 2.)",
@@ -91,6 +97,15 @@ test("a process's names are listed by kind, a view named and never run", { skip 
   assert.strictEqual(kind[".lib.add"], "function");
   assert.strictEqual(kind[".lib.cfg"], "variable");
   assert.strictEqual(kind[".lib.trades"], "table");
+  // A namespace inside a namespace is not a variable: its own names are
+  // listed, to any depth (#1910). A dictionary is one.
+  assert.strictEqual(kind[".lib.io.read"], "function");
+  assert.strictEqual(kind[".lib.io.cache"], "table");
+  assert.strictEqual(kind[".lib.io.deep.depth"], "variable");
+  assert.strictEqual(kind[".lib.io.deep.mk"], "function");
+  assert.deepStrictEqual([kind[".lib.io"], kind[".lib.io.deep"]], [undefined, undefined]);
+  assert.deepStrictEqual([kind[".lib.opts"], kind[".lib.odd"]], ["variable", "variable"]);
+  assert.strictEqual(new Set(names.map((n) => n.name)).size, names.length);
   // q's own namespaces are left out by name; a one-letter one of the
   // process's - .u, the tickerplant's - is listed (#1261).
   assert.strictEqual(kind[".e.x"], "variable");

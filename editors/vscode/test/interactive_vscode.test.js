@@ -253,6 +253,23 @@ test("Smart Send: off it refuses and sends nothing; on it sends the statement an
   assert.strictEqual(q.queries.length, 3, "nothing went to the process");
 });
 
+test("the REPL's input is cleared for a line it sent, not for a run from the editor (#1922)", async (t) => {
+  const { live, repl } = await setUp(t);
+  assert.ok(await live.connectTo("dev"));
+  const posted = [];
+  const original = vscode.window.createWebviewPanel;
+  vscode.window.createWebviewPanel = (...given) => {
+    const panel = original(...given);
+    return new Proxy(panel, { get: (p, key) => (key === "webview" ? new Proxy(p.webview, { get: (w, k) => (k === "postMessage" ? async (m) => void posted.push(m) : w[k]) }) : p[key]), set: (p, key, value) => ((p[key] = value), true) });
+  };
+  t.after(() => (vscode.window.createWebviewPanel = original));
+  const kinds = () => posted.filter((m) => m.type === "accepted" || m.type === "history");
+  await repl.runFromEditor("a:1", vscode.Uri.file("/w/a.q"));
+  assert.deepStrictEqual(kinds(), [{ type: "history", history: ["a:1"] }]);
+  assert.strictEqual(await repl.enter("b:2"), "ran");
+  assert.deepStrictEqual(kinds().slice(1), [{ type: "accepted", history: ["b:2", "a:1"] }]);
+});
+
 test("the REPL: Enter inside a bracket starts a new line; a complete input runs, is kept, and lands in Query History", async (t) => {
   const { q, live, repl, context } = await setUp(t);
   assert.ok(await live.connectTo("dev"));

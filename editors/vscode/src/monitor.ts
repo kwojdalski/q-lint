@@ -9,17 +9,20 @@
 // so in its row rather than failing the call. Nothing is kept on the
 // process. A handle's queue is a count of bytes in kdb+ 4 and a list of
 // message sizes before it, so it is summed. A string (`\cd`) or a name is
-// sent as it is, not as `-3!` writes it, which cuts it at the console width. The process's command line
+// sent as it is, and every other value as `FULL_TEXT` writes it: `-3!` cuts
+// it at the console width (#1908). The process's command line
 // (`.z.x`) is not read: it can hold a password.
 //
 // TorQ keeps its timers in `.timer.timer`; when that table is there, its
 // first 50 rows are listed too. Works on kdb+ (KDB-X) and PeachQ; held there
 // by funcsource_q.test.js.
+import { FULL_TEXT } from "./qtext";
 import { bytes } from "./tableinfo";
 
 export const MONITOR = [
   "{[]",
-  " s:{@[{$[10h=type v:system x;v;-3!v]};x;{\"error: \",x}]};",
+  ` F:{200 sublist x y}${FULL_TEXT}[200];`,
+  " s:{[F;x]@[{$[10h=type v:system y;v;x v]}F;x;{\"error: \",x}]}F;",
   " w:.Q.w[];",
   " h:.z.W;",
   " tm:@[get;`.timer.timer;()];",
@@ -29,10 +32,10 @@ export const MONITOR = [
   "  `key`value!(string key w;\"f\"$value w);",
   "  `handle`queued`self!(\"f\"$key h;\"f\"${$[0h>type x;x;sum x]}each value h;(key h)=.z.w);",
   "  s\"t\";",
-  "  @[{200 sublist -3!.z.ts};::;\"\"];",
-  "  $[count tm;{-3!'x}each tc#tm;()];",
+  "  @[{x .z.ts};F;\"\"];",
+  "  $[count tm;{x each y}[F]each tc#tm;()];",
   "  `key`value!(`p`t`T`g`W`P`c`C`e`s`o`z`S`d`cd;s each(\"p\";\"t\";\"T\";\"g\";\"W\";\"P\";\"c\";\"C\";\"e\";\"s\";\"o\";\"z\";\"S\";\"d\";\"cd\"));",
-  "  `key`value!(`version`release`pid`host`os`script`now;(-3!.z.K;-3!.z.k;-3!.z.i;string .z.h;string .z.o;string .z.f;-3!.z.P)))}",
+  "  `key`value!(`version`release`pid`host`os`script`now;(F .z.K;F .z.k;F .z.i;string .z.h;string .z.o;string .z.f;F .z.P)))}",
 ].join("\n");
 
 export const INFO = {

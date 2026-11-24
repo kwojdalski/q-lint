@@ -67,7 +67,12 @@ vscode.chat = {
 let hovers = {};
 const execute = vscode.commands.executeCommand;
 vscode.commands.executeCommand = async (name, ...args) => (name === "vscode.executeHoverProvider" ? hovers[args[1].offset] ?? [] : execute(name, ...args));
-vscode.languages.getDiagnostics = () => [{ range: { start: { line: 0 } }, code: "QF001", message: "a builtin as a parameter" }];
+vscode.languages.getDiagnostics = () => [
+  { range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } }, code: "QF001", source: "q-lint", message: "a builtin as a parameter" },
+  // Another extension's, and one on the line after the selection (#1917).
+  { range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } }, code: "spell", source: "cSpell", message: "an unknown word" },
+  { range: { start: { line: 1, character: 0 }, end: { line: 1, character: 2 } }, code: "QF005", source: "q-lint", message: "on the next line" },
+];
 const documents = [];
 vscode.workspace.openTextDocument = async ({ content, language }) => {
   let text = content;
@@ -321,7 +326,7 @@ test("@q explains a selection with the server's hovers and findings and the proc
   assert.strictEqual(participants.length, 1);
   assert.strictEqual(participants[0].id, "q-lint.q");
   const text = "f 3";
-  const selection = { isEmpty: false, start: { line: 0 }, intersection: () => ({}) };
+  const selection = { isEmpty: false, start: { line: 0, character: 0 }, end: { line: 1, character: 0 }, intersection: () => ({}) };
   vscode.window.activeTextEditor = {
     selection,
     document: { languageId: "q", uri: "file:///a.q", getText: () => text, offsetAt: () => 0, positionAt: (offset) => ({ offset }) },
@@ -345,6 +350,7 @@ test("@q explains a selection with the server's hovers and findings and the proc
   assert.match(prompt, /```q\nf 3\n```/);
   assert.match(prompt, /- `f`: \*\*f\*\*\[x\]: doubles x/);
   assert.match(prompt, /- line 1: QF001 a builtin as a parameter/);
+  assert.ok(!/an unknown word|on the next line/.test(prompt), prompt);
   assert.match(prompt, /On the connected q process dev:\n- `f`: a function defined on the process as:\n```q\n\{x\*2\}\n```/);
   // Only q-lint's tools are offered; the call went through VS Code, with the chat's token, which asks the user to confirm.
   assert.deepStrictEqual(model.sent[0].options.tools.map((t) => t.name), ["q-lint_runQuery", "q-lint_listTables"]);

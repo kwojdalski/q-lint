@@ -1,7 +1,10 @@
 // The system settings view (#1043), as data: the process's `\c`, `\s`,
 // `\P`, `\T`, `\g`, `\o`, `\z` and `\w`, each with a note on what it does
 // and, for an edit, what a new value may be. Free of any `vscode` import,
-// so node tests it; `syssettingsview.ts` shows them.
+// so node tests it; `syssettingsview.ts` shows them. `\s` and `\w` are
+// shown and never edited: q takes a new `\s` from its own console only
+// ("adjust secondary thread count from handle 0 only"), so no value sent
+// over a connection could ever be set (#1916).
 //
 // `READ_SETTINGS` only reads: each command without an argument. `SET_SETTING`
 // runs one command with the value the view checked against `valueProblem`
@@ -23,7 +26,7 @@ export interface SystemSetting {
 
 export const SYSTEM_SETTINGS: SystemSetting[] = [
   { key: "c", name: "console size", note: "Rows and columns of the console's display (`\\c 25 80`); results wider or longer are cut with `..`.", accepts: "two whole numbers, rows then columns, as 25 80", pattern: /^\d+ \d+$/ },
-  { key: "s", name: "secondary threads", note: "Threads `peach` and `.Q.fc` use; it can be set no higher than the `-s` the process started with.", accepts: "a whole number, 0 or more", pattern: /^\d+$/ },
+  { key: "s", name: "secondary threads", note: "Threads `peach` and `.Q.fc` use, at most the `-s` the process started with. Read only here: q changes it from its own console only, not over a connection.", accepts: "", pattern: /^$/, readOnly: true },
   { key: "P", name: "float precision", note: "Significant digits a float is shown with; 0 is the most (17).", accepts: "a whole number from 0 to 17", pattern: /^(?:\d|1[0-7])$/ },
   { key: "T", name: "query timeout", note: "Seconds a client query may run before it is stopped with 'stop; 0 is no limit.", accepts: "a whole number of seconds, 0 for none", pattern: /^\d+$/ },
   { key: "g", name: "garbage collection", note: "0: deferred, memory is returned at `.Q.gc[]` or when the limit is reached; 1: immediate, freed memory goes back to the system at once.", accepts: "0 or 1", pattern: /^[01]$/ },
@@ -42,7 +45,7 @@ export const READ_SETTINGS = [
 export const SET_SETTING = [
   "{[k;v]",
   " k:(),k;v:(),v;",
-  " if[not k in enlist each \"csPTgoz\";'\"not a setting this view edits\"];",
+  " if[not k in enlist each \"cPTgoz\";'\"not a setting this view edits\"];",
   " if[not all v in \"0123456789 -N\";'\"not a value this view sends\"];",
   " system k,\" \",v;",
   " r:system k; $[10h=type r;r;\" \" sv {$[null x;\"0N\";string x]} each (),r]}",

@@ -36,7 +36,7 @@ import {
   type LanguageModelChatTool,
   type TextDocument,
 } from "vscode";
-import { DESCRIBE, codeOffset, errorPrompt, explainPrompt, namesIn, readDescribed, type Described } from "./assist";
+import { DESCRIBE, codeOffset, errorPrompt, explainPrompt, findingsIn, namesIn, readDescribed, type Described } from "./assist";
 import { ASSIST_SETTINGS, assistOff, readAssist } from "./assistconfig";
 import { charKinds } from "./explorer";
 import { borrowWhenFree } from "./infoview";
@@ -103,10 +103,7 @@ export class QParticipant {
         // No server: the prompt goes without its hovers.
       }
     }
-    const diagnostics = (languages.getDiagnostics?.(document.uri) ?? [])
-      .filter((d) => range.intersection?.(d.range) !== undefined)
-      .map((d) => `line ${d.range.start.line - range.start.line + 1}: ${d.code !== undefined ? `${typeof d.code === "object" ? d.code.value : d.code} ` : ""}${d.message}`);
-    return { hovers, diagnostics };
+    return { hovers, diagnostics: findingsIn(languages.getDiagnostics?.(document.uri) ?? [], range) };
   }
 
   /// The prompt for `request`, or why there is none.

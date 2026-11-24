@@ -8,7 +8,11 @@
 // and changes nothing: it lists the root's and each namespace's functions
 // (`\f`), variables (`\v`, tables marked by `\a`) and the root's views
 // (`\b`) - the system commands list names without evaluating any, so a
-// view is named and never run. One-letter namespaces (`.q`, `.Q`, `.z`,
+// view is named and never run. A namespace inside a namespace is listed
+// among its parent's variables: it is told by its value's first key, the
+// null symbol, read from the parent without evaluating anything, and its
+// own names are listed in its place, to any depth (#1910). One that cannot
+// be listed stays a variable. One-letter namespaces (`.q`, `.Q`, `.z`,
 // ...) are q's own and left out.
 //
 //   `name`kind!(names; kinds), each a list of strings
@@ -38,11 +42,13 @@ export const PROCESS_NAMES = [
   " r:add[r;system\"f\";\"function\"];",
   " v:system\"v\"; r:add[r;v where not v in a;\"variable\"]; r:add[r;v where v in a;\"table\"];",
   " r:add[r;system\"b\";\"view\"];",
-  " one:{[add;r;n] q:\" \",string n; at:{[n;x] ` sv' n,'x}[n];",
-  "  t:system\"a\",q; v:system\"v\",q;",
+  " one:{[add;lim;r;n] if[lim<=count r`name;:r]; q:\" \",string n; at:{[n;x] ` sv' n,'x}[n];",
+  "  t:system\"a\",q; v:system\"v\",q; d:get n;",
+  "  c:v where{$[99h=type x;$[11h=type k:key x;null first k;0b];0b]}each d v; v:v except c;",
   "  r:add[r;at system\"f\",q;\"function\"];",
   "  r:add[r;at v where not v in t;\"variable\"];",
-  "  add[r;at v where v in t;\"table\"]}[add];",
+  "  r:add[r;at v where v in t;\"table\"];",
+  "  {[one;add;r;n] @[one[r];n;{[add;r;n;e] add[r;enlist n;\"variable\"]}[add;r;n]]}[.z.s[add;lim];add]/[r;at c]}[add;lim];",
   " r:{[one;r;n] @[one[r];n;{[r;e] r}[r]]}[one]/[r;ns];",
   " (lim&count r`name) sublist/: r}",
 ].join("\n");
@@ -99,6 +105,34 @@ export function matching(names: ProcessName[], query: string, limit = SYMBOLS_LI
     .filter((n) => matches(query, n.name))
     .sort((a, b) => a.name.length - b.name.length || a.name.localeCompare(b.name))
     .slice(0, limit);
+}
+
+/// The names of `names` that match `query` and `defined` does not say the
+/// workspace defines, at most `limit`, shortest first. The workspace's are
+/// dropped before the cut, not after: the best `limit` matches being all
+/// its own left an empty list over the process's (#1918). `defined` is
+/// asked a page of matches at a time, each twice the last, until the list
+/// is full; one it does not answer for drops nothing.
+export async function processOnly(
+  names: ProcessName[],
+  query: string,
+  defined: (names: string[]) => Promise<unknown>,
+  limit = SYMBOLS_LIMIT,
+): Promise<ProcessName[]> {
+  const all = matching(names, query, names.length);
+  const found: ProcessName[] = [];
+  for (let at = 0, size = Math.max(limit, 1); at < all.length && found.length < limit; at += size, size *= 2) {
+    const page = all.slice(at, at + size);
+    let answer: unknown;
+    try {
+      answer = await defined(page.map((n) => n.name));
+    } catch {
+      answer = undefined;
+    }
+    const known = Array.isArray(answer) ? answer : [];
+    found.push(...page.filter((_, i) => known[i] !== true));
+  }
+  return found.slice(0, limit);
 }
 
 /// The text a process-only symbol opens as: what is known of it without

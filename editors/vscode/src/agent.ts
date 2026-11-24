@@ -71,9 +71,10 @@ export function readAgent(get: <T>(key: string, fallback: T) => T): AgentSetting
 
 /// A real as the shortest decimal that reads back as the same float32. The
 /// codec widens a real's four bytes to the nearest double, so 1.1e arrives as
-/// 1.100000023841858 - a number q neither holds nor prints.
+/// 1.100000023841858 - a number q neither holds nor prints. Nine digits
+/// are always enough for a float32; eight are not (#1911).
 function real(x: number): number {
-  for (let digits = 1; digits < 9; digits++) {
+  for (let digits = 1; digits <= 9; digits++) {
     const n = Number(x.toPrecision(digits));
     if (Math.fround(n) === x) {
       return n;
@@ -221,8 +222,13 @@ export function isProduction(process: Process): boolean {
 }
 
 /// `code` fenced as q, with a fence longer than any run of backticks in it.
+/// The runs are counted one by one: a query's are not bounded, and a hundred
+/// thousand spread into one `Math.max` call overflow the stack (#1915).
 function fenced(code: string): string {
-  const longest = Math.max(2, ...[...code.matchAll(/`+/g)].map((m) => m[0].length));
+  let longest = 2;
+  for (const m of code.matchAll(/`+/g)) {
+    longest = Math.max(longest, m[0].length);
+  }
   const fence = "`".repeat(longest + 1);
   return `${fence}q\n${code}\n${fence}`;
 }

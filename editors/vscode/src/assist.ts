@@ -10,6 +10,7 @@
 // run goes through the Run q Query tool, which the user confirms, and a
 // drafted query is only shown: the user runs it, or not.
 import type { Gathered } from "./explorer";
+import { FULL_TEXT } from "./qtext";
 import type { TableInfo } from "./tableinfo";
 
 export const QSQL_COMMANDS = { draft: "q-lint.draftQsql" } as const;
@@ -17,21 +18,24 @@ export const QSQL_COMMANDS = { draft: "q-lint.draftQsql" } as const;
 /// What each of `nms` (one string, names split by spaces) holds: missing, a
 /// lambda and its text, another function as q prints it, a table and its
 /// columns, a view, which is named and not evaluated (#1133), or a
-/// variable: its type, count and its first ten items as q prints them. Texts are cut at 300 characters, and nothing is counted or
+/// variable: its type, count and its first ten items as q prints them. Texts
+/// are `FULL_TEXT`'s, whole whatever the process's `\c`, cut at 300
+/// characters (#1908), and nothing is counted or
 /// read whole: a table's rows are not counted. The value is taken by `get`
 /// straight into a local: PeachQ loads a partitioned table put in a list,
 /// and it would no longer read as partitioned. Works on KDB-X and PeachQ.
 export const DESCRIBE = [
   "{[nms]",
+  ` F:${FULL_TEXT};`,
   " n:\" \" vs(),nms;",
-  " r:{s:`$x;",
+  " r:{[F;x]s:`$x;",
   "  if[s in views[];:(`view;0h;0n;\"\")];",
   "  if[not @[{get x;1b};s;0b];:(`missing;0h;0n;\"\")];",
   "  v:get s;t:type v;",
   "  $[100h=t;(`lambda;t;0n;last value v);",
-  "   t within 101 112h;(`function;t;0n;300 sublist -3!v);",
+  "   t within 101 112h;(`function;t;0n;300 sublist F[300;v]);",
   "   .Q.qt v;($[1b~p:.Q.qp v;`partitioned;0b~p;`splayed;99h=t;`keyed;`table];t;0n;300 sublist\" \"sv string cols v);",
-  "   (`variable;t;\"f\"$count v;300 sublist -3!$[0>t;v;10 sublist v])]}each n;",
+  "   (`variable;t;\"f\"$count v;300 sublist F[300;$[0>t;v;10 sublist v]])]}[F]each n;",
   " `name`kind`type`count`text!(n;r[;0];r[;1];r[;2];r[;3])}",
 ].join("\n");
 
@@ -81,14 +85,47 @@ const WORDS = new Set(
 );
 
 /// Where `name` is first written as code in `text` - not in a string or a
-/// comment (#1631); -1 when it is not.
+/// comment (#1631), nor as the head of a dotted name, which `namesIn`
+/// reads as another name (#1912); -1 when it is not.
 export function codeOffset(text: string, kinds: string, name: string): number {
-  for (const m of text.matchAll(new RegExp(`(?<![\\w.])${name.replace(/\./g, "\\.")}(?![\\w])`, "g"))) {
+  for (const m of text.matchAll(new RegExp(`(?<![\\w.])${name.replace(/\./g, "\\.")}(?![\\w]|\\.[A-Za-z])`, "g"))) {
     if (kinds[m.index] === "c") {
       return m.index;
     }
   }
   return -1;
+}
+
+interface At {
+  line: number;
+  character: number;
+}
+
+/// A diagnostic, as much of VS Code's as `findingsIn` reads.
+export interface Reported {
+  range: { start: At; end: At };
+  code?: string | number | { value: string | number };
+  source?: string;
+  message: string;
+}
+
+/// q-lint's findings on `range`, a line of the prompt each (#1917): the
+/// server's (`q-lint`, `qls`) and the process warnings, not what another
+/// extension says of the file. One that only touches the range - on the
+/// line after whole lines selected, which end at the next line's column 0
+/// - is not on it; one without a width is where it starts. The line is
+/// counted from the range's first, and one that starts above is on that.
+export function findingsIn(diagnostics: readonly Reported[], range: { start: At; end: At }): string[] {
+  const before = (a: At, b: At): boolean => a.line < b.line || (a.line === b.line && a.character < b.character);
+  return diagnostics
+    .filter((d) => {
+      if (d.source !== "qls" && d.source?.startsWith("q-lint") !== true) {
+        return false;
+      }
+      const { start, end } = d.range;
+      return before(start, end) ? before(start, range.end) && before(range.start, end) : !before(start, range.start) && before(start, range.end);
+    })
+    .map((d) => `line ${Math.max(d.range.start.line - range.start.line, 0) + 1}: ${d.code !== undefined ? `${typeof d.code === "object" ? d.code.value : d.code} ` : ""}${d.message}`);
 }
 
 /// The names `expression` uses that the process could hold: written as
@@ -343,14 +380,20 @@ export function qsqlPrompt(description: string, tables: TableSummary[], process:
 /// The q code in a model's reply: its first fenced block, or all of it
 /// when it has none. A block closes only at a fence starting a line, so
 /// backticks in the code (```a, a symbol list) stay in it; a block on one
-/// line - ```q select from t``` - loses its fences too (#1627).
+/// line - ```q select from t``` - loses its fences too (#1627). A fence is
+/// ``` or ~~~; its closing line may go on after a space (``` done), and a
+/// block the reply was cut before closing runs to the reply's end (#1913).
 export function extractCode(reply: string): string {
-  const block = /(`{3,})[^\n`]*\n([\s\S]*?)^[ \t]*\1[ \t]*$/m.exec(reply);
+  const block = /(`{3,}|~{3,})[^\n`]*\n([\s\S]*?)^[ \t]*\1(?:[ \t][^\n]*)?$/m.exec(reply);
   if (block !== null) {
     return block[2].trim();
   }
   const line = /(`{3,})(?:(?:q|k|kdb|qsql)(?=[ \t]))?[ \t]*([^\n]*?)[ \t]*\1(?!`)/.exec(reply);
-  return (line !== null && line[2] !== "" ? line[2] : reply).trim();
+  if (line !== null && line[2] !== "") {
+    return line[2].trim();
+  }
+  const open = /^[ \t]*(?:`{3,}|~{3,})[^\n`]*\n([\s\S]*)$/m.exec(reply);
+  return (open !== null ? open[1] : reply).trim();
 }
 
 /// The draft a qSQL preview shows: a comment saying where it came from,

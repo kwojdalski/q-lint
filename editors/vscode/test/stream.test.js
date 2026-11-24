@@ -59,6 +59,18 @@ test("a one-row update of string columns is one row, not its characters as colum
   assert.deepStrictEqual(readUpdate(even, "t", ["a", "b"], "cc"), [["a", "c"], ["b", "d"]]);
 });
 
+test("a one-row update of atoms of one type, which q sends as a simple list, is one row (#1921)", () => {
+  // (`upd;`px;(1.5;2.5)), (`a;`b), ("B";"x") and enlist 1.5.
+  const vector = (t, v) => ({ kind: "vector", t, attr: 0, v });
+  assert.deepStrictEqual(readUpdate(upd("px", vector(9, [1.5, 2.5])), "px", ["bid", "ask"]), [["1.5", "2.5"]]);
+  assert.deepStrictEqual(readUpdate(upd("px", vector(11, ["a", "b"])), "px", ["sym", "src"], "ss"), [["a", "b"]]);
+  assert.deepStrictEqual(readUpdate(upd("px", { kind: "chars", attr: 0, v: Buffer.from("Bx") }), "px", ["side", "flag"], "cc"), [["B", "x"]]);
+  assert.deepStrictEqual(readUpdate(upd("px", vector(9, [1.5])), "px", ["bid"]), [["1.5"]]);
+  // Not a row of the table: q's own insert refuses it, 'length.
+  assert.strictEqual(readUpdate(upd("px", vector(9, [1.5, 2.5, 3.5])), "px", ["bid", "ask"]), undefined);
+  assert.strictEqual(readUpdate(upd("px", { kind: "chars", attr: 0, v: Buffer.from("abc") }), "px", ["side"]), undefined);
+});
+
 test("the grid keeps the newest rows, and counts them all", () => {
   const w = new RowWindow(3);
   w.push([["1"], ["2"]]);
