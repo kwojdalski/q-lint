@@ -55,6 +55,7 @@ import {
   protectionsRemoved,
   readProcessFile,
   relabelsAfter,
+  resaved,
   sshDestination,
   serverTypes,
   givenServerTypes,
@@ -1203,6 +1204,17 @@ export class Live {
       await this.vacate(label, fresh.length === 1);
     }
     await this.context.globalState.update(PROCESSES_KEY, processes);
+    // The connected process, and one being connected to, are the entries
+    // captured at connect: a timeout or credential command set since is
+    // theirs from now, not from the next manual connect (#1988).
+    for (const saved of processes) {
+      if (this.active?.label === saved.label && this.active.server === undefined) {
+        this.active = resaved(this.active, saved);
+      }
+      if (this.connectingAs?.label === saved.label && this.connectingAs.server === undefined) {
+        this.connectingAs = resaved(this.connectingAs, saved);
+      }
+    }
     this.processesView.refresh();
   }
 

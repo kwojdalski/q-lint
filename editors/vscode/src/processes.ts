@@ -360,6 +360,17 @@ export function withExtras<P extends Process>(process: P, from: Pick<Process, "s
   } as P;
 }
 
+/// The process a connection opened to `opened` is to once the saved process
+/// of its label is saved as `saved` (#1988): it takes the timeout, read at
+/// each query, and - while `saved` is still where the connection was opened
+/// to - the credential command, read at each connect made for it. A command
+/// saved for another host, port, user, TLS or tunnel is for that one, and is
+/// not run for this connection; its address stays its own either way.
+export function resaved<P extends Process>(opened: P, saved: Process): P {
+  const moved = passwordsToForget([opened], [saved]).length > 0;
+  return withExtras(opened, { ...opened, timeout: saved.timeout, ...(moved ? {} : { credentialCommand: saved.credentialCommand }) });
+}
+
 /// The processes a process file lists, as `parseProcesses` reads them, with
 /// their connect scripts. A byte order mark, which Windows editors write, is
 /// skipped. Throws a SyntaxError when the text is not JSON.

@@ -18,6 +18,8 @@ const { ADMIN_COMMANDS, adminOff, readAdmin } = require("../out/admin.js");
 const { effectiveTimeout, ownTimeout, timeoutDropped, timeoutProblem, timeoutSource } = require("../out/processtimeout.js");
 const { callApart } = require("../out/fndiffview.js");
 const { ProcessTimeouts } = require("../out/timeoutview.js");
+const { resaved } = require("../out/processes.js");
+const { fakeQ, SILENT } = require("./fakeq.js");
 
 const Q = process.env.QLINT_TEST_Q;
 const skip = Q ? false : "QLINT_TEST_Q names no q binary";
@@ -91,6 +93,39 @@ test("Set Process Timeout sets, keeps the rest, validates, and clears", async (t
   assert.strictEqual(live.processes()[0].timeout, 3);
   await stub.commands.get(ADMIN_COMMANDS.setTimeout)("a", null);
   assert.strictEqual(live.processes()[0].timeout, undefined);
+});
+
+// The connection kept the entry captured at connect, so a timeout set on
+// the connected process held only from the next manual connect (#1988).
+test("a timeout set on the connected process holds for its next query, and cleared no longer does", async (t) => {
+  const q = await fakeQ((message) => (JSON.stringify(message).includes("slow") ? SILENT : 1));
+  t.after(() => q.close());
+  const { live } = await setUp(t, [{ label: "a", host: "127.0.0.1", port: q.port, tags: [] }]);
+  assert.strictEqual(await live.connectTo("a"), true);
+  await stub.commands.get(ADMIN_COMMANDS.setTimeout)("a", 0.2);
+  assert.deepStrictEqual(stub.messages.at(-1), ["info", "q-lint: a query on a is dropped after 0.2 s."]);
+  assert.strictEqual(live.activeProcess().timeout, 0.2);
+  await live.run("slow");
+  assert.strictEqual(live.history()[0].outcome, "timeout");
+  assert.strictEqual(live.history()[0].error, "timed out after 0.2 s");
+  for (let i = 0; i < 50 && live.activeLabel() === undefined; i++) await sleep(20);
+  assert.strictEqual(live.activeLabel(), "a");
+  await stub.commands.get(ADMIN_COMMANDS.setTimeout)("a", null);
+  assert.strictEqual(live.activeProcess().timeout, undefined);
+});
+
+test("what a connection takes from its saved process saved again: the timeout, and the credential command only at the same address", () => {
+  const opened = { label: "a", host: "h", port: 1, user: "u", tags: ["dev"], ssh: "bastion", gateway: ["rdb"] };
+  assert.deepStrictEqual(resaved(opened, { ...opened, timeout: 2, credentialCommand: "c" }), { ...opened, timeout: 2, credentialCommand: "c" });
+  assert.deepStrictEqual(resaved({ ...opened, timeout: 2, credentialCommand: "c" }, opened), opened);
+  // Saved elsewhere, the connection stays where it is, without a command given for the other.
+  for (const moved of [{ host: "other" }, { port: 2 }, { user: "v" }, { tls: true }, { ssh: undefined }]) {
+    assert.deepStrictEqual(
+      resaved({ ...opened, credentialCommand: "old" }, { ...opened, ...moved, tags: ["prod"], timeout: 3, credentialCommand: "new" }),
+      { ...opened, credentialCommand: "old", timeout: 3 },
+      JSON.stringify(moved),
+    );
+  }
 });
 
 test("Launcher.interrupt signals only a process it started and that still runs", () => {
