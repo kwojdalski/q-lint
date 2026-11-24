@@ -176,6 +176,11 @@ test("a string that runs onto the next line keeps its newline as \\n", () => {
   assert.strictEqual(replLine('s:("ab\n  cd";\n  1)'), 's:("ab\\n  cd"; 1)');
 });
 
+test("an env file's inline comment is not part of the value (#1686)", () => {
+  const { env } = parseEnv('QHOME=/opt/q # kdb home\nQLIC="/opt/lic" # licence\nS=\'a # b\' # c\nHASH=a#b\nNONE= # nothing\nQ="say # hi"');
+  assert.deepStrictEqual(env, { QHOME: "/opt/q", QLIC: "/opt/lic", S: "a # b", HASH: "a#b", NONE: "", Q: "say # hi" });
+});
+
 test("csh and tcsh set the variables with env, and get a ! escaped (#1683)", () => {
   assert.strictEqual(commandLine("q", ["a!b.q", "it's"], "csh", { QHOME: "/opt/q", QLIC: "/my lic" }), "env QHOME=/opt/q QLIC='/my lic' q 'a\\!b.q' 'it'\\''s'");
   assert.strictEqual(commandLine("q", ["x.q"], "csh"), "q x.q");

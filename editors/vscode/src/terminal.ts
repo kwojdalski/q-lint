@@ -161,8 +161,9 @@ export function qBinaryFrom(qBinary: string, folder: string | undefined, home: s
 }
 
 /// The variables of an env file - one `NAME=value` a line, `#` comments and
-/// blank lines skipped, an `export ` in front allowed, and a value in
-/// matching quotes taken without them - and the lines it could not read.
+/// blank lines skipped, an `export ` in front allowed, a ` # comment` after
+/// a value cut, and a value in matching quotes taken without them - and the
+/// lines it could not read.
 /// Nothing in a value is expanded: `$HOME` stays `$HOME`.
 export function parseEnv(text: string): { env: Record<string, string>; problems: string[] } {
   const env: Record<string, string> = {};
@@ -178,8 +179,10 @@ export function parseEnv(text: string): { env: Record<string, string>; problems:
       return;
     }
     const value = match[2].trim();
-    const quoted = /^(["'])(.*)\1$/.exec(value);
-    env[match[1]] = quoted ? quoted[2] : value;
+    // A ` # comment` after the value, or after its closing quote, is not
+    // part of it, as dotenv and the shells read it (#1686).
+    const quoted = /^(["'])(.*)\1$/.exec(value) ?? /^(["'])(.*?)\1\s+#.*$/.exec(value);
+    env[match[1]] = quoted ? quoted[2] : value.replace(/(^|\s+)#.*$/, "");
   });
   return { env, problems };
 }
