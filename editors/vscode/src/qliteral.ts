@@ -281,6 +281,12 @@ export function atomLiteral(type: number, text: string, raw: unknown): { literal
       }
       return ok(text);
     case 12:
+      // KDB-X reads a timestamp literal only from 1709.01.01 to 2290.12.31:
+      // past them, cast from the count of nanoseconds (#2082).
+      if (/^\d{4}\./.test(text) && (Number(text.slice(0, 4)) < 1709 || Number(text.slice(0, 4)) > 2290) && raw !== undefined && raw !== null) {
+        return ok(`"p"$${String(raw)}`);
+      }
+      return ok(text);
     case 14:
     case 16:
       return ok(text);
@@ -345,6 +351,26 @@ export function exactLiteral(raw: unknown[]): { literal: string; cut: boolean } 
     // A suffix where the items alone would not say the type.
     const suffix = real ? "e" : items.every((n) => /^[-0-9]+$/.test(n)) ? "f" : "";
     return { literal: `${items.join(" ")}${suffix}`, cut: false };
+  }
+  // A temporal cast from its count, which -3! wrote as q cannot read (#2082).
+  if (tag === "c" && Array.isArray(v) && v.length === 2 && typeof v[0] === "number" && LETTERS[Math.abs(v[0])] !== undefined) {
+    const [t, n] = v as [number, unknown];
+    const letter = LETTERS[Math.abs(t)];
+    const one = (x: unknown): string =>
+      t === 15 || t === -15
+        ? floatText(x, false)
+        : x === null || x === undefined
+          ? "0N"
+          : x === Infinity || x === -Infinity
+            ? `${x < 0 ? "-" : ""}0W`
+            : String(x);
+    const items = t < 0 ? [one(n)] : Array.isArray(n) ? n.map(one) : [one(n)];
+    // An int's suffix, and a float's where the items alone would read as longs.
+    const suffix = Math.abs(t) >= 17 ? "i" : Math.abs(t) === 15 && items.every((x) => /^[-0-9]+$/.test(x)) ? "f" : "";
+    if (t < 0) {
+      return { literal: `"${letter}"$${items[0]}${suffix}`, cut: false };
+    }
+    return { literal: `"${letter}"$${items.length === 1 ? "enlist " : ""}${items.join(" ")}${suffix}`, cut: false };
   }
   if (tag === "l" && Array.isArray(v) && v.length > 0) {
     let cut = false;

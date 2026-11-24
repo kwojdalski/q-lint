@@ -29,7 +29,11 @@
 //          inside: `("F";v)` or `("E";v)` for a list of them (a real as its
 //          float), and `("l";v)` for a general list of at most 200, each
 //          item `("f";x)`, `("e";x)`, such a pair, or its `-3!` text
-//          (#1502); `()` for the rest
+//          (#1502); and `("c";(t;n))` for a minute, second, time, datetime
+//          or timestamp atom or vector of type `t` that `-3!` writes as q
+//          cannot read back - past 99 hours (`**`), finer than a
+//          millisecond, outside 1709-2290 - `n` its count (#2082); `()`
+//          for the rest
 //   rank   each row's value's place among the column's distinct values,
 //          sorted by q (`iasc`), so equal values share one; `()` where q
 //          cannot sort it. A copy of the column is sorted (`x til count
@@ -79,7 +83,11 @@ const COLUMN_LINES = [
   "            u=0h;{[g;x]$[-9h=t:type x;$[null x;0b;x];-8h=t;$[null x;0b;\"f\"$x];g x]}[{$[-9h=t:type x;(\"f\";x);-8h=t;(\"e\";\"f\"$x);",
   "              (t in 8 9h)&200>=count x;($[t=9h;\"F\";\"E\"];\"f\"$x);(0h=t)&200>=count x;",
   "              $[all 0b~/:r:.z.s each x;0b;(\"l\";@[r;w;:;-3!'x w:where 0b~/:r])];",
-  "              99h=t;$[0b~r:.z.s(key x;value x);0b;(\"d\";r 1)];98h=t;$[0b~r:.z.s flip x;0b;(\"t\";r)];0b]}] each c;()]} each c;",
+  "              99h=t;$[0b~r:.z.s(key x;value x);0b;(\"d\";r 1)];98h=t;$[0b~r:.z.s flip x;0b;(\"t\";r)];",
+  "              200<count x;0b;",
+  "              abs[t]within 17 19h;$[any(abs w:\"i\"$x)within(1+5999 359999 359999999 abs[t]-17),2147483646;(\"c\";(t;w));0b];",
+  "              15h=abs t;$[any 0.001<abs m-\"j\"$m:86400000*\"f\"$x;(\"c\";(t;\"f\"$x));0b];",
+  "              12h=abs t;$[all(null x)|(x in -0W 0Wp)|x within 1709.01.01D00:00 2290.12.31D23:59:59.999999999;0b;(\"c\";(t;\"j\"$x))];0b]}] each c;()]} each c;",
   "          {@[{i:iasc x:x til count x;\"i\"$@[count[x]#0;i;:;-1+sums differ x i]};x;{[e]()}]} each c;",
 ];
 

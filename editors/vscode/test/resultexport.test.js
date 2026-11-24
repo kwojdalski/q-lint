@@ -62,6 +62,15 @@ test("a cell's q literal keeps its type: suffixes, typed nulls and infinities, s
   assert.strictEqual(lit(20, "x"), "`x");
   // A general list's item is q already, unless it was cut.
   assert.deepStrictEqual(atomLiteral(0, "`a`b", undefined), { literal: "`a`b", cut: false });
+  // A minute, second or time past 99 hours, which -3! writes **, and a
+  // timestamp outside 1709-2290, which KDB-X does not read: cast (#2082).
+  assert.strictEqual(lit(0, "(**:00;1)", ["l", [["c", [-17, 6000]], "1"]]), '("u"$6000i;1)');
+  assert.strictEqual(lit(0, "01:00 **:00", ["c", [17, [60, 6000]]]), '"u"$60 6000i');
+  assert.strictEqual(lit(0, ",**:00:00", ["c", [18, [360000]]]), '"v"$enlist 360000i');
+  assert.strictEqual(lit(0, "0N **:06:40.000", ["c", [19, [null, 400000000]]]), '"t"$0N 400000000i');
+  assert.strictEqual(lit(0, "2000.01.02T02:57:46.666", ["c", [-15, 1.123456789]]), '"z"$1.123456789');
+  assert.strictEqual(lit(0, "", ["c", [-12, -9200000000000000000n]]), '"p"$-9200000000000000000');
+  assert.strictEqual(lit(12, "1708.06.05D21:51:00.000000000", "-9200000000000000000"), '"p"$-9200000000000000000');
   // But a guid, which -3! writes bare: q refuses it, or reads 0Ng as 0 (#2081).
   const g = "8c680a01-5a49-5aab-5a65-d4bfddb6a661";
   const z = "00000000-0000-0000-0000-000000000000";
