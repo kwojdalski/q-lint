@@ -200,7 +200,8 @@ export function realValue(x: unknown): unknown {
   if (typeof x !== "number" || !Number.isFinite(x)) {
     return x;
   }
-  for (let digits = 1; digits < 9; digits++) {
+  // Nine digits are always enough for a float32 (#1734).
+  for (let digits = 1; digits <= 9; digits++) {
     const n = Number(x.toPrecision(digits));
     if (Math.fround(n) === x) {
       return n;
