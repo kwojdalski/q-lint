@@ -16,6 +16,7 @@ const { QConnection } = require("../out/qclient.js");
 const { ERRORS, errorName } = require("../out/errorexplain.js");
 const { CALLED } = require("../out/deadcodeview.js");
 const { HAS_SQL, LOAD_SQL, LEX_CLASS, LEX_MOVES, RUNS_Q, SQL_SCHEMA, readSchema, sqlQuery, sqlText, sqlWrites } = require("../out/sql.js");
+const { statements } = require("../out/statements.js");
 const { registerSql } = require("../out/sqlview.js");
 const { LANGUAGE_COMMANDS } = require("../out/languagefeatures.js");
 const { guardCheck, readGuard } = require("../out/guard.js");
@@ -211,6 +212,30 @@ test("the SQL write check reads comments and quotes as KDB-X's lexer does", { sk
     });
   }
   assert.ok(read > 1000, `${read} texts read`);
+});
+
+// #2009: quoted text is the query's own, line breaks and indents with it.
+test("a SQL string literal that spans lines finds the row that holds it, as typed", { skip }, async (t) => {
+  const c = await connect(t, 'w:([] s:("a\\n   b";"a b";"x  y";"it\'s\\r\\n so";"it\'s so"); n:1 2 3 4 5)\n');
+  try {
+    await c.call(LOAD_SQL);
+    await c.call(".s.P.w0");
+  } catch {
+    // PeachQ: no s.k_, and an engine of DuckDB's.
+    return;
+  }
+  // As Run SQL sends it: the one statement `statements` cuts.
+  const found = async (sql) => {
+    const cut = statements(sqlQuery(sql));
+    assert.strictEqual(cut.length, 1, sql);
+    const rows = await c.call(cut[0]);
+    return (Array.isArray(rows) ? rows : []).map((r) => Number(r.n));
+  };
+  assert.deepStrictEqual(await found("select n from w\n  where s = 'a\n   b'\n;"), [1]);
+  assert.deepStrictEqual(await found("select n -- which\n  from w where s = 'a b'"), [2]);
+  assert.deepStrictEqual(await found("select n from w where s = 'x  y'"), [3]);
+  assert.deepStrictEqual(await found("select n from w where s = 'it''s\r\n so'"), [4]);
+  assert.deepStrictEqual(await found("select n from w\n\n where s = 'it''s so' /* a\n   b */"), [5]);
 });
 
 // #2006: the engine runs q text handed to `qt(...)` and `q(...)`. On the q

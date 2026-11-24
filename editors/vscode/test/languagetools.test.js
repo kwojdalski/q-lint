@@ -18,6 +18,7 @@ const { readDefinitions, byNamespace, registerNamespaces, DEFINITIONS } = requir
 const { affectedIds, registerAffectedOnSave, TESTS_REACHING } = require("../out/affectedonsave.js");
 const { sqlQuery, sqlText, sqlWrites, readSchema, sqlCompletions } = require("../out/sql.js");
 const { registerSql } = require("../out/sqlview.js");
+const { statements } = require("../out/statements.js");
 const { launch } = require("../out/settings.js");
 
 const props = Object.assign({}, ...pkg.contributes.configuration.map((c) => c.properties));
@@ -686,6 +687,27 @@ test("overlapping reads of the q Namespaces view keep the latest, whichever answ
   }
 });
 
+test("quoted SQL text that spans lines is sent as typed; only what is outside it is joined and trimmed (#2009)", () => {
+  // The row holding "a\n   b" is asked for, not the one holding "a b".
+  assert.strictEqual(sqlText("select n from m\n  where s = 'a\n   b';  \n\n"), "select n from m where s = 'a\n   b'");
+  assert.strictEqual(sqlText("select n -- c\n  from m where s = '  a  \r\n\n\t b  ' -- d\n  and n > 0;"), "select n from m where s = '  a  \r\n\n\t b  ' and n > 0");
+  assert.strictEqual(sqlText('select "a\n  b" from\n  m'), 'select "a\n  b" from m');
+  // A `;` or a blank that ends the text inside a quote left open is text.
+  assert.strictEqual(sqlText("  select 'a;\n "), "select 'a;\n ");
+  // A doubled quote, and a quote within the other kind, close nothing.
+  assert.strictEqual(sqlText("select 'it''s\n  so', \"x'\n y\"\n  from t"), "select 'it''s\n  so', \"x'\n y\" from t");
+  // Outside quoted text, as before: each line trimmed, the empty ones dropped, the last `;` too.
+  assert.strictEqual(sqlText("\n  select 1 ;  \n\n ;\n"), "select 1 ; ");
+  assert.strictEqual(sqlText("select  a,\tb\n\n\n   from t /* x\n   y */ ;"), "select  a,\tb from t /* x y */ ");
+  assert.strictEqual(sqlText(" \n "), "");
+  // The q string stays on one line: a statement of ours is cut by lines.
+  assert.strictEqual(sqlQuery("select n from m\nwhere s = 'a\r\n   b'"), `.s.e "select n from m where s = 'a\\r\\n   b'"`);
+  assert.deepStrictEqual(statements(sqlQuery("select n from m\nwhere s = 'a\n   b'")), [`.s.e "select n from m where s = 'a\\n   b'"`]);
+  // The write check reads the text sent: a write on a later line of what only looks quoted is seen.
+  assert.deepStrictEqual(sqlWrites(sqlText("select a.-\n' ;\n insert into t values (1) '")), ["INSERT"]);
+  assert.deepStrictEqual(sqlWrites(sqlText("select 'a\n; insert into t values (1)\n' from t")), []);
+});
+
 test("SQL is sent to .s.e with its comments dropped, and a write is recognised", () => {
   assert.strictEqual(sqlQuery("select sym, px -- the price\nfrom t\nwhere px > 1;"), '.s.e "select sym, px from t where px > 1"');
   assert.strictEqual(sqlQuery("select 'a--b' as s from t"), `.s.e "select 'a--b' as s from t"`);
@@ -716,7 +738,7 @@ test("SQL is sent to .s.e with its comments dropped, and a write is recognised",
   // Quoted text runs across lines, so the `--` in this one is text and stays;
   // #1408's own example is no write as typed or as sent (checked on KDB-X 5).
   const quoted = "select 'a\n--'\n' as c from t; insert into t values (1) -- '";
-  assert.strictEqual(sqlText(quoted), "select 'a --' ' as c from t; insert into t values (1) -- '");
+  assert.strictEqual(sqlText(quoted), "select 'a\n--' ' as c from t; insert into t values (1) -- '");
   assert.deepStrictEqual(sqlWrites(sqlText(quoted)), []);
   // A `--` inside a block comment is part of it, on one line or several, and
   // a quote inside one opens nothing (#1956).

@@ -25,22 +25,38 @@ export const SQL_SCHEMA = "{t!cols each t:tables[]}[]";
 /// comment would swallow the rest once lines are joined) and its lines
 /// joined by a blank. What is a comment is the engine's lexer's to say
 /// (`lex`): a `--` in quoted text or inside `/* */` is not one, and a quote
-/// inside `/* */` opens nothing (#1956). The read-only check judges this
-/// text, not `sql` as typed (#1408).
+/// inside `/* */` opens nothing (#1956). Quoted text is sent as typed, its
+/// line breaks and indents with it: `'a<newline>  b'` is not `'a b'`
+/// (#2009). The read-only check judges this text, not `sql` as typed (#1408).
 export function sqlText(sql: string): string {
   const read = lex(sql);
   let kept = "";
+  // `kept` with each quoted character as a quote, which no blank is.
+  let shape = "";
   for (let i = 0; i < sql.length; i++) {
-    kept += read[i] === "-" ? "" : sql[i];
+    if (read[i] !== "-") {
+      kept += sql[i];
+      shape += read[i] === "'" ? "'" : sql[i];
+    }
   }
-  return kept.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== "").join(" ").replace(/;\s*$/, "");
+  let text = "";
+  let from = 0;
+  // Each line trimmed and the empty ones dropped, then the last `;`.
+  for (const m of shape.matchAll(/^\s+|(?<!\s)\s*\n\s*|;\s*$|(?<!\s)\s+$/g)) {
+    const within = m.index > 0 && m.index + m[0].length < shape.length;
+    text += kept.slice(from, m.index) + (within ? " " : "");
+    from = m.index + m[0].length;
+  }
+  return text + kept.slice(from);
 }
 
-/// `sql` sent to `.s.e` as a q string, as `sqlText` gives it. `load`: load
-/// the engine first where the process has none, for a process not yet asked.
+/// `sql` sent to `.s.e` as a q string, as `sqlText` gives it, a line break
+/// in its quoted text as q's escape for one: the string stays on one line,
+/// as a statement of ours must. `load`: load the engine first where the
+/// process has none, for a process not yet asked.
 export function sqlQuery(sql: string, load = false): string {
   const text = sqlText(sql);
-  const literal = `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  const literal = `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r")}"`;
   return load ? `{if[not \`e in key \`.s;system "l s.k_"];.s.e x} ${literal}` : `.s.e ${literal}`;
 }
 
