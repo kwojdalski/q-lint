@@ -858,3 +858,21 @@ test("xasc, xdesc and xkey projected on the columns, then applied to a table by 
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("in k code, a monadic . evaluates as value does (#1448)", () => {
+  const cases = {
+    'k)."a:1"': ["evaluates a string with k's ."],
+    'k).:"a:1"': ["evaluates a string with k's ."],
+    "k).(:;`a;1)": ["evaluates an assignment with k's ."],
+    'k)x:1;."b:2"': ["assigns x", "evaluates a string with k's ."],
+    // Any string, as with value "1+1": the text is not read further.
+    'k)."1+1"': ["evaluates a string with k's ."],
+    // Dyadic . applies, and q's . on a string is not k's.
+    'k)f . ("a";1)': [],
+    "k)+/1 2 3": [],
+    'f . ("a:1";1)': [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

@@ -53,7 +53,8 @@
 //   likewise, a functional update or delete. Also with the target left
 //   out and given after (`` @[;`a;:;1] `. ``), and the amend or `!`
 //   passed as a value (`` .[@;(`.;`a;:;1)] ``, `` (@) . (`.;..) ``);
-// - `value`, `get`, `eval` or `-6!` applied to a string, to `parse` or
+// - `value`, `get`, `eval` or `-6!`, or in k code a monadic `.`
+//   (`` k)."a:1" ``), applied to a string, to `parse` or
 //   `-5!`, or to a tree headed by `:`, `::` or `+:` (`eval(:;`t;())`), by
 //   an amend `@` or `.` of four items or more on a variable by name
 //   (`` value(@;`.;`a;:;1) ``, `` eval(@;enlist`.;enlist`a;:;1) ``), by
@@ -416,6 +417,8 @@ function readStatement(statement: string, found: Set<string>): void {
   const touching = (a: Token | undefined, b: Token | undefined): boolean =>
     a !== undefined && b !== undefined && at.get(b) === (at.get(a) ?? -2) + 1;
   const t = all.filter((k) => k.kind !== "space");
+  // k code, `k)...`, where a monadic `.` or `.:` is `value` (#1448).
+  const kCode = t[0]?.text === "k" && t[1]?.text === ")" && touching(t[0], t[1]);
   // What each open bracket is: a lambda, a table literal, its key columns'
   // `[`, or none of them.
   const stack: ("lambda" | "table" | "key" | "other")[] = [];
@@ -665,6 +668,15 @@ function readStatement(statement: string, found: Set<string>): void {
         found.add(`assigns ${k.text}`);
       }
       continue;
+    }
+    // In k, `.` with nothing on its left is `value`: `` k)."a:1" ``, `k).:"a:1"`.
+    if (kCode && k.kind === "op" && k.text === "." && i >= 2 && (t[i - 1].kind === "op" || t[i - 1].kind === "open" || i === 2 || t[i - 1].text === ";")) {
+      const what = evaluated(t, next?.text === ":" && touching(k, next) ? i + 2 : i + 1, true);
+      if (what !== undefined) {
+        found.add(`evaluates ${what.reason} with k's .`);
+        i = what.at;
+        continue;
+      }
     }
     // A writer named by its symbol is the function itself: `` `.q.set . (`a;1) ``,
     // `` (get `.q.set)[`a;1] ``, `` `.q.system "x" ``.
