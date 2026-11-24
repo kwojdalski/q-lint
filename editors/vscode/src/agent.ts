@@ -222,8 +222,13 @@ export function isProduction(process: Process): boolean {
 }
 
 /// `code` fenced as q, with a fence longer than any run of backticks in it.
+/// The runs are counted one by one: a query's are not bounded, and a hundred
+/// thousand spread into one `Math.max` call overflow the stack (#1915).
 function fenced(code: string): string {
-  const longest = Math.max(2, ...[...code.matchAll(/`+/g)].map((m) => m[0].length));
+  let longest = 2;
+  for (const m of code.matchAll(/`+/g)) {
+    longest = Math.max(longest, m[0].length);
+  }
   const fence = "`".repeat(longest + 1);
   return `${fence}q\n${code}\n${fence}`;
 }

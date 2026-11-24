@@ -171,6 +171,10 @@ test("the confirmation names the process, shows the query, and warns of producti
   assert.match(confirmation("1", saved[1], { connects: true }).message, /connecting to it first:/);
   // A query holding backticks is fenced by more of them.
   assert.match(confirmation("a:```x", saved[1]).message, /````q\na:```x\n````$/);
+  // A query of half a million characters, a symbol every four, is fenced
+  // too: its runs of backticks are not spread into one call (#1915).
+  const many = `select from t where sym in \`a${" ,\`b".repeat(200000)}`;
+  assert.ok(confirmation(many, saved[1]).message.endsWith(`\`\`\`q\n${many}\n\`\`\``));
   assert.ok(isProduction({ label: "x", host: "h", port: 1, tags: ["eu", "PRD"] }));
   assert.ok(!isProduction({ label: "x", host: "h", port: 1, tags: ["uat"] }));
 });
