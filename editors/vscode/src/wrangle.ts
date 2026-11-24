@@ -26,8 +26,13 @@ import { blockDepth, statements } from "./statements";
 export const FILTER_OPS = ["=", "<>", "<", ">", "<=", ">=", "like", "in", "null", "not null"] as const;
 export type FilterOp = (typeof FILTER_OPS)[number];
 
+/// The tests offered on a column: one of strings has no ordering, which q
+/// makes character by character, 'length against a string of another length.
+export const filterOps = (strings: boolean): FilterOp[] => FILTER_OPS.filter((o) => !strings || !["<", ">", "<=", ">="].includes(o));
+
 export type Step =
-  | { kind: "filter"; column: string; op: FilterOp; value: string }
+  /// `strings`: the column holds strings, which are matched whole (#2014).
+  | { kind: "filter"; column: string; op: FilterOp; value: string; strings?: boolean }
   | { kind: "sort"; column: string; descending: boolean }
   | { kind: "rename"; column: string; to: string }
   /// `strings`: the column holds strings, which are parsed rather than cast.
@@ -89,8 +94,12 @@ export function stepCode(step: Step, x: string): string {
       // its commas: s in `a,`b is two tests (#1412).
       const r = readable(step.value.trim());
       const v = r.includes(",") ? `(${r})` : r;
+      // A string is equal as a whole, and null when it is empty: `=` and
+      // `null` ask each of its characters, 'length and 'type here (#2014).
+      const whole: Partial<Record<FilterOp, string>> =
+        step.strings === true ? { "=": `${c}~\\:${v}`, "<>": `not ${c}~\\:${v}`, null: `0=count each ${c}`, "not null": `0<count each ${c}` } : {};
       const test =
-        step.op === "null" ? `null ${c}` : step.op === "not null" ? `not null ${c}` : step.op === "in" ? `${c} in ${v}` : `${c}${step.op === "like" ? " like " : step.op}${v}`;
+        whole[step.op] ?? (step.op === "null" ? `null ${c}` : step.op === "not null" ? `not null ${c}` : step.op === "in" ? `${c} in ${v}` : `${c}${step.op === "like" ? " like " : step.op}${v}`);
       return `select from ${x} where ${test}`;
     }
     case "sort":
