@@ -2097,13 +2097,16 @@
     const kept = (m.history || []).map(function (h) { return h.id; });
     if (m.id !== state.id) {
       // The page of the result left, to go back to from its tab.
+      // Copies, both ways: a filter, pivot or colour changed on one result
+      // is not changed on the other (#1637).
+      const copyOf = function (v) { return v === undefined ? undefined : JSON.parse(JSON.stringify(v)); };
       const mine = {};
-      PER_RESULT.forEach(function (k) { mine[k] = state[k]; });
+      PER_RESULT.forEach(function (k) { mine[k] = copyOf(state[k]); });
       state.saved[state.id] = mine;
       const back = state.saved[m.id];
       if (back) {
         // A result chosen again from the tabs: as it was left.
-        Object.assign(state, back);
+        Object.assign(state, copyOf(back));
       } else {
         // A new result: the view its mode asks for; the sort, filters and
         // chosen columns only if it has the same columns.

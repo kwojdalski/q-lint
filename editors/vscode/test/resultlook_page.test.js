@@ -271,3 +271,23 @@ test("a new run whose columns are all in the kept hidden list draws them, and of
   assert.strictEqual(page.rows()[0].children.length, 1);
   assert.strictEqual(page.button("1 hidden"), undefined);
 });
+
+test("going back to a result's tab restores its own filter, not one typed on another run of the same columns (#1637)", () => {
+  const page = loadPage(undefined);
+  const hist = (ids) => ids.map((id) => ({ id, process: "p", code: "q", at: 0, rows: 3 }));
+  const cols = [["sym", 11, ["apple", "banana", "cherry"]], ["px", 9, ["1", "2", "3"]]];
+  const filter = (text) => {
+    const box = page.body.all((e) => e.tagName === "INPUT")[0];
+    box.value = text;
+    box.fire("input");
+  };
+  page.send(result("s.1", cols, { history: hist(["s.1"]) }));
+  filter("apple");
+  page.send(result("s.2", cols, { history: hist(["s.1", "s.2"]) }));
+  filter("an");
+  page.send(result("s.1", cols, { history: hist(["s.1", "s.2"]) }));
+  assert.strictEqual(page.body.all((e) => e.tagName === "INPUT")[0].value, "apple");
+  assert.strictEqual(page.rendered().rows, 1);
+  page.send(result("s.2", cols, { history: hist(["s.1", "s.2"]) }));
+  assert.strictEqual(page.body.all((e) => e.tagName === "INPUT")[0].value, "an");
+});
