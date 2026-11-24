@@ -150,6 +150,21 @@ const CASES: &[(&str, &str)] = &[
         "delete from t where px>2",
         "![t;enlist (>;`px;2);0b;`symbol$()]",
     ),
+    // A query as the table keeps its parentheses on the way back: without
+    // them, `select from select from t where px>1 where size>20` is 'type
+    // (#2058).
+    (
+        "select from (select from t where px>1) where size>20",
+        "?[(select from t where px>1);enlist (>;`size;20);0b;()]",
+    ),
+    (
+        "exec px from (select from t where px>1)",
+        "?[(select from t where px>1);();();`px]",
+    ),
+    (
+        "select px from (t lj ([sym:`a`b] w:1 2))",
+        "?[(t lj ([sym:`a`b] w:1 2));();0b;(enlist`px)!enlist `px]",
+    ),
     // A query in parentheses inside another is its own tree, each argument
     // as `parse` holds it: what the functional form takes, enlisted unless
     // `eval` leaves it as it is (#2022). On KDB-X 5,

@@ -1199,10 +1199,21 @@ fn from_functional(verb: u8, args: &[&str]) -> Result<String, String> {
     if table.is_empty() {
         return Err("a functional form with no table".into());
     }
+    // `(t)` is the table `t`, but the parentheses around anything more are
+    // the query's: `select from select from t where px>1 where size>20`
+    // is 'type, where `select from (select ...) where size>20` runs (#2058).
     let table = table
         .strip_prefix('(')
         .and_then(|t| t.strip_suffix(')'))
-        .filter(|t| !t.contains(['(', ')']))
+        .map(str::trim)
+        .filter(|t| {
+            let name = t.strip_prefix('`').unwrap_or(t);
+            !name.is_empty()
+                && !keyword(name)
+                && name
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b':' | b'/'))
+        })
         .unwrap_or(table);
     written(
         verb,
