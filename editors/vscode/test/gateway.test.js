@@ -13,7 +13,7 @@ const { spawn } = require("node:child_process");
 const pkg = require("../package.json");
 const { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, readGateway, symbols } = require("../out/gateway.js");
 const { qString } = require("../out/qliteral.js");
-const { parseProcesses, serverTypes } = require("../out/processes.js");
+const { givenServerTypes, parseProcesses, serverTypes } = require("../out/processes.js");
 const { Live } = require("../out/live.js");
 
 const Q = process.env.QLINT_TEST_Q;
@@ -45,6 +45,15 @@ test("a file names its server types on a `/ @servertypes` line", () => {
   assert.strictEqual(serverTypes(""), undefined);
   // Read from every source, a discovery server's too: it runs nothing new.
   assert.deepStrictEqual(parseProcesses([{ label: "gw", host: "h", port: 1, gateway: ["rdb"] }]).processes[0].gateway, ["rdb"]);
+});
+
+// The editor context menu hands in the editor's Uri: taken as types, it
+// named none, and the command refused every time instead of asking (#1522).
+test("a Uri handed in from a menu is no server types, so they are asked for", () => {
+  assert.strictEqual(givenServerTypes({ scheme: "file", fsPath: "/w/a.q" }), undefined);
+  assert.strictEqual(givenServerTypes(undefined), undefined);
+  assert.strictEqual(givenServerTypes("rdb"), "rdb");
+  assert.deepStrictEqual(givenServerTypes(["rdb", "hdb"]), ["rdb", "hdb"]);
 });
 
 test("the setting is on by default, and hides the gateway commands when off", () => {
