@@ -28,3 +28,20 @@ test("a control character in a label is replaced, so the SVG still parses (#1474
   const svg = C.chartSvg(grid, [0, 1], "bar", d, { colours: ["#f00"] }, {});
   assert.ok(!/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(svg), svg);
 });
+
+test("a range small beside its size still ticks across it: 50 ms of timestamps, 1e12+60 (#1787)", () => {
+  const t0 = 8.5e17;
+  const t = C.ticks(t0, t0 + 5e7);
+  assert.ok(t.step <= 2e7 && t.values.length > 2 && t.values.length < 20, JSON.stringify(t));
+  assert.strictEqual(new Set(t.values).size, t.values.length);
+  const grid = { columns: [{ name: "time", numeric: false, temporal: true, type: 12 }, { name: "px", numeric: true }], cells: [["a", "b", "c"], ["1", "2", "3"]], values: [[t0, t0 + 2.5e7, t0 + 5e7], [1, 2, 3]] };
+  const d = C.chartData(grid, [0, 1, 2], "scatter", [1], 20);
+  const cx = (C.chartSvg(grid, [0, 1, 2], "scatter", d, { colours: ["#f00"] }, {}).match(/cx="[^"]*"/g) || []);
+  assert.strictEqual(new Set(cx).size, 3, cx.join(" "));
+  const big = { columns: [{ name: "i", numeric: false }, { name: "vol", numeric: true }], cells: [["a", "b", "c"], ["1e12", "1e12+30", "1e12+60"]], values: [null, [1e12, 1e12 + 30, 1e12 + 60]] };
+  const svg = C.chartSvg(big, [0, 1, 2], "line", C.chartData(big, [0, 1, 2], "line", [1], 20), { colours: ["#f00"] }, {});
+  const ys = svg.match(/<path d="M[\d.]+ ([\d.]+) L[\d.]+ ([\d.]+) L[\d.]+ ([\d.]+)/);
+  assert.ok(ys && new Set(ys.slice(1)).size === 3, svg);
+  const labels = [...svg.matchAll(/text-anchor="end"[^>]*>([^<]*)</g)].map((m) => m[1]);
+  assert.strictEqual(new Set(labels).size, labels.length, labels.join(" "));
+});

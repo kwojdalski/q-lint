@@ -398,9 +398,10 @@
 
   /// About five round steps from `lo` to `hi`: the ticks of an axis.
   function ticks(lo, hi) {
-    // A range within rounding of its ends (0.3 and 0.1+0.2) is one value:
-    // a step that small would not move `v` on.
-    if (!(hi - lo > Math.max(Math.abs(lo), Math.abs(hi)) * 1e-10)) {
+    // A range within a few ulps of its ends (0.3 and 0.1+0.2) is one value:
+    // a step that small would not move `v` on. 50 ms of timestamps, or
+    // 1e12 to 1e12+60, is a range.
+    if (!(hi - lo > Math.max(Math.abs(lo), Math.abs(hi)) * (64 * Number.EPSILON))) {
       const d = Math.abs(lo) || 1;
       lo -= d / 2;
       hi += d / 2;
@@ -410,9 +411,11 @@
     const raw = hi / 5 - lo / 5;
     const mag = Math.pow(10, Math.floor(Math.log10(raw)));
     const step = [1, 2, 5, 10].map(function (m) { return m * mag; }).filter(function (s) { return s >= raw; })[0];
+    // Enough digits to tell one tick from the next, far from zero.
+    const digits = Math.min(17, Math.max(12, Math.ceil(Math.log10(Math.max(Math.abs(lo), Math.abs(hi)) / step)) + 2));
     const out = [];
     for (let v = Math.floor(lo / step) * step; out.length < 50 && isFinite(v) && v - step / 2 <= hi; v += step) {
-      out.push(+v.toPrecision(12));
+      out.push(+v.toPrecision(digits));
     }
     return out.length > 0 ? { values: out, step: step } : { values: [lo, hi], step: hi - lo };
   }
