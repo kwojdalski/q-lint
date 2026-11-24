@@ -49,9 +49,10 @@ export const RESERVED = new Set(
 );
 
 /// A double as q reads it back exactly: JavaScript's shortest round trip,
-/// its exponent without the `+` q does not take.
+/// its exponent without the `+` q does not take, and `-0` its sign, which
+/// String(-0) drops (#1493).
 export function numberText(x: number): string {
-  return String(x).replace("e+", "e");
+  return Object.is(x, -0) ? "-0" : String(x).replace("e+", "e");
 }
 
 /// A string as a q char vector's literal, its quote, backslash and
