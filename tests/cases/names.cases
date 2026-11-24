@@ -888,6 +888,20 @@ f:{.z.p+:1}
 === QF019 | set by name too
 `.z.i set 0
 
+=== clean | in a lambda .z.s is the lambda's own, and q takes an assignment to it (#2096; q 5: {[a] .z.s:a; .z.s}[5] is 5)
+f:{[a] .z.s:a; .z.s}
+g:{[a] .z.s::a; 1}
+h:{[a] {[b] .z.s:b; .z.s}[a]}
+k:{.z.s:3; .z.s}
+n:{[a] (.z.s;b):(a;2); .z.s}
+
+=== QF019 | but not at the top level, by name, as an amend of the lambda, nor any other letter in a lambda (#2096; q 5: .z.s:1 and `.z.s set a are 'domain, .z.s+:a 'type, .z.t:a 'domain)
+.z.s:1
+f:{[a] `.z.s set a; 1}
+g:{[a] .z.s+:a; 1}
+h:{[a] .z.s[0]:a; 1}
+k:{[a] .z.t:a; 1}
+
 === clean | the longer .z names are callbacks, and setting them installs a handler
 .z.pg:{value x}
 .z.exit:{0N!x}

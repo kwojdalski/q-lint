@@ -6798,18 +6798,42 @@ fn lint_rules(
         {
             continue;
         }
+        // Inside a lambda `.z.s` is that lambda's own binding, and q takes
+        // an assignment to it: q 5 runs `{[a] .z.s:a; .z.s}[5]` as 5, and
+        // `.z.s::a` and `(.z.s;b):(a;2)` too, nested or not. Only at the top
+        // level, `\d` or not, is it 'domain; `` `.z.s set a `` sets the
+        // global wherever it is written, and is 'domain too. An amend in a
+        // lambda, `.z.s+:a` or `.z.s[0]:a`, works on the lambda, and is
+        // 'type (#2096).
+        let lambda_self = m.get(1).is_some()
+            && name.as_str() == ".z.s"
+            && enclosing_brace(code, name.start()).is_some();
+        let plain = code[name.end()..m.get(0).unwrap().end()]
+            .trim_start()
+            .starts_with(':');
+        if lambda_self && plain {
+            continue;
+        }
         add(
             name.start(),
             "QF019",
-            format!(
-                "`{}` is read-only: q refuses any assignment to it with 'domain",
-                name.as_str()
-            ),
+            if lambda_self {
+                "`.z.s` in a lambda is the lambda itself: amending it is 'type".into()
+            } else {
+                format!(
+                    "`{}` is read-only: q refuses any assignment to it with 'domain",
+                    name.as_str()
+                )
+            },
         );
     }
-    // And a multiple assignment: q 5 `(.z.i;.z.h):(1;`a)` is 'domain (#506).
+    // And a multiple assignment: q 5 `(.z.i;.z.h):(1;`a)` is 'domain (#506),
+    // though `.z.s` in a lambda's is the lambda's own, as above.
     for (at, name) in semantics::global_multi_assignments(code) {
-        if re!(r"^\.z\.[A-Za-z]$").is_match(name) && name != ".z.m" {
+        if re!(r"^\.z\.[A-Za-z]$").is_match(name)
+            && name != ".z.m"
+            && !(name == ".z.s" && enclosing_brace(code, at).is_some())
+        {
             // `at` is the target's start; the finding goes on the name.
             add(
                 at + code[at..]

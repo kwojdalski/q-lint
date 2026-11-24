@@ -206,7 +206,7 @@
     "code": "QF019",
     "name": "read-only-system-name",
     "category": "names",
-    "summary": "Assignment to a single-letter .z name, which q refuses with 'domain",
+    "summary": "Assignment to a single-letter .z name, which q refuses with 'domain - but for .z.s in a lambda, the lambda's own",
     "scope": "builtin"
   },
   {
