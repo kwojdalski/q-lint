@@ -316,12 +316,11 @@ test("a connection apart runs the process's connect script before its query", as
   assert.strictEqual(heads(q.sent)[1], "{x}");
 });
 
-// A connect script that never answered held the connect for ever: Disconnect
-// closed nothing, and every connect and query after it waited (#1505).
-test("a connect script that blocks is closed by Disconnect, and times out", async (t) => {
+/// A q process played by a socket server that answers anything but a
+/// message holding "block": a connect script that never returns.
+async function blockingQ(t) {
   const net = require("node:net");
   const { serialize } = require("node-q/lib/c.js");
-  // Answers anything but the script.
   const sockets = new Set();
   const server = net.createServer((socket) => {
     sockets.add(socket);
@@ -340,7 +339,13 @@ test("a connect script that blocks is closed by Disconnect, and times out", asyn
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   t.after(() => (sockets.forEach((s) => s.destroy()), server.close()));
-  const q = { port: server.address().port };
+  return { port: server.address().port };
+}
+
+// A connect script that never answered held the connect for ever: Disconnect
+// closed nothing, and every connect and query after it waited (#1505).
+test("a connect script that blocks is closed by Disconnect, and times out", async (t) => {
+  const q = await blockingQ(t);
   const { live } = await setUp(t, [
     { label: "p", host: "127.0.0.1", port: q.port, tags: [], init: "block[]" },
     { label: "b", host: "127.0.0.1", port: q.port, tags: [] },
@@ -357,3 +362,22 @@ test("a connect script that blocks is closed by Disconnect, and times out", asyn
   assert.strictEqual(await live.connectTo("t"), false);
   assert.match(stub.messages.filter(([k]) => k === "warning").at(-1)[1], /the connect script of t failed: .*1 s/);
 });
+
+// Connecting elsewhere waited on a blocking script with the default timeout
+// 0, so the other process never connected (#1712).
+test("connecting elsewhere closes a connect script that blocks", async (t) => {
+  const q = await blockingQ(t);
+  const { live } = await setUp(t, [
+    { label: "p", host: "127.0.0.1", port: q.port, tags: [], init: "block[]" },
+    { label: "b", host: "127.0.0.1", port: q.port, tags: [] },
+  ]);
+  t.after(() => stub.commands.get("q-lint.disconnectProcess")?.());
+  const p = live.connectTo("p");
+  await new Promise((r) => setTimeout(r, 200));
+  const b = live.connectTo("b");
+  const waited = new Promise((r) => setTimeout(() => r("still waiting"), 3000));
+  assert.strictEqual(await Promise.race([b, waited]), true);
+  assert.strictEqual(await p, false);
+  assert.strictEqual(live.activeLabel(), "b");
+});
+

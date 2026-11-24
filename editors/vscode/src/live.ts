@@ -1805,8 +1805,10 @@ export class Live {
       if (this.connectingTo === passwordKey(process)) {
         return this.connecting;
       }
+      // A connect script that blocks is closed too: no timeout may end it (#1712).
       this.reconnectStopped = true;
       this.untilFree?.abort();
+      this.opening?.abort();
       return this.connecting.then(() => this.open(process, false, false, disconnects, outcome));
     }
     this.reconnectStopped = false;
