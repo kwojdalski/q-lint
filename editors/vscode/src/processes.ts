@@ -168,7 +168,7 @@ export function parseProcesses(json: unknown, scripts = false): { processes: Pro
       problems.push(`${where} (${label}) has no host.`);
       return;
     }
-    const bad = portProblem(port);
+    const bad = hostProblem(host) ?? portProblem(port);
     if (bad !== undefined) {
       problems.push(`${where} (${label}): ${bad}`);
       return;
