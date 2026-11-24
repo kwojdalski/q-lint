@@ -2680,7 +2680,8 @@ export class Live {
   /// editor is run, read by the guard, after asking when it is a production
   /// one (unless `askProduction` is false: the caller asked already).
   async runOnProcess(code: string, label: string, options: { what?: string; mode?: QueryMode; askProduction?: boolean } = {}): Promise<void> {
-    const process = this.processes().find((p) => p.label === label) ?? (this.active?.label === label ? this.active : undefined);
+    // `named` also finds a discovered or shared process (#1425).
+    const process = this.named(label) ?? (this.active?.label === label ? this.active : undefined);
     if (process !== undefined && isProduction(process) && options.askProduction !== false) {
       const yes = "Run";
       const sure = await window.showWarningMessage(
