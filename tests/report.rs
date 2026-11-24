@@ -218,3 +218,54 @@ fn output_file_is_never_written_by_a_refused_run_or_over_an_input() {
     assert!(err.contains("one of the files to lint"), "{err}");
     assert_eq!(fs::read_to_string(d.join("a.q")).unwrap(), TWO);
 }
+
+/// An editor, and GitHub's file view, hide a leading BOM and count no column
+/// for it, so every report places line 1 as it does: `{` of `f:{[count] 1}`
+/// at column 3 and `==` at 16-18, with or without a BOM before them. QE005,
+/// the BOM's own, stays at 1:1 (#2097).
+#[test]
+fn every_report_places_line_one_of_a_bom_file_where_an_editor_shows_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let line = "f:{[count] 1};a==b\n";
+    fs::write(d.join("plain.q"), line).unwrap();
+    fs::write(d.join("bom.q"), format!("\u{feff}{line}")).unwrap();
+    let places = |file: &str| -> Vec<(String, u64, u64)> {
+        let (_, out, err) = run(d, &["--select", "Q", "--format", "json", file]);
+        let found: serde_json::Value =
+            serde_json::from_str(&out).unwrap_or_else(|_| panic!("{err}"));
+        found
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| {
+                (
+                    f["code"].as_str().unwrap().to_string(),
+                    f["column"].as_u64().unwrap(),
+                    f["end_column"].as_u64().unwrap_or(0),
+                )
+            })
+            .collect()
+    };
+    let plain = places("plain.q");
+    let mut bom = places("bom.q");
+    assert_eq!(bom.remove(0), ("QE005".to_string(), 1, 2));
+    assert_eq!(bom, plain);
+    assert!(
+        plain.iter().any(|(c, col, _)| c == "QF001" && *col == 3),
+        "{plain:?}"
+    );
+    assert!(plain.contains(&("QE004".to_string(), 16, 18)), "{plain:?}");
+    // SARIF, the workflow commands and the text say the same.
+    let (_, out, _) = run(d, &["--select", "QE004", "--format", "sarif", "bom.q"]);
+    let report: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let region = &report["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["region"];
+    assert_eq!(
+        (region["startColumn"].as_u64(), region["endColumn"].as_u64()),
+        (Some(16), Some(18))
+    );
+    let (_, out, _) = run(d, &["--select", "QE004", "--format", "github", "bom.q"]);
+    assert!(out.contains("line=1,col=16,endColumn=18,"), "{out}");
+    let (_, out, _) = run(d, &["--select", "QE004", "bom.q"]);
+    assert!(out.contains("bom.q:1:16: "), "{out}");
+}

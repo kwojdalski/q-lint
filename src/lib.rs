@@ -611,7 +611,7 @@ pub fn builtin(name: &str) -> Option<&'static Builtin> {
     BUILTINS.iter().find(|builtin| builtin.name == name)
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Finding {
     pub path: String,
     pub line: usize,
@@ -5882,6 +5882,41 @@ pub fn organise_loads(source: &str) -> Option<Fix> {
     fix.title = "Organise loads".into();
     fix.batch_safe = false;
     Some(fix)
+}
+
+/// A text as an editor holds it, and whether a BOM came before it. An
+/// editor reads a leading BOM as the file's encoding, not as a character of
+/// line 1: it neither shows it nor counts it in a column. The language
+/// server reads every closed file through this (#2027), and the CLI places
+/// what it reports by it (#2097), so the two agree with each other and with
+/// the editor.
+pub fn as_an_editor_holds(text: &str) -> (&str, bool) {
+    match text.strip_prefix('\u{feff}') {
+        Some(rest) => (rest, true),
+        None => (text, false),
+    }
+}
+
+/// `findings` of `source` placed where an editor shows them: in a file that
+/// starts with a BOM, every column on line 1 is one UTF-16 unit left of where
+/// the rules, which read the BOM as the character it is, count it. QE005
+/// alone stays: it is the BOM's own, at 1:1.
+pub fn placed_as_an_editor_shows<'a>(
+    findings: impl IntoIterator<Item = &'a mut Finding>,
+    source: &str,
+) {
+    if !as_an_editor_holds(source).1 {
+        return;
+    }
+    for f in findings
+        .into_iter()
+        .filter(|f| f.line == 1 && f.code != "QE005")
+    {
+        f.column = f.column.map(|c| c.saturating_sub(1).max(1));
+        if f.end_line.is_none_or(|l| l == 1) {
+            f.end_column = f.end_column.map(|c| c.saturating_sub(1).max(1));
+        }
+    }
 }
 
 pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
