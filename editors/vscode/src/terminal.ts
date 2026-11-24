@@ -23,10 +23,11 @@ export function terminalCwd(own: string | undefined, first: string | undefined, 
 }
 
 /// How the shell in the terminal reads a command line.
-export type Shell = "posix" | "powershell" | "cmd";
+export type Shell = "posix" | "csh" | "powershell" | "cmd";
 
-/// The shell a terminal runs, from its path: PowerShell and cmd by name, and
-/// anything else - bash, zsh, fish, Git Bash on Windows - read as POSIX.
+/// The shell a terminal runs, from its path: PowerShell, cmd and csh/tcsh by
+/// name, and anything else - bash, zsh, fish, Git Bash on Windows - read as
+/// POSIX.
 export function shellKind(path: string | undefined): Shell {
   const name = (path ?? "").split(/[\\/]/).pop()?.toLowerCase() ?? "";
   if (/^(pwsh|powershell)(\.exe)?$/.test(name)) {
@@ -34,6 +35,9 @@ export function shellKind(path: string | undefined): Shell {
   }
   if (/^cmd(\.exe)?$/.test(name)) {
     return "cmd";
+  }
+  if (/^t?csh$/.test(name)) {
+    return "csh";
   }
   return "posix";
 }
@@ -44,6 +48,7 @@ export function shellKind(path: string | undefined): Shell {
 /// zsh reads a word that starts with `=` as `=name`, the path of a command.
 const PLAIN: Record<Shell, RegExp> = {
   posix: /^[A-Za-z0-9_\/.,:@%+-][A-Za-z0-9_\/.,:@%+=-]*$/,
+  csh: /^[A-Za-z0-9_\/.,:@%+-][A-Za-z0-9_\/.,:@%+=-]*$/,
   powershell: /^[A-Za-z0-9_\\/.:+=-]+$/,
   cmd: /^[A-Za-z0-9_\\/.:+=-]+$/,
 };
@@ -62,6 +67,10 @@ export function quote(word: string, shell: Shell): string {
   }
   if (shell === "posix") {
     return `'${word.replace(/'/g, `'\\''`)}'`;
+  }
+  if (shell === "csh") {
+    // csh reads `!` as history even in single quotes, unless escaped.
+    return `'${word.replace(/'/g, `'\\''`).replace(/!/g, "\\!")}'`;
   }
   if (shell === "powershell") {
     return powershellLiteral(word);
@@ -118,6 +127,10 @@ export function commandLine(binary: string, args: string[], shell: Shell, env: R
   if (shell === "posix") {
     // Set for q alone, as `NAME=value q` sets it.
     return [...names.map((n) => `${n}=${quote(env[n], "posix")}`), line].join(" ");
+  }
+  if (shell === "csh") {
+    // csh has no `NAME=value q`: env sets them for q alone (#1683).
+    return ["env", ...names.map((n) => `${n}=${quote(env[n], "csh")}`), line].join(" ");
   }
   if (shell === "powershell") {
     // Always quoted: the right of an assignment is an expression, where a

@@ -17,6 +17,8 @@ test("the shell is read from its path", () => {
   assert.strictEqual(shellKind("C:\\Program Files\\Git\\bin\\bash.exe"), "posix");
   assert.strictEqual(shellKind("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"), "powershell");
   assert.strictEqual(shellKind("/usr/local/bin/pwsh"), "powershell");
+  assert.strictEqual(shellKind("/bin/tcsh"), "csh");
+  assert.strictEqual(shellKind("/bin/csh"), "csh");
   assert.strictEqual(shellKind("C:\\Windows\\System32\\cmd.exe"), "cmd");
   assert.strictEqual(shellKind(undefined), "posix");
 });
@@ -172,6 +174,11 @@ test("a trailing comment is cut, and a comment line inside a lambda dropped", ()
 test("a string that runs onto the next line keeps its newline as \\n", () => {
   assert.strictEqual(replLine('s:"ab\n  cd"'), 's:"ab\\n  cd"');
   assert.strictEqual(replLine('s:("ab\n  cd";\n  1)'), 's:("ab\\n  cd"; 1)');
+});
+
+test("csh and tcsh set the variables with env, and get a ! escaped (#1683)", () => {
+  assert.strictEqual(commandLine("q", ["a!b.q", "it's"], "csh", { QHOME: "/opt/q", QLIC: "/my lic" }), "env QHOME=/opt/q QLIC='/my lic' q 'a\\!b.q' 'it'\\''s'");
+  assert.strictEqual(commandLine("q", ["x.q"], "csh"), "q x.q");
 });
 
 test("no tab reaches q's console, which reads one as completion (#1673)", () => {
