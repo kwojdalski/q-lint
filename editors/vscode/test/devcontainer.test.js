@@ -69,6 +69,7 @@ function setUp(t, dir) {
     stat: async (uri) => fs.statSync(uri.fsPath),
     createDirectory: async (uri) => void fs.mkdirSync(uri.fsPath, { recursive: true }),
     writeFile: async (uri, data) => void fs.writeFileSync(uri.fsPath, data),
+    readDirectory: async (uri) => fs.readdirSync(uri.fsPath, { withFileTypes: true }).map((e) => [e.name, e.isDirectory() ? vscode.FileType.Directory : vscode.FileType.File]),
   };
   vscode.workspace.openTextDocument = async (options) => (previews.push(options), options);
   vscode.window.showTextDocument = async () => {};
@@ -111,6 +112,23 @@ test("the command previews first, writes nothing on Cancel, and on Write only th
   assert.deepStrictEqual(await addDevContainer(), []);
   assert.strictEqual(dialogs.length, 2);
   assert.match(stub.messages.at(-1)[1], /already has .*nothing was written/);
+});
+
+// A root .devcontainer.json was shadowed by the template's
+// .devcontainer/devcontainer.json, which Dev Containers read first (#1532).
+test("a repository with a dev container configuration elsewhere gets nothing written", async (t) => {
+  for (const where of [".devcontainer.json", ".devcontainer/py/devcontainer.json"]) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-dcother-"));
+    fs.mkdirSync(path.dirname(path.join(dir, where)), { recursive: true });
+    fs.writeFileSync(path.join(dir, where), "{}\n");
+    const { dialogs } = setUp(t, dir);
+    stub.picks.push("Write");
+    assert.deepStrictEqual(await addDevContainer(), []);
+    assert.strictEqual(dialogs.length, 0);
+    assert.ok(stub.messages.at(-1)[1].includes(`has a dev container configuration already, ${where}; nothing was written`));
+    assert.strictEqual(fs.existsSync(path.join(dir, ".devcontainer", "install-kdbx.sh")), false);
+    stub.picks.length = 0;
+  }
 });
 
 test("off: the command is hidden, refuses, and writes nothing", async (t) => {
