@@ -641,6 +641,15 @@ fn missing_from(
             Some(f) if comments[m.end() + f.end()..at].trim().is_empty() => {
                 "has nothing after its `from`: q raises 'from"
             }
+            // Nor is a `where` straight after it a table: q 5 `parse
+            // "select a from where a>1"`, `"delete from where a>1"` and
+            // `"select from where"` are 'from, while `from where_t` and
+            // `from (where a>1)` read a table, and `from by b` applies the
+            // name `by` (#2095). Read from `comments` too, where `` from
+            // `t where `` still has its table.
+            Some(f) if re!(r"^\s*where\b").is_match(&comments[m.end() + f.end()..at]) => {
+                "has nothing between its `from` and its `where`: q raises 'from"
+            }
             // A where phrase with nothing in it: q 5 `parse "exec a from t
             // where"` and `parse "select from t where"` are ',.
             Some(f)

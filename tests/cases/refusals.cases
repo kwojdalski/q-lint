@@ -589,6 +589,24 @@ r:exec a from t where
 f:{[t] select from t where}
 g:{update a:1 from t where;1}
 
+=== QE007 profile: general | nothing between from and where (#2095; q 5: parse "select a from where a>1" and "delete from where a>1" are 'from)
+r1:select from where a>1
+r2:select a from where a>1
+r3:exec a from  where a>1
+r4:update c:1 from where a>1
+r5:delete from where a>1
+r6:select a by b from where a>1
+r7:select from
+  where a>1
+r8:{select from where}
+
+=== clean profile: general | a table named like where, by its symbol, or in brackets, or a by after from (#2095; q 5 parses each)
+wheres:([]a:1 2)
+r1:select from wheres where a>1
+r2:select from (where a>1)
+r3:select a from by b
+update a:0 from `wheres where a>1
+
 === clean profile: general | a where phrase with a condition, and where as a column or a call
 r:exec a from t where a>1
 s:select where from t
