@@ -93,7 +93,8 @@ export interface Summary {
 export function folderOf(path: string, root: string | string[], depth = 2): string {
   for (const r of typeof root === "string" ? [root] : root) {
     const rel = relative(r, path).split(sep).join("/");
-    if (rel.startsWith("..") || isAbsolute(rel)) {
+    // Outside `r`: `..` or below it, not a name that starts with two dots (#1898).
+    if (rel === ".." || rel.startsWith("../") || isAbsolute(rel)) {
       continue;
     }
     const parts = rel.split("/").slice(0, -1);

@@ -31,6 +31,19 @@ test("a folder opened through a symlink counts its files under their folders, no
   assert.strictEqual(folderOf(path.resolve("/elsewhere/src/x.q"), [opened, real]), ".");
 });
 
+test("a folder whose name starts with two dots is a folder of the tree, not one outside it (#1898)", () => {
+  const root = path.resolve("/proj");
+  assert.strictEqual(folderOf(path.join(root, "..x/b.q"), root), "..x");
+  assert.strictEqual(folderOf(path.join(root, "..x/deep/er/b.q"), root), "..x/deep");
+  assert.strictEqual(folderOf(path.join(root, "sub/..x/b.q"), root), "sub/..x");
+  assert.strictEqual(folderOf(path.join(root, "..b.q"), root), ".");
+  // Outside it still falls to the next spelling, or to ".".
+  assert.strictEqual(folderOf(path.resolve("/other/src/b.q"), [root, path.resolve("/other")]), "src");
+  assert.strictEqual(folderOf(path.resolve("/b.q"), root), ".");
+  const s = summarise([F(path.join(root, "..x/b.q"), "QE004"), F(path.join(root, "top.q"), "QS001")], root);
+  assert.deepStrictEqual(s.folders.map((f) => f.folder).sort(), [".", "..x"]);
+});
+
 test("findings are counted by rule and by folder, with their files", () => {
   const root = path.resolve("/ws");
   const findings = [
