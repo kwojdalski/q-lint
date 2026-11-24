@@ -65,6 +65,16 @@ test("a process is written into the list in place of its label, with no password
   assert.deepStrictEqual(JSON.parse(two), { note: "kept", processes: [{ label: "rdb", host: "h", port: 1, tags: [] }, { label: "x", host: "y", port: 2 }] });
 });
 
+test("a file whose processes is not a list is not written over, and a file with no list keeps its other fields (#1886)", () => {
+  const gw = { label: "gw", host: "h", port: 1, tags: [] };
+  for (const text of ['{"processes":{"rdb":{"host":"a","port":1},"hdb":{"host":"b","port":2}},"note":"desk list"}', '{"processes":"rdb"}', '{"processes":null}', '"rdb"', "42", "null", "true"]) {
+    assert.throws(() => withShared(text, gw), /^Error: it holds no list of processes: a list, or an object with a `processes` list, is expected\. Nothing was written\.$/, text);
+  }
+  assert.deepStrictEqual(JSON.parse(withShared('{"note":"desk list"}', gw)), { note: "desk list", processes: [gw] });
+  assert.deepStrictEqual(JSON.parse(withShared("[]", gw)), { processes: [gw] });
+  assert.deepStrictEqual(JSON.parse(withShared(" \n", gw)), { processes: [gw] });
+});
+
 // An entry labelled "rdb " is listed as rdb, but was not found by Share:
 // a second rdb was appended and skipped as a repeat, the old one kept.
 test("sharing a process replaces an entry whose label has spaces around it", () => {
