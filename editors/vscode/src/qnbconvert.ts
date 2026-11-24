@@ -78,6 +78,8 @@ function inline(text: string, values: Record<string, LiveValue>): string {
     const target = safeHref(href.replace(/&amp;/g, "&"));
     return target === undefined ? m : `${hold(`<a href="${escapeHtml(target)}">`)}${label}${hold("</a>")}`;
   });
+  // A run of three first, so its tags nest (#1550).
+  s = s.replace(/(\*\*\*|___)(?=\S)([\s\S]*?\S)\1/g, "<em><strong>$2</strong></em>");
   s = s.replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, "<strong>$2</strong>");
   s = s.replace(/(^|[^\w*])([*_])(?=\S)([^*_]*?\S)\2(?!\w)/g, "$1<em>$3</em>");
   return s.replace(/\u0000(\d+)\u0000/g, (_m, i: string) => held[Number(i)]);

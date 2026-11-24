@@ -549,3 +549,8 @@ test("a Jupyter notebook keeps its metadata, kernel and cell ids through import 
   assert.strictEqual(fromIpynb(toIpynb(q)).metadata, undefined);
   assert.strictEqual(JSON.parse(toIpynb(q)).metadata.kernelspec.name, "qpk");
 });
+
+test("an HTML export nests ***text*** as CommonMark does (#1550)", () => {
+  assert.strictEqual(markdownHtml("***both*** and ___too___"), "<p><em><strong>both</strong></em> and <em><strong>too</strong></em></p>");
+  assert.strictEqual(markdownHtml("**a *b* c**"), "<p><strong>a <em>b</em> c</strong></p>");
+});
