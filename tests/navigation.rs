@@ -2069,6 +2069,77 @@ fn a_name_with_an_underscore_is_refused_where_a_k_line_reads_it() {
 }
 
 #[test]
+fn a_global_a_k_line_assigns_is_defined_there() {
+    // #2047. KDB-X 5 runs `fk:2`, `k)gk:fk+1` and gk is 3: the k line
+    // assigns a global, which b.q reads once it loads a.q.
+    let dir = tempfile::tempdir().unwrap();
+    let a = "fk:2\nk)gk:fk+1 / three\nk)hk:{fk::x}\nshow gk\n";
+    let b = "\\l a.q\nh:{gk+1}\n";
+    let mut server = Server::start(dir.path(), &[("a.q", a), ("b.q", b)]);
+    let uri = server.open(dir.path(), "b.q", b);
+    let reply = server.ask("textDocument/definition", &uri, b, "gk", 0, json!({}));
+    assert_eq!(places(&reply["result"]), [place("a.q", 1, 2, 4)], "{reply}");
+    let uri = server.open(dir.path(), "a.q", a);
+    let reply = server.request(
+        "textDocument/documentSymbol",
+        json!({"textDocument": {"uri": uri}}),
+    );
+    let listed: Vec<_> = reply["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"))
+        .iter()
+        .map(|s| {
+            (
+                s["name"].as_str().unwrap().to_string(),
+                s["kind"].as_u64().unwrap(),
+                span(&s["range"]),
+            )
+        })
+        .collect();
+    // The statement, its comment left out; a lambda's value a function.
+    assert_eq!(
+        listed,
+        [
+            ("fk".to_string(), 13, (0, 0, 4)),
+            ("gk".to_string(), 13, (1, 2, 9)),
+            ("hk".to_string(), 12, (2, 2, 12)),
+        ],
+        "{reply}"
+    );
+    let reply = server.ask(
+        "textDocument/documentHighlight",
+        &uri,
+        a,
+        "gk",
+        0,
+        json!({}),
+    );
+    let marks: Vec<_> = reply["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"))
+        .iter()
+        .map(|h| (span(&h["range"]), h["kind"].as_u64().unwrap()))
+        .collect();
+    assert_eq!(marks, [((1, 2, 4), 3), ((3, 5, 7), 2)]);
+    // `fk::x` in a k lambda writes the global too.
+    let reply = server.ask(
+        "textDocument/documentHighlight",
+        &uri,
+        a,
+        "fk:",
+        0,
+        json!({}),
+    );
+    let marks: Vec<_> = reply["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| (span(&h["range"]), h["kind"].as_u64().unwrap()))
+        .collect();
+    assert_eq!(marks, [((0, 0, 2), 3), ((1, 5, 7), 2), ((2, 6, 8), 3)]);
+}
+
+#[test]
 fn a_block_comment_after_a_k_line_is_no_k() {
     // #2042. KDB-X 5 runs `fk:1`, `k)gk:2`, `/`, ` fk in a comment`, `\`,
     // `show fk` and prints 1: the bare `/` opens a block comment after the k

@@ -10,7 +10,7 @@ use super::{
     resolved, scope_at, scopes, top_level_statements,
 };
 use crate::{Definition, Local, Mention, Name, Place, boundary, pattern_names, signature};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 const NAME: &str = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*";
 
@@ -155,6 +155,10 @@ struct KLines {
     lambdas: Vec<(usize, HashSet<String>)>,
     /// Each symbol: where its name starts, and the name.
     symbols: Vec<(usize, String)>,
+    /// Each of `globals` that is assigned there, by where it is: whether a
+    /// lambda is its value, and the span of its statement - the k statement
+    /// at the top level, the name alone in a lambda (`k){fk::x}`).
+    assigned: HashMap<usize, (bool, usize, usize)>,
 }
 
 /// The `k)` lines of `raw` read as k, for the names in them.
@@ -169,6 +173,7 @@ fn k_lines(code: &str, raw: &str) -> KLines {
         globals: vec![],
         lambdas: vec![],
         symbols: vec![],
+        assigned: HashMap::new(),
     };
     if !raw.contains("k)") {
         return out;
@@ -177,14 +182,29 @@ fn k_lines(code: &str, raw: &str) -> KLines {
     // comments and symbols too, so that offsets are the file's.
     let mut view = vec![b' '; raw.len()];
     let (mut offset, mut k) = (0, false);
+    // Where each k statement starts and ends, its lines' trailing blanks
+    // and comment left out of the end.
+    let mut statements: Vec<(usize, usize)> = vec![];
+    let content = |line: &str, offset: usize| {
+        let cut = line
+            .match_indices('/')
+            .find(|&(i, _)| i == 0 || line.as_bytes()[i - 1].is_ascii_whitespace())
+            .map_or(line.len(), |(i, _)| i);
+        offset + line[..cut].trim_end().len()
+    };
     for line in raw.split_inclusive('\n') {
         let end = offset + line.len();
         let blanked = code[offset..end].trim().is_empty();
         if line.starts_with("k)") && blanked {
             k = true;
             view[offset + 2..end].copy_from_slice(&raw.as_bytes()[offset + 2..end]);
+            let lead = line[2..].len() - line[2..].trim_start().len();
+            statements.push((offset + 2 + lead, content(line, offset)));
         } else if k && blanked && crate::foreign_continues(line, &raw[end..]) {
             view[offset..end].copy_from_slice(&raw.as_bytes()[offset..end]);
+            if let Some(last) = statements.last_mut() {
+                last.1 = last.1.max(content(line, offset));
+            }
         } else {
             k = false;
         }
@@ -279,6 +299,27 @@ fn k_lines(code: &str, raw: &str) -> KLines {
         }
         let rest = text[at..].trim_start_matches([' ', '\t']);
         let assigned = rest.starts_with(':') && !rest.starts_with("::");
+        // What a global's own: `name:` at the top level of a statement,
+        // `name::` or a dotted `name:` in a lambda, as q has them.
+        let global = if lambda.is_none() {
+            assigned && open.is_empty()
+        } else {
+            rest.starts_with("::") || assigned && m.as_str().contains('.')
+        };
+        if global {
+            let value = rest.trim_start_matches(':').trim_start();
+            let span = if lambda.is_none() {
+                statements
+                    .iter()
+                    .rfind(|(s, _)| *s <= start)
+                    .copied()
+                    .unwrap_or((start, at))
+            } else {
+                (start, at)
+            };
+            out.assigned
+                .insert(start, (value.starts_with('{'), span.0, span.1.max(at)));
+        }
         let kind = match open.last() {
             // In a lambda's `[..]`, a parameter; in a table's, or straight
             // in its parentheses, `name:` is a column.
@@ -523,15 +564,26 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
             });
         }
     }
-    // What a `k)` line reads or assigns, which neither view shows.
-    for (at, len, _) in k_lines(code, raw).globals {
+    // What a `k)` line reads or assigns, which neither view shows. KDB-X 5
+    // runs `k)gk:fk+1` and `gk` is a global like any other (#2047).
+    let k = k_lines(code, raw);
+    for (at, len, _) in k.globals {
         let word = &raw[at..at + len];
         out.push(Mention {
             name: resolved(word, ns_at(at)),
             implicit: !word.starts_with('.') && at < first_switch,
             at,
             len,
-            definition: None,
+            definition: k
+                .assigned
+                .get(&at)
+                .map(|&(function, start, end)| Definition {
+                    function,
+                    detail: String::new(),
+                    params: vec![],
+                    start,
+                    end,
+                }),
         });
     }
     out.sort_by(|a, b| (a.at, &a.name).cmp(&(b.at, &b.name)));
