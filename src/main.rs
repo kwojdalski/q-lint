@@ -292,14 +292,35 @@ fn refuse_overwrite(flag: &str, target: Option<&Path>, inputs: &[PathBuf]) -> Re
     let Some(target) = target else {
         return Ok(());
     };
-    let out = config::absolute(target);
-    if inputs.iter().any(|f| config::absolute(f) == out) {
+    if inputs.iter().any(|f| same_file(target, f)) {
         return Err(format!(
             "{flag} {}: it is one of the files to lint",
             target.display()
         ));
     }
     Ok(())
+}
+
+/// Whether two paths reach one file on disk: compared as files, not names,
+/// so a symlink to a source, a hard link, or another case of its name on a
+/// disk that ignores case is the source (#2116). A path that names no file
+/// yet is no input, unless it is the input's own name.
+fn same_file(a: &Path, b: &Path) -> bool {
+    match (fs::metadata(a), fs::metadata(b)) {
+        #[cfg(unix)]
+        (Ok(x), Ok(y)) => {
+            use std::os::unix::fs::MetadataExt;
+            (x.dev(), x.ino()) == (y.dev(), y.ino())
+        }
+        #[cfg(not(unix))]
+        (Ok(_), Ok(_)) => match (fs::canonicalize(a), fs::canonicalize(b)) {
+            (Ok(x), Ok(y)) => x
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&y.to_string_lossy()),
+            _ => false,
+        },
+        _ => config::absolute(a) == config::absolute(b),
+    }
 }
 
 /// Whether a path names q source.
@@ -549,6 +570,11 @@ fn run(args: Args) -> Result<u8, String> {
             return Err("Stdin (- or --stdin-filename) must be the only input".into());
         }
         let name = args.stdin_filename.unwrap_or_else(|| "<stdin>".into());
+        // The file the buffer is linted as is the file an editor saves it
+        // to: a report written there replaces it (#2116).
+        if name != "<stdin>" {
+            inputs.push(PathBuf::from(&name));
+        }
         // Only q source, however the path arrived: a `.k` buffer is a
         // different language, refused as the same file named outright is
         // (#421).

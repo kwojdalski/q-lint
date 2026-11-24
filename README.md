@@ -215,7 +215,10 @@ one the findings would give.
 `--output-file PATH` writes the report - in any format - to that file,
 replacing it, instead of standard output, which stays empty; the exit code is
 the one the run would give without it, and messages still go to standard
-error. Text written to a file is never coloured.
+error. Text written to a file is never coloured. A file the run reads is
+never the one it writes: one reached through a symlink or a hard link, or by
+another case of its name on a disk that ignores case, and the file
+`--stdin-filename` names, are refused with exit 2 and left as they were.
 
 ### The dependency graph: `qlinter analyze graph`
 
