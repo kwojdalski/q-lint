@@ -84,6 +84,12 @@ test("the guard reads every run as a write to the namespace", () => {
   const settings = { enabled: true, tags: ["prod"] };
   assert.strictEqual(guardCheck("count trade", [prod], settings), undefined);
   assert.notStrictEqual(guardCheck(guardedCode(".ns", "count trade"), [prod], settings), undefined);
+  // Code that ends the script or opens a comment does not hide it (#1441),
+  // and what the code itself writes is still read.
+  for (const code of ["f 1\n\\", "f 1\n/", "f 1\n\\\na:1"]) {
+    assert.notStrictEqual(guardCheck(guardedCode(".ns", code), [prod], settings), undefined, code);
+  }
+  assert.ok(guardCheck(guardedCode(".ns", "a:1"), [prod], settings).reasons.includes("assigns a"));
 });
 
 test("the switch is declared on, and the command only where it can run", () => {

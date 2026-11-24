@@ -52,9 +52,10 @@ export async function cellAnswer(connection: QConnection, mode: CellMode, cut: s
 
 /// What the read-only guard reads for a code cell `source` run with the
 /// Markdown cells `markdown` after it: the source and every live value's
-/// expression, each on a line of its own, since all of them are sent (#1088).
-export function guardedText(source: string, markdown: string[]): string {
-  return [source, ...new Set(markdown.flatMap(liveExpressions))].join("\n");
+/// expression, since all of them are sent (#1088), each read on its own as
+/// each is sent: joined, a `\` or `/` line would hide what came after (#1442).
+export function guardedText(source: string, markdown: string[]): string[] {
+  return [source, ...new Set(markdown.flatMap(liveExpressions))];
 }
 
 /// The live values of the Markdown `sources`, each cell's by expression,
@@ -159,7 +160,7 @@ export function injectParameters(cells: QnbCell[], overrides: Record<string, str
 /// Where a run sends a cell: `use` on the process `label` names, or on the
 /// run's own when it is undefined. Throws, with why, when it cannot.
 export interface Executor {
-  on<T>(label: string | undefined, code: string, use: (connection: QConnection) => Promise<T>): Promise<T>;
+  on<T>(label: string | undefined, code: string | readonly string[], use: (connection: QConnection) => Promise<T>): Promise<T>;
 }
 
 export interface RunResult {
@@ -397,7 +398,9 @@ export const passwordVariable = (label: string): string => `QLINT_Q_PASSWORD_${l
 /// The process `name` names: `host:port`, or a label in `listed`. A listed
 /// process reached through an SSH tunnel or set up by a connect script is
 /// refused: the command line opens neither, and dialling its host and
-/// port straight would reach another process (#1401).
+/// port straight would reach another process (#1401). A `host:port` takes
+/// the tags of every listed process at that address, so a production one
+/// is still one by its address (#1450).
 export function cliProcess(name: string, listed: Process[], user?: string, tls = false): Process | { error: string } {
   const found = listed.find((p) => p.label === name);
   if (found !== undefined) {
@@ -409,7 +412,9 @@ export function cliProcess(name: string, listed: Process[], user?: string, tls =
   const m = /^(.+):(\d{1,5})$/.exec(name);
   if (m !== null && Number(m[2]) >= 1 && Number(m[2]) <= 65535) {
     const host = m[1].replace(/^\[(.*)\]$/, "$1");
-    return { label: name, host, port: Number(m[2]), tags: [], ...(user !== undefined ? { user } : {}), ...(tls ? { tls: true } : {}) };
+    const port = Number(m[2]);
+    const tags = [...new Set(listed.filter((p) => p.host.toLowerCase() === host.toLowerCase() && p.port === port).flatMap((p) => p.tags))];
+    return { label: name, host, port, tags, ...(user !== undefined ? { user } : {}), ...(tls ? { tls: true } : {}) };
   }
   return {
     error: listed.length === 0

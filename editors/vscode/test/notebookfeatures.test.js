@@ -12,6 +12,7 @@ const { cellDirective } = require("../out/celldirectives.js");
 const { LIVE, LIVE_KEY, inlineSpans, liveExpressions, markdownAfter, readLiveValues, scanLive } = require("../out/livemarkdown.js");
 const { ERROR_MIME, fromIpynb, markdownHtml, toHtml, toIpynb, IpynbError } = require("../out/qnbconvert.js");
 const { INJECTED_KEY, cliProcess, guardedText, injectParameters, parametersCell, parametersOf, parseArgs, passwordVariable, runNotebook, writeAs } = require("../out/qnbrun.js");
+const { isProduction } = require("../out/agent.js");
 const { writes } = require("../out/guard.js");
 const { describeVariable, readVariables, bytesText, VARS } = require("../out/notebookvars.js");
 const { NOTEBOOK, parseQnb, serializeQnb } = require("../out/qnb.js");
@@ -360,14 +361,19 @@ test("a headless run numbers and runs the q cells, reads live values, and goes w
 
 test("the guard reads a cell's live values' expressions with its source (#1088)", async () => {
   const markdown = ["Count {{q: count trade}}", "Gone {{q: delete from `trade}}", "Again {{q: count trade}}"];
-  assert.strictEqual(guardedText("/ just a note", markdown), "/ just a note\ncount trade\ndelete from `trade");
+  assert.deepStrictEqual(guardedText("/ just a note", markdown), ["/ just a note", "count trade", "delete from `trade"]);
   assert.deepStrictEqual(writes(guardedText("/ just a note", markdown)), ["deletes from `trade in place"]);
-  assert.strictEqual(guardedText("1+1", []), "1+1");
+  assert.deepStrictEqual(guardedText("1+1", []), ["1+1"]);
+  // Each is read on its own: a cell ending the script or a `/` expression
+  // does not hide what comes after it (#1442), and reads stay reads.
+  assert.deepStrictEqual(writes(guardedText("count t\n\\", ["{{q: a:1}}"])), ["assigns a"]);
+  assert.deepStrictEqual(writes(guardedText("count t", ["Rows {{q: /}} and {{q: a:1}}"])), ["assigns a"]);
+  assert.deepStrictEqual(writes(guardedText("count t\n\\", ["Rows {{q: /}} and {{q: count t}}"])), []);
   // A headless run hands the executor, which guards it, the same text.
   const qnb = { cells: [{ kind: "code", source: "1" }, { kind: "markdown", source: markdown[1] }] };
   const ex = fakeExecutor((cut) => ({ ok: true, type: -7, text: [cut.join(";")] }));
   await runNotebook(qnb, ex, SETTINGS);
-  assert.deepStrictEqual(ex.codes, ["1\ndelete from `trade"]);
+  assert.deepStrictEqual(ex.codes, [["1", "delete from `trade"]]);
 });
 
 test("a headless run stops at the first cell that fails, and clears what the cells after it showed", async () => {
@@ -423,6 +429,13 @@ test("the command line names a process by host:port or by a listed label, and re
   assert.match(cliProcess("t", [{ label: "t", host: "localhost", port: 5000, tags: [], ssh: "bastion" }]).error, /t needs an SSH tunnel \(ssh\), which qnbrun does not run/);
   assert.match(cliProcess("s", [{ label: "s", host: "h", port: 1, tags: [], initFile: "c.q" }]).error, /a connect script/);
   assert.strictEqual(passwordVariable("desk/rdb-1"), "QLINT_Q_PASSWORD_DESK_RDB_1");
+  // By its address, a listed process keeps its tags, and so its production
+  // check (#1450); another address, or another port, has none.
+  const prod = [{ label: "prdb", host: "db1", port: 5000, tags: ["prod"] }, { label: "x", host: "DB1", port: 5000, tags: ["eu"] }];
+  assert.deepStrictEqual(cliProcess("db1:5000", prod).tags, ["prod", "eu"]);
+  assert.strictEqual(isProduction(cliProcess("db1:5000", prod)), true);
+  assert.strictEqual(isProduction(cliProcess("db1:5001", prod)), false);
+  assert.deepStrictEqual(cliProcess("db2:5000", prod).tags, []);
 });
 
 // --- the variables view's data
