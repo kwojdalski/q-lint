@@ -1029,6 +1029,7 @@ fn rename_global(
     if new == old {
         return Ok(json!({"changes": {}}));
     }
+    let targets = in_every_context(sources, targets, old);
     let mut renamed: Vec<String> = targets.iter().map(|name| releafed(name, new)).collect();
     renamed.sort_unstable();
     if let Some(taken) = renamed.iter().find(|name| sources.idx.ws.defines(name)) {
@@ -1157,6 +1158,55 @@ fn rename_global(
         }
     }
     Ok(json!({"changes": changes}))
+}
+
+/// `targets` with every other name a rewritten mention answers to: a file
+/// loaded under two `\d` contexts defines `.aa.ff` and `.bb.ff` with one
+/// `ff:`, so renaming that text renames both, and each use of either has to
+/// follow. KDB-X 5 runs `\d .aa`, `\l b.q`, `\d .bb`, `\l b.q` with b.q's
+/// `ff:{1}`, and `.bb.ff[]` is 1 (#2043). Followed until nothing is added, a
+/// mention through the head of a dotted read (`ta` of `ta.c`) included.
+fn in_every_context(sources: &Sources, mut targets: HashSet<String>, old: &str) -> HashSet<String> {
+    let texts: Vec<_> = sources
+        .keys()
+        .into_iter()
+        .filter_map(|key| {
+            let (_, text) = sources.text(key)?;
+            text.contains(old).then_some((key, text))
+        })
+        .collect();
+    loop {
+        let mut added = vec![];
+        for (key, text) in &texts {
+            let placement = &sources.idx.files[*key].placement;
+            for m in mentions(text) {
+                let names = sources.names(text, &m, placement);
+                // How much of each name is after the part a rename rewrites.
+                let rest = names.iter().find_map(|name| {
+                    if targets.contains(name) {
+                        return Some(0);
+                    }
+                    name.match_indices('.')
+                        .rfind(|&(dot, _)| dot > 0 && targets.contains(&name[..dot]))
+                        .map(|(dot, _)| name.len() - dot)
+                });
+                let Some(rest) = rest else {
+                    continue;
+                };
+                added.extend(
+                    names
+                        .iter()
+                        .filter(|name| name.len() > rest)
+                        .map(|name| name[..name.len() - rest].to_string())
+                        .filter(|name| !targets.contains(name)),
+                );
+            }
+        }
+        if added.is_empty() {
+            return targets;
+        }
+        targets.extend(added);
+    }
 }
 
 /// Whether `name` is one q takes for a name, with no dot in it.

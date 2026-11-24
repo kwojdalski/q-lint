@@ -2063,6 +2063,48 @@ fn a_block_comment_after_a_k_line_is_no_k() {
 }
 
 #[test]
+fn a_file_loaded_under_two_contexts_is_renamed_in_both() {
+    // #2043. KDB-X 5 runs this main.q and prints 1 1: b.q's one `ff:`
+    // defines `.aa.ff` and `.bb.ff`. Renaming it renames both, so the
+    // uses of `.bb.ff` follow, and the new name is checked in both.
+    let dir = tempfile::tempdir().unwrap();
+    let main = "\\d .aa\n\\l b.q\n\\d .bb\n\\l b.q\n\\d .\nshow .aa.ff[]\nshow .bb.ff[]\n";
+    let mut server = Server::start(dir.path(), &[("b.q", "ff:{1}\n"), ("main.q", main)]);
+    let uri = server.open(dir.path(), "main.q", main);
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        main,
+        ".aa.ff",
+        4,
+        json!({"newName": "gg"}),
+    );
+    assert_eq!(
+        edits(&reply["result"]),
+        [
+            edit("b.q", 0, 0, 2, "gg"),
+            edit("main.q", 5, 9, 11, "gg"),
+            edit("main.q", 6, 9, 11, "gg"),
+        ]
+    );
+    std::fs::write(dir.path().join("c.q"), "\\d .bb\ngg:2\n").unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let uri = server.open(dir.path(), "main.q", main);
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        main,
+        ".aa.ff",
+        4,
+        json!({"newName": "gg"}),
+    );
+    assert!(
+        refused(&reply).contains("`.bb.gg` is already assigned"),
+        "{reply}"
+    );
+}
+
+#[test]
 fn rename_can_be_turned_off_on_its_own() {
     let dir = tempfile::tempdir().unwrap();
     let options = json!({"rename": {"enable": false}});

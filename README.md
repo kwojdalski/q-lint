@@ -682,7 +682,9 @@ loaded in - and only its last part changes: `.lib.add` and `add` under
 in another namespace is refused. A dotted read through the global is one of
 those places, and only the global's part of it changes: `ta.c` for a table
 `ta` (q reads column `c` of the global), `.cfg.port` for a `.cfg` assigned
-whole. `prepareRename` answers with the range of
+whole. A file loaded under two contexts defines the name in both with one
+assignment, so both are renamed, and the uses of each with them.
+`prepareRename` answers with the range of
 that last part. `rename.enable: false` leaves renaming unannounced, and the
 rest of navigation on. The rename is refused for a name in a one-letter namespace
 (`.z.pg`, `.q.f`, which q keeps for itself), a name no indexed file assigns
