@@ -518,9 +518,11 @@ function readStatement(statement: string, found: Set<string>): void {
         }
         continue;
       }
-      // A writer indexed out of its namespace: `` .q[`set][`b;2] ``.
-      if ((k.text === ".q" || k.text === ".Q") && next?.text === "[" && t[i + 2]?.kind === "sym") {
-        const name = `${k.text}.${t[i + 2].text.slice(1)}`;
+      // A writer indexed out of its namespace: `` .q[`set][`b;2] ``, and by
+      // juxtaposition, `` (.q`set)[`b;2] `` (#1449).
+      const index = next?.text === "[" && t[i + 2]?.kind === "sym" ? t[i + 2] : next?.kind === "sym" ? next : undefined;
+      if ((k.text === ".q" || k.text === ".Q") && index !== undefined) {
+        const name = `${k.text}.${index.text.slice(1)}`;
         if (WRITERS.has(unqualified(name))) {
           found.add(`calls ${name}`);
           continue;

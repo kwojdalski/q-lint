@@ -876,3 +876,19 @@ test("in k code, a monadic . evaluates as value does (#1448)", () => {
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("a writer taken out of .q or .Q by juxtaposition is a change (#1449)", () => {
+  const cases = {
+    "(.q`set)[`a;1]": ["calls .q.set"],
+    ".q `upsert": ["calls .q.upsert"],
+    "(.Q`dpft)[`:d;.z.d;`sym;`t]": ["calls .Q.dpft"],
+    ".q[`set][`b;2]": ["calls .q.set"],
+    // What is not a writer reads.
+    "(.Q`dd)[`:a;`b]": [],
+    "(.q`count) t": [],
+    "key .q": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
