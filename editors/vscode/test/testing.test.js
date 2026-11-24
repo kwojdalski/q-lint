@@ -584,3 +584,36 @@ test("Stop stops a Re-run Failed run: what is still queued is not sent (#1597)",
   assert.deepStrictEqual(live.sent, []);
   assert.deepStrictEqual(explorer.results().map((r) => r.state), ["skipped"]);
 });
+
+test("one run at a time, and a busy process is asked once, not once per test (#1598)", async () => {
+  stub.reset();
+  fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  const live = fakeLive();
+  const runOnActive = live.runOnActive.bind(live);
+  let inFlight = 0;
+  let most = 0;
+  live.runOnActive = async (...args) => {
+    inFlight++;
+    most = Math.max(most, inFlight);
+    await new Promise((r) => setTimeout(r, 5));
+    try {
+      return await runOnActive(...args);
+    } finally {
+      inFlight--;
+    }
+  };
+  const explorer = registerTestExplorer(stub.newContext(), live, () => ({ sendRequest: async () => LISTED }));
+  await explorer.discover();
+  // A second run asked for while the first is under way waits for it.
+  await Promise.all([explorer.run(), explorer.run()]);
+  assert.strictEqual(most, 1);
+  assert.strictEqual(live.sent.length, 4);
+  // Busy: the first test says so, and the rest are not sent.
+  let asked = 0;
+  live.runOnActive = async () => (asked++, undefined);
+  await explorer.run();
+  assert.strictEqual(asked, 1);
+  assert.deepStrictEqual(explorer.results().map((r) => r.state), ["errored", "errored"]);
+  assert.match(explorer.results()[1].message, /Not run/);
+});

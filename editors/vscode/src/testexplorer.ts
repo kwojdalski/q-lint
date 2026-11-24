@@ -385,7 +385,18 @@ class QTests {
     return [...out];
   }
 
-  private async run(request: TestRunRequest, token: CancellationToken, ask: boolean, coverage = false): Promise<void> {
+  /// One run at a time (#1598): a run asked for while another is under way -
+  /// an affected-on-save run during a Run - waits for it, rather than find
+  /// the connection busy at every test.
+  private queue: Promise<void> = Promise.resolve();
+
+  private run(request: TestRunRequest, token: CancellationToken, ask: boolean, coverage = false): Promise<void> {
+    const next = this.queue.then(() => this.runNow(request, token, ask, coverage));
+    this.queue = next.catch(() => undefined);
+    return next;
+  }
+
+  private async runNow(request: TestRunRequest, token: CancellationToken, ask: boolean, coverage = false): Promise<void> {
     if (!on() || (coverage && !featureOn("testCoverage"))) {
       return;
     }
@@ -472,9 +483,17 @@ class QTests {
         await send([k4Statement(row)], "run").catch(() => undefined);
       }
     };
+    // Once a test finds no connection, or a query still running there, the
+    // rest are not sent: each would say so again (#1598).
+    let unreachable: string | undefined;
     try {
       for (const item of chosen) {
         const entry = this.entries.get(item)!;
+        if (unreachable !== undefined) {
+          run.errored(item, new TestMessage(unreachable));
+          outcome(item, "errored", unreachable);
+          continue;
+        }
         // Turned off mid-run is a cancel: what is still queued is not sent,
         // and what was set up is still torn down (#1277). Stop cancels the
         // run's own token, the one a run VS Code did not start has (#1597).
@@ -490,6 +509,9 @@ class QTests {
           let mode: TestMode;
           if (entry.kind === "snapshot") {
             await this.runSnapshot(run, item, entry.snapshot, process.label, started, outcome);
+            if (this.outcomes.at(-1)?.message?.startsWith("Not run:")) {
+              unreachable = this.outcomes.at(-1)?.message;
+            }
             continue;
           }
           if (entry.kind === "function") {
@@ -523,6 +545,7 @@ class QTests {
             const text = `Not run: no connection to ${process.label}, or a query is still running there.`;
             run.errored(item, new TestMessage(text));
             outcome(item, "errored", text);
+            unreachable = text;
           } else if (done.value.passed) {
             run.passed(item, duration);
             outcome(item, "passed");
