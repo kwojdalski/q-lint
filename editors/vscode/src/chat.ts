@@ -185,7 +185,10 @@ export async function converse(
   const messages = [LanguageModelChatMessage.User(prompt)];
   const tools = typeof lm.invokeTool === "function" ? qlintTools() : [];
   for (let round = 0; round < ROUNDS; round++) {
-    const response = await model.sendRequest(messages, tools.length > 0 ? { tools } : {}, token);
+    // The last round offers no tools: a call made in it would run with its
+    // result never sent back (#1615).
+    const last = round === ROUNDS - 1;
+    const response = await model.sendRequest(messages, tools.length > 0 && !last ? { tools } : {}, token);
     const calls: LanguageModelToolCallPart[] = [];
     const said: LanguageModelTextPart[] = [];
     if (response.stream !== undefined) {
@@ -203,6 +206,10 @@ export async function converse(
       }
     }
     if (calls.length === 0 || token.isCancellationRequested) {
+      return;
+    }
+    if (last) {
+      stream.markdown(`\n\nStopped after ${ROUNDS} rounds of tool calls; the last round's were not run. Ask again to go on.`);
       return;
     }
     messages.push(LanguageModelChatMessage.Assistant([...said, ...calls]));

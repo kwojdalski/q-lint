@@ -79,7 +79,7 @@ vscode.workspace.openTextDocument = async ({ content, language }) => {
 vscode.window.showTextDocument = async (d) => ({ document: d });
 
 const { registerAssistTools, LISTED_TABLE_INFO } = require("../out/assisttools.js");
-const { registerChat } = require("../out/chat.js");
+const { registerChat, converse } = require("../out/chat.js");
 const { registerQsqlDraft } = require("../out/qsqldraft.js");
 const { GATHER } = require("../out/explorer.js");
 const { TABLE_INFO } = require("../out/tableinfo.js");
@@ -328,6 +328,18 @@ test("@q explains a selection with the server's hovers and findings and the proc
   assert.deepStrictEqual(model.sent[1].messages.at(-1).content[0].callId, "c1");
   // The participant itself sent only DESCRIBE, which reads.
   assert.deepStrictEqual(live.sent, [["DESCRIBE", "f"]]);
+});
+
+test("@q offers no tools in its last round and runs none of that round's calls (#1615)", async () => {
+  setup();
+  const call = () => [new LanguageModelToolCallPart("c", "q-lint_runQuery", { query: "1" })];
+  const model = fakeModel([call(), call(), call(), call(), call()]);
+  const said = [];
+  await converse(model, "p", { markdown: (m) => said.push(m) }, token, "TOKEN");
+  assert.strictEqual(model.sent.length, 5);
+  assert.strictEqual(invoked.length, 4);
+  assert.strictEqual(model.sent[4].options.tools, undefined);
+  assert.match(said.join(""), /Stopped after 5 rounds of tool calls/);
 });
 
 test("@q /error explains the last failed query, or the error typed", async () => {
