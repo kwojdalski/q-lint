@@ -9,7 +9,7 @@
 // same rows each time, and defines only the table. The CSV is drawn here
 // by a seeded generator, as q would read it back with `0:`: times as q
 // writes them, symbols bare, strings quoted when they need to be.
-import { qString, symbolLiteral } from "./qliteral";
+import { plainName, qString, symbolLiteral } from "./qliteral";
 import type { TableInfo } from "./tableinfo";
 
 export interface TestDataOptions {
@@ -91,19 +91,28 @@ export function generator(type: string, o: TestDataOptions): string {
 
 /// The q that makes the rows, named `name`.
 export function testDataQ(info: TableInfo, name: string, o: TestDataOptions): string {
-  const cols = info.columns.map((c) => {
+  const gens = info.columns.map((c) => {
     const g = generator(c.type, o);
-    return `${c.name}:${c.name === o.sorted ? `asc ${g}` : g}`;
+    return c.name === o.sorted ? `asc ${g}` : g;
   });
   const keys = info.keys.filter((k) => info.columns.some((c) => c.name === k));
-  const by = keys.map((k) => `\`${k}`).join("");
-  const rows = `([] ${cols.join("; ")})`;
+  // A name q cannot parse (`my t`, `px bid`) by its symbol: the table set,
+  // its columns flipped from a dictionary (#1583).
+  const symbols = (names: string[]) => {
+    const each = names.map(symbolLiteral);
+    return each.every((s) => !s.startsWith("`$")) ? each.join("") : each.length === 1 ? `(${each[0]})` : `(${each.join(";")})`;
+  };
+  const by = symbols(keys);
+  const rows = info.columns.every((c) => plainName(c.name))
+    ? `([] ${info.columns.map((c, i) => `${c.name}:${gens[i]}`).join("; ")})`
+    : `flip ${info.columns.length === 1 ? `(enlist ${symbolLiteral(info.columns[0].name)})!enlist ${gens[0]}` : `${symbols(info.columns.map((c) => c.name))}!(${gens.join(";")})`}`;
+  const assign = (e: string) => (plainName(name) ? `${name}:${e}` : `(${symbolLiteral(name)}) set ${e}`);
   return [
     `/ q-lint: ${keys.length > 0 ? "up to " : ""}${o.rows.toLocaleString("en-US")} rows of test data shaped as ${name}. Run it on a local process.`,
     `\\S ${o.seed}`,
     `n:${o.rows}`,
     // A keyed table keeps the first row of each key drawn: a key is one row (#1282).
-    `${name}:${keys.length > 0 ? `${by} xkey {x where(til count x)=k?k:((),y)#x}[${rows};${by}]` : rows}`,
+    assign(keys.length > 0 ? `${by} xkey {x where(til count x)=k?k:((),y)#x}[${rows};${by}]` : rows),
     // A table named n is the count's name too: it stays (#1084).
     ...(name === "n" ? [] : [`delete n from \`.`]),
     "",

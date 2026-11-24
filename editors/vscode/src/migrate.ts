@@ -12,6 +12,7 @@
 // column that is in both but renamed reads as one dropped and one added:
 // the metas cannot tell a rename from that.
 import { columnScriptOf, type ColumnOp } from "./colmanager";
+import { plainName, symbolLiteral } from "./qliteral";
 import type { TableInfo } from "./tableinfo";
 
 export interface SchemaDiff {
@@ -129,21 +130,31 @@ export function migrationScript(name: string, fromInfo: TableInfo, fromWhere: st
       columnScriptOf(name, ops, process, `migrate ${name} to the schema of ${toWhere}`),
     ].join("\n") + "\n";
   }
-  const t = name;
+  // A table q cannot parse by name (`my t`) is read with get and assigned
+  // with set; a column q-sql cannot name is dropped functionally, and left
+  // as a comment otherwise (#1583).
+  const t = plainName(name) ? name : `get${symbolLiteral(name)}`;
+  const assign = (e: string) => (plainName(name) ? `${name}:${e}` : `(${symbolLiteral(name)}) set ${e}`);
+  const symbols = (names: string[]) => {
+    const each = names.map(symbolLiteral);
+    return each.every((s) => !s.startsWith("`$")) ? each.join("") : `(${each.join(";")})`;
+  };
+  const odd = (c: string, what: string) => `/ not written: ${what} ${c}, whose name q-sql cannot write`;
   const keyed = from.keys.length > 0;
   const lines = [...head];
-  if (keyed) lines.push(`${t}:0!${t}`);
-  for (const c of d.drop) lines.push(`${t}:delete ${c} from ${t}`);
+  if (keyed) lines.push(assign(`0!${t}`));
+  for (const c of d.drop) lines.push(plainName(c) ? assign(`delete ${c} from ${t}`) : assign(`![${t};();0b;enlist ${symbolLiteral(c)}]`));
   // A nested or mixed column takes its empty item once a row: `m:()` is 'length (#1097).
-  for (const a of d.add) lines.push(a.type === a.type.toUpperCase() ? `${t}:update ${a.name}:count[i]#enlist ${nullOf(a.type)} from ${t}` : `${t}:update ${a.name}:${nullOf(a.type)} from ${t}`);
+  for (const a of d.add)
+    lines.push(!plainName(a.name) ? odd(a.name, "the add of") : a.type === a.type.toUpperCase() ? assign(`update ${a.name}:count[i]#enlist ${nullOf(a.type)} from ${t}`) : assign(`update ${a.name}:${nullOf(a.type)} from ${t}`));
   for (const c of d.cast) {
     const problem = castProblem(c.from, c.to, false);
-    lines.push(problem === undefined ? `${t}:update ${c.name}:${castOf(c.name, c.from, c.to)} from ${t}` : `/ not written: a cast of ${c.name} from ${c.from} to ${c.to}: ${problem}`);
+    lines.push(!plainName(c.name) ? odd(c.name, "the cast of") : problem === undefined ? assign(`update ${c.name}:${castOf(c.name, c.from, c.to)} from ${t}`) : `/ not written: a cast of ${c.name} from ${c.from} to ${c.to}: ${problem}`);
   }
-  for (const c of d.attrs) lines.push(`${t}:update ${c.name}:${c.to ? `\`${c.to}#` : "`#"}${c.name} from ${t}`);
-  if (d.order) lines.push(`${t}:${d.order.map((c) => `\`${c}`).join("")} xcols ${t}`);
+  for (const c of d.attrs) lines.push(!plainName(c.name) ? odd(c.name, "the attribute of") : assign(`update ${c.name}:${c.to ? `\`${c.to}#` : "`#"}${c.name} from ${t}`));
+  if (d.order) lines.push(assign(`${symbols(d.order)} xcols ${t}`));
   const keys = to.keys.filter((k) => to.columns.some((c) => c.name === k));
-  if (keys.length > 0) lines.push(`${t}:${keys.map((k) => `\`${k}`).join("")} xkey ${t}`);
-  else if (keyed) lines.push(`/ ${t} was keyed by ${from.keys.join(", ")}; the target is not, so it is left unkeyed`);
+  if (keys.length > 0) lines.push(assign(`${symbols(keys)} xkey ${t}`));
+  else if (keyed) lines.push(`/ ${name} was keyed by ${from.keys.join(", ")}; the target is not, so it is left unkeyed`);
   return lines.join("\n") + "\n";
 }

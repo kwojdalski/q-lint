@@ -382,6 +382,24 @@ test("the test data generator's shorts and ints stay in their type's range", { s
   }
 });
 
+// A table or column name q cannot parse is written by its symbol (#1583).
+test("the test data generator and a migration in memory write names with a space", { skip }, async (t) => {
+  const { connection } = await connect(t, '(`$"my t") set ([] a:1 2);\ntgt:([] a:1 2; b:3 4);\nw:flip(`$("px bid";"a"))!(1 2f;3 4);\n');
+  const info = async (n) => readTableInfo(await connection.call(TABLE_INFO, n, 100));
+  const o = { rows: 3, symbols: ["A"], low: 0, high: 1, seed: 1 };
+  for (const [table, name] of [["my t", "my t"], ["w", "w2"]]) {
+    const ran = readRun(await connection.call(RUN_SCRIPT, statements(testDataQ(await info(table), name, o))));
+    assert.ok(ran.ok, ran.error);
+  }
+  assert.deepStrictEqual(await connection.call('{("f"$count get`$"my t";cols w2)}', 0), [3, ["px bid", "a"]]);
+  const ran = readRun(await connection.call(RUN_SCRIPT, statements(migrationScript("my t", await info("my t"), "my t", await info("tgt"), "tgt", "p"))));
+  assert.ok(ran.ok, ran.error);
+  assert.deepStrictEqual(await connection.call('{cols get`$"my t"}', 0), ["a", "b"]);
+  const dropped = readRun(await connection.call(RUN_SCRIPT, statements(migrationScript("w", await info("w"), "w", await info("tgt"), "tgt", "p"))));
+  assert.ok(dropped.ok, dropped.error);
+  assert.deepStrictEqual(await connection.call("{cols w}", 0), ["a", "b"]);
+});
+
 test("the test data generator keys a table by distinct keys, of two columns too, in the sorted column's order (#1282)", { skip }, async (t) => {
   const { connection } = await connect(t, "");
   const col = (name, type) => ({ name, type, fkey: "", attr: "" });
