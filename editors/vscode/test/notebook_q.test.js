@@ -283,6 +283,26 @@ test("an exported notebook loads in q and defines what its cells define", { skip
   assert.deepStrictEqual((await connection.query(["(a;f 1;exec v from r;b;c;d)"], SIZE)).text, ["1", "2", "2 3 4", "2", "3", "6"]);
 });
 
+test("a grid cell shows a partitioned table, cut as the result panel cuts it (#1368)", { skip }, async (t) => {
+  const q = await startQ(`
+{[d] .Q.dd[hsym \`$(string .z.f),"_hdb";d,\`p\`] set .Q.en[hsym \`$(string .z.f),"_hdb"] ([] sym:\`a\`b\`c; px:1 2 3f)} each 2026.01.01 2026.01.02;
+system "l ",(string .z.f),"_hdb";
+`);
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.close());
+  const data = async (rows) => readCellData(await connection.call(DATA, statements("p"), rows, SIZE));
+  const first = await data(4);
+  assert.strictEqual(first.ok, true, JSON.stringify(first));
+  assert.deepStrictEqual(first.table.columns, ["date", "sym", "px"]);
+  assert.strictEqual(first.table.total, 6);
+  assert.deepStrictEqual(first.table.data[1], ["a", "b", "c", "a"]);
+  const last = await data(-2);
+  assert.deepStrictEqual(last.table.data[0], ["2026.01.02", "2026.01.02"]);
+  assert.deepStrictEqual(last.table.data[1], ["b", "c"]);
+  assert.strictEqual((await data(Infinity)).table.data[0].length, 6);
+});
+
 test("an exported notebook whose comments hold a lone / loads to its end", { skip }, async (t) => {
   // KDB-X opens a block comment inside a block comment on a lone `/`, and
   // one `\` then closes only that one: the rest of the script was comment.

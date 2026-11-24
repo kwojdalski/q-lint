@@ -18,7 +18,9 @@
 // dictionary keyed by a table whose value is not one is not a keyed table.
 // At most `rows` rows are sent, with the table's count, so a large table is
 // cut by the process: the first `rows`, or the last when `rows` is negative,
-// and every row when it is infinite (`sublist` with `0W`). The row limit and
+// and every row when it is infinite (`sublist` with `0W`). A partitioned
+// table, which `sublist` refuses, is read by row index with `.Q.ind`, as
+// `GRID` reads it (#1368). The row limit and
 // where it counts from are `q-lint.notebook.rowLimit` and `rowLimitFrom`,
 // made one signed count by `liveconfig.ts`'s `rowsArgument`. A value that is not a table answers as `RUN` would.
 // `rows` and `size` arrive as floats, and are made long there.
@@ -44,7 +46,9 @@ export const DATA = [
   " k:$[99h=type v;$[(98h=type key v)&98h=type value v;count cols key v;0];0];",
   " t:$[k>0;0!v;v];",
   " if[not 98h=type t;:`ok`table`type`text!(1b;0b;type v;.Q.S[\"j\"$size;0j] v)];",
-  " c:{$[count[cols x]=count distinct cols x;x cols x;value flip x]} (\"j\"$rows) sublist t;",
+  " n:\"j\"$rows;m:count t;",
+  " u:$[1b~.Q.qp t;[j:$[n<0;(m+n)|0;0]+til m&abs n;$[count j;.Q.ind[t;j];select from t where i<0]];n sublist t];",
+  " c:{$[count[cols x]=count distinct cols x;x cols x;value flip x]} u;",
   " str:{$[(0h=type x)|76h<type x;{$[10h=type x;x;-3!x]} each x;string x]};",
   " `ok`table`columns`types`keys`data`total!(1b;1b;cols t;type each c;k;str each c;count t)}",
 ].join("\n");
