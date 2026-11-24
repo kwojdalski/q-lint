@@ -182,3 +182,11 @@ test("a writer named by a cast symbol is held, and writes once let through (#203
   await heldThenWrites(send, read, '(`$".q.set") . (`zz1;1)', "`zz1 in key `.");
   await heldThenWrites(send, read, '(`$".q.value") "p8:1"', "`p8 in key `.");
 });
+
+test("an amend projection in parentheses applied to its target is held, and amends once let through (#2038)", { skip }, async (t) => {
+  const q = await startQ(t, "\n");
+  const { send, read } = await setUp(t, q.port);
+  await heldThenWrites(send, read, "(.[;();:;1]) `q8", "`q8 in key `.");
+  await heldThenWrites(send, read, "(@[;();:;1]) `u8", "`u8 in key `.");
+  await heldThenWrites(send, read, "(.[;();:;1]) each `v2`v3", "all `v2`v3 in key `.");
+});

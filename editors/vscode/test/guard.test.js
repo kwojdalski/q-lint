@@ -1438,3 +1438,23 @@ test("a writer named by a symbol cast from a string is the writer: (`$\".q.set\"
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("an amend projected on all but its target, in parentheses or applied some way, amends the target (#2038)", () => {
+  const cases = {
+    "(.[;();:;1]) `q8": ["amends `q8 in place"],
+    "(@[;();:;1]) `u8": ["amends `u8 in place"],
+    "(.[;();:;1])[`u9]": ["amends `u9 in place"],
+    "((.[;();:;1])) `v1": ["amends `v1 in place"],
+    "(.[;();:;1]) each `v2`v3": ["amends `v2 in place"],
+    "(@[;`a;:;1]) `.": ["amends `. in place"],
+    "(.[;();:;1])@`w1": ["amends `w1 in place"],
+    "(.[;();:;1]) . enlist `w2": ["amends `w2 in place"],
+    ".[;();:;1]/:[`w3]": ["amends `w3 in place"],
+    // On a value it is a value.
+    "(.[;();:;1]) t": [],
+    "(@[;0;+;1]) 1 2": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

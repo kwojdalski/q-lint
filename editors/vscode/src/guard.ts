@@ -66,7 +66,9 @@
 //   amends `f` or fails (#1763); `![` with four likewise, a functional
 //   update or delete. Also through an adverb or applied first in a
 //   composition (`` @/[`.;`a;:;9] ``, `` '[::;@][..] ``), with the target left
-//   out and given after (`` @[;`a;:;1] `. ``), and the amend or `!`
+//   out and given after (`` @[;`a;:;1] `. ``), the projection in parentheses
+//   too and applied by `each`, an adverb, `@` or `.` (`` (.[;();:;1]) `a ``,
+//   `` (.[;();:;1]) each `a`b ``, #2038), and the amend or `!`
 //   passed as a value (`` .[@;(`.;`a;:;1)] ``, `` (@) . (`.;..) ``);
 // - `value`, `get`, `eval`, `reval`, `-6!` or `-24!`, or in k code a monadic `.`
 //   (`` k)."a:1" ``), applied to a string that changes the process by these
@@ -1044,16 +1046,27 @@ function readStatement(statement: string, found: Set<string>): void {
         const args = items(t, i);
         // The target, or with it left out, what the projection is applied
         // to: `` @[;`a;:;1] `. ``, `` .[;();:;5][`a] ``.
-        const close = args.length > 0 ? args[args.length - 1][1] : -1;
+        // Past the parentheses the projection is in, `` (.[;();:;1]) `a ``,
+        // and what applies it, `each`, an adverb, `@` or `.` (#2038).
+        let close = args.length > 0 ? args[args.length - 1][1] : -1;
+        for (let wraps = 0; t[i - 2 - wraps]?.text === "(" && t[close + 1]?.text === ")"; wraps++) close++;
+        let applied = close + 1;
+        while (t[applied]?.kind === "op" && ["'", "/", "\\", ":"].includes(t[applied].text)) applied++;
+        if (t[applied]?.kind === "name" && ITERATORS.has(t[applied].text)) applied++;
+        const iterated = applied > close + 1;
+        if ((t[applied]?.text === "@" || t[applied]?.text === ".") && t[applied].kind === "op") applied++;
+        if (t[applied]?.text === "enlist" && t[applied - 1]?.text === ".") applied++;
         const target =
           args[0]?.[0] !== args[0]?.[1]
             ? // The symbol alone, not indexed: `` @[(`t)[0];..] `` is a value.
               t.slice(args[0][0], args[0][1]).filter((k) => k.text !== "(" && k.text !== ")").length === 1
               ? symbolAt(t, i + 1)
               : undefined
-            : t[close + 1]?.text === "[" && t[close + 1].kind === "open"
-              ? symbolAt(t, close + 2)
-              : symbolAt(t, close + 1);
+            : (t[applied]?.text === "[" || (t[applied]?.text === "(" && t[applied - 1]?.text === ".")) && t[applied].kind === "open"
+              ? symbolAt(t, applied + 1)
+              : iterated && t[applied]?.kind === "sym"
+                ? t[applied].text
+                : symbolAt(t, applied);
         // Three is an amend too, with a unary, `` @[`t;`c;{x*2}] ``: on a
         // symbol it is never a trap (#1763). `!` takes four.
         if (target !== undefined && target.length > 1 && args.length >= minimum(amend)) {
