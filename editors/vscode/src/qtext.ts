@@ -61,7 +61,9 @@ export const TEXT_LIMIT = 100000;
 // anything else on one line. A simple column or key is written with
 // `string`, as `.Q.s` writes it, and every other cell by `FULL_TEXT` - so
 // an item of a list keeps the `(1;`a)` or `1 2f` that `.Q.s` drops, and a
-// matrix is not aligned. A value it cannot lay out is on one line.
+// matrix is not aligned. A value it cannot lay out is on one line. Facing
+// a table, the other side of a dictionary gets a blank line and a rule as
+// wide as its first item, as `.Q.t0` gives it (#2070).
 export const LAID_OUT = [
   "{[F;n;x]",
   " if[(::)~x;:\"\"];",
@@ -72,6 +74,6 @@ export const LAID_OUT = [
   "   t:type x;x:$[t in 0 98 99h;(1+n div 2)sublist x;x];",
   "   ` sv$[t=98h;T x;t=0h;$[count x;F each x;enlist F x];t<>99h;enlist F x;",
   "    [p:98h=type each(k:key x;v:value x);",
-  "     l:$[p 0;T k;((2*p 1)#(\"\";\"\")),C k];j:$[p 1;T v;((2*p 0)#(\"\";\"\")),C v];",
+  "     R:{[p;s]$[p;((count first s)#'\" -\"),s;s]};l:$[p 0;T k;R[p 1]C k];j:$[p 1;T v;R[p 0]C v];",
   "     ((max 0,count each l)$/:l),'\"| \",/:j]]};(F;n;x);{[F;n;x;e]F[n;x],\"\\n\"}[F;n;x]]}",
 ].join("\n");

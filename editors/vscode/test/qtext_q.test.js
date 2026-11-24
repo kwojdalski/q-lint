@@ -168,6 +168,24 @@ test("LAID_OUT shows every row and each cell to its end on a narrow console", { 
   assert.deepStrictEqual(Array.from((await c.evaluate("system\"c\"")).value, Number), [10, 20]);
 });
 
+test("LAID_OUT rules a dictionary with a table on one side as .Q.s does at a wide console (#2070)", { skip }, async (t) => {
+  const c = await connect(t, `${SERVER}\n\\c 10 20\n`);
+  const values = [
+    "(enlist`a)!([]x:enlist til 4)",
+    "([]x:enlist til 4)!enlist `a",
+    "`ab`cde!([]x:1 2)",
+    "([]x:1 2)!`ab`cde",
+    "([]x:1 2;yy:3 4)!`ab`cde",
+    "(`ab;`cdefg)!([]xxxxxxxxx:1 2;yy:3 4)",
+    "([k:`a`b] v:1 2)",
+  ];
+  for (const v of values) {
+    const laid = (await c.evaluate(`${LAID_OUT}[${FULL_TEXT};20000;${v}]`)).value;
+    const wide = (await c.evaluate(`{system"c 2000 3000";r:.Q.s x;system"c 10 20";r}${v}`)).value;
+    assert.strictEqual(laid, wide, v);
+  }
+});
+
 test("the text lambdas are reads to the guard", () => {
   assert.deepStrictEqual(writes(`${FULL_TEXT}[0W;1]`), []);
   assert.deepStrictEqual(writes(`${LAID_OUT}[${FULL_TEXT};100;1]`), []);
