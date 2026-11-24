@@ -39,6 +39,8 @@ export class Launcher {
   /// The labels being started: held from before the first await, so a
   /// second Start while one is on its way is refused, not spawned (#1249).
   private readonly starting = new Set<string>();
+  /// Set when VS Code closes: a Start still on its way spawns nothing.
+  private disposed = false;
 
   constructor(
     context: ExtensionContext,
@@ -55,7 +57,7 @@ export class Launcher {
           this.stopAll();
         }
       }),
-      { dispose: () => this.stopAll() },
+      { dispose: () => ((this.disposed = true), this.stopAll()) },
     );
   }
 
@@ -178,6 +180,11 @@ export class Launcher {
     // then the definition's own; the output shows none of their values.
     const folder = workspace.workspaceFolders?.[0]?.uri;
     const env = mergeEnv(layoutEnvFor(plan.command, folder), await dotenvFor(folder), plan.env);
+    // Turned off, or VS Code closing, while it waited: stopAll has run over
+    // what was started, and would not stop this one (#1434).
+    if (this.disposed || !this.enabled()) {
+      return `the process launcher was turned off; ${process.label} was not started.`;
+    }
     const channel = this.channel(process.label);
     channel.appendLine(`$ ${commandText(plan)}    (in ${plan.cwd})`);
     channel.show(true);

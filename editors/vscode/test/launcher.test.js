@@ -229,6 +229,21 @@ test("turned off, or VS Code closing, the launcher's output channels go too (#14
   assert.ok(closed.has("q: b"));
 });
 
+test("turned off while a Start is on its way, nothing is spawned (#1434)", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-"));
+  fs.writeFileSync(path.join(dir, "fake.js"), FAKE);
+  const port = await freePort();
+  const { launcher, output } = await setUp(t, [proc("a", port, { command: process.execPath, script: "fake.js", cwd: dir })]);
+  const started = stub.commands.get(LAUNCH_COMMANDS.start)("a");
+  stub.config.user["processes.launcher.enable"] = false;
+  stub.changeConfig("q-lint.processes.launcher.enable");
+  await started;
+  await sleep(300);
+  assert.deepStrictEqual(launcher.running(), []);
+  assert.strictEqual(await accepts(port), false);
+  assert.ok(!output("a").includes("$ "), output("a"));
+});
+
 test("Set Launch Definition asks for the program, script and arguments", async (t) => {
   const { live } = await setUp(t, [proc("rdb", 5010, undefined, { tags: ["dev"] })]);
   stub.inputs.push("", "torq.q", '-proctype rdb -procname "rdb 1"');
