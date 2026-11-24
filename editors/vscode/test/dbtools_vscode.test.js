@@ -278,6 +278,38 @@ test("Open Dashboard with a name no dashboard has makes one of that name, asking
   assert.strictEqual(value, "Trading ");
 });
 
+// Names went to the picks as plain strings beside "$(add) New dashboard...",
+// and the pick was told from it by its text: a name with $(trash) drew an
+// icon, and a dashboard named as that item could never be opened.
+test("a dashboard's and a saved query's $(name) are text in the picks, and any name can be picked (#1929)", async (t) => {
+  capture();
+  const { live, context } = await setUp(t);
+  const fresh = "$(add) New dashboard...";
+  await context.workspaceState.update(SAVED_QUERIES_KEY, [{ name: "px $(zap)", code: "select from trade" }]);
+  await context.workspaceState.update(DASHBOARDS_KEY, [
+    { name: "$(trash) x", columns: 2, tiles: [] },
+    { name: fresh, columns: 2, tiles: [] },
+  ]);
+  live.runApart = async () => ({ ok: true, type: -7, text: ["1"] });
+  const dashboards = new Dashboards(context, live);
+  const labels = (o) => o.items.map((i) => (typeof i === "string" ? i : i.label));
+  let offered;
+  stub.picks.push((o) => ((offered = labels(o)), o.items[1]));
+  assert.strictEqual(await stub.commands.get(DB_COMMANDS.openDashboard)(), fresh);
+  assert.deepStrictEqual(offered, ["\\$(trash) x", "\\$(add) New dashboard...", fresh]);
+  assert.strictEqual(stub.inputs.length, 0);
+  assert.strictEqual(context.workspaceState.get(DASHBOARDS_KEY).length, 2);
+  // Add to Dashboard: the saved query by its own name, onto the dashboard picked.
+  const seen = [];
+  stub.picks.push((o) => (seen.push(labels(o)), o.items[0]), (o) => (seen.push(labels(o)), o.items[1]));
+  const id = await stub.commands.get(DB_COMMANDS.addToDashboard)(undefined, undefined, "hdb");
+  assert.deepStrictEqual(seen, [["px \\$(zap)"], ["\\$(trash) x", "\\$(add) New dashboard...", fresh]]);
+  const saved = context.workspaceState.get(DASHBOARDS_KEY);
+  assert.deepStrictEqual(saved.map((d) => d.tiles.map((x) => x.query)), [[], ["px $(zap)"]]);
+  assert.strictEqual(saved[1].tiles[0].id, id);
+  dashboards.close();
+});
+
 // A timer was set only when a tile had none: 5 s -> 300 s went on
 // querying every 5 s until the panel closed.
 test("changing a tile's refresh interval sets its timer again (#1123)", async (t) => {

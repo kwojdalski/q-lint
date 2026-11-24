@@ -4,6 +4,7 @@
 // `.z.x`, and the lines typed into q's console once it starts. No `vscode`
 // import, so node tests it; `runargsview.ts` asks and runs, through Run
 // Code from Terminal's own start (`QTerminals.runFile`).
+import { iconsEscaped } from "./history";
 import { splitArgs } from "./processes";
 
 export const RUN_ARGS_COMMAND = "q-lint.runFileWithArguments";
@@ -111,11 +112,12 @@ export function extraOf(set: ArgSet): RunExtra {
   return { args: splitArgs(set.args), input: inputLines(set.input) };
 }
 
-/// A set as the quick pick lists it.
+/// A set as the quick pick lists it: its arguments as written, a `$(name)`
+/// among them not drawn as an icon (#1929).
 export function describe(set: ArgSet): { label: string; description: string } {
   const n = inputLines(set.input).length;
   return {
-    label: set.args.trim() === "" ? "(no arguments)" : set.args,
+    label: set.args.trim() === "" ? "(no arguments)" : iconsEscaped(set.args),
     description: n === 0 ? "" : `then ${n} line${n === 1 ? "" : "s"} of input`,
   };
 }

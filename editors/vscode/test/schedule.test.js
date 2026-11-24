@@ -202,6 +202,25 @@ test("a saved query's and a process's $(name) are text in the picks, and the sch
   assert.strictEqual(made.process, "p$(zap)");
 });
 
+// A quick pick draws $(name) in a detail as it does in a label: the two
+// file paths of step 6 and a schedule's last outcome went in as written.
+test("a path's and a last outcome's $(name) are text in the picks' details (#1929)", async (t) => {
+  const { schedules, context } = await setUp(t, [{ label: "p", host: "h", port: 1, tags: [] }], [{ name: "trades", code: "select from trade" }]);
+  vscode.window.showSaveDialog = async () => vscode.Uri.file("/data/$(pwd)/out.csv");
+  let details;
+  stub.picks.push("trades", "p", "CSV", (o) => ((details = o.items.map((i) => i.detail)), o.items[0]));
+  stub.inputs.push("+30");
+  const made = await schedules.add();
+  assert.strictEqual(made.path, "/data/$(pwd)/out.csv");
+  assert.strictEqual(details[0], "/data/\\$(pwd)/out.csv");
+  assert.match(details[1], /^\/data\/\\\$\(pwd\)\/out-\d{8}-\d{6}.*\.csv$/);
+  await context.workspaceState.update(SCHEDULES_KEY, [{ ...made, last: "failed at 09:00: p answered '$(flame) is not a table" }]);
+  let listed;
+  stub.picks.push((o) => ((listed = o.items.map((i) => i.detail)), undefined));
+  await schedules.manage();
+  assert.deepStrictEqual(listed, ["failed at 09:00: p answered '\\$(flame) is not a table"]);
+});
+
 // tick built its due list once: a run longer than the tick let the next
 // tick start a schedule the first then ran again, both writing one file;
 // Run Now never asked whether it was running.
