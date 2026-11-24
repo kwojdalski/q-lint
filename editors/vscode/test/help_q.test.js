@@ -58,3 +58,19 @@ test("every cheat sheet entry runs, and an example gives its result", { skip }, 
   }
   assert.deepStrictEqual(runChecks(checks), []);
 });
+
+// Eight examples left the tables t, q and kt behind, so Try it replaced the
+// ones a session had under those names (#1991). q is asked what is defined:
+// `insert` and `set` name what they write in a symbol no reading of the text
+// is sure of.
+test("no example or cheat sheet entry leaves a global behind", { skip }, () => {
+  const examples = JSON.parse(fs.readFileSync(path.join(root, "help", "examples.json"), "utf8"));
+  const sheet = JSON.parse(fs.readFileSync(path.join(root, "help", "cheatsheet.json"), "utf8"));
+  const codes = [...Object.values(examples).flatMap((entry) => entry.examples.map((e) => e.code)), ...sheet.flatMap((s) => s.items.filter((i) => i.result !== undefined).map((i) => i.example ?? i.insert))];
+  // The root namespace and the namespaces, but the one kept for the examples: insert's table is there.
+  const defined = "(key `.;(key `) except `qlintex)";
+  assert.deepStrictEqual(runChecks(codes.map((code) => `{[e] was:${defined}; value e; was~${defined}} ${stringLiteral(code)}`)), []);
+  assert.ok(codes.length >= 230, `${codes.length} examples`);
+  // And one that does is found.
+  assert.strictEqual(runChecks(["{[e] was:key `.; value e; was~key `.} \"t:([] a:1 2); `t insert 3; t\""]).length, 1);
+});

@@ -132,6 +132,23 @@ test("the cheat sheet has its four sections, each item with an example and resul
   }
 });
 
+// Eight examples built their tables in the globals t, q and kt, and Try it
+// then replaced those on the connected process (#1991). What is assigned is
+// what the read-only guard reads as an assignment.
+test("no example assigns a global: its tables are written where they are used", () => {
+  const { writes } = require("../out/guard.js");
+  const examples = JSON.parse(read("help", "examples.json"));
+  const sheet = h.readCheatSheet(read("help", "cheatsheet.json"));
+  const codes = [
+    ...Object.entries(examples).flatMap(([name, entry]) => entry.examples.map((e) => [name, e.code])),
+    ...sheet.flatMap((s) => s.items.map((item) => [item.label, item.example])),
+  ];
+  const assigning = codes.map(([name, code]) => [name, writes(code).filter((r) => r.startsWith("assigns "))]).filter(([, reasons]) => reasons.length > 0);
+  // insert takes its table by name alone: its example's is under a namespace kept for the examples.
+  assert.deepStrictEqual(assigning, [["insert", ["assigns .qlintex.t"]]]);
+  assert.deepStrictEqual(writes("t:([] a:1 2); `t insert 3; t").filter((r) => r.startsWith("assigns ")), ["assigns t"]);
+});
+
 test("the switches are declared, on by default, and hide their commands and view when off", () => {
   const props = Object.assign({}, ...pkg.contributes.configuration.map((c) => c.properties));
   for (const key of ["helpPages", "tryExamples", "cheatSheet"]) {

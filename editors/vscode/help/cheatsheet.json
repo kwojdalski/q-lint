@@ -24,7 +24,7 @@
       { "label": "ej, equi join", "insert": "ej[`k;t1;t2]", "description": "the rows of t1 and t2 that match on the named columns", "example": "ej[`k;([] k:1 2; a:3 4);([] k:2 2; b:5 6)]", "result": "([] k:2 2; a:4 4; b:5 6)" },
       { "label": "pj, plus join", "insert": "t pj kt", "description": "kt's matching numeric values added to t's", "example": "([] k:1 2; v:1 1) pj ([k:enlist 2] v:enlist 10)", "result": "([] k:1 2; v:1 11)" },
       { "label": "aj, as-of join", "insert": "aj[`sym`time;t;q]", "description": "each row of t with the last row of q at or before its time", "example": "aj[`sym`time;([] sym:enlist `a; time:enlist 10:00);([] sym:`a`a; time:09:00 11:00; px:1 2)]", "result": "([] sym:enlist `a; time:enlist 10:00; px:enlist 1)" },
-      { "label": "wj, window join", "insert": "wj[w;`sym`time;t;(q;(max;`px))]", "description": "an aggregate of q's rows within a window around each time of t", "example": "t:([] sym:enlist `a; time:enlist 10:00); q:([] sym:`a`a`a; time:09:58 10:01 10:05; px:1 2 3); wj[-2 2+\\:t`time;`sym`time;t;(q;(max;`px))]", "result": "([] sym:enlist `a; time:enlist 10:00; px:enlist 2)" },
+      { "label": "wj, window join", "insert": "wj[w;`sym`time;t;(q;(max;`px))]", "description": "an aggregate of q's rows within a window around each time of t", "example": "wj[-2 2+\\:enlist 10:00;`sym`time;([] sym:enlist `a; time:enlist 10:00);(([] sym:`a`a`a; time:09:58 10:01 10:05; px:1 2 3);(max;`px))]", "result": "([] sym:enlist `a; time:enlist 10:00; px:enlist 2)" },
       { "label": ", (join rows)", "insert": "t1,t2", "description": "the rows of t2 after t1's, the columns the same", "example": "([] a:enlist 1),([] a:enlist 2)", "result": "([] a:1 2)" }
     ]
   },
