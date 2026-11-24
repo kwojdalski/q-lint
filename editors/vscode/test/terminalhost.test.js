@@ -128,6 +128,18 @@ test("a q binary and an env file under ~ are read from the home directory", asyn
   assert.strictEqual(fake.terminals[0].sent[0], `QHOME=/opt/q ${path.join(home, "q/m64/q")}`);
 });
 
+// A file outside every folder starts in its own directory, where the
+// folder's ./kdb/m64/q is another file or none (#1716).
+test("a relative q binary is the folder's, also for a file outside every folder", async () => {
+  for (const [file, sent] of [["/ws/a.q", "./kdb/m64/q a.q"], ["/elsewhere/b.q", `${path.resolve("/ws", "kdb/m64/q")} b.q`]]) {
+    const fake = fakeVscode({ "terminal.qBinary": "./kdb/m64/q" });
+    const terminals = load(fake);
+    fake.vscode.window.activeTextEditor = { document: fake.document(file, "1+1") };
+    await terminals.runFile();
+    assert.strictEqual(fake.terminals[0].sent[0], sent);
+  }
+});
+
 test("an env file's bad line is named by its number, never its text (#1685)", async () => {
   const fake = fakeVscode({ "terminal.envPath": "/ws/.qenv" }, { "/ws/.qenv": "QHOME=/opt/q\nKX_TOKEN hunter2-secret\n" });
   const terminals = load(fake);

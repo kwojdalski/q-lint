@@ -69,7 +69,7 @@ import { historyHeading, historyLabel, iconsEscaped, mergedHistory, plainMessage
 import { render } from "./query";
 import { QueryModes, type PageLater, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
-import { commandLine, expandHome, replLines, shellKind, terminalCwd } from "./terminal";
+import { commandLine, expandHome, qBinaryFrom, replLines, shellKind, terminalCwd } from "./terminal";
 import { readDotenv, terminalEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import type { RunExtra } from "./runargs";
@@ -486,7 +486,10 @@ export class QTerminals {
     const relative = file !== undefined && cwd !== undefined ? path.relative(cwd, file) : "";
     const inside = relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
     const args = file === undefined ? [] : [inside ? relative : file, ...extraArgs];
-    const line = commandLine(settings.qBinary, args, shellKind(env.shell), shown, refs);
+    // A relative q is the folder's, as in the launcher, also for a file
+    // outside every folder, whose terminal starts elsewhere (#1716).
+    const binary = cwd === folder?.uri.fsPath ? settings.qBinary : (qBinaryFrom(settings.qBinary, folder?.uri.fsPath, os.homedir()) ?? settings.qBinary);
+    const line = commandLine(binary, args, shellKind(env.shell), shown, refs);
     if (typeof line !== "string") {
       void window.showErrorMessage(plainMessage(`q-lint: ${line.error}`));
       return undefined;
