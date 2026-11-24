@@ -1662,6 +1662,145 @@ fn a_dotted_read_that_may_not_be_the_global_refuses_the_rename() {
 }
 
 #[test]
+fn a_global_named_by_a_symbol_is_renamed_where_q_takes_the_name() {
+    // #2018. Each form below takes a global by its name, as KDB-X 5 answers
+    // with `tb:([]c:3 1 2)`: `update .. from `tb`, `delete from `tb ..`,
+    // `` `c xkey `tb ``, `` `c xasc `tb ``, `xdesc[`c;`tb]`, `` 1!`tb ``,
+    // `![`tb;();0b;enlist`d]` and `@[`tb;`c;neg]` change tb in place and
+    // return `` `tb ``; `?[`tb;();0b;()]`, `` get`tb ``, `` value `tb ``,
+    // `` cols `tb ``, `` meta `tb `` and `` keys `tb `` read it. A rename
+    // that left them alone wrote a file that fails on 'tb.
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let lines = [
+        "tb:([]c:1 2 3;d:4 5 6)",
+        "update c:c*2 from `tb;",
+        "delete from `tb where c>1;",
+        "@[`tb;`c;neg];",
+        "r1:get`tb",
+        "r2:value `tb",
+        "`c xkey `tb;",
+        "`c xasc `tb;",
+        "xdesc[`c;`tb];",
+        "r3:?[`tb;();0b;()]",
+        "![`tb;();0b;enlist`d];",
+        "r4:(cols `tb;meta[`tb];keys (`tb))",
+        "0!`tb;",
+        "r5:exec c from `tb",
+        "`tb insert enlist 7;",
+    ];
+    let text = lines.join("\n") + "\n";
+    let uri = server.open(dir.path(), "a.q", &text);
+    let mut all = vec![];
+    for (row, line) in lines.iter().enumerate() {
+        let mut from = 0;
+        while let Some(at) = line[from..].find("tb") {
+            all.push((row as u64, (from + at) as u64));
+            from += at + 2;
+        }
+    }
+    assert_eq!(all.len(), 17);
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        &text,
+        "tb:",
+        0,
+        json!({"newName": "tm"}),
+    );
+    let wanted: Vec<_> = all
+        .iter()
+        .map(|&(row, at)| edit("a.q", row, at, at + 2, "tm"))
+        .collect();
+    assert_eq!(edits(&reply["result"]), wanted);
+    let reply = server.ask("textDocument/references", &uri, &text, "tb:", 0, json!({}));
+    let wanted: Vec<_> = all
+        .iter()
+        .map(|&(row, at)| place("a.q", row, at, at + 2))
+        .collect();
+    assert_eq!(places(&reply["result"]), wanted);
+    // From the symbol too: it is the name. An insert is a definition, as
+    // it makes the table when there is none.
+    let reply = server.ask(
+        "textDocument/definition",
+        &uri,
+        &text,
+        "tb where",
+        0,
+        json!({}),
+    );
+    assert_eq!(
+        places(&reply["result"]),
+        [place("a.q", 0, 0, 2), place("a.q", 14, 1, 3)]
+    );
+}
+
+#[test]
+fn a_symbol_that_may_name_the_global_refuses_the_rename() {
+    // #2018. `` `tc in tables[] `` is 1b before a rename of tc and 0b after
+    // one that leaves the symbol (KDB-X 5), and nothing in the text says
+    // whether a symbol in such a place is the table's name or only data: a
+    // column, a key, an enumeration. The rename is refused and names the
+    // line; Find References lists the place.
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let rename = |server: &mut Server, uri: &str, text: &str, context: &str| {
+        server.ask(
+            "textDocument/rename",
+            uri,
+            text,
+            context,
+            0,
+            json!({"newName": "tn"}),
+        )
+    };
+    let text = "tc:([]c:1 2 3)\nr:`tc in tables[]\n";
+    let uri = server.open(dir.path(), "a.q", text);
+    let why = refused(&rename(&mut server, &uri, text, "tc:"));
+    assert!(why.contains("`tc") && why.contains("a.q:2"), "{why}");
+    let reply = server.ask("textDocument/references", &uri, text, "tc:", 0, json!({}));
+    assert_eq!(
+        places(&reply["result"]),
+        [place("a.q", 0, 0, 2), place("a.q", 1, 3, 5)]
+    );
+    for (file, text) in [
+        // One of a list, a value handed on, a name beside an operator.
+        ("b.q", "td:1\nr:get each `tx`td\n"),
+        ("c.q", "te:1\nr:f[`te]\n"),
+        ("d.q", "tf:1\nr:get `tf,`x\n"),
+    ] {
+        let uri = server.open(dir.path(), file, text);
+        let name = &text[..2];
+        let why = refused(&rename(&mut server, &uri, text, &format!("{name}:")));
+        assert!(
+            why.contains(&format!("`{name}")) && why.contains(&format!("{file}:2")),
+            "{why}"
+        );
+    }
+    // A symbol under another context is another name, and one a write
+    // already places is that write's: neither is in the way.
+    let text = "tg:1\n\\d .o\nr:`tg in tables[]\n@[`.o;`tg;:;2];\n";
+    let uri = server.open(dir.path(), "e.q", text);
+    let reply = rename(&mut server, &uri, text, "tg:");
+    assert_eq!(edits(&reply["result"]), [edit("e.q", 0, 0, 2, "tn")]);
+    // A symbol in a lambda written under a `\d` is looked up where the
+    // lambda is called (KDB-X 5: `\d .ns`, `f:{get `th}`, `\d .`, then
+    // `.ns.f[]` reads the root th). With one th it is that one; with two,
+    // which it names is not in the text.
+    let text = "\\d .ns\nth:1\nf:{get `th}\n\\d .\n";
+    let uri = server.open(dir.path(), "f.q", text);
+    let reply = rename(&mut server, &uri, text, "th:");
+    assert_eq!(
+        edits(&reply["result"]),
+        [edit("f.q", 1, 0, 2, "tn"), edit("f.q", 2, 8, 10, "tn")]
+    );
+    let text = "\\d .ns\nti:1\nf:{get `ti}\n\\d .\nti:2\n";
+    let uri = server.open(dir.path(), "g.q", text);
+    let why = refused(&rename(&mut server, &uri, text, "ti:1"));
+    assert!(why.contains("`ti") && why.contains("g.q:3"), "{why}");
+}
+
+#[test]
 fn rename_can_be_turned_off_on_its_own() {
     let dir = tempfile::tempdir().unwrap();
     let options = json!({"rename": {"enable": false}});

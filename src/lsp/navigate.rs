@@ -22,11 +22,14 @@
 //! a string (`value "f[]"`), a symbol built at run time, or another process
 //! is in no list here. Every place a lambda's own parameter or local is
 //! named is inside the lambda, so renaming one is complete; renaming a
-//! global changes what Find All References lists, and leaves a name built
-//! in a string, a bare symbol or another process as it was.
+//! global changes every use the text proves is one - a symbol too, where q
+//! takes a global by name - and is refused where a use cannot be told from
+//! something else: a symbol of the name anywhere else, a dotted read in a
+//! qSQL phrase. It leaves a name built in a string or another process as it
+//! was.
 use super::{Documents, Index, Lines, file_key, is_q_uri, path_of};
 use q_lint_rs::graph::{self, Placement};
-use q_lint_rs::{Mention, Name, load_at, mentions, name_at};
+use q_lint_rs::{Mention, Name, load_at, mentions, name_at, symbol_mentions};
 use serde_json::{Value, json};
 use std::{
     borrow::Cow,
@@ -346,15 +349,39 @@ impl<'a> Sources<'a> {
             }
             let placement = &self.idx.files[key].placement;
             let lines = Lines::new(&text);
-            for m in &mentions(&text) {
+            let all = mentions(&text);
+            let mut found = vec![];
+            for m in &all {
                 // A name the `\d` in force puts under the global spells
                 // none of it, and is no place to list.
                 if let Some(part) = self.spelt(&text, m, placement, names)
                     && part > 0
                 {
-                    out.push((location(&uri, &lines, m.at, part), m.definition.is_some()));
+                    found.push((m.at, part, m.definition.is_some()));
                 }
             }
+            // And a symbol that may be the name, where nothing says it is
+            // data: `` `t in tables[] `` (#2018). One line too many to skip.
+            let known: HashSet<usize> = all.iter().map(|m| m.at).collect();
+            for leaf in &leaves {
+                for m in symbol_mentions(&text, leaf) {
+                    if !known.contains(&m.at)
+                        && self
+                            .names(&text, &m, placement)
+                            .iter()
+                            .any(|name| names.contains(name))
+                    {
+                        found.push((m.at, m.len, false));
+                    }
+                }
+            }
+            found.sort_unstable();
+            found.dedup_by_key(|place| place.0);
+            out.extend(
+                found
+                    .into_iter()
+                    .map(|(at, len, write)| (location(&uri, &lines, at, len), write)),
+            );
         }
         out
     }
@@ -899,11 +926,11 @@ fn releafed(name: &str, new: &str) -> String {
 /// the workspace can rename it: a name some indexed file assigns, and none
 /// in a namespace q keeps for itself.
 ///
-/// What a rename finds is what Find All References finds: each place an
-/// indexed file names the global, under the `\d` in force and the context
-/// the file is loaded in. A name reached through a string (`value "f[]"`),
-/// a bare symbol (`` `f ``), another process or a file outside the
-/// workspace is not among them, and keeps the old name.
+/// What a rename rewrites is each place an indexed file names the global,
+/// under the `\d` in force and the context the file is loaded in - a symbol
+/// too, where q takes a global by name. A name reached through a string
+/// (`value "f[]"`), another process or a file outside the workspace is not
+/// among them, and keeps the old name.
 fn renamable_global(
     sources: &Sources,
     cursor: &Cursor,
@@ -992,7 +1019,8 @@ fn rename_global(
         let mut bare = vec![];
         let mut columns = vec![];
         let mut done = HashSet::new();
-        for m in &mentions(&text) {
+        let all = mentions(&text);
+        for m in &all {
             if done.contains(&m.at) {
                 continue;
             }
@@ -1016,7 +1044,26 @@ fn rename_global(
                     place()
                 ));
             }
-            if !spelling.contains('.') {
+            // A symbol where q takes a global by name. Read in a lambda
+            // written under a `\d` it is looked up where the lambda is
+            // called, there or at the root: with both defined, which one it
+            // names is not in the text (#2018).
+            let symbol = text[..m.at].ends_with('`');
+            if symbol
+                && m.definition.is_none()
+                && let Some(other) = all
+                    .iter()
+                    .filter(|other| other.at == m.at)
+                    .flat_map(|other| sources.names(&text, other, placement))
+                    .find(|name| !targets.contains(name) && sources.idx.ws.defines(name))
+            {
+                return Err(format!(
+                    "`` `{spelling} `` at {} is looked up where its lambda is called, and \
+                     `{other}` is defined too: which of the two it names is not in the text",
+                    place()
+                ));
+            }
+            if !spelling.contains('.') && !symbol {
                 columns.push(m.at);
                 // Dot notation reads a global whatever the lambda's locals
                 // are: KDB-X 5 `{[ta] ta.c}[5]` is the global's column.
@@ -1028,6 +1075,26 @@ fn rename_global(
                 json!({"range": range(&lines, m.at + part - old.len(), old.len()),
                               "newText": new}),
             );
+        }
+        // A symbol that would be this global were it taken for a name, in a
+        // place where nothing says it is: `` `t in tables[] ``, one of a
+        // list, an argument of a function. Leaving it would rename some
+        // uses and not others, so the rename is refused instead (#2018).
+        let known: HashSet<usize> = all.iter().map(|m| m.at).collect();
+        if let Some(m) = symbol_mentions(&text, old).iter().find(|m| {
+            !known.contains(&m.at)
+                && sources
+                    .names(&text, m, placement)
+                    .iter()
+                    .any(|name| targets.contains(name))
+        }) {
+            let (line, _) = lines.position(m.at);
+            return Err(format!(
+                "the symbol `` `{old} `` at {}:{} may name it or be only a symbol, which the \
+                 text does not say: a rename that left it would change some uses and not others",
+                Path::new(key).display(),
+                line + 1
+            ));
         }
         // A bare name in a qSQL phrase is a column whenever the table has
         // one of that name, which only the table says; the table after

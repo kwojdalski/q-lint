@@ -6,8 +6,8 @@
 //! scopes and the writes the checks already read, and stopped there: what a
 //! name holds when the script runs is still not this crate's to say.
 use super::{
-    Scope, assigns_lambda, first_switch, global_writes, local_view, multi_assignments, resolved,
-    scope_at, scopes, top_level_statements,
+    Scope, assigns_lambda, call_time, first_switch, global_writes, local_view, multi_assignments,
+    resolved, scope_at, scopes, top_level_statements,
 };
 use crate::{Definition, Local, Mention, Name, Place, boundary, pattern_names, signature};
 use std::collections::HashSet;
@@ -55,6 +55,142 @@ fn written(code: &str, key: &str, value: usize) -> Option<(usize, usize)> {
     None
 }
 
+/// Whether what follows a symbol ends the expression it is in, so that the
+/// symbol alone is what the word before it takes: in `` value `c _ x `` and
+/// `` get `a,`b `` it is not.
+fn ends_expression(rest: &str) -> bool {
+    let rest = rest.trim_start_matches([' ', '\t']);
+    rest.is_empty() || rest.starts_with([';', ']', ')', '}', '\n', '\r'])
+}
+
+/// Each symbol the code hands to something that takes a global by its name
+/// and nothing else, as where the name starts and how long it is. KDB-X 5,
+/// with `tb:([]c:3 1 2)`: `update c:c*2 from `tb`, `delete from `tb where
+/// c>1`, `` `c xkey `tb ``, `` `c xasc `tb ``, `xdesc[`c;`tb]`, `` 1!`tb ``,
+/// `` 0!`tb ``, `![`tb;();0b;enlist`c]`, `@[`tb;`c;neg]` and `.[`tb;();,;v]`
+/// change the table in place and return `` `tb ``; `select from `tb`,
+/// `exec c from `tb`, `?[`tb;();0b;()]`, `` get `tb ``, `value[`tb]`,
+/// `` cols `tb ``, `` meta `tb `` and `` keys `tb `` read it. `` `a xcol `tb ``
+/// and `` `a xcols `tb `` do not: 'rank and 'type.
+///
+/// Only where the symbol is the whole operand. One of a list, one an
+/// operator goes on from, one handed to any other word (`` `tb in tables[] ``,
+/// `count `tb`, which is 1) is not here, the text not saying whether it
+/// names the global or is only a symbol.
+fn by_name(code: &str) -> Vec<(usize, usize)> {
+    const SYMBOL: &str = r"`(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)";
+    let whole = |name: regex::Match| {
+        !code[name.end()..].starts_with(|c: char| c.is_ascii_alphanumeric() || "_.:/`".contains(c))
+    };
+    let mut out = vec![];
+    // A table after `from`, to the end of the phrase or its `where`.
+    for m in re!(&format!(r"\bfrom\s*{SYMBOL}")).captures_iter(code) {
+        let name = m.get(1).unwrap();
+        let rest = code[name.end()..].trim_start_matches([' ', '\t']);
+        let filtered = rest
+            .strip_prefix("where")
+            .is_some_and(|rest| !rest.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_'));
+        if boundary(code, m.get(0).unwrap().start())
+            && whole(name)
+            && (filtered || ends_expression(rest))
+        {
+            out.push((name.start(), name.len()));
+        }
+    }
+    // The first argument of an amend, a functional query or a functional
+    // update, which the bracket and the semicolon end.
+    for m in re!(&format!(r"[@.!?]\s*\[\s*{SYMBOL}\s*;")).captures_iter(code) {
+        let name = m.get(1).unwrap();
+        let applied = code[..m.get(0).unwrap().start()]
+            .ends_with(|c: char| c.is_ascii_alphanumeric() || "_.)]}`\"".contains(c));
+        if !applied && whole(name) {
+            out.push((name.start(), name.len()));
+        }
+    }
+    // The right of a word that keys or sorts in place, and of `n!`.
+    for m in re!(&format!(
+        r"(?:\b(?:xkey|xasc|xdesc)\s*(\[[^;\[\]]*;\s*)?|(?m:^|[;:(\[{{])[ \t]*\d+\s*!\s*){SYMBOL}"
+    ))
+    .captures_iter(code)
+    {
+        let name = m.get(2).unwrap();
+        let rest = &code[name.end()..];
+        let ends = match m.get(1) {
+            Some(_) => rest.trim_start_matches([' ', '\t']).starts_with(']'),
+            None => ends_expression(rest),
+        };
+        if boundary(code, m.get(0).unwrap().start()) && whole(name) && ends {
+            out.push((name.start(), name.len()));
+        }
+    }
+    // What a word that takes a name is given, bracketed or parenthesised.
+    for m in re!(&format!(
+        r"\b(?:get|value|cols|meta|keys)\s*(?:([\[(])\s*)?{SYMBOL}"
+    ))
+    .captures_iter(code)
+    {
+        let name = m.get(2).unwrap();
+        let rest = code[name.end()..].trim_start_matches([' ', '\t']);
+        let ends = match m.get(1).map(|open| open.as_str()) {
+            Some("[") => rest.starts_with(']'),
+            Some(_) => rest.strip_prefix(')').is_some_and(ends_expression),
+            None => ends_expression(rest),
+        };
+        if boundary(code, m.get(0).unwrap().start()) && whole(name) && ends {
+            out.push((name.start(), name.len()));
+        }
+    }
+    out
+}
+
+/// The names a symbol written at `at` is looked up as when something takes
+/// it as a global's name: under the `\d` in force, and at the root too from
+/// a lambda written under a `\d`, which looks it up where it is called.
+fn symbol_names(scopes: &[Scope], at: usize, name: &str, ns: &str) -> Vec<String> {
+    let mut names = vec![resolved(name, ns)];
+    if call_time(scopes, at, name) {
+        names.push(resolved(name, ""));
+    }
+    names
+}
+
+/// Each symbol that spells `leaf` and no more, `` `leaf ``, alone or one of
+/// a list, as the global it would name were it handed to something that
+/// takes a name. `mentions` has those it can prove are one (`by_name`, and
+/// the writes); the rest are here for whoever must not miss a use - Find
+/// References, which lists them, and a rename, which will not go on past
+/// one it cannot tell from data (#2018).
+pub fn symbols(code: &str, raw: &str, leaf: &str) -> Vec<Mention> {
+    let (scopes, namespaces) = scopes(code, raw);
+    let first_switch = first_switch(code, raw);
+    let mut out = vec![];
+    for (tick, _) in code.match_indices('`') {
+        let at = tick + 1;
+        let rest = &code[at..];
+        let end = rest
+            .find(|c: char| !(c.is_ascii_alphanumeric() || "_.:/".contains(c)))
+            .unwrap_or(rest.len());
+        let line = code[..at].rfind('\n').map_or(0, |p| p + 1);
+        if &rest[..end] != leaf || crate::system_command(&raw[line..]) {
+            continue;
+        }
+        let ns = &namespaces[namespaces
+            .partition_point(|(p, _)| *p <= at)
+            .saturating_sub(1)]
+        .1;
+        for name in symbol_names(&scopes, at, leaf, ns) {
+            out.push(Mention {
+                name,
+                implicit: !leaf.starts_with('.') && at < first_switch,
+                at,
+                len: leaf.len(),
+                definition: None,
+            });
+        }
+    }
+    out
+}
+
 /// Every global name in the file, where it is written and where it is read,
 /// each as the one name q resolves it to under the `\d` in force - in order.
 ///
@@ -64,7 +200,8 @@ fn written(code: &str, key: &str, value: usize) -> Option<(usize, usize)> {
 /// in a qSQL phrase included, though the table may have a column of that
 /// name: a reference too many is one more line to skip in a list, and one
 /// too few is a caller nobody was told about. A qualified symbol,
-/// `` `.ns.f ``, is a read of that name, as `references` has it.
+/// `` `.ns.f ``, is a read of that name, as `references` has it, and so is
+/// any symbol in a place that takes a global by name (`by_name`).
 pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
     let (scopes, namespaces) = scopes(code, raw);
     let first_switch = first_switch(code, raw);
@@ -183,6 +320,21 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
             len: name.len(),
             definition: None,
         });
+    }
+    for (at, len) in by_name(code) {
+        if writes.contains(&at) || system(at) {
+            continue;
+        }
+        let word = &code[at..at + len];
+        for name in symbol_names(&scopes, at, word, ns_at(at)) {
+            out.push(Mention {
+                name,
+                implicit: !word.starts_with('.') && at < first_switch,
+                at,
+                len,
+                definition: None,
+            });
+        }
     }
     out.sort_by(|a, b| (a.at, &a.name).cmp(&(b.at, &b.name)));
     out.dedup_by(|a, b| a.at == b.at && a.name == b.name);

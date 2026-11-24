@@ -654,7 +654,15 @@ an amend of `` `. `` - and an open buffer is read as the editor has it. A
 definition inside a lambda is still that global's definition. What only
 running the code would tell is not found: a name built at run time, a
 `value "..."` string, a definition another process sends. A column in a qSQL
-phrase reads like a global of that name and is listed with it.
+phrase reads like a global of that name and is listed with it. A symbol is a
+use of the global where q takes one by name and the symbol is the whole
+operand: after `from` (`` update c:1 from `t ``, `` delete from `t where .. ``),
+first in `@[`t;..]`, `.[`t;..]`, `![`t;..]` and `?[`t;..]`, right of `xkey`,
+`xasc`, `xdesc` and a count's `!` (`` 1!`t ``), and handed to `get`, `value`,
+`cols`, `meta` or `keys` - beside `` `t set ``, `` `t insert `` and
+`` `t upsert ``, which are writes. Find All References also lists a symbol
+of that name anywhere else (`` `t in tables[] ``), which may be the name or
+only a symbol.
 
 Rename takes a lambda's parameter or local, within its lambda, and a global
 across the workspace. A local is refused, with the reason in the error, when
@@ -679,9 +687,13 @@ where it would hide the renamed global. It is also refused, naming the line,
 where a use cannot be told from something else or cannot be rewritten: `ta.c`
 inside a qSQL phrase, which is the column `ta` followed through a foreign key
 when the table has one, and a name a `\d` puts under the renamed namespace
-(`port:` under `\d .cfg`). What reading cannot find keeps the
-old name: a string handed to `value`, a bare symbol (`` `f ``), a name another
-process sends.
+(`port:` under `\d .cfg`); and where a symbol of the name is somewhere q is
+not known to take a name - `` `t in tables[] ``, one of a list, an argument of
+a function - or is read by name in a lambda written under a `\d`, which looks
+it up where it is called, with a global of that name both there and at the
+root. What reading cannot find keeps the
+old name: a string handed to `value`, a name built at run time, a name
+another process sends.
 
 Hover, signature help and completion answer from two places and never from a
 running q: the workspace's own source, and a catalogue of q's words that ships

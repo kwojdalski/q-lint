@@ -221,12 +221,17 @@ to a process you add and connect to, and sends only the code you run.
   A dotted read through the global is rewritten with it: the `ta` of `ta.c`
   for a table `ta`, the `.cfg` of `.cfg.port`. Where such a read may be
   something else - `ta.c` inside a qSQL phrase - the rename is refused and
-  names the line, rather than rewrite some uses and not others.
+  names the line, rather than rewrite some uses and not others. A symbol is
+  rewritten where q takes a global by its name: `` update .. from `t ``,
+  `@[`t;..]`, `?[`t;..]`, `` `c xkey `t ``, `` get `t ``, `` `t insert .. ``
+  and their neighbours. A symbol of the name anywhere else
+  (`` `t in tables[] ``, one of a list) may be the name or only a symbol,
+  so it refuses the rename too; Find All References lists it.
   It is refused, with the reason, for a name q reserves or one in a
   one-letter namespace (`.z.pg`, `.q.f`), a name no workspace file assigns,
   a new name that is not one q takes, is already assigned, or is a
   parameter or local of a lambda that reads the global bare. A name reached
-  through a string (`value "f[]"`), a bare symbol (`` `f ``) or another
+  through a string (`value "f[]"`), built at run time or sent by another
   process is not seen and keeps its old name: preview the rename
   (Shift+Enter) when that matters. `q-lint.rename.enable` turns renaming off
   and leaves the rest of navigation on.
