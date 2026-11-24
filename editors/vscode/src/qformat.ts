@@ -91,11 +91,12 @@ function hms(d: Date): string {
 /// q's default, unless given): C's `%.{P}g`, an exponent (of two digits at
 /// least) from 10^P up and below 1e-4, trailing zeros dropped. `\P 0` is
 /// every digit a float holds, `%.17g`, and a real (`real`) `%.8g`, as
-/// KDB-X writes one: 0.3e is 0.30000001e (#1759).
+/// KDB-X writes one: 0.3e is 0.30000001e (#1759). A subnormal is written
+/// as a zero of its sign, as KDB-X writes one (#1760).
 export function floatText(x: number, precision = 7, real = false): string {
-  if (x === 0 || !Number.isFinite(x)) {
+  if (x === 0 || !Number.isFinite(x) || Math.abs(x) < (real ? 1.1754943508222875e-38 : 2.2250738585072014e-308)) {
     // String(-0) is "0"; q writes `-0f` (#1236).
-    return Object.is(x, -0) ? "-0" : String(x);
+    return Number.isFinite(x) ? (x < 0 || Object.is(x, -0) ? "-0" : "0") : String(x);
   }
   const p = precision > 0 ? Math.min(precision, 17) : real ? 8 : 17;
   const [digits, exponent] = significant(Math.abs(x), p);

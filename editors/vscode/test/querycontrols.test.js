@@ -548,3 +548,13 @@ test("a float at an exact decimal tie rounds to even, as C's %g in KDB-X does (#
   assert.strictEqual(floatText(0.1 + 0.2, 17), "0.30000000000000004");
   assert.strictEqual(floatText(9999999.6), "1e+07");
 });
+
+test("a subnormal float or real is written as a zero of its sign, as KDB-X writes it (#1760)", () => {
+  // KDB-X: 1e-310 -1e-310 1e-308 5e-324 -> 0 -0 0 0f; -3.08e-39e -> -0e.
+  assert.strictEqual(vectorText([1e-310, -1e-310, 1e-308, 5e-324], 9), "0 -0 0 0f");
+  assert.strictEqual(floatText(1e-310, 0), "0");
+  assert.strictEqual(atomText(Math.fround(-3.08e-39), -8), "-0e");
+  // The smallest normal ones are still written: 2.225074e-308, 1.175494e-38e.
+  assert.strictEqual(floatText(2.2250738585072014e-308), "2.225074e-308");
+  assert.strictEqual(atomText(Math.fround(1.1754944e-38), -8), "1.175494e-38e");
+});
