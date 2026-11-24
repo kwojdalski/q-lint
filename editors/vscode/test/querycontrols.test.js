@@ -493,3 +493,17 @@ test("a temporal list of only nulls and infinities ends with its type's letter, 
   assert.strictEqual(vectorText([null, null], 13), "0N 0Nm");
   assert.strictEqual(vectorText([day(2026, 11, 20), null], 14), "2026.11.20 0N");
 });
+
+test("an unwrapped dictionary with a table on either side counts its header lines, as the console does (#1497)", () => {
+  // KDB-X console at \c 10 80: (`$"s",/:string til 30)!([]x:til 30) and
+  // ([]k:til 30)!til 30 each show 10 lines, the 8th row then "..".
+  const longs = (n) => ({ kind: "vector", t: 7, attr: 0, v: Array.from({ length: n }, (_, i) => i) });
+  const table = (name, n) => ({ kind: "table", attr: 0, cols: [name], data: [longs(n)] });
+  const syms = { kind: "vector", t: 11, attr: 0, v: Array.from({ length: 30 }, (_, i) => `s${i}`) };
+  const bySym = consoleLines({ kind: "dict", sorted: false, k: syms, v: table("x", 30) }, [10, 80]);
+  assert.strictEqual(bySym.length, 10);
+  assert.deepStrictEqual([bySym[0], bySym[2], bySym[8], bySym[9]], ["  | x", "s0| 0", "s6| 6", ".."]);
+  const byTable = consoleLines({ kind: "dict", sorted: false, k: table("k", 30), v: longs(30) }, [10, 80]);
+  assert.strictEqual(byTable.length, 10);
+  assert.strictEqual(byTable[8].trimEnd(), "6| 6");
+});

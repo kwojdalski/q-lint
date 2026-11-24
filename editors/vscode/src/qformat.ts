@@ -615,8 +615,11 @@ export function consoleLines(q: QValue, size: [number, number], value?: unknown,
   let shown = q;
   let more = false;
   if (q.kind === "table" || q.kind === "dict" || q.kind === "list") {
-    // A table's two header lines count against the height.
-    const tabular = q.kind === "table" || (q.kind === "dict" && q.k.kind === "table" && q.v.kind === "table");
+    // A table's two header lines count against the height, and a
+    // dictionary's when a table is lined up on either side of it: the
+    // console shows 10 lines of `` (`s0`s1..)!([]x:...) `` at `\c 10 80`,
+    // though `.Q.S` writes 12 (#1497).
+    const tabular = q.kind === "table" || (q.kind === "dict" && (q.k.kind === "table" || q.v.kind === "table"));
     const n = Math.max(0, height - (tabular ? 2 : 0));
     const count = q.kind === "dict" ? countOf(q.k) : countOf(q);
     more = count > n;
