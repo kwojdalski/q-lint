@@ -15,7 +15,7 @@
 //
 // A keyed table is type 99 as a dictionary is, so the answer says which.
 //
-//   `found`name`type`keyed`count`text!(1b;name;type;keyed;count;.Q.s, cut)  or  `found`name`view!(1b;name;1b)  or  (,`found)!,0b
+//   `found`name`type`keyed`count`text`cut!(1b;name;type;keyed;count;.Q.s, cut;whether it was)  or  `found`name`view!(1b;name;1b)  or  (,`found)!,0b
 
 import { UTF8_CUT } from "./qtext";
 
@@ -27,7 +27,8 @@ export const VALUE_PREVIEW = [
   " if[null n;:enlist[`found]!enlist 0b];",
   " if[n in views[];:`found`name`view!(1b;n;1b)];",
   " v:get n; qp:$[`qp in key `.Q;@[.Q.qp;v;0b];0b];",
-  ` \`found\`name\`type\`keyed\`count\`text!(1b;n;type v;$[99h=type v;98h=type key v;0b];@[count;v;0N];$[1b~qp;\"\";${UTF8_CUT}[lim;.Q.s v]])}`,
+  " s:$[1b~qp;\"\";.Q.s v];",
+  ` \`found\`name\`type\`keyed\`count\`text\`cut!(1b;n;type v;$[99h=type v;98h=type key v;0b];@[count;v;0N];${UTF8_CUT}[lim;s];lim<count s)}`,
 ].join("\n");
 
 /// The most characters of a value the process sends back.
@@ -36,7 +37,7 @@ export const PREVIEW_LIMIT = 2000;
 export type Preview =
   | { found: false }
   | { found: true; name: string; view: true }
-  | { found: true; name: string; view?: false; type: number; keyed?: true; count?: number; text: string };
+  | { found: true; name: string; view?: false; type: number; keyed?: true; count?: number; text: string; cut?: boolean };
 
 const long = (v: unknown): number | undefined => {
   const n = typeof v === "number" ? v : typeof (v as { toNumber?: unknown } | null)?.toNumber === "function" ? (v as { toNumber: () => number }).toNumber() : undefined;
@@ -59,7 +60,7 @@ export function readPreview(raw: unknown): Preview {
     return { found: true, name, view: true };
   }
   const count = long(r.count);
-  return { found: true, name, type: long(r.type) ?? 0, ...(r.keyed === true ? { keyed: true } : {}), ...(count !== undefined ? { count } : {}), text: text(r.text) };
+  return { found: true, name, type: long(r.type) ?? 0, ...(r.keyed === true ? { keyed: true } : {}), ...(count !== undefined ? { count } : {}), text: text(r.text), ...(typeof r.cut === "boolean" ? { cut: r.cut } : {}) };
 }
 
 /// The names to send, as `VALUE_PREVIEW` takes them.
@@ -113,7 +114,9 @@ export function previewMarkdown(preview: Preview, process: string, limit = PREVI
   } else {
     const shown = preview.text.replace(/\n$/, "");
     parts.push(fenced(shown));
-    if (preview.text.length >= limit) {
+    // The process says whether it cut: a byte limit holds fewer UTF-16
+    // units of non-ASCII text (#2072).
+    if (preview.cut ?? preview.text.length >= limit) {
       parts.push(`The first ${limit.toLocaleString("en")} characters.`);
     }
   }
