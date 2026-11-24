@@ -82,8 +82,10 @@ export function registerLocalsAtError(
     const restore = restoreExpression("err");
     let done;
     try {
-      // Only on the process the question named (#1292).
-      done = await live.runOnActive(`${failure.code}\n${install}`, async (connection) => {
+      // Only on the process the question named (#1292). The replacing goes
+      // first: a failed query ending the script (`\`) or opening a comment
+      // (`/`) would hide what came after it from the guard (#1422).
+      done = await live.runOnActive(`${install}\n${failure.code}`, async (connection) => {
         readRestored(await connection.call(restore));
         const state = readDrift(await connection.call(DRIFT, picked.name)).get(picked.name);
         if (state?.state !== "lambda") {

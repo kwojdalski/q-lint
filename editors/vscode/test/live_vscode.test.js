@@ -367,3 +367,25 @@ test("Disconnect during a connect stops it (#1073)", async (t) => {
   // A connect after it is not stopped.
   assert.strictEqual(await live.connectTo("a"), true);
 });
+
+// A drill-down, wrangle or cell edit on a discovered or shared process (a
+// label `server/label`) that was not the active one found no process for the
+// production question, and went to it unasked (#1425).
+test("a query on a discovered production process asks before it connects (#1425)", async () => {
+  stub.reset();
+  const prod = { label: "desk/rdb", host: "h", port: 1, tags: ["prod"] };
+  const did = [];
+  const self = {
+    processes: () => [],
+    active: undefined,
+    named: (label) => (label === prod.label ? prod : undefined),
+    activeLabel: () => undefined,
+    connection: undefined,
+    connectTo: async (label) => (did.push(`connect ${label}`), true),
+    run: async (code) => void did.push(`run ${code}`),
+  };
+  stub.picks.push(undefined);
+  await Live.prototype.runOnProcess.call(self, "select from t", "desk/rdb");
+  assert.match(stub.messages.at(-1)?.[1] ?? "", /desk\/rdb is a production process/);
+  assert.deepStrictEqual(did, []);
+});

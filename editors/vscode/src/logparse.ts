@@ -86,8 +86,14 @@ export function timeOf(text: string): number | undefined {
   }
   const [, y, mo, d, h = "0", mi = "0", s = "0", frac = "0"] = m;
   const ms = Number(`0.${frac}`) * 1000;
-  const t = Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s)) + Math.floor(ms);
-  return Number.isNaN(t) ? undefined : t;
+  const at = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s)));
+  // Date.UTC rolls 30 February over to March, 25:61 to the next day: a
+  // field it moved was out of range, and is no time (#1436).
+  const fields = [at.getUTCFullYear(), at.getUTCMonth() + 1, at.getUTCDate(), at.getUTCHours(), at.getUTCMinutes(), at.getUTCSeconds()];
+  if (Number.isNaN(at.getTime()) || fields.some((f, i) => f !== Number([y, mo, d, h, mi, s][i]))) {
+    return undefined;
+  }
+  return at.getTime() + Math.floor(ms);
 }
 
 /// A time of day, `HH:MM[:SS[.fff]]`, as milliseconds after midnight.

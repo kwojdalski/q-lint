@@ -24,7 +24,8 @@
 //   `setenv`, `save`, `rsave`, `dsave`, `load`, `rload`, `.Q.dpft`,
 //   `.Q.dpfts`, `.Q.dpt`, `.Q.dpts`, `.Q.hdpf`, `.Q.en`, `.Q.ens`,
 //   `.Q.enx`, `.Q.enxs`, `.Q.chk`, `.Q.dsftg`, `.Q.view`, `.Q.l`, `.Q.lo`,
-//   `.Q.bv` and `.Q.opt` (which sets `.Q.x`), and `0:` or `1:` to a
+//   `.Q.li`, `.Q.bv`, `.Q.Xf` (which creates a file) and `.Q.opt` (which
+//   sets `.Q.x`), and `0:` or `1:` to a
 //   file handle (`` `:f 0: ``, `hsym[`f] 0:`, `(hsym `f) 1:`,
 //   `` (`$":f") 0: ``, `` 0:[`:f;x] ``, `` .[0:;(`:f;x)] ``), and `2:`,
 //   each also by its `.q.` name (`.q.set`), by its symbol
@@ -114,7 +115,7 @@ const OPERATORS = new Set([..."+-*%&|^=<>$,#_~!?@."]);
 const WRITERS = new Set([
   "set", "upsert", "insert", "hdel", "exit", "hclose", "system", "save", "rsave", "dsave", "load", "rload", "setenv",
   ".Q.dpft", ".Q.dpfts", ".Q.dpt", ".Q.dpts", ".Q.hdpf", ".Q.en", ".Q.ens", ".Q.enx", ".Q.enxs", ".Q.chk", ".Q.dsftg",
-  ".Q.view", ".Q.l", ".Q.lo", ".Q.bv", ".Q.opt",
+  ".Q.view", ".Q.l", ".Q.lo", ".Q.li", ".Q.bv", ".Q.opt", ".Q.Xf",
 ]);
 /// System commands that only read a setting when they are given no argument.
 const READS_BARE = new Set([..."abBcCdeEfgoOpPrsSTvwWz_", "cd"]);
@@ -650,12 +651,19 @@ function readStatement(statement: string, found: Set<string>): void {
         continue;
       }
     }
-    // Handle 0 is the process itself: `0"a:1"`, `(0)"a:1"`, `neg[0]"a:1"`
-    // and `-0"a:1"` evaluate the string there.
+    // Handle 0 is the process itself: `0"a:1"`, `(0)"a:1"`, `neg[0]"a:1"`,
+    // `(neg 0)"a:1"` and `-0"a:1"` evaluate the string there, as do
+    // `0("a:1")`, `0@"a:1"` and `0 . enlist "a:1"` (#1424).
     if (k.kind === "num" && /^-?0[ihj]?$/.test(k.text) && t[i - 1]?.kind !== "num") {
       const wrapped =
-        (t[i - 1]?.text === "(" && next?.text === ")") || (t[i - 2]?.text === "neg" && t[i - 1]?.text === "[" && next?.text === "]");
-      if ((wrapped ? t[i + 2] : next)?.kind === "str") {
+        (t[i - 1]?.text === "(" && next?.text === ")") ||
+        (t[i - 2]?.text === "neg" && t[i - 1]?.text === "[" && next?.text === "]") ||
+        (t[i - 2]?.text === "(" && t[i - 1]?.text === "neg" && next?.text === ")");
+      let j = wrapped ? i + 2 : i + 1;
+      while (t[j]?.text === "(" || (t[j]?.kind === "op" && ["@", "."].includes(t[j].text)) || (t[j]?.kind === "name" && t[j].text === "enlist")) {
+        j++;
+      }
+      if (t[j]?.kind === "str") {
         found.add("evaluates a string on handle 0");
         continue;
       }

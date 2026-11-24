@@ -23,6 +23,15 @@ test("the short form joins q's text, says an error, counts a grid, and is cut", 
   assert.ok(long.endsWith("..."));
 });
 
+test("the cut never splits a character outside the BMP (#1428)", () => {
+  const cut = shortForm({ ok: true, type: 10, text: ["a".repeat(76) + "\u{1F600}".repeat(5)] });
+  assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(cut), JSON.stringify(cut));
+  assert.strictEqual(cut, "a".repeat(76) + "\u{1F600}...");
+  // Under the width in characters, though not in UTF-16 units: not cut.
+  const emoji = "\u{1F600}".repeat(50);
+  assert.strictEqual(shortForm({ ok: true, type: 10, text: [emoji] }), emoji);
+});
+
 test("an edit wipes the lines it touches and moves those below", () => {
   // Typing on line 3: its result goes, the others stay.
   assert.deepStrictEqual(shiftLines([1, 3, 5], 3, 3, 0), [1, 5]);

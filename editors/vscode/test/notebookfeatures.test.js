@@ -57,6 +57,16 @@ test("expressions are found once each, never in code; a q symbol's backtick open
   assert.deepStrictEqual(inlineSpans("a `x` {{q: 1}}").map((s) => s.kind), ["code", "live"]);
 });
 
+test("an indented code block or an HTML comment holds no live value (#1429)", () => {
+  assert.deepStrictEqual(liveExpressions("Para\n\n    {{q: indented}}\n"), []);
+  assert.deepStrictEqual(liveExpressions("    {{q: first}}\n\tand {{q: tab}}\n\nAfter {{q: a}}"), ["a"]);
+  assert.deepStrictEqual(liveExpressions("<!-- {{q: hidden}} -->"), []);
+  assert.deepStrictEqual(liveExpressions("A <!--\n{{q: hidden}}\n--> and {{q: b}}"), ["b"]);
+  // Indented under a paragraph line or a list item it is text, and live.
+  assert.deepStrictEqual(liveExpressions("Para\n    {{q: lazy}}"), ["lazy"]);
+  assert.deepStrictEqual(liveExpressions("- item\n\n    {{q: in list}}"), ["in list"]);
+});
+
 test("the Markdown after a code cell is read when it runs; the first code cell reads what is above it", () => {
   const cells = ["markdown", "markdown", "code", "markdown", "code", "code", "markdown"].map((kind) => ({ kind }));
   assert.deepStrictEqual(markdownAfter(cells, 2), [0, 1, 3]);

@@ -30,6 +30,10 @@ test("a query is a q string, several statements a lambda over their strings", ()
   assert.strictEqual(gatewayStatement(["n:1 / one", "n+1"], ["hdb"]), '.gw.syncexec[({last value each x};("n:1 / one";"n+1"));enlist `hdb]');
   assert.ok(isGatewayCall('.gw.syncexec["1";`rdb]'));
   assert.ok(!isGatewayCall("select from trade"));
+  // TorQ's typed and timed variants are gateway calls too (#1427).
+  assert.ok(isGatewayCall('.gw.syncexecj["q";`rdb;raze]'));
+  assert.ok(isGatewayCall('.gw.asyncexecjpt["q";`rdb;raze;();0D00:01]'));
+  assert.ok(!isGatewayCall(".gw.syncexec_x[1]"));
 });
 
 test("a file names its server types on a `/ @servertypes` line", () => {

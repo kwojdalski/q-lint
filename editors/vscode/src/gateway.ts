@@ -34,9 +34,11 @@ export function gatewayStatement(statements: string[], types: string[]): string 
 }
 
 /// Whether `code` is already a gateway call: a query run again from the
-/// history was recorded as it was sent, and is not wrapped twice.
+/// history was recorded as it was sent, and is not wrapped twice. TorQ's
+/// variants (`.gw.syncexecj`, `.gw.asyncexecjpt`) count, as the guard's
+/// GATEWAY_EXEC reads them (#1427).
 export function isGatewayCall(code: string): boolean {
-  return /^\s*\.gw\.(syncexec|asyncexec)\b/.test(code);
+  return /^\s*\.gw\.(syncexec|asyncexec)[A-Za-z]*\b/.test(code);
 }
 
 /// The server types a file names for its queries: a line at column 0

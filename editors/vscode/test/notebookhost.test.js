@@ -378,6 +378,8 @@ function recordingLive(processes, active) {
     sent: [],
     processes: () => processes,
     discovery: { discovered: () => [] },
+    shared: [],
+    sharedList: () => live.shared,
     activeLabel: () => live.active,
     isBusy: () => false,
     connectTo: async (label) => {
@@ -431,6 +433,17 @@ test("/ @process connects to the process it names before the cell runs, and the 
   assert.strictEqual(first.success, true);
   assert.strictEqual(second.success, false);
   assert.match(outputText(second), /No q process is labelled \\"nope\\"/);
+});
+
+test("/ @process names a process from the workspace's shared list (#1426)", async () => {
+  const fake = fakeVscode();
+  const live = recordingLive(PROCESSES, "dev1");
+  live.shared = [{ server: { label: ".qlint" }, state: { processes: [{ label: "rdb", host: "h", port: 3, tags: [] }] } }];
+  load(fake, live);
+  const notebook = notebookWith(fake, [["code", "/ @process .qlint/rdb\n1"]]);
+  const [ran] = await runCells(fake, notebook, [0]);
+  assert.deepStrictEqual(live.connected, [".qlint/rdb"]);
+  assert.strictEqual(ran.success, true, outputText(ran));
 });
 
 test("/ @process to a production process asks first, and runs nothing unless confirmed", async () => {

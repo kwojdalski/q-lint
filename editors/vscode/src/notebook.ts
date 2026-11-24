@@ -240,7 +240,7 @@ export function requireFeature(feature: Feature): boolean {
 }
 
 /// Make the process `label` names the active connection, for a cell that
-/// says `/ @process <label>`: a saved process or a discovered one, its
+/// says `/ @process <label>`: a saved, discovered or shared process, its
 /// password from secret storage or asked for as Connect asks. Connecting to
 /// a production process is confirmed first. Why it could not, or undefined
 /// once it is the active connection.
@@ -248,7 +248,8 @@ export async function switchProcess(live: Live, label: string): Promise<string |
   if (live.activeLabel() === label) {
     return undefined;
   }
-  const found = resolveProcess(label, live.processes(), live.discovery.discovered());
+  // The shared list too, as Connect and the Processes view do (#1426).
+  const found = resolveProcess(label, live.processes(), [...live.discovery.discovered(), ...live.sharedList()]);
   if ("error" in found) {
     return found.error;
   }
