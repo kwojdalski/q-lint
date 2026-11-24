@@ -385,6 +385,17 @@ test("a grid the process holds more of asks for the next page once, as it reache
   assert.strictEqual(button(plain, "Load more"), undefined);
 });
 
+test("a page that could not be fetched for now is asked for again on a scroll, not at once as the grid is drawn again (#1634)", () => {
+  const page = loadPage(undefined);
+  const held = { ...result("s.1", 5), more: true, paused: true, grid: { ...result("s.1", 5).grid, total: 50 } };
+  page.send(held);
+  assert.strictEqual(page.posted.filter((m) => m.type === "more").length, 0);
+  page.send({ ...result("s.2", 100), more: true, paused: true, grid: { ...result("s.2", 100).grid, total: 500 } });
+  page.scroller().scrollTop = 100 * ROW;
+  page.scroller().fire("scroll");
+  assert.deepStrictEqual(page.posted.filter((m) => m.type === "more"), [{ type: "more", id: "s.2" }]);
+});
+
 test("a double-clicked cell asks to drill down from it, and carries its menu context; off, neither (#927)", () => {
   const page = loadPage(undefined);
   page.send(result("s.1", 3));

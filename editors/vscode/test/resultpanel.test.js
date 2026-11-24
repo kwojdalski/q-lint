@@ -500,6 +500,23 @@ test("paging is off by default; on, a cut result the process holds is fetched pa
   await new Promise((r) => setImmediate(r));
   assert.match(warned.at(-1), /could not fetch more rows from p: held/);
   assert.strictEqual(page.posted.at(-1).more, false);
+  // Busy for now (#1634): said, but the result stays held, and the next
+  // ask fetches.
+  let busy = true;
+  modes.setPager(async () => (busy ? { later: "a query is running on it; scroll again once it ends" } : { count: 5, names: ["c"], types: [7], cells: [["3", "4", "5"]], raw: [[3, 4, 5]], rank: [[0, 1, 2]] }));
+  modes.show({ ...result([1, 2], 5), held: true }, live({ gridLimit: 2 }));
+  page.receive({ type: "more", id: page.posted.at(-1).id });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.match(warned.at(-1), /could not fetch more rows from p: a query is running on it; scroll again once it ends/);
+  assert.strictEqual(page.posted.at(-1).more, true);
+  assert.strictEqual(page.posted.at(-1).paused, true);
+  busy = false;
+  page.receive({ type: "more", id: page.posted.at(-1).id });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(page.posted.at(-1).grid.cells, [["1", "2", "3", "4", "5"]]);
+  assert.strictEqual(page.posted.at(-1).paused, false);
   // Off by default.
   const plain = loadModes(fakeVscode());
   assert.strictEqual(plain.wantsHold(false), false);

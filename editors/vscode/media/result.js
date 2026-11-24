@@ -1386,7 +1386,9 @@
     // Near the end of the rows held: ask the process for the next page. With
     // rows filtered out, only when scrolled there: few rows left by a filter
     // are near their end as each page comes, and would fetch the whole result.
-    if (result.more && !moreAsked && rows.length > 0 && end >= rows.length - 10 && (moved || rows.length === rowCount(result.grid))) {
+    // So too once a page could not be fetched for now (#1634): asking again
+    // at once would only be refused again.
+    if (result.more && !moreAsked && rows.length > 0 && end >= rows.length - 10 && (moved || (!result.paused && rows.length === rowCount(result.grid)))) {
       moreAsked = true;
       vscode.postMessage({ type: "more", id: result.id });
     }

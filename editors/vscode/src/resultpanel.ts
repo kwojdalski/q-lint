@@ -225,10 +225,21 @@ interface Shown {
   before?: { payload: GridPayload; process: string; at: number };
   /// The process holds the rest of it, for the grid to page through.
   held?: boolean;
+  /// The last page asked for could not be fetched for now (a query was
+  /// running, another process connected): the grid asks again only when
+  /// scrolled (#1634).
+  paused?: boolean;
   /// The saved query it came from (#912), whose look it keeps.
   saved?: string;
   /// How it is dressed: rules, cell charts, layout, chart preset.
   look: ResultLook;
+}
+
+/// A page that cannot be fetched now but may be later - a query is
+/// running on the process, or another is connected - and why: the result
+/// stays held (#1634).
+export interface PageLater {
+  later: string;
 }
 
 /// A query's code on one line, for a tab or a pick: its first line, cut.
@@ -320,7 +331,7 @@ export class QueryModes {
   private control: Control | undefined;
   private controls = 0;
   /// Fetches rows of a result the process holds; set by the live half.
-  private pager: ((process: string, offset: number, count: number) => Promise<GridPage | string>) | undefined;
+  private pager: ((process: string, offset: number, count: number) => Promise<GridPage | PageLater | string>) | undefined;
   /// Runs a drill-down query on a process; set by the live half.
   private runner: ((code: string, process: string) => Promise<void>) | undefined;
   /// A page fetch under way, so a second is not sent behind it.
@@ -409,7 +420,7 @@ export class QueryModes {
   }
 
   /// Where the live half fetches pages of a held result from.
-  setPager(pager: (process: string, offset: number, count: number) => Promise<GridPage | string>): void {
+  setPager(pager: (process: string, offset: number, count: number) => Promise<GridPage | PageLater | string>): void {
     this.pager = pager;
   }
 
@@ -570,9 +581,13 @@ export class QueryModes {
     this.paging = true;
     try {
       const page = await this.pager(shown.process, have, Math.min(shown.limit, MAX_PAGED_ROWS - have));
+      shown.paused = false;
       if (typeof page === "string") {
         shown.held = false;
         void window.showWarningMessage(plainMessage(`q-lint: could not fetch more rows from ${shown.process}: ${page}`));
+      } else if ("later" in page) {
+        shown.paused = true;
+        void window.showWarningMessage(plainMessage(`q-lint: could not fetch more rows from ${shown.process}: ${page.later}`));
       } else {
         shown.payload = appendPage(shown.payload, page);
         const now = shown.payload.cells[0]?.length ?? 0;
@@ -1566,6 +1581,8 @@ export class QueryModes {
       saved: this.shown.saved,
       // Whether the grid can ask for more rows as it scrolls.
       more: this.canPage(),
+      // A page could not be fetched for now: ask again only on a scroll.
+      paused: this.shown.paused === true,
       history: (features.enable.history ? this.history : [this.shown]).map((h) => ({ id: h.id, process: h.process, code: oneLine(h.code), at: h.at, rows: h.payload.count })),
       control: this.control,
     };
