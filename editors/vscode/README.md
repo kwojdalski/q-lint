@@ -71,9 +71,10 @@ to a process you add and connect to, and sends only the code you run.
   repository's configuration, counted by rule and by folder, and their count
   over commits. A refresh on a commit whose q files are unchanged adds that
   commit to the trend, kept in the workspace's state; **Lint Earlier
-  Commits...** adds the last 5 to 50 from git, each exported with `git
-  archive` to a temporary directory and linted there - nothing is checked
-  out. It reads files and sends nothing to a q process
+  Commits...** adds the last 5 to 50 from git. Each point is of a commit
+  exported with `git archive` to a temporary directory and linted there -
+  nothing is checked out, and a q file git ignores (build output) is in the
+  counts of the folder but in no point of the trend. It reads files and sends nothing to a q process
   (`q-lint.problemsDashboard.enable`).
 - **Format Document** applies the fixes `qlinter --fix` makes - those that
   cannot change a working program - and nothing else: it is not a

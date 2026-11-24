@@ -251,6 +251,67 @@ test("off, the dashboard refuses and lints nothing; on, it shows the folder and 
   assert.strictEqual(linted, before);
 });
 
+/// A stand-in for qlinter, run as `node <script> --format json .`: one
+/// finding for each q file under the directory it is run in.
+function everyFile(t) {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "qlint-linter-")));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "every.js");
+  fs.writeFileSync(
+    file,
+    `const fs = require("node:fs"), path = require("node:path");
+const out = [];
+const walk = (d) => {
+  for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+    if (e.name === ".git") continue;
+    const p = path.join(d, e.name);
+    if (e.isDirectory()) walk(p);
+    else if (e.name.endsWith(".q")) out.push({ path: p, code: "QE004", rule: "foreign-operator", severity: "warning", category: "c" });
+  }
+};
+walk(process.cwd());
+console.log(JSON.stringify(out));
+process.exit(out.length > 0 ? 1 : 0);
+`,
+  );
+  return file;
+}
+
+function dashboardOf(t, linter) {
+  stub.reset();
+  fakePanels();
+  const context = stub.newContext();
+  const state = new Map();
+  context.workspaceState = { get: (k, d) => (state.has(k) ? state.get(k) : d), update: async (k, v) => void state.set(k, v), keys: () => [...state.keys()] };
+  registerProblemsDashboard(context, () => ({ command: process.execPath, args: [linter] }));
+  t.after(() => context.subscriptions.forEach((d) => d.dispose?.()));
+}
+
+test("the trend's point for HEAD is of the commit, as an earlier commit's is: a q file git ignores is not in it (#1896)", async (t) => {
+  const { dir, git } = repo(t);
+  fs.mkdirSync(path.join(dir, "src"));
+  fs.writeFileSync(path.join(dir, "src/a.q"), "a:1\n");
+  fs.writeFileSync(path.join(dir, ".gitignore"), "build/\n");
+  git("add", ".");
+  git("commit", "-qm", "one");
+  fs.writeFileSync(path.join(dir, "src/b.q"), "b:1\n");
+  git("add", ".");
+  git("commit", "-qm", "two");
+  // Build output: q files no commit holds.
+  fs.mkdirSync(path.join(dir, "build"));
+  fs.writeFileSync(path.join(dir, "build/c.q"), "c:1\n");
+  fs.writeFileSync(path.join(dir, "build/d.q"), "d:1\n");
+  dashboardOf(t, everyFile(t));
+  const view = await stub.commands.get(SHOW_PROBLEMS)(dir);
+  // The folder as it is, and the commit as git has it.
+  assert.strictEqual(view.clean, true);
+  assert.strictEqual(view.summary.total, 4);
+  assert.deepStrictEqual(view.trend.map((p) => [p.subject, p.total]), [["two", 2]]);
+  const later = await stub.commands.get(LINT_HISTORY)(5, dir);
+  // (Commits of one second keep the order they were added in.)
+  assert.deepStrictEqual(later.trend.map((p) => [p.subject, p.total]).sort(), [["one", 1], ["two", 2]]);
+});
+
 test("a virtual workspace folder is no directory to lint: the dashboard asks for a folder, and runs nothing (#1843)", async (t) => {
   stub.reset();
   fakePanels();
