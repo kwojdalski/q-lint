@@ -106,6 +106,10 @@ test("a general list's string item is its characters where a format has strings 
   // A run of escapes is UTF-8, not one character per byte (#1397).
   assert.strictEqual(plainItem('"caf\\303\\251 \\344\\275\\240"'), "café 你");
   assert.strictEqual(plainItem('"\\\\101 \\377"'), "\\101 \u00ff");
+  // A byte that is not UTF-8 spoils none of the run's characters (#1737).
+  assert.strictEqual(plainItem('"caf\\303\\251\\377"'), "café\u00ff");
+  assert.strictEqual(plainItem('"\\377\\344\\275\\240\\303"'), "\u00ff你\u00c3");
+  assert.strictEqual(plainItem('"\\303\\303\\251"'), "\u00c3é");
   assert.deepStrictEqual(distinctNames(["a", "a", "", "a_1"]), ["a", "a_1", "column3", "a_1_1"]);
 });
 

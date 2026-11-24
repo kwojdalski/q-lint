@@ -421,8 +421,9 @@ export function distinctNames(names: string[]): string[] {
 /// An item of a general list as plain text: a string's characters, its
 /// escapes undone, for a format with strings of its own; any other item
 /// (and a string cut at 200 characters) as q wrote it. A run of octal
-/// escapes is the string's UTF-8 bytes, decoded as such; bytes that are
-/// not UTF-8 keep one character each.
+/// escapes is the string's UTF-8 bytes, decoded as such; a byte that is
+/// not part of a UTF-8 character keeps one character, and spoils none of
+/// the run's others (#1737).
 export function plainItem(text: string): string {
   const m = /^"((?:[^"\\]|\\.)*)"$/s.exec(text);
   if (m === null) {
@@ -433,10 +434,21 @@ export function plainItem(text: string): string {
       return e === "n" ? "\n" : e === "r" ? "\r" : e === "t" ? "\t" : e;
     }
     const bytes = Buffer.from(run.match(/[0-7]{3}/g)!.map((o) => parseInt(o, 8)));
-    try {
-      return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    } catch {
-      return bytes.toString("latin1");
+    const utf8 = new TextDecoder("utf-8", { fatal: true });
+    let out = "";
+    for (let i = 0; i < bytes.length; ) {
+      // The character the byte at `i` leads, by its length; latin1 if it is none.
+      const b = bytes[i];
+      const length = b < 0x80 ? 1 : b >= 0xc2 && b <= 0xdf ? 2 : b >= 0xe0 && b <= 0xef ? 3 : b >= 0xf0 && b <= 0xf4 ? 4 : 0;
+      let char: string | undefined;
+      try {
+        char = length > 0 && i + length <= bytes.length ? utf8.decode(bytes.subarray(i, i + length)) : undefined;
+      } catch {
+        char = undefined;
+      }
+      out += char ?? bytes.toString("latin1", i, i + 1);
+      i += char === undefined ? 1 : length;
     }
+    return out;
   });
 }
