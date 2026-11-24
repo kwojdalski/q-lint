@@ -351,6 +351,23 @@ fn explain(p: &layout::Parts) -> String {
             head.remove(0);
         }
     }
+    // `select[...]` takes a row count, a sort, or a count then a sort; any
+    // other order or number of items is 'length on KDB-X (`select[<px;2]`,
+    // `select[<px;>size]`, `select[2;3]`), and a query that does not run is
+    // not described as one that does (#2067).
+    let sort = |l: &String| l.starts_with(['<', '>']);
+    let runs = match &limit[..] {
+        [] | [_] => true,
+        [count, by] => !sort(count) && sort(by),
+        _ => false,
+    };
+    if !runs {
+        return format!(
+            "**In words.** q refuses this query with 'length: `select[...]` takes a row count, \
+             a sort (`<c`, `>c`), or a row count then a sort, as in {}.",
+            code("select[2;<px]")
+        );
+    }
     let in_place = from.trim_start().starts_with('`');
     let mut lines = vec![];
     lines.push(match p.lead {
@@ -395,10 +412,8 @@ fn explain(p: &layout::Parts) -> String {
             if distinct {
                 steps.push("Leaves out rows that repeat one already returned.".into());
             }
-            // A sort is applied before a limit, whatever order they are in.
-            let (sorts, limits): (Vec<&String>, Vec<&String>) =
-                limit.iter().partition(|l| l.starts_with(['<', '>']));
-            steps.extend(sorts.into_iter().chain(limits).map(|l| limited(l)));
+            // The sort, written second, is applied before the count.
+            steps.extend(limit.iter().rev().map(|l| limited(l)));
         }
         "exec" => {
             // One group unnamed keys the result by its values; a named one,
@@ -568,6 +583,29 @@ mod tests {
         assert!(!w.contains('\\'), "{w}");
         let w = words("r:select from t where s in ``a\n");
         assert!(w.contains("``` ``a ```"), "{w}");
+        // A count then a sort is the only order of two q runs: on KDB-X
+        // `select[<px;2] from t`, two sorts and two counts are 'length
+        // (#2067).
+        for refused in [
+            "r:select[<px;2] from t\n",
+            "r:select[<px;>size] from t\n",
+            "r:select[2;3] from t\n",
+            "r:select[2;<px;1] from t\n",
+        ] {
+            let w = words(refused);
+            assert!(w.contains("q refuses this query with 'length"), "{w}");
+            assert!(!w.contains("Sorts the result"), "{w}");
+        }
+        let w = words("r:select[<px] from t\n");
+        assert!(
+            w.contains("Sorts the result by `px`, smallest first."),
+            "{w}"
+        );
+        let w = words("r:select[1 2;>px] from t\n");
+        assert!(
+            w.contains("Sorts the result by `px`, largest first.\n3. Keeps only 2 rows"),
+            "{w}"
+        );
         let w = words("r:delete from t\n");
         assert!(w.contains("Removes every row"), "{w}");
         let w = words("r:delete from t where a>1\n");
