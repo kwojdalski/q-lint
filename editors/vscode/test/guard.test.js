@@ -830,6 +830,21 @@ test("an amend or ! in parentheses applied in brackets is a change (#1445)", () 
   }
 });
 
+test("an amend in any number of parentheses applied in brackets is a change (#1730)", () => {
+  const cases = {
+    "((@))[`.;`a;:;1]": ["amends `. in place"],
+    "(((.)))[`a;();:;1]": ["amends `a in place"],
+    "((!))[`t;();0b;`a]": ["updates or deletes from `t in place with !"],
+    // On a value, unbalanced, or not an amend, it reads.
+    "((@))[t;0;:;1]": [],
+    "(f(@))[`.;`a;:;1]": [],
+    "((x))[0]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
 test("value or eval of an amend tree on a variable by name is a change (#1446)", () => {
   const cases = {
     "value(@;`.;`a;:;1)": ["evaluates an amend with value"],
