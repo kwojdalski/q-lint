@@ -45,6 +45,7 @@ import { readTerminal } from "./liveconfig";
 import { mergeEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor, nodeFiles } from "./qenvironment";
 import { spawnPlan } from "./launcher";
+import { signalGroup } from "./lifeline";
 import { qBinaryFrom } from "./terminal";
 import { iconsEscaped, plainMessage } from "./history";
 
@@ -92,7 +93,8 @@ export function probe(binary: string, env: Record<string, string>): Promise<Prob
       return;
     }
     const timer = setTimeout(() => {
-      child.kill("SIGKILL");
+      // q.exe too, under q.cmd's cmd.exe (#1745).
+      signalGroup(child, "SIGKILL");
       finish(readProbe(out));
     }, PROBE_TIMEOUT_MS);
     child.stdout?.setEncoding("utf8");

@@ -53,9 +53,11 @@
   /// A number to `digits` decimals, every digit of its whole part: an
   /// integer from q's text (`text`), which a long past 2^53 is exact in and
   /// its double is not; a float past 1e21 not in exponent form (#1647).
+  /// A fractional value's text is never used: q's \P, or the grid's
+  /// decimals, may have rounded it to an integer's (#1741).
   function fixed(value, digits, text) {
     const zeros = digits > 0 ? "." + "0".repeat(digits) : "";
-    if (/^-?\d+$/.test(text)) {
+    if (Number.isInteger(value) && /^-?\d+$/.test(text)) {
       return text + zeros;
     }
     if (Math.abs(value) >= 1e21) {

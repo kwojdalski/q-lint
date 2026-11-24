@@ -805,6 +805,22 @@ fn a_qunit_test_runs_inside_its_namespace_fixtures() {
     assert_eq!(tests[1]["call"], ".other.testfoo[]");
 }
 
+/// Outside a file that uses qUnit, a `setUp*` or `tearDown*` is the
+/// file's own: never sent with a test or called around it (#1743).
+#[test]
+fn fixtures_wrap_a_test_only_in_a_file_that_uses_qunit() {
+    let dir = tempfile::tempdir().unwrap();
+    let plain = "\\d .db\ntearDownConnections:{[] hclose each .db.handles}\n\
+                 setUpCache:{[] 1b}\ntestQuery:{[] 1b}\n\\d .\n";
+    let mut server = Server::start(dir.path(), &[("plain.q", plain)]);
+    let reply = server.request("q-lint/tests", json!({}));
+    let tests = reply["result"][0]["tests"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"));
+    assert_eq!(tests[0]["code"], "\\d .db\ntestQuery:{[] 1b}\n\\d .");
+    assert_eq!(tests[0]["call"], ".db.testQuery[]");
+}
+
 #[test]
 fn the_global_at_a_position_is_named_as_q_resolves_it() {
     let dir = tempfile::tempdir().unwrap();

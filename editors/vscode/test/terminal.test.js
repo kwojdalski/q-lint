@@ -189,6 +189,11 @@ test("an env file's inline comment is not part of the value (#1686)", () => {
   assert.deepStrictEqual(env, { QHOME: "/opt/q", QLIC: "/opt/lic", S: "a # b", HASH: "a#b", NONE: "", Q: "say # hi" });
 });
 
+test("a quoted value followed by a comment ending in a quote is the quoted text alone (#1748)", () => {
+  const { env } = parseEnv('QHOME="/opt/q" # not "/usr/q"\nA=\'x\' # it\'s\nB="a"b"\nC="x" # the "default" one');
+  assert.deepStrictEqual(env, { QHOME: "/opt/q", A: "x", B: 'a"b', C: "x" });
+});
+
 test("csh and tcsh set the variables with env, and get a ! escaped (#1683)", () => {
   assert.strictEqual(commandLine("q", ["a!b.q", "it's"], "csh", { QHOME: "/opt/q", QLIC: "/my lic" }), "env QHOME=/opt/q QLIC='/my lic' q 'a\\!b.q' 'it'\\''s'");
   assert.strictEqual(commandLine("q", ["x.q"], "csh"), "q x.q");

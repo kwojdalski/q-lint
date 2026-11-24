@@ -373,12 +373,13 @@ pub(super) fn runnables(text: &str) -> Vec<Runnable> {
     }
     // A test in a namespace that defines qUnit fixtures runs inside them:
     // they are defined with it, and called around it, the test's error
-    // signalled again once its `tearDown*` has run.
+    // signalled again once its `tearDown*` has run. Only in a file that uses
+    // qUnit: elsewhere a `setUp*` or `tearDown*` is the file's own (#1743).
     let wrapped: Vec<(usize, String, String)> = out
         .iter()
         .enumerate()
         .filter_map(|(i, run)| {
-            let (ns, _) = namespace_of(&run.name).filter(|_| run.test.is_some())?;
+            let (ns, _) = namespace_of(&run.name).filter(|_| qunit && run.test.is_some())?;
             let of = |kinds: &[&str]| -> Vec<&Runnable> {
                 kinds
                     .iter()

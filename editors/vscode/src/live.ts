@@ -42,6 +42,7 @@ import {
   markdownText,
   merge,
   parseProcesses,
+  parseRelabels,
   plainHost,
   parseTags,
   passwordKey,
@@ -51,12 +52,14 @@ import {
   processTooltip,
   protectionsRemoved,
   readProcessFile,
+  relabelsAfter,
   sshDestination,
   serverTypes,
   givenServerTypes,
   tlsChoices,
   withExtras,
   withProtections,
+  withRelabel,
   type Process,
 } from "./processes";
 import { clickedEditor, unsavedIn } from "./clicked";
@@ -110,6 +113,10 @@ import type { Answered } from "./inlineresult";
 const PROCESSES_KEY = "q-lint.processes";
 /// The address of each process the shared list held when last read (#955).
 const SHARED_SEEN_KEY = "q-lint.sharedProcessesSeen";
+/// Every process renamed or deleted, for the workspaces not open then
+/// (#1749); and, in a workspace, the last of them its state has had.
+const RELABELS_KEY = "q-lint.processRelabels";
+const RELABELS_APPLIED_KEY = "q-lint.processRelabelsApplied";
 const HISTORY_KEY = "q-lint.queryHistory";
 const HISTORY_CLEARED_KEY = "q-lint.queryHistoryCleared";
 /// How many queries the history keeps.
@@ -780,6 +787,7 @@ export class Live {
     this.showStatus();
     this.status.show();
     this.watchShared();
+    void this.applyRelabels();
   }
 
   /// The workspace's shared process list, as a discovery server's list is
@@ -1442,6 +1450,31 @@ export class Live {
   /// Dashboard tiles and scheduled exports, also by label, move with it, or
   /// go with a deleted process (#1617).
   private async rebind(from: string, to: string | undefined): Promise<void> {
+    // Processes are every window's, tiles and schedules this workspace's:
+    // the others follow from the log when they next open (#1749).
+    await this.applyRelabels();
+    const log = withRelabel(parseRelabels(this.context.globalState.get<unknown>(RELABELS_KEY)), from, to);
+    await this.context.globalState.update(RELABELS_KEY, log);
+    await this.context.workspaceState.update(RELABELS_APPLIED_KEY, log[log.length - 1].n);
+    await this.retarget(from, to);
+  }
+
+  /// The renames and deletions made in other workspaces since this one's
+  /// state last had them, applied to it (#1749).
+  private async applyRelabels(): Promise<void> {
+    const log = parseRelabels(this.context.globalState.get<unknown>(RELABELS_KEY));
+    const applied = this.context.workspaceState.get<number>(RELABELS_APPLIED_KEY, 0);
+    const pending = relabelsAfter(log, applied);
+    if (pending.length === 0) {
+      return;
+    }
+    await this.context.workspaceState.update(RELABELS_APPLIED_KEY, log[log.length - 1].n);
+    for (const r of pending) {
+      await this.retarget(r.from, r.to ?? undefined);
+    }
+  }
+
+  private async retarget(from: string, to: string | undefined): Promise<void> {
     await this.context.workspaceState.update(DASHBOARDS_KEY, retargetedTiles(parseDashboards(this.context.workspaceState.get<unknown>(DASHBOARDS_KEY, [])), from, to));
     await this.context.workspaceState.update(SCHEDULES_KEY, retargetedSchedules(parseSchedules(this.context.workspaceState.get<unknown>(SCHEDULES_KEY, [])), from, to));
     let stored = this.context.workspaceState.get<unknown>(FILE_CONNECTIONS_KEY);

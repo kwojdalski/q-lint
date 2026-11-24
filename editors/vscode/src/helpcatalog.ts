@@ -201,8 +201,9 @@ export function nameAt(line: string, character: number): { name: string; start: 
   // Glyphs are cut as q cuts them, an operator and then its iterator:
   // `a:-1` is `:` and `-`, `x,/:y` is `,` and `/:`. A dot is a glyph only
   // where no name starts: `:.Q.s1` is `:` and `.Q.s1`. A symbol, `` `max ``
-  // or `` `:db/t ``, is taken whole, and is no name.
-  const re = /`[\w.]*(?::[\w.:/]*)?|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*|<>|<=|>=|::|':|\/:|\\:|[+\-*%&|^=<>~!#_$?@,'/\\:]|\.(?![A-Za-z])/g;
+  // or `` `:db/t ``, is taken whole, and is no name. `0:`, `1:` and `2:`
+  // are one operator each, as q lexes them, not `:` (#1750).
+  const re = /`[\w.]*(?::[\w.:/]*)?|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*|(?<![\w.])[0-2]:(?!:)|<>|<=|>=|::|':|\/:|\\:|[+\-*%&|^=<>~!#_$?@,'/\\:]|\.(?![A-Za-z])/g;
   // The token the cursor is on, or failing that the one it is just after.
   let found: { name: string; start: number; end: number } | undefined;
   for (const m of line.matchAll(re)) {

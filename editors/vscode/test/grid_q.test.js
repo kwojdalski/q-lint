@@ -215,6 +215,8 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
       // Floats and reals nested in a general column's items (#1502).
       '([] f:(1.23456789012 2.5;(1;2.1234567891234;`a;0.1 0N -0w 0we);enlist 0.1 0n;(enlist 3.14159265358979;"x");`float$();enlist(1.5;0n)))',
       '([] t:(([]a:`p`r);([k:1 2]v:3 4);enlist ([]a:1 2);flip(`$"a b";`c)!(1 2;3 4);1))',
+      // Floats in a dictionary or a table in a general column's items (#1746).
+      '([] d:(`a`b!1.123456789 2;([]a:1.123456789 2);([k:1 2]v:0.1234567891 3);(1;`a`b!1.5 2.123456789);`a`b!1 2;1))',
     ];
     for (const code of tables) {
       const grid = (await connection.queryGrid(statements(code), SIZE, 100)).grid;

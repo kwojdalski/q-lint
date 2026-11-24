@@ -21,7 +21,7 @@
 // - A lambda arrives with its text, which an unwrapped query shows. Any
 //   other function arrives as the word "func".
 // - An empty table arrives with no columns, so they cannot be shown.
-import { TREE_NODES, realValue, type GridPayload, type TreeNode } from "./grid";
+import { TREE_NODES, codePointOrder, realValue, type GridPayload, type TreeNode } from "./grid";
 import type { QValue } from "./qdecode";
 
 /// q's generic null, `(::)`.
@@ -725,9 +725,8 @@ function ranks(values: unknown[], raw: (number | null)[] | undefined): number[] 
     if (typeof x === "number" && typeof y === "number") {
       return x === y ? 0 : x < y ? -1 : 1;
     }
-    const sx = String(x);
-    const sy = String(y);
-    return sx === sy ? 0 : sx < sy ? -1 : 1;
+    // In code point order, as q sorts text (#1747).
+    return codePointOrder(String(x), String(y));
   };
   const order = keys.map((_, i) => i).sort((a, b) => compare(a, b) || a - b);
   const rank = new Array<number>(keys.length);
@@ -845,8 +844,9 @@ function denseRanks(keys: (number | bigint | string | null)[]): number[] {
   const order = keys.map((_, i) => i).sort((a, b) => {
     const x = keys[a];
     const y = keys[b];
-    // A null is below every value, -0w and -0W among them.
-    return x === y ? a - b : x === null ? -1 : y === null ? 1 : x < y ? -1 : 1;
+    // A null is below every value, -0w and -0W among them; text in code
+    // point order, as q sorts it (#1747).
+    return x === y ? a - b : x === null ? -1 : y === null ? 1 : typeof x === "string" && typeof y === "string" ? codePointOrder(x, y) : x < y ? -1 : 1;
   });
   const rank = new Array<number>(keys.length);
   let place = -1;
@@ -929,8 +929,9 @@ export function gridOfQ(q: QValue, limit: number): GridPayload | undefined {
 
 /// A general list's item with floats or reals inside as `GRID` sends it,
 /// for `exactLiteral`: `("f";x)`, `("e";x)`, `("F";v)` or `("E";v)` for a
-/// float, a real or a list of them, and `("l";v)` for a general list, each
-/// item its own or, holding none, its text. At most 200 items a list, as
+/// float, a real or a list of them, `("l";v)` for a general list, each
+/// item its own or, holding none, its text, `("d";(k;v))` for a dictionary
+/// and `("t";d)` for a table. At most 200 items a list, as
 /// a cell is cut at 200 characters; `false` for anything else.
 function exactOf(q: QValue): unknown[] | false {
   if (q.kind === "atom" && (q.t === -9 || q.t === -8)) {
@@ -942,6 +943,16 @@ function exactOf(q: QValue): unknown[] | false {
   if (q.kind === "list" && q.v.length <= 200) {
     const items = q.v.map(exactOf);
     return items.every((x) => x === false) ? false : ["l", items.map((x, i) => (x === false ? oneLine(q.v[i]) : x))];
+  }
+  // A dictionary as ("d";(keys;values)), a table as ("t";its dictionary):
+  // -3! would write their floats to \P (#1746).
+  if (q.kind === "dict") {
+    const pair = exactOf({ kind: "list", attr: 0, v: [q.k, q.v] });
+    return pair === false ? false : ["d", pair[1]];
+  }
+  if (q.kind === "table") {
+    const dict = exactOf({ kind: "dict", sorted: false, k: { kind: "vector", t: 11, attr: 0, v: q.cols }, v: { kind: "list", attr: 0, v: q.data } });
+    return dict === false ? false : ["t", dict];
   }
   return false;
 }

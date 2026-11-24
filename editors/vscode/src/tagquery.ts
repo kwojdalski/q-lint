@@ -13,7 +13,7 @@
 // by are worked out again here over all the rows: each process's own say
 // nothing of another's.
 import { qualified, type Discovered } from "./discovery";
-import { denseRank, sortKey, sortText, type GridAnswer, type GridPayload } from "./grid";
+import { codePointOrder, denseRank, sortKey, sortText, type GridAnswer, type GridPayload } from "./grid";
 import type { Process } from "./processes";
 
 export const TAG_QUERY = {
@@ -73,7 +73,12 @@ const ORDERED = new Set([5, 6, 7, 8, 9, 12, 13, 14, 15, 16, 17, 18, 19]);
 function ranks(type: number, cells: string[], raw: unknown[]): number[] {
   const numeric = ORDERED.has(type) && raw.length === cells.length;
   const keys: (number | bigint | string)[] = numeric ? raw.map(sortKey) : cells.map(sortText);
-  return denseRank(cells.length, (a, b) => (keys[a] < keys[b] ? -1 : keys[a] > keys[b] ? 1 : 0));
+  // Text in code point order, as q sorts it (#1747).
+  return denseRank(cells.length, (a, b) => {
+    const x = keys[a];
+    const y = keys[b];
+    return typeof x === "string" && typeof y === "string" ? codePointOrder(x, y) : x < y ? -1 : x > y ? 1 : 0;
+  });
 }
 
 /// The answers of every process as one payload, a `process` column first.

@@ -140,3 +140,18 @@ test("a console size of the wrong type, as settings.json allows, is no size inst
   assert.strictEqual(consoleSize([50, 160]), undefined);
   assert.deepStrictEqual(readLive((key, fallback) => (key === "output.consoleSize" ? 50 : fallback)).consoleSize, [50, 160]);
 });
+
+test("a rename or deletion is logged for the workspaces not open, each applying what it has not had (#1749)", () => {
+  const { parseRelabels, withRelabel, relabelsAfter } = require("../out/processes.js");
+  let log = withRelabel([], "rdb", "rdb1");
+  log = withRelabel(log, "hdb", undefined);
+  assert.deepStrictEqual(log, [{ n: 1, from: "rdb", to: "rdb1" }, { n: 2, from: "hdb", to: null }]);
+  assert.deepStrictEqual(parseRelabels([...log, { n: "x" }, null, 3]), log);
+  assert.deepStrictEqual(parseRelabels(undefined), []);
+  // A workspace that had the first gets the second; a new one gets both.
+  assert.deepStrictEqual(relabelsAfter(log, 1), [log[1]]);
+  assert.deepStrictEqual(relabelsAfter(log, 0), log);
+  assert.deepStrictEqual(relabelsAfter(log, 2), []);
+  // Kept to its last entries, numbered on.
+  assert.deepStrictEqual(withRelabel(log, "a", "b", 2), [log[1], { n: 3, from: "a", to: "b" }]);
+});

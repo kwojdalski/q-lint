@@ -302,6 +302,19 @@ test("floats nested in a general-list item are written with every digit too (#15
   assert.strictEqual(tableLiteral(g).code, "([] a:(1.23456789012 2.5;(1;2.1234567891234f);`x))");
 });
 
+test("floats in a dictionary or a table nested in a general-list item keep every digit (#1746)", () => {
+  const lit = (text, raw) => atomLiteral(0, text, raw).literal;
+  assert.strictEqual(lit("`a`b!1.123457 2", ["d", ["`a`b", ["F", [1.123456789, 2]]]]), "(`a`b)!1.123456789 2");
+  assert.strictEqual(lit("+(,`a)!,1.123457 2", ["t", ["d", [",`a", ["l", [["F", [1.123456789, 2]]]]]]]), "flip (enlist `a)!enlist 1.123456789 2");
+  // Unwrapped, from the decoded items.
+  const f = (v) => ({ kind: "vector", t: 9, attr: 0, v });
+  const syms = (v) => ({ kind: "vector", t: 11, attr: 0, v });
+  const dict = { kind: "dict", sorted: false, k: syms(["a", "b"]), v: f([1.123456789, 2]) };
+  const table = { kind: "table", attr: 0, cols: ["a"], data: [f([1.123456789, 2])] };
+  const g = gridOfQ({ kind: "table", attr: 0, cols: ["x"], data: [{ kind: "list", attr: 0, v: [dict, table] }] }, 100);
+  assert.strictEqual(tableLiteral(g).code, "([] x:((`a`b)!1.123456789 2;flip (enlist `a)!enlist 1.123456789 2))");
+});
+
 test("a table in a general-list item is written through flip, as q reads it (#1501)", () => {
   // -3! writes a table with k's monadic +, which q refuses: '+ on KDB-X.
   const lit = (t) => atomLiteral(0, t, undefined).literal;

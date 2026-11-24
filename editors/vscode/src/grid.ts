@@ -76,7 +76,8 @@ const COLUMN_LINES = [
   "          {[c]u:type c;$[u in 12 16h;\"j\"$c;u in 13 14 17 18 19h;\"i\"$c;u=15h;\"f\"$c;u=10h;\"x\"$c;u in 2 5 6 7 8 9h;c;",
   "            u=0h;{[g;x]$[-9h=t:type x;$[null x;0b;x];-8h=t;$[null x;0b;\"f\"$x];g x]}[{$[-9h=t:type x;(\"f\";x);-8h=t;(\"e\";\"f\"$x);",
   "              (t in 8 9h)&200>=count x;($[t=9h;\"F\";\"E\"];\"f\"$x);(0h=t)&200>=count x;",
-  "              $[all 0b~/:r:.z.s each x;0b;(\"l\";@[r;w;:;-3!'x w:where 0b~/:r])];0b]}] each c;()]} each c;",
+  "              $[all 0b~/:r:.z.s each x;0b;(\"l\";@[r;w;:;-3!'x w:where 0b~/:r])];",
+  "              99h=t;$[0b~r:.z.s(key x;value x);0b;(\"d\";r 1)];98h=t;$[0b~r:.z.s flip x;0b;(\"t\";r)];0b]}] each c;()]} each c;",
   "          {@[{i:iasc x;\"i\"$@[count[x]#0;i;:;-1+sums differ x i]};x;{[e]()}]} each c;",
 ];
 

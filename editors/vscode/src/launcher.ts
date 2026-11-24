@@ -30,12 +30,33 @@ export function isLocalHost(host: string, hostname: string = os.hostname()): boo
 /// 127.0.0.1 (its own 127.x address), so a process defined as local is not
 /// served on every interface with no password (#1671); any other host's,
 /// bare. q binds IPv4 only and takes no `::1:port`, so `::1` is 127.0.0.1.
-export function listenAddress(host: string, port: number): string {
+/// A process in a stack (`peers`) is bare too: TorQ turns a `localhost` in
+/// process.csv into .z.h, the machine's name, and its processes connect to
+/// each other there, which a loopback-only q refuses (#1742).
+export function listenAddress(host: string, port: number, peers = false): string {
   const h = host.trim().toLowerCase();
+  if (peers) {
+    return String(port);
+  }
   if (/^127\.\d+\.\d+\.\d+$/.test(h)) {
     return `${h}:${port}`;
   }
   return h === "localhost" || h === "::1" ? `127.0.0.1:${port}` : String(port);
+}
+
+/// Whether a launch's script and arguments start a TorQ process (torq.q,
+/// -proctype or -procname): one its stack's other processes connect to by
+/// the machine's name (#1742).
+export function inStack(script: string | undefined, args: readonly string[]): boolean {
+  return (script !== undefined && /(^|[\\/])torq\.q$/i.test(script)) || args.includes("-proctype") || args.includes("-procname");
+}
+
+/// The address that tells whether `host`'s process listens: its own 127.x
+/// address, which it alone may be bound to (#1742); else 127.0.0.1, which a
+/// loopback-only and a bare-port q both answer on.
+export function probeHost(host: string): string {
+  const h = host.trim().toLowerCase();
+  return /^127\.\d+\.\d+\.\d+$/.test(h) ? h : "127.0.0.1";
 }
 
 export interface Plan {
@@ -59,7 +80,7 @@ export function fromWorkspace(launch: Launch, home: string = os.homedir()): bool
 }
 
 /// What starting `process` runs: its command (else `qBinary`), its script,
-/// `-p <port>` (on the loopback for a loopback host) unless its arguments set one, then its arguments; in its
+/// `-p <port>` (on the loopback for a lone q on a loopback host) unless its arguments set one, then its arguments; in its
 /// `cwd`, else the workspace folder, else the home directory. A leading `~`
 /// (`~/`, or `~\` as Windows writes it) is the home directory, and a
 /// relative script or cwd is from the folder. A bare program name is found
@@ -96,7 +117,7 @@ export function launchPlan(
   }
   return {
     command,
-    args: [...(script !== undefined ? [script] : []), ...(args.includes("-p") ? [] : ["-p", listenAddress(process.host, process.port)]), ...args],
+    args: [...(script !== undefined ? [script] : []), ...(args.includes("-p") ? [] : ["-p", listenAddress(process.host, process.port, inStack(launch.script, args))]), ...args],
     cwd,
     env: launch.env ?? {},
   };
