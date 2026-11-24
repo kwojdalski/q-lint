@@ -217,6 +217,19 @@ test("a parameter named expected is not overwritten by the expected value (#1601
   );
 });
 
+test("a parameter named like the function does not take its place in the call (#2004)", () => {
+  const target = functionAt("scale:{[scale;v] v*scale}\n", 0);
+  assert.deepStrictEqual(target, { name: "scale", params: ["scale", "v"] });
+  assert.strictEqual(
+    stubText(target, "test_scale", detectStyle("")),
+    "test_scale:{[]\n  scale:(::); v:(::); / TODO: the arguments\n  expected:(::); / TODO: what `.[`scale][scale;v] should give\n  `.[`scale][scale;v]~expected}\n",
+  );
+  assert.match(stubText(target, "testScale", detectStyle(".qunit.assertEquals[1;1;\"a\"]"), ".tests"), /assertEquals\[`\.\[`scale\]\[scale;v\];expected;"scale"\]/);
+  // A qualified name is no local, and another parameter's name no callee.
+  assert.match(stubText({ name: ".fx.scale", params: ["scale"] }, "test_scale", detectStyle("")), /\n  \.fx\.scale\[scale\]~expected\}/);
+  assert.match(stubText({ name: "scale", params: ["scaled"] }, "test_scale", detectStyle("")), /\n  scale\[scaled\]~expected\}/);
+});
+
 test("a stub appended under a trailing \\d calls a root function at the root (#1599)", () => {
   const file = "\\d .tests\ntestA:{[] .qunit.assertEquals[1;1;\"a\"]}\n";
   assert.strictEqual(endContext(file), ".tests");
