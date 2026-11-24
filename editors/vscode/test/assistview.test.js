@@ -435,6 +435,26 @@ test("Draft qSQL shows the draft for review and runs nothing until Run, then run
   assert.deepStrictEqual(second.live.queried, []);
 });
 
+test("@q explain and Draft qSQL read nothing from a process switched to mid-request (#1621)", async () => {
+  const { live, context } = setup();
+  const chat = registerChat(context, live);
+  // The connection moves to uat before the read borrows it.
+  const borrow = live.borrow;
+  live.activeLabel = () => "dev";
+  live.borrow = (use) => ((live.activeLabel = () => "uat"), borrow((c) => use(c, { ...dev, label: "uat" })));
+  const asked = await chat.participant.prompt({ prompt: "f 3", command: undefined });
+  assert.doesNotMatch(asked.prompt, /\{x\*2\}/);
+  assert.deepStrictEqual(live.sent, []);
+  const second = setup();
+  registerQsqlDraft(second.context, second.live);
+  second.live.borrow = (use) => ((second.live.activeLabel = () => "uat"), fakeLive().borrow((c) => use(c, { ...dev, label: "uat" })));
+  const model = fakeModel([[new LanguageModelTextPart("exec 1 from t")]]);
+  models = [model];
+  stub.picks = [undefined];
+  await stub.commands.get("q-lint.draftQsql")("one");
+  assert.doesNotMatch(model.sent[0].messages[0].content, /trade/);
+});
+
 test("Draft qSQL turned off, or with no model: refuses and asks neither model nor process", async () => {
   const { live, context } = setup({ "chat.englishToQsql.enable": false });
   registerQsqlDraft(context, live);

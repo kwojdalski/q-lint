@@ -138,7 +138,8 @@ export class QParticipant {
     // The server's hovers need the code in a file: the selection, when it is
     // what is explained.
     const server = typed === "" && selected !== undefined ? await this.fromServer(selected.document, selected.selection, names) : { hovers: [], diagnostics: [] };
-    const described = await this.describe(names);
+    // Read from the process the prompt names, or not at all (#1621).
+    const described = process === undefined ? [] : await this.describe(names, process);
     return { prompt: explainPrompt({ expression, ...(process !== undefined ? { process } : {}), ...server, described }, typed === "" ? "" : typed) };
   }
 
