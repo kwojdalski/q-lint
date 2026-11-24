@@ -222,6 +222,22 @@ test("the HDB browser: partitions, counts per partition, splayed tables and the 
   assert.match(hdbTree(two, "hdb")[1].children.at(-1).label, /1 older partition not shown/);
 });
 
+// A table missing from one partition (no .Q.chk): .Q.cn fails, so its
+// counts are unknown, and so is its total - not 0 rows (#1566).
+test("the HDB browser does not call a table missing from a partition empty", { skip }, async (t) => {
+  const c = await connect(t, [
+    "dir:`$\":$DIR/db\";",
+    ".Q.dd[dir;2024.01.01,`quote`] set .Q.en[dir;([]sym:`a`b;bid:1 2f)];",
+    ".Q.dd[dir;2024.01.02,`trade`] set .Q.en[dir;([]sym:`a`b`c;px:1 2 3f)];",
+    ".Q.dd[dir;2024.01.03,`quote`] set .Q.en[dir;([]sym:`a`b;bid:1 2f)];",
+    "system\"l $DIR/db\";",
+    "",
+  ].join("\n"));
+  const h = readHdb(await c.call(HDB, 1000));
+  const quote = h.tables.find((x) => x.name === "quote");
+  assert.deepStrictEqual([quote.counts, quote.total], [[null, null, null], null]);
+});
+
 test("a process with no partitioned database says so", { skip }, async (t) => {
   const c = await connect(t, "a:1\n");
   const h = readHdb(await c.call(HDB, 1000));
@@ -257,4 +273,12 @@ test("the Process Monitor of a process with no TorQ timers, and a long working d
   assert.deepStrictEqual(tree.find((n) => n.label === "Timers").children.map((n) => n.label), ["\\t", ".z.ts"]);
   const cd = tree.find((n) => n.label === "Settings").children.find((n) => n.label === "\\cd").description;
   assert.ok(cd.startsWith("/") && !cd.endsWith(".."), cd);
+});
+
+// One-character descriptions are char atoms: each its own string, not run
+// together into the first job's (#1581).
+test("the Timers view keeps each job's one-character description", { skip }, async (t) => {
+  const { TIMERS, readTimers } = require("../out/timers.js");
+  const c = await connect(t, '.timer.timer:([id:1 2i]period:0D00:01 0D00:05;active:10b;nextrun:2#.z.P;lastrun:2#.z.P;description:("a";"b");funcparam:2#enlist({x};1));\n');
+  assert.deepStrictEqual(readTimers(await c.call(TIMERS, null)).jobs.map((j) => j.description), ["a", "b"]);
 });

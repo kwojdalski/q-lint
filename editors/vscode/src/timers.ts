@@ -5,14 +5,16 @@
 // through the read-only guard there.
 //
 // Each value is read into a string or a float on the process, as the
-// Process Monitor reads its own; the first 200 jobs are listed.
+// Process Monitor reads its own; the first 200 jobs are listed. A
+// one-character string is a char atom, enlisted: `s each` of atoms alone
+// would run them together into one string (#1581).
 
 export const TIMERS = [
   "{[]",
   " t:@[system;\"t\";0N];",
   " tm:@[get;`.timer.timer;()];",
   " tm:$[.Q.qt tm;200 sublist 0!tm;()];",
-  " s:{$[10h=abs type x;x;-3!x]};",
+  " s:{$[10h=type x;x;-10h=type x;enlist x;-3!x]};",
   " r:$[.Q.qt tm;",
   "   `id`active`period`nextrun`lastrun`description`func!(\"f\"$tm`id;tm`active;s each tm`period;s each tm`nextrun;s each tm`lastrun;s each tm`description;{200 sublist -3!x}each tm`funcparam);",
   "   ()];",

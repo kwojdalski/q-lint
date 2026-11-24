@@ -48,6 +48,17 @@ test("an update's rows are read as q's text, in the subscribed columns' order", 
   assert.strictEqual(readUpdate(sym("x"), "trade", ["sym"]), undefined);
 });
 
+test("a one-row update of string columns is one row, not its characters as columns (#1582)", () => {
+  const chars = (t) => ({ kind: "chars", attr: 0, v: Buffer.from(t) });
+  const one = upd("t", { kind: "list", attr: 0, v: [chars("abc"), chars("de")] });
+  assert.deepStrictEqual(readUpdate(one, "t", ["a", "b"]).length, 1);
+  const even = upd("t", { kind: "list", attr: 0, v: [chars("ab"), chars("cd")] });
+  assert.deepStrictEqual(readUpdate(even, "t", ["a", "b"], "  ").length, 1);
+  assert.deepStrictEqual(readUpdate(even, "t", ["a", "b"], "CC").length, 1);
+  // Char columns: two rows.
+  assert.deepStrictEqual(readUpdate(even, "t", ["a", "b"], "cc"), [["a", "c"], ["b", "d"]]);
+});
+
 test("the grid keeps the newest rows, and counts them all", () => {
   const w = new RowWindow(3);
   w.push([["1"], ["2"]]);

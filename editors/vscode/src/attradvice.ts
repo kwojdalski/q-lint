@@ -16,6 +16,8 @@
 // and 8 a row plus 16 a distinct value for `g#`. kdb+ allocates in powers
 // of two, so a real one can be up to twice that.
 
+import { bytes } from "./tableinfo";
+
 export const ATTRIBUTE_SAMPLE = [
   "{[nm;lim]",
   " t:get`$nm;if[not .Q.qt t;'\"not a table\"];",
@@ -172,16 +174,7 @@ export function advise(s: AttributeSample, filters: Map<string, number> = new Ma
 }
 
 const md = (s: string) => s.replace(/([\\`*_{}[\]<>|#])/g, "\\$1");
-const size = (b: number) => {
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let i = 0;
-  let v = b;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return i === 0 ? `${Math.round(b)} B` : `${v.toFixed(v < 10 ? 1 : 0)} ${units[i]}`;
-};
+const size = bytes;
 
 /// The advice as Markdown: a table, the reasons, and a reminder that
 /// nothing was applied.

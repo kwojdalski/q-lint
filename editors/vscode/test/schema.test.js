@@ -33,6 +33,8 @@ test("table templates: select first, meta, count by date and an insert of typed 
   assert.deepStrictEqual(plain.map((x) => x.label), ["Select first 100", "meta", "Insert template"]);
   assert.match(plain[2].code, /enlist 0Nj; \/ k \(j\), key\n {2}enlist \(\)\) {2}\/ v/);
   assert.strictEqual(s.tableTemplates("a b", info())[0].code, 'select[100] from get`$"a b"');
+  // Parenthesised: `$"a b" insert (...) is `$("a b" insert ...) (#1570).
+  assert.match(s.tableTemplates("a b", info())[3].code, /\n\(`\$"a b"\) insert \(\n/);
 });
 
 const tables = [
