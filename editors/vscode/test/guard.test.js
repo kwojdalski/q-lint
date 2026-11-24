@@ -1123,3 +1123,34 @@ test("reval or -24! of an assignment tree is a change (#1774)", () => {
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("a string literal an evaluator runs is read as the code it is (#1776)", () => {
+  const cases = {
+    'value"select from t"': [],
+    'get"count t"': [],
+    'eval parse"select from t"': [],
+    '@[value;"count t";{x}]': [],
+    'value each ("count t";"count b")': [],
+    'value"\\\\v"': [],
+    '-6!parse"count t"': [],
+    'value -5!"count t"': [],
+    // One that writes, is built, or passes through another function is a change.
+    'value"select from t";value"a:9"': ["evaluates a string with value"],
+    'value each ("count t";"a:9")': ["evaluates a string with value"],
+    'value"`b set 7"': ["evaluates a string with value"],
+    'value"\\\\l s.q"': ["evaluates a string with value"],
+    'eval parse"update a:9 from `t"': ["evaluates a parse tree with eval"],
+    'value "a",":9"': ["evaluates a string with value"],
+    'value raze("a";":9")': ["evaluates a string with value"],
+    'value "count t"[0]': ["evaluates a string with value"],
+    "eval parse x": ["evaluates a parse tree with eval"],
+    // The identity is not an assignment.
+    "eval(::)": [],
+    "-6!(::)": [],
+    // k code is not read: its . evaluates k.
+    'k)."1+1"': ["evaluates a string with k's ."],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

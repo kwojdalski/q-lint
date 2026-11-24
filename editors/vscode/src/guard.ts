@@ -57,7 +57,9 @@
 //   out and given after (`` @[;`a;:;1] `. ``), and the amend or `!`
 //   passed as a value (`` .[@;(`.;`a;:;1)] ``, `` (@) . (`.;..) ``);
 // - `value`, `get`, `eval`, `reval`, `-6!` or `-24!`, or in k code a monadic `.`
-//   (`` k)."a:1" ``), applied to a string, to `parse` or
+//   (`` k)."a:1" ``), applied to a string that changes the process by these
+//   rules - `value "count t"` reads (#1776) - or one built or passed through
+//   another function (`value "a",":1"`), to `parse` or
 //   `-5!`, or to a tree headed by `:`, `::` or `+:` (`eval(:;`t;())`), by
 //   an amend `@` or `.` of four items or more on a variable by name
 //   (`` value(@;`.;`a;:;1) ``, `` eval(@;enlist`.;enlist`a;:;1) ``), by
@@ -447,22 +449,83 @@ function evaluated(t: Token[], j: number, byValue: boolean): { reason: string; a
   const projection = head && (k?.text === "@" || k?.text === ".") && t[j + 1]?.text === "[" ? items(t, j + 1) : [];
   const projected =
     projection.length > 0 && projection.length >= minimum(k?.text ?? "") && projection[0][0] === projection[0][1] && named(projection[projection.length - 1][1] + 1)?.kind === "sym" && (named(projection[projection.length - 1][1] + 1)?.text.length ?? 0) > 1;
-  const reason = k?.kind === "str"
-    ? "a string"
-    : (k?.kind === "name" && k.text === "parse") || (k?.text === "-5" && t[j + 1]?.text === "!")
-      ? "a parse tree"
-      : head && k?.kind === "op" && (k.text === ":" || (OPERATORS.has(k.text) && t[j + 1]?.text === ":"))
-        ? "an assignment"
-        : head && k?.text === "!" && t[j + 1]?.text === ";" && (byValue ? t[j + 2] : t[j + 2]?.text === "enlist" ? t[j + 3] : undefined)?.kind === "sym"
-          ? "a functional update or delete"
-          : head && k?.kind === "sym" && WRITERS.has(unqualified(k.text.slice(1)))
-            ? `a call of ${k.text.slice(1)}`
-            : // An amend on a variable by name: `` value(@;`.;`a;:;1) ``,
-              // `` eval(@;enlist`.;enlist`a;:;1) `` (#1446).
-              (head && (k?.text === "@" || k?.text === ".") && named(j + 1 + wrap)?.kind === "sym" && (named(j + 1 + wrap)?.text.length ?? 0) > 1 && items(t, j - 1 - wrap).length > minimum(k?.text ?? "")) || projected
-              ? "an amend"
-              : undefined;
+  // (`(::)` alone is the identity, not an assignment.)
+  const reason = head && k?.kind === "op" && (k.text === ":" || (OPERATORS.has(k.text) && t[j + 1]?.text === ":")) && items(t, j - 1).length > 1
+    ? "an assignment"
+    : head && k?.text === "!" && t[j + 1]?.text === ";" && (byValue ? t[j + 2] : t[j + 2]?.text === "enlist" ? t[j + 3] : undefined)?.kind === "sym"
+      ? "a functional update or delete"
+      : head && k?.kind === "sym" && WRITERS.has(unqualified(k.text.slice(1)))
+        ? `a call of ${k.text.slice(1)}`
+        : // An amend on a variable by name: `` value(@;`.;`a;:;1) ``,
+          // `` eval(@;enlist`.;enlist`a;:;1) `` (#1446).
+          (head && (k?.text === "@" || k?.text === ".") && named(j + 1 + wrap)?.kind === "sym" && (named(j + 1 + wrap)?.text.length ?? 0) > 1 && items(t, j - 1 - wrap).length > minimum(k?.text ?? "")) || projected
+          ? "an amend"
+          : undefined;
   return reason === undefined ? undefined : { reason, at: j };
+}
+
+/// The names and operators an evaluator's argument may pass through on its
+/// way to a string and still be that string: `value each enlist "x"`,
+/// `` @[value;"x";::] ``, `eval parse "x"`.
+const PASSING = new Set(["each", "peach", "enlist", "parse", ...EVALUATORS]);
+const PASSING_OPS = new Set([..."@.'/\\:;"]);
+
+/// Where the argument of what ends at `t[last]` ends: at the first `;` or
+/// close outside the brackets it opens.
+function argumentEnd(t: Token[], last: number): number {
+  let depth = 0;
+  for (let p = last + 1; p < t.length; p++) {
+    if (t[p].kind === "open") depth++;
+    else if (t[p].kind === "close" && depth-- === 0) return p;
+    else if (depth === 0 && t[p].text === ";") return p;
+  }
+  return t.length;
+}
+
+/// What the strings an evaluator ending at `t[last]` is applied to run, up
+/// to `t[end]`: each is read as the code it is (#1776), so `value "count t"`
+/// reads, as a gateway's string does. One that is built, `value "a",":1"`,
+/// or reaches it through another function, `value raze("a";":1")`, is
+/// taken for a change; so is `parse` of what is not a string, and in k
+/// code, `k)."x"`, any string, which is k and not read here.
+function strings(t: Token[], last: number, end: number, kCode: boolean): string | undefined {
+  let passing = true;
+  let parsed = false;
+  let seen = false;
+  let lambda = 0;
+  for (let p = last + 1; p < end; p++) {
+    const k = t[p];
+    if (k.kind === "open" && k.text === "{") lambda++;
+    else if (k.kind === "close" && k.text === "}") lambda--;
+    if (lambda > 0 || k.text === "}") continue;
+    if (k.kind === "name") {
+      parsed ||= k.text === "parse";
+      passing &&= PASSING.has(unqualified(k.text));
+    } else if (k.kind === "num" && k.text === "-5" && t[p + 1]?.text === "!") {
+      parsed = true;
+      p++;
+    } else if (k.kind === "op") {
+      passing &&= PASSING_OPS.has(k.text);
+    } else if (k.kind === "str") {
+      seen = true;
+      const whole = passing && (p + 1 >= end || t[p + 1].text === ";" || t[p + 1].kind === "close");
+      if (!whole || kCode || writes(qText(k.text)).length > 0) {
+        return parsed ? "a parse tree" : "a string";
+      }
+    }
+  }
+  return parsed && !seen ? "a parse tree" : undefined;
+}
+
+/// What an evaluator ending at `t[last]` runs that changes the process: a
+/// tree `evaluated` reads, or a string `strings` does.
+function evaluates(t: Token[], last: number, byValue: boolean, kCode = false): { reason: string; at: number } | undefined {
+  const what = evaluated(t, last + 1, byValue);
+  if (what !== undefined) {
+    return what;
+  }
+  const reason = strings(t, last, argumentEnd(t, last), kCode);
+  return reason === undefined ? undefined : { reason, at: last };
 }
 
 /// What one statement does that the guard asks about, added to `found`.
@@ -690,7 +753,7 @@ function readStatement(statement: string, found: Set<string>): void {
         // Given to a trap, `@[value;"a:1";h]`, `.Q.trp[value;..;h]`, it is
         // applied to the argument after it.
         const trapped = t[i - 1]?.text === "[" && t[i - 1]?.kind === "open" && next?.text === ";";
-        const what = evaluated(t, i + (wrapped || trapped ? 2 : 1), unqualified(k.text) !== "eval" && unqualified(k.text) !== "reval");
+        const what = evaluates(t, i + (wrapped || trapped ? 1 : 0), unqualified(k.text) !== "eval" && unqualified(k.text) !== "reval");
         if (what !== undefined) {
           found.add(`evaluates ${what.reason} with ${k.text}`);
           i = what.at;
@@ -758,7 +821,7 @@ function readStatement(statement: string, found: Set<string>): void {
     const parenthesised = unaryDot && t[after]?.text === ")";
     if (parenthesised || (kCode && k.kind === "op" && k.text === "." && i >= 2 && (t[i - 1].kind === "op" || t[i - 1].kind === "open" || i === 2 || t[i - 1].text === ";"))) {
       after += parenthesised ? 1 : 0;
-      const what = evaluated(t, after, true);
+      const what = evaluates(t, after - 1, true, kCode);
       if (what !== undefined) {
         found.add(`evaluates ${what.reason} with ${kCode ? "k's ." : "(.)"}`);
         i = what.at;
@@ -819,7 +882,7 @@ function readStatement(statement: string, found: Set<string>): void {
             : -1;
     // `-6!` is `eval`, and `-24!` `reval` (#1774).
     if (bang > 0 && (k.text === "-6" || k.text === "-24")) {
-      const what = evaluated(t, bang + 1, false);
+      const what = evaluates(t, bang, false);
       if (what !== undefined) {
         found.add(`evaluates ${what.reason} with ${k.text}!`);
         i = what.at;
