@@ -27,20 +27,30 @@ pub(crate) fn explain_at(code: &str, comments: &str, source: &str, at: usize) ->
     let text = format!("{}\n", conv.text);
     let v = crate::views(&text);
     let parts = layout::parts_at(&v.code, &v.comments, &text, 0)?;
+    // A backslash is no escape in a code span (CommonMark): the span is
+    // fenced by more backticks than it holds in a row instead (#2065).
     Some(format!(
-        "The functional form of `{}`.\n\n{}",
-        conv.text.replace('`', "\\`"),
+        "The functional form of {}.\n\n{}",
+        self::code(&conv.text),
         explain(&parts)
     ))
 }
 
-/// `text` as inline code.
+/// `text` as inline code: fenced by one backtick more than the longest
+/// run of them in it, with a blank inside where it holds any, so that a
+/// symbol (`` `a ``) or an empty one (``` `` ```) does not end the span.
 fn code(text: &str) -> String {
     let text = text.trim();
-    if text.contains('`') {
-        format!("`` {text} ``")
-    } else {
+    let (mut longest, mut run) = (0, 0);
+    for c in text.chars() {
+        run = if c == '`' { run + 1 } else { 0 };
+        longest = longest.max(run);
+    }
+    if longest == 0 {
         format!("`{text}`")
+    } else {
+        let fence = "`".repeat(longest + 1);
+        format!("{fence} {text} {fence}")
     }
 }
 
@@ -471,6 +481,21 @@ mod tests {
         assert!(w.contains("a dictionary from a table of the groups"), "{w}");
         let w = crate::explain_qsql("r:?[t;();(enlist`sym)!enlist`sym;`px]\n", 3).unwrap();
         assert!(w.contains("a dictionary from a table of the groups"), "{w}");
+        // A backtick in the qSQL of a functional form is fenced, not
+        // escaped: a backslash is literal in a code span (#2065).
+        let w = crate::explain_qsql("r:![`t;();0b;enlist`px]\n", 3).unwrap();
+        assert!(
+            w.starts_with("The functional form of `` delete px from `t ``."),
+            "{w}"
+        );
+        let w = crate::explain_qsql("r:?[t;enlist (=;`sym;enlist`a);0b;()]\n", 3).unwrap();
+        assert!(
+            w.starts_with("The functional form of `` select from t where sym=`a ``."),
+            "{w}"
+        );
+        assert!(!w.contains('\\'), "{w}");
+        let w = words("r:select from t where s in ``a\n");
+        assert!(w.contains("``` ``a ```"), "{w}");
         let w = words("r:delete from t\n");
         assert!(w.contains("Removes every row"), "{w}");
         let w = words("r:delete from t where a>1\n");
