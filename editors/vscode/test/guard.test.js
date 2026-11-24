@@ -1404,3 +1404,21 @@ test("a lambda applied where it is written changes what its arguments name: {.[x
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("? passed as a value, in parentheses, through an adverb or to . or @, extends an enumeration (#2036)", () => {
+  const cases = {
+    "(?)[`sym;`x1]": ["extends the enumeration `sym with ?"],
+    ".[?;(`sym;`x2)]": ["extends the enumeration `sym with ?"],
+    "?/[`sym;`x3]": ["extends the enumeration `sym with ?"],
+    "?'[`sym`sym;`x4`x5]": ["extends the enumeration `sym with ?"],
+    ".[(?);(`sym;`x6)]": ["extends the enumeration `sym with ?"],
+    "(?) . (`sym;`x7)": ["extends the enumeration `sym with ?"],
+    // On a list, or a functional select, it finds or selects.
+    "(?)[`a`b;`b]": [],
+    "(?)[1 2 3;2]": [],
+    ".[?;(t;();0b;())]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

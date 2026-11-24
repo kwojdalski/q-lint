@@ -50,7 +50,9 @@
 //   expression (`` .[xkey;(`a;`t)] ``, `` xkey/[`a;`t] ``, #1770);
 // - `?` with a symbol atom on its left (`` `sym?`x ``, `` (`sym)?`x ``,
 //   `` ?[`sym;`x] ``), which extends that enumeration, and the sym file
-//   when the symbol is a handle;
+//   when the symbol is a handle; also passed as a value, in parentheses,
+//   through an adverb or to `.` or `@` (`` (?)[`sym;`x] ``, `` ?/[`sym;`x] ``,
+//   `` .[?;(`sym;`x)] ``), read as the call it makes (#2036);
 // - a string or a list sent to handle 0 (`0"a:1"`, `neg[0]"a:1"`,
 //   `0(@;`b;0;:;9)`), which the process evaluates itself as `value` would;
 // - `-11!`, which replays a log through `upd`, except `-11!(-1;..)` and
@@ -878,6 +880,62 @@ function throughParameters(t: Token[], all: Token[], index: Map<Token, number>, 
   }
 }
 
+/// The operators that change the process given the right arguments, read
+/// as a call when they are passed as a value: `?`, which extends an
+/// enumeration, and the amends `@` and `.`.
+const VALUES = new Set(["?", "@", "."]);
+
+/// The items of the list `t[from]` to `t[to]` an operator is applied to by
+/// `.`, `(x;y)` or `enlist x`; undefined when they are not written.
+function listed(t: Token[], from: number, to: number): [number, number][] | undefined {
+  if (t[from]?.text === "(" && t[from].kind === "open") {
+    const all = items(t, from);
+    return all[all.length - 1][1] === to - 1 ? all : undefined;
+  }
+  return t[from]?.text === "enlist" && to > from + 1 ? [[from + 1, to]] : undefined;
+}
+
+/// The calls the operator at `t[i]` makes when it is passed as a value
+/// rather than written between its arguments: in parentheses,
+/// `` (?)[`sym;`x] ``, through an adverb with nothing on its left,
+/// `` ?/[`sym;`x] ``, or given to `.` or `@`, `` .[?;(`sym;`x)] `` -
+/// written out, `` (`sym)?(`x) ``, for the rules to read (#2036). Through an
+/// adverb, also on the first item of each argument that is a list.
+function asValue(t: Token[], i: number): string[] {
+  const op = t[i].text;
+  let s = i;
+  let e = i;
+  while (t[s - 1]?.text === "(" && t[s - 1].kind === "open" && t[e + 1]?.text === ")") {
+    s--;
+    e++;
+  }
+  let q = e + 1;
+  while (t[q]?.kind === "op" && ["'", "/", "\\", ":"].includes(t[q].text)) q++;
+  const iterated = q > e + 1;
+  const left = t[s - 1];
+  let args: [number, number][] | undefined;
+  if (left?.kind === "open" && left.text === "[" && t[s - 2]?.kind === "op" && (t[s - 2].text === "." || t[s - 2].text === "@") && t[e + 1]?.text === ";") {
+    const arg = items(t, s - 1)[1];
+    args = arg === undefined || arg[0] === arg[1] ? undefined : t[s - 2].text === "@" ? [arg] : listed(t, arg[0], arg[1]);
+  } else if (s < i || (iterated && (left === undefined || left.kind === "open" || left.text === ";"))) {
+    const after = t[q];
+    if (after?.kind === "open" && after.text === "[") {
+      args = items(t, q);
+    } else if (after?.kind === "op" && (after.text === "." || after.text === "@") && argumentEnd(t, q) > q + 1) {
+      args = after.text === "@" ? [[q + 1, argumentEnd(t, q)]] : listed(t, q + 1, argumentEnd(t, q));
+    }
+  }
+  if (args === undefined || args.length === 0 || args.some(([a, b]) => a === b)) {
+    return [];
+  }
+  const call = (texts: string[]): string => (texts.length === 2 ? `(${texts[0]})${op}(${texts[1]})` : `${op}[${texts.join(";")}]`);
+  const calls = [call(args.map(([a, b]) => joined(t, a, b)))];
+  if (iterated) {
+    calls.push(call(args.map(([a, b]) => itemsOf(t, a, b)[0] ?? joined(t, a, b))));
+  }
+  return calls;
+}
+
 /// What one statement does that the guard asks about, added to `found`.
 function readStatement(statement: string, found: Set<string>): void {
   // A language prefix, `q)` or `k)`, as many as are written, `q)k)`, is
@@ -1247,6 +1305,12 @@ function readStatement(statement: string, found: Set<string>): void {
       if (target !== undefined && target.length > 1 && items(t, j).length >= minimum(k.text)) {
         found.add(k.text === "!" ? `updates or deletes from ${target} in place with !` : `amends ${target} in place`);
         continue;
+      }
+    }
+    // An operator passed as a value is read as the call it makes (#2036).
+    if (k.kind === "op" && VALUES.has(k.text)) {
+      for (const call of asValue(t, i)) {
+        for (const reason of rereadOf(call)) found.add(reason);
       }
     }
     // A symbol atom left of `?` extends the enumeration it names, and the

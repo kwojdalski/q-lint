@@ -167,3 +167,11 @@ test("a lambda applied inline that writes through its parameter is held, and wri
   await heldThenWrites(send, read, "{hclose hopen x}`:u4", "`u4 in key `:.");
   await heldThenWrites(send, read, "{.[x;();:;1]} each `v2`v3", "all `v2`v3 in key `.");
 });
+
+test("? passed as a value is held, and extends the enumeration once let through (#2036)", { skip }, async (t) => {
+  const q = await startQ(t, "sym:`a`b\n");
+  const { send, read } = await setUp(t, q.port);
+  await heldThenWrites(send, read, "(?)[`sym;`x1]", "`x1 in sym");
+  await heldThenWrites(send, read, ".[?;(`sym;`x2)]", "`x2 in sym");
+  await heldThenWrites(send, read, "?/[`sym;`x3]", "`x3 in sym");
+});
