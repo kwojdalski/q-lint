@@ -444,6 +444,44 @@ fn what_is_being_typed_is_a_name_with_the_locals_and_context_around_it() {
     assert_eq!(typing("a:\"s\" co"), Some(("co", vec![], String::new())));
 }
 
+/// What is being typed at the `|` in `source`, marked there: the text so
+/// far and the locals in reach.
+fn typing_at(marked: &str) -> (String, Vec<String>) {
+    let at = marked.find('|').unwrap();
+    let source = marked.replacen('|', "", 1);
+    let c = completing(&source, at).unwrap();
+    (source[c.start..at].to_string(), c.locals)
+}
+
+#[test]
+fn the_locals_in_reach_are_the_lambdas_even_just_before_its_closing_brace() {
+    // #2064: the cursor an auto-closed brace leaves, with nothing typed
+    // yet, was taken for outside the lambda - its locals missing, and an
+    // outer lambda's, which q gives the inner one no closure over, offered.
+    let xyz = |more: &[&str]| -> Vec<String> {
+        let mut v: Vec<String> = more.iter().map(|s| s.to_string()).collect();
+        v.extend(["x", "y", "z"].map(String::from));
+        v.sort();
+        v
+    };
+    assert_eq!(typing_at("g:{bb:1; bb+|}"), (String::new(), xyz(&["bb"])));
+    assert_eq!(
+        typing_at("h:{[a] {bc:1; bc+|}}"),
+        (String::new(), xyz(&["bc"]))
+    );
+    assert_eq!(typing_at("h:{[a] {bc:1; b|}}"), ("b".into(), xyz(&["bc"])));
+    assert_eq!(typing_at("k:{|}"), (String::new(), xyz(&[])));
+    assert_eq!(typing_at("m:{[a] a+|}"), (String::new(), vec!["a".into()]));
+    // After the brace, outside it again.
+    assert_eq!(typing_at("g:{bb:1; bb}|"), (String::new(), vec![]));
+    assert_eq!(
+        typing_at("h:{[a] {bc:1; bc}|}"),
+        (String::new(), vec!["a".into()])
+    );
+    // Before the opening brace, not yet in it.
+    assert_eq!(typing_at("g:|{bb:1}"), (String::new(), vec![]));
+}
+
 #[test]
 fn no_name_is_being_typed_in_a_string_a_comment_a_symbol_a_number_or_a_command() {
     for source in [

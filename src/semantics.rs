@@ -473,6 +473,20 @@ fn scope_at(scopes: &[Scope], at: usize) -> Option<usize> {
     }
 }
 
+/// The innermost lambda around the gap before byte `gap` - where a cursor
+/// stands - rather than around a byte: the gap just before a lambda's `}`
+/// is inside it, as is the gap just after its `{`, so `{bb:1; bb+|}` is
+/// typed in that lambda even with nothing typed yet (#2064).
+fn scope_around(scopes: &[Scope], gap: usize) -> Option<usize> {
+    let mut i = scopes.partition_point(|s| s.start < gap).checked_sub(1)?;
+    loop {
+        if gap <= scopes[i].end {
+            return Some(i);
+        }
+        i = scopes[i].parent?;
+    }
+}
+
 /// Script expressions end at an outer semicolon or an unindented next line.
 /// Keep bracketed bodies and indented continuations together so a name on a
 /// continuation line is not mistaken for a standalone global read.
