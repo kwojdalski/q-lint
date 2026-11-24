@@ -313,3 +313,12 @@ test("a result chosen from the tabs is drawn with its own chart kind and bins, n
   assert.strictEqual(page.rendered().chart.kind, "histogram");
   assert.strictEqual(page.state.bins, 7);
 });
+
+test("a 'contains' rule on a formatted column matches the text the cell shows, as the filter does (#1646)", () => {
+  const page = loadPage(undefined);
+  const look = { rules: [{ column: "ret_PCT", op: "contains", value: "1.23%", style: { bold: true } }] };
+  page.send(result("s.1", [["ret_PCT", 9, ["0.0123", "0.5"]]], { look }));
+  assert.strictEqual(page.rows()[0].children[0].textContent, "1.23%");
+  assert.strictEqual(page.rows()[0].children[0].style.fontWeight, "bold");
+  assert.strictEqual(page.rows()[1].children[0].style.fontWeight, undefined);
+});

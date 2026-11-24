@@ -822,7 +822,7 @@
     const lay = layout();
     const display = drawnColumns(grid);
     const formats = feature("columnFormats") ? LOOK.columnFormats(grid) : grid.columns.map(function () { return null; });
-    const rules = feature("conditionalFormats") ? LOOK.ruleStyles(grid, look().rules || []) : grid.columns.map(function () { return null; });
+    const rules = feature("conditionalFormats") ? LOOK.ruleStyles(grid, look().rules || [], shownAs(grid)) : grid.columns.map(function () { return null; });
     const charts = look().cellCharts || {};
     const cells = grid.columns.map(function (c, i) {
       const f = formats[i];

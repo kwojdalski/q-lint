@@ -35,7 +35,7 @@ export const FORMAT_INFO: Record<ExportFormat, { label: string; extension: strin
 
 /// `media/gridlook.js`'s rule evaluation, which the result page runs.
 interface GridLook {
-  ruleStyles(grid: Grid, rules: FormatRule[]): (Map<number, { background?: string; color?: string; bold?: boolean }> | null)[];
+  ruleStyles(grid: Grid, rules: FormatRule[], shown?: (column: number, row: number) => string): (Map<number, { background?: string; color?: string; bold?: boolean }> | null)[];
   columnFormats(grid: Grid): ({ kind: string } | null)[];
   formatNumber(format: { kind: string }, value: number | null, text: string): string;
 }
@@ -66,8 +66,8 @@ function html(text: string): string {
 export function toHtml(payload: GridPayload, decimals: number, rows?: number[], rules: FormatRule[] = [], formats = false): string {
   const values = toGrid(payload, decimals);
   const order = rowOrder(payload, rows);
-  const styles = LOOK.ruleStyles(values, rules);
   const grid = formats ? shownGrid(values) : values;
+  const styles = LOOK.ruleStyles(values, rules, formats ? (c, r) => grid.cells[c][r] : undefined);
   const right = grid.columns.map((c) => c.numeric || c.temporal);
   const head = grid.columns.map((c, i) => `<th${right[i] ? ' class="n"' : ""}>${html(c.name)}</th>`).join("");
   const body = order.map((r) => {

@@ -114,8 +114,10 @@
   /// rows holding the N greatest or least values, ties included; on any
   /// other, `=` and `<>` compare the cell's text and `contains` finds it in
   /// any case. A null matches nothing; an infinity (0w, -0w) compares as
-  /// one (#1645). An empty Set for a rule its column cannot take.
-  function ruleRows(grid, rule) {
+  /// one (#1645). An empty Set for a rule its column cannot take. `shown`,
+  /// when given, is what a cell shows (column, row) where a format changes
+  /// q's text: `contains` finds either, as a filter does (#1646).
+  function ruleRows(grid, rule, shown) {
     const out = new Set();
     const c = grid.columns.findIndex(function (col) { return col.name === rule.column; });
     if (c < 0 || RULE_OPS.indexOf(rule.op) < 0) {
@@ -148,7 +150,7 @@
     if (rule.op === "contains") {
       const lower = String(rule.value).toLowerCase();
       cells.forEach(function (text, r) {
-        if (values[r] !== null && text.toLowerCase().indexOf(lower) >= 0) {
+        if (values[r] !== null && (text.toLowerCase().indexOf(lower) >= 0 || (shown !== undefined && shown(c, r).toLowerCase().indexOf(lower) >= 0))) {
           out.add(r);
         }
       });
@@ -187,8 +189,8 @@
   /// The style each rule gives the cells it matches, per column: an array
   /// with, for a column a rule names, a Map from row to {background, color,
   /// bold}; null for the others. A later rule's colour wins over an
-  /// earlier's on the same cell; bold adds.
-  function ruleStyles(grid, rules) {
+  /// earlier's on the same cell; bold adds. `shown`: as ruleRows takes it.
+  function ruleStyles(grid, rules, shown) {
     const out = grid.columns.map(function () { return null; });
     (rules || []).forEach(function (rule) {
       const c = grid.columns.findIndex(function (col) { return col.name === rule.column; });
@@ -197,7 +199,7 @@
       }
       const style = rule.style || {};
       const map = out[c] || (out[c] = new Map());
-      ruleRows(grid, rule).forEach(function (r) {
+      ruleRows(grid, rule, shown).forEach(function (r) {
         const s = Object.assign({}, map.get(r) || {});
         if (PALETTE[style.background]) {
           s.background = PALETTE[style.background];
