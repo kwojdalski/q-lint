@@ -222,6 +222,22 @@ test("the HDB browser: partitions, counts per partition, splayed tables and the 
   assert.match(hdbTree(two, "hdb")[1].children.at(-1).label, /1 older partition not shown/);
 });
 
+// A table missing from one partition (no .Q.chk): .Q.cn fails, so its
+// counts are unknown, and so is its total - not 0 rows (#1566).
+test("the HDB browser does not call a table missing from a partition empty", { skip }, async (t) => {
+  const c = await connect(t, [
+    "dir:`$\":$DIR/db\";",
+    ".Q.dd[dir;2024.01.01,`quote`] set .Q.en[dir;([]sym:`a`b;bid:1 2f)];",
+    ".Q.dd[dir;2024.01.02,`trade`] set .Q.en[dir;([]sym:`a`b`c;px:1 2 3f)];",
+    ".Q.dd[dir;2024.01.03,`quote`] set .Q.en[dir;([]sym:`a`b;bid:1 2f)];",
+    "system\"l $DIR/db\";",
+    "",
+  ].join("\n"));
+  const h = readHdb(await c.call(HDB, 1000));
+  const quote = h.tables.find((x) => x.name === "quote");
+  assert.deepStrictEqual([quote.counts, quote.total], [[null, null, null], null]);
+});
+
 test("a process with no partitioned database says so", { skip }, async (t) => {
   const c = await connect(t, "a:1\n");
   const h = readHdb(await c.call(HDB, 1000));
