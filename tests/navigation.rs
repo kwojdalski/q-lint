@@ -1295,6 +1295,10 @@ fn a_file_that_starts_with_a_bom_is_navigated_like_any_other() {
     let dir = tempfile::tempdir().unwrap();
     let lib = "\u{feff}zz_bom:{[a] a+1}\n";
     let mut server = Server::start(dir.path(), &[("bom.q", lib)]);
+    // Open, and sent with its BOM: read from disk the BOM is no part of
+    // the text (#2027), so only a client that sends one has the server
+    // hold it.
+    server.open(dir.path(), "bom.q", lib);
     let text = "r:zz_bom[1]\ng:{zz_bom x}\n";
     let uri = server.open(dir.path(), "use.q", text);
     // The BOM is one UTF-16 unit, so the name is at character 1.
@@ -1362,6 +1366,65 @@ fn a_file_that_starts_with_a_bom_is_navigated_like_any_other() {
     let symbol = &reply["result"][0];
     assert_eq!(symbol["name"], "zz_bom", "{reply}");
     assert_eq!(span(&symbol["location"]["range"]), (0, 1, 7));
+}
+
+#[test]
+fn a_closed_file_with_a_bom_is_placed_as_an_editor_holds_it() {
+    // #2027: an editor reads a file's BOM as its encoding, not as a
+    // character of line 0, so the text it holds - and applies an edit to -
+    // starts at the name. The server kept the BOM in what it read from
+    // disk, every place on line 0 of a closed file was one to the right,
+    // and a rename from another file turned `gfn:{[a] a+1}` into
+    // `ggfz{[a] a+1}`.
+    let dir = tempfile::tempdir().unwrap();
+    let lib = "\u{feff}gfn:{[a] a+1}\nu1:gfn 2\n";
+    let mut server = Server::start(dir.path(), &[("lib.q", lib)]);
+    let text = "r:gfn 1\n";
+    let uri = server.open(dir.path(), "main.q", text);
+    let reply = server.ask("textDocument/definition", &uri, text, "gfn", 1, json!({}));
+    assert_eq!(places(&reply["result"]), [place("lib.q", 0, 0, 3)]);
+    let reply = server.ask(
+        "textDocument/references",
+        &uri,
+        text,
+        "gfn",
+        1,
+        json!({"context": {"includeDeclaration": true}}),
+    );
+    assert_eq!(
+        places(&reply["result"]),
+        [
+            place("lib.q", 0, 0, 3),
+            place("lib.q", 1, 3, 6),
+            place("main.q", 0, 2, 5)
+        ]
+    );
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        text,
+        "gfn",
+        1,
+        json!({"newName": "gfz"}),
+    );
+    assert_eq!(
+        edits(&reply["result"]),
+        [
+            edit("lib.q", 0, 0, 3, "gfz"),
+            edit("lib.q", 1, 3, 6, "gfz"),
+            edit("main.q", 0, 2, 5, "gfz"),
+        ],
+        "{reply}"
+    );
+    let reply = server.request("workspace/symbol", json!({"query": "gfn"}));
+    let symbol = &reply["result"][0];
+    assert_eq!(symbol["name"], "gfn", "{reply}");
+    assert_eq!(span(&symbol["location"]["range"]), (0, 0, 3));
+    // Opened by a client that does send the BOM as text, it is a character
+    // of the document, and the places follow the document.
+    server.open(dir.path(), "lib.q", lib);
+    let reply = server.ask("textDocument/definition", &uri, text, "gfn", 1, json!({}));
+    assert_eq!(places(&reply["result"]), [place("lib.q", 0, 1, 4)]);
 }
 
 #[test]

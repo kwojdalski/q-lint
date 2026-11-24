@@ -469,8 +469,8 @@ impl Index {
     }
 
     fn read(&mut self, path: &str) -> bool {
-        match std::fs::read(path) {
-            Ok(bytes) if is_q_path(path) => self.put(path, &String::from_utf8_lossy(&bytes)),
+        match on_disk(path) {
+            Some((text, _)) if is_q_path(path) => self.put(path, &text),
             _ => self.forget(path),
         }
     }
@@ -2877,6 +2877,13 @@ fn diagnose(
     policy: &Policy,
     opts: &Options,
 ) -> Result<(), String> {
+    let findings = linted(uri, text, ws, policy);
+    report(writer, uri, text, findings, kept, opts)
+}
+
+/// What the rules find in `text`, the document `uri`, or the panic of the
+/// rule that failed on it.
+fn linted(uri: &str, text: &str, ws: &Workspace, policy: &Policy) -> Result<Vec<Finding>, String> {
     let path = path_of(uri);
     // Only q source. A client may open anything - a `.k` file, a console
     // buffer, an untitled scratch, a `.txt` - and hand it to whichever server
@@ -2884,13 +2891,24 @@ fn diagnose(
     // about k or about a REPL transcript, so a document that is not a `.q`
     // file on disk gets an empty diagnostic list: that clears anything stale without
     // asserting something about a file this linter cannot read.
-    let findings = if is_q_uri(uri) {
-        // Lenient, so this cannot fail: a configuration it cannot read is
-        // reported once on stderr and the defaults govern its files.
-        guarded(|| policy.lint(text, &path, ws).unwrap_or_default())
-    } else {
-        Ok(vec![])
-    };
+    if !is_q_uri(uri) {
+        return Ok(vec![]);
+    }
+    // Lenient, so this cannot fail: a configuration it cannot read is
+    // reported once on stderr and the defaults govern its files.
+    guarded(|| policy.lint(text, &path, ws).unwrap_or_default())
+}
+
+/// Push `findings`, what the rules found in the `text` of `uri`, as its
+/// diagnostics.
+fn report(
+    writer: &mut impl Write,
+    uri: &str,
+    text: &str,
+    findings: Result<Vec<Finding>, String>,
+    kept: &mut Kept,
+    opts: &Options,
+) -> Result<(), String> {
     // A rule that panicked leaves nothing true to report, so the document
     // gets one diagnostic saying so, at its start, until an edit gets past it.
     let findings = match findings {
@@ -3318,6 +3336,25 @@ fn file_path(uri: &str) -> Option<String> {
 fn re_drive(path: &str) -> bool {
     let b = path.as_bytes();
     b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':'
+}
+
+/// The text of the file `path` on disk as an editor holds it once open, and
+/// whether a BOM came before it. An editor reads a BOM as the file's
+/// encoding, not as a character of line 0: the text it sends when the file
+/// is opened, and applies an edit to when it is not, starts after it. Read
+/// with the BOM in it, every place on line 0 of a closed file was one
+/// character to the right of where the editor has it, and a rename from
+/// another file cut the name there in two (#2027). Every read of a
+/// workspace file comes through here, so the index, the places and the
+/// diagnostics of a closed file agree with each other and with the editor.
+fn on_disk(path: &str) -> Option<(String, bool)> {
+    let bytes = std::fs::read(path).ok()?;
+    let mut text = String::from_utf8_lossy(&bytes).into_owned();
+    let bom = text.starts_with('\u{feff}');
+    if bom {
+        text.drain(..'\u{feff}'.len_utf8());
+    }
+    Some((text, bom))
 }
 
 /// One spelling per file, for the index: the editor's URI and the folder scan

@@ -107,16 +107,14 @@ impl<'a> Sources<'a> {
         keys
     }
 
-    /// A file's URI and text: the open buffer's, or the disk's.
+    /// A file's URI and text: the open buffer's, or the disk's as an editor
+    /// would hold it (`on_disk`).
     pub(super) fn text(&self, key: &str) -> Option<(String, Cow<'a, str>)> {
         if let Some(uri) = self.open.get(key) {
             return Some((uri.to_string(), Cow::Borrowed(self.docs[*uri].as_str())));
         }
-        let bytes = std::fs::read(key).ok()?;
-        Some((
-            self.uri(key),
-            Cow::Owned(String::from_utf8_lossy(&bytes).into_owned()),
-        ))
+        let (text, _) = super::on_disk(key)?;
+        Some((self.uri(key), Cow::Owned(text)))
     }
 
     pub(super) fn placement(&self, key: &str) -> Placement {

@@ -3690,6 +3690,31 @@ fn the_workspace_scope_lints_files_nobody_opened() {
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
+/// A closed file that starts with a BOM reports where an editor shows it
+/// (#2027): the editor holds the text without the BOM, so a finding on
+/// line 0 is where it is once the file is open, and the BOM's own finding
+/// stays at the start of the file.
+#[test]
+fn a_closed_file_with_a_bom_reports_where_an_editor_shows_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(root.join("bom.q"), format!("\u{feff}{RESERVED_PARAM}")).unwrap();
+    let uri = file_uri(&root.join("bom.q"));
+    let options = json!({"lint": {"scope": "workspace"}});
+    let (mut server, _) = start_with_options(&root, &["--lsp"], options, Some(&root));
+    let closed = server.diagnostics_for(&uri);
+    assert_eq!(codes_of(&closed), ["QE005", "QF001"], "{closed:?}");
+    assert_eq!(
+        closed[0]["range"],
+        json!({"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 1}})
+    );
+    server.open(&uri, RESERVED_PARAM);
+    let open = server.diagnostics_for(&uri);
+    assert_eq!(codes_of(&open), ["QF001"], "{open:?}");
+    assert_eq!(closed[1]["range"], open[0]["range"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
 /// The workspace's files are linted between messages, not before them: a
 /// request sent as the scan starts is answered before the last of dozens
 /// of files reports (#1160).
