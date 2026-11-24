@@ -746,9 +746,29 @@ export class Live {
       void window.showInformationMessage(plainMessage(`q-lint: open a folder first: the shared process list is its ${SHARED_FILE}.`));
       return;
     }
-    const process = await this.chosen(row, "Share which q process with the repository?");
-    if (process === undefined) {
+    const chosen = await this.chosen(row, "Share which q process with the repository?");
+    if (chosen === undefined) {
       return;
+    }
+    // What runs or reaches somewhere at connect can hold a secret - a
+    // password in a connect script, a launch's environment - and the file
+    // is committed: it is shown and asked about first (#1528).
+    let process = chosen;
+    const extras = onConnectBrought([], [chosen])[0]?.what ?? [];
+    if (extras.length > 0) {
+      const all = "Share All";
+      const without = "Share Without Them";
+      const { init, initFile, credentialCommand, launch, ssh } = chosen;
+      const answer = await window.showWarningMessage(
+        plainMessage(`${chosen.label} has a ${extras.join(", ")}. ${SHARED_FILE} is committed with the code: everyone who clones it reads what is written there, as shown below. Share them too?`),
+        { modal: true, detail: JSON.stringify({ init, initFile, credentialCommand, launch, ssh }, null, 2) },
+        all,
+        without,
+      );
+      if (answer === undefined) {
+        return;
+      }
+      process = answer === all ? chosen : onConnectOf(chosen, undefined);
     }
     const file = Uri.joinPath(folder.uri, SHARED_FILE);
     let text: string | undefined;

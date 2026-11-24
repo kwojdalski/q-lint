@@ -217,6 +217,28 @@ test("Add to Shared Process List writes a saved process there, without its passw
   assert.match(stub.messages.at(-1)[1], /gw is in \.qlint\/processes\.json, without its password: each user is asked for me's on connect\./);
 });
 
+// Every field went into the committed file unasked: a launch's env, a
+// connect script's password, the credential command (#1528).
+test("Add to Shared asks before writing a connect script, credential command, launch or tunnel, and can leave them out", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-shared-"));
+  const secret = { label: "s", host: "h", port: 1, tags: [], init: "h:hopen`:auth:5000:svc:S3cr3tPass", credentialCommand: "vault read x", launch: { env: { AWS_SECRET_ACCESS_KEY: "wJal" } } };
+  await setUp(t, dir, { saved: [secret] });
+  const read = () => fs.readFileSync(path.join(dir, SHARED_FILE), "utf8");
+  // Escape: nothing written.
+  let asked;
+  stub.picks.push((o) => ((asked = o), undefined));
+  await stub.commands.get(SHARED_COMMANDS.add)("s");
+  assert.match(asked.message, /s has a connect script, credential command, launch definition\. .*committed/);
+  assert.ok(asked.items[0].detail.includes("S3cr3tPass"), "what goes in the file is shown");
+  assert.ok(!fs.existsSync(path.join(dir, SHARED_FILE)));
+  stub.picks.push("Share Without Them");
+  await stub.commands.get(SHARED_COMMANDS.add)("s");
+  assert.deepStrictEqual(JSON.parse(read()), { processes: [{ label: "s", host: "h", port: 1, tags: [] }] });
+  stub.picks.push("Share All");
+  await stub.commands.get(SHARED_COMMANDS.add)("s");
+  assert.strictEqual(JSON.parse(read()).processes[0].credentialCommand, "vault read x");
+});
+
 test("with q-lint.processes.shared.enable off, the file is not read, nor listed, and the command refuses", async (t) => {
   const q = await someQ(t);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-shared-"));
