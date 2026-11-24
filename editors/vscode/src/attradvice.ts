@@ -208,13 +208,22 @@ export function advise(s: AttributeSample, filters: Map<string, number> = new Ma
 const md = (s: string) => s.replace(/([\\`*_{}[\]<>|#])/g, "\\$1");
 const size = bytes;
 
+// How the report opens for each kind `ATTRIBUTE_SAMPLE` answers. The
+// commonest, a table in memory, is the kind `table` (#1980).
+const KINDS = new Map([
+  ["table", "An in-memory table"],
+  ["keyed", "A keyed table"],
+  ["splayed", "A splayed table"],
+  ["partitioned", "A partitioned table"],
+]);
+
 /// The advice as Markdown: a table, the reasons, and a reminder that
 /// nothing was applied.
 export function adviceReport(table: string, process: string, s: AttributeSample, advice: Advice[], queries: number): string {
   const out = [
     `# Attributes for ${md(table)} on ${md(process)}`,
     "",
-    `A ${md(s.kind)} table of ${s.rows === null ? "an unknown number of" : s.rows.toLocaleString("en-US")} rows; ${s.sampled.toLocaleString("en-US")} rows sampled${s.kind === "partitioned" ? " from its last partition" : ""}; ${queries} saved and recent queries read for filters.`,
+    `${KINDS.get(s.kind) ?? "A table"} of ${s.rows === null ? "an unknown number of" : s.rows.toLocaleString("en-US")} rows; ${s.sampled.toLocaleString("en-US")} rows sampled${s.kind === "partitioned" ? " from its last partition" : ""}; ${queries} saved and recent queries read for filters.`,
     "",
     "| column | now | suggested | memory, about | filtered by |",
     "| --- | --- | --- | --- | --- |",

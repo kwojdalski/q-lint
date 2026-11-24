@@ -328,6 +328,20 @@ test("the attribute advisor does not take the sample for the table when the rows
   assert.strictEqual(advise(whole, new Map([["id", 1]]))[0].reason, "every value distinct: u# makes a lookup by value a hash lookup; 1 saved or recent query filters on it");
 });
 
+test("the attribute advisor's report names the kind of table as an adjective (#1980)", () => {
+  const first = (kind, rows = 3) => {
+    const s = readAttributeSample({ kind, rows, sampled: 3, partitions: 1, cols: ["id"], types: ["j"], attrs: [""], distinct: [3], runs: [3], sorted: [false] });
+    return adviceReport("t", "rdb", s, advise(s), 0).split("\n")[2];
+  };
+  assert.strictEqual(first("table"), "An in-memory table of 3 rows; 3 rows sampled; 0 saved and recent queries read for filters.");
+  assert.strictEqual(first("keyed"), "A keyed table of 3 rows; 3 rows sampled; 0 saved and recent queries read for filters.");
+  assert.strictEqual(first("splayed"), "A splayed table of 3 rows; 3 rows sampled; 0 saved and recent queries read for filters.");
+  assert.strictEqual(first("partitioned"), "A partitioned table of 3 rows; 3 rows sampled from its last partition; 0 saved and recent queries read for filters.");
+  // A kind this does not know is still a table, said once.
+  assert.strictEqual(first(""), "A table of 3 rows; 3 rows sampled; 0 saved and recent queries read for filters.");
+  assert.strictEqual(first("odd_kind", null), "A table of an unknown number of rows; 3 rows sampled; 0 saved and recent queries read for filters.");
+});
+
 test("a schema diff names adds, drops, casts and order, and the script turns one into the other", () => {
   const t = (kind, cols, keys = []) => ({ kind, rows: 0, bytes: null, partitions: null, keys, ncols: cols.length, columns: cols.map(([name, type, attr = ""]) => ({ name, type, fkey: "", attr })) });
   const from = t("keyed", [["k", "j"], ["x", "j"], ["y", "s"]], ["k"]);
