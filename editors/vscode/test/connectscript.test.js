@@ -269,3 +269,45 @@ test("a connection apart runs the process's connect script before its query", as
   assert.ok(JSON.stringify(q.sent[0]).includes("setUp:1"), JSON.stringify(q.sent[0]));
   assert.strictEqual(heads(q.sent)[1], "{x}");
 });
+
+// A connect script that never answered held the connect for ever: Disconnect
+// closed nothing, and every connect and query after it waited (#1505).
+test("a connect script that blocks is closed by Disconnect, and times out", async (t) => {
+  const net = require("node:net");
+  const { serialize } = require("node-q/lib/c.js");
+  // Answers anything but the script.
+  const sockets = new Set();
+  const server = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.on("error", () => {});
+    let shook = false;
+    socket.on("data", (chunk) => {
+      if (!shook) {
+        shook = true;
+        socket.write(Buffer.from([3]));
+      } else if (!chunk.includes("block")) {
+        const out = serialize(1);
+        out.writeUInt8(2, 1);
+        socket.write(out);
+      }
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  t.after(() => (sockets.forEach((s) => s.destroy()), server.close()));
+  const q = { port: server.address().port };
+  const { live } = await setUp(t, [
+    { label: "p", host: "127.0.0.1", port: q.port, tags: [], init: "block[]" },
+    { label: "b", host: "127.0.0.1", port: q.port, tags: [] },
+    { label: "t", host: "127.0.0.1", port: q.port, tags: [], init: "block[]", timeout: 1 },
+  ]);
+  t.after(() => stub.commands.get("q-lint.disconnectProcess")?.());
+  const connecting = live.connectTo("p");
+  await new Promise((r) => setTimeout(r, 200));
+  await stub.commands.get("q-lint.disconnectProcess")();
+  assert.strictEqual(await connecting, false);
+  assert.strictEqual(live.activeLabel(), undefined);
+  assert.strictEqual(await live.connectTo("b"), true);
+  // With a timeout, it is given up when the timeout passes, and said.
+  assert.strictEqual(await live.connectTo("t"), false);
+  assert.match(stub.messages.filter(([k]) => k === "warning").at(-1)[1], /the connect script of t failed: .*1 s/);
+});

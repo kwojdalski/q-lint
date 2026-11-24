@@ -493,6 +493,9 @@ export class Live {
   /// that drops the entry just added.
   private queries: HistoryEntry[] | undefined;
   private active: Process | undefined;
+  /// The connection `open` is running the connect script on, before it is
+  /// the active one: what Disconnect closes then.
+  private opening: QConnection | undefined;
   /// A connect in progress, so a second one waits for it instead of opening
   /// another.
   private connecting: Promise<boolean> | undefined;
@@ -1586,11 +1589,20 @@ export class Live {
     const configuration = workspace.getConfiguration("q-lint");
     const { consoleSize } = readLive((key, fallback) => configuration.get(key, fallback));
     const started = Date.now();
+    // A script that blocks holds the connect, and every one after it: it
+    // times out as a query does, and a disconnect closes it (#1505).
+    const controls = this.controls.settings();
+    const timeout = effectiveTimeout(process, controls.timeout, this.setting(readAdmin).processTimeout);
+    let timedOut = false;
+    const disarm = armTimeout(timeout, () => {
+      timedOut = true;
+      connection.abort();
+    });
     try {
       const answer = await window.withProgress(
         { location: { viewId: VIEWS.processes }, title: `Running the connect script of ${process.label}` },
         () =>
-          this.controls.settings().unwrapped
+          controls.unwrapped
             ? runUnwrapped(connection, cut, { size: consoleSize, limit: 0, unlimited: false, grid: false })
             : connection.query(cut, consoleSize),
       );
@@ -1600,7 +1612,11 @@ export class Live {
       }
       this.output.appendLine(`# ${process.label} - connect script ran (${Date.now() - started} ms)`);
     } catch (error) {
-      failed(error instanceof Error ? error.message : String(error));
+      if (!stopped()) {
+        failed(timedOut ? timedOutError(timeout) : error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      disarm();
     }
   }
 
@@ -1698,8 +1714,13 @@ export class Live {
           await connection.close();
           return false;
         }
-        await this.runConnectScript(connection, process, stopped);
-        if (stopped()) {
+        this.opening = connection;
+        try {
+          await this.runConnectScript(connection, process, stopped);
+        } finally {
+          this.opening = undefined;
+        }
+        if (stopped() || !connection.isOpen) {
           await connection.close();
           return false;
         }
@@ -1997,6 +2018,8 @@ export class Live {
 
   private async disconnect(): Promise<void> {
     this.disconnects++;
+    // One running its connect script, which may never answer (#1505).
+    this.opening?.abort();
     if (this.reconnecting !== undefined && this.connection === undefined) {
       // A try under way is closed once it opens.
       this.reconnectStopped = true;
