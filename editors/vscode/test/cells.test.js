@@ -212,4 +212,9 @@ test("the switches: on by default but Smart Send and defining on connect", () =>
   const keys = pkg.contributes.keybindings;
   assert.match(keys.find((k) => k.command === "q-lint.smartSend").when, /config\.q-lint\.smartSend\.enable/);
   assert.match(keys.find((k) => k.command === "q-lint.runCell").when, /q-lint\.hasCells/);
+  // In a q notebook's cell, Shift+Enter and Ctrl+Enter are the notebook's:
+  // an extension's binding outranks them (#1533).
+  for (const command of ["q-lint.smartSend", "q-lint.runCell"]) {
+    assert.match(keys.find((k) => k.command === command).when, /!notebookEditorFocused/, command);
+  }
 });
