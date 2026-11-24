@@ -266,8 +266,11 @@ test("the REPL: Enter inside a bracket starts a new line; a complete input runs,
   assert.deepStrictEqual(repl.history(), ["f:{x+\ny}\nf[1;2]"]);
   assert.deepStrictEqual(context.globalState.get("q-lint.replHistory"), ["f:{x+\ny}\nf[1;2]"]);
   assert.strictEqual(live.history()[0].code, "f:{x+\n y}\nf[1;2]");
+  // Another window's run, written to the shared history meanwhile, is kept (#1694).
+  await context.globalState.update("q-lint.replHistory", ["x:1", ...context.globalState.get("q-lint.replHistory")]);
   await repl.enter("count trades");
-  assert.deepStrictEqual(repl.search("f[", 0), { index: 1, code: "f:{x+\ny}\nf[1;2]" });
+  assert.deepStrictEqual(context.globalState.get("q-lint.replHistory"), ["count trades", "x:1", "f:{x+\ny}\nf[1;2]"]);
+  assert.deepStrictEqual(repl.search("f[", 0), { index: 2, code: "f:{x+\ny}\nf[1;2]" });
   assert.deepStrictEqual(repl.search("zzz", 0), { index: -1, code: "" });
 });
 

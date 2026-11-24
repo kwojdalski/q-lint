@@ -44,6 +44,7 @@ import {
 import { readTerminal } from "./liveconfig";
 import { mergeEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor, nodeFiles } from "./qenvironment";
+import { spawnPlan } from "./launcher";
 import { qBinaryFrom } from "./terminal";
 import { iconsEscaped, plainMessage } from "./history";
 
@@ -79,7 +80,13 @@ export function probe(binary: string, env: Record<string, string>): Promise<Prob
     };
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(binary, ["-q"], { env: { ...process.env, ...env }, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+      // A q.cmd wrapper is run by cmd.exe (#1680).
+      const run = spawnPlan(binary, ["-q"]);
+      if ("error" in run) {
+        resolve(undefined);
+        return;
+      }
+      child = spawn(run.command, run.args, { env: { ...process.env, ...env }, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, windowsVerbatimArguments: run.verbatim });
     } catch {
       resolve(undefined);
       return;
@@ -100,14 +107,17 @@ export function probe(binary: string, env: Record<string, string>): Promise<Prob
 /// The file `binary` runs: itself when it is a path, else the first of
 /// that name on `PATH`. A relative path is relative to `folder`, the
 /// workspace folder the q tasks and terminals start in, not to the
-/// extension host's working directory (#1132).
+/// extension host's working directory (#1132). Undefined when it is not a
+/// program this user can run, a path as much as a name (#1691).
 export function resolveBinary(binary: string, folder: string | undefined = workspace.workspaceFolders?.[0]?.uri.fsPath): string | undefined {
   const file = qBinaryFrom(binary, folder, os.homedir());
   if (file === undefined || path.isAbsolute(file)) {
-    return file;
+    return file !== undefined && nodeFiles.executable(file) ? file : undefined;
   }
   const names = process.platform === "win32" && !/\.exe$/i.test(file) ? [file, `${file}.exe`] : [file];
-  for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
+  for (const entry of (process.env.PATH ?? "").split(path.delimiter)) {
+    // A Windows entry may be quoted, as libuv reads it too (#1681).
+    const dir = process.platform === "win32" ? entry.replace(/"/g, "") : entry;
     for (const name of names) {
       const candidate = path.join(dir, name);
       if (dir !== "" && nodeFiles.executable(candidate)) {
@@ -256,15 +266,24 @@ export class Interpreters {
     }
     // Written where the value in force is set - a folder's own setting would
     // hide one written above it - else in the workspace, else for the user.
+    // In a workspace not trusted, VS Code ignores the workspace's qBinary
+    // (a restricted setting): written for the user, and said (#1690).
     const configuration = workspace.getConfiguration("q-lint", resource());
     const set = configuration.inspect<string>("terminal.qBinary");
-    const target =
-      set?.workspaceFolderValue !== undefined
+    const untrusted = workspace.isTrusted === false;
+    const target = untrusted
+      ? ConfigurationTarget.Global
+      : set?.workspaceFolderValue !== undefined
         ? ConfigurationTarget.WorkspaceFolder
         : set?.workspaceValue !== undefined || (workspace.workspaceFolders ?? []).length > 0
           ? ConfigurationTarget.Workspace
           : ConfigurationTarget.Global;
     await configuration.update("terminal.qBinary", file, target);
+    if (untrusted) {
+      void window.showInformationMessage(
+        plainMessage(`q-lint: this workspace is not trusted, so ${file} was set as your user q-lint.terminal.qBinary, which every workspace reads.`),
+      );
+    }
     this.sync();
     return file;
   }

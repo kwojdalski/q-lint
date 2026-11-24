@@ -3781,12 +3781,12 @@
         },
         {
           "command": "q-lint.startProcess",
-          "when": "view == q-lint.processes && viewItem =~ /^(process|discovered)/ && config.q-lint.processes.launcher.enable",
+          "when": "view == q-lint.processes && viewItem =~ /^process/ && config.q-lint.processes.launcher.enable",
           "group": "4_launch@1"
         },
         {
           "command": "q-lint.stopProcess",
-          "when": "view == q-lint.processes && viewItem =~ /^(process|discovered)/ && config.q-lint.processes.launcher.enable",
+          "when": "view == q-lint.processes && viewItem =~ /^process/ && config.q-lint.processes.launcher.enable",
           "group": "4_launch@2"
         },
         {

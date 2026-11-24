@@ -5,6 +5,7 @@ import * as os from "os";
 import { statSync } from "node:fs";
 import { scriptPath } from "./connectscript";
 import { onPath } from "./relations";
+import { quote } from "./terminal";
 import { splitArgs, type Launch, type Process } from "./processes";
 
 export const LAUNCH_COMMANDS = {
@@ -23,6 +24,18 @@ export function readLauncher(get: <T>(key: string, fallback: T) => T): { enabled
 export function isLocalHost(host: string, hostname: string = os.hostname()): boolean {
   const h = host.trim().toLowerCase();
   return h === "localhost" || h === "::1" || /^127\.\d+\.\d+\.\d+$/.test(h) || h === "0.0.0.0" || h === hostname.toLowerCase();
+}
+
+/// What `-p` is given for a process on `host`: a loopback host's port on
+/// 127.0.0.1 (its own 127.x address), so a process defined as local is not
+/// served on every interface with no password (#1671); any other host's,
+/// bare. q binds IPv4 only and takes no `::1:port`, so `::1` is 127.0.0.1.
+export function listenAddress(host: string, port: number): string {
+  const h = host.trim().toLowerCase();
+  if (/^127\.\d+\.\d+\.\d+$/.test(h)) {
+    return `${h}:${port}`;
+  }
+  return h === "localhost" || h === "::1" ? `127.0.0.1:${port}` : String(port);
 }
 
 export interface Plan {
@@ -44,7 +57,7 @@ export function fromWorkspace(launch: Launch, home: string = os.homedir()): bool
 }
 
 /// What starting `process` runs: its command (else `qBinary`), its script,
-/// `-p <port>` unless its arguments set one, then its arguments; in its
+/// `-p <port>` (on the loopback for a loopback host) unless its arguments set one, then its arguments; in its
 /// `cwd`, else the workspace folder, else the home directory. A leading `~`
 /// (`~/`, or `~\` as Windows writes it) is the home directory, and a
 /// relative script or cwd is from the folder. A bare program name is found
@@ -81,10 +94,33 @@ export function launchPlan(
   }
   return {
     command,
-    args: [...(script !== undefined ? [script] : []), ...(args.includes("-p") ? [] : ["-p", String(process.port)]), ...args],
+    args: [...(script !== undefined ? [script] : []), ...(args.includes("-p") ? [] : ["-p", listenAddress(process.host, process.port)]), ...args],
     cwd,
     env: launch.env ?? {},
   };
+}
+
+/// How to spawn `command` with `args` on `platform`. Node will not run a
+/// `.bat` or `.cmd` wrapper (q.cmd setting QHOME and QLIC, a common one)
+/// without a shell since CVE-2024-27980 - spawn fails with EINVAL (#1680) -
+/// so on Windows one is run by cmd.exe, each word quoted for it; one with a
+/// `"` or a `%`, which cmd reads itself, is refused. Anything else as it is.
+export function spawnPlan(
+  command: string,
+  args: string[],
+  platform: string = globalThis.process.platform,
+  comspec: string = globalThis.process.env.ComSpec ?? "cmd.exe",
+): { command: string; args: string[]; verbatim: boolean } | { error: string } {
+  if (platform !== "win32" || !/\.(bat|cmd)$/i.test(command)) {
+    return { command, args, verbatim: false };
+  }
+  const bad = [command, ...args].find((w) => /["%\r\n]/.test(w));
+  if (bad !== undefined) {
+    return { error: `cmd cannot pass ${JSON.stringify(bad)} to ${command} as written: it reads a " or a % in it itself.` };
+  }
+  // /s: the outer quotes are taken off and the rest run as it is.
+  const line = [command, ...args].map((w) => (w === "" ? '""' : quote(w, "cmd"))).join(" ");
+  return { command: comspec, args: ["/d", "/s", "/c", `"${line}"`], verbatim: true };
 }
 
 function isFile(file: string): boolean {

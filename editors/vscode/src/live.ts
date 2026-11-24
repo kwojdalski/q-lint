@@ -69,8 +69,8 @@ import { historyHeading, historyLabel, iconsEscaped, mergedHistory, plainMessage
 import { render } from "./query";
 import { QueryModes, type PageLater, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
-import { commandLine, expandHome, parseEnv, replLines, shellKind, terminalCwd } from "./terminal";
-import { terminalEnv } from "./qenv";
+import { commandLine, expandHome, replLines, shellKind, terminalCwd } from "./terminal";
+import { readDotenv, terminalEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import type { RunExtra } from "./runargs";
 import { QueryControls } from "./controls";
@@ -325,16 +325,40 @@ export class QTerminals {
   private last: Terminal | undefined;
   /// The terminal a send is starting, so a second send waits for it.
   private starting: Promise<Terminal | undefined> | undefined;
+  /// Those whose q has ended, leaving the shell: code is not typed into it.
+  private readonly ended = new WeakSet<Terminal>();
 
   constructor(context: ExtensionContext) {
     context.subscriptions.push(
       window.onDidCloseTerminal((terminal) => {
         this.ours.delete(terminal);
         if (terminal === this.last) {
-          this.last = [...this.ours].pop();
+          this.last = this.latest();
         }
       }),
     );
+    // Shell integration (VS Code 1.93) tells when the command a terminal
+    // ran - its q - has ended: from then on its shell would read the q
+    // code sent to it, so it is no longer where code goes (#1675).
+    // Older VS Code has none.
+    const ends: typeof window.onDidEndTerminalShellExecution | undefined = window.onDidEndTerminalShellExecution;
+    if (typeof ends === "function") {
+      context.subscriptions.push(
+        ends((event) => {
+          if (this.ours.has(event.terminal)) {
+            this.ended.add(event.terminal);
+            if (event.terminal === this.last) {
+              this.last = this.latest();
+            }
+          }
+        }),
+      );
+    }
+  }
+
+  /// The last q terminal started of those open whose q still runs.
+  private latest(): Terminal | undefined {
+    return [...this.ours].filter((t) => !this.ended.has(t)).pop();
   }
 
   /// Run the active file - or `document`, the one whose Run button was
@@ -444,23 +468,25 @@ export class QTerminals {
         );
         return undefined;
       }
-      const parsed = parseEnv(text);
+      // Lines it could not read are named by number alone: one may be a
+      // secret with a typo in it (#1685).
+      const parsed = readDotenv(text);
       variables = parsed.env;
-      if (parsed.problems.length > 0) {
+      if (parsed.badLines.length > 0) {
         void window.showWarningMessage(
-          plainMessage(`q-lint: skipped ${parsed.problems.length} line(s) of ${envFile}: ${parsed.problems.slice(0, 3).join("; ")}`),
+          plainMessage(`q-lint: skipped ${parsed.badLines.length} line(s) of ${envFile}, not NAME=value: line ${parsed.badLines.join(", ")}`),
         );
       }
     }
     // The `.env` file's variables go in the terminal's environment, never on
     // its command line, where they would show; the layout's stay under the
     // env file's.
-    const { shown, hidden } = terminalEnv(layoutEnvFor(read.qBinary, from), variables, await dotenvFor(from));
+    const { shown, hidden, refs } = terminalEnv(layoutEnvFor(read.qBinary, from), variables, await dotenvFor(from));
     // A file inside the folder is named relative to it, as you would type it.
     const relative = file !== undefined && cwd !== undefined ? path.relative(cwd, file) : "";
     const inside = relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
     const args = file === undefined ? [] : [inside ? relative : file, ...extraArgs];
-    const line = commandLine(settings.qBinary, args, shellKind(env.shell), shown);
+    const line = commandLine(settings.qBinary, args, shellKind(env.shell), shown, refs);
     if (typeof line !== "string") {
       void window.showErrorMessage(plainMessage(`q-lint: ${line.error}`));
       return undefined;
@@ -1015,6 +1041,10 @@ export class Live {
   /// and still runs (#954): the launcher sets it.
   launched: (label: string) => boolean = () => false;
 
+  /// A saved process was renamed `from` to `to`: the launcher keeps what it
+  /// started under the new label.
+  relabelled: (from: string, to: string) => void = () => {};
+
   /// Redraw the Processes view.
   refreshProcesses(): void {
     this.processesView.refresh();
@@ -1313,6 +1343,10 @@ export class Live {
     }
     if (process.user === undefined) {
       await this.context.secrets.delete(passwordKey(process));
+    }
+    if (process.label !== old.label) {
+      // Before the redraw, so its row is still shown running (#1692).
+      this.relabelled(old.label, process.label);
     }
     await this.save(now.map((p) => (p.label === old.label ? process : p)));
     if (process.label !== old.label) {

@@ -64,7 +64,12 @@ function processOf(label: string, host: string, port: string, user: string | und
 }
 
 /// Add `got` to `out`, or why not; a label taken once is skipped after.
-function keep(out: Imported, got: Process | string, seen: Set<string>): void {
+/// `full`: qStudio's name with its folder, the label a repeated short name
+/// takes instead - `desk2/rdb` beside `desk1`'s `rdb` (#1687).
+function keep(out: Imported, got: Process | string, seen: Set<string>, full?: string): void {
+  if (typeof got !== "string" && seen.has(got.label) && full !== undefined && full.includes("/") && !seen.has(full.trim())) {
+    got = { ...got, label: full.trim() };
+  }
   if (typeof got === "string") {
     out.skipped.push(got);
   } else if (seen.has(got.label)) {
@@ -120,7 +125,7 @@ export function readQStudioLines(text: string): Imported {
       }
     }
     // parts[3], the password, is never read.
-    keep(out, processOf(name.slice(name.lastIndexOf("/") + 1), host, parts[1].trim(), parts[2], folderTags(name)), seen);
+    keep(out, processOf(name.slice(name.lastIndexOf("/") + 1), host, parts[1].trim(), parts[2], folderTags(name)), seen, name);
   }
   return out;
 }
@@ -141,7 +146,12 @@ export function readQStudioXml(xml: string): Imported {
       continue;
     }
     // `password` is never read.
-    keep(out, processOf(name.slice(name.lastIndexOf("/") + 1), attrs.host ?? "", attrs.port ?? "", attrs.username, folderTags(name, attrs.folder)), seen);
+    keep(
+      out,
+      processOf(name.slice(name.lastIndexOf("/") + 1), attrs.host ?? "", attrs.port ?? "", attrs.username, folderTags(name, attrs.folder)),
+      seen,
+      name.includes("/") || attrs.folder === undefined || attrs.folder.trim() === "" ? name : `${attrs.folder.trim()}/${name}`,
+    );
   }
   return out;
 }

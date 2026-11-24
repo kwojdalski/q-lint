@@ -23,10 +23,11 @@ export function terminalCwd(own: string | undefined, first: string | undefined, 
 }
 
 /// How the shell in the terminal reads a command line.
-export type Shell = "posix" | "powershell" | "cmd";
+export type Shell = "posix" | "csh" | "powershell" | "cmd";
 
-/// The shell a terminal runs, from its path: PowerShell and cmd by name, and
-/// anything else - bash, zsh, fish, Git Bash on Windows - read as POSIX.
+/// The shell a terminal runs, from its path: PowerShell, cmd and csh/tcsh by
+/// name, and anything else - bash, zsh, fish, Git Bash on Windows - read as
+/// POSIX.
 export function shellKind(path: string | undefined): Shell {
   const name = (path ?? "").split(/[\\/]/).pop()?.toLowerCase() ?? "";
   if (/^(pwsh|powershell)(\.exe)?$/.test(name)) {
@@ -34,6 +35,9 @@ export function shellKind(path: string | undefined): Shell {
   }
   if (/^cmd(\.exe)?$/.test(name)) {
     return "cmd";
+  }
+  if (/^t?csh$/.test(name)) {
+    return "csh";
   }
   return "posix";
 }
@@ -44,6 +48,7 @@ export function shellKind(path: string | undefined): Shell {
 /// zsh reads a word that starts with `=` as `=name`, the path of a command.
 const PLAIN: Record<Shell, RegExp> = {
   posix: /^[A-Za-z0-9_\/.,:@%+-][A-Za-z0-9_\/.,:@%+=-]*$/,
+  csh: /^[A-Za-z0-9_\/.,:@%+-][A-Za-z0-9_\/.,:@%+=-]*$/,
   powershell: /^[A-Za-z0-9_\\/.:+=-]+$/,
   cmd: /^[A-Za-z0-9_\\/.:+=-]+$/,
 };
@@ -56,11 +61,16 @@ function powershellLiteral(text: string): string {
 
 /// `word` as `shell` reads one argument.
 export function quote(word: string, shell: Shell): string {
-  if (PLAIN[shell].test(word)) {
+  // PowerShell splits a bare `-x.y` at its dot into `-x` and `.y` (#1677).
+  if (PLAIN[shell].test(word) && !(shell === "powershell" && /^-.*\./.test(word))) {
     return word;
   }
   if (shell === "posix") {
     return `'${word.replace(/'/g, `'\\''`)}'`;
+  }
+  if (shell === "csh") {
+    // csh reads `!` as history even in single quotes, unless escaped.
+    return `'${word.replace(/'/g, `'\\''`).replace(/!/g, "\\!")}'`;
   }
   if (shell === "powershell") {
     return powershellLiteral(word);
@@ -81,8 +91,17 @@ export function quote(word: string, shell: Shell): string {
 /// a `"` or a `%` inside quotes - its `\"` ends the quoted part, so what
 /// follows is read as commands, and `%NAME%` is expanded (#1274) - so a
 /// word or value with either, or with a line break, is refused there; and
-/// PowerShell is refused a word with a `"`.
-export function commandLine(binary: string, args: string[], shell: Shell, env: Record<string, string> = {}): string | { error: string } {
+/// PowerShell is refused a word with a `"`, an empty word, and a spaced
+/// one ending in a backslash.
+/// `refs` sets each of its names from the variable it maps it to, which the
+/// terminal's environment holds, so the value is not on the line.
+export function commandLine(
+  binary: string,
+  args: string[],
+  shell: Shell,
+  env: Record<string, string> = {},
+  refs: Record<string, string> = {},
+): string | { error: string } {
   if (shell === "cmd") {
     const bad = [binary, ...args, ...Object.entries(env).map(([n, v]) => `${n}=${v}`)].find((w) => /["%\r\n]/.test(w));
     if (bad !== undefined) {
@@ -97,6 +116,12 @@ export function commandLine(binary: string, args: string[], shell: Shell, env: R
     if (bad !== undefined) {
       return { error: `PowerShell cannot pass ${JSON.stringify(bad)} to q as written: Windows PowerShell does not escape the " in it for q. Start q from another terminal, or leave the " out.` };
     }
+    // It passes an empty word as nothing, and a spaced one ending in a
+    // backslash as "...\", whose \" q reads as a quote (#1682).
+    const lost = args.find((w) => w === "" || (/\s/.test(w) && w.endsWith("\\")));
+    if (lost !== undefined) {
+      return { error: `PowerShell cannot pass ${JSON.stringify(lost)} to q as written: Windows PowerShell passes ${lost === "" ? "an empty argument as none" : "a spaced argument ending in \\ with its last quote escaped"}. Start q from another terminal${lost === "" ? "" : ", or leave the trailing \\ out"}.` };
+    }
   }
   const command = quote(binary, shell);
   let line = [command, ...args.map((a) => quote(a, shell))].join(" ");
@@ -104,19 +129,24 @@ export function commandLine(binary: string, args: string[], shell: Shell, env: R
     line = `& ${line}`;
   }
   const names = Object.keys(env);
-  if (names.length === 0) {
+  const byRef = Object.keys(refs);
+  if (names.length === 0 && byRef.length === 0) {
     return line;
   }
   if (shell === "posix") {
     // Set for q alone, as `NAME=value q` sets it.
-    return [...names.map((n) => `${n}=${quote(env[n], "posix")}`), line].join(" ");
+    return [...byRef.map((n) => `${n}="$${refs[n]}"`), ...names.map((n) => `${n}=${quote(env[n], "posix")}`), line].join(" ");
+  }
+  if (shell === "csh") {
+    // csh has no `NAME=value q`: env sets them for q alone (#1683).
+    return ["env", ...byRef.map((n) => `${n}="$${refs[n]}"`), ...names.map((n) => `${n}=${quote(env[n], "csh")}`), line].join(" ");
   }
   if (shell === "powershell") {
     // Always quoted: the right of an assignment is an expression, where a
     // bare `/opt/q` is a division.
-    return [...names.map((n) => `$env:${n}=${powershellLiteral(env[n])}`), line].join("; ");
+    return [...byRef.map((n) => `$env:${n}=$env:${refs[n]}`), ...names.map((n) => `$env:${n}=${powershellLiteral(env[n])}`), line].join("; ");
   }
-  return [...names.map((n) => `set "${n}=${env[n]}"`), line].join(" && ");
+  return [...byRef.map((n) => `set "${n}=%${refs[n]}%"`), ...names.map((n) => `set "${n}=${env[n]}"`), line].join(" && ");
 }
 
 /// `file` with a leading `~` read as `home`, as a shell reads it: a q
@@ -140,8 +170,9 @@ export function qBinaryFrom(qBinary: string, folder: string | undefined, home: s
 }
 
 /// The variables of an env file - one `NAME=value` a line, `#` comments and
-/// blank lines skipped, an `export ` in front allowed, and a value in
-/// matching quotes taken without them - and the lines it could not read.
+/// blank lines skipped, an `export ` in front allowed, a ` # comment` after
+/// a value cut, and a value in matching quotes taken without them - and the
+/// lines it could not read.
 /// Nothing in a value is expanded: `$HOME` stays `$HOME`.
 export function parseEnv(text: string): { env: Record<string, string>; problems: string[] } {
   const env: Record<string, string> = {};
@@ -157,8 +188,10 @@ export function parseEnv(text: string): { env: Record<string, string>; problems:
       return;
     }
     const value = match[2].trim();
-    const quoted = /^(["'])(.*)\1$/.exec(value);
-    env[match[1]] = quoted ? quoted[2] : value;
+    // A ` # comment` after the value, or after its closing quote, is not
+    // part of it, as dotenv and the shells read it (#1686).
+    const quoted = /^(["'])(.*)\1$/.exec(value) ?? /^(["'])(.*?)\1\s+#.*$/.exec(value);
+    env[match[1]] = quoted ? quoted[2] : value.replace(/(^|\s+)#.*$/, "");
   });
   return { env, problems };
 }
@@ -184,19 +217,43 @@ function cut(line: string, inString: boolean): { code: string; inString: boolean
   return { code: line, inString };
 }
 
-/// One statement as one line of q's console. A system command (`\d .ns`,
-/// `\cd /tmp`) is left as it is: q does not read comments in one.
-export function replLine(statement: string): string {
-  if (statement.startsWith("\\")) {
-    return statement;
-  }
+/// `code` with no tab, which q's console reads as completion and drops
+/// (#1673): a space outside a string and `\t` inside one, given whether it
+/// starts inside one.
+function untab(code: string, inString: boolean): string {
   let out = "";
+  for (let i = 0; i < code.length; i++) {
+    const c = code[i];
+    if (c === "\t") {
+      out += inString ? "\\t" : " ";
+      continue;
+    }
+    out += c;
+    if (inString && c === "\\") {
+      out += code[++i] ?? "";
+    } else if (c === '"') {
+      inString = !inString;
+    }
+  }
+  return out;
+}
+
+/// One statement as one line of q's console. A system command's line
+/// (`\d .ns`, `\cd /tmp`) is left as it is - q does not read comments in
+/// one - and its continuation lines (`\t {x+` then `  1}[2]`) joined to it
+/// as any statement's are: a newline sent would run each line alone (#1674).
+export function replLine(statement: string): string {
+  const lines = statement.split("\n");
+  let out = "";
+  if (statement.startsWith("\\")) {
+    out = lines.shift()!.replace(/\t/g, " ");
+  }
   let inString = false;
-  for (const line of statement.split("\n")) {
+  for (const line of lines) {
     if (inString) {
       // The newline and the indentation are part of the string.
       const { code, inString: still } = cut(line, true);
-      out += `\\n${code}`;
+      out += `\\n${untab(code, true)}`;
       inString = still;
       continue;
     }
@@ -206,7 +263,7 @@ export function replLine(statement: string): string {
       // A comment line inside a lambda.
       continue;
     }
-    out = out === "" ? code : `${out} ${code}`;
+    out = out === "" ? untab(code, false) : `${out} ${untab(code, false)}`;
   }
   return out;
 }

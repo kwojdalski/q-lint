@@ -12,6 +12,7 @@ const path = require("node:path");
 function fakeVscode(config = {}, files = {}) {
   const terminals = [];
   const closed = [];
+  const ended = [];
   const messages = [];
   const disposable = { dispose() {} };
   class Uri {
@@ -66,6 +67,10 @@ function fakeVscode(config = {}, files = {}) {
           closed.push(f);
           return disposable;
         },
+        onDidEndTerminalShellExecution: (f) => {
+          ended.push(f);
+          return disposable;
+        },
         showInformationMessage: async (m) => void messages.push(m),
         showWarningMessage: async (m) => void messages.push(m),
         showErrorMessage: async (m) => void messages.push(m),
@@ -85,7 +90,7 @@ function fakeVscode(config = {}, files = {}) {
     },
     { get: (t, k) => (k in t ? t[k] : (t[k] = class {})) },
   );
-  return { vscode, terminals, messages, document, close: (t) => t.dispose() };
+  return { vscode, terminals, messages, document, close: (t) => t.dispose(), end: (terminal) => ended.forEach((f) => f({ terminal })) };
 }
 
 /// QTerminals loaded against `fake`.
@@ -123,6 +128,16 @@ test("a q binary and an env file under ~ are read from the home directory", asyn
   assert.strictEqual(fake.terminals[0].sent[0], `QHOME=/opt/q ${path.join(home, "q/m64/q")}`);
 });
 
+test("an env file's bad line is named by its number, never its text (#1685)", async () => {
+  const fake = fakeVscode({ "terminal.envPath": "/ws/.qenv" }, { "/ws/.qenv": "QHOME=/opt/q\nKX_TOKEN hunter2-secret\n" });
+  const terminals = load(fake);
+  fake.vscode.window.activeTextEditor = { document: fake.document("/ws/a.q", "1+1") };
+  await terminals.repl();
+  assert.strictEqual(fake.terminals.length, 1);
+  assert.match(fake.messages.join("\n"), /skipped 1 line\(s\) of .*\.qenv, not NAME=value: line 2$/);
+  assert.doesNotMatch(fake.messages.join("\n"), /hunter2/);
+});
+
 test("a cmd terminal is not started on a line cmd would read a quote or % in (#1274)", async () => {
   const fake = fakeVscode({ "terminal.envPath": "/ws/.qenv" }, { "/ws/.qenv": 'QINIT=x" & calc & "\n' });
   fake.vscode.env.shell = "C:\\Windows\\System32\\cmd.exe";
@@ -145,6 +160,24 @@ test("with the last q terminal closed, code goes to a q terminal still open, not
   await terminals.send("line");
   assert.strictEqual(fake.terminals.length, 2, "no third terminal is started");
   assert.deepStrictEqual(fake.terminals[0].sent.slice(1), ["1+1"]);
+});
+
+test("once q in the q terminal has ended, code goes to a new q, not its shell (#1675)", async () => {
+  const fake = fakeVscode();
+  const terminals = load(fake);
+  fake.vscode.window.activeTextEditor = { document: fake.document("/ws/a.q", "1+1"), selection: { active: { line: 0 }, isEmpty: true } };
+  await terminals.send("line");
+  assert.strictEqual(fake.terminals.length, 1);
+  // q exits; the terminal stays open, running the shell.
+  fake.end(fake.terminals[0]);
+  await terminals.send("line");
+  assert.strictEqual(fake.terminals.length, 2, "a fresh q terminal");
+  assert.deepStrictEqual(fake.terminals[0].sent, ["q", "1+1"], "nothing more typed into the shell");
+  assert.deepStrictEqual(fake.terminals[1].sent, ["q", "1+1"]);
+  // A terminal this did not start is not ours to forget.
+  fake.end({ name: "other" });
+  await terminals.send("line");
+  assert.strictEqual(fake.terminals.length, 2);
 });
 
 test("Run Code from Terminal keeps the file's running terminal when the new one cannot start", async () => {
