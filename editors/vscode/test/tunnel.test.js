@@ -160,10 +160,11 @@ test("the setting is on by default, and hides Set SSH Tunnel when off", () => {
 test("a tunnel that ssh cannot open says what ssh said, and leaves nothing running", async (t) => {
   const ssh = stubSsh(t);
   process.env.STUB_SSH_FAIL = "1";
-  await assert.rejects(
-    SshTunnel.open({ destination: "me@bastion", host: "rdb", port: 5010, timeoutMs: 5000 }),
-    /the SSH tunnel through me@bastion did not open: banner me@bastion: Permission denied \(publickey\)\./,
-  );
+  // ssh's words can name hosts: they are kept apart from the message, which
+  // a history keeps, for the one message shown at once (#1508).
+  const failure = await SshTunnel.open({ destination: "me@bastion", host: "rdb", port: 5010, timeoutMs: 5000 }).catch((e) => e);
+  assert.strictEqual(failure.message, "the SSH tunnel through me@bastion did not open");
+  assert.match(failure.shown().message, /the SSH tunnel through me@bastion did not open\. ssh said: banner me@bastion: Permission denied \(publickey\)\./);
   assert.strictEqual(alive(ssh.runs()[0].pid), false);
   delete process.env.STUB_SSH_FAIL;
   await assert.rejects(SshTunnel.open({ destination: "x", host: "h", port: 1, ssh: "/nonexistent/ssh" }), /no ssh program \(\/nonexistent\/ssh\) on PATH/);
