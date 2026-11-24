@@ -40,6 +40,10 @@ test("a run is due once a time has come since the last, or the interval has pass
   const every = { every: 15, since: at(9, 0).getTime() };
   assert.strictEqual(isDue(every, at(9, 14, 59)), false);
   assert.strictEqual(isDue(every, at(9, 15)), true);
+  // Last run while the clock was a day ahead: due once now (#1625).
+  const ahead = at(12, 0).getTime() + 86_400_000;
+  assert.strictEqual(isDue({ every: 15, since: ahead }, at(12, 0)), true);
+  assert.strictEqual(isDue({ times: ["09:00"], since: ahead }, at(12, 0)), true);
 });
 
 test("the file a run writes, and which queries may be scheduled", () => {

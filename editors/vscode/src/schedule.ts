@@ -110,8 +110,12 @@ export function renamedSchedules(list: ScheduledExport[], from: string, to: stri
 }
 
 /// Whether `s` is due at `now`: its interval has passed since it last ran,
-/// or one of today's times has come since then.
+/// or one of today's times has come since then. A last run after `now` was
+/// stamped by a clock since put back: it runs once, to restart (#1625).
 export function isDue(s: Pick<ScheduledExport, "times" | "every" | "since">, now: Date): boolean {
+  if (s.since > now.getTime()) {
+    return true;
+  }
   if (s.every !== undefined) {
     return now.getTime() - s.since >= s.every * 60_000;
   }
