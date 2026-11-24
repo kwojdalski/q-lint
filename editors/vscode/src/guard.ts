@@ -42,7 +42,9 @@
 //   process (`` `:host:5000 ``, a port) it only connects, and what is sent
 //   over that handle is not read;
 // - `xasc`, `xdesc` or `xkey` on a table named by a symbol
-//   (`` `a xasc `t ``), which sorts or keys it in place;
+//   (`` `a xasc `t ``), which sorts or keys it in place, also applied some
+//   other way with a symbol for the columns and one for the table in its
+//   expression (`` .[xkey;(`a;`t)] ``, `` xkey/[`a;`t] ``, #1770);
 // - `?` with a symbol atom on its left (`` `sym?`x ``, `` (`sym)?`x ``,
 //   `` ?[`sym;`x] ``), which extends that enumeration, and the sym file
 //   when the symbol is a handle;
@@ -556,9 +558,8 @@ function argumentEnd(t: Token[], last: number): number {
   return t.length;
 }
 
-/// Where the expression `t[i]` is in ends: at the next `;` outside every
-/// bracket around it, or the end of the lambda or statement it is in.
-function expressionEnd(t: Token[], i: number): number {
+/// How many brackets are open around `t[i]`, back to its lambda.
+function around(t: Token[], i: number): number {
   let depth = 0;
   for (let p = i - 1, inner = 0; p >= 0; p--) {
     if (t[p].kind === "close") inner++;
@@ -566,6 +567,25 @@ function expressionEnd(t: Token[], i: number): number {
     else if (t[p].kind === "open" && t[p].text === "{") break;
     else if (t[p].kind === "open") depth++;
   }
+  return depth;
+}
+
+/// Where the expression `t[i]` is in starts: after the `;` before it outside
+/// every bracket around it, or the start of its lambda or statement.
+function expressionStart(t: Token[], i: number): number {
+  let depth = around(t, i);
+  for (let p = i - 1; p >= 0; p--) {
+    if (t[p].kind === "close") depth++;
+    else if (t[p].kind === "open" && depth-- === 0) return p + 1;
+    else if (depth === 0 && t[p].text === ";") return p + 1;
+  }
+  return 0;
+}
+
+/// Where the expression `t[i]` is in ends: at the next `;` outside every
+/// bracket around it, or the end of the lambda or statement it is in.
+function expressionEnd(t: Token[], i: number): number {
+  let depth = around(t, i);
   for (let p = i + 1; p < t.length; p++) {
     if (t[p].kind === "open") depth++;
     else if (t[p].kind === "close" && depth-- === 0) return p;
@@ -801,6 +821,21 @@ function readStatement(statement: string, found: Set<string>): void {
         }
         if (table !== undefined && table.length > 1) {
           found.add(`${unqualified(k.text) === "xkey" ? "keys" : "sorts"} ${table} in place with ${k.text}`);
+        } else if (
+          next !== undefined &&
+          (next.text === ")" || next.text === "]" || next.text === ";" || (next.kind === "op" && [..."/\\'@."].includes(next.text)) || next.text === "each" || next.text === "peach")
+        ) {
+          // Applied some other way - `(xkey)[`a]@`t`, `.[xkey;(`a;`t)]`,
+          // `` `a xdesc/: enlist`t ``, `'[::;xdesc][`a;`t]` (#1770) - when its
+          // expression holds a symbol for the columns and one for the table.
+          const end = expressionEnd(t, i);
+          let groups = 0;
+          for (let p = expressionStart(t, i); p < end; p++) {
+            groups += t[p].kind === "sym" && t[p].text.length > 1 && t[p - 1]?.kind !== "sym" ? 1 : 0;
+          }
+          if (groups >= 2) {
+            found.add(`${unqualified(k.text) === "xkey" ? "keys" : "sorts"} a table in place with ${k.text}`);
+          }
         }
         continue;
       }

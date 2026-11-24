@@ -1294,3 +1294,26 @@ test("hopen applied with @, ., ', each, in parentheses or a trap opens the file 
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("xkey or xdesc applied in parentheses, with . or an adverb, or composed keys or sorts in place (#1770)", () => {
+  const cases = {
+    "(xkey)[`a;`t]": ["keys a table in place with xkey"],
+    "(xkey)[`a]@`t": ["keys a table in place with xkey"],
+    ".[xkey;(`a;`t)]": ["keys a table in place with xkey"],
+    "xkey/[`a;`t]": ["keys a table in place with xkey"],
+    ".q.xkey . (`a;`t)": ["keys a table in place with .q.xkey"],
+    "'[::;xdesc][`a;`t]": ["sorts a table in place with xdesc"],
+    "`a xdesc/: enlist `t": ["sorts a table in place with xdesc"],
+    "(enlist `a) xkey\\: `t": ["keys a table in place with xkey"],
+    "xdesc'[enlist `a;enlist `t]": ["sorts a table in place with xdesc"],
+    // On a value, the columns alone, or another expression's symbol, it reads.
+    ".[xkey;(`a;t)]": [],
+    "(xkey)[`a]t": [],
+    "`a`b xasc/: (t;u)": [],
+    "f:(xdesc)[`a]; `t": ["assigns f"],
+    "`a xdesc select from t where s=`x": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
