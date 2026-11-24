@@ -17,7 +17,7 @@
 // These are the extension's one writer of q strings and symbols: Paste as q
 // Table, the JSON conversion, the gateway's statements and the grid's cell
 // edits all use `qString` and `symbolLiteral`.
-import { realValue, type GridPayload } from "./grid";
+import { bytesText, realValue, type GridPayload } from "./grid";
 
 const NULL_GUID = "00000000-0000-0000-0000-000000000000";
 
@@ -212,6 +212,18 @@ export function readableSymbols(code: string): string {
   return out;
 }
 
+/// A symbol's literal from its bytes: as its text where they are UTF-8,
+/// and otherwise through `` `$ `` with each byte past ASCII escaped, as no
+/// text holds it (#2083).
+export function bytesSymbol(bytes: number[]): string {
+  try {
+    return symbolLiteral(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(bytes)));
+  } catch {
+    const text = stringLiteral(Buffer.from(bytes).toString("latin1"));
+    return `\`$${text.replace(/[\u0080-\u00ff]/g, (c) => `\\${c.charCodeAt(0).toString(8)}`)}`;
+  }
+}
+
 /// Whether `name` can be a column name in `([] ...)` as written.
 export function plainName(name: string): boolean {
   return /^[A-Za-z][A-Za-z0-9_]*$/.test(name) && !RESERVED.has(name);
@@ -256,7 +268,7 @@ export function atomLiteral(type: number, text: string, raw: unknown): { literal
       }
       return ok(stringLiteral(text === "" ? " " : text));
     case 11:
-      return ok(symbolLiteral(text));
+      return ok(Array.isArray(raw) ? bytesSymbol(raw) : symbolLiteral(text));
     case 13:
       return ok(`${text}m`);
     case 15:
@@ -351,6 +363,14 @@ export function exactLiteral(raw: unknown[]): { literal: string; cut: boolean } 
     // A suffix where the items alone would not say the type.
     const suffix = real ? "e" : items.every((n) => /^[-0-9]+$/.test(n)) ? "f" : "";
     return { literal: `${items.join(" ")}${suffix}`, cut: false };
+  }
+  // A symbol, or symbols, from their bytes (#2083).
+  if (tag === "s" && Array.isArray(v)) {
+    return { literal: bytesSymbol(v as number[]), cut: false };
+  }
+  if (tag === "S" && Array.isArray(v) && v.every(Array.isArray)) {
+    const items = (v as number[][]).map(bytesSymbol);
+    return { literal: items.length === 1 ? `enlist ${items[0]}` : `(${items.join(";")})`, cut: false };
   }
   // A temporal cast from its count, which -3! wrote as q cannot read (#2082).
   if (tag === "c" && Array.isArray(v) && v.length === 2 && typeof v[0] === "number" && LETTERS[Math.abs(v[0])] !== undefined) {
@@ -534,22 +554,6 @@ export function plainItem(text: string): string {
     if (run === undefined) {
       return e === "n" ? "\n" : e === "r" ? "\r" : e === "t" ? "\t" : e;
     }
-    const bytes = Buffer.from(run.match(/[0-7]{3}/g)!.map((o) => parseInt(o, 8)));
-    const utf8 = new TextDecoder("utf-8", { fatal: true });
-    let out = "";
-    for (let i = 0; i < bytes.length; ) {
-      // The character the byte at `i` leads, by its length; latin1 if it is none.
-      const b = bytes[i];
-      const length = b < 0x80 ? 1 : b >= 0xc2 && b <= 0xdf ? 2 : b >= 0xe0 && b <= 0xef ? 3 : b >= 0xf0 && b <= 0xf4 ? 4 : 0;
-      let char: string | undefined;
-      try {
-        char = length > 0 && i + length <= bytes.length ? utf8.decode(bytes.subarray(i, i + length)) : undefined;
-      } catch {
-        char = undefined;
-      }
-      out += char ?? bytes.toString("latin1", i, i + 1);
-      i += char === undefined ? 1 : length;
-    }
-    return out;
+    return bytesText(run.match(/[0-7]{3}/g)!.map((o) => parseInt(o, 8))) ?? "";
   });
 }

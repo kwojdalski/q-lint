@@ -22,14 +22,18 @@
 //   raw    the column itself, made its underlying number - `"j"$` of a
 //          timestamp, `"i"$` of a date - for the numeric, temporal and guid
 //          types, and a char column's bytes (`"x"$`): its cells are
-//          decoded as UTF-8, which a byte past ASCII alone is not. For a
+//          decoded as UTF-8, which a byte past ASCII alone is not; a
+//          symbol column's past ASCII, each symbol's bytes where it has
+//          one past ASCII and `0b` where not, its cells read from them
+//          (#2083). For a
 //          general column, each float or real item as a float, which `-3!`
 //          writes to `\P` digits, and `0b` for any other item (not a null,
 //          which the codec makes of `` ` ``) but one with floats or reals
 //          inside: `("F";v)` or `("E";v)` for a list of them (a real as its
 //          float), and `("l";v)` for a general list of at most 200, each
 //          item `("f";x)`, `("e";x)`, such a pair, or its `-3!` text
-//          (#1502); and `("c";(t;n))` for a minute, second, time, datetime
+//          (#1502); `("s";b)` and `("S";bs)` for a symbol or symbols
+//          of a byte past ASCII, their bytes; `("c";(t;n))` for a minute, second, time, datetime
 //          or timestamp atom or vector of type `t` that `-3!` writes as q
 //          cannot read back - past 99 hours (`**`), finer than a
 //          millisecond, outside 1709-2290 - `n` its count (#2082); `()`
@@ -80,11 +84,14 @@ const COLUMN_LINES = [
   "          {[e;x]$[type[x] within 1 76h;string x;{$[200<count x;(197#x),\"...\";x]} each",
   "            {[e;x]$[10h=type x;$[1=count x;\",\";\"\"],\"\\\"\",raze[e\"i\"$200 sublist x],\"\\\"\";-3!x]}[e] each x]}[e] each c;",
   "          {[c]u:type c;$[u in 12 16h;\"j\"$c;u in 13 14 17 18 19h;\"i\"$c;u=15h;\"f\"$c;u=10h;\"x\"$c;u in 2 5 6 7 8 9h;c;",
+  "            u=11h;$[any 127<\"i\"$\"x\"$raze s:string c;{$[any 127<\"i\"$\"x\"$x;\"x\"$x;0b]} each s;()];",
   "            u=0h;{[g;x]$[-9h=t:type x;$[null x;0b;x];-8h=t;$[null x;0b;\"f\"$x];g x]}[{$[-9h=t:type x;(\"f\";x);-8h=t;(\"e\";\"f\"$x);",
   "              (t in 8 9h)&200>=count x;($[t=9h;\"F\";\"E\"];\"f\"$x);(0h=t)&200>=count x;",
   "              $[all 0b~/:r:.z.s each x;0b;(\"l\";@[r;w;:;-3!'x w:where 0b~/:r])];",
   "              99h=t;$[0b~r:.z.s(key x;value x);0b;(\"d\";r 1)];98h=t;$[0b~r:.z.s flip x;0b;(\"t\";r)];",
   "              200<count x;0b;",
+  "              -11h=t;$[any 127<\"i\"$\"x\"$s:string x;(\"s\";\"x\"$s);0b];",
+  "              11h=t;$[any 127<\"i\"$\"x\"$raze s:string x;(\"S\";\"x\"$s);0b];",
   "              abs[t]within 17 19h;$[any(abs w:\"i\"$x)within(1+5999 359999 359999999 abs[t]-17),2147483646;(\"c\";(t;w));0b];",
   "              15h=abs t;$[any 0.001<abs m-\"j\"$m:86400000*\"f\"$x;(\"c\";(t;\"f\"$x));0b];",
   "              12h=abs t;$[all(null x)|(x in -0W 0Wp)|x within 1709.01.01D00:00 2290.12.31D23:59:59.999999999;0b;(\"c\";(t;\"j\"$x))];0b]}] each c;()]} each c;",
@@ -221,6 +228,32 @@ export function realValue(x: unknown): unknown {
   return x;
 }
 
+/// Bytes as text: UTF-8 where they are, and each byte that is part of no
+/// UTF-8 character its Latin-1 character, spoiling none of the others
+/// (#1737). Undefined when `raw` is no list of bytes.
+export function bytesText(raw: unknown): string | undefined {
+  if (!Array.isArray(raw) && !(raw instanceof Uint8Array)) {
+    return undefined;
+  }
+  const bytes = Buffer.from(raw as number[]);
+  const utf8 = new TextDecoder("utf-8", { fatal: true });
+  let out = "";
+  for (let i = 0; i < bytes.length; ) {
+    // The character the byte at `i` leads, by its length; latin1 if it is none.
+    const b = bytes[i];
+    const length = b < 0x80 ? 1 : b >= 0xc2 && b <= 0xdf ? 2 : b >= 0xe0 && b <= 0xef ? 3 : b >= 0xf0 && b <= 0xf4 ? 4 : 0;
+    let char: string | undefined;
+    try {
+      char = length > 0 && i + length <= bytes.length ? utf8.decode(bytes.subarray(i, i + length)) : undefined;
+    } catch {
+      char = undefined;
+    }
+    out += char ?? bytes.toString("latin1", i, i + 1);
+    i += char === undefined ? 1 : length;
+  }
+  return out;
+}
+
 /// Each column's raw numbers, a real column's made `realValue`s.
 function rawColumns(raw: unknown[][], types: number[]): unknown[][] {
   return raw.map((c, i) => (types[i] === 8 ? c.map(realValue) : c));
@@ -259,7 +292,14 @@ export function readGridAnswer(raw: unknown): GridAnswer {
       keys: typeof g.keys === "number" ? g.keys : 0,
       names: names.map((n) => (n === null ? "" : String(n))),
       types: types.map(Number),
-      cells: (cells as unknown[][]).map((c) => c.map((x) => (typeof x === "string" ? x : String(x)))),
+      cells: (cells as unknown[][]).map((c, i) =>
+        c.map((x, r) => {
+          // A symbol of bytes past ASCII from them: its text alone is U+FFFD
+          // where they are no UTF-8 (#2083).
+          const bytes = Number(types[i]) === 11 ? bytesText(perColumn(g.raw)[i][r]) : undefined;
+          return bytes ?? (typeof x === "string" ? x : String(x));
+        }),
+      ),
       raw: rawColumns(perColumn(g.raw), types.map(Number)),
       rank: perColumn(g.rank) as number[][],
       ...(tree !== undefined ? { tree } : {}),

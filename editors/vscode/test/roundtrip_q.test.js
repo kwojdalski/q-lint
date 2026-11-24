@@ -14,6 +14,7 @@ const path = require("node:path");
 const { QConnection } = require("../out/qclient.js");
 const { statements } = require("../out/statements.js");
 const { tableLiteral } = require("../out/qliteral.js");
+const { exportResult } = require("../out/resultexport.js");
 
 const Q = process.env.QLINT_TEST_Q;
 const skip = Q ? false : "QLINT_TEST_Q names no q binary";
@@ -133,38 +134,46 @@ function values() {
 
 /// The classes not yet written back, each by the issue that holds it.
 const PENDING = [
-  [2083, (c) => /\\351/.test(c)],
   [2084, (c) => c === "sp"],
   [2085, (c) => /\(\[\] x:|t:\(\[\]/.test(c)],
 ];
 
-test("Copy as q writes every value so that q reads it back as the value (#2081-#2085, #2089)", { skip }, async (t) => {
+test("a result exported is read back as the value it is, on a real q", { skip }, async (t) => {
   const q = await startQ(SERVER);
   t.after(() => q.stop());
   const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
   t.after(() => connection.abort());
-  const bad = [];
-  for (const code of values().filter((c) => !PENDING.some(([, held]) => held(c)))) {
-    const answer = await connection.queryGrid(statements(code), SIZE, 1000);
-    if (answer.grid === undefined) {
-      bad.push(`${code}: no grid ${answer.gridError ?? answer.error ?? ""}`);
-      continue;
-    }
-    const table = tableLiteral(answer.grid);
-    // A string past 200 characters is cut, and said to be.
-    if (table.cut > 0) {
-      if (!/200#/.test(code)) {
-        bad.push(`${code}: said cut, as ${table.code}`);
+  const grid = async (code) => (await connection.queryGrid(statements(code), SIZE, 1000)).grid;
+
+  await t.test("Copy as q writes every value so that q reads it back as the value (#2081-#2085, #2089)", async () => {
+    const bad = [];
+    for (const code of values().filter((c) => !PENDING.some(([, held]) => held(c)))) {
+      const answer = await connection.queryGrid(statements(code), SIZE, 1000);
+      if (answer.grid === undefined) {
+        bad.push(`${code}: no grid ${answer.gridError ?? answer.error ?? ""}`);
+        continue;
       }
-      continue;
+      const table = tableLiteral(answer.grid);
+      // A string past 200 characters is cut, and said to be.
+      if (table.cut > 0) {
+        if (!/200#/.test(code)) {
+          bad.push(`${code}: said cut, as ${table.code}`);
+        }
+        continue;
+      }
+      // A dictionary is shown as its key and value columns, keyed by the key;
+      // a mapped table is its rows.
+      const value = code === "sp" ? "select from sp" : `{$[99h<>type x;x;98h=type key x;x;1!flip\`key\`value!(key x;value x)]} ${code}`;
+      const same = await connection.query(statements(`(${value})~${table.code}`), SIZE);
+      if (same.text?.join("") !== "1b") {
+        bad.push(`${code}\n   written ${table.code}\n   q: ${(same.text ?? []).join(" ") || same.error}`);
+      }
     }
-    // A dictionary is shown as its key and value columns, keyed by the key;
-    // a mapped table is its rows.
-    const value = code === "sp" ? "select from sp" : `{$[99h<>type x;x;98h=type key x;x;1!flip\`key\`value!(key x;value x)]} ${code}`;
-    const same = await connection.query(statements(`(${value})~${table.code}`), SIZE);
-    if (same.text?.join("") !== "1b") {
-      bad.push(`${code}\n   written ${table.code}\n   q: ${(same.text ?? []).join(" ") || same.error}`);
-    }
-  }
-  assert.deepStrictEqual(bad, []);
+    assert.deepStrictEqual(bad, []);
+  });
+
+  await t.test("a symbol of bytes that are no UTF-8 exports as its characters, not U+FFFD (#2083)", async () => {
+    const json = JSON.parse(exportResult("json", await grid('([k:`$("caf\\351";"ok")] s:`$("\\377x";"caf\\303\\251"))'), -1).data.toString("utf8"));
+    assert.deepStrictEqual(json, [{ k: "café", s: "\u00ffx" }, { k: "ok", s: "café" }]);
+  });
 });
