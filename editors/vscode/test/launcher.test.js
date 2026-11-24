@@ -115,6 +115,10 @@ test("the launcher is on by default, and its commands are hidden while it is off
     assert.ok(menus.length >= 2, command);
     for (const m of menus) assert.match(m.when, /config\.q-lint\.processes\.launcher\.enable/, command);
   }
+  // A discovery server's row never has a launch definition (#1693).
+  for (const m of pkg.contributes.menus["view/item/context"].filter((m) => Object.values(LAUNCH_COMMANDS).includes(m.command))) {
+    assert.doesNotMatch(m.when, /discovered/, m.command);
+  }
 });
 
 async function freePort() {
