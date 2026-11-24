@@ -84,6 +84,9 @@ export function registerLogpoints(
       decoration.dispose();
       decoration = undefined;
       marked = [];
+      // And the hits shown, which would stay in the Output list (#1461).
+      output?.dispose();
+      output = undefined;
     }
   };
   const refuse = (): boolean => {

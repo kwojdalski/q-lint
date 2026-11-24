@@ -126,3 +126,24 @@ test("turned off while Add Logpoint asks for the name, nothing is wrapped (#1453
   assert.deepStrictEqual(s.api.logged(), {});
   assert.match(stub.messages.at(-1)[1], /q-lint\.logpoints\.enable to true/);
 });
+
+test("turned off, the logpoints output channel goes too (#1461)", async () => {
+  const s = setup();
+  const channels = [];
+  vscode.window.createOutputChannel = () => {
+    const channel = { disposed: false, clear() {}, appendLine() {}, show() {}, dispose() { this.disposed = true; } };
+    channels.push(channel);
+    return channel;
+  };
+  await stub.commands.get(LOGPOINT_COMMANDS.hits)();
+  assert.strictEqual(channels.length, 1);
+  stub.config.user["logpoints.enable"] = false;
+  stub.changeConfig("q-lint.logpoints.enable");
+  assert.strictEqual(channels[0].disposed, true);
+  // On again, Show Logpoint Hits makes a new one.
+  stub.config.user["logpoints.enable"] = true;
+  stub.changeConfig("q-lint.logpoints.enable");
+  await stub.commands.get(LOGPOINT_COMMANDS.hits)();
+  assert.strictEqual(channels.length, 2);
+  assert.ok(s.sent.length > 0);
+});
