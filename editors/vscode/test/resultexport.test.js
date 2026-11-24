@@ -421,6 +421,18 @@ test("a float or real item of a general list is written with every digit, not -3
   assert.strictEqual(tableLiteral(g).code, "([] a:(1.23456789f;`x;0n))");
 });
 
+test("JSON writes a general list's integers, booleans and nulls as JSON's own, as it does a float's (#2086)", () => {
+  // KDB-X -3! of each item of ([] a:(1;0n;2.5;0Nj;1b;0x01;`a;"x";enlist "y";1 2;0Wh;-0we;0Ni;`;-7i;9007199254740993)).
+  const cells = ["1", "0n", "2.5", "0N", "1b", "0x01", "`a", '"x"', ',"y"', "1 2", "0Wh", "-0we", "0Ni", "`", "-7i", "9007199254740993"];
+  const raw = cells.map(() => false);
+  raw[2] = 2.5;
+  raw[11] = -Infinity;
+  const p = { count: cells.length, keys: 0, names: ["a"], types: [0], cells: [cells], raw: [raw], rank: [[]] };
+  const json = toJson(p);
+  assert.deepStrictEqual(JSON.parse(json).map((r) => r.a), [1, null, 2.5, null, true, 1, "`a", "x", "y", "1 2", "0Wh", "-0we", null, null, -7, 9007199254740992]);
+  assert.match(json, /"a": 9007199254740993\}/);
+});
+
 test("a float infinity in a general list is shown, sent to an agent and exported as q writes it, not as a long's 0W (#1733)", () => {
   const { toGrid } = require("../out/grid.js");
   const { jsonCell } = require("../out/agent.js");

@@ -539,6 +539,38 @@ export function distinctNames(names: string[]): string[] {
   });
 }
 
+/// An item of a general list as a format with numbers, booleans and nulls
+/// of its own holds it (#2086): a float or a real as its every digit (its
+/// raw, #1485), an integer atom (`1`, `1i`, `2h`, `0x01`) as its number's
+/// digits, `0b` and `1b` as booleans, an atom's null (`0N`, `0n`, `0Nd`,
+/// `` ` ``) as null, a symbol of bytes past ASCII as its characters
+/// (#2083), and anything else as `plainItem`'s text - an infinity among
+/// them, which such a format has no number for.
+export type ItemValue = { number: string } | { boolean: boolean } | { null: true } | { text: string };
+
+export function itemValue(text: string, raw: unknown): ItemValue {
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return { number: numberText(text.endsWith("e") ? Number(realValue(raw)) : raw) };
+  }
+  if (Array.isArray(raw) && raw[0] === "s" && Array.isArray(raw[1])) {
+    return { text: `\`${bytesText(raw[1]) ?? ""}` };
+  }
+  const integer = /^(-?\d+)[hij]?$/.exec(text);
+  if (integer !== null) {
+    return { number: integer[1] };
+  }
+  if (/^0x[0-9a-f]{2}$/.test(text)) {
+    return { number: String(parseInt(text.slice(2), 16)) };
+  }
+  if (text === "0b" || text === "1b") {
+    return { boolean: text === "1b" };
+  }
+  if (/^0N[a-z]?$|^0n$|^`$/.test(text)) {
+    return { null: true };
+  }
+  return { text: plainItem(text) };
+}
+
 /// An item of a general list as plain text: a string's characters, its
 /// escapes undone, for a format with strings of its own; any other item
 /// (and a string cut at 200 characters) as q wrote it. A run of octal

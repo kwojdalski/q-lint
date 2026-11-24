@@ -15,7 +15,7 @@
 // the grid colours them - by `media/gridlook.js`, which the page runs too.
 import { charText, realValue, textBuffer, toGrid, type Grid, type GridPayload } from "./grid";
 import type { FormatRule } from "./resultlook";
-import { distinctNames, plainItem, rawColumn, tableParts, textNull } from "./qliteral";
+import { distinctNames, itemValue, rawColumn, tableParts, textNull } from "./qliteral";
 import { toParquet } from "./parquet";
 import { toXlsx } from "./xlsx";
 
@@ -145,11 +145,13 @@ function jsonParts(payload: GridPayload, rows?: number[]): string[] {
       if (value === null || textNull(type, text)) {
         return "null";
       }
-      if (type === 0 && typeof value === "number" && Number.isFinite(value)) {
-        // A float or real item as a number, not `-3!`'s `\P` text (#1485).
-        return String(text.endsWith("e") ? realValue(value) : value);
+      if (type === 0) {
+        // A number as a number, every digit of a float (#1485); a boolean,
+        // a null, a string as JSON's own (#2086).
+        const item = itemValue(text, value);
+        return "number" in item ? item.number : "boolean" in item ? String(item.boolean) : "null" in item ? "null" : JSON.stringify(item.text);
       }
-      return JSON.stringify(type === 0 ? plainItem(text) : type === 10 ? charText(text, value) : text);
+      return JSON.stringify(type === 10 ? charText(text, value) : text);
     };
   });
   const order = rowOrder(payload, rows);
