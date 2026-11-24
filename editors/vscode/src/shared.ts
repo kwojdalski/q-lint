@@ -88,7 +88,11 @@ export function withShared(text: string | undefined, process: Process): string {
       : { processes: [] };
   const { server: _server, ...entry } = process;
   void _server;
-  const at = holder.processes.findIndex((e) => typeof e === "object" && e !== null && (e as { label?: unknown }).label === process.label);
+  // Trimmed, as the list is read: `"rdb "` is listed as rdb.
+  const at = holder.processes.findIndex((e) => {
+    const label = typeof e === "object" && e !== null ? (e as { label?: unknown }).label : undefined;
+    return typeof label === "string" && label.trim() === process.label;
+  });
   if (at >= 0) {
     holder.processes[at] = entry;
   } else {

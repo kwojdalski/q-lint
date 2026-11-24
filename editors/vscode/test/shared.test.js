@@ -54,6 +54,15 @@ test("a process is written into the list in place of its label, with no password
   assert.deepStrictEqual(JSON.parse(two), { note: "kept", processes: [{ label: "rdb", host: "h", port: 1, tags: [] }, { label: "x", host: "y", port: 2 }] });
 });
 
+// An entry labelled "rdb " is listed as rdb, but was not found by Share:
+// a second rdb was appended and skipped as a repeat, the old one kept.
+test("sharing a process replaces an entry whose label has spaces around it", () => {
+  const file = JSON.stringify({ processes: [{ label: "rdb ", host: "old-host", port: 5000 }] });
+  const read = readSharedFile(withShared(file, { label: "rdb", host: "new-host", port: 5001, tags: [] }), true);
+  assert.deepStrictEqual(read.processes.map((p) => `${p.label}@${p.host}:${p.port}`), ["rdb@new-host:5001"]);
+  assert.deepStrictEqual(read.problems, []);
+});
+
 test("the list is a group beside the saved processes; .qlint names no discovery server", () => {
   const shared = { server: { label: ".qlint", url: "/w/.qlint/processes.json" }, state: { processes: [{ label: "rdb", host: "h", port: 1, tags: [] }], problems: [], loading: false, removed: false, fetchedAt: 1 } };
   const top = children([{ label: "mine", host: "h", port: 2, tags: [] }], [], undefined, shared);
