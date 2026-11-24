@@ -18,6 +18,7 @@ import { NOTEBOOK } from "./qnb";
 import { diffCells, diffSummary, hasOutputs, notebookJson, notebookText, stripQnb, type CellLike } from "./qnbgit";
 import { plainMessage } from "./history";
 import { onProcessPath } from "./relations";
+import { selectedMany } from "./clicked";
 
 /// The scheme of the read-only documents a comparison shows.
 export const CELLS_SCHEME = "q-lint-qnb-cells";
@@ -125,8 +126,11 @@ export class NotebookDiff implements TextDocumentContentProvider {
       return;
     }
     // From the Explorer, the second argument is the selection, not a
-    // notebook: anything but a Uri or HEAD is asked for (#1336).
-    let against = other instanceof Uri || other === HEAD ? other : undefined;
+    // notebook: two selected are compared with each other (#1541), and
+    // anything else but a Uri or HEAD is asked for (#1336).
+    const pair = selectedMany<Uri>(other);
+    const selected = pair?.length === 2 ? pair.find((u) => u.toString() !== from.toString()) : undefined;
+    let against = other instanceof Uri || other === HEAD ? other : selected;
     if (against === undefined) {
       const picked = await window.showQuickPick(
         [

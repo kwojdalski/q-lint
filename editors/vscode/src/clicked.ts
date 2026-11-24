@@ -28,3 +28,10 @@ export function unsavedIn(uri: { toString(): string }, documents: readonly { uri
   const key = uri.toString();
   return documents.some((d) => d.isDirty && d.uri.toString() === key);
 }
+
+/// The files of an Explorer multi-selection: VS Code hands a command the
+/// file clicked, then `selected`, every file selected. Undefined for one
+/// file or none, where the command runs as for the one clicked (#1541).
+export function selectedMany<U extends { scheme: string; toString(): string }>(selected: unknown): U[] | undefined {
+  return Array.isArray(selected) && selected.length > 1 && selected.every(isUriLike) ? (selected as U[]) : undefined;
+}
