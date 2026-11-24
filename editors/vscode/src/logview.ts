@@ -240,6 +240,10 @@ export class LogViewer {
     };
     this.views.set(id, view);
     await this.reload(view);
+    // Turned off while it was read: no provider to open the view with (#1785).
+    if (this.views.get(id) !== view) {
+      return undefined;
+    }
     const document = await workspace.openTextDocument(view.uri);
     const editor = await window.showTextDocument(document, { preview: false });
     // Closed, or the viewer turned off, while it opened: nothing to follow (#1295).

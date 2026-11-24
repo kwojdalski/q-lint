@@ -346,6 +346,26 @@ test("turned off while a log is still opening, no file is left watched (#1295)",
   assert.strictEqual(watched.size, 0);
 });
 
+test("turned off while a large log is still read, Open Log File returns without opening the closed view (#1785)", async (t) => {
+  const file = path.join(tmp(), "big.log");
+  fs.writeFileSync(file, "a\n");
+  const { viewer, providers } = setUp(t);
+  // Large enough for a progress notification; turned off while it shows.
+  const [stat, withProgress] = [fs.promises.stat, vscode.window.withProgress];
+  fs.promises.stat = async (f) => ({ ...(await stat(f)), size: 32 * 1024 * 1024 });
+  vscode.window.withProgress = async (options, task) => {
+    stub.config.user["processes.logViewer.enable"] = false;
+    stub.changeConfig("q-lint.processes.logViewer.enable");
+    return withProgress(options, task);
+  };
+  t.after(() => ([fs.promises.stat, vscode.window.withProgress] = [stat, withProgress]));
+  vscode.workspace.openTextDocument = async (uri) => {
+    if (!providers.has(uri.scheme)) throw new Error(`no provider for ${uri.scheme}`);
+    return { uri, lineCount: 1 };
+  };
+  assert.strictEqual(await viewer.open(vscode.Uri.file(file)), undefined);
+});
+
 test("a view follows the log a real q process writes (real q)", { skip }, async (t) => {
   const dir = tmp();
   const log = path.join(dir, "out_ticker1.log");
