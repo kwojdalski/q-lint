@@ -19,6 +19,7 @@ import {
   LanguageModelToolResult,
   lm,
   MarkdownString,
+  window,
   workspace,
   type CancellationToken,
   type Disposable,
@@ -209,6 +210,20 @@ export function runWith(command: string, args: string[], input: string, cwd: str
   });
 }
 
+/// Where qlinter lints `file` (workspace-relative) as: in the folder it
+/// belongs to, so that folder's configuration governs, and the path in it.
+/// In a multi-root workspace a leading folder name names the folder, as
+/// VS Code writes such a path; otherwise the active editor's folder, else
+/// the first (#1838).
+export function lintPlace(file: string, folders: { name: string; path: string }[], active: string | undefined): { cwd: string | undefined; file: string } {
+  const [head, ...rest] = file.split("/");
+  const named = folders.length > 1 && rest.length > 0 ? folders.find((f) => f.name === head) : undefined;
+  if (named !== undefined) {
+    return { cwd: named.path, file: rest.join("/") };
+  }
+  return { cwd: folders.find((f) => f.path === active)?.path ?? folders[0]?.path, file };
+}
+
 export class LintTool implements LanguageModelTool<LintInput> {
   /// `servers`: the qlinter binaries to try, in order, as the language
   /// server is started.
@@ -232,8 +247,11 @@ export class LintTool implements LanguageModelTool<LintInput> {
     if (input.code.length > LINT_LIMIT) {
       return { error: `The code is longer than ${LINT_LIMIT} characters.` };
     }
-    const file = typeof input.file === "string" && /^[\w./-]+\.q$/.test(input.file) && !input.file.includes("..") ? input.file : "snippet.q";
-    const cwd = workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const named = typeof input.file === "string" && /^[\w./-]+\.q$/.test(input.file) && !input.file.includes("..") ? input.file : "snippet.q";
+    // Folders on disk only: a virtual one is no directory to run in.
+    const folders = (workspace.workspaceFolders ?? []).filter((f) => f.uri.scheme === "file").map((f) => ({ name: f.name, path: f.uri.fsPath }));
+    const editing = window.activeTextEditor?.document.uri;
+    const { cwd, file } = lintPlace(named, folders, editing && workspace.getWorkspaceFolder(editing)?.uri.fsPath);
     let last = "no qlinter binary to run";
     for (const command of this.servers()) {
       // A cancelled lint stops: the next binary is not tried (#1381).
