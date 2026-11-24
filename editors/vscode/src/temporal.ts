@@ -535,7 +535,13 @@ export function temporalAt(
     if (/[A-Za-z0-9_.]/.test(before) || /[A-Za-z0-9_]/.test(line[end] ?? "")) {
       return undefined;
     }
-    if (inStringOrComment(line, start)) {
+    // Inside a symbol or a file handle (`` `2024.01.01 ``, `` `:1700000000 ``)
+    // is no literal either (#1417).
+    let k = start - 1;
+    while (k >= 0 && /[A-Za-z0-9_.:/]/.test(line[k])) {
+      k--;
+    }
+    if (line[k] === "`" || inStringOrComment(line, start)) {
       return undefined;
     }
     // A bare number counts once it is as long as an epoch: 9 digits.
