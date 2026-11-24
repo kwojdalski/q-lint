@@ -175,6 +175,12 @@ pub(crate) fn check(path: &str, code: &str, source: &str) -> Vec<Finding> {
                 && (i == 0 || !word(b[i - 1]))
                 && !b.get(i + 5).is_some_and(|&c| word(c)) =>
             {
+                // A file symbol, `` `:.Q.Cf ``, names a file, never the function.
+                if (i > 1 && b[i - 1] == b':' && b[i - 2] == b'`')
+                    || (i > 0 && b[i - 1] == b'`' && !symbol_reads_function(code, source, i))
+                {
+                    continue;
+                }
                 out.push(Finding::at(
                     path,
                     source,
@@ -187,6 +193,73 @@ pub(crate) fn check(path: &str, code: &str, source: &str) -> Vec<Finding> {
         }
     }
     out
+}
+
+/// Whether the symbol `` `.Q.Cf `` (or `` `.Q.Xf ``) whose name starts at
+/// byte `at` of `code` reaches the function, which KDB-X no longer has.
+/// A symbol is data: `` `.Q.Cf`.Q.Xf ``, `` (`.Q.Cf;"desc") `` and
+/// `` `.Q.Cf in key `.Q `` all run there (#2117). What fails, run on KDB-X,
+/// is the symbol read as the global it names: given to `get` or `value`,
+/// first in `@[` or `.[`, or applied - to a bracket, a noun after it, `@`,
+/// `.` or an adverb (`` `.Q.Cf each 1 2 ``) - each 'the name.
+fn symbol_reads_function(code: &str, source: &str, at: usize) -> bool {
+    let b = code.as_bytes();
+    // The symbol's own text runs on past the name: `.Q.Cf.x` is another one.
+    let start = at - 1;
+    let end = at + 5;
+    let lead = code[..start].trim_end_matches([' ', '\t']);
+    let lead_word = lead
+        .rsplit(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.'))
+        .next()
+        .unwrap_or("");
+    // An item of a symbol vector, `` `a`.Q.Cf ``: the run before it back to
+    // a backtick.
+    let item = code[..start]
+        .trim_end_matches(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == ':');
+    let in_vector = item.ends_with('`');
+    if matches!(lead_word, "get" | "value")
+        || ["get[", "value[", "@[", ".["]
+            .iter()
+            .any(|w| lead.ends_with(w))
+    {
+        return !in_vector;
+    }
+    if in_vector || b.get(end) == Some(&b'`') {
+        return false;
+    }
+    match b.get(end) {
+        Some(b'[' | b'/' | b'\'') => return true,
+        _ if source.as_bytes().get(end) == Some(&b'"') => return true,
+        _ => {}
+    }
+    let gap = code[end..].len() - code[end..].trim_start_matches([' ', '\t']).len();
+    if gap == 0 {
+        return false;
+    }
+    let next = &code[end + gap..];
+    let src_next = source.as_bytes().get(end + gap).copied();
+    match next.bytes().next() {
+        None => false,
+        Some(b'0'..=b'9' | b'(' | b'[' | b'`' | b'@') => true,
+        _ if src_next == Some(b'"') => true,
+        Some(b'-') => next[1..]
+            .bytes()
+            .next()
+            .is_some_and(|c| c.is_ascii_digit() || c == b'.'),
+        Some(b'.') => next[1..]
+            .bytes()
+            .next()
+            .is_none_or(|c| c.is_ascii_alphanumeric() || c == b' ' || c == b'\t'),
+        Some(c) if c.is_ascii_alphabetic() => {
+            let w: String = next
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect();
+            matches!(w.as_str(), "each" | "over" | "scan" | "prior" | "peach")
+                || !crate::semantics::INFIX.contains(&w.as_str())
+        }
+        _ => false,
+    }
 }
 
 /// Whether `inner` has a `;` outside any bracket of its own: `(a;b)`, not

@@ -185,6 +185,56 @@ fn the_target_version_reports_what_does_not_run_there() {
     );
 }
 
+/// A symbol naming `.Q.Cf` is data, not a use of the function: each line
+/// up to `p:` runs on KDB-X (q 5), the description table of SpencerFX's
+/// namespaceQ.q among them (#2117). What follows is each a form KDB-X
+/// refuses with '.Q.Cf: the name, or its symbol read as the global - by
+/// `get` or `value`, first in `@[` or `.[`, or applied.
+#[test]
+fn a_symbol_naming_a_removed_function_is_reported_only_where_it_is_read() {
+    let data = [
+        "names:`.Q.Cf`.Q.Xf",
+        "d:(`.Q.Cf;\"create empty nested char file\")",
+        "r:`.Q.Cf in key `.Q",
+        "e:`.Q.Cf~`a",
+        "j:`.Q.Cf,`a",
+        "f:{`.Q.Cf}",
+        "h:`a`.Q.Cf",
+        "p:`:.Q.Cf",
+    ];
+    let read = [
+        "a1:.Q.Cf",
+        "a2:get `.Q.Cf",
+        "a3:value `.Q.Cf",
+        "a4:get`.Q.Cf",
+        "a5:value[`.Q.Cf]",
+        "a6:`.Q.Cf 1",
+        "a7:`.Q.Cf[1]",
+        "a8:@[`.Q.Cf;1]",
+        "a9:.[`.Q.Xf;enlist 1]",
+        "b1:`.Q.Cf . enlist 1",
+        "b2:`.Q.Cf @ 1",
+        "b3:`.Q.Cf x",
+        "b4:`.Q.Cf\"a\"",
+        "b5:`.Q.Cf .z.p",
+        "b6:`.Q.Cf -1",
+        "b7:`.Q.Cf each 1 2",
+        "b8:`.Q.Cf/[1;2]",
+        "b9:`.Q.Cf `a",
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let text: String = data.iter().chain(&read).map(|l| format!("{l}\n")).collect();
+    fs::write(d.join("a.q"), text).unwrap();
+    let want: Vec<_> = (data.len() + 1..=data.len() + read.len())
+        .map(|l| ("QK005".to_string(), l))
+        .collect();
+    for target in ["4.1", "kdbx"] {
+        let (_, found, err) = run(d, &["--isolated", "--target-version", target, "a.q"]);
+        assert_eq!(qk(&found), want, "{target}: {err}");
+    }
+}
+
 #[test]
 fn a_typed_local_is_judged_as_its_literal_would_be() {
     let dir = tempfile::tempdir().unwrap();
