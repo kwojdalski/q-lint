@@ -100,6 +100,27 @@
     return { start: start, end: end, before: before, after: Math.max(0, MAX_HEIGHT - before - (end - start) * ROW) };
   }
 
+  /// The row at the top of the view for a scroll position: span's first.
+  function firstRow(scrollTop, height, count) {
+    if (count * ROW <= MAX_HEIGHT) {
+      return Math.floor(scrollTop / ROW);
+    }
+    const range = Math.max(1, MAX_HEIGHT - height);
+    return Math.round(Math.max(0, Math.min(1, scrollTop / range)) * Math.max(0, count - Math.ceil(height / ROW)));
+  }
+
+  /// The scroll position that puts row `first` at the top of the view: so
+  /// a page added to a grid spread over the scrollbar keeps the rows in
+  /// view, not the scrollbar's place, which is now another row (#1635).
+  function scrollFor(first, height, count) {
+    if (count * ROW <= MAX_HEIGHT) {
+      return first * ROW;
+    }
+    const range = Math.max(1, MAX_HEIGHT - height);
+    const n = Math.max(0, count - Math.ceil(height / ROW));
+    return n === 0 ? 0 : Math.min(range, (first / n) * range);
+  }
+
   const NULL_GUID = "00000000-0000-0000-0000-000000000000";
 
   /// Whether a cell shows a null: blank, as grid.ts writes every null but
@@ -400,6 +421,8 @@
     chartColumns: chartColumns,
     binsFrom: binsFrom,
     span: span,
+    firstRow: firstRow,
+    scrollFor: scrollFor,
     columnStats: columnStats,
     heatLevels: heatLevels,
     heatColour: heatColour,
@@ -2135,10 +2158,16 @@
     heat = m.heatmap
       ? m.grid.columns.map(function (c, i) { return c.numeric && !c.key ? heatLevels(m.grid.values[i]) : null; })
       : [];
+    // The same result again - a page added - keeps the row at the top.
+    const height = scroller ? scroller.clientHeight || 600 : 0;
+    const first = result && result.id === m.id && scroller ? firstRow(state.top, height, rows.length) : -1;
     result = m;
     moreAsked = false;
     announce(m);
     rows = shownRows(m.grid);
+    if (first >= 0) {
+      state.top = scrollFor(first, height, rows.length);
+    }
     save();
     draw();
     if (image) {

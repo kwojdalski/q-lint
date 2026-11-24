@@ -396,6 +396,25 @@ test("a page that could not be fetched for now is asked for again on a scroll, n
   assert.deepStrictEqual(page.posted.filter((m) => m.type === "more"), [{ type: "more", id: "s.2" }]);
 });
 
+test("a page added to a grid spread over the scrollbar keeps the rows in view, and asks for no more until scrolled (#1635)", () => {
+  const page = loadPage(undefined);
+  const held = (n) => ({ ...result("s.1", n), more: true, grid: { ...result("s.1", n).grid, total: 2000000 } });
+  page.send(held(700000));
+  const scroller = page.scroller();
+  scroller.scrollTop = 15000000 - scroller.clientHeight;
+  scroller.fire("scroll");
+  assert.strictEqual(page.posted.filter((m) => m.type === "more").length, 1);
+  const first = page.rows()[0].children[0].textContent;
+  page.send(held(710000));
+  assert.strictEqual(page.posted.filter((m) => m.type === "more").length, 1, "the new page is not at the end of the view");
+  assert.strictEqual(page.rows()[0].children[0].textContent, first);
+  // Scrolled to the end again: the next page.
+  const again = page.scroller();
+  again.scrollTop = 15000000 - again.clientHeight;
+  again.fire("scroll");
+  assert.strictEqual(page.posted.filter((m) => m.type === "more").length, 2);
+});
+
 test("a double-clicked cell asks to drill down from it, and carries its menu context; off, neither (#927)", () => {
   const page = loadPage(undefined);
   page.send(result("s.1", 3));
