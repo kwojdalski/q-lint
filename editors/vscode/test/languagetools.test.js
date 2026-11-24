@@ -111,6 +111,8 @@ test("Explain qSQL finds where the query starts", () => {
   assert.strictEqual(leadBefore(f, f.indexOf("px")), 2);
   // A name ending in a query word is no query.
   assert.strictEqual(leadBefore("x:.my.select 1\n", 10), undefined);
+  // An empty first line above an indented one ends the walk (#1396).
+  assert.strictEqual(leadBefore("\n  select from t", 10), 3);
 });
 
 test("a q error is explained from the catalogue, with the operation that failed", () => {
