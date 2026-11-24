@@ -26,7 +26,7 @@ import {
   type WorkspaceFolder,
 } from "vscode";
 import { spawnPlan } from "./launcher";
-import { signalGroup } from "./lifeline";
+import { lifeline, signalGroup } from "./lifeline";
 import { readTerminal } from "./liveconfig";
 import { mergeEnv } from "./qenv";
 import { onPath } from "./relations";
@@ -91,12 +91,24 @@ function runner(definition: QTaskDefinition, folder: WorkspaceFolder | undefined
           return;
         }
         try {
-          child = spawn(run.command, run.args, { cwd, env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true, windowsVerbatimArguments: run.verbatim });
+          child = spawn(run.command, run.args, {
+            cwd,
+            env: { ...process.env, ...env },
+            stdio: ["ignore", "pipe", "pipe"],
+            windowsHide: true,
+            windowsVerbatimArguments: run.verbatim,
+            // A group of its own, so that closing the task ends a wrapper
+            // script's q too, not the script alone (#1874).
+            detached: process.platform !== "win32",
+          });
         } catch (error) {
           write.fire(terminalText(`could not start ${binary}: ${error instanceof Error ? error.message : String(error)}\n`));
           close.fire(1);
           return;
         }
+        // Out of the extension host's group, it is ended with the host by
+        // its lifeline, even when that is killed (#1676).
+        lifeline(child);
         child.stdout?.setEncoding("utf8");
         child.stderr?.setEncoding("utf8");
         child.stdout?.on("data", (text: string) => write.fire(terminalText(text)));
@@ -110,7 +122,8 @@ function runner(definition: QTaskDefinition, folder: WorkspaceFolder | undefined
     },
     close: () => {
       closed = true;
-      // q.exe too, under q.cmd's cmd.exe (#1745).
+      // Its group, which it leads (#1874); on Windows q.exe too, under
+      // q.cmd's cmd.exe (#1745).
       if (child !== undefined) signalGroup(child, "SIGTERM");
     },
   };
