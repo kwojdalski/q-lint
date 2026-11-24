@@ -584,6 +584,9 @@ export class Live {
   private heartbeat: ReturnType<typeof setInterval> | undefined;
   private latency: { millis: number; at: number } | undefined;
   private beatSent: number | undefined;
+  /// The connection the heartbeat was last started for: started again on
+  /// the same one, a beat still unanswered stays shown (#1710).
+  private beatOn: QConnection | undefined;
   /// The automatic reconnect under way: its process and try. `reconnectRun`
   /// counts them, so a connect or Disconnect stops the one running.
   private reconnecting: { label: string; attempt: number; of: number } | undefined;
@@ -2174,11 +2177,17 @@ export class Live {
   private restartHeartbeat(): void {
     clearInterval(this.heartbeat);
     this.heartbeat = undefined;
-    this.latency = undefined;
-    this.beatSent = undefined;
     const configuration = workspace.getConfiguration("q-lint");
     const { heartbeat } = readHealth((key, fallback) => configuration.get(key, fallback));
-    if (heartbeat > 0 && this.activeLabel() !== undefined && !this.disposed) {
+    const on = heartbeat > 0 && this.activeLabel() !== undefined && !this.disposed;
+    // Started again on the same connection - an edit, a retag - a beat
+    // still unanswered stays: the next ones are skipped while it is out (#1710).
+    if (!on || this.connection !== this.beatOn) {
+      this.latency = undefined;
+      this.beatSent = undefined;
+    }
+    this.beatOn = on ? this.connection : undefined;
+    if (on) {
       this.heartbeat = setInterval(() => void this.beat(), heartbeat * 1000);
       void this.beat();
     }

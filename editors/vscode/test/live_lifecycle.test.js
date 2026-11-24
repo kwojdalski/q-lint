@@ -309,3 +309,17 @@ test("Abort names the call it stopped: a heartbeat is not the explorer's read (#
   await stub.commands.get("q-lint.abortQuery")();
   assert.match(stub.messages.at(-1)[1], /^q-lint: stopped the heartbeat of a, the only call running\./);
 });
+
+test("an unanswered heartbeat's warning stays through an edit of the process (#1710)", async (t) => {
+  const a = await fakeQ((sent) => (sent === "::" ? undefined : 1));
+  t.after(() => a.close());
+  const { live, events } = await setUp(t, [proc("a", a.port)], { "connection.heartbeat.enable": true, "connection.heartbeatInterval": 1 });
+  await live.connectTo("a");
+  await until(() => /no answer/.test(live.api().statusText()), 8000);
+  assert.match(live.api().statusText(), /no answer/);
+  stub.inputs.push("uat");
+  await stub.commands.get("q-lint.tagProcess")("a");
+  assert.ok(events.includes("edited"));
+  await sleep(1200);
+  assert.match(live.api().statusText(), /no answer/);
+});
