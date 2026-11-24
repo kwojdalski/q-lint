@@ -135,3 +135,29 @@ test("a match row and a qUnit assertion carry both sides of a failure (#980)", {
   const other = await run(c, ["testOk:{[] .qunit.assertEquals[1;1;\"one\"]; '`boom}", "testOk[]"]);
   assert.deepStrictEqual(other, { passed: false, text: "boom", errored: true });
 });
+
+// qUnit's own flag, as qunit.q has it: `doCheck` keeps `failFlag` set once
+// an assertion fails, and an assertion returns the value it checked.
+const QUNIT_FLAG = [
+  "\\d .qunit",
+  "EMPTYAR:`actual`expected`msg!```; ar:EMPTYAR; failFlag:0b; ignoreAllExceptions:0b;",
+  "doCheck:{[checkPassed;failMsg] failFlag::failFlag or not checkPassed; if[failFlag and not .qunit.ignoreAllExceptions; 'failMsg];};",
+  "assertThat:{[actual;relation;expected;msg] p:.[relation;(actual;expected);0b]; ar::`actual`expected`msg!(actual;expected;msg); doCheck[p;\"assertThatFAIL\"]; actual};",
+  "assertTrue:{[actual;msg] assertThat[actual;=;1b;msg]};",
+  "assertFalse:{[actual;msg] assertThat[actual;=;0b;msg]};",
+  "\\d .",
+  "",
+].join("\n");
+
+test("a qUnit failure does not fail the next test, and a failure ignoreAllExceptions hides still fails (#1588)", { skip }, async (t) => {
+  const c = await connect(t, QUNIT_FLAG);
+  const failed = await run(c, ["testA:{[] .qunit.assertThat[1;=;2;\"a\"]}", "testA[]"]);
+  assert.strictEqual(failed.passed, false);
+  // The flag the failure left is cleared before the next test.
+  assert.deepStrictEqual(await run(c, ["testB:{[] .qunit.assertTrue[1b;\"b\"]}", "testB[]"]), { passed: true, text: "1b", errored: false });
+  // With ignoreAllExceptions nothing signals, and the flag still fails it.
+  await c.evaluate(".qunit.ignoreAllExceptions:1b");
+  const quiet = await run(c, ["testC:{[] .qunit.assertThat[1;=;2;\"c\"]}", "testC[]"]);
+  assert.strictEqual(quiet.passed, false);
+  assert.deepStrictEqual(quiet.diff, { expected: "2\n", actual: "1\n" });
+});

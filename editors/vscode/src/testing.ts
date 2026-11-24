@@ -20,16 +20,24 @@
 // The two sides of a failure are those of a `match` row, or a qUnit
 // assertion's: `.qunit.assertEquals` and `assertThat` keep them in
 // `.qunit.ar` before they signal `assertThatFAIL`.
+//
+// On a process with qUnit, its `failFlag` and `ar` are cleared before the
+// statements run, as `.qunit.runTest` clears them: the flag is sticky, and
+// left set every later assertion signals (#1588). A flag set with
+// `ignoreAllExceptions`, where a failed assertion does not signal, fails it.
 
 export const TEST_RUN = [
   "{[s;mode]",
   " s:{(),x} each (),s; mode:`$mode; d:system \"d\";",
+  " qu:@[{99h=type get x};`.qunit;0b]; e:$[qu;@[get;`.qunit.EMPTYAR;()];()];",
+  " if[qu;.qunit.ar:e;if[`failFlag in key`.qunit;.qunit.failFlag:0b]];",
   " r:@[{(1b;last value each x)};s;{(0b;x)}];",
   " system \"d \",string d;",
   " ok:r 0; v:r 1; m:();",
+  " ff:qu&1b~@[get;`.qunit.failFlag;0b];",
   " if[ok&mode~`match;m:v;v:$[2=count m;(~). m;0b];mode:`true];",
-  " failed:$[mode~`fail;ok;not ok;1b;mode~`true;not 1b~v;mode~`run;0b;-1h=type v;not v;1h=type v;not all v;0b];",
-  " q:$[ok;();\"assertThatFAIL\"~v;@[get;`.qunit.ar;()];()];",
+  " failed:$[mode~`fail;ok;not ok;1b;ff;1b;mode~`true;not 1b~v;mode~`run;0b;-1h=type v;not v;1h=type v;not all v;0b];",
+  " q:$[ok;$[ff;@[get;`.qunit.ar;()];()];\"assertThatFAIL\"~v;@[get;`.qunit.ar;()];()];",
   " diff:{20000 sublist .Q.s x} each $[not failed;();2=count m;m 1 0;not 99h=type q;();all`actual`expected in key q;q`expected`actual;()];",
   " `ok`failed`text`diff!(ok;failed;$[ok;300 sublist .Q.s1 v;v];diff)}",
 ].join("\n");
