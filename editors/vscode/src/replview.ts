@@ -35,9 +35,9 @@ export function registerRepl(
   /// Smart Send's `repl` target (#957).
   runFromEditor: (code: string, uri: Uri) => Promise<void>;
 } {
-  /// Read when first needed, newest first.
-  let kept: string[] | undefined;
-  const past = (): string[] => (kept ??= context.globalState.get<string[]>(HISTORY_KEY, []));
+  /// Newest first, read each time: another window adds to it too, and a
+  /// copy kept here would write over what it added (#1694).
+  const past = (): string[] => context.globalState.get<string[]>(HISTORY_KEY, []);
   /// The process's names as last read, and the process they are of: read
   /// again after each run, since a run can define names.
   let names: { process: string; labels: string[] } | undefined;
@@ -59,7 +59,7 @@ export function registerRepl(
     }
     running = true;
     try {
-      kept = pushHistory(past(), code);
+      const kept = pushHistory(past(), code);
       await context.globalState.update(HISTORY_KEY, kept);
       panel.post({ type: "accepted", history: kept });
       const id = panel.add({ code });

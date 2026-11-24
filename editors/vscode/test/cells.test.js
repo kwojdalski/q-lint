@@ -111,13 +111,20 @@ test("Enter runs only a complete input: brackets closed, no string open", () => 
   assert.ok(isComplete("/ \n{\n\\ \n1+1"), "trailing blanks on the / and \\ lines");
   assert.ok(!isComplete("/\n(\n\\\n1+("), "brackets after the block count");
   assert.ok(!isComplete("f:{\n/\n(\n\\\n}"), "inside a bracket a / line is a continuation, not a block");
+  // Block comments nest, as KDB-X reads them: the first `\` closes only the inner one (#1500).
+  assert.ok(isComplete("/\n/\n\\\n(\n\\\n1+1"), "the ( is inside the outer block");
+  assert.ok(!isComplete("/\n/\n\\\n\\\n("), "both blocks closed, the ( counts");
 });
 
 test("lines typed inside a bracket reach q as continuation lines", () => {
   assert.strictEqual(replScript("f:{x+\ny}"), "f:{x+\n y}");
   assert.deepStrictEqual(statements(replScript("f:{x+\ny}\nf[1;2]")), ["f:{x+\n y}", "f[1;2]"]);
   assert.strictEqual(replScript("a:1\nb:2"), "a:1\nb:2", "lines outside a bracket stay statements of their own");
-  assert.strictEqual(replScript('s:"a\nb"'), 's:"a\n b"');
+  // A line inside a string is joined with its newline as \n: an indent
+  // would be in the string (#1678).
+  assert.strictEqual(replScript('s:"a\nb"'), 's:"a\\nb"');
+  assert.strictEqual(replScript('s:"abc\n  def"\nx:1'), 's:"abc\\n  def"\nx:1');
+  assert.deepStrictEqual(statements(replScript('f:{s:"a\nb";\ns}\nf[]')), ['f:{s:"a\\nb";\n s}', "f[]"]);
   assert.strictEqual(replScript("f:{\n  x}"), "f:{\n  x}", "an indented line is left as it is");
 });
 

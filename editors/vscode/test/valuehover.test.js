@@ -25,6 +25,11 @@ test("an answer is read, and shown as the console prints it under a heading", ()
   assert.strictEqual(previewMarkdown(readPreview({ found: true, name: "v", view: true }), "dev"), "**v** on dev: a view, not evaluated here.");
   assert.match(previewMarkdown(readPreview({ found: true, name: "trade", type: 98, count: 5, text: "" }), "hdb"), /partitioned table, 5 rows\n\nPartitioned: not read\.$/);
   assert.strictEqual(previewMarkdown(readPreview({ found: false }), "dev"), undefined);
+  // A keyed table is type 99, but a table of rows, not a dictionary of items.
+  const kt = readPreview({ found: true, name: "kt", type: 99, keyed: true, count: 3, text: "k| v\n-| -\n1| 4\n" });
+  assert.strictEqual(kt.keyed, true);
+  assert.match(previewMarkdown(kt, "rdb"), /^\*\*kt\*\* on rdb: keyed table, 3 rows\n/);
+  assert.match(previewMarkdown(readPreview({ found: true, name: "d", type: 99, keyed: false, count: 2, text: "a| 1\n" }), "rdb"), /: dictionary, 2 items\n/);
   // A label or name is escaped where Markdown would read it.
   assert.match(previewMarkdown(p, "a*b_[x]"), /on a\\\*b\\_\\\[x\\\]:/);
   assert.throws(() => readPreview(42), /something other than a value/);

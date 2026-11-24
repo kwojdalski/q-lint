@@ -52,16 +52,24 @@ export function mergeEnv(...layers: Record<string, string>[]): Record<string, st
   return Object.assign({}, ...layers) as Record<string, string>;
 }
 
+/// The variables q reads as it starts, which a shell's startup file often
+/// exports.
+const Q_NAMES = ["QHOME", "QLIC", "QINIT"];
+
 /// What a q terminal is given, split by where it goes: `shown` on the
 /// command line that starts q (the layout's and `q-lint.terminal.envPath`'s,
 /// the latter winning), and `hidden` in the terminal's environment (the
 /// `.env` file's), so its values never appear on screen. A name the `.env`
-/// file sets is left off the command line, where it would win over it.
+/// file sets is left off the command line, where it would win over it. The
+/// shell's startup file runs after the environment is set, and its export
+/// of QHOME would win over the `.env` file's, as it does not for a launched
+/// q (#1684): so a q variable the `.env` sets is also kept under a name of
+/// its own, which `refs` maps it to, for the command line to set it from.
 export function terminalEnv(
   layout: Record<string, string>,
   envPath: Record<string, string>,
   dotenv: Record<string, string>,
-): { shown: Record<string, string>; hidden: Record<string, string> } {
+): { shown: Record<string, string>; hidden: Record<string, string>; refs: Record<string, string> } {
   const shown: Record<string, string> = {};
   for (const [name, value] of Object.entries(layout)) {
     if (!(name in dotenv)) {
@@ -69,5 +77,13 @@ export function terminalEnv(
     }
   }
   Object.assign(shown, envPath);
-  return { shown, hidden: { ...dotenv } };
+  const hidden = { ...dotenv };
+  const refs: Record<string, string> = {};
+  for (const name of Q_NAMES) {
+    if (name in dotenv && !(name in shown)) {
+      refs[name] = `QLINT_DOTENV_${name}`;
+      hidden[refs[name]] = dotenv[name];
+    }
+  }
+  return { shown, hidden, refs };
 }

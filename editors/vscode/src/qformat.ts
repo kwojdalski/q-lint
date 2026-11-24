@@ -891,12 +891,13 @@ export function gridOfQ(q: QValue, limit: number): GridPayload | undefined {
   // A long, timestamp or timespan past 2^53 keeps its digits as a string,
   // as `GRID`'s Long does: Number() would round it (#1398).
   // A char column's bytes, and a general column's float and real items
-  // (`false` for any other), as `GRID` sends them (#1489, #1485).
+  // (`false` for any other), as `GRID` sends them (#1489, #1485), and an
+  // item with floats or reals inside as `exactOf` (#1502).
   const raw = shown.map((c, i): unknown[] =>
     c.q.kind === "chars"
       ? [...c.q.v]
       : c.q.kind === "list"
-        ? c.q.v.map((x) => (x.kind === "atom" && (x.t === -9 || x.t === -8) && typeof x.v === "number" && !Number.isNaN(x.v) ? x.v : false))
+        ? c.q.v.map((x) => (x.kind === "atom" && (x.t === -9 || x.t === -8) ? (typeof x.v === "number" && !Number.isNaN(x.v) ? x.v : false) : exactOf(x)))
         : c.q.kind === "vector" && [2, 5, 6, 7, 8, 9, 12, 13, 14, 15, 16, 17, 18, 19].includes(types[i])
       ? c.q.v.map((x) => (typeof x === "bigint" ? (Number.isSafeInteger(Number(x)) ? Number(x) : x.toString()) : types[i] === 8 ? realValue(x) : x))
       : [],
@@ -916,6 +917,25 @@ export function gridOfQ(q: QValue, limit: number): GridPayload | undefined {
   });
   const tree = q.kind === "list" || (q.kind === "dict" && q.k.kind !== "table") ? treeOfQ(q) : undefined;
   return { count, keys, names: shown.map((c) => c.name), types, cells, raw, rank, ...(tree !== undefined ? { tree } : {}) };
+}
+
+/// A general list's item with floats or reals inside as `GRID` sends it,
+/// for `exactLiteral`: `("f";x)`, `("e";x)`, `("F";v)` or `("E";v)` for a
+/// float, a real or a list of them, and `("l";v)` for a general list, each
+/// item its own or, holding none, its text. At most 200 items a list, as
+/// a cell is cut at 200 characters; `false` for anything else.
+function exactOf(q: QValue): unknown[] | false {
+  if (q.kind === "atom" && (q.t === -9 || q.t === -8)) {
+    return [q.t === -9 ? "f" : "e", q.v];
+  }
+  if (q.kind === "vector" && (q.t === 9 || q.t === 8) && q.v.length <= 200) {
+    return [q.t === 9 ? "F" : "E", q.v];
+  }
+  if (q.kind === "list" && q.v.length <= 200) {
+    const items = q.v.map(exactOf);
+    return items.every((x) => x === false) ? false : ["l", items.map((x, i) => (x === false ? oneLine(q.v[i]) : x))];
+  }
+  return false;
 }
 
 /// A value decoded with its types as the tree `GRID` sends for it: a

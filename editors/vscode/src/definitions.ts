@@ -6,9 +6,10 @@
 // A definition is a top-level statement `name:{...}` whose lambda is the
 // whole of its right-hand side: `f:{x}[1]` (a projection) or `f:g` is not
 // one. Statements are cut as `statements.ts` cuts them - as q loads a
-// script - and `\d .ns` lines move the context, so `f:{}` after `\d .ns`
-// defines `.ns.f`. The lambda's text is the file's, `{` to its `}`, blank
-// and comment lines inside it kept, as q keeps them in `last value f`.
+// script - and `\d .ns` lines, or `system "d .ns"`, move the context, so
+// `f:{}` after `\d .ns` defines `.ns.f`. The lambda's text is the file's,
+// `{` to its `}`, blank and comment lines inside it kept, as q keeps them in
+// `last value f`.
 //
 // Texts are compared without trailing blanks on each line: KDB-X drops a
 // line's trailing blanks from a lambda's text, and PeachQ keeps them.
@@ -36,6 +37,9 @@ export interface Definition {
 
 const NAME = /^(\.?[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)*)\s*:\s*\{/;
 const CONTEXT = /^\\d\s+(\.[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)*|\.)\s*$/;
+// `system "d .ns"` with a literal argument switches as `\d .ns` does, as the
+// language server reads it (#261); a computed one leaves the context as it was.
+const SYSTEM_CONTEXT = /^system\s*"d\s+(\.[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)*|\.)\s*"\s*;?\s*(?:\s\/.*)?$/;
 
 /// Where the lambda that opens at `open` in `text` closes, by `charKinds`'
 /// code characters; -1 when it does not.
@@ -94,7 +98,7 @@ export function definitions(source: string): Definition[] {
   const end = (): void => {
     if (current !== undefined) {
       const first = current.lines[0];
-      const switched = CONTEXT.exec(first.trim());
+      const switched = CONTEXT.exec(first.trim()) ?? SYSTEM_CONTEXT.exec(first.trim());
       if (switched !== null && current.lines.length === 1) {
         ctx = switched[1] === "." ? "" : switched[1].slice(1);
       } else {
@@ -148,11 +152,12 @@ export function definitions(source: string): Definition[] {
 }
 
 /// A lambda's text as compared: without trailing blanks on any line, nor a
-/// carriage return.
+/// carriage return, and a tab starting a line after the first read as the
+/// blank q turns it into when it loads the file (checked on KDB-X).
 export function normalized(text: string): string {
   return text
     .split("\n")
-    .map((l) => l.replace(/\s+$/, ""))
+    .map((l, i) => (i > 0 && l.startsWith("\t") ? ` ${l.slice(1)}` : l).replace(/\s+$/, ""))
     .join("\n");
 }
 

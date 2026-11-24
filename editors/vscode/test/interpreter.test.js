@@ -66,6 +66,9 @@ test("discovery finds KDB-X, QHOME's platform folders, PATH and a workspace's Pe
   assert.deepStrictEqual(bare.map((i) => [i.path, i.detail]), [["/h/q/l64/q", "kdb+ (~/q)"]]);
   // Windows: q.exe, `;` between PATH's folders.
   const win = I.discover({ env: { Path: "C:\\q\\w64;C:\\bin" }, home: "C:\\Users\\me", platform: "win32", folders: [] }, fake({ "C:\\q\\w64\\q.exe": "x" }));
+  // A quoted entry, as Windows allows (#1681).
+  const quoted = I.discover({ env: { PATH: 'C:\\Windows;"C:\\kdb\\w64"' }, home: "C:\\Users\\me", platform: "win32", folders: [] }, fake({ "C:\\kdb\\w64\\q.exe": "x" }));
+  assert.deepStrictEqual(quoted.map((c) => c.path), ["C:\\kdb\\w64\\q.exe"]);
   assert.deepStrictEqual(win.map((i) => i.path), ["C:\\q\\w64\\q.exe"]);
 });
 
@@ -242,6 +245,24 @@ test("in a multi-root workspace the picker reads and writes the active file's fo
   changeEditor("q");
 });
 
+test("in a workspace not trusted the picked q is written for the user, which VS Code reads there (#1690)", async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-untrusted-"));
+  const kdbx = fakeQ(path.join(home, ".kx", "bin", "q"), "QLINTVER|5|2026.07.23|m64|2035.01.01");
+  setUp(t, home);
+  vscode.workspace.workspaceFolders = [{ uri: vscode.Uri.file(path.join(home, "ws")), name: "ws" }];
+  const trusted = Object.getOwnPropertyDescriptor(vscode.workspace, "isTrusted");
+  vscode.workspace.isTrusted = false;
+  t.after(() => {
+    vscode.workspace.workspaceFolders = undefined;
+    if (trusted) Object.defineProperty(vscode.workspace, "isTrusted", trusted);
+    else delete vscode.workspace.isTrusted;
+  });
+  stub.picks.push((o) => o.items.find((i) => i.file === kdbx));
+  assert.strictEqual(await stub.commands.get(I.INTERPRETER_COMMANDS.select)(), kdbx);
+  assert.deepStrictEqual(stub.updates, [{ key: "terminal.qBinary", value: kdbx, target: "user" }]);
+  assert.match(stub.messages.at(-1)[1], /not trusted, so .* was set as your user q-lint\.terminal\.qBinary/);
+});
+
 test("off: the picker refuses, the item is removed, and no q is started", async (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-pickoff-"));
   const marker = path.join(home, "ran");
@@ -322,11 +343,20 @@ test("the probe against a real q prints its version and, where .z.l has one, a d
 });
 
 test("a relative q binary is resolved against the workspace folder, not the extension host's cwd (#1132)", () => {
-  const folder = path.join(os.tmpdir(), "ws");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-resolve-"));
+  const folder = path.join(root, "ws");
+  for (const file of [path.join(folder, "bin", "q"), path.join(root, "kx", "q"), path.join(root, "elsewhere", "q")]) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "", { mode: 0o755 });
+  }
   assert.strictEqual(resolveBinary(path.join(".", "bin", "q"), folder), path.join(folder, "bin", "q"));
-  assert.strictEqual(resolveBinary(path.join("..", "kx", "q"), folder), path.join(os.tmpdir(), "kx", "q"));
-  const absolute = path.join(os.tmpdir(), "elsewhere", "q");
+  assert.strictEqual(resolveBinary(path.join("..", "kx", "q"), folder), path.join(root, "kx", "q"));
+  const absolute = path.join(root, "elsewhere", "q");
   assert.strictEqual(resolveBinary(absolute, folder), absolute);
+  // A path to no program is not found, as a name on no PATH is (#1691).
+  assert.strictEqual(resolveBinary(path.join(root, "nowhere", "q"), folder), undefined);
+  fs.writeFileSync(path.join(root, "plain"), "");
+  assert.strictEqual(resolveBinary(path.join(root, "plain"), folder), process.platform === "win32" ? path.join(root, "plain") : undefined);
   // With no folder open, there is none to read it from: the extension
   // host's working directory is often / on macOS (#1540).
   assert.strictEqual(resolveBinary(path.join(".", "bin", "q"), undefined), undefined);

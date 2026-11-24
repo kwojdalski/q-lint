@@ -6,7 +6,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import * as net from "node:net";
 import * as os from "node:os";
 import { commands, window, workspace, type ExtensionContext, type OutputChannel } from "vscode";
-import { LAUNCH_COMMANDS, argsFromText, argsText, commandText, fromWorkspace, launchPlan, readLauncher } from "./launcher";
+import { LAUNCH_COMMANDS, argsFromText, argsText, commandText, fromWorkspace, launchPlan, listenAddress, readLauncher, spawnPlan } from "./launcher";
 import { readTerminal } from "./liveconfig";
 import { qBinaryFrom } from "./terminal";
 import { mergeEnv } from "./qenv";
@@ -14,6 +14,7 @@ import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import type { Live, ProcessArg } from "./live";
 import { launchOf, withExtras, type Launch, type Process } from "./processes";
 import { iconsEscaped, plainMessage } from "./history";
+import { lifeline, signalGroup } from "./lifeline";
 
 /// How long a process has to end after SIGTERM before it is killed.
 const STOP_GRACE_MS = 3000;
@@ -49,6 +50,7 @@ export class Launcher {
     private readonly live: Live,
   ) {
     live.launched = (label) => this.started.has(label);
+    live.relabelled = (from, to) => this.relabel(from, to);
     context.subscriptions.push(
       commands.registerCommand(LAUNCH_COMMANDS.start, (row?: ProcessArg) => this.start(row)),
       commands.registerCommand(LAUNCH_COMMANDS.stop, (row?: ProcessArg) => this.stop(row)),
@@ -61,6 +63,15 @@ export class Launcher {
       }),
       { dispose: () => ((this.disposed = true), this.stopAll()) },
     );
+  }
+
+  /// Keep what was started as `from` under `to`, its new label (#1692).
+  private relabel(from: string, to: string): void {
+    const started = this.started.get(from);
+    if (started !== undefined && !this.started.has(to)) {
+      this.started.delete(from);
+      this.started.set(to, started);
+    }
   }
 
   /// The processes running from here, by label, for tests and the e2e run.
@@ -77,7 +88,7 @@ export class Launcher {
     if (globalThis.process.platform === "win32" || child === undefined || child.exitCode !== null || child.signalCode !== null || child.pid === undefined) {
       return undefined;
     }
-    child.kill("SIGINT");
+    signalGroup(child, "SIGINT");
     return child.pid;
   }
 
@@ -199,32 +210,57 @@ export class Launcher {
     const channel = this.channel(process.label);
     channel.appendLine(`$ ${commandText(plan)}    (in ${plan.cwd})`);
     channel.show(true);
+    const run = spawnPlan(plan.command, plan.args);
+    if ("error" in run) {
+      channel.appendLine(`could not start: ${run.error}`);
+      return `could not start ${process.label}: ${run.error}`;
+    }
     let child: ChildProcess;
     try {
-      child = spawn(plan.command, plan.args, {
+      child = spawn(run.command, run.args, {
+        windowsVerbatimArguments: run.verbatim,
         cwd: plan.cwd,
         env: { ...globalThis.process.env, ...env },
         // No stdin: q reads none from a launcher, and keeps running without.
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
+        // A process group of its own, so Stop reaches the q a wrapper
+        // script starts as well as the script (#1672).
+        detached: globalThis.process.platform !== "win32",
       });
     } catch (error) {
       channel.appendLine(`could not start: ${error instanceof Error ? error.message : String(error)}`);
       return `could not start ${process.label}: ${error instanceof Error ? error.message : String(error)}`;
     }
-    const started: Started = { child, channel, port: process.port };
-    this.started.set(process.label, started);
     child.stdout?.setEncoding("utf8");
     child.stderr?.setEncoding("utf8");
     child.stdout?.on("data", (text: string) => channel.append(text));
     child.stderr?.on("data", (text: string) => channel.append(text));
-    child.once("error", (error) => {
-      channel.appendLine(`could not start: ${error.message}`);
-      void window.showErrorMessage(plainMessage(`q-lint: could not start ${process.label}: ${error.message}`));
+    // A missing or not executable program is an 'error' after spawn()
+    // returns: it is the problem, and nothing was started (#1679).
+    const failed = await new Promise<Error | undefined>((resolve) => {
+      child.once("spawn", () => resolve(undefined));
+      child.once("error", resolve);
     });
+    if (failed !== undefined) {
+      channel.appendLine(`could not start: ${failed.message}`);
+      return `could not start ${process.label}: ${failed.message}`;
+    }
+    child.on("error", (error) => channel.appendLine(error.message));
+    if (this.disposed) {
+      signalGroup(child, "SIGKILL");
+      return `the process launcher was turned off; ${process.label} was not started.`;
+    }
+    const started: Started = { child, channel, port: process.port };
+    this.started.set(process.label, started);
+    // Ended with the extension host, even when it is killed (#1676).
+    lifeline(child);
     child.once("close", (code, signal) => {
-      if (this.started.get(process.label)?.child === child) {
-        this.started.delete(process.label);
+      // Under the label it has now, which a rename may have changed.
+      for (const [label, s] of this.started) {
+        if (s.child === child) {
+          this.started.delete(label);
+        }
       }
       channel.appendLine(`[${process.label} ended: ${signal !== null ? `stopped by ${signal}` : `exit code ${code}`}]`);
       this.live.refreshProcesses();
@@ -258,7 +294,9 @@ export class Launcher {
     await this.end(label);
   }
 
-  /// Stop `label`: SIGTERM, then SIGKILL if it has not ended in a while.
+  /// Stop `label`: SIGTERM to its process group, then SIGKILL if it has
+  /// not ended in a while. Done once its output closes, which is once every
+  /// process holding it has ended, or a while after the SIGKILL.
   private end(label: string): Promise<void> {
     const started = this.started.get(label);
     if (started === undefined) {
@@ -270,13 +308,26 @@ export class Launcher {
         resolve();
         return;
       }
-      const kill = setTimeout(() => child.kill("SIGKILL"), STOP_GRACE_MS);
+      let last: NodeJS.Timeout | undefined;
+      const kill = setTimeout(() => {
+        signalGroup(child, "SIGKILL");
+        // Something outside its group may hold its output open.
+        last = setTimeout(() => {
+          if (this.started.get(label)?.child === child) {
+            this.started.delete(label);
+            this.live.refreshProcesses();
+          }
+          resolve();
+        }, STOP_GRACE_MS);
+        last.unref();
+      }, STOP_GRACE_MS);
       kill.unref();
       child.once("close", () => {
         clearTimeout(kill);
+        clearTimeout(last);
         resolve();
       });
-      child.kill("SIGTERM");
+      signalGroup(child, "SIGTERM");
     });
   }
 
@@ -334,7 +385,7 @@ export class Launcher {
       const args = await window.showInputBox({
         title: `Launch ${process.label} (3 of 3): arguments`,
         value: argsText(current.args ?? []),
-        prompt: `Arguments after the script; -p ${process.port} is added unless they set -p. For TorQ: -proctype rdb -procname rdb1 -load code/processes/rdb.q`,
+        prompt: `Arguments after the script; -p ${listenAddress(process.host, process.port)} is added unless they set -p. For TorQ: -proctype rdb -procname rdb1 -load code/processes/rdb.q`,
         ignoreFocusOut: true,
       });
       if (args === undefined) {

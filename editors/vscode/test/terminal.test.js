@@ -17,6 +17,8 @@ test("the shell is read from its path", () => {
   assert.strictEqual(shellKind("C:\\Program Files\\Git\\bin\\bash.exe"), "posix");
   assert.strictEqual(shellKind("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"), "powershell");
   assert.strictEqual(shellKind("/usr/local/bin/pwsh"), "powershell");
+  assert.strictEqual(shellKind("/bin/tcsh"), "csh");
+  assert.strictEqual(shellKind("/bin/csh"), "csh");
   assert.strictEqual(shellKind("C:\\Windows\\System32\\cmd.exe"), "cmd");
   assert.strictEqual(shellKind(undefined), "posix");
 });
@@ -58,6 +60,12 @@ test("PowerShell gets single quotes with a quote doubled, and & before a quoted 
   assert.strictEqual(quote("it\u2019s.q", "powershell"), "'it\u2019\u2019s.q'");
   assert.strictEqual(quote("$env:x.q", "powershell"), "'$env:x.q'");
   assert.strictEqual(quote("a,b.q", "powershell"), "'a,b.q'");
+  // A bare -x.y is two words to PowerShell (#1677); a plain -x, or x.y, one.
+  assert.strictEqual(quote("-.servers.CONNECTIONS", "powershell"), "'-.servers.CONNECTIONS'");
+  assert.strictEqual(quote("-config=prod.json", "powershell"), "'-config=prod.json'");
+  assert.strictEqual(quote("-p", "powershell"), "-p");
+  assert.strictEqual(quote("a.q", "powershell"), "a.q");
+  assert.strictEqual(quote("-.servers.CONNECTIONS", "posix"), "-.servers.CONNECTIONS");
   assert.strictEqual(
     commandLine("C:\\Program Files\\q\\q.exe", ["my file.q"], "powershell"),
     "& 'C:\\Program Files\\q\\q.exe' 'my file.q'",
@@ -93,6 +101,12 @@ test("cmd is refused a quote, a % or a line break, which it reads itself (#1274)
   // C runtime then splits the word: refused there too (#1420).
   assert.ok(typeof commandLine("q", ["-name", 'say "hi" now'], "powershell") === "object");
   assert.match(commandLine("q", ['a"b'], "powershell").error, /PowerShell cannot pass "a\\"b" to q as written/);
+  // Windows PowerShell drops an empty word, and escapes the last quote of a
+  // spaced word ending in a backslash (#1682).
+  assert.match(commandLine("q", ["a.q", "-x", ""], "powershell").error, /PowerShell cannot pass "" to q as written: .*empty argument as none/);
+  assert.match(commandLine("q", ["-dir", "C:\\my data\\"], "powershell").error, /PowerShell cannot pass "C:\\\\my data\\\\" to q/);
+  assert.strictEqual(commandLine("q", ["-dir", "C:\\data\\"], "powershell"), "q -dir C:\\data\\");
+  assert.strictEqual(commandLine("q", ["-x", ""], "posix"), "q -x ''");
   assert.strictEqual(commandLine("q", [], "powershell", { QINIT: 'a"b' }), "$env:QINIT='a\"b'; q");
   assert.strictEqual(commandLine("q", ["my file.q", "a&b"], "cmd"), 'q "my file.q" "a&b"');
 });
@@ -160,6 +174,36 @@ test("a trailing comment is cut, and a comment line inside a lambda dropped", ()
 test("a string that runs onto the next line keeps its newline as \\n", () => {
   assert.strictEqual(replLine('s:"ab\n  cd"'), 's:"ab\\n  cd"');
   assert.strictEqual(replLine('s:("ab\n  cd";\n  1)'), 's:("ab\\n  cd"; 1)');
+});
+
+test("a name set by reference is read from the terminal's environment on each shell (#1684)", () => {
+  const refs = { QHOME: "QLINT_DOTENV_QHOME" };
+  assert.strictEqual(commandLine("q", [], "posix", { QLIC: "/k" }, refs), 'QHOME="$QLINT_DOTENV_QHOME" QLIC=/k q');
+  assert.strictEqual(commandLine("q", [], "csh", {}, refs), 'env QHOME="$QLINT_DOTENV_QHOME" q');
+  assert.strictEqual(commandLine("q", [], "powershell", {}, refs), "$env:QHOME=$env:QLINT_DOTENV_QHOME; q");
+  assert.strictEqual(commandLine("q", [], "cmd", {}, refs), 'set "QHOME=%QLINT_DOTENV_QHOME%" && q');
+});
+
+test("an env file's inline comment is not part of the value (#1686)", () => {
+  const { env } = parseEnv('QHOME=/opt/q # kdb home\nQLIC="/opt/lic" # licence\nS=\'a # b\' # c\nHASH=a#b\nNONE= # nothing\nQ="say # hi"');
+  assert.deepStrictEqual(env, { QHOME: "/opt/q", QLIC: "/opt/lic", S: "a # b", HASH: "a#b", NONE: "", Q: "say # hi" });
+});
+
+test("csh and tcsh set the variables with env, and get a ! escaped (#1683)", () => {
+  assert.strictEqual(commandLine("q", ["a!b.q", "it's"], "csh", { QHOME: "/opt/q", QLIC: "/my lic" }), "env QHOME=/opt/q QLIC='/my lic' q 'a\\!b.q' 'it'\\''s'");
+  assert.strictEqual(commandLine("q", ["x.q"], "csh"), "q x.q");
+});
+
+test("no tab reaches q's console, which reads one as completion (#1673)", () => {
+  assert.deepStrictEqual(replLines("s:count\ttil 3"), ["s:count til 3"]);
+  assert.deepStrictEqual(replLines('s:"a\tb"'), ['s:"a\\tb"']);
+  assert.deepStrictEqual(replLines('f:{\n\tx+1}\ns:"x\n\ty"'), ["f:{ x+1}", 's:"x\\n\\ty"']);
+  assert.deepStrictEqual(replLines('s:"q\\"\tz"'), ['s:"q\\"\\tz"']);
+});
+
+test("a system command's continuation lines join it, never a newline sent (#1674)", () => {
+  assert.deepStrictEqual(replLines("\\t {x+\n  1}[2]"), ["\\t {x+ 1}[2]"]);
+  assert.deepStrictEqual(replLines("\\t:10 {x+\n  / a comment line\n  1}[2]"), ["\\t:10 {x+ 1}[2]"]);
 });
 
 test("a system command is sent as it is, and comments and \\ follow the query rules", () => {

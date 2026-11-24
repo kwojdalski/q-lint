@@ -3,13 +3,15 @@
 // the word Tab completes and what it offers, and the history and its search.
 // Nothing here touches VS Code or a process.
 
+import { blockDepth } from "./statements";
+
 /// Whether each `(`, `[` and `{` of `text` is closed and no string is left
 /// open: then Enter runs it, else it starts a new line, as the Julia REPL
 /// does. Brackets inside a string or a comment do not count: a string is
 /// `"..."` with `\` escapes, and a comment runs from a `/` at the start of
 /// a line, or after a space or a tab, to the line's end, as q reads it, or
 /// a block from a line of `/` alone, outside any bracket, to one of `\`
-/// alone.
+/// alone - blocks nest, as q reads them.
 export function isComplete(text: string): boolean {
   const { depth, inString } = scan(text);
   return depth <= 0 && !inString;
@@ -21,7 +23,7 @@ function scan(text: string): { depth: number; inString: boolean } {
   let depth = 0;
   let inString = false;
   let inComment = false;
-  let inBlock = false;
+  let block = 0;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
     if (ch === "\n") {
@@ -29,17 +31,20 @@ function scan(text: string): { depth: number; inString: boolean } {
       continue;
     }
     // A line of `/` alone opens a block comment, and one of `\` alone
-    // closes it (#1111).
+    // closes it (#1111); inside one a `/` alone opens another (#1500).
     if ((i === 0 || text[i - 1] === "\n") && !inString) {
       const end = text.indexOf("\n", i);
       const line = text.slice(i, end < 0 ? text.length : end).trimEnd();
-      if (inBlock ? line === "\\" : depth <= 0 && line === "/") {
-        inBlock = !inBlock;
-        inComment = true;
-        continue;
+      if (block > 0 || (depth <= 0 && line === "/")) {
+        const after = blockDepth(block, line);
+        if (after !== block) {
+          block = after;
+          inComment = true;
+          continue;
+        }
       }
     }
-    if (inComment || inBlock) {
+    if (inComment || block > 0) {
       continue;
     }
     if (inString) {
@@ -67,16 +72,21 @@ function scan(text: string): { depth: number; inString: boolean } {
 /// `text` as a script q reads the way it was typed: a line that starts
 /// inside an open bracket or string continues the statement above, so it
 /// is indented - in a script a line at column 0 starts a new statement,
-/// and `f:{x+` then `y}` would be two. Lines outside any bracket are left
-/// as they are, each its own statement.
+/// and `f:{x+` then `y}` would be two. A line that starts inside a string
+/// is joined to the one above with the newline as `\n`, since an indent
+/// would be in the string (#1678). Lines outside any bracket are left as
+/// they are, each its own statement.
 export function replScript(text: string): string {
   const lines = text.split(/\r?\n/);
   const out: string[] = [];
   let sofar = "";
   for (const [i, line] of lines.entries()) {
     const { depth, inString } = i === 0 ? { depth: 0, inString: false } : scan(sofar);
-    const inside = depth > 0 || inString;
-    out.push(inside && line !== "" && !line.startsWith(" ") && !line.startsWith("\t") ? ` ${line}` : line);
+    if (inString) {
+      out[out.length - 1] += `\\n${line}`;
+    } else {
+      out.push(depth > 0 && line !== "" && !line.startsWith(" ") && !line.startsWith("\t") ? ` ${line}` : line);
+    }
     sofar += (i === 0 ? "" : "\n") + line;
   }
   return out.join("\n");

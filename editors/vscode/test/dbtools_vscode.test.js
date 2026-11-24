@@ -463,7 +463,8 @@ test("a log opened while another is starting stops the first one's q (#1074)", {
   const children = [];
   cp.spawn = (...args) => {
     const child = spawn(...args);
-    children.push({ child, dir: args[2]?.cwd });
+    // The q's, not its lifeline's watchdog, which starts in no directory.
+    if (args[2]?.cwd !== undefined) children.push({ child, dir: args[2].cwd });
     return child;
   };
   t.after(() => (cp.spawn = spawn));

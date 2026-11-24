@@ -28,9 +28,13 @@ test("a .env file is read by the env file's rules, and a bad line is named by it
 });
 
 test("a terminal gets the .env file's variables in its environment, never on its command line", () => {
-  const { shown, hidden } = terminalEnv({ QHOME: "/k/q", QLIC: "/k" }, { QHOME: "/mine" }, { QLIC: "/env", TOKEN: "t" });
+  const { shown, hidden, refs } = terminalEnv({ QHOME: "/k/q", QLIC: "/k" }, { QHOME: "/mine" }, { QLIC: "/env", TOKEN: "t" });
   assert.deepStrictEqual(shown, { QHOME: "/mine" }, "envPath over the layout; a name the .env sets is left off the line");
-  assert.deepStrictEqual(hidden, { QLIC: "/env", TOKEN: "t" });
+  // A q variable the .env sets is kept under a name of its own too, which
+  // the command line sets it from: a .zshrc's export does not win (#1684).
+  assert.deepStrictEqual(hidden, { QLIC: "/env", TOKEN: "t", QLINT_DOTENV_QLIC: "/env" });
+  assert.deepStrictEqual(refs, { QLIC: "QLINT_DOTENV_QLIC" });
+  assert.deepStrictEqual(terminalEnv({}, { QHOME: "/mine" }, { QHOME: "/env" }).refs, {}, "envPath's QHOME wins, as before");
   assert.deepStrictEqual(mergeEnv({ A: "layout", B: "layout" }, { B: "env", C: "env" }, { C: "own" }), { A: "layout", B: "env", C: "own" });
 });
 
@@ -103,8 +107,8 @@ test("the q REPL gets the workspace's .env in its environment; the command line 
   const fake = fakeVscode({}, { "/ws/.env": "QHOME=/opt/q\nAPI_TOKEN=s3cr3t\nbad s3cr3t line\n" });
   await loadTerminals(fake).repl();
   assert.strictEqual(fake.terminals.length, 1);
-  assert.deepStrictEqual(fake.terminals[0].options.env, { QHOME: "/opt/q", API_TOKEN: "s3cr3t" });
-  assert.strictEqual(fake.terminals[0].sent[0], "q");
+  assert.deepStrictEqual(fake.terminals[0].options.env, { QHOME: "/opt/q", API_TOKEN: "s3cr3t", QLINT_DOTENV_QHOME: "/opt/q" });
+  assert.strictEqual(fake.terminals[0].sent[0], 'QHOME="$QLINT_DOTENV_QHOME" q');
   assert.deepStrictEqual(fake.messages.length, 1);
   assert.match(fake.messages[0], /skipped line 3 of \/ws\/\.env: not NAME=value\. Used QHOME, API_TOKEN\./);
   assert.doesNotMatch(fake.messages.join("\n"), /s3cr3t/, "no value in any message");
@@ -139,7 +143,7 @@ test("Run File with Arguments starts its q with the .env file's variables and th
 test("another file, and none: a missing .env is no .env and says nothing", async () => {
   const fake = fakeVscode({ "env.file": "config/q.env" }, { "/ws/config/q.env": "QLIC=/lic\n" });
   await loadTerminals(fake).repl();
-  assert.deepStrictEqual(fake.terminals[0].options.env, { QLIC: "/lic" });
+  assert.deepStrictEqual(fake.terminals[0].options.env, { QLIC: "/lic", QLINT_DOTENV_QLIC: "/lic" });
   const none = fakeVscode();
   await loadTerminals(none).repl();
   assert.strictEqual(none.terminals[0].options.env, undefined);
@@ -171,7 +175,7 @@ test("a launched process gets the .env file's variables under its definition's o
   fs.writeFileSync(
     path.join(dir, "fake.js"),
     `require("fs").writeFileSync(${JSON.stringify(path.join(dir, "seen.json"))}, JSON.stringify({ FROM_ENV: process.env.FROM_ENV, BOTH: process.env.BOTH }));
-const port = Number(process.argv[process.argv.indexOf("-p") + 1]);
+const port = Number(process.argv[process.argv.indexOf("-p") + 1].split(":").pop());
 require("net").createServer((s) => s.end()).listen(port, "127.0.0.1");
 process.on("SIGTERM", () => process.exit(0));`,
   );

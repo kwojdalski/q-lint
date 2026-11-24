@@ -26,6 +26,7 @@ import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import { qBinaryFrom } from "./terminal";
 import { TPLOG_INIT, rangeProblem, readReplayed, readTpLog, readTpPage, timeOfDay, type TpLog } from "./tplog";
 import { plainMessage } from "./history";
+import { lifeline } from "./lifeline";
 
 const on = (): boolean => dbOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "tickerplantLog");
 
@@ -69,7 +70,16 @@ export async function startLocalQ(binary: string, env: Record<string, string>, t
   const password = randomBytes(24).toString("hex");
   writeFileSync(init, `.z.pw:{[u;p] p~"${password}"};\n${TPLOG_INIT}\n`, { mode: 0o600 });
   const port = await freePort();
-  const child = spawn(binary, [init, "-p", `127.0.0.1:${port}`], { cwd: dir, env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  const child = spawn(binary, [init, "-p", `127.0.0.1:${port}`], {
+    cwd: dir,
+    env: { ...process.env, ...env },
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+    // A group of its own, which its lifeline ends with the extension host,
+    // even when that is killed (#1676).
+    detached: process.platform !== "win32",
+  });
+  lifeline(child);
   const local = { child, dir, port, output: "" } as LocalQ;
   child.stdout?.on("data", (d) => (local.output = (local.output + String(d)).slice(-2000)));
   child.stderr?.on("data", (d) => (local.output = (local.output + String(d)).slice(-2000)));

@@ -9,7 +9,8 @@
 // case. The text is matched as written: `ss`'s wildcards `?` and `[` are
 // escaped, so `x[1]?` finds just that; a text starting with a backtick,
 // which the IPC client sends as a symbol, is made text again. At most
-// `limit` hits are answered.
+// `limit` hits are answered: one more is looked for, so `more` says only
+// that there are more, not that the limit was reached (#1689).
 // The lambda assigns nothing. Works on kdb+ (KDB-X) and PeachQ; held there
 // by processtools_q.test.js.
 import { isNumber, isString, listOf } from "./processtools";
@@ -18,7 +19,7 @@ export const SEARCH_LIMIT = 500;
 
 export const SEARCH = [
   "{[pat;vars;lim]",
-  " pat:lower$[-11h=type pat;\"`\",string pat;(),pat]; m:`long$lim;",
+  " pat:lower$[-11h=type pat;\"`\",string pat;(),pat]; m:1+`long$lim;",
   " esc:raze{$[x in \"[]?*\";\"[\",x,\"]\";enlist x]}each pat;",
   " todo:`.,` sv'`,'asc(key`)except`q`Q`h`j`o`z`qlint`;",
   " todo:todo where{$[99h=type d:@[get;x;0];11h=type key d;0b]}each todo;",
@@ -40,7 +41,7 @@ export const SEARCH = [
   "  i+:1];",
   " if[vars;w:(m-count nm) sublist vn where 0<count each(lower each string vn)ss\\:esc;",
   "  nm,:string w;kd,:(count w)#`variable;ln,:(count w)#0;tx,:(count w)#enlist\"\"];",
-  " (nm;string kd;\"f\"$ln;tx;\"f\"$count fns;m<=count nm)}",
+  " c:m-1;(c sublist nm;string c sublist kd;\"f\"$c sublist ln;c sublist tx;\"f\"$count fns;m<=count nm)}",
 ].join("\n");
 
 export interface Hit {
