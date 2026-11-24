@@ -1287,7 +1287,9 @@ export class Live {
     if (sure !== yes) {
       return;
     }
-    if (this.activeLabel() === process.label && this.active?.server === undefined) {
+    // Or being connected to: it would become the active one once deleted.
+    const connecting = this.connecting !== undefined && this.connectingTo === passwordKey(process);
+    if ((this.activeLabel() === process.label && this.active?.server === undefined) || connecting) {
       await this.disconnect();
     }
     await this.context.secrets.delete(passwordKey(process));

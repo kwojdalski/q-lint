@@ -351,6 +351,21 @@ test("clicking the connected process's row does not reconnect", async (t) => {
   assert.deepStrictEqual(items.map((i) => [i.label, i.command?.command]), [["a", undefined], ["b", "q-lint.connectProcess"]]);
 });
 
+// Delete during a connect disconnected only a process already connected:
+// the connect went on, and the deleted process became the active one (#1519).
+test("deleting a process while it is being connected to stops the connect", async (t) => {
+  const a = await fakeQ(() => GATHERED, 300);
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)]);
+  const connecting = live.connectTo("a");
+  await sleep(50);
+  stub.picks = ["Delete"];
+  await stub.commands.get("q-lint.deleteProcess")("a");
+  assert.strictEqual(await connecting, false);
+  assert.strictEqual(live.activeLabel(), undefined);
+  assert.deepStrictEqual(live.processes(), []);
+});
+
 // A file Export cannot write (a read-only folder, a full disk) rejected the
 // command: VS Code said only that running it failed.
 test("Export Processes says why it could not write the file", async (t) => {
