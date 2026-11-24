@@ -85,12 +85,15 @@ test("notebook features against a real q process", { skip }, async (t) => {
     assert.ok(values["til 1000"].text.length <= 200);
     assert.strictEqual(readLiveValues(["300#\"x\""], await connection.call(LIVE, ["300#\"x\""]))["300#\"x\""].text.length, 200);
     assert.deepStrictEqual(values['"c"'], { text: "c" });
-    // A big table or dictionary is written from its first items, its text as the whole's (#1559).
-    const big = ["([] a:til 1000000; b:1000000#`x)", "(til 1000000)!til 1000000", "1000000#0b", "(1000000#enlist 1 2)"];
-    const small = big.map((e) => e.replace(/1000000/g, "1000"));
+    // A big table or dictionary is written from its first items, its text
+    // as the old unbounded -3! of the same value wrote it (#1559).
+    const big = ["([] a:til 1000000; b:1000000#`x)", "(til 1000000)!til 1000000", "1000000#0b", "(1000000#enlist 1 2)", "([k:til 1000000] v:1000000#`x)"];
     const got = readLiveValues(big, await connection.call(LIVE, big));
-    const want = readLiveValues(small, await connection.call("{200 sublist -3!value x} each", small));
-    big.forEach((e, k) => assert.strictEqual(got[e].text, want[small[k]].text, e));
+    const want = readLiveValues(big, await connection.call("{{(1b;200 sublist -3!value x)} each x}", big));
+    big.forEach((e) => {
+      assert.strictEqual(typeof want[e].text, "string", e);
+      assert.strictEqual(got[e].text, want[e].text, e);
+    });
     // One expression alone is still a list of one.
     assert.deepStrictEqual(readLiveValues(["d"], await connection.call(LIVE, ["d"])), { d: { text: "2024.01.01" } });
   });
