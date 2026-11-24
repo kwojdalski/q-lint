@@ -162,6 +162,9 @@ test("the explorer settings are read, and a preview limit that is not one is 5",
   assert.deepStrictEqual(from({}), { excludedNamespaces: ["q", "Q", "h", "j", "o", "s"], previewLimit: 5, autoRefresh: false });
   assert.deepStrictEqual(from({ "processExplorer.excludedNamespaces": [".z", " a ", "", "b c"] }).excludedNamespaces, ["z", "a"]);
   assert.deepStrictEqual(from({ "processExplorer.excludedNamespaces": "q" }).excludedNamespaces, []);
+  // A namespace written as a symbol is its name: joined, a leading
+  // backtick would be sent as a symbol atom, and the lambdas fail on it (#1965).
+  assert.deepStrictEqual(from({ "processExplorer.excludedNamespaces": ["`zz", "`.q", "``Q", "`", "h"] }).excludedNamespaces, ["zz", "q", "Q", "h"]);
   for (const bad of [0, -1, 2.5, "5"]) {
     assert.strictEqual(from({ "processExplorer.previewLimit": bad }).previewLimit, 5, String(bad));
   }

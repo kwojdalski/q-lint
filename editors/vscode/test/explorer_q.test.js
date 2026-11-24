@@ -74,6 +74,23 @@ test("a dictionary keyed by numbers with :: first is a variable, not a namespace
 
 // Only a table's first `LIMITS[0]` columns are sent; its row said that was
 // how many it had.
+test("a namespace excluded as a symbol, `zz, is excluded: the explorer, schema and callers answer (#1965)", { skip }, async (t) => {
+  const { readExplorer } = require("../out/explorer.js");
+  const { SCHEMA, readSchema } = require("../out/schema.js");
+  const { CALLERS, readCallers } = require("../out/funcsource.js");
+  const q = await startQ(".zz.tab:([] a:1 2);\n.zz.fn:{x+1};\n.yy.tab:([] a:1 2);\n.yy.g:{.zz.fn x};\n");
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.close());
+  const excluded = readExplorer((key, fallback) => (key === "processExplorer.excludedNamespaces" ? ["`zz", "q", "Q", "h", "j", "o", "s", "z", "help"] : fallback)).excludedNamespaces.join(" ");
+  const g = readGathered(await connection.call(GATHER, excluded, LIMITS));
+  assert.deepStrictEqual(g.spaces.map((s) => s.ns).filter((ns) => ns === ".zz" || ns === ".yy"), [".yy"]);
+  const schema = readSchema(await connection.call(SCHEMA, excluded, 50, 50));
+  assert.deepStrictEqual(schema.tables.map((x) => x.name), [".yy.tab"]);
+  const callers = readCallers(await connection.call(CALLERS, excluded, ".zz.fn", 50));
+  assert.deepStrictEqual(callers.callers.map((c) => c.name), [".yy.g"]);
+});
+
 test("a table with more columns than are read says how many it has", { skip }, async (t) => {
   const g = await gathered(t, 'w:flip(`$"c",/:string til 600)!600#enlist 1 2;\n');
   const w = g.entries.find((e) => e.name === "w");
