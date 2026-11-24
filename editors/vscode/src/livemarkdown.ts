@@ -4,7 +4,7 @@
 // first one runs. Free of any `vscode` import, so a test can drive it.
 //
 // The cell's source is never touched. The values are kept in the cell's
-// metadata under `LIVE_KEY`, by expression, and the Markdown renderer's
+// metadata under `LIVE_KEY`, by `liveKey`, and the Markdown renderer's
 // extension `media/livemarkdown.js` shows each in place of its expression,
 // escaped; an expression with no value yet shows as written. An export to
 // HTML (`qnbconvert.ts`) puts them in the same way.
@@ -47,11 +47,31 @@ export type LiveValue = { text: string } | { error: string };
 const BLANK_AFTER = /^[ \t]*\r?\n/;
 
 /// An expression as both sides key it: markdown-it hands the renderer a
-/// blockquote's or a list item's lines without their `>` or indent, and
-/// CRLF as LF, so each continuation line starts with one space here, as q
-/// reads a continued expression (#1788).
+/// list item's lines without their indent, and CRLF as LF, so each
+/// continuation line starts with one space here (#1788). The key is not
+/// what is sent: that is `liveText`'s.
 export function liveKey(expr: string): string {
-  return expr.replace(/\r?\n[ \t>]*/g, "\n ");
+  return expr.replace(/\r?\n[ \t]*/g, "\n ");
+}
+
+/// A line's start up to its text: the markers of the blockquotes and list
+/// items it is in, each less than four columns in from the last.
+const MARKERS = /^(?: {0,3}(?:> ?|(?:[-*+]|\d{1,9}[.)])[ \t]))*/;
+
+/// How many blockquotes the line holding `text[at]` is in, by its markers.
+function quotesAt(text: string, at: number): number {
+  const line = text.slice(text.lastIndexOf("\n", at - 1) + 1, at);
+  return ((MARKERS.exec(line) as RegExpExecArray)[0].match(/>/g) ?? []).length;
+}
+
+/// An expression as written in a cell's source, begun in `quotes`
+/// blockquotes, less its continuation lines' blockquote markers, which
+/// markdown-it never hands the renderer: what the process is sent, every
+/// other character as written (#1993). A marker is the `>` of a quote the
+/// line is in, however far in it stands, and after those a `>` less than
+/// four columns in, which opens a quote; one further in is q's own.
+export function liveText(written: string, quotes = 0): string {
+  return written.trim().replace(new RegExp(String.raw`(\r?\n)(?:[ \t]*> ?){0,${quotes}}(?: {0,3}> ?)*`, "g"), "$1");
 }
 
 /// What `expr` stood in for, from text to its `}}`: the expression's start
@@ -85,7 +105,7 @@ export function scanLive(text: string, at: number): { expr: string; end: number 
         if (text[i + 1] !== "}") {
           return undefined;
         }
-        const expr = liveKey(text.slice(at + 4, i).trim());
+        const expr = liveKey(liveText(text.slice(at + 4, i), quotesAt(text, at)));
         return expr === "" ? undefined : { expr, end: i + 2 };
       }
       depth--;
@@ -334,21 +354,28 @@ function blankLinkTargets(text: string): string {
   return out.join("");
 }
 
-/// The expressions in a Markdown cell's `source`, each once, in order. Ones
-/// in a code block, a code span, an HTML comment, an HTML block, a tag or a
-/// link's target are text, as the renderer shows them (#1429, #1557, #1827).
-export function liveExpressions(source: string): string[] {
+/// The live values in a Markdown cell's `source`, each once, in order: the
+/// `key` its value is kept and shown by, and the `expr` sent to the process
+/// for it (#1993). Ones in a code block, a code span, an HTML comment, an
+/// HTML block, a tag or a link's target are text, as the renderer shows
+/// them (#1429, #1557, #1827).
+export function liveQueries(source: string): { key: string; expr: string }[] {
   // A fence closes at a line of its character, at least as many, and
   // blanks only after them (#1469): "``` text" inside is content.
   const fenced = source.replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^ {0,3}\1(?:(?<=`)`|(?<=~)~)*[ \t]*\r?$|(?![\s\S]))/gm, (m) => " ".repeat(m.length));
   const prose = blankLinkTargets(blankHtml(blankIndented(fenced)).replace(/<!--[\s\S]*?(?:-->|(?![\s\S]))/g, (m) => m.replace(/[^\n]/g, " ")));
-  const found: string[] = [];
+  const found: { key: string; expr: string }[] = [];
   for (const span of inlineSpans(prose)) {
-    if (span.kind === "live" && !found.includes(span.expr)) {
-      found.push(span.expr);
+    if (span.kind === "live" && !found.some((f) => f.key === span.expr)) {
+      found.push({ key: span.expr, expr: liveText(prose.slice(span.start + 4, span.end - 2), quotesAt(prose, span.start)) });
     }
   }
   return found;
+}
+
+/// The keys of `source`'s live values, each once, in order.
+export function liveExpressions(source: string): string[] {
+  return liveQueries(source).map((q) => q.key);
 }
 
 /// The values `LIVE` answered for `exprs`, by expression. Throws when the

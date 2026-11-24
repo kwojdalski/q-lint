@@ -13,6 +13,7 @@ const path = require("node:path");
 const { QConnection } = require("../out/qclient.js");
 const { VARS, readVariables, describeVariable } = require("../out/notebookvars.js");
 const { LIVE, readLiveValues } = require("../out/livemarkdown.js");
+const { liveValues } = require("../out/qnbrun.js");
 
 const Q = process.env.QLINT_TEST_Q;
 const skip = Q ? false : "QLINT_TEST_Q names no q binary";
@@ -127,6 +128,18 @@ test("notebook features against a real q process", { skip }, async (t) => {
     });
     // One expression alone is still a list of one.
     assert.deepStrictEqual(readLiveValues(["d"], await connection.call(LIVE, ["d"])), { d: { text: "2024.01.01" } });
+  });
+
+  // The process is sent the expression as written, so a continuation line's
+  // `>` is q's greater-than; a blockquote's own marker is not sent (#1993).
+  await t.test("a live value continued on a line starting with > is compared, not joined (#1993)", async () => {
+    const sources = ["Big: {{q: 5\n    >3}}", "Ok: {{q: 3 4 5\n\t>=4}} and {{q: sum 10 20 30\r\n    >15}}", "> total {{q: sum\n> til 4}}", '{{q: "a\n   b"}}'];
+    assert.deepStrictEqual(await liveValues(connection, sources), [
+      { "5\n >3": { text: "1b" } },
+      { "3 4 5\n >=4": { text: "011b" }, "sum 10 20 30\n >15": { text: "2i" } },
+      { "sum\n til 4": { text: "6" } },
+      { '"a\n b"': { text: "a\n   b" } },
+    ]);
   });
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-nbrun-"));

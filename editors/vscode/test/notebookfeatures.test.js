@@ -9,7 +9,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const pkg = require("../package.json");
 const { cellDirective } = require("../out/celldirectives.js");
-const { LIVE, LIVE_KEY, inlineSpans, liveExpressions, markdownAfter, readLiveValues, scanLive } = require("../out/livemarkdown.js");
+const { LIVE, LIVE_KEY, inlineSpans, liveExpressions, liveQueries, markdownAfter, readLiveValues, scanLive } = require("../out/livemarkdown.js");
 const { FULL_TEXT } = require("../out/qtext.js");
 const { ERROR_MIME, fromIpynb, markdownHtml, toHtml, toIpynb, IpynbError } = require("../out/qnbconvert.js");
 const { INJECTED_KEY, cliProcess, guardedText, injectParameters, parametersCell, parametersOf, parseArgs, passwordOf, passwordVariable, runNotebook, writeAs } = require("../out/qnbrun.js");
@@ -149,6 +149,34 @@ test("a live value in a blockquote, a list item or a CRLF cell is keyed as the r
   }
   // What markdown-it hands the renderer, the markers and indent gone.
   assert.strictEqual(r.scanLive("total {{q: sum\ntil 4}}", 6).expr, "sum\n til 4");
+});
+
+// A `>` four columns or more into a continuation line is no blockquote
+// marker to markdown-it: it is q's greater-than. The key keeps it on both
+// sides, and the process is sent the text as written, not the key (#1993).
+test("a continuation line's own > is q's: kept in the key, and sent as written (#1993)", async () => {
+  const r = await renderer();
+  // The source, what markdown-it hands the renderer for it, the key, and
+  // the expression sent.
+  for (const [source, inline, key, expr] of [
+    ["Big: {{q: 5\n    >3}}", "Big: {{q: 5\n    >3}}", "5\n >3", "5\n    >3"],
+    ["Big: {{q: 5\n\t>3}}", "Big: {{q: 5\n\t>3}}", "5\n >3", "5\n\t>3"],
+    ["Ok: {{q: 3 4 5\r\n    >=4}}", "Ok: {{q: 3 4 5\n    >=4}}", "3 4 5\n >=4", "3 4 5\r\n    >=4"],
+    ["- item {{q: 5\n      >3}}", "item {{q: 5\n    >3}}", "5\n >3", "5\n      >3"],
+    // In a blockquote its own markers go, and only they.
+    ["> a {{q: 5\n>     >3}}", "a {{q: 5\n    >3}}", "5\n >3", "5\n    >3"],
+    ["> a {{q: 5\n    >3}}", "a {{q: 5\n3}}", "5\n 3", "5\n3"],
+    ["> > a {{q: sum\n> > til 4}}", "a {{q: sum\ntil 4}}", "sum\n til 4", "sum\ntil 4"],
+    // A string's lines are sent as written.
+    ['s {{q: "a\n   b"}}', 's {{q: "a\n   b"}}', '"a\n b"', '"a\n   b"'],
+  ]) {
+    assert.deepStrictEqual(liveQueries(source), [{ key, expr }], JSON.stringify(source));
+    assert.strictEqual(r.scanLive(inline, inline.indexOf("{{q:")).expr, key, JSON.stringify(inline));
+  }
+  // With and without the `>` are two expressions, not one key.
+  assert.deepStrictEqual(liveExpressions("{{q: x\n    >y}} {{q: x\n    y}}"), ["x\n >y", "x\n y"]);
+  // The guard reads what is sent.
+  assert.deepStrictEqual(guardedText("1", ["{{q: 5\n    >3}}", "> {{q: sum\n> til 4}}"]), ["1", "5\n    >3", "sum\ntil 4"]);
 });
 
 test("the renderer reports a prototype's name as having no value, which postMessage can clone (#1391)", async () => {
