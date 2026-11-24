@@ -389,7 +389,9 @@ Each has its own switch, listed in [Settings](#settings) and
   tests are never listed; the report says how many places reach a name by a
   value built at run time, which it cannot see. With
   `q-lint.deadCode.checkProcess` on it also asks the active process, in one
-  read-only query, which of them a function it holds names. `q-lint.deadCode.enable`.
+  read-only query, which of them a function it holds names: the lambdas of
+  every namespace, and those inside a projection, a composition or a small
+  list or dictionary (a table of handlers). `q-lint.deadCode.enable`.
 - **q Namespaces**, a view in the Explorer: every global the workspace
   defines, grouped by namespace, each opening its definition. It reads the
   language server's index when shown, after a save and on Refresh.

@@ -80,6 +80,33 @@ test("the dead code report's process check finds what a function the process hol
   assert.deepStrictEqual(names, [".util.helper", ".util.other", "top"]);
 });
 
+test("the process check reads nested namespaces, and the lambdas a projection, a composition or a dictionary holds (#1901)", { skip }, async (t) => {
+  const source = [
+    "helper:{x+1}", "other:{x+2}", "third:{x}", "fourth:{x}", "fifth:{x}", "sixth:{x}", "seventh:{x}", "eighth:{x}", "alone:{x}", "rec:{$[x>0;rec x-1;x]}",
+    ".app.top:{helper x}",
+    ".app.rest.deep:{other x}",
+    "handlers:`a`b!({third x};{x})",
+    ".z.ts:{fourth x}",
+    "proj:{[a;b] fifth a}[;1]",
+    "comp:('[{sixth x};{x}])",
+    "eachOf:{seventh x}'",
+    ".app.rest.table:`get`put!(({eighth x};1);({x}/;2))",
+    // Data is not read as code: a string, a table, a view.
+    "note:\"alone\"", "tbl:([]a:`alone`b)", "vw::alone 1",
+    "",
+  ].join("\n");
+  const c = await connect(t, source);
+  const held = () => c.call("{string each(key`;key`.)}", null);
+  const before = await held();
+  const got = await c.call(CALLED, "helper other third fourth fifth sixth seventh eighth alone rec nothere");
+  const names = (Array.isArray(got) ? got : [got]).map(String).sort();
+  // PeachQ, which has a `.help` of its own, lists no `.z` handler.
+  const peach = before[0].map(String).includes("help");
+  assert.deepStrictEqual(names, ["eighth", "fifth", ...(peach ? [] : ["fourth"]), "helper", "other", "seventh", "sixth", "third"]);
+  // Nothing was defined by asking.
+  assert.deepStrictEqual(await held(), before);
+});
+
 test("the SQL tab's query runs on KDB-X's SQL engine, loading it where there is none", { skip }, async (t) => {
   const c = await connect(t, "t:([]sym:`a`b`a;px:1 2 3f;size:10 20 30)\n");
   const schema = readSchema(await c.call(SQL_SCHEMA));
