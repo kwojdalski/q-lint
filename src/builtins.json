@@ -310,7 +310,7 @@
   {"name": ".h.xs", "kind": "function", "syntax": ".h.xs x", "params": ["x"], "summary": "The string x with each character XML reserves escaped.", "page": "doth"},
   {"name": ".h.xt", "kind": "function", "syntax": ".h.xt[x;y]", "params": ["x", "y"], "summary": "The strings y as a list of dictionaries, read as the format x names - `json, the only one.", "page": "doth"},
   {"name": ".j.j", "kind": "function", "syntax": ".j.j x", "params": ["x"], "summary": "x serialised as a string of JSON.", "page": "dotj"},
-  {"name": ".j.jd", "kind": "function", "syntax": ".j.jd x", "params": ["x"], "summary": "As .j.j, x being a pair of the value and a dictionary of options: `null0w!1b writes an infinity as null.", "page": "dotj"},
+  {"name": ".j.jd", "kind": "function", "syntax": ".j.jd x", "params": ["x"], "summary": "As .j.j, x being a pair of the value and a dictionary of options: (enlist`null0w)!enlist 1b writes an infinity as null.", "page": "dotj"},
   {"name": ".j.k", "kind": "function", "syntax": ".j.k x", "params": ["x"], "summary": "The JSON in string x as a q value: an object as a dictionary, a number as a float, an array of like objects as a table.", "page": "dotj"},
   {"name": ".z.D", "kind": "variable", "syntax": ".z.D", "params": [], "summary": "The current local date.", "page": "dotz"},
   {"name": ".z.H", "kind": "variable", "syntax": ".z.H", "params": [], "summary": "The handles of the sockets that are open, as a sorted list of ints.", "page": "dotz"},
