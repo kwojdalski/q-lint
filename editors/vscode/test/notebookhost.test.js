@@ -537,6 +537,28 @@ test("a code cell with no statement still reads the live values of the Markdown 
   assert.deepStrictEqual([none.success, none.outputs, live.sent, fake.edits.length], [true, [], [], 1]);
 });
 
+test("Markdown edited while its cell runs: only the expressions the guard read are sent (#1997)", async () => {
+  const fake = fakeVscode();
+  const live = recordingLive(PROCESSES, "dev1");
+  const guarded = [];
+  const sent = [];
+  let notebook;
+  live.runOnActive = async (code, query) => {
+    guarded.push(...code);
+    const connection = {
+      // The Markdown is edited while the cell's own query is out.
+      query: async () => ((notebook.cells[1].document.getText = () => "Rows: {{q: delete from `trade}}"), { ok: true, type: -7, text: ["1"] }),
+      call: async (lambda, exprs) => (sent.push(...exprs), exprs.map((e) => [true, `<${e}>`])),
+    };
+    return { process: "dev1", value: await query(connection) };
+  };
+  load(fake, live);
+  notebook = notebookWith(fake, [["code", "system \"sleep 5\""], ["markdown", "Rows: {{q: count trade}}"]]);
+  const [e] = await runCells(fake, notebook, [0]);
+  assert.strictEqual(e.success, true);
+  assert.deepStrictEqual([guarded, sent], [["system \"sleep 5\"", "count trade"], ["count trade"]]);
+});
+
 test("a code cell that fails drops the live values kept for the Markdown after it (#1544)", async () => {
   const fake = fakeVscode();
   const live = recordingLive(PROCESSES, "dev1");

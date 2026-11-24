@@ -415,9 +415,14 @@ class QnbKernel {
     const notebook = execution.cell.notebook;
     const all = notebook.getCells();
     const kinds = all.map((c) => ({ kind: c.kind === NotebookCellKind.Code ? ("code" as const) : ("markdown" as const) }));
-    const markdown = !featureOn("liveValues") ? [] : markdownAfter(kinds, execution.cell.index ?? all.indexOf(execution.cell)).filter(
-      (j) => kinds[j].kind === "markdown" && liveExpressions(all[j].document.getText()).length > 0,
-    );
+    // Each one's text is read once, here: what the guard is asked about is
+    // then what is sent, though the Markdown is edited while the cell runs
+    // (#1997).
+    const markdown = !featureOn("liveValues") ? [] : markdownAfter(kinds, execution.cell.index ?? all.indexOf(execution.cell))
+      .filter((j) => kinds[j].kind === "markdown")
+      .map((j) => ({ cell: all[j], text: all[j].document.getText() }))
+      .filter((m) => liveExpressions(m.text).length > 0);
+    const texts = markdown.map((m) => m.text);
     // A cell with no statement sends nothing of its own, but the live
     // values under it are still read, as a headless run reads them (#1996).
     if (cut.length === 0 && markdown.length === 0) {
@@ -437,7 +442,7 @@ class QnbKernel {
     });
     try {
       // The guard reads the live values' expressions too: they are sent.
-      const result = await this.live.runOnActive(guardedText(source, markdown.map((j) => all[j].document.getText())), async (connection): Promise<[boolean, OutputPart[], Record<string, LiveValue>[]] | undefined> => {
+      const result = await this.live.runOnActive(guardedText(source, texts), async (connection): Promise<[boolean, OutputPart[], Record<string, LiveValue>[]] | undefined> => {
         if (execution.token.isCancellationRequested) {
           // Interrupted while connecting, before anything was sent.
           return undefined;
@@ -445,9 +450,7 @@ class QnbKernel {
         running = true;
         const [ok, parts]: [boolean, OutputPart[]] = cut.length === 0 ? [true, []] : await cellAnswer(connection, directive, cut, settings);
         // A value that cannot be read leaves the cell's output as it is.
-        const values = ok && markdown.length > 0
-          ? await liveValues(connection, markdown.map((j) => all[j].document.getText())).catch(() => [])
-          : [];
+        const values = ok && markdown.length > 0 ? await liveValues(connection, texts).catch(() => []) : [];
         return [ok, parts, values];
       });
       if (result === undefined) {
@@ -459,7 +462,7 @@ class QnbKernel {
       this.where.set(notebook, result.process);
       const [ok, parts, values] = result.value;
       if (values.length > 0) {
-        await keepLiveValues(notebook, markdown.map((j) => all[j]), values);
+        await keepLiveValues(notebook, markdown.map((m) => m.cell), values);
       }
       const done = await finish(ok, parts.map(toOutput));
       this.ran.fire(notebook);
