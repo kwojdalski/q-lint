@@ -218,9 +218,11 @@ export function xlsxCell(type: number, text: string, raw: unknown): Cell {
   if (type >= 12 && type <= 19 && raw !== undefined) {
     return temporalSerial(type, Number(raw)) ?? { t: text };
   }
-  // Excel's limit on a cell's text.
+  // Excel's limit on a cell's text, one unit less when the cut would split
+  // a surrogate pair (#1811), as assist's cut does.
   const plain = type === 0 ? plainItem(text) : text;
-  return { t: plain.length > 32767 ? plain.slice(0, 32767) : plain };
+  const end = /[\uD800-\uDBFF]/.test(plain[32766] ?? "") ? 32766 : 32767;
+  return { t: plain.length > 32767 ? plain.slice(0, end) : plain };
 }
 
 function cellXml(ref: string, cell: Cell): string {
