@@ -266,13 +266,19 @@ export class Dashboards {
       this.at.set(tile.id, at);
       void this.panel?.webview.postMessage({ type: "tile", id: tile.id, content, at });
     };
+    // A run that fails holds no answer: a view change then draws the
+    // failure again, not the answer of the run before it (#1925).
+    const failed = (text: string) => {
+      this.answers.delete(tile.id);
+      post({ kind: "error", text });
+    };
     const query = this.saved().find((q) => q.name === tile.query);
-    if (query === undefined) return post({ kind: "error", text: `There is no saved query ${tile.query} any more.` });
+    if (query === undefined) return failed(`There is no saved query ${tile.query} any more.`);
     const problem = tileQueryProblem(query.code);
-    if (problem !== undefined) return post({ kind: "error", text: `Not run: ${problem}.` });
+    if (problem !== undefined) return failed(`Not run: ${problem}.`);
     // Saved, discovered or shared, as Add to Dashboard offered it (#1122).
     const process = this.live.named(tile.process);
-    if (process === undefined) return post({ kind: "error", text: `There is no q process ${tile.process}.` });
+    if (process === undefined) return failed(`There is no q process ${tile.process}.`);
     this.running.add(tile.id);
     void this.panel?.webview.postMessage({ type: "running", id: tile.id });
     try {
@@ -282,7 +288,7 @@ export class Dashboards {
       // Shown as the tile is set now: its view can change while the run is out (#1339).
       post(tileContent(answer, this.current()?.tiles.find((x) => x.id === tile.id)?.view ?? tile.view));
     } catch (error) {
-      post({ kind: "error", text: error instanceof Error ? error.message : String(error) });
+      failed(error instanceof Error ? error.message : String(error));
     } finally {
       this.running.delete(tile.id);
     }

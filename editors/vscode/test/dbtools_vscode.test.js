@@ -323,6 +323,47 @@ test("a tile whose view changes while its run is out is shown in the view chosen
   dashboards.close();
 });
 
+// The answer of the run before the failed one was still held, so a view
+// change drew it over the error, under the failed run's time.
+test("a tile whose refresh failed still shows the failure after its view changes (#1925)", async (t) => {
+  const { panels } = capture();
+  const { live, context } = await setUp(t);
+  await context.workspaceState.update(SAVED_QUERIES_KEY, [{ name: "px", code: "select from trade" }]);
+  let fails = false;
+  let runs = 0;
+  live.runApart = async () => {
+    runs++;
+    if (fails) throw new Error("connect ECONNREFUSED 127.0.0.1:5010");
+    return { ok: true, type: 98, text: [], grid: { count: 2, keys: 0, names: ["a", "b"], types: [7, 9], cells: [["1", "2"], ["3", "4"]], raw: [[1, 2], [3, 4]], rank: [[0, 1], [0, 1]] } };
+  };
+  const dashboards = new Dashboards(context, live);
+  stub.inputs.push("Desk");
+  stub.picks.push("$(add) New dashboard...");
+  const id = await stub.commands.get(DB_COMMANDS.addToDashboard)("px", undefined, "hdb");
+  await stub.commands.get(DB_COMMANDS.openDashboard)("Desk");
+  await new Promise((r) => setTimeout(r, 20));
+  assert.strictEqual(dashboards.contents.get(id).kind, "table");
+  fails = true;
+  await dashboards.receive({ type: "refresh", id });
+  const failure = { kind: "error", text: "connect ECONNREFUSED 127.0.0.1:5010" };
+  assert.deepStrictEqual(dashboards.contents.get(id), failure);
+  await dashboards.receive({ type: "view", id, view: "line" });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepStrictEqual(dashboards.contents.get(id), failure);
+  assert.deepStrictEqual(panels[0].posted.filter((m) => m.type === "tile").at(-1).content, failure);
+  assert.strictEqual(runs, 2);
+  // The saved query gone is a failure of the same kind: nothing older is drawn.
+  fails = false;
+  await dashboards.receive({ type: "refresh", id });
+  assert.strictEqual(dashboards.contents.get(id).kind, "chart");
+  await context.workspaceState.update(SAVED_QUERIES_KEY, []);
+  await dashboards.receive({ type: "refresh", id });
+  await dashboards.receive({ type: "view", id, view: "table" });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepStrictEqual(dashboards.contents.get(id), { kind: "error", text: "There is no saved query px any more." });
+  dashboards.close();
+});
+
 // A layout change draws every tile again from what it last showed, and
 // sent that without its time: every "at 09:30:00" went blank.
 test("a tile drawn again after a layout change keeps the time it ran at (#1341)", async (t) => {
