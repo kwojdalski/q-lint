@@ -86,6 +86,19 @@ fn words(n: &Node) -> String {
                 ("each", [Node::Verb(m), x]) if monad(m).is_some() => {
                     format!("{} each item of {}", monad(m).unwrap_or_default(), words(x))
                 }
+                // `&` and `|` are the lesser and the greater of their
+                // arguments, item by item; on booleans that is "and" and
+                // "or", but on numbers it is one column of minima or maxima
+                // (KDB-X: `1 5&3 2` is `1 2`). `and` and `or` are the
+                // same functions (#2066).
+                ("&" | "and" | "|" | "or", [x, y]) if !(boolean(x) && boolean(y)) => {
+                    let which = if matches!(v.as_str(), "&" | "and") {
+                        "lesser"
+                    } else {
+                        "greater"
+                    };
+                    format!("the {which} of {} and {}", operand(x), operand(y))
+                }
                 (d, [x, y]) => match dyad(d) {
                     Some(phrase) => format!("{} {phrase} {}", operand(x), operand(y)),
                     None => quoted(),
@@ -94,6 +107,32 @@ fn words(n: &Node) -> String {
             }
         }
         _ => quoted(),
+    }
+}
+
+/// Whether `n` is sure to be boolean: a comparison, a test, a boolean
+/// literal, or `&`/`|` of two of them.
+fn boolean(n: &Node) -> bool {
+    match n {
+        Node::Leaf(l) => l
+            .strip_suffix('b')
+            .is_some_and(|bits| !bits.is_empty() && bits.bytes().all(|c| c == b'0' || c == b'1')),
+        Node::Apply(f, args) => match (&**f, &args[..]) {
+            (Node::Verb(v), [_, _])
+                if matches!(
+                    v.as_str(),
+                    ">" | "<" | ">=" | "<=" | "=" | "<>" | "~" | "in" | "within" | "like"
+                ) =>
+            {
+                true
+            }
+            (Node::Verb(v), [_]) if matches!(v.as_str(), "not" | "null") => true,
+            (Node::Verb(v), [x, y]) if matches!(v.as_str(), "&" | "and" | "|" | "or") => {
+                boolean(x) && boolean(y)
+            }
+            _ => false,
+        },
+        _ => false,
     }
 }
 
@@ -435,7 +474,12 @@ mod tests {
     fn a_dyad_inside_a_dyad_is_bracketed_as_q_reads_it() {
         let w = words("r:select from t where a>b and c<d\n");
         assert!(
-            w.contains("`a` is greater than (`b` and also (`c` is less than `d`))"),
+            w.contains("`a` is greater than (the lesser of `b` and (`c` is less than `d`))"),
+            "{w}"
+        );
+        let w = words("r:select from t where (a>b) and c<d\n");
+        assert!(
+            w.contains("(`a` is greater than `b`) and also (`c` is less than `d`)"),
             "{w}"
         );
         let w = words("r:select from t where a+1=b\n");
@@ -444,6 +488,34 @@ mod tests {
         assert!(w.contains("(`a` plus `1`) equals `b`"), "{w}");
         let w = words("r:select from t where px>2\n");
         assert!(w.contains("`px` is greater than `2`."), "{w}");
+    }
+
+    // On numbers `&` and `|` are the lesser and the greater, item by
+    // item (KDB-X: `select x:px&size from t` is one column of minima); on
+    // booleans, and and or (#2066).
+    #[test]
+    fn and_and_or_on_numbers_are_the_lesser_and_the_greater() {
+        let w = words("r:select x:px&size from t\n");
+        assert!(w.contains("`x`: the lesser of `px` and `size`"), "{w}");
+        let w = words("r:select x:px|size from t\n");
+        assert!(w.contains("`x`: the greater of `px` and `size`"), "{w}");
+        let w = words("r:select from t where px&size\n");
+        assert!(
+            w.contains("the rows where the lesser of `px` and `size`"),
+            "{w}"
+        );
+        let w = words("r:select from t where (px>1)|null size\n");
+        assert!(
+            w.contains("(`px` is greater than `1`) or else whether this is null: `size`"),
+            "{w}"
+        );
+        let w = words("r:select from t where flag&10101b\n");
+        assert!(w.contains("the lesser of `flag` and `10101b`"), "{w}");
+        let w = words("r:select from t where (px>1)&(size<3)|px=2\n");
+        assert!(
+            w.contains("(`px` is greater than `1`) and also ((`size` is less than `3`) or else (`px` equals `2`))"),
+            "{w}"
+        );
     }
 
     // Checked in KDB-X: `exec from t` is the last row as a dictionary;
