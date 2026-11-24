@@ -194,7 +194,8 @@ export function parseProcesses(json: unknown, scripts = false): { processes: Pro
       label,
       host,
       port: Number(port),
-      ...(typeof e.user === "string" && e.user !== "" ? { user: e.user } : {}),
+      // Trimmed, as Add Process trims it: a space would go in the handshake (#1782).
+      ...(typeof e.user === "string" && e.user.trim() !== "" ? { user: e.user.trim() } : {}),
       tags,
       ...(e.tls === true ? { tls: true } : {}),
       ...(scripts && typeof e.init === "string" && e.init.trim() !== "" ? { init: e.init } : {}),

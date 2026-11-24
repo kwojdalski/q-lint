@@ -58,6 +58,14 @@ test("a host with colons is accepted only when it is an IPv6 address", () => {
   assert.strictEqual(hostProblem("rdb-host:5000:rdb"), "A host only: the port is asked for next.");
 });
 
+test("a process read from a list has its user trimmed, and a blank one is none (#1782)", () => {
+  const { processes } = parseProcesses([
+    { label: "a", host: "h", port: 5000, user: "  " },
+    { label: "b", host: "h", port: 5000, user: " bob " },
+  ]);
+  assert.deepStrictEqual(processes.map((p) => p.user), [undefined, "bob"]);
+});
+
 // Only a colon, a space or a slash was refused: brackets with no IPv6
 // address in them, an ssh-style user@, a # or ? or , or a NUL went through.
 test("a host is a name or an IP address, nothing else (#1781)", () => {
