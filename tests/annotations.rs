@@ -1619,6 +1619,46 @@ fn each_workspace_folder_is_the_root_of_its_own_relative_loads() {
     }
 }
 
+#[test]
+fn a_load_spelled_in_another_case_is_rewritten_on_a_disk_that_ignores_case() {
+    // #2050. Where the disk ignores case, q loads lib/u.q for `\l Lib/U.q`,
+    // so renaming lib/u.q, or the folder, moves what that load reaches.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("lib")).unwrap();
+    std::fs::write(dir.path().join("lib/u.q"), "u:1\n").unwrap();
+    if !dir.path().join("LIB/U.Q").exists() {
+        return;
+    }
+    let files = [("main.q", "\\l Lib/U.q\n\\l LIB/u.q\n")];
+    let options = json!({"renameLoads": {"enable": true}});
+    let (mut server, _) = Server::over(dir.path(), &files, client(), options);
+    let reply = server.request(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("lib/u.q", "lib/w.q")]),
+    );
+    // The part that still leads there keeps the case it was written in.
+    assert_eq!(
+        renamed(&reply, dir.path()),
+        [
+            ("main.q".to_string(), 0, 3, 10, "Lib/w.q".to_string()),
+            ("main.q".into(), 1, 3, 10, "LIB/w.q".into()),
+        ],
+        "{reply}"
+    );
+    let reply = server.request(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("lib", "core")]),
+    );
+    assert_eq!(
+        renamed(&reply, dir.path()),
+        [
+            ("main.q".to_string(), 0, 3, 10, "core/U.q".to_string()),
+            ("main.q".into(), 1, 3, 10, "core/u.q".into()),
+        ],
+        "{reply}"
+    );
+}
+
 /// An absolute load written through a symlink (`/tmp` for `/private/tmp`)
 /// is followed to the file renamed, and keeps its spelling (#1219).
 #[cfg(unix)]

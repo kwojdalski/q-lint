@@ -99,6 +99,42 @@ fn moved(path: &Path, renames: &[(PathBuf, PathBuf)]) -> Option<PathBuf> {
     })
 }
 
+/// Where the path `written` goes under `renames`, found as written or by
+/// its real path - a symlink followed (`/tmp` for `/private/tmp`, #1219),
+/// another case on a disk that ignores it (#2050) - and spelled as written
+/// as far as it still leads there.
+fn moved_as_written(written: &Path, renames: &[(PathBuf, PathBuf)]) -> Option<PathBuf> {
+    let target = moved(written, renames).or_else(|| {
+        let real = PathBuf::from(file_key(&written.to_string_lossy()));
+        let target = moved(&real, renames)?;
+        // What follows the renamed part, in the case it was written in,
+        // when the real path names the same parts.
+        let parts = written.components().count();
+        if parts != real.components().count() {
+            return Some(target);
+        }
+        let (old, new) = renames.iter().find(|(old, _)| real.starts_with(old))?;
+        let rest: PathBuf = written
+            .components()
+            .skip(old.components().count())
+            .collect();
+        Some(if rest.as_os_str().is_empty() {
+            new.clone()
+        } else {
+            new.join(rest)
+        })
+    })?;
+    Some(
+        written
+            .ancestors()
+            .find_map(|dir| {
+                let rest = target.strip_prefix(file_key(&dir.to_string_lossy())).ok()?;
+                Some(dir.join(rest))
+            })
+            .unwrap_or(target),
+    )
+}
+
 /// `workspace/willRenameFiles`: the edits that keep each load naming what
 /// it named - a renamed file, or anything under a renamed folder - and the
 /// loads of a renamed file that its new place would break. A load keeps
@@ -214,16 +250,8 @@ fn rewritten(
         // (`/tmp` for `/private/tmp`) is followed to its file, and the
         // part of it that still leads there is kept as written (#1219).
         let written = lexical(written);
-        let target = moved(&written, renames)
-            .or_else(|| moved(Path::new(&file_key(&written.to_string_lossy())), renames))?;
-        let spelled = written
-            .ancestors()
-            .find_map(|dir| {
-                let rest = target.strip_prefix(file_key(&dir.to_string_lossy())).ok()?;
-                Some(dir.join(rest))
-            })
-            .unwrap_or(target);
-        return Some(spelled.to_string_lossy().replace('\\', "/"));
+        let target = moved_as_written(&written, renames)?;
+        return Some(target.to_string_lossy().replace('\\', "/"));
     }
     // The bases in the order q tries them, each with where it will be.
     let mut bases: Vec<(PathBuf, PathBuf)> = vec![];
@@ -239,7 +267,9 @@ fn rewritten(
         let target = lexical(&base.join(written));
         target.exists().then_some(((base, new_base), target))
     })?;
-    let new_target = moved(&target, renames).unwrap_or_else(|| target.clone());
+    // On a disk that ignores case, `\l Lib/U.q` loads lib/u.q, and only
+    // its real path is among the renames (#2050).
+    let new_target = moved_as_written(&target, renames).unwrap_or_else(|| target.clone());
     let (old_base, new_base) = base;
     if new_target == target && new_base == old_base {
         return None;
