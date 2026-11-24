@@ -1590,6 +1590,29 @@ fn a_global_is_renamed_in_every_file_that_names_it_under_its_context() {
         );
         assert_eq!(edits(&reply["result"]), want, "{new}: {reply}");
     }
+    // From lib.q's bare `add` under `\d .lib` too, and `.lib.plus` is the
+    // namespace it resolves to (#2049); another namespace is still refused.
+    let lib = server.open(dir.path(), "lib.q", LIB);
+    for new in ["plus", ".lib.plus"] {
+        let reply = server.ask(
+            "textDocument/rename",
+            &lib,
+            LIB,
+            "add:",
+            0,
+            json!({"newName": new}),
+        );
+        assert_eq!(edits(&reply["result"]), want, "{new}: {reply}");
+    }
+    let reply = server.ask(
+        "textDocument/rename",
+        &lib,
+        LIB,
+        "add:",
+        0,
+        json!({"newName": ".other.plus"}),
+    );
+    assert!(refused(&reply).contains("another namespace"), "{reply}");
     // And from a bare spelling, a name at the root defined in another file.
     let reply = server.ask(
         "textDocument/rename",

@@ -1048,8 +1048,16 @@ fn rename_global(
     let spelled = &cursor.text[at..at + len];
     let old = leaf(spelled);
     let written = &spelled[..spelled.len() - old.len()];
+    // The namespace may be the one the name resolves to and not one written
+    // there: `add` under `\d .lib` is `.lib.add`, and `.lib.plus` names the
+    // same namespace (#2049).
+    let resolved = targets.iter().find_map(|name| {
+        let namespace = name.strip_suffix(old).filter(|ns| ns.ends_with('.'))?;
+        new.strip_prefix(namespace)
+    });
     let new = match new.strip_prefix(written) {
         Some(rest) if !written.is_empty() => rest,
+        _ if let Some(rest) = resolved => rest,
         _ if new.contains('.') => {
             return Err(format!(
                 "q-lint renames the last part of a name only: `{spelled}` can become \
