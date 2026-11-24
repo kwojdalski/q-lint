@@ -1187,326 +1187,319 @@ pub fn serve(
     let mut watching: Vec<Value> = vec![];
     let mut watch_id: Option<String> = None;
     let mut shutdown_requested = false;
+    // The request being handled, which a panic in its handler still answers.
+    let mut handling: Option<Value> = None;
     loop {
-        // Everything the client has sent so far, before the oldest of it is
-        // handled: what is behind a message can make it moot.
-        // And while nothing has, a closed file of the workspace is linted,
-        // one at a time, so none of them holds up a message (`scope`).
-        if queue.is_empty() {
-            queue.extend(messages.try_iter());
-        }
-        if queue.is_empty()
-            && !shutdown_requested
-            && let Some(key) = closed.next()
-        {
-            closed.lint(writer, &key, &docs, &idx, policy, &opts)?;
-            continue;
-        }
-        if queue.is_empty() {
-            match messages.recv() {
-                Ok(next) => queue.push_back(next),
-                // The reader handed on how the stream ended and stopped; the
-                // loop has already returned on it.
-                Err(_) => return Ok(if shutdown_requested { 0 } else { 1 }),
-            }
-        }
-        queue.extend(messages.try_iter());
-        let next = queue.pop_front().expect("a message, just queued");
-        let message = match next? {
-            Some(Ok(message)) => message,
-            // Answered, with the `id: null` JSON-RPC 2.0 §5 requires when the
-            // id could not be read, and the server carries on: the framing
-            // is intact, and exiting would drop every open document over one
-            // bad message.
-            Some(Err(malformed)) => {
-                eprintln!("qlinter: {}", malformed.message);
-                send(
-                    writer,
-                    json!({"id": Value::Null, "error": {"code": malformed.code, "message": malformed.message}}),
-                )?;
-                continue;
-            }
-            // The stream closed without `exit`. Editors are supposed to send
-            // it; when one dies instead, leaving cleanly is the friendlier
-            // behaviour and matches what rust-analyzer does.
-            None => return Ok(if shutdown_requested { 0 } else { 1 }),
-        };
-        let id = message.get("id").cloned();
-        let method = match message.get("method") {
-            Some(Value::String(method)) => method.clone(),
-            // A response, to a request of the server's own. JSON-RPC 2.0 §5:
-            // a response is never answered - an error sent back would carry
-            // the id of one of the client's own requests.
-            None if message.get("result").is_some() || message.get("error").is_some() => continue,
-            // Not a valid Request object (JSON-RPC 2.0 §5.1): -32600, not
-            // MethodNotFound, and with the id when there is one to read.
-            _ => {
-                send(
-                    writer,
-                    json!({"id": id.unwrap_or(Value::Null), "error": {"code": INVALID_REQUEST,
-                           "message": "a request's method must be a string"}}),
-                )?;
-                continue;
-            }
-        };
-        // JSON-RPC 2.0 §4: an id is a string, a number or null. Any other is
-        // not a Request, and the reply cannot carry it back (#548).
-        if id
-            .as_ref()
-            .is_some_and(|id| !(id.is_string() || id.is_number() || id.is_null()))
-        {
-            send(
-                writer,
-                json!({"id": Value::Null, "error": {"code": INVALID_REQUEST,
-                       "message": "a request's id must be a string, a number or null"}}),
-            )?;
-            continue;
-        }
-        let params = message.get("params").cloned().unwrap_or(Value::Null);
-        // LSP 3.17, Cancellation Support: a request cancelled is still
-        // answered, and RequestCancelled says it was not run. Only one still
-        // waiting can be; one already answered had its cancel come too late,
-        // and the notification is dropped like any other unknown one.
-        // `initialize` and `shutdown` are carried out whatever follows them:
-        // either, left undone, leaves the session in no state at all.
-        if let Some(id) = &id
-            && initialized
-            && method != "shutdown"
-            && queue.iter().any(|later| cancels(later, id))
-        {
-            send(
-                writer,
-                json!({"id": id, "error": {"code": REQUEST_CANCELLED,
-                       "message": "cancelled before it was run"}}),
-            )?;
-            continue;
-        }
-        // A change with another change to the same document already behind
-        // it: its text is taken, so whatever comes between is answered on
-        // it, and it is not linted, since its diagnostics would be replaced
-        // before a person could read them. The last change of a burst is.
-        // A request is not dropped in the same way when its document has
-        // changed behind it: LSP 3.17 says a server should NOT answer
-        // ContentModified for a change still in its queue, as an answer on
-        // the older text can still be of use, and it is the client's to
-        // cancel one that is not.
-        let superseded = method == "textDocument/didChange"
-            && id.is_none()
-            && queue.iter().any(|later| {
-                is_change_to(later, params["textDocument"]["uri"].as_str().unwrap_or(""))
-            });
-
-        let (generation, reads, signatures) = (idx.generation, idx.reads, idx.signatures);
-        match (method.as_str(), id) {
-            // LSP 3.17: "The initialize request may only be sent once." A
-            // second is refused and changes nothing - answered, its options
-            // were installed over a narrowing it could not undo (#547).
-            ("initialize", Some(id)) if initialized => send(
-                writer,
-                json!({"id": id, "error": {"code": INVALID_REQUEST,
-                       "message": "initialize may only be sent once"}}),
-            )?,
-            ("initialize", Some(id)) => {
-                let folders = workspace_folders(&params);
-                idx.roots = folders.iter().map(|(path, _)| path.clone()).collect();
-                idx.folders = folders.into_iter().map(Folder::of).collect();
-                let layer;
-                (opts, layer, problems) = Options::read(&params);
-                if layer.select.is_some() || !layer.ignore.is_empty() {
-                    policy.narrow(layer);
+        // Every message is handled inside the guard, and so is every lint
+        // of a closed file between them: a panic anywhere in it is a bug in
+        // qlinter, and costs the message it was handling - answered, when it
+        // is a request - not the process and every open document's state
+        // (#2108). What was read and changed before it stands.
+        let ran: Result<Result<u8, String>, String> = guarded(|| {
+            loop {
+                handling = None;
+                // Everything the client has sent so far, before the oldest of it is
+                // handled: what is behind a message can make it moot.
+                // And while nothing has, a closed file of the workspace is linted,
+                // one at a time, so none of them holds up a message (`scope`).
+                if queue.is_empty() {
+                    queue.extend(messages.try_iter());
                 }
-                policy.use_baseline(opts.baseline);
-                code_action_literals = params
-                    .pointer("/capabilities/textDocument/codeAction/codeActionLiteralSupport")
-                    .is_some_and(|v| !v.is_null());
-                token_refresh = params
-                    .pointer("/capabilities/workspace/semanticTokens/refreshSupport")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
-                let refreshes = |what: &str| {
-                    opts.cross_file_refresh
-                        && params
-                            .pointer(&format!("/capabilities/workspace/{what}/refreshSupport"))
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false)
-                };
-                lens_refresh = refreshes("codeLens") && (opts.code_lens || opts.reference_lens);
-                hint_refresh = refreshes("inlayHint") && opts.inlay_hints;
-                idx.hinted = hint_refresh;
-                let watched = |key: &str| {
-                    params
-                        .pointer(&format!(
-                            "/capabilities/workspace/didChangeWatchedFiles/{key}"
-                        ))
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false)
-                };
-                watch_registration = watched("dynamicRegistration");
-                relative_patterns = watched("relativePatternSupport");
-                let client = |pointer: &str| {
-                    params
-                        .pointer(&format!("/capabilities/textDocument/{pointer}"))
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false)
-                };
-                nested_symbols = client("documentSymbol/hierarchicalDocumentSymbolSupport");
-                let mut result = capabilities(&opts, code_action_literals);
-                if opts.navigation {
-                    navigate::announce(
-                        &mut result["capabilities"],
-                        client("rename/prepareSupport"),
-                        opts.rename,
-                    );
+                if queue.is_empty()
+                    && !shutdown_requested
+                    && let Some(key) = closed.next()
+                {
+                    closed.lint(writer, &key, &docs, &idx, policy, &opts)?;
+                    continue;
                 }
-                help_client = help::Client::read(&params);
-                help::announce(&mut result["capabilities"], opts.help, opts.completion);
-                paths::announce(
-                    &mut result["capabilities"],
-                    opts.rename_loads,
-                    opts.load_path_completion,
-                );
-                relate::announce(&mut result["capabilities"], opts.call_hierarchy, opts.graph);
-                live::announce(&mut result["capabilities"]);
-                inventory::announce(&mut result["capabilities"]);
-                selection::announce(&mut result["capabilities"], opts.selection_range);
-                annotate::announce(
-                    &mut result["capabilities"],
-                    opts.inlay_hints || opts.inferred_types,
-                    opts.code_lens || opts.reference_lens,
-                    opts.document_links,
-                );
-                send(writer, json!({"id": id, "result": result}))?;
-                initialized = true;
-            }
-            ("exit", _) => return Ok(if shutdown_requested { 0 } else { 1 }),
-            // LSP 3.17, Initialize Request: before `initialize`, a request is
-            // answered with ServerNotInitialized and a notification dropped,
-            // `exit` excepted.
-            (_, Some(id)) if !initialized => send(
-                writer,
-                json!({"id": id, "error": {"code": SERVER_NOT_INITIALIZED, "message": "server is not initialized"}}),
-            )?,
-            (_, None) if !initialized => {}
-            // After `shutdown` the server waits only for `exit`, handled
-            // above: a notification is dropped (#1218).
-            (_, None) if shutdown_requested => {}
-            // Indexed once the client is ready rather than inside initialize,
-            // so a large workspace does not hold up the handshake.
-            ("initialized", None) => {
-                // Told once the client is listening: a setting that could not
-                // be read is otherwise a default nobody knows is in force.
-                for problem in problems.drain(..) {
-                    eprintln!("qlinter: initializationOptions: {problem}");
+                if queue.is_empty() {
+                    match messages.recv() {
+                        Ok(next) => queue.push_back(next),
+                        // The reader handed on how the stream ended and stopped; the
+                        // loop has already returned on it.
+                        Err(_) => return Ok(if shutdown_requested { 0 } else { 1 }),
+                    }
+                }
+                queue.extend(messages.try_iter());
+                let next = queue.pop_front().expect("a message, just queued");
+                let message = match next? {
+                    Some(Ok(message)) => message,
+                    // Answered, with the `id: null` JSON-RPC 2.0 §5 requires when the
+                    // id could not be read, and the server carries on: the framing
+                    // is intact, and exiting would drop every open document over one
+                    // bad message.
+                    Some(Err(malformed)) => {
+                        eprintln!("qlinter: {}", malformed.message);
+                        send(
+                            writer,
+                            json!({"id": Value::Null, "error": {"code": malformed.code, "message": malformed.message}}),
+                        )?;
+                        continue;
+                    }
+                    // The stream closed without `exit`. Editors are supposed to send
+                    // it; when one dies instead, leaving cleanly is the friendlier
+                    // behaviour and matches what rust-analyzer does.
+                    None => return Ok(if shutdown_requested { 0 } else { 1 }),
+                };
+                let id = message.get("id").cloned();
+                let method = match message.get("method") {
+                    Some(Value::String(method)) => method.clone(),
+                    // A response, to a request of the server's own. JSON-RPC 2.0 §5:
+                    // a response is never answered - an error sent back would carry
+                    // the id of one of the client's own requests.
+                    None if message.get("result").is_some() || message.get("error").is_some() => {
+                        continue;
+                    }
+                    // Not a valid Request object (JSON-RPC 2.0 §5.1): -32600, not
+                    // MethodNotFound, and with the id when there is one to read.
+                    _ => {
+                        send(
+                            writer,
+                            json!({"id": id.unwrap_or(Value::Null), "error": {"code": INVALID_REQUEST,
+                                   "message": "a request's method must be a string"}}),
+                        )?;
+                        continue;
+                    }
+                };
+                // JSON-RPC 2.0 §4: an id is a string, a number or null. Any other is
+                // not a Request, and the reply cannot carry it back (#548).
+                if id
+                    .as_ref()
+                    .is_some_and(|id| !(id.is_string() || id.is_number() || id.is_null()))
+                {
                     send(
                         writer,
-                        json!({"method": "window/showMessage", "params": {"type": 2,
-                               "message": format!("q-lint: ignoring a setting: {problem}")}}),
+                        json!({"id": Value::Null, "error": {"code": INVALID_REQUEST,
+                               "message": "a request's id must be a string, a number or null"}}),
                     )?;
+                    continue;
                 }
-                idx.enabled = opts.index;
-                idx.exclude = opts.index_exclude.clone();
-                idx.rebuild(policy, &docs);
-                closed.on = opts.workspace_scope;
-                closed.sync(writer, &idx, &docs, true)?;
-                ready = true;
-            }
-            // A request after shutdown is the one protocol error worth
-            // answering rather than ignoring: the client is confused and
-            // should be told, not left waiting for a reply that never comes.
-            // A second `shutdown` included (LSP 3.17, Shutdown Request).
-            (_, Some(id)) if shutdown_requested => send(
-                writer,
-                json!({"id": id, "error": {"code": INVALID_REQUEST, "message": "server is shut down"}}),
-            )?,
-            ("shutdown", Some(id)) => {
-                shutdown_requested = true;
-                closed.stop();
-                docs.clear();
-                unsaved.clear();
-                kept.clear();
-                send(writer, json!({"id": id, "result": Value::Null}))?;
-            }
-
-            // A document method with no document to act on (#799): a request
-            // answered with JSON-RPC 2.0's Invalid params, not an empty
-            // result that says there is nothing to fix; a notification
-            // dropped, rather than diagnostics published for `uri: ""`.
-            (
-                "textDocument/didOpen"
-                | "textDocument/didChange"
-                | "textDocument/didSave"
-                | "textDocument/didClose"
-                | "textDocument/semanticTokens/full"
-                | "textDocument/codeAction"
-                | "textDocument/formatting"
-                | "textDocument/documentSymbol"
-                | "textDocument/definition"
-                | "textDocument/references"
-                | "textDocument/documentHighlight"
-                | "textDocument/prepareRename"
-                | "textDocument/rename"
-                | "textDocument/foldingRange"
-                | "textDocument/hover"
-                | "textDocument/signatureHelp"
-                | "textDocument/completion"
-                | "textDocument/prepareCallHierarchy"
-                | "textDocument/inlayHint"
-                | "textDocument/codeLens"
-                | "textDocument/documentLink"
-                | "textDocument/selectionRange"
-                | "q-lint/graph"
-                | "q-lint/globalAt"
-                | "q-lint/unresolvedNames"
-                | "q-lint/argumentSlot"
-                | "q-lint/formatChangedLines",
-                id,
-            ) if !params["textDocument"]["uri"].is_string() => {
-                let message = format!("{method}: params.textDocument.uri must be a string");
-                match id {
-                    Some(id) => send(
-                        writer,
-                        json!({"id": id, "error": {"code": INVALID_PARAMS, "message": message}}),
-                    )?,
-                    None => eprintln!("qlinter: {message}"),
-                }
-            }
-            ("textDocument/didOpen", None) => {
-                let uri = uri_of(&params["textDocument"]);
-                let text = params["textDocument"]["text"].as_str().unwrap_or("");
-                unsaved.remove(&uri);
-                publish(
-                    writer,
-                    &mut docs,
-                    &unsaved,
-                    &mut kept,
-                    &mut idx,
-                    uri,
-                    text.to_string(),
-                    policy,
-                    &opts,
-                )?;
-            }
-            ("textDocument/didChange", None) => {
-                let uri = uri_of(&params["textDocument"]);
-                // Full sync, so the LAST change holds the whole buffer. Taking
-                // the first would silently lint a stale document whenever a
-                // client batched two edits into one notification.
-                if let Some(text) = params["contentChanges"]
-                    .as_array()
-                    .and_then(|c| c.last())
-                    .and_then(|c| c["text"].as_str())
+                let params = message.get("params").cloned().unwrap_or(Value::Null);
+                // LSP 3.17, Cancellation Support: a request cancelled is still
+                // answered, and RequestCancelled says it was not run. Only one still
+                // waiting can be; one already answered had its cancel come too late,
+                // and the notification is dropped like any other unknown one.
+                // `initialize` and `shutdown` are carried out whatever follows them:
+                // either, left undone, leaves the session in no state at all.
+                if let Some(id) = &id
+                    && initialized
+                    && method != "shutdown"
+                    && queue.iter().any(|later| cancels(later, id))
                 {
-                    if opts.on_save {
-                        // Kept, so a Quick Fix or a format reads what is on
-                        // screen; linted, and indexed, when it is saved.
-                        docs.insert(uri.clone(), text.to_string());
-                        unsaved.insert(uri);
-                    } else if superseded {
-                        // Indexed with the change that is linted, which
-                        // compares what the document defines with what it
-                        // did before the burst.
-                        docs.insert(uri, text.to_string());
-                    } else {
+                    send(
+                        writer,
+                        json!({"id": id, "error": {"code": REQUEST_CANCELLED,
+                               "message": "cancelled before it was run"}}),
+                    )?;
+                    continue;
+                }
+                // A change with another change to the same document already behind
+                // it: its text is taken, so whatever comes between is answered on
+                // it, and it is not linted, since its diagnostics would be replaced
+                // before a person could read them. The last change of a burst is.
+                // A request is not dropped in the same way when its document has
+                // changed behind it: LSP 3.17 says a server should NOT answer
+                // ContentModified for a change still in its queue, as an answer on
+                // the older text can still be of use, and it is the client's to
+                // cancel one that is not.
+                let superseded = method == "textDocument/didChange"
+                    && id.is_none()
+                    && queue.iter().any(|later| {
+                        is_change_to(later, params["textDocument"]["uri"].as_str().unwrap_or(""))
+                    });
+
+                let (generation, reads, signatures) = (idx.generation, idx.reads, idx.signatures);
+                handling = id.clone();
+                match (method.as_str(), id) {
+                    // LSP 3.17: "The initialize request may only be sent once." A
+                    // second is refused and changes nothing - answered, its options
+                    // were installed over a narrowing it could not undo (#547).
+                    ("initialize", Some(id)) if initialized => send(
+                        writer,
+                        json!({"id": id, "error": {"code": INVALID_REQUEST,
+                               "message": "initialize may only be sent once"}}),
+                    )?,
+                    ("initialize", Some(id)) => {
+                        let folders = workspace_folders(&params);
+                        idx.roots = folders.iter().map(|(path, _)| path.clone()).collect();
+                        idx.folders = folders.into_iter().map(Folder::of).collect();
+                        let layer;
+                        (opts, layer, problems) = Options::read(&params);
+                        if layer.select.is_some() || !layer.ignore.is_empty() {
+                            policy.narrow(layer);
+                        }
+                        policy.use_baseline(opts.baseline);
+                        code_action_literals = params
+                            .pointer(
+                                "/capabilities/textDocument/codeAction/codeActionLiteralSupport",
+                            )
+                            .is_some_and(|v| !v.is_null());
+                        token_refresh = params
+                            .pointer("/capabilities/workspace/semanticTokens/refreshSupport")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false);
+                        let refreshes = |what: &str| {
+                            opts.cross_file_refresh
+                                && params
+                                    .pointer(&format!(
+                                        "/capabilities/workspace/{what}/refreshSupport"
+                                    ))
+                                    .and_then(Value::as_bool)
+                                    .unwrap_or(false)
+                        };
+                        lens_refresh =
+                            refreshes("codeLens") && (opts.code_lens || opts.reference_lens);
+                        hint_refresh = refreshes("inlayHint") && opts.inlay_hints;
+                        idx.hinted = hint_refresh;
+                        let watched = |key: &str| {
+                            params
+                                .pointer(&format!(
+                                    "/capabilities/workspace/didChangeWatchedFiles/{key}"
+                                ))
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false)
+                        };
+                        watch_registration = watched("dynamicRegistration");
+                        relative_patterns = watched("relativePatternSupport");
+                        let client = |pointer: &str| {
+                            params
+                                .pointer(&format!("/capabilities/textDocument/{pointer}"))
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false)
+                        };
+                        nested_symbols = client("documentSymbol/hierarchicalDocumentSymbolSupport");
+                        let mut result = capabilities(&opts, code_action_literals);
+                        if opts.navigation {
+                            navigate::announce(
+                                &mut result["capabilities"],
+                                client("rename/prepareSupport"),
+                                opts.rename,
+                            );
+                        }
+                        help_client = help::Client::read(&params);
+                        help::announce(&mut result["capabilities"], opts.help, opts.completion);
+                        paths::announce(
+                            &mut result["capabilities"],
+                            opts.rename_loads,
+                            opts.load_path_completion,
+                        );
+                        relate::announce(
+                            &mut result["capabilities"],
+                            opts.call_hierarchy,
+                            opts.graph,
+                        );
+                        live::announce(&mut result["capabilities"]);
+                        inventory::announce(&mut result["capabilities"]);
+                        selection::announce(&mut result["capabilities"], opts.selection_range);
+                        annotate::announce(
+                            &mut result["capabilities"],
+                            opts.inlay_hints || opts.inferred_types,
+                            opts.code_lens || opts.reference_lens,
+                            opts.document_links,
+                        );
+                        send(writer, json!({"id": id, "result": result}))?;
+                        initialized = true;
+                    }
+                    ("exit", _) => return Ok(if shutdown_requested { 0 } else { 1 }),
+                    // A handler that panics, for the test that the guard
+                    // around every handler holds.
+                    #[cfg(test)]
+                    ("q-lint/plantedPanic", _) => panic!("planted"),
+                    // LSP 3.17, Initialize Request: before `initialize`, a request is
+                    // answered with ServerNotInitialized and a notification dropped,
+                    // `exit` excepted.
+                    (_, Some(id)) if !initialized => send(
+                        writer,
+                        json!({"id": id, "error": {"code": SERVER_NOT_INITIALIZED, "message": "server is not initialized"}}),
+                    )?,
+                    (_, None) if !initialized => {}
+                    // After `shutdown` the server waits only for `exit`, handled
+                    // above: a notification is dropped (#1218).
+                    (_, None) if shutdown_requested => {}
+                    // Indexed once the client is ready rather than inside initialize,
+                    // so a large workspace does not hold up the handshake.
+                    ("initialized", None) => {
+                        // Told once the client is listening: a setting that could not
+                        // be read is otherwise a default nobody knows is in force.
+                        for problem in problems.drain(..) {
+                            eprintln!("qlinter: initializationOptions: {problem}");
+                            send(
+                                writer,
+                                json!({"method": "window/showMessage", "params": {"type": 2,
+                                       "message": format!("q-lint: ignoring a setting: {problem}")}}),
+                            )?;
+                        }
+                        idx.enabled = opts.index;
+                        idx.exclude = opts.index_exclude.clone();
+                        idx.rebuild(policy, &docs);
+                        closed.on = opts.workspace_scope;
+                        closed.sync(writer, &idx, &docs, true)?;
+                        ready = true;
+                    }
+                    // A request after shutdown is the one protocol error worth
+                    // answering rather than ignoring: the client is confused and
+                    // should be told, not left waiting for a reply that never comes.
+                    // A second `shutdown` included (LSP 3.17, Shutdown Request).
+                    (_, Some(id)) if shutdown_requested => send(
+                        writer,
+                        json!({"id": id, "error": {"code": INVALID_REQUEST, "message": "server is shut down"}}),
+                    )?,
+                    ("shutdown", Some(id)) => {
+                        shutdown_requested = true;
+                        closed.stop();
+                        docs.clear();
+                        unsaved.clear();
+                        kept.clear();
+                        send(writer, json!({"id": id, "result": Value::Null}))?;
+                    }
+
+                    // A document method with no document to act on (#799): a request
+                    // answered with JSON-RPC 2.0's Invalid params, not an empty
+                    // result that says there is nothing to fix; a notification
+                    // dropped, rather than diagnostics published for `uri: ""`.
+                    (
+                        "textDocument/didOpen"
+                        | "textDocument/didChange"
+                        | "textDocument/didSave"
+                        | "textDocument/didClose"
+                        | "textDocument/semanticTokens/full"
+                        | "textDocument/codeAction"
+                        | "textDocument/formatting"
+                        | "textDocument/documentSymbol"
+                        | "textDocument/definition"
+                        | "textDocument/references"
+                        | "textDocument/documentHighlight"
+                        | "textDocument/prepareRename"
+                        | "textDocument/rename"
+                        | "textDocument/foldingRange"
+                        | "textDocument/hover"
+                        | "textDocument/signatureHelp"
+                        | "textDocument/completion"
+                        | "textDocument/prepareCallHierarchy"
+                        | "textDocument/inlayHint"
+                        | "textDocument/codeLens"
+                        | "textDocument/documentLink"
+                        | "textDocument/selectionRange"
+                        | "q-lint/graph"
+                        | "q-lint/globalAt"
+                        | "q-lint/unresolvedNames"
+                        | "q-lint/argumentSlot"
+                        | "q-lint/formatChangedLines",
+                        id,
+                    ) if !params["textDocument"]["uri"].is_string() => {
+                        let message = format!("{method}: params.textDocument.uri must be a string");
+                        match id {
+                            Some(id) => send(
+                                writer,
+                                json!({"id": id, "error": {"code": INVALID_PARAMS, "message": message}}),
+                            )?,
+                            None => eprintln!("qlinter: {message}"),
+                        }
+                    }
+                    ("textDocument/didOpen", None) => {
+                        let uri = uri_of(&params["textDocument"]);
+                        let text = params["textDocument"]["text"].as_str().unwrap_or("");
+                        unsaved.remove(&uri);
                         publish(
                             writer,
                             &mut docs,
@@ -1519,448 +1512,510 @@ pub fn serve(
                             &opts,
                         )?;
                     }
-                }
-            }
-            ("textDocument/didSave", None) => {
-                // `text` is present only when the client registered for it.
-                // Falling back to what we already hold keeps a save from
-                // clearing the diagnostics of a document we know the text of.
-                let uri = uri_of(&params["textDocument"]);
-                let text = params["text"]
-                    .as_str()
-                    .map(str::to_string)
-                    .or_else(|| docs.get(&uri).cloned());
-                if let Some(text) = text {
-                    unsaved.remove(&uri);
-                    publish(
-                        writer, &mut docs, &unsaved, &mut kept, &mut idx, uri, text, policy, &opts,
-                    )?;
-                }
-                closed.sync(writer, &idx, &docs, false)?;
-            }
-            ("textDocument/didClose", None) => {
-                let uri = uri_of(&params["textDocument"]);
-                docs.remove(&uri);
-                unsaved.remove(&uri);
-                kept.remove(&uri);
-                // The buffer is gone, so the disk is the authority again - and
-                // unsaved definitions it held no longer define anything.
-                if idx.reload(&path_of(&uri), policy) {
-                    relint(
-                        writer, &docs, &unsaved, &mut kept, &idx, None, policy, &opts,
-                    )?;
-                }
-                // An empty list, not silence: diagnostics are owned by the
-                // server until it says otherwise, so a closed file would keep
-                // its squiggles in the problems panel forever. Unless every
-                // file the index reads reports, when it does as one on disk.
-                let key = file_key(&path_of(&uri));
-                if closed.on && idx.files.contains_key(&key) {
-                    closed.lint(writer, &key, &docs, &idx, policy, &opts)?;
-                }
-                if !closed.published(&key) {
-                    send(
-                        writer,
-                        json!({"method": "textDocument/publishDiagnostics",
-                               "params": {"uri": uri, "diagnostics": []}}),
-                    )?;
-                }
-                closed.sync(writer, &idx, &docs, false)?;
-            }
-            ("textDocument/semanticTokens/full", Some(id)) => {
-                let uri = uri_of(&params["textDocument"]);
-                let data = guarded(|| {
-                    docs.get(&uri)
-                        .filter(|_| opts.semantic_tokens && is_q_uri(&uri))
-                        .map_or_else(Vec::new, |text| encode_tokens(text, &idx.ws))
-                });
-                match data {
-                    Ok(data) => send(writer, json!({"id": id, "result": {"data": data}}))?,
-                    Err(panic) => send(writer, internal_error(id, &panic))?,
-                }
-            }
-            ("textDocument/codeAction", Some(id)) if !code_action_literals => {
-                send(writer, json!({"id": id, "result": []}))?
-            }
-            ("textDocument/codeAction", Some(id)) => {
-                match guarded(|| code_actions(&params, &docs, &idx.ws, policy, &opts)) {
-                    Ok(actions) => send(writer, json!({"id": id, "result": actions}))?,
-                    Err(panic) => send(writer, internal_error(id, &panic))?,
-                }
-            }
-            ("q-lint/formatChangedLines", Some(id)) => {
-                let edits = if opts.format_changed_lines {
-                    guarded(|| format_changed_lines(&params, &docs, &idx.ws, policy))
-                } else {
-                    Ok(vec![])
-                };
-                match edits {
-                    Ok(edits) => send(writer, json!({"id": id, "result": edits}))?,
-                    Err(panic) => send(writer, internal_error(id, &panic))?,
-                }
-            }
-            ("textDocument/formatting", Some(id)) => {
-                let edits = if opts.format {
-                    let layout =
-                        (opts.qsql_layout && opts.qsql_on_format).then_some(opts.qsql_width);
-                    guarded(|| format(&params, &docs, &idx.ws, policy, layout))
-                } else {
-                    Ok(vec![])
-                };
-                match edits {
-                    Ok(edits) => send(writer, json!({"id": id, "result": edits}))?,
-                    Err(panic) => send(writer, internal_error(id, &panic))?,
-                }
-            }
-            (
-                "textDocument/documentSymbol"
-                | "textDocument/definition"
-                | "textDocument/references"
-                | "textDocument/documentHighlight"
-                | "textDocument/prepareRename"
-                | "textDocument/rename"
-                | "workspace/symbol",
-                Some(id),
-            ) => {
-                let answer = guarded(|| {
-                    let renaming = method.ends_with("ename");
-                    if !opts.navigation || (renaming && !opts.rename) {
-                        return Ok(Value::Null);
+                    ("textDocument/didChange", None) => {
+                        let uri = uri_of(&params["textDocument"]);
+                        // Full sync, so the LAST change holds the whole buffer. Taking
+                        // the first would silently lint a stale document whenever a
+                        // client batched two edits into one notification.
+                        if let Some(text) = params["contentChanges"]
+                            .as_array()
+                            .and_then(|c| c.last())
+                            .and_then(|c| c["text"].as_str())
+                        {
+                            if opts.on_save {
+                                // Kept, so a Quick Fix or a format reads what is on
+                                // screen; linted, and indexed, when it is saved.
+                                docs.insert(uri.clone(), text.to_string());
+                                unsaved.insert(uri);
+                            } else if superseded {
+                                // Indexed with the change that is linted, which
+                                // compares what the document defines with what it
+                                // did before the burst.
+                                docs.insert(uri, text.to_string());
+                            } else {
+                                publish(
+                                    writer,
+                                    &mut docs,
+                                    &unsaved,
+                                    &mut kept,
+                                    &mut idx,
+                                    uri,
+                                    text.to_string(),
+                                    policy,
+                                    &opts,
+                                )?;
+                            }
+                        }
                     }
-                    let sources = navigate::Sources::new(&docs, &idx);
-                    navigate::answer(&method, &params, &sources, nested_symbols)
-                });
-                match answer {
-                    Ok(Ok(result)) => send(writer, json!({"id": id, "result": result}))?,
-                    Ok(Err(refusal)) => send(
-                        writer,
-                        json!({"id": id, "error": {"code": REQUEST_FAILED, "message": refusal}}),
-                    )?,
-                    Err(panic) => send(writer, internal_error(id, &panic))?,
-                }
-            }
-            ("workspace/willRenameFiles", Some(id)) => {
-                // Asked of a server that did not announce it, answered with
-                // no edit rather than refused.
-                let answer = guarded(|| {
-                    if !opts.rename_loads {
-                        return (Value::Null, None);
-                    }
-                    paths::will_rename(&params, &navigate::Sources::new(&docs, &idx))
-                });
-                match answer {
-                    Ok((result, told)) => {
-                        // The loads the new name cannot be written in: the
-                        // rename goes ahead whatever is answered, so the
-                        // user is told which lines it leaves behind.
-                        if let Some(message) = told {
-                            send(
-                                writer,
-                                json!({"method": "window/showMessage",
-                                       "params": {"type": 2, "message": message}}),
+                    ("textDocument/didSave", None) => {
+                        // `text` is present only when the client registered for it.
+                        // Falling back to what we already hold keeps a save from
+                        // clearing the diagnostics of a document we know the text of.
+                        let uri = uri_of(&params["textDocument"]);
+                        let text = params["text"]
+                            .as_str()
+                            .map(str::to_string)
+                            .or_else(|| docs.get(&uri).cloned());
+                        if let Some(text) = text {
+                            unsaved.remove(&uri);
+                            publish(
+                                writer, &mut docs, &unsaved, &mut kept, &mut idx, uri, text,
+                                policy, &opts,
                             )?;
                         }
-                        send(writer, json!({"id": id, "result": result}))?
+                        closed.sync(writer, &idx, &docs, false)?;
                     }
-                    Err(panic) => send(writer, internal_error(id, &panic))?,
-                }
-            }
-            ("textDocument/selectionRange", Some(id)) => {
-                // Asked of a server that did not announce it, answered with
-                // nothing rather than refused.
-                let answer = guarded(|| {
-                    if !opts.selection_range {
-                        return Value::Null;
+                    ("textDocument/didClose", None) => {
+                        let uri = uri_of(&params["textDocument"]);
+                        docs.remove(&uri);
+                        unsaved.remove(&uri);
+                        kept.remove(&uri);
+                        // The buffer is gone, so the disk is the authority again - and
+                        // unsaved definitions it held no longer define anything.
+                        if idx.reload(&path_of(&uri), policy) {
+                            relint(
+                                writer, &docs, &unsaved, &mut kept, &idx, None, policy, &opts,
+                            )?;
+                        }
+                        // An empty list, not silence: diagnostics are owned by the
+                        // server until it says otherwise, so a closed file would keep
+                        // its squiggles in the problems panel forever. Unless every
+                        // file the index reads reports, when it does as one on disk.
+                        let key = file_key(&path_of(&uri));
+                        if closed.on && idx.files.contains_key(&key) {
+                            closed.lint(writer, &key, &docs, &idx, policy, &opts)?;
+                        }
+                        if !closed.published(&key) {
+                            send(
+                                writer,
+                                json!({"method": "textDocument/publishDiagnostics",
+                                       "params": {"uri": uri, "diagnostics": []}}),
+                            )?;
+                        }
+                        closed.sync(writer, &idx, &docs, false)?;
                     }
-                    selection::answer(&params, &navigate::Sources::new(&docs, &idx))
-                });
-                match answer {
-                    Ok(result) => send(writer, json!({"id": id, "result": result}))?,
-                    Err(panic) => send(writer, internal_error(id, &panic))?,
-                }
-            }
-            ("textDocument/foldingRange", Some(id)) => {
-                match guarded(|| folding_ranges(&params, &docs, &kept)) {
-                    Ok(ranges) => send(writer, json!({"id": id, "result": ranges}))?,
-                    Err(panic) => send(writer, internal_error(id, &panic))?,
-                }
-            }
-            (
-                "textDocument/hover" | "textDocument/signatureHelp" | "textDocument/completion",
-                Some(id),
-            ) => {
-                // Asked of a server that did not announce it, a request is
-                // answered with nothing rather than refused.
-                let on = match method.as_str() {
-                    "textDocument/completion" => opts.completion || opts.load_path_completion,
-                    _ => opts.help,
-                };
-                let answer = guarded(|| {
-                    if !on {
-                        return Value::Null;
-                    }
-                    let sources = navigate::Sources::new(&docs, &idx);
-                    if method == "textDocument/completion" && opts.load_path_completion {
-                        let path = sources
-                            .cursor(&params)
-                            .and_then(|cursor| paths::completion(&cursor, &sources));
-                        if let Some(items) = path {
-                            return items;
+                    ("textDocument/semanticTokens/full", Some(id)) => {
+                        let uri = uri_of(&params["textDocument"]);
+                        let data = guarded(|| {
+                            docs.get(&uri)
+                                .filter(|_| opts.semantic_tokens && is_q_uri(&uri))
+                                .map_or_else(Vec::new, |text| encode_tokens(text, &idx.ws))
+                        });
+                        match data {
+                            Ok(data) => send(writer, json!({"id": id, "result": {"data": data}}))?,
+                            Err(panic) => send(writer, internal_error(id, &panic))?,
                         }
                     }
-                    // A `/` is announced as a trigger for the next directory
-                    // of a load and is q's `over` everywhere else: a request
-                    // the character itself raised, off a load path, is for
-                    // no list of names (#2021).
-                    let slash = params["context"]["triggerKind"] == 2
-                        && params["context"]["triggerCharacter"] == "/";
-                    if method == "textDocument/completion" && (!opts.completion || slash) {
-                        return Value::Null;
+                    ("textDocument/codeAction", Some(id)) if !code_action_literals => {
+                        send(writer, json!({"id": id, "result": []}))?
                     }
-                    let more = help::More {
-                        inferred_types: opts.inferred_types,
-                        auto_load: opts.auto_load,
-                        qsql_explain: opts.qsql_explain,
-                    };
-                    help::answer(&method, &params, &sources, help_client, more)
-                });
-                match answer {
-                    Ok(result) => send(writer, json!({"id": id, "result": result}))?,
-                    Err(panic) => send(writer, internal_error(id, &panic))?,
-                }
-            }
-            (
-                "textDocument/inlayHint" | "textDocument/codeLens" | "textDocument/documentLink",
-                Some(id),
-            ) => {
-                // Asked of a server that did not announce it, a request is
-                // answered with nothing rather than refused.
-                let shown = annotate::Shown {
-                    parameter_hints: opts.inlay_hints,
-                    type_hints: opts.inferred_types,
-                    run_lenses: opts.code_lens,
-                    reference_lenses: opts.reference_lens,
-                };
-                let on = match method.as_str() {
-                    "textDocument/codeLens" => opts.code_lens || opts.reference_lens,
-                    "textDocument/documentLink" => opts.document_links,
-                    _ => opts.inlay_hints || opts.inferred_types,
-                };
-                let answer = guarded(|| {
-                    if !on {
-                        return Value::Null;
+                    ("textDocument/codeAction", Some(id)) => {
+                        match guarded(|| code_actions(&params, &docs, &idx.ws, policy, &opts)) {
+                            Ok(actions) => send(writer, json!({"id": id, "result": actions}))?,
+                            Err(panic) => send(writer, internal_error(id, &panic))?,
+                        }
                     }
-                    let sources = navigate::Sources::new(&docs, &idx);
-                    annotate::answer(&method, &params, &sources, shown)
-                });
-                match answer {
-                    Ok(result) => send(writer, json!({"id": id, "result": result}))?,
-                    Err(panic) => send(writer, internal_error(id, &panic))?,
-                }
-            }
-            (
-                "q-lint/tests"
-                | "q-lint/globalAt"
-                | "q-lint/unresolvedNames"
-                | "q-lint/argumentSlot"
-                | "q-lint/defined",
-                Some(id),
-            ) => {
-                let answer = guarded(|| {
-                    let sources = navigate::Sources::new(&docs, &idx);
-                    live::answer(&method, &params, &sources, opts.inlay_hints)
-                });
-                match answer {
-                    Ok(result) => send(writer, json!({"id": id, "result": result}))?,
-                    Err(panic) => send(writer, internal_error(id, &panic))?,
-                }
-            }
-            ("q-lint/definitions" | "q-lint/deadCode" | "q-lint/testsReaching", Some(id)) => {
-                let answer = guarded(|| {
-                    let sources = navigate::Sources::new(&docs, &idx);
-                    inventory::answer(&method, &params, &sources)
-                });
-                match answer {
-                    Ok(result) => send(writer, json!({"id": id, "result": result}))?,
-                    Err(panic) => send(writer, internal_error(id, &panic))?,
-                }
-            }
-            (
-                "textDocument/prepareCallHierarchy"
-                | "callHierarchy/incomingCalls"
-                | "callHierarchy/outgoingCalls"
-                | "q-lint/graph"
-                | "q-lint/affectedTests",
-                Some(id),
-            ) => {
-                let answer = guarded(|| {
-                    let sources = navigate::Sources::new(&docs, &idx);
-                    relate::answer(&method, &params, &sources, opts.call_hierarchy, opts.graph)
-                });
-                match answer {
-                    Ok(result) => send(writer, json!({"id": id, "result": result}))?,
-                    Err(panic) => send(writer, internal_error(id, &panic))?,
-                }
-            }
+                    ("q-lint/formatChangedLines", Some(id)) => {
+                        let edits = if opts.format_changed_lines {
+                            guarded(|| format_changed_lines(&params, &docs, &idx.ws, policy))
+                        } else {
+                            Ok(vec![])
+                        };
+                        match edits {
+                            Ok(edits) => send(writer, json!({"id": id, "result": edits}))?,
+                            Err(panic) => send(writer, internal_error(id, &panic))?,
+                        }
+                    }
+                    ("textDocument/formatting", Some(id)) => {
+                        let edits = if opts.format {
+                            let layout = (opts.qsql_layout && opts.qsql_on_format)
+                                .then_some(opts.qsql_width);
+                            guarded(|| format(&params, &docs, &idx.ws, policy, layout))
+                        } else {
+                            Ok(vec![])
+                        };
+                        match edits {
+                            Ok(edits) => send(writer, json!({"id": id, "result": edits}))?,
+                            Err(panic) => send(writer, internal_error(id, &panic))?,
+                        }
+                    }
+                    (
+                        "textDocument/documentSymbol"
+                        | "textDocument/definition"
+                        | "textDocument/references"
+                        | "textDocument/documentHighlight"
+                        | "textDocument/prepareRename"
+                        | "textDocument/rename"
+                        | "workspace/symbol",
+                        Some(id),
+                    ) => {
+                        let answer = guarded(|| {
+                            let renaming = method.ends_with("ename");
+                            if !opts.navigation || (renaming && !opts.rename) {
+                                return Ok(Value::Null);
+                            }
+                            let sources = navigate::Sources::new(&docs, &idx);
+                            navigate::answer(&method, &params, &sources, nested_symbols)
+                        });
+                        match answer {
+                            Ok(Ok(result)) => send(writer, json!({"id": id, "result": result}))?,
+                            Ok(Err(refusal)) => send(
+                                writer,
+                                json!({"id": id, "error": {"code": REQUEST_FAILED, "message": refusal}}),
+                            )?,
+                            Err(panic) => send(writer, internal_error(id, &panic))?,
+                        }
+                    }
+                    ("workspace/willRenameFiles", Some(id)) => {
+                        // Asked of a server that did not announce it, answered with
+                        // no edit rather than refused.
+                        let answer = guarded(|| {
+                            if !opts.rename_loads {
+                                return (Value::Null, None);
+                            }
+                            paths::will_rename(&params, &navigate::Sources::new(&docs, &idx))
+                        });
+                        match answer {
+                            Ok((result, told)) => {
+                                // The loads the new name cannot be written in: the
+                                // rename goes ahead whatever is answered, so the
+                                // user is told which lines it leaves behind.
+                                if let Some(message) = told {
+                                    send(
+                                        writer,
+                                        json!({"method": "window/showMessage",
+                                               "params": {"type": 2, "message": message}}),
+                                    )?;
+                                }
+                                send(writer, json!({"id": id, "result": result}))?
+                            }
+                            Err(panic) => send(writer, internal_error(id, &panic))?,
+                        }
+                    }
+                    ("textDocument/selectionRange", Some(id)) => {
+                        // Asked of a server that did not announce it, answered with
+                        // nothing rather than refused.
+                        let answer = guarded(|| {
+                            if !opts.selection_range {
+                                return Value::Null;
+                            }
+                            selection::answer(&params, &navigate::Sources::new(&docs, &idx))
+                        });
+                        match answer {
+                            Ok(result) => send(writer, json!({"id": id, "result": result}))?,
+                            Err(panic) => send(writer, internal_error(id, &panic))?,
+                        }
+                    }
+                    ("textDocument/foldingRange", Some(id)) => {
+                        match guarded(|| folding_ranges(&params, &docs, &kept)) {
+                            Ok(ranges) => send(writer, json!({"id": id, "result": ranges}))?,
+                            Err(panic) => send(writer, internal_error(id, &panic))?,
+                        }
+                    }
+                    (
+                        "textDocument/hover"
+                        | "textDocument/signatureHelp"
+                        | "textDocument/completion",
+                        Some(id),
+                    ) => {
+                        // Asked of a server that did not announce it, a request is
+                        // answered with nothing rather than refused.
+                        let on = match method.as_str() {
+                            "textDocument/completion" => {
+                                opts.completion || opts.load_path_completion
+                            }
+                            _ => opts.help,
+                        };
+                        let answer = guarded(|| {
+                            if !on {
+                                return Value::Null;
+                            }
+                            let sources = navigate::Sources::new(&docs, &idx);
+                            if method == "textDocument/completion" && opts.load_path_completion {
+                                let path = sources
+                                    .cursor(&params)
+                                    .and_then(|cursor| paths::completion(&cursor, &sources));
+                                if let Some(items) = path {
+                                    return items;
+                                }
+                            }
+                            // A `/` is announced as a trigger for the next directory
+                            // of a load and is q's `over` everywhere else: a request
+                            // the character itself raised, off a load path, is for
+                            // no list of names (#2021).
+                            let slash = params["context"]["triggerKind"] == 2
+                                && params["context"]["triggerCharacter"] == "/";
+                            if method == "textDocument/completion" && (!opts.completion || slash) {
+                                return Value::Null;
+                            }
+                            let more = help::More {
+                                inferred_types: opts.inferred_types,
+                                auto_load: opts.auto_load,
+                                qsql_explain: opts.qsql_explain,
+                            };
+                            help::answer(&method, &params, &sources, help_client, more)
+                        });
+                        match answer {
+                            Ok(result) => send(writer, json!({"id": id, "result": result}))?,
+                            Err(panic) => send(writer, internal_error(id, &panic))?,
+                        }
+                    }
+                    (
+                        "textDocument/inlayHint"
+                        | "textDocument/codeLens"
+                        | "textDocument/documentLink",
+                        Some(id),
+                    ) => {
+                        // Asked of a server that did not announce it, a request is
+                        // answered with nothing rather than refused.
+                        let shown = annotate::Shown {
+                            parameter_hints: opts.inlay_hints,
+                            type_hints: opts.inferred_types,
+                            run_lenses: opts.code_lens,
+                            reference_lenses: opts.reference_lens,
+                        };
+                        let on = match method.as_str() {
+                            "textDocument/codeLens" => opts.code_lens || opts.reference_lens,
+                            "textDocument/documentLink" => opts.document_links,
+                            _ => opts.inlay_hints || opts.inferred_types,
+                        };
+                        let answer = guarded(|| {
+                            if !on {
+                                return Value::Null;
+                            }
+                            let sources = navigate::Sources::new(&docs, &idx);
+                            annotate::answer(&method, &params, &sources, shown)
+                        });
+                        match answer {
+                            Ok(result) => send(writer, json!({"id": id, "result": result}))?,
+                            Err(panic) => send(writer, internal_error(id, &panic))?,
+                        }
+                    }
+                    (
+                        "q-lint/tests"
+                        | "q-lint/globalAt"
+                        | "q-lint/unresolvedNames"
+                        | "q-lint/argumentSlot"
+                        | "q-lint/defined",
+                        Some(id),
+                    ) => {
+                        let answer = guarded(|| {
+                            let sources = navigate::Sources::new(&docs, &idx);
+                            live::answer(&method, &params, &sources, opts.inlay_hints)
+                        });
+                        match answer {
+                            Ok(result) => send(writer, json!({"id": id, "result": result}))?,
+                            Err(panic) => send(writer, internal_error(id, &panic))?,
+                        }
+                    }
+                    (
+                        "q-lint/definitions" | "q-lint/deadCode" | "q-lint/testsReaching",
+                        Some(id),
+                    ) => {
+                        let answer = guarded(|| {
+                            let sources = navigate::Sources::new(&docs, &idx);
+                            inventory::answer(&method, &params, &sources)
+                        });
+                        match answer {
+                            Ok(result) => send(writer, json!({"id": id, "result": result}))?,
+                            Err(panic) => send(writer, internal_error(id, &panic))?,
+                        }
+                    }
+                    (
+                        "textDocument/prepareCallHierarchy"
+                        | "callHierarchy/incomingCalls"
+                        | "callHierarchy/outgoingCalls"
+                        | "q-lint/graph"
+                        | "q-lint/affectedTests",
+                        Some(id),
+                    ) => {
+                        let answer = guarded(|| {
+                            let sources = navigate::Sources::new(&docs, &idx);
+                            relate::answer(
+                                &method,
+                                &params,
+                                &sources,
+                                opts.call_hierarchy,
+                                opts.graph,
+                            )
+                        });
+                        match answer {
+                            Ok(result) => send(writer, json!({"id": id, "result": result}))?,
+                            Err(panic) => send(writer, internal_error(id, &panic))?,
+                        }
+                    }
 
-            // A `.q` file created, changed or deleted outside the editor - a
-            // pull, a checkout, another tool. An open file's buffer still wins.
-            ("workspace/didChangeWatchedFiles", None) => {
-                let mut changed = false;
-                let mut config_changed = false;
-                let mut seen = HashSet::new();
-                for change in params["changes"].as_array().into_iter().flatten() {
-                    let uri = uri_of(change);
-                    let deleted = change["type"].as_i64() == Some(3);
-                    // A client sends an event once for each pattern its
-                    // path matches, and a q file's matches two (`watchers`).
-                    if !seen.insert((uri.clone(), change["type"].as_i64())) {
-                        continue;
+                    // A `.q` file created, changed or deleted outside the editor - a
+                    // pull, a checkout, another tool. An open file's buffer still wins.
+                    ("workspace/didChangeWatchedFiles", None) => {
+                        let mut changed = false;
+                        let mut config_changed = false;
+                        let mut seen = HashSet::new();
+                        for change in params["changes"].as_array().into_iter().flatten() {
+                            let uri = uri_of(change);
+                            let deleted = change["type"].as_i64() == Some(3);
+                            // A client sends an event once for each pattern its
+                            // path matches, and a q file's matches two (`watchers`).
+                            if !seen.insert((uri.clone(), change["type"].as_i64())) {
+                                continue;
+                            }
+                            // A configuration file changed: every file it governs may
+                            // now report differently, so forget them all and relint.
+                            let path = path_of(&uri);
+                            if is_config_path(&path) || policy.read_from(Path::new(&path)) {
+                                policy.reset();
+                                config_changed = true;
+                                continue;
+                            }
+                            if docs.contains_key(&uri) {
+                                continue;
+                            }
+                            // A directory, not entered through a symlink, as the
+                            // scan does not.
+                            let folder = std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir());
+                            // The pattern that matches a folder matches every other
+                            // path too (`watchers`): a file that is no q says
+                            // nothing here. One that is gone may have been a folder.
+                            if !folder && !deleted && !is_q_path(&path) {
+                                continue;
+                            }
+                            // A folder's one event is the only word of a
+                            // configuration that came with it, too.
+                            changed |= (folder || deleted) && policy.forget_under(Path::new(&path));
+                            if !folder && is_q_path(&path) {
+                                closed.touch(file_key(&path));
+                            }
+                            changed |= if deleted {
+                                idx.remove_tree(&path, &docs)
+                            } else if folder {
+                                idx.add_tree(&path, policy)
+                            } else {
+                                idx.reload(&path, policy)
+                            };
+                        }
+                        // And its `exclude` decides which files the index reads, so
+                        // the index is read again as a fresh server would (#541).
+                        if config_changed {
+                            idx.rebuild(policy, &docs);
+                            // What a broken document carries over was reported under
+                            // the old settings.
+                            kept.clear();
+                        }
+                        if changed || config_changed {
+                            relint(
+                                writer, &docs, &unsaved, &mut kept, &idx, None, policy, &opts,
+                            )?;
+                        }
+                        closed.sync(writer, &idx, &docs, config_changed)?;
                     }
-                    // A configuration file changed: every file it governs may
-                    // now report differently, so forget them all and relint.
-                    let path = path_of(&uri);
-                    if is_config_path(&path) || policy.read_from(Path::new(&path)) {
-                        policy.reset();
-                        config_changed = true;
-                        continue;
+                    // A folder added to or removed from a multi-root workspace (#797).
+                    ("workspace/didChangeWorkspaceFolders", None) => {
+                        let folders = |key: &str| {
+                            workspace_folders(&json!({"workspaceFolders": params["event"][key]}))
+                        };
+                        let removed = folders("removed").into_iter().map(|(path, _)| path);
+                        idx.change_roots(folders("added"), removed.collect(), policy);
+                        // An open buffer still wins over what a folder held.
+                        for (uri, text) in docs.iter().filter(|(uri, _)| is_q_uri(uri)) {
+                            idx.put(&path_of(uri), text);
+                        }
+                        idx.settle();
+                        if idx.generation != generation {
+                            relint(
+                                writer, &docs, &unsaved, &mut kept, &idx, None, policy, &opts,
+                            )?;
+                        }
+                        closed.sync(writer, &idx, &docs, false)?;
                     }
-                    if docs.contains_key(&uri) {
-                        continue;
+                    // Every other REQUEST gets an error, because a client waiting on a
+                    // reply that never arrives looks like a hung server.
+                    (_, Some(id)) => send(
+                        writer,
+                        json!({"id": id, "error": {"code": METHOD_NOT_FOUND, "message": format!("unsupported method: {method}")}}),
+                    )?,
+                    // Every other NOTIFICATION is ignored, which the protocol requires.
+                    (_, None) => {}
+                }
+                // Handled, and answered when it was a request.
+                handling = None;
+                // Another file's definitions changed, so a name in an open document
+                // may now be a function, or no longer one. Its diagnostics were
+                // pushed again; its colours a client fetches only when it changes,
+                // or when asked to (LSP 3.17, workspace/semanticTokens/refresh). The
+                // client's reply is a response, and dropped as one.
+                // What the settings were read from changes as documents open and
+                // configurations change, so the watchers follow it (LSP 3.17,
+                // client/registerCapability). A changed set replaces the old one.
+                if ready && watch_registration && !shutdown_requested {
+                    let want = watchers(&idx.roots, policy, relative_patterns);
+                    if want != watching {
+                        next_request += 1;
+                        let id = format!("qlinter-watch-{next_request}");
+                        send(
+                            writer,
+                            json!({"id": format!("qlinter-{next_request}"),
+                                   "method": "client/registerCapability",
+                                   "params": {"registrations": [{"id": id,
+                                              "method": "workspace/didChangeWatchedFiles",
+                                              "registerOptions": {"watchers": want}}]}}),
+                        )?;
+                        if let Some(old) = watch_id.replace(id) {
+                            next_request += 1;
+                            send(
+                                writer,
+                                json!({"id": format!("qlinter-{next_request}"),
+                                       "method": "client/unregisterCapability",
+                                       "params": {"unregisterations": [{"id": old,
+                                                  "method": "workspace/didChangeWatchedFiles"}]}}),
+                            )?;
+                        }
+                        watching = want;
                     }
-                    // A directory, not entered through a symlink, as the
-                    // scan does not.
-                    let folder = std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir());
-                    // The pattern that matches a folder matches every other
-                    // path too (`watchers`): a file that is no q says
-                    // nothing here. One that is gone may have been a folder.
-                    if !folder && !deleted && !is_q_path(&path) {
-                        continue;
-                    }
-                    // A folder's one event is the only word of a
-                    // configuration that came with it, too.
-                    changed |= (folder || deleted) && policy.forget_under(Path::new(&path));
-                    if !folder && is_q_path(&path) {
-                        closed.touch(file_key(&path));
-                    }
-                    changed |= if deleted {
-                        idx.remove_tree(&path, &docs)
-                    } else if folder {
-                        idx.add_tree(&path, policy)
-                    } else {
-                        idx.reload(&path, policy)
-                    };
                 }
-                // And its `exclude` decides which files the index reads, so
-                // the index is read again as a fresh server would (#541).
-                if config_changed {
-                    idx.rebuild(policy, &docs);
-                    // What a broken document carries over was reported under
-                    // the old settings.
-                    kept.clear();
-                }
-                if changed || config_changed {
-                    relint(
-                        writer, &docs, &unsaved, &mut kept, &idx, None, policy, &opts,
-                    )?;
-                }
-                closed.sync(writer, &idx, &docs, config_changed)?;
-            }
-            // A folder added to or removed from a multi-root workspace (#797).
-            ("workspace/didChangeWorkspaceFolders", None) => {
-                let folders = |key: &str| {
-                    workspace_folders(&json!({"workspaceFolders": params["event"][key]}))
-                };
-                let removed = folders("removed").into_iter().map(|(path, _)| path);
-                idx.change_roots(folders("added"), removed.collect(), policy);
-                // An open buffer still wins over what a folder held.
-                for (uri, text) in docs.iter().filter(|(uri, _)| is_q_uri(uri)) {
-                    idx.put(&path_of(uri), text);
-                }
-                idx.settle();
-                if idx.generation != generation {
-                    relint(
-                        writer, &docs, &unsaved, &mut kept, &idx, None, policy, &opts,
-                    )?;
-                }
-                closed.sync(writer, &idx, &docs, false)?;
-            }
-            // Every other REQUEST gets an error, because a client waiting on a
-            // reply that never arrives looks like a hung server.
-            (_, Some(id)) => send(
-                writer,
-                json!({"id": id, "error": {"code": METHOD_NOT_FOUND, "message": format!("unsupported method: {method}")}}),
-            )?,
-            // Every other NOTIFICATION is ignored, which the protocol requires.
-            (_, None) => {}
-        }
-        // Another file's definitions changed, so a name in an open document
-        // may now be a function, or no longer one. Its diagnostics were
-        // pushed again; its colours a client fetches only when it changes,
-        // or when asked to (LSP 3.17, workspace/semanticTokens/refresh). The
-        // client's reply is a response, and dropped as one.
-        // What the settings were read from changes as documents open and
-        // configurations change, so the watchers follow it (LSP 3.17,
-        // client/registerCapability). A changed set replaces the old one.
-        if ready && watch_registration && !shutdown_requested {
-            let want = watchers(&idx.roots, policy, relative_patterns);
-            if want != watching {
-                next_request += 1;
-                let id = format!("qlinter-watch-{next_request}");
-                send(
-                    writer,
-                    json!({"id": format!("qlinter-{next_request}"),
-                           "method": "client/registerCapability",
-                           "params": {"registrations": [{"id": id,
-                                      "method": "workspace/didChangeWatchedFiles",
-                                      "registerOptions": {"watchers": want}}]}}),
-                )?;
-                if let Some(old) = watch_id.replace(id) {
+                if idx.generation != generation
+                    && token_refresh
+                    && opts.semantic_tokens
+                    && !shutdown_requested
+                {
                     next_request += 1;
                     send(
                         writer,
-                        json!({"id": format!("qlinter-{next_request}"),
-                               "method": "client/unregisterCapability",
-                               "params": {"unregisterations": [{"id": old,
-                                          "method": "workspace/didChangeWatchedFiles"}]}}),
+                        json!({"id": format!("qlinter-{next_request}"), "method": "workspace/semanticTokens/refresh"}),
                     )?;
                 }
-                watching = want;
+                // And what is drawn over the text: a parameter name at a call comes
+                // from the definition another file holds, and a reference count
+                // from the reads of every file. Only once the client is ready.
+                let defined = idx.generation != generation;
+                if ready && !shutdown_requested {
+                    let counted = opts.reference_lens && idx.reads != reads;
+                    for (asked, method) in [
+                        (
+                            lens_refresh && (defined || counted),
+                            "workspace/codeLens/refresh",
+                        ),
+                        (
+                            hint_refresh && (defined || idx.signatures != signatures),
+                            "workspace/inlayHint/refresh",
+                        ),
+                    ] {
+                        if asked {
+                            next_request += 1;
+                            send(
+                                writer,
+                                json!({"id": format!("qlinter-{next_request}"), "method": method}),
+                            )?;
+                        }
+                    }
+                }
             }
-        }
-        if idx.generation != generation
-            && token_refresh
-            && opts.semantic_tokens
-            && !shutdown_requested
-        {
-            next_request += 1;
-            send(
-                writer,
-                json!({"id": format!("qlinter-{next_request}"), "method": "workspace/semanticTokens/refresh"}),
-            )?;
-        }
-        // And what is drawn over the text: a parameter name at a call comes
-        // from the definition another file holds, and a reference count
-        // from the reads of every file. Only once the client is ready.
-        let defined = idx.generation != generation;
-        if ready && !shutdown_requested {
-            let counted = opts.reference_lens && idx.reads != reads;
-            for (asked, method) in [
-                (
-                    lens_refresh && (defined || counted),
-                    "workspace/codeLens/refresh",
-                ),
-                (
-                    hint_refresh && (defined || idx.signatures != signatures),
-                    "workspace/inlayHint/refresh",
-                ),
-            ] {
-                if asked {
-                    next_request += 1;
-                    send(
-                        writer,
-                        json!({"id": format!("qlinter-{next_request}"), "method": method}),
-                    )?;
+        });
+        match ran {
+            Ok(ended) => return ended,
+            Err(panic) => {
+                eprintln!("qlinter: a panic was caught and the server carries on: {panic}");
+                if let Some(id) = handling.take() {
+                    send(writer, internal_error(id, &panic))?;
                 }
             }
         }
@@ -2931,6 +2986,11 @@ fn linted(uri: &str, text: &str, ws: &Workspace, policy: &Policy) -> Result<Vec<
 
 /// Push `findings`, what the rules found in the `text` of `uri`, as its
 /// diagnostics.
+///
+/// Turning them into diagnostics - positions, related places, what is
+/// carried over a broken statement - is guarded as the lint is: a panic
+/// there is a bug in qlinter, and costs this document its diagnostics, not
+/// the server every open document's state (#2108).
 fn report(
     writer: &mut impl Write,
     uri: &str,
@@ -2939,27 +2999,37 @@ fn report(
     kept: &mut Kept,
     opts: &Options,
 ) -> Result<(), String> {
+    let diagnostics =
+        findings.and_then(|findings| guarded(|| diagnostics_of(uri, text, &findings, kept, opts)));
     // A rule that panicked leaves nothing true to report, so the document
     // gets one diagnostic saying so, at its start, until an edit gets past it.
-    let findings = match findings {
-        Ok(findings) => findings,
-        Err(panic) => {
-            let failed = json!({
-                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}},
-                "severity": 1,
-                "source": "q-lint",
-                "message": format!(
-                    "qlinter failed on this document and reports nothing else for it: {panic}. \
-                     This is a bug in qlinter."
-                ),
-            });
-            return send(
-                writer,
-                json!({"method": "textDocument/publishDiagnostics",
-                       "params": {"uri": uri, "diagnostics": [failed]}}),
-            );
-        }
-    };
+    let diagnostics = diagnostics.unwrap_or_else(|panic| {
+        vec![json!({
+            "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}},
+            "severity": 1,
+            "source": "q-lint",
+            "message": format!(
+                "qlinter failed on this document and reports nothing else for it: {panic}. \
+                 This is a bug in qlinter."
+            ),
+        })]
+    });
+    send(
+        writer,
+        json!({"method": "textDocument/publishDiagnostics",
+               "params": {"uri": uri, "diagnostics": diagnostics}}),
+    )
+}
+
+/// `findings` in the `text` of `uri` as its diagnostics, with what `kept`
+/// carries over while a statement does not close.
+fn diagnostics_of(
+    uri: &str,
+    text: &str,
+    findings: &[Finding],
+    kept: &mut Kept,
+    opts: &Options,
+) -> Vec<Value> {
     let lines = Lines::new(text);
     let mut diagnostics: Vec<Value> = findings
         .iter()
@@ -2987,7 +3057,7 @@ fn report(
     // close, where it still stands (`Carry`) - and a version that closes is
     // the next one to carry from.
     if is_q_uri(uri) {
-        if matches!(findings.as_slice(), [only] if only.code == "QE001") {
+        if matches!(findings, [only] if only.code == "QE001") {
             if let Some(good) = kept.get(uri)
                 && let Some(carry) = Carry::new(&good.text, text)
             {
@@ -3029,11 +3099,7 @@ fn report(
             kept.insert(uri.to_string(), good);
         }
     }
-    send(
-        writer,
-        json!({"method": "textDocument/publishDiagnostics",
-               "params": {"uri": uri, "diagnostics": diagnostics}}),
-    )
+    diagnostics
 }
 
 /// One finding as an LSP diagnostic.
@@ -3140,9 +3206,14 @@ impl<'a> Lines<'a> {
     }
 
     /// A byte offset as the line and UTF-16 character a client addresses it
-    /// by.
+    /// by. An offset inside a character is that character's start: a caller
+    /// that steps one byte back from an end lands there whenever the text
+    /// ends in one that is not ASCII (#2108).
     fn position(&self, byte: usize) -> (usize, usize) {
-        let byte = byte.min(self.source.len());
+        let mut byte = byte.min(self.source.len());
+        while !self.source.is_char_boundary(byte) {
+            byte -= 1;
+        }
         let line = self.starts.partition_point(|&s| s <= byte) - 1;
         (line, utf16_len(&self.source[self.starts[line]..byte]))
     }
@@ -3264,7 +3335,13 @@ impl Carry {
             .take_while(|(x, y)| x == y)
             .count();
         let first = after.position(broken.start).0;
-        let last = after.position(broken.end.max(broken.start + 1) - 1).0;
+        // The line of the statement's last character, which starts before
+        // its end by that character's width, not by one byte.
+        let last_char = new[broken.start..broken.end]
+            .char_indices()
+            .next_back()
+            .map_or(broken.start, |(i, _)| broken.start + i);
+        let last = after.position(last_char).0;
         Some(Carry {
             head,
             old_tail: a.len() - tail,
@@ -3482,6 +3559,18 @@ mod tests {
     }
 
     #[test]
+    fn an_offset_inside_a_character_is_that_characters_position() {
+        // `é` is bytes 6..8: byte 7 is inside it, where slicing panicked.
+        let source = "s:\"caf\u{e9}";
+        let lines = Lines::new(source);
+        assert_eq!(lines.position(7), (0, 6));
+        assert_eq!(lines.position(8), (0, 7));
+        // And the statement that does not close ends on its last line.
+        let carry = Carry::new("a:1\n", source).expect("a broken statement");
+        assert_eq!(carry.broken, 0..1);
+    }
+
+    #[test]
     fn a_finding_per_line_converts_in_linear_time() {
         // One finding on each of 20,000 lines. Rebuilding the line table and
         // rescanning from the start for every finding took minutes here, and
@@ -3560,6 +3649,64 @@ mod tests {
         assert_eq!(
             guarded(|| -> i32 { panic!("static") }),
             Err("static".into())
+        );
+    }
+
+    #[test]
+    fn a_panic_in_a_handler_is_answered_and_the_server_carries_on() {
+        // Outside a guard, a panic in any handler ended the process and
+        // every open document's state with it (#2108). Now the request it
+        // was handling is answered with an internal error, a notification
+        // that panics is dropped, and the next request is answered.
+        let frame = |m: Value| {
+            let body = m.to_string();
+            format!("Content-Length: {}\r\n\r\n{body}", body.len())
+        };
+        let input: String = [
+            json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
+            json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+            json!({"jsonrpc": "2.0", "id": 2, "method": "q-lint/plantedPanic"}),
+            json!({"jsonrpc": "2.0", "method": "q-lint/plantedPanic"}),
+            json!({"jsonrpc": "2.0", "id": 3, "method": "shutdown"}),
+            json!({"jsonrpc": "2.0", "method": "exit"}),
+        ]
+        .into_iter()
+        .map(frame)
+        .collect();
+        let policy = Policy::new(
+            crate::config::Overrides {
+                profile: None,
+                default_profile: "style",
+                layer: Layer::default(),
+                exclude: vec![],
+                config: None,
+                isolated: true,
+                target: None,
+                baseline: None,
+                no_baseline: false,
+            },
+            true,
+        );
+        let mut out = vec![];
+        let code = serve(std::io::Cursor::new(input.into_bytes()), &mut out, &policy);
+        assert_eq!(code, Ok(0));
+        let out = String::from_utf8(out).unwrap();
+        let replies: Vec<Value> = out
+            .split("Content-Length: ")
+            .filter_map(|frame| frame.split_once("\r\n\r\n"))
+            .map(|(_, body)| serde_json::from_str(body).unwrap())
+            .filter(|m: &Value| m.get("method").is_none())
+            .collect();
+        assert_eq!(replies.len(), 3, "{out}");
+        assert_eq!(replies[1]["id"], 2);
+        assert_eq!(replies[1]["error"]["code"], INTERNAL_ERROR);
+        assert_eq!(
+            replies[1]["error"]["message"],
+            "qlinter failed on this document: planted"
+        );
+        assert_eq!(
+            (&replies[2]["id"], &replies[2]["result"]),
+            (&json!(3), &Value::Null)
         );
     }
 

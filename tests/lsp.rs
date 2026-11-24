@@ -2152,6 +2152,52 @@ fn with_run_on_save_a_change_is_linted_only_when_saved() {
 }
 
 #[test]
+fn an_unclosed_statement_ending_in_a_non_ascii_character_keeps_the_server_alive() {
+    // The statement that does not close runs to the end of the text, and
+    // its last line was looked up one byte before that end: inside the `é`,
+    // where slicing panicked and the server exited 101 (#2108).
+    for ending in ["s:\"caf\u{e9}", "s:(\u{1f600}", "{\u{20ac}"] {
+        let mut server = Server::start();
+        server.initialize();
+        let uri = "file:///tmp/non-ascii-end.q";
+        server.open(uri, "a:1\n");
+        assert!(server.diagnostics_for(uri).is_empty());
+        server.change(uri, 2, ending);
+        assert_eq!(
+            codes_of(&server.diagnostics_for(uri)),
+            ["QE001"],
+            "{ending:?}"
+        );
+        assert_eq!(server.shutdown_and_exit(), 0, "{ending:?}");
+    }
+}
+
+#[test]
+fn with_run_on_save_an_unclosed_non_ascii_ending_folds_and_saves() {
+    // The same text reached through folding answered an internal error, and
+    // the save after it ended the server (#2108).
+    let dir = tempfile::tempdir().unwrap();
+    let (mut server, _) = start_with_options(
+        dir.path(),
+        &["--lsp"],
+        json!({"lint": {"run": "onSave"}}),
+        None,
+    );
+    let uri = "file:///tmp/on-save-non-ascii.q";
+    server.open(uri, "f:{\n 1}\n");
+    assert!(server.diagnostics_for(uri).is_empty());
+    server.change(uri, 2, "f:{\n 1}\ns:\"caf\u{e9}");
+    assert_eq!(
+        server.folding_ranges(uri),
+        json!([{"startLine": 0, "endLine": 1}])
+    );
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didSave",
+        "params":{"textDocument":{"uri":uri}}}));
+    assert_eq!(codes_of(&server.diagnostics_for(uri)), ["QE001"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn with_run_on_save_another_files_save_does_not_lint_an_unsaved_buffer() {
     // Saving b.q changes what the workspace defines, so the other open
     // documents are linted again - but not a.q's unsaved text (#550).
