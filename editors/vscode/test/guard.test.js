@@ -1085,3 +1085,24 @@ test("? on a symbol atom in parentheses or applied in brackets extends an enumer
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("a name in parentheses or a nested destructuring list assigns (#1772)", () => {
+  const cases = {
+    "(a):9": ["assigns a"],
+    "((a)):9": ["assigns a"],
+    "((a;c);d):((1;2);3)": ["assigns a", "assigns c", "assigns d"],
+    "(a;(c;d)):(1;(2;3))": ["assigns a", "assigns c", "assigns d"],
+    "(.ns.v;a):1 2": ["assigns .ns.v", "assigns a"],
+    "{((a;c);d)::((1;2);3)}[]": ["assigns a", "assigns c", "assigns d"],
+    // A local in a lambda, a list that is not all names, or a comparison reads.
+    "{((a;c);d):((1;2);3); a+c}[]": [],
+    "{(a):9}[]": [],
+    "((a;1);d)": [],
+    "(a)=9": [],
+    "(a;b)~1 2": [],
+    "f[(a);9]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

@@ -17,7 +17,8 @@
 //   is not one of its locals inside a lambda, where q makes them global.
 //   A column named in `select a:x from t` or `([] a:1 2)` is not an
 //   assignment, but one inside a column's expression (`([] c:g:1)`) is;
-//   `(a;b):x` assigns each name, by the same rules;
+//   `(a;b):x` assigns each name, by the same rules, as do `(a):x` and
+//   `((a;b);c):x` (#1772);
 // - `update` or `delete` from a table named by a symbol (`` from `t ``,
 //   `` from (`t) ``), which changes it in place;
 // - `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`, `system`,
@@ -271,6 +272,27 @@ function items(t: Token[], open: number): [number, number][] {
   return out;
 }
 
+/// Where the list of names that opens at `t[open]` ends - past its `)` - when
+/// it holds only names and lists of them, `((a;b);c)`, with each name added
+/// to `names`; -1 otherwise.
+function destructured(t: Token[], open: number, names: string[]): number {
+  let j = open + 1;
+  for (;;) {
+    if (t[j]?.kind === "name") {
+      names.push(t[j].text);
+      j++;
+    } else if (t[j]?.text === "(" && t[j].kind === "open") {
+      j = destructured(t, j, names);
+      if (j < 0) return -1;
+    } else {
+      return -1;
+    }
+    if (t[j]?.text === ")") return j + 1;
+    if (t[j]?.text !== ";") return -1;
+    j++;
+  }
+}
+
 /// The amend, `@`, `.` or `!`, that the bracket opening at `t[open]` applies,
 /// or "": right before it, in parentheses, `` (@)[`.;`a;:;1] `` (#1445), as
 /// many pairs as are written (#1730), through an adverb, `` @/[`.;`a;:;9] ``,
@@ -496,15 +518,11 @@ function readStatement(statement: string, found: Set<string>): void {
         locals.push(lambdaLocals(t, i, touching));
       }
       // `(a;b):x` assigns each name, globally at the top level.
-      if (k.text === "(") {
-        const names: string[] = [];
-        let j = i + 1;
-        while (t[j]?.kind === "name" && (t[j + 1]?.text === ";" || t[j + 1]?.text === ")")) {
-          names.push(t[j].text);
-          j += 2;
-          if (t[j - 1].text === ")") break;
-        }
-        if (names.length > 1 && t[j - 1]?.text === ")" && t[j]?.kind === "op" && t[j].text === ":" && qsql.length === 0) {
+      // So do `(a):x` and nested lists, `((a;b);c):x` (#1772).
+      const names: string[] = [];
+      const j = k.text === "(" ? destructured(t, i, names) : -1;
+      if (j > 0) {
+        if (t[j]?.kind === "op" && t[j].text === ":" && qsql.length === 0) {
           const global = t[j + 1]?.text === ":" && touching(t[j], t[j + 1]);
           for (const name of names) {
             if (lambdas === 0 || global || name.includes(".")) {
