@@ -135,6 +135,13 @@ export function outputPath(path: string, mode: ScheduledExport["mode"], now: Dat
   return dot > slash + 1 ? `${path.slice(0, dot)}-${stamp}${path.slice(dot)}` : `${path}-${stamp}`;
 }
 
+/// Why `payload` is not the whole result - fewer rows came back than it
+/// has - or undefined when it is all there (#1613).
+export function incomplete(payload: { count: number; cells: string[][] }): string | undefined {
+  const rows = payload.cells[0]?.length ?? 0;
+  return payload.cells.length > 0 && rows < payload.count ? `only ${rows} of its ${payload.count} rows came back` : undefined;
+}
+
 /// Why `code` may not be scheduled, or undefined when it may: it would
 /// change the process, or asks for placeholders.
 export function scheduleProblem(code: string): string | undefined {

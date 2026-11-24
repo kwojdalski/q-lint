@@ -2379,7 +2379,9 @@ export class Live {
   /// timeout); `signal` stops waiting. On a TorQ gateway it goes through
   /// `.gw.syncexec` to the process's server types, as `run` sends it. Throws
   /// why there is no answer. The caller asks the read-only guard first.
-  async runApart(process: Process, code: string, signal?: AbortSignal): Promise<GridAnswer> {
+  /// `whole`: every row and the whole text, whatever the limits - a
+  /// scheduled export writes the result, not its first page (#1613).
+  async runApart(process: Process, code: string, signal?: AbortSignal, options: { whole?: boolean } = {}): Promise<GridAnswer> {
     const commanded = process.credentialCommand !== undefined && this.setting(readAdmin).credentialCommand;
     if (!commanded && process.user && process.server !== undefined && (await this.context.secrets.get(passwordKey(process))) === undefined) {
       throw new Error(`no password is stored for ${process.user}: connect to ${process.label} once to give it`);
@@ -2399,7 +2401,7 @@ export class Live {
       await this.runConnectScript(connection, process);
       const configuration = workspace.getConfiguration("q-lint");
       const settings = readLive((key, fallback) => configuration.get(key, fallback));
-      const unlimited = this.controls.unlimited;
+      const unlimited = this.controls.unlimited || options.whole === true;
       const { consoleSize, gridLimit } = limits(settings, unlimited);
       // On a TorQ gateway, through `.gw.syncexec`, as `run` sends it (#1230).
       const cut = statements(this.throughGateway(code, process));

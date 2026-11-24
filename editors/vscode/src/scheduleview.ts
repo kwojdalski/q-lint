@@ -18,6 +18,7 @@ import { SAVED_QUERIES_KEY, parseSaved } from "./savedqueries";
 import {
   SCHEDULES_KEY,
   SCHEDULE_FORMATS,
+  incomplete,
   isDue,
   outputPath,
   parseSchedules,
@@ -131,7 +132,7 @@ export class ScheduledExports {
     if (process === undefined) {
       throw new Error(`there is no q process labelled ${s.process}`);
     }
-    const answer = await this.live.runApart(process, saved.code);
+    const answer = await this.live.runApart(process, saved.code, undefined, { whole: true });
     if (!answer.ok) {
       throw new Error(`${s.process} answered '${answer.error}`);
     }
@@ -139,6 +140,10 @@ export class ScheduledExports {
       throw new Error(`the result could not be shaped: '${answer.gridError}`);
     }
     const payload = answer.grid ?? textPayload(answer.text);
+    const cut = incomplete(payload);
+    if (cut !== undefined) {
+      throw new Error(`nothing was written: ${cut}`);
+    }
     const configuration = workspace.getConfiguration("q-lint");
     const { gridDecimals } = readLive((key, fallback) => configuration.get(key, fallback));
     const data = s.format === "csv" ? Buffer.from(toCsv(toGrid(payload, gridDecimals)), "utf8") : exportResult(s.format, payload, gridDecimals).data;

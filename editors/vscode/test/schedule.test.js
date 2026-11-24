@@ -14,7 +14,7 @@ const path = require("node:path");
 const pkg = require("../package.json");
 const { Live } = require("../out/live.js");
 const { ADMIN_COMMANDS, adminOff, readAdmin } = require("../out/admin.js");
-const { SCHEDULES_KEY, isDue, outputPath, parseSchedules, parseTimes, parseWhen, scheduleProblem, scheduleText } = require("../out/schedule.js");
+const { SCHEDULES_KEY, incomplete, isDue, outputPath, parseSchedules, parseTimes, parseWhen, scheduleProblem, scheduleText } = require("../out/schedule.js");
 const { ScheduledExports } = require("../out/scheduleview.js");
 
 const Q = process.env.QLINT_TEST_Q;
@@ -169,6 +169,23 @@ test("a schedule never runs twice at once (#1089)", async (t) => {
   assert.strictEqual(runs.length, 2);
   assert.strictEqual(most, 2);
   assert.ok(stub.messages.some(([, text]) => /is running/.test(text)), JSON.stringify(stub.messages));
+});
+
+test("a scheduled export asks for the whole result, and writes nothing when rows are missing (#1613)", async (t) => {
+  const { live, schedules, context } = await setUp(t, [{ label: "p", host: "h", port: 1, tags: [] }], [{ name: "q", code: "select from t" }]);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-schedule-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const asked = [];
+  const grid = { count: 250000, keys: 0, names: ["a"], types: [7], cells: [["1", "2"]], raw: [[1, 2]], rank: [[0, 1]] };
+  live.runApart = async (_p, _code, _signal, options) => (asked.push(options), { ok: true, type: 98, text: [], grid });
+  const file = path.join(dir, "out.csv");
+  await context.workspaceState.update(SCHEDULES_KEY, [{ id: "s1", query: "q", process: "p", format: "csv", path: file, every: 1, mode: "replace", since: 0 }]);
+  await schedules.tick(new Date(2026, 10, 22, 9, 30));
+  assert.deepStrictEqual(asked, [{ whole: true }]);
+  assert.strictEqual(fs.existsSync(file), false);
+  assert.match(parseSchedules(context.workspaceState.get(SCHEDULES_KEY))[0].last, /failed .*nothing was written: only 2 of its 250000 rows came back/);
+  assert.strictEqual(incomplete({ count: 2, cells: [["1", "2"]] }), undefined);
+  assert.strictEqual(incomplete({ count: 0, cells: [] }), undefined);
 });
 
 test("turned off while a tick runs, the schedules still due wait (#1296)", async (t) => {
