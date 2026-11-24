@@ -54,6 +54,10 @@ export function gridFromCsv(text: string): Grid {
   }
   const sep = first.includes("\t") && !first.includes(",") ? "\t" : ",";
   const records = readDelimited(text, sep).rows.filter((r) => r.length > 1 || r[0].trim() !== "");
+  if (records.length === 0) {
+    // Lines, but no record: an empty quoted field is all there is (#1939).
+    throw new Error("the file has no header row");
+  }
   const names = records[0].map((n) => n.trim());
   const rows = records.slice(1);
   return gridOf(names, names.map((_, i) => rows.map((r) => r[i] ?? "")));
