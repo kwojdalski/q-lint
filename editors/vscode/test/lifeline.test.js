@@ -45,3 +45,19 @@ test("no lifeline on Windows, nor for a child that never started", () => {
   assert.strictEqual(lifeline({ pid: 1 }, "win32"), undefined);
   assert.strictEqual(lifeline({ pid: undefined }, "linux"), undefined);
 });
+
+test("on Windows a group's signal ends the child's whole tree with taskkill, q.exe under q.cmd's cmd.exe too (#1745)", () => {
+  const { signalGroup } = require("../out/lifeline.js");
+  const ran = [];
+  const killed = [];
+  const run = (command, args) => {
+    ran.push([command, ...args]);
+    return { once: () => {} };
+  };
+  signalGroup({ pid: 42, kill: (s) => killed.push(s) }, "SIGTERM", "win32", run);
+  assert.deepStrictEqual(ran, [["taskkill", "/T", "/F", "/PID", "42"]]);
+  assert.deepStrictEqual(killed, []);
+  // No taskkill to run: the child alone.
+  signalGroup({ pid: 42, kill: (s) => killed.push(s) }, "SIGKILL", "win32", () => { throw new Error("ENOENT"); });
+  assert.deepStrictEqual(killed, ["SIGKILL"]);
+});
