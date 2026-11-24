@@ -19,6 +19,7 @@
 // not. A column with no cell to go by is a string. The guess is a start:
 // the wizard lets each be changed, or the column skipped.
 import { basename } from "node:path";
+import { isLocalHost as isThisMachine } from "./launcher";
 import { readDelimited } from "./pastetable";
 import { RESERVED, qString, stringLiteral } from "./qliteral";
 
@@ -236,8 +237,8 @@ export function tableName(path: string): string {
 }
 
 /// Whether a process at `host` (reached with no SSH tunnel) runs on this
-/// machine, and so can read a file by its path here.
+/// machine, and so can read a file by its path here: no host, or one the
+/// launcher would start a process on - any 127.x, 0.0.0.0 (#1812).
 export function isLocalHost(host: string, here: string): boolean {
-  const h = host.trim().toLowerCase();
-  return h === "" || h === "localhost" || h === "127.0.0.1" || h === "::1" || h === here.trim().toLowerCase();
+  return host.trim() === "" || isThisMachine(host, here.trim());
 }
