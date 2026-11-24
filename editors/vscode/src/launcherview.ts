@@ -220,10 +220,21 @@ export class Launcher {
     child.stderr?.setEncoding("utf8");
     child.stdout?.on("data", (text: string) => channel.append(text));
     child.stderr?.on("data", (text: string) => channel.append(text));
-    child.once("error", (error) => {
-      channel.appendLine(`could not start: ${error.message}`);
-      void window.showErrorMessage(plainMessage(`q-lint: could not start ${process.label}: ${error.message}`));
+    // A missing or not executable program is an 'error' after spawn()
+    // returns: it is the problem, and nothing was started (#1679).
+    const failed = await new Promise<Error | undefined>((resolve) => {
+      child.once("spawn", () => resolve(undefined));
+      child.once("error", resolve);
     });
+    if (failed !== undefined) {
+      channel.appendLine(`could not start: ${failed.message}`);
+      return `could not start ${process.label}: ${failed.message}`;
+    }
+    child.on("error", (error) => channel.appendLine(error.message));
+    if (this.disposed) {
+      signalGroup(child, "SIGKILL");
+      return `the process launcher was turned off; ${process.label} was not started.`;
+    }
     const started: Started = { child, channel, port: process.port };
     this.started.set(process.label, started);
     child.once("close", (code, signal) => {

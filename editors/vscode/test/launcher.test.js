@@ -331,3 +331,18 @@ test("Stop Process ends what a wrapper script started too, and frees its port (#
   assert.deepStrictEqual(launcher.running(), []);
   assert.strictEqual(await accepts(port), false);
 });
+
+test("a program that does not exist is one error, never 'started' (#1679)", async (t) => {
+  const port = await freePort();
+  const { launcher, output } = await setUp(t, [proc("gone", port, { command: path.join(os.tmpdir(), "no-such-q-1679") })]);
+  await stub.commands.get(LAUNCH_COMMANDS.start)("gone");
+  await sleep(100);
+  assert.deepStrictEqual(
+    stub.messages.map((m) => m[0]),
+    ["error"],
+    JSON.stringify(stub.messages),
+  );
+  assert.match(stub.messages[0][1], /^q-lint: could not start gone: spawn .*no-such-q-1679 ENOENT$/);
+  assert.match(output("gone"), /could not start: spawn .*ENOENT/);
+  assert.deepStrictEqual(launcher.running(), []);
+});
