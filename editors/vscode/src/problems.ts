@@ -172,28 +172,34 @@ export function readTrend(raw: unknown): Point[] {
   ) as unknown as Point[];
 }
 
-/// Run a program; resolves with its stdout and exit code, or rejects when
-/// it cannot be started.
-export function run(command: string, args: string[], cwd: string, timeout = 300_000): Promise<{ stdout: string; code: number | null }> {
+/// Run a program; resolves with its stdout, stderr and exit code (null when
+/// a signal or the timeout stopped it), or rejects when it cannot be started.
+export function run(command: string, args: string[], cwd: string, timeout = 300_000): Promise<{ stdout: string; stderr: string; code: number | null }> {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { cwd, timeout, maxBuffer: 256 * 1024 * 1024, windowsHide: true }, (error, stdout) => {
+    execFile(command, args, { cwd, timeout, maxBuffer: 256 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
       const failed = error as (Error & { code?: unknown }) | null;
       if (failed && typeof failed.code === "string") {
         reject(new Error(`${command} could not be run: ${failed.message}`));
         return;
       }
-      resolve({ stdout, code: failed ? (typeof failed.code === "number" ? failed.code : 1) : 0 });
+      resolve({ stdout, stderr, code: failed ? (typeof failed.code === "number" ? failed.code : null) : 0 });
     });
   });
 }
 
 /// The findings under `dir`: `qlinter --format json .` there, with `args`
 /// (a profile, a configuration file) before it. Exit 1 means findings; a
-/// file that could not be read (exit 2) still lets the rest be read.
+/// file that could not be read (exit 2) still lets the rest be read. A run
+/// stopped before it finished, or one that printed no list (a configuration
+/// error exits 2 too), is an error, not "no findings" (#1399).
 export async function lintTree(qlinter: string, args: string[], dir: string): Promise<Finding[]> {
-  const { stdout, code } = await run(qlinter, [...args, "--format", "json", "."], dir);
-  if (code !== 0 && code !== 1 && code !== 2) {
-    throw new Error(`qlinter exited with ${code}`);
+  const { stdout, stderr, code } = await run(qlinter, [...args, "--format", "json", "."], dir);
+  const why = stderr.trim() === "" ? "" : `: ${stderr.trim().slice(0, 500)}`;
+  if (code === null) {
+    throw new Error(`qlinter was stopped before it finished${why}`);
+  }
+  if ((code !== 0 && code !== 1 && code !== 2) || (code !== 0 && stdout.trim() === "")) {
+    throw new Error(`qlinter exited with ${code}${why}`);
   }
   return readFindings(stdout.trim() === "" ? "[]" : stdout);
 }
