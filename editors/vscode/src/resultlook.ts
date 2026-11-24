@@ -102,6 +102,13 @@ export function parseRule(x: unknown): FormatRule | undefined {
   return { column: x.column, op: x.op as RuleOp, value, style };
 }
 
+/// `map`'s entry `name` set to `value` as its own: a query or a column can
+/// be named `__proto__`, which `map[name] = value` takes for the object's
+/// prototype, not a key, so the entry was never stored (#1884).
+function put<T>(map: Record<string, T>, name: string, value: T): void {
+  Object.defineProperty(map, name, { value, enumerable: true, writable: true, configurable: true });
+}
+
 /// The narrowest and widest a column is kept, and the most columns frozen:
 /// a layout past them is brought to them, not dropped (#1641).
 export const COLUMN_WIDTHS = { min: 24, max: 2000 } as const;
@@ -116,7 +123,7 @@ export function parseLayout(x: unknown): ColumnLayout | undefined {
   if (isObject(x.widths)) {
     for (const [name, w] of Object.entries(x.widths)) {
       if (typeof w === "number" && Number.isFinite(w)) {
-        widths[name] = Math.round(Math.min(COLUMN_WIDTHS.max, Math.max(COLUMN_WIDTHS.min, w)));
+        put(widths, name, Math.round(Math.min(COLUMN_WIDTHS.max, Math.max(COLUMN_WIDTHS.min, w))));
       }
     }
   }
@@ -133,7 +140,7 @@ export function parsePreset(x: unknown): ChartPreset | undefined {
   if (isObject(x.colours)) {
     for (const [name, c] of Object.entries(x.colours)) {
       if (typeof c === "string" && HEX.test(c)) {
-        colours[name] = c;
+        put(colours, name, c);
       }
     }
   }
@@ -162,7 +169,7 @@ export function parseLook(x: unknown): ResultLook {
     const charts: Record<string, CellChart> = {};
     for (const [name, c] of Object.entries(x.cellCharts)) {
       if (c === "bar" || c === "spark" || c === "text") {
-        charts[name] = c;
+        put(charts, name, c);
       }
     }
     if (Object.keys(charts).length > 0) {
@@ -187,11 +194,17 @@ export function parseLooks(stored: unknown): Record<string, ResultLook> {
     for (const [name, look] of Object.entries(stored)) {
       const parsed = parseLook(look);
       if (Object.keys(parsed).length > 0) {
-        out[name] = parsed;
+        put(out, name, parsed);
       }
     }
   }
   return out;
+}
+
+/// The look kept under `name`, or undefined: the looks' own entry, not
+/// what every object answers for `constructor` or `toString` (#1884).
+export function lookOf(looks: Record<string, ResultLook>, name: string): ResultLook | undefined {
+  return Object.prototype.hasOwnProperty.call(looks, name) ? looks[name] : undefined;
 }
 
 /// The parts of a look a saved query keeps, by which features are on: the
@@ -219,14 +232,14 @@ export function withLook(looks: Record<string, ResultLook>, name: string, look: 
   if (Object.keys(look).length === 0) {
     delete out[name];
   } else {
-    out[name] = look;
+    put(out, name, look);
   }
   return out;
 }
 
 /// The looks after the saved query `from` was renamed `to`.
 export function renamedLook(looks: Record<string, ResultLook>, from: string, to: string): Record<string, ResultLook> {
-  if (!(from in looks)) {
+  if (!Object.prototype.hasOwnProperty.call(looks, from)) {
     return looks;
   }
   const out = { ...looks, [to]: looks[from] };
@@ -265,7 +278,7 @@ export function withCellChart(look: ResultLook, column: string, chart: CellChart
   if (chart === undefined) {
     delete charts[column];
   } else {
-    charts[column] = chart;
+    put(charts, column, chart);
   }
   const out = { ...look };
   if (Object.keys(charts).length > 0) {
