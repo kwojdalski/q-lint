@@ -247,6 +247,12 @@ test("data bars and sparklines toggle per column; the column must fit (#1014)", 
   assert.deepStrictEqual(last(fake).look.cellCharts, { v: "text" });
   await fake.vscode.commands["q-lint.toggleResultDataBar"]({ column: 0 });
   assert.match(fake.said.at(-1), /does not fit/);
+  // A header's menu opened on a result shown before: nothing changes (#2076).
+  const opened = last(fake).run;
+  modes.show(result(), live, true);
+  await fake.vscode.commands["q-lint.toggleResultDataBar"]({ column: 1, run: opened });
+  assert.match(fake.said.at(-1), /the result changed while its menu was open/);
+  assert.deepStrictEqual(last(fake).look.cellCharts, { v: "text" });
   // From the palette: only the columns that fit are offered.
   fake.answers.picks.push((i) => {
     assert.strictEqual(i.label, "v");

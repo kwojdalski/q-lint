@@ -999,7 +999,7 @@
         sort();
       });
       if (menu) {
-        th.setAttribute("data-vscode-context", JSON.stringify({ webviewSection: "column", column: i, columnKind: columnKind(grid, i), preventDefaultContextMenuItems: false }));
+        th.setAttribute("data-vscode-context", JSON.stringify({ webviewSection: "column", column: i, columnKind: columnKind(grid, i), run: result.run, preventDefaultContextMenuItems: false }));
       }
       if (feature("columnLayout")) {
         // Drag a header to move its column; drag its right edge to resize it.
@@ -1407,7 +1407,7 @@
           // or to edit the cell.
           td.setAttribute("data-c", ci);
           td.setAttribute("data-r", r);
-          td.setAttribute("data-vscode-context", JSON.stringify({ webviewSection: "cell", column: ci, row: r, preventDefaultContextMenuItems: false }));
+          td.setAttribute("data-vscode-context", JSON.stringify({ webviewSection: "cell", column: ci, row: r, run: result.run, preventDefaultContextMenuItems: false }));
         }
         // A cell the diff marks keeps the diff's colour; then a rule's, a
         // colour column's, and the heatmap's.

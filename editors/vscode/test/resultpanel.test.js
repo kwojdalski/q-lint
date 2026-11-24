@@ -567,6 +567,18 @@ test("a double-clicked cell offers its drill-down templates, filled in, and runs
   const { RESULT_VIEW } = require("../out/liveconfig.js");
   await fake.vscode.commands[RESULT_VIEW.drillDown]({ webviewSection: "cell", column: 0, row: 0 });
   assert.deepStrictEqual(ran.at(-1), ["select from t where c>10", "p"]);
+  // A watched query's next run replaced it in place while the menu was
+  // open: the menu's cell is of the result it was opened on (#2076).
+  const opened = page.posted.at(-1).run;
+  modes.show(result([30, 40]), live(), true);
+  assert.strictEqual(page.posted.at(-1).id, page.posted.at(-2).id);
+  assert.notStrictEqual(page.posted.at(-1).run, opened);
+  const before = ran.length;
+  await fake.vscode.commands[RESULT_VIEW.drillDown]({ webviewSection: "cell", column: 0, row: 1, run: opened });
+  assert.strictEqual(ran.length, before);
+  await fake.vscode.commands[RESULT_VIEW.drillDown]({ webviewSection: "cell", column: 0, row: 1, run: page.posted.at(-1).run });
+  assert.deepStrictEqual(ran.at(-1), ["select from t where c>40", "p"]);
+  ran.length = before;
   // No template: it says where to add one.
   const none = fakeVscode();
   const info = [];

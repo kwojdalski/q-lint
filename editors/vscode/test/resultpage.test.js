@@ -442,6 +442,11 @@ test("a cell carries its menu context for Edit Cell, and a column header for Wra
   page.send({ ...result("s.1", 3), features: { drilldown: false } });
   const cell = page.rows()[1].children[0];
   assert.deepStrictEqual(JSON.parse(cell.attributes["data-vscode-context"]), { webviewSection: "cell", column: 0, row: 1, preventDefaultContextMenuItems: false });
+  // Each names the result it is of, by its run (#2076).
+  page.send({ ...result("s.1", 3), run: 7, features: { drilldown: false } });
+  assert.strictEqual(JSON.parse(page.rows()[1].children[0].attributes["data-vscode-context"]).run, 7);
+  assert.strictEqual(JSON.parse(page.body.all((e) => e.tagName === "TH" && e.attributes?.["data-vscode-context"] !== undefined)[0].attributes["data-vscode-context"]).run, 7);
+  page.send({ ...result("s.1", 3), features: { drilldown: false } });
   // Edit Cell is a menu item only: a double-click still drills down, and that is off.
   assert.strictEqual((page.body.all((e) => e.tagName === "TBODY")[0].listeners.dblclick ?? []).length, 0);
   const header = page.body.all((e) => e.tagName === "TH" && e.attributes?.["data-vscode-context"] !== undefined)[0];
