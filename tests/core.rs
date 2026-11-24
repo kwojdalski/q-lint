@@ -147,6 +147,24 @@ fn language_prefixes_preserve_following_q_diagnostics() {
     assert!(lint("a)x:1\n", "t.q", Profile::Style).is_empty());
 }
 
+#[test]
+fn a_bare_slash_after_a_foreign_line_opens_a_block_comment() {
+    // #2042. q 5 hands `t)c`, `/`, `  zz`, `\`, `show 1` to `.t.e` as `c`
+    // alone: the bare `/` opens a block comment, the `\` closes it, and q
+    // runs on. Read as part of the foreign statement, the `\` ended the
+    // script and the unclosed paren after it went unreported.
+    for prefix in ["p)", "k)"] {
+        let text = format!("fk:1\n{prefix}gk:2\n/\n zz\n\\\nshow fk\nx:(1;2\n");
+        let findings = lint(&text, "t.q", Profile::Style);
+        assert!(
+            findings.iter().any(|f| f.code == "QE001" && f.line == 7),
+            "{prefix}: {findings:?}"
+        );
+    }
+    // A `/ note` line is still carried over, as q carries it.
+    assert!(lint("k)gk:2\n/ note\n  (\n", "t.q", Profile::Style).is_empty());
+}
+
 /// The cases here were settled by running each one through a real q 4.x and
 /// asking it what the lambda's parameters actually are (`value value`), not by
 /// reading the reference manual. q accepts more in a parameter list than one

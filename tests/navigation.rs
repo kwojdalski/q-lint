@@ -2034,6 +2034,35 @@ fn a_global_is_followed_onto_a_k_line() {
 }
 
 #[test]
+fn a_block_comment_after_a_k_line_is_no_k() {
+    // #2042. KDB-X 5 runs `fk:1`, `k)gk:2`, `/`, ` fk in a comment`, `\`,
+    // `show fk` and prints 1: the bare `/` opens a block comment after the k
+    // statement, its `\` closes it, and `show fk` reads fk. Neither the
+    // comment's words nor a script end are k's.
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "fk:1\nk)gk:2\n/\n fk in a comment\n\\\nshow fk\n";
+    let uri = server.open(dir.path(), "a.q", text);
+    let reply = server.ask("textDocument/references", &uri, text, "fk:", 0, json!({}));
+    assert_eq!(
+        places(&reply["result"]),
+        [place("a.q", 0, 0, 2), place("a.q", 5, 5, 7)]
+    );
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        text,
+        "fk:",
+        0,
+        json!({"newName": "fz"}),
+    );
+    assert_eq!(
+        edits(&reply["result"]),
+        [edit("a.q", 0, 0, 2, "fz"), edit("a.q", 5, 5, 7, "fz")]
+    );
+}
+
+#[test]
 fn rename_can_be_turned_off_on_its_own() {
     let dir = tempfile::tempdir().unwrap();
     let options = json!({"rename": {"enable": false}});

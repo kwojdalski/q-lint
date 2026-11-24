@@ -3860,6 +3860,27 @@ pub(crate) fn timed_prefix(line: &str) -> usize {
         .find(&line[prompt..])
         .map_or(0, |m| prompt + m.end())
 }
+/// Whether a statement handed to another language - a `k)` or `p)` line -
+/// goes on over `line`, with `rest` the source after it. The one reader of
+/// this for the views and for navigation's reading of `k)` lines.
+///
+/// An indented or blank line continues it. A column-0 comment line ends
+/// nothing an indented line continues after it: q 5 hands `t)a`, `/ note`,
+/// `  b` to `.t.e` as one statement, and `t)a`, `/ note`, `c:1` as `t)a` and
+/// then q (#317). A bare `/` is no comment line but a block comment's
+/// opener, and ends the statement: q 5 hands `t)c`, `/`, `  zz`, `\`,
+/// `show 1` to `.t.e` as `c` alone and then prints 1 (#2042).
+pub(crate) fn foreign_continues(line: &str, rest: &str) -> bool {
+    let bare = |l: &str| l.trim_end_matches(['\r', '\n', ' ', '\t']) == "/";
+    let comment = |l: &str| l.starts_with('/') && !bare(l);
+    line.starts_with([' ', '\t'])
+        || line.trim().is_empty()
+        || comment(line)
+            && rest
+                .lines()
+                .find(|l| !l.trim().is_empty() && !comment(l))
+                .is_some_and(|l| l.starts_with([' ', '\t']))
+}
 /// Whether a source line is a system command whose argument is no q: any
 /// but `\t` and `\ts`, with or without a `q)` before it.
 pub(crate) fn system_command(line: &str) -> bool {
@@ -3947,20 +3968,7 @@ fn views(source: &str) -> Views {
             }
             statement = !stripped.is_empty() && !line.starts_with(['\\', '/', ' ', '\t']);
         }
-        // A column-0 comment line ends nothing an indented line continues
-        // after it: q 5 hands `t)a`, `/ note`, `  b` to `.t.e` as one
-        // statement, and `t)a`, `/ note`, `c:1` as `t)a` and then q (#317).
-        let carried = || {
-            source[end..]
-                .lines()
-                .find(|l| !l.trim().is_empty() && !l.starts_with('/'))
-                .is_some_and(|l| l.starts_with([' ', '\t']))
-        };
-        if foreign
-            && !(line.starts_with([' ', '\t'])
-                || stripped.is_empty()
-                || line.starts_with('/') && carried())
-        {
+        if foreign && !foreign_continues(line, &source[end..]) {
             foreign = false;
         }
         if !ended && block == 0 && string.is_none() {

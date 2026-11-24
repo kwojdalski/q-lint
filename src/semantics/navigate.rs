@@ -183,9 +183,9 @@ fn k_lines(code: &str, raw: &str) -> KLines {
         if line.starts_with("k)") && blanked {
             k = true;
             view[offset + 2..end].copy_from_slice(&raw.as_bytes()[offset + 2..end]);
-        } else if k && blanked && (line.starts_with([' ', '\t']) || line.trim().is_empty()) {
+        } else if k && blanked && crate::foreign_continues(line, &raw[end..]) {
             view[offset..end].copy_from_slice(&raw.as_bytes()[offset..end]);
-        } else if !(k && line.starts_with('/')) {
+        } else {
             k = false;
         }
         offset = end;

@@ -499,7 +499,8 @@ These are heuristics over source text, not a proof: a clean lint means no rule
 matched, which is weaker than "this code is correct".
 Column-zero `p)`/`k)` blocks and their indented continuations are opaque to
 built-in q checks; Python/K syntax is not validated. Normal q analysis resumes
-on the next nonblank, unindented q line, and `q)` bodies are checked normally.
+on the next nonblank, unindented q line - a bare `/` among them, which opens a
+block comment as it does anywhere - and `q)` bodies are checked normally.
 The Python-only repository hook's embedded-q-in-Python check is outside the
 standalone q analyzers' scope.
 
