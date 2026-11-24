@@ -12,6 +12,7 @@
 // processtools_q.test.js.
 import { qName } from "./explorer";
 import { isString, listOf } from "./processtools";
+import { symbolLiteral } from "./qliteral";
 
 export const TABLES = "{[x] string asc tables[]}";
 
@@ -75,7 +76,13 @@ export function operand(expression: string): string {
   return /^\.?[A-Za-z][A-Za-z0-9_.]*$/.test(e) ? e : `(${e})`;
 }
 
-const symbols = (names: string[]): string => names.map((n) => `\`${n}`).join("");
+/// Column names as a symbol list: `` `a`b `` when each is bare, as
+/// qliteral's symbolLiteral writes it; else `` (`$"trade id";`b) ``, in
+/// parentheses even for one, so the `` `$ `` takes no more than its name (#1818).
+const symbols = (names: string[]): string => {
+  const each = names.map(symbolLiteral);
+  return each.every((s) => !s.startsWith("`$")) ? each.join("") : `(${each.join(";")})`;
+};
 
 /// The joins `left` and `right` allow, the likeliest first.
 export function suggestJoins(left: Shape, right: Shape): Suggestion[] {
