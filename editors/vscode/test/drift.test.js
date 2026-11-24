@@ -59,6 +59,11 @@ test("definitions: top-level lambdas, in their context, with their lines", () =>
     [["f", "{x+\n/\n/note\n/\n  y}", 0, 4], ["g", "{x}", 5, 5]],
   );
   assert.deepStrictEqual(definitions("f:{x}\n/\nnote\n\\\ng:{y}").map((d) => [d.name, d.endLine]), [["f", 0], ["g", 4]]);
+  // `system "d .ns"` with a literal argument switches as `\d .ns` does.
+  assert.deepStrictEqual(
+    definitions('system "d .sys";\nh1:{x}\nsystem "d .";\nh2:{x}\nsystem "d .a.b" / note\nh3:{x}\nsystem "d ",x\nh4:{x}\n').map((d) => d.name),
+    [".sys.h1", "h2", ".a.b.h3", ".a.b.h4"],
+  );
   // An unclosed lambda, or a global assign, is no definition.
   assert.deepStrictEqual(definitions("f:{x\ng::{x}\n"), []);
 });
