@@ -274,3 +274,11 @@ test("the Process Monitor of a process with no TorQ timers, and a long working d
   const cd = tree.find((n) => n.label === "Settings").children.find((n) => n.label === "\\cd").description;
   assert.ok(cd.startsWith("/") && !cd.endsWith(".."), cd);
 });
+
+// One-character descriptions are char atoms: each its own string, not run
+// together into the first job's (#1581).
+test("the Timers view keeps each job's one-character description", { skip }, async (t) => {
+  const { TIMERS, readTimers } = require("../out/timers.js");
+  const c = await connect(t, '.timer.timer:([id:1 2i]period:0D00:01 0D00:05;active:10b;nextrun:2#.z.P;lastrun:2#.z.P;description:("a";"b");funcparam:2#enlist({x};1));\n');
+  assert.deepStrictEqual(readTimers(await c.call(TIMERS, null)).jobs.map((j) => j.description), ["a", "b"]);
+});
