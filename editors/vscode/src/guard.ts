@@ -530,18 +530,29 @@ function readStatement(statement: string, found: Set<string>): void {
       }
       // `xasc`, `xdesc` and `xkey` on a table named by a symbol change it in
       // place: `` `a xasc `t ``, `` xasc[`a;`t] ``, and projected on the
-      // columns, `` xasc[`a]`t `` and `` xasc[`a][`t] `` (#1447).
+      // columns, `` xasc[`a]`t `` and `` xasc[`a][`t] `` (#1447), also
+      // `` xasc[`a;]`t ``, `` xasc[`a]@`t ``, `` @[xasc[`a];`t] `` and
+      // `` (`a xasc)`t `` (#1725).
       if (["xasc", "xdesc", "xkey"].includes(unqualified(k.text))) {
-        let table = symbolAt(t, i + 1);
+        // The table a projection ending at `t[close]` is applied to.
+        const applied = (close: number): string | undefined =>
+          t[close + 1]?.text === "[" && t[close + 1].kind === "open"
+            ? symbolAt(t, close + 2)
+            : t[close + 1]?.kind === "op" && t[close + 1].text === "@"
+              ? symbolAt(t, close + 2)
+              : t[close + 1]?.text === ";" && t[i - 1]?.text === "[" && t[i - 2]?.kind === "op" && t[i - 2].text === "@"
+                ? symbolAt(t, close + 2)
+                : symbolAt(t, close + 1);
+        let table = t[i - 1]?.kind === "sym" && t[i - 2]?.text === "(" && next?.text === ")" ? applied(i + 1) : symbolAt(t, i + 1);
         if (next?.text === "[" && next.kind === "open") {
           let depth = 0;
           for (let j = i + 2; j < t.length; j++) {
             if (t[j].kind === "open") depth++;
             else if (t[j].kind === "close" && --depth < 0) {
-              table = t[j + 1]?.text === "[" && t[j + 1].kind === "open" ? symbolAt(t, j + 2) : symbolAt(t, j + 1);
+              table = applied(j);
               break;
             } else if (depth === 0 && t[j].text === ";") {
-              table = symbolAt(t, j + 1);
+              table = t[j + 1]?.text === "]" ? applied(j + 1) : symbolAt(t, j + 1);
               break;
             }
           }

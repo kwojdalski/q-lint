@@ -866,6 +866,27 @@ test("xasc, xdesc and xkey projected on the columns, then applied to a table by 
   }
 });
 
+test("xasc projected with a trailing ;, applied with @, or as (`a xasc) on a table by name is a change (#1725)", () => {
+  const cases = {
+    "xasc[`a;]`t": ["sorts `t in place with xasc"],
+    "xasc[`a]@`t": ["sorts `t in place with xasc"],
+    "@[xasc[`a];`t]": ["sorts `t in place with xasc"],
+    "(`a xasc)`t": ["sorts `t in place with xasc"],
+    "(`a xdesc)@`t": ["sorts `t in place with xdesc"],
+    "xkey[`a;][`t]": ["keys `t in place with xkey"],
+    // On a table's value, or not applied, they read.
+    "xasc[`a;]t": [],
+    "xasc[`a]@t": [],
+    "@[xasc[`a];t]": [],
+    "(`a xasc)t": [],
+    "(`a xasc)": [],
+    "xasc[`a;]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
 test("in k code, a monadic . evaluates as value does (#1448)", () => {
   const cases = {
     'k)."a:1"': ["evaluates a string with k's ."],
