@@ -388,3 +388,28 @@ test("correlation reads at most CORR_BUDGET row-pairs, over every step-th row pa
   const g = grid([["x", 9, ["1", "2", "3", "4"]], ["y", 9, ["2", "4", "6", "9"]]]);
   assert.deepStrictEqual({ ...L.correlation(g, [0, 1, 2, 3], 6), r: undefined, columns: undefined, names: undefined }, { r: undefined, columns: undefined, names: undefined, n: [[2, 2], [2, 2]], used: 2, of: 4, step: 2 });
 });
+
+test("a look, a cell chart, a width and a chart colour are kept under the name __proto__, and a name the looks do not hold has no look (#1884)", () => {
+  const layout = { order: ["a"], hidden: [], widths: {}, frozen: 1 };
+  // Kept as the map's own entry, so it is in what is stored and read back.
+  const kept = look.withLook({}, "__proto__", { layout });
+  assert.deepStrictEqual(Object.keys(kept), ["__proto__"]);
+  assert.strictEqual(Object.getPrototypeOf(kept), Object.prototype);
+  const back = look.parseLooks(JSON.parse(JSON.stringify(kept)));
+  assert.deepStrictEqual(look.lookOf(back, "__proto__"), { layout });
+  assert.deepStrictEqual(Object.keys(look.withLook(back, "__proto__", {})), []);
+  assert.deepStrictEqual(look.lookOf(look.renamedLook(back, "__proto__", "daily"), "daily"), { layout });
+  assert.deepStrictEqual(look.lookOf(look.renamedLook(look.withLook({}, "daily", { layout }), "daily", "__proto__"), "__proto__"), { layout });
+  // A name no look is kept under: not what every object inherits.
+  for (const name of ["__proto__", "constructor", "toString"]) {
+    assert.strictEqual(look.lookOf(look.parseLooks({}), name), undefined);
+    assert.deepStrictEqual(look.renamedLook({}, name, "x"), {});
+  }
+  // Columns named so keep theirs too.
+  const parsed = look.parseLook(JSON.parse('{"cellCharts":{"__proto__":"bar","px":"spark"},"layout":{"order":[],"hidden":[],"widths":{"__proto__":120},"frozen":0},"chart":{"kind":"line","series":[],"colours":{"__proto__":"#ff0000"}}}'));
+  assert.deepStrictEqual(Object.keys(parsed.cellCharts), ["__proto__", "px"]);
+  assert.deepStrictEqual(Object.entries(parsed.layout.widths), [["__proto__", 120]]);
+  assert.deepStrictEqual(Object.entries(parsed.chart.colours), [["__proto__", "#ff0000"]]);
+  assert.deepStrictEqual(Object.entries(look.withCellChart({}, "__proto__", "bar").cellCharts), [["__proto__", "bar"]]);
+  assert.strictEqual(look.withCellChart(look.withCellChart({}, "__proto__", "bar"), "__proto__", undefined).cellCharts, undefined);
+});

@@ -184,10 +184,17 @@ export class Interpreters {
     return value !== null && typeof value === "object" ? value : {};
   }
 
-  private async keep(file: string, found: Probe, env: Record<string, string>): Promise<Kept> {
+  /// The licence file `file` would read with `env` now, and when it was
+  /// last changed; undefined when none is found where q looks.
+  private licence(file: string, env: Record<string, string>): Kept["licence"] {
     const licence = licenceFile(file, { ...process.env, ...env }, os.homedir(), nodeFiles);
+    return licence !== undefined ? { file: licence, mtime: mtime(licence) } : undefined;
+  }
+
+  private async keep(file: string, found: Probe, env: Record<string, string>): Promise<Kept> {
+    const licence = this.licence(file, env);
     // Only what the probe printed: no banner text, no licensee.
-    const kept: Kept = { ...found, ...(licence !== undefined ? { licence: { file: licence, mtime: mtime(licence) } } : {}) };
+    const kept: Kept = { ...found, ...(licence !== undefined ? { licence } : {}) };
     await this.context.globalState.update(PROBES_KEY, { ...this.kept(), [file]: kept });
     return kept;
   }
@@ -335,7 +342,9 @@ export class Interpreters {
 
   /// Warn of the configured binary's licence from what a probe kept, at most
   /// once a day for it. Nothing is started; a binary never probed, or whose
-  /// licence file has changed since, is not warned of.
+  /// licence file has changed since, is not warned of - nor one that would
+  /// now read another file than the probe's, or a file where the probe
+  /// found none: a renewal the kept date knows nothing of (#1883).
   async warnFromKept(today: Date = new Date()): Promise<string | undefined> {
     const read = readInterpreter(get);
     if (!read.licence) {
@@ -346,9 +355,6 @@ export class Interpreters {
     if (file === undefined || kept?.expiry === undefined) {
       return undefined;
     }
-    if (kept.licence !== undefined && mtime(kept.licence.file) !== kept.licence.mtime) {
-      return undefined;
-    }
     const days = daysLeft(kept.expiry, today);
     const warning = days !== undefined ? expiryWarning(file, kept.expiry, days, read.warningDays) : undefined;
     if (warning === undefined) {
@@ -357,6 +363,11 @@ export class Interpreters {
     const day = today.toISOString().slice(0, 10);
     const warned = this.context.globalState.get<Record<string, string>>(WARNED_KEY, {});
     if (warned?.[file] === day) {
+      return undefined;
+    }
+    // Read only when there is a warning to give: the .env file is read for it.
+    const now = this.licence(file, mergeEnv(layoutEnvFor(file), await dotenvFor(resource())));
+    if (now?.file !== kept.licence?.file || now?.mtime !== kept.licence?.mtime) {
       return undefined;
     }
     await this.context.globalState.update(WARNED_KEY, { ...(warned ?? {}), [file]: day });

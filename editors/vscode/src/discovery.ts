@@ -101,6 +101,26 @@ export function parseServers(json: unknown): DiscoveryServer[] {
   return servers;
 }
 
+/// The stored list `json` with the server labelled as the workspace's shared
+/// list is - `.qlint`, a label taken up to 0.28 - given another, and that
+/// label; undefined when it holds none. Read as it stood, the server was
+/// dropped unsaid, and the next save wrote the list without it (#1889).
+export function relabelledServers(json: unknown): { servers: unknown[]; to: string } | undefined {
+  const shared = (entry: unknown): boolean =>
+    typeof entry === "object" && entry !== null && typeof (entry as { label?: unknown }).label === "string" && (entry as { label: string }).label.trim() === SHARED_SOURCE;
+  const at = Array.isArray(json) ? json.findIndex(shared) : -1;
+  if (!Array.isArray(json) || at < 0) {
+    return undefined;
+  }
+  const taken = new Set(parseServers(json).map((s) => s.label));
+  let to = `${SHARED_SOURCE} server`;
+  for (let n = 2; taken.has(to); n++) {
+    to = `${SHARED_SOURCE} server ${n}`;
+  }
+  // A second of the label was skipped as a repeat by every version.
+  return { servers: json.filter((e, i) => i === at || !shared(e)).map((e) => (shared(e) ? { ...(e as object), label: to } : e)), to };
+}
+
 /// The header the stored secret is sent as: `Name: value` names its own
 /// header, and anything else is the value of `Authorization` - `Bearer
 /// <token>`, `Basic <base64>`. Undefined when there is no secret.
@@ -366,12 +386,12 @@ export function toDownload(saved: Process[], listed: Process[]): { added: Proces
   };
 }
 
-/// The passwords Download Processes copies, as [from, to] secret keys: each
-/// downloaded process with a user takes the one given when it was connected
-/// to from `server`, which a saved process would otherwise never be asked
-/// for.
-export function downloadedPasswords(server: string, added: Process[]): [string, string][] {
+/// The passwords Download Processes copies, as [from, to] secret keys and
+/// the label saved under: each downloaded process with a user takes the one
+/// given when it was connected to from `server`, which a saved process
+/// would otherwise never be asked for.
+export function downloadedPasswords(server: string, added: Process[]): [string, string, string][] {
   return added
     .filter((p) => p.user !== undefined)
-    .map((p) => [passwordKey({ label: qualified(server, p.label), server }), passwordKey({ label: p.label })]);
+    .map((p) => [passwordKey({ label: qualified(server, p.label), server }), passwordKey({ label: p.label }), p.label]);
 }

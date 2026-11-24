@@ -228,3 +228,72 @@ test("two windows recording queries keep each other's, and Clear in one holds in
   assert.deepStrictEqual(one.globalState.get("q-lint.queryHistory").map((e) => e.code), ["after clear"]);
   assert.deepStrictEqual(a.history().map((e) => e.code), ["after clear"]);
 });
+
+// Clear run while the clock was ahead stamped a moment still to come: every
+// query sent after the clock was put right was "at or before" it (#1882).
+test("a Clear stamp from a clock that was ahead does not drop the queries sent since", async (t) => {
+  const { clearedStamp } = require("../out/history.js");
+  const now = new Date("2026-11-24T10:00:00.000Z");
+  // A stamp that is not after now is as stored; none is none.
+  assert.strictEqual(clearedStamp("2026-11-24T09:00:00.000Z", "2026-11-24T09:59:59.000Z", now), "2026-11-24T09:00:00.000Z");
+  assert.strictEqual(clearedStamp("2026-11-24T10:00:00.000Z", "2026-11-24T09:59:59.000Z", now), "2026-11-24T10:00:00.000Z");
+  assert.strictEqual(clearedStamp(undefined, "2026-11-24T09:59:59.000Z", now), undefined);
+  assert.strictEqual(clearedStamp(7, "2026-11-24T09:59:59.000Z", now), undefined);
+  // One after now is the moment before the entry: it is kept, what was sent before it is not.
+  assert.strictEqual(clearedStamp("2027-03-01T10:00:00.000Z", "2026-11-24T09:59:59.000Z", now), "2026-11-24T09:59:58.999Z");
+  assert.strictEqual(clearedStamp("2027-03-01T10:00:00.000Z", "not a date", now), "2026-11-24T09:59:59.999Z");
+  assert.strictEqual(clearedStamp("2027-03-01T10:00:00.000Z", "2026-12-01T00:00:00.000Z", now), "2026-11-24T09:59:59.999Z");
+
+  stub.reset();
+  const context = stub.newContext();
+  const live = new Live(context);
+  t.after(() => context.subscriptions.forEach((d) => d.dispose?.()));
+  const entry = (code, ago) => ({ process: "p", code, at: new Date(Date.now() - ago).toISOString(), millis: 1, outcome: "ok" });
+  // Cleared "next year"; another window still holds a query from before it.
+  await context.globalState.update("q-lint.queryHistoryCleared", new Date(Date.now() + 365 * 86_400_000).toISOString());
+  await context.globalState.update("q-lint.queryHistory", [entry("before the clear", 3_600_000)]);
+  await live.record(entry("a", 300));
+  await live.record(entry("b", 200));
+  await live.record(entry("c", 100));
+  assert.deepStrictEqual(live.history().map((e) => e.code), ["c", "b", "a"]);
+  assert.deepStrictEqual(context.globalState.get("q-lint.queryHistory").map((e) => e.code), ["c", "b", "a"]);
+  assert.ok(context.globalState.get("q-lint.queryHistoryCleared") < new Date().toISOString());
+  // Clear still clears.
+  await live.clearHistory();
+  assert.deepStrictEqual(live.history(), []);
+});
+
+// The history was capped by count only: 200 runs of a 1 MB file put over
+// 200 MB in globalState, written again at every query (#1880).
+test("the history keeps the newest queries whose code fits a size between them, each whole", async (t) => {
+  const { HISTORY_CHARS, mergedHistory } = require("../out/history.js");
+  const entry = (code, sec) => ({ process: "p", code, at: new Date(Date.UTC(2026, 10, 24, 10, 0, sec)).toISOString(), millis: 1, outcome: "ok" });
+  const codes = (list) => list.map((e) => (e.code.length > 20 ? `${e.code.slice(0, 2)}x${e.code.length}` : e.code));
+  // Newest first until the next does not fit; one too long alone is left out, not cut, and ends nothing.
+  const held = [entry("d".repeat(40), 4), entry("c".repeat(101), 3), entry("b".repeat(40), 2), entry("a".repeat(40), 1), entry("old", 0)];
+  assert.deepStrictEqual(codes(mergedHistory(undefined, held, [], undefined, 200, 100)), ["ddx40", "bbx40"]);
+  assert.deepStrictEqual(codes(mergedHistory(entry("e".repeat(30), 5), held, [], undefined, 200, 100)), ["eex30", "ddx40"]);
+  assert.deepStrictEqual(codes(mergedHistory(entry("e".repeat(101), 5), held, [], undefined, 200, 100)), ["ddx40", "bbx40"]);
+  assert.deepStrictEqual(codes(mergedHistory(undefined, held, [], undefined, 200)), ["ddx40", "ccx101", "bbx40", "aax40", "old"]);
+
+  stub.reset();
+  const context = stub.newContext();
+  const live = new Live(context);
+  t.after(() => context.subscriptions.forEach((d) => d.dispose?.()));
+  const file = "t:([]a:til 10);\n".repeat(Math.ceil(HISTORY_CHARS / 4 / 16)).slice(0, HISTORY_CHARS / 4);
+  await live.record(entry("select from t", 0));
+  for (let i = 1; i <= 12; i++) {
+    await live.record(entry(`${file}/${String(i).padStart(2, "0")}`, i));
+  }
+  const stored = context.globalState.get("q-lint.queryHistory");
+  assert.ok(JSON.stringify(stored).length < HISTORY_CHARS * 1.1, `${JSON.stringify(stored).length} characters stored`);
+  // The newest three, as they were sent: Run Again runs the whole of each.
+  assert.deepStrictEqual(stored.map((e) => e.code.slice(-3)), ["/12", "/11", "/10"]);
+  assert.ok(stored.every((e) => e.code.startsWith(file) && e.code.length === file.length + 3));
+  assert.deepStrictEqual(live.history(), stored);
+  // A query longer than the whole size is not kept, and the rest stay.
+  await live.record(entry("x".repeat(HISTORY_CHARS + 1), 20));
+  assert.deepStrictEqual(context.globalState.get("q-lint.queryHistory").map((e) => e.code.slice(-3)), ["/12", "/11", "/10"]);
+  await live.record(entry("count t", 21));
+  assert.deepStrictEqual(live.history().map((e) => e.code.slice(-3)), ["t t", "/12", "/11", "/10"]);
+});

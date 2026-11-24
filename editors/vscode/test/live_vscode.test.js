@@ -228,6 +228,32 @@ test("Add and Edit Process keep what was saved while they asked", async (t) => {
   assert.ok(stub.messages.some(([, text]) => /dup.*taken/.test(text)), JSON.stringify(stub.messages));
 });
 
+// A process saved before 0.37 with a host 0.37 refuses was not read, so
+// any save wrote the list without it: its tags, connect script and tunnel
+// were gone, and its password left for the next process of its label (#1881).
+test("a saved process whose host is none is shown, kept by a save, and edited to one", async (t) => {
+  const { context, live } = await setUp(t, [
+    { label: "prod-rdb", host: "rdb.example.com:5000", port: 5000, user: "svc", tags: ["prod"], init: "x:1", ssh: "bastion" },
+    proc("dev", 5001),
+  ]);
+  context.secrets.all.set("q-lint.password.prod-rdb", "its own");
+  const tree = stub.trees.find((v) => v.id === "q-lint.processes").options.treeDataProvider;
+  const row = () => tree.getTreeItem({ kind: "process", process: live.processes().find((p) => p.label === "prod-rdb") });
+  assert.strictEqual(row().description, "[rdb.example.com:5000]:5000 - not a host");
+  stub.inputs = ["uat", "localhost", "5002", "", ""];
+  stub.picks = ["No"];
+  await stub.commands.get("q-lint.addProcess")();
+  assert.deepStrictEqual(context.globalState.get("q-lint.processes").map((p) => p.label), ["prod-rdb", "dev", "uat"]);
+  // Edited to a host: the rest of it is kept, and the password, given for
+  // what was never one, asked for again.
+  stub.inputs = ["prod-rdb", "rdb.example.com", "5000", "svc", "", "prod"];
+  stub.picks = ["No"];
+  await stub.commands.get("q-lint.editProcess")("prod-rdb");
+  assert.deepStrictEqual(live.processes()[0], { label: "prod-rdb", host: "rdb.example.com", port: 5000, user: "svc", tags: ["prod"], init: "x:1", ssh: "bastion" });
+  assert.strictEqual(row().description, "rdb.example.com:5000");
+  assert.strictEqual(context.secrets.all.has("q-lint.password.prod-rdb"), false);
+});
+
 // The same for discovery servers: Add and Edit saved the list as it was
 // before their input boxes.
 test("Add and Edit Discovery Server keep what was saved while they asked", async (t) => {
@@ -357,6 +383,127 @@ test("a discovered process listed at another host or port forgets its password, 
   assert.strictEqual(secrets.has("q-lint.discoveredPassword.desk/rdb"), false);
   assert.strictEqual(secrets.get("q-lint.discoveredPassword.desk/hdb"), "pw");
   void again;
+});
+
+// Before 0.37 nothing was kept of where a discovered process's password was
+// given. The first listing after the upgrade was taken as that place, so a
+// process moved while VS Code was closed was sent the password (#1878).
+test("a discovered process's password kept with no record of where it was given is forgotten at the first listing", async (t) => {
+  const http = require("node:http");
+  const listed = [{ label: "rdb", host: "10.0.0.9", port: 6001, user: "u" }, { label: "hdb", host: "10.0.0.9", port: 6002, user: "u" }];
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(listed));
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  t.after(() => server.close());
+  stub.reset();
+  const context = stub.newContext();
+  const secrets = context.secrets.all;
+  // As 0.36 left it: passwords given for rdb, hdb and one not listed now,
+  // and of where, only what a later version kept for hdb.
+  await context.globalState.update("q-lint.discoveryServers", [{ label: "desk", url: `http://127.0.0.1:${server.address().port}/` }]);
+  await context.globalState.update("q-lint.discoveredPasswords", { desk: ["rdb", "hdb", "gone"] });
+  await context.globalState.update("q-lint.discoveredSeen", { desk: [{ label: "hdb", host: "10.0.0.9", port: 6002, tags: [], user: "u" }] });
+  for (const l of ["rdb", "hdb", "gone"]) secrets.set(`q-lint.discoveredPassword.desk/${l}`, "pw");
+  const live = new Live(context);
+  t.after(() => {
+    for (const d of context.subscriptions) d.dispose?.();
+  });
+  await stub.commands.get("q-lint.reloadDiscoveryServer")("desk");
+  assert.deepStrictEqual([...secrets.keys()].sort(), ["q-lint.discoveredPassword.desk/gone", "q-lint.discoveredPassword.desk/hdb"]);
+  assert.deepStrictEqual(context.globalState.get("q-lint.discoveredPasswords"), { desk: ["hdb", "gone"] });
+  assert.deepStrictEqual(context.globalState.get("q-lint.discoveredSeen").desk.map((p) => p.label), ["hdb"]);
+  // The one not listed then is forgotten when it is listed again, wherever.
+  listed.push({ label: "gone", host: "10.0.0.9", port: 6003, user: "u" });
+  await stub.commands.get("q-lint.reloadDiscoveryServer")("desk");
+  assert.deepStrictEqual([...secrets.keys()], ["q-lint.discoveredPassword.desk/hdb"]);
+  assert.deepStrictEqual(context.globalState.get("q-lint.discoveredPasswords"), { desk: ["hdb"] });
+  void live;
+});
+
+// Up to 0.26 a discovered process's password was kept under the key a saved
+// process of that label has, and nothing took it away since: a process
+// saved as `desk/rdb` afterwards, with no password, connected with it (#1887).
+test("a process new to the saved list starts with no password but the one given with it", async (t) => {
+  const http = require("node:http");
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify([{ label: "hdb", host: "10.0.0.9", port: 6002, user: "u" }, { label: "tp", host: "10.0.0.9", port: 6003, user: "u" }]));
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  t.after(() => server.close());
+  const { context, live } = await setUp(t, [proc("old", 1, { user: "me" })]);
+  const secrets = context.secrets.all;
+  const stale = ["desk/rdb", "renamed", "imported", "hdb", "tp", "bulk"];
+  const left = () => stale.filter((l) => secrets.has(`q-lint.password.${l}`));
+  for (const l of stale) secrets.set(`q-lint.password.${l}`, "another's");
+  secrets.set("q-lint.password.old", "its own");
+  // Added with no password: what was under its key is not sent for it.
+  stub.inputs = ["desk/rdb", "localhost", "5001", "me", "", ""];
+  stub.picks = ["No"];
+  await stub.commands.get("q-lint.addProcess")();
+  assert.deepStrictEqual(left(), ["renamed", "imported", "hdb", "tp", "bulk"]);
+  // Renamed with no password: its own goes with it, over what was there.
+  stub.inputs = ["renamed", "127.0.0.1", "1", "me", "", ""];
+  stub.picks = ["No"];
+  await stub.commands.get("q-lint.editProcess")("old");
+  assert.strictEqual(secrets.get("q-lint.password.renamed"), "its own");
+  // Renamed to another host, its own is forgotten (#1109), and none is left.
+  secrets.set("q-lint.password.old", "another's");
+  stub.inputs = ["old", "elsewhere", "1", "me", "", ""];
+  stub.picks = ["No"];
+  await stub.commands.get("q-lint.editProcess")("renamed");
+  assert.deepStrictEqual([secrets.has("q-lint.password.old"), secrets.has("q-lint.password.renamed")], [false, false]);
+  // Imported, which brings no password.
+  const { vscode } = require("./vscode_stub.js");
+  const fs = vscode.workspace.fs;
+  t.after(() => (vscode.workspace.fs = fs));
+  vscode.workspace.fs = { readFile: async () => Buffer.from(JSON.stringify([proc("imported", 2, { user: "me" }), proc("desk/rdb", 5001, { user: "me" })])) };
+  await stub.commands.get("q-lint.importProcesses")(vscode.Uri.file("/x.json"));
+  assert.deepStrictEqual(left(), ["hdb", "tp", "bulk"]);
+  // Downloaded: the one given for it as a discovered process, or none.
+  await stub.commands.get("q-lint.addDiscoveryServer")({ label: "desk", url: `http://127.0.0.1:${server.address().port}/` });
+  secrets.set("q-lint.discoveredPassword.desk/hdb", "given");
+  await stub.commands.get("q-lint.downloadDiscoveredProcesses")("desk");
+  assert.strictEqual(secrets.get("q-lint.password.hdb"), "given");
+  assert.deepStrictEqual(left(), ["hdb", "bulk"]);
+  // Saved by a view around this one.
+  await live.saveProcesses([...live.processes(), proc("bulk", 3, { user: "me" })]);
+  assert.deepStrictEqual(left(), ["hdb"]);
+  // And one given at Add is kept.
+  stub.inputs = ["added", "localhost", "5004", "me", "given", ""];
+  stub.picks = ["No"];
+  await stub.commands.get("q-lint.addProcess")();
+  assert.strictEqual(secrets.get("q-lint.password.added"), "given");
+  assert.deepStrictEqual(live.processes().map((p) => p.label), ["old", "desk/rdb", "imported", "hdb", "tp", "bulk", "added"]);
+});
+
+// A discovery server labelled `.qlint`, as could be up to 0.28, was not
+// read: gone from the view unsaid, its auth header left in secret storage,
+// and the next change of the servers wrote the list without it (#1889).
+test("a discovery server with the shared list's label is given another at activation, and said", async (t) => {
+  stub.reset();
+  stub.config.user["discovery.refreshInterval"] = 0;
+  const context = stub.newContext();
+  const secrets = context.secrets.all;
+  await context.globalState.update("q-lint.discoveryServers", [{ label: ".qlint", url: "http://127.0.0.1:9/" }, { label: "desk", url: "http://127.0.0.1:9/d" }]);
+  await context.globalState.update("q-lint.discoveredPasswords", { ".qlint": ["rdb"], desk: ["hdb"] });
+  secrets.set("q-lint.discovery.auth..qlint", "Bearer t");
+  secrets.set("q-lint.discoveredPassword..qlint/rdb", "pw");
+  secrets.set("q-lint.discoveredPassword.desk/hdb", "pw");
+  const live = new Live(context);
+  t.after(() => {
+    for (const d of context.subscriptions) d.dispose?.();
+  });
+  for (let i = 0; i < 50 && stub.messages.length === 0; i++) await sleep(10);
+  assert.deepStrictEqual(live.discovery.servers().map((s) => s.label), [".qlint server", "desk"]);
+  assert.deepStrictEqual(context.globalState.get("q-lint.discoveryServers")[0], { label: ".qlint server", url: "http://127.0.0.1:9/" });
+  // Its auth header goes with it, to the URL it was given for; the passwords
+  // given for its processes are forgotten, as when a server is renamed.
+  assert.deepStrictEqual([...secrets.keys()].sort(), ["q-lint.discoveredPassword.desk/hdb", "q-lint.discovery.auth..qlint server"]);
+  assert.deepStrictEqual(context.globalState.get("q-lint.discoveredPasswords"), { desk: ["hdb"] });
+  assert.deepStrictEqual(stub.messages, [["info", 'q-lint: the discovery server ".qlint" is now ".qlint server": .qlint names the workspace\'s shared process list. The passwords given for its processes are asked for again.']]);
 });
 
 // Any failed connect forgot the password just given - a host down or

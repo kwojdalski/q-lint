@@ -13,6 +13,7 @@ const {
   fetchProcesses,
   findDiscovered,
   parseServers,
+  relabelledServers,
   qualified,
   serverDescription,
   serverLabelProblem,
@@ -398,5 +399,23 @@ test("a server's tooltip shows its label as written", () => {
 test("a download takes along the password of each process with a user", () => {
   const { downloadedPasswords } = require("../out/discovery.js");
   const added = [{ ...proc("rdb"), user: "u" }, proc("hdb")];
-  assert.deepStrictEqual(downloadedPasswords("desk", added), [["q-lint.discoveredPassword.desk/rdb", "q-lint.password.rdb"]]);
+  assert.deepStrictEqual(downloadedPasswords("desk", added), [["q-lint.discoveredPassword.desk/rdb", "q-lint.password.rdb", "rdb"]]);
+});
+
+// `.qlint` named a discovery server up to 0.28, and names the workspace's
+// shared list since: read after, the server was dropped unsaid (#1889).
+test("a stored server with the shared list's label gets another, not taken", () => {
+  const desk = { label: "desk", url: "http://d/" };
+  assert.strictEqual(relabelledServers([desk]), undefined);
+  assert.strictEqual(relabelledServers("x"), undefined);
+  assert.deepStrictEqual(parseServers([{ label: ".qlint", url: "http://h/" }, desk]), [desk]);
+  assert.deepStrictEqual(relabelledServers([{ label: ".qlint", url: "http://h/" }, desk]), {
+    servers: [{ label: ".qlint server", url: "http://h/" }, desk],
+    to: ".qlint server",
+  });
+  // A label taken is passed over, and a second of the label, never read, goes.
+  assert.deepStrictEqual(relabelledServers([{ label: ".qlint server", url: "http://s/" }, { label: " .qlint", url: "http://h/" }, { label: ".qlint", url: "http://x/" }]), {
+    servers: [{ label: ".qlint server", url: "http://s/" }, { label: ".qlint server 2", url: "http://h/" }],
+    to: ".qlint server 2",
+  });
 });

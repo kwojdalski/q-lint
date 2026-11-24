@@ -84,6 +84,7 @@ import { fillDrilldown, templatesFor } from "./drilldown";
 import { EXPORT_FORMATS, exportResult, FORMAT_INFO, shownGrid, type ExportFormat } from "./resultexport";
 import { plainSvg, PLOTS } from "./plots";
 import {
+  lookOf,
   lookParts,
   MAX_FROZEN,
   parseLayout,
@@ -490,7 +491,7 @@ export class QueryModes {
     // A saved query's result keeps its look; any other starts from the
     // last run of its code.
     const saved = replaced?.saved ?? (this.expecting !== undefined && savedRun(result.code, this.expecting.code) ? this.expecting.name : undefined);
-    const look = replaced?.look ?? (saved !== undefined ? this.savedLooks()[saved] : undefined) ?? this.looks.get(result.code) ?? {};
+    const look = replaced?.look ?? (saved !== undefined ? lookOf(this.savedLooks(), saved) : undefined) ?? this.looks.get(result.code) ?? {};
     const shown: Shown = {
       process: result.process,
       code: result.code,
@@ -1176,7 +1177,7 @@ export class QueryModes {
     }
     const on = this.lookOn();
     const looks = this.savedLooks();
-    const before = looks[shown.saved] ?? {};
+    const before = lookOf(looks, shown.saved) ?? {};
     const kept: ResultLook = {
       ...lookParts(before, { rules: !on.rules, cellCharts: !on.cellCharts, layout: !on.layout, chart: chart === undefined }),
       ...lookParts(shown.look, { ...on, chart: false }),

@@ -414,7 +414,8 @@ test("a workspace not open when a process was renamed or deleted retargets its t
   assert.deepStrictEqual(state.get("q-lint.dashboards")[0].tiles.map((x) => x.process), ["rdb-ny"]);
   assert.deepStrictEqual(state.get("q-lint.scheduledExports").map((x) => x.process), ["rdb-ny"]);
   // Applied once: a process named rdb again later keeps its own tiles.
-  assert.strictEqual(state.get("q-lint.processRelabelsApplied"), 2);
+  // Three in the log: the label rdb-ny taken (#1879), the rename, the deletion.
+  assert.strictEqual(state.get("q-lint.processRelabelsApplied"), 3);
 });
 
 // Disconnect from the command palette with nothing connected did nothing

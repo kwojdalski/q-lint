@@ -174,3 +174,18 @@ test("a rename or deletion is logged for the workspaces not open, each applying 
   // Kept to its last entries, numbered on.
   assert.deepStrictEqual(withRelabel(log, "a", "b", 2), [log[1], { n: 3, from: "a", to: "b" }]);
 });
+
+// The check of a host arrived in 0.37 for every list read, the saved one
+// too: a process saved before it with `host:5000` was dropped unsaid, and
+// the next save wrote the list without it (#1881).
+test("a host that is none is skipped in a list read from elsewhere, and kept in the one saved here", () => {
+  const { processTooltip } = require("../out/processes.js");
+  const list = [{ label: "prod", host: "rdb.example.com:5000", port: 5000, tags: ["prod"], init: "x:1", ssh: "bastion" }, { label: "bad", host: "h", port: 0 }];
+  assert.deepStrictEqual(parseProcesses(list, true).processes, []);
+  const stored = parseProcesses(list, true, true);
+  assert.deepStrictEqual(stored.processes, [{ label: "prod", host: "rdb.example.com:5000", port: 5000, tags: ["prod"], init: "x:1", ssh: "bastion" }]);
+  assert.deepStrictEqual(stored.problems, ["Entry 2 (bad): A port is between 1 and 65535."]);
+  // And its row says so.
+  assert.ok(processTooltip(stored.processes[0]).includes("\n\nnot a host (A host only: the port is asked for next\\.): Edit Process changes it\n\n"));
+  assert.doesNotMatch(processTooltip({ label: "a", host: "h", port: 1, tags: [] }), /not a host/);
+});

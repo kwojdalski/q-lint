@@ -301,3 +301,66 @@ test("an export is written whole beside the file and renamed over it; a failed w
   assert.ok(fs.statSync(blocked).isDirectory());
   assert.deepStrictEqual(fs.readdirSync(dir).sort(), ["blocked.csv", "out.csv"]);
 });
+
+// v0.36 deleted a saved query or a process and left what ran it: the next
+// one given the name was then run on a timer nobody set for it (#1879).
+test("a schedule and a tile left by a deleted saved query go when another takes its name", async (t) => {
+  const { SavedQueries } = require("../out/savedqueriesview.js");
+  if (!vscode.Uri.from) vscode.Uri.from = (c) => ({ ...c, toString: () => `${c.scheme}:${c.path}` });
+  const { live, schedules, context } = await setUp(t, [{ label: "p", host: "h", port: 1, tags: [] }], [{ name: "kept", code: "1+1" }, { name: "other", code: "3" }]);
+  const sent = [];
+  live.runApart = async (_p, code) => (sent.push(code), { ok: true, type: -7, text: ["2"] });
+  const schedule = (id, query) => ({ id, query, process: "p", format: "csv", path: "/dev/null", times: ["23:59"], mode: "replace", since: Date.now() });
+  const tile = (id, query) => ({ id, query, process: "p", view: "table", refresh: 30 });
+  await context.workspaceState.update(SCHEDULES_KEY, [schedule("a", "daily"), schedule("b", "kept"), schedule("c", "weekly")]);
+  await context.workspaceState.update("q-lint.dashboards", [{ name: "Desk", columns: 2, tiles: [tile("t1", "daily"), tile("t2", "kept"), tile("t3", "weekly")] }]);
+  const saved = new SavedQueries(context, live);
+  await saved.save({ name: "daily", code: "select count i from trade" });
+  assert.deepStrictEqual(schedules.list().map((s) => s.id), ["b", "c"]);
+  assert.deepStrictEqual(context.workspaceState.get("q-lint.dashboards")[0].tiles.map((x) => x.id), ["t2", "t3"]);
+  assert.deepStrictEqual(stub.messages.at(-1), [
+    "info",
+    'q-lint: saved the query "daily". The 1 scheduled export(s) and 1 dashboard tile(s) an earlier query of that name left were deleted.',
+  ]);
+  // A rename takes a name as a save does; what the renamed query had moves with it.
+  await context.workspaceState.update(SCHEDULES_KEY, [...schedules.list(), schedule("d", "other")]);
+  await saved.renameQuery({ name: "other", code: "3" }, "weekly");
+  assert.deepStrictEqual(schedules.list().map((s) => [s.id, s.query]), [["b", "kept"], ["d", "weekly"]]);
+  assert.deepStrictEqual(context.workspaceState.get("q-lint.dashboards")[0].tiles.map((x) => x.id), ["t2"]);
+  assert.match(stub.messages.at(-1)[1], /1 scheduled export\(s\) and 1 dashboard tile\(s\) an earlier query of that name left were deleted/);
+  // A name nothing was left under says nothing more.
+  await saved.save({ name: "fresh", code: "4" });
+  assert.deepStrictEqual(stub.messages.at(-1), ["info", 'q-lint: saved the query "fresh".']);
+  assert.deepStrictEqual(sent, []);
+});
+
+test("a schedule and a tile left by a deleted process go when another takes its label", async (t) => {
+  const { live, schedules, context } = await setUp(t, [{ label: "p", host: "h", port: 1, tags: [] }], [{ name: "daily", code: "1+1" }]);
+  const sent = [];
+  live.runApart = async (process, code) => (sent.push([process.label, code]), { ok: true, type: -7, text: ["2"] });
+  const schedule = (id, process) => ({ id, query: "daily", process, format: "csv", path: "/dev/null", every: 1, mode: "replace", since: 0 });
+  const tile = (id, process) => ({ id, query: "daily", process, view: "table", refresh: 30 });
+  await context.workspaceState.update(SCHEDULES_KEY, [schedule("a", "prod"), schedule("b", "p"), schedule("c", "uat")]);
+  await context.workspaceState.update("q-lint.dashboards", [{ name: "Desk", columns: 2, tiles: [tile("t1", "prod"), tile("t2", "p"), tile("t3", "uat")] }]);
+  stub.inputs.push("prod", "prod.example.com", "5010", "", "");
+  stub.picks.push("No");
+  await stub.commands.get("q-lint.addProcess")();
+  assert.deepStrictEqual(live.processes().map((p) => p.label), ["p", "prod"]);
+  assert.deepStrictEqual(schedules.list().map((s) => s.id), ["b", "c"]);
+  assert.deepStrictEqual(context.workspaceState.get("q-lint.dashboards")[0].tiles.map((x) => x.id), ["t2", "t3"]);
+  assert.deepStrictEqual(stub.messages.at(-1), [
+    "info",
+    'q-lint: the 1 scheduled export(s) and 1 dashboard tile(s) an earlier process labelled "prod" left were deleted.',
+  ]);
+  // A workspace not open drops its own when it opens, as for a deleted process (#1749).
+  assert.deepStrictEqual(context.globalState.get("q-lint.processRelabels"), [{ n: 1, from: "prod", to: null }]);
+  // A rename takes a label as Add Process does; what the renamed process had moves with it.
+  stub.inputs.push("uat", "h", "1", "", "");
+  stub.picks.push("No");
+  await stub.commands.get("q-lint.editProcess")("p");
+  assert.deepStrictEqual(schedules.list().map((s) => [s.id, s.process]), [["b", "uat"]]);
+  assert.deepStrictEqual(context.workspaceState.get("q-lint.dashboards")[0].tiles.map((x) => [x.id, x.process]), [["t2", "uat"]]);
+  // Only what is left is run.
+  await schedules.tick(new Date());
+  assert.deepStrictEqual(sent, [["uat", "1+1"]]);
+});
