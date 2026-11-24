@@ -16,7 +16,7 @@
 // `.z.p` advances in microseconds there, so a statement faster than that
 // reads 0.
 
-import { blockDepth } from "./statements";
+import { blockDepth, stringOpen } from "./statements";
 
 /// The lambda: given the statements, it answers the overhead per
 /// statement in ns, then for each statement run whether it ran, its time in
@@ -67,6 +67,8 @@ export interface Timings {
 export function statementSpans(text: string, firstLine = 0): Span[] {
   const out: Span[] = [];
   let current: { lines: string[]; start: number; end: number } | undefined;
+  // Whether a string is open at the end of the statement so far.
+  let quoted = false;
   let depth = 0;
   const end = (): void => {
     if (current !== undefined) {
@@ -88,12 +90,18 @@ export function statementSpans(text: string, firstLine = 0): Span[] {
       break;
     }
     if (line.trim() === "") {
+      // In a string a blank line is part of it, as q reads it (#1465).
+      if (quoted && current !== undefined) {
+        current.lines.push(line);
+        current.end = at;
+      }
       continue;
     }
     const continues = line.startsWith(" ") || line.startsWith("\t");
     if (continues && current !== undefined) {
       current.lines.push(line);
       current.end = at;
+      quoted = stringOpen(quoted, line);
       continue;
     }
     if (line.startsWith("/")) {
@@ -101,6 +109,7 @@ export function statementSpans(text: string, firstLine = 0): Span[] {
     }
     end();
     current = { lines: [continues ? line.trimStart() : line], start: at, end: at };
+    quoted = stringOpen(false, line);
   }
   end();
   return out;

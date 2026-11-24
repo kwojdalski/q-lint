@@ -31,6 +31,27 @@ export function blockDepth(depth: number, line: string): number {
   return depth > 0 && line === "\\" ? depth - 1 : depth;
 }
 
+/// Whether a string is open after `line`, given whether one was open before
+/// it: a `"` opens or closes one, `\\` in one escapes the character after it,
+/// and a comment - a `/` after a blank outside a string - ends the line.
+export function stringOpen(open: boolean, line: string): boolean {
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (open) {
+      if (c === "\\") {
+        i++;
+      } else if (c === '"') {
+        open = false;
+      }
+    } else if (c === '"') {
+      open = true;
+    } else if (c === "/" && (i === 0 || line[i - 1] === " " || line[i - 1] === "\t")) {
+      break;
+    }
+  }
+  return open;
+}
+
 function blank(line: string): boolean {
   return line.trim() === "";
 }
@@ -40,6 +61,8 @@ function blank(line: string): boolean {
 export function statements(text: string): string[] {
   const out: string[] = [];
   let current: string[] | undefined;
+  // Whether a string is open at the end of the statement so far.
+  let quoted = false;
   let depth = 0;
   const end = (): void => {
     if (current !== undefined) {
@@ -61,10 +84,15 @@ export function statements(text: string): string[] {
       break;
     }
     if (blank(line)) {
+      // In a string a blank line is part of it, as q reads it (#1465).
+      if (quoted && current !== undefined) {
+        current.push(line);
+      }
       continue;
     }
     if (continues(line) && current !== undefined) {
       current.push(line);
+      quoted = stringOpen(quoted, line);
       continue;
     }
     if (line.startsWith("/")) {
@@ -72,6 +100,7 @@ export function statements(text: string): string[] {
     }
     end();
     current = [continues(line) ? line.trimStart() : line];
+    quoted = stringOpen(false, line);
   }
   end();
   return out;

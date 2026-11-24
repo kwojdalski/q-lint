@@ -244,3 +244,11 @@ test("a marker with a block comment between it and a continuation line is a comm
   assert.deepStrictEqual(statements(lines.join("\n")), ["f:{x+\n  y}", "g:1"]);
   assert.deepStrictEqual(markers(lines), [6]);
 });
+
+test("a blank line in a multi-line string is part of the string, as q reads it (#1465)", () => {
+  const { statementSpans } = require("../out/linetimings.js");
+  const src = 's:"line one\n\n  line three"\nt:"a\\"\n   \n  b"\nu:1 / "\n\n  +2';
+  const want = ['s:"line one\n\n  line three"', 't:"a\\"\n\n  b"', 'u:1 / "\n  +2'];
+  assert.deepStrictEqual(statements(src), want);
+  assert.deepStrictEqual(statementSpans(src).map((s) => [s.text, s.start, s.end]), [[want[0], 0, 2], [want[1], 3, 5], [want[2], 6, 8]]);
+});
