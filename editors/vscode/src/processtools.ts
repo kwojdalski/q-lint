@@ -8,6 +8,8 @@
 // (or its view's Refresh is pressed), and inline results draw what a Run
 // Line the user ran already answered.
 
+import { bytes } from "./tableinfo";
+
 export const PROCESS_TOOL_SETTINGS = {
   tickerplantSubscribers: { key: "tickerplant.subscribers.enable", fallback: true, name: "The tickerplant subscribers view" },
   systemSettings: { key: "processes.systemSettings.enable", fallback: true, name: "The system settings view" },
@@ -55,19 +57,10 @@ export function toolOff(feature: ProcessTool): string {
   return `q-lint: ${name} is turned off. Set q-lint.${key} to true to turn it on.`;
 }
 
-/// `n` bytes as a person reads them.
+/// `n` bytes as a person reads them: tableinfo's `bytes`, so the unit is
+/// picked after rounding (#1656); blank for no size.
 export function bytesText(n: number): string {
-  if (!Number.isFinite(n) || n < 0) {
-    return "";
-  }
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let v = n;
-  let u = 0;
-  while (v >= 1024 && u < units.length - 1) {
-    v /= 1024;
-    u++;
-  }
-  return u === 0 ? `${v} B` : `${v.toFixed(v < 10 ? 1 : 0)} ${units[u]}`;
+  return !Number.isFinite(n) || n < 0 ? "" : bytes(n);
 }
 
 /// A list a q answer gave, whatever one element made of it: an atom for a

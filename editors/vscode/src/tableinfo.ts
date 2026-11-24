@@ -65,16 +65,18 @@ export function readTableInfo(raw: unknown): TableInfo {
   };
 }
 
-/// `n` bytes as people read them: B, KB, MB, GB, in powers of 1024.
+/// `n` bytes as people read them: B, KB, MB, GB, in powers of 1024. The
+/// unit is picked after rounding: 1048575 is 1.0 MB, not 1024 KB (#1584).
 export function bytes(n: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];
+  const shown = (v: number, i: number) => (i === 0 ? String(Math.round(v)) : Number(v.toFixed(1)) < 10 ? v.toFixed(1) : v.toFixed(0));
   let i = 0;
   let v = n;
-  while (v >= 1024 && i < units.length - 1) {
+  while ((v >= 1024 || Number(shown(v, i)) >= 1024) && i < units.length - 1) {
     v /= 1024;
     i++;
   }
-  return i === 0 ? `${n} B` : `${v.toFixed(v < 10 ? 1 : 0)} ${units[i]}`;
+  return `${shown(v, i)} ${units[i]}`;
 }
 
 const ATTRIBUTES: Record<string, string> = { s: "sorted", u: "unique", p: "parted", g: "grouped" };
