@@ -275,6 +275,18 @@ test("test data: pools, ranges, a q generator per type, and CSV that sorts and r
   assert.notStrictEqual(random(1)(), random(2)());
 });
 
+test("test data: a short's or an int's range is cut to the finite values it holds, in the q and the CSV (#1499)", () => {
+  const o = { rows: 200, symbols: ["A"], low: 0, high: 5e9, seed: 7 };
+  assert.strictEqual(generator("h", o), '"h"$0+n?32767');
+  assert.strictEqual(generator("i", o), '"i"$0+n?2147483647');
+  assert.strictEqual(generator("j", o), "0+n?5000000000");
+  assert.strictEqual(generator("h", { ...o, low: -40000, high: -39000 }), '"h"$-32766+n?1');
+  assert.strictEqual(generator("h", { ...o, low: 10, high: 20 }), '"h"$10+n?10');
+  const info = { kind: "table", rows: 0, bytes: null, partitions: null, keys: [], ncols: 2, columns: [{ name: "h", type: "h", fkey: "", attr: "" }, { name: "i", type: "i", fkey: "", attr: "" }] };
+  const rows = testDataCsv(info, o).trim().split("\n").slice(1).map((l) => l.split(",").map(Number));
+  assert.ok(rows.every(([h, i]) => h >= 0 && h <= 32766 && i >= 0 && i <= 2147483646), JSON.stringify(rows.slice(0, 3)));
+});
+
 test("the tickerplant log's readers, times of day and ranges", () => {
   assert.strictEqual(timeOfDay(""), null);
   assert.strictEqual(timeOfDay("09:30"), 34_200_000);
