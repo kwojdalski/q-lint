@@ -478,3 +478,12 @@ test("a table past what a cell's output holds shows its first rows and says why,
   assert.strictEqual(tableText(small).length, 5);
   assert.doesNotMatch(tableHtml(small), /class="qnb-note"/);
 });
+
+test("export: a cell that ends in another namespace is followed by \\d ., as the notebook leaves it at the cell's end (#1934)", () => {
+  const code = (source) => ({ kind: "code", source });
+  assert.strictEqual(exportScript([code("\\d .foo\na:1"), code("b:2")]), "\\d .foo\na:1\n\\d .\n\nb:2\n");
+  assert.strictEqual(exportScript([code('system "d .foo"\na:1\n\\\nnot code')]), 'system "d .foo"\na:1\n/\nnot code\n\\\n\\d .\n');
+  // Back in the root already, or never out of it: nothing is added.
+  assert.strictEqual(exportScript([code("\\d .foo\na:1\n\\d .\nb:2")]), "\\d .foo\na:1\n\\d .\nb:2\n");
+  assert.strictEqual(exportScript([code("/ \\d .foo\n\\d\na:1")]), "/ \\d .foo\n\\d\na:1\n");
+});

@@ -25,7 +25,7 @@
 // A file that is not one is refused with what is wrong with it, never read as
 // an empty notebook that a save would then write over it.
 
-import { blockDepth } from "./statements";
+import { blockDepth, statements } from "./statements";
 
 /// The format this extension writes, and the newest it reads.
 export const QNB_VERSION = 1;
@@ -361,8 +361,25 @@ function commentCell(source: string): string[] {
   return ["/", ...lines, "\\"];
 }
 
+/// Whether the cell's code ends in a namespace other than the root: its last
+/// `\d` or `system "d ..."` names one. A notebook runs each cell in the root,
+/// so the `\d` ends with the cell; a script would carry it into every cell
+/// below, whose names would then land in that namespace (#1934). Read from
+/// the text: a namespace set inside a function the cell calls is not seen.
+function leavesNamespace(source: string): boolean {
+  let away = false;
+  for (const statement of statements(source)) {
+    const command = /^\\d\s+(\S+)/.exec(statement);
+    for (const [, name] of command !== null ? [command] : statement.matchAll(/\bsystem\s*\[?\s*"d\s+([^"\s]+)/g)) {
+      away = name !== ".";
+    }
+  }
+  return away;
+}
+
 /// The notebook as a q script q can load: code cells as they run, markdown
-/// cells as comments, a blank line between cells. Outputs are left out.
+/// cells as comments, a blank line between cells. Outputs are left out. A
+/// cell that ends in another namespace is followed by `\d .`.
 export function exportScript(cells: readonly Pick<QnbCell, "kind" | "source" | "language">[], name?: string): string {
   const parts: string[][] = [];
   if (name !== undefined) {
@@ -375,7 +392,7 @@ export function exportScript(cells: readonly Pick<QnbCell, "kind" | "source" | "
     if (cell.kind === "markdown") {
       parts.push(commentCell(cell.source));
     } else if (cell.language === undefined || cell.language === "q") {
-      parts.push(scriptCell(cell.source));
+      parts.push(leavesNamespace(cell.source) ? [...scriptCell(cell.source), "\\d ."] : scriptCell(cell.source));
     } else {
       // Not q: kept, as a comment, so nothing of the notebook is lost.
       parts.push(commentCell(`${cell.language} cell:\n${cell.source}`));
