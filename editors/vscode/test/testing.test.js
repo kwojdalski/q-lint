@@ -429,8 +429,8 @@ test("Stop while a test runs stops waiting for it, as Abort does: the test error
   };
   const answer = live.runOnActive.bind(live);
   live.runOnActive = (code, query) => {
-    if (code !== "hang[]") return answer(code, query);
-    live.sent.push({ statements: [code], mode: "run" });
+    if (guardText(code) !== "hang[]") return answer(code, query);
+    live.sent.push({ statements: [guardText(code)], mode: "run" });
     return new Promise((_, reject) => (fail = reject));
   };
   const listeners = [];
