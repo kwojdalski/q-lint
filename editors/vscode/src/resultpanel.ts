@@ -487,6 +487,9 @@ export class QueryModes {
     this.shown = shown;
     this.applyFeatures(features);
     if (replaced === undefined) {
+      // A command's request was for the result it was asked on: a page
+      // opened for this one does not act on it again (#1409).
+      this.control = undefined;
       this.order.editor = undefined;
       this.order.panel = undefined;
     }
@@ -594,6 +597,7 @@ export class QueryModes {
     }
     if (chosen !== this.shown) {
       this.shown = chosen;
+      this.control = undefined;
       this.order.editor = undefined;
       this.order.panel = undefined;
     }
@@ -805,7 +809,9 @@ export class QueryModes {
       this.images.delete(message.key);
       resolve?.(typeof message.data === "string" && message.data !== "" ? message.data : undefined);
     } else if (message.type === "image") {
-      if (this.viewSettings().enable.charts) {
+      // A keyed image answers a command: one no longer waited for (the
+      // other open page's answer to it) is dropped, not saved unasked (#1409).
+      if (this.viewSettings().enable.charts && (message.key === undefined || this.saving.has(message.key))) {
         void this.saveImage(message);
       }
     } else if (message.type === "drill") {
