@@ -209,6 +209,28 @@ test("Compare Query does not call a keyed and an unkeyed table of two real q pro
   assert.deepStrictEqual([await compare("0!one"), await compare("1!0!one"), await compare("2!0!two")], [[true, 0, undefined], [true, 0, undefined], [true, 0, undefined]]);
 });
 
+test("Compare Query takes what really ends in two dots as whole on two real q processes, and a cut as a cut (#2010)", { skip }, async (t) => {
+  const body = 'path:`:../..\nwide:{[a] a+100000000000000000+100000000000000000+100000000000000000+100000000000000000+100000000000000000+100000000000000000+100000000000000000+100000000000000000+100000000000000000;\n a}\n';
+  const a = await startQ(t, body);
+  const b = await startQ(t, body);
+  // A process whose \c is the least q allows: -3! cuts at 9 characters there.
+  const narrow = await startQ(t, `system "c 10 10"\n${body}`);
+  const { across } = await setUp(t, [proc("a", a.port), proc("b", b.port), proc("narrow", narrow.port)]);
+  const compare = async (code, second = "b") => {
+    await stub.commands.get("q-lint.compareQuery")(code, "a", second);
+    const c = across.state().comparison;
+    return [c.same, c.partial, c.cut];
+  };
+  for (const code of ["path", '`$"a.."', "(1;path)", '([] a:(1;`$"x.."))', '`a`b!(1;`$"x..")', "(`a`b;`p`q..)!1 2", '"see below.."']) {
+    assert.deepStrictEqual([code, ...(await compare(code))], [code, true, false, 0]);
+  }
+  // Cut by -3! at the process's \c, by GRID at 200 characters, and by .Q.S at the console's width.
+  assert.deepStrictEqual([await compare('`$300#"a"'), await compare("wide")], [[false, true, 0], [false, true, 0]]);
+  assert.deepStrictEqual([await compare('(`$300#"a";1)'), await compare('(1000#"a";1)'), await compare("(til 100;1;til 200)")], [[false, false, 1], [false, false, 1], [false, false, 2]]);
+  // The narrowest \c leaves 9 characters: a symbol of 10 is cut there, on that process alone.
+  assert.deepStrictEqual([await compare('(1;`$7#"a")', "narrow"), (await compare('(1;`$10#"a")', "narrow"))[0], (await compare('`$10#"a"', "narrow"))[0], await compare('`$7#"a"', "narrow")], [[true, false, 0], false, false, [true, false, 0]]);
+});
+
 test("Compare Query compares each of two columns of one name on two real q processes (#1964)", { skip }, async (t) => {
   const a = await startQ(t, "d:3 4\n");
   const b = await startQ(t, "d:9 9\n");

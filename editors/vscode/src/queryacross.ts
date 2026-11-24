@@ -114,7 +114,9 @@ export class QueryAcross {
     if (!setting(readCompare).enabled) {
       return;
     }
-    const comparison = compareOutcomes(outcomes[0], outcomes[1], setting(readLive).gridDecimals);
+    // The console width each was asked for; an unlimited run's is cut nowhere.
+    const { gridDecimals, consoleSize } = setting(readLive);
+    const comparison = compareOutcomes(outcomes[0], outcomes[1], gridDecimals, consoleSize[1]);
     this.lastComparison = comparison;
     this.compareView.show(comparison, code);
   }

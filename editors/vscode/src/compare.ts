@@ -16,7 +16,9 @@
 // only to its process's `\P`: `digits` says so. Only what came back is
 // compared: when a side held fewer rows than its result has, or its text
 // was cut at the console size, the answers are never called the same
-// (#1614), nor when a cell's text was cut at 200 characters.
+// (#1614), nor when a cell's text was cut at 200 characters. A cut is told
+// by the length it leaves a text, not by the `..` it ends in, which a
+// symbol or a path may end in itself (#2010).
 import { toGrid, typeName, type Grid, type GridPayload } from "./grid";
 import { atomLiteral, rawColumn } from "./qliteral";
 import type { Outcome } from "./tagquery";
@@ -92,8 +94,31 @@ export interface Comparison {
   partial: boolean;
 }
 
-/// Whether console text was cut at the console size: q ends it with `..`.
-const textCut = (text: string): boolean => /\.\.$/.test(text.trimEnd());
+/// The fewest characters `-3!` leaves of a text it cuts: it stops one short
+/// of the process's `\c` width, which q keeps at 10 or more.
+const LEAST_CUT = 9;
+
+/// Whether `-3!` text may have been cut, at the process's `\c` or by `GRID`
+/// at 200 characters: it ends `..` and is as long as a cut leaves. The
+/// process's `\c` is not sent, so a longer text that only ends so counts.
+const itemCut = (text: string): boolean => text.endsWith("..") && text.length >= LEAST_CUT;
+
+/// Whether the console text of a value of `type` may have been cut. `.Q.S`
+/// cuts a line at the console's `width`, leaving that many characters (at
+/// a width of 1, three; one fewer where an unwrapped run cut inside a
+/// character), and rows past its height are one last line of `..`. Every
+/// value but a function (100 on) is `-3!` text first. With no `width`
+/// given, any line ending `..` may be one the console cut.
+function textCut(lines: string[], type: number, width: number | undefined): boolean {
+  return lines.some(
+    (line, i) =>
+      line.endsWith("..") &&
+      (width === undefined ||
+        (line.length >= width - 1 && line.length <= Math.max(width, 3)) ||
+        (type < 100 && itemCut(line)) ||
+        (line === ".." && i === lines.length - 1)),
+  );
+}
 
 function side(outcome: Outcome): { side: Side } {
   if ("error" in outcome) {
@@ -143,8 +168,9 @@ const keyOf = (side: Held, keys: number, row: number): string =>
     .join("\u0000");
 
 /// `left` and `right` lined up, floats to `decimals` places (`-1`: as the
-/// process wrote them).
-export function compareOutcomes(left: Outcome, right: Outcome, decimals: number): Comparison {
+/// process wrote them). `width` is the console width their text was asked
+/// for, where it is known.
+export function compareOutcomes(left: Outcome, right: Outcome, decimals: number, width?: number): Comparison {
   const a = side(left);
   const b = side(right);
   const ha = "answer" in left && left.answer.ok && left.answer.grid !== undefined ? held(left.answer.grid, decimals) : undefined;
@@ -154,7 +180,8 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number)
     const text = (o: Outcome, s: Side): string => s.text ?? ("answer" in o && o.answer.ok ? o.answer.text.join("\n") : "");
     const sa = { ...a.side, text: text(left, a.side) };
     const sb = { ...b.side, text: text(right, b.side) };
-    const partial = (sa.kind === "text" && textCut(sa.text)) || (sb.kind === "text" && textCut(sb.text));
+    const cut = (o: Outcome, s: Side): boolean => s.kind === "text" && "answer" in o && o.answer.ok && textCut(o.answer.text, o.answer.type, width);
+    const partial = cut(left, sa) || cut(right, sb);
     const same = !partial && sa.kind === sb.kind && sa.text === sb.text;
     // Two values' text, not two errors': the same to the digits written,
     // unless the text of their type is the whole value.
@@ -268,7 +295,7 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number)
           // The difference is past what the grid shows: each in full.
           l[i] = atomLiteral(ha.payload.types[indexA[i]], ...sent(ha, indexA[i], ra)).literal;
           r[i] = atomLiteral(hb.payload.types[indexB[i]], ...sent(hb, indexB[i], rb)).literal;
-        } else if (!differs[i] && ha.payload.types[indexA[i]] === 0 && l[i].endsWith("..")) {
+        } else if (!differs[i] && ha.payload.types[indexA[i]] === 0 && itemCut(sent(ha, indexA[i], ra)[0])) {
           cut++;
         }
       });

@@ -169,6 +169,35 @@ test("what was compared only as far as it is shown is not called the same (#1963
   assert.strictEqual(compareOutcomes(side("a", atom(-9, "1")), { process: "b", error: "down" }, -1).digits, false);
 });
 
+test("a text that only ends in .. is whole: a cut is told by how long it left the text (#2010)", () => {
+  const twice = (answer, width) => {
+    const c = compareOutcomes(side("a", answer), side("b", answer), -1, width);
+    return [c.same, c.partial, c.cut];
+  };
+  const text = (type, ...lines) => ({ ok: true, type, text: lines });
+  // `:../.. and `$"a..", at a console 160 wide: each is all of its value.
+  assert.deepStrictEqual([twice(text(-11, "`:../.."), 160), twice(text(-11, "`a.."), 160)], [[true, false, 0], [true, false, 0]]);
+  // -3! stops one short of the process's \c, which is never under 10: 9 characters may be a cut.
+  assert.deepStrictEqual([twice(text(-11, "`aaaaa.."), 160), twice(text(-11, "`aaaaaa.."), 160)], [[true, false, 0], [false, true, 0]]);
+  assert.deepStrictEqual(twice(text(-11, `\`${"a".repeat(76)}..`), 160), [false, true, 0]);
+  // .Q.S cuts a line at the console's width, whichever line it is; a function's line is cut nowhere else.
+  const fn = (line) => text(100, "{[a]", line, " a}");
+  assert.deepStrictEqual([twice(fn(" a / and more.."), 40), twice(fn(" a / and more.."), 15), twice(fn(" a.."), 4)], [[true, false, 0], [false, true, 0], [false, true, 0]]);
+  // At a width of 1 it leaves a line's last character, then the two dots.
+  assert.deepStrictEqual([twice(text(-11, "a.."), 1), twice(text(-11, "`a.."), 1)], [[false, true, 0], [true, false, 0]]);
+  // Rows cut at the console's height are one last line of two dots.
+  assert.deepStrictEqual([twice(text(0, "1", "`a..", ".."), 160), twice(text(0, "1", "..", "`a.."), 160)], [[false, true, 0], [true, false, 0]]);
+  // With no width given, any line that ends so may be one the console cut.
+  assert.deepStrictEqual(twice(text(-11, "`a..")), [false, true, 0]);
+  // A general column's cell, and a dictionary's key: whole under 9 characters, and possibly cut from there.
+  const cells = (...items) => table({ key: [0, items, items.map(() => false)], value: [7, items.map(() => "1"), items.map(() => 1)] }, 1);
+  assert.deepStrictEqual(twice(cells("1", "`:../..", "`p`q..", "`x.."), 160), [true, false, 0]);
+  assert.deepStrictEqual(twice(cells("1", "`:../..", "`aaaaaa..", `0 1 2 ${"3 ".repeat(35)}..`), 160), [false, false, 2]);
+  const page = loadPage();
+  page.send({ type: "compare", id: 1, code: "`:../..", comparison: compareOutcomes(side("a", text(-11, "`:../..")), side("b", text(-11, "`:../..")), -1, 160) });
+  assert.strictEqual(page.posted.at(-1).rendered.summary, "a and b gave the same answer.");
+});
+
 test("a value that is not tabular, an error or a process not reached is compared as text", () => {
   const atom = (t) => ({ ok: true, type: -7, text: [t] });
   assert.deepStrictEqual(compareOutcomes(side("a", atom("42")), side("b", atom("42")), -1).same, true);
