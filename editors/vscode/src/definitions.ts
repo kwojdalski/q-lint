@@ -114,7 +114,12 @@ export function definitions(source: string): Definition[] {
       continue;
     }
     if (depth > 0 || bare === "/") {
-      end();
+      // A block comment does not end the statement around it (#1463). q
+      // keeps it in the lambda's text as comment lines: `/` and `\` alone
+      // as `/`, any other line with a `/` before it (checked on KDB-X).
+      if (current !== undefined) {
+        pending.push(bare === "/" || bare === "\\" ? "/" : `/${line}`);
+      }
       depth = blockDepth(depth, bare);
       continue;
     }
