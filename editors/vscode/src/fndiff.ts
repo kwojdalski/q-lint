@@ -8,6 +8,7 @@
 // other function (a projection, a composition, a builtin) is shown as q
 // shows it, `-3!f`. The lambda only reads. Works on kdb+ (KDB-X) and
 // PeachQ; held there by processtools_q.test.js.
+import { normalized } from "./definitions";
 import { isString, listOf } from "./processtools";
 
 export const FUNCTION_TEXTS = [
@@ -58,7 +59,8 @@ export interface Difference {
 }
 
 /// Every function of either side, differing ones first, then those on one
-/// side only, then the same; by name within each.
+/// side only, then the same; by name within each. Texts compare as drift
+/// does, without trailing blanks, which KDB-X drops and PeachQ keeps (#1379).
 export function compareTexts(a: Map<string, string>, b: Map<string, string>): Difference[] {
   const rank: Record<Status, number> = { differs: 0, "only in first": 1, "only in second": 2, same: 3 };
   const names = [...new Set([...a.keys(), ...b.keys()])];
@@ -66,7 +68,7 @@ export function compareTexts(a: Map<string, string>, b: Map<string, string>): Di
     .map((name): Difference => {
       const x = a.get(name);
       const y = b.get(name);
-      return { name, status: x === undefined ? "only in second" : y === undefined ? "only in first" : x === y ? "same" : "differs" };
+      return { name, status: x === undefined ? "only in second" : y === undefined ? "only in first" : normalized(x) === normalized(y) ? "same" : "differs" };
     })
     .sort((p, q) => rank[p.status] - rank[q.status] || p.name.localeCompare(q.name));
 }
