@@ -640,6 +640,10 @@ test("an indented block after a heading or a rule is code, and holds no live val
   assert.deepStrictEqual(liveExpressions("---\n    {{q: afterRule}}"), []);
   assert.deepStrictEqual(liveExpressions("Title\n===\n    {{q: afterSetext}}"), []);
   assert.deepStrictEqual(liveExpressions("Para\n    {{q: lazy}}"), ["lazy"]);
+  // A lone == or -- is a paragraph's text, not an underline (#1722).
+  assert.deepStrictEqual(liveExpressions("==\n    {{q: 1+1}}"), ["1+1"]);
+  assert.deepStrictEqual(liveExpressions("intro\n\n--\n    {{q: 2+2}}"), ["2+2"]);
+  assert.deepStrictEqual(liveExpressions("Title\n--\n    {{q: afterUnderline}}"), []);
   assert.strictEqual(markdownHtml("---\n    x"), "<hr>\n<pre><code>x</code></pre>");
 });
 

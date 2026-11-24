@@ -170,8 +170,10 @@ function blankIndented(text: string): string {
         list = /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:\s|$)/.test(line);
       }
       // A heading, a rule or a setext underline ends what came before: an
-      // indented line after it is code (#1558).
-      paragraph = indented || !/^ {0,3}(?:#{1,6}(?:\s|$)|([-*_])(?:\s*\1){2,}\s*$|=+\s*$|-+\s*$)/.test(line);
+      // indented line after it is code (#1558). An underline is one only
+      // under a paragraph line; else `==` or `--` is a paragraph's (#1722).
+      const ends = /^ {0,3}(?:#{1,6}(?:\s|$)|([-*_])(?:\s*\1){2,}\s*$)/.test(line) || (paragraph && /^ {0,3}(?:=+|-+)\s*$/.test(line));
+      paragraph = indented || !ends;
       return line;
     })
     .join("\n");
