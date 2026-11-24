@@ -396,6 +396,63 @@ test("a discovered process's password kept with no record of where it was given 
   void live;
 });
 
+// Up to 0.26 a discovered process's password was kept under the key a saved
+// process of that label has, and nothing took it away since: a process
+// saved as `desk/rdb` afterwards, with no password, connected with it (#1887).
+test("a process new to the saved list starts with no password but the one given with it", async (t) => {
+  const http = require("node:http");
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify([{ label: "hdb", host: "10.0.0.9", port: 6002, user: "u" }, { label: "tp", host: "10.0.0.9", port: 6003, user: "u" }]));
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  t.after(() => server.close());
+  const { context, live } = await setUp(t, [proc("old", 1, { user: "me" })]);
+  const secrets = context.secrets.all;
+  const stale = ["desk/rdb", "renamed", "imported", "hdb", "tp", "bulk"];
+  const left = () => stale.filter((l) => secrets.has(`q-lint.password.${l}`));
+  for (const l of stale) secrets.set(`q-lint.password.${l}`, "another's");
+  secrets.set("q-lint.password.old", "its own");
+  // Added with no password: what was under its key is not sent for it.
+  stub.inputs = ["desk/rdb", "localhost", "5001", "me", "", ""];
+  stub.picks = ["No"];
+  await stub.commands.get("q-lint.addProcess")();
+  assert.deepStrictEqual(left(), ["renamed", "imported", "hdb", "tp", "bulk"]);
+  // Renamed with no password: its own goes with it, over what was there.
+  stub.inputs = ["renamed", "127.0.0.1", "1", "me", "", ""];
+  stub.picks = ["No"];
+  await stub.commands.get("q-lint.editProcess")("old");
+  assert.strictEqual(secrets.get("q-lint.password.renamed"), "its own");
+  // Renamed to another host, its own is forgotten (#1109), and none is left.
+  secrets.set("q-lint.password.old", "another's");
+  stub.inputs = ["old", "elsewhere", "1", "me", "", ""];
+  stub.picks = ["No"];
+  await stub.commands.get("q-lint.editProcess")("renamed");
+  assert.deepStrictEqual([secrets.has("q-lint.password.old"), secrets.has("q-lint.password.renamed")], [false, false]);
+  // Imported, which brings no password.
+  const { vscode } = require("./vscode_stub.js");
+  const fs = vscode.workspace.fs;
+  t.after(() => (vscode.workspace.fs = fs));
+  vscode.workspace.fs = { readFile: async () => Buffer.from(JSON.stringify([proc("imported", 2, { user: "me" }), proc("desk/rdb", 5001, { user: "me" })])) };
+  await stub.commands.get("q-lint.importProcesses")(vscode.Uri.file("/x.json"));
+  assert.deepStrictEqual(left(), ["hdb", "tp", "bulk"]);
+  // Downloaded: the one given for it as a discovered process, or none.
+  await stub.commands.get("q-lint.addDiscoveryServer")({ label: "desk", url: `http://127.0.0.1:${server.address().port}/` });
+  secrets.set("q-lint.discoveredPassword.desk/hdb", "given");
+  await stub.commands.get("q-lint.downloadDiscoveredProcesses")("desk");
+  assert.strictEqual(secrets.get("q-lint.password.hdb"), "given");
+  assert.deepStrictEqual(left(), ["hdb", "bulk"]);
+  // Saved by a view around this one.
+  await live.saveProcesses([...live.processes(), proc("bulk", 3, { user: "me" })]);
+  assert.deepStrictEqual(left(), ["hdb"]);
+  // And one given at Add is kept.
+  stub.inputs = ["added", "localhost", "5004", "me", "given", ""];
+  stub.picks = ["No"];
+  await stub.commands.get("q-lint.addProcess")();
+  assert.strictEqual(secrets.get("q-lint.password.added"), "given");
+  assert.deepStrictEqual(live.processes().map((p) => p.label), ["old", "desk/rdb", "imported", "hdb", "tp", "bulk", "added"]);
+});
+
 // Any failed connect forgot the password just given - a host down or
 // restarting as well as a refused one (#1511).
 test("a discovered process's password is forgotten when it is refused, not when the host is down", async (t) => {

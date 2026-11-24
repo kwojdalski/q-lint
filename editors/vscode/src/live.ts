@@ -692,7 +692,7 @@ export class Live {
     this.historyView = new HistoryView(this);
     this.processesTree = window.createTreeView(VIEWS.processes, { treeDataProvider: this.processesView });
     this.historyTree = window.createTreeView(VIEWS.history, { treeDataProvider: this.historyView });
-    this.discovery = new DiscoveryServers(context, { list: () => this.processes(), save: (processes) => this.save(processes) });
+    this.discovery = new DiscoveryServers(context, { list: () => this.processes(), save: (processes, given) => this.save(processes, given) });
     const terminals = new QTerminals(context);
     this.terminals = terminals;
     this.runFileWith = (extra, document) => terminals.runFile(extra, document);
@@ -1161,7 +1161,17 @@ export class Live {
     return this.save(processes);
   }
 
-  private async save(processes: Process[]): Promise<void> {
+  /// Save `processes` as the list. One new to it starts with no password
+  /// but its own - `given`: the labels one was just stored for. What is
+  /// under a new label's key was another's: a discovered process's, kept
+  /// there up to 0.26, and it was sent for this one unasked (#1887).
+  private async save(processes: Process[], given: string[] = []): Promise<void> {
+    const before = new Set(this.processes().map((p) => p.label));
+    for (const { label } of processes) {
+      if (!before.has(label) && !given.includes(label)) {
+        await this.context.secrets.delete(this.passwordKey({ label }));
+      }
+    }
     await this.context.globalState.update(PROCESSES_KEY, processes);
     this.processesView.refresh();
   }
@@ -1347,7 +1357,7 @@ export class Live {
     if (answer.password !== undefined) {
       await this.context.secrets.store(this.passwordKey(answer.process), answer.password);
     }
-    await this.save([...now, answer.process]);
+    await this.save([...now, answer.process], answer.password !== undefined ? [answer.process.label] : []);
   }
 
   /// The process a command was given from a view row, or one the user picks.
@@ -1438,6 +1448,8 @@ export class Live {
     if (process.label !== old.label) {
       const kept = await this.context.secrets.get(this.passwordKey(old));
       await this.context.secrets.delete(this.passwordKey(old));
+      // What is under the new label's key is not this process's (#1887).
+      await this.context.secrets.delete(this.passwordKey(process));
       if (kept !== undefined && answer.password === undefined && !moved) {
         await this.context.secrets.store(this.passwordKey(process), kept);
       }
@@ -1454,7 +1466,7 @@ export class Live {
       // Before the redraw, so its row is still shown running (#1692).
       this.relabelled(old.label, process.label);
     }
-    await this.save(now.map((p) => (p.label === old.label ? process : p)));
+    await this.save(now.map((p) => (p.label === old.label ? process : p)), [process.label]);
     if (process.label !== old.label) {
       await this.rebind(old.label, process.label);
       this.modes.processRenamed(old.label, process.label);

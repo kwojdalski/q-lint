@@ -398,5 +398,5 @@ test("a server's tooltip shows its label as written", () => {
 test("a download takes along the password of each process with a user", () => {
   const { downloadedPasswords } = require("../out/discovery.js");
   const added = [{ ...proc("rdb"), user: "u" }, proc("hdb")];
-  assert.deepStrictEqual(downloadedPasswords("desk", added), [["q-lint.discoveredPassword.desk/rdb", "q-lint.password.rdb"]]);
+  assert.deepStrictEqual(downloadedPasswords("desk", added), [["q-lint.discoveredPassword.desk/rdb", "q-lint.password.rdb", "rdb"]]);
 });

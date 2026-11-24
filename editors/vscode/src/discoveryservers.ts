@@ -74,7 +74,7 @@ export class DiscoveryServers {
 
   constructor(
     private readonly context: ExtensionContext,
-    private readonly saved: { list: () => Process[]; save: (processes: Process[]) => Promise<void> },
+    private readonly saved: { list: () => Process[]; save: (processes: Process[], given: string[]) => Promise<void> },
   ) {
     const c = (name: string, run: (...args: never[]) => unknown) => commands.registerCommand(name, run);
     context.subscriptions.push(
@@ -460,13 +460,16 @@ export class DiscoveryServers {
     }
     const saved = this.saved.list();
     const { added, skipped } = toDownload(saved, listed);
-    for (const [from, to] of downloadedPasswords(server.label, added)) {
+    // The labels a password was copied for: no other is kept for one (#1887).
+    const given: string[] = [];
+    for (const [from, to, label] of downloadedPasswords(server.label, added)) {
       const password = await this.context.secrets.get(from);
       if (password !== undefined) {
         await this.context.secrets.store(to, password);
+        given.push(label);
       }
     }
-    await this.saved.save([...saved, ...added]);
+    await this.saved.save([...saved, ...added], given);
     const note = skipped.length ? ` Skipped ${skipped.length} whose label is taken: ${skipped.slice(0, 5).join(", ")}.` : "";
     void window.showInformationMessage(plainMessage(`q-lint: saved ${added.length} process(es) from ${server.label}.${note}`));
   }

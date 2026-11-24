@@ -366,12 +366,12 @@ export function toDownload(saved: Process[], listed: Process[]): { added: Proces
   };
 }
 
-/// The passwords Download Processes copies, as [from, to] secret keys: each
-/// downloaded process with a user takes the one given when it was connected
-/// to from `server`, which a saved process would otherwise never be asked
-/// for.
-export function downloadedPasswords(server: string, added: Process[]): [string, string][] {
+/// The passwords Download Processes copies, as [from, to] secret keys and
+/// the label saved under: each downloaded process with a user takes the one
+/// given when it was connected to from `server`, which a saved process
+/// would otherwise never be asked for.
+export function downloadedPasswords(server: string, added: Process[]): [string, string, string][] {
   return added
     .filter((p) => p.user !== undefined)
-    .map((p) => [passwordKey({ label: qualified(server, p.label), server }), passwordKey({ label: p.label })]);
+    .map((p) => [passwordKey({ label: qualified(server, p.label), server }), passwordKey({ label: p.label }), p.label]);
 }
