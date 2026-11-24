@@ -28,7 +28,9 @@ export function parseCredentials(output: string, user?: string): Credentials | {
   if (text === "") {
     return { problem: "it printed nothing" };
   }
-  if (text.startsWith("{")) {
+  // A JSON object opens with `{` and a key (or `}`); a password line may
+  // open with `{` alone (`{s3cret}`) and is read as a line (#1376).
+  if (/^\{\s*["}]/.test(text)) {
     let json: unknown;
     try {
       json = JSON.parse(text);
