@@ -225,3 +225,31 @@ test("a connect elsewhere stops the one under way: its connect script never runs
   assert.deepStrictEqual(events, ["connected"]);
   assert.strictEqual(live.activeLabel(), "b");
 });
+
+test("turning auto-reconnect off while a try is dialing stops that try (#1705)", async (t) => {
+  let shakes = 0;
+  const a = await fakeQ(() => null, () => (shakes++ === 0 ? 0 : 1500));
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)], { "connection.autoReconnect.enable": true });
+  await live.connectTo("a");
+  a.drop();
+  // The first try dials after a second, and its handshake is held 1.5 s.
+  await until(() => shakes === 2);
+  stub.config.user["connection.autoReconnect.enable"] = false;
+  stub.changeConfig("q-lint.connection.autoReconnect.enable");
+  await sleep(2000);
+  assert.strictEqual(live.activeLabel(), undefined);
+  assert.ok(!stub.messages.some(([, m]) => /reconnected/.test(m)));
+});
+
+test("connecting to the process a try is dialing connects, though the try is stopped (#1705)", async (t) => {
+  let shakes = 0;
+  const a = await fakeQ(() => null, () => (shakes++ === 0 ? 0 : 500));
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)], { "connection.autoReconnect.enable": true });
+  await live.connectTo("a");
+  a.drop();
+  await until(() => shakes === 2);
+  assert.strictEqual(await live.connectTo("a"), true);
+  assert.strictEqual(live.activeLabel(), "a");
+});

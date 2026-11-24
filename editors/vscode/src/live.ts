@@ -1826,7 +1826,8 @@ export class Live {
       // A connect to another process - a reconnect after an abort, waiting
       // for that process to be free - is stopped and this one follows: its
       // result says nothing of this process.
-      if (this.connectingTo === passwordKey(process)) {
+      // One to this process that was stopped is followed as well.
+      if (this.connectingTo === passwordKey(process) && this.stopConnect?.signal.aborted !== true) {
         return this.connecting;
       }
       this.reconnectStopped = true;
@@ -2149,6 +2150,11 @@ export class Live {
   private stopReconnecting(): void {
     this.reconnectRun++;
     if (this.reconnecting !== undefined) {
+      // A try dialing now is stopped too, not left to connect (#1705).
+      if (this.connection === undefined) {
+        this.reconnectStopped = true;
+        this.stopConnect?.abort();
+      }
       this.reconnecting = undefined;
       this.showStatus();
     }
