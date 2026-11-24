@@ -1095,6 +1095,19 @@ export class QueryModes {
     }
   }
 
+  /// The process `from` was renamed `to`: the results it gave follow it, so
+  /// paging and drill-down still reach it (#1706).
+  processRenamed(from: string, to: string): void {
+    for (const shown of new Set([...this.history, ...this.previous.values()])) {
+      if (shown.process === from) {
+        shown.process = to;
+      }
+      if (shown.before?.process === from) {
+        shown.before.process = to;
+      }
+    }
+  }
+
   /// The looks the saved queries keep.
   private savedLooks(): Record<string, ResultLook> {
     return parseLooks(this.context.workspaceState.get<unknown>(SAVED_LOOKS_KEY, {}));
