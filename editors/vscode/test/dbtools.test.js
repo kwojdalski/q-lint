@@ -186,6 +186,10 @@ test("the attribute advisor counts filters and suggests by shape, never for an u
   // A symbol value is not a column, nor is a column a prefix of one (#1373).
   assert.deepStrictEqual(Object.fromEntries(filterCounts(["select from trade where x=`sym"], "trade", ["s", "x", "sym"])), { s: 0, x: 1, sym: 0 });
   assert.deepStrictEqual(Object.fromEntries(filterCounts(["?[trade;enlist(=;`sym;enlist`a);0b;()]"], "trade", ["s", "sym"])), { s: 0, sym: 1 });
+  // A functional select may name its table by symbol (#1374).
+  assert.deepStrictEqual(Object.fromEntries(filterCounts(["?[`trade;enlist(=;`sym;enlist`a);0b;()]"], "trade", ["sym"])), { sym: 1 });
+  assert.deepStrictEqual(Object.fromEntries(filterCounts(["?[`.ns.t;enlist(=;`sym;enlist`a);0b;()]"], ".ns.t", ["sym"])), { sym: 1 });
+  assert.deepStrictEqual(Object.fromEntries(filterCounts(["?[`tradex;enlist(=;`sym;enlist`a);0b;()]"], "trade", ["sym"])), { sym: 0 });
   const s = readAttributeSample({
     kind: "table",
     rows: 1000,

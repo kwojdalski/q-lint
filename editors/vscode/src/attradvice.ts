@@ -93,12 +93,14 @@ export function filterCounts(queries: string[], table: string, columns: string[]
   const word = (w: string) => new RegExp(`(?<![\\w.\`])${escape(w)}(?![\\w])`);
   // A namespaced table is named whole, its leading dot included (#1113).
   const tableWord = table.startsWith(".") ? new RegExp(`(?<![\\w\`])${escape(table)}(?![\\w.])`) : word(table);
-  // A functional select names its columns by symbol, whole (#1373).
+  // A functional select names its columns by symbol, whole (#1373), and may
+  // name its table so too (#1374).
   const symbol = (w: string) => new RegExp(`\`${escape(w)}(?![\\w.])`);
+  const tableSymbol = symbol(table);
   for (const q of queries) {
-    if (!tableWord.test(q)) continue;
     const clauses = [...q.matchAll(/\bwhere\b([^\n]*)/g)].map((m) => m[1]);
     const functional = [...q.matchAll(/\?\[[^\]]*\]/g)].map((m) => m[0]);
+    if (!tableWord.test(q) && !functional.some((f) => tableSymbol.test(f))) continue;
     const text = [...clauses, ...functional].join(" ");
     if (text === "") continue;
     const fn = functional.join(" ");
