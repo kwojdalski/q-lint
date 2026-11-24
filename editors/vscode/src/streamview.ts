@@ -128,12 +128,22 @@ export class TableStreams {
         throw new Error(`"${name}" is not a table name`);
       }
       table = name;
+      // Turned off while it asked or connected: nothing is subscribed (#1419).
+      if (!this.settings().enabled) {
+        await connection.close();
+        return;
+      }
       const answer = await connection.call(SUBSCRIBE, `\`${name}`);
       const cols = Array.isArray(answer) ? answer[1] : undefined;
       columns = (Array.isArray(cols) ? cols : [cols]).filter((c): c is string => typeof c === "string");
     } catch (error) {
       await connection.close();
       void window.showErrorMessage(plainMessage(`q-lint: could not subscribe to ${table ?? "the table"} on ${process.label}: ${error instanceof Error ? error.message : String(error)}`));
+      return;
+    }
+    // Or while it subscribed: closing the connection unsubscribes.
+    if (!this.settings().enabled) {
+      await connection.close();
       return;
     }
     this.open(process.label, table, columns, connection, settings.rows);

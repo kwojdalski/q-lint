@@ -45,6 +45,7 @@ import {
   type SavedQuery,
 } from "./savedqueries";
 import { SAVED_LOOKS_KEY, parseLooks, renamedLook, withoutLook } from "./resultlook";
+import { SCHEDULES_KEY, parseSchedules, renamedSchedules, type ScheduledExport } from "./schedule";
 
 /// What a command is given: a view row, a query's name, or nothing.
 type QueryArg = SavedQuery | string | undefined;
@@ -251,6 +252,13 @@ export class SavedQueries implements TreeDataProvider<SavedQuery> {
     await this.store(renamed(now, query.name, name), [query.name, name]);
     // Its result's look (#1015, #1019) goes with it.
     await this.context.workspaceState.update(SAVED_LOOKS_KEY, renamedLook(parseLooks(this.context.workspaceState.get<unknown>(SAVED_LOOKS_KEY, {})), query.name, name));
+    // So do its scheduled exports and the results on show it gave (#1413).
+    await this.context.workspaceState.update(SCHEDULES_KEY, renamedSchedules(this.schedules(), query.name, name));
+    this.live.savedRenamed(query.name, name);
+  }
+
+  private schedules(): ScheduledExport[] {
+    return parseSchedules(this.context.workspaceState.get<unknown>(SCHEDULES_KEY, []));
   }
 
   async remove(arg?: QueryArg): Promise<void> {
@@ -262,11 +270,16 @@ export class SavedQueries implements TreeDataProvider<SavedQuery> {
       return;
     }
     const yes = "Delete";
-    if ((await window.showWarningMessage(plainMessage(`Delete the saved query "${query.name}"?`), { modal: true }, yes)) !== yes) {
+    // Its scheduled exports could run nothing once it is gone: they go with it (#1413).
+    const scheduled = this.schedules().filter((s) => s.query === query.name).length;
+    const also = scheduled === 0 ? "" : ` Its ${scheduled} scheduled export(s) are deleted with it.`;
+    if ((await window.showWarningMessage(plainMessage(`Delete the saved query "${query.name}"?${also}`), { modal: true }, yes)) !== yes) {
       return;
     }
     await this.store(this.queries().filter((q) => q.name !== query.name), [query.name]);
     await this.context.workspaceState.update(SAVED_LOOKS_KEY, withoutLook(parseLooks(this.context.workspaceState.get<unknown>(SAVED_LOOKS_KEY, {})), query.name));
+    await this.context.workspaceState.update(SCHEDULES_KEY, renamedSchedules(this.schedules(), query.name, undefined));
+    this.live.savedRenamed(query.name, undefined);
   }
 }
 

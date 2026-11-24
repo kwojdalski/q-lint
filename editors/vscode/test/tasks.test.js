@@ -153,6 +153,13 @@ async function run(task, resolved = task.definition) {
   return { out, code };
 }
 
+test("a workspace task's relative script is found in the first workspace folder, not under the host's directory (#1414)", { skip: process.platform === "win32" && "POSIX paths" }, () => {
+  assert.deepStrictEqual(T.taskPaths("tests/run_tests.q", "/w", "/x"), { cwd: "/w", script: "/w/tests/run_tests.q" });
+  assert.deepStrictEqual(T.taskPaths("tests/run_tests.q", undefined, "/w"), { cwd: "/w/tests", script: "/w/tests/run_tests.q" });
+  assert.deepStrictEqual(T.taskPaths("/a/b.q", undefined, undefined), { cwd: "/a", script: "/a/b.q" });
+  assert.strictEqual(T.taskPaths("tests/run_tests.q", undefined, undefined), undefined);
+});
+
 test("the provider offers the detected tasks; a task runs q on its script with the .env file's variables and ends with its exit code", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-tasks-"));
   fs.mkdirSync(path.join(dir, "tests"));

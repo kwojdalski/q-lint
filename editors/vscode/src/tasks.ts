@@ -18,7 +18,25 @@
 // file and line of the innermost frame - in a `\l`'d script, the loaded
 // file. A frame of code typed at the console has no file and is not matched.
 
+import * as path from "node:path";
+
 export const TASK_TYPE = "q" as const;
+
+/// Where a task runs `script` (its `~` expanded): in `folder`, the task's
+/// workspace folder, with the script resolved against it; for a task of the
+/// workspace (a `.code-workspace` file), which has none, the script resolved
+/// against `first`, the first workspace folder, run in its own directory
+/// (#1414). Undefined: a relative script with no folder to resolve it in.
+export function taskPaths(script: string, folder: string | undefined, first: string | undefined): { cwd: string; script: string } | undefined {
+  if (folder !== undefined) {
+    return { cwd: folder, script: path.resolve(folder, script) };
+  }
+  if (!path.isAbsolute(script) && first === undefined) {
+    return undefined;
+  }
+  const resolved = path.resolve(first ?? "", script);
+  return { cwd: path.dirname(resolved), script: resolved };
+}
 
 /// Where a test runner script is looked for: the names test suites are
 /// usually started by, anywhere in the workspace.

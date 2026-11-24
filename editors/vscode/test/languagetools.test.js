@@ -16,7 +16,7 @@ const { tomlWithBaseline, writtenCount, rebased, absolutePaths, registerBaseline
 const { readDeadCode, deadCodeReport, registerDeadCode, DEAD_CODE } = require("../out/deadcodeview.js");
 const { readDefinitions, byNamespace, registerNamespaces, DEFINITIONS } = require("../out/namespaceview.js");
 const { affectedIds, registerAffectedOnSave, TESTS_REACHING } = require("../out/affectedonsave.js");
-const { sqlQuery, sqlWrites, readSchema, sqlCompletions } = require("../out/sql.js");
+const { sqlQuery, sqlText, sqlWrites, readSchema, sqlCompletions } = require("../out/sql.js");
 const { registerSql } = require("../out/sqlview.js");
 const { launch } = require("../out/settings.js");
 
@@ -556,6 +556,11 @@ test("SQL is sent to .s.e with its comments dropped, and a write is recognised",
   assert.deepStrictEqual(sqlWrites("select 'it''s; delete' from t"), []);
   assert.deepStrictEqual(sqlWrites("select replace(s, 'a', 'b') from t"), []);
   assert.deepStrictEqual(sqlWrites("replace into t values (1)"), ["REPLACE"]);
+  // A `--` inside a quote that runs across lines is dropped from what is
+  // sent, which moves the quote: the write check judges the sent text (#1408).
+  const hidden = "select 'a\n--'\n' as c from t; insert into t values (1) -- '";
+  assert.strictEqual(sqlQuery(hidden), `.s.e "${sqlText(hidden)}"`);
+  assert.deepStrictEqual(sqlWrites(sqlText(hidden)), ["INSERT"]);
   const schema = readSchema({ trade: ["sym", "px"], quote: ["sym", "bid"] });
   assert.deepStrictEqual([...schema.keys()], ["trade", "quote"]);
   assert.deepStrictEqual(sqlCompletions(schema, "select trade.").map((c) => c.label), ["sym", "px"]);
@@ -611,6 +616,11 @@ test("a SQL write on a guarded process is held until confirmed", async () => {
     vscode.window.activeTextEditor = { document: { languageId: "sql", uri: { toString: () => "untitled:2" }, getText: () => "insert into t values (1)" }, selection: { isEmpty: true } };
     assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.runSql)(), undefined);
     assert.deepStrictEqual(asked, [["`t insert ()", "prod1", "This SQL statement (INSERT)"]]);
+    assert.deepStrictEqual(sent, []);
+    // A write that only the sent text shows is held too (#1408).
+    vscode.window.activeTextEditor.document.getText = () => "select 'a\n--'\n' as c from t; insert into t values (1) -- '";
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.runSql)(), undefined);
+    assert.strictEqual(asked.length, 2);
     assert.deepStrictEqual(sent, []);
   } finally {
     restore();

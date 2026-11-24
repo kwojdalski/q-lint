@@ -21,11 +21,11 @@ export const LOAD_SQL = "system \"l s.k_\"";
 /// Each table of the process with its columns, a fixed read.
 export const SQL_SCHEMA = "{t!cols each t:tables[]}[]";
 
-/// `sql` sent to `.s.e` as a q string, its `--` comments dropped (a comment
-/// would swallow the rest once lines are joined) and its lines joined by a
-/// blank. `load`: load the engine first where the process has none, for a
-/// process not yet asked.
-export function sqlQuery(sql: string, load = false): string {
+/// The SQL text `sqlQuery` sends for `sql`: its `--` comments dropped (a
+/// comment would swallow the rest once lines are joined) and its lines
+/// joined by a blank. The read-only check judges this text, not `sql` as
+/// typed: dropping a comment can move where a quote ends (#1408).
+export function sqlText(sql: string): string {
   const lines = sql.split(/\r?\n/).map((line) => {
     // The quote a quoted text opened, `'` or `"`: the other is text in it.
     let quote: string | undefined;
@@ -39,7 +39,13 @@ export function sqlQuery(sql: string, load = false): string {
     }
     return line;
   });
-  const text = lines.map((l) => l.trim()).filter((l) => l !== "").join(" ").replace(/;\s*$/, "");
+  return lines.map((l) => l.trim()).filter((l) => l !== "").join(" ").replace(/;\s*$/, "");
+}
+
+/// `sql` sent to `.s.e` as a q string, as `sqlText` gives it. `load`: load
+/// the engine first where the process has none, for a process not yet asked.
+export function sqlQuery(sql: string, load = false): string {
+  const text = sqlText(sql);
   const literal = `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
   return load ? `{if[not \`e in key \`.s;system "l s.k_"];.s.e x} ${literal}` : `.s.e ${literal}`;
 }

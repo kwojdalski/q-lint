@@ -70,8 +70,8 @@ export function statements(text: string): string[] {
 }
 
 /// The lines, 0-based and inclusive, of the statement the cursor's `line`
-/// is in: from the unindented line that starts it to its last continuation
-/// line. Undefined on a blank or comment line, or inside a block comment.
+/// is in: from the unindented line that starts it (or the file's first code
+/// line, indented or not) to its last continuation line. Undefined on a blank or comment line, or inside a block comment.
 export function blockAt(lines: string[], line: number): { start: number; end: number } | undefined {
   const at = (i: number): string => (lines[i] ?? "").replace(/\s+$/, "");
   // Where block comments are, read from the top: `/` alone opens one only
@@ -124,7 +124,17 @@ export function blockAt(lines: string[], line: number): { start: number; end: nu
     }
     start--;
   }
-  if (start < 0 || !code(start)) {
+  if (start < 0) {
+    // No unindented line above: as `statements` does, q starts the first
+    // statement at the first code line, indented or not (#1416).
+    start = 0;
+    while (start < line && !code(start)) {
+      start++;
+    }
+    if (!code(start)) {
+      return undefined;
+    }
+  } else if (!code(start)) {
     return undefined;
   }
   let end = line;

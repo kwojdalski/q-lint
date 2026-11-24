@@ -583,6 +583,48 @@ test("Save Result Chart run twice saves each chart to its own file; neither is l
   assert.strictEqual(dialogs, 0);
 });
 
+test("a command's request is not replayed to a later result, and a second page's answer opens no dialog (#1409)", async () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  const { RESULT_VIEW } = require("../out/liveconfig.js");
+  modes.show(result([1, 2]), live({ mode: "chart" }));
+  const page = fake.pages[0];
+  let dialogs = 0;
+  fake.vscode.window.showSaveDialog = async () => (dialogs++, undefined);
+  const saving = fake.vscode.commands[RESULT_VIEW.saveChart]("svg", new fake.vscode.Uri("/a.svg"));
+  const asked = page.posted.at(-1).control;
+  page.receive({ type: "image", id: page.posted.at(-1).id, format: "svg", data: "<svg>a</svg>", key: asked.key });
+  await saving;
+  // The other open page answers the same request: it is not pending, so it is dropped.
+  page.receive({ type: "image", id: page.posted.at(-1).id, format: "svg", data: "<svg>a</svg>", key: asked.key });
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(dialogs, 0);
+  // The next query's result does not carry the old request.
+  modes.show({ ...result([3, 4]), code: "u" }, live({ mode: "chart" }));
+  assert.strictEqual(page.posted.at(-1).control, undefined);
+  // The page's own Save button (no key) still asks where to save.
+  page.receive({ type: "image", id: page.posted.at(-1).id, format: "svg", data: "<svg>b</svg>" });
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(dialogs, 1);
+});
+
+test("a result keeps its saved query's new name once the query is renamed, and none once it is deleted (#1413)", () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  modes.context.workspaceState = { get: (_k, d) => d, update: async () => {} };
+  modes.expectSaved("A", "t");
+  modes.show(result([1, 2]), live());
+  modes.expectSaved(undefined);
+  const page = fake.pages[0];
+  assert.strictEqual(page.posted.at(-1).saved, "A");
+  modes.savedRenamed("A", "B");
+  modes.post();
+  assert.strictEqual(page.posted.at(-1).saved, "B");
+  modes.savedRenamed("B", undefined);
+  modes.post();
+  assert.strictEqual(page.posted.at(-1).saved, undefined);
+});
+
 test("Append to Report from the palette sends the rows the grid shows, as Export As does (#1131)", async () => {
   const fake = fakeVscode({ "query.resultsLocation": "editor" });
   const modes = loadModes(fake);

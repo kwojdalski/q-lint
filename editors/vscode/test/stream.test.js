@@ -230,6 +230,25 @@ test("a tickerplant table streams into the grid, keeping its newest rows, and cl
   assert.strictEqual(await publisher.call('"i"$count .u.w`trade'), 0);
 });
 
+test("streaming turned off while Stream Table asks for the table subscribes to nothing and opens no grid (#1419)", async (t) => {
+  const { fakeQ, heads } = require("./fakeq.js");
+  const { SUBSCRIBE } = require("../out/stream.js");
+  const q = await fakeQ((m) => (Array.isArray(m) && m[0] === SUBSCRIBE ? ["trade", ["time", "sym", "px"]] : null));
+  t.after(() => q.close());
+  const { panels, streams } = await setUp(t, [{ label: "tp", host: "127.0.0.1", port: q.port, tags: [] }]);
+  stub.config.user["tickerplant.stream.enable"] = true;
+  stub.inputs.push(() => {
+    stub.config.user["tickerplant.stream.enable"] = false;
+    stub.changeConfig("q-lint.tickerplant.stream.enable");
+    return "trade";
+  });
+  await stub.commands.get(STREAM_COMMANDS.start)("tp");
+  await sleep(50);
+  assert.ok(!heads(q.sent).includes(SUBSCRIBE));
+  assert.deepStrictEqual(panels, []);
+  assert.deepStrictEqual(streams.state(), []);
+});
+
 test("closing the grid touches its webview no more: the connection's close draws nothing (#1272)", async (t) => {
   const { fakeQ } = require("./fakeq.js");
   const { SUBSCRIBE } = require("../out/stream.js");

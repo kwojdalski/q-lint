@@ -4,7 +4,7 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const { stub, vscode } = require("./vscode_stub");
-const { formatSnapshot, parseSnapshot, sameResult, snapshotName, validName, preview, SNAPSHOT_COMMANDS, SNAPSHOT_RUN } = require("../out/snapshot.js");
+const { formatSnapshot, parseSnapshot, sameResult, snapshotQuery, snapshotName, validName, preview, SNAPSHOT_COMMANDS, SNAPSHOT_RUN } = require("../out/snapshot.js");
 const { registerSnapshots } = require("../out/snapshotview.js");
 
 test("a snapshot file round-trips, and results compare without trailing blanks", () => {
@@ -12,6 +12,10 @@ test("a snapshot file round-trips, and results compare without trailing blanks",
   assert.strictEqual(text, "// q-lint snapshot\n// query\nselect from t\n  where a>1\n// result\na\n-\n2\n");
   assert.deepStrictEqual(parseSnapshot(text), { query: "select from t\n  where a>1", result: "a\n-\n2" });
   assert.deepStrictEqual(parseSnapshot(text.replaceAll("\n", "\r\n")), { query: "select from t\n  where a>1", result: "a\n-\n2" });
+  // A CRLF document's selection is written with \n line ends, and read back as it is (#1415).
+  const crlf = formatSnapshot({ query: "select from t\r\n  where a>1", result: "a" });
+  assert.ok(!crlf.includes("\r"));
+  assert.strictEqual(parseSnapshot(crlf).query, snapshotQuery("select from t\r\n  where a>1"));
   assert.strictEqual(parseSnapshot("x"), undefined);
   assert.strictEqual(parseSnapshot("// q-lint snapshot\n// query\n// result\n1"), undefined);
   assert.strictEqual(sameResult("a  \nb\n", "a\nb"), true);

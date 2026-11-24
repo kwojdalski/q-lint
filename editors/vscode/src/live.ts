@@ -2670,6 +2670,12 @@ export class Live {
     return readPage(await connection.call(PAGE, offset, count));
   }
 
+  /// The saved query `from` was renamed `to`, or deleted: the results it
+  /// gave follow it (#1413).
+  savedRenamed(from: string, to: string | undefined): void {
+    this.modes.savedRenamed(from, to);
+  }
+
   /// The result the panel shows, with the process and code it came from.
   resultOnShow(): { process: string; code: string; payload: GridPayload } | undefined {
     return this.modes.current();

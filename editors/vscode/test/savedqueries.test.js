@@ -231,6 +231,22 @@ test("Rename and Delete Saved Query", async (t) => {
   assert.deepStrictEqual(saved.queries().map((q) => q.name), ["b"]);
 });
 
+test("Rename and Delete Saved Query take its scheduled exports with it (#1413)", async (t) => {
+  const { context } = await setUp(t);
+  const { SCHEDULES_KEY } = require("../out/schedule.js");
+  await stub.commands.get("q-lint.saveQuery")({ name: "a", code: "count t" });
+  await stub.commands.get("q-lint.saveQuery")({ name: "b", code: "count u" });
+  const schedule = (id, query) => ({ id, query, process: "rdb", format: "csv", path: "/o.csv", every: 5, mode: "replace", since: 0 });
+  await context.workspaceState.update(SCHEDULES_KEY, [schedule("1", "a"), schedule("2", "b")]);
+  await stub.commands.get("q-lint.renameSavedQuery")("a", "c");
+  assert.deepStrictEqual(context.workspaceState.get(SCHEDULES_KEY).map((s) => s.query), ["c", "b"]);
+  // Delete says so, and the schedule goes with the query.
+  stub.picks.push("Delete");
+  await stub.commands.get("q-lint.deleteSavedQuery")("c");
+  assert.ok(stub.messages.some(([, m]) => /Delete the saved query "c"\? Its 1 scheduled export\(s\) are deleted with it\./.test(m)));
+  assert.deepStrictEqual(context.workspaceState.get(SCHEDULES_KEY).map((s) => s.id), ["2"]);
+});
+
 test("turned off, the view and its documents are gone, the commands refuse and send nothing; on again, they are back", async (t) => {
   const { q, live, saved, providers, view } = await setUp(t);
   await stub.commands.get("q-lint.saveQuery")({ name: "a", code: "count t" });

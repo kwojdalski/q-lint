@@ -103,6 +103,12 @@ export function parseSchedules(stored: unknown): ScheduledExport[] {
   });
 }
 
+/// The schedules once the saved query `from` is renamed `to` (#1413), or
+/// deleted (`to` undefined): its schedules name the new name, or are gone.
+export function renamedSchedules(list: ScheduledExport[], from: string, to: string | undefined): ScheduledExport[] {
+  return list.flatMap((s) => (s.query !== from ? [s] : to === undefined ? [] : [{ ...s, query: to }]));
+}
+
 /// Whether `s` is due at `now`: its interval has passed since it last ran,
 /// or one of today's times has come since then.
 export function isDue(s: Pick<ScheduledExport, "times" | "every" | "since">, now: Date): boolean {
