@@ -14,11 +14,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /// A q process played by a socket server: it answers the handshake after
 /// `delay` ms (or what `delay()` gives then), then each message with what
 /// `answer` gives for what was sent (a value, sent as a response), or
-/// nothing when it gives undefined. `sent` keeps what it was sent; `drop`
+/// nothing when it gives undefined. `sent` keeps what it was sent, `logins`
+/// each handshake's `user:password`; `drop`
 /// closes the connections it has.
 async function fakeQ(answer = () => null, delay = 0) {
   const sockets = new Set();
   const sent = [];
+  const logins = [];
   const server = net.createServer((socket) => {
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));
@@ -28,6 +30,7 @@ async function fakeQ(answer = () => null, delay = 0) {
     socket.on("data", (chunk) => {
       if (!shook) {
         shook = true;
+        logins.push(chunk.subarray(0, chunk.length - 2).toString("utf8"));
         setTimeout(() => socket.writable && socket.write(Buffer.from([3])), typeof delay === "function" ? delay() : delay);
         return;
       }
@@ -55,6 +58,7 @@ async function fakeQ(answer = () => null, delay = 0) {
   return {
     port: server.address().port,
     sent,
+    logins,
     drop: () => {
       for (const s of sockets) s.destroy();
     },
@@ -335,4 +339,46 @@ test("a drill-down on the connected discovered prod process asks first, though a
   await live.runOnProcess("select from t", "srv/rdb", { what: "drill-down query" });
   assert.match(asked ?? "", /srv\/rdb is a production process/);
   assert.deepStrictEqual(a.sent, []);
+});
+
+// Edit moved the connected process and stored the new address's password
+// under its label; the connection stayed where it was (#1443), and the
+// reconnect after Abort dialled the old address with the new password (#2124).
+test("the reconnect after Abort goes to the process as saved, never the old address with the new password (#2124)", async (t) => {
+  const a = await fakeQ((sent) => (JSON.stringify(sent).includes("slow") ? undefined : 1));
+  const b = await fakeQ(() => 1);
+  t.after(() => (a.close(), b.close()));
+  const { live, context } = await setUp(t, [proc("a", a.port, { user: "bob" })]);
+  await context.secrets.store("q-lint.password.a", "pw-of-a");
+  assert.strictEqual(await live.connectTo("a"), true);
+  stub.inputs.push("a", "127.0.0.1", String(b.port), "bob", "pw-of-b", "");
+  stub.picks.push("No");
+  await stub.commands.get("q-lint.editProcess")("a");
+  assert.strictEqual(live.activeProcess().port, a.port, "still connected where it was");
+  const running = live.run("slow");
+  await until(() => live.isBusy());
+  await stub.commands.get("q-lint.abortQuery")();
+  await running;
+  await until(() => live.activeLabel() !== undefined);
+  assert.strictEqual(live.activeProcess().port, b.port, JSON.stringify(stub.messages));
+  assert.deepStrictEqual(a.logins, ["bob:pw-of-a"], "the old address never got the new password");
+  assert.deepStrictEqual(b.logins, ["bob:pw-of-b"]);
+});
+
+test("a connection kept at its old address is given no password saved for the new one (#2124)", async (t) => {
+  const a = await fakeQ(() => 1);
+  const b = await fakeQ(() => 1);
+  t.after(() => (a.close(), b.close()));
+  const { live, context } = await setUp(t, [proc("a", a.port, { user: "bob" })]);
+  await context.secrets.store("q-lint.password.a", "pw-of-a");
+  assert.strictEqual(await live.connectTo("a"), true);
+  stub.inputs.push("a", "127.0.0.1", String(b.port), "carol", "pw-of-carol", "");
+  stub.picks.push("No");
+  await stub.commands.get("q-lint.editProcess")("a");
+  // What Abort or a timeout reconnects to, as the connection still is.
+  assert.strictEqual(await live.open(live.activeProcess()), false);
+  assert.deepStrictEqual(a.logins, ["bob:pw-of-a"]);
+  assert.deepStrictEqual(b.logins, []);
+  assert.match(stub.messages.at(-1)[1], /edited to 127\.0\.0\.1:\d+ since it was connected/);
+  assert.ok(!JSON.stringify(stub.messages).includes("pw-of"));
 });

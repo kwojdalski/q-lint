@@ -2253,6 +2253,12 @@ export class Live {
   /// kept nowhere. Throws why the command gave none.
   private async targetFor(process: Process): Promise<Target> {
     if (process.credentialCommand === undefined || !this.setting(readAdmin).credentialCommand) {
+      // The label's password is for the address and user saved under it: a
+      // connection kept where it was when that was edited (#1443) gets none (#2124).
+      const saved = process.server === undefined ? this.processes().find((p) => p.label === process.label) : undefined;
+      if (process.user && saved !== undefined && passwordsToForget([process], [saved]).length > 0) {
+        throw new Error(`it was edited to ${address(saved.host, saved.port)} since it was connected, and its password is for that: connect to it again`);
+      }
       const password = process.user ? await this.context.secrets.get(this.passwordKey(process)) : undefined;
       return targetOf(process, password);
     }
@@ -3255,9 +3261,13 @@ export class Live {
     // Not awaited: q runs one message at a time, so the new connection's
     // handshake waits until the process has finished the query it was left
     // with, and the command should not wait with it.
-    void this.open(process, true).then((connected) => {
+    // To the process as saved, as an auto-reconnect is (#1699): one edited
+    // to another address or user since it was connected has its password
+    // stored for that one, never to be sent to where the connection was (#2124).
+    const again = process.server === undefined ? (this.processes().find((p) => p.label === process.label) ?? process) : process;
+    void this.open(again, true).then((connected) => {
       if (connected) {
-        void window.showInformationMessage(plainMessage(`q-lint: reconnected to ${process.label}.`));
+        void window.showInformationMessage(plainMessage(`q-lint: reconnected to ${again.label}.`));
       }
     });
     void window.showInformationMessage(
