@@ -213,6 +213,24 @@ test("refused: off, no notebook, no process, a query running; turned on, it work
   assert.deepStrictEqual(live.sent, ["1"]);
 });
 
+test("turned off at its question, nothing is restarted or run (#1453)", async () => {
+  const off = (answer) => () => {
+    stub.config.user["notebook.restartRunAll.enable"] = false;
+    return answer;
+  };
+  for (const [launched, answer] of [[true, "Restart and Run All"], [false, "Run All Without Restart"]]) {
+    const live = fakeLive({ launched });
+    const launcher = fakeLauncher();
+    const { restart, run } = setUp(live, launcher);
+    vscode.window.activeNotebookEditor = { notebook: notebookOf(["a:1"]) };
+    stub.config.user["notebook.restartRunAll.enable"] = true;
+    stub.picks.push(off(answer));
+    await run();
+    assert.deepStrictEqual([launcher.restarted, live.sent, live.connected, restart.last.outcome], [[], [], [], "refused"]);
+    assert.match(stub.messages.at(-1)[1], /restartRunAll\.enable to true/);
+  }
+});
+
 test("the command is on the notebook's toolbar and the palette, each behind its setting", () => {
   const section = pkg.contributes.configuration.find((c) => c.title === "q-lint: notebook features");
   assert.strictEqual(section.properties["q-lint.notebook.restartRunAll.enable"].default, true);

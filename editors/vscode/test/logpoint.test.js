@@ -112,3 +112,17 @@ test("Remove Logpoint removes only on the process it listed, not one connected w
   assert.ok(!heads(q.sent).includes(LOG_REMOVE) && !heads(other.sent).includes(LOG_REMOVE));
   assert.ok(stub.messages.some(([, m]) => /the logpoint on g was not removed: a is no longer the active process/.test(m)), JSON.stringify(stub.messages));
 });
+
+test("turned off while Add Logpoint asks for the name, nothing is wrapped (#1453)", async () => {
+  const s = setup();
+  vscode.window.activeTextEditor = undefined;
+  stub.inputs.push(() => {
+    stub.config.user["logpoints.enable"] = false;
+    stub.changeConfig("q-lint.logpoints.enable");
+    return ".ns.f";
+  });
+  await stub.commands.get(LOGPOINT_COMMANDS.add)();
+  assert.deepStrictEqual(s.sent, []);
+  assert.deepStrictEqual(s.api.logged(), {});
+  assert.match(stub.messages.at(-1)[1], /q-lint\.logpoints\.enable to true/);
+});

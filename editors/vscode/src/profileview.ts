@@ -26,6 +26,8 @@ import { plainMessage } from "./history";
 
 export const PROFILE_FUNCTIONS = TOOLING_COMMANDS.profileFunctions;
 
+/// What a run turned off before it was sent hands back.
+const OFF = Symbol("off");
 const on = (): boolean => toolingOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "functionProfile");
 
 /// What the page drew, as its script reported it: for tests.
@@ -89,6 +91,10 @@ export function registerFunctionProfile(
     let ran: { process: string; value: unknown } | undefined;
     try {
       ran = await live.runOnActive(guardedCode(ns, code), async (connection) => {
+        // Turned off while it asked: no wrapper is installed (#1453).
+        if (!on()) {
+          return OFF;
+        }
         try {
           return await connection.call(PROFILE, `\`${ns}`, cut);
         } finally {
@@ -103,6 +109,9 @@ export function registerFunctionProfile(
     }
     if (ran === undefined) {
       return "nothing was run";
+    }
+    if (ran.value === OFF) {
+      return say(toolingOff("functionProfile"));
     }
     let view: ProfileView;
     try {
