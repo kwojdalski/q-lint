@@ -236,3 +236,26 @@ test("turned off, the Compare Query panel closes, and a compare still running op
   await running;
   assert.strictEqual(panels.length, 1);
 });
+
+// Cancelled after the first runs, every process not yet started was still
+// recorded in Query History as run and aborted (#1629).
+test("cancelling Query a Tag records only the runs that were sent", async (t) => {
+  const procs = Array.from({ length: 12 }, (_, i) => proc(`p${i}`, 1, ["eu"]));
+  const { live } = await setUp(t, procs);
+  const listeners = [];
+  const token = { isCancellationRequested: false, onCancellationRequested: (f) => (listeners.push(f), { dispose() {} }) };
+  const withProgress = vscode.window.withProgress;
+  vscode.window.withProgress = async (_o, task) => task({ report() {} }, token);
+  t.after(() => (vscode.window.withProgress = withProgress));
+  let sent = 0;
+  live.runApart = async () => {
+    sent++;
+    await new Promise((r) => setTimeout(r, 10));
+    token.isCancellationRequested = true;
+    listeners.forEach((f) => f());
+    return table([1])();
+  };
+  await stub.commands.get("q-lint.queryTag")("eu", "select from t");
+  assert.ok(sent > 0 && sent < 12, String(sent));
+  assert.strictEqual(live.history().length, sent);
+});
