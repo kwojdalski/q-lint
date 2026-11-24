@@ -139,3 +139,11 @@ test("each chart's SVG is a document of its own, its text escaped (#1016-#1018)"
   assert.match(linked, /<svg xmlns="http:\/\/www.w3.org\/2000\/svg" x="0" y="200"/);
   assert.match(linked, /stroke="#00ff00"/);
 });
+
+test("a book whose side column holds strings is read like one of symbols (#1387)", () => {
+  const g = grid([["side", 0, ['"buy"', '"sell"', ',"b"']], ["price", 9, ["1", "1.1", "0.9"]], ["size", 7, ["10", "20", "5"]]]);
+  assert.strictEqual(M.depthColumns(g).mode, "sides");
+  const d = M.depthData(g, all(g));
+  assert.strictEqual(d.note, undefined);
+  assert.deepStrictEqual(d.datasets.map((s) => s.levels), [2, 1]);
+});

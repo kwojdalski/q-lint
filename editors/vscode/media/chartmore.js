@@ -99,7 +99,8 @@
       return { mode: "lists", row: r, bids: bids, asks: asks };
     }
     rows.forEach(function (r) {
-      const side = grid.cells[cols.side][r].replace(/^`/, "");
+      // A symbol shows as buy or `buy, a string as "buy" (one character ,"b").
+      const side = grid.cells[cols.side][r].replace(/^`/, "").replace(/^,?"(.*)"$/, "$1");
       add(BUY.test(side) ? bids : SELL.test(side) ? asks : [], v(cols.price, r), v(cols.size, r));
     });
     return { mode: "sides", bids: bids, asks: asks };
