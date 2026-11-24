@@ -38,6 +38,10 @@ test("the answer is read and the explanation worded for each outcome", () => {
   assert.match(explain(call, 3, "rdb", match({ candidates: 0, missedKey: "sym", missedValue: "`c", matched: -1 })), /none of the 3 rows of quote has sym = `c/);
   assert.match(explain(call, 4, "rdb", match({ matched: -1, time: "08:00" })), /earliest, at time = 08:59, is after this row's time = 08:00/);
   assert.match(explain(call, 2, "rdb", match({ sorted: false })), /not in time order/);
+  // An empty right table has no row to be earliest and no key to miss (#1909).
+  const empty = explain(call, 0, "rdb", match({ candidates: 0, matched: -1, matchedRow: "", earliest: "", rightRows: 0 }));
+  assert.match(empty, /No match: quote has no rows\./);
+  assert.ok(!/same keys|earliest|time = ,/.test(empty), empty);
   assert.ok(!/Warning/.test(explain(call, 2, "rdb", match({}))));
 });
 

@@ -5,7 +5,7 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const { connect, skip } = require("./qserver.js");
-const { EXPLAIN_AJ, readMatch } = require("../out/ajexplain.js");
+const { EXPLAIN_AJ, explain: worded, readMatch } = require("../out/ajexplain.js");
 const { asCode } = require("../out/processtools.js");
 
 const SERVER = [
@@ -35,6 +35,12 @@ test("each row's explained match is the row aj matched", { skip }, async (t) => 
   assert.deepStrictEqual([early.candidates, early.matched, early.earliest, early.time], [2, -1, "08:59:00.000", "08:00:00.000"]);
   assert.strictEqual(early.sorted, true);
   assert.strictEqual((await explain(2, "uq")).sorted, false);
+  // An empty right table, with keys and without: no rows, no key missed (#1909).
+  for (const columns of ["`sym`time", "`time"]) {
+    const none = readMatch(await connection.call(EXPLAIN_AJ, asCode(columns), asCode("trade"), asCode("0#quote"), 0));
+    assert.deepStrictEqual([none.rightRows, none.candidates, none.missedKey, none.matched, none.earliest], [0, 0, "", -1, ""]);
+    assert.match(worded({ fn: "aj", columns, left: "trade", right: "0#quote" }, 0, "p", none), /No match: 0#quote has no rows\./);
+  }
   await assert.rejects(connection.call(EXPLAIN_AJ, asCode("`sym`time"), asCode("trade"), asCode("quote"), 9), /no row 9 in the left table, which has 5 rows/);
   await assert.rejects(connection.call(EXPLAIN_AJ, asCode("`sym`tm"), asCode("trade"), asCode("quote"), 0), /the left table has no column tm/);
 });

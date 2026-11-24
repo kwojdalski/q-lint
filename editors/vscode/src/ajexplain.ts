@@ -116,7 +116,10 @@ export function readMatch(raw: unknown): AjMatch {
 /// The explanation, as plain text lines.
 export function explain(call: AjCall, index: number, process: string, m: AjMatch): string {
   const lines = [`/ ${call.fn}[${call.columns};${call.left};${call.right}] on ${process}: row ${index} of ${call.left}`, "", `left row ${index}: ${m.row}`, ""];
-  if (m.missedKey !== "") {
+  if (m.rightRows === 0) {
+    // No row to be the earliest and no key that missed (#1909).
+    lines.push(`No match: ${call.right} has no rows.`, `${call.fn} leaves the right table's columns null in this row${call.fn === "aj0" ? "" : ", keeping the left row's own"}.`);
+  } else if (m.missedKey !== "") {
     lines.push(
       `No match: none of the ${m.rightRows} rows of ${call.right} has ${m.missedKey} = ${m.missedValue}.`,
       `${call.fn} leaves the right table's columns null in this row${call.fn === "aj0" ? "" : ", keeping the left row's own"}.`,
