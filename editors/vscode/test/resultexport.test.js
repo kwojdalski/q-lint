@@ -290,6 +290,17 @@ test("a pivot's aggregates keep every digit of a long: 123456789012345 is not 12
   assert.strictEqual(page.columnStats(g, [0, 1])[1].mean, "61728394506173");
 });
 
+test("a mean of finite values that overflow their sum is finite, and a sum past the largest float is 0w (#1492)", () => {
+  const g = grid([["s", 11], ["f", 9]], [["a", "a"], ["1e+308", "1e+308"]], [null, [1e308, 1e308]]);
+  assert.strictEqual(page.columnStats(g, [0, 1])[1].mean, "1e+308");
+  const cells = (agg) => page.pivot(g, [0, 1], { row: 0, column: -1, value: 1, agg }).cells;
+  assert.deepStrictEqual(cells("avg"), [["1e+308"]]);
+  // KDB-X: sum 1e308 1e308 is 0w.
+  assert.deepStrictEqual(cells("sum"), [["0w"]]);
+  const h = grid([["s", 11], ["f", 9]], [["a", "a"], ["1e+308", "-1e+308"]], [null, [1e308, -1e308]]);
+  assert.strictEqual(page.columnStats(h, [0, 1])[1].mean, "0");
+});
+
 const look = { colours: ["#111111", "#222222"], foreground: "#000", border: "#ccc", font: "sans-serif", up: "#0f0", down: "#f00" };
 
 test("candles find open, high, low and close by name, and are drawn as floating bars coloured by direction", () => {

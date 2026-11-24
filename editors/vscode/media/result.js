@@ -109,6 +109,10 @@
   /// digits at most, but every digit of its whole part, so
   /// 123456789012345 is not 123456789012000 (#1487).
   function meanText(x) {
+    if (!Number.isFinite(x)) {
+      // A sum past the largest float, as q's `sum` gives it (#1492).
+      return x < 0 ? "-0w" : "0w";
+    }
     return Math.abs(x) >= 1e12 ? String(x) : String(Number(x.toPrecision(12)));
   }
 
@@ -127,7 +131,7 @@
       let nulls = 0;
       let lo = -1;
       let hi = -1;
-      let sum = 0;
+      let mean = 0;
       let n = 0;
       rows.forEach(function (r) {
         const text = cells[r];
@@ -145,8 +149,10 @@
           }
         }
         if (values && values[r] !== null) {
-          sum += values[r];
+          // A running mean, which finite values cannot overflow as their
+          // sum can (#1492).
           n++;
+          mean += values[r] / n - mean / n;
         }
       });
       return {
@@ -157,7 +163,7 @@
         distinct: seen.size,
         min: lo < 0 ? "" : cells[lo],
         max: hi < 0 ? "" : cells[hi],
-        mean: n > 0 ? meanText(sum / n) : "",
+        mean: n > 0 ? meanText(mean) : "",
       };
     });
   }
@@ -286,7 +292,7 @@
       }
       const k = across.of(r);
       if (!acc.has(k)) {
-        acc.set(k, shown.map(function () { return { n: 0, sum: 0, min: Infinity, max: -Infinity }; }));
+        acc.set(k, shown.map(function () { return { n: 0, sum: 0, mean: 0, min: Infinity, max: -Infinity }; }));
       }
       const a = acc.get(k)[j];
       if (agg === "count") {
@@ -299,6 +305,7 @@
       if (v !== null) {
         a.n++;
         a.sum += v;
+        a.mean += v / a.n - a.mean / a.n;
         a.min = Math.min(a.min, v);
         a.max = Math.max(a.max, v);
       }
@@ -310,7 +317,7 @@
       if (a.n === 0) {
         return "";
       }
-      return meanText(agg === "sum" ? a.sum : agg === "avg" ? a.sum / a.n : agg === "min" ? a.min : a.max);
+      return meanText(agg === "sum" ? a.sum : agg === "avg" ? a.mean : agg === "min" ? a.min : a.max);
     };
     const out = { rows: across.order, columns: spec.column >= 0 ? shown : [agg], cells: across.order.map(function (k) { return (acc.get(k) || shown.map(function () { return { n: 0, sum: 0, min: Infinity, max: -Infinity }; })).map(text); }) };
     if (down.order.length > shown.length) {
