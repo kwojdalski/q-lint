@@ -466,37 +466,42 @@ fn named(item: &str) -> (Option<String>, &str) {
     (None, item)
 }
 
+/// The name q gives the next column of a list whose columns so far were
+/// written with (or implied) the names `bases`, when this one's is `base`:
+/// `base` itself the first time, then `base` and the number of times it
+/// came before, whether written or implied - and whatever the other names
+/// are. On KDB-X, `select a:px, a:size, a1:sym from t` has the columns
+/// `` `a`a1`a1 ``, and `select px, px, px1, px from t` `` `px`px1`px1`px2 ``.
+fn q_name(bases: &[String], base: &str) -> String {
+    match bases.iter().filter(|b| *b == base).count() {
+        0 => base.to_string(),
+        n => format!("{base}{n}"),
+    }
+}
+
 /// The columns of a select, by or update list: each one's name and tree,
 /// named as q names them.
 fn columns(items: &[String]) -> Result<Vec<(String, Node)>, String> {
     let mut out: Vec<(String, Node)> = vec![];
-    let mut seen: Vec<String> = vec![];
+    let mut bases: Vec<String> = vec![];
     for item in items {
         let (name, expr) = named(item);
         let node = tree(expr)?;
-        let name = match name {
+        // A name written repeats as one implied does (#2062).
+        let base = match name {
             Some(name) => name,
-            None => {
-                let base = match derived(&node) {
-                    Derived::Name(n) => n,
-                    Derived::X => "x".into(),
-                    Derived::Unknown => {
-                        return Err(format!(
-                            "a column with no name whose name q would choose is not certain here: write it `name:{expr}`"
-                        ));
-                    }
-                };
-                let mut name = base.clone();
-                let mut n = 0;
-                while seen.contains(&name) {
-                    n += 1;
-                    name = format!("{base}{n}");
+            None => match derived(&node) {
+                Derived::Name(n) => n,
+                Derived::X => "x".into(),
+                Derived::Unknown => {
+                    return Err(format!(
+                        "a column with no name whose name q would choose is not certain here: write it `name:{expr}`"
+                    ));
                 }
-                name
-            }
+            },
         };
-        seen.push(name.clone());
-        out.push((name, node));
+        out.push((q_name(&bases, &base), node));
+        bases.push(base);
     }
     Ok(out)
 }
@@ -1103,9 +1108,12 @@ fn dict_items(d: &Data) -> Result<Vec<(String, Node)>, String> {
 }
 
 /// Column items written back: `n:e`, or `e` alone where q would name it
-/// `n` anyway.
+/// `n` anyway. q renames a repeated name (`q_name`), so each column is
+/// written with a name that q turns into its own: `` `a`a1`a1 `` is
+/// `a:px, a1:size, a:sym`. Where no name does - `` `a`a ``, which q's
+/// renaming never gives - nothing is written (#2062).
 fn column_text(cols: &[(String, Node)]) -> Result<String, String> {
-    let mut seen: Vec<String> = vec![];
+    let mut bases: Vec<String> = vec![];
     let mut out = vec![];
     for (name, n) in cols {
         let text = one_item(infix_text(n)?);
@@ -1114,12 +1122,28 @@ fn column_text(cols: &[(String, Node)]) -> Result<String, String> {
             Derived::X => Some("x".into()),
             Derived::Unknown => None,
         };
-        if implied.as_ref() == Some(name) && !seen.contains(name) {
-            out.push(text);
-        } else {
-            out.push(format!("{name}:{text}"));
+        // The names q would turn into `name` here: itself, or what comes
+        // before a count of how often it was written before.
+        let mut candidates: Vec<String> = vec![name.clone()];
+        let stem = name.trim_end_matches(|c: char| c.is_ascii_digit());
+        for cut in stem.len()..name.len() {
+            if !name[cut..].starts_with('0') && cut > 0 {
+                candidates.push(name[..cut].to_string());
+            }
         }
-        seen.push(name.clone());
+        let gives = |b: &String| q_name(&bases, b) == *name && column(b).is_ok();
+        let base = if let Some(i) = implied.as_ref().filter(|i| gives(i)) {
+            out.push(text);
+            i.clone()
+        } else if let Some(b) = candidates.iter().find(|b| gives(b)) {
+            out.push(format!("{b}:{text}"));
+            b.clone()
+        } else {
+            return Err(format!(
+                "a column named `{name}` again, which q's qSQL would rename"
+            ));
+        };
+        bases.push(base);
     }
     Ok(out.join(", "))
 }

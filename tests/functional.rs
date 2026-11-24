@@ -164,6 +164,24 @@ const CASES: &[(&str, &str)] = &[
         "update m:max px by sym from t",
         "![t;();(enlist`sym)!enlist `sym;(enlist`m)!enlist (max;`px)]",
     ),
+    // q renames a repeated name, written or implied, by how often it came
+    // before: KDB-X's `parse` holds `` `a`a1 `` for `select a:px, a:size`,
+    // and `` `a`a1`a1 `` when the third is written `a1` (#2062).
+    ("select a:px, a:size from t", "?[t;();0b;`a`a1!(`px;`size)]"),
+    (
+        "select px, px:size from t",
+        "?[t;();0b;`px`px1!(`px;`size)]",
+    ),
+    (
+        "select a:px, a1:size, a:sym from t",
+        "?[t;();0b;`a`a1`a1!(`px;`size;`sym)]",
+    ),
+    (
+        "select px, px, px1:size, px from t",
+        "?[t;();0b;`px`px1`px1`px2!(`px;`px;`size;`px)]",
+    ),
+    ("update a:px, a:size from t", "![t;();0b;`a`a1!(`px;`size)]"),
+    ("exec a:px, a:size from t", "?[t;();();`a`a1!(`px;`size)]"),
     // q names a dotted column by its last part (KDB-X: `px`, #1300).
     ("select t.px from t", "?[t;();0b;(enlist`px)!enlist `t.px]"),
     ("delete px, size from t", "![t;();0b;`px`size]"),
@@ -418,6 +436,19 @@ fn a_column_named_with_a_word_of_q_is_not_written_as_qsql() {
     ] {
         match functional_to_qsql(&format!("r:{form}\n"), 3) {
             Some(Err(e)) => assert!(e.contains("q's own"), "{form}: {e}"),
+            other => panic!("{form}: {other:?}"),
+        }
+    }
+    // Two columns of one name: q's qSQL renames the second, so there is
+    // none that gives both (#2062). KDB-X runs the form, and
+    // `select a:px, a:size from t` has the columns `a` and `a1`.
+    for form in [
+        "?[t;();0b;`a`a!(`px;`size)]",
+        "?[t;();0b;`px`px!(`px;`size)]",
+        "![t;();0b;`a`a!(`px;`size)]",
+    ] {
+        match functional_to_qsql(&format!("r:{form}\n"), 3) {
+            Some(Err(e)) => assert!(e.contains("rename"), "{form}: {e}"),
             other => panic!("{form}: {other:?}"),
         }
     }
