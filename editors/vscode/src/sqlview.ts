@@ -47,7 +47,14 @@ export function registerSql(
     if (live.activeLabel() !== label) {
       return;
     }
-    const got = await borrowWhenFree(live, async (connection) => readSchema(await connection.call(SQL_SCHEMA)));
+    let got;
+    try {
+      // Kept under `label`: only that process's schema (#1457).
+      got = await borrowWhenFree(live, async (connection) => readSchema(await connection.call(SQL_SCHEMA)), undefined, label);
+    } catch {
+      // Moved elsewhere while it waited, or not read: no completions from it.
+      return;
+    }
     if (got !== undefined) {
       schemas.set(label, got.value);
     }

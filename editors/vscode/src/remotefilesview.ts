@@ -51,7 +51,8 @@ export function registerFileBrowser(
     if (live.activeLabel() !== process) {
       throw new Error(`these files are ${process}'s, and it is no longer the connected process: Browse Files again`);
     }
-    const got = await borrowWhenFree(live, (connection) => use((f, ...args) => connection.call(f, ...args)));
+    // Still `process` once a busy connection is free (#1457).
+    const got = await borrowWhenFree(live, (connection) => use((f, ...args) => connection.call(f, ...args)), undefined, process);
     if (got === undefined) {
       throw new Error("the process is busy with a query; try again once it ends");
     }

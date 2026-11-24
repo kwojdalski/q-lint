@@ -709,3 +709,31 @@ test("the q the SQL tab shows the guard is one the guard reads as a write", () =
   assert.ok(writes(sqlQuery("select 1", true)).length > 0);
   assert.deepStrictEqual(writes(sqlQuery("select 1")), []);
 });
+
+test("a SQL schema is read only from the process it is kept for, not one connected while it waited (#1457)", async () => {
+  const { context, restore } = setUp();
+  vscode.languages.registerCompletionItemProvider = () => ({ dispose() {} });
+  vscode.workspace.openTextDocument = async () => ({ uri: { toString: () => "untitled:9" } });
+  try {
+    stub.config.user["sql.enable"] = true;
+    let active = "a";
+    let busy = true;
+    const read = [];
+    const live = {
+      activeLabel: () => active,
+      fileBinding: () => undefined,
+      processes: () => [],
+      pick: async () => ({ label: "a", tags: [] }),
+      borrow: (use) => (busy ? undefined : use({ call: async () => (read.push(active), {}) }, { label: active, tags: [] })),
+    };
+    registerSql(context, live);
+    const opened = stub.commands.get(LANGUAGE_COMMANDS.newSql)();
+    await new Promise((r) => setTimeout(r, 20));
+    active = "b";
+    busy = false;
+    assert.deepStrictEqual(await opened, { uri: "untitled:9", label: "a" });
+    assert.deepStrictEqual(read, []);
+  } finally {
+    restore();
+  }
+});
