@@ -224,6 +224,11 @@ export class ScheduledExports {
     if ("problem" in read) {
       return undefined;
     }
+    // Turned off at one of the six: no schedule is saved (#2005).
+    if (!on()) {
+      void window.showInformationMessage(plainMessage(adminOff("scheduledExports")));
+      return undefined;
+    }
     const schedule: ScheduledExport = {
       id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
       query: query.name,
@@ -260,6 +265,11 @@ export class ScheduledExports {
     const action = await window.showQuickPick(["Run Now", "Remove"], { title: picked.text });
     const s = this.list().find((x) => x.id === picked.id);
     if (action === undefined || s === undefined) {
+      return;
+    }
+    // Turned off at either pick: nothing is run, written or removed (#2005).
+    if (!on()) {
+      void window.showInformationMessage(plainMessage(adminOff("scheduledExports")));
       return;
     }
     if (action === "Remove") {

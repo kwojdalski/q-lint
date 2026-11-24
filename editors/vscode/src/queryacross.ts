@@ -109,6 +109,10 @@ export class QueryAcross {
     if (!(await this.live.guardAllows(code, [a, b]))) {
       return;
     }
+    // Turned off at a pick or the guard's question: nothing is sent (#2005).
+    if (!featureOn(setting(readCompare).enabled, "Compare Query", "q-lint.query.compare.enable")) {
+      return;
+    }
     const { outcomes } = await this.runEach([a, b], code, `q-lint: comparing ${a.label} and ${b.label}`);
     // Turned off while it ran: no panel opens after the off closed it.
     if (!setting(readCompare).enabled) {
@@ -206,6 +210,10 @@ export class QueryAcross {
       return;
     }
     if (!(await this.live.guardAllows(code, processes))) {
+      return;
+    }
+    // Turned off at the tag pick or the guard's question: nothing is sent (#2005).
+    if (!featureOn(setting(readTagQuery).enabled, "Query a Tag", "q-lint.query.tagQuery.enable")) {
       return;
     }
     const { outcomes, millis } = await this.runEach(processes, code, `q-lint: querying ${processes.length} process${processes.length === 1 ? "" : "es"} tagged ${tag}`);

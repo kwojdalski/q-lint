@@ -90,6 +90,61 @@ test("detected tasks: run current file, and one test task per runner script; def
   assert.strictEqual(T.terminalText("a\nb\r\nc"), "a\r\nb\r\nc");
 });
 
+// What KDB-X printed for `r:til "a"`, ``r:value "1+`a"``, `r:til each ("a";"b")`
+// and `r:1 2 lj 3`: frames of q's own, which name no file, above the script's.
+const INSIDE = {
+  keyword: "'2026.11.24T17:28:12.188 type\n  [3]  (.q.til)\n\n  [2]  /w/e2.q:1: r:til \"a\"\n         ^\n",
+  text: "'2026.11.24T17:28:12.266 type\n  [3]  1+`a\n        ^\n  [2]  /w/e6.q:1: r:value \"1+`a\"\n         ^\n",
+  each: "'2026.11.24T18:01:44.042 type\n  [4]  (.q.til)\n\n  [3]  (.q.each)\n\n  [2]  /w/t3.q:1: r:til each (\"a\";\"b\")\n         ^\n",
+  deep: "'2026.11.24T18:01:44.192 type\n  [6]  (<q.k>:42)\n\n  [5]  (.Q.ft)\n\n  [4]  (.Q.sx)\n\n  [3]  (<q.k>:42)\n\n  [2]  /w/t13.q:1: r:1 2 lj 3\n         ^\n",
+};
+
+/// `text` through `matchable`, arriving in pieces of `size` characters.
+function through(text, size = text.length) {
+  const m = T.matchable();
+  let out = "";
+  for (let i = 0; i < text.length; i += size) out += m.push(text.slice(i, i + size));
+  return out + m.end();
+}
+
+// The two-line matcher read nothing of an error inside a q keyword, a .Q
+// function or evaluated text: the frame under the error names no file
+// (#2001). A q task writes the error line again above the first that does.
+test("an error inside a q keyword or evaluated text is matched at the script's frame, the error line written again above it", () => {
+  for (const [name, file] of [["keyword", "/w/e2.q"], ["text", "/w/e6.q"], ["each", "/w/t3.q"], ["deep", "/w/t13.q"]]) {
+    const printed = INSIDE[name];
+    assert.deepStrictEqual(T.matchProblems(printed), [], `${name}: as q prints it`);
+    const out = through(printed);
+    assert.deepStrictEqual(T.matchProblems(out), [{ file, line: 1, message: "type" }], name);
+    // All of what q printed, in its order, and its error line once more.
+    const error = printed.slice(0, printed.indexOf("\n") + 1);
+    const frame = printed.indexOf("  [2]");
+    assert.strictEqual(out, printed.slice(0, frame) + error + printed.slice(frame), name);
+    // However it arrives.
+    for (const size of [1, 2, 7, 40]) assert.strictEqual(through(printed, size), out, `${name} by ${size}`);
+  }
+  // An error whose first frame names a file is written as it is, on both interpreters.
+  for (const printed of [...Object.values(KDBX), ...Object.values(PEACHQ), "ok\nq)'x\n", "", "no newline"]) {
+    for (const size of [1, 3, 1000]) assert.strictEqual(through(printed, size), printed);
+  }
+  // Nothing waits: text is written as it arrives, an error with no file under it too.
+  const m = T.matchable();
+  assert.strictEqual(m.push("load"), "load");
+  assert.strictEqual(m.push("ing\n'type\n"), "ing\n'type\n");
+  assert.strictEqual(m.push("  [1]  {x+`a}\n"), "  [1]  {x+`a}\n");
+  // But the start of a line that may be the frame the error goes above.
+  assert.strictEqual(m.push("  [0]  /w/a"), "");
+  assert.strictEqual(m.push(".q:2: f 1\n"), "'type\n  [0]  /w/a.q:2: f 1\n");
+  assert.strictEqual(m.push("  [0]  (.q.til)"), "  [0]  (.q.til)");
+  assert.strictEqual(m.end(), "");
+  // An error line followed by other output is no error of a frame below it.
+  assert.strictEqual(through("'type\n  [1]  (.q.til)\nlater\n  [0]  /w/a.q:2: x\n"), "'type\n  [1]  (.q.til)\nlater\n  [0]  /w/a.q:2: x\n");
+  // What is held at the close is written.
+  const held = T.matchable();
+  assert.strictEqual(held.push("'type\n  [1]  (.q.til)\n  [0]  /w/a"), "'type\n  [1]  (.q.til)\n");
+  assert.strictEqual(held.end(), "  [0]  /w/a");
+});
+
 /// The stand-in's task API: providers, tasks and executions kept.
 function setUp(t, folder) {
   stub.reset();
@@ -168,7 +223,7 @@ test("the provider offers the detected tasks; a task runs q on its script with t
   // A q standing in: prints its arguments and a variable, fails on fail.q
   // as q does.
   const fakeQ = path.join(dir, "fakeq");
-  fs.writeFileSync(fakeQ, `#!/bin/sh\necho "args: $* env: $FROM_ENV"\ncase "$1" in *fail.q) echo "'type" >&2; echo "  [1]  $1:2: x" >&2; exit 1;; esac\nexit 0\n`);
+  fs.writeFileSync(fakeQ, `#!/bin/sh\necho "args: $* env: $FROM_ENV"\ncase "$1" in *fail.q) echo "'type" >&2; echo "  [1]  $1:2: x" >&2; exit 1;; *keyword.q) echo "'type" >&2; echo "  [3]  (.q.til)" >&2; echo >&2; echo "  [2]  $1:1: r:til x" >&2; exit 1;; esac\nexit 0\n`);
   fs.chmodSync(fakeQ, 0o755);
   const { providers, registered } = setUp(t, dir);
   stub.config.user["terminal.qBinary"] = fakeQ;
@@ -187,6 +242,10 @@ test("the provider offers the detected tasks; a task runs q on its script with t
   const current = await run(found[0], { type: "q", script: path.join(dir, "fail.q") });
   assert.strictEqual(current.code, 1);
   assert.deepStrictEqual(T.matchProblems(current.out.replace(/\r\n/g, "\n")), [{ file: path.join(dir, "fail.q"), line: 2, message: "type" }]);
+  // An error inside a keyword: the script's frame is under q's own (#2001).
+  const inside = await run(found[0], { type: "q", script: path.join(dir, "keyword.q") });
+  assert.strictEqual(inside.code, 1);
+  assert.deepStrictEqual(T.matchProblems(inside.out.replace(/\r\n/g, "\n")), [{ file: path.join(dir, "keyword.q"), line: 1, message: "type" }]);
   const own = providers[0].provider.resolveTask({ definition: { type: "q", script: "x.q", args: ["-a", "b"] }, name: "mine", scope: vscode.workspace.workspaceFolders[0] });
   assert.match((await run(own)).out, /args: .*x\.q -a b env: hello/);
 });
@@ -357,4 +416,29 @@ test("a q task on a real q: .env variables reach it, and its error reaches the m
   assert.strictEqual(problems.length, 1, out);
   assert.strictEqual(problems[0].line, 3);
   assert.strictEqual(path.basename(problems[0].file), "run_tests.q");
+});
+
+test("a q task on a real q: an error inside a keyword, a .Q function or evaluated text reaches the matcher at the script's line (#2001)", { skip: skipQ }, async (t) => {
+  const { command, args, env } = qCommand();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-taskin-"));
+  fs.writeFileSync(path.join(dir, ".env"), Object.entries(env).map(([k, v]) => `${k}=${v}\n`).join(""));
+  const { providers } = setUp(t, dir);
+  stub.config.user["terminal.qBinary"] = command;
+  const [current] = await providers[0].provider.provideTasks();
+  for (const [name, failing, message] of [
+    ["keyword.q", 'r:til "a"', "type"],
+    ["fs.q", "r:.Q.fs[{x};`:nosuchfile]", /^nosuchfile/],
+    ["text.q", 'r:value "1+`a"', "type"],
+    ["each.q", 'r:til each ("a";"b")', "type"],
+    ["lambda.q", 'r:{til x} "a"', "type"],
+  ]) {
+    fs.writeFileSync(path.join(dir, name), `x:1\n${failing}\ny:2\n`);
+    const { out, code } = await run(current, { type: "q", script: path.join(dir, name), ...(args.length ? { args } : {}) });
+    assert.strictEqual(code, 1, name);
+    const problems = T.matchProblems(out.replace(/\r\n/g, "\n"));
+    assert.strictEqual(problems.length, 1, `${name}: ${out}`);
+    assert.strictEqual(path.basename(problems[0].file), name);
+    assert.strictEqual(problems[0].line, 2);
+    assert.match(problems[0].message, message instanceof RegExp ? message : new RegExp(`^${message}$`));
+  }
 });

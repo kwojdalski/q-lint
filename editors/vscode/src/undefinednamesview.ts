@@ -88,6 +88,10 @@ class Checker {
   readonly collection: DiagnosticCollection;
   private readonly disposables: { dispose(): unknown }[];
   private disposed = false;
+  /// Checks started, and the one whose answer each file shows: an older
+  /// check answered later does not replace it (#1989).
+  private started = 0;
+  private readonly shown = new Map<string, number>();
 
   constructor(
     private readonly live: Live,
@@ -128,6 +132,7 @@ class Checker {
   /// the command, which waits for a busy process a little and confirms a
   /// production one; otherwise a busy or production process is skipped.
   async check(document: TextDocument, asked: boolean): Promise<string | undefined> {
+    const run = ++this.started;
     const process = this.live.activeProcess();
     if (process === undefined) {
       this.collection.delete(document.uri);
@@ -176,6 +181,13 @@ class Checker {
     if (this.disposed || this.live.activeLabel() !== process.label) {
       return undefined;
     }
+    // Still open, the close having cleared its warnings, and not answered
+    // after a later check of it (#1989).
+    const file = document.uri.toString();
+    if (document.isClosed || (this.shown.get(file) ?? 0) > run) {
+      return undefined;
+    }
+    this.shown.set(file, run);
     this.collection.set(
       document.uri,
       undefinedOnProcess(found, defined).map((u) => {

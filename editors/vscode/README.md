@@ -2594,8 +2594,13 @@ script ends: 0 when it loaded, 1 at its first error. The `$q` problem
 matcher puts that error in Problems at its file and line - the innermost
 frame, so the loaded file of a `\l` - as KDB-X prints it
 (`'2026.11.21T19:31:44.874 type` then ``[2]  /w/e.q:3: c:a+`x``) and as
-PeachQ does (`'type`). Add `"problemMatcher": "$q"` to a task of your own
-that runs q to use it there.
+PeachQ does (`'type`). An error inside a q keyword, a `.Q` function or
+evaluated text (`til "a"`, ``value "1+`a"``) has frames of q's own first,
+which name no file (`[3]  (.q.til)`): a `q` task writes the error line
+again above the first frame that does, so it is in Problems at the
+script's line. Add `"problemMatcher": "$q"` to a task of your own that runs
+q to use it there; q's output is not rewritten for such a task, and that
+kind of error is not matched in it.
 
 **Dev container.** **Add q Dev Container Configuration** shows a
 `.devcontainer/devcontainer.json` and `.devcontainer/install-kdbx.sh` for

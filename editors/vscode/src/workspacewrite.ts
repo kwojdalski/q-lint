@@ -7,13 +7,22 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+/// `file` relative to `root` when it is inside it, under it and not `root`
+/// itself; undefined otherwise. The way out is a first segment of `..`: one
+/// that only starts with two dots (`..lib`, `...`) is a folder's name, and
+/// what is under it is inside (#2002).
+export function relativeInside(root: string, file: string): string | undefined {
+  const rel = path.relative(root, file);
+  return rel === "" || rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel) ? undefined : rel;
+}
+
 /// Why `file` is not written as a file of `root`, or undefined when it may
 /// be: `file` outside `root`, or a symbolic link at it or at a folder on the
 /// way to it from `root` (`root` itself may be one). What does not exist yet
 /// is made by the write, so the walk stops there.
 export function linkProblem(root: string, file: string): string | undefined {
-  const rel = path.relative(root, file);
-  if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) {
+  const rel = relativeInside(root, file);
+  if (rel === undefined) {
     return `${file} is not inside ${root}`;
   }
   let at = root;
@@ -34,10 +43,7 @@ export function linkProblem(root: string, file: string): string | undefined {
 
 /// The folder of `folders` that holds `file`, the innermost, if any.
 export function folderOf(folders: readonly string[], file: string): string | undefined {
-  const inside = folders.filter((f) => {
-    const rel = path.relative(f, file);
-    return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
-  });
+  const inside = folders.filter((f) => relativeInside(f, file) !== undefined);
   return inside.sort((a, b) => b.length - a.length)[0];
 }
 

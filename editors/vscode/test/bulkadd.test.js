@@ -10,6 +10,7 @@ const { Live } = require("../out/live.js");
 const { ADMIN_COMMANDS, adminOff, readAdmin } = require("../out/admin.js");
 const { colonParts, csvFields, parseBulk, rowStatus, rowsHtml, toAdd } = require("../out/bulkadd.js");
 const { BulkAdd, bulkAddHtml } = require("../out/bulkaddview.js");
+const vm = require("node:vm");
 
 const saved = [{ label: "rdb", host: "h1", port: 5010, tags: [] }];
 
@@ -111,6 +112,35 @@ test("the form's messages: a check is answered with the table, Add adds", async 
   await bulk.handle({ type: "add", text: "x:1:new" });
   assert.deepStrictEqual(live.processes().map((p) => p.label), ["rdb", "new"]);
   assert.strictEqual(bulk.panel, undefined);
+});
+
+// The panel does not keep its page while hidden, and the page kept what
+// was typed only in its text area: another tab looked at, the form came
+// back empty (#1990).
+test("the form's text survives its tab being hidden: the page keeps it in its state and checks it again", () => {
+  const script = /<script[^>]*>([\s\S]*?)<\/script>/.exec(bulkAddHtml("vscode-resource:"))[1];
+  // The page loaded afresh, as it is each time the tab is shown, over the state VS Code keeps for the panel.
+  let state;
+  const load = () => {
+    const posted = [];
+    const element = () => ({ value: "", innerHTML: "", on: {}, addEventListener(type, f) { this.on[type] = f; } });
+    const elements = { text: element(), rows: element(), add: element() };
+    vm.runInNewContext(script, {
+      acquireVsCodeApi: () => ({ postMessage: (m) => posted.push(m), getState: () => state, setState: (s) => (state = s) }),
+      document: { getElementById: (id) => elements[id] },
+      window: element(),
+    });
+    return { ...elements, posted };
+  };
+  const first = load();
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(first.posted)), [{ type: "check", text: "" }]);
+  first.text.value = "localhost:5010:rdb:dev\ntick:5000";
+  first.text.on.input();
+  const shown = load();
+  assert.strictEqual(shown.text.value, "localhost:5010:rdb:dev\ntick:5000");
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(shown.posted)), [{ type: "check", text: "localhost:5010:rdb:dev\ntick:5000" }]);
+  shown.add.on.click();
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(shown.posted.at(-1))), { type: "add", text: "localhost:5010:rdb:dev\ntick:5000" });
 });
 
 test("turned off, the command refuses and adds nothing; on again without a reload", async (t) => {

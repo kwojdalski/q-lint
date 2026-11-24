@@ -243,6 +243,51 @@ test("closing a handle and setting \\t send nothing when another process became 
   }
 });
 
+// A view's switch was read on entry only: turned off while Close Handle's
+// question, the interval's box or the guard's question was open, the change
+// was still sent, and the view gone was read for again (#2005).
+test("turned off while asked, closing a handle, setting \\t and toggling a timer send nothing (#2005)", async (t) => {
+  const { setUp } = require("./fakeq.js");
+  const { q, live, context } = await setUp(t, { answer: null, register: (c, l) => registerAdminViews(c, l) });
+  await context.globalState.update("q-lint.processes", [
+    { label: "rdb", host: "127.0.0.1", port: q.port, tags: [] },
+    { label: "prd", host: "127.0.0.1", port: q.port, tags: ["prod"] },
+  ]);
+  live.refreshProcesses();
+  const turn = (key, on) => {
+    stub.config.user[key] = on;
+    stub.changeConfig(`q-lint.${key}`);
+  };
+  const offThen = (key, answer) => (options) => (turn(key, false), typeof answer === "function" ? answer(options) : answer);
+  const yes = "Run Anyway";
+  for (const [key, feature, process, run, answers] of [
+    ["connectedClients.enable", "clientsView", "rdb", () => stub.commands.get(ADMIN_COMMANDS.closeClient)({ label: "handle 7", handle: 7, contextValue: "client" }), (k) => ({ picks: [offThen(k, "Close Handle")] })],
+    ["timers.enable", "timerView", "rdb", () => stub.commands.get(ADMIN_COMMANDS.setTimerInterval)({ label: "q timer", interval: 0 }), (k) => ({ inputs: [offThen(k, "500")] })],
+    // On a guarded process the guard asks: turned off at its question.
+    ["timers.enable", "timerView", "prd", () => stub.commands.get(ADMIN_COMMANDS.setTimerInterval)(undefined, 500), (k) => ({ picks: [offThen(k, yes)] })],
+    ["timers.enable", "timerView", "prd", () => stub.commands.get(ADMIN_COMMANDS.toggleTimer)({ label: "flush", job: { id: 1, active: true } }), (k) => ({ picks: [offThen(k, yes)] })],
+  ]) {
+    turn(key, true);
+    assert.strictEqual(await live.connectTo(process), true);
+    await sleep(30);
+    const before = q.sent.length;
+    stub.messages = [];
+    const { picks = [], inputs = [] } = answers(key);
+    stub.picks.push(...picks);
+    stub.inputs.push(...inputs);
+    assert.strictEqual(await run(), false, key);
+    assert.deepStrictEqual([stub.picks.length, stub.inputs.length], [0, 0], key);
+    assert.deepStrictEqual(q.sent.slice(before), [], key);
+    assert.deepStrictEqual(stub.messages.filter(([k]) => k === "info"), [["info", adminOff(feature)]], key);
+  }
+  // On, the same answers send the change.
+  turn("timers.enable", true);
+  stub.inputs.push("500");
+  assert.strictEqual(await live.connectTo("rdb"), true);
+  await stub.commands.get(ADMIN_COMMANDS.setTimerInterval)({ label: "q timer", interval: 0 });
+  assert.match(JSON.stringify(q.sent), /system \\"t 500/);
+});
+
 test("disconnected while asked, closing a handle connects to nothing and asks for no process (#1259)", async (t) => {
   const { setUp } = require("./fakeq.js");
   const { q, live } = await setUp(t, { register: (c, l) => registerAdminViews(c, l) });

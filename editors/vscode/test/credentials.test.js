@@ -18,6 +18,7 @@ const { credentialCwd, credentialEnv, parseCredentials, runCredentialCommand } =
 const { CredentialCommands } = require("../out/credentialview.js");
 const { parseProcesses } = require("../out/processes.js");
 const { readSharedFile } = require("../out/shared.js");
+const { fakeQ, SILENT } = require("./fakeq.js");
 
 const Q = process.env.QLINT_TEST_Q;
 const skip = Q ? false : "QLINT_TEST_Q names no q binary";
@@ -119,6 +120,32 @@ test("turned off, Set Credential Command refuses; on again without a reload", as
   stub.config.user["connection.credentialCommand.enable"] = true;
   await stub.commands.get(ADMIN_COMMANDS.setCredentialCommand)("a", "x");
   assert.strictEqual(live.processes()[0].credentialCommand, "x");
+});
+
+// The connection kept the entry captured at connect, so the reconnect q-lint
+// makes itself after Abort went without the command set since (#1988).
+test("a credential command set on the connected process runs at the reconnect after Abort, and what it prints is not kept", async (t) => {
+  const q = await fakeQ((message) => (JSON.stringify(message).includes("slow") ? SILENT : 1));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-creds-"));
+  t.after(() => (q.close(), fs.rmSync(dir, { recursive: true, force: true })));
+  const marker = path.join(dir, "ran");
+  const { live, context } = await setUp(t, [{ label: "a", host: "127.0.0.1", port: q.port, tags: [] }]);
+  assert.strictEqual(await live.connectTo("a"), true);
+  await stub.commands.get(ADMIN_COMMANDS.setCredentialCommand)("a", `echo ran >> '${marker}'; echo svc:s3cr3t`);
+  assert.deepStrictEqual(stub.messages.at(-1), ["info", "q-lint: a runs its credential command at each connect."]);
+  assert.strictEqual(fs.existsSync(marker), false);
+  const running = live.run("slow");
+  for (let i = 0; i < 50 && !live.isBusy(); i++) await sleep(20);
+  await stub.commands.get("q-lint.abortQuery")();
+  await running;
+  for (let i = 0; i < 100 && live.activeLabel() === undefined; i++) await sleep(20);
+  assert.strictEqual(live.activeLabel(), "a");
+  assert.strictEqual(fs.readFileSync(marker, "utf8"), "ran\n");
+  assert.strictEqual(context.secrets.all.size, 0);
+  assert.ok(!JSON.stringify(stub.messages).includes("s3cr3t"));
+  // Cleared, the next reconnect runs none.
+  await stub.commands.get(ADMIN_COMMANDS.setCredentialCommand)("a", null);
+  assert.strictEqual(live.activeProcess().credentialCommand, undefined);
 });
 
 function freePort() {

@@ -96,6 +96,13 @@ test("a dotted name is one word, a number is one, and an operator splits them", 
     "2024.01.02T10:00",
   ]);
   assert.deepStrictEqual(words("t:10:30;x:1 2"), ["t", "10:30", "x", "1", "2"]);
+  // A number ends at a `_` and a name starts after one: drop without spaces (#1992).
+  assert.deepStrictEqual(words("r:1_til 5"), ["r", "1", "til", "5"]);
+  assert.deepStrictEqual(words("last -1_trades"), ["last", "1", "trades"]);
+  assert.deepStrictEqual(words("0x00_x 1f_y 2_'z 1_.z.p"), ["0x00", "x", "1f", "y", "2", "z", "1", ".z.p"]);
+  assert.deepStrictEqual(words("a1_b x_1"), ["a1_b", "x_1"]);
+  // A float keeps the dot it starts with.
+  assert.deepStrictEqual(words("x:.5+y;(.5;.25e3)"), ["x", ".5", "y", ".5", ".25e3"]);
   // VS Code warns of a word pattern that matches an empty string.
   assert.ok(!WORD.test("") && !WORD.test(" +-*%"));
 });

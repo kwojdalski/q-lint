@@ -5,6 +5,9 @@
 const net = require("node:net");
 const { serialize, deserialize } = require("node-q/lib/c.js");
 
+/// Answered by `answer`, a message is left unanswered: a query that runs on.
+const SILENT = Symbol("silent");
+
 async function fakeQ(answer) {
   const sent = [];
   const sockets = new Set();
@@ -25,7 +28,11 @@ async function fakeQ(answer) {
         buffer = buffer.subarray(message.length);
         const decoded = deserialize(message);
         sent.push(decoded);
-        const out = serialize(typeof answer === "function" ? answer(decoded) : answer);
+        const reply = typeof answer === "function" ? answer(decoded) : answer;
+        if (reply === SILENT) {
+          continue;
+        }
+        const out = serialize(reply);
         out.writeUInt8(2, 1);
         socket.write(out);
       }
@@ -45,7 +52,7 @@ async function fakeQ(answer) {
 /// The first element of each message sent: the lambda's text, or the query.
 const heads = (sent) => sent.map((m) => (Array.isArray(m) ? m[0] : m));
 
-module.exports = { fakeQ, heads };
+module.exports = { fakeQ, heads, SILENT };
 
 /// The stand-in `vscode` with a saved process "rdb" (tagged `tags`) played
 /// by a fake q answering `answer`, a `Live` over it, and `register` called

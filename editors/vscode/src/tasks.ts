@@ -17,6 +17,19 @@
 // The matcher reads the error and the frame under it: the message, and the
 // file and line of the innermost frame - in a `\l`'d script, the loaded
 // file. A frame of code typed at the console has no file and is not matched.
+//
+// An error inside a q keyword, a `.Q` function or evaluated text has frames
+// of q's own first, which name no file, and the script's only under them:
+//
+//   KDB-X:   '2026.11.24T17:28:12.188 type
+//              [3]  (.q.til)
+//
+//              [2]  /w/e.q:1: r:til "a"
+//
+// A matcher's patterns are one line each, and only its last may repeat, so
+// none reads past those frames. A q task writes the error line again above
+// the first frame that names a file (`matchable`), where the two lines are
+// read as any other error's (#2001).
 
 import * as path from "node:path";
 
@@ -107,6 +120,69 @@ export function matchProblems(output: string): Problem[] {
     }
   }
   return found;
+}
+
+/// A frame that names no file, or the line under a frame: its caret, or
+/// nothing under a keyword's.
+const BETWEEN = /^\s+\[\d+\]\s|^\s*\^?\s*$/;
+
+/// What q prints to stderr, as the matcher can read it: `push` gives the
+/// text to write for the text that arrived, and `end` what is left at the
+/// close. All of it is q's, in its order and as it arrives; an error whose
+/// first frames name no file has its line written again above the first
+/// frame that does (#2001). Only the start of a line that may be that frame
+/// waits for its end.
+export function matchable(): { push(text: string): string; end(): string } {
+  const isError = new RegExp(MATCHER.error);
+  const isFrame = new RegExp(MATCHER.frame);
+  // The last error line, while no frame under it has named a file, and
+  // whether a frame has come between.
+  let error: string | undefined;
+  let between = false;
+  // The start of the line being read.
+  let start = "";
+  const line = (whole: string): string => {
+    const text = whole.slice(0, -1);
+    if (error !== undefined) {
+      if (isFrame.test(text)) {
+        const again = between ? error : "";
+        error = undefined;
+        return again + whole;
+      }
+      if (BETWEEN.test(text)) {
+        between = true;
+        return whole;
+      }
+      error = undefined;
+    }
+    if (isError.test(text)) {
+      error = whole;
+      between = false;
+    }
+    return whole;
+  };
+  return {
+    push: (text) => {
+      let out = "";
+      for (const piece of text.split(/(?<=\n)/)) {
+        const written = error === undefined ? start : "";
+        if (piece.endsWith("\n")) {
+          out += line(start + piece).slice(written.length);
+          start = "";
+        } else {
+          out += error === undefined ? piece : "";
+          start += piece;
+        }
+      }
+      return out;
+    },
+    end: () => {
+      const left = error === undefined ? "" : start;
+      error = undefined;
+      start = "";
+      return left;
+    },
+  };
 }
 
 /// Output for a terminal: each newline a carriage return and a newline.
