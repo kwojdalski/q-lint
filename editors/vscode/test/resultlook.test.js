@@ -367,9 +367,27 @@ test("Excel's top and bottom N rank every row the grid holds, not only the filte
   const sheet = unzip(exportResult("xlsx", PAYLOAD, -1, [0, 1], top).data)["xl/worksheets/sheet1.xml"];
   assert.match(sheet, /<formula>AND\(ISNUMBER\(B2\),B2&gt;=9\)<\/formula>/);
   assert.ok(!/top10/.test(sheet));
-  // 0w is the top: no number in Excel matches.
+  // 0w is the top: no number in Excel matches, only its text (#2090); and
+  // with it not written, nothing.
   const infinite = { ...PAYLOAD, cells: [["a", "b", "c"], ["1", "0w", "9"]], raw: [[], [1, Infinity, 9]] };
-  assert.ok(!/conditionalFormatting/.test(unzip(exportResult("xlsx", infinite, -1, undefined, top).data)["xl/worksheets/sheet1.xml"]));
+  assert.match(unzip(exportResult("xlsx", infinite, -1, undefined, top).data)["xl/worksheets/sheet1.xml"], /<conditionalFormatting sqref="B2:B4"><cfRule type="expression" dxfId="0" priority="1"><formula>B2=&quot;0w&quot;<\/formula>/);
+  assert.ok(!/conditionalFormatting/.test(unzip(exportResult("xlsx", infinite, -1, [0, 2], top).data)["xl/worksheets/sheet1.xml"]));
+});
+
+test("Excel colours the 0w and -0w cells the grid's rules colour, a top N of them too (#2090)", () => {
+  // ([] px:0w 5 3 -0w 2f; n:0W 5 3 -0W 2), px > 1 red and n top 1 green.
+  const p = {
+    count: 5, keys: 0, names: ["px", "n"], types: [9, 7],
+    cells: [["0w", "5", "3", "-0w", "2"], ["0W", "5", "3", "-0W", "2"]],
+    raw: [[Infinity, 5, 3, -Infinity, 2], [Infinity, 5, 3, -Infinity, 2]],
+    rank: [[4, 3, 2, 0, 1], [4, 3, 2, 0, 1]],
+  };
+  const rules = [{ column: "px", op: ">", value: 1, style: { background: "red" } }, { column: "n", op: "top", value: 1, style: { color: "green" } }, { column: "px", op: "<=", value: 2, style: { bold: true } }, { column: "n", op: "bottom", value: 2, style: { bold: true } }];
+  const g = require("../out/grid.js").toGrid(p, -1);
+  assert.deepStrictEqual(L.ruleStyles(g, rules).map((m) => [...m.keys()].sort()), [[0, 1, 2, 3, 4], [0, 3, 4]]);
+  const sheet = unzip(exportResult("xlsx", p, -1, undefined, rules).data)["xl/worksheets/sheet1.xml"];
+  const formulas = [...sheet.matchAll(/<formula>([^<]*)<\/formula>/g)].map((m) => m[1].replace(/&quot;/g, '"').replace(/&gt;/g, ">").replace(/&lt;/g, "<"));
+  assert.deepStrictEqual(formulas, ['OR(AND(ISNUMBER(A2),A2>1),A2="0w")', 'B2="0w"', 'OR(AND(ISNUMBER(A2),A2<=2),A2="-0w")', 'OR(AND(ISNUMBER(B2),B2<=2),B2="-0w")']);
 });
 
 test("correlation reads at most CORR_BUDGET row-pairs, over every step-th row past it, and says so (#1857)", () => {
