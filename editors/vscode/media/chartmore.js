@@ -139,7 +139,8 @@
     // Each side runs on past its last level at its whole size, so the last
     // step shows: a twentieth of the prices' range further out, or the spread.
     const prices = bids.concat(asks).map(function (p) { return p[0]; });
-    const range = Math.max.apply(null, prices) - Math.min.apply(null, prices);
+    // A loop, not Math.max.apply: a book of 65k+ prices overflows the stack.
+    const range = prices.reduce(function (m, p) { return Math.max(m, p); }, -Infinity) - prices.reduce(function (m, p) { return Math.min(m, p); }, Infinity);
     const out = range > 0 ? range / 20 : Math.abs(best.bid !== null && best.ask !== null ? best.ask - best.bid : 0) || Math.abs(prices[0]) / 100 || 1;
     const bidLine = bids.length ? [[bids[bids.length - 1][0] - out, bids[bids.length - 1][1]]].concat(bids.slice().reverse()) : [];
     const askLine = asks.length ? asks.concat([[asks[asks.length - 1][0] + out, asks[asks.length - 1][1]]]) : [];

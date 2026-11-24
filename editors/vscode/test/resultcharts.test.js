@@ -147,3 +147,16 @@ test("a book whose side column holds strings is read like one of symbols (#1387)
   assert.strictEqual(d.note, undefined);
   assert.deepStrictEqual(d.datasets.map((s) => s.levels), [2, 1]);
 });
+
+test("a depth chart of a book of 100,000 levels does not overflow the stack (#1388)", () => {
+  const n = 100000;
+  const g = { columns: ["bid", "bidsize", "ask", "asksize"].map((name) => ({ name, numeric: true, type: 9 })), cells: [[], [], [], []], values: [[], [], [], []] };
+  for (let i = 0; i < n; i++) {
+    g.values[0].push(100 - i * 1e-4);
+    g.values[1].push(1);
+    g.values[2].push(100.01 + i * 1e-4);
+    g.values[3].push(1);
+  }
+  const d = M.depthData(g, [...Array(n).keys()]);
+  assert.deepStrictEqual(d.datasets.map((s) => s.levels), [n, n]);
+});
