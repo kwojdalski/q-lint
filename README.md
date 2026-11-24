@@ -297,7 +297,9 @@ are not in it, says on standard error how many it passed over, and exits 0
 when nothing is new. Name the file in a configuration, `baseline =
 "qlinter-baseline.json"`, and every run under it - the language server's
 included - uses it without the flag; `--write-baseline` reads no baseline, so
-it always writes everything.
+it always writes everything. It never writes over a file the run lints, nor
+to a name ending `.q`, `.k` or `.qnb`: `qlinter --write-baseline o.q`, which
+lints the tree, is refused with exit 2 and leaves `o.q` as it was.
 
 A finding is matched on its file, its code and the text of its line with
 the blanks at either end trimmed, never its line number: lines added above

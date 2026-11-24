@@ -108,6 +108,33 @@ fn a_missing_or_broken_baseline_is_an_error_not_silence() {
 
 const NEW_Q: &str = "d:([a:1;b:2])\ng:{(a;b):x; a+b}\nh:{[x:`j] x}\nr:-30!(::)\ns:.Q.Xf\nk:([sym:`a`b] px:1 2)\nt:([] px:1 2)\n";
 
+/// `--write-baseline` writes a file, and a file the run reads is never it:
+/// `--write-baseline o.q` with the tree linted, or `o.q` named as both, once
+/// replaced the source with JSON and exited 0 (#2115). A name that looks like
+/// q source is refused too, read or not, and a refused run writes nothing.
+#[test]
+fn a_baseline_is_never_written_over_q_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("o.q"), OLD).unwrap();
+    for args in [
+        &["--write-baseline", "o.q"][..],
+        &["--write-baseline", "o.q", "o.q"],
+        &["--write-baseline", "./o.q", "."],
+    ] {
+        let (status, _, err) = run(d, args);
+        assert_eq!(status, Some(2), "{args:?}: {err}");
+        assert!(err.contains("one of the files to lint"), "{args:?}: {err}");
+        assert_eq!(fs::read_to_string(d.join("o.q")).unwrap(), OLD, "{args:?}");
+    }
+    for name in ["new.q", "new.K", "new.qnb"] {
+        let (status, _, err) = run(d, &["--write-baseline", name, "o.q"]);
+        assert_eq!(status, Some(2), "{name}: {err}");
+        assert!(err.contains("a baseline is JSON"), "{name}: {err}");
+        assert!(!d.join(name).exists(), "{name}");
+    }
+}
+
 fn qk(found: &[(String, usize)]) -> Vec<(String, usize)> {
     found
         .iter()

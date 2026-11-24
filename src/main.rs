@@ -282,6 +282,26 @@ fn overrides(args: &Args) -> Result<Overrides, String> {
     })
 }
 
+/// Refuse a run whose `flag` would write `target` over a file it reads.
+///
+/// Every flag that writes a file goes through this one check, before
+/// anything is written, so a refused run exits 2 and leaves the file as it
+/// was: `--write-baseline o.q`, with `o.q` taken for the flag's value and
+/// the tree linted, would otherwise replace the source with JSON (#2115).
+fn refuse_overwrite(flag: &str, target: Option<&Path>, inputs: &[PathBuf]) -> Result<(), String> {
+    let Some(target) = target else {
+        return Ok(());
+    };
+    let out = config::absolute(target);
+    if inputs.iter().any(|f| config::absolute(f) == out) {
+        return Err(format!(
+            "{flag} {}: it is one of the files to lint",
+            target.display()
+        ));
+    }
+    Ok(())
+}
+
 /// Whether a path names q source.
 ///
 /// The extension, and nothing else: this runs before the file is opened, and
@@ -514,6 +534,8 @@ fn run(args: Args) -> Result<u8, String> {
     let mut failed = false;
     // Files read lossily, which are linted and reported but never fixed.
     let mut lossy = std::collections::HashSet::new();
+    // Every file the run reads, which no file it writes may be.
+    let mut inputs: Vec<PathBuf> = vec![];
     if stdin {
         if args.fix {
             return Err("--fix needs file paths; use --diff to preview stdin".into());
@@ -562,15 +584,7 @@ fn run(args: Args) -> Result<u8, String> {
     } else {
         let (files, missing) = discover(paths, &policy, args.force_exclude)?;
         failed |= missing;
-        if let Some(out) = OUTPUT_PATH.get() {
-            let out = config::absolute(out);
-            if files.iter().any(|f| config::absolute(f) == out) {
-                return Err(format!(
-                    "--output-file {}: it is one of the files to lint",
-                    out.display()
-                ));
-            }
-        }
+        inputs.extend(files.iter().cloned());
         for path in files {
             // A file that cannot be read is reported and passed over, and the
             // run ends in exit 2, an input failure, whatever the others find.
@@ -617,6 +631,18 @@ fn run(args: Args) -> Result<u8, String> {
                 }
             }
         }
+    }
+    refuse_overwrite("--output-file", args.output_file.as_deref(), &inputs)?;
+    refuse_overwrite("--write-baseline", args.write_baseline.as_deref(), &inputs)?;
+    if let Some(file) = &args.write_baseline
+        && file
+            .extension()
+            .is_some_and(|e| ["q", "k", "qnb"].iter().any(|x| e.eq_ignore_ascii_case(x)))
+    {
+        return Err(format!(
+            "--write-baseline {}: a baseline is JSON, not q source; name it as one, such as qlinter-baseline.json",
+            file.display()
+        ));
     }
     // The files linted together are each other's workspace: a name one
     // defines is not undefined in another. Indexing reads them; nothing runs.
