@@ -1367,6 +1367,7 @@ export class Live {
     await this.save(now.map((p) => (p.label === old.label ? process : p)));
     if (process.label !== old.label) {
       await this.rebind(old.label, process.label);
+      this.modes.processRenamed(old.label, process.label);
     }
     // One being connected to is connected to as it is now (#1700).
     if (this.connectingAs?.label === old.label && this.connectingAs.server === undefined) {

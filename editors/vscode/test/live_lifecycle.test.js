@@ -253,3 +253,22 @@ test("connecting to the process a try is dialing connects, though the try is sto
   assert.strictEqual(await live.connectTo("a"), true);
   assert.strictEqual(live.activeLabel(), "a");
 });
+
+test("renaming the connected process keeps its results its own: paging and drill-down reach it (#1706)", async (t) => {
+  const a = await fakeQ(() => 1);
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)]);
+  await live.connectTo("a");
+  const grid = { count: 2, keys: 0, names: ["c"], types: [7], cells: [["1", "2"]], raw: [[1, 2]], rank: [[0, 1]] };
+  live.modes.show({ process: "a", code: "t", millis: 1, answer: { ok: true, type: 98, text: [], grid } }, { mode: "grid", resultsLocation: "editor", gridLimit: 10000, gridDecimals: -1 });
+  await editProcess("a", "a2", a.port, "");
+  const shown = live.resultOnShow();
+  assert.strictEqual(shown.process, "a2");
+  // Asked of the process (whose answer is no page), not refused as another's.
+  assert.strictEqual((await live.pageHeld(shown.process, 0, 10)).later, undefined);
+  stub.messages.length = 0;
+  const sent = a.sent.length;
+  await live.runOnProcess("1+1", shown.process, { what: "drill-down query" });
+  assert.deepStrictEqual(stub.messages.filter(([kind]) => kind === "error"), []);
+  assert.ok(a.sent.length > sent);
+});
