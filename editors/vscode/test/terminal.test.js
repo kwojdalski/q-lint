@@ -99,6 +99,12 @@ test("cmd is refused a quote, a % or a line break, which it reads itself (#1274)
   // C runtime then splits the word: refused there too (#1420).
   assert.ok(typeof commandLine("q", ["-name", 'say "hi" now'], "powershell") === "object");
   assert.match(commandLine("q", ['a"b'], "powershell").error, /PowerShell cannot pass "a\\"b" to q as written/);
+  // Windows PowerShell drops an empty word, and escapes the last quote of a
+  // spaced word ending in a backslash (#1682).
+  assert.match(commandLine("q", ["a.q", "-x", ""], "powershell").error, /PowerShell cannot pass "" to q as written: .*empty argument as none/);
+  assert.match(commandLine("q", ["-dir", "C:\\my data\\"], "powershell").error, /PowerShell cannot pass "C:\\\\my data\\\\" to q/);
+  assert.strictEqual(commandLine("q", ["-dir", "C:\\data\\"], "powershell"), "q -dir C:\\data\\");
+  assert.strictEqual(commandLine("q", ["-x", ""], "posix"), "q -x ''");
   assert.strictEqual(commandLine("q", [], "powershell", { QINIT: 'a"b' }), "$env:QINIT='a\"b'; q");
   assert.strictEqual(commandLine("q", ["my file.q", "a&b"], "cmd"), 'q "my file.q" "a&b"');
 });

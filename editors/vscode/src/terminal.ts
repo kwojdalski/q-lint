@@ -82,7 +82,8 @@ export function quote(word: string, shell: Shell): string {
 /// a `"` or a `%` inside quotes - its `\"` ends the quoted part, so what
 /// follows is read as commands, and `%NAME%` is expanded (#1274) - so a
 /// word or value with either, or with a line break, is refused there; and
-/// PowerShell is refused a word with a `"`.
+/// PowerShell is refused a word with a `"`, an empty word, and a spaced
+/// one ending in a backslash.
 export function commandLine(binary: string, args: string[], shell: Shell, env: Record<string, string> = {}): string | { error: string } {
   if (shell === "cmd") {
     const bad = [binary, ...args, ...Object.entries(env).map(([n, v]) => `${n}=${v}`)].find((w) => /["%\r\n]/.test(w));
@@ -97,6 +98,12 @@ export function commandLine(binary: string, args: string[], shell: Shell, env: R
     const bad = [binary, ...args].find((w) => w.includes('"'));
     if (bad !== undefined) {
       return { error: `PowerShell cannot pass ${JSON.stringify(bad)} to q as written: Windows PowerShell does not escape the " in it for q. Start q from another terminal, or leave the " out.` };
+    }
+    // It passes an empty word as nothing, and a spaced one ending in a
+    // backslash as "...\", whose \" q reads as a quote (#1682).
+    const lost = args.find((w) => w === "" || (/\s/.test(w) && w.endsWith("\\")));
+    if (lost !== undefined) {
+      return { error: `PowerShell cannot pass ${JSON.stringify(lost)} to q as written: Windows PowerShell passes ${lost === "" ? "an empty argument as none" : "a spaced argument ending in \\ with its last quote escaped"}. Start q from another terminal${lost === "" ? "" : ", or leave the trailing \\ out"}.` };
     }
   }
   const command = quote(binary, shell);
