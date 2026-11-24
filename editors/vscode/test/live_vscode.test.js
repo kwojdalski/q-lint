@@ -339,6 +339,18 @@ test("a discovered process's password is forgotten when it is refused, not when 
   assert.strictEqual(context.secrets.all.has("q-lint.discoveredPassword.desk/refused"), false);
 });
 
+// A click on the connected row ran Connect again, which closed the
+// connection and dropped the query running on it as aborted (#1506).
+test("clicking the connected process's row does not reconnect", async (t) => {
+  const a = await fakeQ(() => GATHERED);
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port), proc("b", a.port)]);
+  assert.strictEqual(await live.connectTo("a"), true);
+  const tree = stub.trees.find((v) => v.id === "q-lint.processes").options.treeDataProvider;
+  const items = tree.getChildren().map((r) => tree.getTreeItem(r));
+  assert.deepStrictEqual(items.map((i) => [i.label, i.command?.command]), [["a", undefined], ["b", "q-lint.connectProcess"]]);
+});
+
 // A file Export cannot write (a read-only folder, a full disk) rejected the
 // command: VS Code said only that running it failed.
 test("Export Processes says why it could not write the file", async (t) => {

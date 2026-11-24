@@ -260,8 +260,12 @@ class ProcessesView implements TreeDataProvider<Row> {
     item.tooltip = new MarkdownString(processTooltip(process, from));
     const kind = from === undefined ? "process" : "discovered";
     item.contextValue = active ? `${kind}.connected` : kind;
-    // A click connects: the row is the process, and connecting is what it is for.
-    item.command = { command: COMMANDS.connect, title: "Connect", arguments: [row] };
+    // A click connects: the row is the process, and connecting is what it is
+    // for. Not the connected row's: it would reconnect, dropping a query
+    // running there (#1506).
+    if (!active) {
+      item.command = { command: COMMANDS.connect, title: "Connect", arguments: [row] };
+    }
     return item;
   }
 }
