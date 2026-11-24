@@ -78,8 +78,8 @@ test("in-place updates, writers, file writes and amends are changes", () => {
     "f:`lib 2:(`f;1)": ["assigns f", "loads a shared object with 2:"],
     "@[`t;0;:;1]": ["amends `t in place"],
     ".[`t;(0;`a);:;1]": ["amends `t in place"],
-    // A trap by name is not an amend.
-    ".[`f;(1;2);{x}]": [],
+    // On a symbol three arguments amend too; on a value it is a trap.
+    ".[`f;(1;2);{x}]": ["amends `f in place"],
     "@[f;x;{y}]": [],
     'value "a:1"': ["evaluates a string with value"],
     "value d": [],
@@ -682,16 +682,38 @@ test("an amend projection with the target left out and applied to a symbol is a 
   }
 });
 
+test("a three-argument amend on a symbol, with any function, is a change (#1763)", () => {
+  const cases = {
+    "@[`b;0;{9}]": ["amends `b in place"],
+    ".[`b;();{9}]": ["amends `b in place"],
+    "@[`b;::;1+]": ["amends `b in place"],
+    "@[`t;`price;{x*2}]": ["amends `t in place"],
+    ".[@;(`b;0;{9})]": ["amends `b in place"],
+    "(@) . (`b;::;1+)": ["amends `b in place"],
+    "value(@;`b;0;{9})": ["evaluates an amend with value"],
+    // On a value, an index, or ! with three, it reads.
+    "@[b;0;{9}]": [],
+    ".[f;(1;2);{x}]": [],
+    "@[`.;`a]": [],
+    ".[@;(b;0;{9})]": [],
+    "@[(`t)[0];1;{x}]": [],
+    "@[(`d)`a;0;neg]": [],
+    "![`t;();0b]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
 test("a three-argument amend with an attribute or a unary is a change (#1323)", () => {
   const cases = {
     "@[`t;`c;`p#]": ["amends `t in place"],
     "@[`t;`a;`s#]": ["amends `t in place"],
     "@[`t;`a;neg]": ["amends `t in place"],
     ".[`t;(0;`a);neg]": ["amends `t in place"],
-    // A trap by name, or on a value, reads.
-    ".[`f;(1;2);{x}]": [],
-    "@[`f;x;::]": [],
-    "@[`f;x;`err]": [],
+    // On a value it reads; on a symbol it is never a trap (#1763).
+    ".[`f;(1;2);{x}]": ["amends `f in place"],
+    "@[`f;x;::]": ["amends `f in place"],
     "@[t;`c;`p#]": [],
     "![`t;();0b]": [],
   };
@@ -835,7 +857,7 @@ test("an amend or ! in parentheses applied in brackets is a change (#1445)", () 
     "(@)[`t;`c;`p#]": ["amends `t in place"],
     // On a value, or a trap, it reads.
     "(@)[t;0;:;1]": [],
-    "(.)[`f;(1;2);{x}]": [],
+    "(.)[f;(1;2);{x}]": [],
     "(@)[f;x;{y}]": [],
     "(!)[t;();0b;`a]": [],
     "(x+1)[0]": [],
@@ -890,6 +912,7 @@ test("value of an amend tree with the head in parentheses or projected is a chan
     "value((@);t;0;:;1)": [],
     "value(@[;0;:;2];t)": [],
     "value(@[;0];`t)": [],
+    "value(@[;0;{9}];`b)": ["evaluates an amend with value"],
     "value(@[f;0];`t)": [],
   };
   for (const [code, expected] of Object.entries(cases)) {
@@ -998,6 +1021,297 @@ test("a writer taken out of .q with @ or . enlist is a change (#1726)", () => {
     "(.q@`count) 1 2": [],
     "(.q . enlist`count) 1 2": [],
     "(.Q@`dd)[`:a;`b]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("an amend or ! through an adverb or a composition is a change (#1771)", () => {
+  const cases = {
+    "@/[`.;`a;:;9]": ["amends `. in place"],
+    "@/[`b;::;1+]": ["amends `b in place"],
+    "(@/)[`.;`a;:;9]": ["amends `. in place"],
+    "'[::;@][`.;`a;:;9]": ["amends `. in place"],
+    "'[::;(@)][`.;`a;:;9]": ["amends `. in place"],
+    "'[::;!][`t;();0b;(enlist`a)!enlist 9]": ["updates or deletes from `t in place with !"],
+    "'[::;.][`:o.txt;();,;1 2]": ["amends `:o.txt in place"],
+    // On a value, an index, or another function, it reads.
+    "@/[b;::;1+]": [],
+    "'[::;@][t;0]": [],
+    "'[::;@][`t;0]": [],
+    "'[neg;+][1;2]": [],
+    "+/[1 2 3]": [],
+    ",/[`a;`b]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("KDB-X use, .h.ht and .Q.L are changes (#1775)", () => {
+  const cases = {
+    "use`kx.rest": ["calls use"],
+    "r:use`kx.rest": ["assigns r", "calls use"],
+    ".h.ht`T": ["calls .h.ht"],
+    ".Q.L[`:db;();`:.]": ["calls .Q.L"],
+    // Their neighbours read.
+    ".h.htc[`p;\"x\"]": [],
+    ".h.hta[`a;()!()]": [],
+    "select users from t": [],
+    ".Q.s t": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("? on a symbol atom in parentheses or applied in brackets extends an enumeration (#1773)", () => {
+  const cases = {
+    "(`sym)?`q": ["extends the enumeration `sym with ?"],
+    "((`sym))?`q": ["extends the enumeration `sym with ?"],
+    "?[`sym;`q]": ["extends the enumeration `sym with ?"],
+    "?[`:db/sym;`q`r]": ["extends the enumeration `:db/sym with ?"],
+    // A list, a value, or a functional select or exec reads.
+    "(`a`b)?`b": [],
+    "(s)?`q": [],
+    "?[`a`b;`b]": [],
+    "?[s;`q]": [],
+    "?[`t;();0b;()]": [],
+    "?[`t;();();`a]": [],
+    "?[1b;`a;`b]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("a name in parentheses or a nested destructuring list assigns (#1772)", () => {
+  const cases = {
+    "(a):9": ["assigns a"],
+    "((a)):9": ["assigns a"],
+    "((a;c);d):((1;2);3)": ["assigns a", "assigns c", "assigns d"],
+    "(a;(c;d)):(1;(2;3))": ["assigns a", "assigns c", "assigns d"],
+    "(.ns.v;a):1 2": ["assigns .ns.v", "assigns a"],
+    "{((a;c);d)::((1;2);3)}[]": ["assigns a", "assigns c", "assigns d"],
+    // A local in a lambda, a list that is not all names, or a comparison reads.
+    "{((a;c);d):((1;2);3); a+c}[]": [],
+    "{(a):9}[]": [],
+    "((a;1);d)": [],
+    "(a)=9": [],
+    "(a;b)~1 2": [],
+    "f[(a);9]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("reval or -24! of an assignment tree is a change (#1774)", () => {
+  const cases = {
+    "reval(:;`a;9)": ["evaluates an assignment with reval"],
+    "reval(+:;`a;1)": ["evaluates an assignment with reval"],
+    ".q.reval(:;`a;9)": ["evaluates an assignment with .q.reval"],
+    "-24!(:;`a;9)": ["evaluates an assignment with -24!"],
+    // A tree that only reads, reads.
+    "reval(+;1;2)": [],
+    "reval(count;`t)": [],
+    "-24!(+;1;2)": [],
+    "reval x": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("a string literal an evaluator runs is read as the code it is (#1776)", () => {
+  const cases = {
+    'value"select from t"': [],
+    'get"count t"': [],
+    'eval parse"select from t"': [],
+    '@[value;"count t";{x}]': [],
+    'value each ("count t";"count b")': [],
+    'value"\\\\v"': [],
+    '-6!parse"count t"': [],
+    'value -5!"count t"': [],
+    // One that writes, is built, or passes through another function is a change.
+    'value"select from t";value"a:9"': ["evaluates a string with value"],
+    'value each ("count t";"a:9")': ["evaluates a string with value"],
+    'value"`b set 7"': ["evaluates a string with value"],
+    'value"\\\\l s.q"': ["evaluates a string with value"],
+    'eval parse"update a:9 from `t"': ["evaluates a parse tree with eval"],
+    'value "a",":9"': ["evaluates a string with value"],
+    'value raze("a";":9")': ["evaluates a string with value"],
+    'value "count t"[0]': ["evaluates a string with value"],
+    "eval parse x": ["evaluates a parse tree with eval"],
+    // The identity is not an assignment.
+    "eval(::)": [],
+    "-6!(::)": [],
+    // k code is not read: its . evaluates k.
+    'k)."1+1"': ["evaluates a string with k's ."],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("value or get passed as a value evaluates the strings around it (#1766)", () => {
+  const cases = {
+    'value/["a:9"]': ["evaluates a string with value"],
+    'get\\["a:9"]': ["evaluates a string with get"],
+    '(value@)"a:9"': ["evaluates a string with value"],
+    '((get)@)"a:9"': ["evaluates a string with get"],
+    "'[value;::]\"a:9\"": ["evaluates a string with value"],
+    "'[::;(get@)]\"a:9\"": ["evaluates a string with get"],
+    '@[(value);"a:9";{x}]': ["evaluates a string with value"],
+    '((value).)enlist"a:9"': ["evaluates a string with value"],
+    '(get@)\'[enlist "a:9"]': ["evaluates a string with get"],
+    '.Q.trp[(value);"a:9";{x}]': ["evaluates a string with value"],
+    // On a read, a value, or a string beside it in another expression, it reads.
+    'value/["count t"]': [],
+    "'[value;::]`t": [],
+    '@[(value);"count t";{x}]': [],
+    "(value@)x": [],
+    'f:{value/[x]};"a:b"': ["assigns f"],
+    'f:{(value@)x}': ["assigns f"],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("value or eval of a list headed by what changes the process is a change (#1767)", () => {
+  const cases = {
+    'value(value;"a:9")': ["evaluates a call of value with value"],
+    'eval(get;"a:9")': ["evaluates a call of get with eval"],
+    "value(hopen;`:g.txt)": ["evaluates a call of hopen with value"],
+    'value((value);"a:9")': ["evaluates a call of (value) with value"],
+    'value(.q.get;"a:9")': ["evaluates a call of .q.get with value"],
+    "value(set;`b;7)": ["evaluates a call of set with value"],
+    "value(?;`sym;`q)": ["evaluates a call of ? with value"],
+    "eval(?;enlist`sym;enlist`q)": ["evaluates a call of ? with eval"],
+    'eval(eval;(parse"a:9"))': ["evaluates a call of eval with eval"],
+    // One that only reads, reads.
+    'value(value;"count t")': [],
+    "value(hopen;`::5000)": [],
+    "value(count;`t)": [],
+    "eval(count;`t)": [],
+    "value(+;1;2)": [],
+    "eval(?;`s;enlist`q)": [],
+    'value("count t";"count b")': [],
+    "value({x+1};2)": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("a list sent to handle 0 is evaluated as value evaluates it (#1768)", () => {
+  const cases = {
+    '0(value;"a:9")': ["evaluates a call of value on handle 0"],
+    "0(@;`b;0;:;9)": ["evaluates an amend on handle 0"],
+    "0(!;`t;();0b;(enlist`a)!enlist 9)": ["evaluates a functional update or delete on handle 0"],
+    "0(:;`a;9)": ["evaluates an assignment on handle 0"],
+    "neg[0](:;`a;9)": ["evaluates an assignment on handle 0"],
+    '0((get@);"a:9")': ["evaluates a call of (get@) on handle 0"],
+    // One that reads, or 0 as a number, reads.
+    "0(count;`t)": [],
+    '0"count t"': [],
+    "@[`b;0]": [],
+    "b[0]": [],
+    "0 1 2": [],
+    "(0;1)": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("an evaluator, hopen or xkey taken out of .q or named by its symbol is a change (#1764)", () => {
+  const cases = {
+    '.q[`value]"a:9"': ["calls .q.value"],
+    '(.q`get)"a:9"': ["calls .q.get"],
+    '(`.q.value)"a:9"': ["calls .q.value"],
+    ".q[`xkey][`a;`t]": ["calls .q.xkey"],
+    "(`.q.xkey)[`a;`t]": ["calls .q.xkey"],
+    "(.q@`hopen)`:g.txt": ["calls .q.hopen"],
+    '(get`.q.get)["a:9"]': ["calls .q.get"],
+    // What is not one of them, or the name applied directly, reads.
+    ".q[`count]`t": [],
+    "(`.q.count)`t": [],
+    ".q.value `t": [],
+    "`a .q.xkey t": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("a function picked from .q by any index is a change (#1765)", () => {
+  const cases = {
+    "(.q . enlist`set)[`b;7]": ["calls .q.set"],
+    "(.q[enlist`set]0)[`b;7]": ["calls .q.set"],
+    "((get`.q)`set)[`b;7]": ["calls .q.set"],
+    "((value`.q)`hdel)`:f.txt": ["calls .q.hdel"],
+    '(.q`$"set")[`b;7]': ["calls .q.set"],
+    "(.q`value`get)0": ["calls .q.value"],
+    "(.Q`$\"dpft\")[`:d;.z.d;`sym;`t]": ["calls .Q.dpft"],
+    // What is not one of them reads.
+    "(.q[enlist`count]0)`t": [],
+    "((get`.q)`count)`t": [],
+    '(.q`$"count") 1 2': [],
+    "(.q`count`sum)0": [],
+    "key .q; `set": [],
+    "count get`.q": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("hopen applied with @, ., ', each, in parentheses or a trap opens the file (#1769)", () => {
+  const cases = {
+    "hopen@`:g.txt": ["opens a file with hopen"],
+    "(hopen)`:g.txt": ["opens a file with hopen"],
+    "hopen . enlist`:g.txt": ["opens a file with hopen"],
+    "hopen'[enlist`:g.txt]": ["opens a file with hopen"],
+    "hopen each enlist`:g.txt": ["opens a file with hopen"],
+    "@[hopen;`:g.txt;{x}]": ["opens a file with hopen"],
+    ".Q.trp[(hopen@);`:g.txt;{x}]": ["opens a file with hopen"],
+    "hopen -1!`g.txt": ["opens a file with hopen"],
+    "hopen .q.hsym`g.txt": ["opens a file with hopen"],
+    "'[::;hopen]`:g.txt": ["opens a file with hopen"],
+    "0((hopen);`:g.txt)": ["evaluates a call of (hopen) on handle 0"],
+    // Of a process, or of a value, it connects.
+    "hopen@`:host:5000": [],
+    "@[hopen;`::5000;{x}]": [],
+    "hopen each (`:a:5000;`:b:5001)": [],
+    "hopen -1!`host:5000": [],
+    "@[hopen;h;{x}]": [],
+    "hopen 5000": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("xkey or xdesc applied in parentheses, with . or an adverb, or composed keys or sorts in place (#1770)", () => {
+  const cases = {
+    "(xkey)[`a;`t]": ["keys a table in place with xkey"],
+    "(xkey)[`a]@`t": ["keys a table in place with xkey"],
+    ".[xkey;(`a;`t)]": ["keys a table in place with xkey"],
+    "xkey/[`a;`t]": ["keys a table in place with xkey"],
+    ".q.xkey . (`a;`t)": ["keys a table in place with .q.xkey"],
+    "'[::;xdesc][`a;`t]": ["sorts a table in place with xdesc"],
+    "`a xdesc/: enlist `t": ["sorts a table in place with xdesc"],
+    "(enlist `a) xkey\\: `t": ["keys a table in place with xkey"],
+    "xdesc'[enlist `a;enlist `t]": ["sorts a table in place with xdesc"],
+    // On a value, the columns alone, or another expression's symbol, it reads.
+    ".[xkey;(`a;t)]": [],
+    "(xkey)[`a]t": [],
+    "`a`b xasc/: (t;u)": [],
+    "f:(xdesc)[`a]; `t": ["assigns f"],
+    "`a xdesc select from t where s=`x": [],
   };
   for (const [code, expected] of Object.entries(cases)) {
     assert.deepStrictEqual(writes(code), expected, code);
