@@ -205,6 +205,21 @@ test("only the last maxLines entries that pass are kept", async (t) => {
   assert.deepStrictEqual([lines[0], lines.at(-1)], ["line 899", "line 999"]);
 });
 
+test("a followed view shows no more than maxLines entries as lines are appended (#1431)", async (t) => {
+  const file = path.join(tmp(), "grow.log");
+  fs.writeFileSync(file, Array.from({ length: 100 }, (_, i) => `line ${i}`).join("\n") + "\n");
+  stub.reset();
+  const { viewer, text } = setUp(t);
+  stub.config.user["processes.logViewer.maxLines"] = 100;
+  await stub.commands.get(LOG_COMMANDS.open)(vscode.Uri.file(file));
+  fs.appendFileSync(file, Array.from({ length: 5 }, (_, i) => `more ${i}`).join("\n") + "\n");
+  for (let i = 0; i < 60 && !text().includes("more 4"); i++) await sleep(50);
+  const lines = text().split("\n");
+  // The last 100 entries, and the one still open.
+  assert.deepStrictEqual([lines.length, lines[0], lines.at(-1)], [101, "line 4", "more 4"]);
+  assert.strictEqual(viewer.state().entries, 100);
+});
+
 test("turned off, the commands refuse, the provider goes and following stops; on again without a reload", async (t) => {
   const file = path.join(tmp(), "q.log");
   fs.writeFileSync(file, "a\n");
