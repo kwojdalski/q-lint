@@ -36,8 +36,12 @@ test("each literal reads to the integer q holds, and is written back as q writes
   // Short forms read as q reads them.
   assert.deepStrictEqual(t.parse("2024.01.02D03"), { type: "timestamp", n: 757479600000000000n });
   assert.deepStrictEqual(t.parse("1D02"), { type: "timespan", n: 93600000000000n });
+  assert.strictEqual(t.parse("0001.01m").type, "month");
+  assert.strictEqual(t.parse("0001.01.01").type, "date");
+  assert.strictEqual(t.parse("0001.01.01T10:00").type, "datetime");
   // No such day, minute or month.
-  for (const bad of ["2023.02.29", "2024.13m", "09:60", "2024.01.02D24:00", "12:00:00.1234", "0Nx", "-0Np", "0wp", "0Wz"]) {
+  // Nor a year 0, which q refuses (#1784); year 1 it reads.
+  for (const bad of ["2023.02.29", "2024.13m", "09:60", "2024.01.02D24:00", "12:00:00.1234", "0Nx", "-0Np", "0wp", "0Wz", "0000.01m", "0000.01.01", "0000.12.31T10:00"]) {
     assert.strictEqual(t.parse(bad), undefined, bad);
   }
 });
@@ -128,7 +132,12 @@ test("the switch is declared, on by default, and the command is hidden when it i
 function fakeEditor(text, selected) {
   const editor = {
     text,
-    document: { lineAt: () => ({ text: editor.text }), getText: (r) => editor.text.slice(r.start.character, r.end.character) },
+    document: {
+      lineAt: () => ({ text: editor.text }),
+      getText: (r) => editor.text.slice(r.start.character, r.end.character),
+      offsetAt: (p) => p.character,
+      positionAt: (o) => ({ line: 0, character: o }),
+    },
     selection: { isEmpty: selected === undefined, active: { line: 0, character: selected?.[0] ?? 0 }, start: { line: 0, character: selected?.[0] }, end: { line: 0, character: selected?.[1] } },
     edit: async (f) => {
       f({ replace: (r, s) => (editor.text = editor.text.slice(0, r.start.character) + s + editor.text.slice(r.end.character)) });
@@ -173,6 +182,10 @@ test("the hover lives only while the feature is on, and Convert replaces the sel
   stub.picks.push((options) => options.items.find((i) => i.description === "from Unix seconds"));
   assert.strictEqual(await stub.commands.get(t.CONVERT_TEMPORAL)(), "2024.01.02D03:04:05.000000000");
   assert.strictEqual(vscode.window.activeTextEditor.text, "ts:2024.01.02D03:04:05.000000000");
+  // The spaces a drag takes around the value are kept (#1783).
+  vscode.window.activeTextEditor = fakeEditor("a 2024.01.02 b", [1, 13]);
+  assert.strictEqual(await stub.commands.get(t.CONVERT_TEMPORAL)("int, days since 2000.01.01 (`\"i\"$`)"), "8767");
+  assert.strictEqual(vscode.window.activeTextEditor.text, "a 8767 b");
   // Nothing to convert.
   vscode.window.activeTextEditor = fakeEditor("abc", [0, 3]);
   assert.strictEqual(await stub.commands.get(t.CONVERT_TEMPORAL)(), undefined);

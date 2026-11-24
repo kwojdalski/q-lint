@@ -1903,9 +1903,11 @@ its view or hover is gone, and it sends nothing.
 [release notes](https://github.com/kwojdalski/q-lint/releases). Each opens in
 your browser.
 
-**Live completion.** While connected, completion in a q file adds the
-process's global names, as read by the explorer, to the language server's,
-and inside a qSQL statement - `select`, `exec`, `update` or `delete` ... `from
+**Live completion**, when turned on with
+`q-lint.processExplorer.liveCompletion.enable` (off by default, as VS Code
+then stops offering the words already in the file). While connected, completion in a q file adds the process's global
+names, as read by the explorer, to the language server's, and inside a qSQL
+statement - `select`, `exec`, `update` or `delete` ... `from
 t` - the columns of `t` first. It adds nothing inside a string or a comment.
 A name q cannot parse (`café`, `a b`, made with `set`) goes in as Preview
 reads it, by its symbol: ``get`$"café"``.
@@ -2697,6 +2699,7 @@ nothing.
 | `q-lint.processExplorer.findCallers.enable` | `true` | Find Callers in Process. | - |
 | `q-lint.processExplorer.tableHover.enable` | `true` | A table's details in its Process Explorer tooltip. | - |
 | `q-lint.processExplorer.editorTableHover.enable` | `false` | A table's details on hovering its name in a q editor; asks the process. | - |
+| `q-lint.processExplorer.liveCompletion.enable` | `false` | While connected, complete the process's global names and, in a qSQL statement, its table's columns, as the Process Explorer read them. Off by default: VS Code then stops offering the words already in the file. | - |
 | `q-lint.processExplorer.tableTemplates.enable` | `true` | **Table Templates...** on a Process Explorer table: select first 100, `meta`, count by date, an insert template. | - |
 | `q-lint.processExplorer.schemaDiagram.enable` | `true` | **Show Schema Diagram**: the process's tables with their foreign keys and link columns. Off, an open diagram closes. | - |
 | `q-lint.dataFiles.open.enable` | `true` | **Open Data File in Grid** on a CSV, TSV or JSON file: loaded through q and shown in the grid. | - |

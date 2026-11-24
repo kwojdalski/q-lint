@@ -298,6 +298,23 @@ test("deleting a discovery server, or changing its URL, forgets its processes' p
   assert.strictEqual(secrets.get("q-lint.discoveredPassword.desk/rdb"), "pw");
 });
 
+// Escape on the new auth header, after Change it, saved the new label and
+// URL as if Keep had been picked, and forgot the processes' passwords.
+test("Escape on Edit Discovery Server's new auth header changes nothing (#1780)", async (t) => {
+  const { context, live } = await setUp(t, []);
+  const url = `http://127.0.0.1:${await deadPort()}/`;
+  await context.globalState.update("q-lint.discoveryServers", [{ label: "desk", url }]);
+  const secrets = context.secrets.all;
+  secrets.set("q-lint.discovery.auth.desk", "Bearer old");
+  secrets.set("q-lint.discoveredPassword.desk/rdb", "pw");
+  stub.inputs = ["desk2", `${url}b`, undefined];
+  stub.picks = ["Change it"];
+  await stub.commands.get("q-lint.editDiscoveryServer")("desk");
+  assert.deepStrictEqual(live.discovery.servers(), [{ label: "desk", url }]);
+  assert.strictEqual(secrets.get("q-lint.discovery.auth.desk"), "Bearer old");
+  assert.strictEqual(secrets.get("q-lint.discoveredPassword.desk/rdb"), "pw");
+});
+
 // A discovery server that lists a process elsewhere kept its password, and
 // the next connect sent it there unasked - after a reload too (#1503).
 test("a discovered process listed at another host or port forgets its password, after a reload too", async (t) => {

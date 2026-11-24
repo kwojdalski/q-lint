@@ -204,6 +204,10 @@ export class DiscoveryServers {
         return undefined;
       }
       secret = picked === drop ? "" : picked === keep ? undefined : await this.askSecret();
+      // Escape on the new header cancels the edit, not keeps the old (#1780).
+      if (picked === change && secret === undefined) {
+        return undefined;
+      }
     } else {
       secret = await this.askSecret();
     }

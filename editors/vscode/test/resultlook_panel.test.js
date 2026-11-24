@@ -578,3 +578,86 @@ test("Toggle Data Bar turns off, and on again, the bar a *_BAR column draws by i
   await fake.vscode.commands["q-lint.toggleResultDataBar"]({ column: 1 });
   assert.strictEqual(last(fake).look.cellCharts, undefined);
 });
+
+test("a format or layout added while a watched query refreshes goes to the refreshed result and stays (#1752)", async () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  modes.show(result(), live);
+  // The first pick waits; the watched query's next run lands meanwhile.
+  let release;
+  const gate = new Promise((r) => (release = r));
+  const pick = fake.vscode.window.showQuickPick;
+  let first = true;
+  fake.vscode.window.showQuickPick = async (items, options) => {
+    if (first) {
+      first = false;
+      await gate;
+    }
+    return pick(items, options);
+  };
+  fake.answers.picks.push(">", "Red background");
+  fake.answers.inputs.push("4");
+  const adding = fake.vscode.commands["q-lint.addResultConditionalFormat"]({ column: 1 });
+  await tick();
+  modes.show(result(), live, true);
+  release();
+  await adding;
+  const rule = { column: "px", op: ">", value: 4, style: { background: "red" } };
+  assert.deepStrictEqual(last(fake).look.rules, [rule]);
+  modes.show(result(), live, true);
+  assert.deepStrictEqual(last(fake).look.rules, [rule]);
+  // Hide Column picked from one result, while another arrives: it hides
+  // the column of the one it was picked from, not the other's.
+  fake.vscode.window.showQuickPick = async (items) => {
+    modes.show(result("select from u", [["x", 7, ["1"], [1]], ["y", 7, ["2"], [2]]]), live);
+    return (await items).find((i) => i.label === "sym");
+  };
+  await fake.vscode.commands["q-lint.hideResultColumn"]();
+  assert.strictEqual(last(fake).look.layout, undefined);
+  modes.show(result(), live);
+  assert.deepStrictEqual(last(fake).look.layout.hidden, ["sym"]);
+});
+
+test("only the saved query's own run takes its look, not another result whose code holds its code (#1753)", async () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  modes.expectSaved("trades", "t");
+  // A watched query that lands while the saved query runs.
+  modes.show(result("select from t where sym=`a"), live);
+  assert.strictEqual(last(fake).saved, undefined);
+  modes.show(result("t"), live);
+  assert.strictEqual(last(fake).saved, "trades");
+  // Its run through a TorQ gateway is still the saved query's.
+  const { savedRun } = require("../out/resultpanel.js");
+  const { gatewayStatement } = require("../out/gateway.js");
+  assert.ok(savedRun(gatewayStatement(["select from t"], ["rdb"]), "select from t"));
+  assert.ok(savedRun(gatewayStatement(["a:1", "a"], ["rdb", "hdb"]), "a:1\na"));
+  assert.ok(!savedRun(gatewayStatement(["select from t where sym=`a"], ["rdb"]), "select from t"));
+  assert.ok(!savedRun("count t", "t"));
+});
+
+test("Hide Column refuses a name several columns share, and says so (#1754)", async () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  // q allows them: `a`a xcol t.
+  modes.show(result("t", [["a", 7, ["1", "2"], [1, 2]], ["a", 7, ["3", "4"], [3, 4]], ["b", 7, ["5", "6"], [5, 6]]]), live);
+  await fake.vscode.commands["q-lint.hideResultColumn"]({ column: 1 });
+  assert.strictEqual(last(fake).look.layout, undefined);
+  assert.match(fake.said.at(-1), /2 columns of the result are named a.*not hidden/);
+  await fake.vscode.commands["q-lint.hideResultColumn"]({ column: 2 });
+  assert.deepStrictEqual(last(fake).look.layout.hidden, ["b"]);
+});
+
+test("a chart preset is forgotten once its result leaves the history (#1755)", async () => {
+  const fake = fakeVscode({ "query.resultHistory": 2 });
+  const modes = loadModes(fake);
+  const preset = { kind: "bar", series: ["px"], colours: {} };
+  const draw = () => fake.pages[0].receive({ type: "rendered", id: last(fake).id, rows: [0, 1, 2], rendered: { view: "chart", rows: 3, held: 3, total: 3, columns: [], first: [], preset } });
+  for (let i = 0; i < 6; i++) {
+    modes.show(result(`select from t${i}`), live);
+    draw();
+  }
+  // As a watched chart query left running: one preset a run, kept only
+  // for the two results the history holds.
+  assert.strictEqual(modes.presets.size, 2);
+});

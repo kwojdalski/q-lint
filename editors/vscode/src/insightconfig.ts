@@ -4,13 +4,15 @@
 // provider unregistered, its command refusing, and sends nothing.
 //
 // The editor's table hover is off unless asked for: it would ask the
-// process for a table's details whenever the mouse rests on its name.
+// process for a table's details whenever the mouse rests on its name. So is
+// live completion: a provider with items hides VS Code's word suggestions.
 
 export const INSIGHT_SETTINGS = {
   functionSource: { key: "processExplorer.functionSource.enable", fallback: true, name: "Function source and Redefine" },
   findCallers: { key: "processExplorer.findCallers.enable", fallback: true, name: "Find Callers in Process" },
   tableHover: { key: "processExplorer.tableHover.enable", fallback: true, name: "The Process Explorer's table hover" },
   editorTableHover: { key: "processExplorer.editorTableHover.enable", fallback: false, name: "The editor's table hover" },
+  liveCompletion: { key: "processExplorer.liveCompletion.enable", fallback: false, name: "Live completion" },
   processMonitor: { key: "processMonitor.enable", fallback: true, name: "The Process Monitor" },
   hdbBrowser: { key: "hdbBrowser.enable", fallback: true, name: "The HDB Browser" },
 } as const;
