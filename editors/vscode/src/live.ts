@@ -535,6 +535,12 @@ export class QTerminals {
   }
 }
 
+/// The seconds left of a `timeout` (0: none) after `waited` ms: never 0,
+/// which would be none.
+function left(timeout: number, waited: number): number {
+  return timeout > 0 ? Math.max(timeout - waited / 1000, 0.001) : 0;
+}
+
 /// Where `process` is connected to, with `password` for its user.
 function targetOf(process: Process, password: string | undefined): Target {
   return {
@@ -626,6 +632,10 @@ export class Live {
   /// disconnected, and closes what it opens (#1073).
   private disconnects = 0;
   private running: { code: string; started: number } | undefined;
+  /// Queries waiting in `ready` to be sent - for a connect under way, or a
+  /// background read out on the connection: shown running, and ended by
+  /// Abort and by their timeout as a query sent is (#2126).
+  private readonly waiters = new Set<{ started: number; stop: AbortController }>();
   /// Redraws the status bar each second while a query runs, so its time
   /// counts up (#910).
   private ticker: ReturnType<typeof setInterval> | undefined;
@@ -1295,6 +1305,10 @@ export class Live {
       this.status.tooltip = counting
         ? `A query has been running on ${label} for ${took}. q-lint: Abort Current Query stops waiting for it.`
         : "A query is running. q-lint: Abort Current Query stops waiting for it.";
+    } else if (this.waiters.size > 0) {
+      const to = label ?? this.connectingAs?.label ?? "the process";
+      this.status.text = `$(sync~spin) q: ${iconsEscaped(to)} waiting`;
+      this.status.tooltip = `A query waits to be sent to ${to}: a connect, or another call, is under way. q-lint: Abort Current Query stops it.`;
     } else if (label !== undefined) {
       const unanswered = this.beatSent === undefined ? 0 : Date.now() - this.beatSent;
       const health =
@@ -1323,7 +1337,7 @@ export class Live {
     // VS Code also shows a view's badge on its container's activity-bar icon.
     this.processesTree.badge = label === undefined ? undefined : { value: 1, tooltip: `Connected to ${label}` };
     void commands.executeCommand("setContext", CONNECTED, label !== undefined);
-    void commands.executeCommand("setContext", QUERY_RUNNING, this.running !== undefined && label !== undefined);
+    void commands.executeCommand("setContext", QUERY_RUNNING, (this.running !== undefined && label !== undefined) || this.waiters.size > 0);
     this.controls?.refresh();
   }
 
@@ -2631,17 +2645,62 @@ export class Live {
 
   /// The active connection and its process, connecting first if there is
   /// none; undefined when none was connected or a query is still running.
-  private async ready(): Promise<{ connection: QConnection; process: Process } | undefined> {
+  /// `seconds` (0: none) bound the wait for a connect under way or a
+  /// background read, and Abort ends it (#2126); `waited` is how long it was.
+  private async ready(seconds = 0, source = "q-lint.query.timeout"): Promise<{ connection: QConnection; process: Process; waited: number } | undefined> {
+    const waiter = { started: 0, stop: new AbortController() };
+    let disarm = (): void => {};
+    let timedOut = false;
+    // Whether `what` settled, rather than the wait being stopped.
+    const wait = async (what: Promise<unknown> | undefined): Promise<boolean> => {
+      if (what === undefined) {
+        return true;
+      }
+      if (!this.waiters.has(waiter)) {
+        waiter.started = Date.now();
+        this.waiters.add(waiter);
+        disarm = armTimeout(seconds, () => {
+          timedOut = true;
+          waiter.stop.abort();
+        });
+        this.showStatus();
+      }
+      const stopped = new Promise<false>((resolve) => waiter.stop.signal.addEventListener("abort", () => resolve(false), { once: true }));
+      const settled = await Promise.race([what.then(() => true, () => true), stopped]);
+      if (!settled) {
+        const to = this.active?.label ?? this.connectingAs?.label ?? "the process";
+        void window.showInformationMessage(
+          plainMessage(timedOut
+            ? `q-lint: the query ${timedOutError(seconds)} (${source}) waiting to be sent to ${to}; it was not run.`
+            : `q-lint: stopped the query waiting to be sent to ${to}; it was not run.`),
+        );
+      }
+      return settled;
+    };
+    try {
+      const ready = await this.readyAfter(wait);
+      return ready === undefined ? undefined : { ...ready, waited: waiter.started === 0 ? 0 : Date.now() - waiter.started };
+    } finally {
+      disarm();
+      if (this.waiters.delete(waiter)) {
+        this.showStatus();
+      }
+    }
+  }
+
+  private async readyAfter(wait: (what: Promise<unknown> | undefined) => Promise<boolean>): Promise<{ connection: QConnection; process: Process } | undefined> {
     // A reconnect still under way (after an abort) is waited for, not
     // replaced by asking which process to connect to.
-    if (this.connection === undefined && this.connecting !== undefined) {
-      await this.connecting;
+    if (this.connection === undefined && this.connecting !== undefined && !(await wait(this.connecting))) {
+      return undefined;
     }
     if (this.connection === undefined && !(await this.connectTo())) {
       return undefined;
     }
     const before = this.connection;
-    await this.borrowed;
+    if (!(await wait(this.borrowed))) {
+      return undefined;
+    }
     const connection = this.connection;
     const process = this.active;
     if (connection !== before && before !== undefined) {
@@ -2684,10 +2743,13 @@ export class Live {
     if (expect !== undefined && this.activeLabel() !== expect) {
       throw movedFrom(expect);
     }
-    let ready = await this.ready();
-    if (ready === undefined) {
+    const asked = this.active ?? this.connectingAs;
+    const first = await this.ready(ownTimeout(asked, this.setting(readAdmin).processTimeout), timeoutSource(asked, this.setting(readAdmin).processTimeout));
+    if (first === undefined) {
       return undefined;
     }
+    const { waited } = first;
+    let ready: { connection: QConnection; process: Process } | undefined = first;
     if (expect !== undefined && ready.process.label !== expect) {
       throw movedFrom(expect);
     }
@@ -2717,7 +2779,8 @@ export class Live {
     const enabled = this.setting(readAdmin).processTimeout;
     const timeout = ownTimeout(ready.process, enabled);
     let timedOut = false;
-    const disarm = armTimeout(timeout, () => {
+    // What is left of it after waiting to be sent.
+    const disarm = armTimeout(left(timeout, waited), () => {
       if (this.running?.started === started) {
         timedOut = true;
         void this.abort(timeout, timeoutSource(ready?.process, enabled));
@@ -3050,10 +3113,14 @@ export class Live {
   async run(written: string, as?: "watch" | "watched", serverTypes?: string[], mode?: QueryMode): Promise<void> {
     const origin = as === undefined ? this.origin : undefined;
     this.origin = undefined;
-    let ready = await this.ready();
-    if (ready === undefined) {
+    const asked = this.active ?? this.connectingAs;
+    const askedOn = this.setting(readAdmin).processTimeout;
+    const first = await this.ready(effectiveTimeout(asked, this.controls.settings().timeout, askedOn), timeoutSource(asked, askedOn));
+    if (first === undefined) {
       return;
     }
+    const { waited } = first;
+    let ready: { connection: QConnection; process: Process } | undefined = first;
     if (as === undefined && this.guardRefuses(written, [ready.process]) !== undefined) {
       if (!(await this.guardAllows(written, [ready.process]))) {
         return;
@@ -3079,8 +3146,9 @@ export class Live {
     const started = Date.now();
     this.running = { code, started };
     this.showStatus();
-    // A query still running at the timeout is aborted as Abort does.
-    const disarm = armTimeout(timeout, () => {
+    // A query still running at the timeout is aborted as Abort does; the
+    // time it waited to be sent counts (#2126).
+    const disarm = armTimeout(left(timeout, waited), () => {
       if (this.running?.started === started) {
         this.timedOut = started;
         void this.abort(timeout, timeoutSource(process, timeoutOn));
@@ -3244,6 +3312,16 @@ export class Live {
   /// so the connection is closed - which also stops the process from sending
   /// a result nobody wants - and opened again.
   async abort(timedOut?: number, source = "q-lint.query.timeout"): Promise<void> {
+    // Queries not sent yet are stopped (#2126); a background read they
+    // wait behind is stopped as well, as before, and a connect left to run.
+    if (timedOut === undefined && this.running === undefined && this.waiters.size > 0) {
+      for (const waiter of [...this.waiters]) {
+        waiter.stop.abort();
+      }
+      if (this.connection?.isBusy !== true) {
+        return;
+      }
+    }
     const connection = this.connection;
     const process = this.active;
     if (connection === undefined || process === undefined || !connection.isBusy) {
