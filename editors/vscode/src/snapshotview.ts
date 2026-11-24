@@ -21,6 +21,7 @@ import {
   preview,
   sameResult,
   snapshotName,
+  snapshotQuery,
   validName,
 } from "./snapshot";
 import { statements } from "./statements";
@@ -115,7 +116,7 @@ async function record(live: Live): Promise<boolean> {
   }
   const before = await existing(target);
   const old = before === undefined ? undefined : parseSnapshot(before);
-  if (old !== undefined && old.query === query.trim() && sameResult(old.result, got)) {
+  if (old !== undefined && old.query === snapshotQuery(query) && sameResult(old.result, got)) {
     void window.showInformationMessage(plainMessage(`q-lint: ${workspace.asRelativePath(target)} already holds this result.`));
     return false;
   }

@@ -51,7 +51,14 @@ export interface Snapshot {
 
 /// The file a snapshot is written as.
 export function formatSnapshot(snapshot: Snapshot): string {
-  return [HEADER, QUERY, snapshot.query.replace(/\s+$/, ""), RESULT, trimmed(snapshot.result), ""].join("\n");
+  return [HEADER, QUERY, snapshotQuery(snapshot.query), RESULT, trimmed(snapshot.result), ""].join("\n");
+}
+
+/// `query` as a snapshot file holds it and `parseSnapshot` reads it back:
+/// with `\n` line ends, as a CRLF document's selection has not (#1415), and
+/// no blanks around it.
+export function snapshotQuery(query: string): string {
+  return query.replace(/\r\n/g, "\n").trim();
 }
 
 /// A snapshot file read, or undefined when `text` is not one.
