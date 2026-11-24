@@ -425,14 +425,16 @@ adds to it.
 The root is the directory the pattern is written relative to, never the path
 being linted: a configuration file's own directory for its patterns, and the
 directory qlinter runs in for `--exclude` (and for a `--config FILE` or the
-user-level file). So `qlinter .. --exclude src/`, run from `proj/tests`,
+user-level file - in the language server, the user-level file's patterns are
+rooted at the workspace folder holding the file instead). So `qlinter .. --exclude src/`, run from `proj/tests`,
 names `proj/tests/src`; a leading `../` climbs from the root, as Ruff resolves
 it, and `qlinter .. --exclude ../src` is the one that names `proj/src`.
 
 Under `uqf`, QP002, QP003 and QP005 - and QP007 where it is selected - pass
 over a file in a `tests`
 directory below that root - the configuration's directory, or the current
-one without a configuration - since a test may build a datetime or read the
+one without a configuration (in the language server, the workspace folder
+holding the file, wherever the editor started it) - since a test may build a datetime or read the
 local clock on purpose. A `tests` above the root exempts nothing, and
 `--select` naming one of them reports it regardless.
 

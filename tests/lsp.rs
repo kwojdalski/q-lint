@@ -1165,6 +1165,57 @@ fn codes_of(diagnostics: &[Value]) -> Vec<String> {
         .collect()
 }
 
+/// The server started in `cwd` under `--profile uqf` with `folders` as its
+/// workspace folders, as VS Code starts it in the first.
+fn start_with_folders(cwd: &std::path::Path, folders: &[&std::path::Path]) -> Server {
+    let mut server = Server::start_in(cwd, &[]);
+    let folders: Vec<Value> = folders
+        .iter()
+        .map(|f| json!({"uri": file_uri(f), "name": "ws"}))
+        .collect();
+    server.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize",
+        "params":{"capabilities":client_capabilities(),"workspaceFolders":folders}}));
+    server.receive();
+    server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    server
+}
+
+#[test]
+fn with_no_configuration_the_tests_exemption_is_rooted_at_the_files_folder() {
+    // With no configuration a file's project root was the server's current
+    // directory, so a second folder's tests/ reported QP002 and QP003 where
+    // `qlinter` run in that folder reports nothing - and, started at `/`, a
+    // folder under a `tests` directory was exempted although the CLI run in
+    // it is not (#2109).
+    let dir = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(dir.path()).unwrap();
+    let (a, b, nested) = (root.join("a"), root.join("b"), root.join("c/tests/proj"));
+    let source = "a:.z.Z\nb:.z.P\n";
+    for path in [a.join("x.q"), b.join("tests/t.q"), nested.join("t.q")] {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, source).unwrap();
+    }
+    let qp = |diagnostics: Vec<Value>| -> Vec<String> {
+        let mut codes = codes_of(&diagnostics);
+        codes.retain(|c| c.starts_with("QP"));
+        codes
+    };
+    let mut server = start_with_folders(&a, &[&a, &b]);
+    let uri = file_uri(&b.join("tests/t.q"));
+    server.open(&uri, source);
+    assert_eq!(qp(server.diagnostics_for(&uri)), Vec::<String>::new());
+    assert_eq!(server.shutdown_and_exit(), 0);
+
+    let mut server = start_with_folders(std::path::Path::new("/"), &[&nested]);
+    let uri = file_uri(&nested.join("t.q"));
+    server.open(&uri, source);
+    assert_eq!(
+        qp(server.diagnostics_for(&uri)),
+        ["QP002", "QP003", "QP003"]
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
 #[test]
 fn a_name_another_workspace_file_defines_is_not_undefined() {
     // lib.q is on disk and never opened; the server reads it at startup.

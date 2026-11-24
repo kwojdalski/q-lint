@@ -545,6 +545,8 @@ impl Index {
                 path
             })
             .collect();
+        // A file no configuration governs is rooted at its own folder.
+        policy.set_roots(self.roots.iter().chain(&added));
         let kept: Vec<String> = self.roots.iter().map(|r| file_key(r)).collect();
         for gone in removed.iter().map(|r| file_key(r)) {
             let under = |key: &str, root: &str| std::path::Path::new(key).starts_with(root);
@@ -1322,6 +1324,7 @@ pub fn serve(
                     ("initialize", Some(id)) => {
                         let folders = workspace_folders(&params);
                         idx.roots = folders.iter().map(|(path, _)| path.clone()).collect();
+                        policy.set_roots(&idx.roots);
                         idx.folders = folders.into_iter().map(Folder::of).collect();
                         let layer;
                         (opts, layer, problems) = Options::read(&params);
