@@ -161,3 +161,10 @@ export function suggestJoins(left: Shape, right: Shape): Suggestion[] {
   }
   return out;
 }
+
+/// The last line `selection` has text on: whole lines selected end at
+/// column 0 of the line after, which is not one of them (#1920).
+export function lastSelectedLine(selection: { start: { line: number }; end: { line: number; character: number } }): number {
+  const { start, end } = selection;
+  return end.character === 0 && end.line > start.line ? end.line - 1 : end.line;
+}

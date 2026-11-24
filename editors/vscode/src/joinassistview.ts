@@ -12,7 +12,7 @@
 // and nothing is sent.
 import { Position, commands, window, workspace, type ExtensionContext } from "vscode";
 import { borrowWhenFree } from "./infoview";
-import { TABLES, TABLE_SHAPE, readShape, tableExpression, suggestJoins, type Shape, type Suggestion } from "./joinassist";
+import { TABLES, TABLE_SHAPE, lastSelectedLine, readShape, tableExpression, suggestJoins, type Shape, type Suggestion } from "./joinassist";
 import type { Live } from "./live";
 import { PROCESS_TOOL_COMMANDS, asCode, isString, listOf, toolOff, toolOn } from "./processtools";
 import { statements } from "./statements";
@@ -31,7 +31,8 @@ function say(text: string): string {
 export async function writeExpression(text: string): Promise<string> {
   const editor = window.activeTextEditor;
   if (editor !== undefined && editor.document.languageId === "q") {
-    const at = editor.selection.isEmpty ? editor.selection.active : new Position(editor.selection.end.line, editor.document.lineAt(editor.selection.end.line).range.end.character);
+    const last = lastSelectedLine(editor.selection);
+    const at = editor.selection.isEmpty ? editor.selection.active : new Position(last, editor.document.lineAt(last).range.end.character);
     const insert = editor.selection.isEmpty ? text : `\n${text}`;
     await editor.edit((edit) => edit.insert(at, insert));
     return `inserted in ${editor.document.uri.toString()}`;
