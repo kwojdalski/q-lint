@@ -382,8 +382,9 @@ function readStatement(statement: string, found: Set<string>): void {
   // names it assigns plainly anywhere in its body, as q compiles it.
   const locals: Set<string>[] = [];
   // Between `select`, `exec`, `update` or `delete` and its `from`, a name
-  // before `:` names a column.
-  let qsql: string | undefined;
+  // before `:` names a column. A stack, so a query nested in a column's
+  // expression closes only itself: `` update c:(exec max a from s) from `t ``.
+  const qsql: string[] = [];
   for (let i = 0; i < t.length; i++) {
     const k = t[i];
     const next = t[i + 1];
@@ -410,7 +411,7 @@ function readStatement(statement: string, found: Set<string>): void {
           j += 2;
           if (t[j - 1].text === ")") break;
         }
-        if (names.length > 1 && t[j - 1]?.text === ")" && t[j]?.kind === "op" && t[j].text === ":" && qsql === undefined) {
+        if (names.length > 1 && t[j - 1]?.text === ")" && t[j]?.kind === "op" && t[j].text === ":" && qsql.length === 0) {
           const global = t[j + 1]?.text === ":" && touching(t[j], t[j + 1]);
           for (const name of names) {
             if (lambdas === 0 || global || name.includes(".")) {
@@ -455,15 +456,15 @@ function readStatement(statement: string, found: Set<string>): void {
     }
     if (k.kind === "name") {
       if (["select", "exec", "update", "delete"].includes(k.text)) {
-        qsql = k.text;
+        qsql.push(k.text);
         continue;
       }
-      if (k.text === "from" && qsql !== undefined) {
+      if (k.text === "from" && qsql.length > 0) {
         const table = symbolAt(t, i + 1);
-        if ((qsql === "update" || qsql === "delete") && table !== undefined) {
-          found.add(table === "`." ? "deletes from the root namespace" : `${qsql === "update" ? "updates" : "deletes from"} ${table} in place`);
+        const query = qsql.pop();
+        if ((query === "update" || query === "delete") && table !== undefined) {
+          found.add(table === "`." ? "deletes from the root namespace" : `${query === "update" ? "updates" : "deletes from"} ${table} in place`);
         }
-        qsql = undefined;
         continue;
       }
       // A writer indexed out of its namespace: `` .q[`set][`b;2] ``.
@@ -593,7 +594,7 @@ function readStatement(statement: string, found: Set<string>): void {
       // In a table literal only the name that starts an item is a column:
       // `([] c:(g:5)+1 2)` and `([] d:g:3)` assign `g`.
       const top = stack[stack.length - 1];
-      const column = qsql !== undefined || ((top === "table" || top === "key") && ["[", "]", ";"].includes(t[i - 1]?.text ?? ""));
+      const column = qsql.length > 0 || ((top === "table" || top === "key") && ["[", "]", ";"].includes(t[i - 1]?.text ?? ""));
       if (column && !global) {
         continue;
       }

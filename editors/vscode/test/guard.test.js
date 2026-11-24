@@ -732,3 +732,18 @@ test("ordinary reads stay reads after the round-6 rules", () => {
     assert.deepStrictEqual(writes(code), [], code);
   }
 });
+
+test("an in-place update whose column holds a subquery is a change (#1439)", () => {
+  const cases = {
+    "update c:(exec max a from s) from `t": ["updates `t in place"],
+    "delete from `t where a in (select a from s)": ["deletes from `t in place"],
+    "update c:(select max a by b from (exec a from s)) from `t": ["updates `t in place"],
+    // A nested query on a value reads, and its columns are not assignments.
+    "update c:(exec max a from s) from t": [],
+    "select c:(exec max a from s) from t": [],
+    "x:update c:(exec a:max a from s) from t": ["assigns x"],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
