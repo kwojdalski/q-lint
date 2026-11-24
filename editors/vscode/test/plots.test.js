@@ -52,6 +52,14 @@ test("only chartSvg's plain SVG is kept: no script, handler or link", () => {
   }
 });
 
+test("a label that reads like a handler or link is text, and the plot is kept (#1475)", () => {
+  for (const label of ["status online=1", "see href=x", "javascript: tips"]) {
+    assert.strictEqual(plainSvg(svg(`<text x="1">${label}</text>`)), true, label);
+  }
+  assert.strictEqual(plainSvg(svg('<text x="1">a</text><a href="x">b</a>')), false);
+  assert.strictEqual(plainSvg(svg('<text x="1" onclick="x()">a</text>')), false);
+});
+
 test("the switch is declared, on by default, and the view and commands are hidden when off", () => {
   const props = Object.assign({}, ...pkg.contributes.configuration.map((c) => c.properties));
   assert.strictEqual(props["q-lint.results.plots.enable"].default, true);
@@ -104,6 +112,8 @@ test("the view shows the plot on show, steps and saves it, and off is unregister
   await new Promise((r) => setImmediate(r));
   const asked = posted.at(-1);
   assert.strictEqual(asked.type, "png");
+  // The ask carries the plot picked, for the page to draw that one (#1482).
+  assert.strictEqual(asked.svg, svg("b"));
   receive({ type: "png", key: asked.key, data: "data:image/png;base64,iVBORw0KGgo=" });
   assert.strictEqual(await saving, "/p.png");
   assert.deepStrictEqual([...written["/p.png"].subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47]);
@@ -117,6 +127,12 @@ test("the view shows the plot on show, steps and saves it, and off is unregister
   receive({ type: "png", key: twoKey, data: "data:image/png;base64,iVBORw0KGgo=" });
   receive({ type: "png", key: oneKey, data: "data:image/png;base64,iVBORw0KGgo=" });
   assert.deepStrictEqual(await Promise.all([one, two]), ["/1.png", "/2.png"]);
+  // A file that cannot be written says so, rather than failing unseen (#1481).
+  const writeFile = vscode.workspace.fs.writeFile;
+  vscode.workspace.fs.writeFile = async () => { throw new Error("EROFS: read-only file system"); };
+  assert.strictEqual(await stub.commands.get(PLOT_COMMANDS.save)("svg", vscode.Uri.file("/ro/p.svg")), undefined);
+  assert.deepStrictEqual(stub.messages.at(-1), ["error", "q-lint: could not write /ro/p.svg: EROFS: read-only file system"]);
+  vscode.workspace.fs.writeFile = writeFile;
   receive({ type: "remove" });
   assert.strictEqual(PLOTS.list().length, 1);
   // Off: unregistered, the plots dropped, the commands refuse.

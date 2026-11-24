@@ -134,6 +134,10 @@ export class SchemaTools {
       void window.showInformationMessage(plainMessage(`q-lint: could not read the tables of ${process}: a query is still running. Try again once it ends.`));
       return;
     }
+    // Turned off while the tables were read: nothing to show (#1479).
+    if (!this.on("diagram")) {
+      return;
+    }
     const { tables, failed } = got.value;
     this.shown = { process, tables, failed, svg: schemaSvg(tables) };
     this.show();

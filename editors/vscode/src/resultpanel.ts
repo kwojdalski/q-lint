@@ -840,10 +840,10 @@ export class QueryModes {
     return picked?.format;
   }
 
-  /// The rows of the result on show to write: `rows` when they are rows
-  /// of it, and otherwise all of them.
-  private rowsOf(rows: number[] | undefined): number[] | undefined {
-    const held = this.shown?.payload.cells[0]?.length ?? 0;
+  /// The rows of `shown` to write: `rows` when they are rows of it, and
+  /// otherwise all of them.
+  private rowsOf(rows: number[] | undefined, shown: Shown): number[] | undefined {
+    const held = shown.payload.cells[0]?.length ?? 0;
     return Array.isArray(rows) ? rows.filter((r) => Number.isInteger(r) && r >= 0 && r < held) : undefined;
   }
 
@@ -880,7 +880,7 @@ export class QueryModes {
     }
     let out;
     try {
-      out = exportResult(chosen, shown.payload, settings().gridDecimals, this.rowsOf(rows), this.rulesOf(shown));
+      out = exportResult(chosen, shown.payload, settings().gridDecimals, this.rowsOf(rows, shown), this.rulesOf(shown));
       await workspace.fs.writeFile(to, out.data);
     } catch (error) {
       void window.showErrorMessage(plainMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
@@ -903,7 +903,7 @@ export class QueryModes {
     if (chosen === undefined) {
       return;
     }
-    const out = exportResult(chosen, shown.payload, settings().gridDecimals, this.rowsOf(rows), this.rulesOf(shown));
+    const out = exportResult(chosen, shown.payload, settings().gridDecimals, this.rowsOf(rows, shown), this.rulesOf(shown));
     await env.clipboard.writeText(out.data.toString("utf8"));
     const notes = out.notes.length > 0 ? ` Note: ${out.notes.join("; ")}.` : "";
     void window.showInformationMessage(plainMessage(`q-lint: copied ${out.rows} row(s) as ${FORMAT_INFO[chosen].label}.${notes}`));
@@ -1328,8 +1328,20 @@ export class QueryModes {
     return picked?.chart;
   }
 
-  /// The page's Send to...: a notebook or a report, picked.
+  /// Whether `shown` is still the result on show, the one the page draws a
+  /// chart of; when not, it says so (#1477).
+  private stillShown(shown: Shown): boolean {
+    if (this.shown === shown) {
+      return true;
+    }
+    void window.showInformationMessage("q-lint: another result came in before its chart was drawn, so nothing was sent. Show that result and send it again.");
+    return false;
+  }
+
+  /// The page's Send to...: a notebook or a report, picked. `rows` are of
+  /// the result on show now, which a pick may outlast (#1477).
   private async sendPicked(rows: number[] | undefined): Promise<void> {
+    const shown = this.shown;
     const picked = await window.showQuickPick(
       [
         { label: "q Notebook", detail: "Insert the result as a Markdown cell into an open q notebook", to: "notebook" as const },
@@ -1338,17 +1350,17 @@ export class QueryModes {
       { title: "q-lint: send the result to" },
     );
     if (picked?.to === "notebook") {
-      await this.toNotebook(rows, undefined, undefined);
+      await this.toNotebook(rows, undefined, undefined, shown);
     } else if (picked?.to === "report") {
-      await this.toReport(rows, undefined, undefined);
+      await this.toReport(rows, undefined, undefined, shown);
     }
   }
 
   /// Insert the result on show into a q notebook as a Markdown cell
   /// (#1021): after the selected cell of the q notebook in view (one picked
   /// when several are), or at the end of the one given or open.
-  private async toNotebook(rows: number[] | undefined, withChart: boolean | undefined, given: Uri | undefined): Promise<void> {
-    const shown = this.shown;
+  private async toNotebook(rows: number[] | undefined, withChart: boolean | undefined, given: Uri | undefined, from: Shown | undefined = this.shown): Promise<void> {
+    const shown = from;
     if (shown === undefined) {
       void window.showInformationMessage("q-lint: no result to send. Run a query in grid or chart mode first.");
       return;
@@ -1380,8 +1392,14 @@ export class QueryModes {
     if (chart === undefined) {
       return;
     }
+    if (chart && !this.stillShown(shown)) {
+      return;
+    }
     const image = chart ? await this.chartImage("png") : undefined;
-    const text = resultMarkdown({ process: shown.process, code: shown.code, at: shown.at, payload: shown.payload, rows: this.rowsOf(rows), decimals: settings().gridDecimals }, image !== undefined && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(image) ? image : undefined);
+    if (chart && !this.stillShown(shown)) {
+      return;
+    }
+    const text = resultMarkdown({ process: shown.process, code: shown.code, at: shown.at, payload: shown.payload, rows: this.rowsOf(rows, shown), decimals: settings().gridDecimals }, image !== undefined && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(image) ? image : undefined);
     const at = editor !== undefined && editor.selections.length > 0 ? Math.min(editor.selections[editor.selections.length - 1].end, notebook.cellCount) : notebook.cellCount;
     const edit = new WorkspaceEdit();
     edit.set(notebook.uri, [NotebookEdit.insertCells(at, [new NotebookCellData(NotebookCellKind.Markup, text.text.replace(/\n+$/, "\n"), "markdown")])]);
@@ -1397,8 +1415,8 @@ export class QueryModes {
   /// the last report, a file picked, or a new one. It says what it will
   /// write and asks first; the report's text is kept and the result added
   /// after it, and the chart goes to a new file beside it, never over one.
-  private async toReport(rows: number[] | undefined, target: Uri | undefined, withChart: boolean | undefined): Promise<void> {
-    const shown = this.shown;
+  private async toReport(rows: number[] | undefined, target: Uri | undefined, withChart: boolean | undefined, from: Shown | undefined = this.shown): Promise<void> {
+    const shown = from;
     if (shown === undefined) {
       void window.showInformationMessage("q-lint: no result to send. Run a query in grid or chart mode first.");
       return;
@@ -1439,7 +1457,13 @@ export class QueryModes {
     } catch {
       existing = undefined;
     }
+    if (chart && !this.stillShown(shown)) {
+      return;
+    }
     const svg = chart ? await this.chartImage("svg") : undefined;
+    if (chart && !this.stillShown(shown)) {
+      return;
+    }
     const folder = Uri.joinPath(to, "..");
     let relative: string | undefined;
     if (svg !== undefined && svg.startsWith("<svg")) {
@@ -1452,7 +1476,7 @@ export class QueryModes {
       }
       relative = imagePath(to.path, Date.now(), (r) => names.includes(r));
     }
-    const text = resultMarkdown({ process: shown.process, code: shown.code, at: shown.at, payload: shown.payload, rows: this.rowsOf(rows), decimals: settings().gridDecimals }, relative === undefined ? undefined : linkTarget(relative));
+    const text = resultMarkdown({ process: shown.process, code: shown.code, at: shown.at, payload: shown.payload, rows: this.rowsOf(rows, shown), decimals: settings().gridDecimals }, relative === undefined ? undefined : linkTarget(relative));
     const before = existing === undefined ? "" : Buffer.from(existing).toString("utf8");
     const gap = before === "" || before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
     const name = to.path.replace(/^.*\//, "");

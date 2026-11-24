@@ -19,3 +19,12 @@ test("a series past the largest double's range still ticks and draws (#1384)", (
   const svg = C.chartSvg(grid, [0, 1], "line", d, { colours: ["#f00"] }, {});
   assert.ok(!svg.includes("NaN"), svg);
 });
+
+test("a control character in a label is replaced, so the SVG still parses (#1474)", () => {
+  assert.strictEqual(C.xml("a\u0001b\u001f<\u000b￿"), "a�b�&lt;��");
+  assert.strictEqual(C.xml("tab\tnl\ncr\r"), "tab\tnl\ncr\r");
+  const grid = { columns: [{ name: "sym", numeric: false }, { name: "px", numeric: true }], cells: [["a\u0001b", "c"], ["1", "2"]], values: [null, [1, 2]] };
+  const d = C.chartData(grid, [0, 1], "bar", [1], 20);
+  const svg = C.chartSvg(grid, [0, 1], "bar", d, { colours: ["#f00"] }, {});
+  assert.ok(!/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(svg), svg);
+});

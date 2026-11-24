@@ -162,6 +162,9 @@ test("Markdown without a value shows its expression as written", () => {
   assert.strictEqual(markdownHtml("> quoted *a*\n\n1. x\n2. y"), "<blockquote><p>quoted <em>a</em></p></blockquote>\n<ol><li>x</li><li>y</li></ol>");
   // A link's URL is not read for emphasis; its label is (#1105).
   assert.strictEqual(markdownHtml("[docs](https://code.kx.com/q/ref/_x_/)"), '<p><a href="https://code.kx.com/q/ref/_x_/">docs</a></p>');
+  // A quote or angle bracket in the URL is escaped once, not twice (#1476).
+  assert.strictEqual(markdownHtml("see [docs](https://en.wikipedia.org/wiki/Hoare's_logic) now"), '<p>see <a href="https://en.wikipedia.org/wiki/Hoare&#39;s_logic">docs</a> now</p>');
+  assert.match(markdownHtml("[q](https://x.io/?q=a<b)"), /href="https:\/\/x\.io\/\?q=a&lt;b"/);
   assert.strictEqual(markdownHtml("[*a*](https://x.io/a*b*c) and *b*"), '<p><a href="https://x.io/a*b*c"><em>a</em></a> and <em>b</em></p>');
 });
 

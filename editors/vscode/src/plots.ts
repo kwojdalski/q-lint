@@ -109,14 +109,15 @@ export class PlotStore {
 export const PLOTS = new PlotStore();
 
 /// Whether `svg` is what chartSvg makes: one svg element and nothing a page
-/// would run. A plot that is not is refused.
+/// would run. A plot that is not is refused. Only the markup is checked: a
+/// label's text ("status online=1") is escaped data, not a handler.
 export function plainSvg(svg: unknown): svg is string {
   return (
     typeof svg === "string" &&
     svg.length < 20_000_000 &&
     svg.startsWith('<svg xmlns="http://www.w3.org/2000/svg"') &&
     svg.trimEnd().endsWith("</svg>") &&
-    !/<script|<foreignObject|\son[a-z]+=|javascript:|href=/i.test(svg)
+    !/<script|<foreignObject|\son[a-z]+=|javascript:|href=/i.test(svg.replace(/>[^<]*</g, "><"))
   );
 }
 
