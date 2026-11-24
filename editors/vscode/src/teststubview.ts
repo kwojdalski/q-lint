@@ -24,7 +24,7 @@ import {
   type TextDocument,
 } from "vscode";
 import { editorFeatureOff, editorFeatureOn } from "./editorfeatures";
-import { TEST_STUB_COMMAND, detectStyle, functionAt, newTestPath, stubText, testFilePatterns, testName, type Target } from "./teststub";
+import { TEST_STUB_COMMAND, detectStyle, endContext, functionAt, newTestPath, stubText, testFilePatterns, testName, type Target } from "./teststub";
 import { plainMessage } from "./history";
 
 const on = (): boolean => editorFeatureOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "testStub");
@@ -109,7 +109,7 @@ export async function generateStub(uri?: Uri, line?: number): Promise<boolean> {
   const file = await testFile(source);
   const style = detectStyle(file.styleFrom);
   const name = testName(target, style, file.text ?? "");
-  const stub = stubText(target, name, style);
+  const stub = stubText(target, name, style, endContext(file.text ?? ""));
   const yes = "Add Test";
   const answer = await window.showInformationMessage(
     plainMessage(`${file.text === undefined ? "Create" : "Add to"} ${workspace.asRelativePath(file.uri)}: ${name}?`),

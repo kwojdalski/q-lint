@@ -5,7 +5,7 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const { stub, vscode } = require("./vscode_stub");
-const { functionAt, detectStyle, testName, stubText, newTestPath, testFilePatterns, TEST_STUB_COMMAND } = require("../out/teststub.js");
+const { functionAt, detectStyle, testName, stubText, newTestPath, testFilePatterns, endContext, TEST_STUB_COMMAND } = require("../out/teststub.js");
 
 const SRC = ["/ lib", "\\d .fx", "mid:{[bid;ask]", "  (bid+ask)%2}", "\\d .", "sq:{x*x}", "now:{[] .z.p}", "test_x:{[] 1b}", ""].join("\n");
 
@@ -163,4 +163,15 @@ test("a parameter named expected is not overwritten by the expected value (#1601
     stubText(target, "test_g", detectStyle("")),
     "test_g:{[]\n  actual:(::); expected:(::); / TODO: the arguments\n  expected_:(::); / TODO: what g[actual;expected] should give\n  g[actual;expected]~expected_}\n",
   );
+});
+
+test("a stub appended under a trailing \\d calls a root function at the root (#1599)", () => {
+  const file = "\\d .tests\ntestA:{[] .qunit.assertEquals[1;1;\"a\"]}\n";
+  assert.strictEqual(endContext(file), ".tests");
+  assert.strictEqual(endContext("\\d .tests\nx:1\n\\d .\n"), ".");
+  const f = functionAt("f:{[a;b] a+b}\n", 0);
+  assert.match(stubText(f, "testF", detectStyle(file), endContext(file)), /\.qunit\.assertEquals\[`\.\[`f\]\[a;b\];expected;"f"\]/);
+  // A qualified one, or under the root, as before.
+  assert.match(stubText(f, "testF", detectStyle(file), "."), /assertEquals\[f\[a;b\]/);
+  assert.match(stubText({ name: ".fx.mid", params: [] }, "testMid", detectStyle(file), ".tests"), /assertEquals\[\.fx\.mid\[\]/);
 });
