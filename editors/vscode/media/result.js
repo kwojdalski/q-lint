@@ -449,8 +449,15 @@
   /// (#1856).
   const PLOT_POINTS = 2000000;
 
+  /// The most pivot rows drawn: one per distinct value of a time or an id
+  /// column is a row per result row, and a table of a million hangs the
+  /// page on layout. The grid draws only the rows in view; the pivot draws
+  /// these, and Copy Pivot copies every row (#1859).
+  const PIVOT_ROWS = 2000;
+
   const helpers = {
     rowCount: rowCount,
+    PIVOT_ROWS: PIVOT_ROWS,
     chartPoints: chartPoints,
     PLOT_POINTS: PLOT_POINTS,
     ownValue: ownValue,
@@ -1585,6 +1592,10 @@
     if (grid.total > rowCount(grid)) {
       note += " of the result's " + grid.total.toLocaleString("en-US");
     }
+    const drawn = Math.min(p.rows.length, PIVOT_ROWS);
+    if (drawn < p.rows.length) {
+      note += ". The first " + drawn.toLocaleString("en-US") + " of its " + p.rows.length.toLocaleString("en-US") + " rows are drawn; Copy Pivot copies them all";
+    }
     pivotView.append(el("p", "note", note + "." + (p.note ? " " + p.note : "")));
     const scroll = el("div", "scroller");
     const table = el("table", "pivot");
@@ -1593,7 +1604,7 @@
     const thead = el("thead");
     thead.append(tr);
     const tbody = el("tbody");
-    p.rows.forEach(function (k, i) {
+    p.rows.slice(0, drawn).forEach(function (k, i) {
       const line = el("tr");
       const key = el("td", "key", k);
       key.title = k;
@@ -1604,7 +1615,7 @@
     table.append(thead, tbody);
     scroll.append(table);
     pivotView.append(scroll);
-    rendered({ pivot: { rows: p.rows.length, columns: head, first: p.rows.length ? [p.rows[0]].concat(p.cells[0]) : [], note: p.note } });
+    rendered({ pivot: Object.assign({ rows: p.rows.length, columns: head, first: p.rows.length ? [p.rows[0]].concat(p.cells[0]) : [], note: p.note }, drawn < p.rows.length ? { drawn: drawn } : {}) });
   }
 
   // --- chart
