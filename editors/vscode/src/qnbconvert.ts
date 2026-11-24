@@ -432,10 +432,11 @@ export function toIpynb(qnb: Qnb): string {
   const meta = qnb.metadata ?? {};
   // A kernel the notebook names is kept (#1548): on another language's, a q
   // cell goes back with the `%%q` magic `fromIpynb` took off.
-  const magic = kernelLanguage(meta) !== "q";
+  const language = kernelLanguage(meta);
+  const magic = language !== "q";
   const ids = qnb.cells.length > 0 && qnb.cells.every((c) => typeof c.extra?.id === "string");
   const cells = qnb.cells.map((cell): Json => {
-    const json = convertCell(cell, magic);
+    const json = convertCell(cell, magic, language);
     return ids ? { id: cell.extra?.id, ...json } : json;
   });
   const notebook = {
@@ -447,8 +448,9 @@ export function toIpynb(qnb: Qnb): string {
   return JSON.stringify(notebook, null, 1) + "\n";
 }
 
-/// One cell as Jupyter writes it; `magic`: a q cell takes `%%q`.
-function convertCell(cell: QnbCell, magic: boolean): Json {
+/// One cell as Jupyter writes it; `magic`: a q cell takes `%%q`. `notebook`
+/// is the language of the notebook's kernel.
+function convertCell(cell: QnbCell, magic: boolean, notebook: string): Json {
   // The attachments `fromIpynb` kept, which `![x](attachment:a.png)` in
   // the cell's text names (#1234).
   const attachments = cell.extra?.attachments !== undefined ? { attachments: cell.extra.attachments } : {};
@@ -462,7 +464,9 @@ function convertCell(cell: QnbCell, magic: boolean): Json {
     return { cell_type: "raw", metadata: cell.metadata ?? {}, source: jupyterLines(cell.source), ...attachments };
   }
   const metadata: Json = { ...(cell.metadata ?? {}) };
-  if (language !== "q") {
+  // Tagged as VS Code tags one: only a cell in another language than the
+  // notebook's, or a round trip rewrites every cell (#1947).
+  if (language !== "q" && language !== notebook) {
     metadata.vscode = { ...(isObject(metadata.vscode) ? metadata.vscode : {}), languageId: language };
   }
   const order = cell.execution?.order;

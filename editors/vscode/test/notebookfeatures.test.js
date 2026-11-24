@@ -852,3 +852,18 @@ test("a Jupyter notebook imported and exported keeps each output's type: a figur
   const odd = { cells: [{ kind: "code", source: "1", outputs: [{ items: [{ mime: "text/plain", text: "1" }], extra: { output_type: "execute_result" } }, { items: [{ mime: "text/plain", text: "2" }], extra: { output_type: "<script>" } }] }] };
   assert.deepStrictEqual(JSON.parse(toIpynb(odd)).cells[0].outputs.map((o) => [o.output_type, o.execution_count]), [["execute_result", null], ["display_data", undefined]]);
 });
+
+test("a Python notebook imported and exported is the notebook it was: no cell is tagged with the notebook's own language (#1947)", () => {
+  const back = JSON.parse(toIpynb(fromIpynb(JSON.stringify(PYTHON_NOTEBOOK))));
+  assert.deepStrictEqual(back.cells.map((c) => c.metadata), PYTHON_NOTEBOOK.cells.map((c) => c.metadata));
+  // And so are its cells' outputs and their types: all of it.
+  assert.deepStrictEqual(back, PYTHON_NOTEBOOK);
+  // A cell in another language than the notebook's is tagged, as VS Code tags one.
+  const mixed = { ...PYTHON_NOTEBOOK, cells: [{ cell_type: "code", execution_count: null, metadata: { vscode: { languageId: "sql" } }, outputs: [], source: ["select 1"] }, PYTHON_NOTEBOOK.cells[3]] };
+  assert.deepStrictEqual(JSON.parse(toIpynb(fromIpynb(JSON.stringify(mixed)))), mixed);
+  const q = JSON.parse(toIpynb({ cells: [{ kind: "code", source: "print(1)", language: "python" }, { kind: "code", source: "1+1" }] }));
+  assert.deepStrictEqual(q.cells.map((c) => c.metadata), [{ vscode: { languageId: "python" } }, {}]);
+  // With only a kernelspec's language to go by, too.
+  const spec = { ...PYTHON_NOTEBOOK, metadata: { kernelspec: { display_name: "Python 3", language: "python", name: "python3" } } };
+  assert.deepStrictEqual(JSON.parse(toIpynb(fromIpynb(JSON.stringify(spec)))), spec);
+});
