@@ -154,6 +154,35 @@ test("a run from the editor is added to the history and leaves what is typed in 
   load(false).send({ type: "history", history: ["x"] });
 });
 
+test("a key pressed while an input method composes is the input method's: its Enter runs nothing (#1923)", () => {
+  const page = load(true);
+  const input = page.find("textarea")[0];
+  page.send({ type: "all", entries: [], history: ["newest", "older"] });
+  input.value = 'msg:"にほん';
+  input.selectionStart = input.selectionEnd = input.value.length;
+  const sent = page.posted.length;
+  // The Enter that takes a candidate, as Chromium sends it, and as Safari does.
+  assert.ok(!page.key("Enter", { isComposing: true, keyCode: 229 }));
+  assert.ok(!page.key("Enter", { isComposing: false, keyCode: 229 }));
+  assert.ok(!page.key("Enter", { isComposing: true, keyCode: 13 }));
+  // Nor do Tab and the arrows, which move through the candidates.
+  assert.ok(!page.key("Tab", { isComposing: true, keyCode: 229 }));
+  assert.ok(!page.key("ArrowUp", { isComposing: true, keyCode: 229 }));
+  assert.strictEqual(page.posted.length, sent);
+  assert.strictEqual(input.value, 'msg:"にほん');
+  // In a history search too: the search stays open and nothing runs.
+  page.key("r", { ctrlKey: true });
+  assert.ok(!page.key("Enter", { isComposing: true, keyCode: 229 }));
+  assert.ok(!page.key("Process", { isComposing: true, keyCode: 229 }));
+  assert.strictEqual(page.posted.length, sent);
+  assert.match(page.find("div").find((d) => d.className === "search").textContent, /^reverse search: $/);
+  page.key("Escape");
+  // Composed, Enter runs the line.
+  input.value = 'msg:"にほん"';
+  assert.ok(page.key("Enter", { isComposing: false, keyCode: 13 }));
+  assert.deepStrictEqual(page.posted.at(-1), { type: "enter", code: 'msg:"にほん"' });
+});
+
 test("completions that arrive after the input ran or changed are dropped (#1337)", () => {
   const page = load(true);
   const input = page.find("textarea")[0];
