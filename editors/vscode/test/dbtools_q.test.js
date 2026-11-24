@@ -490,6 +490,17 @@ test("the attribute advisor samples a table's columns without changing it", { sk
   assert.strictEqual(await connection.call("{(attr m`sym)~`}", 0), true);
 });
 
+// A table one partition lacks cannot be counted: its sample is advised on as
+// a sample, and a u# is not costed from the sample's rows (#1979).
+test("the attribute advisor does not cost a table it could not count from its sample (#1979)", { skip }, async (t) => {
+  const { connection } = await connect(t, HDB("{[r;d] .Q.dd[r;d,`late`] set .Q.en[r] ([] sym:`a`b`c`d;qid:40 10 30 20;bid:1 2 3 4f)}[r] each 2026.01.05 2026.01.07;"));
+  const s = readAttributeSample(await connection.call(ATTRIBUTE_SAMPLE, "late", 100000));
+  assert.deepStrictEqual([s.kind, s.rows, s.sampled, s.partitions], ["partitioned", null, 4, 3]);
+  const qid = advise(s, new Map([["qid", 1]])).find((a) => a.column === "qid");
+  assert.deepStrictEqual([qid.suggest, qid.cost], ["u", null]);
+  assert.match(qid.reason, /^every value distinct \(in 4 rows sampled\): u# makes/);
+});
+
 // `asc` marks a vector already in order `s#` where it is, and a table
 // sampled whole is its own columns: the advisor must not set what it then
 // reports (#1863).

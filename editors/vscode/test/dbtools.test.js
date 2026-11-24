@@ -285,6 +285,49 @@ test("the attribute advisor keeps a p#, u# or g# a column in ascending order alr
   assert.deepStrictEqual([odd.sym.suggest, odd.id.suggest], ["s", "s"]);
 });
 
+// A partitioned table missing from one partition cannot be counted
+// (`.Q.cn` fails): the sample is then all that is known of it.
+test("the attribute advisor does not take the sample for the table when the rows cannot be counted (#1979)", () => {
+  const sample = (rows) =>
+    readAttributeSample({
+      kind: "partitioned",
+      rows,
+      sampled: 100000,
+      partitions: 500,
+      cols: ["time", "id", "venue", "sym"],
+      types: ["p", "j", "s", "s"],
+      attrs: ["", "", "", ""],
+      distinct: [100000, 100000, 2500, 40],
+      runs: [100000, 100000, 90000, 40],
+      sorted: [true, false, false, false],
+    });
+  const filters = new Map([["id", 3], ["venue", 2], ["sym", 1]]);
+  const counted = advise(sample(50000000), filters);
+  assert.deepStrictEqual(counted.map((a) => [a.column, a.suggest, a.cost]), [["time", "s", 0], ["id", "u", 800000000], ["venue", "g", 400000000 + 16 * 2500 * 500], ["sym", "p", 24 * 40 * 500]]);
+  const unknown = advise(sample(null), filters);
+  // The same advice, of a sample: what it found is not stated of the table,
+  // and what depends on the row count is not costed from the sample's.
+  assert.deepStrictEqual(unknown.map((a) => [a.column, a.suggest, a.cost]), [["time", "s", 0], ["id", "u", null], ["venue", "g", null], ["sym", "p", 24 * 40 * 500]]);
+  for (const [i, a] of unknown.entries()) assert.strictEqual(a.reason, counted[i].reason);
+  for (const a of unknown) assert.match(a.reason, / \(in 100,000 rows sampled\)/);
+  const report = adviceReport("quote", "hdb", sample(null), unknown, 6);
+  assert.match(report, /A partitioned table of an unknown number of rows; 100,000 rows sampled from its last partition/);
+  assert.match(report, /\| time \|  \| s# \| 0 B \| 0 \|/);
+  assert.match(report, /\| id \|  \| u# \| unknown \| 3 \|/);
+  assert.match(report, /\| venue \|  \| g# \| unknown \| 2 \|/);
+  assert.match(report, /\| sym \|  \| p# \| 469 KB \| 1 \|/);
+  assert.match(report, /u# and g# keep an entry a row, so their memory is not known where the rows could not be counted/);
+  assert.doesNotMatch(report, /MB/);
+  // A column given no attribute still has an empty cell, and a counted table no such note.
+  const none = adviceReport("quote", "hdb", sample(null), advise(sample(null), new Map()), 0);
+  assert.match(none, /\| venue \|  \| none \|  \| 0 \|/);
+  assert.doesNotMatch(adviceReport("quote", "hdb", sample(50000000), counted, 6), /unknown|could not be counted/);
+  assert.match(adviceReport("quote", "hdb", sample(50000000), counted, 6), /\| id \|  \| u# \| 763 MB \| 3 \|/);
+  // A table sampled whole still has no caveat.
+  const whole = readAttributeSample({ kind: "table", rows: 3, sampled: 3, partitions: 1, cols: ["id"], types: ["j"], attrs: [""], distinct: [3], runs: [3], sorted: [false] });
+  assert.strictEqual(advise(whole, new Map([["id", 1]]))[0].reason, "every value distinct: u# makes a lookup by value a hash lookup; 1 saved or recent query filters on it");
+});
+
 test("a schema diff names adds, drops, casts and order, and the script turns one into the other", () => {
   const t = (kind, cols, keys = []) => ({ kind, rows: 0, bytes: null, partitions: null, keys, ncols: cols.length, columns: cols.map(([name, type, attr = ""]) => ({ name, type, fkey: "", attr })) });
   const from = t("keyed", [["k", "j"], ["x", "j"], ["y", "s"]], ["k"]);

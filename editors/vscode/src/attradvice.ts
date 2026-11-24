@@ -125,7 +125,8 @@ export interface Advice {
   current: string;
   suggest: "" | "s" | "u" | "p" | "g";
   reason: string;
-  /// Bytes the suggested attribute would keep, about; null for none.
+  /// Bytes the suggested attribute would keep, about; null for none
+  /// suggested, and for a `u#` or `g#` of a table whose rows are not known.
   cost: number | null;
   filters: number;
 }
@@ -136,9 +137,13 @@ export interface Advice {
 /// A column in order that has `p#`, `u#` or `g#` keeps it: `s#` is told
 /// only to one with no attribute, or with `s#` (#1978).
 export function advise(s: AttributeSample, filters: Map<string, number> = new Map()): Advice[] {
-  const rows = s.rows ?? s.sampled;
-  const perPartition = s.partitions > 0 ? rows / s.partitions : rows;
-  const full = s.sampled >= rows;
+  // The rows may not be countable (`.Q.cn` fails on a partitioned table one
+  // partition lacks). The sample is then not the table: what it shows keeps
+  // its "in N rows sampled", and what an attribute would keep a row of the
+  // table is not costed from the sample's rows (#1979).
+  const rows = s.rows;
+  const perPartition = rows === null ? null : s.partitions > 0 ? rows / s.partitions : rows;
+  const full = rows !== null && s.sampled >= rows;
   return s.columns.map((c, i): Advice => {
     const f = filters.get(c.name) ?? 0;
     const used = f > 0 ? `${f} saved or recent ${f === 1 ? "query filters" : "queries filter"} on it` : "no saved or recent query filters on it";
@@ -155,9 +160,9 @@ export function advise(s: AttributeSample, filters: Map<string, number> = new Ma
     const sample = full ? "" : ` (in ${s.sampled.toLocaleString("en-US")} rows sampled)`;
     const where = s.kind === "partitioned" ? "in each partition" : "in the table";
     const cost = {
-      u: 16 * rows,
+      u: rows === null ? null : 16 * rows,
       p: 24 * c.distinct * (s.kind === "partitioned" ? s.partitions : 1),
-      g: s.kind === "partitioned" ? (8 * perPartition + 16 * c.distinct) * s.partitions : 8 * rows + 16 * c.distinct,
+      g: rows === null || perPartition === null ? null : s.kind === "partitioned" ? (8 * perPartition + 16 * c.distinct) * s.partitions : 8 * rows + 16 * c.distinct,
     };
     if (c.sorted && (f > 0 || i === 0 || ["p", "n", "t", "z", "d", "v", "u", "m"].includes(c.type))) {
       // A column in order may be so because it is parted, as the sym of a
@@ -215,12 +220,15 @@ export function adviceReport(table: string, process: string, s: AttributeSample,
     "| --- | --- | --- | --- | --- |",
   ];
   for (const a of advice) {
-    out.push(`| ${md(a.column)} | ${a.current ? `${a.current}#` : ""} | ${a.suggest ? `${a.suggest}#` : "none"} | ${a.cost === null ? "" : size(a.cost)} | ${a.filters} |`);
+    out.push(`| ${md(a.column)} | ${a.current ? `${a.current}#` : ""} | ${a.suggest ? `${a.suggest}#` : "none"} | ${a.cost === null ? (a.suggest === "" ? "" : "unknown") : size(a.cost)} | ${a.filters} |`);
   }
   out.push("", "## Why", "");
   for (const a of advice) {
     const keep = a.current && a.current === a.suggest ? " It already has it." : a.current && a.suggest === "" ? ` It has ${a.current}#: drop it only if no query needs it.` : "";
     out.push(`- **${md(a.column)}**: ${md(a.reason)}.${keep}`);
+  }
+  if (advice.some((a) => a.cost === null && a.suggest !== "")) {
+    out.push("", "u# and g# keep an entry a row, so their memory is not known where the rows could not be counted.");
   }
   out.push(
     "",
