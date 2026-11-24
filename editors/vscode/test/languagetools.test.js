@@ -294,6 +294,36 @@ test("Write Lint Baseline keeps the findings: the draft's ../ paths are resolved
   }
 });
 
+test("Write Lint Baseline says a qlinter a signal or the timeout stopped was stopped, not 'exit 1' (#1877)", { skip: process.platform === "win32" && "no signals" }, async () => {
+  const { mkdtempSync, writeFileSync, existsSync, rmSync } = require("node:fs");
+  const { join } = require("node:path");
+  const { tmpdir } = require("node:os");
+  const { runQlinter } = require("../out/baselineview.js");
+  const ws = mkdtempSync(join(tmpdir(), "qlint-bl-stop-"));
+  // A qlinter that is killed as it runs, as the OOM killer would.
+  const crash = join(ws, "..", `${require("node:path").basename(ws)}-crash.js`);
+  writeFileSync(crash, `process.stderr.write("reading a.q\\n");process.kill(process.pid,"SIGKILL");setInterval(()=>{},1000);`);
+  const { context, restore } = setUp();
+  try {
+    assert.deepStrictEqual(await runQlinter(process.execPath, [crash], ws), { code: null, stopped: "was stopped (SIGKILL) before it finished", stdout: "", stderr: "reading a.q\n" });
+    const slow = await runQlinter(process.execPath, ["-e", "setInterval(()=>{},1000)"], ws, 200);
+    assert.deepStrictEqual([slow.code, slow.stopped], [null, "did not finish in 0.2 s"]);
+    // An exit code is kept as it is: 1 is findings.
+    assert.deepStrictEqual(await runQlinter(process.execPath, ["-e", "process.exit(1)"], ws), { code: 1, stdout: "", stderr: "" });
+    assert.deepStrictEqual(await runQlinter(process.execPath, ["-e", ""], ws), { code: 0, stdout: "", stderr: "" });
+    vscode.workspace.workspaceFolders = [{ uri: { scheme: "file", fsPath: ws }, name: "ws" }];
+    registerBaseline(context, () => ({ command: process.execPath, args: [crash] }));
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.writeBaseline)(), undefined);
+    assert.deepStrictEqual(stub.messages.at(-1), ["warning", "q-lint: qlinter was stopped (SIGKILL) before it finished; no baseline was written: reading a.q"]);
+    assert.strictEqual(existsSync(join(ws, "qlinter-baseline.json")), false);
+  } finally {
+    vscode.workspace.workspaceFolders = undefined;
+    restore();
+    rmSync(ws, { recursive: true, force: true });
+    rmSync(crash, { force: true });
+  }
+});
+
 test("the dead code report refuses when off and asks nothing; on, it lists the server's answer", async () => {
   const answer = { functions: [{ name: "lonely", uri: "file:///ws/b.q", range: { start: { line: 3, character: 0 } } }, { name: ".u.x", uri: "file:///ws/a.q", range: { start: { line: 0, character: 0 } } }], dynamic: 2 };
   const read = readDeadCode(answer);
