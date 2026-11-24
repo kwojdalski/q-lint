@@ -175,19 +175,28 @@ export function pageHtml(page: HelpPage, helpCommand: string, tryCommand?: strin
   return parts.join("\n");
 }
 
-/// The q name, or glyph run, at `character` of `line`: `.Q.s1`, `xbar`,
-/// `/:`. Undefined in a string or a comment.
+/// The q name, or glyph, at `character` of `line`: `.Q.s1`, `xbar`, `/:`.
+/// Undefined in a string or a comment.
 export function nameAt(line: string, character: number): { name: string; start: number; end: number } | undefined {
-  // A glyph run takes a dot only where no name starts: `:.Q.s1` is `:`
-  // and `.Q.s1`.
-  const re = /\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*|(?:[+\-*%&|^=<>~!#_$?@,'/\\:]|\.(?![A-Za-z]))+/g;
+  // Glyphs are cut as q cuts them, an operator and then its iterator:
+  // `a:-1` is `:` and `-`, `x,/:y` is `,` and `/:`. A dot is a glyph only
+  // where no name starts: `:.Q.s1` is `:` and `.Q.s1`.
+  const re = /\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*|<>|<=|>=|::|':|\/:|\\:|[+\-*%&|^=<>~!#_$?@,'/\\:]|\.(?![A-Za-z])/g;
+  // The token the cursor is on, or failing that the one it is just after.
+  let found: { name: string; start: number; end: number } | undefined;
   for (const m of line.matchAll(re)) {
     const start = m.index ?? 0;
     const end = start + m[0].length;
-    if (character >= start && character <= end) {
-      // Through `start` itself: a `/` after a blank starts a comment.
-      return inStringOrComment(line, start + 1) ? undefined : { name: m[0], start, end };
+    if (start > character) {
+      break;
+    }
+    if (character <= end) {
+      found = { name: m[0], start, end };
+      if (character < end) {
+        break;
+      }
     }
   }
-  return undefined;
+  // Through `start` itself: a `/` after a blank starts a comment.
+  return found === undefined || inStringOrComment(line, found.start + 1) ? undefined : found;
 }

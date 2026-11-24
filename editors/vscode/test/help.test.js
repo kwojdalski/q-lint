@@ -68,7 +68,7 @@ test("a hover's examples carry Try it with the code as the command's argument", 
   assert.match(ticks, /``` ?q\n`a`b\n```/);
   assert.match(ticks, /gives `` `a`b ``/);
   assert.deepStrictEqual(h.nameAt("x:.Q.s1 y", 4), { name: ".Q.s1", start: 2, end: 7 });
-  assert.deepStrictEqual(h.nameAt("a,/:b", 2), { name: ",/:", start: 1, end: 4 });
+  assert.deepStrictEqual(h.nameAt("a,/:b", 2), { name: "/:", start: 2, end: 4 });
   assert.strictEqual(h.nameAt('"til 3"', 2), undefined);
 });
 
@@ -76,6 +76,26 @@ test("the slash that starts a comment is no name, the slash of Over is", () => {
   assert.strictEqual(h.nameAt("a:1 / note", 4), undefined);
   assert.strictEqual(h.nameAt("/ note", 0), undefined);
   assert.deepStrictEqual(h.nameAt("10 2/ 3", 4), { name: "/", start: 4, end: 5 });
+});
+
+test("glyphs are cut as q cuts them: an operator, then its iterator", () => {
+  const at = (line, c) => h.nameAt(line, c)?.name;
+  assert.strictEqual(at("a:-1", 2), "-");
+  assert.strictEqual(at("a:-1", 1), ":");
+  assert.strictEqual(at("s:+/x", 2), "+");
+  assert.strictEqual(at("s:+/x", 3), "/");
+  assert.strictEqual(at("r:raze x,/:y", 8), ",");
+  assert.strictEqual(at("r:raze x,/:y", 9), "/:");
+  assert.strictEqual(at("x<>y", 1), "<>");
+  assert.strictEqual(at("x<=y", 2), "<=");
+  assert.strictEqual(at("deltas-':x", 7), "':");
+  assert.strictEqual(at("a::1", 1), "::");
+  // Every one is in the catalogue.
+  for (const [line, c] of [["a:-1", 2], ["s:+/x", 2], ["r:raze x,/:y", 8], ["r:raze x,/:y", 9]]) {
+    assert.ok(catalog.has(at(line, c)), line);
+  }
+  // A cursor just after a word is still on it.
+  assert.deepStrictEqual(h.nameAt("til 3", 3), { name: "til", start: 0, end: 3 });
 });
 
 test("the cheat sheet has its four sections, each item with an example and result", () => {
