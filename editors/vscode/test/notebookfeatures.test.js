@@ -11,7 +11,7 @@ const pkg = require("../package.json");
 const { cellDirective } = require("../out/celldirectives.js");
 const { LIVE, LIVE_KEY, inlineSpans, liveExpressions, markdownAfter, readLiveValues, scanLive } = require("../out/livemarkdown.js");
 const { ERROR_MIME, fromIpynb, markdownHtml, toHtml, toIpynb, IpynbError } = require("../out/qnbconvert.js");
-const { INJECTED_KEY, cliProcess, guardedText, injectParameters, parametersCell, parametersOf, parseArgs, passwordVariable, runNotebook, writeAs } = require("../out/qnbrun.js");
+const { INJECTED_KEY, cliProcess, guardedText, injectParameters, parametersCell, parametersOf, parseArgs, passwordOf, passwordVariable, runNotebook, writeAs } = require("../out/qnbrun.js");
 const { isProduction } = require("../out/agent.js");
 const { writes } = require("../out/guard.js");
 const { describeVariable, readVariables, bytesText, VARS } = require("../out/notebookvars.js");
@@ -655,4 +655,13 @@ test("a variable's size takes the next unit when it rounds up to 1024 (#1495)", 
   assert.strictEqual(bytesText(1048575), "1.0 MB");
   assert.strictEqual(bytesText(1073741823), "1.0 GB");
   assert.strictEqual(bytesText(5 * 1024 * 1024 * 1024 * 1024 * 1024), "5120 TB");
+});
+
+test("QLINT_Q_PASSWORD is --process's alone, never sent to another listed process (#1547)", () => {
+  const env = { QLINT_Q_PASSWORD: "dev", QLINT_Q_PASSWORD_RDB: "r" };
+  const target = (label, user = "u") => ({ label, host: "h", port: 1, tags: [], user });
+  assert.strictEqual(passwordOf(target("dev:5000"), env, true), "dev");
+  assert.strictEqual(passwordOf(target("prod_rdb"), env, false), "");
+  assert.strictEqual(passwordOf(target("rdb"), env, false), "r");
+  assert.strictEqual(passwordOf(target("rdb", ""), env, true), undefined);
 });
