@@ -141,9 +141,10 @@ export interface LiveSettings {
 }
 
 /// A whole number from `get`, or `fallback` when it is not one or is below
-/// `least`.
+/// `least`; at most 2^53-1, which JavaScript still writes as digits: 1e21
+/// would reach q code as `1e+21`, a float `til` and `#` refuse (#1852).
 function whole(value: unknown, least: number, fallback: number): number {
-  return typeof value === "number" && Number.isInteger(value) && value >= least ? value : fallback;
+  return typeof value === "number" && Number.isInteger(value) && value >= least ? Math.min(value, Number.MAX_SAFE_INTEGER) : fallback;
 }
 
 /// Whether `get` gave `true`: settings.json may hold any type, and a string

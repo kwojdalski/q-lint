@@ -46,6 +46,7 @@ import { mergeEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor, nodeFiles } from "./qenvironment";
 import { spawnPlan } from "./launcher";
 import { signalGroup } from "./lifeline";
+import { pathExtensions } from "./relations";
 import { qBinaryFrom } from "./terminal";
 import { iconsEscaped, plainMessage } from "./history";
 
@@ -66,6 +67,13 @@ interface Kept extends Probe {
 /// its own q binary (#1333).
 const resource = (): Uri | undefined => window.activeTextEditor?.document.uri;
 const get = <T>(key: string, fallback: T): T => workspace.getConfiguration("q-lint", resource()).get(key, fallback);
+/// That file's workspace folder, which its relative qBinary is relative to,
+/// as the q terminal started from it resolves it; else the first (#1836).
+const folderPath = (): string | undefined => {
+  const from = resource();
+  const own = (from && workspace.getWorkspaceFolder(from)) ?? workspace.workspaceFolders?.[0];
+  return own?.uri.fsPath;
+};
 
 /// Run `binary` with the probe on its stdin, and read what it printed.
 export function probe(binary: string, env: Record<string, string>): Promise<Probe | undefined> {
@@ -111,12 +119,13 @@ export function probe(binary: string, env: Record<string, string>): Promise<Prob
 /// workspace folder the q tasks and terminals start in, not to the
 /// extension host's working directory (#1132). Undefined when it is not a
 /// program this user can run, a path as much as a name (#1691).
-export function resolveBinary(binary: string, folder: string | undefined = workspace.workspaceFolders?.[0]?.uri.fsPath): string | undefined {
+export function resolveBinary(binary: string, folder: string | undefined = folderPath()): string | undefined {
   const file = qBinaryFrom(binary, folder, os.homedir());
   if (file === undefined || path.isAbsolute(file)) {
     return file !== undefined && nodeFiles.executable(file) ? file : undefined;
   }
-  const names = process.platform === "win32" && !/\.exe$/i.test(file) ? [file, `${file}.exe`] : [file];
+  // A q.cmd or q.bat on PATH is a q too: probe runs it through spawnPlan (#1844).
+  const names = process.platform === "win32" && path.extname(file) === "" ? [file, ...pathExtensions(process.env.PATHEXT ?? "").map((e) => file + e)] : [file];
   for (const entry of (process.env.PATH ?? "").split(path.delimiter)) {
     // A Windows entry may be quoted, as libuv reads it too (#1681).
     const dir = process.platform === "win32" ? entry.replace(/"/g, "") : entry;
@@ -223,7 +232,7 @@ export class Interpreters {
       workspace.isTrusted === false ? [] : (workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath).filter((f) => typeof f === "string");
     const found = discover({ env: process.env, home: os.homedir(), platform: process.platform, folders }, nodeFiles);
     const current = resolveBinary(this.binary());
-    const dotenv = await dotenvFor(workspace.workspaceFolders?.[0]?.uri);
+    const dotenv = await dotenvFor(resource());
     type Item = QuickPickItem & { file?: string; enter?: true };
     const items = (async (): Promise<Item[]> => {
       const probed = await Promise.all(
@@ -303,7 +312,7 @@ export class Interpreters {
       void window.showErrorMessage(plainMessage(`q-lint: ${binary} was not found, so its licence could not be checked.`));
       return undefined;
     }
-    const env = mergeEnv(layoutEnvFor(file), await dotenvFor(workspace.workspaceFolders?.[0]?.uri));
+    const env = mergeEnv(layoutEnvFor(file), await dotenvFor(resource()));
     const answer = await probe(file, env);
     if (answer === undefined) {
       void window.showWarningMessage(plainMessage(`q-lint: ${file} did not start and print its version, so its licence could not be checked.`));

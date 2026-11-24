@@ -374,15 +374,15 @@ export class QueryModes {
     context.subscriptions.push(
       this.status,
       commands.registerCommand(COMMANDS.switchMode, (mode?: string) => this.switchMode(mode)),
-      commands.registerCommand(RESULTS.exportCsv, (target?: Uri) => this.exportCsv(target, this.order[settings().resultsLocation])),
+      commands.registerCommand(RESULTS.exportCsv, (target?: Uri) => this.exportCsv(target, this.shownOrder())),
       commands.registerCommand(RESULTS.exportViewCsv, (target?: Uri) => this.exportCsv(target, this.order.panel)),
       commands.registerCommand(RESULT_VIEW.statistics, () => this.enabled("statistics") && this.ask({ action: "view", view: "stats" })),
       commands.registerCommand(RESULT_VIEW.tree, () => this.enabled("tree") && this.ask({ action: "view", view: "tree" })),
       commands.registerCommand(RESULT_VIEW.compare, () => this.enabled("diff") && this.ask({ action: "compare" })),
       commands.registerCommand(RESULT_VIEW.heatmap, () => this.enabled("heatmap") && this.toggleHeatmap()),
       commands.registerCommand(RESULT_VIEW.history, (id?: string) => this.enabled("history") && this.pickFromHistory(id)),
-      commands.registerCommand(RESULT_VIEW.exportAs, (format?: string, target?: Uri) => this.enabled("export") && this.exportAs(format, target, this.order[settings().resultsLocation])),
-      commands.registerCommand(RESULT_VIEW.copyAs, (format?: string) => this.enabled("export") && this.copyAs(format, this.order[settings().resultsLocation])),
+      commands.registerCommand(RESULT_VIEW.exportAs, (format?: string, target?: Uri) => this.enabled("export") && this.exportAs(format, target, this.shownOrder())),
+      commands.registerCommand(RESULT_VIEW.copyAs, (format?: string) => this.enabled("export") && this.copyAs(format, this.shownOrder())),
       commands.registerCommand(RESULT_VIEW.loadMore, () => this.enabled("paging") && this.loadMore(true)),
       commands.registerCommand(RESULT_VIEW.pivot, () => this.enabled("pivot") && this.ask({ action: "view", view: "pivot" })),
       commands.registerCommand(RESULT_VIEW.saveChart, (format?: string, target?: Uri) => this.enabled("charts") && this.saveChart(format, target)),
@@ -399,8 +399,8 @@ export class QueryModes {
       commands.registerCommand(RESULT_VIEW.saveChartPreset, (preset?: unknown) => this.enabled("chartPresets") && this.saveChartPreset(preset)),
       commands.registerCommand(RESULT_VIEW.forgetChartPreset, () => this.enabled("chartPresets") && this.forgetChartPreset()),
       commands.registerCommand(RESULT_VIEW.correlation, () => this.enabled("correlation") && this.showCorrelation()),
-      commands.registerCommand(RESULT_VIEW.toNotebook, (withChart?: boolean, notebook?: Uri) => this.enabled("sendResult") && this.toNotebook(this.order[settings().resultsLocation], withChart, notebook)),
-      commands.registerCommand(RESULT_VIEW.toReport, (target?: Uri, withChart?: boolean) => this.enabled("sendResult") && this.toReport(this.order[settings().resultsLocation], target, withChart)),
+      commands.registerCommand(RESULT_VIEW.toNotebook, (withChart?: boolean, notebook?: Uri) => this.enabled("sendResult") && this.toNotebook(this.shownOrder(), withChart, notebook)),
+      commands.registerCommand(RESULT_VIEW.toReport, (target?: Uri, withChart?: boolean) => this.enabled("sendResult") && this.toReport(this.shownOrder(), target, withChart)),
       window.registerWebviewViewProvider(RESULTS.view, { resolveWebviewView: (view) => this.resolveView(view) }),
       workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration("q-lint.query")) {
@@ -423,6 +423,14 @@ export class QueryModes {
     );
     this.showStatus();
     this.status.show();
+  }
+
+  /// The rows the page results go to shows, in order; the other page's
+  /// while that one has drawn none - results moved from the editor's panel to
+  /// the q Results view not yet opened - not every row unsorted (#1848).
+  private shownOrder(): number[] | undefined {
+    const at = settings().resultsLocation;
+    return this.order[at] ?? this.order[at === "panel" ? "editor" : "panel"];
   }
 
   /// What the panel last drew, or undefined before it drew anything.

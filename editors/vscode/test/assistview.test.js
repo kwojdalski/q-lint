@@ -117,6 +117,7 @@ function fakeLive({ connected = true, history = [] } = {}) {
     activeProcess: () => (connected ? dev : undefined),
     processes: () => [dev],
     discovery: { discovered: () => [] },
+    sharedList: () => [],
     history: () => history,
     queryCode: async (code, uri) => void live.queried.push([code, uri.toString()]),
     borrow: (use) =>
@@ -249,6 +250,29 @@ test("Lint q Code reads qlinter's output whole, a character split across chunks 
   const script = 'process.stdout.write("a".repeat(65535) + "\u00e9".repeat(10))';
   const ran = await runWith(process.execPath, ["-e", script], "", undefined, 10);
   assert.strictEqual(ran.stdout.slice(65535), "\u00e9".repeat(10));
+});
+
+test("Windows: Lint q Code runs a qlinter.cmd serverPath through a shell, as the server is started (#1816)", async (t) => {
+  const { EventEmitter } = require("node:events");
+  const { PassThrough } = require("node:stream");
+  const { runWith } = require("../out/assisttools.js");
+  const cp = require("node:child_process");
+  const { spawn } = cp;
+  const platform = Object.getOwnPropertyDescriptor(process, "platform");
+  const spawned = [];
+  cp.spawn = (command, args, options) => {
+    spawned.push({ command, args, shell: options.shell });
+    const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough(), stdin: new PassThrough(), kill: () => true });
+    setImmediate(() => child.emit("close", 0));
+    return child;
+  };
+  Object.defineProperty(process, "platform", { value: "win32" });
+  t.after(() => {
+    cp.spawn = spawn;
+    Object.defineProperty(process, "platform", platform);
+  });
+  assert.strictEqual((await runWith("C:\\bin\\qlinter.cmd", ["--format", "json", "-"], "1", undefined, 10)).status, 0);
+  assert.deepStrictEqual(spawned, [{ command: '"C:\\bin\\qlinter.cmd"', args: ['"--format"', '"json"', '"-"'], shell: true }]);
 });
 
 test("Lint q Code cancelled stops: the next qlinter is not started (#1381)", async () => {
@@ -470,4 +494,17 @@ test("Draft qSQL turned off, or with no model: refuses and asks neither model no
   assert.strictEqual(await stub.commands.get("q-lint.draftQsql")("x"), undefined);
   assert.match(stub.messages[0][1], /no language model is available/);
   assert.deepStrictEqual(on.live.sent, []);
+});
+
+test("Lint q Code lints a file of another workspace folder in that folder, so its configuration applies (#1838)", () => {
+  const { lintPlace } = require("../out/assisttools.js");
+  const folders = [{ name: "A", path: "/ws/A" }, { name: "B", path: "/ws/B" }];
+  // VS Code's multi-root workspace-relative form names the folder first.
+  assert.deepStrictEqual(lintPlace("B/src/x.q", folders, undefined), { cwd: "/ws/B", file: "src/x.q" });
+  // Without one: the active editor's folder, else the first.
+  assert.deepStrictEqual(lintPlace("src/x.q", folders, "/ws/B"), { cwd: "/ws/B", file: "src/x.q" });
+  assert.deepStrictEqual(lintPlace("src/x.q", folders, undefined), { cwd: "/ws/A", file: "src/x.q" });
+  // One folder: a path is never read as naming it.
+  assert.deepStrictEqual(lintPlace("A/x.q", [folders[0]], undefined), { cwd: "/ws/A", file: "A/x.q" });
+  assert.deepStrictEqual(lintPlace("snippet.q", [], undefined), { cwd: undefined, file: "snippet.q" });
 });

@@ -41,6 +41,26 @@ test("a keyed right table gives lj and ij on its keys", () => {
   ]);
 });
 
+test("shared columns that are not plain names are written as q reads them back (#1818)", () => {
+  const left = shape("t", ["trade id", "_x", "px"], "ssf", [], ["", "", ""]);
+  const right = shape("u", ["trade id", "_x", "qty"], "ssj", [], ["", "", ""]);
+  const by = Object.fromEntries(suggestJoins(left, right).map((x) => [x.join, x]));
+  assert.strictEqual(by.lj.expression, 't lj (`$"trade id";`$"_x") xkey u');
+  assert.strictEqual(by.ij.expression, 't ij (`$"trade id";`$"_x") xkey u');
+  const one = Object.fromEntries(suggestJoins(shape("t", ["_x", "px"], "sf", [], ["", ""]), shape("u", ["_x", "qty"], "sj", [], ["", ""])).map((x) => [x.join, x]));
+  assert.strictEqual(one.lj.expression, 't lj (`$"_x") xkey u');
+});
+
+test("wj writes its time and value columns as q reads them back, a name with a space or a leading _ too (#1845)", () => {
+  const l = shape("t", ["_s", "trade time", "px"], "stf");
+  const wj = (r) => suggestJoins(l, r).find((x) => x.join === "wj").expression;
+  assert.strictEqual(
+    wj(shape("u", ["_s", "trade time", "bid x"], "stf")),
+    '((cols t),(`$"bid x_max";`$"bid x_min")) xcol wj[-1000 0+\\:t[`$"trade time"];(`$"_s";`$"trade time");t;((`$"_s";`$"trade time") xasc u;(max;`$"bid x");(min;`$"bid x"))]',
+  );
+  assert.strictEqual(wj(shape("u", ["_s", "trade time", "name"], "sts")), 'wj[-1000 0+\\:t[`$"trade time"];(`$"_s";`$"trade time");t;((`$"_s";`$"trade time") xasc u;(count;`$"trade time"))]');
+});
+
 test("a shared time column gives aj and wj, sorted unless the right table already is", () => {
   const s = suggestJoins(trade, quote);
   const by = Object.fromEntries(s.map((x) => [x.join, x]));

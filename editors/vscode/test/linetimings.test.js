@@ -59,6 +59,10 @@ test("times and sizes read as a person writes them", () => {
   assert.strictEqual(durationText(59_999_999_999), "60.0 s");
   assert.strictEqual(bytesText(1_048_575), "1.0 MB");
   assert.strictEqual(bytesText(1023), "1023 B");
+  // The decimal decided as rounded: 9.99 KB is 10 KB, as tableinfo writes it (#1806).
+  for (const n of [10192, 10239, 10452699, 10721658198]) {
+    assert.match(bytesText(n), /^10 [KMG]B$/, String(n));
+  }
   assert.strictEqual(decorationText({ ok: true, ns: 2_340_000, bytes: 8388928 }), "  ⏱ 2.34 ms · 8.0 MB");
   assert.strictEqual(decorationText({ ok: true, ns: 1000 }), "  ⏱ 1.0 µs");
   assert.strictEqual(decorationText({ ok: false, ns: 0, error: "type" }), "  ✗ type");

@@ -107,6 +107,9 @@ test("the documenter reads one table's answer, takes the qDoc above a definition
   assert.strictEqual(docs.get("f"), "Adds two numbers.\n@param a");
   assert.strictEqual(docs.get(".lib.g"), "Block doc.");
   assert.strictEqual(docs.has("h"), false);
+  // A block nested in the doc's block is part of it: the doc is the outer one's (#1817).
+  const nested = qdocs(["/", "Adds one to x.", "/", "old note", "\\", "Returns a long.", "\\", "f:{x+1}"].join("\n"));
+  assert.strictEqual(nested.get("f"), "Adds one to x.\n/\nold note\n\\\nReturns a long.");
   const md = docMarkdown(doc, "rdb", "now", new Map([[".lib.f", "x <b>"]]));
   assert.match(md, /### t\\<1\\>/);
   assert.match(md, /\| k \(key\) \| long \| unique \|/);

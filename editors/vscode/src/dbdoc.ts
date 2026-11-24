@@ -14,6 +14,7 @@
 // projection is its bound argument, of a composition a part (#1575). Works on kdb+ (KDB-X) and PeachQ; held there by
 // dbtools_q.test.js.
 import { definitions } from "./definitions";
+import { blockDepth } from "./statements";
 
 export const DOCUMENT = [
   "{[lim]",
@@ -94,15 +95,20 @@ export function readDoc(raw: unknown): DbDoc {
 /// `\` block. By name, as `definitions` names them.
 export function qdocs(source: string): Map<string, string> {
   const lines = source.split(/\r?\n/);
+  // Each line's block comment depth before it: block comments nest (#1817).
+  const depth: number[] = [];
+  lines.reduce((d, line, i) => ((depth[i] = d), blockDepth(d, line.trim())), 0);
   const out = new Map<string, string>();
   for (const def of definitions(source)) {
     const above: string[] = [];
     for (let i = def.line - 1; i >= 0; i--) {
       const line = lines[i].trim();
       if (line === "\\") {
-        // A block comment: back to its opening `/`.
+        // A block comment's close: back to the `/` that opened it, a
+        // nested block and all.
+        if (depth[i] !== 1) break;
         let j = i - 1;
-        while (j >= 0 && lines[j].trim() !== "/") j--;
+        while (j >= 0 && depth[j] !== 0) j--;
         if (j < 0) break;
         above.unshift(...lines.slice(j + 1, i).map((l) => l.trim()));
         i = j;

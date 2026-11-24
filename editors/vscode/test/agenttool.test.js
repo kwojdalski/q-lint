@@ -56,7 +56,7 @@ const prod = { label: "prod", host: "p", port: 2, tags: ["prod"] };
 /// `wait` ms - as it does behind the Process Explorer's read of the
 /// process - before it hands the query the connection. A query that has
 /// started runs until it is aborted.
-function fakeLive({ active, wait = 0, during } = {}) {
+function fakeLive({ active, wait = 0, during, shared = [] } = {}) {
   const live = {
     active,
     ran: [],
@@ -64,6 +64,7 @@ function fakeLive({ active, wait = 0, during } = {}) {
     records: [],
     processes: () => [dev, prod],
     discovery: { discovered: () => [] },
+    sharedList: () => shared,
     activeLabel: () => live.active?.label,
     activeProcess: () => live.active,
     connectTo: async (label) => {
@@ -157,6 +158,15 @@ test("a query runs only on the process the user confirmed", async () => {
   assert.deepStrictEqual(live.ran, []);
   assert.match(result.error, /dev/);
   assert.match(result.error, /prod/);
+});
+
+test("a process on the shared list is named by the label Copy Label for Agent Query copies (#1819)", () => {
+  settings = { "agent.queryTimeout": 0 };
+  const rdb = { label: "rdb", host: "h", port: 5010, tags: [] };
+  const shared = [{ server: { label: ".qlint", url: "file:///w/.vscode/q-processes.json" }, state: { processes: [rdb], problems: [], loading: false, fetchedAt: 1 } }];
+  const t = register(fakeLive({ active: dev, shared }));
+  const asked = t.prepareInvocation({ input: { query: "count trade", process: ".qlint/rdb" } });
+  assert.match(asked.confirmationMessages.title, /rdb/);
 });
 
 test("nor on one the connection moved to while the query waited for it", async () => {

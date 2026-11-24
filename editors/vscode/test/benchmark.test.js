@@ -42,7 +42,11 @@ test("timings are read, one repeat as atoms, and summed per run", () => {
   assert.deepStrictEqual(zero.map((s) => s.ratio), [1, null]);
   assert.match(benchmarkHtml(zero, "p", 10, 1, "N"), /<td>-<\/td><\/tr>/);
   assert.strictEqual(msText(2), "2.00 ms");
-  assert.strictEqual(msText(0.0123), "12.30 µs");
+  assert.strictEqual(msText(0.0123), "12 µs");
+  // The unit picked as rounded (#1805).
+  assert.strictEqual(msText(0.9996), "1.00 ms");
+  assert.strictEqual(msText(0.99999), "1.00 ms");
+  assert.strictEqual(msText(59999.99), "60.0 s");
 });
 
 test("the page escapes every expression, and runs no script", () => {

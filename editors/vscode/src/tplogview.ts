@@ -26,7 +26,8 @@ import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import { qBinaryFrom } from "./terminal";
 import { TPLOG_INIT, rangeProblem, readReplayed, readTpLog, readTpPage, timeOfDay, type TpLog } from "./tplog";
 import { plainMessage } from "./history";
-import { lifeline } from "./lifeline";
+import { spawnPlan } from "./launcher";
+import { lifeline, signalGroup } from "./lifeline";
 
 const on = (): boolean => dbOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "tickerplantLog");
 
@@ -70,7 +71,14 @@ export async function startLocalQ(binary: string, env: Record<string, string>, t
   const password = randomBytes(24).toString("hex");
   writeFileSync(init, `.z.pw:{[u;p] p~"${password}"};\n${TPLOG_INIT}\n`, { mode: 0o600 });
   const port = await freePort();
-  const child = spawn(binary, [init, "-p", `127.0.0.1:${port}`], {
+  // A q.cmd wrapper is run by cmd.exe, as the launcher runs it (#1815).
+  const run = spawnPlan(binary, [init, "-p", `127.0.0.1:${port}`]);
+  if ("error" in run) {
+    rmSync(dir, { recursive: true, force: true });
+    throw new Error(`the local q did not start (${binary}): ${run.error}`);
+  }
+  const child = spawn(run.command, run.args, {
+    windowsVerbatimArguments: run.verbatim,
     cwd: dir,
     env: { ...process.env, ...env },
     stdio: ["ignore", "pipe", "pipe"],
@@ -116,7 +124,11 @@ export function stopLocalQ(local: LocalQ): void {
   // On Windows a q's directory cannot be removed while the q runs, and a
   // kill does not wait for it to exit: removed again once it has (#1287).
   if (local.child.pid !== undefined && local.child.exitCode === null && local.child.signalCode === null) local.child.once("exit", remove);
-  if (local.child.exitCode === null) local.child.kill("SIGKILL");
+  // On Windows q.exe too, under q.cmd's cmd.exe (#1745).
+  if (local.child.exitCode === null) {
+    if (process.platform === "win32") signalGroup(local.child, "SIGKILL");
+    else local.child.kill("SIGKILL");
+  }
   remove();
 }
 
@@ -152,8 +164,9 @@ export class TickerplantLog {
     if (file === undefined) return "cancelled";
     this.stop();
     const opening = this.generation;
-    // The folder's q binary, as the folder it starts in (#1333).
-    const folder = workspace.workspaceFolders?.[0]?.uri;
+    // The folder's q binary, as the folder it starts in (#1333): the log
+    // file's own folder, else the first (#1842).
+    const folder = (workspace.getWorkspaceFolder(Uri.file(file)) ?? workspace.workspaceFolders?.[0])?.uri;
     const configuration = workspace.getConfiguration("q-lint", folder);
     const { qBinary } = readTerminal((key, fallback) => configuration.get(key, fallback));
     const binary = qBinaryFrom(qBinary, folder?.fsPath, os.homedir());

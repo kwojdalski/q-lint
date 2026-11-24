@@ -191,6 +191,35 @@ test("the provider offers the detected tasks; a task runs q on its script with t
   assert.match((await run(own)).out, /args: .*x\.q -a b env: hello/);
 });
 
+test("a workspace task's relative qBinary is the first folder's, as a terminal's is, not under the script's directory (#1840)", { skip: process.platform === "win32" && "POSIX paths" }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-taskbin-"));
+  fs.mkdirSync(path.join(dir, "bin"));
+  fs.mkdirSync(path.join(dir, "scripts"));
+  fs.writeFileSync(path.join(dir, "bin", "q"), "#!/bin/sh\necho ran the folder q on $1\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(dir, "scripts", "run.q"), "");
+  const { providers } = setUp(t, dir);
+  stub.config.user["terminal.qBinary"] = "./bin/q";
+  // A task of the workspace (a .code-workspace file): its scope is no folder.
+  const own = providers[0].provider.resolveTask({ definition: { type: "q", script: "scripts/run.q" }, name: "mine", scope: 2 });
+  const ran = await run(own);
+  assert.match(ran.out, /ran the folder q on .*scripts\/run\.q/);
+  assert.strictEqual(ran.code, 0);
+});
+
+test("a q task's workspace-relative KDB-X qBinary gets its layout's QHOME and QLIC (#1839)", { skip: process.platform === "win32" && "POSIX paths" }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-tasklayout-"));
+  fs.mkdirSync(path.join(dir, "kx", "bin"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "kx", "q"));
+  fs.writeFileSync(path.join(dir, "kx", "bin", "q"), "#!/bin/sh\necho QHOME=$QHOME QLIC=$QLIC\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(dir, "kx", "kc.lic"), "");
+  fs.writeFileSync(path.join(dir, "run.q"), "");
+  const { providers } = setUp(t, dir);
+  stub.config.user["terminal.qBinary"] = "./kx/bin/q";
+  const own = providers[0].provider.resolveTask({ definition: { type: "q", script: "run.q" }, name: "mine", scope: vscode.workspace.workspaceFolders[0] });
+  const ran = await run(own);
+  assert.ok(ran.out.includes(`QHOME=${path.join(dir, "kx", "q")} QLIC=${path.join(dir, "kx")}`), ran.out);
+});
+
 test("a task closed before its q has started never starts it (#1085)", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-taskclose-"));
   fs.writeFileSync(path.join(dir, ".env"), "FROM_ENV=hello\n");
@@ -205,6 +234,35 @@ test("a task closed before its q has started never starts it (#1085)", async (t)
   terminal.close();
   await new Promise((r) => setTimeout(r, 1000));
   assert.strictEqual(fs.existsSync(path.join(dir, "ran")), false);
+});
+
+test("Windows: a q.cmd wrapper is run by cmd.exe, as the launcher runs it, not spawned itself (#1814)", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-taskcmd-"));
+  const { providers } = setUp(t, dir);
+  stub.config.user["terminal.qBinary"] = "C:\\q\\q.cmd";
+  const cp = require("node:child_process");
+  const { spawn } = cp;
+  const platform = Object.getOwnPropertyDescriptor(process, "platform");
+  const spawned = [];
+  cp.spawn = (command, args, options) => {
+    spawned.push({ command, args, verbatim: options.windowsVerbatimArguments });
+    const child = new (require("node:events").EventEmitter)();
+    child.kill = () => {};
+    setImmediate(() => child.emit("close", 0));
+    return child;
+  };
+  Object.defineProperty(process, "platform", { value: "win32" });
+  t.after(() => {
+    cp.spawn = spawn;
+    Object.defineProperty(process, "platform", platform);
+  });
+  const own = providers[0].provider.resolveTask({ definition: { type: "q", script: "x.q" }, name: "mine", scope: vscode.workspace.workspaceFolders[0] });
+  assert.strictEqual((await run(own)).code, 0);
+  assert.strictEqual(spawned.length, 1);
+  assert.match(spawned[0].command, /cmd\.exe$/i);
+  assert.deepStrictEqual(spawned[0].args.slice(0, 3), ["/d", "/s", "/c"]);
+  assert.match(spawned[0].args[3], /^"C:\\q\\q\.cmd .*x\.q"$/);
+  assert.strictEqual(spawned[0].verbatim, true);
 });
 
 test("off: the provider is unregistered, offers and resolves nothing, and runs no q", async (t) => {

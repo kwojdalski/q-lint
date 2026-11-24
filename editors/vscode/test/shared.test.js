@@ -12,7 +12,7 @@ const path = require("node:path");
 const net = require("node:net");
 const { spawn } = require("node:child_process");
 const pkg = require("../package.json");
-const { SHARED_COMMANDS, SHARED_FILE, readShared, readSharedFile, withShared } = require("../out/shared.js");
+const { SHARED_COMMANDS, SHARED_FILE, mergeShared, readShared, readSharedFile, withShared } = require("../out/shared.js");
 const { children, serverLabelProblem } = require("../out/discovery.js");
 const { Live } = require("../out/live.js");
 
@@ -120,14 +120,14 @@ async function someQ(t) {
 /// A Live over a workspace folder `dir`, the file system real, the watcher
 /// faked so a test fires it, and the workspace trusted unless `trusted` is
 /// false.
-async function setUp(t, dir, { trusted = true, saved = [], config = {} } = {}) {
+async function setUp(t, dir, { trusted = true, saved = [], config = {}, more = [] } = {}) {
   stub.reset();
   Object.assign(stub.config.user, config);
   const vscode = require("vscode");
   const watchers = [];
   const reads = [];
   const restore = { fs: vscode.workspace.fs, folders: vscode.workspace.workspaceFolders, trusted: vscode.workspace.isTrusted, watch: vscode.workspace.createFileSystemWatcher };
-  vscode.workspace.workspaceFolders = [{ uri: vscode.Uri.file(dir), name: "w", index: 0 }];
+  vscode.workspace.workspaceFolders = [dir, ...more].map((d, index) => ({ uri: vscode.Uri.file(d), name: index === 0 ? "w" : path.basename(d), index }));
   vscode.workspace.isTrusted = trusted;
   vscode.workspace.fs = {
     readFile: async (uri) => (reads.push(uri.fsPath), fs.promises.readFile(uri.fsPath)),
@@ -332,4 +332,38 @@ test("turning the shared list off closes a connection apart to one of its proces
   stub.changeConfig("q-lint.processes.shared.enable");
   await sleep(50);
   assert.strictEqual(connection.isOpen, false);
+});
+
+test("several folders' lists are one: a label taken is qualified, and a later folder's relative paths are its own (#1841)", { skip: process.platform === "win32" && "POSIX paths" }, () => {
+  const list = (processes) => ({ processes, problems: [], secrets: [] });
+  const merged = mergeShared(
+    [
+      { name: "A", path: "/a", read: list([{ label: "rdb", host: "h", port: 1, tags: [], initFile: "init.q" }]) },
+      { name: "B", path: "/b", read: { ...list([{ label: "rdb", host: "h", port: 2, tags: [], initFile: "conn/init.q" }, { label: "hdb", host: "h", port: 3, tags: [], launch: { script: "hdb.q" } }]), problems: ["x: no port"] } },
+    ],
+    "/a",
+  );
+  assert.deepStrictEqual(merged.processes, [
+    { label: "rdb", host: "h", port: 1, tags: [], initFile: "init.q" },
+    { label: "rdb (B)", host: "h", port: 2, tags: [], initFile: "/b/conn/init.q" },
+    { label: "hdb", host: "h", port: 3, tags: [], launch: { script: "hdb.q", cwd: "/b" } },
+  ]);
+  assert.deepStrictEqual(merged.problems, ["B: x: no port"]);
+});
+
+test("in a multi-root workspace every folder's shared list is read and watched, and Add asks which (#1841)", async (t) => {
+  const a = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-shared-"));
+  const b = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-sharedb-"));
+  write(b, [{ label: "rdb", host: "h", port: 1 }]);
+  const vscode = require("vscode");
+  const plainPick = vscode.window.showWorkspaceFolderPick;
+  t.after(() => (vscode.window.showWorkspaceFolderPick = plainPick));
+  const { live, watchers } = await setUp(t, a, { more: [b], saved: [{ label: "gw", host: "g", port: 5, tags: [] }] });
+  await sleep(50);
+  assert.deepStrictEqual(live.api().sharedProcesses().processes.map((p) => p.label), ["rdb"]);
+  assert.strictEqual(watchers.length, 2, "one watcher a folder");
+  vscode.window.showWorkspaceFolderPick = async () => vscode.workspace.workspaceFolders[1];
+  await stub.commands.get(SHARED_COMMANDS.add)("gw");
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(b, SHARED_FILE), "utf8")).processes.map((p) => p.label), ["rdb", "gw"]);
+  assert.strictEqual(fs.existsSync(path.join(a, SHARED_FILE)), false, "nothing written to the first folder");
 });

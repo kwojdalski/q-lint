@@ -67,10 +67,11 @@ export function nameProblem(name: string, taken: string[]): string | undefined {
   return taken.includes(n) ? "A saved query already has that name." : undefined;
 }
 
-/// A name for `code` to start from: its first line, cut.
+/// A name for `code` to start from: its first line, cut by code point,
+/// never inside a surrogate pair (#1808).
 export function suggestedName(code: string): string {
-  const line = code.trim().split(/\r?\n/)[0] ?? "";
-  return line.length > 40 ? `${line.slice(0, 37)}...` : line;
+  const line = Array.from(code.trim().split(/\r?\n/)[0] ?? "");
+  return line.length > 40 ? `${line.slice(0, 37).join("")}...` : line.join("");
 }
 
 /// The list with `query` added at the end, or in place of one of its name.

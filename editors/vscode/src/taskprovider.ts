@@ -25,12 +25,14 @@ import {
   type TaskDefinition,
   type WorkspaceFolder,
 } from "vscode";
+import { spawnPlan } from "./launcher";
+import { signalGroup } from "./lifeline";
 import { readTerminal } from "./liveconfig";
 import { mergeEnv } from "./qenv";
 import { onPath } from "./relations";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import { EXCLUDE, TASK_TYPE, TEST_RUNNERS, detectedTasks, readTaskDefinition, readTasks, taskPaths, terminalText, type QTaskDefinition } from "./tasks";
-import { expandHome } from "./terminal";
+import { expandHome, qBinaryFrom } from "./terminal";
 
 const isFile = (file: string): boolean => {
   try {
@@ -54,8 +56,12 @@ function runner(definition: QTaskDefinition, folder: WorkspaceFolder | undefined
     open: () => {
       void (async () => {
         const configuration = workspace.getConfiguration("q-lint", folder?.uri);
-        const binary = expandHome(readTerminal((key, fallback) => configuration.get(key, fallback)).qBinary, os.homedir());
-        const paths = taskPaths(expandHome(definition.script, os.homedir()), folder?.uri.fsPath, workspace.workspaceFolders?.[0]?.uri.fsPath);
+        const first = workspace.workspaceFolders?.[0]?.uri.fsPath;
+        // A relative q is the task's folder's, else the first folder's, as a
+        // terminal's is - not under a workspace task's script directory (#1840).
+        const qBinary = readTerminal((key, fallback) => configuration.get(key, fallback)).qBinary;
+        const binary = qBinaryFrom(qBinary, folder?.uri.fsPath ?? first, os.homedir()) ?? expandHome(qBinary, os.homedir());
+        const paths = taskPaths(expandHome(definition.script, os.homedir()), folder?.uri.fsPath, first);
         if (paths === undefined) {
           write.fire(terminalText(`the script ${definition.script} is relative, and there is no workspace folder to find it in\n`));
           close.fire(1);
@@ -77,8 +83,15 @@ function runner(definition: QTaskDefinition, folder: WorkspaceFolder | undefined
           close.fire(1);
           return;
         }
+        // A q.cmd wrapper is run by cmd.exe, as the launcher runs it (#1814).
+        const run = spawnPlan(command, args);
+        if ("error" in run) {
+          write.fire(terminalText(`could not start ${binary}: ${run.error}\n`));
+          close.fire(1);
+          return;
+        }
         try {
-          child = spawn(command, args, { cwd, env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+          child = spawn(run.command, run.args, { cwd, env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true, windowsVerbatimArguments: run.verbatim });
         } catch (error) {
           write.fire(terminalText(`could not start ${binary}: ${error instanceof Error ? error.message : String(error)}\n`));
           close.fire(1);
@@ -97,7 +110,8 @@ function runner(definition: QTaskDefinition, folder: WorkspaceFolder | undefined
     },
     close: () => {
       closed = true;
-      child?.kill();
+      // q.exe too, under q.cmd's cmd.exe (#1745).
+      if (child !== undefined) signalGroup(child, "SIGTERM");
     },
   };
 }

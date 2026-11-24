@@ -43,6 +43,9 @@ test("a column's suffix names its format, in any case, with decimals, and the ba
   assert.strictEqual(L.formatNumber(f("x_CCY"), 123456789012345678, "123456789012345678"), "123,456,789,012,345,678.00");
   assert.strictEqual(L.formatNumber(f("x_NUM2"), -123456789012345678, "-123456789012345678"), "-123,456,789,012,345,678.00");
   assert.strictEqual(L.formatNumber(f("x_NUM0"), 123456789012345678, "123456789012345678"), "123,456,789,012,345,678");
+  // _PCT and _BPS too (#1820).
+  assert.strictEqual(L.formatNumber(f("x_PCT"), 2e19, "2e+19"), "2000000000000000000000.00%");
+  assert.strictEqual(L.formatNumber(f("x_BPS"), 1e18, "1e+18"), "10000000000000000000000.0 bp");
   assert.strictEqual(L.formatNumber(f("x_CCY"), 1e21, "1e+21"), "1,000,000,000,000,000,000,000.00");
   // A float whose text q's \P or the grid's decimals rounded to an integer's (#1741).
   assert.strictEqual(L.formatNumber(f("x_CCY"), 1234567.891, "1234568"), "1,234,567.89");

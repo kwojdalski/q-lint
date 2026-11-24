@@ -32,9 +32,10 @@ import {
   type TextEditor,
   type TreeDataProvider,
   type TreeView,
+  type WorkspaceFolder,
 } from "vscode";
 import { children, findDiscovered, qualified, type Discovered, type Row } from "./discovery";
-import { SHARED_COMMANDS, SHARED_FILE, SHARED_SOURCE, readShared, readSharedFile, secretsWarning, withShared } from "./shared";
+import { SHARED_COMMANDS, SHARED_FILE, SHARED_SOURCE, mergeShared, readShared, readSharedFile, secretsWarning, withShared } from "./shared";
 import { DiscoveryServers, discoveryItem } from "./discoveryservers";
 import {
   address,
@@ -113,6 +114,8 @@ import type { Answered } from "./inlineresult";
 const PROCESSES_KEY = "q-lint.processes";
 /// The address of each process the shared list held when last read (#955).
 const SHARED_SEEN_KEY = "q-lint.sharedProcessesSeen";
+/// The folders a shared process list is read from: those on disk (#1841).
+const sharedFolders = (): readonly WorkspaceFolder[] => (workspace.workspaceFolders ?? []).filter((f) => f.uri.scheme === "file");
 /// Every process renamed or deleted, for the workspaces not open then
 /// (#1749); and, in a workspace, the last of them its state has had.
 const RELABELS_KEY = "q-lint.processRelabels";
@@ -454,8 +457,10 @@ export class QTerminals {
     const configuration = workspace.getConfiguration("q-lint", from);
     const read = readTerminal((key, fallback) => configuration.get(key, fallback));
     const settings = { qBinary: expandHome(read.qBinary, os.homedir()), envPath: expandHome(read.envPath, os.homedir()) };
-    const own = from && workspace.getWorkspaceFolder(from);
-    const folder = own ?? workspace.workspaceFolders?.[0];
+    // Folders on disk: a virtual one is no directory to start in (#1843).
+    const onDisk = (f: WorkspaceFolder | undefined): WorkspaceFolder | undefined => (f?.uri.scheme === "file" ? f : undefined);
+    const own = onDisk(from && workspace.getWorkspaceFolder(from));
+    const folder = own ?? workspace.workspaceFolders?.find((f) => f.uri.scheme === "file");
     const cwd = terminalCwd(own?.uri.fsPath, folder?.uri.fsPath, file, path.dirname);
     let variables: Record<string, string> = {};
     if (settings.envPath !== "") {
@@ -487,8 +492,10 @@ export class QTerminals {
     }
     // The `.env` file's variables go in the terminal's environment, never on
     // its command line, where they would show; the layout's stay under the
-    // env file's.
-    const { shown, hidden, refs } = terminalEnv(layoutEnvFor(read.qBinary, from), variables, await dotenvFor(from));
+    // env file's. A relative q's layout is read where it is, the folder's
+    // (#1839).
+    const layout = layoutEnvFor(qBinaryFrom(settings.qBinary, folder?.uri.fsPath, os.homedir()) ?? settings.qBinary, from);
+    const { shown, hidden, refs } = terminalEnv(layout, variables, await dotenvFor(from));
     // A file inside the folder is named relative to it, as you would type it.
     const relative = file !== undefined && cwd !== undefined ? path.relative(cwd, file) : "";
     const inside = relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
@@ -647,7 +654,7 @@ export class Live {
   /// often, how many runs so far, its timer and status bar item, and
   /// whether a run is out.
   private watching:
-    | { code: string; label: string; every: number; runs: number; timer: ReturnType<typeof setInterval>; status: StatusBarItem; running: boolean }
+    | { code: string; label: string; every: number; runs: number; timer: ReturnType<typeof setInterval>; status: StatusBarItem; running: boolean; asked: { write: boolean; tagged: boolean } }
     | undefined;
   /// The workspace's shared process list as last read (#955), when it is
   /// on and the file is there, and the watcher on the file.
@@ -802,8 +809,8 @@ export class Live {
   private watchShared(): void {
     this.sharedWatcher?.dispose();
     this.sharedWatcher = undefined;
-    const folder = workspace.workspaceFolders?.[0];
-    if (!this.setting(readShared).enabled || folder === undefined) {
+    const folders = sharedFolders();
+    if (!this.setting(readShared).enabled || folders.length === 0) {
       this.sharedRead++;
       const had = this.shared !== undefined;
       this.shared = undefined;
@@ -816,12 +823,17 @@ export class Live {
       }
       return;
     }
-    const watcher = workspace.createFileSystemWatcher(new RelativePattern(folder, SHARED_FILE));
+    // Each folder's file: in a multi-root workspace each repository may
+    // commit its own (#1841).
     const reload = (): void => void this.loadShared();
-    this.sharedWatcher = { dispose: () => watcher.dispose() };
-    watcher.onDidCreate(reload);
-    watcher.onDidChange(reload);
-    watcher.onDidDelete(reload);
+    const watchers = folders.map((folder) => {
+      const watcher = workspace.createFileSystemWatcher(new RelativePattern(folder, SHARED_FILE));
+      watcher.onDidCreate(reload);
+      watcher.onDidChange(reload);
+      watcher.onDidDelete(reload);
+      return watcher;
+    });
+    this.sharedWatcher = { dispose: () => watchers.forEach((w) => w.dispose()) };
     void this.loadShared();
   }
 
@@ -831,9 +843,13 @@ export class Live {
     if (!this.featureOn(this.setting(readShared).enabled, "The shared process list", "q-lint.processes.shared.enable")) {
       return;
     }
-    const folder = workspace.workspaceFolders?.[0];
-    if (folder === undefined) {
+    const folders = sharedFolders();
+    if (folders.length === 0) {
       void window.showInformationMessage(plainMessage(`q-lint: open a folder first: the shared process list is its ${SHARED_FILE}.`));
+      return;
+    }
+    const folder = folders.length === 1 ? folders[0] : await window.showWorkspaceFolderPick({ placeHolder: `Share it in which folder's ${SHARED_FILE}?` });
+    if (folder === undefined) {
       return;
     }
     const chosen = await this.chosen(row, "Share which q process with the repository?");
@@ -888,27 +904,50 @@ export class Live {
   /// Read the shared list again. A process whose host, port or user changed
   /// since it was last read forgets the password given for it.
   private async loadShared(): Promise<void> {
-    const folder = workspace.workspaceFolders?.[0];
+    const folders = sharedFolders();
     const run = ++this.sharedRead;
-    if (!this.setting(readShared).enabled || folder === undefined) {
+    if (!this.setting(readShared).enabled || folders.length === 0) {
       return;
     }
-    const file = Uri.joinPath(folder.uri, SHARED_FILE);
-    let text: string | undefined;
-    try {
-      text = Buffer.from(await workspace.fs.readFile(file)).toString("utf8");
-    } catch {
-      text = undefined;
-    }
+    // Every folder's file, as one list (#1841).
+    const found = (
+      await Promise.all(
+        folders.map(async (folder) => {
+          const file = Uri.joinPath(folder.uri, SHARED_FILE);
+          try {
+            return { folder, file, text: Buffer.from(await workspace.fs.readFile(file)).toString("utf8") };
+          } catch {
+            return undefined;
+          }
+        }),
+      )
+    ).filter((f) => f !== undefined);
     if (run !== this.sharedRead) {
       return;
     }
-    const server = { label: SHARED_SOURCE, url: file.fsPath };
-    if (text === undefined) {
+    const server = { label: SHARED_SOURCE, url: found.map((f) => f.file.fsPath).join(", ") };
+    if (found.length === 0) {
       this.shared = undefined;
     } else {
       try {
-        const read = readSharedFile(text, workspace.isTrusted === true);
+        const trusted = workspace.isTrusted === true;
+        const lists: Parameters<typeof mergeShared>[0] = [];
+        const broken: string[] = [];
+        for (const { folder, file, text } of found) {
+          try {
+            lists.push({ name: folder.name, path: folder.uri.fsPath, read: readSharedFile(text, trusted) });
+          } catch (error) {
+            if (found.length === 1) {
+              throw error;
+            }
+            broken.push(`${file.fsPath} is not JSON: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
+        if (lists.length === 0) {
+          throw new SyntaxError(broken.join("; "));
+        }
+        const merged = mergeShared(lists, workspace.workspaceFolders?.[0]?.uri.fsPath);
+        const read = { ...merged, problems: [...merged.problems, ...broken] };
         const before = this.context.workspaceState.get<unknown>(SHARED_SEEN_KEY);
         const seen = parseProcesses(Array.isArray(before) ? before : [], true).processes;
         for (const label of passwordsToForget(seen, read.processes)) {
@@ -2162,16 +2201,21 @@ export class Live {
   /// user connects elsewhere or disconnects (#917).
   private async autoReconnect(dropped: Process): Promise<void> {
     const run = ++this.reconnectRun;
-    const configuration = workspace.getConfiguration("q-lint");
-    const { reconnectAttempts } = readHealth((key, fallback) => configuration.get(key, fallback));
+    // Read before each try: lowered meanwhile, the tries stop there (#1850).
+    const attempts = (): number => readHealth((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback)).reconnectAttempts;
     let process = dropped;
-    for (let attempt = 1; attempt <= reconnectAttempts; attempt++) {
-      this.reconnecting = { label: process.label, attempt, of: reconnectAttempts };
+    let tried = 0;
+    for (let attempt = 1; attempt <= attempts(); attempt++) {
+      this.reconnecting = { label: process.label, attempt, of: attempts() };
       this.showStatus();
       await new Promise((resolve) => setTimeout(resolve, backoffDelay(attempt)));
       if (run !== this.reconnectRun || this.connection !== undefined) {
         return;
       }
+      if (attempt > attempts()) {
+        break;
+      }
+      tried = attempt;
       // Each try connects to it as it is now - renamed, tagged, given a
       // connect script meanwhile - and a saved one as saved (#1699).
       const now = this.active ?? process;
@@ -2195,7 +2239,7 @@ export class Live {
     }
     this.reconnecting = undefined;
     this.showStatus();
-    void window.showWarningMessage(plainMessage(`q-lint: could not reconnect to ${process.label} after ${reconnectAttempts} tries.`));
+    void window.showWarningMessage(plainMessage(`q-lint: could not reconnect to ${process.label} after ${tried} ${tried === 1 ? "try" : "tries"}.`));
   }
 
   /// Stop an automatic reconnect, if one is under way.
@@ -2730,7 +2774,8 @@ export class Live {
   /// every `every` seconds (one given, or asked for), refreshing its result
   /// in place, until stopped, disconnected, or connected elsewhere. A run
   /// due while a query is out is skipped. The read-only guard asks once, at
-  /// the start, as does a guarded or production process.
+  /// the start, as does a guarded or production process; one it would ask
+  /// later, the process guarded meanwhile, stops the watch.
   async watch(given?: string, every?: number): Promise<void> {
     if (!this.featureOn(this.setting(readWatch).enabled, "Watch Query", "q-lint.query.watch.enable")) {
       return;
@@ -2761,6 +2806,7 @@ export class Live {
       return;
     }
     const { process } = ready;
+    const write = this.guardRefuses(code, [process]) !== undefined;
     if (!(await this.guardAllows(code, [process]))) {
       return;
     }
@@ -2803,6 +2849,7 @@ export class Live {
       timer: setInterval(() => void this.watchRun(), seconds * 1000),
       status,
       running: false,
+      asked: { write, tagged: tags.length > 0 || isProduction(process) },
     };
     void commands.executeCommand("setContext", WATCHING, true);
     status.show();
@@ -2819,6 +2866,19 @@ export class Live {
     if (this.activeLabel() !== watched.label) {
       this.stopWatching(`the connection is no longer to ${watched.label}`);
       return;
+    }
+    // A question the start did not ask, because the process was not guarded
+    // then - the guard's tags changed, or the process was retagged - stops
+    // the watch rather than sending it unasked (#1847).
+    const now = this.activeProcess();
+    const process = now === undefined || now.server !== undefined ? now : (this.processes().find((p) => p.label === now.label) ?? now);
+    if (process !== undefined) {
+      const write = !watched.asked.write && this.guardRefuses(watched.code, [process]) !== undefined;
+      const tagged = !watched.asked.tagged && (guardedBy(process, this.setting(readGuard)).length > 0 || isProduction(process));
+      if (write || tagged) {
+        this.stopWatching(`${watched.label} is now ${write ? "read-only" : "guarded"} (q-lint.processes.readOnlyGuard); Watch Query again to be asked`);
+        return;
+      }
     }
     if (this.connection?.isBusy || this.borrowed !== undefined) {
       return;

@@ -19,6 +19,7 @@ import {
   LanguageModelToolResult,
   lm,
   MarkdownString,
+  window,
   workspace,
   type CancellationToken,
   type Disposable,
@@ -30,6 +31,7 @@ import {
 } from "vscode";
 import { notConnected } from "./agent";
 import { lintArgs, readLint, schemaOf, tablesOf, type LintFinding } from "./assist";
+import { launchable } from "./batch";
 import { ASSIST_SETTINGS, assistOff, readAssist, type AssistFeature } from "./assistconfig";
 import { GATHER, LIMITS, readExplorer, readGathered } from "./explorer";
 import { borrowWhenFree } from "./infoview";
@@ -123,7 +125,7 @@ export class ListTablesTool implements LanguageModelTool<TablesInput> {
     }
     const active = this.live.activeLabel();
     if (active === undefined) {
-      return { error: notConnected(this.live.processes(), this.live.discovery.discovered()) };
+      return { error: notConnected(this.live.processes(), [...this.live.discovery.discovered(), ...this.live.sharedList()]) };
     }
     const named = given(input.process);
     const table = given(input.table);
@@ -181,7 +183,9 @@ export interface LintInput {
 /// exit status. Rejects when it cannot be run or takes over `seconds`.
 export function runWith(command: string, args: string[], input: string, cwd: string | undefined, seconds: number, token?: CancellationToken): Promise<{ status: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, windowsHide: true });
+    // A .cmd wrapper through a shell, as the language server starts one (#1816).
+    const run = launchable(command, args);
+    const child = spawn(run.command, run.args, { cwd, windowsHide: true, shell: run.shell });
     let stdout = "";
     let stderr = "";
     const timer = setTimeout(() => {
@@ -209,6 +213,20 @@ export function runWith(command: string, args: string[], input: string, cwd: str
   });
 }
 
+/// Where qlinter lints `file` (workspace-relative) as: in the folder it
+/// belongs to, so that folder's configuration governs, and the path in it.
+/// In a multi-root workspace a leading folder name names the folder, as
+/// VS Code writes such a path; otherwise the active editor's folder, else
+/// the first (#1838).
+export function lintPlace(file: string, folders: { name: string; path: string }[], active: string | undefined): { cwd: string | undefined; file: string } {
+  const [head, ...rest] = file.split("/");
+  const named = folders.length > 1 && rest.length > 0 ? folders.find((f) => f.name === head) : undefined;
+  if (named !== undefined) {
+    return { cwd: named.path, file: rest.join("/") };
+  }
+  return { cwd: folders.find((f) => f.path === active)?.path ?? folders[0]?.path, file };
+}
+
 export class LintTool implements LanguageModelTool<LintInput> {
   /// `servers`: the qlinter binaries to try, in order, as the language
   /// server is started.
@@ -232,8 +250,11 @@ export class LintTool implements LanguageModelTool<LintInput> {
     if (input.code.length > LINT_LIMIT) {
       return { error: `The code is longer than ${LINT_LIMIT} characters.` };
     }
-    const file = typeof input.file === "string" && /^[\w./-]+\.q$/.test(input.file) && !input.file.includes("..") ? input.file : "snippet.q";
-    const cwd = workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const named = typeof input.file === "string" && /^[\w./-]+\.q$/.test(input.file) && !input.file.includes("..") ? input.file : "snippet.q";
+    // Folders on disk only: a virtual one is no directory to run in.
+    const folders = (workspace.workspaceFolders ?? []).filter((f) => f.uri.scheme === "file").map((f) => ({ name: f.name, path: f.uri.fsPath }));
+    const editing = window.activeTextEditor?.document.uri;
+    const { cwd, file } = lintPlace(named, folders, editing && workspace.getWorkspaceFolder(editing)?.uri.fsPath);
     let last = "no qlinter binary to run";
     for (const command of this.servers()) {
       // A cancelled lint stops: the next binary is not tried (#1381).

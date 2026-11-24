@@ -163,7 +163,8 @@ export function expandHome(file: string, home: string): string {
 /// for a relative path with no folder to read it from.
 export function qBinaryFrom(qBinary: string, folder: string | undefined, home: string): string | undefined {
   const file = expandHome(qBinary, home);
-  if (path.isAbsolute(file) || !/[\\/]/.test(file)) {
+  // A drive or UNC path is absolute wherever it is read.
+  if (path.isAbsolute(file) || /^([A-Za-z]:[\\/]|\\\\)/.test(file) || !/[\\/]/.test(file)) {
     return file;
   }
   return folder === undefined ? undefined : path.resolve(folder, file);
