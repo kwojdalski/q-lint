@@ -160,3 +160,19 @@ test("a depth chart of a book of 100,000 levels does not overflow the stack (#13
   const d = M.depthData(g, [...Array(n).keys()]);
   assert.deepStrictEqual(d.datasets.map((s) => s.levels), [n, n]);
 });
+
+test("a map coloured by a number with one value has one legend entry, and its points are that colour (#1948)", () => {
+  const g = grid([["lat", 9, ["10", "11", "12"]], ["lon", 9, ["20", "21", "22"]], ["c", 7, ["5", "", "5"]]]);
+  const one = M.mapData(g, all(g), { size: -1, colour: 2 }, look);
+  assert.deepStrictEqual(one.legend, [{ label: "c 5", colour: "#3794ff" }]);
+  // The row with no value is grey, as on any map coloured by a number.
+  assert.deepStrictEqual(one.datasets[0].colours, ["#3794ff", "#808080", "#3794ff"]);
+  // Two values still run from the first colour to the last, each in the legend.
+  const two = grid([["lat", 9, ["10", "11"]], ["lon", 9, ["20", "21"]], ["c", 7, ["5", "6"]]]);
+  const d = M.mapData(two, all(two), { size: -1, colour: 2 }, look);
+  assert.deepStrictEqual(d.legend, [{ label: "c 5", colour: "#3794ff" }, { label: "c 6", colour: "#f14c4c" }]);
+  assert.deepStrictEqual(d.datasets[0].colours, ["#3794ff", "#f14c4c"]);
+  // And with no value at all there is nothing to name.
+  const none = grid([["lat", 9, ["10"]], ["lon", 9, ["20"]], ["c", 7, [""]]]);
+  assert.deepStrictEqual(M.mapData(none, all(none), { size: -1, colour: 2 }, look).legend, []);
+});
