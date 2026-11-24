@@ -1370,3 +1370,37 @@ test("a language prefix, repeated or nested, hides neither a system command nor 
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("a lambda applied where it is written changes what its arguments name: {.[x;();:;1]}`a (#2035)", () => {
+  const cases = {
+    '{value x}"s1:1"': ["evaluates a string with value"],
+    '{value x}["s1:1"]': ["evaluates a string with value"],
+    '{value y}[0;"s6:1"]': ["evaluates a string with value"],
+    '{value x}@"s7:1"': ["evaluates a string with value"],
+    '{value x} each enlist "s2:1"': ["evaluates a string with value"],
+    "{eval x}(:;`s3;1)": ["evaluates an assignment with eval"],
+    "{.[x;();:;1]}`u1": ["amends `u1 in place"],
+    "({@[x;();:;1]})`u2": ["amends `u2 in place"],
+    "{update a:9 from x}`t": ["updates `t in place"],
+    "{x 1: 0x00}`:u5": ["writes a file with 1:"],
+    "{hclose hopen x}`:u4": ["opens the file `:u4 with hopen", "calls hclose"],
+    "{.[x;();:;1]} each `v2`v3": ["amends `v2 in place", "amends `v3 in place"],
+    "@[{.[x;();:;1]};`a;h]": ["amends `a in place"],
+    // A name may hold a global's symbol, and an argument not written may be one.
+    "{.[x;();:;1]} v": ["applies a lambda that may change the process through what it is given"],
+    "{.[x;();:;1]} . enlist `a": ["applies a lambda that may change the process through what it is given"],
+    // Applied to what it only reads, defined, or left as a value, it reads.
+    '{value x}"count t"': [],
+    "{x+1} each 1 2 3": [],
+    "{select from x where a>1}`t": [],
+    "{x} v": [],
+    "{value x}": [],
+    "{x 1}{value x}": [],
+    "({value x};1)": [],
+    "f:{value x}": ["assigns f"],
+    "{@[x;0;3_]} read0 `:f": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

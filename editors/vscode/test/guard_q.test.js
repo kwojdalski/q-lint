@@ -156,3 +156,14 @@ test("a system command or k's . after a language prefix is held, and runs once l
   await heldThenWrites(send, read, 'q)k)."i5:1"', "`i5 in key `.");
   await heldThenWrites(send, read, "q)q)\\cd sub", '"sub"~last "/" vs system "cd"');
 });
+
+test("a lambda applied inline that writes through its parameter is held, and writes once let through (#2035)", { skip }, async (t) => {
+  const q = await startQ(t, "t:([] a:1 2; b:3 4)\n");
+  const { send, read } = await setUp(t, q.port);
+  await heldThenWrites(send, read, '{value x}"s1:1"', "`s1 in key `.");
+  await heldThenWrites(send, read, "{.[x;();:;1]}`u1", "`u1 in key `.");
+  await heldThenWrites(send, read, "{update a:9 from x}`t", "9 9~t`a");
+  await heldThenWrites(send, read, "{x 1: 0x00}`:u5", "`u5 in key `:.");
+  await heldThenWrites(send, read, "{hclose hopen x}`:u4", "`u4 in key `:.");
+  await heldThenWrites(send, read, "{.[x;();:;1]} each `v2`v3", "all `v2`v3 in key `.");
+});

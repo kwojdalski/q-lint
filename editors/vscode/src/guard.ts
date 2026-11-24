@@ -87,6 +87,10 @@
 //   `\w 0` or `\w 1`) and `\t` or `\ts`, whose
 //   expression is read by these rules - but `\t 500`, a whole number with
 //   no `:N`, sets the timer;
+// - any of these in a lambda applied where it is written, read with its
+//   arguments in place of its parameters (`` {.[x;();:;1]}`a ``,
+//   `{value x} each enlist "a:1"`), and where an argument is a name or not
+//   written, with a symbol it could hold (`` {.[x;();:;1]} v ``, #2035);
 // - any of these in a string given to a TorQ gateway's `.gw.syncexec` or
 //   `.gw.asyncexec`, in brackets or applied (`.gw.syncexec . (q;`rdb)`),
 //   which runs it on the gateway's servers (#909).
@@ -696,6 +700,167 @@ function picked(t: Token[], at: number, root: string): string | undefined {
   return undefined;
 }
 
+/// What a lambda's parameter is given in place of an argument that is a
+/// name, or not written, which could name a global or a file:
+/// `` {.[x;();:;1]} v `` amends whatever `v` names.
+const WITNESSES = ["(`g)", "(`:g)"];
+/// The names after a lambda that apply it to each item of what follows.
+const ITERATORS = new Set(["each", "peach", "over", "scan", "prior"]);
+/// How deep `writes` is called in itself, and how many lambdas it has read
+/// again with their parameters given: past `REREADS` a lambda applied to
+/// what it cannot read is taken for a change rather than read again.
+let nesting = 0;
+let rereads = 0;
+const REREADS = 2000;
+/// What `writes` found in a lambda read again, by its text.
+const reread = new Map<string, string[]>();
+
+function rereadOf(text: string): string[] {
+  let found = reread.get(text);
+  if (found === undefined) {
+    rereads++;
+    found = writes(text);
+    reread.set(text, found);
+  }
+  return found;
+}
+
+/// The items of the argument `t[from]` to `t[to]` a lambda is applied to
+/// each of: the symbols of `` `a`b ``, the items of `(x;y)`, or none.
+function itemsOf(t: Token[], from: number, to: number): string[] {
+  if (to - from > 1 && t.slice(from, to).every((k) => k.kind === "sym")) {
+    return t.slice(from, to).map((k) => k.text);
+  }
+  const all = t[from]?.text === "(" && t[from].kind === "open" ? items(t, from) : [];
+  return all.length > 1 && all[all.length - 1][1] === to - 1 ? all.map(([a, b]) => joined(t, a, b)) : [];
+}
+
+/// What the lambda that opens at `t[open]`, applied where it is written,
+/// changes through its parameters (#2035): read again with each argument
+/// in place of its parameter, `` {.[x;();:;1]}`a `` as `` .[(`a);();:;1] ``,
+/// through `each` or an adverb with each item too, and where an argument is
+/// a name or not written, with a global's and a file's symbol, which it
+/// could be. `all` is the statement's
+/// tokens, spaces too, and `index` where each one is among them. A lambda
+/// assigned, `f:{value x}`, an item of a list, or the value of the code or
+/// of the lambda around it, is not applied here.
+function throughParameters(t: Token[], all: Token[], index: Map<Token, number>, closes: number[], open: number, found: Set<string>): void {
+  const close = closes[open];
+  if (close === undefined || close < 0) {
+    return;
+  }
+  // Its parameters, named or `x`, `y` and `z` up to the last its body uses.
+  const named = t[open + 1]?.text === "[" && t[open + 1].kind === "open";
+  let params: string[] = [];
+  let listEnd = open;
+  if (named) {
+    for (listEnd = open + 2; listEnd < close && t[listEnd].text !== "]"; listEnd++) {
+      if (t[listEnd].kind === "name") params.push(t[listEnd].text);
+    }
+  } else {
+    let last = -1;
+    for (let p = open + 1; p < close; p++) {
+      if (t[p].kind === "open" && t[p].text === "{") p = closes[p] < 0 ? close : closes[p];
+      else if (t[p].kind === "name") last = Math.max(last, ["x", "y", "z"].indexOf(t[p].text));
+    }
+    params = ["x", "y", "z"].slice(0, last + 1);
+  }
+  if (params.length === 0) {
+    return;
+  }
+  let s = open;
+  let e = close;
+  while (t[s - 1]?.text === "(" && t[e + 1]?.text === ")") {
+    s--;
+    e++;
+  }
+  // Past an adverb or `each`, it is applied to each item.
+  let q = e + 1;
+  while (t[q]?.kind === "op" && ["'", "/", "\\", ":"].includes(t[q].text)) q++;
+  if (t[q]?.kind === "name" && ITERATORS.has(t[q].text)) q++;
+  const iterated = q > e + 1;
+  const after = t[q];
+  const before = t[s - 1];
+  // Each parameter's argument as written, and the items it is applied to.
+  let args: ([number, number] | undefined)[] = [];
+  if (after?.kind === "open" && after.text === "[") {
+    args = items(t, q).map(([a, b]) => (a === b ? undefined : [a, b]));
+  } else if (after?.kind === "op" && (after.text === "@" || after.text === ".") && argumentEnd(t, q) > q + 1) {
+    const arg: [number, number] = [q + 1, argumentEnd(t, q)];
+    args = after.text === "@" ? [arg] : itemsOf(t, arg[0], arg[1]).length > 0 ? items(t, arg[0]).map(([a, b]): [number, number] => [a, b]) : [];
+  } else if (after !== undefined && (["str", "sym", "num", "name"].includes(after.kind) || after.kind === "open")) {
+    args = [[q, argumentEnd(t, q - 1)]];
+  } else if (before?.kind === "open" && before.text === "[" && (t[s - 2]?.text === "." || t[s - 2]?.text === "@") && t[s - 2].kind === "op") {
+    // Applied by `.[f;(x;y)]` or `@[f;x]`, a trap among them.
+    const all = items(t, s - 1);
+    const arg = all[1];
+    if (arg !== undefined && arg[0] < arg[1]) {
+      args = t[s - 2].text === "@" ? [arg] : itemsOf(t, arg[0], arg[1]).length > 0 ? items(t, arg[0]).map(([a, b]): [number, number] => [a, b]) : [];
+    }
+  } else if (
+    !iterated &&
+    (after === undefined || after.text === ";" || after.kind === "close") &&
+    (before === undefined ||
+      before.text === ":" ||
+      before.text === "{" ||
+      // The argument of a lambda before it, which reads it in its place.
+      before.text === "}" ||
+      // An item of a list, applied only once the list is: `value(f;x)`.
+      (before.text === "(" && after?.text === ";") ||
+      (before.text === ";" && (around(t, s) === 0 || after?.text === ";" || after?.text === ")")))
+  ) {
+    return;
+  }
+  if (rereads > REREADS) {
+    found.add("applies a lambda that may change the process through what it is given");
+    return;
+  }
+  // The lambda's text with `given` in place of its parameters, which it then
+  // no longer takes.
+  const text = (given: Map<string, string>): string => {
+    const out: string[] = [];
+    const from = index.get(t[open]) ?? 0;
+    const to = index.get(t[close]) ?? 0;
+    const list = named ? (index.get(t[listEnd]) ?? from) : from;
+    const kept = `[${params.filter((p) => !given.has(p)).join(";")}]`;
+    for (let p = from, nested = 0; p <= to; p++) {
+      const k = all[p];
+      if (p === from) {
+        out.push(given.size > 0 || named ? `{${kept}` : "{");
+        p = list;
+        continue;
+      }
+      if (k.kind === "open" && k.text === "{") nested++;
+      else if (k.kind === "close" && k.text === "}") nested--;
+      out.push(nested === 0 && k.kind === "name" && given.has(k.text) ? (given.get(k.text) ?? k.text) : k.text);
+    }
+    return out.join("");
+  };
+  const base = rereadOf(text(new Map()));
+  // What each parameter may be: its argument, each item of it when it is
+  // iterated, and the witnesses for one that is not a literal.
+  // A name may hold a global's symbol; what a call returns is read as the
+  // call, `{@[x;0;3_]} read0 f` as `@[(read0 f);0;3_]`.
+  const held = (a: number, b: number): boolean => b - a === 1 && t[a].kind === "name";
+  const choices = params.map((_, n) => {
+    const arg = args[n];
+    if (arg === undefined) return WITNESSES;
+    const written = [`(${joined(t, arg[0], arg[1])})`, ...(iterated ? itemsOf(t, arg[0], arg[1]).map((i) => `(${i})`) : [])];
+    return held(arg[0], arg[1]) ? [...written, ...WITNESSES] : written;
+  });
+  // One reading for each choice at a time, the others their first.
+  for (let n = 0; n < params.length; n++) {
+    for (const choice of choices[n]) {
+      const given = new Map(params.map((p, m) => [p, m === n ? choice : choices[m][0]]));
+      for (const reason of rereadOf(text(given))) {
+        if (!base.includes(reason)) {
+          found.add(WITNESSES.includes(choice) || given.size > 0 && [...given.values()].some((v) => WITNESSES.includes(v)) ? "applies a lambda that may change the process through what it is given" : reason);
+        }
+      }
+    }
+  }
+}
+
 /// What one statement does that the guard asks about, added to `found`.
 function readStatement(statement: string, found: Set<string>): void {
   // A language prefix, `q)` or `k)`, as many as are written, `q)k)`, is
@@ -722,6 +887,16 @@ function readStatement(statement: string, found: Set<string>): void {
   const touching = (a: Token | undefined, b: Token | undefined): boolean =>
     a !== undefined && b !== undefined && at.get(b) === (at.get(a) ?? -2) + 1;
   const t = all.filter((k) => k.kind !== "space");
+  // Where the bracket each open one starts closes, -1 for one that does not.
+  const closes: number[] = [];
+  for (let p = 0, open: number[] = []; p < t.length; p++) {
+    if (t[p].kind === "open") {
+      closes[p] = -1;
+      open.push(p);
+    } else if (t[p].kind === "close" && open.length > 0) {
+      closes[open.pop() ?? 0] = p;
+    }
+  }
   // k code, `k)...`, where a monadic `.` or `.:` is `value` (#1448), after
   // the last of the prefixes written, `q)k)."a:1"` (#2034).
   let code = 0;
@@ -754,6 +929,7 @@ function readStatement(statement: string, found: Set<string>): void {
       lambdas += kind === "lambda" ? 1 : 0;
       if (kind === "lambda") {
         locals.push(lambdaLocals(t, i, touching));
+        throughParameters(t, all, at, closes, i, found);
       }
       // `(a;b):x` assigns each name, globally at the top level.
       // So do `(a):x` and nested lists, `((a;b);c):x` (#1772).
@@ -1190,17 +1366,25 @@ export function guardText(code: GuardCode): string {
 /// pieces, each read on its own: a `\` or `/` line ending one does not hide
 /// the next (#1442); one `value`d whole is read as one statement.
 export function writes(code: GuardCode): string[] {
-  const found = new Set<string>();
-  for (const piece of typeof code === "string" ? [code] : code) {
-    if (typeof piece !== "string") {
-      readStatement(piece.valued, found);
-      continue;
-    }
-    for (const statement of statements(piece)) {
-      readStatement(statement, found);
-    }
+  if (nesting++ === 0) {
+    rereads = 0;
+    reread.clear();
   }
-  return [...found];
+  try {
+    const found = new Set<string>();
+    for (const piece of typeof code === "string" ? [code] : code) {
+      if (typeof piece !== "string") {
+        readStatement(piece.valued, found);
+        continue;
+      }
+      for (const statement of statements(piece)) {
+        readStatement(statement, found);
+      }
+    }
+    return [...found];
+  } finally {
+    nesting--;
+  }
 }
 
 /// What the guard holds `code` to on `targets`: the guarded ones, each with
