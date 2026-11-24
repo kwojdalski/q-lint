@@ -100,6 +100,14 @@ export class LogViewer {
       workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration("q-lint.processes.logViewer")) {
           this.apply();
+          // A new maxLines reads each open view again with it (#1432).
+          const { enabled, maxLines } = this.settings();
+          for (const view of enabled ? this.views.values() : []) {
+            if (view.max !== maxLines) {
+              view.max = maxLines;
+              void this.reload(view);
+            }
+          }
         }
       }),
       { dispose: () => this.unregister() },

@@ -220,6 +220,20 @@ test("a followed view shows no more than maxLines entries as lines are appended 
   assert.strictEqual(viewer.state().entries, 100);
 });
 
+test("a changed maxLines takes effect on an open view (#1432)", async (t) => {
+  const file = path.join(tmp(), "many.log");
+  fs.writeFileSync(file, Array.from({ length: 1000 }, (_, i) => `line ${i}`).join("\n") + "\n");
+  stub.reset();
+  const { viewer, text } = setUp(t);
+  stub.config.user["processes.logViewer.maxLines"] = 100;
+  await stub.commands.get(LOG_COMMANDS.open)(vscode.Uri.file(file));
+  stub.config.user["processes.logViewer.maxLines"] = 200;
+  stub.changeConfig("q-lint.processes.logViewer.maxLines");
+  for (let i = 0; i < 60 && viewer.state().entries !== 200; i++) await sleep(50);
+  assert.strictEqual(viewer.state().entries, 200);
+  assert.strictEqual(text().split("\n")[0], "line 799");
+});
+
 test("turned off, the commands refuse, the provider goes and following stops; on again without a reload", async (t) => {
   const file = path.join(tmp(), "q.log");
   fs.writeFileSync(file, "a\n");
