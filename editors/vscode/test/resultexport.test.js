@@ -253,6 +253,18 @@ test("a datetime finer than its millisecond text is written as its float of days
   assert.strictEqual(atomLiteral(15, "", null).literal, "0Nz");
 });
 
+test("a minute, second or time of 100 hours or more is cast from its count: q cannot read the ** it writes (#1967)", () => {
+  // KDB-X: "u"$6000 is **:00, "v"$-360000 is -**:00:00, "t"$360000001 is **:00:00.001.
+  assert.strictEqual(atomLiteral(17, "**:00", 6000).literal, '"u"$6000');
+  assert.strictEqual(atomLiteral(18, "-**:00:00", -360000).literal, '"v"$-360000');
+  assert.strictEqual(atomLiteral(19, "**:00:00.001", 360000001).literal, '"t"$360000001');
+  // Up to 99 hours the text is the literal, as it was.
+  assert.deepStrictEqual([atomLiteral(17, "99:59", 5999).literal, atomLiteral(18, "-99:59:59", -359999).literal, atomLiteral(19, "00:00:00.059", 59).literal], ["99:59", "-99:59:59", "00:00:00.059"]);
+  assert.deepStrictEqual([atomLiteral(17, "", null).literal, atomLiteral(17, "0W", Infinity).literal], ["0Nu", "0Wu"]);
+  const minutes = { count: 2, keys: 0, names: ["c0"], types: [17], cells: [["", "**:00"]], raw: [[null, 6000]], rank: [[0, 1]] };
+  assert.strictEqual(tableLiteral(minutes).code, '([] c0:(0Nu;"u"$6000))');
+});
+
 test("a char cell's literal is written from its byte: one past ASCII as its octal escape (#1489)", () => {
   // GRID's cells of "\303\251" decode as U+FFFD; its raw is the bytes.
   assert.strictEqual(atomLiteral(10, "\ufffd", 0xc3).literal, '"\\303"');

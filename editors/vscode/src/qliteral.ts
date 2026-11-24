@@ -239,12 +239,19 @@ export function atomLiteral(type: number, text: string, raw: unknown): { literal
         }
       }
       return ok(text);
-    case 12:
-    case 14:
-    case 16:
     case 17:
     case 18:
     case 19:
+      // Past 99 hours KDB-X writes the hours `**`, which it cannot read
+      // back: cast from the count of minutes, seconds or milliseconds
+      // (#1967).
+      if (text.includes("**") && typeof raw === "number" && Number.isInteger(raw)) {
+        return ok(`"${LETTERS[type]}"$${raw}`);
+      }
+      return ok(text);
+    case 12:
+    case 14:
+    case 16:
       return ok(text);
     default:
       if (type >= 20 && type <= 76) {

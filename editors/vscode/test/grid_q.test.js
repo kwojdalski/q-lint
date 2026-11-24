@@ -228,6 +228,27 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
     assert.deepStrictEqual((await connection.query(statements(filled.code), SIZE)).text, [",2"]);
   });
 
+  await t.test("an exported q literal rebuilds a minute, second or time of 100 hours or more, which q writes as ** (#1967)", async () => {
+    const { tableLiteral } = require("../out/qliteral.js");
+    const { fillDrilldown } = require("../out/drilldown.js");
+    const tables = [
+      '([] c0:"u"$0N 6000)',
+      '([] u:"u"$0N 6000 -6000 5999 0W -0W 59; v:"v"$0N 360000 -360000 359999 0W -0W 59; t:"t"$0N 360000000 -360000000 359999999 0W -0W 59)',
+      '([k:"u"$6000 1] v:"v"$2147483646 1)',
+      '([] t:1#"t"$-2147483646)',
+    ];
+    for (const code of tables) {
+      const grid = (await connection.queryGrid(statements(code), SIZE, 100)).grid;
+      const literal = tableLiteral(grid).code;
+      const same = await connection.query(statements(`(${code})~${literal}`), SIZE);
+      assert.deepStrictEqual(same.text, ["1b"], `${code}\nwritten as\n${literal}`);
+    }
+    const grid = (await connection.queryGrid(statements(tables[1]), SIZE, 100)).grid;
+    assert.deepStrictEqual(grid.cells[0].slice(1, 3), ["**:00", "-**:00"]);
+    const filled = fillDrilldown(`exec i from ${tables[1]} where u={{value}}, t={{row.t}}`, grid, 0, 2);
+    assert.deepStrictEqual((await connection.query(statements(filled.code), SIZE)).text, [",2"]);
+  });
+
   await t.test("an exported q literal rebuilds a one-character string in a list, a symbol starting with _ and the other awkward cells (0.29.0 bug)", async () => {
     const { tableLiteral } = require("../out/qliteral.js");
     const tables = [
