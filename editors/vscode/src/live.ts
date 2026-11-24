@@ -496,6 +496,8 @@ export class Live {
   /// The connection `open` is running the connect script on, before it is
   /// the active one: what Disconnect closes then.
   private opening: QConnection | undefined;
+  /// Stops the reconnect after an abort that waits for the process to be free.
+  private untilFree: AbortController | undefined;
   /// A connect in progress, so a second one waits for it instead of opening
   /// another.
   private connecting: Promise<boolean> | undefined;
@@ -1676,9 +1678,13 @@ export class Live {
         return this.connecting;
       }
       this.reconnectStopped = true;
+      this.untilFree?.abort();
       return this.connecting.then(() => this.open(process, false, false, disconnects, outcome));
     }
     this.reconnectStopped = false;
+    // A wait for a busy process is cut short, not run out, when it stops (#1510).
+    const free = untilFree ? new AbortController() : undefined;
+    this.untilFree = free;
     this.connectingTo = passwordKey(process);
     this.connecting = (async () => {
       if (this.connection !== undefined) {
@@ -1696,7 +1702,7 @@ export class Live {
             const target = await this.targetFor(process);
             for (;;) {
               try {
-                return await this.dial(process, target);
+                return await this.dial(process, target, free?.signal);
               } catch (error) {
                 const busy = error instanceof Error && error.message.startsWith("no answer from ");
                 if (!untilFree || !busy || this.reconnectStopped) {
@@ -1783,7 +1789,7 @@ export class Live {
         `it is reached through an SSH tunnel via ${process.ssh}, and SSH tunnels are turned off. Set q-lint.connection.sshTunnel.enable to true to turn them on`,
       );
     }
-    const tunnel = await SshTunnel.open({ destination: process.ssh, host: target.host, port: target.port });
+    const tunnel = await SshTunnel.open({ destination: process.ssh, host: target.host, port: target.port, signal });
     try {
       const connection = await QConnection.open(
         {
@@ -2032,6 +2038,7 @@ export class Live {
       return;
     }
     this.reconnectStopped = true;
+    this.untilFree?.abort();
     const connection = this.connection;
     this.connection = undefined;
     // A query running on it was stopped by the user, as Abort stops one.

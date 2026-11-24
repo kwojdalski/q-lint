@@ -177,6 +177,34 @@ test("Disconnect stops a reconnect after Abort", async (t) => {
   assert.strictEqual(events.filter((e) => e === "connected").length, 1);
 });
 
+// A connect elsewhere after Abort waited for the abandoned reconnect's
+// handshake to run out - up to the connect timeout, 10 s (#1510).
+test("a connect elsewhere after Abort does not wait for the abandoned reconnect", async (t) => {
+  let busyUntil = 0;
+  const a = await fakeQ(
+    (message) => {
+      if (isGather(message)) return GATHERED;
+      busyUntil = Date.now() + 3000;
+      return undefined;
+    },
+    () => Math.max(0, busyUntil - Date.now()),
+  );
+  t.after(() => a.close());
+  const b = await fakeQ(() => GATHERED);
+  t.after(() => b.close());
+  const { live } = await setUp(t, [proc("a", a.port), proc("b", b.port)]);
+  assert.strictEqual(await live.connectTo("a"), true);
+  await sleep(50);
+  void live.runOnActive("slow", (c) => c.call("slow")).catch(() => {});
+  await sleep(50);
+  await live.abort();
+  await sleep(100);
+  const started = Date.now();
+  assert.strictEqual(await live.connectTo("b"), true);
+  assert.ok(Date.now() - started < 1500, `${Date.now() - started} ms`);
+  assert.strictEqual(live.activeLabel(), "b");
+});
+
 // Add and Edit read the list before their input boxes and saved it back
 // after them: a process saved meanwhile - Download Processes, an import, or
 // another window, which shares the list - was lost, and a label taken
