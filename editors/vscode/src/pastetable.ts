@@ -31,24 +31,10 @@ const SYMBOL_LENGTH = 40;
 /// Rows a paste may hold: a literal of more is no use in source.
 export const MAX_ROWS = 10000;
 
-/// Rows of fields, read as RFC 4180 reads CSV: a field in double quotes may
-/// hold the delimiter, a newline and `""` for a quote. `delimiter` is a tab,
-/// comma or semicolon, whichever the first record has most of outside its
-/// quotes when not given (#1100).
-export function readDelimited(text: string, delimiter?: string): { delimiter: string; rows: string[][] } {
-  const body = text.replace(/^﻿/, "");
-  let first = "";
-  for (let i = 0, quoted = false; i < body.length && (quoted || (body[i] !== "\n" && body[i] !== "\r")); i++) {
-    if (body[i] === '"') {
-      quoted = !quoted;
-    } else if (!quoted) {
-      first += body[i];
-    }
-  }
-  const count = (c: string) => first.split(c).length - 1;
-  const d = delimiter ?? (count("\t") > 0 ? "\t" : count(";") > count(",") ? ";" : ",");
+/// The records of `body` by delimiter `d`, as RFC 4180 reads CSV, and
+/// whether each is a single unquoted empty field: a blank line.
+function records(body: string, d: string): { rows: string[][]; blank: boolean[] } {
   const rows: string[][] = [];
-  // Whether each row is a single unquoted empty field.
   const blank: boolean[] = [];
   let row: string[] = [];
   let field = "";
@@ -91,6 +77,63 @@ export function readDelimited(text: string, delimiter?: string): { delimiter: st
     rows.push(row);
     blank.push(row.length === 1 && field === "" && !wasQuoted);
   }
+  return { rows, blank };
+}
+
+/// Rows of fields, read as RFC 4180 reads CSV: a field in double quotes may
+/// hold the delimiter, a newline and `""` for a quote. `delimiter` is a
+/// tab, comma or semicolon. When it is not given, it is chosen so (#1986),
+/// and returned:
+///
+/// 1. A tab in the first record, outside its quotes: a tab, as a
+///    spreadsheet copies cells.
+/// 2. Else a comma or a semicolon, where the text is a table by it: the
+///    first record holds it outside its quotes, and no record has more
+///    fields than the first. A record may have fewer, as CSV with its last
+///    cells left off does. Where both are, the one the first record has
+///    more of, a comma when they tie (#1100).
+/// 3. Else none, `""`: each record is one cell. That is one spreadsheet
+///    column, copied with no delimiter at all, whose cells may hold commas
+///    (`Smith, John`, `1,234`) under a header that holds none.
+///
+/// So text that could be either - `Smith, John` over `Doe, Jane`, with no
+/// header - is read as the CSV it may be.
+export function readDelimited(text: string, delimiter?: string): { delimiter: string; rows: string[][] } {
+  const body = text.replace(/^\ufeff/, "");
+  let read: { rows: string[][]; blank: boolean[] } | undefined;
+  let d = delimiter;
+  if (d === undefined) {
+    // The first record that is not a blank line, less what its quotes hold.
+    let first = "";
+    let from = 0;
+    while (body[from] === "\n" || body[from] === "\r") {
+      from++;
+    }
+    for (let i = from, quoted = false; i < body.length && (quoted || (body[i] !== "\n" && body[i] !== "\r")); i++) {
+      if (body[i] === '"') {
+        quoted = !quoted;
+      } else if (!quoted) {
+        first += body[i];
+      }
+    }
+    const count = (c: string) => first.split(c).length - 1;
+    d = count("\t") > 0 ? "\t" : "";
+    if (d === "") {
+      for (const c of count(";") > count(",") ? [";", ","] : [",", ";"]) {
+        if (count(c) === 0) {
+          continue;
+        }
+        const by = records(body, c);
+        const width = by.rows.find((_, i) => !by.blank[i])?.length ?? 0;
+        if (width > 1 && by.rows.every((r) => r.length <= width)) {
+          d = c;
+          read = by;
+          break;
+        }
+      }
+    }
+  }
+  const { rows, blank } = read ?? records(body, d);
   // A blank line, such as the one a spreadsheet ends its copy with, is no
   // row. One between rows is an empty cell of a one-column paste, and a
   // quoted "" always is (#1404).

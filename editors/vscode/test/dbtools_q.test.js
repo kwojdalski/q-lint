@@ -334,10 +334,103 @@ test("the partition check finds missing dates, files, differing types and outlie
 
 const { SYM_INSPECT, readSym, symReport } = require("../out/syminspect.js");
 const { ATTRIBUTE_SAMPLE, readAttributeSample, advise } = require("../out/attradvice.js");
+const { PARTITION_DIRS } = require("../out/partdir.js");
 const { TABLE_INFO, readTableInfo } = require("../out/tableinfo.js");
 const { testDataQ, testDataCsv, loadTypes } = require("../out/testdata.js");
 const { migrationScript } = require("../out/migrate.js");
 const { TPLOG_INIT, readOthers, readTpLog, readTpPage, readReplayed } = require("../out/tplog.js");
+
+/// A database under $DIR/seg whose par.txt names $DIR/s1 and $DIR/s2, each
+/// partition written to the segment `where` gives it, then loaded.
+const SEGMENTED = (where) =>
+  [
+    'r:hsym`$"$DIR/seg";',
+    'system "mkdir -p $DIR/seg";',
+    '(` sv r,`par.txt) 0: ("$DIR/s1";"$DIR/s2");',
+    "mk:{[r;s;d] (` sv (hsym`$s),(`$string d),`trade`) set .Q.en[r] ([] sym:`p#`a`a`b;px:1 2 3f;sz:10 20 30)};",
+    `mk[r] ./: (${where});`,
+    "\\l $DIR/seg",
+    "",
+  ].join("\n");
+
+// q finds a partition wherever par.txt's segments hold it; `.Q.par` names
+// the segment a writer would pick, `date mod 2` here. These four are each in
+// the other one, as a database segmented by date range or by disk has them,
+// and every query works - so every tool must find them too (#1977).
+test("a segmented database not laid out as .Q.par would write it is found by every database tool (#1977)", { skip }, async (t) => {
+  const { connection, dir } = await connect(t, SEGMENTED('("$DIR/s1";2024.01.02);("$DIR/s2";2024.01.03);("$DIR/s1";2024.01.04);("$DIR/s2";2024.01.05)'));
+  assert.deepStrictEqual(await connection.call('{"f"$exec x from select count i by date from trade}', 0), [3, 3, 3, 3]);
+  // What .Q.par answers is not there; what q loaded is.
+  const real = fs.realpathSync(dir);
+  const wrote = ["s1/2024.01.02", "s2/2024.01.03", "s1/2024.01.04", "s2/2024.01.05"].map((d) => `:${dir}/${d}`);
+  assert.deepStrictEqual(await connection.call('{"f"$count each key each .Q.par[hsym`$system"cd";;`trade] each .Q.PV}', 0), [0, 0, 0, 0]);
+  assert.deepStrictEqual(await connection.call(`{string ${PARTITION_DIRS}[hsym\`$system"cd";.Q.PD;.Q.PV]}`, 0), wrote);
+  // A q that sets no .Q.PD is answered by .Q.par, as before.
+  assert.strictEqual(await connection.call(`{(${PARTITION_DIRS}[r;();.Q.PV])~{first\` vs .Q.par[x;y;\`trade]}[r:hsym\`$system"cd"] each .Q.PV}`, 0), true);
+
+  const parts = readPartitions(await connection.call(PARTITION_CHECK, 1000, true));
+  assert.deepStrictEqual(parts.all, ["2024.01.02", "2024.01.03", "2024.01.04", "2024.01.05"]);
+  assert.deepStrictEqual(parts.rows.map((r) => [r.partition, r.dir, r.dotd, r.rows]), parts.all.map((p) => [p, true, true, 3]));
+  assert.deepStrictEqual(partitionProblems(parts), []);
+  // Fewer than all of them are the newest, each still in its own segment.
+  const newest = readPartitions(await connection.call(PARTITION_CHECK, 3, false));
+  assert.deepStrictEqual(newest.rows.map((r) => [r.partition, r.dir, r.rows]), ["2024.01.03", "2024.01.04", "2024.01.05"].map((p) => [p, true, 3]));
+
+  const sym = readSym(await connection.call(SYM_INSPECT, 20));
+  assert.deepStrictEqual(sym.columns.map((c) => [c.table, c.column, c.distinct]), [["trade", "sym", 2]]);
+  assert.deepStrictEqual(sym.growth.map((g) => g.partition), parts.all);
+  // A sample of them is read from where each is.
+  const sampled = readSym(await connection.call(SYM_INSPECT, 2));
+  assert.deepStrictEqual(sampled.growth.map((g) => g.partition), ["2024.01.02", "2024.01.05"]);
+
+  const sample = readAttributeSample(await connection.call(ATTRIBUTE_SAMPLE, "trade", 100000));
+  assert.deepStrictEqual([sample.kind, sample.rows, sample.sampled, sample.partitions], ["partitioned", 12, 3, 4]);
+  assert.deepStrictEqual(sample.columns.map((c) => [c.name, c.attr]), [["sym", "p"], ["px", ""], ["sz", ""]]);
+  // The p# every partition's sym has is what it is told to keep (#1978).
+  assert.deepStrictEqual(advise(sample, new Map([["sym", 2]])).map((a) => [a.column, a.current, a.suggest]).slice(0, 1), [["sym", "p", "p"]]);
+  // Under a view the last partition shown is the one sampled, from its own segment.
+  await connection.call("{.Q.view 2024.01.02 2024.01.03}", 0);
+  assert.strictEqual(readAttributeSample(await connection.call(ATTRIBUTE_SAMPLE, "trade", 100000)).sampled, 3);
+  await connection.call("{.Q.view[]}", 0);
+
+  // The column manager writes to disk: to the four directories that hold the
+  // table, and nowhere else.
+  const say = await run(connection, columnScript("trade", { op: "add", column: "ex", value: "`NYSE" }, "hdb"));
+  assert.match(say, /changed 4 of 4 directories/);
+  assert.deepStrictEqual(await connection.call('{"f"$exec x from select count i by date from trade where ex=`NYSE}', 0), [3, 3, 3, 3]);
+  for (const d of wrote) assert.ok(fs.existsSync(path.join(d.slice(1), "trade", "ex")), d);
+  const made = (root) => fs.readdirSync(path.join(real, root)).sort();
+  assert.deepStrictEqual([made("s1"), made("s2"), made("seg")], [["2024.01.02", "2024.01.04"], ["2024.01.03", "2024.01.05"], ["par.txt", "sym"]]);
+  assert.match(await run(connection, columnScript("trade", { op: "attr", column: "sz", attr: "s" }, "hdb")), /changed 4 of 4 directories/);
+  assert.match(await run(connection, columnScript("trade", { op: "rename", column: "px", to: "price" }, "hdb")), /changed 4 of 4 directories/);
+  assert.deepStrictEqual(await connection.call("{exec c from meta trade}", 0), ["date", "sym", "price", "sz", "ex"]);
+  assert.deepStrictEqual(partitionProblems(readPartitions(await connection.call(PARTITION_CHECK, 1000, true))), []);
+});
+
+// One value can be in two segments: q lists it twice, with a directory
+// each, and selects both. Each is its own directory to check and to change.
+test("a partition held in two segments is checked and changed in both (#1977)", { skip }, async (t) => {
+  const { connection, dir } = await connect(t, SEGMENTED('("$DIR/s1";2024.01.02);("$DIR/s2";2024.01.02);("$DIR/s1";2024.01.04)'));
+  assert.strictEqual(await connection.call('{"f"$count select from trade where date=2024.01.02}', 0), 6);
+  const parts = readPartitions(await connection.call(PARTITION_CHECK, 1000, false));
+  assert.deepStrictEqual(parts.rows.map((r) => [r.partition, r.dir, r.rows]), [["2024.01.02", true, 3], ["2024.01.02", true, 3], ["2024.01.04", true, 3]]);
+  assert.match(await run(connection, columnScript("trade", { op: "add", column: "ex", value: "`NYSE" }, "hdb")), /changed 3 of 3 directories/);
+  for (const d of ["s1/2024.01.02", "s2/2024.01.02", "s1/2024.01.04"]) assert.ok(fs.existsSync(path.join(dir, d, "trade", "ex")), d);
+  assert.strictEqual(await connection.call('{"f"$count select from trade where ex=`NYSE}', 0), 9);
+});
+
+// With no par.txt q loaded every partition from the root, and the
+// directories are the ones .Q.par gave.
+test("a database with no segments has its partitions under the root, as before (#1977)", { skip }, async (t) => {
+  const { connection, dir } = await connect(t, HDB());
+  assert.deepStrictEqual(await connection.call("{string .Q.PD}", 0), [":.", ":.", ":."]);
+  assert.strictEqual(await connection.call(`{(${PARTITION_DIRS}[r;.Q.PD;.Q.PV])~{first\` vs .Q.par[x;y;\`trade]}[r:hsym\`$system"cd"] each .Q.PV}`, 0), true);
+  assert.deepStrictEqual(await connection.call(`{string ${PARTITION_DIRS}[hsym\`$system"cd";.Q.PD;.Q.PV]}`, 0), ["2026.01.05", "2026.01.06", "2026.01.07"].map((d) => `:${fs.realpathSync(dir)}/hdb/${d}`));
+  assert.deepStrictEqual(await connection.call(`{${PARTITION_DIRS}[hsym\`$system"cd";();()]}`, 0), []);
+  assert.deepStrictEqual(partitionProblems(readPartitions(await connection.call(PARTITION_CHECK, 1000, true))), []);
+  assert.strictEqual(readSym(await connection.call(SYM_INSPECT, 2)).growth.length, 2);
+  assert.strictEqual(readAttributeSample(await connection.call(ATTRIBUTE_SAMPLE, "trade", 100000)).sampled, 6);
+});
 
 test("the sym inspector counts the file, its columns' shares and its growth", { skip }, async (t) => {
   const extra = [
@@ -395,6 +488,17 @@ test("the attribute advisor samples a table's columns without changing it", { sk
   assert.deepStrictEqual(p.columns.map((c) => c.name), ["sym", "px", "sz"]);
   assert.strictEqual(advise(p, new Map([["sym", 1]]))[0].suggest, "s");
   assert.strictEqual(await connection.call("{(attr m`sym)~`}", 0), true);
+});
+
+// A table one partition lacks cannot be counted: its sample is advised on as
+// a sample, and a u# is not costed from the sample's rows (#1979).
+test("the attribute advisor does not cost a table it could not count from its sample (#1979)", { skip }, async (t) => {
+  const { connection } = await connect(t, HDB("{[r;d] .Q.dd[r;d,`late`] set .Q.en[r] ([] sym:`a`b`c`d;qid:40 10 30 20;bid:1 2 3 4f)}[r] each 2026.01.05 2026.01.07;"));
+  const s = readAttributeSample(await connection.call(ATTRIBUTE_SAMPLE, "late", 100000));
+  assert.deepStrictEqual([s.kind, s.rows, s.sampled, s.partitions], ["partitioned", null, 4, 3]);
+  const qid = advise(s, new Map([["qid", 1]])).find((a) => a.column === "qid");
+  assert.deepStrictEqual([qid.suggest, qid.cost], ["u", null]);
+  assert.match(qid.reason, /^every value distinct \(in 4 rows sampled\): u# makes/);
 });
 
 // `asc` marks a vector already in order `s#` where it is, and a table

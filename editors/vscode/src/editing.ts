@@ -1,7 +1,8 @@
 // The language configuration q editors get at run time rather than from
 // `language-configuration.json`, which VS Code reads once and offers no
 // switch for: the continuation indent on Enter (#1161) and dotted names as
-// one word (#1162). Free of any `vscode` import, so node tests the patterns;
+// one word (#1162), and what makes a blank line's comment toggle safe
+// (#1970). Free of any `vscode` import, so node tests the patterns;
 // `editingview.ts` registers what is on.
 //
 // A q script ends a definition at a line that starts at column 0, so Enter
@@ -77,4 +78,72 @@ export function languageConfiguration(on: { continuation: boolean; dotted: boole
 /// The words of `line` as `WORD` reads them, for a test.
 export function words(line: string): string[] {
   return [...line.matchAll(new RegExp(WORD.source, "g"))].map((m) => m[0]);
+}
+
+/// One change of a document change event, as VS Code reports it: `text` in
+/// place of the `rangeLength` characters from `character` of `line`, which
+/// ended on `endLine`.
+export interface LineChange {
+  line: number;
+  endLine: number;
+  character: number;
+  rangeLength: number;
+  text: string;
+}
+
+/// What to do at `character` of `line`: `mark` writes a `.` there, and
+/// `clear` takes the one there away.
+export interface BlankCommentFix {
+  line: number;
+  character: number;
+  kind: "mark" | "clear";
+}
+
+/// The line comment token and the blank VS Code writes after it
+/// (`editor.comments.insertSpace`, on by default).
+const TOGGLED = "/ ";
+
+/// Toggle Line Comment on a blank line writes `/ ` and nothing else, and q
+/// reads a line holding only `/` and blanks as the opening of a block
+/// comment: every line below it, to a lone `\` or the end of the file, stops
+/// running, with no error (#1970). `language-configuration.json` can name the
+/// token and nothing about blank lines, and VS Code's own
+/// `editor.comments.ignoreEmptyLines` skips them only beside a line that is
+/// not blank, so the change is answered instead: the line becomes `/ .`,
+/// which q reads as a comment. The toggle back, which leaves that `.` alone
+/// on its line, is answered by taking it away.
+///
+/// `changes` are one event's, and `lineAt` the text of a line after it. Only
+/// the toggle's own shape is answered - the whole `/ ` put in at once, or
+/// taken out at once from before a lone `.` - so a `/` typed on a blank line
+/// stays what was typed: a comment being started, or a block comment meant.
+/// With `editor.comments.insertSpace` off the toggle writes that same lone
+/// `/`, which cannot be told from typing and is left.
+export function blankCommentFixes(changes: readonly LineChange[], lineAt: (line: number) => string): BlankCommentFix[] {
+  // A change that adds or removes a line moves the lines the others name.
+  if (changes.some((c) => c.line !== c.endLine || /[\r\n]/.test(c.text))) {
+    return [];
+  }
+  const fixes: BlankCommentFix[] = [];
+  for (const c of changes) {
+    if (changes.some((other) => other !== c && other.line === c.line)) {
+      continue;
+    }
+    const text = lineAt(c.line);
+    if (c.rangeLength === 0 && c.text === TOGGLED && /^[ \t]*\/[ \t]*$/.test(text) && text.startsWith(TOGGLED, c.character)) {
+      fixes.push({ line: c.line, character: c.character + TOGGLED.length, kind: "mark" });
+    } else if (c.rangeLength === TOGGLED.length && c.text === "" && /^[ \t]*\.[ \t]*$/.test(text) && text[c.character] === ".") {
+      fixes.push({ line: c.line, character: c.character, kind: "clear" });
+    }
+  }
+  return fixes;
+}
+
+/// `text` with `fixes` applied, for a test.
+export function withBlankCommentFixes(text: string, fixes: readonly BlankCommentFix[]): string {
+  const lines = text.split("\n");
+  for (const { line, character, kind } of fixes) {
+    lines[line] = kind === "mark" ? `${lines[line].slice(0, character)}.${lines[line].slice(character)}` : lines[line].slice(0, character) + lines[line].slice(character + 1);
+  }
+  return lines.join("\n");
 }

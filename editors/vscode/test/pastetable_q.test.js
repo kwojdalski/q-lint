@@ -95,3 +95,35 @@ test("each pasted table is the table q's 0: loads from the same text", { skip },
     assert.ok(kinds.has(k), k);
   }
 });
+
+// One spreadsheet column, its cells holding commas (#1986): the table has
+// the lines of the text as its cells, as q reads them, under the header.
+test("a pasted column whose cells hold commas is those cells to q, and CSV beside it is still q's 0: (#1986)", { skip }, () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-paste-"));
+  const lines = ['ck:{[i;e] r:@[value;e;{`$"error ",x}]; if[not 1b~r; -1 "FAIL ",string[i]," ",e," -> ",-3!r]}'];
+  const column = (i, text, cells) => {
+    const got = pasteTable(text);
+    assert.deepStrictEqual([got.names.length, got.header, got.rows], [1, true, text.trim().split("\n").length - 1], text);
+    const file = path.join(dir, `c${i}.txt`);
+    fs.writeFileSync(file, text);
+    lines.push(`ck[${i};${JSON.stringify(`(${cells} first value flip ${got.code})~1_read0 \`$":${file}"`)}]`);
+  };
+  column(0, "name\nSmith, John\nDoe, Jane\n", "");
+  column(1, "v\n1,234\n5,678\n", "string");
+  column(2, "address\n1 Main St, Springfield\n22 Oak Ave, Apt 4, Boston\n", "");
+  // CSV of the same cells, quoted as CSV writes them: two columns, as 0: loads it.
+  const csv = 'name,city\n"Smith, John","Austin, TX"\n"Doe, Jane",Boston\n';
+  const got = pasteTable(csv);
+  assert.deepStrictEqual([got.names, got.kinds, got.rows], [["name", "city"], ["string", "string"], 2]);
+  const file = path.join(dir, "t.csv");
+  fs.writeFileSync(file, csv);
+  lines.push(`ck[3;${JSON.stringify(`${got.code}~("**";enlist ",") 0: read0 \`$":${file}"`)}]`);
+  lines.push('-1 "DONE";', "exit 0");
+  const script = path.join(dir, "paste.q");
+  fs.writeFileSync(script, `${lines.join("\n")}\n`);
+  const run = spawnSync(`${Q} ${script} -q`, { shell: true, encoding: "utf8", timeout: 60000 });
+  const out = `${run.stdout}${run.stderr}`;
+  assert.match(out, /DONE/, out.slice(0, 2000));
+  assert.deepStrictEqual(out.split("\n").filter((l) => l.startsWith("FAIL")), []);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

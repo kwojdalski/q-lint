@@ -1,7 +1,7 @@
 // The switches for the editor features that work with a q process or add to
 // the editor's lists (#939, #940, #944, #945, #996, #997), and the test and
 // debugging tools built on them (#979-#985), and the q editor's own
-// behaviour (#1161, #1162, #1165): each has its own `enable` setting. Free of any `vscode`
+// behaviour (#1161, #1162, #1165, #1970): each has its own `enable` setting. Free of any `vscode`
 // import, so node tests it. A feature turned off has its commands hidden
 // (package.json's `when`) and refusing, its providers and listeners
 // unregistered, and sends nothing.
@@ -33,6 +33,7 @@ export const EDITOR_SETTINGS = {
   processSymbols: { key: "processSymbols.enable", fallback: false, name: "Process names in workspace symbol search" },
   continuationIndent: { key: "editor.continuationIndent.enable", fallback: true, name: "The continuation indent on Enter" },
   dottedNames: { key: "editor.dottedNames.enable", fallback: true, name: "Dotted names as one word" },
+  blankLineComment: { key: "editor.blankLineComment.enable", fallback: true, name: "The comment toggle on a blank line" },
   escapeAborts: { key: "query.escapeAborts.enable", fallback: true, name: "Escape aborting a running query" },
   parameterCache: { key: "editor.parameterCache.enable", fallback: true, name: "Toggle Parameter Cache" },
 } as const;

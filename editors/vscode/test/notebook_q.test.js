@@ -109,6 +109,14 @@ test("notebook cells against a real q process", { skip }, async (t) => {
     }
   });
 
+  await t.test("a column named by the null symbol is shown with no name, as the console shows it (#1981)", async () => {
+    const name = "flip(`a,`,`b)!(1 2;3 4;5 6)";
+    const answer = await data(name);
+    assert.deepStrictEqual(answer.table.columns, ["a", "", "b"]);
+    const console = await connection.query([name], SIZE);
+    assert.deepStrictEqual(tableText(answer.table), console.text.map((l) => l.trimEnd()));
+  });
+
   await t.test("a large table is cut by the process, and its count kept", async () => {
     const answer = await data("big", 10);
     assert.strictEqual(answer.table.total, 2000);

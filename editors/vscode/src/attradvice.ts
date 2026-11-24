@@ -7,7 +7,8 @@
 //
 // One read, defining nothing, of at most `lim` rows: the first rows of a
 // table in memory or of a splayed one, and of a partitioned table the
-// first rows of its last partition, mapped from its directory (`.Q.par`) so
+// first rows of its last partition, mapped from the directory q loaded it
+// from (`.Q.pd`, so any segmenting is followed, #1977) so
 // the partition is not read whole. The current attributes are `meta`'s.
 // Whether a column is in order is asked of a copy of it (`x til count x`):
 // `asc` marks a vector already in order `s#` where it is, and a table read
@@ -19,6 +20,7 @@
 // and 8 a row plus 16 a distinct value for `g#`. kdb+ allocates in powers
 // of two, so a real one can be up to twice that.
 
+import { PARTITION_DIRS } from "./partdir";
 import { bytes } from "./tableinfo";
 
 export const ATTRIBUTE_SAMPLE = [
@@ -27,7 +29,7 @@ export const ATTRIBUTE_SAMPLE = [
   " t:get`$nm;if[not .Q.qt t;'\"not a table\"];",
   " p:.Q.qp t;part:1b~p;m:\"j\"$lim;",
   " n:\"f\"$$[part;@[{sum .Q.cn x};t;0n];count t];",
-  " s:$[part;m sublist get .Q.par[hsym`$system\"cd\";last .Q.pv;`$nm];m sublist 0!t];",
+  ` s:$[part;m sublist get\` sv(first${PARTITION_DIRS}[hsym\`$system"cd";-1#@[get;\`.Q.pd;()];-1#.Q.pv]),\`$nm;m sublist 0!t];`,
   " mt:0!meta t;cs:(cols s)except$[part;.Q.pf;`$()];",
   " one:{[x] nested:0h=type x;",
   "  `d`runs`sorted!(\"f\"$count distinct x;\"f\"$$[nested;0n;sum differ x];$[nested;0b;{x~asc x}x til count x])};",
@@ -123,7 +125,8 @@ export interface Advice {
   current: string;
   suggest: "" | "s" | "u" | "p" | "g";
   reason: string;
-  /// Bytes the suggested attribute would keep, about; null for none.
+  /// Bytes the suggested attribute would keep, about; null for none
+  /// suggested, and for a `u#` or `g#` of a table whose rows are not known.
   cost: number | null;
   filters: number;
 }
@@ -131,10 +134,16 @@ export interface Advice {
 /// The attribute each column would do best with, and why. A column the
 /// queries never filter on is suggested one only when it costs nothing
 /// (`s#`) or the data already has its shape and it is the table's first.
+/// A column in order that has `p#`, `u#` or `g#` keeps it: `s#` is told
+/// only to one with no attribute, or with `s#` (#1978).
 export function advise(s: AttributeSample, filters: Map<string, number> = new Map()): Advice[] {
-  const rows = s.rows ?? s.sampled;
-  const perPartition = s.partitions > 0 ? rows / s.partitions : rows;
-  const full = s.sampled >= rows;
+  // The rows may not be countable (`.Q.cn` fails on a partitioned table one
+  // partition lacks). The sample is then not the table: what it shows keeps
+  // its "in N rows sampled", and what an attribute would keep a row of the
+  // table is not costed from the sample's rows (#1979).
+  const rows = s.rows;
+  const perPartition = rows === null ? null : s.partitions > 0 ? rows / s.partitions : rows;
+  const full = rows !== null && s.sampled >= rows;
   return s.columns.map((c, i): Advice => {
     const f = filters.get(c.name) ?? 0;
     const used = f > 0 ? `${f} saved or recent ${f === 1 ? "query filters" : "queries filter"} on it` : "no saved or recent query filters on it";
@@ -149,19 +158,38 @@ export function advise(s: AttributeSample, filters: Map<string, number> = new Ma
     const parted = c.runs !== null && c.runs === c.distinct && c.distinct < s.sampled;
     const few = c.distinct / s.sampled <= 0.1;
     const sample = full ? "" : ` (in ${s.sampled.toLocaleString("en-US")} rows sampled)`;
+    const where = s.kind === "partitioned" ? "in each partition" : "in the table";
+    const cost = {
+      u: rows === null ? null : 16 * rows,
+      p: 24 * c.distinct * (s.kind === "partitioned" ? s.partitions : 1),
+      g: rows === null || perPartition === null ? null : s.kind === "partitioned" ? (8 * perPartition + 16 * c.distinct) * s.partitions : 8 * rows + 16 * c.distinct,
+    };
     if (c.sorted && (f > 0 || i === 0 || ["p", "n", "t", "z", "d", "v", "u", "m"].includes(c.type))) {
+      // A column in order may be so because it is parted, as the sym of a
+      // partition .Q.dpft wrote is, or hold a key: the attribute it has
+      // does more than s# would, and is what an asof join or a filter on
+      // disk relies on. It is kept while the sample bears it out (#1978).
+      const halves = "where s# would search by halves";
+      if (c.attr === "p" && c.runs !== null && c.runs === c.distinct) {
+        return { ...base, suggest: "p", reason: `each value's rows are together${sample}, ${c.distinct.toLocaleString("en-US")} distinct values: the p# it has finds them as one range ${where}, ${halves}; ${used}`, cost: cost.p };
+      }
+      if (c.attr === "u" && unique) {
+        return { ...base, suggest: "u", reason: `every value distinct${sample}: the u# it has makes a lookup by value a hash lookup, ${halves}; ${used}`, cost: cost.u };
+      }
+      if (c.attr === "g") {
+        return { ...base, suggest: "g", reason: `${c.distinct.toLocaleString("en-US")} distinct values${sample}: the g# it has keeps each value's rows, ${halves}; ${used}`, cost: cost.g };
+      }
       return { ...base, suggest: "s", reason: `already in ascending order${sample}: s# lets a filter or an asof join search it by halves; ${used}`, cost: 0 };
     }
     if (unique && f > 0) {
-      return { ...base, suggest: "u", reason: `every value distinct${sample}: u# makes a lookup by value a hash lookup; ${used}`, cost: 16 * rows };
+      return { ...base, suggest: "u", reason: `every value distinct${sample}: u# makes a lookup by value a hash lookup; ${used}`, cost: cost.u };
     }
     if (parted && (f > 0 || i === 0)) {
-      const where = s.kind === "partitioned" ? "in each partition" : "in the table";
       return {
         ...base,
         suggest: "p",
         reason: `each value's rows are together${sample}, ${c.distinct.toLocaleString("en-US")} distinct values: p# finds them as one range ${where}; ${used}`,
-        cost: 24 * c.distinct * (s.kind === "partitioned" ? s.partitions : 1),
+        cost: cost.p,
       };
     }
     if (few && f > 0) {
@@ -169,7 +197,7 @@ export function advise(s: AttributeSample, filters: Map<string, number> = new Ma
         ...base,
         suggest: "g",
         reason: `${c.distinct.toLocaleString("en-US")} distinct values${sample}, not grouped together: g# keeps each value's rows${s.kind === "partitioned" ? " (on disk, per partition; for one in memory, as on an RDB)" : ""}; ${used}`,
-        cost: s.kind === "partitioned" ? (8 * perPartition + 16 * c.distinct) * s.partitions : 8 * rows + 16 * c.distinct,
+        cost: cost.g,
       };
     }
     const why = unique ? "every value distinct" : parted ? "each value's rows together" : few ? `${c.distinct.toLocaleString("en-US")} distinct values` : `${c.distinct.toLocaleString("en-US")} distinct values in ${s.sampled.toLocaleString("en-US")} rows, not in order`;
@@ -180,24 +208,36 @@ export function advise(s: AttributeSample, filters: Map<string, number> = new Ma
 const md = (s: string) => s.replace(/([\\`*_{}[\]<>|#])/g, "\\$1");
 const size = bytes;
 
+// How the report opens for each kind `ATTRIBUTE_SAMPLE` answers. The
+// commonest, a table in memory, is the kind `table` (#1980).
+const KINDS = new Map([
+  ["table", "An in-memory table"],
+  ["keyed", "A keyed table"],
+  ["splayed", "A splayed table"],
+  ["partitioned", "A partitioned table"],
+]);
+
 /// The advice as Markdown: a table, the reasons, and a reminder that
 /// nothing was applied.
 export function adviceReport(table: string, process: string, s: AttributeSample, advice: Advice[], queries: number): string {
   const out = [
     `# Attributes for ${md(table)} on ${md(process)}`,
     "",
-    `A ${md(s.kind)} table of ${s.rows === null ? "an unknown number of" : s.rows.toLocaleString("en-US")} rows; ${s.sampled.toLocaleString("en-US")} rows sampled${s.kind === "partitioned" ? " from its last partition" : ""}; ${queries} saved and recent queries read for filters.`,
+    `${KINDS.get(s.kind) ?? "A table"} of ${s.rows === null ? "an unknown number of" : s.rows.toLocaleString("en-US")} rows; ${s.sampled.toLocaleString("en-US")} rows sampled${s.kind === "partitioned" ? " from its last partition" : ""}; ${queries} saved and recent queries read for filters.`,
     "",
     "| column | now | suggested | memory, about | filtered by |",
     "| --- | --- | --- | --- | --- |",
   ];
   for (const a of advice) {
-    out.push(`| ${md(a.column)} | ${a.current ? `${a.current}#` : ""} | ${a.suggest ? `${a.suggest}#` : "none"} | ${a.cost === null ? "" : size(a.cost)} | ${a.filters} |`);
+    out.push(`| ${md(a.column)} | ${a.current ? `${a.current}#` : ""} | ${a.suggest ? `${a.suggest}#` : "none"} | ${a.cost === null ? (a.suggest === "" ? "" : "unknown") : size(a.cost)} | ${a.filters} |`);
   }
   out.push("", "## Why", "");
   for (const a of advice) {
     const keep = a.current && a.current === a.suggest ? " It already has it." : a.current && a.suggest === "" ? ` It has ${a.current}#: drop it only if no query needs it.` : "";
     out.push(`- **${md(a.column)}**: ${md(a.reason)}.${keep}`);
+  }
+  if (advice.some((a) => a.cost === null && a.suggest !== "")) {
+    out.push("", "u# and g# keep an entry a row, so their memory is not known where the rows could not be counted.");
   }
   out.push(
     "",

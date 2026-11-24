@@ -84,7 +84,7 @@
         {
           "name": "string.quoted.double.q-console",
           "match": "\"(?:[^\"\\\\]|\\\\.)*\"",
-          "captures": { "0": { "patterns": [{ "match": "\\\\(?:[0-7]{3}|[nrt\"\\\\])", "name": "constant.character.escape.q-console" }] } }
+          "captures": { "0": { "patterns": [{ "match": "\\\\(?:[0-3][0-7]{2}|[nrt\"\\\\/])", "name": "constant.character.escape.q-console" }] } }
         },
         {
           "name": "constant.other.symbol.handle.q-console",

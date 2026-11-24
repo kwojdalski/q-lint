@@ -107,6 +107,15 @@ to a process you add and connect to, and sends only the code you run.
   have them agree, take the `.` out of it for q,
   ``"[q]": {"editor.wordSeparators": "`~!@#$%^&*()-=+[{]}\\|;:'\",<>/?"}``.
   `q-lint.editor.dottedNames.enable` turns it off without a reload.
+- **Comment toggle on a blank line**: **Toggle Line Comment** on a blank
+  line of a q or k file writes `/ .` with the `.` selected, so the comment
+  typed next replaces it, and toggling back leaves the line blank. VS Code
+  alone writes a lone `/ `, which q reads as the opening of a block comment:
+  every line below it, to a lone `\` or the end of the file, stops running
+  with no error. Only the toggle's own edit is answered: a `/` typed on a
+  blank line is left as typed, and so is the toggle with
+  `editor.comments.insertSpace` off, which writes that same lone `/`.
+  `q-lint.editor.blankLineComment.enable` turns it off without a reload.
 - **q in Markdown**: a fenced block opened with ```` ```q ```` (or `kdb+`,
   or `~~~q`) is coloured with the q grammar in a Markdown editor, and one
   opened with ```` ```k ```` with the k grammar; another language's fence,
@@ -153,6 +162,10 @@ to a process you add and connect to, and sends only the code you run.
   type's null; otherwise symbols, or strings once a cell holds a space. The
   first row is taken for the column names unless it reads as data, and the
   names are made q names (`x y` becomes `x_y`, `count` becomes `count_`).
+  Cells are a tab apart where the first row holds one; else a comma or a
+  semicolon apart, where the first row holds it and no row has more cells
+  than the first; else the text is one column, whose cells may hold commas
+  (`Smith, John`, `1,234`).
   Each cell is read as q's `0:` reads the same text with the same type
   letter, so the literal is the table `0:` would load. At most 10,000 rows;
   the message says what was left out (`q-lint.pasteTable.enable`).
@@ -627,7 +640,12 @@ taken as a tag), its `<serverlist>` XML, or the preferences it keeps them in
 when it is there); only kdb servers are taken. From KX's kdb extension: its
 `kdb.servers` in your settings, with `kdb.labelsConnectionMap`'s labels as
 tags, or a file its **Export Connections** wrote; kdb Insights connections
-are left out. You are shown what will be added and asked first. A label
+are left out. A KX label or a qStudio folder of several words, or of
+several folder levels, is one tag, its words joined by `-`: `Non Prod` is
+`non-prod`, which the read-only guard does not guard. A word the guard does
+guard stays a tag of its own beside it, at any folder level, unless `non`
+or `not` stands right before it: `Prod EU`, `Prod-EU/London` and `Pre Prod`
+are each tagged `prod` too, and guarded. You are shown what will be added and asked first. A label
 already in the list is kept as it is, and no password is ever imported,
 even where the source holds one: each is asked for on the first connect.
 `q-lint.processes.importOther.enable` off hides both commands.
@@ -2763,6 +2781,7 @@ nothing.
 | `q-lint.argumentSlot.enable` | `true` | Highlight the argument of `f[a;b;c]` the cursor is in and name its parameter. Asks the language server only. Off, nothing listens or is drawn. | - |
 | `q-lint.editor.continuationIndent.enable` | `true` | Indent the line after one that leaves a bracket open, on Enter. Off, Enter is VS Code's own. | - |
 | `q-lint.editor.dottedNames.enable` | `true` | Take `.ns.f` and `x.y` as one word for Ctrl/Cmd+D, occurrence highlights and completion. Off, a word is VS Code's own. | - |
+| `q-lint.editor.blankLineComment.enable` | `true` | Write `/ .` where **Toggle Line Comment** on a blank line would leave a lone `/ `, the opening of a block comment. Off, the toggle is VS Code's own. | - |
 | `q-lint.editor.parameterCache.enable` | `true` | **Toggle Parameter Cache** and its status bar item. Off, the command is hidden and refuses and the item is hidden. | - |
 | `q-lint.processSymbols.enable` | `false` | List the names only the connected process defines in **Go to Symbol in Workspace**, read while you search. Off, no provider is registered and nothing is sent. | - |
 | `q-lint.processExplorer.driftDetection.enable` | `false` | **Check Drift Against Process**: compare the workspace's function definitions with the connected process. Off, the command is hidden and reads nothing. | - |

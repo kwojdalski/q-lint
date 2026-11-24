@@ -139,3 +139,27 @@ test("nothing after a lone \\, the script's end, is a placeholder (#1471)", () =
   const { tileQueryProblem } = require("../out/dashboard.js");
   assert.strictEqual(tileQueryProblem("select from t\n\\\nscratch: {{x1}}"), undefined);
 });
+
+// q reads a system command's line as the command's own text: what follows
+// a blank and a slash there is an argument - an absolute path begins so -
+// and no comment. Only \t and \ts time q code, where it is one (#1984).
+test("a placeholder in a system command's argument is one, a slash after a blank or not (#1984)", () => {
+  assert.deepStrictEqual(placeholders("\\l /data/{{db}}/load.q"), [{ name: "db", start: 9, end: 15 }]);
+  assert.strictEqual(substitute("\\l /data/{{db}}/load.q", { db: "fx" }), "\\l /data/fx/load.q");
+  assert.strictEqual(substitute("\\cd /hdb/{{date}}", { date: "2024.01.02" }), "\\cd /hdb/2024.01.02");
+  assert.deepStrictEqual(placeholderNames("\\l data/{{db}}/load.q"), ["db"]);
+  // An OS command's later arguments are paths too.
+  assert.deepStrictEqual(placeholderNames("\\cp /a/{{from}} /b/{{to}}"), ["from", "to"]);
+  assert.deepStrictEqual(placeholderNames("\\tail -n 5 /var/log/{{file}}"), ["file"]);
+  assert.deepStrictEqual(placeholderNames("a:1\n\\l /data/{{db}}.q\nb:{{n}} / {{c}}"), ["db", "n"]);
+  // \t and \ts time q code: a comment there is a comment.
+  assert.deepStrictEqual(placeholderNames("\\t f {{n}} / {{c}}"), ["n"]);
+  assert.deepStrictEqual(placeholderNames("\\ts:10 f {{n}} / {{c}}"), ["n"]);
+  assert.deepStrictEqual(placeholderNames("\\t:5 f {{n}} /{{c}}"), ["n"]);
+  // A line of q code is read as before, and a string's line that starts with a backslash is still its text.
+  assert.deepStrictEqual(placeholderNames("a:{{b}} / {{c}}"), ["b"]);
+  assert.deepStrictEqual(placeholderNames('s:"one\n\\l /x/{{in}}";{{out}}'), ["out"]);
+  // Inside a block comment a command is not read, and a lone backslash still ends the script.
+  assert.deepStrictEqual(placeholderNames("/\n\\l /x/{{in}}\n\\\n{{after}}"), ["after"]);
+  assert.deepStrictEqual(placeholderNames("{{a}}\n\\\n\\l /x/{{gone}}"), ["a"]);
+});
