@@ -1246,3 +1246,25 @@ test("an evaluator, hopen or xkey taken out of .q or named by its symbol is a ch
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("a function picked from .q by any index is a change (#1765)", () => {
+  const cases = {
+    "(.q . enlist`set)[`b;7]": ["calls .q.set"],
+    "(.q[enlist`set]0)[`b;7]": ["calls .q.set"],
+    "((get`.q)`set)[`b;7]": ["calls .q.set"],
+    "((value`.q)`hdel)`:f.txt": ["calls .q.hdel"],
+    '(.q`$"set")[`b;7]': ["calls .q.set"],
+    "(.q`value`get)0": ["calls .q.value"],
+    "(.Q`$\"dpft\")[`:d;.z.d;`sym;`t]": ["calls .Q.dpft"],
+    // What is not one of them reads.
+    "(.q[enlist`count]0)`t": [],
+    "((get`.q)`count)`t": [],
+    '(.q`$"count") 1 2': [],
+    "(.q`count`sum)0": [],
+    "key .q; `set": [],
+    "count get`.q": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

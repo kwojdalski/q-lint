@@ -31,7 +31,8 @@
 //   file handle (`` `:f 0: ``, `hsym[`f] 0:`, `(hsym `f) 1:`,
 //   `` (`$":f") 0: ``, `` 0:[`:f;x] ``, `` .[0:;(`:f;x)] ``), and `2:`,
 //   each also by its `.q.` name (`.q.set`), by its symbol
-//   (`` `.q.set . (`a;1) ``) and indexed (`` .q[`set] ``) - as are `value`,
+//   (`` `.q.set . (`a;1) ``) and picked from `.q` by any index
+//   (`` .q[`set] ``, `` (get`.q)`set ``, #1765) - as are `value`,
 //   `get`, `eval`, `reval`, `hopen`, `xasc`, `xdesc` and `xkey`, whose
 //   arguments are then not read (#1764) - `system` of a string literal
 //   is read as that command, so `system "c"` only reads; `hopen` of a file handle
@@ -596,6 +597,21 @@ function evaluates(t: Token[], last: number, byValue: boolean, kCode = false, en
   return reason === undefined ? undefined : { reason, at: last };
 }
 
+/// The function of `CALLED` picked out of `root`, `.q` or `.Q`, at `t[at]`
+/// by whatever names it in the expression after it - `` .q[enlist`set]0 ``,
+/// `` .q`$"set" ``, `` (.q`set`get)0 ``, `` (get`.q)`set `` (#1765) - or
+/// undefined: `` .q`count `` reads.
+function picked(t: Token[], at: number, root: string): string | undefined {
+  const end = expressionEnd(t, at);
+  for (let p = at + 1; p < end; p++) {
+    const name = t[p].kind === "sym" ? t[p].text.slice(1) : t[p].kind === "str" ? qText(t[p].text) : undefined;
+    if (name !== undefined && CALLED.has(unqualified(`${root}.${name}`))) {
+      return `${root}.${name}`;
+    }
+  }
+  return undefined;
+}
+
 /// What one statement does that the guard asks about, added to `found`.
 function readStatement(statement: string, found: Set<string>): void {
   const text = statement.trimStart();
@@ -725,6 +741,11 @@ function readStatement(statement: string, found: Set<string>): void {
           found.add(`calls ${name}`);
           continue;
         }
+      }
+      const name = k.text === ".q" || k.text === ".Q" ? picked(t, i, k.text) : undefined;
+      if (name !== undefined) {
+        found.add(`calls ${name}`);
+        continue;
       }
       // `xasc`, `xdesc` and `xkey` on a table named by a symbol change it in
       // place: `` `a xasc `t ``, `` xasc[`a;`t] ``, and projected on the
@@ -901,6 +922,12 @@ function readStatement(statement: string, found: Set<string>): void {
         i = what.at;
         continue;
       }
+    }
+    // `.q` by its symbol, `` (get`.q)`set ``, likewise.
+    const name = k.kind === "sym" && (k.text === "`.q" || k.text === "`.Q") ? picked(t, i, k.text.slice(1)) : undefined;
+    if (name !== undefined) {
+      found.add(`calls ${name}`);
+      continue;
     }
     // A writer named by its symbol is the function itself: `` `.q.set . (`a;1) ``,
     // `` (get `.q.set)[`a;1] ``, `` `.q.system "x" ``.
