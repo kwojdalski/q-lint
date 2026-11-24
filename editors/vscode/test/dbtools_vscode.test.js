@@ -247,6 +247,8 @@ test("a dashboard runs its tiles' read-only queries, keeps a timer only with an 
   await dashboards.receive({ type: "view", id, view: "line" });
   await new Promise((r) => setTimeout(r, 20));
   assert.strictEqual(dashboards.contents.get(id).kind, "chart");
+  // The last answer is shaped again: the query is not run again (#1630).
+  assert.strictEqual(runs, 1);
   assert.ok(panels[0].posted.some((m) => m.type === "layout" && m.tiles[0].refresh === 5));
   assert.match(panels[0].webview.html, /Content-Security-Policy/);
   stub.config.user["dashboards.enable"] = false;

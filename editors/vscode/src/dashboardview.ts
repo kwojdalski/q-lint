@@ -71,6 +71,9 @@ export class Dashboards {
   private readonly running = new Set<string>();
   /// What each tile last showed, for tests.
   readonly contents = new Map<string, TileContent>();
+  /// Each tile's last answer, shaped again when its view changes rather
+  /// than run again (#1630).
+  private readonly answers = new Map<string, GridAnswer>();
   /// When each of them was worked out, as its tile says it.
   private readonly at = new Map<string, string>();
   /// Queries sent, by tile, for tests.
@@ -274,6 +277,7 @@ export class Dashboards {
     try {
       this.runs++;
       const answer = await this.live.runApart(process, query.code, undefined, { unattended });
+      this.answers.set(tile.id, answer);
       // Shown as the tile is set now: its view can change while the run is out (#1339).
       post(tileContent(answer, this.current()?.tiles.find((x) => x.id === tile.id)?.view ?? tile.view));
     } catch (error) {
@@ -308,8 +312,11 @@ export class Dashboards {
     if (["refresh-interval", "view", "move", "remove", "columns"].includes(String(msg.type))) {
       const next = changed(d, change);
       await this.save(withDashboard(this.list(), next));
-      if (change.type === "view" && typeof msg.id === "string") {
-        this.contents.delete(msg.id);
+      // A new view shapes the last answer again; nothing is run (#1630).
+      const held = change.type === "view" && typeof msg.id === "string" ? this.answers.get(msg.id) : undefined;
+      const tile = next.tiles.find((x) => x.id === msg.id);
+      if (held !== undefined && tile !== undefined) {
+        this.contents.set(tile.id, tileContent(held, tile.view));
       }
       this.render(next, false);
     }
