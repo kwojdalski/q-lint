@@ -50,6 +50,11 @@ test("each step is written as q over the step before, and the steps as a script 
   assert.strictEqual(w.stepCode({ kind: "cast", column: "n", to: "s", type: 7 }, "t"), "update n:`$string n from t");
   assert.strictEqual(w.stepCode({ kind: "cast", column: "s", to: "s", type: 11 }, "t"), "update s:s from t");
   assert.strictEqual(w.stepCode({ kind: "cast", column: "n", to: "f", type: 7 }, "t"), 'update n:"f"$n from t');
+  // Made a char, text or a symbol is its first character, never a blank (#1720).
+  assert.strictEqual(w.stepCode({ kind: "cast", column: "s", to: "c", type: 11 }, "t"), "update s:first each string s from t");
+  assert.strictEqual(w.stepCode({ kind: "cast", column: "e", to: "c", type: 20 }, "t"), "update e:first each string e from t");
+  assert.strictEqual(w.stepCode({ kind: "cast", column: "q", to: "c", strings: true }, "t"), "update q:first each q from t");
+  assert.strictEqual(w.stepCode({ kind: "cast", column: "n", to: "c", type: 7 }, "t"), 'update n:"c"$n from t');
   assert.strictEqual(w.stepCode({ kind: "drop", column: "note" }, "t"), "delete note from t");
   const steps = [
     { kind: "filter", column: "px", op: ">", value: "1" },
