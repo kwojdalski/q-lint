@@ -647,3 +647,17 @@ test("Hide Column refuses a name several columns share, and says so (#1754)", as
   await fake.vscode.commands["q-lint.hideResultColumn"]({ column: 2 });
   assert.deepStrictEqual(last(fake).look.layout.hidden, ["b"]);
 });
+
+test("a chart preset is forgotten once its result leaves the history (#1755)", async () => {
+  const fake = fakeVscode({ "query.resultHistory": 2 });
+  const modes = loadModes(fake);
+  const preset = { kind: "bar", series: ["px"], colours: {} };
+  const draw = () => fake.pages[0].receive({ type: "rendered", id: last(fake).id, rows: [0, 1, 2], rendered: { view: "chart", rows: 3, held: 3, total: 3, columns: [], first: [], preset } });
+  for (let i = 0; i < 6; i++) {
+    modes.show(result(`select from t${i}`), live);
+    draw();
+  }
+  // As a watched chart query left running: one preset a run, kept only
+  // for the two results the history holds.
+  assert.strictEqual(modes.presets.size, 2);
+});

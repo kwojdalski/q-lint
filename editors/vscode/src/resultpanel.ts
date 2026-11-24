@@ -559,13 +559,19 @@ export class QueryModes {
     return false;
   }
 
-  /// Keep only what the features on need: the history to its length, and
-  /// no previous runs while the diff is off.
+  /// Keep only what the features on need: the history to its length, the
+  /// chart presets of the results in it (#1755), and no previous runs while
+  /// the diff is off.
   private applyFeatures(features = this.viewSettings()): void {
     this.history = this.history.slice(-features.history);
     if (this.shown !== undefined && !this.history.includes(this.shown)) {
       this.history.push(this.shown);
       this.history = this.history.slice(-features.history);
+    }
+    for (const id of this.presets.keys()) {
+      if (!this.history.some((h) => h.id === id)) {
+        this.presets.delete(id);
+      }
     }
     if (!features.enable.diff) {
       this.previous.clear();
