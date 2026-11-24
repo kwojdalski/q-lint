@@ -39,7 +39,7 @@ function draw(spec, element) {
     return { chart: null, drawn };
   }
   const box = document.createElement("div");
-  box.style.cssText = `position:relative;width:100%;height:${spec.height || HEIGHT}px`;
+  box.style.cssText = `position:relative;width:100%;height:${C.chartHeight(spec.height, HEIGHT)}px`;
   const canvas = document.createElement("canvas");
   box.append(canvas);
   element.append(box);
