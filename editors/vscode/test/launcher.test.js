@@ -367,6 +367,22 @@ test("Stop Process ends what a wrapper script started too, and frees its port (#
   assert.strictEqual(await accepts(port), false);
 });
 
+test("Stop Process ends what a wrapper left running after it exited (#1744)", { skip: process.platform === "win32" ? "no process groups" : false }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-"));
+  fs.writeFileSync(path.join(dir, "fake.js"), FAKE);
+  // Starts its program in the background and exits, as `q tick.q &` does.
+  fs.writeFileSync(path.join(dir, "bg.sh"), `#!/bin/sh\n"${process.execPath}" "$@" &\nexit 0\n`, { mode: 0o755 });
+  const port = await freePort();
+  const { launcher } = await setUp(t, [proc("bg", port, { command: path.join(dir, "bg.sh"), script: "fake.js", cwd: dir })]);
+  await stub.commands.get(LAUNCH_COMMANDS.start)("bg");
+  for (let i = 0; i < 100 && !(await accepts(port)); i++) await sleep(50);
+  assert.ok(await accepts(port));
+  const stopped = stub.commands.get(LAUNCH_COMMANDS.stop)("bg").then(() => true);
+  assert.strictEqual(await Promise.race([stopped, sleep(8000).then(() => false)]), true);
+  assert.deepStrictEqual(launcher.running(), []);
+  assert.strictEqual(await accepts(port), false);
+});
+
 test("a program that does not exist is one error, never 'started' (#1679)", async (t) => {
   const port = await freePort();
   const { launcher, output } = await setUp(t, [proc("gone", port, { command: path.join(os.tmpdir(), "no-such-q-1679") })]);

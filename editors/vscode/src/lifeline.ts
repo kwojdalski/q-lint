@@ -51,3 +51,18 @@ export function signalGroup(child: ChildProcess, signal: NodeJS.Signals, platfor
   }
   child.kill(signal);
 }
+
+/// Whether anything is left in the process group `child` leads: a wrapper
+/// that has exited may have left its q running in it (#1744). False on
+/// Windows, which has no groups.
+export function groupAlive(child: ChildProcess, platform: string = process.platform): boolean {
+  if (platform === "win32" || child.pid === undefined) {
+    return false;
+  }
+  try {
+    process.kill(-child.pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}

@@ -14,7 +14,7 @@ import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import type { Live, ProcessArg } from "./live";
 import { launchOf, withExtras, type Launch, type Process } from "./processes";
 import { iconsEscaped, plainMessage } from "./history";
-import { lifeline, signalGroup } from "./lifeline";
+import { groupAlive, lifeline, signalGroup } from "./lifeline";
 
 /// How long a process has to end after SIGTERM before it is killed.
 const STOP_GRACE_MS = 3000;
@@ -86,7 +86,7 @@ export class Launcher {
   /// or on Windows, where kill() ends the process whatever the signal (#1250).
   interrupt(label: string): number | undefined {
     const child = this.started.get(label)?.child;
-    if (globalThis.process.platform === "win32" || child === undefined || child.exitCode !== null || child.signalCode !== null || child.pid === undefined) {
+    if (globalThis.process.platform === "win32" || child === undefined || child.pid === undefined || ((child.exitCode !== null || child.signalCode !== null) && !groupAlive(child))) {
       return undefined;
     }
     signalGroup(child, "SIGINT");
@@ -305,7 +305,8 @@ export class Launcher {
     }
     const { child } = started;
     return new Promise((resolve) => {
-      if (child.exitCode !== null || child.signalCode !== null) {
+      // An exited wrapper may have left its q in its group (#1744).
+      if ((child.exitCode !== null || child.signalCode !== null) && !groupAlive(child)) {
         resolve();
         return;
       }
