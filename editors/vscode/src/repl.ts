@@ -153,6 +153,12 @@ export function completionsFor(prefix: string, candidates: Completion[], limit =
 /// How many inputs the REPL keeps.
 export const HISTORY_LIMIT = 500;
 
+/// The history as stored (#1888): its entries that are inputs, or none
+/// when it is no list - the storage is another window's and a sync's too.
+export function parseHistory(stored: unknown): string[] {
+  return Array.isArray(stored) ? stored.filter((h): h is string => typeof h === "string" && h !== "") : [];
+}
+
 /// `history` (newest first) with `code` added at the front: once, so
 /// running the same line again does not fill the history with it.
 export function pushHistory(history: string[], code: string, limit = HISTORY_LIMIT): string[] {

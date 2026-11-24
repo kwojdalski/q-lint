@@ -14,7 +14,7 @@ import { GATHER, LIMITS, fullName, readExplorer, readGathered } from "./explorer
 import { INTERACTIVE_COMMANDS, readInteractive, turnedOff } from "./interactiveconfig";
 import type { Live } from "./live";
 import { RESERVED } from "./qliteral";
-import { completionsFor, isComplete, pushHistory, replScript, searchHistory, wordAt, type Completion } from "./repl";
+import { completionsFor, isComplete, parseHistory, pushHistory, replScript, searchHistory, wordAt, type Completion } from "./repl";
 
 const HISTORY_KEY = "q-lint.replHistory";
 const REPL_OFF = turnedOff("The q REPL pane", "q-lint.repl.enable");
@@ -37,7 +37,7 @@ export function registerRepl(
 } {
   /// Newest first, read each time: another window adds to it too, and a
   /// copy kept here would write over what it added (#1694).
-  const past = (): string[] => context.globalState.get<string[]>(HISTORY_KEY, []);
+  const past = (): string[] => parseHistory(context.globalState.get<unknown>(HISTORY_KEY, []));
   /// The process's names as last read, and the process they are of: read
   /// again after each run, since a run can define names.
   let names: { process: string; labels: string[] } | undefined;

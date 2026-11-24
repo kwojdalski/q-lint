@@ -9,7 +9,7 @@ const assert = require("node:assert");
 const { serialize } = require("node-q/lib/c.js");
 const { markers, cells, cellAt, cellCode, cellName, nextStatement, smartStep, looksLikeMarker, shownCode } = require("../out/cells.js");
 const { blockAt, statements } = require("../out/statements.js");
-const { isComplete, replScript, wordAt, completionsFor, pushHistory, searchHistory } = require("../out/repl.js");
+const { isComplete, replScript, wordAt, completionsFor, parseHistory, pushHistory, searchHistory } = require("../out/repl.js");
 const { viewDefinition, readViewMessage } = require("../out/qview.js");
 const { readInteractive, SMART_SEND_TARGETS } = require("../out/interactiveconfig.js");
 const pkg = require("../package.json");
@@ -161,6 +161,16 @@ test("the history keeps each input once, newest first, and Ctrl+R searches it fr
   assert.strictEqual(searchHistory(history, "select", 1), 2, "Ctrl+R again searches on from the one after");
   assert.strictEqual(searchHistory(history, "nothing"), -1);
   assert.strictEqual(searchHistory(history, ""), -1);
+});
+
+test("a stored REPL history that is no list of strings is read as the strings it holds, or none (#1888)", () => {
+  for (const stored of [{}, "1+1", 7, null, undefined, { 0: "a", length: 1 }]) {
+    assert.deepStrictEqual(parseHistory(stored), []);
+    assert.deepStrictEqual(pushHistory(parseHistory(stored), "x"), ["x"]);
+  }
+  const mixed = parseHistory([null, "a", 3, ["b"], "", "ab"]);
+  assert.deepStrictEqual(mixed, ["a", "ab"]);
+  assert.strictEqual(searchHistory(mixed, "b"), 1);
 });
 
 test("the .qlint.view definition is four statements, sized as asked", () => {
