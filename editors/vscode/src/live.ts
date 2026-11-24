@@ -2010,8 +2010,7 @@ export class Live {
       const connection = await QConnection.open(
         {
           ...target,
-          host: "127.0.0.1",
-          port: tunnel.localPort,
+          ...tunnel.endpoint,
           ...(target.tls ? { servername: target.host } : {}),
         },
         undefined,
@@ -2034,7 +2033,7 @@ export class Live {
           tunnel.said,
         );
       } else if (error instanceof Error) {
-        error.message = error.message.split(`127.0.0.1:${tunnel.localPort}`).join(where);
+        error.message = error.message.split(tunnel.where).join(where);
       }
       tunnel.close();
       throw failure;

@@ -19,6 +19,9 @@ const { parseProcesses, readProcessFile, sshDestination, withExtras } = require(
 const { Live } = require("../out/live.js");
 
 const Q = process.env.QLINT_TEST_Q;
+/// The forward's end as ssh is given it: a socket in a private directory,
+/// or on Windows a loopback port (#1823).
+const FORWARD = process.platform === "win32" ? "127\\.0\\.0\\.1:\\d+" : "/[^:]*/qlint-ssh-[^/:]+/s";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // A stand-in ssh: records its arguments, then forwards the -L port to the
@@ -40,7 +43,8 @@ if (process.env.STUB_SSH_FAIL) {
   process.stderr.write("banner\\nme@bastion: Permission denied (publickey).\\n");
   process.exit(255);
 }
-const [, local, host, port] = /^127\\.0\\.0\\.1:(\\d+):\\[?([^\\]]*?)\\]?:(\\d+)$/.exec(args[args.indexOf("-L") + 1]);
+// The forward's end is a unix socket's path, or a loopback port (Windows).
+const [, local, host, port] = /^(?:127\\.0\\.0\\.1:)?(\\d+|\\/[^:]+):\\[?([^\\]]*?)\\]?:(\\d+)$/.exec(args[args.indexOf("-L") + 1]);
 const server = net.createServer((client) => {
   const upstream = net.connect(Number(port), process.env.STUB_SSH_REACHES || host);
   client.pipe(upstream).pipe(client);
@@ -51,7 +55,7 @@ const server = net.createServer((client) => {
   });
   client.on("error", () => upstream.destroy());
 });
-setTimeout(() => server.listen(Number(local), "127.0.0.1"), 200);
+setTimeout(() => (local.startsWith("/") ? server.listen(local) : server.listen(Number(local), "127.0.0.1")), 200);
 process.on("SIGTERM", () => process.exit(0));
 `;
 
@@ -163,6 +167,29 @@ test("the setting is on by default, and hides Set SSH Tunnel when off", () => {
   }
 });
 
+// The forward was a loopback port, named in ssh's argv for `ps` to show:
+// another local user who bound it before ssh had authenticated was taken
+// for the tunnel and sent the q handshake, user and password (#1823).
+test("the forward is a socket only this user can reach, and nothing else is taken for it", { skip: process.platform === "win32" }, async (t) => {
+  const ssh = stubSsh(t);
+  process.env.STUB_SSH_NEVER = "1";
+  const opened = SshTunnel.open({ destination: "bastion", host: "rdb", port: 5010, timeoutMs: 1500 });
+  let run;
+  for (let i = 0; i < 50 && (run = ssh.runs()[0]) === undefined; i++) await sleep(20);
+  const forward = run.args[run.args.indexOf("-L") + 1];
+  const sock = forward.slice(0, forward.indexOf(":"));
+  assert.strictEqual(fs.statSync(path.dirname(sock)).mode & 0o777, 0o700);
+  assert.ok(!/127\.0\.0\.1/.test(forward), forward);
+  // A listener anyone else could start is on some port; no port is dialled.
+  const seen = [];
+  const other = net.createServer((s) => seen.push(s.remoteAddress)).listen(0, "127.0.0.1");
+  t.after(() => other.close());
+  await assert.rejects(opened, /did not open in 1\.5 s/);
+  assert.deepStrictEqual(seen, []);
+  assert.strictEqual(fs.existsSync(path.dirname(sock)), false, "the directory is removed with ssh");
+  delete process.env.STUB_SSH_NEVER;
+});
+
 test("a tunnel that ssh cannot open says what ssh said, and leaves nothing running", async (t) => {
   const ssh = stubSsh(t);
   process.env.STUB_SSH_FAIL = "1";
@@ -199,7 +226,7 @@ test("a process with a jump host is connected to through ssh, which stops when i
   assert.strictEqual(await live.connectTo("far"), true);
   const [run] = ssh.runs();
   assert.deepStrictEqual(run.args.slice(-6), ["-L", run.args.at(-5), "-p", "2222", "--", "me@bastion"]);
-  assert.match(run.args.at(-5), new RegExp(`^127\\.0\\.0\\.1:\\d+:127\\.0\\.0\\.1:${q.port}$`));
+  assert.match(run.args.at(-5), new RegExp(`^${FORWARD}:127\\.0\\.0\\.1:${q.port}$`));
   assert.ok(alive(run.pid));
   if (q.real) {
     const answer = await live.borrow((c) => c.query(["answer"], [10, 80]));
@@ -249,7 +276,7 @@ test("no q behind the tunnel is said so, with the process's address and what ssh
   const { live, context } = await setUp(t, [{ label: "far", host: "127.0.0.1", port, tags: [], ssh: "me@bastion" }]);
   assert.strictEqual(await live.connectTo("far"), false);
   const [kind, text] = stub.messages.at(-1);
-  const local = /^127\.0\.0\.1:(\d+):/.exec(ssh.runs()[0].args.at(-3))[1];
+  const local = new RegExp(`^(${FORWARD}):`).exec(ssh.runs()[0].args.at(-3))[1];
   assert.strictEqual(kind, "error");
   assert.strictEqual(
     text,
@@ -257,7 +284,7 @@ test("no q behind the tunnel is said so, with the process's address and what ssh
       `no q process answers at 127.0.0.1:${port} as me@bastion reaches it, or the user or password was refused. ` +
       "ssh said: channel 2: open failed: connect failed: Connection refused",
   );
-  assert.ok(!text.includes(`:${local}`), "the tunnel's own port is not named");
+  assert.ok(!text.includes(local), "the tunnel's own end is not named");
   for (let i = 0; i < 50 && alive(ssh.runs()[0].pid); i++) await sleep(50);
   assert.strictEqual(alive(ssh.runs()[0].pid), false, "ssh stopped with the failed connect");
   // What ssh said is in the message shown, and in nothing that is kept.
@@ -299,7 +326,7 @@ test("TLS through a tunnel checks the certificate against the process's own addr
   const far = (label, host) => ({ label, host, port: server.address().port, tags: [], tls: true, ssh: "bastion" });
   const { live } = await setUp(t, [far("far", "10.0.0.5"), far("other", "10.0.0.6")]);
   assert.strictEqual(await live.connectTo("far"), true, String(stub.messages.at(-1)));
-  assert.match(ssh.runs()[0].args.at(-3), new RegExp(`^127\\.0\\.0\\.1:\\d+:10\\.0\\.0\\.5:${server.address().port}$`));
+  assert.match(ssh.runs()[0].args.at(-3), new RegExp(`^${FORWARD}:10\\.0\\.0\\.5:${server.address().port}$`));
   // The check is still made: the same certificate is not another address's,
   await stub.commands.get("q-lint.disconnectProcess")();
   assert.strictEqual(await live.connectTo("other"), false);
