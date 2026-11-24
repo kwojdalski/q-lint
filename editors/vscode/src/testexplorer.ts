@@ -71,6 +71,7 @@ import {
   readServerTests,
   readTestResult,
   splitMatch,
+  testRunGuardCode,
   testStatements,
   type K4Row,
   type ServerTest,
@@ -492,7 +493,7 @@ class QTests {
     }
     const prepared = new Set<K4Row[]>();
     const send = (statements: string[], mode: TestMode) =>
-      this.live.runOnActive(statements.join("\n"), async (connection) => readTestResult(await connection.call(TEST_RUN, statements, mode)), "ask", process.label);
+      this.live.runOnActive(testRunGuardCode(statements), async (connection) => readTestResult(await connection.call(TEST_RUN, statements, mode)), "ask", process.label);
     // A row whose minver is above the process's .z.K is not run, as KUltf
     // does not load it (#1594): asked once, when a row of the run has one.
     let version = Infinity;

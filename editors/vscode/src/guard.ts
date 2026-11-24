@@ -1156,14 +1156,40 @@ function readStatement(statement: string, found: Set<string>): void {
   }
 }
 
+/// Text that q `value`s whole, as `LIVE` does a live value's expression:
+/// read as `value` reads it, not by a script's rules. To `value` a line that
+/// is `/` alone is a comment to its end, not a block comment, and a `\` line
+/// ends nothing, so `(1;\n/\nd:9)` assigns `d` (#2033).
+export interface Valued {
+  valued: string;
+}
+
+/// `text` to be read as `value` reads it.
+export function valued(text: string): Valued {
+  return { valued: text };
+}
+
+/// Code the guard reads: a script's text, or so many pieces each sent on
+/// its own, a piece `value`d whole marked so.
+export type GuardCode = string | readonly (string | Valued)[];
+
+/// The text of `code`, its pieces on lines of their own, to show.
+export function guardText(code: GuardCode): string {
+  return typeof code === "string" ? code : code.map((p) => (typeof p === "string" ? p : p.valued)).join("\n");
+}
+
 /// What `code` does that the guard asks about, each said once, in the
 /// order found: `assigns trade`, `runs the system command \l`. Empty when
 /// it only reads, as far as its text shows. A list is code sent as so many
 /// pieces, each read on its own: a `\` or `/` line ending one does not hide
-/// the next (#1442).
-export function writes(code: string | readonly string[]): string[] {
+/// the next (#1442); one `value`d whole is read as one statement.
+export function writes(code: GuardCode): string[] {
   const found = new Set<string>();
   for (const piece of typeof code === "string" ? [code] : code) {
+    if (typeof piece !== "string") {
+      readStatement(piece.valued, found);
+      continue;
+    }
     for (const statement of statements(piece)) {
       readStatement(statement, found);
     }
@@ -1174,7 +1200,7 @@ export function writes(code: string | readonly string[]): string[] {
 /// What the guard holds `code` to on `targets`: the guarded ones, each with
 /// the tags it is guarded by, and what the code does. Undefined when it
 /// may be sent unasked.
-export function guardCheck(code: string | readonly string[], targets: Pick<Process, "label" | "tags">[], settings: GuardSettings): { guarded: { label: string; tags: string[] }[]; reasons: string[] } | undefined {
+export function guardCheck(code: GuardCode, targets: Pick<Process, "label" | "tags">[], settings: GuardSettings): { guarded: { label: string; tags: string[] }[]; reasons: string[] } | undefined {
   const guarded = targets.map((p) => ({ label: p.label, tags: guardedBy(p, settings) })).filter((g) => g.tags.length > 0);
   if (guarded.length === 0) {
     return undefined;

@@ -33,6 +33,7 @@
 // assertion returns the value it checked, so a false last value is no
 // verdict (#1589) - and a flag set with `ignoreAllExceptions` fails it.
 
+import { valued, type GuardCode } from "./guard";
 import { FULL_TEXT, LAID_OUT } from "./qtext";
 
 export const TEST_RUN = [
@@ -140,6 +141,13 @@ export interface TestResult {
   errored: boolean;
   /// A failed assertion's two sides, as q shows them, when it has them.
   diff?: { expected: string; actual: string };
+}
+
+/// What the read-only guard reads for `statements` sent to `TEST_RUN`: each
+/// `value`d whole - a k4unit row's code as written - so each is read as
+/// `value` reads it, a `/` line in one hiding nothing (#2033).
+export function testRunGuardCode(statements: string[]): GuardCode {
+  return statements.map(valued);
 }
 
 /// What `TEST_RUN` answered. Throws when it is not its answer.

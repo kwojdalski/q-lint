@@ -16,6 +16,7 @@ const {
   k4Statement,
   k4Label,
 } = require("../out/testing.js");
+const { guardText, writes } = require("../out/guard.js");
 const { registerTestExplorer, TESTS_REQUEST } = require("../out/testexplorer.js");
 const { EDITOR_SETTINGS, editorFeatureOn, editorFeatureOff } = require("../out/editorfeatures.js");
 const pkg = require("../package.json");
@@ -522,7 +523,7 @@ test("a k4unit row whose minver is above the process's .z.K is skipped, not run 
   const live = fakeLive();
   const runOnActive = live.runOnActive.bind(live);
   live.runOnActive = async (code, query, ...rest) =>
-    code === ".z.K" ? { process: "dev", value: { passed: true, text: "4.1", errored: false } } : runOnActive(code, query, ...rest);
+    guardText(code) === ".z.K" ? { process: "dev", value: { passed: true, text: "4.1", errored: false } } : runOnActive(code, query, ...rest);
   const explorer = registerTestExplorer(stub.newContext(), live, () => undefined);
   await explorer.discover();
   await explorer.run();
@@ -639,4 +640,12 @@ test("a CSV that is not a k4unit suite is turned down from its first line, not r
   await explorer.discover();
   assert.deepStrictEqual(whole, ["suite.csv"]);
   assert.strictEqual(explorer.items().length, 1);
+});
+
+test("the guard reads a k4unit row's code as TEST_RUN values it, whole (#2033)", () => {
+  const { testRunGuardCode } = require("../out/testing.js");
+  const rows = parseK4unit('action,ms,bytes,lang,code,repeat,minver,comment\ntrue,0,0,q,"(1;\n/\nkk:9)",1,,\n');
+  assert.strictEqual(rows[0].code, "(1;\n/\nkk:9)");
+  assert.deepStrictEqual(writes(testRunGuardCode([k4Statement(rows[0])])), ["assigns kk"]);
+  assert.deepStrictEqual(writes(testRunGuardCode(["1b"])), []);
 });

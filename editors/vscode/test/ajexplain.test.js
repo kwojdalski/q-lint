@@ -93,3 +93,12 @@ test("on a guarded process, a call whose arguments would change it is held", asy
   assert.match(await stub.commands.get(PROCESS_TOOL_COMMANDS.explainAj)("aj[`sym`time;trade;q::quote]", 0), /not confirmed/);
   assert.strictEqual(q.sent.length, before);
 });
+
+test("the guard reads an explanation's columns and tables as EXPLAIN_AJ values them, whole (#2033)", () => {
+  const { explainGuardCode } = require("../out/ajexplain.js");
+  const { writes } = require("../out/guard.js");
+  const found = findAj("aj[`sym`time;t;(1;\n/\nj1:9;q)]");
+  assert.strictEqual(found.right, "(1;\n/\nj1:9;q)");
+  assert.deepStrictEqual(writes(explainGuardCode(found)), ["assigns j1"]);
+  assert.deepStrictEqual(writes(explainGuardCode(call)), []);
+});

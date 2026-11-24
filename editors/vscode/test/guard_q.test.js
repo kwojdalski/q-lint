@@ -111,3 +111,39 @@ test("1: to a file named by a plain symbol is held, and writes the file once let
   // A parse format left of 1: reads, unasked.
   assert.strictEqual(await send('(1#"x";1) 1: `:a', undefined), false);
 });
+
+/// Declined, `send` is held - it throws, `changed` stays "0b"; let through
+/// it runs and `changed` is "1b".
+async function sentWhenConfirmed(read, send, changed, what) {
+  stub.picks.push(undefined);
+  await assert.rejects(send(), /Not run: changing the read-only process prod was not confirmed/, what);
+  stub.picks = [];
+  assert.strictEqual(await read(changed), "0b", `${what} was held`);
+  stub.picks.push("Run Anyway");
+  // What it gives back is beside the point: some fail after the write.
+  await send().catch(() => undefined);
+  stub.picks = [];
+  assert.strictEqual(await read(changed), "1b", `${what} writes on q`);
+}
+
+test("text a feature values whole is held when a / line in it hides a write from a script's reading (#2033)", { skip }, async (t) => {
+  const { guardedText, liveValues } = require("../out/qnbrun.js");
+  const { EXPLAIN_AJ, explainGuardCode, findAj } = require("../out/ajexplain.js");
+  const { TABLE_SHAPE, shapeGuardCode } = require("../out/joinassist.js");
+  const { TEST_RUN, testRunGuardCode } = require("../out/testing.js");
+  const { asCode } = require("../out/processtools.js");
+  const q = await startQ(t, "t:([] sym:`a`b; time:1 2; px:1 2f)\n");
+  const { live, read } = await setUp(t, q.port);
+  // A live value in a notebook's Markdown, sent with its cell as notebook.ts sends it.
+  const markdown = ["Count: {{q: (1;\n/\nd6:9)}} rows"];
+  await sentWhenConfirmed(read, () => live.runOnActive(guardedText("1+1", markdown), (c) => liveValues(c, markdown)), "`d6 in key `.", "a live value");
+  // The aj explainer's right table.
+  const call = findAj("aj[`sym`time;t;(1;\n/\nj1:9;t)]");
+  await sentWhenConfirmed(read, () => live.runOnActive(explainGuardCode(call), (c) => c.call(EXPLAIN_AJ, asCode(call.columns), asCode(call.left), asCode(call.right), 0)), "`j1 in key `.", "an aj explanation");
+  // The join assistant's table.
+  const tables = ["(1;\n/\nj2:9;t)", "t"];
+  await sentWhenConfirmed(read, () => live.runOnActive(shapeGuardCode(tables), (c) => c.call(TABLE_SHAPE, asCode(tables[0]))), "`j2 in key `.", "a table's shape");
+  // A k4unit row's code, run by the Test Explorer.
+  const rows = ["(1;\n/\nkk:9)"];
+  await sentWhenConfirmed(read, () => live.runOnActive(testRunGuardCode(rows), (c) => c.call(TEST_RUN, rows, "run")), "`kk in key `.", "a k4unit row");
+});

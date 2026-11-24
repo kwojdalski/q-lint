@@ -1340,3 +1340,14 @@ test("0: and 1: to any handle but a parse or prepare format write a file: 1: tak
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("text q values whole is read as value reads it: a / line is a comment to its end, not a block (#2033)", () => {
+  const { valued } = require("../out/guard.js");
+  assert.deepStrictEqual(writes([valued("(1;\n/\nd6:9)")]), ["assigns d6"]);
+  assert.deepStrictEqual(writes([valued("1\n/ note\nd1:9")]), ["assigns d1"]);
+  assert.deepStrictEqual(writes([valued("count t\n/\ncount u")]), []);
+  assert.deepStrictEqual(writes([valued("\\l f.q")]), ["runs the system command \\l"]);
+  // A script's text keeps a script's rules: there the / opens a block.
+  assert.deepStrictEqual(writes("(1;\n/\nd6:9)"), []);
+  assert.deepStrictEqual(writes(["count t", valued("(1;\n/\nd6:9)")]), ["assigns d6"]);
+});
