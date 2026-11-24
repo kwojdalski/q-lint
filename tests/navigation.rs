@@ -2266,6 +2266,36 @@ fn a_file_loaded_under_two_contexts_is_renamed_in_both() {
 }
 
 #[test]
+fn a_global_is_not_renamed_while_the_index_is_off() {
+    // #2051. With the index off, main.q is not read until it is opened: a
+    // rename of ff in lib.q would leave main.q calling an ff that is gone.
+    let dir = tempfile::tempdir().unwrap();
+    let files = [("lib.q", "ff:{1}\n"), ("main.q", "\\l lib.q\nx:ff[]\n")];
+    let options = json!({"workspaceIndex": {"enable": false}});
+    let (mut server, _) = Server::over(dir.path(), &files, client(), options);
+    let uri = server.open(dir.path(), "lib.q", "ff:{1}\n");
+    for method in ["textDocument/prepareRename", "textDocument/rename"] {
+        let reply = server.ask(method, &uri, "ff:{1}\n", "ff", 0, json!({"newName": "gg"}));
+        assert!(
+            refused(&reply).contains("workspace index is off"),
+            "{reply}"
+        );
+    }
+    // A local is still renamed: every place it is named is in its lambda.
+    let text = "f:{[a] a+1}\n";
+    let uri = server.open(dir.path(), "c.q", text);
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        text,
+        "a]",
+        0,
+        json!({"newName": "b"}),
+    );
+    assert_eq!(edits(&reply["result"]).len(), 2, "{reply}");
+}
+
+#[test]
 fn rename_can_be_turned_off_on_its_own() {
     let dir = tempfile::tempdir().unwrap();
     let options = json!({"rename": {"enable": false}});

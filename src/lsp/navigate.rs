@@ -1004,6 +1004,15 @@ fn renamable_global(
     cursor: &Cursor,
     at: usize,
 ) -> Result<(HashSet<String>, usize), String> {
+    // With the index off only the open documents are read, and a closed
+    // file that names the global would keep the old name (#2051).
+    if !sources.idx.enabled {
+        return Err(
+            "the workspace index is off (`workspaceIndex.enable`), so the files that are not \
+             open, which may name this global, are not read: a rename could not be complete"
+                .into(),
+        );
+    }
     let (targets, len) = sources.global_at(cursor, at);
     let mut sorted: Vec<&String> = targets.iter().collect();
     sorted.sort_unstable();

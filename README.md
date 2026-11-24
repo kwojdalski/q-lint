@@ -688,7 +688,8 @@ whole. A file loaded under two contexts defines the name in both with one
 assignment, so both are renamed, and the uses of each with them.
 `prepareRename` answers with the range of
 that last part. `rename.enable: false` leaves renaming unannounced, and the
-rest of navigation on. The rename is refused for a name in a one-letter namespace
+rest of navigation on. The rename is refused while `workspaceIndex.enable` is
+`false`, since a file that is not open is then not read, for a name in a one-letter namespace
 (`.z.pg`, `.q.f`, which q keeps for itself), a name no indexed file assigns
 (q's own, or defined where the server cannot read), a new name that is not
 one q takes, is reserved or is already assigned, one with a `_` where a
