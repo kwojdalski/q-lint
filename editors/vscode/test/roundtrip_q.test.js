@@ -134,7 +134,6 @@ function values() {
 
 /// The classes not yet written back, each by the issue that holds it.
 const PENDING = [
-  [2084, (c) => c === "sp"],
   [2085, (c) => /\(\[\] x:|t:\(\[\]/.test(c)],
 ];
 
@@ -170,6 +169,14 @@ test("a result exported is read back as the value it is, on a real q", { skip },
       }
     }
     assert.deepStrictEqual(bad, []);
+  });
+
+  await t.test("a mapped table's nested columns export as the general lists they are (#2084)", async () => {
+    const g = await grid("sp");
+    assert.deepStrictEqual(g.types, [0, 0, 7]);
+    const json = JSON.parse(exportResult("json", g, -1).data.toString("utf8"));
+    assert.deepStrictEqual(json.map((r) => r.s), ["ab", "cd", "x", "café"]);
+    assert.strictEqual(json[0].f, Math.acos(-1));
   });
 
   await t.test("a symbol of bytes that are no UTF-8 exports as its characters, not U+FFFD (#2083)", async () => {

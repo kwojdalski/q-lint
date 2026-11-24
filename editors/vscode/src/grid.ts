@@ -14,7 +14,9 @@
 //   count  the rows the whole result has, as a float: it can pass 2^31
 //   keys   how many of the leading columns are keys
 //   names  the column names
-//   types  each column's q type
+//   types  each column's q type, a mapped list's (77h-97h, an HDB's
+//          splayed nested column) a general list's 0h, which it is to
+//          `select` (#2084)
 //   cells  each column as q prints it in a table: `string` of a simple
 //          column, `-3!` of each item of any other (cut at 200 characters).
 //          `-3!` stops at the process's `\c` width, so a string item is
@@ -85,7 +87,7 @@ const COLUMN_LINES = [
   "            {[e;x]$[10h=type x;$[1=count x;\",\";\"\"],\"\\\"\",raze[e\"i\"$200 sublist x],\"\\\"\";-3!x]}[e] each x]}[e] each c;",
   "          {[c]u:type c;$[u in 12 16h;\"j\"$c;u in 13 14 17 18 19h;\"i\"$c;u=15h;\"f\"$c;u=10h;\"x\"$c;u in 2 5 6 7 8 9h;c;",
   "            u=11h;$[any 127<\"i\"$\"x\"$raze s:string c;{$[any 127<\"i\"$\"x\"$x;\"x\"$x;0b]} each s;()];",
-  "            u=0h;{[g;x]$[-9h=t:type x;$[null x;0b;x];-8h=t;$[null x;0b;\"f\"$x];g x]}[{$[-9h=t:type x;(\"f\";x);-8h=t;(\"e\";\"f\"$x);",
+  "            (u=0h)|u within 77 97h;{[g;x]$[-9h=t:type x;$[null x;0b;x];-8h=t;$[null x;0b;\"f\"$x];g x]}[{$[-9h=t:type x;(\"f\";x);-8h=t;(\"e\";\"f\"$x);",
   "              (t in 8 9h)&200>=count x;($[t=9h;\"F\";\"E\"];\"f\"$x);(0h=t)&200>=count x;",
   "              $[all 0b~/:r:.z.s each x;0b;(\"l\";@[r;w;:;-3!'x w:where 0b~/:r])];",
   "              99h=t;$[0b~r:.z.s(key x;value x);0b;(\"d\";r 1)];98h=t;$[0b~r:.z.s flip x;0b;(\"t\";r)];",
@@ -129,7 +131,7 @@ export function gridLambda(tree: boolean, hold = false): string {
   ...(hold ? [`        ${HELD}:$[(n>0)&m>n;t;()];`] : []),
   "        t:$[1b~.Q.qp t;[j:$[n<0;(m+n)|0;0]+til m&abs n;$[count j;.Q.ind[t;j];select from t where i<0]];n sublist t];",
   "        c:$[count[cols t]=count distinct cols t;t cols t;value flip t];",
-  "        `count`keys`names`types`cells`raw`rank`tree!(\"f\"$m;\"i\"$k;cols t;type each c;",
+  "        `count`keys`names`types`cells`raw`rank`tree!(\"f\"$m;\"i\"$k;cols t;{$[x within 77 97h;0h;x]}each type each c;",
   ...COLUMN_LINES,
   tree ? `          $[(0h=type v)|$[99h=type v;98h<>type key v;0b];g[g;e;${TREE_NODES};"";v];()])]]};` : "          ())]]};",
   "     (r 1;\"j\"$limit);{[e]e}]);",
@@ -153,7 +155,7 @@ export const PAGE = [
   "   j:(\"j\"$off)+til 0|(\"j\"$n)&m-\"j\"$off;",
   "   t:$[1b~.Q.qp t;$[count j;.Q.ind[t;j];select from t where i<0];t j];",
   "   c:$[count[cols t]=count distinct cols t;t cols t;value flip t];",
-  "   `count`names`types`cells`raw`rank!(\"f\"$m;cols t;type each c;",
+  "   `count`names`types`cells`raw`rank!(\"f\"$m;cols t;{$[x within 77 97h;0h;x]}each type each c;",
   ...COLUMN_LINES.map((line, i) => line.replace(/^ {7}/, "").replace(/;$/, i === COLUMN_LINES.length - 1 ? ")};" : ";")),
   "   (off;n);{x}]}",
 ].join("\n");
