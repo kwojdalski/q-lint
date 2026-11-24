@@ -44,6 +44,7 @@ import {
   withQuery,
   type SavedQuery,
 } from "./savedqueries";
+import { DASHBOARDS_KEY, parseDashboards, renamedTileQuery, tilesOf, type Dashboard } from "./dashboard";
 import { SAVED_LOOKS_KEY, parseLooks, renamedLook, withoutLook } from "./resultlook";
 import { SCHEDULES_KEY, parseSchedules, renamedSchedules, type ScheduledExport } from "./schedule";
 
@@ -254,11 +255,17 @@ export class SavedQueries implements TreeDataProvider<SavedQuery> {
     await this.context.workspaceState.update(SAVED_LOOKS_KEY, renamedLook(parseLooks(this.context.workspaceState.get<unknown>(SAVED_LOOKS_KEY, {})), query.name, name));
     // So do its scheduled exports and the results on show it gave (#1413).
     await this.context.workspaceState.update(SCHEDULES_KEY, renamedSchedules(this.schedules(), query.name, name));
+    // And the dashboard tiles that show it (#1616).
+    await this.context.workspaceState.update(DASHBOARDS_KEY, renamedTileQuery(this.dashboards(), query.name, name));
     this.live.savedRenamed(query.name, name);
   }
 
   private schedules(): ScheduledExport[] {
     return parseSchedules(this.context.workspaceState.get<unknown>(SCHEDULES_KEY, []));
+  }
+
+  private dashboards(): Dashboard[] {
+    return parseDashboards(this.context.workspaceState.get<unknown>(DASHBOARDS_KEY, []));
   }
 
   async remove(arg?: QueryArg): Promise<void> {
@@ -272,13 +279,17 @@ export class SavedQueries implements TreeDataProvider<SavedQuery> {
     const yes = "Delete";
     // Its scheduled exports could run nothing once it is gone: they go with it (#1413).
     const scheduled = this.schedules().filter((s) => s.query === query.name).length;
-    const also = scheduled === 0 ? "" : ` Its ${scheduled} scheduled export(s) are deleted with it.`;
+    const tiles = tilesOf(this.dashboards(), query.name);
+    const also =
+      (scheduled === 0 ? "" : ` Its ${scheduled} scheduled export(s) are deleted with it.`) +
+      (tiles === 0 ? "" : ` Its ${tiles} dashboard tile(s) are removed with it.`);
     if ((await window.showWarningMessage(plainMessage(`Delete the saved query "${query.name}"?${also}`), { modal: true }, yes)) !== yes) {
       return;
     }
     await this.store(this.queries().filter((q) => q.name !== query.name), [query.name]);
     await this.context.workspaceState.update(SAVED_LOOKS_KEY, withoutLook(parseLooks(this.context.workspaceState.get<unknown>(SAVED_LOOKS_KEY, {})), query.name));
     await this.context.workspaceState.update(SCHEDULES_KEY, renamedSchedules(this.schedules(), query.name, undefined));
+    await this.context.workspaceState.update(DASHBOARDS_KEY, renamedTileQuery(this.dashboards(), query.name, undefined));
     this.live.savedRenamed(query.name, undefined);
   }
 }

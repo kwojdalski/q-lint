@@ -40,10 +40,11 @@ export interface Drafted {
   picked?: string;
 }
 
-/// The tables of the connected process, by the explorer's lambda; none
-/// when nothing is connected or it stays busy.
-async function tablesOfProcess(live: Live): Promise<TableSummary[]> {
-  if (live.activeLabel() === undefined) {
+/// The tables of `process`, the connected process, by the explorer's
+/// lambda; none when nothing is connected, it stays busy, or the connection
+/// has moved to another process meanwhile (#1621).
+async function tablesOfProcess(live: Live, process: string | undefined): Promise<TableSummary[]> {
+  if (process === undefined || live.activeLabel() === undefined) {
     return [];
   }
   try {
@@ -51,7 +52,7 @@ async function tablesOfProcess(live: Live): Promise<TableSummary[]> {
       const configuration = workspace.getConfiguration("q-lint");
       const { excludedNamespaces } = readExplorer((key, fallback) => configuration.get(key, fallback));
       return tablesOf(readGathered(await connection.call(GATHER, excludedNamespaces.join(" "), LIMITS))).tables;
-    });
+    }, 3000, process);
     return got?.value ?? [];
   } catch {
     return [];
@@ -98,7 +99,7 @@ export async function draftQsql(live: Live, given?: string): Promise<Drafted | u
     code = await window.withProgress(
       { location: ProgressLocation.Notification, title: `q-lint: drafting qSQL with ${model.name}`, cancellable: true },
       async (_progress, token) => {
-        const tables = await tablesOfProcess(live);
+        const tables = await tablesOfProcess(live, process);
         return extractCode(await ask(model, qsqlPrompt(description, tables, process), token));
       },
     );

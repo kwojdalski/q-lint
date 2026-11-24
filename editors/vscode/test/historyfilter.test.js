@@ -203,3 +203,28 @@ test("with q-lint.queryHistory.search.enable off, filter and export refuse, and 
   await run(HISTORY_COMMANDS.filter, { process: "rdb" });
   assert.strictEqual(live.shownHistory().length, 2);
 });
+
+// Each window kept the history it read at start and wrote that back with
+// its new entry: what another window recorded meanwhile was dropped (#1619).
+test("two windows recording queries keep each other's, and Clear in one holds in the other", async (t) => {
+  const { mergedHistory } = require("../out/history.js");
+  stub.reset();
+  const one = stub.newContext();
+  const two = { ...stub.newContext(), globalState: one.globalState };
+  const a = new Live(one);
+  const b = new Live(two);
+  t.after(() => [...one.subscriptions, ...two.subscriptions].forEach((d) => d.dispose?.()));
+  const entry = (code, sec) => ({ process: "p", code, at: `2026-11-24T10:00:${String(sec).padStart(2, "0")}.000Z`, millis: 1, outcome: "ok" });
+  assert.deepStrictEqual(b.history(), []);
+  await a.record(entry("from a", 1));
+  await b.record(entry("from b", 2));
+  await a.record(entry("from a again", 3));
+  assert.deepStrictEqual(one.globalState.get("q-lint.queryHistory").map((e) => e.code), ["from a again", "from b", "from a"]);
+  assert.deepStrictEqual(b.history().map((e) => e.code), ["from a again", "from b", "from a"]);
+  // A read just after a write that returns the value before it drops nothing.
+  assert.deepStrictEqual(mergedHistory(entry("new", 9), [entry("x", 5)], [], undefined, 200).map((e) => e.code), ["new", "x"]);
+  await a.clearHistory();
+  await b.record({ ...entry("after clear", 0), at: new Date(Date.now() + 1000).toISOString() });
+  assert.deepStrictEqual(one.globalState.get("q-lint.queryHistory").map((e) => e.code), ["after clear"]);
+  assert.deepStrictEqual(a.history().map((e) => e.code), ["after clear"]);
+});

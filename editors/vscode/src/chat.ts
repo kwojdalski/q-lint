@@ -36,7 +36,7 @@ import {
   type LanguageModelChatTool,
   type TextDocument,
 } from "vscode";
-import { DESCRIBE, errorPrompt, explainPrompt, namesIn, readDescribed, type Described } from "./assist";
+import { DESCRIBE, codeOffset, errorPrompt, explainPrompt, namesIn, readDescribed, type Described } from "./assist";
 import { ASSIST_SETTINGS, assistOff, readAssist } from "./assistconfig";
 import { charKinds } from "./explorer";
 import { borrowWhenFree } from "./infoview";
@@ -87,8 +87,9 @@ export class QParticipant {
     const text = document.getText(range);
     const start = document.offsetAt(range.start);
     const hovers: { name: string; text: string }[] = [];
+    const kinds = charKinds(text);
     for (const name of names.slice(0, HOVERS)) {
-      const at = text.search(new RegExp(`(?<![\\w.])${name.replace(/\./g, "\\.")}(?![\\w])`));
+      const at = codeOffset(text, kinds, name);
       if (at < 0) {
         continue;
       }
@@ -137,7 +138,8 @@ export class QParticipant {
     // The server's hovers need the code in a file: the selection, when it is
     // what is explained.
     const server = typed === "" && selected !== undefined ? await this.fromServer(selected.document, selected.selection, names) : { hovers: [], diagnostics: [] };
-    const described = await this.describe(names);
+    // Read from the process the prompt names, or not at all (#1621).
+    const described = process === undefined ? [] : await this.describe(names, process);
     return { prompt: explainPrompt({ expression, ...(process !== undefined ? { process } : {}), ...server, described }, typed === "" ? "" : typed) };
   }
 
@@ -185,7 +187,15 @@ export async function converse(
   const messages = [LanguageModelChatMessage.User(prompt)];
   const tools = typeof lm.invokeTool === "function" ? qlintTools() : [];
   for (let round = 0; round < ROUNDS; round++) {
-    const response = await model.sendRequest(messages, tools.length > 0 ? { tools } : {}, token);
+    // The last round offers no tools: a call made in it would run with its
+    // result never sent back (#1615).
+    const last = round === ROUNDS - 1;
+    // Turned off mid-request: nothing more is sent (#1632).
+    if (round > 0 && !on()) {
+      stream.markdown(`\n\n${assistOff("chat")}`);
+      return;
+    }
+    const response = await model.sendRequest(messages, tools.length > 0 && !last ? { tools } : {}, token);
     const calls: LanguageModelToolCallPart[] = [];
     const said: LanguageModelTextPart[] = [];
     if (response.stream !== undefined) {
@@ -205,8 +215,16 @@ export async function converse(
     if (calls.length === 0 || token.isCancellationRequested) {
       return;
     }
+    if (last) {
+      stream.markdown(`\n\nStopped after ${ROUNDS} rounds of tool calls; the last round's were not run. Ask again to go on.`);
+      return;
+    }
     messages.push(LanguageModelChatMessage.Assistant([...said, ...calls]));
     for (const call of calls) {
+      if (!on()) {
+        stream.markdown(`\n\n${assistOff("chat")}`);
+        return;
+      }
       let content: unknown[];
       try {
         const result = await lm.invokeTool(call.name, { input: call.input, toolInvocationToken }, token);

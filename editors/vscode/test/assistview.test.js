@@ -78,8 +78,8 @@ vscode.workspace.openTextDocument = async ({ content, language }) => {
 };
 vscode.window.showTextDocument = async (d) => ({ document: d });
 
-const { registerAssistTools } = require("../out/assisttools.js");
-const { registerChat } = require("../out/chat.js");
+const { registerAssistTools, LISTED_TABLE_INFO } = require("../out/assisttools.js");
+const { registerChat, converse } = require("../out/chat.js");
 const { registerQsqlDraft } = require("../out/qsqldraft.js");
 const { GATHER } = require("../out/explorer.js");
 const { TABLE_INFO } = require("../out/tableinfo.js");
@@ -124,7 +124,7 @@ function fakeLive({ connected = true, history = [] } = {}) {
         ? use(
             {
               call: async (lambda, ...args) => {
-                const name = lambda === GATHER ? "GATHER" : lambda === TABLE_INFO ? "TABLE_INFO" : lambda === DESCRIBE ? "DESCRIBE" : "?";
+                const name = lambda === GATHER ? "GATHER" : lambda === TABLE_INFO || lambda === LISTED_TABLE_INFO ? "TABLE_INFO" : lambda === DESCRIBE ? "DESCRIBE" : "?";
                 live.sent.push([name, ...args]);
                 if (name === "GATHER") {
                   return {
@@ -180,6 +180,32 @@ test("List q Tables: the tables, one table's schema, reading only with the explo
   assert.match((await t2.tables.run({})).error, /No q process is connected/);
 });
 
+test("List q Tables reads a plain table name only, asks first, and refuses a handle or expression (#1612)", async () => {
+  const { live, context } = setup();
+  const tools = registerAssistTools(context, live, () => []);
+  for (const table of [":/data/db/huge", "`:/etc/passwd", "t;exit 0", "a b", "1t", ".ns..t"]) {
+    assert.match((await tools.tables.run({ table })).error, /must be a table's name/, table);
+  }
+  assert.deepStrictEqual(live.sent, []);
+  // The process checks the name is a table it lists before get.
+  await tools.tables.run({ table: ".ns.trade" });
+  assert.deepStrictEqual(live.sent, [["TABLE_INFO", ".ns.trade", 200]]);
+  assert.match(LISTED_TABLE_INFO, /in@\[tables;/);
+  // Asked before reading; read on another process than asked: refused.
+  const prepared = tools.tables.prepareInvocation({ input: { table: "trade" } });
+  assert.match(prepared.confirmationMessages.message.value, /`trade` on \*\*dev\*\*/);
+  assert.strictEqual(tools.tables.prepareInvocation({ input: {} }).confirmationMessages, undefined);
+  live.activeLabel = () => "uat";
+  assert.match((await tools.tables.run({ table: "trade", process: "uat" })).error, /asked to read trade on dev/);
+});
+
+test("List q Tables takes a null process or table as left out (#1623)", async () => {
+  const { live, context } = setup();
+  const tools = registerAssistTools(context, live, () => []);
+  assert.strictEqual((await tools.tables.run({ process: null, table: null })).tables.length, 1);
+  assert.strictEqual((await tools.tables.run({ process: null, table: "trade" })).name, "trade");
+});
+
 test("Lint q Code: qlinter's findings on the code given as standard input", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-linttool-"));
   const fake = path.join(dir, "qlinter");
@@ -205,6 +231,17 @@ test("Lint q Code: qlinter's findings on the code given as standard input", asyn
   const found = await realTools.lint.run({ code: "f:{[x;count] x+count}\n" });
   assert.ok(found.findings.some((f) => f.code === "QF001"), JSON.stringify(found));
   assert.deepStrictEqual(await realTools.lint.run({ code: "f:{[x] x+1}\n" }), { findings: [], count: 0 });
+});
+
+test("Lint q Code answers the first 200 findings, with their count (#1628)", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-lintcap-"));
+  const fake = path.join(dir, "qlinter");
+  const one = '{"line":1,"column":1,"code":"QX","rule":"r","severity":"warning","detail":"d","why":"w"}';
+  fs.writeFileSync(fake, `#!/bin/sh\ncat >/dev/null\nprintf '[%s]' '${Array(500).fill(one).join(",")}'\nexit 1\n`, { mode: 0o755 });
+  const { live, context } = setup();
+  const out = await registerAssistTools(context, live, () => [fake]).lint.run({ code: "1" });
+  assert.deepStrictEqual([out.findings.length, out.count, out.truncated], [200, 500, true]);
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test("Lint q Code reads qlinter's output whole, a character split across chunks too (#1380)", async () => {
@@ -293,6 +330,35 @@ test("@q explains a selection with the server's hovers and findings and the proc
   assert.deepStrictEqual(live.sent, [["DESCRIBE", "f"]]);
 });
 
+test("@q offers no tools in its last round and runs none of that round's calls (#1615)", async () => {
+  setup();
+  const call = () => [new LanguageModelToolCallPart("c", "q-lint_runQuery", { query: "1" })];
+  const model = fakeModel([call(), call(), call(), call(), call()]);
+  const said = [];
+  await converse(model, "p", { markdown: (m) => said.push(m) }, token, "TOKEN");
+  assert.strictEqual(model.sent.length, 5);
+  assert.strictEqual(invoked.length, 4);
+  assert.strictEqual(model.sent[4].options.tools, undefined);
+  assert.match(said.join(""), /Stopped after 5 rounds of tool calls/);
+});
+
+test("@q turned off mid-request sends no more requests and runs no more tools (#1632)", async () => {
+  setup();
+  const call = () => [new LanguageModelToolCallPart("c", "q-lint_runQuery", { query: "1" })];
+  const model = fakeModel([call(), call(), call()]);
+  const send = model.sendRequest;
+  model.sendRequest = async (...args) => {
+    const r = await send(...args);
+    stub.config.user["chat.participant.enable"] = false;
+    return r;
+  };
+  const said = [];
+  await converse(model, "p", { markdown: (m) => said.push(m) }, token, "TOKEN");
+  assert.strictEqual(model.sent.length, 1);
+  assert.strictEqual(invoked.length, 0);
+  assert.match(said.join(""), /turned off/);
+});
+
 test("@q /error explains the last failed query, or the error typed", async () => {
   const history = [
     { process: "dev", code: "1+`a", outcome: "error", error: "type", at: "", millis: 1 },
@@ -367,6 +433,26 @@ test("Draft qSQL shows the draft for review and runs nothing until Run, then run
   assert.deepStrictEqual(stub.offered, ["Run", "Insert at Cursor"]);
   assert.deepStrictEqual(edits, [["SEL", "exec 1 from t"]]);
   assert.deepStrictEqual(second.live.queried, []);
+});
+
+test("@q explain and Draft qSQL read nothing from a process switched to mid-request (#1621)", async () => {
+  const { live, context } = setup();
+  const chat = registerChat(context, live);
+  // The connection moves to uat before the read borrows it.
+  const borrow = live.borrow;
+  live.activeLabel = () => "dev";
+  live.borrow = (use) => ((live.activeLabel = () => "uat"), borrow((c) => use(c, { ...dev, label: "uat" })));
+  const asked = await chat.participant.prompt({ prompt: "f 3", command: undefined });
+  assert.doesNotMatch(asked.prompt, /\{x\*2\}/);
+  assert.deepStrictEqual(live.sent, []);
+  const second = setup();
+  registerQsqlDraft(second.context, second.live);
+  second.live.borrow = (use) => ((second.live.activeLabel = () => "uat"), fakeLive().borrow((c) => use(c, { ...dev, label: "uat" })));
+  const model = fakeModel([[new LanguageModelTextPart("exec 1 from t")]]);
+  models = [model];
+  stub.picks = [undefined];
+  await stub.commands.get("q-lint.draftQsql")("one");
+  assert.doesNotMatch(model.sent[0].messages[0].content, /trade/);
 });
 
 test("Draft qSQL turned off, or with no model: refuses and asks neither model nor process", async () => {

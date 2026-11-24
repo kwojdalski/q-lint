@@ -1946,8 +1946,9 @@ process: to read another, an agent connects with Run q Query's `process`.
 **Lint q Code** (`q-lint_lint`, `#qLint`) runs the qlinter the language
 server runs on the code it is given, as the file `{"file"}` names (for its
 configuration) or `snippet.q`, and answers its findings. Each has its own
-setting, `q-lint.agent.schemaTool.enable` and `q-lint.agent.lintTool.enable`;
-turned off, the tool is unregistered.
+setting, `q-lint.agent.schemaTool.enable` and `q-lint.agent.lintTool.enable`,
+as Run q Query has `q-lint.agent.queryTool.enable`; turned off, the tool is
+unregistered.
 
 **@q in the chat.** `@q <code>`, or `@q` with q code selected in an editor,
 explains the code, right to left. The model is the one picked in the chat,
@@ -2708,6 +2709,7 @@ nothing.
 | `q-lint.argumentSlot.enable` | `true` | Highlight the argument of `f[a;b;c]` the cursor is in and name its parameter. Asks the language server only. Off, nothing listens or is drawn. | - |
 | `q-lint.editor.continuationIndent.enable` | `true` | Indent the line after one that leaves a bracket open, on Enter. Off, Enter is VS Code's own. | - |
 | `q-lint.editor.dottedNames.enable` | `true` | Take `.ns.f` and `x.y` as one word for Ctrl/Cmd+D, occurrence highlights and completion. Off, a word is VS Code's own. | - |
+| `q-lint.editor.parameterCache.enable` | `true` | **Toggle Parameter Cache** and its status bar item. Off, the command is hidden and refuses and the item is hidden. | - |
 | `q-lint.processSymbols.enable` | `false` | List the names only the connected process defines in **Go to Symbol in Workspace**, read while you search. Off, no provider is registered and nothing is sent. | - |
 | `q-lint.processExplorer.driftDetection.enable` | `false` | **Check Drift Against Process**: compare the workspace's function definitions with the connected process. Off, the command is hidden and reads nothing. | - |
 | `q-lint.query.lineTimings.enable` | `true` | **Time Lines on Process** and **Clear Line Timings**. Off, the commands are hidden and refuse, and the timings drawn are cleared. | - |
@@ -2857,6 +2859,7 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | Setting | Default | What it does | q-pro |
 | --- | --- | --- | --- |
 | `q-lint.agent.queryTimeout` | `30` | Seconds a query run by an agent through **Run q Query** may take before it is aborted, as **Abort Current Query** aborts one. `0` sets no limit. | - |
+| `q-lint.agent.queryTool.enable` | `true` | The **Run q Query** tool: q code an agent wrote, run on a process after you confirm it. Off, it is unregistered and a call on its way is refused. | - |
 | `q-lint.agent.schemaTool.enable` | `true` | The **List q Tables** tool: the connected process's tables, or one table's schema. Off, it is unregistered. | - |
 | `q-lint.agent.lintTool.enable` | `true` | The **Lint q Code** tool: qlinter's findings on code an agent gives it. Off, it is unregistered. | - |
 | `q-lint.chat.participant.enable` | `true` | The **@q** chat participant. Off, it is removed from the chat. | - |

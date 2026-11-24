@@ -1,10 +1,14 @@
 // Toggle Parameter Cache (#892) as a VS Code command and a status bar item.
 // What is inserted, where, and what is recognised again is `paramcache.ts`'s;
 // this applies it to the editor and shows when the active file holds a
-// cached lambda.
+// cached lambda. Turned off (`q-lint.editor.parameterCache.enable`, #1624),
+// the command is hidden and refuses and the status bar item is hidden.
 import { commands, Range, StatusBarAlignment, window, workspace, type ExtensionContext, type StatusBarItem } from "vscode";
 import { PARAM_CACHE, cachedLambdas, cachedText, toggleAt } from "./paramcache";
+import { editorFeatureOff, editorFeatureOn } from "./editorfeatures";
 import { plainMessage } from "./history";
+
+const on = (): boolean => editorFeatureOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "parameterCache");
 
 export class ParameterCache {
   private readonly item: StatusBarItem;
@@ -32,6 +36,11 @@ export class ParameterCache {
           this.refresh();
         }
       }),
+      workspace.onDidChangeConfiguration((event) => {
+        if (event.affectsConfiguration("q-lint.editor.parameterCache")) {
+          this.refresh();
+        }
+      }),
     );
     this.refresh();
   }
@@ -45,7 +54,7 @@ export class ParameterCache {
   private refresh(): void {
     const document = window.activeTextEditor?.document;
     // Only q is read: a markdown file quoting an instrumented lambda caches nothing.
-    this.count = document === undefined || document.languageId !== "q" ? 0 : cachedLambdas(document.getText());
+    this.count = !on() || document === undefined || document.languageId !== "q" ? 0 : cachedLambdas(document.getText());
     const text = cachedText(this.count);
     if (text === undefined) {
       this.item.hide();
@@ -56,6 +65,10 @@ export class ParameterCache {
   }
 
   private async toggle(): Promise<void> {
+    if (!on()) {
+      void window.showInformationMessage(plainMessage(editorFeatureOff("parameterCache")));
+      return;
+    }
     const editor = window.activeTextEditor;
     // The command palette offers it in any editor; only q is edited.
     if (editor === undefined || editor.document.languageId !== "q") {

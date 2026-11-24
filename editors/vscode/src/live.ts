@@ -65,7 +65,7 @@ import { ClosedBeforeHandshake, QConnection, QError, type Target } from "./qclie
 import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, TunnelHandshakeError, readTunnel } from "./tunnel";
 import { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, readGateway } from "./gateway";
 import { HEARTBEAT, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
-import { historyHeading, historyLabel, iconsEscaped, plainMessage } from "./history";
+import { historyHeading, historyLabel, iconsEscaped, mergedHistory, plainMessage } from "./history";
 import { render } from "./query";
 import { QueryModes, type PageLater, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
@@ -75,6 +75,8 @@ import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import type { RunExtra } from "./runargs";
 import { QueryControls } from "./controls";
 import { ParameterCache } from "./paramcachecontrol";
+import { DASHBOARDS_KEY, parseDashboards, retargetedTiles } from "./dashboard";
+import { SCHEDULES_KEY, parseSchedules, retargetedSchedules } from "./schedule";
 import { CONTROL_COMMANDS, FILE_CONNECTIONS_KEY, UNLIMITED, armTimeout, limits, readUnlimited, runUnwrapped, timedOutError, withBinding } from "./querycontrols";
 import { elapsedText, finishedText, readProgress, shouldNotify } from "./progress";
 import {
@@ -109,6 +111,7 @@ const PROCESSES_KEY = "q-lint.processes";
 /// The address of each process the shared list held when last read (#955).
 const SHARED_SEEN_KEY = "q-lint.sharedProcessesSeen";
 const HISTORY_KEY = "q-lint.queryHistory";
+const HISTORY_CLEARED_KEY = "q-lint.queryHistoryCleared";
 /// How many queries the history keeps.
 const HISTORY_LIMIT = 200;
 
@@ -498,10 +501,11 @@ export class Live {
   readonly runFileWith: (extra: RunExtra, document?: TextDocument) => Promise<void>;
   private connection: QConnection | undefined;
   /// The query history, newest first. Kept here and written through to
-  /// `globalState`, never rebuilt from it: a read of `globalState` straight
-  /// after a write can return the value before it, and a list rebuilt from
-  /// that drops the entry just added.
-  private queries: HistoryEntry[] | undefined;
+  /// `globalState`, never rebuilt from it alone: a read of `globalState`
+  /// straight after a write can return the value before it, and a list
+  /// rebuilt from that drops the entry just added. Merged with it at each
+  /// read, since every window writes it (#1619).
+  private queries: HistoryEntry[] = [];
   private active: Process | undefined;
   /// The connection `open` is running the connect script on, before it is
   /// the active one: what Disconnect closes then.
@@ -974,8 +978,13 @@ export class Live {
   }
 
   history(): HistoryEntry[] {
-    this.queries ??= this.context.globalState.get<HistoryEntry[]>(HISTORY_KEY, []);
+    this.queries = mergedHistory(undefined, this.queries, this.storedHistory(), this.context.globalState.get<string>(HISTORY_CLEARED_KEY), HISTORY_LIMIT);
     return this.queries;
+  }
+
+  private storedHistory(): HistoryEntry[] {
+    const stored = this.context.globalState.get<unknown>(HISTORY_KEY, []);
+    return Array.isArray(stored) ? (stored as HistoryEntry[]) : [];
   }
 
   /// The history through the Query History view's filter.
@@ -1346,7 +1355,11 @@ export class Live {
       return;
     }
     const yes = "Delete";
-    const sure = await window.showWarningMessage(plainMessage(`Delete the q process "${process.label}" from the list?`), { modal: true }, yes);
+    // Its dashboard tiles and scheduled exports go with it (#1617).
+    const tiles = parseDashboards(this.context.workspaceState.get<unknown>(DASHBOARDS_KEY, [])).reduce((n, d) => n + d.tiles.filter((t) => t.process === process.label).length, 0);
+    const scheduled = parseSchedules(this.context.workspaceState.get<unknown>(SCHEDULES_KEY, [])).filter((s) => s.process === process.label).length;
+    const also = (tiles === 0 ? "" : ` Its ${tiles} dashboard tile(s) are removed with it.`) + (scheduled === 0 ? "" : ` Its ${scheduled} scheduled export(s) are deleted with it.`);
+    const sure = await window.showWarningMessage(plainMessage(`Delete the q process "${process.label}" from the list?${also}`), { modal: true }, yes);
     if (sure !== yes) {
       return;
     }
@@ -1362,7 +1375,11 @@ export class Live {
 
   /// Bind the files bound to the process `from` to `to` instead, or unbind
   /// them: a binding is by label, and one to no process fails every query.
+  /// Dashboard tiles and scheduled exports, also by label, move with it, or
+  /// go with a deleted process (#1617).
   private async rebind(from: string, to: string | undefined): Promise<void> {
+    await this.context.workspaceState.update(DASHBOARDS_KEY, retargetedTiles(parseDashboards(this.context.workspaceState.get<unknown>(DASHBOARDS_KEY, [])), from, to));
+    await this.context.workspaceState.update(SCHEDULES_KEY, retargetedSchedules(parseSchedules(this.context.workspaceState.get<unknown>(SCHEDULES_KEY, [])), from, to));
     let stored = this.context.workspaceState.get<unknown>(FILE_CONNECTIONS_KEY);
     if (typeof stored !== "object" || stored === null) {
       return;
@@ -1610,13 +1627,18 @@ export class Live {
   /// Run `process`'s connect script on `connection`, just opened, before any
   /// query can be: its failure is said, and the connection kept. `stopped`
   /// says the connect was given up - a disconnect - while the read-only
-  /// guard's question was open: nothing is sent then (#1357).
-  private async runConnectScript(connection: QConnection, process: Process, stopped: () => boolean = () => false): Promise<void> {
+  /// guard's question was open: nothing is sent then (#1357). `unattended`:
+  /// run from a timer, with nobody to ask - a script the guard holds is not
+  /// run, and that or a failure throws for the caller to report (#1618).
+  private async runConnectScript(connection: QConnection, process: Process, stopped: () => boolean = () => false, unattended = false): Promise<void> {
     const script = scriptOf(process);
     if (script === undefined || !this.setting(readConnectScript).enabled) {
       return;
     }
     const failed = (why: string): void => {
+      if (unattended) {
+        throw new Error(`the connect script of ${process.label} failed: ${why}`);
+      }
       this.show([`# ${process.label} - connect script failed: ${why}`], false);
       void window.showWarningMessage(plainMessage(`q-lint: the connect script of ${process.label} failed: ${why}`));
     };
@@ -1646,7 +1668,11 @@ export class Live {
     if (cut.length === 0) {
       return;
     }
-    if (!(await this.guardAllows(code, [process], `The connect script of ${process.label}`))) {
+    const refused = unattended ? this.guardRefuses(code, [process]) : undefined;
+    if (refused !== undefined) {
+      throw new Error(`the connect script of ${process.label} was not run, and nothing was: ${refused}`);
+    }
+    if (!unattended && !(await this.guardAllows(code, [process], `The connect script of ${process.label}`))) {
       this.show([`# ${process.label} - connect script not run: changing a read-only process was not confirmed`], false);
       return;
     }
@@ -1679,6 +1705,9 @@ export class Live {
       }
       this.output.appendLine(`# ${process.label} - connect script ran (${Date.now() - started} ms)`);
     } catch (error) {
+      if (unattended && error instanceof Error && error.message.startsWith(`the connect script of ${process.label} failed`)) {
+        throw error;
+      }
       if (!stopped()) {
         failed(timedOut ? timedOutError(timeout) : error instanceof Error ? error.message : String(error));
       }
@@ -2502,7 +2531,11 @@ export class Live {
   /// timeout); `signal` stops waiting. On a TorQ gateway it goes through
   /// `.gw.syncexec` to the process's server types, as `run` sends it. Throws
   /// why there is no answer. The caller asks the read-only guard first.
-  async runApart(process: Process, code: string, signal?: AbortSignal): Promise<GridAnswer> {
+  /// `whole`: every row and the whole text, whatever the limits - a
+  /// scheduled export writes the result, not its first page (#1613).
+  /// `unattended`: run from a timer - a tile's refresh, a schedule - so the
+  /// connect script asks nobody and its failure is thrown (#1618).
+  async runApart(process: Process, code: string, signal?: AbortSignal, options: { whole?: boolean; unattended?: boolean } = {}): Promise<GridAnswer> {
     const commanded = process.credentialCommand !== undefined && this.setting(readAdmin).credentialCommand;
     if (!commanded && process.user && process.server !== undefined && (await this.context.secrets.get(passwordKey(process))) === undefined) {
       throw new Error(`no password is stored for ${process.user}: connect to ${process.label} once to give it`);
@@ -2519,10 +2552,10 @@ export class Live {
       connection.abort();
     });
     try {
-      await this.runConnectScript(connection, process);
+      await this.runConnectScript(connection, process, undefined, options.unattended === true);
       const configuration = workspace.getConfiguration("q-lint");
       const settings = readLive((key, fallback) => configuration.get(key, fallback));
-      const unlimited = this.controls.unlimited;
+      const unlimited = this.controls.unlimited || options.whole === true;
       const { consoleSize, gridLimit } = limits(settings, unlimited);
       // On a TorQ gateway, through `.gw.syncexec`, as `run` sends it (#1230).
       const cut = statements(this.throughGateway(code, process));
@@ -2904,7 +2937,7 @@ export class Live {
   }
 
   async record(entry: HistoryEntry): Promise<void> {
-    this.queries = [entry, ...this.history()].slice(0, HISTORY_LIMIT);
+    this.queries = mergedHistory(entry, this.queries, this.storedHistory(), this.context.globalState.get<string>(HISTORY_CLEARED_KEY), HISTORY_LIMIT);
     this.refreshHistory();
     await this.context.globalState.update(HISTORY_KEY, this.queries);
   }
@@ -2948,8 +2981,10 @@ export class Live {
 
   private async clearHistory(): Promise<void> {
     this.queries = [];
+    // When, so another window's copy drops what it held from before (#1619).
+    await this.context.globalState.update(HISTORY_CLEARED_KEY, new Date().toISOString());
+    await this.context.globalState.update(HISTORY_KEY, []);
     this.refreshHistory();
-    await this.context.globalState.update(HISTORY_KEY, this.queries);
   }
 
   /// Redraw the Query History view, saying what it is filtered by and when

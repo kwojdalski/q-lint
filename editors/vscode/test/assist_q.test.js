@@ -114,3 +114,16 @@ test("the tables GATHER lists, and one table's schema", { skip }, async (t) => {
   assert.deepStrictEqual([trade.kind, trade.rows, trade.partitions], ["partitioned", 6, 2]);
   assert.deepStrictEqual(trade.columns.map((x) => x.type), ["date", "symbol", "float"]);
 });
+
+test("List q Tables reads only a table the process lists: no view run, no file read (#1612)", { skip }, async (t) => {
+  require("./vscode_stub.js");
+  const { LISTED_TABLE_INFO } = require("../out/assisttools.js");
+  const c = await connect(t, `${SERVER}calls:0\nvw::(calls+::1;k)\n`);
+  for (const name of ["k", "trade", ".ns.t"]) {
+    assert.strictEqual(schemaOf(name, readTableInfo(await c.call(LISTED_TABLE_INFO, name, 200))).name, name);
+  }
+  for (const name of ["vw", "`:db/ref", ":db/ref", ".zz.t", "nosuch"]) {
+    await assert.rejects(c.call(LISTED_TABLE_INFO, name, 200), /not a table/, name);
+  }
+  assert.strictEqual(String((await c.evaluate("calls")).value), "0");
+});

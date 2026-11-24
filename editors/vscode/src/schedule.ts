@@ -112,9 +112,19 @@ export function renamedSchedules(list: ScheduledExport[], from: string, to: stri
   return list.flatMap((s) => (s.query !== from ? [s] : to === undefined ? [] : [{ ...s, query: to }]));
 }
 
+/// The schedules once the process `from` is renamed `to`, or deleted (`to`
+/// undefined): they run on the new label, or are gone (#1617).
+export function retargetedSchedules(list: ScheduledExport[], from: string, to: string | undefined): ScheduledExport[] {
+  return list.flatMap((s) => (s.process !== from ? [s] : to === undefined ? [] : [{ ...s, process: to }]));
+}
+
 /// Whether `s` is due at `now`: its interval has passed since it last ran,
-/// or one of today's times has come since then.
+/// or one of today's times has come since then. A last run after `now` was
+/// stamped by a clock since put back: it runs once, to restart (#1625).
 export function isDue(s: Pick<ScheduledExport, "times" | "every" | "since">, now: Date): boolean {
+  if (s.since > now.getTime()) {
+    return true;
+  }
   if (s.every !== undefined) {
     return now.getTime() - s.since >= s.every * 60_000;
   }
@@ -126,16 +136,28 @@ export function isDue(s: Pick<ScheduledExport, "times" | "every" | "since">, now
 }
 
 /// The file a run at `now` writes: `path`, or with `-YYYYMMDD-HHMMSS`
-/// before its extension.
+/// before its extension. Within an hour of a change of UTC offset - when
+/// clocks go back, a wall time comes twice - the stamp ends with the
+/// offset, `-0400`, so the second run does not replace the first (#1626).
 export function outputPath(path: string, mode: ScheduledExport["mode"], now: Date): string {
   if (mode === "replace") {
     return path;
   }
   const two = (n: number): string => String(n).padStart(2, "0");
-  const stamp = `${now.getFullYear()}${two(now.getMonth() + 1)}${two(now.getDate())}-${two(now.getHours())}${two(now.getMinutes())}${two(now.getSeconds())}`;
+  const offset = now.getTimezoneOffset();
+  const changing = [-3_600_000, 3_600_000].some((d) => new Date(now.getTime() + d).getTimezoneOffset() !== offset);
+  const zone = changing ? `${offset > 0 ? "-" : "+"}${two(Math.floor(Math.abs(offset) / 60))}${two(Math.abs(offset) % 60)}` : "";
+  const stamp = `${now.getFullYear()}${two(now.getMonth() + 1)}${two(now.getDate())}-${two(now.getHours())}${two(now.getMinutes())}${two(now.getSeconds())}${zone}`;
   const slash = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   const dot = path.lastIndexOf(".");
   return dot > slash + 1 ? `${path.slice(0, dot)}-${stamp}${path.slice(dot)}` : `${path}-${stamp}`;
+}
+
+/// Why `payload` is not the whole result - fewer rows came back than it
+/// has - or undefined when it is all there (#1613).
+export function incomplete(payload: { count: number; cells: string[][] }): string | undefined {
+  const rows = payload.cells[0]?.length ?? 0;
+  return payload.cells.length > 0 && rows < payload.count ? `only ${rows} of its ${payload.count} rows came back` : undefined;
 }
 
 /// Why `code` may not be scheduled, or undefined when it may: it would

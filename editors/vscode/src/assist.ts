@@ -80,6 +80,17 @@ const WORDS = new Set(
   ).split(" "),
 );
 
+/// Where `name` is first written as code in `text` - not in a string or a
+/// comment (#1631); -1 when it is not.
+export function codeOffset(text: string, kinds: string, name: string): number {
+  for (const m of text.matchAll(new RegExp(`(?<![\\w.])${name.replace(/\./g, "\\.")}(?![\\w])`, "g"))) {
+    if (kinds[m.index] === "c") {
+      return m.index;
+    }
+  }
+  return -1;
+}
+
 /// The names `expression` uses that the process could hold: written as
 /// code, not in a string, a symbol or a comment, and not one of q's common
 /// words. At most `DESCRIBE_LIMIT`, in order of first use.
@@ -222,7 +233,15 @@ export function fence(text: string, language = "q"): string {
 /// The longest text of one item the model is given: a function's source,
 /// an error's code.
 const CUT = 4000;
-const cut = (text: string): string => (text.length > CUT ? `${text.slice(0, CUT)}\n... (${text.length - CUT} more characters)` : text);
+/// `text` cut to `CUT` UTF-16 units, one less when the cut would split a
+/// surrogate pair and send half a character (#1622).
+export const cut = (text: string): string => {
+  if (text.length <= CUT) {
+    return text;
+  }
+  const end = /[\uD800-\uDBFF]/.test(text[CUT - 1]) ? CUT - 1 : CUT;
+  return `${text.slice(0, end)}\n... (${text.length - end} more characters)`;
+};
 
 /// What the language server and the process say about an expression.
 export interface ExplainContext {
@@ -322,10 +341,16 @@ export function qsqlPrompt(description: string, tables: TableSummary[], process:
 }
 
 /// The q code in a model's reply: its first fenced block, or all of it
-/// when it has none.
+/// when it has none. A block closes only at a fence starting a line, so
+/// backticks in the code (```a, a symbol list) stay in it; a block on one
+/// line - ```q select from t``` - loses its fences too (#1627).
 export function extractCode(reply: string): string {
-  const m = /(`{3,})[ \t]*([\w+-]*)[^\n]*\n([\s\S]*?)\n?\1/.exec(reply);
-  return (m === null ? reply : m[3]).trim();
+  const block = /(`{3,})[^\n`]*\n([\s\S]*?)^[ \t]*\1[ \t]*$/m.exec(reply);
+  if (block !== null) {
+    return block[2].trim();
+  }
+  const line = /(`{3,})(?:(?:q|k|kdb|qsql)(?=[ \t]))?[ \t]*([^\n]*?)[ \t]*\1(?!`)/.exec(reply);
+  return (line !== null && line[2] !== "" ? line[2] : reply).trim();
 }
 
 /// The draft a qSQL preview shows: a comment saying where it came from,
