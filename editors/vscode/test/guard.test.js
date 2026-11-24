@@ -1268,3 +1268,29 @@ test("a function picked from .q by any index is a change (#1765)", () => {
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("hopen applied with @, ., ', each, in parentheses or a trap opens the file (#1769)", () => {
+  const cases = {
+    "hopen@`:g.txt": ["opens a file with hopen"],
+    "(hopen)`:g.txt": ["opens a file with hopen"],
+    "hopen . enlist`:g.txt": ["opens a file with hopen"],
+    "hopen'[enlist`:g.txt]": ["opens a file with hopen"],
+    "hopen each enlist`:g.txt": ["opens a file with hopen"],
+    "@[hopen;`:g.txt;{x}]": ["opens a file with hopen"],
+    ".Q.trp[(hopen@);`:g.txt;{x}]": ["opens a file with hopen"],
+    "hopen -1!`g.txt": ["opens a file with hopen"],
+    "hopen .q.hsym`g.txt": ["opens a file with hopen"],
+    "'[::;hopen]`:g.txt": ["opens a file with hopen"],
+    "0((hopen);`:g.txt)": ["evaluates a call of (hopen) on handle 0"],
+    // Of a process, or of a value, it connects.
+    "hopen@`:host:5000": [],
+    "@[hopen;`::5000;{x}]": [],
+    "hopen each (`:a:5000;`:b:5001)": [],
+    "hopen -1!`host:5000": [],
+    "@[hopen;h;{x}]": [],
+    "hopen 5000": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

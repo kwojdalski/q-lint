@@ -37,7 +37,8 @@
 //   arguments are then not read (#1764) - `system` of a string literal
 //   is read as that command, so `system "c"` only reads; `hopen` of a file handle
 //   (`` hopen `:f ``, `` hopen hsym `f ``, `` hopen `$":f" ``, `hopen ":f"`),
-//   which creates the file to write through - of a
+//   which creates the file to write through, also applied some other way
+//   (`` hopen@`:f ``, `` @[hopen;`:f;h] ``, `` hopen -1!`f ``, #1769) - of a
 //   process (`` `:host:5000 ``, a port) it only connects, and what is sent
 //   over that handle is not read;
 // - `xasc`, `xdesc` or `xkey` on a table named by a symbol
@@ -261,6 +262,28 @@ function computedHandle(t: Token[], end: number): boolean {
   }
   const inside = t.slice(open + 1, end);
   return t[open - 1]?.text === "hsym" || t[open - 1]?.text === ".Q.dd" || (t[open].text === "(" && (buildsHandle(inside) || (inside.length === 1 && inside[0].kind === "sym" && inside[0].text.startsWith("`:")) || castHandle(inside, 0)));
+}
+
+/// Whether a file's handle is made between `t[from]` and `t[to]`: written,
+/// `` `:f ``, made with `hsym` or `-1!`, `` hsym`f ``, `` -1!`f ``, cast,
+/// `` `$":f" ``, or a string, `":f"`. A process's, `` `:host:5000 ``, is not.
+function fileIn(t: Token[], from: number, to: number): boolean {
+  for (let p = from; p < to; p++) {
+    const k = t[p];
+    const made =
+      (k.kind === "name" && unqualified(k.text) === "hsym" && t[p + 1]?.kind === "sym") ||
+      (k.text === "-1" && t[p + 1]?.text === "!" && t[p + 2]?.kind === "sym");
+    const sym = made ? t[p + (k.text === "-1" ? 2 : 1)].text : undefined;
+    if (
+      (k.kind === "sym" && k.text.length > 2 && isFileHandle(k.text)) ||
+      (sym !== undefined && sym.length > 1 && isFileHandle(sym.startsWith("`:") ? sym : `\`:${sym.slice(1)}`)) ||
+      (castHandle(t, p) && isFileHandle(`\`${qText(t[p + 2].text)}`)) ||
+      (k.kind === "str" && k.text.startsWith('":') && isFileHandle(`\`${qText(k.text)}`))
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /// Whether `t[i]` starts a handle cast from a string, `` `$":f" ``.
@@ -832,6 +855,10 @@ function readStatement(statement: string, found: Set<string>): void {
           if (first === undefined || isFileHandle(first.text)) {
             found.add(`opens a file with ${k.text}`);
           }
+        } else if (handle === undefined && fileIn(t, i + 1, expressionEnd(t, i))) {
+          // Applied some other way, `hopen@`:f`, `(hopen)`:f`, `@[hopen;`:f;h]`,
+          // `` hopen -1!`f `` (#1769): a file's handle in its expression.
+          found.add(`opens a file with ${k.text}`);
         }
         continue;
       }
