@@ -50,12 +50,21 @@ export const RERUN_FAILED = "q-lint.rerunFailedTests";
 export type TestMode = "test" | "true" | "fail" | "run" | "match";
 
 /// One test the language server lists: its name as written, where, the code
-/// that defines it under its `\d`, and the call that runs it.
+/// that defines it under its `\d`, the call that runs it, and the name q
+/// defines it by (`.a.test_x`).
 export interface ServerTest {
   name: string;
   range: { start: { line: number; character: number }; end: { line: number; character: number } };
   code: string;
   call: string;
+  qualified?: string;
+}
+
+/// A function test's Test Explorer id: its file's URI, `#`, and the name q
+/// defines it by, so that two of one name under two `\d`s are two tests
+/// (#1592) - the name as written from a server that does not say.
+export function functionTestId(uri: string, test: { name: string; qualified?: string }): string {
+  return `${uri}#${test.qualified ?? test.name}`;
 }
 
 export interface ServerTestFile {
@@ -89,7 +98,10 @@ export function readServerTests(raw: unknown): ServerTestFile[] {
         position((t.range as { end?: unknown } | undefined)?.end),
     );
     if (tests.length > 0) {
-      files.push({ uri: file.uri, tests: tests.map(({ name, range, code, call }) => ({ name, range, code, call })) });
+      files.push({
+        uri: file.uri,
+        tests: tests.map(({ name, range, code, call, qualified }) => ({ name, range, code, call, ...(typeof qualified === "string" ? { qualified } : {}) })),
+      });
     }
   }
   return files;

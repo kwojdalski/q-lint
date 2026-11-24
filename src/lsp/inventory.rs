@@ -227,7 +227,7 @@ fn statements(text: &str) -> BTreeMap<String, Vec<String>> {
 }
 
 /// `q-lint/testsReaching`: given `textDocument` and the `previous` text the
-/// client saw of it, `{changed: [names], tests: [{uri, name}]}` - the
+/// client saw of it, `{changed: [names], tests: [{uri, name, qualified}]}` - the
 /// functions whose statements differ, are new or are gone, and every test
 /// that reaches one of them, the changed tests themselves included.
 fn tests_reaching(params: &Value, sources: &Sources) -> Value {
@@ -250,7 +250,7 @@ fn tests_reaching(params: &Value, sources: &Sources) -> Value {
     // statement is an edge from that function to it, the name as q
     // resolves it and as written.
     let mut callers: BTreeMap<String, HashSet<String>> = BTreeMap::new();
-    let mut tests: Vec<(String, String, String)> = vec![];
+    let mut tests: Vec<(String, String, String, String)> = vec![];
     for key in sources.keys() {
         let Some((uri, text)) = sources.text(key) else {
             continue;
@@ -286,7 +286,7 @@ fn tests_reaching(params: &Value, sources: &Sources) -> Value {
                     .iter()
                     .find(|m| m.at == run.at)
                     .map_or(spelled.clone(), |m| m.name.clone());
-                tests.push((uri.clone(), spelled, resolved));
+                tests.push((uri.clone(), spelled, resolved, run.name));
             }
         }
     }
@@ -306,8 +306,8 @@ fn tests_reaching(params: &Value, sources: &Sources) -> Value {
     }
     let found: Vec<Value> = tests
         .into_iter()
-        .filter(|(_, spelled, resolved)| reached.contains(resolved) || reached.contains(spelled))
-        .map(|(uri, name, _)| json!({"uri": uri, "name": name}))
+        .filter(|(_, spelled, resolved, _)| reached.contains(resolved) || reached.contains(spelled))
+        .map(|(uri, name, _, qualified)| json!({"uri": uri, "name": name, "qualified": qualified}))
         .collect();
     json!({"changed": changed, "tests": found})
 }

@@ -391,6 +391,11 @@ test("the q Namespaces view groups the server's definitions and goes away when o
 test("affected tests on save are off by default; on, a save runs the tests the server names", async () => {
   assert.deepStrictEqual(affectedIds({ tests: [{ uri: "file:///t.q", name: "test_a" }, { uri: "file:///t.q", name: "test_gone" }] }, ["file:///t.q#test_a"]), ["file:///t.q#test_a"]);
   assert.deepStrictEqual(affectedIds(null, ["x"]), []);
+  // Two of one name in two namespaces: the one the server names (#1592).
+  assert.deepStrictEqual(
+    affectedIds({ tests: [{ uri: "file:///t.q", name: "test_x", qualified: ".b.test_x" }] }, ["file:///t.q#.a.test_x", "file:///t.q#.b.test_x"]),
+    ["file:///t.q#.b.test_x"],
+  );
   const { context, restore } = setUp();
   const saves = [];
   vscode.workspace.onDidSaveTextDocument = (l) => (saves.push(l), { dispose: () => saves.splice(saves.indexOf(l), 1) });

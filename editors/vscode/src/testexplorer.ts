@@ -58,6 +58,7 @@ import {
   RERUN_FAILED,
   TEST_RUN,
   failureText,
+  functionTestId,
   isK4Test,
   k4Label,
   k4Mode,
@@ -283,7 +284,7 @@ class QTests {
         const uri = Uri.parse(file.uri);
         const parent = this.controller.createTestItem(file.uri, workspace.asRelativePath(uri), uri);
         for (const test of file.tests) {
-          const item = this.controller.createTestItem(`${file.uri}#${test.name}`, test.name, uri);
+          const item = this.controller.createTestItem(functionTestId(file.uri, test), test.name, uri);
           item.range = new Range(test.range.start.line, test.range.start.character, test.range.end.line, test.range.end.character);
           this.entries.set(item, { kind: "function", test });
           parent.children.add(item);

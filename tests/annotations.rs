@@ -1245,6 +1245,33 @@ fn the_tests_reaching_the_functions_a_save_changed_are_listed() {
     assert_eq!(reply["result"]["tests"], json!([]), "{reply}");
 }
 
+/// Two tests of one name in two namespaces of a file are told apart by the
+/// name q gives each, in the list and in the tests a save reaches (#1592).
+#[test]
+fn a_test_carries_the_name_q_defines_it_by() {
+    let dir = tempfile::tempdir().unwrap();
+    let suite = "\\d .a\ntest_x:{[] f 1}\n\\d .b\ntest_x:{[] 0b}\n\\d .\nf:{x}\n";
+    let (mut server, _) = Server::over(dir.path(), &[("t.q", suite)], client(), Value::Null);
+    let reply = server.request("q-lint/tests", json!({}));
+    let qualified: Vec<&str> = reply["result"][0]["tests"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"))
+        .iter()
+        .map(|t| t["qualified"].as_str().unwrap())
+        .collect();
+    assert_eq!(qualified, [".a.test_x", ".b.test_x"]);
+    let uri = server.open(dir.path(), "t.q", &suite.replace("f:{x}", "f:{x+1}"));
+    let reply = server.request(
+        "q-lint/testsReaching",
+        json!({"textDocument": {"uri": uri}, "previous": suite}),
+    );
+    assert_eq!(
+        reply["result"]["tests"],
+        json!([{"uri": uri, "name": "test_x", "qualified": ".a.test_x"}]),
+        "{reply}"
+    );
+}
+
 /// `q-lint/testsReaching` for `name`, saved as `now` over `previous`: the
 /// changed names and the tests reached, sorted.
 fn reaching(

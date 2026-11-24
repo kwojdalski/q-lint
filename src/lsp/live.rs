@@ -135,6 +135,7 @@ fn tests(params: &Value, sources: &Sources) -> Value {
                     "range": range(&lines, run.at, run.len),
                     "code": format!("{}{}", run.fixtures, run.code),
                     "call": call,
+                    "qualified": run.name,
                 }))
             })
             .collect();

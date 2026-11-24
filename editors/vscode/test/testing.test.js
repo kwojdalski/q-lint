@@ -111,7 +111,11 @@ function fakeTests() {
     replace(next) {
       list.splice(0, list.length, ...next);
     },
+    // Keyed by id, as VS Code's collection is: a second of one id replaces
+    // the first.
     add(item) {
+      const at = list.findIndex((i) => i.id === item.id);
+      if (at >= 0) list.splice(at, 1);
       list.push(item);
     },
     forEach(f) {
@@ -461,4 +465,25 @@ test("the Test Explorer turned off mid-run sends none of the tests still queued 
   await explorer.discover();
   await explorer.run();
   assert.strictEqual(live.sent.length, 1);
+});
+
+test("two tests of one name under two \\d's in a file are two tests, each run (#1592)", async () => {
+  stub.reset();
+  fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  const listed = [
+    {
+      uri: "file:///w/t.q",
+      tests: [
+        { name: "test_x", range: range(1, 0, 6), code: "\\d .a\ntest_x:{1b}\n\\d .", call: ".a.test_x[]", qualified: ".a.test_x" },
+        { name: "test_x", range: range(3, 0, 6), code: "\\d .b\ntest_x:{0b}\n\\d .", call: ".b.test_x[]", qualified: ".b.test_x" },
+      ],
+    },
+  ];
+  const live = fakeLive();
+  const explorer = registerTestExplorer(stub.newContext(), live, () => ({ sendRequest: async () => listed }));
+  await explorer.discover();
+  assert.deepStrictEqual(explorer.items(), ["file:///w/t.q#.a.test_x", "file:///w/t.q#.b.test_x"]);
+  await explorer.run();
+  assert.deepStrictEqual(live.sent.map((s) => s.statements.at(-1)), [".a.test_x[]", ".b.test_x[]"]);
 });
