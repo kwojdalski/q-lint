@@ -34,6 +34,11 @@ const stubKind = (): CodeActionKind => CodeActionKind.Refactor.append("generateT
 
 class StubActions implements CodeActionProvider {
   provideCodeActions(document: TextDocument, range: Range): CodeAction[] {
+    // A test file goes beside a file on disk: an untitled editor or a
+    // notebook cell has none (#1600).
+    if (document.uri.scheme !== "file") {
+      return [];
+    }
     const target = functionAt(document.getText(), range.start.line);
     if (target === undefined) {
       return [];
@@ -98,6 +103,10 @@ export async function generateStub(uri?: Uri, line?: number): Promise<boolean> {
   const at = line ?? editor?.selection.active.line;
   if (source === undefined || at === undefined) {
     void window.showInformationMessage("q-lint: put the cursor in a function's definition to generate its test.");
+    return false;
+  }
+  if (source.scheme !== "file") {
+    void window.showInformationMessage("q-lint: save the file first: its test goes in a file beside it.");
     return false;
   }
   const document = await workspace.openTextDocument(source);

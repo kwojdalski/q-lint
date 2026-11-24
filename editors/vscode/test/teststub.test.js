@@ -175,3 +175,13 @@ test("a stub appended under a trailing \\d calls a root function at the root (#1
   assert.match(stubText(f, "testF", detectStyle(file), "."), /assertEquals\[f\[a;b\]/);
   assert.match(stubText({ name: ".fx.mid", params: [] }, "testMid", detectStyle(file), ".tests"), /assertEquals\[\.fx\.mid\[\]/);
 });
+
+test("an untitled editor is offered no stub, and the command writes none at the filesystem's root (#1600)", async () => {
+  const files = { "Untitled-1": "f:{x}\n" };
+  const s = setup(files);
+  const untitled = { scheme: "untitled", fsPath: "Untitled-1", toString: () => "untitled:Untitled-1" };
+  stub.picks.push("Add Test");
+  assert.strictEqual(await stub.commands.get(TEST_STUB_COMMAND)(untitled, 0), false);
+  assert.deepStrictEqual(s.writes, []);
+  assert.match(stub.messages.at(-1)[1], /save the file first/);
+});
