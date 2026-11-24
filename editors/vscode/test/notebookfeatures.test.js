@@ -591,3 +591,9 @@ test("an HTML export shows a data: image as the image, and another image as a li
   assert.strictEqual(markdownHtml("![logo](https://x.io/l.png)"), '<p><a href="https://x.io/l.png">logo</a></p>');
   assert.strictEqual(markdownHtml("![svg](data:image/svg+xml;base64,PHN2Zz4=)"), "<p>svg</p>");
 });
+
+test("an HTML export leaves a double underscore inside a word as it is (#1556)", () => {
+  assert.strictEqual(markdownHtml("call my__private__helper now"), "<p>call my__private__helper now</p>");
+  assert.strictEqual(markdownHtml("__a__b and a___b___c"), "<p>__a__b and a___b___c</p>");
+  assert.strictEqual(markdownHtml("__bold__ and **x**y"), "<p><strong>bold</strong> and <strong>x</strong>y</p>");
+});

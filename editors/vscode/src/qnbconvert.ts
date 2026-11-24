@@ -91,9 +91,12 @@ function inline(text: string, values: Record<string, LiveValue>): string {
     const target = safeHref(href.replace(/&amp;/g, "&"));
     return target === undefined ? m : `${hold(`<a href="${escapeHtml(target)}">`)}${label}${hold("</a>")}`;
   });
-  // A run of three first, so its tags nest (#1550).
-  s = s.replace(/(\*\*\*|___)(?=\S)([\s\S]*?\S)\1/g, "<em><strong>$2</strong></em>");
-  s = s.replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, "<strong>$2</strong>");
+  // A run of three first, so its tags nest (#1550). An underscore run
+  // inside a word is text (#1556), as `_` is below.
+  s = s.replace(/\*\*\*(?=\S)([\s\S]*?\S)\*\*\*|(^|[^\w])___(?=\S)([\s\S]*?\S)___(?!\w)/g, (_m, a: string | undefined, before: string, b: string) =>
+    a !== undefined ? `<em><strong>${a}</strong></em>` : `${before}<em><strong>${b}</strong></em>`);
+  s = s.replace(/\*\*(?=\S)([\s\S]*?\S)\*\*|(^|[^\w])__(?=\S)([\s\S]*?\S)__(?!\w)/g, (_m, a: string | undefined, before: string, b: string) =>
+    a !== undefined ? `<strong>${a}</strong>` : `${before}<strong>${b}</strong>`);
   s = s.replace(/(^|[^\w*])([*_])(?=\S)([^*_]*?\S)\2(?!\w)/g, "$1<em>$3</em>");
   return s.replace(/\u0000(\d+)\u0000/g, (_m, i: string) => held[Number(i)]);
 }
