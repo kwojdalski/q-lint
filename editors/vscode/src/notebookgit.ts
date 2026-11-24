@@ -200,7 +200,6 @@ export class NotebookDiff implements TextDocumentContentProvider {
 export const FILTER = "qnb-strip";
 /// The line that sends `*.qnb` through it.
 export const ATTRIBUTE_LINE = `*.qnb filter=${FILTER}`;
-const HAS_ATTRIBUTE = new RegExp(`^\\*\\.qnb\\s(.*\\s)?filter=${FILTER}(\\s|$)`, "m");
 
 /// Where the attribute goes: this clone's `.git/info/attributes`, or the
 /// repository's `.gitattributes`, committed for everyone who clones it.
@@ -360,6 +359,9 @@ export class NotebookStrip {
       };
     }
     const attributes = where === "info" ? path.resolve(folder, info.stdout.trim()) : path.join(root, ".gitattributes");
+    // As git reads it, its last matching line winning (#1561): a later
+    // "*.qnb -filter" turns the filter off.
+    const attr = await git(["check-attr", "filter", "--", "notebook.qnb"], folder);
     return {
       top: root,
       script,
@@ -367,7 +369,7 @@ export class NotebookStrip {
       clean,
       cleanSet: current !== undefined,
       attributes,
-      attributeSet: HAS_ATTRIBUTE.test(readText(attributes) ?? ""),
+      attributeSet: attr.code === 0 && attr.stdout.trim().endsWith(`: filter: ${FILTER}`),
       node: await nodeOnPath(),
     };
   }

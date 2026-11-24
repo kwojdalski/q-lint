@@ -480,3 +480,18 @@ test("the clean filter gives back bytes that are not UTF-8, or not a notebook, a
   const run = spawnSync(process.execPath, [QNBGIT, "--strip"], { input: qnb([code("1", ran(1, "1"))]) });
   assert.doesNotMatch(run.stdout.toString(), /outputs/);
 });
+
+test("the setup asks git whether *.qnb goes through the filter: a later line turning it off is read (#1561)", async () => {
+  const { dir, git } = repo({ "README": "r\n" });
+  const fake = fakeVscode();
+  load(fake);
+  const folder = fake.vscode.Uri.file(dir);
+  fake.answers.push("Write");
+  await fake.commands["q-lint.setUpNotebookStripFilter"](folder, "gitattributes");
+  fs.appendFileSync(path.join(dir, ".gitattributes"), "*.qnb -filter\n");
+  assert.match(git("check-attr", "filter", "--", "a.qnb"), /filter: unset/);
+  fake.answers.push("Write");
+  await fake.commands["q-lint.setUpNotebookStripFilter"](folder, "gitattributes");
+  assert.doesNotMatch(fake.messages.at(-1), /already/);
+  assert.match(git("check-attr", "filter", "--", "a.qnb"), /filter: qnb-strip/);
+});
