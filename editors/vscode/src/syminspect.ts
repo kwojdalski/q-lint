@@ -16,6 +16,8 @@
 // columns' data is read, so `lim` is kept small. Works on kdb+ (KDB-X) and
 // PeachQ; held there by dbtools_q.test.js.
 
+import { bytes } from "./tableinfo";
+
 export const SYM_INSPECT = [
   "{[lim]",
   " r:hsym`$system\"cd\";f:` sv r,`sym;",
@@ -86,17 +88,8 @@ export function readSym(raw: unknown): SymAnswer {
 const md = (s: string) => s.replace(/([\\`*_{}[\]<>|#])/g, "\\$1");
 const n = (x: number) => x.toLocaleString("en-US");
 
-/// `n` bytes as people read them.
-const size = (b: number) => {
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let i = 0;
-  let v = b;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return i === 0 ? `${b} B` : `${v.toFixed(v < 10 ? 1 : 0)} ${units[i]}`;
-};
+/// `n` bytes as people read them (#1584).
+const size = bytes;
 
 /// The report, as Markdown. `warnAbove`: a sym file with more symbols than
 /// this is warned about.
