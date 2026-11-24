@@ -725,6 +725,8 @@ const ITERATORS = new Set(["each", "peach", "over", "scan", "prior"]);
 /// what it cannot read is taken for a change rather than read again.
 let nesting = 0;
 let rereads = 0;
+/// Whether a lambda is being read with a witness for an argument.
+let guessing = false;
 const REREADS = 2000;
 /// What `writes` found in a text read again, by the text, kept from one
 /// call to the next - it depends on the text alone - up to `KEPT`
@@ -733,11 +735,13 @@ const reread = new Map<string, string[]>();
 const KEPT = 4_000_000;
 let kept = 0;
 
-function rereadOf(text: string): string[] {
+function rereadOf(code: string): string[] {
+  // What a text gives depends on whether it is read guessing.
+  const text = `${guessing ? "?" : "="}${code}`;
   let found = reread.get(text);
   if (found === undefined) {
     rereads++;
-    found = writes(text);
+    found = writes(code);
     if (kept + text.length > KEPT) {
       reread.clear();
       kept = 0;
@@ -876,13 +880,18 @@ function throughParameters(t: Token[], all: Token[], index: Map<Token, number>, 
       readings.push([new Map(params.flatMap((p, n): [string, string][] => (written[n] === undefined ? [] : [[p, each[n][m] === undefined ? written[n] : `(${each[n][m]})`]]))), false]);
     }
   }
-  if (held.some((h) => h)) {
+  // Not again inside a reading that guesses already: one guess deep.
+  if (held.some((h) => h) && !guessing) {
     for (const witness of WITNESSES) {
       readings.push([new Map(params.flatMap((p, n): [string, string][] => (held[n] ? [[p, witness]] : written[n] === undefined ? [] : [[p, written[n]]]))), true]);
     }
   }
   for (const [given, guessed] of readings) {
-    for (const reason of rereadOf(text(given))) {
+    const was = guessing;
+    guessing ||= guessed;
+    const read = rereadOf(text(given));
+    guessing = was;
+    for (const reason of read) {
       if (!base.includes(reason)) {
         found.add(guessed ? "applies a lambda that may change the process through what it is given" : reason);
       }
