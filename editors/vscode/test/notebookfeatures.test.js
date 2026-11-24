@@ -496,3 +496,13 @@ test("a PyKX %%q cell with options imports as q, its options a comment (#1267)",
     ["python", "%%qx\n1"],
   ]);
 });
+
+test("a variable's size takes the next unit when it rounds up to 1024 (#1495)", () => {
+  assert.strictEqual(bytesText(512), "512 B");
+  assert.strictEqual(bytesText(1023), "1023 B");
+  assert.strictEqual(bytesText(1536), "1.5 KB");
+  assert.strictEqual(bytesText(10239), "10 KB");
+  assert.strictEqual(bytesText(1048575), "1.0 MB");
+  assert.strictEqual(bytesText(1073741823), "1.0 GB");
+  assert.strictEqual(bytesText(5 * 1024 * 1024 * 1024 * 1024 * 1024), "5120 TB");
+});
