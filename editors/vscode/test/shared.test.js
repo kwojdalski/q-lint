@@ -41,9 +41,17 @@ test("a password or secret in the shared list is dropped and said", () => {
 test("what runs something is read only in a trusted workspace", () => {
   const text = JSON.stringify([{ label: "a", host: "localhost", port: 1, init: "x:1", ssh: "jump", launch: { script: "s.q" } }]);
   assert.deepStrictEqual(readSharedFile(text, true).processes[0], { label: "a", host: "localhost", port: 1, tags: [], init: "x:1", ssh: "jump", launch: { script: "s.q" } });
-  const untrusted = readSharedFile(text, false);
+  const untrusted = readSharedFile(JSON.stringify([{ label: "a", host: "localhost", port: 1, init: "x:1", launch: { script: "s.q" } }]), false);
   assert.deepStrictEqual(untrusted.processes[0], { label: "a", host: "localhost", port: 1, tags: [] });
   assert.deepStrictEqual(untrusted.problems, ["1 entry's connect script, SSH tunnel or launch definition was not read: the workspace is not trusted."]);
+  // One reached through a tunnel is not listed: it would be connected to
+  // directly, past its tunnel, password and all (#1507).
+  const tunnelled = readSharedFile(text, false);
+  assert.deepStrictEqual(tunnelled.processes, []);
+  assert.deepStrictEqual(tunnelled.problems, [
+    "a: reached through an SSH tunnel, which is not read while the workspace is not trusted, so not listed.",
+    "1 entry's connect script, SSH tunnel or launch definition was not read: the workspace is not trusted.",
+  ]);
   assert.throws(() => readSharedFile("{", true), SyntaxError);
 });
 
@@ -208,7 +216,7 @@ test("a shared list that turns TLS off, or adds or drops a tunnel, forgets the p
 
 test("in an untrusted workspace, a shared process brings no connect script, tunnel or launch", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-shared-"));
-  write(dir, [{ label: "a", host: "localhost", port: 1, init: "evil[]", ssh: "jump", launch: { command: "rm" } }]);
+  write(dir, [{ label: "a", host: "localhost", port: 1, init: "evil[]", launch: { command: "rm" } }, { label: "b", host: "10.0.0.5", port: 1, ssh: "jump" }]);
   const { live } = await setUp(t, dir, { trusted: false });
   await sleep(50);
   assert.deepStrictEqual(live.api().sharedProcesses().processes, [{ label: "a", host: "localhost", port: 1, tags: [] }]);
