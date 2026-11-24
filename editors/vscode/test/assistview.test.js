@@ -78,7 +78,7 @@ vscode.workspace.openTextDocument = async ({ content, language }) => {
 };
 vscode.window.showTextDocument = async (d) => ({ document: d });
 
-const { registerAssistTools } = require("../out/assisttools.js");
+const { registerAssistTools, LISTED_TABLE_INFO } = require("../out/assisttools.js");
 const { registerChat } = require("../out/chat.js");
 const { registerQsqlDraft } = require("../out/qsqldraft.js");
 const { GATHER } = require("../out/explorer.js");
@@ -124,7 +124,7 @@ function fakeLive({ connected = true, history = [] } = {}) {
         ? use(
             {
               call: async (lambda, ...args) => {
-                const name = lambda === GATHER ? "GATHER" : lambda === TABLE_INFO ? "TABLE_INFO" : lambda === DESCRIBE ? "DESCRIBE" : "?";
+                const name = lambda === GATHER ? "GATHER" : lambda === TABLE_INFO || lambda === LISTED_TABLE_INFO ? "TABLE_INFO" : lambda === DESCRIBE ? "DESCRIBE" : "?";
                 live.sent.push([name, ...args]);
                 if (name === "GATHER") {
                   return {
@@ -178,6 +178,25 @@ test("List q Tables: the tables, one table's schema, reading only with the explo
   const none = setup({}, { connected: false });
   const t2 = registerAssistTools(none.context, none.live, () => []);
   assert.match((await t2.tables.run({})).error, /No q process is connected/);
+});
+
+test("List q Tables reads a plain table name only, asks first, and refuses a handle or expression (#1612)", async () => {
+  const { live, context } = setup();
+  const tools = registerAssistTools(context, live, () => []);
+  for (const table of [":/data/db/huge", "`:/etc/passwd", "t;exit 0", "a b", "1t", ".ns..t"]) {
+    assert.match((await tools.tables.run({ table })).error, /must be a table's name/, table);
+  }
+  assert.deepStrictEqual(live.sent, []);
+  // The process checks the name is a table it lists before get.
+  await tools.tables.run({ table: ".ns.trade" });
+  assert.deepStrictEqual(live.sent, [["TABLE_INFO", ".ns.trade", 200]]);
+  assert.match(LISTED_TABLE_INFO, /in@\[tables;/);
+  // Asked before reading; read on another process than asked: refused.
+  const prepared = tools.tables.prepareInvocation({ input: { table: "trade" } });
+  assert.match(prepared.confirmationMessages.message.value, /`trade` on \*\*dev\*\*/);
+  assert.strictEqual(tools.tables.prepareInvocation({ input: {} }).confirmationMessages, undefined);
+  live.activeLabel = () => "uat";
+  assert.match((await tools.tables.run({ table: "trade", process: "uat" })).error, /asked to read trade on dev/);
 });
 
 test("Lint q Code: qlinter's findings on the code given as standard input", async (t) => {

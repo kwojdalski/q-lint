@@ -6,7 +6,10 @@
 // List q Tables sends no code a model wrote: it reads with the explorer's
 // own lambdas (`GATHER`, `TABLE_INFO`), on the connected process only, and
 // shares the query connection as the explorer does - it never interrupts a
-// query. Lint q Code runs the qlinter binary the language server runs, on
+// query. A table it is asked for must be a plain q name the process lists
+// as a table (`tables`, which evaluates no view): never a file handle, a
+// view or an expression, all of which `get` would read or run (#1612). The
+// user is asked before a table's schema is read, as before a query. Lint q Code runs the qlinter binary the language server runs, on
 // the code given as standard input; it touches no process. Each tool has its
 // own setting: turned off, it is unregistered, and a call already on its way
 // is answered that it is off.
@@ -15,12 +18,14 @@ import {
   LanguageModelTextPart,
   LanguageModelToolResult,
   lm,
+  MarkdownString,
   workspace,
   type CancellationToken,
   type Disposable,
   type ExtensionContext,
   type LanguageModelTool,
   type LanguageModelToolInvocationOptions,
+  type LanguageModelToolInvocationPrepareOptions,
   type PreparedToolInvocation,
 } from "vscode";
 import { notConnected } from "./agent";
@@ -38,6 +43,22 @@ export const ASSIST_TOOLS = {
 
 /// Columns of one table's schema answered at most.
 const SCHEMA_COLUMNS = 200;
+/// Findings Lint q Code answers at most (#1628).
+const FINDINGS_LIMIT = 200;
+
+/// A table's name as q code names it - `t` or `.ns.t` - and nothing else:
+/// no handle, no backtick, no expression (#1612).
+export const isTableName = (name: string): boolean => /^\.?[A-Za-z][\w]*(\.[A-Za-z][\w]*)*$/.test(name);
+
+/// TABLE_INFO, run only on a name the process lists as a table in its
+/// namespace: `tables` reads `\a`, which evaluates no view.
+export const LISTED_TABLE_INFO = [
+  "{[nm;lim]",
+  " p:@[` vs;@[`$;nm;`];`$()];",
+  " if[not(last p)in@[tables;$[1=count p;`.;` sv -1_p];`$()];'\"not a table\"];",
+  ` f:${TABLE_INFO.replace(/\n/g, "\n  ")};`,
+  " f[nm;lim]}",
+].join("\n");
 /// Seconds qlinter may take, and the most code it is given.
 const LINT_TIMEOUT = 20;
 const LINT_LIMIT = 1_000_000;
@@ -57,10 +78,35 @@ export interface TablesInput {
 }
 
 export class ListTablesTool implements LanguageModelTool<TablesInput> {
+  /// The process the user was asked to read each table on, or null when
+  /// nothing was connected and they were asked nothing.
+  private readonly asked = new Map<string, string | null>();
+
   constructor(private readonly live: Live) {}
 
-  prepareInvocation(): PreparedToolInvocation {
-    return { invocationMessage: `Reading the tables of ${this.live.activeLabel() ?? "the q process"}` };
+  prepareInvocation(options?: LanguageModelToolInvocationPrepareOptions<TablesInput>): PreparedToolInvocation {
+    const active = this.live.activeLabel();
+    const table: unknown = options?.input?.table;
+    if (typeof table !== "string" || !isTableName(table.trim())) {
+      return { invocationMessage: `Reading the tables of ${active ?? "the q process"}` };
+    }
+    const name = table.trim();
+    this.asked.delete(name);
+    this.asked.set(name, active ?? null);
+    if (active === undefined) {
+      return { invocationMessage: `Reading the schema of ${name}` };
+    }
+    // Tables asked about and never read are forgotten, oldest first.
+    for (const key of [...this.asked.keys()].slice(0, -20)) {
+      this.asked.delete(key);
+    }
+    return {
+      invocationMessage: `Reading the schema of ${name} on ${active}`,
+      confirmationMessages: {
+        title: `Read a table's schema on ${active}`,
+        message: new MarkdownString(`Read the columns, types and row count of the table \`${name}\` on **${active}**? Only a table the process lists is read.`),
+      },
+    };
   }
 
   async invoke(options: LanguageModelToolInvocationOptions<TablesInput>): Promise<LanguageModelToolResult> {
@@ -76,17 +122,29 @@ export class ListTablesTool implements LanguageModelTool<TablesInput> {
     if (active === undefined) {
       return { error: notConnected(this.live.processes(), this.live.discovery.discovered()) };
     }
-    if (input.process !== undefined && input.process !== active) {
+    const named: unknown = input.process;
+    const table: unknown = input.table;
+    if (named !== undefined && named !== active) {
       return {
-        error: `List q Tables reads the connected process, ${active}, only. To read ${JSON.stringify(input.process)}, connect to it first: Run q Query with "process" connects.`,
+        error: `List q Tables reads the connected process, ${active}, only. To read ${JSON.stringify(named)}, connect to it first: Run q Query with "process" connects.`,
       };
     }
-    if (input.table !== undefined && (typeof input.table !== "string" || input.table.trim() === "")) {
+    if (table !== undefined && (typeof table !== "string" || !isTableName(table.trim()))) {
       return { error: `"table" must be a table's name, a string, as q code names it: t or .ns.t.` };
+    }
+    if (typeof table === "string") {
+      const shown = this.asked.get(table.trim());
+      this.asked.delete(table.trim());
+      if (shown === null) {
+        return { error: `Nothing was read: when the call was made no q process was connected, so the user was not asked to read ${table.trim()} on ${active}. Ask again.` };
+      }
+      if (shown !== undefined && shown !== active) {
+        return { error: `Nothing was read: the user was asked to read ${table.trim()} on ${shown}, and the connected process is now ${active}. Ask again.` };
+      }
     }
     try {
       const got =
-        input.table === undefined
+        table === undefined
           ? await borrowWhenFree(this.live, async (connection, process) => {
               const configuration = workspace.getConfiguration("q-lint");
               const { excludedNamespaces } = readExplorer((key, fallback) => configuration.get(key, fallback));
@@ -100,8 +158,8 @@ export class ListTablesTool implements LanguageModelTool<TablesInput> {
               };
             })
           : await borrowWhenFree(this.live, async (connection, process) => {
-              const name = (input.table as string).trim();
-              return { process: process.label, ...schemaOf(name, readTableInfo(await connection.call(TABLE_INFO, name, SCHEMA_COLUMNS))) };
+              const name = (table as string).trim();
+              return { process: process.label, ...schemaOf(name, readTableInfo(await connection.call(LISTED_TABLE_INFO, name, SCHEMA_COLUMNS))) };
             });
       return got === undefined ? { error: `${active} is busy with a query. Try again once it is done.` } : got.value;
     } catch (error) {
