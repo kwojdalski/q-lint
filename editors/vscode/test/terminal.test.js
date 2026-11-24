@@ -21,6 +21,21 @@ test("the shell is read from its path", () => {
   assert.strictEqual(shellKind("/bin/csh"), "csh");
   assert.strictEqual(shellKind("C:\\Windows\\System32\\cmd.exe"), "cmd");
   assert.strictEqual(shellKind(undefined), "posix");
+  assert.strictEqual(shellKind("/usr/local/bin/fish"), "fish");
+});
+
+// fish reads \' and \\ in single quotes as escapes: quoted as POSIX, a file
+// named x\'; touch /tmp/pwned; echo \'.q ran touch (#1832).
+test("fish has its own quoting: a backslash or a quote in single quotes is escaped", () => {
+  const name = "x\\'; touch /tmp/pwned; echo \\'.q";
+  assert.strictEqual(quote(name, "fish"), "'x\\\\\\'; touch /tmp/pwned; echo \\\\\\'.q'");
+  assert.strictEqual(quote("a\\b", "fish"), "'a\\\\b'");
+  assert.strictEqual(quote("$HOME", "fish"), "'$HOME'");
+  assert.strictEqual(quote("src/main.q", "fish"), "src/main.q");
+  // As fish reads it back: \\ is \ and \' is ', nothing else is special.
+  const unquote = (q) => q.slice(1, -1).replace(/\\([\\'])/g, "$1");
+  assert.strictEqual(unquote(quote(name, "fish")), name);
+  assert.strictEqual(commandLine("q", ["t.q"], "fish", { QHOME: "/opt/q x" }, { TOKEN: "QLINT_ENVPATH_TOKEN" }), "env TOKEN=\"$QLINT_ENVPATH_TOKEN\" QHOME='/opt/q x' q t.q");
 });
 
 test("a plain word is passed as it is", () => {
