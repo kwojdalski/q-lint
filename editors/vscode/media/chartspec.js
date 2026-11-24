@@ -89,7 +89,9 @@
       const count = new Array(n).fill(0);
       values.forEach(function (v) {
         if (v !== null && isFinite(v)) {
-          count[width === 0 ? 0 : Math.min(n - 1, Math.floor((v / k - lo / k) / width))] += 1;
+          // A value on an edge (1.2 of 1, 1.05, ...) is in the bin above
+          // it, though (1.2 - 1) / 0.05 rounds to 3.9999999999999996.
+          count[width === 0 ? 0 : Math.min(n - 1, Math.floor((v / k - lo / k) / width + 1e-9))] += 1;
         }
       });
       return count;

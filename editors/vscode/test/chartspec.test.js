@@ -45,3 +45,9 @@ test("a range small beside its size still ticks across it: 50 ms of timestamps, 
   const labels = [...svg.matchAll(/text-anchor="end"[^>]*>([^<]*)</g)].map((m) => m[1]);
   assert.strictEqual(new Set(labels).size, labels.length, labels.join(" "));
 });
+
+test("a value on a bin's edge counts in the bin above it, as labelled (#1790)", () => {
+  const prices = Array.from({ length: 21 }, (_, i) => +(1 + i * 0.05).toFixed(2));
+  assert.deepStrictEqual(C.histogram([prices], 20).counts[0], [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2]);
+  assert.deepStrictEqual(C.histogram([[0, 0.3, 0.6, 0.7, 1]], 10).counts[0], [1, 0, 0, 1, 0, 0, 1, 1, 0, 1]);
+});
