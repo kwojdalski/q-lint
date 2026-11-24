@@ -2079,7 +2079,8 @@ meta, with the number of rows, the symbols drawn from (names, or `50` for
 `sym1` to `sym50`), the range numbers are drawn from, and a column kept in
 ascending order chosen, as q code to run on a local process (it sets `\S`, so it
 makes the same rows each time) or as CSV, with the `0:` types that read it
-back.
+back. A whole-number column's range is cut to what its type holds: a
+short's and an int's finite values, and for a long 2^52 either way.
 
 **Open Tickerplant Log...** starts a q of its own (`q-lint.terminal.qBinary`,
 in a new temporary directory, listening on the loopback only) and has it
