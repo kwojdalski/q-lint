@@ -107,7 +107,9 @@ export function resolveBinary(binary: string, folder: string | undefined = works
     return file;
   }
   const names = process.platform === "win32" && !/\.exe$/i.test(file) ? [file, `${file}.exe`] : [file];
-  for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
+  for (const entry of (process.env.PATH ?? "").split(path.delimiter)) {
+    // A Windows entry may be quoted, as libuv reads it too (#1681).
+    const dir = process.platform === "win32" ? entry.replace(/"/g, "") : entry;
     for (const name of names) {
       const candidate = path.join(dir, name);
       if (dir !== "" && nodeFiles.executable(candidate)) {

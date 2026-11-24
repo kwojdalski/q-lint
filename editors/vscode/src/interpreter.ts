@@ -76,7 +76,9 @@ export function discover(where: Where, files: Files): Interpreter[] {
     }
   }
   const separator = where.platform === "win32" ? ";" : ":";
-  for (const dir of (where.env.PATH ?? where.env.Path ?? "").split(separator)) {
+  for (const entry of (where.env.PATH ?? where.env.Path ?? "").split(separator)) {
+    // A Windows entry may be quoted, as libuv reads it too (#1681).
+    const dir = where.platform === "win32" ? entry.replace(/"/g, "") : entry;
     if (dir.trim() === "") {
       continue;
     }

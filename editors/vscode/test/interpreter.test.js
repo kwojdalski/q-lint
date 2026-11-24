@@ -66,6 +66,9 @@ test("discovery finds KDB-X, QHOME's platform folders, PATH and a workspace's Pe
   assert.deepStrictEqual(bare.map((i) => [i.path, i.detail]), [["/h/q/l64/q", "kdb+ (~/q)"]]);
   // Windows: q.exe, `;` between PATH's folders.
   const win = I.discover({ env: { Path: "C:\\q\\w64;C:\\bin" }, home: "C:\\Users\\me", platform: "win32", folders: [] }, fake({ "C:\\q\\w64\\q.exe": "x" }));
+  // A quoted entry, as Windows allows (#1681).
+  const quoted = I.discover({ env: { PATH: 'C:\\Windows;"C:\\kdb\\w64"' }, home: "C:\\Users\\me", platform: "win32", folders: [] }, fake({ "C:\\kdb\\w64\\q.exe": "x" }));
+  assert.deepStrictEqual(quoted.map((c) => c.path), ["C:\\kdb\\w64\\q.exe"]);
   assert.deepStrictEqual(win.map((i) => i.path), ["C:\\q\\w64\\q.exe"]);
 });
 
