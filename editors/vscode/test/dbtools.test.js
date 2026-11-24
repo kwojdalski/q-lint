@@ -184,6 +184,27 @@ test("the partition check finds weekday gaps, and each kind of problem in an ans
   assert.deepStrictEqual(partitionProblems(single), []);
 });
 
+// #2007: q writes a string or nested column with no rows as a general list
+// (type 0), and maps one with rows as 77h on.
+test("an empty partition's string or nested column is not a different type (#2007)", () => {
+  const row = (partition, types, rows) => ({ table: "ev", partition, dir: true, dotd: true, columns: ["sym", "note", "sz"], missing: [], types, enums: ["sym", "", ""], maxIndexes: [], rows });
+  const typed = (...rows) =>
+    partitionProblems({ hdb: true, field: "date", root: "/db", all: rows.map((r) => r.partition), checked: rows.length, tables: ["ev"], domains: new Map([["sym", 10]]), rows })
+      .filter((p) => p.kind === "different types")
+      .map((p) => [p.what, p.partitions]);
+  const full = (partition) => row(partition, [20, 77, 7], 3);
+  const empty = (partition) => row(partition, [20, 0, 7], 0);
+  assert.deepStrictEqual(typed(full("2026.01.05"), empty("2026.01.06"), full("2026.01.07")), []);
+  // Most partitions empty: the one with rows is not the odd one either.
+  assert.deepStrictEqual(typed(empty("2026.01.05"), empty("2026.01.06"), full("2026.01.07")), []);
+  assert.deepStrictEqual(typed(empty("2026.01.05"), empty("2026.01.06")), []);
+  // A general list with rows is another type, and so is an empty one where
+  // the column is a simple vector: q keeps that one's type with no rows.
+  assert.deepStrictEqual(typed(full("2026.01.05"), row("2026.01.06", [20, 0, 7], 3), full("2026.01.07")), [["ev.note is type 0 here, 77 in most partitions", ["2026.01.06"]]]);
+  assert.deepStrictEqual(typed(full("2026.01.05"), row("2026.01.06", [20, 77, 0], 0), full("2026.01.07")), [["ev.sz is type 0 here, 7 in most partitions", ["2026.01.06"]]]);
+  assert.deepStrictEqual(typed(full("2026.01.05"), row("2026.01.06", [20, 0, 6], 0), full("2026.01.07")), [["ev.sz is type 6 here, 7 in most partitions", ["2026.01.06"]]]);
+});
+
 test("the sym report warns above the threshold and lists columns and growth", () => {
   const a = readSym({ sym: true, root: "/db", count: 2000, bytes: 4096, partitions: 10, sampled: 2, ctable: ["t", "o"], ccol: ["sym", "id"], cdistinct: [5, 1900], gpart: ["2026.01.06", "2026.01.05"], gsize: [2000, 100] });
   assert.deepStrictEqual(a.columns.map((c) => c.column), ["id", "sym"]);

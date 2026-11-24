@@ -279,6 +279,24 @@ test("the documenter says which table it could not read, and documents the rest 
   assert.deepStrictEqual(alone.tables.map((x) => [x.name, x.error]), [["em", "..sym2"]]);
 });
 
+// #2007: a partition holding no rows of a table with a string or a nested
+// column - a quiet day, or a table .Q.chk filled in - is a healthy one: q
+// writes those columns as an empty general list there.
+test("the partition check takes an empty partition's string and nested columns as the table's (#2007)", { skip }, async (t) => {
+  const extra = [
+    'mke:{[r;d;t;n] .Q.dd[r;d,t,`] set .Q.en[r] ([] sym:n#`a`b`c;note:n#("x";"yy";"zzz");tags:n#(1 2;3 4 5;enlist 6))};',
+    "mke[r;;`ev;3] each 2026.01.05 2026.01.07;",
+    "mke[r;2026.01.06;`ev;0];",
+    "mke[r;;`filled;3] each 2026.01.05 2026.01.07;",
+    ".Q.chk r;",
+  ].join("\n");
+  const { connection } = await connect(t, HDB(extra));
+  assert.deepStrictEqual(await connection.call('{"f"$(count select from ev;count select from filled where date=2026.01.06)}', 0), [6, 0]);
+  const problems = partitionProblems(readPartitions(await connection.call(PARTITION_CHECK, 1000, true)));
+  assert.deepStrictEqual(problems.filter((p) => p.kind !== "row count").map((p) => [p.kind, p.what, p.partitions]), []);
+  assert.deepStrictEqual(problems.map((p) => [p.table, p.partitions]).sort(), [["ev", ["2026.01.06"]], ["filled", ["2026.01.06"]]]);
+});
+
 test("the partition check finds missing dates, files, differing types and outliers", { skip }, async (t) => {
   const extra = [
     "mk[r;;6] each 2026.01.12 2026.01.13;",

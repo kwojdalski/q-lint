@@ -194,8 +194,14 @@ export function partitionProblems(a: Extract<PartAnswer, { hdb: true }>): Proble
           return at < 0 ? undefined : r.types[at];
         };
         const seen = good.map((r) => ({ r, t: typeOf(r) })).filter((x) => x.t !== undefined && !Number.isNaN(x.t));
-        const usual = mode(seen.map((x) => String(x.t)));
-        const odd = seen.filter((x) => String(x.t) !== usual);
+        // q writes a string or nested column with no rows as a general
+        // list (type 0) and maps one with rows as 77h on: an empty
+        // partition's is the same column, and has no say in the type (#2007).
+        const unset = (x: (typeof seen)[number]) => x.t === 0 && x.r.rows === 0;
+        const typed = seen.filter((x) => !unset(x));
+        const usual = mode((typed.length > 0 ? typed : seen).map((x) => String(x.t)));
+        const nested = Number(usual) === 0 || Number(usual) >= 77;
+        const odd = seen.filter((x) => String(x.t) !== usual && !(nested && unset(x)));
         for (const t of [...new Set(odd.map((x) => x.t))]) {
           add("different types", `${table}.${col} is type ${t} here, ${usual} in most partitions`, odd.filter((x) => x.t === t).map((x) => x.r.partition));
         }
