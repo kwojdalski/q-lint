@@ -490,8 +490,12 @@ function restart(context: ExtensionContext, asked = false): Promise<void> {
 
 /// Whether `command --version` runs and succeeds.
 function answersVersion(command: string): boolean {
-  const run = launchable(command, ["--version"]);
-  return spawnSync(run.command, run.args, { stdio: "ignore", timeout: 10_000, windowsHide: true, shell: run.shell }).status === 0;
+  try {
+    const run = launchable(command, ["--version"]);
+    return spawnSync(run.command, run.args, { stdio: "ignore", timeout: 10_000, windowsHide: true, shell: run.shell }).status === 0;
+  } catch {
+    return false;
+  }
 }
 
 /// The language client's executable for `command`: through a shell for a
@@ -556,6 +560,13 @@ async function start(context: ExtensionContext): Promise<void> {
     // says why it failed - and a wrapper script need not know --version.
     if (i < candidates.length - 1 && !answersVersion(command)) {
       started = new Error(`${command} --version did not run`);
+      continue;
+    }
+    try {
+      launchable(command, args);
+    } catch (error) {
+      // A .cmd wrapper given a word cmd cannot pass (#1835).
+      started = error;
       continue;
     }
     const server: ServerOptions = {
