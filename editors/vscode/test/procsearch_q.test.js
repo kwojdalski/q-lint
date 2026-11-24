@@ -42,6 +42,12 @@ test("function definitions are searched everywhere but q's own, ignoring case", 
   const two = await find("trade", true, 2);
   assert.strictEqual(two.hits.length, 2);
   assert.strictEqual(two.more, true);
+  // Exactly the limit found, and nothing more: not "more" (#1689).
+  const three = await find("trade", false, 3);
+  assert.strictEqual(three.hits.length, 3);
+  assert.strictEqual(three.more, false);
+  const one = await find("trade", false, 1);
+  assert.deepStrictEqual([one.hits.length, one.more], [1, true]);
   // Nothing was assigned.
   assert.deepStrictEqual(await connection.call("{[x] key `.}", 0), ["top", "tradeCount"]);
 });
