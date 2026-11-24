@@ -369,7 +369,9 @@ Each has its own switch, listed in [Settings](#settings) and
   failed (`c:b+`x;` in `mid`, at `+`). It explains the selected text, the
   last query when it failed (not once a later one has answered), or an
   error typed in; a problem whose message names a q
-  error (`'type`, `'length`, ...) gets a Quick Fix that explains it. The
+  error (`'type`, `'length`, ...) gets a Quick Fix that explains it. A
+  message of several words is one the code signalled, and is said to be;
+  only a single name is taken for one q could not find. The
   catalogue is offline; each example in it was run on KDB-X and PeachQ, and
   the few from the KX reference alone are marked so. `q-lint.errorExplain.enable`.
 - **The q version check**: name a release in a folder's `qlinter.toml` -

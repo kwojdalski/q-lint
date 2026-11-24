@@ -138,6 +138,13 @@ export const ERRORS: Record<string, QError> = {
     example: "f:{f x};f 1",
     checked: "seen",
   },
+  from: {
+    meaning: "A qSQL query has no `from` where q looked for one.",
+    causes: ["A `select`, `exec`, `update` or `delete` with `from` left out or misspelt.", "`from` with no table after it.", "A `;` where a `,` was meant between two columns (`select v;w from t`)."],
+    example: "select v t",
+    checked: "kdbx",
+    peachq: "PeachQ reports 'parse for the example.",
+  },
   parse: {
     meaning: "The text could not be parsed as q.",
     causes: ["An unbalanced bracket or quote in code given to `parse` or `value`."],
@@ -183,11 +190,17 @@ export const ERRORS: Record<string, QError> = {
   },
 };
 
+/// The error as q printed it: without the quote, and the timestamp a
+/// console puts before it.
+function printed(text: string): string {
+  return text.trim().replace(/^'/, "").replace(/^\d{4}\.\d\d\.\d\dT[\d:.]+\s+/, "");
+}
+
 /// The error's name: `'type` and `type` are `type`; an OS error -
 /// `name. OS reports: ...` - is `os`; anything after the first blank is
 /// dropped, as q's own messages are one word but for those.
 export function errorName(text: string): string {
-  const t = text.trim().replace(/^'/, "").replace(/^\d{4}\.\d\d\.\d\dT[\d:.]+\s+/, "");
+  const t = printed(text);
   if (/OS reports:/.test(t)) {
     return /^hop\b/.test(t) ? "hop" : "os";
   }
@@ -221,7 +234,11 @@ export function explainError(error: string, trace?: string): string {
   const name = errorName(error);
   // Own entries only: `'constructor` is not Object.prototype's (#1078).
   const entry = Object.hasOwn(ERRORS, name) ? ERRORS[name] : undefined;
-  const lines: string[] = [`# q error ${code(`'${name}`)}`, ""];
+  // More than one word on its line is no name q could not find, but what
+  // the code said with `'` (#1902).
+  const said = (printed(error).split("\n")[0] ?? "").trim();
+  const message = name !== "os" && entry === undefined && /\s/.test(said);
+  const lines: string[] = [`# q error ${code(`'${message ? said : name}`)}`, ""];
   if (name === "os") {
     lines.push("The operating system refused a file or network operation; its own message follows q's:", "", "> " + error.trim(), "");
     lines.push("Check that the path exists, that the process may read or write it, and that a relative path is relative to the process's working directory, not the editor's.");
@@ -236,6 +253,15 @@ export function explainError(error: string, trace?: string): string {
     if (entry.checked === "documented") {
       lines.push("", "_From the KX reference; not produced in q-lint's tests._");
     }
+  } else if (message) {
+    lines.push(
+      "This is not one of q's own errors, which are one word: it is a message the code signalled, with `'` (signal) or through a library that signals for it (`.j.k` on JSON it cannot read).",
+      "",
+      "**Where to look**",
+      "",
+      "- The text of the message, searched for in the workspace and in the libraries the process loaded.",
+      "- The backtrace, when there is one: its innermost frame is the function that signalled.",
+    );
   } else if (/^[.A-Za-z][A-Za-z0-9_.]*$/.test(name)) {
     lines.push(
       `${code(name)} is not defined where it was read: q signals a name it cannot find as an error of that name.`,
