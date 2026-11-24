@@ -496,6 +496,14 @@ export class Live {
   /// The connection `open` is running the connect script on, before it is
   /// the active one: what Disconnect closes then.
   private opening: QConnection | undefined;
+  /// The SSH tunnels open, stopped now when the extension host goes: one
+  /// left to its connection's close outlives a host that exits first (#1518).
+  private readonly tunnels = new Set<SshTunnel>();
+  private readonly closeTunnels = (): void => {
+    for (const tunnel of this.tunnels) {
+      tunnel.close();
+    }
+  };
   /// The connections `openSeparate` handed out and still open: a stream's.
   private readonly separate = new Set<{ connection: QConnection; process: Process }>();
   /// Stops the reconnect after an abort that waits for the process to be free.
@@ -697,11 +705,14 @@ export class Live {
           // A reconnect after an abort stops trying.
           this.reconnectStopped = true;
           void this.connection?.close();
+          this.closeTunnels();
+          globalThis.process.off("exit", this.closeTunnels);
           this.sharedWatcher?.dispose();
         },
       },
       workspace.onDidGrantWorkspaceTrust(() => void this.loadShared()),
     );
+    globalThis.process.on("exit", this.closeTunnels);
     this.showStatus();
     this.status.show();
     this.watchShared();
@@ -1797,6 +1808,8 @@ export class Live {
       );
     }
     const tunnel = await SshTunnel.open({ destination: process.ssh, host: target.host, port: target.port, signal });
+    this.tunnels.add(tunnel);
+    tunnel.whenClosed(() => this.tunnels.delete(tunnel));
     try {
       const connection = await QConnection.open(
         {

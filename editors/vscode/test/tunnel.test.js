@@ -340,3 +340,21 @@ test("turning tunnels off closes a connection apart through one, and its ssh", a
   for (let i = 0; i < 50 && alive(run.pid); i++) await sleep(50);
   assert.strictEqual(alive(run.pid), false);
 });
+
+// ssh was stopped only from the socket's later close: an extension host
+// that exited first left ssh running, reparented, its forward open (#1518).
+test("deactivating stops ssh at once, not on the connection's later close", async (t) => {
+  const q = await someQ(t);
+  stubSsh(t);
+  const { live, context } = await setUp(t, [{ label: "far", host: "127.0.0.1", port: q.port, tags: [], ssh: "bastion" }]);
+  assert.strictEqual(await live.connectTo("far"), true);
+  const closes = [];
+  const close = SshTunnel.prototype.close;
+  SshTunnel.prototype.close = function () {
+    closes.push(this.pid);
+    return close.call(this);
+  };
+  t.after(() => (SshTunnel.prototype.close = close));
+  for (const d of context.subscriptions) d.dispose?.();
+  assert.strictEqual(closes.length, 1);
+});
