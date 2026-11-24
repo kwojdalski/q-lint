@@ -114,3 +114,11 @@ test("with placeholders off, or none in the code, nothing is asked", async (t) =
   await query();
   assert.deepStrictEqual(sent, ["f:{{x}}; {{a}}", "f:{{x}}; 1"]);
 });
+
+test("nothing after a lone \\, the script's end, is a placeholder (#1471)", () => {
+  assert.deepStrictEqual(placeholderNames("select from t where d={{day}}\n\\\nold scratch {{when}}"), ["day"]);
+  // A \ that closes a block comment ends nothing.
+  assert.deepStrictEqual(placeholderNames("/\n{{a}}\n\\\n{{b}}"), ["b"]);
+  const { tileQueryProblem } = require("../out/dashboard.js");
+  assert.strictEqual(tileQueryProblem("select from t\n\\\nscratch: {{x1}}"), undefined);
+});

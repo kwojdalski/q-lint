@@ -53,6 +53,10 @@ export function placeholders(code: string): Placeholder[] {
         depth = blockDepth(depth, line.trimEnd());
         continue;
       }
+      if (line.trimEnd() === "\\") {
+        // The end of the script: nothing after it is sent (#1471).
+        break;
+      }
       if (line.startsWith("/")) {
         continue;
       }
