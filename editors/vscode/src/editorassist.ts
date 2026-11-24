@@ -107,6 +107,34 @@ export function matching(names: ProcessName[], query: string, limit = SYMBOLS_LI
     .slice(0, limit);
 }
 
+/// The names of `names` that match `query` and `defined` does not say the
+/// workspace defines, at most `limit`, shortest first. The workspace's are
+/// dropped before the cut, not after: the best `limit` matches being all
+/// its own left an empty list over the process's (#1918). `defined` is
+/// asked a page of matches at a time, each twice the last, until the list
+/// is full; one it does not answer for drops nothing.
+export async function processOnly(
+  names: ProcessName[],
+  query: string,
+  defined: (names: string[]) => Promise<unknown>,
+  limit = SYMBOLS_LIMIT,
+): Promise<ProcessName[]> {
+  const all = matching(names, query, names.length);
+  const found: ProcessName[] = [];
+  for (let at = 0, size = Math.max(limit, 1); at < all.length && found.length < limit; at += size, size *= 2) {
+    const page = all.slice(at, at + size);
+    let answer: unknown;
+    try {
+      answer = await defined(page.map((n) => n.name));
+    } catch {
+      answer = undefined;
+    }
+    const known = Array.isArray(answer) ? answer : [];
+    found.push(...page.filter((_, i) => known[i] !== true));
+  }
+  return found.slice(0, limit);
+}
+
 /// The text a process-only symbol opens as: what is known of it without
 /// asking the process again.
 export function processSymbolDocument(name: string, kind: string, process: string): string {
