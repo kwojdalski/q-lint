@@ -55,7 +55,9 @@
   const replayTo = input("to", 6);
   const status = element("p", "status");
 
-  const filter = (offset) => vscode.postMessage({ type: "page", table: applied.table, from: applied.from, to: applied.to, offset: offset });
+  // The pager asks for the filter its rows came from, which the page echoes;
+  // one the extension refused is never applied (#1794).
+  const filter = (offset, f) => ((f = f || applied), vscode.postMessage({ type: "page", table: f.table, from: f.from, to: f.to, offset: offset }));
   const pick = (index) => {
     picked = index;
     vscode.postMessage({ type: "show", index: index });
@@ -70,7 +72,7 @@
   filters.appendChild(labelled("Table", table));
   filters.appendChild(labelled("From", from));
   filters.appendChild(labelled("to", to));
-  filters.appendChild(button("Filter", "List the messages of this table in this time of day", () => ((applied = { table: table.value, from: from.value, to: to.value }), filter(0))));
+  filters.appendChild(button("Filter", "List the messages of this table in this time of day", () => filter(0, { table: table.value, from: from.value, to: to.value })));
   filters.appendChild(button("◀ Page", "The page before", () => filter(Math.max(0, page.offset - page.size))));
   filters.appendChild(button("Page ▶", "The page after", () => page.offset + page.size < page.total && filter(page.offset + page.size)));
   const steps = element("div", "row");
@@ -133,6 +135,12 @@
       });
     } else if (m.type === "page") {
       page = m;
+      applied = { table: m.table, from: m.from, to: m.to };
+      // The filter listed: an error a refused one left goes (#1793).
+      if (status.className === "status failed") {
+        status.textContent = "";
+        status.className = "status";
+      }
       drawRows();
     } else if (m.type === "message") {
       detail.textContent = "Message " + m.index + "\n" + m.text;

@@ -115,7 +115,7 @@
       img.alt = "chart";
       img.src = svgUrl(content.svg);
       t.body.appendChild(img);
-      t.body.appendChild(element("p", "note", content.total + " rows"));
+      t.body.appendChild(element("p", "note", content.drawn < content.total ? "First " + content.drawn + " of " + content.total + " rows." : content.total + " rows"));
     } else {
       const table = element("table");
       const head = element("tr");

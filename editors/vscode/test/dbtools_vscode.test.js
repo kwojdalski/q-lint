@@ -259,6 +259,9 @@ test("a dashboard runs its tiles' read-only queries, keeps a timer only with an 
   await dashboards.runTile({ id, query: "px", process: "hdb", view: "table", refresh: 0 });
   assert.strictEqual(runs, before);
   assert.deepStrictEqual(tileContent({ ok: false, error: "type", trace: "" }, "table"), { kind: "error", text: "type" });
+  // A chart of the rows fetched says how many of the answer's it draws (#1792).
+  const cut = tileContent({ ok: true, type: 98, text: [], grid: { count: 1000000, keys: 0, names: ["a", "b"], types: [7, 9], cells: [["1", "2"], ["3", "4"]], raw: [[1, 2], [3, 4]], rank: [[0, 1], [0, 1]] } }, "line");
+  assert.deepStrictEqual([cut.kind, cut.total, cut.drawn], ["chart", 1000000, 2]);
 });
 
 test("Open Dashboard with a name no dashboard has makes one of that name, asking nothing (#1268)", async (t) => {
@@ -341,6 +344,27 @@ test("a tile drawn again after a layout change keeps the time it ran at (#1341)"
   assert.notStrictEqual(again, ran, "posted again");
   assert.strictEqual(runs, 1, "not run again");
   assert.strictEqual(again.at, ran.at);
+  dashboards.close();
+});
+
+// Adding a tile drew the dashboard with "run every tile": a tile set to
+// refresh only when asked ran again because another was added.
+test("adding a tile to an open dashboard runs the new tile only (#1789)", async (t) => {
+  capture();
+  const { live, context } = await setUp(t);
+  await context.workspaceState.update(SAVED_QUERIES_KEY, [{ name: "px", code: "select from trade" }, { name: "py", code: "select from quote" }]);
+  const ran = [];
+  live.runApart = async (_p, code) => (ran.push(code), { ok: true, type: -7, text: ["1"] });
+  const dashboards = new Dashboards(context, live);
+  stub.inputs.push("Desk");
+  stub.picks.push("$(add) New dashboard...");
+  await stub.commands.get(DB_COMMANDS.addToDashboard)("px", undefined, "hdb");
+  await stub.commands.get(DB_COMMANDS.openDashboard)("Desk");
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepStrictEqual(ran, ["select from trade"]);
+  await stub.commands.get(DB_COMMANDS.addToDashboard)("py", "Desk", "hdb");
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepStrictEqual(ran, ["select from trade", "select from quote"]);
   dashboards.close();
 });
 

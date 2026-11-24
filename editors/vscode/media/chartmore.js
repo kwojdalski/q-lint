@@ -453,6 +453,12 @@
     return C.short(v, step || 0);
   }
 
+  /// Whether the x axis is a temporal q holds in whole units (a date, a
+  /// month, a minute, a second), so ticks between two are not drawn.
+  function wholeX(grid, data) {
+    return data.x >= 0 && Boolean(grid.columns[0].temporal) && C.WHOLE.indexOf(grid.columns[0].type) >= 0;
+  }
+
   /// What the crosshair reads at `x`: the x, as its cell shows it, and each
   /// pane's value at its nearest point. {x, values: [{label, text}]}.
   function readout(grid, data, x) {
@@ -531,7 +537,7 @@
         scales: {
           x: Object.assign({
             type: "linear",
-            ticks: { display: last, maxRotation: 0, callback: function (v, i, ticks) { return xText(grid, data, v, ticks && ticks.length > 1 ? Math.abs(ticks[1].value - ticks[0].value) : 0); } },
+            ticks: Object.assign({ display: last, maxRotation: 0, callback: function (v, i, ticks) { return xText(grid, data, v, ticks && ticks.length > 1 ? Math.abs(ticks[1].value - ticks[0].value) : 0); } }, wholeX(grid, data) ? { precision: 0 } : {}),
             title: { display: last, text: data.x >= 0 ? grid.columns[0].name : "row" },
           }, view.range ? { min: view.range.min, max: view.range.max } : {}),
           y: { title: { display: true, text: pane.label } },
@@ -546,7 +552,8 @@
   /// Series of points on linear axes as an SVG document, drawn by hand as
   /// chartspec.js's chartSvg is: {series: [{label, colour, points: [{x, y,
   /// r?, colour?}], mode: "line" | "before" | "after" | "points", area}],
-  /// xTitle, yTitle, xText(v, step), xRange?, yRange?, outline?, legend?}.
+  /// xTitle, yTitle, xText(v, step), xWhole?, xRange?, yRange?, outline?,
+  /// legend?} - `xWhole`, an x in whole units (dates), ticked by whole ones.
   /// `opts`: {width, height, background, title, at} - `at`, a y offset, for
   /// a pane inside another SVG.
   function xySvg(spec, look, opts) {
@@ -601,7 +608,7 @@
       out.push('<line x1="' + left + '" x2="' + (left + pw) + '" y1="' + f(Y(v)) + '" y2="' + f(Y(v)) + '" stroke="' + border + '" stroke-width="0.5"/>');
       out.push('<text x="' + (left - 6) + '" y="' + f(Y(v)) + '" dy="0.32em" text-anchor="end" fill="' + fg + '">' + xml(C.short(v, yt.step)) + "</text>");
     });
-    const xt = C.ticks(xr.lo, xr.hi);
+    const xt = C.ticks(xr.lo, xr.hi, spec.xWhole);
     xt.values.filter(function (v) { return v >= xr.lo && v <= xr.hi; }).forEach(function (v) {
       out.push('<text x="' + f(X(v)) + '" y="' + (top + ph + 16) + '" text-anchor="middle" fill="' + fg + '">' + xml(spec.xText ? spec.xText(v, xt.step) : C.short(v, xt.step)) + "</text>");
     });
@@ -728,6 +735,7 @@
           return lo <= hi ? { lo: lo, hi: hi } : undefined;
         })(),
         xText: function (v, step) { return last ? xText(grid, data, v, step) : ""; },
+        xWhole: wholeX(grid, data),
         xTitle: last ? (data.x >= 0 ? grid.columns[0].name : "row") : "",
         yTitle: p.label,
         legend: false,

@@ -57,7 +57,7 @@ export function tileContent(answer: GridAnswer, view: TileView): TileContent {
     return { kind: "table", columns: grid.columns.map((c) => c.name), rows: [...Array(n).keys()].map((r) => grid.cells.map((c) => c[r] ?? "")), total: grid.total };
   }
   try {
-    return { kind: "chart", svg: chartFromGrid(grid, { kind: view, width: 640, height: 320, background: "#ffffff" }), total: grid.total };
+    return { kind: "chart", svg: chartFromGrid(grid, { kind: view, width: 640, height: 320, background: "#ffffff" }), total: grid.total, drawn: grid.cells[0]?.length ?? 0 };
   } catch (error) {
     return { kind: "error", text: error instanceof Error ? error.message : String(error) };
   }
@@ -177,7 +177,8 @@ export class Dashboards {
     const tile: Tile = { id: randomBytes(6).toString("hex"), query: name, process, view: "table", refresh: 0 };
     const next = { ...d, tiles: [...d.tiles, tile] };
     await this.save(withDashboard(this.list(), next));
-    if (this.shown === next.name) this.render(next, true);
+    // Only the new tile runs: the others are drawn from what they showed.
+    if (this.shown === next.name) this.render(next, false);
     return tile.id;
   }
 

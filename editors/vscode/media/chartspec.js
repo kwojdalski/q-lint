@@ -89,7 +89,9 @@
       const count = new Array(n).fill(0);
       values.forEach(function (v) {
         if (v !== null && isFinite(v)) {
-          count[width === 0 ? 0 : Math.min(n - 1, Math.floor((v / k - lo / k) / width))] += 1;
+          // A value on an edge (1.2 of 1, 1.05, ...) is in the bin above
+          // it, though (1.2 - 1) / 0.05 rounds to 3.9999999999999996.
+          count[width === 0 ? 0 : Math.min(n - 1, Math.floor((v / k - lo / k) / width + 1e-9))] += 1;
         }
       });
       return count;
@@ -397,10 +399,13 @@
   }
 
   /// About five round steps from `lo` to `hi`: the ticks of an axis.
-  function ticks(lo, hi) {
-    // A range within rounding of its ends (0.3 and 0.1+0.2) is one value:
-    // a step that small would not move `v` on.
-    if (!(hi - lo > Math.max(Math.abs(lo), Math.abs(hi)) * 1e-10)) {
+  /// `whole`: the axis is in whole units (a date's days), so a step is one
+  /// at least and every tick a whole one.
+  function ticks(lo, hi, whole) {
+    // A range within a few ulps of its ends (0.3 and 0.1+0.2) is one value:
+    // a step that small would not move `v` on. 50 ms of timestamps, or
+    // 1e12 to 1e12+60, is a range.
+    if (!(hi - lo > Math.max(Math.abs(lo), Math.abs(hi)) * (64 * Number.EPSILON))) {
       const d = Math.abs(lo) || 1;
       lo -= d / 2;
       hi += d / 2;
@@ -409,10 +414,13 @@
     // cannot overflow.
     const raw = hi / 5 - lo / 5;
     const mag = Math.pow(10, Math.floor(Math.log10(raw)));
-    const step = [1, 2, 5, 10].map(function (m) { return m * mag; }).filter(function (s) { return s >= raw; })[0];
+    const round = [1, 2, 5, 10].map(function (m) { return m * mag; }).filter(function (s) { return s >= raw; })[0];
+    const step = whole ? Math.max(1, round) : round;
+    // Enough digits to tell one tick from the next, far from zero.
+    const digits = Math.min(17, Math.max(12, Math.ceil(Math.log10(Math.max(Math.abs(lo), Math.abs(hi)) / step)) + 2));
     const out = [];
     for (let v = Math.floor(lo / step) * step; out.length < 50 && isFinite(v) && v - step / 2 <= hi; v += step) {
-      out.push(+v.toPrecision(12));
+      out.push(+v.toPrecision(digits));
     }
     return out.length > 0 ? { values: out, step: step } : { values: [lo, hi], step: hi - lo };
   }
@@ -504,11 +512,11 @@
         lo = 0;
         hi = 1;
       }
-      const t = ticks(lo, hi);
+      const x0 = grid.columns[0];
+      const t = ticks(lo, hi, x0 && x0.temporal && WHOLE.indexOf(x0.type) >= 0);
       const a = Math.min(lo, t.values[0]);
       const b = Math.max(hi, t.values[t.values.length - 1]);
       xOf = function (x) { return left + (b === a ? pw / 2 : ((x / 2 - a / 2) / (b / 2 - a / 2)) * pw); };
-      const x0 = grid.columns[0];
       t.values.forEach(function (v) {
         const label = x0 && x0.temporal && grid.columns.length > 1 ? temporalLabel(x0.type, v, t.step) : short(v, t.step);
         out.push('<text x="' + xOf(v).toFixed(1) + '" y="' + (top + ph + 16) + '" text-anchor="middle" fill="' + xml(fg) + '">' + xml(label) + "</text>");
@@ -640,6 +648,7 @@
     ohlcColumns: ohlcColumns,
     chartSvg: chartSvg,
     ticks: ticks,
+    WHOLE: WHOLE,
     short: short,
     xml: xml,
   };

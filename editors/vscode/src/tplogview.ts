@@ -291,7 +291,8 @@ export class TickerplantLog {
       return;
     }
     const page = readTpPage(await this.call(local, ".qlint.tp.page", table, t0 ?? NaN, t1 ?? NaN, Math.max(0, offset), TPLOG_PAGE));
-    await this.post({ type: "page", offset: Math.max(0, offset), size: TPLOG_PAGE, ...page });
+    // The filter echoed, so the page's pager asks for this one (#1794).
+    await this.post({ type: "page", table, from, to, offset: Math.max(0, offset), size: TPLOG_PAGE, ...page });
   }
 
   /// Replay messages `from` to `to` into the local q, after asking.
