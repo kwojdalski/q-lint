@@ -475,8 +475,9 @@ test("an unlimited float list is written to the process's \\P, as its console wr
   assert.strictEqual(floats([1 / 3, 2], 10), "0.3333333333 2");
   assert.strictEqual(floats([1234.5, 0.000123], 3), "1.23e+03 0.000123");
   assert.strictEqual(floats([123456789012.5], 10), ",1.23456789e+11");
-  // A real at \P 0 is as few digits as give it back; at \P 10, ten.
+  // A real at \P 0 is %.8g, as KDB-X writes it (#1759); at \P 10, ten.
   assert.strictEqual(floats([Math.fround(1.1), Math.fround(2.2)], 0, 8), "1.1 2.2e");
+  assert.strictEqual(floats([Math.fround(0.3), Math.fround(0.052670188)], 0, 8), "0.30000001 0.052670188e");
   assert.strictEqual(floats([Math.fround(1.1)], 10, 8), ",1.100000024e");
   // q's default, and an answer with no precision.
   assert.strictEqual(floats([1 / 3], 7), ",0.3333333");

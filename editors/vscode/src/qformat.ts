@@ -90,20 +90,14 @@ function hms(d: Date): string {
 /// A float as q writes it at a `\P` of `precision` significant digits (7,
 /// q's default, unless given): C's `%.{P}g`, an exponent (of two digits at
 /// least) from 10^P up and below 1e-4, trailing zeros dropped. `\P 0` is
-/// every digit a float holds, `%.17g`; a real (`real`) at `\P 0` is as few
-/// digits as give it back, as KDB-X writes one.
+/// every digit a float holds, `%.17g`, and a real (`real`) `%.8g`, as
+/// KDB-X writes one: 0.3e is 0.30000001e (#1759).
 export function floatText(x: number, precision = 7, real = false): string {
   if (x === 0 || !Number.isFinite(x)) {
     // String(-0) is "0"; q writes `-0f` (#1236).
     return Object.is(x, -0) ? "-0" : String(x);
   }
-  let p = precision > 0 ? Math.min(precision, 17) : 17;
-  if (real && precision <= 0) {
-    p = 1;
-    while (p < 9 && Math.fround(Number(x.toPrecision(p))) !== Math.fround(x)) {
-      p++;
-    }
-  }
+  const p = precision > 0 ? Math.min(precision, 17) : real ? 8 : 17;
   const [digits, exponent] = significant(Math.abs(x), p);
   const sign = x < 0 ? "-" : "";
   const trim = (text: string): string => text.replace(/\.?0*$/, "");
