@@ -27,7 +27,9 @@
 //! (`where flag`, `enlist`flag`).
 //!
 //! A functional form says more than qSQL can: where one has no qSQL - a
-//! column named with a word of q's own (`column`) - it is refused too.
+//! column named with a word of q's own (`column`) - it is refused too. And
+//! `enlist x` in a tree is not the call `(enlist;x)`: over anything but one
+//! atom it is q's quote, read back as the constant under it (`constant`).
 use super::layout;
 
 /// A rewrite of the query at the cursor: the bytes `start..end` replaced by
@@ -847,7 +849,12 @@ fn node(d: &Data) -> Result<Node, String> {
         Data::Sym(_) => return Err("a symbol vector where a tree was expected".into()),
         Data::Enlist(inner) => match &**inner {
             Data::Sym(s) => Node::Sym(s.clone()),
-            other => Node::List(vec![node(other)?]),
+            // One atom enlisted is a vector of one item, which `eval`
+            // leaves as it is: `enlist 7` in qSQL too.
+            Data::Leaf(l) if atom(l) => Node::List(vec![Node::Leaf(l.clone())]),
+            // Anything else enlisted is a general list of one item, q's
+            // quote: `eval` gives the item back as it stands (#2024).
+            other => constant(other)?,
         },
         Data::Leaf(l) => Node::Leaf(l.clone()),
         Data::Word(w) => Node::Verb(w.clone()),
@@ -899,6 +906,57 @@ fn node(d: &Data) -> Result<Node, String> {
             }
         },
         Data::Dict(..) | Data::NoSymbols => return Err("a dictionary inside a tree".into()),
+    })
+}
+
+/// Whether the literal `leaf` is one atom, so that enlisting it makes a
+/// vector: `7`, `0b`, `"a"`, `0x01`, `09:30:00`. A vector of several
+/// (`1 2 3`, `101b`, `0x0102`, `"abc"`, `""`) and a lambda are not: a list
+/// holding one of those is a general list.
+fn atom(leaf: &str) -> bool {
+    let b = leaf.as_bytes();
+    if let Some(body) = leaf.strip_prefix('"') {
+        // The characters of a string: an escape is one, `\123` too.
+        let body = body.strip_suffix('"').unwrap_or(body).as_bytes();
+        let (mut i, mut chars) = (0, 0);
+        while i < body.len() {
+            i += match body[i] {
+                b'\\' if body.get(i + 1).is_some_and(u8::is_ascii_digit) => 4,
+                b'\\' => 2,
+                _ => 1,
+            };
+            chars += 1;
+        }
+        return chars == 1;
+    }
+    if leaf.starts_with('{') || leaf == "()" || leaf.contains(' ') {
+        return false;
+    }
+    if let Some(bits) = leaf.strip_suffix('b')
+        && bits.bytes().all(|c| c == b'0' || c == b'1')
+    {
+        return bits.len() == 1;
+    }
+    if leaf.starts_with("0x") {
+        return (3..=4).contains(&b.len());
+    }
+    true
+}
+
+/// Data a tree holds unevaluated - what is under q's quote - as the
+/// expression that builds it: each item of a list a constant in turn, and
+/// an `enlist` inside it a list of one item.
+fn constant(d: &Data) -> Result<Node, String> {
+    Ok(match d {
+        Data::Leaf(l) => Node::Leaf(l.clone()),
+        Data::Sym(s) => Node::Sym(s.clone()),
+        Data::Word(w) => Node::Verb(w.clone()),
+        Data::Enlist(inner) => Node::List(vec![constant(inner)?]),
+        Data::List(items) if items.is_empty() => Node::Leaf("()".into()),
+        Data::List(items) => Node::List(items.iter().map(constant).collect::<Result<_, _>>()?),
+        Data::Dict(..) | Data::NoSymbols => {
+            return Err("a dictionary held as a constant, which no expression here writes".into());
+        }
     })
 }
 

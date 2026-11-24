@@ -178,6 +178,60 @@ const CASES: &[(&str, &str)] = &[
     ),
 ];
 
+/// `(functional, qsql)`, one way only: forms a hand writes that no qSQL
+/// reads back to, though it returns the same. `enlist x` in a tree is q's
+/// quote where it makes a general list (`eval` gives `x` back, unevaluated),
+/// so a vector, a string or a list under it is that constant, and the
+/// items of a quoted list are constants too (#2024). One atom enlisted is a
+/// vector of one item, which `eval` leaves as it is: `enlist 7`.
+const BACK: &[(&str, &str)] = &[
+    (
+        "?[t;();0b;(enlist`v)!enlist enlist \"abcde\"]",
+        "select v:\"abcde\" from t",
+    ),
+    (
+        "?[t;();0b;(enlist`v)!enlist enlist 1 2 3 4 5]",
+        "select v:1 2 3 4 5 from t",
+    ),
+    (
+        "?[t;();0b;(enlist`v)!enlist enlist 10101b]",
+        "select v:10101b from t",
+    ),
+    ("?[t;();();enlist \"abc\"]", "exec \"abc\" from t"),
+    (
+        "?[t;();0b;(enlist`v)!enlist (#;5;enlist enlist \"abc\")]",
+        "select v:5#enlist \"abc\" from t",
+    ),
+    (
+        "?[t;();0b;(enlist`v)!enlist (#;5;enlist 7)]",
+        "select v:5#enlist 7 from t",
+    ),
+    (
+        "?[t;();0b;(enlist`v)!enlist (#;5;enlist \"a\")]",
+        "select v:5#enlist \"a\" from t",
+    ),
+    (
+        "?[t;();0b;(enlist`v)!enlist (#;5;enlist \"\\n\")]",
+        "select v:5#enlist \"\\n\" from t",
+    ),
+    (
+        "?[t;enlist (in;`s;enlist (\"ab\";\"cd\"));0b;()]",
+        "select from t where s in (\"ab\";\"cd\")",
+    ),
+    (
+        "?[t;enlist (in;`s;enlist enlist \"ab\");0b;()]",
+        "select from t where s in enlist \"ab\"",
+    ),
+    (
+        "?[t;();0b;(enlist`v)!enlist (#;5;enlist (>;`px;2))]",
+        "select v:5#(>;`px;2) from t",
+    ),
+    (
+        "?[t;();0b;(enlist`v)!enlist (#;5;enlist (1;enlist `a;enlist 2;\"ab\";`b`c))]",
+        "select v:5#(1;enlist `a;enlist 2;\"ab\";`b`c) from t",
+    ),
+];
+
 /// qSQL that is not rewritten, and why.
 const REFUSED: &[(&str, &str)] = &[
     ("select[2] from t", "takes more arguments"),
@@ -214,6 +268,23 @@ fn a_functional_form_is_written_back_as_qsql() {
             .unwrap_or_else(|e| panic!("{}: {e}", got.text));
         assert_eq!(again.text, *functional, "{qsql} -> {}", got.text);
         assert_eq!(&source[got.start..got.end], *functional);
+    }
+}
+
+#[test]
+fn an_enlisted_constant_is_written_as_the_constant() {
+    // #2024: `enlist "abc"` was copied into the qSQL as a call, which
+    // builds a list of one string where the form holds the string.
+    for (functional, qsql) in BACK {
+        let got = functional_to_qsql(&format!("r:{functional}\n"), 3)
+            .unwrap_or_else(|| panic!("no functional form in {functional}"))
+            .unwrap_or_else(|e| panic!("{functional}: {e}"));
+        assert_eq!(got.text, *qsql, "{functional}");
+    }
+    // A dictionary under the quote has no spelling in an expression.
+    match functional_to_qsql("r:?[t;();();enlist `a`b!1 2]\n", 3) {
+        Some(Err(e)) => assert!(e.contains("dictionary"), "{e}"),
+        other => panic!("{other:?}"),
     }
 }
 
@@ -340,6 +411,9 @@ fn each_rewrite_returns_what_the_query_it_came_from_returns() {
         script.push_str(&format!("ck[{}; {}];\n", quoted(qsql), quoted(functional)));
         script.push_str(&format!("ck[{}; {}];\n", quoted(qsql), quoted(&back)));
     }
+    for (functional, qsql) in BACK {
+        script.push_str(&format!("ck[{}; {}];\n", quoted(functional), quoted(qsql)));
+    }
     script.push_str("\\\\\n");
     let Some(out) = run_q(&script) else {
         eprintln!("QLINT_TEST_Q names no q: the cases stand as KDB-X ran them");
@@ -349,7 +423,7 @@ fn each_rewrite_returns_what_the_query_it_came_from_returns() {
         return;
     };
     let lines: Vec<&str> = out.lines().collect();
-    assert_eq!(lines.len(), 2 * CASES.len(), "{out}");
+    assert_eq!(lines.len(), 2 * CASES.len() + BACK.len(), "{out}");
     assert!(lines.iter().all(|l| *l == "same"), "{out}");
 }
 
