@@ -99,11 +99,32 @@ export class RowWindow {
 
   push(rows: string[][]): void {
     this.total += rows.length;
-    this.kept = rows.length >= this.limit ? rows.slice(-this.limit) : [...this.kept, ...rows].slice(-this.limit);
+    if (rows.length >= this.limit) {
+      this.kept = rows.slice(-this.limit);
+      return;
+    }
+    for (const row of rows) {
+      this.kept.push(row);
+    }
+    // Cut back now and then, not on every update: a busy table sends many
+    // small ones, and copying the kept rows for each was the cost (#1861).
+    if (this.kept.length >= 2 * this.limit) {
+      this.kept = this.kept.slice(-this.limit);
+    }
   }
 
   /// The rows kept, oldest first.
   rows(): string[][] {
-    return this.kept;
+    return this.kept.length > this.limit ? this.kept.slice(-this.limit) : this.kept;
+  }
+
+  /// What the grid needs once it has drawn the first `seen` rows received
+  /// (-1: none drawn): the rows since, oldest first, to add above the rows
+  /// it has. `reset` when none of what it has is still kept, and `rows` are
+  /// then all of them (#1861).
+  since(seen: number): { reset: boolean; rows: string[][] } {
+    const all = this.rows();
+    const added = seen < 0 ? Infinity : this.total - seen;
+    return added >= all.length ? { reset: true, rows: all } : { reset: false, rows: added === 0 ? [] : all.slice(-added) };
   }
 }

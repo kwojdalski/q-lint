@@ -174,16 +174,26 @@ export class TableStreams {
     // Closing the panel closes the connection, whose close handler would
     // draw again: nothing touches the webview once it is disposed (#1272).
     let disposed = false;
+    // The rows received when the page last drew, -1 before it has: each
+    // draw posts only the rows since, which the page adds above its own,
+    // not every kept row to build again (#1861).
+    let seen = -1;
     const draw = (): void => {
+      // A draw now does what one waiting would.
+      clearTimeout(timer);
       timer = undefined;
       if (!disposed && !stream.paused) {
+        const { reset, rows } = stream.window.since(seen);
+        seen = stream.window.total;
         void panel.webview.postMessage({
           type: "rows",
           process: label,
           table,
           columns,
           limit,
-          rows: stream.window.rows(),
+          reset,
+          rows,
+          kept: stream.window.rows().length,
           total: stream.window.total,
           at: new Date().toLocaleTimeString(),
           ...(stream.closed !== undefined ? { closed: stream.closed } : {}),
@@ -215,6 +225,8 @@ export class TableStreams {
     });
     panel.webview.onDidReceiveMessage((message: { type?: string; paused?: unknown }) => {
       if (message.type === "ready") {
+        // A page loaded again has no rows: it is sent them all.
+        seen = -1;
         draw();
       } else if (message.type === "pause") {
         stream.paused = message.paused === true;
