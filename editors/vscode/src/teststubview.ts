@@ -12,6 +12,7 @@ import {
   CodeActionKind,
   Position,
   Range,
+  RelativePattern,
   Selection,
   Uri,
   WorkspaceEdit,
@@ -70,21 +71,25 @@ async function open(uri: Uri): Promise<string | undefined> {
 /// Where the stub for `source`'s function goes: an existing test file, or a
 /// new one, with the text the style is read from.
 async function testFile(source: Uri): Promise<{ uri: Uri; text: string | undefined; styleFrom: string }> {
+  // Searched in `source`'s own folder: in a multi-root workspace another
+  // folder's test_<name>.q tests another repository's file (#1837).
+  const own = workspace.getWorkspaceFolder(source);
+  const within = (glob: string): string | RelativePattern => (own !== undefined ? new RelativePattern(own, glob) : glob);
   for (const pattern of testFilePatterns(source.fsPath)) {
-    const found = (await workspace.findFiles(pattern, "**/node_modules/**", 20)).sort((a, b) => a.fsPath.length - b.fsPath.length);
+    const found = (await workspace.findFiles(within(pattern), "**/node_modules/**", 20)).sort((a, b) => a.fsPath.length - b.fsPath.length);
     if (found.length > 0) {
       const text = (await open(found[0])) ?? "";
       return { uri: found[0], text, styleFrom: text };
     }
   }
-  const folder = workspace.getWorkspaceFolder(source)?.uri;
+  const folder = own?.uri;
   const hasTests =
     folder !== undefined &&
     (await workspace.fs.stat(Uri.joinPath(folder, "tests")).then(
       () => true,
       () => false,
     ));
-  const other = (await workspace.findFiles("**/test_*.q", "**/node_modules/**", 1))[0];
+  const other = (await workspace.findFiles(within("**/test_*.q"), "**/node_modules/**", 1))[0];
   return {
     uri: Uri.file(newTestPath(source.fsPath, folder?.fsPath, hasTests)),
     text: undefined,
