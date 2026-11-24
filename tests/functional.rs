@@ -9,7 +9,7 @@ use q_lint_rs::{functional_to_qsql, qsql_to_functional};
 use std::process::{Command, Stdio};
 
 /// The table every case reads, as q.
-const TABLE: &str = "t:([]sym:`a`b`a`c`b;px:1 2 3 4 5f;size:10 20 30 40 50;flag:10101b;s:(\"ab\";\"cd\";\"ef\";\"gh\";\"ij\");time:09:30:00 09:31:00 09:32:00 09:33:00 09:34:00);s2:`a`b;";
+const TABLE: &str = "t:([]sym:`a`b`a`c`b;px:1 2 3 4 5f;size:10 20 30 40 50;flag:10101b;s:(\"ab\";\"cd\";\"ef\";\"gh\";\"ij\");time:09:30:00 09:31:00 09:32:00 09:33:00 09:34:00);s2:`a`b;pair:{(x;y)};";
 
 /// `(qsql, functional)`: each direction writes the other, where the second
 /// direction's qSQL is the first's up to spacing and implied names.
@@ -111,6 +111,29 @@ const CASES: &[(&str, &str)] = &[
     (
         "select v:px-1e+1 from t",
         "?[t;();0b;(enlist`v)!enlist (-;`px;1e+1)]",
+    ),
+    // `_` and `.` stand apart from their arguments, or q reads `px_1` and
+    // `pair.s2` as names; and `1e-1` is a float where the tree holds the
+    // real `1e` minus `1` (#2060).
+    (
+        "select x:px _ 1 from t",
+        "?[t;();0b;(enlist`x)!enlist (_;`px;1)]",
+    ),
+    (
+        "select v:2 _ s from t",
+        "?[t;();0b;(enlist`v)!enlist (_;2;`s)]",
+    ),
+    (
+        "select from t where sym in pair . s2",
+        "?[t;enlist (in;`sym;(.;`pair;`s2));0b;()]",
+    ),
+    (
+        "select v:px*1e - 1 from t",
+        "?[t;();0b;(enlist`v)!enlist (*;`px;(-;1e;1))]",
+    ),
+    (
+        "select v:px*1e + 1 from t",
+        "?[t;();0b;(enlist`v)!enlist (*;`px;(+;1e;1))]",
     ),
     ("exec px from t", "?[t;();();`px]"),
     ("exec px by sym from t", "?[t;();`sym;`px]"),

@@ -1002,7 +1002,20 @@ pub(crate) fn infix_text(n: &Node) -> Result<String, String> {
             };
             match (&**f, &args[..]) {
                 (Node::Verb(v), [x, y]) if v.bytes().all(|c| GLYPHS.contains(&c)) => {
-                    format!("{}{v}{}", left(x)?, infix_text(y)?)
+                    let (x, y) = (left(x)?, infix_text(y)?);
+                    // Some glyphs join what is on either side into one
+                    // token: q reads `px_1` and `f.s2` as names, `1.2` as
+                    // a float, and `1e-1` and `1e+1` as one number where
+                    // the tree holds the real `1e` (`-4!` on KDB-X 5). So
+                    // `_` and `.` always stand apart, and so does a sign
+                    // after a number ending in `e` (#2060).
+                    let number_e = x.ends_with('e')
+                        && x.starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '.');
+                    if v == "_" || v == "." || (number_e && (v == "-" || v == "+")) {
+                        format!("{x} {v} {y}")
+                    } else {
+                        format!("{x}{v}{y}")
+                    }
                 }
                 (Node::Verb(v), [x, y]) if infix(v) => {
                     format!("{} {v} {}", left(x)?, infix_text(y)?)
