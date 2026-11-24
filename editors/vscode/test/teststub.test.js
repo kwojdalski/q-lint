@@ -38,6 +38,25 @@ test("the suite's style decides the name and the assertion", () => {
   assert.deepStrictEqual(testFilePatterns("/ws/src/lib.q"), ["**/test_lib.q", "**/lib_test.q"]);
 });
 
+// `[1]` in f[1].q is a character class to a glob: test_f1.q was found
+// for it and test_f[1].q never was (#1526).
+test("a file name holding glob characters is matched as written", () => {
+  const { globLiteral } = require("../out/globliteral.js");
+  assert.deepStrictEqual(testFilePatterns("/ws/src/f[1].q"), ["**/test_f[[]1[]].q", "**/f[[]1[]]_test.q"]);
+  assert.strictEqual(globLiteral("x{a,b}*?.q"), "x[{]a,b[}][*][?].q");
+  let mm;
+  try {
+    mm = require("minimatch");
+  } catch {
+    return;
+  }
+  const match = mm.minimatch ?? mm;
+  const [pattern] = testFilePatterns("/ws/src/f[1].q");
+  assert.strictEqual(match("tests/test_f[1].q", pattern), true);
+  assert.strictEqual(match("tests/test_f1.q", pattern), false);
+  assert.strictEqual(match("x{a}.q", `**/${globLiteral("x{a}.q")}`), true);
+});
+
 function setup(files) {
   stub.reset();
   const edits = [];
