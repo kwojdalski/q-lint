@@ -132,6 +132,104 @@ const CASES: &[(&str, &str)] = &[
         "delete from t where px>2",
         "![t;enlist (>;`px;2);0b;`symbol$()]",
     ),
+    // A query in parentheses inside another is its own tree, each argument
+    // as `parse` holds it: what the functional form takes, enlisted unless
+    // `eval` leaves it as it is (#2022). On KDB-X 5,
+    // parse "select from t where sym in (exec sym from t where px>3)" is
+    // (?;`t;,,(in;`sym;(?;`t;,,(>;`px;3);();,`sym));0b;()), and so on down:
+    // each of these was compared there with `parse` of its query, argument
+    // by argument as q displays them, as well as by what it returns. They
+    // were not run on PeachQ.
+    (
+        "select from t where sym in (exec sym from t where px>3)",
+        "?[t;enlist (in;`sym;(?;`t;enlist enlist (>;`px;3);();enlist `sym));0b;()]",
+    ),
+    (
+        "select from t where px>(exec max px from t where sym=`a, size>10)",
+        "?[t;enlist (>;`px;(?;`t;enlist ((=;`sym;enlist`a);(>;`size;10));();enlist (max;`px)));0b;()]",
+    ),
+    (
+        "select from t where px<(count select px, size by sym from t)",
+        "?[t;enlist (<;`px;(count;(?;`t;();(enlist`sym)!enlist `sym;`px`size!(`px;`size))));0b;()]",
+    ),
+    (
+        "select from t where px<(count select distinct sym from t)",
+        "?[t;enlist (<;`px;(count;(?;`t;();1b;(enlist`sym)!enlist `sym)));0b;()]",
+    ),
+    (
+        "select from t where px<(count exec sum px by sym from t)",
+        "?[t;enlist (<;`px;(count;(?;`t;();enlist `sym;enlist (sum;`px))));0b;()]",
+    ),
+    (
+        "select from t where size in (exec size from (delete from t where px>2))",
+        "?[t;enlist (in;`size;(?;(!;`t;enlist enlist (>;`px;2);0b;`symbol$());();();enlist `size));0b;()]",
+    ),
+    (
+        "select from t where size in (exec size from (delete px from t))",
+        "?[t;enlist (in;`size;(?;(!;`t;();0b;enlist enlist`px);();();enlist `size));0b;()]",
+    ),
+    (
+        "select from t where px in (exec px from (update px:2*px from t where sym=`a))",
+        "?[t;enlist (in;`px;(?;(!;`t;enlist enlist (=;`sym;enlist`a);0b;(enlist`px)!enlist (*;2;`px));();();enlist `px));0b;()]",
+    ),
+    (
+        "select from t where sym in (exec a:sym, b:px from t)[`a]",
+        "?[t;enlist (in;`sym;((?;`t;();();`a`b!(`sym;`px));enlist`a));0b;()]",
+    ),
+];
+
+/// `(functional, qsql)`, one way only: forms a hand writes that no qSQL
+/// reads back to, though it returns the same. `enlist x` in a tree is q's
+/// quote where it makes a general list (`eval` gives `x` back, unevaluated),
+/// so a vector, a string or a list under it is that constant, and the
+/// items of a quoted list are constants too (#2024). One atom enlisted is a
+/// vector of one item, which `eval` leaves as it is: `enlist 7`.
+const BACK: &[(&str, &str)] = &[
+    (
+        "?[t;();0b;(enlist`v)!enlist enlist \"abcde\"]",
+        "select v:\"abcde\" from t",
+    ),
+    (
+        "?[t;();0b;(enlist`v)!enlist enlist 1 2 3 4 5]",
+        "select v:1 2 3 4 5 from t",
+    ),
+    (
+        "?[t;();0b;(enlist`v)!enlist enlist 10101b]",
+        "select v:10101b from t",
+    ),
+    ("?[t;();();enlist \"abc\"]", "exec \"abc\" from t"),
+    (
+        "?[t;();0b;(enlist`v)!enlist (#;5;enlist enlist \"abc\")]",
+        "select v:5#enlist \"abc\" from t",
+    ),
+    (
+        "?[t;();0b;(enlist`v)!enlist (#;5;enlist 7)]",
+        "select v:5#enlist 7 from t",
+    ),
+    (
+        "?[t;();0b;(enlist`v)!enlist (#;5;enlist \"a\")]",
+        "select v:5#enlist \"a\" from t",
+    ),
+    (
+        "?[t;();0b;(enlist`v)!enlist (#;5;enlist \"\\n\")]",
+        "select v:5#enlist \"\\n\" from t",
+    ),
+    (
+        "?[t;enlist (in;`s;enlist (\"ab\";\"cd\"));0b;()]",
+        "select from t where s in (\"ab\";\"cd\")",
+    ),
+    (
+        "?[t;enlist (in;`s;enlist enlist \"ab\");0b;()]",
+        "select from t where s in enlist \"ab\"",
+    ),
+    (
+        "?[t;();0b;(enlist`v)!enlist (#;5;enlist (>;`px;2))]",
+        "select v:5#(>;`px;2) from t",
+    ),
+    (
+        "?[t;();0b;(enlist`v)!enlist (#;5;enlist (1;enlist `a;enlist 2;\"ab\";`b`c))]",
+        "select v:5#(1;enlist `a;enlist 2;\"ab\";`b`c) from t",
+    ),
 ];
 
 /// qSQL that is not rewritten, and why.
@@ -174,6 +272,23 @@ fn a_functional_form_is_written_back_as_qsql() {
 }
 
 #[test]
+fn an_enlisted_constant_is_written_as_the_constant() {
+    // #2024: `enlist "abc"` was copied into the qSQL as a call, which
+    // builds a list of one string where the form holds the string.
+    for (functional, qsql) in BACK {
+        let got = functional_to_qsql(&format!("r:{functional}\n"), 3)
+            .unwrap_or_else(|| panic!("no functional form in {functional}"))
+            .unwrap_or_else(|e| panic!("{functional}: {e}"));
+        assert_eq!(got.text, *qsql, "{functional}");
+    }
+    // A dictionary under the quote has no spelling in an expression.
+    match functional_to_qsql("r:?[t;();();enlist `a`b!1 2]\n", 3) {
+        Some(Err(e)) => assert!(e.contains("dictionary"), "{e}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
 fn what_cannot_be_read_is_refused_with_the_reason() {
     for (qsql, why) in REFUSED {
         let source = format!("r:{qsql}\n");
@@ -201,6 +316,51 @@ fn a_functional_form_whose_qsql_q_refuses_is_refused() {
     let source = "r:![t;();(enlist`sym)!enlist `sym;(enlist`sym)!enlist (first;`sym)]\n";
     let got = functional_to_qsql(source, 3).unwrap().unwrap();
     assert_eq!(got.text, "update first sym by sym from t");
+}
+
+#[test]
+fn a_column_named_with_a_word_of_q_is_not_written_as_qsql() {
+    // #2023. A functional form names a column with any symbol; qSQL reads a
+    // word of q's own as that word. On KDB-X 5 each form here runs, and its
+    // qSQL does not: `select count:px from t` is 'assign, `select
+    // select:px from t` 'from, `select px by max:sym from t` 'assign,
+    // `update asc:px from t` 'assign; and with a column `count` in the
+    // table, `select from u where count>1` is 'type (parse reads `#:`),
+    // `select v:count from u` 'rank, `exec sym by count from u` 'length,
+    // `delete count from u` 'type, and `exec count from u` returns the
+    // function.
+    for form in [
+        "?[t;();0b;(enlist`count)!enlist `px]",
+        "?[t;();0b;(enlist`select)!enlist `px]",
+        "?[t;();0b;`a`max!(`px;`size)]",
+        "?[t;();(enlist`by)!enlist `sym;(enlist`px)!enlist (max;`px)]",
+        "?[t;();(enlist`sym)!enlist `sym;(enlist`xbar)!enlist (max;`px)]",
+        "![t;();0b;(enlist`asc)!enlist `px]",
+        "?[t;();();`from`b!(`px;`size)]",
+        "?[t;enlist (>;`count;1);0b;()]",
+        "?[t;();0b;(enlist`v)!enlist `count]",
+        "?[t;();0b;`a`b!`px`max]",
+        "?[t;();0b;(enlist`v)!enlist (+;`lj;1)]",
+        "?[t;();`count;`sym]",
+        "?[t;();();`count]",
+        "![t;();0b;enlist`count]",
+        "![t;();0b;`px`count]",
+    ] {
+        match functional_to_qsql(&format!("r:{form}\n"), 3) {
+            Some(Err(e)) => assert!(e.contains("q's own"), "{form}: {e}"),
+            other => panic!("{form}: {other:?}"),
+        }
+    }
+    // A symbol q reads as no name at all is no column either.
+    match functional_to_qsql("r:?[t;();0b;(enlist`a:b)!enlist `px]\n", 3) {
+        Some(Err(e)) => assert!(e.contains("cannot spell"), "{e}"),
+        other => panic!("{other:?}"),
+    }
+    // `i` and `x` are names like any other: `select i:px from t` runs.
+    let got = functional_to_qsql("r:?[t;();0b;`i`x!(`px;`size)]\n", 3)
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.text, "select i:px, x:size from t");
 }
 
 #[test]
@@ -251,6 +411,9 @@ fn each_rewrite_returns_what_the_query_it_came_from_returns() {
         script.push_str(&format!("ck[{}; {}];\n", quoted(qsql), quoted(functional)));
         script.push_str(&format!("ck[{}; {}];\n", quoted(qsql), quoted(&back)));
     }
+    for (functional, qsql) in BACK {
+        script.push_str(&format!("ck[{}; {}];\n", quoted(functional), quoted(qsql)));
+    }
     script.push_str("\\\\\n");
     let Some(out) = run_q(&script) else {
         eprintln!("QLINT_TEST_Q names no q: the cases stand as KDB-X ran them");
@@ -260,7 +423,7 @@ fn each_rewrite_returns_what_the_query_it_came_from_returns() {
         return;
     };
     let lines: Vec<&str> = out.lines().collect();
-    assert_eq!(lines.len(), 2 * CASES.len(), "{out}");
+    assert_eq!(lines.len(), 2 * CASES.len() + BACK.len(), "{out}");
     assert!(lines.iter().all(|l| *l == "same"), "{out}");
 }
 

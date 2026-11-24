@@ -1095,7 +1095,9 @@ fn the_outline_groups_names_by_the_namespace_they_are_in() {
     let mut server = Server::start(dir.path(), &[]);
     // One level per namespace written into, `.qetl.io` beside `.qetl.cfg`
     // and not under a `.qetl` of its own; a namespace assigned whole holds
-    // the names in it; `\d` names one as a dotted name does.
+    // the names in it; `\d` names one as a dotted name does - `write` is in
+    // `.qetl.io` as `read` is, in a node of its own for being written
+    // after `.qetl.cfg` (#2029).
     let text = "opts:.Q.opt .z.x\n.qetl.io.read:{x}\n.qetl.cfg:()!()\n\
                 .qetl.cfg.port:5010\n\\d .qetl.io\nwrite:{x}\n\\d .\n.z.ps:{x}\n\
                 .qetl.io.batch.size:10\n";
@@ -1108,8 +1110,9 @@ fn the_outline_groups_names_by_the_namespace_they_are_in() {
         tree(&reply["result"]),
         [
             "opts",
-            ".qetl.io(read, write)",
+            ".qetl.io(read)",
             ".qetl.cfg(port)",
+            ".qetl.io(write)",
             ".z(ps)",
             ".qetl.io.batch(size)",
         ]
@@ -1119,6 +1122,78 @@ fn the_outline_groups_names_by_the_namespace_they_are_in() {
     assert_eq!(cfg["kind"], 13);
     assert_eq!(span(&cfg["selectionRange"]), (2, 0, 9));
     assert_eq!(cfg["range"]["end"], json!({"line": 3, "character": 19}));
+}
+
+#[test]
+fn a_namespace_written_in_two_places_is_a_node_for_each() {
+    // #2029: one node for a namespace, spanning from its first name to its
+    // last, took in whatever was written between them - `.bb.g` on line 1
+    // inside the range of `.aa`, which it is not in - and an editor names
+    // the symbol at a position by the first range that holds it.
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let outline = |server: &mut Server, name: &str, text: &str| {
+        let uri = server.open(dir.path(), name, text);
+        let reply = server.request(
+            "textDocument/documentSymbol",
+            json!({"textDocument": {"uri": uri}}),
+        );
+        reply["result"].clone()
+    };
+    let lines = |symbols: &Value| -> Vec<(u64, u64)> {
+        let line = |s: &Value, end: &str| s["range"][end]["line"].as_u64().unwrap();
+        let all = symbols.as_array().unwrap().iter();
+        all.map(|s| (line(s, "start"), line(s, "end"))).collect()
+    };
+    let symbols = outline(
+        &mut server,
+        "a.q",
+        ".aa.f:{x}\n.bb.g:{x}\n.aa.h:{x+1}\nplain:1\n.aa.k:2\n.aa.l:{\n x}\n\
+         \\d .bb\nm:1\n\\d .aa\nn:2\n",
+    );
+    assert_eq!(
+        tree(&symbols),
+        [
+            ".aa(f)",
+            ".bb(g)",
+            ".aa(h)",
+            "plain",
+            ".aa(k, l)",
+            ".bb(m)",
+            ".aa(n)"
+        ]
+    );
+    // Each spans its own names and nothing else: no two share a line.
+    assert_eq!(
+        lines(&symbols),
+        [(0, 0), (1, 1), (2, 2), (3, 3), (4, 6), (8, 8), (10, 10)]
+    );
+    // A namespace assigned whole is that assignment where it is written,
+    // and a namespace where it is only written into.
+    let symbols = outline(
+        &mut server,
+        "own.q",
+        ".cfg.port:1\nother:2\n.cfg:()!()\n.cfg.host:3\n",
+    );
+    assert_eq!(tree(&symbols), [".cfg(port)", "other", ".cfg(host)"]);
+    assert_eq!(lines(&symbols), [(0, 0), (1, 1), (2, 3)]);
+    assert_eq!(
+        (&symbols[0]["kind"], &symbols[2]["kind"]),
+        (&json!(3), &json!(13))
+    );
+    assert_eq!(span(&symbols[2]["selectionRange"]), (2, 0, 4));
+    // A name set inside a statement is written there, not between two
+    // statements: it parts nothing, and joins nothing after it.
+    let symbols = outline(
+        &mut server,
+        "in.q",
+        ".aa.f:{.bb.g::x}\n.aa.h:1\nplain:{.aa.i::1}\n.aa.j:2\n",
+    );
+    assert_eq!(
+        tree(&symbols),
+        [".aa(f, h)", ".bb(g)", "plain", ".aa(i)", ".aa(j)"]
+    );
+    assert_eq!(lines(&symbols), [(0, 1), (0, 0), (2, 2), (2, 2), (3, 3)]);
 }
 
 #[test]
@@ -1295,6 +1370,10 @@ fn a_file_that_starts_with_a_bom_is_navigated_like_any_other() {
     let dir = tempfile::tempdir().unwrap();
     let lib = "\u{feff}zz_bom:{[a] a+1}\n";
     let mut server = Server::start(dir.path(), &[("bom.q", lib)]);
+    // Open, and sent with its BOM: read from disk the BOM is no part of
+    // the text (#2027), so only a client that sends one has the server
+    // hold it.
+    server.open(dir.path(), "bom.q", lib);
     let text = "r:zz_bom[1]\ng:{zz_bom x}\n";
     let uri = server.open(dir.path(), "use.q", text);
     // The BOM is one UTF-16 unit, so the name is at character 1.
@@ -1362,6 +1441,65 @@ fn a_file_that_starts_with_a_bom_is_navigated_like_any_other() {
     let symbol = &reply["result"][0];
     assert_eq!(symbol["name"], "zz_bom", "{reply}");
     assert_eq!(span(&symbol["location"]["range"]), (0, 1, 7));
+}
+
+#[test]
+fn a_closed_file_with_a_bom_is_placed_as_an_editor_holds_it() {
+    // #2027: an editor reads a file's BOM as its encoding, not as a
+    // character of line 0, so the text it holds - and applies an edit to -
+    // starts at the name. The server kept the BOM in what it read from
+    // disk, every place on line 0 of a closed file was one to the right,
+    // and a rename from another file turned `gfn:{[a] a+1}` into
+    // `ggfz{[a] a+1}`.
+    let dir = tempfile::tempdir().unwrap();
+    let lib = "\u{feff}gfn:{[a] a+1}\nu1:gfn 2\n";
+    let mut server = Server::start(dir.path(), &[("lib.q", lib)]);
+    let text = "r:gfn 1\n";
+    let uri = server.open(dir.path(), "main.q", text);
+    let reply = server.ask("textDocument/definition", &uri, text, "gfn", 1, json!({}));
+    assert_eq!(places(&reply["result"]), [place("lib.q", 0, 0, 3)]);
+    let reply = server.ask(
+        "textDocument/references",
+        &uri,
+        text,
+        "gfn",
+        1,
+        json!({"context": {"includeDeclaration": true}}),
+    );
+    assert_eq!(
+        places(&reply["result"]),
+        [
+            place("lib.q", 0, 0, 3),
+            place("lib.q", 1, 3, 6),
+            place("main.q", 0, 2, 5)
+        ]
+    );
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        text,
+        "gfn",
+        1,
+        json!({"newName": "gfz"}),
+    );
+    assert_eq!(
+        edits(&reply["result"]),
+        [
+            edit("lib.q", 0, 0, 3, "gfz"),
+            edit("lib.q", 1, 3, 6, "gfz"),
+            edit("main.q", 0, 2, 5, "gfz"),
+        ],
+        "{reply}"
+    );
+    let reply = server.request("workspace/symbol", json!({"query": "gfn"}));
+    let symbol = &reply["result"][0];
+    assert_eq!(symbol["name"], "gfn", "{reply}");
+    assert_eq!(span(&symbol["location"]["range"]), (0, 0, 3));
+    // Opened by a client that does send the BOM as text, it is a character
+    // of the document, and the places follow the document.
+    server.open(dir.path(), "lib.q", lib);
+    let reply = server.ask("textDocument/definition", &uri, text, "gfn", 1, json!({}));
+    assert_eq!(places(&reply["result"]), [place("lib.q", 0, 1, 4)]);
 }
 
 #[test]
@@ -1572,6 +1710,327 @@ fn a_global_rename_is_refused_where_it_would_change_what_the_code_means() {
             edit("main.q", 1, 9, 15, "bump")
         ]
     );
+}
+
+#[test]
+fn a_dotted_read_through_a_global_is_a_use_of_it() {
+    // #2017: q reads `ta.c` as column c of the global `ta` (KDB-X 5:
+    // `ta:([]c:1 2 3)`, then `sum ta.c` is 6, and under `\d .ns` the same
+    // text reads `.ns.ta`), and `.cfg.port` through a `.cfg` assigned whole.
+    // A rename that left those reads alone wrote a file that fails on 'ta.c.
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "ta:([]c:1 2 3)\nres:sum ta.c\n\\d .ns\ntb:([]c:4 5)\nr:tb.c\n\\d .\n\
+                s:.ns.tb.c\n.cfg:()!()\n.cfg.port:5010\np:.cfg.port\n";
+    let uri = server.open(dir.path(), "a.q", text);
+    let ask = |server: &mut Server, method: &str, context: &str, new: &str| {
+        server.ask(method, &uri, text, context, 0, json!({"newName": new}))
+    };
+    let reply = ask(&mut server, "textDocument/references", "ta:", "");
+    assert_eq!(
+        places(&reply["result"]),
+        [place("a.q", 0, 0, 2), place("a.q", 1, 8, 10)]
+    );
+    let reply = ask(&mut server, "textDocument/documentHighlight", "ta:", "");
+    let marks: Vec<_> = reply["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| span(&h["range"]))
+        .collect();
+    assert_eq!(marks, [(0, 0, 2), (1, 8, 10)], "{reply}");
+    let reply = ask(&mut server, "textDocument/rename", "ta:", "tk");
+    assert_eq!(
+        edits(&reply["result"]),
+        [edit("a.q", 0, 0, 2, "tk"), edit("a.q", 1, 8, 10, "tk")]
+    );
+    // Under a context, bare and with the context written out.
+    let reply = ask(&mut server, "textDocument/rename", "tb:", "tz");
+    assert_eq!(
+        edits(&reply["result"]),
+        [
+            edit("a.q", 3, 0, 2, "tz"),
+            edit("a.q", 4, 2, 4, "tz"),
+            edit("a.q", 6, 6, 8, "tz")
+        ]
+    );
+    // A namespace assigned whole is named by every name in it.
+    let reply = ask(&mut server, "textDocument/rename", ".cfg:", "conf");
+    assert_eq!(
+        edits(&reply["result"]),
+        [
+            edit("a.q", 7, 1, 4, "conf"),
+            edit("a.q", 8, 1, 4, "conf"),
+            edit("a.q", 9, 3, 6, "conf")
+        ]
+    );
+}
+
+#[test]
+fn a_dotted_read_that_may_not_be_the_global_refuses_the_rename() {
+    // #2017. In a qSQL phrase `td.c` is the column `td` followed through a
+    // foreign key whenever the table has one, which only the table says;
+    // and a name a `\d` puts under the global spells none of it to rewrite.
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "td:([]c:1 2 3)\nr:select td.c from t\n";
+    let uri = server.open(dir.path(), "a.q", text);
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        text,
+        "td:",
+        0,
+        json!({"newName": "te"}),
+    );
+    let why = refused(&reply);
+    assert!(why.contains("qSQL") && why.contains("a.q:2"), "{why}");
+    let text = ".cfg:()!()\n\\d .cfg\nport:5010\n";
+    let uri = server.open(dir.path(), "b.q", text);
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        text,
+        ".cfg:",
+        0,
+        json!({"newName": "conf"}),
+    );
+    let why = refused(&reply);
+    assert!(why.contains("`port`") && why.contains("b.q:3"), "{why}");
+}
+
+#[test]
+fn a_global_named_by_a_symbol_is_renamed_where_q_takes_the_name() {
+    // #2018. Each form below takes a global by its name, as KDB-X 5 answers
+    // with `tb:([]c:3 1 2)`: `update .. from `tb`, `delete from `tb ..`,
+    // `` `c xkey `tb ``, `` `c xasc `tb ``, `xdesc[`c;`tb]`, `` 1!`tb ``,
+    // `![`tb;();0b;enlist`d]` and `@[`tb;`c;neg]` change tb in place and
+    // return `` `tb ``; `?[`tb;();0b;()]`, `` get`tb ``, `` value `tb ``,
+    // `` cols `tb ``, `` meta `tb `` and `` keys `tb `` read it. A rename
+    // that left them alone wrote a file that fails on 'tb.
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let lines = [
+        "tb:([]c:1 2 3;d:4 5 6)",
+        "update c:c*2 from `tb;",
+        "delete from `tb where c>1;",
+        "@[`tb;`c;neg];",
+        "r1:get`tb",
+        "r2:value `tb",
+        "`c xkey `tb;",
+        "`c xasc `tb;",
+        "xdesc[`c;`tb];",
+        "r3:?[`tb;();0b;()]",
+        "![`tb;();0b;enlist`d];",
+        "r4:(cols `tb;meta[`tb];keys (`tb))",
+        "0!`tb;",
+        "r5:exec c from `tb",
+        "`tb insert enlist 7;",
+    ];
+    let text = lines.join("\n") + "\n";
+    let uri = server.open(dir.path(), "a.q", &text);
+    let mut all = vec![];
+    for (row, line) in lines.iter().enumerate() {
+        let mut from = 0;
+        while let Some(at) = line[from..].find("tb") {
+            all.push((row as u64, (from + at) as u64));
+            from += at + 2;
+        }
+    }
+    assert_eq!(all.len(), 17);
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        &text,
+        "tb:",
+        0,
+        json!({"newName": "tm"}),
+    );
+    let wanted: Vec<_> = all
+        .iter()
+        .map(|&(row, at)| edit("a.q", row, at, at + 2, "tm"))
+        .collect();
+    assert_eq!(edits(&reply["result"]), wanted);
+    let reply = server.ask("textDocument/references", &uri, &text, "tb:", 0, json!({}));
+    let wanted: Vec<_> = all
+        .iter()
+        .map(|&(row, at)| place("a.q", row, at, at + 2))
+        .collect();
+    assert_eq!(places(&reply["result"]), wanted);
+    // From the symbol too: it is the name. An insert is a definition, as
+    // it makes the table when there is none.
+    let reply = server.ask(
+        "textDocument/definition",
+        &uri,
+        &text,
+        "tb where",
+        0,
+        json!({}),
+    );
+    assert_eq!(
+        places(&reply["result"]),
+        [place("a.q", 0, 0, 2), place("a.q", 14, 1, 3)]
+    );
+}
+
+#[test]
+fn a_symbol_that_may_name_the_global_refuses_the_rename() {
+    // #2018. `` `tc in tables[] `` is 1b before a rename of tc and 0b after
+    // one that leaves the symbol (KDB-X 5), and nothing in the text says
+    // whether a symbol in such a place is the table's name or only data: a
+    // column, a key, an enumeration. The rename is refused and names the
+    // line; Find References lists the place.
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let rename = |server: &mut Server, uri: &str, text: &str, context: &str| {
+        server.ask(
+            "textDocument/rename",
+            uri,
+            text,
+            context,
+            0,
+            json!({"newName": "tn"}),
+        )
+    };
+    let text = "tc:([]c:1 2 3)\nr:`tc in tables[]\n";
+    let uri = server.open(dir.path(), "a.q", text);
+    let why = refused(&rename(&mut server, &uri, text, "tc:"));
+    assert!(why.contains("`tc") && why.contains("a.q:2"), "{why}");
+    let reply = server.ask("textDocument/references", &uri, text, "tc:", 0, json!({}));
+    assert_eq!(
+        places(&reply["result"]),
+        [place("a.q", 0, 0, 2), place("a.q", 1, 3, 5)]
+    );
+    for (file, text) in [
+        // One of a list, a value handed on, a name beside an operator.
+        ("b.q", "td:1\nr:get each `tx`td\n"),
+        ("c.q", "te:1\nr:f[`te]\n"),
+        ("d.q", "tf:1\nr:get `tf,`x\n"),
+    ] {
+        let uri = server.open(dir.path(), file, text);
+        let name = &text[..2];
+        let why = refused(&rename(&mut server, &uri, text, &format!("{name}:")));
+        assert!(
+            why.contains(&format!("`{name}")) && why.contains(&format!("{file}:2")),
+            "{why}"
+        );
+    }
+    // A symbol under another context is another name, and one a write
+    // already places is that write's: neither is in the way.
+    let text = "tg:1\n\\d .o\nr:`tg in tables[]\n@[`.o;`tg;:;2];\n";
+    let uri = server.open(dir.path(), "e.q", text);
+    let reply = rename(&mut server, &uri, text, "tg:");
+    assert_eq!(edits(&reply["result"]), [edit("e.q", 0, 0, 2, "tn")]);
+    // A symbol in a lambda written under a `\d` is looked up where the
+    // lambda is called (KDB-X 5: `\d .ns`, `f:{get `th}`, `\d .`, then
+    // `.ns.f[]` reads the root th). With one th it is that one; with two,
+    // which it names is not in the text.
+    let text = "\\d .ns\nth:1\nf:{get `th}\n\\d .\n";
+    let uri = server.open(dir.path(), "f.q", text);
+    let reply = rename(&mut server, &uri, text, "th:");
+    assert_eq!(
+        edits(&reply["result"]),
+        [edit("f.q", 1, 0, 2, "tn"), edit("f.q", 2, 8, 10, "tn")]
+    );
+    let text = "\\d .ns\nti:1\nf:{get `ti}\n\\d .\nti:2\n";
+    let uri = server.open(dir.path(), "g.q", text);
+    let why = refused(&rename(&mut server, &uri, text, "ti:1"));
+    assert!(why.contains("`ti") && why.contains("g.q:3"), "{why}");
+}
+
+#[test]
+fn a_global_is_followed_onto_a_k_line() {
+    // #2019. A `k)` line names q's globals, under the `\d` in force, and
+    // both views blank it. KDB-X 5: `fk:2`, `k)gk:fk+1`, then gk is 3; in
+    // k a lambda's parameter or `name:` local hides the global as in q,
+    // `([]fk:1 2)` names a column, and `_` is the drop operator, no part of
+    // a name: with `ab:10 20 30` and `cc:1`, `k)ab_cc` is 10 30.
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let lines = [
+        "fk:2",
+        "k)gk:fk+1",
+        "res:gk",
+        "k)hk:{[a] a+fk}",
+        "k)ik:{[fk] fk+1}",
+        "k)jk:{fk:5;fk+1}",
+        "k)lk:(fk;\"fk\";fk_1) / fk",
+        "k)mk:([]fk:1 2)",
+        "k)nk:{{fk+x}x}",
+        "  ,fk",
+        "\\d .ns",
+        "k)ok:fk",
+        "\\d .",
+        "k)pk:{fk::x}",
+    ];
+    let text = lines.join("\n") + "\n";
+    let uri = server.open(dir.path(), "a.q", &text);
+    let uses = [
+        (0, 0),
+        (1, 5),
+        (3, 12),
+        (6, 6),
+        (6, 14),
+        (8, 7),
+        (9, 3),
+        (13, 6),
+    ];
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        &text,
+        "fk:",
+        0,
+        json!({"newName": "fz"}),
+    );
+    let wanted: Vec<_> = uses
+        .iter()
+        .map(|&(row, at)| edit("a.q", row, at, at + 2, "fz"))
+        .collect();
+    assert_eq!(edits(&reply["result"]), wanted);
+    let reply = server.ask("textDocument/references", &uri, &text, "fk:", 0, json!({}));
+    let wanted: Vec<_> = uses
+        .iter()
+        .map(|&(row, at)| place("a.q", row, at, at + 2))
+        .collect();
+    assert_eq!(places(&reply["result"]), wanted);
+    // What a k line assigns is renamed where it is assigned.
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        &text,
+        "gk",
+        1,
+        json!({"newName": "gz"}),
+    );
+    assert_eq!(
+        edits(&reply["result"]),
+        [edit("a.q", 1, 2, 4, "gz"), edit("a.q", 2, 4, 6, "gz")]
+    );
+    // A k lambda's own name would hide the renamed global there, and a
+    // symbol on a k line may name it: both refuse, naming the line.
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        &text,
+        "fk:",
+        0,
+        json!({"newName": "a"}),
+    );
+    let why = refused(&reply);
+    assert!(why.contains("a.q:4"), "{why}");
+    let text = "fq:2\nk)gq:.:`fq\n";
+    let uri = server.open(dir.path(), "b.q", text);
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        text,
+        "fq:",
+        0,
+        json!({"newName": "fz"}),
+    );
+    let why = refused(&reply);
+    assert!(why.contains("`fq") && why.contains("b.q:2"), "{why}");
 }
 
 #[test]

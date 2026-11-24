@@ -246,6 +246,14 @@ pub fn mentions(source: &str) -> Vec<Mention> {
     semantics::navigate::mentions(&v.code, &v.comments, source)
 }
 
+/// Each symbol in `source` that spells `leaf` and no more, as the global it
+/// would name where something took it for a name. `mentions` holds the ones
+/// q is known to take so; the others may be the name or only a symbol.
+pub fn symbol_mentions(source: &str, leaf: &str) -> Vec<Mention> {
+    let v = views(source);
+    semantics::navigate::symbols(&v.code, source, leaf)
+}
+
 /// The path of the load at byte `offset` of `source` - `\l path`,
 /// `system "l path"` or a file symbol, as `References::loads` reads it - as
 /// its start and length, when the offset is in one. Its end counts: a cursor

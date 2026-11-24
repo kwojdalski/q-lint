@@ -109,16 +109,25 @@ impl Server {
 
     /// The reply to a request, past the diagnostics pushed meanwhile.
     fn request(&mut self, method: &str, params: Value) -> Value {
+        self.told(method, params).0
+    }
+
+    /// The reply to a request, and each `window/showMessage` sent before it.
+    fn told(&mut self, method: &str, params: Value) -> (Value, Vec<String>) {
         let id = self.next_id;
         self.next_id += 1;
         self.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}));
+        let mut shown = vec![];
         loop {
             let message = self
                 .messages
                 .recv_timeout(Duration::from_secs(30))
                 .expect("the server answers");
             if message["id"] == id {
-                return message;
+                return (message, shown);
+            }
+            if message["method"] == "window/showMessage" {
+                shown.push(message["params"]["message"].as_str().unwrap().to_string());
             }
         }
     }
@@ -224,6 +233,41 @@ fn a_call_to_a_workspace_function_shows_its_parameter_names() {
         json!({"range": {"start": {"line": 5, "character": 0}, "end": {"line": 5, "character": 99}}}),
     );
     assert_eq!(hints(&reply), [hint(5, 10, "qty:")]);
+}
+
+#[test]
+fn a_string_argument_is_hinted_where_it_starts() {
+    // #2025: the arguments were found in the code view, where a string is
+    // blank - so one that is only a string had no hint, and one that starts
+    // with a string had its hint after the closing quote.
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let main = "cc:{[sym;px] px}\n\
+                n:cc[\"a\";2]\n\
+                p:cc[ \"ab\",string 1;2]\n\
+                m:cc[1;\"x;y]\"]\n\
+                e:cc[\"\";2]\n\
+                c:cc[1; / the price\n  2]\n";
+    let uri = server.open(dir.path(), "main.q", main);
+    let reply = server.whole("textDocument/inlayHint", &uri, everything());
+    assert_eq!(
+        hints(&reply),
+        [
+            hint(1, 5, "sym:"),
+            hint(1, 9, "px:"),
+            hint(2, 6, "sym:"),
+            hint(2, 20, "px:"),
+            // A `;` or a `]` in a string ends no argument.
+            hint(3, 5, "sym:"),
+            hint(3, 7, "px:"),
+            hint(4, 5, "sym:"),
+            hint(4, 8, "px:"),
+            // A comment is no part of the argument after it.
+            hint(5, 5, "sym:"),
+            hint(6, 2, "px:"),
+        ],
+        "{reply}"
+    );
 }
 
 #[test]
@@ -1512,6 +1556,70 @@ fn an_absolute_load_through_a_symlink_is_rewritten_as_written() {
     );
 }
 
+/// A new name the load could not be written with is not written (#2026):
+/// KDB-X 5 answers `\l lib/my util.q` and `system "l lib/my util.q"` with
+/// 'nyi - quoted, or with the blank escaped, too - so no form of a load
+/// reaches a path with a blank in it, and `` `:lib/my-util.q `` is the
+/// symbol `` `:lib/my `` less `util.q`. Checked by loading a real file of
+/// each name on a q started for it.
+#[test]
+fn a_load_is_not_rewritten_into_one_q_cannot_read() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("lib")).unwrap();
+    let files = [
+        ("lib/util.q", "u:1\n"),
+        (
+            "main.q",
+            "\\l lib/util.q\nsystem \"l lib/util.q\"\np:`:lib/util.q\n",
+        ),
+        ("lib/near.q", "\\l util.q\n"),
+    ];
+    let options = json!({"renameLoads": {"enable": true}});
+    let (mut server, _) = Server::over(dir.path(), &files, client(), options);
+    // A blank: no load can hold it, so none is edited, and the user is told
+    // which lines still name the old path.
+    let (reply, shown) = server.told(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("lib/util.q", "lib/my util.q")]),
+    );
+    assert_eq!(reply["result"], Value::Null, "{reply}");
+    assert_eq!(shown.len(), 1, "{shown:?}");
+    for part in [
+        "lib/my util.q",
+        "my util.q",
+        "lib/near.q:1",
+        "main.q:1",
+        "main.q:2",
+        "main.q:3",
+    ] {
+        assert!(shown[0].contains(part), "{part} in {}", shown[0]);
+    }
+    // A `-`: a path after `\l` or in a string holds one, a symbol does not.
+    let (reply, shown) = server.told(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("lib/util.q", "lib/my-util.q")]),
+    );
+    assert_eq!(
+        renamed(&reply, dir.path()),
+        [
+            ("lib/near.q".to_string(), 0, 3, 9, "my-util.q".to_string()),
+            ("main.q".into(), 0, 3, 13, "lib/my-util.q".into()),
+            ("main.q".into(), 1, 10, 20, "lib/my-util.q".into()),
+        ],
+        "{reply}"
+    );
+    assert_eq!(shown.len(), 1, "{shown:?}");
+    assert!(shown[0].contains("main.q:3"), "{}", shown[0]);
+    assert!(!shown[0].contains("main.q:1"), "{}", shown[0]);
+    // A name every form can hold: all three, and nothing to say.
+    let (reply, shown) = server.told(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("lib/util.q", "lib/util2.q")]),
+    );
+    assert_eq!(renamed(&reply, dir.path()).len(), 4, "{reply}");
+    assert!(shown.is_empty(), "{shown:?}");
+}
+
 #[test]
 fn rename_edits_are_not_announced_or_sent_unless_asked_for() {
     let dir = tempfile::tempdir().unwrap();
@@ -1580,6 +1688,47 @@ fn after_a_load_the_directories_and_scripts_complete() {
     // Off a load line, with name completion off, nothing.
     let reply = server.whole("textDocument/completion", &uri, at(3, 1));
     assert_eq!(reply["result"], Value::Null, "{reply}");
+}
+
+#[test]
+fn a_slash_opens_the_list_on_a_load_path_and_nowhere_else() {
+    // #2021: `/` is a trigger character for the next directory of a load,
+    // and q's commonest adverb everywhere else. A request the `/` itself
+    // triggered, off a load path, was answered with every name there is:
+    // typing `r:+/` opened a list of hundreds with nothing typed.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("lib")).unwrap();
+    let options = json!({"completion": {"enable": true}, "loadPathCompletion": {"enable": true}});
+    let (mut server, _) = Server::over(dir.path(), &[("lib/util.q", "u:1\n")], client(), options);
+    let text = "v:1 2 3\nr:+/\ns:(v%/)\n\\l lib/\nt:v\n";
+    let uri = server.open(dir.path(), "main.q", text);
+    let typed = |line: u64, character: u64, context: Value| json!({"position": {"line": line, "character": character}, "context": context});
+    let slash = json!({"triggerKind": 2, "triggerCharacter": "/"});
+    for (line, character) in [(1, 4), (2, 6)] {
+        let reply = server.whole(
+            "textDocument/completion",
+            &uri,
+            typed(line, character, slash.clone()),
+        );
+        assert_eq!(reply["result"], Value::Null, "{line}: {reply}");
+    }
+    // On a load it lists the directory.
+    let reply = server.whole("textDocument/completion", &uri, typed(3, 7, slash));
+    assert_eq!(labels(&reply), ["util.q"], "{reply}");
+    // Asked for there (Ctrl+Space), or triggered by a dot, names complete
+    // as they did.
+    let reply = server.whole(
+        "textDocument/completion",
+        &uri,
+        typed(1, 4, json!({"triggerKind": 1})),
+    );
+    assert!(labels(&reply).contains(&"v".to_string()), "{reply}");
+    let reply = server.whole(
+        "textDocument/completion",
+        &uri,
+        typed(4, 3, json!({"triggerKind": 2, "triggerCharacter": "."})),
+    );
+    assert!(reply["result"]["items"].is_array(), "{reply}");
 }
 
 #[test]

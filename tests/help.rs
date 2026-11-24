@@ -1190,6 +1190,40 @@ fn completion_offers_nothing_where_no_name_is_written() {
     }
 }
 
+#[test]
+fn completion_offers_nothing_inside_a_symbol_that_holds_a_path() {
+    // #2020: a symbol runs on over `:` and `/`, so the `pa` of `` `:pa ``
+    // and the `ut` of `` `:lib/ut `` are no words to complete - accepting
+    // `cut` there wrote `` `:lib/cut ``, another file. The same letters
+    // outside a symbol still complete.
+    let dir = tempfile::tempdir().unwrap();
+    let text = "h:`:pa\ng:`:lib/ut\ne:`:lib/\nf:`:host:5000/db\nd:`a.b_c:x/pa\nr:1%pa\n";
+    let (mut server, uri) = serving(dir.path(), text, client(), completing_options());
+    for (context, skip) in [
+        ("`:pa", 4),
+        ("`:lib/ut", 8),
+        ("`:lib/\n", 6),
+        ("5000/db", 7),
+        ("x/pa", 4),
+    ] {
+        let reply = server.ask(
+            "textDocument/completion",
+            &uri,
+            text,
+            context,
+            skip,
+            Value::Null,
+        );
+        assert_eq!(
+            reply["result"],
+            json!({"isIncomplete": false, "items": []}),
+            "{context}"
+        );
+    }
+    let reply = server.ask("textDocument/completion", &uri, text, "%pa", 3, Value::Null);
+    assert!(offered(&reply).contains(&"parse"), "{reply}");
+}
+
 /// A workspace of a function of three, a projection and aliases of it.
 const ZZ: &str = "/ Adds three numbers.\n.zz.add:{[a;b;c] a+b+c}\n.zz.pr:.zz.add[;2;]\n\
                   .zz.al:.zz.add\n/ Projected twice.\n.zz.ch:.zz.pr[1]\n.zz.loop:.zz.back\n\

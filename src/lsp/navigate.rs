@@ -22,11 +22,14 @@
 //! a string (`value "f[]"`), a symbol built at run time, or another process
 //! is in no list here. Every place a lambda's own parameter or local is
 //! named is inside the lambda, so renaming one is complete; renaming a
-//! global changes what Find All References lists, and leaves a name built
-//! in a string, a bare symbol or another process as it was.
+//! global changes every use the text proves is one - a symbol too, where q
+//! takes a global by name - and is refused where a use cannot be told from
+//! something else: a symbol of the name anywhere else, a dotted read in a
+//! qSQL phrase. It leaves a name built in a string or another process as it
+//! was.
 use super::{Documents, Index, Lines, file_key, is_q_uri, path_of};
 use q_lint_rs::graph::{self, Placement};
-use q_lint_rs::{Mention, Name, load_at, mentions, name_at};
+use q_lint_rs::{Mention, Name, load_at, mentions, name_at, symbol_mentions};
 use serde_json::{Value, json};
 use std::{
     borrow::Cow,
@@ -104,16 +107,14 @@ impl<'a> Sources<'a> {
         keys
     }
 
-    /// A file's URI and text: the open buffer's, or the disk's.
+    /// A file's URI and text: the open buffer's, or the disk's as an editor
+    /// would hold it (`on_disk`).
     pub(super) fn text(&self, key: &str) -> Option<(String, Cow<'a, str>)> {
         if let Some(uri) = self.open.get(key) {
             return Some((uri.to_string(), Cow::Borrowed(self.docs[*uri].as_str())));
         }
-        let bytes = std::fs::read(key).ok()?;
-        Some((
-            self.uri(key),
-            Cow::Owned(String::from_utf8_lossy(&bytes).into_owned()),
-        ))
+        let (text, _) = super::on_disk(key)?;
+        Some((self.uri(key), Cow::Owned(text)))
     }
 
     pub(super) fn placement(&self, key: &str) -> Placement {
@@ -147,6 +148,34 @@ impl<'a> Sources<'a> {
             }
         }
         names
+    }
+
+    /// How much of a mention, from its start, spells one of `targets`: the
+    /// whole of it, or - for a dotted name that goes through the target -
+    /// the part before the rest, `ta` of `ta.c` for a table `ta` and `.cfg`
+    /// of `.cfg.port` for a `.cfg` assigned whole. q reads both through the
+    /// global: KDB-X 5 `ta:([]c:1 2 3)`, then `sum ta.c` is 6 (#2017).
+    /// `Some(0)` where the name goes through the target and the text spells
+    /// none of it, the `\d` in force supplying it.
+    pub(super) fn spelt(
+        &self,
+        text: &str,
+        mention: &Mention,
+        placement: &Placement,
+        targets: &HashSet<String>,
+    ) -> Option<usize> {
+        let names = self.names(text, mention, placement);
+        if names.iter().any(|name| targets.contains(name)) {
+            return Some(mention.len);
+        }
+        names.iter().find_map(|name| {
+            let (dot, _) = name
+                .match_indices('.')
+                .rfind(|&(dot, _)| dot > 0 && targets.contains(&name[..dot]))?;
+            let part = mention.len.saturating_sub(name.len() - dot);
+            let dotted = text.as_bytes().get(mention.at + part) == Some(&b'.');
+            Some(if dotted { part } else { 0 })
+        })
     }
 
     /// The global at byte `at` of the cursor's document, as the names it
@@ -318,15 +347,39 @@ impl<'a> Sources<'a> {
             }
             let placement = &self.idx.files[key].placement;
             let lines = Lines::new(&text);
-            for m in &mentions(&text) {
-                if self
-                    .names(&text, m, placement)
-                    .iter()
-                    .any(|name| names.contains(name))
+            let all = mentions(&text);
+            let mut found = vec![];
+            for m in &all {
+                // A name the `\d` in force puts under the global spells
+                // none of it, and is no place to list.
+                if let Some(part) = self.spelt(&text, m, placement, names)
+                    && part > 0
                 {
-                    out.push((location(&uri, &lines, m.at, m.len), m.definition.is_some()));
+                    found.push((m.at, part, m.definition.is_some()));
                 }
             }
+            // And a symbol that may be the name, where nothing says it is
+            // data: `` `t in tables[] `` (#2018). One line too many to skip.
+            let known: HashSet<usize> = all.iter().map(|m| m.at).collect();
+            for leaf in &leaves {
+                for m in symbol_mentions(&text, leaf) {
+                    if !known.contains(&m.at)
+                        && self
+                            .names(&text, &m, placement)
+                            .iter()
+                            .any(|name| names.contains(name))
+                    {
+                        found.push((m.at, m.len, false));
+                    }
+                }
+            }
+            found.sort_unstable();
+            found.dedup_by_key(|place| place.0);
+            out.extend(
+                found
+                    .into_iter()
+                    .map(|(at, len, write)| (location(&uri, &lines, at, len), write)),
+            );
         }
         out
     }
@@ -494,16 +547,13 @@ fn highlights(params: &Value, sources: &Sources) -> Value {
             let code = q_lint_rs::code_view(cursor.text);
             mentions(cursor.text)
                 .iter()
-                .filter(|m| {
-                    sources
-                        .names(cursor.text, m, &placement)
-                        .iter()
-                        .any(|name| targets.contains(name))
-                })
-                .map(|m| {
+                .filter_map(|m| {
+                    let part = sources
+                        .spelt(cursor.text, m, &placement, &targets)
+                        .filter(|&part| part > 0)?;
                     let write =
                         m.definition.is_some() || q_lint_rs::amended_at(&code, m.at + m.len);
-                    highlight(m.at, m.len, write)
+                    Some(highlight(m.at, part, write))
                 })
                 .collect()
         }
@@ -562,6 +612,16 @@ fn namespace(name: &str) -> Option<&str> {
 /// it before its last dot - `.qetl.io.read` as `read` under `.qetl.io` - and
 /// a name with no namespace at the top.
 ///
+/// A namespace is a node for each place it is written: the names a run of
+/// statements puts in it, one after another with nothing else between
+/// them. One node for all of it would span from its first name to its last
+/// and so take in every other name written between - `.bb.g` inside `.aa`
+/// in `.aa.f:{x}`, `.bb.g:{x}`, `.aa.h:{x}` - and a range is what an editor
+/// reads to say which symbol a position is in: the first that holds it, so
+/// breadcrumbs named `.aa` for a cursor in `.bb.g` (#2029). A name set
+/// inside a statement (`f:{.bb.g::x}`) is written there and not between two
+/// statements, so it neither ends a run nor is joined by what follows.
+///
 /// One level, and not one for every dot. A file mostly writes into one or
 /// two contexts, all under one project prefix: nesting `.qetl.io` under
 /// `.qetl` puts the whole file under a single node with a single child,
@@ -583,32 +643,53 @@ fn outline(defined: &[(&Mention, bool, usize, usize)], lines: &Lines) -> Value {
         children: Vec<usize>,
     }
     let mut groups: Vec<Group> = vec![];
-    let mut group_of: HashMap<&str, usize> = HashMap::new();
-    // In order of first appearance: a group stands where its first name, or
-    // its own assignment, does. `Err` is a group, by its place in `groups`.
+    // In the order written. `Err` is a group, by its place in `groups`.
     let mut top: Vec<Result<usize, usize>> = vec![];
-    for (i, (m, ..)) in defined.iter().enumerate() {
-        let (name, own) = match namespace(&m.name) {
-            _ if used.contains(m.name.as_str()) => (m.name.as_str(), true),
-            Some(ns) => (ns, false),
-            None => {
+    // The group the last statement wrote into, and where that statement
+    // ends: a name assigned before there is assigned inside it.
+    let mut run: Option<usize> = None;
+    let mut reach = 0;
+    for (i, &(m, _, start, end)) in defined.iter().enumerate() {
+        let inside = start < reach;
+        let named = match namespace(&m.name) {
+            _ if used.contains(m.name.as_str()) => Some((m.name.as_str(), true)),
+            Some(ns) => Some((ns, false)),
+            None => None,
+        };
+        // The group it joins: the run's, or for a name inside a statement
+        // the one the name before it there began.
+        let joined = named.and_then(|(name, _)| {
+            let beside = match top.last() {
+                Some(&Err(g)) if inside => Some(g),
+                _ => None,
+            };
+            let same = |g: &usize| groups[*g].name == name;
+            run.filter(same).or(beside.filter(same))
+        });
+        let g = match (named, joined) {
+            (None, _) => {
                 top.push(Ok(i));
-                continue;
+                None
+            }
+            (Some(_), Some(g)) => Some(g),
+            (Some((name, _)), None) => {
+                groups.push(Group {
+                    name,
+                    own: None,
+                    children: vec![],
+                });
+                top.push(Err(groups.len() - 1));
+                Some(groups.len() - 1)
             }
         };
-        let g = *group_of.entry(name).or_insert_with(|| {
-            groups.push(Group {
-                name,
-                own: None,
-                children: vec![],
-            });
-            top.push(Err(groups.len() - 1));
-            groups.len() - 1
-        });
-        if own {
-            groups[g].own = Some(i);
-        } else {
-            groups[g].children.push(i);
+        match (g, named) {
+            (Some(g), Some((_, true))) => groups[g].own = Some(i),
+            (Some(g), _) => groups[g].children.push(i),
+            (None, _) => {}
+        }
+        if !inside {
+            run = g;
+            reach = end;
         }
     }
     let symbol = |i: usize, name: &str| {
@@ -874,11 +955,11 @@ fn releafed(name: &str, new: &str) -> String {
 /// the workspace can rename it: a name some indexed file assigns, and none
 /// in a namespace q keeps for itself.
 ///
-/// What a rename finds is what Find All References finds: each place an
-/// indexed file names the global, under the `\d` in force and the context
-/// the file is loaded in. A name reached through a string (`value "f[]"`),
-/// a bare symbol (`` `f ``), another process or a file outside the
-/// workspace is not among them, and keeps the old name.
+/// What a rename rewrites is each place an indexed file names the global,
+/// under the `\d` in force and the context the file is loaded in - a symbol
+/// too, where q takes a global by name. A name reached through a string
+/// (`value "f[]"`), another process or a file outside the workspace is not
+/// among them, and keeps the old name.
 fn renamable_global(
     sources: &Sources,
     cursor: &Cursor,
@@ -965,42 +1046,91 @@ fn rename_global(
         let lines = Lines::new(&text);
         let mut edits = vec![];
         let mut bare = vec![];
+        let mut columns = vec![];
         let mut done = HashSet::new();
-        for m in &mentions(&text) {
-            if done.contains(&m.at)
-                || !sources
-                    .names(&text, m, placement)
-                    .iter()
-                    .any(|name| targets.contains(name))
-            {
+        let all = mentions(&text);
+        for m in &all {
+            if done.contains(&m.at) {
                 continue;
             }
+            // The part that spells the global: all of the mention, or what
+            // comes before the rest of a dotted read through it, `ta` of
+            // `ta.c` (#2017).
+            let Some(part) = sources.spelt(&text, m, placement, &targets) else {
+                continue;
+            };
             done.insert(m.at);
-            let spelling = &text[m.at..m.at + m.len];
+            let spelling = &text[m.at..m.at + part];
             let place = || {
                 let (line, _) = lines.position(m.at);
                 format!("{}:{}", Path::new(key).display(), line + 1)
             };
             if leaf(spelling) != old {
                 return Err(format!(
-                    "`{spelling}` at {} names it without ending in `{old}`, which a rename \
+                    "`{}` at {} names it without ending in `{old}`, which a rename \
                      cannot follow",
+                    &text[m.at..m.at + m.len],
                     place()
                 ));
             }
-            if !spelling.contains('.') {
-                bare.push(m.at);
+            // A symbol where q takes a global by name. Read in a lambda
+            // written under a `\d` it is looked up where the lambda is
+            // called, there or at the root: with both defined, which one it
+            // names is not in the text (#2018).
+            let symbol = text[..m.at].ends_with('`');
+            if symbol
+                && m.definition.is_none()
+                && let Some(other) = all
+                    .iter()
+                    .filter(|other| other.at == m.at)
+                    .flat_map(|other| sources.names(&text, other, placement))
+                    .find(|name| !targets.contains(name) && sources.idx.ws.defines(name))
+            {
+                return Err(format!(
+                    "`` `{spelling} `` at {} is looked up where its lambda is called, and \
+                     `{other}` is defined too: which of the two it names is not in the text",
+                    place()
+                ));
+            }
+            if !spelling.contains('.') && !symbol {
+                columns.push(m.at);
+                // Dot notation reads a global whatever the lambda's locals
+                // are: KDB-X 5 `{[ta] ta.c}[5]` is the global's column.
+                if part == m.len {
+                    bare.push(m.at);
+                }
             }
             edits.push(
-                json!({"range": range(&lines, m.at + m.len - old.len(), old.len()),
+                json!({"range": range(&lines, m.at + part - old.len(), old.len()),
                               "newText": new}),
             );
         }
+        // A symbol that would be this global were it taken for a name, in a
+        // place where nothing says it is: `` `t in tables[] ``, one of a
+        // list, an argument of a function. Leaving it would rename some
+        // uses and not others, so the rename is refused instead (#2018).
+        let known: HashSet<usize> = all.iter().map(|m| m.at).collect();
+        if let Some(m) = symbol_mentions(&text, old).iter().find(|m| {
+            !known.contains(&m.at)
+                && sources
+                    .names(&text, m, placement)
+                    .iter()
+                    .any(|name| targets.contains(name))
+        }) {
+            let (line, _) = lines.position(m.at);
+            return Err(format!(
+                "the symbol `` `{old} `` at {}:{} may name it or be only a symbol, which the \
+                 text does not say: a rename that left it would change some uses and not others",
+                Path::new(key).display(),
+                line + 1
+            ));
+        }
         // A bare name in a qSQL phrase is a column whenever the table has
         // one of that name, which only the table says; the table after
-        // `from` is a global (#1207).
-        let clauses = q_lint_rs::query_clauses(&text, &bare);
-        if let Some((&at, _)) = bare
+        // `from` is a global (#1207). So is the head of `ta.c` there: the
+        // column `ta` followed through its foreign key, when there is one.
+        let clauses = q_lint_rs::query_clauses(&text, &columns);
+        if let Some((&at, _)) = columns
             .iter()
             .zip(&clauses)
             .find(|(_, clause)| clause.is_some_and(|c| c != "from"))

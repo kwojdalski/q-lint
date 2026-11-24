@@ -34,7 +34,7 @@ pub struct Layout {
     pub text: String,
 }
 
-const LEADS: [&str; 4] = ["select", "exec", "update", "delete"];
+pub(crate) const LEADS: [&str; 4] = ["select", "exec", "update", "delete"];
 
 /// A query's parts: the lead word and its text, then each clause word that
 /// follows and its text, in order. A part's items are its text split at the

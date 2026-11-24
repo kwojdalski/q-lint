@@ -214,14 +214,17 @@ to a process you add and connect to, and sends only the code you run.
   name is resolved as q resolves it under the `\d` context in force,
   including in a file another loads under a context. A name several
   scripts assign goes first to the current file's own assignment, then to
-  those in files it loads; the outline groups names by namespace; and Go to
+  those in files it loads; the outline groups names by namespace, a group
+  for each place a namespace is written; and Go to
   Definition on the path in `\l path/file.q` opens that file - and the path
   is a link too, Ctrl/Cmd+click to open it, in `\l`, `system "l ..."` and a
   file symbol `` `:lib/x.q `` alike (`q-lint.documentLinks.enable`). A path
   that reaches no file, or a directory, is no link. Renaming or moving a
   `.q` file or a folder in the Explorer rewrites the load paths that name
   it, each from the base it was written against, and a moved file's own
-  (`q-lint.renameLoads.enable`); and after `\l ` the folders and `.q`/`.k`
+  (`q-lint.renameLoads.enable`) - but not into a load q cannot read: a new
+  name with a blank in it has no spelling after `\l`, so those lines are
+  left and a message lists them; and after `\l ` the folders and `.q`/`.k`
   scripts complete, from the file's directory and the workspace folder
   (`q-lint.loadPathCompletion.enable`). What only
   running the code would tell - a name built at run time, `value "..."`,
@@ -231,11 +234,20 @@ to a process you add and connect to, and sends only the code you run.
   the `\d` context each file is in, is rewritten - `add` under `\d .lib` and
   `.lib.add` elsewhere both become `plus`. Only the last part of a name is
   renamed (type `plus` or `.lib.plus`, not a name in another namespace).
+  A dotted read through the global is rewritten with it: the `ta` of `ta.c`
+  for a table `ta`, the `.cfg` of `.cfg.port`. Where such a read may be
+  something else - `ta.c` inside a qSQL phrase - the rename is refused and
+  names the line, rather than rewrite some uses and not others. A symbol is
+  rewritten where q takes a global by its name: `` update .. from `t ``,
+  `@[`t;..]`, `?[`t;..]`, `` `c xkey `t ``, `` get `t ``, `` `t insert .. ``
+  and their neighbours. A symbol of the name anywhere else
+  (`` `t in tables[] ``, one of a list) may be the name or only a symbol,
+  so it refuses the rename too; Find All References lists it.
   It is refused, with the reason, for a name q reserves or one in a
   one-letter namespace (`.z.pg`, `.q.f`), a name no workspace file assigns,
   a new name that is not one q takes, is already assigned, or is a
   parameter or local of a lambda that reads the global bare. A name reached
-  through a string (`value "f[]"`), a bare symbol (`` `f ``) or another
+  through a string (`value "f[]"`), built at run time or sent by another
   process is not seen and keeps its old name: preview the rename
   (Shift+Enter) when that matters. `q-lint.rename.enable` turns renaming off
   and leaves the rest of navigation on.
@@ -367,10 +379,15 @@ Each has its own switch, listed in [Settings](#settings) and
   `select n:count i by sym from t where px>2` becomes
   `?[t;enlist (>;`px;2);(enlist`sym)!enlist `sym;(enlist`n)!enlist (count;`i)]`
   and back. Each column, constraint and grouping is written as the tree
-  q's `parse` gives - a name as a symbol, a symbol literal enlisted - and an
-  unnamed column gets the name q would give it. What the rewrite cannot read
+  q's `parse` gives - a name as a symbol, a symbol literal enlisted, a query
+  in parentheses inside another as its own tree (``(?;`u;();();enlist `c)``) -
+  and an unnamed column gets the name q would give it. Read back, an
+  `enlist` over a string, a vector or a list is q's quote, and is written as
+  that constant (`enlist "abc"` is `"abc"`, where `enlist 7` stays a list). What the rewrite cannot read
   (an adverb, a projection, `select[n]`, a glyph used as a monad) is refused,
-  and **Refactor...** says why. Every case in the tests was run both ways on
+  and so is a functional form with no qSQL - one whose column is named with
+  a word of q's own (`` `count ``, `` `select ``), which qSQL reads as that
+  word - and **Refactor...** says why. Every case in the tests was run both ways on
   KDB-X and PeachQ and compared with `~`. `q-lint.functionalForm.enable`.
 - **The qSQL explainer**: hover over a query's `select`, `exec`, `update` or
   `delete` (or a functional form's `?`/`!`) to read it in words - what it
