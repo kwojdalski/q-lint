@@ -1179,3 +1179,29 @@ test("value or get passed as a value evaluates the strings around it (#1766)", (
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("value or eval of a list headed by what changes the process is a change (#1767)", () => {
+  const cases = {
+    'value(value;"a:9")': ["evaluates a call of value with value"],
+    'eval(get;"a:9")': ["evaluates a call of get with eval"],
+    "value(hopen;`:g.txt)": ["evaluates a call of hopen with value"],
+    'value((value);"a:9")': ["evaluates a call of (value) with value"],
+    'value(.q.get;"a:9")': ["evaluates a call of .q.get with value"],
+    "value(set;`b;7)": ["evaluates a call of set with value"],
+    "value(?;`sym;`q)": ["evaluates a call of ? with value"],
+    "eval(?;enlist`sym;enlist`q)": ["evaluates a call of ? with eval"],
+    'eval(eval;(parse"a:9"))': ["evaluates a call of eval with eval"],
+    // One that only reads, reads.
+    'value(value;"count t")': [],
+    "value(hopen;`::5000)": [],
+    "value(count;`t)": [],
+    "eval(count;`t)": [],
+    "value(+;1;2)": [],
+    "eval(?;`s;enlist`q)": [],
+    'value("count t";"count b")': [],
+    "value({x+1};2)": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

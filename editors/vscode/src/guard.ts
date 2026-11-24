@@ -65,7 +65,9 @@
 //   (`` value(@;`.;`a;:;1) ``, `` eval(@;enlist`.;enlist`a;:;1) ``), by
 //   `!` on a table by name (`` eval(!;enlist`t;..) ``, `` value(!;`t;..) ``)
 //   or by the symbol of
-//   a writer above (`` value(`.q.set;`a;1) ``), also through `[`,
+//   a writer above (`` value(`.q.set;`a;1) ``), or by anything that, called
+//   on the rest, changes the process (`value(hopen;`:f)`,
+//   `value(value;"a:1")`, #1767), also through `[`,
 //   `each`, `'`, `@`, `.` or `enlist`, in parentheses (`(value)"a:1"`)
 //   and through a trap (`@[value;"a:1";h]`), and by their `.q.` names;
 //   passed as a value, through an adverb or a composition (`value/["a:1"]`,
@@ -127,6 +129,8 @@ type Kind = "name" | "sym" | "str" | "num" | "op" | "open" | "close" | "space";
 interface Token {
   kind: Kind;
   text: string;
+  /// Where it starts in the statement.
+  pos: number;
 }
 
 const NAME_START = /[A-Za-z.]/;
@@ -155,7 +159,7 @@ function tokens(code: string): Token[] {
       while (j < code.length && code[j] !== '"') {
         j += code[j] === "\\" ? 2 : 1;
       }
-      out.push({ kind: "str", text: code.slice(i, j + 1) });
+      out.push({ kind: "str", text: code.slice(i, j + 1), pos: i });
       i = j + 1;
     } else if (c === "/" && (i === 0 || /\s/.test(code[i - 1]))) {
       while (i < code.length && code[i] !== "\n") {
@@ -166,7 +170,7 @@ function tokens(code: string): Token[] {
       while (j < code.length && /\s/.test(code[j])) {
         j++;
       }
-      out.push({ kind: "space", text: code.slice(i, j) });
+      out.push({ kind: "space", text: code.slice(i, j), pos: i });
       i = j;
     } else if (c === "`") {
       let j = i + 1;
@@ -174,30 +178,30 @@ function tokens(code: string): Token[] {
       while (j < code.length && (/[A-Za-z0-9_.:]/.test(code[j]) || (path && code[j] === "/"))) {
         j++;
       }
-      out.push({ kind: "sym", text: code.slice(i, j) });
+      out.push({ kind: "sym", text: code.slice(i, j), pos: i });
       i = j;
     } else if (/[0-9]/.test(c) || (c === "-" && /[0-9]/.test(code[i + 1] ?? "") && (out.length === 0 || out[out.length - 1].kind !== "name"))) {
       let j = i + 1;
       while (j < code.length && /[0-9A-Za-z.]/.test(code[j])) {
         j++;
       }
-      out.push({ kind: "num", text: code.slice(i, j) });
+      out.push({ kind: "num", text: code.slice(i, j), pos: i });
       i = j;
     } else if (NAME_START.test(c) && !(c === "." && !NAME_START.test(code[i + 1] ?? ""))) {
       let j = i + 1;
       while (j < code.length && NAME.test(code[j])) {
         j++;
       }
-      out.push({ kind: "name", text: code.slice(i, j) });
+      out.push({ kind: "name", text: code.slice(i, j), pos: i });
       i = j;
     } else if ("([{".includes(c)) {
-      out.push({ kind: "open", text: c });
+      out.push({ kind: "open", text: c, pos: i });
       i++;
     } else if (")]}".includes(c)) {
-      out.push({ kind: "close", text: c });
+      out.push({ kind: "close", text: c, pos: i });
       i++;
     } else {
-      out.push({ kind: "op", text: c });
+      out.push({ kind: "op", text: c, pos: i });
       i++;
     }
   }
@@ -428,6 +432,8 @@ function lambdaLocals(t: Token[], open: number, touching: (a: Token | undefined,
 /// it names a table where `eval` would read the variable: `` value(!;`t;..) ``
 /// and `` eval(!;enlist`t;..) `` both update `t` in place.
 function evaluated(t: Token[], j: number, byValue: boolean): { reason: string; at: number } | undefined {
+  // The lists it passes into, `((value);"a:1")`, for `called`.
+  const lists: number[] = [];
   while (
     t[j] !== undefined &&
     ((t[j].kind === "open" && t[j].text !== "{") ||
@@ -436,6 +442,7 @@ function evaluated(t: Token[], j: number, byValue: boolean): { reason: string; a
         ["'", "@", "."].includes(t[j].text) &&
         !(t[j - 1]?.text === "(" && (t[j + 1]?.text === ";" || t[j + 1]?.text === "[" || (t[j - 2]?.text === "(" && t[j + 1]?.text === ")" && t[j + 2]?.text === ";")))))
   ) {
+    if (t[j].text === "(") lists.push(j);
     j++;
   }
   const k = t[j];
@@ -462,8 +469,42 @@ function evaluated(t: Token[], j: number, byValue: boolean): { reason: string; a
           // `` eval(@;enlist`.;enlist`a;:;1) `` (#1446).
           (head && (k?.text === "@" || k?.text === ".") && named(j + 1 + wrap)?.kind === "sym" && (named(j + 1 + wrap)?.text.length ?? 0) > 1 && items(t, j - 1 - wrap).length > minimum(k?.text ?? "")) || projected
           ? "an amend"
-          : undefined;
+          : called(t, lists, byValue);
   return reason === undefined ? undefined : { reason, at: j };
+}
+
+/// The text of `t[from]` to `t[to]`, spaced as written.
+function joined(t: Token[], from: number, to: number): string {
+  return t
+    .slice(from, to)
+    .map((k, n, all) => (n > 0 && all[n - 1].pos + all[n - 1].text.length < k.pos ? ` ${k.text}` : k.text))
+    .join("");
+}
+
+/// What a list an evaluator runs, opening at one of `lists`, does as the
+/// call it is: `(f;x;y)` is `f[x;y]`, so `value(hopen;`:f)` opens the file
+/// as `hopen[`:f]` does, and `value(value;"a:1")` evaluates (#1767). For
+/// `eval` an argument `` `x `` is the variable and `` enlist`x `` the symbol.
+function called(t: Token[], lists: number[], byValue: boolean): string | undefined {
+  for (const open of [...lists].reverse()) {
+    const all = items(t, open);
+    const [hs, he] = all[0];
+    if (all.length < 2 || he - hs < 1 || !["name", "sym", "op", "open"].includes(t[hs].kind) || t[hs].text === "{") {
+      continue;
+    }
+    const head = he - hs === 1 && t[hs].kind === "sym" ? t[hs].text.slice(1) : joined(t, hs, he);
+    const args = all.slice(1).map(([s, e]) =>
+      byValue || e - s > 2
+        ? joined(t, s, e)
+        : e - s === 1 && t[s].kind === "sym"
+          ? t[s].text.slice(1)
+          : e - s === 2 && t[s].text === "enlist" && t[s + 1].kind === "sym"
+            ? t[s + 1].text
+            : joined(t, s, e),
+    );
+    return writes(`${head}[${args.join(";")}]`).length > 0 ? `a call of ${head}` : undefined;
+  }
+  return undefined;
 }
 
 /// The names and operators an evaluator's argument may pass through on its
