@@ -361,3 +361,33 @@ test("a relative q binary is resolved against the workspace folder, not the exte
   // host's working directory is often / on macOS (#1540).
   assert.strictEqual(resolveBinary(path.join(".", "bin", "q"), undefined), undefined);
 });
+
+test("in a multi-root workspace a folder's relative qBinary is found in that folder, by the status bar and the licence check (#1836)", async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-relq-"));
+  fakeQ(path.join(home, "B", "bin", "q"), "QLINTVER|4.1|2024.01.01|m64|2026.12.01");
+  fs.mkdirSync(path.join(home, "A"));
+  const { interpreters, changeEditor } = setUp(t, home);
+  const A = { uri: vscode.Uri.file(path.join(home, "A")), name: "A", index: 0 };
+  const B = { uri: vscode.Uri.file(path.join(home, "B")), name: "B", index: 1 };
+  vscode.workspace.workspaceFolders = [A, B];
+  const folderOf = (uri) => [A, B].find((f) => uri && uri.fsPath.startsWith(f.uri.fsPath + path.sep));
+  const plain = vscode.workspace.getConfiguration;
+  const plainFolder = vscode.workspace.getWorkspaceFolder;
+  vscode.workspace.getWorkspaceFolder = folderOf;
+  vscode.workspace.getConfiguration = (section, resource) => {
+    const c = plain(section);
+    const own = folderOf(resource) === B ? { "terminal.qBinary": "./bin/q" } : undefined;
+    return { ...c, get: (k, d) => (own && k in own ? own[k] : c.get(k, d)) };
+  };
+  t.after(() => {
+    vscode.workspace.getConfiguration = plain;
+    vscode.workspace.getWorkspaceFolder = plainFolder;
+    vscode.workspace.workspaceFolders = undefined;
+  });
+  vscode.window.activeTextEditor = { document: { languageId: "q", uri: vscode.Uri.file(path.join(home, "B", "x.q")) } };
+  changeEditor("q");
+  vscode.window.activeTextEditor = { document: { languageId: "q", uri: vscode.Uri.file(path.join(home, "B", "x.q")) } };
+  const said = await stub.commands.get(I.INTERPRETER_COMMANDS.checkLicence)();
+  assert.match(said ?? stub.messages.at(-1)[1], new RegExp(`${path.join(home, "B", "bin", "q").replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")} expires on 2026\\.12\\.01`));
+  assert.strictEqual(interpreters.status(), "$(terminal) q 4.1 2024.01.01");
+});
