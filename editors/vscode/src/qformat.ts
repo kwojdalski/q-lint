@@ -146,6 +146,18 @@ function monthsOf(d: Date): number {
   return months < 0 && d.getUTCMonth() !== 0 ? months + 12 : months;
 }
 
+/// A month of `m` months since 2000.01, as KDB-X writes it: the year as two
+/// two-digit fields and the month as one, each digit `"0"` plus its value
+/// in C's truncating arithmetic, and `**` for a field past two digits. So
+/// a year past 9999 is `**66.09`, and before year 1, `0+00.01` (#1736).
+function monthText(m: number): string {
+  const x = (m + 24_000) | 0;
+  const field = (n: number): string =>
+    Math.abs(n) > 99 ? "**" : String.fromCharCode(48 + Math.trunc(n / 10), 48 + (n % 10));
+  const y = Math.trunc(x / 12);
+  return `${field(Math.trunc(y / 100))}${field(y % 100)}.${field((x % 12) + 1)}`;
+}
+
 /// Milliseconds since 2000.01.01 of a Date the codec made of a q time.
 const sinceEpoch = (d: Date): number => d.getTime() - EPOCH_MS;
 
@@ -188,10 +200,8 @@ function exactTimestampText(ns: bigint): string {
 function temporalText(x: number | bigint | LongLike, t: number): string | undefined {
   const n = Number(x.toString());
   switch (t) {
-    case 13: {
-      const m = n + 24_000;
-      return `${pad4(Math.floor(m / 12))}.${pad2((m % 12) + 1)}`;
-    }
+    case 13:
+      return monthText(n);
     case 14:
       return ymd(new Date(EPOCH_MS + n * DAY_MS));
     case 15: {
@@ -251,10 +261,8 @@ function itemText(x: unknown, t: number, precision = 7): string | undefined {
     return String(x);
   }
   switch (t) {
-    case 13: {
-      const m = monthsOf(x) + 24_000;
-      return `${pad4(Math.floor(m / 12))}.${pad2((m % 12) + 1)}`;
-    }
+    case 13:
+      return monthText(monthsOf(x));
     case 14:
       return ymd(x);
     case 15:
