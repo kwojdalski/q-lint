@@ -73,13 +73,17 @@ fn relative(to: &Path, from: &Path) -> String {
     parts.join("/")
 }
 
-/// The workspace folder q is taken to be started in, as a key.
-fn root(sources: &Sources) -> Option<PathBuf> {
-    sources
+/// The workspace folder q is taken to be started in for the file `key`, as
+/// a key: the folder that holds it, or the first (`graph::start_dir`).
+fn root(sources: &Sources, key: &str) -> Option<PathBuf> {
+    let roots: Vec<PathBuf> = sources
         .idx
         .roots
-        .first()
+        .iter()
         .map(|r| PathBuf::from(file_key(r)))
+        .collect();
+    let root = q_lint_rs::graph::start_dir(&roots, Path::new(key));
+    (!root.as_os_str().is_empty()).then(|| root.to_path_buf())
 }
 
 /// Where a renamed path goes: each `(old, new)` names a file or a folder,
@@ -120,7 +124,6 @@ pub(super) fn will_rename(params: &Value, sources: &Sources) -> (Value, Option<S
     if renames.is_empty() {
         return (Value::Null, None);
     }
-    let root = root(sources);
     let mut changes: BTreeMap<String, Vec<Value>> = BTreeMap::new();
     let mut left: Vec<String> = vec![];
     for key in sources.keys() {
@@ -131,6 +134,7 @@ pub(super) fn will_rename(params: &Value, sources: &Sources) -> (Value, Option<S
             continue;
         };
         let from = Path::new(key);
+        let root = root(sources, key);
         let dir = from.parent().unwrap_or(Path::new(""));
         let new_from = moved(from, &renames);
         let new_dir = new_from.as_deref().and_then(Path::parent).unwrap_or(dir);
@@ -277,7 +281,7 @@ pub(super) fn completion(cursor: &Cursor, sources: &Sources) -> Option<Value> {
         bases.push(PathBuf::new());
     } else {
         bases.extend(from.parent().map(Path::to_path_buf));
-        bases.extend(root(sources));
+        bases.extend(root(sources, &cursor.key));
     }
     let lines = Lines::new(cursor.text);
     let span = json!({"start": lines.json(start), "end": lines.json(cursor.offset)});

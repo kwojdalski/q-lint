@@ -638,8 +638,10 @@ ignored.
 
 On the path of a load - `\l src/init.q`, `system "l src/init.q"`, or a file
 symbol `` `:lib/x.q `` - Go to Definition opens the file and a hover names it.
-The path is followed as the dependency graph follows it: against the first
-workspace folder, then the loading file's own directory and each one above it;
+The path is followed as the dependency graph follows it: against the
+workspace folder the loading file is in (the first, for a file in none) -
+each folder is the root of its own loads - then the loading file's own
+directory and each one above it;
 a directory loads the scripts directly in it. A load that reaches no file, or
 a relative one written after the script changes directory - a `\cd`, or the
 load of a directory, which q stays in - goes nowhere.
@@ -856,7 +858,7 @@ written only when the item is accepted; its `detail` says `adds \l
 lib/util.q`. "Can already see" is the document itself, every file it loads
 directly or through another, and every file loaded by a file that loads it -
 a sibling its loader brings in - so a load already there is never added
-twice. The path is written from the first workspace folder, or else from the
+twice. The path is written from the document's workspace folder, or else from the
 document's own directory, whichever the dependency graph follows to that
 file. The line goes after the last `\l` line above the cursor and above the
 file's first `\d`, keeping the loads' order; with none, after a leading

@@ -294,7 +294,9 @@ impl<'a> Sources<'a> {
                 .map(str::to_string)
                 .collect()
         };
-        graph::loaded(Path::new(from), load, &self.idx.cwd(), indexed, scripts_in)
+        let cwds = self.idx.cwds();
+        let cwd = graph::start_dir(&cwds, Path::new(from));
+        graph::loaded(Path::new(from), load, cwd, indexed, scripts_in)
     }
 
     /// The path of the load under the cursor, as its start and length, with

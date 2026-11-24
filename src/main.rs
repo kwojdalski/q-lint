@@ -641,7 +641,7 @@ fn run(args: Args) -> Result<u8, String> {
             .map(|(_, source)| q_lint_rs::references(source, false))
             .collect();
         let loads: Vec<_> = reads.iter().map(|r| r.loads.as_slice()).collect();
-        q_lint_rs::graph::placements(&paths, &loads, &cwd)
+        q_lint_rs::graph::placements(&paths, &loads, std::slice::from_ref(&cwd))
             .into_iter()
             .zip(reads)
             .map(|(placement, read)| Some((placement, read.implicit_defines)))
@@ -1051,7 +1051,7 @@ fn analyze_graph(args: GraphArgs) -> Result<u8, String> {
             }
         }
     }
-    let graph = q_lint_rs::graph::build(&sources, args.symbols, &cwd);
+    let graph = q_lint_rs::graph::build(&sources, args.symbols, std::slice::from_ref(&cwd));
     let show = |p: &Path| relative(p, &cwd);
     let mut edges: std::collections::BTreeMap<String, BTreeSet<String>> =
         graph.keys().map(|p| (show(p), BTreeSet::new())).collect();

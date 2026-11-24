@@ -1528,6 +1528,52 @@ fn renaming_a_folder_rewrites_the_loads_under_it_and_moving_a_loader_its_own() {
     );
 }
 
+#[test]
+fn each_workspace_folder_is_the_root_of_its_own_relative_loads() {
+    // #2045. Folders A and B each hold main.q (`\l lib.q`) and lib.q. A q
+    // started in B loads B's lib.q, so B's main.q leads there, and renaming
+    // one folder's lib.q rewrites that folder's load alone.
+    let dir = tempfile::tempdir().unwrap();
+    for folder in ["A", "B"] {
+        std::fs::create_dir_all(dir.path().join(folder)).unwrap();
+        std::fs::write(dir.path().join(folder).join("main.q"), "\\l lib.q\n").unwrap();
+        std::fs::write(dir.path().join(folder).join("lib.q"), "ff:{1}\n").unwrap();
+    }
+    let options = json!({"renameLoads": {"enable": true}});
+    let (mut server, _) = Server::over(&dir.path().join("A"), &[], client(), options);
+    let b = file_uri(&dir.path().join("B"));
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWorkspaceFolders",
+        "params":{"event":{"added":[{"uri":b,"name":"B"}],"removed":[]}}}),
+    );
+    let main = file_uri(&dir.path().join("B/main.q"));
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didOpen",
+        "params":{"textDocument":{"uri":main,"languageId":"q","version":1,"text":"\\l lib.q\n"}}}));
+    let reply = server.request(
+        "textDocument/definition",
+        json!({"textDocument":{"uri":main},"position":{"line":0,"character":4}}),
+    );
+    let targets: Vec<&str> = reply["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"))
+        .iter()
+        .map(|l| l["uri"].as_str().unwrap())
+        .collect();
+    assert_eq!(targets, [file_uri(&dir.path().join("B/lib.q"))], "{reply}");
+    for folder in ["A", "B"] {
+        let (old, new) = (format!("{folder}/lib.q"), format!("{folder}/util.q"));
+        let reply = server.request(
+            "workspace/willRenameFiles",
+            rename_params(dir.path(), &[(&old, &new)]),
+        );
+        assert_eq!(
+            renamed(&reply, dir.path()),
+            [(format!("{folder}/main.q"), 0, 3, 8, "util.q".to_string())],
+            "{reply}"
+        );
+    }
+}
+
 /// An absolute load written through a symlink (`/tmp` for `/private/tmp`)
 /// is followed to the file renamed, and keeps its spelling (#1219).
 #[cfg(unix)]

@@ -394,8 +394,8 @@ impl Index {
                 .iter()
                 .map(|k| self.files[k].loads.as_slice())
                 .collect();
-            let cwd = self.cwd();
-            guarded(|| q_lint_rs::graph::placements(&paths, &loads, &cwd))
+            let cwds = self.cwds();
+            guarded(|| q_lint_rs::graph::placements(&paths, &loads, &cwds))
                 .unwrap_or_else(|_| vec![Placement::default(); keys.len()])
         } else {
             vec![Placement::default(); keys.len()]
@@ -422,17 +422,21 @@ impl Index {
         changed
     }
 
-    /// The directory a relative `\l` is tried against first: the first
+    /// The directories a relative `\l` may be tried against first: each
     /// workspace folder, which is where a q process over this tree is most
-    /// likely started, since the source does not say. By its real path, as
-    /// the files are keyed: a directory loaded, `\l db`, is found by the
-    /// files keyed under it, and a folder opened through a symlink named no
-    /// such directory (#1366).
-    fn cwd(&self) -> std::path::PathBuf {
-        self.roots.first().map_or_else(
-            || std::env::current_dir().unwrap_or_default(),
-            |root| file_key(root).into(),
-        )
+    /// likely started, since the source does not say - a file's own folder
+    /// for a file in one (`graph::start_dir`, #2045), the current directory
+    /// with none. By their real paths, as the files are keyed: a directory
+    /// loaded, `\l db`, is found by the files keyed under it, and a folder
+    /// opened through a symlink named no such directory (#1366).
+    fn cwds(&self) -> Vec<std::path::PathBuf> {
+        if self.roots.is_empty() {
+            return vec![std::env::current_dir().unwrap_or_default()];
+        }
+        self.roots
+            .iter()
+            .map(|root| file_key(root).into())
+            .collect()
     }
 
     /// Forget `path` and, when it was a directory, every file under it but

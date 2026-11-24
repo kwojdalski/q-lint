@@ -901,16 +901,17 @@ impl Loads {
 }
 
 /// How the file `from` names `file` in a `\l` that loads it: by its path
-/// under the first workspace folder, which is where a process over the tree
-/// is most likely started, or else by its path from `from`'s own directory:
+/// under the workspace folder `from` is in (the first, for a file in none),
+/// which is where a process over the tree is most likely started, or else by
+/// its path from `from`'s own directory:
 /// whichever the dependency graph follows to that file. Nothing for a path
 /// with a blank in it, which `\l` would cut.
 fn load_path(sources: &Sources, from: &str, file: &str) -> Option<String> {
     let file_path = std::path::Path::new(file);
     let mut candidates = vec![];
-    if let Some(root) = sources.idx.roots.first()
-        && let Ok(under) = file_path.strip_prefix(file_key(root))
-    {
+    let roots = sources.idx.cwds();
+    let root = q_lint_rs::graph::start_dir(&roots, std::path::Path::new(from));
+    if let Ok(under) = file_path.strip_prefix(root) {
         candidates.push(under.to_path_buf());
     }
     if let Some(dir) = std::path::Path::new(from).parent()

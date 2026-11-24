@@ -63,8 +63,9 @@ fn a_graph_from_what_each_file_reads_is_the_graph_from_the_sources() {
         .iter()
         .map(|(_, text)| references(text, false))
         .collect();
-    let from_reads = build_from(&paths, &reads.iter().collect::<Vec<_>>(), &root);
-    assert_eq!(from_reads, build(&files, false, &root));
+    let roots = [root.clone()];
+    let from_reads = build_from(&paths, &reads.iter().collect::<Vec<_>>(), &roots);
+    assert_eq!(from_reads, build(&files, false, &roots));
     assert_eq!(from_reads[&root.join("app.q")].dependencies.len(), 2);
 }
 
@@ -79,7 +80,7 @@ fn the_files_reaching_a_change_are_its_dependents_all_the_way_up() {
         ("ping.q", ".ping.f:{.pong.f x}\n"),
         ("pong.q", ".pong.f:{.ping.f x}\n"),
     ]);
-    let graph = build(&files, false, &root);
+    let graph = build(&files, false, std::slice::from_ref(&root));
     let reach = |changed: &[&str]| -> Vec<(String, Vec<String>)> {
         let name = |path: &PathBuf| path.strip_prefix(&root).unwrap().display().to_string();
         let changed: Vec<PathBuf> = changed.iter().map(|c| root.join(c)).collect();

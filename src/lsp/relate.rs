@@ -85,7 +85,7 @@ fn graph_of(sources: &Sources) -> BTreeMap<PathBuf, Node> {
         .iter()
         .map(|key| &sources.idx.files[*key].read)
         .collect();
-    graph::build_from(&paths, &reads, &sources.idx.cwd())
+    graph::build_from(&paths, &reads, &sources.idx.cwds())
 }
 
 /// The URI of an indexed file, as every answer names one (`Sources::uri`).
