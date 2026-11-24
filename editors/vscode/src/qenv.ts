@@ -57,9 +57,10 @@ export function mergeEnv(...layers: Record<string, string>[]): Record<string, st
 const Q_NAMES = ["QHOME", "QLIC", "QINIT"];
 
 /// What a q terminal is given, split by where it goes: `shown` on the
-/// command line that starts q (the layout's and `q-lint.terminal.envPath`'s,
-/// the latter winning), and `hidden` in the terminal's environment (the
-/// `.env` file's), so its values never appear on screen. A name the `.env`
+/// command line that starts q (the layout's and `q-lint.terminal.envPath`'s
+/// QHOME, QLIC and QINIT, the latter winning), and `hidden` in the
+/// terminal's environment (the `.env` file's, and envPath's other values
+/// under names of their own), so those values never appear on screen. A name the `.env`
 /// file sets is left off the command line, where it would win over it. The
 /// shell's startup file runs after the environment is set, and its export
 /// of QHOME would win over the `.env` file's, as it does not for a launched
@@ -76,9 +77,21 @@ export function terminalEnv(
       shown[name] = value;
     }
   }
-  Object.assign(shown, envPath);
   const hidden = { ...dotenv };
   const refs: Record<string, string> = {};
+  // Only q's own paths are typed on the line: any other value of the env
+  // file - a licence in KDB_LICENSE_B64, a token - went into the shell's
+  // history and the terminal's kept buffer (#1831). It goes in the
+  // environment, set for q from there, still over the `.env`'s.
+  for (const [name, value] of Object.entries(envPath)) {
+    if (Q_NAMES.includes(name)) {
+      shown[name] = value;
+    } else {
+      delete shown[name];
+      refs[name] = `QLINT_ENVPATH_${name}`;
+      hidden[refs[name]] = value;
+    }
+  }
   for (const name of Q_NAMES) {
     if (name in dotenv && !(name in shown)) {
       refs[name] = `QLINT_DOTENV_${name}`;

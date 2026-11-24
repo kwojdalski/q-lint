@@ -11,6 +11,7 @@ const os = require("node:os");
 const path = require("node:path");
 const pkg = require("../package.json");
 const { readDotenv, readEnvSettings, namesText, terminalEnv, mergeEnv } = require("../out/qenv.js");
+const { commandLine } = require("../out/terminal.js");
 
 const props = Object.assign({}, ...pkg.contributes.configuration.map((c) => c.properties));
 
@@ -35,6 +36,14 @@ test("a terminal gets the .env file's variables in its environment, never on its
   assert.deepStrictEqual(hidden, { QLIC: "/env", TOKEN: "t", QLINT_DOTENV_QLIC: "/env" });
   assert.deepStrictEqual(refs, { QLIC: "QLINT_DOTENV_QLIC" });
   assert.deepStrictEqual(terminalEnv({}, { QHOME: "/mine" }, { QHOME: "/env" }).refs, {}, "envPath's QHOME wins, as before");
+  // envPath's other values are set from the environment, never typed (#1831).
+  const secret = terminalEnv({}, { QHOME: "/opt/kx", KDB_LICENSE_B64: "TElDRU5TRS1TRUNSRVQ=" }, { KDB_LICENSE_B64: "env" });
+  assert.deepStrictEqual(secret.shown, { QHOME: "/opt/kx" });
+  assert.deepStrictEqual(secret.refs, { KDB_LICENSE_B64: "QLINT_ENVPATH_KDB_LICENSE_B64" });
+  assert.strictEqual(secret.hidden.QLINT_ENVPATH_KDB_LICENSE_B64, "TElDRU5TRS1TRUNSRVQ=");
+  const line = commandLine("q", ["t.q"], "posix", secret.shown, secret.refs);
+  assert.strictEqual(line, 'KDB_LICENSE_B64="$QLINT_ENVPATH_KDB_LICENSE_B64" QHOME=/opt/kx q t.q');
+  assert.ok(!line.includes("TElD"));
   assert.deepStrictEqual(mergeEnv({ A: "layout", B: "layout" }, { B: "env", C: "env" }, { C: "own" }), { A: "layout", B: "env", C: "own" });
 });
 

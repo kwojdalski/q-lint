@@ -1118,7 +1118,7 @@
             "default": "",
             "order": 201,
             "scope": "resource",
-            "markdownDescription": "A file of `NAME=value` lines set for q in a q terminal (**Run Code from Terminal**, **Start q REPL**, **Send ... to Terminal**), such as `QHOME` and `QLIC`, on the command line that starts it, so they win over the shell's startup files. Relative to the workspace folder, which may set its own; a leading `~` is your home directory. Values are taken as written: `$HOME` is not expanded."
+            "markdownDescription": "A file of `NAME=value` lines set for q in a q terminal (**Run Code from Terminal**, **Start q REPL**, **Send ... to Terminal**), such as `QHOME` and `QLIC`, set on the command line that starts it, so they win over the shell's startup files: any value but `QHOME`, `QLIC` and `QINIT` from a copy in the terminal's environment, so it is not shown. Relative to the workspace folder, which may set its own; a leading `~` is your home directory. Values are taken as written: `$HOME` is not expanded."
           },
           "q-lint.terminal.runWithArguments.enable": {
             "type": "boolean",
