@@ -1365,10 +1365,39 @@ mod tests {
                 .collect()
         };
         assert_eq!(enumerated(&schema["properties"]["profile"]), set(&PROFILES));
-        assert_eq!(
-            enumerated(&schema["properties"]["target-version"]),
-            set(&Target::NAMES)
-        );
+        // A release is offered by its name and taken in every spelling
+        // `Target::parse` reads (#1976): the names, KDB-X's others, any case,
+        // blanks around it. The schema's pattern must agree on each of these.
+        let target = &schema["properties"]["target-version"]["anyOf"];
+        assert_eq!(enumerated(&target[0]), set(&Target::NAMES));
+        assert_eq!(target[1]["type"], "string");
+        let spelled = regex::Regex::new(target[1]["pattern"].as_str().unwrap()).unwrap();
+        let mut spellings: Vec<String> = Vec::new();
+        for word in [
+            "3.6", "4.0", "4.1", "kdbx", "kdb-x", "5", "KDBX", "KDB-X", "Kdb-X", "kdb+", "kdb_x",
+            "kdb--x", "kdb x", "kx", "4", "4.2", "3.5", "4.00", "40", "4,0", "5.0", "6", "x", "",
+        ] {
+            for shape in [
+                word.to_string(),
+                format!(" {word} "),
+                format!("\t{word}"),
+                format!("v{word}"),
+                format!("{word}0"),
+                format!("{word} {word}"),
+            ] {
+                spellings.push(shape);
+            }
+        }
+        for name in Target::NAMES {
+            assert!(Target::parse(name).is_some(), "{name}");
+        }
+        for text in &spellings {
+            assert_eq!(
+                spelled.is_match(text),
+                Target::parse(text).is_some(),
+                "target-version = {text:?}"
+            );
+        }
         for at in [&schema["properties"], &lint["properties"]] {
             let severity = resolve(&at["severity"]);
             assert_eq!(
