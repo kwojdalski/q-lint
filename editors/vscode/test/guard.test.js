@@ -1106,3 +1106,20 @@ test("a name in parentheses or a nested destructuring list assigns (#1772)", () 
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("reval or -24! of an assignment tree is a change (#1774)", () => {
+  const cases = {
+    "reval(:;`a;9)": ["evaluates an assignment with reval"],
+    "reval(+:;`a;1)": ["evaluates an assignment with reval"],
+    ".q.reval(:;`a;9)": ["evaluates an assignment with .q.reval"],
+    "-24!(:;`a;9)": ["evaluates an assignment with -24!"],
+    // A tree that only reads, reads.
+    "reval(+;1;2)": [],
+    "reval(count;`t)": [],
+    "-24!(+;1;2)": [],
+    "reval x": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

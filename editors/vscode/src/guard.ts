@@ -56,7 +56,7 @@
 //   composition (`` @/[`.;`a;:;9] ``, `` '[::;@][..] ``), with the target left
 //   out and given after (`` @[;`a;:;1] `. ``), and the amend or `!`
 //   passed as a value (`` .[@;(`.;`a;:;1)] ``, `` (@) . (`.;..) ``);
-// - `value`, `get`, `eval` or `-6!`, or in k code a monadic `.`
+// - `value`, `get`, `eval`, `reval`, `-6!` or `-24!`, or in k code a monadic `.`
 //   (`` k)."a:1" ``), applied to a string, to `parse` or
 //   `-5!`, or to a tree headed by `:`, `::` or `+:` (`eval(:;`t;())`), by
 //   an amend `@` or `.` of four items or more on a variable by name
@@ -134,6 +134,8 @@ const WRITERS = new Set([
   ".Q.dpft", ".Q.dpfts", ".Q.dpt", ".Q.dpts", ".Q.hdpf", ".Q.en", ".Q.ens", ".Q.enx", ".Q.enxs", ".Q.chk", ".Q.dsftg",
   ".Q.view", ".Q.l", ".Q.lo", ".Q.li", ".Q.bv", ".Q.opt", ".Q.Xf", ".Q.L", "use", ".h.ht",
 ]);
+/// What evaluates a string or a parse tree it is given.
+const EVALUATORS = new Set(["value", "get", "eval", "reval"]);
 /// System commands that only read a setting when they are given no argument.
 const READS_BARE = new Set([..."abBcCdeEfgoOpPrsSTvwWz_", "cd"]);
 
@@ -681,13 +683,14 @@ function readStatement(statement: string, found: Set<string>): void {
         }
         continue;
       }
-      if (["value", "get", "eval"].includes(unqualified(k.text))) {
+      // `reval` runs a tree as `eval` does, an assignment too (#1774).
+      if (EVALUATORS.has(unqualified(k.text))) {
         // `(value)"a:1"` applies it as `value "a:1"` does.
         const wrapped = t[i - 1]?.text === "(" && next?.text === ")";
         // Given to a trap, `@[value;"a:1";h]`, `.Q.trp[value;..;h]`, it is
         // applied to the argument after it.
         const trapped = t[i - 1]?.text === "[" && t[i - 1]?.kind === "open" && next?.text === ";";
-        const what = evaluated(t, i + (wrapped || trapped ? 2 : 1), unqualified(k.text) !== "eval");
+        const what = evaluated(t, i + (wrapped || trapped ? 2 : 1), unqualified(k.text) !== "eval" && unqualified(k.text) !== "reval");
         if (what !== undefined) {
           found.add(`evaluates ${what.reason} with ${k.text}`);
           i = what.at;
@@ -814,11 +817,11 @@ function readStatement(statement: string, found: Set<string>): void {
           : t[i - 1]?.text === "(" && next?.text === ")" && t[i + 2]?.text === "!"
             ? i + 2
             : -1;
-    // `-6!` is `eval`.
-    if (bang > 0 && k.text === "-6") {
+    // `-6!` is `eval`, and `-24!` `reval` (#1774).
+    if (bang > 0 && (k.text === "-6" || k.text === "-24")) {
       const what = evaluated(t, bang + 1, false);
       if (what !== undefined) {
-        found.add(`evaluates ${what.reason} with -6!`);
+        found.add(`evaluates ${what.reason} with ${k.text}!`);
         i = what.at;
         continue;
       }
