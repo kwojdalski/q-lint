@@ -298,6 +298,41 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
             ),
         ));
     }
+    // After the `D` of a timespan or timestamp the hour takes two digits at
+    // most, whatever follows: q 5 refuses `0D100:00`, `0D012:00:00`,
+    // `1D100:00:00`, `-0D100:00:00` and `2000.01.01D100:00`, and takes
+    // `0D99:00:00` (as 4D03:00:00) and `0D100`, a timespan of no colon
+    // (#2093). The `T` of a datetime is another matter: q 5 reads
+    // `2000.01.01T100:00:00` as a null, not a refusal.
+    for m in crate::captures_where(
+        re!(r"(\d+(?:\.\d\d\.\d\d)?)D\d{3,}:\d+(?::\d+)?(?:\.\d*)?"),
+        unsym,
+        |m| {
+            !unsym[..m.get(0).unwrap().start()]
+                .ends_with(|c: char| c.is_ascii_alphanumeric() || "._".contains(c))
+        },
+    ) {
+        let whole = m.get(0).unwrap();
+        if command_argument(source, whole.start()) || chars(whole.end()) {
+            continue;
+        }
+        let kind = if m[1].contains('.') {
+            "timestamp"
+        } else {
+            "timespan"
+        };
+        out.push(Finding::at(
+            path,
+            source,
+            whole.start(),
+            "QE006",
+            format!(
+                "`{}` is no {kind}: after its D the hour takes two digits at most, and q \
+                 refuses the literal",
+                whole.as_str()
+            ),
+        ));
+    }
     // The digit forms too (#232): q 5 reads `1259u` as 12:59 and refuses
     // `1260u`, `120060v` and `126000t`. The minutes are a minute's last two
     // digits, and a second's or time's from three to five digits; from six or

@@ -1136,6 +1136,24 @@ b:0D25:00:00
 c:12:59:59.999
 d:2023.01m
 
+=== QE006 profile: general | after the D of a timespan or timestamp the hour takes two digits at most (#2093; q 5: '0D100:00:00, '0D012:00:00, '-0D100:00:00, '2000.01.01D100:00)
+a:0D100:00:00
+b:0D100:00
+c:0D1000:00:00
+d:1D100:00:00
+e:2000.01.01D100:00
+f:0D012:00:00
+g:-0D100:00:00
+h:0D01:00 0D100:00
+
+=== clean profile: general | two digits run on past 24, a timespan of no colon and a char suffix (#2093; q 5: 4D03:00:00, 0D01:00:00, " ")
+a:0D99:00:00
+b:0D24:00:00
+c:0D99:59:59.123456789
+d:0D100
+e:2000.01.01D99:00
+f:0D100:00c
+
 === QT024 profile: general | an attribute on a string is checked char by char (q 5: `s#"cba" is 's-fail)
 a:`s#"cba"
 b:`u#"aa"
