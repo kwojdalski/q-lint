@@ -30,7 +30,9 @@ export function shortForm(answer: GridAnswer, width = INLINE_WIDTH): string {
     text = joined !== "" ? joined : answer.grid !== undefined ? `${answer.grid.count} row${answer.grid.count === 1 ? "" : "s"}` : "::";
   }
   const one = text.replace(/\s+/g, " ");
-  return one.length > width ? `${one.slice(0, width - 3)}...` : one;
+  // Counted and cut by code points, so no surrogate pair is split (#1428).
+  const chars = Array.from(one);
+  return chars.length > width ? `${chars.slice(0, width - 3).join("")}...` : one;
 }
 
 /// The lines an edit from line `start` to `end` (0-based, inclusive) that
