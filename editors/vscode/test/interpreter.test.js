@@ -325,11 +325,20 @@ test("the probe against a real q prints its version and, where .z.l has one, a d
 });
 
 test("a relative q binary is resolved against the workspace folder, not the extension host's cwd (#1132)", () => {
-  const folder = path.join(os.tmpdir(), "ws");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-resolve-"));
+  const folder = path.join(root, "ws");
+  for (const file of [path.join(folder, "bin", "q"), path.join(root, "kx", "q"), path.join(root, "elsewhere", "q")]) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "", { mode: 0o755 });
+  }
   assert.strictEqual(resolveBinary(path.join(".", "bin", "q"), folder), path.join(folder, "bin", "q"));
-  assert.strictEqual(resolveBinary(path.join("..", "kx", "q"), folder), path.join(os.tmpdir(), "kx", "q"));
-  const absolute = path.join(os.tmpdir(), "elsewhere", "q");
+  assert.strictEqual(resolveBinary(path.join("..", "kx", "q"), folder), path.join(root, "kx", "q"));
+  const absolute = path.join(root, "elsewhere", "q");
   assert.strictEqual(resolveBinary(absolute, folder), absolute);
+  // A path to no program is not found, as a name on no PATH is (#1691).
+  assert.strictEqual(resolveBinary(path.join(root, "nowhere", "q"), folder), undefined);
+  fs.writeFileSync(path.join(root, "plain"), "");
+  assert.strictEqual(resolveBinary(path.join(root, "plain"), folder), process.platform === "win32" ? path.join(root, "plain") : undefined);
   // With no folder open, there is none to read it from: the extension
   // host's working directory is often / on macOS (#1540).
   assert.strictEqual(resolveBinary(path.join(".", "bin", "q"), undefined), undefined);

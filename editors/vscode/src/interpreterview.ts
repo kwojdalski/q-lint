@@ -100,11 +100,12 @@ export function probe(binary: string, env: Record<string, string>): Promise<Prob
 /// The file `binary` runs: itself when it is a path, else the first of
 /// that name on `PATH`. A relative path is relative to `folder`, the
 /// workspace folder the q tasks and terminals start in, not to the
-/// extension host's working directory (#1132).
+/// extension host's working directory (#1132). Undefined when it is not a
+/// program this user can run, a path as much as a name (#1691).
 export function resolveBinary(binary: string, folder: string | undefined = workspace.workspaceFolders?.[0]?.uri.fsPath): string | undefined {
   const file = qBinaryFrom(binary, folder, os.homedir());
   if (file === undefined || path.isAbsolute(file)) {
-    return file;
+    return file !== undefined && nodeFiles.executable(file) ? file : undefined;
   }
   const names = process.platform === "win32" && !/\.exe$/i.test(file) ? [file, `${file}.exe`] : [file];
   for (const entry of (process.env.PATH ?? "").split(path.delimiter)) {
