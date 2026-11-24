@@ -10,6 +10,7 @@
 // run goes through the Run q Query tool, which the user confirms, and a
 // drafted query is only shown: the user runs it, or not.
 import type { Gathered } from "./explorer";
+import { FULL_TEXT } from "./qtext";
 import type { TableInfo } from "./tableinfo";
 
 export const QSQL_COMMANDS = { draft: "q-lint.draftQsql" } as const;
@@ -17,21 +18,24 @@ export const QSQL_COMMANDS = { draft: "q-lint.draftQsql" } as const;
 /// What each of `nms` (one string, names split by spaces) holds: missing, a
 /// lambda and its text, another function as q prints it, a table and its
 /// columns, a view, which is named and not evaluated (#1133), or a
-/// variable: its type, count and its first ten items as q prints them. Texts are cut at 300 characters, and nothing is counted or
+/// variable: its type, count and its first ten items as q prints them. Texts
+/// are `FULL_TEXT`'s, whole whatever the process's `\c`, cut at 300
+/// characters (#1908), and nothing is counted or
 /// read whole: a table's rows are not counted. The value is taken by `get`
 /// straight into a local: PeachQ loads a partitioned table put in a list,
 /// and it would no longer read as partitioned. Works on KDB-X and PeachQ.
 export const DESCRIBE = [
   "{[nms]",
+  ` F:${FULL_TEXT};`,
   " n:\" \" vs(),nms;",
-  " r:{s:`$x;",
+  " r:{[F;x]s:`$x;",
   "  if[s in views[];:(`view;0h;0n;\"\")];",
   "  if[not @[{get x;1b};s;0b];:(`missing;0h;0n;\"\")];",
   "  v:get s;t:type v;",
   "  $[100h=t;(`lambda;t;0n;last value v);",
-  "   t within 101 112h;(`function;t;0n;300 sublist -3!v);",
+  "   t within 101 112h;(`function;t;0n;300 sublist F[300;v]);",
   "   .Q.qt v;($[1b~p:.Q.qp v;`partitioned;0b~p;`splayed;99h=t;`keyed;`table];t;0n;300 sublist\" \"sv string cols v);",
-  "   (`variable;t;\"f\"$count v;300 sublist -3!$[0>t;v;10 sublist v])]}each n;",
+  "   (`variable;t;\"f\"$count v;300 sublist F[300;$[0>t;v;10 sublist v]])]}[F]each n;",
   " `name`kind`type`count`text!(n;r[;0];r[;1];r[;2];r[;3])}",
 ].join("\n");
 

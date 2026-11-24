@@ -9,10 +9,16 @@
 // process, so the lambda is sent through the read-only guard with the call
 // as the code it reads. It assigns nothing. Works on kdb+ (KDB-X) and
 // PeachQ; held there by processtools_q.test.js.
+//
+// A row and a time are written by `FULL_TEXT`, up to 2000 characters:
+// `.Q.s1` cuts a wide row at the process's `\c` width, short of the columns
+// the match turns on (#1908).
+import { FULL_TEXT } from "./qtext";
 
 export const EXPLAIN_AJ = [
   "{[c;l;r;i]",
   " c:(),value c; L:0!value l; R:0!value r; i:`long$i;",
+  ` F:{2000 sublist x y}${FULL_TEXT}[2000];`,
   " if[not i within(0;-1+count L);'\"no row \",string[i],\" in the left table, which has \",string[count L],\" rows\"];",
   " if[not all c in cols L;'\"the left table has no column \",string first c except cols L];",
   " if[not all c in cols R;'\"the right table has no column \",string first c except cols R];",
@@ -20,7 +26,7 @@ export const EXPLAIN_AJ = [
   " w:til count R; miss:`; k:0;",
   " while[(k<count ks)&0<count w; w:w where(R[ks k] w)=row ks k; if[0=count w;miss:ks k]; k+:1];",
   " tm:R[tc] w; j:$[count w;tm bin row tc;-1];",
-  " (.Q.s1 row;\"f\"$count w;string miss;$[null miss;\"\";.Q.s1 row miss];$[j<0;-1f;\"f\"$w j];$[j<0;\"\";.Q.s1 R w j];$[count w;.Q.s1 first tm;\"\"];.Q.s1 row tc;tm~asc tm;string tc;\"f\"$count R)}",
+  " (F row;\"f\"$count w;string miss;$[null miss;\"\";F row miss];$[j<0;-1f;\"f\"$w j];$[j<0;\"\";F R w j];$[count w;F first tm;\"\"];F row tc;tm~asc tm;string tc;\"f\"$count R)}",
 ].join("\n");
 
 export interface AjCall {
