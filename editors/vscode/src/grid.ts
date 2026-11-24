@@ -159,13 +159,15 @@ export interface TreeNode {
 }
 
 /// A node as `GRID` sends it, `(key;text;type;count;children)`, or
-/// undefined when it is not one.
+/// undefined when it is not one. Cut 64 levels down: a node there is kept
+/// with its children not read, as one whose children were not sent, not
+/// dropped with the whole tree (#1654).
 export function readTree(raw: unknown, depth = 0): TreeNode | undefined {
-  if (!Array.isArray(raw) || raw.length !== 5 || depth > 64) {
+  if (!Array.isArray(raw) || raw.length !== 5) {
     return undefined;
   }
   const [key, text, type, count, children] = raw;
-  const kids = Array.isArray(children) ? children.map((c) => readTree(c, depth + 1)) : [];
+  const kids = Array.isArray(children) && depth < 64 ? children.map((c) => readTree(c, depth + 1)) : [];
   if (kids.some((k) => k === undefined)) {
     return undefined;
   }

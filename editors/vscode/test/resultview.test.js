@@ -147,6 +147,17 @@ test("a tree node as GRID sends it, and nothing that is not one", () => {
   });
   assert.strictEqual(readTree([]), undefined);
   assert.strictEqual(readTree(["", "", 0, 1, [["bad"]]]), undefined);
+  // Nested past 64 levels: cut there, not dropped (#1654).
+  let deep = ["", "1", -7, 1, []];
+  for (let i = 0; i < 70; i++) deep = [String(i), "", 0, 1, [deep]];
+  let node = readTree(deep);
+  let levels = 0;
+  while (node.children.length > 0) {
+    node = node.children[0];
+    levels++;
+  }
+  assert.strictEqual(levels, 64);
+  assert.deepStrictEqual([node.count, node.text], [1, ""], "the cut node says it had a child not sent");
 });
 
 test("a tree node says what it holds, and opens when it has children or had some not sent", () => {
