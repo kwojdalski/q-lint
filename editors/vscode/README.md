@@ -1227,8 +1227,9 @@ kept for when it is on again.
   process, as **Choose Connection for File** would bind it: what you run
   from it goes there, whatever is connected, with the read-only guard and
   the production confirmation as for any query. Nothing is sent until you
-  run something. The binding lasts as long as the editor: saved as a
-  file, it is a new file, which **Choose Connection for File** binds.
+  run something. Saved as a file, the file keeps the binding, so its
+  queries still go to that process; **Clear Connection for File** removes
+  it.
   `q-lint.processes.newQuery.enable` off hides the command.
 - **Reveal Process** selects the connected process in the **Processes**
   view, and shows the view. **Open q-lint Settings** opens Settings at
