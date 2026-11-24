@@ -62,6 +62,9 @@ test("a paste is a ([] ...) literal: names from a header, vectors where q reads 
   assert.deepStrictEqual(p.pasteTable(""), { error: "the clipboard holds no rows." });
   const many = p.pasteTable(`a\n${"1\n".repeat(p.MAX_ROWS + 5)}`);
   assert.deepStrictEqual([many.rows, many.dropped], [p.MAX_ROWS, 5]);
+  // A paste too large to spread into Math.max still keeps the first rows (#1403).
+  const huge = p.pasteTable(`a,b\n${"1,2\n".repeat(300000)}`);
+  assert.deepStrictEqual([huge.rows, huge.dropped], [p.MAX_ROWS, 300000 - p.MAX_ROWS]);
 });
 
 test("JSON is written as .j.k reads it", () => {

@@ -230,7 +230,8 @@ export function pasteTable(text: string, delimiter?: string): PastedTable | { er
   if (all.length === 0) {
     return { error: "the clipboard holds no rows." };
   }
-  const width = Math.max(...all.map((r) => r.length));
+  // A loop, not Math.max(...): a spread of a large paste overflows the stack (#1403).
+  const width = all.reduce((w, r) => Math.max(w, r.length), 0);
   const header = hasHeader(all, width);
   const data = header ? all.slice(1) : all;
   const kept = data.slice(0, MAX_ROWS);
