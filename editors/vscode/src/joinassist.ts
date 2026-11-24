@@ -125,9 +125,11 @@ export function suggestJoins(left: Shape, right: Shape): Suggestion[] {
     const value = right.columns.find((c) => !common.includes(c) && NUMERIC.has(type(right, c)));
     if (second !== undefined && second !== "0") {
       const aggregates = value === undefined ? `(${sorted};(count;\`${time}))` : `(${sorted};(max;\`${value});(min;\`${value}))`;
+      const window = `wj[-${second} 0+\\:${l}\`${time};${cs};${l};${aggregates}]`;
       out.push({
         join: "wj",
-        expression: `wj[-${second} 0+\\:${l}\`${time};${cs};${l};${aggregates}]`,
+        // The max and min would both be named for the column: renamed, so they can be told apart (#1573).
+        expression: value === undefined ? window : `((cols ${l}),\`${value}_max\`${value}_min) xcol ${window}`,
         why: `For each row of ${left.expression.trim()}, ${value === undefined ? "the count of" : `the max and min ${value} of`} the rows of ${right.expression.trim()} in the second up to its ${time}; change the window and the aggregates to suit.${sortWhy}${onDisk(right)}`,
       });
     }

@@ -40,6 +40,8 @@ test("shapes are read, and every join suggested runs and answers a table", { ski
     for (const s of suggestJoins(l, r)) {
       const isTable = await connection.call(`{[x] 98h=type 0!value x}`, asCode(s.expression));
       assert.strictEqual(isTable, true, s.expression);
+      // No two columns of one name: wj's max and min are told apart (#1573).
+      assert.strictEqual(await connection.call(`{[x] c~distinct c:cols value x}`, asCode(s.expression)), true, s.expression);
       ran++;
     }
   }
