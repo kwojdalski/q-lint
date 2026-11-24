@@ -30,8 +30,15 @@ QSQL = ["select", "exec", "update", "delete", "from", "by", "where"]
 
 # An identifier edge: not preceded or followed by a name character, a dot
 # (so `.q.count` is not `count`) or a backtick (so `` `count `` is a symbol).
-BEFORE = r"(?<![A-Za-z0-9_.`])"
+# An underscore before one is no edge to stop at: a name cannot start with
+# `_`, and one inside a name (`a_b`, `` `a_b ``) is taken with the name before
+# anything is looked for after it, so an `_` that is reached is drop or cut -
+# `1_til 5`, `f[x]_y`, `x _y`.
+BEFORE = r"(?<![A-Za-z0-9.`])"
 AFTER = r"(?![A-Za-z0-9_])"
+# Where a number, temporal or null ends: `1_x` is 1, drop, x, since no
+# literal holds an underscore.
+LITERAL_END = r"(?![A-Za-z0-9])"
 NAME = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*"
 # A dotted name split in two: the namespace `.ns.sub` and the member `.f`.
 # The first group is empty for a name with no leading dot, so `a.b` and `f`
@@ -291,20 +298,20 @@ def grammar():
                             ]
                         )
                         + ")"
-                        + AFTER,
+                        + LITERAL_END,
                     },
                     {
                         "comment": "A typed null or infinity. None is of symbol (the null symbol "
                         "is a lone backtick) and no infinity of guid: q refuses 0Ns, 0Ws and 0Wg.",
                         "name": "constant.language.null.q",
-                        "match": BEFORE + r"-?0(?:[Nn][ghijefcpmdznuvt]?|[Ww][hijefcpmdznuvt]?)" + AFTER,
+                        "match": BEFORE + r"-?0(?:[Nn][ghijefcpmdznuvt]?|[Ww][hijefcpmdznuvt]?)" + LITERAL_END,
                     },
-                    {"name": "constant.language.boolean.q", "match": BEFORE + r"[01]+b" + AFTER},
-                    {"name": "constant.numeric.byte.q", "match": BEFORE + r"0x[0-9a-fA-F]*" + AFTER},
+                    {"name": "constant.language.boolean.q", "match": BEFORE + r"[01]+b" + LITERAL_END},
+                    {"name": "constant.numeric.byte.q", "match": BEFORE + r"0x[0-9a-fA-F]*" + LITERAL_END},
                     {
                         "comment": "With p, a number is a timestamp that many hours past 2000: 1p.",
                         "name": "constant.numeric.q",
-                        "match": BEFORE + r"(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[hijefcnuvtp]?" + AFTER,
+                        "match": BEFORE + r"(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[hijefcnuvtp]?" + LITERAL_END,
                     },
                 ],
             },

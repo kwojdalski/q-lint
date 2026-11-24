@@ -30,10 +30,12 @@ const registry = new tm.Registry({
           : null,
 });
 const grammar = registry.loadGrammar("source.q");
+const kGrammar = registry.loadGrammar("source.k");
 
-// The innermost scope of each token whose text is `text`, in order.
-async function scopesOf(source, text) {
-  const g = await grammar;
+// The innermost scope of each token whose text is `text`, in order; `k` for
+// a k file's.
+async function scopesOf(source, text, k = false) {
+  const g = await (k ? kGrammar : grammar);
   let stack = tm.INITIAL;
   const found = [];
   for (const line of source.split("\n")) {
@@ -168,4 +170,40 @@ test("a k) line is k, coloured by the k grammar, and the next q line is q again"
   const next = g.tokenizeLine("f:{x+1}", first.ruleStack);
   const f = next.tokens.find((t) => "f:{x+1}".slice(t.startIndex, t.endIndex) === "f");
   assert.ok(!f.scopes.includes("source.k"), JSON.stringify(f.scopes));
+});
+
+// As KDB-X tokenizes them (-4!): "1_til 5" is 1, _, til, 5 and "(1)_x" ends
+// _, x, while "a_1+a_b" is a_1, +, a_b and "`a_x" one symbol. Only an
+// underscore inside a name belongs to it.
+test("an underscore after a literal or a bracket is drop: what it joins keeps its colour (#1971)", async () => {
+  assert.deepStrictEqual(await scopesOf("r:1_til 5", "1"), ["constant.numeric.q"]);
+  assert.deepStrictEqual(await scopesOf("r:1_til 5", "til"), ["support.function.builtin.q"]);
+  assert.deepStrictEqual(await scopesOf("j:{-1_string x}", "1"), ["constant.numeric.q"]);
+  assert.deepStrictEqual(await scopesOf("j:{-1_string x}", "string"), ["support.function.builtin.q"]);
+  assert.deepStrictEqual(await scopesOf("j:{1_x}", "x"), ["variable.language.implicit.q"]);
+  assert.deepStrictEqual(await scopesOf("f:(-1)_y", "y"), ["variable.other.q"]);
+  assert.deepStrictEqual(await scopesOf("g:f[x]_y", "y"), ["variable.other.q"]);
+  assert.deepStrictEqual(await scopesOf("h:til[3]_2", "2"), ["constant.numeric.q"]);
+  assert.deepStrictEqual(await scopesOf("h:x _y", "y"), ["variable.other.q"]);
+  for (const [literal, scope] of [["2024.01.02", "constant.numeric.temporal.q"], ["0N", "constant.language.null.q"], ["1b", "constant.language.boolean.q"], ["0x01", "constant.numeric.byte.q"], ["1e3", "constant.numeric.q"]]) {
+    assert.deepStrictEqual(await scopesOf(`r:${literal}_v`, literal), [scope], literal);
+    assert.deepStrictEqual(await scopesOf(`r:${literal}_v`, "v"), ["variable.other.q"], literal);
+  }
+  // One inside a name is the name's: no builtin, number or implicit
+  // parameter starts after it.
+  assert.deepStrictEqual(await scopesOf("r:a_1+a_b", "a_1"), ["variable.other.q"]);
+  assert.deepStrictEqual(await scopesOf("r:a_1+a_b", "a_b"), ["variable.other.q"]);
+  assert.deepStrictEqual(await scopesOf("r:a_til", "a_til"), ["variable.other.q"]);
+  assert.deepStrictEqual(await scopesOf("r:count_x", "count_x"), ["variable.other.q"]);
+  assert.deepStrictEqual(await scopesOf("f:{x_1+a_x}", "x_1"), ["variable.other.q"]);
+  assert.deepStrictEqual(await scopesOf("f:{x_1+a_x}", "a_x"), ["variable.other.q"]);
+  assert.deepStrictEqual(await scopesOf("r:.z.p_x", ".z.p_x"), ["support.function.system.q"]);
+  assert.deepStrictEqual(await scopesOf("r:`a_x", "`a_x"), ["constant.other.symbol.q"]);
+  assert.deepStrictEqual(await scopesOf("a_b:1", "a_b"), ["variable.other.definition.q"]);
+  // The same in a k file.
+  assert.deepStrictEqual(await scopesOf("f:{1_x}", "1", true), ["constant.numeric.k"]);
+  assert.deepStrictEqual(await scopesOf("f:{1_x}", "x", true), ["variable.language.implicit.k"]);
+  assert.deepStrictEqual(await scopesOf("r:(1)_y", "y", true), ["variable.other.k"]);
+  assert.deepStrictEqual(await scopesOf("f:{x_1+a_b}", "x_1", true), ["variable.other.k"]);
+  assert.deepStrictEqual(await scopesOf("f:{x_1+a_b}", "a_b", true), ["variable.other.k"]);
 });
