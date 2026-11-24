@@ -2,7 +2,9 @@
 // run by the framework's own runner, and by the Test Explorer on a fresh q,
 // must come out the same, test by test - so that the next way the two part
 // shows up here (#2100). Needs a q binary (QLINT_TEST_Q) and the framework:
-// QLINT_TEST_K4UNIT names k4unit.q (KxSystems' k4unit).
+// QLINT_TEST_K4UNIT names k4unit.q (KxSystems' k4unit), QLINT_TEST_QUNIT
+// TimeStored's qunit.q, and for qUnit, whose tests the language server
+// lists, QLINT_TEST_QLINTER the qlinter binary.
 const test = require("node:test");
 const assert = require("node:assert");
 const { spawn, execFile } = require("node:child_process");
@@ -16,7 +18,16 @@ const { registerTestExplorer } = require("../out/testexplorer.js");
 
 const Q = process.env.QLINT_TEST_Q;
 const K4UNIT = process.env.QLINT_TEST_K4UNIT;
+const QUNIT = process.env.QLINT_TEST_QUNIT;
+const QLINTER = process.env.QLINT_TEST_QLINTER;
 const skipK4 = !Q ? "QLINT_TEST_Q names no q binary" : !K4UNIT ? "QLINT_TEST_K4UNIT names no k4unit.q" : false;
+const skipQunit = !Q
+  ? "QLINT_TEST_Q names no q binary"
+  : !QUNIT
+    ? "QLINT_TEST_QUNIT names no qunit.q"
+    : !QLINTER
+      ? "QLINT_TEST_QLINTER names no qlinter"
+      : false;
 
 function freePort() {
   return new Promise((resolve) => {
@@ -185,4 +196,94 @@ test("a k4unit suite passes and fails in the Test Explorer as k4unit's KUrt pass
   assert.deepStrictEqual(ours, k4, JSON.stringify(explorer.results()));
   // Not vacuous: the suite has a pass and a failure.
   assert.deepStrictEqual(k4, [true, true, true, false, true, true, true, false]);
+});
+
+/// `qlinter --lsp` over `dir`, as the extension's client: what it answers a
+/// request.
+function languageServer(t, dir) {
+  const child = spawn(QLINTER, ["--lsp"], { cwd: dir, stdio: ["pipe", "pipe", "ignore"] });
+  t.after(() => child.kill("SIGKILL"));
+  let buffer = Buffer.alloc(0);
+  const waiting = new Map();
+  child.stdout.on("data", (chunk) => {
+    buffer = Buffer.concat([buffer, chunk]);
+    for (;;) {
+      const head = buffer.indexOf("\r\n\r\n");
+      if (head < 0) return;
+      const length = Number(/Content-Length: (\d+)/i.exec(buffer.subarray(0, head).toString())[1]);
+      if (buffer.length < head + 4 + length) return;
+      const message = JSON.parse(buffer.subarray(head + 4, head + 4 + length).toString());
+      buffer = buffer.subarray(head + 4 + length);
+      if (message.id !== undefined && waiting.has(message.id)) {
+        waiting.get(message.id)(message.result);
+        waiting.delete(message.id);
+      }
+    }
+  });
+  let id = 0;
+  const send = (message) => {
+    const body = Buffer.from(JSON.stringify({ jsonrpc: "2.0", ...message }));
+    child.stdin.write(`Content-Length: ${body.length}\r\n\r\n`);
+    child.stdin.write(body);
+  };
+  const sendRequest = (method, params) =>
+    new Promise((resolve) => {
+      waiting.set(++id, resolve);
+      send({ id, method, params });
+    });
+  return {
+    async start() {
+      await sendRequest("initialize", { capabilities: {}, workspaceFolders: [{ uri: vscode.Uri.file(dir).toString(), name: "ws" }] });
+      send({ method: "initialized", params: {} });
+    },
+    sendRequest,
+  };
+}
+
+// The ways the two have parted: a test over its qunitConfig's maxMem
+// (#2103).
+const QUNIT_SUITE = [
+  "\\d .mytest",
+  "setUp:{`.mytest.v set 10}",
+  "qunitConfig:``testBig`testSmall!(::;`maxTime`maxMem!(0Wj;1000);`maxTime`maxMem!(0Wj;0Wj))",
+  "testAdd:{.qunit.assertEquals[v+1;11;\"add\"]}",
+  "testWrong:{.qunit.assertEquals[v;11;\"wrong\"]}",
+  "testBig:{a:til 1000000;.qunit.assertTrue[1b;\"big\"]}",
+  "testSmall:{a:til 1000000;.qunit.assertTrue[1b;\"small\"]}",
+  "\\d .",
+  "",
+].join("\n");
+
+test("a qUnit suite passes and fails in the Test Explorer as qUnit's runTests passes and fails it", { skip: skipQunit }, async (t) => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "qlint-qunit-")));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const suite = path.join(dir, "suite.q");
+  fs.writeFileSync(suite, QUNIT_SUITE);
+  // As qUnit judges a test: passed when each of its runs passed.
+  const theirs = await runScript(
+    dir,
+    `\\l ${QUNIT}\n.qunit.lg:{x};\n\\l ${suite}\nr:.qunit.runTests \`.mytest;\n` +
+      `k:0!select ok:all status=\`pass by name from r;\n-1 "RESULT:",.j.j (exec name from k)!exec ok from k;\nexit 0\n`,
+  );
+
+  stub.reset();
+  fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  vscode.workspace.findFiles = async () => [];
+  const server = languageServer(t, dir);
+  await server.start();
+  const connection = await startQ(t, dir);
+  await connection.evaluate(`system "l ${QUNIT}"`);
+  const explorer = registerTestExplorer(stub.newContext(), liveOn(connection), () => server);
+  await explorer.discover();
+  await explorer.run();
+  const ours = Object.fromEntries(explorer.results().map((r) => [r.id.split("#").at(-1), r.state === "passed"]));
+  assert.deepStrictEqual(ours, theirs, JSON.stringify(explorer.results()));
+  // Not vacuous: the suite has a pass and a failure of each kind.
+  assert.deepStrictEqual(theirs, {
+    ".mytest.testAdd": true,
+    ".mytest.testWrong": false,
+    ".mytest.testBig": false,
+    ".mytest.testSmall": true,
+  });
 });

@@ -849,6 +849,35 @@ fn a_qunit_test_runs_inside_its_namespace_fixtures() {
     assert_eq!(tests[1]["call"], ".other.testfoo[]");
 }
 
+/// A qUnit test is timed as `.qunit.runTest` times it, and fails over what
+/// its namespace's `qunitConfig` allows it (#2103): the config is sent with
+/// it, and read where it runs.
+#[test]
+fn a_qunit_test_fails_over_its_qunit_config_max_time_or_mem() {
+    let dir = tempfile::tempdir().unwrap();
+    let suite = "\\d .mytest\nqunitConfig:``testSlow!(::;`maxTime`maxMem!(5;0Wj))\n\
+                 testSlow:{do[3000000;sqrt 2.0];.qunit.assertTrue[1b;\"slow\"]}\n\\d .\n";
+    let mut server = Server::start(dir.path(), &[("suite.q", suite)]);
+    let reply = server.request("q-lint/tests", json!({}));
+    let tests = reply["result"][0]["tests"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"));
+    assert_eq!(tests.len(), 1, "{reply}");
+    assert_eq!(
+        tests[0]["code"],
+        "\\d .mytest\nqunitConfig:``testSlow!(::;`maxTime`maxMem!(5;0Wj))\n\\d .\n\
+         \\d .mytest\ntestSlow:{do[3000000;sqrt 2.0];.qunit.assertTrue[1b;\"slow\"]}\n\\d ."
+    );
+    assert_eq!(
+        tests[0]["call"],
+        "{[] t:.Q.ts[{@[{(1b;x[])};x;{(0b;x)}]};enlist .mytest.testSlow]; r:t 1; \
+         c:@[{.[`.mytest;`qunitConfig`testSlow]};::;``!``]; \
+         c:(`maxTime`maxMem!0W 0W),$[99h~type c;c;()!()]; \
+         if[r[0]&any t[0]>c`maxTime`maxMem;r:(0b;\"exceeded max config time/mem\")]; \
+         $[r 0;r 1;'r 1]}[]"
+    );
+}
+
 /// Outside a file that uses qUnit, a `setUp*` or `tearDown*` is the
 /// file's own: never sent with a test or called around it (#1743).
 #[test]
