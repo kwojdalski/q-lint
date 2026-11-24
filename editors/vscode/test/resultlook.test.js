@@ -300,4 +300,5 @@ test("a result sent to a notebook or a report is its query in a fence it cannot 
   const taken = new Set(["daily-images/chart-20261122-093005.svg"]);
   assert.strictEqual(report.imagePath("/r/daily.md", Date.UTC(2026, 10, 22, 9, 30, 5), (p) => taken.has(p)), "daily-images/chart-20261122-093005-2.svg");
   assert.strictEqual(report.linkTarget("a b/(c).svg"), "a%20b/%28c%29.svg");
+  assert.strictEqual(report.linkTarget("Q#1 report-images/chart?.svg"), "Q%231%20report-images/chart%3F.svg");
 });

@@ -75,7 +75,12 @@ export function imagePath(report: string, at: number, taken: (relative: string) 
   }
 }
 
-/// A path as a Markdown link's target: its spaces and parentheses escaped.
+/// A path as a Markdown link's target: each segment percent-encoded, its
+/// parentheses too, so a space, `#` or `?` in a name is no fragment or
+/// query (#1418).
 export function linkTarget(relative: string): string {
-  return relative.replace(/ /g, "%20").replace(/\(/g, "%28").replace(/\)/g, "%29");
+  return relative
+    .split("/")
+    .map((segment) => encodeURIComponent(segment).replace(/\(/g, "%28").replace(/\)/g, "%29"))
+    .join("/");
 }
