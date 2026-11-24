@@ -184,6 +184,27 @@ function cut(line: string, inString: boolean): { code: string; inString: boolean
   return { code: line, inString };
 }
 
+/// `code` with no tab, which q's console reads as completion and drops
+/// (#1673): a space outside a string and `\t` inside one, given whether it
+/// starts inside one.
+function untab(code: string, inString: boolean): string {
+  let out = "";
+  for (let i = 0; i < code.length; i++) {
+    const c = code[i];
+    if (c === "\t") {
+      out += inString ? "\\t" : " ";
+      continue;
+    }
+    out += c;
+    if (inString && c === "\\") {
+      out += code[++i] ?? "";
+    } else if (c === '"') {
+      inString = !inString;
+    }
+  }
+  return out;
+}
+
 /// One statement as one line of q's console. A system command (`\d .ns`,
 /// `\cd /tmp`) is left as it is: q does not read comments in one.
 export function replLine(statement: string): string {
@@ -196,7 +217,7 @@ export function replLine(statement: string): string {
     if (inString) {
       // The newline and the indentation are part of the string.
       const { code, inString: still } = cut(line, true);
-      out += `\\n${code}`;
+      out += `\\n${untab(code, true)}`;
       inString = still;
       continue;
     }
@@ -206,7 +227,7 @@ export function replLine(statement: string): string {
       // A comment line inside a lambda.
       continue;
     }
-    out = out === "" ? code : `${out} ${code}`;
+    out = out === "" ? untab(code, false) : `${out} ${untab(code, false)}`;
   }
   return out;
 }

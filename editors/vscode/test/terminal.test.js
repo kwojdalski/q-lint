@@ -162,6 +162,13 @@ test("a string that runs onto the next line keeps its newline as \\n", () => {
   assert.strictEqual(replLine('s:("ab\n  cd";\n  1)'), 's:("ab\\n  cd"; 1)');
 });
 
+test("no tab reaches q's console, which reads one as completion (#1673)", () => {
+  assert.deepStrictEqual(replLines("s:count\ttil 3"), ["s:count til 3"]);
+  assert.deepStrictEqual(replLines('s:"a\tb"'), ['s:"a\\tb"']);
+  assert.deepStrictEqual(replLines('f:{\n\tx+1}\ns:"x\n\ty"'), ["f:{ x+1}", 's:"x\\n\\ty"']);
+  assert.deepStrictEqual(replLines('s:"q\\"\tz"'), ['s:"q\\"\\tz"']);
+});
+
 test("a system command is sent as it is, and comments and \\ follow the query rules", () => {
   assert.deepStrictEqual(replLines("\\d .lib\nadd:{x+y}\n\\cd /tmp\n\\d ."), ["\\d .lib", "add:{x+y}", "\\cd /tmp", "\\d ."]);
   // `/` alone opens a block comment that `\` alone closes; `\` alone outside
