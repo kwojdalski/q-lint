@@ -2162,16 +2162,21 @@ export class Live {
   /// user connects elsewhere or disconnects (#917).
   private async autoReconnect(dropped: Process): Promise<void> {
     const run = ++this.reconnectRun;
-    const configuration = workspace.getConfiguration("q-lint");
-    const { reconnectAttempts } = readHealth((key, fallback) => configuration.get(key, fallback));
+    // Read before each try: lowered meanwhile, the tries stop there (#1850).
+    const attempts = (): number => readHealth((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback)).reconnectAttempts;
     let process = dropped;
-    for (let attempt = 1; attempt <= reconnectAttempts; attempt++) {
-      this.reconnecting = { label: process.label, attempt, of: reconnectAttempts };
+    let tried = 0;
+    for (let attempt = 1; attempt <= attempts(); attempt++) {
+      this.reconnecting = { label: process.label, attempt, of: attempts() };
       this.showStatus();
       await new Promise((resolve) => setTimeout(resolve, backoffDelay(attempt)));
       if (run !== this.reconnectRun || this.connection !== undefined) {
         return;
       }
+      if (attempt > attempts()) {
+        break;
+      }
+      tried = attempt;
       // Each try connects to it as it is now - renamed, tagged, given a
       // connect script meanwhile - and a saved one as saved (#1699).
       const now = this.active ?? process;
@@ -2195,7 +2200,7 @@ export class Live {
     }
     this.reconnecting = undefined;
     this.showStatus();
-    void window.showWarningMessage(plainMessage(`q-lint: could not reconnect to ${process.label} after ${reconnectAttempts} tries.`));
+    void window.showWarningMessage(plainMessage(`q-lint: could not reconnect to ${process.label} after ${tried} ${tried === 1 ? "try" : "tries"}.`));
   }
 
   /// Stop an automatic reconnect, if one is under way.
