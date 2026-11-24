@@ -11,6 +11,12 @@
 /// As `src/livemarkdown.ts`'s `LIVE_KEY`.
 const LIVE_KEY = "q-lint.liveValues";
 
+/// As `src/livemarkdown.ts`'s `liveKey`: continuation lines start with one
+/// space, whatever `>`, indent or CR came before them (#1788).
+export function liveKey(expr) {
+  return expr.replace(/\r?\n[ \t>]*/g, "\n ");
+}
+
 /// As `src/livemarkdown.ts`'s `scanLive`: the expression from `at`, and the
 /// index after its `}}`.
 export function scanLive(text, at) {
@@ -38,7 +44,7 @@ export function scanLive(text, at) {
         if (text[i + 1] !== "}") {
           return undefined;
         }
-        const expr = text.slice(at + 4, i).trim();
+        const expr = liveKey(text.slice(at + 4, i).trim());
         return expr === "" ? undefined : { expr, end: i + 2 };
       }
       depth--;

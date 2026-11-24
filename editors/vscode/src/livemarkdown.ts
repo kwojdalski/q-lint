@@ -43,6 +43,14 @@ export type LiveValue = { text: string } | { error: string };
 /// What follows a newline that ends a paragraph: a line that is blank.
 const BLANK_AFTER = /^[ \t]*\r?\n/;
 
+/// An expression as both sides key it: markdown-it hands the renderer a
+/// blockquote's or a list item's lines without their `>` or indent, and
+/// CRLF as LF, so each continuation line starts with one space here, as q
+/// reads a continued expression (#1788).
+export function liveKey(expr: string): string {
+  return expr.replace(/\r?\n[ \t>]*/g, "\n ");
+}
+
 /// What `expr` stood in for, from text to its `}}`: the expression's start
 /// and the index after the `}}`, or undefined when it is never closed.
 /// Braces inside it - a lambda, a dictionary - must balance, and a brace in
@@ -74,7 +82,7 @@ export function scanLive(text: string, at: number): { expr: string; end: number 
         if (text[i + 1] !== "}") {
           return undefined;
         }
-        const expr = text.slice(at + 4, i).trim();
+        const expr = liveKey(text.slice(at + 4, i).trim());
         return expr === "" ? undefined : { expr, end: i + 2 };
       }
       depth--;

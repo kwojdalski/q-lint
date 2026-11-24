@@ -47,7 +47,7 @@ test("a live value's expression runs to its }}, braces and q strings balanced", 
   assert.strictEqual(scanLive("{{q: a\n \t\nb}}", 0), undefined);
   assert.strictEqual(scanLive("{{q: a\r\n\r\nb}}", 0), undefined);
   assert.deepStrictEqual(liveExpressions("a {{q: 1+\n \n2}} b"), []);
-  assert.deepStrictEqual(scanLive("{{q: a\r\nb}}", 0), { expr: "a\r\nb", end: 11 });
+  assert.deepStrictEqual(scanLive("{{q: a\r\nb}}", 0), { expr: "a\n b", end: 11 });
 });
 
 test("expressions are found once each, never in code; a q symbol's backtick opens no code span", () => {
@@ -111,6 +111,15 @@ test("the renderer reads expressions as the extension does, and escapes every va
   assert.strictEqual(r.liveHtml('<x">', {}), '<code title="Runs when the code cell above this one runs">{{q: &lt;x&quot;&gt;}}</code>');
   // A prototype's name is no value.
   assert.match(r.liveHtml("constructor", {}), /^<code/);
+});
+
+test("a live value in a blockquote, a list item or a CRLF cell is keyed as the renderer reads it (#1788)", async () => {
+  const r = await renderer();
+  for (const source of ["> total {{q: sum\n> til 4}}", "- total {{q: sum\n  til 4}}", "total {{q: sum\r\ntil 4}}", "total {{q: sum\n til 4}}"]) {
+    assert.deepStrictEqual(liveExpressions(source), ["sum\n til 4"], JSON.stringify(source));
+  }
+  // What markdown-it hands the renderer, the markers and indent gone.
+  assert.strictEqual(r.scanLive("total {{q: sum\ntil 4}}", 6).expr, "sum\n til 4");
 });
 
 test("the renderer reports a prototype's name as having no value, which postMessage can clone (#1391)", async () => {
