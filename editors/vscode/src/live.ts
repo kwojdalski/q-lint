@@ -565,6 +565,19 @@ export function movedFrom(expected: string): Error {
   return new Error(`${expected} is no longer the active process; nothing was run.`);
 }
 
+/// What `Live.runOnActive` throws for a query it stopped waiting for: the
+/// process's own timeout, or Abort, Disconnect or a connect elsewhere. Its
+/// message is the one thrown before; `outcome` is how the history keeps
+/// it, as `run` keeps its own (#1872).
+export class Stopped extends Error {
+  constructor(
+    message: string,
+    readonly outcome: "aborted" | "timeout",
+  ) {
+    super(message);
+  }
+}
+
 export class Live {
   /// Run the active file in its q terminal with Run File with Arguments'
   /// extra words and input (#1005).
@@ -904,9 +917,19 @@ export class Live {
     } catch {
       text = undefined;
     }
+    // A file there that is not JSON is the problem, not the write (#1876).
+    let next: string;
+    try {
+      next = withShared(text, process);
+    } catch (error) {
+      void window.showErrorMessage(
+        plainMessage(`q-lint: ${file.fsPath} is not JSON: ${error instanceof Error ? error.message : String(error)}. Correct it, then share ${process.label} again. Nothing was written.`),
+      );
+      return;
+    }
     try {
       assertWritable(folder.uri.fsPath, file.fsPath);
-      await workspace.fs.writeFile(file, Buffer.from(withShared(text, process), "utf8"));
+      await workspace.fs.writeFile(file, Buffer.from(next, "utf8"));
     } catch (error) {
       void window.showErrorMessage(plainMessage(`q-lint: could not write ${file.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
       return;
@@ -2634,9 +2657,15 @@ export class Live {
     try {
       return { process: ready.process.label, value: await query(ready.connection) };
     } catch (error) {
-      throw timedOut ? new Error(`${timedOutError(timeout)} (${timeoutSource(ready.process, enabled)})`) : error;
+      if (timedOut) {
+        throw new Stopped(`${timedOutError(timeout)} (${timeoutSource(ready.process, enabled)})`, "timeout");
+      }
+      throw this.aborted === started ? new Stopped(error instanceof Error ? error.message : String(error), "aborted") : error;
     } finally {
       disarm();
+      if (this.aborted === started) {
+        this.aborted = undefined;
+      }
       if (this.running?.started === started) {
         this.running = undefined;
       }

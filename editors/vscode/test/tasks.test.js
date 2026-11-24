@@ -236,6 +236,43 @@ test("a task closed before its q has started never starts it (#1085)", async (t)
   assert.strictEqual(fs.existsSync(path.join(dir, "ran")), false);
 });
 
+test("closing a task ends a wrapper script's q too, not the wrapper alone (#1874)", { skip: process.platform === "win32" ? "no process groups" : false }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-taskwrap-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, "server.q"), "");
+  // An rlwrap-style wrapper: its "q" runs as its child, not exec'd, and
+  // says its pid.
+  const wrapper = path.join(dir, "wrapq");
+  fs.writeFileSync(wrapper, "#!/bin/sh\nsleep 300 &\necho \"pid $!\"\nwait\n", { mode: 0o755 });
+  const { providers } = setUp(t, dir);
+  stub.config.user["terminal.qBinary"] = wrapper;
+  const own = providers[0].provider.resolveTask({ definition: { type: "q", script: "server.q" }, name: "mine", scope: vscode.workspace.workspaceFolders[0] });
+  const terminal = await own.execution.callback(own.definition);
+  let out = "";
+  terminal.onDidWrite((text) => (out += text));
+  const closed = new Promise((resolve) => terminal.onDidClose(resolve));
+  terminal.open();
+  for (let i = 0; i < 50 && !/pid \d+/.test(out); i++) await new Promise((r) => setTimeout(r, 100));
+  const inner = Number(/pid (\d+)/.exec(out)?.[1]);
+  assert.ok(inner > 1, out);
+  const alive = () => {
+    try {
+      process.kill(inner, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  t.after(() => alive() && process.kill(inner, "SIGKILL"));
+  assert.strictEqual(alive(), true);
+  // Terminate Task.
+  terminal.close();
+  for (let i = 0; i < 50 && alive(); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.strictEqual(alive(), false, "the wrapper's q is still running");
+  // Its output closed with it: the task ends.
+  await closed;
+});
+
 test("Windows: a q.cmd wrapper is run by cmd.exe, as the launcher runs it, not spawned itself (#1814)", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-taskcmd-"));
   const { providers } = setUp(t, dir);

@@ -66,17 +66,33 @@ export function governingConfiguration(stdout: string): string | undefined {
   return m === null || /^none\b/.test(m[1].trim()) ? undefined : m[1].trim();
 }
 
-function runQlinter(command: string, args: string[], cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {
+/// Run qlinter; resolves with its output and exit code, or - for a run a
+/// signal or the timeout stopped, which has no exit code - with `stopped`,
+/// what is said of it: 1 would read as "findings" (#1877). Rejects when it
+/// cannot be started.
+export function runQlinter(
+  command: string,
+  args: string[],
+  cwd: string,
+  timeout = 300_000,
+): Promise<{ code: number | null; stopped?: string; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     // A .cmd wrapper through a shell, as Node starts one (#1610).
     const run = launchable(command, args);
-    execFile(run.command, run.args, { cwd, timeout: 300_000, maxBuffer: 64 * 1024 * 1024, windowsHide: true, shell: run.shell }, (error, stdout, stderr) => {
-      const failed = error as (Error & { code?: unknown }) | null;
+    execFile(run.command, run.args, { cwd, timeout, maxBuffer: 64 * 1024 * 1024, windowsHide: true, shell: run.shell }, (error, stdout, stderr) => {
+      const failed = error as (Error & { code?: unknown; killed?: boolean; signal?: string | null }) | null;
       if (failed && typeof failed.code === "string") {
         reject(new Error(`${command} could not be run: ${failed.message}`));
         return;
       }
-      resolve({ code: failed ? (typeof failed.code === "number" ? failed.code : 1) : 0, stdout: String(stdout), stderr: String(stderr) });
+      const out = { stdout: String(stdout), stderr: String(stderr) };
+      if (failed && typeof failed.code !== "number") {
+        // `killed`: by the timeout here, not by another's signal.
+        const stopped = failed.killed === true ? `did not finish in ${timeout / 1000} s` : `was stopped${failed.signal ? ` (${failed.signal})` : ""} before it finished`;
+        resolve({ code: null, stopped, ...out });
+        return;
+      }
+      resolve({ code: failed ? (failed.code as number) : 0, ...out });
     });
   });
 }
@@ -117,6 +133,12 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
           return undefined;
         });
         if (ran === undefined) {
+          return undefined;
+        }
+        // Stopped, what it wrote may be cut short: said, and not offered.
+        if (ran.code === null) {
+          const why = ran.stderr.trim() === "" ? "" : `: ${ran.stderr.trim().slice(0, 500)}`;
+          void window.showWarningMessage(plainMessage(`q-lint: qlinter ${ran.stopped ?? "was stopped before it finished"}; no baseline was written${why}`));
           return undefined;
         }
         const count = writtenCount(ran.stderr);

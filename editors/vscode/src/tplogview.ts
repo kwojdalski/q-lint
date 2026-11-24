@@ -124,11 +124,9 @@ export function stopLocalQ(local: LocalQ): void {
   // On Windows a q's directory cannot be removed while the q runs, and a
   // kill does not wait for it to exit: removed again once it has (#1287).
   if (local.child.pid !== undefined && local.child.exitCode === null && local.child.signalCode === null) local.child.once("exit", remove);
-  // On Windows q.exe too, under q.cmd's cmd.exe (#1745).
-  if (local.child.exitCode === null) {
-    if (process.platform === "win32") signalGroup(local.child, "SIGKILL");
-    else local.child.kill("SIGKILL");
-  }
+  // The group it leads, so a wrapper script's q too, not the script alone
+  // (#1874); on Windows q.exe too, under q.cmd's cmd.exe (#1745).
+  if (local.child.exitCode === null) signalGroup(local.child, "SIGKILL");
   remove();
 }
 
