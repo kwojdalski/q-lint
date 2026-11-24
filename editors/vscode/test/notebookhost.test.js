@@ -435,6 +435,17 @@ test("/ @process connects to the process it names before the cell runs, and the 
   assert.match(outputText(second), /No q process is labelled \\"nope\\"/);
 });
 
+test("a cell of only / @process switches process, as a headless run does (#1546)", async () => {
+  const fake = fakeVscode();
+  const live = recordingLive(PROCESSES, "other");
+  load(fake, live);
+  const notebook = notebookWith(fake, [["code", "/ @process dev1"], ["code", "til 3"]]);
+  const [first, second] = await runCells(fake, notebook, [0, 1]);
+  assert.strictEqual(first.success, true);
+  assert.deepStrictEqual(live.connected, ["dev1"]);
+  assert.match(outputText(second), /^dev1: til 3$/);
+});
+
 test("/ @process names a process from the workspace's shared list (#1426)", async () => {
   const fake = fakeVscode();
   const live = recordingLive(PROCESSES, "dev1");

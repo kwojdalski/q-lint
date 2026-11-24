@@ -386,15 +386,17 @@ class QnbKernel {
     if (off !== undefined) {
       return finish(false, [toOutput({ kind: "error", name: "cell directive", message: featureOff(off), stack: "" })]);
     }
-    const cut = statements(source);
-    if (cut.length === 0) {
-      return finish(true, []);
-    }
+    // Before the empty cell returns: a cell of only `/ @process x` switches,
+    // as a headless run's does (#1546).
     if (directive.process !== undefined) {
       const problem = await switchProcess(this.live, directive.process);
       if (problem !== undefined) {
         return finish(false, [problem.startsWith("Not run") ? notice(problem) : toOutput({ kind: "error", name: "@process", message: problem, stack: "" })]);
       }
+    }
+    const cut = statements(source);
+    if (cut.length === 0) {
+      return finish(true, []);
     }
     // The Markdown cells after this one with live values, read once it has run.
     const notebook = execution.cell.notebook;
