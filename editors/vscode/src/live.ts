@@ -457,8 +457,10 @@ export class QTerminals {
     const configuration = workspace.getConfiguration("q-lint", from);
     const read = readTerminal((key, fallback) => configuration.get(key, fallback));
     const settings = { qBinary: expandHome(read.qBinary, os.homedir()), envPath: expandHome(read.envPath, os.homedir()) };
-    const own = from && workspace.getWorkspaceFolder(from);
-    const folder = own ?? workspace.workspaceFolders?.[0];
+    // Folders on disk: a virtual one is no directory to start in (#1843).
+    const onDisk = (f: WorkspaceFolder | undefined): WorkspaceFolder | undefined => (f?.uri.scheme === "file" ? f : undefined);
+    const own = onDisk(from && workspace.getWorkspaceFolder(from));
+    const folder = own ?? workspace.workspaceFolders?.find((f) => f.uri.scheme === "file");
     const cwd = terminalCwd(own?.uri.fsPath, folder?.uri.fsPath, file, path.dirname);
     let variables: Record<string, string> = {};
     if (settings.envPath !== "") {

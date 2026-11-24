@@ -153,6 +153,13 @@ test("a workspace-relative KDB-X qBinary gets its layout's QHOME and QLIC in a t
   assert.ok(line.includes(`QHOME=${path.join(ws, "kx", "q")}`) && line.includes(`QLIC=${path.join(ws, "kx")}`), line);
 });
 
+test("a virtual workspace folder is not a q terminal's working directory (#1843)", async () => {
+  const fake = fakeVscode();
+  fake.vscode.workspace.workspaceFolders[0].uri.scheme = "vscode-vfs";
+  await loadTerminals(fake).repl();
+  assert.strictEqual(fake.terminals[0].options.cwd, undefined);
+});
+
 test("another file, and none: a missing .env is no .env and says nothing", async () => {
   const fake = fakeVscode({ "env.file": "config/q.env" }, { "/ws/config/q.env": "QLIC=/lic\n" });
   await loadTerminals(fake).repl();
