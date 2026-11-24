@@ -110,14 +110,24 @@ export function gitName(top: string, path: string): string {
   let real = path;
   try {
     real = realpathSync(path);
-    const spelled = realpathSync.native(path);
-    if (relativeInside(top, spelled) !== undefined) {
-      real = spelled;
-    }
   } catch {
     // A file not saved yet: as it is named.
   }
+  const spelled = diskSpelling(path);
+  if (spelled !== undefined && relativeInside(top, spelled) !== undefined) {
+    real = spelled;
+  }
   return relative(top, real).split("\\").join("/");
+}
+
+/// `path` as the disk spells it - its case where the disk ignores case, its
+/// symlinks resolved - or undefined when there is no such file.
+export function diskSpelling(path: string): string | undefined {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return undefined;
+  }
 }
 
 /// What the file at `path` was at `HEAD`: its text, `""` for a file git does
