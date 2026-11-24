@@ -1,6 +1,6 @@
 // Logpoints against a real q (#984): a function's calls are printed with 0N!
 // and kept, it answers as before, and removing the logpoint puts back the
-// very function it replaced - in its own context - with .qlint gone.
+// very function it replaced - in its own context - with .qlint empty.
 // Needs QLINT_TEST_Q.
 const test = require("node:test");
 const assert = require("node:assert");
@@ -43,6 +43,22 @@ test("a logpoint logs each call and comes off leaving the function as it was", {
   assert.strictEqual(await c.call(LOG_REMOVE, "now"), true);
   await assert.rejects(c.call(LOG_REMOVE, "now"), /it has no logpoint/);
   assert.strictEqual(await value(c, "{.Q.s1 value each x}`.fx.mid`sq`now"), before);
-  assert.strictEqual(await value(c, "`qlint in key`."), false);
+  assert.strictEqual(await value(c, "key[`.qlint]~enlist`"), true);
   assert.deepStrictEqual(readLogpoints(await c.call(LOG_LIST)), { names: [], hits: [] });
+});
+
+test("the last logpoint off leaves .qlint empty, and a root variable named qlint alone (#1871)", { skip }, async (t) => {
+  const { connection: c } = await connect(t, SRC + "qlint:7\n.qlint.cache.p1:42\n");
+  for (const name of ["sq", "now"]) await c.call(LOG_ADD, name);
+  assert.strictEqual(await c.call(LOG_REMOVE, "sq"), true);
+  // One logpoint is left: its state stays.
+  assert.strictEqual(await value(c, "(key .qlint.log.orig)~enlist`now"), true);
+  assert.strictEqual(await c.call(LOG_REMOVE, "now"), true);
+  // What else q-lint keeps there is kept, and the user's own `qlint` too.
+  assert.strictEqual(await value(c, "(key[`.qlint]~``cache)&(.qlint.cache.p1~42)&qlint~7"), true);
+  // With nothing else there .qlint is empty: q cannot remove a context.
+  await value(c, ".qlint:(enlist`cache)_.qlint");
+  await c.call(LOG_ADD, "sq");
+  assert.strictEqual(await c.call(LOG_REMOVE, "sq"), true);
+  assert.strictEqual(await value(c, "(key[`.qlint]~enlist`)&qlint~7"), true);
 });

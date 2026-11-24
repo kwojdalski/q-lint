@@ -84,7 +84,9 @@ const SERVER = [
 ].join("\n");
 
 const same = async (c) => (await c.evaluate("snap~keep[]")).value === true;
-const noState = async (c) => (await c.evaluate("not `prof in key `.qlint")).value === true;
+// Nothing of q-lint's is left: .qlint is not there, or - q cannot remove a
+// context - is empty.
+const noState = async (c) => (await c.evaluate("0=count key[`.qlint]except`")).value === true;
 
 test("every call is recorded with its caller, and every function is put back", { skip }, async (t) => {
   const c = await connect(t, SERVER);
@@ -109,7 +111,7 @@ test("every call is recorded with its caller, and every function is put back", {
   assert.deepStrictEqual(flame(profile).filter((f) => f.depth === 1).map((f) => f.fn).sort(), [".foo.fib", ".foo.nil", ".foo.two"]);
   assert.ok(profile.overheadPerCall > 0 && profile.overheadPerCall < 1e6, String(profile.overheadPerCall));
   assert.ok(await same(c), "the functions are the ones that were there");
-  assert.ok(await noState(c), ".qlint.prof is gone");
+  assert.ok(await noState(c), ".qlint holds nothing");
   // A projection stays as it was, and still works.
   assert.strictEqual(String((await c.evaluate(".foo.proj 2")).value), "3");
 });
@@ -162,4 +164,17 @@ test("a definition the profiled code made itself is kept, the others put back (#
   await c.call(PROFILE_CLEANUP, 0);
   assert.strictEqual(String((await c.evaluate(".foo.nil[]")).value), "43");
   assert.ok(await noState(c));
+});
+
+test("a name longer than the process's \\c is still the function its wrapper calls (#1869)", { skip }, async (t) => {
+  // -3! of the name, cut at 40 characters, named a function that is not there.
+  const c = await connect(t, "\\c 25 40\n.app.f:{[x] x+1}\n.app.computeTheVeryLongFunctionNameForPricing:{[x] .app.side::1+.app.f x; .app.side}\n.app.side:0\n");
+  const long = ".app.computeTheVeryLongFunctionNameForPricing";
+  const profile = readProfile(await c.call(PROFILE, "`.app", [`${long} 1`]), ".app");
+  await c.call(PROFILE_CLEANUP, 0);
+  assert.strictEqual(profile.error, "");
+  assert.deepStrictEqual(profile.recorded.map((r) => r.fn).sort(), [long, ".app.f"]);
+  // The original ran: its side effect is there.
+  assert.strictEqual(String((await c.evaluate(".app.side")).value), "3");
+  assert.deepStrictEqual(Array.from((await c.evaluate("system\"c\"")).value, Number), [25, 40]);
 });

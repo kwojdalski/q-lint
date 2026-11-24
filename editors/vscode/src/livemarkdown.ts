@@ -13,8 +13,11 @@
 // fails does not lose the rest, and answers with `(1b;text)` or
 // `(0b;error)` each: a string or a symbol as its characters, anything else
 // as `-3!` writes its first `VALUE_LIMIT` items, cut to `VALUE_LIMIT`
-// characters by the process.
+// characters by the process - and not at its `\c`, where `-3!` itself
+// stops: the text is `FULL_TEXT`'s (#1870).
 // Nothing is defined there.
+
+import { FULL_TEXT } from "./qtext";
 
 /// Where a Markdown cell's values are kept in its metadata.
 export const LIVE_KEY = "q-lint.liveValues";
@@ -35,7 +38,7 @@ export const LIVE = [
   // the same. A list `sublist` refuses, such as a partitioned table, whole.
   // `sublist` drops an attribute, so the cut list, a table's columns and a
   // dictionary's keys and values get theirs back (#1718).
-  `  (1b;${VALUE_LIMIT} sublist $[10h=abs type v;(),v;-11h=type v;string v;-3!$[(type v) within 0 99h;{@[${ATTR}x;y;y]}[v] @[${VALUE_LIMIT} sublist;v;v];v]])} each es}`,
+  `  (1b;${VALUE_LIMIT} sublist $[10h=abs type v;(),v;-11h=type v;string v;${FULL_TEXT}[${VALUE_LIMIT};$[(type v) within 0 99h;{@[${ATTR}x;y;y]}[v] @[${VALUE_LIMIT} sublist;v;v];v]]])} each es}`,
 ].join("\n");
 
 export type LiveValue = { text: string } | { error: string };

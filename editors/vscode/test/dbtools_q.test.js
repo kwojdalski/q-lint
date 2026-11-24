@@ -227,6 +227,34 @@ test("the documenter leaves out q's own namespaces, .s too", { skip }, async (t)
   assert.deepStrictEqual(readDoc(await connection.call(DOCUMENT, 100)).functions.filter((f) => /^\.[qQhjozms]\./.test(f.name)), []);
 });
 
+// A dictionary at a dotted top-level name is in key` like a namespace, and
+// \f of it signals: it costs its own functions, not the document (#1867).
+test("the documenter survives a plain dictionary at a dotted top-level name (#1867)", { skip }, async (t) => {
+  const { connection } = await connect(t, "t:([] a:1 2)\nadd:{[a;b] a+b}\n.lib.f:{[x] x}\n.dd:`x`y!1 2\n.cfg:(`$())!()\n.one:(enlist`a)!enlist 1\n.fd:`f`g!({x};{y})\n");
+  const doc = readDoc(await connection.call(DOCUMENT, 100));
+  assert.deepStrictEqual(doc.tables.map((x) => x.name), ["t"]);
+  const names = doc.functions.map((f) => f.name);
+  assert.ok(names.includes("add") && names.includes(".lib.f"), names.join());
+  assert.deepStrictEqual(names.filter((n) => /^\.(dd|cfg|one)\./.test(n)), []);
+  assert.deepStrictEqual((await connection.evaluate("(.dd~`x`y!1 2;key`.)")).value, [true, ["t", "add"]]);
+});
+
+// A table whose enumeration domain is gone cannot be described: meta of it
+// signals. It costs that table's entry, as in the schema diagram (#1868).
+test("the documenter says which table it could not read, and documents the rest (#1868)", { skip }, async (t) => {
+  const { connection } = await connect(t, "t:([] a:1 2)\nsym2:`a`b\nem:([] s:`sym2$`a`b`a)\nkt:([k:1 2] v:3 4)\ndelete sym2 from `.\nadd:{[a;b] a+b}\n");
+  const doc = readDoc(await connection.call(DOCUMENT, 100));
+  assert.deepStrictEqual(doc.tables.map((x) => [x.name, x.error ?? ""]), [["em", "..sym2"], ["kt", ""], ["t", ""]]);
+  assert.deepStrictEqual(doc.tables[0].columns, []);
+  assert.deepStrictEqual(doc.tables[2].columns, [{ name: "a", type: "j", fkey: "", attr: "" }]);
+  assert.deepStrictEqual(doc.functions, [{ name: "add", params: ["a", "b"] }]);
+  assert.match(docMarkdown(doc, "rdb", "now"), /### em\n\nNot read: \.\.sym2\.\n\n### kt\n/);
+  // Every table unreadable is still a document, and one alone still a list.
+  await connection.evaluate("delete t,kt from `.");
+  const alone = readDoc(await connection.call(DOCUMENT, 100));
+  assert.deepStrictEqual(alone.tables.map((x) => [x.name, x.error]), [["em", "..sym2"]]);
+});
+
 test("the partition check finds missing dates, files, differing types and outliers", { skip }, async (t) => {
   const extra = [
     "mk[r;;6] each 2026.01.12 2026.01.13;",
@@ -335,6 +363,27 @@ test("the attribute advisor samples a table's columns without changing it", { sk
   assert.deepStrictEqual(p.columns.map((c) => c.name), ["sym", "px", "sz"]);
   assert.strictEqual(advise(p, new Map([["sym", 1]]))[0].suggest, "s");
   assert.strictEqual(await connection.call("{(attr m`sym)~`}", 0), true);
+});
+
+// `asc` marks a vector already in order `s#` where it is, and a table
+// sampled whole is its own columns: the advisor must not set what it then
+// reports (#1863).
+test("the attribute advisor leaves a sorted column of the table without s# (#1863)", { skip }, async (t) => {
+  const { connection } = await connect(t, "m:([] time:09:00 09:01 09:02; id:til 3; sym:`c`a`b)\nkt:([k:1 3 5] v:10 30 50)\n");
+  const state = "{(attr each flip m;attr each flip key kt;attr each flip value kt;raze string md5 `char$raze -8!'(m;kt))}";
+  const before = await connection.call(state, 0);
+  assert.deepStrictEqual(before.slice(0, 3), [{ time: null, id: null, sym: null }, { k: null }, { v: null }]);
+  for (const name of ["m", "kt"]) {
+    const s = readAttributeSample(await connection.call(ATTRIBUTE_SAMPLE, name, 100000));
+    assert.deepStrictEqual(s.columns.map((c) => [c.sorted, c.attr]), name === "m" ? [[true, ""], [true, ""], [false, ""]] : [[true, ""], [true, ""]]);
+  }
+  assert.deepStrictEqual(await connection.call(state, 0), before);
+});
+
+test("the attribute advisor refuses a view by its name, and does not evaluate it (#1865)", { skip }, async (t) => {
+  const { connection } = await connect(t, "m:([] id:til 3)\nspy::select from m\n");
+  await assert.rejects(connection.call(ATTRIBUTE_SAMPLE, "spy", 100000), /a view, not a table/);
+  assert.deepStrictEqual(await connection.call('{[x] string system"B"}', 0), ["spy"]);
 });
 
 test("the test data generator's q makes the rows asked for, and its CSV loads back", { skip }, async (t) => {

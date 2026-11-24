@@ -23,3 +23,22 @@ test("definitions are answered as written, a namespace's every function", { skip
   assert.strictEqual((await read(".nope")).kind, "missing");
   assert.strictEqual((await read(".lib.v")).kind, "other");
 });
+
+// A view is not a function, and asking does not evaluate it (#1865).
+test("a view is answered as neither a function nor a namespace, and is not evaluated (#1865)", { skip }, async (t) => {
+  const { connection } = await connect(t, SERVER + "t:([] a:1 2)\nspy::select from t\nbad::1+`a\n");
+  const pending = () => connection.call('{[x] string system"B"}', 0);
+  for (const name of ["spy", "bad"]) {
+    assert.strictEqual(readTexts(await connection.call(FUNCTION_TEXTS, name)).kind, "other");
+  }
+  assert.deepStrictEqual(await pending(), ["bad", "spy"]);
+});
+
+test("a projection's text is whole, whatever the process's \\c (#1870)", { skip }, async (t) => {
+  const { connection } = await connect(t, "\\c 25 40\n.lib.f:{x+1}\n.lib.p:{x+y}[til 60]\ntop:{x+y+z}[`aVeryLongSymbolIndeed;;\"and a string that goes on past the width\"]\n");
+  const read = async (name) => readTexts(await connection.call(FUNCTION_TEXTS, name));
+  const p = `{x+y}[${Array.from({ length: 60 }, (_, i) => i).join(" ")}]`;
+  assert.deepStrictEqual([...(await read(".lib")).texts], [[".lib.f", "{x+1}"], [".lib.p", p]]);
+  assert.strictEqual((await read("top")).texts.get("top"), '{x+y+z}[`aVeryLongSymbolIndeed;;"and a string that goes on past the width"]');
+  assert.deepStrictEqual(Array.from((await connection.evaluate("system\"c\"")).value, Number), [25, 40]);
+});

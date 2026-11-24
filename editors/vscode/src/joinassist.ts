@@ -22,6 +22,7 @@ export const tableExpression = (name: string): string => qName(name);
 
 export const TABLE_SHAPE = [
   "{[e]",
+  " if[(`$e)in views[];'\"a view, not a table\"];",
   " t:value e; if[not .Q.qt t;'\"not a table\"];",
   " m:0!meta t; p:.Q.qp t;",
   " (string m`c;m`t;string m`a;string keys t;$[1b~p;\"partitioned\";0b~p;\"splayed\";\"memory\"])}",

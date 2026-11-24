@@ -32,7 +32,9 @@
 //          (#1502); `()` for the rest
 //   rank   each row's value's place among the column's distinct values,
 //          sorted by q (`iasc`), so equal values share one; `()` where q
-//          cannot sort it
+//          cannot sort it. A copy of the column is sorted (`x til count
+//          x`): `iasc` marks a vector already in order `s#` where it is,
+//          and the column can be the user's own table's (#1863)
 //   tree   for a dictionary (not keyed by a table) or a general list, the
 //          value as nested nodes, `(key;text;type;count;children)`: a
 //          dictionary's children are its entries, a list's its items, and
@@ -78,7 +80,7 @@ const COLUMN_LINES = [
   "              (t in 8 9h)&200>=count x;($[t=9h;\"F\";\"E\"];\"f\"$x);(0h=t)&200>=count x;",
   "              $[all 0b~/:r:.z.s each x;0b;(\"l\";@[r;w;:;-3!'x w:where 0b~/:r])];",
   "              99h=t;$[0b~r:.z.s(key x;value x);0b;(\"d\";r 1)];98h=t;$[0b~r:.z.s flip x;0b;(\"t\";r)];0b]}] each c;()]} each c;",
-  "          {@[{i:iasc x;\"i\"$@[count[x]#0;i;:;-1+sums differ x i]};x;{[e]()}]} each c;",
+  "          {@[{i:iasc x:x til count x;\"i\"$@[count[x]#0;i;:;-1+sums differ x i]};x;{[e]()}]} each c;",
 ];
 
 /// `GRID`, with the tree (`tree`) or without it (`()`): a tree is asked for

@@ -10,6 +10,7 @@ const path = require("node:path");
 const pkg = require("../package.json");
 const { cellDirective } = require("../out/celldirectives.js");
 const { LIVE, LIVE_KEY, inlineSpans, liveExpressions, markdownAfter, readLiveValues, scanLive } = require("../out/livemarkdown.js");
+const { FULL_TEXT } = require("../out/qtext.js");
 const { ERROR_MIME, fromIpynb, markdownHtml, toHtml, toIpynb, IpynbError } = require("../out/qnbconvert.js");
 const { INJECTED_KEY, cliProcess, guardedText, injectParameters, parametersCell, parametersOf, parseArgs, passwordOf, passwordVariable, runNotebook, writeAs } = require("../out/qnbrun.js");
 const { isProduction } = require("../out/agent.js");
@@ -116,7 +117,9 @@ test("the live lambda's answer is read by expression; anything else is refused",
   assert.throws(() => readLiveValues(["a"], { ok: 1 }), /1 live values/);
   // One lambda, nothing assigned on the process.
   assert.match(LIVE, /^\{\[es\]/);
-  assert.doesNotMatch(LIVE.replace(/\b[rv]:/g, ""), /[a-zA-Z_.]+::?[^:]/);
+  // FULL_TEXT has locals of its own: qtext_q.test.js holds that it defines nothing.
+  assert.ok(LIVE.includes(FULL_TEXT));
+  assert.doesNotMatch(LIVE.replace(FULL_TEXT, "").replace(/\b[rv]:/g, ""), /[a-zA-Z_.]+::?[^:]/);
 });
 
 /// media/livemarkdown.js, the renderer's extension, as the editor loads it:
@@ -500,6 +503,11 @@ test("the variables lambda's answer is read, nulls as nothing", () => {
   ]);
   assert.deepStrictEqual(readVariables({ names: "a", types: 7, counts: 2, sizes: 30, total: 1 }).variables, [{ name: "a", type: 7, count: 2, size: 30 }]);
   assert.throws(() => readVariables("x"), /globals/);
+  // A view was not evaluated: it has neither count nor size (#1865).
+  assert.deepStrictEqual(readVariables({ names: ["t", "v"], types: [98, 100], counts: [3, null], sizes: [138, null], total: 2, views: [false, true] }).variables, [
+    { name: "t", type: 98, count: 3, size: 138 },
+    { name: "v", type: 100, view: true },
+  ]);
   assert.match(VARS, /^\{\[lim\]/);
 });
 
@@ -509,6 +517,7 @@ test("a variable is described by its kind, count and size", () => {
   assert.strictEqual(describeVariable({ name: "s", type: -11, count: 1, size: 13 }), "symbol · 13 B");
   assert.strictEqual(describeVariable({ name: "b", type: 10, count: 3, size: 17 }), "string · 3 items · 17 B");
   assert.strictEqual(describeVariable({ name: "f", type: 100, count: 1 }), "function");
+  assert.strictEqual(describeVariable({ name: "v", type: 100, view: true }), "view");
   assert.strictEqual(bytesText(5 * 1024 * 1024 * 1024), "5.0 GB");
 });
 
@@ -697,7 +706,7 @@ test("an indented block after a heading or a rule is code, and holds no live val
 });
 
 test("a live value of a big list or table is written from its first items only (#1559)", () => {
-  assert.match(LIVE, /-3!\$\[\(type v\) within 0 99h;\{@\[\{.*\}x;y;y\]\}\[v\] @\[200 sublist;v;v\];v\]/);
+  assert.match(LIVE, /\}\[200;\$\[\(type v\) within 0 99h;\{@\[\{.*\}x;y;y\]\}\[v\] @\[200 sublist;v;v\];v\]\]/);
   // An attribute the cut drops is put back (#1718).
   assert.match(LIVE, /\(attr x\)#y/);
 });

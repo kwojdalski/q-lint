@@ -6,17 +6,21 @@
 //
 // A lambda's definition is `last value f`, the text it was defined from; any
 // other function (a projection, a composition, a builtin) is shown as q
-// shows it, `-3!f`. The lambda only reads. Works on kdb+ (KDB-X) and
+// shows it, `-3!f` - whole whatever the process's `\c`, as `FULL_TEXT`
+// writes it (#1870). A view is neither, and `get` would evaluate it: it is
+// told by its name (#1865). The lambda only reads. Works on kdb+ (KDB-X) and
 // PeachQ; held there by processtools_q.test.js.
 import { normalized } from "./definitions";
 import { isString, listOf } from "./processtools";
+import { FULL_TEXT, TEXT_LIMIT } from "./qtext";
 
 export const FUNCTION_TEXTS = [
   "{[nm]",
   " s:`$(),nm;",
+  " if[s in views[];:(\"other\";();())];",
   " r:@[{(1b;get x)};s;{(0b;x)}];",
   " if[not first r;:(\"missing\";();())];",
-  " v:last r; txt:{$[100h=type x;last value x;-3!x]};",
+  ` v:last r; txt:{$[100h=type x;last value x;${FULL_TEXT}[${TEXT_LIMIT};x]]};`,
   " if[(type v) within 100 112h;:(\"function\";enlist string s;enlist txt v)];",
   " if[99h=type v;if[11h=type key v;if[(::)~first v;",
   "  k:(key v) except `; f:k where (type each v k) within 100 112h;",

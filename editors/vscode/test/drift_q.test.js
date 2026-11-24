@@ -100,6 +100,16 @@ test("the file a process loaded compares the same, name by name", { skip }, asyn
   assert.deepStrictEqual([...one.entries()], [["g", { state: "lambda", text: "{x+1}" }]]);
 });
 
+// A view is held, and is no lambda: one that would signal is not "missing",
+// and asking evaluates neither (#1865).
+test("a view compares as something other than a lambda, and is not evaluated (#1865)", { skip }, async (t) => {
+  const c = await connect(t, FILE + "t:([] a:1 2)\nspy::select from t\nbad::1+`a\n");
+  const pending = () => c.call('{[x] string system"B"}', 0);
+  const held = readDrift(await c.call(DRIFT, "spy bad g nosuch"));
+  assert.deepStrictEqual([...held.values()].map((s) => s.state), ["other", "other", "lambda", "missing"]);
+  assert.deepStrictEqual(await pending(), ["bad", "spy"]);
+});
+
 test("hot reload sends an edited definition, parsed in its context, and it then compares the same", { skip }, async (t) => {
   const c = await connect(t, FILE);
   const before = definitions(FILE);

@@ -53,7 +53,7 @@ class VariablesView implements TreeDataProvider<Variable> {
     item.iconPath = new ThemeIcon(icon(v));
     const tip = new MarkdownString();
     tip.appendMarkdown(`**${v.name.replace(/[\\`*_{}[\]()#+\-.!|<>]/g, "\\$&")}**\n\n`);
-    tip.appendText(`${kindText(v.type)} (type ${v.type})`);
+    tip.appendText(`${kindText(v.type, v.view)} (type ${v.type})`);
     if (v.count !== undefined) {
       tip.appendText(`, count ${v.count.toLocaleString("en")}`);
     }

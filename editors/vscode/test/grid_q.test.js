@@ -61,6 +61,11 @@ const SERVER = (dir) => `
 {[d] .Q.dd[hsym \`$"${dir}/hdb";d,\`p\`] set .Q.en[hsym \`$"${dir}/hdb"] ([] sym:\`a\`b\`c; px:1 2 3f)} each 2026.01.01 2026.01.02;
 \\l ${dir}/hdb
 strs:([] s:(250#"a";"b\\"c\\n";"caf\\303\\251";enlist "x";""))
+st:([] time:09:00 09:01 09:02; px:1 2 3f; sym:\`a\`b\`c)
+skt:([k:1 3 5; j:\`x\`y\`z] v:10 30 50)
+sd:1 3 5!10 30 50
+sdt:([] a:1 2)!([] b:3 4)
+sl:10 20 30
 `;
 
 test("the grid lambda against a real q process", { skip }, async (t) => {
@@ -224,5 +229,33 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
       const same = await connection.query(statements(`(${code})~${literal}`), SIZE);
       assert.deepStrictEqual(same.text, ["1b"], `${code}\nwritten as\n${literal}`);
     }
+  });
+
+  // q's `iasc` marks a sorted vector `s#` where it is, and the columns
+  // ranked can be the user's own: a read must not change them (#1863).
+  await t.test("showing a sorted table, keyed table, dictionary or list leaves its attributes as they were (#1863)", async () => {
+    const { gridLambda, PAGE, readPage, readGridAnswer } = require("../out/grid.js");
+    const state =
+      "{(attr each flip st;attr each flip key skt;attr each flip value skt;attr key sd;attr value sd;" +
+      "attr each flip key sdt;attr each flip value sdt;attr sl;raze string md5 `char$raze -8!'(st;skt;sd;sdt;sl))}";
+    const before = await connection.call(state, 0);
+    // No attribute anywhere (a null symbol is null here).
+    assert.deepStrictEqual(before.slice(0, 8), [{ time: null, px: null, sym: null }, { k: null, j: null }, { v: null }, null, null, { a: null }, { b: null }, null]);
+    const shown = {};
+    for (const name of ["st", "skt", "sd", "sdt", "sl"]) {
+      for (const tree of [false, true]) {
+        const grid = (await connection.queryGrid(statements(name), SIZE, 100, tree)).grid;
+        assert.ok(grid.rank.every((r) => r.length === grid.cells[0].length), name);
+        shown[name] = grid.rank;
+      }
+      // Held for paging and paged too: a page past the first is the held
+      // table's own rows.
+      const held = readGridAnswer(await connection.call(gridLambda(false, true), statements(name), SIZE, 1)).grid;
+      assert.strictEqual(typeof readPage(await connection.call(PAGE, 0, 100)), "object", name);
+      assert.strictEqual(held.cells[0].length, 1);
+    }
+    // Ranked as before: a sorted column's ranks are its rows' places.
+    assert.deepStrictEqual(shown.st, [[0, 1, 2], [0, 1, 2], [0, 1, 2]]);
+    assert.deepStrictEqual(await connection.call(state, 0), before);
   });
 });

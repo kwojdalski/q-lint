@@ -147,6 +147,34 @@ test("callers are read from what q parsed: globals in context, nested lambdas, a
   assert.deepStrictEqual(all.callers.find((x) => x.name === "m").params, ["x"]);
 });
 
+// A view named to a reader is refused by its name, in `views[]`, before
+// `get` would evaluate it (#1865).
+test("a view named to Function Source, Redefine or a table's details is refused, not evaluated (#1865)", { skip }, async (t) => {
+  const c = await connect(t, "t:([] a:1 2)\nspy::select from t\nbad::1+`a\nfv::{x+1}\n");
+  const pending = () => c.call('{[x] string system"B"}', 0);
+  await assert.rejects(c.call(SOURCE, "spy"), /a view, not a function/);
+  await assert.rejects(c.call(SOURCE, "fv"), /a view, not a function/);
+  await assert.rejects(c.call(REDEFINE, "fv", "{x+1}", "{x+2}"), /not a lambda on the process/);
+  await assert.rejects(c.call(TABLE_INFO, "spy", 30), /a view, not a table/);
+  await assert.rejects(c.call(TABLE_INFO, "bad", 30), /a view, not a table/);
+  assert.deepStrictEqual(await pending(), ["bad", "fv", "spy"]);
+  assert.strictEqual(readTableInfo(await c.call(TABLE_INFO, "t", 30)).rows, 2);
+});
+
+// A view has a lambda's type, 100h, and `get` of its name evaluates it: it
+// is not read as a caller, and one that signals does not fail the read
+// (#1864).
+test("callers are found on a process with views, and no view is evaluated (#1864)", { skip }, async (t) => {
+  const c = await connect(t, FUNCTIONS + "tab:([] a:1 2)\nspy::select from tab\nbad::1+`a\ncalls::f[1;2]\n");
+  const pending = () => c.call('{[x] string system"B"}', 0);
+  assert.deepStrictEqual(await pending(), ["bad", "calls", "spy"]);
+  const all = readCallers(await c.call(CALLERS, EXCLUDED, "f", 1000));
+  assert.deepStrictEqual(all.callers.map((x) => `${x.name} ${x.how}`).sort(), ["byname mentions", "m calls"]);
+  const without = readCallers(await (await connect(t, FUNCTIONS)).call(CALLERS, EXCLUDED, "f", 1000));
+  assert.strictEqual(all.scanned, without.scanned);
+  assert.deepStrictEqual(await pending(), ["bad", "calls", "spy"]);
+});
+
 test("a table's details: meta, attributes, keys, rows and bytes", { skip }, async (t) => {
   const c = await connect(t, 't:([]a:`s#1 2 3;b:`g#`x`y`z;c:("ab";"c";"d"))\nk:([id:1 2]v:3 4)\n.ns.e:([]x:`long$())\n');
   const info = readTableInfo(await c.call(TABLE_INFO, "t", 30));
@@ -281,4 +309,15 @@ test("the Timers view keeps each job's one-character description", { skip }, asy
   const { TIMERS, readTimers } = require("../out/timers.js");
   const c = await connect(t, '.timer.timer:([id:1 2i]period:0D00:01 0D00:05;active:10b;nextrun:2#.z.P;lastrun:2#.z.P;description:("a";"b");funcparam:2#enlist({x};1));\n');
   assert.deepStrictEqual(readTimers(await c.call(TIMERS, null)).jobs.map((j) => j.description), ["a", "b"]);
+});
+
+test("a projection's text is whole, whatever the process's \\c (#1870)", { skip }, async (t) => {
+  const p = "{[a;b;c] a+b+c}[\"a fairly long string argument to make the projection long\";`and_a_symbol_too]";
+  const c = await connect(t, `p:${p}\nq:{x+y}[til 60]\n`);
+  for (const console of ["25 80", "25 40"]) {
+    await c.evaluate(`system "c ${console}"`);
+    assert.deepStrictEqual(readSource(await c.call(SOURCE, "p")), { type: 104, text: p, ctx: "", params: [] });
+    assert.strictEqual(readSource(await c.call(SOURCE, "q")).text, `{x+y}[${Array.from({ length: 60 }, (_, i) => i).join(" ")}]`);
+    assert.strictEqual((await c.evaluate("-3!system\"c\"")).value, `${console}i`);
+  }
 });

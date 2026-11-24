@@ -11,6 +11,9 @@
 // which the IPC client sends as a symbol, is made text again. At most
 // `limit` hits are answered: one more is looked for, so `more` says only
 // that there are more, not that the limit was reached (#1689).
+// A view (`v::expr`) has a lambda's type, 100h, but no lambda's parts, and
+// `get` of its name evaluates it: the root's views (`views[]`; q keeps
+// them nowhere else) are neither searched nor counted (#1864).
 // The lambda assigns nothing. Works on kdb+ (KDB-X) and PeachQ; held there
 // by processtools_q.test.js.
 import { isNumber, isString, listOf } from "./processtools";
@@ -23,14 +26,14 @@ export const SEARCH = [
   " esc:raze{$[x in \"[]?*\";\"[\",x,\"]\";enlist x]}each pat;",
   " todo:`.,` sv'`,'asc(key`)except`q`Q`h`j`o`z`qlint`;",
   " todo:todo where{$[99h=type d:@[get;x;0];11h=type key d;0b]}each todo;",
-  " fns:`$();vn:`$();",
+  " fns:`$();vn:`$();vw:views[];",
   " while[count todo;",
   "  ns:first todo;todo:1_todo;",
   "  d:@[get;ns;{()!()}];k:asc(key d)except`;",
   "  kids:$[ns~`.;`$();k where{$[99h=type x;$[11h=type key x;(::)~first x;0b];0b]}each d k];",
   "  todo,:` sv'ns,'kids;",
   "  full:$[ns~`.;k;` sv'ns,'k];t:type each d k;",
-  "  fns,:full where t=100h;",
+  "  fns,:(full where t=100h)except vw;",
   "  vn,:full where not(t within 100 112h)|k in kids];",
   " nm:();kd:();ln:();tx:();",
   " i:0;while[(i<count fns)&m>count nm;",

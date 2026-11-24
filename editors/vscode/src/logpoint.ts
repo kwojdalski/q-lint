@@ -9,7 +9,10 @@
 // text each, in `.qlint.log.hits`, and then calls the function it replaced,
 // kept in `.qlint.log.orig`. Removing it puts that back, unless `f` was
 // redefined meanwhile, which is left as it is; when the last logpoint goes,
-// `.qlint.log` goes too, and `.qlint` when nothing else of q-lint's is in it.
+// `.qlint.log` goes too. `.qlint` itself stays, empty when nothing else of
+// q-lint's is in it: q has no call that removes a context, and
+// `delete qlint from`.` deletes the user's root variable of that name
+// instead (#1871).
 //
 // Only a lambda takes a logpoint. A projection or alias made of `f` before
 // the logpoint keeps calling the original, unlogged.
@@ -44,7 +47,7 @@ export const LOG_REMOVE = [
   " back:.qlint.log.wrap[nm]~@[get;nm;{::}];",
   " if[back;nm set o nm];",
   " .qlint.log.orig:(enlist nm)_o;.qlint.log.wrap:(enlist nm)_.qlint.log.wrap;",
-  " if[0=count .qlint.log.orig;.qlint:(enlist`log)_.qlint;if[all null key .qlint;delete qlint from`.]];",
+  " if[0=count .qlint.log.orig;.qlint:(enlist`log)_.qlint];",
   " back}",
 ].join("\n");
 
