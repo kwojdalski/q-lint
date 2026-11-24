@@ -7,7 +7,8 @@
 //
 // One read, defining nothing, of at most `lim` rows: the first rows of a
 // table in memory or of a splayed one, and of a partitioned table the
-// first rows of its last partition, mapped from its directory (`.Q.par`) so
+// first rows of its last partition, mapped from the directory q loaded it
+// from (`.Q.pd`, so any segmenting is followed, #1977) so
 // the partition is not read whole. The current attributes are `meta`'s.
 // Whether a column is in order is asked of a copy of it (`x til count x`):
 // `asc` marks a vector already in order `s#` where it is, and a table read
@@ -19,6 +20,7 @@
 // and 8 a row plus 16 a distinct value for `g#`. kdb+ allocates in powers
 // of two, so a real one can be up to twice that.
 
+import { PARTITION_DIRS } from "./partdir";
 import { bytes } from "./tableinfo";
 
 export const ATTRIBUTE_SAMPLE = [
@@ -27,7 +29,7 @@ export const ATTRIBUTE_SAMPLE = [
   " t:get`$nm;if[not .Q.qt t;'\"not a table\"];",
   " p:.Q.qp t;part:1b~p;m:\"j\"$lim;",
   " n:\"f\"$$[part;@[{sum .Q.cn x};t;0n];count t];",
-  " s:$[part;m sublist get .Q.par[hsym`$system\"cd\";last .Q.pv;`$nm];m sublist 0!t];",
+  ` s:$[part;m sublist get\` sv(first${PARTITION_DIRS}[hsym\`$system"cd";-1#@[get;\`.Q.pd;()];-1#.Q.pv]),\`$nm;m sublist 0!t];`,
   " mt:0!meta t;cs:(cols s)except$[part;.Q.pf;`$()];",
   " one:{[x] nested:0h=type x;",
   "  `d`runs`sorted!(\"f\"$count distinct x;\"f\"$$[nested;0n;sum differ x];$[nested;0b;{x~asc x}x til count x])};",

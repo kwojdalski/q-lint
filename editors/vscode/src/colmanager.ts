@@ -9,7 +9,10 @@
 // its `.d` - and a directory where the change cannot be made (the column is
 // missing, the new name taken) is left as it is and named in the answer; an
 // error in one directory does not stop the others. The directories are the
-// table's under every partition (`.Q.par`, so segments are followed), or
+// table's under every partition, each where q loaded it from (`.Q.PD`, so
+// any segmenting is followed, where `.Q.par` names the segment a writer
+// would pick - on a database segmented another way, a directory that is
+// not there, #1977), or
 // the splayed table's under the root, which is where the process loaded the
 // database from (`system "cd"`). The database is loaded again after, so the
 // process sees what is now on disk. Under a `.Q.view` the partitions q lists
@@ -28,6 +31,7 @@
 // rename of its own, and rewriting the column would read all of it. Works on kdb+ (KDB-X) and PeachQ; held there by
 // dbtools_q.test.js.
 
+import { PARTITION_DIRS } from "./partdir";
 import { RESERVED, symbolLiteral } from "./qliteral";
 
 export type ColumnOp =
@@ -144,7 +148,8 @@ export const HELPERS = [
   '.qlint.cm.cast:{[c;t;d] if[not c in .qlint.cm.cols d;:`$"no ",string c]; f:` sv d,c; v:get f; a:attr v; s:(0h=type v)|77h<=type v; y:(11h=abs type v)|type[v] within 20 76h; n:not t in "cs"; f set a#$["s"=t;.qlint.cm.enum $[s;`$v;`$string v];n&s;(upper t)$v;n&y;(upper t)$string v;t$v]; if[s&not "c"=t; {if[not ()~key x;hdel x]} each ` sv\' d,/:1_.qlint.cm.nested c]; `ok}',
   ".qlint.cm.attr:{[c;a;d] if[not c in .qlint.cm.cols d;:`$\"no \",string c]; f:` sv d,c; f set a#get f; `ok}",
   ".qlint.cm.order:{[o;d] cs:.qlint.cm.cols d; if[not (asc cs)~asc o;:`$\"other columns\"]; (` sv d,`.d) set o; `ok}",
-  '.qlint.cm.dirs:{[t] r:hsym`$system"cd"; p:.Q.qp get t; if[1b~p; if[not .Q.pv~@[get;`.Q.PV;{.Q.pv}]; \'".Q.view is in force, showing ",string[count .Q.pv]," of ",string[count .Q.PV]," partitions: nothing was changed. This changes every partition on disk and loads the database again, which clears a view; clear it with .Q.view[] and run again"]]; $[1b~p;.Q.par[r;;t] each .Q.pv;0b~p;enlist ` sv r,t;\'"not a table on disk: ",string t]}',
+  `.qlint.cm.pdirs:${PARTITION_DIRS}`,
+  '.qlint.cm.dirs:{[t] r:hsym`$system"cd"; p:.Q.qp get t; if[1b~p; if[not .Q.pv~@[get;`.Q.PV;{.Q.pv}]; \'".Q.view is in force, showing ",string[count .Q.pv]," of ",string[count .Q.PV]," partitions: nothing was changed. This changes every partition on disk and loads the database again, which clears a view; clear it with .Q.view[] and run again"]]; $[1b~p;{` sv x,y}[;t] each .qlint.cm.pdirs[r;@[get;`.Q.PD;()];.Q.pv];0b~p;enlist ` sv r,t;\'"not a table on disk: ",string t]}',
   ".qlint.cm.run:{[t;f] d:.qlint.cm.dirs t; ([] dir:d; result:{[f;d] @[f;d;{`$\"error: \",x}]}[f] each d)}",
 ];
 
