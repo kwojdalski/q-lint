@@ -1801,6 +1801,101 @@ fn a_symbol_that_may_name_the_global_refuses_the_rename() {
 }
 
 #[test]
+fn a_global_is_followed_onto_a_k_line() {
+    // #2019. A `k)` line names q's globals, under the `\d` in force, and
+    // both views blank it. KDB-X 5: `fk:2`, `k)gk:fk+1`, then gk is 3; in
+    // k a lambda's parameter or `name:` local hides the global as in q,
+    // `([]fk:1 2)` names a column, and `_` is the drop operator, no part of
+    // a name: with `ab:10 20 30` and `cc:1`, `k)ab_cc` is 10 30.
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let lines = [
+        "fk:2",
+        "k)gk:fk+1",
+        "res:gk",
+        "k)hk:{[a] a+fk}",
+        "k)ik:{[fk] fk+1}",
+        "k)jk:{fk:5;fk+1}",
+        "k)lk:(fk;\"fk\";fk_1) / fk",
+        "k)mk:([]fk:1 2)",
+        "k)nk:{{fk+x}x}",
+        "  ,fk",
+        "\\d .ns",
+        "k)ok:fk",
+        "\\d .",
+        "k)pk:{fk::x}",
+    ];
+    let text = lines.join("\n") + "\n";
+    let uri = server.open(dir.path(), "a.q", &text);
+    let uses = [
+        (0, 0),
+        (1, 5),
+        (3, 12),
+        (6, 6),
+        (6, 14),
+        (8, 7),
+        (9, 3),
+        (13, 6),
+    ];
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        &text,
+        "fk:",
+        0,
+        json!({"newName": "fz"}),
+    );
+    let wanted: Vec<_> = uses
+        .iter()
+        .map(|&(row, at)| edit("a.q", row, at, at + 2, "fz"))
+        .collect();
+    assert_eq!(edits(&reply["result"]), wanted);
+    let reply = server.ask("textDocument/references", &uri, &text, "fk:", 0, json!({}));
+    let wanted: Vec<_> = uses
+        .iter()
+        .map(|&(row, at)| place("a.q", row, at, at + 2))
+        .collect();
+    assert_eq!(places(&reply["result"]), wanted);
+    // What a k line assigns is renamed where it is assigned.
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        &text,
+        "gk",
+        1,
+        json!({"newName": "gz"}),
+    );
+    assert_eq!(
+        edits(&reply["result"]),
+        [edit("a.q", 1, 2, 4, "gz"), edit("a.q", 2, 4, 6, "gz")]
+    );
+    // A k lambda's own name would hide the renamed global there, and a
+    // symbol on a k line may name it: both refuse, naming the line.
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        &text,
+        "fk:",
+        0,
+        json!({"newName": "a"}),
+    );
+    let why = refused(&reply);
+    assert!(why.contains("a.q:4"), "{why}");
+    let text = "fq:2\nk)gq:.:`fq\n";
+    let uri = server.open(dir.path(), "b.q", text);
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        text,
+        "fq:",
+        0,
+        json!({"newName": "fz"}),
+    );
+    let why = refused(&reply);
+    assert!(why.contains("`fq") && why.contains("b.q:2"), "{why}");
+}
+
+#[test]
 fn rename_can_be_turned_off_on_its_own() {
     let dir = tempfile::tempdir().unwrap();
     let options = json!({"rename": {"enable": false}});

@@ -662,7 +662,9 @@ first in `@[`t;..]`, `.[`t;..]`, `![`t;..]` and `?[`t;..]`, right of `xkey`,
 `cols`, `meta` or `keys` - beside `` `t set ``, `` `t insert `` and
 `` `t upsert ``, which are writes. Find All References also lists a symbol
 of that name anywhere else (`` `t in tables[] ``), which may be the name or
-only a symbol.
+only a symbol. A `k)` line reads and assigns q's globals, and the names on it
+are followed as k has them: a k lambda's parameters and locals are its own,
+and `_` ends a name, being k's drop.
 
 Rename takes a lambda's parameter or local, within its lambda, and a global
 across the workspace. A local is refused, with the reason in the error, when

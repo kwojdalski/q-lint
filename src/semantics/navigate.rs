@@ -143,6 +143,177 @@ fn by_name(code: &str) -> Vec<(usize, usize)> {
     out
 }
 
+/// What the `k)` lines of a file name. Both views blank a `k)` line and the
+/// indented lines that continue it, as they do any other language's, but k
+/// reads and assigns q's globals under the `\d` in force: KDB-X 5 `fk:2`,
+/// `k)gk:fk+1`, then gk is 3 (#2019).
+struct KLines {
+    /// Each name that is a global: where, how long, and the lambda it is
+    /// directly in.
+    globals: Vec<(usize, usize, Option<usize>)>,
+    /// Each lambda: where its brace opens, and its parameters and locals.
+    lambdas: Vec<(usize, HashSet<String>)>,
+    /// Each symbol: where its name starts, and the name.
+    symbols: Vec<(usize, String)>,
+}
+
+/// The `k)` lines of `raw` read as k, for the names in them.
+///
+/// k's names are q's without the underscore, which is the drop operator
+/// there: KDB-X 5 `k)ab_cc` is `1 _ ab` for `cc:1`. A lambda's parameter, an
+/// implicit x, y or z, and a `name:` it assigns are its own, as in q, and a
+/// nested lambda reads the global: `k)f:{[fk] fk+1}`, `k){fk:5;fk+1}` and
+/// `k){{fk+x}x}` were each run, as was `k)([]fk:1 2)`, a column.
+fn k_lines(code: &str, raw: &str) -> KLines {
+    let mut out = KLines {
+        globals: vec![],
+        lambdas: vec![],
+        symbols: vec![],
+    };
+    if !raw.contains("k)") {
+        return out;
+    }
+    // The text of the k lines with everything else blanked, strings,
+    // comments and symbols too, so that offsets are the file's.
+    let mut view = vec![b' '; raw.len()];
+    let (mut offset, mut k) = (0, false);
+    for line in raw.split_inclusive('\n') {
+        let end = offset + line.len();
+        let blanked = code[offset..end].trim().is_empty();
+        if line.starts_with("k)") && blanked {
+            k = true;
+            view[offset + 2..end].copy_from_slice(&raw.as_bytes()[offset + 2..end]);
+        } else if k && blanked && (line.starts_with([' ', '\t']) || line.trim().is_empty()) {
+            view[offset..end].copy_from_slice(&raw.as_bytes()[offset..end]);
+        } else if !(k && line.starts_with('/')) {
+            k = false;
+        }
+        offset = end;
+    }
+    let name = |c: u8| c.is_ascii_alphanumeric();
+    let mut at = 0;
+    while at < view.len() {
+        match view[at] {
+            b'"' => {
+                let start = at;
+                at += 1;
+                while at < view.len() && view[at] != b'"' {
+                    at += 1 + usize::from(view[at] == b'\\');
+                }
+                at = (at + 1).min(view.len());
+                view[start..at].fill(b' ');
+            }
+            b'/' if at == 0 || matches!(view[at - 1], b' ' | b'\t' | b'\n') => {
+                while at < view.len() && view[at] != b'\n' {
+                    view[at] = b' ';
+                    at += 1;
+                }
+            }
+            b'`' => {
+                let start = at + 1;
+                at = start;
+                while at < view.len() && (name(view[at]) || b".:/".contains(&view[at])) {
+                    at += 1;
+                }
+                out.symbols
+                    .push((start, String::from_utf8_lossy(&view[start..at]).into()));
+                view[start - 1..at].fill(b' ');
+            }
+            _ => at += 1,
+        }
+    }
+    let Ok(text) = std::str::from_utf8(&view) else {
+        return out;
+    };
+    // Each name with the lambda it is directly in, and what kind of name
+    // the text beside it makes it.
+    #[derive(PartialEq)]
+    enum Kind {
+        Read,
+        Local,
+        Column,
+    }
+    let mut names = vec![];
+    let mut open: Vec<(u8, Option<usize>, bool)> = vec![];
+    let bytes = text.as_bytes();
+    let mut at = 0;
+    while at < bytes.len() {
+        let c = bytes[at];
+        let lambda = open.iter().rev().find_map(|o| o.1);
+        match c {
+            b'{' => {
+                out.lambdas.push((at, HashSet::new()));
+                open.push((c, Some(out.lambdas.len() - 1), false));
+                let params = text[at + 1..].trim_start();
+                if !params.starts_with('[') {
+                    let own = &mut out.lambdas.last_mut().unwrap().1;
+                    own.extend(["x", "y", "z"].map(String::from));
+                }
+            }
+            b'(' => open.push((c, None, text[at + 1..].trim_start().starts_with('['))),
+            b'[' => {
+                // A lambda's parameters, or the key columns of a table.
+                let declares =
+                    matches!(open.last(), Some((b'{', ..))) && text[..at].trim_end().ends_with('{');
+                let table = matches!(open.last(), Some((b'(', _, true)));
+                open.push((c, None, declares || table));
+            }
+            b'}' | b')' | b']' => {
+                open.pop();
+            }
+            _ => {}
+        }
+        if !(c.is_ascii_alphabetic() || c == b'.') {
+            at += 1;
+            continue;
+        }
+        let Some(m) = re!(r"^\.?[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)*").find(&text[at..])
+        else {
+            at += 1;
+            continue;
+        };
+        let start = at;
+        at += m.len();
+        if start > 0 && (name(bytes[start - 1]) || bytes[start - 1] == b'.') {
+            continue;
+        }
+        let rest = text[at..].trim_start_matches([' ', '\t']);
+        let assigned = rest.starts_with(':') && !rest.starts_with("::");
+        let kind = match open.last() {
+            // In a lambda's `[..]`, a parameter; in a table's, or straight
+            // in its parentheses, `name:` is a column.
+            Some((b'[', _, true))
+                if lambda.is_some_and(|l| {
+                    text[out.lambdas[l].0 + 1..start]
+                        .trim_start()
+                        .starts_with('[')
+                        && !text[out.lambdas[l].0..start].contains(']')
+                }) =>
+            {
+                Kind::Local
+            }
+            Some((b'[', _, true) | (b'(', _, true)) if assigned => Kind::Column,
+            _ if assigned && lambda.is_some() && !m.as_str().contains('.') => Kind::Local,
+            _ => Kind::Read,
+        };
+        if kind == Kind::Local
+            && let Some(l) = lambda
+        {
+            out.lambdas[l].1.insert(m.as_str().into());
+        }
+        names.push((start, m.len(), lambda, kind));
+    }
+    let reserved: HashSet<&str> = crate::RESERVED.iter().map(String::as_str).collect();
+    for (at, len, lambda, kind) in names {
+        let word = &text[at..at + len];
+        let own = lambda.is_some_and(|l| out.lambdas[l].1.contains(word));
+        if kind == Kind::Read && (word.contains('.') || !(own || reserved.contains(word))) {
+            out.globals.push((at, len, lambda));
+        }
+    }
+    out
+}
+
 /// The names a symbol written at `at` is looked up as when something takes
 /// it as a global's name: under the `\d` in force, and at the root too from
 /// a lambda written under a `\d`, which looks it up where it is called.
@@ -181,6 +352,22 @@ pub fn symbols(code: &str, raw: &str, leaf: &str) -> Vec<Mention> {
         for name in symbol_names(&scopes, at, leaf, ns) {
             out.push(Mention {
                 name,
+                implicit: !leaf.starts_with('.') && at < first_switch,
+                at,
+                len: leaf.len(),
+                definition: None,
+            });
+        }
+    }
+    // A symbol on a `k)` line, where nothing is known to take a name.
+    for (at, symbol) in k_lines(code, raw).symbols {
+        if symbol == leaf {
+            let ns = &namespaces[namespaces
+                .partition_point(|(p, _)| *p <= at)
+                .saturating_sub(1)]
+            .1;
+            out.push(Mention {
+                name: resolved(leaf, ns),
                 implicit: !leaf.starts_with('.') && at < first_switch,
                 at,
                 len: leaf.len(),
@@ -335,6 +522,17 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
                 definition: None,
             });
         }
+    }
+    // What a `k)` line reads or assigns, which neither view shows.
+    for (at, len, _) in k_lines(code, raw).globals {
+        let word = &raw[at..at + len];
+        out.push(Mention {
+            name: resolved(word, ns_at(at)),
+            implicit: !word.starts_with('.') && at < first_switch,
+            at,
+            len,
+            definition: None,
+        });
     }
     out.sort_by(|a, b| (a.at, &a.name).cmp(&(b.at, &b.name)));
     out.dedup_by(|a, b| a.at == b.at && a.name == b.name);
@@ -609,8 +807,14 @@ pub fn rename(
 /// `name`, where a global written `name` would read the local instead.
 pub fn shadowing(code: &str, raw: &str, name: &str, offsets: &[usize]) -> Option<usize> {
     let (scopes, _) = scopes(code, raw);
-    offsets
-        .iter()
-        .copied()
-        .find(|&at| scope_at(&scopes, at).is_some_and(|s| scopes[s].locals.contains(name)))
+    let k = k_lines(code, raw);
+    // A k lambda's own names hide a global as q's do.
+    let in_k = |at: usize| {
+        k.globals.iter().any(|&(place, _, lambda)| {
+            place == at && lambda.is_some_and(|l| k.lambdas[l].1.contains(name))
+        })
+    };
+    offsets.iter().copied().find(|&at| {
+        scope_at(&scopes, at).is_some_and(|s| scopes[s].locals.contains(name)) || in_k(at)
+    })
 }
