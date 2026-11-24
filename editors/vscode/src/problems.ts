@@ -14,6 +14,7 @@ import { execFile, spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, sep } from "node:path";
+import { launchable } from "./batch";
 import { onProcessPath } from "./relations";
 
 /// The part of a finding the dashboard reads.
@@ -183,7 +184,9 @@ export function run(command: string, args: string[], cwd: string, timeout = 300_
       reject(new Error(`${command} could not be run: it is not on PATH`));
       return;
     }
-    execFile(binary, args, { cwd, timeout, maxBuffer: 256 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
+    // A .cmd wrapper through a shell, as Node starts one (#1610).
+    const launch = launchable(binary, args);
+    execFile(launch.command, launch.args, { cwd, timeout, maxBuffer: 256 * 1024 * 1024, windowsHide: true, shell: launch.shell }, (error, stdout, stderr) => {
       const failed = error as (Error & { code?: unknown }) | null;
       if (failed && typeof failed.code === "string") {
         reject(new Error(`${command} could not be run: ${failed.message}`));

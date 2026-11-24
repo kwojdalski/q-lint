@@ -46,7 +46,7 @@ function fakeVscode(files = {}) {
           return profile;
         },
         createTestRun(request, name) {
-          const run = { request, name, events: [], output: "", coverage: [] };
+          const run = { request, name, events: [], output: "", coverage: [], token: { isCancellationRequested: false } };
           for (const e of ["enqueued", "started", "passed", "failed", "errored", "skipped"]) {
             run[e] = (item, extra) => run.events.push([e, item.id, extra]);
           }
@@ -236,6 +236,33 @@ test("the Coverage profile instruments, runs the tests, puts the functions back 
   stub.changeConfig("q-lint.testExplorer.coverage.enable");
   assert.strictEqual(profile.disposed, true);
   assert.deepStrictEqual(explorer.profiles(), ["Run", "Run on q Process..."]);
+});
+
+test("coverage of a file with unsaved edits is drawn on the lines its editor holds (#1609)", async (t) => {
+  stub.reset();
+  const made = fakeVscode({ "/ws/lib.q": LIB });
+  const documents = vscode.workspace.textDocuments;
+  t.after(() => (vscode.workspace.textDocuments = documents));
+  // Three lines inserted above f, not saved.
+  vscode.workspace.textDocuments = [{ uri: vscode.Uri.file("/ws/lib.q"), isDirty: true, getText: () => "/ a\n/ b\n/ c\n" + LIB }];
+  const live = fakeLive((lambda, ...args) => {
+    if (lambda === DRIFT) {
+      return { name: ["f", "g"], state: ["lambda", "lambda"], text: ["{[a]\n  b:a+1;\n  $[b>2;g b;b]}", "{x*2}"] };
+    }
+    if (lambda === installLambda("cov")) {
+      return args[0].map(() => "ok");
+    }
+    if (lambda === restoreExpression("cov")) {
+      return { kept: [], d: [1, 1, 0] };
+    }
+    return { ok: true, failed: false, text: "1b" };
+  });
+  stub.config.user["testExplorer.coverage.enable"] = true;
+  const explorer = registerTestExplorer(stub.newContext(), live, () => ({ sendRequest: async () => TESTS }));
+  await explorer.discover();
+  await explorer.run(undefined, false, true);
+  assert.deepStrictEqual(explorer.coverage(), [{ uri: "file:///ws/lib.q", covered: 2, total: 3, hit: [4, 5], missed: [6] }]);
+  assert.ok(made.length > 0);
 });
 
 test("a failed assertion's two sides are a diff, and Re-run Failed runs only those that failed; off, neither", async () => {

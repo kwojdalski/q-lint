@@ -7,6 +7,7 @@
 // terminal gets (`qenvironment.ts`), given to q directly, so none shows.
 // Registered only while q-lint.tasks.enable is on.
 import { spawn, type ChildProcess } from "node:child_process";
+import { statSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
@@ -26,9 +27,18 @@ import {
 } from "vscode";
 import { readTerminal } from "./liveconfig";
 import { mergeEnv } from "./qenv";
+import { onPath } from "./relations";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import { EXCLUDE, TASK_TYPE, TEST_RUNNERS, detectedTasks, readTaskDefinition, readTasks, taskPaths, terminalText, type QTaskDefinition } from "./tasks";
 import { expandHome } from "./terminal";
+
+const isFile = (file: string): boolean => {
+  try {
+    return statSync(file).isFile();
+  } catch {
+    return false;
+  }
+};
 
 const on = (): boolean => readTasks((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback)).enabled;
 
@@ -59,8 +69,16 @@ function runner(definition: QTaskDefinition, folder: WorkspaceFolder | undefined
         }
         const args = [script, ...(definition.args ?? [])];
         write.fire(terminalText(`> ${[binary, ...args].join(" ")}\n`));
+        // A bare name is looked up on PATH here: on Windows, spawn with a
+        // cwd would run a q.exe the folder holds first (#1605).
+        const command = onPath(binary, env.PATH ?? process.env.PATH, isFile);
+        if (command === undefined) {
+          write.fire(terminalText(`could not start ${binary}: it is not on PATH\n`));
+          close.fire(1);
+          return;
+        }
         try {
-          child = spawn(binary, args, { cwd, env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+          child = spawn(command, args, { cwd, env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
         } catch (error) {
           write.fire(terminalText(`could not start ${binary}: ${error instanceof Error ? error.message : String(error)}\n`));
           close.fire(1);

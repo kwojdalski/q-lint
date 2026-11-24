@@ -24,7 +24,7 @@ import {
   type TextDocument,
 } from "vscode";
 import { editorFeatureOff, editorFeatureOn } from "./editorfeatures";
-import { TEST_STUB_COMMAND, detectStyle, functionAt, newTestPath, stubText, testFilePatterns, testName, type Target } from "./teststub";
+import { TEST_STUB_COMMAND, detectStyle, endContext, functionAt, newTestPath, stubText, testFilePatterns, testName, type Target } from "./teststub";
 import { plainMessage } from "./history";
 
 const on = (): boolean => editorFeatureOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "testStub");
@@ -34,6 +34,11 @@ const stubKind = (): CodeActionKind => CodeActionKind.Refactor.append("generateT
 
 class StubActions implements CodeActionProvider {
   provideCodeActions(document: TextDocument, range: Range): CodeAction[] {
+    // A test file goes beside a file on disk: an untitled editor or a
+    // notebook cell has none (#1600).
+    if (document.uri.scheme !== "file") {
+      return [];
+    }
     const target = functionAt(document.getText(), range.start.line);
     if (target === undefined) {
       return [];
@@ -115,7 +120,7 @@ export async function generateStub(uri?: Uri, line?: number): Promise<boolean> {
   const file = await testFile(source);
   const style = detectStyle(file.styleFrom);
   const name = testName(target, style, file.text ?? "");
-  const stub = stubText(target, name, style);
+  const stub = stubText(target, name, style, endContext(file.text ?? ""));
   const yes = "Add Test";
   const answer = await window.showInformationMessage(
     plainMessage(`${file.text === undefined ? "Create" : "Add to"} ${workspace.asRelativePath(file.uri)}: ${name}?`),

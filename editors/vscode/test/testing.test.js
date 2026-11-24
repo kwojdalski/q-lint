@@ -114,7 +114,11 @@ function fakeTests() {
     replace(next) {
       list.splice(0, list.length, ...next);
     },
+    // Keyed by id, as VS Code's collection is: a second of one id replaces
+    // the first.
     add(item) {
+      const at = list.findIndex((i) => i.id === item.id);
+      if (at >= 0) list.splice(at, 1);
       list.push(item);
     },
     forEach(f) {
@@ -137,7 +141,7 @@ function fakeTests() {
           return profile;
         },
         createTestRun(request, name) {
-          const run = { request, name, events: [], output: "" };
+          const run = { request, name, events: [], output: "", token: { isCancellationRequested: false } };
           for (const e of ["enqueued", "started", "passed", "failed", "errored", "skipped"]) {
             run[e] = (item, extra) => run.events.push([e, item.id, extra?.message ?? extra]);
           }
@@ -314,7 +318,7 @@ test("a k4unit suite's before rows run once before its tests, and its after rows
   const live = fakeLive();
   const explorer = registerTestExplorer(stub.newContext(), live, () => undefined);
   await explorer.discover();
-  assert.deepStrictEqual(explorer.items(), ["file:///ws/k.csv#2", "file:///ws/k.csv#3"]);
+  assert.deepStrictEqual(explorer.items(), ["file:///ws/k.csv#true:t=1", "file:///ws/k.csv#fail:bad"]);
   await explorer.run();
   assert.deepStrictEqual(
     live.sent.map((s) => [s.statements.join(";"), s.mode]),
@@ -352,7 +356,7 @@ test("a cancelled k4unit run still runs the after rows of a file it set up (#109
       ["t:0", "run"],
     ],
   );
-  assert.ok(made[0].runs[0].events.some(([e, id]) => e === "skipped" && id === "file:///ws/k.csv#3"));
+  assert.ok(made[0].runs[0].events.some(([e, id]) => e === "skipped" && id === "file:///ws/k.csv#fail:bad"));
 });
 
 test("a test run on a process the read-only guard guards goes through the guard: declined, the test's definition is not sent (#918)", async (t) => {
@@ -464,4 +468,175 @@ test("the Test Explorer turned off mid-run sends none of the tests still queued 
   await explorer.discover();
   await explorer.run();
   assert.strictEqual(live.sent.length, 1);
+});
+
+test("two tests of one name under two \\d's in a file are two tests, each run (#1592)", async () => {
+  stub.reset();
+  fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  const listed = [
+    {
+      uri: "file:///w/t.q",
+      tests: [
+        { name: "test_x", range: range(1, 0, 6), code: "\\d .a\ntest_x:{1b}\n\\d .", call: ".a.test_x[]", qualified: ".a.test_x" },
+        { name: "test_x", range: range(3, 0, 6), code: "\\d .b\ntest_x:{0b}\n\\d .", call: ".b.test_x[]", qualified: ".b.test_x" },
+      ],
+    },
+  ];
+  const live = fakeLive();
+  const explorer = registerTestExplorer(stub.newContext(), live, () => ({ sendRequest: async () => listed }));
+  await explorer.discover();
+  assert.deepStrictEqual(explorer.items(), ["file:///w/t.q#.a.test_x", "file:///w/t.q#.b.test_x"]);
+  await explorer.run();
+  assert.deepStrictEqual(live.sent.map((s) => s.statements.at(-1)), [".a.test_x[]", ".b.test_x[]"]);
+});
+
+test("k4unit's beforeany, beforeeach, aftereach and afterall rows run as KUrt runs them (#1593)", async () => {
+  stub.reset();
+  fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  const head = "action,ms,bytes,lang,code,repeat,minver,comment\n";
+  const files = {
+    "/ws/a.csv": head + "beforeany,0,0,q,once:1,1,,\nbeforeeach,0,0,q,each:1,1,,\nbefore,0,0,q,a:1,1,,\ntrue,0,0,q,a=1,1,,\nafter,0,0,q,a:0,1,,\naftereach,0,0,q,each:0,1,,\nafterall,0,0,q,once:0,1,,\n",
+    "/ws/b.csv": head + "true,0,0,q,b=1,1,,\n",
+  };
+  vscode.workspace.findFiles = async () => Object.keys(files).map((f) => vscode.Uri.file(f));
+  vscode.workspace.fs = { readFile: async (uri) => Buffer.from(files[uri.fsPath]) };
+  const live = fakeLive();
+  const explorer = registerTestExplorer(stub.newContext(), live, () => undefined);
+  await explorer.discover();
+  await explorer.run();
+  assert.deepStrictEqual(
+    live.sent.map((s) => s.statements.join(";")),
+    ["once:1", "each:1", "a:1", "a=1", "a:0", "each:0", "each:1", "b=1", "each:0", "once:0"],
+  );
+});
+
+test("a k4unit row whose minver is above the process's .z.K is skipped, not run (#1594)", async () => {
+  stub.reset();
+  const made = fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  const csv = "action,ms,bytes,lang,code,repeat,minver,comment\ntrue,0,0,q,1b,1,,\ntrue,0,0,q,.z.K>=99,1,99,\nbefore,0,0,q,new:1,1,99,\n";
+  vscode.workspace.findFiles = async () => [vscode.Uri.file("/ws/k.csv")];
+  vscode.workspace.fs = { readFile: async () => Buffer.from(csv) };
+  const live = fakeLive();
+  const runOnActive = live.runOnActive.bind(live);
+  live.runOnActive = async (code, query, ...rest) =>
+    code === ".z.K" ? { process: "dev", value: { passed: true, text: "4.1", errored: false } } : runOnActive(code, query, ...rest);
+  const explorer = registerTestExplorer(stub.newContext(), live, () => undefined);
+  await explorer.discover();
+  await explorer.run();
+  assert.deepStrictEqual(live.sent.map((s) => s.statements.join(";")), ["1b"]);
+  assert.deepStrictEqual(explorer.results().map((r) => r.state), ["passed", "skipped"]);
+  assert.ok(made[0].runs[0].events.some(([e]) => e === "skipped"));
+});
+
+test("a k4unit row keeps its id when a row is inserted above it: Re-run Failed runs the row that failed (#1595)", async () => {
+  stub.reset();
+  fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  stub.config.user["testExplorer.failedTests.enable"] = true;
+  const head = "action,ms,bytes,lang,code,repeat,minver,comment\n";
+  let csv = head + "true,0,0,q,bad=1,1,,\ntrue,0,0,q,good=1,1,,\ntrue,0,0,q,good=1,1,,\n";
+  vscode.workspace.findFiles = async () => [vscode.Uri.file("/ws/suite.csv")];
+  vscode.workspace.fs = { readFile: async () => Buffer.from(csv) };
+  const live = fakeLive();
+  const explorer = registerTestExplorer(stub.newContext(), live, () => undefined);
+  await explorer.discover();
+  // Two rows of one code are told apart.
+  assert.deepStrictEqual(explorer.items(), ["file:///ws/suite.csv#true:bad=1", "file:///ws/suite.csv#true:good=1", "file:///ws/suite.csv#true:good=1#2"]);
+  await explorer.run();
+  csv = head + "true,0,0,q,new=1,1,,\ntrue,0,0,q,bad=1,1,,\ntrue,0,0,q,good=1,1,,\ntrue,0,0,q,good=1,1,,\n";
+  await explorer.discover();
+  live.sent.length = 0;
+  await stub.commands.get("q-lint.rerunFailedTests")();
+  assert.deepStrictEqual(live.sent.map((s) => s.statements.join(";")), ["bad=1"]);
+});
+
+test("a run whose selection holds a file and one of its tests runs that test once (#1596)", async () => {
+  stub.reset();
+  const made = fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  const live = fakeLive();
+  const explorer = registerTestExplorer(stub.newContext(), live, () => ({ sendRequest: async () => LISTED }));
+  await explorer.discover();
+  const file = made[0].items.list[0];
+  const good = file.children.list[0];
+  await made[0].profiles[0].handler(new vscode.TestRunRequest([file, good]), { isCancellationRequested: false });
+  assert.deepStrictEqual(live.sent.map((s) => s.statements.at(-1)), [".t.test_good[]", ".t.test_bad[]"]);
+});
+
+test("Stop stops a Re-run Failed run: what is still queued is not sent (#1597)", async () => {
+  stub.reset();
+  const made = fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  stub.config.user["testExplorer.failedTests.enable"] = true;
+  const live = fakeLive();
+  const explorer = registerTestExplorer(stub.newContext(), live, () => ({ sendRequest: async () => LISTED }));
+  await explorer.discover();
+  await explorer.run();
+  // Stop pressed as the re-run starts: VS Code cancels the run's token.
+  const createTestRun = made[0].createTestRun.bind(made[0]);
+  made[0].createTestRun = (...args) => {
+    const run = createTestRun(...args);
+    run.token.isCancellationRequested = true;
+    return run;
+  };
+  live.sent.length = 0;
+  await stub.commands.get("q-lint.rerunFailedTests")();
+  assert.deepStrictEqual(live.sent, []);
+  assert.deepStrictEqual(explorer.results().map((r) => r.state), ["skipped"]);
+});
+
+test("one run at a time, and a busy process is asked once, not once per test (#1598)", async () => {
+  stub.reset();
+  fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  const live = fakeLive();
+  const runOnActive = live.runOnActive.bind(live);
+  let inFlight = 0;
+  let most = 0;
+  live.runOnActive = async (...args) => {
+    inFlight++;
+    most = Math.max(most, inFlight);
+    await new Promise((r) => setTimeout(r, 5));
+    try {
+      return await runOnActive(...args);
+    } finally {
+      inFlight--;
+    }
+  };
+  const explorer = registerTestExplorer(stub.newContext(), live, () => ({ sendRequest: async () => LISTED }));
+  await explorer.discover();
+  // A second run asked for while the first is under way waits for it.
+  await Promise.all([explorer.run(), explorer.run()]);
+  assert.strictEqual(most, 1);
+  assert.strictEqual(live.sent.length, 4);
+  // Busy: the first test says so, and the rest are not sent.
+  let asked = 0;
+  live.runOnActive = async () => (asked++, undefined);
+  await explorer.run();
+  assert.strictEqual(asked, 1);
+  assert.deepStrictEqual(explorer.results().map((r) => r.state), ["errored", "errored"]);
+  assert.match(explorer.results()[1].message, /Not run/);
+});
+
+test("a CSV that is not a k4unit suite is turned down from its first line, not read whole (#1606)", async (t) => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  stub.reset();
+  fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-csv-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, "data.csv"), "sym,price\n" + "a,1\n".repeat(10000));
+  fs.writeFileSync(path.join(dir, "suite.csv"), "action,ms,bytes,lang,code,repeat,minver,comment\ntrue,0,0,q,1b,1,,\n");
+  vscode.workspace.findFiles = async (glob) => (glob.endsWith(".csv") ? ["data.csv", "suite.csv"].map((f) => vscode.Uri.file(path.join(dir, f))) : []);
+  const whole = [];
+  vscode.workspace.fs = { readFile: async (uri) => (whole.push(path.basename(uri.fsPath)), fs.readFileSync(uri.fsPath)) };
+  const explorer = registerTestExplorer(stub.newContext(), fakeLive(), () => undefined);
+  await explorer.discover();
+  assert.deepStrictEqual(whole, ["suite.csv"]);
+  assert.strictEqual(explorer.items().length, 1);
 });
