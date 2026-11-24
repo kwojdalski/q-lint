@@ -98,7 +98,9 @@
 //   written, with a symbol it could hold (`` {.[x;();:;1]} v ``, #2035);
 // - any of these in a string given to a TorQ gateway's `.gw.syncexec` or
 //   `.gw.asyncexec`, in brackets or applied (`.gw.syncexec . (q;`rdb)`),
-//   which runs it on the gateway's servers (#909).
+//   which runs it on the gateway's servers (#909), and a query there that
+//   is not strings written in the call - a list the servers evaluate, a
+//   name, one built or given later, `.gw.syncexec[;`rdb] "a:1"` (#2039).
 import type { Process } from "./processes";
 import { statements } from "./statements";
 
@@ -957,6 +959,67 @@ function asValue(t: Token[], i: number): string[] {
   return calls;
 }
 
+/// What the TorQ gateway call named at `t[i]` - `.gw.syncexec`, or its
+/// symbol - runs on its servers, added to `found`: each string in its
+/// arguments read as the code it is (#909), and a query that is not
+/// strings, or not written where the call is, taken for a change - a list
+/// the servers evaluate, `(:;`a;1)`, a name, one built, `"a",":1"`, or
+/// given later, `.gw.syncexec[;`rdb] "a:1"` (#2039). A lambda that only
+/// reads may head a list of strings, as the extension's own wrap does,
+/// `({last value each x};("a";"b"))`.
+function gateway(t: Token[], i: number, found: Set<string>): void {
+  const name = t[i].kind === "sym" ? t[i].text.slice(1) : t[i].text;
+  const next = t[i + 1];
+  // Its arguments: in brackets, or the list `.` applies it to.
+  const args =
+    next?.kind === "open" && next.text === "["
+      ? items(t, i + 1)
+      : next?.kind === "op" && next.text === "." && t[i + 2]?.text === "(" && t[i + 2].kind === "open"
+        ? listed(t, i + 2, argumentEnd(t, i + 1))
+        : undefined;
+  const end = args !== undefined ? args[args.length - 1][1] : argumentEnd(t, i);
+  for (let j = i + 1; j < end; j++) {
+    if (t[j].kind === "str") {
+      for (const reason of writes(qText(t[j].text))) {
+        found.add(`${reason} through ${name}`);
+      }
+    }
+  }
+  const query = args?.[0];
+  let readable = false;
+  if (query !== undefined && query[0] < query[1]) {
+    readable = true;
+    for (let j = query[0]; j < query[1] && readable; j++) {
+      const k = t[j];
+      if (k.kind === "open" && k.text === "{") {
+        // A lambda that reads, at the head of a list: `({last value each x};..)`.
+        let close = j;
+        for (let depth = 0; close < query[1]; close++) {
+          if (t[close].kind === "open") depth++;
+          else if (t[close].kind === "close" && --depth === 0) break;
+        }
+        readable = t[j - 1]?.text === "(" && t[close + 1]?.text === ";" && rereadOf(joined(t, j, close + 1)).length === 0;
+        j = close;
+      } else {
+        readable = k.kind === "str" || k.text === ";" || k.text === "(" || k.text === ")" || k.text === "enlist";
+      }
+    }
+  } else if (query === undefined && args === undefined) {
+    // Named alone, not applied - `.gw.syncexec`, `` `.gw.syncexec `` - it reads.
+    let s = i;
+    let e = i;
+    while (t[s - 1]?.text === "(" && t[e + 1]?.text === ")") {
+      s--;
+      e++;
+    }
+    const after = t[e + 1];
+    readable = (after === undefined || after.text === ";" || after.kind === "close") && (t[i].kind === "sym" || s === i || t[s - 1] === undefined || t[s - 1].text === ";" || t[s - 1].text === ":");
+  }
+  if (!readable) {
+    found.add(`runs a query the guard cannot read through ${name}`);
+  }
+}
+
 /// What one statement does that the guard asks about, added to `found`.
 function readStatement(statement: string, found: Set<string>): void {
   // A language prefix, `q)` or `k)`, as many as are written, `q)k)`, is
@@ -1251,18 +1314,7 @@ function readStatement(statement: string, found: Set<string>): void {
       // Its arguments are in brackets, or what follows it to the end of the
       // expression: `` .gw.syncexec . ("a:1";`rdb) ``.
       if (GATEWAY_EXEC.test(k.text)) {
-        const bracket = next?.text === "[";
-        let depth = 0;
-        for (let j = i + 1; j < t.length; j++) {
-          if (t[j].kind === "open") depth++;
-          else if (t[j].kind === "close" && ((--depth === 0 && bracket) || depth < 0)) break;
-          else if (!bracket && depth === 0 && t[j].text === ";") break;
-          else if (t[j].kind === "str") {
-            for (const reason of writes(qText(t[j].text))) {
-              found.add(`${reason} through ${k.text}`);
-            }
-          }
-        }
+        gateway(t, i, found);
         continue;
       }
       // An assignment: the name, an index, an operator, then `:`.
@@ -1318,6 +1370,11 @@ function readStatement(statement: string, found: Set<string>): void {
     const name = k.kind === "sym" && (k.text === "`.q" || k.text === "`.Q") ? picked(t, i, k.text.slice(1)) : undefined;
     if (name !== undefined) {
       found.add(`calls ${name}`);
+      continue;
+    }
+    // A gateway called by its symbol: `` `.gw.syncexec . ("a:1";`rdb) `` (#2039).
+    if (k.kind === "sym" && GATEWAY_EXEC.test(k.text.slice(1)) && next !== undefined && ((next.kind === "op" && (next.text === "." || next.text === "@")) || (next.kind === "open" && next.text === "[") || next.kind === "str")) {
+      gateway(t, i, found);
       continue;
     }
     // A writer named by its symbol is the function itself: `` `.q.set . (`a;1) ``,

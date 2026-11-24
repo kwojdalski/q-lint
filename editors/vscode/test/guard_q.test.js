@@ -190,3 +190,13 @@ test("an amend projection in parentheses applied to its target is held, and amen
   await heldThenWrites(send, read, "(@[;();:;1]) `u8", "`u8 in key `.");
   await heldThenWrites(send, read, "(.[;();:;1]) each `v2`v3", "all `v2`v3 in key `.");
 });
+
+test("a gateway query that is a list, projected or built is held, and runs once let through (#2039)", { skip }, async (t) => {
+  // A stand-in for TorQ's gateway: it evaluates the query, as its servers do.
+  const q = await startQ(t, ".gw.syncexec:{[query;servers] value query}\n");
+  const { send, read } = await setUp(t, q.port);
+  await heldThenWrites(send, read, ".gw.syncexec[(@;`.;`y2;:;1);`rdb]", "`y2 in key `.");
+  await heldThenWrites(send, read, '.gw.syncexec[;`rdb] "y4:1"', "`y4 in key `.");
+  await heldThenWrites(send, read, '(.gw.syncexec)["y5:1";`rdb]', "`y5 in key `.");
+  await heldThenWrites(send, read, '.gw.syncexec["y6",":1";`rdb]', "`y6 in key `.");
+});

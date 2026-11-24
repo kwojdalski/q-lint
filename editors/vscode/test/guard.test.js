@@ -1458,3 +1458,27 @@ test("an amend projected on all but its target, in parentheses or applied some w
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("a gateway query the guard cannot read as strings, where the call is, is taken for a change (#2039)", () => {
+  const cannot = (name = ".gw.syncexec") => `runs a query the guard cannot read through ${name}`;
+  const cases = {
+    ".gw.syncexec[(@;`.;`a;:;1);`rdb]": [cannot()],
+    ".gw.syncexec[(:;`a;1);`rdb]": [cannot()],
+    ".gw.syncexec[;`rdb] \"a:1\"": [cannot()],
+    '(.gw.syncexec)["a:1";`rdb]': [cannot()],
+    '`.gw.syncexec . ("a:1";`rdb)': ["assigns a through .gw.syncexec"],
+    '.gw.syncexec["a",":1";`rdb]': [cannot()],
+    ".gw.syncexec[q;`rdb]": [cannot()],
+    '.gw.asyncexec[(`.q.set;`a;1);`rdb]': [cannot(".gw.asyncexec"), "calls .q.set"],
+    // A string, strings, the extension's own wrap of them, or the name alone read.
+    '.gw.syncexec["select from t";`rdb]': [],
+    '.gw.syncexec[("count t";"count u");`rdb]': [],
+    '.gw.syncexec[({last value each x};("count t";"count u"));enlist `rdb]': [],
+    '.gw.syncexecj["select from t";`rdb`hdb;raze]': [],
+    ".gw.syncexec": [],
+    "`.gw.syncexec": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
