@@ -162,22 +162,27 @@ fn dyad(v: &str) -> Option<&'static str> {
     })
 }
 
-/// A column item: its name, where it has one, and its expression.
-fn column(item: &str) -> String {
+/// The name a column item is written with, `n:e`, and where its
+/// expression starts.
+fn name(item: &str) -> Option<(&str, &str)> {
     let b = item.as_bytes();
     let mut i = 0;
     while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
         i += 1;
     }
-    if i > 0
+    (i > 0
         && b[0].is_ascii_alphabetic()
         && b.get(i) == Some(&b':')
-        && !matches!(b.get(i + 1), Some(b':' | b'/' | b'\\' | b'\''))
-    {
-        let expr = item[i + 1..].trim();
-        return format!("{}: {}", code(&item[..i]), said(expr));
+        && !matches!(b.get(i + 1), Some(b':' | b'/' | b'\\' | b'\'')))
+    .then(|| (&item[..i], item[i + 1..].trim()))
+}
+
+/// A column item: its name, where it has one, and its expression.
+fn column(item: &str) -> String {
+    match name(item) {
+        Some((n, expr)) => format!("{}: {}", code(n), said(expr)),
+        None => said(item),
     }
-    said(item)
 }
 
 /// The `[...]` a `select` is written with, `select[2] a`: what is inside
@@ -347,9 +352,19 @@ fn explain(p: &layout::Parts) -> String {
             steps.extend(sorts.into_iter().chain(limits).map(|l| limited(l)));
         }
         "exec" => {
-            if !by.is_empty() {
+            // One group unnamed keys the result by its values; a named one,
+            // or several, by a table of them (KDB-X: `exec px by s:sym
+            // from t` is keyed by a table with the column `s`, #2059).
+            if let [one] = &by[..]
+                && name(one).is_none()
+            {
                 steps.push(format!(
-                    "Groups the rows by {}: the result is a dictionary from each group.",
+                    "Groups the rows by {}: the result is a dictionary from each value of it.",
+                    column(one)
+                ));
+            } else if !by.is_empty() {
+                steps.push(format!(
+                    "Groups the rows by {}: the result is a dictionary from a table of the groups, one row for each.",
                     list(&by, column)
                 ));
             }
@@ -448,6 +463,14 @@ mod tests {
             w.contains("2. Sorts the result by `a`, largest first.\n3. Keeps only the first 2"),
             "{w}"
         );
+        // One group unnamed keys an exec by its values, a named one by a
+        // table (#2059).
+        let w = words("r:exec px by sym from t\n");
+        assert!(w.contains("a dictionary from each value of it"), "{w}");
+        let w = words("r:exec px by sym:sym from t\n");
+        assert!(w.contains("a dictionary from a table of the groups"), "{w}");
+        let w = crate::explain_qsql("r:?[t;();(enlist`sym)!enlist`sym;`px]\n", 3).unwrap();
+        assert!(w.contains("a dictionary from a table of the groups"), "{w}");
         let w = words("r:delete from t\n");
         assert!(w.contains("Removes every row"), "{w}");
         let w = words("r:delete from t where a>1\n");

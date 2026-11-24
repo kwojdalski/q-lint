@@ -667,7 +667,7 @@ fn form(p: &layout::Parts) -> Result<Form, String> {
         "exec" => {
             let b = match &by[..] {
                 [] => constant("()".to_string()),
-                [one] => evaluated(match tree(one)? {
+                [one] if named(one).0.is_none() => evaluated(match tree(one)? {
                     Node::Name(n) => format!("`{n}"),
                     other => functional(&other),
                 }),
@@ -1254,7 +1254,19 @@ fn written(verb: u8, table: &str, c: &Data, b: &Data, a: &Data) -> Result<String
                     Data::Dict(..) => column_text(&dict_items(a)?)?,
                     other => one_item(infix_text(&node(other)?)?),
                 };
-                return Ok(format!("exec {cols}{} from {table}{tail}", by_text(b)?));
+                // An exec's one group unnamed is the list itself, `,`sym`,
+                // which keys the result by its values; named, it is the
+                // dictionary `(,`sym)!,`sym`, which keys it by a table. So
+                // a dictionary of one group is written with its name, even
+                // where it is the one q would give it (#2059).
+                let by = match b {
+                    Data::Dict(..) => match &dict_items(b)?[..] {
+                        [(name, n)] => format!(" by {name}:{}", one_item(infix_text(n)?)),
+                        _ => by_text(b)?,
+                    },
+                    _ => by_text(b)?,
+                };
+                return Ok(format!("exec {cols}{by} from {table}{tail}"));
             }
             let distinct = matches!(&b, Data::Leaf(l) if l == "1b");
             // A column named as a group is 'dup names for cols/groups in a

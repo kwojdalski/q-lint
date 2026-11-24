@@ -114,6 +114,20 @@ const CASES: &[(&str, &str)] = &[
     ),
     ("exec px from t", "?[t;();();`px]"),
     ("exec px by sym from t", "?[t;();`sym;`px]"),
+    // A named group is a dictionary, which keys the result by a table; an
+    // unnamed one keys it by its values (#2059).
+    (
+        "exec px by sym:sym from t",
+        "?[t;();(enlist`sym)!enlist `sym;`px]",
+    ),
+    (
+        "exec px by s:sym from t",
+        "?[t;();(enlist`s)!enlist `sym;`px]",
+    ),
+    (
+        "exec px by sym, size from t",
+        "?[t;();`sym`size!(`sym;`size);`px]",
+    ),
     ("exec px, size from t", "?[t;();();`px`size!(`px;`size)]"),
     (
         "exec sum size from t where px>2",
