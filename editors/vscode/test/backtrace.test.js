@@ -145,3 +145,55 @@ test("the ^ is read as bytes of the line above it, so text that is not ASCII doe
   // A ^ past the end of the line above it is that far past it.
   assert.deepStrictEqual(frame(["  [8]  /w/lib.q:2: f:{[a]", "  é", "      ^"]).failed, { index: 1, column: 5 });
 });
+
+// q prints a frame's header as the name the function has - whole, `.ns.name`
+// - a colon and the lambda's own text. The file's line is what was typed:
+// the name bare under `\d .ns`, indented, spaced, or one of two on the line.
+// The column is the lambda's in the file, not in what q printed (#1983).
+test("a frame's header line is placed by its lambda's text in the file, not by the name q prints (#1983)", () => {
+  const FILE = [
+    "\\d .bt",
+    "inner:{[a] a+`x}",
+    "\\d .",
+    "spaced : {[a] a+`x}",
+    "if[1b;",
+    "  inif:{[a] a+`x}];",
+    "two:{[a] a+`x};  three:{[a] a-`x}",
+    "d:`a`b!({[a] a+`x};{[a] a*`x})",
+    "\\d .deep",
+    "er.leaf2:{[a] a+`x}",
+    "\\d .",
+    "same:{[a] a+`x}; twin:{[a] a+`x}",
+    "(`u`v)!({[a] a+`x};{[a] a+`x})",
+    "lead:{[a] b:a+`x;",
+    "  b}",
+    "",
+  ].join("\n");
+  const lines = FILE.split("\n");
+  // As q prints it: the ^ under `token` of `code`, the header of line `n`.
+  const at = (n, code, token) => {
+    const head = `  [8]  /w/lib.q:${n}: `;
+    const frame = parseBacktrace(`${head}${code}\n${" ".repeat(head.length + code.indexOf(token))}^\n`)[0];
+    const found = failedAt(frame, FILE);
+    return [found.line + 1, found.character, (lines[found.line] ?? "").slice(found.character, found.character + token.length)];
+  };
+  assert.deepStrictEqual(at(2, ".bt.inner:{[a] a+`x}", "+`x"), [2, 12, "+`x"]);
+  assert.deepStrictEqual(at(4, "spaced:{[a] a+`x}", "+`x"), [4, 15, "+`x"]);
+  assert.deepStrictEqual(at(6, "inif:{[a] a+`x}", "+`x"), [6, 13, "+`x"]);
+  assert.deepStrictEqual(at(7, "two:{[a] a+`x}", "+`x"), [7, 10, "+`x"]);
+  assert.deepStrictEqual(at(7, "three:{[a] a-`x}", "-`x"), [7, 29, "-`x"]);
+  assert.deepStrictEqual(at(8, "{[a] a*`x}", "*`x"), [8, 25, "*`x"]);
+  assert.deepStrictEqual(at(10, ".deep.er.leaf2:{[a] a+`x}", "+`x"), [10, 15, "+`x"]);
+  assert.deepStrictEqual(at(14, ".bt.lead:{[a] b:a+`x;", "+`x"), [14, 13, "+`x"]);
+  // Two lambdas of one text on a line: the name says which.
+  assert.deepStrictEqual(at(12, "twin:{[a] a+`x}", "+`x"), [12, 28, "+`x"]);
+  assert.deepStrictEqual(at(12, "same:{[a] a+`x}", "+`x"), [12, 11, "+`x"]);
+  // With no name to say which, or a line that no longer holds the lambda,
+  // the line is all that is known.
+  assert.deepStrictEqual(at(13, "{[a] a+`x}", "+`x").slice(0, 2), [13, 0]);
+  assert.deepStrictEqual(at(1, ".bt.inner:{[a] a+`x}", "+`x").slice(0, 2), [1, 0]);
+  assert.deepStrictEqual(at(99, ".bt.inner:{[a] a+`x}", "+`x").slice(0, 2), [99, 0]);
+  // Unread, the column is still the one q printed.
+  const head = "  [8]  /w/lib.q:2: ";
+  assert.deepStrictEqual(failedAt(parseBacktrace(`${head}.bt.inner:{[a] a+\`x}\n${" ".repeat(head.length + 16)}^\n`)[0]), { line: 1, character: 16 });
+});

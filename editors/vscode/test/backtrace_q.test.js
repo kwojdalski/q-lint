@@ -42,3 +42,45 @@ test("a frame whose line holds text that is not ASCII points at the token that f
     assert.strictEqual(UNI.split("\n")[at.line].slice(at.character, at.character + 3), "+`x", `${call}: ${JSON.stringify(at)}\n${answer.trace}`);
   }
 });
+
+// q prints `.ns.name:` and the lambda; the file has what was typed (#1983).
+const NAMED = [
+  "\\d .bt",
+  "inner:{[a] a+`x}",
+  "lead:{[a] b:a+`x;",
+  "  b}",
+  "\\d .",
+  "spaced : {[a] a+`x}",
+  "if[1b;",
+  "  inif:{[a] a+`x}];",
+  "/ a comment",
+  "  aftercomment:{[a] a+`x}",
+  "two:{[a] a+`x};  three:{[a] a-`x}",
+  "d:`a`b!({[a] a+`x};{[a] a*`x})",
+  "\\d .deep",
+  "er.leaf2:{[a] a+`x}",
+  "\\d .",
+  "",
+].join("\n");
+
+test("a one-line function's frame points at the token that failed, however its line names it (#1983)", { skip }, async (t) => {
+  const { connection: c } = await connect(t, "\\l named.q\n", { "named.q": NAMED });
+  const lines = NAMED.split("\n");
+  for (const [call, line, token] of [
+    [".bt.inner 1", 2, "+`x"],
+    [".bt.lead 1", 3, "+`x"],
+    ["spaced 1", 6, "+`x"],
+    ["inif 1", 8, "+`x"],
+    ["aftercomment 1", 10, "+`x"],
+    ["two 1", 11, "+`x"],
+    ["three 1", 11, "-`x"],
+    ["d[`b] 1", 12, "*`x"],
+    [".deep.er.leaf2 1", 14, "+`x"],
+  ]) {
+    const answer = readAnswer(await c.call(RUN, [call], [25, 200]));
+    assert.strictEqual(answer.ok, false, call);
+    const frame = parseBacktrace(answer.trace).find((f) => f.file !== undefined);
+    const at = failedAt(frame, NAMED);
+    assert.deepStrictEqual([at.line + 1, lines[at.line].slice(at.character, at.character + 3)], [line, token], `${call}: ${JSON.stringify(at)}\n${answer.trace}`);
+  }
+});

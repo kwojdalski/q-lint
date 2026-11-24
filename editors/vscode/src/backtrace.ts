@@ -143,21 +143,64 @@ export function failedAt(frame: Frame, file?: string): { line: number; character
     return { line: named, character: 0 };
   }
   const { index, column } = frame.failed;
-  // The column is the line's only once the line is known: the header's own,
-  // or one the file shows holds the text above the `^`.
-  let line = named;
-  let known = index === 0;
-  if (file !== undefined && index > 0) {
-    const lines = file.replace(/\r\n/g, "\n").split("\n");
-    const want = frame.code[index].trim();
-    if (lines[named]?.trim() === want) {
-      known = true;
-    } else if (lines[named + index]?.trim() === want) {
-      line = named + index;
-      known = true;
-    }
+  if (file === undefined) {
+    // Unread, only the header's own line is known, as q printed it.
+    return { line: named, character: index === 0 ? column : 0 };
   }
-  return { line, character: known ? column : 0 };
+  const lines = file.replace(/\r\n/g, "\n").split("\n");
+  if (index === 0) {
+    return { line: named, character: headerColumn(frame, lines[named] ?? "") ?? 0 };
+  }
+  // A later line's column is the line's only once the line is known: one
+  // the file shows holds the text above the `^`.
+  const want = frame.code[index].trim();
+  if (lines[named]?.trim() === want) {
+    return { line: named, character: column };
+  }
+  if (lines[named + index]?.trim() === want) {
+    return { line: named + index, character: column };
+  }
+  return { line: named, character: 0 };
+}
+
+const escaped = (w: string) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/// Every place `text` is in `line`.
+function places(line: string, text: string): number[] {
+  const out: number[] = [];
+  for (let at = line.indexOf(text); text !== "" && at !== -1; at = line.indexOf(text, at + 1)) {
+    out.push(at);
+  }
+  return out;
+}
+
+/// The column in `line`, the file's, of a `^` under a frame's header line;
+/// undefined when the line does not say. q prints the header's code as the
+/// name the function has, in full (`.ns.name`), a colon, and the lambda's
+/// own text; the file's line is what was typed - the name bare under
+/// `\d .ns`, indented in a block, with spaces round its colon, or after
+/// another definition. So the column q printed is the file's only where the
+/// line holds the code as printed; otherwise the lambda's text is found in
+/// the line, and the column is as far into it (#1983).
+function headerColumn(frame: Frame, line: string): number | undefined {
+  const { column } = frame.failed ?? { column: 0 };
+  const code = frame.code[0];
+  const whole = places(line, code);
+  if (whole.length > 0) {
+    // Twice on the line, and nothing says which of them failed.
+    return whole.length === 1 ? whole[0] + column : undefined;
+  }
+  const name = NAME.exec(code);
+  if (name === null || column < name[0].length) {
+    return undefined;
+  }
+  const lambda = code.slice(name[0].length);
+  const found = places(line, lambda);
+  // Two lambdas of one text on a line: the one its name is written before.
+  const last = name[1].split(".").at(-1) ?? "";
+  const after = new RegExp(`(?<![A-Za-z0-9_])${escaped(last)}\\s*:\\s*$`);
+  const mine = found.length > 1 ? found.filter((at) => after.test(line.slice(0, at))) : found;
+  return mine.length === 1 ? mine[0] + (column - name[0].length) : undefined;
 }
 
 /// Of `candidates` (paths), the one sharing the most trailing segments with
