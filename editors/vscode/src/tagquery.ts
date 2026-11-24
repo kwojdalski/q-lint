@@ -81,9 +81,24 @@ function ranks(type: number, cells: string[], raw: unknown[]): number[] {
   });
 }
 
+/// What each of an answer's columns is kept under: its name and which of
+/// the answer's columns of that name it is. A table may have two columns
+/// of one name, and they stay two: the n-th `a` of each process lines up
+/// with the n-th of the others (#1931).
+function columnKeys(names: string[]): string[] {
+  const seen = new Map<string, number>();
+  return names.map((name) => {
+    const nth = seen.get(name) ?? 0;
+    seen.set(name, nth + 1);
+    return `${nth}\u0000${name}`;
+  });
+}
+
 /// The answers of every process as one payload, a `process` column first.
 export function mergeOutcomes(outcomes: Outcome[]): GridPayload {
   const names: string[] = [];
+  /// The key of each of `names`, and each key's type.
+  const keysOf: string[] = [];
   const types = new Map<string, number>();
   let results = false;
   let errors = false;
@@ -97,12 +112,13 @@ export function mergeOutcomes(outcomes: Outcome[]): GridPayload {
       results = true;
       continue;
     }
-    grid.names.forEach((name, i) => {
-      if (!types.has(name)) {
-        names.push(name);
-        types.set(name, grid.types[i]);
-      } else if (types.get(name) !== grid.types[i]) {
-        types.set(name, 0);
+    columnKeys(grid.names).forEach((key, i) => {
+      if (!types.has(key)) {
+        names.push(grid.names[i]);
+        keysOf.push(key);
+        types.set(key, grid.types[i]);
+      } else if (types.get(key) !== grid.types[i]) {
+        types.set(key, 0);
       }
     });
   }
@@ -110,7 +126,7 @@ export function mergeOutcomes(outcomes: Outcome[]): GridPayload {
   // name; q-lint's own get a trailing `_` until they are unique.
   const own = (name: string): string => {
     let n = name;
-    while (types.has(n)) {
+    while (names.includes(n)) {
       n = `${n}_`;
     }
     return n;
@@ -122,7 +138,8 @@ export function mergeOutcomes(outcomes: Outcome[]): GridPayload {
   const cells: string[][] = columns.map(() => []);
   const raw: unknown[][] = columns.map(() => []);
   let count = 0;
-  const at = new Map(columns.map((c, i) => [c, i]));
+  // q-lint's own are unique among the names; a table's are found by key.
+  const at = new Map([...keysOf.map((key, i): [string, number] => [key, 1 + i]), [resultName, columns.indexOf(resultName)], [errorName, columns.indexOf(errorName)]]);
   const push = (process: string, values: Map<number, { text: string; raw: unknown }>): void => {
     columns.forEach((_, i) => {
       const v = i === 0 ? { text: process, raw: undefined } : values.get(i);
@@ -159,15 +176,15 @@ export function mergeOutcomes(outcomes: Outcome[]): GridPayload {
     const rows = grid.cells[0]?.length ?? 0;
     for (let r = 0; r < rows; r++) {
       const values = new Map<number, { text: string; raw: unknown }>();
-      grid.names.forEach((name, i) => {
+      columnKeys(grid.names).forEach((key, i) => {
         const column = grid.raw[i] ?? [];
-        values.set(at.get(name)!, { text: grid.cells[i][r] ?? "", raw: column.length === grid.cells[i].length ? column[r] : undefined });
+        values.set(at.get(key)!, { text: grid.cells[i][r] ?? "", raw: column.length === grid.cells[i].length ? column[r] : undefined });
       });
       push(o.process, values);
     }
     count += grid.count;
   }
-  const typeOf = (c: string, i: number): number => (i === 0 || c === resultName || c === errorName ? (i === 0 ? 11 : 10) : (types.get(c) ?? 0));
+  const typeOf = (c: string, i: number): number => (i === 0 || c === resultName || c === errorName ? (i === 0 ? 11 : 10) : (types.get(keysOf[i - 1]) ?? 0));
   const columnTypes = columns.map(typeOf);
   // A raw value is kept only where the column has one type and every row
   // gave one: the panel reads a column's numbers only when it has them all.

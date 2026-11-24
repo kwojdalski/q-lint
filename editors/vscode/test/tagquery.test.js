@@ -106,6 +106,36 @@ test("a table's own process, result or error column keeps its name; q-lint's giv
   assert.deepStrictEqual(merged.cells[3], ["", "down"]);
 });
 
+// Columns were kept by name alone, so the second of two named alike took
+// the first's place: flip `a`a!(1 2;3 4) merged as one column, 3 4.
+test("two columns of one name stay two, each lined up with the other processes' (#1931)", () => {
+  const twice = (first, second, more = {}) => ({
+    ok: true,
+    type: 98,
+    text: [],
+    grid: { count: 1, keys: 0, names: ["a", "a", ...Object.keys(more)], types: [7, 9, ...Object.values(more).map(() => 7)], cells: [[first], [second], ...Object.values(more).map((v) => [v])], raw: [[Number(first)], [Number(second)], ...Object.values(more).map((v) => [Number(v)])], rank: [] },
+  });
+  const merged = mergeOutcomes([
+    { process: "p1", answer: twice("1", "2.5") },
+    { process: "p2", answer: twice("3", "4.5", { b: "9" }) },
+    { process: "p3", answer: ok(grid({ a: [7, ["5"], [5]] })) },
+    { process: "p4", error: "down" },
+  ]);
+  assert.deepStrictEqual(merged.names, ["process", "a", "a", "b", "error"]);
+  assert.deepStrictEqual(merged.types, [11, 7, 9, 7, 10]);
+  assert.deepStrictEqual(merged.cells, [
+    ["p1", "p2", "p3", "p4"],
+    ["1", "3", "5", ""],
+    ["2.5", "4.5", "", ""],
+    ["", "9", "", ""],
+    ["", "", "", "down"],
+  ]);
+  assert.deepStrictEqual(merged.raw.slice(1, 4), [[1, 3, 5, null], [2.5, 4.5, null, null], [null, 9, null, null]]);
+  // q-lint's own columns still give way to a table's, however many it has of the name.
+  const own = mergeOutcomes([{ process: "p1", answer: ok({ count: 1, keys: 0, names: ["process", "process"], types: [11, 11], cells: [["x"], ["y"]], raw: [[], []], rank: [] }) }]);
+  assert.deepStrictEqual([own.names, own.cells], [["process_", "process", "process"], [["p1"], ["x"], ["y"]]]);
+});
+
 test("the count is the rows each whole result had, not only those sent", () => {
   const big = grid({ v: [7, ["1", "2"], [1, 2]] });
   big.count = 50000;
