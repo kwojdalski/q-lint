@@ -75,6 +75,15 @@ function inline(text: string, values: Record<string, LiveValue>): string {
       // character, or as written when HTML has no such name (#1552).
       .replace(/&[A-Za-z][A-Za-z0-9]{1,31};/g, (m) => hold(m)),
   );
+  // An image: one in the page as a data: URL is shown, as Send to
+  // Notebook's chart is; another is a link to it, or its alt text (#1555).
+  s = s.replace(/!\[([^\]]*)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/g, (_m, alt: string, src: string) => {
+    if (/^data:image\/(png|jpeg|gif);base64,[A-Za-z0-9+/=]+$/.test(src)) {
+      return hold(`<img alt="${alt.replace(/\u0000\d+\u0000/g, "")}" src="${src}">`);
+    }
+    const target = safeHref(src.replace(/&amp;/g, "&"));
+    return target === undefined ? alt : `${hold(`<a href="${escapeHtml(target)}">`)}${alt}${hold("</a>")}`;
+  });
   // A URL may hold balanced parentheses, as Wikipedia's do (#1554).
   s = s.replace(/\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/g, (m, label: string, href: string) => {
     // `href` is escaped already: `&amp;` reads back as `&` in an attribute.

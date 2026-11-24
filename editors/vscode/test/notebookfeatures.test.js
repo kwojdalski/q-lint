@@ -584,3 +584,10 @@ test("an HTML export keeps balanced parentheses in a link's URL (#1554)", () => 
     '<p><a href="https://en.wikipedia.org/wiki/Q_(programming_language)">Q</a> now (see <a href="https://x.io/a">a</a>)</p>',
   );
 });
+
+test("an HTML export shows a data: image as the image, and another image as a link or its alt text (#1555)", () => {
+  assert.strictEqual(markdownHtml("![chart](data:image/png;base64,iVBORw0KGgo+/=)"), '<p><img alt="chart" src="data:image/png;base64,iVBORw0KGgo+/="></p>');
+  assert.strictEqual(markdownHtml('![a "b" <c>](data:image/gif;base64,R0lG)'), '<p><img alt="a &quot;b&quot; &lt;c&gt;" src="data:image/gif;base64,R0lG"></p>');
+  assert.strictEqual(markdownHtml("![logo](https://x.io/l.png)"), '<p><a href="https://x.io/l.png">logo</a></p>');
+  assert.strictEqual(markdownHtml("![svg](data:image/svg+xml;base64,PHN2Zz4=)"), "<p>svg</p>");
+});
