@@ -468,3 +468,15 @@ test("Clear Notebook Outputs and the setup are contributed with their setting in
     for (const m of menus) assert.match(m.when, /config\.q-lint\.notebook\.stripOutputs\.enable/, command);
   }
 });
+
+test("the clean filter gives back bytes that are not UTF-8, or not a notebook, as they are (#1560)", () => {
+  const { spawnSync } = require("node:child_process");
+  for (const input of [Buffer.from("not json caf\xe9 \xff\n", "latin1"), Buffer.from('{"qnb":1,"cells":[],"x":"\xe9"}', "latin1"), Buffer.from("﻿plain\r\n")]) {
+    const run = spawnSync(process.execPath, [QNBGIT, "--strip"], { input });
+    assert.strictEqual(run.status, 0);
+    assert.deepStrictEqual(run.stdout, input);
+  }
+  // A notebook is still stripped.
+  const run = spawnSync(process.execPath, [QNBGIT, "--strip"], { input: qnb([code("1", ran(1, "1"))]) });
+  assert.doesNotMatch(run.stdout.toString(), /outputs/);
+});
