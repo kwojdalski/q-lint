@@ -368,8 +368,15 @@
     return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
   }
 
+  /// `map[key]` when `map` has it of its own: a column named constructor
+  /// or valueOf is not one of Object's.
+  function ownValue(map, key) {
+    return map && Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined;
+  }
+
   const helpers = {
     rowCount: rowCount,
+    ownValue: ownValue,
     csvCell: csvCell,
     gridMove: gridMove,
     announcement: announcement,
@@ -813,8 +820,8 @@
     d.display.forEach(function (i) {
       const c = grid.columns[i];
       let css;
-      if (feature("columnLayout") && lay.widths && lay.widths[c.name]) {
-        css = lay.widths[c.name] + "px";
+      if (feature("columnLayout") && ownValue(lay.widths, c.name)) {
+        css = ownValue(lay.widths, c.name) + "px";
       } else {
         let width = headerText(grid, i).length + 2;
         const cells = grid.cells[i];
@@ -1499,7 +1506,7 @@
   function seriesColours(grid, datasets, theme) {
     return datasets.map(function (d, i) {
       const name = d.column !== undefined && grid.columns[d.column] ? grid.columns[d.column].name : null;
-      return (feature("chartPresets") && name && state.colours[name]) || theme.colours[i % theme.colours.length];
+      return (feature("chartPresets") && name && ownValue(state.colours, name)) || theme.colours[i % theme.colours.length];
     });
   }
 
@@ -1512,8 +1519,8 @@
     const series = state.kind === "depth" || state.kind === "map" ? [] : picked.map(name);
     const colours = {};
     series.forEach(function (n) {
-      if (state.colours[n]) {
-        colours[n] = state.colours[n];
+      if (ownValue(state.colours, n)) {
+        colours[n] = ownValue(state.colours, n);
       }
     });
     const out = { kind: state.kind, series: series, bins: state.bins, colours: colours };
@@ -1624,7 +1631,7 @@
         const colour = el("input", "swatch");
         colour.type = "color";
         colour.title = "The colour of " + name;
-        colour.value = state.colours[name] || (/^#[0-9a-f]{6}$/i.test(theme.colours[picked.indexOf(c) % theme.colours.length]) ? theme.colours[picked.indexOf(c) % theme.colours.length] : "#3794ff");
+        colour.value = ownValue(state.colours, name) || (/^#[0-9a-f]{6}$/i.test(theme.colours[picked.indexOf(c) % theme.colours.length]) ? theme.colours[picked.indexOf(c) % theme.colours.length] : "#3794ff");
         colour.addEventListener("change", function () {
           state.colours[name] = colour.value;
           save();

@@ -576,3 +576,11 @@ test("Copy Pivot and Copy Matrix write each field as the grid's CSV does, a form
   }
   assert.strictEqual(panel.csvCell("=1+1"), "'=1+1");
 });
+
+test("a series or column named as an Object member has no colour or width but its own (#1393)", () => {
+  for (const name of ["constructor", "valueOf", "toString", "__proto__"]) {
+    assert.strictEqual(panel.ownValue({}, name), undefined, name);
+  }
+  assert.strictEqual(panel.ownValue({ constructor: "#ff0000" }, "constructor"), "#ff0000");
+  assert.strictEqual(panel.ownValue(undefined, "px"), undefined);
+});
