@@ -41,10 +41,11 @@ export const OPENS = new RegExp(String.raw`^(?:"(?:[^"\\]|\\.)*"|(?!\s/)[^"])*[{
 export const COMMENT = /^\s*\//;
 
 /// A q name, dots and all - `.ns.util.f`, `x.y`, `.z.p` - or a number or
-/// temporal literal (`1.5`, `1e-3`, `0x1f`, `2024.01.02`). A dot that starts
+/// temporal literal (`1.5`, `1e-3`, `0x1f`, `2024.01.02`, `0D00:00:01`,
+/// `2024.01.02D10:00:00.000`, through its colons). A dot that starts
 /// a name stays with it, so `x+.y` is `x` and `.y`; a dot that ends one does
 /// not, so `f.` is `f`.
-export const WORD = /(\d[\d.]*(?:e[+-]?\d+)?\w*)|(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)/;
+export const WORD = /(\d[\d.]*(?:[DT][\d.]*)?(?::[\d.]+)*(?:e[+-]?\d+)?\w*)|(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)/;
 
 export interface EnterRule {
   beforeText: RegExp;

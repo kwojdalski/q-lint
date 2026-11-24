@@ -8,6 +8,7 @@
 // and related names (`help/examples.json`) and the cheat sheet
 // (`help/cheatsheet.json`) are this extension's, written from what q does,
 // and test/help_q.test.js runs every one on a real q.
+import { blockDepth } from "./statements";
 import { inStringOrComment } from "./temporal";
 
 export interface Builtin {
@@ -175,18 +176,48 @@ export function pageHtml(page: HelpPage, helpCommand: string, tryCommand?: strin
   return parts.join("\n");
 }
 
-/// The q name, or glyph run, at `character` of `line`: `.Q.s1`, `xbar`,
-/// `/:`. Undefined in a string or a comment.
+/// Whether the last of `lines`, a file's lines from its first, is
+/// commented out whole: inside a block comment, a `/` or `\` alone that
+/// opens or closes one, or at or after a `\` alone that ends the script.
+export function commentedOut(lines: string[]): boolean {
+  let depth = 0;
+  for (const [i, raw] of lines.entries()) {
+    const line = raw.replace(/\s+$/, "");
+    if (depth === 0 && line === "\\") {
+      return true;
+    }
+    const after = blockDepth(depth, line);
+    if (i === lines.length - 1) {
+      return depth > 0 || after > 0;
+    }
+    depth = after;
+  }
+  return false;
+}
+
+/// The q name, or glyph, at `character` of `line`: `.Q.s1`, `xbar`, `/:`.
+/// Undefined in a string or a comment.
 export function nameAt(line: string, character: number): { name: string; start: number; end: number } | undefined {
-  // A glyph run takes a dot only where no name starts: `:.Q.s1` is `:`
-  // and `.Q.s1`.
-  const re = /\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*|(?:[+\-*%&|^=<>~!#_$?@,'/\\:]|\.(?![A-Za-z]))+/g;
+  // Glyphs are cut as q cuts them, an operator and then its iterator:
+  // `a:-1` is `:` and `-`, `x,/:y` is `,` and `/:`. A dot is a glyph only
+  // where no name starts: `:.Q.s1` is `:` and `.Q.s1`. A symbol, `` `max ``
+  // or `` `:db/t ``, is taken whole, and is no name.
+  const re = /`[\w.]*(?::[\w.:/]*)?|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*|<>|<=|>=|::|':|\/:|\\:|[+\-*%&|^=<>~!#_$?@,'/\\:]|\.(?![A-Za-z])/g;
+  // The token the cursor is on, or failing that the one it is just after.
+  let found: { name: string; start: number; end: number } | undefined;
   for (const m of line.matchAll(re)) {
     const start = m.index ?? 0;
     const end = start + m[0].length;
-    if (character >= start && character <= end) {
-      return inStringOrComment(line, start) ? undefined : { name: m[0], start, end };
+    if (start > character) {
+      break;
+    }
+    if (character <= end) {
+      found = { name: m[0], start, end };
+      if (character < end) {
+        break;
+      }
     }
   }
-  return undefined;
+  // Through `start` itself: a `/` after a blank starts a comment.
+  return found === undefined || found.name.startsWith("`") || inStringOrComment(line, found.start + 1) ? undefined : found;
 }

@@ -13,7 +13,9 @@
 // prints it (`.Q.s`, so within the console's rows and columns), cut at the
 // limit.
 //
-//   `found`name`type`count`text!(1b;name;type;count;.Q.s, cut)  or  `found`name`view!(1b;name;1b)  or  (,`found)!,0b
+// A keyed table is type 99 as a dictionary is, so the answer says which.
+//
+//   `found`name`type`keyed`count`text!(1b;name;type;keyed;count;.Q.s, cut)  or  `found`name`view!(1b;name;1b)  or  (,`found)!,0b
 
 export const VALUE_PREVIEW = [
   "{[ns;lim]",
@@ -23,7 +25,7 @@ export const VALUE_PREVIEW = [
   " if[null n;:enlist[`found]!enlist 0b];",
   " if[n in views[];:`found`name`view!(1b;n;1b)];",
   " v:get n; qp:$[`qp in key `.Q;@[.Q.qp;v;0b];0b];",
-  " `found`name`type`count`text!(1b;n;type v;@[count;v;0N];$[1b~qp;\"\";lim sublist .Q.s v])}",
+  " `found`name`type`keyed`count`text!(1b;n;type v;$[99h=type v;98h=type key v;0b];@[count;v;0N];$[1b~qp;\"\";lim sublist .Q.s v])}",
 ].join("\n");
 
 /// The most characters of a value the process sends back.
@@ -32,7 +34,7 @@ export const PREVIEW_LIMIT = 2000;
 export type Preview =
   | { found: false }
   | { found: true; name: string; view: true }
-  | { found: true; name: string; view?: false; type: number; count?: number; text: string };
+  | { found: true; name: string; view?: false; type: number; keyed?: true; count?: number; text: string };
 
 const long = (v: unknown): number | undefined => {
   const n = typeof v === "number" ? v : typeof (v as { toNumber?: unknown } | null)?.toNumber === "function" ? (v as { toNumber: () => number }).toNumber() : undefined;
@@ -55,7 +57,7 @@ export function readPreview(raw: unknown): Preview {
     return { found: true, name, view: true };
   }
   const count = long(r.count);
-  return { found: true, name, type: long(r.type) ?? 0, ...(count !== undefined ? { count } : {}), text: text(r.text) };
+  return { found: true, name, type: long(r.type) ?? 0, ...(r.keyed === true ? { keyed: true } : {}), ...(count !== undefined ? { count } : {}), text: text(r.text) };
 }
 
 /// The names to send, as `VALUE_PREVIEW` takes them.
@@ -74,12 +76,12 @@ function fenced(code: string): string {
 }
 
 /// What a q type is called, for the hover's heading.
-function kind(type: number, partitioned: boolean): string {
+function kind(type: number, partitioned: boolean, keyed: boolean): string {
   if (type === 98) {
     return partitioned ? "partitioned table" : "table";
   }
   if (type === 99) {
-    return "dictionary";
+    return keyed ? "keyed table" : "dictionary";
   }
   if (type === 100) {
     return "lambda";
@@ -101,8 +103,9 @@ export function previewMarkdown(preview: Preview, process: string, limit = PREVI
     return `${head}: a view, not evaluated here.`;
   }
   const partitioned = preview.type === 98 && preview.text === "";
-  const count = preview.count !== undefined && preview.type >= 0 && preview.type < 100 ? `, ${preview.count.toLocaleString("en")} ${preview.type === 98 ? "rows" : "items"}` : "";
-  const parts = [`${head}: ${kind(preview.type, partitioned)}${count}`];
+  const keyed = preview.keyed === true;
+  const count = preview.count !== undefined && preview.type >= 0 && preview.type < 100 ? `, ${preview.count.toLocaleString("en")} ${preview.type === 98 || keyed ? "rows" : "items"}` : "";
+  const parts = [`${head}: ${kind(preview.type, partitioned, keyed)}${count}`];
   if (partitioned) {
     parts.push("Partitioned: not read.");
   } else {

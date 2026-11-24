@@ -68,8 +68,54 @@ test("a hover's examples carry Try it with the code as the command's argument", 
   assert.match(ticks, /``` ?q\n`a`b\n```/);
   assert.match(ticks, /gives `` `a`b ``/);
   assert.deepStrictEqual(h.nameAt("x:.Q.s1 y", 4), { name: ".Q.s1", start: 2, end: 7 });
-  assert.deepStrictEqual(h.nameAt("a,/:b", 2), { name: ",/:", start: 1, end: 4 });
+  assert.deepStrictEqual(h.nameAt("a,/:b", 2), { name: "/:", start: 2, end: 4 });
   assert.strictEqual(h.nameAt('"til 3"', 2), undefined);
+});
+
+test("the slash that starts a comment is no name, the slash of Over is", () => {
+  assert.strictEqual(h.nameAt("a:1 / note", 4), undefined);
+  assert.strictEqual(h.nameAt("/ note", 0), undefined);
+  assert.deepStrictEqual(h.nameAt("10 2/ 3", 4), { name: "/", start: 4, end: 5 });
+});
+
+test("glyphs are cut as q cuts them: an operator, then its iterator", () => {
+  const at = (line, c) => h.nameAt(line, c)?.name;
+  assert.strictEqual(at("a:-1", 2), "-");
+  assert.strictEqual(at("a:-1", 1), ":");
+  assert.strictEqual(at("s:+/x", 2), "+");
+  assert.strictEqual(at("s:+/x", 3), "/");
+  assert.strictEqual(at("r:raze x,/:y", 8), ",");
+  assert.strictEqual(at("r:raze x,/:y", 9), "/:");
+  assert.strictEqual(at("x<>y", 1), "<>");
+  assert.strictEqual(at("x<=y", 2), "<=");
+  assert.strictEqual(at("deltas-':x", 7), "':");
+  assert.strictEqual(at("a::1", 1), "::");
+  // Every one is in the catalogue.
+  for (const [line, c] of [["a:-1", 2], ["s:+/x", 2], ["r:raze x,/:y", 8], ["r:raze x,/:y", 9]]) {
+    assert.ok(catalog.has(at(line, c)), line);
+  }
+  // A cursor just after a word is still on it.
+  assert.deepStrictEqual(h.nameAt("til 3", 3), { name: "til", start: 0, end: 3 });
+});
+
+test("a symbol is no name: `max is not the builtin", () => {
+  assert.strictEqual(h.nameAt("t:`time`max`count xcol t", 8), undefined);
+  assert.strictEqual(h.nameAt("x:`last", 4), undefined);
+  assert.strictEqual(h.nameAt("(`max;`p)", 3), undefined);
+  assert.strictEqual(h.nameAt("`:db/max", 5), undefined);
+  assert.strictEqual(h.nameAt("`a:b/count", 6), undefined);
+  // The words after it still are.
+  assert.strictEqual(h.nameAt("t:`time`max`count xcol t", 19)?.name, "xcol");
+  assert.strictEqual(h.nameAt("`a`b!1 2", 4)?.name, "!");
+  assert.strictEqual(h.nameAt("`$\"x\"", 1)?.name, "$");
+});
+
+test("a line in a block comment, or after the script's end, is commented out", () => {
+  const lines = ["a:1", "/", "count the rows here", "  / nested", "\\", "count x", "\\", "count y", "\\  ", "count z"];
+  assert.deepStrictEqual(lines.map((_, i) => h.commentedOut(lines.slice(0, i + 1))), [false, true, true, true, true, false, true, true, true, true]);
+  // Nested: `/` alone inside one opens another.
+  assert.strictEqual(h.commentedOut(["/", "/", "\\", "count x"]), true);
+  assert.strictEqual(h.commentedOut(["count x"]), false);
 });
 
 test("the cheat sheet has its four sections, each item with an example and result", () => {
@@ -152,6 +198,11 @@ test("Show Help opens a page, Try it runs an example, and each refuses when turn
   assert.match(hover.contents.value, /\[Try it\]\(command:q-lint\.tryExample/);
   assert.deepStrictEqual(hover.contents.isTrusted, { enabledCommands: [h.HELP.tryExample, h.HELP.show] });
   assert.strictEqual(ui.hovers[0].provider.provideHover({ lineAt: () => ({ text: "myfun" }) }, { line: 0, character: 1 }), undefined);
+  // Nothing in a block comment, which only the lines above tell.
+  const block = ["/", "count the rows here", "\\", "count x"];
+  const doc = { lineAt: (i) => ({ text: block[i] }) };
+  assert.strictEqual(ui.hovers[0].provider.provideHover(doc, { line: 1, character: 2 }), undefined);
+  assert.ok(ui.hovers[0].provider.provideHover(doc, { line: 3, character: 2 }));
   assert.strictEqual(await stub.commands.get(h.HELP.tryExample)("til 4"), true);
   assert.deepStrictEqual(ran, ["til 4"]);
   // Try examples off: no hover, Try it refuses and sends nothing, the open page loses its links.

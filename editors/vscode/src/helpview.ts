@@ -31,7 +31,7 @@ import {
   type WebviewPanel,
 } from "vscode";
 import { editorFeatureOff, editorFeatureOn, type EditorFeature } from "./editorfeatures";
-import { examplesMarkdown, HELP, html, HelpCatalog, nameAt, pageHtml } from "./helpcatalog";
+import { commentedOut, examplesMarkdown, HELP, html, HelpCatalog, nameAt, pageHtml } from "./helpcatalog";
 import type { Live } from "./live";
 import { plainMessage } from "./history";
 
@@ -58,11 +58,18 @@ export function registerHelp(context: ExtensionContext, live: Live): HelpApi {
   let panel: WebviewPanel | undefined;
   let shown: { name: string; html: string } | undefined;
 
+  // The name at `position`, or none in a comment or a string - a block
+  // comment's lines included, which only the lines above it tell.
+  const nameUnder = (document: TextDocument, position: Position): ReturnType<typeof nameAt> => {
+    const above = Array.from({ length: position.line + 1 }, (_, i) => document.lineAt(i).text);
+    return commentedOut(above) ? undefined : nameAt(above[position.line], position.character);
+  };
+
   const hover = (document: TextDocument, position: Position): Hover | undefined => {
     if (!on("tryExamples")) {
       return undefined;
     }
-    const at = nameAt(document.lineAt(position.line).text, position.character);
+    const at = nameUnder(document, position);
     const examples = at === undefined ? [] : load().examples(at.name);
     if (at === undefined || examples.length === 0) {
       return undefined;
@@ -114,7 +121,7 @@ export function registerHelp(context: ExtensionContext, live: Live): HelpApi {
     let name = typeof given === "string" ? given : undefined;
     if (name === undefined) {
       const editor = window.activeTextEditor;
-      const at = editor === undefined ? undefined : nameAt(editor.document.lineAt(editor.selection.active.line).text, editor.selection.active.character);
+      const at = editor === undefined ? undefined : nameUnder(editor.document, editor.selection.active);
       name = at !== undefined && load().has(at.name) ? at.name : undefined;
     }
     if (name === undefined) {

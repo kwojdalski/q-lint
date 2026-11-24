@@ -86,6 +86,15 @@ test("a dotted name is one word, a number is one, and an operator splits them", 
   assert.deepStrictEqual(words("f. .z.p,`sym.x"), ["f", ".z.p", "sym.x"]);
   assert.deepStrictEqual(words("a_b:c2.d_e"), ["a_b", "c2.d_e"]);
   assert.deepStrictEqual(words("{x+y}"), ["x", "y"]);
+  // A temporal is one word through its colons and fraction.
+  assert.deepStrictEqual(words("2024.01.02D10:00:00.000 0D00:00:01 10:30:00 12:00:00.123 2024.01.02T10:00"), [
+    "2024.01.02D10:00:00.000",
+    "0D00:00:01",
+    "10:30:00",
+    "12:00:00.123",
+    "2024.01.02T10:00",
+  ]);
+  assert.deepStrictEqual(words("t:10:30;x:1 2"), ["t", "10:30", "x", "1", "2"]);
   // VS Code warns of a word pattern that matches an empty string.
   assert.ok(!WORD.test("") && !WORD.test(" +-*%"));
 });

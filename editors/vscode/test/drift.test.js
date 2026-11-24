@@ -59,12 +59,28 @@ test("definitions: top-level lambdas, in their context, with their lines", () =>
     [["f", "{x+\n/\n/note\n/\n  y}", 0, 4], ["g", "{x}", 5, 5]],
   );
   assert.deepStrictEqual(definitions("f:{x}\n/\nnote\n\\\ng:{y}").map((d) => [d.name, d.endLine]), [["f", 0], ["g", 4]]);
+  // `system "d .ns"` with a literal argument switches as `\d .ns` does.
+  assert.deepStrictEqual(
+    definitions('system "d .sys";\nh1:{x}\nsystem "d .";\nh2:{x}\nsystem "d .a.b" / note\nh3:{x}\nsystem "d ",x\nh4:{x}\n').map((d) => d.name),
+    [".sys.h1", "h2", ".a.b.h3", ".a.b.h4"],
+  );
   // An unclosed lambda, or a global assign, is no definition.
   assert.deepStrictEqual(definitions("f:{x\ng::{x}\n"), []);
 });
 
 test("texts compare without trailing blanks", () => {
   assert.strictEqual(normalized("{[x]   \n  x \t\n }"), "{[x]\n  x\n }");
+});
+
+test("a tab starting a continuation line compares as the blank q turns it into", () => {
+  // KDB-X, after \l of this file, holds "{[x]\n \ta:x;\t/c\n / note\n\n b:\"\t\";\n  \ta}".
+  const [def] = definitions('g1:{[x]\n\t\ta:x;\t/c\n\t/ note\n\n\tb:"\t";\n  \ta}\n');
+  const held = '{[x]\n \ta:x;\t/c\n / note\n\n b:"\t";\n  \ta}';
+  assert.strictEqual(normalized(def.text), normalized(held));
+  assert.deepStrictEqual(driftRows([{ file: "a.q", def }], readDrift({ name: "g1", state: "lambda", text: held })).map((r) => r.status), ["same"]);
+  // Only the first character of a line after the first: a tab inside one, or on the first, stays.
+  assert.notStrictEqual(normalized("{[x]\n a;\tb}"), normalized("{[x]\n a; b}"));
+  assert.notStrictEqual(normalized("{\t[x]\n a}"), normalized("{ [x]\n a}"));
 });
 
 test("drift rows and their summary", () => {

@@ -24,7 +24,10 @@ const registry = new tm.Registry({
       ? tm.parseRawGrammar(fs.readFileSync(grammarPath, "utf8"), grammarPath)
       : scope === "source.k"
         ? tm.parseRawGrammar(fs.readFileSync(kPath, "utf8"), kPath)
-        : null,
+        : scope === "source.python"
+          ? // A stand-in: what matters is where the embedded block ends.
+            tm.parseRawGrammar(JSON.stringify({ scopeName: "source.python", patterns: [] }), "python.json")
+          : null,
 });
 const grammar = registry.loadGrammar("source.q");
 
@@ -133,6 +136,27 @@ test("a slash after whitespace opens a comment, and one after a value is over", 
 test("a lone backslash ends the script, and what follows is comment", async () => {
   const scopes = await scopesOf("x:1\n\\\ny:2", "y:2");
   assert.ok(scopes[0].startsWith("comment.block.end-of-script.q"), scopes[0]);
+});
+
+test("a p) block runs on past a blank line to the next indented one, and ends at column 0", async () => {
+  const g = await grammar;
+  let stack = tm.INITIAL;
+  const embedded = {};
+  for (const line of ["p)def f(x):", "    y = x", "", "    return y", "", "z:1"]) {
+    const r = g.tokenizeLine(line, stack);
+    for (const t of r.tokens) {
+      const word = line.slice(t.startIndex, t.endIndex).trim();
+      if (word !== "") embedded[word] = t.scopes.includes("meta.embedded.block.python.q");
+    }
+    stack = r.ruleStack;
+  }
+  assert.strictEqual(embedded["return y"] ?? embedded.return, true, JSON.stringify(embedded));
+  assert.strictEqual(embedded.z ?? embedded["z:1"], false, JSON.stringify(embedded));
+  // A k) block likewise.
+  const k1 = g.tokenizeLine("k)f:{x+", tm.INITIAL);
+  const k2 = g.tokenizeLine("", k1.ruleStack);
+  const k3 = g.tokenizeLine(" 1}", k2.ruleStack);
+  assert.ok(k3.tokens.every((t) => t.scopes.includes("meta.embedded.block.k.q")), JSON.stringify(k3.tokens));
 });
 
 test("a k) line is k, coloured by the k grammar, and the next q line is q again", async () => {
