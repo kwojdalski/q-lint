@@ -93,6 +93,17 @@ export function symbolLiteral(name: string): string {
   return /^(?:[A-Za-z0-9.][A-Za-z0-9_.]*)?$/.test(name) ? `\`${name}` : `\`$${stringLiteral(name)}`;
 }
 
+/// `::`, or an operator with its iterators, where an item ends. `,:`, `,'`
+/// and `,/` are left out: `-3!` writes the monadic `,`, join-each and raze
+/// so too.
+const VERB = /^(?:::|[-+*%&|^=<>~#_$?@.!][:/\\']*)(?=[;)\]]|$)/;
+
+/// `enlist x` for a list of the one item `x`, in parentheses when it is no
+/// noun: `enlist ::` is `enlist` itself, and `enlist +` a 'rank (#1968).
+function lone(item: string): string {
+  return /^(?:[A-Za-z0-9"`({]|-\.?\d)/.test(item) ? `enlist ${item}` : `enlist(${item})`;
+}
+
 /// `code` with what q writes but will not read back rewritten, outside
 /// strings: each monadic `,` - at the start, or after `(`, `;`, `[`, `{`,
 /// `!` or another `,` - as `enlist ` (q refuses `,"x"`, and q-sql splits a
@@ -120,6 +131,14 @@ export function readable(code: string): string {
     if (ch === '"') {
       inString = true;
     } else if (ch === "," && (last === "" || "(;[{!,".includes(last))) {
+      // No noun - `::`, an operator - is taken in parentheses (#1968).
+      const verb = VERB.exec(code.slice(i + 1))?.[0];
+      if (verb !== undefined) {
+        out += `enlist(${verb})`;
+        i += verb.length;
+        last = ")";
+        continue;
+      }
       out += "enlist ";
       last = "";
       continue;
@@ -326,7 +345,7 @@ export function exactLiteral(raw: unknown[]): { literal: string; cut: boolean } 
       cut ||= item.cut;
       items.push(item.literal);
     }
-    return { literal: items.length === 1 ? `enlist ${items[0]}` : `(${items.join(";")})`, cut };
+    return { literal: items.length === 1 ? lone(items[0]) : `(${items.join(";")})`, cut };
   }
   // A dictionary, its keys in parentheses unless they are one already, and
   // a table as its dictionary flipped (#1746).
@@ -360,7 +379,7 @@ export function columnLiteral(type: number, items: string[]): string {
     return `"${LETTERS[type] ?? ""}"$()`;
   }
   if (items.length === 1) {
-    return `enlist ${items[0]}`;
+    return lone(items[0]);
   }
   // Symbols side by side when each is bare: `a`b`c.
   if ((type === 11 || (type >= 20 && type <= 76)) && items.every((s) => /^`[A-Za-z0-9_.]*$/.test(s))) {

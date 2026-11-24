@@ -265,6 +265,36 @@ test("a minute, second or time of 100 hours or more is cast from its count: q ca
   assert.strictEqual(tableLiteral(minutes).code, '([] c0:(0Nu;"u"$6000))');
 });
 
+test("a lone item that is no noun, the generic null or an operator, is enlisted in parentheses (#1968)", () => {
+  // KDB-X: enlist :: is enlist itself, and enlist + a 'rank.
+  const one = (type, cell, raw) => tableLiteral({ count: 1, keys: 0, names: ["c"], types: [type], cells: [[cell]], raw: [[raw]], rank: [[0]] }).code;
+  assert.strictEqual(one(0, "::", false), "([] c:enlist(::))");
+  assert.deepStrictEqual(["+", "+/", "-:", "#:", "'", ":"].map((v) => one(0, v, false)), ["+", "+/", "-:", "#:", "'", ":"].map((v) => `([] c:enlist(${v}))`));
+  // A noun is written as it was.
+  assert.deepStrictEqual([one(0, '"ab"', false), one(0, "1 2", false), one(0, "{x+1}", false), one(6, "0N", null), one(7, "-1", -1), one(9, "-0w", -Infinity), one(11, "a", undefined)], [
+    '([] c:enlist "ab")',
+    "([] c:enlist 1 2)",
+    "([] c:enlist {x+1})",
+    "([] c:enlist 0Ni)",
+    "([] c:enlist -1)",
+    "([] c:enlist -0w)",
+    "([] c:enlist `a)",
+  ]);
+  // One enlisted inside an item, as -3! writes it with a comma.
+  assert.deepStrictEqual([",::", ",,::", "(,::;1)", ",+", ",-:", "(,`a)!,::", ",-1", ",:"].map((v) => atomLiteral(0, v, false).literal), [
+    "enlist(::)",
+    "enlist enlist(::)",
+    "(enlist(::);1)",
+    "enlist(+)",
+    "enlist(-:)",
+    "(enlist `a)!enlist(::)",
+    "enlist -1",
+    "enlist :",
+  ]);
+  assert.strictEqual(atomLiteral(0, "(1.5;,::)", ["l", [["f", 1.5], ",::"]]).literal, "(1.5f;enlist(::))");
+  assert.strictEqual(atomLiteral(0, ",::", ["l", ["::"]]).literal, "enlist(::)");
+});
+
 test("a char cell's literal is written from its byte: one past ASCII as its octal escape (#1489)", () => {
   // GRID's cells of "\303\251" decode as U+FFFD; its raw is the bytes.
   assert.strictEqual(atomLiteral(10, "\ufffd", 0xc3).literal, '"\\303"');

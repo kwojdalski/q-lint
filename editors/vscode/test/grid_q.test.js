@@ -249,6 +249,19 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
     assert.deepStrictEqual((await connection.query(statements(filled.code), SIZE)).text, [",2"]);
   });
 
+  await t.test("an exported q literal rebuilds a lone generic null or operator, which enlist alone would not take (#1968)", async () => {
+    const { tableLiteral } = require("../out/qliteral.js");
+    const items = ["(::)", "(+)", "(+/)", "(+:)", "(-:)", "(#:)", "(-)", "(%)", "(.)", "(@)", "enlist(::)", "enlist enlist(::)", "(enlist(::);1)", "enlist(+)", "enlist(-:)", "(1.5;enlist(::))", "enlist(1.5;(::))", "(enlist`a)!enlist(::)", "(1 2!3 4;::)", "{x+1}", "+[1]", "-1", "-0w"];
+    // Not enlist (:) or enlist (') inside an item: -3! writes them ,: and ,' as it writes the monadic comma and join-each.
+    const tables = ["([] c0:enlist 0Nh; c1:enlist (::); c2:enlist 0Nd; c3:enlist 0w)", "([] c:enlist (:))", "([] c:((:);1))", "([] c:enlist ('))", "([] c:((');1))", ...items.flatMap((v) => [`([] c:enlist ${v})`, `([] c:(${v};1))`, `([] c:enlist enlist ${v})`])];
+    for (const code of tables) {
+      const grid = (await connection.queryGrid(statements(code), SIZE, 100)).grid;
+      const literal = tableLiteral(grid).code;
+      const same = await connection.query(statements(`(${code})~${literal}`), SIZE);
+      assert.deepStrictEqual(same.text, ["1b"], `${code}\nwritten as\n${literal}`);
+    }
+  });
+
   await t.test("an exported q literal rebuilds a one-character string in a list, a symbol starting with _ and the other awkward cells (0.29.0 bug)", async () => {
     const { tableLiteral } = require("../out/qliteral.js");
     const tables = [
