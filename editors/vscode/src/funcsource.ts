@@ -22,6 +22,8 @@
 // that names the function is a mention - `value`, `@` or `.` by name, which
 // q resolves when it runs, from the root, whatever the lambda's context. A
 // local, a parameter, a string or a comment that spells the name is neither.
+// A view (`v::expr`) has a lambda's type too, and `get` of its name
+// evaluates it: the root's views (`views[]`) are not read (#1864).
 // Works on kdb+ (KDB-X) and PeachQ; held there by funcsource_q.test.js.
 import { isProduction } from "./agent";
 import type { Process } from "./processes";
@@ -71,7 +73,7 @@ export const CALLERS = [
   "  kids:$[ns~`.;`$();k where{$[99h=type x;$[11h=type key x;(::)~first x;0b];0b]}each d k];",
   "  todo,:(` sv'ns,'kids)except ex;",
   "  k:k where 100h=type each d k;",
-  "  fns,:$[ns~`.;k;` sv'ns,'k]];",
+  "  fns,:$[ns~`.;k except views[];` sv'ns,'k]];",
   " rs:{[c;x]$[(null c)|\".\"=first string x;x;` sv`,c,x]};",
   " calls:{[rs;f]v:value f;g:v 3;(rs[first g]each(1_g)except`),raze .z.s[rs]each v where 100h=type each v}[rs];",
   " says:{[f]k:@[-4!;last value f;{()}];raze{`$1_\"`\"vs x}each k where\"`\"=first each k};",

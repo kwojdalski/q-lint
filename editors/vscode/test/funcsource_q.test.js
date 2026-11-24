@@ -147,6 +147,20 @@ test("callers are read from what q parsed: globals in context, nested lambdas, a
   assert.deepStrictEqual(all.callers.find((x) => x.name === "m").params, ["x"]);
 });
 
+// A view has a lambda's type, 100h, and `get` of its name evaluates it: it
+// is not read as a caller, and one that signals does not fail the read
+// (#1864).
+test("callers are found on a process with views, and no view is evaluated (#1864)", { skip }, async (t) => {
+  const c = await connect(t, FUNCTIONS + "tab:([] a:1 2)\nspy::select from tab\nbad::1+`a\ncalls::f[1;2]\n");
+  const pending = () => c.call('{[x] string system"B"}', 0);
+  assert.deepStrictEqual(await pending(), ["bad", "calls", "spy"]);
+  const all = readCallers(await c.call(CALLERS, EXCLUDED, "f", 1000));
+  assert.deepStrictEqual(all.callers.map((x) => `${x.name} ${x.how}`).sort(), ["byname mentions", "m calls"]);
+  const without = readCallers(await (await connect(t, FUNCTIONS)).call(CALLERS, EXCLUDED, "f", 1000));
+  assert.strictEqual(all.scanned, without.scanned);
+  assert.deepStrictEqual(await pending(), ["bad", "calls", "spy"]);
+});
+
 test("a table's details: meta, attributes, keys, rows and bytes", { skip }, async (t) => {
   const c = await connect(t, 't:([]a:`s#1 2 3;b:`g#`x`y`z;c:("ab";"c";"d"))\nk:([id:1 2]v:3 4)\n.ns.e:([]x:`long$())\n');
   const info = readTableInfo(await c.call(TABLE_INFO, "t", 30));

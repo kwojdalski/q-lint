@@ -51,3 +51,19 @@ test("function definitions are searched everywhere but q's own, ignoring case", 
   // Nothing was assigned.
   assert.deepStrictEqual(await connection.call("{[x] key `.}", 0), ["top", "tradeCount"]);
 });
+
+// A view has a lambda's type, 100h, and reading it by name evaluates it:
+// it is neither searched as a function nor run (#1864).
+test("a process with views is searched, and no view is evaluated (#1864)", { skip }, async (t) => {
+  const { connection } = await connect(t, SERVER + "trade:([] a:1 2)\nspy::select from trade\nbad::1+`a\n");
+  const pending = () => connection.call('{[x] string system"B"}', 0);
+  assert.deepStrictEqual(await pending(), ["bad", "spy"]);
+  // As many functions as the same process has without its views.
+  const plain = readFound(await (await connect(t, SERVER)).connection.call(SEARCH, "trade", false, 100));
+  for (const vars of [false, true]) {
+    const found = readFound(await connection.call(SEARCH, "trade", vars, 100));
+    assert.deepStrictEqual(found.hits.filter((h) => h.kind === "function").map((h) => h.name), ["top", ".lib.f", ".lib.sub.g"]);
+    assert.strictEqual(found.scanned, plain.scanned);
+  }
+  assert.deepStrictEqual(await pending(), ["bad", "spy"]);
+});
