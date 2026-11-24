@@ -513,6 +513,18 @@ function targetOf(process: Process, password: string | undefined): Target {
   };
 }
 
+/// The process a connection opened to `opened` is to once the saved process
+/// it was is edited to `saved`: it takes the new label, tags and connect
+/// script, and keeps its address and tunnel until connected again - and,
+/// moved, its old tags as well (#1443).
+function stillOpen(opened: Process, saved: Process): Process {
+  const { host, port, user, tls } = opened;
+  return withExtras(
+    withScript({ label: saved.label, host, port, ...(user !== undefined ? { user } : {}), tags: openTags(opened, saved), ...(tls ? { tls } : {}) }, scriptOf(saved)),
+    { ...saved, ssh: opened.ssh },
+  );
+}
+
 /// Why nothing was sent: a question asked about `expected`, and another
 /// process became active while it was open (#1081). Callers that send
 /// after a modal or an input box pass the label they asked about as
@@ -551,8 +563,10 @@ export class Live {
   /// A connect in progress, so a second one waits for it instead of opening
   /// another.
   private connecting: Promise<boolean> | undefined;
-  /// The process `connecting` connects to, as `passwordKey` names it.
+  /// The process `connecting` connects to, as `passwordKey` names it, and
+  /// as it becomes the active one: edited or tagged meanwhile, as it is now (#1700).
   private connectingTo: string | undefined;
+  private connectingAs: Process | undefined;
   /// Set by Disconnect, or a connect to another process, to stop a
   /// reconnect after an abort from trying again.
   private reconnectStopped = false;
@@ -1352,20 +1366,16 @@ export class Live {
     if (process.label !== old.label) {
       await this.rebind(old.label, process.label);
     }
+    // One being connected to is connected to as it is now (#1700).
+    if (this.connectingAs?.label === old.label && this.connectingAs.server === undefined) {
+      this.connectingAs = stillOpen(this.connectingAs, process);
+      this.connectingTo = passwordKey(process);
+    }
     const active = this.active;
     if (active?.label === old.label && active.server === undefined) {
-      // The connection is still to where it was opened: it takes the new
-      // label and tags, and keeps its address until connected again - and,
-      // moved, its old tags as well (#1443).
+      // The connection is still to where it was opened (#1443).
       const { host, port, user, tls } = active;
-      this.active = withExtras(
-        withScript(
-          { label: process.label, host, port, ...(user !== undefined ? { user } : {}), tags: openTags(active, process), ...(tls ? { tls } : {}) },
-          scriptOf(process),
-        ),
-        // The tunnel it was opened through stays until connected again.
-        { ...process, ssh: active.ssh },
-      );
+      this.active = stillOpen(active, process);
       this.showStatus();
       // The explorer keeps what it read under the label it read it for.
       if (process.label !== old.label && this.activeLabel() !== undefined) {
@@ -1451,6 +1461,11 @@ export class Live {
     const saved = this.active?.server === undefined ? this.processes().find((p) => p.label === this.active?.label) : undefined;
     if (this.active !== undefined && saved !== undefined) {
       this.active = { ...this.active, tags: openTags(this.active, saved) };
+    }
+    // And one being connected to, once it connects (#1700).
+    const pending = this.connectingAs?.server === undefined ? this.processes().find((p) => p.label === this.connectingAs?.label) : undefined;
+    if (this.connectingAs !== undefined && pending !== undefined) {
+      this.connectingAs = { ...this.connectingAs, tags: openTags(this.connectingAs, pending) };
     }
   }
 
@@ -1814,6 +1829,7 @@ export class Live {
     const free = untilFree ? new AbortController() : undefined;
     this.untilFree = free;
     this.connectingTo = passwordKey(process);
+    this.connectingAs = process;
     this.connecting = (async () => {
       if (this.connection !== undefined) {
         const old = this.connection;
@@ -1859,7 +1875,7 @@ export class Live {
           return false;
         }
         this.connection = connection;
-        this.active = process;
+        this.active = this.connectingAs ?? process;
         // The process as it is when a message comes or the connection
         // closes, not as connected to: it may be renamed or tagged since (#1699).
         connection.whenAsync((message) => {
@@ -1904,6 +1920,7 @@ export class Live {
       }
     })().finally(() => {
       this.connecting = undefined;
+      this.connectingAs = undefined;
     });
     return this.connecting;
   }

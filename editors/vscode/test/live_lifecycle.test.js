@@ -116,3 +116,28 @@ test("an auto-reconnect connects to the process as it is now, renamed and tagged
   assert.ok(stub.messages.some(([, m]) => m === "q-lint: the connection to a2 closed. Reconnecting."), JSON.stringify(stub.messages));
   assert.ok(stub.messages.some(([, m]) => m === "q-lint: reconnected to a2."));
 });
+
+test("Edit Process during a connect connects under the new label and tags (#1700)", async (t) => {
+  const a = await fakeQ(() => null, 400);
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)]);
+  const connecting = live.connectTo("a");
+  await sleep(50);
+  await editProcess("a", "a2", a.port, "prod");
+  assert.strictEqual(await connecting, true);
+  assert.strictEqual(live.activeLabel(), "a2");
+  assert.deepStrictEqual(live.activeProcess().tags, ["prod"]);
+  assert.notStrictEqual(live.guardRefuses("a::1", [live.activeProcess()]), undefined);
+});
+
+test("Tag Process during a connect gives the connection its tags (#1700)", async (t) => {
+  const a = await fakeQ(() => null, 400);
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)]);
+  const connecting = live.connectTo("a");
+  await sleep(50);
+  stub.inputs.push("prod");
+  await stub.commands.get("q-lint.tagProcess")("a");
+  assert.strictEqual(await connecting, true);
+  assert.deepStrictEqual(live.activeProcess().tags, ["prod"]);
+});
