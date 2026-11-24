@@ -2339,8 +2339,8 @@ node out/qnbrun.js report.qnb --process localhost:5001 \
 ```
 
 A value is q text, so a string is `-p name '"text"'`. `--process` is
-`host:port`, or a label in `--processes FILE`, a list as **Export Process
-List** writes it, which also names the processes `/ @process` cells ask
+`host:port`, or a label in `--processes FILE`, a list as **Export
+Processes** writes it, which also names the processes `/ @process` cells ask
 for. A password is never an argument: it is read from `QLINT_Q_PASSWORD`
 for `--process` only, or `QLINT_Q_PASSWORD_<LABEL>` for a listed process (its label in capitals,
 anything but a letter or digit as `_`), with `--user` for `host:port`. A

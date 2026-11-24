@@ -296,7 +296,7 @@ usage: node qnbrun.js NOTEBOOK.qnb --process HOST:PORT|LABEL [options]
   --process HOST:PORT      the process cells run on unless they say
                            \`/ @process <label>\`; or a label in --processes
   -p, --param NAME VALUE   a parameter, as q text; repeat for more
-  --processes FILE         a process list, as q-lint: Export Process List
+  --processes FILE         a process list, as q-lint: Export Processes
                            writes it, for labels
   --user USER              the user for --process HOST:PORT
   --tls                    connect to --process HOST:PORT with TLS
