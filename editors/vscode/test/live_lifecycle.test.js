@@ -172,3 +172,25 @@ test("Abort says the connection went, though the reconnect after it fails (#1702
   assert.strictEqual(live.activeLabel(), undefined);
   assert.ok(events.includes("disconnected"), JSON.stringify(events));
 });
+
+test("Tag Process and Import Processes retagging the connected process say so (#1703)", async (t) => {
+  const a = await fakeQ();
+  t.after(() => a.close());
+  const { live, events } = await setUp(t, [proc("a", a.port)]);
+  await live.connectTo("a");
+  events.length = 0;
+  stub.inputs.push("prod");
+  await stub.commands.get("q-lint.tagProcess")("a");
+  assert.deepStrictEqual(events, ["edited"]);
+  // Tagged as it was: nothing to redraw.
+  stub.inputs.push("prod");
+  await stub.commands.get("q-lint.tagProcess")("a");
+  assert.deepStrictEqual(events, ["edited"]);
+  events.length = 0;
+  const fs = vscode.workspace.fs;
+  t.after(() => (vscode.workspace.fs = fs));
+  vscode.workspace.fs = { readFile: async () => Buffer.from(JSON.stringify({ processes: [proc("a", a.port, { tags: ["prod", "uat"] })] })) };
+  await stub.commands.get("q-lint.importProcesses")(vscode.Uri.file("/x.json"));
+  assert.deepStrictEqual(live.activeProcess().tags, ["prod", "uat"]);
+  assert.deepStrictEqual(events, ["edited"]);
+});

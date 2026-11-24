@@ -1462,7 +1462,12 @@ export class Live {
   private retagActive(): void {
     const saved = this.active?.server === undefined ? this.processes().find((p) => p.label === this.active?.label) : undefined;
     if (this.active !== undefined && saved !== undefined) {
+      const was = this.active.tags;
       this.active = { ...this.active, tags: openTags(this.active, saved) };
+      // What is drawn by its tags, as the environment colour, is redrawn (#1703).
+      if (this.active.tags.join(",") !== was.join(",") && this.activeLabel() !== undefined) {
+        this.changed.fire("edited");
+      }
     }
     // And one being connected to, once it connects (#1700).
     const pending = this.connectingAs?.server === undefined ? this.processes().find((p) => p.label === this.connectingAs?.label) : undefined;
