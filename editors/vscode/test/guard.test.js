@@ -1026,3 +1026,25 @@ test("a writer taken out of .q with @ or . enlist is a change (#1726)", () => {
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("an amend or ! through an adverb or a composition is a change (#1771)", () => {
+  const cases = {
+    "@/[`.;`a;:;9]": ["amends `. in place"],
+    "@/[`b;::;1+]": ["amends `b in place"],
+    "(@/)[`.;`a;:;9]": ["amends `. in place"],
+    "'[::;@][`.;`a;:;9]": ["amends `. in place"],
+    "'[::;(@)][`.;`a;:;9]": ["amends `. in place"],
+    "'[::;!][`t;();0b;(enlist`a)!enlist 9]": ["updates or deletes from `t in place with !"],
+    "'[::;.][`:o.txt;();,;1 2]": ["amends `:o.txt in place"],
+    // On a value, an index, or another function, it reads.
+    "@/[b;::;1+]": [],
+    "'[::;@][t;0]": [],
+    "'[::;@][`t;0]": [],
+    "'[neg;+][1;2]": [],
+    "+/[1 2 3]": [],
+    ",/[`a;`b]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

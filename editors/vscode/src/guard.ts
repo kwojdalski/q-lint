@@ -49,7 +49,8 @@
 //   parentheses (`` .[(`t);..] ``), with three arguments or four: an
 //   amend in place - on a symbol it is never a trap, `.[`f;args;h]`
 //   amends `f` or fails (#1763); `![` with four likewise, a functional
-//   update or delete. Also with the target left
+//   update or delete. Also through an adverb or applied first in a
+//   composition (`` @/[`.;`a;:;9] ``, `` '[::;@][..] ``), with the target left
 //   out and given after (`` @[;`a;:;1] `. ``), and the amend or `!`
 //   passed as a value (`` .[@;(`.;`a;:;1)] ``, `` (@) . (`.;..) ``);
 // - `value`, `get`, `eval` or `-6!`, or in k code a monadic `.`
@@ -268,6 +269,40 @@ function items(t: Token[], open: number): [number, number][] {
   return out;
 }
 
+/// The amend, `@`, `.` or `!`, that the bracket opening at `t[open]` applies,
+/// or "": right before it, in parentheses, `` (@)[`.;`a;:;1] `` (#1445), as
+/// many pairs as are written (#1730), through an adverb, `` @/[`.;`a;:;9] ``,
+/// or applied first in a composition, `` '[::;@][`.;`a;:;9] `` (#1771).
+function amendBefore(t: Token[], open: number): string {
+  let p = open - 1;
+  let parens = 0;
+  for (;;) {
+    if (t[p]?.kind === "close" && t[p].text === ")") {
+      parens++;
+      p--;
+    } else if (t[p]?.kind === "op" && ["/", "\\", "'"].includes(t[p].text) && t[p - 1]?.kind === "op") {
+      p--;
+    } else {
+      break;
+    }
+  }
+  let op: Token | undefined = t[p];
+  if (op?.kind === "close" && op.text === "]") {
+    // A composition, `'[f;g]`: the last function is applied first.
+    let o = p;
+    for (let depth = 0; o >= 0; o--) {
+      if (t[o].kind === "close") depth++;
+      else if (t[o].kind === "open" && --depth === 0) break;
+    }
+    const all = o > 0 && t[o - 1].kind === "op" && t[o - 1].text === "'" ? items(t, o) : [];
+    const last = all.length > 1 ? t.slice(all[all.length - 1][0], all[all.length - 1][1]).filter((k) => k.text !== "(" && k.text !== ")") : [];
+    op = last.length === 1 ? last[0] : undefined;
+    p = o - 1;
+  }
+  const wrapped = Array.from({ length: parens }, (_, n) => t[p - 1 - n]).every((k) => k?.text === "(" && k.kind === "open");
+  return op?.kind === "op" && ["@", ".", "!"].includes(op.text) && wrapped ? op.text : "";
+}
+
 /// The fewest arguments with which `@` and `.` amend a variable by name -
 /// three, with a unary, `` @[`t;`c;neg] `` - and `!` updates or deletes.
 function minimum(amend: string): number {
@@ -476,13 +511,8 @@ function readStatement(statement: string, found: Set<string>): void {
           }
         }
       }
-      // Also in parentheses, `` (@)[`.;`a;:;1] `` (#1445), as many pairs
-      // as are written: `` ((@))[`.;`a;:;1] `` (#1730).
-      let parens = 0;
-      while (t[i - 1 - parens]?.text === ")") parens++;
-      const wrapped = Array.from({ length: parens }, (_, n) => t[i - 2 - parens - n]).every((o) => o?.text === "(" && o.kind === "open");
-      const amend = t[i - 1 - parens]?.kind === "op" && wrapped ? t[i - 1 - parens].text : "";
-      if (k.text === "[" && (amend === "@" || amend === "." || amend === "!")) {
+      const amend = k.text === "[" ? amendBefore(t, i) : "";
+      if (amend !== "") {
         const args = items(t, i);
         // The target, or with it left out, what the projection is applied
         // to: `` @[;`a;:;1] `. ``, `` .[;();:;5][`a] ``.
