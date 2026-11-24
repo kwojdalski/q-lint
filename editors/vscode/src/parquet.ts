@@ -26,7 +26,7 @@
 // is one past what they hold: a timestamp after 2262.04.11, whose Unix
 // nanoseconds pass 2^63, or a date past 2^31 Unix days.
 import { charText, type GridPayload } from "./grid";
-import { distinctNames, plainItem, rawColumn, textNull } from "./qliteral";
+import { distinctNames, itemValue, rawColumn, textNull } from "./qliteral";
 
 // --- Thrift's compact protocol, the little of it a footer needs
 
@@ -241,8 +241,12 @@ function valueOf(type: number, text: string, raw: unknown, lost: { n: number }):
         const millis = BigInt(ms) + EPOCH_MILLIS;
         return millis >= -INT64_MAX - 1n && millis <= INT64_MAX ? millis : past();
       }
-    case 0:
-      return plainItem(text);
+    case 0: {
+      // A string column: a number's every digit, not -3!'s \P text, and a
+      // null as null (#2088).
+      const item = itemValue(text, raw);
+      return "number" in item ? item.number : "null" in item ? null : "boolean" in item ? text : item.text;
+    }
     case 10:
       return charText(text, raw);
     default:

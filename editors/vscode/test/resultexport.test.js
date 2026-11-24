@@ -436,6 +436,23 @@ test("a string cut at 200 characters is written as its characters up to the cut,
   assert.deepStrictEqual(['"caf\\303\\251 \\303...', '"\\346\\227\\245\\346\\227...', '"ab\\30...', '"x\\"...', '"ab\\\\...'].map(plainItem), ["café ...", "日...", "ab...", 'x"...', "ab\\..."]);
 });
 
+test("Excel and Parquet write a general list's float with every digit, as JSON does (#2088)", () => {
+  // GRID's payload of ([] l:(acos -1;0n;"x";1b;7;9007199254740993)).
+  assert.deepStrictEqual(xlsxCell(0, "3.141593", Math.PI), { n: Math.PI });
+  assert.deepStrictEqual(xlsxCell(0, "0.1e", Math.fround(0.1)), { n: 0.1 });
+  assert.deepStrictEqual(xlsxCell(0, "0n", false), undefined);
+  assert.deepStrictEqual(xlsxCell(0, '"x"', false), { t: "x" });
+  assert.deepStrictEqual(xlsxCell(0, "1b", false), { b: true });
+  assert.deepStrictEqual(xlsxCell(0, "7", false), { n: 7 });
+  assert.deepStrictEqual(xlsxCell(0, "9007199254740993", false), { t: "9007199254740993" });
+  const p = { count: 3, keys: 0, names: ["l"], types: [0], cells: [["3.141593", "0n", '"x"']], raw: [[Math.PI, false, false]], rank: [[]] };
+  const file = toParquet(p, [0, 1, 2]).data;
+  assert.ok(file.includes(Buffer.from("3.141592653589793")), "every digit");
+  assert.ok(!file.includes(Buffer.from("3.141593")) && !file.includes(Buffer.from("0n")), "no \\P text, no q null");
+  const sheet = unzip(exportResult("xlsx", p, -1).data)["xl/worksheets/sheet1.xml"];
+  assert.match(sheet, /<c r="A2"><v>3\.141592653589793<\/v><\/c>/);
+});
+
 test("JSON writes a general list's integers, booleans and nulls as JSON's own, as it does a float's (#2086)", () => {
   // KDB-X -3! of each item of ([] a:(1;0n;2.5;0Nj;1b;0x01;`a;"x";enlist "y";1 2;0Wh;-0we;0Ni;`;-7i;9007199254740993)).
   const cells = ["1", "0n", "2.5", "0N", "1b", "0x01", "`a", '"x"', ',"y"', "1 2", "0Wh", "-0we", "0Ni", "`", "-7i", "9007199254740993"];

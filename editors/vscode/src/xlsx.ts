@@ -18,7 +18,7 @@
 // 16,384 columns; a grid with more is cut there, and the notes say so.
 import { deflateRawSync } from "node:zlib";
 import { charText, textBuffer, type GridPayload } from "./grid";
-import { plainItem, rawColumn, textNull } from "./qliteral";
+import { itemValue, plainItem, rawColumn, textNull } from "./qliteral";
 import { rankEdge, xlsxRules, type FormatRule } from "./resultlook";
 
 /// One file of a zip: its name and its bytes.
@@ -218,9 +218,26 @@ export function xlsxCell(type: number, text: string, raw: unknown): Cell {
   if (type >= 12 && type <= 19 && raw !== undefined) {
     return temporalSerial(type, Number(raw)) ?? { t: text };
   }
+  // A general list's number as a number, every digit of a float, its
+  // boolean and its null Excel's own, as JSON writes them (#2088); a long
+  // Excel would round keeps its digits as text.
+  let plain = type === 10 ? charText(text, raw) : text;
+  if (type === 0) {
+    const item = itemValue(text, raw);
+    if ("number" in item) {
+      const n = Number(item.number);
+      return /[.e]/.test(item.number) || Number.isSafeInteger(n) ? { n } : { t: item.number };
+    }
+    if ("boolean" in item) {
+      return { b: item.boolean };
+    }
+    if ("null" in item) {
+      return undefined;
+    }
+    plain = item.text;
+  }
   // Excel's limit on a cell's text, one unit less when the cut would split
   // a surrogate pair (#1811), as assist's cut does.
-  const plain = type === 0 ? plainItem(text) : type === 10 ? charText(text, raw) : text;
   const end = /[\uD800-\uDBFF]/.test(plain[32766] ?? "") ? 32766 : 32767;
   return { t: plain.length > 32767 ? plain.slice(0, end) : plain };
 }
