@@ -58,11 +58,16 @@ interface LocalQ {
 }
 
 /// Start a q listening on the loopback with `TPLOG_INIT` loaded, and
-/// connect to it. Throws why it could not.
+/// connect to it. Throws why it could not. The loopback is open to every
+/// local user, and the q runs code as you: it takes only a password made
+/// for this start (`.z.pw`), which is in its init file - in a directory
+/// only you can read - and never shown or kept (#1574). q answers no
+/// connection before the init file has run.
 export async function startLocalQ(binary: string, env: Record<string, string>, timeoutMs = 15_000): Promise<LocalQ> {
   const dir = mkdtempSync(path.join(os.tmpdir(), "qlint-tplog-"));
   const init = path.join(dir, "qlint_tplog.q");
-  writeFileSync(init, `${TPLOG_INIT}\n`);
+  const password = randomBytes(24).toString("hex");
+  writeFileSync(init, `.z.pw:{[u;p] p~"${password}"};\n${TPLOG_INIT}\n`, { mode: 0o600 });
   const port = await freePort();
   const child = spawn(binary, [init, "-p", `127.0.0.1:${port}`], { cwd: dir, env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   const local = { child, dir, port, output: "" } as LocalQ;
@@ -77,7 +82,7 @@ export async function startLocalQ(binary: string, env: Record<string, string>, t
       throw new Error(`the local q did not start (${binary}): ${failed?.message ?? (local.output.trim() || `exit code ${child.exitCode}`)}`);
     }
     try {
-      local.connection = await QConnection.open({ host: "127.0.0.1", port }, 1000);
+      local.connection = await QConnection.open({ host: "127.0.0.1", port, user: "qlint", password }, 1000);
       return local;
     } catch {
       if (Date.now() > until) {
