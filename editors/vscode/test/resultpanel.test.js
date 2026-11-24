@@ -429,9 +429,18 @@ test("a watched query's next run replaces its result in place: the same id, no n
   assert.deepStrictEqual(next.grid.cells, [["2"]]);
   assert.strictEqual(next.history.length, 1);
   assert.deepStrictEqual(next.diff.changes, [[0, 0, "1"]]);
-  // Another query on show is not replaced: a run of `w` then is a new result.
+  // Another query on show stays on show: `w`'s next run replaces its own
+  // tab where it is, adding none and taking the panel from none (#1636).
   modes.show({ ...result([3]), code: "other" }, live());
   modes.show({ ...result([4]), code: "w" }, live(), true);
+  modes.show({ ...result([5]), code: "w" }, live(), true);
+  assert.strictEqual(page.posted.at(-1).code, "other");
+  assert.deepStrictEqual(page.posted.at(-1).history.map((h) => [h.code, h.rows]), [["w", 1], ["other", 1]]);
+  assert.strictEqual(page.posted.at(-1).history[0].id, first.id);
+  page.receive({ type: "select", id: page.posted.at(-1).id, pick: first.id });
+  assert.deepStrictEqual(page.posted.at(-1).grid.cells, [["5"]]);
+  // A run of `w` that is not watched is a new result.
+  modes.show({ ...result([6]), code: "w" }, live());
   assert.notStrictEqual(page.posted.at(-1).id, first.id);
   assert.strictEqual(page.posted.at(-1).history.length, 3);
   assert.strictEqual(fake.pages.length, 1);

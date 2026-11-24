@@ -439,9 +439,10 @@ export class QueryModes {
   /// the value was tabular. False when it belongs in the output instead.
   /// `held`: it was asked for with `wantsHold`, so the process holds a
   /// result cut at the limit.
-  /// `inPlace`, for a watched query's next run (#914): when the result on
-  /// show is of the same code and process, it is replaced under its id, so
-  /// the page keeps its view, sort, filters and scroll, and no tab is added.
+  /// `inPlace`, for a watched query's next run (#914): a kept result of the
+  /// same code and process is replaced under its id, so the page keeps its
+  /// view, sort, filters and scroll, and no tab is added. One not on show
+  /// is replaced where it is, and the result on show stays (#1636).
   show(result: { process: string; code: string; millis: number; answer: GridAnswer; held?: boolean }, live: LiveSettings, inPlace = false): boolean {
     const { answer } = result;
     if (live.mode === "console" || !answer.ok) {
@@ -456,7 +457,8 @@ export class QueryModes {
     }
     const features = this.viewSettings();
     const last = features.enable.diff ? this.previous.get(result.code) : undefined;
-    const replaced = inPlace && this.shown?.code === result.code && this.shown.process === result.process ? this.shown : undefined;
+    const replaced = inPlace ? [...this.history].reverse().find((h) => h.code === result.code && h.process === result.process) : undefined;
+    const onShow = replaced === undefined || replaced === this.shown;
     // A saved query's result keeps its look; any other starts from the
     // last run of its code.
     const saved = replaced?.saved ?? (this.expecting !== undefined && result.code.includes(this.expecting.code) ? this.expecting.name : undefined);
@@ -495,7 +497,9 @@ export class QueryModes {
     } else {
       this.history.push(shown);
     }
-    this.shown = shown;
+    if (onShow) {
+      this.shown = shown;
+    }
     this.applyFeatures(features);
     if (replaced === undefined) {
       // A command's request was for the result it was asked on: a page
