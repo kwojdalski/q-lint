@@ -2958,8 +2958,10 @@ export class Live {
   /// editor is run, read by the guard, after asking when it is a production
   /// one (unless `askProduction` is false: the caller asked already).
   async runOnProcess(code: string, label: string, options: { what?: string; mode?: QueryMode; askProduction?: boolean } = {}): Promise<void> {
-    // `named` also finds a discovered or shared process (#1425).
-    const process = this.named(label) ?? (this.active?.label === label ? this.active : undefined);
+    // The connected process when it is the one named - a saved process may
+    // share a discovered one's label (#1711) - and `named` also finds a
+    // discovered or shared process (#1425).
+    const process = this.activeLabel() === label ? this.active : this.named(label) ?? (this.active?.label === label ? this.active : undefined);
     if (process !== undefined && isProduction(process) && options.askProduction !== false) {
       const yes = "Run";
       const sure = await window.showWarningMessage(

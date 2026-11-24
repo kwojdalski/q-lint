@@ -323,3 +323,16 @@ test("an unanswered heartbeat's warning stays through an edit of the process (#1
   await sleep(1200);
   assert.match(live.api().statusText(), /no answer/);
 });
+
+test("a drill-down on the connected discovered prod process asks first, though a saved process has its label (#1711)", async (t) => {
+  const a = await fakeQ(() => 1);
+  const b = await fakeQ(() => 1);
+  t.after(() => (a.close(), b.close()));
+  const { live } = await setUp(t, [proc("srv/rdb", b.port)]);
+  assert.strictEqual(await live.open({ label: "srv/rdb", server: "srv", host: "127.0.0.1", port: a.port, tags: ["prod"] }), true);
+  let asked;
+  stub.picks.push(({ message }) => ((asked = message), undefined));
+  await live.runOnProcess("select from t", "srv/rdb", { what: "drill-down query" });
+  assert.match(asked ?? "", /srv\/rdb is a production process/);
+  assert.deepStrictEqual(a.sent, []);
+});
