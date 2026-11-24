@@ -522,3 +522,12 @@ test("a file saved from a bound untitled editor is matched by its text, recently
   assert.strictEqual(savedFrom("a:1", [{ label: "prod", text: "a:1", at: now }], now, 5000, now - 60000), undefined);
   assert.strictEqual(savedFrom("a:1", [{ label: "prod", text: "a:1", at: now }], now, 5000, now - 10), "prod");
 });
+
+test("an unwrapped datetime is cut to the millisecond as KDB-X cuts it, not rounded (#1757)", () => {
+  // KDB-X: "z"$0.99999999999 -1e-9, 0.5 and 1.5 ms, and 1561.428 (stored as
+  // 1561.4279999999999), which a plain floor writes as .199.
+  assert.strictEqual(atomText(0.99999999999, -15), "2000.01.01T23:59:59.999");
+  assert.strictEqual(atomText(-1e-9, -15), "1999.12.31T23:59:59.999");
+  assert.strictEqual(vectorText([0.5 / 86400000, 1.5 / 86400000], 15), "2000.01.01T00:00:00.000 2000.01.01T00:00:00.001");
+  assert.strictEqual(atomText(1561.4279999999999, -15), "2004.04.10T10:16:19.200");
+});

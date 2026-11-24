@@ -205,7 +205,9 @@ function temporalText(x: number | bigint | LongLike, t: number): string | undefi
     case 14:
       return ymd(new Date(EPOCH_MS + n * DAY_MS));
     case 15: {
-      return ymdhms(new Date(EPOCH_MS + Math.round(n * DAY_MS)));
+      // KDB-X rounds the float days to the microsecond and cuts that to the
+      // millisecond: 0.99999999999 is 23:59:59.999, not the next day (#1757).
+      return ymdhms(new Date(EPOCH_MS + Math.floor(Math.round(n * DAY_MS * 1000) / 1000)));
     }
     case 17:
       return clock(n, "minute");
