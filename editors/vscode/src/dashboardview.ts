@@ -177,7 +177,8 @@ export class Dashboards {
     const tile: Tile = { id: randomBytes(6).toString("hex"), query: name, process, view: "table", refresh: 0 };
     const next = { ...d, tiles: [...d.tiles, tile] };
     await this.save(withDashboard(this.list(), next));
-    if (this.shown === next.name) this.render(next, true);
+    // Only the new tile runs: the others are drawn from what they showed.
+    if (this.shown === next.name) this.render(next, false);
     return tile.id;
   }
 

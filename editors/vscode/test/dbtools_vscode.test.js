@@ -344,6 +344,27 @@ test("a tile drawn again after a layout change keeps the time it ran at (#1341)"
   dashboards.close();
 });
 
+// Adding a tile drew the dashboard with "run every tile": a tile set to
+// refresh only when asked ran again because another was added.
+test("adding a tile to an open dashboard runs the new tile only (#1789)", async (t) => {
+  capture();
+  const { live, context } = await setUp(t);
+  await context.workspaceState.update(SAVED_QUERIES_KEY, [{ name: "px", code: "select from trade" }, { name: "py", code: "select from quote" }]);
+  const ran = [];
+  live.runApart = async (_p, code) => (ran.push(code), { ok: true, type: -7, text: ["1"] });
+  const dashboards = new Dashboards(context, live);
+  stub.inputs.push("Desk");
+  stub.picks.push("$(add) New dashboard...");
+  await stub.commands.get(DB_COMMANDS.addToDashboard)("px", undefined, "hdb");
+  await stub.commands.get(DB_COMMANDS.openDashboard)("Desk");
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepStrictEqual(ran, ["select from trade"]);
+  await stub.commands.get(DB_COMMANDS.addToDashboard)("py", "Desk", "hdb");
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepStrictEqual(ran, ["select from trade", "select from quote"]);
+  dashboards.close();
+});
+
 // Add to Dashboard offers discovered and shared processes, but a tile ran
 // only on a saved one: "There is no saved process desk/rdb", every time.
 test("a tile on a discovered process runs on it (#1122)", async (t) => {
