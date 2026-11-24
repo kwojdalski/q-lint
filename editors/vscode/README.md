@@ -74,7 +74,9 @@ to a process you add and connect to, and sends only the code you run.
   Commits...** adds the last 5 to 50 from git. Each point is of a commit
   exported with `git archive` to a temporary directory and linted there -
   nothing is checked out, and a q file git ignores (build output) is in the
-  counts of the folder but in no point of the trend. It reads files and sends nothing to a q process
+  counts of the folder but in no point of the trend. A folder below the
+  repository's top is linted, at each commit, under the configuration above
+  it, as it is in the working tree. It reads files and sends nothing to a q process
   (`q-lint.problemsDashboard.enable`).
 - **Format Document** applies the fixes `qlinter --fix` makes - those that
   cannot change a working program - and nothing else: it is not a

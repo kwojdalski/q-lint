@@ -11,7 +11,7 @@
 // exported with `git archive` to a directory of its own and linted there,
 // never checked out.
 import { execFile, spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { launchable } from "./batch";
@@ -214,15 +214,30 @@ export async function lintTree(qlinter: string, args: string[], dir: string): Pr
   return readFindings(stdout.trim() === "" ? "[]" : stdout);
 }
 
+/// The repository `dir` is in: its top level, and `dir`'s path below it
+/// (`pkg/sub/`; empty at the top). Undefined outside one.
+async function within(dir: string): Promise<{ top: string; prefix: string } | undefined> {
+  const got = await run("git", ["rev-parse", "--show-toplevel", "--show-prefix"], dir).catch(() => undefined);
+  if (got === undefined || got.code !== 0) {
+    return undefined;
+  }
+  const [top, prefix = ""] = got.stdout.split(/\r?\n/);
+  return top === "" ? undefined : { top, prefix };
+}
+
 /// The commit `HEAD` is, its date and subject, and whether a q file differs
-/// from it; undefined outside a git repository or before a first commit.
+/// from it - or a configuration, in the folder or in a directory above it,
+/// where qlinter looks for one too (#1897); undefined outside a git
+/// repository or before a first commit.
 export async function head(dir: string): Promise<{ commit: string; date: string; subject: string; clean: boolean } | undefined> {
   const log = await run("git", ["log", "-1", "--format=%H%x00%cI%x00%s"], dir).catch(() => undefined);
   if (log === undefined || log.code !== 0 || log.stdout.trim() === "") {
     return undefined;
   }
   const [commit, date, subject] = log.stdout.trim().split("\0");
-  const status = await run("git", ["status", "--porcelain", "--", "*.q", "*.toml"], dir).catch(() => undefined);
+  const above = ((await within(dir))?.prefix ?? "").split("/").filter((part) => part !== "");
+  const configurations = above.map((_, i) => `:(top,glob)${above.slice(0, i).map((part) => `${part.replace(/[\\*?[]/g, "\\$&")}/`).join("")}*.toml`);
+  const status = await run("git", ["status", "--porcelain", "--", "*.q", "*.toml", ...configurations], dir).catch(() => undefined);
   return { commit, date, subject: subject ?? "", clean: status !== undefined && status.code === 0 && status.stdout.trim() === "" };
 }
 
@@ -243,10 +258,17 @@ export async function history(dir: string, count: number): Promise<{ commit: str
 
 /// The findings of `commit`: its q files and configuration exported with
 /// `git archive` into a directory of its own and linted there; the
-/// directory is removed after. The working tree is never touched.
+/// directory is removed after. The working tree is never touched. The
+/// export is of the whole repository and `dir`'s place in it is what is
+/// linted, so a configuration above `dir` counts as it does in the working
+/// tree (#1897); a commit without `dir` has nothing to lint.
 export async function lintCommit(qlinter: string, args: string[], dir: string, commit: string): Promise<Finding[]> {
   if (!/^[0-9a-f]{7,64}$/.test(commit)) {
     throw new Error(`not a commit: ${commit}`);
+  }
+  const repository = await within(dir);
+  if (repository === undefined) {
+    throw new Error(`git archive ${commit} failed: ${dir} is not in a git repository`);
   }
   const out = await mkdtemp(join(tmpdir(), "qlint-trend-"));
   try {
@@ -256,7 +278,7 @@ export async function lintCommit(qlinter: string, args: string[], dir: string, c
         reject(new Error(`git archive ${commit} failed: ${git === undefined ? "git" : "tar"} is not on PATH`));
         return;
       }
-      const archive = spawn(git, ["archive", "--format=tar", commit], { cwd: dir, windowsHide: true });
+      const archive = spawn(git, ["archive", "--format=tar", commit], { cwd: repository.top, windowsHide: true });
       const tar = spawn(tarBinary, ["-x", "-f", "-", "-C", out], { windowsHide: true });
       archive.stdout.pipe(tar.stdin);
       let failed = "";
@@ -276,7 +298,9 @@ export async function lintCommit(qlinter: string, args: string[], dir: string, c
       archive.on("close", done("git archive"));
       tar.on("close", done("tar"));
     });
-    return await lintTree(qlinter, args, out);
+    const place = join(out, repository.prefix);
+    await mkdir(place, { recursive: true });
+    return await lintTree(qlinter, args, place);
   } finally {
     await rm(out, { recursive: true, force: true });
   }
