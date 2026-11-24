@@ -42,6 +42,11 @@ test("a live value's expression runs to its }}, braces and q strings balanced", 
   assert.strictEqual(scanLive("{{q: 1+1}", 0), undefined);
   assert.strictEqual(scanLive("{{q:   }}", 0), undefined);
   assert.strictEqual(scanLive("{{q: a\n\nb}}", 0), undefined);
+  // A line of blanks, or a CRLF blank line, ends the paragraph too (#1468).
+  assert.strictEqual(scanLive("{{q: a\n \t\nb}}", 0), undefined);
+  assert.strictEqual(scanLive("{{q: a\r\n\r\nb}}", 0), undefined);
+  assert.deepStrictEqual(liveExpressions("a {{q: 1+\n \n2}} b"), []);
+  assert.deepStrictEqual(scanLive("{{q: a\r\nb}}", 0), { expr: "a\r\nb", end: 11 });
 });
 
 test("expressions are found once each, never in code; a q symbol's backtick opens no code span", () => {

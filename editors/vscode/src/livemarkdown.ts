@@ -31,6 +31,9 @@ export const LIVE = [
 
 export type LiveValue = { text: string } | { error: string };
 
+/// What follows a newline that ends a paragraph: a line that is blank.
+const BLANK_AFTER = /^[ \t]*\r?\n/;
+
 /// What `expr` stood in for, from text to its `}}`: the expression's start
 /// and the index after the `}}`, or undefined when it is never closed.
 /// Braces inside it - a lambda, a dictionary - must balance, and a brace in
@@ -51,8 +54,9 @@ export function scanLive(text: string, at: number): { expr: string; end: number 
       }
     } else if (c === '"') {
       quoted = true;
-    } else if (c === "\n" && text[i + 1] === "\n") {
-      // A blank line ends a paragraph, and the expression with it.
+    } else if (c === "\n" && BLANK_AFTER.test(text.slice(i + 1))) {
+      // A blank line - empty, of spaces and tabs, or a CRLF one - ends a
+      // paragraph, and the expression with it (#1468).
       return undefined;
     } else if (c === "{") {
       depth++;
