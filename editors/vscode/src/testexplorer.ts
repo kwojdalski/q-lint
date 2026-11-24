@@ -476,8 +476,9 @@ class QTests {
       for (const item of chosen) {
         const entry = this.entries.get(item)!;
         // Turned off mid-run is a cancel: what is still queued is not sent,
-        // and what was set up is still torn down (#1277).
-        if (token.isCancellationRequested || !on()) {
+        // and what was set up is still torn down (#1277). Stop cancels the
+        // run's own token, the one a run VS Code did not start has (#1597).
+        if (token.isCancellationRequested || run.token.isCancellationRequested || !on()) {
           run.skipped(item);
           outcome(item, "skipped");
           continue;

@@ -46,7 +46,7 @@ function fakeVscode(files = {}) {
           return profile;
         },
         createTestRun(request, name) {
-          const run = { request, name, events: [], output: "", coverage: [] };
+          const run = { request, name, events: [], output: "", coverage: [], token: { isCancellationRequested: false } };
           for (const e of ["enqueued", "started", "passed", "failed", "errored", "skipped"]) {
             run[e] = (item, extra) => run.events.push([e, item.id, extra]);
           }

@@ -138,7 +138,7 @@ function fakeTests() {
           return profile;
         },
         createTestRun(request, name) {
-          const run = { request, name, events: [], output: "" };
+          const run = { request, name, events: [], output: "", token: { isCancellationRequested: false } };
           for (const e of ["enqueued", "started", "passed", "failed", "errored", "skipped"]) {
             run[e] = (item, extra) => run.events.push([e, item.id, extra?.message ?? extra]);
           }
@@ -561,4 +561,26 @@ test("a run whose selection holds a file and one of its tests runs that test onc
   const good = file.children.list[0];
   await made[0].profiles[0].handler(new vscode.TestRunRequest([file, good]), { isCancellationRequested: false });
   assert.deepStrictEqual(live.sent.map((s) => s.statements.at(-1)), [".t.test_good[]", ".t.test_bad[]"]);
+});
+
+test("Stop stops a Re-run Failed run: what is still queued is not sent (#1597)", async () => {
+  stub.reset();
+  const made = fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  stub.config.user["testExplorer.failedTests.enable"] = true;
+  const live = fakeLive();
+  const explorer = registerTestExplorer(stub.newContext(), live, () => ({ sendRequest: async () => LISTED }));
+  await explorer.discover();
+  await explorer.run();
+  // Stop pressed as the re-run starts: VS Code cancels the run's token.
+  const createTestRun = made[0].createTestRun.bind(made[0]);
+  made[0].createTestRun = (...args) => {
+    const run = createTestRun(...args);
+    run.token.isCancellationRequested = true;
+    return run;
+  };
+  live.sent.length = 0;
+  await stub.commands.get("q-lint.rerunFailedTests")();
+  assert.deepStrictEqual(live.sent, []);
+  assert.deepStrictEqual(explorer.results().map((r) => r.state), ["skipped"]);
 });
