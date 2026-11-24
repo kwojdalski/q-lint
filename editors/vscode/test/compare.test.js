@@ -67,6 +67,24 @@ test("a column only one side has differs in every row; the same tables are the s
   assert.deepStrictEqual([same.same, same.differing], [true, 0]);
 });
 
+test("a repeated column name is matched occurrence by occurrence, not to the first of that name (#1964)", () => {
+  // flip `a`a!(1 2;3 4) against flip `a`a!(1 2;9 9).
+  const twice = (second) => ({ ok: true, type: 98, text: [], grid: { count: 2, keys: 0, names: ["a", "a"], types: [7, 7], cells: [["1", "2"], second.map(String)], raw: [[1, 2], second], rank: [[], []] } });
+  const c = compareOutcomes(side("a", twice([3, 4])), side("b", twice([9, 9])), -1);
+  assert.deepStrictEqual(c.columns, ["a", "a"]);
+  assert.deepStrictEqual(c.rows, [
+    { left: ["1", "3"], right: ["1", "9"], differs: [false, true] },
+    { left: ["2", "4"], right: ["2", "9"], differs: [false, true] },
+  ]);
+  assert.deepStrictEqual([c.same, c.differing], [false, 2]);
+  assert.strictEqual(compareOutcomes(side("a", twice([3, 4])), side("b", twice([3, 4])), -1).same, true);
+  // The second a is a column only that side has.
+  const once = compareOutcomes(side("a", twice([3, 4])), side("b", table({ a: [7, ["1", "2"], [1, 2]] })), -1);
+  assert.deepStrictEqual([once.columns, once.inLeft, once.inRight, once.same, once.differing], [["a", "a"], [true, true], [true, false], false, 2]);
+  const other = compareOutcomes(side("b", table({ b: [7, ["1", "2"], [1, 2]], a: [7, ["1", "2"], [1, 2]] })), side("a", twice([3, 4])), -1);
+  assert.deepStrictEqual([other.columns, other.inLeft, other.inRight], [["b", "a", "a"], [true, true, false], [false, true, true]]);
+});
+
 test("floats are compared by their values, whatever decimals the grid shows (#1963)", () => {
   const a = side("a", table({ f: [9, ["1.2345"], [1.2345]] }));
   const b = side("b", table({ f: [9, ["1.2346"], [1.2346]] }));

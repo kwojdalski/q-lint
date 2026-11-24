@@ -161,9 +161,22 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number)
   const gb = hb.grid;
   const namesA = ga.columns.map((c) => c.name);
   const namesB = gb.columns.map((c) => c.name);
-  const columns = [...namesA, ...namesB.filter((n) => !namesA.includes(n))];
-  const indexA = columns.map((n) => namesA.indexOf(n));
-  const indexB = columns.map((n) => namesB.indexOf(n));
+  // A name a table repeats, as a join can, is matched occurrence by
+  // occurrence: the second `a` with the other side's second (#1964).
+  const nth = (names: string[]): string[] => {
+    const seen = new Map<string, number>();
+    return names.map((n) => {
+      const k = seen.get(n) ?? 0;
+      seen.set(n, k + 1);
+      return `${k}\u0000${n}`;
+    });
+  };
+  const idsA = nth(namesA);
+  const idsB = nth(namesB);
+  const ids = [...idsA, ...idsB.filter((n) => !idsA.includes(n))];
+  const columns = ids.map((id) => id.slice(id.indexOf("\u0000") + 1));
+  const indexA = ids.map((id) => idsA.indexOf(id));
+  const indexB = ids.map((id) => idsB.indexOf(id));
   const keysA = ga.columns.filter((c) => c.key).length;
   const keysB = gb.columns.filter((c) => c.key).length;
   const byKey = keysA > 0 && keysA === keysB && namesA.slice(0, keysA).join("\u0000") === namesB.slice(0, keysB).join("\u0000");

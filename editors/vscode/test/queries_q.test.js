@@ -192,6 +192,18 @@ test("Compare Query compares two real q processes' values, not the digits they w
   assert.deepStrictEqual([(await compare("count fx", "a", "b")).same, across.state().comparison.digits], [true, false]);
 });
 
+test("Compare Query compares each of two columns of one name on two real q processes (#1964)", { skip }, async (t) => {
+  const a = await startQ(t, "d:3 4\n");
+  const b = await startQ(t, "d:9 9\n");
+  const { across } = await setUp(t, [proc("a", a.port), proc("b", b.port)]);
+  await stub.commands.get("q-lint.compareQuery")("flip `a`a!(1 2;d)", "a", "b");
+  const c = across.state().comparison;
+  assert.deepStrictEqual([c.columns, c.same, c.differing], [["a", "a"], false, 2]);
+  assert.deepStrictEqual(c.rows.map((r) => [r.left.join(" "), r.right.join(" "), r.differs.map(Number).join("")]), [["1 3", "1 9", "01"], ["2 4", "2 9", "01"]]);
+  await stub.commands.get("q-lint.compareQuery")("flip `a`a!(1 2;1+1 2)", "a", "b");
+  assert.strictEqual(across.state().comparison.same, true);
+});
+
 test("a saved query runs on a real q process, its placeholder asked for (#912)", { skip }, async (t) => {
   const q = await startQ(t, "trade:([] sym:`a`b`a; px:1 2 3f)\n");
   const { live, saved, editor, last } = await setUp(t, [proc("rdb", q.port)]);
