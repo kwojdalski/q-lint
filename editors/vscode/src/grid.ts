@@ -475,6 +475,24 @@ export function sortText(cell: string): string {
   return m[1].replace(/\\([0-7]{3}|.)/gs, (_, e: string) => (e.length === 3 ? String.fromCharCode(parseInt(e, 8)) : (named[e] ?? e)));
 }
 
+/// Two texts in code point order, as q sorts a symbol or a string by its
+/// UTF-8 bytes: JavaScript's `<` compares UTF-16 units, which puts an
+/// astral character (an emoji) before U+E000-U+FFFF (#1642).
+export function codePointOrder(a: string, b: string): number {
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    const x = a.charCodeAt(i);
+    const y = b.charCodeAt(i);
+    if (x !== y) {
+      // A surrogate is half of an astral character: after every BMP one.
+      const sx = x >= 0xd800 && x <= 0xdfff;
+      const sy = y >= 0xd800 && y <= 0xdfff;
+      return sx !== sy ? (sx ? 1 : -1) : x < y ? -1 : 1;
+    }
+  }
+  return a.length < b.length ? -1 : a.length > b.length ? 1 : 0;
+}
+
 /// Ranks over a whole column, as `GRID` gives them: equal values share one.
 export function denseRank(n: number, compare: (a: number, b: number) => number): number[] {
   const order = [...Array(n).keys()].sort((a, b) => compare(a, b) || a - b);
@@ -510,7 +528,7 @@ export function appendPage(payload: GridPayload, page: GridPage): GridPayload {
     const texts = values === undefined ? column.map(sortText) : [];
     const compare = values !== undefined
       ? (a: number, b: number) => (values[a] < values[b] ? -1 : values[a] > values[b] ? 1 : 0)
-      : (a: number, b: number) => (texts[a] < texts[b] ? -1 : texts[a] > texts[b] ? 1 : 0);
+      : (a: number, b: number) => codePointOrder(texts[a], texts[b]);
     return denseRank(column.length, compare);
   });
   return { ...payload, count: page.count, cells, raw, rank };

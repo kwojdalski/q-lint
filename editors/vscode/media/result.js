@@ -21,6 +21,22 @@
     return grid.cells.length === 0 ? 0 : grid.cells[0].length;
   }
 
+  /// Two texts in code point order, as q sorts them: grid.ts's
+  /// codePointOrder (#1642).
+  function textOrder(a, b) {
+    const n = Math.min(a.length, b.length);
+    for (let i = 0; i < n; i++) {
+      const x = a.charCodeAt(i);
+      const y = b.charCodeAt(i);
+      if (x !== y) {
+        const sx = x >= 0xd800 && x <= 0xdfff;
+        const sy = y >= 0xd800 && y <= 0xdfff;
+        return sx !== sy ? (sx ? 1 : -1) : x < y ? -1 : 1;
+      }
+    }
+    return a.length < b.length ? -1 : a.length > b.length ? 1 : 0;
+  }
+
   /// The rows to show, in order: those whose cells hold each column's filter
   /// text (ignoring case), sorted by `sort` ({column, descending}) when set.
   /// A column the process ranked sorts by its rank, as q's `xasc` or
@@ -48,7 +64,7 @@
       const cells = grid.cells[sort.column];
       const up = rank
         ? function (a, b) { return rank[a] - rank[b]; }
-        : function (a, b) { return cells[a] < cells[b] ? -1 : cells[a] > cells[b] ? 1 : 0; };
+        : function (a, b) { return textOrder(cells[a], cells[b]); };
       rows.sort(function (a, b) { return (sort.descending ? up(b, a) : up(a, b)) || a - b; });
     }
     return rows;
@@ -299,7 +315,7 @@
         if (rank) {
           return rank[first.get(a)] - rank[first.get(b)];
         }
-        return a < b ? -1 : a > b ? 1 : 0;
+        return textOrder(a, b);
       });
       return { of: function (r) { return cells[r]; }, order: order };
     };
@@ -418,6 +434,7 @@
     defaultPivot: defaultPivot,
     AGGREGATIONS: AGGREGATIONS,
     visibleRows: visibleRows,
+    textOrder: textOrder,
     chartColumns: chartColumns,
     binsFrom: binsFrom,
     span: span,

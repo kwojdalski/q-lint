@@ -6,7 +6,7 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const Long = require("long");
-const { GRID, readGridAnswer, toGrid, toCsv, csvField, csvText, cellText, typeName, rowCount } = require("../out/grid.js");
+const { GRID, readGridAnswer, toGrid, toCsv, csvField, csvText, cellText, typeName, rowCount, appendPage, codePointOrder } = require("../out/grid.js");
 const { RUN } = require("../out/query.js");
 const panel = require("../media/result.js");
 const charts = require("../media/chartspec.js");
@@ -604,4 +604,16 @@ test("a real's raw number is the shortest decimal its float32 reads back as, for
   // An unwrapped result, decoded here.
   const { gridOfQ } = require("../out/qformat.js");
   assert.deepStrictEqual(gridOfQ({ kind: "vector", t: 8, attr: 0, v: [wide, null] }, 100).raw, [[0.1, null]]);
+});
+
+test("a page added to a symbol column ranks it in code point order, as q sorts by UTF-8 bytes; the page's text sort too (#1642)", () => {
+  const first = { count: 3, keys: 0, names: ["s"], types: [11], cells: [["\uff21"]], raw: [[]], rank: [[0]] };
+  const page = { count: 3, names: ["s"], types: [11], cells: [["\u{1f600}", "z"]], raw: [[]], rank: [[1, 0]] };
+  // z, fullwidth A, then the emoji.
+  assert.deepStrictEqual(appendPage(first, page).rank[0], [1, 2, 0]);
+  assert.ok(codePointOrder("\uff21", "\u{1f600}") < 0);
+  assert.ok(codePointOrder("a", "ab") < 0);
+  assert.strictEqual(codePointOrder("x", "x"), 0);
+  const grid = { columns: [{ name: "s" }], cells: [["\u{1f600}", "\uff21", "z"]], rank: [null], values: [null] };
+  assert.deepStrictEqual(panel.visibleRows(grid, [], { column: 0, descending: false }), [2, 1, 0]);
 });
