@@ -14,7 +14,7 @@ import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import type { Live, ProcessArg } from "./live";
 import { launchOf, withExtras, type Launch, type Process } from "./processes";
 import { iconsEscaped, plainMessage } from "./history";
-import { signalGroup } from "./lifeline";
+import { lifeline, signalGroup } from "./lifeline";
 
 /// How long a process has to end after SIGTERM before it is killed.
 const STOP_GRACE_MS = 3000;
@@ -237,6 +237,8 @@ export class Launcher {
     }
     const started: Started = { child, channel, port: process.port };
     this.started.set(process.label, started);
+    // Ended with the extension host, even when it is killed (#1676).
+    lifeline(child);
     child.once("close", (code, signal) => {
       if (this.started.get(process.label)?.child === child) {
         this.started.delete(process.label);
