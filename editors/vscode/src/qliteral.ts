@@ -256,12 +256,71 @@ export function atomLiteral(type: number, text: string, raw: unknown): { literal
         const real = text.endsWith("e");
         return ok(`${numberText(real ? Number(realValue(raw)) : raw)}${real ? "e" : "f"}`);
       }
+      // An item with floats or reals inside, sent as they are (#1502).
+      if (type === 0 && Array.isArray(raw)) {
+        const exact = exactLiteral(raw);
+        if (exact !== undefined) {
+          return exact;
+        }
+      }
       // A general list's item: `-3!` of it, or a string written as one,
       // made readable.
       // Cut, it ends `...` or `..`, as no whole item does but a symbol
       // ending in dots, which is taken as cut too (#1484).
       return { literal: text === "" ? "()" : readable(readableSymbols(text)), cut: text.endsWith("..") };
   }
+}
+
+/// A float's or a real's literal, without a suffix: its null and
+/// infinities as q writes them in a list of their type.
+function floatText(x: unknown, real: boolean): string {
+  if (typeof x !== "number" || Number.isNaN(x)) {
+    return real ? "0N" : "0n";
+  }
+  if (!Number.isFinite(x)) {
+    return x < 0 ? "-0w" : "0w";
+  }
+  return numberText(real ? Number(realValue(x)) : x);
+}
+
+/// The literal of a general list's item that `GRID` sent with its floats
+/// and reals: `("f";x)` or `("e";x)` for one, `("F";v)` or `("E";v)` for a
+/// list of them (a real as its float), and `("l";v)` for a general list,
+/// each item its own such pair or, holding none, its `-3!` text. Undefined
+/// for anything else.
+export function exactLiteral(raw: unknown[]): { literal: string; cut: boolean } | undefined {
+  const [tag, v] = raw;
+  if (raw.length !== 2) {
+    return undefined;
+  }
+  if (tag === "f" || tag === "e") {
+    const n = floatText(v, tag === "e");
+    return { literal: tag === "e" || (typeof v === "number" && Number.isFinite(v)) ? `${n}${tag}` : n, cut: false };
+  }
+  if ((tag === "F" || tag === "E") && Array.isArray(v)) {
+    const real = tag === "E";
+    if (v.length < 2) {
+      return { literal: v.length === 0 ? `"${real ? "e" : "f"}"$()` : `enlist ${exactLiteral([real ? "e" : "f", v[0]])!.literal}`, cut: false };
+    }
+    const items = v.map((x) => floatText(x, real));
+    // A suffix where the items alone would not say the type.
+    const suffix = real ? "e" : items.every((n) => /^[-0-9]+$/.test(n)) ? "f" : "";
+    return { literal: `${items.join(" ")}${suffix}`, cut: false };
+  }
+  if (tag === "l" && Array.isArray(v) && v.length > 0) {
+    let cut = false;
+    const items: string[] = [];
+    for (const x of v) {
+      const item = Array.isArray(x) ? exactLiteral(x) : typeof x === "string" ? atomLiteral(0, x, false) : undefined;
+      if (item === undefined) {
+        return undefined;
+      }
+      cut ||= item.cut;
+      items.push(item.literal);
+    }
+    return { literal: items.length === 1 ? `enlist ${items[0]}` : `(${items.join(";")})`, cut };
+  }
+  return undefined;
 }
 
 /// A column's literal over `rows`: `enlist x` for one item, `(x;y;...)`

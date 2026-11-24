@@ -25,7 +25,11 @@
 //          decoded as UTF-8, which a byte past ASCII alone is not. For a
 //          general column, each float or real item as a float, which `-3!`
 //          writes to `\P` digits, and `0b` for any other item (not a null,
-//          which the codec makes of `` ` ``); `()` for the rest
+//          which the codec makes of `` ` ``) but one with floats or reals
+//          inside: `("F";v)` or `("E";v)` for a list of them (a real as its
+//          float), and `("l";v)` for a general list of at most 200, each
+//          item `("f";x)`, `("e";x)`, such a pair, or its `-3!` text
+//          (#1502); `()` for the rest
 //   rank   each row's value's place among the column's distinct values,
 //          sorted by q (`iasc`), so equal values share one; `()` where q
 //          cannot sort it
@@ -70,7 +74,9 @@ const COLUMN_LINES = [
   "          {[e;x]$[type[x] within 1 76h;string x;{$[200<count x;(197#x),\"...\";x]} each",
   "            {[e;x]$[10h=type x;$[1=count x;\",\";\"\"],\"\\\"\",raze[e\"i\"$200 sublist x],\"\\\"\";-3!x]}[e] each x]}[e] each c;",
   "          {[c]u:type c;$[u in 12 16h;\"j\"$c;u in 13 14 17 18 19h;\"i\"$c;u=15h;\"f\"$c;u=10h;\"x\"$c;u in 2 5 6 7 8 9h;c;",
-  "            u=0h;{$[-9h=t:type x;$[null x;0b;x];-8h=t;$[null x;0b;\"f\"$x];0b]} each c;()]} each c;",
+  "            u=0h;{[g;x]$[-9h=t:type x;$[null x;0b;x];-8h=t;$[null x;0b;\"f\"$x];g x]}[{$[-9h=t:type x;(\"f\";x);-8h=t;(\"e\";\"f\"$x);",
+  "              (t in 8 9h)&200>=count x;($[t=9h;\"F\";\"E\"];\"f\"$x);(0h=t)&200>=count x;",
+  "              $[all 0b~/:r:.z.s each x;0b;(\"l\";@[r;w;:;-3!'x w:where 0b~/:r])];0b]}] each c;()]} each c;",
   "          {@[{i:iasc x;\"i\"$@[count[x]#0;i;:;-1+sums differ x i]};x;{[e]()}]} each c;",
 ];
 
