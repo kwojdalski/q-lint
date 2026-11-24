@@ -123,6 +123,16 @@ test("a q binary and an env file under ~ are read from the home directory", asyn
   assert.strictEqual(fake.terminals[0].sent[0], `QHOME=/opt/q ${path.join(home, "q/m64/q")}`);
 });
 
+test("an env file's bad line is named by its number, never its text (#1685)", async () => {
+  const fake = fakeVscode({ "terminal.envPath": "/ws/.qenv" }, { "/ws/.qenv": "QHOME=/opt/q\nKX_TOKEN hunter2-secret\n" });
+  const terminals = load(fake);
+  fake.vscode.window.activeTextEditor = { document: fake.document("/ws/a.q", "1+1") };
+  await terminals.repl();
+  assert.strictEqual(fake.terminals.length, 1);
+  assert.match(fake.messages.join("\n"), /skipped 1 line\(s\) of .*\.qenv, not NAME=value: line 2$/);
+  assert.doesNotMatch(fake.messages.join("\n"), /hunter2/);
+});
+
 test("a cmd terminal is not started on a line cmd would read a quote or % in (#1274)", async () => {
   const fake = fakeVscode({ "terminal.envPath": "/ws/.qenv" }, { "/ws/.qenv": 'QINIT=x" & calc & "\n' });
   fake.vscode.env.shell = "C:\\Windows\\System32\\cmd.exe";

@@ -69,8 +69,8 @@ import { historyHeading, historyLabel, iconsEscaped, plainMessage } from "./hist
 import { render } from "./query";
 import { QueryModes, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
-import { commandLine, expandHome, parseEnv, replLines, shellKind, terminalCwd } from "./terminal";
-import { terminalEnv } from "./qenv";
+import { commandLine, expandHome, replLines, shellKind, terminalCwd } from "./terminal";
+import { readDotenv, terminalEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import type { RunExtra } from "./runargs";
 import { QueryControls } from "./controls";
@@ -441,11 +441,13 @@ export class QTerminals {
         );
         return undefined;
       }
-      const parsed = parseEnv(text);
+      // Lines it could not read are named by number alone: one may be a
+      // secret with a typo in it (#1685).
+      const parsed = readDotenv(text);
       variables = parsed.env;
-      if (parsed.problems.length > 0) {
+      if (parsed.badLines.length > 0) {
         void window.showWarningMessage(
-          plainMessage(`q-lint: skipped ${parsed.problems.length} line(s) of ${envFile}: ${parsed.problems.slice(0, 3).join("; ")}`),
+          plainMessage(`q-lint: skipped ${parsed.badLines.length} line(s) of ${envFile}, not NAME=value: line ${parsed.badLines.join(", ")}`),
         );
       }
     }
