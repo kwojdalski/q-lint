@@ -731,3 +731,39 @@ test("a q error with empty text is an empty QError, not 'null'", async (t) => {
     await assert.rejects(connection.evaluate("'`"), (e) => e instanceof QError && e.message === expected);
   }
 });
+
+// Node dials `::1` first for `localhost`, while q - and Start Process's
+// q, bound to 127.0.0.1 - listens on IPv4 only: whoever bound [::1] on
+// the same port got the user, the password and every query (#2123).
+test("localhost is dialled at 127.0.0.1, where q listens, never at [::1] first (#2123)", async (t) => {
+  const { dialHost } = require("../out/qclient.js");
+  assert.strictEqual(dialHost("localhost"), "127.0.0.1");
+  assert.strictEqual(dialHost("LocalHost."), "127.0.0.1");
+  assert.strictEqual(dialHost("::1"), "::1");
+  assert.strictEqual(dialHost("rdb.example"), "rdb.example");
+  const got = { v4: [], v6: [] };
+  const listener = (into) =>
+    net.createServer((s) => {
+      s.on("error", () => {});
+      s.once("data", (d) => {
+        into.push(d.length);
+        s.write(Buffer.from([3]));
+      });
+    });
+  const v4 = listener(got.v4);
+  await new Promise((r) => v4.listen(0, "127.0.0.1", r));
+  t.after(() => v4.close());
+  const port = v4.address().port;
+  const v6 = listener(got.v6);
+  const bound = await new Promise((r) => {
+    v6.once("error", () => r(false));
+    v6.listen(port, "::1", () => r(true));
+  });
+  if (bound) {
+    t.after(() => v6.close());
+  }
+  const connection = await QConnection.open({ host: "localhost", port, user: "bob", password: "not-a-real-secret" });
+  connection.abort();
+  assert.strictEqual(got.v4.length, 1, "the handshake reached 127.0.0.1");
+  assert.strictEqual(got.v6.length, 0, "nothing reached [::1]");
+});

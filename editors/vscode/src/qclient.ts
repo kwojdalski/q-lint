@@ -93,6 +93,16 @@ export function withReason(error: Error): Error {
   return error;
 }
 
+/// The address a connect to `host` dials. `localhost` is 127.0.0.1, where
+/// q listens - it binds IPv4 only, and Start Process binds a local process
+/// to 127.0.0.1 - and where q's own hopen of `:localhost:port goes. Node
+/// would try `::1` first, a port any local user may bind while q holds
+/// only the IPv4 one, and send it the user and password (#2123). Any other
+/// host, `::1` among them, is dialled as it is written.
+export function dialHost(host: string): string {
+  return /^localhost\.?$/i.test(host.trim()) ? "127.0.0.1" : host;
+}
+
 export class QConnection {
   /// What has arrived of the messages not yet read, in the chunks it came
   /// in: joined only once a whole message is there, since joining each
@@ -122,7 +132,7 @@ export class QConnection {
   /// is closed, so nothing is left open behind it.
   static open(target: Target, timeoutMs: number = CONNECT_TIMEOUT_MS, signal?: AbortSignal): Promise<QConnection> {
     return new Promise((resolve, reject) => {
-      const options = target.path !== undefined ? { path: target.path } : { host: target.host, port: target.port };
+      const options = target.path !== undefined ? { path: target.path } : { host: dialHost(target.host), port: target.port };
       const at = target.path ?? `${target.host}:${target.port}`;
       // The name the certificate must be for. An IP address cannot be sent
       // as the server name, and without one the check is against the host
