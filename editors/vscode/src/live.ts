@@ -2736,7 +2736,10 @@ export class Live {
     if (!this.setting(readWatch).enabled) {
       return;
     }
-    this.stopWatching();
+    // One watched before is replaced; with none, nothing is said (#1708).
+    if (this.watching !== undefined) {
+      this.stopWatching();
+    }
     const status = window.createStatusBarItem("q-lint.watch", StatusBarAlignment.Left, 48);
     status.name = "q-lint: watched query";
     status.command = WATCH.stop;

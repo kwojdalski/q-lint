@@ -285,3 +285,17 @@ test("renaming the connected process keeps its Watch Query running (#1707)", asy
   assert.ok(live.api().watching().runs >= 2);
   assert.ok(!stub.messages.some(([, m]) => /stopped watching/.test(m)), JSON.stringify(stub.messages));
 });
+
+test("starting a Watch Query says nothing of there being none to stop (#1708)", async (t) => {
+  const a = await fakeQ(() => 1);
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)], { "query.watch.enable": true });
+  await live.connectTo("a");
+  await stub.commands.get("q-lint.watchQuery")("1+1", 1);
+  assert.ok(live.api().watching() !== undefined);
+  assert.ok(!stub.messages.some(([, m]) => m === "q-lint: no query is watched."), JSON.stringify(stub.messages));
+  // Stop Watching Query with none watched still says so.
+  await stub.commands.get("q-lint.stopWatchingQuery")();
+  await stub.commands.get("q-lint.stopWatchingQuery")();
+  assert.deepStrictEqual(stub.messages.at(-1), ["info", "q-lint: no query is watched."]);
+});
