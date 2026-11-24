@@ -63,6 +63,12 @@ export function renamedTileQuery(list: Dashboard[], from: string, to: string | u
   return list.map((d) => ({ ...d, tiles: d.tiles.flatMap((t) => (t.query !== from ? [t] : to === undefined ? [] : [{ ...t, query: to }])) }));
 }
 
+/// The dashboards once the process `from` is renamed `to`, or deleted
+/// (`to` undefined): its tiles run on the new label, or are gone (#1617).
+export function retargetedTiles(list: Dashboard[], from: string, to: string | undefined): Dashboard[] {
+  return list.map((d) => ({ ...d, tiles: d.tiles.flatMap((t) => (t.process !== from ? [t] : to === undefined ? [] : [{ ...t, process: to }])) }));
+}
+
 /// The tiles in `list` that show the saved query `name`.
 export const tilesOf = (list: Dashboard[], name: string): number => list.reduce((n, d) => n + d.tiles.filter((t) => t.query === name).length, 0);
 

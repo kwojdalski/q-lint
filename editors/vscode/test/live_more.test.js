@@ -366,6 +366,25 @@ test("renaming or deleting a process carries the files bound to it along", async
   assert.deepStrictEqual(context.workspaceState.get("q-lint.fileConnections"), { "file:///b.q": "other" });
 });
 
+test("renaming or deleting a process carries its dashboard tiles and scheduled exports along (#1617)", async (t) => {
+  const q = await fakeQ(() => OK);
+  t.after(() => q.close());
+  const { context } = await setUp(t, [proc("rdb", q.port), proc("other", q.port)]);
+  const tile = (id, process) => ({ id, query: "vwap", process, view: "table", refresh: 0 });
+  const schedule = (id, process) => ({ id, query: "vwap", process, format: "csv", path: "/o.csv", every: 5, mode: "replace", since: 0 });
+  await context.workspaceState.update("q-lint.dashboards", [{ name: "Desk", columns: 2, tiles: [tile("1", "rdb"), tile("2", "other")] }]);
+  await context.workspaceState.update("q-lint.scheduledExports", [schedule("s1", "rdb"), schedule("s2", "other")]);
+  editAnswers("rdb-ny", "127.0.0.1", q.port);
+  await stub.commands.get("q-lint.editProcess")("rdb");
+  assert.deepStrictEqual(context.workspaceState.get("q-lint.dashboards")[0].tiles.map((x) => x.process), ["rdb-ny", "other"]);
+  assert.deepStrictEqual(context.workspaceState.get("q-lint.scheduledExports").map((x) => x.process), ["rdb-ny", "other"]);
+  stub.picks.push("Delete");
+  await stub.commands.get("q-lint.deleteProcess")("rdb-ny");
+  assert.ok(stub.messages.some(([, m]) => /Its 1 dashboard tile\(s\) are removed with it\. Its 1 scheduled export\(s\) are deleted with it\./.test(m)), JSON.stringify(stub.messages));
+  assert.deepStrictEqual(context.workspaceState.get("q-lint.dashboards")[0].tiles.map((x) => x.id), ["2"]);
+  assert.deepStrictEqual(context.workspaceState.get("q-lint.scheduledExports").map((x) => x.id), ["s2"]);
+});
+
 // Disconnect from the command palette with nothing connected did nothing
 // and said nothing, where Abort, Reveal Process and Insert Label say there
 // is no connection.

@@ -109,6 +109,12 @@ export function renamedSchedules(list: ScheduledExport[], from: string, to: stri
   return list.flatMap((s) => (s.query !== from ? [s] : to === undefined ? [] : [{ ...s, query: to }]));
 }
 
+/// The schedules once the process `from` is renamed `to`, or deleted (`to`
+/// undefined): they run on the new label, or are gone (#1617).
+export function retargetedSchedules(list: ScheduledExport[], from: string, to: string | undefined): ScheduledExport[] {
+  return list.flatMap((s) => (s.process !== from ? [s] : to === undefined ? [] : [{ ...s, process: to }]));
+}
+
 /// Whether `s` is due at `now`: its interval has passed since it last ran,
 /// or one of today's times has come since then. A last run after `now` was
 /// stamped by a clock since put back: it runs once, to restart (#1625).

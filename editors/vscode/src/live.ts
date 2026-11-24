@@ -72,6 +72,8 @@ import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import type { RunExtra } from "./runargs";
 import { QueryControls } from "./controls";
 import { ParameterCache } from "./paramcachecontrol";
+import { DASHBOARDS_KEY, parseDashboards, retargetedTiles } from "./dashboard";
+import { SCHEDULES_KEY, parseSchedules, retargetedSchedules } from "./schedule";
 import { CONTROL_COMMANDS, FILE_CONNECTIONS_KEY, UNLIMITED, armTimeout, limits, readUnlimited, runUnwrapped, timedOutError, withBinding } from "./querycontrols";
 import { elapsedText, finishedText, readProgress, shouldNotify } from "./progress";
 import {
@@ -1284,7 +1286,11 @@ export class Live {
       return;
     }
     const yes = "Delete";
-    const sure = await window.showWarningMessage(plainMessage(`Delete the q process "${process.label}" from the list?`), { modal: true }, yes);
+    // Its dashboard tiles and scheduled exports go with it (#1617).
+    const tiles = parseDashboards(this.context.workspaceState.get<unknown>(DASHBOARDS_KEY, [])).reduce((n, d) => n + d.tiles.filter((t) => t.process === process.label).length, 0);
+    const scheduled = parseSchedules(this.context.workspaceState.get<unknown>(SCHEDULES_KEY, [])).filter((s) => s.process === process.label).length;
+    const also = (tiles === 0 ? "" : ` Its ${tiles} dashboard tile(s) are removed with it.`) + (scheduled === 0 ? "" : ` Its ${scheduled} scheduled export(s) are deleted with it.`);
+    const sure = await window.showWarningMessage(plainMessage(`Delete the q process "${process.label}" from the list?${also}`), { modal: true }, yes);
     if (sure !== yes) {
       return;
     }
@@ -1298,7 +1304,11 @@ export class Live {
 
   /// Bind the files bound to the process `from` to `to` instead, or unbind
   /// them: a binding is by label, and one to no process fails every query.
+  /// Dashboard tiles and scheduled exports, also by label, move with it, or
+  /// go with a deleted process (#1617).
   private async rebind(from: string, to: string | undefined): Promise<void> {
+    await this.context.workspaceState.update(DASHBOARDS_KEY, retargetedTiles(parseDashboards(this.context.workspaceState.get<unknown>(DASHBOARDS_KEY, [])), from, to));
+    await this.context.workspaceState.update(SCHEDULES_KEY, retargetedSchedules(parseSchedules(this.context.workspaceState.get<unknown>(SCHEDULES_KEY, [])), from, to));
     let stored = this.context.workspaceState.get<unknown>(FILE_CONNECTIONS_KEY);
     if (typeof stored !== "object" || stored === null) {
       return;
