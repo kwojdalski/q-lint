@@ -34,7 +34,22 @@ test("an order book by level is found by its column names and drawn as cumulativ
   assert.strictEqual(M.depthTitle(d), "mid 100 · spread 2");
   const config = M.depthConfig(d, look);
   assert.strictEqual(config.options.scales.x.type, "linear");
-  assert.deepStrictEqual(config.data.datasets.map((s) => [s.stepped, s.borderColor]), [["before", "#89d185"], ["after", "#f14c4c"]]);
+  assert.deepStrictEqual(config.data.datasets.map((s) => [s.stepped, s.borderColor]), [["after", "#89d185"], ["before", "#f14c4c"]]);
+});
+
+test("the depth chart on screen steps each level the way its SVG does: a level's size holds up to the next price (#1385)", () => {
+  // Chart.js 4's stepped segment: "after" goes up or down first, any other
+  // mode across first (lineTo(previous.x, target.y) or (target.x, previous.y)).
+  const chartjs = (pts, mode) => pts.slice(1).flatMap((p, i) => (mode === "after" ? [[pts[i].x, p.y], [p.x, p.y]] : [[p.x, pts[i].y], [p.x, p.y]]));
+  // The SVG's: "before" up or down first (V then H), "after" across first.
+  const svg = (pts, mode) => pts.slice(1).flatMap((p, i) => (mode === "before" ? [[pts[i].x, p.y], [p.x, p.y]] : [[p.x, pts[i].y], [p.x, p.y]]));
+  const g = grid([["bidPx", 9, ["100", "99"]], ["bidSize", 7, ["5", "5"]], ["askPx", 9, ["101", "102"]], ["askSize", 7, ["5", "5"]]]);
+  const d = M.depthData(g, all(g));
+  const config = M.depthConfig(d, look);
+  d.datasets.forEach((s, i) => assert.deepStrictEqual(chartjs(s.data, config.data.datasets[i].stepped), svg(s.data, s.stepped), s.side));
+  // Bids: 10 only down at 99, 5 from there to 100. Asks: 5 from 101 to 102.
+  assert.deepStrictEqual(svg(d.datasets[0].data, d.datasets[0].stepped).slice(2, 4), [[99, 5], [100, 5]]);
+  assert.deepStrictEqual(svg(d.datasets[1].data, d.datasets[1].stepped).slice(0, 2), [[102, 5], [102, 10]]);
 });
 
 test("an order book as lists reads the first row shown, and one by side sums sizes at a price (#1016)", () => {

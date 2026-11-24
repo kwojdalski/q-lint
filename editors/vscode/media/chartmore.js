@@ -172,8 +172,10 @@
     return {
       type: "line",
       data: {
+        // `stepped` is in the SVG's sense ("before": rise, then run on);
+        // Chart.js reads each name the other way round.
         datasets: data.datasets.map(function (d) {
-          return Object.assign({}, d, { borderColor: colour[d.side], backgroundColor: translucent(colour[d.side]), fill: "origin", pointRadius: 0, borderWidth: 1.5 });
+          return Object.assign({}, d, { stepped: d.stepped === "before" ? "after" : "before", borderColor: colour[d.side], backgroundColor: translucent(colour[d.side]), fill: "origin", pointRadius: 0, borderWidth: 1.5 });
         }),
       },
       options: {
