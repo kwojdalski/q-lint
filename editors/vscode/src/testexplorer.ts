@@ -665,12 +665,15 @@ class QTests {
     run.appendOutput(`${item.label}: ${done === undefined ? "not run" : this.outcomes.at(-1)?.state} on ${done?.process ?? label}\r\n`);
   }
 
-  /// The workspace's q files, for coverage.
+  /// The workspace's q files, for coverage: an open file with unsaved
+  /// edits as its editor holds it, the text its coverage is drawn on (#1609).
   private async sourceFiles(): Promise<SourceFile[]> {
     const out: SourceFile[] = [];
+    const dirty = new Map(workspace.textDocuments.filter((d) => d.isDirty).map((d) => [d.uri.toString(), d]));
     for (const uri of await workspace.findFiles("**/*.q", "**/node_modules/**", MAX_CSV)) {
       try {
-        out.push({ uri: uri.toString(), text: Buffer.from(await workspace.fs.readFile(uri)).toString("utf8") });
+        const open = dirty.get(uri.toString());
+        out.push({ uri: uri.toString(), text: open !== undefined ? open.getText() : Buffer.from(await workspace.fs.readFile(uri)).toString("utf8") });
       } catch {
         // Gone since it was listed.
       }
