@@ -95,3 +95,25 @@ test("a refresh put off by a running query is made when the query is done (#1077
   await new Promise((r) => setTimeout(r, 10));
   assert.strictEqual(live.calls, 1);
 });
+
+test("q-lint.notebookActive follows the active editor with the view off, for Restart and Run All (#1402)", async () => {
+  stub.reset();
+  stub.config.user["notebook.variables.enable"] = false;
+  const contexts = new Map();
+  const execute = vscode.commands.executeCommand;
+  const watch = vscode.window.onDidChangeActiveNotebookEditor;
+  const listeners = [];
+  vscode.commands.executeCommand = async (name, ...args) => (name === "setContext" ? void contexts.set(args[0], args[1]) : execute(name, ...args));
+  vscode.window.onDidChangeActiveNotebookEditor = (l) => (listeners.push(l), { dispose() {} });
+  try {
+    vscode.window.activeNotebookEditor = { notebook: { notebookType: "q-lint-notebook" } };
+    registerNotebookVariables(stub.newContext(), fakeLive("x"), () => undefined, () => ({ dispose() {} }));
+    assert.strictEqual(contexts.get("q-lint.notebookActive"), true);
+    vscode.window.activeNotebookEditor = undefined;
+    for (const l of listeners) l(undefined);
+    assert.strictEqual(contexts.get("q-lint.notebookActive"), false);
+  } finally {
+    vscode.commands.executeCommand = execute;
+    vscode.window.onDidChangeActiveNotebookEditor = watch;
+  }
+});

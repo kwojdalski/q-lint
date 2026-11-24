@@ -22,7 +22,8 @@ import { bytesText, describeVariable, kindText, readVariables, VARIABLE_LIMIT, V
 import { featureOn, featureSetting, requireFeature } from "./notebook";
 import { NOTEBOOK } from "./qnb";
 
-/// Set while the active editor is a q notebook: the view shows then.
+/// Set while the active editor is a q notebook: the view shows then, and
+/// Restart and Run All is in the palette.
 export const NOTEBOOK_ACTIVE = "q-lint.notebookActive";
 
 const icon = (v: Variable): string =>
@@ -68,6 +69,12 @@ class VariablesView implements TreeDataProvider<Variable> {
   }
 }
 
+/// The active editor's notebook when it is a q notebook.
+const active = (): NotebookDocument | undefined => {
+  const notebook = window.activeNotebookEditor?.notebook;
+  return notebook?.notebookType === NOTEBOOK.type ? notebook : undefined;
+};
+
 /// Register the view and its Refresh, while `q-lint.notebook.variables.enable`
 /// is on: off, the view is disposed and nothing is read, and Refresh says
 /// so. `processOf` names the process a notebook's cells last ran on;
@@ -88,7 +95,12 @@ export function registerNotebookVariables(
     }
   };
   sync();
+  // Kept whether or not the view is on: Restart and Run All's palette entry
+  // reads it too (#1402).
+  const setContext = (): void => void commands.executeCommand("setContext", NOTEBOOK_ACTIVE, active() !== undefined);
+  setContext();
   context.subscriptions.push(
+    window.onDidChangeActiveNotebookEditor(() => setContext()),
     commands.registerCommand(NOTEBOOK.refreshVariables, async () => {
       if (requireFeature("variables")) {
         await running?.refreshNow();
@@ -117,10 +129,6 @@ function startView(
 ) {
   const provider = new VariablesView();
   const view = window.createTreeView(NOTEBOOK.variablesView, { treeDataProvider: provider });
-  const active = (): NotebookDocument | undefined => {
-    const notebook = window.activeNotebookEditor?.notebook;
-    return notebook?.notebookType === NOTEBOOK.type ? notebook : undefined;
-  };
   const show = (variables: Variable[], message?: string, description?: string): void => {
     provider.set(variables);
     view.message = message;
@@ -175,8 +183,6 @@ function startView(
       reading = undefined;
     });
   };
-  const setContext = (): void => void commands.executeCommand("setContext", NOTEBOOK_ACTIVE, active() !== undefined);
-  setContext();
   const disposables = [
     provider,
     view,
@@ -185,10 +191,7 @@ function startView(
         whenShown();
       }
     }),
-    window.onDidChangeActiveNotebookEditor(() => {
-      setContext();
-      whenShown();
-    }),
+    window.onDidChangeActiveNotebookEditor(() => whenShown()),
     view.onDidChangeVisibility(() => whenShown()),
     live.onDidChange((what) => {
       if (what === "disconnected" || (what === "queried" && deferred)) {
