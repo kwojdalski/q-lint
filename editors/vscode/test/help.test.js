@@ -160,9 +160,9 @@ function fakeUi() {
   vscode.Range = class { constructor(a, b, c, d) { Object.assign(this, { start: { line: a, character: b }, end: { line: c, character: d } }); } };
   vscode.window.createWebviewPanel = (id, title, column, options) => {
     const panel = {
-      id, title, options, disposed: false,
+      id, title, column, options, disposed: false, reveals: [],
       webview: { html: "", cspSource: "vscode-resource:", asWebviewUri: (u) => u },
-      reveal() {},
+      reveal(...where) { this.reveals.push(where); },
       onDidDispose(f) { this.disposeListener = f; },
       dispose() { this.disposed = true; this.disposeListener?.(); },
     };
@@ -192,6 +192,11 @@ test("Show Help opens a page, Try it runs an example, and each refuses when turn
   await stub.commands.get(h.HELP.show)("bin");
   assert.strictEqual(ui.panels.length, 1);
   assert.strictEqual(panel.title, "q Help: bin");
+  // Opened beside the editor, and shown again where it is: "beside" on a
+  // reveal is beside the page itself when a link in it was clicked (#1919).
+  assert.deepStrictEqual(panel.column, { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true });
+  assert.notStrictEqual(vscode.ViewColumn.Beside, undefined);
+  assert.deepStrictEqual(panel.reveals, [[undefined, true], [undefined, true]]);
   // From the word under the cursor; a word q does not define is picked from the list.
   vscode.window.activeTextEditor = { document: { lineAt: () => ({ text: "x:til 3" }) }, selection: { active: { line: 0, character: 3 } } };
   assert.strictEqual(await stub.commands.get(h.HELP.show)(), "til");
