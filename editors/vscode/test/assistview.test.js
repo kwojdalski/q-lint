@@ -199,6 +199,13 @@ test("List q Tables reads a plain table name only, asks first, and refuses a han
   assert.match((await tools.tables.run({ table: "trade", process: "uat" })).error, /asked to read trade on dev/);
 });
 
+test("List q Tables takes a null process or table as left out (#1623)", async () => {
+  const { live, context } = setup();
+  const tools = registerAssistTools(context, live, () => []);
+  assert.strictEqual((await tools.tables.run({ process: null, table: null })).tables.length, 1);
+  assert.strictEqual((await tools.tables.run({ process: null, table: "trade" })).name, "trade");
+});
+
 test("Lint q Code: qlinter's findings on the code given as standard input", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-linttool-"));
   const fake = path.join(dir, "qlinter");

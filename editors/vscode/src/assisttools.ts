@@ -77,6 +77,9 @@ export interface TablesInput {
   process?: string;
 }
 
+/// A model may send null for an optional field it leaves out (#1623).
+const given = (value: unknown): unknown => (value === null ? undefined : value);
+
 export class ListTablesTool implements LanguageModelTool<TablesInput> {
   /// The process the user was asked to read each table on, or null when
   /// nothing was connected and they were asked nothing.
@@ -86,7 +89,7 @@ export class ListTablesTool implements LanguageModelTool<TablesInput> {
 
   prepareInvocation(options?: LanguageModelToolInvocationPrepareOptions<TablesInput>): PreparedToolInvocation {
     const active = this.live.activeLabel();
-    const table: unknown = options?.input?.table;
+    const table = given(options?.input?.table);
     if (typeof table !== "string" || !isTableName(table.trim())) {
       return { invocationMessage: `Reading the tables of ${active ?? "the q process"}` };
     }
@@ -122,8 +125,8 @@ export class ListTablesTool implements LanguageModelTool<TablesInput> {
     if (active === undefined) {
       return { error: notConnected(this.live.processes(), this.live.discovery.discovered()) };
     }
-    const named: unknown = input.process;
-    const table: unknown = input.table;
+    const named = given(input.process);
+    const table = given(input.table);
     if (named !== undefined && named !== active) {
       return {
         error: `List q Tables reads the connected process, ${active}, only. To read ${JSON.stringify(named)}, connect to it first: Run q Query with "process" connects.`,
