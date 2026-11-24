@@ -696,3 +696,18 @@ test("a message whose header gives a length shorter than itself closes the conne
   await assert.rejects(connection.evaluate("1+1"), /length/);
   assert.strictEqual(connection.isOpen, false);
 });
+
+// A service that speaks first was taken as q: its banner's first byte as
+// the capability, the rest as a message whose length never arrived, so the
+// connect said connected and every query waited for ever.
+test("a port where a non-q service speaks first is refused at the handshake", async (t) => {
+  for (const banner of ["SSH-2.0-OpenSSH_9.6\r\n", "220 mail ESMTP\r\n", "\u0003SSH"]) {
+    const server = net.createServer((s) => {
+      s.on("error", () => {});
+      s.write(banner);
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    t.after(() => server.close());
+    await assert.rejects(QConnection.open({ host: "127.0.0.1", port: server.address().port }, 2000), /not as a q process does/);
+  }
+});

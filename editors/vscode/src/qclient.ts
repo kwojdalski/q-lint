@@ -164,6 +164,13 @@ export class QConnection {
         if (settled) {
           return;
         }
+        // q answers with one capability byte, 0 to 6, and a message after
+        // it can only open with a header: endianness 0 or 1, type 0 to 2. A
+        // service that speaks first (an SSH or SMTP banner) is not q.
+        if (chunk[0] > 6 || (chunk.length > 1 && chunk[1] > 1) || (chunk.length > 2 && chunk[2] > 2)) {
+          fail(new Error(`${target.host}:${target.port} answered the handshake, but not as a q process does: is it a q process?`));
+          return;
+        }
         settled = true;
         clearTimeout(timer);
         signal?.removeEventListener("abort", cancelled);
