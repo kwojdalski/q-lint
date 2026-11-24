@@ -446,7 +446,15 @@ class QTests {
     const prepared = new Set<K4Row[]>();
     const send = (statements: string[], mode: TestMode) =>
       this.live.runOnActive(statements.join("\n"), async (connection) => readTestResult(await connection.call(TEST_RUN, statements, mode)), "ask", process.label);
-    const phase = (rows: K4Row[], action: string): K4Row[] => rows.filter((r) => r.action === action);
+    // A row whose minver is above the process's .z.K is not run, as KUltf
+    // does not load it (#1594): asked once, when a row of the run has one.
+    let version = Infinity;
+    if ([...remaining.keys()].some((rows) => rows.some((r) => r.minver > 0))) {
+      const k = await send([".z.K"], "run").catch(() => undefined);
+      version = k?.value.passed ? Number.parseFloat(k.value.text) || Infinity : Infinity;
+    }
+    const runs = (row: K4Row): boolean => row.minver <= version;
+    const phase = (rows: K4Row[], action: string): K4Row[] => rows.filter((r) => r.action === action && runs(r));
     const everywhere = (action: string): K4Row[] => [...remaining.keys()].flatMap((rows) => phase(rows, action));
     const setUp = async (rows: K4Row[]): Promise<void> => {
       for (const row of rows) {
@@ -484,6 +492,11 @@ class QTests {
             statements = testStatements(entry.test);
             mode = "test";
           } else {
+            if (!runs(entry.row)) {
+              run.skipped(item);
+              outcome(item, "skipped", `needs kdb+ ${entry.row.minver}`);
+              continue;
+            }
             if (!prepared.has(entry.rows)) {
               if (prepared.size === 0) {
                 await setUp(everywhere("beforeany"));

@@ -221,13 +221,14 @@ const TERM = new RegExp(
 // --- k4unit
 
 /// One row of a k4unit suite: what to do (`before`, `after`, `true`,
-/// `fail`, `run`, ...), the language (`q` or `k`), the code, and the line it
-/// is on, from 0.
+/// `fail`, `run`, ...), the language (`q` or `k`), the code, the line it
+/// is on, from 0, and the least `.z.K` it is run on (0: any).
 export interface K4Row {
   action: string;
   lang: string;
   code: string;
   line: number;
+  minver: number;
 }
 
 /// The fields of each CSV record in `text`, with the line each starts on: a
@@ -295,7 +296,7 @@ export function parseK4unit(text: string): K4Row[] | undefined {
   const records = csv(text);
   const header = records[0]?.fields.map((f) => f.trim().toLowerCase());
   const at = (name: string) => header?.indexOf(name) ?? -1;
-  const [action, lang, code] = [at("action"), at("lang"), at("code")];
+  const [action, lang, code, minver] = [at("action"), at("lang"), at("code"), at("minver")];
   if (action !== 0 || lang < 0 || code < 0 || at("ms") < 0) {
     return undefined;
   }
@@ -306,6 +307,7 @@ export function parseK4unit(text: string): K4Row[] | undefined {
       lang: (fields[lang] ?? "").trim().toLowerCase() || "q",
       code: fields[code] ?? "",
       line,
+      minver: Number.parseFloat(minver < 0 ? "" : (fields[minver] ?? "")) || 0,
     }))
     .filter((row) => row.action !== "" && row.code.trim() !== "" && !row.action.startsWith("comment"));
 }

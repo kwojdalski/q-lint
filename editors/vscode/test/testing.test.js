@@ -508,3 +508,22 @@ test("k4unit's beforeany, beforeeach, aftereach and afterall rows run as KUrt ru
     ["once:1", "each:1", "a:1", "a=1", "a:0", "each:0", "each:1", "b=1", "each:0", "once:0"],
   );
 });
+
+test("a k4unit row whose minver is above the process's .z.K is skipped, not run (#1594)", async () => {
+  stub.reset();
+  const made = fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  const csv = "action,ms,bytes,lang,code,repeat,minver,comment\ntrue,0,0,q,1b,1,,\ntrue,0,0,q,.z.K>=99,1,99,\nbefore,0,0,q,new:1,1,99,\n";
+  vscode.workspace.findFiles = async () => [vscode.Uri.file("/ws/k.csv")];
+  vscode.workspace.fs = { readFile: async () => Buffer.from(csv) };
+  const live = fakeLive();
+  const runOnActive = live.runOnActive.bind(live);
+  live.runOnActive = async (code, query, ...rest) =>
+    code === ".z.K" ? { process: "dev", value: { passed: true, text: "4.1", errored: false } } : runOnActive(code, query, ...rest);
+  const explorer = registerTestExplorer(stub.newContext(), live, () => undefined);
+  await explorer.discover();
+  await explorer.run();
+  assert.deepStrictEqual(live.sent.map((s) => s.statements.join(";")), ["1b"]);
+  assert.deepStrictEqual(explorer.results().map((r) => r.state), ["passed", "skipped"]);
+  assert.ok(made[0].runs[0].events.some(([e]) => e === "skipped"));
+});
