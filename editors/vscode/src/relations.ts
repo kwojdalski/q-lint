@@ -320,17 +320,21 @@ export function unsavedIn(dirty: string[], folders: string[]): string[] {
 /// the workspace folder, so a `git.exe` checked in there would be what ran.
 /// There the name is found here instead, in the absolute directories of
 /// `path` and with the two extensions a bare name is tried with; undefined
-/// where none of them holds it.
+/// where none of them holds it. A caller that starts what it finds through
+/// launcher's spawnPlan, which runs a `.bat` or `.cmd` by cmd.exe, passes
+/// `pathext` - PATHEXT, or its default when unset - and each directory is
+/// asked for those, in that order, as cmd.exe asks: q.cmd is a q (#1844).
 export function onPath(
   binary: string,
   path: string | undefined,
   exists: (file: string) => boolean,
   platform: string = process.platform,
+  pathext?: string,
 ): string | undefined {
   if (platform !== "win32" || /[\\/]/.test(binary)) {
     return binary;
   }
-  const endings = win32.extname(binary) === "" ? [".com", ".exe"] : [""];
+  const endings = win32.extname(binary) !== "" ? [""] : pathext === undefined ? [".com", ".exe"] : pathExtensions(pathext);
   for (const entry of (path ?? "").split(";")) {
     // An entry may be quoted, as libuv reads it too.
     const dir = entry.replace(/"/g, "");
@@ -347,6 +351,13 @@ export function onPath(
     }
   }
   return undefined;
+}
+
+/// PATHEXT's extensions, lower-cased: `.COM;.EXE;.BAT;.CMD` where it is
+/// empty, as Windows takes it.
+export function pathExtensions(pathext: string): string[] {
+  const each = pathext.split(";").map((e) => e.trim().toLowerCase()).filter((e) => e.startsWith("."));
+  return each.length > 0 ? each : [".com", ".exe", ".bat", ".cmd"];
 }
 
 /// `binary` as `onPath` finds it on this process's `PATH`, with the files
