@@ -403,14 +403,16 @@
       lo -= d / 2;
       hi += d / 2;
     }
-    const raw = (hi - lo) / 5;
+    // In fifths, so a range past the largest double (-1e308 to 1e308)
+    // cannot overflow.
+    const raw = hi / 5 - lo / 5;
     const mag = Math.pow(10, Math.floor(Math.log10(raw)));
     const step = [1, 2, 5, 10].map(function (m) { return m * mag; }).filter(function (s) { return s >= raw; })[0];
     const out = [];
-    for (let v = Math.floor(lo / step) * step; out.length < 50 && v <= hi + step / 2; v += step) {
+    for (let v = Math.floor(lo / step) * step; out.length < 50 && isFinite(v) && v - step / 2 <= hi; v += step) {
       out.push(+v.toPrecision(12));
     }
-    return { values: out, step: step };
+    return out.length > 0 ? { values: out, step: step } : { values: [lo, hi], step: hi - lo };
   }
 
   /// The chart chartData() describes as an SVG document, drawn here rather
@@ -471,7 +473,8 @@
       const t = ticks(s.lo, s.hi);
       const lo = Math.min(s.lo, t.values[0]);
       const hi = Math.max(s.hi, t.values[t.values.length - 1]);
-      return { ticks: t, y: function (v) { return top + ph - (hi === lo ? ph / 2 : ((v - lo) / (hi - lo)) * ph); } };
+      // Halved, so a span past the largest double does not overflow.
+      return { ticks: t, y: function (v) { return top + ph - (hi === lo ? ph / 2 : ((v / 2 - lo / 2) / (hi / 2 - lo / 2)) * ph); } };
     };
     const main = axis(data.datasets.filter(function (d) { return d.column !== y2; }));
     const alt = y2 >= 0 ? axis(data.datasets.filter(function (d) { return d.column === y2; })) : null;
@@ -502,7 +505,7 @@
       const t = ticks(lo, hi);
       const a = Math.min(lo, t.values[0]);
       const b = Math.max(hi, t.values[t.values.length - 1]);
-      xOf = function (x) { return left + (b === a ? pw / 2 : ((x - a) / (b - a)) * pw); };
+      xOf = function (x) { return left + (b === a ? pw / 2 : ((x / 2 - a / 2) / (b / 2 - a / 2)) * pw); };
       const x0 = grid.columns[0];
       t.values.forEach(function (v) {
         const label = x0 && x0.temporal && grid.columns.length > 1 ? temporalLabel(x0.type, v, t.step) : short(v, t.step);

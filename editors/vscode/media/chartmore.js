@@ -587,8 +587,9 @@
     };
     const xr = extent(function (p) { return p.x; }, spec.xRange, false);
     const yr = extent(function (p) { return p.y; }, spec.yRange, spec.series.some(function (s) { return s.area; }));
-    const X = function (v) { return left + (xr.hi === xr.lo ? pw / 2 : ((v - xr.lo) / (xr.hi - xr.lo)) * pw); };
-    const Y = function (v) { return top + ph - (yr.hi === yr.lo ? ph / 2 : ((v - yr.lo) / (yr.hi - yr.lo)) * ph); };
+    // Halved, so a span past the largest double does not overflow.
+    const X = function (v) { return left + (xr.hi === xr.lo ? pw / 2 : ((v / 2 - xr.lo / 2) / (xr.hi / 2 - xr.lo / 2)) * pw); };
+    const Y = function (v) { return top + ph - (yr.hi === yr.lo ? ph / 2 : ((v / 2 - yr.lo / 2) / (yr.hi / 2 - yr.lo / 2)) * ph); };
     const f = function (v) { return v.toFixed(1); };
     out.push('<clipPath id="plot' + (opts.at || 0) + '"><rect x="' + left + '" y="' + top + '" width="' + pw + '" height="' + ph + '"/></clipPath>');
     const yt = C.ticks(yr.lo, yr.hi);
