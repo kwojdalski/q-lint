@@ -34,6 +34,10 @@ test("the word being typed, dots and all, is what is replaced; the preview shows
   assert.strictEqual(wordStart("x:.z.p", 6), 2);
   assert.strictEqual(wordStart("  aj", 4), 2);
   assert.strictEqual(wordStart("f[", 2), 2);
+  // After a drop written without spaces the name alone is the word (#1992).
+  for (const [line, word] of [["x:1_aj", "aj"], ["r:-1_tra", "tra"], ["0x00_x", "x"], ["1_2_.z.p", ".z.p"], ["t _tra", "tra"], ["2024.01.02_d", "d"], ["a1_b", "a1_b"], ["x_1", "x_1"], ["x:12", "12"], ["1_", ""]]) {
+    assert.strictEqual(line.slice(wordStart(line, line.length)), word, line);
+  }
   assert.strictEqual(preview("aj[`${1:sym}`${2:time};${3:t};${4:q}]$0"), "aj[`sym`time;t;q]");
   assert.strictEqual(preview("w:${1:-0D00:00:01 0D00:00:00}+\\\\:${2:t}"), "w:-0D00:00:01 0D00:00:00+\\:t");
   assert.strictEqual(preview("${1:a ${2:b}} \\$x"), "a b $x");
