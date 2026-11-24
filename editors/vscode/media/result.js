@@ -678,7 +678,8 @@
       });
       extras.push(heatmap);
     }
-    const hidden = layout().hidden.filter(function (name) { return grid.columns.some(function (c) { return c.name === name; }); });
+    const drawn = drawnColumns(grid);
+    const hidden = layout().hidden.filter(function (name) { return grid.columns.some(function (c, i) { return c.name === name && drawn.indexOf(i) < 0; }); });
     if (state.view === "grid" && hidden.length > 0) {
       const show = el("button", "", hidden.length + " hidden");
       show.title = "Show the hidden columns: " + hidden.join(", ");

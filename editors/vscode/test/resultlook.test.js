@@ -140,6 +140,12 @@ test("the layout orders, hides and freezes columns by name, a name twice taking 
   assert.deepStrictEqual(L.frozenOffsets(["10ch"], 0), []);
 });
 
+test("a layout that would hide every column draws them all: a new run of only hidden columns is not a grid of none (#1652)", () => {
+  const g = grid([["a", 7, ["1"]], ["a", 7, ["1"]]]);
+  assert.deepStrictEqual(L.displayColumns(g, { order: [], hidden: ["a"] }), [0, 1]);
+  assert.deepStrictEqual(L.displayColumns(grid([["a", 7, ["1"]], ["b", 7, ["1"]]]), { order: [], hidden: ["a"] }), [1]);
+});
+
 test("the correlation matrix is Pearson's over the rows where both values are there, keys left out (#1020)", () => {
   const g = grid([["x", 9, ["1", "2", "3", "4"]], ["y", 9, ["2", "4", "6", "9"]], ["z", 9, ["4", "3", "", "1"]], ["k", 9, ["1", "1", "1", "1"]], ["s", 11, ["a", "b", "c", "d"]]]);
   const c = L.correlation(g, [0, 1, 2, 3]);

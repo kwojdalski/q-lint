@@ -366,7 +366,8 @@
   /// The columns to draw, by place in the grid, in the layout's order: the
   /// names in `layout.order` first (a name twice in the grid takes its next
   /// column each time), then the rest in the grid's order, leaving out the
-  /// names in `layout.hidden`.
+  /// names in `layout.hidden` - unless that leaves none, as a new run
+  /// of only hidden columns would: then every one is drawn (#1652).
   function displayColumns(grid, layout) {
     const names = grid.columns.map(function (c) { return c.name; });
     const used = names.map(function () { return false; });
@@ -384,7 +385,8 @@
       }
     });
     const hidden = (layout && layout.hidden) || [];
-    return out.filter(function (i) { return hidden.indexOf(names[i]) < 0; });
+    const shown = out.filter(function (i) { return hidden.indexOf(names[i]) < 0; });
+    return shown.length === 0 ? out : shown;
   }
 
   /// The order of names after moving the column drawn at `from` to `to`

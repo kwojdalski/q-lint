@@ -260,3 +260,14 @@ test("a hidden column's filter and sort are not in force, and are again once it 
   page.button("1 hidden").fire("click");
   assert.strictEqual(page.rendered().rows, 1);
 });
+
+test("a new run whose columns are all in the kept hidden list draws them, and offers no hidden ones to show (#1652)", () => {
+  const page = loadPage(undefined);
+  const lay = { order: [], hidden: ["a"], widths: {}, frozen: 0 };
+  page.send(result("s.1", [["a", 7, ["1"]], ["b", 7, ["2"]]], { look: { layout: lay } }));
+  assert.deepStrictEqual(page.headers().map((h) => h.textContent), ["b"]);
+  page.send(result("s.2", [["a", 7, ["1", "2"]]], { look: { layout: lay } }));
+  assert.deepStrictEqual(page.headers().map((h) => h.textContent), ["a"]);
+  assert.strictEqual(page.rows()[0].children.length, 1);
+  assert.strictEqual(page.button("1 hidden"), undefined);
+});
