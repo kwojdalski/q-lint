@@ -337,6 +337,21 @@ test("the attribute advisor samples a table's columns without changing it", { sk
   assert.strictEqual(await connection.call("{(attr m`sym)~`}", 0), true);
 });
 
+// `asc` marks a vector already in order `s#` where it is, and a table
+// sampled whole is its own columns: the advisor must not set what it then
+// reports (#1863).
+test("the attribute advisor leaves a sorted column of the table without s# (#1863)", { skip }, async (t) => {
+  const { connection } = await connect(t, "m:([] time:09:00 09:01 09:02; id:til 3; sym:`c`a`b)\nkt:([k:1 3 5] v:10 30 50)\n");
+  const state = "{(attr each flip m;attr each flip key kt;attr each flip value kt;raze string md5 `char$raze -8!'(m;kt))}";
+  const before = await connection.call(state, 0);
+  assert.deepStrictEqual(before.slice(0, 3), [{ time: null, id: null, sym: null }, { k: null }, { v: null }]);
+  for (const name of ["m", "kt"]) {
+    const s = readAttributeSample(await connection.call(ATTRIBUTE_SAMPLE, name, 100000));
+    assert.deepStrictEqual(s.columns.map((c) => [c.sorted, c.attr]), name === "m" ? [[true, ""], [true, ""], [false, ""]] : [[true, ""], [true, ""]]);
+  }
+  assert.deepStrictEqual(await connection.call(state, 0), before);
+});
+
 test("the test data generator's q makes the rows asked for, and its CSV loads back", { skip }, async (t) => {
   const { connection, dir } = await connect(t, "t:([k:`symbol$()] time:`timestamp$(); px:`float$(); qty:`long$(); d:`date$(); note:())\n");
   const info = readTableInfo(await connection.call(TABLE_INFO, "t", 100));
