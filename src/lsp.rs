@@ -3095,6 +3095,7 @@ fn diagnostics_of(
     opts: &Options,
 ) -> Vec<Value> {
     let lines = Lines::new(text);
+    let view = std::cell::OnceCell::new();
     let mut diagnostics: Vec<Value> = findings
         .iter()
         .map(|f| {
@@ -3106,7 +3107,7 @@ fn diagnostics_of(
                 && let Some(column) = f.column
             {
                 let at = lines.q_offset(f.line.saturating_sub(1), column.saturating_sub(1));
-                let places = related::related(f, text, &lines, at, uri);
+                let places = related::related(f, text, &view, &lines, at, uri);
                 if !places.is_empty() {
                     d["relatedInformation"] = json!(places);
                 }
@@ -3247,7 +3248,16 @@ struct Lines<'a> {
     /// Where each line starts as q counts them - ended by `\n` alone - which
     /// is how a finding names its line.
     q_starts: Vec<usize>,
+    /// Marks along the text, made the first time a column is converted:
+    /// a character boundary at least every `MARK` bytes, with the UTF-16
+    /// units before it. A conversion walks from the mark before it, not
+    /// from its line's start, which on one long line - generated or
+    /// minified q - made each finding cost the line's length (#2114).
+    marks: std::cell::OnceCell<Vec<(usize, usize)>>,
 }
+
+/// The most bytes a conversion walks past its mark.
+const MARK: usize = 64;
 
 impl<'a> Lines<'a> {
     fn new(source: &'a str) -> Self {
@@ -3266,7 +3276,52 @@ impl<'a> Lines<'a> {
             source,
             starts,
             q_starts,
+            marks: std::cell::OnceCell::new(),
         }
+    }
+
+    fn marks(&self) -> &[(usize, usize)] {
+        self.marks.get_or_init(|| {
+            let mut marks = vec![(0, 0)];
+            let (mut last, mut units) = (0, 0);
+            for (i, c) in self.source.char_indices() {
+                if i - last >= MARK {
+                    marks.push((i, units));
+                    last = i;
+                }
+                units += c.len_utf16();
+            }
+            marks
+        })
+    }
+
+    /// The UTF-16 units of the text before `byte`, a character boundary.
+    fn units_before(&self, byte: usize) -> usize {
+        let marks = self.marks();
+        let (at, units) = marks[marks.partition_point(|&(b, _)| b <= byte) - 1];
+        units + utf16_len(&self.source[at..byte])
+    }
+
+    /// The first character boundary from `start` to `end` with `column`
+    /// UTF-16 units between it and `start`, or `end` when there is none.
+    fn column_in(&self, start: usize, end: usize, column: usize) -> usize {
+        let target = self.units_before(start) + column;
+        let marks = self.marks();
+        // The last mark short of the target, or `start` when that is later.
+        let k = marks.partition_point(|&(_, u)| u < target);
+        let (mut at, mut units) = match k.checked_sub(1).map(|k| marks[k]) {
+            Some((b, u)) if b > start => (b, u),
+            _ => (start, target - column),
+        };
+        while units < target && at < end {
+            let c = self.source[at..]
+                .chars()
+                .next()
+                .expect("a character before the end");
+            units += c.len_utf16();
+            at += c.len_utf8();
+        }
+        at.min(end)
     }
 
     /// A byte offset as the line and UTF-16 character a client addresses it
@@ -3279,7 +3334,12 @@ impl<'a> Lines<'a> {
             byte -= 1;
         }
         let line = self.starts.partition_point(|&s| s <= byte) - 1;
-        (line, utf16_len(&self.source[self.starts[line]..byte]))
+        let start = self.starts[line];
+        // A short way in is walked; a long one is counted from the marks.
+        if byte - start <= MARK {
+            return (line, utf16_len(&self.source[start..byte]));
+        }
+        (line, self.units_before(byte) - self.units_before(start))
     }
 
     fn json(&self, byte: usize) -> Value {
@@ -3295,16 +3355,14 @@ impl<'a> Lines<'a> {
         let Some(&start) = self.starts.get(line) else {
             return self.source.len();
         };
-        let rest = &self.source[start..];
-        let text = &rest[..rest.find(['\n', '\r']).unwrap_or(rest.len())];
-        let mut units = 0;
-        for (i, c) in text.char_indices() {
-            if units >= character {
-                return start + i;
-            }
-            units += c.len_utf16();
-        }
-        start + text.len()
+        // The line ends before its line ending: `\n`, `\r\n` or a lone `\r`.
+        let end = self
+            .starts
+            .get(line + 1)
+            .map_or(self.source.len(), |&next| {
+                next - 1 - usize::from(self.source[..next].ends_with("\r\n"))
+            });
+        self.column_in(start, end, character)
     }
 
     /// Each line as a client counts them, with its line ending.
@@ -3342,15 +3400,7 @@ impl<'a> Lines<'a> {
         let Some(&start) = self.q_starts.get(line) else {
             return self.source.len();
         };
-        let text = self.q_line(line);
-        let mut units = 0;
-        for (i, c) in text.char_indices() {
-            if units >= column {
-                return start + i;
-            }
-            units += c.len_utf16();
-        }
-        start + text.len()
+        self.column_in(start, start + self.q_line(line).len(), column)
     }
 }
 
@@ -3662,6 +3712,103 @@ mod tests {
         // And the statement that does not close ends on its last line.
         let carry = Carry::new("a:1\n", source).expect("a broken statement");
         assert_eq!(carry.broken, 0..1);
+    }
+
+    #[test]
+    fn findings_on_one_long_line_convert_in_linear_time() {
+        // 40,000 findings on one 600 KB line, generated or minified q. Each
+        // position was found by scanning from the start of its line: 10 s
+        // to publish 24,000 in a release build, and every code action as
+        // long (#2114). The `é` at the start keeps every column one UTF-16
+        // unit short of its byte, so no ASCII shortcut passes this.
+        let unit = "{[x] y:1; x};";
+        let source = format!("\u{e9}a:({})\n", unit.repeat(40_000));
+        let lines = Lines::new(&source);
+        let started = std::time::Instant::now();
+        for k in 0..40_000 {
+            // Columns count UTF-16 units from 1: `é` is one, two bytes.
+            let column = 4 + k * unit.len();
+            let mut f = Finding::new("x.q", 1, "QF017", "detail".into());
+            f.column = Some(column + 1);
+            f.end_column = Some(column + 2);
+            let d = diagnostic(&f, &lines);
+            assert_eq!(d["range"]["start"], json!({"line": 0, "character": column}));
+            let byte = lines.q_offset(0, column);
+            assert_eq!(byte, column + 1);
+            assert_eq!(&source[byte..byte + 1], "{");
+            assert_eq!(lines.position(byte), (0, column));
+            assert_eq!(lines.offset(0, column), byte);
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn positions_from_the_marks_are_the_ones_a_walk_from_the_line_start_gives() {
+        // The marks are a shortcut (#2114): over texts with long lines, every
+        // kind of line ending and characters of one to four bytes, each
+        // conversion must answer what walking the line from its start does.
+        let pieces = [
+            "a",
+            "bc ",
+            "\u{e9}",
+            "\u{20ac}",
+            "\u{1f600}",
+            "\n",
+            "\r\n",
+            "\r",
+            "{[x] x}",
+        ];
+        let mut seed: u64 = 7;
+        let mut next = |n: usize| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 33) as usize % n
+        };
+        for _ in 0..200 {
+            let text: String = (0..next(400))
+                .map(|_| pieces[next(pieces.len() - 3) + usize::from(next(20) == 0) * 3])
+                .collect();
+            let lines = Lines::new(&text);
+            let walk = |start: usize, end: usize, column: usize| {
+                let mut units = 0;
+                for (i, c) in text[start..end].char_indices() {
+                    if units >= column {
+                        return start + i;
+                    }
+                    units += c.len_utf16();
+                }
+                end
+            };
+            for byte in (0..=text.len()).filter(|&b| text.is_char_boundary(b)) {
+                let line = lines.starts.partition_point(|&s| s <= byte) - 1;
+                let start = lines.starts[line];
+                assert_eq!(lines.position(byte), (line, utf16_len(&text[start..byte])));
+            }
+            for line in 0..lines.q_starts.len() {
+                let start = lines.q_starts[line];
+                let end = start + lines.q_line(line).len();
+                for column in 0..utf16_len(&text[start..end]) + 3 {
+                    assert_eq!(lines.q_offset(line, column), walk(start, end, column));
+                }
+            }
+            for line in 0..lines.starts.len() {
+                let start = lines.starts[line];
+                let rest = &text[start..];
+                let end = start + rest.find(['\n', '\r']).unwrap_or(rest.len());
+                for column in 0..utf16_len(&text[start..end]) + 3 {
+                    assert_eq!(
+                        lines.offset(line, column),
+                        walk(start, end, column),
+                        "{text:?}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

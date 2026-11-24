@@ -7,22 +7,27 @@
 use super::Lines;
 use q_lint_rs::Finding;
 use serde_json::{Value, json};
+use std::cell::OnceCell;
 
 /// The related locations for `finding`, which starts at byte `at` of
 /// `text`, each a location in `uri` with a message - or none, for a rule
-/// that points at one place only.
+/// that points at one place only. `view` holds `text` with strings and
+/// comments blanked once it is first wanted, for all of a document's
+/// findings: made again for each, a file with many was quadratic (#2114).
 pub(super) fn related(
     finding: &Finding,
     text: &str,
+    view: &OnceCell<String>,
     lines: &Lines,
     at: usize,
     uri: &str,
 ) -> Vec<Value> {
     // Read with strings and comments blanked, so a name or a bracket in
     // one is not taken for code.
+    let view = || view.get_or_init(|| q_lint_rs::code_view(text)).as_str();
     let places = match finding.code.as_str() {
-        "QF008" => parameters(finding, &q_lint_rs::code_view(text), at),
-        "QB019" | "QB021" => columns(finding, &q_lint_rs::code_view(text), at),
+        "QF008" => parameters(finding, view(), at),
+        "QB019" | "QB021" => columns(finding, view(), at),
         _ => vec![],
     };
     places
@@ -77,8 +82,13 @@ fn columns<'a>(finding: &'a Finding, text: &str, at: usize) -> Vec<(usize, &'a s
     let end = if text[at..].starts_with('(') {
         closer(text, at).unwrap_or(text.len())
     } else {
-        let line = text[at..].find('\n').map_or(text.len(), |n| at + n);
-        text[at..line].find(" from").map_or(line, |n| at + n)
+        // The line's end or its first ` from`, whichever comes first, read
+        // no further: on one long line, reading to its end for each
+        // finding was quadratic (#2114).
+        let rest = &text.as_bytes()[at..];
+        (0..rest.len())
+            .find(|&i| rest[i] == b'\n' || rest[i..].starts_with(b" from"))
+            .map_or(text.len(), |i| at + i)
     };
     let found = if finding.code == "QB021" {
         by_duplicate(text, at, end, name)
