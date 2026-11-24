@@ -264,3 +264,21 @@ test("a blank line in a multi-line string is part of the string, as q reads it (
   assert.deepStrictEqual(statements(src), want);
   assert.deepStrictEqual(statementSpans(src).map((s) => [s.text, s.start, s.end]), [[want[0], 0, 2], [want[1], 3, 5], [want[2], 6, 8]]);
 });
+
+test("replScript reads a long script once: twice the lines take about twice the time, not four times (#1858)", () => {
+  const block = ['f:{[x;y]', '  a:x+y; / a comment (', '  b:"a string with { and \\" in it";', '  c:(1 2', '   3 4);', '  a*b}', '/', 'a block ( comment', '\\', 'g:f[1;2]', 's:"two', 'lines"'];
+  const script = (n) => Array.from({ length: n }, (_, i) => block[i % block.length]).join("\n");
+  const time = (n) => {
+    const text = script(n);
+    const t = process.hrtime.bigint();
+    replScript(text);
+    return Number(process.hrtime.bigint() - t) / 1e6;
+  };
+  time(2000);
+  const small = time(20_000);
+  const big = time(40_000);
+  // Before, 10,000 lines took 15 s; each doubling, four times as long.
+  assert.ok(big < Math.max(small, 5) * 3, `${small} ms at 20k lines, ${big} ms at 40k`);
+  // What each line is given is as before: the block's lines inside brackets indented, the string's joined.
+  assert.strictEqual(replScript(block.join("\n")), 'f:{[x;y]\n  a:x+y; / a comment (\n  b:"a string with { and \\" in it";\n  c:(1 2\n   3 4);\n  a*b}\n/\na block ( comment\n\\\ng:f[1;2]\ns:"two\\nlines"');
+});

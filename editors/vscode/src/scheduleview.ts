@@ -10,7 +10,7 @@ import * as path from "node:path";
 import { Uri, commands, window, workspace, type ExtensionContext } from "vscode";
 import { ADMIN_COMMANDS, adminOff, readAdmin } from "./admin";
 import { textPayload } from "./asyncquery";
-import { toCsv, toGrid } from "./grid";
+import { csvLines, textBuffer, toGrid } from "./grid";
 import type { Live } from "./live";
 import { readLive } from "./liveconfig";
 import { exportResult } from "./resultexport";
@@ -147,7 +147,7 @@ export class ScheduledExports {
     }
     const configuration = workspace.getConfiguration("q-lint");
     const { gridDecimals } = readLive((key, fallback) => configuration.get(key, fallback));
-    const data = s.format === "csv" ? Buffer.from(toCsv(toGrid(payload, gridDecimals)), "utf8") : exportResult(s.format, payload, gridDecimals).data;
+    const data = s.format === "csv" ? textBuffer(csvLines(toGrid(payload, gridDecimals))) : exportResult(s.format, payload, gridDecimals).data;
     const file = outputPath(s.path, s.mode, now);
     await fs.mkdir(path.dirname(file), { recursive: true });
     await writeWhole(file, data);

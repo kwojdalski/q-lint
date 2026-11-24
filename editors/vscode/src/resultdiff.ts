@@ -77,10 +77,16 @@ export function diffGrids(before: Grid, after: Grid): GridDiff {
         list.push(r);
       }
     }
+    // How far into each key's list rows are taken: shift() would copy the
+    // list down each time, quadratic in a key's rows (#1860).
+    const taken = new Map<string, number>();
     for (let r = 0; r < now; r++) {
-      const list = rows.get(keyOf(after, keys, r));
-      const b = list?.shift();
+      const k = keyOf(after, keys, r);
+      const list = rows.get(k);
+      const next = taken.get(k) ?? 0;
+      const b = list?.[next];
       if (b !== undefined) {
+        taken.set(k, next + 1);
         match[r] = b;
         used[b] = true;
       }

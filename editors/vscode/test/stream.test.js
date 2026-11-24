@@ -331,3 +331,100 @@ test("an update in the same packet as .u.sub's answer reaches the grid", async (
   assert.deepStrictEqual(panels[0].posted.at(-1).rows, [["a", "1.5"]]);
   panels[0].dispose();
 });
+
+test("the grid is sent only the rows since it last drew, and all of them when none it has is kept (#1861)", () => {
+  const w = new RowWindow(3);
+  assert.deepStrictEqual(w.since(-1), { reset: true, rows: [] });
+  w.push([["1"], ["2"]]);
+  assert.deepStrictEqual(w.since(-1), { reset: true, rows: [["1"], ["2"]] });
+  w.push([["3"]]);
+  assert.deepStrictEqual(w.since(2), { reset: false, rows: [["3"]] });
+  assert.deepStrictEqual(w.since(3), { reset: false, rows: [] });
+  w.push([["4"], ["5"]]);
+  assert.deepStrictEqual(w.since(3), { reset: false, rows: [["4"], ["5"]] });
+  w.push([["6"], ["7"], ["8"]]);
+  assert.deepStrictEqual(w.since(5), { reset: true, rows: [["6"], ["7"], ["8"]] });
+  // Many small updates keep only the newest, without copying them all each time.
+  const big = new RowWindow(10_000);
+  const t = process.hrtime.bigint();
+  for (let i = 0; i < 100_000; i++) {
+    big.push([[String(i)]]);
+  }
+  assert.ok(Number(process.hrtime.bigint() - t) / 1e6 < 1000);
+  assert.strictEqual(big.rows().length, 10_000);
+  assert.deepStrictEqual(big.rows()[0], ["90000"]);
+  assert.deepStrictEqual(big.rows().at(-1), ["99999"]);
+});
+
+test("the stream page adds the rows that came above its own and drops the oldest, not every row again (#1861)", () => {
+  let made = 0;
+  class Node {
+    constructor(tag) {
+      this.tagName = tag;
+      this.children = [];
+      this.textContent = "";
+      made++;
+    }
+    append(...nodes) {
+      for (const n of nodes) {
+        if (n.tagName === "#fragment") {
+          this.append(...n.children);
+        } else {
+          n.parent = this;
+          this.children.push(n);
+        }
+      }
+    }
+    insertBefore(node, before) {
+      const at = before === null || before === undefined ? this.children.length : this.children.indexOf(before);
+      const nodes = node.tagName === "#fragment" ? node.children : [node];
+      nodes.forEach((n) => (n.parent = this));
+      this.children.splice(at, 0, ...nodes);
+    }
+    replaceChildren(...nodes) {
+      this.children = [];
+      this.append(...nodes);
+    }
+    remove() {
+      this.parent.children.splice(this.parent.children.indexOf(this), 1);
+    }
+    addEventListener() {}
+    get firstChild() {
+      return this.children[0] ?? null;
+    }
+    get lastElementChild() {
+      return this.children.at(-1) ?? null;
+    }
+    get childElementCount() {
+      return this.children.length;
+    }
+  }
+  let listener;
+  const body = new Node("body");
+  const context = {
+    acquireVsCodeApi: () => ({ postMessage() {} }),
+    document: { body, createElement: (t) => new Node(t), createDocumentFragment: () => new Node("#fragment") },
+    window: { addEventListener: (_t, f) => (listener = f) },
+  };
+  require("node:vm").runInNewContext(fs.readFileSync(path.join(__dirname, "..", "media", "stream.js"), "utf8"), context);
+  const w = new RowWindow(10_000);
+  let seen = -1;
+  const send = () => {
+    const { reset, rows } = w.since(seen);
+    seen = w.total;
+    listener({ data: { type: "rows", process: "tp", table: "trade", columns: ["sym", "px"], limit: 10_000, reset, rows, kept: w.rows().length, total: w.total, at: "now" } });
+  };
+  const tbody = () => body.children[1].children[0].children[1];
+  const shown = () => tbody().children.map((tr) => tr.children.map((td) => td.textContent));
+  w.push(Array.from({ length: 10_000 }, (_, i) => ["a", String(i)]));
+  send();
+  assert.strictEqual(tbody().children.length, 10_000);
+  // A batch of five makes five rows' nodes, not ten thousand.
+  made = 0;
+  w.push(Array.from({ length: 5 }, (_, i) => ["b", String(10_000 + i)]));
+  send();
+  assert.ok(made <= 5 * 3 + 1, String(made));
+  assert.strictEqual(tbody().children.length, 10_000);
+  // Newest first, the oldest dropped: as a full redraw would show them.
+  assert.deepStrictEqual(shown(), w.rows().slice().reverse());
+});

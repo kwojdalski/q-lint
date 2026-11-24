@@ -199,3 +199,28 @@ test("unwrapped mode makes the tree GRID would: entries and items as children, t
   assert.deepStrictEqual(deep.children[0].children.map((c) => c.text), ["1", "2"]);
   assert.deepStrictEqual(deep.children[1].children.map((c) => c.text), ["`p"]);
 });
+
+test("a diff of a key repeated on many rows matches them in order in linear time (#1860)", () => {
+  const { diffGrids } = require("../out/resultdiff.js");
+  const mk = (rows) => ({ columns: [{ name: "s", key: true }, { name: "v", key: false }], cells: [Array.from({ length: rows }, (_, i) => "k" + (i % 10)), Array.from({ length: rows }, (_, i) => String(i))], total: rows });
+  const time = (rows) => {
+    const a = mk(rows);
+    const b = mk(rows);
+    const t = process.hrtime.bigint();
+    diffGrids(a, b);
+    return Number(process.hrtime.bigint() - t) / 1e6;
+  };
+  time(50_000);
+  const small = time(200_000);
+  const big = time(400_000);
+  // Shifting per row was four times the cost per doubling: 304 ms, then 1163 ms.
+  assert.ok(big < Math.max(small, 20) * 3, `${small} ms at 200k, ${big} ms at 400k`);
+  // Two rows with one key are still matched in their order.
+  const before = { columns: [{ name: "s", key: true }, { name: "v", key: false }], cells: [["a", "a", "b"], ["1", "2", "3"]], total: 3 };
+  const after = { columns: [{ name: "s", key: true }, { name: "v", key: false }], cells: [["a", "b", "a", "a"], ["1", "3", "9", "4"]], total: 4 };
+  // The second a is matched to the second a (2 to 9); the third is new.
+  const d = diffGrids(before, after);
+  assert.deepStrictEqual(d.changes, [[1, 2, "2"]]);
+  assert.deepStrictEqual(d.addedRows, [3]);
+  assert.strictEqual(d.removed.count, 0);
+});

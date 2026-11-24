@@ -17,7 +17,7 @@
 // would round. A null is an empty cell. Excel holds 1,048,576 rows and
 // 16,384 columns; a grid with more is cut there, and the notes say so.
 import { deflateRawSync } from "node:zlib";
-import type { GridPayload } from "./grid";
+import { textBuffer, type GridPayload } from "./grid";
 import { plainItem, rawColumn, textNull } from "./qliteral";
 import { rankEdge, xlsxRules, type FormatRule } from "./resultlook";
 
@@ -321,7 +321,8 @@ export function toXlsx(payload: GridPayload, order: number[], rules: FormatRule[
         "</Relationships>",
       ]),
     },
-    { name: "xl/worksheets/sheet1.xml", data: xml(sheet) },
+    // The sheet in parts: a big result's is past the longest string V8 makes (#1855).
+    { name: "xl/worksheets/sheet1.xml", data: textBuffer(sheet) },
     {
       name: "xl/styles.xml",
       data: Buffer.from(formats.dxfs.length === 0 ? STYLES : STYLES.replace("</styleSheet>", `<dxfs count="${formats.dxfs.length}">${formats.dxfs.join("")}</dxfs></styleSheet>`), "utf8"),
