@@ -14,6 +14,7 @@ import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import type { Live, ProcessArg } from "./live";
 import { launchOf, withExtras, type Launch, type Process } from "./processes";
 import { iconsEscaped, plainMessage } from "./history";
+import { signalGroup } from "./lifeline";
 
 /// How long a process has to end after SIGTERM before it is killed.
 const STOP_GRACE_MS = 3000;
@@ -77,7 +78,7 @@ export class Launcher {
     if (globalThis.process.platform === "win32" || child === undefined || child.exitCode !== null || child.signalCode !== null || child.pid === undefined) {
       return undefined;
     }
-    child.kill("SIGINT");
+    signalGroup(child, "SIGINT");
     return child.pid;
   }
 
@@ -207,13 +208,14 @@ export class Launcher {
         // No stdin: q reads none from a launcher, and keeps running without.
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
+        // A process group of its own, so Stop reaches the q a wrapper
+        // script starts as well as the script (#1672).
+        detached: globalThis.process.platform !== "win32",
       });
     } catch (error) {
       channel.appendLine(`could not start: ${error instanceof Error ? error.message : String(error)}`);
       return `could not start ${process.label}: ${error instanceof Error ? error.message : String(error)}`;
     }
-    const started: Started = { child, channel, port: process.port };
-    this.started.set(process.label, started);
     child.stdout?.setEncoding("utf8");
     child.stderr?.setEncoding("utf8");
     child.stdout?.on("data", (text: string) => channel.append(text));
@@ -222,6 +224,8 @@ export class Launcher {
       channel.appendLine(`could not start: ${error.message}`);
       void window.showErrorMessage(plainMessage(`q-lint: could not start ${process.label}: ${error.message}`));
     });
+    const started: Started = { child, channel, port: process.port };
+    this.started.set(process.label, started);
     child.once("close", (code, signal) => {
       if (this.started.get(process.label)?.child === child) {
         this.started.delete(process.label);
@@ -258,7 +262,9 @@ export class Launcher {
     await this.end(label);
   }
 
-  /// Stop `label`: SIGTERM, then SIGKILL if it has not ended in a while.
+  /// Stop `label`: SIGTERM to its process group, then SIGKILL if it has
+  /// not ended in a while. Done once its output closes, which is once every
+  /// process holding it has ended, or a while after the SIGKILL.
   private end(label: string): Promise<void> {
     const started = this.started.get(label);
     if (started === undefined) {
@@ -270,13 +276,26 @@ export class Launcher {
         resolve();
         return;
       }
-      const kill = setTimeout(() => child.kill("SIGKILL"), STOP_GRACE_MS);
+      let last: NodeJS.Timeout | undefined;
+      const kill = setTimeout(() => {
+        signalGroup(child, "SIGKILL");
+        // Something outside its group may hold its output open.
+        last = setTimeout(() => {
+          if (this.started.get(label)?.child === child) {
+            this.started.delete(label);
+            this.live.refreshProcesses();
+          }
+          resolve();
+        }, STOP_GRACE_MS);
+        last.unref();
+      }, STOP_GRACE_MS);
       kill.unref();
       child.once("close", () => {
         clearTimeout(kill);
+        clearTimeout(last);
         resolve();
       });
-      child.kill("SIGTERM");
+      signalGroup(child, "SIGTERM");
     });
   }
 

@@ -315,3 +315,19 @@ test("the Arguments box gives back the arguments it was filled with (#1430)", ()
   assert.strictEqual(argsText(["-e", "", "a b"]), '-e "" "a b"');
   assert.deepStrictEqual(argsFromText('-e "" "a b" -x', ["-e", "", "a b"]), ["-e", "", "a b", "-x"]);
 });
+
+test("Stop Process ends what a wrapper script started too, and frees its port (#1672)", { skip: process.platform === "win32" ? "no process groups" : false }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-"));
+  fs.writeFileSync(path.join(dir, "fake.js"), FAKE);
+  // Runs its program without exec, as TorQ's start script and rlwrap do.
+  fs.writeFileSync(path.join(dir, "wrap.sh"), `#!/bin/sh\n"${process.execPath}" "$@"\necho wrapper done\n`, { mode: 0o755 });
+  const port = await freePort();
+  const { launcher } = await setUp(t, [proc("w", port, { command: path.join(dir, "wrap.sh"), script: "fake.js", cwd: dir })]);
+  await stub.commands.get(LAUNCH_COMMANDS.start)("w");
+  for (let i = 0; i < 100 && !(await accepts(port)); i++) await sleep(50);
+  assert.ok(await accepts(port));
+  const stopped = stub.commands.get(LAUNCH_COMMANDS.stop)("w").then(() => true);
+  assert.strictEqual(await Promise.race([stopped, sleep(5000).then(() => false)]), true);
+  assert.deepStrictEqual(launcher.running(), []);
+  assert.strictEqual(await accepts(port), false);
+});
