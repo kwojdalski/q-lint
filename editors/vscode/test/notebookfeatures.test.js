@@ -92,6 +92,18 @@ test("the renderer reads expressions as the extension does, and escapes every va
   assert.match(r.liveHtml("constructor", {}), /^<code/);
 });
 
+test("the renderer reports a prototype's name as having no value, which postMessage can clone (#1391)", async () => {
+  const r = await renderer();
+  const rules = {};
+  const md = { inline: { ruler: { before: (_at, _name, rule) => (rules.inline = rule) } }, renderer: { rules } };
+  const heard = [];
+  r.extend(md, (expr, value) => heard.push(structuredClone({ expr, value: value ?? null })));
+  const env = { outputItem: { metadata: { "q-lint.liveValues": { a: { text: "1" } } } } };
+  const html = ["constructor", "toString", "a"].map((expr) => rules.qlint_live([{ meta: { expr } }], 0, {}, env));
+  assert.deepStrictEqual(heard, [{ expr: "constructor", value: null }, { expr: "toString", value: null }, { expr: "a", value: { text: "1" } }]);
+  assert.match(html[0], /^<code/);
+});
+
 test("package.json contributes the live values renderer as an extension of the Markdown renderer", () => {
   const live = pkg.contributes.notebookRenderer.find((r) => r.id === NOTEBOOK.liveRenderer);
   assert.deepStrictEqual(live.entrypoint, { extends: "vscode.markdown-it-renderer", path: "./media/livemarkdown.js" });
