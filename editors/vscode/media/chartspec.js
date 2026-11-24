@@ -396,7 +396,9 @@
 
   /// About five round steps from `lo` to `hi`: the ticks of an axis.
   function ticks(lo, hi) {
-    if (!(hi > lo)) {
+    // A range within rounding of its ends (0.3 and 0.1+0.2) is one value:
+    // a step that small would not move `v` on.
+    if (!(hi - lo > Math.max(Math.abs(lo), Math.abs(hi)) * 1e-10)) {
       const d = Math.abs(lo) || 1;
       lo -= d / 2;
       hi += d / 2;
@@ -405,7 +407,7 @@
     const mag = Math.pow(10, Math.floor(Math.log10(raw)));
     const step = [1, 2, 5, 10].map(function (m) { return m * mag; }).filter(function (s) { return s >= raw; })[0];
     const out = [];
-    for (let v = Math.floor(lo / step) * step; v <= hi + step / 2; v += step) {
+    for (let v = Math.floor(lo / step) * step; out.length < 50 && v <= hi + step / 2; v += step) {
       out.push(+v.toPrecision(12));
     }
     return { values: out, step: step };
