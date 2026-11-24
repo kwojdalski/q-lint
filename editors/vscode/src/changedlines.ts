@@ -100,21 +100,13 @@ export const runGit: Git = (args, cwd) =>
     );
   });
 
-/// What the file at `path` was at `HEAD`: its text, `""` for a file git does
-/// not track there (every line is new), or undefined outside a git
-/// repository, or when git cannot say (a timeout, a lock), where nothing is
-/// to be formatted.
-export async function committedText(path: string, git: Git = runGit): Promise<string | undefined> {
-  const cwd = dirname(path);
-  const top = (await git(["rev-parse", "--show-toplevel"], cwd))?.trim();
-  if (top === undefined || top === "") {
-    return undefined;
-  }
-  // git names the top through symlinks resolved: /tmp is /private/tmp. And
-  // it names a file as the disk spells it, which where case is ignored need
-  // not be how the editor was given it (`upper.q` for Upper.q, #2003): the
-  // native call answers that spelling, taken when it is under the top - a
-  // mapped drive's is not.
+/// The file at `path` as git names it in the repository whose top is `top`,
+/// `/`-separated. git names the top through symlinks resolved: /tmp is
+/// /private/tmp. And it names a file as the disk spells it, which where case
+/// is ignored need not be how the editor was given it (`upper.q` for
+/// Upper.q, #2003): the native call answers that spelling, taken when it is
+/// under the top - a mapped drive's is not.
+export function gitName(top: string, path: string): string {
   let real = path;
   try {
     real = realpathSync(path);
@@ -125,7 +117,20 @@ export async function committedText(path: string, git: Git = runGit): Promise<st
   } catch {
     // A file not saved yet: as it is named.
   }
-  const name = relative(top, real).split("\\").join("/");
+  return relative(top, real).split("\\").join("/");
+}
+
+/// What the file at `path` was at `HEAD`: its text, `""` for a file git does
+/// not track there (every line is new), or undefined outside a git
+/// repository, or when git cannot say (a timeout, a lock), where nothing is
+/// to be formatted.
+export async function committedText(path: string, git: Git = runGit): Promise<string | undefined> {
+  const cwd = dirname(path);
+  const top = (await git(["rev-parse", "--show-toplevel"], cwd))?.trim();
+  if (top === undefined || top === "") {
+    return undefined;
+  }
+  const name = gitName(top, path);
   // `HEAD:./name` would be relative to cwd; the top-level path is not.
   const text = await git(["show", `HEAD:${name}`], top);
   if (text !== undefined) {
