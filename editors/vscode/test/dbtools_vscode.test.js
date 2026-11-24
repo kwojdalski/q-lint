@@ -571,3 +571,29 @@ test("the local q's directory is removed once the q has exited, where it cannot 
     fs.rmSync(parent, { recursive: true, force: true });
   }
 });
+
+test("Open Tickerplant Log starts the q of the log file's own workspace folder (#1842)", { skip: process.platform === "win32" && "POSIX paths" }, async (t) => {
+  capture();
+  stub.reset();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-tplog-folder-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const A = path.join(root, "A");
+  const B = path.join(root, "B");
+  fs.mkdirSync(path.join(A, "bin"), { recursive: true });
+  fs.mkdirSync(path.join(B, "bin"), { recursive: true });
+  fs.mkdirSync(path.join(B, "logs"));
+  // Each folder's ./bin/q leaves its mark; neither is a q.
+  for (const dir of [A, B]) fs.writeFileSync(path.join(dir, "bin", "q"), `#!/bin/sh\ntouch '${path.join(dir, "ran")}'\n`, { mode: 0o755 });
+  stub.config.user["terminal.qBinary"] = "./bin/q";
+  const folders = [A, B].map((d, index) => ({ uri: vscode.Uri.file(d), name: path.basename(d), index }));
+  const plain = { folders: vscode.workspace.workspaceFolders, get: vscode.workspace.getWorkspaceFolder };
+  vscode.workspace.workspaceFolders = folders;
+  vscode.workspace.getWorkspaceFolder = (uri) => folders.find((f) => uri.fsPath.startsWith(f.uri.fsPath + path.sep));
+  t.after(() => void Object.assign(vscode.workspace, { workspaceFolders: plain.folders, getWorkspaceFolder: plain.get }));
+  const context = stub.newContext();
+  const log = new TickerplantLog(context);
+  t.after(() => context.subscriptions.forEach((d) => d.dispose?.()));
+  await log.open(path.join(B, "logs", "tp2026.11.24"));
+  assert.strictEqual(fs.existsSync(path.join(B, "ran")), true, "B's q was started");
+  assert.strictEqual(fs.existsSync(path.join(A, "ran")), false, "A's was not");
+});
