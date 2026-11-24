@@ -1495,3 +1495,21 @@ test("a guard tag with a blank in it is read as process tags are, a tag for each
   assert.deepStrictEqual(guardedBy({ tags: ["Live Desk"] }, settings({ "processes.readOnlyGuard.tags": ["desk"] })), ["Live Desk"]);
   assert.deepStrictEqual(guardedBy({ tags: ["dev"] }, blank), []);
 });
+
+test("! passed as a value with -11 or -19 replays a log or writes a compressed file (#2041)", () => {
+  const cases = {
+    "(!)[-11;`:lg]": ["replays a log with -11!"],
+    ".[!;(-11;`:lg)]": ["replays a log with -11!"],
+    "!/[-11;`:lg]": ["replays a log with -11!"],
+    ".[!;(-19;(`:lg;`:lgz;17;2;6))]": ["writes a compressed file with -19!"],
+    "(!)[-6;(:;`a;1)]": ["evaluates an assignment with -6!"],
+    // Counting a log, a dictionary, or another internal function reads.
+    "(!)[-11;(-1;`:lg)]": [],
+    "(!)[`a`b;1 2]": [],
+    "(!) . (`a`b;1 2)": [],
+    '(!)[-4;"x"]': [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

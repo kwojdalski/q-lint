@@ -59,7 +59,8 @@
 // - `-11!`, which replays a log through `upd`, except `-11!(-1;..)` and
 //   `-11!(-2;..)`, which only count and check one; `-19!`, which
 //   compresses a file into another - each also spaced or with the number
-//   in parentheses (`-19 !x`, `(-19)!x`);
+//   in parentheses (`-19 !x`, `(-19)!x`), and with `!` passed as a value
+//   (`` (!)[-11;`:log] ``, `` .[!;(-19;..)] ``, `` !/[-11;`:log] ``, #2041);
 // - `@[` or `.[` on a variable named by a symbol, alone or in
 //   parentheses (`` .[(`t);..] ``), with three arguments or four: an
 //   amend in place - on a symbol it is never a trap, `.[`f;args;h]`
@@ -907,8 +908,9 @@ function throughParameters(t: Token[], all: Token[], index: Map<Token, number>, 
 
 /// The operators that change the process given the right arguments, read
 /// as a call when they are passed as a value: `?`, which extends an
-/// enumeration, and the amends `@` and `.`.
-const VALUES = new Set(["?", "@", "."]);
+/// enumeration, the amends `@` and `.`, and `!`, whose `-11!` and `-19!`
+/// replay a log and write a file (#2041).
+const VALUES = new Set(["?", "@", ".", "!"]);
 
 /// The items of the list `t[from]` to `t[to]` an operator is applied to by
 /// `.`, `(x;y)` or `enlist x`; undefined when they are not written.
@@ -954,7 +956,12 @@ function asValue(t: Token[], i: number): string[] {
     return [];
   }
   const call = (texts: string[]): string => (texts.length === 2 ? `(${texts[0]})${op}(${texts[1]})` : `${op}[${texts.join(";")}]`);
-  const calls = [call(args.map(([a, b]) => joined(t, a, b)))];
+  // An argument in parentheses already is written as it is: `(-11)!(-1;f)`.
+  const own = ([a, b]: [number, number]): string => {
+    const text = joined(t, a, b);
+    return t[a]?.text === "(" && t[a].kind === "open" && items(t, a).at(-1)?.[1] === b - 1 && items(t, a).length > 1 ? text.slice(1, -1) : text;
+  };
+  const calls = [call(args.map((arg) => (args.length === 2 ? own(arg) : joined(t, arg[0], arg[1]))))];
   if (iterated) {
     calls.push(call(args.map(([a, b]) => itemsOf(t, a, b)[0] ?? joined(t, a, b))));
   }

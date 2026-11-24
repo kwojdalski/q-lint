@@ -213,3 +213,13 @@ test("a process imported as Live Desk is guarded by the guard tag live desk, and
   const { send, read } = await setUp(t, q.port, kx.processes[0].tags, config);
   await heldThenWrites(send, read, "a1:1", "`a1 in key `.");
 });
+
+test("! passed as a value with -11 or -19 is held, and replays or compresses once let through (#2041)", { skip }, async (t) => {
+  // A two-message log, and an upd that counts the messages replayed.
+  const q = await startQ(t, "n:0; upd:{[t;x] n+::1}; `:lg set (); h:hopen `:lg; h enlist (`upd;`t;1); h enlist (`upd;`t;2); hclose h;\n");
+  const { send, read } = await setUp(t, q.port);
+  await heldThenWrites(send, read, "(!)[-11;`:lg]", "n=2");
+  await heldThenWrites(send, read, ".[!;(-11;`:lg)]", "n=4");
+  await heldThenWrites(send, read, "!/[-11;`:lg]", "n=6");
+  await heldThenWrites(send, read, ".[!;(-19;(`:lg;`:lgz;17;2;6))]", "`lgz in key `:.");
+});
