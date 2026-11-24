@@ -584,14 +584,16 @@ fn highlights(params: &Value, sources: &Sources) -> Value {
             let (targets, _) = sources.global_at(&cursor, at);
             let placement = sources.placement(&cursor.key);
             let code = q_lint_rs::code_view(cursor.text);
+            let changed = q_lint_rs::changed_by_name(cursor.text);
             mentions(cursor.text)
                 .iter()
                 .filter_map(|m| {
                     let part = sources
                         .spelt(cursor.text, m, &placement, &targets)
                         .filter(|&part| part > 0)?;
-                    let write =
-                        m.definition.is_some() || q_lint_rs::amended_at(&code, m.at + m.len);
+                    let write = m.definition.is_some()
+                        || q_lint_rs::amended_at(&code, m.at + m.len)
+                        || changed.contains(&m.at);
                     Some(highlight(m.at, part, write))
                 })
                 .collect()

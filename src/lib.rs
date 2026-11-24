@@ -293,6 +293,14 @@ pub fn shadowing(source: &str, name: &str, offsets: &[usize]) -> Option<usize> {
     semantics::navigate::shadowing(&v.code, source, name, offsets)
 }
 
+/// Where `source` hands a global by its name to a word that changes it in
+/// place - `` update c:1 from `t ``, `` `c xasc `t ``, `@[`t;..]` - as the
+/// start of each such symbol's name.
+pub fn changed_by_name(source: &str) -> Vec<usize> {
+    let v = views(source);
+    semantics::navigate::changed_by_name(&v.code)
+}
+
 /// The first of `offsets` of `source` on a `k)` line, where k reads the
 /// name: see `semantics::navigate::on_k_line`.
 pub fn on_k_line(source: &str, offsets: &[usize]) -> Option<usize> {

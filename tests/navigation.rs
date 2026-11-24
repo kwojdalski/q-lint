@@ -968,6 +968,32 @@ fn highlights_mark_a_write_apart_from_a_read() {
             ((3, 2, 3), 2)
         ]
     );
+    // A table changed in place by its name is written (#2054). KDB-X 5,
+    // `tb:([]c:3 1 2)`: the update makes c 6 2 4, the xasc 2 4 6, the amend
+    // -2 -4 -6; the select and `?[`tb;..]` change nothing.
+    let text = "tb:([]c:3 1 2)\nupdate c:c*2 from `tb\n`c xasc `tb\n@[`tb;`c;neg]\n\
+                delete from `tb where c>5\nselect from `tb\n?[`tb;();0b;()]\n";
+    let uri = server.open(dir.path(), "c.q", text);
+    let reply = server.ask(
+        "textDocument/documentHighlight",
+        &uri,
+        text,
+        "tb:",
+        0,
+        json!({}),
+    );
+    assert_eq!(
+        marks(&reply),
+        [
+            ((0, 0, 2), 3),
+            ((1, 19, 21), 3),
+            ((2, 9, 11), 3),
+            ((3, 3, 5), 3),
+            ((4, 13, 15), 3),
+            ((5, 13, 15), 2),
+            ((6, 3, 5), 2)
+        ]
+    );
 }
 
 #[test]

@@ -77,7 +77,13 @@ fn ends_expression(rest: &str) -> bool {
 /// operator goes on from, one handed to any other word (`` `tb in tables[] ``,
 /// `count `tb`, which is 1) is not here, the text not saying whether it
 /// names the global or is only a symbol.
-fn by_name(code: &str) -> Vec<(usize, usize)> {
+///
+/// With each, whether the word changes the table in place - every one above
+/// that returns `` `tb ``: `update` and `delete` from it, `xkey`, `xasc`,
+/// `xdesc`, `n!`, and the amends and functional update or delete (`@`, `.`,
+/// `!`) - and so writes it, where a select, `?` and the words that take a
+/// name only read it (#2054).
+fn by_name(code: &str) -> Vec<(usize, usize, bool)> {
     const SYMBOL: &str = r"`(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)";
     let whole = |name: regex::Match| {
         !code[name.end()..].starts_with(|c: char| c.is_ascii_alphanumeric() || "_.:/`".contains(c))
@@ -94,7 +100,12 @@ fn by_name(code: &str) -> Vec<(usize, usize)> {
             && whole(name)
             && (filtered || ends_expression(rest))
         {
-            out.push((name.start(), name.len()));
+            // The phrase the `from` ends: the nearest query word before it.
+            let changes = re!(r"\b(select|exec|update|delete)\b")
+                .find_iter(&code[..m.get(0).unwrap().start()])
+                .last()
+                .is_some_and(|word| matches!(word.as_str(), "update" | "delete"));
+            out.push((name.start(), name.len(), changes));
         }
     }
     // The first argument of an amend, a functional query or a functional
@@ -104,7 +115,8 @@ fn by_name(code: &str) -> Vec<(usize, usize)> {
         let applied = code[..m.get(0).unwrap().start()]
             .ends_with(|c: char| c.is_ascii_alphanumeric() || "_.)]}`\"".contains(c));
         if !applied && whole(name) {
-            out.push((name.start(), name.len()));
+            let changes = !m.get(0).unwrap().as_str().starts_with('?');
+            out.push((name.start(), name.len(), changes));
         }
     }
     // The right of a word that keys or sorts in place, and of `n!`.
@@ -120,7 +132,7 @@ fn by_name(code: &str) -> Vec<(usize, usize)> {
             None => ends_expression(rest),
         };
         if boundary(code, m.get(0).unwrap().start()) && whole(name) && ends {
-            out.push((name.start(), name.len()));
+            out.push((name.start(), name.len(), true));
         }
     }
     // What a word that takes a name is given, bracketed or parenthesised.
@@ -137,10 +149,19 @@ fn by_name(code: &str) -> Vec<(usize, usize)> {
             None => ends_expression(rest),
         };
         if boundary(code, m.get(0).unwrap().start()) && whole(name) && ends {
-            out.push((name.start(), name.len()));
+            out.push((name.start(), name.len(), false));
         }
     }
     out
+}
+
+/// Where the code hands a global by its name to a word that changes it in
+/// place (`by_name`): the start of each such symbol's name.
+pub fn changed_by_name(code: &str) -> Vec<usize> {
+    by_name(code)
+        .into_iter()
+        .filter_map(|(at, _, changes)| changes.then_some(at))
+        .collect()
 }
 
 /// What the `k)` lines of a file name. Both views blank a `k)` line and the
@@ -549,7 +570,7 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
             definition: None,
         });
     }
-    for (at, len) in by_name(code) {
+    for (at, len, _) in by_name(code) {
         if writes.contains(&at) || system(at) {
             continue;
         }
