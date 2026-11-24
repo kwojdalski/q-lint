@@ -9,7 +9,7 @@ import { ProgressLocation, Uri, window, workspace } from "vscode";
 import * as path from "node:path";
 import type { Live } from "./live";
 import { readLive, readNotebook, rowsArgument } from "./liveconfig";
-import { featureOff, featureOn, qnbOf, requireFeature, switchProcess } from "./notebook";
+import { featureOff, featureOn, qnbOf, requireFeature, scriptBeside, switchProcess } from "./notebook";
 import { NOTEBOOK, type Qnb } from "./qnb";
 import { parametersCell, parametersOf, runNotebook, writeAs, type RunResult } from "./qnbrun";
 import { plainMessage } from "./history";
@@ -71,7 +71,8 @@ export async function runWithParameters(live: Live, source?: Uri, target?: Uri, 
       ? target
       : await window.showSaveDialog({
           title: "Write the run's notebook, with its outputs, to",
-          defaultUri: from.with({ path: from.path.replace(/(\.qnb)?$/i, "-run.qnb") }),
+          // On disk, for an untitled notebook too (#1549).
+          defaultUri: scriptBeside(from, "-run.qnb"),
           filters: { "q notebook": ["qnb"], HTML: ["html"], "Jupyter notebook": ["ipynb"] },
         });
   if (to === undefined) {

@@ -566,6 +566,20 @@ function loadRun(fake, live) {
   }
 }
 
+test("Run with Parameters on an untitled notebook offers to save the run on disk (#1549)", async () => {
+  const fake = fakeVscode();
+  const live = recordingLive(PROCESSES, "dev1");
+  const { runWithParameters } = loadRun(fake, live);
+  const uri = new fake.vscode.Uri("Untitled-1.qnb", "untitled");
+  const notebook = { uri, notebookType: "q-lint-notebook", metadata: {}, getCells: () => [{ kind: 2, document: { getText: () => "til 3", languageId: "q" }, outputs: [], metadata: {} }] };
+  fake.vscode.workspace.notebookDocuments.push(notebook);
+  fake.vscode.window.activeNotebookEditor = { notebook };
+  fake.vscode.workspace.workspaceFolders = [{ uri: fake.vscode.Uri.file("/ws") }];
+  await runWithParameters(live, undefined, undefined, {});
+  const offered = fake.dialogs[0].defaultUri;
+  assert.strictEqual(`${offered.scheme}:${offered.path}`, "file:/ws/Untitled-1-run.qnb");
+});
+
 test("Run Notebook with Parameters runs the notebook on the active connection and writes the run; off, it refuses", async () => {
   const fake = fakeVscode();
   const live = recordingLive(PROCESSES, "dev1");

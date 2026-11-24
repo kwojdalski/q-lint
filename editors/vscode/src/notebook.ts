@@ -536,14 +536,14 @@ async function cellsOf(uri: Uri): Promise<QnbCell[]> {
   return parseQnb(Buffer.from(await workspace.fs.readFile(uri)).toString("utf8")).cells;
 }
 
-/// Where Export Notebook offers to write `notebook`'s script: beside it, or,
-/// for an untitled notebook (New q Notebook's), in the first workspace
-/// folder - a save dialog cannot browse `untitled:`, and nothing can be
+/// Where Export Notebook offers to write `notebook`'s script, and Run with
+/// Parameters its run: beside it, or, for an untitled notebook (New q
+/// Notebook's), in the first workspace folder - a save dialog cannot browse `untitled:`, and nothing can be
 /// written there.
-function scriptBeside(notebook: Uri, extension = ".q"): Uri {
-  const name = path.posix.basename(notebook.path).replace(/\.qnb$/i, extension);
+export function scriptBeside(notebook: Uri, extension = ".q"): Uri {
+  const name = path.posix.basename(notebook.path).replace(/(\.qnb)?$/i, extension);
   if (notebook.scheme !== "untitled") {
-    return notebook.with({ path: notebook.path.replace(/\.qnb$/i, extension) });
+    return notebook.with({ path: notebook.path.replace(/(\.qnb)?$/i, extension) });
   }
   const folder = workspace.workspaceFolders?.[0]?.uri ?? Uri.file(os.homedir());
   return Uri.joinPath(folder, name);
