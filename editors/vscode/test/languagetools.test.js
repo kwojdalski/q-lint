@@ -539,6 +539,87 @@ test("in a workspace that is not trusted a save runs no affected test (#1228)", 
   }
 });
 
+test("a save the server does not answer for keeps its baseline: the next save tests its changes too (#1875)", async () => {
+  const { context, restore } = setUp();
+  const saves = [];
+  const trusted = vscode.workspace.isTrusted;
+  const said = [];
+  vscode.window.setStatusBarMessage = (text) => (said.push(text), { dispose() {} });
+  vscode.workspace.onDidSaveTextDocument = (l) => (saves.push(l), { dispose: () => saves.splice(saves.indexOf(l), 1) });
+  vscode.workspace.onDidOpenTextDocument = () => ({ dispose() {} });
+  vscode.workspace.onDidCloseTextDocument = () => ({ dispose() {} });
+  const doc = (text) => ({ languageId: "q", uri: { scheme: "file", fsPath: "/w/a.q", toString: () => "file:///w/a.q" }, isDirty: false, getText: () => text });
+  vscode.workspace.textDocuments = [doc("v0")];
+  try {
+    const sent = [];
+    const runs = [];
+    let fail = "server restarting";
+    let client;
+    const server = {
+      sendRequest: async (_method, params) => {
+        sent.push(params.previous);
+        if (fail) throw new Error(fail);
+        return { tests: [{ uri: "file:///t.q", name: "test_a" }] };
+      },
+    };
+    let runFails = false;
+    const tests = {
+      discover: async () => {},
+      items: () => ["file:///t.q#test_a"],
+      run: async (ids) => {
+        if (runFails) throw new Error("no connection");
+        runs.push(ids);
+      },
+    };
+    stub.config.user["testing.runAffectedOnSave.enable"] = true;
+    const api = registerAffectedOnSave(context, () => client, tests);
+    const save = async (text) => {
+      saves[0](doc(text));
+      await api.settled();
+    };
+    // No language server yet: nothing is asked, and v0 stays the baseline.
+    await save("v1");
+    assert.deepStrictEqual([sent, said], [[], []]);
+    // The request fails: said, and the baseline still does not move.
+    client = server;
+    await save("v2");
+    assert.deepStrictEqual(sent, ["v0"]);
+    assert.strictEqual(said.length, 1);
+    assert.match(said[0], /could not find the tests this save affects \(server restarting\)/);
+    // Not trusted: nothing is asked.
+    fail = "";
+    vscode.workspace.isTrusted = false;
+    await save("v3");
+    assert.deepStrictEqual(sent, ["v0"]);
+    vscode.workspace.isTrusted = true;
+    // Answered, but the run fails: its tests are still to be run.
+    runFails = true;
+    await save("v4");
+    assert.deepStrictEqual([sent, runs], [["v0", "v0"], []]);
+    // Answered and run: every change since v0 was compared, and only now
+    // does the next save compare against this one.
+    runFails = false;
+    await save("v5");
+    assert.deepStrictEqual([sent, runs], [["v0", "v0", "v0"], [["file:///t.q#test_a"]]]);
+    await save("v6");
+    assert.deepStrictEqual(sent, ["v0", "v0", "v0", "v5"]);
+    assert.deepStrictEqual(said.slice(1), ["q-lint: running 1 affected test(s)", "q-lint: running 1 affected test(s)", "q-lint: running 1 affected test(s)"]);
+    // Two saves queued behind a request that fails: the second is still
+    // compared against the text before the first.
+    fail = "gone";
+    saves[0](doc("v7"));
+    saves[0](doc("v8"));
+    await api.settled();
+    assert.deepStrictEqual(sent.slice(4), ["v6", "v6"]);
+    stub.config.user["testing.runAffectedOnSave.enable"] = false;
+    stub.changeConfig("q-lint.testing.runAffectedOnSave.enable");
+  } finally {
+    vscode.workspace.isTrusted = trusted;
+    delete vscode.window.setStatusBarMessage;
+    restore();
+  }
+});
+
 test("overlapping reads of the q Namespaces view keep the latest, whichever answers last (#1120)", async () => {
   const def = (name) => ({ name, namespace: ".", kind: "variable", uri: "file:///a.q", range: { start: { line: 0, character: 0 } } });
   const { context, restore } = setUp();
