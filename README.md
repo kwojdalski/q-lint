@@ -613,7 +613,10 @@ written with the dot or under `\d .qetl.io`. It is one level deep, a group per
 context the file writes into, rather than one level per dot, which would put a
 file that writes only into `.qetl.io` under a `.qetl` with a single child. A
 namespace the file also assigns whole (`.cfg:()!()` beside `.cfg.port:5010`)
-is that assignment, holding the names in it. A client that does not declare
+is that assignment, holding the names in it. A namespace written in two
+places, with other names between them, is a group in each: a group spans
+only its own names, so the symbol at a position is the one written there. A
+client that does not declare
 `hierarchicalDocumentSymbolSupport` gets the flat list.
 
 Go to Definition on a name several files assign lists the current file's own

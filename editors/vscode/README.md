@@ -201,7 +201,8 @@ to a process you add and connect to, and sends only the code you run.
   name is resolved as q resolves it under the `\d` context in force,
   including in a file another loads under a context. A name several
   scripts assign goes first to the current file's own assignment, then to
-  those in files it loads; the outline groups names by namespace; and Go to
+  those in files it loads; the outline groups names by namespace, a group
+  for each place a namespace is written; and Go to
   Definition on the path in `\l path/file.q` opens that file - and the path
   is a link too, Ctrl/Cmd+click to open it, in `\l`, `system "l ..."` and a
   file symbol `` `:lib/x.q `` alike (`q-lint.documentLinks.enable`). A path

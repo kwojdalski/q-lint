@@ -612,6 +612,16 @@ fn namespace(name: &str) -> Option<&str> {
 /// it before its last dot - `.qetl.io.read` as `read` under `.qetl.io` - and
 /// a name with no namespace at the top.
 ///
+/// A namespace is a node for each place it is written: the names a run of
+/// statements puts in it, one after another with nothing else between
+/// them. One node for all of it would span from its first name to its last
+/// and so take in every other name written between - `.bb.g` inside `.aa`
+/// in `.aa.f:{x}`, `.bb.g:{x}`, `.aa.h:{x}` - and a range is what an editor
+/// reads to say which symbol a position is in: the first that holds it, so
+/// breadcrumbs named `.aa` for a cursor in `.bb.g` (#2029). A name set
+/// inside a statement (`f:{.bb.g::x}`) is written there and not between two
+/// statements, so it neither ends a run nor is joined by what follows.
+///
 /// One level, and not one for every dot. A file mostly writes into one or
 /// two contexts, all under one project prefix: nesting `.qetl.io` under
 /// `.qetl` puts the whole file under a single node with a single child,
@@ -633,32 +643,53 @@ fn outline(defined: &[(&Mention, bool, usize, usize)], lines: &Lines) -> Value {
         children: Vec<usize>,
     }
     let mut groups: Vec<Group> = vec![];
-    let mut group_of: HashMap<&str, usize> = HashMap::new();
-    // In order of first appearance: a group stands where its first name, or
-    // its own assignment, does. `Err` is a group, by its place in `groups`.
+    // In the order written. `Err` is a group, by its place in `groups`.
     let mut top: Vec<Result<usize, usize>> = vec![];
-    for (i, (m, ..)) in defined.iter().enumerate() {
-        let (name, own) = match namespace(&m.name) {
-            _ if used.contains(m.name.as_str()) => (m.name.as_str(), true),
-            Some(ns) => (ns, false),
-            None => {
+    // The group the last statement wrote into, and where that statement
+    // ends: a name assigned before there is assigned inside it.
+    let mut run: Option<usize> = None;
+    let mut reach = 0;
+    for (i, &(m, _, start, end)) in defined.iter().enumerate() {
+        let inside = start < reach;
+        let named = match namespace(&m.name) {
+            _ if used.contains(m.name.as_str()) => Some((m.name.as_str(), true)),
+            Some(ns) => Some((ns, false)),
+            None => None,
+        };
+        // The group it joins: the run's, or for a name inside a statement
+        // the one the name before it there began.
+        let joined = named.and_then(|(name, _)| {
+            let beside = match top.last() {
+                Some(&Err(g)) if inside => Some(g),
+                _ => None,
+            };
+            let same = |g: &usize| groups[*g].name == name;
+            run.filter(same).or(beside.filter(same))
+        });
+        let g = match (named, joined) {
+            (None, _) => {
                 top.push(Ok(i));
-                continue;
+                None
+            }
+            (Some(_), Some(g)) => Some(g),
+            (Some((name, _)), None) => {
+                groups.push(Group {
+                    name,
+                    own: None,
+                    children: vec![],
+                });
+                top.push(Err(groups.len() - 1));
+                Some(groups.len() - 1)
             }
         };
-        let g = *group_of.entry(name).or_insert_with(|| {
-            groups.push(Group {
-                name,
-                own: None,
-                children: vec![],
-            });
-            top.push(Err(groups.len() - 1));
-            groups.len() - 1
-        });
-        if own {
-            groups[g].own = Some(i);
-        } else {
-            groups[g].children.push(i);
+        match (g, named) {
+            (Some(g), Some((_, true))) => groups[g].own = Some(i),
+            (Some(g), _) => groups[g].children.push(i),
+            (None, _) => {}
+        }
+        if !inside {
+            run = g;
+            reach = end;
         }
     }
     let symbol = |i: usize, name: &str| {

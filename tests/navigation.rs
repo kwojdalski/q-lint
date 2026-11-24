@@ -1095,7 +1095,9 @@ fn the_outline_groups_names_by_the_namespace_they_are_in() {
     let mut server = Server::start(dir.path(), &[]);
     // One level per namespace written into, `.qetl.io` beside `.qetl.cfg`
     // and not under a `.qetl` of its own; a namespace assigned whole holds
-    // the names in it; `\d` names one as a dotted name does.
+    // the names in it; `\d` names one as a dotted name does - `write` is in
+    // `.qetl.io` as `read` is, in a node of its own for being written
+    // after `.qetl.cfg` (#2029).
     let text = "opts:.Q.opt .z.x\n.qetl.io.read:{x}\n.qetl.cfg:()!()\n\
                 .qetl.cfg.port:5010\n\\d .qetl.io\nwrite:{x}\n\\d .\n.z.ps:{x}\n\
                 .qetl.io.batch.size:10\n";
@@ -1108,8 +1110,9 @@ fn the_outline_groups_names_by_the_namespace_they_are_in() {
         tree(&reply["result"]),
         [
             "opts",
-            ".qetl.io(read, write)",
+            ".qetl.io(read)",
             ".qetl.cfg(port)",
+            ".qetl.io(write)",
             ".z(ps)",
             ".qetl.io.batch(size)",
         ]
@@ -1119,6 +1122,78 @@ fn the_outline_groups_names_by_the_namespace_they_are_in() {
     assert_eq!(cfg["kind"], 13);
     assert_eq!(span(&cfg["selectionRange"]), (2, 0, 9));
     assert_eq!(cfg["range"]["end"], json!({"line": 3, "character": 19}));
+}
+
+#[test]
+fn a_namespace_written_in_two_places_is_a_node_for_each() {
+    // #2029: one node for a namespace, spanning from its first name to its
+    // last, took in whatever was written between them - `.bb.g` on line 1
+    // inside the range of `.aa`, which it is not in - and an editor names
+    // the symbol at a position by the first range that holds it.
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let outline = |server: &mut Server, name: &str, text: &str| {
+        let uri = server.open(dir.path(), name, text);
+        let reply = server.request(
+            "textDocument/documentSymbol",
+            json!({"textDocument": {"uri": uri}}),
+        );
+        reply["result"].clone()
+    };
+    let lines = |symbols: &Value| -> Vec<(u64, u64)> {
+        let line = |s: &Value, end: &str| s["range"][end]["line"].as_u64().unwrap();
+        let all = symbols.as_array().unwrap().iter();
+        all.map(|s| (line(s, "start"), line(s, "end"))).collect()
+    };
+    let symbols = outline(
+        &mut server,
+        "a.q",
+        ".aa.f:{x}\n.bb.g:{x}\n.aa.h:{x+1}\nplain:1\n.aa.k:2\n.aa.l:{\n x}\n\
+         \\d .bb\nm:1\n\\d .aa\nn:2\n",
+    );
+    assert_eq!(
+        tree(&symbols),
+        [
+            ".aa(f)",
+            ".bb(g)",
+            ".aa(h)",
+            "plain",
+            ".aa(k, l)",
+            ".bb(m)",
+            ".aa(n)"
+        ]
+    );
+    // Each spans its own names and nothing else: no two share a line.
+    assert_eq!(
+        lines(&symbols),
+        [(0, 0), (1, 1), (2, 2), (3, 3), (4, 6), (8, 8), (10, 10)]
+    );
+    // A namespace assigned whole is that assignment where it is written,
+    // and a namespace where it is only written into.
+    let symbols = outline(
+        &mut server,
+        "own.q",
+        ".cfg.port:1\nother:2\n.cfg:()!()\n.cfg.host:3\n",
+    );
+    assert_eq!(tree(&symbols), [".cfg(port)", "other", ".cfg(host)"]);
+    assert_eq!(lines(&symbols), [(0, 0), (1, 1), (2, 3)]);
+    assert_eq!(
+        (&symbols[0]["kind"], &symbols[2]["kind"]),
+        (&json!(3), &json!(13))
+    );
+    assert_eq!(span(&symbols[2]["selectionRange"]), (2, 0, 4));
+    // A name set inside a statement is written there, not between two
+    // statements: it parts nothing, and joins nothing after it.
+    let symbols = outline(
+        &mut server,
+        "in.q",
+        ".aa.f:{.bb.g::x}\n.aa.h:1\nplain:{.aa.i::1}\n.aa.j:2\n",
+    );
+    assert_eq!(
+        tree(&symbols),
+        [".aa(f, h)", ".bb(g)", "plain", ".aa(i)", ".aa(j)"]
+    );
+    assert_eq!(lines(&symbols), [(0, 1), (0, 0), (2, 2), (2, 2), (3, 3)]);
 }
 
 #[test]
