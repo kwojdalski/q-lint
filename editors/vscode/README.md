@@ -2511,9 +2511,13 @@ lines, `#` comments, quotes dropped, nothing expanded - each time one of
 them starts. Its values may be secrets, so they go in the environment and
 never on a command line, and no message or log ever shows one: a line that
 is not `NAME=value` is named by its number, and the variables by their
-names. In a terminal, q is started by your shell, so a variable your
-shell's startup files export wins over the `.env` file's; put that one in
-`q-lint.terminal.envPath` instead, whose variables go on the command line.
+names. In a terminal, q is started by your shell, after its startup files
+run. `QHOME`, `QLIC` and `QINIT` from the `.env` file still win over theirs:
+the command line sets each from a copy of its own in the environment
+(`QHOME="$QLINT_DOTENV_QHOME" q ...`), so the value itself is not shown.
+Any other variable your shell's startup files export wins over the `.env`
+file's; put that one in `q-lint.terminal.envPath` instead, whose variables
+go on the command line and win over both.
 A launched process gets the `.env` file's variables under its definition's
 own `env`. A missing file is no file.
 
