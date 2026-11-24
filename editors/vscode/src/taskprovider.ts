@@ -32,7 +32,7 @@ import { mergeEnv } from "./qenv";
 import { onPath } from "./relations";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import { EXCLUDE, TASK_TYPE, TEST_RUNNERS, detectedTasks, readTaskDefinition, readTasks, taskPaths, terminalText, type QTaskDefinition } from "./tasks";
-import { expandHome } from "./terminal";
+import { expandHome, qBinaryFrom } from "./terminal";
 
 const isFile = (file: string): boolean => {
   try {
@@ -56,8 +56,12 @@ function runner(definition: QTaskDefinition, folder: WorkspaceFolder | undefined
     open: () => {
       void (async () => {
         const configuration = workspace.getConfiguration("q-lint", folder?.uri);
-        const binary = expandHome(readTerminal((key, fallback) => configuration.get(key, fallback)).qBinary, os.homedir());
-        const paths = taskPaths(expandHome(definition.script, os.homedir()), folder?.uri.fsPath, workspace.workspaceFolders?.[0]?.uri.fsPath);
+        const first = workspace.workspaceFolders?.[0]?.uri.fsPath;
+        // A relative q is the task's folder's, else the first folder's, as a
+        // terminal's is - not under a workspace task's script directory (#1840).
+        const qBinary = readTerminal((key, fallback) => configuration.get(key, fallback)).qBinary;
+        const binary = qBinaryFrom(qBinary, folder?.uri.fsPath ?? first, os.homedir()) ?? expandHome(qBinary, os.homedir());
+        const paths = taskPaths(expandHome(definition.script, os.homedir()), folder?.uri.fsPath, first);
         if (paths === undefined) {
           write.fire(terminalText(`the script ${definition.script} is relative, and there is no workspace folder to find it in\n`));
           close.fire(1);

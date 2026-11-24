@@ -164,8 +164,9 @@ export class TickerplantLog {
     if (file === undefined) return "cancelled";
     this.stop();
     const opening = this.generation;
-    // The folder's q binary, as the folder it starts in (#1333).
-    const folder = workspace.workspaceFolders?.[0]?.uri;
+    // The folder's q binary, as the folder it starts in (#1333): the log
+    // file's own folder, else the first (#1842).
+    const folder = (workspace.getWorkspaceFolder(Uri.file(file)) ?? workspace.workspaceFolders?.[0])?.uri;
     const configuration = workspace.getConfiguration("q-lint", folder);
     const { qBinary } = readTerminal((key, fallback) => configuration.get(key, fallback));
     const binary = qBinaryFrom(qBinary, folder?.fsPath, os.homedir());

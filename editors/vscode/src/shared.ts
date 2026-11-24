@@ -6,6 +6,7 @@
 // holds a secret: a password, a secret or a token in an entry is dropped and
 // said. What would run something - a connect script, an SSH jump host, a
 // launch definition - is read only in a trusted workspace.
+import * as path from "node:path";
 import { SHARED_SOURCE } from "./discovery";
 import { parseProcesses, type Process } from "./processes";
 
@@ -76,6 +77,37 @@ export function readSharedFile(text: string, trusted: boolean): SharedList {
       ...(untrusted > 0 ? [`${untrusted} entr${untrusted === 1 ? "y's" : "ies'"} connect script, SSH tunnel or launch definition was not read: the workspace is not trusted.`] : []),
     ],
     secrets,
+  };
+}
+
+/// The lists of several workspace folders' files as one (#1841), in folder
+/// order. A label an earlier folder's list took is qualified with the
+/// folder's name; and in a folder other than `first`, which a connect
+/// script and a launch are otherwise read against, a relative one is made
+/// that folder's. Problems are named by folder when there are several.
+export function mergeShared(lists: { name: string; path: string; read: SharedList }[], first: string | undefined): SharedList {
+  const taken = new Set<string>();
+  const own = (file: string, dir: string): string => (path.isAbsolute(file) || file.startsWith("~") ? file : path.join(dir, file));
+  const processes = lists.flatMap(({ name, path: dir, read }) =>
+    read.processes.map((p) => {
+      const label = taken.has(p.label) ? `${p.label} (${name})` : p.label;
+      taken.add(label);
+      if (dir === first) {
+        return { ...p, label };
+      }
+      return {
+        ...p,
+        label,
+        ...(p.initFile !== undefined ? { initFile: own(p.initFile, dir) } : {}),
+        ...(p.launch !== undefined ? { launch: { ...p.launch, cwd: p.launch.cwd !== undefined ? own(p.launch.cwd, dir) : dir } } : {}),
+      };
+    }),
+  );
+  const named = lists.length > 1;
+  return {
+    processes,
+    problems: lists.flatMap(({ name, read }) => read.problems.map((problem) => (named ? `${name}: ${problem}` : problem))),
+    secrets: lists.flatMap(({ read }) => read.secrets),
   };
 }
 

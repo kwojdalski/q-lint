@@ -250,3 +250,19 @@ test("off, the dashboard refuses and lints nothing; on, it shows the folder and 
   await stub.commands.get(SHOW_PROBLEMS)(dir);
   assert.strictEqual(linted, before);
 });
+
+test("a virtual workspace folder is no directory to lint: the dashboard asks for a folder, and runs nothing (#1843)", async (t) => {
+  stub.reset();
+  fakePanels();
+  stub.config.user["problemsDashboard.enable"] = true;
+  // A GitHub Remote Repositories folder: not on disk.
+  const vfs = { uri: Object.assign(vscode.Uri.file("/kwojdalski/q-lint"), { scheme: "vscode-vfs" }), name: "q-lint", index: 0 };
+  vscode.workspace.workspaceFolders = [vfs];
+  t.after(() => (vscode.workspace.workspaceFolders = undefined));
+  const context = stub.newContext();
+  let linted = 0;
+  const dashboard = registerProblemsDashboard(context, () => (linted++, { command: "/bin/echo", args: [] }));
+  t.after(() => context.subscriptions.forEach((d) => d.dispose?.()));
+  assert.strictEqual(await dashboard.show(), "q-lint: open a folder first: the dashboard lints a workspace folder.");
+  assert.strictEqual(linted, 0);
+});

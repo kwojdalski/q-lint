@@ -54,7 +54,9 @@ export function registerProblemsDashboard(
     if (given !== undefined) {
       return given;
     }
-    const folders = workspace.workspaceFolders ?? [];
+    // Folders on disk: a virtual one (a remote repository) is no directory
+    // for qlinter to run in, as Write Lint Baseline skips one too (#1843).
+    const folders = (workspace.workspaceFolders ?? []).filter((f) => f.uri.scheme === "file");
     if (folders.length <= 1) {
       return folders[0]?.uri.fsPath;
     }

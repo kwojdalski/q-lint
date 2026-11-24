@@ -191,6 +191,35 @@ test("the provider offers the detected tasks; a task runs q on its script with t
   assert.match((await run(own)).out, /args: .*x\.q -a b env: hello/);
 });
 
+test("a workspace task's relative qBinary is the first folder's, as a terminal's is, not under the script's directory (#1840)", { skip: process.platform === "win32" && "POSIX paths" }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-taskbin-"));
+  fs.mkdirSync(path.join(dir, "bin"));
+  fs.mkdirSync(path.join(dir, "scripts"));
+  fs.writeFileSync(path.join(dir, "bin", "q"), "#!/bin/sh\necho ran the folder q on $1\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(dir, "scripts", "run.q"), "");
+  const { providers } = setUp(t, dir);
+  stub.config.user["terminal.qBinary"] = "./bin/q";
+  // A task of the workspace (a .code-workspace file): its scope is no folder.
+  const own = providers[0].provider.resolveTask({ definition: { type: "q", script: "scripts/run.q" }, name: "mine", scope: 2 });
+  const ran = await run(own);
+  assert.match(ran.out, /ran the folder q on .*scripts\/run\.q/);
+  assert.strictEqual(ran.code, 0);
+});
+
+test("a q task's workspace-relative KDB-X qBinary gets its layout's QHOME and QLIC (#1839)", { skip: process.platform === "win32" && "POSIX paths" }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-tasklayout-"));
+  fs.mkdirSync(path.join(dir, "kx", "bin"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "kx", "q"));
+  fs.writeFileSync(path.join(dir, "kx", "bin", "q"), "#!/bin/sh\necho QHOME=$QHOME QLIC=$QLIC\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(dir, "kx", "kc.lic"), "");
+  fs.writeFileSync(path.join(dir, "run.q"), "");
+  const { providers } = setUp(t, dir);
+  stub.config.user["terminal.qBinary"] = "./kx/bin/q";
+  const own = providers[0].provider.resolveTask({ definition: { type: "q", script: "run.q" }, name: "mine", scope: vscode.workspace.workspaceFolders[0] });
+  const ran = await run(own);
+  assert.ok(ran.out.includes(`QHOME=${path.join(dir, "kx", "q")} QLIC=${path.join(dir, "kx")}`), ran.out);
+});
+
 test("a task closed before its q has started never starts it (#1085)", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-taskclose-"));
   fs.writeFileSync(path.join(dir, ".env"), "FROM_ENV=hello\n");

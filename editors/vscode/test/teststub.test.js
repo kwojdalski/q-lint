@@ -75,9 +75,17 @@ function setup(files) {
       return {};
     },
   };
+  // A RelativePattern searches its folder only; a plain glob, every folder.
+  vscode.RelativePattern = class {
+    constructor(base, pattern) {
+      Object.assign(this, { base: base.uri ?? base, pattern });
+    }
+  };
   vscode.workspace.findFiles = async (glob) => {
-    const re = new RegExp(`^.*/${glob.replace("**/", "").replace(".", "\\.").replace("*", "[^/]*")}$`);
-    return Object.keys(files).filter((f) => re.test(f)).map((f) => vscode.Uri.file(f));
+    const pattern = typeof glob === "string" ? glob : glob.pattern;
+    const within = typeof glob === "string" ? "" : `${glob.base.fsPath}/`;
+    const re = new RegExp(`^.*/${pattern.replace("**/", "").replace(".", "\\.").replace("*", "[^/]*")}$`);
+    return Object.keys(files).filter((f) => re.test(f) && f.startsWith(within)).map((f) => vscode.Uri.file(f));
   };
   vscode.workspace.openTextDocument = async (uri) => ({ uri, getText: () => files[uri.fsPath] });
   vscode.workspace.getWorkspaceFolder = () => ({ uri: vscode.Uri.file("/ws") });
@@ -228,4 +236,19 @@ test("an untitled editor is offered no stub, and the command writes none at the 
   assert.strictEqual(await stub.commands.get(TEST_STUB_COMMAND)(untitled, 0), false);
   assert.deepStrictEqual(s.writes, []);
   assert.match(stub.messages.at(-1)[1], /save the file first/);
+});
+
+test("in a multi-root workspace the test file is looked for in the source's own folder (#1837)", async () => {
+  const files = {
+    "/a/t/test_lib.q": "/ A's tests of A's lib.q",
+    "/ws/src/lib.q": SRC,
+  };
+  setup(files);
+  // The source is in /ws; /a is another folder, its test_lib.q not this one's.
+  vscode.workspace.getWorkspaceFolder = (uri) => ({ uri: vscode.Uri.file(uri.fsPath.startsWith("/a/") ? "/a" : "/ws") });
+  const run = stub.commands.get(TEST_STUB_COMMAND);
+  stub.picks.push("Add Test");
+  assert.strictEqual(await run(vscode.Uri.file("/ws/src/lib.q"), 3), true);
+  assert.strictEqual(files["/a/t/test_lib.q"], "/ A's tests of A's lib.q", "the other folder's file is left alone");
+  assert.match(files["/ws/test_lib.q"] ?? files["/ws/src/test_lib.q"], /test_mid/);
 });

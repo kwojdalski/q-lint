@@ -180,18 +180,20 @@ export class Launcher {
   /// Start `process` from its launch definition. Why it could not, or
   /// undefined once it is spawned.
   private async launch(process: Process): Promise<string | undefined> {
-    const configuration = workspace.getConfiguration("q-lint", workspace.workspaceFolders?.[0]?.uri);
+    // The first folder on disk: a virtual one is no directory to start in (#1843).
+    const first = workspace.workspaceFolders?.filter((f) => f.uri.scheme === "file")[0]?.uri;
+    const configuration = workspace.getConfiguration("q-lint", first);
     const { qBinary } = readTerminal((key, fallback) => configuration.get(key, fallback));
     if (workspace.isTrusted === false && process.launch !== undefined && fromWorkspace(process.launch)) {
       return `${process.label}'s working directory or script is relative to the workspace folder, which is not trusted: it was not started. Name them by their full paths.`;
     }
     // A relative q binary is the folder's, as in the terminals, not the
     // launch's working directory's (#1540).
-    const binary = process.launch?.command !== undefined ? qBinary : qBinaryFrom(qBinary, workspace.workspaceFolders?.[0]?.uri.fsPath, os.homedir());
+    const binary = process.launch?.command !== undefined ? qBinary : qBinaryFrom(qBinary, first?.fsPath, os.homedir());
     if (binary === undefined) {
       return `q-lint.terminal.qBinary ${qBinary} is relative, and there is no workspace folder to read it from; ${process.label} was not started.`;
     }
-    const plan = launchPlan(process, binary, workspace.workspaceFolders?.[0]?.uri.fsPath);
+    const plan = launchPlan(process, binary, first?.fsPath);
     if ("error" in plan) {
       return plan.error;
     }
@@ -201,8 +203,7 @@ export class Launcher {
     }
     // The binary's layout's variables, then the workspace's .env file's,
     // then the definition's own; the output shows none of their values.
-    const folder = workspace.workspaceFolders?.[0]?.uri;
-    const env = mergeEnv(layoutEnvFor(plan.command, folder), await dotenvFor(folder), plan.env);
+    const env = mergeEnv(layoutEnvFor(plan.command, first), await dotenvFor(first), plan.env);
     // Turned off, or VS Code closing, while it waited: stopAll has run over
     // what was started, and would not stop this one (#1434).
     if (this.disposed || !this.enabled()) {

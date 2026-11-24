@@ -495,3 +495,16 @@ test("Draft qSQL turned off, or with no model: refuses and asks neither model no
   assert.match(stub.messages[0][1], /no language model is available/);
   assert.deepStrictEqual(on.live.sent, []);
 });
+
+test("Lint q Code lints a file of another workspace folder in that folder, so its configuration applies (#1838)", () => {
+  const { lintPlace } = require("../out/assisttools.js");
+  const folders = [{ name: "A", path: "/ws/A" }, { name: "B", path: "/ws/B" }];
+  // VS Code's multi-root workspace-relative form names the folder first.
+  assert.deepStrictEqual(lintPlace("B/src/x.q", folders, undefined), { cwd: "/ws/B", file: "src/x.q" });
+  // Without one: the active editor's folder, else the first.
+  assert.deepStrictEqual(lintPlace("src/x.q", folders, "/ws/B"), { cwd: "/ws/B", file: "src/x.q" });
+  assert.deepStrictEqual(lintPlace("src/x.q", folders, undefined), { cwd: "/ws/A", file: "src/x.q" });
+  // One folder: a path is never read as naming it.
+  assert.deepStrictEqual(lintPlace("A/x.q", [folders[0]], undefined), { cwd: "/ws/A", file: "A/x.q" });
+  assert.deepStrictEqual(lintPlace("snippet.q", [], undefined), { cwd: undefined, file: "snippet.q" });
+});
