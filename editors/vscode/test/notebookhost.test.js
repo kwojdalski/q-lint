@@ -520,6 +520,23 @@ test("a code cell that runs reads the live values of the Markdown after it into 
   assert.strictEqual(fake.edits.length, 1);
 });
 
+test("a code cell with no statement still reads the live values of the Markdown after it, as a headless run does (#1996)", async () => {
+  const fake = fakeVscode();
+  const live = recordingLive(PROCESSES, "dev1");
+  load(fake, live);
+  const notebook = notebookWith(fake, [["code", "/ a title, nothing to run"], ["markdown", "Rows: {{q: count trade}}"], ["code", "/ no value under this one"], ["code", "1"]]);
+  const [e] = await runCells(fake, notebook, [0]);
+  assert.deepStrictEqual([e.success, e.outputs], [true, []]);
+  // The guard reads what is sent: the expressions, and no statement of the cell's.
+  assert.deepStrictEqual(live.sent, ["/ a title, nothing to run\ncount trade", "live count trade"]);
+  assert.deepStrictEqual(fake.edits.flatMap((x) => x.list), [{ index: 1, metadata: { "q-lint.liveValues": { "count trade": { text: "<count trade>" } } } }]);
+  // With no live value to read, nothing is sent and no process is asked for.
+  live.sent = [];
+  live.runOnActive = async () => assert.fail("nothing to send");
+  const [none] = await runCells(fake, notebook, [2]);
+  assert.deepStrictEqual([none.success, none.outputs, live.sent, fake.edits.length], [true, [], [], 1]);
+});
+
 test("a code cell that fails drops the live values kept for the Markdown after it (#1544)", async () => {
   const fake = fakeVscode();
   const live = recordingLive(PROCESSES, "dev1");

@@ -411,9 +411,6 @@ class QnbKernel {
       }
     }
     const cut = statements(source);
-    if (cut.length === 0) {
-      return finish(true, []);
-    }
     // The Markdown cells after this one with live values, read once it has run.
     const notebook = execution.cell.notebook;
     const all = notebook.getCells();
@@ -421,6 +418,11 @@ class QnbKernel {
     const markdown = !featureOn("liveValues") ? [] : markdownAfter(kinds, execution.cell.index ?? all.indexOf(execution.cell)).filter(
       (j) => kinds[j].kind === "markdown" && liveExpressions(all[j].document.getText()).length > 0,
     );
+    // A cell with no statement sends nothing of its own, but the live
+    // values under it are still read, as a headless run reads them (#1996).
+    if (cut.length === 0 && markdown.length === 0) {
+      return finish(true, []);
+    }
     const configuration = workspace.getConfiguration("q-lint");
     const { consoleSize } = readLive((key, fallback) => configuration.get(key, fallback));
     const limit = readNotebook((key, fallback) => configuration.get(key, fallback));
@@ -441,7 +443,7 @@ class QnbKernel {
           return undefined;
         }
         running = true;
-        const [ok, parts] = await cellAnswer(connection, directive, cut, settings);
+        const [ok, parts]: [boolean, OutputPart[]] = cut.length === 0 ? [true, []] : await cellAnswer(connection, directive, cut, settings);
         // A value that cannot be read leaves the cell's output as it is.
         const values = ok && markdown.length > 0
           ? await liveValues(connection, markdown.map((j) => all[j].document.getText())).catch(() => [])
