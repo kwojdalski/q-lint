@@ -456,7 +456,13 @@ function readStatement(statement: string, found: Set<string>): void {
           }
         }
       }
-      const amend = t[i - 1]?.kind === "op" ? t[i - 1].text : "";
+      // Also in parentheses, `` (@)[`.;`a;:;1] `` (#1445).
+      const amend =
+        t[i - 1]?.kind === "op"
+          ? t[i - 1].text
+          : t[i - 1]?.text === ")" && t[i - 2]?.kind === "op" && t[i - 3]?.text === "(" && t[i - 3].kind === "open"
+            ? t[i - 2].text
+            : "";
       if (k.text === "[" && (amend === "@" || amend === "." || amend === "!")) {
         const args = items(t, i);
         // The target, or with it left out, what the projection is applied

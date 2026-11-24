@@ -804,3 +804,21 @@ test("in a lambda, a qsql or table-literal column of a name does not make it a l
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("an amend or ! in parentheses applied in brackets is a change (#1445)", () => {
+  const cases = {
+    "(@)[`.;`a;:;1]": ["amends `. in place"],
+    "(.)[`a;();:;1]": ["amends `a in place"],
+    "(!)[`t;();0b;`a]": ["updates or deletes from `t in place with !"],
+    "(@)[`t;`c;`p#]": ["amends `t in place"],
+    // On a value, or a trap, it reads.
+    "(@)[t;0;:;1]": [],
+    "(.)[`f;(1;2);{x}]": [],
+    "(@)[f;x;{y}]": [],
+    "(!)[t;();0b;`a]": [],
+    "(x+1)[0]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
