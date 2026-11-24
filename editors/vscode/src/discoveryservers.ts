@@ -268,11 +268,15 @@ export class DiscoveryServers {
   /// Forget the password of each process `label` now lists at another
   /// host, port, user or without TLS than where it was given (#1503): it
   /// would be sent there unasked. `before`: what it listed, when nothing
-  /// was kept of where.
+  /// was kept of where. One with neither - a password kept by a version
+  /// before 0.37, which recorded nothing of where - is forgotten too, and
+  /// asked for again: what is listed now may not be where it was given
+  /// (#1878).
   private async forgetMoved(label: string, before: Process[], processes: Process[]): Promise<void> {
     const kept = this.seen()[label] ?? [];
     const seen = [...kept, ...before.filter((p) => !kept.some((k) => k.label === p.label))];
-    for (const process of passwordsToForget(seen, processes)) {
+    const unplaced = (this.given()[label] ?? []).filter((g) => processes.some((p) => p.label === g) && !seen.some((s) => s.label === g));
+    for (const process of [...passwordsToForget(seen, processes), ...unplaced]) {
       await this.context.secrets.delete(passwordKey({ label: qualified(label, process), server: label }));
       await this.passwordGiven(label, process, false);
     }

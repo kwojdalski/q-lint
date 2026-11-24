@@ -359,6 +359,43 @@ test("a discovered process listed at another host or port forgets its password, 
   void again;
 });
 
+// Before 0.37 nothing was kept of where a discovered process's password was
+// given. The first listing after the upgrade was taken as that place, so a
+// process moved while VS Code was closed was sent the password (#1878).
+test("a discovered process's password kept with no record of where it was given is forgotten at the first listing", async (t) => {
+  const http = require("node:http");
+  const listed = [{ label: "rdb", host: "10.0.0.9", port: 6001, user: "u" }, { label: "hdb", host: "10.0.0.9", port: 6002, user: "u" }];
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(listed));
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  t.after(() => server.close());
+  stub.reset();
+  const context = stub.newContext();
+  const secrets = context.secrets.all;
+  // As 0.36 left it: passwords given for rdb, hdb and one not listed now,
+  // and of where, only what a later version kept for hdb.
+  await context.globalState.update("q-lint.discoveryServers", [{ label: "desk", url: `http://127.0.0.1:${server.address().port}/` }]);
+  await context.globalState.update("q-lint.discoveredPasswords", { desk: ["rdb", "hdb", "gone"] });
+  await context.globalState.update("q-lint.discoveredSeen", { desk: [{ label: "hdb", host: "10.0.0.9", port: 6002, tags: [], user: "u" }] });
+  for (const l of ["rdb", "hdb", "gone"]) secrets.set(`q-lint.discoveredPassword.desk/${l}`, "pw");
+  const live = new Live(context);
+  t.after(() => {
+    for (const d of context.subscriptions) d.dispose?.();
+  });
+  await stub.commands.get("q-lint.reloadDiscoveryServer")("desk");
+  assert.deepStrictEqual([...secrets.keys()].sort(), ["q-lint.discoveredPassword.desk/gone", "q-lint.discoveredPassword.desk/hdb"]);
+  assert.deepStrictEqual(context.globalState.get("q-lint.discoveredPasswords"), { desk: ["hdb", "gone"] });
+  assert.deepStrictEqual(context.globalState.get("q-lint.discoveredSeen").desk.map((p) => p.label), ["hdb"]);
+  // The one not listed then is forgotten when it is listed again, wherever.
+  listed.push({ label: "gone", host: "10.0.0.9", port: 6003, user: "u" });
+  await stub.commands.get("q-lint.reloadDiscoveryServer")("desk");
+  assert.deepStrictEqual([...secrets.keys()], ["q-lint.discoveredPassword.desk/hdb"]);
+  assert.deepStrictEqual(context.globalState.get("q-lint.discoveredPasswords"), { desk: ["hdb"] });
+  void live;
+});
+
 // Any failed connect forgot the password just given - a host down or
 // restarting as well as a refused one (#1511).
 test("a discovered process's password is forgotten when it is refused, not when the host is down", async (t) => {
