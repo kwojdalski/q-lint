@@ -559,3 +559,30 @@ test("an unwrapped result's longs and timestamps reach Parquet exactly (#1398)",
   const ts = gridOfQ({ kind: "vector", t: 12, attr: 0, v: [789000000123456789n] }, 10);
   assert.ok(has(toParquet(ts, [0]).data, 789000000123456789n + 946684800000000000n));
 });
+
+test("an export is written in parts: past V8's longest string it is still the whole text (#1855)", () => {
+  const { textBuffer, csvLines, toCsv, toGrid, tooBigToCopy, CLIPBOARD_LIMIT } = require("../out/grid.js");
+  const { constants } = require("node:buffer");
+  // One string shared by every part, so only the Buffer costs memory.
+  const part = "x".repeat(1 << 20);
+  const count = Math.ceil(constants.MAX_STRING_LENGTH / part.length) + 1;
+  assert.throws(() => Array(count).fill(part).join(""), /Invalid string length/);
+  const big = textBuffer(Array(count).fill(part));
+  assert.strictEqual(big.length, count * part.length);
+  assert.strictEqual(big[big.length - 1], 0x78);
+  // Too big to copy says so, and points at a file.
+  assert.match(tooBigToCopy(big, 1_000_000), /more than the 64 MB a copy puts on the clipboard\. Export them to a file instead\./);
+  assert.strictEqual(tooBigToCopy(Buffer.alloc(CLIPBOARD_LIMIT), 1), undefined);
+  // Each format's parts make the same text as its string.
+  const payload = { count: 3, keys: 1, names: ["k", "v", "s"], types: [7, 9, 11], cells: [["1", "2", "3"], ["1.5", "0n", "-0w"], ["a", "", "c d"]], raw: [[1, 2, 3], [1.5, null, -Infinity], []], rank: [[], [], []] };
+  const grid = toGrid(payload, 2);
+  assert.strictEqual(textBuffer(csvLines(grid, [2, 0])).toString(), toCsv(grid, [2, 0]));
+  assert.strictEqual(exportResult("json", payload, 2).data.toString(), toJson(payload));
+  assert.strictEqual(exportResult("markdown", payload, 2).data.toString(), toMarkdown(payload, 2));
+  assert.strictEqual(exportResult("q", payload, 2).data.toString(), `${tableLiteral(payload).code}\n`);
+  assert.strictEqual(exportResult("q", { ...payload, names: ["k", "v w", "s"] }, 2).data.toString(), `${tableLiteral({ ...payload, names: ["k", "v w", "s"] }).code}\n`);
+  const { toHtml } = require("../out/resultexport.js");
+  assert.strictEqual(exportResult("html", payload, 2).data.toString(), toHtml(payload, 2));
+  assert.match(toHtml({ ...payload, cells: [[], [], []], raw: [[], [], []] }, 2), /<tbody>\n\n<\/tbody>\n<\/table><\/body><\/html>\n$/);
+  assert.strictEqual(toJson({ ...payload, cells: [[], [], []], raw: [[], [], []] }), "[]\n");
+});

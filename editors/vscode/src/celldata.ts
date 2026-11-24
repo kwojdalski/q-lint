@@ -122,11 +122,22 @@ export function readCellData(raw: unknown): CellData {
 
 const rowCount = (table: Table): number => table.data[0]?.length ?? 0;
 
-/// What says a table was cut, or nothing when it was not.
-export function cutNote(table: Table): string | undefined {
+/// What says a table was cut, or nothing when it was not. `drawn`: the rows
+/// an output held before it reached `OUTPUT_LIMIT`, when fewer than it has.
+export function cutNote(table: Table, drawn?: number): string | undefined {
   const shown = rowCount(table);
-  return table.total > shown ? `Showing the ${table.from ?? "first"} ${shown.toLocaleString("en")} of ${table.total.toLocaleString("en")} rows.` : undefined;
+  const cut = table.total > shown ? `Showing the ${table.from ?? "first"} ${shown.toLocaleString("en")} of ${table.total.toLocaleString("en")} rows.` : undefined;
+  if (drawn === undefined || drawn >= shown) {
+    return cut;
+  }
+  const limit = `Showing the first ${drawn.toLocaleString("en")} of ${shown.toLocaleString("en")} rows fetched: a cell's output holds about ${(OUTPUT_LIMIT / 1e6).toLocaleString("en")}M characters.`;
+  return cut === undefined ? limit : `${cut} ${limit}`;
 }
+
+/// The most characters of rows a table's HTML or text output holds; a
+/// million rows of fifty columns is past the longest string V8 makes, so the
+/// rows past it are left out and the note says so (#1855).
+export const OUTPUT_LIMIT = 64_000_000;
 
 const ESCAPES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 
@@ -169,10 +180,14 @@ export function tableHtml(table: Table): string {
   const attr = (i: number): string => (cls(i) === "" ? "" : ` class="${cls(i)}"`);
   const head = table.columns.map((c, i) => `<th${attr(i)}>${escapeHtml(c)}</th>`).join("");
   const body: string[] = [];
-  for (let r = 0; r < rows; r++) {
-    body.push(`<tr>${table.data.map((column, i) => `<td${attr(i)}>${escapeHtml(clip(column[r] ?? ""))}</td>`).join("")}</tr>`);
+  let size = 0;
+  let r = 0;
+  for (; r < rows && size < OUTPUT_LIMIT; r++) {
+    const row = `<tr>${table.data.map((column, i) => `<td${attr(i)}>${escapeHtml(clip(column[r] ?? ""))}</td>`).join("")}</tr>`;
+    body.push(row);
+    size += row.length;
   }
-  const note = cutNote(table);
+  const note = cutNote(table, r);
   return [
     `<style>${STYLE}</style>`,
     `<table class="qnb-grid"><thead><tr>${head}</tr></thead><tbody>${body.join("")}</tbody></table>`,
@@ -200,10 +215,14 @@ export function tableText(table: Table): string[] {
   const keyWidth = widths.slice(0, table.keys).reduce((sum, w) => sum + w, 0) + table.keys - 1;
   const rule = keyed ? `${"-".repeat(keyWidth)}| ${"-".repeat(header.length - keyWidth - 2)}` : "-".repeat(header.length);
   const lines = [header.trimEnd(), rule];
-  for (let r = 0; r < rows; r++) {
-    lines.push(line((i) => oneLine(table.data[i][r] ?? "")).trimEnd());
+  let size = 0;
+  let r = 0;
+  for (; r < rows && size < OUTPUT_LIMIT; r++) {
+    const text = line((i) => oneLine(table.data[i][r] ?? "")).trimEnd();
+    lines.push(text);
+    size += text.length + 1;
   }
-  const note = cutNote(table);
+  const note = cutNote(table, r);
   return note === undefined ? lines : [...lines, note];
 }
 

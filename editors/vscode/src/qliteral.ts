@@ -377,6 +377,14 @@ export interface QTable {
 /// `([k:...] v:...)` when every name can be written plainly, and
 /// `` n!flip `a`b!(...) `` when one cannot.
 export function tableLiteral(payload: GridPayload, rows?: number[]): QTable {
+  const { parts, ...rest } = tableParts(payload, rows);
+  return { code: parts.join(""), ...rest };
+}
+
+/// `tableLiteral`'s expression in parts, a column's literal one of them:
+/// all of a big result's columns together are past the longest string V8
+/// makes, which an export writes with `textBuffer` instead (#1855).
+export function tableParts(payload: GridPayload, rows?: number[]): Omit<QTable, "code"> & { parts: string[] } {
   const held = payload.cells[0]?.length ?? 0;
   const order = rows ?? [...Array(held).keys()];
   let cut = 0;
@@ -393,18 +401,32 @@ export function tableLiteral(payload: GridPayload, rows?: number[]): QTable {
   });
   const names = payload.names;
   const keys = Math.min(payload.keys, names.length);
-  let code: string;
+  const parts: string[] = [];
   if (names.length > 0 && names.every(plainName) && new Set(names).size === names.length) {
-    const part = (from: number, to: number) => names.slice(from, to).map((n, j) => `${n}:${columns[from + j]}`).join(";");
-    code = `([${part(0, keys)}] ${part(keys, names.length)})`;
+    const part = (from: number, to: number) => {
+      for (let k = from; k < to; k++) {
+        parts.push(`${k > from ? ";" : ""}${names[k]}:`, columns[k]);
+      }
+    };
+    parts.push("([");
+    part(0, keys);
+    parts.push("] ");
+    part(keys, names.length);
+    parts.push(")");
   } else {
     const symbols = names.map(symbolLiteral);
     // Parenthesised: `enlist `a!x` would be `enlist (`a!x)`.
     const nameList = symbols.length === 1 ? `(enlist ${symbols[0]})` : symbols.every((s) => /^`[A-Za-z0-9_.]*$/.test(s)) ? symbols.join("") : `(${symbols.join(";")})`;
-    const columnList = columns.length === 1 ? `enlist ${columns[0]}` : `(${columns.join(";")})`;
-    code = `${keys > 0 ? `${keys}!` : ""}flip ${nameList}!${columnList}`;
+    parts.push(`${keys > 0 ? `${keys}!` : ""}flip ${nameList}!`);
+    if (columns.length === 1) {
+      parts.push("enlist ", columns[0]);
+    } else {
+      parts.push("(");
+      columns.forEach((c, k) => parts.push(k > 0 ? ";" : "", c));
+      parts.push(")");
+    }
   }
-  return { code, rows: order.length, total: payload.count, cut };
+  return { parts, rows: order.length, total: payload.count, cut };
 }
 
 /// Whether a cell holds q's null of a type sent without raw numbers.

@@ -406,12 +406,51 @@ export function csvText(text: string): string {
 /// anything, and a numeric or temporal column holds `-0W` and `-0D01:00`,
 /// which are no number either.
 export function toCsv(grid: Grid, rows?: number[]): string {
+  return csvLines(grid, rows).join("");
+}
+
+/// `toCsv`'s lines, each with its `\n`: what a file is written from with
+/// `textBuffer`, as a big result's CSV is past the longest string V8 makes.
+export function csvLines(grid: Grid, rows?: number[]): string[] {
   const order = rows ?? [...Array(rowCount(grid)).keys()];
-  const lines = [grid.columns.map((c) => csvField(csvText(c.name))).join(",")];
+  const lines = [grid.columns.map((c) => csvField(csvText(c.name))).join(",") + "\n"];
   for (const r of order) {
-    lines.push(grid.cells.map((column) => csvField(csvText(column[r] ?? ""))).join(","));
+    lines.push(grid.cells.map((column) => csvField(csvText(column[r] ?? ""))).join(",") + "\n");
   }
-  return lines.join("\n") + "\n";
+  return lines;
+}
+
+/// `parts` one after another as UTF-8, joined a few megabytes at a time: a
+/// result of a million rows by fifty columns is more text than V8's longest
+/// string (about 536M characters), which one `join` would throw on
+/// (#1855). A `Buffer` holds it.
+export function textBuffer(parts: Iterable<string>): Buffer {
+  const chunks: Buffer[] = [];
+  let pending: string[] = [];
+  let size = 0;
+  for (const part of parts) {
+    pending.push(part);
+    size += part.length;
+    if (size >= 1 << 24) {
+      chunks.push(Buffer.from(pending.join(""), "utf8"));
+      pending = [];
+      size = 0;
+    }
+  }
+  chunks.push(Buffer.from(pending.join(""), "utf8"));
+  return chunks.length === 1 ? chunks[0] : Buffer.concat(chunks);
+}
+
+/// The most text a copy puts on the clipboard, in bytes: past it the text
+/// is no use pasted and nears what a string can hold.
+export const CLIPBOARD_LIMIT = 64 * 1024 * 1024;
+
+/// Why `data` is not copied - too big for the clipboard - or undefined
+/// when it can be.
+export function tooBigToCopy(data: Buffer, rows: number): string | undefined {
+  return data.length > CLIPBOARD_LIMIT
+    ? `q-lint: ${rows.toLocaleString("en-US")} row(s) are ${Math.ceil(data.length / 1024 / 1024).toLocaleString("en-US")} MB of text, more than the ${CLIPBOARD_LIMIT / 1024 / 1024} MB a copy puts on the clipboard. Export them to a file instead.`
+    : undefined;
 }
 
 /// `payload` with only the columns at `columns`, in that order: what the

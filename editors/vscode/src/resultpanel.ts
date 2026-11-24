@@ -78,7 +78,7 @@ import {
   type ResultViewSettings,
   type ResultsLocation,
 } from "./liveconfig";
-import { appendPage, pickColumns, rowCount, toCsv, toGrid, type GridAnswer, type GridPage, type GridPayload } from "./grid";
+import { appendPage, csvLines, pickColumns, rowCount, textBuffer, toGrid, tooBigToCopy, type GridAnswer, type GridPage, type GridPayload } from "./grid";
 import { diffGrids, type GridDiff } from "./resultdiff";
 import { fillDrilldown, templatesFor } from "./drilldown";
 import { EXPORT_FORMATS, exportResult, FORMAT_INFO, shownGrid, type ExportFormat } from "./resultexport";
@@ -962,7 +962,18 @@ export class QueryModes {
     if (chosen === undefined) {
       return;
     }
-    const out = exportResult(chosen, this.exportPayload(shown), settings().gridDecimals, this.rowsOf(rows, shown), this.rulesOf(shown), this.formatsOn());
+    let out;
+    try {
+      out = exportResult(chosen, this.exportPayload(shown), settings().gridDecimals, this.rowsOf(rows, shown), this.rulesOf(shown), this.formatsOn());
+    } catch (error) {
+      void window.showErrorMessage(plainMessage(`q-lint: could not copy the result: ${error instanceof Error ? error.message : String(error)}`));
+      return;
+    }
+    const tooBig = tooBigToCopy(out.data, out.rows);
+    if (tooBig !== undefined) {
+      void window.showWarningMessage(plainMessage(tooBig));
+      return;
+    }
     await env.clipboard.writeText(out.data.toString("utf8"));
     const notes = out.notes.length > 0 ? ` Note: ${out.notes.join("; ")}.` : "";
     void window.showInformationMessage(plainMessage(`q-lint: copied ${out.rows} row(s) as ${FORMAT_INFO[chosen].label}.${notes}`));
@@ -1685,8 +1696,9 @@ export class QueryModes {
   }
 
   /// The grid on show and the rows of it to write: `rows` when they are
-  /// rows of it, and otherwise all of them.
-  private chosen(rows: number[] | undefined): { csv: string; count: number } | undefined {
+  /// rows of it, and otherwise all of them, as CSV in a `Buffer`: a big
+  /// result's is past the longest string V8 makes (#1855).
+  private chosen(rows: number[] | undefined): { csv: Buffer; count: number } | undefined {
     if (this.shown === undefined) {
       return undefined;
     }
@@ -1695,21 +1707,39 @@ export class QueryModes {
     const values = toGrid(this.exportPayload(this.shown), settings().gridDecimals);
     const grid = this.formatsOn() ? shownGrid(values) : values;
     const order = Array.isArray(rows) ? rows.filter((r) => Number.isInteger(r) && r >= 0 && r < rowCount(grid)) : undefined;
-    return { csv: toCsv(grid, order), count: order?.length ?? rowCount(grid) };
+    return { csv: textBuffer(csvLines(grid, order)), count: order?.length ?? rowCount(grid) };
+  }
+
+  /// `chosen`; null when making the CSV failed, the error shown.
+  private chosenOrSay(rows: number[] | undefined, doing: string): { csv: Buffer; count: number } | undefined | null {
+    try {
+      return this.chosen(rows);
+    } catch (error) {
+      void window.showErrorMessage(plainMessage(`q-lint: could not ${doing} the result: ${error instanceof Error ? error.message : String(error)}`));
+      return null;
+    }
   }
 
   private async copy(rows: number[] | undefined): Promise<void> {
-    const chosen = this.chosen(rows);
-    if (chosen === undefined) {
+    const chosen = this.chosenOrSay(rows, "copy");
+    if (chosen === undefined || chosen === null) {
       return;
     }
-    await env.clipboard.writeText(chosen.csv);
+    const tooBig = tooBigToCopy(chosen.csv, chosen.count);
+    if (tooBig !== undefined) {
+      void window.showWarningMessage(plainMessage(tooBig));
+      return;
+    }
+    await env.clipboard.writeText(chosen.csv.toString("utf8"));
     void window.showInformationMessage(plainMessage(`q-lint: copied ${chosen.count} row(s) as CSV.`));
   }
 
   /// Write the rows shown as CSV to `target`, or to a file the user picks.
   private async exportCsv(target: Uri | undefined, rows: number[] | undefined): Promise<void> {
-    const chosen = this.chosen(rows);
+    const chosen = this.chosenOrSay(rows, "export");
+    if (chosen === null) {
+      return;
+    }
     if (chosen === undefined) {
       void window.showInformationMessage("q-lint: no result to export. Run a query in grid or chart mode first.");
       return;
@@ -1727,7 +1757,7 @@ export class QueryModes {
       return;
     }
     try {
-      await workspace.fs.writeFile(to, Buffer.from(chosen.csv, "utf8"));
+      await workspace.fs.writeFile(to, chosen.csv);
     } catch (error) {
       void window.showErrorMessage(plainMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
       return;

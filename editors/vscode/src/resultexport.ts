@@ -13,9 +13,9 @@
 // HTML is for reading too: a page of one table, the cells as the grid shows
 // them, coloured by the result's conditional formatting rules (#1013) as
 // the grid colours them - by `media/gridlook.js`, which the page runs too.
-import { realValue, toGrid, type Grid, type GridPayload } from "./grid";
+import { realValue, textBuffer, toGrid, type Grid, type GridPayload } from "./grid";
 import type { FormatRule } from "./resultlook";
-import { distinctNames, plainItem, rawColumn, tableLiteral, textNull } from "./qliteral";
+import { distinctNames, plainItem, rawColumn, tableParts, textNull } from "./qliteral";
 import { toParquet } from "./parquet";
 import { toXlsx } from "./xlsx";
 
@@ -64,6 +64,11 @@ function html(text: string): string {
 /// each cell a rule matches styled as the grid styles it; `formats`: the
 /// cells as a name's format shows them.
 export function toHtml(payload: GridPayload, decimals: number, rows?: number[], rules: FormatRule[] = [], formats = false): string {
+  return htmlParts(payload, decimals, rows, rules, formats).join("");
+}
+
+/// `toHtml`'s text in parts, for `textBuffer` (#1855).
+function htmlParts(payload: GridPayload, decimals: number, rows?: number[], rules: FormatRule[] = [], formats = false): string[] {
   const values = toGrid(payload, decimals);
   const order = rowOrder(payload, rows);
   const grid = formats ? shownGrid(values) : values;
@@ -76,18 +81,19 @@ export function toHtml(payload: GridPayload, decimals: number, rows?: number[], 
       const css = s === undefined ? [] : [s.background !== undefined ? `background:${s.background}` : "", s.color !== undefined ? `color:${s.color}` : "", s.bold ? "font-weight:bold" : ""].filter((x) => x !== "");
       return `<td${right[i] ? ' class="n"' : ""}${css.length > 0 ? ` style="${css.join(";")}"` : ""}>${html(col[r] ?? "")}</td>`;
     });
-    return `<tr>${cells.join("")}</tr>`;
+    return `<tr>${cells.join("")}</tr>\n`;
   });
   return [
-    "<!DOCTYPE html>",
-    '<html><head><meta charset="utf-8"><title>q-lint: result</title>',
-    "<style>table{border-collapse:collapse;font-family:monospace}th,td{border:1px solid #ccc;padding:2px 6px;white-space:nowrap}th{background:#f3f3f3}.n{text-align:right}</style>",
-    "</head><body><table>",
-    `<thead><tr>${head}</tr></thead>`,
-    `<tbody>\n${body.join("\n")}\n</tbody>`,
-    "</table></body></html>",
-    "",
-  ].join("\n");
+    "<!DOCTYPE html>\n",
+    '<html><head><meta charset="utf-8"><title>q-lint: result</title>\n',
+    "<style>table{border-collapse:collapse;font-family:monospace}th,td{border:1px solid #ccc;padding:2px 6px;white-space:nowrap}th{background:#f3f3f3}.n{text-align:right}</style>\n",
+    "</head><body><table>\n",
+    `<thead><tr>${head}</tr></thead>\n`,
+    "<tbody>\n",
+    ...(body.length === 0 ? ["\n"] : body),
+    "</tbody>\n",
+    "</table></body></html>\n",
+  ];
 }
 
 /// A cell of a numeric column as JSON: a number, exactly as sent, or the
@@ -114,6 +120,11 @@ export function rowOrder(payload: GridPayload, rows?: number[]): number[] {
 
 /// The rows as a JSON array of objects, one key per column.
 export function toJson(payload: GridPayload, rows?: number[]): string {
+  return jsonParts(payload, rows).join("");
+}
+
+/// `toJson`'s text in parts, for `textBuffer` (#1855).
+function jsonParts(payload: GridPayload, rows?: number[]): string[] {
   const names = distinctNames(payload.names).map((n) => JSON.stringify(n));
   const columns = payload.names.map((_, i) => {
     const type = payload.types[i];
@@ -141,8 +152,13 @@ export function toJson(payload: GridPayload, rows?: number[]): string {
       return JSON.stringify(type === 0 ? plainItem(text) : text);
     };
   });
-  const lines = rowOrder(payload, rows).map((r) => `  {${columns.map((cell, i) => `${names[i]}: ${cell(r)}`).join(", ")}}`);
-  return lines.length === 0 ? "[]\n" : `[\n${lines.join(",\n")}\n]\n`;
+  const order = rowOrder(payload, rows);
+  if (order.length === 0) {
+    return ["[]\n"];
+  }
+  const parts = order.map((r, k) => `${k === 0 ? "[\n" : ",\n"}  {${columns.map((cell, i) => `${names[i]}: ${cell(r)}`).join(", ")}}`);
+  parts.push("\n]\n");
+  return parts;
 }
 
 /// A cell as Markdown table text, shown as written: what Markdown reads
@@ -157,13 +173,21 @@ export function markdownCell(text: string): string {
 /// floats to `decimals`, numeric and temporal columns aligned right;
 /// `formats`: the cells as a name's format shows them.
 export function toMarkdown(payload: GridPayload, decimals: number, rows?: number[], formats = false): string {
+  return markdownParts(payload, decimals, rows, formats).join("");
+}
+
+/// `toMarkdown`'s lines, each with its `\n`, for `textBuffer` (#1855).
+function markdownParts(payload: GridPayload, decimals: number, rows?: number[], formats = false): string[] {
   const values = toGrid(payload, decimals);
   const grid = formats ? shownGrid(values) : values;
   const order = rowOrder(payload, rows);
   const header = `| ${grid.columns.map((c) => markdownCell(c.name) || " ").join(" | ")} |`;
   const rule = `| ${grid.columns.map((c) => (c.numeric || c.temporal ? "---:" : "---")).join(" | ")} |`;
-  const body = order.map((r) => `| ${grid.cells.map((col) => markdownCell(col[r] ?? "")).join(" | ")} |`);
-  return [header, rule, ...body].join("\n") + "\n";
+  const lines = [`${header}\n`, `${rule}\n`];
+  for (const r of order) {
+    lines.push(`| ${grid.cells.map((col) => markdownCell(col[r] ?? "")).join(" | ")} |\n`);
+  }
+  return lines;
 }
 
 export interface Exported {
@@ -177,7 +201,9 @@ export interface Exported {
 
 /// The rows of `payload` in `format`. `rules`: the result's conditional
 /// formatting, which the Excel and HTML files keep. `formats`: Markdown
-/// and HTML write the cells as the columns' formats show them.
+/// and HTML write the cells as the columns' formats show them. Text is
+/// written in parts to a `Buffer`, never one string: a big result's is past
+/// the longest string V8 makes (#1855).
 export function exportResult(format: ExportFormat, payload: GridPayload, decimals: number, rows?: number[], rules: FormatRule[] = [], formats = false): Exported {
   const order = rowOrder(payload, rows);
   const notes: string[] = [];
@@ -186,15 +212,15 @@ export function exportResult(format: ExportFormat, payload: GridPayload, decimal
   }
   switch (format) {
     case "json":
-      return { data: Buffer.from(toJson(payload, order), "utf8"), rows: order.length, notes };
+      return { data: textBuffer(jsonParts(payload, order)), rows: order.length, notes };
     case "markdown":
-      return { data: Buffer.from(toMarkdown(payload, decimals, order, formats), "utf8"), rows: order.length, notes };
+      return { data: textBuffer(markdownParts(payload, decimals, order, formats)), rows: order.length, notes };
     case "q": {
-      const table = tableLiteral(payload, order);
+      const table = tableParts(payload, order);
       if (table.cut > 0) {
         notes.push(`${table.cut} cell(s) were cut at 200 characters or at the process's \\c width and are not their whole value`);
       }
-      return { data: Buffer.from(`${table.code}\n`, "utf8"), rows: order.length, notes };
+      return { data: textBuffer([...table.parts, "\n"]), rows: order.length, notes };
     }
     case "xlsx": {
       const book = toXlsx(payload, order, rules);
@@ -202,7 +228,7 @@ export function exportResult(format: ExportFormat, payload: GridPayload, decimal
       return { data: book.data, rows: book.rows, notes };
     }
     case "html":
-      return { data: Buffer.from(toHtml(payload, decimals, order, rules, formats), "utf8"), rows: order.length, notes };
+      return { data: textBuffer(htmlParts(payload, decimals, order, rules, formats)), rows: order.length, notes };
     case "parquet": {
       const file = toParquet(payload, order);
       notes.push(...file.notes);
