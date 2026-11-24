@@ -151,6 +151,21 @@ test("a link whose query is spread over many lines, or hides characters, is not 
   assert.strictEqual(promptProblem("a:1\u202e;b"), "holding a control, zero-width or bidi character");
   assert.strictEqual(promptProblem("a\u200b"), "holding a control, zero-width or bidi character");
   assert.strictEqual(promptProblem("select from t\r\nwhere\ta=1\n\nb"), undefined);
+  // A blank is one whatever its code point: no-break and wide spaces, and
+  // the characters drawn as nothing, push the write off the prompt as 40
+  // spaces do (#1899).
+  const blanks = { nbsp: "\u00a0", ogham: "\u1680", enQuad: "\u2000", em: "\u2003", hair: "\u200a", narrow: "\u202f", math: "\u205f", ideographic: "\u3000", braille: "\u2800", filler: "\u3164", choseong: "\u115f", jungseong: "\u1160", halfwidth: "\uffa0", softHyphen: "\u00ad" };
+  for (const [name, blank] of Object.entries(blanks)) {
+    assert.strictEqual(promptProblem(`a:"${blank.repeat(1900)}";delete from \`trade`), "spread out by blank lines or spaces", name);
+    assert.strictEqual(promptProblem(`a${blank.repeat(20)}${" ".repeat(20)}b`), "spread out by blank lines or spaces", name);
+    assert.strictEqual(promptProblem(`a\n${blank}\n\t${blank}\n${blank} \nb`), "spread out by blank lines or spaces", name);
+    assert.strictEqual(promptProblem(`select from t where s like "a${blank}b"`), undefined, name);
+  }
+  stub.picks.push("Run");
+  assert.strictEqual(await links.open(asUri(queryLink("vscode", "wojdalski.q-lint", "rdb", `a:"${"\u00a0".repeat(1900)}";delete from \`trade`).link)), false);
+  assert.ok(!stub.messages.some(([, text]) => /Run it\?/.test(text)));
+  assert.match(stub.messages.at(-1)[1], /the link's query is spread out by blank lines or spaces, too much to show whole/);
+  assert.strictEqual(ran, 0);
 });
 
 test("a link run with {{placeholders}} asks for them and sends the query filled in (#1225)", async (t) => {

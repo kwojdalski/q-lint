@@ -250,6 +250,7 @@ export class FunctionSources implements TextDocumentContentProvider {
     if (!on("functionSource")) {
       return false;
     }
+    let held = text;
     try {
       // Only on the process the question named (#1290).
       const got = await borrowWhenFree(this.live, (connection) => connection.call(REDEFINE, copy.name, copy.was, text), undefined, copy.process);
@@ -257,14 +258,16 @@ export class FunctionSources implements TextDocumentContentProvider {
         void window.showInformationMessage(plainMessage(`q-lint: ${copy.process} is busy with a query; ${copy.name} was not redefined.`));
         return false;
       }
+      // The text the process kept, which is not always the one sent (#1895).
+      held = typeof got.value === "string" ? got.value : text;
     } catch (error) {
       void window.showErrorMessage(plainMessage(`q-lint: ${copy.name} was not redefined on ${copy.process}: ${message(error)}`));
       return false;
     }
-    copy.was = text;
+    copy.was = held;
     const shown = this.shown.get(copy.from);
     if (shown !== undefined) {
-      shown.source = { ...shown.source, text };
+      shown.source = { ...shown.source, text: held };
       this.changed.fire(Uri.parse(copy.from));
     }
     void window.showInformationMessage(plainMessage(`q-lint: redefined ${copy.name} on ${copy.process}.`));

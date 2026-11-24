@@ -71,9 +71,12 @@ to a process you add and connect to, and sends only the code you run.
   repository's configuration, counted by rule and by folder, and their count
   over commits. A refresh on a commit whose q files are unchanged adds that
   commit to the trend, kept in the workspace's state; **Lint Earlier
-  Commits...** adds the last 5 to 50 from git, each exported with `git
-  archive` to a temporary directory and linted there - nothing is checked
-  out. It reads files and sends nothing to a q process
+  Commits...** adds the last 5 to 50 from git. Each point is of a commit
+  exported with `git archive` to a temporary directory and linted there -
+  nothing is checked out, and a q file git ignores (build output) is in the
+  counts of the folder but in no point of the trend. A folder below the
+  repository's top is linted, at each commit, under the configuration above
+  it, as it is in the working tree. It reads files and sends nothing to a q process
   (`q-lint.problemsDashboard.enable`).
 - **Format Document** applies the fixes `qlinter --fix` makes - those that
   cannot change a working program - and nothing else: it is not a
@@ -366,7 +369,9 @@ Each has its own switch, listed in [Settings](#settings) and
   failed (`c:b+`x;` in `mid`, at `+`). It explains the selected text, the
   last query when it failed (not once a later one has answered), or an
   error typed in; a problem whose message names a q
-  error (`'type`, `'length`, ...) gets a Quick Fix that explains it. The
+  error (`'type`, `'length`, ...) gets a Quick Fix that explains it. A
+  message of several words is one the code signalled, and is said to be;
+  only a single name is taken for one q could not find. The
   catalogue is offline; each example in it was run on KDB-X and PeachQ, and
   the few from the KX reference alone are marked so. `q-lint.errorExplain.enable`.
 - **The q version check**: name a release in a folder's `qlinter.toml` -
@@ -386,7 +391,9 @@ Each has its own switch, listed in [Settings](#settings) and
   tests are never listed; the report says how many places reach a name by a
   value built at run time, which it cannot see. With
   `q-lint.deadCode.checkProcess` on it also asks the active process, in one
-  read-only query, which of them a function it holds names. `q-lint.deadCode.enable`.
+  read-only query, which of them a function it holds names: the lambdas of
+  every namespace, and those inside a projection, a composition or a small
+  list or dictionary (a table of handlers). `q-lint.deadCode.enable`.
 - **q Namespaces**, a view in the Explorer: every global the workspace
   defines, grouped by namespace, each opening its definition. It reads the
   language server's index when shown, after a save and on Refresh.
@@ -770,14 +777,22 @@ namespace as Redefine defines it; after the last test, every one is put
 back and the counts show in the editor's gutter and the Test Coverage view.
 A function changed on the process since it was loaded, or not loaded, is
 left alone, and the run's output names those; one redefined while the tests
-ran is left as it is then. `.qlint.cov` holds the counts and the originals
+ran is left as it is then. A call made where q refuses a global write
+(under `reval`, in a secondary thread of `peach`) answers as before and is
+not counted. `.qlint.cov` holds the counts and the originals
 meanwhile, and is deleted after; `.qlint` itself stays, empty when nothing
-else of q-lint's is in it, as q cannot remove a namespace. A run
-interrupted before the functions were put back (the connection lost, say)
-is put right first thing in the next coverage run. The replacing goes
-through the read-only guard. A statement is
+else of q-lint's is in it, as q cannot remove a namespace. When the
+functions cannot be put back over the active connection - another process
+became active, the query timed out, the connection was lost - they are put
+back over a connection of its own to the process the run instrumented,
+waited for for 10 seconds; failing that, a warning names the functions that
+may still be instrumented and the process, and the next coverage run there
+puts them right first thing. The replacing and the putting back go through
+the read-only guard; declined there, nothing more is sent. A statement is
 counted, not each line inside it: an `if[...]` or a nested lambda counts
-as part of the statement it is in. `q-lint.testExplorer.coverage.enable`
+as part of the statement it is in. The first 500 q files found in the
+workspace are measured; with more, the run's output says so.
+`q-lint.testExplorer.coverage.enable`
 removes the profile.
 
 **Failed tests.** A failed assertion with two sides shows them as an
@@ -1282,7 +1297,9 @@ without editing its file: the function is replaced there by a wrapper of
 the same parameters that prints `(name; arguments)` with `0N!`, to the
 process's console or log (a launched process's output channel), keeps the
 last 1000 calls as text in `.qlint.log.hits`, and calls the original, kept
-in `.qlint.log.orig`. The editor marks the definition `logpoint on
+in `.qlint.log.orig`. Where q refuses a global write - a call made under
+`reval`, or in a secondary thread of `peach` - the call is printed but not
+kept, and the function answers as before. The editor marks the definition `logpoint on
 <process>`. **Show Logpoint Hits** reads the calls kept, **Remove
 Logpoint** puts one function back, and **Remove All Logpoints** all of
 them; a function redefined while it had a logpoint is left as it is. With
@@ -1301,7 +1318,10 @@ top of its body assigns (`a:`, `a+:`, `a[i]:`), once that statement has
 run. The function is put back in the same call, error or not, and what was
 kept opens as a document: the arguments, the statement that failed, and the
 locals. It runs the query again as written, so it can change data again;
-the replacing goes through the read-only guard. A local assigned inside an
+the replacing goes through the read-only guard. When the run again times
+out or the connection closes, the function is put back over a connection of
+its own to that process; when that fails too, a warning names the function
+and the process it is still replaced on. A local assigned inside an
 `if[...]` or a nested lambda is not seen. `q-lint.localsAtError.enable`
 hides the command.
 
@@ -1983,8 +2003,9 @@ menu, asks a language model for a query that does what you describe, given
 the connected process's tables and columns, and opens the draft in a new q
 editor. Nothing runs: the notification offers **Run**, which runs the
 draft as it then stands, edited or not, as a query from an editor runs,
-and **Insert at Cursor**, which puts it in the editor you started from.
-Close it, and nothing happens. `q-lint.chat.englishToQsql.enable` off hides
+and **Insert at Cursor**, which puts it in the editor you started from,
+shown again when its tab was switched away from or closed since.
+Close the notification, and nothing happens. `q-lint.chat.englishToQsql.enable` off hides
 the command. Both need a language model in VS Code, such as GitHub
 Copilot's; without one they say so.
 
@@ -2061,7 +2082,8 @@ meta, with the number of rows, the symbols drawn from (names, or `50` for
 `sym1` to `sym50`), the range numbers are drawn from, and a column kept in
 ascending order chosen, as q code to run on a local process (it sets `\S`, so it
 makes the same rows each time) or as CSV, with the `0:` types that read it
-back.
+back. A whole-number column's range is cut to what its type holds: a
+short's and an int's finite values, and for a long 2^52 either way.
 
 **Open Tickerplant Log...** starts a q of its own (`q-lint.terminal.qBinary`,
 in a new temporary directory, listening on the loopback only) and has it

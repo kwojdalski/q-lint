@@ -3,8 +3,9 @@
 // reading, as CI sees it - and draws its findings by rule and by folder, and
 // their trend over commits (`problems.ts`). Each refresh on a commit whose q
 // files are unchanged adds that commit to the trend, kept in the workspace's
-// state; **Lint Earlier Commits** adds the last ones from git, each exported
-// with `git archive` and linted apart, never checked out. Nothing is sent to
+// state; **Lint Earlier Commits** adds the last ones from git. Every point
+// is of a commit exported with `git archive` and linted apart, never checked
+// out: the commit's files, not the q files git ignores in the folder. Nothing is sent to
 // a q process. Off (q-lint.problemsDashboard.enable), the panel closes and
 // the commands refuse.
 //
@@ -86,8 +87,10 @@ export function registerProblemsDashboard(
       // repository's configuration, which can name programs to run.
       const at = workspace.isTrusted === false ? undefined : await head(folder);
       let points = trend(folder);
-      if (at !== undefined && at.clean) {
-        points = withPoint(points, pointOf(findings, at.commit, at.date, at.subject));
+      // The commit's point is of the commit, as an earlier one's is: the
+      // folder may hold q files git ignores, which no commit has (#1896).
+      if (at !== undefined && at.clean && !points.some((p) => p.commit === at.commit)) {
+        points = withPoint(points, pointOf(await lintCommit(command, args, folder, at.commit), at.commit, at.date, at.subject));
         await context.workspaceState.update(trendKey(folder), points);
       }
       view = {

@@ -23,15 +23,30 @@ export const DEAD_CODE = "q-lint/deadCode";
 
 /// Which of a space-separated list of names the body of some function in
 /// the process names as a word - its last part (`helper` in its own
-/// namespace) or the whole name (`.util.helper`, #1227) - other than its own: every namespace but q's own, and
-/// `.z`. A root name that is no namespace (`.cfg:42`) lists nothing (#1370). Reads only. Checked on KDB-X and PeachQ; PeachQ lists no `.z`
+/// namespace) or the whole name (`.util.helper`, #1227) - other than its own: every namespace but q's own
+/// (PeachQ's `.help` among them), and `.z`. A root name that is no namespace (`.cfg:42`) lists nothing (#1370).
+/// The functions are the lambdas of every namespace, however deep, and
+/// those held in a projection, a composition or an iterator's derived
+/// function, or in a list or dictionary of at most 1000 items - a table of
+/// handlers (#1901); a view is not read. Reads only. Checked on KDB-X and PeachQ; PeachQ lists no `.z`
 /// handler, so a function only a handler calls stays a candidate there.
 export const CALLED = [
   "{[nms]",
   " n:\" \" vs(),nms;",
-  " fs:raze {[ns] $[ns~`.;system\"f\";` sv' ns,'@[{system\"f \",string x};ns;()]]} each `.,` sv'`,'(key`) except `q`Q`h`j`o`m;",
-  " fs:fs where 100h=type each get each fs;",
-  " b:{last value get x} each fs;",
+  " lam:{$[100h=t:type x;enlist x;t within 104 111h;raze .z.s each(),value x;$[t in 0 99h;1000>=count x;0b];raze .z.s each $[99h=t;value x;x];()]};",
+  " isns:{$[99h=type x;$[11h=type key x;(::)~first x;0b];0b]};",
+  " todo:`.,` sv'`,'(key`) except``q`Q`h`j`o`m`help;",
+  " fs:`$();b:();",
+  " while[count todo;",
+  "  ns:first todo;todo:1_todo;",
+  "  d:@[get;ns;{()!()}];if[not $[99h=type d;11h=type key d;0b];d:(`$())!()];",
+  "  k:(key d)except`;",
+  "  if[ns~`.;k:k except views[]];",
+  "  kids:$[ns~`.;`$();k where isns each d k];",
+  "  todo,:` sv'ns,'kids;k:k except kids;",
+  "  l:@[lam;;()]each d k;",
+  "  fs,:raze(count each l)#'$[ns~`.;k;` sv'ns,'k];",
+  "  b,:raze{last value x}each'l];",
   " w:{[s;l] any {[s;l;i] not any s[(i-1),i+count l] in .Q.an,\"_.\"}[s;l] each ss[s;l]};",
   " n where {[b;fs;w;n] any (fs<>`$n) & (w[;last \".\" vs n] each b) or w[;n] each b}[b;fs;w] each n}",
 ].join("\n");

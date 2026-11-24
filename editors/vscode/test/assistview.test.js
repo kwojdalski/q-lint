@@ -459,6 +459,47 @@ test("Draft qSQL shows the draft for review and runs nothing until Run, then run
   assert.deepStrictEqual(second.live.queried, []);
 });
 
+test("Insert at Cursor shows the source document again when its editor was closed meanwhile, and says when it cannot (#1906)", async (t) => {
+  const { live, context } = setup();
+  registerQsqlDraft(context, live);
+  const show = vscode.window.showTextDocument;
+  t.after(() => ((vscode.window.showTextDocument = show), (vscode.window.activeTextEditor = undefined)));
+  // The editor the command started from, its tab no longer shown: VS Code's own refusal.
+  const source = { languageId: "q", uri: { toString: () => "file:///w/a.q" } };
+  const closed = {
+    document: source,
+    selection: "SEL",
+    viewColumn: 2,
+    edit: () => {
+      throw new Error("TextEditor#edit not possible on closed editors");
+    },
+  };
+  const edits = [];
+  const shown = [];
+  vscode.window.showTextDocument = async (d, options) => {
+    if (d !== source) return show(d, options);
+    shown.push(options);
+    return { document: d, selection: options.selection, edit: async (f) => (f({ replace: (at, text) => edits.push([at, text]) }), true) };
+  };
+  const insert = async () => {
+    vscode.window.activeTextEditor = closed;
+    models = [fakeModel([[new LanguageModelTextPart("exec 1 from t")]])];
+    stub.picks = ["Insert at Cursor"];
+    return stub.commands.get("q-lint.draftQsql")("one");
+  };
+  assert.strictEqual((await insert()).picked, "Insert at Cursor");
+  assert.deepStrictEqual(shown, [{ viewColumn: 2, selection: "SEL" }]);
+  assert.deepStrictEqual(edits, [["SEL", "exec 1 from t"]]);
+  // The document is gone too: said, not thrown.
+  vscode.window.showTextDocument = async (d, options) => {
+    if (d !== source) return show(d, options);
+    throw new Error("cannot open file:///w/a.q");
+  };
+  assert.strictEqual((await insert()).picked, "Insert at Cursor");
+  assert.deepStrictEqual(stub.messages.at(-1), ["error", "q-lint: the draft was not inserted: cannot open file:///w/a.q. It is still in its own editor."]);
+  assert.strictEqual(edits.length, 1);
+});
+
 test("@q explain and Draft qSQL read nothing from a process switched to mid-request (#1621)", async () => {
   const { live, context } = setup();
   const chat = registerChat(context, live);

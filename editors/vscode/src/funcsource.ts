@@ -14,7 +14,10 @@
 // `(value f)3`: a global `g` in a lambda defined in `.ns` is `.ns.g`, so
 // Redefine parses the new text in that context, as the original was, and
 // restores the process's own context before it assigns. It refuses when the
-// function on the process is no longer the text the editor started from.
+// function on the process is no longer the text the editor started from,
+// and answers the text the process keeps for the new one - the lambda alone,
+// without a blank before it or a comment after - which is what the next
+// Redefine is checked against (#1895).
 //
 // Callers are read from what q parsed, not from text: each lambda's globals
 // (`(value f)3`, resolved in its context), and those of the lambdas nested
@@ -58,7 +61,7 @@ export const REDEFINE = [
   " if[not first r;'last r];",
   " if[not 100h=type last r;'\"the text is not a function\"];",
   " nm set last r;",
-  " string nm}",
+  " last value last r}",
 ].join("\n");
 
 export const CALLERS = [

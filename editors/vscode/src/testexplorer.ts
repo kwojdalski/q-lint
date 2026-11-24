@@ -50,8 +50,9 @@ import { isProduction } from "./agent";
 import { coverageByFile, coveragePlan, coverageSummary, definedNames, type CoveragePlan, type SourceFile } from "./coverage";
 import { DRIFT, DRIFT_BATCH, readDrift, type ProcessState } from "./definitions";
 import { editorFeatureOff, editorFeatureOn, type EditorFeature, type Server } from "./editorfeatures";
-import { installLambda, readInstalled, readRestored, restoreExpression } from "./instrument";
+import { guardDeclined, installLambda, leftInstrumented, readInstalled, readRestored, restoreApart, restoreExpression, type Restored } from "./instrument";
 import type { Live } from "./live";
+import type { Process } from "./processes";
 import { readAnswer } from "./query";
 import { SNAPSHOT_EXTENSION, SNAPSHOT_RUN, parseSnapshot, sameResult, type Snapshot } from "./snapshot";
 import { statements } from "./statements";
@@ -467,7 +468,7 @@ class QTests {
     // Instrumented before the first test, and put back after the last.
     // Every call below goes to `process` and no other: a run does not
     // follow a connection made while it is under way (#1283).
-    const covering = coverage ? await this.coverStart(run, process.label).catch((error: unknown) => {
+    const covering = coverage ? await this.coverStart(run, process).catch((error: unknown) => {
       run.appendOutput(`Coverage not counted: ${error instanceof Error ? error.message : String(error)}\r\n`);
       return undefined;
     }) : undefined;
@@ -618,7 +619,7 @@ class QTests {
       }
     } finally {
       if (covering !== undefined) {
-        await this.coverEnd(run, covering, process.label).catch((error: unknown) =>
+        await this.coverEnd(run, covering, process).catch((error: unknown) =>
           run.appendOutput(`Coverage not read: ${error instanceof Error ? error.message : String(error)}\r\n`),
         );
       }
@@ -667,10 +668,12 @@ class QTests {
 
   /// The workspace's q files, for coverage: an open file with unsaved
   /// edits as its editor holds it, the text its coverage is drawn on (#1609).
-  private async sourceFiles(): Promise<SourceFile[]> {
+  /// `capped` when there are more than were read (#1907).
+  private async sourceFiles(): Promise<{ files: SourceFile[]; capped: boolean }> {
     const out: SourceFile[] = [];
     const dirty = new Map(workspace.textDocuments.filter((d) => d.isDirty).map((d) => [d.uri.toString(), d]));
-    for (const uri of await workspace.findFiles("**/*.q", "**/node_modules/**", MAX_CSV)) {
+    const found = await workspace.findFiles("**/*.q", "**/node_modules/**", MAX_CSV);
+    for (const uri of found) {
       try {
         const open = dirty.get(uri.toString());
         out.push({ uri: uri.toString(), text: open !== undefined ? open.getText() : Buffer.from(await workspace.fs.readFile(uri)).toString("utf8") });
@@ -678,16 +681,44 @@ class QTests {
         // Gone since it was listed.
       }
     }
-    return out;
+    return { files: out, capped: found.length >= MAX_CSV };
+  }
+
+  /// The run's own restore could not be sent to `process` (`why`): it is
+  /// tried over a connection of its own to that process, and when that
+  /// fails too the user is told which functions may still be instrumented
+  /// there (#1892). Undefined when they were not put back.
+  private async putBack(run: TestRun, process: Process, names: readonly string[], why: string): Promise<Restored | undefined> {
+    let reason = why.replace(/\.$/, "");
+    // Declined at the guard's question: not sent another way either.
+    if (!guardDeclined(why)) {
+      try {
+        return await restoreApart(this.live, process, "cov", "Putting back the functions instrumented for coverage");
+      } catch (error) {
+        reason += `; nor over a connection of its own: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    }
+    run.appendOutput(`${leftInstrumented(names, process.label, reason, "coverage run", names.length)}\r\n`);
+    void window.showWarningMessage(plainMessage(leftInstrumented(names, process.label, reason, "coverage run")));
+    return undefined;
   }
 
   /// Instrument what the workspace defines and the process holds unchanged:
   /// what an interrupted run left there is put back first. Undefined when
   /// nothing was instrumented.
-  private async coverStart(run: TestRun, label: string): Promise<{ plan: CoveragePlan; installed: Set<string> } | undefined> {
-    const files = await this.sourceFiles();
+  private async coverStart(run: TestRun, process: Process): Promise<{ plan: CoveragePlan; installed: Set<string> } | undefined> {
+    const label = process.label;
+    const { files, capped } = await this.sourceFiles();
+    if (capped) {
+      run.appendOutput(
+        `Coverage: the workspace holds ${MAX_CSV} q files or more; only the first ${MAX_CSV} found are measured, and a function defined in another shows no coverage.\r\n`,
+      );
+    }
     const names = definedNames(files);
     const install = installLambda("cov");
+    // The names INSTALL was sent, once it was: a failure after that leaves
+    // them replaced, and nothing for the end of the run to put back.
+    let sent: string[] | undefined;
     const done = await this.live.runOnActive(install, async (connection) => {
       const left = readRestored(await connection.call(restoreExpression("cov")));
       if (left.kept.length > 0) {
@@ -703,10 +734,16 @@ class QTests {
       if (plan.names.length === 0) {
         return { plan, installed: new Set<string>() };
       }
+      sent = plan.names;
       const statuses = readInstalled(await connection.call(install, plan.names, plan.was, plan.src, plan.probes.length), plan.names.length);
       statuses.forEach((status, i) => status !== "ok" && run.appendOutput(`Not instrumented, ${plan.names[i]}: ${status}\r\n`));
       return { plan, installed: new Set(plan.names.filter((_, i) => statuses[i] === "ok")) };
-    }, "ask", label);
+    }, "ask", label).catch(async (error: unknown) => {
+      if (sent !== undefined) {
+        await this.putBack(run, process, sent, error instanceof Error ? error.message : String(error));
+      }
+      throw error;
+    });
     if (done === undefined) {
       run.appendOutput("Coverage not counted: no connection, or a query is still running there.\r\n");
       return undefined;
@@ -722,19 +759,26 @@ class QTests {
   }
 
   /// Read the counts, put every function back, and show the coverage.
-  private async coverEnd(run: TestRun, covering: { plan: CoveragePlan; installed: Set<string> }, label: string): Promise<void> {
+  private async coverEnd(run: TestRun, covering: { plan: CoveragePlan; installed: Set<string> }, process: Process): Promise<void> {
     const restore = restoreExpression("cov");
-    const done = await this.live.runOnActive(restore, async (connection) => readRestored(await connection.call(restore)), "ask", label);
+    // Not sent - no connection, a query running there - or sent and thrown:
+    // another process became active, the guard's question was declined, it
+    // timed out. Either way the functions are still replaced (#1892).
+    let why = "no connection, or a query is running";
+    const own = await this.live
+      .runOnActive(restore, async (connection) => readRestored(await connection.call(restore)), "ask", process.label)
+      .catch((error: unknown) => {
+        why = error instanceof Error ? error.message : String(error);
+        return undefined;
+      });
+    const done = own?.value ?? (await this.putBack(run, process, [...covering.installed], why));
     if (done === undefined) {
-      const text = `q-lint: the functions instrumented for coverage could not be put back (no connection, or a query is running). The next coverage run puts them back first.`;
-      run.appendOutput(`${text}\r\n`);
-      void window.showWarningMessage(plainMessage(text));
       return;
     }
-    if (done.value.kept.length > 0) {
-      run.appendOutput(`Left as they are, redefined while the tests ran: ${done.value.kept.join(", ")}\r\n`);
+    if (done.kept.length > 0) {
+      run.appendOutput(`Left as they are, redefined while the tests ran: ${done.kept.join(", ")}\r\n`);
     }
-    const byFile = coverageByFile(covering.plan, done.value.d, covering.installed);
+    const byFile = coverageByFile(covering.plan, done.d, covering.installed);
     this.covered = [];
     for (const [uri, counted] of byFile) {
       const details = counted.map((s) => new StatementCoverage(s.count, new Range(s.start.line, s.start.character, s.end.line, s.end.character)));

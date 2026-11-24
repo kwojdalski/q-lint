@@ -431,6 +431,18 @@ test("the test data generator's shorts and ints stay in their type's range", { s
   }
 });
 
+// A range past what a long holds made q that q could not read, or a
+// column of floats (#1904).
+test("the test data generator's longs are longs whatever the range", { skip }, async (t) => {
+  const { connection } = await connect(t, "");
+  const info = { kind: "table", rows: 0, bytes: null, partitions: null, keys: [], ncols: 1, columns: [{ name: "j", type: "j", fkey: "", attr: "" }] };
+  for (const [low, high] of [[0, 1e19], [0, 1e21], [-1e21, 1e21], [1e25, 1e26]]) {
+    const ran = readRun(await connection.call(RUN_SCRIPT, statements(testDataQ(info, "gen", { rows: 40, symbols: ["a"], low, high, seed: 2 }))));
+    assert.ok(ran.ok, `${low} ${high}: ${ran.error}`);
+    assert.strictEqual(await connection.call("{j:exec j from gen;(7h=type j)&all(not null j)&abs[j]<0W}", 0), true, `${low} ${high}`);
+  }
+});
+
 // A table or column name q cannot parse is written by its symbol (#1583).
 test("the test data generator and a migration in memory write names with a space", { skip }, async (t) => {
   const { connection } = await connect(t, '(`$"my t") set ([] a:1 2);\ntgt:([] a:1 2; b:3 4);\nw:flip(`$("px bid";"a"))!(1 2f;3 4);\n');

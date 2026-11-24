@@ -48,12 +48,16 @@ export function rangeOf(text: string): [number, number] | undefined {
 const DAY = "2026.01.02";
 
 /// The largest finite short and int: one more is the type's infinity, and
-/// past that `"H"$` and `"I"$` read a number as a null (#1499).
-const WHOLE_LIMIT: Record<string, number> = { h: 32766, i: 2147483646 };
+/// past that `"H"$` and `"I"$` read a number as a null (#1499). A long is
+/// held to 2^52, the whole numbers a JavaScript number holds one by one:
+/// past 2^63 the count is a number q cannot read, and from 1e21 it prints
+/// as a float (#1904).
+const WHOLE_LIMIT: Record<string, number> = { h: 32766, i: 2147483646, j: 2 ** 52 };
 
 /// The first whole number a column of type `type` takes from `o`'s range
-/// and how many follow it: the range rounded, and for a short or an int
-/// cut to the values the type holds, so the q and the CSV draw alike.
+/// and how many follow it: the range rounded, and cut to the values the
+/// type holds (a long, to those written exactly), so the q and the CSV
+/// draw alike.
 export function wholeRange(type: string, o: TestDataOptions): [number, number] {
   let lo = Math.round(o.low);
   let hi = lo + Math.max(1, Math.round(o.high - o.low));

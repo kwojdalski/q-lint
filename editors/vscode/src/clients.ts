@@ -8,7 +8,9 @@
 // interpreter has it. q keeps no address or user for a handle other than
 // the caller's own, so those come only from TorQ's `.clients.clients`,
 // when the process records them. The handles include those the process
-// opened itself. Every read is trapped; nothing is kept on the process.
+// opened itself. Every read is trapped - a `.clients.clients` that is not
+// TorQ's (no `w`, `u` or `ipa`, a user held as a string) gives no address
+// or user, as none does (#1905); nothing is kept on the process.
 
 export const CLIENTS = [
   "{[]",
@@ -16,9 +18,11 @@ export const CLIENTS = [
   " n:{$[0h>type x;x;sum x]}each value .z.W;",
   ' k:{@[{d:-38!x;$[99h=type d;(("tcp";"unix")"u"=d`f),$[d`z;" TLS";""],$["w"=d`p;" websocket";""];""]};x;""]}each h;',
   " c:@[{0!get x};`.clients.clients;()];",
-  ' u:$[.Q.qt c;{$[null x;"";string x]}each(exec w!u from c)h;count[h]#enlist""];',
-  ' ip:$[.Q.qt c;{$[null x;"";string x]}each(exec w!ipa from c)h;count[h]#enlist""];',
-  " `handle`queued`self`kind`user`host`tracked!(\"f\"$h;\"f\"$n;h=.z.w;k;u;ip;.Q.qt c)}",
+  ' rd:{[c;h;f]$[$[.Q.qt c;all(`w,f)in cols c;0b];.[{[c;h;f]{$[null x;"";string x]}each(c[`w]!c f)h};(c;h;f);{[e]::}];::]};',
+  " u:rd[c;h;`u];ip:rd[c;h;`ipa];",
+  " t:not any(::)~/:(u;ip);",
+  ' if[not t;u:ip:count[h]#enlist""];',
+  " `handle`queued`self`kind`user`host`tracked!(\"f\"$h;\"f\"$n;h=.z.w;k;u;ip;t)}",
 ].join("\n");
 
 export interface ClientRow {

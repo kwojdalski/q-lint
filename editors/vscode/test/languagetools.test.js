@@ -168,6 +168,21 @@ test("Explain q Error prefers the selection, and forgets a failure once a later 
   }
 });
 
+test("a message the code signalled is not explained as an undefined name (#1902)", () => {
+  for (const said of ["price must be positive", "'Not connected", "unknown table: trade", "illegal char b at 1", "2026.11.22T19:23:04.352 price must be positive"]) {
+    const text = explainError(said);
+    assert.doesNotMatch(text, /is not defined where it was read/, said);
+    assert.match(text, /a message the code signalled/, said);
+  }
+  assert.match(explainError("price must be positive"), /^# q error `'price must be positive`\n/);
+  // One name is still one: alone, or over the backtrace q printed under it.
+  assert.match(explainError("'undefinedname123\n  [0]  undefinedname123+1\n       ^"), /`undefinedname123` is not defined where it was read/);
+  assert.match(explainError("'type\n  [0]  1+`a\n        ^"), /An argument is of a type/);
+  // qSQL's own: a query q could not find the `from` of.
+  assert.match(explainError("'from"), /# q error `'from`/);
+  assert.doesNotMatch(explainError("'from"), /is not defined where it was read/);
+});
+
 test("an error named after an Object.prototype member is an undefined name, not a crash (#1078)", () => {
   for (const name of ["constructor", "toString", "valueOf", "hasOwnProperty"]) {
     assert.match(explainError(`'${name}`), new RegExp(`\`${name}\` is not defined where it was read`), name);

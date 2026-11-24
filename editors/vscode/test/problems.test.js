@@ -31,6 +31,19 @@ test("a folder opened through a symlink counts its files under their folders, no
   assert.strictEqual(folderOf(path.resolve("/elsewhere/src/x.q"), [opened, real]), ".");
 });
 
+test("a folder whose name starts with two dots is a folder of the tree, not one outside it (#1898)", () => {
+  const root = path.resolve("/proj");
+  assert.strictEqual(folderOf(path.join(root, "..x/b.q"), root), "..x");
+  assert.strictEqual(folderOf(path.join(root, "..x/deep/er/b.q"), root), "..x/deep");
+  assert.strictEqual(folderOf(path.join(root, "sub/..x/b.q"), root), "sub/..x");
+  assert.strictEqual(folderOf(path.join(root, "..b.q"), root), ".");
+  // Outside it still falls to the next spelling, or to ".".
+  assert.strictEqual(folderOf(path.resolve("/other/src/b.q"), [root, path.resolve("/other")]), "src");
+  assert.strictEqual(folderOf(path.resolve("/b.q"), root), ".");
+  const s = summarise([F(path.join(root, "..x/b.q"), "QE004"), F(path.join(root, "top.q"), "QS001")], root);
+  assert.deepStrictEqual(s.folders.map((f) => f.folder).sort(), [".", "..x"]);
+});
+
 test("findings are counted by rule and by folder, with their files", () => {
   const root = path.resolve("/ws");
   const findings = [
@@ -249,6 +262,132 @@ test("off, the dashboard refuses and lints nothing; on, it shows the folder and 
   assert.strictEqual(dashboard.panelOpen(), false);
   await stub.commands.get(SHOW_PROBLEMS)(dir);
   assert.strictEqual(linted, before);
+});
+
+/// A stand-in for qlinter, run as `node <script> --format json .`: one
+/// finding for each q file under the directory it is run in.
+function everyFile(t) {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "qlint-linter-")));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "every.js");
+  fs.writeFileSync(
+    file,
+    `const fs = require("node:fs"), path = require("node:path");
+const out = [];
+const walk = (d) => {
+  for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+    if (e.name === ".git") continue;
+    const p = path.join(d, e.name);
+    if (e.isDirectory()) walk(p);
+    else if (e.name.endsWith(".q")) out.push({ path: p, code: "QE004", rule: "foreign-operator", severity: "warning", category: "c" });
+  }
+};
+walk(process.cwd());
+console.log(JSON.stringify(out));
+process.exit(out.length > 0 ? 1 : 0);
+`,
+  );
+  return file;
+}
+
+function dashboardOf(t, linter) {
+  stub.reset();
+  fakePanels();
+  const context = stub.newContext();
+  const state = new Map();
+  context.workspaceState = { get: (k, d) => (state.has(k) ? state.get(k) : d), update: async (k, v) => void state.set(k, v), keys: () => [...state.keys()] };
+  registerProblemsDashboard(context, () => ({ command: process.execPath, args: [linter] }));
+  t.after(() => context.subscriptions.forEach((d) => d.dispose?.()));
+}
+
+test("the trend's point for HEAD is of the commit, as an earlier commit's is: a q file git ignores is not in it (#1896)", async (t) => {
+  const { dir, git } = repo(t);
+  fs.mkdirSync(path.join(dir, "src"));
+  fs.writeFileSync(path.join(dir, "src/a.q"), "a:1\n");
+  fs.writeFileSync(path.join(dir, ".gitignore"), "build/\n");
+  git("add", ".");
+  git("commit", "-qm", "one");
+  fs.writeFileSync(path.join(dir, "src/b.q"), "b:1\n");
+  git("add", ".");
+  git("commit", "-qm", "two");
+  // Build output: q files no commit holds.
+  fs.mkdirSync(path.join(dir, "build"));
+  fs.writeFileSync(path.join(dir, "build/c.q"), "c:1\n");
+  fs.writeFileSync(path.join(dir, "build/d.q"), "d:1\n");
+  dashboardOf(t, everyFile(t));
+  const view = await stub.commands.get(SHOW_PROBLEMS)(dir);
+  // The folder as it is, and the commit as git has it.
+  assert.strictEqual(view.clean, true);
+  assert.strictEqual(view.summary.total, 4);
+  assert.deepStrictEqual(view.trend.map((p) => [p.subject, p.total]), [["two", 2]]);
+  const later = await stub.commands.get(LINT_HISTORY)(5, dir);
+  // (Commits of one second keep the order they were added in.)
+  assert.deepStrictEqual(later.trend.map((p) => [p.subject, p.total]).sort(), [["one", 1], ["two", 2]]);
+});
+
+test("a folder below the repository's top is linted, at a commit, under the configuration above it (#1897)", async (t) => {
+  const { dir, git } = repo(t);
+  const linters = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "qlint-linter-")));
+  t.after(() => fs.rmSync(linters, { recursive: true, force: true }));
+  // A stand-in for qlinter: one finding a q file under the directory it is
+  // run in, QE004 unless a .qlinter.toml above the directory ignores it.
+  const linter = path.join(linters, "configured.js");
+  fs.writeFileSync(
+    linter,
+    `const fs = require("node:fs"), path = require("node:path");
+let ignored = false;
+for (let d = process.cwd(); ; d = path.dirname(d)) {
+  if (fs.existsSync(path.join(d, ".qlinter.toml"))) { ignored = /QE004/.test(fs.readFileSync(path.join(d, ".qlinter.toml"), "utf8")); break; }
+  if (path.dirname(d) === d) break;
+}
+const out = [];
+const walk = (d) => {
+  for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+    const p = path.join(d, e.name);
+    if (e.isDirectory()) walk(p);
+    else if (e.name.endsWith(".q") && !ignored) out.push({ path: p, code: "QE004", rule: "foreign-operator", severity: "warning", category: "c" });
+  }
+};
+walk(process.cwd());
+console.log(JSON.stringify(out));
+process.exit(out.length > 0 ? 1 : 0);
+`,
+  );
+  fs.writeFileSync(path.join(dir, "top.q"), "t:1\n");
+  git("add", ".");
+  git("commit", "-qm", "before the folder");
+  const before = git("rev-parse", "HEAD").trim();
+  fs.mkdirSync(path.join(dir, "pkg/src"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "other"));
+  fs.writeFileSync(path.join(dir, "pkg/src/a.q"), "a:1\n");
+  fs.writeFileSync(path.join(dir, "other/b.q"), "b:1\n");
+  git("add", ".");
+  git("commit", "-qm", "the folder");
+  const unconfigured = git("rev-parse", "HEAD").trim();
+  fs.writeFileSync(path.join(dir, ".qlinter.toml"), 'ignore = ["QE004"]\n');
+  git("add", ".");
+  git("commit", "-qm", "configured at the top");
+  const folder = path.join(dir, "pkg");
+  const at = await head(folder);
+  assert.strictEqual(at.clean, true);
+  // As the folder is linted where it is: the configuration above it counts.
+  assert.deepStrictEqual(await lintTree(process.execPath, [linter], folder), []);
+  assert.deepStrictEqual(await lintCommit(process.execPath, [linter], folder, at.commit), []);
+  // Before the configuration: the folder's own file, not its neighbour's.
+  const then = await lintCommit(process.execPath, [linter], folder, unconfigured);
+  assert.deepStrictEqual(then.map((f) => path.basename(f.path)), ["a.q"]);
+  // Before the folder: nothing of it to lint.
+  assert.deepStrictEqual(await lintCommit(process.execPath, [linter], folder, before), []);
+  // A configuration changed above the folder is a change to what it lints as.
+  fs.writeFileSync(path.join(dir, ".qlinter.toml"), "ignore = []\n");
+  assert.strictEqual((await head(folder)).clean, false);
+  git("checkout", "-q", "--", ".qlinter.toml");
+  assert.strictEqual((await head(folder)).clean, true);
+  // One beside it is not.
+  fs.writeFileSync(path.join(dir, "other/qlinter.toml"), "ignore = []\n");
+  fs.writeFileSync(path.join(dir, "other/c.q"), "c:1\n");
+  assert.strictEqual((await head(folder)).clean, true);
+  assert.strictEqual(git("status", "--porcelain", "--", "pkg"), "");
 });
 
 test("a virtual workspace folder is no directory to lint: the dashboard asks for a folder, and runs nothing (#1843)", async (t) => {

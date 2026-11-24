@@ -43,7 +43,12 @@ export function promptProblem(code: string): string | undefined {
   if (code.split("\n").length > PROMPT_LINES) {
     return `longer than ${PROMPT_LINES} lines`;
   }
-  if (/\n[ \t\r]*\n[ \t\r]*\n[ \t\r]*\n/.test(code) || /[ \t]{40}/.test(code)) {
+  // A blank is whatever is shown as one: a space of any width (no-break,
+  // em, ideographic) and a character drawn as nothing - the default
+  // ignorable ones (the hangul fillers, a soft hyphen) and the braille
+  // blank (#1899).
+  const spaced = code.replace(/[^\S\n]|[\p{Default_Ignorable_Code_Point}\u0085\u2800]/gu, " ");
+  if (/\n *\n *\n *\n/.test(spaced) || / {40}/.test(spaced)) {
     return "spread out by blank lines or spaces";
   }
   if (/[\x00-\x08\x0b-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/.test(code.replace(/\r\n/g, "\n"))) {

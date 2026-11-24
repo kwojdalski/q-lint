@@ -307,6 +307,21 @@ test("test data: a short's or an int's range is cut to the finite values it hold
   assert.ok(rows.every(([h, i]) => h >= 0 && h <= 32766 && i >= 0 && i <= 2147483646), JSON.stringify(rows.slice(0, 3)));
 });
 
+test("test data: a long's range is cut to the whole numbers a JavaScript number holds, in the q and the CSV (#1904)", () => {
+  const o = { rows: 200, symbols: ["A"], low: 0, high: 1e19, seed: 7 };
+  // 2^52 either way: past 2^63 q cannot read the count, and 1e21 prints as a float.
+  assert.strictEqual(generator("j", o), "0+n?4503599627370497");
+  assert.strictEqual(generator("j", { ...o, high: 1e21 }), "0+n?4503599627370497");
+  assert.strictEqual(generator("j", { ...o, low: -1e21, high: 1e21 }), "-4503599627370496+n?9007199254740992");
+  assert.strictEqual(generator("j", { ...o, low: 1e25, high: 1e26 }), "4503599627370496+n?1");
+  assert.strictEqual(generator("j", { ...o, high: 5e9 }), "0+n?5000000000");
+  const info = { kind: "table", rows: 0, bytes: null, partitions: null, keys: [], ncols: 1, columns: [{ name: "j", type: "j", fkey: "", attr: "" }] };
+  for (const [low, high] of [[0, 1e19], [0, 1e21], [-1e21, 1e21]]) {
+    const cells = testDataCsv(info, { ...o, low, high }).trim().split("\n").slice(1);
+    assert.ok(cells.every((c) => /^-?\d+$/.test(c) && Math.abs(Number(c)) <= 2 ** 52), JSON.stringify(cells.slice(0, 3)));
+  }
+});
+
 test("the tickerplant log's readers, times of day and ranges", () => {
   assert.strictEqual(timeOfDay(""), null);
   assert.strictEqual(timeOfDay("09:30"), 34_200_000);
