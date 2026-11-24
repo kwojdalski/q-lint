@@ -227,6 +227,18 @@ test("the documenter leaves out q's own namespaces, .s too", { skip }, async (t)
   assert.deepStrictEqual(readDoc(await connection.call(DOCUMENT, 100)).functions.filter((f) => /^\.[qQhjozms]\./.test(f.name)), []);
 });
 
+// A dictionary at a dotted top-level name is in key` like a namespace, and
+// \f of it signals: it costs its own functions, not the document (#1867).
+test("the documenter survives a plain dictionary at a dotted top-level name (#1867)", { skip }, async (t) => {
+  const { connection } = await connect(t, "t:([] a:1 2)\nadd:{[a;b] a+b}\n.lib.f:{[x] x}\n.dd:`x`y!1 2\n.cfg:(`$())!()\n.one:(enlist`a)!enlist 1\n.fd:`f`g!({x};{y})\n");
+  const doc = readDoc(await connection.call(DOCUMENT, 100));
+  assert.deepStrictEqual(doc.tables.map((x) => x.name), ["t"]);
+  const names = doc.functions.map((f) => f.name);
+  assert.ok(names.includes("add") && names.includes(".lib.f"), names.join());
+  assert.deepStrictEqual(names.filter((n) => /^\.(dd|cfg|one)\./.test(n)), []);
+  assert.deepStrictEqual((await connection.evaluate("(.dd~`x`y!1 2;key`.)")).value, [true, ["t", "add"]]);
+});
+
 test("the partition check finds missing dates, files, differing types and outliers", { skip }, async (t) => {
   const extra = [
     "mk[r;;6] each 2026.01.12 2026.01.13;",

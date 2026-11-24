@@ -28,7 +28,9 @@ export const DOCUMENT = [
   "   string mt`c;{$[null x;enlist\" \";enlist x]}each mt`t;string mt`f;string mt`a)};",
   " ns:(key`)except`q`Q`h`j`o`s`z`m`qlint;",
   " ns:ns where not null ns;ns:ns where{99h=type get` sv`,x}each ns;",
-  " fs:m sublist(system\"f\"),raze{` sv'(` sv`,x),/:system\"f \",string` sv`,x}each ns;",
+  // A dictionary held at a dotted name is listed among the namespaces, and
+  // `\f` of one that is no context signals: it has no functions (#1867).
+  " fs:m sublist(system\"f\"),raze{@[{` sv'(` sv`,x),/:system\"f \",string` sv`,x};x;`$()]}each ns;",
   " `pf`parts`tables`fnames`fparams!(",
   "  $[@[{0<count .Q.pv};::;0b];string .Q.pf;\"\"];",
   "  \"f\"$@[{count .Q.pv};::;0];",
