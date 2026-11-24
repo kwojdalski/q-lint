@@ -210,14 +210,15 @@ export function restoreExpression(ns: "cov" | "err"): string {
 /// `src`, defined in its own context, keeping what it held. `d` is how many
 /// probes coverage counts (`.qlint.cov.d`, longs); the locals capture starts
 /// `.qlint.err.d` empty. Answers, for each name, `ok`, `missing`,
-/// `changed` or the error defining it gave.
+/// `changed` or the error defining it gave; when none is `ok`,
+/// `.qlint.<ns>` is deleted again.
 export function installLambda(ns: "cov" | "err"): string {
   const n = `.qlint.${ns}`;
   return [
     "{[nms;was;src;d]",
     ` ${n}.saved:(\`$())!();${n}.inst:(\`$())!();`,
     ns === "cov" ? ' .qlint.cov.d:("j"$d)#0j;' : " .qlint.err.d:`args`locals`at!((`$())!();(`$())!();0N);",
-    " {[nm;w;s]",
+    " r:{[nm;w;s]",
     "  nm:`$nm;old:@[get;nm;{::}];",
     "  if[not 100h=type old;:\"missing\"];",
     "  if[not w~last value old;:\"changed\"];",
@@ -228,7 +229,11 @@ export function installLambda(ns: "cov" | "err"): string {
     "  if[not first r;:last r];",
     "  if[not 100h=type last r;:\"not a lambda\"];",
     `  ${n}.saved[nm]:old;${n}.inst[nm]:last r;`,
-    "  nm set last r;\"ok\"}'[{(),x}each(),nms;{(),x}each(),was;{(),x}each(),src]}",
+    "  nm set last r;\"ok\"}'[{(),x}each(),nms;{(),x}each(),was;{(),x}each(),src];",
+    // Nothing replaced: nothing is kept for a restore the caller has no
+    // reason to send (#1893).
+    ` if[0=count ${n}.saved;.qlint:(enlist\`${ns})_.qlint];`,
+    " r}",
   ].join("\n");
 }
 

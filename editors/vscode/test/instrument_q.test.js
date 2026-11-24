@@ -75,6 +75,14 @@ test("a function that changed on the process, or is not there, is not replaced",
   );
   assert.deepStrictEqual(statuses.slice(0, 2), ["changed", "missing"]);
   assert.notStrictEqual(statuses[2], "ok", "text that does not parse is reported, not defined");
+  // Nothing was replaced, so nothing is kept to put back with: .qlint.cov
+  // is gone already, whether or not a restore follows (#1893).
+  assert.strictEqual(await value(c, "key[`.qlint]~enlist`"), true);
+  assert.deepStrictEqual(readInstalled(await c.call(installLambda("err"), ["g"], ["{x}"], ["{x}"], 0), 1), ["missing"]);
+  assert.strictEqual(await value(c, "key[`.qlint]~enlist`"), true);
+  // One replaced of two: kept until the restore.
+  assert.deepStrictEqual(readInstalled(await c.call(installLambda("cov"), ["f", "g"], ["{x+1}", "{x}"], ["{x+1}", "{x}"], 0), 2), ["ok", "missing"]);
+  assert.strictEqual(await value(c, "key[`.qlint]~``cov"), true);
   readRestored(await c.call(restoreExpression("cov")));
   assert.strictEqual(await value(c, "last value f"), "{x+1}");
 });
