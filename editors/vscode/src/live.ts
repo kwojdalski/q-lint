@@ -1032,6 +1032,10 @@ export class Live {
   /// and still runs (#954): the launcher sets it.
   launched: (label: string) => boolean = () => false;
 
+  /// A saved process was renamed `from` to `to`: the launcher keeps what it
+  /// started under the new label.
+  relabelled: (from: string, to: string) => void = () => {};
+
   /// Redraw the Processes view.
   refreshProcesses(): void {
     this.processesView.refresh();
@@ -1330,6 +1334,10 @@ export class Live {
     }
     if (process.user === undefined) {
       await this.context.secrets.delete(passwordKey(process));
+    }
+    if (process.label !== old.label) {
+      // Before the redraw, so its row is still shown running (#1692).
+      this.relabelled(old.label, process.label);
     }
     await this.save(now.map((p) => (p.label === old.label ? process : p)));
     if (process.label !== old.label) {

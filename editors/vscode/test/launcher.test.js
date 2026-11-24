@@ -368,3 +368,21 @@ test("a program that does not exist is one error, never 'started' (#1679)", asyn
   assert.match(output("gone"), /could not start: spawn .*ENOENT/);
   assert.deepStrictEqual(launcher.running(), []);
 });
+
+test("a process started here and then renamed is still running and stopped under its new label (#1692)", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-"));
+  fs.writeFileSync(path.join(dir, "fake.js"), FAKE);
+  const port = await freePort();
+  const { live, launcher } = await setUp(t, [proc("rdb", port, { command: process.execPath, script: "fake.js", cwd: dir })]);
+  await stub.commands.get(LAUNCH_COMMANDS.start)("rdb");
+  for (let i = 0; i < 100 && !(await accepts(port)); i++) await sleep(50);
+  stub.inputs = ["rdb1", "127.0.0.1", String(port), "", ""];
+  stub.picks = ["No"];
+  await stub.commands.get("q-lint.editProcess")("rdb");
+  assert.deepStrictEqual(live.processes().map((p) => p.label), ["rdb1"]);
+  assert.deepStrictEqual(launcher.running().map((r) => r.label), ["rdb1"]);
+  assert.ok(live.launched("rdb1"));
+  await stub.commands.get(LAUNCH_COMMANDS.stop)("rdb1");
+  assert.deepStrictEqual(launcher.running(), []);
+  assert.strictEqual(await accepts(port), false);
+});

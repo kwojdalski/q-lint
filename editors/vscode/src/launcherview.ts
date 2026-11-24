@@ -50,6 +50,7 @@ export class Launcher {
     private readonly live: Live,
   ) {
     live.launched = (label) => this.started.has(label);
+    live.relabelled = (from, to) => this.relabel(from, to);
     context.subscriptions.push(
       commands.registerCommand(LAUNCH_COMMANDS.start, (row?: ProcessArg) => this.start(row)),
       commands.registerCommand(LAUNCH_COMMANDS.stop, (row?: ProcessArg) => this.stop(row)),
@@ -62,6 +63,15 @@ export class Launcher {
       }),
       { dispose: () => ((this.disposed = true), this.stopAll()) },
     );
+  }
+
+  /// Keep what was started as `from` under `to`, its new label (#1692).
+  private relabel(from: string, to: string): void {
+    const started = this.started.get(from);
+    if (started !== undefined && !this.started.has(to)) {
+      this.started.delete(from);
+      this.started.set(to, started);
+    }
   }
 
   /// The processes running from here, by label, for tests and the e2e run.
@@ -246,8 +256,11 @@ export class Launcher {
     // Ended with the extension host, even when it is killed (#1676).
     lifeline(child);
     child.once("close", (code, signal) => {
-      if (this.started.get(process.label)?.child === child) {
-        this.started.delete(process.label);
+      // Under the label it has now, which a rename may have changed.
+      for (const [label, s] of this.started) {
+        if (s.child === child) {
+          this.started.delete(label);
+        }
       }
       channel.appendLine(`[${process.label} ended: ${signal !== null ? `stopped by ${signal}` : `exit code ${code}`}]`);
       this.live.refreshProcesses();
