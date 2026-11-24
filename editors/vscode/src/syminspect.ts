@@ -10,7 +10,8 @@
 // at most `lim` partitions spread over the whole range, and from every
 // splayed table in the root: each column's distinct indexes over them is
 // its share, and each partition's largest index is how big the file was,
-// at least, when it was written - an enumeration only ever appends. Those
+// at least, when it was written - an enumeration only ever appends. A null
+// symbol (index 0N) is no entry of the file (#1568). Those
 // columns' data is read, so `lim` is kept small. Works on kdb+ (KDB-X) and
 // PeachQ; held there by dbtools_q.test.js.
 
@@ -27,7 +28,7 @@ export const SYM_INSPECT = [
   " one:{[enc;p;t;d] cs:enc d;([] part:(count cs)#p;tbl:(count cs)#t;col:cs;ix:{\"j\"$get` sv x,y}[d]each cs)};",
   " rows:raze raze{[one;enc;r;pt;p]{[one;enc;r;p;t]one[enc;`$string p;t;.Q.par[r;p;t]]}[one;enc;r;p]each pt}[one;enc;r;pt]each s;",
   " rows,:raze{[one;enc;r;t]one[enc;`;t;` sv r,t]}[one;enc;r]each o;",
-  " c:$[count rows;0!select d:\"f\"$count distinct raze ix by tbl,col from rows;([] tbl:`$();col:`$();d:`float$())];",
+  " c:$[count rows;0!select d:\"f\"$count distinct except[raze ix;0N]by tbl,col from rows;([] tbl:`$();col:`$();d:`float$())];",
   " g:$[count rows;0!select x:\"f\"$1+max max each ix by part from rows where not null part;([] part:`$();x:`float$())];",
   " `sym`root`count`bytes`partitions`sampled`ctable`ccol`cdistinct`gpart`gsize!(1b;system\"cd\";\"f\"$n;\"f\"$b;\"f\"$count pv;\"f\"$count s;",
   "  string c`tbl;string c`col;c`d;string g`part;g`x)}",

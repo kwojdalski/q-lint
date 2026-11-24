@@ -258,6 +258,23 @@ test("the sym inspector counts the file, its columns' shares and its growth", { 
   assert.strictEqual(readSym(await plain.call(SYM_INSPECT, 20)).sym, false);
 });
 
+// A null symbol is no entry of the file, and a partition of no symbols
+// (empty, or all null) says nothing of its size (#1567, #1568).
+test("the sym inspector leaves out null symbols and partitions that hold none", { skip }, async (t) => {
+  const { connection } = await connect(t, [
+    'r:hsym`$"$DIR/e";',
+    ".Q.dd[r;2026.01.05,`trade`] set .Q.en[r] ([] sym:`x`y`z``;px:1 2 3 4 5f);",
+    ".Q.dd[r;2026.01.06,`trade`] set .Q.en[r] ([] sym:`$();px:`float$());",
+    ".Q.dd[r;2026.01.07,`trade`] set .Q.en[r] ([] sym:``;px:1 2f);",
+    "\\l $DIR/e",
+    "",
+  ].join("\n"));
+  const answer = readSym(await connection.call(SYM_INSPECT, 20));
+  assert.strictEqual(answer.count, 3);
+  assert.deepStrictEqual(answer.columns.map((c) => [c.table, c.column, c.distinct]), [["trade", "sym", 3]]);
+  assert.doesNotMatch(symReport(answer, "hdb", 1e6), /133/);
+});
+
 test("the attribute advisor samples a table's columns without changing it", { skip }, async (t) => {
   const { connection } = await connect(t, HDB() + "\nm:([] time:asc 1000?0D; sym:1000?`a`b`c; id:til 1000; px:1000?1f)\n");
   const s = readAttributeSample(await connection.call(ATTRIBUTE_SAMPLE, "m", 100000));
