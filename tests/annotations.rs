@@ -227,6 +227,41 @@ fn a_call_to_a_workspace_function_shows_its_parameter_names() {
 }
 
 #[test]
+fn a_string_argument_is_hinted_where_it_starts() {
+    // #2025: the arguments were found in the code view, where a string is
+    // blank - so one that is only a string had no hint, and one that starts
+    // with a string had its hint after the closing quote.
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let main = "cc:{[sym;px] px}\n\
+                n:cc[\"a\";2]\n\
+                p:cc[ \"ab\",string 1;2]\n\
+                m:cc[1;\"x;y]\"]\n\
+                e:cc[\"\";2]\n\
+                c:cc[1; / the price\n  2]\n";
+    let uri = server.open(dir.path(), "main.q", main);
+    let reply = server.whole("textDocument/inlayHint", &uri, everything());
+    assert_eq!(
+        hints(&reply),
+        [
+            hint(1, 5, "sym:"),
+            hint(1, 9, "px:"),
+            hint(2, 6, "sym:"),
+            hint(2, 20, "px:"),
+            // A `;` or a `]` in a string ends no argument.
+            hint(3, 5, "sym:"),
+            hint(3, 7, "px:"),
+            hint(4, 5, "sym:"),
+            hint(4, 8, "px:"),
+            // A comment is no part of the argument after it.
+            hint(5, 5, "sym:"),
+            hint(6, 2, "px:"),
+        ],
+        "{reply}"
+    );
+}
+
+#[test]
 fn inlay_hints_are_announced_and_can_be_turned_off() {
     let dir = tempfile::tempdir().unwrap();
     let (_, reply) = Server::over(dir.path(), &[], client(), Value::Null);
