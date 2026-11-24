@@ -8,6 +8,7 @@
 // such action or words. Nothing here talks to a q process.
 import { CodeActionKind, MarkdownString, Range, commands, window, workspace, type CodeAction, type ExtensionContext, type Hover, type Position } from "vscode";
 import { LANGUAGE_COMMANDS, languageOff, languageOn, type LanguageFeature } from "./languagefeatures";
+import { charKinds } from "./explorer";
 import { plainMessage } from "./history";
 
 /// The server's titles for its two rewrites (`src/lsp.rs`).
@@ -52,8 +53,9 @@ async function rewrite(direction: keyof typeof REWRITE_TITLES): Promise<boolean>
 
 /// Where the query or functional form around `offset` starts: the nearest
 /// `select`, `exec`, `update` or `delete`, or `?[` / `![`, at or before it
-/// in the same statement - which the server's hover explains. Undefined
-/// when the statement holds none.
+/// in the same statement - which the server's hover explains. A word in a
+/// string or a comment is no lead (#1466). Undefined when the statement
+/// holds none.
 export function leadBefore(text: string, offset: number): number | undefined {
   // The statement: back to a line that starts at column 0.
   let start = text.lastIndexOf("\n", Math.max(0, offset - 1)) + 1;
@@ -64,9 +66,10 @@ export function leadBefore(text: string, offset: number): number | undefined {
   }
   const end = Math.min(text.length, offset + 8);
   const lead = /(?<![A-Za-z0-9_.`])(select|exec|update|delete)(?![A-Za-z0-9_])|[?!](?=\[)/g;
+  const kinds = charKinds(text.slice(start, end));
   let found: number | undefined;
   for (const m of text.slice(start, end).matchAll(lead)) {
-    if (start + (m.index ?? 0) <= offset) {
+    if (start + (m.index ?? 0) <= offset && kinds[m.index ?? 0] === "c") {
       found = start + (m.index ?? 0);
     }
   }

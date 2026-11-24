@@ -92,10 +92,11 @@ const NAME = /^\.?[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)*$/;
 
 /// The parameters a parameters cell assigns, in order, by name: each line
 /// `name:value`, a trailing `;` and comment left off. Other lines are not
-/// parameters.
+/// parameters, and the lines are q's statements: one in a block comment or
+/// a string, or a statement of more than one line, is none (#1470).
 export function parametersOf(source: string): { name: string; value: string }[] {
   const found: { name: string; value: string }[] = [];
-  for (const line of source.split(/\r?\n/)) {
+  for (const line of statements(source).filter((s) => !s.includes("\n"))) {
     const m = /^(\.?[a-zA-Z][\w.]*)\s*:\s*(.*)$/.exec(line);
     if (m === null) {
       continue;

@@ -184,8 +184,9 @@ export class AsyncQueries {
     }
     const picked = await window.showQuickPick(
       [...this.pending.values()].map((p) => ({
-        line: p.code.split(/\r?\n/)[0].slice(0, 80),
-        label: iconsEscaped(p.code.split(/\r?\n/)[0].slice(0, 80)),
+        // By code point, never inside a surrogate pair (#1473).
+        line: Array.from(p.code.split(/\r?\n/)[0]).slice(0, 80).join(""),
+        label: iconsEscaped(Array.from(p.code.split(/\r?\n/)[0]).slice(0, 80).join("")),
         description: iconsEscaped(`${p.process}, ${elapsedText(Date.now() - p.started)}`),
         id: p.id,
       })),

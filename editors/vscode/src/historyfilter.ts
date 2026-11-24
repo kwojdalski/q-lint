@@ -3,6 +3,8 @@
 // file. No `vscode` import, so node tests it; `live.ts` is the VS Code around
 // it.
 
+import { blockDepth } from "./statements";
+
 export const HISTORY_COMMANDS = {
   filter: "q-lint.filterQueryHistory",
   clearFilter: "q-lint.clearQueryHistoryFilter",
@@ -137,14 +139,12 @@ export function historyScript(entries: Entry[]): string {
 /// hide the entries below. The rules are `statements.ts`'s.
 function standalone(code: string): string {
   const lines = code.split("\n");
-  let inBlock = false;
+  let depth = 0;
   let started = false;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].replace(/\s+$/, "");
-    if (inBlock) {
-      inBlock = line !== "\\";
-    } else if (line === "/") {
-      inBlock = true;
+    if (depth > 0 || line === "/") {
+      depth = blockDepth(depth, line);
     } else if (line === "\\") {
       // The end of the script ended this entry when it ran, and would end
       // the export here: it and the rest of the entry become comments (#1136).
@@ -154,7 +154,7 @@ function standalone(code: string): string {
       started = true;
     }
   }
-  return inBlock ? `${lines.join("\n")}\n\\` : lines.join("\n");
+  return depth > 0 ? `${lines.join("\n")}\n${"\\\n".repeat(depth - 1)}\\` : lines.join("\n");
 }
 
 /// Which format a file is written in, from its name: a `.q` file the

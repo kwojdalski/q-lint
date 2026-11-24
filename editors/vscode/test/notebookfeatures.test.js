@@ -42,6 +42,11 @@ test("a live value's expression runs to its }}, braces and q strings balanced", 
   assert.strictEqual(scanLive("{{q: 1+1}", 0), undefined);
   assert.strictEqual(scanLive("{{q:   }}", 0), undefined);
   assert.strictEqual(scanLive("{{q: a\n\nb}}", 0), undefined);
+  // A line of blanks, or a CRLF blank line, ends the paragraph too (#1468).
+  assert.strictEqual(scanLive("{{q: a\n \t\nb}}", 0), undefined);
+  assert.strictEqual(scanLive("{{q: a\r\n\r\nb}}", 0), undefined);
+  assert.deepStrictEqual(liveExpressions("a {{q: 1+\n \n2}} b"), []);
+  assert.deepStrictEqual(scanLive("{{q: a\r\nb}}", 0), { expr: "a\r\nb", end: 11 });
 });
 
 test("expressions are found once each, never in code; a q symbol's backtick opens no code span", () => {
@@ -59,6 +64,11 @@ test("expressions are found once each, never in code; a q symbol's backtick open
 
 test("an indented code block or an HTML comment holds no live value (#1429)", () => {
   assert.deepStrictEqual(liveExpressions("Para\n\n    {{q: indented}}\n"), []);
+  // A fence closes only at a line of the fence alone, blanks after (#1469).
+  assert.deepStrictEqual(liveExpressions("```\n``` not a closer\n{{q: secret}}\n```\n"), []);
+  assert.deepStrictEqual(liveExpressions("~~~\n~~~x\n{{q: secret}}\n~~~\n"), []);
+  assert.deepStrictEqual(liveExpressions("```\n~~~\n{{q: in}}\n````  \n{{q: out}}"), ["out"]);
+  assert.deepStrictEqual(liveExpressions("```\r\ncode\r\n```\r\n{{q: out}}"), ["out"]);
   assert.deepStrictEqual(liveExpressions("    {{q: first}}\n\tand {{q: tab}}\n\nAfter {{q: a}}"), ["a"]);
   assert.deepStrictEqual(liveExpressions("<!-- {{q: hidden}} -->"), []);
   assert.deepStrictEqual(liveExpressions("A <!--\n{{q: hidden}}\n--> and {{q: b}}"), ["b"]);
@@ -279,6 +289,8 @@ test("a parameters cell's assignments are its parameters", () => {
     { name: "q", value: '"a\\" /b"' },
     { name: "n", value: "1" },
   ]);
+  // One in a block comment, or a line of a multi-line string, is none (#1470).
+  assert.deepStrictEqual(parametersOf('/ @parameters\n/\nold:5\n\\\nn:10\ns:"a\n  b:2"'), [{ name: "n", value: "10" }]);
   const cells = [{ kind: "markdown", source: "/ @parameters" }, { kind: "code", source: "1" }, { kind: "code", source: "/ @parameters\nn:1" }];
   assert.strictEqual(parametersCell(cells), 2);
   assert.strictEqual(parametersCell([{ kind: "code", source: "/ @parameters", language: "python" }]), -1);
