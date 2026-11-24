@@ -398,3 +398,10 @@ test("the tickerplant log page forgets the last log's messages, pick and range w
   assert.deepStrictEqual(inputs(), ["", "", "", ""]);
   assert.strictEqual(body.all((e) => e.tagName === "PRE")[0].textContent, "");
 });
+
+test("a menu that matches a file's extension matches it in any case (#1382)", () => {
+  const whens = Object.values(pkg.contributes.menus).flat().map((m) => m.when ?? "");
+  const clauses = whens.flatMap((w) => [...w.matchAll(/resourceExtname =~ (\/\S*)/g)].map((m) => m[1]));
+  assert.ok(clauses.length > 0);
+  for (const c of clauses) assert.match(c, /\/i$/, c);
+});
