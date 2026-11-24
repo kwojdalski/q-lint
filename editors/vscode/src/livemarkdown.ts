@@ -162,7 +162,9 @@ function blankIndented(text: string): string {
 /// in a code block, a code span or an HTML comment are text, as the
 /// renderer shows them (#1429).
 export function liveExpressions(source: string): string[] {
-  const fenced = source.replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^ {0,3}\1[^\n]*$|(?![\s\S]))/gm, (m) => " ".repeat(m.length));
+  // A fence closes at a line of its character, at least as many, and
+  // blanks only after them (#1469): "``` text" inside is content.
+  const fenced = source.replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^ {0,3}\1(?:(?<=`)`|(?<=~)~)*[ \t]*\r?$|(?![\s\S]))/gm, (m) => " ".repeat(m.length));
   const prose = blankIndented(fenced).replace(/<!--[\s\S]*?(?:-->|(?![\s\S]))/g, (m) => m.replace(/[^\n]/g, " "));
   const found: string[] = [];
   for (const span of inlineSpans(prose)) {

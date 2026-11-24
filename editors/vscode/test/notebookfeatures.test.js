@@ -64,6 +64,11 @@ test("expressions are found once each, never in code; a q symbol's backtick open
 
 test("an indented code block or an HTML comment holds no live value (#1429)", () => {
   assert.deepStrictEqual(liveExpressions("Para\n\n    {{q: indented}}\n"), []);
+  // A fence closes only at a line of the fence alone, blanks after (#1469).
+  assert.deepStrictEqual(liveExpressions("```\n``` not a closer\n{{q: secret}}\n```\n"), []);
+  assert.deepStrictEqual(liveExpressions("~~~\n~~~x\n{{q: secret}}\n~~~\n"), []);
+  assert.deepStrictEqual(liveExpressions("```\n~~~\n{{q: in}}\n````  \n{{q: out}}"), ["out"]);
+  assert.deepStrictEqual(liveExpressions("```\r\ncode\r\n```\r\n{{q: out}}"), ["out"]);
   assert.deepStrictEqual(liveExpressions("    {{q: first}}\n\tand {{q: tab}}\n\nAfter {{q: a}}"), ["a"]);
   assert.deepStrictEqual(liveExpressions("<!-- {{q: hidden}} -->"), []);
   assert.deepStrictEqual(liveExpressions("A <!--\n{{q: hidden}}\n--> and {{q: b}}"), ["b"]);
