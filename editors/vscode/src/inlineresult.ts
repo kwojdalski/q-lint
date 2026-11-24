@@ -35,6 +35,16 @@ export function shortForm(answer: GridAnswer, width = INLINE_WIDTH): string {
   return chars.length > width ? `${chars.slice(0, width - 3).join("")}...` : one;
 }
 
+/// The most characters of q's output the hover shows.
+export const HOVER_WIDTH = 2000;
+
+/// The hover's code block: q's output, its first `HOVER_WIDTH` characters
+/// - by code point, as the short form cuts (#1810) - or the error. Twice
+/// as many UTF-16 units always hold them, so no more are split.
+export function hoverForm(answer: GridAnswer): string {
+  return answer.ok ? Array.from(answer.text.join("\n").slice(0, 2 * HOVER_WIDTH)).slice(0, HOVER_WIDTH).join("") : `'${answer.error}`;
+}
+
 /// The lines an edit from line `start` to `end` (0-based, inclusive) that
 /// adds `added` line breaks leaves results on: each drawn line it does not
 /// touch, moved by the lines it added or removed. A touched line's result

@@ -7,10 +7,18 @@ const { stub, vscode, EventEmitter } = require("./vscode_stub.js");
 const test = require("node:test");
 const assert = require("node:assert");
 const { setUp } = require("./fakeq.js");
-const { shortForm, shiftLines, INLINE_WIDTH } = require("../out/inlineresult.js");
+const { shortForm, shiftLines, hoverForm, INLINE_WIDTH } = require("../out/inlineresult.js");
 const { registerInlineResults } = require("../out/inlineresultview.js");
 const { PROCESS_TOOL_COMMANDS } = require("../out/processtools.js");
 const pkg = require("../package.json");
+
+test("the hover cuts q's output by code point, never inside a surrogate pair (#1810)", () => {
+  const text = ["a".repeat(1999) + "😀" + "b".repeat(10)];
+  assert.strictEqual(hoverForm({ ok: true, text }), "a".repeat(1999) + "😀");
+  assert.strictEqual(hoverForm({ ok: true, text: ["1", "2"] }), "1\n2");
+  assert.strictEqual(hoverForm({ ok: true, text: ["😀".repeat(2500)] }), "😀".repeat(2000));
+  assert.strictEqual(hoverForm({ ok: false, error: "type" }), "'type");
+});
 
 test("the short form joins q's text, says an error, counts a grid, and is cut", () => {
   assert.strictEqual(shortForm({ ok: true, type: -7, text: ["42"] }), "42");
