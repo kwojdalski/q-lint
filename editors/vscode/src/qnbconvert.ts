@@ -159,6 +159,11 @@ export function markdownHtml(source: string, values: Record<string, LiveValue> =
     const item = /^ {0,3}([-*+]|\d{1,9}[.)])\s+(.*)$/.exec(line);
     if (line.trim() === "") {
       flush();
+    } else if (paragraph.length > 0 && /^ {0,3}(=+|-+)\s*$/.test(line)) {
+      // A setext heading: the paragraph above a line of = or - (#1551).
+      const level = line.trim()[0] === "=" ? 1 : 2;
+      out.push(`<h${level}>${paragraph.map((l) => inline(l, values)).join("\n")}</h${level}>`);
+      paragraph = [];
     } else if (heading !== null) {
       flush();
       const text = heading[2].replace(/(^|\s+)#+$/, "");

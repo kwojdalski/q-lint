@@ -554,3 +554,11 @@ test("an HTML export nests ***text*** as CommonMark does (#1550)", () => {
   assert.strictEqual(markdownHtml("***both*** and ___too___"), "<p><em><strong>both</strong></em> and <em><strong>too</strong></em></p>");
   assert.strictEqual(markdownHtml("**a *b* c**"), "<p><strong>a <em>b</em> c</strong></p>");
 });
+
+test("an HTML export reads a setext heading, under a paragraph only (#1551)", () => {
+  assert.strictEqual(markdownHtml("Sub\n---"), "<h2>Sub</h2>");
+  assert.strictEqual(markdownHtml("Title\n====="), "<h1>Title</h1>");
+  assert.strictEqual(markdownHtml("a *b*\nc\n  ==  "), "<h1>a <em>b</em>\nc</h1>");
+  assert.strictEqual(markdownHtml("text\n\n---"), "<p>text</p>\n<hr>");
+  assert.strictEqual(markdownHtml("- item\n---"), "<ul><li>item</li></ul>\n<hr>");
+});
