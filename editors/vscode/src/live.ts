@@ -1751,7 +1751,8 @@ export class Live {
         `it is reached through an SSH tunnel via ${process.ssh}, and SSH tunnels are turned off. Set q-lint.connection.sshTunnel.enable to true to turn them on`,
       );
     }
-    const tunnel = await SshTunnel.open({ destination: process.ssh, host: target.host, port: target.port });
+    // Cancelled while ssh opens the forward: stop waiting for it too (#1459).
+    const tunnel = await SshTunnel.open({ destination: process.ssh, host: target.host, port: target.port, signal });
     try {
       const connection = await QConnection.open(
         {
