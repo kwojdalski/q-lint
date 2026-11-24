@@ -409,8 +409,8 @@ Each has its own switch, listed in [Settings](#settings) and
 - **The q version check**: name a release in a folder's `qlinter.toml` -
   `target-version = "4.0"` (`3.6`, `4.0`, `4.1` or `kdbx`) - and q-lint
   reports what does not run there: a dictionary literal, a pattern
-  assignment or a typed parameter before 4.1, `-30!` before 3.6, `.Q.Xf` on
-  4.1 and later (QK001-QK005). `q-lint.versionCheck.enable`.
+  assignment or a typed parameter before 4.1, `.Q.Xf` on 4.1 and later
+  (QK001-QK003, QK005). `q-lint.versionCheck.enable`.
 - **A lint baseline**: **q-lint: Write Lint Baseline** writes today's
   findings to `qlinter-baseline.json` in the folder - it says how many and
   asks first, and again before it replaces one - and offers to add

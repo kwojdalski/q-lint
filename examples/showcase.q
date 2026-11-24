@@ -1020,7 +1020,7 @@ typedLocals:{[]
   r3:n,v;
   (r1;r2;r3)}
 
-/ QK001-QK005 report only for a configuration's target-version that does
+/ QK001-QK003 and QK005 report only for a configuration's target-version that does
 / not run them; with no profile deciding, every one is shown here.
 / expect-next: QK001
 dictLiteral:([a:1;b:2])
@@ -1030,8 +1030,6 @@ patterns:{[]
   / expect-next: QK002
   (a;b):1 2;
   a+b}
-/ expect-next: QK004
-deferred:{[h] -30!(h;0b;1)}
 / expect-next: QK005
 removed:{[] .Q.Xf}
 

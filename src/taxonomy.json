@@ -994,13 +994,6 @@
     "scope": "builtin"
   },
   {
-    "code": "QK004",
-    "name": "target-deferred-response",
-    "category": "compatibility",
-    "summary": "-30!, the deferred response, which q has from 3.6 on: reported only for an older target-version",
-    "scope": "builtin"
-  },
-  {
     "code": "QK005",
     "name": "target-removed-q-function",
     "category": "compatibility",
