@@ -94,7 +94,8 @@ export const runGit: Git = (args, cwd) =>
 
 /// What the file at `path` was at `HEAD`: its text, `""` for a file git does
 /// not track there (every line is new), or undefined outside a git
-/// repository, where nothing is to be formatted.
+/// repository, or when git cannot say (a timeout, a lock), where nothing is
+/// to be formatted.
 export async function committedText(path: string, git: Git = runGit): Promise<string | undefined> {
   const cwd = dirname(path);
   const top = (await git(["rev-parse", "--show-toplevel"], cwd))?.trim();
@@ -111,5 +112,18 @@ export async function committedText(path: string, git: Git = runGit): Promise<st
   const name = relative(top, real).split("\\").join("/");
   // `HEAD:./name` would be relative to cwd; the top-level path is not.
   const text = await git(["show", `HEAD:${name}`], top);
-  return text ?? "";
+  if (text !== undefined) {
+    return text;
+  }
+  // `show` fails for a path HEAD lacks, and also on a timeout or a lock:
+  // only a path git says HEAD lacks is new (#1369).
+  const listed = await git(["ls-tree", "--name-only", "HEAD", "--", name], top);
+  if (listed !== undefined) {
+    return listed.trim() === "" ? "" : undefined;
+  }
+  // No HEAD to list: a repository without a commit yet, whose branch is
+  // named but does not exist, holds every line as new.
+  const branch = (await git(["symbolic-ref", "-q", "HEAD"], top))?.trim();
+  const exists = branch === undefined || branch === "" ? undefined : await git(["for-each-ref", branch], top);
+  return exists !== undefined && exists.trim() === "" ? "" : undefined;
 }
