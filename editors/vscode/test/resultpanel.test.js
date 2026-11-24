@@ -608,6 +608,23 @@ test("a command's request is not replayed to a later result, and a second page's
   assert.strictEqual(dialogs, 1);
 });
 
+test("a result keeps its saved query's new name once the query is renamed, and none once it is deleted (#1413)", () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  modes.context.workspaceState = { get: (_k, d) => d, update: async () => {} };
+  modes.expectSaved("A", "t");
+  modes.show(result([1, 2]), live());
+  modes.expectSaved(undefined);
+  const page = fake.pages[0];
+  assert.strictEqual(page.posted.at(-1).saved, "A");
+  modes.savedRenamed("A", "B");
+  modes.post();
+  assert.strictEqual(page.posted.at(-1).saved, "B");
+  modes.savedRenamed("B", undefined);
+  modes.post();
+  assert.strictEqual(page.posted.at(-1).saved, undefined);
+});
+
 test("Append to Report from the palette sends the rows the grid shows, as Export As does (#1131)", async () => {
   const fake = fakeVscode({ "query.resultsLocation": "editor" });
   const modes = loadModes(fake);
