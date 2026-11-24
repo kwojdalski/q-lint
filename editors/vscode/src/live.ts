@@ -2479,6 +2479,10 @@ export class Live {
       void window.showInformationMessage(plainMessage(`q-lint: the connection moved from ${process.label} while you were asked; nothing is watched.`));
       return;
     }
+    // Turned off while it asked: stopWatching had nothing to stop (#1451).
+    if (!this.setting(readWatch).enabled) {
+      return;
+    }
     this.stopWatching();
     const status = window.createStatusBarItem("q-lint.watch", StatusBarAlignment.Left, 48);
     status.name = "q-lint: watched query";
