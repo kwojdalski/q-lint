@@ -128,7 +128,12 @@ test("the switch is declared, on by default, and the command is hidden when it i
 function fakeEditor(text, selected) {
   const editor = {
     text,
-    document: { lineAt: () => ({ text: editor.text }), getText: (r) => editor.text.slice(r.start.character, r.end.character) },
+    document: {
+      lineAt: () => ({ text: editor.text }),
+      getText: (r) => editor.text.slice(r.start.character, r.end.character),
+      offsetAt: (p) => p.character,
+      positionAt: (o) => ({ line: 0, character: o }),
+    },
     selection: { isEmpty: selected === undefined, active: { line: 0, character: selected?.[0] ?? 0 }, start: { line: 0, character: selected?.[0] }, end: { line: 0, character: selected?.[1] } },
     edit: async (f) => {
       f({ replace: (r, s) => (editor.text = editor.text.slice(0, r.start.character) + s + editor.text.slice(r.end.character)) });
@@ -173,6 +178,10 @@ test("the hover lives only while the feature is on, and Convert replaces the sel
   stub.picks.push((options) => options.items.find((i) => i.description === "from Unix seconds"));
   assert.strictEqual(await stub.commands.get(t.CONVERT_TEMPORAL)(), "2024.01.02D03:04:05.000000000");
   assert.strictEqual(vscode.window.activeTextEditor.text, "ts:2024.01.02D03:04:05.000000000");
+  // The spaces a drag takes around the value are kept (#1783).
+  vscode.window.activeTextEditor = fakeEditor("a 2024.01.02 b", [1, 13]);
+  assert.strictEqual(await stub.commands.get(t.CONVERT_TEMPORAL)("int, days since 2000.01.01 (`\"i\"$`)"), "8767");
+  assert.strictEqual(vscode.window.activeTextEditor.text, "a 8767 b");
   // Nothing to convert.
   vscode.window.activeTextEditor = fakeEditor("abc", [0, 3]);
   assert.strictEqual(await stub.commands.get(t.CONVERT_TEMPORAL)(), undefined);
