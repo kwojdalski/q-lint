@@ -40,6 +40,9 @@ test("an update's rows are read as q's text, in the subscribed columns' order", 
   // One row as a list of atoms.
   const row = { kind: "list", attr: 0, v: [sym("c"), { kind: "atom", t: -9, v: 3 }] };
   assert.deepStrictEqual(readUpdate(upd("trade", row), "trade", ["sym", "px"]), [["c", "3"]]);
+  // A char atom is its char, not its byte's number (#1490): (`a;"B";1.5).
+  const chars = { kind: "list", attr: 0, v: [sym("a"), { kind: "atom", t: -10, v: 66 }, { kind: "atom", t: -9, v: 1.5 }] };
+  assert.deepStrictEqual(readUpdate(upd("trade", chars), "trade", ["sym", "side", "px"]), [["a", "B", "1.5"]]);
   // Another table's update, or not an update: nothing.
   assert.strictEqual(readUpdate(upd("quote", data), "trade", ["sym", "px"]), undefined);
   assert.strictEqual(readUpdate(sym("x"), "trade", ["sym"]), undefined);

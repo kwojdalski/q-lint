@@ -69,7 +69,9 @@ export function gridFromJson(json: string): Grid {
     const rows = v.filter((r): r is Record<string, unknown> => r !== null && typeof r === "object" && !Array.isArray(r));
     if (rows.length === 0) throw new Error("the JSON is not an array of objects");
     const names = [...new Set(rows.flatMap((r) => Object.keys(r)))];
-    return gridOf(names, names.map((n) => rows.map((r) => text(r[n]))));
+    // A row's own keys only: one lacking `valueOf` is an empty cell, not
+    // Object.prototype's method (#1480).
+    return gridOf(names, names.map((n) => rows.map((r) => text(Object.hasOwn(r, n) ? r[n] : undefined))));
   }
   if (v !== null && typeof v === "object") {
     const cols = Object.entries(v as Record<string, unknown>).filter(([, c]) => Array.isArray(c)) as [string, unknown[]][];

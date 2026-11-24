@@ -73,9 +73,11 @@ function inline(text: string, values: Record<string, LiveValue>): string {
       .replace(/&(amp|lt|gt|quot|#\d{1,7}|#[xX][0-9a-fA-F]{1,6});/g, (m, e: string) => hold(escapeHtml(entity(e) ?? m))),
   );
   s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, label: string, href: string) => {
-    // `href` is escaped already: `&amp;` reads back as `&` in an attribute.
-    // The tags are held, so the emphasis below finds no `_` in the URL (#1105).
-    const target = safeHref(href.replace(/&amp;/g, "&"));
+    // `href` is escaped already: read it back to the URL written, or it is
+    // escaped twice (`'` as `&amp;#39;`, #1476). The tags are held, so the
+    // emphasis below finds no `_` in the URL (#1105).
+    const unescaped = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'" } as Record<string, string>;
+    const target = safeHref(href.replace(/&(amp|lt|gt|quot|#39);/g, (e) => unescaped[e]));
     return target === undefined ? m : `${hold(`<a href="${escapeHtml(target)}">`)}${label}${hold("</a>")}`;
   });
   s = s.replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, "<strong>$2</strong>");

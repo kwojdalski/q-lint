@@ -144,8 +144,9 @@ export class PlotsView {
     });
   }
 
-  /// The page's PNG of the plot on show, the view opened first if need be.
-  private async pngOf(): Promise<string | undefined> {
+  /// The page's PNG of `plot`, the view opened first if need be. The plot is
+  /// sent with the ask: the one on show may have moved on (#1482).
+  private async pngOf(plot: Plot): Promise<string | undefined> {
     if (this.view === undefined) {
       const shown = new Promise<void>((resolve) => this.ready.push(resolve));
       await commands.executeCommand(`${PLOT_COMMANDS.view}.focus`);
@@ -159,7 +160,7 @@ export class PlotsView {
       this.png.set(key, resolve);
       setTimeout(() => this.png.delete(key) && resolve(undefined), PNG_WAIT);
     });
-    void this.view.webview.postMessage({ type: "png", key });
+    void this.view.webview.postMessage({ type: "png", key, svg: plot.svg });
     return answer;
   }
 
@@ -190,7 +191,7 @@ export class PlotsView {
     if (chosen === "svg") {
       bytes = Buffer.from(plot.svg, "utf8");
     } else {
-      const data = await this.pngOf();
+      const data = await this.pngOf(plot);
       if (data === undefined) {
         void window.showInformationMessage("q-lint: the q Plots view did not draw the PNG; open it and save again.");
         return undefined;
@@ -208,7 +209,12 @@ export class PlotsView {
     if (to === undefined) {
       return undefined;
     }
-    await workspace.fs.writeFile(to, bytes);
+    try {
+      await workspace.fs.writeFile(to, bytes);
+    } catch (error) {
+      void window.showErrorMessage(plainMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
+      return undefined;
+    }
     void window.showInformationMessage(plainMessage(`q-lint: saved the plot to ${to.fsPath}.`));
     return to.fsPath;
   }

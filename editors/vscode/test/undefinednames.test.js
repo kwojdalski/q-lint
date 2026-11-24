@@ -186,3 +186,30 @@ test("a production process is asked only by the command, after a confirmation", 
   assert.match(await check.check(doc, true), /connect to a q process first/);
   assert.strictEqual(check.collection().entries.size, 0);
 });
+
+test("a production process connected while the server answered is not asked (#1456)", async () => {
+  stub.reset();
+  stub.config.user["undefinedNames.enable"] = true;
+  let active = { label: "dev", tags: [] };
+  const asked = [];
+  const live = {
+    activeProcess: () => active,
+    activeLabel: () => active?.label,
+    onDidChange: () => ({ dispose() {} }),
+    borrow: (use) => use({ call: async () => (asked.push(active.label), [true]) }, active),
+  };
+  let release;
+  const lsp = {
+    sendRequest: async () => (
+      await new Promise((r) => (release = r)),
+      [{ written: "foo", names: ["foo"], range: { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } } }]
+    ),
+  };
+  const r = registerUndefinedNames(stub.newContext(), live, () => lsp);
+  const check = r.check({ uri: vscode.Uri.file("/a.q"), languageId: "q" }, false);
+  await new Promise((r) => setImmediate(r));
+  active = { label: "prodrdb", tags: ["prod"] };
+  release();
+  await check;
+  assert.deepStrictEqual(asked, []);
+});

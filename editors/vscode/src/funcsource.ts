@@ -153,7 +153,7 @@ export function firstUse(text: string, name: string, kinds: string): number {
   const short = name.replace(/^\.[A-Za-z]\w*\./, "");
   for (const word of short === name ? [name] : [name, short]) {
     const escaped = word.replace(/[.]/g, "\\.");
-    for (const m of text.matchAll(new RegExp(`(?<![\\w.])${escaped}(?![\\w])`, "g"))) {
+    for (const m of text.matchAll(new RegExp(`(?<![\\w.])${escaped}(?![\\w.])`, "g"))) {
       if (kinds[m.index] === "c") {
         return m.index;
       }

@@ -96,7 +96,7 @@ import { PLACEHOLDER_VALUES_KEY, lastValue, placeholderNames, readPlaceholders, 
 import { guardCheck, guardQuestion, guardRefusal, readGuard } from "./guard";
 import type { GridAnswer, GridPayload } from "./grid";
 import { WATCH, WATCHING, intervalProblem, readWatch, watchText } from "./watch";
-import { guardedBy } from "./guard";
+import { guardedBy, openTags } from "./guard";
 import { readAdmin } from "./admin";
 import { credentialEnv, parseCredentials, runCredentialCommand } from "./credentials";
 import { effectiveTimeout, ownTimeout, timeoutDropped, timeoutSource } from "./processtimeout";
@@ -530,9 +530,10 @@ export class Live {
   private borrowed: Promise<unknown> | undefined;
   /// Set on deactivate: a connection opened after it is closed at once.
   private disposed = false;
-  private readonly changed = new EventEmitter<"connected" | "disconnected" | "queried">();
+  private readonly changed = new EventEmitter<"connected" | "disconnected" | "queried" | "edited">();
   /// Fired when a connection opens or closes, and when a query has finished:
-  /// what the process explorer refreshes on.
+  /// what the process explorer refreshes on. "edited": the connected
+  /// process kept its label and took new tags (#1460).
   readonly onDidChange = this.changed.event;
   /// Fired with the answer to a query run from an editor's line or
   /// selection, and where it came from: what inline results (#1047) draw.
@@ -976,7 +977,7 @@ export class Live {
   /// Whether `code` may be sent to `targets`: when the read-only guard
   /// (#918) finds it would change a guarded one, the user is asked first.
   /// `what` names the code in the question, when it is not a query.
-  async guardAllows(code: string, targets: Process[], what?: string): Promise<boolean> {
+  async guardAllows(code: string | readonly string[], targets: Process[], what?: string): Promise<boolean> {
     const check = guardCheck(code, targets, this.setting(readGuard));
     if (check === undefined) {
       return true;
@@ -988,7 +989,7 @@ export class Live {
 
   /// Why `code` is refused on `targets` to a caller that cannot ask the
   /// user, an agent; undefined when the guard lets it be sent.
-  guardRefuses(code: string, targets: Process[]): string | undefined {
+  guardRefuses(code: string | readonly string[], targets: Process[]): string | undefined {
     const check = guardCheck(code, targets, this.setting(readGuard));
     return check === undefined ? undefined : guardRefusal(check);
   }
@@ -1249,11 +1250,12 @@ export class Live {
     const active = this.active;
     if (active?.label === old.label && active.server === undefined) {
       // The connection is still to where it was opened: it takes the new
-      // label and tags, and keeps its address until connected again.
+      // label and tags, and keeps its address until connected again - and,
+      // moved, its old tags as well (#1443).
       const { host, port, user, tls } = active;
       this.active = withExtras(
         withScript(
-          { label: process.label, host, port, ...(user !== undefined ? { user } : {}), tags: process.tags, ...(tls ? { tls } : {}) },
+          { label: process.label, host, port, ...(user !== undefined ? { user } : {}), tags: openTags(active, process), ...(tls ? { tls } : {}) },
           scriptOf(process),
         ),
         // The tunnel it was opened through stays until connected again.
@@ -1263,6 +1265,9 @@ export class Live {
       // The explorer keeps what it read under the label it read it for.
       if (process.label !== old.label && this.activeLabel() !== undefined) {
         this.changed.fire("connected");
+      } else if (process.tags.join(",") !== active.tags.join(",") && this.activeLabel() !== undefined) {
+        // What is drawn by its tags, as the environment colour, is redrawn.
+        this.changed.fire("edited");
       }
       const moved = process.host !== host || process.port !== port || process.user !== user || (process.tls === true) !== (tls === true);
       if (moved && this.activeLabel() !== undefined) {
@@ -1325,11 +1330,12 @@ export class Live {
   }
 
   /// Give the connected process, when it is a saved one, its saved tags: an
-  /// agent's query warns by them.
+  /// agent's query warns by them. Saved at another address, it keeps its
+  /// own as well until connected again (#1443).
   private retagActive(): void {
     const saved = this.active?.server === undefined ? this.processes().find((p) => p.label === this.active?.label) : undefined;
     if (this.active !== undefined && saved !== undefined) {
-      this.active = { ...this.active, tags: saved.tags };
+      this.active = { ...this.active, tags: openTags(this.active, saved) };
     }
   }
 
@@ -1751,7 +1757,8 @@ export class Live {
         `it is reached through an SSH tunnel via ${process.ssh}, and SSH tunnels are turned off. Set q-lint.connection.sshTunnel.enable to true to turn them on`,
       );
     }
-    const tunnel = await SshTunnel.open({ destination: process.ssh, host: target.host, port: target.port });
+    // Cancelled while ssh opens the forward: stop waiting for it too (#1459).
+    const tunnel = await SshTunnel.open({ destination: process.ssh, host: target.host, port: target.port, signal });
     try {
       const connection = await QConnection.open(
         {
@@ -2210,7 +2217,7 @@ export class Live {
   /// With `expect`, the label of the process a question asked about, it
   /// throws `movedFrom` instead of running on any other (#1081).
   async runOnActive<T>(
-    code: string,
+    code: string | readonly string[],
     query: (connection: QConnection) => Promise<T>,
     guard: "ask" | "refuse" = "ask",
     expect?: string,
@@ -2246,7 +2253,7 @@ export class Live {
       return undefined;
     }
     const started = Date.now();
-    this.running = { code, started };
+    this.running = { code: typeof code === "string" ? code : code.join("\n"), started };
     this.showStatus();
     // The process's own timeout (#1036), while it is on, as in `run`: the
     // connection is dropped as Abort drops it, and the user told.
@@ -2477,6 +2484,10 @@ export class Live {
     }
     if (this.activeLabel() !== process.label) {
       void window.showInformationMessage(plainMessage(`q-lint: the connection moved from ${process.label} while you were asked; nothing is watched.`));
+      return;
+    }
+    // Turned off while it asked: stopWatching had nothing to stop (#1451).
+    if (!this.setting(readWatch).enabled) {
       return;
     }
     this.stopWatching();

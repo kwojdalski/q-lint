@@ -82,6 +82,10 @@ export class NotebookRestart {
       if (!confirmed) {
         return this.done("declined", label);
       }
+      // Turned off at the question: nothing is stopped or run (#1453).
+      if (!requireFeature("restartRunAll")) {
+        return this.done("refused", label);
+      }
       const problem = await this.launcher.restart(label);
       if (problem !== undefined) {
         void window.showErrorMessage(plainMessage(`q-lint: could not restart ${label}: ${problem}`));
@@ -101,6 +105,9 @@ export class NotebookRestart {
     );
     if (!confirmed) {
       return this.done("declined", label);
+    }
+    if (!requireFeature("restartRunAll")) {
+      return this.done("refused", label);
     }
     // The cells go where they last ran, not wherever the connection is now.
     if (this.live.activeLabel() !== label && !(await this.live.connectTo(label))) {

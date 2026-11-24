@@ -67,11 +67,16 @@ export function bytesText(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];
   let n = bytes;
   let u = 0;
-  while (n >= 1024 && u < units.length - 1) {
+  // As rounded: 1048575 B is 1.0 MB, not 1024 KB, and 10239 B 10 KB (#1495).
+  const shown = (): string => {
+    const one = n.toFixed(1);
+    return u === 0 ? String(n) : Number(one) < 10 ? one : String(Math.round(n));
+  };
+  while (Number(shown()) >= 1024 && u < units.length - 1) {
     n /= 1024;
     u++;
   }
-  return u === 0 ? `${n} B` : `${n < 10 ? n.toFixed(1) : Math.round(n)} ${units[u]}`;
+  return `${shown()} ${units[u]}`;
 }
 
 /// What a variable's kind is called: q's type name, a table, a function.
