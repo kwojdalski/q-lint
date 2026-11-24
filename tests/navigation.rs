@@ -1744,6 +1744,38 @@ fn a_dotted_read_through_a_global_is_a_use_of_it() {
         edits(&reply["result"]),
         [edit("a.q", 0, 0, 2, "tk"), edit("a.q", 1, 8, 10, "tk")]
     );
+    // From the read itself, the same (#2048): the cursor on `ta` of `ta.c`
+    // is on the table, as Go to Definition already had it.
+    let reply = ask(&mut server, "textDocument/references", "ta.c", "");
+    assert_eq!(
+        places(&reply["result"]),
+        [place("a.q", 0, 0, 2), place("a.q", 1, 8, 10)]
+    );
+    let reply = ask(&mut server, "textDocument/documentHighlight", "ta.c", "");
+    let marks: Vec<_> = reply["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| (span(&h["range"]), h["kind"].as_u64().unwrap()))
+        .collect();
+    assert_eq!(marks, [((0, 0, 2), 3), ((1, 8, 10), 2)], "{reply}");
+    let reply = ask(&mut server, "textDocument/prepareRename", "ta.c", "");
+    assert_eq!(span(&reply["result"]["range"]), (1, 8, 10), "{reply}");
+    assert_eq!(reply["result"]["placeholder"], "ta");
+    let reply = ask(&mut server, "textDocument/rename", "ta.c", "tk");
+    assert_eq!(
+        edits(&reply["result"]),
+        [edit("a.q", 0, 0, 2, "tk"), edit("a.q", 1, 8, 10, "tk")]
+    );
+    let reply = ask(&mut server, "textDocument/rename", ".ns.tb.c", "tz");
+    assert_eq!(
+        edits(&reply["result"]),
+        [
+            edit("a.q", 3, 0, 2, "tz"),
+            edit("a.q", 4, 2, 4, "tz"),
+            edit("a.q", 6, 6, 8, "tz")
+        ]
+    );
     // Under a context, bare and with the context written out.
     let reply = ask(&mut server, "textDocument/rename", "tb:", "tz");
     assert_eq!(
