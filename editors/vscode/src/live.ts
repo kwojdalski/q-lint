@@ -1167,13 +1167,42 @@ export class Live {
   /// there up to 0.26, and it was sent for this one unasked (#1887).
   private async save(processes: Process[], given: string[] = []): Promise<void> {
     const before = new Set(this.processes().map((p) => p.label));
-    for (const { label } of processes) {
-      if (!before.has(label) && !given.includes(label)) {
+    const fresh = processes.map((p) => p.label).filter((label) => !before.has(label));
+    for (const label of fresh) {
+      if (!given.includes(label)) {
         await this.context.secrets.delete(this.passwordKey({ label }));
       }
+      await this.vacate(label, fresh.length === 1);
     }
     await this.context.globalState.update(PROCESSES_KEY, processes);
     this.processesView.refresh();
+  }
+
+  /// Delete what a process once labelled `label` left, before another takes
+  /// the label: v0.36 deleted a process and kept its scheduled exports and
+  /// dashboard tiles, which then ran on the next one of that label (#1879).
+  /// Not the tiles and files of a discovered or shared process that answers
+  /// to the label. `logged` for the workspaces not open, as a deletion is: a
+  /// list downloaded or imported is not, the log keeping its last hundred.
+  private async vacate(label: string, logged: boolean): Promise<void> {
+    const schedules = parseSchedules(this.context.workspaceState.get<unknown>(SCHEDULES_KEY, []));
+    const scheduled = schedules.filter((s) => s.process === label).length;
+    let tiles = 0;
+    if (findDiscovered([...this.discovery.discovered(), ...this.sharedList()], label) !== undefined) {
+      // A scheduled export runs on a saved process only.
+      if (scheduled > 0) {
+        await this.context.workspaceState.update(SCHEDULES_KEY, retargetedSchedules(schedules, label, undefined));
+      }
+    } else {
+      const dashboards = parseDashboards(this.context.workspaceState.get<unknown>(DASHBOARDS_KEY, []));
+      tiles = dashboards.reduce((n, d) => n + d.tiles.filter((t) => t.process === label).length, 0);
+      await (logged ? this.rebind(label, undefined) : this.retarget(label, undefined));
+    }
+    if (scheduled + tiles > 0) {
+      void window.showInformationMessage(
+        plainMessage(`q-lint: the ${scheduled} scheduled export(s) and ${tiles} dashboard tile(s) an earlier process labelled "${label}" left were deleted.`),
+      );
+    }
   }
 
   /// A setting group read with `read`, as configured now.
