@@ -22,7 +22,7 @@
 //   other function arrives as the word "func".
 // - An empty table arrives with no columns, so they cannot be shown.
 import { TREE_NODES, codePointOrder, realValue, type GridPayload, type TreeNode } from "./grid";
-import type { QValue } from "./qdecode";
+import type { Item, QValue } from "./qdecode";
 
 /// q's generic null, `(::)`.
 const NULL_TYPE = 101;
@@ -901,6 +901,99 @@ function denseRanks(keys: (number | bigint | string | null)[]): number[] {
   return rank;
 }
 
+/// Two items of one simple type in q's order: a null first, text in code
+/// point order.
+function itemOrder(x: Item, y: Item): number {
+  if (x === y) {
+    return 0;
+  }
+  if (x === null || y === null) {
+    return x === null ? -1 : 1;
+  }
+  if (typeof x === "string" && typeof y === "string") {
+    return codePointOrder(x, y);
+  }
+  return x < y ? -1 : x > y ? 1 : 0;
+}
+
+/// Two values in the order q's `iasc` sorts a general list (#1756): every
+/// atom before every list, atoms by type (`1b` before `0x01` before `2`
+/// before `2.5`) and then value, lists by type and then item by item, a
+/// shorter one first when it is the other's start; a dictionary and a table
+/// by their values alone. A function is equal to any other.
+function qOrder(a: QValue, b: QValue): number {
+  const typeOf = (q: QValue): number => (q.kind === "atom" ? q.t - 1000 : q.kind === "func" ? q.t : columnTypeOf(q));
+  const ta = typeOf(a);
+  const tb = typeOf(b);
+  if (ta !== tb) {
+    return a.kind === "atom" && b.kind === "atom" ? tb - ta : ta - tb;
+  }
+  if (a.kind === "atom" && b.kind === "atom") {
+    return itemOrder(a.v, b.v);
+  }
+  if (a.kind === "dict" && b.kind === "dict") {
+    return qOrder(a.v, b.v);
+  }
+  if (a.kind === "func" || b.kind === "func" || a.kind === "dict" || b.kind === "dict") {
+    return 0;
+  }
+  const xs = a.kind === "table" ? a.data : itemsOf(a);
+  const ys = b.kind === "table" ? b.data : itemsOf(b);
+  for (let i = 0; i < Math.min(xs.length, ys.length); i++) {
+    const order = qOrder(xs[i], ys[i]);
+    if (order !== 0) {
+      return order;
+    }
+  }
+  return xs.length - ys.length;
+}
+
+/// Whether two values are the same to q's `~`, given they are equal in
+/// `qOrder`: a dictionary's keys, a table's names and a lambda's text too.
+function same(a: QValue, b: QValue): boolean {
+  if (a.kind === "dict" && b.kind === "dict") {
+    return same(a.k, b.k) && same(a.v, b.v);
+  }
+  if (a.kind === "table" && b.kind === "table") {
+    return a.cols.join("\u0000") === b.cols.join("\u0000") && a.data.every((c, i) => same(c, b.data[i]));
+  }
+  if (a.kind === "func" && b.kind === "func") {
+    return a.text !== undefined && a.text === b.text;
+  }
+  if (a.kind === "list" && b.kind === "list") {
+    return a.v.every((x, i) => same(x, b.v[i]));
+  }
+  return qOrder(a, b) === 0;
+}
+
+/// The ranks `GRID` gives a general column: its items sorted as `iasc`
+/// sorts them, a new place wherever one `differ`s from the one before. The
+/// first is held to its type's null, as `differ` holds it, so a first null
+/// or empty item, or a general list of them, ranks -1. None for a symbol and a long, which `iasc`
+/// refuses with `type`, as an enumeration's parts.
+function listRanks(items: QValue[]): number[] {
+  const [x, y] = items;
+  if (items.length === 2 && x.kind === "atom" && x.t === -11 && y.kind === "atom" && y.t === -7) {
+    return [];
+  }
+  const order = items.map((_, i) => i).sort((a, b) => qOrder(items[a], items[b]) || a - b);
+  const rank = new Array<number>(items.length);
+  const empty = (q: QValue): boolean =>
+    q.kind === "atom"
+      ? q.v === null || q.v === false || q.v === "" || (q.v === 0 && q.t === -4) || (q.v === 32 && q.t === -10)
+      : q.kind === "list"
+        ? q.v.every(empty)
+        : countOf(q) === 0;
+  let place = -1;
+  order.forEach((row, i) => {
+    if (i === 0 ? !empty(items[row]) : qOrder(items[order[i - 1]], items[row]) !== 0 || !same(items[order[i - 1]], items[row])) {
+      place++;
+    }
+    rank[row] = place;
+  });
+  return rank;
+}
+
 /// The rows the result panel shows for a value decoded with its types, as
 /// `GRID` would send them for the same value: a table (keyed: its keys
 /// marked), a dictionary as `key` and `value` columns (keyed by a table, its
@@ -955,6 +1048,9 @@ export function gridOfQ(q: QValue, limit: number): GridPayload | undefined {
   const rank = shown.map((c) => {
     if (c.q.kind === "chars") {
       return denseRanks([...c.q.v]);
+    }
+    if (c.q.kind === "list") {
+      return listRanks(c.q.v);
     }
     if (c.q.kind !== "vector") {
       return [];
