@@ -30,6 +30,8 @@ export interface Target {
   /// The name or address a TLS certificate is checked against, when `host`
   /// is not it: a tunnel's loopback end (#908).
   servername?: string;
+  /// A unix socket dialled instead of `host:port`: a tunnel's own end (#1823).
+  path?: string;
 }
 
 /// How long a connect may take before it is given up.
@@ -120,7 +122,8 @@ export class QConnection {
   /// is closed, so nothing is left open behind it.
   static open(target: Target, timeoutMs: number = CONNECT_TIMEOUT_MS, signal?: AbortSignal): Promise<QConnection> {
     return new Promise((resolve, reject) => {
-      const options = { host: target.host, port: target.port };
+      const options = target.path !== undefined ? { path: target.path } : { host: target.host, port: target.port };
+      const at = target.path ?? `${target.host}:${target.port}`;
       // The name the certificate must be for. An IP address cannot be sent
       // as the server name, and without one the check is against the host
       // dialled: a tunnel's loopback end. So an address given as
@@ -134,7 +137,7 @@ export class QConnection {
           })
         : net.connect(options);
       let settled = false;
-      const cancelled = (): void => fail(new Error(`the connect to ${target.host}:${target.port} was cancelled`));
+      const cancelled = (): void => fail(new Error(`the connect to ${at} was cancelled`));
       const fail = (error: Error): void => {
         if (!settled) {
           settled = true;
@@ -146,7 +149,7 @@ export class QConnection {
       };
       // A timer cannot wait for ever: an infinite delay fires at once.
       const timer = Number.isFinite(timeoutMs)
-        ? setTimeout(() => fail(new Error(`no answer from ${target.host}:${target.port} in ${timeoutMs / 1000} s`)), timeoutMs)
+        ? setTimeout(() => fail(new Error(`no answer from ${at} in ${timeoutMs / 1000} s`)), timeoutMs)
         : undefined;
       if (signal?.aborted) {
         cancelled();
@@ -155,7 +158,7 @@ export class QConnection {
       signal?.addEventListener("abort", cancelled);
       socket.once("error", (error: Error) => fail(withReason(error)));
       // A process that refuses the user closes the socket without a byte.
-      socket.once("close", () => fail(new ClosedBeforeHandshake(`${target.host}:${target.port} closed the connection: the user or password was refused`)));
+      socket.once("close", () => fail(new ClosedBeforeHandshake(`${at} closed the connection: the user or password was refused`)));
       socket.once(target.tls ? "secureConnect" : "connect", () => {
         const auth = target.user !== undefined ? `${target.user}:${target.password ?? ""}` : "";
         socket.write(Buffer.concat([Buffer.from(auth, "utf8"), Buffer.from([CAPABILITY, 0])]));
@@ -168,7 +171,7 @@ export class QConnection {
         // it can only open with a header: endianness 0 or 1, type 0 to 2. A
         // service that speaks first (an SSH or SMTP banner) is not q.
         if (chunk[0] > 6 || (chunk.length > 1 && chunk[1] > 1) || (chunk.length > 2 && chunk[2] > 2)) {
-          fail(new Error(`${target.host}:${target.port} answered the handshake, but not as a q process does: is it a q process?`));
+          fail(new Error(`${at} answered the handshake, but not as a q process does: is it a q process?`));
           return;
         }
         settled = true;

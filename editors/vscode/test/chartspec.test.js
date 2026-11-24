@@ -69,3 +69,18 @@ test("a date, month, minute or second x axis ticks whole units, each label once 
   assert.ok(ls.length >= 2 && new Set(ls).size === ls.length, ls.join(" | "));
   assert.strictEqual(M.linkedConfig(grid, ld, ld.panes[0], "#f00", look, {}, true).options.scales.x.ticks.precision, 0);
 });
+
+// A .qnb file's chart height "1px;position:fixed;inset:0;..." went into the
+// renderer's cssText whole (#1834): only a number in / @height's range is.
+test("a notebook chart's height is a number in / @height's range, or the default", () => {
+  const { CHART_HEIGHT } = require("../out/celldirectives.js");
+  assert.strictEqual(C.chartHeight(450, 300), 450);
+  assert.strictEqual(C.chartHeight(CHART_HEIGHT.min, 300), CHART_HEIGHT.min);
+  assert.strictEqual(C.chartHeight(CHART_HEIGHT.max, 300), CHART_HEIGHT.max);
+  assert.strictEqual(C.chartHeight(CHART_HEIGHT.max + 1, 300), 300);
+  assert.strictEqual(C.chartHeight(CHART_HEIGHT.min - 1, 300), 300);
+  for (const bad of ["1px;position:fixed;inset:0;z-index:9;background:url(https://evil.example/b)", "450", NaN, Infinity, null, undefined, {}]) {
+    assert.strictEqual(C.chartHeight(bad, 300), 300, String(bad));
+  }
+  assert.match(require("node:fs").readFileSync(require.resolve("../media/chartrenderer.js"), "utf8"), /height:\$\{C\.chartHeight\(spec\.height, HEIGHT\)\}px/);
+});

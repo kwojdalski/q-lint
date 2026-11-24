@@ -7,6 +7,7 @@ import * as path from "node:path";
 import { FileType, Uri, commands, window, workspace, type ExtensionContext, type WorkspaceFolder } from "vscode";
 import { DEVCONTAINER_COMMAND, otherConfigs, plan, previewText, readDevContainer, templateFiles } from "./devcontainer";
 import { plainMessage } from "./history";
+import { assertWritable } from "./workspacewrite";
 
 const exists = async (uri: Uri): Promise<boolean> => {
   try {
@@ -80,6 +81,8 @@ export async function addDevContainer(): Promise<string[]> {
       continue;
     }
     try {
+      // A dangling link the repository ships is "not there" to exists (#1830).
+      assertWritable(root.fsPath, uri.fsPath);
       await workspace.fs.createDirectory(Uri.joinPath(root, ...path.posix.dirname(file.path).split("/")));
       await workspace.fs.writeFile(uri, Buffer.from(file.content, "utf8"));
     } catch (error) {

@@ -15,9 +15,12 @@ const pkg = require("../package.json");
 const { SHARED_COMMANDS, SHARED_FILE, mergeShared, readShared, readSharedFile, withShared } = require("../out/shared.js");
 const { children, serverLabelProblem } = require("../out/discovery.js");
 const { Live } = require("../out/live.js");
+const { sharedPasswordKey } = require("../out/processes.js");
 
 const Q = process.env.QLINT_TEST_Q;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/// Where the password of shared process `p` of folder `dir` is kept (#1824).
+const keyOf = (dir, p) => sharedPasswordKey({ ...p, label: `.qlint/${p.label}` }, require("vscode").Uri.file(dir).toString());
 
 test("a password or secret in the shared list is dropped and said", () => {
   const text = JSON.stringify({
@@ -183,7 +186,8 @@ test("the shared list is listed, watched, and its processes connect like a disco
   stub.inputs.push((o) => (assert.match(o.title, /password of me/), "pw"));
   assert.strictEqual(await live.connectTo(".qlint/rdb"), true);
   assert.strictEqual(live.activeLabel(), ".qlint/rdb");
-  assert.strictEqual(context.secrets.all.get("q-lint.discoveredPassword..qlint/rdb"), "pw");
+  const rdb = { label: "rdb", host: "127.0.0.1", port: q.port, user: "me" };
+  assert.strictEqual(context.secrets.all.get(keyOf(dir, rdb)), "pw");
   if (q.real) {
     assert.deepStrictEqual((await live.borrow((c) => c.query(["answer"], [10, 80]))).text, ["42"]);
   }
@@ -191,7 +195,7 @@ test("the shared list is listed, watched, and its processes connect like a disco
   write(dir, { processes: [{ label: "rdb", host: "localhost", port: q.port, user: "me", tags: [] }, { label: "hdb", host: "h", port: 2 }] });
   await changed();
   assert.deepStrictEqual(live.api().sharedProcesses().processes.map((p) => p.label), ["rdb", "hdb"]);
-  assert.strictEqual(context.secrets.all.has("q-lint.discoveredPassword..qlint/rdb"), false);
+  assert.strictEqual(context.secrets.all.has(keyOf(dir, rdb)), false);
   // Not JSON: said under the group.
   write(dir, "{");
   await changed();
@@ -208,10 +212,40 @@ test("a shared list that turns TLS off, or adds or drops a tunnel, forgets the p
   write(dir, [{ label: "a", host: "h", port: 1, tls: true }, { label: "b", host: "h", port: 2, ssh: "jump" }, { label: "c", host: "h", port: 3 }]);
   const { context, changed } = await setUp(t, dir);
   await sleep(50);
-  for (const l of ["a", "b", "c"]) context.secrets.all.set(`q-lint.discoveredPassword..qlint/${l}`, "pw");
+  const was = [{ label: "a", host: "h", port: 1, tls: true }, { label: "b", host: "h", port: 2, ssh: "jump" }, { label: "c", host: "h", port: 3 }];
+  for (const p of was) context.secrets.all.set(keyOf(dir, p), "pw");
   write(dir, [{ label: "a", host: "h", port: 1 }, { label: "b", host: "h", port: 2 }, { label: "c", host: "h", port: 3 }]);
   await changed();
-  assert.deepStrictEqual(["a", "b", "c"].map((l) => context.secrets.all.has(`q-lint.discoveredPassword..qlint/${l}`)), [false, false, true]);
+  assert.deepStrictEqual(was.map((p) => context.secrets.all.has(keyOf(dir, p))), [false, false, true]);
+});
+
+// Kept by label alone, another repository's list naming its own rdb at
+// another host connected with this one's password, asking nothing (#1824).
+test("a shared process's password is kept by its folder and address, not its label", async (t) => {
+  const q = await someQ(t);
+  const a = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-shared-"));
+  const b = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-shared-"));
+  write(a, [{ label: "rdb", host: "127.0.0.1", port: q.port, user: "me" }]);
+  write(b, [{ label: "rdb", host: "localhost", port: q.port, user: "me" }]);
+  const first = await setUp(t, a);
+  await sleep(50);
+  stub.inputs.push("pw-for-a");
+  assert.strictEqual(await first.live.connectTo(".qlint/rdb"), true);
+  await stub.commands.get("q-lint.disconnectProcess")();
+  const stored = new Map(first.context.secrets.all);
+  assert.deepStrictEqual([...stored.values()], ["pw-for-a"]);
+  for (const d of first.context.subscriptions) d.dispose?.();
+  // Workspace b, the same secret storage: its rdb is asked for its own.
+  const second = await setUp(t, b);
+  for (const [k, v] of stored) second.context.secrets.all.set(k, v);
+  await sleep(50);
+  const asked = [];
+  stub.inputs.push((o) => (asked.push(o.title), "pw-for-b"));
+  assert.strictEqual(await second.live.connectTo(".qlint/rdb"), true);
+  assert.strictEqual(asked.length, 1, "b's rdb is asked for a password");
+  assert.strictEqual(second.context.secrets.all.get(keyOf(a, { label: "rdb", host: "127.0.0.1", port: q.port, user: "me" })), "pw-for-a");
+  // The same file in another folder is another process too.
+  assert.notStrictEqual(keyOf(a, { label: "rdb", host: "h", port: 1 }), keyOf(b, { label: "rdb", host: "h", port: 1 }));
 });
 
 test("in an untrusted workspace, a shared process brings no connect script, tunnel or launch", async (t) => {

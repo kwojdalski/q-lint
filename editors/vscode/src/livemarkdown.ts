@@ -231,14 +231,114 @@ function blankHtml(text: string): string {
   return lines.join("\n");
 }
 
+const AUTOLINK = /^<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^<>\x00-\x20]*|[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+)>/;
+
+/// The index after the `)` closing a link's destination and title, read
+/// from just after its `(`; undefined when it is not one.
+function linkTargetEnd(text: string, from: number): number | undefined {
+  let j = from;
+  const space = (): void => {
+    while (j < text.length && /[ \t\n]/.test(text[j])) j++;
+  };
+  space();
+  if (text[j] === "<") {
+    const close = text.slice(j).search(/[>\n]/);
+    if (close < 0 || text[j + close] !== ">") return undefined;
+    j += close + 1;
+  } else {
+    for (let depth = 0; j < text.length && !/[\s\x00-\x1f]/.test(text[j]); j++) {
+      if (text[j] === "\\") j++;
+      else if (text[j] === "(") depth++;
+      else if (text[j] === ")" && depth-- === 0) break;
+    }
+  }
+  space();
+  const quote = text[j];
+  if (quote === '"' || quote === "'" || quote === "(") {
+    const close = text.indexOf(quote === "(" ? ")" : quote, j + 1);
+    if (close < 0) return undefined;
+    j = close + 1;
+    space();
+  }
+  return text[j] === ")" ? j + 1 : undefined;
+}
+
+/// `text` with what markdown-it reads as a link's target, never through its
+/// inline rules, made spaces (#1827): a link reference definition's line
+/// (and the line after one whose destination or title goes on), an inline
+/// link's or image's destination and title, a reference link's `[ref]`,
+/// an image's alt text, and an autolink. The renderer never draws a live value in one, so none is run.
+/// Over-reading here only leaves a value shown as written, never runs one.
+function blankLinkTargets(text: string): string {
+  const out = text.split("");
+  const blank = (from: number, to: number): void => {
+    for (let k = from; k < to; k++) {
+      if (out[k] !== "\n") {
+        out[k] = " ";
+      }
+    }
+  };
+  // Definitions: `[label]:` at a line's start, in a quote or list too.
+  const definition = /^(?:[ \t]*>)*[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?\[(?:[^\]\\\n]|\\.)+\]:([^\n]*)$/gm;
+  for (let m; (m = definition.exec(text)) !== null; ) {
+    let end = m.index + m[0].length;
+    const rest = m[1].trim();
+    // The destination on the next line, or a title opened and not closed.
+    const quote = /^(?:<[^>]*>|\S+)\s+(["'(])/.exec(rest)?.[1];
+    const open = quote !== undefined && !new RegExp(`[${quote === "(" ? ")" : quote}]\\s*$`).test(rest.slice(rest.indexOf(quote) + 1));
+    const after = text.slice(end + 1, text.indexOf("\n", end + 1) < 0 ? undefined : text.indexOf("\n", end + 1)).trim();
+    if (rest === "" || open || (/^(?:<[^>]*>|\S+)$/.test(rest) && /^["'(]/.test(after))) {
+      const next = text.indexOf("\n", end + 1);
+      const close = open ? text.slice(end).search(new RegExp(`[${quote === "(" ? ")" : quote}]`)) : -1;
+      end = open && close >= 0 ? end + close + 1 : next < 0 ? text.length : next;
+    }
+    blank(m.index, end);
+  }
+  // Autolinks, links and images, left to right as markdown-it reads them: a
+  // live value, a code span or a tag met first is that, and is skipped whole.
+  const spans = new Map(inlineSpans(text).map((sp) => [sp.start, sp.end]));
+  const skip = (k: number): number => spans.get(k) ?? (text[k] === "\\" ? k + 2 : k + 1);
+  for (let i = 0; i < text.length; ) {
+    const autolink = text[i] === "<" ? AUTOLINK.exec(text.slice(i)) : null;
+    if (autolink !== null) {
+      blank(i, i + autolink[0].length);
+      i += autolink[0].length;
+      continue;
+    }
+    const image = text[i] === "!" && text[i + 1] === "[";
+    if (spans.has(i) || (text[i] !== "[" && !image)) {
+      i = skip(i);
+      continue;
+    }
+    // The label's `]`, brackets in it balanced.
+    let j = image ? i + 2 : i + 1;
+    for (let depth = 0; j < text.length; j = skip(j)) {
+      if (spans.has(j)) continue;
+      if (text[j] === "[") depth++;
+      else if (text[j] === "]" && depth-- === 0) break;
+    }
+    // A reference link's `[ref]` is never drawn either, when it resolves.
+    const ref = text[j] === "]" && text[j + 1] === "[" ? /^\[(?:[^\[\]\\]|\\.)*\]/.exec(text.slice(j + 1)) : null;
+    const end = ref !== null ? j + 1 + ref[0].length : text[j] === "]" && text[j + 1] === "(" ? linkTargetEnd(text, j + 2) : undefined;
+    if (end === undefined) {
+      i = image ? i + 2 : i + 1;
+      continue;
+    }
+    // An image's alt text is drawn as plain text, without the live rule.
+    blank(image ? i : j, end);
+    i = image ? end : i + 1;
+  }
+  return out.join("");
+}
+
 /// The expressions in a Markdown cell's `source`, each once, in order. Ones
-/// in a code block, a code span, an HTML comment, an HTML block or a tag
-/// are text, as the renderer shows them (#1429, #1557).
+/// in a code block, a code span, an HTML comment, an HTML block, a tag or a
+/// link's target are text, as the renderer shows them (#1429, #1557, #1827).
 export function liveExpressions(source: string): string[] {
   // A fence closes at a line of its character, at least as many, and
   // blanks only after them (#1469): "``` text" inside is content.
   const fenced = source.replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^ {0,3}\1(?:(?<=`)`|(?<=~)~)*[ \t]*\r?$|(?![\s\S]))/gm, (m) => " ".repeat(m.length));
-  const prose = blankHtml(blankIndented(fenced)).replace(/<!--[\s\S]*?(?:-->|(?![\s\S]))/g, (m) => m.replace(/[^\n]/g, " "));
+  const prose = blankLinkTargets(blankHtml(blankIndented(fenced)).replace(/<!--[\s\S]*?(?:-->|(?![\s\S]))/g, (m) => m.replace(/[^\n]/g, " ")));
   const found: string[] = [];
   for (const span of inlineSpans(prose)) {
     if (span.kind === "live" && !found.includes(span.expr)) {

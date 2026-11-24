@@ -23,11 +23,11 @@ export function terminalCwd(own: string | undefined, first: string | undefined, 
 }
 
 /// How the shell in the terminal reads a command line.
-export type Shell = "posix" | "csh" | "powershell" | "cmd";
+export type Shell = "posix" | "csh" | "fish" | "powershell" | "cmd";
 
-/// The shell a terminal runs, from its path: PowerShell, cmd and csh/tcsh by
-/// name, and anything else - bash, zsh, fish, Git Bash on Windows - read as
-/// POSIX.
+/// The shell a terminal runs, from its path: PowerShell, cmd, csh/tcsh and
+/// fish by name, and anything else - bash, zsh, Git Bash on Windows - read
+/// as POSIX.
 export function shellKind(path: string | undefined): Shell {
   const name = (path ?? "").split(/[\\/]/).pop()?.toLowerCase() ?? "";
   if (/^(pwsh|powershell)(\.exe)?$/.test(name)) {
@@ -39,6 +39,10 @@ export function shellKind(path: string | undefined): Shell {
   if (/^t?csh$/.test(name)) {
     return "csh";
   }
+  // fish reads \' and \\ inside single quotes as escapes (#1832).
+  if (/^fish(\.exe)?$/.test(name)) {
+    return "fish";
+  }
   return "posix";
 }
 
@@ -49,6 +53,7 @@ export function shellKind(path: string | undefined): Shell {
 const PLAIN: Record<Shell, RegExp> = {
   posix: /^[A-Za-z0-9_\/.,:@%+-][A-Za-z0-9_\/.,:@%+=-]*$/,
   csh: /^[A-Za-z0-9_\/.,:@%+-][A-Za-z0-9_\/.,:@%+=-]*$/,
+  fish: /^[A-Za-z0-9_\/.,:@+-][A-Za-z0-9_\/.,:@%+=-]*$/,
   powershell: /^[A-Za-z0-9_\\/.:+=-]+$/,
   cmd: /^[A-Za-z0-9_\\/.:+=-]+$/,
 };
@@ -71,6 +76,10 @@ export function quote(word: string, shell: Shell): string {
   if (shell === "csh") {
     // csh reads `!` as history even in single quotes, unless escaped.
     return `'${word.replace(/'/g, `'\\''`).replace(/!/g, "\\!")}'`;
+  }
+  if (shell === "fish") {
+    // Inside fish's single quotes a backslash escapes a quote or itself.
+    return `'${word.replace(/[\\']/g, "\\$&")}'`;
   }
   if (shell === "powershell") {
     return powershellLiteral(word);
@@ -137,9 +146,10 @@ export function commandLine(
     // Set for q alone, as `NAME=value q` sets it.
     return [...byRef.map((n) => `${n}="$${refs[n]}"`), ...names.map((n) => `${n}=${quote(env[n], "posix")}`), line].join(" ");
   }
-  if (shell === "csh") {
-    // csh has no `NAME=value q`: env sets them for q alone (#1683).
-    return ["env", ...byRef.map((n) => `${n}="$${refs[n]}"`), ...names.map((n) => `${n}=${quote(env[n], "csh")}`), line].join(" ");
+  if (shell === "csh" || shell === "fish") {
+    // csh, and fish before 3.1, have no `NAME=value q`: env sets them for q
+    // alone (#1683).
+    return ["env", ...byRef.map((n) => `${n}="$${refs[n]}"`), ...names.map((n) => `${n}=${quote(env[n], shell)}`), line].join(" ");
   }
   if (shell === "powershell") {
     // Always quoted: the right of an assignment is an expression, where a
@@ -160,14 +170,23 @@ export function expandHome(file: string, home: string): string {
 /// relative path (`./kdb/m64/q`) made whole against `folder`, where the
 /// terminals start - started in a temporary or a launch's directory it was
 /// another file, or none (#1540). A bare name is left for `PATH`. Undefined
-/// for a relative path with no folder to read it from.
-export function qBinaryFrom(qBinary: string, folder: string | undefined, home: string): string | undefined {
+/// for a relative path with no folder to read it from, or whose folder is
+/// not `trusted`: the program would be the repository's (#1825).
+export function qBinaryFrom(qBinary: string, folder: string | undefined, home: string, trusted = true): string | undefined {
   const file = expandHome(qBinary, home);
   // A drive or UNC path is absolute wherever it is read.
   if (path.isAbsolute(file) || /^([A-Za-z]:[\\/]|\\\\)/.test(file) || !/[\\/]/.test(file)) {
     return file;
   }
-  return folder === undefined ? undefined : path.resolve(folder, file);
+  return folder === undefined || !trusted ? undefined : path.resolve(folder, file);
+}
+
+/// Why a relative `q-lint.terminal.qBinary` gave no program: no folder to
+/// read it from, or a folder that is not trusted (#1825).
+export function relativeBinaryProblem(qBinary: string, trusted: boolean): string {
+  return trusted
+    ? `q-lint.terminal.qBinary ${qBinary} is relative, and there is no workspace folder to read it from`
+    : `q-lint.terminal.qBinary ${qBinary} is relative to the workspace folder, which is not trusted: name it by its full path`;
 }
 
 /// The variables of an env file - one `NAME=value` a line, `#` comments and

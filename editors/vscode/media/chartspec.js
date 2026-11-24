@@ -21,6 +21,16 @@
   /// Bins a histogram starts with.
   const BINS = 20;
 
+  /// The pixels a notebook chart is tall: its spec's `height` when it is a
+  /// number in `/ @height`'s range (CHART_HEIGHT in celldirectives.ts), else
+  /// `fallback`. The spec comes from the notebook file, which can hold
+  /// anything: a string height went into the box's cssText whole, adding
+  /// declarations that overlaid the page (#1834).
+  function chartHeight(height, fallback) {
+    const px = typeof height === "number" ? height : NaN;
+    return Number.isFinite(px) && px >= 100 && px <= 2000 ? Math.round(px) : fallback;
+  }
+
   /// A grid of one column - a list - is charted against its row numbers:
   /// its column is a series, not the x axis.
   function byRow(grid) {
@@ -644,6 +654,7 @@
     theme: theme,
     applyTheme: applyTheme,
     chartConfig: chartConfig,
+    chartHeight: chartHeight,
     summary: summary,
     ohlcColumns: ohlcColumns,
     chartSvg: chartSvg,

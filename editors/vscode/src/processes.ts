@@ -57,6 +57,20 @@ export function passwordKey(process: Pick<Process, "label" | "server">): string 
   return process.server === undefined ? `q-lint.password.${process.label}` : `q-lint.discoveredPassword.${process.label}`;
 }
 
+/// Where a password of a process from the workspace's shared list is kept:
+/// by the folder whose list names it and where the list says it is, not by
+/// its label alone. Another repository's list can name its own `rdb` at
+/// another host, and was given this one's password for it (#1824).
+export function sharedPasswordKey(process: Pick<Process, "label" | "host" | "port" | "user" | "tls" | "ssh">, folder: string): string {
+  return `q-lint.sharedPassword.${process.label} ${sharedScope(process, folder)}`;
+}
+
+/// The folder and the address, user, TLS and tunnel of a shared-list
+/// process, as one string: what its password and scratch buffer are kept by.
+export function sharedScope(process: Pick<Process, "host" | "port" | "user" | "tls" | "ssh">, folder: string): string {
+  return JSON.stringify([folder, process.host, process.port, process.user ?? "", process.tls === true, process.ssh ?? ""]);
+}
+
 /// Why `port` is not a port, or undefined when it is one.
 export function portProblem(port: string): string | undefined {
   if (!/^\d+$/.test(port.trim())) {

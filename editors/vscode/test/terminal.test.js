@@ -7,7 +7,7 @@ const assert = require("node:assert");
 const { spawnSync } = require("node:child_process");
 const path = require("node:path");
 const pkg = require("../package.json");
-const { commandLine, parseEnv, quote, replLine, qBinaryFrom, replLines, shellKind, terminalCwd } = require("../out/terminal.js");
+const { commandLine, parseEnv, quote, replLine, qBinaryFrom, relativeBinaryProblem, replLines, shellKind, terminalCwd } = require("../out/terminal.js");
 const { COMMANDS, readTerminal } = require("../out/liveconfig.js");
 const { needsRestart } = require("../out/settings.js");
 
@@ -21,6 +21,21 @@ test("the shell is read from its path", () => {
   assert.strictEqual(shellKind("/bin/csh"), "csh");
   assert.strictEqual(shellKind("C:\\Windows\\System32\\cmd.exe"), "cmd");
   assert.strictEqual(shellKind(undefined), "posix");
+  assert.strictEqual(shellKind("/usr/local/bin/fish"), "fish");
+});
+
+// fish reads \' and \\ in single quotes as escapes: quoted as POSIX, a file
+// named x\'; touch /tmp/pwned; echo \'.q ran touch (#1832).
+test("fish has its own quoting: a backslash or a quote in single quotes is escaped", () => {
+  const name = "x\\'; touch /tmp/pwned; echo \\'.q";
+  assert.strictEqual(quote(name, "fish"), "'x\\\\\\'; touch /tmp/pwned; echo \\\\\\'.q'");
+  assert.strictEqual(quote("a\\b", "fish"), "'a\\\\b'");
+  assert.strictEqual(quote("$HOME", "fish"), "'$HOME'");
+  assert.strictEqual(quote("src/main.q", "fish"), "src/main.q");
+  // As fish reads it back: \\ is \ and \' is ', nothing else is special.
+  const unquote = (q) => q.slice(1, -1).replace(/\\([\\'])/g, "$1");
+  assert.strictEqual(unquote(quote(name, "fish")), name);
+  assert.strictEqual(commandLine("q", ["t.q"], "fish", { QHOME: "/opt/q x" }, { TOKEN: "QLINT_ENVPATH_TOKEN" }), "env TOKEN=\"$QLINT_ENVPATH_TOKEN\" QHOME='/opt/q x' q t.q");
 });
 
 test("a plain word is passed as it is", () => {
@@ -304,4 +319,12 @@ test("a relative q binary is the workspace folder's; a bare name is left for PAT
   assert.strictEqual(qBinaryFrom("q", "/ws", "/home/u"), "q");
   assert.strictEqual(qBinaryFrom("~/q/m64/q", undefined, "/home/u"), "/home/u/q/m64/q");
   assert.strictEqual(qBinaryFrom("/opt/kx/q", undefined, "/home/u"), "/opt/kx/q");
+});
+
+test("a relative q binary is not the folder's when the folder is not trusted (#1825)", () => {
+  assert.strictEqual(qBinaryFrom("./kdb/m64/q", "/ws", "/home/u", false), undefined);
+  assert.strictEqual(qBinaryFrom("q", "/ws", "/home/u", false), "q");
+  assert.strictEqual(qBinaryFrom("~/q/m64/q", "/ws", "/home/u", false), "/home/u/q/m64/q");
+  assert.match(relativeBinaryProblem("bin/q", false), /relative to the workspace folder, which is not trusted: name it by its full path$/);
+  assert.match(relativeBinaryProblem("bin/q", true), /no workspace folder to read it from$/);
 });

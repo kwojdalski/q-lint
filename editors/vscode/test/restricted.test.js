@@ -86,6 +86,18 @@ test("an untrusted workspace cannot turn the read-only guard off or change its t
   }
 });
 
+// A repository's settings offered its own drill-down, its tail past what the
+// quick pick shows, run on the process the result came from (#1826).
+test("every setting holding q code sent to a process is restricted", () => {
+  const code = Object.entries(props)
+    .filter(([, v]) => v.type === "array" && v.items?.properties?.query !== undefined)
+    .map(([k]) => k);
+  assert.deepStrictEqual(code, ["q-lint.results.drilldownTemplates"]);
+  for (const key of code) {
+    assert.ok(restricted.has(key), key);
+  }
+});
+
 test("an untrusted workspace cannot turn on running the affected tests at every save (#1228)", () => {
   assert.ok(restricted.has("q-lint.testing.runAffectedOnSave.enable"));
 });

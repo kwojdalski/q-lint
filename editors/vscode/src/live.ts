@@ -47,6 +47,7 @@ import {
   plainHost,
   parseTags,
   passwordKey,
+  sharedPasswordKey,
   passwordsToForget,
   portProblem,
   processThemeColour,
@@ -73,7 +74,8 @@ import { historyHeading, historyLabel, iconsEscaped, mergedHistory, plainMessage
 import { render } from "./query";
 import { QueryModes, type PageLater, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
-import { commandLine, expandHome, qBinaryFrom, replLines, shellKind, terminalCwd } from "./terminal";
+import { assertWritable } from "./workspacewrite";
+import { commandLine, expandHome, qBinaryFrom, relativeBinaryProblem, replLines, shellKind, terminalCwd } from "./terminal";
 import { readDotenv, terminalEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import type { RunExtra } from "./runargs";
@@ -463,7 +465,20 @@ export class QTerminals {
     const folder = own ?? workspace.workspaceFolders?.find((f) => f.uri.scheme === "file");
     const cwd = terminalCwd(own?.uri.fsPath, folder?.uri.fsPath, file, path.dirname);
     let variables: Record<string, string> = {};
+    // The folder's own program or env file, in a folder that is not trusted,
+    // is the repository's: refused, as dotenvFor and the launcher do (#1825).
+    const trusted = workspace.isTrusted !== false;
+    if (qBinaryFrom(settings.qBinary, folder?.uri.fsPath ?? "", os.homedir(), trusted) === undefined) {
+      void window.showErrorMessage(plainMessage(`q-lint: ${relativeBinaryProblem(settings.qBinary, trusted)}.`));
+      return undefined;
+    }
     if (settings.envPath !== "") {
+      if (!path.isAbsolute(settings.envPath) && !trusted) {
+        void window.showErrorMessage(
+          plainMessage(`q-lint: q-lint.terminal.envPath "${settings.envPath}" is relative to the workspace folder, which is not trusted: name it by its full path.`),
+        );
+        return undefined;
+      }
       if (!path.isAbsolute(settings.envPath) && folder === undefined) {
         void window.showErrorMessage(
           plainMessage(`q-lint: q-lint.terminal.envPath "${settings.envPath}" is relative, and there is no workspace folder to read it from.`),
@@ -890,6 +905,7 @@ export class Live {
       text = undefined;
     }
     try {
+      assertWritable(folder.uri.fsPath, file.fsPath);
       await workspace.fs.writeFile(file, Buffer.from(withShared(text, process), "utf8"));
     } catch (error) {
       void window.showErrorMessage(plainMessage(`q-lint: could not write ${file.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
@@ -899,6 +915,15 @@ export class Live {
     void window.showInformationMessage(
       plainMessage(`q-lint: ${process.label} is in ${SHARED_FILE}, without its password${process.user !== undefined ? `: each user is asked for ${process.user}'s on connect` : ""}.`),
     );
+  }
+
+  /// Where `process`'s password is kept: a shared-list process's by this
+  /// folder and its address too (#1824).
+  private passwordKey(process: Pick<Process, "label" | "server"> & Partial<Pick<Process, "host" | "port" | "user" | "tls" | "ssh">>): string {
+    const folder = workspace.workspaceFolders?.[0]?.uri.toString();
+    return process.server === SHARED_SOURCE && process.host !== undefined && process.port !== undefined
+      ? sharedPasswordKey({ ...process, host: process.host, port: process.port }, folder ?? "")
+      : passwordKey(process);
   }
 
   /// Read the shared list again. A process whose host, port or user changed
@@ -951,7 +976,10 @@ export class Live {
         const before = this.context.workspaceState.get<unknown>(SHARED_SEEN_KEY);
         const seen = parseProcesses(Array.isArray(before) ? before : [], true).processes;
         for (const label of passwordsToForget(seen, read.processes)) {
-          await this.context.secrets.delete(passwordKey({ label: qualified(SHARED_SOURCE, label), server: SHARED_SOURCE }));
+          const was = seen.find((p) => p.label === label);
+          if (was !== undefined) {
+            await this.context.secrets.delete(this.passwordKey({ ...was, label: qualified(SHARED_SOURCE, label), server: SHARED_SOURCE }));
+          }
         }
         await this.context.workspaceState.update(
           SHARED_SEEN_KEY,
@@ -1311,7 +1339,7 @@ export class Live {
       return;
     }
     if (answer.password !== undefined) {
-      await this.context.secrets.store(passwordKey(answer.process), answer.password);
+      await this.context.secrets.store(this.passwordKey(answer.process), answer.password);
     }
     await this.save([...now, answer.process]);
   }
@@ -1402,19 +1430,19 @@ export class Live {
     // it was given for the one it was stored with (#1109).
     const moved = passwordsToForget([old], [{ ...process, label: old.label }]).length > 0;
     if (process.label !== old.label) {
-      const kept = await this.context.secrets.get(passwordKey(old));
-      await this.context.secrets.delete(passwordKey(old));
+      const kept = await this.context.secrets.get(this.passwordKey(old));
+      await this.context.secrets.delete(this.passwordKey(old));
       if (kept !== undefined && answer.password === undefined && !moved) {
-        await this.context.secrets.store(passwordKey(process), kept);
+        await this.context.secrets.store(this.passwordKey(process), kept);
       }
     }
     if (answer.password !== undefined) {
-      await this.context.secrets.store(passwordKey(process), answer.password);
+      await this.context.secrets.store(this.passwordKey(process), answer.password);
     } else if (moved) {
-      await this.context.secrets.delete(passwordKey(process));
+      await this.context.secrets.delete(this.passwordKey(process));
     }
     if (process.user === undefined) {
-      await this.context.secrets.delete(passwordKey(process));
+      await this.context.secrets.delete(this.passwordKey(process));
     }
     if (process.label !== old.label) {
       // Before the redraw, so its row is still shown running (#1692).
@@ -1434,7 +1462,7 @@ export class Live {
     // One being connected to is connected to as it is now (#1700).
     if (this.connectingAs?.label === old.label && this.connectingAs.server === undefined) {
       this.connectingAs = stillOpen(this.connectingAs, process);
-      this.connectingTo = passwordKey(process);
+      this.connectingTo = this.passwordKey(process);
     }
     const active = this.active;
     if (active?.label === old.label && active.server === undefined) {
@@ -1474,12 +1502,12 @@ export class Live {
     }
     // Or being connected to: it would become the active one once deleted.
     // Or reconnected to after a drop, between tries too (#1701).
-    const connecting = this.connecting !== undefined && this.connectingTo === passwordKey(process);
+    const connecting = this.connecting !== undefined && this.connectingTo === this.passwordKey(process);
     const reconnecting = this.reconnecting?.label === process.label && this.connection === undefined && this.active?.server === undefined;
     if ((this.activeLabel() === process.label && this.active?.server === undefined) || connecting || reconnecting) {
       await this.disconnect();
     }
-    await this.context.secrets.delete(passwordKey(process));
+    await this.context.secrets.delete(this.passwordKey(process));
     await this.save(this.processes().filter((p) => p.label !== process.label));
     await this.rebind(process.label, undefined);
   }
@@ -1638,7 +1666,7 @@ export class Live {
     }
     // Reached another way - TLS or a tunnel changed - its password is forgotten.
     for (const label of passwordsToForget(before, processes)) {
-      await this.context.secrets.delete(passwordKey({ label }));
+      await this.context.secrets.delete(this.passwordKey({ label }));
     }
     await this.save(merge(before, processes));
     this.retagActive();
@@ -1879,7 +1907,7 @@ export class Live {
     const saved = process.server === undefined;
     // One whose credential command (#1034) gives its password is not asked.
     const commanded = process.credentialCommand !== undefined && this.setting(readAdmin).credentialCommand;
-    if (!saved && process.user && !commanded && (await this.context.secrets.get(passwordKey(process))) === undefined) {
+    if (!saved && process.user && !commanded && (await this.context.secrets.get(this.passwordKey(process))) === undefined) {
       const password = await window.showInputBox({
         title: `q process ${process.label}: password of ${process.user}`,
         password: true,
@@ -1888,7 +1916,7 @@ export class Live {
       if (password === undefined) {
         return false;
       }
-      await this.context.secrets.store(passwordKey(process), password);
+      await this.context.secrets.store(this.passwordKey(process), password);
       // Kept, so deleting the server forgets it even after a reload.
       await this.discovery.passwordGiven(process.server!, process.label.slice(process.server!.length + 1));
     }
@@ -1898,7 +1926,7 @@ export class Live {
     // is forgotten: the next connect asks for it again. One that met a host
     // down or a timeout is kept (#1511).
     if (!connected && outcome.refused === true && !saved && process.user && !commanded) {
-      await this.context.secrets.delete(passwordKey(process));
+      await this.context.secrets.delete(this.passwordKey(process));
       await this.discovery.passwordGiven(process.server!, process.label.slice(process.server!.length + 1), false);
     }
     return connected;
@@ -1917,7 +1945,7 @@ export class Live {
       // for that process to be free - is stopped and this one follows: its
       // result says nothing of this process.
       // One to this process that was stopped is followed as well.
-      if (this.connectingTo === passwordKey(process) && this.stopConnect?.signal.aborted !== true) {
+      if (this.connectingTo === this.passwordKey(process) && this.stopConnect?.signal.aborted !== true) {
         return this.connecting;
       }
       // A connect script that blocks is closed too: no timeout may end it (#1712).
@@ -1932,7 +1960,7 @@ export class Live {
     // (#1510), and so is any connect replaced by another or by Disconnect (#1704).
     const cut = new AbortController();
     this.stopConnect = cut;
-    this.connectingTo = passwordKey(process);
+    this.connectingTo = this.passwordKey(process);
     this.connectingAs = process;
     this.connecting = (async () => {
       if (this.connection !== undefined) {
@@ -2049,8 +2077,7 @@ export class Live {
       const connection = await QConnection.open(
         {
           ...target,
-          host: "127.0.0.1",
-          port: tunnel.localPort,
+          ...tunnel.endpoint,
           ...(target.tls ? { servername: target.host } : {}),
         },
         undefined,
@@ -2073,7 +2100,7 @@ export class Live {
           tunnel.said,
         );
       } else if (error instanceof Error) {
-        error.message = error.message.split(`127.0.0.1:${tunnel.localPort}`).join(where);
+        error.message = error.message.split(tunnel.where).join(where);
       }
       tunnel.close();
       throw failure;
@@ -2140,7 +2167,7 @@ export class Live {
   /// kept nowhere. Throws why the command gave none.
   private async targetFor(process: Process): Promise<Target> {
     if (process.credentialCommand === undefined || !this.setting(readAdmin).credentialCommand) {
-      const password = process.user ? await this.context.secrets.get(passwordKey(process)) : undefined;
+      const password = process.user ? await this.context.secrets.get(this.passwordKey(process)) : undefined;
       return targetOf(process, password);
     }
     const output = await runCredentialCommand(process.credentialCommand, {
@@ -2722,7 +2749,7 @@ export class Live {
   /// connect script asks nobody and its failure is thrown (#1618).
   async runApart(process: Process, code: string, signal?: AbortSignal, options: { whole?: boolean; unattended?: boolean } = {}): Promise<GridAnswer> {
     const commanded = process.credentialCommand !== undefined && this.setting(readAdmin).credentialCommand;
-    if (!commanded && process.user && process.server !== undefined && (await this.context.secrets.get(passwordKey(process))) === undefined) {
+    if (!commanded && process.user && process.server !== undefined && (await this.context.secrets.get(this.passwordKey(process))) === undefined) {
       throw new Error(`no password is stored for ${process.user}: connect to ${process.label} once to give it`);
     }
     // Through its tunnel, as any connect to it is (#1070).
