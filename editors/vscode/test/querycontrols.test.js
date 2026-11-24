@@ -531,3 +531,19 @@ test("an unwrapped datetime is cut to the millisecond as KDB-X cuts it, not roun
   assert.strictEqual(vectorText([0.5 / 86400000, 1.5 / 86400000], 15), "2000.01.01T00:00:00.000 2000.01.01T00:00:00.001");
   assert.strictEqual(atomText(1561.4279999999999, -15), "2004.04.10T10:16:19.200");
 });
+
+test("a float at an exact decimal tie rounds to even, as C's %g in KDB-X does (#1758)", () => {
+  // KDB-X: 100.03125 -> 100.0312, 2345678.5 -> 2345678f, 0.125 at \P 2 -> 0.12,
+  // and at \P 17 182394159939530.125 -> 182394159939530.12.
+  assert.strictEqual(floatText(100.03125), "100.0312");
+  assert.strictEqual(floatText(100.03135), "100.0314");
+  assert.strictEqual(floatText(2345678.5), "2345678");
+  assert.strictEqual(floatText(2345679.5), "2345680");
+  assert.strictEqual(floatText(0.125, 2), "0.12");
+  assert.strictEqual(floatText(182394159939530.125, 17), "182394159939530.12");
+  assert.strictEqual(floatText(-979628008118440.5, 15), "-979628008118440");
+  assert.strictEqual(vectorText([1, 2, 100.03125], 9), "1 2 100.0312");
+  // Not a tie: the nearest decimal, as before.
+  assert.strictEqual(floatText(0.1 + 0.2, 17), "0.30000000000000004");
+  assert.strictEqual(floatText(9999999.6), "1e+07");
+});

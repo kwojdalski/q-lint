@@ -104,13 +104,54 @@ export function floatText(x: number, precision = 7, real = false): string {
       p++;
     }
   }
-  const [mantissa, e] = x.toExponential(p - 1).split("e");
-  const exponent = Number(e);
-  const trim = (digits: string): string => (digits.includes(".") ? digits.replace(/\.?0+$/, "") : digits);
+  const [digits, exponent] = significant(Math.abs(x), p);
+  const sign = x < 0 ? "-" : "";
+  const trim = (text: string): string => text.replace(/\.?0*$/, "");
   if (exponent < -4 || exponent >= p) {
-    return `${trim(mantissa)}e${exponent < 0 ? "-" : "+"}${String(Math.abs(exponent)).padStart(2, "0")}`;
+    return `${sign}${trim(`${digits[0]}.${digits.slice(1)}`)}e${exponent < 0 ? "-" : "+"}${String(Math.abs(exponent)).padStart(2, "0")}`;
   }
-  return trim(x.toFixed(p - 1 - exponent));
+  const text = exponent < 0 ? `0.${"0".repeat(-exponent - 1)}${digits}` : `${digits.slice(0, exponent + 1)}.${digits.slice(exponent + 1)}`;
+  return sign + trim(text);
+}
+
+/// The first `p` significant digits of `x` (positive, finite) and the power
+/// of ten of the first, rounded as C's printf rounds: from the exact binary
+/// value, a tie to even (#1758). JavaScript's toExponential takes a tie
+/// away from zero, and is used only where no tie can be: a tie has at most
+/// 18 significant digits, and a value of more than 2^±64 has more.
+function significant(x: number, p: number): [string, number] {
+  const view = new DataView(new ArrayBuffer(8));
+  view.setFloat64(0, x);
+  const bits = view.getBigUint64(0);
+  const biased = Number((bits >> 52n) & 0x7ffn);
+  let m = (bits & 0xfffffffffffffn) | (biased === 0 ? 0n : 1n << 52n);
+  let e = (biased === 0 ? 1 : biased) - 1075;
+  while (e < 0 && (m & 1n) === 0n) {
+    m >>= 1n;
+    e++;
+  }
+  if (Math.abs(e) > 64) {
+    const [mantissa, power] = x.toExponential(p - 1).split("e");
+    return [mantissa.replace(".", ""), Number(power)];
+  }
+  // x is exactly `all` times 10^`shift`.
+  const all = (e >= 0 ? m << BigInt(e) : m * 5n ** BigInt(-e)).toString();
+  const shift = Math.min(e, 0);
+  let exponent = all.length - 1 + shift;
+  if (all.length <= p) {
+    return [all.padEnd(p, "0"), exponent];
+  }
+  let head = BigInt(all.slice(0, p));
+  const rest = all.slice(p);
+  if (rest[0] > "5" || (rest[0] === "5" && (/[1-9]/.test(rest.slice(1)) || (head & 1n) === 1n))) {
+    head++;
+  }
+  let digits = head.toString();
+  if (digits.length > p) {
+    digits = digits.slice(0, p);
+    exponent++;
+  }
+  return [digits, exponent];
 }
 
 /// A time of day, or a span, from milliseconds or nanoseconds: `hh:mm`,
