@@ -67,7 +67,7 @@ import { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, rea
 import { HEARTBEAT, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
 import { historyHeading, historyLabel, iconsEscaped, plainMessage } from "./history";
 import { render } from "./query";
-import { QueryModes, type Rendered } from "./resultpanel";
+import { QueryModes, type PageLater, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
 import { commandLine, expandHome, parseEnv, replLines, shellKind, terminalCwd } from "./terminal";
 import { terminalEnv } from "./qenv";
@@ -2793,13 +2793,14 @@ export class Live {
   /// Rows `offset` on of the result `label`'s process holds for paging, or
   /// why they could not be fetched. Only on the connection the result came
   /// from, and only when no query is running on it.
-  private async pageHeld(label: string, offset: number, count: number): Promise<GridPage | string> {
+  /// Either of those may pass, so the result stays held (#1634).
+  private async pageHeld(label: string, offset: number, count: number): Promise<GridPage | PageLater | string> {
     const connection = this.connection;
     if (connection === undefined || this.activeLabel() !== label) {
-      return `it is no longer the connected process; run the query again to page through it`;
+      return { later: "it is not the connected process now; connect to it again, then scroll again" };
     }
     if (connection.isBusy) {
-      return "a query is running on it; scroll again once it ends";
+      return { later: "a query is running on it; scroll again once it ends" };
     }
     return readPage(await connection.call(PAGE, offset, count));
   }

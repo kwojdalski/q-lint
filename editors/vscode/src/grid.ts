@@ -159,13 +159,15 @@ export interface TreeNode {
 }
 
 /// A node as `GRID` sends it, `(key;text;type;count;children)`, or
-/// undefined when it is not one.
+/// undefined when it is not one. Cut 64 levels down: a node there is kept
+/// with its children not read, as one whose children were not sent, not
+/// dropped with the whole tree (#1654).
 export function readTree(raw: unknown, depth = 0): TreeNode | undefined {
-  if (!Array.isArray(raw) || raw.length !== 5 || depth > 64) {
+  if (!Array.isArray(raw) || raw.length !== 5) {
     return undefined;
   }
   const [key, text, type, count, children] = raw;
-  const kids = Array.isArray(children) ? children.map((c) => readTree(c, depth + 1)) : [];
+  const kids = Array.isArray(children) && depth < 64 ? children.map((c) => readTree(c, depth + 1)) : [];
   if (kids.some((k) => k === undefined)) {
     return undefined;
   }
@@ -402,6 +404,18 @@ export function toCsv(grid: Grid, rows?: number[]): string {
   return lines.join("\n") + "\n";
 }
 
+/// `payload` with only the columns at `columns`, in that order: what the
+/// grid draws under its layout, for an export of it (#1639). The key
+/// columns stay keys while they lead.
+export function pickColumns(payload: GridPayload, columns: number[]): GridPayload {
+  let keys = 0;
+  while (keys < columns.length && columns[keys] < payload.keys) {
+    keys++;
+  }
+  const pick = <T>(of: T[][]): T[][] => columns.map((i) => of[i] ?? []);
+  return { ...payload, keys, names: columns.map((i) => payload.names[i]), types: columns.map((i) => payload.types[i]), cells: pick(payload.cells), raw: pick(payload.raw), rank: pick(payload.rank) };
+}
+
 /// A page `PAGE` sent: the rows held, and the page's columns as `GRID`'s.
 export interface GridPage {
   count: number;
@@ -453,14 +467,34 @@ export function sortKey(x: unknown): number | bigint {
 
 /// A cell's text as it sorts: a string item, which `GRID` writes quoted and
 /// escaped as `-3!` does, as its characters, so a one-character one (`,"b"`)
-/// sorts among the others as `iasc` puts it (#1126).
+/// sorts among the others as `iasc` puts it (#1126). One `GRID` cut at 197
+/// characters and "..." has no closing quote: its characters up to the cut
+/// (#1643).
 export function sortText(cell: string): string {
-  const m = /^,?"((?:[^"\\]|\\.)*)"$/s.exec(cell);
+  const m = /^,?"((?:[^"\\]|\\.)*)(?:"|\\?\.\.\.)$/s.exec(cell);
   if (m === null) {
     return cell;
   }
   const named: Record<string, string> = { n: "\n", r: "\r", t: "\t" };
   return m[1].replace(/\\([0-7]{3}|.)/gs, (_, e: string) => (e.length === 3 ? String.fromCharCode(parseInt(e, 8)) : (named[e] ?? e)));
+}
+
+/// Two texts in code point order, as q sorts a symbol or a string by its
+/// UTF-8 bytes: JavaScript's `<` compares UTF-16 units, which puts an
+/// astral character (an emoji) before U+E000-U+FFFF (#1642).
+export function codePointOrder(a: string, b: string): number {
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    const x = a.charCodeAt(i);
+    const y = b.charCodeAt(i);
+    if (x !== y) {
+      // A surrogate is half of an astral character: after every BMP one.
+      const sx = x >= 0xd800 && x <= 0xdfff;
+      const sy = y >= 0xd800 && y <= 0xdfff;
+      return sx !== sy ? (sx ? 1 : -1) : x < y ? -1 : 1;
+    }
+  }
+  return a.length < b.length ? -1 : a.length > b.length ? 1 : 0;
 }
 
 /// Ranks over a whole column, as `GRID` gives them: equal values share one.
@@ -498,7 +532,7 @@ export function appendPage(payload: GridPayload, page: GridPage): GridPayload {
     const texts = values === undefined ? column.map(sortText) : [];
     const compare = values !== undefined
       ? (a: number, b: number) => (values[a] < values[b] ? -1 : values[a] > values[b] ? 1 : 0)
-      : (a: number, b: number) => (texts[a] < texts[b] ? -1 : texts[a] > texts[b] ? 1 : 0);
+      : (a: number, b: number) => codePointOrder(texts[a], texts[b]);
     return denseRank(column.length, compare);
   });
   return { ...payload, count: page.count, cells, raw, rank };

@@ -429,9 +429,18 @@ test("a watched query's next run replaces its result in place: the same id, no n
   assert.deepStrictEqual(next.grid.cells, [["2"]]);
   assert.strictEqual(next.history.length, 1);
   assert.deepStrictEqual(next.diff.changes, [[0, 0, "1"]]);
-  // Another query on show is not replaced: a run of `w` then is a new result.
+  // Another query on show stays on show: `w`'s next run replaces its own
+  // tab where it is, adding none and taking the panel from none (#1636).
   modes.show({ ...result([3]), code: "other" }, live());
   modes.show({ ...result([4]), code: "w" }, live(), true);
+  modes.show({ ...result([5]), code: "w" }, live(), true);
+  assert.strictEqual(page.posted.at(-1).code, "other");
+  assert.deepStrictEqual(page.posted.at(-1).history.map((h) => [h.code, h.rows]), [["w", 1], ["other", 1]]);
+  assert.strictEqual(page.posted.at(-1).history[0].id, first.id);
+  page.receive({ type: "select", id: page.posted.at(-1).id, pick: first.id });
+  assert.deepStrictEqual(page.posted.at(-1).grid.cells, [["5"]]);
+  // A run of `w` that is not watched is a new result.
+  modes.show({ ...result([6]), code: "w" }, live());
   assert.notStrictEqual(page.posted.at(-1).id, first.id);
   assert.strictEqual(page.posted.at(-1).history.length, 3);
   assert.strictEqual(fake.pages.length, 1);
@@ -500,6 +509,23 @@ test("paging is off by default; on, a cut result the process holds is fetched pa
   await new Promise((r) => setImmediate(r));
   assert.match(warned.at(-1), /could not fetch more rows from p: held/);
   assert.strictEqual(page.posted.at(-1).more, false);
+  // Busy for now (#1634): said, but the result stays held, and the next
+  // ask fetches.
+  let busy = true;
+  modes.setPager(async () => (busy ? { later: "a query is running on it; scroll again once it ends" } : { count: 5, names: ["c"], types: [7], cells: [["3", "4", "5"]], raw: [[3, 4, 5]], rank: [[0, 1, 2]] }));
+  modes.show({ ...result([1, 2], 5), held: true }, live({ gridLimit: 2 }));
+  page.receive({ type: "more", id: page.posted.at(-1).id });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.match(warned.at(-1), /could not fetch more rows from p: a query is running on it; scroll again once it ends/);
+  assert.strictEqual(page.posted.at(-1).more, true);
+  assert.strictEqual(page.posted.at(-1).paused, true);
+  busy = false;
+  page.receive({ type: "more", id: page.posted.at(-1).id });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(page.posted.at(-1).grid.cells, [["1", "2", "3", "4", "5"]]);
+  assert.strictEqual(page.posted.at(-1).paused, false);
   // Off by default.
   const plain = loadModes(fakeVscode());
   assert.strictEqual(plain.wantsHold(false), false);
@@ -748,4 +774,14 @@ test("each chart the page draws is kept for the q Plots view; off, none is (#970
   page.receive({ type: "plotted", id: m.id, format: "step", data: svg("e") });
   assert.strictEqual(PLOTS.list().length, 2);
   PLOTS.clear();
+});
+
+test("a result tab's label is cut by characters, never through an emoji (#1650)", () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  const code = "a".repeat(56) + "\u{1f600}\u{1f600}" + "b".repeat(10);
+  modes.show({ ...result([1]), code }, live());
+  const label = fake.pages[0].posted.at(-1).history[0].code;
+  assert.strictEqual(label, "a".repeat(56) + "\u{1f600}...");
+  assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])/.test(label));
 });

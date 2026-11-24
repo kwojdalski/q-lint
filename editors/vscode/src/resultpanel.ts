@@ -78,13 +78,14 @@ import {
   type ResultViewSettings,
   type ResultsLocation,
 } from "./liveconfig";
-import { appendPage, rowCount, toCsv, toGrid, type GridAnswer, type GridPage, type GridPayload } from "./grid";
+import { appendPage, pickColumns, rowCount, toCsv, toGrid, type GridAnswer, type GridPage, type GridPayload } from "./grid";
 import { diffGrids, type GridDiff } from "./resultdiff";
 import { fillDrilldown, templatesFor } from "./drilldown";
-import { EXPORT_FORMATS, exportResult, FORMAT_INFO, type ExportFormat } from "./resultexport";
+import { EXPORT_FORMATS, exportResult, FORMAT_INFO, shownGrid, type ExportFormat } from "./resultexport";
 import { plainSvg, PLOTS } from "./plots";
 import {
   lookParts,
+  MAX_FROZEN,
   parseLayout,
   parseLooks,
   parsePreset,
@@ -117,6 +118,7 @@ import { unsavedIn } from "./clicked";
 /// `media/gridlook.js`'s helpers the column commands use, as the page does.
 interface GridLookHelpers {
   isNumericList(grid: Grid, column: number): boolean;
+  columnFormat(name: string): { kind: string } | null;
   displayColumns(grid: Grid, layout: ColumnLayout | undefined): number[];
 }
 const GRID_LOOK = require("../media/gridlook.js") as GridLookHelpers;
@@ -226,17 +228,29 @@ interface Shown {
   before?: { payload: GridPayload; process: string; at: number };
   /// The process holds the rest of it, for the grid to page through.
   held?: boolean;
+  /// The last page asked for could not be fetched for now (a query was
+  /// running, another process connected): the grid asks again only when
+  /// scrolled (#1634).
+  paused?: boolean;
   /// The saved query it came from (#912), whose look it keeps.
   saved?: string;
   /// How it is dressed: rules, cell charts, layout, chart preset.
   look: ResultLook;
 }
 
-/// A query's code on one line, for a tab or a pick: its first line, cut.
+/// A page that cannot be fetched now but may be later - a query is
+/// running on the process, or another is connected - and why: the result
+/// stays held (#1634).
+export interface PageLater {
+  later: string;
+}
+
+/// A query's code on one line, for a tab or a pick: its first line, cut
+/// by characters, so never through an emoji's surrogate pair (#1650).
 function oneLine(code: string): string {
-  const line = code.trim().split(/\r?\n/)[0] ?? "";
+  const line = Array.from(code.trim().split(/\r?\n/)[0] ?? "");
   const more = line.length > 60 || code.trim().includes("\n");
-  return more ? `${line.slice(0, 57)}...` : line;
+  return more ? `${line.slice(0, 57).join("")}...` : line.join("");
 }
 
 function settings(): LiveSettings {
@@ -321,7 +335,7 @@ export class QueryModes {
   private control: Control | undefined;
   private controls = 0;
   /// Fetches rows of a result the process holds; set by the live half.
-  private pager: ((process: string, offset: number, count: number) => Promise<GridPage | string>) | undefined;
+  private pager: ((process: string, offset: number, count: number) => Promise<GridPage | PageLater | string>) | undefined;
   /// Runs a drill-down query on a process; set by the live half.
   private runner: ((code: string, process: string) => Promise<void>) | undefined;
   /// A page fetch under way, so a second is not sent behind it.
@@ -410,7 +424,7 @@ export class QueryModes {
   }
 
   /// Where the live half fetches pages of a held result from.
-  setPager(pager: (process: string, offset: number, count: number) => Promise<GridPage | string>): void {
+  setPager(pager: (process: string, offset: number, count: number) => Promise<GridPage | PageLater | string>): void {
     this.pager = pager;
   }
 
@@ -429,9 +443,10 @@ export class QueryModes {
   /// the value was tabular. False when it belongs in the output instead.
   /// `held`: it was asked for with `wantsHold`, so the process holds a
   /// result cut at the limit.
-  /// `inPlace`, for a watched query's next run (#914): when the result on
-  /// show is of the same code and process, it is replaced under its id, so
-  /// the page keeps its view, sort, filters and scroll, and no tab is added.
+  /// `inPlace`, for a watched query's next run (#914): a kept result of the
+  /// same code and process is replaced under its id, so the page keeps its
+  /// view, sort, filters and scroll, and no tab is added. One not on show
+  /// is replaced where it is, and the result on show stays (#1636).
   show(result: { process: string; code: string; millis: number; answer: GridAnswer; held?: boolean }, live: LiveSettings, inPlace = false): boolean {
     const { answer } = result;
     if (live.mode === "console" || !answer.ok) {
@@ -446,7 +461,8 @@ export class QueryModes {
     }
     const features = this.viewSettings();
     const last = features.enable.diff ? this.previous.get(result.code) : undefined;
-    const replaced = inPlace && this.shown?.code === result.code && this.shown.process === result.process ? this.shown : undefined;
+    const replaced = inPlace ? [...this.history].reverse().find((h) => h.code === result.code && h.process === result.process) : undefined;
+    const onShow = replaced === undefined || replaced === this.shown;
     // A saved query's result keeps its look; any other starts from the
     // last run of its code.
     const saved = replaced?.saved ?? (this.expecting !== undefined && result.code.includes(this.expecting.code) ? this.expecting.name : undefined);
@@ -485,7 +501,9 @@ export class QueryModes {
     } else {
       this.history.push(shown);
     }
-    this.shown = shown;
+    if (onShow) {
+      this.shown = shown;
+    }
     this.applyFeatures(features);
     if (replaced === undefined) {
       // A command's request was for the result it was asked on: a page
@@ -571,9 +589,13 @@ export class QueryModes {
     this.paging = true;
     try {
       const page = await this.pager(shown.process, have, Math.min(shown.limit, MAX_PAGED_ROWS - have));
+      shown.paused = false;
       if (typeof page === "string") {
         shown.held = false;
         void window.showWarningMessage(plainMessage(`q-lint: could not fetch more rows from ${shown.process}: ${page}`));
+      } else if ("later" in page) {
+        shown.paused = true;
+        void window.showWarningMessage(plainMessage(`q-lint: could not fetch more rows from ${shown.process}: ${page.later}`));
       } else {
         shown.payload = appendPage(shown.payload, page);
         const now = shown.payload.cells[0]?.length ?? 0;
@@ -848,6 +870,22 @@ export class QueryModes {
     return Array.isArray(rows) ? rows.filter((r) => Number.isInteger(r) && r >= 0 && r < held) : undefined;
   }
 
+  /// What an export of `shown` writes, as the grid draws it (#1639): the
+  /// columns its layout shows, in that order, while the layout is on.
+  private exportPayload(shown: Shown): GridPayload {
+    if (!this.viewSettings().enable.columnLayout) {
+      return shown.payload;
+    }
+    const names = { columns: shown.payload.names.map((name) => ({ name })) } as unknown as Grid;
+    return pickColumns(shown.payload, GRID_LOOK.displayColumns(names, shown.look.layout));
+  }
+
+  /// Whether an export writes the cells as their columns' formats show
+  /// them: while column formats are on.
+  private formatsOn(): boolean {
+    return this.viewSettings().enable.columnFormats;
+  }
+
   /// The conditional formats an export of `shown` keeps: none while they
   /// are off (#1013).
   private rulesOf(shown: Shown): FormatRule[] {
@@ -881,7 +919,7 @@ export class QueryModes {
     }
     let out;
     try {
-      out = exportResult(chosen, shown.payload, settings().gridDecimals, this.rowsOf(rows, shown), this.rulesOf(shown));
+      out = exportResult(chosen, this.exportPayload(shown), settings().gridDecimals, this.rowsOf(rows, shown), this.rulesOf(shown), this.formatsOn());
       await workspace.fs.writeFile(to, out.data);
     } catch (error) {
       void window.showErrorMessage(plainMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
@@ -904,7 +942,7 @@ export class QueryModes {
     if (chosen === undefined) {
       return;
     }
-    const out = exportResult(chosen, shown.payload, settings().gridDecimals, this.rowsOf(rows, shown), this.rulesOf(shown));
+    const out = exportResult(chosen, this.exportPayload(shown), settings().gridDecimals, this.rowsOf(rows, shown), this.rulesOf(shown), this.formatsOn());
     await env.clipboard.writeText(out.data.toString("utf8"));
     const notes = out.notes.length > 0 ? ` Note: ${out.notes.join("; ")}.` : "";
     void window.showInformationMessage(plainMessage(`q-lint: copied ${out.rows} row(s) as ${FORMAT_INFO[chosen].label}.${notes}`));
@@ -1191,7 +1229,9 @@ export class QueryModes {
     }
     const name = at.grid.columns[at.column].name;
     const now = at.shown.look.cellCharts?.[name];
-    const next = chart === "bar" ? (now === "bar" ? undefined : "bar") : now === "text" ? undefined : "text";
+    // A *_BAR column draws its bar by its name: toggled off as text (#1651).
+    const named = chart === "bar" && this.viewSettings().enable.columnFormats && GRID_LOOK.columnFormat(name)?.kind === "bar";
+    const next = named ? (now === "text" ? undefined : "text") : chart === "bar" ? (now === "bar" ? undefined : "bar") : now === "text" ? undefined : "text";
     await this.relook(at.shown, withCellChart(at.shown.look, name, next));
   }
 
@@ -1234,7 +1274,10 @@ export class QueryModes {
       return;
     }
     const place = GRID_LOOK.displayColumns(at.grid, at.shown.look.layout).indexOf(at.column);
-    if (place >= 0) {
+    if (place >= MAX_FROZEN) {
+      // Said, not frozen at MAX_FROZEN and undone later (#1641).
+      void window.showInformationMessage(plainMessage(`q-lint: at most ${MAX_FROZEN} columns are frozen; this column is number ${place + 1}. Move it nearer the left, or freeze fewer.`));
+    } else if (place >= 0) {
       await this.changeLayout((l) => ({ ...l, frozen: place + 1 }));
     }
   }
@@ -1400,7 +1443,7 @@ export class QueryModes {
     if (chart && !this.stillShown(shown)) {
       return;
     }
-    const text = resultMarkdown({ process: shown.process, code: shown.code, at: shown.at, payload: shown.payload, rows: this.rowsOf(rows, shown), decimals: settings().gridDecimals }, image !== undefined && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(image) ? image : undefined);
+    const text = resultMarkdown({ process: shown.process, code: shown.code, at: shown.at, payload: this.exportPayload(shown), rows: this.rowsOf(rows, shown), decimals: settings().gridDecimals, formats: this.formatsOn() }, image !== undefined && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(image) ? image : undefined);
     const at = editor !== undefined && editor.selections.length > 0 ? Math.min(editor.selections[editor.selections.length - 1].end, notebook.cellCount) : notebook.cellCount;
     const edit = new WorkspaceEdit();
     edit.set(notebook.uri, [NotebookEdit.insertCells(at, [new NotebookCellData(NotebookCellKind.Markup, text.text.replace(/\n+$/, "\n"), "markdown")])]);
@@ -1483,7 +1526,7 @@ export class QueryModes {
       }
       relative = imagePath(to.path, Date.now(), (r) => names.includes(r));
     }
-    const text = resultMarkdown({ process: shown.process, code: shown.code, at: shown.at, payload: shown.payload, rows: this.rowsOf(rows, shown), decimals: settings().gridDecimals }, relative === undefined ? undefined : linkTarget(relative));
+    const text = resultMarkdown({ process: shown.process, code: shown.code, at: shown.at, payload: this.exportPayload(shown), rows: this.rowsOf(rows, shown), decimals: settings().gridDecimals, formats: this.formatsOn() }, relative === undefined ? undefined : linkTarget(relative));
     const before = existing === undefined ? "" : Buffer.from(existing).toString("utf8");
     const gap = before === "" || before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
     const name = to.path.replace(/^.*\//, "");
@@ -1573,6 +1616,8 @@ export class QueryModes {
       saved: this.shown.saved,
       // Whether the grid can ask for more rows as it scrolls.
       more: this.canPage(),
+      // A page could not be fetched for now: ask again only on a scroll.
+      paused: this.shown.paused === true,
       history: (features.enable.history ? this.history : [this.shown]).map((h) => ({ id: h.id, process: h.process, code: oneLine(h.code), at: h.at, rows: h.payload.count })),
       control: this.control,
     };
@@ -1592,7 +1637,10 @@ export class QueryModes {
     if (this.shown === undefined) {
       return undefined;
     }
-    const grid = toGrid(this.shown.payload, settings().gridDecimals);
+    // As the grid shows them: its columns, in its order, as their formats
+    // show the cells (#1639).
+    const values = toGrid(this.exportPayload(this.shown), settings().gridDecimals);
+    const grid = this.formatsOn() ? shownGrid(values) : values;
     const order = Array.isArray(rows) ? rows.filter((r) => Number.isInteger(r) && r >= 0 && r < rowCount(grid)) : undefined;
     return { csv: toCsv(grid, order), count: order?.length ?? rowCount(grid) };
   }

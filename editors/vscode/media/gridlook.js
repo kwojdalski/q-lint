@@ -50,6 +50,20 @@
     return m ? m[1] + m[2].replace(/\B(?=(\d{3})+(?!\d))/g, ",") + m[3] : text;
   }
 
+  /// A number to `digits` decimals, every digit of its whole part: an
+  /// integer from q's text (`text`), which a long past 2^53 is exact in and
+  /// its double is not; a float past 1e21 not in exponent form (#1647).
+  function fixed(value, digits, text) {
+    const zeros = digits > 0 ? "." + "0".repeat(digits) : "";
+    if (/^-?\d+$/.test(text)) {
+      return text + zeros;
+    }
+    if (Math.abs(value) >= 1e21) {
+      return BigInt(value).toString() + zeros;
+    }
+    return value.toFixed(digits);
+  }
+
   /// What a cell of a numeric column shows under format `f`: `text`, q's,
   /// for a null or an infinity (`value` null) and for a format that is no
   /// number format.
@@ -63,9 +77,9 @@
       case "bps":
         return (value * 10000).toFixed(f.digits) + " bp";
       case "ccy":
-        return grouped(value.toFixed(f.digits));
+        return grouped(fixed(value, f.digits, text));
       case "num":
-        return f.digits >= 0 ? grouped(value.toFixed(f.digits)) : grouped(text);
+        return f.digits >= 0 ? grouped(fixed(value, f.digits, text)) : grouped(text);
       default:
         return text;
     }
@@ -113,9 +127,11 @@
   /// column the comparisons are of numbers, and top or bottom N are the
   /// rows holding the N greatest or least values, ties included; on any
   /// other, `=` and `<>` compare the cell's text and `contains` finds it in
-  /// any case. A null matches nothing. An empty Set for a rule its column
-  /// cannot take.
-  function ruleRows(grid, rule) {
+  /// any case. A null matches nothing; an infinity (0w, -0w) compares as
+  /// one (#1645). An empty Set for a rule its column cannot take. `shown`,
+  /// when given, is what a cell shows (column, row) where a format changes
+  /// q's text: `contains` finds either, as a filter does (#1646).
+  function ruleRows(grid, rule, shown) {
     const out = new Set();
     const c = grid.columns.findIndex(function (col) { return col.name === rule.column; });
     if (c < 0 || RULE_OPS.indexOf(rule.op) < 0) {
@@ -140,11 +156,15 @@
       });
       return out;
     }
-    const values = grid.values[c];
+    // grid.ts writes an infinity's value as null, as a null's: its text
+    // tells them apart.
+    const values = grid.values[c].map(function (v, r) {
+      return v !== null ? v : /^-0[wW]$/.test(cells[r]) ? -Infinity : /^0[wW]$/.test(cells[r]) ? Infinity : null;
+    });
     if (rule.op === "contains") {
       const lower = String(rule.value).toLowerCase();
       cells.forEach(function (text, r) {
-        if (values[r] !== null && text.toLowerCase().indexOf(lower) >= 0) {
+        if (values[r] !== null && (text.toLowerCase().indexOf(lower) >= 0 || (shown !== undefined && shown(c, r).toLowerCase().indexOf(lower) >= 0))) {
           out.add(r);
         }
       });
@@ -183,8 +203,8 @@
   /// The style each rule gives the cells it matches, per column: an array
   /// with, for a column a rule names, a Map from row to {background, color,
   /// bold}; null for the others. A later rule's colour wins over an
-  /// earlier's on the same cell; bold adds.
-  function ruleStyles(grid, rules) {
+  /// earlier's on the same cell; bold adds. `shown`: as ruleRows takes it.
+  function ruleStyles(grid, rules, shown) {
     const out = grid.columns.map(function () { return null; });
     (rules || []).forEach(function (rule) {
       const c = grid.columns.findIndex(function (col) { return col.name === rule.column; });
@@ -193,7 +213,7 @@
       }
       const style = rule.style || {};
       const map = out[c] || (out[c] = new Map());
-      ruleRows(grid, rule).forEach(function (r) {
+      ruleRows(grid, rule, shown).forEach(function (r) {
         const s = Object.assign({}, map.get(r) || {});
         if (PALETTE[style.background]) {
           s.background = PALETTE[style.background];
@@ -366,7 +386,8 @@
   /// The columns to draw, by place in the grid, in the layout's order: the
   /// names in `layout.order` first (a name twice in the grid takes its next
   /// column each time), then the rest in the grid's order, leaving out the
-  /// names in `layout.hidden`.
+  /// names in `layout.hidden` - unless that leaves none, as a new run
+  /// of only hidden columns would: then every one is drawn (#1652).
   function displayColumns(grid, layout) {
     const names = grid.columns.map(function (c) { return c.name; });
     const used = names.map(function () { return false; });
@@ -384,7 +405,8 @@
       }
     });
     const hidden = (layout && layout.hidden) || [];
-    return out.filter(function (i) { return hidden.indexOf(names[i]) < 0; });
+    const shown = out.filter(function (i) { return hidden.indexOf(names[i]) < 0; });
+    return shown.length === 0 ? out : shown;
   }
 
   /// The order of names after moving the column drawn at `from` to `to`

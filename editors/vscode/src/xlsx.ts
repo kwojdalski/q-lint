@@ -19,7 +19,7 @@
 import { deflateRawSync } from "node:zlib";
 import type { GridPayload } from "./grid";
 import { plainItem, rawColumn, textNull } from "./qliteral";
-import { xlsxRules, type FormatRule } from "./resultlook";
+import { rankEdge, xlsxRules, type FormatRule } from "./resultlook";
 
 /// One file of a zip: its name and its bytes.
 export interface ZipEntry {
@@ -274,7 +274,7 @@ export function toXlsx(payload: GridPayload, order: number[], rules: FormatRule[
   // the text the grid's rules read (#1411).
   const text = types.map((t, i) => !(t === 1 || t === 4 || (t >= 5 && t <= 9) || (t >= 12 && t <= 19)) &&
     !(t === 0 && rows.some((r) => plainItem(payload.cells[i][r] ?? "") !== (payload.cells[i][r] ?? ""))));
-  const formats = xlsxRules(rules, payload.names.slice(0, width), types.map((t) => t >= 5 && t <= 9), columnName, rows.length + 1, text);
+  const formats = xlsxRules(rules, payload.names.slice(0, width), types.map((t) => t >= 5 && t <= 9), columnName, rows.length + 1, text, (rule, c) => rankEdge(payload, c, rule));
   sheet.push("</sheetData>", ...formats.formatting, "</worksheet>");
   const xml = (lines: string[]) => Buffer.from(lines.join(""), "utf8");
   const data = zip([

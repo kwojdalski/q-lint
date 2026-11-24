@@ -534,3 +534,47 @@ test("package.json contributes each setting, command and menu, hidden while its 
   assert.match(contextMenu.get("q-lint.toggleResultDataBar"), /columnKind == 'numeric'/);
   assert.match(contextMenu.get("q-lint.toggleResultSparkline"), /columnKind == 'list'/);
 });
+
+test("Copy as CSV and the exports write the columns drawn, in the order drawn, as their formats show the cells (#1639)", async () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  modes.show(result("select from t", [...COLUMNS, ["ret_PCT", 9, ["0.0123", "0.5", "1"], [0.0123, 0.5, 1]]]), live);
+  const id = last(fake).id;
+  fake.pages[0].receive({ type: "look", id, layout: { order: ["px", "sym", "v"], hidden: ["v"], widths: {}, frozen: 0 } });
+  await tick();
+  await fake.vscode.commands["q-lint.exportResults"](new fake.vscode.Uri("/out.csv"));
+  assert.strictEqual(fake.files["/out.csv"].toString(), "px,sym,ret_PCT\n1,a,1.23%\n5,b,50.00%\n9,c,100.00%\n");
+  await fake.vscode.commands["q-lint.exportResultsAs"]("markdown", new fake.vscode.Uri("/out.md"));
+  assert.match(fake.files["/out.md"].toString(), /^\| px \| sym \| ret\\_PCT \|\n.*\n\| 1 \| a \| 1\.23% \|/);
+  // Typed formats keep the value, in the columns and order drawn.
+  await fake.vscode.commands["q-lint.exportResultsAs"]("json", new fake.vscode.Uri("/out.json"));
+  assert.match(fake.files["/out.json"].toString(), /^\[\n  \{"px": 1, "sym": "a", "ret_PCT": 0\.0123\}/);
+});
+
+test("Freeze Columns past the most frozen says so, rather than freezing what a resize then undoes (#1641)", async () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  const info = [];
+  fake.vscode.window.showInformationMessage = async (m) => info.push(m);
+  const cols = Array.from({ length: 60 }, (_, i) => ["c" + i, 7, ["1"], [1]]);
+  modes.show(result("wide", cols), live);
+  await fake.vscode.commands["q-lint.freezeResultColumns"]({ column: 54 });
+  assert.match(info.at(-1), /at most 50 columns are frozen; this column is number 55/);
+  assert.strictEqual(last(fake).look.layout?.frozen ?? 0, 0);
+  await fake.vscode.commands["q-lint.freezeResultColumns"]({ column: 49 });
+  assert.strictEqual(last(fake).look.layout.frozen, 50);
+  fake.pages[0].receive({ type: "look", id: last(fake).id, layout: { ...last(fake).look.layout, widths: { c0: 2400 } } });
+  await tick();
+  modes.show(result("wide", cols), live);
+  assert.deepStrictEqual([last(fake).look.layout.frozen, last(fake).look.layout.widths], [50, { c0: 2000 }]);
+});
+
+test("Toggle Data Bar turns off, and on again, the bar a *_BAR column draws by its name (#1651)", async () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  modes.show(result("q", [["sym", 11, ["a", "b"]], ["px_BAR", 9, ["1", "5"], [1, 5]]]), live);
+  await fake.vscode.commands["q-lint.toggleResultDataBar"]({ column: 1 });
+  assert.deepStrictEqual(last(fake).look.cellCharts, { px_BAR: "text" });
+  await fake.vscode.commands["q-lint.toggleResultDataBar"]({ column: 1 });
+  assert.strictEqual(last(fake).look.cellCharts, undefined);
+});

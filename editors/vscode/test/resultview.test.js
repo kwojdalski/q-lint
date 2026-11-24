@@ -48,6 +48,22 @@ test("a diff by place marks changed cells with what they were, and rows past the
   assert.deepStrictEqual(shorter.removed, { columns: ["a"], rows: [["2"], ["3"]], count: 2 });
 });
 
+test("a row past the other run's cut at gridLimit is not compared: neither added nor removed (#1640)", () => {
+  const cut = (columns, total, keys = 0) => ({ ...grid(columns, keys), total });
+  const d = diffGrids(cut({ id: [1, 2], v: [10, 20] }, 4), grid({ id: [1, 2, 3, 4], v: [10, 20, 30, 40] }));
+  assert.deepStrictEqual(d.addedRows, []);
+  assert.strictEqual(d.changed, 0);
+  assert.strictEqual(d.uncompared, 2);
+  const back = diffGrids(grid({ id: [1, 2, 3, 4], v: [10, 20, 30, 40] }), cut({ id: [1, 2], v: [10, 20] }, 4));
+  assert.strictEqual(back.removed.count, 0);
+  assert.strictEqual(back.uncompared, 2);
+  const keyed = diffGrids(cut({ id: [1, 2], v: [10, 20] }, 4, 1), grid({ id: [3, 1, 2, 4], v: [30, 10, 20, 40] }, 1));
+  assert.deepStrictEqual(keyed.addedRows, []);
+  assert.strictEqual(keyed.uncompared, 2);
+  // Neither cut: added and removed as before.
+  assert.strictEqual(diffGrids(grid({ a: [1] }), grid({ a: [1, 2] })).uncompared, 0);
+});
+
 test("a keyed result is matched by its key, so a row that moved is not a change", () => {
   const before = grid({ k: ["a", "b", "c"], v: [1, 2, 3] }, 1, { k: 11 });
   const after = grid({ k: ["c", "a", "d"], v: [3, 9, 4] }, 1, { k: 11 });
@@ -131,6 +147,17 @@ test("a tree node as GRID sends it, and nothing that is not one", () => {
   });
   assert.strictEqual(readTree([]), undefined);
   assert.strictEqual(readTree(["", "", 0, 1, [["bad"]]]), undefined);
+  // Nested past 64 levels: cut there, not dropped (#1654).
+  let deep = ["", "1", -7, 1, []];
+  for (let i = 0; i < 70; i++) deep = [String(i), "", 0, 1, [deep]];
+  let node = readTree(deep);
+  let levels = 0;
+  while (node.children.length > 0) {
+    node = node.children[0];
+    levels++;
+  }
+  assert.strictEqual(levels, 64);
+  assert.deepStrictEqual([node.count, node.text], [1, ""], "the cut node says it had a child not sent");
 });
 
 test("a tree node says what it holds, and opens when it has children or had some not sent", () => {

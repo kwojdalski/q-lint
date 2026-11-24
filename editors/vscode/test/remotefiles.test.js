@@ -9,7 +9,7 @@ const assert = require("node:assert");
 const { setUp, heads } = require("./fakeq.js");
 const { FILE_LIMIT, LIST_DIRECTORY, LIST_LIMIT, READ_FILE, WORKING_DIRECTORY, fileDocument, joinPath, readFileHead, readListing } = require("../out/remotefiles.js");
 const { registerFileBrowser, FILES_VIEW } = require("../out/remotefilesview.js");
-const { PROCESS_TOOL_COMMANDS } = require("../out/processtools.js");
+const { PROCESS_TOOL_COMMANDS, bytesText } = require("../out/processtools.js");
 const pkg = require("../package.json");
 
 test("a listing is read, one entry as atoms, and a file's head with its cut", () => {
@@ -116,4 +116,11 @@ test("connected elsewhere while a busy process was waited for, the other's files
   assert.match(await browsed, /could not list the working directory on rdb: rdb is no longer the active process/);
   assert.deepStrictEqual(sent, []);
   for (const d of context.subscriptions) d.dispose?.();
+});
+
+test("a file's size picks its unit after rounding: just under 1 MB is 1.0 MB, not 1024 KB (#1656)", () => {
+  assert.strictEqual(bytesText(1048575), "1.0 MB");
+  assert.strictEqual(bytesText(1023), "1023 B");
+  assert.strictEqual(bytesText(1536), "1.5 KB");
+  assert.strictEqual(bytesText(-1), "");
 });

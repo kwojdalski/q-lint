@@ -22,6 +22,8 @@ export interface ReportResult {
   /// The rows shown, in order; all of them when undefined.
   rows?: number[];
   decimals: number;
+  /// The cells as their columns' formats show them (#1639).
+  formats?: boolean;
 }
 
 /// Text as Markdown that shows it as written: its Markdown punctuation
@@ -47,9 +49,16 @@ export function resultMarkdown(result: ReportResult, image?: string): { text: st
   const fence = fenceFor(result.code);
   const lines = [`**Result** from ${markdownText(result.process)} at ${when}`, "", `${fence}q`, result.code.replace(/\s+$/, ""), fence, ""];
   // A cell's text is shown as text: its `<` is escaped and starts no HTML.
-  lines.push(toMarkdown(result.payload, result.decimals, shown).replace(/\n$/, ""));
+  lines.push(toMarkdown(result.payload, result.decimals, shown, result.formats === true).replace(/\n$/, ""));
   const held = result.payload.cells[0]?.length ?? 0;
-  if (shown.length < order.length || result.payload.count > held) {
+  const fmt = (n: number): string => n.toLocaleString("en-US");
+  const cut = shown.length < order.length || result.payload.count > held;
+  if (cut && order.length < held) {
+    // Rows the grid's filters picked are not the first of anything (#1649).
+    const which = shown.length < order.length ? `The first ${fmt(shown.length)} of the ${fmt(order.length)} rows` : `The ${fmt(shown.length)} row${shown.length === 1 ? "" : "s"}`;
+    const whole = result.payload.count > held ? `; the result has ${fmt(result.payload.count)}` : "";
+    lines.push("", `_${which} the grid's filters show, of the ${fmt(held)} held${whole}._`);
+  } else if (cut) {
     const of = Math.max(order.length, result.payload.count);
     lines.push("", `_The first ${shown.length.toLocaleString("en-US")} of ${of.toLocaleString("en-US")} rows._`);
   }
