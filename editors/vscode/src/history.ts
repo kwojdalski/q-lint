@@ -11,6 +11,27 @@ export function markdownText(text: string): string {
 /// The longest label a history row or Run Again's pick shows, in characters.
 export const LABEL_LIMIT = 80;
 
+/// The query history as a window shows and writes it (#1619): `entry`
+/// first, then what `kept` - this window's copy, which a read just after a
+/// write can be ahead of - and `stored` - the shared list, which every
+/// window writes - hold between them, each entry once, newest first, none
+/// sent at or before `cleared` (when Clear was last run, in any window), at
+/// most `limit`.
+export function mergedHistory<T extends { at: string; process: string; code: string }>(entry: T | undefined, kept: readonly T[], stored: readonly T[], cleared: string | undefined, limit: number): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const e of [...(entry === undefined ? [] : [entry]), ...kept, ...stored]) {
+    const key = `${e.at}\u0000${e.process}\u0000${e.code}`;
+    if (seen.has(key) || (cleared !== undefined && e.at <= cleared && e !== entry)) {
+      continue;
+    }
+    seen.add(key);
+    out.push(e);
+  }
+  // Stable: entries sent at the same moment keep their order.
+  return out.sort((a, b) => (a === entry ? -1 : b === entry ? 1 : a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).slice(0, limit);
+}
+
 /// A query's label: its first line that is not blank, without the CR of a
 /// CRLF file, cut to `LABEL_LIMIT` characters - never inside a surrogate
 /// pair, which would show a replacement character.

@@ -62,7 +62,7 @@ import { ClosedBeforeHandshake, QConnection, QError, type Target } from "./qclie
 import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, readTunnel } from "./tunnel";
 import { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, readGateway } from "./gateway";
 import { HEARTBEAT, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
-import { historyHeading, historyLabel, iconsEscaped, plainMessage } from "./history";
+import { historyHeading, historyLabel, iconsEscaped, mergedHistory, plainMessage } from "./history";
 import { render } from "./query";
 import { QueryModes, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
@@ -108,6 +108,7 @@ const PROCESSES_KEY = "q-lint.processes";
 /// The address of each process the shared list held when last read (#955).
 const SHARED_SEEN_KEY = "q-lint.sharedProcessesSeen";
 const HISTORY_KEY = "q-lint.queryHistory";
+const HISTORY_CLEARED_KEY = "q-lint.queryHistoryCleared";
 /// How many queries the history keeps.
 const HISTORY_LIMIT = 200;
 
@@ -486,10 +487,11 @@ export class Live {
   readonly runFileWith: (extra: RunExtra) => Promise<void>;
   private connection: QConnection | undefined;
   /// The query history, newest first. Kept here and written through to
-  /// `globalState`, never rebuilt from it: a read of `globalState` straight
-  /// after a write can return the value before it, and a list rebuilt from
-  /// that drops the entry just added.
-  private queries: HistoryEntry[] | undefined;
+  /// `globalState`, never rebuilt from it alone: a read of `globalState`
+  /// straight after a write can return the value before it, and a list
+  /// rebuilt from that drops the entry just added. Merged with it at each
+  /// read, since every window writes it (#1619).
+  private queries: HistoryEntry[] = [];
   private active: Process | undefined;
   /// A connect in progress, so a second one waits for it instead of opening
   /// another.
@@ -914,8 +916,13 @@ export class Live {
   }
 
   history(): HistoryEntry[] {
-    this.queries ??= this.context.globalState.get<HistoryEntry[]>(HISTORY_KEY, []);
+    this.queries = mergedHistory(undefined, this.queries, this.storedHistory(), this.context.globalState.get<string>(HISTORY_CLEARED_KEY), HISTORY_LIMIT);
     return this.queries;
+  }
+
+  private storedHistory(): HistoryEntry[] {
+    const stored = this.context.globalState.get<unknown>(HISTORY_KEY, []);
+    return Array.isArray(stored) ? (stored as HistoryEntry[]) : [];
   }
 
   /// The history through the Query History view's filter.
@@ -2806,7 +2813,7 @@ export class Live {
   }
 
   async record(entry: HistoryEntry): Promise<void> {
-    this.queries = [entry, ...this.history()].slice(0, HISTORY_LIMIT);
+    this.queries = mergedHistory(entry, this.queries, this.storedHistory(), this.context.globalState.get<string>(HISTORY_CLEARED_KEY), HISTORY_LIMIT);
     this.refreshHistory();
     await this.context.globalState.update(HISTORY_KEY, this.queries);
   }
@@ -2850,8 +2857,10 @@ export class Live {
 
   private async clearHistory(): Promise<void> {
     this.queries = [];
+    // When, so another window's copy drops what it held from before (#1619).
+    await this.context.globalState.update(HISTORY_CLEARED_KEY, new Date().toISOString());
+    await this.context.globalState.update(HISTORY_KEY, []);
     this.refreshHistory();
-    await this.context.globalState.update(HISTORY_KEY, this.queries);
   }
 
   /// Redraw the Query History view, saying what it is filtered by and when
