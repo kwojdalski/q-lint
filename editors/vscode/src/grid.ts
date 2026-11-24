@@ -465,9 +465,11 @@ export function sortKey(x: unknown): number | bigint {
 
 /// A cell's text as it sorts: a string item, which `GRID` writes quoted and
 /// escaped as `-3!` does, as its characters, so a one-character one (`,"b"`)
-/// sorts among the others as `iasc` puts it (#1126).
+/// sorts among the others as `iasc` puts it (#1126). One `GRID` cut at 197
+/// characters and "..." has no closing quote: its characters up to the cut
+/// (#1643).
 export function sortText(cell: string): string {
-  const m = /^,?"((?:[^"\\]|\\.)*)"$/s.exec(cell);
+  const m = /^,?"((?:[^"\\]|\\.)*)(?:"|\\?\.\.\.)$/s.exec(cell);
   if (m === null) {
     return cell;
   }

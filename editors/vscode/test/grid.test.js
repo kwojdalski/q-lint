@@ -6,7 +6,7 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const Long = require("long");
-const { GRID, readGridAnswer, toGrid, toCsv, csvField, csvText, cellText, typeName, rowCount, appendPage, codePointOrder } = require("../out/grid.js");
+const { GRID, readGridAnswer, toGrid, toCsv, csvField, csvText, cellText, typeName, rowCount, appendPage, codePointOrder, sortText } = require("../out/grid.js");
 const { RUN } = require("../out/query.js");
 const panel = require("../media/result.js");
 const charts = require("../media/chartspec.js");
@@ -616,4 +616,15 @@ test("a page added to a symbol column ranks it in code point order, as q sorts b
   assert.strictEqual(codePointOrder("x", "x"), 0);
   const grid = { columns: [{ name: "s" }], cells: [["\u{1f600}", "\uff21", "z"]], rank: [null], values: [null] };
   assert.deepStrictEqual(panel.visibleRows(grid, [], { column: 0, descending: false }), [2, 1, 0]);
+});
+
+test("a page added to a string column ranks a cell GRID cut at 197 characters by its characters, not its quote (#1643)", () => {
+  const long = '"' + "z".repeat(196) + "...";
+  const first = { count: 3, keys: 0, names: ["s"], types: [0], cells: [['"apple"']], raw: [[]], rank: [[0]] };
+  const page = { count: 3, names: ["s"], types: [0], cells: [[long, '"mango"']], raw: [[]], rank: [[1, 0]] };
+  assert.deepStrictEqual(appendPage(first, page).rank[0], [0, 2, 1]);
+  assert.strictEqual(sortText(long), "z".repeat(196));
+  // A whole string that ends in dots keeps them; a cut through an escape drops its backslash.
+  assert.strictEqual(sortText('"ab..."'), "ab...");
+  assert.strictEqual(sortText('"ab\\...'), "ab");
 });
