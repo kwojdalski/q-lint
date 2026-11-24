@@ -1048,3 +1048,20 @@ test("an amend or ! through an adverb or a composition is a change (#1771)", () 
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("KDB-X use, .h.ht and .Q.L are changes (#1775)", () => {
+  const cases = {
+    "use`kx.rest": ["calls use"],
+    "r:use`kx.rest": ["assigns r", "calls use"],
+    ".h.ht`T": ["calls .h.ht"],
+    ".Q.L[`:db;();`:.]": ["calls .Q.L"],
+    // Their neighbours read.
+    ".h.htc[`p;\"x\"]": [],
+    ".h.hta[`a;()!()]": [],
+    "select users from t": [],
+    ".Q.s t": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
