@@ -39,8 +39,8 @@ test("a terminal gets the .env file's variables in its environment, never on its
 });
 
 /// A stand-in `vscode` for QTerminals: settings from `config`, files from
-/// `files`, terminals and messages kept.
-function fakeVscode(config = {}, files = {}) {
+/// `files`, terminals and messages kept; one workspace folder, `root`.
+function fakeVscode(config = {}, files = {}, root = "/ws") {
   const terminals = [];
   const messages = [];
   class Uri {
@@ -53,13 +53,13 @@ function fakeVscode(config = {}, files = {}) {
       return new Uri(p);
     }
   }
-  const folder = { uri: Uri.file("/ws"), name: "ws", index: 0 };
+  const folder = { uri: Uri.file(root), name: "ws", index: 0 };
   const vscode = new Proxy(
     {
       Uri,
       env: { shell: "/bin/zsh" },
       window: {
-        activeTextEditor: { document: { uri: Uri.file("/ws/a.q"), isDirty: false, save: async () => true, getText: () => "" } },
+        activeTextEditor: { document: { uri: Uri.file(`${root}/a.q`), isDirty: false, save: async () => true, getText: () => "" } },
         createTerminal: (options) => {
           const terminal = { options, sent: [], show() {}, sendText: (t) => terminal.sent.push(t), dispose() {} };
           terminals.push(terminal);
@@ -72,7 +72,7 @@ function fakeVscode(config = {}, files = {}) {
       },
       workspace: {
         workspaceFolders: [folder],
-        getWorkspaceFolder: (uri) => (uri.path.startsWith("/ws/") ? folder : undefined),
+        getWorkspaceFolder: (uri) => (uri.path.startsWith(`${root}/`) ? folder : undefined),
         getConfiguration: () => ({ get: (key, fallback) => (key in config ? config[key] : fallback) }),
         fs: {
           readFile: async (uri) => {
@@ -138,6 +138,19 @@ test("Run File with Arguments starts its q with the .env file's variables and th
   await loadTerminals(off).runFile({ args: ["x"], input: [] });
   assert.deepStrictEqual(off.terminals[0].options.env, { FEED: "live" });
   assert.strictEqual(off.terminals[0].sent[0], `${binary} a.q x`);
+});
+
+test("a workspace-relative KDB-X qBinary gets its layout's QHOME and QLIC in a terminal, as in the launcher (#1839)", async (t) => {
+  const ws = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-kxrel-"));
+  t.after(() => fs.rmSync(ws, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(ws, "kx", "bin"), { recursive: true });
+  fs.mkdirSync(path.join(ws, "kx", "q"));
+  fs.writeFileSync(path.join(ws, "kx", "bin", "q"), "");
+  fs.writeFileSync(path.join(ws, "kx", "kc.lic"), "");
+  const fake = fakeVscode({ "terminal.qBinary": "./kx/bin/q" }, {}, ws);
+  await loadTerminals(fake).repl();
+  const line = fake.terminals[0].sent[0];
+  assert.ok(line.includes(`QHOME=${path.join(ws, "kx", "q")}`) && line.includes(`QLIC=${path.join(ws, "kx")}`), line);
 });
 
 test("another file, and none: a missing .env is no .env and says nothing", async () => {

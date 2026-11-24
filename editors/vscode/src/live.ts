@@ -487,8 +487,10 @@ export class QTerminals {
     }
     // The `.env` file's variables go in the terminal's environment, never on
     // its command line, where they would show; the layout's stay under the
-    // env file's.
-    const { shown, hidden, refs } = terminalEnv(layoutEnvFor(read.qBinary, from), variables, await dotenvFor(from));
+    // env file's. A relative q's layout is read where it is, the folder's
+    // (#1839).
+    const layout = layoutEnvFor(qBinaryFrom(settings.qBinary, folder?.uri.fsPath, os.homedir()) ?? settings.qBinary, from);
+    const { shown, hidden, refs } = terminalEnv(layout, variables, await dotenvFor(from));
     // A file inside the folder is named relative to it, as you would type it.
     const relative = file !== undefined && cwd !== undefined ? path.relative(cwd, file) : "";
     const inside = relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
