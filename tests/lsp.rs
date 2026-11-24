@@ -1324,6 +1324,178 @@ fn deleting_a_folder_forgets_every_definition_under_it() {
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
+/// The events of `events`, each `(path, type)`, that a client sends a
+/// server which registered `watchers`: one whose path matches a pattern
+/// registered for that kind of event (LSP `FileSystemWatcher`: a `kind` of
+/// create 1, change 2, delete 4, all three when there is none). Only the
+/// patterns the server writes are read: `**/*`, any path, and `**/*.ext`.
+fn forwarded(watchers: &Value, events: &[(&std::path::Path, u64)]) -> Vec<Value> {
+    let matches = |watcher: &Value, path: &std::path::Path, kind: u64| {
+        let glob = watcher["globPattern"].as_str().unwrap_or("-");
+        let named = match glob.strip_prefix("**/*") {
+            Some(extension) => path.to_string_lossy().ends_with(extension),
+            None => false,
+        };
+        named && watcher["kind"].as_u64().unwrap_or(7) & kind != 0
+    };
+    events
+        .iter()
+        .filter(|(path, event)| {
+            let kind = [0, 1, 2, 4][*event as usize];
+            watchers
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|w| matches(w, path, kind))
+        })
+        .map(|(path, event)| json!({"uri": file_uri(path), "type": event}))
+        .collect()
+}
+
+#[test]
+fn a_folder_moved_on_disk_is_heard_of_through_the_watchers_registered() {
+    // #2028: an editor has one event for a folder renamed, moved or deleted
+    // on disk - for the folder, none for the files in it - and sends it
+    // only if the folder's path matches a pattern the server registered.
+    // `**/*.q` and `**/*.toml` match no folder, so after `mv lib core` the
+    // server heard nothing, and went on answering from `lib`.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir(root.join("lib")).unwrap();
+    std::fs::write(root.join("lib/util.q"), "helper:{[a] a+1}\n").unwrap();
+    let mut server = Server::start_in(&root, &[]);
+    let mut capabilities = client_capabilities();
+    capabilities["workspace"] = json!({"didChangeWatchedFiles": {"dynamicRegistration": true}});
+    server.send(
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+        "capabilities": capabilities,
+        "workspaceFolders":[{"uri":file_uri(&root),"name":"ws"}]}}),
+    );
+    server.receive();
+    server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    let request = server.until(|m| m["method"] == "client/registerCapability");
+    let watchers = request["params"]["registrations"][0]["registerOptions"]["watchers"].clone();
+    server.send(json!({"jsonrpc":"2.0","id":request["id"],"result":null}));
+    let app = file_uri(&root.join("app.q"));
+    server.open(&app, "r:helper 2\n");
+    let mut next = 70;
+    let mut defined = |server: &mut Server| {
+        next += 1;
+        server.send(
+            json!({"jsonrpc":"2.0","id":next,"method":"textDocument/definition",
+            "params":{"textDocument":{"uri":app},"position":{"line":0,"character":3}}}),
+        );
+        let reply = loop {
+            let message = server.receive();
+            if message["id"] == next {
+                break message;
+            }
+        };
+        let places = reply["result"].as_array().cloned().unwrap_or_default();
+        let uris = places
+            .iter()
+            .map(|p| p["uri"].as_str().unwrap().to_string());
+        uris.collect::<Vec<_>>()
+    };
+    assert_eq!(defined(&mut server), [file_uri(&root.join("lib/util.q"))]);
+    std::fs::rename(root.join("lib"), root.join("core")).unwrap();
+    let (lib, core) = (root.join("lib"), root.join("core"));
+    let changes = forwarded(&watchers, &[(&lib, 3), (&core, 1)]);
+    assert_eq!(changes.len(), 2, "{watchers} lets through {changes:?}");
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+        "params":{"changes":changes}}),
+    );
+    assert_eq!(defined(&mut server), [file_uri(&root.join("core/util.q"))]);
+    // What else such a pattern lets through says nothing to the server: a
+    // file that is no q created or deleted, and a q file's event twice, once
+    // for each pattern its path matches.
+    std::fs::write(root.join("core/notes.txt"), "helper:{0}\n").unwrap();
+    std::fs::write(root.join("core/more.q"), "other:{[a] a}\n").unwrap();
+    let (notes, more, gone) = (
+        root.join("core/notes.txt"),
+        root.join("core/more.q"),
+        root.join("core/gone.txt"),
+    );
+    let mut changes = forwarded(&watchers, &[(&notes, 1), (&more, 1), (&gone, 3)]);
+    assert_eq!(changes.len(), 3, "{changes:?}");
+    changes.push(changes[1].clone());
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+        "params":{"changes":changes}}),
+    );
+    assert_eq!(defined(&mut server), [file_uri(&root.join("core/util.q"))]);
+    // A file only changed is not sent for the wide pattern.
+    assert!(forwarded(&watchers, &[(&notes, 2)]).is_empty());
+    assert_eq!(forwarded(&watchers, &[(&more, 2)]).len(), 1);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn a_folder_event_stands_for_the_configuration_inside_it() {
+    // The one event for a folder is the only word of a qlinter.toml in it
+    // too (#2028): the folder gone, a document that was linted under that
+    // configuration is linted as if it had never been; and the folder back
+    // with one, under it again.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let sub = root.join("sub");
+    let held = root.join("held");
+    std::fs::create_dir(&sub).unwrap();
+    std::fs::write(sub.join("qlinter.toml"), "profile = \"styleq\"\n").unwrap();
+    let (mut server, _) = start_with_options(&root, &["--lsp"], json!({}), Some(&root));
+    let uri = file_uri(&sub.join("a.q"));
+    server.open(&uri, TWO_FAMILIES);
+    assert_eq!(codes_of(&server.diagnostics_for(&uri)), ["QF001", "QS001"]);
+    let moved = |server: &mut Server, from: &std::path::Path, to: &std::path::Path| {
+        std::fs::rename(from, to).unwrap();
+        server.send(
+            json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+            "params":{"changes":[{"uri":file_uri(from),"type":3},{"uri":file_uri(to),"type":1}]}}),
+        );
+        codes_of(&server.diagnostics_for(&uri))
+    };
+    assert_eq!(moved(&mut server, &sub, &held), ["QF001"]);
+    assert_eq!(moved(&mut server, &held, &sub), ["QF001", "QS001"]);
+    // And a folder that comes with one, where a document was already
+    // linted without: the search made for it then is made again.
+    let later = root.join("later");
+    let unsaved = file_uri(&later.join("b.q"));
+    // The other open document is linted again each time too, before or
+    // after: what stands is the last published by the time a request sent
+    // behind the notification is answered.
+    let mut asked = 80;
+    let mut standing = |server: &mut Server| {
+        asked += 1;
+        server.send(
+            json!({"jsonrpc":"2.0","id":asked,"method":"workspace/symbol",
+            "params":{"query":"none"}}),
+        );
+        let mut last = None;
+        loop {
+            let message = server.receive();
+            if message["id"] == asked {
+                break last.expect("diagnostics were published");
+            }
+            if message["params"]["uri"] == unsaved.as_str() {
+                last = Some(codes_of(
+                    message["params"]["diagnostics"].as_array().unwrap(),
+                ));
+            }
+        }
+    };
+    server.open(&unsaved, TWO_FAMILIES);
+    assert_eq!(standing(&mut server), ["QF001"]);
+    std::fs::create_dir(&later).unwrap();
+    std::fs::write(later.join("qlinter.toml"), "profile = \"styleq\"\n").unwrap();
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+        "params":{"changes":[{"uri":file_uri(&later),"type":1}]}}),
+    );
+    assert_eq!(standing(&mut server), ["QF001", "QS001"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
 #[test]
 fn a_document_takes_the_profile_of_the_qlinter_toml_above_it() {
     // An editor starts the server with no --profile when the user has not set

@@ -1808,8 +1808,15 @@ pub fn serve(
             ("workspace/didChangeWatchedFiles", None) => {
                 let mut changed = false;
                 let mut config_changed = false;
+                let mut seen = HashSet::new();
                 for change in params["changes"].as_array().into_iter().flatten() {
                     let uri = uri_of(change);
+                    let deleted = change["type"].as_i64() == Some(3);
+                    // A client sends an event once for each pattern its
+                    // path matches, and a q file's matches two (`watchers`).
+                    if !seen.insert((uri.clone(), change["type"].as_i64())) {
+                        continue;
+                    }
                     // A configuration file changed: every file it governs may
                     // now report differently, so forget them all and relint.
                     let path = path_of(&uri);
@@ -1824,10 +1831,19 @@ pub fn serve(
                     // A directory, not entered through a symlink, as the
                     // scan does not.
                     let folder = std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir());
-                    if !folder {
+                    // The pattern that matches a folder matches every other
+                    // path too (`watchers`): a file that is no q says
+                    // nothing here. One that is gone may have been a folder.
+                    if !folder && !deleted && !is_q_path(&path) {
+                        continue;
+                    }
+                    // A folder's one event is the only word of a
+                    // configuration that came with it, too.
+                    changed |= (folder || deleted) && policy.forget_under(Path::new(&path));
+                    if !folder && is_q_path(&path) {
                         closed.touch(file_key(&path));
                     }
-                    changed |= if change["type"].as_i64() == Some(3) {
+                    changed |= if deleted {
                         idx.remove_tree(&path, &docs)
                     } else if folder {
                         idx.add_tree(&path, policy)
@@ -2103,6 +2119,19 @@ fn is_config_path(path: &str) -> bool {
 
 /// What the server asks a client to watch for it: the workspace's `.q`
 /// files, and every `.toml` in it, since a base is `extend`ed by any name.
+///
+/// And every path created or deleted, which is how a folder is heard of. An
+/// editor has ONE event for a folder renamed, moved or deleted on disk -
+/// for the folder, none for the files in it - and sends it only if the
+/// folder's path matches a pattern registered here. A glob cannot say "a
+/// directory", and a folder's name is any name, so the pattern is every
+/// path: with only the two above, `mv lib core` reached the server as
+/// nothing, and it answered from `lib` until restarted (#2028). Not a
+/// change (`kind` is create and delete, LSP `WatchKind` 1 and 4): a folder
+/// is not changed, and every write to every file in the workspace is what
+/// that would send. What it does send besides folders - any other file
+/// created or deleted - the handler drops on its name.
+///
 /// And, for a client that takes a pattern rooted elsewhere, the files and
 /// directories outside the workspace that the settings came from or were
 /// searched for in - a configuration above the folder, an `extend`ed base
@@ -2112,6 +2141,7 @@ fn watchers(roots: &[String], policy: &Policy, relative: bool) -> Vec<Value> {
     let mut out = vec![
         json!({"globPattern": "**/*.q"}),
         json!({"globPattern": "**/*.toml"}),
+        json!({"globPattern": "**/*", "kind": 5}),
     ];
     if !relative {
         return out;

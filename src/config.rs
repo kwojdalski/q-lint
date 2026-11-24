@@ -274,16 +274,30 @@ impl Policy {
     }
 
     /// Whether `path` is a file some settings read so far were made from -
-    /// one found beside the source, one it extends, or `--config`.
+    /// one found beside the source, one it extends, or `--config` - or a
+    /// folder that holds one: an editor's watcher has one event for a
+    /// folder moved or deleted and none for the files in it.
     pub fn read_from(&self, path: &Path) -> bool {
         let path = absolute(path);
         self.is_explicit_config(&path)
-            || self.baselines.borrow().contains_key(&path)
+            || self.baselines.borrow().keys().any(|b| b.starts_with(&path))
             || self
                 .cache
                 .borrow()
                 .values()
-                .any(|settings| settings.sources.contains(&path))
+                .any(|settings| settings.sources.iter().any(|s| s.starts_with(&path)))
+    }
+
+    /// Forget the settings of every directory in the folder `dir`, which
+    /// appeared or went, and whether there were any. They were made without
+    /// what the folder holds now: a configuration that came with it would
+    /// not be searched for, the search having been made already.
+    pub fn forget_under(&self, dir: &Path) -> bool {
+        let dir = absolute(dir);
+        let mut cache = self.cache.borrow_mut();
+        let before = cache.len();
+        cache.retain(|searched, _| !searched.starts_with(&dir));
+        cache.len() != before
     }
 
     /// What a change to could change the settings read so far: the files

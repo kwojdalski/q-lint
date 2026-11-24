@@ -1231,6 +1231,11 @@ The index stops after 20,000 `.q` files or 500,000 directory entries of any
 kind, whichever comes first, so a folder opened at `/` cannot stall the
 server; past that, a name defined only in a file it did not reach is
 reported as undefined in the editor where `qlinter .` would not.
+It follows the disk through `workspace/didChangeWatchedFiles`, and asks a
+client that registers watchers for three: `**/*.q`, `**/*.toml`, and `**/*`
+for a path created or deleted (`kind` 5) - the last because a folder
+renamed, moved or deleted is one event for the folder and none for the
+files in it, which stands for every `.q` file and configuration it holds.
 A value the server cannot read is reported with `window/showMessage` and its
 default used.
 
