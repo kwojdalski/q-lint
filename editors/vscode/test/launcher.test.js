@@ -291,6 +291,35 @@ test("turned off while a Start is on its way, nothing is spawned (#1434)", async
   assert.ok(!output("a").includes("$ "), output("a"));
 });
 
+test("turned off while a Start waits for the spawn, the process is stopped, not kept (#1740)", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-"));
+  fs.writeFileSync(path.join(dir, "fake.js"), FAKE);
+  const port = await freePort();
+  const { launcher } = await setUp(t, [proc("a", port, { command: process.execPath, script: "fake.js", cwd: dir })]);
+  // Turned off just as the command line is written: past the check before
+  // the spawn, while it waits for the spawn event.
+  const vscode = require("vscode");
+  const make = vscode.window.createOutputChannel;
+  vscode.window.createOutputChannel = (name) => {
+    const channel = make(name);
+    const appendLine = channel.appendLine;
+    channel.appendLine = (x) => {
+      appendLine(x);
+      if (x.startsWith("$ ")) {
+        stub.config.user["processes.launcher.enable"] = false;
+        stub.changeConfig("q-lint.processes.launcher.enable");
+      }
+    };
+    return channel;
+  };
+  t.after(() => (vscode.window.createOutputChannel = make));
+  await stub.commands.get(LAUNCH_COMMANDS.start)("a");
+  await sleep(500);
+  assert.deepStrictEqual(launcher.running(), []);
+  assert.strictEqual(await accepts(port), false);
+  assert.match(stub.messages.at(-1)?.[1] ?? "", /launcher was turned off; a was not started/, JSON.stringify(stub.messages));
+});
+
 test("Set Launch Definition asks for the program, script and arguments", async (t) => {
   const { live } = await setUp(t, [proc("rdb", 5010, undefined, { tags: ["dev"] })]);
   stub.inputs.push("", "torq.q", '-proctype rdb -procname "rdb 1"');
