@@ -137,6 +137,44 @@ export function readable(code: string): string {
   return out;
 }
 
+/// `-3!` text with each run of symbols written so q reads it back. `-3!`
+/// writes a symbol bare whatever it holds - `` `a b `` for `` `$"a b" ``,
+/// which q reads as `` `a `` applied to `b` (#1486) - so outside strings and
+/// lambdas a name runs to the next `` ` ``, `;`, `)`, `]`, `}`, `!`, `$`,
+/// `#` or the end, which is what follows a symbol in `-3!`'s text, and a run
+/// that cannot be bare is written through `` `$ ``. Not for code a person
+/// wrote, where `` `a xor `b `` is two symbols.
+export function readableSymbols(code: string): string {
+  let out = "";
+  let depth = 0;
+  for (let i = 0; i < code.length; i++) {
+    const ch = code[i];
+    if (ch === '"') {
+      const s = /^"(?:[^"\\]|\\.)*"?/s.exec(code.slice(i))?.[0] ?? ch;
+      out += s;
+      i += s.length - 1;
+      continue;
+    }
+    if (ch === "{") {
+      depth++;
+    } else if (ch === "}") {
+      depth = Math.max(0, depth - 1);
+    } else if (ch === "`" && depth === 0) {
+      const run = /^(?:`[^`;)\]}!$#]*)+/.exec(code.slice(i))?.[0] ?? ch;
+      const names = run.slice(1).split("`");
+      // After the first, a name may start with `_`: `` `a`_y `` is two.
+      const bare = names.every((n, k) => (k === 0 ? symbolLiteral(n) === `\`${n}` : /^[A-Za-z0-9_.]*$/.test(n)));
+      const cast = names.length === 1 ? symbolLiteral(names[0]) : `\`$(${names.map(qString).join(";")})`;
+      // In parentheses before a `!`, `$` or `#`, which `` `$ `` would take in.
+      out += bare ? run : "!$#".includes(code[i + run.length] ?? ";") ? `(${cast})` : cast;
+      i += run.length - 1;
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
 /// Whether `name` can be a column name in `([] ...)` as written.
 export function plainName(name: string): boolean {
   return /^[A-Za-z][A-Za-z0-9_]*$/.test(name) && !RESERVED.has(name);
@@ -210,7 +248,7 @@ export function atomLiteral(type: number, text: string, raw: unknown): { literal
       // made readable.
       // Cut, it ends `...` or `..`, as no whole item does but a symbol
       // ending in dots, which is taken as cut too (#1484).
-      return { literal: text === "" ? "()" : readable(text), cut: text.endsWith("..") };
+      return { literal: text === "" ? "()" : readable(readableSymbols(text)), cut: text.endsWith("..") };
   }
 }
 

@@ -252,6 +252,25 @@ test("a char cell's literal is written from its byte: one past ASCII as its octa
   assert.strictEqual(tableLiteral(g).code, '([] c:("\\303";"\\251"))');
 });
 
+test("a general-list item's symbol holding a space, / or - is written through `$ (#1486)", () => {
+  // Each read back by KDB-X to what -3! wrote.
+  const lit = (t) => atomLiteral(0, t, undefined).literal;
+  assert.strictEqual(lit("(`a b;1)"), '(`$"a b";1)');
+  assert.strictEqual(lit("`a b`c"), '`$("a b";enlist "c")');
+  assert.strictEqual(lit(",`a b"), 'enlist `$"a b"');
+  assert.strictEqual(lit("`a/b"), '`$"a/b"');
+  assert.strictEqual(lit("`x y!,1"), '(`$"x y")!enlist 1');
+  assert.strictEqual(lit("`s#`a b`c"), '`s#`$("a b";enlist "c")');
+  // What can be bare stays bare, a string's or a lambda's text untouched.
+  assert.strictEqual(lit("`a``b"), "`a``b");
+  assert.strictEqual(lit("`a`b!(1;\"x\")"), '`a`b!(1;"x")');
+  assert.strictEqual(lit('("`x y";`p)'), '("`x y";`p)');
+  assert.strictEqual(lit("{`a b}"), "{`a b}");
+  // The table literal does the same.
+  const t = { count: 1, keys: 0, names: ["a"], types: [0], cells: [["`x y"]], raw: [[]], rank: [[]] };
+  assert.strictEqual(tableLiteral(t).code, '([] a:enlist `$"x y")');
+});
+
 test("a page of rows is added after the grid's, ranked again over both, and a page of another result is refused", () => {
   const first = { count: 4, keys: 0, names: ["v", "s"], types: [9, 11], cells: [["3", "1"], ["b", "a"]], raw: [[3, 1], []], rank: [[1, 0], [1, 0]] };
   const next = readPage({ count: 4, names: ["v", "s"], types: [9, 11], cells: [["", "2"], ["a", "c"]], raw: [[null, 2], []], rank: [[0, 1], [0, 1]] });
