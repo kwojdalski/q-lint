@@ -7,6 +7,7 @@
 // and answers each run's milliseconds and bytes. The expressions are the
 // user's own and run as written, so the read-only guard reads them as
 // `\ts:N e` lines - its rules read the expression `\ts` times.
+import { durationText } from "./linetimings";
 import { bytesText } from "./processtools";
 
 export const BENCHMARK = [
@@ -105,9 +106,10 @@ export function summarise(timings: Timing[], n: number): Summary[] {
   return rows.map((r, i) => ({ ...r, ratio: i === 0 ? 1 : base > 0 ? r.mean / base : null }));
 }
 
-/// A time in ms as a person reads it.
+/// A time in ms as a person reads it: line timings' `durationText`, so the
+/// unit is picked as rounded and 0.9996 ms is 1.00 ms, not 1000 µs (#1805).
 export function msText(ms: number): string {
-  return ms >= 1 ? `${ms.toFixed(ms >= 100 ? 0 : 2)} ms` : `${(ms * 1000).toFixed(ms * 1000 >= 100 ? 0 : 2)} µs`;
+  return durationText(ms * 1e6);
 }
 
 export function escapeHtml(text: string): string {
