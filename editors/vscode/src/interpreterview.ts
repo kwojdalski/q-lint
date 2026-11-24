@@ -259,15 +259,24 @@ export class Interpreters {
     }
     // Written where the value in force is set - a folder's own setting would
     // hide one written above it - else in the workspace, else for the user.
+    // In a workspace not trusted, VS Code ignores the workspace's qBinary
+    // (a restricted setting): written for the user, and said (#1690).
     const configuration = workspace.getConfiguration("q-lint", resource());
     const set = configuration.inspect<string>("terminal.qBinary");
-    const target =
-      set?.workspaceFolderValue !== undefined
+    const untrusted = workspace.isTrusted === false;
+    const target = untrusted
+      ? ConfigurationTarget.Global
+      : set?.workspaceFolderValue !== undefined
         ? ConfigurationTarget.WorkspaceFolder
         : set?.workspaceValue !== undefined || (workspace.workspaceFolders ?? []).length > 0
           ? ConfigurationTarget.Workspace
           : ConfigurationTarget.Global;
     await configuration.update("terminal.qBinary", file, target);
+    if (untrusted) {
+      void window.showInformationMessage(
+        plainMessage(`q-lint: this workspace is not trusted, so ${file} was set as your user q-lint.terminal.qBinary, which every workspace reads.`),
+      );
+    }
     this.sync();
     return file;
   }

@@ -245,6 +245,24 @@ test("in a multi-root workspace the picker reads and writes the active file's fo
   changeEditor("q");
 });
 
+test("in a workspace not trusted the picked q is written for the user, which VS Code reads there (#1690)", async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-untrusted-"));
+  const kdbx = fakeQ(path.join(home, ".kx", "bin", "q"), "QLINTVER|5|2026.07.23|m64|2035.01.01");
+  setUp(t, home);
+  vscode.workspace.workspaceFolders = [{ uri: vscode.Uri.file(path.join(home, "ws")), name: "ws" }];
+  const trusted = Object.getOwnPropertyDescriptor(vscode.workspace, "isTrusted");
+  vscode.workspace.isTrusted = false;
+  t.after(() => {
+    vscode.workspace.workspaceFolders = undefined;
+    if (trusted) Object.defineProperty(vscode.workspace, "isTrusted", trusted);
+    else delete vscode.workspace.isTrusted;
+  });
+  stub.picks.push((o) => o.items.find((i) => i.file === kdbx));
+  assert.strictEqual(await stub.commands.get(I.INTERPRETER_COMMANDS.select)(), kdbx);
+  assert.deepStrictEqual(stub.updates, [{ key: "terminal.qBinary", value: kdbx, target: "user" }]);
+  assert.match(stub.messages.at(-1)[1], /not trusted, so .* was set as your user q-lint\.terminal\.qBinary/);
+});
+
 test("off: the picker refuses, the item is removed, and no q is started", async (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-pickoff-"));
   const marker = path.join(home, "ran");
