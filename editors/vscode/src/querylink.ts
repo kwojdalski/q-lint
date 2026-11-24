@@ -26,6 +26,32 @@ export function queryLink(scheme: string, extensionId: string, label: string | u
   return link.length > LINK_MAX ? { problem: `the link would be ${link.length} characters, over ${LINK_MAX}: share the query as a file instead` } : { link };
 }
 
+/// The longest query a link's Run prompt shows, whole, in characters and in
+/// lines.
+export const PROMPT_LIMIT = 2000;
+export const PROMPT_LINES = 40;
+
+/// Why the Run prompt cannot show `code` whole, so Run is not offered, or
+/// undefined when it can (#1620). Under the length limit, a statement could
+/// still sit far below the first line, after blank lines or a run of spaces
+/// the dialog wraps, or behind a control, zero-width or bidi character that
+/// hides or reorders what is shown (#1828).
+export function promptProblem(code: string): string | undefined {
+  if (code.length > PROMPT_LIMIT) {
+    return `longer than ${PROMPT_LIMIT} characters`;
+  }
+  if (code.split("\n").length > PROMPT_LINES) {
+    return `longer than ${PROMPT_LINES} lines`;
+  }
+  if (/\n[ \t\r]*\n[ \t\r]*\n[ \t\r]*\n/.test(code) || /[ \t]{40}/.test(code)) {
+    return "spread out by blank lines or spaces";
+  }
+  if (/[\x00-\x08\x0b-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/.test(code.replace(/\r\n/g, "\n"))) {
+    return "holding a control, zero-width or bidi character";
+  }
+  return undefined;
+}
+
 /// What an opened link asks for: its query and process, or why it is not
 /// a query link. `path` and `query` are the URI's.
 export function readQueryLink(path: string, query: string): { code: string; process?: string } | { problem: string } {
