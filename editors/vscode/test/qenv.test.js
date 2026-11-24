@@ -171,7 +171,7 @@ test("a launched process gets the .env file's variables under its definition's o
   fs.writeFileSync(
     path.join(dir, "fake.js"),
     `require("fs").writeFileSync(${JSON.stringify(path.join(dir, "seen.json"))}, JSON.stringify({ FROM_ENV: process.env.FROM_ENV, BOTH: process.env.BOTH }));
-const port = Number(process.argv[process.argv.indexOf("-p") + 1]);
+const port = Number(process.argv[process.argv.indexOf("-p") + 1].split(":").pop());
 require("net").createServer((s) => s.end()).listen(port, "127.0.0.1");
 process.on("SIGTERM", () => process.exit(0));`,
   );

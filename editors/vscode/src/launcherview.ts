@@ -6,7 +6,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import * as net from "node:net";
 import * as os from "node:os";
 import { commands, window, workspace, type ExtensionContext, type OutputChannel } from "vscode";
-import { LAUNCH_COMMANDS, argsFromText, argsText, commandText, fromWorkspace, launchPlan, readLauncher } from "./launcher";
+import { LAUNCH_COMMANDS, argsFromText, argsText, commandText, fromWorkspace, launchPlan, listenAddress, readLauncher } from "./launcher";
 import { readTerminal } from "./liveconfig";
 import { qBinaryFrom } from "./terminal";
 import { mergeEnv } from "./qenv";
@@ -334,7 +334,7 @@ export class Launcher {
       const args = await window.showInputBox({
         title: `Launch ${process.label} (3 of 3): arguments`,
         value: argsText(current.args ?? []),
-        prompt: `Arguments after the script; -p ${process.port} is added unless they set -p. For TorQ: -proctype rdb -procname rdb1 -load code/processes/rdb.q`,
+        prompt: `Arguments after the script; -p ${listenAddress(process.host, process.port)} is added unless they set -p. For TorQ: -proctype rdb -procname rdb1 -load code/processes/rdb.q`,
         ignoreFocusOut: true,
       });
       if (args === undefined) {

@@ -10,7 +10,7 @@ const os = require("node:os");
 const path = require("node:path");
 const net = require("node:net");
 const pkg = require("../package.json");
-const { LAUNCH_COMMANDS, argsFromText, argsText, commandText, fromWorkspace, isLocalHost, launchPlan, readLauncher } = require("../out/launcher.js");
+const { LAUNCH_COMMANDS, argsFromText, argsText, commandText, fromWorkspace, isLocalHost, launchPlan, listenAddress, readLauncher } = require("../out/launcher.js");
 const { launchOf, parseProcesses, splitArgs } = require("../out/processes.js");
 const { onPath } = require("../out/relations.js");
 const { Live } = require("../out/live.js");
@@ -20,18 +20,32 @@ const Q = process.env.QLINT_TEST_Q;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const proc = (label, port, launch, extra = {}) => ({ label, host: "127.0.0.1", port, tags: [], ...(launch ? { launch } : {}), ...extra });
 
+test("a process defined on a loopback host listens on the loopback only, not on every interface (#1671)", () => {
+  const plan = (host) => launchPlan({ ...proc("l", 47126, {}), host }, "q", undefined, "/home/me").args;
+  assert.deepStrictEqual(plan("localhost"), ["-p", "127.0.0.1:47126"]);
+  assert.deepStrictEqual(plan("127.0.0.1"), ["-p", "127.0.0.1:47126"]);
+  assert.deepStrictEqual(plan("127.0.1.1"), ["-p", "127.0.1.1:47126"]);
+  // q takes no ::1:port and binds IPv4 only.
+  assert.deepStrictEqual(plan("::1"), ["-p", "127.0.0.1:47126"]);
+  // Asked for every interface, or by the machine's name: a bare port.
+  assert.deepStrictEqual(plan("0.0.0.0"), ["-p", "47126"]);
+  assert.strictEqual(listenAddress("box", 5), "5");
+  // Its own -p is left as it is.
+  assert.deepStrictEqual(launchPlan({ ...proc("l", 1, { args: ["-p", "5001"] }), host: "localhost" }, "q", undefined, "/home/me").args, ["-p", "5001"]);
+});
+
 test("a launch definition starts its program with its script, -p and its arguments", () => {
   const p = proc("rdb", 5010, { script: "torq.q", args: ["-proctype", "rdb", "-procname", "rdb1"], env: { KDBCODE: "code" } });
   assert.deepStrictEqual(launchPlan(p, "q", "/w", "/home/me"), {
     command: "q",
-    args: ["/w/torq.q", "-p", "5010", "-proctype", "rdb", "-procname", "rdb1"],
+    args: ["/w/torq.q", "-p", "127.0.0.1:5010", "-proctype", "rdb", "-procname", "rdb1"],
     cwd: "/w",
     env: { KDBCODE: "code" },
   });
   // Its own program, cwd and -p; ~ is home.
   const own = launchPlan(proc("a", 1, { command: "~/q/m64/q", cwd: "~/torq", script: "x.q", args: ["-p", "6000"] }), "q", undefined, "/home/me");
   assert.deepStrictEqual(own, { command: "/home/me/q/m64/q", args: ["/home/me/torq/x.q", "-p", "6000"], cwd: "/home/me/torq", env: {} });
-  assert.deepStrictEqual(launchPlan(proc("b", 7, {}), "q", undefined, "/home/me"), { command: "q", args: ["-p", "7"], cwd: "/home/me", env: {} });
+  assert.deepStrictEqual(launchPlan(proc("b", 7, {}), "q", undefined, "/home/me"), { command: "q", args: ["-p", "127.0.0.1:7"], cwd: "/home/me", env: {} });
   // ~\ is home too, as Windows writes it (#1284), in the definition and in q-lint.qBinary.
   const winHome = path.join("/home/me", "q\\w64\\q.exe");
   assert.strictEqual(launchPlan(proc("w", 1, { command: "~\\q\\w64\\q.exe" }), "q", undefined, "/home/me").command, winHome);
@@ -133,7 +147,7 @@ async function setUp(t, processes) {
 // A process standing in for q: listens on the port after -p, says so, and
 // ends on SIGTERM saying that too.
 const FAKE = `const net = require("net");
-const port = Number(process.argv[process.argv.indexOf("-p") + 1]);
+const port = Number(process.argv[process.argv.indexOf("-p") + 1].split(":").pop());
 net.createServer((s) => s.end()).listen(port, "127.0.0.1", () => console.log("listening on " + port + " in " + process.cwd() + " A=" + process.env.A));
 process.on("SIGTERM", () => { console.error("bye"); process.exit(0); });
 `;
@@ -152,7 +166,7 @@ test("Start Process starts the definition, shows its output, and Stop Process en
   assert.ok(live.launched("fake"));
   for (let i = 0; i < 50 && !output("fake").includes("listening"); i++) await sleep(20);
   const realDir = fs.realpathSync(dir);
-  assert.match(output("fake"), new RegExp(`^\\$ .*node.* ${path.join(dir, "fake.js").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} -p ${port}    \\(in .*\\)\\nlistening on ${port} in (${dir}|${realDir}) A=x\\n`));
+  assert.match(output("fake"), new RegExp(`^\\$ .*node.* ${path.join(dir, "fake.js").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} -p 127\\.0\\.0\\.1:${port}    \\(in .*\\)\\nlistening on ${port} in (${dir}|${realDir}) A=x\\n`));
   // Started twice: said, not started.
   await stub.commands.get(LAUNCH_COMMANDS.start)("fake");
   assert.strictEqual(stub.messages.at(-1)[1], "q-lint: fake is already running from here.");
