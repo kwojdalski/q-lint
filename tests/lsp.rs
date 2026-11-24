@@ -3962,7 +3962,8 @@ fn the_workspace_scope_lints_files_nobody_opened() {
 /// A closed file that starts with a BOM reports where an editor shows it
 /// (#2027): the editor holds the text without the BOM, so a finding on
 /// line 0 is where it is once the file is open, and the BOM's own finding
-/// stays at the start of the file.
+/// stays at the start of the file - open or closed. It went when the file
+/// was opened and came back when it was closed (#2110).
 #[test]
 fn a_closed_file_with_a_bom_reports_where_an_editor_shows_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -3979,8 +3980,31 @@ fn a_closed_file_with_a_bom_reports_where_an_editor_shows_it() {
     );
     server.open(&uri, RESERVED_PARAM);
     let open = server.diagnostics_for(&uri);
-    assert_eq!(codes_of(&open), ["QF001"], "{open:?}");
-    assert_eq!(closed[1]["range"], open[0]["range"]);
+    assert_eq!(open, closed, "the same, where the editor shows them");
+    // Still there as it is typed in: the disk has the BOM until a save.
+    server.change(&uri, 2, "f:{[desc] 1+2}\n");
+    assert_eq!(codes_of(&server.diagnostics_for(&uri)), ["QE005", "QF001"]);
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didClose",
+        "params":{"textDocument":{"uri":uri}}}));
+    assert_eq!(server.diagnostics_for(&uri), closed);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn an_open_file_reports_the_bom_on_disk_only_once_and_only_when_there() {
+    // A client that sends the BOM has it linted in the text, once; a file
+    // with none on disk reports none, whatever scope (#2110).
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(root.join("bom.q"), "\u{feff}a:1\n").unwrap();
+    std::fs::write(root.join("plain.q"), "a:1\n").unwrap();
+    let mut server = start_with_workspace(&root);
+    let bom = file_uri(&root.join("bom.q"));
+    server.open(&bom, "\u{feff}a:1\n");
+    assert_eq!(codes_of(&server.diagnostics_for(&bom)), ["QE005"]);
+    let plain = file_uri(&root.join("plain.q"));
+    server.open(&plain, "a:1\n");
+    assert!(server.diagnostics_for(&plain).is_empty());
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 

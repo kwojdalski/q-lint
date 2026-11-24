@@ -2971,6 +2971,13 @@ fn diagnose(
 
 /// What the rules find in `text`, the document `uri`, or the panic of the
 /// rule that failed on it.
+///
+/// An editor reads a file's BOM as its encoding and sends, or holds, the
+/// text after it; the BOM is still the file's, and q still refuses it. So
+/// when the file on disk starts with one and `text` does not, QE005 is
+/// asked of the text with the BOM put back, and reported first, at its
+/// start - open or closed alike, as the CLI reports the file (#2027,
+/// #2110).
 fn linted(uri: &str, text: &str, ws: &Workspace, policy: &Policy) -> Result<Vec<Finding>, String> {
     let path = path_of(uri);
     // Only q source. A client may open anything - a `.k` file, a console
@@ -2984,7 +2991,28 @@ fn linted(uri: &str, text: &str, ws: &Workspace, policy: &Policy) -> Result<Vec<
     }
     // Lenient, so this cannot fail: a configuration it cannot read is
     // reported once on stderr and the defaults govern its files.
-    guarded(|| policy.lint(text, &path, ws).unwrap_or_default())
+    let mut findings = guarded(|| policy.lint(text, &path, ws).unwrap_or_default());
+    if let Ok(found) = &mut findings
+        && !text.starts_with('\u{feff}')
+        && !found.iter().any(|f| f.code == "QE005")
+        && starts_with_bom(&path)
+    {
+        let whole = format!("\u{feff}{text}");
+        let of_bom = guarded(|| policy.lint(&whole, &path, ws).unwrap_or_default());
+        let of_bom = of_bom.unwrap_or_default().into_iter();
+        found.splice(0..0, of_bom.filter(|f| f.code == "QE005"));
+    }
+    findings
+}
+
+/// Whether the file `path` on disk starts with a UTF-8 BOM, read from its
+/// first three bytes alone: asked at every lint of an open document.
+fn starts_with_bom(path: &str) -> bool {
+    use std::io::Read;
+    let mut head = [0u8; 3];
+    std::fs::File::open(path)
+        .and_then(|mut file| file.read_exact(&mut head))
+        .is_ok_and(|()| head == [0xef, 0xbb, 0xbf])
 }
 
 /// Push `findings`, what the rules found in the `text` of `uri`, as its
