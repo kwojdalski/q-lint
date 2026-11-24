@@ -243,11 +243,12 @@ export interface PageLater {
   later: string;
 }
 
-/// A query's code on one line, for a tab or a pick: its first line, cut.
+/// A query's code on one line, for a tab or a pick: its first line, cut
+/// by characters, so never through an emoji's surrogate pair (#1650).
 function oneLine(code: string): string {
-  const line = code.trim().split(/\r?\n/)[0] ?? "";
+  const line = Array.from(code.trim().split(/\r?\n/)[0] ?? "");
   const more = line.length > 60 || code.trim().includes("\n");
-  return more ? `${line.slice(0, 57)}...` : line;
+  return more ? `${line.slice(0, 57).join("")}...` : line.join("");
 }
 
 function settings(): LiveSettings {

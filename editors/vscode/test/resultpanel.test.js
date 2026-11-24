@@ -753,3 +753,13 @@ test("each chart the page draws is kept for the q Plots view; off, none is (#970
   assert.strictEqual(PLOTS.list().length, 2);
   PLOTS.clear();
 });
+
+test("a result tab's label is cut by characters, never through an emoji (#1650)", () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  const code = "a".repeat(56) + "\u{1f600}\u{1f600}" + "b".repeat(10);
+  modes.show({ ...result([1]), code }, live());
+  const label = fake.pages[0].posted.at(-1).history[0].code;
+  assert.strictEqual(label, "a".repeat(56) + "\u{1f600}...");
+  assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])/.test(label));
+});
