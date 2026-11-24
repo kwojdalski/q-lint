@@ -292,8 +292,8 @@ usage: node qnbrun.js NOTEBOOK.qnb --process HOST:PORT|LABEL [options]
   --console-size H W       the console size values are written at (25 200)
 
 A password is read from the environment, never from an argument:
-QLINT_Q_PASSWORD, or QLINT_Q_PASSWORD_<LABEL> for a listed process (its
-label in capitals, anything but a letter or digit as _).
+QLINT_Q_PASSWORD for --process, or QLINT_Q_PASSWORD_<LABEL> for a listed
+process (its label in capitals, anything but a letter or digit as _).
 
 Exits 0 when every cell ran, 1 when one failed or could not be sent (the
 notebook is written, run up to it), 2 for a usage error or a file that
@@ -408,6 +408,16 @@ export function parseArgs(argv: string[]): CliOptions | { error: string } | { he
 /// The environment variable a listed process's password is read from.
 export const passwordVariable = (label: string): string => `QLINT_Q_PASSWORD_${label.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`;
 
+/// The password for `target`, which has a user: its own variable's, or,
+/// for `--process` alone (`given`), QLINT_Q_PASSWORD's - never sent to
+/// another process a cell names (#1547).
+export function passwordOf(target: Process, env: Record<string, string | undefined>, given: boolean): string | undefined {
+  if (!target.user) {
+    return undefined;
+  }
+  return env[passwordVariable(target.label)] ?? (given ? env.QLINT_Q_PASSWORD : undefined) ?? "";
+}
+
 /// The process `name` names: `host:port`, or a label in `listed`. A listed
 /// process reached through an SSH tunnel or set up by a connect script is
 /// refused: the command line opens neither, and dialling its host and
@@ -477,7 +487,7 @@ export async function main(
         if (isProduction(target) && !options.allowProduction) {
           throw new Error(`${target.label} is a production process (tagged ${target.tags.join(", ")}); pass --allow-production to run the notebook there`);
         }
-        const password = target.user ? (env[passwordVariable(target.label)] ?? env.QLINT_Q_PASSWORD ?? "") : undefined;
+        const password = passwordOf(target, env, label === undefined);
         return QConnection.open({
           host: target.host,
           port: target.port,

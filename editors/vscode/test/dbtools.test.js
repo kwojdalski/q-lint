@@ -239,6 +239,10 @@ test("a schema diff names adds, drops, casts and order, and the script turns one
   // A mixed column is added as an empty list a row (#1097).
   assert.match(migrationScript("a", t("table", [["k", "j"]]), "a", t("table", [["k", "j"], ["m", ""]]), "b", "p"), /\na:update m:count\[i\]#enlist \(\) from a\n/);
   assert.match(migrationScript("a", from, "a", from, "a", "p"), /the same: there is nothing to change/);
+  // A column q-sql cannot name is added, so the order and keys after find it (#1719).
+  const odd = migrationScript("my t", t("keyed", [["sym", "s"], ["px bid", "f"]], ["sym"]), "a", t("keyed", [["new c", "j"], ["sym", "s"], ["px bid", "f"]], ["new c"]), "b", "p");
+  assert.match(odd, /\n\(`\$"my t"\) set \{@\[x;y;:;count\[x\]#enlist z\]\}\[get`\$"my t";`\$"new c";0N\]\n/);
+  assert.doesNotMatch(odd, /not written/);
   // Only the keys differ: keyed, or unkeyed (#1579).
   const ua = t("table", [["s", "s"], ["p", "f"]]);
   const ka = t("keyed", [["s", "s"], ["p", "f"]], ["s"]);

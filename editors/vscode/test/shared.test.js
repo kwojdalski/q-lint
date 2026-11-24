@@ -256,6 +256,24 @@ test("Add to Shared asks before writing a connect script, credential command, la
   assert.strictEqual(JSON.parse(read()).processes[0].credentialCommand, "vault read x");
 });
 
+// Share Without Them dropped the tunnel, so every clone dialled its own
+// localhost:5000 with the password typed for prod (#1715).
+test("Add to Shared keeps a process's SSH tunnel, with or without what runs on connect", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-shared-"));
+  const prod = { label: "prod", host: "localhost", port: 5000, user: "svc", tags: ["prod"], ssh: "bastion.corp" };
+  await setUp(t, dir, { saved: [prod, { ...prod, label: "p2", credentialCommand: "vault read x" }] });
+  const read = () => JSON.parse(fs.readFileSync(path.join(dir, SHARED_FILE), "utf8")).processes;
+  // A tunnel alone is not asked about.
+  await stub.commands.get(SHARED_COMMANDS.add)("prod");
+  assert.deepStrictEqual(read(), [prod]);
+  let asked;
+  stub.picks.push((o) => ((asked = o), "Share Without Them"));
+  await stub.commands.get(SHARED_COMMANDS.add)("p2");
+  assert.match(asked.message, /p2 has a credential command\. /);
+  assert.deepStrictEqual(read()[1], { ...prod, label: "p2" });
+  assert.deepStrictEqual(readSharedFile(fs.readFileSync(path.join(dir, SHARED_FILE), "utf8"), true).processes.map((p) => p.ssh), ["bastion.corp", "bastion.corp"]);
+});
+
 // Written under the open list's unsaved edits, its next save conflicted (#1531).
 test("Add to Shared refuses while the list is open with unsaved edits", async (t) => {
   const vscode = require("vscode");

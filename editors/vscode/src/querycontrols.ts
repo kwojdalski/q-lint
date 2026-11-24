@@ -181,9 +181,11 @@ export interface UntitledBinding {
 /// The process of the untitled editor a file just saved was saved from:
 /// one with the same text, seen within `within` ms. Saving an untitled
 /// editor closes it and opens the file, and nothing else links the two
-/// (#1529). Undefined for empty text, or when two processes would match.
-export function savedFrom(text: string, untitled: readonly UntitledBinding[], now: number, within = 5000): string | undefined {
-  if (text.trim() === "") {
+/// (#1529). Undefined for empty text, or when two processes would match,
+/// or for a file `opened` - when this window first saw it - longer ago than
+/// that: an old file saved with the same text is not the one saved as (#1723).
+export function savedFrom(text: string, untitled: readonly UntitledBinding[], now: number, within = 5000, opened?: number): string | undefined {
+  if (text.trim() === "" || (opened !== undefined && now - opened > within)) {
     return undefined;
   }
   const labels = new Set(untitled.filter((u) => u.text === text && now - u.at <= within).map((u) => u.label));

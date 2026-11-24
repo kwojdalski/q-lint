@@ -131,8 +131,9 @@ export function migrationScript(name: string, fromInfo: TableInfo, fromWhere: st
     ].join("\n") + "\n";
   }
   // A table q cannot parse by name (`my t`) is read with get and assigned
-  // with set; a column q-sql cannot name is dropped functionally, and left
-  // as a comment otherwise (#1583).
+  // with set; a column q-sql cannot name is dropped and added functionally,
+  // so the order and keys after it find it (#1719), and left as a comment
+  // otherwise (#1583).
   const t = plainName(name) ? name : `get${symbolLiteral(name)}`;
   const assign = (e: string) => (plainName(name) ? `${name}:${e}` : `(${symbolLiteral(name)}) set ${e}`);
   const symbols = (names: string[]) => {
@@ -146,7 +147,7 @@ export function migrationScript(name: string, fromInfo: TableInfo, fromWhere: st
   for (const c of d.drop) lines.push(plainName(c) ? assign(`delete ${c} from ${t}`) : assign(`![${t};();0b;enlist ${symbolLiteral(c)}]`));
   // A nested or mixed column takes its empty item once a row: `m:()` is 'length (#1097).
   for (const a of d.add)
-    lines.push(!plainName(a.name) ? odd(a.name, "the add of") : a.type === a.type.toUpperCase() ? assign(`update ${a.name}:count[i]#enlist ${nullOf(a.type)} from ${t}`) : assign(`update ${a.name}:${nullOf(a.type)} from ${t}`));
+    lines.push(!plainName(a.name) ? assign(`{@[x;y;:;count[x]#enlist z]}[${t};${symbolLiteral(a.name)};${nullOf(a.type)}]`) : a.type === a.type.toUpperCase() ? assign(`update ${a.name}:count[i]#enlist ${nullOf(a.type)} from ${t}`) : assign(`update ${a.name}:${nullOf(a.type)} from ${t}`));
   for (const c of d.cast) {
     const problem = castProblem(c.from, c.to, false);
     lines.push(!plainName(c.name) ? odd(c.name, "the cast of") : problem === undefined ? assign(`update ${c.name}:${castOf(c.name, c.from, c.to)} from ${t}`) : `/ not written: a cast of ${c.name} from ${c.from} to ${c.to}: ${problem}`);

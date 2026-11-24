@@ -30,12 +30,14 @@ import { PROCESS_TOOL_COMMANDS, toolOff, toolOn } from "./processtools";
 import { AT_ONCE, allTags, tagged } from "./tagquery";
 import { ToolTree, type ToolNode } from "./toolstree";
 import { iconsEscaped, plainMessage } from "./history";
+import { shownError } from "./tunnel";
 
 export const FIND_VIEW = "q-lint.findInProcesses";
 export const FOUND_SCHEME = "q-lint-found";
 
 const on = (): boolean => toolOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "findInProcesses");
-const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+// ssh's words for a tunnel that did not open are shown, not kept (#1721).
+const message = shownError;
 
 function say(text: string): string {
   void window.showInformationMessage(plainMessage(text));

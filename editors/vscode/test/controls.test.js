@@ -37,6 +37,10 @@ function fakeVscode(state, editor) {
         fakeVscode.on.rename = f;
         return disposable;
       },
+      onDidOpenTextDocument: (f) => {
+        fakeVscode.on.open = f;
+        return disposable;
+      },
       onDidSaveTextDocument: (f) => {
         fakeVscode.on.save = f;
         return disposable;
@@ -148,6 +152,23 @@ test("an untitled editor saved to a file hands the file its process", async () =
   const unrelated = uri("file", "/w/b.q");
   await fakeVscode.on.save({ uri: unrelated, getText: () => "1+1" });
   assert.strictEqual(controls.binding(unrelated), undefined);
+  // A file opened long before, saved with an open bound editor's text, is
+  // not the one it was saved as (#1723).
+  const old = uri("file", "/w/old.q");
+  fakeVscode.on.open({ uri: old });
+  const at = Date.now;
+  Date.now = () => at() + 60_000;
+  try {
+    await fakeVscode.on.save({ uri: old, getText: () => "count t" });
+  } finally {
+    Date.now = at;
+  }
+  assert.strictEqual(controls.binding(old), undefined);
+  // One just opened by the save, as Save As opens it, still takes it.
+  const fresh = uri("file", "/w/q3.q");
+  fakeVscode.on.open({ uri: fresh });
+  await fakeVscode.on.save({ uri: fresh, getText: () => "count t" });
+  assert.strictEqual(controls.binding(fresh), "dev");
 });
 
 // Two New Query opens in a row: the first one's bind landed on the second

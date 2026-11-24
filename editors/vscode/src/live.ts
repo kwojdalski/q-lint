@@ -69,7 +69,7 @@ import { historyHeading, historyLabel, iconsEscaped, mergedHistory, plainMessage
 import { render } from "./query";
 import { QueryModes, type PageLater, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
-import { commandLine, expandHome, replLines, shellKind, terminalCwd } from "./terminal";
+import { commandLine, expandHome, qBinaryFrom, replLines, shellKind, terminalCwd } from "./terminal";
 import { readDotenv, terminalEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import type { RunExtra } from "./runargs";
@@ -94,7 +94,7 @@ import {
   normalised,
   type HistoryFilter,
 } from "./historyfilter";
-import { CONNECT_SCRIPT_COMMANDS, onConnectBrought, onConnectOf, readConnectScript, scriptOf, scriptPath, scriptSummary, withScript, type ConnectScript } from "./connectscript";
+import { CONNECT_SCRIPT_COMMANDS, onConnectBrought, onConnectOf, readConnectScript, scriptOf, scriptPath, scriptSummary, sharedEntry, withScript, type ConnectScript } from "./connectscript";
 import { isProduction } from "./agent";
 import { PAGE, readPage, type GridPage } from "./grid";
 import { PLACEHOLDER_VALUES_KEY, lastValue, placeholderNames, readPlaceholders, remembered, substitute } from "./placeholders";
@@ -486,7 +486,10 @@ export class QTerminals {
     const relative = file !== undefined && cwd !== undefined ? path.relative(cwd, file) : "";
     const inside = relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
     const args = file === undefined ? [] : [inside ? relative : file, ...extraArgs];
-    const line = commandLine(settings.qBinary, args, shellKind(env.shell), shown, refs);
+    // A relative q is the folder's, as in the launcher, also for a file
+    // outside every folder, whose terminal starts elsewhere (#1716).
+    const binary = cwd === folder?.uri.fsPath ? settings.qBinary : (qBinaryFrom(settings.qBinary, folder?.uri.fsPath, os.homedir()) ?? settings.qBinary);
+    const line = commandLine(binary, args, shellKind(env.shell), shown, refs);
     if (typeof line !== "string") {
       void window.showErrorMessage(plainMessage(`q-lint: ${line.error}`));
       return undefined;
@@ -832,22 +835,23 @@ export class Live {
     // What runs or reaches somewhere at connect can hold a secret - a
     // password in a connect script, a launch's environment - and the file
     // is committed: it is shown and asked about first (#1528).
+    // An SSH tunnel is always shared: it holds no secret (#1715).
     let process = chosen;
-    const extras = onConnectBrought([], [chosen])[0]?.what ?? [];
+    const extras = (onConnectBrought([], [chosen])[0]?.what ?? []).filter((what) => what !== "SSH tunnel");
     if (extras.length > 0) {
       const all = "Share All";
       const without = "Share Without Them";
-      const { init, initFile, credentialCommand, launch, ssh } = chosen;
+      const { init, initFile, credentialCommand, launch } = chosen;
       const answer = await window.showWarningMessage(
         plainMessage(`${chosen.label} has a ${extras.join(", ")}. ${SHARED_FILE} is committed with the code: everyone who clones it reads what is written there, as shown below. Share them too?`),
-        { modal: true, detail: JSON.stringify({ init, initFile, credentialCommand, launch, ssh }, null, 2) },
+        { modal: true, detail: JSON.stringify({ init, initFile, credentialCommand, launch }, null, 2) },
         all,
         without,
       );
       if (answer === undefined) {
         return;
       }
-      process = answer === all ? chosen : onConnectOf(chosen, undefined);
+      process = sharedEntry(chosen, answer === all, folder.uri.fsPath);
     }
     const file = Uri.joinPath(folder.uri, SHARED_FILE);
     // Written under unsaved edits, the next save conflicts (#1531).
@@ -1700,13 +1704,15 @@ export class Live {
   /// guard's question was open: nothing is sent then (#1357). `unattended`:
   /// run from a timer, with nobody to ask - a script the guard holds is not
   /// run, and that or a failure throws for the caller to report (#1618).
-  private async runConnectScript(connection: QConnection, process: Process, stopped: () => boolean = () => false, unattended = false): Promise<void> {
+  /// `throws`: a failure throws rather than being said - a connection apart
+  /// is not handed out unprepared, or closed by a timeout (#1713).
+  private async runConnectScript(connection: QConnection, process: Process, stopped: () => boolean = () => false, unattended = false, throws = unattended): Promise<void> {
     const script = scriptOf(process);
     if (script === undefined || !this.setting(readConnectScript).enabled) {
       return;
     }
     const failed = (why: string): void => {
-      if (unattended) {
+      if (throws) {
         throw new Error(`the connect script of ${process.label} failed: ${why}`);
       }
       this.show([`# ${process.label} - connect script failed: ${why}`], false);
@@ -1775,7 +1781,7 @@ export class Live {
       }
       this.output.appendLine(`# ${process.label} - connect script ran (${Date.now() - started} ms)`);
     } catch (error) {
-      if (unattended && error instanceof Error && error.message.startsWith(`the connect script of ${process.label} failed`)) {
+      if (throws && error instanceof Error && error.message.startsWith(`the connect script of ${process.label} failed`)) {
         throw error;
       }
       if (!stopped()) {
@@ -1842,6 +1848,7 @@ export class Live {
       if (this.connectingTo === passwordKey(process) && this.stopConnect?.signal.aborted !== true) {
         return this.connecting;
       }
+      // A connect script that blocks is closed too: no timeout may end it (#1712).
       this.reconnectStopped = true;
       this.stopConnect?.abort();
       // One running its connect script, which may never answer.
@@ -2009,7 +2016,7 @@ export class Live {
   async openSeparate(process: Process): Promise<QConnection> {
     const connection = await this.dial(process, await this.targetFor(process));
     try {
-      await this.runConnectScript(connection, process);
+      await this.runConnectScript(connection, process, undefined, false, true);
     } catch (error) {
       connection.abort();
       throw error;

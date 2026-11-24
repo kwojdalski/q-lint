@@ -99,6 +99,12 @@ export class TunnelConnectError extends Error {
   }
 }
 
+/// The message of `error` for a message shown at once, never kept: with what
+/// ssh said, for a tunnel that did not open (#1721).
+export function shownError(error: unknown): string {
+  return error instanceof TunnelConnectError ? error.shown().message : error instanceof Error ? error.message : String(error);
+}
+
 /// A connect through an open tunnel that closed before the handshake: as
 /// likely a refused user as a forward that reached no q.
 export class TunnelHandshakeError extends TunnelConnectError {}
