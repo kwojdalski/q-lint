@@ -270,7 +270,10 @@ export function toXlsx(payload: GridPayload, order: number[], rules: FormatRule[
   });
   const types = payload.types.slice(0, width);
   // Booleans, bytes and the temporal types are written as Excel values, not text.
-  const text = types.map((t) => !(t === 1 || t === 4 || (t >= 5 && t <= 9) || (t >= 12 && t <= 19)));
+  // A general list whose strings are written without their quotes is not
+  // the text the grid's rules read (#1411).
+  const text = types.map((t, i) => !(t === 1 || t === 4 || (t >= 5 && t <= 9) || (t >= 12 && t <= 19)) &&
+    !(t === 0 && rows.some((r) => plainItem(payload.cells[i][r] ?? "") !== (payload.cells[i][r] ?? ""))));
   const formats = xlsxRules(rules, payload.names.slice(0, width), types.map((t) => t >= 5 && t <= 9), columnName, rows.length + 1, text);
   sheet.push("</sheetData>", ...formats.formatting, "</worksheet>");
   const xml = (lines: string[]) => Buffer.from(lines.join(""), "utf8");
