@@ -207,3 +207,21 @@ test("an underscore after a literal or a bracket is drop: what it joins keeps it
   assert.deepStrictEqual(await scopesOf("f:{x_1+a_b}", "x_1", true), ["variable.other.k"]);
   assert.deepStrictEqual(await scopesOf("f:{x_1+a_b}", "a_b", true), ["variable.other.k"]);
 });
+
+// Checked on KDB-X by evaluating "\<c>" for every printable c and every
+// three octal digits: after a backslash q takes n, r, t, a quote, a
+// backslash and a slash, and the octals 000 to 377. "\400" is an error, and
+// so are "\1" and "\12".
+test("a string's escapes are the ones q takes: a slash is one, an octal past 377 is not (#1972)", async () => {
+  assert.deepStrictEqual(await scopesOf('u:"http:\\/\\/x"', "\\/"), ["constant.character.escape.q", "constant.character.escape.q"]);
+  assert.deepStrictEqual(await scopesOf('s:"a\\377b"', "\\377"), ["constant.character.escape.q"]);
+  assert.deepStrictEqual(await scopesOf('s:"a\\000b"', "\\000"), ["constant.character.escape.q"]);
+  assert.deepStrictEqual(await scopesOf('s:"a\\400b"', "\\4"), ["invalid.illegal.escape.q"]);
+  assert.deepStrictEqual(await scopesOf('s:"a\\777b"', "\\7"), ["invalid.illegal.escape.q"]);
+  assert.deepStrictEqual(await scopesOf('s:"a\\12b"', "\\1"), ["invalid.illegal.escape.q"]);
+  // The slash escape opens no comment and ends no string.
+  assert.deepStrictEqual(await scopesOf('u:"a \\/ b";v:1', "v"), ["variable.other.definition.q"]);
+  // The same in a k file.
+  assert.deepStrictEqual(await scopesOf('u:"a\\/b"', "\\/", true), ["constant.character.escape.k"]);
+  assert.deepStrictEqual(await scopesOf('s:"a\\400b"', "\\4", true), ["invalid.illegal.escape.k"]);
+});

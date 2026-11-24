@@ -242,7 +242,8 @@
       },
       "patterns": [
         {
-          "match": "\\\\(?:[0-7]{3}|[nrt\"\\\\])",
+          "comment": "What q takes after a backslash: n, r, t, a quote, a backslash, a slash, or three octal digits up to \\377 - \\400 is refused.",
+          "match": "\\\\(?:[0-3][0-7]{2}|[nrt\"\\\\/])",
           "name": "constant.character.escape.q"
         },
         {

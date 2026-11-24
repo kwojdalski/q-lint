@@ -211,7 +211,12 @@ def grammar():
                 "beginCaptures": {"0": {"name": "punctuation.definition.string.begin.q"}},
                 "endCaptures": {"0": {"name": "punctuation.definition.string.end.q"}},
                 "patterns": [
-                    {"match": r'\\(?:[0-7]{3}|[nrt"\\])', "name": "constant.character.escape.q"},
+                    {
+                        "comment": "What q takes after a backslash: n, r, t, a quote, a backslash, "
+                        "a slash, or three octal digits up to \\377 - \\400 is refused.",
+                        "match": r'\\(?:[0-3][0-7]{2}|[nrt"\\/])',
+                        "name": "constant.character.escape.q",
+                    },
                     {"match": r"\\.", "name": "invalid.illegal.escape.q"},
                 ],
             },

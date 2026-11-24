@@ -68,7 +68,7 @@
       "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.k" } },
       "endCaptures": { "0": { "name": "punctuation.definition.string.end.k" } },
       "patterns": [
-        { "match": "\\\\(?:[0-7]{3}|[nrt\"\\\\])", "name": "constant.character.escape.k" },
+        { "match": "\\\\(?:[0-3][0-7]{2}|[nrt\"\\\\/])", "name": "constant.character.escape.k" },
         { "match": "\\\\.", "name": "invalid.illegal.escape.k" }
       ]
     },

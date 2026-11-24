@@ -239,6 +239,15 @@ cases("source.q-console", [
   ["the caret", OUT, "^", "invalid.illegal.caret.q-console", 0],
 ]);
 
+// A string cell as .Q.S prints it: the escapes q takes (#1972), so a slash
+// is one and \\400 is not.
+test("source.q-console: a printed string's escapes are the ones q takes", async () => {
+  const printed = 's\n---------\n"a\\/b\\377c\\400"';
+  assert.deepStrictEqual(await innermost("source.q-console", printed, "\\/"), ["constant.character.escape.q-console"]);
+  assert.deepStrictEqual(await innermost("source.q-console", printed, "\\377"), ["constant.character.escape.q-console"]);
+  assert.deepStrictEqual(await innermost("source.q-console", printed, "\\400"), []);
+});
+
 test("source.q-console: a guid is one value, not hex with numbers in it", async () => {
   // As .Q.S prints a guid column: 1?0Ng and the null guid.
   for (const guid of ["8c6b8b64-6815-6084-0a3e-178401251b68", "00000000-0000-0000-0000-000000000000"]) {
