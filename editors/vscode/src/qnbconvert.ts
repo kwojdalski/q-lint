@@ -75,7 +75,8 @@ function inline(text: string, values: Record<string, LiveValue>): string {
       // character, or as written when HTML has no such name (#1552).
       .replace(/&[A-Za-z][A-Za-z0-9]{1,31};/g, (m) => hold(m)),
   );
-  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, label: string, href: string) => {
+  // A URL may hold balanced parentheses, as Wikipedia's do (#1554).
+  s = s.replace(/\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/g, (m, label: string, href: string) => {
     // `href` is escaped already: `&amp;` reads back as `&` in an attribute.
     // The tags are held, so the emphasis below finds no `_` in the URL (#1105).
     const target = safeHref(href.replace(/&amp;/g, "&"));

@@ -577,3 +577,10 @@ test("an HTML export shows an indented code block as code, as the cell and live 
   assert.strictEqual(markdownHtml("text\n    more"), "<p>text<br>\nmore</p>");
   assert.strictEqual(markdownHtml("- a\n    b"), "<ul><li>a b</li></ul>");
 });
+
+test("an HTML export keeps balanced parentheses in a link's URL (#1554)", () => {
+  assert.strictEqual(
+    markdownHtml("[Q](https://en.wikipedia.org/wiki/Q_(programming_language)) now (see [a](https://x.io/a))"),
+    '<p><a href="https://en.wikipedia.org/wiki/Q_(programming_language)">Q</a> now (see <a href="https://x.io/a">a</a>)</p>',
+  );
+});
