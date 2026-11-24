@@ -87,8 +87,8 @@ import { registerNamespaces } from "./namespaceview";
 import { registerAffectedOnSave } from "./affectedonsave";
 import { registerSql } from "./sqlview";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { accessSync, chmodSync, constants, existsSync, statSync } from "node:fs";
+import { delimiter, isAbsolute, join } from "node:path";
 import { onPath } from "./relations";
 import {
   CloseAction,
@@ -141,19 +141,34 @@ function serverChanged(): void {
 /// was never on PATH. The platform-neutral build carries none, and falls back
 /// to the setting. An explicit `q-lint.serverPath` always wins: someone who
 /// named a binary meant that one.
-/// `qlinter` from PATH, the server of last resort. Off Windows the bare name,
-/// which only PATH is asked for. On Windows the file PATH holds it in: a bare
-/// name there is looked for first in the directory it is started in - the
-/// workspace folder - so an untrusted folder's qlinter.exe would run (#1251).
-/// Undefined where PATH holds none.
+/// `qlinter` from PATH, the server of last resort: the file PATH holds it
+/// in. On Windows a bare name is looked for first in the directory it is
+/// started in - the workspace folder - so an untrusted folder's qlinter.exe
+/// would run (#1251). Undefined where PATH holds none, on every platform:
+/// off Windows the bare name was given back whatever PATH held, and "no
+/// qlinter" was never said (#1611).
 function pathServer(): string | undefined {
-  return onPath("qlinter", process.env.PATH, (file) => {
+  if (process.platform === "win32") {
+    return onPath("qlinter", process.env.PATH, (file) => {
+      try {
+        return statSync(file).isFile();
+      } catch {
+        return false;
+      }
+    });
+  }
+  for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+    const file = join(dir, "qlinter");
     try {
-      return statSync(file).isFile();
+      if (dir !== "" && isAbsolute(dir) && statSync(file).isFile()) {
+        accessSync(file, constants.X_OK);
+        return file;
+      }
     } catch {
-      return false;
+      // Not there, or not executable: the next entry.
     }
-  });
+  }
+  return undefined;
 }
 
 function bundledServer(context: ExtensionContext): string | undefined {

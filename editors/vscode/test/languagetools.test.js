@@ -238,6 +238,16 @@ test("a baseline is named first in qlinter.toml, its count read, and its paths m
     assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.writeBaseline)(), undefined);
     assert.match(stub.messages.at(-1)[1], /lint baseline is turned off/);
     assert.strictEqual(asked, 0);
+    // A qlinter that cannot be started is said, the command not failing (#1611).
+    stub.config.user["baseline.enable"] = true;
+    vscode.workspace.workspaceFolders = [{ uri: { scheme: "file", fsPath: require("node:os").tmpdir() }, name: "tmp" }];
+    const missing = require("node:path").join(require("node:os").tmpdir(), "no-such-qlinter-here");
+    context.subscriptions.length = 0;
+    stub.commands.delete(LANGUAGE_COMMANDS.writeBaseline);
+    registerBaseline(context, () => ({ command: missing, args: [] }));
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.writeBaseline)(), undefined);
+    assert.match(stub.messages.at(-1)[1], /could not be run/);
+    vscode.workspace.workspaceFolders = undefined;
   } finally {
     restore();
   }

@@ -182,18 +182,23 @@ test("a server that never answers initialize does not hold up activation or Rest
   await w.extension.deactivate();
 });
 
-test("a bundled server that cannot run falls back to PATH without an error", { skip: process.platform === "win32" && "a shell script" }, async () => {
+test("a bundled server that cannot run falls back to PATH without an error", { skip: process.platform === "win32" && "a shell script" }, async (t) => {
   // A package built on another platform carries a binary this one cannot
   // execute. PATH's server then runs, and nothing failed that the user must
   // hear about.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-ext-"));
   fs.mkdirSync(path.join(dir, "server"));
+  fs.mkdirSync(path.join(dir, "bin"));
   fs.writeFileSync(path.join(dir, "server", "qlinter"), "#!/bin/sh\nexit 126\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(dir, "bin", "qlinter"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  const PATH = process.env.PATH;
+  process.env.PATH = path.join(dir, "bin");
+  t.after(() => (process.env.PATH = PATH));
   const bundled = path.join(dir, "server", "qlinter");
   const w = load({ extensionPath: dir, behaviour: (command) => (command === bundled ? "fail" : "ok") });
   await w.extension.activate(w.context);
   await sleep(100);
-  assert.deepStrictEqual(w.started, ["qlinter"]);
+  assert.deepStrictEqual(w.started, [path.join(dir, "bin", "qlinter")]);
   assert.deepStrictEqual(w.errors, []);
   await w.extension.deactivate();
 });
@@ -217,6 +222,20 @@ test("on Windows a bare qlinter is looked for on PATH, never in the workspace fo
   assert.deepStrictEqual(w.started, []);
   assert.strictEqual(w.clients.length, 0);
   assert.match(w.errors.join("\n"), /could not start "qlinter"\..*qlinter is not on PATH\./);
+  assert.strictEqual(w.linter().command, undefined);
+  assert.strictEqual(w.baseline().command, undefined);
+  await w.extension.deactivate();
+});
+
+test("off Windows too, PATH holding no qlinter is said, not run as a bare name (#1611)", { skip: process.platform === "win32" && "POSIX PATH" }, async (t) => {
+  const PATH = process.env.PATH;
+  process.env.PATH = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-nopath-"));
+  t.after(() => (process.env.PATH = PATH));
+  const w = load();
+  await w.extension.activate(w.context);
+  await sleep(100);
+  assert.deepStrictEqual(w.started, []);
+  assert.match(w.errors.join("\n"), /qlinter is not on PATH\./);
   assert.strictEqual(w.linter().command, undefined);
   assert.strictEqual(w.baseline().command, undefined);
   await w.extension.deactivate();

@@ -106,7 +106,15 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
       const scratch = mkdtempSync(join(tmpdir(), "qlint-baseline-"));
       try {
         const draft = join(scratch, BASELINE_FILE);
-        const ran = await runQlinter(command, [...args, "--write-baseline", draft, "."], dir);
+        // One that cannot be started is said, not left to VS Code's
+        // "Running the contributed command failed" (#1611).
+        const ran = await runQlinter(command, [...args, "--write-baseline", draft, "."], dir).catch((error: unknown) => {
+          void window.showWarningMessage(plainMessage(`q-lint: ${error instanceof Error ? error.message : String(error)}`));
+          return undefined;
+        });
+        if (ran === undefined) {
+          return undefined;
+        }
         const count = writtenCount(ran.stderr);
         if (count === undefined || !existsSync(draft)) {
           void window.showWarningMessage(plainMessage(`q-lint: qlinter wrote no baseline: ${ran.stderr.trim() || `exit ${ran.code}`}`));
