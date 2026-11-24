@@ -53,6 +53,13 @@ export function generator(type: string, o: TestDataOptions): string {
   const lo = o.low;
   const span = o.high - o.low;
   const whole = Math.max(1, Math.round(span));
+  // A short or an int drawn in the range cut to its type's finite values
+  // (`0Wh` is 32767): past it, the cast makes every value an infinity (#1580).
+  const within = (letter: string, max: number): string => {
+    const a = Math.min(max, Math.max(-max, Math.round(lo)));
+    const b = Math.min(max, Math.max(-max, Math.round(o.high)));
+    return `"${letter}"$${a}+n?${Math.max(1, b - a)}`;
+  };
   // A symbol a bare one cannot write (`a/b` is `a` over `b`, '/) goes
   // through `$ (#1279).
   const bare = o.symbols.every((s) => symbolLiteral(s) === `\`${s}`);
@@ -62,8 +69,8 @@ export function generator(type: string, o: TestDataOptions): string {
     case "b": return "n?0b";
     case "g": return "n?0Ng";
     case "x": return "`byte$n?256";
-    case "h": return `"h"$${Math.round(lo)}+n?${Math.min(whole, 32767)}`;
-    case "i": return `"i"$${Math.round(lo)}+n?${whole}`;
+    case "h": return within("h", 32766);
+    case "i": return within("i", 2147483646);
     case "j": return `${Math.round(lo)}+n?${whole}`;
     case "e": return `"e"$${lo}+n?${span}e`;
     case "f": return `${lo}+n?${span}f`;

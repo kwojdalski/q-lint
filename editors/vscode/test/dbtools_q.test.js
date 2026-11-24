@@ -370,6 +370,18 @@ test("the test data generator's q takes symbols a bare symbol cannot write (#127
   }
 });
 
+// A range past a short's or an int's bounds is cut to them, not every
+// value 0W (#1580).
+test("the test data generator's shorts and ints stay in their type's range", { skip }, async (t) => {
+  const { connection } = await connect(t, "");
+  const info = { kind: "table", rows: 0, bytes: null, partitions: null, keys: [], ncols: 2, columns: [{ name: "h", type: "h", fkey: "", attr: "" }, { name: "i", type: "i", fkey: "", attr: "" }] };
+  for (const [low, high] of [[40000, 70000], [-3000000000, -2999999990], [-1e10, 1e10]]) {
+    const ran = readRun(await connection.call(RUN_SCRIPT, statements(testDataQ(info, "gen", { rows: 40, symbols: ["a"], low, high, seed: 2 }))));
+    assert.ok(ran.ok, ran.error);
+    assert.strictEqual(await connection.call("{h:exec h from gen;i:exec i from gen;all(not null h),(not null i),(abs[h]<0Wh),abs[i]<0Wi}", 0), true, `${low} ${high}`);
+  }
+});
+
 test("the test data generator keys a table by distinct keys, of two columns too, in the sorted column's order (#1282)", { skip }, async (t) => {
   const { connection } = await connect(t, "");
   const col = (name, type) => ({ name, type, fkey: "", attr: "" });
