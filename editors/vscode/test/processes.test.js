@@ -50,6 +50,14 @@ test("a host is refused when it holds a port, a space or a slash", () => {
   assert.strictEqual(hostProblem("tcp://h"), "A host only: the port is asked for next.");
 });
 
+// Two or more colons were taken as an IPv6 address unchecked: `[::1]:5000`
+// and `host:5000:rdb` were accepted, then dialled as a name.
+test("a host with colons is accepted only when it is an IPv6 address", () => {
+  assert.strictEqual(hostProblem("fe80::1"), undefined);
+  assert.strictEqual(hostProblem("[::1]:5000"), "A host only: the port is asked for next.");
+  assert.strictEqual(hostProblem("rdb-host:5000:rdb"), "A host only: the port is asked for next.");
+});
+
 // Tooltips are Markdown: a label, host, user or tag was read as Markdown,
 // so `*prod*` showed as italic prod, `a_b_c` lost its underscores and a user
 // with a backtick broke out of its code span.
