@@ -1226,3 +1226,23 @@ test("a list sent to handle 0 is evaluated as value evaluates it (#1768)", () =>
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("an evaluator, hopen or xkey taken out of .q or named by its symbol is a change (#1764)", () => {
+  const cases = {
+    '.q[`value]"a:9"': ["calls .q.value"],
+    '(.q`get)"a:9"': ["calls .q.get"],
+    '(`.q.value)"a:9"': ["calls .q.value"],
+    ".q[`xkey][`a;`t]": ["calls .q.xkey"],
+    "(`.q.xkey)[`a;`t]": ["calls .q.xkey"],
+    "(.q@`hopen)`:g.txt": ["calls .q.hopen"],
+    '(get`.q.get)["a:9"]': ["calls .q.get"],
+    // What is not one of them, or the name applied directly, reads.
+    ".q[`count]`t": [],
+    "(`.q.count)`t": [],
+    ".q.value `t": [],
+    "`a .q.xkey t": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

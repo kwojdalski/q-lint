@@ -31,7 +31,9 @@
 //   file handle (`` `:f 0: ``, `hsym[`f] 0:`, `(hsym `f) 1:`,
 //   `` (`$":f") 0: ``, `` 0:[`:f;x] ``, `` .[0:;(`:f;x)] ``), and `2:`,
 //   each also by its `.q.` name (`.q.set`), by its symbol
-//   (`` `.q.set . (`a;1) ``) and indexed (`` .q[`set] ``) - `system` of a string literal
+//   (`` `.q.set . (`a;1) ``) and indexed (`` .q[`set] ``) - as are `value`,
+//   `get`, `eval`, `reval`, `hopen`, `xasc`, `xdesc` and `xkey`, whose
+//   arguments are then not read (#1764) - `system` of a string literal
 //   is read as that command, so `system "c"` only reads; `hopen` of a file handle
 //   (`` hopen `:f ``, `` hopen hsym `f ``, `` hopen `$":f" ``, `hopen ":f"`),
 //   which creates the file to write through - of a
@@ -144,6 +146,11 @@ const WRITERS = new Set([
 ]);
 /// What evaluates a string or a parse tree it is given.
 const EVALUATORS = new Set(["value", "get", "eval", "reval"]);
+/// What changes the process when it is called on the right arguments: the
+/// writers, the evaluators, `hopen` and what sorts or keys a table. Taken
+/// out of `.q` or named by its symbol, it is the function itself, whose
+/// arguments are not read: `` .q[`value] ``, `` `.q.xkey `` (#1764).
+const CALLED = new Set([...WRITERS, ...EVALUATORS, "hopen", "xasc", "xdesc", "xkey"]);
 /// System commands that only read a setting when they are given no argument.
 const READS_BARE = new Set([..."abBcCdeEfgoOpPrsSTvwWz_", "cd"]);
 
@@ -714,7 +721,7 @@ function readStatement(statement: string, found: Set<string>): void {
               : undefined;
       if ((k.text === ".q" || k.text === ".Q") && index !== undefined) {
         const name = `${k.text}.${index.text.slice(1)}`;
-        if (WRITERS.has(unqualified(name))) {
+        if (CALLED.has(unqualified(name))) {
           found.add(`calls ${name}`);
           continue;
         }
@@ -897,7 +904,7 @@ function readStatement(statement: string, found: Set<string>): void {
     }
     // A writer named by its symbol is the function itself: `` `.q.set . (`a;1) ``,
     // `` (get `.q.set)[`a;1] ``, `` `.q.system "x" ``.
-    if (k.kind === "sym" && k.text.startsWith("`.") && WRITERS.has(unqualified(k.text.slice(1)))) {
+    if (k.kind === "sym" && k.text.startsWith("`.") && CALLED.has(unqualified(k.text.slice(1)))) {
       found.add(`calls ${k.text.slice(1)}`);
       continue;
     }
