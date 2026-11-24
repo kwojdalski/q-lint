@@ -431,6 +431,19 @@
     return map && Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined;
   }
 
+  /// Set `map[key]` as its own: assigning `__proto__` would set the
+  /// prototype, or nothing (#2079).
+  function setOwn(map, key, value) {
+    Object.defineProperty(map, key, { value: value, enumerable: true, writable: true, configurable: true });
+  }
+
+  /// A copy of `map`'s own entries.
+  function ownCopy(map) {
+    const out = {};
+    Object.keys(map || {}).forEach(function (k) { setOwn(out, k, map[k]); });
+    return out;
+  }
+
   /// The points a chart's data draws: each dataset's or linked pane's.
   function chartPoints(data) {
     let n = 0;
@@ -1639,7 +1652,7 @@
     const colours = {};
     series.forEach(function (n) {
       if (ownValue(state.colours, n)) {
-        colours[n] = ownValue(state.colours, n);
+        setOwn(colours, n, ownValue(state.colours, n));
       }
     });
     const out = { kind: state.kind, series: series, bins: state.bins, colours: colours };
@@ -1668,7 +1681,7 @@
     if (preset.bins) {
       state.bins = preset.bins;
     }
-    state.colours = Object.assign({}, preset.colours || {});
+    state.colours = ownCopy(preset.colours);
     state.mapSize = preset.size ? at(preset.size) : -1;
     state.mapColour = preset.colour ? at(preset.colour) : -1;
   }
@@ -1752,7 +1765,7 @@
         colour.title = "The colour of " + name;
         colour.value = ownValue(state.colours, name) || (/^#[0-9a-f]{6}$/i.test(theme.colours[picked.indexOf(c) % theme.colours.length]) ? theme.colours[picked.indexOf(c) % theme.colours.length] : "#3794ff");
         colour.addEventListener("change", function () {
-          state.colours[name] = colour.value;
+          setOwn(state.colours, name, colour.value);
           save();
           drawChart();
         });
