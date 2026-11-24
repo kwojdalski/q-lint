@@ -20,7 +20,7 @@ const { readSym, symReport } = require("../out/syminspect.js");
 const { advise, filterCounts, adviceReport, readAttributeSample } = require("../out/attradvice.js");
 const { schemaDiff, migrationScript, nullOf, castOf } = require("../out/migrate.js");
 const { symbolPool, rangeOf, generator, testDataQ, testDataCsv, loadTypes, random } = require("../out/testdata.js");
-const { timeOfDay, rangeProblem, readTpPage, readTpLog, readReplayed } = require("../out/tplog.js");
+const { headNames, timeOfDay, rangeProblem, readTpPage, readTpLog, readReplayed } = require("../out/tplog.js");
 const { parseDashboards, changed, tileQueryProblem, dashboardNameProblem, withDashboard, refreshOf } = require("../out/dashboard.js");
 const { gridFromCsv, gridFromJson, chartFromGrid } = require("../out/chartfile.js");
 const { parseArgs, main, USAGE } = require("../out/chartcli.js");
@@ -308,6 +308,8 @@ test("the tickerplant log's readers, times of day and ranges", () => {
   assert.deepStrictEqual(readTpPage({ total: 1, i: 4, fn: "upd", tb: "trade", rows: 2, tx: "09:00" }).rows, [{ index: 4, fn: "upd", table: "trade", rows: 2, time: "09:00" }]);
   assert.strictEqual(readTpLog({ count: 3, bytes: 10, size: 12, complete: false, tables: "trade" }).tables[0], "trade");
   assert.deepStrictEqual(readReplayed({ replayed: 2, failed: 0, errors: [], tables: ["t"], rows: [2] }).tables, [{ name: "t", rows: 2 }]);
+  assert.deepStrictEqual(readReplayed({ replayed: 1, failed: 0, errors: [], skipped: 2, heads: ["system", ""], tables: [], rows: [] }).heads, ["system", ""]);
+  assert.strictEqual(headNames(["system", ""]), "system, no name");
   assert.throws(() => readTpPage(1), /page of messages/);
 });
 

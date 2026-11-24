@@ -24,7 +24,7 @@ import { QConnection } from "./qclient";
 import { mergeEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import { qBinaryFrom, relativeBinaryProblem } from "./terminal";
-import { TPLOG_INIT, rangeProblem, readReplayed, readTpLog, readTpPage, timeOfDay, type TpLog } from "./tplog";
+import { TPLOG_INIT, headNames, rangeProblem, readOthers, readReplayed, readTpLog, readTpPage, timeOfDay, type TpLog } from "./tplog";
 import { plainMessage } from "./history";
 import { lifeline } from "./lifeline";
 
@@ -307,17 +307,23 @@ export class TickerplantLog {
       return problem;
     }
     if (!confirmed) {
+      const others = readOthers(await this.call(local, ".qlint.tp.others", from, to));
+      const skipped = others.count > 0 ? ` ${others.count} message(s) name something other than upd (${headNames(others.heads)}): they are skipped, never run.` : "";
       const yes = "Replay";
       const answer = await window.showWarningMessage(
         plainMessage(`Replay messages ${from} to ${to} into the local q on port ${local.port}?`),
-        { modal: true, detail: "Each runs as -11! would run it, in the q q-lint started for this log; nothing is sent to your processes. Without a schema loaded first, a table is made from its first message." },
+        {
+          modal: true,
+          detail: `Each (\`upd;table;data) message is passed to upd, as -11! would, in the q q-lint started for this log; nothing is sent to your processes. Without a schema loaded first, a table is made from its first message.${skipped}`,
+        },
         yes,
       );
       if (answer !== yes) return "not replayed";
     }
     if (this.local !== local || !on()) return "not replayed";
     const r = readReplayed(await this.call(local, ".qlint.tp.replay", from, to));
-    const text = `Replayed ${r.replayed} messages${r.failed ? `, ${r.failed} failed (${r.errors.join("; ")})` : ""}. The local q on port ${local.port} now holds ${r.tables.map((t) => `${t.name} ${t.rows.toLocaleString("en-US")} rows`).join(", ") || "no tables"}.`;
+    const skipped = r.skipped ? `, ${r.skipped} skipped as not upd's (${headNames(r.heads)})` : "";
+    const text = `Replayed ${r.replayed} messages${r.failed ? `, ${r.failed} failed (${r.errors.join("; ")})` : ""}${skipped}. The local q on port ${local.port} now holds ${r.tables.map((t) => `${t.name} ${t.rows.toLocaleString("en-US")} rows`).join(", ") || "no tables"}.`;
     await this.post({ type: "status", text, failed: r.failed > 0 });
     return text;
   }

@@ -277,7 +277,7 @@ const { ATTRIBUTE_SAMPLE, readAttributeSample, advise } = require("../out/attrad
 const { TABLE_INFO, readTableInfo } = require("../out/tableinfo.js");
 const { testDataQ, testDataCsv, loadTypes } = require("../out/testdata.js");
 const { migrationScript } = require("../out/migrate.js");
-const { TPLOG_INIT, readTpLog, readTpPage, readReplayed } = require("../out/tplog.js");
+const { TPLOG_INIT, readOthers, readTpLog, readTpPage, readReplayed } = require("../out/tplog.js");
 
 test("the sym inspector counts the file, its columns' shares and its growth", { skip }, async (t) => {
   const extra = [
@@ -495,6 +495,34 @@ test("a tickerplant log's one-row messages, a list of atoms, have a time and are
   assert.match(all.rows[0].time, /2026\.01\.05D09:00:00/);
   const early = readTpPage(await connection.call(".qlint.tp.page", "", 8 * 3600000, 10 * 3600000, 0, 100));
   assert.deepStrictEqual(early.rows.map((r) => r.index), [0]);
+});
+
+// Replay ran `value` on each message: a log naming system, set on .z.pw or
+// a lambda ran it in the local q, which runs as the user (#1829).
+test("a replay passes only upd's messages to upd, to a table's name, and skips the rest", { skip }, async (t) => {
+  const log = [
+    'f:hsym`$"$DIR/tp.log";',
+    ".[f;();:;()];",
+    "h:hopen f;",
+    "h enlist(`upd;`trade;([]sym:enlist`a;px:enlist 1f));",
+    'h enlist(`system;"touch $DIR/pwned1");',
+    "h enlist(`set;`.z.pw;{[u;p]1b});",
+    'h enlist({system"touch $DIR/pwned2"};1);',
+    "h enlist(`upd;`.z.pw;([]a:enlist 1));",
+    "hclose h;",
+    "",
+  ].join("\n");
+  const { connection, dir } = await connect(t, log + TPLOG_INIT + "\n");
+  readTpLog(await connection.call(".qlint.tp.load", path.join(dir, "tp.log")));
+  assert.deepStrictEqual(readOthers(await connection.call(".qlint.tp.others", 0, 4)), { count: 3, heads: ["system", "set", ""] });
+  const replayed = readReplayed(await connection.call(".qlint.tp.replay", 0, 4));
+  assert.deepStrictEqual([replayed.replayed, replayed.failed, replayed.skipped], [2, 1, 3]);
+  assert.deepStrictEqual(replayed.heads, ["system", "set", ""]);
+  assert.match(replayed.errors[0], /not a table name: `\.z\.pw/);
+  assert.deepStrictEqual(Object.fromEntries(replayed.tables.map((x) => [x.name, x.rows])), { trade: 1 });
+  assert.strictEqual(fs.existsSync(path.join(dir, "pwned1")), false);
+  assert.strictEqual(fs.existsSync(path.join(dir, "pwned2")), false);
+  assert.strictEqual(await connection.call("{[x] @[{100h=type .z.pw};::;0b]}", 0), false);
 });
 
 test("a tickerplant log whose first temporal column is a date or a month opens, with no time of day (#1248)", { skip }, async (t) => {
