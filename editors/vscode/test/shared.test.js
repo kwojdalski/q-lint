@@ -41,9 +41,17 @@ test("a password or secret in the shared list is dropped and said", () => {
 test("what runs something is read only in a trusted workspace", () => {
   const text = JSON.stringify([{ label: "a", host: "localhost", port: 1, init: "x:1", ssh: "jump", launch: { script: "s.q" } }]);
   assert.deepStrictEqual(readSharedFile(text, true).processes[0], { label: "a", host: "localhost", port: 1, tags: [], init: "x:1", ssh: "jump", launch: { script: "s.q" } });
-  const untrusted = readSharedFile(text, false);
+  const untrusted = readSharedFile(JSON.stringify([{ label: "a", host: "localhost", port: 1, init: "x:1", launch: { script: "s.q" } }]), false);
   assert.deepStrictEqual(untrusted.processes[0], { label: "a", host: "localhost", port: 1, tags: [] });
   assert.deepStrictEqual(untrusted.problems, ["1 entry's connect script, SSH tunnel or launch definition was not read: the workspace is not trusted."]);
+  // One reached through a tunnel is not listed: it would be connected to
+  // directly, past its tunnel, password and all (#1507).
+  const tunnelled = readSharedFile(text, false);
+  assert.deepStrictEqual(tunnelled.processes, []);
+  assert.deepStrictEqual(tunnelled.problems, [
+    "a: reached through an SSH tunnel, which is not read while the workspace is not trusted, so not listed.",
+    "1 entry's connect script, SSH tunnel or launch definition was not read: the workspace is not trusted.",
+  ]);
   assert.throws(() => readSharedFile("{", true), SyntaxError);
 });
 
@@ -52,6 +60,15 @@ test("a process is written into the list in place of its label, with no password
   assert.deepStrictEqual(JSON.parse(one), { processes: [{ label: "rdb", host: "h", port: 1, user: "me", tags: [] }] });
   const two = withShared('{"note":"kept","processes":[{"label":"rdb","host":"old"},{"label":"x","host":"y","port":2}]}', { label: "rdb", host: "h", port: 1, tags: [] });
   assert.deepStrictEqual(JSON.parse(two), { note: "kept", processes: [{ label: "rdb", host: "h", port: 1, tags: [] }, { label: "x", host: "y", port: 2 }] });
+});
+
+// An entry labelled "rdb " is listed as rdb, but was not found by Share:
+// a second rdb was appended and skipped as a repeat, the old one kept.
+test("sharing a process replaces an entry whose label has spaces around it", () => {
+  const file = JSON.stringify({ processes: [{ label: "rdb ", host: "old-host", port: 5000 }] });
+  const read = readSharedFile(withShared(file, { label: "rdb", host: "new-host", port: 5001, tags: [] }), true);
+  assert.deepStrictEqual(read.processes.map((p) => `${p.label}@${p.host}:${p.port}`), ["rdb@new-host:5001"]);
+  assert.deepStrictEqual(read.problems, []);
 });
 
 test("the list is a group beside the saved processes; .qlint names no discovery server", () => {
@@ -199,7 +216,7 @@ test("a shared list that turns TLS off, or adds or drops a tunnel, forgets the p
 
 test("in an untrusted workspace, a shared process brings no connect script, tunnel or launch", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-shared-"));
-  write(dir, [{ label: "a", host: "localhost", port: 1, init: "evil[]", ssh: "jump", launch: { command: "rm" } }]);
+  write(dir, [{ label: "a", host: "localhost", port: 1, init: "evil[]", launch: { command: "rm" } }, { label: "b", host: "10.0.0.5", port: 1, ssh: "jump" }]);
   const { live } = await setUp(t, dir, { trusted: false });
   await sleep(50);
   assert.deepStrictEqual(live.api().sharedProcesses().processes, [{ label: "a", host: "localhost", port: 1, tags: [] }]);
@@ -280,4 +297,21 @@ test("with q-lint.processes.shared.enable off, the file is not read, nor listed,
   assert.ok(watchers.every((w) => w.disposed));
   assert.strictEqual(live.api().sharedProcesses(), undefined);
   assert.strictEqual(live.activeLabel(), undefined);
+});
+
+// Turned off, only the active connection to a shared process closed: a
+// stream's own connection kept receiving updates (#1517).
+test("turning the shared list off closes a connection apart to one of its processes", async (t) => {
+  const q = await someQ(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-shared-"));
+  write(dir, [{ label: "a", host: "127.0.0.1", port: q.port }]);
+  const { live } = await setUp(t, dir);
+  await sleep(50);
+  const connection = await live.openSeparate(live.named(".qlint/a"));
+  t.after(() => connection.abort());
+  assert.strictEqual(connection.isOpen, true);
+  stub.config.user["processes.shared.enable"] = false;
+  stub.changeConfig("q-lint.processes.shared.enable");
+  await sleep(50);
+  assert.strictEqual(connection.isOpen, false);
 });

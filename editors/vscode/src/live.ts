@@ -62,7 +62,7 @@ import {
 import { clickedEditor, unsavedIn } from "./clicked";
 import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
 import { ClosedBeforeHandshake, QConnection, QError, type Target } from "./qclient";
-import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, readTunnel } from "./tunnel";
+import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, TunnelHandshakeError, readTunnel } from "./tunnel";
 import { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, readGateway } from "./gateway";
 import { HEARTBEAT, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
 import { historyHeading, historyLabel, iconsEscaped, plainMessage } from "./history";
@@ -269,8 +269,12 @@ class ProcessesView implements TreeDataProvider<Row> {
     item.tooltip = new MarkdownString(processTooltip(process, from));
     const kind = from === undefined ? "process" : "discovered";
     item.contextValue = active ? `${kind}.connected` : kind;
-    // A click connects: the row is the process, and connecting is what it is for.
-    item.command = { command: COMMANDS.connect, title: "Connect", arguments: [row] };
+    // A click connects: the row is the process, and connecting is what it is
+    // for. Not the connected row's: it would reconnect, dropping a query
+    // running there (#1506).
+    if (!active) {
+      item.command = { command: COMMANDS.connect, title: "Connect", arguments: [row] };
+    }
     return item;
   }
 }
@@ -499,6 +503,21 @@ export class Live {
   /// that drops the entry just added.
   private queries: HistoryEntry[] | undefined;
   private active: Process | undefined;
+  /// The connection `open` is running the connect script on, before it is
+  /// the active one: what Disconnect closes then.
+  private opening: QConnection | undefined;
+  /// The SSH tunnels open, stopped now when the extension host goes: one
+  /// left to its connection's close outlives a host that exits first (#1518).
+  private readonly tunnels = new Set<SshTunnel>();
+  private readonly closeTunnels = (): void => {
+    for (const tunnel of this.tunnels) {
+      tunnel.close();
+    }
+  };
+  /// The connections `openSeparate` handed out and still open: a stream's.
+  private readonly separate = new Set<{ connection: QConnection; process: Process }>();
+  /// Stops the reconnect after an abort that waits for the process to be free.
+  private untilFree: AbortController | undefined;
   /// A connect in progress, so a second one waits for it instead of opening
   /// another.
   private connecting: Promise<boolean> | undefined;
@@ -668,9 +687,13 @@ export class Live {
         if (event.affectsConfiguration("q-lint.processes.shared")) {
           this.watchShared();
         }
-        // Turned off, a connection through a tunnel closes with its tunnel.
-        if (event.affectsConfiguration("q-lint.connection.sshTunnel") && !this.setting(readTunnel).enabled && this.active?.ssh !== undefined && this.connection !== undefined) {
-          void this.disconnect();
+        // Turned off, a connection through a tunnel closes with its tunnel,
+        // a stream's apart too (#1517).
+        if (event.affectsConfiguration("q-lint.connection.sshTunnel") && !this.setting(readTunnel).enabled) {
+          this.closeSeparate((p) => p.ssh !== undefined);
+          if (this.active?.ssh !== undefined && this.connection !== undefined) {
+            void this.disconnect();
+          }
         }
       }),
       this.changed.event((what) => {
@@ -693,11 +716,14 @@ export class Live {
           // A reconnect after an abort stops trying.
           this.reconnectStopped = true;
           void this.connection?.close();
+          this.closeTunnels();
+          globalThis.process.off("exit", this.closeTunnels);
           this.sharedWatcher?.dispose();
         },
       },
       workspace.onDidGrantWorkspaceTrust(() => void this.loadShared()),
     );
+    globalThis.process.on("exit", this.closeTunnels);
     this.showStatus();
     this.status.show();
     this.watchShared();
@@ -723,6 +749,7 @@ export class Live {
       if (had) {
         this.processesView.refresh();
       }
+      this.closeSeparate((p) => p.server === SHARED_SOURCE);
       if (this.active?.server === SHARED_SOURCE && this.connection !== undefined) {
         void this.disconnect();
       }
@@ -1323,7 +1350,9 @@ export class Live {
     if (sure !== yes) {
       return;
     }
-    if (this.activeLabel() === process.label && this.active?.server === undefined) {
+    // Or being connected to: it would become the active one once deleted.
+    const connecting = this.connecting !== undefined && this.connectingTo === passwordKey(process);
+    if ((this.activeLabel() === process.label && this.active?.server === undefined) || connecting) {
       await this.disconnect();
     }
     await this.context.secrets.delete(passwordKey(process));
@@ -1627,11 +1656,20 @@ export class Live {
     const configuration = workspace.getConfiguration("q-lint");
     const { consoleSize } = readLive((key, fallback) => configuration.get(key, fallback));
     const started = Date.now();
+    // A script that blocks holds the connect, and every one after it: it
+    // times out as a query does, and a disconnect closes it (#1505).
+    const controls = this.controls.settings();
+    const timeout = effectiveTimeout(process, controls.timeout, this.setting(readAdmin).processTimeout);
+    let timedOut = false;
+    const disarm = armTimeout(timeout, () => {
+      timedOut = true;
+      connection.abort();
+    });
     try {
       const answer = await window.withProgress(
         { location: { viewId: VIEWS.processes }, title: `Running the connect script of ${process.label}` },
         () =>
-          this.controls.settings().unwrapped
+          controls.unwrapped
             ? runUnwrapped(connection, cut, { size: consoleSize, limit: 0, unlimited: false, grid: false })
             : connection.query(cut, consoleSize),
       );
@@ -1641,7 +1679,11 @@ export class Live {
       }
       this.output.appendLine(`# ${process.label} - connect script ran (${Date.now() - started} ms)`);
     } catch (error) {
-      failed(error instanceof Error ? error.message : String(error));
+      if (!stopped()) {
+        failed(timedOut ? timedOutError(timeout) : error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      disarm();
     }
   }
 
@@ -1673,10 +1715,12 @@ export class Live {
       // Kept, so deleting the server forgets it even after a reload.
       await this.discovery.passwordGiven(process.server!, process.label.slice(process.server!.length + 1));
     }
-    const connected = await this.open(process);
-    // A discovered process cannot be edited, so a password that did not
-    // connect is forgotten: the next connect asks for it again.
-    if (!connected && !saved && process.user && !commanded) {
+    const outcome: { refused?: boolean } = {};
+    const connected = await this.open(process, false, false, this.disconnects, outcome);
+    // A discovered process cannot be edited, so a password that was refused
+    // is forgotten: the next connect asks for it again. One that met a host
+    // down or a timeout is kept (#1511).
+    if (!connected && outcome.refused === true && !saved && process.user && !commanded) {
       await this.context.secrets.delete(passwordKey(process));
       await this.discovery.passwordGiven(process.server!, process.label.slice(process.server!.length + 1), false);
     }
@@ -1688,7 +1732,9 @@ export class Live {
   /// the handshake is still running the query it was left with, and is
   /// tried again until it does, or until the user disconnects or connects
   /// elsewhere.
-  private open(process: Process, untilFree = false, quiet = false, disconnects = this.disconnects): Promise<boolean> {
+  /// `outcome.refused` is set when the process closed before the handshake:
+  /// how it refuses a user or password.
+  private open(process: Process, untilFree = false, quiet = false, disconnects = this.disconnects, outcome: { refused?: boolean } = {}): Promise<boolean> {
     if (this.connecting !== undefined) {
       // A connect to another process - a reconnect after an abort, waiting
       // for that process to be free - is stopped and this one follows: its
@@ -1697,9 +1743,13 @@ export class Live {
         return this.connecting;
       }
       this.reconnectStopped = true;
-      return this.connecting.then(() => this.open(process, false, false, disconnects));
+      this.untilFree?.abort();
+      return this.connecting.then(() => this.open(process, false, false, disconnects, outcome));
     }
     this.reconnectStopped = false;
+    // A wait for a busy process is cut short, not run out, when it stops (#1510).
+    const free = untilFree ? new AbortController() : undefined;
+    this.untilFree = free;
     this.connectingTo = passwordKey(process);
     this.connecting = (async () => {
       if (this.connection !== undefined) {
@@ -1717,7 +1767,7 @@ export class Live {
             const target = await this.targetFor(process);
             for (;;) {
               try {
-                return await this.dial(process, target);
+                return await this.dial(process, target, free?.signal);
               } catch (error) {
                 const busy = error instanceof Error && error.message.startsWith("no answer from ");
                 if (!untilFree || !busy || this.reconnectStopped) {
@@ -1735,8 +1785,13 @@ export class Live {
           await connection.close();
           return false;
         }
-        await this.runConnectScript(connection, process, stopped);
-        if (stopped()) {
+        this.opening = connection;
+        try {
+          await this.runConnectScript(connection, process, stopped);
+        } finally {
+          this.opening = undefined;
+        }
+        if (stopped() || !connection.isOpen) {
           await connection.close();
           return false;
         }
@@ -1767,6 +1822,7 @@ export class Live {
         this.changed.fire("connected");
         return true;
       } catch (failure) {
+        outcome.refused = failure instanceof ClosedBeforeHandshake || failure instanceof TunnelHandshakeError;
         if ((untilFree && this.reconnectStopped) || quiet || disconnects !== this.disconnects) {
           return false;
         }
@@ -1800,6 +1856,8 @@ export class Live {
     }
     // Cancelled while ssh opens the forward: stop waiting for it too (#1459).
     const tunnel = await SshTunnel.open({ destination: process.ssh, host: target.host, port: target.port, signal });
+    this.tunnels.add(tunnel);
+    tunnel.whenClosed(() => this.tunnels.delete(tunnel));
     try {
       const connection = await QConnection.open(
         {
@@ -1823,7 +1881,7 @@ export class Live {
       if (error instanceof ClosedBeforeHandshake) {
         // What ssh says of a forward that failed can come just after the close.
         await new Promise((resolve) => setTimeout(resolve, 100));
-        failure = new TunnelConnectError(
+        failure = new TunnelHandshakeError(
           `the connection through the SSH tunnel via ${process.ssh} closed before the handshake: no q process answers at ${where} as ${process.ssh} reaches it, or the user or password was refused`,
           tunnel.said,
         );
@@ -1839,8 +1897,29 @@ export class Live {
   /// its stored password and through its tunnel; the caller closes it. No
   /// timeout: a stream's subscription holds it open. A call that should end
   /// goes through `callSeparate`.
+  /// Its connect script runs first, as on every connect (#1509).
   async openSeparate(process: Process): Promise<QConnection> {
-    return this.dial(process, await this.targetFor(process));
+    const connection = await this.dial(process, await this.targetFor(process));
+    try {
+      await this.runConnectScript(connection, process);
+    } catch (error) {
+      connection.abort();
+      throw error;
+    }
+    const kept = { connection, process };
+    this.separate.add(kept);
+    connection.whenClosed(() => this.separate.delete(kept));
+    return connection;
+  }
+
+  /// Close the connections apart to the processes `which` picks: a setting
+  /// that reached them was turned off.
+  private closeSeparate(which: (process: Process) => boolean): void {
+    for (const { connection, process } of [...this.separate]) {
+      if (which(process)) {
+        connection.abort();
+      }
+    }
   }
 
   /// `use` over a connection of its own to `process` (`openSeparate`),
@@ -2026,6 +2105,8 @@ export class Live {
 
   private async disconnect(): Promise<void> {
     this.disconnects++;
+    // One running its connect script, which may never answer (#1505).
+    this.opening?.abort();
     if (this.reconnecting !== undefined && this.connection === undefined) {
       // A try under way is closed once it opens.
       this.reconnectStopped = true;
@@ -2038,6 +2119,7 @@ export class Live {
       return;
     }
     this.reconnectStopped = true;
+    this.untilFree?.abort();
     const connection = this.connection;
     this.connection = undefined;
     // A query running on it was stopped by the user, as Abort stops one.
