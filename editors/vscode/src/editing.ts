@@ -32,8 +32,9 @@ const SETTLED = settled(4);
 /// and nothing after it that closes it. `f:{[x]`, `select from t where x in (1;2`,
 /// and `f:{` before a `}` the cursor sits on. A bracket in a trailing
 /// comment (` / see (a`) opens nothing; a comment after one that is open
-/// (`f:{ / doc`) leaves it open.
-export const OPENS = new RegExp(String.raw`^(?:(?!\s/).)*[{\[(]${SETTLED}*(?:\s/.*)?$`);
+/// (`f:{ / doc`) leaves it open, and a string before it (`s:"a /b";f:{`)
+/// starts no comment (#1375).
+export const OPENS = new RegExp(String.raw`^(?:"(?:[^"\\]|\\.)*"|(?!\s/)[^"])*[{\[(]${SETTLED}*(?:\s/.*)?$`);
 
 /// A comment line: what follows it is not a continuation of it. A `/` alone
 /// opens a block comment, and the line after it is text, not q.

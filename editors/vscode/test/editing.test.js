@@ -56,6 +56,8 @@ test("a string or brackets nested and closed on the line leave an open one open 
     'f:{-1 "(";',
     'f:{s:"a\\"b";',
     "f:{g[{x}[1];(2;[3])]",
+    's:"a /b";f:{',
+    's:"a \\" /b";f:{[x]',
   ]) {
     assert.strictEqual(enter(line), "indent", line);
   }
