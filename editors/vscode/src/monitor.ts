@@ -44,10 +44,11 @@ export const INFO = {
 
 /// The Monitor's seconds between reads while it is shown; 0 is never. At
 /// most an hour, the setting's maximum: setInterval runs one too long for it
-/// every millisecond (#1110).
+/// every millisecond (#1110). Whole seconds, as the setting declares; a
+/// hand-written 0.5 is the fastest there is, a second, not never (#1851).
 export function readMonitorInterval(get: <T>(key: string, fallback: T) => T): number {
   const seconds = get<unknown>("processMonitor.refreshInterval", 0);
-  return typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 1 ? Math.min(Math.floor(seconds), 3600) : 0;
+  return typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0 ? Math.min(Math.max(Math.floor(seconds), 1), 3600) : 0;
 }
 
 /// A row of the Process Monitor or the HDB browser.

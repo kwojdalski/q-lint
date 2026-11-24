@@ -134,7 +134,17 @@ test("the Process Monitor's tree", () => {
 
 test("the Monitor's interval is whole seconds, at least one, or never", () => {
   const read = (v) => readMonitorInterval((key, fallback) => (key === "processMonitor.refreshInterval" ? v : fallback));
-  assert.deepStrictEqual([read(undefined), read(0), read(0.5), read(5), read(7.9), read("5"), read(-3)], [0, 0, 0, 5, 7, 0, 0]);
+  assert.deepStrictEqual([read(undefined), read(0), read(5), read(7.9), read("5"), read(-3)], [0, 0, 5, 7, 0, 0]);
+});
+
+// A positive fraction is the fastest refresh asked for, not none; the
+// setting is an integer, as discovery.refreshInterval is.
+test("a Monitor interval under a second refreshes every second, not never (#1851)", () => {
+  const read = (v) => readMonitorInterval((key, fallback) => (key === "processMonitor.refreshInterval" ? v : fallback));
+  assert.deepStrictEqual([read(0.5), read(0.001), read(2.5)], [1, 1, 2]);
+  const pkg = require("../package.json");
+  const setting = pkg.contributes.configuration.map((c) => c.properties["q-lint.processMonitor.refreshInterval"]).find((p) => p !== undefined);
+  assert.strictEqual(setting.type, "integer");
 });
 
 // A hand-edited interval of 2147484 s or more overflowed setInterval,
