@@ -175,8 +175,15 @@ export class LintTool implements LanguageModelTool<LintInput> {
     const cwd = workspace.workspaceFolders?.[0]?.uri.fsPath;
     let last = "no qlinter binary to run";
     for (const command of this.servers()) {
+      // A cancelled lint stops: the next binary is not tried (#1381).
+      if (token?.isCancellationRequested) {
+        return { error: "Linting was cancelled." };
+      }
       try {
         const ran = await runWith(command, lintArgs(file), input.code, cwd, LINT_TIMEOUT, token);
+        if (token?.isCancellationRequested) {
+          return { error: "Linting was cancelled." };
+        }
         // 0: no findings; 1: findings; anything else: qlinter failed.
         if (ran.status !== 0 && ran.status !== 1) {
           last = `qlinter exited with ${ran.status}: ${ran.stderr.trim().slice(0, 500)}`;
@@ -187,6 +194,9 @@ export class LintTool implements LanguageModelTool<LintInput> {
       } catch (error) {
         last = message(error);
       }
+    }
+    if (token?.isCancellationRequested) {
+      return { error: "Linting was cancelled." };
     }
     return { error: `Could not lint: ${last}.` };
   }

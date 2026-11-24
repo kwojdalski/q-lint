@@ -214,6 +214,31 @@ test("Lint q Code reads qlinter's output whole, a character split across chunks 
   assert.strictEqual(ran.stdout.slice(65535), "\u00e9".repeat(10));
 });
 
+test("Lint q Code cancelled stops: the next qlinter is not started (#1381)", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-lintcancel-"));
+  const log = path.join(dir, "ran");
+  const fake = (n) => {
+    const f = path.join(dir, `qlinter${n}`);
+    fs.writeFileSync(f, `#!/bin/sh\necho ${n} >> ${log}\nsleep 2\necho []\n`, { mode: 0o755 });
+    return f;
+  };
+  const { live, context } = setup();
+  const tools = registerAssistTools(context, live, () => [fake(1), fake(2)]);
+  const listeners = [];
+  const cancelling = { isCancellationRequested: false, onCancellationRequested: (f) => (listeners.push(f), { dispose() {} }) };
+  // Cancelled once the first has started.
+  const started = setInterval(() => {
+    if (fs.existsSync(log)) {
+      clearInterval(started);
+      cancelling.isCancellationRequested = true;
+      listeners.forEach((f) => f());
+    }
+  }, 20);
+  assert.deepStrictEqual(await tools.lint.run({ code: "x:1" }, cancelling), { error: "Linting was cancelled." });
+  assert.deepStrictEqual(fs.readFileSync(log, "utf8").trim().split("\n"), ["1"]);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test("the tools turned off: unregistered at once, and a call on its way is told so and sends nothing", async () => {
   const { live, context } = setup({ "agent.schemaTool.enable": false });
   const tools = registerAssistTools(context, live, () => []);
