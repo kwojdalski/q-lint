@@ -176,6 +176,21 @@ test("the correlation matrix is Pearson's over the rows where both values are th
   assert.strictEqual(pairs.at(-1).r, null);
 });
 
+test("values near the largest or the smallest double still correlate: 1e200 does not square to Infinity, 1e-200 to 0 (#2077)", () => {
+  const g = grid([["a", 9, ["1e200", "2e200", "3e200"]], ["b", 9, ["1e200", "2e200", "3.1e200"]], ["c", 9, ["1e-200", "2e-200", "3e-200"]], ["d", 9, ["3e-200", "2e-200", "1e-200"]]]);
+  const c = L.correlation(g, [0, 1, 2]);
+  const r = (x, y) => c.r[x][y];
+  assert.ok([0, 1, 2, 3].every((i) => Math.abs(r(i, i) - 1) < 1e-12), JSON.stringify(c.r));
+  // As 1 2 3 and 1 2 3.1 correlate.
+  assert.ok(Math.abs(r(0, 1) - 0.9996222851612185) < 1e-12, String(r(0, 1)));
+  assert.ok(Math.abs(r(0, 2) - 1) < 1e-12 && Math.abs(r(2, 3) - -1) < 1e-12, JSON.stringify(c.r));
+  assert.ok(L.correlationPairs(c).every((p) => p.r !== null && Number.isFinite(p.r)));
+  // An infinity leaves no correlation to tell, not NaN.
+  const inf = grid([["x", 9, ["1", "2", "0w"]], ["y", 9, ["1", "2", "3"]]]);
+  inf.values[0][2] = Infinity;
+  assert.strictEqual(L.correlation(inf, [0, 1, 2]).r[0][1], null);
+});
+
 test("a column that does not vary has no correlation even when its mean is off by rounding (#1386)", () => {
   const g = grid([["fee", 9, ["0.1", "0.1", "0.1"]], ["rate", 9, ["0.7", "0.7", "0.7"]], ["sq", 9, ["0", "1", "4"]]]);
   const c = L.correlation(g, [0, 1, 2]);
