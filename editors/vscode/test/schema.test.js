@@ -49,6 +49,12 @@ test("the schema diagram: foreign keys and links found by meta, every name escap
     { from: "u<x>", column: "l", to: "t", kind: "link" },
     { from: "u<x>", column: "o", to: "gone", kind: "foreign key" },
   ]);
+  // A foreign key over a long key has a link's type letter: the keyed table
+  // it points into tells them apart, as does a plain one for a link (#1957).
+  const kt = { name: "kt", info: info({ kind: "keyed", keys: ["k"], ncols: 2, columns: [{ name: "k", type: "j", fkey: "", attr: "" }, { name: "v", type: "j", fkey: "", attr: "" }] }) };
+  const lk = { name: "lk", info: info({ ncols: 3, columns: [{ name: "c", type: "j", fkey: "kt", attr: "" }, { name: "h", type: "h", fkey: "kt", attr: "" }, { name: "r", type: "j", fkey: "lk", attr: "" }] }) };
+  assert.deepStrictEqual(s.schemaLinks([kt, lk]).map((l) => `${l.column} ${l.kind}`), ["c foreign key", "h foreign key", "r link"]);
+  assert.deepStrictEqual(s.schemaLinks([lk]).map((l) => l.kind), ["link", "link", "link"]);
   const svg = s.schemaSvg(tables);
   assert.match(svg, /^<svg xmlns="http:\/\/www.w3.org\/2000\/svg" class="schema"/);
   assert.ok(!svg.includes("u<x>"), "a name is escaped");

@@ -61,7 +61,8 @@ async function startQ(source) {
 }
 
 // A keyed table, a table with a foreign key into it, one with a link column,
-// a table in a namespace, and an HDB of two date partitions.
+// a table in a namespace, a foreign key over a long key there, and an HDB of
+// two date partitions.
 const SERVER = (dir) => `
 {[d] .Q.dd[hsym \`$"${dir}/hdb";d,\`p\`] set .Q.en[hsym \`$"${dir}/hdb"] ([] sym:\`a\`b\`c; px:1 2 3f)} each 2026.01.01 2026.01.02;
 \\l ${dir}/hdb
@@ -69,6 +70,8 @@ s:([sym:\`a\`b\`c] nm:("Aa";"Bb";"Cc"));
 t:([] time:2026.01.01D10:00 2026.01.02D11:00 2026.01.02D12:00; sym:\`s$\`a\`b\`a; px:1.5 0n 2.5; qty:1 2 3; note:("x y";enlist"z";"w"));
 u:([] x:1 2; l:\`t!0 2);
 .ns.v:([] a:1 2);
+.ns.k:([k:1 2 3] w:10 20 30);
+.ns.f:([] c:\`.ns.k$1 2 2);
 `;
 
 const cells = (answer, name) => answer.grid.cells[answer.grid.names.indexOf(name)];
@@ -100,7 +103,8 @@ test("the q of the data tools against a real q process", { skip }, async (t) => 
     }
     assert.strictEqual(tables.find((x) => x.name === "p").info.kind, "partitioned");
     const links = s.schemaLinks(tables).map((l) => `${l.from}.${l.column}->${l.to} ${l.kind}`);
-    assert.deepStrictEqual(links.sort(), ["t.sym->s foreign key", "u.l->t link"]);
+    // `meta` shows `j` for the key over longs as for the link (#1957).
+    assert.deepStrictEqual(links.sort(), [".ns.f.c->.ns.k foreign key", "t.sym->s foreign key", "u.l->t link"]);
     assert.match(s.schemaSvg(tables), /class="edge link"/);
   });
 
