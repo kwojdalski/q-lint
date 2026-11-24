@@ -126,9 +126,10 @@ export function toJson(payload: GridPayload, rows?: number[]): string {
 
 /// A cell as Markdown table text, shown as written: what Markdown reads
 /// inline - code, emphasis, links, HTML, entities, strikethrough, math -
-/// and the pipe escaped (#1263), its line breaks spaces.
+/// the pipe escaped (#1263), and braces, so no `{{q: }}` live value runs
+/// (#1543); its line breaks spaces.
 export function markdownCell(text: string): string {
-  return text.replace(/[\\`*_[\]<>~|&$]/g, "\\$&").replace(/\r?\n|\r/g, " ");
+  return text.replace(/[\\`*_[\]<>~|&${}]/g, "\\$&").replace(/\r?\n|\r/g, " ");
 }
 
 /// The rows as a Markdown table, the cells as the grid shows them with
