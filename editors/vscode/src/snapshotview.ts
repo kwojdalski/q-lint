@@ -26,6 +26,7 @@ import {
 } from "./snapshot";
 import { statements } from "./statements";
 import { plainMessage } from "./history";
+import { assertWritableIn } from "./workspacewrite";
 
 const on = (): boolean => editorFeatureOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "snapshotTests");
 
@@ -86,6 +87,8 @@ async function confirmWrite(uri: Uri, text: string, replacing: boolean): Promise
     return false;
   }
   try {
+    // Not through a link the repository ships (#1830).
+    assertWritableIn(workspace.workspaceFolders, uri.fsPath);
     await workspace.fs.createDirectory(Uri.file(dirname(uri.fsPath)));
     await workspace.fs.writeFile(uri, Buffer.from(text, "utf8"));
   } catch (error) {

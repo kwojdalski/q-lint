@@ -15,6 +15,7 @@ import { commands, window, workspace, type ExtensionContext } from "vscode";
 import { launchable } from "./batch";
 import { LANGUAGE_COMMANDS, languageOff, languageOn } from "./languagefeatures";
 import { plainMessage } from "./history";
+import { assertWritable, linkProblem } from "./workspacewrite";
 
 export const BASELINE_FILE = "qlinter-baseline.json";
 
@@ -123,6 +124,12 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
           void window.showWarningMessage(plainMessage(`q-lint: qlinter wrote no baseline: ${ran.stderr.trim() || `exit ${ran.code}`}`));
           return undefined;
         }
+        // A link the repository ships would take the write elsewhere (#1830).
+        const linked = linkProblem(dir, target);
+        if (linked !== undefined) {
+          void window.showErrorMessage(plainMessage(`q-lint: ${linked}; no baseline was written.`));
+          return undefined;
+        }
         const exists = existsSync(target);
         const write = exists ? "Replace" : "Write";
         const answer = await window.showWarningMessage(
@@ -142,6 +149,7 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
         // relative to the scratch directory, through `..` (#1191, #1275).
         const text = absolutePaths(readFileSync(draft, "utf8"), canonicalDir(scratch));
         try {
+          assertWritable(dir, target);
           writeFileSync(target, rebased(text, dir, canonicalDir(dir)));
         } catch (error) {
           void window.showErrorMessage(plainMessage(`q-lint: could not write ${target}: ${error instanceof Error ? error.message : String(error)}`));
@@ -236,6 +244,8 @@ async function offerConfiguration(dir: string, target: string, command: string, 
   );
   if (answer === add) {
     try {
+      // The configuration may govern from above the folder: not a link either.
+      assertWritable(dirname(config), config);
       writeFileSync(config, after);
     } catch (error) {
       void window.showErrorMessage(plainMessage(`q-lint: could not write ${config}: ${error instanceof Error ? error.message : String(error)}`));

@@ -26,6 +26,7 @@ import {
 import { editorFeatureOff, editorFeatureOn } from "./editorfeatures";
 import { TEST_STUB_COMMAND, detectStyle, endContext, functionAt, newTestPath, stubText, testFilePatterns, testName, type Target } from "./teststub";
 import { plainMessage } from "./history";
+import { assertWritableIn } from "./workspacewrite";
 
 const on = (): boolean => editorFeatureOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "testStub");
 
@@ -139,6 +140,8 @@ export async function generateStub(uri?: Uri, line?: number): Promise<boolean> {
     }
     const content = `/ Tests for ${workspace.asRelativePath(source)}\n\n${stub}`;
     try {
+      // A dangling link the repository ships reads as no file (#1830).
+      assertWritableIn(workspace.workspaceFolders, file.uri.fsPath);
       await workspace.fs.writeFile(file.uri, Buffer.from(content, "utf8"));
     } catch (error) {
       void window.showErrorMessage(plainMessage(`q-lint: could not write ${file.uri.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
