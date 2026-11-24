@@ -14,6 +14,8 @@ export interface Position {
 
 export const START: Position = { offset: 0, partial: "" };
 
+const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
+
 /// Read `file` from `from` to its end now, calling `line` with each line
 /// that ends (without its `\n` or `\r\n`); the position to read from next.
 /// A file now shorter than `from` was truncated, and one that is another
@@ -43,7 +45,9 @@ export async function readFrom(file: string, from: Position, line: (text: string
   for await (const chunk of stream as AsyncIterable<Buffer>) {
     read += chunk.length;
     const bytes = rest.length > 0 ? Buffer.concat([rest, chunk]) : chunk;
-    let begin = 0;
+    // A byte order mark at the head of the file is no part of its first
+    // line, which would not be read as a log line behind one (#1958).
+    let begin = start.offset === 0 && read === bytes.length && bytes.subarray(0, 3).equals(BOM) ? 3 : 0;
     for (let nl = bytes.indexOf(0x0a); nl >= 0; nl = bytes.indexOf(0x0a, begin)) {
       const text = partial + bytes.toString("utf8", begin, nl);
       line(text.endsWith("\r") ? text.slice(0, -1) : text);
