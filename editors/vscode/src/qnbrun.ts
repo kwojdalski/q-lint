@@ -52,9 +52,10 @@ export async function cellAnswer(connection: QConnection, mode: CellMode, cut: s
 
 /// What the read-only guard reads for a code cell `source` run with the
 /// Markdown cells `markdown` after it: the source and every live value's
-/// expression, each on a line of its own, since all of them are sent (#1088).
-export function guardedText(source: string, markdown: string[]): string {
-  return [source, ...new Set(markdown.flatMap(liveExpressions))].join("\n");
+/// expression, since all of them are sent (#1088), each read on its own as
+/// each is sent: joined, a `\` or `/` line would hide what came after (#1442).
+export function guardedText(source: string, markdown: string[]): string[] {
+  return [source, ...new Set(markdown.flatMap(liveExpressions))];
 }
 
 /// The live values of the Markdown `sources`, each cell's by expression,
@@ -158,7 +159,7 @@ export function injectParameters(cells: QnbCell[], overrides: Record<string, str
 /// Where a run sends a cell: `use` on the process `label` names, or on the
 /// run's own when it is undefined. Throws, with why, when it cannot.
 export interface Executor {
-  on<T>(label: string | undefined, code: string, use: (connection: QConnection) => Promise<T>): Promise<T>;
+  on<T>(label: string | undefined, code: string | readonly string[], use: (connection: QConnection) => Promise<T>): Promise<T>;
 }
 
 export interface RunResult {

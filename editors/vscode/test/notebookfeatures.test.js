@@ -345,14 +345,19 @@ test("a headless run numbers and runs the q cells, reads live values, and goes w
 
 test("the guard reads a cell's live values' expressions with its source (#1088)", async () => {
   const markdown = ["Count {{q: count trade}}", "Gone {{q: delete from `trade}}", "Again {{q: count trade}}"];
-  assert.strictEqual(guardedText("/ just a note", markdown), "/ just a note\ncount trade\ndelete from `trade");
+  assert.deepStrictEqual(guardedText("/ just a note", markdown), ["/ just a note", "count trade", "delete from `trade"]);
   assert.deepStrictEqual(writes(guardedText("/ just a note", markdown)), ["deletes from `trade in place"]);
-  assert.strictEqual(guardedText("1+1", []), "1+1");
+  assert.deepStrictEqual(guardedText("1+1", []), ["1+1"]);
+  // Each is read on its own: a cell ending the script or a `/` expression
+  // does not hide what comes after it (#1442), and reads stay reads.
+  assert.deepStrictEqual(writes(guardedText("count t\n\\", ["{{q: a:1}}"])), ["assigns a"]);
+  assert.deepStrictEqual(writes(guardedText("count t", ["Rows {{q: /}} and {{q: a:1}}"])), ["assigns a"]);
+  assert.deepStrictEqual(writes(guardedText("count t\n\\", ["Rows {{q: /}} and {{q: count t}}"])), []);
   // A headless run hands the executor, which guards it, the same text.
   const qnb = { cells: [{ kind: "code", source: "1" }, { kind: "markdown", source: markdown[1] }] };
   const ex = fakeExecutor((cut) => ({ ok: true, type: -7, text: [cut.join(";")] }));
   await runNotebook(qnb, ex, SETTINGS);
-  assert.deepStrictEqual(ex.codes, ["1\ndelete from `trade"]);
+  assert.deepStrictEqual(ex.codes, [["1", "delete from `trade"]]);
 });
 
 test("a headless run stops at the first cell that fails, and clears what the cells after it showed", async () => {

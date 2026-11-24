@@ -725,11 +725,15 @@ function readStatement(statement: string, found: Set<string>): void {
 
 /// What `code` does that the guard asks about, each said once, in the
 /// order found: `assigns trade`, `runs the system command \l`. Empty when
-/// it only reads, as far as its text shows.
-export function writes(code: string): string[] {
+/// it only reads, as far as its text shows. A list is code sent as so many
+/// pieces, each read on its own: a `\` or `/` line ending one does not hide
+/// the next (#1442).
+export function writes(code: string | readonly string[]): string[] {
   const found = new Set<string>();
-  for (const statement of statements(code)) {
-    readStatement(statement, found);
+  for (const piece of typeof code === "string" ? [code] : code) {
+    for (const statement of statements(piece)) {
+      readStatement(statement, found);
+    }
   }
   return [...found];
 }
@@ -737,7 +741,7 @@ export function writes(code: string): string[] {
 /// What the guard holds `code` to on `targets`: the guarded ones, each with
 /// the tags it is guarded by, and what the code does. Undefined when it
 /// may be sent unasked.
-export function guardCheck(code: string, targets: Pick<Process, "label" | "tags">[], settings: GuardSettings): { guarded: { label: string; tags: string[] }[]; reasons: string[] } | undefined {
+export function guardCheck(code: string | readonly string[], targets: Pick<Process, "label" | "tags">[], settings: GuardSettings): { guarded: { label: string; tags: string[] }[]; reasons: string[] } | undefined {
   const guarded = targets.map((p) => ({ label: p.label, tags: guardedBy(p, settings) })).filter((g) => g.tags.length > 0);
   if (guarded.length === 0) {
     return undefined;
