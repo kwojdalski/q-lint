@@ -377,7 +377,7 @@ export class LogViewer {
         });
       });
     }
-    const text = lines.length > 0 ? lines.join("\n") : view.filter === NO_FILTER ? "(empty)" : "(nothing passes the filter)";
+    const text = lines.length > 0 ? lines.join("\n") : filterText(view.filter) === "" ? "(empty)" : "(nothing passes the filter)";
     view.lines = infos;
     if (text !== view.text) {
       view.text = text;

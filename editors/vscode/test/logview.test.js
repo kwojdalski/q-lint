@@ -249,6 +249,21 @@ test("several files followed stay in time order, each file's open entry and appe
   assert.deepStrictEqual(order(), ["a0", "b1", "b3", "a4", "b5", "a6", "b7", "a8"]);
 });
 
+// A filter of no levels is a new object, not NO_FILTER, though it filters
+// nothing (#1786).
+test("an empty log with nothing filtered says it is empty, a filter of none picked included", async (t) => {
+  const file = path.join(tmp(), "empty.log");
+  fs.writeFileSync(file, "");
+  const { text } = setUp(t);
+  await stub.commands.get(LOG_COMMANDS.open)(vscode.Uri.file(file));
+  assert.strictEqual(text(), "(empty)");
+  stub.picks.push(() => []);
+  await stub.commands.get(LOG_COMMANDS.levels)();
+  assert.strictEqual(text(), "(empty)");
+  await stub.commands.get(LOG_COMMANDS.levels)(["ERROR"]);
+  assert.strictEqual(text(), "(nothing passes the filter)");
+});
+
 test("only the last maxLines entries that pass are kept", async (t) => {
   const file = path.join(tmp(), "many.log");
   fs.writeFileSync(file, Array.from({ length: 1000 }, (_, i) => `line ${i}`).join("\n") + "\n");
