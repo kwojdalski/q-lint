@@ -415,6 +415,14 @@ test("a page added to a grid spread over the scrollbar keeps the rows in view, a
   assert.strictEqual(page.posted.filter((m) => m.type === "more").length, 2);
 });
 
+test("a result paged past gridLimit and then stopped is not said to be cut at the limit (#1644)", () => {
+  const page = loadPage(undefined);
+  page.send({ ...result("s.1", 4), limit: 2, more: false, grid: { ...result("s.1", 4).grid, total: 10 } });
+  assert.strictEqual(page.body.all((e) => e.className === "info")[0].textContent, "4 of 10 rows: no more were fetched");
+  page.send({ ...result("s.2", 2), limit: 2, grid: { ...result("s.2", 2).grid, total: 10 } });
+  assert.strictEqual(page.body.all((e) => e.className === "info")[0].textContent, "2 of 10 rows: cut at q-lint.query.gridLimit (2)");
+});
+
 test("a double-clicked cell asks to drill down from it, and carries its menu context; off, neither (#927)", () => {
   const page = loadPage(undefined);
   page.send(result("s.1", 3));

@@ -670,7 +670,10 @@
     if (grid.total > held) {
       count = result.more
         ? fmt(held) + " of " + fmt(grid.total) + " rows: more as the grid scrolls"
-        : fmt(held) + " of " + fmt(grid.total) + " rows: cut at q-lint.query.gridLimit (" + fmt(result.limit) + ")";
+        : held > result.limit
+          // Paged past the limit, then stopped (#1644).
+          ? fmt(held) + " of " + fmt(grid.total) + " rows: no more were fetched"
+          : fmt(held) + " of " + fmt(grid.total) + " rows: cut at q-lint.query.gridLimit (" + fmt(result.limit) + ")";
     }
     if (rows.length !== held) {
       count = fmt(rows.length) + " shown, " + count;
@@ -1155,7 +1158,7 @@
       note += " (the grid's filters apply)";
     }
     if (grid.total > held) {
-      note += "; the result had " + grid.total.toLocaleString("en-US") + ", cut at q-lint.query.gridLimit";
+      note += "; the result had " + grid.total.toLocaleString("en-US") + (held > result.limit ? ", of which no more were fetched" : ", cut at q-lint.query.gridLimit");
     }
     statsView.append(el("p", "note", note + "."));
     const scroll = el("div", "scroller");
