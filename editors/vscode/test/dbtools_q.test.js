@@ -386,6 +386,8 @@ test("a segmented database not laid out as .Q.par would write it is found by eve
   const sample = readAttributeSample(await connection.call(ATTRIBUTE_SAMPLE, "trade", 100000));
   assert.deepStrictEqual([sample.kind, sample.rows, sample.sampled, sample.partitions], ["partitioned", 12, 3, 4]);
   assert.deepStrictEqual(sample.columns.map((c) => [c.name, c.attr]), [["sym", "p"], ["px", ""], ["sz", ""]]);
+  // The p# every partition's sym has is what it is told to keep (#1978).
+  assert.deepStrictEqual(advise(sample, new Map([["sym", 2]])).map((a) => [a.column, a.current, a.suggest]).slice(0, 1), [["sym", "p", "p"]]);
   // Under a view the last partition shown is the one sampled, from its own segment.
   await connection.call("{.Q.view 2024.01.02 2024.01.03}", 0);
   assert.strictEqual(readAttributeSample(await connection.call(ATTRIBUTE_SAMPLE, "trade", 100000)).sampled, 3);

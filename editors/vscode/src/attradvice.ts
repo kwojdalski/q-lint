@@ -133,6 +133,8 @@ export interface Advice {
 /// The attribute each column would do best with, and why. A column the
 /// queries never filter on is suggested one only when it costs nothing
 /// (`s#`) or the data already has its shape and it is the table's first.
+/// A column in order that has `p#`, `u#` or `g#` keeps it: `s#` is told
+/// only to one with no attribute, or with `s#` (#1978).
 export function advise(s: AttributeSample, filters: Map<string, number> = new Map()): Advice[] {
   const rows = s.rows ?? s.sampled;
   const perPartition = s.partitions > 0 ? rows / s.partitions : rows;
@@ -151,19 +153,38 @@ export function advise(s: AttributeSample, filters: Map<string, number> = new Ma
     const parted = c.runs !== null && c.runs === c.distinct && c.distinct < s.sampled;
     const few = c.distinct / s.sampled <= 0.1;
     const sample = full ? "" : ` (in ${s.sampled.toLocaleString("en-US")} rows sampled)`;
+    const where = s.kind === "partitioned" ? "in each partition" : "in the table";
+    const cost = {
+      u: 16 * rows,
+      p: 24 * c.distinct * (s.kind === "partitioned" ? s.partitions : 1),
+      g: s.kind === "partitioned" ? (8 * perPartition + 16 * c.distinct) * s.partitions : 8 * rows + 16 * c.distinct,
+    };
     if (c.sorted && (f > 0 || i === 0 || ["p", "n", "t", "z", "d", "v", "u", "m"].includes(c.type))) {
+      // A column in order may be so because it is parted, as the sym of a
+      // partition .Q.dpft wrote is, or hold a key: the attribute it has
+      // does more than s# would, and is what an asof join or a filter on
+      // disk relies on. It is kept while the sample bears it out (#1978).
+      const halves = "where s# would search by halves";
+      if (c.attr === "p" && c.runs !== null && c.runs === c.distinct) {
+        return { ...base, suggest: "p", reason: `each value's rows are together${sample}, ${c.distinct.toLocaleString("en-US")} distinct values: the p# it has finds them as one range ${where}, ${halves}; ${used}`, cost: cost.p };
+      }
+      if (c.attr === "u" && unique) {
+        return { ...base, suggest: "u", reason: `every value distinct${sample}: the u# it has makes a lookup by value a hash lookup, ${halves}; ${used}`, cost: cost.u };
+      }
+      if (c.attr === "g") {
+        return { ...base, suggest: "g", reason: `${c.distinct.toLocaleString("en-US")} distinct values${sample}: the g# it has keeps each value's rows, ${halves}; ${used}`, cost: cost.g };
+      }
       return { ...base, suggest: "s", reason: `already in ascending order${sample}: s# lets a filter or an asof join search it by halves; ${used}`, cost: 0 };
     }
     if (unique && f > 0) {
-      return { ...base, suggest: "u", reason: `every value distinct${sample}: u# makes a lookup by value a hash lookup; ${used}`, cost: 16 * rows };
+      return { ...base, suggest: "u", reason: `every value distinct${sample}: u# makes a lookup by value a hash lookup; ${used}`, cost: cost.u };
     }
     if (parted && (f > 0 || i === 0)) {
-      const where = s.kind === "partitioned" ? "in each partition" : "in the table";
       return {
         ...base,
         suggest: "p",
         reason: `each value's rows are together${sample}, ${c.distinct.toLocaleString("en-US")} distinct values: p# finds them as one range ${where}; ${used}`,
-        cost: 24 * c.distinct * (s.kind === "partitioned" ? s.partitions : 1),
+        cost: cost.p,
       };
     }
     if (few && f > 0) {
@@ -171,7 +192,7 @@ export function advise(s: AttributeSample, filters: Map<string, number> = new Ma
         ...base,
         suggest: "g",
         reason: `${c.distinct.toLocaleString("en-US")} distinct values${sample}, not grouped together: g# keeps each value's rows${s.kind === "partitioned" ? " (on disk, per partition; for one in memory, as on an RDB)" : ""}; ${used}`,
-        cost: s.kind === "partitioned" ? (8 * perPartition + 16 * c.distinct) * s.partitions : 8 * rows + 16 * c.distinct,
+        cost: cost.g,
       };
     }
     const why = unique ? "every value distinct" : parted ? "each value's rows together" : few ? `${c.distinct.toLocaleString("en-US")} distinct values` : `${c.distinct.toLocaleString("en-US")} distinct values in ${s.sampled.toLocaleString("en-US")} rows, not in order`;

@@ -242,6 +242,49 @@ test("the attribute advisor counts filters and suggests by shape, never for an u
   assert.match(report, /\| sym \|  \| g# \|/);
 });
 
+// The sample one partition of a table written by .Q.dpft gives: sym parted
+// and so in ascending order, a key every value of which is distinct, a
+// venue kept grouped.
+const partedSample = (attrs, extra = {}) =>
+  readAttributeSample({
+    kind: "partitioned",
+    rows: 5000,
+    sampled: 1000,
+    partitions: 5,
+    cols: ["sym", "id", "venue", "time"],
+    types: ["s", "j", "s", "p"],
+    attrs,
+    distinct: [3, 1000, 2, 1000],
+    runs: [3, 1000, 2, 1000],
+    sorted: [true, true, true, true],
+    ...extra,
+  });
+
+test("the attribute advisor keeps a p#, u# or g# a column in ascending order already has (#1978)", () => {
+  const filters = new Map([["sym", 3], ["id", 1], ["venue", 1]]);
+  const by = (s, f = filters) => Object.fromEntries(advise(s, f).map((a) => [a.column, a]));
+  const kept = by(partedSample(["p", "u", "g", ""]));
+  assert.deepStrictEqual([kept.sym.suggest, kept.id.suggest, kept.venue.suggest, kept.time.suggest], ["p", "u", "g", "s"]);
+  assert.match(kept.sym.reason, /^each value's rows are together \(in 1,000 rows sampled\), 3 distinct values: the p# it has finds them as one range in each partition, where s# would search by halves; 3 saved or recent queries filter on it$/);
+  assert.match(kept.id.reason, /^every value distinct \(in 1,000 rows sampled\): the u# it has makes a lookup by value a hash lookup, where s# would search by halves; /);
+  assert.match(kept.venue.reason, /^2 distinct values \(in 1,000 rows sampled\): the g# it has keeps each value's rows, where s# would search by halves/);
+  // What it keeps costs what setting it would.
+  assert.deepStrictEqual([kept.sym.cost, kept.id.cost, kept.venue.cost], [24 * 3 * 5, 16 * 5000, (8 * 1000 + 16 * 2) * 5]);
+  const report = adviceReport("trade", "hdb", partedSample(["p", "u", "g", ""]), advise(partedSample(["p", "u", "g", ""]), filters), 5);
+  assert.match(report, /\| sym \| p# \| p# \|/);
+  assert.match(report, /\*\*sym\*\*: .*where s\\# would search by halves; 3 saved or recent queries filter on it\. It already has it\./);
+  assert.doesNotMatch(report, /\| (sym|id|venue) \| [pug]# \| s# \|/);
+  // The first column of a table, filtered by nothing, is kept the same way.
+  assert.strictEqual(by(partedSample(["p", "", "", ""]), new Map()).sym.suggest, "p");
+  // A column with no attribute, or with s#, is still told s#.
+  const bare = by(partedSample(["", "", "", "s"]));
+  assert.deepStrictEqual([bare.sym.suggest, bare.id.suggest, bare.venue.suggest, bare.time.suggest], ["s", "s", "s", "s"]);
+  assert.match(bare.sym.reason, /^already in ascending order \(in 1,000 rows sampled\): s# lets a filter/);
+  // An attribute the sample does not bear out is not kept on its word.
+  const odd = by(partedSample(["u", "p", "", ""], { distinct: [3, 1000, 2, 1000], runs: [3, null, 2, 1000] }));
+  assert.deepStrictEqual([odd.sym.suggest, odd.id.suggest], ["s", "s"]);
+});
+
 test("a schema diff names adds, drops, casts and order, and the script turns one into the other", () => {
   const t = (kind, cols, keys = []) => ({ kind, rows: 0, bytes: null, partitions: null, keys, ncols: cols.length, columns: cols.map(([name, type, attr = ""]) => ({ name, type, fkey: "", attr })) });
   const from = t("keyed", [["k", "j"], ["x", "j"], ["y", "s"]], ["k"]);
