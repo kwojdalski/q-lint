@@ -94,7 +94,7 @@ import {
   normalised,
   type HistoryFilter,
 } from "./historyfilter";
-import { CONNECT_SCRIPT_COMMANDS, onConnectBrought, onConnectOf, readConnectScript, scriptOf, scriptPath, scriptSummary, withScript, type ConnectScript } from "./connectscript";
+import { CONNECT_SCRIPT_COMMANDS, onConnectBrought, onConnectOf, readConnectScript, scriptOf, scriptPath, scriptSummary, sharedEntry, withScript, type ConnectScript } from "./connectscript";
 import { isProduction } from "./agent";
 import { PAGE, readPage, type GridPage } from "./grid";
 import { PLACEHOLDER_VALUES_KEY, lastValue, placeholderNames, readPlaceholders, remembered, substitute } from "./placeholders";
@@ -812,22 +812,23 @@ export class Live {
     // What runs or reaches somewhere at connect can hold a secret - a
     // password in a connect script, a launch's environment - and the file
     // is committed: it is shown and asked about first (#1528).
+    // An SSH tunnel is always shared: it holds no secret (#1715).
     let process = chosen;
-    const extras = onConnectBrought([], [chosen])[0]?.what ?? [];
+    const extras = (onConnectBrought([], [chosen])[0]?.what ?? []).filter((what) => what !== "SSH tunnel");
     if (extras.length > 0) {
       const all = "Share All";
       const without = "Share Without Them";
-      const { init, initFile, credentialCommand, launch, ssh } = chosen;
+      const { init, initFile, credentialCommand, launch } = chosen;
       const answer = await window.showWarningMessage(
         plainMessage(`${chosen.label} has a ${extras.join(", ")}. ${SHARED_FILE} is committed with the code: everyone who clones it reads what is written there, as shown below. Share them too?`),
-        { modal: true, detail: JSON.stringify({ init, initFile, credentialCommand, launch, ssh }, null, 2) },
+        { modal: true, detail: JSON.stringify({ init, initFile, credentialCommand, launch }, null, 2) },
         all,
         without,
       );
       if (answer === undefined) {
         return;
       }
-      process = answer === all ? chosen : onConnectOf(chosen, undefined);
+      process = sharedEntry(chosen, answer === all);
     }
     const file = Uri.joinPath(folder.uri, SHARED_FILE);
     // Written under unsaved edits, the next save conflicts (#1531).

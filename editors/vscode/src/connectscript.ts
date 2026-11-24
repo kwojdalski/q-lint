@@ -97,6 +97,17 @@ export function onConnectOf<P extends Process>(process: P, old: Process | undefi
   } as P;
 }
 
+/// `process` as the shared list is given it (#1528): with what runs or
+/// reaches somewhere at connect (`all`), or without - but always with its SSH
+/// tunnel, which holds no secret: without it every clone dials its own
+/// host:port, and sends the password there (#1715).
+export function sharedEntry<P extends Process>(process: P, all: boolean): P {
+  if (all) {
+    return process;
+  }
+  return { ...onConnectOf(process, undefined), ...(process.ssh !== undefined ? { ssh: process.ssh } : {}) };
+}
+
 /// What a connect script is called in a pick or a message.
 export function scriptSummary(script: ConnectScript | undefined): string {
   if (script === undefined) {

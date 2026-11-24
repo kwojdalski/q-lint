@@ -590,8 +590,10 @@ hosts and launch definitions are read only in a trusted workspace; in a
 restricted one they are left out and a note says so. A file that is not
 JSON shows why under the group. **Add to Shared Process List**, on a saved
 process row, writes the process there (creating the file), replacing an
-entry of its label: its address, user, tags and settings, never its
-password. `q-lint.processes.shared.enable` off stops reading the file,
+entry of its label: its address, user, tags, SSH jump host and settings,
+never its password. A connect script, credential command or launch
+definition is shown first, and shared only if you say so.
+`q-lint.processes.shared.enable` off stops reading the file,
 removes the group, closes a connection to one of its processes, and hides
 the command.
 
