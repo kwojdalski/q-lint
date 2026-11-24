@@ -208,7 +208,12 @@ export class PlotsView {
     if (to === undefined) {
       return undefined;
     }
-    await workspace.fs.writeFile(to, bytes);
+    try {
+      await workspace.fs.writeFile(to, bytes);
+    } catch (error) {
+      void window.showErrorMessage(plainMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
+      return undefined;
+    }
     void window.showInformationMessage(plainMessage(`q-lint: saved the plot to ${to.fsPath}.`));
     return to.fsPath;
   }

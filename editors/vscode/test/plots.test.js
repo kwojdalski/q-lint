@@ -125,6 +125,12 @@ test("the view shows the plot on show, steps and saves it, and off is unregister
   receive({ type: "png", key: twoKey, data: "data:image/png;base64,iVBORw0KGgo=" });
   receive({ type: "png", key: oneKey, data: "data:image/png;base64,iVBORw0KGgo=" });
   assert.deepStrictEqual(await Promise.all([one, two]), ["/1.png", "/2.png"]);
+  // A file that cannot be written says so, rather than failing unseen (#1481).
+  const writeFile = vscode.workspace.fs.writeFile;
+  vscode.workspace.fs.writeFile = async () => { throw new Error("EROFS: read-only file system"); };
+  assert.strictEqual(await stub.commands.get(PLOT_COMMANDS.save)("svg", vscode.Uri.file("/ro/p.svg")), undefined);
+  assert.deepStrictEqual(stub.messages.at(-1), ["error", "q-lint: could not write /ro/p.svg: EROFS: read-only file system"]);
+  vscode.workspace.fs.writeFile = writeFile;
   receive({ type: "remove" });
   assert.strictEqual(PLOTS.list().length, 1);
   // Off: unregistered, the plots dropped, the commands refuse.
