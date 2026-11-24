@@ -163,3 +163,16 @@ test("a definition the profiled code made itself is kept, the others put back (#
   assert.strictEqual(String((await c.evaluate(".foo.nil[]")).value), "43");
   assert.ok(await noState(c));
 });
+
+test("a name longer than the process's \\c is still the function its wrapper calls (#1869)", { skip }, async (t) => {
+  // -3! of the name, cut at 40 characters, named a function that is not there.
+  const c = await connect(t, "\\c 25 40\n.app.f:{[x] x+1}\n.app.computeTheVeryLongFunctionNameForPricing:{[x] .app.side::1+.app.f x; .app.side}\n.app.side:0\n");
+  const long = ".app.computeTheVeryLongFunctionNameForPricing";
+  const profile = readProfile(await c.call(PROFILE, "`.app", [`${long} 1`]), ".app");
+  await c.call(PROFILE_CLEANUP, 0);
+  assert.strictEqual(profile.error, "");
+  assert.deepStrictEqual(profile.recorded.map((r) => r.fn).sort(), [long, ".app.f"]);
+  // The original ran: its side effect is there.
+  assert.strictEqual(String((await c.evaluate(".app.side")).value), "3");
+  assert.deepStrictEqual(Array.from((await c.evaluate("system\"c\"")).value, Number), [25, 40]);
+});

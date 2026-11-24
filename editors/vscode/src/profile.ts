@@ -9,8 +9,10 @@
 // own clock (`.z.p`), on entry and on exit - through an error too, which it
 // signals on - runs the statements, and puts every original back, the very
 // objects it took, whether the run succeeded or not - but for a name the
-// run itself defined anew, which keeps its new definition. Its working state lives
-// in `.qlint.prof` for the run and is deleted after. What it cannot see: a
+// run itself defined anew, which keeps its new definition. A wrapper holds
+// its function's name written with `string`: `-3!` cuts a name longer than
+// the process's `\c`, and the wrapper then called nothing (#1869). Its
+// working state lives in `.qlint.prof` for the run and is deleted after. What it cannot see: a
 // function reached by value rather than by name (one stored in a dictionary
 // or a callback set before the run keeps the original), a projection or
 // composition (only lambdas are wrapped), and a function of another
@@ -42,7 +44,7 @@ export const PROFILE = [
   `   done:{[id;p;name;t0;u] .qlint.prof.stack:-1_.qlint.prof.stack; if[id<=${LIMIT}; \`.qlint.prof.log insert (id;p;name;t0;.z.p)]}[id;p;name;t0];`,
   "   r:.[.qlint.prof.orig name;args;{[done;e] done[]; 'e}[done]]; done[]; r};",
   " wrap:{[name;fn] ps:(value fn) 1; ps:$[ps~enlist `;enlist `x0;`$\"x\",/:string til count ps];",
-  "   value \"{[\",(\";\" sv string ps),\"] .qlint.prof.call[\",(-3!name),\";\",$[1=count ps;\"enlist \",string first ps;\"(\",(\";\" sv string ps),\")\"],\"]}\"};",
+  "   value \"{[\",(\";\" sv string ps),\"] .qlint.prof.call[`\",string[name],\";\",$[1=count ps;\"enlist \",string first ps;\"(\",(\";\" sv string ps),\")\"],\"]}\"};",
   " wrapped:wrap'[full;orig]; .qlint.prof.wrapped:full!wrapped;",
   " .qlint.prof.orig[`.qlint.prof.id]:{x}; idw:wrap[`.qlint.prof.id;{x}];",
   " t0:.z.p; do[1000;{x}1]; plain:.z.p-t0; t0:.z.p; do[1000;idw 1]; inst:.z.p-t0;",
