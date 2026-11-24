@@ -1687,7 +1687,7 @@
           "q-lint.query.inlineResults.enable": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "After **Run Line** or **Run Selection**, show the result's short form at the end of the line, until the line is edited. It draws only what the query answered; nothing more is sent. Off, the results are cleared and nothing is drawn."
+            "markdownDescription": "After **Query Current Line** or **Query Current Selection** (Ctrl+Q, Ctrl+R), show the result's short form at the end of the line, until the line is edited. It draws only what the query answered; nothing more is sent. Off, the results are cleared and nothing is drawn."
           },
           "q-lint.query.benchmark.enable": {
             "type": "boolean",
