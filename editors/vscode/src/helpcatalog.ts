@@ -8,6 +8,7 @@
 // and related names (`help/examples.json`) and the cheat sheet
 // (`help/cheatsheet.json`) are this extension's, written from what q does,
 // and test/help_q.test.js runs every one on a real q.
+import { blockDepth } from "./statements";
 import { inStringOrComment } from "./temporal";
 
 export interface Builtin {
@@ -173,6 +174,25 @@ export function pageHtml(page: HelpPage, helpCommand: string, tryCommand?: strin
     parts.push(`<p class="reference">The KX reference: <a href="${html(REFERENCE + page.page)}">${html(REFERENCE + page.page)}</a></p>`);
   }
   return parts.join("\n");
+}
+
+/// Whether the last of `lines`, a file's lines from its first, is
+/// commented out whole: inside a block comment, a `/` or `\` alone that
+/// opens or closes one, or at or after a `\` alone that ends the script.
+export function commentedOut(lines: string[]): boolean {
+  let depth = 0;
+  for (const [i, raw] of lines.entries()) {
+    const line = raw.replace(/\s+$/, "");
+    if (depth === 0 && line === "\\") {
+      return true;
+    }
+    const after = blockDepth(depth, line);
+    if (i === lines.length - 1) {
+      return depth > 0 || after > 0;
+    }
+    depth = after;
+  }
+  return false;
 }
 
 /// The q name, or glyph, at `character` of `line`: `.Q.s1`, `xbar`, `/:`.

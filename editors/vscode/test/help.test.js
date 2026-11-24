@@ -110,6 +110,14 @@ test("a symbol is no name: `max is not the builtin", () => {
   assert.strictEqual(h.nameAt("`$\"x\"", 1)?.name, "$");
 });
 
+test("a line in a block comment, or after the script's end, is commented out", () => {
+  const lines = ["a:1", "/", "count the rows here", "  / nested", "\\", "count x", "\\", "count y", "\\  ", "count z"];
+  assert.deepStrictEqual(lines.map((_, i) => h.commentedOut(lines.slice(0, i + 1))), [false, true, true, true, true, false, true, true, true, true]);
+  // Nested: `/` alone inside one opens another.
+  assert.strictEqual(h.commentedOut(["/", "/", "\\", "count x"]), true);
+  assert.strictEqual(h.commentedOut(["count x"]), false);
+});
+
 test("the cheat sheet has its four sections, each item with an example and result", () => {
   const sheet = h.readCheatSheet(read("help", "cheatsheet.json"));
   assert.deepStrictEqual(sheet.map((s) => s.section), ["Iterators", "Joins", "Temporal casts", "Attributes"]);
@@ -190,6 +198,11 @@ test("Show Help opens a page, Try it runs an example, and each refuses when turn
   assert.match(hover.contents.value, /\[Try it\]\(command:q-lint\.tryExample/);
   assert.deepStrictEqual(hover.contents.isTrusted, { enabledCommands: [h.HELP.tryExample, h.HELP.show] });
   assert.strictEqual(ui.hovers[0].provider.provideHover({ lineAt: () => ({ text: "myfun" }) }, { line: 0, character: 1 }), undefined);
+  // Nothing in a block comment, which only the lines above tell.
+  const block = ["/", "count the rows here", "\\", "count x"];
+  const doc = { lineAt: (i) => ({ text: block[i] }) };
+  assert.strictEqual(ui.hovers[0].provider.provideHover(doc, { line: 1, character: 2 }), undefined);
+  assert.ok(ui.hovers[0].provider.provideHover(doc, { line: 3, character: 2 }));
   assert.strictEqual(await stub.commands.get(h.HELP.tryExample)("til 4"), true);
   assert.deepStrictEqual(ran, ["til 4"]);
   // Try examples off: no hover, Try it refuses and sends nothing, the open page loses its links.
