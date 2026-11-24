@@ -113,6 +113,11 @@ test("Explain qSQL finds where the query starts", () => {
   assert.strictEqual(leadBefore("x:.my.select 1\n", 10), undefined);
   // An empty first line above an indented one ends the walk (#1396).
   assert.strictEqual(leadBefore("\n  select from t", 10), 3);
+  // A query word in a string or a comment is no lead (#1466).
+  const s = 'select from trade where sym like "update*"';
+  assert.strictEqual(leadBefore(s, s.length), 0);
+  const c = "exec price from trade / then delete it";
+  assert.strictEqual(leadBefore(c, c.length), 0);
 });
 
 test("a q error is explained from the catalogue, with the operation that failed", () => {
