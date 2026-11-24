@@ -10,7 +10,7 @@ const os = require("node:os");
 const path = require("node:path");
 const net = require("node:net");
 const pkg = require("../package.json");
-const { LAUNCH_COMMANDS, argsFromText, argsText, commandText, fromWorkspace, isLocalHost, launchPlan, listenAddress, readLauncher } = require("../out/launcher.js");
+const { LAUNCH_COMMANDS, argsFromText, argsText, commandText, fromWorkspace, isLocalHost, launchPlan, listenAddress, readLauncher, spawnPlan } = require("../out/launcher.js");
 const { launchOf, parseProcesses, splitArgs } = require("../out/processes.js");
 const { onPath } = require("../out/relations.js");
 const { Live } = require("../out/live.js");
@@ -32,6 +32,20 @@ test("a process defined on a loopback host listens on the loopback only, not on 
   assert.strictEqual(listenAddress("box", 5), "5");
   // Its own -p is left as it is.
   assert.deepStrictEqual(launchPlan({ ...proc("l", 1, { args: ["-p", "5001"] }), host: "localhost" }, "q", undefined, "/home/me").args, ["-p", "5001"]);
+});
+
+test("on Windows a q.cmd or q.bat wrapper is run by cmd.exe, which Node needs for one (#1680)", () => {
+  const cmd = "C:\\Windows\\system32\\cmd.exe";
+  assert.deepStrictEqual(spawnPlan("C:\\kdb\\q.cmd", ["C:\\my dir\\x.q", "-p", "127.0.0.1:5000", ""], "win32", cmd), {
+    command: cmd,
+    args: ["/d", "/s", "/c", '"C:\\kdb\\q.cmd "C:\\my dir\\x.q" -p 127.0.0.1:5000 """'],
+    verbatim: true,
+  });
+  assert.strictEqual(spawnPlan("C:\\kdb\\Q.BAT", ["-q"], "win32", cmd).command, cmd);
+  assert.match(spawnPlan("C:\\kdb\\q.cmd", ["50%"], "win32", cmd).error, /cmd cannot pass "50%"/);
+  // An .exe, and anything off Windows, as it is.
+  assert.deepStrictEqual(spawnPlan("C:\\kdb\\q.exe", ["-q"], "win32", cmd), { command: "C:\\kdb\\q.exe", args: ["-q"], verbatim: false });
+  assert.deepStrictEqual(spawnPlan("/opt/q.cmd", ["-q"], "linux", cmd), { command: "/opt/q.cmd", args: ["-q"], verbatim: false });
 });
 
 test("a launch definition starts its program with its script, -p and its arguments", () => {

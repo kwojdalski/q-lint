@@ -44,6 +44,7 @@ import {
 import { readTerminal } from "./liveconfig";
 import { mergeEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor, nodeFiles } from "./qenvironment";
+import { spawnPlan } from "./launcher";
 import { qBinaryFrom } from "./terminal";
 import { iconsEscaped, plainMessage } from "./history";
 
@@ -79,7 +80,13 @@ export function probe(binary: string, env: Record<string, string>): Promise<Prob
     };
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(binary, ["-q"], { env: { ...process.env, ...env }, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+      // A q.cmd wrapper is run by cmd.exe (#1680).
+      const run = spawnPlan(binary, ["-q"]);
+      if ("error" in run) {
+        resolve(undefined);
+        return;
+      }
+      child = spawn(run.command, run.args, { env: { ...process.env, ...env }, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, windowsVerbatimArguments: run.verbatim });
     } catch {
       resolve(undefined);
       return;

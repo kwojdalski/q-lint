@@ -5,6 +5,7 @@ import * as os from "os";
 import { statSync } from "node:fs";
 import { scriptPath } from "./connectscript";
 import { onPath } from "./relations";
+import { quote } from "./terminal";
 import { splitArgs, type Launch, type Process } from "./processes";
 
 export const LAUNCH_COMMANDS = {
@@ -97,6 +98,29 @@ export function launchPlan(
     cwd,
     env: launch.env ?? {},
   };
+}
+
+/// How to spawn `command` with `args` on `platform`. Node will not run a
+/// `.bat` or `.cmd` wrapper (q.cmd setting QHOME and QLIC, a common one)
+/// without a shell since CVE-2024-27980 - spawn fails with EINVAL (#1680) -
+/// so on Windows one is run by cmd.exe, each word quoted for it; one with a
+/// `"` or a `%`, which cmd reads itself, is refused. Anything else as it is.
+export function spawnPlan(
+  command: string,
+  args: string[],
+  platform: string = globalThis.process.platform,
+  comspec: string = globalThis.process.env.ComSpec ?? "cmd.exe",
+): { command: string; args: string[]; verbatim: boolean } | { error: string } {
+  if (platform !== "win32" || !/\.(bat|cmd)$/i.test(command)) {
+    return { command, args, verbatim: false };
+  }
+  const bad = [command, ...args].find((w) => /["%\r\n]/.test(w));
+  if (bad !== undefined) {
+    return { error: `cmd cannot pass ${JSON.stringify(bad)} to ${command} as written: it reads a " or a % in it itself.` };
+  }
+  // /s: the outer quotes are taken off and the rest run as it is.
+  const line = [command, ...args].map((w) => (w === "" ? '""' : quote(w, "cmd"))).join(" ");
+  return { command: comspec, args: ["/d", "/s", "/c", `"${line}"`], verbatim: true };
 }
 
 function isFile(file: string): boolean {

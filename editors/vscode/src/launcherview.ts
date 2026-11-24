@@ -6,7 +6,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import * as net from "node:net";
 import * as os from "node:os";
 import { commands, window, workspace, type ExtensionContext, type OutputChannel } from "vscode";
-import { LAUNCH_COMMANDS, argsFromText, argsText, commandText, fromWorkspace, launchPlan, listenAddress, readLauncher } from "./launcher";
+import { LAUNCH_COMMANDS, argsFromText, argsText, commandText, fromWorkspace, launchPlan, listenAddress, readLauncher, spawnPlan } from "./launcher";
 import { readTerminal } from "./liveconfig";
 import { qBinaryFrom } from "./terminal";
 import { mergeEnv } from "./qenv";
@@ -200,9 +200,15 @@ export class Launcher {
     const channel = this.channel(process.label);
     channel.appendLine(`$ ${commandText(plan)}    (in ${plan.cwd})`);
     channel.show(true);
+    const run = spawnPlan(plan.command, plan.args);
+    if ("error" in run) {
+      channel.appendLine(`could not start: ${run.error}`);
+      return `could not start ${process.label}: ${run.error}`;
+    }
     let child: ChildProcess;
     try {
-      child = spawn(plan.command, plan.args, {
+      child = spawn(run.command, run.args, {
+        windowsVerbatimArguments: run.verbatim,
         cwd: plan.cwd,
         env: { ...globalThis.process.env, ...env },
         // No stdin: q reads none from a launcher, and keeps running without.
