@@ -1316,7 +1316,10 @@ top of its body assigns (`a:`, `a+:`, `a[i]:`), once that statement has
 run. The function is put back in the same call, error or not, and what was
 kept opens as a document: the arguments, the statement that failed, and the
 locals. It runs the query again as written, so it can change data again;
-the replacing goes through the read-only guard. A local assigned inside an
+the replacing goes through the read-only guard. When the run again times
+out or the connection closes, the function is put back over a connection of
+its own to that process; when that fails too, a warning names the function
+and the process it is still replaced on. A local assigned inside an
 `if[...]` or a nested lambda is not seen. `q-lint.localsAtError.enable`
 hides the command.
 

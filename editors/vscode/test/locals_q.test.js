@@ -24,6 +24,7 @@ test("the locals of the innermost function are shown, and it is put back", { ski
   const live = {
     lastFailure: { process: "dev", code: "run 1", error: failed.error, trace: failed.trace },
     activeLabel: () => "dev",
+    activeProcess: () => ({ label: "dev", tags: [] }),
     async runOnActive(_code, query) {
       return { process: "dev", value: await query(c) };
     },

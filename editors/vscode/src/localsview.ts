@@ -4,13 +4,16 @@
 // them - the statement it is on, and each local as it is assigned, then puts
 // the function back and shows what was kept. It is asked first, as the query
 // runs again and can change data again; the function is replaced in the
-// same call it is put back in, through the read-only guard (#918). Only the
-// command sends anything. While q-lint.localsAtError.enable is off it is
+// same call it is put back in, through the read-only guard (#918). When it
+// could not be put back there - the run again timed out, the connection
+// closed - that is tried over a connection of its own to the process it was
+// replaced on, and the function named when it is left replaced (#1903).
+// Only the command sends anything. While q-lint.localsAtError.enable is off it is
 // hidden and refuses.
 import { EventEmitter, Uri, commands, window, workspace, type ExtensionContext, type TextDocumentContentProvider } from "vscode";
 import { DRIFT, readDrift } from "./definitions";
 import { editorFeatureOff, editorFeatureOn } from "./editorfeatures";
-import { installLambda, localsText, readInstalled, readRestored, restoreExpression } from "./instrument";
+import { installLambda, leftInstrumented, localsText, readInstalled, readRestored, restoreApart, restoreExpression } from "./instrument";
 import type { Live } from "./live";
 import { CAPTURE_LOCALS, localsDocument, namedFrames, readCapture } from "./locals";
 import { RUN, readAnswer } from "./query";
@@ -50,7 +53,9 @@ export function registerLocalsAtError(
       void window.showInformationMessage("q-lint: no query has failed yet; run the one that fails inside a function first.");
       return;
     }
-    if (live.activeLabel() !== failure.process) {
+    // The process the function is replaced on, whichever is active later.
+    const process = live.activeProcess();
+    if (live.activeLabel() !== failure.process || process === undefined) {
       void window.showInformationMessage(plainMessage(`q-lint: the last failed query ran on ${failure.process}; connect to it again to look into it.`));
       return;
     }
@@ -80,6 +85,8 @@ export function registerLocalsAtError(
     }
     const install = installLambda("err");
     const restore = restoreExpression("err");
+    // From INSTALL being sent until a restore answered.
+    let replaced = false;
     let done;
     try {
       // Only on the process the question named (#1292). The replacing goes
@@ -95,22 +102,42 @@ export function registerLocalsAtError(
         if (captured === undefined) {
           throw new Error(`${picked.name}'s text could not be read as one lambda`);
         }
+        replaced = true;
         const [status] = readInstalled(await connection.call(install, [picked.name], [state.text], [captured.text], 0), 1);
         if (status !== "ok") {
           await connection.call(restore);
+          replaced = false;
           throw new Error(`${picked.name} could not be instrumented: ${status}`);
         }
         // Put back whatever the run does: RUN traps q's errors, so only the
-        // connection failing skips it, and the next capture puts it back.
-        const answer = await connection.call(RUN, statements(failure.code), [25, 200]).then(readAnswer, async (error: unknown) => {
-          await connection.call(restore).catch(() => undefined);
-          throw error;
-        });
+        // connection failing, or an answer that cannot be read, comes here.
+        const answer = await connection
+          .call(RUN, statements(failure.code), [25, 200])
+          .then(readAnswer)
+          .catch(async (error: unknown) => {
+            replaced = !(await connection.call(restore).then(
+              () => true,
+              () => false,
+            ));
+            throw error;
+          });
         const restored = readRestored(await connection.call(restore));
+        replaced = false;
         return { captured, answer, restored, text: state.text };
       }, "ask", failure.process);
     } catch (error) {
-      void window.showErrorMessage(plainMessage(`q-lint: no locals captured: ${error instanceof Error ? error.message : String(error)}`));
+      const why = error instanceof Error ? error.message : String(error);
+      let back = "";
+      if (replaced) {
+        try {
+          await restoreApart(live, process, "err", `Putting back ${picked.name}, instrumented to capture its locals`);
+          back = `${why.endsWith(".") ? "" : "."} ${picked.name} was put back on ${process.label}.`;
+        } catch (apart) {
+          const reason = `${why}; nor over a connection of its own: ${apart instanceof Error ? apart.message : String(apart)}`;
+          void window.showWarningMessage(plainMessage(leftInstrumented([picked.name], process.label, reason, "locals capture")));
+        }
+      }
+      void window.showErrorMessage(plainMessage(`q-lint: no locals captured: ${why}${back}`));
       return;
     }
     if (done === undefined) {
