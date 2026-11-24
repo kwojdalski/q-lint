@@ -67,8 +67,20 @@ const pad3 = (n: number): string => String(n).padStart(3, "0");
 /// A year as q writes it, in four digits: `0001.01.01` (#1235).
 const pad4 = (n: number): string => String(n).padStart(4, "0");
 
+/// A date as q writes it: `0000.00.00` outside 0001.01.01 to 9999.12.31,
+/// which takes in one JavaScript's Date cannot hold (#1498).
 function ymd(d: Date): string {
-  return `${pad4(d.getUTCFullYear())}.${pad2(d.getUTCMonth() + 1)}.${pad2(d.getUTCDate())}`;
+  const y = d.getUTCFullYear();
+  if (!(y >= 1 && y <= 9999)) {
+    return "0000.00.00";
+  }
+  return `${pad4(y)}.${pad2(d.getUTCMonth() + 1)}.${pad2(d.getUTCDate())}`;
+}
+
+/// A datetime as q writes it: all zeros when its date is out of range.
+function ymdhms(d: Date): string {
+  const date = ymd(d);
+  return date === "0000.00.00" ? "0000.00.00T00:00:00.000" : `${date}T${hms(d)}.${pad3(d.getUTCMilliseconds())}`;
 }
 
 function hms(d: Date): string {
@@ -183,8 +195,7 @@ function temporalText(x: number | bigint | LongLike, t: number): string | undefi
     case 14:
       return ymd(new Date(EPOCH_MS + n * DAY_MS));
     case 15: {
-      const d = new Date(EPOCH_MS + Math.round(n * DAY_MS));
-      return `${ymd(d)}T${hms(d)}.${pad3(d.getUTCMilliseconds())}`;
+      return ymdhms(new Date(EPOCH_MS + Math.round(n * DAY_MS)));
     }
     case 17:
       return clock(n, "minute");
@@ -247,7 +258,7 @@ function itemText(x: unknown, t: number, precision = 7): string | undefined {
     case 14:
       return ymd(x);
     case 15:
-      return `${ymd(x)}T${hms(x)}.${pad3(x.getUTCMilliseconds())}`;
+      return ymdhms(x);
     case 17:
       return clock(sinceEpoch(x) / 60_000, "minute");
     case 18:
@@ -399,7 +410,7 @@ export function cellText(x: unknown): string {
     return x.toString();
   }
   if (x instanceof Date) {
-    return x.getTime() % DAY_MS === 0 ? ymd(x) : `${ymd(x)}T${hms(x)}.${pad3(x.getUTCMilliseconds())}`;
+    return x.getTime() % DAY_MS === 0 ? ymd(x) : ymdhms(x);
   }
   if (Array.isArray(x)) {
     if (x.length > 0 && x.every((s) => typeof s === "string" || s === null)) {
