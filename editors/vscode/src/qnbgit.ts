@@ -40,7 +40,12 @@ const isObject = (v: unknown): v is Json => typeof v === "object" && v !== null 
 export function notebookJson(raw: string): { cells: CellLike[] } & Json | undefined {
   const text = raw.startsWith("﻿") ? raw.slice(1) : raw;
   try {
-    const json: unknown = JSON.parse(text);
+    // As `qnb.ts`'s `lossless`, which this file cannot import: an integer
+    // too big for a number is written back as it was (#1562).
+    const raw = (JSON as { rawJSON?: (text: string) => unknown }).rawJSON;
+    const json: unknown = JSON.parse(text, (_key, value: unknown, context?: { source?: string }) =>
+      typeof value === "number" && !Number.isSafeInteger(value) && raw !== undefined && /^-?\d+$/.test(context?.source ?? "") ? raw(context?.source ?? "") : value,
+    );
     return isObject(json) && typeof json.qnb === "number" && Array.isArray(json.cells) && json.cells.every(isObject)
       ? (json as { cells: CellLike[] } & Json)
       : undefined;

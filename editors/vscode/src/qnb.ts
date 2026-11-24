@@ -123,17 +123,27 @@ function withExtra(out: Json, extra: Json | undefined, known: string[]): Json {
   return out;
 }
 
+/// `JSON.parse`'s reviver: an integer too big for a number kept as its text,
+/// which `JSON.stringify` writes back as it was (#1562), where the runtime
+/// has `JSON.rawJSON`.
+export function lossless(_key: string, value: unknown, context?: { source?: string }): unknown {
+  const raw = (JSON as { rawJSON?: (text: string) => unknown }).rawJSON;
+  return typeof value === "number" && !Number.isSafeInteger(value) && raw !== undefined && /^-?\d+$/.test(context?.source ?? "") ? raw(context?.source ?? "") : value;
+}
+
 /// Read a `.qnb`. An empty file is a new, empty notebook; anything else that
 /// is not a notebook throws a `QnbError` saying where it is wrong. A byte
 /// order mark in front, which JSON does not allow, is skipped.
-export function parseQnb(raw: string): Qnb {
+/// `exact: false` reads every number as a number, for the editor, which
+/// holds no other kind: VS Code rounds a big integer there.
+export function parseQnb(raw: string, exact = true): Qnb {
   const text = raw.startsWith("\uFEFF") ? raw.slice(1) : raw;
   if (text.trim() === "") {
     return { cells: [] };
   }
   let json: unknown;
   try {
-    json = JSON.parse(text);
+    json = exact ? JSON.parse(text, lossless) : JSON.parse(text);
   } catch (error) {
     throw new QnbError(`not a q notebook: the file is not JSON (${error instanceof Error ? error.message : String(error)})`);
   }

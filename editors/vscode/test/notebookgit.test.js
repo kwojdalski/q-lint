@@ -495,3 +495,13 @@ test("the setup asks git whether *.qnb goes through the filter: a later line tur
   assert.doesNotMatch(fake.messages.at(-1), /already/);
   assert.match(git("check-attr", "filter", "--", "a.qnb"), /filter: qnb-strip/);
 });
+
+test("an integer too big for a number is saved and stripped as written (#1562)", () => {
+  const raw = '{"qnb":1,"cells":[{"kind":"code","source":["1"],"metadata":{"id":-98765432109876543210}}],"metadata":{"t":1700000000123456789,"f":0.5,"n":12}}';
+  const saved = serializeQnb(parseQnb(raw));
+  assert.match(saved, /"t": 1700000000123456789,/);
+  assert.match(saved, /"id": -98765432109876543210/);
+  assert.match(saved, /"f": 0\.5/);
+  assert.strictEqual(serializeQnb(parseQnb(saved)), saved);
+  assert.match(stripQnb(raw), /"t": 1700000000123456789,/);
+});

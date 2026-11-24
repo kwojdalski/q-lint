@@ -117,7 +117,7 @@ class QnbSerializer implements NotebookSerializer {
   deserializeNotebook(content: Uint8Array, _token: CancellationToken): NotebookData {
     // A file that is not a notebook throws here, and the editor says why
     // instead of opening an empty notebook a save would write over it.
-    const qnb = parseQnb(Buffer.from(content).toString("utf8"));
+    const qnb = parseQnb(Buffer.from(content).toString("utf8"), false);
     const data = new NotebookData(
       qnb.cells.map((cell) => {
         const code = cell.kind === "code";
