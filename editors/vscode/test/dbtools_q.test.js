@@ -272,7 +272,8 @@ test("the sym inspector leaves out null symbols and partitions that hold none", 
   const answer = readSym(await connection.call(SYM_INSPECT, 20));
   assert.strictEqual(answer.count, 3);
   assert.deepStrictEqual(answer.columns.map((c) => [c.table, c.column, c.distinct]), [["trade", "sym", 3]]);
-  assert.doesNotMatch(symReport(answer, "hdb", 1e6), /133/);
+  assert.deepStrictEqual(answer.growth, [{ partition: "2026.01.05", size: 3 }]);
+  assert.doesNotMatch(symReport(answer, "hdb", 1e6), /-9,223|133/);
 });
 
 test("the attribute advisor samples a table's columns without changing it", { skip }, async (t) => {
