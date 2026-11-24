@@ -787,3 +787,20 @@ test("a connection still to the old address of an edited process keeps its old t
   assert.deepStrictEqual(openTags(open, { host: "prodhost", port: 5000, tags: ["dev"] }), ["dev"]);
   assert.deepStrictEqual(openTags({ ...open, tags: ["dev"] }, { host: "prodhost", port: 5000, tags: ["prod"] }), ["prod"]);
 });
+
+test("in a lambda, a qsql or table-literal column of a name does not make it a local (#1444)", () => {
+  const cases = {
+    "{select a:b from t; a+:1}[]": ["assigns a"],
+    "{exec a:b from t; a+:1}[]": ["assigns a"],
+    "{([] a:1 2); a+:1}[]": ["assigns a"],
+    "{t:([] a:1 2); a+:1}[]": ["assigns a"],
+    "{([k:1 2] v:3 4); k[0]:5}[]": ["assigns k"],
+    // A plain assignment, also in a column's expression, still makes a local.
+    "{a:5; a+:1; a}[]": [],
+    "{s:([] c:a:1 2); a+:1; a}[]": [],
+    "{s:select a:b from t; a:s`a; a+:1}[]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

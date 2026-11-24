@@ -306,7 +306,8 @@ function isFileHandle(sym: string): boolean {
 
 /// The locals of the lambda that opens at `t[open]`: its parameters (`x`,
 /// `y` and `z` when it names none) and every name its body assigns with a
-/// plain `:`, outside the lambdas nested in it.
+/// plain `:`, outside the lambdas nested in it. A column, `select a:b from t`
+/// or `([] a:1 2)`, is not one, as `readStatement` has it (#1444).
 function lambdaLocals(t: Token[], open: number, touching: (a: Token | undefined, b: Token | undefined) => boolean): Set<string> {
   const out = new Set<string>();
   let i = open + 1;
@@ -320,16 +321,28 @@ function lambdaLocals(t: Token[], open: number, touching: (a: Token | undefined,
   }
   let depth = 0;
   let nested = 0;
+  // What each bracket open in the body is, and the qsql keywords open in it.
+  const kinds: ("table" | "key" | "other")[] = [];
+  let qsql = 0;
   for (; i < t.length; i++) {
     const k = t[i];
     if (k.kind === "open") {
       depth++;
       nested += nested > 0 || k.text === "{" ? 1 : 0;
+      kinds.push(k.text === "(" && t[i + 1]?.text === "[" ? "table" : k.text === "[" && kinds[kinds.length - 1] === "table" && t[i - 1]?.text === "(" ? "key" : "other");
     } else if (k.kind === "close") {
       if (depth-- === 0) break;
       nested -= nested > 0 ? 1 : 0;
+      kinds.pop();
+    } else if (nested === 0 && k.kind === "name" && ["select", "exec", "update", "delete"].includes(k.text)) {
+      qsql++;
+    } else if (nested === 0 && k.kind === "name" && k.text === "from" && qsql > 0) {
+      qsql--;
     } else if (nested === 0 && k.kind === "name" && t[i + 1]?.kind === "op" && t[i + 1].text === ":" && !(t[i + 2]?.text === ":" && touching(t[i + 1], t[i + 2]))) {
-      out.add(k.text);
+      const top = kinds[kinds.length - 1];
+      if (qsql === 0 && !((top === "table" || top === "key") && ["[", "]", ";"].includes(t[i - 1]?.text ?? ""))) {
+        out.add(k.text);
+      }
     } else if (nested === 0 && k.kind === "name" && (t[i - 1]?.text === "(" || t[i - 1]?.text === ";")) {
       // A name in a destructuring list, `(a;b):x`, is assigned as well.
       let j = i;
