@@ -74,10 +74,11 @@
       return text;
     }
     switch (f.kind) {
+      // Every digit past 1e21 too, not exponent form, as ccy (#1820).
       case "pct":
-        return (value * 100).toFixed(f.digits) + "%";
+        return fixed(value * 100, f.digits, "") + "%";
       case "bps":
-        return (value * 10000).toFixed(f.digits) + " bp";
+        return fixed(value * 10000, f.digits, "") + " bp";
       case "ccy":
         return grouped(fixed(value, f.digits, text));
       case "num":
