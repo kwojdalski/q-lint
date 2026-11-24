@@ -39,6 +39,8 @@ test("names: needed, one line, unique; a suggestion from the code's first line",
   assert.strictEqual(nameProblem("b", ["a"]), undefined);
   assert.strictEqual(suggestedName("  select from t\nwhere x"), "select from t");
   assert.strictEqual(suggestedName("x".repeat(50)), `${"x".repeat(37)}...`);
+  // Cut by code point, never through an emoji (#1808).
+  assert.strictEqual(suggestedName(`${"a".repeat(36)}😀 rest of the line`), `${"a".repeat(36)}😀...`);
 });
 
 test("adding, replacing and renaming keep the order", () => {
