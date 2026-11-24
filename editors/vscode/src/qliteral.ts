@@ -96,7 +96,9 @@ export function symbolLiteral(name: string): string {
 /// `code` with what q writes but will not read back rewritten, outside
 /// strings: each monadic `,` - at the start, or after `(`, `;`, `[`, `{`,
 /// `!` or another `,` - as `enlist ` (q refuses `,"x"`, and q-sql splits a
-/// clause at a `,` after `(`: `where c~\:(,"z")`), and a run of symbols
+/// clause at a `,` after `(`: `where c~\:(,"z")`), each monadic `+`
+/// before a `(` or a `` ` `` - a table, as `-3!` writes it - as `flip `
+/// (q refuses `+(,`a)!,1`: #1501), and a run of symbols
 /// whose first starts with `_` (`` `_y ``, `` `_y`a ``) through `` `$ ``.
 /// `-3!` writes both, so a general list's item needs it, and a grid cell
 /// edit's value too.
@@ -119,6 +121,10 @@ export function readable(code: string): string {
       inString = true;
     } else if (ch === "," && (last === "" || "(;[{!,".includes(last))) {
       out += "enlist ";
+      last = "";
+      continue;
+    } else if (ch === "+" && (last === "" || "(;[!,".includes(last)) && "(`".includes(code[i + 1] ?? " ")) {
+      out += "flip ";
       last = "";
       continue;
     } else if (ch === "`" && code[i + 1] === "_" && !/[A-Za-z0-9_.`]/.test(code[i - 1] ?? "")) {
@@ -250,12 +256,71 @@ export function atomLiteral(type: number, text: string, raw: unknown): { literal
         const real = text.endsWith("e");
         return ok(`${numberText(real ? Number(realValue(raw)) : raw)}${real ? "e" : "f"}`);
       }
+      // An item with floats or reals inside, sent as they are (#1502).
+      if (type === 0 && Array.isArray(raw)) {
+        const exact = exactLiteral(raw);
+        if (exact !== undefined) {
+          return exact;
+        }
+      }
       // A general list's item: `-3!` of it, or a string written as one,
       // made readable.
       // Cut, it ends `...` or `..`, as no whole item does but a symbol
       // ending in dots, which is taken as cut too (#1484).
       return { literal: text === "" ? "()" : readable(readableSymbols(text)), cut: text.endsWith("..") };
   }
+}
+
+/// A float's or a real's literal, without a suffix: its null and
+/// infinities as q writes them in a list of their type.
+function floatText(x: unknown, real: boolean): string {
+  if (typeof x !== "number" || Number.isNaN(x)) {
+    return real ? "0N" : "0n";
+  }
+  if (!Number.isFinite(x)) {
+    return x < 0 ? "-0w" : "0w";
+  }
+  return numberText(real ? Number(realValue(x)) : x);
+}
+
+/// The literal of a general list's item that `GRID` sent with its floats
+/// and reals: `("f";x)` or `("e";x)` for one, `("F";v)` or `("E";v)` for a
+/// list of them (a real as its float), and `("l";v)` for a general list,
+/// each item its own such pair or, holding none, its `-3!` text. Undefined
+/// for anything else.
+export function exactLiteral(raw: unknown[]): { literal: string; cut: boolean } | undefined {
+  const [tag, v] = raw;
+  if (raw.length !== 2) {
+    return undefined;
+  }
+  if (tag === "f" || tag === "e") {
+    const n = floatText(v, tag === "e");
+    return { literal: tag === "e" || (typeof v === "number" && Number.isFinite(v)) ? `${n}${tag}` : n, cut: false };
+  }
+  if ((tag === "F" || tag === "E") && Array.isArray(v)) {
+    const real = tag === "E";
+    if (v.length < 2) {
+      return { literal: v.length === 0 ? `"${real ? "e" : "f"}"$()` : `enlist ${exactLiteral([real ? "e" : "f", v[0]])!.literal}`, cut: false };
+    }
+    const items = v.map((x) => floatText(x, real));
+    // A suffix where the items alone would not say the type.
+    const suffix = real ? "e" : items.every((n) => /^[-0-9]+$/.test(n)) ? "f" : "";
+    return { literal: `${items.join(" ")}${suffix}`, cut: false };
+  }
+  if (tag === "l" && Array.isArray(v) && v.length > 0) {
+    let cut = false;
+    const items: string[] = [];
+    for (const x of v) {
+      const item = Array.isArray(x) ? exactLiteral(x) : typeof x === "string" ? atomLiteral(0, x, false) : undefined;
+      if (item === undefined) {
+        return undefined;
+      }
+      cut ||= item.cut;
+      items.push(item.literal);
+    }
+    return { literal: items.length === 1 ? `enlist ${items[0]}` : `(${items.join(";")})`, cut };
+  }
+  return undefined;
 }
 
 /// A column's literal over `rows`: `enlist x` for one item, `(x;y;...)`

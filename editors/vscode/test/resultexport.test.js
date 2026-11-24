@@ -276,6 +276,41 @@ test("a general-list item's symbol holding a space, / or - is written through `$
   assert.strictEqual(tableLiteral(t).code, '([] a:enlist `$"x y")');
 });
 
+test("floats nested in a general-list item are written with every digit too (#1502)", () => {
+  // GRID's raw for such an item: ("F";floats), ("E";reals as floats), ("f";x), ("e";x) and
+  // ("l";each item's own, or its -3! text), as the codec decodes it.
+  const lit = (text, raw) => atomLiteral(0, text, raw);
+  assert.deepStrictEqual(lit("1.234568 2.5", ["F", [1.23456789012, 2.5]]), { literal: "1.23456789012 2.5", cut: false });
+  assert.strictEqual(lit("1 2f", ["F", [1, 2]]).literal, "1 2f");
+  assert.strictEqual(lit("1 0n 0w -0w", ["F", [1, null, Infinity, -Infinity]]).literal, "1 0n 0w -0w");
+  assert.strictEqual(lit(",1.234568", ["F", [1.23456789]]).literal, "enlist 1.23456789f");
+  assert.strictEqual(lit("`float$()", ["F", []]).literal, '"f"$()');
+  assert.strictEqual(lit("0.1 0N 0we", ["E", [Math.fround(0.1), null, Infinity]]).literal, "0.1 0N 0we");
+  assert.strictEqual(lit("(1;2.123457;`a b;1 2.5e)", ["l", ["1", ["f", 2.1234567891234], "`a b", ["E", [1, 2.5]]]]).literal, '(1;2.1234567891234f;`$"a b";1 2.5e)');
+  assert.strictEqual(lit(",(1.234568;0n)", ["l", [["l", [["f", 1.23456789], ["f", null]]]]]).literal, "enlist (1.23456789f;0n)");
+  assert.strictEqual(lit("(0Ne;-0w)", ["l", [["e", null], ["f", -Infinity]]]).literal, "(0Ne;-0w)");
+  // An item's text cut by -3! is still cut.
+  assert.strictEqual(lit("(1.5;`aaaa..)", ["l", [["f", 1.5], "`aaaa.."]]).cut, true);
+  // Unwrapped, from the decoded items.
+  const f = (v) => ({ kind: "vector", t: 9, attr: 0, v });
+  const list = { kind: "list", attr: 0, v: [f([1.23456789012, 2.5]), { kind: "list", attr: 0, v: [{ kind: "atom", t: -7, v: 1n }, { kind: "atom", t: -9, v: 2.1234567891234 }] }, { kind: "atom", t: -11, v: "x" }] };
+  const g = gridOfQ({ kind: "table", attr: 0, cols: ["a"], data: [list] }, 100);
+  assert.strictEqual(tableLiteral(g).code, "([] a:(1.23456789012 2.5;(1;2.1234567891234f);`x))");
+});
+
+test("a table in a general-list item is written through flip, as q reads it (#1501)", () => {
+  // -3! writes a table with k's monadic +, which q refuses: '+ on KDB-X.
+  const lit = (t) => atomLiteral(0, t, undefined).literal;
+  assert.strictEqual(lit("+(,`a)!,`p`r"), "flip (enlist `a)!enlist `p`r");
+  assert.strictEqual(lit("(+(,`k)!,,1)!+(,`v)!,,2"), "(flip (enlist `k)!enlist enlist 1)!flip (enlist `v)!enlist enlist 2");
+  assert.strictEqual(lit(",+(,`a)!,1 2"), "enlist flip (enlist `a)!enlist 1 2");
+  assert.strictEqual(lit("+`a b`c!(1 2;3 4)"), 'flip (`$("a b";enlist "c"))!(1 2;3 4)');
+  // + the function, and + between two values, stay.
+  assert.strictEqual(lit("(+;1)"), "(+;1)");
+  assert.strictEqual(lit("{x+(y;1)}"), "{x+(y;1)}");
+  assert.strictEqual(lit('("+(";1)'), '("+(";1)');
+});
+
 test("a float or real item of a general list is written with every digit, not -3!'s \\P 7 text (#1485)", () => {
   // GRID's raw for a general column: each float or real item as a float, 0b for the rest.
   const p = { count: 3, keys: 0, names: ["a"], types: [0], cells: [["1.234568", "`x", "0.1e"]], raw: [[1.23456789, false, Math.fround(0.1)]], rank: [[]] };
