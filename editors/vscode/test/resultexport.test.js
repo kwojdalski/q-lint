@@ -62,6 +62,13 @@ test("a cell's q literal keeps its type: suffixes, typed nulls and infinities, s
   assert.strictEqual(lit(20, "x"), "`x");
   // A general list's item is q already, unless it was cut.
   assert.deepStrictEqual(atomLiteral(0, "`a`b", undefined), { literal: "`a`b", cut: false });
+  // But a guid, which -3! writes bare: q refuses it, or reads 0Ng as 0 (#2081).
+  const g = "8c680a01-5a49-5aab-5a65-d4bfddb6a661";
+  const z = "00000000-0000-0000-0000-000000000000";
+  assert.strictEqual(lit(0, `(${g};1)`, false), `(("G"$"${g}");1)`);
+  assert.strictEqual(lit(0, `(1 2;${z})`, false), `(1 2;("G"$"${z}"))`);
+  assert.strictEqual(lit(0, `,${g} ${z}`, false), `enlist ("G"$("${g}";"${z}"))`);
+  assert.strictEqual(lit(0, `("${g}";\`$"${g}")`, false), `("${g}";\`$"${g}")`);
   assert.strictEqual(atomLiteral(0, `"${"x".repeat(196)}...`, undefined).cut, true);
   // Cut by -3! at \c (#1484). KDB-X at \c 25 80: -3!til 40 is "0 1 ... 28 ..".
   const wide = `${Array.from({ length: 29 }, (_, i) => i).join(" ")} ..`;

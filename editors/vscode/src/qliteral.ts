@@ -98,6 +98,10 @@ export function symbolLiteral(name: string): string {
 /// so too.
 const VERB = /^(?:::|[-+*%&|^=<>~#_$?@.!][:/\\']*)(?=[;)\]]|$)/;
 
+/// A guid as `-3!` writes it, or a run of them, where it ends.
+const GUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+const GUIDS = new RegExp(`^${GUID}(?: ${GUID})*(?![A-Za-z0-9_.])`);
+
 /// `enlist x` for a list of the one item `x`, in parentheses when it is no
 /// noun: `enlist ::` is `enlist` itself, and `enlist +` a 'rank (#1968).
 function lone(item: string): string {
@@ -112,7 +116,8 @@ function lone(item: string): string {
 /// (q refuses `+(,`a)!,1`: #1501), and a run of symbols
 /// whose first starts with `_` (`` `_y ``, `` `_y`a ``) through `` `$ ``.
 /// `-3!` writes both, so a general list's item needs it, and a grid cell
-/// edit's value too.
+/// edit's value too. A guid, which `-3!` writes bare, and a run of them,
+/// are written through `"G"$` (#2081).
 export function readable(code: string): string {
   let out = "";
   let inString = false;
@@ -145,6 +150,13 @@ export function readable(code: string): string {
     } else if (ch === "+" && (last === "" || "(;[!,".includes(last)) && "(`".includes(code[i + 1] ?? " ")) {
       out += "flip ";
       last = "";
+      continue;
+    } else if (/[0-9a-f]/.test(ch) && !/[A-Za-z0-9_.`:]/.test(code[i - 1] ?? "") && GUIDS.test(code.slice(i))) {
+      const run = GUIDS.exec(code.slice(i))![0];
+      const guids = run.split(" ");
+      out += guids.length === 1 ? `("G"$"${run}")` : `("G"$(${guids.map((g) => `"${g}"`).join(";")}))`;
+      i += run.length - 1;
+      last = ")";
       continue;
     } else if (ch === "`" && code[i + 1] === "_" && !/[A-Za-z0-9_.`]/.test(code[i - 1] ?? "")) {
       const run = /^(?:`[A-Za-z0-9_.]*)+/.exec(code.slice(i))?.[0] ?? "`";
