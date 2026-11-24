@@ -6,7 +6,7 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const Long = require("long");
-const { GRID, readGridAnswer, toGrid, toCsv, csvField, cellText, typeName, rowCount } = require("../out/grid.js");
+const { GRID, readGridAnswer, toGrid, toCsv, csvField, csvText, cellText, typeName, rowCount } = require("../out/grid.js");
 const { RUN } = require("../out/query.js");
 const panel = require("../media/result.js");
 const charts = require("../media/chartspec.js");
@@ -568,4 +568,11 @@ test("a key column's sticky header is opaque, though the key shade is translucen
   // its filter.
   const head = cssRule("thead th.key");
   assert.match(head, /background:[^;]*var\(--vscode-editor-inactiveSelectionBackground[^;]*,\s*var\(--vscode-editor(GroupHeader-tabs)?-background/);
+});
+
+test("Copy Pivot and Copy Matrix write each field as the grid's CSV does, a formula neutralised (#1389)", () => {
+  for (const t of ['=HYPERLINK("http://x","y")', "+1+2", "-0W", "@sum", "\tx", "-0.5", "1e-3", "a,b", "plain", ""]) {
+    assert.strictEqual(panel.csvCell(t), csvField(csvText(t)), JSON.stringify(t));
+  }
+  assert.strictEqual(panel.csvCell("=1+1"), "'=1+1");
 });

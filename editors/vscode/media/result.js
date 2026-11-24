@@ -360,8 +360,17 @@
     return n.toLocaleString("en-US") + " row" + (n === 1 ? "" : "s") + " in " + millis + " ms";
   }
 
+  /// One CSV field of a copy, as grid.ts's csvField(csvText(t)) writes it:
+  /// quoted where it must be, and text a spreadsheet would run as a formula
+  /// (=, +, -, @, tab or CR first, and no number) behind a '.
+  function csvCell(t) {
+    const text = /^[=+\-@\t\r]/.test(t) && !/^-?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(t) ? "'" + t : t;
+    return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+  }
+
   const helpers = {
     rowCount: rowCount,
+    csvCell: csvCell,
     gridMove: gridMove,
     announcement: announcement,
     HEAD_ROWS: HEAD_ROWS,
@@ -1450,9 +1459,8 @@
     const copy = el("button", "", "Copy Pivot");
     copy.title = "The pivot as CSV";
     const head = [grid.columns[spec.row] ? grid.columns[spec.row].name : ""].concat(p.columns);
-    const csv = function (t) { return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
     copy.addEventListener("click", function () {
-      const lines = [head.map(csv).join(",")].concat(p.rows.map(function (k, i) { return [k].concat(p.cells[i]).map(csv).join(","); }));
+      const lines = [head.map(csvCell).join(",")].concat(p.rows.map(function (k, i) { return [k].concat(p.cells[i]).map(csvCell).join(","); }));
       vscode.postMessage({ type: "copyText", id: result.id, text: lines.join("\n") + "\n" });
     });
     controls.append(copy);
@@ -1935,9 +1943,8 @@
     const controls = el("div", "controls");
     const copy = el("button", "", "Copy Matrix");
     copy.title = "The correlation matrix as CSV";
-    const csv = function (t) { return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
     copy.addEventListener("click", function () {
-      const lines = [[""].concat(corr.names).map(csv).join(",")].concat(corr.names.map(function (n, i) { return [n].concat(corr.r[i].map(function (r) { return r === null ? "" : String(r); })).map(csv).join(","); }));
+      const lines = [[""].concat(corr.names).map(csvCell).join(",")].concat(corr.names.map(function (n, i) { return [n].concat(corr.r[i].map(function (r) { return r === null ? "" : String(r); })).map(csvCell).join(","); }));
       vscode.postMessage({ type: "copyText", id: result.id, text: lines.join("\n") + "\n" });
     });
     controls.append(copy);
