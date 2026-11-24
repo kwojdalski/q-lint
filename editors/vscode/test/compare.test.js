@@ -129,6 +129,26 @@ test("a column of another type is not the same answer, and the page says which (
   assert.strictEqual(page.posted.at(-1).rendered.summary, "px is float (f) on prod and long (j) on uat (rows lined up by place).");
 });
 
+test("tables that are not keyed by the same columns are not the same answer, and the page says how each is keyed (#2008)", () => {
+  // ([k:1 2] v:10 20) and ([] k:1 2; v:10 20): the same cells, and not the same value.
+  const t = (keys) => table({ k: [7, ["1", "2"], [1, 2]], j: [7, ["3", "4"], [3, 4]], v: [7, ["10", "20"], [10, 20]] }, keys);
+  const c = compareOutcomes(side("prod", t(1)), side("uat", t(0)), -1);
+  assert.deepStrictEqual([c.same, c.differing, c.onlyLeft, c.onlyRight, c.matchedBy, c.rekeyed], [false, 0, 0, 0, "place", { left: ["k"], right: [] }]);
+  const page = loadPage();
+  page.send({ type: "compare", id: 1, code: "t", comparison: c });
+  assert.strictEqual(page.posted.at(-1).rendered.summary, "the table is keyed by k on prod and not keyed on uat (rows lined up by place).");
+  const two = compareOutcomes(side("prod", t(2)), side("uat", t(1)), -1);
+  assert.deepStrictEqual([two.same, two.rekeyed], [false, { left: ["k", "j"], right: ["k"] }]);
+  page.send({ type: "compare", id: 2, code: "t", comparison: two });
+  assert.strictEqual(page.posted.at(-1).rendered.summary, "the table is keyed by k, j on prod and by k on uat (rows lined up by place).");
+  // Keyed alike, or neither keyed: nothing to say.
+  assert.deepStrictEqual([0, 1, 2, 3].map((k) => [compareOutcomes(side("a", t(k)), side("b", t(k)), -1).same, compareOutcomes(side("a", t(k)), side("b", t(k)), -1).rekeyed]), [[true, undefined], [true, undefined], [true, undefined], [true, undefined]]);
+  // Beside a cell that differs.
+  const other = table({ k: [7, ["1", "2"], [1, 2]], j: [7, ["3", "4"], [3, 4]], v: [7, ["10", "21"], [10, 21]] }, 0);
+  page.send({ type: "compare", id: 3, code: "t", comparison: compareOutcomes(side("prod", t(1)), side("uat", other), -1) });
+  assert.strictEqual(page.posted.at(-1).rendered.summary, "1 cell differs, the table is keyed by k on prod and not keyed on uat (rows lined up by place).");
+});
+
 test("what was compared only as far as it is shown is not called the same (#1963)", () => {
   // A cell cut at 200 characters: the rest was never sent.
   const long = `"${"a".repeat(196)}...`;

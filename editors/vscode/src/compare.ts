@@ -9,7 +9,8 @@
 // one - a number, a temporal, a char, the floats in a general list's item -
 // and by q's text of it where that is the whole value; the text the grid
 // shows, floats to `q-lint.query.gridDecimals`, is only what is drawn, and
-// two columns of one name are the same only if their types are (#1963).
+// two columns of one name are the same only if their types are (#1963),
+// and two tables only if they are keyed by the same columns (#2008).
 // Anything else - a value that is not tabular, an error, a process not
 // reached - is compared as the text each side gave, which holds a float
 // only to its process's `\P`: `digits` says so. Only what came back is
@@ -75,6 +76,9 @@ export interface Comparison {
   /// The columns both tables have whose type is not the same, with each
   /// side's: a float 1 and a long 1 are not the same answer.
   retyped: { column: string; left: string; right: string }[];
+  /// Each table's key columns, where the two are not keyed by the same:
+  /// a keyed table and an unkeyed one of the same cells are two values.
+  rekeyed?: { left: string[]; right: string[] };
   /// Cells that are the same as far as their text goes, which was cut at
   /// 200 characters: the rest of each was not compared.
   cut: number;
@@ -179,7 +183,8 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number)
   const indexB = ids.map((id) => idsB.indexOf(id));
   const keysA = ga.columns.filter((c) => c.key).length;
   const keysB = gb.columns.filter((c) => c.key).length;
-  const byKey = keysA > 0 && keysA === keysB && namesA.slice(0, keysA).join("\u0000") === namesB.slice(0, keysB).join("\u0000");
+  const keyedAlike = keysA === keysB && namesA.slice(0, keysA).join("\u0000") === namesB.slice(0, keysB).join("\u0000");
+  const byKey = keysA > 0 && keyedAlike;
   const countA = ga.cells[0]?.length ?? 0;
   const countB = gb.cells[0]?.length ?? 0;
   // Pairs of row numbers, either side undefined where it has no such row.
@@ -287,9 +292,10 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number)
     onlyLeft,
     onlyRight,
     retyped,
+    ...(keyedAlike ? {} : { rekeyed: { left: namesA.slice(0, keysA), right: namesB.slice(0, keysB) } }),
     cut,
     digits: false,
-    same: !partial && sameColumns && retyped.length === 0 && cut === 0 && differing === 0 && onlyLeft === 0 && onlyRight === 0 && ga.total === gb.total,
+    same: !partial && sameColumns && keyedAlike && retyped.length === 0 && cut === 0 && differing === 0 && onlyLeft === 0 && onlyRight === 0 && ga.total === gb.total,
     partial,
   };
 }

@@ -192,6 +192,23 @@ test("Compare Query compares two real q processes' values, not the digits they w
   assert.deepStrictEqual([(await compare("count fx", "a", "b")).same, across.state().comparison.digits], [true, false]);
 });
 
+test("Compare Query does not call a keyed and an unkeyed table of two real q processes the same (#2008)", { skip }, async (t) => {
+  const a = await startQ(t, "one:([k:1 2] v:10 20)\ntwo:([k:`a`b;j:1 2] v:10 20)\nd:`a`b!1 2\n");
+  const b = await startQ(t, "one:([] k:1 2; v:10 20)\ntwo:([k:`a`b] j:1 2;v:10 20)\nd:flip `key`value!(`a`b;1 2)\n");
+  const { across } = await setUp(t, [proc("a", a.port), proc("b", b.port)]);
+  const compare = async (code) => {
+    await stub.commands.get("q-lint.compareQuery")(code, "a", "b");
+    const c = across.state().comparison;
+    return [c.same, c.differing, c.rekeyed];
+  };
+  assert.deepStrictEqual(await compare("one"), [false, 0, { left: ["k"], right: [] }]);
+  assert.deepStrictEqual(await compare("two"), [false, 0, { left: ["k", "j"], right: ["k"] }]);
+  // A dictionary, which the grid draws keyed by `key`, and a table of those columns.
+  assert.deepStrictEqual(await compare("d"), [false, 0, { left: ["key"], right: [] }]);
+  // Keyed alike on both, or on neither.
+  assert.deepStrictEqual([await compare("0!one"), await compare("1!0!one"), await compare("2!0!two")], [[true, 0, undefined], [true, 0, undefined], [true, 0, undefined]]);
+});
+
 test("Compare Query compares each of two columns of one name on two real q processes (#1964)", { skip }, async (t) => {
   const a = await startQ(t, "d:3 4\n");
   const b = await startQ(t, "d:9 9\n");
