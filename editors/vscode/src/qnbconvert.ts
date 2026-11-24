@@ -77,20 +77,23 @@ function inline(text: string, values: Record<string, LiveValue>): string {
       // character, or as written when HTML has no such name (#1552).
       .replace(/&[A-Za-z][A-Za-z0-9]{1,31};/g, (m) => hold(m)),
   );
+  // `href` is escaped already: read it back to the URL written, or it is
+  // escaped twice (`'` as `&amp;#39;`, #1476).
+  const unescaped = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'" } as Record<string, string>;
+  const url = (href: string): string => href.replace(/&(amp|lt|gt|quot|#39);/g, (e) => unescaped[e]);
   // An image: one in the page as a data: URL is shown, as Send to
   // Notebook's chart is; another is a link to it, or its alt text (#1555).
   s = s.replace(/!\[([^\]]*)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/g, (_m, alt: string, src: string) => {
     if (/^data:image\/(png|jpeg|gif);base64,[A-Za-z0-9+/=]+$/.test(src)) {
       return hold(`<img alt="${alt.replace(/\u0000\d+\u0000/g, "")}" src="${src}">`);
     }
-    const target = safeHref(src.replace(/&amp;/g, "&"));
+    const target = safeHref(url(src));
     return target === undefined ? alt : `${hold(`<a href="${escapeHtml(target)}">`)}${alt}${hold("</a>")}`;
   });
   // A URL may hold balanced parentheses, as Wikipedia's do (#1554).
   s = s.replace(/\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/g, (m, label: string, href: string) => {
-    // `href` is escaped already: `&amp;` reads back as `&` in an attribute.
     // The tags are held, so the emphasis below finds no `_` in the URL (#1105).
-    const target = safeHref(href.replace(/&amp;/g, "&"));
+    const target = safeHref(url(href));
     return target === undefined ? m : `${hold(`<a href="${escapeHtml(target)}">`)}${label}${hold("</a>")}`;
   });
   // A run of three first, so its tags nest (#1550). An underscore run

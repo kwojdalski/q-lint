@@ -80,7 +80,8 @@ export interface TunnelOptions {
   signal?: AbortSignal;
 }
 
-/// A connect through a tunnel that closed before the handshake (#1355).
+/// A connect through a tunnel that closed before the handshake (#1355), or
+/// a tunnel ssh did not open.
 /// What ssh printed about it is kept apart from `message`, in `sshSaid`:
 /// it can name hosts, so it is for a message shown to the user at once and
 /// never for a history, a notebook's output or anything else that is kept.
@@ -97,6 +98,10 @@ export class TunnelConnectError extends Error {
     return this.sshSaid === "" ? this : new Error(`${this.message}. ssh said: ${this.sshSaid}`);
   }
 }
+
+/// A connect through an open tunnel that closed before the handshake: as
+/// likely a refused user as a forward that reached no q.
+export class TunnelHandshakeError extends TunnelConnectError {}
 
 export class SshTunnel {
   private closed = false;
@@ -144,14 +149,19 @@ export class SshTunnel {
     const timeoutMs = options.timeoutMs ?? TUNNEL_TIMEOUT_MS;
     const started = Date.now();
     let failure: string | undefined;
+    // What ssh said as it exited: kept out of the message (#1355).
+    let sshSaid: string | undefined;
     child.once("error", (error) => {
       failure = (error as NodeJS.ErrnoException).code === "ENOENT" ? `no ssh program (${options.ssh ?? "ssh"}) on PATH` : error.message;
     });
-    tunnel.whenClosed((why) => (failure ??= why));
+    tunnel.whenClosed((why) => (sshSaid ??= why));
     for (;;) {
       if (failure !== undefined) {
         tunnel.close();
         throw new Error(`the SSH tunnel through ${options.destination} did not open: ${failure}`);
+      }
+      if (sshSaid !== undefined) {
+        throw new TunnelConnectError(`the SSH tunnel through ${options.destination} did not open`, sshSaid);
       }
       if (options.signal?.aborted) {
         tunnel.close();

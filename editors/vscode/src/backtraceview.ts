@@ -28,6 +28,7 @@ import {
 } from "vscode";
 import { bestSuffixMatch, failedAt, headerLink, parseBacktrace, type Frame } from "./backtrace";
 import { editorFeatureOn } from "./editorfeatures";
+import { globLiteral } from "./globliteral";
 import { plainMessage } from "./history";
 
 const on = (): boolean => editorFeatureOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "backtraceLinks");
@@ -41,7 +42,7 @@ export async function localFile(path: string): Promise<Uri | undefined> {
   if (base === undefined || base === "") {
     return undefined;
   }
-  const found = await workspace.findFiles(`**/${base}`, "**/node_modules/**", 50);
+  const found = await workspace.findFiles(`**/${globLiteral(base)}`, "**/node_modules/**", 50);
   const best = bestSuffixMatch(
     path,
     found.map((u) => u.fsPath),

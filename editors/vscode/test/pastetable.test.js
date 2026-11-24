@@ -167,3 +167,14 @@ test("the pastes write at the selection; Copy Value as JSON asks the process thr
   for (const d of context.subscriptions) d.dispose?.();
   vscode.window.activeTextEditor = undefined;
 });
+
+test("negative zero keeps its sign in a q literal: 1%-0f is -0w (#1493)", () => {
+  const { atomLiteral, numberText } = require("../out/qliteral.js");
+  assert.strictEqual(numberText(-0), "-0");
+  assert.strictEqual(numberText(0), "0");
+  assert.strictEqual(p.floatText(-0), "-0f");
+  assert.strictEqual(atomLiteral(9, "-0", -0).literal, "-0f");
+  assert.strictEqual(atomLiteral(8, "-0", -0).literal, "-0e");
+  // KDB-X: .j.k "[-0.0,1]" is -0 1f.
+  assert.strictEqual(jsonToQ("[-0.0, 1]").code, "-0 1f");
+});

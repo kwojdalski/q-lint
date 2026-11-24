@@ -373,6 +373,34 @@ test("Send Result to Notebook inserts a Markdown cell after the selected cell, t
   assert.match(fake.edits[1].list[0].cells[0].value, /\| c \| 9 \| ,5 \|\n$/);
 });
 
+test("Send to... keeps to the result it was asked from when another comes in during the picks (#1477)", async () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  modes.show(result(), live);
+  const nb = fake.notebook("/w/a.qnb", 1);
+  fake.vscode.window.visibleNotebookEditors.push({ notebook: nb, selections: [] });
+  // Result B, one row, arrives while the destination is picked: A's row 2 is still written.
+  let arrived = false;
+  const arrive = (code) => (i) => (arrived || ((arrived = true), modes.show(result(code, [["sym", 11, ["z"]], ["px", 9, ["7"], [7]]]), live)), i.label === "q Notebook");
+  fake.answers.picks.push(arrive("select from u"), "Table");
+  fake.pages[0].receive({ type: "send", id: last(fake).id, rows: [2] });
+  await tick();
+  await tick();
+  const cell = fake.edits[0].list[0].cells[0].value;
+  assert.match(cell, /select from t/);
+  assert.match(cell, /\| c \| 9 \| ,5 \|\n$/);
+  assert.ok(!/select from u|\| z \|/.test(cell), cell);
+  // With the chart: the page now draws B's, so nothing is sent, and it says so.
+  arrived = false;
+  fake.answers.picks.push(arrive("select from w"), "Table and chart");
+  fake.pages[0].receive({ type: "send", id: last(fake).id, rows: [0] });
+  await tick();
+  await tick();
+  assert.strictEqual(fake.edits.length, 1);
+  assert.match(fake.said.at(-1), /another result came in before its chart was drawn/);
+  assert.notStrictEqual(last(fake).control?.action, "image");
+});
+
 test("Append Result to Markdown Report shows what it writes, appends after the text, and never writes over an image (#1021)", async () => {
   const fake = fakeVscode();
   const modes = loadModes(fake);

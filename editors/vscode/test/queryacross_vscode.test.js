@@ -202,3 +202,37 @@ test("turned off, Compare Query refuses, says how to turn it on, and sends nothi
   await stub.commands.get("q-lint.compareQuery")("count t", "a", "b");
   assert.strictEqual(queries(a).length, 2);
 });
+
+test("turned off, the Compare Query panel closes, and a compare still running opens none (#1458)", async (t) => {
+  const panels = [];
+  const create = vscode.window.createWebviewPanel;
+  vscode.window.createWebviewPanel = () => {
+    const panel = {
+      disposed: false,
+      webview: { html: "", cspSource: "csp", asWebviewUri: (u) => u, onDidReceiveMessage: () => ({ dispose() {} }), postMessage: async () => true },
+      onDidDispose: () => ({ dispose() {} }),
+      reveal() {},
+      dispose() { this.disposed = true; },
+    };
+    panels.push(panel);
+    return panel;
+  };
+  t.after(() => (vscode.window.createWebviewPanel = create));
+  const a = await fakeQ(table([1]));
+  const b = await fakeQ(table([2]));
+  t.after(() => [a, b].forEach((q) => q.close()));
+  await setUp(t, [proc("a", a.port, []), proc("b", b.port, [])]);
+  await stub.commands.get("q-lint.compareQuery")("count t", "a", "b");
+  assert.strictEqual(panels.length, 1);
+  stub.config.user["query.compare.enable"] = false;
+  stub.changeConfig("q-lint.query.compare.enable");
+  assert.strictEqual(panels[0].disposed, true);
+  // On again, and turned off while a compare runs: no panel after.
+  stub.config.user["query.compare.enable"] = true;
+  stub.changeConfig("q-lint.query.compare.enable");
+  const running = stub.commands.get("q-lint.compareQuery")("count t", "a", "b");
+  stub.config.user["query.compare.enable"] = false;
+  stub.changeConfig("q-lint.query.compare.enable");
+  await running;
+  assert.strictEqual(panels.length, 1);
+});

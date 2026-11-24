@@ -218,6 +218,11 @@ test("a table as text is laid out as q's console lays it out", () => {
   assert.deepStrictEqual(tableText(plain), ["a bb", "----", "1 22"]);
 });
 
+test("a string cell holding a newline or a tab stays on its row in the text table (#1496)", () => {
+  const t = { columns: ["s", "n"], types: [0, 7], keys: 0, data: [["a\nb", "c\td"], ["1", "2"]], total: 2 };
+  assert.deepStrictEqual(tableText(t), ["s    n", "------", "a\\nb 1", "c\\td 2"]);
+});
+
 test("a table of every row is laid out as text, however many rows it has", () => {
   // q-lint.notebook.rowLimit 0 sends every row: far more than a call takes arguments.
   const rows = 300000;

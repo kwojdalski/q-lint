@@ -61,6 +61,7 @@ import type { Live } from "./live";
 import { decodeItem, encodeItem, exportScript, NOTEBOOK, parseQnb, serializeQnb, type Qnb, type QnbCell, type QnbOutput } from "./qnb";
 import { statements } from "./statements";
 import { plainMessage } from "./history";
+import { selectedMany } from "./clicked";
 
 /// Where the fields of a file, a cell or an output this extension does not
 /// know ride in VS Code's metadata between an open and a save; never written
@@ -604,6 +605,61 @@ async function exportNotebook(source?: Uri, target?: Uri, format: ExportFormat =
   }
 }
 
+/// Export the notebook clicked, or each of an Explorer multi-selection.
+function exportSelected(source: Uri | undefined, target: unknown, format: ExportFormat): Promise<void> {
+  const many = selectedMany<Uri>(target)?.filter((u) => /\.qnb$/i.test(u.path));
+  return many !== undefined && many.length > 1
+    ? eachBeside(many, (from) => scriptBeside(from, EXPORTS[format].extension), "Export", `as ${EXPORTS[format].extension.slice(1)}`, (from, to) => exportNotebook(from, to, format))
+    : exportNotebook(source, target instanceof Uri ? target : undefined, format);
+}
+
+/// Run `run` on each of `sources`, an Explorer multi-selection, to the file
+/// `beside` names, once asked: only the file clicked was done, and the rest
+/// skipped unsaid (#1541). A file there already is left as it is.
+async function eachBeside(sources: Uri[], beside: (from: Uri) => Uri, verb: string, how: string, run: (from: Uri, to: Uri) => Promise<void>): Promise<void> {
+  const exists = (uri: Uri): Promise<boolean> =>
+    Promise.resolve()
+      .then(() => workspace.fs.stat(uri))
+      .then(
+        () => true,
+        () => false,
+      );
+  const todo: { from: Uri; to: Uri }[] = [];
+  const there: string[] = [];
+  for (const from of sources) {
+    const to = beside(from);
+    if (await exists(to)) {
+      there.push(path.posix.basename(to.path));
+    } else {
+      todo.push({ from, to });
+    }
+  }
+  const left = there.length > 0 ? `\n\nAlready there, and left as they are: ${there.join(", ")}.` : "";
+  if (todo.length === 0) {
+    void window.showInformationMessage(plainMessage(`q-lint: ${there.join(", ")} ${there.length === 1 ? "is" : "are"} there already; nothing was written.`));
+    return;
+  }
+  const answer = await window.showWarningMessage(
+    plainMessage(`${verb} ${todo.length} notebook${todo.length === 1 ? "" : "s"} ${how}, each beside itself?`),
+    { modal: true, detail: `${todo.map((t) => `${path.posix.basename(t.from.path)} -> ${path.posix.basename(t.to.path)}`).join("\n")}${left}` },
+    verb,
+  );
+  if (answer !== verb) {
+    return;
+  }
+  const done: string[] = [];
+  for (const { from, to } of todo) {
+    // One that fails says why itself.
+    await run(from, to);
+    if (await exists(to)) {
+      done.push(path.posix.basename(to.path));
+    }
+  }
+  if (done.length > 0) {
+    void window.showInformationMessage(plainMessage(`q-lint: wrote ${done.join(", ")}.`));
+  }
+}
+
 /// Read the Jupyter notebook at `source` - picked when not given - as a q
 /// notebook, write it to `target` or where the user picks (beside it, as
 /// `.qnb`), and open it when the user picked.
@@ -743,10 +799,18 @@ export function registerNotebooks(
   context.subscriptions.push(
     workspace.registerNotebookSerializer(NOTEBOOK.type, new QnbSerializer()),
     kernel,
-    commands.registerCommand(NOTEBOOK.exportCommand, (source?: Uri, target?: Uri) => exportNotebook(source, target)),
-    commands.registerCommand(NOTEBOOK.exportHtmlCommand, (source?: Uri, target?: Uri) => requireFeature("export") ? exportNotebook(source, target, "html") : undefined),
-    commands.registerCommand(NOTEBOOK.exportIpynbCommand, (source?: Uri, target?: Uri) => requireFeature("export") ? exportNotebook(source, target, "ipynb") : undefined),
-    commands.registerCommand(NOTEBOOK.importIpynbCommand, (source?: Uri, target?: Uri) => requireFeature("export") ? importIpynb(source, target) : undefined),
+    commands.registerCommand(NOTEBOOK.exportCommand, (source?: Uri, target?: unknown) => exportSelected(source, target, "q")),
+    commands.registerCommand(NOTEBOOK.exportHtmlCommand, (source?: Uri, target?: unknown) => requireFeature("export") ? exportSelected(source, target, "html") : undefined),
+    commands.registerCommand(NOTEBOOK.exportIpynbCommand, (source?: Uri, target?: unknown) => requireFeature("export") ? exportSelected(source, target, "ipynb") : undefined),
+    commands.registerCommand(NOTEBOOK.importIpynbCommand, (source?: Uri, target?: unknown) => {
+      if (!requireFeature("export")) {
+        return undefined;
+      }
+      const many = selectedMany<Uri>(target)?.filter((u) => /\.ipynb$/i.test(u.path));
+      return many !== undefined && many.length > 1
+        ? eachBeside(many, (from) => from.with({ path: from.path.replace(/\.ipynb$/i, "") + ".qnb" }), "Import", "as q notebooks", importIpynb)
+        : importIpynb(source, target instanceof Uri ? target : undefined);
+    }),
     liveMessaging.onDidReceiveMessage(({ message }: { message: { type?: string; expr?: unknown; value?: LiveValue | null } }) => {
       if (message.type === "live" && typeof message.expr === "string") {
         shown.push({ expr: message.expr, value: message.value ?? null });

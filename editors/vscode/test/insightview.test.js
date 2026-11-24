@@ -258,6 +258,16 @@ test("Redefine sends nothing when another process became active while it was ask
   assert.ok(stub.messages.some(([, text]) => /was not redefined on p: p is no longer the active process; nothing was run/.test(text)), JSON.stringify(stub.messages));
 });
 
+test("Redefine sends nothing when Function Source is turned off while it asked (#1453)", async (t) => {
+  const { q } = await setUp(t);
+  const uri = await stub.commands.get("q-lint.openFunctionSource")(".ns.h");
+  const copy = await stub.commands.get("q-lint.editFunctionSource")(uri);
+  copy.text = "/ .ns.h on p, defined in .ns\n{[x] x+lim*2}\n";
+  stub.picks.push(() => ((stub.config.user["processExplorer.functionSource.enable"] = false), "Redefine"));
+  assert.strictEqual(await stub.commands.get("q-lint.redefineFunction")(), false);
+  assert.deepStrictEqual(calls(q, REDEFINE), []);
+});
+
 test("Redefine on a process tagged prod says so in its confirmation", async (t) => {
   await setUp(t, ["prod"]);
   let asked;

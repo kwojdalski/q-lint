@@ -40,6 +40,9 @@ test("an update's rows are read as q's text, in the subscribed columns' order", 
   // One row as a list of atoms.
   const row = { kind: "list", attr: 0, v: [sym("c"), { kind: "atom", t: -9, v: 3 }] };
   assert.deepStrictEqual(readUpdate(upd("trade", row), "trade", ["sym", "px"]), [["c", "3"]]);
+  // A char atom is its char, not its byte's number (#1490): (`a;"B";1.5).
+  const chars = { kind: "list", attr: 0, v: [sym("a"), { kind: "atom", t: -10, v: 66 }, { kind: "atom", t: -9, v: 1.5 }] };
+  assert.deepStrictEqual(readUpdate(upd("trade", chars), "trade", ["sym", "side", "px"]), [["a", "B", "1.5"]]);
   // Another table's update, or not an update: nothing.
   assert.strictEqual(readUpdate(upd("quote", data), "trade", ["sym", "px"]), undefined);
   assert.strictEqual(readUpdate(sym("x"), "trade", ["sym"]), undefined);
@@ -277,4 +280,43 @@ test("closing the grid touches its webview no more: the connection's close draws
   panels[0].dispose();
   await sleep(400);
   assert.deepStrictEqual(thrown, []);
+});
+
+// The grid listened for updates only once .u.sub had answered: an update
+// a tickerplant published at once, in the same packet as the answer, was
+// dispatched to no listener and lost.
+test("an update in the same packet as .u.sub's answer reaches the grid", async (t) => {
+  const { serialize, deserialize } = require("node-q/lib/c.js");
+  const { SUBSCRIBE } = require("../out/stream.js");
+  const server = net.createServer((socket) => {
+    socket.on("error", () => {});
+    let shook = false;
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk) => {
+      if (!shook) {
+        shook = true;
+        socket.write(Buffer.from([3]));
+        return;
+      }
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.length >= 8 && buffer.length >= buffer.readUInt32LE(4)) {
+        const message = buffer.subarray(0, buffer.readUInt32LE(4));
+        buffer = buffer.subarray(message.length);
+        const m = deserialize(message);
+        const answer = serialize(Array.isArray(m) && m[0] === SUBSCRIBE ? ["trade", ["sym", "px"]] : null);
+        answer.writeUInt8(2, 1);
+        // The answer and the first update, in one write.
+        socket.write(Array.isArray(m) && m[0] === SUBSCRIBE ? Buffer.concat([answer, serialize(["`upd", "`trade", ["`a", 1.5]])]) : answer);
+      }
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  t.after(() => server.close());
+  const { panels } = await setUp(t, [{ label: "tp", host: "127.0.0.1", port: server.address().port, tags: [] }]);
+  stub.config.user["tickerplant.stream.enable"] = true;
+  await stub.commands.get(STREAM_COMMANDS.start)("tp", "trade");
+  assert.strictEqual(panels.length, 1);
+  await sleep(400);
+  assert.deepStrictEqual(panels[0].posted.at(-1).rows, [["a", "1.5"]]);
+  panels[0].dispose();
 });

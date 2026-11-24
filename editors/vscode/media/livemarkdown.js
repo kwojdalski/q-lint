@@ -29,7 +29,7 @@ export function scanLive(text, at) {
       }
     } else if (c === '"') {
       quoted = true;
-    } else if (c === "\n" && text[i + 1] === "\n") {
+    } else if (c === "\n" && /^[ \t]*\r?\n/.test(text.slice(i + 1))) {
       return undefined;
     } else if (c === "{") {
       depth++;

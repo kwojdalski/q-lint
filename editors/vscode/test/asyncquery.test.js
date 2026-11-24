@@ -108,6 +108,42 @@ const until = async (f) => {
   for (let i = 0; i < 100 && !f(); i++) await sleep(50);
 };
 
+test("turned off while it asked, nothing is sent and no status item is left (#1454)", async () => {
+  stub.reset();
+  const vscode = require("vscode");
+  const items = [];
+  const create = vscode.window.createStatusBarItem;
+  vscode.window.createStatusBarItem = () => {
+    const item = { shown: false, show() { this.shown = true; }, hide() { this.shown = false; }, dispose() { this.shown = false; } };
+    items.push(item);
+    return item;
+  };
+  const sent = [];
+  let release;
+  const live = {
+    runOnActive: async (_code, query) => {
+      await new Promise((r) => (release = r));
+      return { process: "p", value: await query({ sendAsync: (...a) => sent.push(a) }) };
+    },
+    onAsyncMessage: () => ({ dispose() {} }),
+    onDidChange: () => ({ dispose() {} }),
+    codeFromEditor: async () => "1+1",
+  };
+  const context = stub.newContext();
+  const queries = new AsyncQueries(context, live);
+  const run = queries.run("1+1");
+  await new Promise((r) => setImmediate(r));
+  stub.config.user["query.async.enable"] = false;
+  stub.changeConfig("q-lint.query.async.enable");
+  release();
+  assert.strictEqual(await run, undefined);
+  vscode.window.createStatusBarItem = create;
+  for (const d of context.subscriptions) d.dispose?.();
+  assert.deepStrictEqual(sent, []);
+  assert.deepStrictEqual(queries.state().pending, []);
+  assert.strictEqual(items.filter((i) => i.shown).length, 0);
+});
+
 test("a query sent async leaves the connection free; its table, value and error arrive (real q)", { skip }, async (t) => {
   const port = await freePort();
   const q = await startQ(port);

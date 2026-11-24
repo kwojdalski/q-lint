@@ -104,9 +104,13 @@ export class AsyncQueries {
     const configuration = workspace.getConfiguration("q-lint");
     const { consoleSize, gridLimit } = readLive((key, fallback) => configuration.get(key, fallback));
     const id = this.next++;
-    let sent: { process: string; value: number } | undefined;
+    let sent: { process: string; value: number | undefined } | undefined;
     try {
       sent = await this.live.runOnActive(code, async (connection) => {
+        // Turned off at the pick or the guard: nothing is sent (#1454).
+        if (!on()) {
+          return undefined;
+        }
         connection.sendAsync(ASYNC, id, cut, consoleSize, Number.isFinite(gridLimit) ? gridLimit : 0);
         return id;
       });
@@ -115,6 +119,10 @@ export class AsyncQueries {
       return undefined;
     }
     if (sent === undefined) {
+      return undefined;
+    }
+    if (sent.value === undefined) {
+      void window.showInformationMessage(plainMessage(adminOff("asyncQuery")));
       return undefined;
     }
     this.pending.set(id, { id, process: sent.process, code, started: Date.now() });
@@ -176,8 +184,9 @@ export class AsyncQueries {
     }
     const picked = await window.showQuickPick(
       [...this.pending.values()].map((p) => ({
-        line: p.code.split(/\r?\n/)[0].slice(0, 80),
-        label: iconsEscaped(p.code.split(/\r?\n/)[0].slice(0, 80)),
+        // By code point, never inside a surrogate pair (#1473).
+        line: Array.from(p.code.split(/\r?\n/)[0]).slice(0, 80).join(""),
+        label: iconsEscaped(Array.from(p.code.split(/\r?\n/)[0]).slice(0, 80).join("")),
         description: iconsEscaped(`${p.process}, ${elapsedText(Date.now() - p.started)}`),
         id: p.id,
       })),

@@ -60,6 +60,12 @@ export class QueryAcross {
     context.subscriptions.push(
       commands.registerCommand(TAG_QUERY.command, (tag?: Row | string, code?: string) => this.queryTag(tag, code)),
       commands.registerCommand(COMPARE.command, (code?: string, first?: Row | string, second?: Row | string) => this.compare(code, first, second)),
+      // Turned off, the side-by-side panel goes, as benchmark's does (#1458).
+      workspace.onDidChangeConfiguration((event) => {
+        if (event.affectsConfiguration("q-lint.query.compare") && !setting(readCompare).enabled) {
+          this.compareView.close();
+        }
+      }),
     );
   }
 
@@ -104,6 +110,10 @@ export class QueryAcross {
       return;
     }
     const { outcomes } = await this.runEach([a, b], code, `q-lint: comparing ${a.label} and ${b.label}`);
+    // Turned off while it ran: no panel opens after the off closed it.
+    if (!setting(readCompare).enabled) {
+      return;
+    }
     const comparison = compareOutcomes(outcomes[0], outcomes[1], setting(readLive).gridDecimals);
     this.lastComparison = comparison;
     this.compareView.show(comparison, code);

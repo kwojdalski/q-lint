@@ -3,7 +3,7 @@
 // drives every path that sends code through it.
 const test = require("node:test");
 const assert = require("node:assert");
-const { DEFAULT_GUARD_TAGS, guardCheck, guardQuestion, guardRefusal, guardedBy, readGuard, writes } = require("../out/guard.js");
+const { DEFAULT_GUARD_TAGS, guardCheck, guardQuestion, guardRefusal, guardedBy, openTags, readGuard, writes } = require("../out/guard.js");
 
 const settings = (values = {}) => readGuard((key, fallback) => (key in values ? values[key] : fallback));
 
@@ -730,5 +730,165 @@ test("ordinary reads stay reads after the round-6 rules", () => {
     "-21!`:dst",
   ]) {
     assert.deepStrictEqual(writes(code), [], code);
+  }
+});
+
+test("an in-place update whose column holds a subquery is a change (#1439)", () => {
+  const cases = {
+    "update c:(exec max a from s) from `t": ["updates `t in place"],
+    "delete from `t where a in (select a from s)": ["deletes from `t in place"],
+    "update c:(select max a by b from (exec a from s)) from `t": ["updates `t in place"],
+    // A nested query on a value reads, and its columns are not assignments.
+    "update c:(exec max a from s) from t": [],
+    "select c:(exec max a from s) from t": [],
+    "x:update c:(exec a:max a from s) from t": ["assigns x"],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("0:, 1: and hopen to a handle built with ` sv, .Q.dd or hsym of a cast are changes (#1440)", () => {
+  const cases = {
+    "(` sv `:a`b) 1: 0x00": ["writes a file with 1:"],
+    "(` sv dir,`f.csv) 0: lines": ["writes a file with 0:"],
+    "(.Q.dd[`:a;`b]) 0: x": ["writes a file with 0:"],
+    ".Q.dd[`:a;`b] 0: x": ["writes a file with 0:"],
+    "hopen ` sv `:a`b": ["opens a file with hopen"],
+    "hopen .Q.dd[`:a;`b]": ["opens a file with hopen"],
+    'hopen hsym `$"/tmp/f"': ["opens the file `:/tmp/f with hopen"],
+    // A parse format left of 0: on a built path, and a built connection, read.
+    '("SJ";",") 0: ` sv `:a`b.csv': [],
+    '("SJ";",") 0: .Q.dd[`:a;`b]': [],
+    'hopen hsym `$"host:5000"': [],
+    "hopen ` sv `:host:5000`x": [],
+    "` sv `:a`b": [],
+    "read0 ` sv `:a`b": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("a connection still to the old address of an edited process keeps its old tags (#1443)", () => {
+  const open = { host: "prodhost", port: 5000, tags: ["prod"] };
+  // Moved: still connected to prodhost, so still guarded.
+  for (const saved of [
+    { host: "devhost", port: 5000, tags: ["dev"] },
+    { host: "prodhost", port: 5001, tags: [] },
+    { host: "prodhost", port: 5000, user: "me", tags: ["dev"] },
+    { host: "prodhost", port: 5000, tls: true, tags: ["dev"] },
+  ]) {
+    const tags = openTags(open, saved);
+    assert.deepStrictEqual(guardedBy({ tags }, settings()), ["prod"], JSON.stringify(saved));
+    assert.ok(saved.tags.every((t) => tags.includes(t)));
+  }
+  // At the same address, the new tags are its own: untagging unguards it.
+  assert.deepStrictEqual(openTags(open, { host: "prodhost", port: 5000, tags: ["dev"] }), ["dev"]);
+  assert.deepStrictEqual(openTags({ ...open, tags: ["dev"] }, { host: "prodhost", port: 5000, tags: ["prod"] }), ["prod"]);
+});
+
+test("in a lambda, a qsql or table-literal column of a name does not make it a local (#1444)", () => {
+  const cases = {
+    "{select a:b from t; a+:1}[]": ["assigns a"],
+    "{exec a:b from t; a+:1}[]": ["assigns a"],
+    "{([] a:1 2); a+:1}[]": ["assigns a"],
+    "{t:([] a:1 2); a+:1}[]": ["assigns a"],
+    "{([k:1 2] v:3 4); k[0]:5}[]": ["assigns k"],
+    // A plain assignment, also in a column's expression, still makes a local.
+    "{a:5; a+:1; a}[]": [],
+    "{s:([] c:a:1 2); a+:1; a}[]": [],
+    "{s:select a:b from t; a:s`a; a+:1}[]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("an amend or ! in parentheses applied in brackets is a change (#1445)", () => {
+  const cases = {
+    "(@)[`.;`a;:;1]": ["amends `. in place"],
+    "(.)[`a;();:;1]": ["amends `a in place"],
+    "(!)[`t;();0b;`a]": ["updates or deletes from `t in place with !"],
+    "(@)[`t;`c;`p#]": ["amends `t in place"],
+    // On a value, or a trap, it reads.
+    "(@)[t;0;:;1]": [],
+    "(.)[`f;(1;2);{x}]": [],
+    "(@)[f;x;{y}]": [],
+    "(!)[t;();0b;`a]": [],
+    "(x+1)[0]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("value or eval of an amend tree on a variable by name is a change (#1446)", () => {
+  const cases = {
+    "value(@;`.;`a;:;1)": ["evaluates an amend with value"],
+    "value(.;`.;enlist`a;:;1)": ["evaluates an amend with value"],
+    "eval(@;enlist`.;enlist`a;:;1)": ["evaluates an amend with eval"],
+    "-6!(@;enlist`t;0;:;1)": ["evaluates an amend with -6!"],
+    // An index, or an amend of a value, reads.
+    "value(@;`t;0)": [],
+    "value(@;t;0;:;1)": [],
+    "eval(@;`t;0;:;1)": [],
+    "value@(`t)": [],
+    "value(.;d;enlist`a)": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("xasc, xdesc and xkey projected on the columns, then applied to a table by name, are changes (#1447)", () => {
+  const cases = {
+    "xasc[`a]`t": ["sorts `t in place with xasc"],
+    "xdesc[`a] `t": ["sorts `t in place with xdesc"],
+    "xkey[`a]`t": ["keys `t in place with xkey"],
+    "xasc[`a][`t]": ["sorts `t in place with xasc"],
+    "xasc[`a;`t]": ["sorts `t in place with xasc"],
+    // Applied to a table's value, or not applied, it reads.
+    "xasc[`a] t": [],
+    "xasc[`a]": [],
+    "f:xasc[`a]": ["assigns f"],
+    "xasc[`a;t]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("in k code, a monadic . evaluates as value does (#1448)", () => {
+  const cases = {
+    'k)."a:1"': ["evaluates a string with k's ."],
+    'k).:"a:1"': ["evaluates a string with k's ."],
+    "k).(:;`a;1)": ["evaluates an assignment with k's ."],
+    'k)x:1;."b:2"': ["assigns x", "evaluates a string with k's ."],
+    // Any string, as with value "1+1": the text is not read further.
+    'k)."1+1"': ["evaluates a string with k's ."],
+    // Dyadic . applies, and q's . on a string is not k's.
+    'k)f . ("a";1)': [],
+    "k)+/1 2 3": [],
+    'f . ("a:1";1)': [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("a writer taken out of .q or .Q by juxtaposition is a change (#1449)", () => {
+  const cases = {
+    "(.q`set)[`a;1]": ["calls .q.set"],
+    ".q `upsert": ["calls .q.upsert"],
+    "(.Q`dpft)[`:d;.z.d;`sym;`t]": ["calls .Q.dpft"],
+    ".q[`set][`b;2]": ["calls .q.set"],
+    // What is not a writer reads.
+    "(.Q`dd)[`:a;`b]": [],
+    "(.q`count) t": [],
+    "key .q": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
   }
 });
