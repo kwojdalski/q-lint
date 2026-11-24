@@ -38,6 +38,7 @@ import {
   type Filter,
   type Level,
 } from "./logparse";
+import { isUriLike } from "./clicked";
 import { readFrom, START, type Position } from "./logreader";
 import { iconsEscaped, plainMessage } from "./history";
 
@@ -95,8 +96,8 @@ export class LogViewer {
       c(LOG_COMMANDS.processes, (given?: unknown) => this.filterProcesses(given)),
       c(LOG_COMMANDS.time, (given?: unknown) => this.filterTime(given)),
       c(LOG_COMMANDS.text, (given?: unknown) => this.filterText(given)),
-      c(LOG_COMMANDS.clear, () => this.setFilter(() => NO_FILTER)),
-      c(LOG_COMMANDS.follow, () => this.toggleFollow()),
+      c(LOG_COMMANDS.clear, (given?: unknown) => (this.enabled() ? this.setFilter(() => NO_FILTER, this.activeView(given)) : undefined)),
+      c(LOG_COMMANDS.follow, (given?: unknown) => this.toggleFollow(given)),
       workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration("q-lint.processes.logViewer")) {
           this.apply();
@@ -181,10 +182,13 @@ export class LogViewer {
     return uri.scheme === LOG_SCHEME ? this.views.get(new URLSearchParams(uri.query).get("view") ?? "") : undefined;
   }
 
-  /// The view in the active editor, or the only one open.
-  private activeView(): View | undefined {
+  /// The view of `given`, the Uri a title-bar button hands in - it does not
+  /// focus its editor (#1524) - else the view in the active editor, or the
+  /// only one open.
+  private activeView(given?: unknown): View | undefined {
+    const clicked = isUriLike(given) ? this.viewOf(given as Uri) : undefined;
     const uri = window.activeTextEditor?.document.uri;
-    const view = uri === undefined ? undefined : this.viewOf(uri);
+    const view = clicked ?? (uri === undefined ? undefined : this.viewOf(uri));
     if (view === undefined && this.views.size === 1) {
       return [...this.views.values()][0];
     }
@@ -462,11 +466,11 @@ export class LogViewer {
     this.refreshStatus();
   }
 
-  private async toggleFollow(): Promise<void> {
+  private async toggleFollow(given?: unknown): Promise<void> {
     if (!this.enabled()) {
       return;
     }
-    const view = this.activeView();
+    const view = this.activeView(given);
     if (view === undefined) {
       return;
     }
@@ -482,12 +486,11 @@ export class LogViewer {
     this.refreshStatus();
   }
 
-  private async setFilter(change: (filter: Filter) => Filter): Promise<void> {
-    if (!this.enabled()) {
-      return;
-    }
-    const view = this.activeView();
-    if (view === undefined) {
+  /// Change `view`'s filter: the view the command was run for, looked up
+  /// before any pick, not again after it.
+  private async setFilter(change: (filter: Filter) => Filter, view: View | undefined): Promise<void> {
+    // Closed while a pick was open: nothing to change.
+    if (!this.enabled() || view === undefined || !this.views.has(view.id)) {
       return;
     }
     view.filter = change(view.filter);
@@ -501,13 +504,13 @@ export class LogViewer {
     if (!this.enabled()) {
       return;
     }
-    const view = this.activeView();
+    const view = this.activeView(given);
     if (view === undefined) {
       return;
     }
     if (Array.isArray(given)) {
       const levels = LEVELS.filter((l) => given.some((g) => typeof g === "string" && g.toUpperCase() === l));
-      await this.setFilter((f) => ({ ...f, levels }));
+      await this.setFilter((f) => ({ ...f, levels }), view);
       return;
     }
     const picked = await window.showQuickPick(
@@ -515,7 +518,7 @@ export class LogViewer {
       { canPickMany: true, title: "Show which levels? (none picked: every line)" },
     );
     if (picked !== undefined) {
-      await this.setFilter((f) => ({ ...f, levels: picked.map((p) => p.label as Level) }));
+      await this.setFilter((f) => ({ ...f, levels: picked.map((p) => p.label as Level) }), view);
     }
   }
 
@@ -523,13 +526,13 @@ export class LogViewer {
     if (!this.enabled()) {
       return;
     }
-    const view = this.activeView();
+    const view = this.activeView(given);
     if (view === undefined) {
       return;
     }
     if (Array.isArray(given)) {
       const processes = given.filter((g): g is string => typeof g === "string");
-      await this.setFilter((f) => ({ ...f, processes }));
+      await this.setFilter((f) => ({ ...f, processes }), view);
       return;
     }
     const picked = await window.showQuickPick(
@@ -537,7 +540,7 @@ export class LogViewer {
       { canPickMany: true, title: "Show which processes? (none picked: every process)" },
     );
     if (picked !== undefined) {
-      await this.setFilter((f) => ({ ...f, processes: picked.map((p) => p.label) }));
+      await this.setFilter((f) => ({ ...f, processes: picked.map((p) => p.label) }), view);
     }
   }
 
@@ -545,7 +548,7 @@ export class LogViewer {
     if (!this.enabled()) {
       return;
     }
-    const view = this.activeView();
+    const view = this.activeView(given);
     if (view === undefined) {
       return;
     }
@@ -553,7 +556,7 @@ export class LogViewer {
     // A menu hands in the editor's URI, which is no bound.
     if (typeof g === "object" && g !== null && ("from" in g || "to" in g)) {
       const bound = (v: unknown) => (typeof v === "string" && v.trim() !== "" && validBound(v) ? v.trim() : undefined);
-      await this.setFilter((f) => ({ ...f, from: bound(g.from), to: bound(g.to) }));
+      await this.setFilter((f) => ({ ...f, from: bound(g.from), to: bound(g.to) }), view);
       return;
     }
     const validateInput = (v: string) => (validBound(v) ? undefined : "A time of day (12:30, 12:30:15.5) or a date and time (2026.11.21D12:30:00, 2026-11-21 12:30); empty for none.");
@@ -566,24 +569,24 @@ export class LogViewer {
     if (to === undefined) {
       return;
     }
-    await this.setFilter((f) => ({ ...f, from: from.trim() || undefined, to: to.trim() || undefined }));
+    await this.setFilter((f) => ({ ...f, from: from.trim() || undefined, to: to.trim() || undefined }), view);
   }
 
   private async filterText(given?: unknown): Promise<void> {
     if (!this.enabled()) {
       return;
     }
-    const view = this.activeView();
+    const view = this.activeView(given);
     if (view === undefined) {
       return;
     }
     if (typeof given === "string") {
-      await this.setFilter((f) => ({ ...f, text: given || undefined }));
+      await this.setFilter((f) => ({ ...f, text: given || undefined }), view);
       return;
     }
     const text = await window.showInputBox({ title: "Show entries containing (ignoring case)", value: view.filter.text ?? "", prompt: "Empty: every entry." });
     if (text !== undefined) {
-      await this.setFilter((f) => ({ ...f, text: text || undefined }));
+      await this.setFilter((f) => ({ ...f, text: text || undefined }), view);
     }
   }
 

@@ -52,6 +52,13 @@ test("definitions: top-level lambdas, in their context, with their lines", () =>
   );
   // Comment and blank lines after a statement are not part of it.
   assert.deepStrictEqual(definitions("f:{x}\n\n/ c\ng:{y}\n").map((d) => [d.name, d.endLine]), [["f", 0], ["g", 3]]);
+  // A block comment inside a lambda does not end it, and is in its text as
+  // q keeps it: each line a comment line (#1463).
+  assert.deepStrictEqual(
+    definitions("f:{x+\n/\nnote\n\\\n  y}\ng:{x}").map((d) => [d.name, d.text, d.line, d.endLine]),
+    [["f", "{x+\n/\n/note\n/\n  y}", 0, 4], ["g", "{x}", 5, 5]],
+  );
+  assert.deepStrictEqual(definitions("f:{x}\n/\nnote\n\\\ng:{y}").map((d) => [d.name, d.endLine]), [["f", 0], ["g", 4]]);
   // An unclosed lambda, or a global assign, is no definition.
   assert.deepStrictEqual(definitions("f:{x\ng::{x}\n"), []);
 });

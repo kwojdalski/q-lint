@@ -21,7 +21,7 @@
 // - A lambda arrives with its text, which an unwrapped query shows. Any
 //   other function arrives as the word "func".
 // - An empty table arrives with no columns, so they cannot be shown.
-import { TREE_NODES, type GridPayload, type TreeNode } from "./grid";
+import { TREE_NODES, realValue, type GridPayload, type TreeNode } from "./grid";
 import type { QValue } from "./qdecode";
 
 /// q's generic null, `(::)`.
@@ -67,8 +67,20 @@ const pad3 = (n: number): string => String(n).padStart(3, "0");
 /// A year as q writes it, in four digits: `0001.01.01` (#1235).
 const pad4 = (n: number): string => String(n).padStart(4, "0");
 
+/// A date as q writes it: `0000.00.00` outside 0001.01.01 to 9999.12.31,
+/// which takes in one JavaScript's Date cannot hold (#1498).
 function ymd(d: Date): string {
-  return `${pad4(d.getUTCFullYear())}.${pad2(d.getUTCMonth() + 1)}.${pad2(d.getUTCDate())}`;
+  const y = d.getUTCFullYear();
+  if (!(y >= 1 && y <= 9999)) {
+    return "0000.00.00";
+  }
+  return `${pad4(y)}.${pad2(d.getUTCMonth() + 1)}.${pad2(d.getUTCDate())}`;
+}
+
+/// A datetime as q writes it: all zeros when its date is out of range.
+function ymdhms(d: Date): string {
+  const date = ymd(d);
+  return date === "0000.00.00" ? "0000.00.00T00:00:00.000" : `${date}T${hms(d)}.${pad3(d.getUTCMilliseconds())}`;
 }
 
 function hms(d: Date): string {
@@ -183,8 +195,7 @@ function temporalText(x: number | bigint | LongLike, t: number): string | undefi
     case 14:
       return ymd(new Date(EPOCH_MS + n * DAY_MS));
     case 15: {
-      const d = new Date(EPOCH_MS + Math.round(n * DAY_MS));
-      return `${ymd(d)}T${hms(d)}.${pad3(d.getUTCMilliseconds())}`;
+      return ymdhms(new Date(EPOCH_MS + Math.round(n * DAY_MS)));
     }
     case 17:
       return clock(n, "minute");
@@ -247,7 +258,7 @@ function itemText(x: unknown, t: number, precision = 7): string | undefined {
     case 14:
       return ymd(x);
     case 15:
-      return `${ymd(x)}T${hms(x)}.${pad3(x.getUTCMilliseconds())}`;
+      return ymdhms(x);
     case 17:
       return clock(sinceEpoch(x) / 60_000, "minute");
     case 18:
@@ -265,6 +276,7 @@ function nullText(t: number): string {
 }
 
 const SUFFIX: Record<number, string> = { 5: "h", 6: "i", 8: "e", 13: "m" };
+const TEMPORAL_LETTERS: Record<number, string> = { 12: "p", 14: "d", 15: "z", 16: "n", 17: "u", 18: "v", 19: "t" };
 const NAMES: Record<number, string> = {
   1: "boolean", 2: "guid", 4: "byte", 5: "short", 6: "int", 7: "long", 8: "real", 9: "float", 10: "char",
   11: "symbol", 12: "timestamp", 13: "month", 14: "date", 15: "datetime", 16: "timespan", 17: "minute",
@@ -332,6 +344,11 @@ function listText(values: unknown, t: number, precision: number): string {
   if (t === 9 && texts.every((s) => /^-?\d+$/.test(s))) {
     suffix = "f";
   }
+  // A temporal list of only nulls and infinities shows no type of its
+  // own, so q writes the letter: `0N 0Nd`, `,0Np` (#1491).
+  if (TEMPORAL_LETTERS[t] && texts.every((s) => /^-?0[NWw]$/.test(s))) {
+    suffix = TEMPORAL_LETTERS[t];
+  }
   return `${one}${texts.join(" ")}${suffix}`;
 }
 
@@ -393,7 +410,7 @@ export function cellText(x: unknown): string {
     return x.toString();
   }
   if (x instanceof Date) {
-    return x.getTime() % DAY_MS === 0 ? ymd(x) : `${ymd(x)}T${hms(x)}.${pad3(x.getUTCMilliseconds())}`;
+    return x.getTime() % DAY_MS === 0 ? ymd(x) : ymdhms(x);
   }
   if (Array.isArray(x)) {
     if (x.length > 0 && x.every((s) => typeof s === "string" || s === null)) {
@@ -598,8 +615,11 @@ export function consoleLines(q: QValue, size: [number, number], value?: unknown,
   let shown = q;
   let more = false;
   if (q.kind === "table" || q.kind === "dict" || q.kind === "list") {
-    // A table's two header lines count against the height.
-    const tabular = q.kind === "table" || (q.kind === "dict" && q.k.kind === "table" && q.v.kind === "table");
+    // A table's two header lines count against the height, and a
+    // dictionary's when a table is lined up on either side of it: the
+    // console shows 10 lines of `` (`s0`s1..)!([]x:...) `` at `\c 10 80`,
+    // though `.Q.S` writes 12 (#1497).
+    const tabular = q.kind === "table" || (q.kind === "dict" && (q.k.kind === "table" || q.v.kind === "table"));
     const n = Math.max(0, height - (tabular ? 2 : 0));
     const count = q.kind === "dict" ? countOf(q.k) : countOf(q);
     more = count > n;
@@ -870,9 +890,15 @@ export function gridOfQ(q: QValue, limit: number): GridPayload | undefined {
   // The numbers of a numeric, temporal or guid column, as `GRID` sends them.
   // A long, timestamp or timespan past 2^53 keeps its digits as a string,
   // as `GRID`'s Long does: Number() would round it (#1398).
+  // A char column's bytes, and a general column's float and real items
+  // (`false` for any other), as `GRID` sends them (#1489, #1485).
   const raw = shown.map((c, i): unknown[] =>
-    c.q.kind === "vector" && [2, 5, 6, 7, 8, 9, 12, 13, 14, 15, 16, 17, 18, 19].includes(types[i])
-      ? c.q.v.map((x) => (typeof x === "bigint" ? (Number.isSafeInteger(Number(x)) ? Number(x) : x.toString()) : x))
+    c.q.kind === "chars"
+      ? [...c.q.v]
+      : c.q.kind === "list"
+        ? c.q.v.map((x) => (x.kind === "atom" && (x.t === -9 || x.t === -8) && typeof x.v === "number" && !Number.isNaN(x.v) ? x.v : false))
+        : c.q.kind === "vector" && [2, 5, 6, 7, 8, 9, 12, 13, 14, 15, 16, 17, 18, 19].includes(types[i])
+      ? c.q.v.map((x) => (typeof x === "bigint" ? (Number.isSafeInteger(Number(x)) ? Number(x) : x.toString()) : types[i] === 8 ? realValue(x) : x))
       : [],
   );
   const rank = shown.map((c) => {

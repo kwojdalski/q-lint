@@ -12,6 +12,7 @@ const { cellDirective } = require("../out/celldirectives.js");
 const { LIVE, LIVE_KEY, inlineSpans, liveExpressions, markdownAfter, readLiveValues, scanLive } = require("../out/livemarkdown.js");
 const { ERROR_MIME, fromIpynb, markdownHtml, toHtml, toIpynb, IpynbError } = require("../out/qnbconvert.js");
 const { INJECTED_KEY, cliProcess, guardedText, injectParameters, parametersCell, parametersOf, parseArgs, passwordVariable, runNotebook, writeAs } = require("../out/qnbrun.js");
+const { isProduction } = require("../out/agent.js");
 const { writes } = require("../out/guard.js");
 const { describeVariable, readVariables, bytesText, VARS } = require("../out/notebookvars.js");
 const { NOTEBOOK, parseQnb, serializeQnb } = require("../out/qnb.js");
@@ -42,6 +43,11 @@ test("a live value's expression runs to its }}, braces and q strings balanced", 
   assert.strictEqual(scanLive("{{q: 1+1}", 0), undefined);
   assert.strictEqual(scanLive("{{q:   }}", 0), undefined);
   assert.strictEqual(scanLive("{{q: a\n\nb}}", 0), undefined);
+  // A line of blanks, or a CRLF blank line, ends the paragraph too (#1468).
+  assert.strictEqual(scanLive("{{q: a\n \t\nb}}", 0), undefined);
+  assert.strictEqual(scanLive("{{q: a\r\n\r\nb}}", 0), undefined);
+  assert.deepStrictEqual(liveExpressions("a {{q: 1+\n \n2}} b"), []);
+  assert.deepStrictEqual(scanLive("{{q: a\r\nb}}", 0), { expr: "a\r\nb", end: 11 });
 });
 
 test("expressions are found once each, never in code; a q symbol's backtick opens no code span", () => {
@@ -59,6 +65,11 @@ test("expressions are found once each, never in code; a q symbol's backtick open
 
 test("an indented code block or an HTML comment holds no live value (#1429)", () => {
   assert.deepStrictEqual(liveExpressions("Para\n\n    {{q: indented}}\n"), []);
+  // A fence closes only at a line of the fence alone, blanks after (#1469).
+  assert.deepStrictEqual(liveExpressions("```\n``` not a closer\n{{q: secret}}\n```\n"), []);
+  assert.deepStrictEqual(liveExpressions("~~~\n~~~x\n{{q: secret}}\n~~~\n"), []);
+  assert.deepStrictEqual(liveExpressions("```\n~~~\n{{q: in}}\n````  \n{{q: out}}"), ["out"]);
+  assert.deepStrictEqual(liveExpressions("```\r\ncode\r\n```\r\n{{q: out}}"), ["out"]);
   assert.deepStrictEqual(liveExpressions("    {{q: first}}\n\tand {{q: tab}}\n\nAfter {{q: a}}"), ["a"]);
   assert.deepStrictEqual(liveExpressions("<!-- {{q: hidden}} -->"), []);
   assert.deepStrictEqual(liveExpressions("A <!--\n{{q: hidden}}\n--> and {{q: b}}"), ["b"]);
@@ -162,6 +173,9 @@ test("Markdown without a value shows its expression as written", () => {
   assert.strictEqual(markdownHtml("> quoted *a*\n\n1. x\n2. y"), "<blockquote><p>quoted <em>a</em></p></blockquote>\n<ol><li>x</li><li>y</li></ol>");
   // A link's URL is not read for emphasis; its label is (#1105).
   assert.strictEqual(markdownHtml("[docs](https://code.kx.com/q/ref/_x_/)"), '<p><a href="https://code.kx.com/q/ref/_x_/">docs</a></p>');
+  // A quote or angle bracket in the URL is escaped once, not twice (#1476).
+  assert.strictEqual(markdownHtml("see [docs](https://en.wikipedia.org/wiki/Hoare's_logic) now"), '<p>see <a href="https://en.wikipedia.org/wiki/Hoare&#39;s_logic">docs</a> now</p>');
+  assert.match(markdownHtml("[q](https://x.io/?q=a<b)"), /href="https:\/\/x\.io\/\?q=a&lt;b"/);
   assert.strictEqual(markdownHtml("[*a*](https://x.io/a*b*c) and *b*"), '<p><a href="https://x.io/a*b*c"><em>a</em></a> and <em>b</em></p>');
 });
 
@@ -276,6 +290,8 @@ test("a parameters cell's assignments are its parameters", () => {
     { name: "q", value: '"a\\" /b"' },
     { name: "n", value: "1" },
   ]);
+  // One in a block comment, or a line of a multi-line string, is none (#1470).
+  assert.deepStrictEqual(parametersOf('/ @parameters\n/\nold:5\n\\\nn:10\ns:"a\n  b:2"'), [{ name: "n", value: "10" }]);
   const cells = [{ kind: "markdown", source: "/ @parameters" }, { kind: "code", source: "1" }, { kind: "code", source: "/ @parameters\nn:1" }];
   assert.strictEqual(parametersCell(cells), 2);
   assert.strictEqual(parametersCell([{ kind: "code", source: "/ @parameters", language: "python" }]), -1);
@@ -345,14 +361,19 @@ test("a headless run numbers and runs the q cells, reads live values, and goes w
 
 test("the guard reads a cell's live values' expressions with its source (#1088)", async () => {
   const markdown = ["Count {{q: count trade}}", "Gone {{q: delete from `trade}}", "Again {{q: count trade}}"];
-  assert.strictEqual(guardedText("/ just a note", markdown), "/ just a note\ncount trade\ndelete from `trade");
+  assert.deepStrictEqual(guardedText("/ just a note", markdown), ["/ just a note", "count trade", "delete from `trade"]);
   assert.deepStrictEqual(writes(guardedText("/ just a note", markdown)), ["deletes from `trade in place"]);
-  assert.strictEqual(guardedText("1+1", []), "1+1");
+  assert.deepStrictEqual(guardedText("1+1", []), ["1+1"]);
+  // Each is read on its own: a cell ending the script or a `/` expression
+  // does not hide what comes after it (#1442), and reads stay reads.
+  assert.deepStrictEqual(writes(guardedText("count t\n\\", ["{{q: a:1}}"])), ["assigns a"]);
+  assert.deepStrictEqual(writes(guardedText("count t", ["Rows {{q: /}} and {{q: a:1}}"])), ["assigns a"]);
+  assert.deepStrictEqual(writes(guardedText("count t\n\\", ["Rows {{q: /}} and {{q: count t}}"])), []);
   // A headless run hands the executor, which guards it, the same text.
   const qnb = { cells: [{ kind: "code", source: "1" }, { kind: "markdown", source: markdown[1] }] };
   const ex = fakeExecutor((cut) => ({ ok: true, type: -7, text: [cut.join(";")] }));
   await runNotebook(qnb, ex, SETTINGS);
-  assert.deepStrictEqual(ex.codes, ["1\ndelete from `trade"]);
+  assert.deepStrictEqual(ex.codes, [["1", "delete from `trade"]]);
 });
 
 test("a headless run stops at the first cell that fails, and clears what the cells after it showed", async () => {
@@ -408,6 +429,13 @@ test("the command line names a process by host:port or by a listed label, and re
   assert.match(cliProcess("t", [{ label: "t", host: "localhost", port: 5000, tags: [], ssh: "bastion" }]).error, /t needs an SSH tunnel \(ssh\), which qnbrun does not run/);
   assert.match(cliProcess("s", [{ label: "s", host: "h", port: 1, tags: [], initFile: "c.q" }]).error, /a connect script/);
   assert.strictEqual(passwordVariable("desk/rdb-1"), "QLINT_Q_PASSWORD_DESK_RDB_1");
+  // By its address, a listed process keeps its tags, and so its production
+  // check (#1450); another address, or another port, has none.
+  const prod = [{ label: "prdb", host: "db1", port: 5000, tags: ["prod"] }, { label: "x", host: "DB1", port: 5000, tags: ["eu"] }];
+  assert.deepStrictEqual(cliProcess("db1:5000", prod).tags, ["prod", "eu"]);
+  assert.strictEqual(isProduction(cliProcess("db1:5000", prod)), true);
+  assert.strictEqual(isProduction(cliProcess("db1:5001", prod)), false);
+  assert.deepStrictEqual(cliProcess("db2:5000", prod).tags, []);
 });
 
 // --- the variables view's data
@@ -495,4 +523,136 @@ test("a PyKX %%q cell with options imports as q, its options a comment (#1267)",
     [undefined, "1"],
     ["python", "%%qx\n1"],
   ]);
+});
+
+test("a failed run drops the live values of the Markdown after the cells it did not run (#1544)", async () => {
+  const stale = { [LIVE_KEY]: { y: { text: "999 (from last week)" } } };
+  const qnb = {
+    cells: [
+      { kind: "code", source: "x:1" },
+      { kind: "code", source: "'boom" },
+      { kind: "markdown", source: "after the failure {{q: y}}", metadata: { keep: 1, ...stale } },
+      { kind: "code", source: "y:2" },
+      { kind: "markdown", source: "y is {{q: y}}", metadata: stale },
+    ],
+  };
+  const ex = fakeExecutor((cut) => (cut[0] === "'boom" ? { ok: false, error: "boom", trace: "" } : { ok: true, type: -7, text: ["1"] }));
+  const run = await runNotebook(qnb, ex, SETTINGS);
+  assert.deepStrictEqual(run.failed, { cell: 2, message: "'boom" });
+  assert.deepStrictEqual(run.qnb.cells[2].metadata, { keep: 1 });
+  assert.deepStrictEqual(run.qnb.cells[4].metadata, {});
+  assert.doesNotMatch(toHtml(run.qnb, "n"), /from last week/);
+});
+
+test("a JSON output that is an array or a string comes back from Jupyter as the same JSON (#1545)", () => {
+  for (const text of ["[1,2]", '"abc"', '{"a":[1]}', "3"]) {
+    const qnb = { cells: [{ kind: "code", source: "1", outputs: [{ items: [{ mime: "application/json", text }] }] }] };
+    assert.strictEqual(fromIpynb(toIpynb(qnb)).cells[0].outputs[0].items[0].text, text);
+  }
+});
+
+test("a Jupyter notebook keeps its metadata, kernel and cell ids through import and export (#1548)", () => {
+  const nb = {
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: { author: "me", kernelspec: { language: "python", name: "python3", display_name: "Python 3" }, language_info: { name: "python" } },
+    cells: [
+      { id: "m1", cell_type: "markdown", metadata: {}, source: "# T" },
+      { id: "c1", cell_type: "code", execution_count: null, metadata: {}, source: "import pykx", outputs: [] },
+      { id: "c2", cell_type: "code", execution_count: null, metadata: {}, source: "%%q --port 5000\ntil 3", outputs: [] },
+      { id: "c3", cell_type: "code", execution_count: null, metadata: {}, source: "%%q\n1+1", outputs: [] },
+    ],
+  };
+  const qnb = fromIpynb(JSON.stringify(nb));
+  assert.strictEqual(qnb.metadata.author, "me");
+  assert.strictEqual(qnb.cells[1].extra.id, "c1");
+  const back = JSON.parse(toIpynb(qnb));
+  assert.deepStrictEqual(back.metadata, nb.metadata);
+  assert.strictEqual(back.nbformat_minor, 5);
+  assert.deepStrictEqual(back.cells.map((c) => c.id), ["m1", "c1", "c2", "c3"]);
+  // On a Python kernel a q cell goes back with its %%q magic.
+  assert.deepStrictEqual(back.cells.map((c) => c.source.join("")), ["# T", "import pykx", "%%q --port 5000\ntil 3", "%%q\n1+1"]);
+  // A q notebook's own kernel is not kept as metadata of its .qnb.
+  const q = { cells: [{ kind: "code", source: "1" }] };
+  assert.strictEqual(fromIpynb(toIpynb(q)).metadata, undefined);
+  assert.strictEqual(JSON.parse(toIpynb(q)).metadata.kernelspec.name, "qpk");
+});
+
+test("an HTML export nests ***text*** as CommonMark does (#1550)", () => {
+  assert.strictEqual(markdownHtml("***both*** and ___too___"), "<p><em><strong>both</strong></em> and <em><strong>too</strong></em></p>");
+  assert.strictEqual(markdownHtml("**a *b* c**"), "<p><strong>a <em>b</em> c</strong></p>");
+});
+
+test("an HTML export reads a setext heading, under a paragraph only (#1551)", () => {
+  assert.strictEqual(markdownHtml("Sub\n---"), "<h2>Sub</h2>");
+  assert.strictEqual(markdownHtml("Title\n====="), "<h1>Title</h1>");
+  assert.strictEqual(markdownHtml("a *b*\nc\n  ==  "), "<h1>a <em>b</em>\nc</h1>");
+  assert.strictEqual(markdownHtml("text\n\n---"), "<p>text</p>\n<hr>");
+  assert.strictEqual(markdownHtml("- item\n---"), "<ul><li>item</li></ul>\n<hr>");
+});
+
+test("an HTML export keeps a named entity, which the page shows as its character (#1552)", () => {
+  assert.strictEqual(markdownHtml("a&nbsp;b &copy; 2024 &lt;x&gt; &amp;"), "<p>a&nbsp;b &copy; 2024 &lt;x&gt; &amp;</p>");
+  // Not an entity: escaped.
+  assert.strictEqual(markdownHtml("a & b &x y; &<b>;"), "<p>a &amp; b &amp;x y; &amp;&lt;b&gt;;</p>");
+});
+
+test("an HTML export shows an indented code block as code, as the cell and live values read it (#1553)", () => {
+  assert.strictEqual(markdownHtml("    indented code"), "<pre><code>indented code</code></pre>");
+  assert.strictEqual(markdownHtml("text\n\n    f:{x+1}\n\n      g:2\n\nafter"), "<p>text</p>\n<pre><code>f:{x+1}\n\n  g:2</code></pre>\n<p>after</p>");
+  assert.strictEqual(markdownHtml("# T\n\tt:1 <b>"), "<h1>T</h1>\n<pre><code>t:1 &lt;b&gt;</code></pre>");
+  // Under a paragraph line or a list item it is not code.
+  assert.strictEqual(markdownHtml("text\n    more"), "<p>text<br>\nmore</p>");
+  assert.strictEqual(markdownHtml("- a\n    b"), "<ul><li>a b</li></ul>");
+});
+
+test("an HTML export keeps balanced parentheses in a link's URL (#1554)", () => {
+  assert.strictEqual(
+    markdownHtml("[Q](https://en.wikipedia.org/wiki/Q_(programming_language)) now (see [a](https://x.io/a))"),
+    '<p><a href="https://en.wikipedia.org/wiki/Q_(programming_language)">Q</a> now (see <a href="https://x.io/a">a</a>)</p>',
+  );
+});
+
+test("an HTML export shows a data: image as the image, and another image as a link or its alt text (#1555)", () => {
+  assert.strictEqual(markdownHtml("![chart](data:image/png;base64,iVBORw0KGgo+/=)"), '<p><img alt="chart" src="data:image/png;base64,iVBORw0KGgo+/="></p>');
+  assert.strictEqual(markdownHtml('![a "b" & c](data:image/gif;base64,R0lG)'), '<p><img alt="a &quot;b&quot; &amp; c" src="data:image/gif;base64,R0lG"></p>');
+  assert.strictEqual(markdownHtml("![logo](https://x.io/l.png)"), '<p><a href="https://x.io/l.png">logo</a></p>');
+  assert.strictEqual(markdownHtml("![svg](data:image/svg+xml;base64,PHN2Zz4=)"), "<p>svg</p>");
+});
+
+test("an HTML export leaves a double underscore inside a word as it is (#1556)", () => {
+  assert.strictEqual(markdownHtml("call my__private__helper now"), "<p>call my__private__helper now</p>");
+  assert.strictEqual(markdownHtml("__a__b and a___b___c"), "<p>__a__b and a___b___c</p>");
+  assert.strictEqual(markdownHtml("__bold__ and **x**y"), "<p><strong>bold</strong> and <strong>x</strong>y</p>");
+});
+
+test("a live value in an HTML block or inside a tag is text, as the renderer shows it (#1557)", () => {
+  assert.deepStrictEqual(liveExpressions("<div>\n{{q: inHtml}}\n</div>\n\nAfter {{q: a}}"), ["a"]);
+  assert.deepStrictEqual(liveExpressions('<span title="{{q: inAttr}}">x</span> and <b>{{q: b}}</b>'), ["b"]);
+  assert.deepStrictEqual(liveExpressions("<pre>\n{{q: p}}\n\n{{q: q}}\n</pre>\n{{q: c}}"), ["c"]);
+  // A tag inside the expression is the expression's; a paragraph's line is not an HTML block.
+  assert.deepStrictEqual(liveExpressions("{{q: a<b>c}}\ntext\n<x-y>\n{{q: d}}"), ["a<b>c", "d"]);
+  assert.strictEqual(markdownHtml('<span title="{{q: x}}">y</span>'), "<p>&lt;span title=&quot;{{q: x}}&quot;&gt;y&lt;/span&gt;</p>");
+});
+
+test("an indented block after a heading or a rule is code, and holds no live value (#1558)", () => {
+  assert.deepStrictEqual(liveExpressions("# Title\n    {{q: afterHeading}}"), []);
+  assert.deepStrictEqual(liveExpressions("---\n    {{q: afterRule}}"), []);
+  assert.deepStrictEqual(liveExpressions("Title\n===\n    {{q: afterSetext}}"), []);
+  assert.deepStrictEqual(liveExpressions("Para\n    {{q: lazy}}"), ["lazy"]);
+  assert.strictEqual(markdownHtml("---\n    x"), "<hr>\n<pre><code>x</code></pre>");
+});
+
+test("a live value of a big list or table is written from its first items only (#1559)", () => {
+  assert.match(LIVE, /-3!\$\[\(type v\) within 0 99h;@\[200 sublist;v;v\];v\]/);
+});
+
+test("a variable's size takes the next unit when it rounds up to 1024 (#1495)", () => {
+  assert.strictEqual(bytesText(512), "512 B");
+  assert.strictEqual(bytesText(1023), "1023 B");
+  assert.strictEqual(bytesText(1536), "1.5 KB");
+  assert.strictEqual(bytesText(10239), "10 KB");
+  assert.strictEqual(bytesText(1048575), "1.0 MB");
+  assert.strictEqual(bytesText(1073741823), "1.0 GB");
+  assert.strictEqual(bytesText(5 * 1024 * 1024 * 1024 * 1024 * 1024), "5120 TB");
 });

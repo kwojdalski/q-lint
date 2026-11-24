@@ -42,6 +42,9 @@ export function readSharedFile(text: string, trusted: boolean): SharedList {
   const list = Array.isArray(json) ? json : typeof json === "object" && json !== null ? (json as { processes?: unknown }).processes : undefined;
   const secrets: string[] = [];
   let untrusted = 0;
+  // An entry reached through a tunnel is not listed untrusted: without its
+  // tunnel it would be connected to directly, password and all (#1507).
+  const tunnelled = new Set<string>();
   const cleaned = Array.isArray(list)
     ? list.map((entry, i) => {
         if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
@@ -55,14 +58,20 @@ export function readSharedFile(text: string, trusted: boolean): SharedList {
         if (!trusted && ["init", "initFile", "ssh", "launch", "credentialCommand"].some((k) => k in kept)) {
           untrusted++;
         }
+        if (!trusted && typeof kept.ssh === "string" && kept.ssh.trim() !== "" && typeof kept.label === "string") {
+          tunnelled.add(kept.label.trim());
+        }
         return kept;
       })
     : json;
-  const { processes, problems } = parseProcesses(Array.isArray(list) ? { processes: cleaned } : cleaned, trusted);
+  const read = parseProcesses(Array.isArray(list) ? { processes: cleaned } : cleaned, trusted);
+  const processes = read.processes.filter((p) => !tunnelled.has(p.label));
+  const skipped = read.processes.filter((p) => tunnelled.has(p.label)).map((p) => p.label);
   return {
     processes,
     problems: [
-      ...problems,
+      ...read.problems,
+      ...(skipped.length > 0 ? [`${skipped.join(", ")}: reached through an SSH tunnel, which is not read while the workspace is not trusted, so not listed.`] : []),
       ...(secrets.length > 0 ? [`${secrets.join(", ")}: a password or secret was dropped; a shared list holds none.`] : []),
       ...(untrusted > 0 ? [`${untrusted} entr${untrusted === 1 ? "y's" : "ies'"} connect script, SSH tunnel or launch definition was not read: the workspace is not trusted.`] : []),
     ],
@@ -88,7 +97,11 @@ export function withShared(text: string | undefined, process: Process): string {
       : { processes: [] };
   const { server: _server, ...entry } = process;
   void _server;
-  const at = holder.processes.findIndex((e) => typeof e === "object" && e !== null && (e as { label?: unknown }).label === process.label);
+  // Trimmed, as the list is read: `"rdb "` is listed as rdb.
+  const at = holder.processes.findIndex((e) => {
+    const label = typeof e === "object" && e !== null ? (e as { label?: unknown }).label : undefined;
+    return typeof label === "string" && label.trim() === process.label;
+  });
   if (at >= 0) {
     holder.processes[at] = entry;
   } else {

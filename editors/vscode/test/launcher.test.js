@@ -10,7 +10,7 @@ const os = require("node:os");
 const path = require("node:path");
 const net = require("node:net");
 const pkg = require("../package.json");
-const { LAUNCH_COMMANDS, argsFromText, argsText, commandText, isLocalHost, launchPlan, readLauncher } = require("../out/launcher.js");
+const { LAUNCH_COMMANDS, argsFromText, argsText, commandText, fromWorkspace, isLocalHost, launchPlan, readLauncher } = require("../out/launcher.js");
 const { launchOf, parseProcesses, splitArgs } = require("../out/processes.js");
 const { onPath } = require("../out/relations.js");
 const { Live } = require("../out/live.js");
@@ -52,6 +52,17 @@ test("a launch definition starts its program with its script, -p and its argumen
   assert.strictEqual(commandText({ command: "q", args: ["a b.q", "-p", "1"] }), 'q "a b.q" -p 1');
   assert.ok(isLocalHost("localhost") && isLocalHost("127.0.0.1") && isLocalHost("::1") && isLocalHost("MyBox", "mybox"));
   assert.ok(!isLocalHost("rdb.example", "mybox"));
+});
+
+// A saved process's relative cwd or script is whichever workspace is open:
+// in one not trusted, its script (#1527).
+test("a relative cwd, or a relative script with no cwd, is from the workspace folder", () => {
+  assert.strictEqual(fromWorkspace({ cwd: "db" }, "/home/u"), true);
+  assert.strictEqual(fromWorkspace({ script: "rdb.q" }, "/home/u"), true);
+  assert.strictEqual(fromWorkspace({ cwd: "/srv/db", script: "rdb.q" }, "/home/u"), false);
+  assert.strictEqual(fromWorkspace({ cwd: "~/db", script: "rdb.q" }, "/home/u"), false);
+  assert.strictEqual(fromWorkspace({ script: "/srv/rdb.q" }, "/home/u"), false);
+  assert.strictEqual(fromWorkspace({ args: ["-p", "1"] }, "/home/u"), false);
 });
 
 test("a definition is read from the saved list and an import, never from a discovery server", () => {

@@ -40,9 +40,11 @@ export function backoffDelay(attempt: number): number {
   return Math.min(1000 * 2 ** Math.max(0, attempt - 1), 30_000);
 }
 
-/// A round trip as the status bar writes it: `3 ms`, `1.2 s`.
+/// A round trip as the status bar writes it: `3 ms`, `1.2 s`. Rounded
+/// first, so 999.6 is `1.0 s`, not `1000 ms` (#1585).
 export function latencyText(millis: number): string {
-  return millis < 1000 ? `${Math.max(0, Math.round(millis))} ms` : `${(millis / 1000).toFixed(1)} s`;
+  const ms = Math.max(0, Math.round(millis));
+  return ms < 1000 ? `${ms} ms` : `${(millis / 1000).toFixed(1)} s`;
 }
 
 /// How long a heartbeat may go unanswered before the status bar says so:

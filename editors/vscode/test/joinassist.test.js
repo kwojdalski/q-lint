@@ -46,7 +46,7 @@ test("a shared time column gives aj and wj, sorted unless the right table alread
   const by = Object.fromEntries(s.map((x) => [x.join, x]));
   assert.strictEqual(by.aj.expression, "aj[`sym`time;trade;`sym`time xasc quote]");
   assert.match(by.aj.why, /binary search/);
-  assert.strictEqual(by.wj.expression, "wj[-1000 0+\\:trade`time;`sym`time;trade;(`sym`time xasc quote;(max;`bid);(min;`bid))]");
+  assert.strictEqual(by.wj.expression, "((cols trade),`bid_max`bid_min) xcol wj[-1000 0+\\:trade`time;`sym`time;trade;(`sym`time xasc quote;(max;`bid);(min;`bid))]");
   assert.strictEqual(by.uj.expression, "trade uj quote");
   // Grouped on sym, it is not sorted again.
   const grouped = shape("quote", ["sym", "time", "bid"], "stf", [], ["g", "", ""]);
@@ -63,7 +63,7 @@ test("a shared time column gives aj and wj, sorted unless the right table alread
   // Timestamps get a window in nanoseconds.
   const tp = shape("t", ["sym", "time", "px"], "spf");
   const qp = shape("q", ["sym", "time", "bid"], "spf");
-  assert.match(suggestJoins(tp, qp).find((x) => x.join === "wj").expression, /^wj\[-1000000000 0\+\\:t`time;/);
+  assert.match(suggestJoins(tp, qp).find((x) => x.join === "wj").expression, / xcol wj\[-1000000000 0\+\\:t`time;/);
   // Nothing in common: nothing to suggest.
   assert.deepStrictEqual(suggestJoins(shape("a", ["x"], "j"), shape("b", ["y"], "f")), []);
 });

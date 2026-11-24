@@ -11,6 +11,7 @@
 import { execFile } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { dirname, relative } from "node:path";
+import { onProcessPath } from "./relations";
 
 /// Lines of `after` that are not in `before`, as pairs of 0-based first and
 /// last lines, inclusive. Where lines were only deleted, the line that took
@@ -87,7 +88,13 @@ export type Git = (args: string[], cwd: string) => Promise<string | undefined>;
 
 export const runGit: Git = (args, cwd) =>
   new Promise((resolve) => {
-    execFile("git", args, { cwd, timeout: 5000, maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (error, stdout) =>
+    // Found on PATH, not in the q file's folder as Windows would (#1407, #1538).
+    const git = onProcessPath("git");
+    if (git === undefined) {
+      resolve(undefined);
+      return;
+    }
+    execFile(git, args, { cwd, timeout: 5000, maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (error, stdout) =>
       resolve(error ? undefined : stdout),
     );
   });

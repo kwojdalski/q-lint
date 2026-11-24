@@ -139,6 +139,10 @@ test("preview shows a table's first rows, reading a partitioned one by .Q.ind", 
   assert.strictEqual(previewCode({ kind: "table", name: "trade", partitioned: true }, 3), ".Q.ind[trade;til 3&count trade]");
   assert.strictEqual(previewCode({ kind: "variable", name: ".ns.v" }, 5), ".ns.v");
   assert.strictEqual(previewCode({ kind: "function", name: "f" }, 5), undefined);
+  // A table named as one of q's words is read by its symbol (#1587).
+  assert.strictEqual(previewCode({ kind: "table", name: "count" }, 5), '5 sublist get`$"count"');
+  assert.strictEqual(previewCode({ kind: "table", name: "select", partitioned: true }, 5), '.Q.ind[get`$"select";til 5&count get`$"select"]');
+  assert.strictEqual(previewCode({ kind: "variable", name: ".ns.count" }, 5), ".ns.count");
   assert.strictEqual(previewCode({ kind: "column" }, 5), undefined);
 });
 

@@ -113,6 +113,11 @@ test("Explain qSQL finds where the query starts", () => {
   assert.strictEqual(leadBefore("x:.my.select 1\n", 10), undefined);
   // An empty first line above an indented one ends the walk (#1396).
   assert.strictEqual(leadBefore("\n  select from t", 10), 3);
+  // A query word in a string or a comment is no lead (#1466).
+  const s = 'select from trade where sym like "update*"';
+  assert.strictEqual(leadBefore(s, s.length), 0);
+  const c = "exec price from trade / then delete it";
+  assert.strictEqual(leadBefore(c, c.length), 0);
 });
 
 test("a q error is explained from the catalogue, with the operation that failed", () => {
@@ -770,5 +775,33 @@ test("Write Lint Baseline names the baseline in the configuration that governs t
     vscode.workspace.workspaceFolders = undefined;
     restore();
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a SQL schema is read only from the process it is kept for, not one connected while it waited (#1457)", async () => {
+  const { context, restore } = setUp();
+  vscode.languages.registerCompletionItemProvider = () => ({ dispose() {} });
+  vscode.workspace.openTextDocument = async () => ({ uri: { toString: () => "untitled:9" } });
+  try {
+    stub.config.user["sql.enable"] = true;
+    let active = "a";
+    let busy = true;
+    const read = [];
+    const live = {
+      activeLabel: () => active,
+      fileBinding: () => undefined,
+      processes: () => [],
+      pick: async () => ({ label: "a", tags: [] }),
+      borrow: (use) => (busy ? undefined : use({ call: async () => (read.push(active), {}) }, { label: active, tags: [] })),
+    };
+    registerSql(context, live);
+    const opened = stub.commands.get(LANGUAGE_COMMANDS.newSql)();
+    await new Promise((r) => setTimeout(r, 20));
+    active = "b";
+    busy = false;
+    assert.deepStrictEqual(await opened, { uri: "untitled:9", label: "a" });
+    assert.deepStrictEqual(read, []);
+  } finally {
+    restore();
   }
 });

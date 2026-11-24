@@ -15,6 +15,8 @@ import type { Live } from "./live";
 import { PROCESS_TOOL_COMMANDS, asCode, toolOff, toolOn } from "./processtools";
 import { plainMessage } from "./history";
 
+/// What a run turned off before it was sent hands back.
+const OFF = Symbol("off");
 const on = (): boolean => toolOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "benchmark");
 
 function say(text: string): string {
@@ -81,12 +83,16 @@ export function registerBenchmark(
     const expressions = [code.trim(), ...(second.trim() === "" ? [] : [second.trim()])];
     let ran: { process: string; value: unknown } | undefined;
     try {
-      ran = await live.runOnActive(guardCode(expressions, runs.n), (connection) => connection.call(BENCHMARK, expressions.map(asCode), runs.n, runs.k));
+      // Turned off while it asked: nothing is timed (#1453).
+      ran = await live.runOnActive(guardCode(expressions, runs.n), async (connection) => (on() ? connection.call(BENCHMARK, expressions.map(asCode), runs.n, runs.k) : OFF));
     } catch (error) {
       return say(`q-lint: the benchmark failed: ${error instanceof Error ? error.message : String(error)}`);
     }
     if (ran === undefined) {
       return "nothing was run";
+    }
+    if (ran.value === OFF) {
+      return say(toolOff("benchmark"));
     }
     let summary: Summary[];
     try {

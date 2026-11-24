@@ -12,7 +12,7 @@
 // and nothing is sent.
 import { Position, commands, window, workspace, type ExtensionContext } from "vscode";
 import { borrowWhenFree } from "./infoview";
-import { TABLES, TABLE_SHAPE, readShape, suggestJoins, type Shape, type Suggestion } from "./joinassist";
+import { TABLES, TABLE_SHAPE, readShape, tableExpression, suggestJoins, type Shape, type Suggestion } from "./joinassist";
 import type { Live } from "./live";
 import { PROCESS_TOOL_COMMANDS, asCode, isString, listOf, toolOff, toolOn } from "./processtools";
 import { statements } from "./statements";
@@ -52,8 +52,8 @@ export function registerJoinAssistant(
     const TYPE = "Type an expression...";
     const picked = await window.showQuickPick(
       [
-        ...(result !== undefined && statements(result.code).length === 1 ? [{ label: "Result on show", description: iconsEscaped(result.code.trim().slice(0, 80)), value: result.code.trim() }] : []),
-        ...names.map((n) => ({ label: iconsEscaped(n), description: "table", value: n })),
+        ...(result !== undefined && statements(result.code).length === 1 ? [{ label: "Result on show", description: iconsEscaped(Array.from(result.code.trim()).slice(0, 80).join("")), value: result.code.trim() }] : []),
+        ...names.map((n) => ({ label: iconsEscaped(n), description: "table", value: tableExpression(n) })),
         { label: TYPE, description: "a table's name or a query", value: "" },
       ],
       { title },

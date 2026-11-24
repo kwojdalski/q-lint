@@ -81,9 +81,12 @@ export class SchemaTools {
       return;
     }
     const name = node.name;
+    const process = this.live.activeLabel();
     let got;
     try {
-      got = await borrowWhenFree(this.live, async (connection) => readTableInfo(await connection.call(TABLE_INFO, name, TEMPLATE_COLUMNS)), 5000);
+      // Only the process the table was listed on, not one connected while
+      // it waited (#1457).
+      got = await borrowWhenFree(this.live, async (connection) => readTableInfo(await connection.call(TABLE_INFO, name, TEMPLATE_COLUMNS)), 5000, process);
     } catch (error) {
       void window.showWarningMessage(plainMessage(`q-lint: could not read ${name}: ${error instanceof Error ? error.message : String(error)}`));
       return;
@@ -125,6 +128,8 @@ export class SchemaTools {
         this.live,
         async (connection) => readSchema(await connection.call(SCHEMA, excludedNamespaces.join(" "), SCHEMA_TABLES, SCHEMA_COLUMNS)),
         5000,
+        // The diagram is titled with this label: only its tables (#1457).
+        process,
       );
     } catch (error) {
       void window.showWarningMessage(plainMessage(`q-lint: could not read the tables of ${process}: ${error instanceof Error ? error.message : String(error)}`));
@@ -132,6 +137,10 @@ export class SchemaTools {
     }
     if (got === undefined) {
       void window.showInformationMessage(plainMessage(`q-lint: could not read the tables of ${process}: a query is still running. Try again once it ends.`));
+      return;
+    }
+    // Turned off while the tables were read: nothing to show (#1479).
+    if (!this.on("diagram")) {
       return;
     }
     const { tables, failed } = got.value;

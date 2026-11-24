@@ -16,7 +16,7 @@ function literalAt(payload: GridPayload, column: number, row: number): { literal
   const raw = rawColumn(payload, column);
   const atom = atomLiteral(payload.types[column], payload.cells[column][row] ?? "", raw === undefined ? undefined : raw[row]);
   if (atom.cut) {
-    return { error: `the cell in ${payload.names[column]} was cut at 200 characters, so its value is not known here` };
+    return { error: `the cell in ${payload.names[column]} was cut at 200 characters or at the process's \\c width, so its value is not known here` };
   }
   return { literal: atom.literal };
 }
@@ -26,6 +26,10 @@ export function templatesFor(templates: DrilldownTemplate[], name: string): Dril
   return templates.filter((t) => t.columns.length === 0 || t.columns.includes(name));
 }
 
+/// A literal as one operand: `` `$"a b" `` parenthesised, or q reads
+/// `` `$"a b" xasc t `` as `` `$("a b" xasc t) `` (#1570).
+const operand = (literal: string) => (literal.startsWith("`$") ? `(${literal})` : literal);
+
 /// `query` with the cell at `column`, `row` put in, or why it could not be.
 export function fillDrilldown(query: string, payload: GridPayload, column: number, row: number): { code: string } | { error: string } {
   if (column < 0 || column >= payload.names.length || row < 0 || row >= (payload.cells[column]?.length ?? 0)) {
@@ -34,7 +38,7 @@ export function fillDrilldown(query: string, payload: GridPayload, column: numbe
   let error: string | undefined;
   const code = query.replace(PLACEHOLDER, (whole: string, what: string, name: string | undefined) => {
     if (what === "column") {
-      return symbolLiteral(payload.names[column]);
+      return operand(symbolLiteral(payload.names[column]));
     }
     const at = what === "value" ? column : payload.names.indexOf((name ?? "").trim());
     if (at < 0) {
@@ -46,7 +50,7 @@ export function fillDrilldown(query: string, payload: GridPayload, column: numbe
       error ??= cell.error;
       return whole;
     }
-    return cell.literal;
+    return operand(cell.literal);
   });
   return error !== undefined ? { error } : { code };
 }

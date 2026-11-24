@@ -18,6 +18,7 @@ import { NOTEBOOK } from "./qnb";
 import { diffCells, diffSummary, hasOutputs, notebookJson, notebookText, stripQnb, type CellLike } from "./qnbgit";
 import { plainMessage } from "./history";
 import { onProcessPath } from "./relations";
+import { selectedMany } from "./clicked";
 
 /// The scheme of the read-only documents a comparison shows.
 export const CELLS_SCHEME = "q-lint-qnb-cells";
@@ -125,8 +126,11 @@ export class NotebookDiff implements TextDocumentContentProvider {
       return;
     }
     // From the Explorer, the second argument is the selection, not a
-    // notebook: anything but a Uri or HEAD is asked for (#1336).
-    let against = other instanceof Uri || other === HEAD ? other : undefined;
+    // notebook: two selected are compared with each other (#1541), and
+    // anything else but a Uri or HEAD is asked for (#1336).
+    const pair = selectedMany<Uri>(other);
+    const selected = pair?.length === 2 ? pair.find((u) => u.toString() !== from.toString()) : undefined;
+    let against = other instanceof Uri || other === HEAD ? other : selected;
     if (against === undefined) {
       const picked = await window.showQuickPick(
         [
@@ -200,7 +204,6 @@ export class NotebookDiff implements TextDocumentContentProvider {
 export const FILTER = "qnb-strip";
 /// The line that sends `*.qnb` through it.
 export const ATTRIBUTE_LINE = `*.qnb filter=${FILTER}`;
-const HAS_ATTRIBUTE = new RegExp(`^\\*\\.qnb\\s(.*\\s)?filter=${FILTER}(\\s|$)`, "m");
 
 /// Where the attribute goes: this clone's `.git/info/attributes`, or the
 /// repository's `.gitattributes`, committed for everyone who clones it.
@@ -351,7 +354,7 @@ export class NotebookStrip {
     }
     const theirs = readText(script);
     // Forward slashes: git runs the command through a POSIX shell.
-    const clean = `node "${script.replace(/\\/g, "/")}" --strip`;
+    const clean = `node ${shellQuoted(script.replace(/\\/g, "/"))} --strip`;
     const set = await git(["config", "--local", "--get", `filter.${FILTER}.clean`], root);
     const current = set.code === 0 ? set.stdout.trim() : undefined;
     if (current !== undefined && current !== clean) {
@@ -360,6 +363,9 @@ export class NotebookStrip {
       };
     }
     const attributes = where === "info" ? path.resolve(folder, info.stdout.trim()) : path.join(root, ".gitattributes");
+    // As git reads it, its last matching line winning (#1561): a later
+    // "*.qnb -filter" turns the filter off.
+    const attr = await git(["check-attr", "filter", "--", "notebook.qnb"], folder);
     return {
       top: root,
       script,
@@ -367,7 +373,7 @@ export class NotebookStrip {
       clean,
       cleanSet: current !== undefined,
       attributes,
-      attributeSet: HAS_ATTRIBUTE.test(readText(attributes) ?? ""),
+      attributeSet: attr.code === 0 && attr.stdout.trim().endsWith(`: filter: ${FILTER}`),
       node: await nodeOnPath(),
     };
   }
@@ -464,6 +470,13 @@ export class NotebookStrip {
 /// Register Compare Notebook Cells - its command, which says when the
 /// setting is off, and its documents' provider, only while it is on - and
 /// Clear Notebook Outputs and Set Up Git to Strip Notebook Outputs.
+/// `text` in double quotes as a POSIX shell reads them: `$`, a backquote,
+/// `"` and `\` escaped, which the shell git runs a filter with expands - a
+/// repository under `/me/$work` ran a script that is not there (#1534).
+export function shellQuoted(text: string): string {
+  return `"${text.replace(/["$`\\]/g, "\\$&")}"`;
+}
+
 export function registerNotebookGit(context: ExtensionContext): { diff: NotebookDiff; strip: NotebookStrip } {
   return { diff: new NotebookDiff(context), strip: new NotebookStrip(context) };
 }

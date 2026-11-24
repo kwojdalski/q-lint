@@ -9,6 +9,8 @@
 // `{{a}}` is still taken for one; `q-lint.query.placeholders.enable` turns
 // them off.
 
+import { blockDepth } from "./statements";
+
 /// Where `values` are remembered between queries: `globalState`, under this
 /// key, as `{ [name]: value }`.
 export const PLACEHOLDER_VALUES_KEY = "q-lint.placeholderValues";
@@ -39,7 +41,7 @@ const IMPLICIT = new Set(["x", "y", "z"]);
 export function placeholders(code: string): Placeholder[] {
   const found: Placeholder[] = [];
   let inString = false;
-  let inBlock = false;
+  let depth = 0;
   let offset = 0;
   for (const raw of code.split("\n")) {
     const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
@@ -47,13 +49,13 @@ export function placeholders(code: string): Placeholder[] {
     offset += raw.length + 1;
     if (!inString) {
       // A line of `/` alone opens a block comment, one of `\` alone closes it.
-      if (inBlock) {
-        inBlock = line.trimEnd() !== "\\";
+      if (depth > 0 || line.trimEnd() === "/") {
+        depth = blockDepth(depth, line.trimEnd());
         continue;
       }
-      if (line.trimEnd() === "/") {
-        inBlock = true;
-        continue;
+      if (line.trimEnd() === "\\") {
+        // The end of the script: nothing after it is sent (#1471).
+        break;
       }
       if (line.startsWith("/")) {
         continue;

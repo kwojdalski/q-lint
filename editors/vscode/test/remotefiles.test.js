@@ -94,3 +94,26 @@ test("off, nothing is sent; on, Browse lists, a directory is read when expanded,
   assert.strictEqual(feature.tree().open, false);
   await assert.rejects(root.children[0].load(), /turned off/);
 });
+
+test("connected elsewhere while a busy process was waited for, the other's files are not read (#1457)", async () => {
+  stub.reset();
+  stub.config.user["processes.fileBrowser.enable"] = true;
+  let active = "rdb";
+  let busy = true;
+  const sent = [];
+  const live = {
+    activeLabel: () => active,
+    activeProcess: () => ({ label: active, tags: [] }),
+    onDidChange: () => ({ dispose() {} }),
+    borrow: (use) => (busy ? undefined : use({ call: async (...a) => (sent.push([active, ...a]), "/srv/other") }, { label: active, tags: [] })),
+  };
+  const context = stub.newContext();
+  const feature = registerFileBrowser(context, live);
+  const browsed = feature.browse();
+  await new Promise((r) => setImmediate(r));
+  active = "other";
+  busy = false;
+  assert.match(await browsed, /could not list the working directory on rdb: rdb is no longer the active process/);
+  assert.deepStrictEqual(sent, []);
+  for (const d of context.subscriptions) d.dispose?.();
+});

@@ -10,13 +10,14 @@
 // (a space, or a leading `_`), `` `$"a b" ``; a guid `"G"$"..."`. An item
 // of a general list is `-3!` of it made readable (`readable`): `-3!` writes
 // a one-item list `,x`, which q refuses, and a symbol starting with `_` bare.
-// An item cut at 200 characters is not its value - `cut` says so. An
+// An item cut at 200 characters (`...`), or by `-3!` at the process's `\c`
+// width (`..`), is not its value - `cut` says so. An
 // enumerated column is written as its symbols, without its domain.
 //
 // These are the extension's one writer of q strings and symbols: Paste as q
 // Table, the JSON conversion, the gateway's statements and the grid's cell
 // edits all use `qString` and `symbolLiteral`.
-import type { GridPayload } from "./grid";
+import { realValue, type GridPayload } from "./grid";
 
 const NULL_GUID = "00000000-0000-0000-0000-000000000000";
 
@@ -49,9 +50,10 @@ export const RESERVED = new Set(
 );
 
 /// A double as q reads it back exactly: JavaScript's shortest round trip,
-/// its exponent without the `+` q does not take.
+/// its exponent without the `+` q does not take, and `-0` its sign, which
+/// String(-0) drops (#1493).
 export function numberText(x: number): string {
-  return String(x).replace("e+", "e");
+  return Object.is(x, -0) ? "-0" : String(x).replace("e+", "e");
 }
 
 /// A string as a q char vector's literal, its quote, backslash and
@@ -135,6 +137,44 @@ export function readable(code: string): string {
   return out;
 }
 
+/// `-3!` text with each run of symbols written so q reads it back. `-3!`
+/// writes a symbol bare whatever it holds - `` `a b `` for `` `$"a b" ``,
+/// which q reads as `` `a `` applied to `b` (#1486) - so outside strings and
+/// lambdas a name runs to the next `` ` ``, `;`, `)`, `]`, `}`, `!`, `$`,
+/// `#` or the end, which is what follows a symbol in `-3!`'s text, and a run
+/// that cannot be bare is written through `` `$ ``. Not for code a person
+/// wrote, where `` `a xor `b `` is two symbols.
+export function readableSymbols(code: string): string {
+  let out = "";
+  let depth = 0;
+  for (let i = 0; i < code.length; i++) {
+    const ch = code[i];
+    if (ch === '"') {
+      const s = /^"(?:[^"\\]|\\.)*"?/s.exec(code.slice(i))?.[0] ?? ch;
+      out += s;
+      i += s.length - 1;
+      continue;
+    }
+    if (ch === "{") {
+      depth++;
+    } else if (ch === "}") {
+      depth = Math.max(0, depth - 1);
+    } else if (ch === "`" && depth === 0) {
+      const run = /^(?:`[^`;)\]}!$#]*)+/.exec(code.slice(i))?.[0] ?? ch;
+      const names = run.slice(1).split("`");
+      // After the first, a name may start with `_`: `` `a`_y `` is two.
+      const bare = names.every((n, k) => (k === 0 ? symbolLiteral(n) === `\`${n}` : /^[A-Za-z0-9_.]*$/.test(n)));
+      const cast = names.length === 1 ? symbolLiteral(names[0]) : `\`$(${names.map(qString).join(";")})`;
+      // In parentheses before a `!`, `$` or `#`, which `` `$ `` would take in.
+      out += bare ? run : "!$#".includes(code[i + run.length] ?? ";") ? `(${cast})` : cast;
+      i += run.length - 1;
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
 /// Whether `name` can be a column name in `([] ...)` as written.
 export function plainName(name: string): boolean {
   return /^[A-Za-z][A-Za-z0-9_]*$/.test(name) && !RESERVED.has(name);
@@ -142,7 +182,8 @@ export function plainName(name: string): boolean {
 
 /// One cell's literal. `text` is q's text of it, as `GRID` sent it;
 /// `raw` its number, when `GRID` sent one (undefined when it did not).
-/// `cut`: the text was cut at 200 characters, so the literal is not the value.
+/// `cut`: the text was cut at 200 characters or at `\c`, so the literal is
+/// not the value.
 export function atomLiteral(type: number, text: string, raw: unknown): { literal: string; cut: boolean } {
   const ok = (literal: string) => ({ literal, cut: false });
   if (raw === null && NULLS[type] !== undefined) {
@@ -171,14 +212,29 @@ export function atomLiteral(type: number, text: string, raw: unknown): { literal
       return ok(`${n}${type === 8 ? "e" : "f"}`);
     }
     case 10:
+      // From its byte when sent: one past ASCII is no character alone, and
+      // its text is U+FFFD or a Latin-1 character (#1489).
+      if (typeof raw === "number") {
+        return ok(raw >= 128 ? `"\\${raw.toString(8).padStart(3, "0")}"` : stringLiteral(String.fromCharCode(raw)));
+      }
       return ok(stringLiteral(text === "" ? " " : text));
     case 11:
       return ok(symbolLiteral(text));
     case 13:
       return ok(`${text}m`);
+    case 15:
+      // A datetime is a float of days, which `string` writes to the
+      // millisecond: one with a finer fraction is written as its float
+      // (#1494).
+      if (typeof raw === "number") {
+        const ms = raw * 864e5;
+        if (Math.abs(ms - Math.round(ms)) > 1e-3) {
+          return ok(`"z"$${numberText(raw)}`);
+        }
+      }
+      return ok(text);
     case 12:
     case 14:
-    case 15:
     case 16:
     case 17:
     case 18:
@@ -188,9 +244,17 @@ export function atomLiteral(type: number, text: string, raw: unknown): { literal
       if (type >= 20 && type <= 76) {
         return ok(symbolLiteral(text));
       }
+      // A float or real item, sent as its float: every digit, not the
+      // `\P` that `-3!` writes (#1485).
+      if (type === 0 && typeof raw === "number" && Number.isFinite(raw)) {
+        const real = text.endsWith("e");
+        return ok(`${numberText(real ? Number(realValue(raw)) : raw)}${real ? "e" : "f"}`);
+      }
       // A general list's item: `-3!` of it, or a string written as one,
       // made readable.
-      return { literal: text === "" ? "()" : readable(text), cut: text.length >= 200 && text.endsWith("...") };
+      // Cut, it ends `...` or `..`, as no whole item does but a symbol
+      // ending in dots, which is taken as cut too (#1484).
+      return { literal: text === "" ? "()" : readable(readableSymbols(text)), cut: text.endsWith("..") };
   }
 }
 
@@ -225,7 +289,7 @@ export interface QTable {
   /// Rows written, and rows the result had.
   rows: number;
   total: number;
-  /// Cells cut at 200 characters, whose literal is not their value.
+  /// Cells cut at 200 characters or at `\c`, whose literal is not their value.
   cut: number;
 }
 

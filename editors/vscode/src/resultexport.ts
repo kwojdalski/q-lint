@@ -13,7 +13,7 @@
 // HTML is for reading too: a page of one table, the cells as the grid shows
 // them, coloured by the result's conditional formatting rules (#1013) as
 // the grid colours them - by `media/gridlook.js`, which the page runs too.
-import { toGrid, type Grid, type GridPayload } from "./grid";
+import { realValue, toGrid, type Grid, type GridPayload } from "./grid";
 import type { FormatRule } from "./resultlook";
 import { distinctNames, plainItem, rawColumn, tableLiteral, textNull } from "./qliteral";
 import { toParquet } from "./parquet";
@@ -117,6 +117,10 @@ export function toJson(payload: GridPayload, rows?: number[]): string {
       if (value === null || textNull(type, text)) {
         return "null";
       }
+      if (type === 0 && typeof value === "number" && Number.isFinite(value)) {
+        // A float or real item as a number, not `-3!`'s `\P` text (#1485).
+        return String(text.endsWith("e") ? realValue(value) : value);
+      }
       return JSON.stringify(type === 0 ? plainItem(text) : text);
     };
   });
@@ -126,9 +130,10 @@ export function toJson(payload: GridPayload, rows?: number[]): string {
 
 /// A cell as Markdown table text, shown as written: what Markdown reads
 /// inline - code, emphasis, links, HTML, entities, strikethrough, math -
-/// and the pipe escaped (#1263), its line breaks spaces.
+/// the pipe escaped (#1263), and braces, so no `{{q: }}` live value runs
+/// (#1543); its line breaks spaces.
 export function markdownCell(text: string): string {
-  return text.replace(/[\\`*_[\]<>~|&$]/g, "\\$&").replace(/\r?\n|\r/g, " ");
+  return text.replace(/[\\`*_[\]<>~|&${}]/g, "\\$&").replace(/\r?\n|\r/g, " ");
 }
 
 /// The rows as a Markdown table, the cells as the grid shows them with
@@ -167,7 +172,7 @@ export function exportResult(format: ExportFormat, payload: GridPayload, decimal
     case "q": {
       const table = tableLiteral(payload, order);
       if (table.cut > 0) {
-        notes.push(`${table.cut} cell(s) were cut at 200 characters and are not their whole value`);
+        notes.push(`${table.cut} cell(s) were cut at 200 characters or at the process's \\c width and are not their whole value`);
       }
       return { data: Buffer.from(`${table.code}\n`, "utf8"), rows: order.length, notes };
     }

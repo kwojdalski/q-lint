@@ -74,7 +74,8 @@ async function valueHover(live: Live, server: () => Server | undefined, document
     return new Hover(new MarkdownString(`Live value not read: ${process.label.replace(/[\\`*_{}[\]()#+\-.!|<>~]/g, "\\$&")} is a production process.`), range);
   }
   try {
-    const got = await borrowWhenFree(live, (connection) => connection.call(VALUE_PREVIEW, names, PREVIEW_LIMIT), WAIT);
+    // Only the process checked above: not one connected meanwhile (#1456).
+    const got = await borrowWhenFree(live, (connection) => connection.call(VALUE_PREVIEW, names, PREVIEW_LIMIT), WAIT, process.label);
     const markdown = got === undefined ? undefined : previewMarkdown(readPreview(got.value), process.label);
     return markdown === undefined ? undefined : new Hover(new MarkdownString(markdown), range);
   } catch {

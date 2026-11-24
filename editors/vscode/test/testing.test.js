@@ -85,6 +85,9 @@ test("a k4unit suite is read from its CSV, quoted code and all", () => {
   assert.deepStrictEqual(rows.filter(isK4Test).map(k4Mode), ["true", "true", "fail", "run"]);
   assert.strictEqual(k4Statement(rows[2]), "k)3=#t");
   assert.strictEqual(k4Label({ code: "a:1;\n  b:2" }), "a:1; b:2");
+  // Cut by code point: an emoji at the cut is kept whole or left out (#1473).
+  const long = "x".repeat(78) + "\u{1F600}\u{1F600}" + "y";
+  assert.strictEqual(k4Label({ code: long }), "x".repeat(78) + "\u{1F600}…");
   // A field over two lines; any other CSV is no suite.
   assert.strictEqual(parseK4unit('action,ms,lang,code\ntrue,0,q,"1b\n  "\n')[0].line, 1);
   // A quote opens quoting only at a field's start, as q's 0: reads it (#1410).

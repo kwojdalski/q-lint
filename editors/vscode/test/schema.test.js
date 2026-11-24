@@ -33,6 +33,8 @@ test("table templates: select first, meta, count by date and an insert of typed 
   assert.deepStrictEqual(plain.map((x) => x.label), ["Select first 100", "meta", "Insert template"]);
   assert.match(plain[2].code, /enlist 0Nj; \/ k \(j\), key\n {2}enlist \(\)\) {2}\/ v/);
   assert.strictEqual(s.tableTemplates("a b", info())[0].code, 'select[100] from get`$"a b"');
+  // Parenthesised: `$"a b" insert (...) is `$("a b" insert ...) (#1570).
+  assert.match(s.tableTemplates("a b", info())[3].code, /\n\(`\$"a b"\) insert \(\n/);
 });
 
 const tables = [
@@ -69,4 +71,10 @@ test("the schema diagram: foreign keys and links found by meta, every name escap
   assert.deepStrictEqual(read.failed, [{ name: "bad", error: "type" }]);
   assert.throws(() => s.readSchema({}), /something other than its tables/);
   assert.match(s.SCHEMA, /^\{\[ex;lim;nc\]/);
+});
+
+test("schema diagram: a control character in a name is replaced, so the SVG still parses (#1474)", () => {
+  const svg = s.schemaSvg([{ name: "fix\u0001msg", info: info({ columns: [{ name: "c\u0002", type: "s", fkey: "", attr: "" }] }) }]);
+  assert.ok(!/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(svg), svg);
+  assert.match(svg, /fix�msg/);
 });

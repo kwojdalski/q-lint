@@ -123,17 +123,27 @@ function withExtra(out: Json, extra: Json | undefined, known: string[]): Json {
   return out;
 }
 
+/// `JSON.parse`'s reviver: an integer too big for a number kept as its text,
+/// which `JSON.stringify` writes back as it was (#1562), where the runtime
+/// has `JSON.rawJSON`.
+export function lossless(_key: string, value: unknown, context?: { source?: string }): unknown {
+  const raw = (JSON as { rawJSON?: (text: string) => unknown }).rawJSON;
+  return typeof value === "number" && !Number.isSafeInteger(value) && raw !== undefined && /^-?\d+$/.test(context?.source ?? "") ? raw(context?.source ?? "") : value;
+}
+
 /// Read a `.qnb`. An empty file is a new, empty notebook; anything else that
 /// is not a notebook throws a `QnbError` saying where it is wrong. A byte
 /// order mark in front, which JSON does not allow, is skipped.
-export function parseQnb(raw: string): Qnb {
+/// `exact: false` reads every number as a number, for the editor, which
+/// holds no other kind: VS Code rounds a big integer there.
+export function parseQnb(raw: string, exact = true): Qnb {
   const text = raw.startsWith("\uFEFF") ? raw.slice(1) : raw;
   if (text.trim() === "") {
     return { cells: [] };
   }
   let json: unknown;
   try {
-    json = JSON.parse(text);
+    json = exact ? JSON.parse(text, lossless) : JSON.parse(text);
   } catch (error) {
     throw new QnbError(`not a q notebook: the file is not JSON (${error instanceof Error ? error.message : String(error)})`);
   }
@@ -292,7 +302,8 @@ const trimEnd = (line: string): string => line.replace(/\s+$/, "");
 /// A code cell as a script runs it the way the cell runs: q reads a script
 /// as `statements.ts` reads a cell, but across cells, so what one cell leaves
 /// open would change the next. An indented first line would continue the
-/// cell above, and is unindented; a block comment the cell leaves open is
+/// cell above, and is unindented - a lone `/` or `\` there made a line
+/// comment; a block comment the cell leaves open is
 /// closed; a lone `\`, which ends the cell's code, would end the script, and
 /// opens a block comment over the rest of the cell instead. A lone `/`
 /// inside a comment is indented: KDB-X opens a second block comment there,
@@ -321,8 +332,15 @@ function scriptCell(source: string): string[] {
       out.push("/");
       continue;
     } else if (first && text !== "" && !text.startsWith("/")) {
+      const unindented = line.trimStart();
+      if (trimEnd(unindented) === "/" || trimEnd(unindented) === "\\") {
+        // Unindented, a lone `/` would open a block comment and a lone `\`
+        // end the script, losing every later cell (#1563): a line comment.
+        out.push(`/ ${unindented}`);
+        continue;
+      }
       first = false;
-      out.push(line.trimStart());
+      out.push(unindented);
       continue;
     }
     out.push(line);

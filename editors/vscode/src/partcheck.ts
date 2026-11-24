@@ -13,6 +13,8 @@
 // by its first column's header. Only a full check (`deep`) reads data: the
 // largest index of every symbol column, to find one past its own domain's
 // end (#1103), as a float: a long arrives as an object, which reads as none.
+// A nested column (type 77h on), or one whose file q cannot read, without
+// its `c#` data file is missing `c#`: q fails on it at select (#1577).
 // Works on kdb+ (KDB-X) and PeachQ; held there by dbtools_q.test.js.
 
 export const PARTITION_CHECK = [
@@ -31,7 +33,8 @@ export const PARTITION_CHECK = [
   "  en:{[d;c;y]$[y within 20 76h;@[{key get x};` sv d,c;`];`]}[d]'[have;ty];",
   "  mx:\"f\"${[d;deep;c;y]$[deep&y within 20 76h;@[{max\"j\"$get x};` sv d,c;0N];0N]}[d;deep]'[have;ty];",
   "  n:$[count have;@[{\"f\"$count get x};` sv d,first have;0n];0n];",
-  "  @[e;`dir`dotd`cols`missing`types`enums`maxidx`rows;:;(1b;1b;string cs;string cs except have;\"h\"$ty;string en;mx;n)]};",
+  "  nh:{`$string[x],\"#\"}each have;nh:nh where(not nh in k)&(ty>=77h)|null ty;",
+  "  @[e;`dir`dotd`cols`missing`types`enums`maxidx`rows;:;(1b;1b;string cs;string(cs except have),nh;\"h\"$ty;string en;mx;n)]};",
   " rows:raze{[one;r;deep;pt;p]one[r;deep;;p]each pt}[one;r;deep;pt]each pv;",
   " `hdb`pf`root`all`checked`tables`domains`domainsizes`rows!(1b;string .Q.pf;system\"cd\";string .Q.pv;\"f\"$count pv;string pt;",
   "  string key dom;\"f\"$value dom;$[count rows;flip rows;()])}",
@@ -168,7 +171,8 @@ export function partitionProblems(a: Extract<PartAnswer, { hdb: true }>): Proble
     add("missing .d", `${table} has no .d file`, rows.filter((r) => r.dir && !r.dotd).map((r) => r.partition));
     const good = rows.filter((r) => r.dotd);
     for (const col of [...new Set(good.flatMap((r) => r.missing))]) {
-      add("missing column file", `${table}.${col} is in .d but has no file`, good.filter((r) => r.missing.includes(col)).map((r) => r.partition));
+      const what = col.endsWith("#") ? `${table}.${col.slice(0, -1)} has no ${col} data file` : `${table}.${col} is in .d but has no file`;
+      add("missing column file", what, good.filter((r) => r.missing.includes(col)).map((r) => r.partition));
     }
     // The schema most partitions have is the table's; the others differ.
     const signature = (r: PartRow) => r.columns.join(" ");

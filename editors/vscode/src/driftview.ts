@@ -254,6 +254,12 @@ export class Drift implements TextDocumentContentProvider {
       if (everySave || !this.always.has(asking)) {
         this.asking = sending;
         const picked = await askRedefine(sending, process, everySave ? [RELOAD] : [RELOAD, ALWAYS], also).finally(() => (this.asking = undefined));
+        // Turned off at the question: unlisten has forgotten this file and
+        // every "always"; nothing is sent, kept or remembered (#1452).
+        if (!setting("hotReload")) {
+          out.reason = "hot reload was turned off";
+          return done(out);
+        }
         if (picked !== RELOAD && picked !== ALWAYS) {
           out.reason = "not confirmed";
           keep(new Set(plan.already));
@@ -265,6 +271,10 @@ export class Drift implements TextDocumentContentProvider {
         }
       }
       for (const s of plan.send) {
+        if (!setting("hotReload")) {
+          out.reason = "hot reload was turned off";
+          return done(out);
+        }
         try {
           // Only on the process the question named (#1289).
           const got = await borrowWhenFree(this.live, (connection) => connection.call(REDEFINE, s.name, s.held, s.text), undefined, process.label);

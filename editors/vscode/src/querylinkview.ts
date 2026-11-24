@@ -96,7 +96,7 @@ export class QueryLinks {
       void window.showWarningMessage(plainMessage(`q-lint: the link is for a process labelled "${read.process}", which is not in your Processes list; its query is open, not bound or run.`));
       return false;
     }
-    await commands.executeCommand(CONTROL_COMMANDS.chooseFileConnection, read.process);
+    await commands.executeCommand(CONTROL_COMMANDS.chooseFileConnection, read.process, document.uri);
     const yes = "Run";
     const answer = await window.showWarningMessage(
       plainMessage(`A link asks to run this query on ${read.process}. Run it?`),

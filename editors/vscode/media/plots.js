@@ -51,8 +51,9 @@
     document.body.append(bar, about, code, img);
   }
 
-  function png(key) {
-    if (!shown) {
+  /// A PNG of `svg`, the plot the save picked, which need not be the one on show.
+  function png(key, svg) {
+    if (typeof svg !== "string") {
       send({ type: "png", key: key });
       return;
     }
@@ -68,13 +69,13 @@
       send({ type: "png", key: key, data: canvas.toDataURL("image/png") });
     };
     img.onerror = () => send({ type: "png", key: key });
-    img.src = svgUrl(shown.svg);
+    img.src = svgUrl(svg);
   }
 
   window.addEventListener("message", (event) => {
     const m = event.data;
     if (m.type === "plots") focus.over(() => draw(m));
-    else if (m.type === "png") png(m.key);
+    else if (m.type === "png") png(m.key, m.svg);
   });
   send({ type: "ready" });
 })();

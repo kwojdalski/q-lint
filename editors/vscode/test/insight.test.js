@@ -51,6 +51,8 @@ test("where a caller uses a name: as code, not in a string or a comment, or by i
   // Named by symbol only.
   assert.strictEqual(at("{value(`f;x)}", "f"), 7);
   assert.strictEqual(at("{x}", "f"), -1);
+  // .ns.f.g is a longer name, not a use of .ns.f (#1472).
+  assert.strictEqual(at("{a:.ns.f.g[x]; b:.ns.f[x]}", ".ns.f"), 17);
 });
 
 test("a source document names its function, and an edit is read back without the header", () => {
@@ -98,6 +100,8 @@ test("a table's details become a short hover, every name escaped", () => {
   assert.match(tableMarkdown("t", "p", readTableInfo({ ...INFO, kind: "partitioned", bytes: null, partitions: 20 })), /partitioned table, 1,234 rows, 3 columns, 20 partitions, on disk, not measured/);
   assert.throws(() => readTableInfo({ kind: "x" }), /something other than a table's details/);
   assert.deepStrictEqual([bytes(0), bytes(1023), bytes(1536), bytes(5 * 1024 ** 3)], ["0 B", "1023 B", "1.5 KB", "5.0 GB"]);
+  // The unit is picked after rounding (#1584).
+  assert.deepStrictEqual([bytes(1048575), bytes(1023.9 * 1024), bytes(1023.6), bytes(10239)], ["1.0 MB", "1.0 MB", "1.0 KB", "10 KB"]);
 });
 
 test("the Process Monitor's tree", () => {

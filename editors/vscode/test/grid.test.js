@@ -584,3 +584,24 @@ test("a series or column named as an Object member has no colour or width but it
   assert.strictEqual(panel.ownValue({ constructor: "#ff0000" }, "constructor"), "#ff0000");
   assert.strictEqual(panel.ownValue(undefined, "px"), undefined);
 });
+
+test("a real's raw number is the shortest decimal its float32 reads back as, for exports and rules (#1488)", () => {
+  const { toJson } = require("../out/resultexport.js");
+  const { xlsxCell } = require("../out/xlsx.js");
+  const look = require("../media/gridlook.js");
+  // node-q widens 0.1e to the nearest double.
+  const wide = Math.fround(0.1);
+  assert.strictEqual(wide, 0.10000000149011612);
+  const payload = { count: 2, keys: 0, names: ["e", "f"], types: [8, 9], cells: [["0.1", "0w"], ["0.1", "1.5"]], raw: [[wide, Infinity], [wide, 1.5]], rank: [[0, 1], [0, 1]] };
+  const { grid } = readGridAnswer({ ok: true, type: 98, text: [], grid: payload });
+  assert.deepStrictEqual(grid.raw, [[0.1, Infinity], [wide, 1.5]]);
+  assert.match(toJson(grid), /"e": 0\.1,/);
+  assert.deepStrictEqual(xlsxCell(8, "0.1", grid.raw[0][0]), { n: 0.1 });
+  assert.deepStrictEqual([...look.ruleRows(toGrid(grid, -1), { column: "e", op: "=", value: "0.1" })], [0]);
+  // A page of a held result likewise.
+  const { readPage } = require("../out/grid.js");
+  assert.deepStrictEqual(readPage({ count: 1, names: ["e"], types: [8], cells: [["0.1"]], raw: [[wide]], rank: [[0]] }).raw, [[0.1]]);
+  // An unwrapped result, decoded here.
+  const { gridOfQ } = require("../out/qformat.js");
+  assert.deepStrictEqual(gridOfQ({ kind: "vector", t: 8, attr: 0, v: [wide, null] }, 100).raw, [[0.1, null]]);
+});

@@ -104,7 +104,9 @@ export function schemaLinks(tables: SchemaTable[]): SchemaLink[] {
   );
 }
 
-const escape = (s: string): string => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+// A control character XML 1.0 forbids becomes U+FFFD, or the SVG will not parse.
+const escape = (s: string): string =>
+  s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, "\uFFFD").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 const CHAR = 7.2;
 const LINE = 18;
@@ -282,7 +284,7 @@ export function tableTemplates(name: string, info: TableInfo, limit = 100): Tabl
     out.push({
       label: "Insert template",
       detail: "a row of typed nulls to fill in, opened in an editor",
-      code: [`/ One row for ${name}: replace each null, then run the statement.`, `${symbolLiteral(name)} insert (`, ...rows, ""].join("\n"),
+      code: [`/ One row for ${name}: replace each null, then run the statement.`, `${/^`\$/.test(symbolLiteral(name)) ? `(${symbolLiteral(name)})` : symbolLiteral(name)} insert (`, ...rows, ""].join("\n"),
       runs: false,
     });
   }

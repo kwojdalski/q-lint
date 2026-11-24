@@ -141,7 +141,12 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
         // Rewritten to be relative to the folder: the draft's paths are
         // relative to the scratch directory, through `..` (#1191, #1275).
         const text = absolutePaths(readFileSync(draft, "utf8"), canonicalDir(scratch));
-        writeFileSync(target, rebased(text, dir, canonicalDir(dir)));
+        try {
+          writeFileSync(target, rebased(text, dir, canonicalDir(dir)));
+        } catch (error) {
+          void window.showErrorMessage(plainMessage(`q-lint: could not write ${target}: ${error instanceof Error ? error.message : String(error)}`));
+          return undefined;
+        }
         await offerConfiguration(dir, target, command, args);
         return target;
       } finally {
@@ -230,6 +235,10 @@ async function offerConfiguration(dir: string, target: string, command: string, 
     add,
   );
   if (answer === add) {
-    writeFileSync(config, after);
+    try {
+      writeFileSync(config, after);
+    } catch (error) {
+      void window.showErrorMessage(plainMessage(`q-lint: could not write ${config}: ${error instanceof Error ? error.message : String(error)}`));
+    }
   }
 }

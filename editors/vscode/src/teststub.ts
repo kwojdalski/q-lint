@@ -15,6 +15,7 @@
 // passed or failed. Its arguments and the expected value are `(::)`, marked
 // to be filled in: the stub fails until they are.
 import { definitions } from "./definitions";
+import { globLiteral } from "./globliteral";
 import { codeMask, lambdas, parameters } from "./paramcache";
 
 export const TEST_STUB_COMMAND = "q-lint.generateTestStub";
@@ -123,8 +124,8 @@ export function newTestPath(source: string, folder: string | undefined, hasTests
 }
 
 /// The test files that may already be `source`'s: `test_<name>.q` or
-/// `<name>_test.q`, as glob patterns.
+/// `<name>_test.q`, as glob patterns, the name matched as written.
 export function testFilePatterns(source: string): string[] {
-  const base = (source.split(/[\\/]/).pop() ?? "").replace(/\.q$/, "");
+  const base = globLiteral((source.split(/[\\/]/).pop() ?? "").replace(/\.q$/, ""));
   return [`**/test_${base}.q`, `**/${base}_test.q`];
 }

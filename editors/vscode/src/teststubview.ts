@@ -105,8 +105,10 @@ export async function generateStub(uri?: Uri, line?: number): Promise<boolean> {
     void window.showInformationMessage("q-lint: put the cursor in a function's definition to generate its test.");
     return false;
   }
+  // An untitled file or a notebook cell has no folder to put a test in: its
+  // stub went to the disk root, or beside the notebook (#1525).
   if (source.scheme !== "file") {
-    void window.showInformationMessage("q-lint: save the file first: its test goes in a file beside it.");
+    void window.showInformationMessage("q-lint: save the file first: a test stub goes beside a q file on disk.");
     return false;
   }
   const document = await workspace.openTextDocument(source);
@@ -136,7 +138,12 @@ export async function generateStub(uri?: Uri, line?: number): Promise<boolean> {
       return false;
     }
     const content = `/ Tests for ${workspace.asRelativePath(source)}\n\n${stub}`;
-    await workspace.fs.writeFile(file.uri, Buffer.from(content, "utf8"));
+    try {
+      await workspace.fs.writeFile(file.uri, Buffer.from(content, "utf8"));
+    } catch (error) {
+      void window.showErrorMessage(plainMessage(`q-lint: could not write ${file.uri.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
+      return false;
+    }
     stubLine = 2;
   } else {
     const text = (await open(file.uri)) ?? file.text;
@@ -164,7 +171,7 @@ export function registerTestStubs(context: ExtensionContext): { registered: () =
   let provider: { dispose(): unknown } | undefined;
   const sync = (): void => {
     if (on() && provider === undefined) {
-      provider = languages.registerCodeActionsProvider({ language: "q" }, new StubActions(), { providedCodeActionKinds: [stubKind()] });
+      provider = languages.registerCodeActionsProvider({ language: "q", scheme: "file" }, new StubActions(), { providedCodeActionKinds: [stubKind()] });
     } else if (!on() && provider !== undefined) {
       provider.dispose();
       provider = undefined;

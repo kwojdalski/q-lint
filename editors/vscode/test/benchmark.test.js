@@ -109,3 +109,18 @@ test("on a guarded process an expression that writes is held unless confirmed", 
   assert.match(await stub.commands.get(PROCESS_TOOL_COMMANDS.benchmark)("t:til 10", "", "10 1"), /not confirmed/);
   assert.strictEqual(q.sent.length, before + 1);
 });
+
+test("turned off while it asks for the runs, nothing is timed (#1453)", async (t) => {
+  const made = panels();
+  const { q, live } = await setUp(t, { config: { "query.benchmark.enable": true }, answer, register: registerBenchmark });
+  await live.connectTo("rdb");
+  const before = q.sent.length;
+  stub.inputs.push(() => {
+    stub.config.user["query.benchmark.enable"] = false;
+    stub.changeConfig("q-lint.query.benchmark.enable");
+    return "10 2";
+  });
+  assert.match(await stub.commands.get(PROCESS_TOOL_COMMANDS.benchmark)("sum til 10", ""), /The benchmark is turned off/);
+  assert.deepStrictEqual(q.sent.slice(before), []);
+  assert.strictEqual(made.length, 0);
+});

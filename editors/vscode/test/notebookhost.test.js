@@ -115,7 +115,7 @@ function fakeVscode() {
         warnings.push(rest);
         return fake.answer;
       },
-      withProgress: async (_o, task) => task({ report() {} }, { isCancellationRequested: false }),
+      withProgress: async (_o, task) => task({ report() {} }, { isCancellationRequested: false, onCancellationRequested: () => disposable }),
       showErrorMessage: async (m) => void messages.push(m),
       showSaveDialog: async (options) => {
         dialogs.push(options);
@@ -266,7 +266,9 @@ function slowLive() {
   const waiting = new Map();
   return {
     release: (code) => waiting.get(code)?.(),
-    runOnActive: async (code, query) => {
+    // The guard's pieces, a cell's source and its live values (#1442), as one text.
+    runOnActive: async (pieces, query) => {
+      const code = typeof pieces === "string" ? pieces : pieces.join("\n");
       await new Promise((resolve) => waiting.set(code, resolve));
       return { process: "p", value: await query({ query: async () => ({ ok: true, type: -7, text: ["1"] }) }) };
     },
@@ -388,7 +390,7 @@ function recordingLive(processes, active) {
       return true;
     },
     runOnActive: async (code, query) => {
-      live.sent.push(code);
+      live.sent.push(typeof code === "string" ? code : code.join("\n"));
       const connection = {
         query: async (cut) => ({ ok: true, type: -7, text: [`${live.active}: ${cut.join(";")}`] }),
         call: async (lambda, arg) => {
@@ -433,6 +435,17 @@ test("/ @process connects to the process it names before the cell runs, and the 
   assert.strictEqual(first.success, true);
   assert.strictEqual(second.success, false);
   assert.match(outputText(second), /No q process is labelled \\"nope\\"/);
+});
+
+test("a cell of only / @process switches process, as a headless run does (#1546)", async () => {
+  const fake = fakeVscode();
+  const live = recordingLive(PROCESSES, "other");
+  load(fake, live);
+  const notebook = notebookWith(fake, [["code", "/ @process dev1"], ["code", "til 3"]]);
+  const [first, second] = await runCells(fake, notebook, [0, 1]);
+  assert.strictEqual(first.success, true);
+  assert.deepStrictEqual(live.connected, ["dev1"]);
+  assert.match(outputText(second), /^dev1: til 3$/);
 });
 
 test("/ @process names a process from the workspace's shared list (#1426)", async () => {
@@ -507,6 +520,18 @@ test("a code cell that runs reads the live values of the Markdown after it into 
   assert.strictEqual(fake.edits.length, 1);
 });
 
+test("a code cell that fails drops the live values kept for the Markdown after it (#1544)", async () => {
+  const fake = fakeVscode();
+  const live = recordingLive(PROCESSES, "dev1");
+  live.runOnActive = async (code, query) => ({ process: "dev1", value: await query({ query: async () => ({ ok: false, error: "boom", trace: "" }) }) });
+  load(fake, live);
+  const notebook = notebookWith(fake, [["code", "'boom"], ["markdown", "y is {{q: y}}"]]);
+  notebook.cells[1].metadata = { keep: 1, "q-lint.liveValues": { y: { text: "999 (from last week)" } } };
+  const [e] = await runCells(fake, notebook, [0]);
+  assert.strictEqual(e.success, false);
+  assert.deepStrictEqual(fake.edits.flatMap((x) => x.list), [{ index: 1, metadata: { keep: 1 } }]);
+});
+
 test("Export as HTML and as Jupyter write the notebook with its outputs; off, they refuse and write nothing", async () => {
   const fake = fakeVscode();
   load(fake);
@@ -529,6 +554,42 @@ test("Export as HTML and as Jupyter write the notebook with its outputs; off, th
   assert.match(fake.messages.at(-1), /set q-lint\.notebook\.export\.enable to true/);
 });
 
+// Three selected in the Explorer: only the one clicked was exported, and a
+// save dialog opened for it (#1541).
+test("Export and Import from an Explorer multi-selection do each one, beside itself, once asked; one there already is left", async () => {
+  const fake = fakeVscode();
+  load(fake);
+  const { Uri } = fake.vscode;
+  fake.vscode.workspace.fs.stat = async (uri) => {
+    if (!fake.written.has(uri.path)) throw new Error("ENOENT");
+    return {};
+  };
+  const nb = Buffer.from(JSON.stringify({ qnb: 1, cells: [{ kind: "code", source: ["1+1"] }] }));
+  for (const n of ["a", "b", "c"]) fake.written.set(`/ws/${n}.qnb`, nb);
+  fake.written.set("/ws/c.html", Buffer.from("mine"));
+  const selection = ["a", "b", "c"].map((n) => Uri.file(`/ws/${n}.qnb`));
+  // Cancelled: nothing written.
+  await fake.registered.commands["q-lint.exportNotebookHtml"](selection[0], selection);
+  assert.match(fake.messages.at(-1), /^Export 2 notebooks as html, each beside itself\?$/);
+  assert.match(fake.warnings.at(-1)[0].detail, /a\.qnb -> a\.html\nb\.qnb -> b\.html\n\nAlready there, and left as they are: c\.html\./);
+  assert.ok(!fake.written.has("/ws/a.html"));
+  fake.answer = "Export";
+  await fake.registered.commands["q-lint.exportNotebookHtml"](selection[0], selection);
+  assert.ok(fake.written.has("/ws/a.html") && fake.written.has("/ws/b.html"));
+  assert.strictEqual(fake.written.get("/ws/c.html").toString(), "mine");
+  assert.strictEqual(fake.messages.at(-1), "q-lint: wrote a.html, b.html.");
+  assert.strictEqual(fake.dialogs.length, 0, "no save dialog");
+  // Import, likewise.
+  await fake.registered.commands["q-lint.exportNotebookIpynb"](selection[0], selection.slice(0, 2));
+  fake.answer = "Import";
+  await fake.registered.commands["q-lint.importIpynb"](Uri.file("/ws/a.ipynb"), [Uri.file("/ws/a.ipynb"), Uri.file("/ws/b.ipynb"), Uri.file("/ws/a.qnb")]);
+  assert.match(fake.messages.at(-1), /a\.qnb, b\.qnb are there already; nothing was written/);
+  fake.written.delete("/ws/b.qnb");
+  await fake.registered.commands["q-lint.importIpynb"](Uri.file("/ws/a.ipynb"), [Uri.file("/ws/a.ipynb"), Uri.file("/ws/b.ipynb")]);
+  assert.strictEqual(fake.messages.at(-1), "q-lint: wrote b.qnb.");
+  assert.strictEqual(JSON.parse(fake.written.get("/ws/b.qnb").toString()).cells[0].source[0], "1+1");
+});
+
 /// `src/notebookrun.ts` loaded against `fake`, beside `src/notebook.ts`.
 function loadRun(fake, live) {
   load(fake, live);
@@ -542,6 +603,44 @@ function loadRun(fake, live) {
     Module._load = original;
   }
 }
+
+test("Run with Parameters on an untitled notebook offers to save the run on disk (#1549)", async () => {
+  const fake = fakeVscode();
+  const live = recordingLive(PROCESSES, "dev1");
+  const { runWithParameters } = loadRun(fake, live);
+  const uri = new fake.vscode.Uri("Untitled-1.qnb", "untitled");
+  const notebook = { uri, notebookType: "q-lint-notebook", metadata: {}, getCells: () => [{ kind: 2, document: { getText: () => "til 3", languageId: "q" }, outputs: [], metadata: {} }] };
+  fake.vscode.workspace.notebookDocuments.push(notebook);
+  fake.vscode.window.activeNotebookEditor = { notebook };
+  fake.vscode.workspace.workspaceFolders = [{ uri: fake.vscode.Uri.file("/ws") }];
+  await runWithParameters(live, undefined, undefined, {});
+  const offered = fake.dialogs[0].defaultUri;
+  assert.strictEqual(`${offered.scheme}:${offered.path}`, "file:/ws/Untitled-1-run.qnb");
+});
+
+test("cancelling Run with Parameters aborts the query of the cell running (#1564)", async () => {
+  const fake = fakeVscode();
+  const live = recordingLive(PROCESSES, "dev1");
+  const { runWithParameters } = loadRun(fake, live);
+  const { Uri } = fake.vscode;
+  fake.written.set("/ws/p.qnb", Buffer.from(JSON.stringify({ qnb: 1, cells: [{ kind: "code", source: ["long[]"] }, { kind: "code", source: ["2"] }] })));
+  let release;
+  const token = { isCancellationRequested: false, listeners: [], onCancellationRequested: (f) => (token.listeners.push(f), { dispose() {} }) };
+  fake.vscode.window.withProgress = async (_o, task) => task({ report() {} }, token);
+  live.aborted = 0;
+  live.abort = async () => {
+    live.aborted++;
+    release({ ok: false, error: "abort", trace: "" });
+  };
+  live.runOnActive = async (code, query) => ({ process: "dev1", value: await query({ query: () => new Promise((r) => (release = r)) }) });
+  const run = runWithParameters(live, Uri.file("/ws/p.qnb"), Uri.file("/ws/p-run.qnb"), {});
+  await new Promise((r) => setImmediate(r));
+  token.isCancellationRequested = true;
+  token.listeners.forEach((f) => f());
+  const result = await run;
+  assert.strictEqual(live.aborted, 1);
+  assert.strictEqual(result.failed.cell, 1);
+});
 
 test("Run Notebook with Parameters runs the notebook on the active connection and writes the run; off, it refuses", async () => {
   const fake = fakeVscode();

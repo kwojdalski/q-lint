@@ -9,7 +9,7 @@
 // same rows each time, and defines only the table. The CSV is drawn here
 // by a seeded generator, as q would read it back with `0:`: times as q
 // writes them, symbols bare, strings quoted when they need to be.
-import { qString, symbolLiteral } from "./qliteral";
+import { plainName, qString, symbolLiteral } from "./qliteral";
 import type { TableInfo } from "./tableinfo";
 
 export interface TestDataOptions {
@@ -47,12 +47,29 @@ export function rangeOf(text: string): [number, number] | undefined {
 
 const DAY = "2026.01.02";
 
+/// The largest finite short and int: one more is the type's infinity, and
+/// past that `"H"$` and `"I"$` read a number as a null (#1499).
+const WHOLE_LIMIT: Record<string, number> = { h: 32766, i: 2147483646 };
+
+/// The first whole number a column of type `type` takes from `o`'s range
+/// and how many follow it: the range rounded, and for a short or an int
+/// cut to the values the type holds, so the q and the CSV draw alike.
+export function wholeRange(type: string, o: TestDataOptions): [number, number] {
+  let lo = Math.round(o.low);
+  let hi = lo + Math.max(1, Math.round(o.high - o.low));
+  const m = WHOLE_LIMIT[type];
+  if (m !== undefined) {
+    lo = Math.min(Math.max(lo, -m), m);
+    hi = Math.min(Math.max(hi, lo + 1), m + 1);
+  }
+  return [lo, hi - lo];
+}
+
 /// The q expression of `n` random values of type `type` (a meta type
 /// character), with `o`'s pool and range.
 export function generator(type: string, o: TestDataOptions): string {
   const lo = o.low;
   const span = o.high - o.low;
-  const whole = Math.max(1, Math.round(span));
   // A symbol a bare one cannot write (`a/b` is `a` over `b`, '/) goes
   // through `$ (#1279).
   const bare = o.symbols.every((s) => symbolLiteral(s) === `\`${s}`);
@@ -62,9 +79,12 @@ export function generator(type: string, o: TestDataOptions): string {
     case "b": return "n?0b";
     case "g": return "n?0Ng";
     case "x": return "`byte$n?256";
-    case "h": return `"h"$${Math.round(lo)}+n?${Math.min(whole, 32767)}`;
-    case "i": return `"i"$${Math.round(lo)}+n?${whole}`;
-    case "j": return `${Math.round(lo)}+n?${whole}`;
+    case "h":
+    case "i":
+    case "j": {
+      const [from, count] = wholeRange(type, o);
+      return `${type === "j" ? "" : `"${type}"$`}${from}+n?${count}`;
+    }
     case "e": return `"e"$${lo}+n?${span}e`;
     case "f": return `${lo}+n?${span}f`;
     case "c": return "n?.Q.a";
@@ -84,19 +104,28 @@ export function generator(type: string, o: TestDataOptions): string {
 
 /// The q that makes the rows, named `name`.
 export function testDataQ(info: TableInfo, name: string, o: TestDataOptions): string {
-  const cols = info.columns.map((c) => {
+  const gens = info.columns.map((c) => {
     const g = generator(c.type, o);
-    return `${c.name}:${c.name === o.sorted ? `asc ${g}` : g}`;
+    return c.name === o.sorted ? `asc ${g}` : g;
   });
   const keys = info.keys.filter((k) => info.columns.some((c) => c.name === k));
-  const by = keys.map((k) => `\`${k}`).join("");
-  const rows = `([] ${cols.join("; ")})`;
+  // A name q cannot parse (`my t`, `px bid`) by its symbol: the table set,
+  // its columns flipped from a dictionary (#1583).
+  const symbols = (names: string[]) => {
+    const each = names.map(symbolLiteral);
+    return each.every((s) => !s.startsWith("`$")) ? each.join("") : each.length === 1 ? `(${each[0]})` : `(${each.join(";")})`;
+  };
+  const by = symbols(keys);
+  const rows = info.columns.every((c) => plainName(c.name))
+    ? `([] ${info.columns.map((c, i) => `${c.name}:${gens[i]}`).join("; ")})`
+    : `flip ${info.columns.length === 1 ? `(enlist ${symbolLiteral(info.columns[0].name)})!enlist ${gens[0]}` : `${symbols(info.columns.map((c) => c.name))}!(${gens.join(";")})`}`;
+  const assign = (e: string) => (plainName(name) ? `${name}:${e}` : `(${symbolLiteral(name)}) set ${e}`);
   return [
     `/ q-lint: ${keys.length > 0 ? "up to " : ""}${o.rows.toLocaleString("en-US")} rows of test data shaped as ${name}. Run it on a local process.`,
     `\\S ${o.seed}`,
     `n:${o.rows}`,
     // A keyed table keeps the first row of each key drawn: a key is one row (#1282).
-    `${name}:${keys.length > 0 ? `${by} xkey {x where(til count x)=k?k:((),y)#x}[${rows};${by}]` : rows}`,
+    assign(keys.length > 0 ? `${by} xkey {x where(til count x)=k?k:((),y)#x}[${rows};${by}]` : rows),
     // A table named n is the count's name too: it stays (#1084).
     ...(name === "n" ? [] : [`delete n from \`.`]),
     "",
@@ -141,7 +170,10 @@ function csvValue(type: string, o: TestDataOptions, next: () => number): string 
     case "x": return Math.floor(r * 256).toString(16).padStart(2, "0");
     case "h":
     case "i":
-    case "j": return String(Math.round(lo) + Math.floor(r * Math.max(1, Math.round(span))));
+    case "j": {
+      const [from, count] = wholeRange(type, o);
+      return String(from + Math.floor(r * count));
+    }
     case "e":
     case "f": return String(+(lo + r * span).toFixed(6));
     case "c": return String.fromCharCode(97 + Math.floor(r * 26));
