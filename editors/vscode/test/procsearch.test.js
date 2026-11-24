@@ -98,3 +98,29 @@ test("off, nothing is sent; on, every tagged process is searched apart and a hit
   assert.deepStrictEqual(other.sent[1], [FUNCTION_TEXTS, ".lib.f"]);
   assert.strictEqual(opened.length, 1);
 });
+
+// The switch was read again only after the search came back, to hide its
+// answer: turned off at the tag pick, the text box or the scope pick, the
+// search was still sent to every tagged process (#2005).
+test("turned off at a prompt, Find in Processes sends nothing (#2005)", async (t) => {
+  const { q } = await setUp(t, { tags: ["eu"], answer: null, register: registerFindInProcesses });
+  const key = "processes.findInProcesses.enable";
+  const turn = (on) => {
+    stub.config.user[key] = on;
+    stub.changeConfig(`q-lint.${key}`);
+  };
+  const offThen = (answer) => (options) => (turn(false), typeof answer === "function" ? answer(options) : answer);
+  const first = (o) => o.items[0];
+  for (const [picks, inputs] of [
+    [[offThen(first), first], ["trade"]],
+    [[first, first], [offThen("trade")]],
+    [[first, offThen(first)], ["trade"]],
+  ]) {
+    turn(true);
+    stub.picks.push(...picks);
+    stub.inputs.push(...inputs);
+    assert.match(await stub.commands.get(PROCESS_TOOL_COMMANDS.findInProcesses)(), /Find in processes is turned off/);
+    assert.deepStrictEqual([stub.picks.length, stub.inputs.length], [0, 0]);
+    assert.deepStrictEqual(q.sent, []);
+  }
+});

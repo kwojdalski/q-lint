@@ -65,22 +65,46 @@ const typeNameOf = (t: string) =>
 
 const listType = (t: string) => t !== "" && t === t.toUpperCase();
 
+/// The atom casts q refuses with 'type, by the type cast: a date's or a
+/// month's to a time of day, and a time of day's to a date. A guid is cast
+/// to and from nothing. Read off a real q, which dbtools_q.test.js holds
+/// this to (#2012).
+const NO_CAST: Record<string, string> = { m: "znuvt", d: "nuvt", n: "pmdz", u: "pmdz", v: "pmdz", t: "pmdz" };
+const noCast = (from: string, to: string) => (from === "g") !== (to === "g") || (NO_CAST[from] ?? "").includes(to);
+
 /// Why a cast from `from` to `to` is not written, or undefined when it is:
 /// a list column's items are not atoms, nor an atom column's lists, so a
 /// cast between them does nothing or fails - but for text, parsed or made
-/// symbols (`C` to an atom type but `c`), and anything made text (`C`).
+/// symbols (`C` to an atom type but `c`), and atoms made text (`C`).
 /// A symbol to a char, its first character, is made in memory only (#1578).
+/// Between atom columns it is q that has no cast, but through a symbol's
+/// text, and between two list columns the cast is the atoms', made in each
+/// item (#2013). A mixed column's cast is written - whether q makes it is
+/// its values' to say, and an empty table's untyped column is one - and no
+/// cast makes a mixed column of another.
 export function castProblem(from: string, to: string, onDisk: boolean): string | undefined {
-  if (from === "" || to === "") return undefined;
-  if (to === "C") return listType(from) && from !== "C" ? "a list column made text is not a column of strings" : undefined;
-  if (from === "C") return listType(to) || to === "c" ? "a column of strings holds lists, not chars" : undefined;
-  if (listType(from) || listType(to)) return "a list column's items are lists, an atom column's are not";
+  if (from === "") return undefined;
+  if (to === "") return "no cast makes a mixed column";
+  const [f, t] = [from.toLowerCase(), to.toLowerCase()];
+  if (listType(from) !== listType(to)) {
+    if (to === "C") return undefined;
+    if (from === "C") return to === "c" ? "a column of strings holds lists, not chars" : undefined;
+    return "a list column's items are lists, an atom column's are not";
+  }
   if (from === "s" && to === "c" && onDisk) return "the column manager makes no symbol into a char";
+  if (f !== "s" && t !== "s" && noCast(f, t)) return `q has no cast from ${typeNameOf(f)} to ${typeNameOf(t)}`;
   return undefined;
 }
 
 /// The expression that casts column `c` from type `from` to type `to`.
 export function castOf(c: string, from: string, to: string): string {
+  if (listType(from) && listType(to)) {
+    // A plain cast goes through the items; any other is made in each, and a
+    // symbol's first character of none is a char still.
+    const [f, t] = [from.toLowerCase(), to.toLowerCase()];
+    const item = castOf("x", f, t);
+    return item === `"${t}"$x` ? `"${t}"$${c}` : `{${f === "s" && t === "c" ? '"c"$' : ""}${item}} each ${c}`;
+  }
   if (to === "c" && from === "s") return `first each string ${c}`;
   if (to === "s" && from === "C") return `\`$${c}`;
   if (to === "C") return `string ${c}`;
@@ -117,16 +141,16 @@ export function migrationScript(name: string, fromInfo: TableInfo, fromWhere: st
     const ops: ColumnOp[] = [
       ...d.drop.map((column): ColumnOp => ({ op: "delete", column })),
       ...d.add.map((a): ColumnOp => ({ op: "add", column: a.name, value: nullOf(a.type) })),
-      ...d.cast.filter((c) => c.to.length === 1 && c.to === c.to.toLowerCase() && castProblem(c.from, c.to, true) === undefined).map((c): ColumnOp => ({ op: "cast", column: c.name, type: c.to })),
+      ...d.cast.filter((c) => !listType(c.to) && castProblem(c.from, c.to, true) === undefined).map((c): ColumnOp => ({ op: "cast", column: c.name, type: c.to })),
       ...d.attrs.map((c): ColumnOp => ({ op: "attr", column: c.name, attr: c.to as "" | "s" | "u" | "p" | "g" })),
       ...(d.order ? [{ op: "reorder", order: d.order } as ColumnOp] : []),
     ];
-    const skipped = d.cast.filter((c) => !(c.to.length === 1 && c.to === c.to.toLowerCase()));
+    const skipped = d.cast.filter((c) => listType(c.to));
     const refused = d.cast.filter((c) => !skipped.includes(c) && castProblem(c.from, c.to, true) !== undefined);
     return [
       ...head,
       ...skipped.map((c) => `/ not written: a cast of ${c.name} to the nested type ${c.to}, which the column manager does not make on disk`),
-      ...refused.map((c) => `/ not written: a cast of ${c.name} from ${c.from} to ${c.to}: ${castProblem(c.from, c.to, true)}`),
+      ...refused.map((c) => `/ not written: a cast of ${c.name} from ${c.from} to ${c.to || "mixed"}: ${castProblem(c.from, c.to, true)}`),
       columnScriptOf(name, ops, process, `migrate ${name} to the schema of ${toWhere}`),
     ].join("\n") + "\n";
   }
@@ -150,7 +174,7 @@ export function migrationScript(name: string, fromInfo: TableInfo, fromWhere: st
     lines.push(!plainName(a.name) ? assign(`{@[x;y;:;count[x]#enlist z]}[${t};${symbolLiteral(a.name)};${nullOf(a.type)}]`) : a.type === a.type.toUpperCase() ? assign(`update ${a.name}:count[i]#enlist ${nullOf(a.type)} from ${t}`) : assign(`update ${a.name}:${nullOf(a.type)} from ${t}`));
   for (const c of d.cast) {
     const problem = castProblem(c.from, c.to, false);
-    lines.push(!plainName(c.name) ? odd(c.name, "the cast of") : problem === undefined ? assign(`update ${c.name}:${castOf(c.name, c.from, c.to)} from ${t}`) : `/ not written: a cast of ${c.name} from ${c.from} to ${c.to}: ${problem}`);
+    lines.push(!plainName(c.name) ? odd(c.name, "the cast of") : problem === undefined ? assign(`update ${c.name}:${castOf(c.name, c.from, c.to)} from ${t}`) : `/ not written: a cast of ${c.name} from ${c.from} to ${c.to || "mixed"}: ${problem}`);
   }
   for (const c of d.attrs) lines.push(!plainName(c.name) ? odd(c.name, "the attribute of") : assign(`update ${c.name}:${c.to ? `\`${c.to}#` : "`#"}${c.name} from ${t}`));
   if (d.order) lines.push(assign(`${symbols(d.order)} xcols ${t}`));

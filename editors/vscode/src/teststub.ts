@@ -83,9 +83,12 @@ export function testName(target: Target, style: Style, taken: string): string {
 ///
 /// `context` is the `\d` the stub is appended under: under one that is not
 /// the root, a root function is called as `` `.[`f] ``, since a lambda's
-/// globals resolve in the context it is defined in (#1599).
+/// globals resolve in the context it is defined in (#1599). So is one a
+/// parameter of its own is named after (`scale:{[scale;v] ...}`): the
+/// argument's local would be what the bare name called (#2004).
 export function stubText(target: Target, name: string, style: Style, context = "."): string {
-  const callee = context !== "." && !target.name.startsWith(".") ? `\`.[\`${target.name}]` : target.name;
+  const callee =
+    (context !== "." || target.params.includes(target.name)) && !target.name.startsWith(".") ? `\`.[\`${target.name}]` : target.name;
   const call = `${callee}[${target.params.join(";")}]`;
   let expected = "expected";
   while (target.params.includes(expected)) {

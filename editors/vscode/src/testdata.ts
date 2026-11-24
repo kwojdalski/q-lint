@@ -6,7 +6,8 @@
 // (`tableinfo.ts`'s TABLE_INFO) and opens the result.
 //
 // The q is self-contained: it sets the random seed (`\S`), so it makes the
-// same rows each time, and defines only the table. The CSV is drawn here
+// same rows each time, and defines only the table - the row count is a
+// lambda's parameter, no global of the process's (#2016). The CSV is drawn here
 // by a seeded generator, as q would read it back with `0:`: times as q
 // writes them, symbols bare, strings quoted when they need to be.
 import { plainName, qString, symbolLiteral } from "./qliteral";
@@ -106,7 +107,11 @@ export function generator(type: string, o: TestDataOptions): string {
   }
 }
 
-/// The q that makes the rows, named `name`.
+/// The columns one lambda of the script makes, well inside what q lets a
+/// lambda hold (`dbtools_q.test.js` runs a script of a thousand).
+const LAMBDA_COLUMNS = 100;
+
+/// The q that makes the rows, named `name`: that name is all it defines.
 export function testDataQ(info: TableInfo, name: string, o: TestDataOptions): string {
   const gens = info.columns.map((c) => {
     const g = generator(c.type, o);
@@ -120,18 +125,26 @@ export function testDataQ(info: TableInfo, name: string, o: TestDataOptions): st
     return each.every((s) => !s.startsWith("`$")) ? each.join("") : each.length === 1 ? `(${each[0]})` : `(${each.join(";")})`;
   };
   const by = symbols(keys);
-  const rows = info.columns.every((c) => plainName(c.name))
-    ? `([] ${info.columns.map((c, i) => `${c.name}:${gens[i]}`).join("; ")})`
-    : `flip ${info.columns.length === 1 ? `(enlist ${symbolLiteral(info.columns[0].name)})!enlist ${gens[0]}` : `${symbols(info.columns.map((c) => c.name))}!(${gens.join(";")})`}`;
+  const plain = info.columns.every((c) => plainName(c.name));
+  // The count is the parameter `n` of a lambda, which holds so many columns
+  // and no more ('stack past some 250, 'limit sooner): a wider table is
+  // made of several, their columns joined.
+  const parts: string[] = [];
+  for (let i = 0; i < info.columns.length; i += LAMBDA_COLUMNS) {
+    const columns = info.columns.slice(i, i + LAMBDA_COLUMNS).map((c) => c.name);
+    const g = gens.slice(i, i + LAMBDA_COLUMNS);
+    const table = plain
+      ? `([] ${columns.map((c, j) => `${c}:${g[j]}`).join("; ")})`
+      : `flip ${columns.length === 1 ? `(enlist ${symbolLiteral(columns[0])})!enlist ${g[0]}` : `${symbols(columns)}!(${g.join(";")})`}`;
+    parts.push(`{[n] ${table}}[${o.rows}]`);
+  }
+  const rows = parts.length === 1 ? parts[0] : `flip ${parts.map((p) => `(flip ${p})`).join(",")}`;
   const assign = (e: string) => (plainName(name) ? `${name}:${e}` : `(${symbolLiteral(name)}) set ${e}`);
   return [
     `/ q-lint: ${keys.length > 0 ? "up to " : ""}${o.rows.toLocaleString("en-US")} rows of test data shaped as ${name}. Run it on a local process.`,
     `\\S ${o.seed}`,
-    `n:${o.rows}`,
     // A keyed table keeps the first row of each key drawn: a key is one row (#1282).
     assign(keys.length > 0 ? `${by} xkey {x where(til count x)=k?k:((),y)#x}[${rows};${by}]` : rows),
-    // A table named n is the count's name too: it stays (#1084).
-    ...(name === "n" ? [] : [`delete n from \`.`]),
     "",
   ].join("\n");
 }

@@ -10,7 +10,7 @@
 //! on the path goes.
 use super::navigate::{Sources, range};
 use super::{Lines, file_key, path_of};
-use q_lint_rs::{Mention, bracket_calls, load_paths, mentions, typed_locals};
+use q_lint_rs::{Mention, argument_slots, load_paths, mentions, typed_locals};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 
@@ -184,7 +184,9 @@ fn inlay_hints(params: &Value, sources: &Sources) -> Value {
     let mut known: HashMap<Vec<String>, Option<Vec<String>>> = HashMap::new();
     let mut read = HashMap::new();
     let mut hints = vec![];
-    for call in bracket_calls(text) {
+    // The slots with their strings in them: in the code view a string is
+    // blank, and an argument that is one would start after it (#2025).
+    for call in argument_slots(text) {
         if call.at < from || call.at > to {
             continue;
         }

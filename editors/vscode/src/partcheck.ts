@@ -8,7 +8,9 @@
 // tests it; `dbtoolsview.ts` asks the process and opens the report.
 //
 // One read, defining nothing. The partitions are those on disk (`.Q.PV`):
-// a `.Q.view` hides none of them from the check (#1959). Each table
+// a `.Q.view` hides none of them from the check (#1959), each in the
+// directory q loaded it from (`.Q.PD`, so any segmenting is followed,
+// #1977). Each table
 // directory of the newest `lim` is looked at through its `.d` and its column files' headers
 // (`type get`, which maps the file and reads none of its data) and counted
 // by its first column's header. Only a full check (`deep`) reads data: the
@@ -18,13 +20,16 @@
 // its `c#` data file is missing `c#`: q fails on it at select (#1577).
 // Works on kdb+ (KDB-X) and PeachQ; held there by dbtools_q.test.js.
 
+import { PARTITION_DIRS } from "./partdir";
+
 export const PARTITION_CHECK = [
   "{[lim;deep]",
   " if[not@[{0<count .Q.pv};::;0b];:`hdb`root!(0b;system\"cd\")];",
   " r:hsym`$system\"cd\";av:@[get;`.Q.PV;{.Q.pv}];pv:(neg\"j\"$lim)sublist av;pt:(),.Q.pt;",
+  ` pd:${PARTITION_DIRS}[r;(neg count pv)sublist@[get;\`.Q.PD;()];pv];`,
   " fs:((key r)except`$string av)except`par.txt;",
   " dom:fs!{@[{$[11h=type v:get x;count v;0N]};x;0N]}each` sv'r,/:fs;dom:(where not null dom)#dom;",
-  " one:{[r;deep;t;p] d:.Q.par[r;p;t];k:key d;",
+  " one:{[b;deep;t;p] d:` sv b,t;k:key d;",
   "  e:`tbl`part`dir`dotd`cols`missing`types`enums`maxidx`rows!(string t;string p;0b;0b;();();`short$();();`float$();0n);",
   "  if[(not 11h=abs type k)|0=count k;:e];",
   "  if[-11h=type k;:e];",
@@ -36,7 +41,7 @@ export const PARTITION_CHECK = [
   "  n:$[count have;@[{\"f\"$count get x};` sv d,first have;0n];0n];",
   "  nh:{`$string[x],\"#\"}each have;nh:nh where(not nh in k)&(ty>=77h)|null ty;",
   "  @[e;`dir`dotd`cols`missing`types`enums`maxidx`rows;:;(1b;1b;string cs;string(cs except have),nh;\"h\"$ty;string en;mx;n)]};",
-  " rows:raze{[one;r;deep;pt;p]one[r;deep;;p]each pt}[one;r;deep;pt]each pv;",
+  " rows:raze{[one;deep;pt;p;b]one[b;deep;;p]each pt}[one;deep;pt]'[pv;pd];",
   " `hdb`pf`root`all`checked`tables`domains`domainsizes`rows!(1b;string .Q.pf;system\"cd\";string av;\"f\"$count pv;string pt;",
   "  string key dom;\"f\"$value dom;$[count rows;flip rows;()])}",
 ].join("\n");
@@ -194,8 +199,14 @@ export function partitionProblems(a: Extract<PartAnswer, { hdb: true }>): Proble
           return at < 0 ? undefined : r.types[at];
         };
         const seen = good.map((r) => ({ r, t: typeOf(r) })).filter((x) => x.t !== undefined && !Number.isNaN(x.t));
-        const usual = mode(seen.map((x) => String(x.t)));
-        const odd = seen.filter((x) => String(x.t) !== usual);
+        // q writes a string or nested column with no rows as a general
+        // list (type 0) and maps one with rows as 77h on: an empty
+        // partition's is the same column, and has no say in the type (#2007).
+        const unset = (x: (typeof seen)[number]) => x.t === 0 && x.r.rows === 0;
+        const typed = seen.filter((x) => !unset(x));
+        const usual = mode((typed.length > 0 ? typed : seen).map((x) => String(x.t)));
+        const nested = Number(usual) === 0 || Number(usual) >= 77;
+        const odd = seen.filter((x) => String(x.t) !== usual && !(nested && unset(x)));
         for (const t of [...new Set(odd.map((x) => x.t))]) {
           add("different types", `${table}.${col} is type ${t} here, ${usual} in most partitions`, odd.filter((x) => x.t === t).map((x) => x.r.partition));
         }

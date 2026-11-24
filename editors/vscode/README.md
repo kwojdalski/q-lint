@@ -107,6 +107,15 @@ to a process you add and connect to, and sends only the code you run.
   have them agree, take the `.` out of it for q,
   ``"[q]": {"editor.wordSeparators": "`~!@#$%^&*()-=+[{]}\\|;:'\",<>/?"}``.
   `q-lint.editor.dottedNames.enable` turns it off without a reload.
+- **Comment toggle on a blank line**: **Toggle Line Comment** on a blank
+  line of a q or k file writes `/ .` with the `.` selected, so the comment
+  typed next replaces it, and toggling back leaves the line blank. VS Code
+  alone writes a lone `/ `, which q reads as the opening of a block comment:
+  every line below it, to a lone `\` or the end of the file, stops running
+  with no error. Only the toggle's own edit is answered: a `/` typed on a
+  blank line is left as typed, and so is the toggle with
+  `editor.comments.insertSpace` off, which writes that same lone `/`.
+  `q-lint.editor.blankLineComment.enable` turns it off without a reload.
 - **q in Markdown**: a fenced block opened with ```` ```q ```` (or `kdb+`,
   or `~~~q`) is coloured with the q grammar in a Markdown editor, and one
   opened with ```` ```k ```` with the k grammar; another language's fence,
@@ -153,6 +162,10 @@ to a process you add and connect to, and sends only the code you run.
   type's null; otherwise symbols, or strings once a cell holds a space. The
   first row is taken for the column names unless it reads as data, and the
   names are made q names (`x y` becomes `x_y`, `count` becomes `count_`).
+  Cells are a tab apart where the first row holds one; else a comma or a
+  semicolon apart, where the first row holds it and no row has more cells
+  than the first; else the text is one column, whose cells may hold commas
+  (`Smith, John`, `1,234`).
   Each cell is read as q's `0:` reads the same text with the same type
   letter, so the literal is the table `0:` would load. At most 10,000 rows;
   the message says what was left out (`q-lint.pasteTable.enable`).
@@ -201,14 +214,17 @@ to a process you add and connect to, and sends only the code you run.
   name is resolved as q resolves it under the `\d` context in force,
   including in a file another loads under a context. A name several
   scripts assign goes first to the current file's own assignment, then to
-  those in files it loads; the outline groups names by namespace; and Go to
+  those in files it loads; the outline groups names by namespace, a group
+  for each place a namespace is written; and Go to
   Definition on the path in `\l path/file.q` opens that file - and the path
   is a link too, Ctrl/Cmd+click to open it, in `\l`, `system "l ..."` and a
   file symbol `` `:lib/x.q `` alike (`q-lint.documentLinks.enable`). A path
   that reaches no file, or a directory, is no link. Renaming or moving a
   `.q` file or a folder in the Explorer rewrites the load paths that name
   it, each from the base it was written against, and a moved file's own
-  (`q-lint.renameLoads.enable`); and after `\l ` the folders and `.q`/`.k`
+  (`q-lint.renameLoads.enable`) - but not into a load q cannot read: a new
+  name with a blank in it has no spelling after `\l`, so those lines are
+  left and a message lists them; and after `\l ` the folders and `.q`/`.k`
   scripts complete, from the file's directory and the workspace folder
   (`q-lint.loadPathCompletion.enable`). What only
   running the code would tell - a name built at run time, `value "..."`,
@@ -218,11 +234,20 @@ to a process you add and connect to, and sends only the code you run.
   the `\d` context each file is in, is rewritten - `add` under `\d .lib` and
   `.lib.add` elsewhere both become `plus`. Only the last part of a name is
   renamed (type `plus` or `.lib.plus`, not a name in another namespace).
+  A dotted read through the global is rewritten with it: the `ta` of `ta.c`
+  for a table `ta`, the `.cfg` of `.cfg.port`. Where such a read may be
+  something else - `ta.c` inside a qSQL phrase - the rename is refused and
+  names the line, rather than rewrite some uses and not others. A symbol is
+  rewritten where q takes a global by its name: `` update .. from `t ``,
+  `@[`t;..]`, `?[`t;..]`, `` `c xkey `t ``, `` get `t ``, `` `t insert .. ``
+  and their neighbours. A symbol of the name anywhere else
+  (`` `t in tables[] ``, one of a list) may be the name or only a symbol,
+  so it refuses the rename too; Find All References lists it.
   It is refused, with the reason, for a name q reserves or one in a
   one-letter namespace (`.z.pg`, `.q.f`), a name no workspace file assigns,
   a new name that is not one q takes, is already assigned, or is a
   parameter or local of a lambda that reads the global bare. A name reached
-  through a string (`value "f[]"`), a bare symbol (`` `f ``) or another
+  through a string (`value "f[]"`), built at run time or sent by another
   process is not seen and keeps its old name: preview the rename
   (Shift+Enter) when that matters. `q-lint.rename.enable` turns renaming off
   and leaves the rest of navigation on.
@@ -354,10 +379,15 @@ Each has its own switch, listed in [Settings](#settings) and
   `select n:count i by sym from t where px>2` becomes
   `?[t;enlist (>;`px;2);(enlist`sym)!enlist `sym;(enlist`n)!enlist (count;`i)]`
   and back. Each column, constraint and grouping is written as the tree
-  q's `parse` gives - a name as a symbol, a symbol literal enlisted - and an
-  unnamed column gets the name q would give it. What the rewrite cannot read
+  q's `parse` gives - a name as a symbol, a symbol literal enlisted, a query
+  in parentheses inside another as its own tree (``(?;`u;();();enlist `c)``) -
+  and an unnamed column gets the name q would give it. Read back, an
+  `enlist` over a string, a vector or a list is q's quote, and is written as
+  that constant (`enlist "abc"` is `"abc"`, where `enlist 7` stays a list). What the rewrite cannot read
   (an adverb, a projection, `select[n]`, a glyph used as a monad) is refused,
-  and **Refactor...** says why. Every case in the tests was run both ways on
+  and so is a functional form with no qSQL - one whose column is named with
+  a word of q's own (`` `count ``, `` `select ``), which qSQL reads as that
+  word - and **Refactor...** says why. Every case in the tests was run both ways on
   KDB-X and PeachQ and compared with `~`. `q-lint.functionalForm.enable`.
 - **The qSQL explainer**: hover over a query's `select`, `exec`, `update` or
   `delete` (or a functional form's `?`/`!`) to read it in words - what it
@@ -627,7 +657,12 @@ taken as a tag), its `<serverlist>` XML, or the preferences it keeps them in
 when it is there); only kdb servers are taken. From KX's kdb extension: its
 `kdb.servers` in your settings, with `kdb.labelsConnectionMap`'s labels as
 tags, or a file its **Export Connections** wrote; kdb Insights connections
-are left out. You are shown what will be added and asked first. A label
+are left out. A KX label or a qStudio folder of several words, or of
+several folder levels, is one tag, its words joined by `-`: `Non Prod` is
+`non-prod`, which the read-only guard does not guard. A word the guard does
+guard stays a tag of its own beside it, at any folder level, unless `non`
+or `not` stands right before it: `Prod EU`, `Prod-EU/London` and `Pre Prod`
+are each tagged `prod` too, and guarded. You are shown what will be added and asked first. A label
 already in the list is kept as it is, and no password is ever imported,
 even where the source holds one: each is asked for on the first connect.
 `q-lint.processes.importOther.enable` off hides both commands.
@@ -2576,8 +2611,13 @@ script ends: 0 when it loaded, 1 at its first error. The `$q` problem
 matcher puts that error in Problems at its file and line - the innermost
 frame, so the loaded file of a `\l` - as KDB-X prints it
 (`'2026.11.21T19:31:44.874 type` then ``[2]  /w/e.q:3: c:a+`x``) and as
-PeachQ does (`'type`). Add `"problemMatcher": "$q"` to a task of your own
-that runs q to use it there.
+PeachQ does (`'type`). An error inside a q keyword, a `.Q` function or
+evaluated text (`til "a"`, ``value "1+`a"``) has frames of q's own first,
+which name no file (`[3]  (.q.til)`): a `q` task writes the error line
+again above the first frame that does, so it is in Problems at the
+script's line. Add `"problemMatcher": "$q"` to a task of your own that runs
+q to use it there; q's output is not rewritten for such a task, and that
+kind of error is not matched in it.
 
 **Dev container.** **Add q Dev Container Configuration** shows a
 `.devcontainer/devcontainer.json` and `.devcontainer/install-kdbx.sh` for
@@ -2763,6 +2803,7 @@ nothing.
 | `q-lint.argumentSlot.enable` | `true` | Highlight the argument of `f[a;b;c]` the cursor is in and name its parameter. Asks the language server only. Off, nothing listens or is drawn. | - |
 | `q-lint.editor.continuationIndent.enable` | `true` | Indent the line after one that leaves a bracket open, on Enter. Off, Enter is VS Code's own. | - |
 | `q-lint.editor.dottedNames.enable` | `true` | Take `.ns.f` and `x.y` as one word for Ctrl/Cmd+D, occurrence highlights and completion. Off, a word is VS Code's own. | - |
+| `q-lint.editor.blankLineComment.enable` | `true` | Write `/ .` where **Toggle Line Comment** on a blank line would leave a lone `/ `, the opening of a block comment. Off, the toggle is VS Code's own. | - |
 | `q-lint.editor.parameterCache.enable` | `true` | **Toggle Parameter Cache** and its status bar item. Off, the command is hidden and refuses and the item is hidden. | - |
 | `q-lint.processSymbols.enable` | `false` | List the names only the connected process defines in **Go to Symbol in Workspace**, read while you search. Off, no provider is registered and nothing is sent. | - |
 | `q-lint.processExplorer.driftDetection.enable` | `false` | **Check Drift Against Process**: compare the workspace's function definitions with the connected process. Off, the command is hidden and reads nothing. | - |

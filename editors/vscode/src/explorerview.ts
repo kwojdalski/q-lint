@@ -48,6 +48,7 @@ import {
   type Node,
 } from "./explorer";
 import { nameAt } from "./funcsource";
+import { wordStart } from "./idioms";
 import { borrowWhenFree } from "./infoview";
 import { readInsight } from "./insightconfig";
 import type { Live } from "./live";
@@ -349,8 +350,7 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
     }
     const table = qsqlTable(text, offset);
     // The word being typed, dots and all, so `.ns.f` replaces `.ns.` whole.
-    const typed = /[.\w]*$/.exec(lines[position.line].slice(0, position.character))?.[0] ?? "";
-    const range = new Range(position.line, position.character - typed.length, position.line, position.character);
+    const range = new Range(position.line, wordStart(lines[position.line], position.character), position.line, position.character);
     return liveCompletions(kept.gathered, kept.process, table).map((c) => {
       const item = new CompletionItem(c.label, KINDS[c.kind]);
       item.detail = c.detail;

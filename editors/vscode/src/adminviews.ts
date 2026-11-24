@@ -160,12 +160,15 @@ export class AdminView implements TreeDataProvider<AdminNode> {
   }
 }
 
+/// What a change turned off before it was sent hands back.
+const OFF = Symbol("off");
+
 /// A view made while its switch is on and disposed when it is turned off.
 class Switched {
   view: AdminView | undefined;
 
   constructor(
-    private readonly feature: AdminFeature,
+    readonly feature: AdminFeature,
     private readonly make: () => AdminView,
   ) {
     this.apply();
@@ -236,12 +239,18 @@ export function registerAdminViews(context: ExtensionContext, live: Live_): { cl
   const timers = new Switched("timerView", () => new AdminView(ADMIN_VIEWS.timers, live, readTimerNodes));
 
   /// Send `code` through the guard to `expect`, the process the user was
-  /// shown or asked about; whether it ran without a q error.
-  const change = async (code: string, what: string, expect: string): Promise<boolean> => {
+  /// shown or asked about; whether it ran without a q error. Nothing is
+  /// sent once `from`, the view it is a command of, is turned off: at the
+  /// command's own question or box, or at the guard's (#2005).
+  const change = async (code: string, what: string, expect: string, from: Switched): Promise<boolean> => {
     const { consoleSize } = readLive((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback));
     try {
-      const ran = await live.runOnActive(code, (connection) => connection.query(statements(code), consoleSize), "ask", expect);
+      const ran = await live.runOnActive(code, async (connection) => (from.on() ? connection.query(statements(code), consoleSize) : OFF), "ask", expect);
       if (ran === undefined) {
+        return false;
+      }
+      if (ran.value === OFF) {
+        void window.showInformationMessage(plainMessage(adminOff(from.feature)));
         return false;
       }
       if (!ran.value.ok) {
@@ -276,8 +285,9 @@ export function registerAdminViews(context: ExtensionContext, live: Live_): { cl
     if ((await window.showWarningMessage(plainMessage(`Close handle ${node.handle} on ${process.label}? The client it belongs to is disconnected.`), { modal: true }, yes)) !== yes) {
       return false;
     }
-    const done = await change(closeCode(node.handle), `close handle ${node.handle}`, process.label);
-    await view.refresh();
+    const done = await change(closeCode(node.handle), `close handle ${node.handle}`, process.label, clients);
+    // The view as it is now: turned off meanwhile, there is none to read for.
+    await clients.view?.refresh();
     return done;
   };
 
@@ -287,8 +297,8 @@ export function registerAdminViews(context: ExtensionContext, live: Live_): { cl
     if (view === undefined || node?.job === undefined || label === undefined) {
       return false;
     }
-    const done = await change(toggleCode(node.job.id, !node.job.active), `${node.job.active ? "turn off" : "turn on"} timer ${node.job.id}`, label);
-    await view.refresh();
+    const done = await change(toggleCode(node.job.id, !node.job.active), `${node.job.active ? "turn off" : "turn on"} timer ${node.job.id}`, label, timers);
+    await timers.view?.refresh();
     return done;
   };
 
@@ -314,8 +324,8 @@ export function registerAdminViews(context: ExtensionContext, live: Live_): { cl
       }
       ms = Number(text.trim());
     }
-    const done = await change(intervalCode(ms), "set the timer", label);
-    await view.refresh();
+    const done = await change(intervalCode(ms), "set the timer", label, timers);
+    await timers.view?.refresh();
     return done;
   };
 

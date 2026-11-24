@@ -12,9 +12,10 @@
 const LIVE_KEY = "q-lint.liveValues";
 
 /// As `src/livemarkdown.ts`'s `liveKey`: continuation lines start with one
-/// space, whatever `>`, indent or CR came before them (#1788).
+/// space, whatever indent or CR came before them (#1788). A `>` there is
+/// q's: a blockquote's markers never reach this text (#1993).
 export function liveKey(expr) {
-  return expr.replace(/\r?\n[ \t>]*/g, "\n ");
+  return expr.replace(/\r?\n[ \t]*/g, "\n ");
 }
 
 /// As `src/livemarkdown.ts`'s `scanLive`: the expression from `at`, and the

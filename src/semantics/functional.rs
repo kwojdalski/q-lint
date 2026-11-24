@@ -10,7 +10,9 @@
 //! becomes a symbol (`` `px ``), as in `parse`: whether it is a column or a
 //! global is the query's to settle when it runs, and the functional form
 //! settles it the same way. A symbol literal is enlisted, the one thing a
-//! hand-written functional form most often gets wrong.
+//! hand-written functional form most often gets wrong. A query in
+//! parentheses inside another is a tree of its own there (`Node::Query`),
+//! and is read back as one.
 //!
 //! What this cannot read it refuses, with the reason, rather than guess: an
 //! adverb (`f'`, `,/`), an assignment inside an expression, a projection
@@ -23,6 +25,11 @@
 //! cases, each compared with `~` against the qSQL it came from in KDB-X.
 //! PeachQ refuses one shape KDB-X runs: a where clause that is a bare name
 //! (`where flag`, `enlist`flag`).
+//!
+//! A functional form says more than qSQL can: where one has no qSQL - a
+//! column named with a word of q's own (`column`) - it is refused too. And
+//! `enlist x` in a tree is not the call `(enlist;x)`: over anything but one
+//! atom it is q's quote, read back as the constant under it (`constant`).
 use super::layout;
 
 /// A rewrite of the query at the cursor: the bytes `start..end` replaced by
@@ -50,6 +57,9 @@ pub(crate) enum Node {
     Apply(Box<Node>, Vec<Node>),
     /// A general list, `(a;b)`: `(enlist;a;b)` in the tree.
     List(Vec<Node>),
+    /// A query inside the expression, in both spellings: the tree `parse`
+    /// gives for it, `(?;`t;();();enlist `c)`, and its qSQL in parentheses.
+    Query { tree: String, qsql: String },
 }
 
 /// The keywords q applies infix, beyond the ones the catalogue writes as
@@ -79,6 +89,8 @@ enum Tok {
     Leaf(String),
     Sym(Vec<String>),
     Name(String),
+    /// A query inside the expression: its tree and its qSQL (`Node::Query`).
+    Query(String, String),
     Op(String),
     Open(u8),
     Close(u8),
@@ -99,7 +111,7 @@ fn tokens(text: &str) -> Result<Vec<Tok>, String> {
             && !b[i - 1].is_ascii_whitespace()
             && matches!(
                 out.last(),
-                Some(Tok::Leaf(_) | Tok::Sym(_) | Tok::Name(_) | Tok::Close(_))
+                Some(Tok::Leaf(_) | Tok::Sym(_) | Tok::Name(_) | Tok::Query(..) | Tok::Close(_))
             )
     };
     while i < b.len() {
@@ -215,6 +227,14 @@ fn tokens(text: &str) -> Result<Vec<Tok>, String> {
                 {
                     i += 1;
                 }
+                // A query word is no function applied to what follows:
+                // it opens a query of its own, read as one.
+                if layout::LEADS.contains(&&text[start..i]) {
+                    let (tree, end) = nested(text, start)?;
+                    out.push(Tok::Query(tree, format!("({})", &text[start..end])));
+                    i = end;
+                    continue;
+                }
                 out.push(Tok::Name(text[start..i].to_string()));
             }
             _ if GLYPHS.contains(&c) => {
@@ -290,6 +310,7 @@ impl Reader {
             Tok::Sym(s) => Node::Sym(s),
             Tok::Name(n) if keyword(&n) => Node::Verb(n),
             Tok::Name(n) => Node::Name(n),
+            Tok::Query(tree, qsql) => Node::Query { tree, qsql },
             Tok::Op(op) if matches!(self.peek(), Some(Tok::Open(b'['))) => Node::Verb(op),
             Tok::Op(op) => return Err(format!("`{op}` used as a monad")),
             Tok::Open(b'(') => {
@@ -369,6 +390,7 @@ pub(crate) fn functional(node: &Node) -> String {
             parts.extend(items.iter().map(functional));
             format!("({})", parts.join(";"))
         }
+        Node::Query { tree, .. } => tree.clone(),
     }
 }
 
@@ -397,7 +419,7 @@ pub(crate) fn derived(node: &Node) -> Derived {
         // `month` on KDB-X, as `.ns.v` is `v` (#1300).
         Node::Name(n) => Derived::Name(n.rsplit('.').next().unwrap_or(n).to_string()),
         Node::Leaf(_) | Node::Sym(_) => Derived::X,
-        Node::Verb(_) => Derived::Unknown,
+        Node::Verb(_) | Node::Query { .. } => Derived::Unknown,
         Node::List(items) => items.last().map_or(Derived::X, derived),
         Node::Apply(_, args) if args.len() == 1 => derived(&args[0]),
         Node::Apply(f, args) if args.len() == 2 => match &**f {
@@ -513,6 +535,57 @@ pub(crate) fn to_functional_at(
 }
 
 fn to_functional(p: &layout::Parts) -> Result<String, String> {
+    let f = form(p)?;
+    let [c, b, a] = &f.rest;
+    Ok(format!("{}[{};{};{};{}]", f.verb, f.table, c.0, b.0, a.0))
+}
+
+/// The query whose lead word is at byte `at` of the expression `text`, as
+/// the tree `parse` holds for a query inside another, and where it ends.
+/// The tree's arguments are the functional form's, each as `eval` must find
+/// it to give that argument: the table an expression's tree, and the others
+/// enlisted unless `eval` leaves them as they are. On KDB-X,
+/// `parse "select from t where a in (exec b from u where c>1)"` holds
+/// ``(?;`u;,,(>;`c;1);();,`b)``.
+fn nested(text: &str, at: usize) -> Result<(String, usize), String> {
+    let v = crate::views(text);
+    let p = layout::parts_at(&v.code, &v.comments, text, at)
+        .filter(|p| p.start == at)
+        .ok_or("a query inside the query whose parts are not certain here")?;
+    let f = form(&p)?;
+    let quoted = |(text, constant): &(String, bool)| {
+        if *constant {
+            text.clone()
+        } else {
+            format!("enlist {text}")
+        }
+    };
+    let [c, b, a] = &f.rest;
+    let table = functional(&tree(&f.from)?);
+    Ok((
+        format!(
+            "({};{table};{};{};{})",
+            f.verb,
+            quoted(c),
+            quoted(b),
+            quoted(a)
+        ),
+        p.end,
+    ))
+}
+
+/// A query as its functional form's parts: the verb, the table as the form
+/// writes it and as the query does, and the where, by and column arguments,
+/// each with whether `eval` leaves it as it is (`()`, a boolean, a
+/// dictionary, an empty symbol list), so that a tree holds it unchanged.
+struct Form {
+    verb: char,
+    table: String,
+    from: String,
+    rest: [(String, bool); 3],
+}
+
+fn form(p: &layout::Parts) -> Result<Form, String> {
     let clause = |w: &str| p.clauses.iter().find(|(c, _)| *c == w).map(|(_, i)| i);
     let from = clause("from")
         .and_then(|i| i.first())
@@ -541,11 +614,20 @@ fn to_functional(p: &layout::Parts) -> Result<String, String> {
         }
     }
     let c = constraints(&wheres)?;
-    let from = if from.contains([' ', '[', '(']) && !from.starts_with('(') {
+    let table = if from.contains([' ', '[', '(']) && !from.starts_with('(') {
         format!("({from})")
     } else {
         from.to_string()
     };
+    let c = (c.clone(), c == "()");
+    let made = |verb: char, b: (String, bool), a: (String, bool)| Form {
+        verb,
+        table: table.clone(),
+        from: from.to_string(),
+        rest: [c.clone(), b, a],
+    };
+    let constant = |text: String| (text, true);
+    let evaluated = |text: String| (text, false);
     match p.lead {
         "select" | "update" => {
             if distinct && !by.is_empty() {
@@ -567,24 +649,24 @@ fn to_functional(p: &layout::Parts) -> Result<String, String> {
             } else {
                 dict(&cols)
             };
-            let verb = if p.lead == "select" { "?" } else { "!" };
-            Ok(format!("{verb}[{from};{c};{b};{a}]"))
+            let verb = if p.lead == "select" { '?' } else { '!' };
+            Ok(made(verb, constant(b), constant(a)))
         }
         "exec" => {
             let b = match &by[..] {
-                [] => "()".to_string(),
-                [one] => match tree(one)? {
+                [] => constant("()".to_string()),
+                [one] => evaluated(match tree(one)? {
                     Node::Name(n) => format!("`{n}"),
                     other => functional(&other),
-                },
-                _ => dict(&columns(&by)?),
+                }),
+                _ => constant(dict(&columns(&by)?)),
             };
             let a = match &head[..] {
                 [] => return Err("an exec with no columns".into()),
-                [one] if named(one).0.is_none() => functional(&tree(one)?),
-                _ => dict(&columns(&head)?),
+                [one] if named(one).0.is_none() => evaluated(functional(&tree(one)?)),
+                _ => constant(dict(&columns(&head)?)),
             };
-            Ok(format!("?[{from};{c};{b};{a}]"))
+            Ok(made('?', b, a))
         }
         "delete" => {
             if !by.is_empty() {
@@ -592,7 +674,11 @@ fn to_functional(p: &layout::Parts) -> Result<String, String> {
             }
             match (&head[..], wheres.is_empty()) {
                 ([], true) => Err("a delete with neither columns nor a where clause".into()),
-                ([], false) => Ok(format!("![{from};{c};0b;`symbol$()]")),
+                ([], false) => Ok(made(
+                    '!',
+                    constant("0b".into()),
+                    constant("`symbol$()".into()),
+                )),
                 (cols, true) => {
                     let mut names = String::new();
                     for col in cols {
@@ -605,7 +691,7 @@ fn to_functional(p: &layout::Parts) -> Result<String, String> {
                     if cols.len() == 1 {
                         names.insert_str(0, "enlist");
                     }
-                    Ok(format!("![{from};();0b;{names}]"))
+                    Ok(made('!', constant("0b".into()), evaluated(names)))
                 }
                 (_, false) => Err("a delete with both columns and a where clause".into()),
             }
@@ -734,14 +820,41 @@ fn data_tokens(text: &str) -> Result<Vec<Tok>, String> {
     tokens(&t)
 }
 
+/// `name` as a column qSQL can name. A functional form names one with any
+/// symbol; qSQL reads a word of q's own as that word wherever it stands -
+/// `select count:px from t` is 'assign, and `where count>1` compares the
+/// function - and a symbol that is no name has no spelling there (#2023).
+fn column(name: &str) -> Result<String, String> {
+    if keyword(name) {
+        return Err(format!(
+            "a column named `{name}`, which qSQL reads as q's own `{name}`"
+        ));
+    }
+    let b = name.as_bytes();
+    let spelt = b
+        .first()
+        .is_some_and(|c| c.is_ascii_alphabetic() || *c == b'.')
+        && b.iter()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.'));
+    if !spelt {
+        return Err(format!("a column named `{name}`, which qSQL cannot spell"));
+    }
+    Ok(name.to_string())
+}
+
 /// A tree from functional-form data.
 fn node(d: &Data) -> Result<Node, String> {
     Ok(match d {
-        Data::Sym(s) if s.len() == 1 => Node::Name(s[0].clone()),
+        Data::Sym(s) if s.len() == 1 => Node::Name(column(&s[0])?),
         Data::Sym(_) => return Err("a symbol vector where a tree was expected".into()),
         Data::Enlist(inner) => match &**inner {
             Data::Sym(s) => Node::Sym(s.clone()),
-            other => Node::List(vec![node(other)?]),
+            // One atom enlisted is a vector of one item, which `eval`
+            // leaves as it is: `enlist 7` in qSQL too.
+            Data::Leaf(l) if atom(l) => Node::List(vec![Node::Leaf(l.clone())]),
+            // Anything else enlisted is a general list of one item, q's
+            // quote: `eval` gives the item back as it stands (#2024).
+            other => constant(other)?,
         },
         Data::Leaf(l) => Node::Leaf(l.clone()),
         Data::Word(w) => Node::Verb(w.clone()),
@@ -750,11 +863,39 @@ fn node(d: &Data) -> Result<Node, String> {
             Data::Word(w) if w == "enlist" => {
                 Node::List(items[1..].iter().map(node).collect::<Result<_, _>>()?)
             }
+            // A query's tree, as `parse` holds one inside another: read
+            // back through its qSQL, so both spellings are in the node.
+            Data::Word(w) if (w == "?" || w == "!") && items.len() == 5 => {
+                let table = node(&items[1])?;
+                let text = infix_text(&table)?;
+                let table = match table {
+                    Node::Apply(..) | Node::List(_) => format!("({text})"),
+                    _ => text,
+                };
+                // What `eval` makes of an argument is what the form takes.
+                let evaluated = |d: &Data| match d {
+                    Data::Enlist(inner) => Ok((**inner).clone()),
+                    Data::List(items) if items.is_empty() => Ok(d.clone()),
+                    Data::Leaf(_) | Data::Dict(..) | Data::NoSymbols => Ok(d.clone()),
+                    _ => {
+                        Err("a query inside a tree whose arguments are not as `parse` writes them")
+                    }
+                };
+                let qsql = written(
+                    w.as_bytes()[0],
+                    &table,
+                    &evaluated(&items[2])?,
+                    &evaluated(&items[3])?,
+                    &evaluated(&items[4])?,
+                )?;
+                tree(&format!("({qsql})"))?
+            }
             f => {
                 let f = match f {
                     Data::Word(w) => Node::Verb(w.clone()),
                     Data::Sym(s) if s.len() == 1 => Node::Name(s[0].clone()),
                     Data::Leaf(l) if l.starts_with('{') => Node::Leaf(l.clone()),
+                    Data::List(_) => node(f)?,
                     _ => return Err("a list whose first item is no function".into()),
                 };
                 let args = items[1..].iter().map(node).collect::<Result<Vec<_>, _>>()?;
@@ -768,6 +909,57 @@ fn node(d: &Data) -> Result<Node, String> {
     })
 }
 
+/// Whether the literal `leaf` is one atom, so that enlisting it makes a
+/// vector: `7`, `0b`, `"a"`, `0x01`, `09:30:00`. A vector of several
+/// (`1 2 3`, `101b`, `0x0102`, `"abc"`, `""`) and a lambda are not: a list
+/// holding one of those is a general list.
+fn atom(leaf: &str) -> bool {
+    let b = leaf.as_bytes();
+    if let Some(body) = leaf.strip_prefix('"') {
+        // The characters of a string: an escape is one, `\123` too.
+        let body = body.strip_suffix('"').unwrap_or(body).as_bytes();
+        let (mut i, mut chars) = (0, 0);
+        while i < body.len() {
+            i += match body[i] {
+                b'\\' if body.get(i + 1).is_some_and(u8::is_ascii_digit) => 4,
+                b'\\' => 2,
+                _ => 1,
+            };
+            chars += 1;
+        }
+        return chars == 1;
+    }
+    if leaf.starts_with('{') || leaf == "()" || leaf.contains(' ') {
+        return false;
+    }
+    if let Some(bits) = leaf.strip_suffix('b')
+        && bits.bytes().all(|c| c == b'0' || c == b'1')
+    {
+        return bits.len() == 1;
+    }
+    if leaf.starts_with("0x") {
+        return (3..=4).contains(&b.len());
+    }
+    true
+}
+
+/// Data a tree holds unevaluated - what is under q's quote - as the
+/// expression that builds it: each item of a list a constant in turn, and
+/// an `enlist` inside it a list of one item.
+fn constant(d: &Data) -> Result<Node, String> {
+    Ok(match d {
+        Data::Leaf(l) => Node::Leaf(l.clone()),
+        Data::Sym(s) => Node::Sym(s.clone()),
+        Data::Word(w) => Node::Verb(w.clone()),
+        Data::Enlist(inner) => Node::List(vec![constant(inner)?]),
+        Data::List(items) if items.is_empty() => Node::Leaf("()".into()),
+        Data::List(items) => Node::List(items.iter().map(constant).collect::<Result<_, _>>()?),
+        Data::Dict(..) | Data::NoSymbols => {
+            return Err("a dictionary held as a constant, which no expression here writes".into());
+        }
+    })
+}
+
 /// A tree written as the q expression that reads to it.
 pub(crate) fn infix_text(n: &Node) -> Result<String, String> {
     Ok(match n {
@@ -775,6 +967,7 @@ pub(crate) fn infix_text(n: &Node) -> Result<String, String> {
         Node::Name(n) => n.clone(),
         Node::Sym(s) => symbols(s),
         Node::Verb(v) => v.clone(),
+        Node::Query { qsql, .. } => qsql.clone(),
         // `(enlist;x)` is a one-item list, which `(x)` is not.
         Node::List(items) if items.len() == 1 => format!("enlist {}", infix_text(&items[0])?),
         Node::List(items) => format!(
@@ -805,17 +998,19 @@ pub(crate) fn infix_text(n: &Node) -> Result<String, String> {
                 (Node::Verb(v), [_]) if v.bytes().all(|c| GLYPHS.contains(&c)) => {
                     return Err(format!("`{v}` applied as a monad"));
                 }
-                (Node::Verb(_) | Node::Name(_) | Node::Leaf(_), [x]) => {
+                (Node::Verb(_) | Node::Name(_) | Node::Leaf(_) | Node::Query { .. }, [x]) => {
                     format!("{} {}", infix_text(f)?, infix_text(x)?)
                 }
-                (Node::Verb(_) | Node::Name(_) | Node::Leaf(_), many) => format!(
-                    "{}[{}]",
-                    infix_text(f)?,
-                    many.iter()
-                        .map(infix_text)
-                        .collect::<Result<Vec<_>, _>>()?
-                        .join(";")
-                ),
+                (Node::Verb(_) | Node::Name(_) | Node::Leaf(_) | Node::Query { .. }, many) => {
+                    format!(
+                        "{}[{}]",
+                        infix_text(f)?,
+                        many.iter()
+                            .map(infix_text)
+                            .collect::<Result<Vec<_>, _>>()?
+                            .join(";")
+                    )
+                }
                 _ => return Err("a function that is itself an application".into()),
             }
         }
@@ -863,9 +1058,16 @@ fn dict_items(d: &Data) -> Result<Vec<(String, Node)>, String> {
         },
         _ => return Err("dictionary keys that are not symbols".into()),
     };
+    let keys = keys
+        .iter()
+        .map(|k| column(k))
+        .collect::<Result<Vec<_>, _>>()?;
     let vals: Vec<Node> = match &**v {
         Data::Enlist(one) => vec![node(one)?],
-        Data::Sym(s) => s.iter().map(|s| Node::Name(s.clone())).collect(),
+        Data::Sym(s) => s
+            .iter()
+            .map(|s| column(s).map(Node::Name))
+            .collect::<Result<_, _>>()?,
         Data::List(items) => items.iter().map(node).collect::<Result<_, _>>()?,
         _ => return Err("dictionary values that are not a list".into()),
     };
@@ -990,12 +1192,22 @@ fn from_functional(verb: u8, args: &[&str]) -> Result<String, String> {
         .and_then(|t| t.strip_suffix(')'))
         .filter(|t| !t.contains(['(', ')']))
         .unwrap_or(table);
-    let wheres = where_list(&data(args[1])?)?
+    written(
+        verb,
+        table,
+        &data(args[1])?,
+        &data(args[2])?,
+        &data(args[3])?,
+    )
+}
+
+/// The qSQL of a functional form: its verb, its table as text, and its
+/// where, by and column arguments.
+fn written(verb: u8, table: &str, c: &Data, b: &Data, a: &Data) -> Result<String, String> {
+    let wheres = where_list(c)?
         .iter()
         .map(|n| infix_text(n).map(one_item))
         .collect::<Result<Vec<_>, _>>()?;
-    let b = data(args[2])?;
-    let a = data(args[3])?;
     let tail = if wheres.is_empty() {
         String::new()
     } else {
@@ -1005,7 +1217,7 @@ fn from_functional(verb: u8, args: &[&str]) -> Result<String, String> {
         Ok(match b {
             Data::Leaf(l) if l == "0b" => String::new(),
             Data::List(items) if items.is_empty() => String::new(),
-            Data::Sym(s) if s.len() == 1 => format!(" by {}", s[0]),
+            Data::Sym(s) if s.len() == 1 => format!(" by {}", column(&s[0])?),
             other => format!(" by {}", column_text(&dict_items(other)?)?),
         })
     };
@@ -1016,17 +1228,17 @@ fn from_functional(verb: u8, args: &[&str]) -> Result<String, String> {
                 || !matches!(a, Data::Dict(..) | Data::List(_));
             if exec {
                 let cols = match &a {
-                    Data::Dict(..) => column_text(&dict_items(&a)?)?,
+                    Data::Dict(..) => column_text(&dict_items(a)?)?,
                     other => one_item(infix_text(&node(other)?)?),
                 };
-                return Ok(format!("exec {cols}{} from {table}{tail}", by_text(&b)?));
+                return Ok(format!("exec {cols}{} from {table}{tail}", by_text(b)?));
             }
             let distinct = matches!(&b, Data::Leaf(l) if l == "1b");
             // A column named as a group is 'dup names for cols/groups in a
             // select, though the functional form runs (#1301).
             if let (Data::Dict(..), Data::Dict(..)) = (&b, &a) {
-                let groups = dict_items(&b)?;
-                if let Some((dup, _)) = dict_items(&a)?
+                let groups = dict_items(b)?;
+                if let Some((dup, _)) = dict_items(a)?
                     .into_iter()
                     .find(|(n, _)| groups.iter().any(|(g, _)| g == n))
                 {
@@ -1045,27 +1257,26 @@ fn from_functional(verb: u8, args: &[&str]) -> Result<String, String> {
             } else {
                 "select"
             };
-            let by = if distinct {
-                String::new()
-            } else {
-                by_text(&b)?
-            };
+            let by = if distinct { String::new() } else { by_text(b)? };
             let gap = if cols.is_empty() { "" } else { " " };
             Ok(format!("{lead}{gap}{cols}{by} from {table}{tail}"))
         }
         _ => match &a {
             Data::NoSymbols => Ok(format!("delete from {table}{tail}")),
-            Data::Sym(s) if wheres.is_empty() => Ok(format!("delete {} from {table}", s.join(","))),
+            Data::Sym(s) if wheres.is_empty() => {
+                let names = s.iter().map(|n| column(n)).collect::<Result<Vec<_>, _>>()?;
+                Ok(format!("delete {} from {table}", names.join(",")))
+            }
             Data::Enlist(one)
                 if wheres.is_empty() && matches!(&**one, Data::Sym(s) if s.len() == 1) =>
             {
                 let Data::Sym(s) = &**one else { unreachable!() };
-                Ok(format!("delete {} from {table}", s[0]))
+                Ok(format!("delete {} from {table}", column(&s[0])?))
             }
             Data::Dict(..) => Ok(format!(
                 "update {}{} from {table}{tail}",
-                column_text(&dict_items(&a)?)?,
-                by_text(&b)?
+                column_text(&dict_items(a)?)?,
+                by_text(b)?
             )),
             _ => Err("a `![...]` that is neither an update nor a delete".into()),
         },

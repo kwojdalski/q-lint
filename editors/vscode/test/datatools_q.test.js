@@ -132,6 +132,23 @@ test("the q of the data tools against a real q process", { skip }, async (t) => 
     assert.deepStrictEqual(cells(last, "date"), ["2026.01.02", "2026.01.02", "2026.01.02"]);
   });
 
+  await t.test("every filter offered on a column of strings runs, and keeps the rows it says (#2014)", async () => {
+    const from = '([] a:3 1 2 4; b:("xy";"yy";"";enlist"x"))';
+    const base = await grid(from);
+    const strings = w.stringColumn(base.grid, 1);
+    assert.strictEqual(strings, true);
+    const kept = async (op, value) => cells(await grid(w.wrangleQuery(from, [{ kind: "filter", column: "b", op, value, strings }])), "a");
+    // The value the filter starts from is the first cell's, as the view fills it in.
+    const first = w.cellLiteral(base.grid, 1, 0);
+    const answers = {};
+    for (const op of w.filterOps(strings)) answers[op] = await kept(op, op === "in" ? '("yy";"xy")' : op === "like" ? '"?y"' : first);
+    assert.deepStrictEqual(answers, { "=": ["3"], "<>": ["1", "2", "4"], like: ["3", "1"], in: ["3", "1"], null: ["2"], "not null": ["3", "1", "4"] });
+    assert.deepStrictEqual(await kept("=", w.cellLiteral(base.grid, 1, 3)), ["4"]);
+    // The ordering tests are q's 'length on strings: they are not offered.
+    const answer = await connection.queryGrid(statements(w.wrangleQuery(from, [{ kind: "filter", column: "b", op: "<", value: first }])), SIZE, 1000);
+    assert.deepStrictEqual([answer.ok, answer.error], [false, "length"]);
+  });
+
   await t.test("a wrangle's steps run as one expression, and change nothing on the process (#961)", async () => {
     const base = await grid("select from t");
     const steps = [

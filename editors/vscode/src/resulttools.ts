@@ -36,10 +36,10 @@ import type { Live } from "./live";
 import { plainName } from "./qliteral";
 import {
   CAST_TYPES,
-  FILTER_OPS,
   cellLiteral,
   columnProblem,
   editStatement,
+  filterOps,
   guessTable,
   stepText,
   stringColumn,
@@ -198,15 +198,16 @@ export class ResultTools {
     const column = payload.names[at];
     switch (kind) {
       case "filter": {
+        const strings = stringColumn(payload, at);
         const op = await window.showQuickPick(
-          FILTER_OPS.map((o) => ({ label: o, description: o === "like" ? "a pattern, \"AB*\"" : o === "in" ? "a list, `a`b" : undefined })),
+          filterOps(strings).map((o) => ({ label: o, description: o === "like" ? "a pattern, \"AB*\"" : o === "in" ? "a list, `a`b" : undefined })),
           { title: `q-lint: keep the rows where ${column} ...` },
         );
         if (op === undefined) {
           return undefined;
         }
         if (op.label === "null" || op.label === "not null") {
-          return { kind, column, op: op.label as FilterOp, value: "" };
+          return { kind, column, op: op.label as FilterOp, value: "", strings };
         }
         const value = await window.showInputBox({
           title: `q-lint: keep the rows where ${column} ${op.label} ...`,
@@ -214,7 +215,7 @@ export class ResultTools {
           value: (payload.cells[at]?.length ?? 0) > 0 ? cellLiteral(payload, at, 0) : "",
           validateInput: (v) => (v.trim() === "" ? "Give a q value" : undefined),
         });
-        return value === undefined ? undefined : { kind, column, op: op.label as FilterOp, value };
+        return value === undefined ? undefined : { kind, column, op: op.label as FilterOp, value, strings };
       }
       case "sort": {
         const way = await window.showQuickPick(

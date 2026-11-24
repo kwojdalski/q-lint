@@ -30,10 +30,12 @@ const registry = new tm.Registry({
           : null,
 });
 const grammar = registry.loadGrammar("source.q");
+const kGrammar = registry.loadGrammar("source.k");
 
-// The innermost scope of each token whose text is `text`, in order.
-async function scopesOf(source, text) {
-  const g = await grammar;
+// The innermost scope of each token whose text is `text`, in order; `k` for
+// a k file's.
+async function scopesOf(source, text, k = false) {
+  const g = await (k ? kGrammar : grammar);
   let stack = tm.INITIAL;
   const found = [];
   for (const line of source.split("\n")) {
@@ -168,4 +170,147 @@ test("a k) line is k, coloured by the k grammar, and the next q line is q again"
   const next = g.tokenizeLine("f:{x+1}", first.ruleStack);
   const f = next.tokens.find((t) => "f:{x+1}".slice(t.startIndex, t.endIndex) === "f");
   assert.ok(!f.scopes.includes("source.k"), JSON.stringify(f.scopes));
+});
+
+// As KDB-X tokenizes them (-4!): "1_til 5" is 1, _, til, 5 and "(1)_x" ends
+// _, x, while "a_1+a_b" is a_1, +, a_b and "`a_x" one symbol. Only an
+// underscore inside a name belongs to it.
+test("an underscore after a literal or a bracket is drop: what it joins keeps its colour (#1971)", async () => {
+  assert.deepStrictEqual(await scopesOf("r:1_til 5", "1"), ["constant.numeric.q"]);
+  assert.deepStrictEqual(await scopesOf("r:1_til 5", "til"), ["support.function.builtin.q"]);
+  assert.deepStrictEqual(await scopesOf("j:{-1_string x}", "1"), ["constant.numeric.q"]);
+  assert.deepStrictEqual(await scopesOf("j:{-1_string x}", "string"), ["support.function.builtin.q"]);
+  assert.deepStrictEqual(await scopesOf("j:{1_x}", "x"), ["variable.language.implicit.q"]);
+  assert.deepStrictEqual(await scopesOf("f:(-1)_y", "y"), ["variable.other.q"]);
+  assert.deepStrictEqual(await scopesOf("g:f[x]_y", "y"), ["variable.other.q"]);
+  assert.deepStrictEqual(await scopesOf("h:til[3]_2", "2"), ["constant.numeric.q"]);
+  assert.deepStrictEqual(await scopesOf("h:x _y", "y"), ["variable.other.q"]);
+  for (const [literal, scope] of [["2024.01.02", "constant.numeric.temporal.q"], ["0N", "constant.language.null.q"], ["1b", "constant.language.boolean.q"], ["0x01", "constant.numeric.byte.q"], ["1e3", "constant.numeric.q"]]) {
+    assert.deepStrictEqual(await scopesOf(`r:${literal}_v`, literal), [scope], literal);
+    assert.deepStrictEqual(await scopesOf(`r:${literal}_v`, "v"), ["variable.other.q"], literal);
+  }
+  // One inside a name is the name's: no builtin, number or implicit
+  // parameter starts after it.
+  assert.deepStrictEqual(await scopesOf("r:a_1+a_b", "a_1"), ["variable.other.q"]);
+  assert.deepStrictEqual(await scopesOf("r:a_1+a_b", "a_b"), ["variable.other.q"]);
+  assert.deepStrictEqual(await scopesOf("r:a_til", "a_til"), ["variable.other.q"]);
+  assert.deepStrictEqual(await scopesOf("r:count_x", "count_x"), ["variable.other.q"]);
+  assert.deepStrictEqual(await scopesOf("f:{x_1+a_x}", "x_1"), ["variable.other.q"]);
+  assert.deepStrictEqual(await scopesOf("f:{x_1+a_x}", "a_x"), ["variable.other.q"]);
+  assert.deepStrictEqual(await scopesOf("r:.z.p_x", ".z.p_x"), ["support.function.system.q"]);
+  assert.deepStrictEqual(await scopesOf("r:`a_x", "`a_x"), ["constant.other.symbol.q"]);
+  assert.deepStrictEqual(await scopesOf("a_b:1", "a_b"), ["variable.other.definition.q"]);
+  // The same in a k file.
+  assert.deepStrictEqual(await scopesOf("f:{1_x}", "1", true), ["constant.numeric.k"]);
+  assert.deepStrictEqual(await scopesOf("f:{1_x}", "x", true), ["variable.language.implicit.k"]);
+  assert.deepStrictEqual(await scopesOf("r:(1)_y", "y", true), ["variable.other.k"]);
+  assert.deepStrictEqual(await scopesOf("f:{x_1+a_b}", "x_1", true), ["variable.other.k"]);
+  assert.deepStrictEqual(await scopesOf("f:{x_1+a_b}", "a_b", true), ["variable.other.k"]);
+});
+
+// Checked on KDB-X by evaluating "\<c>" for every printable c and every
+// three octal digits: after a backslash q takes n, r, t, a quote, a
+// backslash and a slash, and the octals 000 to 377. "\400" is an error, and
+// so are "\1" and "\12".
+test("a string's escapes are the ones q takes: a slash is one, an octal past 377 is not (#1972)", async () => {
+  assert.deepStrictEqual(await scopesOf('u:"http:\\/\\/x"', "\\/"), ["constant.character.escape.q", "constant.character.escape.q"]);
+  assert.deepStrictEqual(await scopesOf('s:"a\\377b"', "\\377"), ["constant.character.escape.q"]);
+  assert.deepStrictEqual(await scopesOf('s:"a\\000b"', "\\000"), ["constant.character.escape.q"]);
+  assert.deepStrictEqual(await scopesOf('s:"a\\400b"', "\\4"), ["invalid.illegal.escape.q"]);
+  assert.deepStrictEqual(await scopesOf('s:"a\\777b"', "\\7"), ["invalid.illegal.escape.q"]);
+  assert.deepStrictEqual(await scopesOf('s:"a\\12b"', "\\1"), ["invalid.illegal.escape.q"]);
+  // The slash escape opens no comment and ends no string.
+  assert.deepStrictEqual(await scopesOf('u:"a \\/ b";v:1', "v"), ["variable.other.definition.q"]);
+  // The same in a k file.
+  assert.deepStrictEqual(await scopesOf('u:"a\\/b"', "\\/", true), ["constant.character.escape.k"]);
+  assert.deepStrictEqual(await scopesOf('s:"a\\400b"', "\\4", true), ["invalid.illegal.escape.k"]);
+});
+
+// On KDB-X ('[neg;count]) 1 2 3 and (')[neg;count] 1 2 3 are -3, '[neg;count]
+// opens a line or a lambda the same way, and {'[`bad]} 1 returns `bad' - a
+// quote before a bracket never raises. {'(`bad)} and {' `bad} do.
+test("a quote before a bracket or a closing parenthesis is the iterator, not a signal (#1973)", async () => {
+  const iterator = (await scopesOf("r:{x} '[1 2]", "'"))[0];
+  assert.match(iterator, /iterator/);
+  assert.deepStrictEqual(await scopesOf("h:('[neg;count]) 1 2", "'"), [iterator]);
+  assert.deepStrictEqual(await scopesOf("i:(')[neg;count]", "'"), [iterator]);
+  assert.deepStrictEqual(await scopesOf("'[neg;count] 1 2 3", "'"), [iterator]);
+  assert.deepStrictEqual(await scopesOf("j:{'[neg;count] x}", "'"), [iterator]);
+  assert.deepStrictEqual(await scopesOf("k:{[f;g] '[f;g]}", "'"), [iterator]);
+  // What is composed keeps its own colours.
+  assert.deepStrictEqual(await scopesOf("h:('[neg;count]) 1 2", "neg"), ["support.function.builtin.q"]);
+  // A signal is still one, a parenthesised operand included.
+  assert.deepStrictEqual(await scopesOf("f:{'(`bad)}", "'"), ["keyword.control.flow.signal.q"]);
+  assert.deepStrictEqual(await scopesOf("f:{' `bad}", "'"), ["keyword.control.flow.signal.q"]);
+  assert.deepStrictEqual(await scopesOf("f:{$[x;'`bad;1]}", "'"), ["keyword.control.flow.signal.q"]);
+  assert.deepStrictEqual(await scopesOf("f:('`bad)", "'"), ["keyword.control.flow.signal.q"]);
+});
+
+// On KDB-X a script of "#!/usr/bin/env q" then "sh1:1" loads and sh1 is 1,
+// a .k one the same; with the #! line second the load fails with '#.
+test("a script's #! first line is a comment, and only the first line (#1974)", async () => {
+  const script = "#!/usr/bin/env q\nsh1:1 / set";
+  assert.deepStrictEqual(await scopesOf(script, "#!/usr/bin/env q"), ["comment.line.shebang.q"]);
+  assert.deepStrictEqual(await scopesOf(script, "bin"), []);
+  assert.deepStrictEqual(await scopesOf(script, "sh1"), ["variable.other.definition.q"]);
+  // Anywhere else q reads it as code, so it is coloured as code.
+  const second = "sh2:1\n#!/usr/bin/env q";
+  assert.deepStrictEqual(await scopesOf(second, "#!/usr/bin/env q"), []);
+  assert.deepStrictEqual(await scopesOf(second, "bin"), ["support.function.builtin.q"]);
+  assert.deepStrictEqual(await scopesOf("r:1#!/usr", "#!/usr"), []);
+  // The same in a k file.
+  assert.deepStrictEqual(await scopesOf("#!/bin/k\nsh4:1", "#!/bin/k", true), ["comment.line.shebang.k"]);
+  assert.deepStrictEqual(await scopesOf("#!/bin/k\nsh4:1", "sh4", true), ["variable.other.k"]);
+  assert.deepStrictEqual(await scopesOf("sh4:1\n#!/bin/k", "#!/bin/k", true), []);
+});
+
+// Every literal here was put to KDB-X as `type value "<it>"` with `-4!`
+// counting its tokens: the first two lists are one token of the type named,
+// the last is an error there.
+test("a temporal or numeric literal is one token with the type letters q takes, and only those (#1975)", async () => {
+  const temporal = [
+    "12:34p", "12:34n", "12:34u", "12:34:56p", "12:34:56n", "12:34:56.789p", "12:34:56.789n", "12:34:56.789t", "12:34:56.p",
+    "2024.01.02m", "2024.01.02n", "2024.01.02d", "2024.01.02p", "2024.01.02z", "2024.01m",
+    "2024.01.02D", "2024.01.02Dn", "2024.01.02D12:34:56.789n", "2024.01.02D12:34d", "2024.01.02D12:34:56.123456789z",
+    "2024.01.02T12:34:56.789", "2024.01.02T12:34p", "2024.01.02T12:34:56.789n", "2024.01.02Td", "2024.01.02T12z",
+    "1D", "1Dp", "1D12p", "1D12:34:56.789p", "0D00:00:01n", "123:45", "123:45u", "123:45:07.5t",
+  ];
+  for (const literal of temporal) {
+    assert.deepStrictEqual(await scopesOf(`a:${literal}+1`, literal), ["constant.numeric.temporal.q"], literal);
+    assert.deepStrictEqual(await scopesOf(`a:${literal}`, literal, true), ["constant.numeric.temporal.k"], `k ${literal}`);
+  }
+  const numeric = [
+    "1", "12j", "1h", "1e", "1f", "1n", "1u", "1v", "1t", "1p", "1.", "1.5", ".5", "1.5e", "1.5f", "1.5n", "1.5t", "1.5p", "1.f",
+    "1e5", "1e-3", "1e+3", "1.5e3", "1.5e-3", "1e5f", "1e5e", "1.5E3", "1.E3", ".5E3", "1.5E3f", "2024.01", "2024.01p",
+  ];
+  for (const literal of numeric) {
+    assert.deepStrictEqual(await scopesOf(`a:${literal}+x`, literal), ["constant.numeric.q"], literal);
+    assert.deepStrictEqual(await scopesOf(`a:${literal}`, literal, true), ["constant.numeric.k"], `k ${literal}`);
+  }
+  // What q refuses is no literal: no part of it is coloured as one.
+  const refused = [
+    "1E5", "15E3", "1.5E", "1.2.3", "1.5i", "1.5h", "1.5j", "1.5u", "1.5v", "1e5i", "1e5j", "1e5p", "1e5n", "1d", "1m", "1z",
+    "2024.01.02t", "2024.01.02u", "2024.01.02v", "2024.01.02Dm", "2024.01.02Dt", "2024.01.02Tn", "2024.01.02Tp", "2024.01.02T12p",
+    "12:34z", "12:34d", "12:34m", "12:34:56.789z", "1Dt", "1Du", "1Dz", "1D12:34d", "12:34:56.789d",
+  ];
+  for (const text of refused) {
+    for (const k of [false, true]) {
+      const g = await (k ? kGrammar : grammar);
+      const { tokens } = g.tokenizeLine(`a:${text}`, tm.INITIAL);
+      const coloured = tokens.filter((t) => t.scopes.some((x) => /^constant\./.test(x))).map((t) => `a:${text}`.slice(t.startIndex, t.endIndex));
+      assert.deepStrictEqual(coloured, [], `${k ? "k " : ""}${text}`);
+    }
+  }
+  // An upper-case exponent takes no sign: q reads 1.5E-3 as the bad token
+  // 1.5E, minus, 3.
+  assert.deepStrictEqual(await scopesOf("a:1.5E-3", "1.5E"), []);
+  assert.deepStrictEqual(await scopesOf("a:1.5E-3", "1.5"), []);
+  assert.deepStrictEqual(await scopesOf("a:1.5E-3", "1"), ["source.q"]);
+  assert.deepStrictEqual(await scopesOf("a:1.5E-3", "3"), ["constant.numeric.q"]);
+  // One digit before a colon is a file operator's, and still a number.
+  assert.deepStrictEqual(await scopesOf("r:`:f 0:x", "0"), ["constant.numeric.q"]);
+  assert.deepStrictEqual(await scopesOf("r:h 0:1 2", "0"), ["constant.numeric.q"]);
+  assert.deepStrictEqual(await scopesOf("r:h 0:1 2", "1"), ["constant.numeric.q"]);
+  // With a c any of them is a char - 3c is "3" - so it is not a number.
+  assert.deepStrictEqual(await scopesOf("a:3c", "3c"), ["source.q"]);
 });

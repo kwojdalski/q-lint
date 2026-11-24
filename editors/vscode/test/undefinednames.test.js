@@ -213,3 +213,46 @@ test("a production process connected while the server answered is not asked (#14
   await check;
   assert.deepStrictEqual(asked, []);
 });
+
+// The check awaits the server and the process, and wrote what came back
+// whatever had happened meanwhile: a file closed during it was warned on
+// until the next disconnect, and an older check replaced a newer one's
+// answer (#1989).
+test("a check answered after its file was closed, or after a later check of it, shows nothing", async () => {
+  stub.reset();
+  const { collections, listeners } = fakeEditor();
+  stub.config.user["undefinedNames.enable"] = true;
+  const waiting = [];
+  const server = { sendRequest: () => new Promise((r) => waiting.push(r)) };
+  const check = registerUndefinedNames(stub.newContext(), fakeLive(), () => server);
+  const entries = collections[0].entries;
+  const answered = (names) => names.map((n) => ({ names: [n], written: n, range: range(0, 0, n.length) }));
+  const settled = () => new Promise((r) => setImmediate(r));
+
+  const closing = { ...doc, isClosed: false };
+  listeners.open.forEach((l) => l(closing));
+  closing.isClosed = true;
+  listeners.close.forEach((l) => l(closing));
+  waiting.shift()(answered(["gone"]));
+  await settled();
+  assert.deepStrictEqual([...entries.keys()], []);
+  // Opened again, it is a document of its own, and is warned on.
+  const again = { ...doc, isClosed: false };
+  listeners.open.forEach((l) => l(again));
+  waiting.shift()(answered(["gone"]));
+  await settled();
+  assert.deepStrictEqual(entries.get("file:///ws/main.q").map((d) => d.message), ["gone is defined neither in the workspace nor on dev"]);
+
+  const older = check.check(again, false);
+  const newer = check.check(again, false);
+  waiting.pop()(answered(["now"]));
+  await newer;
+  waiting.pop()(answered(["before"]));
+  await older;
+  assert.deepStrictEqual(entries.get("file:///ws/main.q").map((d) => d.message), ["now is defined neither in the workspace nor on dev"]);
+  // And a later check still replaces it.
+  const last = check.check(again, false);
+  waiting.pop()(answered([]));
+  await last;
+  assert.deepStrictEqual(entries.get("file:///ws/main.q"), []);
+});

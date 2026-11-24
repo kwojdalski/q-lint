@@ -233,7 +233,10 @@ test("unlimited asks for every row and a size nothing reaches, and keeps nothing
   const off = limits(settings, true);
   assert.strictEqual(off.gridLimit, UNLIMITED_ROWS);
   assert.ok(off.consoleSize[0] >= 1e9 && off.consoleSize[1] >= 1e9);
-  assert.ok(!UNLIMITED.includes("::") && !/\bset\b/.test(UNLIMITED), UNLIMITED);
+  // No global is assigned: the one `::` is the null LAID_OUT compares with (#1995).
+  assert.ok(!UNLIMITED.replace('(::)~x', "").includes("::") && !/\bset\b/.test(UNLIMITED), UNLIMITED);
+  // And the process's console size is read, never set.
+  assert.ok(!/system\s*"c\s|\\c\s/.test(UNLIMITED), UNLIMITED);
   assert.ok(UNLIMITED.startsWith("{[s;size]") && UNLIMITED.endsWith("}"));
   // A simple list comes as its value and is written here, whole.
   const many = Array.from({ length: 1000 }, (_, i) => Long.fromInt(i));

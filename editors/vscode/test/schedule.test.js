@@ -222,6 +222,54 @@ test("a path's and a last outcome's $(name) are text in the picks' details (#192
 });
 
 // tick built its due list once: a run longer than the tick let the next
+// The switch was read on entry only: turned off while a pick was open, Run
+// Now still ran the saved query and wrote its file, and Add still saved
+// (#2005).
+test("turned off at a prompt, nothing is run, written, removed or saved (#2005)", async (t) => {
+  const { live, schedules, context } = await setUp(t, [{ label: "p", host: "h", port: 1, tags: [] }], [{ name: "q", code: "1+1" }]);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-schedule-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  let ran = 0;
+  live.runApart = async () => (ran++, { ok: true, type: -7, text: ["2"] });
+  const one = { id: "s1", query: "q", process: "p", format: "csv", path: path.join(dir, "s1.csv"), every: 60, mode: "replace", since: 0 };
+  await context.workspaceState.update(SCHEDULES_KEY, [one]);
+  const turn = (on) => {
+    stub.config.user["export.schedule.enable"] = on;
+    stub.changeConfig("q-lint.export.schedule.enable");
+  };
+  const offThen = (answer) => (options) => (turn(false), typeof answer === "function" ? answer(options) : answer);
+  for (const picks of [
+    [offThen((o) => o.items[0]), "Run Now"],
+    [(o) => o.items[0], offThen("Run Now")],
+    [(o) => o.items[0], offThen("Remove")],
+  ]) {
+    turn(true);
+    stub.messages = [];
+    stub.picks.push(...picks);
+    await schedules.manage();
+    assert.strictEqual(schedules.ticking, false);
+    assert.deepStrictEqual([ran, fs.existsSync(one.path), schedules.list().map((s) => s.id)], [0, false, ["s1"]]);
+    assert.deepStrictEqual(stub.messages, [["info", adminOff("scheduledExports")]]);
+  }
+  // Add, at the first of its six and at the last.
+  vscode.window.showSaveDialog = async () => vscode.Uri.file(path.join(dir, "new.csv"));
+  for (const at of [0, 3]) {
+    turn(true);
+    stub.messages = [];
+    const answers = ["q", "p", "CSV", "Replace the file each run"];
+    stub.picks.push(...answers.map((a, i) => (i === at ? offThen(a) : a)));
+    stub.inputs.push("+30");
+    assert.strictEqual(await schedules.add(), undefined);
+    assert.deepStrictEqual(schedules.list().map((s) => s.id), ["s1"]);
+    assert.deepStrictEqual(stub.messages, [["info", adminOff("scheduledExports")]]);
+  }
+  // On, both do as asked.
+  turn(true);
+  stub.picks.push((o) => o.items[0], "Run Now");
+  await schedules.manage();
+  assert.deepStrictEqual([ran, fs.existsSync(one.path)], [1, true]);
+});
+
 // tick start a schedule the first then ran again, both writing one file;
 // Run Now never asked whether it was running.
 test("a schedule never runs twice at once (#1089)", async (t) => {

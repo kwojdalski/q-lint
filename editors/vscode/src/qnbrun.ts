@@ -19,7 +19,7 @@ import * as path from "node:path";
 import { isProduction } from "./agent";
 import { cellOutputs, chartCellOutputs, DATA, readCellData, type OutputPart } from "./celldata";
 import { cellDirective, type CellMode } from "./celldirectives";
-import { LIVE, LIVE_KEY, liveExpressions, markdownAfter, readLiveValues, type LiveValue } from "./livemarkdown";
+import { LIVE, LIVE_KEY, liveQueries, markdownAfter, readLiveValues, type LiveValue } from "./livemarkdown";
 import type { RowLimitFrom } from "./liveconfig";
 import { address, readProcessFile, type Process } from "./processes";
 import { QConnection } from "./qclient";
@@ -55,18 +55,20 @@ export async function cellAnswer(connection: QConnection, mode: CellMode, cut: s
 /// expression, since all of them are sent (#1088), each read on its own as
 /// each is sent: joined, a `\` or `/` line would hide what came after (#1442).
 export function guardedText(source: string, markdown: string[]): string[] {
-  return [source, ...new Set(markdown.flatMap(liveExpressions))];
+  return [source, ...new Set(markdown.flatMap(liveQueries).map((q) => q.expr))];
 }
 
-/// The live values of the Markdown `sources`, each cell's by expression,
-/// read on `connection` in one call; empty when they have none.
+/// The live values of the Markdown `sources`, each cell's by its key, read
+/// on `connection` in one call; empty when they have none. What is sent is
+/// each one's expression as written, not its key (#1993).
 export async function liveValues(connection: QConnection, sources: string[]): Promise<Record<string, LiveValue>[]> {
-  const exprs = [...new Set(sources.flatMap(liveExpressions))];
+  const queries = sources.map(liveQueries);
+  const exprs = [...new Set(queries.flat().map((q) => q.expr))];
   if (exprs.length === 0) {
     return sources.map(() => ({}));
   }
   const all = readLiveValues(exprs, await connection.call(LIVE, exprs));
-  return sources.map((s) => Object.fromEntries(liveExpressions(s).map((e) => [e, all[e]])));
+  return queries.map((qs) => Object.fromEntries(qs.map((q) => [q.key, all[q.expr]])));
 }
 
 /// An output as the file keeps it: an error as VS Code writes one.

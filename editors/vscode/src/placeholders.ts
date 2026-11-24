@@ -3,7 +3,8 @@
 // import, so node tests it; `live.ts` asks for the values.
 //
 // A placeholder is found only in code q reads: never in a string or a
-// comment, where `{{name}}` is text. Its name is a q name (`a`, `.ns.v`,
+// comment, where `{{name}}` is text. A system command's line has no
+// comment: a blank and a slash there begin an argument (#1984). Its name is a q name (`a`, `.ns.v`,
 // `start_date`), and not `x`, `y` or `z`: `{{x}}` is a lambda in a lambda,
 // q's own code, and is left alone. A lambda that reads a global as
 // `{{a}}` is still taken for one; `q-lint.query.placeholders.enable` turns
@@ -37,6 +38,8 @@ export interface Placeholder {
 }
 
 const PLACEHOLDER = /\{\{[ \t]*(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)[ \t]*\}\}/y;
+/// A system command's line, other than `\t` and `\ts`, which time q code.
+const SYSTEM = /^\\(?!ts?(?:[:\s]|$))\S/;
 /// q's implicit parameters: `{{x}}` is a lambda returning its argument.
 const IMPLICIT = new Set(["x", "y", "z"]);
 
@@ -50,6 +53,11 @@ export function placeholders(code: string): Placeholder[] {
     const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
     const start = offset;
     offset += raw.length + 1;
+    // A system command's line is the command's own text, not q code: q
+    // takes what follows a blank and a slash there as the argument it is
+    // (`\l /data/x.q`, `\cd /hdb`, `\cp /a /b`), never as a comment. Only
+    // `\t` and `\ts` time q code, where a comment is one (#1984).
+    const command = !inString && depth === 0 && SYSTEM.test(line);
     if (!inString) {
       // A line of `/` alone opens a block comment, one of `\` alone closes it.
       if (depth > 0 || line.trimEnd() === "/") {
@@ -76,7 +84,7 @@ export function placeholders(code: string): Placeholder[] {
       }
       if (c === '"') {
         inString = true;
-      } else if (c === "/" && (line[i - 1] === " " || line[i - 1] === "\t")) {
+      } else if (c === "/" && !command && (line[i - 1] === " " || line[i - 1] === "\t")) {
         break;
       } else if (c === "{" && line[i + 1] === "{") {
         PLACEHOLDER.lastIndex = i;

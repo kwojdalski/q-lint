@@ -330,8 +330,18 @@ pub fn completing(
     while start > line && part(raw.as_bytes()[start - 1]) {
         start -= 1;
     }
+    // Inside a symbol, which runs on over `:` and, once it has one, over
+    // `/`: KDB-X 5 reads `` `:lib/ut `` and `` `a.b_c:x/pa `` as one symbol
+    // each, and `` `a/pa `` as `/` over a symbol (#2020).
+    let in_symbol = raw[line..offset].rfind('`').is_some_and(|tick| {
+        let mut colon = false;
+        raw[line + tick + 1..offset].bytes().all(|b| {
+            colon |= b == b':';
+            part(b) || b == b':' || (b == b'/' && colon)
+        })
+    });
     if raw[start..offset].starts_with(|c: char| c.is_ascii_digit())
-        || raw[..start].ends_with('`')
+        || in_symbol
         || (start < offset && !boundary(code, start))
     {
         return None;

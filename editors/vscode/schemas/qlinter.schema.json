@@ -96,8 +96,11 @@
       "description": "Another configuration to inherit, relative to this file; what this file sets overrides it."
     },
     "target-version": {
-      "enum": ["3.6", "4.0", "4.1", "kdbx"],
-      "description": "The q release the QK rules report what does not run on."
+      "anyOf": [
+        { "enum": ["3.6", "4.0", "4.1", "kdbx"] },
+        { "type": "string", "pattern": "^\\s*(?:3\\.6|4\\.0|4\\.1|5|[Kk][Dd][Bb]-?[Xx])\\s*$" }
+      ],
+      "description": "The q release the QK rules report what does not run on: 3.6, 4.0, 4.1 or kdbx. KDB-X is also read as kdb-x or 5, in any case."
     },
     "baseline": {
       "type": "string",

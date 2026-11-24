@@ -262,6 +262,9 @@ test("live completion inserts a name q cannot parse by its symbol", async (t) =>
     "x.y": "x.y",
     ".ns.é": 'get`$".ns.é"',
   });
+  // After a drop written without spaces the name alone is replaced (#1992).
+  const dropped = provider.provideCompletionItems({ getText: () => "r:-1_tra" }, { line: 0, character: 8 });
+  assert.deepStrictEqual(dropped[0].range.at, [0, 5, 0, 8]);
   stub.config.user["processExplorer.liveCompletion.enable"] = false;
   stub.changeConfig("q-lint.processExplorer.liveCompletion.enable");
   assert.strictEqual(provider, undefined);

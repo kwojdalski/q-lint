@@ -36,10 +36,13 @@ export function readIdioms(text: string): Idiom[] {
 }
 
 /// Where the word being typed at `character` of `line` starts: the word
-/// before the cursor, a `.` in it included, so `.z.p` is replaced whole.
+/// before the cursor, a `.` in it included, so `.z.p` is replaced whole. A
+/// name starts at no digit or `_`: after a drop written without spaces
+/// (`-1_tra`, `0x00_x`) it is `tra`, past the number and its `_` (#1992).
 export function wordStart(line: string, character: number): number {
   const m = /[.A-Za-z0-9_]*$/.exec(line.slice(0, character));
-  return character - (m?.[0].length ?? 0);
+  const word = (m?.[0] ?? "").replace(/^(?:(?:\.?\d[A-Za-z0-9.]*)?_+)+/, "");
+  return character - word.length;
 }
 
 /// A snippet body as it reads once inserted with its defaults, for the

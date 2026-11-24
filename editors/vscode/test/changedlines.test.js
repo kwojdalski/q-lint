@@ -66,6 +66,33 @@ test("the committed text comes from git HEAD; untracked is empty; outside git, n
   assert.strictEqual(await committedText(path.join(outside, "c.q")), undefined);
 });
 
+// Where the filesystem ignores case, the editor keeps the spelling a file
+// was opened by. git's tree does not ignore it: Upper.q asked for as
+// upper.q was a file HEAD lacks, every line new, and the whole committed
+// file was formatted on save; under a folder spelled another way, nothing
+// was (#2003).
+test("a file opened in another case than git's name is still the committed file", async (t) => {
+  const { dir, git } = repo(t);
+  fs.mkdirSync(path.join(dir, "Sub"));
+  fs.writeFileSync(path.join(dir, "Sub", "Upper.q"), "u:1\n");
+  git("add", ".");
+  git("commit", "-qm", "one");
+  if (!fs.existsSync(path.join(dir, "sub", "upper.q"))) {
+    t.skip("this filesystem tells case apart");
+    return;
+  }
+  for (const opened of [path.join(dir, "Sub", "Upper.q"), path.join(dir, "Sub", "upper.q"), path.join(dir, "sub", "Upper.q"), path.join(dir, "SUB", "UPPER.Q")]) {
+    assert.strictEqual(await committedText(opened), "u:1\n", opened);
+    assert.deepStrictEqual(changedLines(await committedText(opened), "u:1\nv:2\n"), [[1, 1]], opened);
+  }
+  // The repository's own folder spelled another way.
+  const shouted = path.join(path.dirname(dir), path.basename(dir).toUpperCase(), "Sub", "Upper.q");
+  assert.strictEqual(await committedText(shouted), "u:1\n");
+  // A file git does not track is new, however it is spelled.
+  fs.writeFileSync(path.join(dir, "New.q"), "n\n");
+  assert.strictEqual(await committedText(path.join(dir, "new.q")), "");
+});
+
 test("a tracked file git cannot show is not every line new (#1369)", async () => {
   // git answers the top and lists the path in HEAD, but `show` fails: a
   // timeout, a lock, too much output.

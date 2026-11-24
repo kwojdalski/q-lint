@@ -289,3 +289,38 @@ test("cancelling Query a Tag while a process connects records no run for it", as
   assert.deepStrictEqual(payload.cells[0], ["a", "slow"]);
   assert.strictEqual(payload.cells[payload.names.indexOf("error")][1], "cancelled");
 });
+
+// Each read its switch on entry only: turned off while a pick or the
+// guard's question was open, the query was still sent (#2005).
+test("turned off at a pick or the guard's question, Query a Tag and Compare Query send nothing (#2005)", async (t) => {
+  const a = await fakeQ(table([1]));
+  const b = await fakeQ(table([2]));
+  t.after(() => [a, b].forEach((q) => q.close()));
+  await setUp(t, [proc("a", a.port, ["prod"]), proc("b", b.port, ["prod"])]);
+  const turn = (key, on) => {
+    stub.config.user[key] = on;
+    stub.changeConfig(`q-lint.${key}`);
+  };
+  const offThen = (key, answer) => (options) => (turn(key, false), answer(options));
+  const first = (o) => o.items[0];
+  const yes = () => "Run Anyway";
+  const named = (label) => (o) => o.items.find((i) => i.label === label);
+  const says = (text) => stub.messages.filter(([k]) => k === "info").map(([, m]) => m).includes(text);
+  for (const [key, off, run, picks] of [
+    // The tag pick.
+    ["query.tagQuery.enable", "q-lint: Query a Tag is turned off. Set q-lint.query.tagQuery.enable to true to turn it on.", () => stub.commands.get("q-lint.queryTag")(undefined, "count t"), (k) => [offThen(k, first)]],
+    // The guard's question, answered yes.
+    ["query.tagQuery.enable", "q-lint: Query a Tag is turned off. Set q-lint.query.tagQuery.enable to true to turn it on.", () => stub.commands.get("q-lint.queryTag")("prod", "t:1"), (k) => [offThen(k, yes)]],
+    ["query.compare.enable", "q-lint: Compare Query is turned off. Set q-lint.query.compare.enable to true to turn it on.", () => stub.commands.get("q-lint.compareQuery")("count t"), (k) => [offThen(k, named("a")), named("b")]],
+    ["query.compare.enable", "q-lint: Compare Query is turned off. Set q-lint.query.compare.enable to true to turn it on.", () => stub.commands.get("q-lint.compareQuery")("count t"), (k) => [named("a"), offThen(k, named("b"))]],
+    ["query.compare.enable", "q-lint: Compare Query is turned off. Set q-lint.query.compare.enable to true to turn it on.", () => stub.commands.get("q-lint.compareQuery")("t:1", "a", "b"), (k) => [offThen(k, yes)]],
+  ]) {
+    turn(key, true);
+    stub.messages = [];
+    stub.picks.push(...picks(key));
+    await run();
+    assert.strictEqual(stub.picks.length, 0, key);
+    assert.deepStrictEqual([a.sent, b.sent], [[], []], key);
+    assert.ok(says(off), JSON.stringify(stub.messages));
+  }
+});

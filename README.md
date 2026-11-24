@@ -613,7 +613,10 @@ written with the dot or under `\d .qetl.io`. It is one level deep, a group per
 context the file writes into, rather than one level per dot, which would put a
 file that writes only into `.qetl.io` under a `.qetl` with a single child. A
 namespace the file also assigns whole (`.cfg:()!()` beside `.cfg.port:5010`)
-is that assignment, holding the names in it. A client that does not declare
+is that assignment, holding the names in it. A namespace written in two
+places, with other names between them, is a group in each: a group spans
+only its own names, so the symbol at a position is the one written there. A
+client that does not declare
 `hierarchicalDocumentSymbolSupport` gets the flat list.
 
 Go to Definition on a name several files assign lists the current file's own
@@ -654,7 +657,17 @@ an amend of `` `. `` - and an open buffer is read as the editor has it. A
 definition inside a lambda is still that global's definition. What only
 running the code would tell is not found: a name built at run time, a
 `value "..."` string, a definition another process sends. A column in a qSQL
-phrase reads like a global of that name and is listed with it.
+phrase reads like a global of that name and is listed with it. A symbol is a
+use of the global where q takes one by name and the symbol is the whole
+operand: after `from` (`` update c:1 from `t ``, `` delete from `t where .. ``),
+first in `@[`t;..]`, `.[`t;..]`, `![`t;..]` and `?[`t;..]`, right of `xkey`,
+`xasc`, `xdesc` and a count's `!` (`` 1!`t ``), and handed to `get`, `value`,
+`cols`, `meta` or `keys` - beside `` `t set ``, `` `t insert `` and
+`` `t upsert ``, which are writes. Find All References also lists a symbol
+of that name anywhere else (`` `t in tables[] ``), which may be the name or
+only a symbol. A `k)` line reads and assigns q's globals, and the names on it
+are followed as k has them: a k lambda's parameters and locals are its own,
+and `_` ends a name, being k's drop.
 
 Rename takes a lambda's parameter or local, within its lambda, and a global
 across the workspace. A local is refused, with the reason in the error, when
@@ -665,16 +678,27 @@ A global is renamed in every place Find All References lists - each indexed
 file that names it, under the `\d` in force and the context the file is
 loaded in - and only its last part changes: `.lib.add` and `add` under
 `\d .lib` both become `plus`, given as `plus` or as `.lib.plus`, and a name
-in another namespace is refused. `prepareRename` answers with the range of
+in another namespace is refused. A dotted read through the global is one of
+those places, and only the global's part of it changes: `ta.c` for a table
+`ta` (q reads column `c` of the global), `.cfg.port` for a `.cfg` assigned
+whole. `prepareRename` answers with the range of
 that last part. `rename.enable: false` leaves renaming unannounced, and the
 rest of navigation on. The rename is refused for a name in a one-letter namespace
 (`.z.pg`, `.q.f`, which q keeps for itself), a name no indexed file assigns
 (q's own, or defined where the server cannot read), a new name that is not
 one q takes, is reserved or is already assigned, and one that is a
 parameter or local of a lambda reading the global without its namespace,
-where it would hide the renamed global. What reading cannot find keeps the
-old name: a string handed to `value`, a bare symbol (`` `f ``), a name another
-process sends.
+where it would hide the renamed global. It is also refused, naming the line,
+where a use cannot be told from something else or cannot be rewritten: `ta.c`
+inside a qSQL phrase, which is the column `ta` followed through a foreign key
+when the table has one, and a name a `\d` puts under the renamed namespace
+(`port:` under `\d .cfg`); and where a symbol of the name is somewhere q is
+not known to take a name - `` `t in tables[] ``, one of a list, an argument of
+a function - or is read by name in a lambda written under a `\d`, which looks
+it up where it is called, with a global of that name both there and at the
+root. What reading cannot find keeps the
+old name: a string handed to `value`, a name built at run time, a name
+another process sends.
 
 Hover, signature help and completion answer from two places and never from a
 running q: the workspace's own source, and a catalogue of q's words that ships
@@ -1196,16 +1220,25 @@ lenses are on, and the second also when a definition's parameters change, as
 `.q`/`.k` files and folders, and answers it with the edits that keep each
 load naming what it named - written from the workspace folder or from the
 loading file's directory, whichever it was written from - including the
-loads of a file that moves. `loadPathCompletion.enable: true` completes the
+loads of a file that moves. A load the new path cannot be written in (a
+blank after `\l` or in `system "l ..."`, which q has no spelling for, or
+anything a file symbol cannot hold) gets no edit, and one
+`window/showMessage` lists those lines. `loadPathCompletion.enable: true` completes the
 folders and `.q`/`.k` scripts after `\l `, with `/` as a trigger
 character; with `completion.enable` off, it announces completion and
-answers only on a `\l` line.
+answers only on a `\l` line. A request the `/` itself triggered is answered
+on a load path only: anywhere else it is q's `over`, and no list of names.
 `workspaceIndex.exclude`
 holds globs relative to each workspace folder that the index does not read.
 The index stops after 20,000 `.q` files or 500,000 directory entries of any
 kind, whichever comes first, so a folder opened at `/` cannot stall the
 server; past that, a name defined only in a file it did not reach is
 reported as undefined in the editor where `qlinter .` would not.
+It follows the disk through `workspace/didChangeWatchedFiles`, and asks a
+client that registers watchers for three: `**/*.q`, `**/*.toml`, and `**/*`
+for a path created or deleted (`kind` 5) - the last because a folder
+renamed, moved or deleted is one event for the folder and none for the
+files in it, which stands for every `.q` file and configuration it holds.
 A value the server cannot read is reported with `window/showMessage` and its
 default used.
 

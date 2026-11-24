@@ -7,7 +7,9 @@
 // One read, defining nothing. The sym file is the root's (`system "cd"`,
 // where the process loaded the database from): its bytes by `hcount`, its
 // symbols by `count get`. The columns enumerated against it are read from
-// at most `lim` partitions spread over the whole range, and from every
+// at most `lim` partitions spread over the whole range, each in the
+// directory q loaded it from (`.Q.pd`, so any segmenting is followed,
+// #1977), and from every
 // splayed table in the root: each column's distinct indexes over them is
 // its share, and each partition's largest index is how big the file was,
 // at least, when it was written - an enumeration only ever appends. A null
@@ -16,6 +18,7 @@
 // columns' data is read, so `lim` is kept small. Works on kdb+ (KDB-X) and
 // PeachQ; held there by dbtools_q.test.js.
 
+import { PARTITION_DIRS } from "./partdir";
 import { bytes } from "./tableinfo";
 
 export const SYM_INSPECT = [
@@ -24,12 +27,13 @@ export const SYM_INSPECT = [
   " if[not -11h=type key f;:`sym`root!(0b;system\"cd\")];",
   " n:@[{count get x};f;0N];b:hcount f;",
   " pv:@[{.Q.pv};::;()];pt:@[{(),.Q.pt};::;`$()];",
-  " m:\"j\"$lim;s:$[m>=count pv;pv;pv distinct\"j\"$(til m)*(count[pv]-1)%m-1];",
+  " m:\"j\"$lim;at:$[m>=count pv;til count pv;distinct\"j\"$(til m)*(count[pv]-1)%m-1];s:pv at;",
+  ` pd:@[{.Q.pd};::;()];sd:${PARTITION_DIRS}[r;$[count[pd]=count pv;pd at;()];s];`,
   " o:((key r)except`$string pv)except`sym`par.txt;",
   " o:o where{@[{`.d in key x};x;0b]}each` sv'r,/:o;",
   " enc:{[d] cs:@[{(),get` sv x,`.d};d;`$()];cs where{@[{v:get x;$[type[v]within 20 76h;`sym~key v;0b]};x;0b]}each` sv'd,/:cs};",
   " one:{[enc;p;t;d] cs:enc d;([] part:(count cs)#p;tbl:(count cs)#t;col:cs;ix:{\"j\"$get` sv x,y}[d]each cs)};",
-  " rows:raze raze{[one;enc;r;pt;p]{[one;enc;r;p;t]one[enc;`$string p;t;.Q.par[r;p;t]]}[one;enc;r;p]each pt}[one;enc;r;pt]each s;",
+  " rows:raze raze{[one;enc;pt;p;b]{[one;enc;p;b;t]one[enc;`$string p;t;` sv b,t]}[one;enc;p;b]each pt}[one;enc;pt]'[s;sd];",
   " rows,:raze{[one;enc;r;t]one[enc;`;t;` sv r,t]}[one;enc;r]each o;",
   " c:$[count rows;0!select d:\"f\"$count distinct except[raze ix;0N]by tbl,col from rows;([] tbl:`$();col:`$();d:`float$())];",
   " g:$[count rows;select from(0!select x:\"f\"$1+max max each ix by part from rows where not null part)where x>0;([] part:`$();x:`float$())];",

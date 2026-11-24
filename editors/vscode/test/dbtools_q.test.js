@@ -279,6 +279,24 @@ test("the documenter says which table it could not read, and documents the rest 
   assert.deepStrictEqual(alone.tables.map((x) => [x.name, x.error]), [["em", "..sym2"]]);
 });
 
+// #2007: a partition holding no rows of a table with a string or a nested
+// column - a quiet day, or a table .Q.chk filled in - is a healthy one: q
+// writes those columns as an empty general list there.
+test("the partition check takes an empty partition's string and nested columns as the table's (#2007)", { skip }, async (t) => {
+  const extra = [
+    'mke:{[r;d;t;n] .Q.dd[r;d,t,`] set .Q.en[r] ([] sym:n#`a`b`c;note:n#("x";"yy";"zzz");tags:n#(1 2;3 4 5;enlist 6))};',
+    "mke[r;;`ev;3] each 2026.01.05 2026.01.07;",
+    "mke[r;2026.01.06;`ev;0];",
+    "mke[r;;`filled;3] each 2026.01.05 2026.01.07;",
+    ".Q.chk r;",
+  ].join("\n");
+  const { connection } = await connect(t, HDB(extra));
+  assert.deepStrictEqual(await connection.call('{"f"$(count select from ev;count select from filled where date=2026.01.06)}', 0), [6, 0]);
+  const problems = partitionProblems(readPartitions(await connection.call(PARTITION_CHECK, 1000, true)));
+  assert.deepStrictEqual(problems.filter((p) => p.kind !== "row count").map((p) => [p.kind, p.what, p.partitions]), []);
+  assert.deepStrictEqual(problems.map((p) => [p.table, p.partitions]).sort(), [["ev", ["2026.01.06"]], ["filled", ["2026.01.06"]]]);
+});
+
 test("the partition check finds missing dates, files, differing types and outliers", { skip }, async (t) => {
   const extra = [
     "mk[r;;6] each 2026.01.12 2026.01.13;",
@@ -334,10 +352,103 @@ test("the partition check finds missing dates, files, differing types and outlie
 
 const { SYM_INSPECT, readSym, symReport } = require("../out/syminspect.js");
 const { ATTRIBUTE_SAMPLE, readAttributeSample, advise } = require("../out/attradvice.js");
+const { PARTITION_DIRS } = require("../out/partdir.js");
 const { TABLE_INFO, readTableInfo } = require("../out/tableinfo.js");
 const { testDataQ, testDataCsv, loadTypes } = require("../out/testdata.js");
 const { migrationScript } = require("../out/migrate.js");
 const { TPLOG_INIT, readOthers, readTpLog, readTpPage, readReplayed } = require("../out/tplog.js");
+
+/// A database under $DIR/seg whose par.txt names $DIR/s1 and $DIR/s2, each
+/// partition written to the segment `where` gives it, then loaded.
+const SEGMENTED = (where) =>
+  [
+    'r:hsym`$"$DIR/seg";',
+    'system "mkdir -p $DIR/seg";',
+    '(` sv r,`par.txt) 0: ("$DIR/s1";"$DIR/s2");',
+    "mk:{[r;s;d] (` sv (hsym`$s),(`$string d),`trade`) set .Q.en[r] ([] sym:`p#`a`a`b;px:1 2 3f;sz:10 20 30)};",
+    `mk[r] ./: (${where});`,
+    "\\l $DIR/seg",
+    "",
+  ].join("\n");
+
+// q finds a partition wherever par.txt's segments hold it; `.Q.par` names
+// the segment a writer would pick, `date mod 2` here. These four are each in
+// the other one, as a database segmented by date range or by disk has them,
+// and every query works - so every tool must find them too (#1977).
+test("a segmented database not laid out as .Q.par would write it is found by every database tool (#1977)", { skip }, async (t) => {
+  const { connection, dir } = await connect(t, SEGMENTED('("$DIR/s1";2024.01.02);("$DIR/s2";2024.01.03);("$DIR/s1";2024.01.04);("$DIR/s2";2024.01.05)'));
+  assert.deepStrictEqual(await connection.call('{"f"$exec x from select count i by date from trade}', 0), [3, 3, 3, 3]);
+  // What .Q.par answers is not there; what q loaded is.
+  const real = fs.realpathSync(dir);
+  const wrote = ["s1/2024.01.02", "s2/2024.01.03", "s1/2024.01.04", "s2/2024.01.05"].map((d) => `:${dir}/${d}`);
+  assert.deepStrictEqual(await connection.call('{"f"$count each key each .Q.par[hsym`$system"cd";;`trade] each .Q.PV}', 0), [0, 0, 0, 0]);
+  assert.deepStrictEqual(await connection.call(`{string ${PARTITION_DIRS}[hsym\`$system"cd";.Q.PD;.Q.PV]}`, 0), wrote);
+  // A q that sets no .Q.PD is answered by .Q.par, as before.
+  assert.strictEqual(await connection.call(`{(${PARTITION_DIRS}[r;();.Q.PV])~{first\` vs .Q.par[x;y;\`trade]}[r:hsym\`$system"cd"] each .Q.PV}`, 0), true);
+
+  const parts = readPartitions(await connection.call(PARTITION_CHECK, 1000, true));
+  assert.deepStrictEqual(parts.all, ["2024.01.02", "2024.01.03", "2024.01.04", "2024.01.05"]);
+  assert.deepStrictEqual(parts.rows.map((r) => [r.partition, r.dir, r.dotd, r.rows]), parts.all.map((p) => [p, true, true, 3]));
+  assert.deepStrictEqual(partitionProblems(parts), []);
+  // Fewer than all of them are the newest, each still in its own segment.
+  const newest = readPartitions(await connection.call(PARTITION_CHECK, 3, false));
+  assert.deepStrictEqual(newest.rows.map((r) => [r.partition, r.dir, r.rows]), ["2024.01.03", "2024.01.04", "2024.01.05"].map((p) => [p, true, 3]));
+
+  const sym = readSym(await connection.call(SYM_INSPECT, 20));
+  assert.deepStrictEqual(sym.columns.map((c) => [c.table, c.column, c.distinct]), [["trade", "sym", 2]]);
+  assert.deepStrictEqual(sym.growth.map((g) => g.partition), parts.all);
+  // A sample of them is read from where each is.
+  const sampled = readSym(await connection.call(SYM_INSPECT, 2));
+  assert.deepStrictEqual(sampled.growth.map((g) => g.partition), ["2024.01.02", "2024.01.05"]);
+
+  const sample = readAttributeSample(await connection.call(ATTRIBUTE_SAMPLE, "trade", 100000));
+  assert.deepStrictEqual([sample.kind, sample.rows, sample.sampled, sample.partitions], ["partitioned", 12, 3, 4]);
+  assert.deepStrictEqual(sample.columns.map((c) => [c.name, c.attr]), [["sym", "p"], ["px", ""], ["sz", ""]]);
+  // The p# every partition's sym has is what it is told to keep (#1978).
+  assert.deepStrictEqual(advise(sample, new Map([["sym", 2]])).map((a) => [a.column, a.current, a.suggest]).slice(0, 1), [["sym", "p", "p"]]);
+  // Under a view the last partition shown is the one sampled, from its own segment.
+  await connection.call("{.Q.view 2024.01.02 2024.01.03}", 0);
+  assert.strictEqual(readAttributeSample(await connection.call(ATTRIBUTE_SAMPLE, "trade", 100000)).sampled, 3);
+  await connection.call("{.Q.view[]}", 0);
+
+  // The column manager writes to disk: to the four directories that hold the
+  // table, and nowhere else.
+  const say = await run(connection, columnScript("trade", { op: "add", column: "ex", value: "`NYSE" }, "hdb"));
+  assert.match(say, /changed 4 of 4 directories/);
+  assert.deepStrictEqual(await connection.call('{"f"$exec x from select count i by date from trade where ex=`NYSE}', 0), [3, 3, 3, 3]);
+  for (const d of wrote) assert.ok(fs.existsSync(path.join(d.slice(1), "trade", "ex")), d);
+  const made = (root) => fs.readdirSync(path.join(real, root)).sort();
+  assert.deepStrictEqual([made("s1"), made("s2"), made("seg")], [["2024.01.02", "2024.01.04"], ["2024.01.03", "2024.01.05"], ["par.txt", "sym"]]);
+  assert.match(await run(connection, columnScript("trade", { op: "attr", column: "sz", attr: "s" }, "hdb")), /changed 4 of 4 directories/);
+  assert.match(await run(connection, columnScript("trade", { op: "rename", column: "px", to: "price" }, "hdb")), /changed 4 of 4 directories/);
+  assert.deepStrictEqual(await connection.call("{exec c from meta trade}", 0), ["date", "sym", "price", "sz", "ex"]);
+  assert.deepStrictEqual(partitionProblems(readPartitions(await connection.call(PARTITION_CHECK, 1000, true))), []);
+});
+
+// One value can be in two segments: q lists it twice, with a directory
+// each, and selects both. Each is its own directory to check and to change.
+test("a partition held in two segments is checked and changed in both (#1977)", { skip }, async (t) => {
+  const { connection, dir } = await connect(t, SEGMENTED('("$DIR/s1";2024.01.02);("$DIR/s2";2024.01.02);("$DIR/s1";2024.01.04)'));
+  assert.strictEqual(await connection.call('{"f"$count select from trade where date=2024.01.02}', 0), 6);
+  const parts = readPartitions(await connection.call(PARTITION_CHECK, 1000, false));
+  assert.deepStrictEqual(parts.rows.map((r) => [r.partition, r.dir, r.rows]), [["2024.01.02", true, 3], ["2024.01.02", true, 3], ["2024.01.04", true, 3]]);
+  assert.match(await run(connection, columnScript("trade", { op: "add", column: "ex", value: "`NYSE" }, "hdb")), /changed 3 of 3 directories/);
+  for (const d of ["s1/2024.01.02", "s2/2024.01.02", "s1/2024.01.04"]) assert.ok(fs.existsSync(path.join(dir, d, "trade", "ex")), d);
+  assert.strictEqual(await connection.call('{"f"$count select from trade where ex=`NYSE}', 0), 9);
+});
+
+// With no par.txt q loaded every partition from the root, and the
+// directories are the ones .Q.par gave.
+test("a database with no segments has its partitions under the root, as before (#1977)", { skip }, async (t) => {
+  const { connection, dir } = await connect(t, HDB());
+  assert.deepStrictEqual(await connection.call("{string .Q.PD}", 0), [":.", ":.", ":."]);
+  assert.strictEqual(await connection.call(`{(${PARTITION_DIRS}[r;.Q.PD;.Q.PV])~{first\` vs .Q.par[x;y;\`trade]}[r:hsym\`$system"cd"] each .Q.PV}`, 0), true);
+  assert.deepStrictEqual(await connection.call(`{string ${PARTITION_DIRS}[hsym\`$system"cd";.Q.PD;.Q.PV]}`, 0), ["2026.01.05", "2026.01.06", "2026.01.07"].map((d) => `:${fs.realpathSync(dir)}/hdb/${d}`));
+  assert.deepStrictEqual(await connection.call(`{${PARTITION_DIRS}[hsym\`$system"cd";();()]}`, 0), []);
+  assert.deepStrictEqual(partitionProblems(readPartitions(await connection.call(PARTITION_CHECK, 1000, true))), []);
+  assert.strictEqual(readSym(await connection.call(SYM_INSPECT, 2)).growth.length, 2);
+  assert.strictEqual(readAttributeSample(await connection.call(ATTRIBUTE_SAMPLE, "trade", 100000)).sampled, 6);
+});
 
 test("the sym inspector counts the file, its columns' shares and its growth", { skip }, async (t) => {
   const extra = [
@@ -397,6 +508,17 @@ test("the attribute advisor samples a table's columns without changing it", { sk
   assert.strictEqual(await connection.call("{(attr m`sym)~`}", 0), true);
 });
 
+// A table one partition lacks cannot be counted: its sample is advised on as
+// a sample, and a u# is not costed from the sample's rows (#1979).
+test("the attribute advisor does not cost a table it could not count from its sample (#1979)", { skip }, async (t) => {
+  const { connection } = await connect(t, HDB("{[r;d] .Q.dd[r;d,`late`] set .Q.en[r] ([] sym:`a`b`c`d;qid:40 10 30 20;bid:1 2 3 4f)}[r] each 2026.01.05 2026.01.07;"));
+  const s = readAttributeSample(await connection.call(ATTRIBUTE_SAMPLE, "late", 100000));
+  assert.deepStrictEqual([s.kind, s.rows, s.sampled, s.partitions], ["partitioned", null, 4, 3]);
+  const qid = advise(s, new Map([["qid", 1]])).find((a) => a.column === "qid");
+  assert.deepStrictEqual([qid.suggest, qid.cost], ["u", null]);
+  assert.match(qid.reason, /^every value distinct \(in 4 rows sampled\): u# makes/);
+});
+
 // `asc` marks a vector already in order `s#` where it is, and a table
 // sampled whole is its own columns: the advisor must not set what it then
 // reports (#1863).
@@ -439,6 +561,52 @@ test("the test data generator's q makes the rows asked for, and its CSV loads ba
   assert.strictEqual(loaded[1], "spfjdC");
   assert.strictEqual(loaded[2], true);
   assert.strictEqual(loaded[3], true);
+});
+
+// The script set a global `n` to the row count and deleted it at its end:
+// a process's own `n` was gone once the script had run.
+test("the test data generator's q defines the table and no other name, however wide the table (#2016)", { skip }, async (t) => {
+  const { connection } = await connect(t, "n:`precious`data\nkt:([k:`symbol$(); j:`long$()] v:`float$())\n");
+  const col = (name, type) => ({ name, type, fkey: "", attr: "" });
+  const wide = (count, types = "bgxhijefcspmdznuvtC") => ({ kind: "table", rows: 0, bytes: null, partitions: null, keys: [], ncols: count, columns: Array.from({ length: count }, (_, i) => col(`c${i}`, types[i % types.length])) });
+  const o = { rows: 30, symbols: ["A", "B"], low: 0, high: 5, seed: 4 };
+  const state = "{(n;asc key `.;asc system \"v\";asc system \"f\")}";
+  const before = await connection.call(state, 0);
+  const made = [];
+  const run = async (info, name, options) => {
+    const ran = readRun(await connection.call(RUN_SCRIPT, statements(testDataQ(info, name, options))));
+    assert.ok(ran.ok, `${name}: ${ran.error}`);
+    made.push(name);
+  };
+  await run(readTableInfo(await connection.call(TABLE_INFO, "kt", 100)), "gen", { ...o, sorted: "v" });
+  assert.deepStrictEqual(await connection.call('{(keys gen;"f"$count gen;exec t from meta gen;v~asc v:exec v from gen)}', 0), [["k", "j"], 10, "sjf", true]);
+  // A lambda holds some 250 columns at most: a wider table is still made,
+  // each column of its type, with the rows asked for.
+  for (const count of [1, 100, 101, 250, 1000]) {
+    const info = wide(count);
+    await run(info, `w${count}`, { ...o, sorted: "c12" });
+    const got = await connection.call(`{t:get x; (cols[t]~\`$"c",/:string til ${count};exec t from meta t;"f"$count t;\`s=attr t\`c12)}`, `w${count}`);
+    assert.deepStrictEqual(got, [true, info.columns.map((c) => c.type).join(""), 30, count > 12], `w${count}`);
+  }
+  // Strings, each column's drawn by a lambda of its own.
+  await run(wide(300, "C"), "strs", o);
+  assert.deepStrictEqual(await connection.call('{(distinct exec t from meta strs;"f"$count cols strs;"f"$count strs)}', 0), ["C", 300, 30]);
+  // Names q cannot parse, and a column named as the count is.
+  const odd = { ...wide(150), columns: wide(150).columns.map((c, i) => (i === 0 ? col("n", "j") : i === 149 ? col("px bid", "f") : c)) };
+  await run(odd, "my t", o);
+  assert.deepStrictEqual(await connection.call('{t:get`$"my t"; (2#cols t;last cols t;"f"$count t;"f"$count cols t)}', 0), [["n", "c1"], "px bid", 30, 150]);
+  const after = await connection.call(state, 0);
+  assert.deepStrictEqual(after[0], ["precious", "data"]);
+  assert.deepStrictEqual(after[1], [...before[1], ...made].sort());
+  assert.deepStrictEqual(after.slice(2), [[...before[2], ...made].sort(), before[3]]);
+  // The same seed, the same rows.
+  const first = await connection.call("{-8!w250}", 0);
+  await run(wide(250), "w250", { ...o, sorted: "c12" });
+  made.pop();
+  assert.deepStrictEqual(await connection.call("{-8!w250}", 0), first);
+  // A table named as the count was is the table (#1084).
+  await run(wide(3), "n", o);
+  assert.deepStrictEqual(await connection.call('{(exec t from meta n;"f"$count n)}', 0), ["bgx", 30]);
 });
 
 test("the test data generator's q takes symbols a bare symbol cannot write (#1279)", { skip }, async (t) => {
@@ -553,6 +721,135 @@ test("a schema migration writes no list-atom cast, in memory or on disk", { skip
   const done = readRun(await connection.call(RUN_SCRIPT, statements(disk)));
   assert.ok(done.ok, done.error);
   assert.doesNotMatch(done.text, /left as they were/);
+});
+
+// Every type a meta names, cast to every other one, on a real q: what q's
+// own cast makes of a column is asked of it here, so the casts the script
+// leaves out (`castProblem`) cannot drift from what q does. A cast that is
+// written runs and gives the type; one left out is one q's cast does not
+// make, and says so (#2012).
+const SAMPLE = {
+  b: "101b", g: "3?0Ng", x: "0x010203", h: "1 2 3h", i: "1 2 3i", j: "1 2 3", e: "1 2 3e", f: "1.5 2.5 3.5", c: '"abc"', s: "`a`b`c",
+  p: "2024.01.01D0+1 2 3", m: "2024.01 2024.02 2024.03m", d: "2024.01.01 2024.01.02 2024.01.03", z: "2024.01.01T00:00:00.000+1 2 3",
+  n: "0D00:00:01 0D00:00:02 0D00:00:03", u: "00:01 00:02 00:03", v: "00:00:01 00:00:02 00:00:03", t: "00:00:00.001 00:00:00.002 00:00:00.003",
+};
+const ATOMS = Object.keys(SAMPLE);
+const isList = (type) => type !== "" && type === type.toUpperCase();
+const sampleOf = (type) => (type === "" ? '(1;`a;"x")' : isList(type) ? `{(2#x;1#x;0#x)}[${SAMPLE[type.toLowerCase()]}]` : SAMPLE[type]);
+/// The type q's own cast of mgA's column to `t` gives, or the error.
+const OWN_CAST = "{[t] @[{[t] string first exec t from meta ([] c:t$mgA`c)};$[1=count t;first t;t];{\"'\",x}]}";
+
+/// A table whose column `c` is of every type in turn, migrated in memory to
+/// the schema of one whose `c` is of every other: `each(from, to, script,
+/// own)` is told the script and what q's own cast gives, after checking
+/// that a script with a cast in it ran and made the column the target's.
+async function everyCast(t, types, each) {
+  const { connection } = await connect(t, types.map((type, i) => `mg${i}:([] k:1 2 3; c:${sampleOf(type)})`).join("\n") + "\n");
+  const infos = [];
+  for (let i = 0; i < types.length; i++) infos.push(readTableInfo(await connection.call(TABLE_INFO, `mg${i}`, 100)));
+  assert.deepStrictEqual(infos.map((info) => info.columns[1].type), types);
+  for (let a = 0; a < types.length; a++) {
+    for (let b = 0; b < types.length; b++) {
+      // A mixed column's cast is its values' to allow: it is not asked here.
+      if (a === b || types[a] === "") continue;
+      const [from, to] = [types[a], types[b]];
+      await connection.call("{[a] `mgA set get a;}", `mg${a}`);
+      const script = migrationScript("mgA", infos[a], "A", infos[b], "B", "p");
+      const own = String(await connection.call(OWN_CAST, to.toLowerCase())).trim();
+      if (!/\n\/ not written/.test(script)) {
+        const ran = readRun(await connection.call(RUN_SCRIPT, statements(script)));
+        assert.ok(ran.ok, `${from} to ${to}: ${script}${ran.error}`);
+        const same = await connection.call("{[b;n] b:get b; (meta[mgA]~meta b;(type each mgA`c)~type each b`c;n|(count each mgA`c)~count each b`c)}", `mg${b}`, !(isList(from) && isList(to)));
+        assert.deepStrictEqual(same, [true, true, true], `${from} to ${to}: ${script}`);
+      }
+      each(from, to, script, own);
+    }
+  }
+  return connection;
+}
+
+test("a schema migration writes the casts q makes between atom columns, and no other (#2012)", { skip }, async (t) => {
+  const written = [];
+  const connection = await everyCast(t, ATOMS, (from, to, script, own) => {
+    const left = script.match(/\n\/ not written: a cast of c from (\S+) to (\S+): (.*)\n/);
+    if (left === null) return written.push(`${from}${to}`);
+    // What is left out is what q's own cast refuses, by its name.
+    assert.deepStrictEqual([left[1], left[2], own], [from, to, "'type"], script);
+    assert.match(left[3], /^q has no cast from \w+ to \w+$/, script);
+  });
+  // 57 of the 306 are no cast of q's: a guid's but to and from text, a
+  // date's or a month's to a time of day, and a time of day's to a date.
+  assert.strictEqual(written.length, 306 - 57);
+  for (const pair of ["jg", "gj", "bg", "dt", "dn", "mz", "nd", "tp", "um", "vz"]) assert.ok(!written.includes(pair), pair);
+  for (const pair of ["gs", "sg", "jf", "dp", "md", "pd", "zt", "pn", "tn", "sc", "cs"]) assert.ok(written.includes(pair), pair);
+  // No cast makes a typed column a mixed one, and none is written.
+  await connection.call('{`mgA set ([] k:1 2 3; c:1 2 3); `mgM set ([] k:1 2 3; c:(1;`a;"x"));}', 0);
+  const info = async (n) => readTableInfo(await connection.call(TABLE_INFO, n, 100));
+  const mixed = migrationScript("mgA", await info("mgA"), "A", await info("mgM"), "M", "p");
+  assert.match(mixed, /\n\/ not written: a cast of c from j to mixed: no cast makes a mixed column\n$/);
+  assert.match(String(await connection.call(OWN_CAST, "")), /^'/);
+  // A mixed column's cast is written, as an empty table's untyped column is one.
+  for (const to of ATOMS) {
+    await connection.call("{`mgA set ([] k:`long$(); c:());}", 0);
+    const ran = readRun(await connection.call(RUN_SCRIPT, statements(migrationScript("mgA", await info("mgA"), "A", await info(`mg${ATOMS.indexOf(to)}`), "B", "p"))));
+    assert.ok(ran.ok, `mixed to ${to}: ${ran.error}`);
+    assert.strictEqual(await connection.call("{[t] first[t]~first exec t from meta mgA where c=`c}", to), true, to);
+  }
+});
+
+// Between two list columns q's cast is the atoms', made in each item: it
+// was refused as if one of the two were an atom column (#2013).
+test("a schema migration casts a list column to another list type, as q does, and refuses no cast q makes (#2013)", { skip }, async (t) => {
+  const LISTS = ATOMS.map((a) => a.toUpperCase());
+  const written = [];
+  const scripts = new Map();
+  const connection = await everyCast(t, [...ATOMS, ...LISTS, ""], (from, to, script, own) => {
+    scripts.set(`${from}>${to}`, script);
+    const left = script.match(/\n\/ not written: a cast of c from (\S+) to (\S+): (.*)\n/);
+    if (left === null) return written.push(`${from}${to}`);
+    // Whatever is left out, q's own cast does not make the target's column of it.
+    assert.notStrictEqual(own, to, script);
+    if (isList(from) && isList(to)) assert.deepStrictEqual([own, left[3]], ["'type", script.match(/q has no cast from \w+ to \w+/)?.[0]], script);
+    else if (to !== "" && isList(from) !== isList(to)) assert.match(left[3], /a list column's items are lists, an atom column's are not|a column of strings holds lists, not chars/, script);
+  });
+  // List to list is written where atom to atom is, pair for pair.
+  const pairs = (types) => written.filter((w) => types.includes(w[0]) && types.includes(w[1]));
+  assert.deepStrictEqual(pairs(LISTS).map((w) => w.toLowerCase()), pairs(ATOMS));
+  assert.strictEqual(pairs(LISTS).length, 306 - 57);
+  assert.match(scripts.get("J>F"), /\nmgA:update c:"f"\$c from mgA\n$/);
+  assert.match(scripts.get("S>J"), /\nmgA:update c:\{"J"\$string x\} each c from mgA\n$/);
+  assert.match(scripts.get("G>J"), /\n\/ not written: a cast of c from G to J: q has no cast from guid to long\n$/);
+  assert.match(scripts.get("J>j"), /\n\/ not written: a cast of c from J to j: a list column's items are lists, an atom column's are not\n$/);
+  // The issue's own table, ragged and with an empty item, and the values it holds after.
+  await connection.call("{`mgA set ([] a:1 2 3; b:(1 2;`long$();enlist 6)); `mgB set ([] a:1 2 3; b:(1 2f;3 4f;5 6f));}", 0);
+  const info = async (n) => readTableInfo(await connection.call(TABLE_INFO, n, 100));
+  const ran = readRun(await connection.call(RUN_SCRIPT, statements(migrationScript("mgA", await info("mgA"), "A", await info("mgB"), "B", "p"))));
+  assert.ok(ran.ok, ran.error);
+  assert.deepStrictEqual(await connection.call("{(meta[mgA]~meta mgB;mgA[`b]~(1 2f;`float$();enlist 6f))}", 0), [true, true]);
+});
+
+test("a schema migration casts on disk what the column manager casts, and no other (#2012)", { skip }, async (t) => {
+  const cols = [...ATOMS.map((a) => `c${a}:${SAMPLE[a]}`), 'sC:("12";"2024.01.01";"x")', "lJ:(1 2;3 4;5 6)"].join("; ");
+  const { connection } = await connect(t, [
+    'r:hsym`$"$DIR/hdb";',
+    `{[r;n] .Q.dd[r;2026.01.05,n,\`] set .Q.en[r] ([] k:1 2 3; ${cols})}[r] each \`$"mg",/:"${ATOMS.join("")}";`,
+    "\\l $DIR/hdb",
+    "",
+  ].join("\n"));
+  const { castProblem } = require("../out/migrate.js");
+  for (const to of ATOMS) {
+    const from = readTableInfo(await connection.call(TABLE_INFO, `mg${to}`, 100));
+    assert.strictEqual(from.columns.map((c) => c.type).join(""), `dj${ATOMS.join("")}CJ`);
+    const target = { ...from, kind: "table", columns: from.columns.map((c) => (c.name === "date" || c.name === "k" ? c : { ...c, type: to })) };
+    const script = migrationScript(`mg${to}`, from, "disk", target, "B", "p");
+    const done = readRun(await connection.call(RUN_SCRIPT, statements(script)));
+    assert.ok(done.ok, done.error);
+    // Every cast written was made: no directory was left as it was.
+    assert.match(done.text, /^changed (\d+) of \1 directories$/, `to ${to}: ${done.text}`);
+    const kept = from.columns.slice(2).map((c) => (c.type === to || castProblem(c.type, to, true) === undefined ? to : c.type));
+    assert.strictEqual(await connection.call("{[n] exec t from meta get n}", `mg${to}`), `dj${kept.join("")}`, `to ${to}`);
+    for (const c of from.columns.slice(2)) assert.strictEqual(script.includes(`/ not written: a cast of ${c.name} from ${c.type} to ${to}: `), kept[from.columns.indexOf(c) - 2] !== to, `${c.name} to ${to}`);
+  }
 });
 
 test("a schema migration parses text and symbols it casts to numbers (#1096)", { skip }, async (t) => {

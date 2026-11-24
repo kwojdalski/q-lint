@@ -12,6 +12,7 @@ import { execFile } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { dirname, relative } from "node:path";
 import { onProcessPath } from "./relations";
+import { relativeInside } from "./workspacewrite";
 
 /// Lines of `after` that are not in `before`, as pairs of 0-based first and
 /// last lines, inclusive. Where lines were only deleted, the line that took
@@ -109,10 +110,18 @@ export async function committedText(path: string, git: Git = runGit): Promise<st
   if (top === undefined || top === "") {
     return undefined;
   }
-  // git names the top through symlinks resolved: /tmp is /private/tmp.
+  // git names the top through symlinks resolved: /tmp is /private/tmp. And
+  // it names a file as the disk spells it, which where case is ignored need
+  // not be how the editor was given it (`upper.q` for Upper.q, #2003): the
+  // native call answers that spelling, taken when it is under the top - a
+  // mapped drive's is not.
   let real = path;
   try {
     real = realpathSync(path);
+    const spelled = realpathSync.native(path);
+    if (relativeInside(top, spelled) !== undefined) {
+      real = spelled;
+    }
   } catch {
     // A file not saved yet: as it is named.
   }

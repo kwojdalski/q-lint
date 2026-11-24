@@ -274,16 +274,30 @@ impl Policy {
     }
 
     /// Whether `path` is a file some settings read so far were made from -
-    /// one found beside the source, one it extends, or `--config`.
+    /// one found beside the source, one it extends, or `--config` - or a
+    /// folder that holds one: an editor's watcher has one event for a
+    /// folder moved or deleted and none for the files in it.
     pub fn read_from(&self, path: &Path) -> bool {
         let path = absolute(path);
         self.is_explicit_config(&path)
-            || self.baselines.borrow().contains_key(&path)
+            || self.baselines.borrow().keys().any(|b| b.starts_with(&path))
             || self
                 .cache
                 .borrow()
                 .values()
-                .any(|settings| settings.sources.contains(&path))
+                .any(|settings| settings.sources.iter().any(|s| s.starts_with(&path)))
+    }
+
+    /// Forget the settings of every directory in the folder `dir`, which
+    /// appeared or went, and whether there were any. They were made without
+    /// what the folder holds now: a configuration that came with it would
+    /// not be searched for, the search having been made already.
+    pub fn forget_under(&self, dir: &Path) -> bool {
+        let dir = absolute(dir);
+        let mut cache = self.cache.borrow_mut();
+        let before = cache.len();
+        cache.retain(|searched, _| !searched.starts_with(&dir));
+        cache.len() != before
     }
 
     /// What a change to could change the settings read so far: the files
@@ -1365,10 +1379,39 @@ mod tests {
                 .collect()
         };
         assert_eq!(enumerated(&schema["properties"]["profile"]), set(&PROFILES));
-        assert_eq!(
-            enumerated(&schema["properties"]["target-version"]),
-            set(&Target::NAMES)
-        );
+        // A release is offered by its name and taken in every spelling
+        // `Target::parse` reads (#1976): the names, KDB-X's others, any case,
+        // blanks around it. The schema's pattern must agree on each of these.
+        let target = &schema["properties"]["target-version"]["anyOf"];
+        assert_eq!(enumerated(&target[0]), set(&Target::NAMES));
+        assert_eq!(target[1]["type"], "string");
+        let spelled = regex::Regex::new(target[1]["pattern"].as_str().unwrap()).unwrap();
+        let mut spellings: Vec<String> = Vec::new();
+        for word in [
+            "3.6", "4.0", "4.1", "kdbx", "kdb-x", "5", "KDBX", "KDB-X", "Kdb-X", "kdb+", "kdb_x",
+            "kdb--x", "kdb x", "kx", "4", "4.2", "3.5", "4.00", "40", "4,0", "5.0", "6", "x", "",
+        ] {
+            for shape in [
+                word.to_string(),
+                format!(" {word} "),
+                format!("\t{word}"),
+                format!("v{word}"),
+                format!("{word}0"),
+                format!("{word} {word}"),
+            ] {
+                spellings.push(shape);
+            }
+        }
+        for name in Target::NAMES {
+            assert!(Target::parse(name).is_some(), "{name}");
+        }
+        for text in &spellings {
+            assert_eq!(
+                spelled.is_match(text),
+                Target::parse(text).is_some(),
+                "target-version = {text:?}"
+            );
+        }
         for at in [&schema["properties"], &lint["properties"]] {
             let severity = resolve(&at["severity"]);
             assert_eq!(

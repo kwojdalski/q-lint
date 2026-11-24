@@ -18,7 +18,7 @@ const { readDoc, qdocs, docMarkdown, docHtml, typeName, workspaceDocs } = requir
 const { missingWeekdays, partitionProblems, partitionReport, readPartitions } = require("../out/partcheck.js");
 const { readSym, symReport } = require("../out/syminspect.js");
 const { advise, filterCounts, adviceReport, readAttributeSample, ATTRIBUTE_SAMPLE } = require("../out/attradvice.js");
-const { schemaDiff, migrationScript, nullOf, castOf } = require("../out/migrate.js");
+const { schemaDiff, migrationScript, nullOf, castOf, castProblem } = require("../out/migrate.js");
 const { symbolPool, rangeOf, generator, testDataQ, testDataCsv, loadTypes, random } = require("../out/testdata.js");
 const { headNames, timeOfDay, rangeProblem, readTpPage, readTpLog, readReplayed } = require("../out/tplog.js");
 const { parseDashboards, changed, tileQueryProblem, dashboardNameProblem, withDashboard, refreshOf } = require("../out/dashboard.js");
@@ -184,6 +184,27 @@ test("the partition check finds weekday gaps, and each kind of problem in an ans
   assert.deepStrictEqual(partitionProblems(single), []);
 });
 
+// #2007: q writes a string or nested column with no rows as a general list
+// (type 0), and maps one with rows as 77h on.
+test("an empty partition's string or nested column is not a different type (#2007)", () => {
+  const row = (partition, types, rows) => ({ table: "ev", partition, dir: true, dotd: true, columns: ["sym", "note", "sz"], missing: [], types, enums: ["sym", "", ""], maxIndexes: [], rows });
+  const typed = (...rows) =>
+    partitionProblems({ hdb: true, field: "date", root: "/db", all: rows.map((r) => r.partition), checked: rows.length, tables: ["ev"], domains: new Map([["sym", 10]]), rows })
+      .filter((p) => p.kind === "different types")
+      .map((p) => [p.what, p.partitions]);
+  const full = (partition) => row(partition, [20, 77, 7], 3);
+  const empty = (partition) => row(partition, [20, 0, 7], 0);
+  assert.deepStrictEqual(typed(full("2026.01.05"), empty("2026.01.06"), full("2026.01.07")), []);
+  // Most partitions empty: the one with rows is not the odd one either.
+  assert.deepStrictEqual(typed(empty("2026.01.05"), empty("2026.01.06"), full("2026.01.07")), []);
+  assert.deepStrictEqual(typed(empty("2026.01.05"), empty("2026.01.06")), []);
+  // A general list with rows is another type, and so is an empty one where
+  // the column is a simple vector: q keeps that one's type with no rows.
+  assert.deepStrictEqual(typed(full("2026.01.05"), row("2026.01.06", [20, 0, 7], 3), full("2026.01.07")), [["ev.note is type 0 here, 77 in most partitions", ["2026.01.06"]]]);
+  assert.deepStrictEqual(typed(full("2026.01.05"), row("2026.01.06", [20, 77, 0], 0), full("2026.01.07")), [["ev.sz is type 0 here, 7 in most partitions", ["2026.01.06"]]]);
+  assert.deepStrictEqual(typed(full("2026.01.05"), row("2026.01.06", [20, 0, 6], 0), full("2026.01.07")), [["ev.sz is type 6 here, 7 in most partitions", ["2026.01.06"]]]);
+});
+
 test("the sym report warns above the threshold and lists columns and growth", () => {
   const a = readSym({ sym: true, root: "/db", count: 2000, bytes: 4096, partitions: 10, sampled: 2, ctable: ["t", "o"], ccol: ["sym", "id"], cdistinct: [5, 1900], gpart: ["2026.01.06", "2026.01.05"], gsize: [2000, 100] });
   assert.deepStrictEqual(a.columns.map((c) => c.column), ["id", "sym"]);
@@ -242,6 +263,106 @@ test("the attribute advisor counts filters and suggests by shape, never for an u
   assert.match(report, /\| sym \|  \| g# \|/);
 });
 
+// The sample one partition of a table written by .Q.dpft gives: sym parted
+// and so in ascending order, a key every value of which is distinct, a
+// venue kept grouped.
+const partedSample = (attrs, extra = {}) =>
+  readAttributeSample({
+    kind: "partitioned",
+    rows: 5000,
+    sampled: 1000,
+    partitions: 5,
+    cols: ["sym", "id", "venue", "time"],
+    types: ["s", "j", "s", "p"],
+    attrs,
+    distinct: [3, 1000, 2, 1000],
+    runs: [3, 1000, 2, 1000],
+    sorted: [true, true, true, true],
+    ...extra,
+  });
+
+test("the attribute advisor keeps a p#, u# or g# a column in ascending order already has (#1978)", () => {
+  const filters = new Map([["sym", 3], ["id", 1], ["venue", 1]]);
+  const by = (s, f = filters) => Object.fromEntries(advise(s, f).map((a) => [a.column, a]));
+  const kept = by(partedSample(["p", "u", "g", ""]));
+  assert.deepStrictEqual([kept.sym.suggest, kept.id.suggest, kept.venue.suggest, kept.time.suggest], ["p", "u", "g", "s"]);
+  assert.match(kept.sym.reason, /^each value's rows are together \(in 1,000 rows sampled\), 3 distinct values: the p# it has finds them as one range in each partition, where s# would search by halves; 3 saved or recent queries filter on it$/);
+  assert.match(kept.id.reason, /^every value distinct \(in 1,000 rows sampled\): the u# it has makes a lookup by value a hash lookup, where s# would search by halves; /);
+  assert.match(kept.venue.reason, /^2 distinct values \(in 1,000 rows sampled\): the g# it has keeps each value's rows, where s# would search by halves/);
+  // What it keeps costs what setting it would.
+  assert.deepStrictEqual([kept.sym.cost, kept.id.cost, kept.venue.cost], [24 * 3 * 5, 16 * 5000, (8 * 1000 + 16 * 2) * 5]);
+  const report = adviceReport("trade", "hdb", partedSample(["p", "u", "g", ""]), advise(partedSample(["p", "u", "g", ""]), filters), 5);
+  assert.match(report, /\| sym \| p# \| p# \|/);
+  assert.match(report, /\*\*sym\*\*: .*where s\\# would search by halves; 3 saved or recent queries filter on it\. It already has it\./);
+  assert.doesNotMatch(report, /\| (sym|id|venue) \| [pug]# \| s# \|/);
+  // The first column of a table, filtered by nothing, is kept the same way.
+  assert.strictEqual(by(partedSample(["p", "", "", ""]), new Map()).sym.suggest, "p");
+  // A column with no attribute, or with s#, is still told s#.
+  const bare = by(partedSample(["", "", "", "s"]));
+  assert.deepStrictEqual([bare.sym.suggest, bare.id.suggest, bare.venue.suggest, bare.time.suggest], ["s", "s", "s", "s"]);
+  assert.match(bare.sym.reason, /^already in ascending order \(in 1,000 rows sampled\): s# lets a filter/);
+  // An attribute the sample does not bear out is not kept on its word.
+  const odd = by(partedSample(["u", "p", "", ""], { distinct: [3, 1000, 2, 1000], runs: [3, null, 2, 1000] }));
+  assert.deepStrictEqual([odd.sym.suggest, odd.id.suggest], ["s", "s"]);
+});
+
+// A partitioned table missing from one partition cannot be counted
+// (`.Q.cn` fails): the sample is then all that is known of it.
+test("the attribute advisor does not take the sample for the table when the rows cannot be counted (#1979)", () => {
+  const sample = (rows) =>
+    readAttributeSample({
+      kind: "partitioned",
+      rows,
+      sampled: 100000,
+      partitions: 500,
+      cols: ["time", "id", "venue", "sym"],
+      types: ["p", "j", "s", "s"],
+      attrs: ["", "", "", ""],
+      distinct: [100000, 100000, 2500, 40],
+      runs: [100000, 100000, 90000, 40],
+      sorted: [true, false, false, false],
+    });
+  const filters = new Map([["id", 3], ["venue", 2], ["sym", 1]]);
+  const counted = advise(sample(50000000), filters);
+  assert.deepStrictEqual(counted.map((a) => [a.column, a.suggest, a.cost]), [["time", "s", 0], ["id", "u", 800000000], ["venue", "g", 400000000 + 16 * 2500 * 500], ["sym", "p", 24 * 40 * 500]]);
+  const unknown = advise(sample(null), filters);
+  // The same advice, of a sample: what it found is not stated of the table,
+  // and what depends on the row count is not costed from the sample's.
+  assert.deepStrictEqual(unknown.map((a) => [a.column, a.suggest, a.cost]), [["time", "s", 0], ["id", "u", null], ["venue", "g", null], ["sym", "p", 24 * 40 * 500]]);
+  for (const [i, a] of unknown.entries()) assert.strictEqual(a.reason, counted[i].reason);
+  for (const a of unknown) assert.match(a.reason, / \(in 100,000 rows sampled\)/);
+  const report = adviceReport("quote", "hdb", sample(null), unknown, 6);
+  assert.match(report, /A partitioned table of an unknown number of rows; 100,000 rows sampled from its last partition/);
+  assert.match(report, /\| time \|  \| s# \| 0 B \| 0 \|/);
+  assert.match(report, /\| id \|  \| u# \| unknown \| 3 \|/);
+  assert.match(report, /\| venue \|  \| g# \| unknown \| 2 \|/);
+  assert.match(report, /\| sym \|  \| p# \| 469 KB \| 1 \|/);
+  assert.match(report, /u# and g# keep an entry a row, so their memory is not known where the rows could not be counted/);
+  assert.doesNotMatch(report, /MB/);
+  // A column given no attribute still has an empty cell, and a counted table no such note.
+  const none = adviceReport("quote", "hdb", sample(null), advise(sample(null), new Map()), 0);
+  assert.match(none, /\| venue \|  \| none \|  \| 0 \|/);
+  assert.doesNotMatch(adviceReport("quote", "hdb", sample(50000000), counted, 6), /unknown|could not be counted/);
+  assert.match(adviceReport("quote", "hdb", sample(50000000), counted, 6), /\| id \|  \| u# \| 763 MB \| 3 \|/);
+  // A table sampled whole still has no caveat.
+  const whole = readAttributeSample({ kind: "table", rows: 3, sampled: 3, partitions: 1, cols: ["id"], types: ["j"], attrs: [""], distinct: [3], runs: [3], sorted: [false] });
+  assert.strictEqual(advise(whole, new Map([["id", 1]]))[0].reason, "every value distinct: u# makes a lookup by value a hash lookup; 1 saved or recent query filters on it");
+});
+
+test("the attribute advisor's report names the kind of table as an adjective (#1980)", () => {
+  const first = (kind, rows = 3) => {
+    const s = readAttributeSample({ kind, rows, sampled: 3, partitions: 1, cols: ["id"], types: ["j"], attrs: [""], distinct: [3], runs: [3], sorted: [false] });
+    return adviceReport("t", "rdb", s, advise(s), 0).split("\n")[2];
+  };
+  assert.strictEqual(first("table"), "An in-memory table of 3 rows; 3 rows sampled; 0 saved and recent queries read for filters.");
+  assert.strictEqual(first("keyed"), "A keyed table of 3 rows; 3 rows sampled; 0 saved and recent queries read for filters.");
+  assert.strictEqual(first("splayed"), "A splayed table of 3 rows; 3 rows sampled; 0 saved and recent queries read for filters.");
+  assert.strictEqual(first("partitioned"), "A partitioned table of 3 rows; 3 rows sampled from its last partition; 0 saved and recent queries read for filters.");
+  // A kind this does not know is still a table, said once.
+  assert.strictEqual(first(""), "A table of 3 rows; 3 rows sampled; 0 saved and recent queries read for filters.");
+  assert.strictEqual(first("odd_kind", null), "A table of an unknown number of rows; 3 rows sampled; 0 saved and recent queries read for filters.");
+});
+
 test("a schema diff names adds, drops, casts and order, and the script turns one into the other", () => {
   const t = (kind, cols, keys = []) => ({ kind, rows: 0, bytes: null, partitions: null, keys, ncols: cols.length, columns: cols.map(([name, type, attr = ""]) => ({ name, type, fkey: "", attr })) });
   const from = t("keyed", [["k", "j"], ["x", "j"], ["y", "s"]], ["k"]);
@@ -260,6 +381,18 @@ test("a schema diff names adds, drops, casts and order, and the script turns one
   assert.strictEqual(castOf("c", "C", "j"), '"J"$c');
   assert.strictEqual(castOf("c", "s", "j"), '"J"$string c');
   assert.strictEqual(castOf("c", "s", "d"), '"D"$string c');
+  // A cast q does not make is left out by its name (#2012); between two list
+  // columns it is the atoms' cast, made in each item (#2013).
+  assert.strictEqual(castProblem("j", "g", false), "q has no cast from long to guid");
+  assert.strictEqual(castProblem("d", "t", true), "q has no cast from date to time");
+  assert.deepStrictEqual([castProblem("g", "s", false), castProblem("s", "g", true), castProblem("d", "p", false), castProblem("", "j", false)], [undefined, undefined, undefined, undefined]);
+  assert.strictEqual(castProblem("j", "", false), "no cast makes a mixed column");
+  assert.deepStrictEqual([castProblem("J", "F", false), castOf("b", "J", "F")], [undefined, '"f"$b']);
+  assert.deepStrictEqual([castOf("b", "S", "J"), castOf("b", "J", "S"), castOf("b", "S", "C"), castOf("b", "C", "J")], ['{"J"$string x} each b', "{`$string x} each b", '{"c"$first each string x} each b', '"j"$b']);
+  assert.strictEqual(castProblem("M", "T", false), "q has no cast from month to time");
+  assert.strictEqual(castProblem("J", "j", false), "a list column's items are lists, an atom column's are not");
+  const cast = migrationScript("a", t("table", [["k", "j"], ["g", "j"], ["l", "J"], ["m", "j"]]), "a", t("table", [["k", "j"], ["g", "g"], ["l", "F"], ["m", ""]]), "b", "p");
+  assert.match(cast, /\n\/ not written: a cast of g from j to g: q has no cast from long to guid\na:update l:"f"\$l from a\n\/ not written: a cast of m from j to mixed: no cast makes a mixed column\n$/);
   // A mixed column is added as an empty list a row (#1097).
   assert.match(migrationScript("a", t("table", [["k", "j"]]), "a", t("table", [["k", "j"], ["m", ""]]), "b", "p"), /\na:update m:count\[i\]#enlist \(\) from a\n/);
   assert.match(migrationScript("a", from, "a", from, "a", "p"), /the same: there is nothing to change/);
@@ -291,10 +424,15 @@ test("test data: pools, ranges, a q generator per type, and CSV that sorts and r
   assert.strictEqual(generator("f", o), "10+n?10f");
   const info = { kind: "keyed", rows: 0, bytes: null, partitions: null, keys: ["k"], ncols: 3, columns: [{ name: "k", type: "s", fkey: "", attr: "" }, { name: "px", type: "f", fkey: "", attr: "" }, { name: "t", type: "p", fkey: "", attr: "" }] };
   const q = testDataQ(info, "gen", o);
-  assert.match(q, /\\S 3\nn:20\ngen:`k xkey \{x where\(til count x\)=k\?k:\(\(\),y\)#x\}\[\(\[\] k:n\?enlist`A; px:asc 10\+n\?10f; t:2026\.01\.02D\+n\?1D\);`k\]/);
-  assert.match(q, /\ndelete n from `\.\n/);
-  // A table named n is not deleted by the script's own clean-up (#1084).
-  assert.doesNotMatch(testDataQ(info, "n", o), /delete n from/);
+  // The count is a lambda's parameter: the script sets no global `n`, and
+  // deletes none (#2016).
+  assert.strictEqual(q.split("\n").slice(1).join("\n"), "\\S 3\ngen:`k xkey {x where(til count x)=k?k:((),y)#x}[{[n] ([] k:n?enlist`A; px:asc 10+n?10f; t:2026.01.02D+n?1D)}[20];`k]\n");
+  // A table named n is the lambda's answer, as any other (#1084).
+  assert.strictEqual(testDataQ({ ...info, keys: [] }, "n", o).split("\n")[2], "n:{[n] ([] k:n?enlist`A; px:asc 10+n?10f; t:2026.01.02D+n?1D)}[20]");
+  // A lambda holds so many columns: a wider table's are joined from several.
+  const column = (i) => ({ name: `c${i}`, type: "j", fkey: "", attr: "" });
+  const wide = testDataQ({ ...info, keys: [], ncols: 201, columns: Array.from({ length: 201 }, (_, i) => column(i)) }, "w", o).split("\n")[2];
+  assert.match(wide, /^w:flip \(flip \{\[n\] \(\[\] c0:[^}]*; c99:10\+n\?10\)\}\[20\]\),\(flip \{\[n\] \(\[\] c100:[^}]*; c199:10\+n\?10\)\}\[20\]\),\(flip \{\[n\] \(\[\] c200:10\+n\?10\)\}\[20\]\)$/);
   const csv = testDataCsv(info, o);
   assert.strictEqual(csv, testDataCsv(info, o));
   const lines = csv.trim().split("\n");

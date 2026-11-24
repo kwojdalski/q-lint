@@ -31,7 +31,7 @@ import { readTerminal } from "./liveconfig";
 import { mergeEnv } from "./qenv";
 import { onPath } from "./relations";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
-import { EXCLUDE, TASK_TYPE, TEST_RUNNERS, detectedTasks, readTaskDefinition, readTasks, taskPaths, terminalText, type QTaskDefinition } from "./tasks";
+import { EXCLUDE, TASK_TYPE, TEST_RUNNERS, detectedTasks, matchable, readTaskDefinition, readTasks, taskPaths, terminalText, type QTaskDefinition } from "./tasks";
 import { expandHome, qBinaryFrom } from "./terminal";
 
 const isFile = (file: string): boolean => {
@@ -112,12 +112,20 @@ function runner(definition: QTaskDefinition, folder: WorkspaceFolder | undefined
         child.stdout?.setEncoding("utf8");
         child.stderr?.setEncoding("utf8");
         child.stdout?.on("data", (text: string) => write.fire(terminalText(text)));
-        child.stderr?.on("data", (text: string) => write.fire(terminalText(text)));
+        // An error inside a q keyword, where the matcher can read it (#2001).
+        const errors = matchable();
+        const put = (text: string): void => {
+          if (text !== "") write.fire(terminalText(text));
+        };
+        child.stderr?.on("data", (text: string) => put(errors.push(text)));
         child.once("error", (error) => {
           write.fire(terminalText(`could not start ${binary}: ${error.message}\n`));
           close.fire(1);
         });
-        child.once("close", (code) => close.fire(code ?? 1));
+        child.once("close", (code) => {
+          put(errors.end());
+          close.fire(code ?? 1);
+        });
       })();
     },
     close: () => {

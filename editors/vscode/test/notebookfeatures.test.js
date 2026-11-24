@@ -7,9 +7,10 @@ const test = require("node:test");
 const assert = require("node:assert");
 const fs = require("node:fs");
 const path = require("node:path");
+const url = require("node:url");
 const pkg = require("../package.json");
 const { cellDirective } = require("../out/celldirectives.js");
-const { LIVE, LIVE_KEY, inlineSpans, liveExpressions, markdownAfter, readLiveValues, scanLive } = require("../out/livemarkdown.js");
+const { LIVE, LIVE_KEY, inlineSpans, liveExpressions, liveQueries, markdownAfter, readLiveValues, scanLive } = require("../out/livemarkdown.js");
 const { FULL_TEXT } = require("../out/qtext.js");
 const { ERROR_MIME, fromIpynb, markdownHtml, toHtml, toIpynb, IpynbError } = require("../out/qnbconvert.js");
 const { INJECTED_KEY, cliProcess, guardedText, injectParameters, parametersCell, parametersOf, parseArgs, passwordOf, passwordVariable, runNotebook, writeAs } = require("../out/qnbrun.js");
@@ -149,6 +150,156 @@ test("a live value in a blockquote, a list item or a CRLF cell is keyed as the r
   }
   // What markdown-it hands the renderer, the markers and indent gone.
   assert.strictEqual(r.scanLive("total {{q: sum\ntil 4}}", 6).expr, "sum\n til 4");
+});
+
+// A `>` four columns or more into a continuation line is no blockquote
+// marker to markdown-it: it is q's greater-than. The key keeps it on both
+// sides, and the process is sent the text as written, not the key (#1993).
+test("a continuation line's own > is q's: kept in the key, and sent as written (#1993)", async () => {
+  const r = await renderer();
+  // The source, what markdown-it hands the renderer for it, the key, and
+  // the expression sent.
+  for (const [source, inline, key, expr] of [
+    ["Big: {{q: 5\n    >3}}", "Big: {{q: 5\n    >3}}", "5\n >3", "5\n    >3"],
+    ["Big: {{q: 5\n\t>3}}", "Big: {{q: 5\n\t>3}}", "5\n >3", "5\n\t>3"],
+    ["Ok: {{q: 3 4 5\r\n    >=4}}", "Ok: {{q: 3 4 5\n    >=4}}", "3 4 5\n >=4", "3 4 5\r\n    >=4"],
+    ["- item {{q: 5\n      >3}}", "item {{q: 5\n    >3}}", "5\n >3", "5\n      >3"],
+    // In a blockquote its own markers go, and only they.
+    ["> a {{q: 5\n>     >3}}", "a {{q: 5\n    >3}}", "5\n >3", "5\n    >3"],
+    ["> a {{q: 5\n    >3}}", "a {{q: 5\n3}}", "5\n 3", "5\n3"],
+    ["> > a {{q: sum\n> > til 4}}", "a {{q: sum\ntil 4}}", "sum\n til 4", "sum\ntil 4"],
+    // A string's lines are sent as written.
+    ['s {{q: "a\n   b"}}', 's {{q: "a\n   b"}}', '"a\n b"', '"a\n   b"'],
+  ]) {
+    assert.deepStrictEqual(liveQueries(source), [{ key, expr }], JSON.stringify(source));
+    assert.strictEqual(r.scanLive(inline, inline.indexOf("{{q:")).expr, key, JSON.stringify(inline));
+  }
+  // With and without the `>` are two expressions, not one key.
+  assert.deepStrictEqual(liveExpressions("{{q: x\n    >y}} {{q: x\n    y}}"), ["x\n >y", "x\n y"]);
+  // The guard reads what is sent.
+  assert.deepStrictEqual(guardedText("1", ["{{q: 5\n    >3}}", "> {{q: sum\n> til 4}}"]), ["1", "5\n    >3", "sum\ntil 4"]);
+});
+
+// A fence, an indented code block and an HTML block are that in a
+// blockquote and in a list item as at the cell's top: the renderer shows
+// their `{{q: }}` as written, so the process is never asked for it (#2000).
+test("a code or HTML block inside a blockquote or a list item is not prose: its live values are not run (#2000)", async () => {
+  const r = await renderer();
+  for (const hidden of [
+    "> ~~~\n> {{q: x}}\n> ~~~",
+    "> <div>\n> {{q: x}}\n> </div>",
+    "- a\n\n      {{q: x}}",
+    "- ~~~\n  {{q: x}}\n  ~~~",
+    "1. <pre>\n   {{q: x}}\n   </pre>",
+    ">     {{q: x}}",
+    "> - a\n>\n>       {{q: x}}",
+    "- > ```\n  > {{q: x}}",
+    // A comment's block reads on over the item's empty line.
+    "- <!--\n\n  {{q: x}}",
+    // After a link reference definition a line four columns in is code.
+    "[x]: /u\n    {{q: x}}",
+    // A code span is read before the comment opened in it.
+    "`{{q: x}}<!--`",
+    "a <!A {{q: x}}> b <?{{q: x}}?>",
+  ]) {
+    assert.deepStrictEqual(liveQueries(hidden), [], JSON.stringify(hidden));
+  }
+  // What is prose there is read as before. The source, what markdown-it
+  // hands the renderer for its blocks, and the keys.
+  for (const [source, inline, keys] of [
+    // The block ends, and prose follows it in the same container.
+    ["> ~~~\n> {{q: x}}\n> ~~~\n> after {{q: a}}", ["after {{q: a}}"], ["a"]],
+    ["- <div>\n  {{q: x}}\n\n  {{q: d}}", ["{{q: d}}"], ["d"]],
+    ["- a\n- b\n\n      {{q: x}}\n- c {{q: f}}", ["a", "b", "c {{q: f}}"], ["f"]],
+    // A line without the quote's `>` is not in its fence.
+    ["> ~~~\n{{q: out}}", ["{{q: out}}"], ["out"]],
+    // Four columns in is code only past the item's own indent.
+    ["- a\n\n    {{q: c}}", ["a", "{{q: c}}"], ["c"]],
+    ["1. a\n\n   {{q: b}}\n\n       {{q: x}}", ["a", "{{q: b}}"], ["b"]],
+    // A comment never closed in a paragraph is text, as is `[x]:` with no
+    // destination after it.
+    ["a <!-- {{q: g}}", ["a <!-- {{q: g}}"], ["g"]],
+    ["[x]:{{q: h}} i", ["[x]:{{q: h}} i"], ["h"]],
+  ]) {
+    assert.deepStrictEqual(liveExpressions(source), keys, JSON.stringify(source));
+    assert.deepStrictEqual(inline.flatMap((text) => inlineSpans(text).filter((sp) => sp.kind === "live").map((sp) => r.scanLive(text, sp.start).expr)), keys, JSON.stringify(inline));
+  }
+  // The guard reads none of what is not run.
+  assert.deepStrictEqual(guardedText("1", ["> ~~~\n> {{q: `t set 1}}\n> ~~~", "- a\n\n      {{q: delete from `t}}"]), ["1"]);
+});
+
+// markdown-it splits a table's row at each `|` before any inline rule and
+// hands a cell's `\|` over as `|`. The host read the row as written: it
+// ran `1|2` for a row that showed nothing, and sent q `1\|2`, which it
+// refuses, for the row that showed the value (#1999).
+test("a live value in a table cell is read as the cell's text: its \\| is q's |, and one the row splits is not run (#1999)", async () => {
+  const r = await renderer();
+  const table = (row) => `| a | b |\n|---|---|\n${row}`;
+  assert.deepStrictEqual(liveQueries(table("| {{q: 1\\|2}} | x |")), [{ key: "1|2", expr: "1|2" }]);
+  // The key the page looks up, from the cell's text as markdown-it hands it.
+  assert.strictEqual(r.scanLive("{{q: 1|2}}", 0).expr, "1|2");
+  // Unescaped, the row splits inside it: two cells of text, and no query.
+  assert.deepStrictEqual(liveQueries(table("| {{q: 1|2}} | x |")), []);
+  assert.deepStrictEqual(guardedText("1", [table("| {{q: `t set 1|2}} | x |")]), ["1"]);
+  assert.deepStrictEqual(guardedText("1", [table("| {{q: `t set 1\\|2}} | x |")]), ["1", "`t set 1|2"]);
+  // The header's cells are read so too, and a cell past its last is not shown.
+  assert.deepStrictEqual(liveExpressions("| {{q: a\\|b}} | {{q: c}} |\n|---|---|"), ["a|b", "c"]);
+  assert.deepStrictEqual(liveExpressions(table("| {{q: d}} | e | {{q: f}} |\n\n{{q: g}}")), ["d", "g"]);
+  // In a quote and a list item, and with CRLF line ends.
+  assert.deepStrictEqual(liveExpressions("> | a |\n> |---|\n> | {{q: 1\\|2}} |\n\n- | a |\n  |---|\n  | {{q: 3\\|4}} |"), ["1|2", "3|4"]);
+  assert.deepStrictEqual(liveQueries(table("| {{q: 1\\|2}} | x |").replace(/\n/g, "\r\n")), [{ key: "1|2", expr: "1|2" }]);
+  // With no line of dashes under it a row is a paragraph, sent as written.
+  assert.deepStrictEqual(liveQueries("| {{q: 1|2}} | x |"), [{ key: "1|2", expr: "1|2" }]);
+  assert.deepStrictEqual(liveQueries("| {{q: 1\\|2}} | x |"), [{ key: "1\\|2", expr: "1\\|2" }]);
+});
+
+/// The lines generated Markdown is made of: the containers a line opens or
+/// goes on in, and what it holds.
+const PREFIXES = ["", "", "", "> ", ">", "- ", "* ", "1. ", "  ", "    ", "      ", "\t", "> > ", "> - ", "- > ", ">     ", "   > "];
+const BODIES = ["{{q: K}}", "{{q: K}}", "text {{q: K}}", "text", "", "", "```", "~~~", "``` q", "~~~ {{q: K}}", "<div>", "</div>", "<pre>", "</pre>", "<!--", "-->", "<span>", "<!A", "<?", "?>", "<script>", "---", "===", "# {{q: K}}", "<b>{{q: K}}</b>", "`{{q: K}}`", "- {{q: K}}", "> {{q: K}}", "-", "{{q: K", "K}}", "[x]: /u", "[x]: {{q: K}}", "[x]:", '"t {{q: K}}"', "{{q: K}} <!--", "<div> {{q: K}}"];
+/// A table's lines among them (#1999).
+BODIES.push("| {{q: K}} | {{q: K\\|1}} |", "{{q: K|2}} | x", "| a | b |", "|---|---|", "---|---", "|-|", "| {{q: K}} |", "x \\| {{q: K}} | y | {{q: 3\\|K}}", ":-:|-:", "{{q: K}} \\\\| w");
+
+// markdown-it itself is the judge: the renderer VS Code ships, when
+// QLINT_TEST_MARKDOWN_IT names its notebook-out/index.js.
+test("over generated Markdown the extension runs the live values markdown-it draws, and no other (#2000)", { skip: process.env.QLINT_TEST_MARKDOWN_IT ? false : "QLINT_TEST_MARKDOWN_IT names no markdown-it renderer" }, async () => {
+  const r = await renderer();
+  const element = () => ({ classList: { add() {} }, content: { appendChild() {} }, appendChild() {}, textContent: "", style: {}, setAttribute() {} });
+  const had = globalThis.document;
+  globalThis.document = { documentElement: { style: { getPropertyValue: () => "" } }, createElement: element, head: { appendChild() {} }, body: { appendChild() {} } };
+  let md;
+  try {
+    const bundled = await import(url.pathToFileURL(process.env.QLINT_TEST_MARKDOWN_IT).href);
+    const api = await bundled.activate({ workspace: { isTrusted: true }, onDidChangeSettings() {}, settings: {}, postMessage() {} });
+    api.extendMarkdownIt((m) => (md = m));
+  } finally {
+    globalThis.document = had;
+  }
+  let drawn = [];
+  r.extend(md, (expr) => drawn.push(expr));
+  let seed = 2000;
+  const random = (n) => {
+    seed = (seed + 0x6d2b79f5) >>> 0;
+    let t = seed;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return Math.floor((((t ^ (t >>> 14)) >>> 0) / 4294967296) * n);
+  };
+  const pick = (from) => from[random(from.length)];
+  let withValues = 0;
+  for (let doc = 0; doc < 20000; doc++) {
+    const lines = [];
+    for (let k = random(6); k >= 0; k--) {
+      lines.push(pick(PREFIXES) + (random(5) === 0 ? pick(PREFIXES) : "") + pick(BODIES).replace(/K/g, () => `k${lines.length}`));
+    }
+    const source = lines.join(random(20) === 0 ? "\r\n" : "\n");
+    drawn = [];
+    md.render(source, { outputItem: { metadata: {} } });
+    assert.deepStrictEqual([...liveExpressions(source)].sort(), [...new Set(drawn)].sort(), JSON.stringify(source));
+    withValues += drawn.length > 0 ? 1 : 0;
+  }
+  // Nearly half draw one, so this is not nothing compared with nothing.
+  assert.ok(withValues > 5000, `${withValues} documents drew a live value`);
 });
 
 test("the renderer reports a prototype's name as having no value, which postMessage can clone (#1391)", async () => {

@@ -3,6 +3,7 @@
 // `live.ts` runs it and asks for it.
 import * as path from "path";
 import type { Process } from "./processes";
+import { relativeInside } from "./workspacewrite";
 
 export const CONNECT_SCRIPT_COMMANDS = {
   set: "q-lint.setConnectScript",
@@ -105,8 +106,8 @@ export function onConnectOf<P extends Process>(process: P, old: Process | undefi
 /// the list is read in every clone, where that is where the file is (#1717).
 export function sharedEntry<P extends Process>(process: P, all: boolean, folder?: string): P {
   if (all) {
-    const relative = process.initFile === undefined || folder === undefined || !path.isAbsolute(process.initFile) ? undefined : path.relative(folder, process.initFile);
-    return relative !== undefined && relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative) ? { ...process, initFile: relative.split(path.sep).join("/") } : process;
+    const relative = process.initFile === undefined || folder === undefined || !path.isAbsolute(process.initFile) ? undefined : relativeInside(folder, process.initFile);
+    return relative !== undefined ? { ...process, initFile: relative.split(path.sep).join("/") } : process;
   }
   return { ...onConnectOf(process, undefined), ...(process.ssh !== undefined ? { ssh: process.ssh } : {}) };
 }

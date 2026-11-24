@@ -55,6 +55,7 @@ import {
   protectionsRemoved,
   readProcessFile,
   relabelsAfter,
+  resaved,
   sshDestination,
   serverTypes,
   givenServerTypes,
@@ -74,7 +75,7 @@ import { clearedStamp, historyHeading, historyLabel, iconsEscaped, mergedHistory
 import { render } from "./query";
 import { QueryModes, type PageLater, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
-import { assertWritable } from "./workspacewrite";
+import { assertWritable, relativeInside } from "./workspacewrite";
 import { commandLine, expandHome, qBinaryFrom, relativeBinaryProblem, replLines, shellKind, terminalCwd } from "./terminal";
 import { readDotenv, terminalEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
@@ -512,9 +513,8 @@ export class QTerminals {
     const layout = layoutEnvFor(qBinaryFrom(settings.qBinary, folder?.uri.fsPath, os.homedir()) ?? settings.qBinary, from);
     const { shown, hidden, refs } = terminalEnv(layout, variables, await dotenvFor(from));
     // A file inside the folder is named relative to it, as you would type it.
-    const relative = file !== undefined && cwd !== undefined ? path.relative(cwd, file) : "";
-    const inside = relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
-    const args = file === undefined ? [] : [inside ? relative : file, ...extraArgs];
+    const relative = file !== undefined && cwd !== undefined ? relativeInside(cwd, file) : undefined;
+    const args = file === undefined ? [] : [relative ?? file, ...extraArgs];
     // A relative q is the folder's, as in the launcher, also for a file
     // outside every folder, whose terminal starts elsewhere (#1716).
     const binary = cwd === folder?.uri.fsPath ? settings.qBinary : (qBinaryFrom(settings.qBinary, folder?.uri.fsPath, os.homedir()) ?? settings.qBinary);
@@ -1203,6 +1203,17 @@ export class Live {
       await this.vacate(label, fresh.length === 1);
     }
     await this.context.globalState.update(PROCESSES_KEY, processes);
+    // The connected process, and one being connected to, are the entries
+    // captured at connect: a timeout or credential command set since is
+    // theirs from now, not from the next manual connect (#1988).
+    for (const saved of processes) {
+      if (this.active?.label === saved.label && this.active.server === undefined) {
+        this.active = resaved(this.active, saved);
+      }
+      if (this.connectingAs?.label === saved.label && this.connectingAs.server === undefined) {
+        this.connectingAs = resaved(this.connectingAs, saved);
+      }
+    }
     this.processesView.refresh();
   }
 

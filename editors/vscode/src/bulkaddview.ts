@@ -13,7 +13,7 @@ import { plainMessage } from "./history";
 const on = (): boolean => readAdmin((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback)).bulkAdd;
 
 /// The form's page: a text area and the table under it, under a policy
-/// that runs only its own script.
+/// that runs only its own script. Its text is kept in the panel's state.
 export function bulkAddHtml(cspSource: string): string {
   const nonce = randomBytes(16).toString("base64");
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
@@ -34,10 +34,14 @@ button { margin-top: 8px; color: var(--vscode-button-foreground); background: va
 <script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
 const text = document.getElementById("text");
-text.addEventListener("input", () => vscode.postMessage({ type: "check", text: text.value }));
+// A hidden tab's page is thrown away and loaded again when shown: what was
+// typed is kept in the panel's state, and put back (#1990).
+const kept = vscode.getState();
+if (kept && typeof kept.text === "string") text.value = kept.text;
+text.addEventListener("input", () => { vscode.setState({ text: text.value }); vscode.postMessage({ type: "check", text: text.value }); });
 document.getElementById("add").addEventListener("click", () => vscode.postMessage({ type: "add", text: text.value }));
 window.addEventListener("message", (event) => { if (event.data.type === "rows") document.getElementById("rows").innerHTML = event.data.html; });
-vscode.postMessage({ type: "check", text: "" });
+vscode.postMessage({ type: "check", text: text.value });
 </script></body></html>`;
 }
 

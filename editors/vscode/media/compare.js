@@ -56,6 +56,11 @@
     (c.retyped || []).forEach(function (t) {
       parts.push(t.column + " is " + t.left + " on " + l + " and " + t.right + " on " + r);
     });
+    if (c.rekeyed) {
+      // Keyed by other columns, or one of them not at all (#2008).
+      const by = function (keys, said) { return keys.length === 0 ? "not keyed" : said + keys.join(", "); };
+      parts.push("the table is " + by(c.rekeyed.left, "keyed by ") + " on " + l + " and " + by(c.rekeyed.right, c.rekeyed.left.length === 0 ? "keyed by " : "by ") + " on " + r);
+    }
     if (c.cut > 0) {
       parts.push(plural(c.cut, "cell is", "cells are") + " the same as far as shown, cut at 200 characters, and no further compared");
     }

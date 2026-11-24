@@ -20,7 +20,9 @@
 //! save, a close, a change on disk, a folder added or removed, or a
 //! configuration changed - not at every keystroke of an open file, which
 //! would start the whole workspace over on each.
-use super::{Documents, Index, Kept, Options, diagnose, file_key, navigate::Sources, path_of};
+use super::{
+    Documents, Index, Kept, Options, file_key, linted, navigate::Sources, on_disk, path_of, report,
+};
 use crate::config::Policy;
 use crate::jsonrpc::send;
 use serde_json::json;
@@ -118,19 +120,24 @@ impl Closed {
             self.published.remove(key);
             return Ok(());
         }
-        let text = idx
-            .files
-            .contains_key(key)
-            .then(|| std::fs::read(key).ok())
-            .flatten();
-        let Some(bytes) = text else {
+        let read = idx.files.contains_key(key).then(|| on_disk(key)).flatten();
+        let Some((text, bom)) = read else {
             return self.clear(writer, key);
         };
         let uri = sources.uri(key);
-        let text = String::from_utf8_lossy(&bytes);
+        let mut findings = linted(&uri, &text, &idx.ws, policy);
+        // The text is the editor's, which has no BOM in it, so everything
+        // is found where the editor shows it. The BOM itself is still the
+        // file's, and q still refuses it: QE005 is asked of the file as it
+        // is on disk, and reported at its start (#2027).
+        if bom && let Ok(findings) = &mut findings {
+            let whole = format!("\u{feff}{text}");
+            let of_bom = linted(&uri, &whole, &idx.ws, policy).unwrap_or_default();
+            findings.splice(0..0, of_bom.into_iter().filter(|f| f.code == "QE005"));
+        }
         // Nothing carried over for a file nobody is typing in, and nothing
         // of its text kept once it is linted.
-        diagnose(writer, &uri, &text, &mut Kept::new(), &idx.ws, policy, opts)?;
+        report(writer, &uri, &text, findings, &mut Kept::new(), opts)?;
         self.published.insert(key.to_string(), uri);
         Ok(())
     }
