@@ -686,7 +686,9 @@ export function consoleLines(q: QValue, size: [number, number], value?: unknown,
 /// one `..` line.
 export function cutLines(lines: string[], size: [number, number]): string[] {
   const [height, width] = size;
-  const cut = lines.map((l) => (l.length > width ? `${l.slice(0, Math.max(0, width - 2))}..` : l));
+  // A cut inside an astral character drops its first half too (#1761).
+  const head = (l: string, n: number): string => (/[\ud800-\udbff]/.test(l[n - 1] ?? "") ? l.slice(0, n - 1) : l.slice(0, n));
+  const cut = lines.map((l) => (l.length > width ? `${head(l, Math.max(0, width - 2))}..` : l));
   return cut.length > height ? [...cut.slice(0, Math.max(0, height - 1)), ".."] : cut;
 }
 

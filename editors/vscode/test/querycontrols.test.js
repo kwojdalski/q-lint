@@ -568,3 +568,11 @@ test("an unwrapped minute, second or time of 100 hours or more writes its hours 
   assert.strictEqual(vectorText([359999999, -2147483646], 19), "99:59:59.999 -**:31:23.646");
   assert.strictEqual(atomText(2147483646, -18), "**:14:06");
 });
+
+test("an unwrapped line cut at the width never ends in half an astral character (#1761)", () => {
+  const smile = "\u{1F600}";
+  // 77 a's and two emoji at 80: the cut at 78 would end inside the first.
+  assert.deepStrictEqual(cutLines(["a".repeat(77) + smile + smile], [25, 80]), ["a".repeat(77) + ".."]);
+  assert.deepStrictEqual(cutLines(["a".repeat(76) + smile + smile + "b"], [25, 80]), ["a".repeat(76) + smile + ".."]);
+  assert.deepStrictEqual(cutLines(["a".repeat(78) + smile], [25, 80]), ["a".repeat(78) + smile]);
+});
