@@ -121,9 +121,22 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
 /// already absolute (another Windows drive) is left as it is.
 export function absolutePaths(text: string, dir: string): string {
   const base = dir.replace(/\\/g, "/").replace(/^\/\/\?\//, "");
-  return text.replace(/"path":"([^"]*)"/g, (whole, path: string) =>
-    /^(\/|[A-Za-z]:)/.test(path) ? whole : `"path":"${posix.normalize(`${base}/${path}`)}"`,
-  );
+  return mapPaths(text, (path) => (/^(\/|[A-Za-z]:)/.test(path) ? path : posix.normalize(`${base}/${path}`)));
+}
+
+/// `text` with each finding's `"path"` - a JSON string, its escapes read
+/// and written back, so that a folder named with a `"` or `\` is one path
+/// (#1604) - replaced with what `f` makes of it.
+function mapPaths(text: string, f: (path: string) => string): string {
+  return text.replace(/"path":("(?:[^"\\]|\\.)*")/g, (whole, quoted: string) => {
+    let path: unknown;
+    try {
+      path = JSON.parse(quoted);
+    } catch {
+      return whole;
+    }
+    return typeof path === "string" ? `"path":${JSON.stringify(f(path))}` : whole;
+  });
 }
 
 /// A baseline written from a scratch directory, its paths made absolute,
@@ -134,9 +147,9 @@ export function absolutePaths(text: string, dir: string): string {
 export function rebased(text: string, ...folders: string[]): string {
   const canonical = (p: string): string => p.replace(/\\/g, "/").replace(/^\/\/\?\//, "").replace(/^[a-z]:/, (d) => d.toUpperCase());
   const prefixes = folders.map((f) => canonical(f).replace(/\/*$/, "/"));
-  return text.replace(/"path":"([^"]*)"/g, (whole, path: string) => {
+  return mapPaths(text, (path) => {
     const prefix = prefixes.find((p) => canonical(path).startsWith(p));
-    return prefix === undefined ? whole : `"path":"${canonical(path).slice(prefix.length)}"`;
+    return prefix === undefined ? path : canonical(path).slice(prefix.length);
   });
 }
 

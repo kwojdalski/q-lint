@@ -226,6 +226,10 @@ test("a baseline is named first in qlinter.toml, its count read, and its paths m
   assert.strictEqual(rebased(row("C:/projx/a.q"), win), row("C:/projx/a.q"));
   assert.strictEqual(rebased(row("/private/tmp/proj/src/a.q"), posix.join("/tmp", "proj"), "/private/tmp/proj"), row("src/a.q"));
   assert.strictEqual(rebased(row("/other/a.q"), "/tmp/proj", "/private/tmp/proj"), row("/other/a.q"));
+  // A folder named with a quote or a backslash: its path as JSON escapes it (#1604).
+  assert.strictEqual(rebased(row('/ws/my \\"proj\\"/a.q'), '/ws/my "proj"'), row("a.q"));
+  assert.strictEqual(absolutePaths(row('../my \\"proj\\"/a\\\\b.q'), "/ws/x"), row('/ws/my \\"proj\\"/a\\\\b.q'));
+  assert.strictEqual(rebased(absolutePaths(row('../my \\"proj\\"/a.q'), "/ws/x"), '/ws/my "proj"'), row("a.q"));
   const { context, restore } = setUp();
   try {
     let asked = 0;
