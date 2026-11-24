@@ -92,6 +92,14 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
     assert.deepStrictEqual(cells.slice(1), ['"b\\"c\\n"', '"caf\\303\\251"', ',"x"', '""'], own);
   });
 
+  await t.test("a char column's raw is its bytes, so a byte past ASCII is written back as itself (#1489)", async () => {
+    const { atomLiteral } = require("../out/qliteral.js");
+    const answer = await connection.queryGrid(statements('([]c:"a\\303\\251")'), SIZE, 10);
+    assert.strictEqual(answer.gridError, undefined, answer.gridError);
+    assert.deepStrictEqual(answer.grid.raw[0], [97, 0xc3, 0xa9]);
+    assert.deepStrictEqual(answer.grid.cells[0].map((c, r) => atomLiteral(10, c, answer.grid.raw[0][r]).literal), ['"a"', '"\\303"', '"\\251"']);
+  });
+
   await t.test("a dictionary or a nested list comes with its tree, as unwrapped mode makes it (#928)", async () => {
     const { runUnwrapped } = require("../out/querycontrols.js");
     const { TREE_NODES } = require("../out/grid.js");

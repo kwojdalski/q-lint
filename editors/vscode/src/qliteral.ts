@@ -174,6 +174,11 @@ export function atomLiteral(type: number, text: string, raw: unknown): { literal
       return ok(`${n}${type === 8 ? "e" : "f"}`);
     }
     case 10:
+      // From its byte when sent: one past ASCII is no character alone, and
+      // its text is U+FFFD or a Latin-1 character (#1489).
+      if (typeof raw === "number") {
+        return ok(raw >= 128 ? `"\\${raw.toString(8).padStart(3, "0")}"` : stringLiteral(String.fromCharCode(raw)));
+      }
       return ok(stringLiteral(text === "" ? " " : text));
     case 11:
       return ok(symbolLiteral(text));

@@ -890,8 +890,9 @@ export function gridOfQ(q: QValue, limit: number): GridPayload | undefined {
   // The numbers of a numeric, temporal or guid column, as `GRID` sends them.
   // A long, timestamp or timespan past 2^53 keeps its digits as a string,
   // as `GRID`'s Long does: Number() would round it (#1398).
+  // A char column's bytes, as `GRID` sends them (#1489).
   const raw = shown.map((c, i): unknown[] =>
-    c.q.kind === "vector" && [2, 5, 6, 7, 8, 9, 12, 13, 14, 15, 16, 17, 18, 19].includes(types[i])
+    c.q.kind === "chars" ? [...c.q.v] : c.q.kind === "vector" && [2, 5, 6, 7, 8, 9, 12, 13, 14, 15, 16, 17, 18, 19].includes(types[i])
       ? c.q.v.map((x) => (typeof x === "bigint" ? (Number.isSafeInteger(Number(x)) ? Number(x) : x.toString()) : types[i] === 8 ? realValue(x) : x))
       : [],
   );

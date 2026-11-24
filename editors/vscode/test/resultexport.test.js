@@ -239,6 +239,19 @@ test("a datetime finer than its millisecond text is written as its float of days
   assert.strictEqual(atomLiteral(15, "", null).literal, "0Nz");
 });
 
+test("a char cell's literal is written from its byte: one past ASCII as its octal escape (#1489)", () => {
+  // GRID's cells of "\303\251" decode as U+FFFD; its raw is the bytes.
+  assert.strictEqual(atomLiteral(10, "\ufffd", 0xc3).literal, '"\\303"');
+  assert.strictEqual(atomLiteral(10, "a", 97).literal, '"a"');
+  assert.strictEqual(atomLiteral(10, " ", 32).literal, '" "');
+  assert.strictEqual(atomLiteral(10, '"', 34).literal, '"\\""');
+  assert.strictEqual(atomLiteral(10, "\n", 10).literal, '"\\n"');
+  // Unwrapped, the decoded bytes are sent the same way.
+  const g = gridOfQ({ kind: "table", attr: 0, cols: ["c"], data: [{ kind: "chars", attr: 0, v: Buffer.from([0xc3, 0xa9]) }] }, 100);
+  assert.deepStrictEqual(g.raw[0], [0xc3, 0xa9]);
+  assert.strictEqual(tableLiteral(g).code, '([] c:("\\303";"\\251"))');
+});
+
 test("a page of rows is added after the grid's, ranked again over both, and a page of another result is refused", () => {
   const first = { count: 4, keys: 0, names: ["v", "s"], types: [9, 11], cells: [["3", "1"], ["b", "a"]], raw: [[3, 1], []], rank: [[1, 0], [1, 0]] };
   const next = readPage({ count: 4, names: ["v", "s"], types: [9, 11], cells: [["", "2"], ["a", "c"]], raw: [[null, 2], []], rank: [[0, 1], [0, 1]] });
