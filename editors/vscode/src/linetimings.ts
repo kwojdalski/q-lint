@@ -152,13 +152,15 @@ export function readTimings(raw: unknown, spans: Span[]): Timings {
 }
 
 /// A duration for the decoration: µs under a millisecond, ms under a
-/// minute, then seconds.
+/// minute, then seconds - as rounded, so 999.9 µs is 1.00 ms (#1437).
 export function durationText(ns: number): string {
-  if (ns < 1e6) {
-    return `${(ns / 1e3).toFixed(ns < 1e4 ? 1 : 0)} µs`;
+  const us = (ns / 1e3).toFixed(ns < 1e4 ? 1 : 0);
+  if (ns < 1e6 && Number(us) < 1000) {
+    return `${us} µs`;
   }
-  if (ns < 6e10) {
-    return `${(ns / 1e6).toFixed(ns < 1e7 ? 2 : ns < 1e8 ? 1 : 0)} ms`;
+  const ms = (ns / 1e6).toFixed(ns < 1e7 ? 2 : ns < 1e8 ? 1 : 0);
+  if (ns < 6e10 && Number(ms) < 60000) {
+    return `${ms} ms`;
   }
   return `${(ns / 1e9).toFixed(1)} s`;
 }
@@ -168,11 +170,13 @@ export function bytesText(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];
   let value = bytes;
   let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
+  const shown = (): string => (unit === 0 ? String(value) : value.toFixed(value < 10 ? 1 : 0));
+  // As rounded: 1023.99 KB is 1.0 MB (#1437).
+  while (Number(shown()) >= 1024 && unit < units.length - 1) {
     value /= 1024;
     unit++;
   }
-  return `${unit === 0 ? value : value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
+  return `${shown()} ${units[unit]}`;
 }
 
 /// The text drawn after a statement's last line.
