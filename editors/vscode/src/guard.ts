@@ -38,8 +38,9 @@
 //   over that handle is not read;
 // - `xasc`, `xdesc` or `xkey` on a table named by a symbol
 //   (`` `a xasc `t ``), which sorts or keys it in place;
-// - `?` with a symbol atom on its left (`` `sym?`x ``), which extends that
-//   enumeration, and the sym file when the symbol is a handle;
+// - `?` with a symbol atom on its left (`` `sym?`x ``, `` (`sym)?`x ``,
+//   `` ?[`sym;`x] ``), which extends that enumeration, and the sym file
+//   when the symbol is a handle;
 // - a string sent to handle 0 (`0"a:1"`, `neg[0]"a:1"`), which the
 //   process evaluates itself;
 // - `-11!`, which replays a log through `upd`, except `-11!(-1;..)` and
@@ -768,6 +769,21 @@ function readStatement(statement: string, found: Set<string>): void {
     if (k.kind === "sym" && k.text.length > 1 && next?.kind === "op" && next.text === "?" && t[i - 1]?.kind !== "sym") {
       found.add(`extends the enumeration ${k.text} with ?`);
       continue;
+    }
+    // Also in parentheses, `` (`sym)?`x ``, and applied, `` ?[`sym;`x] ``
+    // (#1773); with four arguments `?[` is a functional select.
+    if (k.kind === "op" && k.text === "?") {
+      let parens = 0;
+      while (t[i - 1 - parens]?.text === ")") parens++;
+      const start = i - 1 - 2 * parens;
+      const left = parens > 0 && t[start]?.text === "(" && t[start - 1]?.kind !== "sym" ? symbolAt(t, start) : undefined;
+      const args = next?.text === "[" && next.kind === "open" ? items(t, i + 1) : [];
+      const applied = args.length === 2 && args[0][1] - args[0][0] === 1 ? t[args[0][0]] : undefined;
+      const sym = left ?? (applied?.kind === "sym" ? applied.text : undefined);
+      if (sym !== undefined && sym.length > 1) {
+        found.add(`extends the enumeration ${sym} with ?`);
+        continue;
+      }
     }
     // Where the `!` of an internal function `-N!` is, spaced or with the
     // number in parentheses: `-19 !x`, `(-19)!x`. Not after a number, where

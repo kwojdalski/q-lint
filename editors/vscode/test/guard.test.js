@@ -1065,3 +1065,23 @@ test("KDB-X use, .h.ht and .Q.L are changes (#1775)", () => {
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("? on a symbol atom in parentheses or applied in brackets extends an enumeration (#1773)", () => {
+  const cases = {
+    "(`sym)?`q": ["extends the enumeration `sym with ?"],
+    "((`sym))?`q": ["extends the enumeration `sym with ?"],
+    "?[`sym;`q]": ["extends the enumeration `sym with ?"],
+    "?[`:db/sym;`q`r]": ["extends the enumeration `:db/sym with ?"],
+    // A list, a value, or a functional select or exec reads.
+    "(`a`b)?`b": [],
+    "(s)?`q": [],
+    "?[`a`b;`b]": [],
+    "?[s;`q]": [],
+    "?[`t;();0b;()]": [],
+    "?[`t;();();`a]": [],
+    "?[1b;`a;`b]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
