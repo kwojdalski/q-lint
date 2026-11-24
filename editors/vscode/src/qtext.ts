@@ -51,6 +51,16 @@ export const FULL_TEXT = [
   "   r};(.z.s;r;n;x);{[r;e]r}[r]]}",
 ].join("\n");
 
+/// `UTF8_CUT[n;s]` is `n sublist s` for a string of UTF-8 bytes, less a
+/// character it would cut inside: the codec reads such a tail as U+FFFD
+/// (#2071).
+export const UTF8_CUT =
+  '{[n;s]if[n>=count s;:s];s:n#s;b:"i"$"x"$(0|count[s]-4)_s;i:last where not b within 128 191;$[null i;s;($[b[i]>=240;4;b[i]>=224;3;b[i]>=192;2;1])>(count b)-i;(i-count b)_s;s]}';
+
+/// `ESCAPE_CUT[n;s]` is `UTF8_CUT[n;s]` for the text of `-3!`, less an
+/// escape it would cut inside: `"\346\2` (#2071).
+export const ESCAPE_CUT = `{[n;s]c:count s;s:${UTF8_CUT}[n;s];if[c=count s;:s];o:0|count[s]-3;p:o+last where"\\\\"=o _s;if[null p;:s];if[not all((1+p)_s)in"01234567";:s];r:p-last -1,where not"\\\\"=p#s;$[r mod 2;p#s;s]}`;
+
 /// The items of a vector, and about the characters of a list, that a
 /// function's text is written to: a projection may hold a table of any size.
 export const TEXT_LIMIT = 100000;

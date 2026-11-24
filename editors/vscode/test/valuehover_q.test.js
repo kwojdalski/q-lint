@@ -79,6 +79,8 @@ const SERVER = [
   "v::calls+::1",
   "s:5000#\"ab\"",
   "x:7",
+  "u:`$600#enlist \"\\303\\251\\303\\251\\303\\251\"",
+  "tt:([]a:u)",
   "",
 ].join("\n");
 
@@ -106,6 +108,13 @@ test("the first name the process defines is read, as the console prints it, with
   const cut = readPreview(await c.call(VALUE_PREVIEW, "s", 50));
   assert.strictEqual(cut.text.length, 50);
   assert.match(previewMarkdown(cut, "dev", 50), /The first 50 characters\.$/);
+  // Cut on a character, never inside a UTF-8 one (#2071).
+  for (const name of ["u", "tt"]) {
+    const p = await preview(c, [name]);
+    assert.doesNotMatch(p.text, /\uFFFD/, name);
+  }
+  const utf = readPreview(await c.call(VALUE_PREVIEW, "tt", 52));
+  assert.strictEqual(utf.text, `a     \n------\n${"ééé\n".repeat(5)}é`);
   // A view is named and not evaluated: it would count its calls.
   assert.deepStrictEqual(await preview(c, ["v"]), { found: true, name: "v", view: true });
   assert.strictEqual(String((await c.evaluate("calls")).value), "0");
