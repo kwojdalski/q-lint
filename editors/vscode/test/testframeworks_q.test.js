@@ -241,13 +241,17 @@ function languageServer(t, dir) {
 }
 
 // The ways the two have parted: a test over its qunitConfig's maxMem
-// (#2103).
+// (#2103), one that reads its namespace's parameter (#2104).
 const QUNIT_SUITE = [
   "\\d .mytest",
+  "beforeParameters:{`.mytest.seen set ()}",
+  "parameters:{1 2 3}",
   "setUp:{`.mytest.v set 10}",
   "qunitConfig:``testBig`testSmall!(::;`maxTime`maxMem!(0Wj;1000);`maxTime`maxMem!(0Wj;0Wj))",
   "testAdd:{.qunit.assertEquals[v+1;11;\"add\"]}",
   "testWrong:{.qunit.assertEquals[v;11;\"wrong\"]}",
+  "testParam:{.qunit.assertTrue[parameter in 1 2 3;\"param\"]}",
+  "testOnlyOne:{.qunit.assertTrue[parameter=1;\"one\"]}",
   "testBig:{a:til 1000000;.qunit.assertTrue[1b;\"big\"]}",
   "testSmall:{a:til 1000000;.qunit.assertTrue[1b;\"small\"]}",
   "\\d .",
@@ -283,6 +287,8 @@ test("a qUnit suite passes and fails in the Test Explorer as qUnit's runTests pa
   assert.deepStrictEqual(theirs, {
     ".mytest.testAdd": true,
     ".mytest.testWrong": false,
+    ".mytest.testParam": true,
+    ".mytest.testOnlyOne": false,
     ".mytest.testBig": false,
     ".mytest.testSmall": true,
   });

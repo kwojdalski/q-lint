@@ -409,10 +409,22 @@ pub(super) fn runnables(text: &str) -> Vec<Runnable> {
                     .collect()
             };
             let (before, after) = (of(&FIXTURES_BEFORE), of(&FIXTURES_AFTER));
+            // qUnit's `.qunit.runNsTests` runs each test once for each value
+            // its namespace's first `parameters*` gives, with `.ns.parameter`
+            // set to it, between its `beforeParameters*` and
+            // `afterParameters*` (#2104).
+            let mut parameters = of(&["parameters"]);
+            parameters.sort_by(|a, b| a.name.cmp(&b.name));
+            let parameters = parameters.first().copied();
+            let (before_all, after_all) = if parameters.is_some() {
+                (of(&["beforeParameters"]), of(&["afterParameters"]))
+            } else {
+                (vec![], vec![])
+            };
             let config = configs
                 .iter()
                 .find(|(_, name, _)| namespace_of(name).is_some_and(|(n, _)| n == ns));
-            if before.is_empty() && after.is_empty() && config.is_none() {
+            if before.is_empty() && after.is_empty() && parameters.is_none() && config.is_none() {
                 return None;
             }
             let calls = |rs: &[&Runnable]| -> String {
@@ -421,6 +433,9 @@ pub(super) fn runnables(text: &str) -> Vec<Runnable> {
             let mut defined: Vec<(usize, &str)> = before
                 .iter()
                 .chain(&after)
+                .chain(&before_all)
+                .chain(&after_all)
+                .chain(&parameters)
                 .map(|r| (r.at, r.code.as_str()))
                 .chain(config.map(|(at, _, code)| (*at, code.as_str())))
                 .collect();
@@ -448,7 +463,17 @@ pub(super) fn runnables(text: &str) -> Vec<Runnable> {
                 None => format!("r:{protected}; "),
             };
             let once = format!("{}{ran}{}", calls(&before), calls(&after));
-            let call = format!("{{[] {once}$[r 0;r 1;'r 1]}}[]");
+            let call = match parameters {
+                Some(p) => format!(
+                    "{{[] {}p:@[{{x[]}};{};()]; i:0; f:(1b;::); \
+                     do[max 1,count p; @[`{ns};`parameter;:;p i]; {once}if[f 0;f:r]; i+:1]; \
+                     {}$[f 0;f 1;'f 1]}}[]",
+                    calls(&before_all),
+                    p.name,
+                    calls(&after_all),
+                ),
+                None => format!("{{[] {once}$[r 0;r 1;'r 1]}}[]"),
+            };
             Some((i, fixtures, call))
         })
         .collect();
