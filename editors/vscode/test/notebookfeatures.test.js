@@ -606,3 +606,11 @@ test("a live value in an HTML block or inside a tag is text, as the renderer sho
   assert.deepStrictEqual(liveExpressions("{{q: a<b>c}}\ntext\n<x-y>\n{{q: d}}"), ["a<b>c", "d"]);
   assert.strictEqual(markdownHtml('<span title="{{q: x}}">y</span>'), "<p>&lt;span title=&quot;{{q: x}}&quot;&gt;y&lt;/span&gt;</p>");
 });
+
+test("an indented block after a heading or a rule is code, and holds no live value (#1558)", () => {
+  assert.deepStrictEqual(liveExpressions("# Title\n    {{q: afterHeading}}"), []);
+  assert.deepStrictEqual(liveExpressions("---\n    {{q: afterRule}}"), []);
+  assert.deepStrictEqual(liveExpressions("Title\n===\n    {{q: afterSetext}}"), []);
+  assert.deepStrictEqual(liveExpressions("Para\n    {{q: lazy}}"), ["lazy"]);
+  assert.strictEqual(markdownHtml("---\n    x"), "<hr>\n<pre><code>x</code></pre>");
+});

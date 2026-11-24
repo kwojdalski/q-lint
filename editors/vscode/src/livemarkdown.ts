@@ -156,7 +156,9 @@ function blankIndented(text: string): string {
       if (!indented) {
         list = /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:\s|$)/.test(line);
       }
-      paragraph = true;
+      // A heading, a rule or a setext underline ends what came before: an
+      // indented line after it is code (#1558).
+      paragraph = indented || !/^ {0,3}(?:#{1,6}(?:\s|$)|([-*_])(?:\s*\1){2,}\s*$|=+\s*$|-+\s*$)/.test(line);
       return line;
     })
     .join("\n");
