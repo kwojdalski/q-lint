@@ -618,6 +618,31 @@ f:2026.09.17D10:00:01.500 0Np
 g:12:00 1u
 h:0D00:01 5n
 
+=== QE010 profile: general | a date beside a plain number, or a month suffix over one (#2094; q 5: parse "1 2000.01.01" is '1, "2000.01.01 1" '2000.01.01, "1 2000.01m" '1)
+a:1 2000.01.01
+b:0 2000.01.01
+c:1.5 2000.01.01
+d:1 2000.01m
+e:2000.01.01 1
+f:2000.01.01 -1
+g:2000.01.01 1e3
+h:2000.01.01 1f
+i:2000.01.01 2000.01
+j:2000.01.01 0W
+k:1.5 2000.01m
+
+=== clean profile: general | a date beside dates or nulls, a timestamp or float among numbers, and months under the suffix (#2094; q 5 parses each)
+a:2000.01.01 0N
+b:0N 2000.01.01
+c:0W 2000.01.01
+d:2000.01.01 2000.01.02
+e:1 2000.01.01D00:00
+f:1 2000.01
+g:2001 2000.01m
+h:2000.01 2000.01m
+i:0N 2000.01m
+j:2000.01.01 0Wd
+
 === QA006 QE010 profile: general | a number that is no integer, followed by : - a typo for $[c;a;b] (q 5: '1.5:0, '2000.01.01:x, '1j:2, '0N:x and '-1:x, #660)
 r:$[1b;1.5:0]
 s:2000.01.01:x

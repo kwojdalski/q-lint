@@ -2177,7 +2177,7 @@ fn numbers(
                      between the number and the word"
                 ))
             } else {
-                None
+                date_among_numbers(run, k, text)
             };
             // In a string only what q refuses as it reads the token.
             let detail = detail.filter(|_| {
@@ -2200,4 +2200,44 @@ fn numbers(
         }
         i = j + 1;
     }
+}
+
+/// QE010: a date or a month among plain numbers. q reads a vector literal
+/// by its items' shape, and a date has no shape in common with a number:
+/// q 5 refuses `1 2000.01.01` ('1), `1.5 2000.01.01`, `2000.01.01 1`
+/// ('2000.01.01), `2000.01.01 2000.01`, `2000.01.01 1e3` and `2000.01.01 1f`, and after a
+/// date an infinity, `2000.01.01 0W`. A null before or after it parses
+/// (`0N 2000.01.01`, `0W 2000.01.01`, `2000.01.01 0N`), as do a timestamp
+/// among numbers, `1 2000.01.01D00:00`, and floats, `1 2000.01` (#2094).
+/// An `m` after the last item reads every item as a month: q 5 refuses
+/// `1 2000.01m` and `1.5 2000.01m`, and takes `2001 2000.01m` (2020.01) and
+/// `2000.01 2000.01m`. q names the run's first item of the two, as here.
+fn date_among_numbers(run: &[regex::Match], k: usize, text: &str) -> Option<String> {
+    let date = |t: &str| re!(r"^\d{4}\.\d\d\.\d\d$").is_match(t);
+    let number = |t: &str| re!(r"^\.?\d+(?:\.\d*)?(?:e[+-]?\d+)?[ef]?$").is_match(t);
+    let infinity = |t: &str| re!(r"^0[Ww]$").is_match(t);
+    let items: Vec<&str> = run.iter().map(|t| t.as_str()).collect();
+    let last = items[items.len() - 1];
+    if date(text)
+        && (items.iter().any(|&t| number(t)) || items[k + 1..].iter().any(|&t| infinity(t)))
+    {
+        return Some(format!(
+            "`{text}`: a date in a vector literal takes only dates or nulls beside it"
+        ));
+    }
+    if number(text) && items[k + 1..].iter().any(|&t| date(t)) {
+        return Some(format!(
+            "`{text}`: a number in a vector literal takes no date beside it"
+        ));
+    }
+    if k + 1 < items.len()
+        && re!(r"^\d{4,}\.\d\dm$").is_match(last)
+        && (re!(r"^\d{1,3}$").is_match(text)
+            || (re!(r"^\d*\.\d*$").is_match(text) && !re!(r"^\d{4,}\.\d\d$").is_match(text)))
+    {
+        return Some(format!(
+            "`{text}`: the vector's `m` suffix makes every item a month, and this is none"
+        ));
+    }
+    None
 }
