@@ -36,8 +36,12 @@ test("each literal reads to the integer q holds, and is written back as q writes
   // Short forms read as q reads them.
   assert.deepStrictEqual(t.parse("2024.01.02D03"), { type: "timestamp", n: 757479600000000000n });
   assert.deepStrictEqual(t.parse("1D02"), { type: "timespan", n: 93600000000000n });
+  assert.strictEqual(t.parse("0001.01m").type, "month");
+  assert.strictEqual(t.parse("0001.01.01").type, "date");
+  assert.strictEqual(t.parse("0001.01.01T10:00").type, "datetime");
   // No such day, minute or month.
-  for (const bad of ["2023.02.29", "2024.13m", "09:60", "2024.01.02D24:00", "12:00:00.1234", "0Nx", "-0Np", "0wp", "0Wz"]) {
+  // Nor a year 0, which q refuses (#1784); year 1 it reads.
+  for (const bad of ["2023.02.29", "2024.13m", "09:60", "2024.01.02D24:00", "12:00:00.1234", "0Nx", "-0Np", "0wp", "0Wz", "0000.01m", "0000.01.01", "0000.12.31T10:00"]) {
     assert.strictEqual(t.parse(bad), undefined, bad);
   }
 });

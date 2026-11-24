@@ -216,7 +216,8 @@ export function parse(text: string): Temporal | undefined {
     }
     return special[2] === w ? { type, special: special[1] === "-" ? "-inf" : "inf", n: 0n } : undefined;
   }
-  const day = (y: string, m: string, d: string) => daysFrom(Number(y), Number(m), Number(d));
+  // q has no year 0: 0000.01.01 and 0000.01m are refused (#1784).
+  const day = (y: string, m: string, d: string) => (Number(y) < 1 ? undefined : daysFrom(Number(y), Number(m), Number(d)));
   let m = /^(\d{4})\.(\d{2})\.(\d{2})D(?:(\d{2})(?::(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?)?)?$/.exec(text);
   if (m !== null) {
     const days = day(m[1], m[2], m[3]);
@@ -245,7 +246,7 @@ export function parse(text: string): Temporal | undefined {
   m = /^(\d{4})\.(\d{2})m$/.exec(text);
   if (m !== null) {
     const month = Number(m[2]);
-    return month < 1 || month > 12 ? undefined : { type: "month", n: (BigInt(m[1]) - 2000n) * 12n + BigInt(month - 1) };
+    return month < 1 || month > 12 || Number(m[1]) < 1 ? undefined : { type: "month", n: (BigInt(m[1]) - 2000n) * 12n + BigInt(month - 1) };
   }
   m = /^(-?)(\d+)D(?:(\d{2})(?::(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?)?)?$/.exec(text);
   if (m !== null) {
