@@ -105,9 +105,11 @@
     return text === "" || (type === 2 && text === NULL_GUID) || (type === 10 && text === " ");
   }
 
-  /// A mean as the statistics show it: twelve significant digits at most.
+  /// A mean, or a pivot's sum, min or max, as shown: twelve significant
+  /// digits at most, but every digit of its whole part, so
+  /// 123456789012345 is not 123456789012000 (#1487).
   function meanText(x) {
-    return String(Number(x.toPrecision(12)));
+    return Math.abs(x) >= 1e12 ? String(x) : String(Number(x.toPrecision(12)));
   }
 
   /// Each column's statistics over `rows`, the rows shown: {name, type,

@@ -280,6 +280,16 @@ test("a pivot groups by two columns in q's order and aggregates a third", () => 
   assert.deepStrictEqual(page.defaultPivot(g), { row: 0, column: -1, value: 2, agg: "sum" });
 });
 
+test("a pivot's aggregates keep every digit of a long: 123456789012345 is not 123456789012000 (#1487)", () => {
+  const g = grid([["s", 11], ["q", 7]], [["a", "a"], ["123456789012345", "1"]], [null, [123456789012345, 1]]);
+  const cells = (agg) => page.pivot(g, [0, 1], { row: 0, column: -1, value: 1, agg }).cells;
+  assert.deepStrictEqual(cells("max"), [["123456789012345"]]);
+  assert.deepStrictEqual(cells("min"), [["1"]]);
+  assert.deepStrictEqual(cells("sum"), [["123456789012346"]]);
+  assert.deepStrictEqual(cells("avg"), [["61728394506173"]]);
+  assert.strictEqual(page.columnStats(g, [0, 1])[1].mean, "61728394506173");
+});
+
 const look = { colours: ["#111111", "#222222"], foreground: "#000", border: "#ccc", font: "sans-serif", up: "#0f0", down: "#f00" };
 
 test("candles find open, high, low and close by name, and are drawn as floating bars coloured by direction", () => {
