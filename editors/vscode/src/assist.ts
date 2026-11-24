@@ -96,6 +96,38 @@ export function codeOffset(text: string, kinds: string, name: string): number {
   return -1;
 }
 
+interface At {
+  line: number;
+  character: number;
+}
+
+/// A diagnostic, as much of VS Code's as `findingsIn` reads.
+export interface Reported {
+  range: { start: At; end: At };
+  code?: string | number | { value: string | number };
+  source?: string;
+  message: string;
+}
+
+/// q-lint's findings on `range`, a line of the prompt each (#1917): the
+/// server's (`q-lint`, `qls`) and the process warnings, not what another
+/// extension says of the file. One that only touches the range - on the
+/// line after whole lines selected, which end at the next line's column 0
+/// - is not on it; one without a width is where it starts. The line is
+/// counted from the range's first, and one that starts above is on that.
+export function findingsIn(diagnostics: readonly Reported[], range: { start: At; end: At }): string[] {
+  const before = (a: At, b: At): boolean => a.line < b.line || (a.line === b.line && a.character < b.character);
+  return diagnostics
+    .filter((d) => {
+      if (d.source !== "qls" && d.source?.startsWith("q-lint") !== true) {
+        return false;
+      }
+      const { start, end } = d.range;
+      return before(start, end) ? before(start, range.end) && before(range.start, end) : !before(start, range.start) && before(start, range.end);
+    })
+    .map((d) => `line ${Math.max(d.range.start.line - range.start.line, 0) + 1}: ${d.code !== undefined ? `${typeof d.code === "object" ? d.code.value : d.code} ` : ""}${d.message}`);
+}
+
 /// The names `expression` uses that the process could hold: written as
 /// code, not in a string, a symbol or a comment, and not one of q's common
 /// words. At most `DESCRIBE_LIMIT`, in order of first use.

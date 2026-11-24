@@ -6,6 +6,7 @@ const assert = require("node:assert");
 const {
   namesIn,
   codeOffset,
+  findingsIn,
   cut,
   readDescribed,
   tablesOf,
@@ -149,6 +150,28 @@ test("codeOffset finds a name written as code, past a comment or string (#1631)"
     assert.strictEqual(codeOffset(text, charKinds(text), name), at, `${name} in ${text}`);
   }
   assert.deepStrictEqual(namesIn("a.b+a", charKinds("a.b+a")), ["a.b", "a"]);
+});
+
+test("the findings a selection is explained with are q-lint's, on it, and numbered from its first line (#1917)", () => {
+  const R = (sl, sc, el, ec) => ({ start: { line: sl, character: sc }, end: { line: el, character: ec } });
+  const d = (range, code, message, source = "q-lint") => ({ range, code, message, source });
+  // Line 5 selected whole: the selection ends at column 0 of line 6, which
+  // a finding there only touches.
+  const whole = R(5, 0, 6, 0);
+  assert.deepStrictEqual(
+    findingsIn([d(R(4, 0, 4, 3), "QS001", "above"), d(R(6, 0, 6, 3), "QF005", "below"), d(R(5, 2, 5, 4), "QF001", "on it"), d(R(5, 0, 5, 0), "QB001", "no width, on it"), d(R(6, 0, 6, 0), "QB002", "no width, below")], whole),
+    ["line 1: QF001 on it", "line 1: QB001 no width, on it"],
+  );
+  // One that starts above the selection is on its first line, not line -2.
+  assert.deepStrictEqual(findingsIn([d(R(2, 0, 9, 1), "QS010", "a long function")], R(5, 0, 8, 0)), ["line 1: QS010 a long function"]);
+  assert.deepStrictEqual(findingsIn([d(R(6, 1, 6, 2), { value: "QF005", target: "u" }, "second line")], R(5, 0, 8, 0)), ["line 2: QF005 second line"]);
+  assert.deepStrictEqual(findingsIn([d(R(5, 0, 5, 1), undefined, "no code")], whole), ["line 1: no code"]);
+  // The server's two engines and the process warnings are q-lint's;
+  // another extension's findings on the file are not.
+  assert.deepStrictEqual(
+    findingsIn([d(R(5, 0, 5, 1), "a", "A", "qls"), d(R(5, 0, 5, 1), "b", "B", "q-lint (process)"), d(R(5, 0, 5, 1), "c", "C", "cSpell"), { range: R(5, 0, 5, 1), code: "e", message: "E" }], whole),
+    ["line 1: a A", "line 1: b B"],
+  );
 });
 
 test("a prompt's cut never splits a surrogate pair (#1622)", () => {
