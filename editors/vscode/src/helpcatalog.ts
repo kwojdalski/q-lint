@@ -180,8 +180,9 @@ export function pageHtml(page: HelpPage, helpCommand: string, tryCommand?: strin
 export function nameAt(line: string, character: number): { name: string; start: number; end: number } | undefined {
   // Glyphs are cut as q cuts them, an operator and then its iterator:
   // `a:-1` is `:` and `-`, `x,/:y` is `,` and `/:`. A dot is a glyph only
-  // where no name starts: `:.Q.s1` is `:` and `.Q.s1`.
-  const re = /\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*|<>|<=|>=|::|':|\/:|\\:|[+\-*%&|^=<>~!#_$?@,'/\\:]|\.(?![A-Za-z])/g;
+  // where no name starts: `:.Q.s1` is `:` and `.Q.s1`. A symbol, `` `max ``
+  // or `` `:db/t ``, is taken whole, and is no name.
+  const re = /`[\w.]*(?::[\w.:/]*)?|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*|<>|<=|>=|::|':|\/:|\\:|[+\-*%&|^=<>~!#_$?@,'/\\:]|\.(?![A-Za-z])/g;
   // The token the cursor is on, or failing that the one it is just after.
   let found: { name: string; start: number; end: number } | undefined;
   for (const m of line.matchAll(re)) {
@@ -198,5 +199,5 @@ export function nameAt(line: string, character: number): { name: string; start: 
     }
   }
   // Through `start` itself: a `/` after a blank starts a comment.
-  return found === undefined || inStringOrComment(line, found.start + 1) ? undefined : found;
+  return found === undefined || found.name.startsWith("`") || inStringOrComment(line, found.start + 1) ? undefined : found;
 }

@@ -98,6 +98,18 @@ test("glyphs are cut as q cuts them: an operator, then its iterator", () => {
   assert.deepStrictEqual(h.nameAt("til 3", 3), { name: "til", start: 0, end: 3 });
 });
 
+test("a symbol is no name: `max is not the builtin", () => {
+  assert.strictEqual(h.nameAt("t:`time`max`count xcol t", 8), undefined);
+  assert.strictEqual(h.nameAt("x:`last", 4), undefined);
+  assert.strictEqual(h.nameAt("(`max;`p)", 3), undefined);
+  assert.strictEqual(h.nameAt("`:db/max", 5), undefined);
+  assert.strictEqual(h.nameAt("`a:b/count", 6), undefined);
+  // The words after it still are.
+  assert.strictEqual(h.nameAt("t:`time`max`count xcol t", 19)?.name, "xcol");
+  assert.strictEqual(h.nameAt("`a`b!1 2", 4)?.name, "!");
+  assert.strictEqual(h.nameAt("`$\"x\"", 1)?.name, "$");
+});
+
 test("the cheat sheet has its four sections, each item with an example and result", () => {
   const sheet = h.readCheatSheet(read("help", "cheatsheet.json"));
   assert.deepStrictEqual(sheet.map((s) => s.section), ["Iterators", "Joins", "Temporal casts", "Attributes"]);
