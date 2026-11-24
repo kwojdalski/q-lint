@@ -83,7 +83,10 @@ export function stepCode(step: Step, x: string): string {
   const c = step.column;
   switch (step.kind) {
     case "filter": {
-      const v = readable(step.value.trim());
+      // In parentheses where it has a comma: q-sql splits a where clause at
+      // its commas: s in `a,`b is two tests (#1412).
+      const r = readable(step.value.trim());
+      const v = r.includes(",") ? `(${r})` : r;
       const test =
         step.op === "null" ? `null ${c}` : step.op === "not null" ? `not null ${c}` : step.op === "in" ? `${c} in ${v}` : `${c}${step.op === "like" ? " like " : step.op}${v}`;
       return `select from ${x} where ${test}`;
