@@ -127,6 +127,8 @@ export function processTooltip(process: Process, from?: string): string {
   return [
     `**${markdownText(process.label)}**`,
     `${markdownText(address(process.host, process.port))}${process.tls ? " (TLS)" : ""}`,
+    // One saved before a host was checked (#1881).
+    ...(hostProblem(process.host) !== undefined ? [`not a host (${markdownText(hostProblem(process.host)!)}): Edit Process changes it`] : []),
     process.user ? `user ${markdownText(process.user)}` : "no user",
     process.tags.length ? `tags: ${markdownText(process.tags.join(", "))}` : "no tags",
     ...(process.init !== undefined ? ["runs q code on connect"] : []),
@@ -159,7 +161,10 @@ export function parseTags(text: string): string[] {
 /// already seen is skipped, so an import cannot hold two of one name. A
 /// connect script (`init` code or an `initFile`) is read only when `scripts`
 /// asks: a list from a discovery server never runs code on a process.
-export function parseProcesses(json: unknown, scripts = false): { processes: Process[]; problems: string[] } {
+/// `stored`: the list is the one saved here, which versions before 0.37
+/// wrote with a host unchecked. Such an entry is kept as it is, to be shown
+/// and edited: skipped, the next save wrote the list without it (#1881).
+export function parseProcesses(json: unknown, scripts = false, stored = false): { processes: Process[]; problems: string[] } {
   const list = Array.isArray(json)
     ? json
     : typeof json === "object" && json !== null && Array.isArray((json as { processes?: unknown }).processes)
@@ -189,7 +194,7 @@ export function parseProcesses(json: unknown, scripts = false): { processes: Pro
       problems.push(`${where} (${label}) has no host.`);
       return;
     }
-    const bad = hostProblem(host) ?? portProblem(port);
+    const bad = (stored ? undefined : hostProblem(host)) ?? portProblem(port);
     if (bad !== undefined) {
       problems.push(`${where} (${label}): ${bad}`);
       return;

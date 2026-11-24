@@ -279,7 +279,7 @@ class ProcessesView implements TreeDataProvider<Row> {
     const active = connected?.server === from && connected?.label === (from === undefined ? process.label : qualified(from, process.label));
     const item = new TreeItem(process.label, TreeItemCollapsibleState.None);
     const running = from === undefined && this.live.launched(process.label);
-    item.description = `${address(process.host, process.port)}${active ? " - connected" : ""}${running ? " - running" : ""}`;
+    item.description = `${address(process.host, process.port)}${hostProblem(process.host) !== undefined ? " - not a host" : ""}${active ? " - connected" : ""}${running ? " - running" : ""}`;
     item.iconPath = new ThemeIcon(active ? "vm-active" : "server-process", colourOf(process.tags));
     item.tooltip = new MarkdownString(processTooltip(process, from));
     const kind = from === undefined ? "process" : "discovered";
@@ -1078,7 +1078,7 @@ export class Live {
   }
 
   processes(): Process[] {
-    return parseProcesses(this.context.globalState.get<unknown>(PROCESSES_KEY, []), true).processes;
+    return parseProcesses(this.context.globalState.get<unknown>(PROCESSES_KEY, []), true, true).processes;
   }
 
   activeLabel(): string | undefined {

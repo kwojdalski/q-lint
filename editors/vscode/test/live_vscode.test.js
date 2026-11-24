@@ -228,6 +228,32 @@ test("Add and Edit Process keep what was saved while they asked", async (t) => {
   assert.ok(stub.messages.some(([, text]) => /dup.*taken/.test(text)), JSON.stringify(stub.messages));
 });
 
+// A process saved before 0.37 with a host 0.37 refuses was not read, so
+// any save wrote the list without it: its tags, connect script and tunnel
+// were gone, and its password left for the next process of its label (#1881).
+test("a saved process whose host is none is shown, kept by a save, and edited to one", async (t) => {
+  const { context, live } = await setUp(t, [
+    { label: "prod-rdb", host: "rdb.example.com:5000", port: 5000, user: "svc", tags: ["prod"], init: "x:1", ssh: "bastion" },
+    proc("dev", 5001),
+  ]);
+  context.secrets.all.set("q-lint.password.prod-rdb", "its own");
+  const tree = stub.trees.find((v) => v.id === "q-lint.processes").options.treeDataProvider;
+  const row = () => tree.getTreeItem({ kind: "process", process: live.processes().find((p) => p.label === "prod-rdb") });
+  assert.strictEqual(row().description, "[rdb.example.com:5000]:5000 - not a host");
+  stub.inputs = ["uat", "localhost", "5002", "", ""];
+  stub.picks = ["No"];
+  await stub.commands.get("q-lint.addProcess")();
+  assert.deepStrictEqual(context.globalState.get("q-lint.processes").map((p) => p.label), ["prod-rdb", "dev", "uat"]);
+  // Edited to a host: the rest of it is kept, and the password, given for
+  // what was never one, asked for again.
+  stub.inputs = ["prod-rdb", "rdb.example.com", "5000", "svc", "", "prod"];
+  stub.picks = ["No"];
+  await stub.commands.get("q-lint.editProcess")("prod-rdb");
+  assert.deepStrictEqual(live.processes()[0], { label: "prod-rdb", host: "rdb.example.com", port: 5000, user: "svc", tags: ["prod"], init: "x:1", ssh: "bastion" });
+  assert.strictEqual(row().description, "rdb.example.com:5000");
+  assert.strictEqual(context.secrets.all.has("q-lint.password.prod-rdb"), false);
+});
+
 // The same for discovery servers: Add and Edit saved the list as it was
 // before their input boxes.
 test("Add and Edit Discovery Server keep what was saved while they asked", async (t) => {
