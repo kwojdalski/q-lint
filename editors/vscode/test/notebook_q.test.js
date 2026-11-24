@@ -310,7 +310,9 @@ test("an exported notebook whose comments hold a lone / loads to its end", { ski
     { kind: "markdown", source: "a path:\n/\nthe root" },
     { kind: "code", source: "a:1\n/\nnot code\n/\nstill not\n\\" },
     { kind: "code", source: "b:2\n\\\nended, and\n/\nstill ended" },
-    { kind: "code", source: "c:a+b" },
+    // Nested, as the cell runs it (#1731): only e:5 is code.
+    { kind: "code", source: "/\n/\n\\\nz:9\n\\\ne:5" },
+    { kind: "code", source: "c:a+b+e" },
   ];
   const q = await startQ("");
   t.after(() => q.stop());
@@ -320,5 +322,5 @@ test("an exported notebook whose comments hold a lone / loads to its end", { ski
   t.after(() => connection.close());
   const loaded = await connection.query([`system "l ${file}"`], SIZE);
   assert.strictEqual(loaded.ok, true, JSON.stringify(loaded));
-  assert.deepStrictEqual((await connection.query(["(a;b;c)"], SIZE)).text, ["1 2 3"]);
+  assert.deepStrictEqual((await connection.query(["(a;b;e;c;`z in key `.)"], SIZE)).text, ["1", "2", "5", "8", "0b"]);
 });
