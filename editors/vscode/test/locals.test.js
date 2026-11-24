@@ -90,9 +90,20 @@ test("Capture Locals at Last Error asks, instruments, runs again and puts the fu
   stub.picks.push("Run Again");
   await stub.commands.get(CAPTURE_LOCALS)();
   assert.deepStrictEqual(s.sent, [restoreExpression("err"), DRIFT, installLambda("err"), RUN, restoreExpression("err")]);
-  assert.ok(s.live.guarded[0].startsWith(".ns.m[1;2]\n"), "the guard reads the query and the replacing");
+  assert.ok(s.live.guarded[0].endsWith("\n.ns.m[1;2]"), "the guard reads the replacing and the query");
   assert.match(s.api.last(), /signalled 'type; \.ns\.m was at statement 2 of 2: d\+`x/);
   assert.match(s.api.last(), /\nc: 3\n/);
+});
+
+test("the guard reads the replacing when the failed query ends the script or opens a comment (#1422)", async () => {
+  const { writes } = require("../out/guard.js");
+  for (const code of ["f[1]\n\\\nnotes", "f[1]\n/\nnotes"]) {
+    const s = setup({ process: "dev", code, error: "type", trace: TRACE });
+    stub.picks.push({ label: ".ns.m", frame: { name: ".ns.m", where: "/w/lib.q:5" } });
+    stub.picks.push("Run Again");
+    await stub.commands.get(CAPTURE_LOCALS)();
+    assert.ok(writes(s.live.guarded[0]).length > 0, JSON.stringify(s.live.guarded[0]));
+  }
 });
 
 test("with no failure, or turned off, nothing is sent", async () => {
