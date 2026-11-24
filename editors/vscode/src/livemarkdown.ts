@@ -12,7 +12,8 @@
 // `LIVE` evaluates the expressions with `value`, each on its own so one that
 // fails does not lose the rest, and answers with `(1b;text)` or
 // `(0b;error)` each: a string or a symbol as its characters, anything else
-// as `-3!` writes it, cut to `VALUE_LIMIT` characters by the process.
+// as `-3!` writes its first `VALUE_LIMIT` items, cut to `VALUE_LIMIT`
+// characters by the process.
 // Nothing is defined there.
 
 /// Where a Markdown cell's values are kept in its metadata.
@@ -26,7 +27,10 @@ export const LIVE = [
   " {r:@[{(1b;value x)};x;{(0b;x)}];",
   "  if[not r 0;:r];",
   "  v:r 1;",
-  `  (1b;${VALUE_LIMIT} sublist $[10h=abs type v;(),v;-11h=type v;string v;-3!v])} each es}`,
+  // `-3!` of the first VALUE_LIMIT items only, never of a whole table
+  // (#1559): each item writes at least one character, so the text kept is
+  // the same. A list `sublist` refuses, such as a partitioned table, whole.
+  `  (1b;${VALUE_LIMIT} sublist $[10h=abs type v;(),v;-11h=type v;string v;-3!$[(type v) within 0 99h;@[${VALUE_LIMIT} sublist;v;v];v]])} each es}`,
 ].join("\n");
 
 export type LiveValue = { text: string } | { error: string };

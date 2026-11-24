@@ -614,3 +614,7 @@ test("an indented block after a heading or a rule is code, and holds no live val
   assert.deepStrictEqual(liveExpressions("Para\n    {{q: lazy}}"), ["lazy"]);
   assert.strictEqual(markdownHtml("---\n    x"), "<hr>\n<pre><code>x</code></pre>");
 });
+
+test("a live value of a big list or table is written from its first items only (#1559)", () => {
+  assert.match(LIVE, /-3!\$\[\(type v\) within 0 99h;@\[200 sublist;v;v\];v\]/);
+});
