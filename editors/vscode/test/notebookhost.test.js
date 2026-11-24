@@ -115,7 +115,7 @@ function fakeVscode() {
         warnings.push(rest);
         return fake.answer;
       },
-      withProgress: async (_o, task) => task({ report() {} }, { isCancellationRequested: false }),
+      withProgress: async (_o, task) => task({ report() {} }, { isCancellationRequested: false, onCancellationRequested: () => disposable }),
       showErrorMessage: async (m) => void messages.push(m),
       showSaveDialog: async (options) => {
         dialogs.push(options);
@@ -578,6 +578,30 @@ test("Run with Parameters on an untitled notebook offers to save the run on disk
   await runWithParameters(live, undefined, undefined, {});
   const offered = fake.dialogs[0].defaultUri;
   assert.strictEqual(`${offered.scheme}:${offered.path}`, "file:/ws/Untitled-1-run.qnb");
+});
+
+test("cancelling Run with Parameters aborts the query of the cell running (#1564)", async () => {
+  const fake = fakeVscode();
+  const live = recordingLive(PROCESSES, "dev1");
+  const { runWithParameters } = loadRun(fake, live);
+  const { Uri } = fake.vscode;
+  fake.written.set("/ws/p.qnb", Buffer.from(JSON.stringify({ qnb: 1, cells: [{ kind: "code", source: ["long[]"] }, { kind: "code", source: ["2"] }] })));
+  let release;
+  const token = { isCancellationRequested: false, listeners: [], onCancellationRequested: (f) => (token.listeners.push(f), { dispose() {} }) };
+  fake.vscode.window.withProgress = async (_o, task) => task({ report() {} }, token);
+  live.aborted = 0;
+  live.abort = async () => {
+    live.aborted++;
+    release({ ok: false, error: "abort", trace: "" });
+  };
+  live.runOnActive = async (code, query) => ({ process: "dev1", value: await query({ query: () => new Promise((r) => (release = r)) }) });
+  const run = runWithParameters(live, Uri.file("/ws/p.qnb"), Uri.file("/ws/p-run.qnb"), {});
+  await new Promise((r) => setImmediate(r));
+  token.isCancellationRequested = true;
+  token.listeners.forEach((f) => f());
+  const result = await run;
+  assert.strictEqual(live.aborted, 1);
+  assert.strictEqual(result.failed.cell, 1);
 });
 
 test("Run Notebook with Parameters runs the notebook on the active connection and writes the run; off, it refuses", async () => {
