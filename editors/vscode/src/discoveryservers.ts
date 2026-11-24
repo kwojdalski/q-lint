@@ -17,10 +17,12 @@ import {
 } from "vscode";
 import {
   EMPTY_STATE,
+  SHARED_SOURCE,
   downloadedPasswords,
   fetchProcesses,
   parseServers,
   qualified,
+  relabelledServers,
   serverDescription,
   serverLabelProblem,
   serverTooltip,
@@ -93,6 +95,31 @@ export class DiscoveryServers {
       { dispose: () => clearInterval(this.timer) },
     );
     this.schedule(true);
+    void this.relabel();
+  }
+
+  /// Give a stored server labelled as the shared list is another label
+  /// (#1889), as Edit would: its auth header goes with it, to the URL it
+  /// was given for, and the passwords given for its processes are forgotten.
+  private async relabel(): Promise<void> {
+    const relabelled = relabelledServers(this.context.globalState.get<unknown>(SERVERS_KEY, []));
+    if (relabelled === undefined) {
+      return;
+    }
+    await this.forgetPasswords(SHARED_SOURCE);
+    const kept = await this.context.secrets.get(secretKey(SHARED_SOURCE));
+    await this.context.secrets.delete(secretKey(SHARED_SOURCE));
+    if (kept !== undefined) {
+      await this.context.secrets.store(secretKey(relabelled.to), kept);
+    }
+    await this.context.globalState.update(SERVERS_KEY, relabelled.servers);
+    this.changed.fire();
+    this.schedule(true);
+    void window.showInformationMessage(
+      plainMessage(
+        `q-lint: the discovery server "${SHARED_SOURCE}" is now "${relabelled.to}": ${SHARED_SOURCE} names the workspace's shared process list. The passwords given for its processes are asked for again.`,
+      ),
+    );
   }
 
   servers(): DiscoveryServer[] {

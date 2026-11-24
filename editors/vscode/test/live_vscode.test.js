@@ -479,6 +479,33 @@ test("a process new to the saved list starts with no password but the one given 
   assert.deepStrictEqual(live.processes().map((p) => p.label), ["old", "desk/rdb", "imported", "hdb", "tp", "bulk", "added"]);
 });
 
+// A discovery server labelled `.qlint`, as could be up to 0.28, was not
+// read: gone from the view unsaid, its auth header left in secret storage,
+// and the next change of the servers wrote the list without it (#1889).
+test("a discovery server with the shared list's label is given another at activation, and said", async (t) => {
+  stub.reset();
+  stub.config.user["discovery.refreshInterval"] = 0;
+  const context = stub.newContext();
+  const secrets = context.secrets.all;
+  await context.globalState.update("q-lint.discoveryServers", [{ label: ".qlint", url: "http://127.0.0.1:9/" }, { label: "desk", url: "http://127.0.0.1:9/d" }]);
+  await context.globalState.update("q-lint.discoveredPasswords", { ".qlint": ["rdb"], desk: ["hdb"] });
+  secrets.set("q-lint.discovery.auth..qlint", "Bearer t");
+  secrets.set("q-lint.discoveredPassword..qlint/rdb", "pw");
+  secrets.set("q-lint.discoveredPassword.desk/hdb", "pw");
+  const live = new Live(context);
+  t.after(() => {
+    for (const d of context.subscriptions) d.dispose?.();
+  });
+  for (let i = 0; i < 50 && stub.messages.length === 0; i++) await sleep(10);
+  assert.deepStrictEqual(live.discovery.servers().map((s) => s.label), [".qlint server", "desk"]);
+  assert.deepStrictEqual(context.globalState.get("q-lint.discoveryServers")[0], { label: ".qlint server", url: "http://127.0.0.1:9/" });
+  // Its auth header goes with it, to the URL it was given for; the passwords
+  // given for its processes are forgotten, as when a server is renamed.
+  assert.deepStrictEqual([...secrets.keys()].sort(), ["q-lint.discoveredPassword.desk/hdb", "q-lint.discovery.auth..qlint server"]);
+  assert.deepStrictEqual(context.globalState.get("q-lint.discoveredPasswords"), { desk: ["hdb"] });
+  assert.deepStrictEqual(stub.messages, [["info", 'q-lint: the discovery server ".qlint" is now ".qlint server": .qlint names the workspace\'s shared process list. The passwords given for its processes are asked for again.']]);
+});
+
 // Any failed connect forgot the password just given - a host down or
 // restarting as well as a refused one (#1511).
 test("a discovered process's password is forgotten when it is refused, not when the host is down", async (t) => {
