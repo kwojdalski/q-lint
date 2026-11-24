@@ -242,6 +242,22 @@ test("the q Results view's Export button writes the view's rows, though the edit
   assert.strictEqual(fake.written["/editor.csv"], "c\n30\n20\n10\n");
 });
 
+test("Export Results writes the rows the grid shows after resultsLocation changes, while the new page has drawn none (#1848)", async () => {
+  const fake = fakeVscode({ "query.resultsLocation": "editor" });
+  const modes = loadModes(fake);
+  modes.show(result([10, 20, 30]), live());
+  const panel = fake.pages[0];
+  const id = panel.posted.at(-1).id;
+  panel.receive({ type: "rendered", id, rows: [2], rendered: { view: "grid", rows: 1, held: 3, total: 3, columns: ["c"], first: ["30"] } });
+  const { RESULTS } = require("../out/liveconfig.js");
+  fake.config["query.resultsLocation"] = "panel";
+  for (const f of fake.listeners.config) {
+    f({ affectsConfiguration: (k) => "q-lint.query.resultsLocation" === k || "q-lint.query.resultsLocation".startsWith(`${k}.`) });
+  }
+  await fake.vscode.commands[RESULTS.exportCsv](new fake.vscode.Uri("/after.csv"));
+  assert.strictEqual(fake.written["/after.csv"], "c\n30\n");
+});
+
 test("the q Results view's page is drawn on the panel's background, the editor's on the editor's", () => {
   // result.css painted every page with editor.background, so the view in
   // the bottom panel stood out as a block of the editor's colour where
