@@ -600,7 +600,8 @@ async function everyCast(t, types, each) {
   assert.deepStrictEqual(infos.map((info) => info.columns[1].type), types);
   for (let a = 0; a < types.length; a++) {
     for (let b = 0; b < types.length; b++) {
-      if (a === b) continue;
+      // A mixed column's cast is its values' to allow: it is not asked here.
+      if (a === b || types[a] === "") continue;
       const [from, to] = [types[a], types[b]];
       await connection.call("{[a] `mgA set get a;}", `mg${a}`);
       const script = migrationScript("mgA", infos[a], "A", infos[b], "B", "p");
@@ -644,6 +645,37 @@ test("a schema migration writes the casts q makes between atom columns, and no o
     assert.ok(ran.ok, `mixed to ${to}: ${ran.error}`);
     assert.strictEqual(await connection.call("{[t] first[t]~first exec t from meta mgA where c=`c}", to), true, to);
   }
+});
+
+// Between two list columns q's cast is the atoms', made in each item: it
+// was refused as if one of the two were an atom column (#2013).
+test("a schema migration casts a list column to another list type, as q does, and refuses no cast q makes (#2013)", { skip }, async (t) => {
+  const LISTS = ATOMS.map((a) => a.toUpperCase());
+  const written = [];
+  const scripts = new Map();
+  const connection = await everyCast(t, [...ATOMS, ...LISTS, ""], (from, to, script, own) => {
+    scripts.set(`${from}>${to}`, script);
+    const left = script.match(/\n\/ not written: a cast of c from (\S+) to (\S+): (.*)\n/);
+    if (left === null) return written.push(`${from}${to}`);
+    // Whatever is left out, q's own cast does not make the target's column of it.
+    assert.notStrictEqual(own, to, script);
+    if (isList(from) && isList(to)) assert.deepStrictEqual([own, left[3]], ["'type", script.match(/q has no cast from \w+ to \w+/)?.[0]], script);
+    else if (to !== "" && isList(from) !== isList(to)) assert.match(left[3], /a list column's items are lists, an atom column's are not|a column of strings holds lists, not chars/, script);
+  });
+  // List to list is written where atom to atom is, pair for pair.
+  const pairs = (types) => written.filter((w) => types.includes(w[0]) && types.includes(w[1]));
+  assert.deepStrictEqual(pairs(LISTS).map((w) => w.toLowerCase()), pairs(ATOMS));
+  assert.strictEqual(pairs(LISTS).length, 306 - 57);
+  assert.match(scripts.get("J>F"), /\nmgA:update c:"f"\$c from mgA\n$/);
+  assert.match(scripts.get("S>J"), /\nmgA:update c:\{"J"\$string x\} each c from mgA\n$/);
+  assert.match(scripts.get("G>J"), /\n\/ not written: a cast of c from G to J: q has no cast from guid to long\n$/);
+  assert.match(scripts.get("J>j"), /\n\/ not written: a cast of c from J to j: a list column's items are lists, an atom column's are not\n$/);
+  // The issue's own table, ragged and with an empty item, and the values it holds after.
+  await connection.call("{`mgA set ([] a:1 2 3; b:(1 2;`long$();enlist 6)); `mgB set ([] a:1 2 3; b:(1 2f;3 4f;5 6f));}", 0);
+  const info = async (n) => readTableInfo(await connection.call(TABLE_INFO, n, 100));
+  const ran = readRun(await connection.call(RUN_SCRIPT, statements(migrationScript("mgA", await info("mgA"), "A", await info("mgB"), "B", "p"))));
+  assert.ok(ran.ok, ran.error);
+  assert.deepStrictEqual(await connection.call("{(meta[mgA]~meta mgB;mgA[`b]~(1 2f;`float$();enlist 6f))}", 0), [true, true]);
 });
 
 test("a schema migration casts on disk what the column manager casts, and no other (#2012)", { skip }, async (t) => {

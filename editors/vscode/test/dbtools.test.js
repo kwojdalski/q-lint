@@ -18,7 +18,7 @@ const { readDoc, qdocs, docMarkdown, docHtml, typeName, workspaceDocs } = requir
 const { missingWeekdays, partitionProblems, partitionReport, readPartitions } = require("../out/partcheck.js");
 const { readSym, symReport } = require("../out/syminspect.js");
 const { advise, filterCounts, adviceReport, readAttributeSample, ATTRIBUTE_SAMPLE } = require("../out/attradvice.js");
-const { schemaDiff, migrationScript, nullOf, castOf } = require("../out/migrate.js");
+const { schemaDiff, migrationScript, nullOf, castOf, castProblem } = require("../out/migrate.js");
 const { symbolPool, rangeOf, generator, testDataQ, testDataCsv, loadTypes, random } = require("../out/testdata.js");
 const { headNames, timeOfDay, rangeProblem, readTpPage, readTpLog, readReplayed } = require("../out/tplog.js");
 const { parseDashboards, changed, tileQueryProblem, dashboardNameProblem, withDashboard, refreshOf } = require("../out/dashboard.js");
@@ -281,6 +281,18 @@ test("a schema diff names adds, drops, casts and order, and the script turns one
   assert.strictEqual(castOf("c", "C", "j"), '"J"$c');
   assert.strictEqual(castOf("c", "s", "j"), '"J"$string c');
   assert.strictEqual(castOf("c", "s", "d"), '"D"$string c');
+  // A cast q does not make is left out by its name (#2012); between two list
+  // columns it is the atoms' cast, made in each item (#2013).
+  assert.strictEqual(castProblem("j", "g", false), "q has no cast from long to guid");
+  assert.strictEqual(castProblem("d", "t", true), "q has no cast from date to time");
+  assert.deepStrictEqual([castProblem("g", "s", false), castProblem("s", "g", true), castProblem("d", "p", false), castProblem("", "j", false)], [undefined, undefined, undefined, undefined]);
+  assert.strictEqual(castProblem("j", "", false), "no cast makes a mixed column");
+  assert.deepStrictEqual([castProblem("J", "F", false), castOf("b", "J", "F")], [undefined, '"f"$b']);
+  assert.deepStrictEqual([castOf("b", "S", "J"), castOf("b", "J", "S"), castOf("b", "S", "C"), castOf("b", "C", "J")], ['{"J"$string x} each b', "{`$string x} each b", '{"c"$first each string x} each b', '"j"$b']);
+  assert.strictEqual(castProblem("M", "T", false), "q has no cast from month to time");
+  assert.strictEqual(castProblem("J", "j", false), "a list column's items are lists, an atom column's are not");
+  const cast = migrationScript("a", t("table", [["k", "j"], ["g", "j"], ["l", "J"], ["m", "j"]]), "a", t("table", [["k", "j"], ["g", "g"], ["l", "F"], ["m", ""]]), "b", "p");
+  assert.match(cast, /\n\/ not written: a cast of g from j to g: q has no cast from long to guid\na:update l:"f"\$l from a\n\/ not written: a cast of m from j to mixed: no cast makes a mixed column\n$/);
   // A mixed column is added as an empty list a row (#1097).
   assert.match(migrationScript("a", t("table", [["k", "j"]]), "a", t("table", [["k", "j"], ["m", ""]]), "b", "p"), /\na:update m:count\[i\]#enlist \(\) from a\n/);
   assert.match(migrationScript("a", from, "a", from, "a", "p"), /the same: there is nothing to change/);
