@@ -7,10 +7,11 @@
 // it was defined in, exactly as Redefine does. Only a function the process
 // holds with the text it is told it holds is replaced, and what it held is
 // kept under `.qlint.<ns>.saved`; RESTORE puts each back - unless it was
-// redefined meanwhile, which is left as it is - and deletes `.qlint.<ns>`,
-// and `.qlint` too when nothing else of q-lint's is left in it. INSTALL
-// starts with nothing of `.qlint.<ns>` there: the caller restores first, so
-// a run that was interrupted is put right before another starts.
+// redefined meanwhile, which is left as it is - and deletes `.qlint.<ns>`.
+// `.qlint` stays, empty when nothing else of q-lint's is left in it: q has
+// no call that removes a context (#1871). INSTALL starts with nothing of
+// `.qlint.<ns>` there: the caller restores first, so a run that was
+// interrupted is put right before another starts.
 //
 // Coverage puts `.qlint.cov.d[k]+:1;` in front of each statement of a
 // function's own body; the locals capture keeps the call's arguments as the
@@ -199,7 +200,6 @@ export function restoreExpression(ns: "cov" | "err"): string {
     ...(ns === "err" ? [` d:@[{@[x;\`args\`locals;{{2000 sublist ${FULL_TEXT}[2000;x]}each x}]};d;{::}];`] : []),
     " kept:{[nm;old;new]$[new~@[get;nm;{::}];[nm set old;0b];1b]}'[key s;value s;i key s];",
     ` .qlint:(enlist\`${ns})_.qlint;`,
-    " if[all null key .qlint;delete qlint from`.];",
     " `kept`d!((`$()),key[s] where kept;d)}[]",
   ].join("\n");
 }

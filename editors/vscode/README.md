@@ -771,10 +771,11 @@ back and the counts show in the editor's gutter and the Test Coverage view.
 A function changed on the process since it was loaded, or not loaded, is
 left alone, and the run's output names those; one redefined while the tests
 ran is left as it is then. `.qlint.cov` holds the counts and the originals
-meanwhile, and is deleted after, with `.qlint` when nothing else of
-q-lint's is in it. A run interrupted before the functions were put back
-(the connection lost, say) is put right first thing in the next coverage
-run. The replacing goes through the read-only guard. A statement is
+meanwhile, and is deleted after; `.qlint` itself stays, empty when nothing
+else of q-lint's is in it, as q cannot remove a namespace. A run
+interrupted before the functions were put back (the connection lost, say)
+is put right first thing in the next coverage run. The replacing goes
+through the read-only guard. A statement is
 counted, not each line inside it: an `if[...]` or a nested lambda counts
 as part of the statement it is in. `q-lint.testExplorer.coverage.enable`
 removes the profile.
@@ -1285,9 +1286,10 @@ in `.qlint.log.orig`. The editor marks the definition `logpoint on
 <process>`. **Show Logpoint Hits** reads the calls kept, **Remove
 Logpoint** puts one function back, and **Remove All Logpoints** all of
 them; a function redefined while it had a logpoint is left as it is. With
-the last one removed, `.qlint.log` is deleted. Only a lambda takes one, and
-a projection or alias made of the function before keeps calling the
-original. Adding and removing go through the read-only guard; reading the
+the last one removed, `.qlint.log` is deleted and `.qlint` is left empty: q
+cannot remove a namespace. Only a lambda takes one, and a projection or
+alias made of the function before keeps calling the original. Adding and
+removing go through the read-only guard; reading the
 hits changes nothing. `q-lint.logpoints.enable` hides the commands.
 
 **Locals at the error.** **Capture Locals at Last Error** looks into the

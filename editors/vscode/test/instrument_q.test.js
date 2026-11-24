@@ -1,6 +1,6 @@
 // Instrumenting a process's functions against a real q (#979, #985): the
 // coverage probes count, the locals are kept, and every definition is put
-// back as it was, in its own context, with `.qlint` gone. Needs QLINT_TEST_Q.
+// back as it was, in its own context, with `.qlint` empty. Needs QLINT_TEST_Q.
 const test = require("node:test");
 const assert = require("node:assert");
 const fs = require("node:fs");
@@ -57,11 +57,12 @@ test("coverage counts each statement, and the functions are put back as they wer
   const after = await value(c, "{.Q.s1 (value each x),'(get each x)~'get each x}`f`big`small`.ns.h`.ns.k");
   assert.strictEqual(after, before);
   assert.strictEqual(await value(c, "(`cov in key`.qlint;.qlint.cache.p1)~(0b;42)"), true);
-  // With nothing else of q-lint's there, .qlint goes too.
-  await value(c, "delete qlint from `.");
+  // With nothing else of q-lint's there .qlint is left empty - q cannot
+  // remove a context - and a root variable named qlint is the user's (#1871).
+  await value(c, ".qlint:(enlist`cache)_.qlint;qlint:7");
   readInstalled(await c.call(installLambda("cov"), ["f"], [states.get("f").text], [covered[0].text], 2), 1);
   readRestored(await c.call(restoreExpression("cov")));
-  assert.strictEqual(await value(c, "`qlint in key`."), false);
+  assert.strictEqual(await value(c, "(key[`.qlint]~enlist`)&qlint~7"), true);
   // Nothing to restore is not an error.
   assert.deepStrictEqual(readRestored(await c.call(restoreExpression("cov"))).kept, []);
 });
@@ -94,7 +95,7 @@ test("the locals capture keeps the arguments and locals up to the error", { skip
   assert.deepStrictEqual(d.locals, { c: "3", d: "6" });
   assert.strictEqual(await value(c, "last value .ns.m"), was);
   // Back in its own context, and nothing of q-lint's left.
-  assert.deepStrictEqual(await value(c, "(`ns~first(value .ns.m)3;`qlint in key`.)"), [true, false]);
+  assert.deepStrictEqual(await value(c, "(`ns~first(value .ns.m)3;key[`.qlint]~enlist`)"), [true, true]);
 });
 
 test("a captured local is text to 2000 characters, whatever the process's \\c (#1870)", { skip }, async (t) => {
@@ -107,5 +108,5 @@ test("a captured local is text to 2000 characters, whatever the process's \\c (#
   const n = Array.from({ length: 60 }, (_, i) => i).join(" ");
   assert.deepStrictEqual(d.args, { a: "60", b: "`sym" });
   assert.deepStrictEqual(d.locals, { c: n, d: `+\`x\`y!(${n};${Array(60).fill("`sym").join("")})` });
-  assert.deepStrictEqual(await value(c, "(system\"c\";`qlint in key`.)"), [[25, 40], false]);
+  assert.deepStrictEqual(await value(c, "(system\"c\";key[`.qlint]~enlist`)"), [[25, 40], true]);
 });

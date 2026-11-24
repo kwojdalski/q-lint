@@ -84,7 +84,9 @@ const SERVER = [
 ].join("\n");
 
 const same = async (c) => (await c.evaluate("snap~keep[]")).value === true;
-const noState = async (c) => (await c.evaluate("not `prof in key `.qlint")).value === true;
+// Nothing of q-lint's is left: .qlint is not there, or - q cannot remove a
+// context - is empty.
+const noState = async (c) => (await c.evaluate("0=count key[`.qlint]except`")).value === true;
 
 test("every call is recorded with its caller, and every function is put back", { skip }, async (t) => {
   const c = await connect(t, SERVER);
@@ -109,7 +111,7 @@ test("every call is recorded with its caller, and every function is put back", {
   assert.deepStrictEqual(flame(profile).filter((f) => f.depth === 1).map((f) => f.fn).sort(), [".foo.fib", ".foo.nil", ".foo.two"]);
   assert.ok(profile.overheadPerCall > 0 && profile.overheadPerCall < 1e6, String(profile.overheadPerCall));
   assert.ok(await same(c), "the functions are the ones that were there");
-  assert.ok(await noState(c), ".qlint.prof is gone");
+  assert.ok(await noState(c), ".qlint holds nothing");
   // A projection stays as it was, and still works.
   assert.strictEqual(String((await c.evaluate(".foo.proj 2")).value), "3");
 });
