@@ -1860,15 +1860,18 @@ export class Live {
         }
         this.connection = connection;
         this.active = process;
+        // The process as it is when a message comes or the connection
+        // closes, not as connected to: it may be renamed or tagged since (#1699).
         connection.whenAsync((message) => {
           if (this.connection === connection) {
             for (const listener of this.asyncListeners) {
-              listener(message, process);
+              listener(message, this.active ?? process);
             }
           }
         });
         connection.whenClosed(() => {
           if (this.connection === connection) {
+            const now = this.active ?? process;
             this.connection = undefined;
             this.running = undefined;
             const configuration = workspace.getConfiguration("q-lint");
@@ -1876,9 +1879,9 @@ export class Live {
             this.showStatus();
             this.processesView.refresh();
             this.changed.fire("disconnected");
-            void window.showWarningMessage(plainMessage(`q-lint: the connection to ${process.label} closed.${again ? " Reconnecting." : ""}`));
+            void window.showWarningMessage(plainMessage(`q-lint: the connection to ${now.label} closed.${again ? " Reconnecting." : ""}`));
             if (again) {
-              void this.autoReconnect(process);
+              void this.autoReconnect(now);
             }
           }
         });
@@ -2075,10 +2078,11 @@ export class Live {
   /// Reconnect to `process`, whose connection dropped, waiting longer before
   /// each try (`backoffDelay`), until it connects, the tries run out, or the
   /// user connects elsewhere or disconnects (#917).
-  private async autoReconnect(process: Process): Promise<void> {
+  private async autoReconnect(dropped: Process): Promise<void> {
     const run = ++this.reconnectRun;
     const configuration = workspace.getConfiguration("q-lint");
     const { reconnectAttempts } = readHealth((key, fallback) => configuration.get(key, fallback));
+    let process = dropped;
     for (let attempt = 1; attempt <= reconnectAttempts; attempt++) {
       this.reconnecting = { label: process.label, attempt, of: reconnectAttempts };
       this.showStatus();
@@ -2086,6 +2090,16 @@ export class Live {
       if (run !== this.reconnectRun || this.connection !== undefined) {
         return;
       }
+      // Each try connects to it as it is now - renamed, tagged, given a
+      // connect script meanwhile - and a saved one as saved (#1699).
+      const now = this.active ?? process;
+      const saved = now.server === undefined ? this.processes().find((p) => p.label === now.label) : now;
+      if (saved === undefined) {
+        this.reconnecting = undefined;
+        this.showStatus();
+        return;
+      }
+      process = saved;
       const connected = await this.open(process, false, true);
       if (run !== this.reconnectRun) {
         return;
