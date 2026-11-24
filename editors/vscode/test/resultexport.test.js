@@ -426,6 +426,18 @@ test("a mean of finite values that overflow their sum is finite, and a sum past 
   assert.strictEqual(page.columnStats(h, [0, 1])[1].mean, "0");
 });
 
+test("a mean of large values is the sum over the count, as q's avg, not a running mean an ulp off (#1735)", () => {
+  const xs = [9846345813163, 9846345813140, 9846345813100, 9846345813120, 9846345813090, 9846345813091, 9846345813113];
+  const g = grid([["s", 11], ["f", 9]], [xs.map(() => "a"), xs.map(String)], [null, xs]);
+  const rows = xs.map((_, i) => i);
+  // KDB-X: avg gives 9846345813116.7148 (\P 0), the double 9846345813116.715.
+  assert.strictEqual(page.columnStats(g, rows)[1].mean, "9846345813116.715");
+  assert.deepStrictEqual(page.pivot(g, rows, { row: 0, column: -1, value: 1, agg: "avg" }).cells, [["9846345813116.715"]]);
+  // Small values as before.
+  const small = grid([["s", 11], ["f", 9]], [["a", "a"], ["1", "2"]], [null, [1, 2]]);
+  assert.strictEqual(page.columnStats(small, [0, 1])[1].mean, "1.5");
+});
+
 const look = { colours: ["#111111", "#222222"], foreground: "#000", border: "#ccc", font: "sans-serif", up: "#0f0", down: "#f00" };
 
 test("candles find open, high, low and close by name, and are drawn as floating bars coloured by direction", () => {
