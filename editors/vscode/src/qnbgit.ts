@@ -40,7 +40,12 @@ const isObject = (v: unknown): v is Json => typeof v === "object" && v !== null 
 export function notebookJson(raw: string): { cells: CellLike[] } & Json | undefined {
   const text = raw.startsWith("﻿") ? raw.slice(1) : raw;
   try {
-    const json: unknown = JSON.parse(text);
+    // As `qnb.ts`'s `lossless`, which this file cannot import: an integer
+    // too big for a number is written back as it was (#1562).
+    const raw = (JSON as { rawJSON?: (text: string) => unknown }).rawJSON;
+    const json: unknown = JSON.parse(text, (_key, value: unknown, context?: { source?: string }) =>
+      typeof value === "number" && !Number.isSafeInteger(value) && raw !== undefined && /^-?\d+$/.test(context?.source ?? "") ? raw(context?.source ?? "") : value,
+    );
     return isObject(json) && typeof json.qnb === "number" && Array.isArray(json.cells) && json.cells.every(isObject)
       ? (json as { cells: CellLike[] } & Json)
       : undefined;
@@ -196,19 +201,35 @@ export function diffSummary(diff: CellDiff): string {
 
 const USAGE = "usage: node qnbgit.js --text NOTEBOOK.qnb | --strip [NOTEBOOK.qnb]";
 
+/// `bytes` stripped, or as they are when they are not UTF-8 or not a
+/// notebook (#1560): never decoded and written back changed.
+export function stripBytes(bytes: Buffer): Buffer {
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    return bytes;
+  }
+  return notebookJson(text) === undefined ? bytes : Buffer.from(stripQnb(text), "utf8");
+}
+
 /// The command line: what to write to stdout and stderr, and the exit code.
 /// `--strip` with no file reads stdin, as git's clean filter gives it.
-export function main(argv: string[], read: (file: string | 0) => string = (f) => fs.readFileSync(f, "utf8")): { out: string; err: string; code: number } {
+export function main(
+  argv: string[],
+  read: (file: string | 0) => string | Buffer = (f) => fs.readFileSync(f),
+): { out: string | Buffer; err: string; code: number } {
   if (argv[0] === "--strip" && argv.length <= 2) {
     try {
-      return { out: stripQnb(read(argv[1] ?? 0)), err: "", code: 0 };
+      const raw = read(argv[1] ?? 0);
+      return { out: typeof raw === "string" ? stripQnb(raw) : stripBytes(raw), err: "", code: 0 };
     } catch (error) {
       return { out: "", err: `qnbgit: ${error instanceof Error ? error.message : String(error)}\n`, code: 2 };
     }
   }
   if (argv[0] === "--text" && argv.length === 2) {
     try {
-      return { out: fileText(read(argv[1])), err: "", code: 0 };
+      return { out: fileText(read(argv[1]).toString()), err: "", code: 0 };
     } catch (error) {
       return { out: "", err: `qnbgit: ${error instanceof Error ? error.message : String(error)}\n`, code: 2 };
     }

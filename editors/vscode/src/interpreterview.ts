@@ -44,7 +44,7 @@ import {
 import { readTerminal } from "./liveconfig";
 import { mergeEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor, nodeFiles } from "./qenvironment";
-import { expandHome } from "./terminal";
+import { qBinaryFrom } from "./terminal";
 import { iconsEscaped, plainMessage } from "./history";
 
 /// How long a binary has to answer the probe.
@@ -102,9 +102,9 @@ export function probe(binary: string, env: Record<string, string>): Promise<Prob
 /// workspace folder the q tasks and terminals start in, not to the
 /// extension host's working directory (#1132).
 export function resolveBinary(binary: string, folder: string | undefined = workspace.workspaceFolders?.[0]?.uri.fsPath): string | undefined {
-  const file = expandHome(binary, os.homedir());
-  if (path.isAbsolute(file) || file.includes("/") || file.includes("\\")) {
-    return path.resolve(folder ?? "", file);
+  const file = qBinaryFrom(binary, folder, os.homedir());
+  if (file === undefined || path.isAbsolute(file)) {
+    return file;
   }
   const names = process.platform === "win32" && !/\.exe$/i.test(file) ? [file, `${file}.exe`] : [file];
   for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {

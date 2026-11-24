@@ -85,8 +85,13 @@ async function confirmWrite(uri: Uri, text: string, replacing: boolean): Promise
   if (answer !== yes) {
     return false;
   }
-  await workspace.fs.createDirectory(Uri.file(dirname(uri.fsPath)));
-  await workspace.fs.writeFile(uri, Buffer.from(text, "utf8"));
+  try {
+    await workspace.fs.createDirectory(Uri.file(dirname(uri.fsPath)));
+    await workspace.fs.writeFile(uri, Buffer.from(text, "utf8"));
+  } catch (error) {
+    void window.showErrorMessage(plainMessage(`q-lint: could not write ${uri.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
+    return false;
+  }
   return true;
 }
 

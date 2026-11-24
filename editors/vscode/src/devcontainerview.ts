@@ -4,8 +4,8 @@
 // is left as it is and named in the preview; one that appears between the
 // preview and the write is left too.
 import * as path from "node:path";
-import { Uri, commands, window, workspace, type ExtensionContext, type WorkspaceFolder } from "vscode";
-import { DEVCONTAINER_COMMAND, plan, previewText, readDevContainer, templateFiles } from "./devcontainer";
+import { FileType, Uri, commands, window, workspace, type ExtensionContext, type WorkspaceFolder } from "vscode";
+import { DEVCONTAINER_COMMAND, otherConfigs, plan, previewText, readDevContainer, templateFiles } from "./devcontainer";
 import { plainMessage } from "./history";
 
 const exists = async (uri: Uri): Promise<boolean> => {
@@ -36,6 +36,16 @@ export async function addDevContainer(): Promise<string[]> {
     return [];
   }
   const root = folder.uri;
+  const subfolders = await workspace.fs.readDirectory(Uri.joinPath(root, ".devcontainer")).then(
+    (entries) => entries.filter(([, type]) => type === FileType.Directory).map(([name]) => name),
+    () => [],
+  );
+  for (const other of otherConfigs(subfolders)) {
+    if (await exists(Uri.joinPath(root, ...other.split("/")))) {
+      void window.showInformationMessage(plainMessage(`q-lint: ${folder.name} has a dev container configuration already, ${other}; nothing was written.`));
+      return [];
+    }
+  }
   const files = templateFiles();
   const there = new Set<string>();
   for (const file of files) {
@@ -69,8 +79,14 @@ export async function addDevContainer(): Promise<string[]> {
     if (await exists(uri)) {
       continue;
     }
-    await workspace.fs.createDirectory(Uri.joinPath(root, ...path.posix.dirname(file.path).split("/")));
-    await workspace.fs.writeFile(uri, Buffer.from(file.content, "utf8"));
+    try {
+      await workspace.fs.createDirectory(Uri.joinPath(root, ...path.posix.dirname(file.path).split("/")));
+      await workspace.fs.writeFile(uri, Buffer.from(file.content, "utf8"));
+    } catch (error) {
+      const done = written.length > 0 ? ` ${written.join(" and ")} ${written.length === 1 ? "was" : "were"} written.` : "";
+      void window.showErrorMessage(plainMessage(`q-lint: could not write ${uri.fsPath}: ${error instanceof Error ? error.message : String(error)}.${done}`));
+      return written;
+    }
     written.push(file.path);
   }
   void window.showInformationMessage(

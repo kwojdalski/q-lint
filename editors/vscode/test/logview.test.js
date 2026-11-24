@@ -173,6 +173,32 @@ test("a log opens in a view, and filters by level, process, time and text read i
   assert.strictEqual(text(), "(nothing passes the filter)");
 });
 
+// Two views side by side: a title-bar button in the one not focused
+// filtered or paused the focused one (#1524).
+test("a title-bar button filters and pauses the view it was clicked in, not the active one", async (t) => {
+  const dir = tmp();
+  const a = path.join(dir, "server.log");
+  const b = path.join(dir, "gateway.log");
+  fs.writeFileSync(a, [torq("10:00:00", "rdb1", "INFO", "a"), torq("10:01:00", "rdb1", "ERROR", "b"), ""].join("\n"));
+  fs.writeFileSync(b, [torq("10:00:00", "gw1", "INFO", "c"), ""].join("\n"));
+  const { viewer } = setUp(t);
+  await stub.commands.get(LOG_COMMANDS.open)(vscode.Uri.file(a));
+  const left = vscode.window.activeTextEditor.document.uri;
+  await stub.commands.get(LOG_COMMANDS.open)(vscode.Uri.file(b));
+  const views = [...viewer.views.values()];
+  stub.picks.push((o) => o.items.filter((i) => i.label === "ERROR"));
+  await stub.commands.get(LOG_COMMANDS.levels)(left);
+  assert.deepStrictEqual(views.map((v) => v.filter.levels), [["ERROR"], []]);
+  await stub.commands.get(LOG_COMMANDS.follow)(left);
+  assert.deepStrictEqual(views.map((v) => v.follow), [false, true]);
+  await stub.commands.get(LOG_COMMANDS.clear)(left);
+  assert.deepStrictEqual(views.map((v) => v.filter.levels), [[], []]);
+  await stub.commands.get(LOG_COMMANDS.follow)(left);
+  // Without a Uri - a keybinding - the active view, as before.
+  await stub.commands.get(LOG_COMMANDS.follow)();
+  assert.deepStrictEqual(views.map((v) => v.follow), [true, false]);
+});
+
 test("a followed view shows appended lines once they end, the last entry before the next starts; paused, it reads nothing until resumed", async (t) => {
   const file = path.join(tmp(), "q.log");
   fs.writeFileSync(file, "first\n");

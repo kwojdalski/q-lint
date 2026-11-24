@@ -61,6 +61,7 @@ import type { Live } from "./live";
 import { decodeItem, encodeItem, exportScript, NOTEBOOK, parseQnb, serializeQnb, type Qnb, type QnbCell, type QnbOutput } from "./qnb";
 import { statements } from "./statements";
 import { plainMessage } from "./history";
+import { selectedMany } from "./clicked";
 
 /// Where the fields of a file, a cell or an output this extension does not
 /// know ride in VS Code's metadata between an open and a save; never written
@@ -117,7 +118,7 @@ class QnbSerializer implements NotebookSerializer {
   deserializeNotebook(content: Uint8Array, _token: CancellationToken): NotebookData {
     // A file that is not a notebook throws here, and the editor says why
     // instead of opening an empty notebook a save would write over it.
-    const qnb = parseQnb(Buffer.from(content).toString("utf8"));
+    const qnb = parseQnb(Buffer.from(content).toString("utf8"), false);
     const data = new NotebookData(
       qnb.cells.map((cell) => {
         const code = cell.kind === "code";
@@ -333,6 +334,7 @@ class QnbKernel {
         execution.start();
         if (fresh) {
           void execution.clearOutput();
+          void dropLiveValues(execution.cell);
         }
         execution.end(undefined);
       }
@@ -369,6 +371,9 @@ class QnbKernel {
       if (outputs.length > 0) {
         await execution.replaceOutput(outputs);
       }
+      if (!success) {
+        await dropLiveValues(execution.cell);
+      }
       execution.end(success, Date.now());
       return success;
     };
@@ -382,15 +387,17 @@ class QnbKernel {
     if (off !== undefined) {
       return finish(false, [toOutput({ kind: "error", name: "cell directive", message: featureOff(off), stack: "" })]);
     }
-    const cut = statements(source);
-    if (cut.length === 0) {
-      return finish(true, []);
-    }
+    // Before the empty cell returns: a cell of only `/ @process x` switches,
+    // as a headless run's does (#1546).
     if (directive.process !== undefined) {
       const problem = await switchProcess(this.live, directive.process);
       if (problem !== undefined) {
         return finish(false, [problem.startsWith("Not run") ? notice(problem) : toOutput({ kind: "error", name: "@process", message: problem, stack: "" })]);
       }
+    }
+    const cut = statements(source);
+    if (cut.length === 0) {
+      return finish(true, []);
     }
     // The Markdown cells after this one with live values, read once it has run.
     const notebook = execution.cell.notebook;
@@ -472,6 +479,28 @@ async function keepLiveValues(notebook: NotebookDocument, cells: NotebookCell[],
   await workspace.applyEdit(edit);
 }
 
+/// Drop the values kept for the Markdown the code cell `cell` reads: it
+/// failed or was not run, so what they showed was another run's (#1544).
+async function dropLiveValues(cell: NotebookCell): Promise<void> {
+  if (!featureOn("liveValues") || cell.index < 0) {
+    return;
+  }
+  const all = cell.notebook.getCells();
+  const kinds = all.map((c) => ({ kind: c.kind === NotebookCellKind.Code ? ("code" as const) : ("markdown" as const) }));
+  const edits = markdownAfter(kinds, cell.index)
+    .filter((j) => kinds[j].kind === "markdown" && all[j].metadata?.[LIVE_KEY] !== undefined)
+    .map((j) => {
+      const { [LIVE_KEY]: _old, ...rest } = all[j].metadata;
+      return NotebookEdit.updateCellMetadata(j, rest);
+    });
+  if (edits.length === 0) {
+    return;
+  }
+  const edit = new WorkspaceEdit();
+  edit.set(cell.notebook.uri, edits);
+  await workspace.applyEdit(edit);
+}
+
 /// The notebook at `uri` as the file keeps it, outputs and all: the open
 /// document, unsaved edits and all, or the file.
 export async function qnbOf(uri: Uri): Promise<Qnb> {
@@ -508,14 +537,14 @@ async function cellsOf(uri: Uri): Promise<QnbCell[]> {
   return parseQnb(Buffer.from(await workspace.fs.readFile(uri)).toString("utf8")).cells;
 }
 
-/// Where Export Notebook offers to write `notebook`'s script: beside it, or,
-/// for an untitled notebook (New q Notebook's), in the first workspace
-/// folder - a save dialog cannot browse `untitled:`, and nothing can be
+/// Where Export Notebook offers to write `notebook`'s script, and Run with
+/// Parameters its run: beside it, or, for an untitled notebook (New q
+/// Notebook's), in the first workspace folder - a save dialog cannot browse `untitled:`, and nothing can be
 /// written there.
-function scriptBeside(notebook: Uri, extension = ".q"): Uri {
-  const name = path.posix.basename(notebook.path).replace(/\.qnb$/i, extension);
+export function scriptBeside(notebook: Uri, extension = ".q"): Uri {
+  const name = path.posix.basename(notebook.path).replace(/(\.qnb)?$/i, extension);
   if (notebook.scheme !== "untitled") {
-    return notebook.with({ path: notebook.path.replace(/\.qnb$/i, extension) });
+    return notebook.with({ path: notebook.path.replace(/(\.qnb)?$/i, extension) });
   }
   const folder = workspace.workspaceFolders?.[0]?.uri ?? Uri.file(os.homedir());
   return Uri.joinPath(folder, name);
@@ -573,6 +602,61 @@ async function exportNotebook(source?: Uri, target?: Uri, format: ExportFormat =
   }
   if (!(target instanceof Uri)) {
     void window.showInformationMessage(plainMessage(`q-lint: exported the notebook to ${to.fsPath}.`));
+  }
+}
+
+/// Export the notebook clicked, or each of an Explorer multi-selection.
+function exportSelected(source: Uri | undefined, target: unknown, format: ExportFormat): Promise<void> {
+  const many = selectedMany<Uri>(target)?.filter((u) => /\.qnb$/i.test(u.path));
+  return many !== undefined && many.length > 1
+    ? eachBeside(many, (from) => scriptBeside(from, EXPORTS[format].extension), "Export", `as ${EXPORTS[format].extension.slice(1)}`, (from, to) => exportNotebook(from, to, format))
+    : exportNotebook(source, target instanceof Uri ? target : undefined, format);
+}
+
+/// Run `run` on each of `sources`, an Explorer multi-selection, to the file
+/// `beside` names, once asked: only the file clicked was done, and the rest
+/// skipped unsaid (#1541). A file there already is left as it is.
+async function eachBeside(sources: Uri[], beside: (from: Uri) => Uri, verb: string, how: string, run: (from: Uri, to: Uri) => Promise<void>): Promise<void> {
+  const exists = (uri: Uri): Promise<boolean> =>
+    Promise.resolve()
+      .then(() => workspace.fs.stat(uri))
+      .then(
+        () => true,
+        () => false,
+      );
+  const todo: { from: Uri; to: Uri }[] = [];
+  const there: string[] = [];
+  for (const from of sources) {
+    const to = beside(from);
+    if (await exists(to)) {
+      there.push(path.posix.basename(to.path));
+    } else {
+      todo.push({ from, to });
+    }
+  }
+  const left = there.length > 0 ? `\n\nAlready there, and left as they are: ${there.join(", ")}.` : "";
+  if (todo.length === 0) {
+    void window.showInformationMessage(plainMessage(`q-lint: ${there.join(", ")} ${there.length === 1 ? "is" : "are"} there already; nothing was written.`));
+    return;
+  }
+  const answer = await window.showWarningMessage(
+    plainMessage(`${verb} ${todo.length} notebook${todo.length === 1 ? "" : "s"} ${how}, each beside itself?`),
+    { modal: true, detail: `${todo.map((t) => `${path.posix.basename(t.from.path)} -> ${path.posix.basename(t.to.path)}`).join("\n")}${left}` },
+    verb,
+  );
+  if (answer !== verb) {
+    return;
+  }
+  const done: string[] = [];
+  for (const { from, to } of todo) {
+    // One that fails says why itself.
+    await run(from, to);
+    if (await exists(to)) {
+      done.push(path.posix.basename(to.path));
+    }
+  }
+  if (done.length > 0) {
+    void window.showInformationMessage(plainMessage(`q-lint: wrote ${done.join(", ")}.`));
   }
 }
 
@@ -715,10 +799,18 @@ export function registerNotebooks(
   context.subscriptions.push(
     workspace.registerNotebookSerializer(NOTEBOOK.type, new QnbSerializer()),
     kernel,
-    commands.registerCommand(NOTEBOOK.exportCommand, (source?: Uri, target?: Uri) => exportNotebook(source, target)),
-    commands.registerCommand(NOTEBOOK.exportHtmlCommand, (source?: Uri, target?: Uri) => requireFeature("export") ? exportNotebook(source, target, "html") : undefined),
-    commands.registerCommand(NOTEBOOK.exportIpynbCommand, (source?: Uri, target?: Uri) => requireFeature("export") ? exportNotebook(source, target, "ipynb") : undefined),
-    commands.registerCommand(NOTEBOOK.importIpynbCommand, (source?: Uri, target?: Uri) => requireFeature("export") ? importIpynb(source, target) : undefined),
+    commands.registerCommand(NOTEBOOK.exportCommand, (source?: Uri, target?: unknown) => exportSelected(source, target, "q")),
+    commands.registerCommand(NOTEBOOK.exportHtmlCommand, (source?: Uri, target?: unknown) => requireFeature("export") ? exportSelected(source, target, "html") : undefined),
+    commands.registerCommand(NOTEBOOK.exportIpynbCommand, (source?: Uri, target?: unknown) => requireFeature("export") ? exportSelected(source, target, "ipynb") : undefined),
+    commands.registerCommand(NOTEBOOK.importIpynbCommand, (source?: Uri, target?: unknown) => {
+      if (!requireFeature("export")) {
+        return undefined;
+      }
+      const many = selectedMany<Uri>(target)?.filter((u) => /\.ipynb$/i.test(u.path));
+      return many !== undefined && many.length > 1
+        ? eachBeside(many, (from) => from.with({ path: from.path.replace(/\.ipynb$/i, "") + ".qnb" }), "Import", "as q notebooks", importIpynb)
+        : importIpynb(source, target instanceof Uri ? target : undefined);
+    }),
     liveMessaging.onDidReceiveMessage(({ message }: { message: { type?: string; expr?: unknown; value?: LiveValue | null } }) => {
       if (message.type === "live" && typeof message.expr === "string") {
         shown.push({ expr: message.expr, value: message.value ?? null });

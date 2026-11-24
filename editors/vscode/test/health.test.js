@@ -46,6 +46,7 @@ test("a reconnect waits 1 s, then twice as long, at most 30 s; latency is ms, th
   assert.deepStrictEqual([1, 2, 3, 4, 5, 6, 7, 20].map(backoffDelay), [1000, 2000, 4000, 8000, 16000, 30000, 30000, 30000]);
   assert.strictEqual(backoffDelay(0), 1000);
   assert.deepStrictEqual([0, 3.4, 999, 1000, 12345].map(latencyText), ["0 ms", "3 ms", "999 ms", "1.0 s", "12.3 s"]);
+  assert.deepStrictEqual([999.4, 999.5, 999.9].map(latencyText), ["999 ms", "1.0 s", "1.0 s"]);
   assert.strictEqual(HEARTBEAT, "::");
   assert.strictEqual(UNANSWERED_MS, 5000);
 });

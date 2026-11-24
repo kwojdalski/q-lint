@@ -38,6 +38,25 @@ test("the suite's style decides the name and the assertion", () => {
   assert.deepStrictEqual(testFilePatterns("/ws/src/lib.q"), ["**/test_lib.q", "**/lib_test.q"]);
 });
 
+// `[1]` in f[1].q is a character class to a glob: test_f1.q was found
+// for it and test_f[1].q never was (#1526).
+test("a file name holding glob characters is matched as written", () => {
+  const { globLiteral } = require("../out/globliteral.js");
+  assert.deepStrictEqual(testFilePatterns("/ws/src/f[1].q"), ["**/test_f[[]1[]].q", "**/f[[]1[]]_test.q"]);
+  assert.strictEqual(globLiteral("x{a,b}*?.q"), "x[{]a,b[}][*][?].q");
+  let mm;
+  try {
+    mm = require("minimatch");
+  } catch {
+    return;
+  }
+  const match = mm.minimatch ?? mm;
+  const [pattern] = testFilePatterns("/ws/src/f[1].q");
+  assert.strictEqual(match("tests/test_f[1].q", pattern), true);
+  assert.strictEqual(match("tests/test_f1.q", pattern), false);
+  assert.strictEqual(match("x{a}.q", `**/${globLiteral("x{a}.q")}`), true);
+});
+
 function setup(files) {
   stub.reset();
   const edits = [];
@@ -132,6 +151,31 @@ test("with no test file, a new one is made in tests/, never over one made meanwh
   assert.strictEqual(s.stubs.registered(), false);
   assert.strictEqual(await run(vscode.Uri.file("/ws/src/lib.q"), 3), false);
   assert.match(stub.messages.at(-1)[1], /q-lint\.testStub\.enable to true/);
+});
+
+// An untitled file's stub went to /test_Untitled-1.q, a notebook cell's
+// beside the notebook (#1525): only a file on disk gets one.
+test("an untitled file or a notebook cell is asked to be saved, and nothing is written", async () => {
+  const files = { "/ws/src/lib.q": SRC };
+  const s = setup(files);
+  const run = stub.commands.get(TEST_STUB_COMMAND);
+  for (const uri of [{ scheme: "untitled", fsPath: "Untitled-1" }, { scheme: "vscode-notebook-cell", fsPath: "/ws/nb.qnb" }]) {
+    assert.strictEqual(await run(uri, 3), false);
+    assert.match(stub.messages.at(-1)[1], /save the file first/);
+  }
+  assert.deepStrictEqual(s.writes, []);
+});
+
+// A write that fails escaped as a raw command error (#1536).
+test("a test file that cannot be written is said, and the command ends", async () => {
+  const files = { "/ws/src/lib.q": SRC, "/ws/tests/other.q": "" };
+  setup(files);
+  vscode.workspace.fs.writeFile = async () => {
+    throw new Error("EACCES: permission denied");
+  };
+  stub.picks.push("Add Test");
+  assert.strictEqual(await stub.commands.get(TEST_STUB_COMMAND)(vscode.Uri.file("/ws/src/lib.q"), 3), false);
+  assert.deepStrictEqual(stub.messages.at(-1), ["error", "q-lint: could not write /ws/tests/test_lib.q: EACCES: permission denied"]);
 });
 
 test("a new test file's path on Windows keeps the folder and the separator (#1094)", () => {

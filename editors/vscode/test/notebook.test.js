@@ -439,3 +439,12 @@ test("a cell that opens with a qDoc comment runs: @param and its kin are documen
   assert.deepStrictEqual(cellDirective("/ @grid\n/ @param t table\nt"), { mode: "grid" });
   assert.match(cellDirective("/ @grd\nt").problem, /not a cell directive/);
 });
+
+test("an indented lone / or \\ on a cell's first line opens no block comment and ends nothing (#1563)", () => {
+  const { statements } = require("../out/statements.js");
+  for (const first of [" /", " \\", "\t/"]) {
+    const script = exportScript([{ kind: "code", source: `${first}\na:1` }, { kind: "code", source: "b:2" }]);
+    assert.deepStrictEqual(statements(script), ["a:1", "b:2"], script);
+  }
+  assert.strictEqual(exportScript([{ kind: "code", source: " /\n x:1" }]), "/ /\nx:1\n");
+});

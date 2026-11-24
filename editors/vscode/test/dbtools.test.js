@@ -14,7 +14,7 @@ const path = require("node:path");
 const pkg = require("../package.json");
 const { DB_SETTINGS, DB_COMMANDS, dbOn, dbOff } = require("../out/dbfeatures.js");
 const { opProblem, opText, columnScript, columnScriptOf, readRun, HELPERS } = require("../out/colmanager.js");
-const { readDoc, qdocs, docMarkdown, docHtml, typeName } = require("../out/dbdoc.js");
+const { readDoc, qdocs, docMarkdown, docHtml, typeName, workspaceDocs } = require("../out/dbdoc.js");
 const { missingWeekdays, partitionProblems, partitionReport, readPartitions } = require("../out/partcheck.js");
 const { readSym, symReport } = require("../out/syminspect.js");
 const { advise, filterCounts, adviceReport, readAttributeSample } = require("../out/attradvice.js");
@@ -239,6 +239,11 @@ test("a schema diff names adds, drops, casts and order, and the script turns one
   // A mixed column is added as an empty list a row (#1097).
   assert.match(migrationScript("a", t("table", [["k", "j"]]), "a", t("table", [["k", "j"], ["m", ""]]), "b", "p"), /\na:update m:count\[i\]#enlist \(\) from a\n/);
   assert.match(migrationScript("a", from, "a", from, "a", "p"), /the same: there is nothing to change/);
+  // Only the keys differ: keyed, or unkeyed (#1579).
+  const ua = t("table", [["s", "s"], ["p", "f"]]);
+  const ka = t("keyed", [["s", "s"], ["p", "f"]], ["s"]);
+  assert.match(migrationScript("ua", ua, "ua", ka, "ka", "p"), /\/ keys {3}s\nua:`s xkey ua\n$/);
+  assert.match(migrationScript("ka", ka, "ka", ua, "ua", "p"), /\/ keys {3}none\nka:0!ka\n/);
   const disk = migrationScript("trade", t("partitioned", [["date", "d"], ["sym", "s"], ["px", "f"]]), "trade", t("table", [["sym", "s"], ["px", "j"], ["ex", "s"]]), "t2", "hdb");
   assert.match(disk, /HDB column manager/);
   assert.match(disk, /\.qlint\.cm\.add\[`ex;`\]/);
@@ -419,4 +424,16 @@ test("a menu that matches a file's extension matches it in any case (#1382)", ()
   const clauses = whens.flatMap((w) => [...w.matchAll(/resourceExtname =~ (\/\S*)/g)].map((m) => m[1]));
   assert.ok(clauses.length > 0);
   for (const c of clauses) assert.match(c, /\/i$/, c);
+});
+
+// One file that cannot be read - permission denied, a dangling symlink -
+// ended the reading, and the files after it went undocumented (#1542).
+test("a workspace file that cannot be read is skipped, and the files after it still documented", async () => {
+  const files = { "a.q": "/ adds one\nf:{x+1}\n", "b.q": null, "c.q": "/ doubles\ng:{2*x}\n/ not this one\nf:{x}\n" };
+  const read = async (f) => {
+    if (files[f] === null) throw new Error("EACCES");
+    return files[f];
+  };
+  const docs = await workspaceDocs(Object.keys(files), read);
+  assert.deepStrictEqual([...docs], [["f", "adds one"], ["g", "doubles"]]);
 });

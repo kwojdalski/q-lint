@@ -14,7 +14,7 @@ const path = require("node:path");
 const pkg = require("../package.json");
 const { Live } = require("../out/live.js");
 const { ADMIN_COMMANDS, adminOff, readAdmin } = require("../out/admin.js");
-const { credentialEnv, parseCredentials, runCredentialCommand } = require("../out/credentials.js");
+const { credentialCwd, credentialEnv, parseCredentials, runCredentialCommand } = require("../out/credentials.js");
 const { CredentialCommands } = require("../out/credentialview.js");
 const { parseProcesses } = require("../out/processes.js");
 const { readSharedFile } = require("../out/shared.js");
@@ -22,6 +22,14 @@ const { readSharedFile } = require("../out/shared.js");
 const Q = process.env.QLINT_TEST_Q;
 const skip = Q ? false : "QLINT_TEST_Q names no q binary";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// "user": "" was taken as the user and then dropped, so the handshake
+// went as `:password` instead of as the process's own user.
+test("a credential JSON whose user is empty keeps the process's user", () => {
+  assert.deepStrictEqual(parseCredentials('{"user":"","password":"s3cret"}', "bob"), { user: "bob", password: "s3cret" });
+  assert.deepStrictEqual(parseCredentials('{"user":"","username":"u","password":"p"}', "bob"), { user: "u", password: "p" });
+  assert.deepStrictEqual(parseCredentials('{"user":null,"password":"s3cret"}', "bob"), { user: "bob", password: "s3cret" });
+});
 
 test("what a command prints: JSON, user:password, a password for the process's user, a token", () => {
   assert.deepStrictEqual(parseCredentials('{"user":"me","password":"pw"}\n'), { user: "me", password: "pw" });
@@ -170,4 +178,13 @@ test("a process whose command prints the right credentials connects, and nothing
   // Turned off, the command is not run: the stored password (none) is sent.
   stub.config.user["connection.credentialCommand.enable"] = false;
   assert.strictEqual(await live.connectTo("good"), false);
+});
+
+// A saved process's credential command ran in the opened folder even when
+// it was not trusted: `./creds.sh`, or on Windows a bare `vault`, was the
+// repository's (#1537).
+test("a credential command runs in the workspace folder only when it is trusted, else in the home directory", () => {
+  assert.strictEqual(credentialCwd(true, "/ws", "/home/u"), "/ws");
+  assert.strictEqual(credentialCwd(false, "/ws", "/home/u"), "/home/u");
+  assert.strictEqual(credentialCwd(true, undefined, "/home/u"), "/home/u");
 });

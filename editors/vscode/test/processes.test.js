@@ -50,6 +50,29 @@ test("a host is refused when it holds a port, a space or a slash", () => {
   assert.strictEqual(hostProblem("tcp://h"), "A host only: the port is asked for next.");
 });
 
+// Two or more colons were taken as an IPv6 address unchecked: `[::1]:5000`
+// and `host:5000:rdb` were accepted, then dialled as a name.
+test("a host with colons is accepted only when it is an IPv6 address", () => {
+  assert.strictEqual(hostProblem("fe80::1"), undefined);
+  assert.strictEqual(hostProblem("[::1]:5000"), "A host only: the port is asked for next.");
+  assert.strictEqual(hostProblem("rdb-host:5000:rdb"), "A host only: the port is asked for next.");
+});
+
+// A discovery server, an import or the shared list was never checked for a
+// host the Add box would refuse: it was listed, then failed at connect.
+test("a listed process with a host the Add box would refuse is skipped", () => {
+  const read = parseProcesses([
+    { label: "a", host: "rdb-host:5000", port: 5000 },
+    { label: "b", host: "h b", port: 1 },
+    { label: "c", host: "::1", port: 1 },
+  ]);
+  assert.deepStrictEqual(read.processes.map((p) => p.label), ["c"]);
+  assert.deepStrictEqual(read.problems, [
+    "Entry 1 (a): A host only: the port is asked for next.",
+    "Entry 2 (b): A host has no spaces or slashes.",
+  ]);
+});
+
 // Tooltips are Markdown: a label, host, user or tag was read as Markdown,
 // so `*prod*` showed as italic prod, `a_b_c` lost its underscores and a user
 // with a backtick broke out of its code span.
