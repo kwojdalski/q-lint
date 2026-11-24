@@ -226,7 +226,7 @@ test("renaming the connected process keeps the Process Explorer", async (t) => {
 // Such a name goes in as Preview reads it, by its symbol.
 test("live completion inserts a name q cannot parse by its symbol", async (t) => {
   let provider;
-  vscode.languages.registerCompletionItemProvider = (_selector, p) => ((provider = p), { dispose() {} });
+  vscode.languages.registerCompletionItemProvider = (_selector, p) => ((provider = p), { dispose: () => (provider = undefined) });
   vscode.CompletionItem = class {
     constructor(label, kind) {
       this.label = label;
@@ -248,6 +248,10 @@ test("live completion inserts a name q cannot parse by its symbol", async (t) =>
   const explorer = new ProcessExplorer(context, live);
   assert.strictEqual(await live.connectTo("p"), true);
   for (let i = 0; i < 50 && explorer.rows().length === 0; i++) await sleep(10);
+  // Off by default: a provider with items hides VS Code's word suggestions (#1779).
+  assert.strictEqual(provider, undefined);
+  stub.config.user["processExplorer.liveCompletion.enable"] = true;
+  stub.changeConfig("q-lint.processExplorer.liveCompletion.enable");
   const document = { getText: () => "" };
   const items = provider.provideCompletionItems(document, { line: 0, character: 0 });
   const inserted = Object.fromEntries(items.map((i) => [i.label, i.insertText ?? i.label]));
@@ -258,6 +262,9 @@ test("live completion inserts a name q cannot parse by its symbol", async (t) =>
     "x.y": "x.y",
     ".ns.é": 'get`$".ns.é"',
   });
+  stub.config.user["processExplorer.liveCompletion.enable"] = false;
+  stub.changeConfig("q-lint.processExplorer.liveCompletion.enable");
+  assert.strictEqual(provider, undefined);
 });
 
 // From the command palette with no editor open (or the Output panel

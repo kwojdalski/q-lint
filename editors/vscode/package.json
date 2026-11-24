@@ -852,6 +852,12 @@
             "order": 127,
             "markdownDescription": "A hover on a table's name in a q editor asks the connected process for its `meta`, rows and memory. Off by default: it queries the process whenever the mouse rests on a table's name."
           },
+          "q-lint.processExplorer.liveCompletion.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 127,
+            "markdownDescription": "While connected, complete the active process's global names, as the **Process Explorer** read them, and inside a qSQL statement the columns of its table. Nothing is sent to complete: the names are those the explorer last read. Off by default, because VS Code stops offering the words already in the file once a provider answers."
+          },
           "q-lint.processExplorer.tableTemplates.enable": {
             "type": "boolean",
             "default": true,
