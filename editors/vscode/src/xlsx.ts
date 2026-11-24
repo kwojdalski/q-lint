@@ -17,7 +17,7 @@
 // would round. A null is an empty cell. Excel holds 1,048,576 rows and
 // 16,384 columns; a grid with more is cut there, and the notes say so.
 import { deflateRawSync } from "node:zlib";
-import { textBuffer, type GridPayload } from "./grid";
+import { charText, textBuffer, type GridPayload } from "./grid";
 import { plainItem, rawColumn, textNull } from "./qliteral";
 import { rankEdge, xlsxRules, type FormatRule } from "./resultlook";
 
@@ -220,7 +220,7 @@ export function xlsxCell(type: number, text: string, raw: unknown): Cell {
   }
   // Excel's limit on a cell's text, one unit less when the cut would split
   // a surrogate pair (#1811), as assist's cut does.
-  const plain = type === 0 ? plainItem(text) : text;
+  const plain = type === 0 ? plainItem(text) : type === 10 ? charText(text, raw) : text;
   const end = /[\uD800-\uDBFF]/.test(plain[32766] ?? "") ? 32766 : 32767;
   return { t: plain.length > 32767 ? plain.slice(0, end) : plain };
 }

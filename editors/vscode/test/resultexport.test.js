@@ -13,7 +13,7 @@ const { toJson, toMarkdown, markdownCell, exportResult, EXPORT_FORMATS, FORMAT_I
 const { crc32, zip, columnName, xmlText, temporalSerial, xlsxCell } = require("../out/xlsx.js");
 const { definitionLevels, planFor, toParquet } = require("../out/parquet.js");
 const { gridOfQ } = require("../out/qformat.js");
-const { appendPage, readPage } = require("../out/grid.js");
+const { appendPage, readPage, toGrid } = require("../out/grid.js");
 const { fillDrilldown, templatesFor } = require("../out/drilldown.js");
 const { readDrilldown } = require("../out/liveconfig.js");
 const page = require("../media/result.js");
@@ -264,6 +264,22 @@ test("a char cell's literal is written from its byte: one past ASCII as its octa
   const g = gridOfQ({ kind: "table", attr: 0, cols: ["c"], data: [{ kind: "chars", attr: 0, v: Buffer.from([0xc3, 0xa9]) }] }, 100);
   assert.deepStrictEqual(g.raw[0], [0xc3, 0xa9]);
   assert.strictEqual(tableLiteral(g).code, '([] c:("\\303";"\\251"))');
+});
+
+test("a char cell past ASCII is exported, and shown, as the character its byte is, not as U+FFFD (#1962)", () => {
+  // GRID's cells of "a\351\303" decode as U+FFFD twice; its raw is the bytes.
+  const chars = { count: 3, keys: 0, names: ["c"], types: [10], cells: [["a", "\ufffd", "\ufffd"]], raw: [[97, 0xe9, 0xc3]], rank: [[]] };
+  assert.deepStrictEqual(JSON.parse(toJson(chars)), [{ c: "a" }, { c: "\u00e9" }, { c: "\u00c3" }]);
+  assert.strictEqual(toMarkdown(chars, 2), "| c |\n| --- |\n| a |\n| \u00e9 |\n| \u00c3 |\n");
+  assert.match(exportResult("html", chars, 2).data.toString("utf8"), /<td>a<\/td><\/tr>\n<tr><td>\u00e9<\/td><\/tr>\n<tr><td>\u00c3<\/td>/);
+  assert.deepStrictEqual(toGrid(chars, 2).cells, [["a", "\u00e9", "\u00c3"]]);
+  const parquet = toParquet(chars, [0, 1, 2]).data;
+  assert.ok(parquet.includes(Buffer.from("\u00e9")) && parquet.includes(Buffer.from("\u00c3")) && !parquet.includes(Buffer.from("\ufffd")));
+  assert.deepStrictEqual([xlsxCell(10, "\ufffd", 0xe9), xlsxCell(10, "a", 97)], [{ t: "\u00e9" }, { t: "a" }]);
+  // The same from an unwrapped result, and the q literal is still the byte.
+  const g = gridOfQ({ kind: "table", attr: 0, cols: ["c"], data: [{ kind: "chars", attr: 0, v: Buffer.from([97, 0xe9, 0xc3]) }] }, 100);
+  assert.deepStrictEqual(JSON.parse(toJson(g)), JSON.parse(toJson(chars)));
+  assert.strictEqual(tableLiteral(chars).code, '([] c:("a";"\\351";"\\303"))');
 });
 
 test("a general-list item's symbol holding a space, / or - is written through `$ (#1486)", () => {

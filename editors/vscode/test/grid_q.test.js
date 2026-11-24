@@ -114,6 +114,25 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
     assert.deepStrictEqual(answer.grid.cells[0].map((c, r) => atomLiteral(10, c, answer.grid.raw[0][r]).literal), ['"a"', '"\\303"', '"\\251"']);
   });
 
+  await t.test("a char column's bytes past ASCII are exported as the characters they are, each its own (#1962)", async () => {
+    const { exportResult } = require("../out/resultexport.js");
+    const { toGrid } = require("../out/grid.js");
+    const code = '([]c:" a\\"\\351\\303\\251\\377")';
+    const grid = (await connection.queryGrid(statements(code), SIZE, 10)).grid;
+    const bytes = (await connection.query(statements(`"j"$(${code})\`c`), SIZE)).text.join("").split(" ").map(Number);
+    assert.deepStrictEqual(bytes, [32, 97, 34, 0xe9, 0xc3, 0xa9, 0xff]);
+    const codes = (cells) => cells.map((c) => c.charCodeAt(0));
+    assert.deepStrictEqual(codes(JSON.parse(exportResult("json", grid, -1).data.toString("utf8")).map((r) => r.c)), bytes);
+    assert.deepStrictEqual(codes(toGrid(grid, -1).cells[0]), bytes);
+    // The Parquet file holds each as UTF-8, and no replacement character.
+    const parquet = exportResult("parquet", grid, -1).data;
+    assert.ok(parquet.includes(Buffer.from("\u00e9\u00c3")) || (parquet.includes(Buffer.from("\u00e9")) && parquet.includes(Buffer.from("\u00ff"))));
+    assert.ok(!parquet.includes(Buffer.from("\ufffd")));
+    // Export as q is the table itself.
+    const literal = exportResult("q", grid, -1).data.toString("utf8");
+    assert.deepStrictEqual((await connection.query(statements(`(${code})~${literal}`), SIZE)).text, ["1b"], literal);
+  });
+
   await t.test("a general column's float and real items come with every digit, for a literal (#1485)", async () => {
     const { tableLiteral } = require("../out/qliteral.js");
     const answer = await connection.queryGrid(statements("([]a:(1.23456789;`x;0n;0.1e;1 2))"), SIZE, 10);
