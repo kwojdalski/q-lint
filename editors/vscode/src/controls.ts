@@ -46,6 +46,9 @@ export class QueryControls {
   /// Bound untitled editors closed lately: one saved to a file is closed,
   /// and the file takes its process.
   private closed: UntitledBinding[] = [];
+  /// When this window first saw each file open: one saved from an untitled
+  /// editor has just opened, or is not seen yet (#1723).
+  private readonly opened = new Map<string, number>();
   private readonly flags: StatusBarItem;
   private readonly fileItem: StatusBarItem;
 
@@ -59,6 +62,10 @@ export class QueryControls {
     this.fileItem = window.createStatusBarItem("q-lint.fileConnection", StatusBarAlignment.Left, 49.8);
     this.fileItem.name = "q-lint: file's q process";
     this.fileItem.command = CONTROL_COMMANDS.chooseFileConnection;
+    // Open before this window looked: not just opened.
+    for (const document of workspace.textDocuments ?? []) {
+      this.opened.set(document.uri.toString(), 0);
+    }
     const c = (name: string, run: (...args: never[]) => unknown) => commands.registerCommand(name, run);
     context.subscriptions.push(
       this.flags,
@@ -84,6 +91,11 @@ export class QueryControls {
             this.closed = [...this.closed.filter((c) => Date.now() - c.at < 60_000), { label, text: document.getText(), at: Date.now() }];
           }
           this.untitled.delete(document.uri.toString());
+        }
+      }),
+      workspace.onDidOpenTextDocument((document) => {
+        if (!this.opened.has(document.uri.toString())) {
+          this.opened.set(document.uri.toString(), Date.now());
         }
       }),
       // An untitled editor saved to a file keeps its process (#1529).
@@ -190,7 +202,7 @@ export class QueryControls {
     if (open.length === 0 && this.closed.length === 0) {
       return;
     }
-    const label = savedFrom(document.getText(), [...open, ...this.closed], now);
+    const label = savedFrom(document.getText(), [...open, ...this.closed], now, undefined, this.opened.get(document.uri.toString()));
     if (label !== undefined) {
       await this.store(document.uri, label);
     }
