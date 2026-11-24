@@ -111,6 +111,9 @@ test("Enter runs only a complete input: brackets closed, no string open", () => 
   assert.ok(isComplete("/ \n{\n\\ \n1+1"), "trailing blanks on the / and \\ lines");
   assert.ok(!isComplete("/\n(\n\\\n1+("), "brackets after the block count");
   assert.ok(!isComplete("f:{\n/\n(\n\\\n}"), "inside a bracket a / line is a continuation, not a block");
+  // Block comments nest, as KDB-X reads them: the first `\` closes only the inner one (#1500).
+  assert.ok(isComplete("/\n/\n\\\n(\n\\\n1+1"), "the ( is inside the outer block");
+  assert.ok(!isComplete("/\n/\n\\\n\\\n("), "both blocks closed, the ( counts");
 });
 
 test("lines typed inside a bracket reach q as continuation lines", () => {
