@@ -149,6 +149,34 @@ impl<'a> Sources<'a> {
         names
     }
 
+    /// How much of a mention, from its start, spells one of `targets`: the
+    /// whole of it, or - for a dotted name that goes through the target -
+    /// the part before the rest, `ta` of `ta.c` for a table `ta` and `.cfg`
+    /// of `.cfg.port` for a `.cfg` assigned whole. q reads both through the
+    /// global: KDB-X 5 `ta:([]c:1 2 3)`, then `sum ta.c` is 6 (#2017).
+    /// `Some(0)` where the name goes through the target and the text spells
+    /// none of it, the `\d` in force supplying it.
+    pub(super) fn spelt(
+        &self,
+        text: &str,
+        mention: &Mention,
+        placement: &Placement,
+        targets: &HashSet<String>,
+    ) -> Option<usize> {
+        let names = self.names(text, mention, placement);
+        if names.iter().any(|name| targets.contains(name)) {
+            return Some(mention.len);
+        }
+        names.iter().find_map(|name| {
+            let (dot, _) = name
+                .match_indices('.')
+                .rfind(|&(dot, _)| dot > 0 && targets.contains(&name[..dot]))?;
+            let part = mention.len.saturating_sub(name.len() - dot);
+            let dotted = text.as_bytes().get(mention.at + part) == Some(&b'.');
+            Some(if dotted { part } else { 0 })
+        })
+    }
+
     /// The global at byte `at` of the cursor's document, as the names it
     /// answers to.
     pub(super) fn targets(&self, cursor: &Cursor, at: usize) -> HashSet<String> {
@@ -319,12 +347,12 @@ impl<'a> Sources<'a> {
             let placement = &self.idx.files[key].placement;
             let lines = Lines::new(&text);
             for m in &mentions(&text) {
-                if self
-                    .names(&text, m, placement)
-                    .iter()
-                    .any(|name| names.contains(name))
+                // A name the `\d` in force puts under the global spells
+                // none of it, and is no place to list.
+                if let Some(part) = self.spelt(&text, m, placement, names)
+                    && part > 0
                 {
-                    out.push((location(&uri, &lines, m.at, m.len), m.definition.is_some()));
+                    out.push((location(&uri, &lines, m.at, part), m.definition.is_some()));
                 }
             }
         }
@@ -494,16 +522,13 @@ fn highlights(params: &Value, sources: &Sources) -> Value {
             let code = q_lint_rs::code_view(cursor.text);
             mentions(cursor.text)
                 .iter()
-                .filter(|m| {
-                    sources
-                        .names(cursor.text, m, &placement)
-                        .iter()
-                        .any(|name| targets.contains(name))
-                })
-                .map(|m| {
+                .filter_map(|m| {
+                    let part = sources
+                        .spelt(cursor.text, m, &placement, &targets)
+                        .filter(|&part| part > 0)?;
                     let write =
                         m.definition.is_some() || q_lint_rs::amended_at(&code, m.at + m.len);
-                    highlight(m.at, m.len, write)
+                    Some(highlight(m.at, part, write))
                 })
                 .collect()
         }
@@ -965,42 +990,51 @@ fn rename_global(
         let lines = Lines::new(&text);
         let mut edits = vec![];
         let mut bare = vec![];
+        let mut columns = vec![];
         let mut done = HashSet::new();
         for m in &mentions(&text) {
-            if done.contains(&m.at)
-                || !sources
-                    .names(&text, m, placement)
-                    .iter()
-                    .any(|name| targets.contains(name))
-            {
+            if done.contains(&m.at) {
                 continue;
             }
+            // The part that spells the global: all of the mention, or what
+            // comes before the rest of a dotted read through it, `ta` of
+            // `ta.c` (#2017).
+            let Some(part) = sources.spelt(&text, m, placement, &targets) else {
+                continue;
+            };
             done.insert(m.at);
-            let spelling = &text[m.at..m.at + m.len];
+            let spelling = &text[m.at..m.at + part];
             let place = || {
                 let (line, _) = lines.position(m.at);
                 format!("{}:{}", Path::new(key).display(), line + 1)
             };
             if leaf(spelling) != old {
                 return Err(format!(
-                    "`{spelling}` at {} names it without ending in `{old}`, which a rename \
+                    "`{}` at {} names it without ending in `{old}`, which a rename \
                      cannot follow",
+                    &text[m.at..m.at + m.len],
                     place()
                 ));
             }
             if !spelling.contains('.') {
-                bare.push(m.at);
+                columns.push(m.at);
+                // Dot notation reads a global whatever the lambda's locals
+                // are: KDB-X 5 `{[ta] ta.c}[5]` is the global's column.
+                if part == m.len {
+                    bare.push(m.at);
+                }
             }
             edits.push(
-                json!({"range": range(&lines, m.at + m.len - old.len(), old.len()),
+                json!({"range": range(&lines, m.at + part - old.len(), old.len()),
                               "newText": new}),
             );
         }
         // A bare name in a qSQL phrase is a column whenever the table has
         // one of that name, which only the table says; the table after
-        // `from` is a global (#1207).
-        let clauses = q_lint_rs::query_clauses(&text, &bare);
-        if let Some((&at, _)) = bare
+        // `from` is a global (#1207). So is the head of `ta.c` there: the
+        // column `ta` followed through its foreign key, when there is one.
+        let clauses = q_lint_rs::query_clauses(&text, &columns);
+        if let Some((&at, _)) = columns
             .iter()
             .zip(&clauses)
             .find(|(_, clause)| clause.is_some_and(|c| c != "from"))

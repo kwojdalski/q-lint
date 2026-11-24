@@ -665,14 +665,21 @@ A global is renamed in every place Find All References lists - each indexed
 file that names it, under the `\d` in force and the context the file is
 loaded in - and only its last part changes: `.lib.add` and `add` under
 `\d .lib` both become `plus`, given as `plus` or as `.lib.plus`, and a name
-in another namespace is refused. `prepareRename` answers with the range of
+in another namespace is refused. A dotted read through the global is one of
+those places, and only the global's part of it changes: `ta.c` for a table
+`ta` (q reads column `c` of the global), `.cfg.port` for a `.cfg` assigned
+whole. `prepareRename` answers with the range of
 that last part. `rename.enable: false` leaves renaming unannounced, and the
 rest of navigation on. The rename is refused for a name in a one-letter namespace
 (`.z.pg`, `.q.f`, which q keeps for itself), a name no indexed file assigns
 (q's own, or defined where the server cannot read), a new name that is not
 one q takes, is reserved or is already assigned, and one that is a
 parameter or local of a lambda reading the global without its namespace,
-where it would hide the renamed global. What reading cannot find keeps the
+where it would hide the renamed global. It is also refused, naming the line,
+where a use cannot be told from something else or cannot be rewritten: `ta.c`
+inside a qSQL phrase, which is the column `ta` followed through a foreign key
+when the table has one, and a name a `\d` puts under the renamed namespace
+(`port:` under `\d .cfg`). What reading cannot find keeps the
 old name: a string handed to `value`, a bare symbol (`` `f ``), a name another
 process sends.
 

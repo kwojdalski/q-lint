@@ -1575,6 +1575,93 @@ fn a_global_rename_is_refused_where_it_would_change_what_the_code_means() {
 }
 
 #[test]
+fn a_dotted_read_through_a_global_is_a_use_of_it() {
+    // #2017: q reads `ta.c` as column c of the global `ta` (KDB-X 5:
+    // `ta:([]c:1 2 3)`, then `sum ta.c` is 6, and under `\d .ns` the same
+    // text reads `.ns.ta`), and `.cfg.port` through a `.cfg` assigned whole.
+    // A rename that left those reads alone wrote a file that fails on 'ta.c.
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "ta:([]c:1 2 3)\nres:sum ta.c\n\\d .ns\ntb:([]c:4 5)\nr:tb.c\n\\d .\n\
+                s:.ns.tb.c\n.cfg:()!()\n.cfg.port:5010\np:.cfg.port\n";
+    let uri = server.open(dir.path(), "a.q", text);
+    let ask = |server: &mut Server, method: &str, context: &str, new: &str| {
+        server.ask(method, &uri, text, context, 0, json!({"newName": new}))
+    };
+    let reply = ask(&mut server, "textDocument/references", "ta:", "");
+    assert_eq!(
+        places(&reply["result"]),
+        [place("a.q", 0, 0, 2), place("a.q", 1, 8, 10)]
+    );
+    let reply = ask(&mut server, "textDocument/documentHighlight", "ta:", "");
+    let marks: Vec<_> = reply["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| span(&h["range"]))
+        .collect();
+    assert_eq!(marks, [(0, 0, 2), (1, 8, 10)], "{reply}");
+    let reply = ask(&mut server, "textDocument/rename", "ta:", "tk");
+    assert_eq!(
+        edits(&reply["result"]),
+        [edit("a.q", 0, 0, 2, "tk"), edit("a.q", 1, 8, 10, "tk")]
+    );
+    // Under a context, bare and with the context written out.
+    let reply = ask(&mut server, "textDocument/rename", "tb:", "tz");
+    assert_eq!(
+        edits(&reply["result"]),
+        [
+            edit("a.q", 3, 0, 2, "tz"),
+            edit("a.q", 4, 2, 4, "tz"),
+            edit("a.q", 6, 6, 8, "tz")
+        ]
+    );
+    // A namespace assigned whole is named by every name in it.
+    let reply = ask(&mut server, "textDocument/rename", ".cfg:", "conf");
+    assert_eq!(
+        edits(&reply["result"]),
+        [
+            edit("a.q", 7, 1, 4, "conf"),
+            edit("a.q", 8, 1, 4, "conf"),
+            edit("a.q", 9, 3, 6, "conf")
+        ]
+    );
+}
+
+#[test]
+fn a_dotted_read_that_may_not_be_the_global_refuses_the_rename() {
+    // #2017. In a qSQL phrase `td.c` is the column `td` followed through a
+    // foreign key whenever the table has one, which only the table says;
+    // and a name a `\d` puts under the global spells none of it to rewrite.
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "td:([]c:1 2 3)\nr:select td.c from t\n";
+    let uri = server.open(dir.path(), "a.q", text);
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        text,
+        "td:",
+        0,
+        json!({"newName": "te"}),
+    );
+    let why = refused(&reply);
+    assert!(why.contains("qSQL") && why.contains("a.q:2"), "{why}");
+    let text = ".cfg:()!()\n\\d .cfg\nport:5010\n";
+    let uri = server.open(dir.path(), "b.q", text);
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        text,
+        ".cfg:",
+        0,
+        json!({"newName": "conf"}),
+    );
+    let why = refused(&reply);
+    assert!(why.contains("`port`") && why.contains("b.q:3"), "{why}");
+}
+
+#[test]
 fn rename_can_be_turned_off_on_its_own() {
     let dir = tempfile::tempdir().unwrap();
     let options = json!({"rename": {"enable": false}});
