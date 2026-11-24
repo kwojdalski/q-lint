@@ -180,6 +180,20 @@ test("coverage plans only the functions the process holds as the file has them",
   assert.deepStrictEqual(coveragePlan(files, new Map()).skipped.map((s) => s.why), ["missing", "missing"]);
 });
 
+test("coverage of a lambda that opens below its name is placed on the lambda's lines (#1900)", () => {
+  const marked = (text) => {
+    const lines = text.split("\n");
+    const states = new Map([["f", { state: "lambda", text: text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1) }]]);
+    return coveragePlan([{ uri: "file:///ws/a.q", text }], states).probes.map((p) => [p.start.line, lines[p.start.line].slice(p.start.character, p.end.line === p.start.line ? p.end.character : undefined)]);
+  };
+  assert.deepStrictEqual(marked("f:\n {x+1}\n"), [[1, "x+1"]]);
+  assert.deepStrictEqual(marked("a:1\nf:\n\n   {[x] y:x+1; y}\n"), [[3, "y:x+1"], [3, "y"]]);
+  assert.deepStrictEqual(marked("f:\n {[x]\n  y:x+1;\n  y*2}\n"), [[2, "y:x+1"], [3, "y*2"]]);
+  // On the name's line, as before.
+  assert.deepStrictEqual(marked("f : {x+1}\n"), [[0, "x+1"]]);
+  assert.deepStrictEqual(marked("f:{[x]\n y:x+1;\n y}\n"), [[1, "y:x+1"], [2, "y"]]);
+});
+
 test("the Coverage profile instruments, runs the tests, puts the functions back and shows the counts; off, it is not offered", async () => {
   stub.reset();
   const made = fakeVscode({ "/ws/lib.q": LIB });

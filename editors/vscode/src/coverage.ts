@@ -45,6 +45,19 @@ export function definedNames(files: SourceFile[]): string[] {
   return [...new Set(files.flatMap((f) => definitions(f.text).map((d) => d.name)))];
 }
 
+/// Where the lambda of the definition on lines `first` to `last` opens: the
+/// first `{` of the statement, which is below the name's line when only
+/// blanks follow the `:` there (#1900).
+function opening(lines: string[], first: number, last: number): Pos {
+  for (let line = first; line <= last; line++) {
+    const character = (lines[line] ?? "").indexOf("{");
+    if (character >= 0) {
+      return { line, character };
+    }
+  }
+  return { line: first, character: 0 };
+}
+
 /// What to instrument, given what the process holds of each name.
 export function coveragePlan(files: SourceFile[], states: Map<string, ProcessState>): CoveragePlan {
   const plan: CoveragePlan = { names: [], was: [], src: [], probes: [], skipped: [] };
@@ -71,7 +84,7 @@ export function coveragePlan(files: SourceFile[], states: Map<string, ProcessSta
       }
       seen.add(def.name);
       skipped.delete(def.name);
-      const at = { line: def.line, character: Math.max(0, (lines[def.line] ?? "").indexOf("{")) };
+      const at = opening(lines, def.line, def.endLine);
       plan.names.push(def.name);
       plan.was.push(state.text);
       plan.src.push(covered.text);
