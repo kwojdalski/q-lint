@@ -56,7 +56,8 @@ function powershellLiteral(text: string): string {
 
 /// `word` as `shell` reads one argument.
 export function quote(word: string, shell: Shell): string {
-  if (PLAIN[shell].test(word)) {
+  // PowerShell splits a bare `-x.y` at its dot into `-x` and `.y` (#1677).
+  if (PLAIN[shell].test(word) && !(shell === "powershell" && /^-.*\./.test(word))) {
     return word;
   }
   if (shell === "posix") {

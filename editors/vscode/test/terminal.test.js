@@ -58,6 +58,12 @@ test("PowerShell gets single quotes with a quote doubled, and & before a quoted 
   assert.strictEqual(quote("it\u2019s.q", "powershell"), "'it\u2019\u2019s.q'");
   assert.strictEqual(quote("$env:x.q", "powershell"), "'$env:x.q'");
   assert.strictEqual(quote("a,b.q", "powershell"), "'a,b.q'");
+  // A bare -x.y is two words to PowerShell (#1677); a plain -x, or x.y, one.
+  assert.strictEqual(quote("-.servers.CONNECTIONS", "powershell"), "'-.servers.CONNECTIONS'");
+  assert.strictEqual(quote("-config=prod.json", "powershell"), "'-config=prod.json'");
+  assert.strictEqual(quote("-p", "powershell"), "-p");
+  assert.strictEqual(quote("a.q", "powershell"), "a.q");
+  assert.strictEqual(quote("-.servers.CONNECTIONS", "posix"), "-.servers.CONNECTIONS");
   assert.strictEqual(
     commandLine("C:\\Program Files\\q\\q.exe", ["my file.q"], "powershell"),
     "& 'C:\\Program Files\\q\\q.exe' 'my file.q'",
