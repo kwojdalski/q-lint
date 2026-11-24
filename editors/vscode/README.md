@@ -640,11 +640,12 @@ taken as a tag), its `<serverlist>` XML, or the preferences it keeps them in
 when it is there); only kdb servers are taken. From KX's kdb extension: its
 `kdb.servers` in your settings, with `kdb.labelsConnectionMap`'s labels as
 tags, or a file its **Export Connections** wrote; kdb Insights connections
-are left out. A label of several words is one tag, its words joined by `-`:
-`Non Prod` is `non-prod`, which the read-only guard does not guard. A word
-the guard does guard stays a tag of its own beside it unless `non` or `not`
-stands right before it, so `Prod EU` (`prod-eu` and `prod`) is still
-guarded. You are shown what will be added and asked first. A label
+are left out. A KX label or a qStudio folder of several words, or of
+several folder levels, is one tag, its words joined by `-`: `Non Prod` is
+`non-prod`, which the read-only guard does not guard. A word the guard does
+guard stays a tag of its own beside it, at any folder level, unless `non`
+or `not` stands right before it: `Prod EU`, `Prod-EU/London` and `Pre Prod`
+are each tagged `prod` too, and guarded. You are shown what will be added and asked first. A label
 already in the list is kept as it is, and no password is ever imported,
 even where the source holds one: each is asked for on the first connect.
 `q-lint.processes.importOther.enable` off hides both commands.

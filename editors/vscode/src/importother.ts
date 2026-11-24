@@ -19,7 +19,7 @@
 // in the user settings: `kdb.servers`, an object of
 // `{ serverAlias, serverName (the host), serverPort (a string), tls, auth }`,
 // and `kdb.labelsConnectionMap`, a list of `{ labelName, connections: [alias] }`
-// - read here as tags, a label of several words as one (`labelTags`). Its
+// - read here as tags, a label of several words as one (`nameTags`). Its
 // **Export Connections** writes
 // `{ "connections": { "KDB": [...], "Insights": [...] } }`, a KDB entry
 // holding a `username` and `password` when auth was included. Insights
@@ -82,14 +82,58 @@ function keep(out: Imported, got: Process | string, seen: Set<string>, full?: st
   }
 }
 
-/// A qStudio name's folder as a tag: `desk/rdb` is in folder `desk`.
-function folderTags(name: string, folder?: string): string[] {
+/// A word that says the one after it is not so: `Non Prod` is not production.
+const NEGATES = new Set(["non", "not"]);
+
+/// The words of `text`, lower case: its runs of letters and of digits, so
+/// `Prod-EU`, `prod_eu` and `PRD2` each hold the word a guard tag is.
+const wordsOf = (text: string): string[] => text.toLowerCase().match(/\p{L}+|\p{N}+/gu) ?? [];
+
+/// A name another tool files processes under - a KX label, a qStudio folder
+/// and the folders above it - as tags (#1985, #2030). The one function all
+/// the readers here use, so that they cannot differ on what is production.
+///
+/// The name is one tag: its words, apart at blanks, commas and slashes,
+/// joined by `-`. `Non Prod` is `non-prod`, never `non` and `prod`, and
+/// `Prod EU/London` is `prod-eu-london`.
+///
+/// Beside it, each tag the read-only guard guards (`guarded`, and the three
+/// it guards by default) whose word the name holds is a tag of its own, so
+/// the process is guarded: `Prod EU` is `prod-eu` and `prod`. A word is
+/// held wherever it stands as one - at any folder level, and after a `-`,
+/// a `_` or a digit's edge (`Prod-EU`, `PRD2`), not inside a longer word
+/// (`products`). Only `non` or `not` right before it at the same level
+/// (`Non Prod`, `non-prod`) says the process is not production. Any other
+/// name holding the word (`Pre Prod`, `NO Prod`, `Non/Prod`) may be
+/// production, and is left guarded: the mistake to make is to ask before a
+/// write that was safe, not to send one unasked.
+export function nameTags(name: string, guarded: readonly string[] = DEFAULT_GUARD_TAGS): string[] {
+  const joined = name
+    .toLowerCase()
+    .split(/[\s,/]+/)
+    .filter((w) => w !== "")
+    .join("-");
+  if (joined === "") {
+    return [];
+  }
+  // A folder level, or a part between commas, is read on its own.
+  const levels = name.split(/[/,]/).map(wordsOf);
+  const held = (words: string[]): boolean =>
+    words.length > 0 && levels.some((level) => level.some((_, i) => words.every((w, k) => level[i + k] === w) && !NEGATES.has(level[i - 1] ?? "")));
+  const tags = new Set([...DEFAULT_GUARD_TAGS, ...guarded.map((g) => g.trim().toLowerCase())]);
+  return [joined, ...[...tags].filter((tag) => tag !== joined && held(wordsOf(tag)))];
+}
+
+/// A qStudio name's folders as tags: `desk/rdb` is in folder `desk`, and
+/// the XML may name a `folder` beside it.
+function folderTags(name: string, folder: string | undefined, guarded?: readonly string[]): string[] {
   const at = name.lastIndexOf("/");
-  return [...(folder !== undefined && folder.trim() !== "" ? [folder] : []), ...(at > 0 ? [name.slice(0, at)] : [])].map((f) => f.replace(/[/\s]+/g, "-"));
+  return [...(folder !== undefined ? [folder] : []), ...(at > 0 ? [name.slice(0, at)] : [])].flatMap((f) => nameTags(f, guarded));
 }
 
 /// qStudio's server list lines, as **Copy Server List** writes them.
-export function readQStudioLines(text: string): Imported {
+/// `guarded`: the read-only guard's tags, which `nameTags` reads a folder by.
+export function readQStudioLines(text: string, guarded?: readonly string[]): Imported {
   const out: Imported = { processes: [], skipped: [] };
   const seen = new Set<string>();
   for (const raw of text.split(/\r?\n/)) {
@@ -127,13 +171,13 @@ export function readQStudioLines(text: string): Imported {
       }
     }
     // parts[3], the password, is never read.
-    keep(out, processOf(name.slice(name.lastIndexOf("/") + 1), host, parts[1].trim(), parts[2], folderTags(name)), seen, name);
+    keep(out, processOf(name.slice(name.lastIndexOf("/") + 1), host, parts[1].trim(), parts[2], folderTags(name, undefined, guarded)), seen, name);
   }
   return out;
 }
 
-/// qStudio's `<serverlist>` XML.
-export function readQStudioXml(xml: string): Imported {
+/// qStudio's `<serverlist>` XML. `guarded`: as `readQStudioLines` takes it.
+export function readQStudioXml(xml: string, guarded?: readonly string[]): Imported {
   const out: Imported = { processes: [], skipped: [] };
   const seen = new Set<string>();
   for (const m of xml.matchAll(/<ServerConfig\b([^>]*)\/?>/g)) {
@@ -150,7 +194,7 @@ export function readQStudioXml(xml: string): Imported {
     // `password` is never read.
     keep(
       out,
-      processOf(name.slice(name.lastIndexOf("/") + 1), attrs.host ?? "", attrs.port ?? "", attrs.username, folderTags(name, attrs.folder)),
+      processOf(name.slice(name.lastIndexOf("/") + 1), attrs.host ?? "", attrs.port ?? "", attrs.username, folderTags(name, attrs.folder, guarded)),
       seen,
       name.includes("/") || attrs.folder === undefined || attrs.folder.trim() === "" ? name : `${attrs.folder.trim()}/${name}`,
     );
@@ -186,44 +230,20 @@ export function qStudioPrefsXml(text: string): string | undefined {
   return inflateSync(Buffer.from(joined.slice("XXX_ENCODED_XXX".length), "base64")).toString("utf8");
 }
 
-/// qStudio's servers from whichever of its forms `text` is.
-export function readQStudio(text: string): Imported {
+/// qStudio's servers from whichever of its forms `text` is. `guarded`: as
+/// `readQStudioLines` takes it.
+export function readQStudio(text: string, guarded?: readonly string[]): Imported {
   const prefs = /CONNECTIONS/.test(text) ? qStudioPrefsXml(text) : undefined;
   const xml = prefs ?? text;
   if (/<ServerConfig\b/.test(xml)) {
-    return readQStudioXml(xml);
+    return readQStudioXml(xml, guarded);
   }
   // Some other XML - a preferences file without qStudio's list - is not
   // read as lines.
-  return /^\s*</.test(text) ? { processes: [], skipped: ["it holds no qStudio server list"] } : readQStudioLines(text);
+  return /^\s*</.test(text) ? { processes: [], skipped: ["it holds no qStudio server list"] } : readQStudioLines(text, guarded);
 }
 
 /// The tags `kdb.labelsConnectionMap` gives each alias.
-/// A word that says the one after it is not so: `Non Prod` is not production.
-const NEGATES = new Set(["non", "not"]);
-
-/// A KX label as tags (#1985). A label of one word is that tag. One of
-/// several is one tag too, its words joined by `-` as `folderTags` joins a
-/// qStudio folder's: `Non Prod` is `non-prod`, and never `non` and `prod`,
-/// which coloured a UAT process red and guarded it as production.
-///
-/// A word the read-only guard guards (`guarded`, and the three it guards by
-/// default) stays a tag of its own beside that one, so `Prod EU` - `prod-eu`
-/// and `prod` - is guarded as it was. Only `non` or `not` right before the
-/// word drops it: any other label holding it (`Pre Prod`, `NO Prod`,
-/// `Non Prod and Prod`) may be production, and is left guarded.
-export function labelTags(label: string, guarded: readonly string[] = DEFAULT_GUARD_TAGS): string[] {
-  const words = label
-    .toLowerCase()
-    .split(/[\s,]+/)
-    .filter((w) => w !== "");
-  if (words.length < 2) {
-    return words;
-  }
-  const production = new Set([...DEFAULT_GUARD_TAGS, ...guarded.map((g) => g.trim().toLowerCase())]);
-  return [words.join("-"), ...words.filter((w, i) => production.has(w) && !NEGATES.has(words[i - 1]))];
-}
-
 function kxLabels(map: unknown, guarded?: readonly string[]): Map<string, string[]> {
   const out = new Map<string, string[]>();
   if (!Array.isArray(map)) {
@@ -236,7 +256,7 @@ function kxLabels(map: unknown, guarded?: readonly string[]): Map<string, string
     }
     for (const alias of e.connections) {
       if (typeof alias === "string") {
-        out.set(alias, [...(out.get(alias) ?? []), ...labelTags(e.labelName, guarded)]);
+        out.set(alias, [...(out.get(alias) ?? []), ...nameTags(e.labelName, guarded)]);
       }
     }
   }
@@ -245,7 +265,7 @@ function kxLabels(map: unknown, guarded?: readonly string[]): Map<string, string
 
 /// KX's kdb connections: entries of `kdb.servers` or of an export's
 /// `connections.KDB`, with `kdb.labelsConnectionMap`'s labels as tags.
-/// `guarded`: the read-only guard's tags, which `labelTags` reads a label by.
+/// `guarded`: the read-only guard's tags, which `nameTags` reads a label by.
 export function readKxServers(servers: unknown, labelMap?: unknown, guarded?: readonly string[]): Imported {
   const out: Imported = { processes: [], skipped: [] };
   const seen = new Set<string>();

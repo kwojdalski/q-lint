@@ -164,6 +164,85 @@ test("Import Connections from KX Extension reads a label's guarded words by q-li
   assert.deepStrictEqual(live.processes().slice(-2).map((p) => [p.label, p.tags]), [["kxa", ["live-eu", "live"]], ["kxb", ["non-live"]]]);
 });
 
+// A qStudio folder of several words was one tag and nothing more (#2030):
+// `Prod EU` gave `prod-eu`, which the guard does not guard, so a production
+// process came in unguarded. One rule now reads a KX label and a qStudio
+// folder alike.
+test("a qStudio folder holding a guarded word keeps it as a tag, at any level, unless it says non (#2030)", () => {
+  const { guardedBy } = require("../out/guard.js");
+  const guard = { enabled: true, tags: ["prod", "prd", "production"] };
+  const line = (folder, guarded) => readQStudioLines(`${folder}/hdb1@host1:5010`, guarded).processes[0].tags;
+  const xml = (folder, guarded) => readQStudioXml(`<ServerConfig name="hdb1" host="host1" port="5010" folder="${folder}"/>`, guarded).processes[0].tags;
+  const kx = (labelName, guarded) =>
+    readKxServers({ a: { serverName: "h", serverPort: "5000", serverAlias: "p" } }, [{ labelName, connections: ["p"] }], guarded).processes[0].tags;
+  assert.deepStrictEqual(
+    readQStudioLines("Prod EU/hdb1@host1:5010\nprod/hdb2@host2:5011").processes.map((p) => [p.label, p.tags]),
+    [["hdb1", ["prod-eu", "prod"]], ["hdb2", ["prod"]]],
+  );
+  // Production, or what may be: guarded, by the three readers alike.
+  const production = {
+    "Prod EU": ["prod-eu", "prod"],
+    "Prod EU/London": ["prod-eu-london", "prod"],
+    "Desk/EU Production/hdb": ["desk-eu-production-hdb", "production"],
+    "Pre Prod": ["pre-prod", "prod"],
+    "Prod-EU": ["prod-eu", "prod"],
+    "prod_eu": ["prod_eu", "prod"],
+    "pre-prod": ["pre-prod", "prod"],
+    "PRD2": ["prd2", "prd"],
+    // A level of its own is not said to be non by the one above it.
+    "Non/Prod": ["non-prod", "prod"],
+    "Non Prod/Prod": ["non-prod-prod", "prod"],
+  };
+  for (const [name, tags] of Object.entries(production)) {
+    for (const read of [line, xml, kx]) {
+      assert.deepStrictEqual(read(name), tags, name);
+      assert.strictEqual(guardedBy({ tags: read(name) }, guard).length, 1, name);
+    }
+  }
+  // Not production: said outright, or no word of it.
+  const other = {
+    "Non Prod": ["non-prod"],
+    "non-prod": ["non-prod"],
+    "Not Production/London": ["not-production-london"],
+    "UAT/Non-Prod EU": ["uat-non-prod-eu"],
+    "London Desk": ["london-desk"],
+    "products": ["products"],
+    "desk": ["desk"],
+  };
+  for (const [name, tags] of Object.entries(other)) {
+    for (const read of [line, xml, kx]) {
+      assert.deepStrictEqual(read(name), tags, name);
+      assert.deepStrictEqual(guardedBy({ tags: read(name) }, guard), [], name);
+    }
+  }
+  // The guard's own tags, a tag of several words among them.
+  for (const read of [line, xml, kx]) {
+    assert.deepStrictEqual(read("Live EU"), ["live-eu"]);
+    assert.deepStrictEqual(read("Live EU", ["Live"]), ["live-eu", "live"]);
+    assert.deepStrictEqual(read("Non Live", ["live"]), ["non-live"]);
+    assert.deepStrictEqual(read("Desk/Live EU/West", ["live-eu"]), ["desk-live-eu-west", "live-eu"]);
+    assert.deepStrictEqual(read("Prod EU", ["live"]), ["prod-eu", "prod"]);
+  }
+  // The XML's folder and a folder in the name are each read, and the name with no folder is no tag.
+  assert.deepStrictEqual(readQStudioXml('<ServerConfig name="London/hdb1" host="h" port="1" folder="Prod EU"/>').processes[0].tags, ["prod-eu", "prod", "london"]);
+  assert.deepStrictEqual(readQStudioXml('<ServerConfig name="Prod EU/London/hdb1" host="h" port="1"/>').processes[0].tags, ["prod-eu-london", "prod"]);
+  assert.deepStrictEqual(readQStudioXml('<ServerConfig name="prod hdb" host="h" port="1"/>').processes[0].tags, []);
+  // With no name, the folder is on the host.
+  assert.deepStrictEqual(readQStudioLines("Prod EU/London/host1:5010").processes[0].tags, ["prod-eu-london", "prod"]);
+  // readQStudio hands the guard's tags to whichever form it reads.
+  assert.deepStrictEqual(readQStudio("Live EU/x@h:1", ["live"]).processes[0].tags, ["live-eu", "live"]);
+  assert.deepStrictEqual(readQStudio('<serverlist><ServerConfig name="x" host="h" port="1" folder="Live EU"/></serverlist>', ["live"]).processes[0].tags, ["live-eu", "live"]);
+});
+
+test("Import Servers from qStudio reads a folder's guarded words by q-lint.processes.readOnlyGuard.tags (#2030)", async (t) => {
+  const { live } = await setUp(t);
+  stub.config.user["processes.readOnlyGuard.tags"] = ["live"];
+  vscode.env = { clipboard: { readText: async () => "Live EU/qa@h:5001\nNon Live/qb@h:5002\nProd EU/qc@h:5003" } };
+  stub.picks.push("From the clipboard", "Import");
+  assert.strictEqual(await stub.commands.get(ADMIN_COMMANDS.importQStudio)(), 3);
+  assert.deepStrictEqual(live.processes().slice(-3).map((p) => [p.label, p.tags]), [["qa", ["live-eu", "live"]], ["qb", ["non-live"]], ["qc", ["prod-eu", "prod"]]]);
+});
+
 test("the switch: on by default, contributed, its commands hidden while off", () => {
   assert.strictEqual(readAdmin((_k, f) => f).importOther, true);
   const section = pkg.contributes.configuration.find((c) => c.title === "q-lint: process admin");

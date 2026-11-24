@@ -13,6 +13,8 @@ import { readKxExport, readKxServers, readQStudio, type Imported } from "./impor
 import type { Live } from "./live";
 import { plainMessage } from "./history";
 
+/// The read-only guard's tags, which a label or a folder is read by.
+const guardTags = (): string[] => readGuard((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback)).tags;
 const on = (): boolean => readAdmin((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback)).importOther;
 
 /// Where qStudio's preferences are on this machine, when they are there.
@@ -88,7 +90,7 @@ export class ImportOther {
           from = chosen.fsPath;
         }
       }
-      return await this.add(readQStudio(text), "qStudio", from);
+      return await this.add(readQStudio(text, guardTags()), "qStudio", from);
     } catch (error) {
       void window.showErrorMessage(plainMessage(`q-lint: could not read qStudio's servers: ${error instanceof Error ? error.message : String(error)}`));
       return 0;
@@ -117,8 +119,7 @@ export class ImportOther {
         }
         if (picked.id === "settings") {
           const kdb = workspace.getConfiguration("kdb");
-          const guarded = readGuard((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback)).tags;
-          return await this.add(readKxServers(kdb.get<unknown>("servers"), kdb.get<unknown>("labelsConnectionMap"), guarded), "KX's extension", "kdb.servers");
+          return await this.add(readKxServers(kdb.get<unknown>("servers"), kdb.get<unknown>("labelsConnectionMap"), guardTags()), "KX's extension", "kdb.servers");
         }
         chosen = (await window.showOpenDialog({ title: "KX connections export", canSelectMany: false, filters: { JSON: ["json"] } }))?.[0];
         if (chosen === undefined) {
