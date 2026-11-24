@@ -255,3 +255,17 @@ test("a connect script is not sent once the connect was given up while the read-
   assert.strictEqual(await live.connectTo("p"), true);
   assert.strictEqual(scripts(), 1);
 });
+
+// Diff Function, Find in Processes, table info and streams opened their own
+// connection with no connect script, so they queried a session it never
+// prepared: another namespace, a login not made (#1509).
+test("a connection apart runs the process's connect script before its query", async (t) => {
+  const { fakeQ, heads } = require("./fakeq.js");
+  const q = await fakeQ(1);
+  t.after(() => q.close());
+  const { live } = await setUp(t, [{ label: "p", host: "127.0.0.1", port: q.port, tags: [], init: "setUp:1" }]);
+  await live.callSeparate(live.processes()[0], (c) => c.call("{x}", 1));
+  assert.strictEqual(q.sent.length, 2);
+  assert.ok(JSON.stringify(q.sent[0]).includes("setUp:1"), JSON.stringify(q.sent[0]));
+  assert.strictEqual(heads(q.sent)[1], "{x}");
+});

@@ -1802,8 +1802,16 @@ export class Live {
   /// its stored password and through its tunnel; the caller closes it. No
   /// timeout: a stream's subscription holds it open. A call that should end
   /// goes through `callSeparate`.
+  /// Its connect script runs first, as on every connect (#1509).
   async openSeparate(process: Process): Promise<QConnection> {
-    return this.dial(process, await this.targetFor(process));
+    const connection = await this.dial(process, await this.targetFor(process));
+    try {
+      await this.runConnectScript(connection, process);
+    } catch (error) {
+      connection.abort();
+      throw error;
+    }
+    return connection;
   }
 
   /// `use` over a connection of its own to `process` (`openSeparate`),
