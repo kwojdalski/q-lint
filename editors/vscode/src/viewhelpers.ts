@@ -25,6 +25,23 @@ export function registerViewHelpers(
   define: (quiet?: boolean) => Promise<boolean>;
 } {
   let listener: Disposable | undefined;
+  /// The definition last sent to each process here: the limits are written
+  /// into it, so new ones define it again (#1849).
+  const definedOn = new Map<string, string>();
+  const current = (): { code: string; consoleSize: [number, number] } => {
+    const configuration = workspace.getConfiguration("q-lint");
+    const { consoleSize, gridLimit } = readLive((key, fallback) => configuration.get(key, fallback));
+    return { code: viewDefinition(consoleSize, gridLimit), consoleSize };
+  };
+  /// Defined again, quietly, on the connected process when it holds a
+  /// definition from here with other limits.
+  const refresh = (): void => {
+    const active = live.activeLabel();
+    const held = active === undefined ? undefined : definedOn.get(active);
+    if (held !== undefined && held !== current().code && settings().view) {
+      void define(true, active);
+    }
+  };
   const shown: { kind: ViewKind; process: string; rows: number }[] = [];
 
   const sync = (): void => {
@@ -59,18 +76,17 @@ export function registerViewHelpers(
   /// Define the two on the connected process (connecting first if none is),
   /// through the read-only guard: asked, or with `quiet` (on connect)
   /// refused outright on a guarded process. True when they were defined.
-  const define = async (quiet = false): Promise<boolean> => {
+  /// With `expect`, only on that process, if it is still the active one.
+  const define = async (quiet = false, expect?: string): Promise<boolean> => {
     if (!settings().view) {
       if (!quiet) {
         void window.showInformationMessage(VIEW_OFF);
       }
       return false;
     }
-    const configuration = workspace.getConfiguration("q-lint");
-    const { consoleSize, gridLimit } = readLive((key, fallback) => configuration.get(key, fallback));
-    const code = viewDefinition(consoleSize, gridLimit);
+    const { code, consoleSize } = current();
     try {
-      const ran = await live.runOnActive(code, (connection) => connection.query(statements(code), consoleSize), quiet ? "refuse" : "ask");
+      const ran = await live.runOnActive(code, (connection) => connection.query(statements(code), consoleSize), quiet ? "refuse" : "ask", expect);
       if (ran === undefined) {
         return false;
       }
@@ -78,6 +94,7 @@ export function registerViewHelpers(
         void window.showErrorMessage(plainMessage(`q-lint: could not define .qlint.view and .qlint.plot on ${ran.process}: '${ran.value.error}`));
         return false;
       }
+      definedOn.set(ran.process, code);
       if (!quiet) {
         void window.showInformationMessage(plainMessage(`q-lint: .qlint.view and .qlint.plot are defined on ${ran.process}: \`.qlint.view t\` opens t in the grid, \`.qlint.plot t\` as a chart.`));
       }
@@ -96,11 +113,17 @@ export function registerViewHelpers(
       if (event.affectsConfiguration("q-lint.view")) {
         sync();
       }
+      // New limits reach the connected process now, another when it is connected to.
+      if (event.affectsConfiguration("q-lint.query.gridLimit") || event.affectsConfiguration("q-lint.output.consoleSize")) {
+        refresh();
+      }
     }),
     live.onDidChange((what) => {
       const s = settings();
       if (what === "connected" && s.view && s.defineViewOnConnect) {
         void define(true);
+      } else if (what === "connected") {
+        refresh();
       }
     }),
     { dispose: () => listener?.dispose() },
