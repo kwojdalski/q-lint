@@ -705,11 +705,14 @@ daily at given times (`09:00, 17:30`) or every N minutes (`+15`), its
 result written as CSV, Parquet or Excel to the file you choose - replaced
 each run, or written anew with the run's time in its name, as you choose
 then. Each runs while VS Code is open, on a connection of its own, so the
-connected process and your queries are left alone; the grid's row limit
-(`q-lint.query.gridLimit`) applies. Only a read-only query is run - one in
-which the read-only guard's reading finds no write, on any process - and
-one with no `{{name}}` placeholder, since nobody is there to fill it in; a
-run that cannot be made says why. **Manage Scheduled Exports...** lists
+connected process and your queries are left alone. The grid's row limit
+(`q-lint.query.gridLimit`) does not apply: every row of the result is
+fetched into VS Code and written, however many there are, so a query over
+a large table moves all of it - filter or cap it in the query itself
+(`select from trade where date=.z.d`, `1000#`). Only a read-only query
+is run - one in which the read-only guard's reading finds no write, on any
+process - and one with no `{{name}}` placeholder, since nobody is there to
+fill it in; a run that cannot be made says why. **Manage Scheduled Exports...** lists
 them with how each last ran, and runs one now or removes it. They are kept
 per workspace, as saved queries are.
 
