@@ -369,12 +369,25 @@ function evaluated(t: Token[], j: number, byValue: boolean): { reason: string; a
     t[j] !== undefined &&
     ((t[j].kind === "open" && t[j].text !== "{") ||
       (t[j].kind === "name" && ["each", "peach", "enlist"].includes(t[j].text)) ||
-      (t[j].kind === "op" && ["'", "@", "."].includes(t[j].text) && !(t[j - 1]?.text === "(" && t[j + 1]?.text === ";")))
+      (t[j].kind === "op" &&
+        ["'", "@", "."].includes(t[j].text) &&
+        !(t[j - 1]?.text === "(" && (t[j + 1]?.text === ";" || t[j + 1]?.text === "[" || (t[j - 2]?.text === "(" && t[j + 1]?.text === ")" && t[j + 2]?.text === ";")))))
   ) {
     j++;
   }
   const k = t[j];
-  const head = t[j - 1]?.text === "(" && t[j - 1]?.kind === "open";
+  // The amend at the head in parentheses of its own, `` value((@);`a;();:;1) ``
+  // (#1727): what follows it is read past the `)`.
+  const wrap = k?.kind === "op" && t[j + 1]?.text === ")" && t[j - 2]?.text === "(" ? 1 : 0;
+  const head = t[j - 1 - wrap]?.text === "(" && t[j - 1 - wrap]?.kind === "open";
+  // The item after `t[at]`'s `;`, the variable an amend names: as it is for
+  // `value`, `enlist`ed for `eval`.
+  const named = (at: number): Token | undefined => (t[at]?.text !== ";" ? undefined : byValue ? t[at + 1] : t[at + 1]?.text === "enlist" ? t[at + 2] : undefined);
+  // An amend projected on all but its target, at the head and applied to the
+  // variable after it: `` value(@[;`a;:;2];`.) `` (#1727).
+  const projection = head && (k?.text === "@" || k?.text === ".") && t[j + 1]?.text === "[" ? items(t, j + 1) : [];
+  const projected =
+    projection.length >= 4 && projection[0][0] === projection[0][1] && named(projection[projection.length - 1][1] + 1)?.kind === "sym" && (named(projection[projection.length - 1][1] + 1)?.text.length ?? 0) > 1;
   const reason = k?.kind === "str"
     ? "a string"
     : (k?.kind === "name" && k.text === "parse") || (k?.text === "-5" && t[j + 1]?.text === "!")
@@ -387,7 +400,7 @@ function evaluated(t: Token[], j: number, byValue: boolean): { reason: string; a
             ? `a call of ${k.text.slice(1)}`
             : // An amend on a variable by name: `` value(@;`.;`a;:;1) ``,
               // `` eval(@;enlist`.;enlist`a;:;1) `` (#1446).
-              head && (k?.text === "@" || k?.text === ".") && t[j + 1]?.text === ";" && ((byValue ? t[j + 2] : t[j + 2]?.text === "enlist" ? t[j + 3] : undefined)?.text.length ?? 0) > 1 && (byValue ? t[j + 2] : t[j + 3])?.kind === "sym" && items(t, j - 1).length >= 4
+              (head && (k?.text === "@" || k?.text === ".") && named(j + 1 + wrap)?.kind === "sym" && (named(j + 1 + wrap)?.text.length ?? 0) > 1 && items(t, j - 1 - wrap).length >= 4) || projected
               ? "an amend"
               : undefined;
   return reason === undefined ? undefined : { reason, at: j };

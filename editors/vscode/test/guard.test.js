@@ -863,6 +863,25 @@ test("value or eval of an amend tree on a variable by name is a change (#1446)",
   }
 });
 
+test("value of an amend tree with the head in parentheses or projected is a change (#1727)", () => {
+  const cases = {
+    "value((@);`a;();:;1)": ["evaluates an amend with value"],
+    "value((.);`a;();:;1)": ["evaluates an amend with value"],
+    "value(@[;`a;:;2];`.)": ["evaluates an amend with value"],
+    "value(.[;();:;5];`a)": ["evaluates an amend with value"],
+    "eval((@);enlist`.;enlist`a;:;1)": ["evaluates an amend with eval"],
+    // An index, an amend of a value, or a projection not on a name reads.
+    "value((@);`t;0)": [],
+    "value((@);t;0;:;1)": [],
+    "value(@[;0;:;2];t)": [],
+    "value(@[;0];`t)": [],
+    "value(@[f;0];`t)": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
 test("xasc, xdesc and xkey projected on the columns, then applied to a table by name, are changes (#1447)", () => {
   const cases = {
     "xasc[`a]`t": ["sorts `t in place with xasc"],
