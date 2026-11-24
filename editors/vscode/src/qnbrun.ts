@@ -190,6 +190,15 @@ export async function runNotebook(
   const stop = (i: number, message: string): void => {
     failed ??= { cell: i + 1, message };
   };
+  // The Markdown whose values the cell at `i` reads, and, when it does not
+  // run or fails, what they showed was another run's (#1544).
+  const markdownOf = (i: number): number[] => (hooks.liveValues === false ? [] : markdownAfter(cells, i).filter((j) => cells[j].kind === "markdown"));
+  const dropLive = (i: number): void => {
+    for (const j of markdownOf(i)) {
+      const { [LIVE_KEY]: _old, ...rest } = cells[j].metadata ?? {};
+      cells[j] = { ...cells[j], metadata: rest };
+    }
+  };
   for (let i = 0; i < cells.length; i++) {
     const cell = cells[i];
     if (!isQ(cell)) {
@@ -202,6 +211,7 @@ export async function runNotebook(
       // Not reached: what it showed was another run's.
       delete cell.outputs;
       delete cell.execution;
+      dropLive(i);
       continue;
     }
     hooks.progress?.(i + 1, cells.length);
@@ -215,10 +225,11 @@ export async function runNotebook(
     if ("problem" in directive) {
       finish(false, [{ kind: "error", name: "cell directive", message: directive.problem, stack: "" }]);
       stop(i, directive.problem);
+      dropLive(i);
       continue;
     }
     const cut = statements(cell.source);
-    const after = hooks.liveValues === false ? [] : markdownAfter(cells, i).filter((j) => cells[j].kind === "markdown");
+    const after = markdownOf(i);
     try {
       const [ok, parts, values] = await executor.on(directive.process, guardedText(cell.source, after.map((j) => cells[j].source)), async (connection) => {
         const [ok, parts] = cut.length === 0 ? [true, []] : await cellAnswer(connection, directive, cut, settings);
@@ -234,11 +245,13 @@ export async function runNotebook(
       if (!ok) {
         const error = parts.find((p) => p.kind === "error");
         stop(i, error?.kind === "error" ? error.message : "the cell failed");
+        dropLive(i);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       finish(false, [{ kind: "error", name: "q-lint", message, stack: "" }]);
       stop(i, message);
+      dropLive(i);
     }
   }
   return { qnb: { ...qnb, cells }, ran: order, ...(failed !== undefined ? { failed } : {}) };

@@ -496,3 +496,22 @@ test("a PyKX %%q cell with options imports as q, its options a comment (#1267)",
     ["python", "%%qx\n1"],
   ]);
 });
+
+test("a failed run drops the live values of the Markdown after the cells it did not run (#1544)", async () => {
+  const stale = { [LIVE_KEY]: { y: { text: "999 (from last week)" } } };
+  const qnb = {
+    cells: [
+      { kind: "code", source: "x:1" },
+      { kind: "code", source: "'boom" },
+      { kind: "markdown", source: "after the failure {{q: y}}", metadata: { keep: 1, ...stale } },
+      { kind: "code", source: "y:2" },
+      { kind: "markdown", source: "y is {{q: y}}", metadata: stale },
+    ],
+  };
+  const ex = fakeExecutor((cut) => (cut[0] === "'boom" ? { ok: false, error: "boom", trace: "" } : { ok: true, type: -7, text: ["1"] }));
+  const run = await runNotebook(qnb, ex, SETTINGS);
+  assert.deepStrictEqual(run.failed, { cell: 2, message: "'boom" });
+  assert.deepStrictEqual(run.qnb.cells[2].metadata, { keep: 1 });
+  assert.deepStrictEqual(run.qnb.cells[4].metadata, {});
+  assert.doesNotMatch(toHtml(run.qnb, "n"), /from last week/);
+});

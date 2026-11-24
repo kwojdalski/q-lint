@@ -507,6 +507,18 @@ test("a code cell that runs reads the live values of the Markdown after it into 
   assert.strictEqual(fake.edits.length, 1);
 });
 
+test("a code cell that fails drops the live values kept for the Markdown after it (#1544)", async () => {
+  const fake = fakeVscode();
+  const live = recordingLive(PROCESSES, "dev1");
+  live.runOnActive = async (code, query) => ({ process: "dev1", value: await query({ query: async () => ({ ok: false, error: "boom", trace: "" }) }) });
+  load(fake, live);
+  const notebook = notebookWith(fake, [["code", "'boom"], ["markdown", "y is {{q: y}}"]]);
+  notebook.cells[1].metadata = { keep: 1, "q-lint.liveValues": { y: { text: "999 (from last week)" } } };
+  const [e] = await runCells(fake, notebook, [0]);
+  assert.strictEqual(e.success, false);
+  assert.deepStrictEqual(fake.edits.flatMap((x) => x.list), [{ index: 1, metadata: { keep: 1 } }]);
+});
+
 test("Export as HTML and as Jupyter write the notebook with its outputs; off, they refuse and write nothing", async () => {
   const fake = fakeVscode();
   load(fake);

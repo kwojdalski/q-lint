@@ -333,6 +333,7 @@ class QnbKernel {
         execution.start();
         if (fresh) {
           void execution.clearOutput();
+          void dropLiveValues(execution.cell);
         }
         execution.end(undefined);
       }
@@ -368,6 +369,9 @@ class QnbKernel {
     const finish = async (success: boolean, outputs: NotebookCellOutput[]): Promise<boolean> => {
       if (outputs.length > 0) {
         await execution.replaceOutput(outputs);
+      }
+      if (!success) {
+        await dropLiveValues(execution.cell);
       }
       execution.end(success, Date.now());
       return success;
@@ -469,6 +473,28 @@ async function keepLiveValues(notebook: NotebookDocument, cells: NotebookCell[],
   }
   const edit = new WorkspaceEdit();
   edit.set(notebook.uri, edits);
+  await workspace.applyEdit(edit);
+}
+
+/// Drop the values kept for the Markdown the code cell `cell` reads: it
+/// failed or was not run, so what they showed was another run's (#1544).
+async function dropLiveValues(cell: NotebookCell): Promise<void> {
+  if (!featureOn("liveValues") || cell.index < 0) {
+    return;
+  }
+  const all = cell.notebook.getCells();
+  const kinds = all.map((c) => ({ kind: c.kind === NotebookCellKind.Code ? ("code" as const) : ("markdown" as const) }));
+  const edits = markdownAfter(kinds, cell.index)
+    .filter((j) => kinds[j].kind === "markdown" && all[j].metadata?.[LIVE_KEY] !== undefined)
+    .map((j) => {
+      const { [LIVE_KEY]: _old, ...rest } = all[j].metadata;
+      return NotebookEdit.updateCellMetadata(j, rest);
+    });
+  if (edits.length === 0) {
+    return;
+  }
+  const edit = new WorkspaceEdit();
+  edit.set(cell.notebook.uri, edits);
   await workspace.applyEdit(edit);
 }
 
