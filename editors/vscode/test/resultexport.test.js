@@ -97,6 +97,9 @@ test("a table's q literal: ([k:...] v:...) for plain names, n!flip for a reserve
 test("a general list's string item is its characters where a format has strings of its own", () => {
   assert.strictEqual(plainItem('"say \\"hi\\"\\n\\001"'), 'say "hi"\n\u0001');
   assert.strictEqual(plainItem("`x`y"), "`x`y");
+  // A run of escapes is UTF-8, not one character per byte (#1397).
+  assert.strictEqual(plainItem('"caf\\303\\251 \\344\\275\\240"'), "café 你");
+  assert.strictEqual(plainItem('"\\\\101 \\377"'), "\\101 \u00ff");
   assert.deepStrictEqual(distinctNames(["a", "a", "", "a_1"]), ["a", "a_1", "column3", "a_1_1"]);
 });
 
