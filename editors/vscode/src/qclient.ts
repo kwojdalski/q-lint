@@ -350,8 +350,15 @@ export class QConnection {
         pending.resolve(deserialize(message, false, true, false, false));
       } catch (error) {
         // A q error arrives as a message of type -128, which the codec
-        // throws as an Error holding q's text.
-        const text = error instanceof Error ? error.message : String(error);
+        // throws as an Error holding q's text - but an empty text as null,
+        // so an uncompressed one's text is read from the message itself.
+        const end = message.indexOf(0, 9);
+        const text =
+          this.answerType === -128 && message.readUInt8(2) !== 1
+            ? message.subarray(9, end < 0 ? undefined : end).toString("utf8")
+            : error instanceof Error
+              ? error.message
+              : String(error);
         pending.reject(this.answerType === -128 ? new QError(text) : error instanceof Error ? error : new Error(text));
       }
     }
