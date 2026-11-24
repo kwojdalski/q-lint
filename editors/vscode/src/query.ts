@@ -80,15 +80,22 @@ export function render(shown: Shown, options: { includeQuery: boolean; ignoreNul
   }
   const outcome = answer.ok ? "" : ` - '${answer.error}`;
   const lines = [`# ${shown.process} (${shown.millis} ms)${outcome}`];
+  // One push per line, never push(...many): an unlimited result is one line
+  // per row, and V8 refuses a spread of 150k+ arguments.
+  const add = (more: readonly string[]) => {
+    for (const l of more) {
+      lines.push(l);
+    }
+  };
   if (options.includeQuery) {
-    lines.push(...shown.code.split("\n").map((l) => `q) ${l}`));
+    add(shown.code.split("\n").map((l) => `q) ${l}`));
   }
   if (answer.ok) {
-    lines.push(...answer.text);
+    add(answer.text);
   } else {
     lines.push(`'${answer.error}`);
     if (answer.trace.trim() !== "") {
-      lines.push(...answer.trace.replace(/\n+$/, "").split("\n"));
+      add(answer.trace.replace(/\n+$/, "").split("\n"));
     }
   }
   return lines;
