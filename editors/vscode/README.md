@@ -790,7 +790,9 @@ may still be instrumented and the process, and the next coverage run there
 puts them right first thing. The replacing and the putting back go through
 the read-only guard; declined there, nothing more is sent. A statement is
 counted, not each line inside it: an `if[...]` or a nested lambda counts
-as part of the statement it is in. `q-lint.testExplorer.coverage.enable`
+as part of the statement it is in. The first 500 q files found in the
+workspace are measured; with more, the run's output says so.
+`q-lint.testExplorer.coverage.enable`
 removes the profile.
 
 **Failed tests.** A failed assertion with two sides shows them as an

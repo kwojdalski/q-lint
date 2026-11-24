@@ -668,10 +668,12 @@ class QTests {
 
   /// The workspace's q files, for coverage: an open file with unsaved
   /// edits as its editor holds it, the text its coverage is drawn on (#1609).
-  private async sourceFiles(): Promise<SourceFile[]> {
+  /// `capped` when there are more than were read (#1907).
+  private async sourceFiles(): Promise<{ files: SourceFile[]; capped: boolean }> {
     const out: SourceFile[] = [];
     const dirty = new Map(workspace.textDocuments.filter((d) => d.isDirty).map((d) => [d.uri.toString(), d]));
-    for (const uri of await workspace.findFiles("**/*.q", "**/node_modules/**", MAX_CSV)) {
+    const found = await workspace.findFiles("**/*.q", "**/node_modules/**", MAX_CSV);
+    for (const uri of found) {
       try {
         const open = dirty.get(uri.toString());
         out.push({ uri: uri.toString(), text: open !== undefined ? open.getText() : Buffer.from(await workspace.fs.readFile(uri)).toString("utf8") });
@@ -679,7 +681,7 @@ class QTests {
         // Gone since it was listed.
       }
     }
-    return out;
+    return { files: out, capped: found.length >= MAX_CSV };
   }
 
   /// The run's own restore could not be sent to `process` (`why`): it is
@@ -706,7 +708,12 @@ class QTests {
   /// nothing was instrumented.
   private async coverStart(run: TestRun, process: Process): Promise<{ plan: CoveragePlan; installed: Set<string> } | undefined> {
     const label = process.label;
-    const files = await this.sourceFiles();
+    const { files, capped } = await this.sourceFiles();
+    if (capped) {
+      run.appendOutput(
+        `Coverage: the workspace holds ${MAX_CSV} q files or more; only the first ${MAX_CSV} found are measured, and a function defined in another shows no coverage.\r\n`,
+      );
+    }
     const names = definedNames(files);
     const install = installLambda("cov");
     // The names INSTALL was sent, once it was: a failure after that leaves

@@ -279,6 +279,43 @@ test("coverage of a file with unsaved edits is drawn on the lines its editor hol
   assert.ok(made.length > 0);
 });
 
+test("a coverage run says so when it measures only the first 500 q files of the workspace (#1907)", async () => {
+  const cover = async (count) => {
+    stub.reset();
+    const files = { "/ws/lib.q": LIB };
+    for (let i = 0; i < count; i++) {
+      files[`/ws/more/m${i}.q`] = `m${i}:{x}\n`;
+    }
+    const made = fakeVscode(files);
+    // As VS Code's: no more than it is asked for.
+    const all = vscode.workspace.findFiles;
+    const asked = [];
+    vscode.workspace.findFiles = async (glob, exclude, most) => (asked.push([glob, most]), (await all(glob)).slice(0, most));
+    const live = fakeLive((lambda, ...args) => {
+      if (lambda === DRIFT) {
+        return { name: ["f", "g"], state: ["lambda", "lambda"], text: ["{[a]\n  b:a+1;\n  $[b>2;g b;b]}", "{x*2}"] };
+      }
+      if (lambda === installLambda("cov")) {
+        return args[0].map(() => "ok");
+      }
+      if (lambda === restoreExpression("cov")) {
+        return { kept: [], d: [1, 1, 0] };
+      }
+      return { ok: true, failed: false, text: "1b" };
+    });
+    stub.config.user["testExplorer.coverage.enable"] = true;
+    const explorer = registerTestExplorer(stub.newContext(), live, () => ({ sendRequest: async () => TESTS }));
+    await explorer.discover();
+    await explorer.run(undefined, false, true);
+    assert.deepStrictEqual(asked.filter(([glob]) => glob === "**/*.q"), [["**/*.q", 500]]);
+    return made[0].runs.at(-1).output;
+  };
+  const capped = await cover(600);
+  assert.match(capped, /Coverage: the workspace holds 500 q files or more; only the first 500 found are measured, and a function defined in another shows no coverage\./);
+  assert.match(capped, /Coverage: 2 of 3 statements run/);
+  assert.doesNotMatch(await cover(3), /only the first 500/);
+});
+
 /// As `fakeLive`, with the run's last restore on the active connection
 /// failing as `end` says (a throw, or undefined for nothing sent), and a
 /// connection of its own to a process answering as `apart` does.
