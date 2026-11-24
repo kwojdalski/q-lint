@@ -94,7 +94,7 @@ export function registerSql(
       }
       const document = await workspace.openTextDocument({ language: "sql", content: `-- SQL for ${process.label} (KDB-X .s.e); q-lint: Run SQL runs it\n` });
       await window.showTextDocument(document);
-      await commands.executeCommand(CONTROL_COMMANDS.chooseFileConnection, process.label);
+      await commands.executeCommand(CONTROL_COMMANDS.chooseFileConnection, process.label, document.uri);
       editors.set(document.uri.toString(), process.label);
       await readSchemaOf(process.label);
       return { uri: document.uri.toString(), label: process.label };

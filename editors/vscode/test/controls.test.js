@@ -149,3 +149,15 @@ test("an untitled editor saved to a file hands the file its process", async () =
   await fakeVscode.on.save({ uri: unrelated, getText: () => "1+1" });
   assert.strictEqual(controls.binding(unrelated), undefined);
 });
+
+// Two New Query opens in a row: the first one's bind landed on the second
+// editor, active by then, and left the first unbound (#1530).
+test("the editor named is bound, not whichever is active by then", async () => {
+  const first = uri("untitled", "Untitled-1");
+  const second = uri("untitled", "Untitled-2");
+  const controls = loadControls(fakeVscode({}, { document: { uri: second } }));
+  await fakeVscode.commands["q-lint.chooseConnectionForFile"]("prodA", first);
+  await fakeVscode.commands["q-lint.chooseConnectionForFile"]("devB", second);
+  assert.strictEqual(controls.binding(first), "prodA");
+  assert.strictEqual(controls.binding(second), "devB");
+});

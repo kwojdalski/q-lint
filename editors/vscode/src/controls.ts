@@ -25,6 +25,7 @@ import {
   type ControlSettings,
   type UntitledBinding,
 } from "./querycontrols";
+import { isUriLike } from "./clicked";
 
 /// What the controls need of the live half.
 export interface ControlsHost {
@@ -64,7 +65,7 @@ export class QueryControls {
       this.fileItem,
       c(CONTROL_COMMANDS.toggleUnlimited, () => this.toggleUnlimited()),
       c(CONTROL_COMMANDS.toggleUnwrapped, () => this.toggleUnwrapped()),
-      c(CONTROL_COMMANDS.chooseFileConnection, (label?: string) => this.chooseFileConnection(label)),
+      c(CONTROL_COMMANDS.chooseFileConnection, (label?: string, uri?: unknown) => this.chooseFileConnection(label, uri)),
       c(CONTROL_COMMANDS.clearFileConnection, () => this.clearFileConnection()),
       c(CONTROL_COMMANDS.openSettings, () =>
         commands.executeCommand("workbench.action.openSettings", `@ext:${context.extension.id}`),
@@ -153,9 +154,11 @@ export class QueryControls {
     this.refresh();
   }
 
-  private async chooseFileConnection(label?: string): Promise<void> {
-    const document = window.activeTextEditor?.document;
-    if (document === undefined) {
+  /// Bind `uri` - an editor just opened, named so: two opened at once each
+  /// bound the active one (#1530) - else the active editor's file.
+  private async chooseFileConnection(label?: string, uri?: unknown): Promise<void> {
+    const target = isUriLike(uri) ? (uri as Uri) : window.activeTextEditor?.document.uri;
+    if (target === undefined) {
       void window.showInformationMessage("q-lint: open the file to choose its q process.");
       return;
     }
@@ -163,7 +166,7 @@ export class QueryControls {
     if (chosen === undefined) {
       return;
     }
-    await this.store(document.uri, chosen);
+    await this.store(target, chosen);
   }
 
   private async clearFileConnection(): Promise<void> {
