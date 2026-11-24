@@ -124,12 +124,23 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number)
     const waiting = new Map<string, number[]>();
     for (let r = 0; r < countB; r++) {
       const k = keyOf(gb, keysB, r);
-      waiting.set(k, [...(waiting.get(k) ?? []), r]);
+      const list = waiting.get(k);
+      if (list === undefined) {
+        waiting.set(k, [r]);
+      } else {
+        list.push(r);
+      }
     }
+    // How far into each key's list rows are taken, not shift(), which is
+    // quadratic in a key's rows (#1860).
+    const taken = new Map<string, number>();
     const used = new Set<number>();
     for (let r = 0; r < countA; r++) {
-      const match = waiting.get(keyOf(ga, keysA, r))?.shift();
+      const k = keyOf(ga, keysA, r);
+      const next = taken.get(k) ?? 0;
+      const match = waiting.get(k)?.[next];
       if (match !== undefined) {
+        taken.set(k, next + 1);
         used.add(match);
       }
       pairs.push([r, match]);

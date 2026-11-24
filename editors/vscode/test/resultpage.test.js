@@ -507,3 +507,33 @@ test("a chart drawn is sent to the q Plots view as SVG while plots are on; off, 
   page.send({ ...chart, id: "p.2", features: { plots: false } });
   assert.strictEqual(page.posted.filter((m) => m.type === "plotted").length, 1);
 });
+
+test("Pivot draws at most PIVOT_ROWS rows and says how many it has; Copy Pivot copies them all (#1859)", () => {
+  const { PIVOT_ROWS } = require("../media/result.js");
+  const rows = 50_000;
+  const ids = Array.from({ length: rows }, (_, i) => `id${String(i).padStart(6, "0")}`);
+  const n = ids.map((_, i) => String(i));
+  const page = loadPage(undefined);
+  page.send({
+    ...result("s.1", rows),
+    grid: {
+      columns: [
+        { name: "id", type: 11, typeName: "symbol (s)", key: false, numeric: false, temporal: false },
+        { name: "n", type: 7, typeName: "long (j)", key: false, numeric: true, temporal: false },
+      ],
+      cells: [ids, n],
+      rank: [ids.map((_, i) => i), ids.map((_, i) => i)],
+      values: [null, n.map(Number)],
+      total: rows,
+    },
+    control: { key: "k.1", action: "view", view: "pivot" },
+  });
+  const pivot = lastRendered(page).rendered.pivot;
+  assert.strictEqual(pivot.rows, rows);
+  assert.strictEqual(pivot.drawn, PIVOT_ROWS);
+  const lines = page.body.all((e) => e.tagName === "TR" && e.parent?.parent?.className === "pivot");
+  assert.strictEqual(lines.length, PIVOT_ROWS + 1);
+  assert.ok(page.body.all((e) => e.className === "note" && /The first 2,000 of its 50,000 rows are drawn; Copy Pivot copies them all\./.test(e.textContent)).length === 1);
+  button(page, "Copy Pivot").fire("click");
+  assert.strictEqual(page.posted.at(-1).text.split("\n").length, rows + 2);
+});

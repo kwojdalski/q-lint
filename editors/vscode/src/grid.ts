@@ -406,12 +406,51 @@ export function csvText(text: string): string {
 /// anything, and a numeric or temporal column holds `-0W` and `-0D01:00`,
 /// which are no number either.
 export function toCsv(grid: Grid, rows?: number[]): string {
+  return csvLines(grid, rows).join("");
+}
+
+/// `toCsv`'s lines, each with its `\n`: what a file is written from with
+/// `textBuffer`, as a big result's CSV is past the longest string V8 makes.
+export function csvLines(grid: Grid, rows?: number[]): string[] {
   const order = rows ?? [...Array(rowCount(grid)).keys()];
-  const lines = [grid.columns.map((c) => csvField(csvText(c.name))).join(",")];
+  const lines = [grid.columns.map((c) => csvField(csvText(c.name))).join(",") + "\n"];
   for (const r of order) {
-    lines.push(grid.cells.map((column) => csvField(csvText(column[r] ?? ""))).join(","));
+    lines.push(grid.cells.map((column) => csvField(csvText(column[r] ?? ""))).join(",") + "\n");
   }
-  return lines.join("\n") + "\n";
+  return lines;
+}
+
+/// `parts` one after another as UTF-8, joined a few megabytes at a time: a
+/// result of a million rows by fifty columns is more text than V8's longest
+/// string (about 536M characters), which one `join` would throw on
+/// (#1855). A `Buffer` holds it.
+export function textBuffer(parts: Iterable<string>): Buffer {
+  const chunks: Buffer[] = [];
+  let pending: string[] = [];
+  let size = 0;
+  for (const part of parts) {
+    pending.push(part);
+    size += part.length;
+    if (size >= 1 << 24) {
+      chunks.push(Buffer.from(pending.join(""), "utf8"));
+      pending = [];
+      size = 0;
+    }
+  }
+  chunks.push(Buffer.from(pending.join(""), "utf8"));
+  return chunks.length === 1 ? chunks[0] : Buffer.concat(chunks);
+}
+
+/// The most text a copy puts on the clipboard, in bytes: past it the text
+/// is no use pasted and nears what a string can hold.
+export const CLIPBOARD_LIMIT = 64 * 1024 * 1024;
+
+/// Why `data` is not copied - too big for the clipboard - or undefined
+/// when it can be.
+export function tooBigToCopy(data: Buffer, rows: number): string | undefined {
+  return data.length > CLIPBOARD_LIMIT
+    ? `q-lint: ${rows.toLocaleString("en-US")} row(s) are ${Math.ceil(data.length / 1024 / 1024).toLocaleString("en-US")} MB of text, more than the ${CLIPBOARD_LIMIT / 1024 / 1024} MB a copy puts on the clipboard. Export them to a file instead.`
+    : undefined;
 }
 
 /// `payload` with only the columns at `columns`, in that order: what the
@@ -521,6 +560,96 @@ export function denseRank(n: number, compare: (a: number, b: number) => number):
   return rank;
 }
 
+/// Rank arrays `mergeRank` made, so already known to agree with the column's
+/// order: the next page need not check them again.
+const merged = new WeakSet<readonly number[]>();
+
+/// The dense ranks over `n` rows when the first `held` already have theirs in
+/// `heldRank`: the page's rows are sorted alone and each distinct value is
+/// placed among the held ones by binary search, so a page costs its own sort
+/// plus one pass of integer arithmetic over the rows held, not a sort of
+/// every row (#1854). Held ranks this did not make are checked first - in
+/// range, no gap, in the order `compare` gives - and ranked again from
+/// scratch if not, so the answer is `denseRank`'s. Rows sharing a held rank
+/// are taken as equal: `compare` sees one row per rank, so a column's sort
+/// keys need not all be worked out.
+export function mergeRank(held: number, heldRank: readonly number[], n: number, compare: (a: number, b: number) => number): number[] {
+  const all = new Int32Array(held).fill(-1);
+  let distinct = 0;
+  for (let row = 0; row < held; row++) {
+    const r = heldRank[row];
+    if (!Number.isInteger(r) || r < 0 || r >= held) {
+      return remember(denseRank(n, compare));
+    }
+    if (all[r] === -1) {
+      all[r] = row;
+      distinct = Math.max(distinct, r + 1);
+    }
+  }
+  const reps = all.subarray(0, distinct);
+  if (!merged.has(heldRank)) {
+    for (let r = 0; r < reps.length; r++) {
+      if (reps[r] === -1 || (r > 0 && compare(reps[r - 1], reps[r]) >= 0)) {
+        return remember(denseRank(n, compare));
+      }
+    }
+  }
+  const order: number[] = [];
+  for (let row = held; row < n; row++) {
+    order.push(row);
+  }
+  order.sort((a, b) => compare(a, b) || a - b);
+  const pageRank = new Int32Array(n - held);
+  // shift[r]: the page's new values that sort before held rank r.
+  const shift = new Int32Array(reps.length + 1);
+  let added = 0;
+  let last = -1;
+  let lastRank = -1;
+  for (const row of order) {
+    if (last !== -1 && compare(last, row) === 0) {
+      pageRank[row - held] = lastRank;
+      continue;
+    }
+    let lo = 0;
+    let hi = reps.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (compare(reps[mid], row) < 0) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    if (lo < reps.length && compare(reps[lo], row) === 0) {
+      // A held value: its rank once the new values before it are counted.
+      lastRank = lo + added;
+    } else {
+      lastRank = lo + added;
+      shift[lo] += 1;
+      added += 1;
+    }
+    last = row;
+    pageRank[row - held] = lastRank;
+  }
+  for (let r = 1; r <= reps.length; r++) {
+    shift[r] += shift[r - 1];
+  }
+  const rank: number[] = [];
+  for (let row = 0; row < held; row++) {
+    const r = heldRank[row];
+    rank.push(r + shift[r]);
+  }
+  for (const r of pageRank) {
+    rank.push(r);
+  }
+  return remember(rank);
+}
+
+function remember(rank: number[]): number[] {
+  merged.add(rank);
+  return rank;
+}
+
 /// `payload` with `page`'s rows after its own. The ranks are ranked again
 /// over both - by the raw numbers where there are some, by the text where q
 /// sorts by it (symbols, chars, booleans, bytes, guids) - and are dropped
@@ -533,17 +662,26 @@ export function appendPage(payload: GridPayload, page: GridPage): GridPayload {
   const cells = payload.cells.map((c, i) => c.concat(page.cells[i]));
   const raw = payload.raw.map((r, i) => (r.length === payload.cells[i].length && page.raw[i].length === page.cells[i].length ? r.concat(page.raw[i]) : []));
   const rank = cells.map((column, i) => {
-    const ranked = payload.rank[i].length === payload.cells[i].length && page.rank[i].length === page.cells[i].length;
+    const held = payload.cells[i].length;
+    const ranked = payload.rank[i].length === held && page.rank[i].length === page.cells[i].length;
     if (!ranked) {
       return [];
     }
     const byNumber = NUMERIC.has(payload.types[i]) || TEMPORAL.has(payload.types[i]);
-    const values = byNumber && raw[i].length === column.length && raw[i].length > 0 ? raw[i].map(sortKey) : undefined;
-    const texts = values === undefined ? column.map(sortText) : [];
-    const compare = values !== undefined
-      ? (a: number, b: number) => (values[a] < values[b] ? -1 : values[a] > values[b] ? 1 : 0)
-      : (a: number, b: number) => codePointOrder(texts[a], texts[b]);
-    return denseRank(column.length, compare);
+    // Each row's key is worked out when it is first compared.
+    const byValue = byNumber && raw[i].length === column.length && raw[i].length > 0;
+    const keys = new Array<number | bigint | string | undefined>(column.length);
+    const key = byValue
+      ? (k: number) => (keys[k] ??= sortKey(raw[i][k])) as number | bigint
+      : (k: number) => (keys[k] ??= sortText(column[k])) as string;
+    const compare = byValue
+      ? (a: number, b: number) => {
+          const x = key(a);
+          const y = key(b);
+          return x < y ? -1 : x > y ? 1 : 0;
+        }
+      : (a: number, b: number) => codePointOrder(key(a) as string, key(b) as string);
+    return mergeRank(held, payload.rank[i], column.length, compare);
   });
   return { ...payload, count: page.count, cells, raw, rank };
 }

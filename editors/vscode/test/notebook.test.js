@@ -462,3 +462,19 @@ test("an indented lone / or \\ on a cell's first line opens no block comment and
   }
   assert.strictEqual(exportScript([{ kind: "code", source: " /\n x:1" }]), "/ /\nx:1\n");
 });
+
+test("a table past what a cell's output holds shows its first rows and says why, not 'Invalid string length' (#1855)", () => {
+  const { OUTPUT_LIMIT } = require("../out/celldata.js");
+  const rows = 400_000;
+  const table = { columns: [...Array(20).keys()].map((i) => `c${i}`), types: Array(20).fill(9), keys: 0, data: [...Array(20)].map(() => new Array(rows).fill("12345.6789")), total: rows };
+  const html = tableHtml(table);
+  assert.ok(html.length < OUTPUT_LIMIT + 10_000, String(html.length));
+  assert.match(html, /Showing the first [\d,]+ of 400,000 rows fetched: a cell&#39;s output holds about 64M characters\./);
+  const text = tableText(table);
+  assert.ok(text.length < rows + 2);
+  assert.match(text[text.length - 1], /^Showing the first [\d,]+ of 400,000 rows fetched/);
+  // A small table is whole, with no note.
+  const small = { ...table, data: table.data.map((c) => c.slice(0, 3)), total: 3 };
+  assert.strictEqual(tableText(small).length, 5);
+  assert.doesNotMatch(tableHtml(small), /class="qnb-note"/);
+});

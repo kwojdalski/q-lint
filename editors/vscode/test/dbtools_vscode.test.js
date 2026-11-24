@@ -574,25 +574,61 @@ test("opening a second log lists its messages, not the first one's (#1258)", { s
   assert.deepStrictEqual(log.posted[1].rows.map((r) => r.index), [0]);
 });
 
-test("the local q's directory is removed once the q has exited, where it cannot be before (#1287)", { skip: process.platform === "win32" || process.getuid?.() === 0 ? "a read-only directory stands in for a running q on POSIX, as a non-root user" : false }, () => {
-  const { EventEmitter } = require("node:events");
+test("the local q's directory is removed once the q has exited, where it cannot be before (#1287)", { skip: process.platform === "win32" || process.getuid?.() === 0 ? "a read-only directory stands in for a running q on POSIX, as a non-root user" : false }, async () => {
+  const { once } = require("node:events");
+  const { spawn } = require("node:child_process");
   const { stopLocalQ } = require("../out/tplogview.js");
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-tplog-test-"));
   const dir = path.join(parent, "q");
   fs.mkdirSync(dir);
   fs.writeFileSync(path.join(dir, "qlint_tplog.q"), "");
+  // A child of its own group, as the local q is: stopLocalQ signals that
+  // group, so the pid has to be one this test owns (#1874).
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore" });
+  await once(child, "spawn");
   // As on Windows, where a running q's directory cannot be removed.
   fs.chmodSync(parent, 0o555);
   try {
-    const child = Object.assign(new EventEmitter(), { pid: 1, exitCode: null, signalCode: null, kill: () => true });
     stopLocalQ({ child, dir, port: 0, connection: undefined, output: "" });
     assert.strictEqual(fs.existsSync(dir), true);
     fs.chmodSync(parent, 0o755);
-    child.emit("exit", null, "SIGKILL");
+    await once(child, "exit");
     assert.strictEqual(fs.existsSync(dir), false);
   } finally {
+    child.kill("SIGKILL");
     fs.chmodSync(parent, 0o755);
     fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("stopping the local q ends a wrapper script's q too, not the wrapper alone (#1874)", { skip: process.platform === "win32" ? "no process groups" : false }, async () => {
+  const { once } = require("node:events");
+  const { spawn } = require("node:child_process");
+  const { stopLocalQ } = require("../out/tplogview.js");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-tplog-test-"));
+  // As startLocalQ spawns it, in a group of its own; the "q" is a wrapper
+  // whose q runs as its child (rlwrap-style, no exec), and says its pid.
+  const child = spawn("/bin/sh", ["-c", "sleep 300 & echo $!; wait"], { detached: true, stdio: ["ignore", "pipe", "ignore"] });
+  const [said] = await once(child.stdout, "data");
+  const inner = Number(String(said).trim());
+  assert.ok(inner > 1 && inner !== child.pid, String(said));
+  const alive = () => {
+    try {
+      process.kill(inner, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  try {
+    assert.strictEqual(alive(), true);
+    stopLocalQ({ child, dir, port: 0, connection: undefined, output: "" });
+    for (let i = 0; i < 50 && alive(); i++) await new Promise((r) => setTimeout(r, 100));
+    assert.strictEqual(alive(), false, "the wrapper's q is still running");
+    assert.strictEqual(fs.existsSync(dir), false);
+  } finally {
+    if (alive()) process.kill(inner, "SIGKILL");
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 

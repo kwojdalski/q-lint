@@ -294,6 +294,36 @@ test("Write Lint Baseline keeps the findings: the draft's ../ paths are resolved
   }
 });
 
+test("Write Lint Baseline says a qlinter a signal or the timeout stopped was stopped, not 'exit 1' (#1877)", { skip: process.platform === "win32" && "no signals" }, async () => {
+  const { mkdtempSync, writeFileSync, existsSync, rmSync } = require("node:fs");
+  const { join } = require("node:path");
+  const { tmpdir } = require("node:os");
+  const { runQlinter } = require("../out/baselineview.js");
+  const ws = mkdtempSync(join(tmpdir(), "qlint-bl-stop-"));
+  // A qlinter that is killed as it runs, as the OOM killer would.
+  const crash = join(ws, "..", `${require("node:path").basename(ws)}-crash.js`);
+  writeFileSync(crash, `process.stderr.write("reading a.q\\n");process.kill(process.pid,"SIGKILL");setInterval(()=>{},1000);`);
+  const { context, restore } = setUp();
+  try {
+    assert.deepStrictEqual(await runQlinter(process.execPath, [crash], ws), { code: null, stopped: "was stopped (SIGKILL) before it finished", stdout: "", stderr: "reading a.q\n" });
+    const slow = await runQlinter(process.execPath, ["-e", "setInterval(()=>{},1000)"], ws, 200);
+    assert.deepStrictEqual([slow.code, slow.stopped], [null, "did not finish in 0.2 s"]);
+    // An exit code is kept as it is: 1 is findings.
+    assert.deepStrictEqual(await runQlinter(process.execPath, ["-e", "process.exit(1)"], ws), { code: 1, stdout: "", stderr: "" });
+    assert.deepStrictEqual(await runQlinter(process.execPath, ["-e", ""], ws), { code: 0, stdout: "", stderr: "" });
+    vscode.workspace.workspaceFolders = [{ uri: { scheme: "file", fsPath: ws }, name: "ws" }];
+    registerBaseline(context, () => ({ command: process.execPath, args: [crash] }));
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.writeBaseline)(), undefined);
+    assert.deepStrictEqual(stub.messages.at(-1), ["warning", "q-lint: qlinter was stopped (SIGKILL) before it finished; no baseline was written: reading a.q"]);
+    assert.strictEqual(existsSync(join(ws, "qlinter-baseline.json")), false);
+  } finally {
+    vscode.workspace.workspaceFolders = undefined;
+    restore();
+    rmSync(ws, { recursive: true, force: true });
+    rmSync(crash, { force: true });
+  }
+});
+
 test("the dead code report refuses when off and asks nothing; on, it lists the server's answer", async () => {
   const answer = { functions: [{ name: "lonely", uri: "file:///ws/b.q", range: { start: { line: 3, character: 0 } } }, { name: ".u.x", uri: "file:///ws/a.q", range: { start: { line: 0, character: 0 } } }], dynamic: 2 };
   const read = readDeadCode(answer);
@@ -535,6 +565,87 @@ test("in a workspace that is not trusted a save runs no affected test (#1228)", 
     assert.deepStrictEqual(runs, [["file:///t.q#test_a"]]);
   } finally {
     vscode.workspace.isTrusted = trusted;
+    restore();
+  }
+});
+
+test("a save the server does not answer for keeps its baseline: the next save tests its changes too (#1875)", async () => {
+  const { context, restore } = setUp();
+  const saves = [];
+  const trusted = vscode.workspace.isTrusted;
+  const said = [];
+  vscode.window.setStatusBarMessage = (text) => (said.push(text), { dispose() {} });
+  vscode.workspace.onDidSaveTextDocument = (l) => (saves.push(l), { dispose: () => saves.splice(saves.indexOf(l), 1) });
+  vscode.workspace.onDidOpenTextDocument = () => ({ dispose() {} });
+  vscode.workspace.onDidCloseTextDocument = () => ({ dispose() {} });
+  const doc = (text) => ({ languageId: "q", uri: { scheme: "file", fsPath: "/w/a.q", toString: () => "file:///w/a.q" }, isDirty: false, getText: () => text });
+  vscode.workspace.textDocuments = [doc("v0")];
+  try {
+    const sent = [];
+    const runs = [];
+    let fail = "server restarting";
+    let client;
+    const server = {
+      sendRequest: async (_method, params) => {
+        sent.push(params.previous);
+        if (fail) throw new Error(fail);
+        return { tests: [{ uri: "file:///t.q", name: "test_a" }] };
+      },
+    };
+    let runFails = false;
+    const tests = {
+      discover: async () => {},
+      items: () => ["file:///t.q#test_a"],
+      run: async (ids) => {
+        if (runFails) throw new Error("no connection");
+        runs.push(ids);
+      },
+    };
+    stub.config.user["testing.runAffectedOnSave.enable"] = true;
+    const api = registerAffectedOnSave(context, () => client, tests);
+    const save = async (text) => {
+      saves[0](doc(text));
+      await api.settled();
+    };
+    // No language server yet: nothing is asked, and v0 stays the baseline.
+    await save("v1");
+    assert.deepStrictEqual([sent, said], [[], []]);
+    // The request fails: said, and the baseline still does not move.
+    client = server;
+    await save("v2");
+    assert.deepStrictEqual(sent, ["v0"]);
+    assert.strictEqual(said.length, 1);
+    assert.match(said[0], /could not find the tests this save affects \(server restarting\)/);
+    // Not trusted: nothing is asked.
+    fail = "";
+    vscode.workspace.isTrusted = false;
+    await save("v3");
+    assert.deepStrictEqual(sent, ["v0"]);
+    vscode.workspace.isTrusted = true;
+    // Answered, but the run fails: its tests are still to be run.
+    runFails = true;
+    await save("v4");
+    assert.deepStrictEqual([sent, runs], [["v0", "v0"], []]);
+    // Answered and run: every change since v0 was compared, and only now
+    // does the next save compare against this one.
+    runFails = false;
+    await save("v5");
+    assert.deepStrictEqual([sent, runs], [["v0", "v0", "v0"], [["file:///t.q#test_a"]]]);
+    await save("v6");
+    assert.deepStrictEqual(sent, ["v0", "v0", "v0", "v5"]);
+    assert.deepStrictEqual(said.slice(1), ["q-lint: running 1 affected test(s)", "q-lint: running 1 affected test(s)", "q-lint: running 1 affected test(s)"]);
+    // Two saves queued behind a request that fails: the second is still
+    // compared against the text before the first.
+    fail = "gone";
+    saves[0](doc("v7"));
+    saves[0](doc("v8"));
+    await api.settled();
+    assert.deepStrictEqual(sent.slice(4), ["v6", "v6"]);
+    stub.config.user["testing.runAffectedOnSave.enable"] = false;
+    stub.changeConfig("q-lint.testing.runAffectedOnSave.enable");
+  } finally {
+    vscode.workspace.isTrusted = trusted;
+    delete vscode.window.setStatusBarMessage;
     restore();
   }
 });

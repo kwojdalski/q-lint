@@ -17,14 +17,24 @@ export function isComplete(text: string): boolean {
   return depth <= 0 && !inString;
 }
 
+interface Open {
+  depth: number;
+  inString: boolean;
+}
+
 /// The open bracket depth at the end of `text`, and whether a string is
-/// still open there.
-function scan(text: string): { depth: number; inString: boolean } {
+/// still open there. `stops`: offsets in `text`, ascending; `at[k]` is what
+/// `scan(text.slice(0, stops[k]))` would give, read in the same one pass.
+function scan(text: string, stops: number[] = []): Open & { at: Open[] } {
   let depth = 0;
   let inString = false;
   let inComment = false;
   let block = 0;
+  const at: Open[] = [];
   for (let i = 0; i < text.length; i++) {
+    while (at.length < stops.length && i >= stops[at.length]) {
+      at.push({ depth, inString });
+    }
     const ch = text[i];
     if (ch === "\n") {
       inComment = false;
@@ -66,7 +76,10 @@ function scan(text: string): { depth: number; inString: boolean } {
       depth--;
     }
   }
-  return { depth, inString };
+  while (at.length < stops.length) {
+    at.push({ depth, inString });
+  }
+  return { depth, inString, at };
 }
 
 /// `text` as a script q reads the way it was typed: a line that starts
@@ -75,19 +88,26 @@ function scan(text: string): { depth: number; inString: boolean } {
 /// and `f:{x+` then `y}` would be two. A line that starts inside a string
 /// is joined to the one above with the newline as `\n`, since an indent
 /// would be in the string (#1678). Lines outside any bracket are left as
-/// they are, each its own statement.
+/// they are, each its own statement. The text is read once, noting where
+/// each line starts, not again up to every line (#1858).
 export function replScript(text: string): string {
   const lines = text.split(/\r?\n/);
+  const whole = lines.join("\n");
+  const stops: number[] = [];
+  let end = -1;
+  for (const line of lines.slice(0, -1)) {
+    end += line.length + 1;
+    stops.push(end);
+  }
+  const { at } = scan(whole, stops);
   const out: string[] = [];
-  let sofar = "";
   for (const [i, line] of lines.entries()) {
-    const { depth, inString } = i === 0 ? { depth: 0, inString: false } : scan(sofar);
+    const { depth, inString } = i === 0 ? { depth: 0, inString: false } : at[i - 1];
     if (inString) {
       out[out.length - 1] += `\\n${line}`;
     } else {
       out.push(depth > 0 && line !== "" && !line.startsWith(" ") && !line.startsWith("\t") ? ` ${line}` : line);
     }
-    sofar += (i === 0 ? "" : "\n") + line;
   }
   return out.join("\n");
 }

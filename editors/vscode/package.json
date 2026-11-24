@@ -23,7 +23,7 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
-      "description": "Linting, Quick Fixes, navigation and colouring work in Restricted Mode: the linter reads q and never runs it. The settings that name a program, a command or the language server's arguments, and the read-only guard's, are taken from your user settings only, the workspace's .env is not given to q, q binaries in the workspace are not offered, and git is not run in it.",
+      "description": "Linting, Quick Fixes, navigation and colouring work in Restricted Mode: the linter reads q and never runs it. The settings that name a program, a command or the language server's arguments, the read-only guard's and the drill-down queries, are taken from your user settings only, the workspace's .env is not given to q, q binaries in the workspace are not offered, and git is not run in it.",
       "restrictedConfigurations": [
         "q-lint.serverPath",
         "q-lint.serverArgs",
@@ -37,7 +37,8 @@
         "q-lint.connection.credentialCommand.enable",
         "q-lint.processes.readOnlyGuard.enable",
         "q-lint.processes.readOnlyGuard.tags",
-        "q-lint.testing.runAffectedOnSave.enable"
+        "q-lint.testing.runAffectedOnSave.enable",
+        "q-lint.results.drilldownTemplates"
       ]
     }
   },
@@ -1117,7 +1118,7 @@
             "default": "",
             "order": 201,
             "scope": "resource",
-            "markdownDescription": "A file of `NAME=value` lines set for q in a q terminal (**Run Code from Terminal**, **Start q REPL**, **Send ... to Terminal**), such as `QHOME` and `QLIC`, on the command line that starts it, so they win over the shell's startup files. Relative to the workspace folder, which may set its own; a leading `~` is your home directory. Values are taken as written: `$HOME` is not expanded."
+            "markdownDescription": "A file of `NAME=value` lines set for q in a q terminal (**Run Code from Terminal**, **Start q REPL**, **Send ... to Terminal**), such as `QHOME` and `QLIC`, set on the command line that starts it, so they win over the shell's startup files: any value but `QHOME`, `QLIC` and `QINIT` from a copy in the terminal's environment, so it is not shown. Relative to the workspace folder, which may set its own; a leading `~` is your home directory. Values are taken as written: `$HOME` is not expanded."
           },
           "q-lint.terminal.runWithArguments.enable": {
             "type": "boolean",

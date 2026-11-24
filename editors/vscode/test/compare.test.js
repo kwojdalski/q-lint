@@ -223,3 +223,18 @@ test("the page shows two answers that are not tables as text, and says when they
   const pres = page.body.all((e) => e.tagName === "PRE");
   assert.deepStrictEqual(pres.map((p) => [p.className, p.textContent]), [["changed", "1"], ["error", "down"]]);
 });
+
+test("Compare Query matches a key repeated on many rows in linear time, in order (#1860)", () => {
+  const mk = (rows) => ({ ok: true, type: 99, text: [], grid: { count: rows, keys: 1, names: ["s", "v"], types: [11, 7], cells: [Array.from({ length: rows }, (_, i) => "k" + (i % 10)), Array.from({ length: rows }, (_, i) => String(i))], raw: [[], []], rank: [[], []] } });
+  const time = (rows) => {
+    const o = { process: "p", answer: mk(rows), millis: 1 };
+    const t = process.hrtime.bigint();
+    compareOutcomes(o, o, -1);
+    return Number(process.hrtime.bigint() - t) / 1e6;
+  };
+  time(10_000);
+  const small = time(50_000);
+  const big = time(100_000);
+  // Before: 125 ms at 50k, 375 ms at 100k, 2.9 s at 200k.
+  assert.ok(big < Math.max(small, 20) * 3, `${small} ms at 50k, ${big} ms at 100k`);
+});

@@ -356,3 +356,35 @@ test("Excel's top and bottom N rank every row the grid holds, not only the filte
   const infinite = { ...PAYLOAD, cells: [["a", "b", "c"], ["1", "0w", "9"]], raw: [[], [1, Infinity, 9]] };
   assert.ok(!/conditionalFormatting/.test(unzip(exportResult("xlsx", infinite, -1, undefined, top).data)["xl/worksheets/sheet1.xml"]));
 });
+
+test("correlation reads at most CORR_BUDGET row-pairs, over every step-th row past it, and says so (#1857)", () => {
+  const columns = 20;
+  const make = (rows) => ({
+    columns: [...Array(columns)].map((_, i) => ({ name: "c" + i, numeric: true, key: false, type: 9 })),
+    values: [...Array(columns)].map((_, c) => Float64Array.from({ length: rows }, (_, i) => Math.sin(i * (c + 1)))),
+    cells: [...Array(columns)].map(() => []),
+  });
+  const time = (rows) => {
+    const g = make(rows);
+    const all = [...Array(rows).keys()];
+    const t = process.hrtime.bigint();
+    const c = L.correlation(g, all);
+    return { ms: Number(process.hrtime.bigint() - t) / 1e6, c };
+  };
+  const small = time(200_000);
+  const big = time(800_000);
+  // Rows x columns^2 grew four times with the rows; now it is bounded.
+  assert.ok(big.ms < small.ms * 2.5, `${small.ms} ms at 200k, ${big.ms} ms at 800k`);
+  const pairs = (columns * (columns + 1)) / 2;
+  assert.ok(big.c.used * pairs <= L.CORR_BUDGET);
+  assert.strictEqual(big.c.of, 800_000);
+  assert.strictEqual(big.c.step, Math.ceil((800_000 * pairs) / L.CORR_BUDGET));
+  // Within the budget every row is read, as before.
+  const exact = L.correlation(make(1000), [...Array(1000).keys()]);
+  assert.strictEqual(exact.step, 1);
+  assert.strictEqual(exact.used, 1000);
+  assert.strictEqual(exact.n[0][1], 1000);
+  // A budget given is the one kept: every other row of four.
+  const g = grid([["x", 9, ["1", "2", "3", "4"]], ["y", 9, ["2", "4", "6", "9"]]]);
+  assert.deepStrictEqual({ ...L.correlation(g, [0, 1, 2, 3], 6), r: undefined, columns: undefined, names: undefined }, { r: undefined, columns: undefined, names: undefined, n: [[2, 2], [2, 2]], used: 2, of: 4, step: 2 });
+});

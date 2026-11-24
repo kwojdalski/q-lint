@@ -9,11 +9,9 @@ import { commands, env, window, workspace, type Disposable, type ExtensionContex
 import { ADMIN_COMMANDS, adminOff, readAdmin } from "./admin";
 import type { Live } from "./live";
 import { CONTROL_COMMANDS } from "./querycontrols";
-import { queryLink, readQueryLink } from "./querylink";
+import { promptProblem, queryLink, readQueryLink } from "./querylink";
 import { plainMessage } from "./history";
 
-/// The longest query a link's Run prompt shows, whole.
-const PROMPT_LIMIT = 2000;
 
 const on = (): boolean => readAdmin((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback)).queryLinks;
 
@@ -101,10 +99,11 @@ export class QueryLinks {
     }
     await commands.executeCommand(CONTROL_COMMANDS.chooseFileConnection, read.process, document.uri);
     // Run is offered only on a query the prompt shows whole: what follows a
-    // cut would run unseen (#1620).
-    if (read.code.length > PROMPT_LIMIT) {
+    // cut would run unseen (#1620, #1828).
+    const problem = promptProblem(read.code);
+    if (problem !== undefined) {
       void window.showWarningMessage(
-        plainMessage(`q-lint: the link's query is longer than ${PROMPT_LIMIT} characters, too long to show whole before it runs; it is open, bound to ${read.process}, to read and run from the editor.`),
+        plainMessage(`q-lint: the link's query is ${problem}, too much to show whole before it runs; it is open, bound to ${read.process}, to read and run from the editor.`),
       );
       return false;
     }

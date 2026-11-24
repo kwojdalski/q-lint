@@ -8,7 +8,7 @@ import * as os from "node:os";
 import { commands, window, workspace, type ExtensionContext, type OutputChannel } from "vscode";
 import { LAUNCH_COMMANDS, argsFromText, argsText, commandText, fromWorkspace, launchPlan, listenAddress, probeHost, readLauncher, spawnPlan } from "./launcher";
 import { readTerminal } from "./liveconfig";
-import { qBinaryFrom } from "./terminal";
+import { qBinaryFrom, relativeBinaryProblem } from "./terminal";
 import { mergeEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import type { Live, ProcessArg } from "./live";
@@ -189,9 +189,10 @@ export class Launcher {
     }
     // A relative q binary is the folder's, as in the terminals, not the
     // launch's working directory's (#1540).
-    const binary = process.launch?.command !== undefined ? qBinary : qBinaryFrom(qBinary, first?.fsPath, os.homedir());
+    const trusted = workspace.isTrusted !== false;
+    const binary = process.launch?.command !== undefined ? qBinary : qBinaryFrom(qBinary, first?.fsPath, os.homedir(), trusted);
     if (binary === undefined) {
-      return `q-lint.terminal.qBinary ${qBinary} is relative, and there is no workspace folder to read it from; ${process.label} was not started.`;
+      return `${relativeBinaryProblem(qBinary, trusted)}; ${process.label} was not started.`;
     }
     const plan = launchPlan(process, binary, first?.fsPath);
     if ("error" in plan) {

@@ -432,8 +432,34 @@
     return map && Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined;
   }
 
+  /// The points a chart's data draws: each dataset's or linked pane's.
+  function chartPoints(data) {
+    let n = 0;
+    [data && data.datasets, data && data.panes].forEach(function (sets) {
+      (Array.isArray(sets) ? sets : []).forEach(function (d) {
+        n += d && Array.isArray(d.data) ? d.data.length : 0;
+      });
+    });
+    return n;
+  }
+
+  /// Past this many points a chart's SVG is more than the 20 MB the q Plots
+  /// view keeps (plots.ts's plainSvg), at the ten or more characters each
+  /// point takes: the page does not build one to have it thrown away
+  /// (#1856).
+  const PLOT_POINTS = 2000000;
+
+  /// The most pivot rows drawn: one per distinct value of a time or an id
+  /// column is a row per result row, and a table of a million hangs the
+  /// page on layout. The grid draws only the rows in view; the pivot draws
+  /// these, and Copy Pivot copies every row (#1859).
+  const PIVOT_ROWS = 2000;
+
   const helpers = {
     rowCount: rowCount,
+    PIVOT_ROWS: PIVOT_ROWS,
+    chartPoints: chartPoints,
+    PLOT_POINTS: PLOT_POINTS,
     ownValue: ownValue,
     csvCell: csvCell,
     gridMove: gridMove,
@@ -1566,6 +1592,10 @@
     if (grid.total > rowCount(grid)) {
       note += " of the result's " + grid.total.toLocaleString("en-US");
     }
+    const drawn = Math.min(p.rows.length, PIVOT_ROWS);
+    if (drawn < p.rows.length) {
+      note += ". The first " + drawn.toLocaleString("en-US") + " of its " + p.rows.length.toLocaleString("en-US") + " rows are drawn; Copy Pivot copies them all";
+    }
     pivotView.append(el("p", "note", note + "." + (p.note ? " " + p.note : "")));
     const scroll = el("div", "scroller");
     const table = el("table", "pivot");
@@ -1574,7 +1604,7 @@
     const thead = el("thead");
     thead.append(tr);
     const tbody = el("tbody");
-    p.rows.forEach(function (k, i) {
+    p.rows.slice(0, drawn).forEach(function (k, i) {
       const line = el("tr");
       const key = el("td", "key", k);
       key.title = k;
@@ -1585,7 +1615,7 @@
     table.append(thead, tbody);
     scroll.append(table);
     pivotView.append(scroll);
-    rendered({ pivot: { rows: p.rows.length, columns: head, first: p.rows.length ? [p.rows[0]].concat(p.cells[0]) : [], note: p.note } });
+    rendered({ pivot: Object.assign({ rows: p.rows.length, columns: head, first: p.rows.length ? [p.rows[0]].concat(p.cells[0]) : [], note: p.note }, drawn < p.rows.length ? { drawn: drawn } : {}) });
   }
 
   // --- chart
@@ -1881,22 +1911,24 @@
   /// Keep the chart drawn in the q Plots view (#970), as the SVG Save SVG
   /// writes.
   function plotted() {
-    if (!feature("plots") || !drawnChart) {
+    if (!feature("plots") || !drawnChart || chartPoints(drawnChart.data) > PLOT_POINTS) {
       return;
     }
     const canvas = drawnChart.canvas;
-    vscode.postMessage({
-      type: "plotted",
-      id: result.id,
-      format: state.kind,
+    let data;
+    try {
       // At least 640 by 360: a plot drawn in a narrow panel is still one
       // to read, and to save.
-      data: svgOf(drawnChart, {
+      data = svgOf(drawnChart, {
         width: Math.max(640, Math.round(canvas.clientWidth || 800)),
         height: Math.max(360, Math.round(canvas.clientHeight || 450)),
         background: cssVar("--vscode-editor-background", "#ffffff"),
-      }),
-    });
+      });
+    } catch (e) {
+      // Too big a string to make: the chart is drawn all the same.
+      return;
+    }
+    vscode.postMessage({ type: "plotted", id: result.id, format: state.kind, data: data });
   }
 
   /// Linked panes (#1018): one chart per series, stacked on one x axis. A
@@ -2001,6 +2033,7 @@
   /// the command's request it answers.
   function sendImage(format, key) {
     let data = "";
+    let error;
     if (drawnChart && drawnChart.canvas) {
       const background = cssVar("--vscode-editor-background", "#ffffff");
       const canvases = drawnChart.canvases && drawnChart.canvases.length ? drawnChart.canvases : [drawnChart.canvas];
@@ -2019,22 +2052,36 @@
         });
         data = out.toDataURL("image/png");
       } else {
-        data = svgOf(drawnChart, {
-          width: Math.round(canvas.clientWidth || 800),
-          height: Math.round(canvases.reduce(function (h, c) { return h + (c.clientHeight || 0); }, 0) || 450),
-          background: background,
-        });
+        try {
+          data = svgOf(drawnChart, {
+            width: Math.round(canvas.clientWidth || 800),
+            height: Math.round(canvases.reduce(function (h, c) { return h + (c.clientHeight || 0); }, 0) || 450),
+            background: background,
+          });
+        } catch (e) {
+          // A chart of millions of points is more SVG than a string holds:
+          // answer with why, not silence (#1856).
+          data = "";
+          error = "the chart's " + chartPoints(drawnChart.data).toLocaleString("en-US") + " points are too much SVG to make (" + (e && e.message ? e.message : String(e)) + "). Save it as PNG instead.";
+        }
       }
     }
-    vscode.postMessage({ type: "image", id: result.id, format: format, data: data, key: key });
+    vscode.postMessage({ type: "image", id: result.id, format: format, data: data, key: key, error: error });
   }
 
   // --- correlation (#1020)
 
+  /// The last correlation worked out, kept while the grid and its rows
+  /// are the same: a redraw - a tab switch, a bar action - does not read
+  /// every row again (#1857).
+  let corrKept = null;
+
   function drawCorr() {
     const grid = result.grid;
     corrView.replaceChildren();
-    const corr = LOOK.correlation(grid, rows);
+    const same = corrKept && corrKept.grid === grid && corrKept.rows.length === rows.length && corrKept.rows.every(function (r, k) { return r === rows[k]; });
+    const corr = same ? corrKept.corr : LOOK.correlation(grid, rows);
+    corrKept = { grid: grid, rows: rows.slice(), corr: corr };
     const fixed = function (r) { return r === null ? "" : r.toFixed(3); };
     const controls = el("div", "controls");
     const copy = el("button", "", "Copy Matrix");
@@ -2046,6 +2093,9 @@
     controls.append(copy);
     corrView.append(controls);
     corrView.append(el("p", "note", "Pearson correlation of the numeric columns over the " + rows.length.toLocaleString("en-US") + " row" + (rows.length === 1 ? "" : "s") + " shown; each pair over the rows where both are not null. Key columns are left out."));
+    if (corr.step > 1) {
+      corrView.append(el("p", "note", "Over every " + corr.step.toLocaleString("en-US") + "th of those rows, " + corr.used.toLocaleString("en-US") + " in all, evenly through them: every pair over all " + corr.of.toLocaleString("en-US") + " would hold the panel for seconds. Filter the grid to fewer rows for an exact figure."));
+    }
     const scroll = el("div", "scroller");
     const matrix = el("table", "corr");
     const head = el("tr");

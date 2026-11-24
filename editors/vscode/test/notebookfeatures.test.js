@@ -78,6 +78,32 @@ test("an indented code block or an HTML comment holds no live value (#1429)", ()
   assert.deepStrictEqual(liveExpressions("- item\n\n    {{q: in list}}"), ["in list"]);
 });
 
+// markdown-it reads a link's target and a reference definition without
+// its inline rules, so the renderer drew nothing there, yet the code cell
+// above ran the expression with it (#1827).
+test("a live value in a link's target, a reference definition or an image's alt text is not run", () => {
+  for (const hidden of [
+    '[x]: {{q:system"id"}}',
+    '[docs](<https://kx.com/{{q: system "touch /tmp/pwn"}}>)',
+    '![a](<b {{q: system "id"}}>)',
+    "[a](http://x/{{q:1}})",
+    '[l](u "{{q:1}}")',
+    "![{{q:1}}](u)",
+    "<http://x/{{q:1}}>",
+    "[t][{{q:1}}]",
+    "[x]:\n  {{q:1}}",
+    '[x]: /u\n"t {{q:1}}"',
+    "> [x]: {{q:1}}",
+  ]) {
+    assert.deepStrictEqual(liveExpressions(hidden), [], hidden);
+  }
+  // A link's text is drawn, and a live value met before a link is one.
+  assert.deepStrictEqual(liveExpressions("see [{{q: a}}](u) and {{q: b}}"), ["a", "b"]);
+  assert.deepStrictEqual(liveExpressions("x {{q: f[1](2)}}"), ["f[1](2)"]);
+  assert.deepStrictEqual(liveExpressions("[x]: /u\nshown {{q: c}}"), ["c"]);
+  assert.deepStrictEqual(liveExpressions("`[a](`{{q: d}}`)`"), ["d"]);
+});
+
 test("the Markdown after a code cell is read when it runs; the first code cell reads what is above it", () => {
   const cells = ["markdown", "markdown", "code", "markdown", "code", "code", "markdown"].map((kind) => ({ kind }));
   assert.deepStrictEqual(markdownAfter(cells, 2), [0, 1, 3]);
@@ -693,4 +719,19 @@ test("QLINT_Q_PASSWORD is --process's alone, never sent to another listed proces
   assert.strictEqual(passwordOf(target("prod_rdb"), env, false), "");
   assert.strictEqual(passwordOf(target("rdb"), env, false), "r");
   assert.strictEqual(passwordOf(target("rdb", ""), env, true), undefined);
+});
+
+// rdb-1, rdb_1, rdb.1 and "RDB 1" all read QLINT_Q_PASSWORD_RDB_1: one
+// password was sent to every one a notebook named (#1833).
+test("a password variable two listed processes would share is refused, not sent to both", () => {
+  const p = (label, user = "u") => ({ label, host: label, port: 1, tags: [], user });
+  const listed = [p("rdb-1"), p("rdb_1"), p("Prod"), p("prod", ""), p("gw")];
+  const env = { QLINT_Q_PASSWORD_RDB_1: "one", QLINT_Q_PASSWORD_PROD: "pr", QLINT_Q_PASSWORD_GW: "g" };
+  assert.throws(() => passwordOf(listed[0], env, false, listed), /^Error: rdb-1 and rdb_1 both read their password from QLINT_Q_PASSWORD_RDB_1: relabel one/);
+  assert.throws(() => passwordOf(listed[1], env, false, listed), /rdb_1 and rdb-1/);
+  // A process with no user is asked for no password, so shares nothing.
+  assert.strictEqual(passwordOf(listed[2], env, false, listed), "pr");
+  assert.strictEqual(passwordOf(listed[4], env, false, listed), "g");
+  // HOST:PORT given on the command line is checked against the list too.
+  assert.throws(() => passwordOf(p("rdb:1"), env, true, [p("rdb_1")]), /rdb:1 and rdb_1/);
 });

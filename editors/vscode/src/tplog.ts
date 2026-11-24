@@ -14,16 +14,19 @@
 // many bytes were left. A message's time is its first temporal column's
 // first item, or that column itself in a one-row message of atoms; a date
 // or a month has no time of day, so the time filter leaves it out.
-// A replay runs each message as `-11!` would, with an `upd` that inserts
+// A replay runs each `upd` message as `-11!` would, with an `upd` that inserts
 // into a table of that name, creating it from a first message that is a
 // table; a q file loaded first (the tickerplant's schema, its own `upd`)
-// takes the place of that. Works on kdb+ (KDB-X) and PeachQ; held there by
+// takes the place of that. A message naming anything but `upd` is skipped
+// (#1829): the log is a file from anywhere, and the local q runs as you. Works on kdb+ (KDB-X) and PeachQ; held there by
 // dbtools_q.test.js.
 
 /// The local q's startup: the default `upd`, and the loader, pager and
 /// replayer the page asks through.
 export const TPLOG_INIT = [
-  "upd:{[t;x] $[t in tables`.;t insert x;98h=type x;t set x;'\"no table \",string[t],\": load its schema first\"]}",
+  // A table's name only: not a dotted one, `.z.pw` or `.q.x`, which `set`
+  // would replace with what the message holds (#1829).
+  "upd:{[t;x] if[(-11h<>type t)|\".\"=first string t;'\"not a table name: \",-3!t];$[t in tables`.;t insert x;98h=type x;t set x;'\"no table \",string[t],\": load its schema first\"]}",
   ".qlint.tp.load:{[f] f:hsym`$f;c:-11!(-2;f);ok:0>type c;n:$[ok;c;c 0];",
   " m:$[0=n;();ok;get f;[b:(c 1)#read1 f;b[4+til 4]:reverse 0x0 vs\"i\"$n;p:`:qlintprefix.log;p 1:b;r:get p;hdel p;r]];",
   " m:(),m;",
@@ -44,10 +47,16 @@ export const TPLOG_INIT = [
   " p:(\"j\"$lim)sublist(\"j\"$off)_s;",
   " `total`i`fn`tb`rows`tx!(\"f\"$count s;\"f\"$p`i;string p`fn;string p`tb;p`rows;p`tx)}",
   ".qlint.tp.show:{[i;w] .Q.S[(30;\"j\"$w);0j].qlint.tp.m\"j\"$i}",
+  // Only a message `(`upd;table;data)` is replayed, through `upd`: `value`
+  // ran whatever a message named - `system`, `set` on `.z.pw`, a lambda -
+  // in a q running as the user (#1829). Any other is skipped and named.
   ".qlint.tp.replay:{[a;b] ix:(\"j\"$a)+til 1+(\"j\"$b)-\"j\"$a;",
-  " r:{@[{value x;`ok};x;{`$x}]}each .qlint.tp.m ix;",
-  " e:r where not r=`ok;",
-  " `replayed`failed`errors`tables`rows!(\"f\"$count ix;\"f\"$count e;string 5 sublist distinct e;string tables`.;\"f\"${count get x}each tables`.)}",
+  " r:{$[(0h=type x)&(1<count x)&`upd~first x;@[{upd . 1_x;`ok};x;{`$x}];`skip]}each .qlint.tp.m ix;",
+  " e:r where not r in`ok`skip;",
+  " k:.qlint.tp.s[`fn]ix where r=`skip;",
+  " `replayed`failed`errors`skipped`heads`tables`rows!(\"f\"$sum not r=`skip;\"f\"$count e;string 5 sublist distinct e;\"f\"$count k;string 5 sublist distinct k;string tables`.;\"f\"${count get x}each tables`.)}",
+  // The messages of a range that are not `upd`'s, and the names they give.
+  ".qlint.tp.others:{[a;b] k:{x where not x=`upd}.qlint.tp.s[`fn](\"j\"$a)+til 1+(\"j\"$b)-\"j\"$a;`count`heads!(\"f\"$count k;string 5 sublist distinct k)}",
   // `\l` refuses a path with a space in it ('nyi, KDB-X), so a schema is
   // loaded by its name from its own directory - where its own relative
   // `\l`s look too - and the local q goes back to its directory after.
@@ -71,6 +80,10 @@ export interface Replayed {
   replayed: number;
   failed: number;
   errors: string[];
+  /// Messages not `upd`'s, never run, and the first few names they give
+  /// (empty for one whose head is not a name).
+  skipped: number;
+  heads: string[];
   tables: { name: string; rows: number }[];
 }
 
@@ -106,7 +119,26 @@ export function readReplayed(raw: unknown): Replayed {
   const r = obj(raw, "replayed", "a replay's outcome");
   const names = strings(r.tables);
   const rows = numbers(r.rows);
-  return { replayed: number(r.replayed), failed: number(r.failed), errors: strings(r.errors), tables: names.map((name, i) => ({ name, rows: rows[i] ?? 0 })) };
+  return {
+    replayed: number(r.replayed),
+    failed: number(r.failed),
+    errors: strings(r.errors),
+    skipped: number(r.skipped),
+    heads: strings(r.heads),
+    tables: names.map((name, i) => ({ name, rows: rows[i] ?? 0 })),
+  };
+}
+
+/// The messages of a range that are not `upd`'s, which a replay skips.
+export function readOthers(raw: unknown): { count: number; heads: string[] } {
+  const r = obj(raw, "heads", "a range's other messages");
+  return { count: number(r.count), heads: strings(r.heads) };
+}
+
+/// The names `heads` as a message says them: one that is not a name, such
+/// as a lambda's, as "no name".
+export function headNames(heads: string[]): string {
+  return heads.map((h) => (h === "" ? "no name" : h)).join(", ");
 }
 
 /// A time of day typed as `HH:MM`, `HH:MM:SS` or `HH:MM:SS.mmm`, in ms

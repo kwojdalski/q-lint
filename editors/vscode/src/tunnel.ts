@@ -6,7 +6,10 @@
 // it authenticates with the user's agent and `~/.ssh/config`, or fails, and
 // q-lint stores nothing. The tunnel lives as long as the connection over it.
 import { spawn, type ChildProcess } from "node:child_process";
+import * as fs from "node:fs";
 import * as net from "node:net";
+import * as os from "node:os";
+import * as path from "node:path";
 
 export const TUNNEL_COMMANDS = {
   set: "q-lint.setSshTunnel",
@@ -22,11 +25,12 @@ export function readTunnel(get: <T>(key: string, fallback: T) => T): { enabled: 
 export const TUNNEL_TIMEOUT_MS = 20_000;
 
 /// The arguments ssh is run with: no command (`-N`), the forward from
-/// `localPort` on the loopback to `host:port` as the jump host sees it, and
+/// `local` - a unix socket's path, or a port on the loopback - to
+/// `host:port` as the jump host sees it, and
 /// the destination after `--`, so nothing in it is read as an option. A
 /// `host:port` or `[v6]:port` destination is given to ssh as `-p`; a bare
 /// IPv6 address has no port, its last group is not one (#1068).
-export function sshArgs(destination: string, localPort: number, host: string, port: number): string[] {
+export function sshArgs(destination: string, local: number | string, host: string, port: number): string[] {
   const bracketed = /^([^@]*@)?\[([^\]]+)\](?::(\d+))?$/.exec(destination);
   const plain = /^([^:]*):(\d+)$/.exec(destination);
   const m = bracketed ? [destination, `${bracketed[1] ?? ""}${bracketed[2]}`, bracketed[3]] : plain ?? [destination, destination, undefined];
@@ -40,7 +44,7 @@ export function sshArgs(destination: string, localPort: number, host: string, po
     "-o",
     "ServerAliveInterval=30",
     "-L",
-    `127.0.0.1:${localPort}:${target}:${port}`,
+    typeof local === "string" ? `${local}:${target}:${port}` : `127.0.0.1:${local}:${target}:${port}`,
     ...(m[2] !== undefined ? ["-p", m[2]] : []),
     "--",
     m[1],
@@ -59,10 +63,30 @@ export function freePort(): Promise<number> {
   });
 }
 
-/// Whether something accepts a connection on `port` of the loopback.
-function accepts(port: number): Promise<boolean> {
+/// A directory only this user can enter, for the forward's socket (#1823):
+/// a loopback port is open to every local user, who can bind it before ssh
+/// does, be taken for the tunnel and be sent the q password; nobody else can
+/// make or reach a socket in here. Undefined on Windows, whose ssh forwards
+/// no unix socket, and for a temporary directory whose path ssh cannot take
+/// (a `:` splits the forward).
+export function socketDir(platform: NodeJS.Platform = process.platform): string | undefined {
+  if (platform === "win32") {
+    return undefined;
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-ssh-"));
+  fs.chmodSync(dir, 0o700);
+  if (dir.includes(":") || /\s/.test(dir)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    return undefined;
+  }
+  return dir;
+}
+
+/// Whether something accepts a connection on `local`: a socket's path, or a
+/// port of the loopback.
+function accepts(local: number | string): Promise<boolean> {
   return new Promise((resolve) => {
-    const socket = net.connect(port, "127.0.0.1", () => {
+    const socket = net.connect(typeof local === "string" ? { path: local } : { port: local, host: "127.0.0.1" }, () => {
       socket.destroy();
       resolve(true);
     });
@@ -115,11 +139,16 @@ export class SshTunnel {
 
   private constructor(
     private readonly child: ChildProcess,
-    readonly localPort: number,
+    /// The forward's end: a unix socket's path, or a loopback port on Windows.
+    readonly local: number | string,
     private readonly stderr: () => string,
+    private readonly dir: string | undefined,
   ) {
+    // ssh that never started (no program) has no exit to wait for.
+    child.once("error", () => this.removeDir());
     child.once("exit", (code, signal) => {
       this.closed = true;
+      this.removeDir();
       const why = this.stderr() || (signal !== null ? `ssh was stopped by ${signal}` : `ssh exited with ${code}`);
       for (const listener of this.onExit.splice(0)) {
         listener(why);
@@ -131,8 +160,9 @@ export class SshTunnel {
   /// said when it exits first, the time runs out, or `signal` aborts: ssh is
   /// then stopped, so nothing is left running behind a failed connect.
   static async open(options: TunnelOptions): Promise<SshTunnel> {
-    const localPort = await freePort();
-    const child = spawn(options.ssh ?? "ssh", sshArgs(options.destination, localPort, options.host, options.port), {
+    const dir = socketDir();
+    const local = dir !== undefined ? path.join(dir, "s") : await freePort();
+    const child = spawn(options.ssh ?? "ssh", sshArgs(options.destination, local, options.host, options.port), {
       stdio: ["ignore", "ignore", "pipe"],
       windowsHide: true,
     });
@@ -151,7 +181,7 @@ export class SshTunnel {
         .filter((l, i, all) => l.trim() !== "" && l !== all[i - 1])
         .slice(-3)
         .join(" ");
-    const tunnel = new SshTunnel(child, localPort, said);
+    const tunnel = new SshTunnel(child, local, said, dir);
     const timeoutMs = options.timeoutMs ?? TUNNEL_TIMEOUT_MS;
     const started = Date.now();
     let failure: string | undefined;
@@ -177,11 +207,21 @@ export class SshTunnel {
         tunnel.close();
         throw new Error(`the SSH tunnel through ${options.destination} did not open in ${timeoutMs / 1000} s`);
       }
-      if (child.exitCode === null && (await accepts(localPort))) {
+      if (child.exitCode === null && (await accepts(local))) {
         return tunnel;
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
+  }
+
+  /// What a connection dials for the forward's end.
+  get endpoint(): { path: string } | { host: string; port: number } {
+    return typeof this.local === "string" ? { path: this.local } : { host: "127.0.0.1", port: this.local };
+  }
+
+  /// The forward's end as a message names it.
+  get where(): string {
+    return typeof this.local === "string" ? this.local : `127.0.0.1:${this.local}`;
   }
 
   get isOpen(): boolean {
@@ -207,10 +247,17 @@ export class SshTunnel {
     }
   }
 
+  private removeDir(): void {
+    if (this.dir !== undefined) {
+      fs.rmSync(this.dir, { recursive: true, force: true });
+    }
+  }
+
   /// Stop ssh, which closes the forward.
   close(): void {
     if (!this.closed && this.child.exitCode === null) {
       this.child.kill();
     }
+    this.removeDir();
   }
 }

@@ -2349,7 +2349,7 @@ A value is q text, so a string is `-p name '"text"'`. `--process` is
 Processes** writes it, which also names the processes `/ @process` cells ask
 for. A password is never an argument: it is read from `QLINT_Q_PASSWORD`
 for `--process` only, or `QLINT_Q_PASSWORD_<LABEL>` for a listed process (its label in capitals,
-anything but a letter or digit as `_`), with `--user` for `host:port`. A
+anything but a letter or digit as `_`; two processes with users whose labels give one name, such as `rdb-1` and `rdb_1`, are refused), with `--user` for `host:port`. A
 listed process tagged `prod`, `prd` or `production` is refused unless
 `--allow-production` is given. `--row-limit`, `--rows-from` and
 `--console-size` stand in for the settings. It exits 0 when every cell ran,
@@ -2834,7 +2834,7 @@ reaches the language server.
 | Setting | Default | What it does | q-pro |
 | --- | --- | --- | --- |
 | `q-lint.terminal.qBinary` | `"q"` | The q binary a terminal starts: a name on `PATH` or a path, where a leading `~` is your home directory. It is quoted for the terminal's shell (POSIX, PowerShell or cmd), so it names one program, not a command with arguments. cmd has no quoting for `"` or `%`, so a line with either - in the binary, the file or an env file's value - is refused there. | `q-terminal.cfg.qBinary` |
-| `q-lint.terminal.envPath` | `""` | A file of `NAME=value` lines set for q, such as `QHOME` and `QLIC`. They go on the command line that starts q (`NAME=value q`, `$env:NAME=` in PowerShell, `set` in cmd), so they win over what your shell's startup files set, and show there. Relative to the workspace folder; a leading `~` is your home directory. It is read, not run as a shell script as q-pro's is: `#` lines are comments, `export ` is allowed, quotes around a value are dropped, and nothing is expanded: `$HOME` stays `$HOME`. | `q-terminal.cfg.envPath` |
+| `q-lint.terminal.envPath` | `""` | A file of `NAME=value` lines set for q, such as `QHOME` and `QLIC`. They are set on the command line that starts q (`NAME=value q`, `$env:NAME=` in PowerShell, `set` in cmd), so they win over what your shell's startup files set: `QHOME`, `QLIC` and `QINIT` by value, any other from a copy of its own in the terminal's environment, so a licence or token never shows there or in your shell's history. Relative to the workspace folder; a leading `~` is your home directory. It is read, not run as a shell script as q-pro's is: `#` lines are comments, `export ` is allowed, quotes around a value are dropped, and nothing is expanded: `$HOME` stays `$HOME`. | `q-terminal.cfg.envPath` |
 | `q-lint.terminal.runWithArguments.enable` | `true` | **Run File with Arguments...**: run the file in its q terminal with a saved or new set of `.z.x` words and console input. The sets are kept per workspace, never in settings. Off, the command is hidden and refuses. | - |
 
 ### q environment settings

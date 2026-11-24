@@ -15,6 +15,7 @@ import { commands, window, workspace, type ExtensionContext } from "vscode";
 import { launchable } from "./batch";
 import { LANGUAGE_COMMANDS, languageOff, languageOn } from "./languagefeatures";
 import { plainMessage } from "./history";
+import { assertWritable, linkProblem } from "./workspacewrite";
 
 export const BASELINE_FILE = "qlinter-baseline.json";
 
@@ -65,17 +66,33 @@ export function governingConfiguration(stdout: string): string | undefined {
   return m === null || /^none\b/.test(m[1].trim()) ? undefined : m[1].trim();
 }
 
-function runQlinter(command: string, args: string[], cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {
+/// Run qlinter; resolves with its output and exit code, or - for a run a
+/// signal or the timeout stopped, which has no exit code - with `stopped`,
+/// what is said of it: 1 would read as "findings" (#1877). Rejects when it
+/// cannot be started.
+export function runQlinter(
+  command: string,
+  args: string[],
+  cwd: string,
+  timeout = 300_000,
+): Promise<{ code: number | null; stopped?: string; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     // A .cmd wrapper through a shell, as Node starts one (#1610).
     const run = launchable(command, args);
-    execFile(run.command, run.args, { cwd, timeout: 300_000, maxBuffer: 64 * 1024 * 1024, windowsHide: true, shell: run.shell }, (error, stdout, stderr) => {
-      const failed = error as (Error & { code?: unknown }) | null;
+    execFile(run.command, run.args, { cwd, timeout, maxBuffer: 64 * 1024 * 1024, windowsHide: true, shell: run.shell }, (error, stdout, stderr) => {
+      const failed = error as (Error & { code?: unknown; killed?: boolean; signal?: string | null }) | null;
       if (failed && typeof failed.code === "string") {
         reject(new Error(`${command} could not be run: ${failed.message}`));
         return;
       }
-      resolve({ code: failed ? (typeof failed.code === "number" ? failed.code : 1) : 0, stdout: String(stdout), stderr: String(stderr) });
+      const out = { stdout: String(stdout), stderr: String(stderr) };
+      if (failed && typeof failed.code !== "number") {
+        // `killed`: by the timeout here, not by another's signal.
+        const stopped = failed.killed === true ? `did not finish in ${timeout / 1000} s` : `was stopped${failed.signal ? ` (${failed.signal})` : ""} before it finished`;
+        resolve({ code: null, stopped, ...out });
+        return;
+      }
+      resolve({ code: failed ? (failed.code as number) : 0, ...out });
     });
   });
 }
@@ -118,9 +135,21 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
         if (ran === undefined) {
           return undefined;
         }
+        // Stopped, what it wrote may be cut short: said, and not offered.
+        if (ran.code === null) {
+          const why = ran.stderr.trim() === "" ? "" : `: ${ran.stderr.trim().slice(0, 500)}`;
+          void window.showWarningMessage(plainMessage(`q-lint: qlinter ${ran.stopped ?? "was stopped before it finished"}; no baseline was written${why}`));
+          return undefined;
+        }
         const count = writtenCount(ran.stderr);
         if (count === undefined || !existsSync(draft)) {
           void window.showWarningMessage(plainMessage(`q-lint: qlinter wrote no baseline: ${ran.stderr.trim() || `exit ${ran.code}`}`));
+          return undefined;
+        }
+        // A link the repository ships would take the write elsewhere (#1830).
+        const linked = linkProblem(dir, target);
+        if (linked !== undefined) {
+          void window.showErrorMessage(plainMessage(`q-lint: ${linked}; no baseline was written.`));
           return undefined;
         }
         const exists = existsSync(target);
@@ -142,6 +171,7 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
         // relative to the scratch directory, through `..` (#1191, #1275).
         const text = absolutePaths(readFileSync(draft, "utf8"), canonicalDir(scratch));
         try {
+          assertWritable(dir, target);
           writeFileSync(target, rebased(text, dir, canonicalDir(dir)));
         } catch (error) {
           void window.showErrorMessage(plainMessage(`q-lint: could not write ${target}: ${error instanceof Error ? error.message : String(error)}`));
@@ -236,6 +266,8 @@ async function offerConfiguration(dir: string, target: string, command: string, 
   );
   if (answer === add) {
     try {
+      // The configuration may govern from above the folder: not a link either.
+      assertWritable(dirname(config), config);
       writeFileSync(config, after);
     } catch (error) {
       void window.showErrorMessage(plainMessage(`q-lint: could not write ${config}: ${error instanceof Error ? error.message : String(error)}`));

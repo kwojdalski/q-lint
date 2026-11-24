@@ -4,7 +4,9 @@
 // graph (`q-lint/testsReaching`); those tests - and only those - are run by
 // the Test Explorer, as its Run profile runs them: on the active connection,
 // asking which process when there is none, and confirming a production one.
-// One run at a time: a save while one runs waits for it.
+// One run at a time: a save while one runs waits for it. A save the server
+// did not answer for, or whose run failed, is not forgotten: the next save
+// of that file is compared against the text that one was (#1875).
 //
 // Off unless asked for (q-lint.testing.runAffectedOnSave.enable), since it
 // sends code to a process at every save; off, nothing listens and nothing is
@@ -13,6 +15,7 @@
 // runs nothing (#1228).
 import { window, workspace, type Disposable, type ExtensionContext, type TextDocument } from "vscode";
 import type { Server } from "./editorfeatures";
+import { iconsEscaped } from "./history";
 import { languageOn } from "./languagefeatures";
 import { functionTestId } from "./testing";
 
@@ -51,15 +54,26 @@ export function registerAffectedOnSave(
   let listening: { listeners: Disposable[]; seen: Map<string, string | Promise<string>> } | undefined;
   let running: Promise<void> = Promise.resolve();
   let last: string[] = [];
-  const affected = async (document: TextDocument, previous: string): Promise<void> => {
+  /// Whether the server was asked and answered; throws what the run does.
+  const affected = async (document: TextDocument, previous: string): Promise<boolean> => {
     // Queued behind another run: turned off meanwhile, nothing is sent (#1086).
     // A folder that is not trusted runs nothing at a save, whatever its
     // settings say (#1228).
     const client = server();
     if (!on() || client === undefined || workspace.isTrusted === false) {
-      return;
+      return false;
     }
-    const answer = await client.sendRequest(TESTS_REACHING, { textDocument: { uri: document.uri.toString() }, previous }).catch(() => undefined);
+    let answer: unknown;
+    try {
+      answer = await client.sendRequest(TESTS_REACHING, { textDocument: { uri: document.uri.toString() }, previous });
+    } catch (error) {
+      // Said, not swallowed: no test ran for this save (#1875).
+      window.setStatusBarMessage(
+        iconsEscaped(`q-lint: could not find the tests this save affects (${error instanceof Error ? error.message : String(error)}); the next save looks again`),
+        5000,
+      );
+      return false;
+    }
     await tests.discover();
     const ids = affectedIds(answer, tests.items());
     last = ids;
@@ -67,10 +81,14 @@ export function registerAffectedOnSave(
       window.setStatusBarMessage(`q-lint: running ${ids.length} affected test(s)`, 5000);
       await tests.run(ids);
     }
+    return true;
   };
   const sync = (): void => {
     if (on() && listening === undefined) {
       const seen = new Map<string, string | Promise<string>>();
+      // The text a save that ran nothing was compared against, by file: its
+      // changes are still to be tested, so the next save's are added to them.
+      const owed = new Map<string, string>();
       // A document already edited when listening starts compares against
       // its file on disk: its buffer holds edits no save has run tests for.
       const baseline = (d: TextDocument): string | Promise<string> =>
@@ -93,7 +111,15 @@ export function registerAffectedOnSave(
           const key = d.uri.toString();
           const previous = seen.get(key) ?? "";
           seen.set(key, d.getText());
-          running = running.then(async () => affected(d, await previous)).catch(() => undefined);
+          running = running
+            .then(async () => {
+              const since = owed.get(key) ?? (await previous);
+              owed.set(key, since);
+              if (await affected(d, since)) {
+                owed.delete(key);
+              }
+            })
+            .catch(() => undefined);
         }),
       ];
       listening = { listeners, seen };
