@@ -8,6 +8,7 @@
 // take a newline or a trailing comment as the end of a statement, so they are
 // not joined into one.
 import { qString } from "./qliteral";
+import { statements } from "./statements";
 
 export const GATEWAY_COMMANDS = {
   set: "q-lint.setGatewayServerTypes",
@@ -36,9 +37,10 @@ export function gatewayStatement(statements: string[], types: string[]): string 
 /// Whether `code` is already a gateway call: a query run again from the
 /// history was recorded as it was sent, and is not wrapped twice. TorQ's
 /// variants (`.gw.syncexecj`, `.gw.asyncexecjpt`) count, as the guard's
-/// GATEWAY_EXEC reads them (#1427).
+/// GATEWAY_EXEC reads them (#1427). Any of its statements may be the call:
+/// one under a comment, or after another statement, is one too (#1951).
 export function isGatewayCall(code: string): boolean {
-  return /^\s*\.gw\.(syncexec|asyncexec)[A-Za-z]*\b/.test(code);
+  return statements(code).some((s) => /^\s*\.gw\.(syncexec|asyncexec)[A-Za-z]*\b/.test(s));
 }
 
 /// The server types a file names for its queries: a line at column 0
