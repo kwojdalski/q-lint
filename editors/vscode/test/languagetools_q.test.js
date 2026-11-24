@@ -15,7 +15,7 @@ const path = require("node:path");
 const { QConnection } = require("../out/qclient.js");
 const { ERRORS, errorName } = require("../out/errorexplain.js");
 const { CALLED } = require("../out/deadcodeview.js");
-const { HAS_SQL, SQL_SCHEMA, readSchema, sqlQuery, sqlWrites } = require("../out/sql.js");
+const { HAS_SQL, LOAD_SQL, LEX_CLASS, LEX_MOVES, SQL_SCHEMA, readSchema, sqlQuery, sqlText, sqlWrites } = require("../out/sql.js");
 
 const Q = process.env.QLINT_TEST_Q;
 const skip = Q ? false : "QLINT_TEST_Q names no q binary";
@@ -105,4 +105,70 @@ test("the SQL tab's query runs on KDB-X's SQL engine, loading it where there is 
   assert.deepStrictEqual(sqlWrites(hidden), ["INSERT"]);
   await c.call(sqlQuery(hidden));
   assert.strictEqual(Number(await c.call("count t")), 4);
+});
+
+// #1955: the write check reads SQL as the engine's lexer does, not as SQL
+// has it. Its tables are KDB-X's own, an INSERT behind a `--` comment that
+// a form feed, a lone CR or a backslash ends is seen, and for generated
+// text every write word the lexer gives the parser is one the check gives.
+test("the SQL write check reads comments and quotes as KDB-X's lexer does", { skip }, async (t) => {
+  const c = await connect(t, "t:([] a:1 2 3; b:`x`y`z)\n");
+  try {
+    await c.call(LOAD_SQL);
+    await c.call(".s.P.w0");
+  } catch {
+    // PeachQ: no s.k_, and a lexer of DuckDB's.
+    return;
+  }
+  assert.strictEqual(await c.call('"0123456789abc" .s.P.w0'), LEX_CLASS);
+  assert.deepStrictEqual(await c.call(".s.P.ww"), LEX_MOVES);
+  const count = async () => Number(await c.call("count t"));
+  // q itself refuses ('char) a statement holding any other control character.
+  for (const end of ["\f", "\r", "\\"]) {
+    const sql = `select 1 /* ' */ -- x${end}; insert into t values (21,'a')`;
+    const before = await count();
+    await c.call(sqlQuery(sql));
+    assert.strictEqual(await count(), before + 1, `the comment ends at ${JSON.stringify(end)}`);
+    assert.deepStrictEqual(sqlWrites(sqlText(sql)), ["INSERT"], JSON.stringify(sql));
+  }
+  // A tab does not end the comment: nothing is written, and nothing asked.
+  const tabbed = "select 1 /* ' */ -- x\t; insert into t values (21,'a')";
+  const rows = await count();
+  await c.call(sqlQuery(tabbed));
+  assert.strictEqual(await count(), rows);
+  assert.deepStrictEqual(sqlWrites(sqlText(tabbed)), []);
+  // Generated text, as typed and as sent. `LEXERR`: the lexer refused it,
+  // so nothing of it runs.
+  const pieces = ["insert", "drop", "INSERT", "--", "-", "/*", "*/", "*", "/", "'", '"', "''", ".", "x", "x.-", "1", "e", "1e", "_", " ", " ", "\t", "\n", "\r", "\f", "\u0001", "\\", ";", "(", "é"];
+  let seed = 1955;
+  const next = (n) => (seed = (seed * 1103515245 + 12345) % 2147483648) % n;
+  const texts = [];
+  for (let i = 0; i < 1500; i++) {
+    const text = Array.from({ length: 1 + next(12) }, () => pieces[next(pieces.length)]).join("");
+    texts.push(text, sqlText(text));
+  }
+  const corpus = [...new Set(texts)].filter((x) => x !== "");
+  const words = "{@[{asc distinct w where (w:`$upper each (),/:.s.P.w x) in `INSERT`DROP};x;{enlist`LEXERR}]}";
+  let read = 0;
+  for (let i = 0; i < corpus.length; i += 50) {
+    const chunk = corpus.slice(i, i + 50);
+    const answer = await c.call(`${words} each (${chunk.map((x) => `"c"$(),0x${Buffer.from(x, "utf8").toString("hex")}`).join(";")};"")`);
+    chunk.forEach((text, k) => {
+      const lexed = [...answer[k]].map(String);
+      if (lexed.includes("LEXERR")) {
+        return;
+      }
+      read++;
+      const ours = sqlWrites(text).sort();
+      for (const w of lexed) {
+        assert.ok(ours.includes(w), `${JSON.stringify(text)}: the lexer gives ${w}, the check ${JSON.stringify(ours)}`);
+      }
+      // The two agree to the word where only one reading is possible: no
+      // line end for SQL's own to stop at, no `.-` the parser refuses.
+      if (!/[\n.]/.test(text)) {
+        assert.deepStrictEqual(ours, lexed, JSON.stringify(text));
+      }
+    });
+  }
+  assert.ok(read > 1000, `${read} texts read`);
 });

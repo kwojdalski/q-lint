@@ -703,6 +703,29 @@ test("SQL is sent to .s.e with its comments dropped, and a write is recognised",
   assert.strictEqual(readSchema(null).size, 0);
 });
 
+test("the SQL write check ends a -- comment where KDB-X's lexer does", () => {
+  // The quote in the block comment keeps sqlText from cutting the line, so
+  // the `--` is sent: KDB-X ends that comment at a form feed, a lone CR or
+  // a backslash and runs the INSERT (#1955, checked on KDB-X 5).
+  for (const end of ["\f", "\r", "\v", "\u0001", "\\"]) {
+    const sql = `select 1 /* ' */ -- x${end}; insert into t values (21,'a')`;
+    assert.deepStrictEqual(sqlWrites(sqlText(sql)), ["INSERT"], JSON.stringify(sql));
+    assert.deepStrictEqual(sqlWrites(`select 1 -- x${end}drop table t`), ["DROP"], JSON.stringify(end));
+  }
+  // A tab or a blank does not end it, and neither does a quote in it.
+  assert.deepStrictEqual(sqlWrites("select 1 -- x\t; insert into t values (21,'a') ' drop"), []);
+  // Quoted text is read as before: it runs across lines, a doubled quote in it.
+  assert.deepStrictEqual(sqlWrites("select 'a\n; drop table t ''' from t"), []);
+  assert.deepStrictEqual(sqlWrites("select 1 /* ' */ ; drop table t /* ' */"), ["DROP"]);
+  // Where SQL's own reading of the text shows a write and KDB-X's does not,
+  // it still counts: here KDB-X starts a string at the quote after the form feed.
+  assert.deepStrictEqual(sqlWrites("select 1 -- x\f' \n; insert into t values (1) --'"), ["INSERT"]);
+  // `.-` after a name is a token KDB-X refuses, not a comment that hides.
+  assert.deepStrictEqual(sqlWrites("select a.- x\f; insert into t values (1)"), ["INSERT"]);
+  // A control character is a blank to the lexer, before REPLACE too.
+  assert.deepStrictEqual(sqlWrites("select 1;\u0001replace into t values (1)"), ["REPLACE"]);
+});
+
 test("the SQL tab refuses when off and sends nothing; its completion goes with it", async () => {
   const { context, restore } = setUp();
   const providers = [];
