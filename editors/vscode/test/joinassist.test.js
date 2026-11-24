@@ -51,6 +51,16 @@ test("shared columns that are not plain names are written as q reads them back (
   assert.strictEqual(one.lj.expression, 't lj (`$"_x") xkey u');
 });
 
+test("wj writes its time and value columns as q reads them back, a name with a space or a leading _ too (#1845)", () => {
+  const l = shape("t", ["_s", "trade time", "px"], "stf");
+  const wj = (r) => suggestJoins(l, r).find((x) => x.join === "wj").expression;
+  assert.strictEqual(
+    wj(shape("u", ["_s", "trade time", "bid x"], "stf")),
+    '((cols t),(`$"bid x_max";`$"bid x_min")) xcol wj[-1000 0+\\:t[`$"trade time"];(`$"_s";`$"trade time");t;((`$"_s";`$"trade time") xasc u;(max;`$"bid x");(min;`$"bid x"))]',
+  );
+  assert.strictEqual(wj(shape("u", ["_s", "trade time", "name"], "sts")), 'wj[-1000 0+\\:t[`$"trade time"];(`$"_s";`$"trade time");t;((`$"_s";`$"trade time") xasc u;(count;`$"trade time"))]');
+});
+
 test("a shared time column gives aj and wj, sorted unless the right table already is", () => {
   const s = suggestJoins(trade, quote);
   const by = Object.fromEntries(s.map((x) => [x.join, x]));
