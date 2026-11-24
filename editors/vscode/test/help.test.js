@@ -88,6 +88,12 @@ test("glyphs are cut as q cuts them: an operator, then its iterator", () => {
   assert.strictEqual(at("r:raze x,/:y", 9), "/:");
   assert.strictEqual(at("x<>y", 1), "<>");
   assert.strictEqual(at("x<=y", 2), "<=");
+  // 0:, 1: and 2: are one operator each, never Assign (#1750).
+  assert.strictEqual(at("x 0:y", 3), "0:");
+  assert.strictEqual(at("x 1: y", 3), "1:");
+  assert.strictEqual(at("`:f 2:(`f;1)", 5), "2:");
+  assert.strictEqual(at("a10:3", 3), ":");
+  assert.strictEqual(at("x:10:y", 4), ":");
   assert.strictEqual(at("deltas-':x", 7), "':");
   assert.strictEqual(at("a::1", 1), "::");
   // Every one is in the catalogue.
