@@ -29,7 +29,10 @@
 //   sets `.Q.x`), KDB-X's `use` (which runs a module) and `.h.ht` (which
 //   writes HTML files) (#1775), and `0:` or `1:` to a
 //   file handle (`` `:f 0: ``, `hsym[`f] 0:`, `(hsym `f) 1:`,
-//   `` (`$":f") 0: ``, `` 0:[`:f;x] ``, `` .[0:;(`:f;x)] ``), and `2:`,
+//   `` (`$":f") 0: ``, `` 0:[`:f;x] ``, `` .[0:;(`:f;x)] ``) - or to
+//   anything else but a parse or prepare format (`"," 0: t`,
+//   `("SJ";",") 0: f`): `1:` takes a plain symbol for a file, and a name
+//   may hold a handle (#2032) - and `2:`,
 //   each also by its `.q.` name (`.q.set`), by its symbol
 //   (`` `.q.set . (`a;1) ``) and picked from `.q` by any index
 //   (`` .q[`set] ``, `` (get`.q)`set ``, #1765) - as are `value`,
@@ -286,6 +289,43 @@ function fileIn(t: Token[], from: number, to: number): boolean {
     }
   }
   return false;
+}
+
+/// The left argument of the `0:` or `1:` at `t[at]`, `[start, end)`: a
+/// string, a symbol, a name, a number or what is in the parentheses before
+/// it, `[at, at)` for an index, `x[0] 0: ..`, which cannot be read; undefined
+/// when nothing is left of it, `0:[..]`, `.[0:;..]`.
+function leftArgument(t: Token[], at: number): [number, number] | undefined {
+  const k = t[at - 1];
+  if (k === undefined || k.kind === "op" || k.kind === "open" || k.kind === "space") {
+    return undefined;
+  }
+  if (k.kind !== "close") {
+    return [at - 1, at];
+  }
+  if (k.text !== ")") {
+    return [at, at];
+  }
+  let open = at - 1;
+  for (let depth = 0; open >= 0; open--) {
+    if (t[open].kind === "close") depth++;
+    else if (t[open].kind === "open" && --depth === 0) break;
+  }
+  return open < 0 ? [at, at] : [open, at];
+}
+
+/// Whether `t[from]` to `t[to]` is a parse or prepare format, which `0:` and
+/// `1:` read with rather than write to: a string, `","`, `4#"i"`, or a list
+/// whose first item is one, `("SJ";enlist ",")` - a string and no symbol or
+/// name but `enlist`. Anything else may be a file's handle (#2032).
+function formatIn(t: Token[], from: number, to: number): boolean {
+  while (t[from]?.text === "(" && t[to - 1]?.text === ")" && items(t, from).length === 1 && items(t, from)[0][1] === to - 1) {
+    from++;
+    to--;
+  }
+  const [s, e] = t[from]?.text === "(" && t[from].kind === "open" && items(t, from).length > 1 && items(t, from).at(-1)?.[1] === to - 1 ? items(t, from)[0] : [from, to];
+  const part = t.slice(s, e);
+  return part.some((k) => k.kind === "str") && part.every((k) => k.kind !== "sym" && (k.kind !== "name" || k.text === "enlist"));
 }
 
 /// Whether `t[i]` starts a handle cast from a string, `` `$":f" ``.
@@ -1100,6 +1140,16 @@ function readStatement(statement: string, found: Set<string>): void {
         const handle = first < 0 ? undefined : t[first]?.kind === "sym" ? t[first].text : t[first]?.text === "hsym" && t[first + 1]?.kind === "sym" ? `\`:${t[first + 1].text.slice(1)}` : undefined;
         if (handle !== undefined && isFileHandle(handle)) {
           found.add(`writes the file ${handle} with ${k.text}:`);
+        } else {
+          // Any other handle writes too: `1:` takes a plain symbol for a
+          // file name, `` `f 1: 0x00 `` (#2032), and a name may hold one.
+          // Only a parse or prepare format - a string, `("SJ";",")` - reads.
+          const left = leftArgument(t, i);
+          const arg = left !== undefined ? left : first < 0 ? undefined : items(t, first - 1)[0];
+          if (arg === undefined || !formatIn(t, arg[0], arg[1])) {
+            const sym = arg !== undefined && arg[1] - arg[0] === 1 && t[arg[0]].kind === "sym" ? t[arg[0]].text : undefined;
+            found.add(sym !== undefined && sym.length > 1 ? `writes the file ${sym} with ${k.text}:` : `writes a file with ${k.text}:`);
+          }
         }
       }
     }

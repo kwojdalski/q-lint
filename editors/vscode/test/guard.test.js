@@ -1317,3 +1317,26 @@ test("xkey or xdesc applied in parentheses, with . or an adverb, or composed key
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("0: and 1: to any handle but a parse or prepare format write a file: 1: takes a plain symbol (#2032)", () => {
+  const cases = {
+    "`a 1: 0x00": ["writes the file `a with 1:"],
+    "1:[`b1;0x00]": ["writes the file `b1 with 1:"],
+    ".[1:;(`b2;0x00)]": ["writes the file `b2 with 1:"],
+    "(`b6) 1: 0x01": ["writes a file with 1:"],
+    '`b0 0: enlist "x"': ["writes the file `b0 with 0:"],
+    // A name, an index or an argument not written may hold a handle.
+    "f 1: 0x00": ["writes a file with 1:"],
+    "x[0] 0: y": ["writes a file with 0:"],
+    "0:/[`a;y]": ["writes a file with 0:"],
+    ".[1:;args]": ["writes a file with 1:"],
+    // A format reads: a string, or a list headed by one.
+    '"," 0: t': [],
+    '"S=;" 0: "a=1;b=2"': [],
+    '(1#"x";1) 1: `:a': [],
+    '(enlist ",") 0: t': [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
