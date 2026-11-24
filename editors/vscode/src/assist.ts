@@ -348,14 +348,20 @@ export function qsqlPrompt(description: string, tables: TableSummary[], process:
 /// The q code in a model's reply: its first fenced block, or all of it
 /// when it has none. A block closes only at a fence starting a line, so
 /// backticks in the code (```a, a symbol list) stay in it; a block on one
-/// line - ```q select from t``` - loses its fences too (#1627).
+/// line - ```q select from t``` - loses its fences too (#1627). A fence is
+/// ``` or ~~~; its closing line may go on after a space (``` done), and a
+/// block the reply was cut before closing runs to the reply's end (#1913).
 export function extractCode(reply: string): string {
-  const block = /(`{3,})[^\n`]*\n([\s\S]*?)^[ \t]*\1[ \t]*$/m.exec(reply);
+  const block = /(`{3,}|~{3,})[^\n`]*\n([\s\S]*?)^[ \t]*\1(?:[ \t][^\n]*)?$/m.exec(reply);
   if (block !== null) {
     return block[2].trim();
   }
   const line = /(`{3,})(?:(?:q|k|kdb|qsql)(?=[ \t]))?[ \t]*([^\n]*?)[ \t]*\1(?!`)/.exec(reply);
-  return (line !== null && line[2] !== "" ? line[2] : reply).trim();
+  if (line !== null && line[2] !== "") {
+    return line[2].trim();
+  }
+  const open = /^[ \t]*(?:`{3,}|~{3,})[^\n`]*\n([\s\S]*)$/m.exec(reply);
+  return (open !== null ? open[1] : reply).trim();
 }
 
 /// The draft a qSQL preview shows: a comment saying where it came from,

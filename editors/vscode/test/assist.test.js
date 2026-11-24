@@ -121,6 +121,18 @@ test("the qSQL prompt names the tables, and the draft round-trips", () => {
   assert.strictEqual(extractCode("```select from trade```"), "select from trade");
   assert.strictEqual(extractCode("```q\nselect from t where sym in ```a\n```"), "select from t where sym in ```a");
   assert.strictEqual(extractCode("```q\nselect from t where sym in ```a`b\n```\nThat filters."), "select from t where sym in ```a`b");
+  // #1913: a reply cut before its closing fence, a closing fence with text
+  // after it on its line, and a ~~~ fence all lose their fence lines.
+  assert.strictEqual(extractCode("```q\nselect from t"), "select from t");
+  assert.strictEqual(extractCode("Here:\n```q\nselect from t\n  where a>1"), "select from t\n  where a>1");
+  assert.strictEqual(extractCode("```q\nselect from t\n``` done"), "select from t");
+  assert.strictEqual(extractCode("~~~q\nselect from t\n~~~"), "select from t");
+  assert.strictEqual(extractCode("~~~\nselect from t where a~b\n~~~ done"), "select from t where a~b");
+  assert.strictEqual(extractCode("~~~q\nselect from t"), "select from t");
+  assert.strictEqual(extractCode("```q\r\nselect from t\r\n```\r\n"), "select from t");
+  // A line of symbols is still code, not a fence.
+  assert.strictEqual(extractCode("```q\nselect from t where sym in\n ```a`b\n```"), "select from t where sym in\n ```a`b");
+  assert.strictEqual(extractCode("select from t where sym in\n ```a`b"), "select from t where sym in\n ```a`b");
   const doc = draftDocument("last px\nby sym", "Fake", "select last px by sym from trade");
   assert.match(doc, /^\/ Drafted by Fake from: last px by sym\n\/ Review it: nothing has run\./);
   assert.strictEqual(draftCode(doc), "select last px by sym from trade");
