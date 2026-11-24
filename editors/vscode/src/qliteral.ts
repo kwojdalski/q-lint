@@ -96,7 +96,9 @@ export function symbolLiteral(name: string): string {
 /// `code` with what q writes but will not read back rewritten, outside
 /// strings: each monadic `,` - at the start, or after `(`, `;`, `[`, `{`,
 /// `!` or another `,` - as `enlist ` (q refuses `,"x"`, and q-sql splits a
-/// clause at a `,` after `(`: `where c~\:(,"z")`), and a run of symbols
+/// clause at a `,` after `(`: `where c~\:(,"z")`), each monadic `+`
+/// before a `(` or a `` ` `` - a table, as `-3!` writes it - as `flip `
+/// (q refuses `+(,`a)!,1`: #1501), and a run of symbols
 /// whose first starts with `_` (`` `_y ``, `` `_y`a ``) through `` `$ ``.
 /// `-3!` writes both, so a general list's item needs it, and a grid cell
 /// edit's value too.
@@ -119,6 +121,10 @@ export function readable(code: string): string {
       inString = true;
     } else if (ch === "," && (last === "" || "(;[{!,".includes(last))) {
       out += "enlist ";
+      last = "";
+      continue;
+    } else if (ch === "+" && (last === "" || "(;[!,".includes(last)) && "(`".includes(code[i + 1] ?? " ")) {
+      out += "flip ";
       last = "";
       continue;
     } else if (ch === "`" && code[i + 1] === "_" && !/[A-Za-z0-9_.`]/.test(code[i - 1] ?? "")) {

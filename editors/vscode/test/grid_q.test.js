@@ -202,6 +202,8 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
       '([] s:enlist `$"_y"; w:enlist enlist "x"; l:enlist enlist `$"_q")',
       // Keyed by a symbol starting with _, so a name list is written too.
       '([k:`$("_a";"b")] v:(enlist "x";"yz"))',
+      // Tables in a general column, which -3! writes with k's monadic + (#1501).
+      '([] t:(([]a:`p`r);([k:1 2]v:3 4);enlist ([]a:1 2);flip(`$"a b";`c)!(1 2;3 4);1))',
     ];
     for (const code of tables) {
       const grid = (await connection.queryGrid(statements(code), SIZE, 100)).grid;
