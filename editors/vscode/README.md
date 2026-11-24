@@ -705,11 +705,14 @@ daily at given times (`09:00, 17:30`) or every N minutes (`+15`), its
 result written as CSV, Parquet or Excel to the file you choose - replaced
 each run, or written anew with the run's time in its name, as you choose
 then. Each runs while VS Code is open, on a connection of its own, so the
-connected process and your queries are left alone; the grid's row limit
-(`q-lint.query.gridLimit`) applies. Only a read-only query is run - one in
-which the read-only guard's reading finds no write, on any process - and
-one with no `{{name}}` placeholder, since nobody is there to fill it in; a
-run that cannot be made says why. **Manage Scheduled Exports...** lists
+connected process and your queries are left alone. The grid's row limit
+(`q-lint.query.gridLimit`) does not apply: every row of the result is
+fetched into VS Code and written, however many there are, so a query over
+a large table moves all of it - filter or cap it in the query itself
+(`select from trade where date=.z.d`, `1000#`). Only a read-only query
+is run - one in which the read-only guard's reading finds no write, on any
+process - and one with no `{{name}}` placeholder, since nobody is there to
+fill it in; a run that cannot be made says why. **Manage Scheduled Exports...** lists
 them with how each last ran, and runs one now or removes it. They are kept
 per workspace, as saved queries are.
 
@@ -1224,8 +1227,9 @@ kept for when it is on again.
   process, as **Choose Connection for File** would bind it: what you run
   from it goes there, whatever is connected, with the read-only guard and
   the production confirmation as for any query. Nothing is sent until you
-  run something. The binding lasts as long as the editor: saved as a
-  file, it is a new file, which **Choose Connection for File** binds.
+  run something. Saved as a file, the file keeps the binding, so its
+  queries still go to that process; **Clear Connection for File** removes
+  it.
   `q-lint.processes.newQuery.enable` off hides the command.
 - **Reveal Process** selects the connected process in the **Processes**
   view, and shows the view. **Open q-lint Settings** opens Settings at
@@ -1535,8 +1539,10 @@ its tooltip, and a cell's tooltip is q's own text:
 A number format can end in a digit, its decimals: `ret_PCT1`, `pnl_CCY0`.
 It applies to a numeric column only, and a null or an infinity is shown as
 q writes it. A colour is a name or `#` and three, four, six or eight hex
-digits; anything else colours nothing. Copy and the exports write the
-cells as q sent them.
+digits; anything else colours nothing. Copied or exported as CSV,
+Markdown or HTML, a formatted column is written as the grid shows it
+(`1.23%`); as Excel, JSON, Parquet or q, as the values q sent. With column
+formats off, every one writes q's values.
 
 ```q
 select sym, ret_PCT:ret, spread_BPS:spread, pnl_CCY:pnl, sym_BG:?[pnl>0;`green;`red] from book
@@ -1571,7 +1577,8 @@ Hidden Result Columns**, shows them; **Reset Result Column Layout** puts
 everything back. The layout is kept by column name with the result's tab,
 the next run of the same query in the window, and the saved query the
 result came from: run from **Saved Queries**, it opens as it was left.
-Hidden columns are still in Copy and the exports.
+Copy and the exports leave hidden columns out, and write the others in the
+order shown.
 
 **Depth chart.** An order book is drawn as its depth: the cumulative size at
 each price either side of the mid, the bid side green and stepping down to
@@ -1944,9 +1951,12 @@ Two more tools read and lint without running anything. **List q Tables**
 (`q-lint_listTables`, `#qTables`) answers the connected process's tables -
 each by the name a query uses, with its kind, rows and first 50 columns -
 or, given `{"table"}`, that table's schema from `meta`: each column's type,
-attribute and foreign key, its keys and rows. It reads as the Process
-Explorer reads, with the same lambdas and limits, and only the connected
-process: to read another, an agent connects with Run q Query's `process`.
+attribute and foreign key, its keys and rows. Given `{"table"}` while a
+process is connected, it asks you to confirm the read first (**Read a
+table's schema on** the process); declined, nothing is read, and if the
+connection changed after you were asked, it reads nothing and tells the
+agent to ask again. It reads as the Process Explorer reads, with the same
+lambdas and limits, and only the connected process: to read another, an agent connects with Run q Query's `process`.
 **Lint q Code** (`q-lint_lint`, `#qLint`) runs the qlinter the language
 server runs on the code it is given, as the file `{"file"}` names (for its
 configuration) or `snippet.q`, and answers its findings. Each has its own
@@ -2156,7 +2166,8 @@ time, with a read-only lambda, at most 500 hits each; one that cannot be
 reached is shown as failed. `q-lint.processes.findInProcesses.enable` off
 removes the view and the command.
 
-**Inline results.** After **Run Line** or **Run Selection**, the
+**Inline results.** After **Query Current Line** or **Query Current
+Selection** (Ctrl+Q, Ctrl+R; not a block, a file or the **Run** lens), the
 result's short form - q's console text on one line, cut at 80 characters, or
 the error - shows after the end of the line it came from (the selection's
 last line), in the code lens colour, with the whole result and its time on
@@ -2334,8 +2345,8 @@ node out/qnbrun.js report.qnb --process localhost:5001 \
 ```
 
 A value is q text, so a string is `-p name '"text"'`. `--process` is
-`host:port`, or a label in `--processes FILE`, a list as **Export Process
-List** writes it, which also names the processes `/ @process` cells ask
+`host:port`, or a label in `--processes FILE`, a list as **Export
+Processes** writes it, which also names the processes `/ @process` cells ask
 for. A password is never an argument: it is read from `QLINT_Q_PASSWORD`
 for `--process` only, or `QLINT_Q_PASSWORD_<LABEL>` for a listed process (its label in capitals,
 anything but a letter or digit as `_`), with `--user` for `host:port`. A
@@ -2506,9 +2517,13 @@ lines, `#` comments, quotes dropped, nothing expanded - each time one of
 them starts. Its values may be secrets, so they go in the environment and
 never on a command line, and no message or log ever shows one: a line that
 is not `NAME=value` is named by its number, and the variables by their
-names. In a terminal, q is started by your shell, so a variable your
-shell's startup files export wins over the `.env` file's; put that one in
-`q-lint.terminal.envPath` instead, whose variables go on the command line.
+names. In a terminal, q is started by your shell, after its startup files
+run. `QHOME`, `QLIC` and `QINIT` from the `.env` file still win over theirs:
+the command line sets each from a copy of its own in the environment
+(`QHOME="$QLINT_DOTENV_QHOME" q ...`), so the value itself is not shown.
+Any other variable your shell's startup files export wins over the `.env`
+file's; put that one in `q-lint.terminal.envPath` instead, whose variables
+go on the command line and win over both.
 A launched process gets the `.env` file's variables under its definition's
 own `env`. A missing file is no file.
 
@@ -2903,7 +2918,7 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | `q-lint.processes.fileBrowser.enable` | `true` | The **Process Files** view: the q host's files through the process, read-only and capped. Off, the view is gone and its commands refuse. | - |
 | `q-lint.processes.functionDiff.enable` | `true` | **Diff Function** and **Diff Namespace Across Processes**. Off, both are hidden and refuse. | - |
 | `q-lint.processes.findInProcesses.enable` | `true` | **Find in Processes...** and its view. Off, the view is gone and the command hidden and refusing. | - |
-| `q-lint.query.inlineResults.enable` | `true` | The result's short form at the end of a line after **Run Line** or **Run Selection**. Off, none is drawn and those shown are cleared. | - |
+| `q-lint.query.inlineResults.enable` | `true` | The result's short form at the end of a line after **Query Current Line** or **Query Current Selection**. Off, none is drawn and those shown are cleared. | - |
 | `q-lint.query.benchmark.enable` | `true` | **Benchmark Expression**, run only on the command. Off, it is hidden and refuses, and the panel closes. | - |
 | `q-lint.query.joinAssistant.enable` | `true` | **Join Assistant...**. Off, it is hidden and refuses. | - |
 | `q-lint.query.ajExplainer.enable` | `true` | **Explain aj Match...**. Off, it is hidden and refuses. | - |

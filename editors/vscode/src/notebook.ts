@@ -770,6 +770,22 @@ export interface RenderedChart {
 /// How many outputs' charts are remembered: the latest drawn.
 const CHARTS_KEPT = 100;
 
+/// `drawn` after the chart renderer's `message`: a drawing replaces the
+/// output's last, the oldest going past `kept`; a failed one leaves the
+/// output out, rather than reporting what it last drew (#1795).
+export function chartReported(drawn: Map<string, RenderedChart>, message: { type?: string; id?: string; chart?: Omit<RenderedChart, "id"> }, kept = CHARTS_KEPT): void {
+  if (typeof message.id !== "string") return;
+  if (message.type === "failed") {
+    drawn.delete(message.id);
+  } else if (message.type === "rendered" && message.chart !== undefined) {
+    drawn.delete(message.id);
+    drawn.set(message.id, { id: message.id, ...message.chart });
+    if (drawn.size > kept) {
+      drawn.delete(drawn.keys().next().value as string);
+    }
+  }
+}
+
 /// A live value the Markdown renderer showed: for tests, through the API
 /// `activate` returns.
 export interface RenderedLiveValue {
@@ -818,15 +834,7 @@ export function registerNotebooks(
       }
     }),
     commands.registerCommand(RESULTS.setRowLimit, (limit?: number | "all", from?: string) => setRowLimit(limit, from)),
-    messaging.onDidReceiveMessage(({ message }: { message: { type?: string; id?: string; chart?: Omit<RenderedChart, "id"> } }) => {
-      if (message.type === "rendered" && typeof message.id === "string" && message.chart !== undefined) {
-        drawn.delete(message.id);
-        drawn.set(message.id, { id: message.id, ...message.chart });
-        if (drawn.size > CHARTS_KEPT) {
-          drawn.delete(drawn.keys().next().value as string);
-        }
-      }
-    }),
+    messaging.onDidReceiveMessage(({ message }: { message: { type?: string; id?: string; chart?: Omit<RenderedChart, "id"> } }) => chartReported(drawn, message)),
   );
   return {
     charts: () => [...drawn.values()],

@@ -140,6 +140,7 @@ export const TILE_ROWS = 200;
 /// text, or why it could not run.
 export type TileContent =
   | { kind: "table"; columns: string[]; rows: string[][]; total: number }
-  | { kind: "chart"; svg: string; total: number }
+  /// `drawn`: the rows the chart draws, those fetched of the `total`.
+  | { kind: "chart"; svg: string; total: number; drawn: number }
   | { kind: "text"; text: string }
   | { kind: "error"; text: string };

@@ -17,52 +17,67 @@
 //   is not one of its locals inside a lambda, where q makes them global.
 //   A column named in `select a:x from t` or `([] a:1 2)` is not an
 //   assignment, but one inside a column's expression (`([] c:g:1)`) is;
-//   `(a;b):x` assigns each name, by the same rules;
+//   `(a;b):x` assigns each name, by the same rules, as do `(a):x` and
+//   `((a;b);c):x` (#1772);
 // - `update` or `delete` from a table named by a symbol (`` from `t ``,
 //   `` from (`t) ``), which changes it in place;
 // - `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`, `system`,
 //   `setenv`, `save`, `rsave`, `dsave`, `load`, `rload`, `.Q.dpft`,
 //   `.Q.dpfts`, `.Q.dpt`, `.Q.dpts`, `.Q.hdpf`, `.Q.en`, `.Q.ens`,
 //   `.Q.enx`, `.Q.enxs`, `.Q.chk`, `.Q.dsftg`, `.Q.view`, `.Q.l`, `.Q.lo`,
-//   `.Q.li`, `.Q.bv`, `.Q.Xf` (which creates a file) and `.Q.opt` (which
-//   sets `.Q.x`), and `0:` or `1:` to a
+//   `.Q.li`, `.Q.bv`, `.Q.L`, `.Q.Xf` (which creates a file), `.Q.opt` (which
+//   sets `.Q.x`), KDB-X's `use` (which runs a module) and `.h.ht` (which
+//   writes HTML files) (#1775), and `0:` or `1:` to a
 //   file handle (`` `:f 0: ``, `hsym[`f] 0:`, `(hsym `f) 1:`,
 //   `` (`$":f") 0: ``, `` 0:[`:f;x] ``, `` .[0:;(`:f;x)] ``), and `2:`,
 //   each also by its `.q.` name (`.q.set`), by its symbol
-//   (`` `.q.set . (`a;1) ``) and indexed (`` .q[`set] ``) - `system` of a string literal
+//   (`` `.q.set . (`a;1) ``) and picked from `.q` by any index
+//   (`` .q[`set] ``, `` (get`.q)`set ``, #1765) - as are `value`,
+//   `get`, `eval`, `reval`, `hopen`, `xasc`, `xdesc` and `xkey`, whose
+//   arguments are then not read (#1764) - `system` of a string literal
 //   is read as that command, so `system "c"` only reads; `hopen` of a file handle
 //   (`` hopen `:f ``, `` hopen hsym `f ``, `` hopen `$":f" ``, `hopen ":f"`),
-//   which creates the file to write through - of a
+//   which creates the file to write through, also applied some other way
+//   (`` hopen@`:f ``, `` @[hopen;`:f;h] ``, `` hopen -1!`f ``, #1769) - of a
 //   process (`` `:host:5000 ``, a port) it only connects, and what is sent
 //   over that handle is not read;
 // - `xasc`, `xdesc` or `xkey` on a table named by a symbol
-//   (`` `a xasc `t ``), which sorts or keys it in place;
-// - `?` with a symbol atom on its left (`` `sym?`x ``), which extends that
-//   enumeration, and the sym file when the symbol is a handle;
-// - a string sent to handle 0 (`0"a:1"`, `neg[0]"a:1"`), which the
-//   process evaluates itself;
+//   (`` `a xasc `t ``), which sorts or keys it in place, also applied some
+//   other way with a symbol for the columns and one for the table in its
+//   expression (`` .[xkey;(`a;`t)] ``, `` xkey/[`a;`t] ``, #1770);
+// - `?` with a symbol atom on its left (`` `sym?`x ``, `` (`sym)?`x ``,
+//   `` ?[`sym;`x] ``), which extends that enumeration, and the sym file
+//   when the symbol is a handle;
+// - a string or a list sent to handle 0 (`0"a:1"`, `neg[0]"a:1"`,
+//   `0(@;`b;0;:;9)`), which the process evaluates itself as `value` would;
 // - `-11!`, which replays a log through `upd`, except `-11!(-1;..)` and
 //   `-11!(-2;..)`, which only count and check one; `-19!`, which
 //   compresses a file into another - each also spaced or with the number
 //   in parentheses (`-19 !x`, `(-19)!x`);
 // - `@[` or `.[` on a variable named by a symbol, alone or in
-//   parentheses (`` .[(`t);..] ``), with four arguments: an
-//   amend in place (three is as often a trap, `.[`f;args;handler]`, and
-//   is not taken for one, unless the third is an attribute or a unary
-//   that maps the items, `` @[`t;`c;`p#] ``, `` @[`t;`a;neg] ``); `![`
-//   likewise, a functional update or delete. Also with the target left
+//   parentheses (`` .[(`t);..] ``), with three arguments or four: an
+//   amend in place - on a symbol it is never a trap, `.[`f;args;h]`
+//   amends `f` or fails (#1763); `![` with four likewise, a functional
+//   update or delete. Also through an adverb or applied first in a
+//   composition (`` @/[`.;`a;:;9] ``, `` '[::;@][..] ``), with the target left
 //   out and given after (`` @[;`a;:;1] `. ``), and the amend or `!`
 //   passed as a value (`` .[@;(`.;`a;:;1)] ``, `` (@) . (`.;..) ``);
-// - `value`, `get`, `eval` or `-6!`, or in k code a monadic `.`
-//   (`` k)."a:1" ``), applied to a string, to `parse` or
+// - `value`, `get`, `eval`, `reval`, `-6!` or `-24!`, or in k code a monadic `.`
+//   (`` k)."a:1" ``), applied to a string that changes the process by these
+//   rules - `value "count t"` reads (#1776) - or one built or passed through
+//   another function (`value "a",":1"`), to `parse` or
 //   `-5!`, or to a tree headed by `:`, `::` or `+:` (`eval(:;`t;())`), by
 //   an amend `@` or `.` of four items or more on a variable by name
 //   (`` value(@;`.;`a;:;1) ``, `` eval(@;enlist`.;enlist`a;:;1) ``), by
 //   `!` on a table by name (`` eval(!;enlist`t;..) ``, `` value(!;`t;..) ``)
 //   or by the symbol of
-//   a writer above (`` value(`.q.set;`a;1) ``), also through `[`,
+//   a writer above (`` value(`.q.set;`a;1) ``), or by anything that, called
+//   on the rest, changes the process (`value(hopen;`:f)`,
+//   `value(value;"a:1")`, #1767), also through `[`,
 //   `each`, `'`, `@`, `.` or `enlist`, in parentheses (`(value)"a:1"`)
 //   and through a trap (`@[value;"a:1";h]`), and by their `.q.` names;
+//   passed as a value, through an adverb or a composition (`value/["a:1"]`,
+//   `'[value;::]"a:1"`), each string in the expression around it (#1766);
 // - a system command (`\l`, `\cd x`, `\\`), except one that only reads a
 //   setting (`\c`, `\d`, `\P`, `\_`, `\r`, `\E` without an argument, and
 //   `\w 0` or `\w 1`) and `\t` or `\ts`, whose
@@ -120,6 +135,8 @@ type Kind = "name" | "sym" | "str" | "num" | "op" | "open" | "close" | "space";
 interface Token {
   kind: Kind;
   text: string;
+  /// Where it starts in the statement.
+  pos: number;
 }
 
 const NAME_START = /[A-Za-z.]/;
@@ -129,8 +146,15 @@ const OPERATORS = new Set([..."+-*%&|^=<>$,#_~!?@."]);
 const WRITERS = new Set([
   "set", "upsert", "insert", "hdel", "exit", "hclose", "system", "save", "rsave", "dsave", "load", "rload", "setenv",
   ".Q.dpft", ".Q.dpfts", ".Q.dpt", ".Q.dpts", ".Q.hdpf", ".Q.en", ".Q.ens", ".Q.enx", ".Q.enxs", ".Q.chk", ".Q.dsftg",
-  ".Q.view", ".Q.l", ".Q.lo", ".Q.li", ".Q.bv", ".Q.opt", ".Q.Xf",
+  ".Q.view", ".Q.l", ".Q.lo", ".Q.li", ".Q.bv", ".Q.opt", ".Q.Xf", ".Q.L", "use", ".h.ht",
 ]);
+/// What evaluates a string or a parse tree it is given.
+const EVALUATORS = new Set(["value", "get", "eval", "reval"]);
+/// What changes the process when it is called on the right arguments: the
+/// writers, the evaluators, `hopen` and what sorts or keys a table. Taken
+/// out of `.q` or named by its symbol, it is the function itself, whose
+/// arguments are not read: `` .q[`value] ``, `` `.q.xkey `` (#1764).
+const CALLED = new Set([...WRITERS, ...EVALUATORS, "hopen", "xasc", "xdesc", "xkey"]);
 /// System commands that only read a setting when they are given no argument.
 const READS_BARE = new Set([..."abBcCdeEfgoOpPrsSTvwWz_", "cd"]);
 
@@ -146,7 +170,7 @@ function tokens(code: string): Token[] {
       while (j < code.length && code[j] !== '"') {
         j += code[j] === "\\" ? 2 : 1;
       }
-      out.push({ kind: "str", text: code.slice(i, j + 1) });
+      out.push({ kind: "str", text: code.slice(i, j + 1), pos: i });
       i = j + 1;
     } else if (c === "/" && (i === 0 || /\s/.test(code[i - 1]))) {
       while (i < code.length && code[i] !== "\n") {
@@ -157,7 +181,7 @@ function tokens(code: string): Token[] {
       while (j < code.length && /\s/.test(code[j])) {
         j++;
       }
-      out.push({ kind: "space", text: code.slice(i, j) });
+      out.push({ kind: "space", text: code.slice(i, j), pos: i });
       i = j;
     } else if (c === "`") {
       let j = i + 1;
@@ -165,30 +189,30 @@ function tokens(code: string): Token[] {
       while (j < code.length && (/[A-Za-z0-9_.:]/.test(code[j]) || (path && code[j] === "/"))) {
         j++;
       }
-      out.push({ kind: "sym", text: code.slice(i, j) });
+      out.push({ kind: "sym", text: code.slice(i, j), pos: i });
       i = j;
     } else if (/[0-9]/.test(c) || (c === "-" && /[0-9]/.test(code[i + 1] ?? "") && (out.length === 0 || out[out.length - 1].kind !== "name"))) {
       let j = i + 1;
       while (j < code.length && /[0-9A-Za-z.]/.test(code[j])) {
         j++;
       }
-      out.push({ kind: "num", text: code.slice(i, j) });
+      out.push({ kind: "num", text: code.slice(i, j), pos: i });
       i = j;
     } else if (NAME_START.test(c) && !(c === "." && !NAME_START.test(code[i + 1] ?? ""))) {
       let j = i + 1;
       while (j < code.length && NAME.test(code[j])) {
         j++;
       }
-      out.push({ kind: "name", text: code.slice(i, j) });
+      out.push({ kind: "name", text: code.slice(i, j), pos: i });
       i = j;
     } else if ("([{".includes(c)) {
-      out.push({ kind: "open", text: c });
+      out.push({ kind: "open", text: c, pos: i });
       i++;
     } else if (")]}".includes(c)) {
-      out.push({ kind: "close", text: c });
+      out.push({ kind: "close", text: c, pos: i });
       i++;
     } else {
-      out.push({ kind: "op", text: c });
+      out.push({ kind: "op", text: c, pos: i });
       i++;
     }
   }
@@ -242,6 +266,28 @@ function computedHandle(t: Token[], end: number): boolean {
   return t[open - 1]?.text === "hsym" || t[open - 1]?.text === ".Q.dd" || (t[open].text === "(" && (buildsHandle(inside) || (inside.length === 1 && inside[0].kind === "sym" && inside[0].text.startsWith("`:")) || castHandle(inside, 0)));
 }
 
+/// Whether a file's handle is made between `t[from]` and `t[to]`: written,
+/// `` `:f ``, made with `hsym` or `-1!`, `` hsym`f ``, `` -1!`f ``, cast,
+/// `` `$":f" ``, or a string, `":f"`. A process's, `` `:host:5000 ``, is not.
+function fileIn(t: Token[], from: number, to: number): boolean {
+  for (let p = from; p < to; p++) {
+    const k = t[p];
+    const made =
+      (k.kind === "name" && unqualified(k.text) === "hsym" && t[p + 1]?.kind === "sym") ||
+      (k.text === "-1" && t[p + 1]?.text === "!" && t[p + 2]?.kind === "sym");
+    const sym = made ? t[p + (k.text === "-1" ? 2 : 1)].text : undefined;
+    if (
+      (k.kind === "sym" && k.text.length > 2 && isFileHandle(k.text)) ||
+      (sym !== undefined && sym.length > 1 && isFileHandle(sym.startsWith("`:") ? sym : `\`:${sym.slice(1)}`)) ||
+      (castHandle(t, p) && isFileHandle(`\`${qText(t[p + 2].text)}`)) ||
+      (k.kind === "str" && k.text.startsWith('":') && isFileHandle(`\`${qText(k.text)}`))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /// Whether `t[i]` starts a handle cast from a string, `` `$":f" ``.
 function castHandle(t: Token[], i: number): boolean {
   return t[i]?.text === "`" && t[i + 1]?.text === "$" && t[i + 2]?.kind === "str" && t[i + 2].text.startsWith('":');
@@ -269,12 +315,66 @@ function items(t: Token[], open: number): [number, number][] {
   return out;
 }
 
-/// The unaries that, as an amend's third argument, change the items in place
-/// rather than handle an error: `` @[`t;`a;neg] ``.
-const UNARY = new Set([
-  "neg", "not", "abs", "reverse", "asc", "desc", "distinct", "floor", "ceiling", "sqrt", "exp", "log",
-  "reciprocal", "signum", "upper", "lower", "trim", "ltrim", "rtrim", "null", "fills", "sums", "deltas",
-]);
+/// Where the list of names that opens at `t[open]` ends - past its `)` - when
+/// it holds only names and lists of them, `((a;b);c)`, with each name added
+/// to `names`; -1 otherwise.
+function destructured(t: Token[], open: number, names: string[]): number {
+  let j = open + 1;
+  for (;;) {
+    if (t[j]?.kind === "name") {
+      names.push(t[j].text);
+      j++;
+    } else if (t[j]?.text === "(" && t[j].kind === "open") {
+      j = destructured(t, j, names);
+      if (j < 0) return -1;
+    } else {
+      return -1;
+    }
+    if (t[j]?.text === ")") return j + 1;
+    if (t[j]?.text !== ";") return -1;
+    j++;
+  }
+}
+
+/// The amend, `@`, `.` or `!`, that the bracket opening at `t[open]` applies,
+/// or "": right before it, in parentheses, `` (@)[`.;`a;:;1] `` (#1445), as
+/// many pairs as are written (#1730), through an adverb, `` @/[`.;`a;:;9] ``,
+/// or applied first in a composition, `` '[::;@][`.;`a;:;9] `` (#1771).
+function amendBefore(t: Token[], open: number): string {
+  let p = open - 1;
+  let parens = 0;
+  for (;;) {
+    if (t[p]?.kind === "close" && t[p].text === ")") {
+      parens++;
+      p--;
+    } else if (t[p]?.kind === "op" && ["/", "\\", "'"].includes(t[p].text) && t[p - 1]?.kind === "op") {
+      p--;
+    } else {
+      break;
+    }
+  }
+  let op: Token | undefined = t[p];
+  if (op?.kind === "close" && op.text === "]") {
+    // A composition, `'[f;g]`: the last function is applied first.
+    let o = p;
+    for (let depth = 0; o >= 0; o--) {
+      if (t[o].kind === "close") depth++;
+      else if (t[o].kind === "open" && --depth === 0) break;
+    }
+    const all = o > 0 && t[o - 1].kind === "op" && t[o - 1].text === "'" ? items(t, o) : [];
+    const last = all.length > 1 ? t.slice(all[all.length - 1][0], all[all.length - 1][1]).filter((k) => k.text !== "(" && k.text !== ")") : [];
+    op = last.length === 1 ? last[0] : undefined;
+    p = o - 1;
+  }
+  const wrapped = Array.from({ length: parens }, (_, n) => t[p - 1 - n]).every((k) => k?.text === "(" && k.kind === "open");
+  return op?.kind === "op" && ["@", ".", "!"].includes(op.text) && wrapped ? op.text : "";
+}
+
+/// The fewest arguments with which `@` and `.` amend a variable by name -
+/// three, with a unary, `` @[`t;`c;neg] `` - and `!` updates or deletes.
+function minimum(amend: string): number {
+  return amend === "!" ? 4 : 3;
+}
 
 /// `name` without the `.q.` that names a builtin as well: `.q.set` is `set`.
 function unqualified(name: string): string {
@@ -365,6 +465,8 @@ function lambdaLocals(t: Token[], open: number, touching: (a: Token | undefined,
 /// it names a table where `eval` would read the variable: `` value(!;`t;..) ``
 /// and `` eval(!;enlist`t;..) `` both update `t` in place.
 function evaluated(t: Token[], j: number, byValue: boolean): { reason: string; at: number } | undefined {
+  // The lists it passes into, `((value);"a:1")`, for `called`.
+  const lists: number[] = [];
   while (
     t[j] !== undefined &&
     ((t[j].kind === "open" && t[j].text !== "{") ||
@@ -373,6 +475,7 @@ function evaluated(t: Token[], j: number, byValue: boolean): { reason: string; a
         ["'", "@", "."].includes(t[j].text) &&
         !(t[j - 1]?.text === "(" && (t[j + 1]?.text === ";" || t[j + 1]?.text === "[" || (t[j - 2]?.text === "(" && t[j + 1]?.text === ")" && t[j + 2]?.text === ";")))))
   ) {
+    if (t[j].text === "(") lists.push(j);
     j++;
   }
   const k = t[j];
@@ -387,23 +490,169 @@ function evaluated(t: Token[], j: number, byValue: boolean): { reason: string; a
   // variable after it: `` value(@[;`a;:;2];`.) `` (#1727).
   const projection = head && (k?.text === "@" || k?.text === ".") && t[j + 1]?.text === "[" ? items(t, j + 1) : [];
   const projected =
-    projection.length >= 4 && projection[0][0] === projection[0][1] && named(projection[projection.length - 1][1] + 1)?.kind === "sym" && (named(projection[projection.length - 1][1] + 1)?.text.length ?? 0) > 1;
-  const reason = k?.kind === "str"
-    ? "a string"
-    : (k?.kind === "name" && k.text === "parse") || (k?.text === "-5" && t[j + 1]?.text === "!")
-      ? "a parse tree"
-      : head && k?.kind === "op" && (k.text === ":" || (OPERATORS.has(k.text) && t[j + 1]?.text === ":"))
-        ? "an assignment"
-        : head && k?.text === "!" && t[j + 1]?.text === ";" && (byValue ? t[j + 2] : t[j + 2]?.text === "enlist" ? t[j + 3] : undefined)?.kind === "sym"
-          ? "a functional update or delete"
-          : head && k?.kind === "sym" && WRITERS.has(unqualified(k.text.slice(1)))
-            ? `a call of ${k.text.slice(1)}`
-            : // An amend on a variable by name: `` value(@;`.;`a;:;1) ``,
-              // `` eval(@;enlist`.;enlist`a;:;1) `` (#1446).
-              (head && (k?.text === "@" || k?.text === ".") && named(j + 1 + wrap)?.kind === "sym" && (named(j + 1 + wrap)?.text.length ?? 0) > 1 && items(t, j - 1 - wrap).length >= 4) || projected
-              ? "an amend"
-              : undefined;
+    projection.length > 0 && projection.length >= minimum(k?.text ?? "") && projection[0][0] === projection[0][1] && named(projection[projection.length - 1][1] + 1)?.kind === "sym" && (named(projection[projection.length - 1][1] + 1)?.text.length ?? 0) > 1;
+  // (`(::)` alone is the identity, not an assignment.)
+  const reason = head && k?.kind === "op" && (k.text === ":" || (OPERATORS.has(k.text) && t[j + 1]?.text === ":")) && items(t, j - 1).length > 1
+    ? "an assignment"
+    : head && k?.text === "!" && t[j + 1]?.text === ";" && (byValue ? t[j + 2] : t[j + 2]?.text === "enlist" ? t[j + 3] : undefined)?.kind === "sym"
+      ? "a functional update or delete"
+      : head && k?.kind === "sym" && WRITERS.has(unqualified(k.text.slice(1)))
+        ? `a call of ${k.text.slice(1)}`
+        : // An amend on a variable by name: `` value(@;`.;`a;:;1) ``,
+          // `` eval(@;enlist`.;enlist`a;:;1) `` (#1446).
+          (head && (k?.text === "@" || k?.text === ".") && named(j + 1 + wrap)?.kind === "sym" && (named(j + 1 + wrap)?.text.length ?? 0) > 1 && items(t, j - 1 - wrap).length > minimum(k?.text ?? "")) || projected
+          ? "an amend"
+          : called(t, lists, byValue);
   return reason === undefined ? undefined : { reason, at: j };
+}
+
+/// The text of `t[from]` to `t[to]`, spaced as written.
+function joined(t: Token[], from: number, to: number): string {
+  return t
+    .slice(from, to)
+    .map((k, n, all) => (n > 0 && all[n - 1].pos + all[n - 1].text.length < k.pos ? ` ${k.text}` : k.text))
+    .join("");
+}
+
+/// What a list an evaluator runs, opening at one of `lists`, does as the
+/// call it is: `(f;x;y)` is `f[x;y]`, so `value(hopen;`:f)` opens the file
+/// as `hopen[`:f]` does, and `value(value;"a:1")` evaluates (#1767). For
+/// `eval` an argument `` `x `` is the variable and `` enlist`x `` the symbol.
+function called(t: Token[], lists: number[], byValue: boolean): string | undefined {
+  for (const open of [...lists].reverse()) {
+    const all = items(t, open);
+    const [hs, he] = all[0];
+    if (all.length < 2 || he - hs < 1 || !["name", "sym", "op", "open"].includes(t[hs].kind) || t[hs].text === "{") {
+      continue;
+    }
+    const head = he - hs === 1 && t[hs].kind === "sym" ? t[hs].text.slice(1) : joined(t, hs, he);
+    const args = all.slice(1).map(([s, e]) =>
+      byValue || e - s > 2
+        ? joined(t, s, e)
+        : e - s === 1 && t[s].kind === "sym"
+          ? t[s].text.slice(1)
+          : e - s === 2 && t[s].text === "enlist" && t[s + 1].kind === "sym"
+            ? t[s + 1].text
+            : joined(t, s, e),
+    );
+    return writes(`${head}[${args.join(";")}]`).length > 0 ? `a call of ${head}` : undefined;
+  }
+  return undefined;
+}
+
+/// The names and operators an evaluator's argument may pass through on its
+/// way to a string and still be that string: `value each enlist "x"`,
+/// `` @[value;"x";::] ``, `eval parse "x"`.
+const PASSING = new Set(["each", "peach", "enlist", "parse", ...EVALUATORS]);
+const PASSING_OPS = new Set([..."@.'/\\:;"]);
+
+/// Where the argument of what ends at `t[last]` ends: at the first `;` or
+/// close outside the brackets it opens.
+function argumentEnd(t: Token[], last: number): number {
+  let depth = 0;
+  for (let p = last + 1; p < t.length; p++) {
+    if (t[p].kind === "open") depth++;
+    else if (t[p].kind === "close" && depth-- === 0) return p;
+    else if (depth === 0 && t[p].text === ";") return p;
+  }
+  return t.length;
+}
+
+/// How many brackets are open around `t[i]`, back to its lambda.
+function around(t: Token[], i: number): number {
+  let depth = 0;
+  for (let p = i - 1, inner = 0; p >= 0; p--) {
+    if (t[p].kind === "close") inner++;
+    else if (t[p].kind === "open" && inner > 0) inner--;
+    else if (t[p].kind === "open" && t[p].text === "{") break;
+    else if (t[p].kind === "open") depth++;
+  }
+  return depth;
+}
+
+/// Where the expression `t[i]` is in starts: after the `;` before it outside
+/// every bracket around it, or the start of its lambda or statement.
+function expressionStart(t: Token[], i: number): number {
+  let depth = around(t, i);
+  for (let p = i - 1; p >= 0; p--) {
+    if (t[p].kind === "close") depth++;
+    else if (t[p].kind === "open" && depth-- === 0) return p + 1;
+    else if (depth === 0 && t[p].text === ";") return p + 1;
+  }
+  return 0;
+}
+
+/// Where the expression `t[i]` is in ends: at the next `;` outside every
+/// bracket around it, or the end of the lambda or statement it is in.
+function expressionEnd(t: Token[], i: number): number {
+  let depth = around(t, i);
+  for (let p = i + 1; p < t.length; p++) {
+    if (t[p].kind === "open") depth++;
+    else if (t[p].kind === "close" && depth-- === 0) return p;
+    else if (depth === 0 && t[p].text === ";") return p;
+  }
+  return t.length;
+}
+
+/// What the strings an evaluator ending at `t[last]` is applied to run, up
+/// to `t[end]`: each is read as the code it is (#1776), so `value "count t"`
+/// reads, as a gateway's string does. One that is built, `value "a",":1"`,
+/// or reaches it through another function, `value raze("a";":1")`, is
+/// taken for a change; so is `parse` of what is not a string, and in k
+/// code, `k)."x"`, any string, which is k and not read here.
+function strings(t: Token[], last: number, end: number, kCode: boolean): string | undefined {
+  let passing = true;
+  let parsed = false;
+  let seen = false;
+  let lambda = 0;
+  for (let p = last + 1; p < end; p++) {
+    const k = t[p];
+    if (k.kind === "open" && k.text === "{") lambda++;
+    else if (k.kind === "close" && k.text === "}") lambda--;
+    if (lambda > 0 || k.text === "}") continue;
+    if (k.kind === "name") {
+      parsed ||= k.text === "parse";
+      passing &&= PASSING.has(unqualified(k.text));
+    } else if (k.kind === "num" && k.text === "-5" && t[p + 1]?.text === "!") {
+      parsed = true;
+      p++;
+    } else if (k.kind === "op") {
+      passing &&= PASSING_OPS.has(k.text);
+    } else if (k.kind === "str") {
+      seen = true;
+      const whole = passing && (p + 1 >= end || t[p + 1].text === ";" || t[p + 1].kind === "close");
+      if (!whole || kCode || writes(qText(k.text)).length > 0) {
+        return parsed ? "a parse tree" : "a string";
+      }
+    }
+  }
+  return parsed && !seen ? "a parse tree" : undefined;
+}
+
+/// What an evaluator ending at `t[last]` runs that changes the process: a
+/// tree `evaluated` reads, or a string `strings` does.
+function evaluates(t: Token[], last: number, byValue: boolean, kCode = false, end = argumentEnd(t, last)): { reason: string; at: number } | undefined {
+  const what = evaluated(t, last + 1, byValue);
+  if (what !== undefined) {
+    return what;
+  }
+  const reason = strings(t, last, end, kCode);
+  return reason === undefined ? undefined : { reason, at: last };
+}
+
+/// The function of `CALLED` picked out of `root`, `.q` or `.Q`, at `t[at]`
+/// by whatever names it in the expression after it - `` .q[enlist`set]0 ``,
+/// `` .q`$"set" ``, `` (.q`set`get)0 ``, `` (get`.q)`set `` (#1765) - or
+/// undefined: `` .q`count `` reads.
+function picked(t: Token[], at: number, root: string): string | undefined {
+  const end = expressionEnd(t, at);
+  for (let p = at + 1; p < end; p++) {
+    const name = t[p].kind === "sym" ? t[p].text.slice(1) : t[p].kind === "str" ? qText(t[p].text) : undefined;
+    if (name !== undefined && CALLED.has(unqualified(`${root}.${name}`))) {
+      return `${root}.${name}`;
+    }
+  }
+  return undefined;
 }
 
 /// What one statement does that the guard asks about, added to `found`.
@@ -461,15 +710,11 @@ function readStatement(statement: string, found: Set<string>): void {
         locals.push(lambdaLocals(t, i, touching));
       }
       // `(a;b):x` assigns each name, globally at the top level.
-      if (k.text === "(") {
-        const names: string[] = [];
-        let j = i + 1;
-        while (t[j]?.kind === "name" && (t[j + 1]?.text === ";" || t[j + 1]?.text === ")")) {
-          names.push(t[j].text);
-          j += 2;
-          if (t[j - 1].text === ")") break;
-        }
-        if (names.length > 1 && t[j - 1]?.text === ")" && t[j]?.kind === "op" && t[j].text === ":" && qsql.length === 0) {
+      // So do `(a):x` and nested lists, `((a;b);c):x` (#1772).
+      const names: string[] = [];
+      const j = k.text === "(" ? destructured(t, i, names) : -1;
+      if (j > 0) {
+        if (t[j]?.kind === "op" && t[j].text === ":" && qsql.length === 0) {
           const global = t[j + 1]?.text === ":" && touching(t[j], t[j + 1]);
           for (const name of names) {
             if (lambdas === 0 || global || name.includes(".")) {
@@ -478,32 +723,24 @@ function readStatement(statement: string, found: Set<string>): void {
           }
         }
       }
-      // Also in parentheses, `` (@)[`.;`a;:;1] `` (#1445), as many pairs
-      // as are written: `` ((@))[`.;`a;:;1] `` (#1730).
-      let parens = 0;
-      while (t[i - 1 - parens]?.text === ")") parens++;
-      const wrapped = Array.from({ length: parens }, (_, n) => t[i - 2 - parens - n]).every((o) => o?.text === "(" && o.kind === "open");
-      const amend = t[i - 1 - parens]?.kind === "op" && wrapped ? t[i - 1 - parens].text : "";
-      if (k.text === "[" && (amend === "@" || amend === "." || amend === "!")) {
+      const amend = k.text === "[" ? amendBefore(t, i) : "";
+      if (amend !== "") {
         const args = items(t, i);
         // The target, or with it left out, what the projection is applied
         // to: `` @[;`a;:;1] `. ``, `` .[;();:;5][`a] ``.
         const close = args.length > 0 ? args[args.length - 1][1] : -1;
         const target =
           args[0]?.[0] !== args[0]?.[1]
-            ? symbolAt(t, i + 1)
+            ? // The symbol alone, not indexed: `` @[(`t)[0];..] `` is a value.
+              t.slice(args[0][0], args[0][1]).filter((k) => k.text !== "(" && k.text !== ")").length === 1
+              ? symbolAt(t, i + 1)
+              : undefined
             : t[close + 1]?.text === "[" && t[close + 1].kind === "open"
               ? symbolAt(t, close + 2)
               : symbolAt(t, close + 1);
-        // Three is a trap as often as an amend, `.[`f;args;handler]`, unless
-        // the third is a unary that sets an attribute or maps the items:
-        // `` @[`t;`c;`p#] ``, `` @[`t;`a;neg] ``.
-        const third = args.length === 3 ? t.slice(args[2][0], args[2][1]) : [];
-        const unary =
-          amend !== "!" &&
-          ((third.length === 2 && third[0].kind === "sym" && third[1].text === "#") ||
-            (third.length === 1 && third[0].kind === "name" && UNARY.has(third[0].text)));
-        if (target !== undefined && target.length > 1 && (args.length >= 4 || unary)) {
+        // Three is an amend too, with a unary, `` @[`t;`c;{x*2}] ``: on a
+        // symbol it is never a trap (#1763). `!` takes four.
+        if (target !== undefined && target.length > 1 && args.length >= minimum(amend)) {
           found.add(amend === "!" ? `updates or deletes from ${target} in place with !` : `amends ${target} in place`);
         }
       }
@@ -543,10 +780,15 @@ function readStatement(statement: string, found: Set<string>): void {
               : undefined;
       if ((k.text === ".q" || k.text === ".Q") && index !== undefined) {
         const name = `${k.text}.${index.text.slice(1)}`;
-        if (WRITERS.has(unqualified(name))) {
+        if (CALLED.has(unqualified(name))) {
           found.add(`calls ${name}`);
           continue;
         }
+      }
+      const name = k.text === ".q" || k.text === ".Q" ? picked(t, i, k.text) : undefined;
+      if (name !== undefined) {
+        found.add(`calls ${name}`);
+        continue;
       }
       // `xasc`, `xdesc` and `xkey` on a table named by a symbol change it in
       // place: `` `a xasc `t ``, `` xasc[`a;`t] ``, and projected on the
@@ -579,6 +821,21 @@ function readStatement(statement: string, found: Set<string>): void {
         }
         if (table !== undefined && table.length > 1) {
           found.add(`${unqualified(k.text) === "xkey" ? "keys" : "sorts"} ${table} in place with ${k.text}`);
+        } else if (
+          next !== undefined &&
+          (next.text === ")" || next.text === "]" || next.text === ";" || (next.kind === "op" && [..."/\\'@."].includes(next.text)) || next.text === "each" || next.text === "peach")
+        ) {
+          // Applied some other way - `(xkey)[`a]@`t`, `.[xkey;(`a;`t)]`,
+          // `` `a xdesc/: enlist`t ``, `'[::;xdesc][`a;`t]` (#1770) - when its
+          // expression holds a symbol for the columns and one for the table.
+          const end = expressionEnd(t, i);
+          let groups = 0;
+          for (let p = expressionStart(t, i); p < end; p++) {
+            groups += t[p].kind === "sym" && t[p].text.length > 1 && t[p - 1]?.kind !== "sym" ? 1 : 0;
+          }
+          if (groups >= 2) {
+            found.add(`${unqualified(k.text) === "xkey" ? "keys" : "sorts"} a table in place with ${k.text}`);
+          }
         }
         continue;
       }
@@ -633,16 +890,27 @@ function readStatement(statement: string, found: Set<string>): void {
           if (first === undefined || isFileHandle(first.text)) {
             found.add(`opens a file with ${k.text}`);
           }
+        } else if (handle === undefined && fileIn(t, i + 1, expressionEnd(t, i))) {
+          // Applied some other way, `hopen@`:f`, `(hopen)`:f`, `@[hopen;`:f;h]`,
+          // `` hopen -1!`f `` (#1769): a file's handle in its expression.
+          found.add(`opens a file with ${k.text}`);
         }
         continue;
       }
-      if (["value", "get", "eval"].includes(unqualified(k.text))) {
+      // `reval` runs a tree as `eval` does, an assignment too (#1774).
+      if (EVALUATORS.has(unqualified(k.text))) {
         // `(value)"a:1"` applies it as `value "a:1"` does.
         const wrapped = t[i - 1]?.text === "(" && next?.text === ")";
         // Given to a trap, `@[value;"a:1";h]`, `.Q.trp[value;..;h]`, it is
         // applied to the argument after it.
         const trapped = t[i - 1]?.text === "[" && t[i - 1]?.kind === "open" && next?.text === ";";
-        const what = evaluated(t, i + (wrapped || trapped ? 2 : 1), unqualified(k.text) !== "eval");
+        // Passed as a value instead - `value/["a:1"]`, `(value@)"a:1"`,
+        // `'[value;::]"a:1"`, `@[(value);"a:1";h]` (#1766) - it runs what the
+        // expression around it gives it: each string there is read.
+        let n = i + 1;
+        while (t[n]?.kind === "op" && ["@", ".", "'"].includes(t[n].text)) n++;
+        const applied = t[n] !== undefined && (["str", "name", "sym", "num"].includes(t[n].kind) || (t[n].kind === "open" && t[n].text !== "{"));
+        const what = evaluates(t, i + (wrapped || trapped ? 1 : 0), unqualified(k.text) !== "eval" && unqualified(k.text) !== "reval", false, applied ? undefined : expressionEnd(t, i));
         if (what !== undefined) {
           found.add(`evaluates ${what.reason} with ${k.text}`);
           i = what.at;
@@ -710,16 +978,22 @@ function readStatement(statement: string, found: Set<string>): void {
     const parenthesised = unaryDot && t[after]?.text === ")";
     if (parenthesised || (kCode && k.kind === "op" && k.text === "." && i >= 2 && (t[i - 1].kind === "op" || t[i - 1].kind === "open" || i === 2 || t[i - 1].text === ";"))) {
       after += parenthesised ? 1 : 0;
-      const what = evaluated(t, after, true);
+      const what = evaluates(t, after - 1, true, kCode);
       if (what !== undefined) {
         found.add(`evaluates ${what.reason} with ${kCode ? "k's ." : "(.)"}`);
         i = what.at;
         continue;
       }
     }
+    // `.q` by its symbol, `` (get`.q)`set ``, likewise.
+    const name = k.kind === "sym" && (k.text === "`.q" || k.text === "`.Q") ? picked(t, i, k.text.slice(1)) : undefined;
+    if (name !== undefined) {
+      found.add(`calls ${name}`);
+      continue;
+    }
     // A writer named by its symbol is the function itself: `` `.q.set . (`a;1) ``,
     // `` (get `.q.set)[`a;1] ``, `` `.q.system "x" ``.
-    if (k.kind === "sym" && k.text.startsWith("`.") && WRITERS.has(unqualified(k.text.slice(1)))) {
+    if (k.kind === "sym" && k.text.startsWith("`.") && CALLED.has(unqualified(k.text.slice(1)))) {
       found.add(`calls ${k.text.slice(1)}`);
       continue;
     }
@@ -731,7 +1005,7 @@ function readStatement(statement: string, found: Set<string>): void {
         j++;
       }
       const target = t[j]?.text === "(" ? symbolAt(t, j + 1) : undefined;
-      if (target !== undefined && target.length > 1 && items(t, j).length >= 4) {
+      if (target !== undefined && target.length > 1 && items(t, j).length >= minimum(k.text)) {
         found.add(k.text === "!" ? `updates or deletes from ${target} in place with !` : `amends ${target} in place`);
         continue;
       }
@@ -742,6 +1016,21 @@ function readStatement(statement: string, found: Set<string>): void {
     if (k.kind === "sym" && k.text.length > 1 && next?.kind === "op" && next.text === "?" && t[i - 1]?.kind !== "sym") {
       found.add(`extends the enumeration ${k.text} with ?`);
       continue;
+    }
+    // Also in parentheses, `` (`sym)?`x ``, and applied, `` ?[`sym;`x] ``
+    // (#1773); with four arguments `?[` is a functional select.
+    if (k.kind === "op" && k.text === "?") {
+      let parens = 0;
+      while (t[i - 1 - parens]?.text === ")") parens++;
+      const start = i - 1 - 2 * parens;
+      const left = parens > 0 && t[start]?.text === "(" && t[start - 1]?.kind !== "sym" ? symbolAt(t, start) : undefined;
+      const args = next?.text === "[" && next.kind === "open" ? items(t, i + 1) : [];
+      const applied = args.length === 2 && args[0][1] - args[0][0] === 1 ? t[args[0][0]] : undefined;
+      const sym = left ?? (applied?.kind === "sym" ? applied.text : undefined);
+      if (sym !== undefined && sym.length > 1) {
+        found.add(`extends the enumeration ${sym} with ?`);
+        continue;
+      }
     }
     // Where the `!` of an internal function `-N!` is, spaced or with the
     // number in parentheses: `-19 !x`, `(-19)!x`. Not after a number, where
@@ -754,11 +1043,11 @@ function readStatement(statement: string, found: Set<string>): void {
           : t[i - 1]?.text === "(" && next?.text === ")" && t[i + 2]?.text === "!"
             ? i + 2
             : -1;
-    // `-6!` is `eval`.
-    if (bang > 0 && k.text === "-6") {
-      const what = evaluated(t, bang + 1, false);
+    // `-6!` is `eval`, and `-24!` `reval` (#1774).
+    if (bang > 0 && (k.text === "-6" || k.text === "-24")) {
+      const what = evaluates(t, bang, false);
       if (what !== undefined) {
-        found.add(`evaluates ${what.reason} with -6!`);
+        found.add(`evaluates ${what.reason} with ${k.text}!`);
         i = what.at;
         continue;
       }
@@ -766,18 +1055,22 @@ function readStatement(statement: string, found: Set<string>): void {
     // Handle 0 is the process itself: `0"a:1"`, `(0)"a:1"`, `neg[0]"a:1"`,
     // `(neg 0)"a:1"` and `-0"a:1"` evaluate the string there, as do
     // `0("a:1")`, `0@"a:1"`, `0 . enlist "a:1"` (#1424) and `0["a:1"]` (#1724).
+    // Read as `value` reads them: a list is a tree, `0(@;`b;0;:;9)`, and
+    // a call, `0(value;"a:1")` (#1768), and a string that only reads, reads.
     if (k.kind === "num" && /^-?0[ihj]?$/.test(k.text) && t[i - 1]?.kind !== "num") {
       const wrapped =
         (t[i - 1]?.text === "(" && next?.text === ")") ||
         (t[i - 2]?.text === "neg" && t[i - 1]?.text === "[" && next?.text === "]") ||
         (t[i - 2]?.text === "(" && t[i - 1]?.text === "neg" && next?.text === ")");
-      let j = wrapped ? i + 2 : i + 1;
-      while (t[j]?.text === "(" || t[j]?.text === "[" || (t[j]?.kind === "op" && ["@", "."].includes(t[j].text)) || (t[j]?.kind === "name" && t[j].text === "enlist")) {
-        j++;
-      }
-      if (t[j]?.kind === "str") {
-        found.add("evaluates a string on handle 0");
-        continue;
+      const last = wrapped ? i + 1 : i;
+      const first = t[last + 1];
+      if (first?.kind === "str" || first?.text === "(" || first?.text === "[" || (first?.kind === "op" && ["@", "."].includes(first.text)) || (first?.kind === "name" && first.text === "enlist")) {
+        const what = evaluates(t, last, true);
+        if (what !== undefined) {
+          found.add(`evaluates ${what.reason} on handle 0`);
+          i = what.at;
+          continue;
+        }
       }
     }
     // `-11!` replays a log; `-11!(-1;..)` and `(-2;..)` only count and check it.

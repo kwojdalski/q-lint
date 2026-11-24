@@ -28,3 +28,44 @@ test("a control character in a label is replaced, so the SVG still parses (#1474
   const svg = C.chartSvg(grid, [0, 1], "bar", d, { colours: ["#f00"] }, {});
   assert.ok(!/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(svg), svg);
 });
+
+test("a range small beside its size still ticks across it: 50 ms of timestamps, 1e12+60 (#1787)", () => {
+  const t0 = 8.5e17;
+  const t = C.ticks(t0, t0 + 5e7);
+  assert.ok(t.step <= 2e7 && t.values.length > 2 && t.values.length < 20, JSON.stringify(t));
+  assert.strictEqual(new Set(t.values).size, t.values.length);
+  const grid = { columns: [{ name: "time", numeric: false, temporal: true, type: 12 }, { name: "px", numeric: true }], cells: [["a", "b", "c"], ["1", "2", "3"]], values: [[t0, t0 + 2.5e7, t0 + 5e7], [1, 2, 3]] };
+  const d = C.chartData(grid, [0, 1, 2], "scatter", [1], 20);
+  const cx = (C.chartSvg(grid, [0, 1, 2], "scatter", d, { colours: ["#f00"] }, {}).match(/cx="[^"]*"/g) || []);
+  assert.strictEqual(new Set(cx).size, 3, cx.join(" "));
+  const big = { columns: [{ name: "i", numeric: false }, { name: "vol", numeric: true }], cells: [["a", "b", "c"], ["1e12", "1e12+30", "1e12+60"]], values: [null, [1e12, 1e12 + 30, 1e12 + 60]] };
+  const svg = C.chartSvg(big, [0, 1, 2], "line", C.chartData(big, [0, 1, 2], "line", [1], 20), { colours: ["#f00"] }, {});
+  const ys = svg.match(/<path d="M[\d.]+ ([\d.]+) L[\d.]+ ([\d.]+) L[\d.]+ ([\d.]+)/);
+  assert.ok(ys && new Set(ys.slice(1)).size === 3, svg);
+  const labels = [...svg.matchAll(/text-anchor="end"[^>]*>([^<]*)</g)].map((m) => m[1]);
+  assert.strictEqual(new Set(labels).size, labels.length, labels.join(" "));
+});
+
+test("a value on a bin's edge counts in the bin above it, as labelled (#1790)", () => {
+  const prices = Array.from({ length: 21 }, (_, i) => +(1 + i * 0.05).toFixed(2));
+  assert.deepStrictEqual(C.histogram([prices], 20).counts[0], [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2]);
+  assert.deepStrictEqual(C.histogram([[0, 0.3, 0.6, 0.7, 1]], 10).counts[0], [1, 0, 0, 1, 0, 0, 1, 1, 0, 1]);
+});
+
+test("a date, month, minute or second x axis ticks whole units, each label once (#1791)", () => {
+  const M = require("../media/chartmore.js");
+  const look = { colours: ["#f00", "#0f0"] };
+  const g = (type, vals) => ({ columns: [{ name: "d", numeric: false, temporal: true, type }, { name: "px", numeric: true }], cells: [vals.map(String), ["1", "2", "3"].slice(0, vals.length)], values: [vals, [1, 2, 3].slice(0, vals.length)] });
+  const labels = (svg) => [...svg.matchAll(/text-anchor="middle"[^>]*>([^<]*)</g)].map((m) => m[1]).filter((l) => /\d/.test(l));
+  for (const [type, vals] of [[14, [9800, 9801]], [13, [318, 319]], [17, [600, 601]], [18, [36000, 36001]]]) {
+    const grid = g(type, vals);
+    const ls = labels(C.chartSvg(grid, [0, 1], "scatter", C.chartData(grid, [0, 1], "scatter", [1], 20), look, {}));
+    assert.ok(ls.length >= 2 && new Set(ls).size === ls.length, type + ": " + ls.join(" | "));
+  }
+  assert.deepStrictEqual(C.ticks(9800, 9801, true).values.every(Number.isInteger), true);
+  const grid = g(14, [9800, 9801, 9802]);
+  const ld = M.linkedData(grid, [0, 1, 2], [1]);
+  const ls = labels(M.linkedSvg(grid, ld, look, look.colours, {}));
+  assert.ok(ls.length >= 2 && new Set(ls).size === ls.length, ls.join(" | "));
+  assert.strictEqual(M.linkedConfig(grid, ld, ld.panes[0], "#f00", look, {}, true).options.scales.x.ticks.precision, 0);
+});
