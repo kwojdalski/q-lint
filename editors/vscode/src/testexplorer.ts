@@ -566,7 +566,8 @@ class QTests {
             statements = [k4Statement(entry.row)];
             mode = k4Mode(entry.row);
             // A true row `a~b` is sent as `(a;b)`, for both sides (#980).
-            const sides = mode === "true" && entry.row.lang !== "k" && featureOn("failedTests") ? splitMatch(entry.row.code) : undefined;
+            const sides =
+              mode === "true" && entry.row.lang !== "k" && (entry.row.repeat ?? 1) === 1 && featureOn("failedTests") ? splitMatch(entry.row.code) : undefined;
             if (sides !== undefined) {
               statements = [`(${sides.left};${sides.right})`];
               mode = "match";

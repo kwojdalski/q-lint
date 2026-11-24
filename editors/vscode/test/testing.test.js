@@ -96,6 +96,27 @@ test("a k4unit suite is read from its CSV, quoted code and all", () => {
   assert.strictEqual(parseK4unit(""), undefined);
 });
 
+test("a k4unit row is run its repeat times, as KUpexec runs it: do[n;code] (#2100)", () => {
+  const rows = parseK4unit(
+    [
+      "action,ms,bytes,lang,code,repeat,minver,comment",
+      "before,0,0,q,cnt+:1,3,,",
+      "true,0,0,q,cnt=3,1,,",
+      "run,0,0,k,x+:1,2,,",
+      "true,0,0,q,1b,,,",
+      "true,0,0,q,1b,-4,,",
+      "",
+    ].join("\n"),
+  );
+  assert.deepStrictEqual(
+    rows.map((r) => r.repeat),
+    [3, 1, 2, 1, 1],
+  );
+  assert.deepStrictEqual(rows.map(k4Statement), ["do[3;cnt+:1]", "cnt=3", "k)do[2;x+:1]", "1b", "1b"]);
+  // A row built without one is run once.
+  assert.strictEqual(k4Statement({ action: "true", lang: "q", code: "1b", line: 0, minver: 0 }), "1b");
+});
+
 test("the switch is declared, on by default, and named in what a refusal says", () => {
   const props = Object.assign({}, ...pkg.contributes.configuration.map((c) => c.properties));
   const { key, fallback } = EDITOR_SETTINGS.testExplorer;
@@ -327,6 +348,27 @@ test("a k4unit suite's before rows run once before its tests, and its after rows
       ["t=1", "true"],
       ["bad", "fail"],
       ["t:0", "run"],
+    ],
+  );
+});
+
+test("a repeated k4unit row is sent as do[n;code], a true row's a~b too: not split into its sides (#2100)", async () => {
+  stub.reset();
+  fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  const csv = "action,ms,bytes,lang,code,repeat,minver,comment\nbefore,0,0,q,cnt+:1,3,,\ntrue,0,0,q,cnt~3,1,,\ntrue,0,0,q,cnt~3,2,,\n";
+  vscode.workspace.findFiles = async () => [vscode.Uri.file("/ws/k.csv")];
+  vscode.workspace.fs = { readFile: async () => Buffer.from(csv) };
+  const live = fakeLive();
+  const explorer = registerTestExplorer(stub.newContext(), live, () => undefined);
+  await explorer.discover();
+  await explorer.run();
+  assert.deepStrictEqual(
+    live.sent.map((s) => [s.statements.join(";"), s.mode]),
+    [
+      ["do[3;cnt+:1]", "run"],
+      ["(cnt;3)", "match"],
+      ["do[2;cnt~3]", "true"],
     ],
   );
 });
