@@ -67,6 +67,7 @@ fn sarif_has_the_shape_code_scanning_requires_and_one_result_per_finding() {
         assert!(!r["message"]["text"].as_str().unwrap().is_empty());
         let loc = &r["locations"][0]["physicalLocation"];
         assert_eq!(loc["artifactLocation"]["uri"], "src/a.q");
+        assert_eq!(loc["artifactLocation"]["uriBaseId"], "%SRCROOT%");
         assert!(loc["region"]["startLine"].as_u64().unwrap() >= 1);
         let print = r["partialFingerprints"]["qlinterBaseline/v1"]
             .as_str()
@@ -268,4 +269,52 @@ fn every_report_places_line_one_of_a_bom_file_where_an_editor_shows_it() {
     assert!(out.contains("line=1,col=16,endColumn=18,"), "{out}");
     let (_, out, _) = run(d, &["--select", "QE004", "bom.q"]);
     assert!(out.contains("bom.q:1:16: "), "{out}");
+}
+
+/// A file outside the directory qlinter runs in is located by its `file:`
+/// URI, and a relative one by `%SRCROOT%`, which the run says is that
+/// directory: a bare absolute path is a reference SARIF readers resolve
+/// against their own base (#2098). Read back through an RFC 3986 parser,
+/// the two name the same file.
+#[test]
+fn sarif_locates_a_file_outside_the_run_by_its_file_uri() {
+    use iri_string::types::{UriAbsoluteStr, UriReferenceStr, UriStr};
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::create_dir_all(d.join("an")).unwrap();
+    fs::create_dir_all(d.join("w x")).unwrap();
+    fs::write(d.join("w x/c.q"), TWO).unwrap();
+    fs::write(d.join("an/b.q"), TWO).unwrap();
+    let (_, out, err) = run(&d.join("an"), &["--format", "sarif", "../w x/c.q", "b.q"]);
+    let report: serde_json::Value = serde_json::from_str(&out).unwrap_or_else(|_| panic!("{err}"));
+    let run0 = &report["runs"][0];
+    let base = run0["originalUriBaseIds"]["%SRCROOT%"]["uri"]
+        .as_str()
+        .unwrap();
+    let base = UriAbsoluteStr::new(base).unwrap();
+    assert_eq!(base.scheme_str(), "file");
+    let mut seen = vec![];
+    for r in run0["results"].as_array().unwrap() {
+        let loc = &r["locations"][0]["physicalLocation"]["artifactLocation"];
+        let reference = UriReferenceStr::new(loc["uri"].as_str().unwrap()).unwrap();
+        let file = match loc.get("uriBaseId") {
+            Some(id) => {
+                assert_eq!(id, "%SRCROOT%");
+                reference.resolve_against(base).to_string()
+            }
+            None => reference.to_string(),
+        };
+        let file = UriStr::new(&file).unwrap();
+        assert_eq!(file.scheme_str(), "file", "{loc}");
+        assert!(!file.path_str().contains('?'), "{loc}");
+        seen.push(file.path_str().rsplit_once("/").unwrap().1.to_string());
+        if loc.get("uriBaseId").is_none() {
+            assert!(file.path_str().ends_with("/w%20x/c.q"), "{loc}");
+        } else {
+            assert!(file.path_str().ends_with("/an/b.q"), "{loc}");
+        }
+    }
+    seen.sort();
+    seen.dedup();
+    assert_eq!(seen, ["b.q", "c.q"]);
 }

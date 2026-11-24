@@ -26,9 +26,9 @@ fn fnv1a(text: &str) -> u64 {
     })
 }
 
-/// A relative path as a URI reference: each byte outside RFC 3986's
-/// unreserved set and `/` percent-encoded, so a space or a `#` in a file
-/// name stays part of the path.
+/// A path, with `/`, as the path of a URI: each byte outside RFC 3986's
+/// unreserved set and `/` percent-encoded, so a space, a `#` or a character
+/// past ASCII (as its UTF-8 bytes) stays part of the path.
 fn uri(path: &str) -> String {
     let mut out = String::with_capacity(path.len());
     for b in path.bytes() {
@@ -39,6 +39,43 @@ fn uri(path: &str) -> String {
         }
     }
     out
+}
+
+/// The `file:` URI (RFC 8089) of an absolute path with `/`: `/a/b.q` is
+/// `file:///a/b.q`, a Windows drive's `C:/a/b.q` is `file:///C:/a/b.q`, its
+/// drive letter and colon as they are, and a share's `//host/share/b.q` is
+/// `file://host/share/b.q`. Windows writes a canonical path behind `\\?\`,
+/// which says nothing about the file and is no part of its URI.
+fn file_uri(path: &str) -> String {
+    let path = path.strip_prefix("//?/").map_or(path.to_string(), |rest| {
+        rest.strip_prefix("UNC/")
+            .map_or(rest.to_string(), |share| format!("//{share}"))
+    });
+    if let Some(share) = path.strip_prefix("//") {
+        let (host, rest) = share.split_once('/').unwrap_or((share, ""));
+        return format!("file://{}/{}", uri(host), uri(rest));
+    }
+    let b = path.as_bytes();
+    if b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' {
+        return format!("file:///{}{}", &path[..2], uri(&path[2..]));
+    }
+    format!("file://{}", uri(&path))
+}
+
+/// Where SARIF says a finding's file is (2.1.0, 3.4): a path under the
+/// directory qlinter runs in as a relative reference against `%SRCROOT%`,
+/// which the run's `originalUriBaseIds` says is that directory, and any
+/// other as its absolute `file:` URI. A bare absolute path is a reference a
+/// consumer resolves against a base of its own, not the file (#2098).
+fn artifact_location(path: &str) -> Value {
+    let b = path.as_bytes();
+    let absolute =
+        path.starts_with('/') || (b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':');
+    if absolute {
+        json!({"uri": file_uri(path)})
+    } else {
+        json!({"uri": uri(path), "uriBaseId": "%SRCROOT%"})
+    }
 }
 
 fn level(severity: &str) -> &'static str {
@@ -114,7 +151,7 @@ pub fn sarif(findings: &[Finding], sources: &[(String, String)], cwd: &Path) -> 
                 "level": level(&f.severity),
                 "message": {"text": f.detail},
                 "locations": [{"physicalLocation": {
-                    "artifactLocation": {"uri": uri(&path)},
+                    "artifactLocation": artifact_location(&path),
                     "region": region,
                 }}],
                 "partialFingerprints": {"qlinterBaseline/v1": format!("{hash:016x}:{n}")},
@@ -132,6 +169,12 @@ pub fn sarif(findings: &[Finding], sources: &[(String, String)], cwd: &Path) -> 
                 "rules": rules,
             }},
             "results": results,
+            // The base the relative locations are read against: the
+            // directory qlinter ran in, as a directory's URI ends, in `/`.
+            "originalUriBaseIds": {"%SRCROOT%": {"uri": format!(
+                "{}/",
+                file_uri(&cwd.to_string_lossy().replace('\\', "/")).trim_end_matches('/')
+            )}},
             // SARIF 2.1.0 requires it once there are results: a finding's
             // columns count UTF-16 units, as an editor's do.
             "columnKind": "utf16CodeUnits",
@@ -249,5 +292,64 @@ mod tests {
     #[test]
     fn a_uri_keeps_its_path_and_encodes_the_rest() {
         assert_eq!(uri("src/a b#1.q"), "src/a%20b%231.q");
+    }
+
+    /// A URI path's bytes, percent-decoded.
+    fn decoded(path: &str) -> String {
+        let b = path.as_bytes();
+        let (mut out, mut i) = (vec![], 0);
+        while i < b.len() {
+            if b[i] == b'%' {
+                out.push(u8::from_str_radix(&path[i + 1..i + 3], 16).unwrap());
+                i += 3;
+            } else {
+                out.push(b[i]);
+                i += 1;
+            }
+        }
+        String::from_utf8(out).unwrap()
+    }
+
+    /// SARIF 2.1.0 (3.4) reads `artifactLocation.uri` as a URI reference:
+    /// an absolute path is a `file:` URI, a relative one is resolved
+    /// against its `uriBaseId`. Each produced here is parsed by an RFC 3986
+    /// parser and read back to the path it names (#2098).
+    #[test]
+    fn a_sarif_location_is_a_uri_that_names_its_file() {
+        use iri_string::types::{UriAbsoluteStr, UriReferenceStr, UriStr};
+        for (path, host, file_path) in [
+            ("/private/tmp/w/c.q", "", "/private/tmp/w/c.q"),
+            ("C:/x/a.q", "", "/C:/x/a.q"),
+            ("//?/C:/x/a.q", "", "/C:/x/a.q"),
+            ("//server/share/a.q", "server", "/share/a.q"),
+            ("//?/UNC/server/share/a.q", "server", "/share/a.q"),
+            ("/tmp/my dir/zażółć #1.q", "", "/tmp/my dir/zażółć #1.q"),
+            ("D:/Program Files/é.q", "", "/D:/Program Files/é.q"),
+        ] {
+            let loc = artifact_location(path);
+            assert_eq!(loc.get("uriBaseId"), None, "{path}");
+            let text = loc["uri"].as_str().unwrap();
+            let parsed = UriStr::new(text).unwrap_or_else(|e| panic!("{text}: {e}"));
+            assert_eq!(parsed.scheme_str(), "file", "{text}");
+            assert_eq!(parsed.authority_str(), Some(host), "{text}");
+            assert_eq!(decoded(parsed.path_str()), file_path, "{text}");
+            assert_eq!(parsed.query(), None, "{text}");
+            assert_eq!(parsed.fragment(), None, "{text}");
+        }
+        // A relative one names its file once read against the run's base.
+        let base = format!("{}/", file_uri("/tmp/my dir"));
+        let base = UriAbsoluteStr::new(&base).unwrap();
+        for (path, full) in [
+            ("src/a.q", "/tmp/my dir/src/a.q"),
+            ("a b/zażółć #1.q", "/tmp/my dir/a b/zażółć #1.q"),
+        ] {
+            let loc = artifact_location(path);
+            assert_eq!(loc["uriBaseId"], "%SRCROOT%");
+            let reference = UriReferenceStr::new(loc["uri"].as_str().unwrap()).unwrap();
+            assert!(reference.scheme_str().is_none(), "{path}");
+            let resolved = reference.resolve_against(base).to_string();
+            let resolved = UriStr::new(&resolved).unwrap();
+            assert_eq!(decoded(resolved.path_str()), full);
+        }
     }
 }

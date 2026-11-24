@@ -199,7 +199,9 @@ results name, each with its summary and a link to its row in
 (`partialFingerprints."qlinterBaseline/v1"`) is the baseline's key for it -
 its file, code and line text - so a finding keeps its identity when lines are
 added above it and gets a new one when its own line is edited. Paths are
-relative to the directory qlinter runs in; run it from the repository root.
+relative to the directory qlinter runs in, against the base `%SRCROOT%`
+that the run's `originalUriBaseIds` says is that directory; run it from the
+repository root. A file outside it is named by its absolute `file:` URI.
 
 `--format github` prints one GitHub Actions workflow command per finding -
 `::error`, `::warning` or `::notice` with its file, line, columns and the
