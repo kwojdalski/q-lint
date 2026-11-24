@@ -459,13 +459,14 @@ export function distinctNames(names: string[]): string[] {
 /// (and a string cut at 200 characters) as q wrote it. A run of octal
 /// escapes is the string's UTF-8 bytes, decoded as such; a byte that is
 /// not part of a UTF-8 character keeps one character, and spoils none of
-/// the run's others (#1737).
+/// the run's others (#1737). A string of one character is one too, which
+/// q writes with a comma before it (#1961); `,"ab"` is a list of a string.
 export function plainItem(text: string): string {
-  const m = /^"((?:[^"\\]|\\.)*)"$/s.exec(text);
+  const m = /^(?:"((?:[^"\\]|\\.)*)"|,"([^"\\]|\\[0-7]{3}|\\.)")$/s.exec(text);
   if (m === null) {
     return text;
   }
-  return m[1].replace(/((?:\\[0-7]{3})+)|\\(.)/gs, (_, run: string | undefined, e: string) => {
+  return (m[1] ?? m[2]).replace(/((?:\\[0-7]{3})+)|\\(.)/gs, (_, run: string | undefined, e: string) => {
     if (run === undefined) {
       return e === "n" ? "\n" : e === "r" ? "\r" : e === "t" ? "\t" : e;
     }

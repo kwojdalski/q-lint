@@ -97,6 +97,15 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
     assert.deepStrictEqual(cells.slice(1), ['"b\\"c\\n"', '"caf\\303\\251"', ',"x"', '""'], own);
   });
 
+  await t.test("a string column exported as JSON is read back by q as the strings it held, one of a single character too (#1961)", async () => {
+    const { exportResult } = require("../out/resultexport.js");
+    const grid = (await connection.queryGrid(statements("1_strs"), SIZE, 10)).grid;
+    const json = exportResult("json", grid, -1).data.toString("utf8");
+    assert.deepStrictEqual(JSON.parse(json).map((r) => r.s), ['b"c\n', "café", "x", ""]);
+    const same = await connection.query(statements(`(1_strs)~{([] s:{$[10h=type x;x;enlist x]} each x\`s)} .j.k ${JSON.stringify(json)}`), SIZE);
+    assert.deepStrictEqual(same.text, ["1b"], json);
+  });
+
   await t.test("a char column's raw is its bytes, so a byte past ASCII is written back as itself (#1489)", async () => {
     const { atomLiteral } = require("../out/qliteral.js");
     const answer = await connection.queryGrid(statements('([]c:"a\\303\\251")'), SIZE, 10);

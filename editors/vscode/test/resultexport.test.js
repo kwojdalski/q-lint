@@ -110,6 +110,11 @@ test("a general list's string item is its characters where a format has strings 
   assert.strictEqual(plainItem('"caf\\303\\251\\377"'), "café\u00ff");
   assert.strictEqual(plainItem('"\\377\\344\\275\\240\\303"'), "\u00ff你\u00c3");
   assert.strictEqual(plainItem('"\\303\\303\\251"'), "\u00c3é");
+  // A string of one character, which q writes with a comma (#1961); a
+  // list of one string is no string.
+  assert.deepStrictEqual([',"x"', ',"\\n"', ',"\\""', ',"\\351"', ',"ab"', ',""', ',,"x"'].map(plainItem), ["x", "\n", '"', "\u00e9", ',"ab"', ',""', ',,"x"']);
+  const flags = { count: 3, keys: 0, names: ["a"], types: [0], cells: [['"ab"', '""', ',"x"']], raw: [[false, false, false]], rank: [[]] };
+  assert.deepStrictEqual(JSON.parse(toJson(flags)), [{ a: "ab" }, { a: "" }, { a: "x" }]);
   assert.deepStrictEqual(distinctNames(["a", "a", "", "a_1"]), ["a", "a_1", "column3", "a_1_1"]);
 });
 
