@@ -260,6 +260,10 @@ test("the partition check finds missing dates, files, differing types and outlie
   const { connection: two } = await connect(t, twoDomains);
   const enumerations = partitionProblems(readPartitions(await two.call(PARTITION_CHECK, 1000, true))).filter((p) => p.kind === "enumeration");
   assert.deepStrictEqual(enumerations.map((p) => [p.what, p.partitions]), [["trade.src has a symbol index past the end of src", ["2026.01.06"]]]);
+  // A nested column's # data file gone is a missing file (#1577).
+  const { connection: nested } = await connect(t, HDB('{[r;d] .Q.dd[r;d,`book`] set .Q.en[r] ([] sym:`a`b;sz:(1 2;3 4 5))}[r] each 2026.01.05 2026.01.06 2026.01.07;\nhdel .Q.dd[r;2026.01.06,`book,`$"sz#"];'));
+  const gone = partitionProblems(readPartitions(await nested.call(PARTITION_CHECK, 1000, false))).filter((p) => p.table === "book");
+  assert.deepStrictEqual(gone.map((p) => [p.kind, p.what, p.partitions]), [["missing column file", "book.sz has no sz# data file", ["2026.01.06"]]]);
   // One table in one partition is healthy (#1102).
   const { connection: lone } = await connect(t, 'r:hsym`$"$DIR/one";\n.Q.dd[r;2026.01.05,`trade`] set .Q.en[r] ([] sym:`a`b;px:1 2f);\n\\l $DIR/one\n');
   assert.deepStrictEqual(partitionProblems(readPartitions(await lone.call(PARTITION_CHECK, 1000, true))), []);
