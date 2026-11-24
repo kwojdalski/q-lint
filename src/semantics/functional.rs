@@ -130,7 +130,19 @@ fn tokens(text: &str) -> Result<Vec<Tok>, String> {
         if number_start {
             let start = i;
             i += 1;
-            while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'.' || b[i] == b':') {
+            // A sign straight after a lower-case `e` is the exponent's, as
+            // q's tokenizer reads it (`-4!` on KDB-X 5): `1e-3` and `1e+1`
+            // are one number each. A `-` there always is (`1e-` too), a
+            // `+` only before a digit (`1e+x` is `1e`, `+`, `x`), and
+            // `1E-3` is three tokens.
+            while i < b.len()
+                && (b[i].is_ascii_alphanumeric()
+                    || b[i] == b'.'
+                    || b[i] == b':'
+                    || (b[i - 1] == b'e'
+                        && (b[i] == b'-'
+                            || (b[i] == b'+' && b.get(i + 1).is_some_and(u8::is_ascii_digit)))))
+            {
                 i += 1;
             }
             let atom = text[start..i].to_string();
@@ -1280,5 +1292,75 @@ fn written(verb: u8, table: &str, c: &Data, b: &Data, a: &Data) -> Result<String
             )),
             _ => Err("a `![...]` that is neither an update nor a delete".into()),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Tok, tokens};
+
+    /// A number's tokens are q's own: each literal here with the tokens
+    /// `-4!` gives for it on KDB-X 5, blanks left out (#2057).
+    #[test]
+    fn a_number_is_read_as_q_tokenizes_it() {
+        let cases: &[(&str, &[&str])] = &[
+            ("1e-3", &["1e-3"]),
+            ("2.5e-1", &["2.5e-1"]),
+            ("1e+1", &["1e+1"]),
+            ("1e3", &["1e3"]),
+            ("2e10", &["2e10"]),
+            ("2e+10", &["2e+10"]),
+            ("1.e-3", &["1.e-3"]),
+            (".5e-3", &[".5e-3"]),
+            ("-1e-3", &["-1e-3"]),
+            ("-2.5e+2", &["-2.5e+2"]),
+            ("10e-1", &["10e-1"]),
+            ("1e-3e", &["1e-3e"]),
+            ("1e-3e-2", &["1e-3e-2"]),
+            ("1e-3f", &["1e-3f"]),
+            ("1E-3", &["1E", "-", "3"]),
+            ("1E3", &["1E3"]),
+            ("1e--3", &["1e-", "-", "3"]),
+            ("1e+-3", &["1e", "+", "-3"]),
+            ("1e-", &["1e-"]),
+            ("1e+", &["1e", "+"]),
+            ("1e+x", &["1e", "+", "x"]),
+            ("1e+.5", &["1e", "+", ".5"]),
+            ("1e-+3", &["1e-", "+", "3"]),
+            ("1e3-2", &["1e3", "-", "2"]),
+            ("1f-3", &["1f", "-", "3"]),
+            ("1b-3", &["1b", "-", "3"]),
+            ("1d-3", &["1d", "-", "3"]),
+            ("0x1e-3", &["0x1e-3"]),
+            ("0Ne-3", &["0Ne-3"]),
+            ("0we-1", &["0we-1"]),
+            ("x*1e-3", &["x", "*", "1e-3"]),
+            ("px>1e-3", &["px", ">", "1e-3"]),
+            ("1e-3-2", &["1e-3", "-", "2"]),
+            ("3-1e-3", &["3", "-", "1e-3"]),
+            ("1e-3*2", &["1e-3", "*", "2"]),
+            ("1e-3+1e+3", &["1e-3", "+", "1e+3"]),
+            ("px-1e-3", &["px", "-", "1e-3"]),
+            ("x-2e", &["x", "-", "2e"]),
+            ("1e1e-1", &["1e1e-1"]),
+            ("2e-3j", &["2e-3j"]),
+            ("1he-2", &["1he-2"]),
+            ("2012.01.01e-3", &["2012.01.01e-3"]),
+            // q's tokens for a vector are its items; here they are one
+            // literal, as `parse` holds them.
+            ("1.5e-2 1e-1 3", &["1.5e-2 1e-1 3"]),
+            ("1e-3 2", &["1e-3 2"]),
+        ];
+        for (text, want) in cases {
+            let got: Vec<String> = tokens(text)
+                .unwrap_or_else(|e| panic!("{text}: {e}"))
+                .into_iter()
+                .map(|t| match t {
+                    Tok::Leaf(s) | Tok::Name(s) | Tok::Op(s) => s,
+                    other => panic!("{text}: {other:?}"),
+                })
+                .collect();
+            assert_eq!(got, *want, "{text}");
+        }
     }
 }

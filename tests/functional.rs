@@ -94,6 +94,24 @@ const CASES: &[(&str, &str)] = &[
         "select from t where px>-1.5",
         "?[t;enlist (>;`px;-1.5);0b;()]",
     ),
+    // An exponent's sign is its number's: `1e-3` is one float, not
+    // `1e` minus `3` (#2057).
+    (
+        "select x:px*1e-3 from t",
+        "?[t;();0b;(enlist`x)!enlist (*;`px;1e-3)]",
+    ),
+    (
+        "select from t where px>1e-3, size<2.5e+1",
+        "?[t;((>;`px;1e-3);(<;`size;2.5e+1));0b;()]",
+    ),
+    (
+        "select v:px+1.5e-2 1e-1 3 4 5 from t",
+        "?[t;();0b;(enlist`v)!enlist (+;`px;1.5e-2 1e-1 3 4 5)]",
+    ),
+    (
+        "select v:px-1e+1 from t",
+        "?[t;();0b;(enlist`v)!enlist (-;`px;1e+1)]",
+    ),
     ("exec px from t", "?[t;();();`px]"),
     ("exec px by sym from t", "?[t;();`sym;`px]"),
     ("exec px, size from t", "?[t;();();`px`size!(`px;`size)]"),
@@ -467,6 +485,9 @@ fn a_query_is_said_in_words() {
         words.contains("`px` equals the largest of `px` within each group of `sym`"),
         "{words}"
     );
+    // An exponent's sign is its number's (#2057).
+    let words = q_lint_rs::explain_qsql("r:select from t where px>1e-3\n", 3).unwrap();
+    assert!(words.contains("`px` is greater than `1e-3`"), "{words}");
     // What it has no words for is quoted.
     let words = q_lint_rs::explain_qsql("r:select from t where px>f[a;b]\n", 3).unwrap();
     assert!(words.contains("`px` is greater than `f[a;b]`"), "{words}");
