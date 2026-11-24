@@ -45,6 +45,7 @@ import {
   type TestRun,
   type TestRunProfile,
 } from "vscode";
+import { open } from "node:fs/promises";
 import { isProduction } from "./agent";
 import { coverageByFile, coveragePlan, coverageSummary, definedNames, type CoveragePlan, type SourceFile } from "./coverage";
 import { DRIFT, DRIFT_BATCH, readDrift, type ProcessState } from "./definitions";
@@ -60,6 +61,7 @@ import {
   failureText,
   functionTestId,
   isK4Test,
+  isK4unitHeader,
   k4Keys,
   k4Label,
   k4Mode,
@@ -176,6 +178,8 @@ class QTests {
   private readonly disposables: { dispose(): unknown }[];
   private discovering: Promise<void> | undefined;
   private again = false;
+  /// Whether the CSV cap was said once already.
+  private capped = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private readonly runProfiles: TestRunProfile[] = [];
   private coverageProfile: TestRunProfile | undefined;
@@ -293,9 +297,19 @@ class QTests {
         items.push(parent);
       }
     }
-    for (const uri of await workspace.findFiles("**/*.csv", "**/node_modules/**", MAX_CSV)) {
+    const csvs = await workspace.findFiles("**/*.csv", "**/node_modules/**", MAX_CSV);
+    if (csvs.length >= MAX_CSV && !this.capped) {
+      this.capped = true;
+      void window.showInformationMessage(
+        plainMessage(`The workspace holds ${MAX_CSV} CSV files or more: the Test Explorer looks for k4unit suites in the first ${MAX_CSV} only.`),
+      );
+    }
+    for (const uri of csvs) {
       let rows: K4Row[] | undefined;
       try {
+        if (!isK4unitHeader(await this.head(uri))) {
+          continue;
+        }
         rows = parseK4unit(Buffer.from(await workspace.fs.readFile(uri)).toString("utf8"));
       } catch {
         continue;
@@ -334,6 +348,24 @@ class QTests {
       }
     }
     this.controller.items.replace(items);
+  }
+
+  /// The first few KB of a file: from disk when it is there, else the
+  /// whole file as VS Code reads it.
+  private async head(uri: Uri): Promise<string> {
+    if (uri.scheme === "file") {
+      const file = await open(uri.fsPath).catch(() => undefined);
+      if (file !== undefined) {
+        try {
+          const buffer = Buffer.alloc(4096);
+          const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+          return buffer.subarray(0, bytesRead).toString("utf8");
+        } finally {
+          await file.close();
+        }
+      }
+    }
+    return Buffer.from(await workspace.fs.readFile(uri)).toString("utf8");
   }
 
   /// Every test's id, in order.

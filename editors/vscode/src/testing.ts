@@ -312,6 +312,14 @@ export function parseK4unit(text: string): K4Row[] | undefined {
     .filter((row) => row.action !== "" && row.code.trim() !== "" && !row.action.startsWith("comment"));
 }
 
+/// Whether `start`, the first line of a CSV or more, is a k4unit header:
+/// read before the whole file, so that a workspace's data CSVs are not read
+/// in full to be turned down (#1606).
+export function isK4unitHeader(start: string): boolean {
+  const end = start.search(/\r?\n/);
+  return parseK4unit(end < 0 ? start : start.slice(0, end)) !== undefined;
+}
+
 /// Whether a row is a test of its own: the others set up and tear down.
 export function isK4Test(row: K4Row): boolean {
   return row.action === "true" || row.action === "fail" || row.action === "run";

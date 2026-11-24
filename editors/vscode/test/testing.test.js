@@ -617,3 +617,23 @@ test("one run at a time, and a busy process is asked once, not once per test (#1
   assert.deepStrictEqual(explorer.results().map((r) => r.state), ["errored", "errored"]);
   assert.match(explorer.results()[1].message, /Not run/);
 });
+
+test("a CSV that is not a k4unit suite is turned down from its first line, not read whole (#1606)", async (t) => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  stub.reset();
+  fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-csv-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, "data.csv"), "sym,price\n" + "a,1\n".repeat(10000));
+  fs.writeFileSync(path.join(dir, "suite.csv"), "action,ms,bytes,lang,code,repeat,minver,comment\ntrue,0,0,q,1b,1,,\n");
+  vscode.workspace.findFiles = async (glob) => (glob.endsWith(".csv") ? ["data.csv", "suite.csv"].map((f) => vscode.Uri.file(path.join(dir, f))) : []);
+  const whole = [];
+  vscode.workspace.fs = { readFile: async (uri) => (whole.push(path.basename(uri.fsPath)), fs.readFileSync(uri.fsPath)) };
+  const explorer = registerTestExplorer(stub.newContext(), fakeLive(), () => undefined);
+  await explorer.discover();
+  assert.deepStrictEqual(whole, ["suite.csv"]);
+  assert.strictEqual(explorer.items().length, 1);
+});
