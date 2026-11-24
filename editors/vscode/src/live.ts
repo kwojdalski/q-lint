@@ -28,6 +28,7 @@ import {
   type OutputChannel,
   type StatusBarItem,
   type Terminal,
+  type TextDocument,
   type TextEditor,
   type TreeDataProvider,
   type TreeView,
@@ -58,6 +59,7 @@ import {
   withProtections,
   type Process,
 } from "./processes";
+import { clickedEditor } from "./clicked";
 import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
 import { ClosedBeforeHandshake, QConnection, QError, type Target } from "./qclient";
 import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, readTunnel } from "./tunnel";
@@ -149,6 +151,12 @@ function codeAt(editor: TextEditor, from: From): string | undefined {
     return block === undefined ? undefined : lines.slice(block.start, block.end + 1).join("\n");
   }
   return document.lineAt(line).text;
+}
+
+/// The editor a command is for: the one showing `uri`, a Uri a title-bar
+/// button handed in, else the active one (#1523).
+function clicked(uri: unknown): TextEditor | undefined {
+  return clickedEditor(uri, window.visibleTextEditors ?? [], window.activeTextEditor);
 }
 
 /// What a command that reads the active editor says when there is none.
@@ -322,13 +330,13 @@ export class QTerminals {
     );
   }
 
-  /// Run the active file in a terminal named after it, saving it first. The
+  /// Run the active file - or `document`, the one whose Run button was
+  /// clicked - in a terminal named after it, saving it first. The
   /// terminal it ran in before is closed: running the file again starts a
   /// fresh q. Another file of the same name keeps its own. `extra`: Run File
   /// with Arguments' words after the file (`.z.x`) and lines typed into q
   /// once it starts.
-  async runFile(extra?: RunExtra): Promise<void> {
-    const document = window.activeTextEditor?.document;
+  async runFile(extra?: RunExtra, document = window.activeTextEditor?.document): Promise<void> {
     if (document === undefined || document.uri.scheme !== "file") {
       void window.showInformationMessage("q-lint: open a q file saved on disk to run it.");
       return;
@@ -482,7 +490,7 @@ export function movedFrom(expected: string): Error {
 export class Live {
   /// Run the active file in its q terminal with Run File with Arguments'
   /// extra words and input (#1005).
-  readonly runFileWith: (extra: RunExtra) => Promise<void>;
+  readonly runFileWith: (extra: RunExtra, document?: TextDocument) => Promise<void>;
   private connection: QConnection | undefined;
   /// The query history, newest first. Kept here and written through to
   /// `globalState`, never rebuilt from it: a read of `globalState` straight
@@ -584,7 +592,7 @@ export class Live {
     this.discovery = new DiscoveryServers(context, { list: () => this.processes(), save: (processes) => this.save(processes) });
     const terminals = new QTerminals(context);
     this.terminals = terminals;
-    this.runFileWith = (extra) => terminals.runFile(extra);
+    this.runFileWith = (extra, document) => terminals.runFile(extra, document);
     this.modes = new QueryModes(context);
     this.modes.setPager((label, offset, count) => this.pageHeld(label, offset, count));
     this.modes.setRunner((code, label) => this.runOnProcess(code, label));
@@ -610,16 +618,16 @@ export class Live {
       c(COMMANDS.refresh, () => this.processesView.refresh()),
       c(COMMANDS.insertLabel, () => this.insertLabel()),
       c(COMMANDS.queryLine, () => this.queryFrom("line")),
-      c(COMMANDS.querySelection, () => this.queryFrom("selection")),
-      c(COMMANDS.queryBlock, () => this.queryFrom("block")),
+      c(COMMANDS.querySelection, (uri?: unknown) => this.queryFrom("selection", undefined, uri)),
+      c(COMMANDS.queryBlock, (uri?: unknown) => this.queryFrom("block", undefined, uri)),
       c(COMMANDS.abort, () => this.abort()),
       c(COMMANDS.rerun, (entry?: HistoryEntry) => this.rerun(entry)),
       c(COMMANDS.clearHistory, () => this.clearHistory()),
-      c(COMMANDS.runInTerminal, () => terminals.runFile()),
+      c(COMMANDS.runInTerminal, (uri?: unknown) => terminals.runFile(undefined, clicked(uri)?.document)),
       c(COMMANDS.sendLine, () => terminals.send("line")),
       c(COMMANDS.sendSelection, () => terminals.send("selection")),
       c(COMMANDS.sendBlock, () => terminals.send("block")),
-      c(CONTROL_COMMANDS.queryFile, () => this.queryFrom("file")),
+      c(CONTROL_COMMANDS.queryFile, (uri?: unknown) => this.queryFrom("file", undefined, uri)),
       c(CONTROL_COMMANDS.startRepl, () => terminals.repl()),
       c(CONTROL_COMMANDS.copyQuery, (entry?: HistoryEntry) => this.copyQuery(entry)),
       c(CONTROL_COMMANDS.revealProcess, () => this.revealProcess()),
@@ -2004,8 +2012,8 @@ export class Live {
 
   // --- queries
 
-  private async queryFrom(from: From, serverTypes?: string[]): Promise<void> {
-    const editor = window.activeTextEditor;
+  private async queryFrom(from: From, serverTypes?: string[], uri?: unknown): Promise<void> {
+    const editor = clicked(uri);
     if (editor === undefined) {
       noEditor();
       return;
