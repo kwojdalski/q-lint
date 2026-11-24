@@ -207,6 +207,13 @@ test("Lint q Code: qlinter's findings on the code given as standard input", asyn
   assert.deepStrictEqual(await realTools.lint.run({ code: "f:{[x] x+1}\n" }), { findings: [], count: 0 });
 });
 
+test("Lint q Code reads qlinter's output whole, a character split across chunks too (#1380)", async () => {
+  const { runWith } = require("../out/assisttools.js");
+  const script = 'process.stdout.write("a".repeat(65535) + "\u00e9".repeat(10))';
+  const ran = await runWith(process.execPath, ["-e", script], "", undefined, 10);
+  assert.strictEqual(ran.stdout.slice(65535), "\u00e9".repeat(10));
+});
+
 test("the tools turned off: unregistered at once, and a call on its way is told so and sends nothing", async () => {
   const { live, context } = setup({ "agent.schemaTool.enable": false });
   const tools = registerAssistTools(context, live, () => []);

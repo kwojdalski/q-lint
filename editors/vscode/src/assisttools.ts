@@ -128,6 +128,9 @@ export function runWith(command: string, args: string[], input: string, cwd: str
       reject(new Error(`qlinter took longer than ${seconds} s`));
     }, seconds * 1000);
     const cancelled = token?.onCancellationRequested(() => child.kill());
+    // Decoded across chunks: a character split at a chunk's end stays whole (#1380).
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
     child.stdout.on("data", (d) => (stdout += d));
     child.stderr.on("data", (d) => (stderr += d));
     child.on("error", (error) => {
