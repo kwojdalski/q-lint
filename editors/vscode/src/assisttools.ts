@@ -222,7 +222,7 @@ export class LintTool implements LanguageModelTool<LintInput> {
     return answer(await this.run(options.input, token));
   }
 
-  async run(input: LintInput, token?: CancellationToken): Promise<{ findings: LintFinding[]; count: number } | { error: string }> {
+  async run(input: LintInput, token?: CancellationToken): Promise<{ findings: LintFinding[]; count: number; truncated?: true } | { error: string }> {
     if (!setting("lintTool")) {
       return { error: assistOff("lintTool").replace(/^q-lint: /, "") };
     }
@@ -250,8 +250,9 @@ export class LintTool implements LanguageModelTool<LintInput> {
           last = `qlinter exited with ${ran.status}: ${ran.stderr.trim().slice(0, 500)}`;
           continue;
         }
+        // The first FINDINGS_LIMIT, as the other tools cap theirs (#1628).
         const findings = readLint(ran.stdout);
-        return { findings, count: findings.length };
+        return findings.length > FINDINGS_LIMIT ? { findings: findings.slice(0, FINDINGS_LIMIT), count: findings.length, truncated: true } : { findings, count: findings.length };
       } catch (error) {
         last = message(error);
       }

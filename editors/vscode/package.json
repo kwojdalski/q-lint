@@ -5188,7 +5188,7 @@
         "icon": "$(checklist)",
         "when": "config.q-lint.agent.lintTool.enable",
         "userDescription": "Lint q code with qlinter, the linter behind q-lint.",
-        "modelDescription": "Lints q (kdb+) code with qlinter, the static linter behind the q-lint extension, without running it, and returns `{findings, count}`: each finding `{line, column, code, rule, severity, message}`, lines and columns 1-based in the code given. An empty list means no rule matched, which is weaker than the code being correct. A failure gives `{error}`. qlinter reads the workspace's configuration (`.qlinter.toml`) as for the file `file`. Use it to check q code before suggesting it or running it.",
+        "modelDescription": "Lints q (kdb+) code with qlinter, the static linter behind the q-lint extension, without running it, and returns `{findings, count}`: each finding `{line, column, code, rule, severity, message}`, lines and columns 1-based in the code given; at most the first 200, with `count` how many there are and `truncated: true` when that is more. An empty list means no rule matched, which is weaker than the code being correct. A failure gives `{error}`. qlinter reads the workspace's configuration (`.qlinter.toml`) as for the file `file`. Use it to check q code before suggesting it or running it.",
         "inputSchema": {
           "type": "object",
           "properties": {

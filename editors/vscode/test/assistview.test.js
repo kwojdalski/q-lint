@@ -233,6 +233,17 @@ test("Lint q Code: qlinter's findings on the code given as standard input", asyn
   assert.deepStrictEqual(await realTools.lint.run({ code: "f:{[x] x+1}\n" }), { findings: [], count: 0 });
 });
 
+test("Lint q Code answers the first 200 findings, with their count (#1628)", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-lintcap-"));
+  const fake = path.join(dir, "qlinter");
+  const one = '{"line":1,"column":1,"code":"QX","rule":"r","severity":"warning","detail":"d","why":"w"}';
+  fs.writeFileSync(fake, `#!/bin/sh\ncat >/dev/null\nprintf '[%s]' '${Array(500).fill(one).join(",")}'\nexit 1\n`, { mode: 0o755 });
+  const { live, context } = setup();
+  const out = await registerAssistTools(context, live, () => [fake]).lint.run({ code: "1" });
+  assert.deepStrictEqual([out.findings.length, out.count, out.truncated], [200, 500, true]);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test("Lint q Code reads qlinter's output whole, a character split across chunks too (#1380)", async () => {
   const { runWith } = require("../out/assisttools.js");
   const script = 'process.stdout.write("a".repeat(65535) + "\u00e9".repeat(10))';
