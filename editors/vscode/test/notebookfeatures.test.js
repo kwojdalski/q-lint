@@ -812,3 +812,43 @@ test("an HTML export breaks a paragraph's line only where the notebook does: aft
   assert.strictEqual(markdownHtml("Title  \n==="), "<h1>Title</h1>");
   assert.strictEqual(markdownHtml("a <b>  \n*c*"), "<p>a &lt;b&gt;<br>\n<em>c</em></p>");
 });
+
+/// A Python notebook as Jupyter saves one: a figure shown, a value with
+/// what was printed after it, a `%%q` cell, and a cell not run.
+const PYTHON_NOTEBOOK = {
+  cells: [
+    { cell_type: "code", execution_count: 1, metadata: {}, outputs: [{ output_type: "display_data", data: { "image/png": "AAAA", "text/plain": ["<Figure>"] }, metadata: {} }], source: ["import matplotlib\n", "plot()"] },
+    {
+      cell_type: "code",
+      execution_count: 2,
+      metadata: {},
+      outputs: [
+        { output_type: "execute_result", execution_count: 2, data: { "text/plain": ["1"] }, metadata: {} },
+        { output_type: "stream", name: "stdout", text: ["x\n"] },
+      ],
+      source: ["1"],
+    },
+    { cell_type: "code", execution_count: 3, metadata: {}, outputs: [{ output_type: "display_data", data: { "text/plain": ["a"] }, metadata: {} }, { output_type: "display_data", data: { "text/plain": ["b"] }, metadata: {} }], source: ["%%q\n", "show 1"] },
+    { cell_type: "code", execution_count: null, metadata: { collapsed: true }, outputs: [], source: [] },
+    { cell_type: "markdown", metadata: {}, source: ["# T"] },
+  ],
+  metadata: { kernelspec: { display_name: "Python 3", language: "python", name: "python3" }, language_info: { name: "python", version: "3.11" } },
+  nbformat: 4,
+  nbformat_minor: 4,
+};
+
+test("a Jupyter notebook imported and exported keeps each output's type: a figure is no Out[n] value (#1946)", () => {
+  const back = JSON.parse(toIpynb(fromIpynb(JSON.stringify(PYTHON_NOTEBOOK))));
+  const types = (notebook) => notebook.cells.map((c) => (c.outputs ?? []).map((o) => o.output_type));
+  assert.deepStrictEqual(types(back), [["display_data"], ["execute_result", "stream"], ["display_data", "display_data"], [], []]);
+  assert.deepStrictEqual(back.cells.map((c) => c.outputs), PYTHON_NOTEBOOK.cells.map((c) => c.outputs));
+  // The type is the output's own through a save of the .qnb as well.
+  const saved = JSON.parse(toIpynb(parseQnb(serializeQnb(fromIpynb(JSON.stringify(PYTHON_NOTEBOOK))))));
+  assert.deepStrictEqual(types(saved), types(PYTHON_NOTEBOOK));
+  // An output made here has none: the last one of a cell that ran is its value.
+  const made = JSON.parse(toIpynb({ cells: [{ kind: "code", source: "1", execution: { order: 4 }, outputs: [{ items: [{ mime: "text/plain", text: "a" }] }, { items: [{ mime: "text/plain", text: "1" }] }] }] }));
+  assert.deepStrictEqual(made.cells[0].outputs.map((o) => [o.output_type, o.execution_count]), [["display_data", undefined], ["execute_result", 4]]);
+  // A value's number is its cell's, and nothing but the two types is taken from the file.
+  const odd = { cells: [{ kind: "code", source: "1", outputs: [{ items: [{ mime: "text/plain", text: "1" }], extra: { output_type: "execute_result" } }, { items: [{ mime: "text/plain", text: "2" }], extra: { output_type: "<script>" } }] }] };
+  assert.deepStrictEqual(JSON.parse(toIpynb(odd)).cells[0].outputs.map((o) => [o.output_type, o.execution_count]), [["execute_result", null], ["display_data", undefined]]);
+});

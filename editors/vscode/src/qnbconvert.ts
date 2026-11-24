@@ -409,9 +409,12 @@ function outputToJupyter(output: QnbOutput, order: number | undefined, last: boo
       data[item.mime] = jupyterLines(item.text ?? "");
     }
   }
-  // The last output of a cell that ran is its value, as Jupyter numbers one.
-  return last && order !== undefined
-    ? { output_type: "execute_result", execution_count: order, data, metadata: output.metadata ?? {} }
+  // An output read from a Jupyter notebook is of the type it had there
+  // (#1946). Of those made here, the last one of a cell that ran is its
+  // value, as Jupyter numbers one.
+  const type = output.extra?.output_type;
+  return type === "execute_result" || (type !== "display_data" && last && order !== undefined)
+    ? { output_type: "execute_result", execution_count: order ?? null, data, metadata: output.metadata ?? {} }
     : { output_type: "display_data", data, metadata: output.metadata ?? {} };
 }
 
@@ -505,7 +508,9 @@ function outputFromJupyter(raw: unknown): QnbOutput | undefined {
         // Jupyter keeps an image's bytes as base64 text.
         return mime.startsWith("image/") && mime !== "image/svg+xml" ? { mime, base64: text.replace(/\s/g, "") } : { mime, text };
       });
-      return items.length === 0 ? undefined : { items, ...(isObject(raw.metadata) && Object.keys(raw.metadata).length > 0 ? { metadata: raw.metadata } : {}) };
+      // Which of the two it is goes with it, for `toIpynb` (#1946).
+      const kept = { extra: { output_type: raw.output_type } };
+      return items.length === 0 ? undefined : { items, ...(isObject(raw.metadata) && Object.keys(raw.metadata).length > 0 ? { metadata: raw.metadata } : {}), ...kept };
     }
     default:
       return undefined;
