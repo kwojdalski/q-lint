@@ -389,3 +389,16 @@ test("cells turned off while Run All Cells is queued: the cells not yet run are 
   await run;
   assert.deepStrictEqual(q.queries, []);
 });
+
+test("Run Cell, Run Above and Run Below title an untitled cell by its number, as Run All does (#1937)", async (t) => {
+  const { interactive, live, editor } = await setUp(t);
+  assert.ok(await live.connectTo("dev"));
+  editor("/ %%\na:1\n/ %%\nb:2\n/ %%\nc:3", 3);
+  const titles = () => interactive.entries().map((e) => e.title);
+  await stub.commands.get(C.runCell)();
+  assert.deepStrictEqual(titles(), ["Cell 2"]);
+  await stub.commands.get(C.runAbove)("file:///w/a.q", 4);
+  assert.deepStrictEqual(titles().slice(1), ["Cell 1", "Cell 2"]);
+  await stub.commands.get(C.runBelow)("file:///w/a.q", 2);
+  assert.deepStrictEqual(titles().slice(3), ["Cell 2", "Cell 3"]);
+});
