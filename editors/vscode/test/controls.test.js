@@ -37,6 +37,11 @@ function fakeVscode(state, editor) {
         fakeVscode.on.rename = f;
         return disposable;
       },
+      onDidSaveTextDocument: (f) => {
+        fakeVscode.on.save = f;
+        return disposable;
+      },
+      textDocuments: [],
     },
     state,
   };
@@ -95,7 +100,7 @@ test("an untitled editor closed unsaved does not hand its process to the next ne
   const first = uri("untitled", "Untitled-1");
   const controls = loadControls(fakeVscode({}, { document: { uri: first } }));
   await fakeVscode.commands["q-lint.chooseConnectionForFile"]("prod");
-  fakeVscode.on.close({ uri: first });
+  fakeVscode.on.close({ uri: first, getText: () => "" });
   assert.strictEqual(controls.binding(uri("untitled", "Untitled-1")), undefined);
 });
 
@@ -117,4 +122,30 @@ test("a file renamed or moved keeps its process", async () => {
   assert.strictEqual(other.binding(file), undefined);
   assert.strictEqual(other.binding(uri("file", "/w/e/b.q")), "dev");
   assert.strictEqual(controls.binding(inFolder), undefined);
+});
+
+// Saving a bound untitled editor closes it and opens the file: the file
+// lost its process, and its queries went to the active one (#1529).
+test("an untitled editor saved to a file hands the file its process", async () => {
+  const first = uri("untitled", "Untitled-1");
+  const vscode = fakeVscode({}, { document: { uri: first } });
+  const controls = loadControls(vscode);
+  await fakeVscode.commands["q-lint.chooseConnectionForFile"]("prod");
+  // Closed first, then saved: the file opened has its text.
+  fakeVscode.on.close({ uri: first, getText: () => "select from t" });
+  const saved = uri("file", "/w/q1.q");
+  await fakeVscode.on.save({ uri: saved, getText: () => "select from t" });
+  assert.strictEqual(controls.binding(saved), "prod");
+  // Saved while still open, as VS Code may order it.
+  const second = uri("untitled", "Untitled-2");
+  vscode.window.activeTextEditor = { document: { uri: second } };
+  await fakeVscode.commands["q-lint.chooseConnectionForFile"]("dev");
+  vscode.workspace.textDocuments = [{ uri: second, getText: () => "count t" }];
+  const other = uri("file", "/w/q2.q");
+  await fakeVscode.on.save({ uri: other, getText: () => "count t" });
+  assert.strictEqual(controls.binding(other), "dev");
+  // Another file saved meanwhile, with other text, takes none.
+  const unrelated = uri("file", "/w/b.q");
+  await fakeVscode.on.save({ uri: unrelated, getText: () => "1+1" });
+  assert.strictEqual(controls.binding(unrelated), undefined);
 });

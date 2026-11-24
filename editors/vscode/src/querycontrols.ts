@@ -170,6 +170,26 @@ export async function runUnwrapped(
   return grid === undefined ? answer : { ...answer, grid };
 }
 
+/// An untitled editor's process, as its text was when last seen.
+export interface UntitledBinding {
+  label: string;
+  text: string;
+  /// When it was seen: closed, or now for one still open.
+  at: number;
+}
+
+/// The process of the untitled editor a file just saved was saved from:
+/// one with the same text, seen within `within` ms. Saving an untitled
+/// editor closes it and opens the file, and nothing else links the two
+/// (#1529). Undefined for empty text, or when two processes would match.
+export function savedFrom(text: string, untitled: readonly UntitledBinding[], now: number, within = 5000): string | undefined {
+  if (text.trim() === "") {
+    return undefined;
+  }
+  const labels = new Set(untitled.filter((u) => u.text === text && now - u.at <= within).map((u) => u.label));
+  return labels.size === 1 ? [...labels][0] : undefined;
+}
+
 /// The process a file is bound to, from what `workspaceState` holds.
 export function bindingFor(stored: unknown, uri: string): string | undefined {
   if (typeof stored !== "object" || stored === null) {

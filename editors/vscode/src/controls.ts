@@ -10,6 +10,7 @@ import {
   workspace,
   type ExtensionContext,
   type StatusBarItem,
+  type TextDocument,
   type Uri,
 } from "vscode";
 import {
@@ -19,8 +20,10 @@ import {
   bindingText,
   flagsText,
   readControls,
+  savedFrom,
   withBinding,
   type ControlSettings,
+  type UntitledBinding,
 } from "./querycontrols";
 
 /// What the controls need of the live half.
@@ -39,6 +42,9 @@ export class QueryControls {
   /// (`Untitled-1`) is the next window's first new editor's too, whose
   /// queries must not go where an editor closed unsaved was sent.
   private readonly untitled = new Map<string, string>();
+  /// Bound untitled editors closed lately: one saved to a file is closed,
+  /// and the file takes its process.
+  private closed: UntitledBinding[] = [];
   private readonly flags: StatusBarItem;
   private readonly fileItem: StatusBarItem;
 
@@ -72,9 +78,15 @@ export class QueryControls {
       // The next new editor in this window takes a closed one's name.
       workspace.onDidCloseTextDocument((document) => {
         if (document.uri.scheme === "untitled") {
+          const label = this.untitled.get(document.uri.toString());
+          if (label !== undefined) {
+            this.closed = [...this.closed.filter((c) => Date.now() - c.at < 60_000), { label, text: document.getText(), at: Date.now() }];
+          }
           this.untitled.delete(document.uri.toString());
         }
       }),
+      // An untitled editor saved to a file keeps its process (#1529).
+      workspace.onDidSaveTextDocument((document) => this.saved(document)),
       // A file renamed or moved, or one in a folder that was, keeps its process.
       workspace.onDidRenameFiles((event) => this.moved(event.files)),
     );
@@ -161,6 +173,24 @@ export class QueryControls {
       return;
     }
     await this.store(document.uri, undefined);
+  }
+
+  private async saved(document: TextDocument): Promise<void> {
+    if (document.uri.scheme === "untitled" || this.binding(document.uri) !== undefined) {
+      return;
+    }
+    const now = Date.now();
+    const open = workspace.textDocuments.flatMap((d) => {
+      const label = d.uri.scheme === "untitled" ? this.untitled.get(d.uri.toString()) : undefined;
+      return label === undefined ? [] : [{ label, text: d.getText(), at: now }];
+    });
+    if (open.length === 0 && this.closed.length === 0) {
+      return;
+    }
+    const label = savedFrom(document.getText(), [...open, ...this.closed], now);
+    if (label !== undefined) {
+      await this.store(document.uri, label);
+    }
   }
 
   private async moved(files: readonly { oldUri: Uri; newUri: Uri }[]): Promise<void> {

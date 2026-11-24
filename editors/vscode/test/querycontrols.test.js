@@ -482,3 +482,15 @@ test("an unlimited float list is written to the process's \\P, as its console wr
   assert.strictEqual(floats([1 / 3], 7), ",0.3333333");
   assert.strictEqual(readUnlimited({ ok: true, type: 9, text: [], value: [1 / 3] }).text[0], ",0.3333333");
 });
+
+// The untitled editor a saved file came from, by its text (#1529).
+test("a file saved from a bound untitled editor is matched by its text, recently, and only one way", () => {
+  const { savedFrom } = require("../out/querycontrols.js");
+  const now = 100000;
+  assert.strictEqual(savedFrom("a:1", [{ label: "prod", text: "a:1", at: now - 10 }], now), "prod");
+  assert.strictEqual(savedFrom("a:1", [{ label: "prod", text: "a:1", at: now - 60000 }], now), undefined);
+  assert.strictEqual(savedFrom("a:2", [{ label: "prod", text: "a:1", at: now }], now), undefined);
+  assert.strictEqual(savedFrom("  ", [{ label: "prod", text: "  ", at: now }], now), undefined);
+  assert.strictEqual(savedFrom("a:1", [{ label: "prod", text: "a:1", at: now }, { label: "dev", text: "a:1", at: now }], now), undefined);
+  assert.strictEqual(savedFrom("a:1", [{ label: "prod", text: "a:1", at: now }, { label: "prod", text: "a:1", at: now }], now), "prod");
+});
