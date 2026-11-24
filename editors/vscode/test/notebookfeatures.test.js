@@ -763,3 +763,21 @@ test("an HTML export writes a link's URL as it was written: an entity, an escape
   // A destination with a blank in it is no link, as CommonMark reads it.
   assert.strictEqual(markdownHtml("[open](https://host/{{q: id}})"), "<p>[open](https://host/<code>{{q: id}}</code>)</p>");
 });
+
+test("an HTML export nests a list written under an item, as the notebook shows it (#1943)", () => {
+  assert.strictEqual(markdownHtml("- a\n  - b\n- c"), "<ul><li>a<ul><li>b</li></ul></li><li>c</li></ul>");
+  assert.strictEqual(markdownHtml("- a\n    - b\n- c"), "<ul><li>a<ul><li>b</li></ul></li><li>c</li></ul>");
+  assert.strictEqual(markdownHtml("1. a\n   - b\n2. c"), "<ol><li>a<ul><li>b</li></ul></li><li>c</li></ol>");
+  // Deeper, a numbered one under a bullet, and an item's own next line.
+  assert.strictEqual(markdownHtml("- a\n  - b\n    - c\n  - d\n- e"), "<ul><li>a<ul><li>b<ul><li>c</li></ul></li><li>d</li></ul></li><li>e</li></ul>");
+  assert.strictEqual(markdownHtml("* a\n  3. b\n  4. c\n     more"), '<ul><li>a<ol start="3"><li>b</li><li>c more</li></ol></li></ul>');
+  assert.strictEqual(markdownHtml("- a\n\t- b"), "<ul><li>a<ul><li>b</li></ul></li></ul>");
+  // Under the item's text, not under its marker: a sibling, as before.
+  assert.strictEqual(markdownHtml("- a\n - b"), "<ul><li>a</li><li>b</li></ul>");
+  assert.strictEqual(markdownHtml("- a\n  b\n  c"), "<ul><li>a b c</li></ul>");
+  // What is nested is text still: escaped, and its live value read.
+  assert.strictEqual(
+    markdownHtml("- a\n  - <b>x</b> {{q: n}} [l](javascript:alert(1))", { n: { text: "<7>" } }),
+    '<ul><li>a<ul><li>&lt;b&gt;x&lt;/b&gt; <span class="live" title="q: n">&lt;7&gt;</span> [l](javascript:alert(1))</li></ul></li></ul>',
+  );
+});

@@ -135,7 +135,9 @@ export function markdownHtml(source: string, values: Record<string, LiveValue> =
   const lines = source.split(/\r?\n/);
   const out: string[] = [];
   let paragraph: string[] = [];
-  let list: { tag: "ul" | "ol"; start: number; items: string[] } | undefined;
+  // An item: its text, the column that text starts at, and the lines
+  // written under it from that column on - a list of its own (#1943).
+  let list: { tag: "ul" | "ol"; start: number; items: { text: string; column: number; under: string[] }[] } | undefined;
   // Whether the last line not indented was a list item's.
   let listed = false;
   const flush = (): void => {
@@ -145,12 +147,26 @@ export function markdownHtml(source: string, values: Record<string, LiveValue> =
     }
     if (list !== undefined) {
       const start = list.tag === "ol" && list.start !== 1 ? ` start="${list.start}"` : "";
-      out.push(`<${list.tag}${start}>${list.items.map((i) => `<li>${inline(i, values)}</li>`).join("")}</${list.tag}>`);
+      const item = (i: { text: string; under: string[] }): string =>
+        `<li>${inline(i.text, values)}${i.under.length > 0 ? markdownHtml(i.under.join("\n"), values) : ""}</li>`;
+      out.push(`<${list.tag}${start}>${list.items.map(item).join("")}</${list.tag}>`);
       list = undefined;
     }
   };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    // A list under the last item: a line indented to the item's text that
+    // starts an item, and what follows it there. It is that item's own
+    // Markdown, as a quote's lines are the quote's (#1943).
+    const last = list?.items[list.items.length - 1];
+    const indent = (/^[ \t]*/.exec(line) as RegExpExecArray)[0].replace(/\t/g, "    ");
+    if (last !== undefined && line.trim() !== "" && indent.length >= last.column) {
+      const under = indent.slice(last.column) + line.trimStart();
+      if (last.under.length > 0 || /^ {0,3}([-*+]|\d{1,9}[.)])(?:\s|$)/.test(under)) {
+        last.under.push(under);
+        continue;
+      }
+    }
     // A backtick fence's info string holds no backtick: "```a``` b" is a
     // line of text with a code span in it, not a fence (#1307).
     const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
@@ -244,9 +260,9 @@ export function markdownHtml(source: string, values: Record<string, LiveValue> =
         flush();
       }
       list ??= { tag, start: tag === "ol" ? parseInt(item[1], 10) : 1, items: [] };
-      list.items.push(item[2]);
+      list.items.push({ text: item[2], column: line.length - item[2].length, under: [] });
     } else if (list !== undefined && /^\s+\S/.test(line)) {
-      list.items[list.items.length - 1] += ` ${line.trim()}`;
+      list.items[list.items.length - 1].text += ` ${line.trim()}`;
     } else {
       if (list !== undefined) {
         flush();
