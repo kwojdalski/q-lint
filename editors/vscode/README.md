@@ -1538,8 +1538,10 @@ its tooltip, and a cell's tooltip is q's own text:
 A number format can end in a digit, its decimals: `ret_PCT1`, `pnl_CCY0`.
 It applies to a numeric column only, and a null or an infinity is shown as
 q writes it. A colour is a name or `#` and three, four, six or eight hex
-digits; anything else colours nothing. Copy and the exports write the
-cells as q sent them.
+digits; anything else colours nothing. Copied or exported as CSV,
+Markdown or HTML, a formatted column is written as the grid shows it
+(`1.23%`); as Excel, JSON, Parquet or q, as the values q sent. With column
+formats off, every one writes q's values.
 
 ```q
 select sym, ret_PCT:ret, spread_BPS:spread, pnl_CCY:pnl, sym_BG:?[pnl>0;`green;`red] from book
@@ -1574,7 +1576,8 @@ Hidden Result Columns**, shows them; **Reset Result Column Layout** puts
 everything back. The layout is kept by column name with the result's tab,
 the next run of the same query in the window, and the saved query the
 result came from: run from **Saved Queries**, it opens as it was left.
-Hidden columns are still in Copy and the exports.
+Copy and the exports leave hidden columns out, and write the others in the
+order shown.
 
 **Depth chart.** An order book is drawn as its depth: the cumulative size at
 each price either side of the mid, the bid side green and stepping down to
