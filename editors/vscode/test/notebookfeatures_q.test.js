@@ -142,6 +142,12 @@ test("notebook features against a real q process", { skip }, async (t) => {
     ]);
   });
 
+  // A table cell's `\|` is the cell's `|`, and q is sent that (#1999).
+  await t.test("a live value in a table cell with an escaped | is q's or, and is kept under the key the page reads (#1999)", async () => {
+    const sources = ["| a | b |\n|---|---|\n| {{q: 1\\|2}} | {{q: (\\|/)1 5 3}} |", "| a | b |\n|---|---|\n| {{q: `unset\\|1|2}} | x |"];
+    assert.deepStrictEqual(await liveValues(connection, sources), [{ "1|2": { text: "2" }, "(|/)1 5 3": { text: "5" } }, {}]);
+  });
+
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-nbrun-"));
   const notebook = path.join(dir, "report.qnb");
   fs.writeFileSync(

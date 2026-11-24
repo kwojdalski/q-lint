@@ -228,10 +228,37 @@ test("a code or HTML block inside a blockquote or a list item is not prose: its 
   assert.deepStrictEqual(guardedText("1", ["> ~~~\n> {{q: `t set 1}}\n> ~~~", "- a\n\n      {{q: delete from `t}}"]), ["1"]);
 });
 
+// markdown-it splits a table's row at each `|` before any inline rule and
+// hands a cell's `\|` over as `|`. The host read the row as written: it
+// ran `1|2` for a row that showed nothing, and sent q `1\|2`, which it
+// refuses, for the row that showed the value (#1999).
+test("a live value in a table cell is read as the cell's text: its \\| is q's |, and one the row splits is not run (#1999)", async () => {
+  const r = await renderer();
+  const table = (row) => `| a | b |\n|---|---|\n${row}`;
+  assert.deepStrictEqual(liveQueries(table("| {{q: 1\\|2}} | x |")), [{ key: "1|2", expr: "1|2" }]);
+  // The key the page looks up, from the cell's text as markdown-it hands it.
+  assert.strictEqual(r.scanLive("{{q: 1|2}}", 0).expr, "1|2");
+  // Unescaped, the row splits inside it: two cells of text, and no query.
+  assert.deepStrictEqual(liveQueries(table("| {{q: 1|2}} | x |")), []);
+  assert.deepStrictEqual(guardedText("1", [table("| {{q: `t set 1|2}} | x |")]), ["1"]);
+  assert.deepStrictEqual(guardedText("1", [table("| {{q: `t set 1\\|2}} | x |")]), ["1", "`t set 1|2"]);
+  // The header's cells are read so too, and a cell past its last is not shown.
+  assert.deepStrictEqual(liveExpressions("| {{q: a\\|b}} | {{q: c}} |\n|---|---|"), ["a|b", "c"]);
+  assert.deepStrictEqual(liveExpressions(table("| {{q: d}} | e | {{q: f}} |\n\n{{q: g}}")), ["d", "g"]);
+  // In a quote and a list item, and with CRLF line ends.
+  assert.deepStrictEqual(liveExpressions("> | a |\n> |---|\n> | {{q: 1\\|2}} |\n\n- | a |\n  |---|\n  | {{q: 3\\|4}} |"), ["1|2", "3|4"]);
+  assert.deepStrictEqual(liveQueries(table("| {{q: 1\\|2}} | x |").replace(/\n/g, "\r\n")), [{ key: "1|2", expr: "1|2" }]);
+  // With no line of dashes under it a row is a paragraph, sent as written.
+  assert.deepStrictEqual(liveQueries("| {{q: 1|2}} | x |"), [{ key: "1|2", expr: "1|2" }]);
+  assert.deepStrictEqual(liveQueries("| {{q: 1\\|2}} | x |"), [{ key: "1\\|2", expr: "1\\|2" }]);
+});
+
 /// The lines generated Markdown is made of: the containers a line opens or
 /// goes on in, and what it holds.
 const PREFIXES = ["", "", "", "> ", ">", "- ", "* ", "1. ", "  ", "    ", "      ", "\t", "> > ", "> - ", "- > ", ">     ", "   > "];
 const BODIES = ["{{q: K}}", "{{q: K}}", "text {{q: K}}", "text", "", "", "```", "~~~", "``` q", "~~~ {{q: K}}", "<div>", "</div>", "<pre>", "</pre>", "<!--", "-->", "<span>", "<!A", "<?", "?>", "<script>", "---", "===", "# {{q: K}}", "<b>{{q: K}}</b>", "`{{q: K}}`", "- {{q: K}}", "> {{q: K}}", "-", "{{q: K", "K}}", "[x]: /u", "[x]: {{q: K}}", "[x]:", '"t {{q: K}}"', "{{q: K}} <!--", "<div> {{q: K}}"];
+/// A table's lines among them (#1999).
+BODIES.push("| {{q: K}} | {{q: K\\|1}} |", "{{q: K|2}} | x", "| a | b |", "|---|---|", "---|---", "|-|", "| {{q: K}} |", "x \\| {{q: K}} | y | {{q: 3\\|K}}", ":-:|-:", "{{q: K}} \\\\| w");
 
 // markdown-it itself is the judge: the renderer VS Code ships, when
 // QLINT_TEST_MARKDOWN_IT names its notebook-out/index.js.

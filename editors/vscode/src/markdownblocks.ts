@@ -1,8 +1,9 @@
 // The inline text of a Markdown cell, block by block, as markdown-it hands
 // it to the notebook's renderer (#2000): a paragraph's or a heading's lines
 // less the markers and indent of the blockquotes and list items they are
-// in. A code block, a fence, an HTML block and a rule have none, wherever
-// they stand - in a quote or a list item as at the cell's top.
+// in, and each cell of a table (#1999). A code block, a fence, an HTML
+// block and a rule have none, wherever they stand - in a quote or a list
+// item as at the cell's top.
 //
 // What the renderer shows is markdown-it's reading, not CommonMark's, so
 // the rules here are its block rules, in its order, with its line marks
@@ -161,6 +162,79 @@ function tokenize(s: Blocks, startLine: number, endLine: number): void {
     line = s.line;
   }
 }
+
+/// A table's row as its cells: split at each `|` with no backslash before
+/// it, a `\|` being a `|` of the cell's (#1999), less an empty first and
+/// last one.
+function cells(row: string): string[] {
+  const out: string[] = [];
+  let cell = "";
+  for (let i = 0; i < row.length; i++) {
+    if (row[i] === "|" && row[i - 1] === "\\") {
+      cell = cell.slice(0, -1) + "|";
+    } else if (row[i] === "|") {
+      out.push(cell);
+      cell = "";
+    } else {
+      cell += row[i];
+    }
+  }
+  out.push(cell);
+  if (out.length > 0 && out[0] === "") {
+    out.shift();
+  }
+  if (out.length > 0 && out[out.length - 1] === "") {
+    out.pop();
+  }
+  return out;
+}
+
+const table: Rule = (s, startLine, endLine, silent) => {
+  if (startLine + 2 > endLine) {
+    return false;
+  }
+  const under = startLine + 1;
+  if (s.sCount[under] < s.blkIndent || s.sCount[under] - s.blkIndent >= 4) {
+    return false;
+  }
+  // The line under the header: `|`, `-` and `:` only, and not a list item.
+  const rule = s.text(under);
+  if (!/^[-:|][-:| \t]*$/.test(rule) || rule.length < 2 || /^-[ \t]/.test(rule)) {
+    return false;
+  }
+  const aligns = rule.split("|").map((c) => c.trim());
+  if (aligns.some((c, i) => (c === "" ? i !== 0 && i !== aligns.length - 1 : !/^:?-+:?$/.test(c)))) {
+    return false;
+  }
+  const header = s.text(startLine).trim();
+  if (!header.includes("|") || s.sCount[startLine] - s.blkIndent >= 4) {
+    return false;
+  }
+  const columns = cells(header);
+  if (columns.length === 0 || columns.length !== aligns.filter((c) => c !== "").length) {
+    return false;
+  }
+  if (silent) {
+    return true;
+  }
+  columns.forEach((c) => s.keepLine(c.trim()));
+  let nextLine = startLine + 2;
+  for (; nextLine < endLine; nextLine++) {
+    if (s.sCount[nextLine] < s.blkIndent || ENDS.blockquote.some((end) => end(s, nextLine, endLine, true))) {
+      break;
+    }
+    const row = s.text(nextLine).trim();
+    if (row === "" || s.sCount[nextLine] - s.blkIndent >= 4) {
+      break;
+    }
+    // A cell past the header's last is not shown.
+    cells(row)
+      .slice(0, columns.length)
+      .forEach((c) => s.keepLine(c.trim()));
+  }
+  s.line = nextLine;
+  return true;
+};
 
 const code: Rule = (s, startLine, endLine) => {
   if (s.sCount[startLine] - s.blkIndent < 4) {
@@ -626,12 +700,12 @@ const paragraph: Rule = (s, startLine, endLine) => {
   return true;
 };
 
-const RULES: Rule[] = [code, fence, blockquote, hr, list, reference, htmlBlock, heading, paragraph];
+const RULES: Rule[] = [table, code, fence, blockquote, hr, list, reference, htmlBlock, heading, paragraph];
 
 /// The blocks that end a paragraph, a blockquote and a list without an
 /// empty line before them.
 const ENDS = {
-  paragraph: [fence, blockquote, hr, list, htmlBlock, heading],
+  paragraph: [table, fence, blockquote, hr, list, htmlBlock, heading],
   blockquote: [fence, blockquote, hr, list, htmlBlock, heading],
   list: [fence, blockquote, hr],
 };
