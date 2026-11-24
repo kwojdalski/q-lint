@@ -283,12 +283,14 @@ fn declared(
 }
 
 /// A function a statement at column 0 defines, as a lens or a test runs
-/// it: the name as written at `at` for `len` bytes, the code that defines it
-/// (the statement, wrapped in `\d .ns` and `\d .` when it is written under
-/// `\d .ns`) and, for a test, the call that runs it once defined.
+/// it: the name as written at `at` for `len` bytes, the name q gives it
+/// once defined, the code that defines it (the statement, wrapped in
+/// `\d .ns` and `\d .` when it is written under `\d .ns`) and, for a test,
+/// the call that runs it once defined.
 pub(super) struct Runnable {
     pub(super) at: usize,
     pub(super) len: usize,
+    pub(super) name: String,
     pub(super) code: String,
     pub(super) test: Option<String>,
 }
@@ -304,10 +306,20 @@ pub(super) fn is_test(name: &str) -> bool {
             .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_uppercase()))
 }
 
+/// The namespace of `name` as q resolves it, and its last part: `None` for
+/// one at the root.
+fn namespace_of(name: &str) -> Option<(&str, &str)> {
+    name.rsplit_once('.')
+        .filter(|(ns, _)| ns.len() > 1 && ns.starts_with('.'))
+}
+
 /// Each function a statement at column 0 of `text` defines, in order.
 pub(super) fn runnables(text: &str) -> Vec<Runnable> {
-    let mut out = vec![];
+    let mut out: Vec<Runnable> = vec![];
     let mut seen = HashSet::new();
+    // A file that uses qUnit runs every `test*` of a namespace, as
+    // `.qunit.runNsTests` does (#1591).
+    let qunit = text.contains(".qunit.");
     // Read once: asked for each definition, the whole file was read again
     // for each (#1216).
     let contexts = q_lint_rs::contexts(text);
@@ -340,10 +352,13 @@ pub(super) fn runnables(text: &str) -> Vec<Runnable> {
         // file's first `\d` is wherever the process puts it, the root for a
         // query.
         let name = if m.implicit { spelled } else { &m.name };
+        let qunit_test =
+            qunit && namespace_of(name).is_some_and(|(_, leaf)| leaf.starts_with("test"));
         out.push(Runnable {
             at: m.at,
             len: m.len,
-            test: is_test(spelled).then(|| format!("{name}[]")),
+            name: name.to_string(),
+            test: (is_test(spelled) || qunit_test).then(|| format!("{name}[]")),
             code,
         });
     }

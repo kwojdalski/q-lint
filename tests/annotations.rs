@@ -751,6 +751,31 @@ fn the_workspace_tests_are_listed_with_the_code_that_runs_them() {
     assert_eq!(span(&tests[0]["range"]), (2, 0, 8));
 }
 
+/// A file that uses qUnit has every `test*` of a namespace run, as
+/// `.qunit.runNsTests` does (#1591).
+#[test]
+fn qunit_tests_are_listed_as_qunit_finds_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let suite = "\\d .testCalc\ntestfoo:{[] .qunit.assertEquals[1;1;\"one\"]}\ntest1:{[] 1b}\n\
+                 helper:{x}\n\\d .\n";
+    let mut server = Server::start(
+        dir.path(),
+        &[("suite.q", suite), ("bare.q", "testlower:{[] 1b}\n")],
+    );
+    let reply = server.request("q-lint/tests", json!({}));
+    let files = reply["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"));
+    assert_eq!(files.len(), 1, "{reply}");
+    let calls: Vec<&str> = files[0]["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["call"].as_str().unwrap())
+        .collect();
+    assert_eq!(calls, [".testCalc.testfoo[]", ".testCalc.test1[]"]);
+}
+
 #[test]
 fn the_global_at_a_position_is_named_as_q_resolves_it() {
     let dir = tempfile::tempdir().unwrap();
