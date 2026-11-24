@@ -195,6 +195,11 @@ const TYPED: &[(&str, i16)] = &[
     ("\"\"", 10),
     ("\"a\"", -10),
     ("\"ab\"", 10),
+    // q counts a string in bytes: one character of two or four is a
+    // string, not a char (#2063).
+    ("\"\u{e9}\"", 10),
+    ("\"\u{1f600}\"", 10),
+    ("\"a\u{e9}\"", 10),
     ("\"\\n\"", -10),
     ("\"\\\"\"", -10),
     ("\"\\012\"", -10),

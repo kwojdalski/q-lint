@@ -176,6 +176,15 @@ fn a_typed_local_is_judged_as_its_literal_would_be() {
             pair("QT033", 10),
         ]
     );
+    // q counts a string in bytes: `"é"` is a string, so joining it to
+    // longs is the mixed join `"ab"` gives (#2063).
+    fs::write(
+        d.join("b.q"),
+        "f:{c:\"\u{e9}\"; c,1 2}\ng:{c:\"ab\"; c,1 2}\nh:{c:\"e\"; c,1 2}\n",
+    )
+    .unwrap();
+    let (_, found, _) = run(d, &["--isolated", "--select", "QT034", "b.q"]);
+    assert_eq!(found, vec![pair("QT034", 1), pair("QT034", 2)]);
     // In the style profile, not in general.
     let (_, found, _) = run(d, &["--isolated", "--profile", "general", "a.q"]);
     assert!(
