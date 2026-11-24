@@ -1351,3 +1351,22 @@ test("text q values whole is read as value reads it: a / line is a comment to it
   assert.deepStrictEqual(writes("(1;\n/\nd6:9)"), []);
   assert.deepStrictEqual(writes(["count t", valued("(1;\n/\nd6:9)")]), ["assigns d6"]);
 });
+
+test("a language prefix, repeated or nested, hides neither a system command nor k's . (#2034)", () => {
+  const cases = {
+    "k)\\l ld.q": ["runs the system command \\l"],
+    "k)\\cd sub": ["runs the system command \\cd"],
+    "q)\\cd sub": ["runs the system command \\cd"],
+    "q)q)\\cd sub": ["runs the system command \\cd"],
+    "q)k)\\t 500": ["sets the timer with \\t"],
+    'q)k)."i5:1"': ["evaluates a string with k's ."],
+    'k)k)."i9:1"': ["evaluates a string with k's ."],
+    // A setting read, or q code, after the prefix still reads.
+    "k)\\c": [],
+    "q)count t": [],
+    "q)\\t count t": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

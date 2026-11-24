@@ -81,7 +81,8 @@
 //   and through a trap (`@[value;"a:1";h]`), and by their `.q.` names;
 //   passed as a value, through an adverb or a composition (`value/["a:1"]`,
 //   `'[value;::]"a:1"`), each string in the expression around it (#1766);
-// - a system command (`\l`, `\cd x`, `\\`), except one that only reads a
+// - a system command (`\l`, `\cd x`, `\\`), also after a language prefix
+//   or several, `k)\l f.q`, `q)k)\cd x` (#2034), except one that only reads a
 //   setting (`\c`, `\d`, `\P`, `\_`, `\r`, `\E` without an argument, and
 //   `\w 0` or `\w 1`) and `\t` or `\ts`, whose
 //   expression is read by these rules - but `\t 500`, a whole number with
@@ -697,7 +698,9 @@ function picked(t: Token[], at: number, root: string): string | undefined {
 
 /// What one statement does that the guard asks about, added to `found`.
 function readStatement(statement: string, found: Set<string>): void {
-  const text = statement.trimStart();
+  // A language prefix, `q)` or `k)`, as many as are written, `q)k)`, is
+  // not what it runs: `k)\l f.q` loads the script (#2034).
+  const text = statement.trimStart().replace(/^(?:[qk]\)\s*)+/, "");
   if (text.startsWith("\\")) {
     const command = /^\\(\\|[A-Za-z_]+)(?::\d+)?\s*([\s\S]*)$/.exec(text);
     const name = command?.[1] ?? "";
@@ -719,8 +722,11 @@ function readStatement(statement: string, found: Set<string>): void {
   const touching = (a: Token | undefined, b: Token | undefined): boolean =>
     a !== undefined && b !== undefined && at.get(b) === (at.get(a) ?? -2) + 1;
   const t = all.filter((k) => k.kind !== "space");
-  // k code, `k)...`, where a monadic `.` or `.:` is `value` (#1448).
-  const kCode = t[0]?.text === "k" && t[1]?.text === ")" && touching(t[0], t[1]);
+  // k code, `k)...`, where a monadic `.` or `.:` is `value` (#1448), after
+  // the last of the prefixes written, `q)k)."a:1"` (#2034).
+  let code = 0;
+  while ((t[code]?.text === "k" || t[code]?.text === "q") && t[code + 1]?.text === ")" && touching(t[code], t[code + 1])) code += 2;
+  const kCode = code > 0 && t[code - 2].text === "k";
   // What each open bracket is: a lambda, a table literal, its key columns'
   // `[`, or none of them.
   const stack: ("lambda" | "table" | "key" | "other")[] = [];
@@ -1016,7 +1022,7 @@ function readStatement(statement: string, found: Set<string>): void {
     const unaryDot = k.kind === "op" && k.text === "." && t[i - 1]?.text === "(" && t[i - 1].kind === "open";
     let after = next?.text === ":" && touching(k, next) ? i + 2 : i + 1;
     const parenthesised = unaryDot && t[after]?.text === ")";
-    if (parenthesised || (kCode && k.kind === "op" && k.text === "." && i >= 2 && (t[i - 1].kind === "op" || t[i - 1].kind === "open" || i === 2 || t[i - 1].text === ";"))) {
+    if (parenthesised || (kCode && k.kind === "op" && k.text === "." && i >= code && (t[i - 1].kind === "op" || t[i - 1].kind === "open" || i === code || t[i - 1].text === ";"))) {
       after += parenthesised ? 1 : 0;
       const what = evaluates(t, after - 1, true, kCode);
       if (what !== undefined) {

@@ -147,3 +147,12 @@ test("text a feature values whole is held when a / line in it hides a write from
   const rows = ["(1;\n/\nkk:9)"];
   await sentWhenConfirmed(read, () => live.runOnActive(testRunGuardCode(rows), (c) => c.call(TEST_RUN, rows, "run")), "`kk in key `.", "a k4unit row");
 });
+
+test("a system command or k's . after a language prefix is held, and runs once let through (#2034)", { skip }, async (t) => {
+  const q = await startQ(t, "\n", { "ld.q": "loaded:42\n" });
+  fs.mkdirSync(path.join(q.dir, "sub"));
+  const { send, read } = await setUp(t, q.port);
+  await heldThenWrites(send, read, "k)\\l ld.q", "`loaded in key `.");
+  await heldThenWrites(send, read, 'q)k)."i5:1"', "`i5 in key `.");
+  await heldThenWrites(send, read, "q)q)\\cd sub", '"sub"~last "/" vs system "cd"');
+});
