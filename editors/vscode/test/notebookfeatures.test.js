@@ -744,3 +744,22 @@ test("a password variable two listed processes would share is refused, not sent 
   // HOST:PORT given on the command line is checked against the list too.
   assert.throws(() => passwordOf(p("rdb:1"), env, true, [p("rdb_1")]), /rdb:1 and rdb_1/);
 });
+
+test("an HTML export writes a link's URL as it was written: an entity, an escape or a {{q:}} in it is no placeholder (#1942)", () => {
+  assert.strictEqual(markdownHtml("[x](https://host/?a=1&amp;b=2)"), '<p><a href="https://host/?a=1&amp;b=2">x</a></p>');
+  assert.strictEqual(markdownHtml("[x](https://host/a\\_b\\(1\\)) and *y*"), '<p><a href="https://host/a_b(1)">x</a> and <em>y</em></p>');
+  assert.strictEqual(markdownHtml("[open](https://host/{{q:id}}/`a`)"), '<p><a href="https://host/{{q:id}}/`a`">open</a></p>');
+  assert.strictEqual(markdownHtml("[x](https://host/&copy;&#x41;)"), '<p><a href="https://host/&amp;copy;A">x</a></p>');
+  assert.strictEqual(markdownHtml("![logo](https://x.io/l.png?a=1&amp;b=2)"), '<p><a href="https://x.io/l.png?a=1&amp;b=2">logo</a></p>');
+  // No placeholder, and so no NUL, is left in any of them.
+  for (const source of ["[x](https://host/?a=1&amp;b=2)", "[open](https://host/{{q: id}})", "[x](https://h/<b>)", "[x](\\https://h)"]) {
+    assert.doesNotMatch(markdownHtml(source, { id: { text: "7" } }), /\u0000/, source);
+  }
+  // What an entity or an escape spells is still checked and escaped: no
+  // script URL, and no quote that would end the attribute.
+  assert.strictEqual(markdownHtml("[x](&#106;avascript:alert(1))"), "<p>[x](javascript:alert(1))</p>");
+  assert.strictEqual(markdownHtml("[x](java\\script:alert(1))"), "<p>[x](java\\script:alert(1))</p>");
+  assert.strictEqual(markdownHtml("[x](https://h/&quot;onmouseover=&quot;a&lt;b)"), '<p><a href="https://h/&quot;onmouseover=&quot;a&lt;b">x</a></p>');
+  // A destination with a blank in it is no link, as CommonMark reads it.
+  assert.strictEqual(markdownHtml("[open](https://host/{{q: id}})"), "<p>[open](https://host/<code>{{q: id}}</code>)</p>");
+});

@@ -58,42 +58,54 @@ function tableCells(line: string): string[] {
 /// live values as `liveHtml` writes them, everything escaped.
 function inline(text: string, values: Record<string, LiveValue>): string {
   const held: string[] = [];
-  const hold = (html: string): string => `\u0000${held.push(html) - 1}\u0000`;
+  // What each held piece is as plain text, for a link's target: a URL is
+  // text, and none of the page's HTML (#1942).
+  const plain: string[] = [];
+  const hold = (html: string, text = ""): string => {
+    plain.push(text);
+    return `\u0000${held.push(html) - 1}\u0000`;
+  };
   let s = "";
   let from = 0;
   for (const span of inlineSpans(text)) {
     // A tag is shown as written, as the page shows no HTML of the notebook's.
     const html = span.kind === "code" ? `<code>${escapeHtml(span.expr.trim())}</code>` : span.kind === "html" ? escapeHtml(span.expr) : liveHtml(span.expr, values[span.expr]);
-    s += text.slice(from, span.start) + hold(html);
+    s += text.slice(from, span.start) + hold(html, text.slice(span.start, span.end));
     from = span.end;
   }
   // A backslash escapes any ASCII punctuation (CommonMark 2.4, #1310).
   s = escapeHtml(
     (s + text.slice(from))
-      .replace(/\\([!-/:-@[-`{-~])/g, (_m, c: string) => hold(escapeHtml(c)))
+      .replace(/\\([!-/:-@[-`{-~])/g, (_m, c: string) => hold(escapeHtml(c), c))
       // The entities a result's table is written with (#1309).
-      .replace(/&(amp|lt|gt|quot|#\d{1,7}|#[xX][0-9a-fA-F]{1,6});/g, (m, e: string) => hold(escapeHtml(entity(e) ?? m)))
+      .replace(/&(amp|lt|gt|quot|#\d{1,7}|#[xX][0-9a-fA-F]{1,6});/g, (m, e: string) => hold(escapeHtml(entity(e) ?? m), entity(e) ?? m))
       // Any other named one as it is, which the page shows as its
       // character, or as written when HTML has no such name (#1552).
-      .replace(/&[A-Za-z][A-Za-z0-9]{1,31};/g, (m) => hold(m)),
+      .replace(/&[A-Za-z][A-Za-z0-9]{1,31};/g, (m) => hold(m, m)),
   );
   // `href` is escaped already: read it back to the URL written, or it is
-  // escaped twice (`'` as `&amp;#39;`, #1476).
+  // escaped twice (`'` as `&amp;#39;`, #1476). What was held in it - an
+  // entity, an escaped character, a `{{q: }}` - goes back as the text it
+  // stands for, before the URL is checked and escaped (#1942).
   const unescaped = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'" } as Record<string, string>;
-  const url = (href: string): string => href.replace(/&(amp|lt|gt|quot|#39);/g, (e) => unescaped[e]);
+  const url = (href: string): string =>
+    href.replace(/&(amp|lt|gt|quot|#39);/g, (e) => unescaped[e]).replace(/\u0000(\d+)\u0000/g, (_m, i: string) => plain[Number(i)] ?? "");
+  /// A target a page may follow: `safeHref`'s, and with no blank in it,
+  /// which a held piece may bring: a destination with a blank is no link.
+  const followed = (href: string): string | undefined => (/\s/.test(url(href).trim()) ? undefined : safeHref(url(href)));
   // An image: one in the page as a data: URL is shown, as Send to
   // Notebook's chart is; another is a link to it, or its alt text (#1555).
   s = s.replace(/!\[([^\]]*)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/g, (_m, alt: string, src: string) => {
     if (/^data:image\/(png|jpeg|gif);base64,[A-Za-z0-9+/=]+$/.test(src)) {
       return hold(`<img alt="${alt.replace(/\u0000\d+\u0000/g, "")}" src="${src}">`);
     }
-    const target = safeHref(url(src));
+    const target = followed(src);
     return target === undefined ? alt : `${hold(`<a href="${escapeHtml(target)}">`)}${alt}${hold("</a>")}`;
   });
   // A URL may hold balanced parentheses, as Wikipedia's do (#1554).
   s = s.replace(/\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/g, (m, label: string, href: string) => {
     // The tags are held, so the emphasis below finds no `_` in the URL (#1105).
-    const target = safeHref(url(href));
+    const target = followed(href);
     return target === undefined ? m : `${hold(`<a href="${escapeHtml(target)}">`)}${label}${hold("</a>")}`;
   });
   // A run of three first, so its tags nest (#1550). An underscore run
