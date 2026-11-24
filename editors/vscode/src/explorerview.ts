@@ -170,7 +170,7 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
     const call = this.live.borrow(async (connection, process) => ({
       process: process.label,
       gathered: readGathered(await connection.call(GATHER, excludedNamespaces.join(" "), LIMITS)),
-    }));
+    }), "the Process Explorer's read");
     if (call === undefined) {
       // Busy with a query, or not connected: `connected` will refresh.
       this.owed = this.live.activeLabel() !== undefined;

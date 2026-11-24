@@ -110,15 +110,20 @@ export function stepCode(step: Step, x: string): string {
 /// it is, which `string` would split into characters (#1281). A symbol or
 /// enumerated column (`type` 11, 20-76) is parsed from its text, as a cast
 /// fails with 'type or gives an enum's indexes; and any column is made
-/// symbols from its text, which `"s"$` refuses (#1571).
+/// symbols from its text, which `"s"$` refuses (#1571). Text or a symbol
+/// made a char is its first character, as the migration makes it: `"C"$`
+/// gives a blank for text longer than one (#1720).
 export function castCode(c: string, letter: string, strings = false, type?: number): string {
   if (letter === "*") {
     return strings ? `{$[10h=type x;x;string x]}each ${c}` : `string ${c}`;
   }
+  const symbols = type !== undefined && (Math.abs(type) === 11 || (type >= 20 && type <= 76));
+  if (letter === "c" && (strings || symbols)) {
+    return `first each ${strings ? "" : "string "}${c}`;
+  }
   if (strings) {
     return letter === "s" ? `\`$${c}` : `"${letter.toUpperCase()}"$${c}`;
   }
-  const symbols = type !== undefined && (Math.abs(type) === 11 || (type >= 20 && type <= 76));
   if (letter === "s") {
     return type === 11 ? c : `\`$string ${c}`;
   }

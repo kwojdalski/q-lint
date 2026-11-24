@@ -518,4 +518,7 @@ test("a file saved from a bound untitled editor is matched by its text, recently
   assert.strictEqual(savedFrom("  ", [{ label: "prod", text: "  ", at: now }], now), undefined);
   assert.strictEqual(savedFrom("a:1", [{ label: "prod", text: "a:1", at: now }, { label: "dev", text: "a:1", at: now }], now), undefined);
   assert.strictEqual(savedFrom("a:1", [{ label: "prod", text: "a:1", at: now }, { label: "prod", text: "a:1", at: now }], now), "prod");
+  // A file this window opened long ago is not one just saved as (#1723).
+  assert.strictEqual(savedFrom("a:1", [{ label: "prod", text: "a:1", at: now }], now, 5000, now - 60000), undefined);
+  assert.strictEqual(savedFrom("a:1", [{ label: "prod", text: "a:1", at: now }], now, 5000, now - 10), "prod");
 });

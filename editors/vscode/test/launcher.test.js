@@ -91,6 +91,13 @@ test("a relative cwd, or a relative script with no cwd, is from the workspace fo
   assert.strictEqual(fromWorkspace({ cwd: "~/db", script: "rdb.q" }, "/home/u"), false);
   assert.strictEqual(fromWorkspace({ script: "/srv/rdb.q" }, "/home/u"), false);
   assert.strictEqual(fromWorkspace({ args: ["-p", "1"] }, "/home/u"), false);
+  // A relative program path runs the repository's binary (#1714).
+  assert.strictEqual(fromWorkspace({ command: "./bin/q" }, "/home/u"), true);
+  assert.strictEqual(fromWorkspace({ command: "bin\\q.exe" }, "/home/u"), true);
+  assert.strictEqual(fromWorkspace({ command: "q" }, "/home/u"), false);
+  assert.strictEqual(fromWorkspace({ command: "/opt/kx/q" }, "/home/u"), false);
+  assert.strictEqual(fromWorkspace({ command: "~/q/m64/q" }, "/home/u"), false);
+  assert.strictEqual(fromWorkspace({ command: "./bin/q", cwd: "/srv/db" }, "/home/u"), false);
 });
 
 test("a definition is read from the saved list and an import, never from a discovery server", () => {

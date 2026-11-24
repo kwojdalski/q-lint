@@ -87,7 +87,7 @@ test("notebook features against a real q process", { skip }, async (t) => {
     assert.deepStrictEqual(values['"c"'], { text: "c" });
     // A big table or dictionary is written from its first items, its text
     // as the old unbounded -3! of the same value wrote it (#1559).
-    const big = ["([] a:til 1000000; b:1000000#`x)", "(til 1000000)!til 1000000", "1000000#0b", "(1000000#enlist 1 2)", "([k:til 1000000] v:1000000#`x)"];
+    const big = ["([] a:til 1000000; b:1000000#`x)", "(til 1000000)!til 1000000", "1000000#0b", "(1000000#enlist 1 2)", "([k:til 1000000] v:1000000#`x)", "`s#til 300", "`u#til 300", "([]time:`s#til 300;x:300#1)", "([k:`u#til 300]x:300#1)", "(`s#til 300)!300#1"];
     const got = readLiveValues(big, await connection.call(LIVE, big));
     const want = readLiveValues(big, await connection.call("{{(1b;200 sublist -3!value x)} each x}", big));
     big.forEach((e) => {

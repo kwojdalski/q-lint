@@ -31,6 +31,7 @@ import { SYM_INSPECT, SYM_PARTITIONS, readSym, symReport } from "./syminspect";
 import { TABLE_INFO, readTableInfo, type TableInfo } from "./tableinfo";
 import { loadTypes, rangeOf, symbolPool, testDataCsv, testDataQ, type TestDataOptions } from "./testdata";
 import { plainMessage } from "./history";
+import { shownError } from "./tunnel";
 
 const settings = <T>(key: string, fallback: T): T => workspace.getConfiguration("q-lint").get(key, fallback);
 const on = (feature: DbFeature): boolean => dbOn(settings, feature);
@@ -278,7 +279,7 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
           const info = readTableInfo(await live.callSeparate(process, (connection) => connection.call(TABLE_INFO, name.trim(), META_COLUMNS)));
           to = { info, where: `${name.trim()} on ${process.label}` };
         } catch (error) {
-          return say(`q-lint: could not read ${name.trim()} on ${process.label}: ${error instanceof Error ? error.message : String(error)}`);
+          return say(`q-lint: could not read ${name.trim()} on ${process.label}: ${shownError(error)}`);
         }
       }
     }

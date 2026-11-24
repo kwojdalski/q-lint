@@ -6,7 +6,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const pkg = require("../package.json");
 const { parseProcesses, processTooltip, readProcessFile } = require("../out/processes.js");
-const { CONNECT_SCRIPT_COMMANDS, onConnectBrought, onConnectOf, scriptOf, scriptPath, scriptsBrought, scriptSummary, withScript } = require("../out/connectscript.js");
+const { CONNECT_SCRIPT_COMMANDS, onConnectBrought, onConnectOf, scriptOf, scriptPath, scriptsBrought, scriptSummary, sharedEntry, withScript } = require("../out/connectscript.js");
 const { Live } = require("../out/live.js");
 
 const proc = (label, extra = {}) => ({ label, host: "h", port: 1, tags: [], ...extra });
@@ -307,7 +307,7 @@ test("a connect script file is kept by its full path, and a relative one is not 
 // prepared: another namespace, a login not made (#1509).
 test("a connection apart runs the process's connect script before its query", async (t) => {
   const { fakeQ, heads } = require("./fakeq.js");
-  const q = await fakeQ(1);
+  const q = await fakeQ((m) => (heads([m])[0] === "{x}" ? 1 : { ok: true, type: -7, text: ["1"] }));
   t.after(() => q.close());
   const { live } = await setUp(t, [{ label: "p", host: "127.0.0.1", port: q.port, tags: [], init: "setUp:1" }]);
   await live.callSeparate(live.processes()[0], (c) => c.call("{x}", 1));
@@ -316,12 +316,11 @@ test("a connection apart runs the process's connect script before its query", as
   assert.strictEqual(heads(q.sent)[1], "{x}");
 });
 
-// A connect script that never answered held the connect for ever: Disconnect
-// closed nothing, and every connect and query after it waited (#1505).
-test("a connect script that blocks is closed by Disconnect, and times out", async (t) => {
+/// A q process played by a socket server that answers anything but a
+/// message holding "block": a connect script that never returns.
+async function blockingQ(t) {
   const net = require("node:net");
   const { serialize } = require("node-q/lib/c.js");
-  // Answers anything but the script.
   const sockets = new Set();
   const server = net.createServer((socket) => {
     sockets.add(socket);
@@ -340,7 +339,13 @@ test("a connect script that blocks is closed by Disconnect, and times out", asyn
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   t.after(() => (sockets.forEach((s) => s.destroy()), server.close()));
-  const q = { port: server.address().port };
+  return { port: server.address().port };
+}
+
+// A connect script that never answered held the connect for ever: Disconnect
+// closed nothing, and every connect and query after it waited (#1505).
+test("a connect script that blocks is closed by Disconnect, and times out", async (t) => {
+  const q = await blockingQ(t);
   const { live } = await setUp(t, [
     { label: "p", host: "127.0.0.1", port: q.port, tags: [], init: "block[]" },
     { label: "b", host: "127.0.0.1", port: q.port, tags: [] },
@@ -356,4 +361,53 @@ test("a connect script that blocks is closed by Disconnect, and times out", asyn
   // With a timeout, it is given up when the timeout passes, and said.
   assert.strictEqual(await live.connectTo("t"), false);
   assert.match(stub.messages.filter(([k]) => k === "warning").at(-1)[1], /the connect script of t failed: .*1 s/);
+});
+
+// Connecting elsewhere waited on a blocking script with the default timeout
+// 0, so the other process never connected (#1712).
+test("connecting elsewhere closes a connect script that blocks", async (t) => {
+  const q = await blockingQ(t);
+  const { live } = await setUp(t, [
+    { label: "p", host: "127.0.0.1", port: q.port, tags: [], init: "block[]" },
+    { label: "b", host: "127.0.0.1", port: q.port, tags: [] },
+  ]);
+  t.after(() => stub.commands.get("q-lint.disconnectProcess")?.());
+  const p = live.connectTo("p");
+  await new Promise((r) => setTimeout(r, 200));
+  const b = live.connectTo("b");
+  const waited = new Promise((r) => setTimeout(() => r("still waiting"), 3000));
+  assert.strictEqual(await Promise.race([b, waited]), true);
+  assert.strictEqual(await p, false);
+  assert.strictEqual(live.activeLabel(), "b");
+});
+
+// A connection apart whose script timed out or failed was handed out closed,
+// or unprepared, with only a warning (#1713).
+test("a connection apart whose connect script fails or times out is not handed out", async (t) => {
+  const q = await blockingQ(t);
+  const { live } = await setUp(t, [
+    { label: "t", host: "127.0.0.1", port: q.port, tags: [], init: "block[]", timeout: 1 },
+  ]);
+  await assert.rejects(live.openSeparate(live.processes()[0]), /the connect script of t failed: .*1 s/);
+  let used = false;
+  await assert.rejects(live.callSeparate(live.processes()[0], async () => (used = true)), /the connect script of t failed/);
+  assert.strictEqual(used, false);
+  assert.deepStrictEqual(stub.messages.filter(([k, m]) => k === "warning" && /connect script of t/.test(m)), []);
+  const { fakeQ } = require("./fakeq.js");
+  const e = await fakeQ(1);
+  t.after(() => e.close());
+  const failing = { label: "e", host: "127.0.0.1", port: e.port, tags: [], initFile: "/nowhere/init.q" };
+  await assert.rejects(live.openSeparate(failing), /the connect script of e failed: could not read/);
+});
+
+// Set Connect Script keeps the full path, which Share All committed: every
+// clone failed to read /Users/me/repo/init.q (#1717).
+test("a connect script file inside the folder is shared relative to it", () => {
+  const p = proc("a", { initFile: "/Users/me/repo/q/init.q", user: "u" });
+  assert.deepStrictEqual(sharedEntry(p, true, "/Users/me/repo"), { ...p, initFile: "q/init.q" });
+  assert.deepStrictEqual(sharedEntry(p, true, "/Users/me/other"), p);
+  assert.deepStrictEqual(sharedEntry(proc("a", { initFile: "~/init.q" }), true, "/Users/me/repo"), proc("a", { initFile: "~/init.q" }));
+  assert.deepStrictEqual(sharedEntry(p, false, "/Users/me/repo"), proc("a", { user: "u" }));
+  // The list a clone reads runs it from its own folder.
+  assert.strictEqual(scriptPath(sharedEntry(p, true, "/Users/me/repo").initFile, "/home/c", "/home/c/repo"), "/home/c/repo/q/init.q");
 });

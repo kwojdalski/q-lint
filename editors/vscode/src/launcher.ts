@@ -45,15 +45,17 @@ export interface Plan {
   env: Record<string, string>;
 }
 
-/// Whether `launch` starts in, or runs a script from, the workspace folder:
-/// a relative cwd, or a relative script and no cwd. Saved processes are
-/// every window's, so in a workspace not trusted that is the repository's
-/// script, run with the user's q (#1527).
+/// Whether `launch` starts in, or runs a script or program from, the
+/// workspace folder: a relative cwd, or, with no cwd, a relative script or a
+/// relative command path (`./bin/q`). Saved processes are every window's, so
+/// in a workspace not trusted that is the repository's script, run with the
+/// user's q (#1527), or the repository's program (#1714).
 export function fromWorkspace(launch: Launch, home: string = os.homedir()): boolean {
   if (launch.cwd !== undefined) {
     return scriptPath(launch.cwd, home, undefined) === undefined;
   }
-  return launch.script !== undefined && scriptPath(launch.script, home, undefined) === undefined;
+  const relative = (file: string | undefined): boolean => file !== undefined && scriptPath(file, home, undefined) === undefined;
+  return relative(launch.script) || (/[\\/]/.test(launch.command ?? "") && relative(launch.command));
 }
 
 /// What starting `process` runs: its command (else `qBinary`), its script,
