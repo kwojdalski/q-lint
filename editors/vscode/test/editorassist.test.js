@@ -262,3 +262,20 @@ test("a production process, a busy one and no connection add nothing", async () 
   const busy = { activeProcess: () => ({ label: "dev", tags: [] }), activeLabel: () => undefined, borrow: () => undefined };
   assert.deepStrictEqual(await registerProcessSymbols(stub.newContext(), busy, () => server).search(""), []);
 });
+
+test("a production process made active while the names wait for a busy one is not read (#1378)", async () => {
+  stub.reset();
+  fakeSymbols();
+  stub.config.user["processSymbols.enable"] = true;
+  const server = { sendRequest: async (method, params) => params.names.map(() => false) };
+  const live = fakeLive({ label: "live", tags: ["prod"] });
+  let process = { label: "dev", tags: [] };
+  let asked = 0;
+  live.activeProcess = () => process;
+  live.activeLabel = () => process.label;
+  const borrow = live.borrow;
+  // dev is busy at first; by the next try, live is active.
+  live.borrow = (use) => (asked++ === 0 ? ((process = { label: "live", tags: ["prod"] }), undefined) : borrow.call(live, use));
+  assert.deepStrictEqual(await registerProcessSymbols(stub.newContext(), live, () => server).search(""), []);
+  assert.deepStrictEqual(live.sent, []);
+});

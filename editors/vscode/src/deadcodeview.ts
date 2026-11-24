@@ -24,12 +24,12 @@ export const DEAD_CODE = "q-lint/deadCode";
 /// Which of a space-separated list of names the body of some function in
 /// the process names as a word - its last part (`helper` in its own
 /// namespace) or the whole name (`.util.helper`, #1227) - other than its own: every namespace but q's own, and
-/// `.z`. Reads only. Checked on KDB-X and PeachQ; PeachQ lists no `.z`
+/// `.z`. A root name that is no namespace (`.cfg:42`) lists nothing (#1370). Reads only. Checked on KDB-X and PeachQ; PeachQ lists no `.z`
 /// handler, so a function only a handler calls stays a candidate there.
 export const CALLED = [
   "{[nms]",
   " n:\" \" vs(),nms;",
-  " fs:raze {[ns] $[ns~`.;system\"f\";` sv' ns,'system\"f \",string ns]} each `.,` sv'`,'(key`) except `q`Q`h`j`o`m;",
+  " fs:raze {[ns] $[ns~`.;system\"f\";` sv' ns,'@[{system\"f \",string x};ns;()]]} each `.,` sv'`,'(key`) except `q`Q`h`j`o`m;",
   " fs:fs where 100h=type each get each fs;",
   " b:{last value get x} each fs;",
   " w:{[s;l] any {[s;l;i] not any s[(i-1),i+count l] in .Q.an,\"_.\"}[s;l] each ss[s;l]};",
@@ -122,10 +122,11 @@ export function registerDeadCode(context: ExtensionContext, live: Live, server: 
       let called: { process: string; names: Set<string> } | undefined;
       if (languageOn(get as never, "deadCodeProcess") && answer.functions.length > 0 && live.activeLabel() !== undefined) {
         const names = answer.functions.map((f) => f.name).join(" ");
+        // A process that fails the check leaves the report to the workspace (#1370).
         const got = await borrowWhenFree(live, async (connection, process) => ({
           process: process.label,
           names: await connection.call(CALLED, names),
-        }));
+        })).catch(() => undefined);
         if (got !== undefined && Array.isArray(got.value.names)) {
           called = { process: got.value.process, names: new Set(got.value.names.filter((n): n is string => typeof n === "string")) };
         } else {

@@ -67,13 +67,14 @@ export class QParticipant {
   constructor(private readonly live: Live) {}
 
   /// What the process holds for `names`; none when nothing is connected or
-  /// it stays busy for a second.
-  private async describe(names: string[]): Promise<Described[]> {
+  /// it stays busy for a second, or when `expect` names a process other
+  /// than the active one (#1377).
+  private async describe(names: string[], expect?: string): Promise<Described[]> {
     if (names.length === 0 || this.live.activeLabel() === undefined) {
       return [];
     }
     try {
-      const got = await borrowWhenFree(this.live, async (connection) => readDescribed(await connection.call(DESCRIBE, names.join(" "))), 1000);
+      const got = await borrowWhenFree(this.live, async (connection) => readDescribed(await connection.call(DESCRIBE, names.join(" "))), 1000, expect);
       return got?.value ?? [];
     } catch {
       return [];
@@ -120,7 +121,8 @@ export class QParticipant {
       const error = typed !== "" ? typed : (entry?.error as string);
       const code = entry?.code;
       stream?.progress(process === undefined ? "Explaining the error" : `Reading the names in the code from ${process}`);
-      const described = code === undefined ? [] : await this.describe(namesIn(code, charKinds(code)));
+      // Described on the process the query failed on, or not at all.
+      const described = code === undefined ? [] : await this.describe(namesIn(code, charKinds(code)), entry?.process);
       return { prompt: errorPrompt({ error, ...(code !== undefined ? { code } : {}), ...(entry !== undefined ? { process: entry.process } : process !== undefined ? { process } : {}), described }, "") };
     }
     const editor = window.activeTextEditor;

@@ -66,6 +66,21 @@ test("the committed text comes from git HEAD; untracked is empty; outside git, n
   assert.strictEqual(await committedText(path.join(outside, "c.q")), undefined);
 });
 
+test("a tracked file git cannot show is not every line new (#1369)", async () => {
+  // git answers the top and lists the path in HEAD, but `show` fails: a
+  // timeout, a lock, too much output.
+  const tracked = async (args) => (args[0] === "rev-parse" ? "/repo\n" : args[0] === "ls-tree" ? "a.q\n" : undefined);
+  assert.strictEqual(await committedText("/repo/a.q", tracked), undefined);
+  // git cannot list HEAD either, and HEAD's branch exists: nothing to say.
+  const broken = async (args) => (args[0] === "rev-parse" ? "/repo\n" : args[0] === "symbolic-ref" ? "refs/heads/master\n" : args[0] === "for-each-ref" ? "abc commit\trefs/heads/master\n" : undefined);
+  assert.strictEqual(await committedText("/repo/a.q", broken), undefined);
+  const silent = async (args) => (args[0] === "rev-parse" ? "/repo\n" : undefined);
+  assert.strictEqual(await committedText("/repo/a.q", silent), undefined);
+  // HEAD lists no such path: it is new.
+  const untracked = async (args) => (args[0] === "rev-parse" ? "/repo\n" : args[0] === "ls-tree" ? "" : undefined);
+  assert.strictEqual(await committedText("/repo/a.q", untracked), "");
+});
+
 function document(file, text) {
   return { languageId: "q", uri: { scheme: "file", fsPath: file, toString: () => `file://${file}` }, getText: () => text };
 }

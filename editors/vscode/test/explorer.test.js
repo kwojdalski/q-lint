@@ -180,6 +180,9 @@ test("the table a qSQL statement reads, wherever the cursor is in it", () => {
   assert.strictEqual(at("select from t where a in (1;|)"), "t");
   // The nearest statement before the cursor.
   assert.strictEqual(at("select from t where x in exec y from u where |"), "u");
+  // An astral character before the cursor is two UTF-16 units (#1372).
+  assert.strictEqual(at('s:"\u{1F600}\u{1F600}\u{1F600}";select | from trade'), "trade");
+  assert.strictEqual(at("/ note \u{1F600}\u{1F600}\nselect | from trade"), "trade");
 });
 
 test("no table outside a qSQL statement", () => {

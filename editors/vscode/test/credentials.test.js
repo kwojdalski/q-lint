@@ -31,7 +31,11 @@ test("what a command prints: JSON, user:password, a password for the process's u
   assert.deepStrictEqual(parseCredentials("pa:ss\r\n", "fixed"), { user: "fixed", password: "pa:ss" });
   assert.deepStrictEqual(parseCredentials("tokenonly"), { password: "tokenonly" });
   assert.deepStrictEqual(parseCredentials("  \n"), { problem: "it printed nothing" });
-  assert.deepStrictEqual(parseCredentials("{nope"), { problem: "it printed something that starts like JSON but is not" });
+  assert.deepStrictEqual(parseCredentials('{"user":"me",}'), { problem: "it printed something that starts like JSON but is not" });
+  // A password that opens with a brace is a line, not broken JSON (#1376).
+  assert.deepStrictEqual(parseCredentials("{s3cret}\n"), { password: "{s3cret}" });
+  assert.deepStrictEqual(parseCredentials("{abc", "svc"), { user: "svc", password: "{abc" });
+  assert.deepStrictEqual(parseCredentials('{\n  "password": "pw"\n}'), { password: "pw" });
   assert.deepStrictEqual(parseCredentials('{"user":"x"}'), { problem: "its JSON has no password or token string" });
   assert.deepStrictEqual(credentialEnv({ label: "a", host: "h", port: 1 }), { QLINT_PROCESS_LABEL: "a", QLINT_PROCESS_HOST: "h", QLINT_PROCESS_PORT: "1" });
 });

@@ -252,7 +252,8 @@ class ProcessSymbols {
       return this.kept;
     }
     this.asked += 1;
-    const got = await borrowWhenFree(this.live, (connection) => connection.call(PROCESS_NAMES, NAMES_LIMIT), WAIT);
+    // From the process checked above, never one made active while waiting (#1378).
+    const got = await borrowWhenFree(this.live, (connection) => connection.call(PROCESS_NAMES, NAMES_LIMIT), WAIT, process.label);
     if (got === undefined) {
       return undefined;
     }

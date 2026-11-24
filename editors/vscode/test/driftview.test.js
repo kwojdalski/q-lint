@@ -272,3 +272,21 @@ test("a process connected while Redefine was asked is not redefined: the reload 
   assert.deepStrictEqual(live.sent.map((s) => s[0]), ["DRIFT"]);
   assert.strictEqual(held.f, "{x}");
 });
+
+test("Check Drift switched to another process between batches reads nothing more and reports nothing (#1378)", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-drift-"));
+  fs.writeFileSync(path.join(dir, "a.q"), Array.from({ length: 501 }, (_, i) => `f${i}:{x}\n`).join(""));
+  const { live } = setup({});
+  vscode.workspace.findFiles = async () => [vscode.Uri.file(path.join(dir, "a.q"))];
+  const call = live.borrow;
+  live.borrow = (use) => {
+    const got = call(use);
+    // Another process is made active once the first batch is asked.
+    live.process = prod;
+    return got;
+  };
+  assert.strictEqual(await stub.commands.get("q-lint.checkDrift")(), undefined);
+  assert.deepStrictEqual(live.sent.map((s) => s[0]), ["DRIFT"]);
+  assert.ok(stub.messages.some(([, m]) => /could not compare with dev: dev is no longer the active process/.test(m)), JSON.stringify(stub.messages));
+  fs.rmSync(dir, { recursive: true, force: true });
+});

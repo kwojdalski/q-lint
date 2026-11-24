@@ -183,6 +183,13 @@ test("the attribute advisor counts filters and suggests by shape, never for an u
   // A namespaced table is matched by its whole name, and not by its last part (#1113).
   assert.deepStrictEqual(Object.fromEntries(filterCounts(["select from .ns.t where sym=`a", "select from t where px>1"], ".ns.t", ["sym", "px"])), { sym: 1, px: 0 });
   assert.deepStrictEqual(Object.fromEntries(filterCounts(["select from .ns.t where sym=`a"], "t", ["sym"])), { sym: 0 });
+  // A symbol value is not a column, nor is a column a prefix of one (#1373).
+  assert.deepStrictEqual(Object.fromEntries(filterCounts(["select from trade where x=`sym"], "trade", ["s", "x", "sym"])), { s: 0, x: 1, sym: 0 });
+  assert.deepStrictEqual(Object.fromEntries(filterCounts(["?[trade;enlist(=;`sym;enlist`a);0b;()]"], "trade", ["s", "sym"])), { s: 0, sym: 1 });
+  // A functional select may name its table by symbol (#1374).
+  assert.deepStrictEqual(Object.fromEntries(filterCounts(["?[`trade;enlist(=;`sym;enlist`a);0b;()]"], "trade", ["sym"])), { sym: 1 });
+  assert.deepStrictEqual(Object.fromEntries(filterCounts(["?[`.ns.t;enlist(=;`sym;enlist`a);0b;()]"], ".ns.t", ["sym"])), { sym: 1 });
+  assert.deepStrictEqual(Object.fromEntries(filterCounts(["?[`tradex;enlist(=;`sym;enlist`a);0b;()]"], "trade", ["sym"])), { sym: 0 });
   const s = readAttributeSample({
     kind: "table",
     rows: 1000,
@@ -390,4 +397,11 @@ test("the tickerplant log page forgets the last log's messages, pick and range w
   assert.deepStrictEqual(cells(), []);
   assert.deepStrictEqual(inputs(), ["", "", "", ""]);
   assert.strictEqual(body.all((e) => e.tagName === "PRE")[0].textContent, "");
+});
+
+test("a menu that matches a file's extension matches it in any case (#1382)", () => {
+  const whens = Object.values(pkg.contributes.menus).flat().map((m) => m.when ?? "");
+  const clauses = whens.flatMap((w) => [...w.matchAll(/resourceExtname =~ (\/\S*)/g)].map((m) => m[1]));
+  assert.ok(clauses.length > 0);
+  for (const c of clauses) assert.match(c, /\/i$/, c);
 });
