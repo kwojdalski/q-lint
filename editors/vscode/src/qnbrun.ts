@@ -393,11 +393,17 @@ export function parseArgs(argv: string[]): CliOptions | { error: string } | { he
 /// The environment variable a listed process's password is read from.
 export const passwordVariable = (label: string): string => `QLINT_Q_PASSWORD_${label.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`;
 
-/// The process `name` names: `host:port`, or a label in `listed`.
+/// The process `name` names: `host:port`, or a label in `listed`. A listed
+/// process reached through an SSH tunnel or set up by a connect script is
+/// refused: the command line opens neither, and dialling its host and
+/// port straight would reach another process (#1401).
 export function cliProcess(name: string, listed: Process[], user?: string, tls = false): Process | { error: string } {
   const found = listed.find((p) => p.label === name);
   if (found !== undefined) {
-    return found;
+    const needs = [found.ssh !== undefined ? "an SSH tunnel (ssh)" : "", found.init !== undefined || found.initFile !== undefined ? "a connect script (init, initFile)" : ""].filter((x) => x !== "");
+    return needs.length === 0
+      ? found
+      : { error: `${found.label} needs ${needs.join(" and ")}, which qnbrun does not run: run the notebook in the editor, or name the process by HOST:PORT` };
   }
   const m = /^(.+):(\d{1,5})$/.exec(name);
   if (m !== null && Number(m[2]) >= 1 && Number(m[2]) <= 65535) {

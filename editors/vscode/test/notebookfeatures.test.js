@@ -382,6 +382,9 @@ test("the command line names a process by host:port or by a listed label, and re
   assert.deepStrictEqual(cliProcess("[::1]:5001", [], "me", true), { label: "[::1]:5001", host: "::1", port: 5001, tags: [], user: "me", tls: true });
   assert.match(cliProcess("rdb", []).error, /pass --processes/);
   assert.match(cliProcess("hdb", listed).error, /The labels are: rdb/);
+  // A tunnelled or scripted process is refused, not dialled at its host (#1401).
+  assert.match(cliProcess("t", [{ label: "t", host: "localhost", port: 5000, tags: [], ssh: "bastion" }]).error, /t needs an SSH tunnel \(ssh\), which qnbrun does not run/);
+  assert.match(cliProcess("s", [{ label: "s", host: "h", port: 1, tags: [], initFile: "c.q" }]).error, /a connect script/);
   assert.strictEqual(passwordVariable("desk/rdb-1"), "QLINT_Q_PASSWORD_DESK_RDB_1");
 });
 
