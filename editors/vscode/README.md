@@ -1949,9 +1949,12 @@ Two more tools read and lint without running anything. **List q Tables**
 (`q-lint_listTables`, `#qTables`) answers the connected process's tables -
 each by the name a query uses, with its kind, rows and first 50 columns -
 or, given `{"table"}`, that table's schema from `meta`: each column's type,
-attribute and foreign key, its keys and rows. It reads as the Process
-Explorer reads, with the same lambdas and limits, and only the connected
-process: to read another, an agent connects with Run q Query's `process`.
+attribute and foreign key, its keys and rows. Given `{"table"}` while a
+process is connected, it asks you to confirm the read first (**Read a
+table's schema on** the process); declined, nothing is read, and if the
+connection changed after you were asked, it reads nothing and tells the
+agent to ask again. It reads as the Process Explorer reads, with the same
+lambdas and limits, and only the connected process: to read another, an agent connects with Run q Query's `process`.
 **Lint q Code** (`q-lint_lint`, `#qLint`) runs the qlinter the language
 server runs on the code it is given, as the file `{"file"}` names (for its
 configuration) or `snippet.q`, and answers its findings. Each has its own
