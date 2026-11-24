@@ -23,6 +23,14 @@ const Q = process.env.QLINT_TEST_Q;
 const skip = Q ? false : "QLINT_TEST_Q names no q binary";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// "user": "" was taken as the user and then dropped, so the handshake
+// went as `:password` instead of as the process's own user.
+test("a credential JSON whose user is empty keeps the process's user", () => {
+  assert.deepStrictEqual(parseCredentials('{"user":"","password":"s3cret"}', "bob"), { user: "bob", password: "s3cret" });
+  assert.deepStrictEqual(parseCredentials('{"user":"","username":"u","password":"p"}', "bob"), { user: "u", password: "p" });
+  assert.deepStrictEqual(parseCredentials('{"user":null,"password":"s3cret"}', "bob"), { user: "bob", password: "s3cret" });
+});
+
 test("what a command prints: JSON, user:password, a password for the process's user, a token", () => {
   assert.deepStrictEqual(parseCredentials('{"user":"me","password":"pw"}\n'), { user: "me", password: "pw" });
   assert.deepStrictEqual(parseCredentials('{"token":"t0k"}', "svc"), { user: "svc", password: "t0k" });

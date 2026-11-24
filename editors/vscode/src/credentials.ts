@@ -42,7 +42,9 @@ export function parseCredentials(output: string, user?: string): Credentials | {
     if (password === undefined) {
       return { problem: "its JSON has no password or token string" };
     }
-    const named = typeof j.user === "string" ? j.user : typeof j.username === "string" ? j.username : user;
+    // An empty name is no name (a vault template's unset field), as null is.
+    const given = (v: unknown) => (typeof v === "string" && v !== "" ? v : undefined);
+    const named = given(j.user) ?? given(j.username) ?? user;
     return { ...(named !== undefined && named !== "" ? { user: named } : {}), password };
   }
   // The line as printed, less only its line ending: spaces and tabs at
