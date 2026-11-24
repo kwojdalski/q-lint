@@ -248,7 +248,18 @@ export async function lintCommit(qlinter: string, args: string[], dir: string, c
       archive.stderr.on("data", (d) => (failed += d));
       archive.on("error", reject);
       tar.on("error", reject);
-      tar.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`git archive ${commit} failed: ${failed || `tar exited ${code}`}`))));
+      // Both must succeed: tar can exit 0 on the empty stream of a git
+      // archive that failed (#1400).
+      let closed = 0;
+      const done = (what: string) => (code: number | null) => {
+        if (code !== 0) {
+          reject(new Error(`git archive ${commit} failed: ${failed.trim() || `${what} exited ${code}`}`));
+        } else if (++closed === 2) {
+          resolve();
+        }
+      };
+      archive.on("close", done("git archive"));
+      tar.on("close", done("tar"));
     });
     return await lintTree(qlinter, args, out);
   } finally {

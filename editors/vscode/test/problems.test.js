@@ -137,6 +137,19 @@ test("a qlinter that fails or is stopped is an error, not an empty dashboard (#1
   assert.deepStrictEqual((await lintTree(process.execPath, [partial], dir)).map((f) => f.code), ["QE004"]);
 });
 
+test("an earlier commit git cannot export is an error, not 0 findings (#1400)", async (t) => {
+  const { dir, git } = repo(t);
+  fs.writeFileSync(path.join(dir, "a.q"), "a:1\n");
+  git("add", ".");
+  git("commit", "-qm", "one");
+  // The linter is never reached: a stand-in that would report nothing.
+  const linter = path.join(dir, "none.js");
+  fs.writeFileSync(linter, 'console.log("[]");');
+  await assert.rejects(lintCommit(process.execPath, [linter], dir, "deadbeefdeadbeef"), /git archive deadbeefdeadbeef failed/);
+  const at = git("rev-parse", "HEAD").trim();
+  assert.deepStrictEqual(await lintCommit(process.execPath, [linter], dir, at), []);
+});
+
 test("the switches are declared, and the commands only where they can run", () => {
   const props = Object.assign({}, ...pkg.contributes.configuration.map((c) => c.properties));
   assert.strictEqual(props["q-lint.problemsDashboard.enable"].default, true);
