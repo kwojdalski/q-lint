@@ -28,6 +28,21 @@ test("a snapshot file round-trips, and results compare without trailing blanks",
   assert.strictEqual(preview("1\n2\n3", 2), "1\n2\n... 1 more lines");
 });
 
+test("a query holding the line '// result' is read back whole, not cut at it (#1885)", () => {
+  for (const query of ["r:select from t\n// result\nr", "// result\n1+1", "a\n//\\ result\n//\\\\ result\nb", "a\n// result"]) {
+    const text = formatSnapshot({ query, result: "a\n-\n1" });
+    assert.deepStrictEqual(parseSnapshot(text), { query, result: "a\n-\n1" }, query);
+    // The file holds the marker once: where the result starts.
+    assert.strictEqual(text.split("\n").filter((l) => l === "// result").length, 1, query);
+  }
+  // The line is marked in the file, and only that line.
+  assert.strictEqual(formatSnapshot({ query: "a\n// result\n// results\nb", result: "1" }), "// q-lint snapshot\n// query\na\n//\\ result\n// results\nb\n// result\n1\n");
+  // A file written before, whose query has no such line, reads as it did.
+  assert.deepStrictEqual(parseSnapshot("// q-lint snapshot\n// query\nselect from t\n// results\n// result\na\n"), { query: "select from t\n// results", result: "a" });
+  // A result that prints the line is the result still.
+  assert.deepStrictEqual(parseSnapshot(formatSnapshot({ query: "x", result: "a\n// result\nb" })), { query: "x", result: "a\n// result\nb" });
+});
+
 function setup(files, answer) {
   stub.reset();
   const written = [];
