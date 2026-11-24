@@ -170,6 +170,10 @@ export function registerFindInProcesses(
     if (withVariables === undefined) {
       return "nothing picked";
     }
+    // Turned off at the tag pick, the text box or this one: nothing is sent (#2005).
+    if (!on()) {
+      return say(toolOff("findInProcesses"));
+    }
     const outcomes = await window.withProgress(
       { location: ProgressLocation.Notification, title: `q-lint: finding "${text}" in ${processes.length} process${processes.length === 1 ? "" : "es"} tagged ${tag}` },
       () =>
