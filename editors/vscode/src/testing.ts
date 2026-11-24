@@ -172,7 +172,8 @@ export function failureText(result: TestResult, mode: TestMode): string {
 /// A k4unit `true` row's `a~b` as the two sides, when `a` is one term - a
 /// name, literal, string, symbol, or bracketed group, with any indexes
 /// after it - so that q reads the row as `a ~ b`; undefined otherwise.
-/// Sent as `(a;b)`, which q evaluates in the same order: `b` first.
+/// Sent as `(a;b)`, which q evaluates in the same order: `b` first. A `~`
+/// with an adverb or `:` after it (`1~'1`, `x~/:y`) is no `a ~ b` (#2101).
 export function splitMatch(code: string): { left: string; right: string } | undefined {
   const text = code.trim();
   if (text.includes("\n") || text.startsWith("k)")) {
@@ -199,6 +200,9 @@ export function splitMatch(code: string): { left: string; right: string } | unde
     } else if (")]}".includes(c)) {
       depth--;
     } else if (depth === 0 && c === "~" && at < 0) {
+      if ("'/\\:".includes(text[i + 1] ?? "")) {
+        return undefined;
+      }
       at = i;
     } else if (depth === 0 && c === ";") {
       return undefined;

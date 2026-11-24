@@ -15,6 +15,7 @@ const {
   k4Mode,
   k4Statement,
   k4Label,
+  splitMatch,
 } = require("../out/testing.js");
 const { registerTestExplorer, TESTS_REQUEST } = require("../out/testexplorer.js");
 const { EDITOR_SETTINGS, editorFeatureOn, editorFeatureOff } = require("../out/editorfeatures.js");
@@ -115,6 +116,15 @@ test("a k4unit row is run its repeat times, as KUpexec runs it: do[n;code] (#210
   assert.deepStrictEqual(rows.map(k4Statement), ["do[3;cnt+:1]", "cnt=3", "k)do[2;x+:1]", "1b", "1b"]);
   // A row built without one is run once.
   assert.strictEqual(k4Statement({ action: "true", lang: "q", code: "1b", line: 0, minver: 0 }), "1b");
+});
+
+test("a true row's ~ with an adverb or : after it is not split into two sides (#2101)", () => {
+  for (const code of ["1~'1", "x~/:y", "x~\\:y", "a~:b"]) {
+    assert.strictEqual(splitMatch(code), undefined, code);
+  }
+  assert.deepStrictEqual(splitMatch("f[1]~3"), { left: "f[1]", right: "3" });
+  // An adverb after the right side's first term is the right side's own.
+  assert.deepStrictEqual(splitMatch("x~1+'2"), { left: "x", right: "1+'2" });
 });
 
 test("the switch is declared, on by default, and named in what a refusal says", () => {

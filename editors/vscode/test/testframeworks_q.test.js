@@ -145,7 +145,8 @@ function liveOn(connection) {
   };
 }
 
-// Each row is one of the ways the two have parted: a row's repeat (#2100).
+// Each row is one of the ways the two have parted: a row's repeat (#2100),
+// ~ with an adverb after it (#2101).
 const K4_SUITE = [
   "action,ms,bytes,lang,code,repeat,minver,comment",
   "before,0,0,q,cnt:0,1,,",
@@ -155,6 +156,9 @@ const K4_SUITE = [
   "true,0,0,q,cnt=5,1,,",
   "true,0,0,q,1b,2,,",
   "fail,0,0,q,1+`a,1,,",
+  "true,0,0,q,1~'1,1,,",
+  "true,0,0,q,1~/:1,1,,",
+  "true,0,0,q,1 2~/:1 2,1,,",
   "",
 ].join("\n");
 
@@ -180,5 +184,5 @@ test("a k4unit suite passes and fails in the Test Explorer as k4unit's KUrt pass
   const ours = explorer.results().map((r) => r.state === "passed");
   assert.deepStrictEqual(ours, k4, JSON.stringify(explorer.results()));
   // Not vacuous: the suite has a pass and a failure.
-  assert.deepStrictEqual(k4, [true, true, true, false, true]);
+  assert.deepStrictEqual(k4, [true, true, true, false, true, true, true, false]);
 });
