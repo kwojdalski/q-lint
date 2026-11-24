@@ -26,11 +26,14 @@
   /// A column the process ranked sorts by its rank, as q's `xasc` or
   /// `xdesc` would, equal values kept in their order either way; one it
   /// could not sort, by its text. `shown`, when given, is what a cell shows
-  /// in place of its text (column, row): a filter finds either.
-  function visibleRows(grid, filters, sort, shown) {
+  /// in place of its text (column, row): a filter finds either. `drawn`,
+  /// when given, is the columns drawn: a hidden column's filter and sort,
+  /// with no box or arrow left to see them by, are not in force (#1633).
+  function visibleRows(grid, filters, sort, shown, drawn) {
     const active = [];
+    const isDrawn = function (c) { return drawn === undefined || drawn.indexOf(c) >= 0; };
     (filters || []).forEach(function (f, c) {
-      if (f && c < grid.cells.length) {
+      if (f && c < grid.cells.length && isDrawn(c)) {
         active.push([c, String(f).toLowerCase()]);
       }
     });
@@ -40,7 +43,7 @@
         rows.push(r);
       }
     }
-    if (sort && sort.column < grid.cells.length) {
+    if (sort && sort.column < grid.cells.length && isDrawn(sort.column)) {
       const rank = grid.rank[sort.column];
       const cells = grid.cells[sort.column];
       const up = rank
@@ -681,6 +684,8 @@
       show.title = "Show the hidden columns: " + hidden.join(", ");
       show.addEventListener("click", function () {
         setLayout(Object.assign({}, layout(), { hidden: [] }));
+        // Their filters and sort are in force again.
+        rows = shownRows(grid);
         draw();
       });
       extras.push(show);
@@ -754,10 +759,20 @@
     };
   }
 
+  /// The columns of `grid` drawn, by place, in the order drawn.
+  function drawnColumns(grid) {
+    return feature("columnLayout") ? LOOK.displayColumns(grid, layout()) : grid.columns.map(function (_, i) { return i; });
+  }
+
+  /// The rows the grid shows: the filters and sort of the columns drawn.
+  function shownRows(grid) {
+    return visibleRows(grid, state.filters, state.sort, shownAs(grid), drawnColumns(grid));
+  }
+
   function dressGrid() {
     const grid = result.grid;
     const lay = layout();
-    const display = feature("columnLayout") ? LOOK.displayColumns(grid, lay) : grid.columns.map(function (_, i) { return i; });
+    const display = drawnColumns(grid);
     const formats = feature("columnFormats") ? LOOK.columnFormats(grid) : grid.columns.map(function () { return null; });
     const rules = feature("conditionalFormats") ? LOOK.ruleStyles(grid, look().rules || []) : grid.columns.map(function () { return null; });
     const charts = look().cellCharts || {};
@@ -885,7 +900,7 @@
         state.sort = !s || s.column !== i ? { column: i, descending: false } : s.descending ? null : { column: i, descending: true };
         state.top = 0;
         save();
-        rows = visibleRows(grid, state.filters, state.sort, shownAs(grid));
+        rows = shownRows(grid);
         drawGrid();
         drawBar();
         rendered();
@@ -969,7 +984,7 @@
         state.filters[i] = input.value;
         state.top = 0;
         save();
-        rows = visibleRows(grid, state.filters, state.sort, shownAs(grid));
+        rows = shownRows(grid);
         scroller.scrollTop = 0;
         paint();
         drawBar();
@@ -2120,7 +2135,7 @@
     result = m;
     moreAsked = false;
     announce(m);
-    rows = visibleRows(m.grid, state.filters, state.sort, shownAs(m.grid));
+    rows = shownRows(m.grid);
     save();
     draw();
     if (image) {

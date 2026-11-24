@@ -243,3 +243,20 @@ test("Send to... sends the rows shown to the extension, while on (#1021)", () =>
   page.send(result("s.2", [["x", 9, ["1"]]], { features: { sendResult: false } }));
   assert.strictEqual(page.button("Send to..."), undefined);
 });
+
+test("a hidden column's filter and sort are not in force, and are again once it is shown (#1633)", () => {
+  const page = loadPage(undefined);
+  const cols = [["sym", 11, ["b", "a", "c"]], ["px", 9, ["1", "2", "3"]]];
+  page.send(result("s.1", cols));
+  page.headers()[0].fire("click");
+  const input = page.body.all((e) => e.tagName === "INPUT")[0];
+  input.value = "a";
+  input.fire("input");
+  assert.strictEqual(page.rendered().rows, 1);
+  page.send(result("s.1", cols, { look: { layout: { order: [], hidden: ["sym"], widths: {}, frozen: 0 } } }));
+  assert.deepStrictEqual(page.headers().map((h) => h.textContent), ["px"]);
+  assert.strictEqual(page.rendered().rows, 3, "no box is left to see the filter by");
+  assert.deepStrictEqual(page.rows().map((tr) => tr.children[0].textContent), ["1", "2", "3"], "nor the sort");
+  page.button("1 hidden").fire("click");
+  assert.strictEqual(page.rendered().rows, 1);
+});
