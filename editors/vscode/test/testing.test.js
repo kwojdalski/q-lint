@@ -315,7 +315,7 @@ test("a k4unit suite's before rows run once before its tests, and its after rows
   const live = fakeLive();
   const explorer = registerTestExplorer(stub.newContext(), live, () => undefined);
   await explorer.discover();
-  assert.deepStrictEqual(explorer.items(), ["file:///ws/k.csv#2", "file:///ws/k.csv#3"]);
+  assert.deepStrictEqual(explorer.items(), ["file:///ws/k.csv#true:t=1", "file:///ws/k.csv#fail:bad"]);
   await explorer.run();
   assert.deepStrictEqual(
     live.sent.map((s) => [s.statements.join(";"), s.mode]),
@@ -353,7 +353,7 @@ test("a cancelled k4unit run still runs the after rows of a file it set up (#109
       ["t:0", "run"],
     ],
   );
-  assert.ok(made[0].runs[0].events.some(([e, id]) => e === "skipped" && id === "file:///ws/k.csv#3"));
+  assert.ok(made[0].runs[0].events.some(([e, id]) => e === "skipped" && id === "file:///ws/k.csv#fail:bad"));
 });
 
 test("a test run on a process the read-only guard guards goes through the guard: declined, the test's definition is not sent (#918)", async (t) => {
@@ -526,4 +526,26 @@ test("a k4unit row whose minver is above the process's .z.K is skipped, not run 
   assert.deepStrictEqual(live.sent.map((s) => s.statements.join(";")), ["1b"]);
   assert.deepStrictEqual(explorer.results().map((r) => r.state), ["passed", "skipped"]);
   assert.ok(made[0].runs[0].events.some(([e]) => e === "skipped"));
+});
+
+test("a k4unit row keeps its id when a row is inserted above it: Re-run Failed runs the row that failed (#1595)", async () => {
+  stub.reset();
+  fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  stub.config.user["testExplorer.failedTests.enable"] = true;
+  const head = "action,ms,bytes,lang,code,repeat,minver,comment\n";
+  let csv = head + "true,0,0,q,bad=1,1,,\ntrue,0,0,q,good=1,1,,\ntrue,0,0,q,good=1,1,,\n";
+  vscode.workspace.findFiles = async () => [vscode.Uri.file("/ws/suite.csv")];
+  vscode.workspace.fs = { readFile: async () => Buffer.from(csv) };
+  const live = fakeLive();
+  const explorer = registerTestExplorer(stub.newContext(), live, () => undefined);
+  await explorer.discover();
+  // Two rows of one code are told apart.
+  assert.deepStrictEqual(explorer.items(), ["file:///ws/suite.csv#true:bad=1", "file:///ws/suite.csv#true:good=1", "file:///ws/suite.csv#true:good=1#2"]);
+  await explorer.run();
+  csv = head + "true,0,0,q,new=1,1,,\ntrue,0,0,q,bad=1,1,,\ntrue,0,0,q,good=1,1,,\ntrue,0,0,q,good=1,1,,\n";
+  await explorer.discover();
+  live.sent.length = 0;
+  await stub.commands.get("q-lint.rerunFailedTests")();
+  assert.deepStrictEqual(live.sent.map((s) => s.statements.join(";")), ["bad=1"]);
 });

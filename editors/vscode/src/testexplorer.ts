@@ -60,6 +60,7 @@ import {
   failureText,
   functionTestId,
   isK4Test,
+  k4Keys,
   k4Label,
   k4Mode,
   k4Statement,
@@ -305,8 +306,9 @@ class QTests {
       }
       const id = uri.toString();
       const parent = this.controller.createTestItem(id, workspace.asRelativePath(uri), uri);
-      for (const row of tested) {
-        const item = this.controller.createTestItem(`${id}#${row.line}`, `${row.action}: ${k4Label(row)}`, uri);
+      const keys = k4Keys(tested);
+      for (const [i, row] of tested.entries()) {
+        const item = this.controller.createTestItem(`${id}#${keys[i]}`, `${row.action}: ${k4Label(row)}`, uri);
         item.range = new Range(row.line, 0, row.line, 0);
         this.entries.set(item, { kind: "k4unit", rows, row });
         parent.children.add(item);

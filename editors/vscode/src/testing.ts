@@ -327,6 +327,20 @@ export function k4Statement(row: K4Row): string {
   return row.lang === "k" ? `k)${row.code}` : row.code;
 }
 
+/// Each test row's part of its Test Explorer id: its action and code, and
+/// for a second row of both, which one - not its line, so that a row
+/// inserted above keeps Re-run Failed and VS Code's history on the row
+/// that failed (#1595).
+export function k4Keys(rows: K4Row[]): string[] {
+  const seen = new Map<string, number>();
+  return rows.map((row) => {
+    const key = `${row.action}:${row.code.trim()}`;
+    const n = (seen.get(key) ?? 0) + 1;
+    seen.set(key, n);
+    return n === 1 ? key : `${key}#${n}`;
+  });
+}
+
 /// What a test's label is: a k4unit row is its code, cut to one line.
 export function k4Label(row: K4Row): string {
   const one = row.code.replace(/\s+/g, " ").trim();
