@@ -26,6 +26,7 @@ test("a file is read from where the last read stopped, a line still being writte
   let at = await readFrom(file, START, (l) => got.push(l));
   assert.deepStrictEqual(got, ["one", "two"]);
   assert.deepStrictEqual([at.offset, at.partial, at.restarted], [12, "thr", false]);
+  assert.strictEqual(typeof at.ino, "number");
   fs.appendFileSync(file, "ee\nfour\n");
   at = await readFrom(file, at, (l) => got.push(l));
   assert.deepStrictEqual(got, ["one", "two", "three", "four"]);
@@ -37,6 +38,18 @@ test("a file is read from where the last read stopped, a line still being writte
   at = await readFrom(file, at, (l) => got.push(l));
   assert.strictEqual(at.restarted, true);
   assert.deepStrictEqual(got.slice(-1), ["new"]);
+});
+
+test("a log rotated to a new file already longer than the old read position is read from its start (#1688)", async () => {
+  const file = path.join(tmp(), "a.log");
+  fs.writeFileSync(file, "old line 1\nold line 2\n");
+  let at = await readFrom(file, START, () => {});
+  fs.renameSync(file, `${file}.1`);
+  fs.writeFileSync(file, "NEW entry A\nNEW entry B\nNEW entry C\n");
+  const got = [];
+  at = await readFrom(file, at, (l) => got.push(l));
+  assert.strictEqual(at.restarted, true);
+  assert.deepStrictEqual(got, ["NEW entry A", "NEW entry B", "NEW entry C"]);
 });
 
 test("the offset counts the file's bytes, a byte that is not UTF-8 and a character cut in two included (#1079)", async () => {

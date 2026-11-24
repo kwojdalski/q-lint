@@ -4,28 +4,35 @@
 // it on files appended while it reads.
 import * as fs from "node:fs";
 
-/// Where a file has been read to, and the start of a line not yet ended.
+/// Where a file has been read to, the start of a line not yet ended, and
+/// which file it was: its inode, once read.
 export interface Position {
   offset: number;
   partial: string;
+  ino?: number;
 }
 
 export const START: Position = { offset: 0, partial: "" };
 
 /// Read `file` from `from` to its end now, calling `line` with each line
 /// that ends (without its `\n` or `\r\n`); the position to read from next.
-/// A file now shorter than `from` was truncated or rotated, and is read
-/// again from its start (`restarted`).
+/// A file now shorter than `from` was truncated, and one that is another
+/// file - renamed away and made again, as a log is rotated, however long
+/// the new one has grown (#1688) - rotated: either is read again from its
+/// start (`restarted`).
 export async function readFrom(file: string, from: Position, line: (text: string) => void): Promise<Position & { restarted: boolean }> {
-  const size = (await fs.promises.stat(file)).size;
+  const stat = await fs.promises.stat(file);
+  const size = stat.size;
+  // 0 where the file system has no inodes to tell files apart.
+  const ino = stat.ino !== 0 ? stat.ino : undefined;
   let start = from;
   let restarted = false;
-  if (size < from.offset) {
+  if (size < from.offset || (from.ino !== undefined && ino !== undefined && from.ino !== ino)) {
     start = START;
     restarted = true;
   }
   if (size === start.offset) {
-    return { ...start, restarted };
+    return { ...start, ino, restarted };
   }
   // Bytes, not decoded text, are counted and split on `\n`: a byte that is
   // not UTF-8 decodes to U+FFFD, three bytes long (#1079).
@@ -48,7 +55,7 @@ export async function readFrom(file: string, from: Position, line: (text: string
   // A character cut in two at the end is left for the next read.
   const held = cutCharacter(rest);
   partial += rest.toString("utf8", 0, rest.length - held);
-  return { offset: start.offset + read - held, partial, restarted };
+  return { offset: start.offset + read - held, partial, ino, restarted };
 }
 
 /// How many bytes at the end of `bytes` start a UTF-8 character that is
