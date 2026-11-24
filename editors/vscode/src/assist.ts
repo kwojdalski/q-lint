@@ -85,9 +85,10 @@ const WORDS = new Set(
 );
 
 /// Where `name` is first written as code in `text` - not in a string or a
-/// comment (#1631); -1 when it is not.
+/// comment (#1631), nor as the head of a dotted name, which `namesIn`
+/// reads as another name (#1912); -1 when it is not.
 export function codeOffset(text: string, kinds: string, name: string): number {
-  for (const m of text.matchAll(new RegExp(`(?<![\\w.])${name.replace(/\./g, "\\.")}(?![\\w])`, "g"))) {
+  for (const m of text.matchAll(new RegExp(`(?<![\\w.])${name.replace(/\./g, "\\.")}(?![\\w]|\\.[A-Za-z])`, "g"))) {
     if (kinds[m.index] === "c") {
       return m.index;
     }

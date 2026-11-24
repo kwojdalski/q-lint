@@ -131,6 +131,12 @@ test("codeOffset finds a name written as code, past a comment or string (#1631)"
     assert.strictEqual(codeOffset(text, charKinds(text), "vwap"), at, text);
   }
   assert.strictEqual(codeOffset("x.f;.ns.f 1", charKinds("x.f;.ns.f 1"), ".ns.f"), 4);
+  // Nor is a name found at the head of a dotted one, which namesIn reads
+  // as another name (#1912): the hover of a.b is not a's.
+  for (const [text, name, at] of [["a.b+a", "a", 4], ["x.y:1;x", "x", 6], ["t.c+t", "t", 4], ["a.b", "a", -1], ["a.b+a", "a.b", 0], ["x.a+a", "a", 4], ["a.1+a", "a", 0]]) {
+    assert.strictEqual(codeOffset(text, charKinds(text), name), at, `${name} in ${text}`);
+  }
+  assert.deepStrictEqual(namesIn("a.b+a", charKinds("a.b+a")), ["a.b", "a"]);
 });
 
 test("a prompt's cut never splits a surrogate pair (#1622)", () => {
