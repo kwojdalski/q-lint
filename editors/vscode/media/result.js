@@ -307,26 +307,25 @@
     if (agg !== "count" && !numbers) {
       return { rows: [], columns: [], cells: [], note: "Choose a numeric column to take the " + agg + " of, or count." };
     }
+    // Grouped by rank where q ranked the column, so floats the grid rounds
+    // alike stay apart as q's `by` keeps them (#2078); by text where it did
+    // not. A group is labelled by its first row's text.
     const keys = function (c) {
       if (c < 0 || c >= grid.columns.length) {
-        return { of: function () { return ""; }, order: [""] };
+        return { of: function () { return ""; }, order: [""], label: function () { return ""; } };
       }
       const cells = grid.cells[c];
-      const rank = grid.rank[c];
+      const rank = grid.rank[c] && grid.rank[c].length === cells.length ? grid.rank[c] : null;
+      const of = rank ? function (r) { return rank[r]; } : function (r) { return cells[r]; };
       const first = new Map();
       rows.forEach(function (r) {
-        if (!first.has(cells[r])) {
-          first.set(cells[r], r);
+        if (!first.has(of(r))) {
+          first.set(of(r), r);
         }
       });
       const order = Array.from(first.keys());
-      order.sort(function (a, b) {
-        if (rank) {
-          return rank[first.get(a)] - rank[first.get(b)];
-        }
-        return textOrder(a, b);
-      });
-      return { of: function (r) { return cells[r]; }, order: order };
+      order.sort(rank ? function (a, b) { return a - b; } : textOrder);
+      return { of: of, order: order, label: function (k) { return cells[first.get(k)]; } };
     };
     const across = keys(spec.row);
     const down = keys(spec.column);
@@ -368,7 +367,7 @@
       }
       return meanText(agg === "sum" ? a.sum : agg === "avg" ? average(a.sum, a.mean, a.n) : agg === "min" ? a.min : a.max);
     };
-    const out = { rows: across.order, columns: spec.column >= 0 ? shown : [agg], cells: across.order.map(function (k) { return (acc.get(k) || shown.map(function () { return { n: 0, sum: 0, min: Infinity, max: -Infinity }; })).map(text); }) };
+    const out = { rows: across.order.map(across.label), columns: spec.column >= 0 ? shown.map(down.label) : [agg], cells: across.order.map(function (k) { return (acc.get(k) || shown.map(function () { return { n: 0, sum: 0, min: Infinity, max: -Infinity }; })).map(text); }) };
     if (down.order.length > shown.length) {
       out.note = "The first " + shown.length + " of " + down.order.length + " values of " + grid.columns[spec.column].name + " are shown as columns.";
     }

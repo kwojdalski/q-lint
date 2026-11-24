@@ -485,6 +485,15 @@ test("a pivot groups by two columns in q's order and aggregates a third", () => 
   assert.deepStrictEqual(page.defaultPivot(g), { row: 0, column: -1, value: 2, agg: "sum" });
 });
 
+test("a pivot keeps apart floats the grid rounds alike, as q's by does (#2078)", () => {
+  const g = grid([["px", 9], ["qty", 7]], [["1.00", "1.00", "1.00", "1.00"], ["10", "20", "30", "40"]], [[1.001, 1.002, 1.003, 1.002], [10, 20, 30, 40]], [[0, 1, 2, 1], [0, 1, 2, 3]]);
+  const p = page.pivot(g, [0, 1, 2, 3], { row: 0, column: -1, value: 1, agg: "sum" });
+  assert.deepStrictEqual(p, { rows: ["1.00", "1.00", "1.00"], columns: ["sum"], cells: [["10"], ["60"], ["30"]] });
+  // As columns too, in q's order.
+  const across = page.pivot(g, [3, 2, 0], { row: -1, column: 0, value: 1, agg: "sum" });
+  assert.deepStrictEqual([across.columns, across.cells], [["1.00", "1.00", "1.00"], [["10", "40", "30"]]]);
+});
+
 test("a pivot's aggregates keep every digit of a long: 123456789012345 is not 123456789012000 (#1487)", () => {
   const g = grid([["s", 11], ["q", 7]], [["a", "a"], ["123456789012345", "1"]], [null, [123456789012345, 1]]);
   const cells = (agg) => page.pivot(g, [0, 1], { row: 0, column: -1, value: 1, agg }).cells;

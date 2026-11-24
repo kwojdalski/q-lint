@@ -161,7 +161,8 @@ function result(id, columns, extra = {}) {
     grid: {
       columns: columns.map(([name, type]) => ({ name, type, typeName: "t", key: false, numeric: NUMERIC.includes(type), temporal: false })),
       cells: columns.map(([, , cells]) => cells),
-      rank: columns.map(([, , cells]) => cells.map((_, i) => i)),
+      // As GRID ranks them: equal values share a place.
+      rank: columns.map(([, , cells]) => cells.map((c) => [...new Set(cells)].sort().indexOf(c))),
       values: columns.map(([, type, cells]) => (NUMERIC.includes(type) ? cells.map(Number) : null)),
       total: columns[0][2].length,
     },
