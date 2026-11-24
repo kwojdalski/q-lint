@@ -262,10 +262,16 @@ export class Launcher {
     });
   }
 
+  /// Stop everything started from here, and close the output channels once
+  /// each has ended, so their last lines are in them first (#1433).
   private stopAll(): void {
-    for (const label of [...this.started.keys()]) {
-      void this.end(label);
-    }
+    const channels = [...this.channels.values()];
+    this.channels.clear();
+    void Promise.all([...this.started.keys()].map((label) => this.end(label))).then(() => {
+      for (const channel of channels) {
+        channel.dispose();
+      }
+    });
   }
 
   /// Give a saved process a launch definition, or remove it. `launch` (from
