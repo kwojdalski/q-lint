@@ -23,23 +23,17 @@ export const SQL_SCHEMA = "{t!cols each t:tables[]}[]";
 
 /// The SQL text `sqlQuery` sends for `sql`: its `--` comments dropped (a
 /// comment would swallow the rest once lines are joined) and its lines
-/// joined by a blank. The read-only check judges this text, not `sql` as
-/// typed: dropping a comment can move where a quote ends (#1408).
+/// joined by a blank. What is a comment is the engine's lexer's to say
+/// (`lex`): a `--` in quoted text or inside `/* */` is not one, and a quote
+/// inside `/* */` opens nothing (#1956). The read-only check judges this
+/// text, not `sql` as typed (#1408).
 export function sqlText(sql: string): string {
-  const lines = sql.split(/\r?\n/).map((line) => {
-    // The quote a quoted text opened, `'` or `"`: the other is text in it.
-    let quote: string | undefined;
-    for (let i = 0; i < line.length; i++) {
-      const c = line[i];
-      if (c === "'" || c === '"') {
-        quote = quote === undefined ? c : quote === c ? undefined : quote;
-      } else if (quote === undefined && c === "-" && line[i + 1] === "-") {
-        return line.slice(0, i);
-      }
-    }
-    return line;
-  });
-  return lines.map((l) => l.trim()).filter((l) => l !== "").join(" ").replace(/;\s*$/, "");
+  const read = lex(sql);
+  let kept = "";
+  for (let i = 0; i < sql.length; i++) {
+    kept += read[i] === "-" ? "" : sql[i];
+  }
+  return kept.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== "").join(" ").replace(/;\s*$/, "");
 }
 
 /// `sql` sent to `.s.e` as a q string, as `sqlText` gives it. `load`: load

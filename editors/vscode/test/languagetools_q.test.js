@@ -137,6 +137,16 @@ test("the SQL write check reads comments and quotes as KDB-X's lexer does", { sk
   await c.call(sqlQuery(tabbed));
   assert.strictEqual(await count(), rows);
   assert.deepStrictEqual(sqlWrites(sqlText(tabbed)), []);
+  // #1956: a `--` inside a block comment is not cut, so the WHERE is sent.
+  const one = await c.call(sqlQuery("select * from t /* see a--b */ where a = 1"));
+  assert.deepStrictEqual((Array.isArray(one) ? one : []).map((r) => Number(r.a)), [1]);
+  // Quoted text runs across lines: the `--` in it stays, and the INSERT
+  // after it is text in the next quote, as typed and as sent (#1408's case).
+  const quoted = "select 'a\n--'\n' as c from t; insert into t values (1) -- '";
+  const held = await count();
+  await c.call(sqlQuery(quoted)).catch(() => undefined);
+  assert.strictEqual(await count(), held);
+  assert.deepStrictEqual(sqlWrites(sqlText(quoted)), []);
   // Generated text, as typed and as sent. `LEXERR`: the lexer refused it,
   // so nothing of it runs.
   const pieces = ["insert", "drop", "INSERT", "--", "-", "/*", "*/", "*", "/", "'", '"', "''", ".", "x", "x.-", "1", "e", "1e", "_", " ", " ", "\t", "\n", "\r", "\f", "\u0001", "\\", ";", "(", "é"];

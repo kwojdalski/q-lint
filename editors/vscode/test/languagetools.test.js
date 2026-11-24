@@ -691,11 +691,26 @@ test("SQL is sent to .s.e with its comments dropped, and a write is recognised",
   assert.deepStrictEqual(sqlWrites("select 'it''s; delete' from t"), []);
   assert.deepStrictEqual(sqlWrites("select replace(s, 'a', 'b') from t"), []);
   assert.deepStrictEqual(sqlWrites("replace into t values (1)"), ["REPLACE"]);
-  // A `--` inside a quote that runs across lines is dropped from what is
-  // sent, which moves the quote: the write check judges the sent text (#1408).
-  const hidden = "select 'a\n--'\n' as c from t; insert into t values (1) -- '";
+  // The write check judges the sent text (#1408). Joining the lines lets
+  // this `.-` run on over the quote that hid the INSERT (KDB-X refuses the
+  // `.-` token; the check does not lean on that).
+  const hidden = "select a.-\n' ; insert into t values (1) '";
   assert.strictEqual(sqlQuery(hidden), `.s.e "${sqlText(hidden)}"`);
+  assert.deepStrictEqual(sqlWrites(hidden), []);
   assert.deepStrictEqual(sqlWrites(sqlText(hidden)), ["INSERT"]);
+  // Quoted text runs across lines, so the `--` in this one is text and stays;
+  // #1408's own example is no write as typed or as sent (checked on KDB-X 5).
+  const quoted = "select 'a\n--'\n' as c from t; insert into t values (1) -- '";
+  assert.strictEqual(sqlText(quoted), "select 'a --' ' as c from t; insert into t values (1) -- '");
+  assert.deepStrictEqual(sqlWrites(sqlText(quoted)), []);
+  // A `--` inside a block comment is part of it, on one line or several, and
+  // a quote inside one opens nothing (#1956).
+  assert.strictEqual(sqlText("select * from t /* see a--b */ where a = 1"), "select * from t /* see a--b */ where a = 1");
+  assert.strictEqual(sqlText("select * from t /* a\n-- b */ where a = 1;"), "select * from t /* a -- b */ where a = 1");
+  assert.strictEqual(sqlText("select 1 /* it's */ -- note\nfrom t"), "select 1 /* it's */ from t");
+  assert.strictEqual(sqlText("select 1 /* c */ -- /* note\nfrom t -- */ x"), "select 1 /* c */ from t");
+  // The comment that hid #1955's INSERT is dropped where the lexer ends it.
+  assert.strictEqual(sqlText("select 1 /* ' */ -- x\f; insert into t values (21,'a')"), "select 1 /* ' */ \f; insert into t values (21,'a')");
   const schema = readSchema({ trade: ["sym", "px"], quote: ["sym", "bid"] });
   assert.deepStrictEqual([...schema.keys()], ["trade", "quote"]);
   assert.deepStrictEqual(sqlCompletions(schema, "select trade.").map((c) => c.label), ["sym", "px"]);
@@ -776,7 +791,7 @@ test("a SQL write on a guarded process is held until confirmed", async () => {
     assert.deepStrictEqual(asked, [["`t insert ()", "prod1", "This SQL statement (INSERT)"]]);
     assert.deepStrictEqual(sent, []);
     // A write that only the sent text shows is held too (#1408).
-    vscode.window.activeTextEditor.document.getText = () => "select 'a\n--'\n' as c from t; insert into t values (1) -- '";
+    vscode.window.activeTextEditor.document.getText = () => "select a.-\n' ; insert into t values (1) '";
     assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.runSql)(), undefined);
     assert.strictEqual(asked.length, 2);
     assert.deepStrictEqual(sent, []);
