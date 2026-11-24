@@ -199,6 +199,10 @@ test("a bundled server that cannot run falls back to PATH without an error", { s
   await w.extension.activate(w.context);
   await sleep(100);
   assert.deepStrictEqual(w.started, [path.join(dir, "bin", "qlinter")]);
+  // The dashboard and the baseline run the one that started, not the
+  // bundled one (#1608).
+  assert.strictEqual(w.linter().command, path.join(dir, "bin", "qlinter"));
+  assert.strictEqual(w.baseline().command, path.join(dir, "bin", "qlinter"));
   assert.deepStrictEqual(w.errors, []);
   await w.extension.deactivate();
 });

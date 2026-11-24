@@ -171,6 +171,22 @@ function pathServer(): string | undefined {
   return undefined;
 }
 
+/// The server binary start() last launched, for the dashboard and the
+/// baseline to run too.
+let launched: string | undefined;
+
+/// The qlinter the dashboard and the baseline run, with no serverPath: the
+/// one the server was started from, or with none started, the first of the
+/// bundled one and PATH's that runs here. A bundled binary built for another
+/// platform falls through to PATH, as it does for the server (#1608).
+function serverBinary(context: ExtensionContext): string | undefined {
+  if (launched !== undefined) {
+    return launched;
+  }
+  const candidates = [bundledServer(context), pathServer()].filter((c): c is string => !!c);
+  return candidates.find((c, i) => i === candidates.length - 1 || answersVersion(c));
+}
+
 function bundledServer(context: ExtensionContext): string | undefined {
   const name = process.platform === "win32" ? "qlinter.exe" : "qlinter";
   const path = join(context.extensionPath, "server", name);
@@ -367,7 +383,7 @@ export async function activate(
   // profile and configuration file the settings give it.
   const problemsDashboard = registerProblemsDashboard(context, () => {
     const settings = launch(workspace.getConfiguration("q-lint"), workspace.workspaceFolders?.[0]?.uri.fsPath);
-    const command = settings.serverPath || bundledServer(context) || pathServer();
+    const command = settings.serverPath || serverBinary(context);
     return { command, args: settings.args.filter((a) => a !== "--lsp") };
   });
   const dbTools = registerDbTools(context, live);
@@ -379,7 +395,7 @@ export async function activate(
   const errorExplainer = registerErrorExplainer(context, live);
   registerBaseline(context, () => {
     const settings = launch(workspace.getConfiguration("q-lint"), workspace.workspaceFolders?.[0]?.uri.fsPath);
-    const command = settings.serverPath || bundledServer(context) || pathServer();
+    const command = settings.serverPath || serverBinary(context);
     return { command, args: settings.args.filter((a) => a !== "--lsp") };
   });
   registerDeadCode(context, live, running);
@@ -489,6 +505,7 @@ async function start(context: ExtensionContext): Promise<void> {
     workspace.getConfiguration("q-lint"),
     workspace.workspaceFolders?.[0]?.uri.fsPath,
   );
+  launched = undefined;
   if (!settings.enabled) {
     return;
   }
@@ -575,6 +592,7 @@ async function start(context: ExtensionContext): Promise<void> {
       // this line there was no way to tell from inside the editor.
       const version = client.initializeResult?.serverInfo?.version ?? "unknown version";
       client.outputChannel.appendLine(`q-lint ${version} from ${command}`);
+      launched = configured ? undefined : command;
       break;
     } catch (error) {
       clearTimeout(timer);
