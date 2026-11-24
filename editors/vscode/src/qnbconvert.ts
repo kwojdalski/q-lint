@@ -62,7 +62,9 @@ function inline(text: string, values: Record<string, LiveValue>): string {
   let s = "";
   let from = 0;
   for (const span of inlineSpans(text)) {
-    s += text.slice(from, span.start) + hold(span.kind === "code" ? `<code>${escapeHtml(span.expr.trim())}</code>` : liveHtml(span.expr, values[span.expr]));
+    // A tag is shown as written, as the page shows no HTML of the notebook's.
+    const html = span.kind === "code" ? `<code>${escapeHtml(span.expr.trim())}</code>` : span.kind === "html" ? escapeHtml(span.expr) : liveHtml(span.expr, values[span.expr]);
+    s += text.slice(from, span.start) + hold(html);
     from = span.end;
   }
   // A backslash escapes any ASCII punctuation (CommonMark 2.4, #1310).

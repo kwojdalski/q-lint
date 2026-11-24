@@ -70,18 +70,26 @@ export function scanLive(text: string, at: number): { expr: string; end: number 
   return undefined;
 }
 
-/// The live values and code spans of a line of Markdown's inline text, left
-/// to right, as markdown-it reads them: whichever starts first wins, so a
-/// q symbol's backtick inside `{{q: ...}}` opens no code span, and a
-/// `{{q: ...}}` inside a code span is text. A backslash escapes the
-/// character after it.
-export function inlineSpans(text: string): { kind: "live" | "code"; start: number; end: number; expr: string }[] {
-  const spans: { kind: "live" | "code"; start: number; end: number; expr: string }[] = [];
+/// An HTML tag, open or closing, as CommonMark reads one inline.
+const TAG = /<[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:[^\s"'=<>`]+|'[^']*'|"[^"]*"))?)*\s*\/?>|<\/[A-Za-z][A-Za-z0-9-]*\s*>/y;
+
+/// The live values, code spans and HTML tags of a line of Markdown's
+/// inline text, left to right, as markdown-it reads them: whichever starts
+/// first wins, so a q symbol's backtick inside `{{q: ...}}` opens no code
+/// span, and a `{{q: ...}}` inside a code span or a tag (#1557) is text. A
+/// backslash escapes the character after it.
+export function inlineSpans(text: string): { kind: "live" | "code" | "html"; start: number; end: number; expr: string }[] {
+  const spans: { kind: "live" | "code" | "html"; start: number; end: number; expr: string }[] = [];
   let i = 0;
   while (i < text.length) {
     const c = text[i];
+    TAG.lastIndex = i;
+    const tag = c === "<" ? TAG.exec(text) : null;
     if (c === "\\") {
       i += 2;
+    } else if (tag !== null) {
+      spans.push({ kind: "html", start: i, end: i + tag[0].length, expr: tag[0] });
+      i += tag[0].length;
     } else if (c === "{") {
       const live = scanLive(text, i);
       if (live !== undefined) {
@@ -154,12 +162,56 @@ function blankIndented(text: string): string {
     .join("\n");
 }
 
+/// The block-level tags that open an HTML block, which a paragraph's line
+/// may too (CommonMark 4.6, kind 6).
+const BLOCK_TAGS = new Set(
+  ("address article aside base basefont blockquote body caption center col colgroup dd details dialog dir div dl dt fieldset figcaption figure " +
+    "footer form frame frameset h1 h2 h3 h4 h5 h6 head header hr html iframe legend li link main menu menuitem nav noframes ol optgroup option " +
+    "p param search section summary table tbody td tfoot th thead title tr track ul").split(" "),
+);
+
+/// `text` with each HTML block made spaces (#1557): one opened by `<pre`,
+/// `<script`, `<style` or `<textarea` to the line closing it, and one
+/// opened by a block-level tag, or by a tag alone on a line not under a
+/// paragraph line, to a blank line.
+function blankHtml(text: string): string {
+  const lines = text.split("\n");
+  let paragraph = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const raw = /^ {0,3}<(script|pre|style|textarea)(?:\s|>|$)/i.exec(line);
+    const name = /^ {0,3}<\/?([A-Za-z][A-Za-z0-9-]*)(?:\s|\/?>|$)/.exec(line)?.[1].toLowerCase();
+    TAG.lastIndex = line.indexOf("<");
+    const alone = !paragraph && /^ {0,3}</.test(line) && TAG.exec(line) !== null && line.slice(TAG.lastIndex).trim() === "";
+    if (raw !== null) {
+      const close = new RegExp(`</${raw[1]}>`, "i");
+      let j = i;
+      while (j < lines.length - 1 && !close.test(lines[j])) {
+        j++;
+      }
+      for (; i <= j; i++) {
+        lines[i] = " ".repeat(lines[i].length);
+      }
+      i--;
+      paragraph = false;
+    } else if ((name !== undefined && BLOCK_TAGS.has(name)) || alone) {
+      for (; i < lines.length && lines[i].trim() !== ""; i++) {
+        lines[i] = " ".repeat(lines[i].length);
+      }
+      paragraph = false;
+    } else {
+      paragraph = line.trim() !== "";
+    }
+  }
+  return lines.join("\n");
+}
+
 /// The expressions in a Markdown cell's `source`, each once, in order. Ones
-/// in a code block, a code span or an HTML comment are text, as the
-/// renderer shows them (#1429).
+/// in a code block, a code span, an HTML comment, an HTML block or a tag
+/// are text, as the renderer shows them (#1429, #1557).
 export function liveExpressions(source: string): string[] {
   const fenced = source.replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^ {0,3}\1[^\n]*$|(?![\s\S]))/gm, (m) => " ".repeat(m.length));
-  const prose = blankIndented(fenced).replace(/<!--[\s\S]*?(?:-->|(?![\s\S]))/g, (m) => m.replace(/[^\n]/g, " "));
+  const prose = blankHtml(blankIndented(fenced)).replace(/<!--[\s\S]*?(?:-->|(?![\s\S]))/g, (m) => m.replace(/[^\n]/g, " "));
   const found: string[] = [];
   for (const span of inlineSpans(prose)) {
     if (span.kind === "live" && !found.includes(span.expr)) {

@@ -587,7 +587,7 @@ test("an HTML export keeps balanced parentheses in a link's URL (#1554)", () => 
 
 test("an HTML export shows a data: image as the image, and another image as a link or its alt text (#1555)", () => {
   assert.strictEqual(markdownHtml("![chart](data:image/png;base64,iVBORw0KGgo+/=)"), '<p><img alt="chart" src="data:image/png;base64,iVBORw0KGgo+/="></p>');
-  assert.strictEqual(markdownHtml('![a "b" <c>](data:image/gif;base64,R0lG)'), '<p><img alt="a &quot;b&quot; &lt;c&gt;" src="data:image/gif;base64,R0lG"></p>');
+  assert.strictEqual(markdownHtml('![a "b" & c](data:image/gif;base64,R0lG)'), '<p><img alt="a &quot;b&quot; &amp; c" src="data:image/gif;base64,R0lG"></p>');
   assert.strictEqual(markdownHtml("![logo](https://x.io/l.png)"), '<p><a href="https://x.io/l.png">logo</a></p>');
   assert.strictEqual(markdownHtml("![svg](data:image/svg+xml;base64,PHN2Zz4=)"), "<p>svg</p>");
 });
@@ -596,4 +596,13 @@ test("an HTML export leaves a double underscore inside a word as it is (#1556)",
   assert.strictEqual(markdownHtml("call my__private__helper now"), "<p>call my__private__helper now</p>");
   assert.strictEqual(markdownHtml("__a__b and a___b___c"), "<p>__a__b and a___b___c</p>");
   assert.strictEqual(markdownHtml("__bold__ and **x**y"), "<p><strong>bold</strong> and <strong>x</strong>y</p>");
+});
+
+test("a live value in an HTML block or inside a tag is text, as the renderer shows it (#1557)", () => {
+  assert.deepStrictEqual(liveExpressions("<div>\n{{q: inHtml}}\n</div>\n\nAfter {{q: a}}"), ["a"]);
+  assert.deepStrictEqual(liveExpressions('<span title="{{q: inAttr}}">x</span> and <b>{{q: b}}</b>'), ["b"]);
+  assert.deepStrictEqual(liveExpressions("<pre>\n{{q: p}}\n\n{{q: q}}\n</pre>\n{{q: c}}"), ["c"]);
+  // A tag inside the expression is the expression's; a paragraph's line is not an HTML block.
+  assert.deepStrictEqual(liveExpressions("{{q: a<b>c}}\ntext\n<x-y>\n{{q: d}}"), ["a<b>c", "d"]);
+  assert.strictEqual(markdownHtml('<span title="{{q: x}}">y</span>'), "<p>&lt;span title=&quot;{{q: x}}&quot;&gt;y&lt;/span&gt;</p>");
 });
