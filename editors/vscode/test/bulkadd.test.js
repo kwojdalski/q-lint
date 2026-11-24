@@ -41,6 +41,11 @@ test("bad lines say why; duplicates of saved or earlier labels are skipped; a sh
   assert.deepStrictEqual(toAdd(rows).map((p) => p.label), ["a", "other"]);
 });
 
+test("a host that differs from a saved one only in case is the same address (#1813)", () => {
+  const rows = parseBulk("H1:5010:r3", saved);
+  assert.deepStrictEqual(rows.map(rowStatus), ["added; rdb is at the same address"]);
+});
+
 test("CSV with a header row: columns in any order, quoted fields, tags, user and tls; never a password", () => {
   assert.deepStrictEqual(csvFields('a,"b, c","d ""q"""'), ["a", "b, c", 'd "q"']);
   const rows = parseBulk('Port,Host,Label,Tags,User,TLS,Password\n5000,h,"x, y",prod;uat,me,yes,secret\n5001,h,,,,no,', []);
