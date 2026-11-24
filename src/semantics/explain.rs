@@ -21,7 +21,7 @@ pub(crate) fn explain_at(code: &str, comments: &str, source: &str, at: usize) ->
         return Some(explain(&parts));
     }
     // A functional form, through its qSQL spelling.
-    let Ok(conv) = super::functional::to_qsql_at(code, source, at)? else {
+    let Ok(conv) = super::functional::bare_qsql_at(code, source, at)? else {
         return None;
     };
     let text = format!("{}\n", conv.text);

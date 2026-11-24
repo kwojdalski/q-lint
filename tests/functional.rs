@@ -446,6 +446,55 @@ fn the_cursor_can_be_anywhere_in_the_query() {
     assert_eq!(got.text, "select from t where px>2");
 }
 
+/// `(expression, rewritten)`: a functional form inside an expression, and
+/// the expression with it written as qSQL. The qSQL is bracketed where a
+/// name before it or anything after it on the line would read into it
+/// (#2061): on KDB-X, `countselect from t` is 'from, and
+/// `select from t where px>2[`px]` puts the index in the where clause.
+const AROUND: &[(&str, &str)] = &[
+    ("count?[t;();0b;()]", "count(select from t)"),
+    ("first![t;();0b;`symbol$()]", "first(delete from t)"),
+    (
+        "?[t;enlist (>;`px;2);0b;()][`px]",
+        "(select from t where px>2)[`px]",
+    ),
+    ("?[t;();0b;()]`px", "(select from t)`px"),
+    (
+        "?[t;enlist (>;`px;2);0b;()],t",
+        "(select from t where px>2),t",
+    ),
+    (
+        "?[t;enlist (>;`px;2);0b;()] lj ([sym:`a`b] w:1 2)",
+        "(select from t where px>2) lj ([sym:`a`b] w:1 2)",
+    ),
+    // Where nothing joins it, it stands as it is.
+    (
+        "1+count ?[t;enlist (>;`px;2);0b;()]",
+        "1+count select from t where px>2",
+    ),
+    ("(?[t;();0b;()])", "(select from t)"),
+    ("{count x}[?[t;();0b;()]]", "{count x}[select from t]"),
+    ("(?[t;();0b;()];1)", "(select from t;1)"),
+];
+
+/// `expression` with the functional form in it written as qSQL.
+fn rewritten_around(expression: &str) -> String {
+    let source = format!("r:{expression}\n");
+    let at = source.find(['?', '!']).unwrap() + 1;
+    let got = functional_to_qsql(&source, at)
+        .unwrap_or_else(|| panic!("no functional form in {expression}"))
+        .unwrap_or_else(|e| panic!("{expression}: {e}"));
+    let line = format!("{}{}{}", &source[..got.start], got.text, &source[got.end..]);
+    line["r:".len()..].trim_end().to_string()
+}
+
+#[test]
+fn qsql_written_into_an_expression_is_bracketed_where_it_would_join_it() {
+    for (expression, want) in AROUND {
+        assert_eq!(rewritten_around(expression), *want, "{expression}");
+    }
+}
+
 /// Run `script` on the q that QLINT_TEST_Q names, and what it printed.
 fn run_q(script: &str) -> Option<String> {
     let q = std::env::var("QLINT_TEST_Q").ok()?;
@@ -484,6 +533,10 @@ fn each_rewrite_returns_what_the_query_it_came_from_returns() {
     for (functional, qsql) in BACK {
         script.push_str(&format!("ck[{}; {}];\n", quoted(functional), quoted(qsql)));
     }
+    for (expression, _) in AROUND {
+        let back = rewritten_around(expression);
+        script.push_str(&format!("ck[{}; {}];\n", quoted(expression), quoted(&back)));
+    }
     script.push_str("\\\\\n");
     let Some(out) = run_q(&script) else {
         eprintln!("QLINT_TEST_Q names no q: the cases stand as KDB-X ran them");
@@ -493,7 +546,11 @@ fn each_rewrite_returns_what_the_query_it_came_from_returns() {
         return;
     };
     let lines: Vec<&str> = out.lines().collect();
-    assert_eq!(lines.len(), 2 * CASES.len() + BACK.len(), "{out}");
+    assert_eq!(
+        lines.len(),
+        2 * CASES.len() + BACK.len() + AROUND.len(),
+        "{out}"
+    );
     assert!(lines.iter().all(|l| *l == "same"), "{out}");
 }
 

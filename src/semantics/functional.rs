@@ -1127,7 +1127,41 @@ fn column_text(cols: &[(String, Node)]) -> Result<String, String> {
 /// The functional form around byte `at` as qSQL; `None` where there is no
 /// `?[...]` or `![...]` of four arguments around it, and the reason where
 /// one cannot be written as qSQL.
+///
+/// The qSQL is in parentheses where the text around it would otherwise
+/// join it: a name just before it fuses with the lead word
+/// (`count?[t;..]` is not `countselect from t`, which q reads as one
+/// name), and anything after it on the line, but a closing bracket or a
+/// `;`, is read into its last clause (`?[..][`px]` is not
+/// `select from t where px>2[`px]`, and `?[..],u` not
+/// `select from t,u`) (#2061).
 pub(crate) fn to_qsql_at(
+    code: &str,
+    source: &str,
+    at: usize,
+) -> Option<Result<Conversion, String>> {
+    let b = code.as_bytes();
+    Some(bare_qsql_at(code, source, at)?.map(|mut c| {
+        let before = c.start.checked_sub(1).map(|i| b[i]);
+        let after = b[c.end..]
+            .iter()
+            .find(|c| !matches!(c, b' ' | b'\t'))
+            .copied();
+        let joined_before =
+            before.is_some_and(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.'));
+        let joined_after = !matches!(
+            after,
+            None | Some(b'\n' | b'\r' | b';' | b')' | b']' | b'}')
+        );
+        if joined_before || joined_after {
+            c.text = format!("({})", c.text);
+        }
+        c
+    }))
+}
+
+/// As `to_qsql_at`, the qSQL alone, whatever is around it.
+pub(crate) fn bare_qsql_at(
     code: &str,
     source: &str,
     at: usize,
