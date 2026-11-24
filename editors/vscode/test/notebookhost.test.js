@@ -101,7 +101,7 @@ function fakeVscode() {
     },
     notebooks: {
       createNotebookController: () => {
-        const controller = { dispose() {}, createNotebookCellExecution: (cell) => fakeExecution(cell) };
+        const controller = { dispose() {}, onDidChangeSelectedNotebooks: () => disposable, createNotebookCellExecution: (cell) => fakeExecution(cell) };
         registered.controller = controller;
         return controller;
       },

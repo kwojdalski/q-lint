@@ -31,6 +31,7 @@ import {
   window,
   workspace,
   type CancellationToken,
+  type Disposable,
   type ExtensionContext,
   type NotebookCell,
   type NotebookCellExecution,
@@ -285,6 +286,10 @@ class QnbKernel {
   private queue: Promise<void> = Promise.resolve();
   /// The process each notebook's cells last ran on, by its label.
   private readonly where = new WeakMap<NotebookDocument, string>();
+  /// The notebooks VS Code has selected this kernel for, by URI, as it
+  /// keeps them: only a cell of one of these can be run.
+  private readonly selected = new Set<string>();
+  private readonly selection: Disposable;
   private readonly ran = new EventEmitter<NotebookDocument>();
   /// Fired when a cell has run on a process: what the variables view
   /// refreshes on.
@@ -296,11 +301,21 @@ class QnbKernel {
     this.controller.supportedLanguages = ["q"];
     this.controller.supportsExecutionOrder = true;
     this.controller.executeHandler = (cells, notebook) => this.execute(cells, notebook);
+    this.selection = this.controller.onDidChangeSelectedNotebooks(({ notebook, selected }) => {
+      this.selected[selected ? "add" : "delete"](notebook.uri.toString());
+    });
   }
 
   dispose(): void {
+    this.selection.dispose();
     this.controller.dispose();
     this.ran.dispose();
+  }
+
+  /// Whether a cell of `notebook` can run: VS Code refuses one of a
+  /// notebook this kernel is not selected for (#1994).
+  canRun(notebook: NotebookDocument): boolean {
+    return this.selected.has(notebook.uri.toString());
   }
 
   /// The label of the process `notebook`'s cells last ran on.
@@ -804,6 +819,7 @@ export function registerNotebooks(
   liveValues: () => RenderedLiveValue[];
   processOf: (notebook: NotebookDocument) => string | undefined;
   onDidRun: QnbKernel["onDidRun"];
+  canRun: (notebook: NotebookDocument) => boolean;
   runAll: (notebook: NotebookDocument) => Promise<void>;
 } {
   // By output, the last drawing of each, in the order last drawn.
@@ -841,6 +857,7 @@ export function registerNotebooks(
     liveValues: () => [...shown],
     processOf: (notebook) => kernel.processOf(notebook),
     onDidRun: kernel.onDidRun,
+    canRun: (notebook) => kernel.canRun(notebook),
     runAll: (notebook) => kernel.runAll(notebook),
   };
 }

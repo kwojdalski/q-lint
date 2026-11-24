@@ -40,6 +40,13 @@ class NotebookCellOutputItem {
   }
 }
 let executions = [];
+/// The notebooks the kernel is selected for, by URI, and who VS Code tells.
+const kernelOf = new Set();
+let kernelListener = () => {};
+function selectKernel(notebook, selected) {
+  kernelOf[selected ? "add" : "delete"](notebook.uri.toString());
+  kernelListener({ notebook, selected });
+}
 function fakeExecution(cell) {
   const execution = {
     cell,
@@ -60,7 +67,15 @@ Object.assign(vscode, {
   NotebookCellOutputItem,
   NotebookCellKind: { Markup: 1, Code: 2 },
   notebooks: {
-    createNotebookController: () => ({ dispose() {}, createNotebookCellExecution: fakeExecution }),
+    // As VS Code: a cell runs only in a notebook the controller is selected for.
+    createNotebookController: () => ({
+      dispose() {},
+      onDidChangeSelectedNotebooks: (listener) => ((kernelListener = listener), { dispose() {} }),
+      createNotebookCellExecution: (cell) => {
+        if (!kernelOf.has(cell.notebook.uri.toString())) throw new Error(`notebook controller is NOT associated to notebook: ${cell.notebook.uri.toString()}`);
+        return fakeExecution(cell);
+      },
+    }),
     createRendererMessaging: () => ({ onDidReceiveMessage: () => ({ dispose() {} }) }),
   },
 });
@@ -95,6 +110,8 @@ function setUp(live, launcher) {
   executions = [];
   const context = stub.newContext();
   const kernel = registerNotebooks(context, live);
+  // The notebook of every test here has the kernel, until a test takes it away.
+  selectKernel(notebookOf([]), true);
   const restart = new NotebookRestart(context, live, launcher, kernel);
   return { context, kernel, restart, run: (uri) => stub.commands.get("q-lint.restartNotebookAndRunAll")(uri) };
 }
@@ -232,6 +249,51 @@ test("turned off at its question, nothing is restarted or run (#1453)", async ()
   }
 });
 
+test("no kernel selected for the notebook: said so, and nothing is asked, restarted or run (#1994)", async () => {
+  for (const [launched, answer, outcome] of [[true, "Restart and Run All", "restarted"], [false, "Run All Without Restart", "ran"]]) {
+    const live = fakeLive({ launched });
+    const launcher = fakeLauncher();
+    const { restart, run } = setUp(live, launcher);
+    const notebook = notebookOf(["a:1", "a"]);
+    vscode.window.activeNotebookEditor = { notebook };
+    selectKernel(notebook, false);
+    await run();
+    assert.deepStrictEqual(stub.messages, [["info", "q-lint: nothing was restarted or run: VS Code has no kernel selected for this notebook, so its cells cannot run. Run a cell, or choose q (active connection) with Select Kernel, then try again."]]);
+    assert.deepStrictEqual([launcher.restarted, live.connected, live.sent, executions.length], [[], [], [], 0]);
+    assert.deepStrictEqual(restart.last, { outcome: "refused", process: "rdb" });
+    // Taken away at the question: the same.
+    stub.picks.push(() => (selectKernel(notebook, false), answer));
+    selectKernel(notebook, true);
+    await run();
+    assert.match(stub.messages.at(-1)[1], /^q-lint: nothing was restarted or run: VS Code has no kernel selected/);
+    assert.deepStrictEqual([launcher.restarted, live.connected, live.sent, executions.length, restart.last.outcome], [[], [], [], 0, "refused"]);
+    // Selected, it runs.
+    selectKernel(notebook, true);
+    stub.picks.push(answer);
+    await run();
+    assert.deepStrictEqual([live.sent, restart.last.outcome], [["a:1", "a"], outcome]);
+  }
+});
+
+test("a kernel lost while the process restarts: the command says what ran and does not reject (#1994)", async () => {
+  const live = fakeLive({ launched: true });
+  const launcher = fakeLauncher();
+  const { restart, run } = setUp(live, launcher);
+  const notebook = notebookOf(["a:1"]);
+  vscode.window.activeNotebookEditor = { notebook };
+  launcher.restart = async (l) => (launcher.restarted.push(l), selectKernel(notebook, false), undefined);
+  stub.picks.push("Restart and Run All");
+  await run();
+  assert.deepStrictEqual(stub.messages.at(-1), ["error", "q-lint: rdb was restarted, but no cell ran: notebook controller is NOT associated to notebook: file:///ws/nb.qnb"]);
+  assert.deepStrictEqual([launcher.restarted, live.sent, restart.last], [["rdb"], [], { outcome: "refused", process: "rdb" }]);
+  // A notebook with no q cell has nothing a kernel must run: its process is still restarted.
+  vscode.window.activeNotebookEditor = { notebook: notebookOf([["# md", "markdown"]]) };
+  launcher.restart = async (l) => (launcher.restarted.push(l), undefined);
+  stub.picks.push("Restart and Run All");
+  await run();
+  assert.deepStrictEqual([launcher.restarted, restart.last.outcome], [["rdb", "rdb"], "restarted"]);
+});
+
 test("the command is on the notebook's toolbar and the palette, each behind its setting", () => {
   const section = pkg.contributes.configuration.find((c) => c.title === "q-lint: notebook features");
   assert.strictEqual(section.properties["q-lint.notebook.restartRunAll.enable"].default, true);
@@ -285,6 +347,7 @@ test("a real q process q-lint started is restarted, its state gone, and the cell
   const live = new Live(context);
   const launcher = new Launcher(context, live);
   const kernel = registerNotebooks(context, live);
+  selectKernel(notebookOf([]), true);
   const restart = new NotebookRestart(context, live, launcher, kernel);
   t.after(async () => {
     vs.window.createOutputChannel = make;
