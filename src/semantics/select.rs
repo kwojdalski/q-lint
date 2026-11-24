@@ -75,6 +75,9 @@ fn token(
     if let Some(&string) = in_string(strings, offset) {
         return Some(string);
     }
+    if let Some(literal) = temporal(code, offset) {
+        return Some(literal);
+    }
     if let Some((start, len)) = super::help::word_at(code, raw, offset) {
         return Some((start, start + len));
     }
@@ -83,6 +86,27 @@ fn token(
     let start = offset - b[..offset].iter().rev().take_while(|b| word(b)).count();
     let end = offset + b[offset..].iter().take_while(|b| word(b)).count();
     (start < end).then_some((start, end))
+}
+
+/// The time or timestamp literal at `offset`, as q lexes it: `12:30`,
+/// `0D12:00:00.5`, `2020.01.01T10:00:00.000` are one token each, which the
+/// word rule would split at each `:` (#2052). A number starts where no name
+/// goes on, and runs over digits, `.`, `:` and the type letters; only a
+/// literal with a `:` in it is one the word rule gets wrong.
+fn temporal(code: &str, offset: usize) -> Option<(usize, usize)> {
+    let line = code[..offset].rfind('\n').map_or(0, |i| i + 1);
+    let end = code[offset..].find('\n').map_or(code.len(), |i| offset + i);
+    re!(r"(?:^|[^A-Za-z0-9_.])(\d[0-9A-Za-z.:]*)")
+        .captures_iter(&code[line..end])
+        .filter_map(|c| c.get(1))
+        .map(|m| {
+            (
+                line + m.start(),
+                line + m.as_str().trim_end_matches(':').len() + m.start(),
+            )
+        })
+        .find(|&(start, end)| start <= offset && offset <= end)
+        .filter(|&(start, end)| code[start..end].contains(':'))
 }
 
 /// The string literal `at` is in, from its opening quote to just past its
@@ -232,6 +256,34 @@ mod tests {
                 "f:{[x]\n  a:x+1;\n  b:a*2;\n  b}",
             ]
         );
+    }
+
+    #[test]
+    fn a_time_or_timestamp_literal_is_one_token() {
+        // #2052. q lexes each of these as one atom: KDB-X 5 `type 12:30` is
+        // -17h, `type 0D12:00:00.5` -16h, `type 10:00:00.123` -19h.
+        assert_eq!(spans("x:12:30\n", "30"), ["12:30", "x:12:30"]);
+        assert_eq!(spans("x:12:30\n", "12"), ["12:30", "x:12:30"]);
+        assert_eq!(
+            spans("x:0D12:00:00.5\n", "00.5"),
+            ["0D12:00:00.5", "x:0D12:00:00.5"]
+        );
+        assert_eq!(
+            spans("x:2020.01.01T10:00:00.000\n", "T10"),
+            ["2020.01.01T10:00:00.000", "x:2020.01.01T10:00:00.000"]
+        );
+        assert_eq!(
+            spans("f[10:00:00.123;1]\n", "123"),
+            [
+                "10:00:00.123",
+                "10:00:00.123;1",
+                "[10:00:00.123;1]",
+                "f[10:00:00.123;1]"
+            ]
+        );
+        // A name with digits in it, and a plain number, are as before.
+        assert_eq!(spans("a1:2\n", "1:"), ["a1", "a1:2"]);
+        assert_eq!(spans("x:1.5\n", "5"), ["1.5", "x:1.5"]);
     }
 
     #[test]
