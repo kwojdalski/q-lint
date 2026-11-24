@@ -100,10 +100,13 @@ export function onConnectOf<P extends Process>(process: P, old: Process | undefi
 /// `process` as the shared list is given it (#1528): with what runs or
 /// reaches somewhere at connect (`all`), or without - but always with its SSH
 /// tunnel, which holds no secret: without it every clone dials its own
-/// host:port, and sends the password there (#1715).
-export function sharedEntry<P extends Process>(process: P, all: boolean): P {
+/// host:port, and sends the password there (#1715). A connect script file
+/// inside `folder`, kept by its full path here, is written relative to it:
+/// the list is read in every clone, where that is where the file is (#1717).
+export function sharedEntry<P extends Process>(process: P, all: boolean, folder?: string): P {
   if (all) {
-    return process;
+    const relative = process.initFile === undefined || folder === undefined || !path.isAbsolute(process.initFile) ? undefined : path.relative(folder, process.initFile);
+    return relative !== undefined && relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative) ? { ...process, initFile: relative.split(path.sep).join("/") } : process;
   }
   return { ...onConnectOf(process, undefined), ...(process.ssh !== undefined ? { ssh: process.ssh } : {}) };
 }

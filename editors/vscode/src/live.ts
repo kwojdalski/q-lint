@@ -828,7 +828,7 @@ export class Live {
       if (answer === undefined) {
         return;
       }
-      process = sharedEntry(chosen, answer === all);
+      process = sharedEntry(chosen, answer === all, folder.uri.fsPath);
     }
     const file = Uri.joinPath(folder.uri, SHARED_FILE);
     // Written under unsaved edits, the next save conflicts (#1531).

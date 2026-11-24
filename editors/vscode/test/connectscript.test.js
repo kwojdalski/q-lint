@@ -6,7 +6,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const pkg = require("../package.json");
 const { parseProcesses, processTooltip, readProcessFile } = require("../out/processes.js");
-const { CONNECT_SCRIPT_COMMANDS, onConnectBrought, onConnectOf, scriptOf, scriptPath, scriptsBrought, scriptSummary, withScript } = require("../out/connectscript.js");
+const { CONNECT_SCRIPT_COMMANDS, onConnectBrought, onConnectOf, scriptOf, scriptPath, scriptsBrought, scriptSummary, sharedEntry, withScript } = require("../out/connectscript.js");
 const { Live } = require("../out/live.js");
 
 const proc = (label, extra = {}) => ({ label, host: "h", port: 1, tags: [], ...extra });
@@ -398,4 +398,16 @@ test("a connection apart whose connect script fails or times out is not handed o
   t.after(() => e.close());
   const failing = { label: "e", host: "127.0.0.1", port: e.port, tags: [], initFile: "/nowhere/init.q" };
   await assert.rejects(live.openSeparate(failing), /the connect script of e failed: could not read/);
+});
+
+// Set Connect Script keeps the full path, which Share All committed: every
+// clone failed to read /Users/me/repo/init.q (#1717).
+test("a connect script file inside the folder is shared relative to it", () => {
+  const p = proc("a", { initFile: "/Users/me/repo/q/init.q", user: "u" });
+  assert.deepStrictEqual(sharedEntry(p, true, "/Users/me/repo"), { ...p, initFile: "q/init.q" });
+  assert.deepStrictEqual(sharedEntry(p, true, "/Users/me/other"), p);
+  assert.deepStrictEqual(sharedEntry(proc("a", { initFile: "~/init.q" }), true, "/Users/me/repo"), proc("a", { initFile: "~/init.q" }));
+  assert.deepStrictEqual(sharedEntry(p, false, "/Users/me/repo"), proc("a", { user: "u" }));
+  // The list a clone reads runs it from its own folder.
+  assert.strictEqual(scriptPath(sharedEntry(p, true, "/Users/me/repo").initFile, "/home/c", "/home/c/repo"), "/home/c/repo/q/init.q");
 });
