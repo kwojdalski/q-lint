@@ -199,7 +199,9 @@ results name, each with its summary and a link to its row in
 (`partialFingerprints."qlinterBaseline/v1"`) is the baseline's key for it -
 its file, code and line text - so a finding keeps its identity when lines are
 added above it and gets a new one when its own line is edited. Paths are
-relative to the directory qlinter runs in; run it from the repository root.
+relative to the directory qlinter runs in, against the base `%SRCROOT%`
+that the run's `originalUriBaseIds` says is that directory; run it from the
+repository root. A file outside it is named by its absolute `file:` URI.
 
 `--format github` prints one GitHub Actions workflow command per finding -
 `::error`, `::warning` or `::notice` with its file, line, columns and the
@@ -320,7 +322,6 @@ every finding.
 | QK001 | a dictionary literal, `([a:1;b:2])` | 4.1 and later |
 | QK002 | a pattern assignment, `(a;b):x`, `([k:v]):d` | 4.1 and later |
 | QK003 | a typed or filtered parameter, `{[x:`j] ...}`, `{[(a;b)] ...}` | 4.1 and later |
-| QK004 | `-30!`, the deferred response | 3.6 and later |
 | QK005 | `.Q.Xf` or `.Q.Cf` | before 4.1, which removed them |
 
 Each fact is from KX's release notes (ChangesIn3.6, 4.0 and 4.1 on
@@ -329,6 +330,10 @@ construct above and has neither `.Q.Xf` nor `.Q.Cf`. No 3.6, 4.0 or 4.1
 binary was at hand, so the older side is the release notes' word, not a
 test's. PeachQ runs the dictionary literal and `(a;b):`, and refuses
 `([k:v]):` ('nyi) and a filtered parameter ('parse).
+
+There is no QK004. It reported `-30!`, the deferred response, which q has
+from 3.6 on - the oldest release a target can name - so it could never
+report anything, and was withdrawn.
 
 ### Configuration
 
@@ -1364,7 +1369,7 @@ language server driven over real LSP framing as a real process.
 
 ### Rule and multiline regression corpus
 
-The taxonomy contains 144 codes. Ten literal-call rules cover excess builtin
+The taxonomy contains 143 codes. Ten literal-call rules cover excess builtin
 arguments (QA010), invalid literal types/shapes (QT008–QT014), and negative
 `til`/`where` counts (QD001–QD002). These checks leave unknown expressions
 unresolved and account for projections, seeded scans and variadic `enlist`.
@@ -1373,7 +1378,7 @@ unresolved and account for projections, seeded scans and variadic `enlist`.
 `tests/showcase.rs` checks exact code/line pairs under every profile, including
 silence in the clean section. Together with the three companion examples -
 `syntax-error.q`, `byte-order-mark.q` and `query-injection.q`, each holding
-a rule that would hide or stop the others - it covers all 142 rules available
+a rule that would hide or stop the others - it covers all 141 rules available
 in this build; QF006 and QLS001 are excluded.
 
 Multiline fixtures cover nested lambdas, split argument lists, comments,

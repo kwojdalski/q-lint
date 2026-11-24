@@ -792,8 +792,14 @@ fn run(args: Args) -> Result<u8, String> {
             policy.baselined.get()
         );
     }
+    // Reported where an editor shows them: a BOM is no column to it (#2097).
+    // `findings` keeps the rules' own places, which the fixes are found by.
+    let mut shown = findings.clone();
+    for (path, source) in &sources {
+        q_lint_rs::placed_as_an_editor_shows(shown.iter_mut().filter(|f| f.path == *path), source);
+    }
     if args.statistics {
-        let rows = report::statistics(&findings);
+        let rows = report::statistics(&shown);
         if args.format == "json" {
             let rows: Vec<_> = rows
                 .iter()
@@ -809,19 +815,19 @@ fn run(args: Args) -> Result<u8, String> {
             }
         }
     } else if args.format == "json" {
-        out!("{}", serde_json::to_string(&findings).unwrap());
+        out!("{}", serde_json::to_string(&shown).unwrap());
     } else if args.format == "sarif" {
         let cwd = config::absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
-        let report = report::sarif(&findings, &sources, &cwd);
+        let report = report::sarif(&shown, &sources, &cwd);
         out!("{}", serde_json::to_string_pretty(&report).unwrap());
     } else if args.format == "github" {
         let cwd = config::absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
-        for f in &findings {
+        for f in &shown {
             out!("{}", report::github(f, &cwd));
         }
     } else {
         let paint = Paint::for_stdout(&args.color);
-        for f in &findings {
+        for f in &shown {
             let col = f.column.map_or(String::new(), |c| format!(":{c}"));
             let severity = match f.severity.as_str() {
                 "error" => paint.red_bold(&f.severity),
@@ -841,8 +847,8 @@ fn run(args: Args) -> Result<u8, String> {
                 paint.dim(&f.why)
             );
         }
-        let errors = findings.iter().filter(|f| f.severity == "error").count();
-        let warnings = findings.iter().filter(|f| f.severity == "warning").count();
+        let errors = shown.iter().filter(|f| f.severity == "error").count();
+        let warnings = shown.iter().filter(|f| f.severity == "warning").count();
         let tally = match (errors, warnings) {
             (0, 0) => String::new(),
             _ => format!(
@@ -860,7 +866,7 @@ fn run(args: Args) -> Result<u8, String> {
         out!(
             "qlinter: {} file(s), {} finding(s){tally}",
             sources.len(),
-            findings.len()
+            shown.len()
         );
     }
     // What --fix leaves it could not fix, and the run says so: a finding

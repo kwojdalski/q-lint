@@ -3390,12 +3390,9 @@ fn re_drive(path: &str) -> bool {
 /// diagnostics of a closed file agree with each other and with the editor.
 fn on_disk(path: &str) -> Option<(String, bool)> {
     let bytes = std::fs::read(path).ok()?;
-    let mut text = String::from_utf8_lossy(&bytes).into_owned();
-    let bom = text.starts_with('\u{feff}');
-    if bom {
-        text.drain(..'\u{feff}'.len_utf8());
-    }
-    Some((text, bom))
+    let text = String::from_utf8_lossy(&bytes);
+    let (text, bom) = q_lint_rs::as_an_editor_holds(&text);
+    Some((text.to_string(), bom))
 }
 
 /// One spelling per file, for the index: the editor's URI and the folder scan

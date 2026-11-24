@@ -1,6 +1,6 @@
 # Rules
 
-All 144 rules, generated from `src/taxonomy.json` - the same data
+All 143 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -81,7 +81,7 @@ it, or `ALL`.
 | <a id="qf016"></a>`QF016` | unused-parameter | Declared parameter the body never reads | `style` and above |
 | <a id="qf017"></a>`QF017` | unused-local | Local assigned and never read | `style` and above |
 | <a id="qf018"></a>`QF018` | possibly-undefined-name | Bare value read has no local or global definition in this file | `style` and above |
-| <a id="qf019"></a>`QF019` | read-only-system-name | Assignment to a single-letter .z name, which q refuses with 'domain | every profile |
+| <a id="qf019"></a>`QF019` | read-only-system-name | Assignment to a single-letter .z name, which q refuses with 'domain - but for .z.s in a lambda, the lambda's own | every profile |
 | <a id="qf020"></a>`QF020` | unknown-column | A column a table literal does not have, in select, exec, update, a where phrase or xkey, and nothing defines it | every profile |
 | <a id="qf021"></a>`QF021` | dotted-local | name.member on a parameter or local reads a global, never the local | every profile |
 | <a id="qf022"></a>`QF022` | local-global-assignment | `::` on a parameter or local assigns the local, not a global of that name | `style` and above |
@@ -214,7 +214,6 @@ it, or `ALL`.
 | <a id="qk001"></a>`QK001` | target-dictionary-literal | A dictionary literal, ([a:1;b:2]), which q reads from 4.1 on: reported only for an older target-version | every profile |
 | <a id="qk002"></a>`QK002` | target-pattern-assignment | A pattern assignment, (a;b):x, which q runs from 4.1 on: reported only for an older target-version | every profile |
 | <a id="qk003"></a>`QK003` | target-typed-parameter | A typed or filtered lambda parameter, {[x:`j] ...}, which q runs from 4.1 on: reported only for an older target-version | every profile |
-| <a id="qk004"></a>`QK004` | target-deferred-response | -30!, the deferred response, which q has from 3.6 on: reported only for an older target-version | every profile |
 | <a id="qk005"></a>`QK005` | target-removed-q-function | .Q.Xf or .Q.Cf, removed in q 4.1: reported only for a target-version of 4.1 or KDB-X | every profile |
 
 ## Leftovers - things left in q that were never meant to ship

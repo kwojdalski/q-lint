@@ -589,6 +589,24 @@ r:exec a from t where
 f:{[t] select from t where}
 g:{update a:1 from t where;1}
 
+=== QE007 profile: general | nothing between from and where (#2095; q 5: parse "select a from where a>1" and "delete from where a>1" are 'from)
+r1:select from where a>1
+r2:select a from where a>1
+r3:exec a from  where a>1
+r4:update c:1 from where a>1
+r5:delete from where a>1
+r6:select a by b from where a>1
+r7:select from
+  where a>1
+r8:{select from where}
+
+=== clean profile: general | a table named like where, by its symbol, or in brackets, or a by after from (#2095; q 5 parses each)
+wheres:([]a:1 2)
+r1:select from wheres where a>1
+r2:select from (where a>1)
+r3:select a from by b
+update a:0 from `wheres where a>1
+
 === clean profile: general | a where phrase with a condition, and where as a column or a call
 r:exec a from t where a>1
 s:select where from t
@@ -617,6 +635,31 @@ e:-0D00:00:00.250 0D 0D00:00:00.500
 f:2026.09.17D10:00:01.500 0Np
 g:12:00 1u
 h:0D00:01 5n
+
+=== QE010 profile: general | a date beside a plain number, or a month suffix over one (#2094; q 5: parse "1 2000.01.01" is '1, "2000.01.01 1" '2000.01.01, "1 2000.01m" '1)
+a:1 2000.01.01
+b:0 2000.01.01
+c:1.5 2000.01.01
+d:1 2000.01m
+e:2000.01.01 1
+f:2000.01.01 -1
+g:2000.01.01 1e3
+h:2000.01.01 1f
+i:2000.01.01 2000.01
+j:2000.01.01 0W
+k:1.5 2000.01m
+
+=== clean profile: general | a date beside dates or nulls, a timestamp or float among numbers, and months under the suffix (#2094; q 5 parses each)
+a:2000.01.01 0N
+b:0N 2000.01.01
+c:0W 2000.01.01
+d:2000.01.01 2000.01.02
+e:1 2000.01.01D00:00
+f:1 2000.01
+g:2001 2000.01m
+h:2000.01 2000.01m
+i:0N 2000.01m
+j:2000.01.01 0Wd
 
 === QA006 QE010 profile: general | a number that is no integer, followed by : - a typo for $[c;a;b] (q 5: '1.5:0, '2000.01.01:x, '1j:2, '0N:x and '-1:x, #660)
 r:$[1b;1.5:0]
@@ -813,6 +856,25 @@ k:0x1g 1c
 
 === QE010 profile: general | a string still refuses an uppercase exponent's sign (#445; q 5: '1E)
 l:1E-3 1c
+
+=== QE010 profile: general | a sign straight after an e is the exponent's whatever follows, so q reads the letters after it into the number (#2099; q 5: -4!"1e-y" is one token, and '1e-y, '1e-, '2e-y, '1e-1e-1, '0x1e-3, '12:00e-1)
+y:2
+a:1e-y
+b:1e-
+c:2e-y+1
+d:3-1e-y
+e:1e-1e-1
+f:0x1e-3
+g:12:00e-1
+h:0Ne-3
+
+=== clean profile: general | a float's signed exponent, and the letters of one in a string, are no names (#2099; q 5: 0.001, 0.001e, 1000f, " 1")
+y:2
+a:1e-3
+b:1e-3e
+c:1e+3f
+d:1e-y 1c
+e:2*y-1e-3
 
 === clean profile: general | a time or date suffix among items of its shape (#446; q 5: 12:00 12:30, 12:00:00 13:00:00, 12:00:00 12:30:00, 0W 2000.01.01)
 m:12:00u 12:30
@@ -1135,6 +1197,24 @@ a:25:00
 b:0D25:00:00
 c:12:59:59.999
 d:2023.01m
+
+=== QE006 profile: general | after the D of a timespan or timestamp the hour takes two digits at most (#2093; q 5: '0D100:00:00, '0D012:00:00, '-0D100:00:00, '2000.01.01D100:00)
+a:0D100:00:00
+b:0D100:00
+c:0D1000:00:00
+d:1D100:00:00
+e:2000.01.01D100:00
+f:0D012:00:00
+g:-0D100:00:00
+h:0D01:00 0D100:00
+
+=== clean profile: general | two digits run on past 24, a timespan of no colon and a char suffix (#2093; q 5: 4D03:00:00, 0D01:00:00, " ")
+a:0D99:00:00
+b:0D24:00:00
+c:0D99:59:59.123456789
+d:0D100
+e:2000.01.01D99:00
+f:0D100:00c
 
 === QT024 profile: general | an attribute on a string is checked char by char (q 5: `s#"cba" is 's-fail)
 a:`s#"cba"
