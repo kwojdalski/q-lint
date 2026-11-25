@@ -141,14 +141,14 @@ async function directLiveValues(connection: QConnection, exprs: string[], gatewa
       values[expr] = { error: ran.error };
       continue;
     }
-    const { value, type, typed } = ran.last;
+    const { value, type, typed, precision } = ran.last;
     const text =
       typed?.kind === "chars"
         ? Buffer.from(typed.v).toString("utf8")
         : type === -11 && typeof value === "string"
           ? value
           : typed !== undefined
-            ? oneLine(typed)
+            ? oneLine(typed, precision)
             : formatValue(value, type).join(" ");
     values[expr] = { text: Array.from(text).slice(0, VALUE_LIMIT).join("") };
   }

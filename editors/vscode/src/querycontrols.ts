@@ -159,6 +159,40 @@ export interface Evaluated {
   value: unknown;
   type: number | undefined;
   typed: QValue | undefined;
+  /// The process's `\P`, the digits its console writes a float to (#2570):
+  /// asked only of a value that holds one, and 7, q's default, otherwise.
+  precision: number;
+}
+
+/// Whether `q` holds a float or a real anywhere, which its text writes to `\P`.
+function holdsFloat(q: QValue): boolean {
+  switch (q.kind) {
+    case "atom":
+    case "vector":
+      return Math.abs(q.t) === 8 || Math.abs(q.t) === 9;
+    case "list":
+      return q.v.some(holdsFloat);
+    case "table":
+      return q.data.some(holdsFloat);
+    case "dict":
+      return holdsFloat(q.k) || holdsFloat(q.v);
+    default:
+      return false;
+  }
+}
+
+/// The process's `\P`, asked as a plain string; 7, q's default, when it
+/// refuses to say.
+async function precisionOf(connection: Evaluator): Promise<number> {
+  try {
+    const p = Number((await connection.evaluate("\\P"))?.value);
+    return Number.isInteger(p) && p >= 0 ? p : 7;
+  } catch (error) {
+    if (error instanceof QError) {
+      return 7;
+    }
+    throw error;
+  }
 }
 
 /// `statement` as the plain string that runs it in `context`: q reads each
@@ -199,7 +233,8 @@ export async function evaluateAll(connection: Evaluator, statements: string[]): 
     }
     typed = undefined;
   }
-  return { ok: true, last: { value: last.value, type: last.type, typed } };
+  const precision = typed !== undefined && holdsFloat(typed) ? await precisionOf(connection) : 7;
+  return { ok: true, last: { value: last.value, type: last.type, typed, precision } };
 }
 
 /// Run `statements` unwrapped: each sent as a plain string, in order,
@@ -228,7 +263,9 @@ export function answerOf(last: Evaluated, options: { size: [number, number]; lim
     const lines = formatValue(last.value, last.type);
     text = options.unlimited ? lines : cutLines(lines, options.size);
   } else {
-    text = options.unlimited ? formatQ(typed, last.value, last.type) : consoleLines(typed, options.size, last.value, last.type);
+    text = options.unlimited
+      ? formatQ(typed, last.value, last.type, last.precision)
+      : consoleLines(typed, options.size, last.value, last.type, last.precision);
   }
   const answer: GridAnswer = { ok: true, type: last.type ?? 0, text };
   if (!options.grid) {
@@ -237,7 +274,7 @@ export function answerOf(last: Evaluated, options: { size: [number, number]; lim
   // A string is shown as text, as `GRID` shows one.
   const limit = options.unlimited ? Infinity : options.limit;
   const grid =
-    typed !== undefined ? gridOfQ(typed, limit) : typeof last.value === "string" ? undefined : gridOf(last.value, last.type, limit);
+    typed !== undefined ? gridOfQ(typed, limit, last.precision) : typeof last.value === "string" ? undefined : gridOf(last.value, last.type, limit);
   return grid === undefined ? answer : { ...answer, grid };
 }
 

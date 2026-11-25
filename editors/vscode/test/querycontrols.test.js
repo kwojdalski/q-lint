@@ -486,6 +486,26 @@ test("an unwrapped table is cut to the console's rows before it is laid out, as 
   assert.deepStrictEqual((await run([25, 80])).text.length, 22);
 });
 
+test("an unwrapped float is written to the process's \\P, asked as a plain string, as its console writes it (#2570)", async () => {
+  // -8!0.1+0.2, and -8!([] a:1%3 7)
+  const table = fromQ("0x010000002f0000006200630b00010000006100000001000000090002000000555555555555d53f922449922449c23f");
+  const run = async (answer, precision) => {
+    const sent = [];
+    const fake = { evaluate: async (text) => (sent.push(text), text === "\\P" ? { value: precision, type: -6 } : answer) };
+    const ran = await runUnwrapped(fake, ["x"], { size: [25, 80], limit: 10, unlimited: false, grid: true });
+    return { ran, sent };
+  };
+  const atom = fromQ("0x0100000011000000f7343333333333d33f");
+  assert.deepStrictEqual((await run(atom, 0)).ran.text, ["0.30000000000000004"]);
+  assert.deepStrictEqual((await run(atom, 7)).ran.text, ["0.3"]);
+  const at0 = (await run(table, 0)).ran;
+  assert.deepStrictEqual(at0.text, ["a", "-------------------", "0.33333333333333331", "0.14285714285714285"]);
+  assert.deepStrictEqual(at0.grid.cells, [["0.33333333333333331", "0.14285714285714285"]]);
+  assert.deepStrictEqual((await run(table, 3)).ran.text, ["a", "-----", "0.333", "0.143"]);
+  // A value with no float in it asks nothing more.
+  assert.deepStrictEqual((await run(fromQ("0x010000000d000000fa01000000"), 0)).sent, ["x"]);
+});
+
 test("an unlimited float list is written to the process's \\P, as its console writes it", () => {
   const floats = (value, precision, type = 9) => readUnlimited({ ok: true, type, text: [], value, attr: null, precision }).text[0];
   assert.ok(UNLIMITED.includes('system"P"'));
