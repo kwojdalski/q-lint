@@ -47,14 +47,22 @@ LITERAL_END = r"(?![A-Za-z0-9])"
 NUMBER_END = r"(?![A-Za-z0-9.]|(?<=\d\d):\d)"
 TEMPORAL_END = r"(?![A-Za-z0-9.:])"
 # The clock of a timestamp, datetime or timespan, and what follows the hours
-# of a time: 12, 12:34, 12:34:56, 12:34:56.789.
-MINUTES = r":\d{2}(?::\d{2}(?:\.\d*)?)?"
-CLOCK = r"\d{2}(?:" + MINUTES + r")?"
+# of a time: 12, 12:34, 12:34:56, 12:34:56.789. Hours with nothing after them
+# are any number of digits, with a fraction: KDB-X reads 1970.01.01D0, 0D123
+# and 0D1.5. With minutes they are two: 0D1:23 is refused. A minute or second
+# is never past 59, at any hour: 12:60 and 123:45:67 are refused.
+MINUTES = r":[0-5]\d(?::[0-5]\d(?:\.\d*)?)?"
+HOURS = r"\d+(?:\.\d*)?"
+CLOCK = r"(?:\d{2}" + MINUTES + r"|" + HOURS + r")"
 NAME = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*"
 # A dotted name split in two: the namespace `.ns.sub` and the member `.f`.
 # The first group is empty for a name with no leading dot, so `a.b` and `f`
 # stay whole in the second.
 SPLIT = r"(\.[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*(?=\.))?(" + NAME + ")"
+# The elements of a symbol vector that start with an underscore: none can
+# stand alone (`_a is a null symbol, drop, a), but one written straight after
+# another symbol is one too - KDB-X reads `a`_b as the symbols `a`_b.
+SYMBOL_TAIL = r"(?:`_[A-Za-z0-9_.]*(?::[A-Za-z0-9_.:/]*)?)*"
 NAMESPACE = {"name": "entity.name.namespace.q"}
 PARAMETERS = [
     {"match": r"[A-Za-z][A-Za-z0-9_]*", "name": "variable.parameter.q"},
@@ -128,12 +136,15 @@ def grammar():
         ],
         "repository": {
             "block-comment": {
+                "comment": "q counts a block comment's depth: a lone / inside one opens another, "
+                "and only the \\ that closes the outermost ends it. The nested include keeps the inner "
+                "\\ from closing the outer comment and the outer \\ from reading as end-of-script.",
                 "name": "comment.block.q",
                 "begin": r"^/\s*$",
                 "end": r"^\\\s*$",
                 "beginCaptures": {"0": {"name": "punctuation.definition.comment.begin.q"}},
                 "endCaptures": {"0": {"name": "punctuation.definition.comment.end.q"}},
-                "patterns": [{"include": "#qdoc"}],
+                "patterns": [{"include": "#block-comment"}, {"include": "#qdoc"}],
             },
             "end-of-script": {
                 "comment": "A lone backslash outside a block ends the script; q reads nothing after it.",
@@ -242,12 +253,16 @@ def grammar():
                     {
                         "comment": "A file or network handle: `:path/to/file, `:host:port. "
                         "A minus is not in one: `:a-b is `:a minus b.",
-                        "match": r"`:[A-Za-z0-9_.:/]*",
-                        "name": "constant.other.symbol.handle.q",
+                        "match": r"(`:[A-Za-z0-9_.:/]*)(" + SYMBOL_TAIL + ")",
+                        "captures": {
+                            "1": {"name": "constant.other.symbol.handle.q"},
+                            "2": {"name": "constant.other.symbol.q"},
+                        },
                     },
                     {
-                        "comment": "Past a colon a symbol takes slashes too: `a:b/c is one symbol.",
-                        "match": r"`[A-Za-z0-9_.]*(?::[A-Za-z0-9_.:/]*)?",
+                        "comment": "Past a colon a symbol takes slashes too: `a:b/c is one symbol. "
+                        "It does not start with an underscore: `_a is a null symbol, drop, a.",
+                        "match": r"`(?:[A-Za-z0-9.][A-Za-z0-9_.]*)?(?::[A-Za-z0-9_.:/]*)?" + SYMBOL_TAIL,
                         "name": "constant.other.symbol.q",
                     },
                 ],
@@ -314,7 +329,7 @@ def grammar():
                                 # timestamp: a timespan (n), date (d) or datetime (z) on request
                                 r"\d{4}\.\d{2}\.\d{2}D(?:" + CLOCK + r")?[npdz]?",
                                 # datetime: n and p only once it has minutes
-                                r"\d{4}\.\d{2}\.\d{2}T(?:\d{2}" + MINUTES + r"[npdz]?|(?:\d{2})?[dz]?)",
+                                r"\d{4}\.\d{2}\.\d{2}T(?:\d{2}" + MINUTES + r"[npdz]?|(?:" + HOURS + r")?[dz]?)",
                                 # date, as itself or a timestamp (p), datetime (z), month (m)
                                 # or timespan (n); and a month
                                 r"\d{4}\.\d{2}(?:\.\d{2}[npdzm]?|m)",
@@ -331,6 +346,13 @@ def grammar():
                         + TEMPORAL_END,
                     },
                     {
+                        "comment": "What the rule above refuses once a colon follows two characters "
+                        "and a digit: q reads 12:60, 12:3, 0D1:23 and 12:34e as one token, and an "
+                        "error, so no piece of it is coloured. One digit before a colon is a file "
+                        "operator's (1:23 is 1:, 23).",
+                        "match": BEFORE + r"\d[\d.]*(?:[DT][\d.]*)?\d:[A-Za-z0-9.:]*",
+                    },
+                    {
                         "comment": "A typed null or infinity. None is of symbol (the null symbol "
                         "is a lone backtick) and no infinity of guid: q refuses 0Ns, 0Ws and 0Wg.",
                         "name": "constant.language.null.q",
@@ -342,13 +364,14 @@ def grammar():
                         "comment": "With p, a number is a timestamp that many hours past 2000: 1p. "
                         "As KDB-X reads them: a fraction takes e, f, n, t and p but no integer "
                         "letter (1.5i is an error); an exponent is a lower-case e, or an "
-                        "unsigned upper-case one after a fraction (1.5E3, not 1E5 or 1.5E-3), "
-                        "and takes only e or f after it. With c anything is a char, not a "
+                        "unsigned upper-case one (1.5E3, not 1.5E-3), which after an integer "
+                        "needs its e or f (1E3e and 1E3f, not 1E5), and takes only e or f after "
+                        "it. With c anything is a char, not a "
                         "number: 3c is \"3\".",
                         "name": "constant.numeric.q",
                         "match": BEFORE
                         + r"(?:(?:\d+\.\d*|\.\d+)(?:(?:e[+-]?\d+|E\d+)[ef]?|[efntp])?"
-                        + r"|\d+(?:e[+-]?\d+[ef]?|[hijefnuvtp])?)"
+                        + r"|\d+(?:e[+-]?\d+[ef]?|E\d+[ef]|[hijefnuvtp])?)"
                         + NUMBER_END,
                     },
                 ],

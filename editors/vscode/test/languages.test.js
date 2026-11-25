@@ -248,6 +248,21 @@ test("source.q-console: a printed string's escapes are the ones q takes", async 
   assert.deepStrictEqual(await innermost("source.q-console", printed, "\\400"), []);
 });
 
+// As KDB-X's .Q.S prints them: `$"a-b" is `a-b, and a list of them
+// `a-b`c, so a minus is in a printed symbol, and the next backtick starts
+// the next one. A blank cannot be told from a table's column gap (a row
+// `x   1 prints the same as the symbol `$"x   1"), so it ends one.
+test("source.q-console: a printed symbol takes a minus (#2307)", async () => {
+  for (const [printed, symbols] of [["`a-b", ["`a-b"]], ["`a-b`c", ["`a-b", "`c"]], ["a| `EUR-USD`x", ["`EUR-USD", "`x"]], ["`a:b-c/d", ["`a:b-c/d"]]]) {
+    const g = await registry.loadGrammar("source.q-console");
+    const { tokens: line } = g.tokenizeLine(printed, tm.INITIAL);
+    const found = line.filter((t) => t.scopes.includes("constant.other.symbol.q-console")).map((t) => printed.slice(t.startIndex, t.endIndex));
+    assert.deepStrictEqual(found.join("").match(/`[^`]*/g), symbols, printed);
+  }
+  // A key column's bar is still the key's.
+  assert.deepStrictEqual(await innermost("source.q-console", "`a-b| 1", "|"), ["keyword.other.key.q-console"]);
+});
+
 test("source.q-console: a guid is one value, not hex with numbers in it", async () => {
   // As .Q.S prints a guid column: 1?0Ng and the null guid.
   for (const guid of ["8c6b8b64-6815-6084-0a3e-178401251b68", "00000000-0000-0000-0000-000000000000"]) {

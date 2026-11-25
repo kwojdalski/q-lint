@@ -34,8 +34,11 @@ const SETTLED = settled(4);
 /// and `f:{` before a `}` the cursor sits on. A bracket in a trailing
 /// comment (` / see (a`) opens nothing; a comment after one that is open
 /// (`f:{ / doc`) leaves it open, and a string before it (`s:"a /b";f:{`)
-/// starts no comment (#1375).
-export const OPENS = new RegExp(String.raw`^(?:"(?:[^"\\]|\\.)*"|(?!\s/)[^"])*[{\[(]${SETTLED}*(?:\s/.*)?$`);
+/// starts no comment (#1375). A line that ends inside a string it opened
+/// (`f:{x,"abc`, `s:"a`) is continued the same way: the rest of the string at
+/// column 0 would end the statement there (#2303). A line that closes a string
+/// opened above looks the same and is indented too, which q does not mind.
+export const OPENS = new RegExp(String.raw`^(?:"(?:[^"\\]|\\.)*"|(?!\s/)[^"])*(?:[{\[(]${SETTLED}*(?:\s/.*)?|"(?:[^"\\]|\\.)*)$`);
 
 /// A comment line: what follows it is not a continuation of it. A `/` alone
 /// opens a block comment, and the line after it is text, not q.
@@ -45,9 +48,12 @@ export const COMMENT = /^\s*\//;
 /// temporal literal (`1.5`, `1e-3`, `0x1f`, `2024.01.02`, `0D00:00:01`,
 /// `2024.01.02D10:00:00.000`, through its colons). A dot that starts
 /// a name stays with it, so `x+.y` is `x` and `.y`; a dot that ends one does
-/// not, so `f.` is `f`. A number takes the dot it starts with (`.5`) and ends
-/// at a `_`, as q reads it: `1_til 5` is `1` and `til` (#1992).
-export const WORD = /(\.?\d[\d.]*(?:[DT][\d.]*)?(?::[\d.]+)*(?:e[+-]?\d+)?[A-Za-z0-9]*)|(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)/;
+/// not, so `f.` is `f`. A segment after a dot may start with `_` or a digit,
+/// as q reads `.ns.__f` (#2300). A number takes the dot it starts with (`.5`)
+/// and ends at a `_`, as q reads it: `1_til 5` is `1` and `til` (#1992).
+/// It takes a colon only after two digits: one digit before a colon is a
+/// file verb, so `0:.h.tx` is `0` and `.h.tx` (#2301).
+export const WORD = /(\.?\d[\d.]*(?:[DT][\d.]*)?(?:(?<=\d\d):[\d.]+)*(?:e[+-]?\d+)?[A-Za-z0-9]*)|(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*)/;
 
 export interface EnterRule {
   beforeText: RegExp;
@@ -120,6 +126,10 @@ const TOGGLED = "/ ";
 /// stays what was typed: a comment being started, or a block comment meant.
 /// With `editor.comments.insertSpace` off the toggle writes that same lone
 /// `/`, which cannot be told from typing and is left.
+///
+/// The toggle that uncomments `//` or `/ /` takes the first `/` (and a blank)
+/// away and leaves the same lone `/` (#2304); that is answered by a `.` after
+/// it (`/.`, `/ .`). Backspace on `//` takes the second `/`, and is left.
 export function blankCommentFixes(changes: readonly LineChange[], lineAt: (line: number) => string): BlankCommentFix[] {
   // A change that adds or removes a line moves the lines the others name.
   if (changes.some((c) => c.line !== c.endLine || /[\r\n]/.test(c.text))) {
@@ -135,6 +145,8 @@ export function blankCommentFixes(changes: readonly LineChange[], lineAt: (line:
       fixes.push({ line: c.line, character: c.character + TOGGLED.length, kind: "mark" });
     } else if (c.rangeLength === TOGGLED.length && c.text === "" && /^[ \t]*\.[ \t]*$/.test(text) && text[c.character] === ".") {
       fixes.push({ line: c.line, character: c.character, kind: "clear" });
+    } else if ((c.rangeLength === 1 || c.rangeLength === TOGGLED.length) && c.text === "" && /^[ \t]*\/[ \t]*$/.test(text) && text[c.character] === "/" && text.slice(0, c.character).trim() === "") {
+      fixes.push({ line: c.line, character: text.length, kind: "mark" });
     }
   }
   return fixes;

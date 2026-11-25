@@ -67,14 +67,29 @@ test("a string or brackets nested and closed on the line leave an open one open 
   }
 });
 
+// On KDB-X f:{x,"abc / def"} over two lines fails with '{ when def"} starts
+// at column 0 and loads indented (f "z" is "zabc\n def"), and a string
+// alone the same: a line that ends inside a string is continued like one
+// that leaves a bracket open.
+test("a line that ends inside an open string is followed by an indented one (#2303)", () => {
+  for (const line of ['f:{x,"abc', 'g:"abc', 's:"a /b', 'f:{x,"a\\"b', 'h:{[x] -1 "done";"more', 'x:("a";"b']) {
+    assert.strictEqual(enter(line), "indent", line);
+  }
+  for (const line of ['x:"ab"', 'x:1 / it"s', 'x:"a" / "b', '/ "quoted', 'x:"a\\""']) {
+    assert.notStrictEqual(enter(line), "indent", line);
+  }
+});
+
 test("the patterns are linear: a long line is answered at once", () => {
   const line = `f:{${"a[b;c](d)".repeat(5000)}`;
   const start = Date.now();
   assert.strictEqual(enter(line), "indent");
   assert.strictEqual(enter(`${line}}`), undefined);
   assert.strictEqual(enter(`x:1 / ${"(".repeat(20000)}`), undefined);
-  // An unclosed string after many brackets is read once per bracket.
-  assert.strictEqual(enter(`x:"${'(\\"'.repeat(5000)}`), undefined);
+  // An unclosed string after many brackets is read once per bracket; it is
+  // open at the end, so the next line is indented (#2303).
+  assert.strictEqual(enter(`x:"${'(\\"'.repeat(5000)}`), "indent");
+  assert.strictEqual(enter(`x:${'"(\\"" '.repeat(5000)}`), undefined);
   assert.ok(Date.now() - start < 1000, `${Date.now() - start} ms`);
 });
 
@@ -105,6 +120,24 @@ test("a dotted name is one word, a number is one, and an operator splits them", 
   assert.deepStrictEqual(words("x:.5+y;(.5;.25e3)"), ["x", ".5", "y", ".5", ".25e3"]);
   // VS Code warns of a word pattern that matches an empty string.
   assert.ok(!WORD.test("") && !WORD.test(" +-*%"));
+});
+
+// KDB-X's -4! reads .ns.__f, x.y._z and .tst._run as one name each: a
+// segment after a dot may start with an underscore or a digit.
+test("a dotted name is one word through a segment that starts with an underscore (#2300)", () => {
+  assert.deepStrictEqual(words("a:.ns.__p+1"), ["a", ".ns.__p", "1"]);
+  assert.deepStrictEqual(words(".strategy.__hedgeStep x.y._z .tst._runAllStep a.1"), [".strategy.__hedgeStep", "x.y._z", ".tst._runAllStep", "a.1"]);
+  // A dot that ends a name is still not in it, and a name starts with a letter.
+  assert.deepStrictEqual(words("f. _a"), ["f", "a"]);
+});
+
+// KDB-X's -4! reads `:f 0:.h.tx t as 0:, .h.tx and x 0:1 as 0:, 1: one digit
+// before a colon is a file verb, and what follows it a word of its own.
+test("a file verb's colon is not in the word after it (#2301)", () => {
+  assert.deepStrictEqual(words("0:.h.tx t"), ["0", ".h.tx", "t"]);
+  assert.deepStrictEqual(words("x 0:1;h 1:`a;2:x"), ["x", "0", "1", "h", "1", "a", "2", "x"]);
+  // A time keeps its colons.
+  assert.deepStrictEqual(words("10:30 0D00:00:01 12:00:00.123 123:45"), ["10:30", "0D00:00:01", "12:00:00.123", "123:45"]);
 });
 
 test("nothing is added with both features off, and each adds only its own", () => {
@@ -217,6 +250,26 @@ test("a comment toggle on a blank line leaves no lone slash, and toggles back to
   const some = toggled("f:{\n  \n\n  x}", [1, 2]);
   assert.strictEqual(some.text, "f:{\n  / .\n/ .\n  x}");
   assert.strictEqual(toggled(some.text, [1, 2]).text, "f:{\n  \n\n  x}");
+});
+
+// Uncommenting a qdoc separator `//`, or `/ /`, takes one `/` (and a blank)
+// away and leaves a lone `/`, which q reads as a block comment's opening, as
+// on a blank line. KDB-X reads `/.` and `/ .` as comments.
+test("uncommenting a line to a lone slash leaves a comment, not a block (#2304)", () => {
+  // What VS Code alone leaves.
+  assert.strictEqual(toggle("a:1\n//\nb:2", [1]).text, "a:1\n/\nb:2");
+  assert.strictEqual(toggled("a:1\n//\nb:2", [1]).text, "a:1\n/.\nb:2");
+  assert.strictEqual(toggled("/ /", [0]).text, "/.");
+  assert.strictEqual(toggled("// ", [0]).text, "/ .");
+  assert.strictEqual(toggled("f:{\n  //\n  x}", [1]).text, "f:{\n  /.\n  x}");
+  assert.strictEqual(toggled("//\n//", [0, 1]).text, "/.\n/.");
+  // A line left with more than the slash is a comment already.
+  assert.strictEqual(toggled("//x", [0]).text, "/x");
+  assert.strictEqual(toggled("/ / x", [0]).text, "/ x");
+  // The slash before the cursor deleted from `//` is a block comment being
+  // written: Backspace takes the second slash, the toggle the first.
+  const fixes = (changes, text) => blankCommentFixes(changes, (l) => text.split("\n")[l]);
+  assert.deepStrictEqual(fixes([{ line: 0, endLine: 0, character: 1, rangeLength: 1, text: "" }], "/"), []);
 });
 
 test("only the toggle's own edit on a blank line is answered", () => {
