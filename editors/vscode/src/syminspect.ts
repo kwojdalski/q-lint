@@ -19,7 +19,9 @@
 // symbol (index 0N) is no entry of the file, and a partition holding no
 // symbol says nothing of its size, so both are left out (#1567, #1568); so
 // is an index past the file's end, which is no symbol of it but is counted
-// and warned of (#2143). Those
+// and warned of (#2143). A nested column of enumerations (77h, a list of
+// symbols a row) is enumerated against its items' domain, and its indexes
+// are all its items' (#2530). Those
 // columns' data is read, so `lim` is kept small. Works on kdb+ (KDB-X) and
 // PeachQ; held there by dbtools_q.test.js.
 
@@ -35,8 +37,8 @@ export const SYM_INSPECT = [
   " m:\"j\"$lim;at:$[m>=count pv;til count pv;distinct\"j\"$(til m)*(count[pv]-1)%m-1];s:pv at;",
   ` pd:@[{.Q.pd};::;()];sd:${PARTITION_DIRS}[r;$[count[pd]=count pv;pd at;()];s];`,
   " o:(fs except dm)where{@[{`.d in key x};x;0b]}each` sv'r,/:fs except dm;",
-  " enc:{[dm;d] cs:@[{(),get` sv x,`.d};d;`$()];k:{[dm;x]@[{[dm;x]v:get x;$[type[v]within 20 76h;$[(key v)in dm;key v;`];`]}[dm];x;`]}[dm]each` sv'd,/:cs;(cs;k)}[dm];",
-  " one:{[enc;p;t;d] e:enc d;w:where not null e 1;([] part:(count w)#p;tbl:(count w)#t;col:e[0]w;dom:e[1]w;ix:{\"j\"$get` sv x,y}[d]each e[0]w)};",
+  " enc:{[dm;d] cs:@[{(),get` sv x,`.d};d;`$()];k:{[dm;x]@[{[dm;x]v:get x;v:$[(type[v]>=77h)&count v;first v;v];$[type[v]within 20 76h;$[(key v)in dm;key v;`];`]}[dm];x;`]}[dm]each` sv'd,/:cs;(cs;k)}[dm];",
+  " one:{[enc;p;t;d] e:enc d;w:where not null e 1;([] part:(count w)#p;tbl:(count w)#t;col:e[0]w;dom:e[1]w;ix:{v:get` sv x,y;\"j\"$$[type[v]>=77h;raze v;v]}[d]each e[0]w)};",
   " rows:raze raze{[one;enc;pt;p;b]{[one;enc;p;b;t]one[enc;`$string p;t;` sv b,t]}[one;enc;p;b]each pt}[one;enc;pt]'[s;sd];",
   " rows,:raze{[one;enc;r;t]one[enc;`;t;` sv r,t]}[one;enc;r]each o;",
   " ds:distinct(((),`sym)inter dm),$[count rows;exec dom from rows;`$()];",
