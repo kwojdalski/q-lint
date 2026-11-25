@@ -2039,3 +2039,27 @@ a:x[0].-y
 a:x.,y
 a:"s".-1
 a:x /:y
+
+=== QE008 profile: general | a glyph or an iterator straight after from (q 5: '!, #2235)
+a:select from !t
+
+=== QE008 profile: general | a glyph or an iterator straight after from (q 5: ', #2235)
+a:select from- t
+
+=== QE009 profile: general | a glyph or an iterator straight after from (q 5: ', #2235)
+a:update a from\ t
+
+=== QE008 profile: general | a glyph or an iterator straight after from (q 5: ', #2235)
+a:select from- 1
+
+=== QE008 profile: general | a glyph or an iterator straight after from (q 5: ', #2235)
+a:select from - t
+
+=== clean profile: general | while q 5 parses each of these (#2235)
+a:select from t
+a:select from(t)
+a:select from `t
+a:select from .a.t
+a:select from -1#t
+a:select from t where -1<a
+a:update a:1 from t

@@ -1532,13 +1532,18 @@ pub(crate) fn opens_expression(
     // query - `where -a` alone is the where function minus a (#355). A `_`
     // written against the word continues it: `exec_rows` is a name.
     let glued = before.len() == i && comments.as_bytes().get(i) == Some(&b'_');
+    // `from` too: q 5 refuses `select from !t` and `update a from- t`
+    // (#2235), and reads `select from -1#t` as a negative literal.
     let qsql = !glued
-        && re!(r"(?:select|exec|update|delete|by|where)$")
+        && re!(r"(?:select|exec|update|delete|by|where|from)$")
             .find(before)
             .is_some_and(|m| {
                 boundary(comments, m.start())
-                    && (!matches!(m.as_str(), "by" | "where")
-                        || crate::in_qsql_phrase(comments, m.end()))
+                    && match m.as_str() {
+                        "by" | "where" => crate::in_qsql_phrase(comments, m.end()),
+                        "from" => crate::qsql_phrase(comments, m.end(), false),
+                        _ => true,
+                    }
             });
     // After an infix keyword q expects its right argument, so a glyph or
     // a derived function there is applied by juxtaposition: q 5 refuses
@@ -1657,7 +1662,17 @@ fn juxtaposed_derived(
             || (next.starts_with('-')
                 && next[1..]
                     .starts_with(|ch: char| ch.is_ascii_alphabetic() || "`(\"".contains(ch)));
-        let Some(start) = derived_operand(&view, c, &opener, m.start()) else {
+        // A qSQL word is no operand: q 5 refuses `update a from\ t` and
+        // `select from\ t` as it does `(1;/x)` (#2235).
+        let start = derived_operand(&view, c, &opener, m.start()).filter(|&s| {
+            !(re!(r"^(?:from|by|where)$").is_match(&view[s..m.start()])
+                && crate::qsql_phrase(comments, m.start(), false))
+        });
+        let keyword = start.is_none()
+            && m.start() > 0
+            && re!(r"(?:^|[^A-Za-z0-9_.])(?:from|by|where)$").is_match(&view[..m.start()])
+            && crate::qsql_phrase(comments, m.start(), false);
+        let Some(start) = start else {
             // Nothing on its left at all - right after `(`, `[`, `{`, `;` or
             // a signature - an iterator derives no function, and q 5 refuses
             // `(1;/x)`, `f[/x]` and `{[x]/x}` with '/ (#656). A blank before
@@ -1666,7 +1681,9 @@ fn juxtaposed_derived(
             if operand
                 && m.start() > line_start
                 && !crate::system_command(&source[line_start..])
-                && (b"([{;".contains(&c[m.start() - 1]) || after_signature(code, source, m.start()))
+                && (b"([{;".contains(&c[m.start() - 1])
+                    || after_signature(code, source, m.start())
+                    || keyword)
                 && !(m.as_str().starts_with('\'') && !m.as_str().starts_with("':"))
             {
                 let iter = &view[iterator..m.end()];

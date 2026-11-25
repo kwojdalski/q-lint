@@ -2665,7 +2665,12 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                     let s = v.code[..run]
                         .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || "._".contains(ch)))
                         .map_or(0, |p| p + 1);
-                    if !c[s].is_ascii_alphabetic() && c[s] != b'.' || !boundary(&v.code, s) {
+                    // A qSQL word is no operand: `update a from\ t` has
+                    // nothing to put in parentheses (#2235).
+                    if !c[s].is_ascii_alphabetic() && c[s] != b'.'
+                        || !boundary(&v.code, s)
+                        || matches!(&v.code[s..run], "from" | "by" | "where")
+                    {
                         return None;
                     }
                     s
@@ -3347,7 +3352,7 @@ pub(crate) fn in_qsql_phrase(code: &str, at: usize) -> bool {
 
 /// `in_qsql_phrase`, where `joins` says whether the from phrase is refused:
 /// a `,` there joins tables, but a keyword after it still ends the operand.
-fn qsql_phrase(code: &str, at: usize, joins: bool) -> bool {
+pub(crate) fn qsql_phrase(code: &str, at: usize, joins: bool) -> bool {
     // Each `,` of a where phrase asks this again, and every walk back to the
     // keyword passed all the conditions before it (#707). So the answer from
     // each top-level `,` passed is kept, for the length of the lint, for the
