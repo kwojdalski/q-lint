@@ -305,7 +305,9 @@ when nothing is new. Name the file in a configuration, `baseline =
 included - uses it without the flag; `--write-baseline` reads no baseline, so
 it always writes everything. It never writes over a file the run lints, nor
 to a name ending `.q`, `.k` or `.qnb`: `qlinter --write-baseline o.q`, which
-lints the tree, is refused with exit 2 and leaves `o.q` as it was.
+lints the tree, is refused with exit 2 and leaves `o.q` as it was. Nor
+does a run that could not read one of its inputs write anything: it exits 2
+and keeps the baseline there, which a partial one would replace.
 
 A finding is matched on its file, its code and the text of its line with
 the blanks at either end trimmed, never its line number: lines added above

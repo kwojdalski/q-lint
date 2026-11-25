@@ -171,6 +171,12 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
           void window.showWarningMessage(plainMessage(`q-lint: qlinter ${ran.stopped ?? "was stopped before it finished"}; no baseline was written${why}`));
           return undefined;
         }
+        // Exit 2: an input it could not read, which a baseline would be
+        // missing - and replaced with - though an older qlinter writes it (#2180).
+        if (ran.code === 2) {
+          void window.showWarningMessage(plainMessage(`q-lint: qlinter could not read every file; no baseline was written: ${ran.stderr.trim().slice(0, 500) || "exit 2"}`));
+          return undefined;
+        }
         const count = writtenCount(ran.stderr);
         if (count === undefined || !existsSync(draft)) {
           void window.showWarningMessage(plainMessage(`q-lint: qlinter wrote no baseline: ${ran.stderr.trim() || `exit ${ran.code}`}`));

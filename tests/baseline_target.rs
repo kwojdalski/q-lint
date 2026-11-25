@@ -135,6 +135,40 @@ fn a_baseline_is_never_written_over_q_source() {
     }
 }
 
+/// A run that cannot read one of its inputs writes no baseline: one without
+/// that file's findings would replace the good one, and they would all come
+/// back as new once the file reads again (#2180).
+#[test]
+fn a_run_with_an_unread_input_keeps_the_baseline() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("a.q"), OLD).unwrap();
+    fs::write(d.join("b.q"), OLD).unwrap();
+    let (status, _, err) = run(d, &["--write-baseline", "base.json", "a.q", "b.q"]);
+    assert_eq!(status, Some(0), "{err}");
+    let good = fs::read_to_string(d.join("base.json")).unwrap();
+    let (status, _, err) = run(d, &["--write-baseline", "base.json", "a.q", "gone.q"]);
+    assert_eq!(status, Some(2), "{err}");
+    assert!(err.contains("no baseline written"), "{err}");
+    assert_eq!(fs::read_to_string(d.join("base.json")).unwrap(), good);
+    let (status, _, err) = run(d, &["--write-baseline", "new.json", "a.q", "gone.q"]);
+    assert_eq!(status, Some(2), "{err}");
+    assert!(!d.join("new.json").exists());
+    // A file there but unreadable, where permissions can say so (not root).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(d.join("b.q"), fs::Permissions::from_mode(0o000)).unwrap();
+        if fs::read(d.join("b.q")).is_err() {
+            let (status, _, err) = run(d, &["--write-baseline", "base.json", "."]);
+            assert_eq!(status, Some(2), "{err}");
+            assert!(err.contains("no baseline written"), "{err}");
+            assert_eq!(fs::read_to_string(d.join("base.json")).unwrap(), good);
+        }
+        fs::set_permissions(d.join("b.q"), fs::Permissions::from_mode(0o644)).unwrap();
+    }
+}
+
 fn qk(found: &[(String, usize)]) -> Vec<(String, usize)> {
     found
         .iter()
