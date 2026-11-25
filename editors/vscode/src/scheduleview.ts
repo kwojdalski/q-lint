@@ -153,6 +153,12 @@ export class ScheduledExports {
     const configuration = workspace.getConfiguration("q-lint");
     const { gridDecimals } = readLive((key, fallback) => configuration.get(key, fallback));
     const data = s.format === "csv" ? textBuffer(csvLines(toGrid(payload, gridDecimals))) : exportResult(s.format, payload, gridDecimals).data;
+    // Removed, changed or turned off while the query ran: nothing is
+    // written, and a process gone with it is not written for (#2557).
+    const still = this.list().find((x) => x.id === s.id);
+    if (!on() || still === undefined || still.process !== s.process || still.path !== s.path || still.format !== s.format || still.mode !== s.mode || !this.live.processes().some((p) => p.label === s.process)) {
+      throw new Error(`nothing was written: the scheduled export was ${on() ? "removed or changed" : "turned off"} while its query ran`);
+    }
     const file = outputPath(s.path, s.mode, now);
     await fs.mkdir(path.dirname(file), { recursive: true });
     await writeWhole(file, data);

@@ -362,6 +362,29 @@ test("turned off while a tick runs, the schedules still due wait (#1296)", async
   assert.strictEqual(schedules.ticking, false);
 });
 
+test("a schedule removed or turned off while its query runs writes nothing (#2557)", async (t) => {
+  const { live, schedules, context } = await setUp(t, [{ label: "p", host: "h", port: 1, tags: [] }], [{ name: "q", code: "1+1" }]);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-schedule-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const every = (id) => ({ id, query: "q", process: "p", format: "csv", path: path.join(dir, `${id}.csv`), every: 1, mode: "replace", since: 0 });
+  live.runApart = async () => {
+    await context.workspaceState.update(SCHEDULES_KEY, []);
+    return { ok: true, type: -7, text: ["2"] };
+  };
+  await context.workspaceState.update(SCHEDULES_KEY, [every("s1")]);
+  await schedules.tick(new Date(2026, 10, 22, 9, 30));
+  assert.strictEqual(fs.existsSync(path.join(dir, "s1.csv")), false);
+  assert.deepStrictEqual(schedules.list(), []);
+  live.runApart = async () => {
+    stub.config.user["export.schedule.enable"] = false;
+    stub.changeConfig("q-lint.export.schedule.enable");
+    return { ok: true, type: -7, text: ["2"] };
+  };
+  await context.workspaceState.update(SCHEDULES_KEY, [every("s2")]);
+  await schedules.tick(new Date(2026, 10, 22, 9, 31));
+  assert.strictEqual(fs.existsSync(path.join(dir, "s2.csv")), false);
+});
+
 function freePort() {
   return new Promise((resolve) => {
     const s = net.createServer().listen(0, "127.0.0.1", () => {
