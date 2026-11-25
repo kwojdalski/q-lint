@@ -1,4 +1,20 @@
 use q_lint_rs::{Profile, Workspace, broken_statement, lint, lint_selecting};
+
+/// The best of three runs of `run`, for the speed tests below that compare a
+/// small input with a large one. They assert the ratio of the two, not a
+/// duration: a duration measures the runner, and CI's are several times
+/// slower than a Mac. One preempted run on a shared runner is enough to break
+/// a ratio, so each side takes its fastest of three.
+fn best_of_three<T>(run: impl Fn() -> T) -> std::time::Duration {
+    (0..3)
+        .map(|_| {
+            let started = std::time::Instant::now();
+            std::hint::black_box(run());
+            started.elapsed()
+        })
+        .min()
+        .unwrap()
+}
 #[test]
 fn mutation_classes_and_valid_boundaries() {
     for (source, code) in [
@@ -921,20 +937,25 @@ fn an_indexed_integer_names_the_error_of_a_closed_handle() {
 fn deeply_nested_lambdas_lint_in_bounded_time() {
     // #185: every rule that matched braces from each `{` was quadratic in
     // nesting depth. Generated or hostile input can nest thousands deep, and
-    // the language server lints on every keystroke. About 1 s in a debug
-    // build after the fix, against roughly five times that before it. At 4000
-    // deep it took 3 s here and over 10 s on a shared CI runner, so the bound
-    // failed with no regression behind it.
+    // the language server lints on every keystroke. A fixed bound at 4000
+    // deep took 3 s here and over 10 s on a shared CI runner, so it failed
+    // with no regression behind it: the ratio of two depths is what is asked.
     // Past q's own limit of 100, which QE001 reports alone (#717), so the
     // rules are run as they are with QE001 deselected.
-    let depth = 2000;
-    let source = format!("f:{}{}\n", "{".repeat(depth), "}".repeat(depth));
-    let started = std::time::Instant::now();
-    lint_selecting(&source, "t.q", Profile::Style, &Workspace::default(), false);
-    let elapsed = started.elapsed();
+    let time = |depth: usize| {
+        let source = format!("f:{}{}\n", "{".repeat(depth), "}".repeat(depth));
+        best_of_three(|| {
+            lint_selecting(&source, "t.q", Profile::Style, &Workspace::default(), false);
+        })
+    };
+    time(500); // warm the allocator and the regex caches
+    let (small, large) = (time(500), time(4000));
+    eprintln!("500 nested lambdas took {small:?} and 4000 {large:?}");
+    // Quadratic is 64 times; linear is 8. Linear measures 5.1 here (47 ms and
+    // 240 ms). 16 still fails a quadratic walk by four times.
     assert!(
-        elapsed < std::time::Duration::from_secs(10),
-        "{depth} nested lambdas took {elapsed:?}"
+        large < small * 16,
+        "500 nested lambdas took {small:?} and 4000 {large:?}"
     );
 }
 /// Every finding is placed by its line, which was counted from the file's
@@ -945,13 +966,18 @@ fn deeply_nested_lambdas_lint_in_bounded_time() {
 /// comment by walking every block, quadratic again in their number.
 #[test]
 fn many_findings_lint_in_bounded_time() {
-    let source = "/\nsome text here {[ ( \"\n\\\n".repeat(20000);
-    let started = std::time::Instant::now();
-    lint(&source, "t.q", Profile::Uqf);
-    let elapsed = started.elapsed();
+    let time = |n: usize| {
+        let source = "/\nsome text here {[ ( \"\n\\\n".repeat(n);
+        best_of_three(|| lint(&source, "t.q", Profile::Uqf))
+    };
+    time(2500); // warm the allocator and the regex caches
+    let (small, large) = (time(2500), time(20000));
+    eprintln!("2500 block comments took {small:?} and 20000 {large:?}");
+    // Quadratic is 64 times; linear is 8. Linear measures 7.4 here (231 ms and
+    // 1.71 s). 16 still fails a quadratic walk by four times.
     assert!(
-        elapsed < std::time::Duration::from_secs(10),
-        "20000 block comments took {elapsed:?}"
+        large < small * 16,
+        "2500 block comments took {small:?} and 20000 {large:?}"
     );
 }
 /// Each name read asked whether a lambda around it binds the name by walking
@@ -1054,13 +1080,18 @@ fn a_long_lambda_body_lints_in_bounded_time() {
 /// QV001 (0.31) did it again, reading each query's phrase to its end.
 #[test]
 fn chained_queries_lint_in_bounded_time() {
-    let source = format!("r:{}t\n", "select from ".repeat(8000));
-    let started = std::time::Instant::now();
-    lint(&source, "t.q", Profile::Uqf);
-    let elapsed = started.elapsed();
+    let time = |n: usize| {
+        let source = format!("r:{}t\n", "select from ".repeat(n));
+        best_of_three(|| lint(&source, "t.q", Profile::Uqf))
+    };
+    time(1000); // warm the allocator and the regex caches
+    let (small, large) = (time(1000), time(8000));
+    eprintln!("1000 chained queries took {small:?} and 8000 {large:?}");
+    // Quadratic is 64 times; linear is 8. Linear measures 6.4 here (91 ms and
+    // 583 ms). 16 still fails a quadratic walk by four times.
     assert!(
-        elapsed < std::time::Duration::from_secs(10),
-        "8000 chained queries took {elapsed:?}"
+        large < small * 16,
+        "1000 chained queries took {small:?} and 8000 {large:?}"
     );
 }
 /// A long loop body: QV003 asked of each assignment whether a lambda opened
@@ -1069,15 +1100,24 @@ fn chained_queries_lint_in_bounded_time() {
 /// debug build, against 1.5 s for the same file without the rule.
 #[test]
 fn a_long_loop_body_lints_in_bounded_time() {
-    let body: String = (0..16000).map(|i| format!("  a{i}:a{i},1;\n")).collect();
-    let source = format!("do[3;\n{body}  ]\n");
-    let started = std::time::Instant::now();
-    let found = lint(&source, "t.q", Profile::Uqf);
-    let elapsed = started.elapsed();
-    assert_eq!(found.iter().filter(|f| f.code == "QV003").count(), 16000);
+    let source = |n: usize| {
+        let body: String = (0..n).map(|i| format!("  a{i}:a{i},1;\n")).collect();
+        format!("do[3;\n{body}  ]\n")
+    };
+    let found = lint(&source(2000), "t.q", Profile::Uqf);
+    assert_eq!(found.iter().filter(|f| f.code == "QV003").count(), 2000);
+    let time = |n: usize| {
+        let source = source(n);
+        best_of_three(|| lint(&source, "t.q", Profile::Uqf))
+    };
+    time(2000); // warm the allocator and the regex caches
+    let (small, large) = (time(2000), time(16000));
+    eprintln!("a 2000-line loop body took {small:?} and a 16000-line one {large:?}");
+    // Quadratic is 64 times; linear is 8. Linear measures 6.3 here (268 ms and
+    // 1.69 s). 16 still fails a quadratic walk by four times.
     assert!(
-        elapsed < std::time::Duration::from_secs(10),
-        "a 16000-line loop body took {elapsed:?}"
+        large < small * 16,
+        "a 2000-line loop body took {small:?} and a 16000-line one {large:?}"
     );
 }
 /// Many where phrases on one line: each captured, and copied, the rest of
@@ -1085,13 +1125,18 @@ fn a_long_loop_body_lints_in_bounded_time() {
 /// 25 s for 8000 in a release build (#1205).
 #[test]
 fn a_line_of_where_phrases_lints_in_bounded_time() {
-    let source = format!("{}\n", vec!["select from t where c"; 4000].join(";"));
-    let started = std::time::Instant::now();
-    lint(&source, "t.q", Profile::Uqf);
-    let elapsed = started.elapsed();
+    let time = |n: usize| {
+        let source = format!("{}\n", vec!["select from t where c"; n].join(";"));
+        best_of_three(|| lint(&source, "t.q", Profile::Uqf))
+    };
+    time(500); // warm the allocator and the regex caches
+    let (small, large) = (time(500), time(4000));
+    eprintln!("a line of 500 where phrases took {small:?} and of 4000 {large:?}");
+    // Quadratic is 64 times; linear is 8. Linear measures 6.5 here (82 ms and
+    // 531 ms). 16 still fails a quadratic walk by four times.
     assert!(
-        elapsed < std::time::Duration::from_secs(10),
-        "a line of 4000 where phrases took {elapsed:?}"
+        large < small * 16,
+        "a line of 500 where phrases took {small:?} and of 4000 {large:?}"
     );
 }
 /// The char-column comparison rule compiled a regex for each where phrase's
@@ -1100,17 +1145,20 @@ fn a_line_of_where_phrases_lints_in_bounded_time() {
 /// build (#1206).
 #[test]
 fn many_where_phrases_lint_in_bounded_time() {
-    // 4000: the quadratic scan took 17 s here in a debug build, and the fixed
-    // one leaves room on a Windows runner, several times slower than a Mac.
-    let source: String = (0..4000)
-        .map(|i| format!("f{i}:{{update a:1 from t where b}}\n"))
-        .collect();
-    let started = std::time::Instant::now();
-    lint(&source, "t.q", Profile::Uqf);
-    let elapsed = started.elapsed();
+    let time = |n: usize| {
+        let source: String = (0..n)
+            .map(|i| format!("f{i}:{{update a:1 from t where b}}\n"))
+            .collect();
+        best_of_three(|| lint(&source, "t.q", Profile::Uqf))
+    };
+    time(500); // warm the allocator and the regex caches
+    let (small, large) = (time(500), time(4000));
+    eprintln!("500 where phrases took {small:?} and 4000 {large:?}");
+    // Quadratic is 64 times; linear is 8. Linear measures 7.3 here (192 ms and
+    // 1.39 s). 16 still fails a quadratic walk by four times.
     assert!(
-        elapsed < std::time::Duration::from_secs(10),
-        "4000 where phrases took {elapsed:?}"
+        large < small * 16,
+        "500 where phrases took {small:?} and 4000 {large:?}"
     );
 }
 /// Nested `$[`, `@[` and `.[`: each split its whole contents into slots, the
@@ -1118,15 +1166,21 @@ fn many_where_phrases_lint_in_bounded_time() {
 /// q's limit of 100, so read as with QE001 deselected.
 #[test]
 fn nested_conditionals_lint_in_bounded_time() {
-    let depth = 16000;
     for (open, close) in [("$[x;", ";0]"), ("@[f;", ";0]"), (".[f;", ";0]")] {
-        let source = format!("a:{}1{}\n", open.repeat(depth), close.repeat(depth));
-        let started = std::time::Instant::now();
-        lint_selecting(&source, "t.q", Profile::Style, &Workspace::default(), false);
-        let elapsed = started.elapsed();
+        let time = |depth: usize| {
+            let source = format!("a:{}1{}\n", open.repeat(depth), close.repeat(depth));
+            best_of_three(|| {
+                lint_selecting(&source, "t.q", Profile::Style, &Workspace::default(), false);
+            })
+        };
+        time(2000); // warm the allocator and the regex caches
+        let (small, large) = (time(2000), time(16000));
+        eprintln!("2000 nested {open} took {small:?} and 16000 {large:?}");
+        // Quadratic is 64 times; linear is 8. Linear measures 5.9, 6.1 and 6.3
+        // here for the three (66, 70 and 78 ms against 391, 426 and 488 ms).
         assert!(
-            elapsed < std::time::Duration::from_secs(10),
-            "{depth} nested {open} took {elapsed:?}"
+            large < small * 16,
+            "2000 nested {open} took {small:?} and 16000 {large:?}"
         );
     }
 }
@@ -1135,15 +1189,20 @@ fn nested_conditionals_lint_in_bounded_time() {
 /// each number on the line looked back for the line's start (#711).
 #[test]
 fn a_wide_table_literal_lints_in_bounded_time() {
-    let keys: Vec<String> = (0..16000).map(|i| format!("k{i}:1 2")).collect();
-    let columns: Vec<String> = (0..16000).map(|i| format!("c{i}:3 4")).collect();
-    let source = format!("t:([{}] {})\n", keys.join("; "), columns.join("; "));
-    let started = std::time::Instant::now();
-    lint(&source, "t.q", Profile::Style);
-    let elapsed = started.elapsed();
+    let time = |n: usize| {
+        let keys: Vec<String> = (0..n).map(|i| format!("k{i}:1 2")).collect();
+        let columns: Vec<String> = (0..n).map(|i| format!("c{i}:3 4")).collect();
+        let source = format!("t:([{}] {})\n", keys.join("; "), columns.join("; "));
+        best_of_three(|| lint(&source, "t.q", Profile::Style))
+    };
+    time(2000); // warm the allocator and the regex caches
+    let (small, large) = (time(2000), time(16000));
+    eprintln!("2000 keys and columns each took {small:?} and 16000 {large:?}");
+    // Quadratic is 64 times; linear is 8. Linear measures 5.6 here (425 ms and
+    // 2.38 s). 16 still fails a quadratic walk by four times.
     assert!(
-        elapsed < std::time::Duration::from_secs(10),
-        "32000 columns took {elapsed:?}"
+        large < small * 16,
+        "2000 keys and columns each took {small:?} and 16000 {large:?}"
     );
 }
 /// Lambdas nested in each other's bodies: each scope copied its whole body,
@@ -1152,14 +1211,20 @@ fn a_wide_table_literal_lints_in_bounded_time() {
 /// 4 GB for 32000 (#704). Past q's limit, so read as with QE001 deselected.
 #[test]
 fn nested_lambda_bodies_lint_in_bounded_time() {
-    let depth = 16000;
-    let source = format!("a:{}1{}\n", "{x+".repeat(depth), "}".repeat(depth));
-    let started = std::time::Instant::now();
-    lint_selecting(&source, "t.q", Profile::Style, &Workspace::default(), false);
-    let elapsed = started.elapsed();
+    let time = |depth: usize| {
+        let source = format!("a:{}1{}\n", "{x+".repeat(depth), "}".repeat(depth));
+        best_of_three(|| {
+            lint_selecting(&source, "t.q", Profile::Style, &Workspace::default(), false);
+        })
+    };
+    time(2000); // warm the allocator and the regex caches
+    let (small, large) = (time(2000), time(16000));
+    eprintln!("2000 nested lambda bodies took {small:?} and 16000 {large:?}");
+    // Quadratic is 64 times; linear is 8. Linear measures 7.3 here (227 ms and
+    // 1.66 s). 16 still fails a quadratic walk by four times.
     assert!(
-        elapsed < std::time::Duration::from_secs(10),
-        "{depth} nested lambda bodies took {elapsed:?}"
+        large < small * 16,
+        "2000 nested lambda bodies took {small:?} and 16000 {large:?}"
     );
 }
 /// Tens of thousands of nested parentheses - beyond q's own limit, which

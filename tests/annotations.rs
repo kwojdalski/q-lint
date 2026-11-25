@@ -359,28 +359,42 @@ fn a_top_level_function_has_a_run_lens_and_a_test_a_run_test_lens_too() {
 /// for every definition, 63 s at 5,000 (#1216).
 #[test]
 fn hints_and_lenses_over_many_definitions_take_linear_time() {
-    let n = 1500;
-    let text: String = (0..n)
-        .map(|i| format!("f{i}:{{[a;b] a+f{}[b;a]}}\n", i.max(1) - 1))
-        .collect();
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("chain.q"), &text).unwrap();
-    let options = json!({"codeLens": {"enable": true}, "referenceLens": {"enable": true}});
-    let (mut server, _) = Server::over(dir.path(), &[], client(), options);
-    let uri = server.open(dir.path(), "chain.q", &text);
-    let started = std::time::Instant::now();
-    let range = json!({"range": {"start": {"line": 0, "character": 0},
-                                 "end": {"line": n, "character": 0}}});
-    let hints = server.whole("textDocument/inlayHint", &uri, range);
-    let lenses = server.whole("textDocument/codeLens", &uri, json!({}));
-    let tests = server.request("q-lint/tests", json!({}));
-    let elapsed = started.elapsed();
-    assert_eq!(hints["result"].as_array().unwrap().len(), 2 * n as usize);
-    assert!(lenses["result"].as_array().unwrap().len() >= n as usize);
-    assert!(tests["result"].is_array(), "{tests}");
+    // The ratio of two sizes, not a bound, as for the speed tests in
+    // tests/core.rs: a fixed bound measures the runner.
+    let time = |n: usize| {
+        let text: String = (0..n)
+            .map(|i| format!("f{i}:{{[a;b] a+f{}[b;a]}}\n", i.max(1) - 1))
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("chain.q"), &text).unwrap();
+        let options = json!({"codeLens": {"enable": true}, "referenceLens": {"enable": true}});
+        let (mut server, _) = Server::over(dir.path(), &[], client(), options);
+        let uri = server.open(dir.path(), "chain.q", &text);
+        let range = json!({"range": {"start": {"line": 0, "character": 0},
+                                     "end": {"line": n, "character": 0}}});
+        let mut ask = || {
+            let started = std::time::Instant::now();
+            let hints = server.whole("textDocument/inlayHint", &uri, range.clone());
+            let lenses = server.whole("textDocument/codeLens", &uri, json!({}));
+            let tests = server.request("q-lint/tests", json!({}));
+            let elapsed = started.elapsed();
+            assert_eq!(hints["result"].as_array().unwrap().len(), 2 * n);
+            assert!(lenses["result"].as_array().unwrap().len() >= n);
+            assert!(tests["result"].is_array(), "{tests}");
+            elapsed
+        };
+        // The first answer waits behind the lint of the opened file: not
+        // what is measured. The answers are not cached, so each is the work.
+        ask();
+        (0..3).map(|_| ask()).min().unwrap()
+    };
+    let (small, large) = (time(250), time(2000));
+    eprintln!("250 definitions took {small:?} and 2000 {large:?}");
+    // Quadratic is 64 times; linear is 8. Linear measures 8.2 here (75 ms and
+    // 615 ms). 16 still fails a quadratic walk by four times.
     assert!(
-        elapsed < Duration::from_secs(10),
-        "{n} definitions took {elapsed:?}"
+        large < small * 16,
+        "250 definitions took {small:?} and 2000 {large:?}"
     );
 }
 
