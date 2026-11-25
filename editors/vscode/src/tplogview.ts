@@ -9,8 +9,8 @@
 // yours, and the read-only guard has nothing to guard. A replay asks first,
 // and can load a q file before it - the tickerplant's schema, its `upd` -
 // into the same q. The q is stopped, and its directory removed, when the
-// panel closes, when another log is opened, and when the feature is turned
-// off (q-lint.tickerplantLog.enable).
+// panel closes, when another log has been opened, and when the feature is
+// turned off (q-lint.tickerplantLog.enable).
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -160,8 +160,9 @@ export class TickerplantLog {
     if (!on()) return say(dbOff("tickerplantLog"));
     const file = given ?? (await window.showOpenDialog({ canSelectMany: false, title: "Open which tickerplant log?" }))?.[0]?.fsPath;
     if (file === undefined) return "cancelled";
-    this.stop();
-    const opening = this.generation;
+    // Supersedes an open in flight; the log open now stays until this one
+    // has loaded, so a file that is not a log leaves it working (#2552).
+    const opening = ++this.generation;
     // The folder's q binary, as the folder it starts in (#1333): the log
     // file's own folder, else the first (#1842).
     const folder = (workspace.getWorkspaceFolder(Uri.file(file)) ?? workspace.workspaceFolders?.[0])?.uri;
@@ -179,17 +180,17 @@ export class TickerplantLog {
         stopLocalQ(local);
         return "superseded";
       }
-      this.local = local;
       const read = readTpLog(await local.connection.call(".qlint.tp.load", file));
-      // A stop since has stopped this q already.
-      if (opening !== this.generation) return "superseded";
-      this.log = { ...read, file };
-    } catch (error) {
       if (opening !== this.generation) {
-        if (local !== undefined) stopLocalQ(local);
+        stopLocalQ(local);
         return "superseded";
       }
-      this.stop();
+      if (this.local !== undefined) stopLocalQ(this.local);
+      this.local = local;
+      this.log = { ...read, file };
+    } catch (error) {
+      if (local !== undefined) stopLocalQ(local);
+      if (opening !== this.generation) return "superseded";
       return say(`q-lint: could not read ${file}: ${error instanceof Error ? error.message : String(error)}`);
     }
     if (!on()) {
