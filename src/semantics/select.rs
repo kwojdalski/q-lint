@@ -93,7 +93,36 @@ fn token(
     let b = code.as_bytes();
     let start = offset - b[..offset].iter().rev().take_while(|b| word(b)).count();
     let end = offset + b[offset..].iter().take_while(|b| word(b)).count();
-    (start < end).then_some((start, end))
+    if start >= end {
+        return None;
+    }
+    // The run is q's tokens: a number never holds `_`, which drops after
+    // it - KDB-X's `-4!"s:-1_y"` is `s`, `:`, `-1`, `_`, `y` (#2319) - and
+    // a name runs to the end of the run.
+    let mut at = start;
+    while at < end {
+        let number = b[at].is_ascii_digit()
+            || b[at] == b'.' && b.get(at + 1).is_some_and(u8::is_ascii_digit);
+        let stop = if number {
+            crate::number_end(code, at).clamp(at + 1, end)
+        } else if b[at] == b'_' {
+            at + 1
+        } else {
+            end
+        };
+        if offset <= stop || stop == end {
+            // A `-` is the number's own where no operand ends before it:
+            // `-1` in `s:-1_y` and `a -1`, but `-` and `1` in `a-1`.
+            let negative = number
+                && at > 0
+                && b[at - 1] == b'-'
+                && (at == 1
+                    || !(b[at - 2].is_ascii_alphanumeric() || b")]}._\"`".contains(&b[at - 2])));
+            return Some((at - usize::from(negative), stop));
+        }
+        at = stop;
+    }
+    Some((start, end))
 }
 
 /// The time or timestamp literal at `offset`, as q lexes it: `12:30`,
@@ -306,6 +335,16 @@ mod tests {
             spans("r:`:f[1]\n", "1]"),
             ["1", "[1]", "`:f[1]", "r:`:f[1]"]
         );
+    }
+
+    #[test]
+    fn a_number_before_a_drop_is_its_own_token() {
+        // KDB-X's `-4!` reads `-1`, `_`, `y` in `s:-1_y`, and `10`, `_`,
+        // `string` in `10_string z`; `a-1` is `a`, `-`, `1` (#2319).
+        assert_eq!(spans("r:1_y\n", "1"), ["1", "r:1_y"]);
+        assert_eq!(spans("s:-1_y\n", "1"), ["-1", "s:-1_y"]);
+        assert_eq!(spans("u:10_string z\n", "0"), ["10", "u:10_string z"]);
+        assert_eq!(spans("v:a-1_y\n", "1"), ["1", "v:a-1_y"]);
     }
 
     #[test]
