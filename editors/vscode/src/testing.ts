@@ -33,6 +33,7 @@
 // assertion returns the value it checked, so a false last value is no
 // verdict (#1589) - and a flag set with `ignoreAllExceptions` fails it.
 
+import { statements } from "./statements";
 import { valued, type GuardCode } from "./guard";
 import { FULL_TEXT, LAID_OUT } from "./qtext";
 
@@ -117,21 +118,11 @@ export function readServerTests(raw: unknown): ServerTestFile[] {
   return files;
 }
 
-/// The statements that run a listed test: the code that defines it, one
-/// `\d` line or definition at a time, then the call.
+/// The statements that run a listed test: the code that defines it, cut as
+/// q loads it - a `\d` line a statement of its own, a block comment inside
+/// the definition a comment there, not its end (#2283) - then the call.
 export function testStatements(test: Pick<ServerTest, "code" | "call">): string[] {
-  const lines = test.code.split("\n");
-  const statements: string[] = [];
-  for (const line of lines) {
-    // A `\d` line is a statement of its own; the definition between keeps
-    // its continuation lines.
-    if (line.startsWith("\\") || statements.length === 0 || statements[statements.length - 1].startsWith("\\")) {
-      statements.push(line);
-    } else {
-      statements[statements.length - 1] += `\n${line}`;
-    }
-  }
-  return [...statements, test.call];
+  return [...statements(test.code), test.call];
 }
 
 export interface TestResult {

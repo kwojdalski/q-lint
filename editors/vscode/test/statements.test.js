@@ -9,6 +9,7 @@ const { cells, shownCode } = require("../out/cells.js");
 const { isComplete } = require("../out/repl.js");
 const { replLines } = require("../out/terminal.js");
 const { definitions } = require("../out/definitions.js");
+const { testStatements } = require("../out/testing.js");
 
 test("only a space, a tab and a carriage return are blank to q (#2279)", () => {
   // `/` and a no-break space is a comment line, no block comment: b runs.
@@ -93,4 +94,15 @@ test("a selection is read as the document reads at its first line (#2287)", () =
   assert.deepStrictEqual(statements(selectionCode(["a:1", "\\", "b:2"], 2, "b:2")), []);
   // Outside them it is the selection.
   assert.strictEqual(selectionCode(["a:1", "b:2"], 1, "b:2"), "b:2");
+});
+
+test("a test's code is cut as q loads it, a block comment inside no end (#2283)", () => {
+  const code = "test_blk:{\n  a:1;\n/\n  junk\n\\\n  a~1}";
+  assert.deepStrictEqual(testStatements({ code, call: "test_blk[]" }), ["test_blk:{\n  a:1;\n/\n/  junk\n/\n  a~1}", "test_blk[]"]);
+  assert.deepStrictEqual(testStatements({ code: `\\d .ns\n${code}\n\\d .`, call: ".ns.test_blk[]" }), [
+    "\\d .ns",
+    "test_blk:{\n  a:1;\n/\n/  junk\n/\n  a~1}",
+    "\\d .",
+    ".ns.test_blk[]",
+  ]);
 });
