@@ -49,6 +49,9 @@ def test_a_function_takes_as_many_arguments_as_q_says(tmp_path):
     for name, kind, rank in rows:
         if int(kind) not in (LAMBDA, UNARY, OPERATOR):
             continue
+        # enlist is a unary primitive to `type`, and takes any number.
+        if functions[name][-1:] == ["..."]:
+            continue
         held += 1
         if int(rank) != len(functions[name]):
             wrong.append((name, functions[name], int(rank)))

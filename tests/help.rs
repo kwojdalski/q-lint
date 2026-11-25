@@ -1062,6 +1062,44 @@ fn signature_help_for_a_word_of_q_comes_from_the_catalogue() {
 }
 
 #[test]
+fn signature_help_lets_a_running_function_take_its_seed_and_enlist_any_number() {
+    // q 5 runs sums[0;1 2] and deltas[0;x] - the first argument is the seed
+    // or prior - and enlist with nine arguments (#2249).
+    let dir = tempfile::tempdir().unwrap();
+    let text = "r:sums[0;1 2]\ns:enlist[1;2;3;4]\n";
+    let (mut server, uri) = serving(dir.path(), text, plain(), Value::Null);
+    let reply = server.ask(
+        "textDocument/signatureHelp",
+        &uri,
+        text,
+        "1 2]",
+        0,
+        Value::Null,
+    );
+    let help = &reply["result"];
+    assert_eq!(help["signatures"][0]["label"], "sums[x;y]");
+    assert_eq!(help["activeParameter"], 1);
+    assert!(
+        !help["signatures"][0]["documentation"]
+            .as_str()
+            .unwrap()
+            .starts_with("Too many"),
+        "{help}"
+    );
+    let reply = server.ask(
+        "textDocument/signatureHelp",
+        &uri,
+        text,
+        "4]",
+        0,
+        Value::Null,
+    );
+    let help = &reply["result"];
+    assert_eq!(help["signatures"][0]["label"], "enlist[x;...]");
+    assert_eq!(help["activeParameter"], 1);
+}
+
+#[test]
 fn signature_help_is_silent_for_a_local_and_for_an_unknown_name() {
     let dir = tempfile::tempdir().unwrap();
     let text = "apply:{[add;v] add[v;\nr:nobody[1;\n";

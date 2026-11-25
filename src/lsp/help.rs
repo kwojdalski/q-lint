@@ -507,7 +507,8 @@ fn builtin_signature(name: &str) -> Option<Signature> {
             name: b.name.clone(),
             params: b.params.clone(),
             said: b.summary.clone(),
-            open: b.kind == BuiltinKind::Control,
+            // `enlist[x;y;...]` takes any number, as the control words do.
+            open: b.kind == BuiltinKind::Control || b.params.last().is_some_and(|p| p == "..."),
         },
     )
 }
