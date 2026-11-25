@@ -1252,6 +1252,36 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
                     || n == b'_'
                     || (n == b'.' && !b.get(i + 2).is_some_and(u8::is_ascii_alphabetic))
             });
+        // `::` with nothing on its left, applied to a value: q 5 refuses
+        // `{::1}`, `(::1)`, `@[x;::1]` and `(:: 1)`, and takes `{a::1}`,
+        // `(::)1`, `(::;1)` and `{::}` (#2233).
+        if g == b':'
+            && b.get(i + 1) == Some(&b':')
+            && code.as_bytes()[i] == b':'
+            && !i
+                .checked_sub(1)
+                .is_some_and(|p| GLYPHS.contains(&b[p]) || b":/\\'_.".contains(&b[p]))
+            && !crate::system_command(&source[line_start..])
+        {
+            let next = continued(&comments[i + 2..]);
+            let expression = line_start + expression_start(&source[line_start..]);
+            if !next.starts_with(':')
+                && starts_operand(next)
+                && opens_expression(code, source, comments, i, expression)
+            {
+                let mut finding = Finding::at(
+                    path,
+                    source,
+                    i,
+                    "QE008",
+                    "`::` applied to a value with nothing on its left: q 5 refuses this line"
+                        .into(),
+                );
+                finding.end_column = finding.column.map(|c| c + 2);
+                out.push(finding);
+            }
+            continue;
+        }
         if !(GLYPHS.contains(&g) || g == b'_' || dot)
             || code.as_bytes()[i] != g
             || crate::system_command(&source[line_start..])
@@ -1395,6 +1425,14 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
 }
 
 const GLYPHS: &[u8] = b"+-*%!#$&|^=<>~,@?";
+
+/// Whether `next` starts an operand a monadic application would take: a
+/// name, a symbol, a string, a list, a lambda, a number, a negative literal
+/// or a dotted name.
+fn starts_operand(next: &str) -> bool {
+    next.starts_with(|c: char| c.is_ascii_alphanumeric() || "`(\"{".contains(c))
+        || re!(r"^-?\.?\d|^\.[A-Za-z]").is_match(next)
+}
 
 /// Whether `next` opens a glyph applied with brackets, `$[c;a;b]`,
 /// `@[v;0;neg]`, `.[f;x]` or `?[t;();()]`: a value, so an operand (#568).
