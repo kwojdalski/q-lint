@@ -576,6 +576,13 @@ fn missing_from(
         if after.starts_with('[') && m.as_str() != "select" {
             continue;
         }
+        // A keyword with a point and a name after it is a name: q 5 loads
+        // `exec.fill:{x}` under `\d .qf` and reads `exec.fill 1` (#2219).
+        if unsym[m.end()..].starts_with('.')
+            && unsym[m.end() + 1..].starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
+        {
+            continue;
+        }
         // In a lambda the word as a parameter is QF001's, and assigned as a
         // local QF003's: one finding for one mistake.
         let lambda = crate::enclosing_brace(code, m.start());

@@ -1756,3 +1756,11 @@ a:"3:x"
 a:`3:x
 a:x3:y
 
+
+=== clean profile: general | while q 5 parses each of these (#2219)
+exec.fill:{x}
+b:exec.fill 1
+select.b:1
+update.x:2
+b:select.b
+c:delete.y
