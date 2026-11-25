@@ -2250,6 +2250,66 @@ fn a_context_switched_on_a_k_line_is_followed() {
 }
 
 #[test]
+fn a_context_switched_after_several_language_prefixes_is_followed() {
+    // #2194. q reads any run of `q)` and `k)` before a command as the
+    // command: on KDB-X 5, each of these lines then `d:1` and `\d .` leaves
+    // `.qux.d` 1 and `d` undefined. The outline put `d` at the root.
+    for prefix in ["q)k)", "k)q)", "q)q)", "k)k)", "q)k)q)"] {
+        let dir = tempfile::tempdir().unwrap();
+        let a = format!("{prefix}\\d .qux\nd:1\n\\d .\ngg:2\n");
+        let b = "\\l a.q\nr:.qux.d+gg\n";
+        let mut server = Server::start(dir.path(), &[("a.q", &a), ("b.q", b)]);
+        let reply = server.request("workspace/symbol", json!({"query": ""}));
+        let mut names: Vec<&str> = reply["result"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{prefix}: {reply}"))
+            .iter()
+            .map(|s| s["name"].as_str().unwrap())
+            .collect();
+        names.sort();
+        assert_eq!(names, [".qux.d", "gg", "r"], "{prefix}: {reply}");
+        // The outline puts `d` under `.qux`.
+        let uri = server.open(dir.path(), "a.q", &a);
+        let reply = server.request(
+            "textDocument/documentSymbol",
+            json!({"textDocument": {"uri": uri}}),
+        );
+        let outline: Vec<(&str, Vec<&str>)> = reply["result"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{prefix}: {reply}"))
+            .iter()
+            .map(|s| {
+                let children = s["children"].as_array().into_iter().flatten();
+                (
+                    s["name"].as_str().unwrap(),
+                    children.map(|c| c["name"].as_str().unwrap()).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            outline,
+            [(".qux", vec!["d"]), ("gg", vec![])],
+            "{prefix}: {reply}"
+        );
+        let uri = server.open(dir.path(), "b.q", b);
+        let reply = server.ask("textDocument/definition", &uri, b, ".qux.d", 0, json!({}));
+        assert_eq!(
+            places(&reply["result"]),
+            [place("a.q", 1, 0, 1)],
+            "{prefix}: {reply}"
+        );
+        // The command names no global: `d` and `.qux` on it are no reads.
+        let uri = server.open(dir.path(), "a.q", &a);
+        let reply = server.ask("textDocument/references", &uri, &a, "d:", 0, json!({}));
+        assert_eq!(
+            places(&reply["result"]),
+            [place("a.q", 1, 0, 1), place("b.q", 1, 2, 8)],
+            "{prefix}"
+        );
+    }
+}
+
+#[test]
 fn a_block_comment_after_a_k_line_is_no_k() {
     // #2042. KDB-X 5 runs `fk:1`, `k)gk:2`, `/`, ` fk in a comment`, `\`,
     // `show fk` and prints 1: the bare `/` opens a block comment after the k
