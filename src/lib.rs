@@ -2040,11 +2040,21 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             // A string is blank in the code view, and a blank reads as the
             // space between operands: `a=f "x" and b=0` would group as
             // `(a=f) "x"`. Fill it, so the string stays part of its operand.
-            let filled: String = v.code[phrase..end]
-                .bytes()
-                .zip(v.comments[phrase..end].bytes())
-                .map(|(c, s)| {
-                    if c != s || !c.is_ascii() {
+            // A symbol and a dotted name are filled too, so the `and` of
+            // `` `and ``, `` `x.and `` or `x.and` is no keyword: grouping
+            // there closed the parenthesis inside the token, `(s=`)and`,
+            // which q 5 cannot parse (#2256).
+            let unsym = unsymbolled(&v.code[phrase..end]);
+            let code = v.code[phrase..end].as_bytes();
+            let filled: String = (0..code.len())
+                .map(|i| {
+                    let c = code[i];
+                    let named = c == b'.' && code.get(i + 1).is_some_and(u8::is_ascii_alphabetic);
+                    if c != v.comments.as_bytes()[phrase + i]
+                        || c != unsym.as_bytes()[i]
+                        || named
+                        || !c.is_ascii()
+                    {
                         '_'
                     } else {
                         c as char
@@ -3684,6 +3694,13 @@ fn bare_segments(code: &str, source: &str) -> Vec<(usize, String, Vec<usize>)> {
 /// reading is the point: `n>=4|.00002*count text`, `0<x&y`.
 static LOGIC: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"\b(?:and|or)\b").unwrap());
+/// The `and`s and `or`s of `text` that are words: not the end of a dotted
+/// name, `x.and` or `.ns.or`, nor part of one, `and.x` (#2256).
+fn logic_words(text: &str) -> impl Iterator<Item = regex::Match<'_>> {
+    LOGIC.find_iter(text).filter(move |m| {
+        !text[..m.start()].ends_with(['.', '`']) && !text[m.end()..].starts_with('.')
+    })
+}
 /// A comparison to the left of one: the glyphs, and the words applied infix.
 /// q 5 `where a in 1 3 and b=0` is `a in (1 3 and b=0)` too (#735).
 static COMPARISON: LazyLock<regex::Regex> = LazyLock::new(|| {
@@ -3696,8 +3713,7 @@ static COMPARISON: LazyLock<regex::Regex> = LazyLock::new(|| {
 fn comparison_swallowed(clause: &str) -> bool {
     let clause =
         re!(r"`[\w.:/]*").replace_all(clause, |m: &regex::Captures| " ".repeat(m[0].len()));
-    LOGIC
-        .find_iter(&clause)
+    logic_words(&clause)
         .find(|logic| !clause[logic.end()..].starts_with(['\'', '/', '\\']))
         .is_some_and(|logic| COMPARISON.is_match(&clause[..logic.start()]))
 }
@@ -3711,7 +3727,7 @@ pub(crate) fn swallowed_comparisons(flat: &str) -> Vec<(usize, usize)> {
     let mut clause_start = 0;
     for clause in flat.split(',') {
         let mut from = 0;
-        for logic in LOGIC.find_iter(clause) {
+        for logic in logic_words(clause) {
             let operand = &clause[from..logic.start()];
             if COMPARISON.is_match(operand) {
                 let lead = operand.len() - operand.trim_start().len();

@@ -2202,3 +2202,31 @@ fn a_sort_under_scan_or_prior_is_not_rewritten() {
     };
     assert_eq!(values, ["(`s#1 2 3;3 1 2)", "(3 1 2;3 2 1)"]);
 }
+
+/// QB006 groups the comparisons an `and` or `or` swallows, and a symbol or
+/// a dotted name that spells the word is no keyword: the parenthesis once
+/// closed inside it, `(s=`)and and b=0`, which q 5 cannot parse (#2256).
+#[test]
+fn a_where_phrase_fix_leaves_a_symbol_spelling_and_whole() {
+    let cases = [
+        ("s=`and and b=0", "(s=`and) and b=0"),
+        ("s=`x.and and b=0", "(s=`x.and) and b=0"),
+        ("s=x.and and b=0", "(s=x.and) and b=0"),
+        ("s=`or or b=0", "(s=`or) or b=0"),
+        ("s=`a`and and b=0", "(s=`a`and) and b=0"),
+    ];
+    let mut scripts = vec![];
+    for (phrase, fixed) in cases {
+        let source = format!("r:select from t where {phrase}");
+        let after = fixed_with(&source, &["QB006"], true);
+        assert_eq!(after, format!("r:select from t where {fixed}"));
+        scripts.push(format!(
+            "x.and:`and;t:([]s:`and`or`x.and`a;b:0 0 0 1);\n{after}\nr:count r"
+        ));
+    }
+    let Some(values) = values_on_q(&scripts) else {
+        return;
+    };
+    // The last compares with two symbols, 'length as it was before (QB008).
+    assert_eq!(values, ["1", "1", "1", "3", "'length"]);
+}
