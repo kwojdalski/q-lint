@@ -24,6 +24,7 @@ import { LIVE, LIVE_KEY, LIVE_READ_ONLY, VALUE_LIMIT, liveQueries, markdownAfter
 import type { GridAnswer, GridPayload } from "./grid";
 import { formatValue, gridOfQ, headOf, oneLine } from "./qformat";
 import type { Gatewayed } from "./gateway";
+import type { QValue } from "./qdecode";
 import { answerOf, directMode, evaluateAll } from "./querycontrols";
 import type { RowLimitFrom } from "./liveconfig";
 import { address, readProcessFile, type Process } from "./processes";
@@ -151,19 +152,31 @@ async function directLiveValues(connection: QConnection, exprs: string[], gatewa
       continue;
     }
     const { value, type, typed, precision } = ran.last;
-    // Only what is kept is written: a character is at most 4 bytes, and
-    // any other item at least one character (#2480).
-    const text =
-      typed?.kind === "chars"
-        ? Buffer.from(typed.v.subarray(0, 4 * VALUE_LIMIT)).toString("utf8")
-        : type === -11 && typeof value === "string"
-          ? value
-          : typed !== undefined
-            ? oneLine(headOf(typed, VALUE_LIMIT), precision)
-            : formatValue(value, type).join(" ");
+    const text = liveText(typed, value, type, precision);
     values[expr] = { text: Array.from(text.slice(0, 2 * VALUE_LIMIT)).slice(0, VALUE_LIMIT).join("") };
   }
   return values;
+}
+
+/// A direct live value's text, as `LIVE` writes it: a string or a char
+/// its characters (#2479), a symbol its name - the null one, which the
+/// codec makes null, none (#2574) - and anything else on one line. Only
+/// what is kept is written: a character is at most 4 bytes, and any other
+/// item at least one character (#2480).
+function liveText(typed: QValue | undefined, value: unknown, type: number | undefined, precision: number): string {
+  if (typed?.kind === "chars") {
+    return Buffer.from(typed.v.subarray(0, 4 * VALUE_LIMIT)).toString("utf8");
+  }
+  if (typed?.kind === "atom" && typed.t === -10) {
+    return Buffer.from([Number(typed.v ?? 32)]).toString("utf8");
+  }
+  if (typed?.kind === "atom" && typed.t === -11) {
+    return String(typed.v ?? "");
+  }
+  if (type === -11 && typeof value === "string") {
+    return value;
+  }
+  return typed !== undefined ? oneLine(headOf(typed, VALUE_LIMIT), precision) : formatValue(value, type).join(" ");
 }
 
 /// An output as the file keeps it: an error as VS Code writes one.

@@ -1326,3 +1326,11 @@ test("a direct cell makes grid cells only of the rows it shows, and none in cons
     qformat.gridOfQ = gridOfQ;
   }
 });
+
+test("a direct live value of a char atom is its character, and of the null symbol nothing, as LIVE writes them (#2479, #2574)", async () => {
+  const { liveValues } = require("../out/qnbrun.js");
+  // -8!"a", -8!"\n", -8!`, -8!`ab
+  const connection = directConnection({ '"a"': "0x010000000a000000f661", '"\\n"': "0x010000000a000000f60a", "`": "0x010000000a000000f500", "`ab": "0x010000000c000000f5616200" });
+  const [values] = await liveValues(connection, ['{{q: "a"}} {{q: "\\n"}} {{q: `}} {{q: `ab}}']);
+  assert.deepStrictEqual(values, { '"a"': { text: "a" }, '"\\n"': { text: "\n" }, "`": { text: "" }, "`ab": { text: "ab" } });
+});
