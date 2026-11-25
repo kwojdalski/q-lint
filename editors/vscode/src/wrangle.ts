@@ -184,15 +184,30 @@ function uncommented(base: string): string {
   return lines.map(cut).filter((l) => l.trim() !== "").join("\n");
 }
 
+/// A table's name read alone can be a partitioned table, which the grid
+/// shows by row index; a sort, a cast or a drop of one fails 'par and a
+/// rename leaves its columns as they were. Reading every partition into
+/// memory to make them could exhaust the process, so before any step but a
+/// filter the wrangle signals instead, naming the fix: a filter first - on
+/// the partition column, say - reads only the partitions it keeps and
+/// answers a table in memory, which every later step works on. Whether a
+/// table is partitioned is the process's to say, so it is asked in the q
+/// sent (#2147). Any other base answers a table in memory already.
+export const NOT_PARTITIONED = `{$[1b~@[.Q.qp;x;0b];'"a partitioned table: filter it first, on ",string[.Q.pf]," for one, so that only the partitions it keeps are read";x]}`;
+function startOf(base: string, steps: Step[]): string {
+  const code = uncommented(base);
+  return steps.length > 0 && steps[0].kind !== "filter" && /^\.?[A-Za-z]\w*(\.[A-Za-z]\w*)*$/.test(code.trim()) ? `${NOT_PARTITIONED}${code.trim()}` : code;
+}
+
 /// The steps nested in one expression over `base`.
 export function wrangleQuery(base: string, steps: Step[]): string {
-  return steps.reduce((x, step) => stepCode(step, `(${x})`), uncommented(base));
+  return steps.reduce((x, step) => stepCode(step, `(${x})`), startOf(base, steps));
 }
 
 /// The steps as a script to keep: one line each, over a local `w`, in a
 /// lambda run at once so nothing is assigned on the process.
 export function wrangleScript(base: string, steps: Step[], process: string): string {
-  const first = uncommented(base).split(/\r?\n/);
+  const first = startOf(base, steps).split(/\r?\n/);
   return [
     `/ Wrangled on ${process} by q-lint: ${steps.length} step${steps.length === 1 ? "" : "s"}`,
     "{[]",

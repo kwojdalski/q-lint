@@ -136,13 +136,15 @@ test("Wrangle Result applies a step over the result's query on its process, in t
   stub.picks.push("$(edit) Rename column...");
   stub.inputs.push((options) => (assert.strictEqual(options.validateInput("sym"), "The result has a column sym already"), assert.match(options.validateInput("a b"), /plain q name/), "price"));
   await run(RESULT_VIEW.wrangleColumn, { column: 1 });
-  assert.strictEqual(live.ran.at(-1).code, "(enlist[`px]!enlist `price) xcol (t)");
+  // A name read alone may be a partitioned table, which the q sent refuses (#2147).
+  const { NOT_PARTITIONED } = require("../out/wrangle.js");
+  assert.strictEqual(live.ran.at(-1).code, `(enlist[\`px]!enlist \`price) xcol (${NOT_PARTITIONED}t)`);
   stub.picks.push("$(symbol-type-parameter) Cast column...", "long");
   await run(RESULT_VIEW.wrangleColumn, { column: 1 });
-  assert.strictEqual(live.ran.at(-1).code, 'update px:"j"$px from (t)');
+  assert.strictEqual(live.ran.at(-1).code, `update px:"j"$px from (${NOT_PARTITIONED}t)`);
   stub.picks.push("$(trash) Drop column");
   await run(RESULT_VIEW.wrangleColumn, { column: 0 });
-  assert.strictEqual(live.ran.at(-1).code, "delete sym from (t)");
+  assert.strictEqual(live.ran.at(-1).code, `delete sym from (${NOT_PARTITIONED}t)`);
 });
 
 test("a result of a script cannot be wrangled; Escape sends nothing; turned off, the commands refuse (#961)", async () => {

@@ -175,6 +175,40 @@ test("the q of the data tools against a real q process", { skip }, async (t) => 
     assert.strictEqual(await text("count t"), "3");
   });
 
+  // The grid shows a partitioned table by row index; a sort, a cast, a drop
+  // or a rename of it would read every partition into memory, so the q sent
+  // refuses it, naming the fix: a filter first (#2147).
+  await t.test("a wrangle refuses a sort, cast, drop or rename of a partitioned table before a filter (#2147)", async () => {
+    for (const step of [
+      { kind: "sort", column: "px", descending: true },
+      { kind: "cast", column: "px", to: "j", type: 9 },
+      { kind: "drop", column: "px" },
+      { kind: "rename", column: "px", to: "price" },
+    ]) {
+      const answer = await connection.queryGrid(statements(w.wrangleQuery("p", [step])), SIZE, 1000);
+      assert.strictEqual(answer.ok, false, step.kind);
+      assert.match(answer.error, /^a partitioned table: filter it first, on date for one, so that only the partitions it keeps are read/, step.kind);
+      const script = await connection.queryGrid(statements(w.wrangleScript("p", [step], "test")), SIZE, 1000);
+      assert.match(script.error ?? "", /^a partitioned table: filter it first, on date/, step.kind);
+    }
+    // A filter first reads only the partitions it keeps; every step after works.
+    const steps = [
+      { kind: "filter", column: "date", op: "=", value: "2026.01.02" },
+      { kind: "sort", column: "px", descending: true },
+      { kind: "rename", column: "px", to: "price" },
+      { kind: "cast", column: "price", to: "j", type: 9 },
+      { kind: "drop", column: "sym" },
+    ];
+    const kept = w.wrangleQuery("p", steps);
+    assert.doesNotMatch(kept, /qp/);
+    const out = await grid(kept);
+    assert.deepStrictEqual([out.grid.names, cells(out, "price"), cells(out, "date"), out.grid.types[1]], [["date", "price"], ["3", "2", "1"], ["2026.01.02", "2026.01.02", "2026.01.02"], 7]);
+    assert.deepStrictEqual((await grid(w.wrangleScript("p", steps, "test"))).grid.cells, out.grid.cells);
+    // A table in memory read by its name passes through the check.
+    assert.deepStrictEqual((await grid(w.wrangleQuery("t", [{ kind: "drop", column: "note" }]))).grid.names, ["time", "sym", "px", "qty"]);
+    assert.strictEqual(await text(".Q.qp p"), "1b");
+  });
+
   await t.test("a cell edit changes the one row it was made in: a null, a string and an enumeration found (#964)", async () => {
     const before = await grid("t");
     // Row 1: px is null, note a one-character string, sym enumerated.
