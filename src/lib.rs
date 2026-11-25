@@ -2497,6 +2497,18 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 .iter()
                 .filter_map(|(r, to)| r.find_iter(line).find(&in_code).map(|m| (m, *r, *to)))
                 .min_by_key(|s| s.0.start())?;
+            // A cast keeps its value only where what it casts is a temporal
+            // value: a number cast to datetime counts days, and to timestamp
+            // nanoseconds - `` `datetime$1 `` is 2000.01.02T00:00, and
+            // `` `timestamp$1 `` 2000.01.01D00:00:00.000000001 (q 5, #2254).
+            // So only before a date, datetime or timestamp literal or the
+            // clock's own; what a name holds is not known here.
+            if m.as_str().ends_with('$')
+                && !re!(r"^[ \t]*(?:-?\d{4}\.\d{2}\.\d{2}(?:[TD]\d|[^\w.:]|$)|\.z\.[pPzZdD](?:[^\w.]|$))")
+                    .is_match(&line[m.end()..])
+            {
+                return None;
+            }
             begin = start + m.start();
             (
                 &source[begin..start + m.end()],

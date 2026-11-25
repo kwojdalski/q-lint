@@ -654,15 +654,21 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         // The last statement is the lambda's value, so the name stays (#213).
         ("QB017", "f:{[a] a:a}", "f:{[a] a}", false),
         ("QB017", "f:{[a]\n  a:a\n  }", "f:{[a]\n  a\n  }", false),
-        ("QP002", "r:`datetime$x", "r:`timestamp$x", false),
+        // A cast before a temporal literal or the clock: the same instant.
+        ("QP002", "r:`datetime$.z.p", "r:`timestamp$.z.p", false),
         ("QP002", "r:2026.01.01T12:00", "r:2026.01.01D12:00", false),
         (
             "QP002",
-            "s:\"15h$\";y:`datetime$z",
-            "s:\"15h$\";y:`timestamp$z",
+            "s:\"15h$\";y:15h$2020.01.01",
+            "s:\"15h$\";y:12h$2020.01.01",
             false,
         ),
-        ("QP002", "r:\"z\"$x", "r:\"p\"$x", false),
+        (
+            "QP002",
+            "r:\"z\"$ 2020.01.01T10:00",
+            "r:\"p\"$ 2020.01.01T10:00",
+            false,
+        ),
         // The datetime fixed, and the symbol on the same line left (#409).
         (
             "QP002",
@@ -807,6 +813,12 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QA007", "f:{[c] $[c;1;2;3]}"),                    // no empty slot
         ("QP002", "t:.z.z / old: 15h$x"),                   // the cast is in a comment
         ("QP002", "t:.z.Z;s:\"0Nz\""),                      // and the null in a string
+        // A number cast counts days to datetime, nanoseconds to timestamp,
+        // and a name may hold one (#2254).
+        ("QP002", "r:`datetime$1"),
+        ("QP002", "r:`datetime$x"),
+        ("QP002", "r:\"z\"$-923892.12"),
+        ("QP002", "r:15h$x"),
         (
             "QF005",
             "f:{[k] g:{[a;b;c;d;e;f;g;h] k+h}; g[1;2;3;4;5;6;7;8]}",
@@ -2138,4 +2150,36 @@ fn append_in_place_is_offered_only_where_it_can_succeed() {
         return;
     };
     assert_eq!(values, ["0 0 1 2", "'type", "0 1 2", "0 1 2", "'type"]);
+}
+
+/// QP002 changes the type, never the instant: a cast is swapped only before
+/// a date, datetime or timestamp literal or the clock, where q 5 gives the
+/// same time both ways. Before a number it is not - one day as a datetime,
+/// one nanosecond as a timestamp - and there is no fix (#2254).
+#[test]
+fn a_datetime_cast_fix_keeps_the_instant() {
+    let operands = ["2020.01.01", "2020.01.01T10:00:00.123", "2020.01.01D10:00"];
+    for operand in operands {
+        let source = format!("r:`datetime${operand}");
+        let fixed = fixed_with(&source, &["QP002"], true);
+        // The datetime literal is QP002's too, and becomes a timestamp.
+        assert_eq!(fixed, format!("r:`timestamp${}", operand.replace('T', "D")));
+    }
+    for source in [
+        "r:`datetime$1",
+        "r:`datetime$2.5",
+        "r:`datetime$x",
+        "r:15h$1",
+    ] {
+        assert_eq!(fixed_with(source, &["QP002"], true), source);
+    }
+    let mut scripts: Vec<String> = operands
+        .iter()
+        .map(|o| format!("r:(`timestamp$`datetime${o})=`timestamp${o}"))
+        .collect();
+    scripts.push("r:(`timestamp$`datetime$1)=`timestamp$1".into());
+    let Some(values) = values_on_q(&scripts) else {
+        return;
+    };
+    assert_eq!(values, ["1b", "1b", "1b", "0b"]);
 }
