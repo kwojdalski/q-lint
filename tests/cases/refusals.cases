@@ -1714,3 +1714,14 @@ a:10 0N
 a:1 0N
 a:-0W
 
+
+=== clean profile: general | while q 5 parses each of these (#2236)
+a:3.0s
+a:3.5s
+a:3s
+a:3.0
+a:3.0f
+a:3.0e
+a:3.0c
+a:1 2.0s
+a:3.0p

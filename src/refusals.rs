@@ -2044,7 +2044,7 @@ fn numbers(
                 // 1234.01m, and refuses `20000.13m`.
                 Some(format!("`{text}` is no month"))
             } else if re!(r"^\d+\.\d*[A-Za-z]$").is_match(text)
-                && !re!(r"[cefnpt]$|^\d{4}\.\d*m$|^\d{5,}\.\d\dm$").is_match(text)
+                && !re!(r"[cefnpst]$|^\d{4}\.\d*m$|^\d{5,}\.\d\dm$").is_match(text)
                 // A fraction nine characters long or more and a `z` are a
                 // datetime, seconds from 1970: q 5 reads `1234567.5z` as
                 // 1970.01.15T06:56:07.500 and refuses `123456.5z` (#811).
@@ -2054,7 +2054,9 @@ fn numbers(
                 // suffix reads: q 5 refuses `1.5d`, `1.5m`, `1.5u`, `1.5v`
                 // and `1.5x` - `u` and `v` although `1u` and `1v` parse -
                 // and takes `1.5n`, `1.5p`, `1.5t` and the month `2024.01m` (a
-                // month's digits, `2023.1m`, are QE006's).
+                // month's digits, `2023.1m`, are QE006's). An `s` makes a
+                // name, as it does after an integer: q 5 parses `3.0s` as the
+                // name `3.0`, which `` `3.0 set 5 `` defines (#2236).
                 Some(format!(
                     "`{text}`: `{}` is no type a fraction takes",
                     &text[text.len() - 1..]
