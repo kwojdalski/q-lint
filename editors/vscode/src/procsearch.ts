@@ -5,7 +5,7 @@
 // it on every process with a tag and shows the hits as a tree.
 //
 // It walks the root and every namespace (not q's own: .q .Q .h .j .o .z,
-// nor q-lint's .qlint), nested ones too, as Find Callers does, ignoring
+// KDB-X's .s and .m (#2167), nor q-lint's .qlint), nested ones too, as Find Callers does, ignoring
 // the case of A to Z: q's `lower` changes no other letter (#2166). The text is matched as written: `ss`'s wildcards `?` and `[` are
 // escaped, so `x[1]?` finds just that; a text starting with a backtick,
 // which the IPC client sends as a symbol, is made text again. At most
@@ -24,7 +24,7 @@ export const SEARCH = [
   "{[pat;vars;lim]",
   " pat:lower$[-11h=type pat;\"`\",string pat;(),pat]; m:1+`long$lim;",
   " esc:raze{$[x in \"[]?*\";\"[\",x,\"]\";enlist x]}each pat;",
-  " todo:`.,` sv'`,'asc(key`)except`q`Q`h`j`o`z`qlint`;",
+  " todo:`.,` sv'`,'asc(key`)except`q`Q`h`j`o`s`z`m`qlint`;",
   " todo:todo where{$[99h=type d:@[get;x;0];11h=type key d;0b]}each todo;",
   " fns:`$();vn:`$();vw:views[];",
   " while[count todo;",
