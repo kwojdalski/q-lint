@@ -2226,8 +2226,8 @@ off hides both.
 
 **Find in Processes...** (on a tag row in Processes, the view's title,
 or the palette) searches the function definitions - and, when you ask,
-the variable names - of every process with a tag, ignoring case, in the
-root and every namespace but q's own. The hits land in the **Find in
+the variable names - of every process with a tag, ignoring the case of
+A to Z (q's `lower` changes no other letter), in the root and every namespace but q's own. The hits land in the **Find in
 Processes** view: each process, its functions, each matching line; a line
 opens the function's live source, read again from that process, at the
 line. Each process is searched over a connection of its own, eight at a

@@ -155,3 +155,14 @@ test("a process that does not answer is given up at q-lint.query.timeout, and Ca
   assert.strictEqual(options.cancellable, true);
   assert.deepStrictEqual(cancelled.map((o) => [o.process, "found" in o ? "found" : o.error]), [["rdb", "found"], ["hung", "cancelled before it answered"]]);
 });
+
+// q's lower changes A to Z only: "ünï" found nothing in "Ünï", and the box
+// said the search ignored case.
+test("the text box says only A to Z are matched in either case, as q's lower does (#2166)", async (t) => {
+  await setUp(t, { tags: ["eu"], answer, register: registerFindInProcesses });
+  let prompt;
+  stub.inputs.push((o) => ((prompt = o.prompt), "trade"));
+  stub.picks.push((o) => o.items[0]);
+  await stub.commands.get(PROCESS_TOOL_COMMANDS.findInProcesses)("eu");
+  assert.strictEqual(prompt, "Text to find in function definitions; A to Z match in either case, other letters only as written.");
+});

@@ -176,7 +176,7 @@ export function registerFindInProcesses(
     }
     const text =
       given ??
-      (await window.showInputBox({ title: `Find in the ${processes.length} process${processes.length === 1 ? "" : "es"} tagged ${tag}`, prompt: "Text to find in function definitions, ignoring case.", validateInput: patternProblem }));
+      (await window.showInputBox({ title: `Find in the ${processes.length} process${processes.length === 1 ? "" : "es"} tagged ${tag}`, prompt: "Text to find in function definitions; A to Z match in either case, other letters only as written.", validateInput: patternProblem }));
     if (text === undefined) {
       return "no text";
     }

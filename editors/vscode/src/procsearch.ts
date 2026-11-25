@@ -6,7 +6,7 @@
 //
 // It walks the root and every namespace (not q's own: .q .Q .h .j .o .z,
 // nor q-lint's .qlint), nested ones too, as Find Callers does, ignoring
-// case. The text is matched as written: `ss`'s wildcards `?` and `[` are
+// the case of A to Z: q's `lower` changes no other letter (#2166). The text is matched as written: `ss`'s wildcards `?` and `[` are
 // escaped, so `x[1]?` finds just that; a text starting with a backtick,
 // which the IPC client sends as a symbol, is made text again. At most
 // `limit` hits are answered: one more is looked for, so `more` says only
