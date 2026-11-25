@@ -1034,7 +1034,7 @@ Development Host, or package and install it:
 
 ```sh
 mkdir -p server && install -m 755 ../../target/release/qlinter server/qlinter
-npx vsce package --out q-lint.vsix         # a name no release bump makes stale
+npx --yes @vscode/vsce package --out q-lint.vsix  # a name no release bump makes stale
 code --install-extension q-lint.vsix
 ```
 
