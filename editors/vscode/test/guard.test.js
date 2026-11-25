@@ -1559,3 +1559,28 @@ test("code too deep or too long to read is asked about, quickly, and never throw
   assert.deepStrictEqual(writes(`${"(".repeat(8000)}1${")".repeat(8000)}`), []);
   assert.deepStrictEqual(writes("((a;(b;c));d):x"), ["assigns a", "assigns b", "assigns c", "assigns d"]);
 });
+
+test("code in another language than q and k is read as SQL, or asked about (#2197, #2209)", () => {
+  const cases = {
+    // KDB-X SQL, read as the SQL tab's guard reads it: a write word in any case.
+    "s)DROP TABLE t": ["runs SQL that changes data (DROP)"],
+    "s)INSERT INTO t VALUES(9,'q')": ["runs SQL that changes data (INSERT)"],
+    "s)CREATE TABLE zz (a int)": ["runs SQL that changes data (CREATE)"],
+    "k)s)Insert Into t Values(9,'q')": ["runs SQL that changes data (INSERT)"],
+    "s) select qt('a:1')": ["runs SQL that changes data (QT())"],
+    "\\t s)delete from t": ["runs SQL that changes data (DELETE)"],
+    "s)\\l f.q": ["runs the system command \\l through SQL"],
+    "s)SELECT * FROM t": [],
+    "q)s)select a from t where b=1": [],
+    // Python is not read: a `p)` line, and embedPy's or PyKX's evaluators.
+    'p)import os; os.remove("f")': ["runs Python the guard cannot read"],
+    '.p.e "import os"': ["runs Python with .p.e"],
+    '.p.qeval"1+1"': ["runs Python with .p.qeval"],
+    '.pykx.pyexec"x=1"': ["runs Python with .pykx.pyexec"],
+    // Nor any other language.
+    "r)print(1)": ["runs r) code the guard cannot read"],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

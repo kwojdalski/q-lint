@@ -102,11 +102,15 @@
 //   which runs it on the gateway's servers (#909), and a query there that
 //   is not strings written in the call - a list the servers evaluate, a
 //   name, one built or given later, `.gw.syncexec[;`rdb] "a:1"` (#2039).
+// - code in a language other than q and k: KDB-X SQL after `s)`, read as
+//   the SQL tab reads it, `s)drop table t`, and anything else not read at
+//   all, Python after `p)` or given to `.p.e`, `.pykx.pyexec` (#2197, #2209);
 // Code too long or too deeply nested to read within the guard's bounds, or
 // that it fails to read, is asked about: the bounds keep a read well under
 // 100 ms, and the answer is the code's alone, not what was read before
 // (#2190, #2210, #2211).
 import { parseTags, type Process } from "./processes";
+import { sqlWrites } from "./sql";
 import { statements } from "./statements";
 
 export interface GuardSettings {
@@ -1124,14 +1128,42 @@ function gateway(t: Token[], i: number, found: Set<string>): void {
   }
 }
 
+/// `statement` past its `q)` and `k)` prefixes, and the language of the
+/// first other one, which runs the rest: `s)` SQL, `p)` Python (#2197, #2209).
+function unprefixed(statement: string): { text: string; language?: string } {
+  let text = statement.trimStart();
+  for (let m = /^([A-Za-z])\)\s*/.exec(text); m !== null; m = /^([A-Za-z])\)\s*/.exec(text)) {
+    text = text.slice(m[0].length);
+    if (m[1] !== "q" && m[1] !== "k") {
+      return { text, language: m[1] };
+    }
+  }
+  return { text };
+}
+
+/// What `text`, in a language other than q and k, does that the guard asks
+/// about: KDB-X SQL, `s)`, read as the SQL tab's guard reads it - a write
+/// word in any case, `INSERT`, `drop`, a function that runs q, `qt(..)` -
+/// and with a system command after the prefix, `s)\l f.q`, as that; any
+/// other language, `p)` Python among them, is not read, so asked about.
+function readLanguage(language: string, text: string, found: Set<string>): void {
+  if (language !== "s") {
+    found.add(`runs ${language === "p" ? "Python" : `${language}) code`} the guard cannot read`);
+  } else if (text.startsWith("\\")) {
+    found.add(`runs the system command ${/^\\(\\|[A-Za-z_]*)/.exec(text)?.[0] ?? "\\"} through SQL`);
+  } else if (sqlWrites(text).length > 0) {
+    found.add(`runs SQL that changes data (${sqlWrites(text).join(", ")})`);
+  }
+}
+
 /// What one statement does that the guard asks about, added to `found`.
 function readStatement(statement: string, found: Set<string>): void {
   // A language prefix, `q)` or `k)`, as many as are written, `q)k)`, is
   // not what it runs: `k)\l f.q` loads the script (#2034).
-  let text = statement.trimStart().replace(/^(?:[qk]\)\s*)+/, "");
+  let { text, language } = unprefixed(statement);
   // `\t` and `\ts` time the expression after them, read in their place, as
   // many as are written.
-  while (text.startsWith("\\")) {
+  while (language === undefined && text.startsWith("\\")) {
     const command = /^\\(\\|[A-Za-z_]+)(?::\d+)?\s*([\s\S]*)$/.exec(text);
     const name = command?.[1] ?? "";
     const argument = (command?.[2] ?? "").trim();
@@ -1139,12 +1171,16 @@ function readStatement(statement: string, found: Set<string>): void {
       found.add("sets the timer with \\t");
     } else if (name === "t" || name === "ts") {
       statement = argument;
-      text = argument.trimStart().replace(/^(?:[qk]\)\s*)+/, "");
+      ({ text, language } = unprefixed(argument));
       continue;
     } else if (!(argument === "" && READS_BARE.has(name)) && !(name === "w" && /^[01]$/.test(argument))) {
       // (`\w 0` and `\w 1` report the symbols; another number sets the limit.)
       found.add(`runs the system command \\${name}`);
     }
+    return;
+  }
+  if (language !== undefined) {
+    readLanguage(language, text, found);
     return;
   }
   // The lambdas read again count by statement: a long script of reads is
@@ -1343,6 +1379,12 @@ function readStatement(statement: string, found: Set<string>): void {
             found.add(`${unqualified(k.text) === "xkey" ? "keys" : "sorts"} a table in place with ${k.text}`);
           }
         }
+        continue;
+      }
+      // embedPy and PyKX run Python, which the guard does not read: `.p.e`,
+      // `.p.qeval`, `.p.import`, `.pykx.pyexec` (#2197).
+      if (/^\.(p|pykx)(\.|$)/.test(k.text)) {
+        found.add(`runs Python with ${k.text}`);
         continue;
       }
       if (WRITERS.has(unqualified(k.text))) {
