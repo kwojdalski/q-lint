@@ -1887,3 +1887,25 @@ test("eval of a tree reads the tree's head past its parentheses, and every list 
     assert.deepStrictEqual(writes(code), [], code);
   }
 });
+
+test("an evaluator passed as a value - in parentheses, through an iterator, a composition, a list - is read on the trees around it (#2266)", () => {
+  const asks = [
+    "((eval))(:;`a;77)", "(eval')enlist(:;`a;77)", "eval/[(:;`a;77)]", "'[eval;::](:;`a;77)", "(eval/)(:;`a;77)", "(-6!)(:;`a;77)", "((-6!))(:;`a;77)",
+    "((eval))(?;enlist`sym;enlist`zz)", "(eval;::)[0](:;`a;77)", "first[(eval;::)](:;`a;77)", "{x y}[eval;(count;(:;`a;77))]", "'[::;eval](eval;enlist(:;`a;77))",
+    "(value/)((@);`b;0;:;77)", "(.q.eval)(enlist;(:;`a;77))", "(-6!;::)[0](:;`a;77)", "(-24!)(:;`a;77)", "{x}[eval](:;`a;77)", "(eval) . enlist(:;`a;77)",
+  ];
+  for (const code of asks) {
+    assert.ok(writes(code).length > 0, code);
+  }
+  for (const code of ["(eval)(+;1;2)", "(eval')enlist(+;1;2)", "{x y}[eval;(count;1 2)]", "(-6!)(+;1;2)", "eval/[(*;2;3)]"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});
+
+test("handle 0 picked out of a list and applied to a tree evaluates it (#2266)", () => {
+  assert.deepStrictEqual(writes("(0;::)[0]((@);`b;0;:;77)"), ["evaluates an amend on handle 0"]);
+  assert.ok(writes("(0;::)[0](.;`b;enlist 0;:;77)").length > 0);
+  for (const code of ["(0;1)[0]", "(0;1 2)[1]", "(0;::)[0](+;1;2)", "x:(0;1)[0]"]) {
+    assert.deepStrictEqual(writes(code).filter((r) => !r.startsWith("assigns")), [], code);
+  }
+});

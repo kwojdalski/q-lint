@@ -944,6 +944,26 @@ function evaluated(t: Token[], j: number, byValue: boolean): { reason: string; a
   return reason === undefined ? undefined : { reason, at: j };
 }
 
+/// What an evaluator at `t[i]` passed as a value - in parentheses,
+/// through an iterator or a composition, an item of a list, given to a
+/// function - would run on a tree in the expression around it, which it
+/// may be applied to: `((eval))(:;`a;77)`, `'[eval;::](:;`a;77)`,
+/// `{x y}[eval;(count;(:;`a;77))]` (#2266). Lists in a lambda there are
+/// that lambda's.
+function treesAround(t: Token[], i: number, byValue: boolean): { reason: string; at: number } | undefined {
+  const end = expressionEnd(t, i);
+  scanned(end - i);
+  for (let p = expressionStart(t, i), lambda = 0; p < end; p++) {
+    if (t[p].kind === "open" && t[p].text === "{") lambda++;
+    else if (t[p].kind === "close" && t[p].text === "}") lambda--;
+    else if (lambda === 0 && t[p].kind === "open" && t[p].text === "(") {
+      const what = evaluated(t, p, byValue);
+      if (what !== undefined) return { reason: what.reason, at: i };
+    }
+  }
+  return undefined;
+}
+
 /// What a list in the tree opening at `t[open]` does that changes the
 /// process, `eval` evaluating each list in a tree before applying its
 /// head: `eval(+;0;(:;`a;77))` assigns `a` (#2265). Not `value`'s, which
@@ -2059,7 +2079,8 @@ function readStatement(statement: string, found: Set<string>): void {
         let n = i + 1;
         while (t[n]?.kind === "op" && ["@", ".", "'"].includes(t[n].text)) n++;
         const applied = t[n] !== undefined && (["str", "name", "sym", "num"].includes(t[n].kind) || (t[n].kind === "open" && t[n].text !== "{"));
-        const what = evaluates(t, i + (wrapped || trapped ? 1 : 0), unqualified(k.text) !== "eval" && unqualified(k.text) !== "reval", false, applied ? undefined : expressionEnd(t, i));
+        const byValue = unqualified(k.text) !== "eval" && unqualified(k.text) !== "reval";
+        const what = evaluates(t, i + (wrapped || trapped ? 1 : 0), byValue, false, applied ? undefined : expressionEnd(t, i)) ?? (applied && !wrapped ? undefined : treesAround(t, i, byValue));
         if (what !== undefined) {
           found.add(`evaluates ${what.reason} with ${k.text}`);
           i = what.at;
@@ -2162,7 +2183,8 @@ function readStatement(statement: string, found: Set<string>): void {
     // is assigned by the rules of `a:77` - global at the top level, with
     // `::`, to a dotted name, or compound or indexed to a name that is not a
     // local of the lambda it is in.
-    if (k.kind === "op" && k.text === ":" && (next?.text !== ":" || !touching(k, next))) {
+    // (After an iterator, `':[f;x]`, `/:[f;x]`, it is the iterator's.)
+    if (k.kind === "op" && k.text === ":" && (next?.text !== ":" || !touching(k, next)) && !(t[i - 1]?.kind === "op" && ["'", "/", "\\"].includes(t[i - 1].text) && touching(t[i - 1], k))) {
       const wrapped = next?.text === ")" && next.kind === "close";
       const bracket = t[i + (wrapped ? 2 : 1)];
       // Where the operator starts: `::` and `+:` are one, `0:` a file verb.
@@ -2317,9 +2339,11 @@ function readStatement(statement: string, found: Set<string>): void {
         }
       }
     }
-    // `-6!` is `eval`, and `-24!` `reval` (#1774).
+    // `-6!` is `eval`, and `-24!` `reval` (#1774); passed as a value,
+    // `(-6!)(:;`a;1)`, `(-6!;::)[0]`, it is read on the trees around it (#2266).
     if (bang > 0 && (fn === "-6" || fn === "-24")) {
-      const what = evaluates(t, bang, false);
+      const passed = t[bang + 1] === undefined || t[bang + 1].text === ";" || (t[bang + 1].kind === "close" && t[bang + 1].text !== "}");
+      const what = evaluates(t, bang, false) ?? (passed ? treesAround(t, bang, false) : undefined);
       if (what !== undefined) {
         found.add(`evaluates ${what.reason} with ${fn}!`);
         i = what.at;
@@ -2351,6 +2375,21 @@ function readStatement(statement: string, found: Set<string>): void {
         if (what !== undefined) {
           found.add(`evaluates ${what.reason} on handle 0`);
           i = what.at;
+          continue;
+        }
+      }
+      // An item of a list picked and applied, `(0;::)[0](@;`b;0;:;77)`:
+      // read on the trees around it, as an evaluator passed as a value (#2266).
+      if ((t[i - 1]?.text === "(" || t[i - 1]?.text === ";") && (next?.text === ";" || next?.text === ")")) {
+        let close = i + 1;
+        for (let depth = 0; close < t.length; close++) {
+          if (t[close].kind === "open") depth++;
+          else if (t[close].kind === "close" && depth-- === 0) break;
+        }
+        scanned(close - i);
+        const what = t[close]?.text === ")" && t[close + 1]?.kind === "open" && t[close + 1].text === "[" ? treesAround(t, i, true) : undefined;
+        if (what !== undefined) {
+          found.add(`evaluates ${what.reason} on handle 0`);
           continue;
         }
       }
