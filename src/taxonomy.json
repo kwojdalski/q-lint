@@ -52,7 +52,7 @@
     "code": "QE008",
     "name": "monadic-glyph",
     "category": "syntax",
-    "summary": "A glyph applied to one argument; q 5 refuses -x, ,x, #x and the rest - the keyword is neg, enlist, count, not...",
+    "summary": "A glyph applied to one argument; q 5 refuses -x, ,x, #x and the rest - the keyword is neg, enlist, count, not... - and an infix keyword with nothing on its left, in b",
     "scope": "builtin"
   },
   {

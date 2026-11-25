@@ -20,6 +20,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     monadic_glyph(path, source, code, comments, &mut out);
     juxtaposed_derived(path, source, code, comments, &mut out);
     keyword_each(path, source, comments, &unsym, &mut out);
+    monadic_keyword(path, source, code, comments, &unsym, &mut out);
     numbers(path, source, code, comments, &unsym, &mut out);
     number_colon(path, source, code, &unsym, &mut out);
     non_ascii(path, source, code, &mut out);
@@ -1540,7 +1541,14 @@ pub(crate) fn opens_expression(
             .is_some_and(|m| {
                 boundary(comments, m.start())
                     && match m.as_str() {
-                        "by" | "where" => crate::in_qsql_phrase(comments, m.end()),
+                        // `where` is the keyword only after the query's
+                        // `from`: before it, it is the function, and q 5
+                        // parses `select where each b from t` (#2217).
+                        "where" => {
+                            crate::in_qsql_phrase(comments, m.end())
+                                && !crate::qsql_phrase(comments, m.start(), true)
+                        }
+                        "by" => crate::in_qsql_phrase(comments, m.end()),
                         "from" => crate::qsql_phrase(comments, m.end(), false),
                         _ => true,
                     }
@@ -1811,6 +1819,76 @@ fn derived_operand(
         }
     }
     (q < at).then_some(q)
+}
+
+/// QE008 too. An infix keyword with nothing on its left, applied to what
+/// follows it: q 5 refuses `a:in b`, `a:mod 2`, `a:xasc t`, `x: each y`,
+/// `{ div 2}` and `(set 1)` at parse (with ' , or 'insert for `insert`), and
+/// takes `x in b`, `in[1;b]`, `(in)` and `a:in`. Checked keyword by keyword
+/// against q 5: `aj`, `aj0` and `ej` are no infix there, and parse applied
+/// (#2217). Before `each` and the other iterator keywords it is QE011's.
+fn monadic_keyword(
+    path: &str,
+    source: &str,
+    code: &str,
+    comments: &str,
+    unsym: &str,
+    out: &mut Vec<Finding>,
+) {
+    for m in re!(
+        r"\b(?:and|asof|bin|binr|cor|cov|cross|cut|div|dsave|each|except|ij|in|insert|inter|like|lj|lsq|mmu|mod|or|over|peach|pj|prior|rotate|scan|set|setenv|ss|sublist|sv|uj|union|upsert|vs|wavg|within|wsum|xasc|xbar|xcol|xcols|xdesc|xexp|xgroup|xkey|xlog|xprev|xrank|ema|fby|mavg|mcount|mdev|mmax|mmin|msum|scov|ijf|ljf|ujf)\b"
+    )
+    .find_iter(unsym)
+    {
+        let line_start = unsym[..m.start()].rfind('\n').map_or(0, |p| p + 1);
+        if !boundary(code, m.start())
+            || unsym[..m.start()].ends_with(['.', '`'])
+            || unsym[m.end()..].starts_with(['.', ':', '['])
+            || crate::system_command(&source[line_start..])
+        {
+            continue;
+        }
+        let next = continued(&comments[m.end()..]);
+        if !starts_operand(next)
+            || re!(r"^(?:each|peach|over|scan|prior)(?:[^A-Za-z0-9_.]|$)").is_match(next)
+        {
+            continue;
+        }
+        // An iterator keyword after an infix keyword or a glyph is QE011's,
+        // `cor each x` and `x + each y`; and a symbol ending in `/` or `:`
+        // is an operand, `` `:db/t/ set x `` (#2217).
+        let before = comments[..m.start()].trim_end_matches([' ', '\t', '\r', '\n']);
+        let tail = &before[before.len()
+            - before
+                .bytes()
+                .rev()
+                .take_while(|b| b.is_ascii_alphanumeric() || *b == b'_')
+                .count()..];
+        if (matches!(m.as_str(), "each" | "peach" | "over" | "scan" | "prior")
+            && (crate::semantics::INFIX.contains(&tail)
+                || before.ends_with(|c: char| GLYPHS.contains(&(c as u8)))))
+            || re!(r"`(?::[A-Za-z0-9_.:/]*|[A-Za-z0-9_.][A-Za-z0-9_.:]*)$").is_match(before)
+        {
+            continue;
+        }
+        let expression = line_start + expression_start(&source[line_start..]);
+        if !opens_expression(code, source, comments, m.start(), expression) {
+            continue;
+        }
+        let word = m.as_str();
+        let mut finding = Finding::at(
+            path,
+            source,
+            m.start(),
+            "QE008",
+            format!(
+                "`{word}` is infix and has nothing on its left: q 5 refuses this line; write \
+                 its left argument before it, or `{word}[x;y]`"
+            ),
+        );
+        finding.end_column = finding.column.map(|c| c + word.len());
+        out.push(finding);
+    }
 }
 
 /// QE011. An infix keyword or glyph before an iterator keyword - `each`,

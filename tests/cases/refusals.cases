@@ -2063,3 +2063,64 @@ a:select from .a.t
 a:select from -1#t
 a:select from t where -1<a
 a:update a:1 from t
+
+=== QE008 profile: general | an infix keyword with nothing on its left (q 5: ', #2217)
+a:in b
+
+=== QE008 profile: general | an infix keyword with nothing on its left (q 5: ', #2217)
+a:except b
+
+=== QE008 profile: general | an infix keyword with nothing on its left (q 5: ', #2217)
+a:like "a"
+
+=== QE008 profile: general | an infix keyword with nothing on its left (q 5: ', #2217)
+a:mod 2
+
+=== QE008 profile: general | an infix keyword with nothing on its left (q 5: ', #2217)
+a:xasc t
+
+=== QE008 profile: general | an infix keyword with nothing on its left (q 5: ', #2217)
+a:set 1
+
+=== QE008 profile: general | an infix keyword with nothing on its left (q 5: ', #2217)
+a:x: each y
+
+=== QE008 profile: general | an infix keyword with nothing on its left (q 5: ', #2217)
+a:{ div 2}
+
+=== QE008 profile: general | an infix keyword with nothing on its left (q 5: 'insert, #2217)
+a:insert`x
+
+=== QE008 profile: general | an infix keyword with nothing on its left (q 5: ', #2217)
+a:each y
+
+=== QE008 profile: general | an infix keyword with nothing on its left (q 5: ', #2217)
+a:within 1 2
+
+=== QE008 QF010 profile: general | an infix keyword with nothing on its left (q 5: ', #2217)
+a:{[x] in y}
+
+=== QE008 profile: general | an infix keyword with nothing on its left (q 5: ', #2217)
+a:(mod 2)
+
+=== clean profile: general | while q 5 parses each of these (#2217)
+a:1 in b
+a:in[1;b]
+a:(in)
+a:x mod 2
+a:`a xasc t
+a:f each y
+a:{x div 2}
+a:`t insert 1
+a:(in;1)
+a:.q.in 1
+a:in
+a:mod[2]
+
+=== QE008 profile: general | where before from is the function (q 5: ', #2217)
+a:select from t where each b
+
+=== clean profile: general | while q 5 parses each of these (#2217)
+nums:raze exec 1_/:num[idx]@'where each b idx from uniqueTab
+a:select where each b from t
+a:select a by where each b from t
