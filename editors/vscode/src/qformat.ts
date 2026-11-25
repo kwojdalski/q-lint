@@ -850,18 +850,26 @@ function columnTypeOf(q: QValue): number {
   return q.kind === "vector" ? q.t : q.kind === "chars" ? 10 : q.kind === "table" ? 98 : q.kind === "dict" ? 99 : 0;
 }
 
-/// The first `n` items of a decoded list.
-function firstOf(q: QValue, n: number): QValue {
+/// The first `n` items of a decoded list; the last `n` when `last`.
+function firstOf(q: QValue, n: number, last = false): QValue {
+  const from = (length: number): [number, number] => (last ? [Math.max(0, length - n), length] : [0, n]);
   if (q.kind === "vector" || q.kind === "list") {
-    return { ...q, v: q.v.slice(0, n) } as QValue;
+    return { ...q, v: q.v.slice(...from(q.v.length)) } as QValue;
   }
   if (q.kind === "chars") {
-    return { ...q, v: q.v.subarray(0, n) };
+    return { ...q, v: q.v.subarray(...from(q.v.length)) };
   }
   if (q.kind === "table") {
-    return { ...q, data: q.data.map((c) => firstOf(c, n)) };
+    return { ...q, data: q.data.map((c) => firstOf(c, n, last)) };
   }
   return q;
+}
+
+/// The first `n` items of a decoded value - a dictionary's first `n` keys
+/// and values - for text that is cut after `n` characters anyway, each
+/// item writing at least one (#2480).
+export function headOf(q: QValue, n: number): QValue {
+  return q.kind === "dict" ? { ...q, k: firstOf(q.k, n), v: firstOf(q.v, n) } : firstOf(q, n);
 }
 
 /// The items of a decoded list as values: a table's rows, a list's items.
@@ -1005,8 +1013,9 @@ function listRanks(items: QValue[]): number[] {
 /// `GRID` would send them for the same value: a table (keyed: its keys
 /// marked), a dictionary as `key` and `value` columns (keyed by a table, its
 /// key columns and `value`), or a list other than a string as one `value`
-/// column; at most `limit` rows. Undefined for anything else.
-export function gridOfQ(q: QValue, limit: number, precision = 7): GridPayload | undefined {
+/// column; at most `limit` rows, the last ones when `last`. Undefined for
+/// anything else.
+export function gridOfQ(q: QValue, limit: number, precision = 7, last = false): GridPayload | undefined {
   let columns: TypedColumn[];
   let keys = 0;
   const tableColumns = (t: QValue & { kind: "table" }): TypedColumn[] => t.cols.map((name, i) => ({ name, q: t.data[i] }));
@@ -1027,7 +1036,7 @@ export function gridOfQ(q: QValue, limit: number, precision = 7): GridPayload | 
     return undefined;
   }
   const count = columns.length > 0 ? countOf(columns[0].q) : 0;
-  const shown = columns.map((c) => ({ ...c, q: firstOf(c.q, limit) }));
+  const shown = columns.map((c) => ({ ...c, q: firstOf(c.q, limit, last) }));
   const types = shown.map((c) => columnTypeOf(c.q));
   const cells = shown.map((c) =>
     c.q.kind === "vector" || c.q.kind === "chars"
