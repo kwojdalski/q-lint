@@ -1259,13 +1259,32 @@ test("a replay passes only upd's messages to upd, to a table's name, and skips t
   readTpLog(await connection.call(".qlint.tp.load", path.join(dir, "tp.log")));
   assert.deepStrictEqual(readOthers(await connection.call(".qlint.tp.others", 0, 4)), { count: 3, heads: ["system", "set", ""] });
   const replayed = readReplayed(await connection.call(".qlint.tp.replay", 0, 4));
-  assert.deepStrictEqual([replayed.replayed, replayed.failed, replayed.skipped], [2, 1, 3]);
+  assert.deepStrictEqual([replayed.replayed, replayed.failed, replayed.skipped], [1, 1, 3]);
   assert.deepStrictEqual(replayed.heads, ["system", "set", ""]);
   assert.match(replayed.errors[0], /not a table name: `\.z\.pw/);
   assert.deepStrictEqual(Object.fromEntries(replayed.tables.map((x) => [x.name, x.rows])), { trade: 1 });
   assert.strictEqual(fs.existsSync(path.join(dir, "pwned1")), false);
   assert.strictEqual(fs.existsSync(path.join(dir, "pwned2")), false);
   assert.strictEqual(await connection.call("{[x] @[{100h=type .z.pw};::;0b]}", 0), false);
+});
+
+// A tickerplant journals column lists, which the default upd cannot make a
+// table from; the failures were counted as replayed (#2597).
+test("a replay of a log of column lists without its schema counts every message failed, none replayed", { skip }, async (t) => {
+  const log = [
+    'f:hsym`$"$DIR/tp.log";',
+    ".[f;();:;()];",
+    "h:hopen f;",
+    "h enlist(`upd;`trade;(enlist 09:00:00.000;enlist`a;enlist 1f));",
+    "h enlist(`upd;`quote;(enlist 09:00:01.000;enlist`a;enlist 1f));",
+    "hclose h;",
+    "",
+  ].join("\n");
+  const { connection, dir } = await connect(t, log + TPLOG_INIT + "\n");
+  readTpLog(await connection.call(".qlint.tp.load", path.join(dir, "tp.log")));
+  const replayed = readReplayed(await connection.call(".qlint.tp.replay", 0, 1));
+  assert.deepStrictEqual([replayed.replayed, replayed.failed], [0, 2]);
+  assert.match(replayed.errors[0], /no table trade: load its schema first/);
 });
 
 test("a tickerplant log whose first temporal column is a date or a month opens, with no time of day (#1248)", { skip }, async (t) => {

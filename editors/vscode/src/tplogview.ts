@@ -325,7 +325,7 @@ export class TickerplantLog {
         plainMessage(`Replay messages ${from} to ${to} into the local q on port ${local.port}?`),
         {
           modal: true,
-          detail: `Each (\`upd;table;data) message is passed to upd, as -11! would, in the q q-lint started for this log; nothing is sent to your processes. Without a schema loaded first, a table is made from its first message.${skipped}`,
+          detail: `Each (\`upd;table;data) message is passed to upd, as -11! would, in the q q-lint started for this log; nothing is sent to your processes. Without a schema loaded first, a table is made only from a first message that is a table: a log of column lists, as a TorQ or kdb+tick tickerplant writes, needs its schema (Load Schema) first.${skipped}`,
         },
         yes,
       );

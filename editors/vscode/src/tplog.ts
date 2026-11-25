@@ -25,7 +25,9 @@
 /// replayer the page asks through.
 export const TPLOG_INIT = [
   // A table's name only: not a dotted one, `.z.pw` or `.q.x`, which `set`
-  // would replace with what the message holds (#1829).
+  // would replace with what the message holds (#1829). A table is made only
+  // from a message that is one: a tickerplant journals a list of columns,
+  // which needs its schema loaded first (#2597).
   "upd:{[t;x] if[(-11h<>type t)|\".\"=first string t;'\"not a table name: \",-3!t];$[t in tables`.;t insert x;98h=type x;t set x;'\"no table \",string[t],\": load its schema first\"]}",
   ".qlint.tp.load:{[f] f:hsym`$f;c:-11!(-2;f);ok:0>type c;n:$[ok;c;c 0];",
   " m:$[0=n;();ok;get f;[b:(c 1)#read1 f;b[4+til 4]:reverse 0x0 vs\"i\"$n;p:`:qlintprefix.log;p 1:b;r:get p;hdel p;r]];",
@@ -57,7 +59,7 @@ export const TPLOG_INIT = [
   " r:{$[(0h=type x)&(1<count x)&`upd~first x;@[{upd . 1_x;`ok};x;{`$x}];`skip]}each .qlint.tp.m ix;",
   " e:r where not r in`ok`skip;",
   " k:.qlint.tp.s[`fn]ix where r=`skip;",
-  " `replayed`failed`errors`skipped`heads`tables`rows!(\"f\"$sum not r=`skip;\"f\"$count e;string 5 sublist distinct e;\"f\"$count k;string 5 sublist distinct k;string tables`.;\"f\"${count get x}each tables`.)}",
+  " `replayed`failed`errors`skipped`heads`tables`rows!(\"f\"$sum r=`ok;\"f\"$count e;string 5 sublist distinct e;\"f\"$count k;string 5 sublist distinct k;string tables`.;\"f\"${count get x}each tables`.)}",
   // The messages of a range that are not `upd`'s, and the names they give.
   ".qlint.tp.others:{[a;b] k:{x where not x=`upd}.qlint.tp.s[`fn](\"j\"$a)+til 1+(\"j\"$b)-\"j\"$a;`count`heads!(\"f\"$count k;string 5 sublist distinct k)}",
   // `\l` refuses a path with a space in it ('nyi, KDB-X), so a schema is
@@ -80,6 +82,7 @@ export interface TpPage {
 }
 
 export interface Replayed {
+  /// Messages `upd` ran without an error; `failed` are those it refused.
   replayed: number;
   failed: number;
   errors: string[];
