@@ -282,10 +282,14 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
     //
     // Between the name and its argument, and between vector items, the gap
     // is the statement's blanks: a line break into an indented line
-    // continues it, past any blank or comment lines (#193, #676).
+    // continues it, past any blank or comment lines (#193, #676). q needs
+    // no gap at all before a backtick, a quote or a parenthesis: q 5
+    // `sum`a`b`, `til"a"` and `til(1.5)` are 'type as their spaced forms are
+    // (#2241). Before a digit there has to be one, or the digit is part of
+    // the name - `til1` is a name, not `til 1`.
     const GAP: &str = blank!();
     for call in re!(&format!(
-        r#"\b({BUILTINS}){GAP}+((?:-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*(?:{GAP}+-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*)*)|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*"|\((?:[^()"\n]|"(?:\\.|[^"\\])*")*\)|enlist{GAP}+(?:-?\.?\d[A-Za-z0-9.:]*(?:[ \t]+-?\.?\d[A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*"))"#
+        r#"\b({BUILTINS}){GAP}*((?:-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*(?:{GAP}+-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*)*)|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*"|\((?:[^()"\n]|"(?:\\.|[^"\\])*")*\)|enlist{GAP}+(?:-?\.?\d[A-Za-z0-9.:]*(?:[ \t]+-?\.?\d[A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*"))"#
     ))
     .captures_iter(comments)
     {
@@ -309,6 +313,9 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
             continue;
         }
         let arg = call.get(2).unwrap();
+        if arg.start() == name.end() && !arg.as_str().starts_with(['`', '"', '(']) {
+            continue;
+        }
         out.push(Call {
             at: whole.start(),
             name: call.get(1).unwrap().as_str(),

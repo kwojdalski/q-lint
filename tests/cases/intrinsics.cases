@@ -794,3 +794,37 @@ f:x within 0W 1
 g:x within `b`a
 h:x within (10;1)
 i:x within 2024.01.01 2024.01.10
+
+=== QT010 profile: general | a builtin needs no blank before a backtick (q 5: 'type, #2241)
+r:sum`a`b
+
+=== QT008 profile: general | nor before a quote (q 5: 'type, #2241)
+r:til"a"
+
+=== QT008 profile: general | nor before a parenthesis (q 5: 'type, #2241)
+r:til(1.5)
+
+=== QT011 profile: general | an unspaced one-char string is an atom to sort (q 5: 'rank, #2241)
+r:asc"a"
+
+=== QT016 profile: general | unspaced symbol to numeric math (q 5: 'type, #2241)
+r:sqrt`a
+
+=== QT013 profile: general | unspaced symbol to flip (q 5: 'rank, #2241)
+r:flip`t
+
+=== QT012 profile: general | unspaced symbol atom to distinct (q 5: 'type, #2241)
+r:distinct`a
+
+=== clean profile: general | the unspaced forms q runs stay silent (#2241)
+a:sum(1 2)
+b:til(3)
+c:asc"ab"
+d:distinct`a`b
+e:til`.q
+f:count`a
+g:max`a
+
+=== clean profile: general | a digit straight after the name is part of another name, not an argument (#2241)
+a:{til1:1.5; til1}[]
+
