@@ -776,6 +776,26 @@ test("a failed run drops the live values of the Markdown after the cells it did 
   assert.doesNotMatch(toHtml(run.qnb, "n"), /from last week/);
 });
 
+// Values not read are not this run's: they go, as a failed cell's do (#2151).
+test("a run with live values off drops the values an earlier run kept, and writes none (#2151)", async () => {
+  const stale = { [LIVE_KEY]: { total: { text: "50" } } };
+  const qnb = {
+    cells: [
+      { kind: "markdown", source: "Top {{q: total}}", metadata: stale },
+      { kind: "code", source: "total:10*n" },
+      { kind: "markdown", source: "Total is {{q: total}}", metadata: { keep: 1, ...stale } },
+    ],
+  };
+  const ex = fakeExecutor((cut) => ({ ok: true, type: -7, text: [cut.join(";")] }));
+  const run = await runNotebook(qnb, ex, SETTINGS, { n: "7" }, { liveValues: false });
+  assert.strictEqual(run.failed, undefined);
+  assert.deepStrictEqual(ex.codes.flat().filter((c) => c === "total"), []);
+  // The parameters' cell is the first.
+  assert.deepStrictEqual(run.qnb.cells[1].metadata, {});
+  assert.deepStrictEqual(run.qnb.cells[3].metadata, { keep: 1 });
+  assert.doesNotMatch(toHtml(run.qnb, "n"), />50</);
+});
+
 test("a JSON output that is an array or a string comes back from Jupyter as the same JSON (#1545)", () => {
   for (const text of ["[1,2]", '"abc"', '{"a":[1]}', "3"]) {
     const qnb = { cells: [{ kind: "code", source: "1", outputs: [{ items: [{ mime: "application/json", text }] }] }] };

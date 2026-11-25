@@ -192,7 +192,8 @@ export interface RunResult {
 /// Run the notebook `qnb`'s q cells in order on `executor`, with its
 /// parameters `overrides`; the notebook with this run's outputs.
 /// `progress` hears each cell as it starts; `cancelled` is asked before
-/// each, and stops the run; `liveValues: false` reads no Markdown values.
+/// each, and stops the run; `liveValues: false` reads no Markdown values,
+/// and drops those an earlier run kept.
 export async function runNotebook(
   qnb: Qnb,
   executor: Executor,
@@ -214,8 +215,9 @@ export async function runNotebook(
     failed ??= { cell: i + 1, message };
   };
   // The Markdown whose values the cell at `i` reads, and, when it does not
-  // run or fails, what they showed was another run's (#1544).
-  const markdownOf = (i: number): number[] => (hooks.liveValues === false ? [] : markdownAfter(cells, i).filter((j) => cells[j].kind === "markdown"));
+  // run or fails, or values are not read, what they showed was another
+  // run's (#1544, #2151).
+  const markdownOf = (i: number): number[] => markdownAfter(cells, i).filter((j) => cells[j].kind === "markdown");
   const dropLive = (i: number): void => {
     for (const j of markdownOf(i)) {
       const { [LIVE_KEY]: _old, ...rest } = cells[j].metadata ?? {};
@@ -252,7 +254,7 @@ export async function runNotebook(
       continue;
     }
     const cut = statements(cell.source);
-    const after = markdownOf(i);
+    const after = hooks.liveValues === false ? [] : markdownOf(i);
     named = directive.process ?? named;
     try {
       const [ok, parts, values] = await executor.on(named, guardedText(cell.source, after.map((j) => cells[j].source)), async (connection) => {
@@ -269,6 +271,8 @@ export async function runNotebook(
       if (!ok) {
         const error = parts.find((p) => p.kind === "error");
         stop(i, error?.kind === "error" ? error.message : "the cell failed");
+        dropLive(i);
+      } else if (hooks.liveValues === false) {
         dropLive(i);
       }
     } catch (error) {
