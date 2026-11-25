@@ -31,9 +31,12 @@ pub(super) fn parameters(code: &str, raw: &str, scopes: &[Scope], brace: usize) 
         // A column name is no read: not in a query's phrases, nor before
         // the `:` of a table literal's column (KDB-X: `{select z from x}`
         // and `{([]z:x)}` take one argument).
+        // Scopes are in order of their `{`, as `scope_at` reads them: a
+        // search, where a walk of them all for each lambda was quadratic
+        // in a file of lambdas (#2348).
         let direct = scopes
-            .iter()
-            .find(|scope| scope.start == brace)
+            .get(scopes.partition_point(|scope| scope.start < brace))
+            .filter(|scope| scope.start == brace)
             .map_or(String::new(), |scope| {
                 crate::table_columns_blanked(&super::with_from_clauses(&scope.direct, false))
             });

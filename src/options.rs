@@ -68,7 +68,9 @@ impl Default for RuleOptions {
     fn default() -> Self {
         RuleOptions {
             max_lines: 25,
-            markers: Regex::new(r"\b(TODO|FIXME|XXX|HACK)\b").unwrap(),
+            // Compiled once: `Settings::default` builds these for every
+            // finding under `--isolated` (#2350).
+            markers: re!(r"\b(TODO|FIXME|XXX|HACK)\b").clone(),
             name_pattern: None,
         }
     }

@@ -412,8 +412,11 @@ pub fn symbols(code: &str, raw: &str, leaf: &str) -> Vec<Mention> {
         let end = rest
             .find(|c: char| !(c.is_ascii_alphanumeric() || "_.:/".contains(c)))
             .unwrap_or(rest.len());
+        if &rest[..end] != leaf {
+            continue;
+        }
         let line = code[..at].rfind('\n').map_or(0, |p| p + 1);
-        if &rest[..end] != leaf || crate::system_command(&raw[line..]) {
+        if crate::system_command(&raw[line..]) {
             continue;
         }
         let ns = &namespaces[namespaces
@@ -470,8 +473,15 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
         .1
         .as_str()
     };
+    // Each line's start from one table of newlines: a search back from each
+    // name made every request that reads mentions quadratic in the length
+    // of a long line (#2347).
+    let newlines: Vec<usize> = code.match_indices('\n').map(|(at, _)| at).collect();
     let system = |at: usize| {
-        let line = code[..at].rfind('\n').map_or(0, |p| p + 1);
+        let line = match newlines.partition_point(|&p| p < at) {
+            0 => 0,
+            n => newlines[n - 1] + 1,
+        };
         crate::system_command(&raw[line..])
     };
     let statements = top_level_statements(code, raw);

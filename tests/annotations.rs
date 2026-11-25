@@ -398,6 +398,48 @@ fn hints_and_lenses_over_many_definitions_take_linear_time() {
     );
 }
 
+/// Reference lenses over one name defined many times and read as often:
+/// each read added one to every definition of the name, n^2 increments for
+/// lenses that all show the same total (#2349).
+#[test]
+fn reference_lenses_over_one_name_defined_many_times_take_linear_time() {
+    let time = |n: usize| {
+        let text: String = (0..n)
+            .map(|i| format!("f:{{[a;b] a+b+{i}}};\nr{i}:f[1;2];\n"))
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("same.q"), &text).unwrap();
+        let options = json!({"codeLens": {"enable": true}, "referenceLens": {"enable": true}});
+        let (mut server, _) = Server::over(dir.path(), &[], client(), options);
+        let uri = server.open(dir.path(), "same.q", &text);
+        let mut ask = || {
+            let started = std::time::Instant::now();
+            let lenses = server.whole("textDocument/codeLens", &uri, json!({}));
+            let elapsed = started.elapsed();
+            let lenses = lenses["result"].as_array().unwrap().clone();
+            let counted = format!("{n} references");
+            assert!(
+                lenses
+                    .iter()
+                    .any(|l| l["command"]["title"] == counted.as_str()),
+                "{lenses:?}"
+            );
+            elapsed
+        };
+        // The first answer waits behind the lint of the opened file.
+        ask();
+        (0..3).map(|_| ask()).min().unwrap()
+    };
+    let (small, large) = (time(2000), time(16000));
+    eprintln!("2000 definitions took {small:?} and 16000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "2000 definitions took {small:?} and 16000 {large:?}"
+    );
+}
+
 #[test]
 fn code_lenses_are_off_unless_asked_for() {
     let dir = tempfile::tempdir().unwrap();
