@@ -138,23 +138,145 @@ fn each_entry_says_how_it_is_written_and_what_it_gives_in_a_line_or_two() {
     assert_eq!(builtin("til").unwrap().params, ["x"]);
 }
 
-#[test]
-fn the_catalogue_and_the_arity_rule_agree_on_how_many_arguments_a_word_takes() {
-    let draws = |call: &str| {
-        lint(call, "t.q", Profile::General)
-            .iter()
-            .any(|f| f.code == "QA010")
-    };
-    // The rule is awake: it knows these two.
-    assert!(draws("r:md5[a;b]\n") && draws("r:ssr[a;b;c;d]\n"));
-    for b in BUILTINS
+/// `name` called with `count` arguments, `a0` to `a{count-1}`, the last
+/// left out when `elided`.
+fn call_with(name: &str, count: usize, elided: bool) -> String {
+    let arguments: Vec<String> = (0..count)
+        .map(|n| match elided && n + 1 == count {
+            true => String::new(),
+            false => format!("a{n}"),
+        })
+        .collect();
+    format!("r:{name}[{}]\n", arguments.join(";"))
+}
+
+fn draws_qa010(call: &str) -> bool {
+    lint(call, "t.q", Profile::General)
+        .iter()
+        .any(|f| f.code == "QA010")
+}
+
+/// The functions of the catalogue that take arguments, and whether each
+/// takes any number (`enlist[x;...]`).
+fn functions() -> impl Iterator<Item = (&'static str, usize, bool)> {
+    BUILTINS
         .iter()
         .filter(|b| b.kind == BuiltinKind::Function && !b.params.is_empty())
-    {
-        let arguments: Vec<String> = (0..b.params.len()).map(|n| format!("a{n}")).collect();
-        let call = format!("r:{}[{}]\n", b.name, arguments.join(";"));
-        assert!(!draws(&call), "QA010 refuses {call}");
+        .map(|b| {
+            let open = b.params.last().is_some_and(|p| p == "...");
+            (b.name.as_str(), b.params.len(), open)
+        })
+}
+
+#[test]
+fn the_catalogue_and_the_arity_rule_agree_on_how_many_arguments_a_word_takes() {
+    // Every function, `.Q`, `.h` and `.j` ones too: QA010 passes a call
+    // with as many arguments as the catalogue names and reports one with
+    // one more, so the rule's arity is the catalogue's and cannot drift
+    // from it (#2246).
+    let mut missed = vec![];
+    for (name, takes, open) in functions() {
+        let call = call_with(name, takes, false);
+        assert!(!draws_qa010(&call), "QA010 refuses {call}");
+        let call = call_with(name, takes + 1, false);
+        if !open && !draws_qa010(&call) {
+            missed.push(call);
+        }
     }
+    assert!(missed.is_empty(), "QA010 misses {missed:?}");
+    assert!(!draws_qa010("r:enlist[1;2;3;4;5;6;7;8;9]\n"));
+}
+
+/// The most arguments q takes for a value: a lambda its parameters, a
+/// primitive one or two, a projection what its slots leave open, a
+/// composition what its last function takes, and a derived function what
+/// its iterator lets it take - `+\` a seed and a list. `.` and `@` take 2,
+/// 3 or 4, so a projection of either takes what its own slots leave. Each
+/// is then applied with one argument more, which q refuses with 'rank
+/// before anything runs.
+const RANKS: &str = r#"
+rk:{[v] t:type v;
+  $[t=100h; count (value v) 1; t=101h; 1; t=102h; 2;
+    t=104h; [p:value v; a:1_p; ($[any (first p)~/:(.;@); 2|count a; rk first p]-count a)+sum a~\:(::)];
+    t=105h; rk last value v;
+    t within 106 111h; [f:value v; $[100h>type f; 1; t=106h; rk f; 2|rk f]];
+    -1]};
+fn:{[w] v:@[{value ".q.",x};w;{`missing}]; if[v~`missing; v:@[value;w;{`missing}]]; v};
+probe:{[w] v:fn w; r:rk v; res:.[{x . y;"ran"};(v;(r+1)#1);{x}];
+  -1 w,"\t",(string r),"\t",res;};
+probe each read0 `:names.txt;
+-1 "enlist9\t",.Q.s1 @[{enlist[1;2;3;4;5;6;7;8;9];"ran"};::;{x}];
+{-1 "projection\t",x,"\t",@[{value x;"made"};x;{x}]} each read0 `:projections.txt;
+exit 0
+"#;
+
+#[test]
+fn every_function_takes_as_many_arguments_as_q_says() {
+    let Ok(q) = std::env::var("QLINT_TEST_Q") else {
+        eprintln!("QLINT_TEST_Q names no q: the ranks stand as KDB-X gave them");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let functions: Vec<_> = functions().collect();
+    let names: Vec<&str> = functions.iter().map(|f| f.0).collect();
+    std::fs::write(dir.path().join("names.txt"), names.join("\n") + "\n").unwrap();
+    // Each projection with an elided slot too many that QA010 reports: q
+    // has to refuse it where it is made, or the finding is false.
+    let reported: Vec<String> = functions
+        .iter()
+        .filter(|(_, _, open)| !open)
+        .filter(|(name, takes, _)| draws_qa010(&call_with(name, takes + 1, true)))
+        .map(|(name, takes, _)| format!("{name}[{}]", "1;".repeat(*takes)))
+        .collect();
+    assert!(reported.iter().any(|call| call.starts_with("til[")));
+    std::fs::write(
+        dir.path().join("projections.txt"),
+        reported.join("\n") + "\n",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("ranks.q"), RANKS).unwrap();
+    let mut words = q.split_whitespace();
+    let out = Command::new(words.next().unwrap())
+        .args(words)
+        .arg("ranks.q")
+        .arg("-q")
+        .current_dir(dir.path())
+        .stdin(Stdio::null())
+        .output()
+        .expect("run q");
+    let out = String::from_utf8_lossy(&out.stdout);
+    let rows: Vec<Vec<&str>> = out.lines().map(|l| l.split('\t').collect()).collect();
+    let mut wrong = vec![];
+    for (name, takes, open) in &functions {
+        let row = rows
+            .iter()
+            .find(|r| r.len() == 3 && r[0] == *name)
+            .unwrap_or_else(|| panic!("q gave no rank for {name}: {out}"));
+        if *open {
+            continue;
+        }
+        if row[1] != takes.to_string() || row[2] != "rank" {
+            wrong.push(format!(
+                "{name}: catalogue {takes}, q {} ({})",
+                row[1], row[2]
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    assert!(out.contains("enlist9\t\"ran\""), "{out}");
+    let refused: Vec<&str> = rows
+        .iter()
+        .filter(|r| r.len() == 3 && r[0] == "projection" && r[2] != "rank")
+        .map(|r| r[1])
+        .collect();
+    assert!(refused.is_empty(), "q makes these projections: {refused:?}");
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r.len() == 3 && r[0] == "projection")
+            .count(),
+        reported.len(),
+        "{out}"
+    );
 }
 
 // ---------------------------------------------------------------------------

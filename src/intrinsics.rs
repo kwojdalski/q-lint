@@ -473,6 +473,37 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
     out
 }
 
+/// The most arguments q's function `name` takes, from the catalogue: its
+/// parameters, or any number when the last is `...` (`enlist`). None for a
+/// name the catalogue has no function for.
+fn most_arguments(name: &str) -> Option<usize> {
+    let b = crate::builtin(name).filter(|b| b.kind == crate::BuiltinKind::Function)?;
+    match b.params.last()?.as_str() {
+        "..." => Some(usize::MAX),
+        _ => Some(b.params.len()),
+    }
+}
+
+/// Whether the file assigns `name` anywhere, which makes it a function of
+/// the file's own: after `.h.xs:{[a;b] a}`, `.h.xs[1;2]` runs.
+fn assigned(code: &str, name: &str) -> bool {
+    regex::Regex::new(&format!(r"{}{}*:", regex::escape(name), blank!()))
+        .unwrap()
+        .find_iter(code)
+        .any(|m| boundary(code, m.start()))
+}
+
+/// The functions q defines as lambdas, which check an elided slot too many
+/// where they are projected: q 5 `til[3;]` and `xasc[a;b;]` are 'rank, while
+/// `sum[1;]` and `bin[a;b;]` are projections, refused only when run.
+const LAMBDAS: &[&str] = &[
+    "til", "med", "asc", "desc", "iasc", "idesc", "signum", "cols", "keys", "meta", "next",
+    "upper", "lower", "trim", "ltrim", "rtrim", "show", "parse", "sdev", "svar", "avgs", "rotate",
+    "mavg", "msum", "mcount", "mdev", "mmin", "mmax", "xasc", "xdesc", "except", "vs", "sv",
+    "xbar", "cross", "cut", "inter", "xkey", "xcols", "xlog", "xgroup", "mod", "uj", "set", "fby",
+    "ssr", "aj", "aj0", "ajf", "ajf0", "ej", "wj", "wj1",
+];
+
 pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Finding> {
     let mut out = vec![];
     // A keyword the file redefines in `.q` calls the new definition from
@@ -480,36 +511,49 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     // after `.q.til:{x+1}`, `til 1.5` is 2.5 (#440).
     let dotq = crate::dotq_definitions(code, source);
     let redefined = |name: &str, at: usize| dotq.iter().any(|(n, from)| n == name && at > *from);
-    // QA010 for the keywords that are not in BUILTINS: arity from calling
-    // each with one more argument than it takes, which q 5 refuses with
-    // 'rank - `xasc[`a;t;1]`, `ssr[a;b;c;d]`, `wj[a;b;c;d;e]`.
+    // QA010 for every other function in the catalogue, `.Q`, `.h` and
+    // `.j` ones included: q 5 refuses one more argument than it takes with
+    // 'rank - `ij[a;b;c]`, `ssr[a;b;c;d]`, `.Q.dd[a;b;c]` (#2246). The
+    // most it takes is the catalogue's, which `tests/help.rs` holds to q's.
     // A column-0 `[1;2;3]` under `keyjoin:lj` is a statement of its own (#742).
-    for m in re!(concat!(r"\b(xasc|xdesc|bin|binr|except|ss|vs|sv|upsert|xbar|cross|cut|inter|union|in|like|xkey|xcols|xexp|xlog|xgroup|mod|div|insert|lj|uj|set|dsave|fby|md5|ssr|aj|aj0|ajf|ajf0|ej|wj|wj1)", blank!(), r"*\["))
-        .captures_iter(code)
+    for m in re!(concat!(
+        r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)",
+        blank!(),
+        r"*\["
+    ))
+    .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
         let name = &m[1];
-        if !boundary(code, whole.start()) || redefined(name, whole.start()) {
+        let Some(arity) = most_arguments(name) else {
+            continue;
+        };
+        if BUILTINS.split('|').any(|b| b == name)
+            || !boundary(code, whole.start())
+            || redefined(name, whole.start())
+            || (name.starts_with('.') && assigned(code, name))
+        {
             continue;
         }
-        let arity = match name {
-            "md5" => 1,
-            "ssr" | "aj" | "aj0" | "ajf" | "ajf0" | "ej" => 3,
-            "wj" | "wj1" => 4,
-            _ => 2,
-        };
         let open = whole.end() - 1;
         let Some(close) = matching(code, open, b'[', b']') else {
             continue;
         };
-        let given = slots(&code[open + 1..close - 1]).len();
-        if given > arity {
+        let slots = slots(&code[open + 1..close - 1]);
+        let given = slots.len();
+        // An elided slot makes a projection, which q refuses where it is
+        // made only for a function it defines as a lambda: q 5 `xasc[a;b;]`
+        // is 'rank, while `bin[a;b;]` is a projection that fails when run.
+        let projection = slots.iter().any(|slot| slot.trim().is_empty());
+        if given > arity && (!projection || LAMBDAS.contains(&name)) {
             out.push(Finding::at(
                 path,
                 source,
                 whole.start(),
                 "QA010",
-                format!("{name} accepts at most {arity} argument(s), but this call supplies {given}"),
+                format!(
+                    "{name} accepts at most {arity} argument(s), but this call supplies {given}"
+                ),
             ));
         }
     }
@@ -532,19 +576,12 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
         let report = |out: &mut Vec<Finding>, id, detail| {
             out.push(Finding::at(path, source, at, id, detail))
         };
-        let max_arity = match name {
-            "enlist" => usize::MAX,
-            "sums" | "prds" | "deltas" | "ratios" | "maxs" | "mins" | "fills" => 2,
-            _ => arity,
-        };
+        let max_arity = most_arguments(name).unwrap_or(arity);
         // A projection is refused only by a builtin q defines as a lambda,
         // which checks its slots where it is projected: q 5 `til[3;]`,
         // `til[;3]` and `mavg[1;;]` are 'rank, while `sum[1;]` and
         // `count[1;]` are not refused until they run, if then (#631).
-        let lambda = re!(
-            r"^(?:til|med|asc|desc|iasc|idesc|signum|cols|keys|meta|next|upper|lower|trim|ltrim|rtrim|show|parse|sdev|svar|avgs|rotate|mavg|msum|mcount|mdev|mmin|mmax)$"
-        );
-        if args.len() > max_arity && (!projection || lambda.is_match(name)) {
+        if args.len() > max_arity && (!projection || LAMBDAS.contains(&name)) {
             report(
                 &mut out,
                 "QA010",

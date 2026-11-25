@@ -825,7 +825,14 @@
     "text": "`e_ xdesc value select first n_, first v_, first e_ by c_, v_ from `e_ xdesc tree_}"
    }
   ],
-  "jonathonmcmurray/qwebapi": [],
+  "jonathonmcmurray/qwebapi": [
+   {
+    "code": "QA010",
+    "detail": ".h.hy accepts at most 2 argument(s), but this call supplies 3",
+    "path": "webapi/api.q",
+    "text": "ret:$[.z.K>=3.7;{.h.hy[1b;x;-35!(6;y)]};.h.hy];"
+   }
+  ],
   "jonathonmcmurray/reQ": [],
   "jsogarro/qstats": [],
   "kimtang/btick2": [

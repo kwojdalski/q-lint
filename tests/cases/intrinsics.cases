@@ -934,3 +934,33 @@ c:0W rotate 1 2 3
 d:-0W rotate 1 2 3
 e:2 mavg 1 2 3
 
+
+=== QA010 profile: general | the arity of every function comes from the catalogue (q 5: 'rank, #2246)
+a:ij[1;2;3]
+
+=== QA010 profile: general | sublist takes two (q 5: 'rank, #2246)
+a:sublist[1;2;3]
+
+=== QA010 profile: general | and the .Q, .h and .j functions are in it too (q 5: 'rank, #2246)
+a:.Q.dd[1;2;3]
+
+=== QA010 profile: general | h.xs takes one (q 5: 'rank, #2246)
+a:.h.xs[1;2]
+
+=== QA010 profile: general | j.j takes one (q 5: 'rank, #2246)
+a:.j.j[1;2]
+
+=== QA010 profile: general | an elided slot too many for a function q defines as a lambda (q 5: 'rank where it is made, #2246)
+a:xasc[`a;1;]
+
+=== clean profile: general | what each takes, and an elided slot too many for a primitive, a projection q makes (#2246)
+a:.Q.dd[`a;`b]
+b:sublist[1;1 2 3]
+c:bin[1 2;1;]
+d:.j.j[1]
+e:raze[1 2;(3;4)]
+
+=== clean profile: general | a file that defines a .h function of its own calls that one (#2246)
+.h.xs:{[a;b] a}
+r:.h.xs[1;2]
+
