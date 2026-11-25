@@ -31,12 +31,15 @@ export const TPLOG_INIT = [
   " m:$[0=n;();ok;get f;[b:(c 1)#read1 f;b[4+til 4]:reverse 0x0 vs\"i\"$n;p:`:qlintprefix.log;p 1:b;r:get p;hdel p;r]];",
   " m:(),m;",
   " d:{$[(0h=type x)&2<count x;x 2;::]}each m;",
-  " tm:{tv:$[98h=type x;value flip x;0h=type x;x;()];tv:tv where(abs type each tv)within 12 19h;$[count tv;first first tv;0Np]}each d;",
+  // A dictionary is one row of atoms, or columns as a table's (#2415).
+  " tm:{tv:$[98h=type x;value flip x;99h=type x;$[98h=type key x;value flip 0!x;value x];0h=type x;x;()];tv:tv where(abs type each tv)within 12 19h;$[count tv;first first tv;0Np]}each d;",
   " .qlint.tp.m::m;",
   " .qlint.tp.s::([] i:til count m;",
   "  fn:{$[(0h=type x)&-11h=type first x;first x;`]}each m;",
   "  tb:{$[(0h=type x)&1<count x;$[-11h=type x 1;x 1;`];`]}each m;",
-  "  rows:{\"f\"$$[98h=type x;count x;99h=type x;count x;0h=type x;$[count x;count first x;0];1]}each d;",
+  // Columns only when every item is a list of one length: a row of atoms
+  // whose first is a string is one row, not that string's length (#2500).
+  "  rows:{\"f\"$$[98h=type x;count x;99h=type x;$[98h=type key x;count x;all 0>type each v:value x;1;count first v];0h=type x;$[0=count x;0;(all 0<=type each x)&1=count distinct count each x;count first x;1];1]}each d;",
   "  tod:{$[null x;0n;(abs type x)in 13 14h;0n;\"f\"$`time$x]}each tm;",
   "  tx:{$[null x;\"\";string x]}each tm);",
   " `count`bytes`size`complete`tables!(\"f\"$n;\"f\"$$[ok;hcount f;c 1];\"f\"$hcount f;ok;string asc distinct exec tb from .qlint.tp.s where not null tb)}",

@@ -1218,6 +1218,28 @@ test("a tickerplant log's one-row messages, a list of atoms, have a time and are
   assert.deepStrictEqual(early.rows.map((r) => r.index), [0]);
 });
 
+// A dictionary's keys were counted as its rows, and its time not found
+// (#2415); a row of atoms whose first is a string counted that string's
+// length (#2500).
+test("a tickerplant log's dictionary and string-first one-row messages are one row each, with a time", { skip }, async (t) => {
+  const log = [
+    'f:hsym`$"$DIR/tp.log";',
+    ".[f;();:;()];",
+    "h:hopen f;",
+    "h enlist(`upd;`trade;`time`sym`px!(0D09:30;`a;1f));",
+    'h enlist(`upd;`news;("ECB raises rates by 25bp";12:00:00.000;`EUR));',
+    "h enlist(`upd;`trade;`time`sym!(09:00 09:01;`a`b));",
+    'h enlist(`upd;`news;(("up";"down");12:00:01.000 12:00:02.000;`EUR`USD));',
+    "hclose h;",
+    "",
+  ].join("\n");
+  const { connection, dir } = await connect(t, log + TPLOG_INIT + "\n");
+  readTpLog(await connection.call(".qlint.tp.load", path.join(dir, "tp.log")));
+  const all = readTpPage(await connection.call(".qlint.tp.page", "", NaN, NaN, 0, 100));
+  assert.deepStrictEqual(all.rows.map((r) => r.rows), [1, 1, 2, 2]);
+  assert.deepStrictEqual(all.rows.map((r) => r.time), ["0D09:30:00.000000000", "12:00:00.000", "09:00", "12:00:01.000"]);
+});
+
 // Replay ran `value` on each message: a log naming system, set on .z.pw or
 // a lambda ran it in the local q, which runs as the user (#1829).
 test("a replay passes only upd's messages to upd, to a table's name, and skips the rest", { skip }, async (t) => {
