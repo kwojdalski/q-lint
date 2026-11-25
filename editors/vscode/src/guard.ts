@@ -964,6 +964,50 @@ function treesAround(t: Token[], i: number, byValue: boolean): { reason: string;
   return undefined;
 }
 
+/// What a string in the expression around `t[i]`, an evaluator passed as
+/// a value, runs that changes the process, read as `value` reads it: it may
+/// be what the evaluator is given, `@[{'x};"a:77";value]`, `@[;"a:77"] value`
+/// (#2268). Strings in a lambda there are that lambda's.
+function stringsAround(t: Token[], i: number): { reason: string; at: number } | undefined {
+  const end = expressionEnd(t, i);
+  scanned(end - i);
+  for (let p = expressionStart(t, i), lambda = 0; p < end; p++) {
+    if (t[p].kind === "open" && t[p].text === "{") lambda++;
+    else if (t[p].kind === "close" && t[p].text === "}") lambda--;
+    else if (lambda === 0 && t[p].kind === "str" && writes([valued(qText(t[p].text))]).length > 0) return { reason: "a string", at: i };
+  }
+  return undefined;
+}
+
+/// Whether what is at `t[i]` is passed on rather than applied where it is
+/// written: followed by nothing, `;`, a close or an iterator.
+function passedOn(t: Token[], i: number): boolean {
+  const next = t[i + 1];
+  return next === undefined || next.text === ";" || (next.kind === "close" && next.text !== "}") || (next.kind === "op" && ["'", "/", "\\"].includes(next.text));
+}
+
+/// What gives a trap's handler, or a function applied to a file's lines,
+/// something the guard cannot read: the error a trap signals is any string
+/// the trapped function makes - with `{'x}`, its argument - and `.Q.fs`
+/// gives the lines of a file.
+const HANDLER_WITNESSES = ['"a:1"', "`:g", '":g"'];
+
+/// What the handler `t[from]` to `t[to]` of a trap does, given what it may
+/// be given (`HANDLER_WITNESSES`), that changes the process (#2268):
+/// `@[{'x};"a:77";value]` evaluates "a:77". `dyadic` for `.Q.trp`'s, which
+/// is given the backtrace too.
+function handlerRuns(t: Token[], from: number, to: number, dyadic: boolean): string | undefined {
+  // A handler that is not a function - `0`, `""`, `()` - is what the trap gives.
+  const [a, b] = unwrapped(t, from, to);
+  if (b - a === 1 && t[a].kind !== "name" || (b - a === 2 && t[a].text === "(" && t[a + 1].text === ")")) return undefined;
+  const handler = joined(t, from, to);
+  for (const witness of HANDLER_WITNESSES) {
+    const found = rereadOf(`(${handler})[${witness}${dyadic ? ";()" : ""}]`);
+    if (found.length > 0 && found[0] !== TOO_MUCH) return found[0];
+  }
+  return undefined;
+}
+
 /// What a list in the tree opening at `t[open]` does that changes the
 /// process, `eval` evaluating each list in a tree before applying its
 /// head: `eval(+;0;(:;`a;77))` assigns `a` (#2265). Not `value`'s, which
@@ -1800,6 +1844,20 @@ function readStatement(statement: string, found: Set<string>): void {
         }
       }
       const amend = k.text === "[" ? amendBefore(t, i) : "";
+      // A trap, `@[f;x;h]`, `.[f;x;h]`, `.Q.trp[f;x;h]`: its handler is given
+      // an error it cannot read (#2268). `.Q.fs` and its kin give their
+      // function a file's lines.
+      const trap = k.text !== "[" ? 0 : (amend === "@" || amend === ".") && t[i - 1]?.text === amend ? 1 : t[i - 1]?.text === ".Q.trp" ? 2 : 0;
+      if (trap > 0) {
+        const args = items(t, i);
+        const what = args.length === 3 && args[2][0] < args[2][1] && symbolAt(t, args[0][0]) === undefined ? handlerRuns(t, args[2][0], args[2][1], trap === 2) : undefined;
+        if (what !== undefined) found.add(what);
+      }
+      if (k.text === "[" && /^\.Q\.f(s|sn|ps|pn)$/.test(t[i - 1]?.text ?? "")) {
+        const fn = items(t, i)[0];
+        const what = fn !== undefined && fn[0] < fn[1] ? rereadOf(`${joined(t, fn[0], fn[1])} enlist ${HANDLER_WITNESSES[0]}`).find((r) => r !== TOO_MUCH) : undefined;
+        if (what !== undefined) found.add(`applies what ${t[i - 1].text} is given to a file's lines: ${what}`);
+      }
       if (amend !== "") {
         const args = items(t, i);
         // The target, or with it left out, what the projection is applied
@@ -2052,9 +2110,10 @@ function readStatement(statement: string, found: Set<string>): void {
           if (first === undefined || isFileHandle(first.text)) {
             found.add(`opens a file with ${k.text}`);
           }
-        } else if (handle === undefined && fileIn(t, i + 1, expressionEnd(t, i))) {
+        } else if (handle === undefined && fileIn(t, passedOn(t, i) ? expressionStart(t, i) : i + 1, expressionEnd(t, i))) {
           // Applied some other way, `hopen@`:f`, `(hopen)`:f`, `@[hopen;`:f;h]`,
-          // `` hopen -1!`f `` (#1769): a file's handle in its expression.
+          // `` hopen -1!`f `` (#1769): a file's handle in its expression -
+          // before it too where it is passed on, `` @[{'x};`:f;hopen] `` (#2268).
           found.add(`opens a file with ${k.text}`);
         } else if (handle === undefined) {
           // Made some way it cannot read, `` hopen hsym(`f) ``,
@@ -2080,7 +2139,9 @@ function readStatement(statement: string, found: Set<string>): void {
         while (t[n]?.kind === "op" && ["@", ".", "'"].includes(t[n].text)) n++;
         const applied = t[n] !== undefined && (["str", "name", "sym", "num"].includes(t[n].kind) || (t[n].kind === "open" && t[n].text !== "{"));
         const byValue = unqualified(k.text) !== "eval" && unqualified(k.text) !== "reval";
-        const what = evaluates(t, i + (wrapped || trapped ? 1 : 0), byValue, false, applied ? undefined : expressionEnd(t, i)) ?? (applied && !wrapped ? undefined : treesAround(t, i, byValue));
+        const what =
+          evaluates(t, i + (wrapped || trapped ? 1 : 0), byValue, false, applied ? undefined : expressionEnd(t, i)) ??
+          (applied && !wrapped ? undefined : (treesAround(t, i, byValue) ?? stringsAround(t, i)));
         if (what !== undefined) {
           found.add(`evaluates ${what.reason} with ${k.text}`);
           i = what.at;

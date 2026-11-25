@@ -1909,3 +1909,27 @@ test("handle 0 picked out of a list and applied to a tree evaluates it (#2266)",
     assert.deepStrictEqual(writes(code).filter((r) => !r.startsWith("assigns")), [], code);
   }
 });
+
+test("an evaluator given to a function that applies it - a trap's handler, .Q.fs, a projection - is read on what it may be given (#2268)", () => {
+  const asks = [
+    "@[{'x};\"a:77\";value]", "@[{'x};\"a:77\";get]", "@[{'x};\"a:77\";.h.val]", "@[{'x};\"a:77\";(value;::)0]", "@[{'x};\"a:77\";{value x}]",
+    "@[{'x};`:o.txt;hopen]", ".[{'x};enlist `:o.txt;hopen]", ".Q.fs[value each;`:f.q]", ".Q.fs[{value each x};`:f.q]", ".Q.fsn[value each;`:f.q;100]",
+    "@[;\"a:77\"] value", ".Q.trp[{'x};\"a:77\";{[e;b](value) e}]", "@[{'x};`boom;{[e](0) e}]", ".[{'x};enlist\"a:77\";{[e](get) e}]", "{x y}[value;\"a:77\"]",
+  ];
+  for (const code of asks) {
+    assert.ok(writes(code).length > 0, code);
+  }
+  assert.deepStrictEqual(writes("@[{'x};\"a:77\";value]"), ["evaluates a string with value"]);
+  assert.deepStrictEqual(writes(".Q.fs[value each;`:f.q]"), ["applies what .Q.fs is given to a file's lines: evaluates a string with value"]);
+  // Handlers and line functions that only read, and value given a read.
+  for (const code of [
+    "@[value;\"count t\";{x}]", ".Q.trp[{count x};t;{-2 x;-2 .Q.sbt y;0}]", "@[{'x};`boom;{x}]", ".[{x+y};1 2;{-1 x;0}]", "@[get;`:f;()]",
+    ".Q.fs[{count x};`:f.csv]", ".Q.fsn[{`t insert flip x}[;100];`:f.csv;1000]" , "@[;\"count t\"] value", "@[hopen;`:localhost:5000;0N]",
+  ]) {
+    assert.deepStrictEqual(writes(code).filter((r) => !/insert/.test(r)), [], code);
+  }
+  // The iterator's colon is not an assignment called (#2264).
+  for (const code of ["{x,y}':[til 3]", "{x+y}/:[1;2 3]", "{x+y}\\:[1 2;3]"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});
