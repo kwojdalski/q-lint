@@ -57,6 +57,25 @@ test("two tables keyed alike are lined up by key, whatever their order", () => {
   assert.deepStrictEqual([c.differing, c.onlyLeft, c.onlyRight], [0, 0, 1]);
 });
 
+test("a symbol key column with one byte past ASCII still lines rows up by key, not all under one (#2460)", () => {
+  // GRID sends a symbol's bytes when one is past ASCII, `false` otherwise.
+  const cafe = [99, 97, 102, 233];
+  const c = compareOutcomes(
+    side("a", table({ s: [11, ["a", "b", "caf\u00e9"], [false, false, cafe]], v: [7, ["1", "2", "3"]] }, 1)),
+    side("b", table({ s: [11, ["b", "a", "caf\u00e9"], [false, false, cafe]], v: [7, ["2", "1", "3"]] }, 1)),
+    -1,
+  );
+  assert.strictEqual(c.matchedBy, "key");
+  assert.deepStrictEqual([c.same, c.differing, c.onlyLeft, c.onlyRight], [true, 0, 0, 0]);
+  // Bytes whose text reads alike are still other keys.
+  const d = compareOutcomes(
+    side("a", table({ s: [11, ["caf\u00e9"], [cafe]], v: [7, ["1"]] }, 1)),
+    side("b", table({ s: [11, ["caf\u00e9"], [[99, 97, 102, 195, 169]]], v: [7, ["1"]] }, 1)),
+    -1,
+  );
+  assert.deepStrictEqual([d.onlyLeft, d.onlyRight], [1, 1]);
+});
+
 test("a column only one side has differs in every row; the same tables are the same", () => {
   const c = compareOutcomes(side("a", table({ v: [7, ["1"]] })), side("b", table({ v: [7, ["1"]], w: [7, ["2"]] })), -1);
   assert.deepStrictEqual(c.columns, ["v", "w"]);
