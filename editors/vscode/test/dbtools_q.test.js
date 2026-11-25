@@ -623,6 +623,21 @@ test("the sym inspector counts the file, its columns' shares and its growth", { 
   assert.strictEqual(readSym(await plain.call(SYM_INSPECT, 20)).sym, false);
 });
 
+// The middle partition uses only the first two symbols of a file that held
+// four already: it shows four, and the next adds none (#2142).
+test("the sym inspector's growth counts from the largest size before, not the partition just before (#2142)", { skip }, async (t) => {
+  const { connection } = await connect(t, [
+    'r:hsym`$"$DIR/g";',
+    "{[r;d;s] .Q.dd[r;d,`trade`] set .Q.en[r] ([] sym:s;px:count[s]#1f)}[r]'[2026.01.07 2026.01.08 2026.01.09;(`a`b`c`d;`a`b;`d`c`b`a)];",
+    "\\l $DIR/g",
+    "",
+  ].join("\n"));
+  const answer = readSym(await connection.call(SYM_INSPECT, 20));
+  assert.deepStrictEqual(answer.growth.map((g) => g.size), [4, 2, 4]);
+  const rows = symReport(answer, "g", 1e6).split("\n").filter((l) => /^\| 2026/.test(l));
+  assert.deepStrictEqual(rows, ["| 2026.01.07 | 4 |  |", "| 2026.01.08 | 4 | 0 |", "| 2026.01.09 | 4 | 0 |"]);
+});
+
 // A null symbol is no entry of the file, and a partition of no symbols
 // (empty, or all null) says nothing of its size (#1567, #1568).
 test("the sym inspector leaves out null symbols and partitions that hold none", { skip }, async (t) => {

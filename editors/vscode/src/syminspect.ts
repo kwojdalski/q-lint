@@ -124,8 +124,23 @@ export function symReport(a: SymAnswer, process: string, warnAbove: number): str
     out.push("");
   }
   if (a.growth.length > 0) {
-    out.push("## Growth", "", "The file's size when each partition was written, at least: one more than the largest index its columns use.", "", "| partition | symbols | added since the one before |", "| --- | --- | --- |");
-    a.growth.forEach((g, i) => out.push(`| ${md(g.partition)} | ${n(g.size)} | ${i === 0 ? "" : n(Math.max(0, g.size - a.growth[i - 1].size))} |`));
+    out.push(
+      "## Growth",
+      "",
+      "The file's size when each partition was written, at least: one more than the largest index its columns use, or than an earlier partition's, as the file only grows.",
+      "",
+      "| partition | symbols | added since the one before |",
+      "| --- | --- | --- |",
+    );
+    // A partition that uses only the first symbols says the file was at
+    // least that big, not that it shrank: the size so far is the largest
+    // yet, and what is added is counted from it (#2142).
+    let most = 0;
+    a.growth.forEach((g, i) => {
+      const at = Math.max(most, g.size);
+      out.push(`| ${md(g.partition)} | ${n(at)} | ${i === 0 ? "" : n(at - most)} |`);
+      most = at;
+    });
     out.push("");
   }
   return out.join("\n");

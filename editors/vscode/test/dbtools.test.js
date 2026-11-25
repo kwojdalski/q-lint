@@ -281,6 +281,14 @@ test("the sym report warns above the threshold and lists columns and growth", ()
   assert.deepStrictEqual(ints.growth.map((g) => g.partition), ["8", "9", "10"]);
 });
 
+// A partition that uses only the first indexes is no smaller file: what the
+// next one adds is counted from the largest size before it (#2142).
+test("the sym report's growth counts from the largest size so far (#2142)", () => {
+  const a = readSym({ sym: true, root: "/db", count: 6, bytes: 64, partitions: 4, sampled: 4, ctable: [], ccol: [], cdistinct: [], gpart: ["2026.01.07", "2026.01.08", "2026.01.09", "2026.01.12"], gsize: [4, 2, 4, 6] });
+  const rows = symReport(a, "hdb", 1000).split("\n").filter((l) => /^\| 2026/.test(l));
+  assert.deepStrictEqual(rows, ["| 2026.01.07 | 4 |  |", "| 2026.01.08 | 4 | 0 |", "| 2026.01.09 | 4 | 0 |", "| 2026.01.12 | 6 | 2 |"]);
+});
+
 test("the attribute advisor counts filters and suggests by shape, never for an unfiltered column", () => {
   // Order is asked of a copy: `asc` would mark the table's own column s# (#1863).
   assert.deepStrictEqual(ATTRIBUTE_SAMPLE.match(/[^;\[]*\basc [^\])]*/g), ["{x~asc x}x til count x"]);
