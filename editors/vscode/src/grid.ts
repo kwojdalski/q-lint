@@ -73,7 +73,7 @@
 // or a parameter. A partitioned table, which `sublist` refuses, is read by
 // row index with `.Q.ind`. A value it cannot shape gives q's error as a
 // string in `grid`, and the result is shown in the output instead.
-import { TRAP, readAnswer, type Answer } from "./query";
+import { readAnswer, trapLines, type Answer } from "./query";
 
 /// The most nodes `GRID` sends of a dictionary or a nested list's tree.
 export const TREE_NODES = 2000;
@@ -120,11 +120,12 @@ const COLUMN_LINES = [
 /// at its limit is kept on the process in `HELD` for this client under
 /// that token, for `PAGE` to send more of, and this client's entry is
 /// dropped when it is not cut: only the result panel asks for that, while
-/// `q-lint.results.paging.enable` is on.
-export function gridLambda(tree: boolean, hold?: string): string {
+/// `q-lint.results.paging.enable` is on. `readOnly`: the statements are
+/// evaluated under `reval` (`trapLines`); what shapes the value is not.
+export function gridLambda(tree: boolean, hold?: string, readOnly = false): string {
   const lines = [
   "{[s;size;limit]",
-  ...TRAP,
+  ...trapLines(readOnly),
   " $[r 0;",
   "   `ok`type`text`grid!(1b;type r 1;.Q.S[\"j\"$size;0j] r 1;.[{[v;n]",
   "     k:$[99h<>type v;0;98h=type key v;count cols key v;1];",
@@ -163,6 +164,9 @@ export function gridLambda(tree: boolean, hold?: string): string {
 export const GRID = gridLambda(false);
 /// `GRID` with a dictionary's or a nested list's tree.
 export const GRID_TREE = gridLambda(true);
+/// `GRID` and `GRID_TREE` under `reval`.
+export const GRID_READ_ONLY = gridLambda(false, undefined, true);
+export const GRID_TREE_READ_ONLY = gridLambda(true, undefined, true);
 
 /// The rows `off` to `off+n` of the table `GRID` held for this client
 /// under the token `tok`, as `GRID`'s `grid` writes them but for its `keys`

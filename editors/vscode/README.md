@@ -1165,6 +1165,30 @@ string built at run time and evaluated, is not seen, so it guards against a
 slip, not a person - a process that must not change needs its own `.z.pg`.
 `q-lint.processes.readOnlyGuard.enable` off sends code unasked, as before.
 
+**Read-only evaluation.** So that a write the guard misses is not made,
+code it reads as read-only goes to a guarded process to be evaluated under
+`reval`, q's read-only evaluation (`q-lint.processes.readOnlyGuard.enforce`,
+on by default): the process refuses anything that would assign a global
+(`'noupdate`), write, delete or open a file (`'access`), run a system command
+that sets something or runs a shell (`'sys`) or send to itself
+(`'restricted`), and the query ends with that error, the process unchanged.
+Reads run as before - `select`, `exec`, `update` and joins on a value,
+functional forms, `\d` in one statement holding for the next - but some reads
+change something on the way, and q refuses them too: a function that caches
+into a global or counts its calls, the first `.Q.ind` on a partitioned table
+(which sets `.Q.PN`), `system "pwd"`, `\cd`, a message to the process itself. Such
+a refusal is asked about - "Refused by the read-only evaluation of rdb:
+'noupdate: `. `c. Run it anyway?" - and sent again as it is only when you
+confirm; an agent's query, or a scheduled or dashboard refresh, gets the
+refusal as its error. Code the guard asked about and you confirmed is sent
+as it is. It covers a query (console, grid, chart, unlimited), a notebook
+cell and its live values, Query a Tag, Compare Query and the paths through
+`Live.runOnActive`; not a TorQ gateway, whose `.gw.syncexec` changes the
+gateway itself, unwrapped mode, which sends nothing of ours, or a process
+without `reval` (said once), where the guard alone holds. `reval` does not
+stop a breakpoint (`.Q.bs`, `-104!`) patching a function in place - q refuses
+the update of `.Q.BP` after the code is patched - so the guard asks about those.
+
 **Placeholders.** A query from the editor (line, selection, block or entire
 file) that holds `{{name}}` asks for each name's value in an input box, then
 sends the code with the values put in place, as written - so a symbol is
@@ -2967,6 +2991,7 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | `q-lint.processes.tagColors` | `{}` | A tag's colour in the Processes view, as a theme colour id: `{"eu": "charts.purple"}`. Over the built-in `prod`, `uat` and `dev` colours; a value that is not a colour id is ignored. Changing it recolours the view at once. | - |
 | `q-lint.processes.readOnlyGuard.enable` | `true` | Ask before sending code that would change a process carrying a guarded tag; refuse an agent's. Off, code is sent unasked. | - |
 | `q-lint.processes.readOnlyGuard.tags` | `["prod","prd","production"]` | The tags the read-only guard guards, ignoring case; `[]` guards none. | - |
+| `q-lint.processes.readOnlyGuard.enforce` | `true` | Send code the guard reads as read-only to a guarded process under `reval`, so q refuses a write the guard missed; a read q refuses is asked about. | - |
 
 ### Database settings
 

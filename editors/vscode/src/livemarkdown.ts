@@ -29,19 +29,27 @@ export const VALUE_LIMIT = 200;
 /// `y`, cut from `x`, with the attributes `x` has.
 const ATTR = "{$[98h=type x;flip .z.s'[flip x;flip y];99h=type x;.z.s[key x;key y]!.z.s[value x;value y];(attr x)#y]}";
 
-export const LIVE = [
-  "{[es]",
-  " {r:@[{(1b;value x)};x;{(0b;x)}];",
-  "  if[not r 0;:r];",
-  "  v:r 1;",
-  // `-3!` of the first VALUE_LIMIT items only, never of a whole table
-  // (#1559): each item writes at least one character, so the text kept is
-  // the same. A list `sublist` refuses, such as a partitioned table, whole.
-  // `sublist` drops an attribute, so the cut list, a table's columns and a
-  // dictionary's keys and values get theirs back (#1718).
-  // Cut on a character, never inside a UTF-8 one or an escape (#2071).
-  `  (1b;$[10h=abs type v;${UTF8_CUT}[${VALUE_LIMIT};(),v];-11h=type v;${UTF8_CUT}[${VALUE_LIMIT};string v];${ESCAPE_CUT}[${VALUE_LIMIT};${FULL_TEXT}[${VALUE_LIMIT};$[(type v) within 0 99h;{@[${ATTR}x;y;y]}[v] @[${VALUE_LIMIT} sublist;v;v];v]]]])} each es}`,
-].join("\n");
+/// `LIVE`, each expression evaluated under `reval` when `readOnly` - with
+/// `value` on a process without it - as `trapLines` evaluates statements.
+function liveLambda(readOnly: boolean): string {
+  return [
+    "{[es]",
+    ` {r:@[{(1b;${readOnly ? "$[`reval in key`.q;reval(value;x);value x]" : "value x"})};x;{(0b;x)}];`,
+    "  if[not r 0;:r];",
+    "  v:r 1;",
+    // `-3!` of the first VALUE_LIMIT items only, never of a whole table
+    // (#1559): each item writes at least one character, so the text kept is
+    // the same. A list `sublist` refuses, such as a partitioned table, whole.
+    // `sublist` drops an attribute, so the cut list, a table's columns and a
+    // dictionary's keys and values get theirs back (#1718).
+    // Cut on a character, never inside a UTF-8 one or an escape (#2071).
+    `  (1b;$[10h=abs type v;${UTF8_CUT}[${VALUE_LIMIT};(),v];-11h=type v;${UTF8_CUT}[${VALUE_LIMIT};string v];${ESCAPE_CUT}[${VALUE_LIMIT};${FULL_TEXT}[${VALUE_LIMIT};$[(type v) within 0 99h;{@[${ATTR}x;y;y]}[v] @[${VALUE_LIMIT} sublist;v;v];v]]]])} each es}`,
+  ].join("\n");
+}
+
+export const LIVE = liveLambda(false);
+/// `LIVE` under `reval`.
+export const LIVE_READ_ONLY = liveLambda(true);
 
 export type LiveValue = { text: string } | { error: string };
 

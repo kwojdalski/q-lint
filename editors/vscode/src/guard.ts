@@ -9,7 +9,9 @@
 // is sent. What is read is the text: a lambda defined earlier that writes,
 // or a string built at run time and evaluated, is not seen. The guard is a
 // check against a slip, not a permission system - a process that must not
-// be changed needs its own `.z.pg`.
+// be changed needs its own `.z.pg`. Its backstop: what it reads as
+// read-only goes to a guarded process under `reval` (`readEnforce`), so q
+// refuses a write it missed - all but a breakpoint, which it must catch.
 //
 // The rules, outside strings and comments:
 // - `name:`, `name::`, `name+:` and `name[i]:` at the top level, and
@@ -150,6 +152,15 @@ export function readGuard(get: <T>(key: string, fallback: T) => T): GuardSetting
     enabled: get<unknown>("processes.readOnlyGuard.enable", true) !== false,
     tags: Array.isArray(tags) && tags.every((t) => typeof t === "string") ? parseTags(tags.join(" ")) : DEFAULT_GUARD_TAGS,
   };
+}
+
+/// Whether code the guard lets be sent unasked to a process it guards goes
+/// under `reval` (`query.ts`'s `trapLines`), q's own read-only evaluation,
+/// so a write the guard missed is refused by q: on unless
+/// `q-lint.processes.readOnlyGuard.enforce` is false, and only while the
+/// guard is on.
+export function readEnforce(get: <T>(key: string, fallback: T) => T): boolean {
+  return readGuard(get).enabled && get<unknown>("processes.readOnlyGuard.enforce", true) !== false;
 }
 
 /// The tags of `process` the guard guards it by; empty when it is not
@@ -2400,4 +2411,17 @@ export function guardRefusal(check: NonNullable<ReturnType<typeof guardCheck>>):
     `(tagged ${[...new Set(guarded.flatMap((g) => g.tags))].join(", ")}; q-lint.processes.readOnlyGuard.tags), and the query ${list(reasons)}. ` +
     "Send only code that reads, or ask the user to run it themselves."
   );
+}
+
+/// The question asked when `reval`, the guard's backstop (`readEnforce`),
+/// refused code the guard read as read-only on the process `label`, with
+/// q's error `refused`: whether to send it again as it is.
+export function refusalQuestion(label: string, refused: string): string {
+  return `Refused by the read-only evaluation of ${label}: '${refused}. Run it anyway?`;
+}
+
+/// Why such code was not run, to a caller that cannot ask: an agent, a
+/// timer.
+export function refusalReason(label: string, refused: string): string {
+  return `Refused by the read-only evaluation of ${label}: '${refused}. The read-only guard read the code as read-only, and q refused it as a change (q-lint.processes.readOnlyGuard.enforce); nothing was changed.`;
 }

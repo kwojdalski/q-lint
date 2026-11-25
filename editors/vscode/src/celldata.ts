@@ -37,29 +37,34 @@
 //
 // It works on kdb+/KDB-X and on PeachQ.
 import type { Answer } from "./query";
-import { NULL_TYPE } from "./query";
+import { NULL_TYPE, trapLines } from "./query";
 import type { CellMode, ChartMode } from "./celldirectives";
 import type { RowLimitFrom } from "./liveconfig";
 import { bytesText, toGrid, type Grid, type GridAnswer } from "./grid";
 
-export const DATA = [
-  "{[s;rows;size]",
-  " r:$[`trp in key `.Q;",
-  "   .Q.trp[{(1b;last value each x)};s;{(0b;x;.Q.sbt -4_y)}];",
-  "   @[{(1b;last value each x)};s;{(0b;x;\"\")}]];",
-  " if[not r 0;:`ok`error`trace!(0b;r 1;r 2)];",
-  " v:r 1;",
-  " k:$[99h=type v;$[(98h=type key v)&98h=type value v;count cols key v;0];0];",
-  " t:$[k>0;0!v;v];",
-  " if[not 98h=type t;:`ok`table`type`text!(1b;0b;type v;.Q.S[\"j\"$size;0j] v)];",
-  " n:\"j\"$rows;m:count t;",
-  " u:$[1b~.Q.qp t;[j:$[n<0;(m+n)|0;0]+til m&abs n;$[count j;.Q.ind[t;j];select from t where i<0]];n sublist t];",
-  " c:{$[count[cols x]=count distinct cols x;x cols x;value flip x]} u;",
-  " str:{$[(0h=type x)|76h<type x;{$[10h=type x;x;-3!x]} each x;string x]};",
-  " d:str each c;",
-  " `ok`table`columns`types`keys`data`bytes`total!(1b;1b;cols t;type each c;k;d;",
-  "   {$[any 127<\"i\"$\"x\"$raze x;{$[any 127<\"i\"$\"x\"$x;\"x\"$x;0b]} each x;()]} each d;count t)}",
-].join("\n");
+/// `DATA`, its statements evaluated under `reval` when `readOnly` (`trapLines`).
+function dataLambda(readOnly: boolean): string {
+  return [
+    "{[s;rows;size]",
+    ...trapLines(readOnly),
+    " if[not r 0;:`ok`error`trace!(0b;r 1;r 2)];",
+    " v:r 1;",
+    " k:$[99h=type v;$[(98h=type key v)&98h=type value v;count cols key v;0];0];",
+    " t:$[k>0;0!v;v];",
+    " if[not 98h=type t;:`ok`table`type`text!(1b;0b;type v;.Q.S[\"j\"$size;0j] v)];",
+    " n:\"j\"$rows;m:count t;",
+    " u:$[1b~.Q.qp t;[j:$[n<0;(m+n)|0;0]+til m&abs n;$[count j;.Q.ind[t;j];select from t where i<0]];n sublist t];",
+    " c:{$[count[cols x]=count distinct cols x;x cols x;value flip x]} u;",
+    " str:{$[(0h=type x)|76h<type x;{$[10h=type x;x;-3!x]} each x;string x]};",
+    " d:str each c;",
+    " `ok`table`columns`types`keys`data`bytes`total!(1b;1b;cols t;type each c;k;d;",
+    "   {$[any 127<\"i\"$\"x\"$raze x;{$[any 127<\"i\"$\"x\"$x;\"x\"$x;0b]} each x;()]} each d;count t)}",
+  ].join("\n");
+}
+
+export const DATA = dataLambda(false);
+/// `DATA` under `reval`.
+export const DATA_READ_ONLY = dataLambda(true);
 
 /// How many rows `@grid` and `@chart` ask for by default:
 /// `q-lint.notebook.rowLimit`'s default.

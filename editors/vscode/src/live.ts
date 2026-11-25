@@ -86,7 +86,7 @@ import { QueryControls } from "./controls";
 import { ParameterCache } from "./paramcachecontrol";
 import { DASHBOARDS_KEY, parseDashboards, retargetedTiles } from "./dashboard";
 import { SCHEDULES_KEY, parseSchedules, retargetedSchedules } from "./schedule";
-import { CONTROL_COMMANDS, FILE_CONNECTIONS_KEY, UNLIMITED, armTimeout, limits, readUnlimited, runUnwrapped, timedOutError, withBinding } from "./querycontrols";
+import { CONTROL_COMMANDS, FILE_CONNECTIONS_KEY, UNLIMITED, UNLIMITED_READ_ONLY, armTimeout, limits, readUnlimited, runUnwrapped, timedOutError, withBinding } from "./querycontrols";
 import { elapsedText, finishedText, readProgress, shouldNotify } from "./progress";
 import {
   HISTORY_COMMANDS,
@@ -107,7 +107,7 @@ import { CONNECT_SCRIPT_COMMANDS, onConnectBrought, onConnectOf, readConnectScri
 import { isProduction } from "./agent";
 import { PAGE, readPage, type GridPage } from "./grid";
 import { PLACEHOLDER_VALUES_KEY, lastValue, placeholderNames, readPlaceholders, remembered, substitute } from "./placeholders";
-import { guardCheck, guardQuestion, guardRefusal, guardText, readGuard, type GuardCode } from "./guard";
+import { guardCheck, guardQuestion, guardRefusal, guardText, readEnforce, readGuard, refusalQuestion, refusalReason, type GuardCode } from "./guard";
 import type { GridAnswer, GridPayload } from "./grid";
 import { WATCH, WATCHING, intervalProblem, readWatch, watchText } from "./watch";
 import { guardedBy, openTags } from "./guard";
@@ -670,6 +670,9 @@ export class Live {
   /// for started, so its entry says so: a connection the process closed is
   /// a failure, not an abort.
   private aborted: number | undefined;
+  /// The processes said to have no `reval`, so the read-only guard's
+  /// backstop cannot hold there: each is said once.
+  private readonly toldNoReval = new Set<string>();
   /// The last query from the editor that failed, with q's backtrace: what
   /// Capture Locals at Last Error (#985) runs again. Not one sent through a
   /// gateway, nor in unwrapped mode, which has no backtrace.
@@ -1300,6 +1303,58 @@ export class Live {
   guardRefuses(code: GuardCode, targets: Process[]): string | undefined {
     const check = guardCheck(code, targets, this.setting(readGuard));
     return check === undefined ? undefined : guardRefusal(check);
+  }
+
+  /// Set `connection` to evaluate the statements next sent under `reval`
+  /// (`query.ts`'s `trapLines`) when that is the guard's backstop for
+  /// `code` on `process`: the process is guarded,
+  /// q-lint.processes.readOnlyGuard.enforce is on, and the guard reads
+  /// `code` as read-only - code it asked about and the user confirmed goes
+  /// as it is. Not on a TorQ gateway, whose `.gw.syncexec` changes the
+  /// gateway itself, so the guard alone holds there. Whether it was set.
+  private backstop(connection: QConnection, process: Process, code: GuardCode): boolean {
+    const on =
+      this.setting(readEnforce) &&
+      guardedBy(process, this.setting(readGuard)).length > 0 &&
+      process.gateway === undefined &&
+      !isGatewayCall(guardText(code)) &&
+      this.guardRefuses(code, [process]) === undefined;
+    connection.readOnly = on;
+    connection.refused = undefined;
+    return on;
+  }
+
+  /// After a send `backstop` set: `reval`'s refusal, if it refused, and
+  /// `connection` back to evaluating as it did. A process found to have
+  /// no `reval` is said once.
+  private backstopped(connection: QConnection, process: Process): string | undefined {
+    const refused = connection.refused;
+    connection.readOnly = false;
+    connection.refused = undefined;
+    if (connection.noReval && !this.toldNoReval.has(process.label)) {
+      this.toldNoReval.add(process.label);
+      void window.showInformationMessage(
+        plainMessage(`q-lint: ${process.label} has no reval, so code the read-only guard reads as read-only is sent to it as it is: the guard alone holds there (q-lint.processes.readOnlyGuard.enforce).`),
+      );
+    }
+    return refused;
+  }
+
+  /// Whether to send again, as it is, code `reval` refused on `process`
+  /// with `refused`: the user is asked.
+  private async refusedAnyway(process: Process, refused: string): Promise<boolean> {
+    const yes = "Run Anyway";
+    return (
+      (await window.showWarningMessage(
+        plainMessage(refusalQuestion(process.label, refused)),
+        {
+          modal: true,
+          detail:
+            "The read-only guard read this code as read-only, so it was sent under reval, q's read-only evaluation (q-lint.processes.readOnlyGuard.enforce), and q refused it: it would change the process - assign a global, write or delete a file, run a system command - or calls something that does. Run Anyway sends it again as it is.",
+        },
+        yes,
+      )) === yes
+    );
   }
 
   private showStatus(): void {
@@ -2866,7 +2921,28 @@ export class Live {
       }
     });
     try {
-      const value = await query(ready.connection);
+      const backstopped = this.backstop(ready.connection, ready.process, code);
+      let value: T;
+      try {
+        value = await query(ready.connection);
+      } finally {
+        // Back to evaluating as it did, whatever the query threw.
+        if (backstopped) {
+          ready.connection.readOnly = false;
+        }
+      }
+      const refused = backstopped ? this.backstopped(ready.connection, ready.process) : undefined;
+      if (refused !== undefined) {
+        if (guard === "refuse") {
+          throw new Error(refusalReason(ready.process.label, refused));
+        }
+        if (await this.refusedAnyway(ready.process, refused)) {
+          if (!ready.connection.isOpen || ready.connection.isBusy) {
+            throw new Error(`Not run again: the connection to ${ready.process.label} closed or became busy while you were asked.`);
+          }
+          value = await query(ready.connection);
+        }
+      }
       this.answeredOn = ready.connection;
       return { process: ready.process.label, value };
     } catch (error) {
@@ -3016,9 +3092,21 @@ export class Live {
       const { consoleSize, gridLimit } = limits(settings, unlimited);
       // On a TorQ gateway, through `.gw.syncexec`, as `run` sends it (#1230).
       const cut = statements(this.throughGateway(code, process));
-      return controls.unwrapped
-        ? await runUnwrapped(connection, cut, { size: consoleSize, limit: gridLimit, unlimited, grid: true })
-        : await connection.queryGrid(cut, consoleSize, gridLimit);
+      if (controls.unwrapped) {
+        return await runUnwrapped(connection, cut, { size: consoleSize, limit: gridLimit, unlimited, grid: true });
+      }
+      // Under `reval` where that is the guard's backstop; a refusal is
+      // asked about, or thrown from a timer (#1618).
+      const backstopped = this.backstop(connection, process, code);
+      const answer = await connection.queryGrid(cut, consoleSize, gridLimit);
+      const refused = backstopped ? this.backstopped(connection, process) : undefined;
+      if (refused === undefined) {
+        return answer;
+      }
+      if (options.unattended === true) {
+        throw new Error(refusalReason(process.label, refused));
+      }
+      return (await this.refusedAnyway(process, refused)) ? await connection.queryGrid(cut, consoleSize, gridLimit) : answer;
     } catch (error) {
       throw timedOut ? new Error(timedOutError(timeout)) : signal?.aborted ? new Error("cancelled") : error;
     } finally {
@@ -3247,13 +3335,34 @@ export class Live {
       const hold = !controls.unwrapped && settings.mode !== "console" && this.modes.wantsHold(readOnly);
       // This result's own, so a page is of it and no other (#2128).
       const token = hold ? randomBytes(16).toString("hex") : undefined;
-      const answer = controls.unwrapped
-        ? await runUnwrapped(connection, cut, { size: consoleSize, limit: gridLimit, unlimited, grid: settings.mode !== "console" })
-        : settings.mode !== "console"
-          ? await connection.queryGrid(cut, consoleSize, gridLimit, this.modes.wantsTree(), token)
-          : unlimited
-            ? readUnlimited(await connection.call(UNLIMITED, cut, consoleSize))
-            : await connection.query(cut, consoleSize);
+      const send = async () =>
+        controls.unwrapped
+          ? await runUnwrapped(connection, cut, { size: consoleSize, limit: gridLimit, unlimited, grid: settings.mode !== "console" })
+          : settings.mode !== "console"
+            ? await connection.queryGrid(cut, consoleSize, gridLimit, this.modes.wantsTree(), token)
+            : unlimited
+              ? await connection.trapped(UNLIMITED, UNLIMITED_READ_ONLY, readUnlimited, cut, consoleSize)
+              : await connection.query(cut, consoleSize);
+      // Unwrapped mode sends the text alone, so nothing of ours can put it
+      // under `reval`: the guard alone holds there.
+      const backstopped = !controls.unwrapped && this.backstop(connection, process, written);
+      let answer: Awaited<ReturnType<typeof send>>;
+      try {
+        answer = await send();
+      } finally {
+        if (backstopped) {
+          connection.readOnly = false;
+        }
+      }
+      const refused = backstopped ? this.backstopped(connection, process) : undefined;
+      // A watched query's later runs ask nothing: its error says why.
+      if (refused !== undefined && as !== "watched" && (await this.refusedAnyway(process, refused))) {
+        if (connection.isOpen && !connection.isBusy && this.connection === connection) {
+          answer = await send();
+        } else {
+          void window.showInformationMessage(plainMessage(`q-lint: the connection to ${process.label} closed or became busy while you were asked; nothing more was run.`));
+        }
+      }
       const millis = Date.now() - started;
       // Answered: the connection holds, and a drop after starts the tries again (#2129).
       this.answeredOn = connection;
