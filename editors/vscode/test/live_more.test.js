@@ -141,6 +141,22 @@ test("a history row and Run Again's pick are labelled with the first line of cod
   assert.deepStrictEqual(offered, labels);
 });
 
+// Run Again offered an empty pick on an empty history, where its sibling
+// Copy Query says the history is empty (#2262).
+test("Run Again on an empty history says it is empty, as Copy Query does, and asks nothing", async (t) => {
+  await setUp(t, []);
+  let asked;
+  stub.picks.push((o) => ((asked = o.title), undefined));
+  await stub.commands.get("q-lint.rerunQuery")();
+  assert.strictEqual(asked, undefined);
+  stub.picks.length = 0;
+  await stub.commands.get("q-lint.copyQuery")();
+  assert.deepStrictEqual(stub.messages, [
+    ["info", "q-lint: the query history is empty."],
+    ["info", "q-lint: the query history is empty."],
+  ]);
+});
+
 // A query whose process closed the connection before answering - `exit 0`,
 // `\\`, a crash - was recorded as aborted, and the output said "aborted",
 // though nobody aborted it. Abort itself is still recorded as aborted.

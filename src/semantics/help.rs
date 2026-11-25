@@ -165,7 +165,9 @@ const PAIRS: [&str; 7] = ["<=", ">=", "<>", "::", "':", "/:", "\\:"];
 /// in a string, a comment, a symbol or a system command.
 pub fn glyph_at(code: &str, raw: &str, offset: usize) -> Option<(usize, usize)> {
     let line = code.get(..offset)?.rfind('\n').map_or(0, |p| p + 1);
-    if crate::system_command(&raw[line..]) {
+    // A timed line's `\t`, `\ts` or `\t:n` is a command too, though what
+    // follows it is q: its backslash is no Scan (#2247).
+    if crate::system_command(&raw[line..]) || offset < line + crate::timed_prefix(&raw[line..]) {
         return None;
     }
     let code = crate::unsymbolled(code);

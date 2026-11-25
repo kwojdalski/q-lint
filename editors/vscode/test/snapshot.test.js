@@ -132,3 +132,21 @@ test("a failed query writes nothing; Update Snapshot rewrites only on Replace; o
   assert.strictEqual(s.sent.length, 3);
   assert.match(stub.messages.at(-1)[1], /q-lint\.snapshotTests\.enable to true/);
 });
+
+test("a declined guard or a dropped connection writes nothing and says why, without rejecting (#2261)", async () => {
+  const files = { "/ws/src/__snapshots__/t.qsnap": formatSnapshot({ query: "count t", result: "3" }) };
+  const s = setup(files, () => ({ ok: true, type: -7, text: ["4"] }));
+  const item = { uri: vscode.Uri.file("/ws/src/__snapshots__/t.qsnap") };
+  for (const why of ["Not run: changing the read-only process prodq was not confirmed.", "the connection closed before the process answered"]) {
+    s.live.runOnActive = async () => {
+      throw new Error(why);
+    };
+    stub.inputs.push("snap1");
+    await stub.commands.get(SNAPSHOT_COMMANDS.record)();
+    assert.deepStrictEqual(stub.messages.at(-1), ["info", `q-lint: no snapshot was written: ${why}`]);
+    await stub.commands.get(SNAPSHOT_COMMANDS.update)(item);
+    assert.deepStrictEqual(stub.messages.at(-1), ["info", `q-lint: no snapshot was written: ${why}`]);
+  }
+  assert.deepStrictEqual(s.written, []);
+  assert.strictEqual(s.told(), 0);
+});

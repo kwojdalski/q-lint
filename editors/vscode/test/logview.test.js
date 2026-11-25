@@ -287,6 +287,23 @@ test("an empty log with nothing filtered says it is empty, a filter of none pick
   assert.strictEqual(text(), "(nothing passes the filter)");
 });
 
+// Every line names a process, by its own field or its file's name, so only
+// a log with no line yet has none: Filter Log by Process offered an empty
+// pick there (#2262).
+test("Filter Log by Process on a log with no line says there is no process to pick, and asks nothing", async (t) => {
+  const file = path.join(tmp(), "empty.log");
+  fs.writeFileSync(file, "");
+  setUp(t);
+  await stub.commands.get(LOG_COMMANDS.open)(vscode.Uri.file(file));
+  stub.messages = [];
+  let asked;
+  stub.picks.push((o) => ((asked = o.title), undefined));
+  await stub.commands.get(LOG_COMMANDS.processes)();
+  assert.strictEqual(asked, undefined);
+  stub.picks.length = 0;
+  assert.deepStrictEqual(stub.messages, [["info", "q-lint: the log has no line yet, so there is no process to filter by."]]);
+});
+
 test("only the last maxLines entries that pass are kept", async (t) => {
   const file = path.join(tmp(), "many.log");
   fs.writeFileSync(file, Array.from({ length: 1000 }, (_, i) => `line ${i}`).join("\n") + "\n");

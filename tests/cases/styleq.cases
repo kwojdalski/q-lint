@@ -287,7 +287,7 @@ TradeBook:1
 TradeBook:1
 tradeCount:0
 
-=== QS010 profile: styleq | kebab-case is subtraction, and assigns only the last word
+=== QF004 QS010 profile: styleq | kebab-case is subtraction, and assigns only the last word - here `count`, which q 5 refuses ('assign, #2231)
 trade-count:5
 
 === QS010 profile: styleq | likewise at the start of a statement in a lambda

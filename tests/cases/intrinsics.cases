@@ -789,8 +789,178 @@ a:x within 1 10
 b:x within 5 5
 c:x within lo hi
 d:x within 10 1+y
-e:x within 10:00 9:30
+e:x within 10:00 09:30:00
 f:x within 0W 1
 g:x within `b`a
 h:x within (10;1)
 i:x within 2024.01.01 2024.01.10
+
+=== QT010 profile: general | a builtin needs no blank before a backtick (q 5: 'type, #2241)
+r:sum`a`b
+
+=== QT008 profile: general | nor before a quote (q 5: 'type, #2241)
+r:til"a"
+
+=== QT008 profile: general | nor before a parenthesis (q 5: 'type, #2241)
+r:til(1.5)
+
+=== QT011 profile: general | an unspaced one-char string is an atom to sort (q 5: 'rank, #2241)
+r:asc"a"
+
+=== QT016 profile: general | unspaced symbol to numeric math (q 5: 'type, #2241)
+r:sqrt`a
+
+=== QT013 profile: general | unspaced symbol to flip (q 5: 'rank, #2241)
+r:flip`t
+
+=== QT012 profile: general | unspaced symbol atom to distinct (q 5: 'type, #2241)
+r:distinct`a
+
+=== clean profile: general | the unspaced forms q runs stay silent (#2241)
+a:sum(1 2)
+b:til(3)
+c:asc"ab"
+d:distinct`a`b
+e:til`.q
+f:count`a
+g:max`a
+
+=== clean profile: general | a digit straight after the name is part of another name, not an argument (#2241)
+a:{til1:1.5; til1}[]
+
+
+=== QT011 profile: general | a temporal or real null is an atom to sort (q 5: 'rank, #2243)
+a:asc 0Nd
+b:iasc 0Np
+c:desc 0Ne
+d:asc 0Wp
+
+=== QT012 profile: general | and to distinct (q 5: 'type, #2243)
+a:distinct 0Nd
+b:distinct 0Nt
+
+=== QT013 profile: general | and to flip (q 5: 'rank, #2243)
+a:flip 0Np
+b:flip 0Nz
+
+=== QT008 profile: general | a real or temporal null is no count (q 5: 'type, #2243)
+a:til 0Ne
+b:til 0Nm
+c:til 0Wd
+
+=== QT009 profile: general | nor something to repeat indices by (q 5: 'type, #2243)
+a:where 0Nd
+b:where 0Wt
+
+=== QT017 profile: general | nor a window (q 5: 'type, #2243)
+a:0Nd mavg 1 2
+
+=== clean profile: general | what q runs on the same nulls stays silent (#2243)
+a:sum 0Nd
+b:asc enlist 0Nd
+c:distinct (0Nd;0Nd)
+d:count 0Np
+e:til 0Wh
+
+
+=== QT013 profile: general | a vector holding a null is still a flat vector (q 5: 'rank, #2242)
+a:flip 1 0N
+b:flip 0N 1
+c:flip 1 0n
+
+=== QT008 profile: general | and no count (q 5: 'type, #2242)
+a:til 0N 1
+b:til 1 0w
+
+=== QD002 profile: general | a null long or int is the least of its type, a negative count to where (q 5: 'limit, #2242)
+a:where 1 0N
+b:where 1 0Ni
+c:where 1 -0W
+
+=== QT009 profile: general | a float vector holding an infinity is no count to where (q 5: 'type, #2242)
+a:where 0w 1
+b:where 0N 1h
+
+=== QT019 profile: general | three bounds, one of them null (q 5: 'length, #2242)
+a:5 within 0N 1 2
+
+=== QT018 profile: general | lengths that differ, one vector holding a null or infinity (q 5: 'length, #2242)
+a:1 2 3 cor 1 0N
+b:1 2 3 wsum 0w 1
+c:1 2 3 cov 1 0n
+
+=== clean profile: general | the same nulls where q takes them (#2242)
+a:flip (1 0N;2 3)
+b:5 within 0N 10
+c:1 2 3 cor 1 0N 2
+d:asc 1 0N
+e:sum 1 0n
+f:distinct 0N 0N
+g:1 2 wsum 0w 1
+h:where 1 0 2
+
+
+=== QT008 profile: general | a month vector carries its m on the last item alone (q 5: 'type, #2244)
+a:til 2000.01 2000.02m
+
+=== QT009 profile: general | and is no count to where (q 5: 'type, #2244)
+a:where 2000.01 2000.02m
+
+=== QT013 profile: general | nor something flip transposes (q 5: 'rank, #2244)
+a:flip 2000.01 2000.02 2000.03m
+
+=== clean profile: general | q sorts it, and without the m the same text is a float vector (#2244)
+a:asc 2000.01 2000.02m
+b:where 2000.01 2000.02m=2000.01m
+c:sum 2000.01 2000.02
+d:distinct 2000.01 2000.02m
+
+
+=== QT017 profile: general | a null window, of any integer width (q 5: 'type, #2245)
+a:0N mavg 1 2 3
+b:0Nh msum 1 2 3
+c:mcount[0N;1 2]
+d:0Ni mdev 1 2
+
+=== QT014 profile: general | a null rotate count (q 5: 'domain, #2245)
+a:0N rotate 1 2 3
+b:rotate[0N;"abc"]
+c:0Nh rotate 1 2
+
+=== clean profile: general | mmin and mmax take a null window, and an infinity rotates (#2245)
+a:0N mmin 1 2 3
+b:mmax[0N;1 2 3]
+c:0W rotate 1 2 3
+d:-0W rotate 1 2 3
+e:2 mavg 1 2 3
+
+
+=== QA010 profile: general | the arity of every function comes from the catalogue (q 5: 'rank, #2246)
+a:ij[1;2;3]
+
+=== QA010 profile: general | sublist takes two (q 5: 'rank, #2246)
+a:sublist[1;2;3]
+
+=== QA010 profile: general | and the .Q, .h and .j functions are in it too (q 5: 'rank, #2246)
+a:.Q.dd[1;2;3]
+
+=== QA010 profile: general | h.xs takes one (q 5: 'rank, #2246)
+a:.h.xs[1;2]
+
+=== QA010 profile: general | j.j takes one (q 5: 'rank, #2246)
+a:.j.j[1;2]
+
+=== QA010 profile: general | an elided slot too many for a function q defines as a lambda (q 5: 'rank where it is made, #2246)
+a:xasc[`a;1;]
+
+=== clean profile: general | what each takes, and an elided slot too many for a primitive, a projection q makes (#2246)
+a:.Q.dd[`a;`b]
+b:sublist[1;1 2 3]
+c:bin[1 2;1;]
+d:.j.j[1]
+e:raze[1 2;(3;4)]
+
+=== clean profile: general | a file that defines a .h function of its own calls that one (#2246)
+.h.xs:{[a;b] a}
+r:.h.xs[1;2]
+

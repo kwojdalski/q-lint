@@ -62,26 +62,21 @@ pub(crate) enum Node {
     Query { tree: String, qsql: String },
 }
 
-/// The keywords q applies infix, beyond the ones the catalogue writes as
-/// `x kw y`: the `.q` functions of two arguments.
-const MORE_INFIX: [&str; 18] = [
-    "fby", "each", "peach", "over", "scan", "prior", "xasc", "xdesc", "xgroup", "xkey", "lj",
-    "ljf", "ij", "ijf", "uj", "ujf", "pj", "asof",
-];
-
+/// Whether q applies keyword `word` infix: the catalogue writes it between
+/// its two operands, whatever it calls them - `x in y`, `t1 lj t2`,
+/// `x xcol t`, `f each x`, `(f;d) fby g`. q's `parse` agrees on every
+/// keyword: `a xcols b` is (xcols;`a;`b), not `a` indexed by `xcols b`
+/// (#2240; `tests/functional.rs` holds it to `parse`).
 fn infix(word: &str) -> bool {
-    MORE_INFIX.contains(&word)
-        || crate::builtin(word).is_some_and(|b| {
-            b.syntax
-                .strip_prefix("x ")
-                .and_then(|s| s.strip_prefix(word))
-                .is_some_and(|s| s.starts_with(" y"))
-        })
+    crate::builtin(word).is_some_and(|b| {
+        b.kind == crate::BuiltinKind::Function
+            && matches!(b.syntax.split(' ').collect::<Vec<_>>()[..], [_, w, _] if w == word)
+    })
 }
 
 /// Whether `word` is one of q's own, so a function rather than a name.
 fn keyword(word: &str) -> bool {
-    crate::is_reserved(word) || MORE_INFIX.contains(&word)
+    crate::is_reserved(word)
 }
 
 #[derive(Clone, PartialEq, Debug)]

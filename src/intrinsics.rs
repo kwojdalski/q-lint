@@ -21,6 +21,8 @@ struct Literal {
     len: usize,
     negative: bool,
     short_integer: bool,
+    /// An integer null atom: `0N`, `0Nh`, `0Ni`, `0Nj`.
+    integer_null: bool,
 }
 fn literal(s: &str) -> Option<Literal> {
     let mut s = s.trim();
@@ -58,6 +60,7 @@ fn literal(s: &str) -> Option<Literal> {
             len: s.bytes().filter(|&b| b == b'`').count(),
             negative: false,
             short_integer: false,
+            integer_null: false,
         });
     }
     // Read from `comments`, where a string is still text. Its length is
@@ -70,6 +73,7 @@ fn literal(s: &str) -> Option<Literal> {
             len,
             negative: false,
             short_integer: false,
+            integer_null: false,
         });
     }
     if let Some(hex) = s.strip_prefix("0x")
@@ -82,6 +86,7 @@ fn literal(s: &str) -> Option<Literal> {
             len: hex.len() / 2,
             negative: false,
             short_integer: false,
+            integer_null: false,
         });
     }
     if re!(r"^[01]+b$").is_match(s) {
@@ -91,15 +96,21 @@ fn literal(s: &str) -> Option<Literal> {
             len: s.len() - 1,
             negative: false,
             short_integer: false,
+            integer_null: false,
         });
     }
     // A null or an infinity atom: the integer ones are integers and the
     // float ones floats (q 5: `asc 0N` and `iasc 0w` are 'rank, `til 0n`
-    // 'type, #616).
-    if let Some(m) = re!(r"^(-)?0(?:[NW][hij]?|([nw])[ef]?)$").captures(s) {
+    // 'type, #616). A type letter after `0N` or `0W` gives the real, float
+    // or temporal one: `0Ne`, `0Wf`, `0Nd`, `0Wp`, `0Nm` ... `0Nt` (q 5:
+    // `asc 0Nd` is 'rank, `til 0Ne` and `distinct 0Nd` 'type, #2243).
+    if let Some(m) = re!(r"^(-)?0(?:[NW]([hijefpmdznuvt])?|([nw])[ef]?)$").captures(s) {
+        let letter = m.get(2).map_or("", |l| l.as_str());
         return Some(Literal {
-            kind: if m.get(2).is_some() {
+            kind: if m.get(3).is_some() || matches!(letter, "e" | "f") {
                 Kind::Float
+            } else if !letter.is_empty() && "pmdznuvt".contains(letter) {
+                Kind::Temporal
             } else {
                 Kind::Integer
             },
@@ -107,14 +118,24 @@ fn literal(s: &str) -> Option<Literal> {
             len: 1,
             negative: m.get(1).is_some(),
             short_integer: s.ends_with('h'),
+            integer_null: re!(r"^0N[hij]?$").is_match(s),
         });
     }
-    if re!(r"^-?\d+(?:\s+-?\d+)*[hij]?$").is_match(s) {
+    // A vector's items may be nulls and infinities, the last one carrying
+    // the vector's type: `1 0N`, `0N 1h`, `1 -0W`, `1 0Nh` (q 5: `flip 1 0N`
+    // is 'rank, `where 1 0N` 'limit, #2242). The null is the least long,
+    // and negative as a count.
+    if re!(r"^(?:-?\d+|0N|-?0W)(?:\s+(?:-?\d+|0N|-?0W))*[hij]?$").is_match(s) {
         // Values outside the host integer range stay unknown, not truncated.
         let numbers = s
             .trim_end_matches(['h', 'i', 'j'])
             .split_whitespace()
-            .map(str::parse::<i64>)
+            .map(|item| match item {
+                "0N" => Ok(i64::MIN),
+                "0W" => Ok(i64::MAX),
+                "-0W" => Ok(-i64::MAX),
+                _ => item.parse::<i64>(),
+            })
             .collect::<Result<Vec<_>, _>>()
             .ok()?;
         return Some(Literal {
@@ -123,6 +144,7 @@ fn literal(s: &str) -> Option<Literal> {
             len: numbers.len(),
             negative: numbers.iter().any(|&v| v < 0),
             short_integer: s.ends_with('h'),
+            integer_null: false,
         });
     }
     // `2000.01.01`, `2000.01m`, `12:00`, `12:00:00.123`, `0D01`,
@@ -132,6 +154,22 @@ fn literal(s: &str) -> Option<Literal> {
     );
     // A time vector may end in the letter of its type: `12:00u`,
     // `12:00:00v`, `12:00 13:00t` (#593).
+    // A month vector carries its `m` on the last item alone: `2000.01
+    // 2000.02m` (q 5: `til` of it is 'type, #2244). Without the `m` the same
+    // text is a float vector.
+    if let Some(months) = s.strip_suffix('m')
+        && re!(r"^\d{4}\.\d\d(?:\s+\d{4}\.\d\d)*$").is_match(months)
+    {
+        let len = months.split_whitespace().count();
+        return Some(Literal {
+            kind: Kind::Temporal,
+            vector: len > 1,
+            len,
+            negative: false,
+            short_integer: false,
+            integer_null: false,
+        });
+    }
     let unsuffixed = s
         .strip_suffix(['u', 'v', 't'])
         .filter(|t| re!(r"\d\d:\d\d(?::\d\d(?:\.\d*)?)?$").is_match(t))
@@ -144,18 +182,28 @@ fn literal(s: &str) -> Option<Literal> {
             len: items.len(),
             negative: false,
             short_integer: false,
+            integer_null: false,
         });
     }
+    // Its items may be nulls and infinities too, which make a vector of
+    // integers a float one: `1 0n`, `0w 1`, `1.5 0N`, `1 0Ne` (q 5: `1 2 3
+    // cor 1 0n` is 'length, #2242).
     let float = re!(
-        r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+|E\d+)?(?:\s+-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+|E\d+)?)*[ef]?$"
+        r"^(?:-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+|E\d+)?|0[nNwW]|-0[wW])(?:\s+(?:-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+|E\d+)?|0[nNwW]|-0[wW]))*[ef]?$"
     );
-    if float.is_match(s) && (s.contains(['.', 'e', 'E']) || s.ends_with('f')) {
+    if float.is_match(s)
+        && (s.contains(['.', 'e', 'E'])
+            || s.ends_with('f')
+            || s.split_whitespace()
+                .any(|item| matches!(item, "0n" | "0w" | "-0w")))
+    {
         return Some(Literal {
             kind: Kind::Float,
             vector: s.split_whitespace().count() > 1,
             len: s.split_whitespace().count(),
             negative: false,
             short_integer: false,
+            integer_null: false,
         });
     }
     None
@@ -282,10 +330,14 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
     //
     // Between the name and its argument, and between vector items, the gap
     // is the statement's blanks: a line break into an indented line
-    // continues it, past any blank or comment lines (#193, #676).
+    // continues it, past any blank or comment lines (#193, #676). q needs
+    // no gap at all before a backtick, a quote or a parenthesis: q 5
+    // `sum`a`b`, `til"a"` and `til(1.5)` are 'type as their spaced forms are
+    // (#2241). Before a digit there has to be one, or the digit is part of
+    // the name - `til1` is a name, not `til 1`.
     const GAP: &str = blank!();
     for call in re!(&format!(
-        r#"\b({BUILTINS}){GAP}+((?:-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*(?:{GAP}+-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*)*)|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*"|\((?:[^()"\n]|"(?:\\.|[^"\\])*")*\)|enlist{GAP}+(?:-?\.?\d[A-Za-z0-9.:]*(?:[ \t]+-?\.?\d[A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*"))"#
+        r#"\b({BUILTINS}){GAP}*((?:-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*(?:{GAP}+-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*)*)|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*"|\((?:[^()"\n]|"(?:\\.|[^"\\])*")*\)|enlist{GAP}+(?:-?\.?\d[A-Za-z0-9.:]*(?:[ \t]+-?\.?\d[A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*"))"#
     ))
     .captures_iter(comments)
     {
@@ -309,6 +361,9 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
             continue;
         }
         let arg = call.get(2).unwrap();
+        if arg.start() == name.end() && !arg.as_str().starts_with(['`', '"', '(']) {
+            continue;
+        }
         out.push(Call {
             at: whole.start(),
             name: call.get(1).unwrap().as_str(),
@@ -418,6 +473,37 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
     out
 }
 
+/// The most arguments q's function `name` takes, from the catalogue: its
+/// parameters, or any number when the last is `...` (`enlist`). None for a
+/// name the catalogue has no function for.
+fn most_arguments(name: &str) -> Option<usize> {
+    let b = crate::builtin(name).filter(|b| b.kind == crate::BuiltinKind::Function)?;
+    match b.params.last()?.as_str() {
+        "..." => Some(usize::MAX),
+        _ => Some(b.params.len()),
+    }
+}
+
+/// Whether the file assigns `name` anywhere, which makes it a function of
+/// the file's own: after `.h.xs:{[a;b] a}`, `.h.xs[1;2]` runs.
+fn assigned(code: &str, name: &str) -> bool {
+    regex::Regex::new(&format!(r"{}{}*:", regex::escape(name), blank!()))
+        .unwrap()
+        .find_iter(code)
+        .any(|m| boundary(code, m.start()))
+}
+
+/// The functions q defines as lambdas, which check an elided slot too many
+/// where they are projected: q 5 `til[3;]` and `xasc[a;b;]` are 'rank, while
+/// `sum[1;]` and `bin[a;b;]` are projections, refused only when run.
+const LAMBDAS: &[&str] = &[
+    "til", "med", "asc", "desc", "iasc", "idesc", "signum", "cols", "keys", "meta", "next",
+    "upper", "lower", "trim", "ltrim", "rtrim", "show", "parse", "sdev", "svar", "avgs", "rotate",
+    "mavg", "msum", "mcount", "mdev", "mmin", "mmax", "xasc", "xdesc", "except", "vs", "sv",
+    "xbar", "cross", "cut", "inter", "xkey", "xcols", "xlog", "xgroup", "mod", "uj", "set", "fby",
+    "ssr", "aj", "aj0", "ajf", "ajf0", "ej", "wj", "wj1",
+];
+
 pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Finding> {
     let mut out = vec![];
     // A keyword the file redefines in `.q` calls the new definition from
@@ -425,36 +511,49 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     // after `.q.til:{x+1}`, `til 1.5` is 2.5 (#440).
     let dotq = crate::dotq_definitions(code, source);
     let redefined = |name: &str, at: usize| dotq.iter().any(|(n, from)| n == name && at > *from);
-    // QA010 for the keywords that are not in BUILTINS: arity from calling
-    // each with one more argument than it takes, which q 5 refuses with
-    // 'rank - `xasc[`a;t;1]`, `ssr[a;b;c;d]`, `wj[a;b;c;d;e]`.
+    // QA010 for every other function in the catalogue, `.Q`, `.h` and
+    // `.j` ones included: q 5 refuses one more argument than it takes with
+    // 'rank - `ij[a;b;c]`, `ssr[a;b;c;d]`, `.Q.dd[a;b;c]` (#2246). The
+    // most it takes is the catalogue's, which `tests/help.rs` holds to q's.
     // A column-0 `[1;2;3]` under `keyjoin:lj` is a statement of its own (#742).
-    for m in re!(concat!(r"\b(xasc|xdesc|bin|binr|except|ss|vs|sv|upsert|xbar|cross|cut|inter|union|in|like|xkey|xcols|xexp|xlog|xgroup|mod|div|insert|lj|uj|set|dsave|fby|md5|ssr|aj|aj0|ajf|ajf0|ej|wj|wj1)", blank!(), r"*\["))
-        .captures_iter(code)
+    for m in re!(concat!(
+        r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)",
+        blank!(),
+        r"*\["
+    ))
+    .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
         let name = &m[1];
-        if !boundary(code, whole.start()) || redefined(name, whole.start()) {
+        let Some(arity) = most_arguments(name) else {
+            continue;
+        };
+        if BUILTINS.split('|').any(|b| b == name)
+            || !boundary(code, whole.start())
+            || redefined(name, whole.start())
+            || (name.starts_with('.') && assigned(code, name))
+        {
             continue;
         }
-        let arity = match name {
-            "md5" => 1,
-            "ssr" | "aj" | "aj0" | "ajf" | "ajf0" | "ej" => 3,
-            "wj" | "wj1" => 4,
-            _ => 2,
-        };
         let open = whole.end() - 1;
         let Some(close) = matching(code, open, b'[', b']') else {
             continue;
         };
-        let given = slots(&code[open + 1..close - 1]).len();
-        if given > arity {
+        let slots = slots(&code[open + 1..close - 1]);
+        let given = slots.len();
+        // An elided slot makes a projection, which q refuses where it is
+        // made only for a function it defines as a lambda: q 5 `xasc[a;b;]`
+        // is 'rank, while `bin[a;b;]` is a projection that fails when run.
+        let projection = slots.iter().any(|slot| slot.trim().is_empty());
+        if given > arity && (!projection || LAMBDAS.contains(&name)) {
             out.push(Finding::at(
                 path,
                 source,
                 whole.start(),
                 "QA010",
-                format!("{name} accepts at most {arity} argument(s), but this call supplies {given}"),
+                format!(
+                    "{name} accepts at most {arity} argument(s), but this call supplies {given}"
+                ),
             ));
         }
     }
@@ -477,19 +576,12 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
         let report = |out: &mut Vec<Finding>, id, detail| {
             out.push(Finding::at(path, source, at, id, detail))
         };
-        let max_arity = match name {
-            "enlist" => usize::MAX,
-            "sums" | "prds" | "deltas" | "ratios" | "maxs" | "mins" | "fills" => 2,
-            _ => arity,
-        };
+        let max_arity = most_arguments(name).unwrap_or(arity);
         // A projection is refused only by a builtin q defines as a lambda,
         // which checks its slots where it is projected: q 5 `til[3;]`,
         // `til[;3]` and `mavg[1;;]` are 'rank, while `sum[1;]` and
         // `count[1;]` are not refused until they run, if then (#631).
-        let lambda = re!(
-            r"^(?:til|med|asc|desc|iasc|idesc|signum|cols|keys|meta|next|upper|lower|trim|ltrim|rtrim|show|parse|sdev|svar|avgs|rotate|mavg|msum|mcount|mdev|mmin|mmax)$"
-        );
-        if args.len() > max_arity && (!projection || lambda.is_match(name)) {
+        if args.len() > max_arity && (!projection || LAMBDAS.contains(&name)) {
             report(
                 &mut out,
                 "QA010",
@@ -574,6 +666,11 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             {
                 Some(("QT016", "Numeric math cannot operate on a symbol literal"))
             }
+            // A null window too, though `mmin` and `mmax` take one: q 5
+            // `0N mavg x` is 'type and `0N mmin x` is x (#2245).
+            "mavg" | "msum" | "mcount" | "mdev" if value.integer_null => {
+                Some(("QT017", "a null is no moving-window size"))
+            }
             "mavg" | "msum" | "mcount" | "mdev" | "mmin" | "mmax"
                 if value.vector
                     || matches!(
@@ -654,6 +751,8 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             )),
             // A symbol too, though it may name a table: q 5 `flip `t` is 'rank.
             "flip" => Some(("QT013", "flip cannot transpose an atom or a flat vector")),
+            // Nor is a null a count: q 5 `0N rotate x` is 'domain (#2245).
+            "rotate" if value.integer_null => Some(("QT014", "a null is no rotate count")),
             "rotate"
                 if value.vector
                     || matches!(

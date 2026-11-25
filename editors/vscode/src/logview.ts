@@ -542,6 +542,12 @@ export class LogViewer {
       await this.setFilter((f) => ({ ...f, processes }), view);
       return;
     }
+    // Every line names a process, by its own field or its file's name, so
+    // only a log with no line yet has none to pick from (#2262).
+    if (view.processes.size === 0) {
+      void window.showInformationMessage("q-lint: the log has no line yet, so there is no process to filter by.");
+      return;
+    }
     const picked = await window.showQuickPick(
       [...view.processes].sort(([a], [b]) => a.localeCompare(b)).map(([name, n]) => ({ label: name, description: `${n}`, picked: view.filter.processes.includes(name) })),
       { canPickMany: true, title: "Show which processes? (none picked: every process)" },

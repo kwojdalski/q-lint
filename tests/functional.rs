@@ -264,6 +264,17 @@ const CASES: &[(&str, &str)] = &[
         "select from t where sym in (exec a:sym, b:px from t)[`a]",
         "?[t;enlist (in;`sym;((?;`t;();();`a`b!(`sym;`px));enlist`a));0b;()]",
     ),
+    // A keyword written between its operands is applied infix, whatever
+    // the catalogue calls them: q 5 parses `a xcols b` as (xcols;`a;`b)
+    // (#2240).
+    (
+        "select c:count `size`px xcols t from t",
+        "?[t;();0b;(enlist`c)!enlist (count;(xcols;enlist`size`px;`t))]",
+    ),
+    (
+        "select from t where 6=count cols `a`b xcol t",
+        "?[t;enlist (=;6;(count;(cols;(xcol;enlist`a`b;`t))));0b;()]",
+    ),
 ];
 
 /// `(functional, qsql)`, one way only: forms a hand writes that no qSQL
@@ -564,6 +575,55 @@ fn qsql_written_into_an_expression_is_bracketed_where_it_would_join_it() {
     for (expression, want) in AROUND {
         assert_eq!(rewritten_around(expression), *want, "{expression}");
     }
+}
+
+#[test]
+fn a_keyword_is_applied_infix_exactly_where_q_parses_it_so() {
+    // Every keyword of the catalogue, between two names in a select: the
+    // rewrite applies it to both, `(kw;`a;`b)`, exactly where q's own
+    // `parse` of `a kw b` does (#2240: `xcol` and `xcols` were read as a
+    // unary applied to `b`, indexing `a` with the result).
+    let words: Vec<&str> = q_lint_rs::BUILTINS
+        .iter()
+        .filter(|b| b.kind == q_lint_rs::BuiltinKind::Function)
+        .map(|b| b.name.as_str())
+        .filter(|name| {
+            name.bytes()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        })
+        .collect();
+    let ours: Vec<bool> = words
+        .iter()
+        .map(|word| {
+            let source = format!("r:select c:a {word} b from t\n");
+            qsql_to_functional(&source, 3)
+                .and_then(Result::ok)
+                .is_some_and(|got| got.text.contains(&format!("({word};`a;`b)")))
+        })
+        .collect();
+    assert!(ours[words.iter().position(|w| *w == "xcols").unwrap()]);
+    assert!(!ours[words.iter().position(|w| *w == "til").unwrap()]);
+    let mut script = String::new();
+    for word in &words {
+        script.push_str(&format!(
+            "p:parse \"a {word} b\"; -1 \"{word} \",string $[0h=type p; (3=count p) and (`a~p 1) and `b~p 2; 0b];\n"
+        ));
+    }
+    script.push_str("\\\\\n");
+    let Some(out) = run_q(&script) else {
+        eprintln!("QLINT_TEST_Q names no q: the keywords stand as KDB-X parsed them");
+        return;
+    };
+    let theirs: Vec<&str> = out.lines().collect();
+    assert_eq!(theirs.len(), words.len(), "{out}");
+    let wrong: Vec<String> = words
+        .iter()
+        .zip(&ours)
+        .zip(&theirs)
+        .filter(|((word, ours), theirs)| **theirs != format!("{word} {}", u8::from(**ours)))
+        .map(|((word, ours), theirs)| format!("{word}: ours {ours}, q {theirs}"))
+        .collect();
+    assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
 /// Run `script` on the q that QLINT_TEST_Q names, and what it printed.

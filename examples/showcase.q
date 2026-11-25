@@ -301,6 +301,11 @@ corrs: cor each 1 2 3
 / expect-next: QE012
 spaced:1 2 +3
 
+/ QE013: an empty column slot in a table literal - a `;` left before the
+/ closing parenthesis - which q 5 refuses at parse with ';.
+/ expect-next: QE013
+ledger:([] sym:`a`b; px:1 2; )
+
 / QA006: one slot projects, three or more are conditionals - exactly two is
 / the arity $ has no meaning for, and q says 'type only at runtime.
 / expect-next: QA006

@@ -138,23 +138,218 @@ fn each_entry_says_how_it_is_written_and_what_it_gives_in_a_line_or_two() {
     assert_eq!(builtin("til").unwrap().params, ["x"]);
 }
 
-#[test]
-fn the_catalogue_and_the_arity_rule_agree_on_how_many_arguments_a_word_takes() {
-    let draws = |call: &str| {
-        lint(call, "t.q", Profile::General)
-            .iter()
-            .any(|f| f.code == "QA010")
-    };
-    // The rule is awake: it knows these two.
-    assert!(draws("r:md5[a;b]\n") && draws("r:ssr[a;b;c;d]\n"));
-    for b in BUILTINS
+/// `name` called with `count` arguments, `a0` to `a{count-1}`, the last
+/// left out when `elided`.
+fn call_with(name: &str, count: usize, elided: bool) -> String {
+    let arguments: Vec<String> = (0..count)
+        .map(|n| match elided && n + 1 == count {
+            true => String::new(),
+            false => format!("a{n}"),
+        })
+        .collect();
+    format!("r:{name}[{}]\n", arguments.join(";"))
+}
+
+fn draws_qa010(call: &str) -> bool {
+    lint(call, "t.q", Profile::General)
+        .iter()
+        .any(|f| f.code == "QA010")
+}
+
+/// The functions of the catalogue that take arguments, and whether each
+/// takes any number (`enlist[x;...]`).
+fn functions() -> impl Iterator<Item = (&'static str, usize, bool)> {
+    BUILTINS
         .iter()
         .filter(|b| b.kind == BuiltinKind::Function && !b.params.is_empty())
-    {
-        let arguments: Vec<String> = (0..b.params.len()).map(|n| format!("a{n}")).collect();
-        let call = format!("r:{}[{}]\n", b.name, arguments.join(";"));
-        assert!(!draws(&call), "QA010 refuses {call}");
+        .map(|b| {
+            let open = b.params.last().is_some_and(|p| p == "...");
+            (b.name.as_str(), b.params.len(), open)
+        })
+}
+
+#[test]
+fn the_catalogue_and_the_arity_rule_agree_on_how_many_arguments_a_word_takes() {
+    // Every function, `.Q`, `.h` and `.j` ones too: QA010 passes a call
+    // with as many arguments as the catalogue names and reports one with
+    // one more, so the rule's arity is the catalogue's and cannot drift
+    // from it (#2246).
+    let mut missed = vec![];
+    for (name, takes, open) in functions() {
+        let call = call_with(name, takes, false);
+        assert!(!draws_qa010(&call), "QA010 refuses {call}");
+        let call = call_with(name, takes + 1, false);
+        if !open && !draws_qa010(&call) {
+            missed.push(call);
+        }
     }
+    assert!(missed.is_empty(), "QA010 misses {missed:?}");
+    assert!(!draws_qa010("r:enlist[1;2;3;4;5;6;7;8;9]\n"));
+}
+
+/// What a summary says of a result, and the q that shows it (#2250): each
+/// summary has to say the phrase, and with QLINT_TEST_Q each expression
+/// has to give `1b`. `.z.a` inside a handler is the client's (127.0.0.1
+/// from a local one), which needs a server to show and is left to the
+/// hunt that found it; at the console it is this host's.
+const SAID: &[(&str, &str, &str)] = &[
+    (
+        ".Q.res",
+        "til among them, are not in it",
+        "(not `til in .Q.res) and all `if`select`abs in .Q.res",
+    ),
+    (
+        ".Q.res",
+        "control words",
+        "all `if`do`while`from`by in .Q.res",
+    ),
+    (".z.a", "of the client", "-6h=type .z.a"),
+    (
+        ".h.xs",
+        "quotes are left as they are",
+        ".h.xs[\"<>&\\\"'\"]~\"&lt;&gt;&amp;\\\"'\"",
+    ),
+    (
+        ".h.he",
+        "with a ' in front",
+        "(.h.he[\"a<b\"] like \"HTTP/1.1 400 Bad Request*\") and (.h.he[\"a<b\"] like \"*text/plain*\") and \"\\r\\n\\r\\n'a<b\"~-8#.h.he \"a<b\"",
+    ),
+    (
+        "floor",
+        "a short or int keeps its type",
+        "(-5 -6 -7 -7 -7h~type each (floor 1h;floor 1i;floor 1j;floor 1.5e;floor 1.5)) and \"abc\"~floor \"AbC\"",
+    ),
+    (
+        "ceiling",
+        "a boolean, byte or char an int",
+        "-5 -6 -7 -7 -7 -6 -6 -6h~type each (ceiling 1h;ceiling 1i;ceiling 1j;ceiling 1.5e;ceiling 1.5;ceiling 1b;ceiling 0x01;ceiling \"a\")",
+    ),
+];
+
+#[test]
+fn a_summary_says_what_q_gives() {
+    for (name, phrase, _) in SAID {
+        let summary = &builtin(name).unwrap().summary;
+        assert!(summary.contains(phrase), "{name}: {summary}");
+    }
+    let Ok(q) = std::env::var("QLINT_TEST_Q") else {
+        eprintln!("QLINT_TEST_Q names no q: the summaries stand as KDB-X gave them");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let script: String = SAID
+        .iter()
+        .map(|(_, _, shown)| format!("-1 .Q.s1 @[value;{shown:?};{{`$x}}];\n"))
+        .chain(["exit 0\n".to_string()])
+        .collect();
+    std::fs::write(dir.path().join("said.q"), script).unwrap();
+    let mut words = q.split_whitespace();
+    let out = Command::new(words.next().unwrap())
+        .args(words)
+        .arg("said.q")
+        .arg("-q")
+        .current_dir(dir.path())
+        .stdin(Stdio::null())
+        .output()
+        .expect("run q");
+    let out = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        out.lines().collect::<Vec<_>>(),
+        vec!["1b"; SAID.len()],
+        "{out}"
+    );
+}
+
+/// The most arguments q takes for a value: a lambda its parameters, a
+/// primitive one or two, a projection what its slots leave open, a
+/// composition what its last function takes, and a derived function what
+/// its iterator lets it take - `+\` a seed and a list. `.` and `@` take 2,
+/// 3 or 4, so a projection of either takes what its own slots leave. Each
+/// is then applied with one argument more, which q refuses with 'rank
+/// before anything runs.
+const RANKS: &str = r#"
+rk:{[v] t:type v;
+  $[t=100h; count (value v) 1; t=101h; 1; t=102h; 2;
+    t=104h; [p:value v; a:1_p; ($[any (first p)~/:(.;@); 2|count a; rk first p]-count a)+sum a~\:(::)];
+    t=105h; rk last value v;
+    t within 106 111h; [f:value v; $[100h>type f; 1; t=106h; rk f; 2|rk f]];
+    -1]};
+fn:{[w] v:@[{value ".q.",x};w;{`missing}]; if[v~`missing; v:@[value;w;{`missing}]]; v};
+probe:{[w] v:fn w; r:rk v; res:.[{x . y;"ran"};(v;(r+1)#1);{x}];
+  -1 w,"\t",(string r),"\t",res;};
+probe each read0 `:names.txt;
+-1 "enlist9\t",.Q.s1 @[{enlist[1;2;3;4;5;6;7;8;9];"ran"};::;{x}];
+{-1 "projection\t",x,"\t",@[{value x;"made"};x;{x}]} each read0 `:projections.txt;
+exit 0
+"#;
+
+#[test]
+fn every_function_takes_as_many_arguments_as_q_says() {
+    let Ok(q) = std::env::var("QLINT_TEST_Q") else {
+        eprintln!("QLINT_TEST_Q names no q: the ranks stand as KDB-X gave them");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let functions: Vec<_> = functions().collect();
+    let names: Vec<&str> = functions.iter().map(|f| f.0).collect();
+    std::fs::write(dir.path().join("names.txt"), names.join("\n") + "\n").unwrap();
+    // Each projection with an elided slot too many that QA010 reports: q
+    // has to refuse it where it is made, or the finding is false.
+    let reported: Vec<String> = functions
+        .iter()
+        .filter(|(_, _, open)| !open)
+        .filter(|(name, takes, _)| draws_qa010(&call_with(name, takes + 1, true)))
+        .map(|(name, takes, _)| format!("{name}[{}]", "1;".repeat(*takes)))
+        .collect();
+    assert!(reported.iter().any(|call| call.starts_with("til[")));
+    std::fs::write(
+        dir.path().join("projections.txt"),
+        reported.join("\n") + "\n",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("ranks.q"), RANKS).unwrap();
+    let mut words = q.split_whitespace();
+    let out = Command::new(words.next().unwrap())
+        .args(words)
+        .arg("ranks.q")
+        .arg("-q")
+        .current_dir(dir.path())
+        .stdin(Stdio::null())
+        .output()
+        .expect("run q");
+    let out = String::from_utf8_lossy(&out.stdout);
+    let rows: Vec<Vec<&str>> = out.lines().map(|l| l.split('\t').collect()).collect();
+    let mut wrong = vec![];
+    for (name, takes, open) in &functions {
+        let row = rows
+            .iter()
+            .find(|r| r.len() == 3 && r[0] == *name)
+            .unwrap_or_else(|| panic!("q gave no rank for {name}: {out}"));
+        if *open {
+            continue;
+        }
+        if row[1] != takes.to_string() || row[2] != "rank" {
+            wrong.push(format!(
+                "{name}: catalogue {takes}, q {} ({})",
+                row[1], row[2]
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    assert!(out.contains("enlist9\t\"ran\""), "{out}");
+    let refused: Vec<&str> = rows
+        .iter()
+        .filter(|r| r.len() == 3 && r[0] == "projection" && r[2] != "rank")
+        .map(|r| r[1])
+        .collect();
+    assert!(refused.is_empty(), "q makes these projections: {refused:?}");
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r.len() == 3 && r[0] == "projection")
+            .count(),
+        reported.len(),
+        "{out}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -402,6 +597,13 @@ fn a_glyph_is_one_outside_names_numbers_strings_and_comments() {
         assert_eq!(glyph(source, context, skip), None, "{context}");
     }
     assert_eq!(glyph(source, "x-1", 1), Some("-"));
+    // A timed line's command is no glyph, though the q it times is
+    // (#2247): the backslash of `\t` is not Scan, nor the `:` of `\t:10`.
+    let source = "a:1\n\\t 1000\n\\ts f[]\n\\t:10 x+y\n";
+    for (context, skip) in [("\\t 1000", 0), ("\\ts", 0), ("\\t:10", 0), ("\\t:10", 2)] {
+        assert_eq!(glyph(source, context, skip), None, "{context}");
+    }
+    assert_eq!(glyph(source, "x+y", 1), Some("+"));
 }
 
 #[test]
@@ -1062,6 +1264,44 @@ fn signature_help_for_a_word_of_q_comes_from_the_catalogue() {
 }
 
 #[test]
+fn signature_help_lets_a_running_function_take_its_seed_and_enlist_any_number() {
+    // q 5 runs sums[0;1 2] and deltas[0;x] - the first argument is the seed
+    // or prior - and enlist with nine arguments (#2249).
+    let dir = tempfile::tempdir().unwrap();
+    let text = "r:sums[0;1 2]\ns:enlist[1;2;3;4]\n";
+    let (mut server, uri) = serving(dir.path(), text, plain(), Value::Null);
+    let reply = server.ask(
+        "textDocument/signatureHelp",
+        &uri,
+        text,
+        "1 2]",
+        0,
+        Value::Null,
+    );
+    let help = &reply["result"];
+    assert_eq!(help["signatures"][0]["label"], "sums[x;y]");
+    assert_eq!(help["activeParameter"], 1);
+    assert!(
+        !help["signatures"][0]["documentation"]
+            .as_str()
+            .unwrap()
+            .starts_with("Too many"),
+        "{help}"
+    );
+    let reply = server.ask(
+        "textDocument/signatureHelp",
+        &uri,
+        text,
+        "4]",
+        0,
+        Value::Null,
+    );
+    let help = &reply["result"];
+    assert_eq!(help["signatures"][0]["label"], "enlist[x;...]");
+    assert_eq!(help["activeParameter"], 1);
+}
+
+#[test]
 fn signature_help_is_silent_for_a_local_and_for_an_unknown_name() {
     let dir = tempfile::tempdir().unwrap();
     let text = "apply:{[add;v] add[v;\nr:nobody[1;\n";
@@ -1394,4 +1634,31 @@ fn hovering_a_glyph_shows_its_catalogue_entry() {
             .starts_with("x _ y")
     );
     assert_eq!(span(&hover(&mut server, "<=", 0)["range"]), (2, 3, 5));
+}
+
+#[test]
+fn hovering_the_bang_of_an_internal_function_shows_no_dictionary() {
+    // With a negative integer on its left, `!` is an internal function:
+    // q 5 `-3!1 2` is the string "1 2", not a dictionary (#2248).
+    let dir = tempfile::tempdir().unwrap();
+    let text = "a:-3!x\nb:-11!`:log\nc:(-3)!x\nd:neg[3]!x\ne:x -3!y\nf:x-3!y\ng:`a`b!1 2\n";
+    let (mut server, uri) = serving(dir.path(), text, plain(), Value::Null);
+    let mut hover = |context: &str, skip: usize| {
+        server.ask("textDocument/hover", &uri, text, context, skip, Value::Null)["result"].clone()
+    };
+    for (context, skip) in [
+        ("3!x", 1),
+        ("11!", 2),
+        (")!x", 1),
+        ("]!x", 1),
+        ("3!y\nf", 1),
+    ] {
+        assert_eq!(hover(context, skip), Value::Null, "{context}");
+    }
+    // `x-3!y` subtracts `3!y`, and `` `a`b!1 2 `` is the dictionary.
+    for (context, skip) in [("x-3!y", 3), ("b!1", 1)] {
+        let reply = hover(context, skip);
+        let value = reply["contents"]["value"].as_str().unwrap();
+        assert!(value.starts_with("x!y"), "{context}: {value}");
+    }
 }

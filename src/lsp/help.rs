@@ -300,6 +300,42 @@ fn builtin_described(builtin: &Builtin, markdown: bool) -> String {
     )
 }
 
+/// Whether `before`, the source up to a `!`, ends in a negative integer
+/// written as one: `-3`, `(-3)` or `neg[3]`. Not `x-3`, where the `-`
+/// subtracts and `3!` is what follows it.
+fn negative_integer_before(before: &str) -> bool {
+    let line = before
+        .rsplit('\n')
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches([' ', '\t']);
+    let integer = |s: &str| {
+        let s = s.strip_suffix(['h', 'i', 'j']).unwrap_or(s);
+        !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
+    };
+    let operand_end =
+        |s: &str| s.ends_with(|c: char| c.is_alphanumeric() || "_.`\")]}".contains(c));
+    if let Some(inner) = line
+        .strip_suffix(')')
+        .and_then(|s| s.rfind('(').map(|i| s[i + 1..].trim()))
+    {
+        return inner.strip_prefix('-').is_some_and(integer);
+    }
+    if let Some((head, inner)) = line
+        .strip_suffix(']')
+        .and_then(|s| s.rfind('[').map(|i| (&s[..i], s[i + 1..].trim())))
+    {
+        return integer(inner)
+            && head
+                .trim_end_matches([' ', '\t'])
+                .strip_suffix("neg")
+                .is_some_and(|h| !operand_end(h));
+    }
+    let number = line.strip_suffix(['h', 'i', 'j']).unwrap_or(line);
+    let sign = number.trim_end_matches(|c: char| c.is_ascii_digit());
+    sign.len() < number.len() && sign.strip_suffix('-').is_some_and(|h| !operand_end(h))
+}
+
 /// `textDocument/hover`: for a global, each definition the workspace has of
 /// it - a function as its name and parameters, anything else as the line
 /// that assigns it - with the comment above, the best first; for a name q
@@ -317,6 +353,16 @@ fn hover(params: &Value, sources: &Sources, client: Client, more: More) -> Value
     let builtin_at = |at: usize, len: usize| {
         builtin(&cursor.text[at..at + len]).map(|b| builtin_described(b, markdown))
     };
+    // With a negative integer on its left, `!` is an internal function -
+    // `-3!x` the string form, `-11!` a log replayed - and neither Dict nor
+    // Key, which is all the catalogue says of it: nothing beats a wrong
+    // entry (#2248).
+    if let Some((at, 1)) = glyph_at(cursor.text, cursor.offset)
+        && &cursor.text[at..at + 1] == "!"
+        && negative_integer_before(&cursor.text[..at])
+    {
+        return Value::Null;
+    }
     // A glyph is no name, and is described where the cursor is on it - also
     // right after a name, which `name_at` would answer for.
     let glyph = glyph_at(cursor.text, cursor.offset)
@@ -507,7 +553,8 @@ fn builtin_signature(name: &str) -> Option<Signature> {
             name: b.name.clone(),
             params: b.params.clone(),
             said: b.summary.clone(),
-            open: b.kind == BuiltinKind::Control,
+            // `enlist[x;y;...]` takes any number, as the control words do.
+            open: b.kind == BuiltinKind::Control || b.params.last().is_some_and(|p| p == "..."),
         },
     )
 }

@@ -3457,6 +3457,11 @@ export class Live {
 
   private async rerun(entry?: HistoryEntry): Promise<void> {
     if (entry === undefined) {
+      // Nothing to pick from: said as Copy Query says it (#2262).
+      if (this.history().length === 0) {
+        void window.showInformationMessage("q-lint: the query history is empty.");
+        return;
+      }
       const picked = await window.showQuickPick(
         this.history().map((e) => ({ label: iconsEscaped(historyLabel(e.code)), description: iconsEscaped(e.process), entry: e })),
         { title: "Run which query again?" },
