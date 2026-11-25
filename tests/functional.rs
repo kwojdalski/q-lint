@@ -401,6 +401,26 @@ fn a_functional_form_whose_qsql_q_refuses_is_refused() {
         Some(Err(e)) => assert!(e.contains("dup names"), "{e}"),
         other => panic!("{other:?}"),
     }
+    // A select whose columns are not a dictionary is 'type on KDB-X, and
+    // was written as an exec, which runs (#2193); `?[t;();();`px]` is the
+    // exec.
+    for form in [
+        "?[t;();0b;`px]",
+        "?[t;();1b;`px]",
+        "?[t;();0b;enlist `px]",
+        "?[t;();0b;(+;`px;1)]",
+    ] {
+        match functional_to_qsql(&format!("r:{form}\n"), 3) {
+            Some(Err(e)) => assert!(e.contains("'type"), "{form}: {e}"),
+            other => panic!("{form}: {other:?}"),
+        }
+        if let Some(out) = run_q(&format!(
+            "{TABLE}\n-1 @[{{value x;\"ran\"}};{};{{x}}];\n\\\\\n",
+            quoted(form)
+        )) {
+            assert_eq!(out.trim(), "type", "{form}");
+        }
+    }
     let source = "r:![t;();(enlist`sym)!enlist `sym;(enlist`sym)!enlist (first;`sym)]\n";
     let got = functional_to_qsql(source, 3).unwrap().unwrap();
     assert_eq!(got.text, "update first sym by sym from t");

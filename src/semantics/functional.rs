@@ -1342,6 +1342,19 @@ fn written(verb: u8, table: &str, c: &Data, b: &Data, a: &Data) -> Result<String
     };
     match verb {
         b'?' => {
+            // `0b` or `1b` is a select, whose columns are a dictionary or
+            // `()`: q refuses any other with 'type, and an exec of them
+            // would run (#2193).
+            if matches!(b, Data::Leaf(l) if l == "0b" || l == "1b")
+                && !matches!(a, Data::Dict(..))
+                && !matches!(a, Data::List(items) if items.is_empty())
+            {
+                return Err(
+                    "a select whose columns are neither a dictionary nor (), which q refuses: \
+                     'type"
+                        .into(),
+                );
+            }
             let exec = matches!(&b, Data::List(items) if items.is_empty())
                 || matches!(&b, Data::Sym(s) if s.len() == 1)
                 || !matches!(a, Data::Dict(..) | Data::List(_));
