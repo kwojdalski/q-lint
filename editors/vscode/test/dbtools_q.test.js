@@ -657,6 +657,30 @@ test("the sym inspector counts no index past the file's end as a symbol, and war
   assert.match(text, /trade\.sym has 3 values whose index is past the end of sym/);
 });
 
+// .Q.ens[d;t;`mysym] enumerates against mysym, and a column may be against
+// a domain of its own beside sym: each is inspected (#2146).
+test("the sym inspector inspects a database enumerated against another domain than sym (#2146)", { skip }, async (t) => {
+  const { connection } = await connect(t, [
+    'r:hsym`$"$DIR/splay";',
+    "(` sv r,`sp`) set .Q.ens[r;([] s:`a`b`c; u:`x`y`z; n:1 2 3);`mysym];",
+    "\\l $DIR/splay",
+    "",
+  ].join("\n"));
+  const answer = readSym(await connection.call(SYM_INSPECT, 20));
+  assert.deepStrictEqual([answer.sym, answer.domain, answer.count, answer.others], [true, "mysym", 6, []]);
+  assert.deepStrictEqual(answer.columns.map((c) => [c.table, c.column, c.distinct]).sort(), [["sp", "s", 3], ["sp", "u", 3]]);
+  assert.match(symReport(answer, "splay", 1e6), /\/mysym: 6 symbols/);
+  const { connection: two } = await connect(t, [
+    'r:hsym`$"$DIR/two";src:`x`y`z;(` sv r,`src) set src;',
+    "{[r;d] .Q.dd[r;d,`trade`] set .Q.en[r] ([] sym:`a`b;src:`src$`x`z)}[r] each 2026.01.05 2026.01.06;",
+    "\\l $DIR/two",
+    "",
+  ].join("\n"));
+  const both = readSym(await two.call(SYM_INSPECT, 20));
+  assert.deepStrictEqual([both.domain, both.count, both.columns.map((c) => c.column)], ["sym", 2, ["sym"]]);
+  assert.deepStrictEqual(both.others.map((d) => [d.domain, d.count, d.columns.map((c) => [c.column, c.distinct]), d.growth.map((g) => g.size)]), [["src", 3, [["src", 2]], [3, 3]]]);
+});
+
 // A null symbol is no entry of the file, and a partition of no symbols
 // (empty, or all null) says nothing of its size (#1567, #1568).
 test("the sym inspector leaves out null symbols and partitions that hold none", { skip }, async (t) => {

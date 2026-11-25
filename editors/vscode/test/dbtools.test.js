@@ -302,6 +302,20 @@ test("the sym report counts no index past the file's end, and warns of them (#21
   assert.strictEqual(readSym({ sym: true, root: "/db", count: 3, bytes: 1, partitions: 1, sampled: 1, ctable: ["t"], ccol: ["s"], cdistinct: [1], gpart: [], gsize: [] }).columns[0].past, 0);
 });
 
+// A database enumerated against mysym, or against sym and src: each domain
+// file a column is enumerated against is inspected (#2146).
+test("the sym report covers each domain a column is enumerated against (#2146)", () => {
+  const a = readSym({ sym: true, root: "/db", count: 9, bytes: 99, partitions: 0, sampled: 0, dnames: ["mysym", "src"], dcounts: [9, 3], dbytes: [99, 30], cdom: ["mysym", "src", "mysym"], ctable: ["sp", "sp", "sp"], ccol: ["s", "v", "u"], cdistinct: [3, 2, 4], cpast: [0, 0, 0], gdom: [], gpart: [], gsize: [] });
+  assert.deepStrictEqual([a.domain, a.count, a.columns.map((c) => c.column)], ["mysym", 9, ["u", "s"]]);
+  assert.deepStrictEqual(a.others, [{ domain: "src", count: 3, bytes: 30, columns: [{ table: "sp", column: "v", distinct: 2, past: 0 }], growth: [] }]);
+  const text = symReport(a, "splay", 1000);
+  assert.match(text, /^# Sym file of splay\n\n\/db\/mysym: 9 symbols, /);
+  assert.match(text, /\| sp \| u \| 4 \| 44\.4% \|/);
+  assert.match(text, /\n## src\n\n\/db\/src: 3 symbols, .*\n\n### By column\n[^]*\| sp \| v \| 2 \| 66\.7% \|/);
+  // An answer that names no domain is sym's.
+  assert.strictEqual(readSym({ sym: true, root: "/db", count: 1, bytes: 1, partitions: 0, sampled: 0, ctable: ["t"], ccol: ["s"], cdistinct: [1], gpart: [], gsize: [] }).domain, "sym");
+});
+
 test("the attribute advisor counts filters and suggests by shape, never for an unfiltered column", () => {
   // Order is asked of a copy: `asc` would mark the table's own column s# (#1863).
   assert.deepStrictEqual(ATTRIBUTE_SAMPLE.match(/[^;\[]*\basc [^\])]*/g), ["{x~asc x}x til count x"]);
