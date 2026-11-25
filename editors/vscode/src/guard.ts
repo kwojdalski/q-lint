@@ -38,7 +38,7 @@
 //   may hold a handle (#2032) - and `2:`,
 //   each also by its `.q.` name (`.q.set`), by its symbol
 //   (`` `.q.set . (`a;1) ``), one cast from a string too (`` (`$".q.set") ``,
-//   #2037), and picked from `.q` by any index
+//   #2037), and picked from `.q`, `.Q` or `.h` (#2272) by any index
 //   (`` .q[`set] ``, `` (get`.q)`set ``, #1765) or by an index it cannot
 //   read, `` .q[`$"se","t"] ``, `((value .q) 71)` (#2206), and got with
 //   `parse` or `-5!`, `(parse"set")[`a;1]` (#2205) - as are `value`,
@@ -1112,7 +1112,11 @@ function evaluates(t: Token[], last: number, byValue: boolean, kCode = false, en
   return reason === undefined ? undefined : { reason, at: last };
 }
 
-/// The function of `CALLED` picked out of `root`, `.q` or `.Q`, at `t[at]`
+/// The namespaces that hold a function of `CALLED`: `.q`, `.Q`, and `.h`,
+/// whose `ht` writes files and `val` is `value` (#2272).
+const ROOTS = new Set([".q", ".Q", ".h"]);
+
+/// The function of `CALLED` picked out of `root`, one of `ROOTS`, at `t[at]`
 /// by whatever names it in the expression after it - `` .q[enlist`set]0 ``,
 /// `` .q`$"set" ``, `` (.q`set`get)0 ``, `` (get`.q)`set `` (#1765) - or
 /// undefined: `` .q`count `` reads.
@@ -1128,7 +1132,7 @@ function picked(t: Token[], at: number, root: string): string | undefined {
   return undefined;
 }
 
-/// Whether `.q` or `.Q` at `t[at]`, or `` `.q `` got with `get` or `value`,
+/// Whether one of `ROOTS` at `t[at]`, or `` `.q `` got with `get` or `value`,
 /// is indexed by what the guard cannot read: not symbols or strings written
 /// but a symbol made, `` .q[`$"se","t"] ``, a number, `((value .q) 71)`, or
 /// another expression, `(.q (key .q) 71)` (#2206).
@@ -1842,20 +1846,20 @@ function readStatement(statement: string, found: Set<string>): void {
             : next?.kind === "sym"
               ? next
               : undefined;
-      if ((k.text === ".q" || k.text === ".Q") && index !== undefined) {
+      if (ROOTS.has(k.text) && index !== undefined) {
         const name = `${k.text}.${index.text.slice(1)}`;
         if (CALLED.has(unqualified(name))) {
           found.add(`calls ${name}`);
           continue;
         }
       }
-      const name = k.text === ".q" || k.text === ".Q" ? picked(t, i, k.text) : undefined;
+      const name = ROOTS.has(k.text) ? picked(t, i, k.text) : undefined;
       if (name !== undefined) {
         found.add(`calls ${name}`);
         continue;
       }
       // Picked by what it cannot read, `` .q[`$"se","t"] ``, `((value .q) 71)` (#2206).
-      if ((k.text === ".q" || k.text === ".Q") && pickedUnread(t, i)) {
+      if (ROOTS.has(k.text) && pickedUnread(t, i)) {
         found.add(`calls a function picked from ${k.text} by what the guard cannot read`);
         continue;
       }
@@ -2100,12 +2104,12 @@ function readStatement(statement: string, found: Set<string>): void {
       }
     }
     // `.q` by its symbol, `` (get`.q)`set ``, likewise.
-    const name = k.kind === "sym" && (k.text === "`.q" || k.text === "`.Q") ? picked(t, i, k.text.slice(1)) : undefined;
+    const name = k.kind === "sym" && ROOTS.has(k.text.slice(1)) ? picked(t, i, k.text.slice(1)) : undefined;
     if (name !== undefined) {
       found.add(`calls ${name}`);
       continue;
     }
-    if (k.kind === "sym" && (k.text === "`.q" || k.text === "`.Q") && pickedUnread(t, i)) {
+    if (k.kind === "sym" && ROOTS.has(k.text.slice(1)) && pickedUnread(t, i)) {
       found.add(`calls a function picked from ${k.text.slice(1)} by what the guard cannot read`);
       continue;
     }

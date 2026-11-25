@@ -1790,3 +1790,15 @@ test("the debugger's breakpoints patch a function in place: .Q.bs and what it ca
   // Its table of breakpoints, read, is a read.
   assert.deepStrictEqual(writes(".Q.BP"), []);
 });
+
+test("a writer picked out of .h by any index is called, as out of .q and .Q (#2272)", () => {
+  const asks = [".h[`ht]`g", "(.h`ht)`g", "(.h@`ht)`g", "(get`.h)[`ht]`g", "(value`.h)`ht", ".h[`$\"ht\"]`g", "{.h[x]}[`ht]`g", ".h[`val]\"a:77\"", "(.h . enlist`ht)`g", ".h[`$\"h\",\"t\"]`g"];
+  for (const code of asks) {
+    assert.ok(writes(code).length > 0, code);
+  }
+  assert.deepStrictEqual(writes(".h[`ht]`g"), ["calls .h.ht"]);
+  // Its readers, picked, read.
+  for (const code of [".h[`tx][`csv;t]", "(.h`hb)[\"a\";\"b\"]", ".h.tx[`csv;t]", "key .h", "(get`.h)`br"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});
