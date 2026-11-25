@@ -105,6 +105,9 @@ export interface Comparison {
   /// Whether either side came back cut - fewer rows than its result has,
   /// or console text cut - so only its first part was compared.
   partial: boolean;
+  /// Whether the text that made it `partial` may as well be whole: it ends
+  /// in `..` as a cut at the process's unknown `\c` would leave it (#2164).
+  unsureCut?: boolean;
 }
 
 /// The fewest characters `-3!` leaves of a text it cuts: it stops one short
@@ -121,16 +124,17 @@ const itemCut = (text: string): boolean => text.endsWith("..") && text.length >=
 /// a width of 1, three; one fewer where an unwrapped run cut inside a
 /// character), and rows past its height are one last line of `..`. Every
 /// value but a function (100 on) is `-3!` text first. With no `width`
-/// given, any line ending `..` may be one the console cut.
-function textCut(lines: string[], type: number, width: number | undefined): boolean {
-  return lines.some(
-    (line, i) =>
-      line.endsWith("..") &&
-      (width === undefined ||
-        (line.length >= width - 1 && line.length <= Math.max(width, 3)) ||
-        (type < 100 && itemCut(line)) ||
-        (line === ".." && i === lines.length - 1)),
-  );
+/// given, any line ending `..` may be one the console cut. "maybe" where
+/// only a cut at the process's `\c`, which is not sent, would leave it so:
+/// whether it is one cannot be told (#2164).
+function textCut(lines: string[], type: number, width: number | undefined): "sure" | "maybe" | undefined {
+  const sure = (line: string, i: number): boolean =>
+    width !== undefined && ((line.length >= width - 1 && line.length <= Math.max(width, 3)) || (line === ".." && i === lines.length - 1));
+  const ends = lines.map((line) => line.endsWith(".."));
+  if (lines.some((line, i) => ends[i] && sure(line, i))) {
+    return "sure";
+  }
+  return lines.some((line, i) => ends[i] && (width === undefined || (type < 100 && itemCut(line)))) ? "maybe" : undefined;
 }
 
 /// What a value of `type` that `GRID` made a table of is: a dictionary and
@@ -226,8 +230,10 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number,
     const text = (o: Outcome, s: Side): string => s.text ?? ("answer" in o && o.answer.ok ? o.answer.text.join("\n") : "");
     const sa = { ...a.side, text: text(left, a.side) };
     const sb = { ...b.side, text: text(right, b.side) };
-    const cut = (o: Outcome, s: Side): boolean => s.kind === "text" && "answer" in o && o.answer.ok && textCut(o.answer.text, o.answer.type, width);
-    const partial = cut(left, sa) || cut(right, sb);
+    const cut = (o: Outcome, s: Side): "sure" | "maybe" | undefined => (s.kind === "text" && "answer" in o && o.answer.ok ? textCut(o.answer.text, o.answer.type, width) : undefined);
+    const cuts = [cut(left, sa), cut(right, sb)];
+    const partial = cuts.some((c) => c !== undefined);
+    const unsureCut = partial && !cuts.includes("sure");
     // And of one type, an enumeration's number aside (#2163).
     const typed = (o: Outcome): string => ("answer" in o && o.answer.ok ? typeName(o.answer.type) : "");
     const same = !partial && sa.kind === sb.kind && sa.text === sb.text && typed(left) === typed(right);
@@ -238,7 +244,7 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number,
     const typeOf = (o: Outcome): number | undefined => ("answer" in o && o.answer.ok ? o.answer.type : undefined);
     const toDigits =
       !same && !partial && sa.kind === "text" && sb.kind === "text" && typeOf(left) === typeOf(right) && !exactText(typeOf(left) ?? 10) && sameToDigits(sa.text, sb.text) ? 1 : 0;
-    return { left: sa, right: sb, columns: [], inLeft: [], inRight: [], matchedBy: "place", rows: [], lined: 0, differing: 0, onlyLeft: 0, onlyRight: 0, uncompared: 0, retyped: [], cut: 0, digits, toDigits, same, partial };
+    return { left: sa, right: sb, columns: [], inLeft: [], inRight: [], matchedBy: "place", rows: [], lined: 0, differing: 0, onlyLeft: 0, onlyRight: 0, uncompared: 0, retyped: [], cut: 0, digits, toDigits, same, partial, unsureCut };
   }
   const ga = ha.grid;
   const gb = hb.grid;

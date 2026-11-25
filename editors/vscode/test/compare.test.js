@@ -446,3 +446,18 @@ test("a list and a table, or a dictionary and a keyed table, of the same cells a
   const atom = (type, text) => ({ ok: true, type, text: [text] });
   assert.deepStrictEqual([compareOutcomes(side("a", atom(-7, "1")), side("b", atom(-9, "1")), -1).same, compareOutcomes(side("a", atom(20, "`sym$`a")), side("b", atom(21, "`sym$`a")), -1).same], [false, true]);
 });
+
+// `/data/hdb/x.. is 14 characters ending in .., as -3! leaves a text it cut
+// at a \c of 15: with \c unknown, the same answer on both was said to be cut.
+test("a text that ends in .. where q may or may not have cut it is said to be unknown, not cut (#2164)", () => {
+  const text = (type, ...lines) => ({ ok: true, type, text: lines });
+  const c = compareOutcomes(side("a", text(-11, "`/data/hdb/x..")), side("b", text(-11, "`/data/hdb/x..")), -1, 160);
+  assert.deepStrictEqual([c.same, c.partial, c.unsureCut], [false, true, true]);
+  const page = loadPage();
+  const said = (comparison) => (page.send({ type: "compare", id: 1, code: "x", comparison }), page.posted.at(-1).rendered.summary);
+  assert.strictEqual(said(c), "Each answer's text is the same, and ends in .. as q writes a value it cut at the process's console width (\\c), which q-lint is not told: whether the rest is the same cannot be told.");
+  // A line the console cut at the width asked for, or rows past its height, is cut.
+  const sure = compareOutcomes(side("a", text(0, "1", "`a..", "..")), side("b", text(0, "1", "`a..", "..")), -1, 160);
+  assert.deepStrictEqual([sure.partial, sure.unsureCut], [true, false]);
+  assert.match(said(sure), /^The part of each answer that came back is the same; the text was cut at the console size/);
+});

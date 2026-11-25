@@ -32,6 +32,10 @@
         ? l + " and " + r + " gave the same answer to the digits shown. A float that is not in a list or a table is compared as each console writes it: compare enlist of it to compare its every digit."
         : l + " and " + r + " gave the same answer.";
     }
+    // Text that only a cut at the process's \c, not sent, would leave so (#2164).
+    if (c.partial && c.unsureCut && c.columns.length === 0 && c.left.kind === c.right.kind && c.left.text === c.right.text) {
+      return "Each answer's text is the same, and ends in .. as q writes a value it cut at the process's console width (\\c), which q-lint is not told: whether the rest is the same cannot be told.";
+    }
     // Only the part that came back was compared (#1614).
     const cutNote = " Not every row came back, so only the rows held were compared: raise q-lint.query.gridLimit or turn on Unlimited to compare them all.";
     if (c.partial && c.columns.length === 0 && c.left.kind === c.right.kind && c.left.text === c.right.text) {
