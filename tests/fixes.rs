@@ -2230,3 +2230,37 @@ fn a_where_phrase_fix_leaves_a_symbol_spelling_and_whole() {
     // The last compares with two symbols, 'length as it was before (QB008).
     assert_eq!(values, ["1", "1", "1", "3", "'length"]);
 }
+
+/// QP006 brackets `f x` only where `f` is applied: q 5 parses `f dsave x`
+/// and `f setenv x` as the infix call, which `f[dsave x]` is not - and
+/// does not parse at all - while `f aj x` and `f find x` are `f` applied,
+/// so their brackets keep q's parse tree (#2257).
+#[test]
+fn juxtaposition_is_bracketed_only_before_a_word_q_applies() {
+    let fix = |source: &str| {
+        q_lint_rs::fix_all(source, false, |text| {
+            Ok::<_, ()>(q_lint_rs::lint(text, "probe.q", q_lint_rs::Profile::Uqf))
+        })
+        .unwrap()
+        .text
+    };
+    let mut scripts = vec![];
+    for (source, fixed) in [
+        ("r:f dsave 1 2", "r:f dsave 1 2"),
+        ("r:f setenv 1 2", "r:f setenv 1 2"),
+        ("r:f aj 1 2", "r:f[aj 1 2]"),
+        ("r:f aj0 1 2", "r:f[aj0 1 2]"),
+        ("r:f ej 1 2", "r:f[ej 1 2]"),
+    ] {
+        let defined = |s: &str| format!("f:{{[a;b] a+b}}\n{s}");
+        assert_eq!(fix(&defined(source)), defined(fixed), "{source}");
+        if source != fixed {
+            scripts.push(format!("r:(parse {source:?})~parse {fixed:?}"));
+        }
+    }
+    scripts.push("r:@[parse;\"f[dsave 1 2]\";{`refused}]".into());
+    let Some(values) = values_on_q(&scripts) else {
+        return;
+    };
+    assert_eq!(values, ["1b", "1b", "1b", "`refused"]);
+}
