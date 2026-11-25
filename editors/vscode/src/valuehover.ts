@@ -10,14 +10,15 @@
 // evaluated to find it. A view is named and not evaluated, and a
 // partitioned table is not printed, since either could cost the process
 // far more than a hover is worth. Anything else is printed as the console
-// prints it (`.Q.s`, so within the console's rows and columns), cut at the
-// limit, never inside a UTF-8 character (#2071).
+// prints it, but every row and each cell to its end rather than within the
+// process's `\c` (`LAID_OUT`, #2546), cut at the limit, never inside a
+// UTF-8 character (#2071).
 //
 // A keyed table is type 99 as a dictionary is, so the answer says which.
 //
 //   `found`name`type`keyed`count`text`cut!(1b;name;type;keyed;count;.Q.s, cut;whether it was)  or  `found`name`view!(1b;name;1b)  or  (,`found)!,0b
 
-import { UTF8_CUT } from "./qtext";
+import { FULL_TEXT, LAID_OUT, UTF8_CUT } from "./qtext";
 
 export const VALUE_PREVIEW = [
   "{[ns;lim]",
@@ -27,7 +28,7 @@ export const VALUE_PREVIEW = [
   " if[null n;:enlist[`found]!enlist 0b];",
   " if[n in views[];:`found`name`view!(1b;n;1b)];",
   " v:get n; qp:$[`qp in key `.Q;@[.Q.qp;v;0b];0b];",
-  " s:$[1b~qp;\"\";.Q.s v];",
+  ` s:$[1b~qp;"";${LAID_OUT}[${FULL_TEXT};lim+1;v]];`,
   ` \`found\`name\`type\`keyed\`count\`text\`cut!(1b;n;type v;$[99h=type v;98h=type key v;0b];@[count;v;0N];${UTF8_CUT}[lim;s];lim<count s)}`,
 ].join("\n");
 
