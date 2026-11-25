@@ -1066,9 +1066,9 @@ fn rename_global(
         let namespace = name.strip_suffix(old).filter(|ns| ns.ends_with('.'))?;
         new.strip_prefix(namespace)
     });
-    let new = match new.strip_prefix(written) {
-        Some(rest) if !written.is_empty() => rest,
-        _ if let Some(rest) = resolved => rest,
+    let new = match (new.strip_prefix(written), resolved) {
+        (Some(rest), _) if !written.is_empty() => rest,
+        (_, Some(rest)) => rest,
         _ if new.contains('.') => {
             return Err(format!(
                 "q-lint renames the last part of a name only: `{spelled}` can become \
