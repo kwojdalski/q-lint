@@ -304,21 +304,12 @@ fn refuse_overwrite(flag: &str, target: Option<&Path>, inputs: &[PathBuf]) -> Re
 /// Whether two paths reach one file on disk: compared as files, not names,
 /// so a symlink to a source, a hard link, or another case of its name on a
 /// disk that ignores case is the source (#2116). A path that names no file
-/// yet is no input, unless it is the input's own name.
+/// yet is no input, unless it is the input's own name. On Windows a hard
+/// link has a canonical path of its own, so files are told apart by volume
+/// and file index there, as by device and inode elsewhere.
 fn same_file(a: &Path, b: &Path) -> bool {
     match (fs::metadata(a), fs::metadata(b)) {
-        #[cfg(unix)]
-        (Ok(x), Ok(y)) => {
-            use std::os::unix::fs::MetadataExt;
-            (x.dev(), x.ino()) == (y.dev(), y.ino())
-        }
-        #[cfg(not(unix))]
-        (Ok(_), Ok(_)) => match (fs::canonicalize(a), fs::canonicalize(b)) {
-            (Ok(x), Ok(y)) => x
-                .to_string_lossy()
-                .eq_ignore_ascii_case(&y.to_string_lossy()),
-            _ => false,
-        },
+        (Ok(_), Ok(_)) => same_file::is_same_file(a, b).unwrap_or(false),
         _ => config::absolute(a) == config::absolute(b),
     }
 }
