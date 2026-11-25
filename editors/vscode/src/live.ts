@@ -70,7 +70,7 @@ import {
 } from "./processes";
 import { clickedEditor, unsavedIn } from "./clicked";
 import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
-import { ClosedBeforeHandshake, QConnection, QError, type DirectMode, type Target } from "./qclient";
+import { ClosedBeforeHandshake, DirectRefused, QConnection, QError, directRefusal, type DirectMode, type Target } from "./qclient";
 import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, TunnelHandshakeError, readTunnel } from "./tunnel";
 import { GATEWAY_COMMANDS, fileServerTypes, gatewayJoined, gatewayParts, gatewayStatement, isGatewayCall, readGateway, withServerTypes } from "./gateway";
 import { isLocalHost } from "./launcher";
@@ -3061,13 +3061,16 @@ export class Live {
   /// refused outright for a caller that cannot ask (`guard` "refuse").
   /// With `expect`, the label of the process a question asked about, it
   /// throws `movedFrom` instead of running on any other (#1081). `signal`
-  /// stops this call's wait to be sent, and nothing else's (#2560).
+  /// stops this call's wait to be sent, and nothing else's (#2560). With
+  /// `lambda`, for a feature that needs q-lint's lambda, a direct
+  /// connection is refused before the guard asks: nothing would be sent.
   async runOnActive<T>(
     code: GuardCode,
     query: (connection: QConnection) => Promise<T>,
     guard: "ask" | "refuse" = "ask",
     expect?: string,
     signal?: AbortSignal,
+    lambda = false,
   ): Promise<{ process: string; value: T } | undefined> {
     // Checked before `ready` would connect and before the guard asks: no
     // question about a process nothing will be sent to. `stillReady` keeps
@@ -3084,6 +3087,11 @@ export class Live {
     let ready: { connection: QConnection; process: Process } | undefined = first;
     if (expect !== undefined && ready.process.label !== expect) {
       throw movedFrom(expect);
+    }
+    // Refused before the guard asks about a change that cannot be sent (#2485).
+    const direct = lambda ? ready.connection.direct() : undefined;
+    if (direct !== undefined) {
+      throw new DirectRefused(directRefusal(direct));
     }
     const refused = this.guardRefuses(code, [ready.process]);
     if (refused !== undefined) {

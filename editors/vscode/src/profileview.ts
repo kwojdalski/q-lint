@@ -110,7 +110,7 @@ export function registerFunctionProfile(
             await connection.call(PROFILE_CLEANUP, 0).catch(() => undefined);
           }
         }
-      });
+      }, "ask", undefined, undefined, true);
     } catch (error) {
       return say(`q-lint: the profile failed: ${error instanceof Error ? error.message : String(error)}`);
     }

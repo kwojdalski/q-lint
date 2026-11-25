@@ -515,7 +515,7 @@ class QTests {
     };
     const send = (statements: string[], mode: TestMode) =>
       sending(() =>
-        this.live.runOnActive(testRunGuardCode(statements), async (connection) => readTestResult(await connection.call(TEST_RUN, statements, mode)), "ask", process.label),
+        this.live.runOnActive(testRunGuardCode(statements), async (connection) => readTestResult(await connection.call(TEST_RUN, statements, mode)), "ask", process.label, undefined, true),
       );
     // A row whose minver is above the process's .z.K is not run, as KUltf
     // does not load it (#1594): asked once, when a row of the run has one.
@@ -688,7 +688,7 @@ class QTests {
       snapshot.query,
       async (connection) => connection.trapped(SNAPSHOT_RUN, SNAPSHOT_RUN_READ_ONLY, readAnswer, statements(snapshot.query)),
       "ask",
-      label,
+      label, undefined, true,
     );
     const at = item.uri !== undefined ? new Location(item.uri, new Range(0, 0, 0, 0)) : undefined;
     if (done === undefined) {
@@ -786,7 +786,7 @@ class QTests {
       const statuses = readInstalled(await connection.call(install, plan.names, plan.was, plan.src, plan.probes.length), plan.names.length);
       statuses.forEach((status, i) => status !== "ok" && run.appendOutput(`Not instrumented, ${plan.names[i]}: ${status}\r\n`));
       return { plan, installed: new Set(plan.names.filter((_, i) => statuses[i] === "ok")) };
-    }, "ask", label).catch(async (error: unknown) => {
+    }, "ask", label, undefined, true).catch(async (error: unknown) => {
       if (sent !== undefined) {
         await this.putBack(run, process, sent, error instanceof Error ? error.message : String(error));
       }

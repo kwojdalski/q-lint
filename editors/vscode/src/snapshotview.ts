@@ -68,7 +68,7 @@ async function result(live: Live, query: string): Promise<string | undefined> {
     return undefined;
   }
   try {
-    done = await live.runOnActive(query, async (connection) => connection.trapped(SNAPSHOT_RUN, SNAPSHOT_RUN_READ_ONLY, readAnswer, statements(query)));
+    done = await live.runOnActive(query, async (connection) => connection.trapped(SNAPSHOT_RUN, SNAPSHOT_RUN_READ_ONLY, readAnswer, statements(query)), "ask", undefined, undefined, true);
   } catch (error) {
     void window.showInformationMessage(plainMessage(`q-lint: no snapshot was written: ${error instanceof Error ? error.message : String(error)}`));
     return undefined;

@@ -94,7 +94,7 @@ export function registerLineTimings(
           connection.noteRefusal(failed.error);
         }
         return raw;
-      });
+      }, "ask", undefined, undefined, true);
     } catch (error) {
       return say(`q-lint: line timings failed: ${error instanceof Error ? error.message : String(error)}`);
     }
