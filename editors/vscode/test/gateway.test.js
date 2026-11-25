@@ -11,7 +11,7 @@ const path = require("node:path");
 const net = require("node:net");
 const { spawn } = require("node:child_process");
 const pkg = require("../package.json");
-const { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, joined, readGateway, symbols, withServerTypes } = require("../out/gateway.js");
+const { GATEWAY_COMMANDS, fileServerTypes, gatewayParts, gatewayStatement, isGatewayCall, joined, readGateway, symbols, withServerTypes } = require("../out/gateway.js");
 const { qString } = require("../out/qliteral.js");
 const { givenServerTypes, parseProcesses, serverTypes } = require("../out/processes.js");
 const { Live } = require("../out/live.js");
@@ -218,6 +218,15 @@ test("a query to a TorQ gateway goes through .gw.syncexec to the server types as
   assert.match(stub.messages.at(-1)[1], /goes to the server types it names, not hdb/);
 });
 
+test("a result's gateway call gives the query inside it and its server types (#2436, #2437)", () => {
+  assert.deepStrictEqual(gatewayParts('.gw.syncexec["count trade";enlist `hdb]'), { query: "count trade", types: ["hdb"] });
+  const query = 's:"a\\"b\\\\c\tdé\001"\nselect from trade';
+  assert.deepStrictEqual(gatewayParts(gatewayStatement([query], ["rdb", "hdb"])), { query, types: ["rdb", "hdb"] });
+  assert.deepStrictEqual(gatewayParts('.gw.syncexec[enlist "1";`rdb]'), { query: "1", types: ["rdb"] });
+  assert.strictEqual(gatewayParts("select from trade"), undefined);
+  assert.strictEqual(gatewayParts('t:.gw.syncexec["1";`rdb]'), undefined);
+});
+
 test("a recorded gateway call is sent to other server types (#2592)", () => {
   assert.strictEqual(withServerTypes('.gw.syncexec["count trade";enlist `rdb]', ["hdb", "rdb"]), '.gw.syncexec["count trade";`hdb`rdb]');
   assert.strictEqual(withServerTypes('.gw.syncexec["a:\\"x;y]\\"\\n ;a";`rdb`hdb]', ["hdb"]), '.gw.syncexec["a:\\"x;y]\\"\\n ;a";enlist `hdb]');
@@ -264,6 +273,14 @@ test("a gateway call written by hand, and the gateway's own API and state, run o
   // A file can send its queries to the gateway itself.
   r = await query("role\n/ @servertypes none");
   assert.deepStrictEqual(r, { code: "role", outcome: "ok", text: "`gateway" });
+});
+
+test("a drill-down, a wrangle or a cell edit from a gateway's result goes to the server types it came from (#2437)", { skip }, async (t) => {
+  const gw = await torq(t);
+  const { live } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb"] }]);
+  assert.strictEqual(await live.connectTo("gw"), true);
+  await live.runOnProcess("exec sym from trade where px>3", "gw", { serverTypes: ["hdb"] });
+  assert.deepStrictEqual([live.history()[0].code, live.history()[0].outcome], ['.gw.syncexec["exec sym from trade where px>3";enlist `hdb]', "ok"]);
 });
 
 test("a query run apart - a dashboard tile, a scheduled export, Query a Tag - goes through the gateway too (#1230)", { skip }, async (t) => {

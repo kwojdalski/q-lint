@@ -72,7 +72,7 @@ import { clickedEditor, unsavedIn } from "./clicked";
 import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
 import { ClosedBeforeHandshake, QConnection, QError, type DirectMode, type Target } from "./qclient";
 import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, TunnelHandshakeError, readTunnel } from "./tunnel";
-import { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, readGateway, withServerTypes } from "./gateway";
+import { GATEWAY_COMMANDS, fileServerTypes, gatewayParts, gatewayStatement, isGatewayCall, readGateway, withServerTypes } from "./gateway";
 import { isLocalHost } from "./launcher";
 import { HEARTBEAT, STEADY_MS, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
 import { clearedStamp, historyHeading, historyLabel, iconsEscaped, mergedHistory, plainMessage } from "./history";
@@ -749,7 +749,8 @@ export class Live {
     this.runFileWith = (extra, document) => terminals.runFile(extra, document);
     this.modes = new QueryModes(context);
     this.modes.setPager((label, offset, count, token) => this.pageHeld(label, offset, count, token));
-    this.modes.setRunner((code, label) => this.runOnProcess(code, label));
+    // A drill-down from a gateway's result goes to the servers it came from (#2437).
+    this.modes.setRunner((code, label, from) => this.runOnProcess(code, label, { serverTypes: gatewayParts(from)?.types }));
     this.controls = new QueryControls(context, {
       activeLabel: () => this.activeLabel(),
       activeDirect: () => this.activeDirect(),
@@ -3621,7 +3622,8 @@ export class Live {
   /// (#927), a wrangle step (#961), a cell edit (#964) - as a query from the
   /// editor is run, read by the guard, after asking when it is a production
   /// one (unless `askProduction` is false: the caller asked already).
-  async runOnProcess(code: string, label: string, options: { what?: string; mode?: QueryMode; askProduction?: boolean } = {}): Promise<void> {
+  /// `serverTypes`: on a gateway, those the result came from (#2437).
+  async runOnProcess(code: string, label: string, options: { what?: string; mode?: QueryMode; askProduction?: boolean; serverTypes?: string[] } = {}): Promise<void> {
     // The connected process when it is the one named - a saved process may
     // share a discovered one's label (#1711) - and `named` also finds a
     // discovered or shared process (#1425).
@@ -3646,7 +3648,7 @@ export class Live {
         return;
       }
     }
-    await this.run(code, undefined, undefined, options.mode);
+    await this.run(code, undefined, options.serverTypes, options.mode);
   }
 
   /// Say a long query has ended, when the window is not focused: the user

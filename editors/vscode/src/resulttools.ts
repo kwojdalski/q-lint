@@ -30,6 +30,7 @@ import {
   tableName,
   type Sample,
 } from "./datafile";
+import { gatewayParts, gatewayStatement } from "./gateway";
 import type { GridPayload } from "./grid";
 import { RESULT_VIEW, readResultView, type ResultFeature } from "./liveconfig";
 import type { Live } from "./live";
@@ -51,6 +52,7 @@ import {
 } from "./wrangle";
 import { iconsEscaped, plainMessage } from "./history";
 import { staleMenu } from "./resultpanel";
+import { statements } from "./statements";
 
 /// Wrangles kept, to go on from the result of one.
 const WRANGLES = 50;
@@ -59,6 +61,9 @@ interface Wrangle {
   base: string;
   steps: Step[];
   process: string;
+  /// On a TorQ gateway, the server types the base ran on: the base is the
+  /// query inside its `.gw.syncexec`, and each step goes there too (#2436).
+  serverTypes?: string[];
 }
 
 /// What a column's context menu, or a cell's, passes its command.
@@ -124,8 +129,12 @@ export class ResultTools {
     if (kept !== undefined) {
       return kept;
     }
-    const problem = wrangleBase(shown.code);
-    return problem !== undefined ? problem : { base: shown.code, steps: [], process: shown.process };
+    // A gateway's result was sent as a `.gw.syncexec` call: its steps are
+    // built over the query inside, sent to the same servers (#2436).
+    const parts = gatewayParts(shown.code);
+    const base = parts?.query ?? shown.code;
+    const problem = wrangleBase(base);
+    return problem !== undefined ? problem : { base, steps: [], process: shown.process, ...(parts !== undefined ? { serverTypes: parts.types } : {}) };
   }
 
   /// Pick a step and apply it, or undo, show or drop the steps so far.
@@ -165,7 +174,8 @@ export class ResultTools {
       return;
     }
     if (picked.action === "show") {
-      await openQ(wrangleScript(wrangle.base, wrangle.steps, wrangle.process));
+      const script = wrangleScript(wrangle.base, wrangle.steps, wrangle.process);
+      await openQ(wrangle.serverTypes !== undefined ? `/ @servertypes ${wrangle.serverTypes.join(" ")}\n${script}` : script);
       return;
     }
     if (picked.action === "undo" || picked.action === "reset") {
@@ -255,7 +265,8 @@ export class ResultTools {
   /// grid, and keep them for the next step.
   private async apply(wrangle: Wrangle): Promise<void> {
     const code = wrangle.steps.length === 0 ? wrangle.base : wrangleQuery(wrangle.base, wrangle.steps);
-    const key = `${wrangle.process}\0${code}`;
+    // Kept under the code its result carries: on a gateway, as sent.
+    const key = `${wrangle.process}\0${wrangle.serverTypes !== undefined ? gatewayStatement(statements(code), wrangle.serverTypes) : code}`;
     this.wrangles.delete(key);
     if (wrangle.steps.length > 0) {
       this.wrangles.set(key, wrangle);
@@ -263,7 +274,7 @@ export class ResultTools {
         this.wrangles.delete(this.wrangles.keys().next().value as string);
       }
     }
-    await this.live.runOnProcess(code, wrangle.process, { what: "wrangle query", mode: "grid" });
+    await this.live.runOnProcess(code, wrangle.process, { what: "wrangle query", mode: "grid", ...(wrangle.serverTypes !== undefined ? { serverTypes: wrangle.serverTypes } : {}) });
   }
 
   /// The steps of the wrangle a result's code belongs to, for tests.
@@ -290,7 +301,7 @@ export class ResultTools {
     const table = await window.showInputBox({
       title: `q-lint: edit ${name} on ${process}: the table to update`,
       prompt: "The table the result came from, updated in place",
-      value: guessTable(shown.code) ?? "",
+      value: guessTable(gatewayParts(shown.code)?.query ?? shown.code) ?? "",
       validateInput: (v) => (/^\.?[A-Za-z][\w]*(\.[A-Za-z][\w]*)*$/.test(v.trim()) ? undefined : "A table's name, such as trade or .ns.trade"),
     });
     if (table === undefined) {
@@ -324,7 +335,9 @@ export class ResultTools {
     if (answer === editor) {
       await openQ(`/ An edit of ${name} on ${process}, written by q-lint: review it, then run it.\n${edit.code}\n`);
     } else if (answer === run) {
-      await this.live.runOnProcess(edit.code, process, { what: "cell edit", askProduction: false });
+      // On a gateway, to the servers the result came from (#2437).
+      const types = gatewayParts(shown.code)?.types;
+      await this.live.runOnProcess(edit.code, process, { what: "cell edit", askProduction: false, ...(types !== undefined ? { serverTypes: types } : {}) });
     }
   }
 
