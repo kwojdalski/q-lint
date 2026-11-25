@@ -2871,6 +2871,12 @@ export class Live {
       chosen = picked.value;
     } else {
       chosen = evaluationOf(mode);
+      // Only "" and null mean neither: anything else unknown, a typo in a
+      // keybinding, is refused rather than taken as that (#2487).
+      if (chosen === undefined && mode !== "" && mode !== null) {
+        void window.showErrorMessage(plainMessage(`q-lint: ${JSON.stringify(mode) ?? String(mode)} is no evaluation: give "direct", "wrapped", or "" (or null) to follow q-lint.query.unwrapped. ${process.label} was not changed.`));
+        return;
+      }
     }
     const now = this.processes();
     if (!now.some((p) => p.label === process.label)) {

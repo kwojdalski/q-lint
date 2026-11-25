@@ -186,3 +186,24 @@ test("a listed process's direct evaluation is said to be its list's, not Set Pro
   // A listed process that sets none follows the setting, which Toggle changes.
   assert.deepStrictEqual(directMode({ label: "desk/pm", server: "desk" }, true), { label: "desk/pm", from: "setting" });
 });
+
+test("Set Process Evaluation refuses a mode it does not know, rather than clearing the process's (#2487)", async (t) => {
+  const { stub } = require("./vscode_stub.js");
+  const { Live } = require("../out/live.js");
+  stub.reset();
+  const context = stub.newContext();
+  await context.globalState.update("q-lint.processes", [{ label: "pm", host: "h", port: 1, tags: [], evaluation: "direct" }]);
+  const live = new Live(context);
+  t.after(() => context.subscriptions.forEach((d) => d.dispose?.()));
+  const set = stub.commands.get("q-lint.setProcessEvaluation");
+  for (const typo of ["plain", { mode: "direct" }, 1]) {
+    stub.messages.length = 0;
+    await set("pm", typo);
+    assert.strictEqual(live.processes()[0].evaluation, "direct", JSON.stringify(typo));
+    assert.match(stub.messages.at(-1)[1], /is no evaluation: give "direct", "wrapped", or ""/);
+  }
+  await set("pm", "Wrapped");
+  assert.strictEqual(live.processes()[0].evaluation, "wrapped");
+  await set("pm", "");
+  assert.strictEqual("evaluation" in live.processes()[0], false);
+});
