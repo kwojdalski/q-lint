@@ -209,6 +209,11 @@ type Documents = HashMap<String, String>;
 /// `lint.run: "onSave"` is since they were last saved.
 type Unsaved = HashSet<String>;
 
+/// Of those, the ones whose edits changed what the workspace defines: the
+/// index took them as they were typed, and the other open documents are
+/// linted again for them when they are saved.
+type Redefined = HashSet<String>;
+
 /// What each open document reported the last time its brackets and strings
 /// all closed, and the text it reported that on - carried over, where the
 /// lines are unchanged, while a statement in it is being typed (`Carry`).
@@ -760,7 +765,8 @@ fn workspace_folders(params: &Value) -> Vec<(String, String)> {
 #[derive(Debug)]
 struct Options {
     /// Lint on save rather than on every change. An open buffer's text is
-    /// still kept current, for code actions and formatting.
+    /// still kept current, and indexed, for code actions, formatting and
+    /// navigation: only the lint waits (#2174).
     on_save: bool,
     /// `lint.scope: "workspace"`: publish diagnostics for every file the
     /// index reads, not only the open ones (`scope`).
@@ -1206,6 +1212,7 @@ pub fn serve(
     let mut queue: VecDeque<Incoming> = VecDeque::new();
     let mut docs: Documents = HashMap::new();
     let mut unsaved = Unsaved::new();
+    let mut redefined = Redefined::new();
     let mut kept = Kept::new();
     let mut idx = Index::default();
     let mut closed = scope::Closed::default();
@@ -1498,6 +1505,7 @@ pub fn serve(
                         closed.stop();
                         docs.clear();
                         unsaved.clear();
+                        redefined.clear();
                         kept.clear();
                         send(writer, json!({"id": id, "result": Value::Null}))?;
                     }
@@ -1549,6 +1557,7 @@ pub fn serve(
                         let uri = uri_of(&params["textDocument"]);
                         let text = params["textDocument"]["text"].as_str().unwrap_or("");
                         unsaved.remove(&uri);
+                        redefined.remove(&uri);
                         if is_q_uri(&uri) {
                             closed.opened(writer, &file_key(&path_of(&uri)), &uri)?;
                         }
@@ -1576,7 +1585,12 @@ pub fn serve(
                         {
                             if opts.on_save {
                                 // Kept, so a Quick Fix or a format reads what is on
-                                // screen; linted, and indexed, when it is saved.
+                                // screen, and indexed, so navigation answers from
+                                // it; linted when it is saved, and the others too
+                                // when what it defines changed (#2174).
+                                if !superseded && is_q_uri(&uri) && idx.set(&path_of(&uri), text) {
+                                    redefined.insert(uri.clone());
+                                }
                                 docs.insert(uri.clone(), text.to_string());
                                 unsaved.insert(uri);
                             } else if superseded {
@@ -1610,10 +1624,32 @@ pub fn serve(
                             .or_else(|| docs.get(&uri).cloned());
                         if let Some(text) = text {
                             unsaved.remove(&uri);
+                            let others = redefined.remove(&uri);
                             publish(
-                                writer, &mut docs, &unsaved, &mut kept, &mut idx, uri, text,
-                                policy, &opts,
+                                writer,
+                                &mut docs,
+                                &unsaved,
+                                &mut kept,
+                                &mut idx,
+                                uri.clone(),
+                                text,
+                                policy,
+                                &opts,
                             )?;
+                            // Indexed as it was typed, so the save itself changed
+                            // nothing the index holds.
+                            if others {
+                                relint(
+                                    writer,
+                                    &docs,
+                                    &unsaved,
+                                    &mut kept,
+                                    &idx,
+                                    Some(&uri),
+                                    policy,
+                                    &opts,
+                                )?;
+                            }
                         }
                         closed.sync(writer, &idx, &docs, false)?;
                     }
@@ -1621,6 +1657,7 @@ pub fn serve(
                         let uri = uri_of(&params["textDocument"]);
                         docs.remove(&uri);
                         unsaved.remove(&uri);
+                        redefined.remove(&uri);
                         kept.remove(&uri);
                         // The buffer is gone, so the disk is the authority again - and
                         // unsaved definitions it held no longer define anything.

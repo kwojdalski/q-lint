@@ -792,6 +792,40 @@ fn an_open_buffer_is_read_as_the_editor_has_it_not_as_the_disk_does() {
     assert_eq!(places(&reply["result"]), [place("lib.q", 2, 0, 3)]);
 }
 
+/// With `lint.run: "onSave"` only the lint waits for a save: navigation
+/// answers from the buffer on screen. A change was kept and not indexed,
+/// so a name typed and not yet saved had no definition, and its rename was
+/// refused as one no file assigns (#2174).
+#[test]
+fn with_run_on_save_navigation_reads_the_unsaved_buffer() {
+    let dir = tempfile::tempdir().unwrap();
+    let (lib, main) = ("f:{x+1}\n", "\\l lib.q\nnewf 1\n");
+    let options = json!({"lint": {"run": "onSave"}});
+    let files = [("lib.q", lib), ("main.q", main)];
+    let (mut server, _) = Server::over(dir.path(), &files, client(), options);
+    let uri = server.open(dir.path(), "main.q", main);
+    let lib_uri = server.open(dir.path(), "lib.q", lib);
+    let typed = "f:{x+1}\nnewf:{[a] a}\n";
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didChange",
+        "params":{"textDocument":{"uri":lib_uri,"version":2},
+                  "contentChanges":[{"text":typed}]}}));
+    let reply = server.ask("textDocument/definition", &uri, main, "newf", 0, json!({}));
+    assert_eq!(places(&reply["result"]), [place("lib.q", 1, 0, 4)]);
+    let reply = server.ask(
+        "textDocument/rename",
+        &lib_uri,
+        typed,
+        "newf",
+        0,
+        json!({"newName": "g"}),
+    );
+    assert_eq!(
+        reply["result"]["changes"].as_object().unwrap().len(),
+        2,
+        "{reply}"
+    );
+}
+
 /// A file opened by another spelling of its path than the folder's - its
 /// real path under a folder opened through a symlink, or another case on a
 /// disk that ignores case - and closed again is still the workspace's: the

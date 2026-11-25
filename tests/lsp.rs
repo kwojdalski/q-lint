@@ -2319,6 +2319,32 @@ fn with_run_on_save_another_files_save_does_not_lint_an_unsaved_buffer() {
 }
 
 #[test]
+fn with_run_on_save_a_definition_typed_relints_the_others_when_saved() {
+    // The buffer is indexed as it is typed, for navigation (#2174), so the
+    // save changes nothing the index holds - and still lints the files
+    // whose findings the typed definitions changed, as it did before.
+    let dir = tempfile::tempdir().unwrap();
+    let (mut server, _) = start_with_options(
+        dir.path(),
+        &["--lsp", "--profile", "uqf"],
+        json!({"lint": {"run": "onSave"}}),
+        Some(dir.path()),
+    );
+    let lib = file_uri(&dir.path().join("lib.q"));
+    let app = file_uri(&dir.path().join("app.q"));
+    server.open(&lib, "cfg:5\n");
+    server.diagnostics_for(&lib);
+    server.open(&app, "n:cfg\n");
+    assert!(!codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
+    server.change(&lib, 2, "config:5\n");
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didSave",
+        "params":{"textDocument":{"uri":lib}}}));
+    server.diagnostics_for(&lib);
+    assert!(codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn a_severity_setting_overrides_by_the_longest_prefix() {
     let dir = tempfile::tempdir().unwrap();
     let (mut server, _) = start_with_options(
