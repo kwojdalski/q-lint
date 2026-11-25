@@ -338,6 +338,7 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         // One character in quotes is a char atom, still 'type (#564).
         ("QB007", "r:s like `a", "r:s like enlist\"a\"", true),
         ("QT007", "r:ss[`abc;\"b\"]", "r:ss[\"abc\";\"b\"]", false),
+        ("QT007", "r:`a ss \"a\"", "r:(enlist\"a\") ss \"a\"", false),
         ("QB012", "f:{[x] x+1;}", "f:{[x] x+1}", false),
         ("QB010", "a:1;b:a -1", "a:1;b:a - 1", false),
         ("QR001", "r:reverse asc 3 1 2", "r:desc 3 1 2", false),
@@ -2263,4 +2264,27 @@ fn juxtaposition_is_bracketed_only_before_a_word_q_applies() {
         return;
     };
     assert_eq!(values, ["1b", "1b", "1b", "`refused"]);
+}
+
+/// QT007 spells a symbol given to ss or ssr as a string, and one character
+/// as a one-item string: in quotes alone it is a char atom, which q 5
+/// refuses as it does the symbol. Before an infix `ss` it takes
+/// parentheses, or `enlist` would take the whole call (#2258).
+#[test]
+fn a_one_character_symbol_given_to_ss_becomes_a_string_ss_takes() {
+    let mut scripts = vec![];
+    for (source, fixed) in [
+        ("r:`a ss \"a\"", "r:(enlist\"a\") ss \"a\""),
+        ("r:ss[`a;\"a\"]", "r:ss[enlist\"a\";\"a\"]"),
+        ("r:ssr[`a;\"a\";\"b\"]", "r:ssr[enlist\"a\";\"a\";\"b\"]"),
+        ("r:ss[\"abc\";`b]", "r:ss[\"abc\";enlist\"b\"]"),
+        ("r:`ab ss \"a\"", "r:\"ab\" ss \"a\""),
+    ] {
+        assert_eq!(fixed_with(source, &["QT007"], true), fixed);
+        scripts.push(fixed.to_string());
+    }
+    let Some(values) = values_on_q(&scripts) else {
+        return;
+    };
+    assert_eq!(values, [",0", ",0", ",\"b\"", ",1", ",0"]);
 }

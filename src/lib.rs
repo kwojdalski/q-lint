@@ -1561,15 +1561,20 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             if name.contains('`') {
                 return None;
             }
+            // One character in quotes is a char atom, which ss and ssr
+            // refuse as they do the symbol (q 5: `"a" ss "a"` is 'type): a
+            // one-item string, as QB007 writes, in parentheses before an
+            // infix `ss`, where `enlist"a" ss "a"` would enlist the result
+            // (#2258).
+            let string = match (name.chars().count(), symbol.start()) {
+                (1, 0) => format!("(enlist\"{name}\")"),
+                (1, _) => format!("enlist\"{name}\""),
+                _ => format!("\"{name}\""),
+            };
             (
                 old,
-                format!(
-                    "{}\"{name}\"{}",
-                    &old[..symbol.start()],
-                    &old[symbol.end()..]
-                )
-                .into(),
-                format!("Pass the string \"{name}\"").into(),
+                format!("{}{string}{}", &old[..symbol.start()], &old[symbol.end()..]).into(),
+                format!("Pass the string {string}").into(),
                 false,
             )
         }
