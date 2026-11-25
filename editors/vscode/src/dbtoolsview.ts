@@ -17,7 +17,7 @@ import { Uri, window, workspace, type ExtensionContext } from "vscode";
 import { commands } from "vscode";
 import { ATTRIBUTE_ROWS, ATTRIBUTE_SAMPLE, adviceReport, advise, filterCounts, readAttributeSample } from "./attradvice";
 import { CHART_KINDS, chartFromGrid, gridFromFile, type ChartKind } from "./chartfile";
-import { CAST_TYPES, RUN_SCRIPT, columnScript, opProblem, opText, readRun, type ColumnOp } from "./colmanager";
+import { CAST_TYPES, COLUMN_DIRS, RUN_SCRIPT, columnScript, columnsOf, opProblem, opText, readColumnDirs, readRun, type ColumnOp } from "./colmanager";
 import { DB_COMMANDS, dbOff, dbOn, type DbFeature } from "./dbfeatures";
 import { DOCUMENT, DOCUMENT_LIMIT, docHtml, docMarkdown, readDoc, workspaceDocs } from "./dbdoc";
 import { borrowWhenFree } from "./infoview";
@@ -130,10 +130,13 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
       return say(`q-lint: ${table} is a table in memory; the column manager changes tables on disk.`);
     }
     const field = info.kind === "partitioned" ? (info.columns[0]?.name ?? "") : "";
-    const columns = info.columns.map((c) => c.name);
+    // Every directory's .d, not only the newest partition's meta (#2138).
+    const dirs = await read(live, COLUMN_DIRS, table);
+    if (dirs === undefined) return "not read";
+    const { columns, everywhere } = columnsOf(info.columns.map((c) => c.name), readColumnDirs(dirs.value));
     const op = given ?? (await askOp(columns.filter((c) => c !== field)));
     if (op === undefined) return "cancelled";
-    const problem = opProblem(op, columns, field);
+    const problem = opProblem(op, columns, field, everywhere);
     if (problem !== undefined) return say(`q-lint: ${problem}.`);
     const script = columnScript(table, op, process.label);
     // A guarded process is refused before anything is shown to run.

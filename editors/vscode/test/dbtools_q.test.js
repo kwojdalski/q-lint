@@ -14,7 +14,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { QConnection } = require("../out/qclient.js");
 const { statements } = require("../out/statements.js");
-const { columnScript, HELPERS, RUN_SCRIPT, readRun } = require("../out/colmanager.js");
+const { columnScript, columnsOf, COLUMN_DIRS, HELPERS, opProblem, readColumnDirs, RUN_SCRIPT, readRun } = require("../out/colmanager.js");
 const { DOCUMENT, readDoc, docMarkdown } = require("../out/dbdoc.js");
 const { PARTITION_CHECK, readPartitions, partitionProblems } = require("../out/partcheck.js");
 
@@ -268,6 +268,40 @@ test("the column manager's cast and attribute keep each partition's compression 
   assert.deepStrictEqual(ex.map((r) => r.slice(0, 5)), ["2026.01.05", "2026.01.06", "2026.01.07"].map((p, i) => [p, 20, "", zips[i], 4]));
   assert.deepStrictEqual(await onDisk(t, `${dir}/hdb`, '{"f"$(count select from trade;first(select sum sz from trade)`sz)}'), [12, 300]);
   assert.deepStrictEqual(await onDisk(t, `${dir}/hdb`, "{exec t from meta trade}"), "dsfis");
+});
+
+// A column added to the newest partitions only, or left in the oldest
+// only: meta reads the newest, and select fails on the others (#2138).
+test("the column manager adds a column the newest partitions have to the rest, and deletes one only the oldest have (#2138)", { skip }, async (t) => {
+  const source = [
+    'r:hsym`$"$DIR/hdb";',
+    "mk:{[r;d;t] .Q.dd[r;d,`trade`] set .Q.en[r] t};",
+    "mk[r;;([] sym:`a`b`c;px:1 2 3f;old:1 2 3)] each 2026.02.02 2026.02.03;",
+    "mk[r;;([] sym:`a`b`c;px:1 2 3f)] each 2026.02.04 2026.02.05;",
+    "mk[r;;([] sym:`a`b`c;px:1 2 3f;ex:`X`Y`X)] each 2026.02.09 2026.02.10;",
+    "\\l $DIR/hdb",
+    "",
+  ].join("\n");
+  const { connection, dir } = await connect(t, source);
+  const info = readTableInfo(await connection.call(TABLE_INFO, "trade", 100));
+  const meta = info.columns.map((c) => c.name);
+  assert.deepStrictEqual(meta, ["date", "sym", "px", "ex"]);
+  const { columns, everywhere } = columnsOf(meta, readColumnDirs(await connection.call(COLUMN_DIRS, "trade")));
+  assert.deepStrictEqual([columns, everywhere], [["date", "sym", "px", "ex", "old"], ["date", "sym", "px"]]);
+  const add = { op: "add", column: "ex", value: "`" };
+  assert.strictEqual(opProblem(add, columns, "date", everywhere), undefined);
+  assert.strictEqual(opProblem({ op: "delete", column: "old" }, columns, "date", everywhere), undefined);
+  assert.match(await run(connection, columnScript("trade", add, "hdb")), /changed 4 of 6 directories; left as they were: .*2026\.02\.09\/trade: has ex/);
+  assert.match(await run(connection, columnScript("trade", { op: "delete", column: "old" }, "hdb")), /changed 2 of 6 directories/);
+  // A q of its own: every partition lists the same columns, ex in each.
+  const db = `${dir}/hdb`;
+  assert.deepStrictEqual(
+    await onDisk(t, db, '{{f:` sv(hsym`$string x),`trade; (string x;string get` sv f,`.d;"h"$type get` sv f,`ex;string get` sv f,`ex)} each .Q.pv}'),
+    ["2026.02.02", "2026.02.03", "2026.02.04", "2026.02.05", "2026.02.09", "2026.02.10"].map((p, i) => [p, ["sym", "px", "ex"], 20, i < 4 ? ["", "", ""] : ["X", "Y", "X"]]),
+  );
+  assert.deepStrictEqual(await onDisk(t, db, '{"f"$exec x from select count i by date from trade where null ex}'), [3, 3, 3, 3]);
+  assert.deepStrictEqual(await onDisk(t, db, "{exec c from meta trade}"), ["date", "sym", "px", "ex"]);
+  assert.deepStrictEqual(await onDisk(t, db, '{key` sv(hsym`$string first .Q.pv),`trade}'), [".d", "ex", "px", "sym"]);
 });
 
 test("the documenter reads tables, keys, foreign keys and functions", { skip }, async (t) => {

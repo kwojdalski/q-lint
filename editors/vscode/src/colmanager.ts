@@ -60,11 +60,44 @@ function nameProblem(name: string): string | undefined {
   return undefined;
 }
 
+/// The columns each directory of a table lists in its `.d` (#2138): `meta`
+/// reads the newest partition only, so a column added to the newest ones,
+/// or dropped from them, is one it cannot tell is in some partitions and not
+/// the others. Read-only; the directories are the column manager's - every
+/// partition on disk, each where q loaded it from, or the splayed table's.
+/// A directory whose `.d` cannot be read lists none.
+export const COLUMN_DIRS = [
+  "{[nm] t:`$(),nm; r:hsym`$system\"cd\"; p:.Q.qp get t;",
+  ` ds:$[1b~p;{\` sv x,y}[;t] each ${PARTITION_DIRS}[r;@[get;\`.Q.PD;()];@[get;\`.Q.PV;{.Q.pv}]];0b~p;enlist\` sv r,t;()];`,
+  " {@[{string(),get` sv x,`.d};x;()]} each ds}",
+].join("\n");
+
+/// What `COLUMN_DIRS` answered: each directory's columns.
+export function readColumnDirs(raw: unknown): string[][] {
+  if (!Array.isArray(raw)) return [];
+  // One column in a directory arrives as a string, not a list of one.
+  return raw.map((d) => (Array.isArray(d) ? d.map(String) : typeof d === "string" ? [d] : []));
+}
+
+/// Which columns a table has: `meta`'s, in its order, then those only an
+/// older directory lists; and those every directory lists. A table whose
+/// directories were not read is `meta`'s throughout.
+export function columnsOf(meta: string[], dirs: string[][]): { columns: string[]; everywhere: string[] } {
+  const read = dirs.filter((d) => d.length > 0);
+  if (read.length === 0) return { columns: meta, everywhere: meta };
+  const columns = [...new Set([...meta, ...read.flat()])];
+  return { columns, everywhere: columns.filter((c) => !read.some((d) => !d.includes(c)) || !read.flat().includes(c)) };
+}
+
 /// Why `op` cannot be applied to a table of `columns` partitioned by
-/// `field` (empty for a splayed one); undefined when it can.
-export function opProblem(op: ColumnOp, columns: string[], field = ""): string | undefined {
+/// `field` (empty for a splayed one); undefined when it can. `everywhere`
+/// is the columns every directory has (`columnsOf`): a column only some
+/// have can be added to the rest, and deleted or renamed where it is.
+export function opProblem(op: ColumnOp, columns: string[], field = "", everywhere: string[] = columns): string | undefined {
   const has = (c: string) => columns.includes(c);
   if (op.op === "reorder") {
+    const some = columns.filter((c) => c !== field && !everywhere.includes(c));
+    if (some.length > 0) return `only some partitions have ${some.join(", ")}: add it to the rest or delete it first`;
     const given = op.order.filter((c) => c !== field);
     const want = columns.filter((c) => c !== field);
     return given.length === want.length && want.every((c) => given.includes(c)) ? undefined : "a new order names every column once";
@@ -75,7 +108,7 @@ export function opProblem(op: ColumnOp, columns: string[], field = ""): string |
   if (op.op === "add") {
     const bad = nameProblem(op.column);
     if (bad !== undefined) return bad;
-    if (has(op.column)) return `the table already has a column ${op.column}`;
+    if (everywhere.includes(op.column)) return `the table already has a column ${op.column}`;
     if (op.value.trim() === "" || /[\r\n]/.test(op.value)) return "the default is one q value on one line: 0n, 0, `, \"\" or 0Np";
     return undefined;
   }

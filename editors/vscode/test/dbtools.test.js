@@ -13,7 +13,7 @@ const os = require("node:os");
 const path = require("node:path");
 const pkg = require("../package.json");
 const { DB_SETTINGS, DB_COMMANDS, dbOn, dbOff } = require("../out/dbfeatures.js");
-const { opProblem, opText, columnScript, columnScriptOf, readRun, HELPERS } = require("../out/colmanager.js");
+const { opProblem, opText, columnScript, columnScriptOf, readRun, HELPERS, columnsOf, readColumnDirs } = require("../out/colmanager.js");
 const { readDoc, qdocs, docMarkdown, docHtml, typeName, workspaceDocs } = require("../out/dbdoc.js");
 const { missingWeekdays, partitionProblems, partitionReport, readPartitions } = require("../out/partcheck.js");
 const { readSym, symReport } = require("../out/syminspect.js");
@@ -59,6 +59,25 @@ test("every switch is declared, on by default, and every command hidden by its s
   assert.strictEqual(dbOn((k, d) => (k === "charts.commandLine.enable" ? false : d), "chartCli"), false);
   assert.strictEqual(dbOn(() => "yes", "chartCli"), true);
   if (DB_SETTINGS.symInspector) assert.strictEqual(props["q-lint.hdbBrowser.symInspector.warnAbove"].default, 1000000);
+});
+
+// meta reads the newest partition only: a column the newest have and the
+// older lack is added to the older ones, and one only the older have is
+// deleted or renamed there (#2138).
+test("the column manager takes its columns from every directory's .d, not the newest partition's meta (#2138)", () => {
+  const meta = ["date", "sym", "px", "ex"];
+  const dirs = readColumnDirs([["sym", "px"], ["sym", "px", "old"], ["sym", "px", "ex"], []]);
+  const { columns, everywhere } = columnsOf(meta, dirs);
+  assert.deepStrictEqual([columns, everywhere], [["date", "sym", "px", "ex", "old"], ["date", "sym", "px"]]);
+  assert.strictEqual(opProblem({ op: "add", column: "ex", value: "`" }, columns, "date", everywhere), undefined);
+  assert.strictEqual(opProblem({ op: "delete", column: "old" }, columns, "date", everywhere), undefined);
+  assert.strictEqual(opProblem({ op: "rename", column: "old", to: "older" }, columns, "date", everywhere), undefined);
+  assert.match(opProblem({ op: "rename", column: "px", to: "old" }, columns, "date", everywhere), /already has a column old/);
+  assert.match(opProblem({ op: "add", column: "px", value: "0n" }, columns, "date", everywhere), /already has a column px/);
+  assert.match(opProblem({ op: "reorder", order: ["px", "sym", "ex", "old"] }, columns, "date", everywhere), /^only some partitions have ex, old: /);
+  // One column in a directory arrives as a string; nothing read is meta's.
+  assert.deepStrictEqual(readColumnDirs(["sym", ["sym", "px"]]), [["sym"], ["sym", "px"]]);
+  assert.deepStrictEqual(columnsOf(meta, readColumnDirs(null)), { columns: meta, everywhere: meta });
 });
 
 test("the column manager checks an op against the table and writes a script the guard reads as a write", () => {
