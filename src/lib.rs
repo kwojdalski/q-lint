@@ -1242,17 +1242,28 @@ fn restated_pair(
 /// The single source of replacements for the CLI and LSP. Findings have UTF-16
 /// positions for editors, while edits use byte offsets to change Rust strings.
 pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
-    fix_with(finding, source, &views(source))
+    let (v, lines) = LineIndex::new(source);
+    fix_with(finding, source, &v, &lines)
 }
 
 /// The fixes for many findings in one source, masking it once. `fix_for` per
 /// finding re-masks the whole file each time, which grows with findings times
 /// file size - 1.7 s for 3000 findings in 6000 lines, against 0.13 s to lint.
 pub fn fixes_for<'a>(findings: impl IntoIterator<Item = &'a Finding>, source: &str) -> Vec<Fix> {
-    let v = views(source);
+    fixes_each(findings, source).into_iter().flatten().collect()
+}
+
+/// `fix_for` each of many findings in one source, in their order, masking
+/// it once for them all: what an editor's request about a whole selection
+/// wants, where each finding's own `fix_for` was quadratic in them (#2335).
+pub fn fixes_each<'a>(
+    findings: impl IntoIterator<Item = &'a Finding>,
+    source: &str,
+) -> Vec<Option<Fix>> {
+    let (v, lines) = LineIndex::new(source);
     findings
         .into_iter()
-        .filter_map(|finding| fix_with(finding, source, &v))
+        .map(|finding| fix_with(finding, source, &v, &lines))
         .collect()
 }
 
@@ -1435,10 +1446,10 @@ fn starts_as_atom(source: &str, code: &str, at: usize, name: &str) -> bool {
         .is_some_and(|t| t < 0)
 }
 
-fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
+fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Option<Fix> {
     // A comment is what QL003 edits, so it passes the check below.
     if finding.code == "QL003" {
-        return unused_noqa_fix(finding, source, v);
+        return unused_noqa_fix(finding, source, v, lines);
     }
     let line = finding.line.checked_sub(1)?;
     let column = finding.column?.checked_sub(1)?;
@@ -4198,11 +4209,50 @@ fn prompts_start_statements(source: &str, v: &mut Views) {
     }
 }
 fn views(source: &str) -> Views {
+    views_lines(source, false).0
+}
+/// What `views` carries from one line to the next. Everything a line is
+/// masked by is here, so a line lexed again from the state it began in is
+/// masked as the whole file's lexing masked it.
+#[derive(Clone, Copy)]
+struct LexState {
+    string: Option<usize>,
+    block: usize,
+    ended: bool,
+    statement: bool,
+    foreign: bool,
+    open_block: Option<usize>,
+}
+impl LexState {
+    /// Whether the lines after one ending in `self` mask as they would after
+    /// one ending in `other`: positions recorded for the report aside, what
+    /// masking reads of the state.
+    fn masks_alike(&self, other: &LexState) -> bool {
+        self.string.is_some() == other.string.is_some()
+            && self.block == other.block
+            && self.ended == other.ended
+            && self.statement == other.statement
+            && self.foreign == other.foreign
+    }
+}
+/// What `views` reports beyond the two masks, gathered line by line.
+#[derive(Default)]
+struct LexRecord {
+    foreign_offsets: Vec<usize>,
+    blocks: Vec<(usize, usize)>,
+    string_starts: Vec<usize>,
+    script_end: Option<usize>,
+    unterminated: Option<usize>,
+}
+/// `views`, and with `states` the state each line it lexed began in, keyed
+/// by the line's offset, so that an edit to one line can be checked by
+/// lexing that line again (`edited_line_views`) instead of the whole file.
+fn views_lines(source: &str, states: bool) -> (Views, Vec<(usize, LexState)>) {
     // A BOM is QE005's to report; the rest of the file is read as q would
     // read it without one, so `<BOM>/ note` is still a comment line (#221).
     if let Some(body) = source.strip_prefix('\u{feff}') {
         let n = source.len() - body.len();
-        let mut v = views(body);
+        let (mut v, _) = views_lines(body, false);
         v.comments.insert(0, '\u{feff}');
         v.code.insert(0, '\u{feff}');
         let shift = |at: &mut usize| *at += n;
@@ -4215,25 +4265,28 @@ fn views(source: &str) -> Views {
         });
         v.string_starts.iter_mut().for_each(shift);
         v.script_end.iter_mut().for_each(shift);
-        return v;
+        // No states: an edit is checked against the whole file here.
+        return (v, vec![]);
     }
     let bytes = source.as_bytes();
     let mut comments = bytes.to_vec();
     let mut code = bytes.to_vec();
-    let (mut string, mut block, mut ended, mut offset) = (None, 0usize, false, 0);
-    let mut foreign = false;
-    let mut foreign_offsets = Vec::new();
-    let mut open_block = None;
-    let mut blocks = Vec::new();
-    let mut script_end = None;
-    let mut string_starts = Vec::new();
-    let mut unterminated = None;
+    let mut offset = 0;
+    let mut record = LexRecord::default();
+    let mut lines = vec![];
     // Before the first statement, an indented line continues nothing, and q
     // drops it: q 5 loads `/ c` + `  b:1`, `/ c` + blank + `  b:1`,
     // `\d .foo` + `  b:1` and a file starting `  b:1` all leaving b
     // undefined. Comments, blank lines and system commands are not
     // statements, so none of them ends that stretch.
-    let mut statement = false;
+    let mut state = LexState {
+        string: None,
+        block: 0,
+        ended: false,
+        statement: false,
+        foreign: false,
+        open_block: None,
+    };
     // q skips a first line that starts `#!`, the interpreter line of an
     // executable script: q 5 loads `#!/usr/bin/env q` + `show 1` and prints
     // 1. Only the first - a later one is refused with '# (#314).
@@ -4244,161 +4297,347 @@ fn views(source: &str) -> Views {
     }
     for line in source[offset..].split_inclusive('\n') {
         let end = offset + line.len();
-        let stripped = line.trim_end_matches(['\r', '\n', ' ', '\t']);
-        // A string runs on over indented and blank lines only. A line at
-        // column 0 starts a statement, so q 5 refuses `s:"abc` + `def"` with
-        // '" - and the lambda around such a string with '{ - and reads that
-        // line as code.
-        if string.is_some() && !stripped.is_empty() && !line.starts_with([' ', '\t']) {
-            unterminated = unterminated.or(string.take());
+        if states {
+            lines.push((offset, state));
         }
-        if !ended && block == 0 && string.is_none() && !statement {
-            if line.starts_with([' ', '\t']) && !stripped.trim().is_empty() {
-                blank(&mut comments[offset..end]);
-                blank(&mut code[offset..end]);
-                offset = end;
-                continue;
-            }
-            statement = !stripped.is_empty() && !line.starts_with(['\\', '/', ' ', '\t']);
-        }
-        if foreign && !foreign_continues(line, &source[end..]) {
-            foreign = false;
-        }
-        if !ended && block == 0 && string.is_none() {
-            // Any `x)` line is another language: q hands it to `.x.e`, which
-            // is how `p)` reaches embedPy and `k)` reaches k, and a test
-            // harness may define `.t.e` for `t)`. `q)` is q itself, and its
-            // prefix is stripped below instead.
-            let b = line.as_bytes();
-            if b.len() >= 2 && b[0].is_ascii_lowercase() && b[0] != b'q' && b[1] == b')' {
-                foreign = true;
-            }
-            if foreign {
-                blank(&mut comments[offset..end]);
-                blank(&mut code[offset..end]);
-                foreign_offsets.push(offset);
-                offset = end;
-                continue;
-            }
-        }
-        // A command after a run of prefixes is the command, as q reads
-        // `q)k)\d .ns` (#2194).
-        let prefix = if string.is_none() && line.starts_with("q)") {
-            let run = language_prefixes(line);
-            if line[run..].starts_with('\\') {
-                run
-            } else {
-                2
-            }
-        } else {
-            0
-        };
-        // `\t` and `\ts` run their argument as q, so its strings and its
-        // comment are masked as on any other line (#222); the command itself
-        // stays, for the rules that read system commands.
-        let timed = if string.is_none() {
-            timed_prefix(line)
-        } else {
-            0
-        };
-        // q reads `q)\l f.q` as `\l f.q` (#316), and `q)k)\l f.q` too.
-        let command = string.is_none() && line[prefix..].starts_with('\\');
-        // q appends an indented line to the command before it, so after any
-        // command but `\t` the lines that follow are its argument, not q:
-        // `\d .foo` + `  b:1` defines no `b` anywhere (#223).
-        if !ended && block == 0 && command {
-            statement = timed > 0;
-        }
-        if ended || block > 0 {
-            blank(&mut comments[offset..end]);
-            blank(&mut code[offset..end]);
-            // Block comments nest: inside one, a bare `/` opens another and
-            // a bare `\` closes the innermost. q 5 loads `/`,`/`,`\`,`f:..`,
-            // `\`,`g:..` as g alone. `/ x` is a comment line and nests nothing.
-            if block > 0 && stripped == "/" {
-                block += 1;
-            } else if block > 0 && stripped == "\\" {
-                block -= 1;
-                if block == 0 {
-                    blocks.extend(open_block.take().map(|open| (open, offset)));
-                }
-            }
-        } else if string.is_none()
-            && (matches!(stripped, "/" | "\\" | "\\\\")
-                || re!(r"^(?:q\))?\\\\(?:[ \t]|$)").is_match(stripped))
-        {
-            // `\\` exits q, so a script ends there as it does at a lone `\`
-            // - whatever follows it past a blank: q 5 stops at `\\ / bye`
-            // and `\\ 3` (#322), and runs on past `\ / end`. With a `q)`
-            // prefix too: q 5 stops at `q)\\` (#584), though `q)\` and `q)/`
-            // end nothing.
-            block = usize::from(stripped == "/");
-            ended = stripped != "/";
-            if ended {
-                script_end = Some(offset);
-            }
-            if block > 0 {
-                open_block = Some(offset);
-            }
-            blank(&mut comments[offset..end]);
-            blank(&mut code[offset..end]);
-        } else if timed == 0 && command {
-            // Any other command's argument is no q: a path, a name, or text
-            // for the shell. Only what the rules read of it is kept - the
-            // command, and the namespace or file of `\d` and `\l`.
-            let kept = prefix
-                + re!(r"^\\(?:[dl][ \t]+[^ \t\r\n]*|[^ \t\r\n]*)")
-                    .find(&line[prefix..])
-                    .map_or(0, |m| m.end());
-            blank(&mut comments[offset..offset + prefix]);
-            blank(&mut code[offset..offset + prefix]);
-            blank(&mut comments[offset + kept..end]);
-            blank(&mut code[offset + kept..end]);
-        } else {
-            blank(&mut comments[offset..offset + prefix]);
-            blank(&mut code[offset..offset + prefix]);
-            let mut i = offset + prefix.max(timed);
-            while i < end {
-                let c = bytes[i];
-                if string.is_some() {
-                    blank(&mut code[i..i + 1]);
-                    if c == b'\\' && i + 1 < end {
-                        blank(&mut code[i + 1..i + 2]);
-                        i += 2;
-                        continue;
-                    }
-                    if c == b'"' {
-                        string = None;
-                    }
-                } else if c == b'"' {
-                    string = Some(i);
-                    string_starts.push(i);
-                    code[i] = b' ';
-                } else if c == b'/'
-                    && (i == offset + prefix
-                        || source[..i]
-                            .chars()
-                            .next_back()
-                            .is_some_and(char::is_whitespace))
-                {
-                    blank(&mut comments[i..end]);
-                    blank(&mut code[i..end]);
-                    break;
-                }
-                i += 1;
-            }
-        }
+        lex_line(
+            &mut state,
+            &mut record,
+            line,
+            offset,
+            &source[end..],
+            &mut comments[offset..end],
+            &mut code[offset..end],
+        );
         offset = end;
     }
-    Views {
+    let views = Views {
         comments: String::from_utf8(comments).unwrap(),
         code: String::from_utf8(code).unwrap(),
-        unterminated: unterminated.or(string),
-        foreign_offsets,
-        open_block,
-        blocks,
-        string_starts,
-        script_end,
+        unterminated: record.unterminated.or(state.string),
+        foreign_offsets: record.foreign_offsets,
+        open_block: state.open_block,
+        blocks: record.blocks,
+        string_starts: record.string_starts,
+        script_end: record.script_end,
+    };
+    (views, lines)
+}
+/// Masks one line of `views`: `line` starts at `offset` in the source,
+/// `rest` is the source after it, and `comments` and `code` are the line's
+/// own bytes of the two masks, to blank.
+fn lex_line(
+    st: &mut LexState,
+    record: &mut LexRecord,
+    line: &str,
+    offset: usize,
+    rest: &str,
+    comments: &mut [u8],
+    code: &mut [u8],
+) {
+    let bytes = line.as_bytes();
+    let len = line.len();
+    let stripped = line.trim_end_matches(['\r', '\n', ' ', '\t']);
+    // A string runs on over indented and blank lines only. A line at
+    // column 0 starts a statement, so q 5 refuses `s:"abc` + `def"` with
+    // '" - and the lambda around such a string with '{ - and reads that
+    // line as code.
+    if st.string.is_some() && !stripped.is_empty() && !line.starts_with([' ', '\t']) {
+        record.unterminated = record.unterminated.or(st.string.take());
+    }
+    if !st.ended && st.block == 0 && st.string.is_none() && !st.statement {
+        if line.starts_with([' ', '\t']) && !stripped.trim().is_empty() {
+            blank(comments);
+            blank(code);
+            return;
+        }
+        st.statement = !stripped.is_empty() && !line.starts_with(['\\', '/', ' ', '\t']);
+    }
+    if st.foreign && !foreign_continues(line, rest) {
+        st.foreign = false;
+    }
+    if !st.ended && st.block == 0 && st.string.is_none() {
+        // Any `x)` line is another language: q hands it to `.x.e`, which
+        // is how `p)` reaches embedPy and `k)` reaches k, and a test
+        // harness may define `.t.e` for `t)`. `q)` is q itself, and its
+        // prefix is stripped below instead.
+        if bytes.len() >= 2 && bytes[0].is_ascii_lowercase() && bytes[0] != b'q' && bytes[1] == b')'
+        {
+            st.foreign = true;
+        }
+        if st.foreign {
+            blank(comments);
+            blank(code);
+            record.foreign_offsets.push(offset);
+            return;
+        }
+    }
+    // A command after a run of prefixes is the command, as q reads
+    // `q)k)\d .ns` (#2194).
+    let prefix = if st.string.is_none() && line.starts_with("q)") {
+        let run = language_prefixes(line);
+        if line[run..].starts_with('\\') {
+            run
+        } else {
+            2
+        }
+    } else {
+        0
+    };
+    // `\t` and `\ts` run their argument as q, so its strings and its
+    // comment are masked as on any other line (#222); the command itself
+    // stays, for the rules that read system commands.
+    let timed = if st.string.is_none() {
+        timed_prefix(line)
+    } else {
+        0
+    };
+    // q reads `q)\l f.q` as `\l f.q` (#316), and `q)k)\l f.q` too.
+    let command = st.string.is_none() && line[prefix..].starts_with('\\');
+    // q appends an indented line to the command before it, so after any
+    // command but `\t` the lines that follow are its argument, not q:
+    // `\d .foo` + `  b:1` defines no `b` anywhere (#223).
+    if !st.ended && st.block == 0 && command {
+        st.statement = timed > 0;
+    }
+    if st.ended || st.block > 0 {
+        blank(comments);
+        blank(code);
+        // Block comments nest: inside one, a bare `/` opens another and
+        // a bare `\` closes the innermost. q 5 loads `/`,`/`,`\`,`f:..`,
+        // `\`,`g:..` as g alone. `/ x` is a comment line and nests nothing.
+        if st.block > 0 && stripped == "/" {
+            st.block += 1;
+        } else if st.block > 0 && stripped == "\\" {
+            st.block -= 1;
+            if st.block == 0 {
+                record
+                    .blocks
+                    .extend(st.open_block.take().map(|open| (open, offset)));
+            }
+        }
+    } else if st.string.is_none()
+        && (matches!(stripped, "/" | "\\" | "\\\\")
+            || re!(r"^(?:q\))?\\\\(?:[ \t]|$)").is_match(stripped))
+    {
+        // `\\` exits q, so a script ends there as it does at a lone `\`
+        // - whatever follows it past a blank: q 5 stops at `\\ / bye`
+        // and `\\ 3` (#322), and runs on past `\ / end`. With a `q)`
+        // prefix too: q 5 stops at `q)\\` (#584), though `q)\` and `q)/`
+        // end nothing.
+        st.block = usize::from(stripped == "/");
+        st.ended = stripped != "/";
+        if st.ended {
+            record.script_end = Some(offset);
+        }
+        if st.block > 0 {
+            st.open_block = Some(offset);
+        }
+        blank(comments);
+        blank(code);
+    } else if timed == 0 && command {
+        // Any other command's argument is no q: a path, a name, or text
+        // for the shell. Only what the rules read of it is kept - the
+        // command, and the namespace or file of `\d` and `\l`.
+        let kept = prefix
+            + re!(r"^\\(?:[dl][ \t]+[^ \t\r\n]*|[^ \t\r\n]*)")
+                .find(&line[prefix..])
+                .map_or(0, |m| m.end());
+        blank(&mut comments[..prefix]);
+        blank(&mut code[..prefix]);
+        blank(&mut comments[kept..len]);
+        blank(&mut code[kept..len]);
+    } else {
+        blank(&mut comments[..prefix]);
+        blank(&mut code[..prefix]);
+        let mut i = prefix.max(timed);
+        while i < len {
+            let c = bytes[i];
+            if st.string.is_some() {
+                blank(&mut code[i..i + 1]);
+                if c == b'\\' && i + 1 < len {
+                    blank(&mut code[i + 1..i + 2]);
+                    i += 2;
+                    continue;
+                }
+                if c == b'"' {
+                    st.string = None;
+                }
+            } else if c == b'"' {
+                st.string = Some(offset + i);
+                record.string_starts.push(offset + i);
+                code[i] = b' ';
+            } else if c == b'/'
+                && (i == prefix
+                    || line[..i]
+                        .chars()
+                        .next_back()
+                        .is_some_and(char::is_whitespace))
+            {
+                blank(&mut comments[i..len]);
+                blank(&mut code[i..len]);
+                break;
+            }
+            i += 1;
+        }
+    }
+}
+/// The masks of one line after an edit to it - `at..end` of `source`, in
+/// the line that starts at `start`, replaced by `replacement` - when they
+/// settle the rest of the file: the edited line, and its `comments` and
+/// `code` masks. The line is lexed again from the state it began in, and
+/// when it ends in a state that masks the lines after it as before, they
+/// and the lines before it mask as they did. `None` when that cannot be
+/// said: then the edited file must be masked whole.
+///
+/// The lines before are unchanged because what any of them reads of a
+/// later line (`foreign_continues`) is whether it is blank, indented or a
+/// comment line: an edit after a line's first byte that leaves it neither
+/// blank nor a bare `/` changes none of those, and one that makes it a bare
+/// `/` opens a block, which ends the line in another state.
+fn edited_line_views(
+    source: &str,
+    states: &[(usize, LexState)],
+    start: usize,
+    at: usize,
+    end: usize,
+    replacement: &str,
+) -> Option<(String, String, String)> {
+    let index = states.binary_search_by_key(&start, |&(o, _)| o).ok()?;
+    if at <= start {
+        return None;
+    }
+    let line = source[start..].split_inclusive('\n').next()?;
+    let line_end = start + line.len();
+    let edited = format!(
+        "{}{replacement}{}",
+        &source[start..at],
+        &source[end..line_end]
+    );
+    // Blank, or a bare `/`, it would read differently to the lines before
+    // it; and a line opening with a byte-order mark is one `noqa_codes`
+    // reads apart from its place in the file.
+    if edited.trim().is_empty()
+        || edited.trim_end_matches(['\r', '\n', ' ', '\t']) == "/"
+        || edited.starts_with('\u{feff}')
+    {
+        return None;
+    }
+    let mut state = states[index].1;
+    let mut record = LexRecord::default();
+    let (mut comments, mut code) = (edited.as_bytes().to_vec(), edited.as_bytes().to_vec());
+    lex_line(
+        &mut state,
+        &mut record,
+        &edited,
+        start,
+        &source[line_end..],
+        &mut comments,
+        &mut code,
+    );
+    // The state the next line began in, or the one the file ended in.
+    let next = match states.get(index + 1) {
+        Some(&(_, next)) => next,
+        None => {
+            let mut last = states[index].1;
+            let mut record = LexRecord::default();
+            let (mut c, mut k) = (line.as_bytes().to_vec(), line.as_bytes().to_vec());
+            lex_line(
+                &mut last,
+                &mut record,
+                line,
+                start,
+                &source[line_end..],
+                &mut c,
+                &mut k,
+            );
+            last
+        }
+    };
+    let (comments, code) = (
+        String::from_utf8(comments).ok()?,
+        String::from_utf8(code).ok()?,
+    );
+    state.masks_alike(&next).then_some((edited, comments, code))
+}
+/// Where each line of a source starts, as a finding counts lines (each
+/// ended by `\n`), and the state `views` began each line in: what checking
+/// many edits to one source needs, built once for them all.
+struct LineIndex {
+    starts: Vec<usize>,
+    states: Vec<(usize, LexState)>,
+}
+impl LineIndex {
+    fn new(source: &str) -> (Views, LineIndex) {
+        let (v, states) = views_lines(source, true);
+        let starts = std::iter::once(0)
+            .chain(source.match_indices('\n').map(|(at, _)| at + 1))
+            .collect();
+        (v, LineIndex { starts, states })
+    }
+    /// Where 0-based line `row` starts, if the source has it.
+    fn start(&self, row: usize) -> Option<usize> {
+        self.starts.get(row).copied()
+    }
+}
+/// A source after one edit to a single line, masked: the edited line alone
+/// when `edited_line_views` can settle the rest from it, or else the whole
+/// edited source. `base` is where `text` starts in the edited source, and
+/// `before` the span of the original's masks that `comments` and `code`
+/// stand in for.
+struct EditedMasks {
+    base: usize,
+    before: std::ops::Range<usize>,
+    text: String,
+    comments: String,
+    code: String,
+}
+impl EditedMasks {
+    fn new(
+        source: &str,
+        lines: &LineIndex,
+        start: usize,
+        at: usize,
+        end: usize,
+        replacement: &str,
+    ) -> EditedMasks {
+        if let Some((text, comments, code)) =
+            edited_line_views(source, &lines.states, start, at, end, replacement)
+        {
+            let line_end = start + text.len() + (end - at) - replacement.len();
+            return EditedMasks {
+                base: start,
+                before: start..line_end,
+                text,
+                comments,
+                code,
+            };
+        }
+        let mut text = source.to_string();
+        text.replace_range(at..end, replacement);
+        let after = views(&text);
+        EditedMasks {
+            base: 0,
+            before: 0..source.len(),
+            text,
+            comments: after.comments,
+            code: after.code,
+        }
+    }
+    /// Whether the edit of `at..end` to `added` bytes changed nothing q
+    /// reads: both masks the same around it, the new text blank in each
+    /// (a comment), and with `removed` the old text blank in each too.
+    fn comment_only(&self, v: &Views, at: usize, end: usize, added: usize, removed: bool) -> bool {
+        let (at, end) = (at - self.base, end - self.base);
+        let added = at + added;
+        let alike = |before: &str, after: &str| {
+            let (before, after) = (&before.as_bytes()[self.before.clone()], after.as_bytes());
+            before[..at] == after[..at]
+                && (!removed || before[at..end].iter().all(|&b| b == b' '))
+                && after[at..added].iter().all(|&b| b == b' ')
+                && before[end..] == after[added..]
+        };
+        alike(&v.code, &self.code) && alike(&v.comments, &self.comments)
     }
 }
 /// Every bracket's match in one text, computed once in a single stack pass.
@@ -5775,18 +6014,14 @@ fn unused_noqa(
 /// batch-safe: whether a rule fires on a line can turn on the files around
 /// it (QF018 reads the workspace), so a `noqa` one run finds unused another
 /// may need, and `--fix` does not delete it unattended.
-fn unused_noqa_fix(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
+fn unused_noqa_fix(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Option<Fix> {
     let unused: Vec<&str> = re!(r"^Unused noqa codes?: ([A-Z0-9, ]+);")
         .captures(&finding.detail)?
         .get(1)?
         .as_str()
         .split(", ")
         .collect();
-    let row = finding.line.checked_sub(1)?;
-    let start = match row {
-        0 => 0,
-        _ => source.match_indices('\n').nth(row - 1)?.0 + 1,
-    };
+    let start = lines.start(finding.line.checked_sub(1)?)?;
     let line = source[start..].split_inclusive('\n').next()?;
     let text = line.trim_end_matches(['\n', '\r']);
     let codes = noqa_codes(source, &v.comments, start, start + line.len())?;
@@ -5809,19 +6044,12 @@ fn unused_noqa_fix(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
     } else {
         (codes.start, codes.end, kept.join(", "))
     };
-    let mut edited = source.to_string();
-    edited.replace_range(at..end, &replacement);
-    let after = views(&edited);
-    let comment_only = |before: &str, after: &str| {
-        let (before, after) = (before.as_bytes(), after.as_bytes());
-        let added = at + replacement.len();
-        before[..at] == after[..at]
-            && before[at..end].iter().all(|&b| b == b' ')
-            && after[at..added].iter().all(|&b| b == b' ')
-            && before[end..] == after[added..]
-    };
-    (comment_only(&v.code, &after.code) && comment_only(&v.comments, &after.comments)).then(|| {
-        Fix {
+    // Checked on the edited line alone where that settles it: masking the
+    // whole file again for each finding was quadratic in them (#2335).
+    let after = EditedMasks::new(source, lines, start, at, end, &replacement);
+    after
+        .comment_only(v, at, end, replacement.len(), true)
+        .then(|| Fix {
             start: at,
             end,
             replacement: replacement.into(),
@@ -5831,8 +6059,7 @@ fn unused_noqa_fix(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 format!("Remove {} from the noqa", unused.join(", ")).into()
             },
             batch_safe: false,
-        }
-    })
+        })
 }
 
 /// The code lists of the file's `/ qlinter: noqa: CODE` directives, each as
@@ -5979,28 +6206,24 @@ pub fn suppressions_for<'a>(
     findings: impl IntoIterator<Item = &'a Finding>,
     source: &str,
 ) -> Vec<Option<Fix>> {
-    let v = views(source);
+    let (v, lines) = LineIndex::new(source);
     let balanced = problems(source, &v).is_empty();
     findings
         .into_iter()
         .map(|finding| {
             balanced
-                .then(|| suppression_with(finding, source, &v))
+                .then(|| suppression_with(finding, source, &v, &lines))
                 .flatten()
         })
         .collect()
 }
 
-fn suppression_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
+fn suppression_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Option<Fix> {
     let code = finding.code.as_str();
     if !re!(r"^[A-Z]+[0-9]+$").is_match(code) {
         return None;
     }
-    let row = finding.line.checked_sub(1)?;
-    let start = match row {
-        0 => 0,
-        _ => source.match_indices('\n').nth(row - 1)?.0 + 1,
-    };
+    let start = lines.start(finding.line.checked_sub(1)?)?;
     let line = source[start..].split_inclusive('\n').next()?;
     let text = line.strip_suffix('\n').unwrap_or(line);
     let text = text.strip_suffix('\r').unwrap_or(text);
@@ -6024,27 +6247,24 @@ fn suppression_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             format!(" / noqa: {code}"),
         ),
     };
-    let mut edited = source.to_string();
-    edited.replace_range(at..end, &replacement);
-    let after = views(&edited);
-    let comment_only = |before: &str, after: &str| {
-        let (before, after) = (before.as_bytes(), after.as_bytes());
-        let added = at + replacement.len();
-        before[..at] == after[..at]
-            && after[at..added].iter().all(|&b| b == b' ')
-            && before[end..] == after[added..]
-    };
+    // Checked on the edited line alone where that settles it: masking the
+    // whole file again for each finding was quadratic in them (#2335).
+    let after = EditedMasks::new(source, lines, start, at, end, &replacement);
     let line_end = start + line.len() - (end - at) + replacement.len();
-    let named = noqa_codes(&edited, &after.comments, start, line_end)
-        .is_some_and(|codes| codes_in(&edited[codes]).any(|c| c == code));
-    (named && comment_only(&v.code, &after.code) && comment_only(&v.comments, &after.comments))
-        .then(|| Fix {
-            start: at,
-            end,
-            replacement: replacement.into(),
-            title: format!("Suppress {code} on this line").into(),
-            batch_safe: false,
-        })
+    let named = noqa_codes(
+        &after.text,
+        &after.comments,
+        start - after.base,
+        line_end - after.base,
+    )
+    .is_some_and(|codes| codes_in(&after.text[codes]).any(|c| c == code));
+    (named && after.comment_only(v, at, end, replacement.len(), false)).then(|| Fix {
+        start: at,
+        end,
+        replacement: replacement.into(),
+        title: format!("Suppress {code} on this line").into(),
+        batch_safe: false,
+    })
 }
 
 /// The edit that organises a file's loads, as isort does a Python file's

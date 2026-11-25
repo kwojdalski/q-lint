@@ -161,8 +161,8 @@ use crate::jsonrpc::{INVALID_REQUEST, Malformed, receive, send};
 use q_lint_rs::graph::Placement;
 use q_lint_rs::{
     FileIndex, Finding, Fix, References, TokenKind, Workspace, balanced, broken_statement,
-    file_suppression_for, fix_all, fix_for, fix_lines, folds, functional_to_qsql, organise_loads,
-    qsql_layout_at, qsql_layouts, qsql_to_functional, rule_url, semantic_tokens_in,
+    file_suppression_for, fix_all, fix_lines, fixes_each, folds, functional_to_qsql,
+    organise_loads, qsql_layout_at, qsql_layouts, qsql_to_functional, rule_url, semantic_tokens_in,
     suppressions_for, whole_edit,
 };
 use serde_json::{Value, json};
@@ -2847,8 +2847,14 @@ fn quick_fixes(
     } else {
         asked_about.iter().map(|_| None).collect()
     };
+    let fixes = fixes_each(asked_about.iter().map(|(finding, _)| finding), source);
+    // Where each suppression edit is in `suppressions`, by the edit: a scan
+    // of them all for each was quadratic in a selection's findings.
+    let mut suppression_at: HashMap<String, usize> = HashMap::new();
     let mut in_file: Vec<(String, Option<Value>)> = vec![];
-    for ((finding, client_diagnostic), suppression) in asked_about.iter().zip(accepted) {
+    for (((finding, client_diagnostic), suppression), fix) in
+        asked_about.iter().zip(accepted).zip(fixes)
+    {
         // The edit's range comes from the fix, not from the diagnostic. The
         // two coincide for an operator swapped in place, but `f x` becomes
         // `f[x]` by replacing the whole application while the diagnostic
@@ -2870,21 +2876,19 @@ fn quick_fixes(
                 "edit": {"changes": changes},
             })
         };
-        actions.extend(
-            fix_for(finding, source)
-                .filter(|f| f.batch_safe || unsafe_fixes)
-                .map(action),
-        );
+        actions.extend(fix.filter(|f| f.batch_safe || unsafe_fixes).map(action));
         if let Some(suppression) = suppression.map(action) {
-            match suppressions
-                .iter_mut()
-                .find(|s| s["edit"] == suppression["edit"])
-            {
-                Some(same) => same["diagnostics"]
-                    .as_array_mut()
-                    .expect("made above")
-                    .push((*client_diagnostic).clone()),
-                None => suppressions.push(suppression),
+            match suppression_at.entry(suppression["edit"].to_string()) {
+                std::collections::hash_map::Entry::Occupied(at) => {
+                    suppressions[*at.get()]["diagnostics"]
+                        .as_array_mut()
+                        .expect("made above")
+                        .push((*client_diagnostic).clone())
+                }
+                std::collections::hash_map::Entry::Vacant(at) => {
+                    at.insert(suppressions.len());
+                    suppressions.push(suppression);
+                }
             }
         }
         // One edit a code, and each asked for once: it masks the file.

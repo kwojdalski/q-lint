@@ -1677,3 +1677,43 @@ fn typed_locals_and_version_rules_lint_in_bounded_time() {
         "500 statements took {small:?} and 4000 took {large:?}"
     );
 }
+/// Accepting each of a file's findings where it is - `--add-noqa`, and an
+/// editor's Select All asking for the code actions of every finding - masked
+/// a copy of the whole file again for each, and so did the fix of each stale
+/// `noqa` (QL003), which `--fix`, `--diff` and Format Document ask for:
+/// quadratic in the findings, 22 s for 8000 in an editor (#2335).
+#[test]
+fn accepting_or_fixing_every_finding_is_linear() {
+    let accept = |n: usize| {
+        let source: String = (0..n).map(|i| format!("r{i}:a*b+{i};\n")).collect();
+        let found = lint(&source, "t.q", Profile::Uqf);
+        let accepted = q_lint_rs::suppressions_for(&found, &source);
+        assert!(accepted.iter().flatten().count() >= n);
+        best_of_three(|| q_lint_rs::suppressions_for(&found, &source))
+    };
+    accept(500); // warm the allocator and the regex caches
+    let (small, large) = (accept(500), accept(4000));
+    eprintln!("accepting 500 findings took {small:?} and 4000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "accepting 500 findings took {small:?} and 4000 {large:?}"
+    );
+    let fix = |n: usize| {
+        let source: String = (0..n)
+            .map(|i| format!("g{i}:{{[a] a}} / noqa: QF016\n"))
+            .collect();
+        let found = lint(&source, "t.q", Profile::Uqf);
+        let fixes = q_lint_rs::fixes_for(&found, &source);
+        assert_eq!(fixes.iter().filter(|f| f.replacement.is_empty()).count(), n);
+        best_of_three(|| q_lint_rs::fixes_for(&found, &source))
+    };
+    fix(500);
+    let (small, large) = (fix(500), fix(4000));
+    eprintln!("fixing 500 stale noqa took {small:?} and 4000 {large:?}");
+    assert!(
+        large < small * 16,
+        "fixing 500 stale noqa took {small:?} and 4000 {large:?}"
+    );
+}
