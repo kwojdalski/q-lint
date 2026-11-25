@@ -36,7 +36,9 @@
 //   each also by its `.q.` name (`.q.set`), by its symbol
 //   (`` `.q.set . (`a;1) ``), one cast from a string too (`` (`$".q.set") ``,
 //   #2037), and picked from `.q` by any index
-//   (`` .q[`set] ``, `` (get`.q)`set ``, #1765) - as are `value`,
+//   (`` .q[`set] ``, `` (get`.q)`set ``, #1765) or by an index it cannot
+//   read, `` .q[`$"se","t"] ``, `((value .q) 71)` (#2206), and got with
+//   `parse` or `-5!`, `(parse"set")[`a;1]` (#2205) - as are `value`,
 //   `get`, `eval`, `reval`, `hopen`, `xasc`, `xdesc` and `xkey`, whose
 //   arguments are then not read (#1764) - `system` of a string literal
 //   is read as that command, so `system "c"` only reads; `hopen` of a file handle
@@ -1107,6 +1109,52 @@ function picked(t: Token[], at: number, root: string): string | undefined {
   return undefined;
 }
 
+/// Whether `.q` or `.Q` at `t[at]`, or `` `.q `` got with `get` or `value`,
+/// is indexed by what the guard cannot read: not symbols or strings written
+/// but a symbol made, `` .q[`$"se","t"] ``, a number, `((value .q) 71)`, or
+/// another expression, `(.q (key .q) 71)` (#2206).
+function pickedUnread(t: Token[], at: number): boolean {
+  let end = at;
+  // `(value .q) 71`, `` (get`.q)`$"x" ``: indexed after the parentheses.
+  if ((t[at - 1]?.text === "value" || t[at - 1]?.text === "get") && t[at - 2]?.text === "(" && t[at + 1]?.text === ")") {
+    end = at + 1;
+  }
+  const k = t[end + 1];
+  if (k === undefined) return false;
+  const range: [number, number] | undefined =
+    k.kind === "open" && k.text === "["
+      ? [end + 2, items(t, end + 1).at(-1)?.[1] ?? t.length]
+      : k.kind === "op" && (k.text === "@" || k.text === ".")
+        ? [end + 2, argumentEnd(t, end + 1)]
+        : ["sym", "str", "num", "name"].includes(k.kind) || (k.kind === "open" && k.text === "(")
+          ? [end + 1, argumentEnd(t, end)]
+          : undefined;
+  if (range === undefined || range[0] >= range[1] || (k.kind === "name" && INFIX.has(k.text))) return false;
+  return !t.slice(range[0], range[1]).every((x) => x.kind === "sym" || x.kind === "str" || x.text === "enlist" || x.text === ";" || x.text === "(" || x.text === ")");
+}
+
+/// What `parse`, or `-5!`, at `t[at]` picks that writes, applied to `arg`:
+/// of a writer's name, `parse"set"`, the writer itself - of an amend, `!`,
+/// `?`, an internal function or a file verb too - and of a string it cannot
+/// read, whatever it gives where that is applied, `(parse x)[`a;1]` (#2205).
+function parsedWriter(t: Token[], at: number, arg: [number, number] | undefined): string | undefined {
+  if (arg === undefined) return undefined;
+  const [a, b] = unwrapped(t, arg[0], arg[1]);
+  if (b - a === 1 && t[a].kind === "str") {
+    const text = qText(t[a].text).trim();
+    const writer = CALLED.has(unqualified(text)) || ["@", ".", "?", "!", "0:", "1:", "2:"].includes(text) || /^-\d+[ihj]?!$/.test(text) || GATEWAY_EXEC.test(text) || /^\.(p|pykx)(\.|$)/.test(text);
+    return writer ? `gets ${text} with parse` : undefined;
+  }
+  // Not a string written, and what it gives applied: `(parse x)[`a;1]`.
+  let s = at;
+  while (t[s - 1]?.text === "(" && t[s - 1].kind === "open") s--;
+  const close = s < at ? (items(t, s).at(-1)?.[1] ?? -1) : -1;
+  const after = t[close + 1];
+  return close >= 0 && after !== undefined && (after.kind === "open" || ["sym", "str", "num", "name"].includes(after.kind) || after.text === "@" || after.text === ".")
+    ? "applies what parse gives, which the guard cannot read"
+    : undefined;
+}
+
 /// What a lambda's parameter is given in place of an argument that is a
 /// name, or not written, which could name a global or a file:
 /// `` {.[x;();:;1]} v `` amends whatever `v` names.
@@ -1787,6 +1835,19 @@ function readStatement(statement: string, found: Set<string>): void {
         found.add(`calls ${name}`);
         continue;
       }
+      // Picked by what it cannot read, `` .q[`$"se","t"] ``, `((value .q) 71)` (#2206).
+      if ((k.text === ".q" || k.text === ".Q") && pickedUnread(t, i)) {
+        found.add(`calls a function picked from ${k.text} by what the guard cannot read`);
+        continue;
+      }
+      // `parse` of a writer's name gives the writer: `(parse"set")[`a;1]` (#2205).
+      if (unqualified(k.text) === "parse") {
+        const what = parsedWriter(t, i, argumentOf(t, i));
+        if (what !== undefined) {
+          found.add(what);
+          continue;
+        }
+      }
       // `xasc`, `xdesc` and `xkey` on a table named by a symbol change it in
       // place: `` `a xasc `t ``, `` xasc[`a;`t] ``, and projected on the
       // columns, `` xasc[`a]`t `` and `` xasc[`a][`t] `` (#1447), also
@@ -2024,6 +2085,19 @@ function readStatement(statement: string, found: Set<string>): void {
     if (name !== undefined) {
       found.add(`calls ${name}`);
       continue;
+    }
+    if (k.kind === "sym" && (k.text === "`.q" || k.text === "`.Q") && pickedUnread(t, i)) {
+      found.add(`calls a function picked from ${k.text.slice(1)} by what the guard cannot read`);
+      continue;
+    }
+    // `-5!` is `parse`: `` (-5!"hopen")`:f `` (#2205).
+    if (k.kind === "num" && k.text.replace(/[ihj]$/, "") === "-5" && next?.text === "!" && t[i - 1]?.kind !== "num") {
+      const end = argumentEnd(t, i + 1);
+      const what = parsedWriter(t, i, end > i + 2 ? [i + 2, end] : undefined);
+      if (what !== undefined) {
+        found.add(what);
+        continue;
+      }
     }
     // A gateway called by its symbol: `` `.gw.syncexec . ("a:1";`rdb) `` (#2039).
     if (k.kind === "sym" && GATEWAY_EXEC.test(k.text.slice(1))) {

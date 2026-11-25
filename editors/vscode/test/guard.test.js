@@ -1727,3 +1727,22 @@ test("an internal function's number with a type or computed is read as the numbe
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("a writer got with parse or -5!, or picked from .q by what the guard cannot read, is called (#2205, #2206)", () => {
+  const asks = [
+    '(parse"set")[`a;77]', '(parse("set")) . (`a;77)', '(-5!"set")[`a] 77', '{parse x}"set"', '(parse"upsert")[`t;(9;`q)]', '(parse"insert")[`t;(9;`q)]',
+    '(parse"xdesc")[`a;`t]', '(parse"hopen")`:o.txt', '(-5!"hopen")`:o.txt', '(parse"value")"a:77"', '(parse"system")"l f.q"', '(parse".")[`a;();:;77]',
+    '(parse"-11!")', "(parse x)[`a;77]",
+    '.q[`$"se","t"][`a;77]', '.q[`$reverse"tes"][`a] 77', '(.q@`$"se","t")[`a;77]', '((get`.q)`$"se","t")[`a;77]', '(.q`$"xk","ey")[`b;`t]',
+    "(.q (key .q) 71)[`a;77]", "((value .q) 71)[`a;77]", '((value .q) 68)"a:77"', '((value .q) 88)"l f.q"', "((value .q) 104)[`a;`t]",
+  ];
+  for (const code of asks) {
+    assert.ok(writes(code).length > 0, code);
+  }
+  assert.deepStrictEqual(writes('(parse"set")[`a;77]'), ["gets set with parse"]);
+  assert.deepStrictEqual(writes("((value .q) 71)[`a;77]"), ["calls a function picked from .q by what the guard cannot read"]);
+  // Parse of a query, and .q indexed by a read-only builtin's name, read.
+  for (const code of ['parse"select from t"', "-5!\"count t\"", ".q`count", ".q[`count]", "key .q", "count .q", '(.q`$"count")t']) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});
