@@ -217,7 +217,13 @@ export async function runNotebook(
   // The Markdown whose values the cell at `i` reads, and, when it does not
   // run or fails, or values are not read, what they showed was another
   // run's (#1544, #2151).
-  const markdownOf = (i: number): number[] => markdownAfter(cells, i).filter((j) => cells[j].kind === "markdown");
+  // Parameters put at the top, with no parameters cell, are not the first
+  // code cell: the Markdown above that is read after it, as without them
+  // (#2152).
+  const injected = cells.findIndex((c) => c.metadata?.[INJECTED_KEY] === true);
+  const leads = injected >= 0 && !cells.slice(0, injected).some((c) => c.kind === "code");
+  const kinds = cells.map((c, j) => ({ kind: leads && j === injected ? ("markdown" as const) : c.kind }));
+  const markdownOf = (i: number): number[] => (leads && i === injected ? [] : markdownAfter(kinds, i).filter((j) => cells[j].kind === "markdown"));
   const dropLive = (i: number): void => {
     for (const j of markdownOf(i)) {
       const { [LIVE_KEY]: _old, ...rest } = cells[j].metadata ?? {};
