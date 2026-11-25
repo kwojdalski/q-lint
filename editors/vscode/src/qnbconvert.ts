@@ -19,6 +19,7 @@
 // Python notebook (PyKX's magic) is q, without the magic line.
 import { escapeHtml } from "./celldata";
 import { inlineSpans, storedValues, type LiveValue } from "./livemarkdown";
+import { markdownBlocks } from "./markdownblocks";
 import type { Qnb, QnbCell, QnbItem, QnbOutput } from "./qnb";
 
 /// VS Code's mime types for an error and for the two streams.
@@ -47,18 +48,11 @@ function entity(name: string): string | undefined {
   return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : undefined;
 }
 
-/// A GFM table row's cells: split on the pipes not escaped, the outer ones
-/// dropped, an escaped pipe a pipe.
-function tableCells(line: string): string[] {
-  const row = line.trim().replace(/^\|/, "").replace(/(^|[^\\])\|$/, "$1");
-  return row.split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|"));
-}
-
 /// Markdown's inline text as HTML: code spans as they are, live values as
 /// `liveHtml` writes them, everything escaped. A paragraph or an item is
 /// read whole, as `liveQueries` reads it, so a `{{q: }}` over two lines is
 /// one value under the key the run kept it by (#2149); a line's trailing
-/// blanks go, and with `breaks` two spaces or a backslash at a line's end
+/// and a later line's leading blanks go, and with `breaks` two spaces or a backslash at a line's end
 /// is a `<br>` (#1945).
 function inline(text: string, values: Record<string, LiveValue>, breaks = false): string {
   const held: string[] = [];
@@ -81,7 +75,8 @@ function inline(text: string, values: Record<string, LiveValue>, breaks = false)
   if (breaks) {
     s = s.replace(/(?<!\\)((?:\\\\)*)\\\n/g, (_m, pairs: string) => `${pairs}${hold("<br>")}\n`).replace(/[ \t]* {2}\n/g, () => `${hold("<br>")}\n`);
   }
-  s = s.replace(/[ \t]+\n/g, "\n");
+  // And a later line's leading ones, as markdown-it's `newline` rule drops them.
+  s = s.replace(/[ \t]+\n/g, "\n").replace(/\n[ \t]+/g, "\n");
   // A backslash escapes any ASCII punctuation (CommonMark 2.4, #1310).
   s = escapeHtml(
     s
@@ -147,149 +142,56 @@ export function liveHtml(expr: string, value: LiveValue | undefined): string {
   return `<code>{{q: ${escapeHtml(expr)}}}</code>`;
 }
 
-/// A Markdown cell as HTML, its live values from `values`.
+/// A Markdown cell as HTML, its live values from `values`: its blocks as
+/// the notebook's renderer reads them (`markdownBlocks`, #2393) - a list
+/// item, a quote and what is in them as Markdown of their own, a list
+/// ended where a new one starts - and each one's inline text by `inline`.
+/// An HTML block is shown as written, as a tag is.
 export function markdownHtml(source: string, values: Record<string, LiveValue> = {}): string {
-  const lines = source.split(/\r?\n/);
   const out: string[] = [];
-  let paragraph: string[] = [];
-  // An item: its text, the column that text starts at, and the lines
-  // written under it from that column on - a list of its own (#1943).
-  let list: { tag: "ul" | "ol"; start: number; items: { text: string; column: number; under: string[] }[] } | undefined;
-  // Whether the last line not indented was a list item's.
-  let listed = false;
-  const flush = (): void => {
-    if (paragraph.length > 0) {
+  let line = "";
+  let open = 0;
+  for (const block of markdownBlocks(source)) {
+    open += block.kind === "open" ? 1 : block.kind === "close" ? -1 : 0;
+    switch (block.kind) {
+      case "open":
+        line += block.tag === "ol" && block.start !== undefined && block.start !== 1 ? `<ol start="${block.start}">` : `<${block.tag}>`;
+        break;
+      case "close":
+        line += `</${block.tag}>`;
+        break;
       // A line's end is a space, as the notebook shows it: a break only
-      // after two spaces or a backslash not itself escaped (#1945).
-      out.push(`<p>${inline(paragraph.join("\n").trimEnd(), values, true)}</p>`);
-      paragraph = [];
-    }
-    if (list !== undefined) {
-      const start = list.tag === "ol" && list.start !== 1 ? ` start="${list.start}"` : "";
-      const item = (i: { text: string; under: string[] }): string =>
-        `<li>${inline(i.text, values)}${i.under.length > 0 ? markdownHtml(i.under.join("\n"), values) : ""}</li>`;
-      out.push(`<${list.tag}${start}>${list.items.map(item).join("")}</${list.tag}>`);
-      list = undefined;
-    }
-  };
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    // A list under the last item: a line indented to the item's text that
-    // starts an item, and what follows it there. It is that item's own
-    // Markdown, as a quote's lines are the quote's (#1943).
-    const last = list?.items[list.items.length - 1];
-    const indent = (/^[ \t]*/.exec(line) as RegExpExecArray)[0].replace(/\t/g, "    ");
-    if (last !== undefined && line.trim() !== "" && indent.length >= last.column) {
-      const under = indent.slice(last.column) + line.trimStart();
-      if (last.under.length > 0 || /^ {0,3}([-*+]|\d{1,9}[.)])(?:\s|$)/.test(under)) {
-        last.under.push(under);
-        continue;
+      // after two spaces or a backslash not itself escaped (#1945, #2399).
+      case "paragraph":
+        line += block.hidden ? inline(block.text, values, true) : `<p>${inline(block.text, values, true)}</p>`;
+        break;
+      case "heading":
+        line += `<h${block.depth}>${inline(block.text, values, true)}</h${block.depth}>`;
+        break;
+      case "code":
+        line += `<pre><code>${escapeHtml(block.text)}</code></pre>`;
+        break;
+      case "hr":
+        line += "<hr>";
+        break;
+      case "html":
+        line += `<p>${escapeHtml(block.text)}</p>`;
+        break;
+      case "table": {
+        const cell = (tag: string, text: string, at: number): string =>
+          `<${tag}${block.aligns[at] ? ` style="text-align:${block.aligns[at]}"` : ""}>${inline(text, values)}</${tag}>`;
+        const head = block.head.map((c, at) => cell("th", c, at));
+        const body = block.rows.map((row) => `<tr>${block.aligns.map((_a, at) => cell("td", row[at] ?? "", at)).join("")}</tr>`);
+        line += `<table><thead><tr>${head.join("")}</tr></thead>${body.length > 0 ? `<tbody>${body.join("")}</tbody>` : ""}</table>`;
+        break;
       }
     }
-    // A backtick fence's info string holds no backtick: "```a``` b" is a
-    // line of text with a code span in it, not a fence (#1307).
-    const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
-    if (fence !== null && !(fence[1][0] === "`" && fence[2].includes("`"))) {
-      flush();
-      // Closed only by a bare run of the same character, at least as long:
-      // a "```q" inside is code (#1308).
-      const close = new RegExp(`^ {0,3}${fence[1][0]}{${fence[1].length},}\\s*$`);
-      const code: string[] = [];
-      for (i++; i < lines.length && !close.test(lines[i]); i++) {
-        code.push(lines[i]);
-      }
-      out.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`);
-      continue;
-    }
-    // An indented code block, where `liveExpressions` reads one: not under
-    // a paragraph line or a list item (#1553). Blank lines inside it are
-    // its; those after it are not.
-    if (/^(?: {4}|\t)/.test(line) && line.trim() !== "" && paragraph.length === 0 && !listed) {
-      flush();
-      const code: string[] = [];
-      for (; i < lines.length && (/^(?: {4}|\t)/.test(lines[i]) || lines[i].trim() === ""); i++) {
-        code.push(lines[i].replace(/^(?: {4}|\t)/, ""));
-      }
-      while (code[code.length - 1].trim() === "") {
-        code.pop();
-      }
-      i--;
-      out.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`);
-      continue;
-    }
-    if (line.trim() !== "" && !/^(?: {4}|\t)/.test(line)) {
-      listed = /^ {0,3}([-*+]|\d{1,9}[.)])(?:\s|$)/.test(line);
-    }
-    // A GFM table: a header row, a delimiter row of as many cells, then
-    // rows up to a blank line (#1309).
-    const delimiter = i + 1 < lines.length ? tableCells(lines[i + 1]) : [];
-    if (
-      line.includes("|") &&
-      /^ {0,3}\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/.test(lines[i + 1] ?? "") &&
-      tableCells(line).length === delimiter.length
-    ) {
-      flush();
-      const align = delimiter.map((d) => (d.endsWith(":") ? (d.startsWith(":") ? "center" : "right") : d.startsWith(":") ? "left" : ""));
-      const cell = (tag: string, text: string, at: number): string =>
-        `<${tag}${align[at] ? ` style="text-align:${align[at]}"` : ""}>${inline(text, values)}</${tag}>`;
-      const head = tableCells(line).map((c, at) => cell("th", c, at));
-      const body: string[] = [];
-      for (i += 2; i < lines.length && lines[i].trim() !== "" && !/^ {0,3}(`{3,}|~{3,}|#{1,6}\s|>)/.test(lines[i]); i++) {
-        const cells = tableCells(lines[i]);
-        body.push(`<tr>${align.map((_a, at) => cell("td", cells[at] ?? "", at)).join("")}</tr>`);
-      }
-      i--;
-      out.push(`<table><thead><tr>${head.join("")}</tr></thead>${body.length > 0 ? `<tbody>${body.join("")}</tbody>` : ""}</table>`);
-      continue;
-    }
-    // A closing run of `#` only after a space: `# Using C#` keeps its `#`
-    // (CommonMark, #1237).
-    const heading = /^ {0,3}(#{1,6})\s+(.*?)\s*$/.exec(line);
-    const item = /^ {0,3}([-*+]|\d{1,9}[.)])\s+(.*)$/.exec(line);
-    if (line.trim() === "") {
-      flush();
-    } else if (paragraph.length > 0 && /^ {0,3}(=+|-+)\s*$/.test(line)) {
-      // A setext heading: the paragraph above a line of = or - (#1551).
-      const level = line.trim()[0] === "=" ? 1 : 2;
-      out.push(`<h${level}>${inline(paragraph.join("\n").trimEnd(), values)}</h${level}>`);
-      paragraph = [];
-    } else if (heading !== null) {
-      flush();
-      const text = heading[2].replace(/(^|\s+)#+$/, "");
-      out.push(`<h${heading[1].length}>${inline(text, values)}</h${heading[1].length}>`);
-    } else if (/^ {0,3}([-*_])(\s*\1){2,}\s*$/.test(line)) {
-      flush();
-      out.push("<hr>");
-    } else if (/^ {0,3}>/.test(line)) {
-      flush();
-      const quote: string[] = [];
-      for (; i < lines.length && /^ {0,3}>/.test(lines[i]); i++) {
-        quote.push(lines[i].replace(/^ {0,3}> ?/, ""));
-      }
-      i--;
-      out.push(`<blockquote>${markdownHtml(quote.join("\n"), values)}</blockquote>`);
-    } else if (item !== null && (paragraph.length === 0 || (item[2].trim() !== "" && /^([-*+]|0*1[.)])$/.test(item[1])))) {
-      // Only a bullet or a "1." with text interrupts a paragraph: "in
-      // 2024. it ran" goes on with it (CommonMark 5.2, #1311).
-      if (paragraph.length > 0) {
-        flush();
-      }
-      const tag = /\d/.test(item[1]) ? "ol" : "ul";
-      if (list !== undefined && list.tag !== tag) {
-        flush();
-      }
-      list ??= { tag, start: tag === "ol" ? parseInt(item[1], 10) : 1, items: [] };
-      list.items.push({ text: item[2], column: line.length - item[2].length, under: [] });
-    } else if (list !== undefined && /^\s+\S/.test(line)) {
-      list.items[list.items.length - 1].text += `\n${line.trim()}`;
-    } else {
-      if (list !== undefined) {
-        flush();
-      }
-      paragraph.push(line.trimStart());
+    // A block at the cell's top is a line of its own.
+    if (open === 0) {
+      out.push(line);
+      line = "";
     }
   }
-  flush();
   return out.join("\n");
 }
 

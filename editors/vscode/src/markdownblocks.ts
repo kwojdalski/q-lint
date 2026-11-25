@@ -10,6 +10,10 @@
 // (`bMarks`, `tShift`, `sCount`, `bsCount`, `blkIndent`) and its quirks: a
 // `>` continues an open quote however far in it stands, and a line after a
 // quote's fence is no longer the quote's.
+//
+// The same reading gives the blocks themselves (`markdownBlocks`), which the
+// HTML export draws (#2393): a list item, a quote and what is in them, as
+// the notebook draws them.
 // Free of any `vscode` import, so a test can drive it.
 
 /// One block's inline text.
@@ -20,6 +24,19 @@ export interface InlineText {
   /// whole but for its blockquote markers, with the line end it has.
   written(from: number, to: number): string;
 }
+
+/// One block, as markdown-it's tokens are: a container's opening and its
+/// close, with what is in it between them. A paragraph of a tight list's
+/// item is `hidden`, drawn without its `<p>`; `text` is a block's inline
+/// text, as `InlineText`'s is.
+export type Block =
+  | { kind: "open" | "close"; tag: "blockquote" | "ul" | "ol" | "li"; start?: number }
+  | { kind: "paragraph"; text: string; hidden: boolean }
+  | { kind: "heading"; depth: number; text: string }
+  | { kind: "code"; text: string }
+  | { kind: "hr" }
+  | { kind: "table"; aligns: ("left" | "right" | "center" | "")[]; head: string[]; rows: string[][] }
+  | { kind: "html"; text: string };
 
 type Rule = (s: Blocks, startLine: number, endLine: number, silent: boolean) => boolean;
 
@@ -47,6 +64,11 @@ class Blocks {
   line = 0;
   lineMax: number;
   readonly found: InlineText[] = [];
+  /// The blocks read, and the level each paragraph is at, for a tight list.
+  readonly blocks: Block[] = [];
+  readonly levels: number[] = [];
+  /// Whether the blocks just read had no empty line between them.
+  tight = true;
 
   constructor(source: string) {
     const parts = source.split(/(\r\n?|\n)/);
@@ -89,7 +111,7 @@ class Blocks {
   }
 
   /// The line less `indent` columns of indent, a tab cut in two as spaces.
-  private shown(line: number, indent: number): string {
+  shown(line: number, indent: number): string {
     const begin = this.bMarks[line];
     let first = begin;
     let lineIndent = 0;
@@ -139,12 +161,27 @@ class Blocks {
   keepLine(text: string): void {
     this.found.push({ text, written: (begin, end) => text.slice(begin, end) });
   }
+
+  /// Lines `from` up to `to`, each less `indent` columns, as a code block's.
+  lines(from: number, to: number, indent: number): string {
+    const out: string[] = [];
+    for (let line = from; line < to; line++) {
+      out.push(this.shown(line, indent));
+    }
+    return out.join("\n");
+  }
+
+  push(block: Block): void {
+    this.blocks.push(block);
+    this.levels.push(this.level);
+  }
 }
 
 /// Read the blocks of lines `startLine` up to `endLine`, to where a line
 /// stands out of the container being read.
 function tokenize(s: Blocks, startLine: number, endLine: number): void {
   let line = startLine;
+  let hasEmptyLines = false;
   while (line < endLine) {
     while (line < endLine && s.isEmpty(line)) {
       line++;
@@ -159,7 +196,16 @@ function tokenize(s: Blocks, startLine: number, endLine: number): void {
     }
     // The paragraph rule takes any line, so one always does.
     RULES.some((rule) => rule(s, line, endLine, false));
+    // Tight while no empty line came before this block: the one after the
+    // last does not count.
+    s.tight = !hasEmptyLines;
+    if (s.isEmpty(s.line - 1)) {
+      hasEmptyLines = true;
+    }
     line = s.line;
+    if (line < endLine && s.isEmpty(line)) {
+      hasEmptyLines = true;
+    }
   }
 }
 
@@ -218,6 +264,9 @@ const table: Rule = (s, startLine, endLine, silent) => {
     return true;
   }
   columns.forEach((c) => s.keepLine(c.trim()));
+  const align = (c: string): "left" | "right" | "center" | "" => (c.endsWith(":") ? (c.startsWith(":") ? "center" : "right") : c.startsWith(":") ? "left" : "");
+  const block: Block & { kind: "table" } = { kind: "table", aligns: aligns.filter((c) => c !== "").map(align), head: columns.map((c) => c.trim()), rows: [] };
+  s.push(block);
   let nextLine = startLine + 2;
   for (; nextLine < endLine; nextLine++) {
     if (s.sCount[nextLine] < s.blkIndent || ENDS.blockquote.some((end) => end(s, nextLine, endLine, true))) {
@@ -228,9 +277,11 @@ const table: Rule = (s, startLine, endLine, silent) => {
       break;
     }
     // A cell past the header's last is not shown.
-    cells(row)
+    const shown = cells(row)
       .slice(0, columns.length)
-      .forEach((c) => s.keepLine(c.trim()));
+      .map((c) => c.trim());
+    shown.forEach((c) => s.keepLine(c));
+    block.rows.push(shown);
   }
   s.line = nextLine;
   return true;
@@ -250,6 +301,7 @@ const code: Rule = (s, startLine, endLine) => {
       break;
     }
   }
+  s.push({ kind: "code", text: s.lines(startLine, last, s.blkIndent + 4) });
   s.line = last;
   return true;
 };
@@ -265,16 +317,20 @@ const fence: Rule = (s, startLine, endLine, silent) => {
   // Closed by a run of its character, at least as long, with blanks only
   // after it (#1469), less than four columns in; or by its container's end.
   let nextLine = startLine + 1;
+  let closed = false;
   for (; nextLine < endLine; nextLine++) {
     if (!s.isEmpty(nextLine) && s.sCount[nextLine] < s.blkIndent) {
       break;
     }
     const close = /^(`+|~+)[ \t]*$/.exec(s.text(nextLine));
     if (close !== null && close[1][0] === open[1][0] && close[1].length >= open[1].length && s.sCount[nextLine] - s.blkIndent < 4) {
+      closed = true;
       nextLine++;
       break;
     }
   }
+  // Each line less the fence's own indent (#2396).
+  s.push({ kind: "code", text: s.lines(startLine + 1, nextLine - (closed ? 1 : 0), s.sCount[startLine]) });
   s.line = nextLine;
   return true;
 };
@@ -352,9 +408,11 @@ const blockquote: Rule = (s, startLine, endLine, silent) => {
   }
   const oldIndent = s.blkIndent;
   s.blkIndent = 0;
+  s.push({ kind: "open", tag: "blockquote" });
   s.level++;
   tokenize(s, startLine, nextLine);
   s.level--;
+  s.push({ kind: "close", tag: "blockquote" });
   s.lineMax = oldLineMax;
   s.parent = oldParent;
   for (const [line, b, bs, sc, t] of old) {
@@ -372,6 +430,7 @@ const hr: Rule = (s, startLine, _endLine, silent) => {
     return false;
   }
   if (!silent) {
+    s.push({ kind: "hr" });
     s.line = startLine + 1;
   }
   return true;
@@ -411,6 +470,12 @@ const list: Rule = (s, startLine, endLine, silent) => {
   const first = marker;
   const oldParent = s.parent;
   s.parent = "list";
+  const tag = first.ordered ? "ol" : "ul";
+  const opened = s.blocks.length;
+  s.push(first.ordered ? { kind: "open", tag, start: Number(/^\d+/.exec(s.text(nextLine))?.[0]) } : { kind: "open", tag });
+  const level = s.level;
+  let tight = true;
+  let prevEmptyEnd = false;
   s.level++;
   while (nextLine < endLine) {
     let pos = marker.after;
@@ -429,6 +494,9 @@ const list: Rule = (s, startLine, endLine, silent) => {
     const oldTShift = s.tShift[nextLine];
     const oldSCount = s.sCount[nextLine];
     const oldListIndent = s.listIndent;
+    const oldTight = s.tight;
+    s.push({ kind: "open", tag: "li" });
+    s.tight = true;
     s.listIndent = s.blkIndent;
     s.blkIndent = initial + indentAfter;
     s.tShift[nextLine] = pos - s.bMarks[nextLine];
@@ -441,6 +509,14 @@ const list: Rule = (s, startLine, endLine, silent) => {
       tokenize(s, nextLine, endLine);
       s.level--;
     }
+    // Loose when an item is, or an item ends in an empty line before
+    // another (CommonMark 5.3).
+    if (!s.tight || prevEmptyEnd) {
+      tight = false;
+    }
+    prevEmptyEnd = s.line - nextLine > 1 && s.isEmpty(s.line - 1);
+    s.tight = oldTight;
+    s.push({ kind: "close", tag: "li" });
     s.blkIndent = s.listIndent;
     s.listIndent = oldListIndent;
     s.tShift[nextLine] = oldTShift;
@@ -459,6 +535,15 @@ const list: Rule = (s, startLine, endLine, silent) => {
     marker = next;
   }
   s.level--;
+  s.push({ kind: "close", tag });
+  if (tight) {
+    for (let i = opened; i < s.blocks.length; i++) {
+      const block = s.blocks[i];
+      if (block.kind === "paragraph" && s.levels[i] === level + 2) {
+        block.hidden = true;
+      }
+    }
+  }
   s.line = nextLine;
   s.parent = oldParent;
   return true;
@@ -648,6 +733,7 @@ const htmlBlock: Rule = (s, startLine, endLine, silent) => {
       }
     }
   }
+  s.push({ kind: "html", text: s.lines(startLine, nextLine, s.blkIndent) });
   s.line = nextLine;
   return true;
 };
@@ -659,13 +745,13 @@ const heading: Rule = (s, startLine, _endLine, silent) => {
   }
   if (!silent) {
     // One line, less the `#`s closing it.
-    s.keepLine(
-      s
-        .text(startLine)
-        .slice(m[0].length)
-        .replace(/[ \t]+#+[ \t]*$/, "")
-        .trim(),
-    );
+    const text = s
+      .text(startLine)
+      .slice(m[0].length)
+      .replace(/[ \t]+#+[ \t]*$/, "")
+      .trim();
+    s.keepLine(text);
+    s.push({ kind: "heading", depth: m[0].length, text });
     s.line = startLine + 1;
   }
   return true;
@@ -696,6 +782,8 @@ const paragraph: Rule = (s, startLine, endLine) => {
   }
   s.parent = oldParent;
   s.keep(startLine, nextLine);
+  const text = s.found[s.found.length - 1].text.trim();
+  s.push(underlined ? { kind: "heading", depth: s.text(nextLine)[0] === "=" ? 1 : 2, text } : { kind: "paragraph", text, hidden: false });
   s.line = nextLine + (underlined ? 1 : 0);
   return true;
 };
@@ -715,4 +803,11 @@ export function inlineTexts(source: string): InlineText[] {
   const s = new Blocks(source);
   tokenize(s, 0, s.lineMax);
   return s.found;
+}
+
+/// The blocks of `source`, in order, as markdown-it reads them.
+export function markdownBlocks(source: string): Block[] {
+  const s = new Blocks(source);
+  tokenize(s, 0, s.lineMax);
+  return s.blocks;
 }

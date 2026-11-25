@@ -1005,7 +1005,9 @@ test("an HTML export nests a list written under an item, as the notebook shows i
   assert.strictEqual(markdownHtml("1. a\n   - b\n2. c"), "<ol><li>a<ul><li>b</li></ul></li><li>c</li></ol>");
   // Deeper, a numbered one under a bullet, and an item's own next line.
   assert.strictEqual(markdownHtml("- a\n  - b\n    - c\n  - d\n- e"), "<ul><li>a<ul><li>b<ul><li>c</li></ul></li><li>d</li></ul></li><li>e</li></ul>");
-  assert.strictEqual(markdownHtml("* a\n  3. b\n  4. c\n     more"), '<ul><li>a<ol start="3"><li>b</li><li>c\nmore</li></ol></li></ul>');
+  assert.strictEqual(markdownHtml("* a\n  1. b\n  4. c\n     more"), "<ul><li>a<ol><li>b</li><li>c\nmore</li></ol></li></ul>");
+  // A numbered item from 3 does not break the item's text (CommonMark 5.2), as the notebook shows it.
+  assert.strictEqual(markdownHtml("* a\n  3. b\n  4. c\n     more"), "<ul><li>a\n3. b\n4. c\nmore</li></ul>");
   assert.strictEqual(markdownHtml("- a\n\t- b"), "<ul><li>a<ul><li>b</li></ul></li></ul>");
   // Under the item's text, not under its marker: a sibling, as before.
   assert.strictEqual(markdownHtml("- a\n - b"), "<ul><li>a</li><li>b</li></ul>");
@@ -1015,6 +1017,50 @@ test("an HTML export nests a list written under an item, as the notebook shows i
     markdownHtml("- a\n  - <b>x</b> {{q: n}} [l](javascript:alert(1))", { n: { text: "<7>" } }),
     '<ul><li>a<ul><li>&lt;b&gt;x&lt;/b&gt; <span class="live" title="q: n">&lt;7&gt;</span> [l](javascript:alert(1))</li></ul></li></ul>',
   );
+});
+
+// The export read Markdown's blocks with rules of its own: a list item held
+// only text and lists, a quote only `>` lines, a table every line to a blank
+// one. It reads them now as the notebook's renderer does (`markdownBlocks`).
+test("an HTML export draws a list item's and a quote's blocks as the notebook does (#2393, #2394, #2395, #2397)", () => {
+  // A line that starts no block goes on with the paragraph above it (#2393).
+  assert.strictEqual(markdownHtml("- item one\ncontinued here"), "<ul><li>item one\ncontinued here</li></ul>");
+  assert.strictEqual(markdownHtml("> quoted\ncontinued here"), "<blockquote><p>quoted\ncontinued here</p></blockquote>");
+  // A quote, a second paragraph, code and a list after an empty line are the item's (#2394).
+  assert.strictEqual(markdownHtml("- a\n\n  second paragraph of a"), "<ul><li><p>a</p><p>second paragraph of a</p></li></ul>");
+  assert.strictEqual(markdownHtml("1. step\n\n   ```\n   x:1\n   ```"), "<ol><li><p>step</p><pre><code>x:1</code></pre></li></ol>");
+  assert.strictEqual(markdownHtml("- a\n  > note"), "<ul><li>a<blockquote><p>note</p></blockquote></li></ul>");
+  assert.strictEqual(markdownHtml("- a\n\n  - b"), "<ul><li><p>a</p><ul><li>b</li></ul></li></ul>");
+  // An item's first line is Markdown too, and a fence in it ends there (#2395).
+  assert.strictEqual(markdownHtml("- > quoted item"), "<ul><li><blockquote><p>quoted item</p></blockquote></li></ul>");
+  assert.strictEqual(markdownHtml("- # Heading item"), "<ul><li><h1>Heading item</h1></li></ul>");
+  assert.strictEqual(markdownHtml("1. ---"), "<ol><li><hr></li></ol>");
+  assert.strictEqual(
+    markdownHtml("- ```\n  x:1\n  ```\n\n# Results\n\nThe *mean* is 3."),
+    "<ul><li><pre><code>x:1</code></pre></li></ul>\n<h1>Results</h1>\n<p>The <em>mean</em> is 3.</p>",
+  );
+  // An empty item is one, and an item's text may start on the next line (#2397).
+  assert.strictEqual(markdownHtml("- a\n-\n- c"), "<ul><li>a</li><li></li><li>c</li></ul>");
+  assert.strictEqual(markdownHtml("-\n  a"), "<ul><li>a</li></ul>");
+});
+
+test("an HTML export ends a table, a list and a fence's indent where the notebook does (#2396, #2398, #2402)", () => {
+  // A fence's own indent is not its code's (#2396).
+  assert.strictEqual(markdownHtml("   ```\n   x:1\n     y\n   ```"), "<pre><code>x:1\n  y</code></pre>");
+  // A line that starts another block ends a table (#2398).
+  assert.strictEqual(
+    markdownHtml("| a | b |\n|---|---|\n| 1 | 2 |\n- next item\n---"),
+    "<table><thead><tr><th>a</th><th>b</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>\n<ul><li>next item</li></ul>\n<hr>",
+  );
+  assert.strictEqual(markdownHtml("| a |\n|---|\n| 1 |\n    code"), "<table><thead><tr><th>a</th></tr></thead><tbody><tr><td>1</td></tr></tbody></table>\n<pre><code>code</code></pre>");
+  // Another delimiter or bullet starts another list (#2402).
+  assert.strictEqual(markdownHtml("1. a\n2. b\n1) x\n2) y"), "<ol><li>a</li><li>b</li></ol>\n<ol><li>x</li><li>y</li></ol>");
+  assert.strictEqual(markdownHtml("- a\n+ b"), "<ul><li>a</li></ul>\n<ul><li>b</li></ul>");
+});
+
+test("an HTML export breaks a list item's and a setext heading's lines as a paragraph's (#2399)", () => {
+  assert.strictEqual(markdownHtml("- Address:  \n  1 Main St\\\n  London"), "<ul><li>Address:<br>\n1 Main St<br>\nLondon</li></ul>");
+  assert.strictEqual(markdownHtml("Line one  \nline two\n==="), "<h1>Line one<br>\nline two</h1>");
 });
 
 test("an HTML export keeps a link's title, as the tip the notebook shows (#1944)", () => {
