@@ -1691,14 +1691,14 @@ fn accepting_or_fixing_every_finding_is_linear() {
         assert!(accepted.iter().flatten().count() >= n);
         best_of_three(|| q_lint_rs::suppressions_for(&found, &source))
     };
-    accept(500); // warm the allocator and the regex caches
-    let (small, large) = (accept(500), accept(4000));
-    eprintln!("accepting 500 findings took {small:?} and 4000 {large:?}");
+    accept(1000); // warm the allocator and the regex caches
+    let (small, large) = (accept(1000), accept(8000));
+    eprintln!("accepting 1000 findings took {small:?} and 8000 {large:?}");
     // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
     // four times.
     assert!(
         large < small * 16,
-        "accepting 500 findings took {small:?} and 4000 {large:?}"
+        "accepting 1000 findings took {small:?} and 8000 {large:?}"
     );
     let fix = |n: usize| {
         let source: String = (0..n)
@@ -1709,12 +1709,12 @@ fn accepting_or_fixing_every_finding_is_linear() {
         assert_eq!(fixes.iter().filter(|f| f.replacement.is_empty()).count(), n);
         best_of_three(|| q_lint_rs::fixes_for(&found, &source))
     };
-    fix(500);
-    let (small, large) = (fix(500), fix(4000));
-    eprintln!("fixing 500 stale noqa took {small:?} and 4000 {large:?}");
+    fix(1000);
+    let (small, large) = (fix(1000), fix(8000));
+    eprintln!("fixing 1000 stale noqa took {small:?} and 8000 {large:?}");
     assert!(
         large < small * 16,
-        "fixing 500 stale noqa took {small:?} and 4000 {large:?}"
+        "fixing 1000 stale noqa took {small:?} and 8000 {large:?}"
     );
 }
 /// About thirteen patterns built from constants were compiled again on every
@@ -1789,14 +1789,14 @@ fn fixing_every_line_is_linear() {
             q_lint_rs::fix_lines(&source, &[(1, n)], lint).unwrap();
         })
     };
-    time(500); // warm the allocator and the regex caches
-    let (small, large) = (time(500), time(4000));
-    eprintln!("fixing 500 lines took {small:?} and 4000 {large:?}");
+    time(1000); // warm the allocator and the regex caches
+    let (small, large) = (time(1000), time(8000));
+    eprintln!("fixing 1000 lines took {small:?} and 8000 {large:?}");
     // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
     // four times.
     assert!(
         large < small * 16,
-        "fixing 500 lines took {small:?} and 4000 {large:?}"
+        "fixing 1000 lines took {small:?} and 8000 {large:?}"
     );
 }
 /// Every bracket call of a `.Q`, `.h` or `.j` function, correct ones too,
@@ -1863,22 +1863,26 @@ fn many_table_literals_with_char_columns_lint_in_bounded_time() {
 }
 /// A select of many columns on one line: each column's assignment scanned
 /// on to the end of the statement for the value it holds, so a wide select
-/// was quadratic in its columns (#2346).
+/// was quadratic in its columns (#2346). Blanks between the columns make
+/// that scan longer without adding names for every other rule to read.
 #[test]
 fn a_wide_select_lints_in_bounded_time() {
     let time = |n: usize| {
         let columns: Vec<String> = (0..n).map(|i| format!("c{i}:x{i}")).collect();
-        let source = format!("a:select {} from t\n", columns.join(","));
+        let source = format!(
+            "a:select {} from t\n",
+            columns.join(&format!("{},", " ".repeat(40)))
+        );
         best_of_three(|| lint(&source, "t.q", Profile::General))
     };
-    time(2000); // warm the allocator and the regex caches
-    let (small, large) = (time(2000), time(16000));
-    eprintln!("a select of 2000 columns took {small:?} and of 16000 {large:?}");
+    time(1000); // warm the allocator and the regex caches
+    let (small, large) = (time(1000), time(8000));
+    eprintln!("a select of 1000 columns took {small:?} and of 8000 {large:?}");
     // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
     // four times.
     assert!(
         large < small * 16,
-        "a select of 2000 columns took {small:?} and of 16000 {large:?}"
+        "a select of 1000 columns took {small:?} and of 8000 {large:?}"
     );
 }
 /// Navigation and semantic tokens on one long line: whether each name sat on
