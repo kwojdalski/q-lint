@@ -543,7 +543,7 @@ impl Index {
         self.ws = Workspace::default();
         self.generation += 1;
         if self.enabled {
-            self.scan(policy);
+            self.scan(policy, docs);
         }
         for (uri, text) in docs.iter().filter(|(uri, _)| is_q_uri(uri)) {
             self.put(&path_of(uri), text);
@@ -560,6 +560,7 @@ impl Index {
         added: Vec<(String, String)>,
         removed: Vec<String>,
         policy: &Policy,
+        docs: &Documents,
     ) {
         self.roots.retain(|r| !removed.contains(r));
         self.folders.retain(|f| !removed.contains(&f.path));
@@ -589,26 +590,32 @@ impl Index {
         }
         if self.enabled && !added.is_empty() {
             let all = std::mem::replace(&mut self.roots, added.clone());
-            self.scan(policy);
+            self.scan(policy, docs);
             self.roots = all;
         }
         self.roots.extend(added);
         self.settle();
     }
 
-    fn scan(&mut self, policy: &Policy) {
-        self.scan_within(policy, MAX_FILES, MAX_ENTRIES)
+    fn scan(&mut self, policy: &Policy, docs: &Documents) {
+        self.scan_within(policy, docs, MAX_FILES, MAX_ENTRIES)
     }
 
-    fn scan_within(&mut self, policy: &Policy, max_files: usize, max_entries: usize) {
+    fn scan_within(
+        &mut self,
+        policy: &Policy,
+        docs: &Documents,
+        max_files: usize,
+        max_entries: usize,
+    ) {
         let stack = self.roots.iter().map(|r| (r.into(), r.into())).collect();
-        self.walk(policy, stack, max_files, max_entries);
+        self.walk(policy, docs, stack, max_files, max_entries);
     }
 
     /// Read every `.q` file under the directory `path`, as the scan would
     /// have: a watcher reports a folder created or moved in as one event for
     /// the folder, not one per file inside it (#1217).
-    fn add_tree(&mut self, path: &str, policy: &Policy) -> bool {
+    fn add_tree(&mut self, path: &str, policy: &Policy, docs: &Documents) -> bool {
         let Some((root, dir)) = self.roots.iter().find_map(|root| {
             let root = std::path::PathBuf::from(root);
             let dir = self.spelled_under(&root, path)?;
@@ -624,20 +631,29 @@ impl Index {
         {
             return false;
         }
-        let changed = self.walk(policy, vec![(root, dir)], MAX_FILES, MAX_ENTRIES);
+        let changed = self.walk(policy, docs, vec![(root, dir)], MAX_FILES, MAX_ENTRIES);
         changed | self.settle()
     }
 
     /// Read the `.q` files under each `(folder, directory)` of `stack`, and
-    /// whether that changed the index.
+    /// whether that changed the index - all but the open documents, whose
+    /// text is the client's and never the disk's: a folder created with an
+    /// open file in it, by a rename or a checkout, put the disk's text over
+    /// the unsaved buffer (#2173).
     fn walk(
         &mut self,
         policy: &Policy,
+        docs: &Documents,
         mut stack: Vec<(std::path::PathBuf, std::path::PathBuf)>,
         max_files: usize,
         max_entries: usize,
     ) -> bool {
         let (mut seen, mut visited, mut changed) = (0, 0, false);
+        let open: HashSet<String> = docs
+            .keys()
+            .filter(|uri| is_q_uri(uri))
+            .map(|uri| file_key(&path_of(uri)))
+            .collect();
         while let Some((root, dir)) = stack.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else {
                 continue;
@@ -669,7 +685,12 @@ impl Index {
                 if kind.is_dir() {
                     stack.push((root.clone(), path));
                 } else {
-                    changed |= self.read(&path.to_string_lossy());
+                    let path = path.to_string_lossy();
+                    // Keyed only when something is open: a key costs a
+                    // canonicalize, and `read` pays one again.
+                    if open.is_empty() || !open.contains(&file_key(&path)) {
+                        changed |= self.read(&path);
+                    }
                     seen += 1;
                     if seen >= max_files {
                         return changed;
@@ -1928,7 +1949,7 @@ pub fn serve(
                             changed |= if deleted {
                                 idx.remove_tree(&path, &docs)
                             } else if folder {
-                                idx.add_tree(&path, policy)
+                                idx.add_tree(&path, policy, &docs)
                             } else {
                                 idx.reload(&path, policy)
                             };
@@ -1954,7 +1975,7 @@ pub fn serve(
                             workspace_folders(&json!({"workspaceFolders": params["event"][key]}))
                         };
                         let removed = folders("removed").into_iter().map(|(path, _)| path);
-                        idx.change_roots(folders("added"), removed.collect(), policy);
+                        idx.change_roots(folders("added"), removed.collect(), policy, &docs);
                         // An open buffer still wins over what a folder held.
                         for (uri, text) in docs.iter().filter(|(uri, _)| is_q_uri(uri)) {
                             idx.put(&path_of(uri), text);
@@ -4028,7 +4049,7 @@ mod tests {
                 enabled: true,
                 ..Index::default()
             };
-            idx.scan_within(&policy, MAX_FILES, max_entries);
+            idx.scan_within(&policy, &Documents::new(), MAX_FILES, max_entries);
             idx.files.len()
         };
         assert_eq!(scanned(10), 0);

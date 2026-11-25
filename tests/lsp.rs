@@ -1375,6 +1375,44 @@ fn deleting_a_folder_forgets_every_definition_under_it() {
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
+/// A folder created on disk holding a file that is open is read for every
+/// file but that one, whose buffer is what the index holds: a folder
+/// renamed with an unsaved file in it (VS Code reopens the buffer under
+/// the new path, then the watcher reports the folder), or a checkout that
+/// creates one, put the disk's text over the buffer, and a name only the
+/// buffer defines was found nowhere (#2173).
+#[test]
+fn a_folder_created_on_disk_keeps_the_buffers_open_in_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let mut server = start_with_workspace(&root);
+    let app = file_uri(&root.join("app.q"));
+    server.open(&app, "r:newf 2\n");
+    server.diagnostics_for(&app);
+    std::fs::create_dir(root.join("core")).unwrap();
+    std::fs::write(root.join("core/A.q"), "f:{x}\n").unwrap();
+    let a = file_uri(&root.join("core/A.q"));
+    server.open(&a, "f:{x}\nnewf:{x}\n");
+    server.diagnostics_for(&a);
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+        "params":{"changes":[{"uri":file_uri(&root.join("core")),"type":1}]}}),
+    );
+    server.send(
+        json!({"jsonrpc":"2.0","id":80,"method":"textDocument/definition",
+        "params":{"textDocument":{"uri":app},"position":{"line":0,"character":3}}}),
+    );
+    let reply = server.until(|m| m["id"] == 80);
+    let found: Vec<&str> = reply["result"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|place| place["uri"].as_str().unwrap())
+        .collect();
+    assert_eq!(found, [a.as_str()], "{reply}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
 /// The events of `events`, each `(path, type)`, that a client sends a
 /// server which registered `watchers`: one whose path matches a pattern
 /// registered for that kind of event (LSP `FileSystemWatcher`: a `kind` of
