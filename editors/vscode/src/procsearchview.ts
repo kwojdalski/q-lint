@@ -9,6 +9,7 @@
 // view is gone, the commands refuse and nothing is sent.
 import {
   EventEmitter,
+  type CancellationToken,
   ProgressLocation,
   Range,
   Selection,
@@ -23,6 +24,9 @@ import {
 import type { Row } from "./discovery";
 import { FUNCTION_TEXTS, readTexts } from "./fndiff";
 import { callApart } from "./fndiffview";
+import { readAdmin } from "./admin";
+import { effectiveTimeout, timeoutSource } from "./processtimeout";
+import { readControls } from "./querycontrols";
 import type { Live } from "./live";
 import type { Process } from "./processes";
 import { SEARCH, SEARCH_LIMIT, groupHits, patternProblem, readFound, type Found } from "./procsearch";
@@ -59,6 +63,30 @@ async function eachLimited<T, R>(items: T[], limit: number, f: (item: T) => Prom
 }
 
 export type Outcome = { process: string; found: Found } | { process: string; error: string };
+
+/// The search on `process` over a connection of its own, given up - the
+/// connection dropped - after `seconds` (0: never) or when `token` is
+/// cancelled: a process that never answers holds no other's hits (#2161).
+function searchOne(live: Live, process: Process, args: unknown[], seconds: number, source: string, token: CancellationToken): Promise<unknown> {
+  const cancelled = "cancelled before it answered";
+  if (token.isCancellationRequested) {
+    return Promise.reject(new Error(cancelled));
+  }
+  let giveUp: (why: string) => void = () => undefined;
+  // Cancelled while it connects, too.
+  const ended = new Promise<never>((_, reject) => (giveUp = (why) => reject(new Error(why))));
+  const timer = seconds > 0 ? setTimeout(() => giveUp(`did not answer within ${seconds} s (${source})`), seconds * 1000) : undefined;
+  const listening = token.onCancellationRequested(() => giveUp(cancelled));
+  const searched = live.callSeparate(process, (connection) => {
+    void ended.catch(() => connection.abort());
+    return Promise.race([connection.call(SEARCH, ...args), ended]);
+  });
+  void searched.catch(() => undefined);
+  return Promise.race([searched, ended]).finally(() => {
+    clearTimeout(timer);
+    listening.dispose();
+  });
+}
 
 interface Place {
   process: string;
@@ -148,7 +176,7 @@ export function registerFindInProcesses(
     }
     const text =
       given ??
-      (await window.showInputBox({ title: `Find in the ${processes.length} process${processes.length === 1 ? "" : "es"} tagged ${tag}`, prompt: "Text to find in function definitions, ignoring case.", validateInput: patternProblem }));
+      (await window.showInputBox({ title: `Find in the ${processes.length} process${processes.length === 1 ? "" : "es"} tagged ${tag}`, prompt: "Text to find in function definitions; A to Z match in either case, other letters only as written.", validateInput: patternProblem }));
     if (text === undefined) {
       return "no text";
     }
@@ -174,12 +202,18 @@ export function registerFindInProcesses(
     if (!on()) {
       return say(toolOff("findInProcesses"));
     }
+    // Each within q-lint.query.timeout, or its own (#2161).
+    const configuration = workspace.getConfiguration("q-lint");
+    const get = <T>(key: string, fallback: T): T => configuration.get(key, fallback);
+    const own = readAdmin(get).processTimeout;
+    const global = readControls(get).timeout;
     const outcomes = await window.withProgress(
-      { location: ProgressLocation.Notification, title: `q-lint: finding "${text}" in ${processes.length} process${processes.length === 1 ? "" : "es"} tagged ${tag}` },
-      () =>
+      { location: ProgressLocation.Notification, title: `q-lint: finding "${text}" in ${processes.length} process${processes.length === 1 ? "" : "es"} tagged ${tag}`, cancellable: true },
+      (_progress, token) =>
         eachLimited(processes, AT_ONCE, async (process): Promise<Outcome> => {
           try {
-            return { process: process.label, found: readFound(await callApart(live, process, SEARCH, text, withVariables, SEARCH_LIMIT)) };
+            const seconds = effectiveTimeout(process, global, own);
+            return { process: process.label, found: readFound(await searchOne(live, process, [text, withVariables, SEARCH_LIMIT], seconds, timeoutSource(process, own), token)) };
           } catch (error) {
             return { process: process.label, error: message(error) };
           }

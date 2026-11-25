@@ -379,3 +379,117 @@ test("Compare Query matches a key repeated on many rows in linear time, in order
   // Before: 125 ms at 50k, 375 ms at 100k, 2.9 s at 200k.
   assert.ok(big < Math.max(small, 20) * 3, `${small} ms at 50k, ${big} ms at 100k`);
 });
+
+// ([k:til 20]a:til 20) against ([k:reverse til 20]a:reverse til 20), each
+// cut at 10 rows: every key is on both, and was called only on one side.
+test("a row whose key the other side did not send, as it came back cut, is not compared, not only on one side (#2158)", () => {
+  const keyed = (ks, total) => {
+    const t = table({ k: [7, ks.map(String), ks], a: [7, ks.map(String), ks] }, 1);
+    t.grid.count = total;
+    return t;
+  };
+  const up = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+  const down = [19, 18, 17, 16, 15, 14, 13, 12, 11, 10];
+  const c = compareOutcomes(side("a", keyed(up, 20)), side("b", keyed(down, 20)), -1);
+  assert.deepStrictEqual([c.same, c.partial, c.differing, c.onlyLeft, c.onlyRight, c.uncompared], [false, true, 0, 0, 0, 20]);
+  const page = loadPage();
+  const said = (comparison) => (page.send({ type: "compare", id: 1, code: "t", comparison }), page.posted.at(-1).rendered.summary);
+  assert.match(said(c), /^The rows held are the same\. Not every row came back/);
+  // Drawn as not compared, not as only on one side.
+  const cells = page.body.all((e) => e.tagName === "TR").slice(2)[0].children.filter((td) => td.className !== "gap");
+  assert.deepStrictEqual(cells.map((td) => [td.className, td.title]), [
+    ["", "Not compared: not among the rows b sent"],
+    ["", "Not compared: not among the rows b sent"],
+    ["missing", "Not among the rows b sent"],
+    ["missing", "Not among the rows b sent"],
+  ]);
+  // A key the whole other side does not have is only on this one; with a cell that differs, the rest is counted.
+  const whole = compareOutcomes(side("a", keyed([1, 2], 2)), side("b", keyed([2, 3], 3)), -1);
+  assert.deepStrictEqual([whole.onlyLeft, whole.onlyRight, whole.uncompared], [0, 1, 1]);
+  const t = keyed([1, 2], 9);
+  t.grid.raw[1] = [1, 5];
+  t.grid.cells[1] = ["1", "5"];
+  assert.match(said(compareOutcomes(side("a", t), side("b", keyed([2, 3], 9)), -1)), /^1 cell differs, 2 rows not compared, as the other side did not send them \(rows lined up by key\)\./);
+});
+
+// 1%3 on a process at \P 3 and on one at \P 7 wrote 0.333 and 0.3333333:
+// the same value, called different. Text that agrees to the digits the
+// fewer of the two wrote cannot be told the same or different.
+test("floats written to two processes' \\P that agree as far as the fewer digits go are neither the same nor different (#2159)", () => {
+  const atom = (type, text) => ({ ok: true, type, text: [text] });
+  const both = (type, ta, tb) => compareOutcomes(side("a", atom(type, ta)), side("b", atom(type, tb)), -1);
+  const p = both(-9, "0.333", "0.3333333");
+  assert.deepStrictEqual([p.same, p.toDigits], [false, 1]);
+  assert.deepStrictEqual([both(9, "1e+03 0.333", "1000.5 0.3333333").toDigits, both(99, "`a`b!0.333 0.143", "`a`b!0.3333333 0.1428571").toDigits], [1, 1]);
+  // A float apart at the fewer digits, another type's text, or text around the numbers that differs: different.
+  assert.deepStrictEqual(
+    [both(-9, "0.333", "0.334"), both(-9, "0.333", "0.3343333"), both(-7, "1", "2"), both(0, "(0.333;`a)", "(0.3333333;`b)"), both(0, "(`a0.333;1)", "(`a0.3333333;1)"), both(-14, "2024.01.01", "2024.01.02")].map((c) => [c.same, c.toDigits]),
+    [[false, 0], [false, 0], [false, 0], [false, 0], [false, 0], [false, 0]],
+  );
+  const page = loadPage();
+  page.send({ type: "compare", id: 1, code: "1%3", comparison: p });
+  assert.strictEqual(page.posted.at(-1).rendered.summary, "a and b wrote the same answer as far as the fewer digits written go: their \\P differs, so whether they are the same cannot be told. Compare enlist of it to compare its every digit.");
+  // A cell GRID sent only as text, a column of dictionaries: not counted as differing.
+  const dicts = (text) => table({ a: [98, [text]] });
+  const c = compareOutcomes(side("a", dicts("`a`b!0.333 0.143")), side("b", dicts("`a`b!0.3333333 0.1428571")), -1);
+  assert.deepStrictEqual([c.same, c.differing, c.toDigits], [false, 0, 1]);
+  page.send({ type: "compare", id: 2, code: "t", comparison: c });
+  assert.strictEqual(page.posted.at(-1).rendered.summary, "1 cell is the same as far as the fewer digits written go, as the processes' \\P differs, and no further compared (rows lined up by place).");
+  // A symbol's text is all of it.
+  const syms = (text) => table({ s: [11, [text]] });
+  assert.deepStrictEqual([compareOutcomes(side("a", syms("0.1")), side("b", syms("0.10")), -1)].map((x) => [x.differing, x.toDigits]), [[1, 0]]);
+});
+
+// GRID makes a list a table of one column named value, and a dictionary a
+// keyed table of key and value: 1 2 3 against flip(enlist`value)!enlist 1 2 3
+// was "the same answer", though q's ~ says they differ.
+test("a list and a table, or a dictionary and a keyed table, of the same cells are not the same answer (#2163)", () => {
+  const as = (type, answer, text) => ({ ...answer, type, text });
+  const values = () => table({ value: [7, ["1", "2", "3"], [1, 2, 3]] });
+  const list = compareOutcomes(side("a", as(7, values(), ["1 2 3"])), side("b", as(98, values(), ["value", "-----", "1", "2", "3"])), -1);
+  assert.deepStrictEqual([list.same, list.reshaped], [false, { left: "a list", right: "a table" }]);
+  const pairs = () => table({ key: [11, ["a", "b"]], value: [7, ["1", "2"], [1, 2]] }, 1);
+  const dict = (s) => side(s, as(99, pairs(), ["a| 1", "b| 2"]));
+  const keyed = (s) => side(s, as(99, pairs(), ["key| value", "---| -----", "a  | 1", "b  | 2"]));
+  const c = compareOutcomes(dict("a"), keyed("b"), -1);
+  assert.deepStrictEqual([c.same, c.reshaped], [false, { left: "a dictionary", right: "a keyed table" }]);
+  // A dictionary of a table's rows is a dictionary still.
+  assert.strictEqual(compareOutcomes(side("a", as(99, pairs(), [" | x", "-| -", "a| 1"])), dict("b"), -1).reshaped, undefined);
+  assert.deepStrictEqual([compareOutcomes(dict("a"), dict("b"), -1).same, compareOutcomes(keyed("a"), keyed("b"), -1).same], [true, true]);
+  const page = loadPage();
+  page.send({ type: "compare", id: 1, code: "x", comparison: c });
+  assert.strictEqual(page.posted.at(-1).rendered.summary, "the answer is a dictionary on a and a keyed table on b (rows lined up by key).");
+  // Text of two types is two answers, an enumeration's number aside.
+  const atom = (type, text) => ({ ok: true, type, text: [text] });
+  assert.deepStrictEqual([compareOutcomes(side("a", atom(-7, "1")), side("b", atom(-9, "1")), -1).same, compareOutcomes(side("a", atom(20, "`sym$`a")), side("b", atom(21, "`sym$`a")), -1).same], [false, true]);
+});
+
+// `/data/hdb/x.. is 14 characters ending in .., as -3! leaves a text it cut
+// at a \c of 15: with \c unknown, the same answer on both was said to be cut.
+test("a text that ends in .. where q may or may not have cut it is said to be unknown, not cut (#2164)", () => {
+  const text = (type, ...lines) => ({ ok: true, type, text: lines });
+  const c = compareOutcomes(side("a", text(-11, "`/data/hdb/x..")), side("b", text(-11, "`/data/hdb/x..")), -1, 160);
+  assert.deepStrictEqual([c.same, c.partial, c.unsureCut], [false, true, true]);
+  const page = loadPage();
+  const said = (comparison) => (page.send({ type: "compare", id: 1, code: "x", comparison }), page.posted.at(-1).rendered.summary);
+  assert.strictEqual(said(c), "Each answer's text is the same, and ends in .. as q writes a value it cut at the process's console width (\\c), which q-lint is not told: whether the rest is the same cannot be told.");
+  // A line the console cut at the width asked for, or rows past its height, is cut.
+  const sure = compareOutcomes(side("a", text(0, "1", "`a..", "..")), side("b", text(0, "1", "`a..", "..")), -1, 160);
+  assert.deepStrictEqual([sure.partial, sure.unsureCut], [true, false]);
+  assert.match(said(sure), /^The part of each answer that came back is the same; the text was cut at the console size/);
+});
+
+// 30 30#til 900: each row's item is 79 characters, cut at \c 80, and the
+// page said the cells were cut at 200 characters.
+test("a cell q cut at its console width is not said to be cut at 200 characters (#2165)", () => {
+  const item = `${Array.from({ length: 30 }, (_, i) => i).join(" ")}`.slice(0, 77) + "..";
+  const long = `"${"a".repeat(196)}...`;
+  const cells = (...items) => table({ x: [0, items, items.map(() => false)] });
+  const page = loadPage();
+  const said = (c) => (page.send({ type: "compare", id: 1, code: "t", comparison: c }), page.posted.at(-1).rendered.summary);
+  const c = compareOutcomes(side("a", cells(item)), side("b", cells(item)), -1);
+  assert.deepStrictEqual([c.same, c.cut, c.consoleCut], [false, 1, 1]);
+  assert.strictEqual(said(c), "1 cell is the same as far as shown, ending in .. as q writes an item it cut at the process's console width (\\c), and no further compared (rows lined up by place).");
+  const both = compareOutcomes(side("a", cells(item, long, item)), side("b", cells(item, long, item)), -1);
+  assert.strictEqual(said(both), "1 cell is the same as far as shown, cut at 200 characters, and no further compared, 2 cells are the same as far as shown, ending in .. as q writes an item it cut at the process's console width (\\c), and no further compared (rows lined up by place).");
+});

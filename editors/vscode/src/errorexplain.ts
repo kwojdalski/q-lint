@@ -61,7 +61,9 @@ export const ERRORS: Record<string, QError> = {
   },
   domain: {
     meaning: "An argument is of the right type but outside the values the operation takes.",
-    causes: ["A negative count (`til -1`), a negative take of a generator, a roll from an empty list."],
+    // Each raises it on KDB-X and PeachQ; a roll from an empty list does
+    // not, and a deal past its range is 'length (#2169).
+    causes: ["A negative count to `til` (`til -1`).", "A negative right argument to roll (`1?-1`)."],
     example: "til -1",
     checked: "seen",
   },

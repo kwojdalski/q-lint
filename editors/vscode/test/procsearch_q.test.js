@@ -52,6 +52,18 @@ test("function definitions are searched everywhere but q's own, ignoring case", 
   assert.deepStrictEqual(await connection.call("{[x] key `.}", 0), ["top", "tradeCount"]);
 });
 
+// KDB-X's root holds .s, its SQL interface's code: .s.init was listed as
+// the user's hit, its lambdas counted as searched.
+test("KDB-X's .s and .m are q's own, and not searched (#2167)", { skip }, async (t) => {
+  const { connection } = await connect(t, SERVER);
+  const own = await connection.call("{[x] string(key`)inter`s`m}", 0);
+  t.diagnostic(`q's own here: ${JSON.stringify(own)}`);
+  const found = readFound(await connection.call(SEARCH, "\"", false, 1000));
+  assert.deepStrictEqual(found.hits.filter((h) => /^\.(s|m)\./.test(h.name)).map((h) => h.name), []);
+  assert.strictEqual(found.scanned, readFound(await connection.call(SEARCH, "zzz", false, 1000)).scanned);
+  assert.strictEqual(found.scanned, 4);
+});
+
 // A view has a lambda's type, 100h, and reading it by name evaluates it:
 // it is neither searched as a function nor run (#1864).
 test("a process with views is searched, and no view is evaluated (#1864)", { skip }, async (t) => {

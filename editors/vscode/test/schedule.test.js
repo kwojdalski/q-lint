@@ -302,6 +302,31 @@ test("a schedule never runs twice at once (#1089)", async (t) => {
   assert.ok(stub.messages.some(([, text]) => /is running/.test(text)), JSON.stringify(stub.messages));
 });
 
+// A tick still running a slow export when the next began: the later one ran
+// B and stamped it, and the earlier then took B's newer stamp for a clock
+// put back, ran it again - a second timestamped file - and stamped it older.
+test("a tick that finds a schedule run since it began skips it, and its last run only moves on (#2160)", async (t) => {
+  const { live, schedules, context } = await setUp(t, [{ label: "p", host: "h", port: 1, tags: [] }], [{ name: "slow", code: "1" }, { name: "b", code: "2" }]);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-schedule-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const runs = [];
+  live.runApart = async (_p, code) => {
+    runs.push(code);
+    if (code === "1") await sleep(150);
+    return { ok: true, type: -7, text: [code] };
+  };
+  const at = (h, m, sec = 0) => new Date(2026, 10, 22, h, m, sec);
+  const one = (id, query, mode) => ({ id, query, process: "p", format: "csv", path: path.join(dir, `${id}.csv`), times: ["08:59"], mode, since: at(8, 0).getTime() });
+  await context.workspaceState.update(SCHEDULES_KEY, [one("A", "slow", "replace"), one("B", "b", "timestamped")]);
+  const first = schedules.tick(at(8, 59, 45));
+  await sleep(30);
+  const second = await schedules.tick(at(9, 0, 15));
+  assert.deepStrictEqual([await first, second], [["A"], ["B"]]);
+  assert.deepStrictEqual(runs, ["1", "2"]);
+  assert.deepStrictEqual(fs.readdirSync(dir).sort(), ["A.csv", "B-20261122-090015.csv"]);
+  assert.deepStrictEqual(schedules.list().map((s) => [s.id, s.since]), [["A", at(8, 59, 45).getTime()], ["B", at(9, 0, 15).getTime()]]);
+});
+
 test("a scheduled export asks for the whole result, and writes nothing when rows are missing (#1613)", async (t) => {
   const { live, schedules, context } = await setUp(t, [{ label: "p", host: "h", port: 1, tags: [] }], [{ name: "q", code: "select from t" }]);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-schedule-"));

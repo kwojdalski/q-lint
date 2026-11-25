@@ -72,7 +72,7 @@ export function registerFileBrowser(
         return e.file
           ? {
               label: e.name,
-              description: e.size === -2 ? "unreadable" : bytesText(e.size),
+              description: e.size === -2 ? "unreadable" : e.size === -3 ? "not a regular file" : bytesText(e.size),
               tooltip: `${at.path} on ${at.process}`,
               icon: "file",
               contextValue: "processFile",
