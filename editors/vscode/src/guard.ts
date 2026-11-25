@@ -1318,6 +1318,10 @@ function parsedWriter(t: Token[], at: number, arg: [number, number] | undefined)
     : undefined;
 }
 
+/// What a lambda given a witness for a name it is applied to does to a
+/// table that the name, as a value, would not: change it in place (#2277).
+const TABLE_IN_PLACE = /^(updates or deletes from|updates|deletes from|sorts|keys) (`:?g|what .* names) in place/;
+
 /// What a lambda's parameter is given in place of an argument that is a
 /// name, or not written, which could name a global or a file:
 /// `` {.[x;();:;1]} v `` amends whatever `v` names.
@@ -1578,6 +1582,11 @@ function throughParameters(t: Token[], all: Token[], statement: string, closes: 
     const read = readOf(given);
     guessing = was;
     for (const reason of read) {
+      // A table it is given by name, updated, deleted from, sorted or keyed,
+      // is a copy, as the guard reads a name anywhere else: `{`a xasc x} t`
+      // reads (#2277). An amend, a file or a call it could be given are
+      // still guessed (#2035).
+      if (guessed && TABLE_IN_PLACE.test(reason)) continue;
       // (Too much to read is said once, by `writes`.)
       if (!base.includes(reason) && reason !== TOO_MUCH) {
         found.add(guessed ? "applies a lambda that may change the process through what it is given" : reason);

@@ -1992,3 +1992,16 @@ test("an amend projection composed with another function, or applied through an 
     assert.deepStrictEqual(writes(code), [], code);
   }
 });
+
+test("a helper lambda that updates, sorts or keys a table it is given by name is read as given the table (#2277)", () => {
+  for (const code of [
+    "{x lj `sym xkey y}[trade;ref]", "{update mid:0.5*bid+ask from x} quote", "{`time xasc x} trade", "{[t] delete from t where size=0} trade", "{update a:1 from x}[t]",
+    "{`sym xkey x} each (trade;quote)", "{![x;();0b;(enlist`c)!enlist(*;`price;2)]} trade", "{x lj `sym xkey y}/[trade;(r1;r2)]",
+  ]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+  // Given a symbol, or amending what it is given, it is asked about as before (#2035).
+  for (const code of ["{`time xasc x} `trade", "{update a:1 from x}`t", "{.[x;();:;1]} v", "{x set 1} v", "{@[x;0;:;1]} v", "{hopen x} f"]) {
+    assert.ok(writes(code).length > 0, code);
+  }
+});
