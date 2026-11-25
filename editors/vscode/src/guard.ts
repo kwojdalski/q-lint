@@ -102,6 +102,10 @@
 //   which runs it on the gateway's servers (#909), and a query there that
 //   is not strings written in the call - a list the servers evaluate, a
 //   name, one built or given later, `.gw.syncexec[;`rdb] "a:1"` (#2039).
+// Code too long or too deeply nested to read within the guard's bounds, or
+// that it fails to read, is asked about: the bounds keep a read well under
+// 100 ms, and the answer is the code's alone, not what was read before
+// (#2190, #2210, #2211).
 import { parseTags, type Process } from "./processes";
 import { statements } from "./statements";
 
@@ -155,10 +159,29 @@ interface Token {
   text: string;
   /// Where it starts in the statement.
   pos: number;
+  /// Where it is among the statement's tokens, spaces too.
+  n: number;
 }
 
-const NAME_START = /[A-Za-z.]/;
-const NAME = /[A-Za-z0-9_.]/;
+/// What each ASCII character may be in a token, as bits: a letter, a
+/// digit, `_`, `.`, `:`, white space. Tested by code, not by a pattern, as
+/// the guard reads every character of what is sent, often more than once.
+const LETTER = 1;
+const DIGIT = 2;
+const UNDERSCORE = 4;
+const DOT = 8;
+const COLON = 16;
+const SPACE = 32;
+const CLASS = new Uint8Array(128);
+for (let c = 0; c < 128; c++) {
+  const ch = String.fromCharCode(c);
+  CLASS[c] = (/[A-Za-z]/.test(ch) ? LETTER : 0) | (/[0-9]/.test(ch) ? DIGIT : 0) | (ch === "_" ? UNDERSCORE : 0) | (ch === "." ? DOT : 0) | (ch === ":" ? COLON : 0) | (/\s/.test(ch) ? SPACE : 0);
+}
+/// Whether the character at `code[i]` is any of `bits`; past the end, none.
+function is(code: string, i: number, bits: number): boolean {
+  const c = code.charCodeAt(i);
+  return c < 128 ? (CLASS[c] & bits) !== 0 : c === c && (bits & SPACE) !== 0 && /\s/.test(code[i]);
+}
 /// The characters that make a compound assignment with `:` after them.
 const OPERATORS = new Set([..."+-*%&|^=<>$,#_~!?@."]);
 const WRITERS = new Set([
@@ -190,56 +213,56 @@ function tokens(code: string): Token[] {
       }
       const text = code.slice(i, j + 1);
       // A symbol cast from a string, `` `$".q.set" ``, is that symbol (#2037).
-      const tail = out.filter((k, n) => n >= out.length - 4 && k.kind !== "space");
+      const tail = out.slice(-4).filter((k) => k.kind !== "space");
       const cast = tail.length >= 2 && tail[tail.length - 1].text === "$" && tail[tail.length - 2].kind === "sym" && tail[tail.length - 2].text === "`";
       if (cast) {
         const start = out.lastIndexOf(tail[tail.length - 2]);
-        out.splice(start, out.length - start, { kind: "sym", text: `\`${qText(text)}`, pos: tail[tail.length - 2].pos });
+        out.splice(start, out.length - start, { kind: "sym", text: `\`${qText(text)}`, pos: tail[tail.length - 2].pos, n: start });
       } else {
-        out.push({ kind: "str", text, pos: i });
+        out.push({ kind: "str", text, pos: i, n: out.length });
       }
       i = j + 1;
-    } else if (c === "/" && (i === 0 || /\s/.test(code[i - 1]))) {
+    } else if (c === "/" && (i === 0 || is(code, i - 1, SPACE))) {
       while (i < code.length && code[i] !== "\n") {
         i++;
       }
-    } else if (/\s/.test(c)) {
+    } else if (is(code, i, SPACE)) {
       let j = i;
-      while (j < code.length && /\s/.test(code[j])) {
+      while (j < code.length && is(code, j, SPACE)) {
         j++;
       }
-      out.push({ kind: "space", text: code.slice(i, j), pos: i });
+      out.push({ kind: "space", text: code.slice(i, j), pos: i, n: out.length });
       i = j;
     } else if (c === "`") {
       let j = i + 1;
       const path = code[j] === ":";
-      while (j < code.length && (/[A-Za-z0-9_.:]/.test(code[j]) || (path && code[j] === "/"))) {
+      while (j < code.length && (is(code, j, LETTER | DIGIT | UNDERSCORE | DOT | COLON) || (path && code[j] === "/"))) {
         j++;
       }
-      out.push({ kind: "sym", text: code.slice(i, j), pos: i });
+      out.push({ kind: "sym", text: code.slice(i, j), pos: i, n: out.length });
       i = j;
-    } else if (/[0-9]/.test(c) || (c === "-" && /[0-9]/.test(code[i + 1] ?? "") && (out.length === 0 || out[out.length - 1].kind !== "name"))) {
+    } else if (is(code, i, DIGIT) || (c === "-" && is(code, i + 1, DIGIT) && (out.length === 0 || out[out.length - 1].kind !== "name"))) {
       let j = i + 1;
-      while (j < code.length && /[0-9A-Za-z.]/.test(code[j])) {
+      while (j < code.length && is(code, j, DIGIT | LETTER | DOT)) {
         j++;
       }
-      out.push({ kind: "num", text: code.slice(i, j), pos: i });
+      out.push({ kind: "num", text: code.slice(i, j), pos: i, n: out.length });
       i = j;
-    } else if (NAME_START.test(c) && !(c === "." && !NAME_START.test(code[i + 1] ?? ""))) {
+    } else if (is(code, i, LETTER | DOT) && !(c === "." && !is(code, i + 1, LETTER | DOT))) {
       let j = i + 1;
-      while (j < code.length && NAME.test(code[j])) {
+      while (j < code.length && is(code, j, LETTER | DIGIT | UNDERSCORE | DOT)) {
         j++;
       }
-      out.push({ kind: "name", text: code.slice(i, j), pos: i });
+      out.push({ kind: "name", text: code.slice(i, j), pos: i, n: out.length });
       i = j;
     } else if ("([{".includes(c)) {
-      out.push({ kind: "open", text: c, pos: i });
+      out.push({ kind: "open", text: c, pos: i, n: out.length });
       i++;
     } else if (")]}".includes(c)) {
-      out.push({ kind: "close", text: c, pos: i });
+      out.push({ kind: "close", text: c, pos: i, n: out.length });
       i++;
     } else {
-      out.push({ kind: "op", text: c, pos: i });
+      out.push({ kind: "op", text: c, pos: i, n: out.length });
       i++;
     }
   }
@@ -286,6 +309,7 @@ function computedHandle(t: Token[], end: number): boolean {
     if (t[open].kind === "close") depth++;
     else if (t[open].kind === "open" && --depth === 0) break;
   }
+  scanned(end - open);
   if (open < 0) {
     return false;
   }
@@ -297,6 +321,7 @@ function computedHandle(t: Token[], end: number): boolean {
 /// `` `:f ``, made with `hsym` or `-1!`, `` hsym`f ``, `` -1!`f ``, cast,
 /// `` `$":f" ``, or a string, `":f"`. A process's, `` `:host:5000 ``, is not.
 function fileIn(t: Token[], from: number, to: number): boolean {
+  scanned(to - from);
   for (let p = from; p < to; p++) {
     const k = t[p];
     const made =
@@ -335,6 +360,7 @@ function leftArgument(t: Token[], at: number): [number, number] | undefined {
     if (t[open].kind === "close") depth++;
     else if (t[open].kind === "open" && --depth === 0) break;
   }
+  scanned(at - open);
   return open < 0 ? [at, at] : [open, at];
 }
 
@@ -368,6 +394,7 @@ function items(t: Token[], open: number): [number, number][] {
     else if (t[j].kind === "close") {
       if (depth-- === 0) {
         out.push([start, j]);
+        scanned(j - open);
         return out;
       }
     } else if (depth === 0 && t[j].text === ";") {
@@ -376,26 +403,39 @@ function items(t: Token[], open: number): [number, number][] {
     }
   }
   out.push([start, t.length]);
+  scanned(t.length - open);
   return out;
 }
 
 /// Where the list of names that opens at `t[open]` ends - past its `)` - when
 /// it holds only names and lists of them, `((a;b);c)`, with each name added
-/// to `names`; -1 otherwise.
+/// to `names`; -1 otherwise, and for lists nested deeper than 16.
 function destructured(t: Token[], open: number, names: string[]): number {
+  // Without recursion, so no depth of parentheses overflows the stack (#2211).
   let j = open + 1;
+  let depth = 1;
+  const start = names.length;
   for (;;) {
     if (t[j]?.kind === "name") {
       names.push(t[j].text);
       j++;
-    } else if (t[j]?.text === "(" && t[j].kind === "open") {
-      j = destructured(t, j, names);
-      if (j < 0) return -1;
+    } else if (t[j]?.text === "(" && t[j].kind === "open" && depth < 16) {
+      depth++;
+      j++;
+      continue;
     } else {
+      names.length = start;
       return -1;
     }
-    if (t[j]?.text === ")") return j + 1;
-    if (t[j]?.text !== ";") return -1;
+    while (t[j]?.text === ")" && depth > 0) {
+      depth--;
+      j++;
+      if (depth === 0) return j;
+    }
+    if (t[j]?.text !== ";") {
+      names.length = start;
+      return -1;
+    }
     j++;
   }
 }
@@ -425,6 +465,7 @@ function amendBefore(t: Token[], open: number): string {
       if (t[o].kind === "close") depth++;
       else if (t[o].kind === "open" && --depth === 0) break;
     }
+    scanned(p - o);
     const all = o > 0 && t[o - 1].kind === "op" && t[o - 1].text === "'" ? items(t, o) : [];
     const last = all.length > 1 ? t.slice(all[all.length - 1][0], all[all.length - 1][1]).filter((k) => k.text !== "(" && k.text !== ")") : [];
     op = last.length === 1 ? last[0] : undefined;
@@ -519,6 +560,7 @@ function lambdaLocals(t: Token[], open: number, touching: (a: Token | undefined,
       }
     }
   }
+  scanned(i - open);
   return out;
 }
 
@@ -614,23 +656,27 @@ const PASSING_OPS = new Set([..."@.'/\\:;"]);
 /// close outside the brackets it opens.
 function argumentEnd(t: Token[], last: number): number {
   let depth = 0;
-  for (let p = last + 1; p < t.length; p++) {
+  let p = last + 1;
+  for (; p < t.length; p++) {
     if (t[p].kind === "open") depth++;
-    else if (t[p].kind === "close" && depth-- === 0) return p;
-    else if (depth === 0 && t[p].text === ";") return p;
+    else if (t[p].kind === "close" && depth-- === 0) break;
+    else if (depth === 0 && t[p].text === ";") break;
   }
-  return t.length;
+  scanned(p - last);
+  return p;
 }
 
 /// How many brackets are open around `t[i]`, back to its lambda.
 function around(t: Token[], i: number): number {
   let depth = 0;
-  for (let p = i - 1, inner = 0; p >= 0; p--) {
+  let p = i - 1;
+  for (let inner = 0; p >= 0; p--) {
     if (t[p].kind === "close") inner++;
     else if (t[p].kind === "open" && inner > 0) inner--;
     else if (t[p].kind === "open" && t[p].text === "{") break;
     else if (t[p].kind === "open") depth++;
   }
+  scanned(i - p);
   return depth;
 }
 
@@ -638,24 +684,28 @@ function around(t: Token[], i: number): number {
 /// every bracket around it, or the start of its lambda or statement.
 function expressionStart(t: Token[], i: number): number {
   let depth = around(t, i);
-  for (let p = i - 1; p >= 0; p--) {
+  let p = i - 1;
+  for (; p >= 0; p--) {
     if (t[p].kind === "close") depth++;
-    else if (t[p].kind === "open" && depth-- === 0) return p + 1;
-    else if (depth === 0 && t[p].text === ";") return p + 1;
+    else if (t[p].kind === "open" && depth-- === 0) break;
+    else if (depth === 0 && t[p].text === ";") break;
   }
-  return 0;
+  scanned(i - p);
+  return p + 1;
 }
 
 /// Where the expression `t[i]` is in ends: at the next `;` outside every
 /// bracket around it, or the end of the lambda or statement it is in.
 function expressionEnd(t: Token[], i: number): number {
   let depth = around(t, i);
-  for (let p = i + 1; p < t.length; p++) {
+  let p = i + 1;
+  for (; p < t.length; p++) {
     if (t[p].kind === "open") depth++;
-    else if (t[p].kind === "close" && depth-- === 0) return p;
-    else if (depth === 0 && t[p].text === ";") return p;
+    else if (t[p].kind === "close" && depth-- === 0) break;
+    else if (depth === 0 && t[p].text === ";") break;
   }
-  return t.length;
+  scanned(p - i);
+  return p;
 }
 
 /// What the strings an evaluator ending at `t[last]` is applied to run, up
@@ -665,6 +715,7 @@ function expressionEnd(t: Token[], i: number): number {
 /// taken for a change; so is `parse` of what is not a string, and in k
 /// code, `k)."x"`, any string, which is k and not read here.
 function strings(t: Token[], last: number, end: number, kCode: boolean): string | undefined {
+  scanned(end - last);
   let passing = true;
   let parsed = false;
   let seen = false;
@@ -710,6 +761,7 @@ function evaluates(t: Token[], last: number, byValue: boolean, kCode = false, en
 /// undefined: `` .q`count `` reads.
 function picked(t: Token[], at: number, root: string): string | undefined {
   const end = expressionEnd(t, at);
+  scanned(end - at);
   for (let p = at + 1; p < end; p++) {
     const name = t[p].kind === "sym" ? t[p].text.slice(1) : t[p].kind === "str" ? qText(t[p].text) : undefined;
     if (name !== undefined && CALLED.has(unqualified(`${root}.${name}`))) {
@@ -727,35 +779,57 @@ const WITNESSES = ["(`g)", "(`:g)"];
 const ITEMS = 8;
 /// The names after a lambda that apply it to each item of what follows.
 const ITERATORS = new Set(["each", "peach", "over", "scan", "prior"]);
-/// How deep `writes` is called in itself, and how many lambdas it has read
-/// again with their parameters given: past `REREADS` a lambda applied to
-/// what it cannot read is taken for a change rather than read again.
+/// How deep `writes` is called in itself, how many lambdas it has read
+/// again with their parameters given, and how many tokens it has read, in
+/// the call `writes` was given from outside: past `DEPTH`, `REREADS` or
+/// `WORK` the code is too much to read, and is asked about (#2210), as it is
+/// when reading it throws (#2211). The bounds keep a read well under 100 ms.
 let nesting = 0;
 let rereads = 0;
+let work = 0;
+/// Whether a bound was passed, in the reading under way.
+let exhausted = false;
 /// Whether a lambda is being read with a witness for an argument.
 let guessing = false;
-const REREADS = 2000;
-/// What `writes` found in a text read again, by the text, kept from one
-/// call to the next - it depends on the text alone - up to `KEPT`
-/// characters of them.
+const DEPTH = 24;
+const REREADS = 10_000;
+const WORK = 600_000;
+/// What a text gives when it is too much to read, or reading it fails.
+const TOO_MUCH = "is too long or too deeply nested for the guard to read";
+/// What `writes` found in a text read again, by the text, for the call
+/// `writes` was given from outside only: kept from one call to the next, a
+/// text read once within the bounds and once past them gave two answers
+/// for the same code (#2190). Within one call it is what reading it again
+/// would give, so the answer is a function of the code alone.
 const reread = new Map<string, string[]>();
-const KEPT = 4_000_000;
-let kept = 0;
+/// The same for a lambda read with what it is given, by the statement it is
+/// in, the lambda and what it is given (`throughParameters`).
+const readings_ = new Map<string, Map<string, string[]>>();
+
+/// Counts `n` tokens looked at again, a fourth of one read for the first time.
+function scanned(n: number): void {
+  work += n / 4;
+}
+
+/// Whether reading on would pass a bound; marks the reading so when it does.
+function overBudget(): boolean {
+  exhausted ||= nesting > DEPTH || rereads > REREADS || work > WORK;
+  return exhausted;
+}
 
 function rereadOf(code: string): string[] {
   // What a text gives depends on whether it is read guessing.
   const text = `${guessing ? "?" : "="}${code}`;
-  let found = reread.get(text);
-  if (found === undefined) {
-    rereads++;
-    found = writes(code);
-    if (kept + text.length > KEPT) {
-      reread.clear();
-      kept = 0;
-    }
-    kept += text.length;
-    reread.set(text, found);
+  const known = reread.get(text);
+  if (known !== undefined) {
+    return known;
   }
+  if (overBudget()) {
+    return [TOO_MUCH];
+  }
+  rereads++;
+  const found = writes(code);
+  reread.set(text, found);
   return found;
 }
 
@@ -778,7 +852,7 @@ function itemsOf(t: Token[], from: number, to: number): string[] {
 /// tokens, spaces too, and `index` where each one is among them. A lambda
 /// assigned, `f:{value x}`, an item of a list, or the value of the code or
 /// of the lambda around it, is not applied here.
-function throughParameters(t: Token[], all: Token[], index: Map<Token, number>, closes: number[], open: number, found: Set<string>): void {
+function throughParameters(t: Token[], all: Token[], statement: string, closes: number[], open: number, found: Set<string>): void {
   const close = closes[open];
   if (close === undefined || close < 0) {
     return;
@@ -845,32 +919,52 @@ function throughParameters(t: Token[], all: Token[], index: Map<Token, number>, 
   ) {
     return;
   }
-  if (rereads > REREADS) {
-    found.add("applies a lambda that may change the process through what it is given");
+  if (overBudget()) {
     return;
   }
   // The lambda's text with `given` in place of its parameters, which it then
-  // no longer takes.
+  // no longer takes: the statement's text between where they stand.
+  const from = t[open].n;
+  const to = t[close].n;
+  const list = named ? (t[listEnd]?.n ?? from) : from;
+  const bodyStart = all[list].pos + all[list].text.length;
+  const uses: Token[] = [];
+  for (let p = list + 1, nested = 0; p < to; p++) {
+    const k = all[p];
+    if (k.kind === "open" && k.text === "{") nested++;
+    else if (k.kind === "close" && k.text === "}") nested--;
+    else if (nested === 0 && k.kind === "name" && params.includes(k.text)) uses.push(k);
+  }
   const text = (given: Map<string, string>): string => {
-    const out: string[] = [];
-    const from = index.get(t[open]) ?? 0;
-    const to = index.get(t[close]) ?? 0;
-    const list = named ? (index.get(t[listEnd]) ?? from) : from;
-    const kept = `[${params.filter((p) => !given.has(p)).join(";")}]`;
-    for (let p = from, nested = 0; p <= to; p++) {
-      const k = all[p];
-      if (p === from) {
-        out.push(given.size > 0 || named ? `{${kept}` : "{");
-        p = list;
-        continue;
+    let out = given.size > 0 || named ? `{[${params.filter((p) => !given.has(p)).join(";")}]` : "{";
+    let at = bodyStart;
+    for (const k of uses) {
+      const value = given.get(k.text);
+      if (value !== undefined) {
+        out += statement.slice(at, k.pos) + value;
+        at = k.pos + k.text.length;
       }
-      if (k.kind === "open" && k.text === "{") nested++;
-      else if (k.kind === "close" && k.text === "}") nested--;
-      out.push(nested === 0 && k.kind === "name" && given.has(k.text) ? (given.get(k.text) ?? k.text) : k.text);
     }
-    return out.join("");
+    return out + statement.slice(at, t[close].pos + 1);
   };
-  const base = rereadOf(text(new Map()));
+  // What a reading gives, by the statement, the lambda and what it is
+  // given, so the text is not made again for one read already.
+  const readOf = (given: Map<string, string>): string[] => {
+    let byStatement = readings_.get(statement);
+    if (byStatement === undefined) {
+      byStatement = new Map();
+      readings_.set(statement, byStatement);
+    }
+    const key = `${guessing ? "?" : "="}${open}\u0000${[...given].flat().join("\u0000")}`;
+    const known = byStatement.get(key);
+    if (known !== undefined) {
+      return known;
+    }
+    const found = rereadOf(text(given));
+    byStatement.set(key, found);
+    return found;
+  };
+  const base = readOf(new Map());
   // Read with every argument in place, with the first item of each when it
   // is iterated, and with a symbol for each one that is a name or not
   // written: a few readings, whatever the count of parameters.
@@ -896,10 +990,11 @@ function throughParameters(t: Token[], all: Token[], index: Map<Token, number>, 
   for (const [given, guessed] of readings) {
     const was = guessing;
     guessing ||= guessed;
-    const read = rereadOf(text(given));
+    const read = readOf(given);
     guessing = was;
     for (const reason of read) {
-      if (!base.includes(reason)) {
+      // (Too much to read is said once, by `writes`.)
+      if (!base.includes(reason) && reason !== TOO_MUCH) {
         found.add(guessed ? "applies a lambda that may change the process through what it is given" : reason);
       }
     }
@@ -1052,12 +1147,18 @@ function readStatement(statement: string, found: Set<string>): void {
     }
     return;
   }
+  // The lambdas read again count by statement: a long script of reads is
+  // not asked about for its length.
+  if (nesting === 1) {
+    rereads = 0;
+  }
   const all = tokens(statement);
-  // Where each token stands among all of them: `a::` is a global
-  // assignment, `a: :` is not one.
-  const at = new Map(all.map((k, i) => [k, i]));
-  const touching = (a: Token | undefined, b: Token | undefined): boolean =>
-    a !== undefined && b !== undefined && at.get(b) === (at.get(a) ?? -2) + 1;
+  work += all.length;
+  if (overBudget()) {
+    return;
+  }
+  // `a::` is a global assignment, `a: :` is not one.
+  const touching = (a: Token | undefined, b: Token | undefined): boolean => a !== undefined && b !== undefined && b.n === a.n + 1;
   const t = all.filter((k) => k.kind !== "space");
   // Where the bracket each open one starts closes, -1 for one that does not.
   const closes: number[] = [];
@@ -1085,7 +1186,7 @@ function readStatement(statement: string, found: Set<string>): void {
   // before `:` names a column. A stack, so a query nested in a column's
   // expression closes only itself: `` update c:(exec max a from s) from `t ``.
   const qsql: string[] = [];
-  for (let i = 0; i < t.length; i++) {
+  for (let i = 0; i < t.length && !overBudget(); i++) {
     const k = t[i];
     const next = t[i + 1];
     if (k.kind === "open") {
@@ -1101,7 +1202,7 @@ function readStatement(statement: string, found: Set<string>): void {
       lambdas += kind === "lambda" ? 1 : 0;
       if (kind === "lambda") {
         locals.push(lambdaLocals(t, i, touching));
-        throughParameters(t, all, at, closes, i, found);
+        throughParameters(t, all, statement, closes, i, found);
       }
       // `(a;b):x` assigns each name, globally at the top level.
       // So do `(a):x` and nested lists, `((a;b);c):x` (#1772).
@@ -1334,12 +1435,7 @@ function readStatement(statement: string, found: Set<string>): void {
       let j = i + 1;
       const indexed = t[j]?.text === "[" && t[j]?.kind === "open";
       if (indexed) {
-        let depth = 0;
-        for (; j < t.length; j++) {
-          if (t[j].kind === "open") depth++;
-          else if (t[j].kind === "close" && --depth === 0) break;
-        }
-        j++;
+        j = (closes[j] < 0 ? t.length : closes[j]) + 1;
       }
       const compound = t[j]?.kind === "op" && OPERATORS.has(t[j].text) && t[j + 1]?.text === ":" && touching(t[j], t[j + 1]);
       if (compound) {
@@ -1549,11 +1645,33 @@ export function guardText(code: GuardCode): string {
 /// pieces, each read on its own: a `\` or `/` line ending one does not hide
 /// the next (#1442); one `value`d whole is read as one statement.
 export function writes(code: GuardCode): string[] {
-  if (nesting++ === 0) {
-    rereads = 0;
+  if (nesting > 0) {
+    return read(code);
   }
+  rereads = 0;
+  work = 0;
+  exhausted = false;
+  guessing = false;
+  reread.clear();
+  readings_.clear();
+  try {
+    const found = read(code);
+    return exhausted ? [...new Set([...found, TOO_MUCH])] : found;
+  } catch {
+    // Too deep for the stack, or a defect: asked about, never let through.
+    nesting = 0;
+    return [TOO_MUCH];
+  }
+}
+
+/// What `writes` finds in `code`, read within the bounds.
+function read(code: GuardCode): string[] {
+  nesting++;
   try {
     const found = new Set<string>();
+    if (overBudget()) {
+      return [];
+    }
     for (const piece of typeof code === "string" ? [code] : code) {
       if (typeof piece !== "string") {
         readStatement(piece.valued, found);

@@ -1518,3 +1518,44 @@ test("\\t and \\ts nested deep are read in a loop, not one call each", () => {
   assert.deepStrictEqual(writes(`${"\\ts ".repeat(2000)}a:1`), ["assigns a"]);
   assert.deepStrictEqual(writes(`${"\\t ".repeat(2000)}count t`), []);
 });
+
+const TOO_MUCH = "is too long or too deeply nested for the guard to read";
+
+test("the answer is the code's alone, whatever was read before it (#2190)", () => {
+  // Read-only, with more lambdas applied than one statement may have read
+  // again: asked about the first time and every time after, cold or warm.
+  const many = Array.from({ length: 3000 }, (_, i) => `{x+${i}} v${i}`).join(";");
+  const first = writes(many);
+  assert.ok(first.includes(TOO_MUCH), JSON.stringify(first));
+  assert.deepStrictEqual(writes(many), first);
+  writes("{x+1} v");
+  assert.deepStrictEqual(writes(many), first);
+  // Under the bound, it reads, each time.
+  const some = Array.from({ length: 800 }, (_, i) => `{x+${i}} v${i}`).join(";");
+  assert.deepStrictEqual(writes(some), []);
+  assert.deepStrictEqual(writes(some), []);
+});
+
+test("code too deep or too long to read is asked about, quickly, and never throws (#2210, #2211)", () => {
+  const timed = (code) => {
+    const started = process.hrtime.bigint();
+    const found = writes(code);
+    return [found, Number(process.hrtime.bigint() - started) / 1e6];
+  };
+  for (const code of [
+    `${"{x}@".repeat(1000)}\`a`,
+    `${"{x}[".repeat(600)}\`a${"]".repeat(600)}`,
+    `${"{.[x;();:;1]}[".repeat(1000)}v${"]".repeat(1000)}`,
+    `${"{x} each ".repeat(1000)}\`a`,
+    `${"@[".repeat(3000)}t${";0;neg]".repeat(3000)}`,
+  ]) {
+    const [found, ms] = timed(code);
+    assert.ok(found.includes(TOO_MUCH), `${code.slice(0, 20)}: ${JSON.stringify(found)}`);
+    // Well under the 100 ms a send may wait; generous for a loaded machine.
+    assert.ok(ms < 1000, `${code.slice(0, 20)}: ${ms} ms`);
+  }
+  // Deep parentheses are read without recursion, and a list of names in
+  // them still assigns each.
+  assert.deepStrictEqual(writes(`${"(".repeat(8000)}1${")".repeat(8000)}`), []);
+  assert.deepStrictEqual(writes("((a;(b;c));d):x"), ["assigns a", "assigns b", "assigns c", "assigns d"]);
+});
