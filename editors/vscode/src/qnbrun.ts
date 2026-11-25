@@ -506,17 +506,20 @@ export async function main(
   const connections = new Map<string, Promise<QConnection>>();
   const open = (label: string | undefined): Promise<QConnection> => {
     const name = label ?? options.process;
+    // A cell naming --process's own label is on --process's connection,
+    // as --process gives it: whichever cell opens it first (#2135).
+    const given = name === options.process;
     let connection = connections.get(name);
     if (connection === undefined) {
       connection = (async () => {
-        const target = cliProcess(name, listed, label === undefined ? options.user : undefined, label === undefined && options.tls);
+        const target = cliProcess(name, listed, given ? options.user : undefined, given && options.tls);
         if ("error" in target) {
           throw new Error(target.error);
         }
         if (isProduction(target) && !options.allowProduction) {
           throw new Error(`${target.label} is a production process (tagged ${target.tags.join(", ")}); pass --allow-production to run the notebook there`);
         }
-        const password = passwordOf(target, env, label === undefined, listed);
+        const password = passwordOf(target, env, given, listed);
         return QConnection.open({
           host: target.host,
           port: target.port,

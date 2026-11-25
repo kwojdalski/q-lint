@@ -1023,3 +1023,37 @@ test("a live value's expression is read as LIVE values it, whole: a / line in it
   const code = guardedText("1+1", ["Count: {{q: (1;\n/\nd6:9)}} rows"]);
   assert.deepStrictEqual(writes(code), ["assigns d6"]);
 });
+
+// The first cell to open a connection decided its password: one naming
+// `/ @process rdb` opened rdb without QLINT_Q_PASSWORD, though --process
+// rdb gives it that, and every cell after reused it (#2135).
+test("a cell naming --process's own label connects as --process does (#2135)", async (t) => {
+  const net = require("node:net");
+  const os = require("node:os");
+  const { main } = require("../out/qnbrun.js");
+  const logins = [];
+  const sockets = new Set();
+  const server = net.createServer((s) => {
+    sockets.add(s);
+    s.on("error", () => {});
+    s.once("data", (d) => {
+      logins.push(d.subarray(0, d.length - 2).toString("utf8"));
+      s.write(Buffer.from([3]));
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-qnbrun-"));
+  t.after(() => (server.close(), fs.rmSync(dir, { recursive: true, force: true })));
+  const list = path.join(dir, "list.json");
+  fs.writeFileSync(list, JSON.stringify({ processes: [{ label: "rdb", host: "127.0.0.1", port: server.address().port, user: "bob", tags: [] }] }));
+  for (const [name, first] of [["named", ["/ @process rdb", "1+1"]], ["bare", ["1+1"]]]) {
+    const nb = path.join(dir, `${name}.qnb`);
+    fs.writeFileSync(nb, JSON.stringify({ qnb: 1, cells: [{ kind: "code", source: first }, { kind: "code", source: ["2+2"] }] }));
+    // The fake answers no query: the run fails at its first cell, after the handshake.
+    const run = main([nb, "--process", "rdb", "--processes", list, "-o", path.join(dir, `${name}.out.qnb`)], { QLINT_Q_PASSWORD: "not-a-real-secret" }, () => {});
+    await new Promise((r) => setTimeout(r, 300));
+    for (const s of sockets) s.destroy();
+    assert.strictEqual(await run, 1);
+  }
+  assert.deepStrictEqual(logins, ["bob:not-a-real-secret", "bob:not-a-real-secret"]);
+});

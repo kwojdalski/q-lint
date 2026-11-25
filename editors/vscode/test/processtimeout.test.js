@@ -133,12 +133,20 @@ test("Launcher.interrupt signals only a process it started and that still runs",
   const context = stub.newContext();
   const launcher = new Launcher(context, { launched: undefined, refreshProcesses() {} });
   const sent = [];
-  launcher.started.set("mine", { child: { pid: 42, exitCode: null, signalCode: null, kill: (s) => sent.push(s) } });
-  launcher.started.set("gone", { child: { pid: 43, exitCode: 0, signalCode: null, kill: (s) => sent.push(s) } });
-  assert.strictEqual(launcher.interrupt("mine"), 42);
-  assert.strictEqual(launcher.interrupt("gone"), undefined);
-  assert.strictEqual(launcher.interrupt("other"), undefined);
+  launcher.started.set("mine", { port: 5001, child: { pid: 42, exitCode: null, signalCode: null, kill: (s) => sent.push(s) } });
+  launcher.started.set("gone", { port: 5002, child: { pid: 43, exitCode: 0, signalCode: null, kill: (s) => sent.push(s) } });
+  const at = (label, port, more = {}) => ({ label, host: "localhost", port, ...more });
+  assert.strictEqual(launcher.interrupt(at("mine", 5001)), 42);
+  assert.strictEqual(launcher.interrupt(at("gone", 5002)), undefined);
+  assert.strictEqual(launcher.interrupt(at("other", 5001)), undefined);
   assert.deepStrictEqual(sent, ["SIGINT"]);
+  // The label's q, but the connection is to another process: edited to
+  // another port or host, or reached through a tunnel (#2125).
+  assert.strictEqual(launcher.interrupt(at("mine", 5003)), undefined);
+  assert.strictEqual(launcher.interrupt({ ...at("mine", 5001), host: "rdb.example" }), undefined);
+  assert.strictEqual(launcher.interrupt(at("mine", 5001, { ssh: "bastion" })), undefined);
+  assert.strictEqual(launcher.interrupt({ ...at("mine", 5001), host: "127.0.0.1" }), 42);
+  assert.deepStrictEqual(sent, ["SIGINT", "SIGINT"]);
   launcher.started.clear();
   for (const d of context.subscriptions) d.dispose?.();
 });
@@ -151,11 +159,11 @@ test("on Windows Interrupt Query sends nothing: kill() there ends q (#1250)", as
   const context = stub.newContext();
   const launcher = new Launcher(context, { launched: undefined, refreshProcesses() {} });
   const sent = [];
-  launcher.started.set("mine", { child: { pid: 42, exitCode: null, signalCode: null, kill: (s) => sent.push(s) } });
-  assert.strictEqual(launcher.interrupt("mine"), undefined);
+  launcher.started.set("mine", { port: 5001, child: { pid: 42, exitCode: null, signalCode: null, kill: (s) => sent.push(s) } });
+  assert.strictEqual(launcher.interrupt({ label: "mine", host: "localhost", port: 5001 }), undefined);
   launcher.started.clear();
   for (const d of context.subscriptions) d.dispose?.();
-  const { timeouts, live } = await setUp(t, [{ label: "a", host: "h", port: 1, tags: [] }], { interrupt: (l) => (sent.push(l), 1) });
+  const { timeouts, live } = await setUp(t, [{ label: "a", host: "h", port: 1, tags: [] }], { interrupt: (l) => (sent.push(l.label), 1) });
   live.activeProcess = () => ({ label: "a", host: "h", port: 1, tags: [] });
   live.isBusy = () => true;
   assert.strictEqual(timeouts.interrupt(), undefined);
@@ -165,7 +173,7 @@ test("on Windows Interrupt Query sends nothing: kill() there ends q (#1250)", as
 
 test("Interrupt Query with nothing running, or a process not started here, sends no signal", async (t) => {
   const sent = [];
-  const { timeouts, live } = await setUp(t, [{ label: "a", host: "h", port: 1, tags: [] }], { interrupt: (l) => (sent.push(l), undefined) });
+  const { timeouts, live } = await setUp(t, [{ label: "a", host: "h", port: 1, tags: [] }], { interrupt: (l) => (sent.push(l.label), undefined) });
   assert.strictEqual(timeouts.interrupt(), undefined);
   assert.deepStrictEqual(stub.messages.at(-1), ["info", "q-lint: no query is running."]);
   live.activeProcess = () => ({ label: "a", host: "h", port: 1, tags: [] });
@@ -177,7 +185,7 @@ test("Interrupt Query with nothing running, or a process not started here, sends
 
 test("turned off, both commands refuse and nothing is set or signalled; on again without a reload", async (t) => {
   const sent = [];
-  const { live, timeouts } = await setUp(t, [{ label: "a", host: "h", port: 1, tags: [] }], { interrupt: (l) => (sent.push(l), 1) });
+  const { live, timeouts } = await setUp(t, [{ label: "a", host: "h", port: 1, tags: [] }], { interrupt: (l) => (sent.push(l.label), 1) });
   live.activeProcess = () => ({ label: "a", host: "h", port: 1, tags: [] });
   live.isBusy = () => true;
   stub.config.user["query.processTimeout.enable"] = false;
@@ -249,7 +257,7 @@ test("Interrupt Query stops a running query on a local process with 'stop, and t
   const q = await startQ(port);
   t.after(() => q.stop());
   const { live, timeouts } = await setUp(t, [{ label: "local", host: "127.0.0.1", port, tags: [] }], {
-    interrupt: (label) => (label === "local" ? (q.signal("SIGINT"), q.pid) : undefined),
+    interrupt: ({ label }) => (label === "local" ? (q.signal("SIGINT"), q.pid) : undefined),
   });
   assert.strictEqual(await live.connectTo("local"), true);
   const running = live.run("busy 20");

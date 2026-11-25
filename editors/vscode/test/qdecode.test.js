@@ -186,3 +186,60 @@ test("a long symbol in a general list is cut by code point in the grid and the t
   const short = { kind: "atom", t: -11, v: "😀".repeat(150) };
   assert.ok(!treeOfQ({ kind: "list", attr: 0, v: [short] }).children[0].text.endsWith("..."));
 });
+
+// A symbol list holding fewer symbols than its count never threw: each
+// symbol past the last NUL read the message again from byte 0, until the
+// extension host ran out of heap - in this decoder and in node-q's (#2136).
+// Run in a child with a small heap, so a hang or an OOM fails the test
+// rather than the test run.
+test("no decoder reads past a message cut short or corrupted: it throws, at once (#2136)", { timeout: 60_000 }, () => {
+  const { spawnSync } = require("node:child_process");
+  const path = require("node:path");
+  const out = path.join(__dirname, "..", "out");
+  const body = `
+const { serialize, deserialize } = require(${JSON.stringify(require.resolve("node-q/lib/c.js"))});
+const { decode, checkedBody } = require(${JSON.stringify(path.join(out, "qdecode.js"))});
+const readers = [(m) => decode(m), (m) => deserialize(checkedBody(m), false, true, false, false)];
+const tried = (m) => { for (const read of readers) { try { read(m); } catch {} } };
+// The issue's message: a symbol list of 5e7 with no symbols in it, and the
+// same for a general list and a char vector.
+for (const t of [0, 10, 11]) {
+  const m = Buffer.alloc(14); m[0] = 1; m[1] = 2; m.writeUInt32LE(14, 4); m[8] = t; m.writeUInt32LE(50_000_000, 10);
+  for (const read of readers) { let threw = false; try { read(m); } catch { threw = true; } if (!threw) throw new Error("read type " + t); }
+}
+// A compressed message claiming 4 GB.
+{ const m = Buffer.alloc(16); m[0] = 1; m[1] = 2; m[2] = 1; m.writeUInt32LE(16, 4); m.writeUInt32LE(0xffffffff, 8); tried(m); }
+const values = [
+  { s: ["abc", "de", "", "f"] }, [1, "two", [3, ["four"]], { k: "v" }], "a char vector", 42, [1.5, 2.5], { a: [1, 2], b: ["x", "y"] },
+  Array.from({ length: 300 }, (_, i) => "sym" + i), new Date(0), true,
+];
+let seed = 2136;
+const random = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+for (const v of values) {
+  const whole = serialize(v);
+  whole.writeUInt8(2, 1);
+  for (const read of readers) read(whole);
+  // Cut at every length, the header saying the length it has.
+  for (let n = 9; n < whole.length; n++) {
+    const m = Buffer.from(whole.subarray(0, n)); m.writeUInt32LE(n, 4); tried(m);
+  }
+  // Bytes changed at random: a count, a type, a NUL.
+  for (let k = 0; k < 400; k++) {
+    const m = Buffer.from(whole);
+    for (let j = 0; j < 1 + Math.floor(random() * 3); j++) m[8 + Math.floor(random() * (m.length - 8))] = Math.floor(random() * 256);
+    tried(m);
+  }
+}
+`;
+  const run = spawnSync(process.execPath, ["--max-old-space-size=128", "-e", body], { encoding: "utf8", timeout: 45_000 });
+  assert.strictEqual(run.status, 0, `${run.signal ?? ""} ${run.stderr.slice(-800)}`);
+});
+
+test("a whole message is checked and given back uncompressed (#2136)", () => {
+  const { checkedBody } = require("../out/qdecode.js");
+  const m = message([0x0b, 0x00, 0x02, 0, 0, 0], "ab\0c\0");
+  assert.strictEqual(checkedBody(m), m);
+  assert.throws(() => checkedBody(message([0x0b, 0x00, 0x03, 0, 0, 0], "ab\0c\0")), /a message shorter than its list/);
+  assert.throws(() => decode(message([0x0b, 0x00, 0x03, 0, 0, 0], "ab\0c\0")), /a message shorter than its list/);
+  assert.throws(() => checkedBody(message([0x07, 0x00, 0x02, 0, 0, 0], Buffer.alloc(15))), /a message shorter than its list/);
+});

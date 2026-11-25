@@ -48,7 +48,7 @@ test("the grid lambda keeps nothing on the process, and runs code as RUN does", 
 // q by grid_q.test.js).
 test("the grid ranks a copy of each column, in a page too (#1863)", () => {
   const { GRID_TREE, PAGE, gridLambda } = require("../out/grid.js");
-  for (const lambda of [GRID, GRID_TREE, PAGE, gridLambda(false, true)]) {
+  for (const lambda of [GRID, GRID_TREE, PAGE, gridLambda(false, "0123456789abcdef")]) {
     assert.deepStrictEqual(lambda.match(/iasc [^;]*/g), ["iasc x:x til count x"], lambda);
   }
 });
