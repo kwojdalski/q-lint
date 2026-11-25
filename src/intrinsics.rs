@@ -378,7 +378,10 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
     const LITERAL: &str = r#"(?:-?\.?\d[A-Za-z0-9.:]*(?:[ \t]+-?\.?\d[A-Za-z0-9.:]*)*)|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*""#;
     // So is `.` given a one-item list: `til . enlist 2.5` and
     // `.[til;enlist 2.5]` (q 5: 'type, #617).
-    for (pattern, name_group, arg_group) in [
+    // Each compiled once, not for every file (#2350).
+    static COMPILED: [std::sync::OnceLock<regex::Regex>; 4] =
+        [const { std::sync::OnceLock::new() }; 4];
+    for (k, (pattern, name_group, arg_group)) in [
         (format!(r"\b({BUILTINS})[ \t]*@[ \t]*({LITERAL})"), 1, 2),
         (
             format!(r"@\[[ \t]*({BUILTINS})[ \t]*;[ \t]*({LITERAL})[ \t]*\]"),
@@ -395,8 +398,12 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
             1,
             2,
         ),
-    ] {
-        for call in regex::Regex::new(&pattern).unwrap().captures_iter(comments) {
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let compiled = COMPILED[k].get_or_init(|| regex::Regex::new(&pattern).unwrap());
+        for call in compiled.captures_iter(comments) {
             let whole = call.get(0).unwrap();
             let name = call.get(name_group).unwrap();
             if !boundary(code, whole.start()) || code.get(name.range()) != Some(name.as_str()) {

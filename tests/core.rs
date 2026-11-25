@@ -1717,3 +1717,31 @@ fn accepting_or_fixing_every_finding_is_linear() {
         "fixing 500 stale noqa took {small:?} and 4000 {large:?}"
     );
 }
+/// About thirteen patterns built from constants were compiled again on every
+/// lint: 2.4 ms before a file's first byte was read, 90% of the time to lint
+/// a small one, paid per file by a pre-commit run and per open document by
+/// the language server (#2350). Linting a line as a file of its own should
+/// cost about what the same line costs inside a larger file.
+#[test]
+fn a_small_file_pays_no_compilation_of_its_own() {
+    let line = "f:{[a;b] a+b};\n";
+    let many = line.repeat(400);
+    let time = || {
+        let one = best_of_three(|| {
+            for _ in 0..400 {
+                std::hint::black_box(lint(line, "t.q", Profile::Uqf));
+            }
+        });
+        let together = best_of_three(|| lint(&many, "t.q", Profile::Uqf));
+        (one, together)
+    };
+    time(); // warm the allocator and the regex caches
+    let (apart, together) = time();
+    eprintln!("400 one-line files took {apart:?} and one of 400 lines {together:?}");
+    // Compiling per lint made 400 files about 100 times one of 400 lines in
+    // a debug build (8.4 s and 85 ms); without it they are about twice.
+    assert!(
+        apart < together * 16,
+        "400 one-line files took {apart:?} and one of 400 lines {together:?}"
+    );
+}

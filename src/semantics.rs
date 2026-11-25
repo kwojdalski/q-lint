@@ -4447,7 +4447,7 @@ fn named_values(
     let vector = r"-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?[A-Za-z0-9.]*)+|(?:`[A-Za-z0-9_.]*){2,}|\([^()]*;[^()]*\)";
     // The statement's blanks around the operator: `bump:v+` and then a
     // column-0 `1 2` are two statements (#742).
-    let pair = regex::Regex::new(&format!(
+    let pair = re_built!(&format!(
         concat!(
             r"(?P<l>{name_re}|{vector})",
             blank!(),
@@ -4457,8 +4457,7 @@ fn named_values(
         ),
         name_re = name_re,
         vector = vector
-    ))
-    .unwrap();
+    ));
     let length = |text: &str, at: usize| -> Option<usize> {
         if re!(r"^\.?[A-Za-z]").is_match(text) {
             match visible(text, at)? {
@@ -4521,7 +4520,7 @@ fn named_values(
     let operand = r#""(?:\\.|[^"\\])*"|[01]+b|0x[0-9a-fA-F]+|(?:-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?[ \t]+)*-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?e\b|-?0[NW][hij]?\b|-?\d+[hij]?(?:[ \t]+-?\d+[hij]?)*|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*"#;
     // The statement's blanks around the operator: `inc:x+` and then a
     // column-0 `"done"` are two statements (#741).
-    let infix = regex::Regex::new(&format!(
+    let infix = re_built!(&format!(
         concat!(
             r"(?P<l>{operand})",
             blank!(),
@@ -4530,8 +4529,7 @@ fn named_values(
             r"*(?P<r>{operand})"
         ),
         operand = operand
-    ))
-    .unwrap();
+    ));
     let kind_of = |text: &str, at: usize| -> Option<Arithmetic> {
         // `.5e` is a number, `.ns.a` a name (#587).
         if text.starts_with(char::is_alphabetic) || re!(r"^\.[A-Za-z]").is_match(text) {
@@ -4981,7 +4979,7 @@ fn named_values(
     let row = r"\(|-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+";
     // Infix, the row is in the same statement: `add:`t insert` and then a
     // column-0 `(1;2;3)` are two statements (#743).
-    let forms = regex::Regex::new(&format!(
+    let forms = re_built!(&format!(
         concat!(
             r"`(?P<a>{name})",
             blank!(),
@@ -4995,8 +4993,7 @@ fn named_values(
         ),
         name = name,
         row = row
-    ))
-    .unwrap();
+    ));
     let dictionary = re!(r"^\(?\s*(?:`[A-Za-z][A-Za-z0-9_.]*)+\s*\)?\s*!");
     let dictionaries: HashSet<&str> = re!(
         r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*:\s*\(?\s*(?:`[A-Za-z][A-Za-z0-9_.]*)+\s*\)?\s*!"

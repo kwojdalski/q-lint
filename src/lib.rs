@@ -10,6 +10,15 @@ macro_rules! re {
         &*RE
     }};
 }
+/// `re!` for a pattern assembled by `format!` from constants: compiled the
+/// first time this line runs and kept, not compiled again for every file
+/// (#2350). Only for a pattern that is the same on every run of its line.
+macro_rules! re_built {
+    ($pattern:expr) => {{
+        static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+        RE.get_or_init(|| regex::Regex::new($pattern).unwrap())
+    }};
+}
 /// Blanks inside one statement, for a pattern to span: spaces and tabs, and a
 /// line break only into an indented line, which q continues the statement
 /// with. `\s` would run on into the next statement - `r:x like "a*"`, then
@@ -7238,7 +7247,10 @@ fn lint_rules(
         // Around the operator, the statement's blanks: `match:`x=` and then a
         // column-0 `1 2 3` are two statements (#743).
         let gap = concat!(blank!(), "*");
-        for (pattern, view, quoted) in [
+        // Each compiled once, not for every file (#2350).
+        static COMPILED: [std::sync::OnceLock<regex::Regex>; 4] =
+            [const { std::sync::OnceLock::new() }; 4];
+        for (k, (pattern, view, quoted)) in [
             (
                 format!(r"({sym}){gap}{op}{gap}({num})"),
                 code.as_str(),
@@ -7259,10 +7271,14 @@ fn lint_rules(
                 v.comments.as_str(),
                 Some(2),
             ),
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let compiled = COMPILED[k].get_or_init(|| regex::Regex::new(&pattern).unwrap());
             // A match that starts inside a name, the `2` of `b2:1=`a`, is
             // looked past rather than taking the comparison with it.
-            for m in boundary_captures(&regex::Regex::new(&pattern).unwrap(), view, view) {
+            for m in boundary_captures(compiled, view, view) {
                 let (at, end) = (m.get(0).unwrap().start(), m.get(0).unwrap().end());
                 if let Some(group) = quoted
                     && v.string_starts
@@ -9198,10 +9214,9 @@ fn lint_rules(
     // where the string is still text; only a one-character string is an atom.
     let char_atom = r#""(?:[^"\\]|\\.)""#;
     let number = r"-?\d[A-Za-z0-9.]*";
-    let pair = regex::Regex::new(&format!(
+    let pair = re_built!(&format!(
         r"({char_atom}|{number})[ \t]*(=|<>|<=|>=|<|>)[ \t]*({char_atom}|{number})"
-    ))
-    .unwrap();
+    ));
     for m in pair.captures_iter(&v.comments) {
         let whole = m.get(0).unwrap();
         // Each quote has to open a string, not close one.
