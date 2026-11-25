@@ -1819,3 +1819,18 @@ test("k's monadic ~ (hdel), < (hopen) and > (hclose) are read as those, on a fil
     assert.deepStrictEqual(writes(code), [], code);
   }
 });
+
+test("a string an evaluator, handle 0 or a gateway is given is read as value reads it, not as a script (#2274)", () => {
+  const asks = [
+    'value"\\n/\\na:77"', 'value"count t\\n/\\na:77"', 'value"count t\\n\\\\\\na:77"', 'get"count t\\n/\\na:77"', 'eval parse"count t\\n/\\na:77"',
+    '0"count t\\n/\\na:77"', 'neg[0]"count t\\n/\\na:77"', '@[value;"count t\\n/\\na:77";::]', 'value/["count t\\n/\\na:77"]', '{value x}"count t\\n/\\na:77"',
+    'value each enlist"count t\\n/\\na:77"', '.gw.syncexec["count t\\n/\\na:77";`rdb]', 'value"count t\\n/ c\\na:77"', 'value"1\\r\\n/\\r\\na:77"',
+  ];
+  for (const code of asks) {
+    assert.ok(writes(code).length > 0, code);
+  }
+  // A string that only reads, on lines of its own, reads.
+  for (const code of ['value"count t\\n/ a comment\\n"', 'value"select from t\\n where a>1"', '.gw.syncexec["count t";`rdb]']) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});

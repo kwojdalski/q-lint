@@ -82,7 +82,7 @@
 //   passed as a value (`` .[@;(`.;`a;:;1)] ``, `` (@) . (`.;..) ``);
 // - `value`, `get`, `eval`, `reval`, `.h.val` (#2273), `-6!` or `-24!`, or in k code a monadic `.`
 //   (`` k)."a:1" ``), applied to a string that changes the process by these
-//   rules - `value "count t"` reads (#1776) - or one built or passed through
+//   rules, read whole as `value` reads it, not as a script (#2274) - `value "count t"` reads (#1776) - or one built or passed through
 //   another function (`value "a",":1"`), or made without a string written,
 //   `` value string`a:1 ``, `` get`char$97 58 49 `` (#2203), to `parse` or
 //   `-5!`, or to a tree headed by `:`, `::` or `+:` (`eval(:;`t;())`), by
@@ -1095,7 +1095,9 @@ function strings(t: Token[], last: number, end: number, kCode: boolean): string 
     } else if (k.kind === "str") {
       seen = true;
       const whole = passing && (p + 1 >= end || t[p + 1].text === ";" || t[p + 1].kind === "close");
-      if (!whole || kCode || writes(qText(k.text)).length > 0) {
+      // Read as `value` reads it, whole: a `/` or `\` line in it is not a
+      // script's comment or end (#2274).
+      if (!whole || kCode || writes([valued(qText(k.text))]).length > 0) {
         return parsed ? "a parse tree" : "a string";
       }
     }
@@ -1552,7 +1554,7 @@ function gateway(t: Token[], i: number, found: Set<string>): void {
   let written = false;
   for (let j = i + 1; j < end; j++) {
     if (t[j].kind === "str") {
-      for (const reason of writes(qText(t[j].text))) {
+      for (const reason of writes([valued(qText(t[j].text))])) {
         found.add(`${reason} through ${name}`);
         written = true;
       }
@@ -1607,7 +1609,7 @@ function gateway(t: Token[], i: number, found: Set<string>): void {
       const close = items(t, open).at(-1)?.[1] ?? t.length;
       for (let j = open + 1; j < close; j++) {
         if (t[j].kind === "str") {
-          for (const reason of writes(qText(t[j].text))) found.add(`${reason} through ${name}`);
+          for (const reason of writes([valued(qText(t[j].text))])) found.add(`${reason} through ${name}`);
         }
       }
     }
