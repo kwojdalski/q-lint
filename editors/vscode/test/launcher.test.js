@@ -25,8 +25,12 @@ test("a process defined on a loopback host listens on the loopback only, not on 
   assert.deepStrictEqual(plan("localhost"), ["-p", "127.0.0.1:47126"]);
   assert.deepStrictEqual(plan("127.0.0.1"), ["-p", "127.0.0.1:47126"]);
   assert.deepStrictEqual(plan("127.0.1.1"), ["-p", "127.0.1.1:47126"]);
-  // q takes no ::1:port and binds IPv4 only.
-  assert.deepStrictEqual(plan("::1"), ["-p", "127.0.0.1:47126"]);
+  // q takes no ::1:port and binds IPv4 only, and a connect dials ::1 as
+  // written: a process at ::1 is not started, as it could not be reached (#2130).
+  assert.deepStrictEqual(launchPlan({ ...proc("l", 47126, {}), host: "::1" }, "q", undefined, "/home/me"), {
+    error: "l is at ::1, and q listens on IPv4 only: give it the host 127.0.0.1 or localhost to start it here.",
+  });
+  assert.strictEqual(listenAddress("::1", 47126), "127.0.0.1:47126");
   // Asked for every interface, or by the machine's name: a bare port.
   assert.deepStrictEqual(plan("0.0.0.0"), ["-p", "47126"]);
   assert.strictEqual(listenAddress("box", 5), "5");
