@@ -57,7 +57,8 @@ test("a marker between a statement and its indented continuation is a comment in
   assert.deepStrictEqual(markers(lines), [3]);
   // Past blank and comment lines too.
   assert.deepStrictEqual(markers(L("f:{x+\n/ %% mid\n\n/ note\n  y}")), []);
-  // Before any statement an indented line starts one, so the marker counts.
+  // Before any statement q skips an indented line (#2278), so the marker
+  // counts.
   assert.deepStrictEqual(markers(L("/ %% one\n  x:1")), [0]);
   // A cell's code cuts into the statements q would run, the marker a
   // comment line in f, as q keeps it (#2282).

@@ -25,7 +25,7 @@ import { ConsolePanel, type ConsoleEntry } from "./consolepanel";
 import { answerLines, runText } from "./consolerun";
 import { HAS_CELLS, INTERACTIVE_COMMANDS, readInteractive, turnedOff, type InteractiveSettings } from "./interactiveconfig";
 import type { Live } from "./live";
-import { blockAt, statements } from "./statements";
+import { blockAt, scriptCode, statements } from "./statements";
 import { plainMessage } from "./history";
 
 const settings = (): InteractiveSettings => readInteractive((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback));
@@ -93,7 +93,8 @@ export function registerInteractive(
     const chosen = choose(all);
     const run = queue.then(async () => {
       for (const cell of chosen) {
-        if (!(await runInto(shownCode(cellCode(lines, cell), cell), document.uri, cellName(all, cell)))) {
+        // Without the indented lines q skips above the first statement (#2278).
+        if (!(await runInto(shownCode(scriptCode(cellCode(lines, cell)), cell), document.uri, cellName(all, cell)))) {
           return;
         }
       }

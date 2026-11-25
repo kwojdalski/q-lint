@@ -76,7 +76,7 @@ import { HEARTBEAT, STEADY_MS, UNANSWERED_MS, backoffDelay, latencyText, readHea
 import { clearedStamp, historyHeading, historyLabel, iconsEscaped, mergedHistory, plainMessage } from "./history";
 import { render } from "./query";
 import { QueryModes, type PageLater, type Rendered } from "./resultpanel";
-import { blockAt, statements } from "./statements";
+import { blockAt, scriptCode, statements } from "./statements";
 import { assertWritable, relativeInside } from "./workspacewrite";
 import { commandLine, expandHome, qBinaryFrom, relativeBinaryProblem, replLines, shellKind, terminalCwd } from "./terminal";
 import { readDotenv, terminalEnv } from "./qenv";
@@ -160,8 +160,10 @@ function codeAt(editor: TextEditor, from: From): string | undefined {
   if (from === "selection" && !editor.selection.isEmpty) {
     return document.getText(editor.selection);
   }
+  // A file without the indented lines q skips before its first statement
+  // (#2278).
   if (from === "file") {
-    return document.getText();
+    return scriptCode(document.getText());
   }
   if (from === "block") {
     const lines = document.getText().split(/\r?\n/);
@@ -1953,7 +1955,8 @@ export class Live {
         return;
       }
     }
-    const cut = statements(code);
+    // A script, read as q loads one (#2278).
+    const cut = statements(scriptCode(code));
     if (cut.length === 0) {
       return;
     }

@@ -130,12 +130,13 @@ test("system commands are statements", () => {
   assert.deepStrictEqual(statements("\\d .ns\nf:{x}\n\\d ."), ["\\d .ns", "f:{x}", "\\d ."]);
 });
 
-test("an indented first line starts a statement", () => {
+test("an indented first line starts a statement, but not in a file", () => {
   assert.deepStrictEqual(statements("  a:1\n  +2"), ["a:1\n  +2"]);
-  // The block at the cursor is that statement too (#1416).
-  assert.deepStrictEqual(blockAt(["  a:1", "  +2"], 1), { start: 0, end: 1 });
-  assert.deepStrictEqual(blockAt(["/ header", "", "  x:1"], 2), { start: 2, end: 2 });
-  assert.deepStrictEqual(blockAt(["/", "junk", "\\", "  x:1", "y:2"], 3), { start: 3, end: 3 });
+  // In a file q's loader skips it (checked on KDB-X), so no block is there
+  // (#2278, which #1416 had the other way).
+  assert.strictEqual(blockAt(["  a:1", "  +2"], 1), undefined);
+  assert.strictEqual(blockAt(["/ header", "", "  x:1"], 2), undefined);
+  assert.strictEqual(blockAt(["/", "junk", "\\", "  x:1", "y:2"], 3), undefined);
   // A blank line above it is in no statement.
   assert.strictEqual(blockAt(["", "  x:1"], 0), undefined);
 });

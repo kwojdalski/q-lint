@@ -21,7 +21,13 @@
 //   keeps them (a lambda's text holds them), a block comment's lines made
 //   comment lines as q makes them (#2282). So a comment line inside an open
 //   string reaches `value`, which refuses it as `\l` does (#2281).
-// - A first line starting `#!` is skipped, as q skips a shebang.
+// - In a script, indented lines before the first statement are skipped
+//   (#2278), and so is a first line starting `#!`, as q skips a shebang.
+//
+// Code that is not a whole script - a selection, a block, a typed query - may
+// start with an indented line, a piece of a statement: that line starts the
+// first statement, its indent dropped unless that would make it a command
+// (`  \\` is no exit in a script, and must not become one).
 
 /// Whether `line` is read as part of the statement above it.
 function continues(line: string): boolean {
@@ -76,6 +82,55 @@ export function stringOpen(open: boolean, line: string): boolean {
     }
   }
   return open;
+}
+
+/// How q reads each line of a script: inside a comment (a block comment,
+/// the shebang, after the script's end, or an indented line before the
+/// first statement), a comment line, blank, a continuation line, or code
+/// that starts a statement.
+export type LineKind = "commented" | "comment" | "blank" | "continues" | "starts";
+
+/// The kind of each of `lines`, a whole script read from its top.
+export function lineKinds(lines: string[]): LineKind[] {
+  const out: LineKind[] = [];
+  let depth = 0;
+  let ended = false;
+  let open = false;
+  for (const [i, raw] of lines.entries()) {
+    const line = trimBlanks(raw);
+    if (ended || (i === 0 && line.startsWith("#!"))) {
+      out.push("commented");
+    } else if (depth > 0 || line === "/") {
+      out.push("commented");
+      depth = blockDepth(depth, line);
+    } else if (line === "\\") {
+      out.push("commented");
+      ended = true;
+    } else if (line === "") {
+      out.push("blank");
+    } else if (continues(line)) {
+      // Before the first statement q skips it (#2278).
+      out.push(open ? "continues" : "commented");
+    } else if (line.startsWith("/")) {
+      out.push("comment");
+    } else {
+      out.push("starts");
+      open = true;
+    }
+  }
+  return out;
+}
+
+/// `text`, a whole script, as code that reads the same however it is cut:
+/// the indented lines before its first statement, which q skips, made
+/// blank (#2278). Running a file sends this.
+export function scriptCode(text: string): string {
+  const lines = text.split("\n");
+  const kinds = lineKinds(lines);
+  const first = kinds.indexOf("starts");
+  return lines
+    .map((line, i) => ((first < 0 || i < first) && kinds[i] === "commented" && continues(trimBlanks(line)) ? "" : line))
+    .join("\n");
 }
 
 /// A control character q refuses with 'char wherever it is in a script
@@ -156,8 +211,18 @@ export function statementSpans(text: string, firstLine = 0): Span[] {
     if (line.startsWith("/")) {
       continue;
     }
+    let first = line;
+    if (continues(line)) {
+      // A piece of a statement, not a script: its indent goes, unless the
+      // line would then be a comment or a command.
+      const bare = line.trimStart();
+      if (bare.startsWith("/")) {
+        continue;
+      }
+      first = bare.startsWith("\\") ? line : bare;
+    }
     end();
-    current = { text: continues(line) ? line.trimStart() : line, start: at, end: at };
+    current = { text: first, start: at, end: at };
   }
   end();
   return out;
@@ -170,67 +235,35 @@ export function statements(text: string): string[] {
 }
 
 /// The lines, 0-based and inclusive, of the statement the cursor's `line`
-/// is in: from the unindented line that starts it (or the file's first code
-/// line, indented or not) to its last continuation line. Undefined on a blank or comment line, or inside a block comment.
+/// is in: from the unindented line that starts it to its last continuation
+/// line. Undefined on a comment line, inside a block comment, before the
+/// script's first statement, and on a blank line no continuation line
+/// follows.
 export function blockAt(lines: string[], line: number): { start: number; end: number } | undefined {
-  const at = (i: number): string => trimBlanks(lines[i] ?? "");
-  // Where block comments are, read from the top.
-  const commented: boolean[] = [];
-  let depth = 0;
-  let ended = false;
-  for (let i = 0; i < lines.length; i++) {
-    const text = at(i);
-    if (ended || (i === 0 && text.startsWith("#!"))) {
-      commented.push(true);
-    } else if (depth > 0 || text === "/") {
-      commented.push(true);
-      depth = blockDepth(depth, text);
-    } else if (text === "\\") {
-      commented.push(true);
-      ended = true;
-    } else {
-      commented.push(false);
-    }
-  }
-  const code = (i: number): boolean =>
-    i >= 0 && i < lines.length && !commented[i] && !isBlankLine(at(i)) && !at(i).startsWith("/");
+  const kind = lineKinds(lines);
   // A comment inside a statement is skipped, as `statements` skips it.
-  const skipped = (i: number): boolean => commented[i] || isBlankLine(at(i)) || at(i).startsWith("/");
-  if (commented[line] ?? true) {
+  const skipped = (i: number): boolean => kind[i] === "commented" || kind[i] === "blank" || kind[i] === "comment";
+  const at = kind[line];
+  if (at === undefined || at === "commented" || at === "comment") {
     return undefined;
   }
-  if (isBlankLine(at(line))) {
+  if (at === "blank") {
     // A blank line is in a statement only when an indented line follows it.
     let next = line + 1;
     while (next < lines.length && skipped(next)) {
       next++;
     }
-    if (next >= lines.length || !continues(at(next))) {
+    if (kind[next] !== "continues") {
       return undefined;
     }
-  } else if (!code(line) && !continues(at(line))) {
-    return undefined;
   }
   let start = line;
   // Up past continuation lines and the blank and comment lines between
   // them, to the line that starts the statement.
-  while (start >= 0) {
-    if (!skipped(start) && !continues(at(start))) {
-      break;
-    }
+  while (start >= 0 && kind[start] !== "starts") {
     start--;
   }
   if (start < 0) {
-    // No unindented line above: as `statements` does, q starts the first
-    // statement at the first code line, indented or not (#1416).
-    start = 0;
-    while (start < line && !code(start)) {
-      start++;
-    }
-    if (!code(start)) {
-      return undefined;
-    }
-  } else if (!code(start)) {
     return undefined;
   }
   let end = line;
@@ -238,7 +271,7 @@ export function blockAt(lines: string[], line: number): { start: number; end: nu
     if (skipped(i)) {
       continue;
     }
-    if (!continues(at(i))) {
+    if (kind[i] !== "continues") {
       break;
     }
     end = i;

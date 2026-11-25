@@ -19,7 +19,7 @@
 // the process still holds the exact text it was told it holds, and only
 // when that text is what the file had before the edit.
 import { charKinds } from "./explorer";
-import { statementSpans } from "./statements";
+import { scriptCode, statementSpans } from "./statements";
 
 export const DRIFT_COMMANDS = {
   check: "q-lint.checkDrift",
@@ -89,7 +89,7 @@ function definitionOf(lines: string[], line: number, ctx: string): Definition | 
 export function definitions(source: string): Definition[] {
   const out: Definition[] = [];
   let ctx = "";
-  for (const { text, start } of statementSpans(source)) {
+  for (const { text, start } of statementSpans(scriptCode(source))) {
     const lines = text.split("\n");
     const switched = lines.length === 1 ? (CONTEXT.exec(text.trim()) ?? SYSTEM_CONTEXT.exec(text.trim())) : null;
     if (switched !== null) {

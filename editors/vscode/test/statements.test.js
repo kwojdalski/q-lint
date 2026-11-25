@@ -3,7 +3,7 @@
 // it follows, checked on KDB-X.
 const test = require("node:test");
 const assert = require("node:assert");
-const { statements, statementSpans, isBlankLine } = require("../out/statements.js");
+const { statements, statementSpans, scriptCode, blockAt, lineKinds, isBlankLine } = require("../out/statements.js");
 const { statementSpans: timedSpans } = require("../out/linetimings.js");
 const { cells, shownCode } = require("../out/cells.js");
 const { isComplete } = require("../out/repl.js");
@@ -57,4 +57,26 @@ test("a continuation line's leading tab is read as a space, as q reads it (#2280
   // In a block comment inside a statement too.
   assert.deepStrictEqual(statements("f:{x+\n/\n\tbar\n\\\n  y}"), ["f:{x+\n/\n/ bar\n/\n  y}"]);
   assert.deepStrictEqual(replLines('sql:"select *\n\tfrom t"'), ['sql:"select *\\n from t"']);
+});
+
+test("a script's indented lines before its first statement are skipped, as q skips them (#2278)", () => {
+  assert.deepStrictEqual(statements(scriptCode("  a:1\nb:2")), ["b:2"]);
+  assert.deepStrictEqual(statements(scriptCode("/ c\n  a:1\nb:2")), ["b:2"]);
+  assert.deepStrictEqual(statements(scriptCode("/\nx\n\\\n  a:1\nb:2")), ["b:2"]);
+  // Never made a command: `  \\` in a script is no exit.
+  assert.deepStrictEqual(statements(scriptCode("  \\\\\nb:2")), ["b:2"]);
+  // Lines keep their numbers.
+  assert.strictEqual(scriptCode("  a:1\nb:2\n  +1"), "\nb:2\n  +1");
+  // A piece of code that is no script starts at its first line, but never
+  // as a command it is not.
+  assert.deepStrictEqual(statements("  a:1\n  +2"), ["a:1\n  +2"]);
+  assert.deepStrictEqual(statements("  \\\\"), ["  \\\\"]);
+  assert.deepStrictEqual(statements("  \\d .x"), ["  \\d .x"]);
+  assert.deepStrictEqual(statements("  / note\na:1"), ["a:1"]);
+  // Block, cells and definitions read the file as q does.
+  assert.strictEqual(blockAt(["  a:1", "b:2"], 0), undefined);
+  assert.deepStrictEqual(blockAt(["  a:1", "b:2", "  +1"], 2), { start: 1, end: 2 });
+  assert.deepStrictEqual(lineKinds(["  a:1", "b:2", "  +1"]), ["commented", "starts", "continues"]);
+  assert.deepStrictEqual(cells(["  a:1", "/ %% one", "b:2"]).map((c) => c.start), [1]);
+  assert.deepStrictEqual(definitions("  f:{x}\ng:{y}").map((d) => d.name), ["g"]);
 });
