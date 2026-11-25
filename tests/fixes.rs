@@ -317,448 +317,460 @@ fn a_file_whose_structure_does_not_close_is_not_fixed() {
     }
 }
 
+/// Each rule's rewrite: the code, a source, what its fix leaves, and
+/// whether `--fix` applies it unattended. The README's two lists of fixes
+/// are checked against it, and it against the rules that have a fix.
+const FIX_CASES: &[(&str, &str, &str, bool)] = &[
+    (
+        "QB007",
+        "r:select from t where s like `a*",
+        "r:select from t where s like \"a*\"",
+        true,
+    ),
+    (
+        "QB007",
+        "r:\"abc\" like `abc",
+        "r:\"abc\" like \"abc\"",
+        true,
+    ),
+    // A path symbol takes its `/`: cut there, `/c` is refused (#768).
+    ("QB007", "a like `:b/c", "a like \":b/c\"", true),
+    // One character in quotes is a char atom, still 'type (#564).
+    ("QB007", "r:s like `a", "r:s like enlist\"a\"", true),
+    ("QT007", "r:ss[`abc;\"b\"]", "r:ss[\"abc\";\"b\"]", false),
+    ("QT007", "r:`a ss \"a\"", "r:(enlist\"a\") ss \"a\"", false),
+    ("QB012", "f:{[x] x+1;}", "f:{[x] x+1}", false),
+    ("QB010", "a:1;b:a -1", "a:1;b:a - 1", false),
+    ("QR001", "r:reverse asc 3 1 2", "r:desc 3 1 2", false),
+    ("QR002", "r:{x} each 1 2 3", "r:1 2 3", false),
+    ("QR002", "r:count {x} each y", "r:count y", false),
+    ("QR002", "r:{x}' y", "r:y", false),
+    ("QR002", "a:1 2 3;r:a{x} each 0 2", "a:1 2 3;r:a 0 2", false),
+    ("QR002", "b:0 2;r:0 1 2{x} each b", "b:0 2;r:0 1 2 b", false),
+    // A `-` left against the number would make it a negative literal
+    // and the subtraction an application (#207).
+    ("QR002", "r:a -{x} each 1 2", "r:a - 1 2", false),
+    ("QR002", "r:a -{x} each .5", "r:a - .5", false),
+    (
+        "QR003",
+        "r:distinct asc distinct 3 1 1",
+        "r:asc distinct 3 1 1",
+        false,
+    ),
+    ("QS004", "a:1;r:(a)+1", "a:1;r:a+1", true),
+    ("QS004", "a:1;r:(a)b", "a:1;r:a b", true),
+    ("QS004", "a:1;r:a (b)", "a:1;r:a b", true),
+    ("QS004", "a:1;r:\"ab\"(1)", "a:1;r:\"ab\" 1", true),
+    // A symbol ending in `:` or `/` would take the name in (#776).
+    ("QS004", "`:db/(t)", "`:db/ t", true),
+    ("QS004", "`:(k)", "`: k", true),
+    ("QS004", "`a:(k)", "`a: k", true),
+    ("QE002", "p:\"C:\\data\"", "p:\"C:\\\\data\"", true),
+    (
+        "QF015",
+        "f:{[x] if[x;:true]; x}",
+        "f:{[x] if[x;:1b]; x}",
+        true,
+    ),
+    ("QF015", "r:(1b;false)", "r:(1b;0b)", true),
+    ("QF015", "r:None", "r:(::)", true),
+    ("QF015", "f:{[x] return x+1}", "f:{[x] :x+1}", true),
+    ("QF015", "f:{[x] a:x; return a}", "f:{[x] a:x; :a}", true),
+    (
+        "QT005",
+        "t:([]a:1;b:`x)",
+        "t:([]a:enlist 1;b:enlist `x)",
+        true,
+    ),
+    (
+        "QB015",
+        "t:([]s:`ab`cd);r:select from t where s=\"ab\"",
+        "t:([]s:`ab`cd);r:select from t where s like \"ab\"",
+        false,
+    ),
+    ("QP005", "r:2*3+4", "r:2*(3+4)", true),
+    ("QP005", "a:1;r:a*a*a+1", "a:1;r:a*a*(a+1)", true),
+    ("QP005", "a:1;r:a+a*a-1", "a:1;r:a+(a*a-1)", true),
+    // Before a semicolon, in a lambda and in a bracket (#511).
+    ("QP005", "h:2*3+4;", "h:2*(3+4);", true),
+    ("QP005", "g:{[a;b] a*b+1}", "g:{[a;b] a*(b+1)}", true),
+    ("QP005", "k:(2*3+4)", "k:(2*(3+4))", true),
+    // In a qSQL phrase the operand ends where the column does (#847).
+    (
+        "QP005",
+        "r:select mid:0.5*bid+ask from q",
+        "r:select mid:0.5*(bid+ask) from q",
+        true,
+    ),
+    (
+        "QB008",
+        "t:([]s:`a`b`c);r:select from t where s=`a`b",
+        "t:([]s:`a`b`c);r:select from t where s in `a`b",
+        false,
+    ),
+    (
+        "QB008",
+        "t:([]a:1 2 3;s:`a`b`c);r:select from t where a>1,s=`a`b",
+        "t:([]a:1 2 3;s:`a`b`c);r:select from t where a>1,s in `a`b",
+        false,
+    ),
+    (
+        "QA008",
+        "f:{[a;b] a+b};r:f(1;2)",
+        "f:{[a;b] a+b};r:f[1;2]",
+        false,
+    ),
+    ("QT004", "r:`int$\"12\"", "r:\"I\"$\"12\"", false),
+    ("QT004", "r:\"j\"$\"12\"", "r:\"J\"$\"12\"", false),
+    (
+        "QT004",
+        "r:\"d\"$ \"2024.01.01\"",
+        "r:\"D\"$ \"2024.01.01\"",
+        false,
+    ),
+    ("QT032", "r:`symbol$\"ab\"", "r:`$\"ab\"", false),
+    (
+        "QT032",
+        "r:`guid$\"0a369037-75d3-b24d-6721-5a1d44d4bed5\"",
+        "r:\"G\"$\"0a369037-75d3-b24d-6721-5a1d44d4bed5\"",
+        false,
+    ),
+    ("QB020", "f:{[x] :x; x+1}", "f:{[x] :x}", false),
+    ("QF017", "f:{[x] a:x+1; x}", "f:{[x] x+1; x}", false),
+    ("QF017", "f:{[a] r:a -m:1; r}", "f:{[a] r:a - 1; r}", false),
+    // A negative literal left against a signature stays one (#563).
+    ("QF017", "f:{[x]r:-1;x}", "f:{[x] -1;x}", false),
+    ("QP003", "r:.z.P", "r:.z.p", false),
+    // The clock named is the clock fixed, on the line it is on (#206).
+    ("QP003", "a:(.z.D;.z.P)", "a:(.z.d;.z.P)", false),
+    ("QP003", "f:{x}\n  .z.P", "f:{x}\n  .z.p", false),
+    // Not `.z.z`, the datetime QP002 reports in the same profile (#519).
+    ("QP003", "a:.z.Z", "a:.z.p", false),
+    (
+        "QB006",
+        "t:([]a:1 2;b:3 4);r:select from t where a=1 and b=3",
+        "t:([]a:1 2;b:3 4);r:select from t where (a=1) and b=3",
+        false,
+    ),
+    (
+        "QB006",
+        "t:([]a:1 2;b:3 4);r:select from t where a>1 or b<=4, a<3;",
+        "t:([]a:1 2;b:3 4);r:select from t where (a>1) or b<=4, a<3;",
+        false,
+    ),
+    // A string ends no operand: it is not the gap a blank would be (#210).
+    (
+        "QB006",
+        "r:select from t where a=f \"x\" and b=0",
+        "r:select from t where (a=f \"x\") and b=0",
+        false,
+    ),
+    (
+        "QB006",
+        "s:select from t where a=\"x\" and b=0",
+        "s:select from t where (a=\"x\") and b=0",
+        false,
+    ),
+    // Nor does a bracket argument, or a derived function (#405).
+    (
+        "QB006",
+        "r:select from t where a=f[b;b] and b=0",
+        "r:select from t where (a=f[b;b]) and b=0",
+        false,
+    ),
+    (
+        "QB006",
+        "r:select from t where a=f'[b;b] and b=0",
+        "r:select from t where (a=f'[b;b]) and b=0",
+        false,
+    ),
+    (
+        "QB006",
+        "r:select from t where a=(+/)[b] and b=0",
+        "r:select from t where (a=(+/)[b]) and b=0",
+        false,
+    ),
+    // The argument ends at `from` after a drop too (#340).
+    (
+        "QP006",
+        "g:{x+y};r:1_select c:g a from t",
+        "g:{x+y};r:1_select c:g[a] from t",
+        true,
+    ),
+    // A line at the left margin that starts with a string is a new
+    // statement, even though `code` blanks its quote to a space (#399).
+    (
+        "QP006",
+        "f:{x+y}\nr:f 1\n\"s\"",
+        "f:{x+y}\nr:f[1]\n\"s\"",
+        true,
+    ),
+    (
+        "QP006",
+        "f:{x+y}\nr:f 1\n/ c\n\"s\"",
+        "f:{x+y}\nr:f[1]\n/ c\n\"s\"",
+        true,
+    ),
+    ("QP005", "r:a*b+c\n\"s\"", "r:a*(b+c)\n\"s\"", true),
+    ("QV002", "r:abs each x", "r:abs x", false),
+    ("QV002", "r:sqrt  each x", "r:sqrt x", false),
+    ("QV002", "r:not'[b]", "r:not[b]", false),
+    ("QV002", "f:{[x] neg each x}", "f:{[x] neg x}", false),
+    (
+        "QV003",
+        "f:{r:(); do[n; r:r,til 10]; r}",
+        "f:{r:(); do[n; r,:til 10]; r}",
+        false,
+    ),
+    (
+        "QV003",
+        "f:{r:(); do[n; r: r ,1]; r}",
+        "f:{r:(); do[n; r,:1]; r}",
+        false,
+    ),
+    ("QR004", "r:{x+1} each 1 2 3", "r:1 2 3+1", false),
+    ("QR004", "r:{2-x} each a,b", "r:2-a,b", false),
+    ("QR004", "r:{x%2} each a,b", "r:(a,b)%2", false),
+    ("QR004", "r:count {x*2} each b", "r:count b*2", false),
+    ("QR004", "f:{a{x+1} each b}", "f:{a b+1}", false),
+    ("QR004", "r:{x - 1} each b", "r:b-1", false),
+    ("QR004", "s:a -{1+x} each 2 3", "s:a - 1+2 3", false),
+    // In a query the argument ends where the column does (#350).
+    (
+        "QR004",
+        "r:select c:{x+1} each a, d:b from t",
+        "r:select c:a+1, d:b from t",
+        false,
+    ),
+    (
+        "QR004",
+        "r:select c:{x+1} each a by b from t",
+        "r:select c:a+1 by b from t",
+        false,
+    ),
+    (
+        "QR004",
+        "r:select from t where b>{2*x} each a",
+        "r:select from t where b>2*a",
+        false,
+    ),
+    ("QR004", "t:a -{x*2} each 3 4", "t:a - 3 4*2", false),
+    ("QL002", "a:1\n/ old:{x+1}\nb:2", "a:1\nb:2", false),
+    // The indentation goes with it, or `b:2` would continue `a:1` (#205).
+    ("QL002", "a:1\n  / f:{x}\nb:2", "a:1\nb:2", false),
+    (
+        "QB005",
+        "t:([]a:1 2);r:select from t where a~1",
+        "t:([]a:1 2);r:select from t where a=1",
+        false,
+    ),
+    ("QF010", "f:{[a] x+1}", "f:{[a] a+1}", false),
+    ("QA004", "f:{1};r:f . ()", "f:{1};r:f[]", true),
+    // Only the `. ()` reported changes - not the string argument before
+    // it, nor the `. (),1` that applies to a list (#208).
+    (
+        "QA004",
+        "f:{1}\nr:(!).(\"S=;\"); s:f . ()\nt:g . (),1; u:f . ()",
+        "f:{1}\nr:(!).(\"S=;\"); s:f[]\nt:g . (),1; u:f . ()",
+        true,
+    ),
+    ("QT008", "r:til 5.0", "r:til 5", true),
+    ("QT008", "r:til 3f", "r:til 3", true),
+    // One digit in quotes is a char atom, which is 'stype too (#565).
+    ("QT025", "f:{'5}", "f:{'enlist\"5\"}", true),
+    ("QT025", "f:{'12}", "f:{'\"12\"}", true),
+    ("QT025", "f:{'12:00}", "f:{'\"12:00\"}", true),
+    ("QT025", "f:{'1e-3}", "f:{'\"1e-3\"}", true),
+    (
+        "QF005",
+        "f:{[a] {a+x} each 1 2}",
+        "f:{[a] {[x;a] a+x}[;a] each 1 2}",
+        false,
+    ),
+    (
+        "QF005",
+        "f:{[a] {[x;y] a+y}'[1 2;3 4]}",
+        "f:{[a] {[x;y;a] a+y}[;;a]'[1 2;3 4]}",
+        false,
+    ),
+    (
+        "QF005",
+        "f:{[a] {a+y}'[1 2;3 4]}",
+        "f:{[a] {[x;y;a] a+y}[;;a]'[1 2;3 4]}",
+        false,
+    ),
+    (
+        "QF005",
+        "f:{[a] g:{ [b] a+b}; g 1}",
+        "f:{[a] g:{[b;a] a+b}[;a]; g 1}",
+        false,
+    ),
+    (
+        "QF005",
+        "f:{[a] g:{a}; g 1}",
+        "f:{[a] g:{[x;a] a}[;a]; g 1}",
+        false,
+    ),
+    (
+        "QF005",
+        "f:{a:2; {a+x} each 1 2}",
+        "f:{a:2; {[x;a] a+x}[;a] each 1 2}",
+        false,
+    ),
+    // A column in a query is no argument: q 5 gives the lambda one (#777).
+    (
+        "QF005",
+        "f:{[a] {a+x+exec sum y from t} each 1 2}",
+        "f:{[a] {[x;a] a+x+exec sum y from t}[;a] each 1 2}",
+        false,
+    ),
+    ("QA007", "f:{[c] $[c;1;2;]}", "f:{[c] $[c;1;2]}", false),
+    ("QA006", "f:{[c] $[c=1;1];c}", "f:{[c] if[c=1;1];c}", false),
+    ("QA006", "$[1=1;show 1]", "if[1=1;show 1]", false),
+    (
+        "QA006",
+        "f:{[c] if[c;$[c=1;1]];c}",
+        "f:{[c] if[c;if[c=1;1]];c}",
+        false,
+    ),
+    (
+        "QT028",
+        "t:([]a:1 2);r:select from t where a:1",
+        "t:([]a:1 2);r:select from t where a=1",
+        true,
+    ),
+    ("QT014", "r:2.0 rotate 1 2 3", "r:2 rotate 1 2 3", true),
+    ("QT017", "r:3f mavg 1 2 3", "r:3 mavg 1 2 3", true),
+    ("QB014", "r:10/2", "r:10%2", false),
+    ("QB017", "a:1\na:a\nb:2", "a:1\nb:2", false),
+    ("QB017", "a:1;a:a;b:2", "a:1;b:2", false),
+    // A comment after it keeps its blank: `;/` is over (#403).
+    ("QB017", "a:1\nx:1;a:a / note", "a:1\nx:1; / note", false),
+    ("QB017", "a:1\nx:1;a:a; / note", "a:1\nx:1; / note", false),
+    // An operand, not a statement: only the assignment goes, and the
+    // value it held stays where it was read (q 5: both give 3).
+    ("QB017", "f:{[x;b] r:x+b:b;r}", "f:{[x;b] r:x+b;r}", false),
+    ("QB017", "b:1;c:b:b;c", "b:1;c:b;c", false),
+    ("QB017", "f:{[b] b:b; b}", "f:{[b] b}", false),
+    // The last statement is the lambda's value, so the name stays (#213).
+    ("QB017", "f:{[a] a:a}", "f:{[a] a}", false),
+    ("QB017", "f:{[a]\n  a:a\n  }", "f:{[a]\n  a\n  }", false),
+    // A cast before a temporal literal or the clock: the same instant.
+    ("QP002", "r:`datetime$.z.p", "r:`timestamp$.z.p", false),
+    ("QP002", "r:2026.01.01T12:00", "r:2026.01.01D12:00", false),
+    (
+        "QP002",
+        "s:\"15h$\";y:15h$2020.01.01",
+        "s:\"15h$\";y:12h$2020.01.01",
+        false,
+    ),
+    (
+        "QP002",
+        "r:\"z\"$ 2020.01.01T10:00",
+        "r:\"p\"$ 2020.01.01T10:00",
+        false,
+    ),
+    // The datetime fixed, and the symbol on the same line left (#409).
+    (
+        "QP002",
+        "s:`2020.01.01T10;t:2020.01.01T10",
+        "s:`2020.01.01T10;t:2020.01.01D10",
+        false,
+    ),
+    (
+        "QF001",
+        "f:{[count] count+{count x}[count]}",
+        "f:{[countArg] countArg+{count x}[countArg]}",
+        false,
+    ),
+    // The blanks go with it, or q 5 skips the first line (#663).
+    ("QE005", "\u{feff} r:1\n", "r:1\n", true),
+    ("QE005", "\u{feff}r:1\n", "r:1\n", true),
+    (
+        "QF020",
+        "t:([]price:1 2);r:select prce from t",
+        "t:([]price:1 2);r:select price from t",
+        false,
+    ),
+    // Each glyph's keyword: on KDB-X `(g:)x` and the keyword parse alike.
+    ("QE008", "r:-x", "r:neg x", true),
+    ("QE008", "r:#x", "r:count x", true),
+    ("QE008", "r:,x", "r:enlist x", true),
+    ("QE008", "r:~x", "r:not x", true),
+    ("QE008", "r:_x", "r:floor x", true),
+    ("QE008", "r:%x", "r:reciprocal x", true),
+    ("QE008", "r:!x", "r:key x", true),
+    ("QE008", "r:$x", "r:string x", true),
+    ("QE008", "r:&x", "r:where x", true),
+    ("QE008", "r:|x", "r:reverse x", true),
+    ("QE008", "r:^x", "r:null x", true),
+    ("QE008", "r:@x", "r:type x", true),
+    ("QE008", "r:?x", "r:distinct x", true),
+    ("QE008", "r:*x", "r:first x", true),
+    ("QE008", "r:+x", "r:flip x", true),
+    ("QE008", "r:.(x)", "r:value (x)", true),
+    ("QE008", "r:#:x", "r:count x", true),
+    ("QE008", "r:,-1", "r:enlist -1", true),
+    ("QE008", "r:*$[a;b;c]", "r:first $[a;b;c]", true),
+    ("QE008", "f:{[a]-x}", "f:{[a] neg x}", true),
+    ("QE008", "r:- x", "r:neg x", true),
+    // The derived function in parentheses: on KDB-X `(+/)x+y` parses as
+    // `+/[x+y]`, which is what q 4 applied it to.
+    ("QE009", "f:{+/x}", "f:{(+/)x}", true),
+    ("QE009", "f:{x/y}", "f:{(x/)y}", true),
+    ("QE009", "f:{count'x}", "f:{(count')x}", true),
+    ("QE009", "f:{sum/:x}", "f:{(sum/:)x}", true),
+    ("QE009", "f:{+/'x}", "f:{(+/')x}", true),
+    ("QE009", "f:{.:'x}", "f:{(.:')x}", true),
+    ("QE009", "f:{-':x}", "f:{(-':)x}", true),
+    ("QE009", "f:{.foo.f/x}", "f:{(.foo.f/)x}", true),
+    ("QE009", "f:{+/x+y}", "f:{(+/)x+y}", true),
+    // Each keyword in parentheses: on KDB-X `(cor) each x` is
+    // `each[cor;x]`, as `count each x` is.
+    ("QE011", "r:cor each x", "r:(cor) each x", true),
+    ("QE011", "r:1+mavg peach x", "r:1+(mavg) peach x", true),
+    ("QE011", "r:within over x", "r:(within) over x", true),
+    ("QE011", "r:xexp scan x", "r:(xexp) scan x", true),
+    ("QE011", "r:mod prior x", "r:(mod) prior x", true),
+    ("QE011", "f:{[x] cor each x}", "f:{[x] (cor) each x}", true),
+    // 'type before, a connection after: only in the editor.
+    (
+        "QT029",
+        "h:hopen `localhost:5000",
+        "h:hopen `:localhost:5000",
+        false,
+    ),
+    ("QT029", "h:hopen[`db:5000]", "h:hopen[`:db:5000]", false),
+    // Each look-alike becomes its ASCII; the one in the string stays.
+    ("QE012", "r:1\u{a0}2", "r:1 2", true),
+    (
+        "QE012",
+        "r:\"\u{a0}\";s:1\u{a0}+2",
+        "r:\"\u{a0}\";s:1 +2",
+        true,
+    ),
+    ("QE012", "r:\u{2013}1", "r:-1", true),
+    ("QE012", "r:1\u{2014}2", "r:1-2", true),
+    ("QE012", "r:\u{2212}1", "r:-1", true),
+    ("QE012", "r:f\u{2018}x", "r:f'x", true),
+    ("QE012", "r:f\u{2019}x", "r:f'x", true),
+    ("QE012", "s:\u{201c}hi\u{201d}", "s:\"hi\"", true),
+    ("QE004", "a:1==1", "a:1=1", true),
+    ("QE004", "c:1&&2", "c:1&2", false),
+    ("QP007", "r:2+3*4", "r:2+(3*4)", true),
+    ("QP008", "r:2*(3+4)", "r:2*3+4", true),
+    // A suppression nothing needs: only in the editor.
+    ("QL003", "a:1 / noqa: QE004", "a:1", false),
+];
+
 #[test]
 fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
     use q_lint_rs::{Profile, fix_for, lint};
-    let cases = [
-        (
-            "QB007",
-            "r:select from t where s like `a*",
-            "r:select from t where s like \"a*\"",
-            true,
-        ),
-        (
-            "QB007",
-            "r:\"abc\" like `abc",
-            "r:\"abc\" like \"abc\"",
-            true,
-        ),
-        // A path symbol takes its `/`: cut there, `/c` is refused (#768).
-        ("QB007", "a like `:b/c", "a like \":b/c\"", true),
-        // One character in quotes is a char atom, still 'type (#564).
-        ("QB007", "r:s like `a", "r:s like enlist\"a\"", true),
-        ("QT007", "r:ss[`abc;\"b\"]", "r:ss[\"abc\";\"b\"]", false),
-        ("QT007", "r:`a ss \"a\"", "r:(enlist\"a\") ss \"a\"", false),
-        ("QB012", "f:{[x] x+1;}", "f:{[x] x+1}", false),
-        ("QB010", "a:1;b:a -1", "a:1;b:a - 1", false),
-        ("QR001", "r:reverse asc 3 1 2", "r:desc 3 1 2", false),
-        ("QR002", "r:{x} each 1 2 3", "r:1 2 3", false),
-        ("QR002", "r:count {x} each y", "r:count y", false),
-        ("QR002", "r:{x}' y", "r:y", false),
-        ("QR002", "a:1 2 3;r:a{x} each 0 2", "a:1 2 3;r:a 0 2", false),
-        ("QR002", "b:0 2;r:0 1 2{x} each b", "b:0 2;r:0 1 2 b", false),
-        // A `-` left against the number would make it a negative literal
-        // and the subtraction an application (#207).
-        ("QR002", "r:a -{x} each 1 2", "r:a - 1 2", false),
-        ("QR002", "r:a -{x} each .5", "r:a - .5", false),
-        (
-            "QR003",
-            "r:distinct asc distinct 3 1 1",
-            "r:asc distinct 3 1 1",
-            false,
-        ),
-        ("QS004", "a:1;r:(a)+1", "a:1;r:a+1", true),
-        ("QS004", "a:1;r:(a)b", "a:1;r:a b", true),
-        ("QS004", "a:1;r:a (b)", "a:1;r:a b", true),
-        ("QS004", "a:1;r:\"ab\"(1)", "a:1;r:\"ab\" 1", true),
-        // A symbol ending in `:` or `/` would take the name in (#776).
-        ("QS004", "`:db/(t)", "`:db/ t", true),
-        ("QS004", "`:(k)", "`: k", true),
-        ("QS004", "`a:(k)", "`a: k", true),
-        ("QE002", "p:\"C:\\data\"", "p:\"C:\\\\data\"", true),
-        (
-            "QF015",
-            "f:{[x] if[x;:true]; x}",
-            "f:{[x] if[x;:1b]; x}",
-            true,
-        ),
-        ("QF015", "r:(1b;false)", "r:(1b;0b)", true),
-        ("QF015", "r:None", "r:(::)", true),
-        ("QF015", "f:{[x] return x+1}", "f:{[x] :x+1}", true),
-        ("QF015", "f:{[x] a:x; return a}", "f:{[x] a:x; :a}", true),
-        (
-            "QT005",
-            "t:([]a:1;b:`x)",
-            "t:([]a:enlist 1;b:enlist `x)",
-            true,
-        ),
-        (
-            "QB015",
-            "t:([]s:`ab`cd);r:select from t where s=\"ab\"",
-            "t:([]s:`ab`cd);r:select from t where s like \"ab\"",
-            false,
-        ),
-        ("QP005", "r:2*3+4", "r:2*(3+4)", true),
-        ("QP005", "a:1;r:a*a*a+1", "a:1;r:a*a*(a+1)", true),
-        ("QP005", "a:1;r:a+a*a-1", "a:1;r:a+(a*a-1)", true),
-        // Before a semicolon, in a lambda and in a bracket (#511).
-        ("QP005", "h:2*3+4;", "h:2*(3+4);", true),
-        ("QP005", "g:{[a;b] a*b+1}", "g:{[a;b] a*(b+1)}", true),
-        ("QP005", "k:(2*3+4)", "k:(2*(3+4))", true),
-        // In a qSQL phrase the operand ends where the column does (#847).
-        (
-            "QP005",
-            "r:select mid:0.5*bid+ask from q",
-            "r:select mid:0.5*(bid+ask) from q",
-            true,
-        ),
-        (
-            "QB008",
-            "t:([]s:`a`b`c);r:select from t where s=`a`b",
-            "t:([]s:`a`b`c);r:select from t where s in `a`b",
-            false,
-        ),
-        (
-            "QB008",
-            "t:([]a:1 2 3;s:`a`b`c);r:select from t where a>1,s=`a`b",
-            "t:([]a:1 2 3;s:`a`b`c);r:select from t where a>1,s in `a`b",
-            false,
-        ),
-        (
-            "QA008",
-            "f:{[a;b] a+b};r:f(1;2)",
-            "f:{[a;b] a+b};r:f[1;2]",
-            false,
-        ),
-        ("QT004", "r:`int$\"12\"", "r:\"I\"$\"12\"", false),
-        ("QT004", "r:\"j\"$\"12\"", "r:\"J\"$\"12\"", false),
-        (
-            "QT004",
-            "r:\"d\"$ \"2024.01.01\"",
-            "r:\"D\"$ \"2024.01.01\"",
-            false,
-        ),
-        ("QT032", "r:`symbol$\"ab\"", "r:`$\"ab\"", false),
-        (
-            "QT032",
-            "r:`guid$\"0a369037-75d3-b24d-6721-5a1d44d4bed5\"",
-            "r:\"G\"$\"0a369037-75d3-b24d-6721-5a1d44d4bed5\"",
-            false,
-        ),
-        ("QB020", "f:{[x] :x; x+1}", "f:{[x] :x}", false),
-        ("QF017", "f:{[x] a:x+1; x}", "f:{[x] x+1; x}", false),
-        ("QF017", "f:{[a] r:a -m:1; r}", "f:{[a] r:a - 1; r}", false),
-        // A negative literal left against a signature stays one (#563).
-        ("QF017", "f:{[x]r:-1;x}", "f:{[x] -1;x}", false),
-        ("QP003", "r:.z.P", "r:.z.p", false),
-        // The clock named is the clock fixed, on the line it is on (#206).
-        ("QP003", "a:(.z.D;.z.P)", "a:(.z.d;.z.P)", false),
-        ("QP003", "f:{x}\n  .z.P", "f:{x}\n  .z.p", false),
-        // Not `.z.z`, the datetime QP002 reports in the same profile (#519).
-        ("QP003", "a:.z.Z", "a:.z.p", false),
-        (
-            "QB006",
-            "t:([]a:1 2;b:3 4);r:select from t where a=1 and b=3",
-            "t:([]a:1 2;b:3 4);r:select from t where (a=1) and b=3",
-            false,
-        ),
-        (
-            "QB006",
-            "t:([]a:1 2;b:3 4);r:select from t where a>1 or b<=4, a<3;",
-            "t:([]a:1 2;b:3 4);r:select from t where (a>1) or b<=4, a<3;",
-            false,
-        ),
-        // A string ends no operand: it is not the gap a blank would be (#210).
-        (
-            "QB006",
-            "r:select from t where a=f \"x\" and b=0",
-            "r:select from t where (a=f \"x\") and b=0",
-            false,
-        ),
-        (
-            "QB006",
-            "s:select from t where a=\"x\" and b=0",
-            "s:select from t where (a=\"x\") and b=0",
-            false,
-        ),
-        // Nor does a bracket argument, or a derived function (#405).
-        (
-            "QB006",
-            "r:select from t where a=f[b;b] and b=0",
-            "r:select from t where (a=f[b;b]) and b=0",
-            false,
-        ),
-        (
-            "QB006",
-            "r:select from t where a=f'[b;b] and b=0",
-            "r:select from t where (a=f'[b;b]) and b=0",
-            false,
-        ),
-        (
-            "QB006",
-            "r:select from t where a=(+/)[b] and b=0",
-            "r:select from t where (a=(+/)[b]) and b=0",
-            false,
-        ),
-        // The argument ends at `from` after a drop too (#340).
-        (
-            "QP006",
-            "g:{x+y};r:1_select c:g a from t",
-            "g:{x+y};r:1_select c:g[a] from t",
-            true,
-        ),
-        // A line at the left margin that starts with a string is a new
-        // statement, even though `code` blanks its quote to a space (#399).
-        (
-            "QP006",
-            "f:{x+y}\nr:f 1\n\"s\"",
-            "f:{x+y}\nr:f[1]\n\"s\"",
-            true,
-        ),
-        (
-            "QP006",
-            "f:{x+y}\nr:f 1\n/ c\n\"s\"",
-            "f:{x+y}\nr:f[1]\n/ c\n\"s\"",
-            true,
-        ),
-        ("QP005", "r:a*b+c\n\"s\"", "r:a*(b+c)\n\"s\"", true),
-        ("QV002", "r:abs each x", "r:abs x", false),
-        ("QV002", "r:sqrt  each x", "r:sqrt x", false),
-        ("QV002", "r:not'[b]", "r:not[b]", false),
-        ("QV002", "f:{[x] neg each x}", "f:{[x] neg x}", false),
-        (
-            "QV003",
-            "f:{r:(); do[n; r:r,til 10]; r}",
-            "f:{r:(); do[n; r,:til 10]; r}",
-            false,
-        ),
-        (
-            "QV003",
-            "f:{r:(); do[n; r: r ,1]; r}",
-            "f:{r:(); do[n; r,:1]; r}",
-            false,
-        ),
-        ("QR004", "r:{x+1} each 1 2 3", "r:1 2 3+1", false),
-        ("QR004", "r:{2-x} each a,b", "r:2-a,b", false),
-        ("QR004", "r:{x%2} each a,b", "r:(a,b)%2", false),
-        ("QR004", "r:count {x*2} each b", "r:count b*2", false),
-        ("QR004", "f:{a{x+1} each b}", "f:{a b+1}", false),
-        ("QR004", "r:{x - 1} each b", "r:b-1", false),
-        ("QR004", "s:a -{1+x} each 2 3", "s:a - 1+2 3", false),
-        // In a query the argument ends where the column does (#350).
-        (
-            "QR004",
-            "r:select c:{x+1} each a, d:b from t",
-            "r:select c:a+1, d:b from t",
-            false,
-        ),
-        (
-            "QR004",
-            "r:select c:{x+1} each a by b from t",
-            "r:select c:a+1 by b from t",
-            false,
-        ),
-        (
-            "QR004",
-            "r:select from t where b>{2*x} each a",
-            "r:select from t where b>2*a",
-            false,
-        ),
-        ("QR004", "t:a -{x*2} each 3 4", "t:a - 3 4*2", false),
-        ("QL002", "a:1\n/ old:{x+1}\nb:2", "a:1\nb:2", false),
-        // The indentation goes with it, or `b:2` would continue `a:1` (#205).
-        ("QL002", "a:1\n  / f:{x}\nb:2", "a:1\nb:2", false),
-        (
-            "QB005",
-            "t:([]a:1 2);r:select from t where a~1",
-            "t:([]a:1 2);r:select from t where a=1",
-            false,
-        ),
-        ("QF010", "f:{[a] x+1}", "f:{[a] a+1}", false),
-        ("QA004", "f:{1};r:f . ()", "f:{1};r:f[]", true),
-        // Only the `. ()` reported changes - not the string argument before
-        // it, nor the `. (),1` that applies to a list (#208).
-        (
-            "QA004",
-            "f:{1}\nr:(!).(\"S=;\"); s:f . ()\nt:g . (),1; u:f . ()",
-            "f:{1}\nr:(!).(\"S=;\"); s:f[]\nt:g . (),1; u:f . ()",
-            true,
-        ),
-        ("QT008", "r:til 5.0", "r:til 5", true),
-        ("QT008", "r:til 3f", "r:til 3", true),
-        // One digit in quotes is a char atom, which is 'stype too (#565).
-        ("QT025", "f:{'5}", "f:{'enlist\"5\"}", true),
-        ("QT025", "f:{'12}", "f:{'\"12\"}", true),
-        ("QT025", "f:{'12:00}", "f:{'\"12:00\"}", true),
-        ("QT025", "f:{'1e-3}", "f:{'\"1e-3\"}", true),
-        (
-            "QF005",
-            "f:{[a] {a+x} each 1 2}",
-            "f:{[a] {[x;a] a+x}[;a] each 1 2}",
-            false,
-        ),
-        (
-            "QF005",
-            "f:{[a] {[x;y] a+y}'[1 2;3 4]}",
-            "f:{[a] {[x;y;a] a+y}[;;a]'[1 2;3 4]}",
-            false,
-        ),
-        (
-            "QF005",
-            "f:{[a] {a+y}'[1 2;3 4]}",
-            "f:{[a] {[x;y;a] a+y}[;;a]'[1 2;3 4]}",
-            false,
-        ),
-        (
-            "QF005",
-            "f:{[a] g:{ [b] a+b}; g 1}",
-            "f:{[a] g:{[b;a] a+b}[;a]; g 1}",
-            false,
-        ),
-        (
-            "QF005",
-            "f:{[a] g:{a}; g 1}",
-            "f:{[a] g:{[x;a] a}[;a]; g 1}",
-            false,
-        ),
-        (
-            "QF005",
-            "f:{a:2; {a+x} each 1 2}",
-            "f:{a:2; {[x;a] a+x}[;a] each 1 2}",
-            false,
-        ),
-        // A column in a query is no argument: q 5 gives the lambda one (#777).
-        (
-            "QF005",
-            "f:{[a] {a+x+exec sum y from t} each 1 2}",
-            "f:{[a] {[x;a] a+x+exec sum y from t}[;a] each 1 2}",
-            false,
-        ),
-        ("QA007", "f:{[c] $[c;1;2;]}", "f:{[c] $[c;1;2]}", false),
-        ("QA006", "f:{[c] $[c=1;1];c}", "f:{[c] if[c=1;1];c}", false),
-        ("QA006", "$[1=1;show 1]", "if[1=1;show 1]", false),
-        (
-            "QA006",
-            "f:{[c] if[c;$[c=1;1]];c}",
-            "f:{[c] if[c;if[c=1;1]];c}",
-            false,
-        ),
-        (
-            "QT028",
-            "t:([]a:1 2);r:select from t where a:1",
-            "t:([]a:1 2);r:select from t where a=1",
-            true,
-        ),
-        ("QT014", "r:2.0 rotate 1 2 3", "r:2 rotate 1 2 3", true),
-        ("QT017", "r:3f mavg 1 2 3", "r:3 mavg 1 2 3", true),
-        ("QB014", "r:10/2", "r:10%2", false),
-        ("QB017", "a:1\na:a\nb:2", "a:1\nb:2", false),
-        ("QB017", "a:1;a:a;b:2", "a:1;b:2", false),
-        // A comment after it keeps its blank: `;/` is over (#403).
-        ("QB017", "a:1\nx:1;a:a / note", "a:1\nx:1; / note", false),
-        ("QB017", "a:1\nx:1;a:a; / note", "a:1\nx:1; / note", false),
-        // An operand, not a statement: only the assignment goes, and the
-        // value it held stays where it was read (q 5: both give 3).
-        ("QB017", "f:{[x;b] r:x+b:b;r}", "f:{[x;b] r:x+b;r}", false),
-        ("QB017", "b:1;c:b:b;c", "b:1;c:b;c", false),
-        ("QB017", "f:{[b] b:b; b}", "f:{[b] b}", false),
-        // The last statement is the lambda's value, so the name stays (#213).
-        ("QB017", "f:{[a] a:a}", "f:{[a] a}", false),
-        ("QB017", "f:{[a]\n  a:a\n  }", "f:{[a]\n  a\n  }", false),
-        // A cast before a temporal literal or the clock: the same instant.
-        ("QP002", "r:`datetime$.z.p", "r:`timestamp$.z.p", false),
-        ("QP002", "r:2026.01.01T12:00", "r:2026.01.01D12:00", false),
-        (
-            "QP002",
-            "s:\"15h$\";y:15h$2020.01.01",
-            "s:\"15h$\";y:12h$2020.01.01",
-            false,
-        ),
-        (
-            "QP002",
-            "r:\"z\"$ 2020.01.01T10:00",
-            "r:\"p\"$ 2020.01.01T10:00",
-            false,
-        ),
-        // The datetime fixed, and the symbol on the same line left (#409).
-        (
-            "QP002",
-            "s:`2020.01.01T10;t:2020.01.01T10",
-            "s:`2020.01.01T10;t:2020.01.01D10",
-            false,
-        ),
-        (
-            "QF001",
-            "f:{[count] count+{count x}[count]}",
-            "f:{[countArg] countArg+{count x}[countArg]}",
-            false,
-        ),
-        // The blanks go with it, or q 5 skips the first line (#663).
-        ("QE005", "\u{feff} r:1\n", "r:1\n", true),
-        ("QE005", "\u{feff}r:1\n", "r:1\n", true),
-        (
-            "QF020",
-            "t:([]price:1 2);r:select prce from t",
-            "t:([]price:1 2);r:select price from t",
-            false,
-        ),
-        // Each glyph's keyword: on KDB-X `(g:)x` and the keyword parse alike.
-        ("QE008", "r:-x", "r:neg x", true),
-        ("QE008", "r:#x", "r:count x", true),
-        ("QE008", "r:,x", "r:enlist x", true),
-        ("QE008", "r:~x", "r:not x", true),
-        ("QE008", "r:_x", "r:floor x", true),
-        ("QE008", "r:%x", "r:reciprocal x", true),
-        ("QE008", "r:!x", "r:key x", true),
-        ("QE008", "r:$x", "r:string x", true),
-        ("QE008", "r:&x", "r:where x", true),
-        ("QE008", "r:|x", "r:reverse x", true),
-        ("QE008", "r:^x", "r:null x", true),
-        ("QE008", "r:@x", "r:type x", true),
-        ("QE008", "r:?x", "r:distinct x", true),
-        ("QE008", "r:*x", "r:first x", true),
-        ("QE008", "r:+x", "r:flip x", true),
-        ("QE008", "r:.(x)", "r:value (x)", true),
-        ("QE008", "r:#:x", "r:count x", true),
-        ("QE008", "r:,-1", "r:enlist -1", true),
-        ("QE008", "r:*$[a;b;c]", "r:first $[a;b;c]", true),
-        ("QE008", "f:{[a]-x}", "f:{[a] neg x}", true),
-        ("QE008", "r:- x", "r:neg x", true),
-        // The derived function in parentheses: on KDB-X `(+/)x+y` parses as
-        // `+/[x+y]`, which is what q 4 applied it to.
-        ("QE009", "f:{+/x}", "f:{(+/)x}", true),
-        ("QE009", "f:{x/y}", "f:{(x/)y}", true),
-        ("QE009", "f:{count'x}", "f:{(count')x}", true),
-        ("QE009", "f:{sum/:x}", "f:{(sum/:)x}", true),
-        ("QE009", "f:{+/'x}", "f:{(+/')x}", true),
-        ("QE009", "f:{.:'x}", "f:{(.:')x}", true),
-        ("QE009", "f:{-':x}", "f:{(-':)x}", true),
-        ("QE009", "f:{.foo.f/x}", "f:{(.foo.f/)x}", true),
-        ("QE009", "f:{+/x+y}", "f:{(+/)x+y}", true),
-        // Each keyword in parentheses: on KDB-X `(cor) each x` is
-        // `each[cor;x]`, as `count each x` is.
-        ("QE011", "r:cor each x", "r:(cor) each x", true),
-        ("QE011", "r:1+mavg peach x", "r:1+(mavg) peach x", true),
-        ("QE011", "r:within over x", "r:(within) over x", true),
-        ("QE011", "r:xexp scan x", "r:(xexp) scan x", true),
-        ("QE011", "r:mod prior x", "r:(mod) prior x", true),
-        ("QE011", "f:{[x] cor each x}", "f:{[x] (cor) each x}", true),
-        // 'type before, a connection after: only in the editor.
-        (
-            "QT029",
-            "h:hopen `localhost:5000",
-            "h:hopen `:localhost:5000",
-            false,
-        ),
-        ("QT029", "h:hopen[`db:5000]", "h:hopen[`:db:5000]", false),
-        // Each look-alike becomes its ASCII; the one in the string stays.
-        ("QE012", "r:1\u{a0}2", "r:1 2", true),
-        (
-            "QE012",
-            "r:\"\u{a0}\";s:1\u{a0}+2",
-            "r:\"\u{a0}\";s:1 +2",
-            true,
-        ),
-        ("QE012", "r:\u{2013}1", "r:-1", true),
-        ("QE012", "r:1\u{2014}2", "r:1-2", true),
-        ("QE012", "r:\u{2212}1", "r:-1", true),
-        ("QE012", "r:f\u{2018}x", "r:f'x", true),
-        ("QE012", "r:f\u{2019}x", "r:f'x", true),
-        ("QE012", "s:\u{201c}hi\u{201d}", "s:\"hi\"", true),
-    ];
-    for (code, source, expected, safe) in cases {
+    for &(code, source, expected, safe) in FIX_CASES {
+        // QP007 and QP008 are in no profile, and QL003 is about the others.
         let finding = lint(source, "probe.q", Profile::Uqf)
             .into_iter()
+            .chain(selected(source, &[code]))
             .find(|f| f.code == code)
             .unwrap_or_else(|| panic!("{code} not reported on {source}"));
         let fix = fix_for(&finding, source).unwrap_or_else(|| panic!("no fix for {source}"));
@@ -2287,4 +2299,64 @@ fn a_one_character_symbol_given_to_ss_becomes_a_string_ss_takes() {
         return;
     };
     assert_eq!(values, [",0", ",0", ",\"b\"", ",1", ",0"]);
+}
+
+/// The rules a fix exists for: each arm of `fix_with` in src/lib.rs, and
+/// QL003, whose fix has a function of its own.
+fn rules_with_a_fix() -> std::collections::BTreeSet<String> {
+    let lib = include_str!("../src/lib.rs").replace("\r\n", "\n");
+    let from = lib.find("\nfn fix_with(").expect("fix_with in src/lib.rs");
+    let body = &lib[from..from + lib[from..].find("\n}\n").unwrap()];
+    let arm = regex::Regex::new(r#"(?m)^ {8}((?:"Q[A-Z]\d{3}"(?: \| )?)+)(?: if .*)? =>"#).unwrap();
+    let code = regex::Regex::new(r"Q[A-Z]\d{3}").unwrap();
+    let mut rules: std::collections::BTreeSet<String> = arm
+        .captures_iter(body)
+        .flat_map(|m| {
+            code.find_iter(m.get(1).unwrap().as_str())
+                .map(|c| c.as_str().to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    rules.insert("QL003".into());
+    rules
+}
+
+/// The rule codes the README names in the paragraph that begins `opening`.
+fn readme_codes(opening: &str) -> std::collections::BTreeSet<String> {
+    let readme = include_str!("../README.md").replace("\r\n", "\n");
+    let from = readme
+        .find(opening)
+        .unwrap_or_else(|| panic!("README lost `{opening}`"));
+    let paragraph = &readme[from..from + readme[from..].find("\n\n").unwrap()];
+    regex::Regex::new(r"\bQ[A-Z]\d{3}\b")
+        .unwrap()
+        .find_iter(paragraph)
+        .map(|c| c.as_str().to_string())
+        .collect()
+}
+
+/// The README's two lists of fixes are what `--fix` and the editor do: a
+/// rule is in "Batch fixing handles" when a fix of its is batch-safe, and in
+/// the editor-only list when one is not - QR003's, once listed as batch,
+/// has been editor-only since #1201 (#2260). And every rule with a fix has
+/// a row in `FIX_CASES`, so neither list can leave one out unseen.
+#[test]
+fn the_readme_lists_each_fix_where_fix_applies_it() {
+    use std::collections::BTreeSet;
+    let rules = rules_with_a_fix();
+    let tested: BTreeSet<String> = FIX_CASES.iter().map(|c| c.0.to_string()).collect();
+    let untested: Vec<_> = rules.difference(&tested).collect();
+    assert!(
+        untested.is_empty(),
+        "rules with a fix and no FIX_CASES row: {untested:?}"
+    );
+    let with = |safe: bool| -> BTreeSet<String> {
+        FIX_CASES
+            .iter()
+            .filter(|c| c.3 == safe)
+            .map(|c| c.0.to_string())
+            .collect()
+    };
+    assert_eq!(readme_codes("Batch fixing handles"), with(true));
+    assert_eq!(readme_codes("Some rewrites change behaviour"), with(false));
 }
