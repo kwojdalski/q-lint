@@ -147,10 +147,10 @@ fn by_name(code: &str) -> Vec<(usize, usize)> {
 /// indented lines that continue it, as they do any other language's, but k
 /// reads and assigns q's globals under the `\d` in force: KDB-X 5 `fk:2`,
 /// `k)gk:fk+1`, then gk is 3 (#2019).
-struct KLines {
+pub(super) struct KLines {
     /// Each name that is a global: where, how long, and the lambda it is
     /// directly in.
-    globals: Vec<(usize, usize, Option<usize>)>,
+    pub(super) globals: Vec<(usize, usize, Option<usize>)>,
     /// Each lambda: where its brace opens, and its parameters and locals.
     lambdas: Vec<(usize, HashSet<String>)>,
     /// Each symbol: where its name starts, and the name.
@@ -164,7 +164,7 @@ struct KLines {
 /// implicit x, y or z, and a `name:` it assigns are its own, as in q, and a
 /// nested lambda reads the global: `k)f:{[fk] fk+1}`, `k){fk:5;fk+1}` and
 /// `k){{fk+x}x}` were each run, as was `k)([]fk:1 2)`, a column.
-fn k_lines(code: &str, raw: &str) -> KLines {
+pub(super) fn k_lines(code: &str, raw: &str) -> KLines {
     let mut out = KLines {
         globals: vec![],
         lambdas: vec![],

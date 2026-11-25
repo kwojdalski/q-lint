@@ -857,6 +857,28 @@ fn a_k_line_defines_the_global_it_assigns() {
 }
 
 #[test]
+fn a_k_line_reads_the_global_it_names() {
+    // KDB-X 5: after c.q's `qdef:{x+1}`, `k)r2:qdef 1` is 2 and the k lambda
+    // continued on an indented line, `k)h:{x+` / `  qdef x}`, reads it too
+    // (h 1 is 2); a k lambda's parameter of the name is its own (f 5 is 6),
+    // and a k line that assigns the name reads nothing (#2120).
+    let g = graph(
+        &[
+            ("c.q", "qdef:{x+1}\ndone:1\n"),
+            ("d.q", "k)r2:qdef 1\n"),
+            ("e.q", "k)h:{x+\n  qdef x}\n"),
+            ("f.q", "k)f:{[qdef] qdef+1}\n"),
+            ("g.q", "k)done:2\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "d.q"), ["c.q"]);
+    assert_eq!(deps(&g, "e.q"), ["c.q"]);
+    assert!(deps(&g, "f.q").is_empty(), "{:?}", deps(&g, "f.q"));
+    assert!(deps(&g, "g.q").is_empty(), "{:?}", deps(&g, "g.q"));
+}
+
+#[test]
 fn a_relative_load_is_tried_against_the_process_directory_first() {
     // q 5, run from the root: sub/a.q's `\l b.q` loads the root's b.q, not
     // sub/b.q beside it (#529).

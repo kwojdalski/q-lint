@@ -244,7 +244,8 @@ A file depends on another when:
   in a string or comment. A name no file defines is tried without its last
   segment, so `.cfg.opts.port` reaches the file defining `.cfg.opts`. A
   symbol handed straight to `get` or `value`, `` get`.ns.x `` or
-  `` get[`.ns.x] ``, is a read too;
+  `` get[`.ns.x] ``, is a read too, and so is a name on a `k)` line, which
+  reads q's globals as k has its names;
 - it loads the other by a literal path, `\l path` or `system "l path"`, or
   names it as a file symbol ending in `.q`, `` `:lib/x.q ``, whatever that is
   handed to - a project's own loader is invisible to reading otherwise. q

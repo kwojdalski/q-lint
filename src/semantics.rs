@@ -1373,6 +1373,17 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
         }
         read(m.as_str(), m.start());
     }
+    // What a `k)` line reads, which both views blank: k reads q's globals
+    // under the `\d` in force, KDB-X 5 `helper:{x+1}` then `k)r:helper 1`
+    // is 2, as `index` already takes what one defines (#2120).
+    for (at, len, _) in navigate::k_lines(code, raw).globals {
+        if !raw[at + len..]
+            .trim_start_matches([' ', '\t'])
+            .starts_with(':')
+        {
+            read(&raw[at..at + len], at);
+        }
+    }
     // A symbol handed straight to `get` or `value` names the global it reads
     // as plainly as writing the name would - unless it is resolved at call
     // time, in a `\d` the source does not say; then, and for a `set` into
