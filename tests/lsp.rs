@@ -3711,6 +3711,38 @@ fn performance_lints_can_be_turned_off() {
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
+/// A rule family a toggle turns off stays off when `lint.select` names one
+/// of its codes, or a longer prefix: the toggle is not one more `ignore`
+/// entry a longer selector outranks (#2294).
+#[test]
+fn a_feature_toggle_beats_a_longer_selector_in_lint_select() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("qlinter.toml"),
+        "target-version = \"4.0\"\n",
+    )
+    .unwrap();
+    let uri = file_uri(&dir.path().join("k.q"));
+    let run = |init: Value| {
+        let (mut server, _) = start_with_options(dir.path(), &["--lsp"], init, None);
+        server.open(&uri, "d:([a:1;b:2])\nr:abs each x\n");
+        let found = codes_of(&server.diagnostics_for(&uri));
+        assert_eq!(server.shutdown_and_exit(), 0);
+        found
+    };
+    let select = json!(["QK001", "QV002", "QF"]);
+    assert_eq!(run(json!({"lint": {"select": select}})), ["QK001", "QV002"]);
+    for (toggle, left) in [("versionCheck", "QV002"), ("performanceLints", "QK001")] {
+        for select in [json!(["QK001", "QV002", "QF"]), json!(["QK0", "QV0", "QF"])] {
+            assert_eq!(
+                run(json!({toggle: {"enable": false}, "lint": {"select": select}})),
+                [left],
+                "{toggle} off, select {select}"
+            );
+        }
+    }
+}
+
 /// `q-lint/formatChangedLines` makes the safe fixes for the findings on the
 /// lines it is given and no others; with the setting off, or no lines, it
 /// makes none.

@@ -195,7 +195,10 @@ pub struct Policy {
     /// command line select it AND this layer does. It is how a language
     /// client's settings narrow what a repository's configuration - the one
     /// CI reads - turns on, without being able to widen it.
-    narrowing: RefCell<Option<Layer>>,
+    /// Several layers, each of which must select a rule: the editor's
+    /// `lint.select`/`lint.ignore`, and the rule families its feature toggles
+    /// turn off, which a longer selector in the first must not outrank.
+    narrowing: RefCell<Vec<Layer>>,
     /// Each baseline file read, or why it could not be.
     baselines: RefCell<HashMap<PathBuf, Rc<Result<Baseline, String>>>>,
     /// An editor's switch for the baseline, over everything else.
@@ -296,11 +299,12 @@ impl Policy {
         b
     }
 
-    /// Narrow every file's selection by `layer`, resolved the way a
+    /// Narrow every file's selection by each of `layers`, resolved the way a
     /// configuration's own layer is - the longest selector that names a code
-    /// decides - and then intersected with what is already selected.
-    pub fn narrow(&self, layer: Layer) {
-        *self.narrowing.borrow_mut() = Some(layer);
+    /// decides - and then intersected with what is already selected: a rule
+    /// reports only where every layer selects it (#2294).
+    pub fn narrow(&self, layers: Vec<Layer>) {
+        *self.narrowing.borrow_mut() = layers;
     }
 
     /// Forget every file read, after one of them changed on disk.
@@ -520,8 +524,8 @@ impl Policy {
             && self
                 .narrowing
                 .borrow()
-                .as_ref()
-                .is_none_or(|layer| apply(layer, code, true))
+                .iter()
+                .all(|layer| apply(layer, code, true))
     }
 
     /// Whether the configuration and flags select `code`, before the

@@ -966,7 +966,7 @@ impl Options {
     /// could not be read. A bad value is reported and its default used: a
     /// server that refused to start over a typo in a setting would give an
     /// editor no diagnostics at all.
-    fn read(params: &Value) -> (Self, Layer, Vec<String>) {
+    fn read(params: &Value) -> (Self, Vec<Layer>, Vec<String>) {
         let init = &params["initializationOptions"];
         let mut options = Options::default();
         let mut problems = vec![];
@@ -1129,15 +1129,19 @@ impl Options {
                 .collect()
         };
         let select = codes("/lint/select", select);
-        let mut ignore = codes("/lint/ignore", ignore);
+        let ignore = codes("/lint/ignore", ignore);
+        // A rule family a toggle turns off is a layer of its own: in
+        // `lint.ignore`, `QK` would lose to a longer `QK001` in `lint.select`,
+        // the longest selector deciding, and the toggle would not hold (#2294).
+        let mut off = vec![];
         if !options.performance_lints {
-            ignore.push("QV".to_string());
+            off.push("QV".to_string());
         }
         if !options.version_check {
-            ignore.push("QK".to_string());
+            off.push("QK".to_string());
         }
         if !options.type_lints {
-            ignore.extend(["QT033", "QT034", "QT035"].map(String::from));
+            off.extend(["QT033", "QT034", "QT035"].map(String::from));
         }
         for text in exclude {
             match crate::config::pattern(&text) {
@@ -1172,14 +1176,24 @@ impl Options {
                 "/lint/severity must map codes to severities, not {other}"
             )),
         }
-        let layer = Layer {
-            // An empty list is no selection at all, not a selection of
-            // nothing: it is what an editor sends for a setting left alone.
-            select: (!select.is_empty()).then_some(select),
-            extend_select: vec![],
-            ignore,
-        };
-        (options, layer, problems)
+        let layers = [
+            Layer {
+                // An empty list is no selection at all, not a selection of
+                // nothing: it is what an editor sends for a setting left alone.
+                select: (!select.is_empty()).then_some(select),
+                extend_select: vec![],
+                ignore,
+            },
+            Layer {
+                select: None,
+                extend_select: vec![],
+                ignore: off,
+            },
+        ]
+        .into_iter()
+        .filter(|layer| layer.select.is_some() || !layer.ignore.is_empty())
+        .collect();
+        (options, layers, problems)
     }
 
     /// The severity a client asked for `code`, if it asked for one.
@@ -1405,11 +1419,9 @@ pub fn serve(
                         idx.roots = folders.iter().map(|(path, _)| path.clone()).collect();
                         policy.set_roots(&idx.roots);
                         idx.folders = folders.into_iter().map(Folder::of).collect();
-                        let layer;
-                        (opts, layer, problems) = Options::read(&params);
-                        if layer.select.is_some() || !layer.ignore.is_empty() {
-                            policy.narrow(layer);
-                        }
+                        let layers;
+                        (opts, layers, problems) = Options::read(&params);
+                        policy.narrow(layers);
                         policy.use_baseline(opts.baseline);
                         code_action_literals = params
                             .pointer(
