@@ -14,6 +14,7 @@ import { ASYNC, readAsyncMessage, textPayload } from "./asyncquery";
 import { elapsedText } from "./progress";
 import type { Live } from "./live";
 import { readLive } from "./liveconfig";
+import { limits } from "./querycontrols";
 import { statements } from "./statements";
 import { iconsEscaped, plainMessage } from "./history";
 import { DirectRefused, directRefusal } from "./qclient";
@@ -37,7 +38,7 @@ export class AsyncQueries {
 
   constructor(
     context: ExtensionContext,
-    private readonly live: Pick<Live, "runOnActive" | "onAsyncMessage" | "onDidChange" | "showGrid" | "record" | "codeFromEditor"> & Partial<Pick<Live, "activeDirect">>,
+    private readonly live: Pick<Live, "runOnActive" | "onAsyncMessage" | "onDidChange" | "showGrid" | "record" | "codeFromEditor"> & Partial<Pick<Live, "activeDirect" | "queryUnlimited">>,
   ) {
     context.subscriptions.push(
       commands.registerCommand(ADMIN_COMMANDS.runAsync, (code?: string) => this.run(code)),
@@ -111,7 +112,8 @@ export class AsyncQueries {
       return undefined;
     }
     const configuration = workspace.getConfiguration("q-lint");
-    const { consoleSize, gridLimit } = readLive((key, fallback) => configuration.get(key, fallback));
+    // Unlimited asks for every row and the whole text, as a query run waits does (#2367).
+    const { consoleSize, gridLimit } = limits(readLive((key, fallback) => configuration.get(key, fallback)), this.live.queryUnlimited?.() ?? false);
     const id = this.next++;
     let sent: { process: string; value: number | undefined } | undefined;
     try {

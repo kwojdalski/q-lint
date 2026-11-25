@@ -685,6 +685,11 @@ export class Live {
   /// gateway, nor in direct evaluation, which has no backtrace.
   lastFailure: { process: string; code: string; error: string; trace: string } | undefined;
   private readonly controls: QueryControls;
+
+  /// Whether Toggle Unlimited Query is on: every row and the whole text.
+  queryUnlimited(): boolean {
+    return this.controls.unlimited;
+  }
   private readonly parameterCache: ParameterCache;
   /// The process explorer's call on the connection, if one is out: a query
   /// waits for it (`borrow`). `borrower` says whose it is, for Abort (#1709).
