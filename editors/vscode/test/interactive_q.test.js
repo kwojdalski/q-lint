@@ -32,12 +32,12 @@ function freePort() {
 }
 
 /// A q process loading `body`, listening on a free port.
-async function startQ(body) {
+async function startQ(body, flags = "") {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-interactiveq-"));
   const script = path.join(dir, "server.q");
   fs.writeFileSync(script, body);
   const port = await freePort();
-  const child = spawn(`${Q} ${script} -p ${port}`, { shell: true, stdio: ["ignore", "ignore", "pipe"], detached: true });
+  const child = spawn(`${Q} ${script} -p ${port} ${flags}`, { shell: true, stdio: ["ignore", "ignore", "pipe"], detached: true });
   for (let i = 0; i < 100; i++) {
     const up = await new Promise((resolve) => {
       const s = net.connect(port, "127.0.0.1", () => {
@@ -158,4 +158,24 @@ test(".qlint.view and .qlint.plot, defined on the process, open what a query pas
   for (let i = 0; i < 50 && stub.messages.length === 0; i++) await sleep(20);
   assert.ok(stub.messages.some(([, text]) => /has no rows to show: 42/.test(text)));
   assert.strictEqual(view.shown().length, 2);
+});
+
+test(".qlint.view in a read-only query or under peach gives the value back rather than failing the query (#2540)", { skip }, async (t) => {
+  const { QConnection } = require("../out/qclient.js");
+  const { viewDefinition } = require("../out/qview.js");
+  const { statements } = require("../out/statements.js");
+  const q = await startQ("t:([] a:1 2 3)\n", "-s 2");
+  t.after(() => q.stop());
+  const c = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => c.close());
+  assert.strictEqual((await c.query(statements(viewDefinition([25, 80], 100)), [25, 80])).ok, true);
+  assert.deepStrictEqual(await c.query(["{count .qlint.view x} peach (t;t)"], [25, 80]), { ok: true, type: 7, text: ["3 3"] });
+  c.readOnly = true;
+  try {
+    assert.deepStrictEqual(await c.query(["count .qlint.plot t"], [25, 80]), { ok: true, type: -7, text: ["3"] });
+  } finally {
+    c.readOnly = false;
+  }
+  // Nothing was held there.
+  assert.deepStrictEqual(await c.query(["@[get;`.qlint.shown;`none]"], [25, 80]), { ok: true, type: -11, text: ["`none"] });
 });
