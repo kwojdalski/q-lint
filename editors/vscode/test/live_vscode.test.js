@@ -637,6 +637,23 @@ test("a query apart goes through the process's SSH tunnel, and refuses when tunn
   assert.strictEqual(reached, 0);
 });
 
+// A tunnel set, changed or cleared reaches another q at host:port: the
+// password stored for the old way was sent there at the next connect (#2371).
+test("Set SSH Tunnel forgets the stored password when the way changes, and keeps it when it does not (#2371)", async (t) => {
+  const { context, live } = await setUp(t, [proc("rdb", 5010, { user: "bob" })]);
+  const secrets = context.secrets.all;
+  secrets.set("q-lint.password.rdb", "s3cret");
+  await stub.commands.get("q-lint.setSshTunnel")("rdb", "me@bastion");
+  assert.strictEqual(live.processes()[0].ssh, "me@bastion");
+  assert.strictEqual(secrets.has("q-lint.password.rdb"), false);
+  secrets.set("q-lint.password.rdb", "s3cret");
+  await stub.commands.get("q-lint.setSshTunnel")("rdb", "me@bastion");
+  assert.strictEqual(secrets.get("q-lint.password.rdb"), "s3cret");
+  await stub.commands.get("q-lint.setSshTunnel")("rdb", null);
+  assert.strictEqual(live.processes()[0].ssh, undefined);
+  assert.strictEqual(secrets.has("q-lint.password.rdb"), false);
+});
+
 // Disconnect while a connect waits for the handshake: the connect went on,
 // and the process - perhaps a production one - became the active one.
 test("Disconnect during a connect stops it (#1073)", async (t) => {

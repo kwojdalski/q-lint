@@ -2487,7 +2487,13 @@ export class Live {
       void window.showErrorMessage(plainMessage(`q-lint: "${process.label}" was deleted meanwhile; its tunnel was not set.`));
       return;
     }
-    await this.save(now.map((p) => (p.label === process.label ? withExtras(p, { ...p, ssh }) : p)));
+    const saved = now.find((p) => p.label === process.label)!;
+    const updated = withExtras(saved, { ...saved, ssh });
+    // Another tunnel reaches another q: its password was not given for that (#2371).
+    if (passwordsToForget([saved], [updated]).length > 0) {
+      await this.context.secrets.delete(this.passwordKey(saved));
+    }
+    await this.save(now.map((p) => (p.label === process.label ? updated : p)));
     void window.showInformationMessage(
       plainMessage(ssh === undefined
         ? `q-lint: ${process.label} is connected to directly from the next connect.`
