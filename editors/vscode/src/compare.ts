@@ -86,6 +86,10 @@ export interface Comparison {
   /// Each table's key columns, where the two are not keyed by the same:
   /// a keyed table and an unkeyed one of the same cells are two values.
   rekeyed?: { left: string[]; right: string[] };
+  /// What each answer is, where the two are not alike: `GRID` makes a list
+  /// a table of one column and a dictionary a keyed table, which are other
+  /// values to q (#2163).
+  reshaped?: { left: string; right: string };
   /// Cells that are the same as far as their text goes, which was cut at
   /// 200 characters: the rest of each was not compared.
   cut: number;
@@ -127,6 +131,16 @@ function textCut(lines: string[], type: number, width: number | undefined): bool
         (type < 100 && itemCut(line)) ||
         (line === ".." && i === lines.length - 1)),
   );
+}
+
+/// What a value of `type` that `GRID` made a table of is: a dictionary and
+/// a keyed table are both 99, and only the console tells them apart - a
+/// keyed table's first line names its columns, its second is dashes.
+function shape(type: number, text: string[]): string {
+  if (type === 99) {
+    return text.length > 1 && /^\S.*\|/.test(text[0]) && /^-+\|/.test(text[1]) ? "a keyed table" : "a dictionary";
+  }
+  return type === 98 ? "a table" : "a list";
 }
 
 function side(outcome: Outcome): { side: Side } {
@@ -214,7 +228,9 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number,
     const sb = { ...b.side, text: text(right, b.side) };
     const cut = (o: Outcome, s: Side): boolean => s.kind === "text" && "answer" in o && o.answer.ok && textCut(o.answer.text, o.answer.type, width);
     const partial = cut(left, sa) || cut(right, sb);
-    const same = !partial && sa.kind === sb.kind && sa.text === sb.text;
+    // And of one type, an enumeration's number aside (#2163).
+    const typed = (o: Outcome): string => ("answer" in o && o.answer.ok ? typeName(o.answer.type) : "");
+    const same = !partial && sa.kind === sb.kind && sa.text === sb.text && typed(left) === typed(right);
     // Two values' text, not two errors': the same to the digits written,
     // unless the text of their type is the whole value.
     const digits = same && sa.kind === "text" && [left, right].some((o) => "answer" in o && o.answer.ok && !exactText(o.answer.type));
@@ -226,6 +242,7 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number,
   }
   const ga = ha.grid;
   const gb = hb.grid;
+  const shapes = [left, right].map((o) => ("answer" in o && o.answer.ok ? shape(o.answer.type, o.answer.text) : ""));
   const namesA = ga.columns.map((c) => c.name);
   const namesB = gb.columns.map((c) => c.name);
   // A name a table repeats, as a join can, is matched occurrence by
@@ -379,11 +396,12 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number,
     onlyRight,
     uncompared,
     retyped,
+    ...(shapes[0] === shapes[1] ? {} : { reshaped: { left: shapes[0], right: shapes[1] } }),
     ...(keyedAlike ? {} : { rekeyed: { left: namesA.slice(0, keysA), right: namesB.slice(0, keysB) } }),
     cut,
     digits: false,
     toDigits,
-    same: !partial && sameColumns && keyedAlike && retyped.length === 0 && cut === 0 && toDigits === 0 && differing === 0 && onlyLeft === 0 && onlyRight === 0 && ga.total === gb.total,
+    same: !partial && sameColumns && keyedAlike && shapes[0] === shapes[1] && retyped.length === 0 && cut === 0 && toDigits === 0 && differing === 0 && onlyLeft === 0 && onlyRight === 0 && ga.total === gb.total,
     partial,
   };
 }

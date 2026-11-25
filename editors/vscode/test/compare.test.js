@@ -422,3 +422,27 @@ test("floats written to two processes' \\P that agree as far as the fewer digits
   const syms = (text) => table({ s: [11, [text]] });
   assert.deepStrictEqual([compareOutcomes(side("a", syms("0.1")), side("b", syms("0.10")), -1)].map((x) => [x.differing, x.toDigits]), [[1, 0]]);
 });
+
+// GRID makes a list a table of one column named value, and a dictionary a
+// keyed table of key and value: 1 2 3 against flip(enlist`value)!enlist 1 2 3
+// was "the same answer", though q's ~ says they differ.
+test("a list and a table, or a dictionary and a keyed table, of the same cells are not the same answer (#2163)", () => {
+  const as = (type, answer, text) => ({ ...answer, type, text });
+  const values = () => table({ value: [7, ["1", "2", "3"], [1, 2, 3]] });
+  const list = compareOutcomes(side("a", as(7, values(), ["1 2 3"])), side("b", as(98, values(), ["value", "-----", "1", "2", "3"])), -1);
+  assert.deepStrictEqual([list.same, list.reshaped], [false, { left: "a list", right: "a table" }]);
+  const pairs = () => table({ key: [11, ["a", "b"]], value: [7, ["1", "2"], [1, 2]] }, 1);
+  const dict = (s) => side(s, as(99, pairs(), ["a| 1", "b| 2"]));
+  const keyed = (s) => side(s, as(99, pairs(), ["key| value", "---| -----", "a  | 1", "b  | 2"]));
+  const c = compareOutcomes(dict("a"), keyed("b"), -1);
+  assert.deepStrictEqual([c.same, c.reshaped], [false, { left: "a dictionary", right: "a keyed table" }]);
+  // A dictionary of a table's rows is a dictionary still.
+  assert.strictEqual(compareOutcomes(side("a", as(99, pairs(), [" | x", "-| -", "a| 1"])), dict("b"), -1).reshaped, undefined);
+  assert.deepStrictEqual([compareOutcomes(dict("a"), dict("b"), -1).same, compareOutcomes(keyed("a"), keyed("b"), -1).same], [true, true]);
+  const page = loadPage();
+  page.send({ type: "compare", id: 1, code: "x", comparison: c });
+  assert.strictEqual(page.posted.at(-1).rendered.summary, "the answer is a dictionary on a and a keyed table on b (rows lined up by key).");
+  // Text of two types is two answers, an enumeration's number aside.
+  const atom = (type, text) => ({ ok: true, type, text: [text] });
+  assert.deepStrictEqual([compareOutcomes(side("a", atom(-7, "1")), side("b", atom(-9, "1")), -1).same, compareOutcomes(side("a", atom(20, "`sym$`a")), side("b", atom(21, "`sym$`a")), -1).same], [false, true]);
+});

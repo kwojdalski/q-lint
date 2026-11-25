@@ -64,6 +64,10 @@
     (c.retyped || []).forEach(function (t) {
       parts.push(t.column + " is " + t.left + " on " + l + " and " + t.right + " on " + r);
     });
+    if (c.reshaped) {
+      // A list and a table, a dictionary and a keyed table (#2163).
+      parts.push("the answer is " + c.reshaped.left + " on " + l + " and " + c.reshaped.right + " on " + r);
+    }
     if (c.rekeyed) {
       // Keyed by other columns, or one of them not at all (#2008).
       const by = function (keys, said) { return keys.length === 0 ? "not keyed" : said + keys.join(", "); };
