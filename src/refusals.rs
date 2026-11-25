@@ -2199,6 +2199,41 @@ fn numbers(
                     "`{text}`: a sign straight after an `e` is an exponent's, so q reads \
                      all of `{text}` as one number"
                 ))
+            } else if negative && re!(r"^(?:[01]+b|0x[0-9a-fA-F]*)$").is_match(text) {
+                // A boolean or a byte takes no minus: q 5 refuses `-1b`,
+                // `-0b`, `-10b`, `x -1b` and `-0x01` with the token, and
+                // `x-1b` subtracts (#2222).
+                Some(format!(
+                    "`-{text}`: a {} has no negative",
+                    if text.starts_with("0x") {
+                        "byte"
+                    } else {
+                        "boolean"
+                    }
+                ))
+            } else if re!(r"^\d+[NW]").is_match(text) && !re!(r"^0[NW]").is_match(text) {
+                // Only a lone 0 comes before a null's or an infinity's
+                // letter: q 5 refuses `1N`, `10N`, `00N` and `1W` (#2223).
+                Some(format!(
+                    "`{text}`: a null or an infinity is written with one 0 before its letter"
+                ))
+            } else if suffix_tail(text) && !re!(r"\d{4}\.\d\dm$").is_match(text) {
+                // A type letter ends a number, so a digit or a point after it
+                // runs the token on: q 5 refuses `1i2`, `2h3`, `1i.`, `1b.`,
+                // `0x01.`, `1.5f2`, `1e1e1` and `2000.01m.` with it (#2221).
+                // A month at its end is read as that month: q 5 parses
+                // `2006.05m2006.04m` as 2006.04m.
+                Some(format!(
+                    "`{text}`: a digit or a point after the type letter runs the number on"
+                ))
+            } else if re!(r"^\d+(?:\.\d*){2,}")
+                .find(text)
+                .is_some_and(|m| !re!(r"^\d{4}\.\d\d\.\d\d$").is_match(m.as_str()))
+            {
+                // Two points make a date or nothing, whatever follows: q 5
+                // refuses `1.2.a`, `3.4.z.K` and `2026.05.2912000f` with the
+                // token (#2224).
+                Some(format!("`{text}` is not a number or a date (yyyy.mm.dd)"))
             } else {
                 date_among_numbers(run, k, text)
             };
@@ -2219,6 +2254,46 @@ fn numbers(
         }
         i = j + 1;
     }
+}
+
+/// Whether a digit or a point follows a number's type letter, in the one
+/// token q reads: `1i2`, `1.5f2`, `1e1e1` (an exponent, then the letter `e`),
+/// `0x01.`. Read as q reads a number: digits, points and colons, a lower-case
+/// exponent with its digits or an upper-case one, then one letter. A `D` or a
+/// `T` starts a timespan's or a timestamp's clock, which is left alone.
+fn suffix_tail(text: &str) -> bool {
+    let b = text.as_bytes();
+    let digit = |p: usize| b.get(p).is_some_and(u8::is_ascii_digit);
+    let mut p = 0;
+    if text.starts_with("0x") {
+        p = 2 + b[2..].iter().take_while(|c| c.is_ascii_hexdigit()).count();
+        return b.get(p) == Some(&b'.');
+    }
+    p += b
+        .iter()
+        .take_while(|c| c.is_ascii_digit() || b".:".contains(c))
+        .count();
+    match b.get(p) {
+        Some(b'e')
+            if digit(p + 1) || (matches!(b.get(p + 1), Some(b'+' | b'-')) && digit(p + 2)) =>
+        {
+            p += 2;
+            while digit(p) {
+                p += 1;
+            }
+        }
+        Some(b'E') if digit(p + 1) => {
+            p += 1;
+            while digit(p) {
+                p += 1;
+            }
+        }
+        _ => {}
+    }
+    if !b.get(p).is_some_and(u8::is_ascii_alphabetic) || matches!(b[p], b'D' | b'T') {
+        return false;
+    }
+    digit(p + 1) || b.get(p + 1) == Some(&b'.')
 }
 
 /// QE010: a date or a month among plain numbers. q reads a vector literal

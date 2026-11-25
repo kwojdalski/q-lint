@@ -1595,3 +1595,122 @@ h:{[]-.5}
 k:{[a] -1}
 n:{x[0]-1}
 p:{[a]a[0]-1}
+
+=== QE010 profile: general | a digit or a point after a number's type letter runs the token on (q 5: '1i2, #2221)
+a:1i2
+
+=== QE010 profile: general | a digit or a point after a number's type letter runs the token on (q 5: '2h3, #2221)
+a:2h3
+
+=== QE010 profile: general | a digit or a point after a number's type letter runs the token on (q 5: '3i5, #2221)
+a:1 2 3i5
+
+=== QE010 profile: general | a digit or a point after a number's type letter runs the token on (q 5: '1i., #2221)
+a:1i.
+
+=== QE010 profile: general | a digit or a point after a number's type letter runs the token on (q 5: '1b., #2221)
+a:1b.
+
+=== QE010 profile: general | a digit or a point after a number's type letter runs the token on (q 5: '0x01., #2221)
+a:0x01.
+
+=== QE010 profile: general | a digit or a point after a number's type letter runs the token on (q 5: '1.5f2, #2221)
+a:1.5f2
+
+=== QE010 profile: general | a digit or a point after a number's type letter runs the token on (q 5: '1e1e1, #2221)
+a:1e1e1
+
+=== QE010 profile: general | a digit or a point after a number's type letter runs the token on (q 5: '2000.01m., #2221)
+a:2000.01m.
+
+=== QE010 profile: general | a digit or a point after a number's type letter runs the token on (q 5: '1f.5, #2221)
+a:1f.5
+
+=== QE010 profile: general | a digit or a point after a number's type letter runs the token on (q 5: '1i., #2221)
+a:1i.z
+
+=== QE010 profile: general | a digit or a point after a number's type letter runs the token on (q 5: '1j.a, #2221)
+a:1j.a
+
+=== clean profile: general | while q 5 parses each of these (#2221)
+a:1i
+a:1.5f
+a:1e10
+a:2000.01m
+a:0x01
+a:1b
+a:1 2 3i
+a:1i+2
+a:1.
+a:1e-5
+a:2000.01.01D10:00
+
+=== QE010 profile: general | two points make a date or nothing, whatever follows them (q 5: '1.2.a, #2224)
+a:1.2.a
+
+=== QE010 profile: general | two points make a date or nothing, whatever follows them (q 5: '3.4.z.K, #2224)
+a:3.4.z.K
+
+=== QE010 profile: general | two points make a date or nothing, whatever follows them (q 5: '2026.05.2, #2224)
+a:2026.05.2912000f
+
+=== clean profile: general | while q 5 parses each of these (#2224)
+a:1.2 .a
+a:(3.4<.z.K)
+a:3.4<.z.K
+a:2026.05.29D12
+a:1.2+.a
+
+=== QE010 profile: general | a boolean or a byte takes no minus (q 5: '-1b, #2222)
+a:-1b
+
+=== QE010 profile: general | a boolean or a byte takes no minus (q 5: '-0b, #2222)
+a:-0b
+
+=== QE010 profile: general | a boolean or a byte takes no minus (q 5: '-1b, #2222)
+a:-1b+1
+
+=== QE010 profile: general | a boolean or a byte takes no minus (q 5: '-0x01, #2222)
+a:-0x01
+
+=== QE010 profile: general | a boolean or a byte takes no minus (q 5: '-1b, #2222)
+a:x -1b
+
+=== QE010 profile: general | a boolean or a byte takes no minus (q 5: '-1b, #2222)
+a:(-1b)
+
+=== QE010 profile: general | a boolean or a byte takes no minus (q 5: '-10b, #2222)
+a:-10b
+
+=== clean profile: general | while q 5 parses each of these (#2222)
+a:x-1b
+a:1b
+a:0x01
+a:-1
+a:-1 0b
+
+=== QE010 profile: general | only a lone 0 comes before a null's or an infinity's letter (q 5: '1N, #2223)
+a:1N
+
+=== QE010 profile: general | only a lone 0 comes before a null's or an infinity's letter (q 5: '10N, #2223)
+a:10N
+
+=== QE010 profile: general | only a lone 0 comes before a null's or an infinity's letter (q 5: '10N, #2223)
+a:n#10N?5
+
+=== QE010 profile: general | only a lone 0 comes before a null's or an infinity's letter (q 5: '1W, #2223)
+a:1W
+
+=== QE010 profile: general | only a lone 0 comes before a null's or an infinity's letter (q 5: '00N, #2223)
+a:00N
+
+=== clean profile: general | while q 5 parses each of these (#2223)
+a:2n
+a:0N
+a:0W
+a:0n
+a:0w
+a:10 0N
+a:1 0N
+a:-0W
+
