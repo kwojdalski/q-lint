@@ -1135,6 +1135,29 @@ fn highlights_mark_a_write_apart_from_a_read() {
 }
 
 #[test]
+fn a_dictionary_pattern_outlines_what_it_binds_and_not_its_keys() {
+    // KDB-X 5 binds vv, b1, b2 and p for these, and neither kk, b nor the
+    // filter neg: `value`kk` and `value`b` are 'kk and 'b (#2330, #2329).
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "d:`kk`b!(1;2 3)\n([kk:vv]):d\n([b:(b1;b2)]):d\n([k:p:neg]):`k`z!5 6\n";
+    let uri = server.open(dir.path(), "pa.q", text);
+    let reply = server.request(
+        "textDocument/documentSymbol",
+        json!({"textDocument": {"uri": uri}}),
+    );
+    let names: Vec<&str> = reply["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["d", "vv", "b1", "b2", "p"]);
+    let reply = server.request("workspace/symbol", json!({"query": "kk"}));
+    assert_eq!(reply["result"], json!([]), "{reply}");
+}
+
+#[test]
 fn the_outline_lists_what_the_document_assigns() {
     let dir = tempfile::tempdir().unwrap();
     let mut server = Server::start(dir.path(), &[]);

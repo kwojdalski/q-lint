@@ -4710,7 +4710,7 @@ pub(crate) fn slots(s: &str) -> Vec<&str> {
 }
 /// A lambda parameter name. `_` is absent deliberately: q reads `{[_] ...}` as
 /// a body, not a signature, which is what `named` below is about.
-fn is_param_name(s: &str) -> bool {
+pub(crate) fn is_param_name(s: &str) -> bool {
     re!(r"^\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*$").is_match(s)
 }
 
@@ -4784,7 +4784,7 @@ fn pattern_within(s: &str, nested: bool, depth: usize) -> bool {
 /// (`a:`x`y`z; b:1; {[a b] 7}[`y]` is 7). A builtin applied, an operator, an
 /// iterator, or a literal at the head is 'nyi where the lambda is defined:
 /// `{[count x] 1}`, `{[a+b] 1}`, `{[a'] 1}`, `{[1 a] 1}` (#484).
-fn application(s: &str) -> bool {
+pub(crate) fn application(s: &str) -> bool {
     let s = s.trim();
     re!(r"^\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*")
         .find(s)
@@ -4946,7 +4946,7 @@ fn assigns_operand(rest: &str) -> bool {
     !rest.is_empty() && !rest.starts_with([';', ')', ']', '}', '\'', '[', '/', '\\', '\r', '\n'])
 }
 /// The first `byte` in `s` outside any bracket, brace or parenthesis.
-fn first_outside(s: &str, byte: u8) -> Option<usize> {
+pub(crate) fn first_outside(s: &str, byte: u8) -> Option<usize> {
     let mut depth = 0i32;
     for (i, b) in s.bytes().enumerate() {
         match b {
@@ -4994,17 +4994,36 @@ fn names_within(slot: &str, depth: usize) -> Vec<&str> {
         return vec![];
     }
     let slot = typed_at(slot).map_or(slot, |at| &slot[..at]);
+    // A dictionary or table pattern's field `k:p` matches its key or column
+    // `k` against the pattern `p`, which binds what it binds: `([k:v])`
+    // binds v, `([k:p:neg])` binds p, filtered by neg, and `([k:`j])` binds
+    // nothing - it matches the symbol (q 5: `([k:p:neg]):`k`z!5 6` sets p to
+    // -5, `{[([k:v:abs])] v}[`k`z!(-3;4)]` is 3, `([kq:`j]):`kq`z!5 6` is
+    // 'match, and none sets k or kq, #2329). A field with no colon binds
+    // its own name: `([k;v])` binds k and v, `([]a;b:c)` binds a and c.
+    let trimmed = slot.trim();
+    let whole = trimmed.starts_with('(') && matching(trimmed, 0, b'(', b')') == Some(trimmed.len());
+    if whole
+        && trimmed.starts_with("([")
+        && let Some(close) = matching(trimmed, 1, b'[', b']')
+    {
+        let mut names = field_names(slots(&trimmed[2..close - 1]), depth);
+        names.extend(field_names(
+            slots(&trimmed[close..trimmed.len() - 1]),
+            depth,
+        ));
+        return names;
+    }
     // A list pattern's items each take their own filter: `(a:neg;b)` binds
     // a and b, and not neg (q 5 `{[(a:neg;b)] (a;b)} 1 2` is -1 2, #668).
-    let trimmed = slot.trim();
-    if trimmed.starts_with('(')
-        && !trimmed.starts_with("([")
-        && matching(trimmed, 0, b'(', b')') == Some(trimmed.len())
-    {
-        return slots(&trimmed[1..trimmed.len() - 1])
-            .into_iter()
-            .flat_map(|item| names_within(item, depth + 1))
-            .collect();
+    if whole {
+        return items_names(slots(&trimmed[1..trimmed.len() - 1]), depth);
+    }
+    // A dictionary pattern `k!p`: what each side binds, each side its own
+    // pattern - `k!(a:neg;b)` binds k, a and b (q 5: `(k!(a:neg;b)):`x`y!1 2`
+    // sets k to `x`y and a to -1).
+    if let Some(at) = first_outside(trimmed, b'!') {
+        return items_names(vec![&trimmed[..at], &trimmed[at + 1..]], depth);
     }
     if application(trimmed) {
         return vec![];
@@ -5018,6 +5037,24 @@ fn names_within(slot: &str, depth: usize) -> Vec<&str> {
                 && !slot[m.end()..].trim_start().starts_with(':')
         })
         .map(|m| m.as_str())
+        .collect()
+}
+/// What the items of a pattern at `depth` bind, each its own pattern.
+fn items_names(items: Vec<&str>, depth: usize) -> Vec<&str> {
+    items
+        .into_iter()
+        .flat_map(|item| names_within(item, depth + 1))
+        .collect()
+}
+/// What the fields of a dictionary or table pattern at `depth` bind: the
+/// pattern after a field's first colon, or the field's own name.
+fn field_names(items: Vec<&str>, depth: usize) -> Vec<&str> {
+    items
+        .into_iter()
+        .flat_map(|item| match item.split_once(':') {
+            Some((_, p)) => names_within(p, depth + 1),
+            None => names_within(item, depth + 1),
+        })
         .collect()
 }
 /// Where a parameter slot would bind a name holding `_`: `Some(true)` for a

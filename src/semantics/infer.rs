@@ -341,7 +341,16 @@ pub fn typed_locals(code: &str, raw: &str, comments: &str) -> Vec<Typed> {
 /// bounds it to stay linear in the file's length.
 pub fn typed_locals_up_to(code: &str, raw: &str, comments: &str, most: usize) -> Vec<Typed> {
     let (scopes, _) = scopes(code, raw);
-    let sigs = signatures(code);
+    let mut sigs = signatures(code);
+    // A pattern assignment's item is no assignment either: in
+    // `(a:`f;b):x`, `a:`f` checks the item is a float, and `a` is that
+    // float (q 5 `{(a:`f;b):x; a*2}[(1.5;2)]` is 3f, #2331).
+    sigs.extend(
+        super::pattern_targets(code)
+            .into_iter()
+            .map(|(open, close, _)| (open + 1, close)),
+    );
+    sigs.sort_unstable();
     let mut out = vec![];
     for s in 0..scopes.len() {
         if scopes[s].locals.len() > most {
@@ -404,12 +413,23 @@ fn settled(
 
 /// Each lambda signature in `code`, `{[...]`, as the bytes between its
 /// brackets: one pass, a signature holding no other bracket of its kind.
+/// Blanks may stand between the brace and the bracket: q 5 reads
+/// `{ [x:`j] x}` as a typed parameter (`{ [x:`j] x}[1f]` is 'type).
 fn signatures(code: &str) -> Vec<(usize, usize)> {
     let b = code.as_bytes();
     let mut out = vec![];
     let mut i = 0;
     while i + 1 < b.len() {
-        if b[i] == b'{' && b[i + 1] == b'[' {
+        let gap = if b[i] == b'{' {
+            b[i + 1..]
+                .iter()
+                .take_while(|c| matches!(c, b' ' | b'\t' | b'\r' | b'\n'))
+                .count()
+        } else {
+            0
+        };
+        if b[i] == b'{' && b.get(i + 1 + gap) == Some(&b'[') {
+            i += gap;
             let mut depth = 0usize;
             let mut j = i + 1;
             while j < b.len() {

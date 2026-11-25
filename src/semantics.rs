@@ -130,10 +130,26 @@ pub(crate) fn global_multi_assignments(text: &str) -> impl Iterator<Item = (usiz
 /// Each name a pattern assignment binds, with where it starts and whether
 /// it is a global wherever it is written.
 fn pattern_assignments(text: &str) -> impl Iterator<Item = (usize, &str, bool)> {
+    pattern_targets(text)
+        .into_iter()
+        .flat_map(move |(at, close, double)| {
+            crate::pattern_names(&text[at..=close])
+                .into_iter()
+                .map(move |n| (at, n, double || n.contains('.')))
+        })
+}
+/// Each pattern-assignment target in `text`, wherever it stands: where its
+/// `(` opens, where its `)` closes, and whether `::` follows, which assigns
+/// globals. The one reading of KDB-X's pattern syntax the rules and the
+/// editor share: q 5 runs each of `(a;b):1 2`, `r:(a;b):1 2` (r is 1 2),
+/// `(a;b)::3 4`, `r:count (a;b):7 8`, `(k!v):`a`b!1 2` (k is `a`b),
+/// `([a;b])::d`, `([kk:vv]):d` (vv only) and `(a:`f;b):x` (a checked to be a
+/// float), a target being anything `is_pattern` takes (#2326, #2329).
+pub(crate) fn pattern_targets(text: &str) -> Vec<(usize, usize, bool)> {
     let bytes = text.as_bytes();
-    re!(r"\)\s*(::?)[^:]")
+    re!(r"\)\s*(::?)(?:[^:]|$)")
         .captures_iter(text)
-        .filter_map(move |c| {
+        .filter_map(|c| {
             let m = c.get(0).unwrap();
             let double = c[1].len() == 2;
             // Back to the `(` that opens the target. A filter can hold any
@@ -155,14 +171,9 @@ fn pattern_assignments(text: &str) -> impl Iterator<Item = (usize, &str, bool)> 
                 }
                 at = at.checked_sub(1)?;
             }
-            let target = &text[at..=m.start()];
-            crate::is_pattern(target, false).then(|| {
-                crate::pattern_names(target)
-                    .into_iter()
-                    .map(move |n| (at, n, double || n.contains('.')))
-            })
+            crate::is_pattern(&text[at..=m.start()], false).then_some((at, m.start(), double))
         })
-        .flatten()
+        .collect()
 }
 /// Whether a `set`, `insert` or `upsert` whose target is the symbol written
 /// at `tick`, with `rest` between it and the keyword, names what it writes:
@@ -868,10 +879,15 @@ fn scopes(code: &str, raw: &str) -> (Vec<Scope>, Vec<(usize, String)>) {
         // `{t:([]c:1 2); {c+1}[]}[]` is 11, and `{[a] t:([]x:1 2); x}[1]` is 'x.
         let view = local_view(&direct, true);
         let mut locals = scope.params.clone();
+        let targets = pattern_targets(&view);
         for a in assignment.captures_iter(&view) {
-            if boundary(&view, a.get(0).unwrap().start())
+            let at = a.get(0).unwrap().start();
+            if boundary(&view, at)
                 && a.get(2).is_none()
                 && !a[1].contains('.')
+                && !targets
+                    .iter()
+                    .any(|&(open, close, _)| open < at && at < close)
             {
                 locals.insert(a[1].into());
             }
@@ -1060,6 +1076,14 @@ fn global_writes(
             blank(&mut view[open + 1..close - 1]);
         }
     }
+    // A pattern's `k:` is a key or a filter, not an assignment: q 5's
+    // `([kk:vv]):d` binds vv alone and leaves `kk` undefined (#2330). What a
+    // target binds is read from it below, by `pattern_names`.
+    let targets = pattern_targets(code);
+    let mut patterns = view.clone();
+    for &(open, close, _) in &targets {
+        blank(&mut view[open + 1..close]);
+    }
     // A keyword inside a range already blanked ends no later than it, so it
     // is passed over: `select from select from t` scanned to the statement's
     // end once per keyword (#709).
@@ -1088,6 +1112,7 @@ fn global_writes(
             at += 1;
         }
         blank(&mut view[m.start()..at]);
+        blank(&mut patterns[m.start()..at]);
         blanked = at;
     }
     let code = std::str::from_utf8(&view).unwrap_or(code);
@@ -1246,6 +1271,7 @@ fn global_writes(
                 .push(whole.end());
         }
     }
+    let code = std::str::from_utf8(&patterns).unwrap_or(code);
     for (at, name) in multi_assignments(code)
         .filter(|&(at, _)| scope_at(scopes, at).is_none())
         .chain(global_multi_assignments(code))
