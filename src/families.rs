@@ -74,7 +74,7 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
         let name = c.get(1).is_some();
         (code[handle.start()..].starts_with(handle.as_str())
             && !(name
-                && (crate::RESERVED.iter().any(|n| n == handle.as_str())
+                && (crate::reserved_word(handle.as_str())
                     || lambda(handle.as_str()))))
         .then_some((handle.start(), handle.end()))
     })
@@ -210,9 +210,8 @@ fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut V
         let value = value.map(|c| c.get(1).unwrap().as_str());
         // A secret has letters or digits in it, and is no q word: a lexer's
         // `sepToken:","` and `token:"if"` are syntax (#655).
-        let opaque = |v: &str| {
-            v.bytes().any(|b| b.is_ascii_alphanumeric()) && !crate::RESERVED.iter().any(|n| n == v)
-        };
+        let opaque =
+            |v: &str| v.bytes().any(|b| b.is_ascii_alphanumeric()) && !crate::reserved_word(v);
         if whole && value.is_some_and(opaque) {
             out.push(Finding::at(
                 path,
@@ -818,7 +817,7 @@ fn tokens(s: &str) -> Option<Vec<Tok<'_>>> {
 }
 
 fn reserved(name: &str) -> bool {
-    crate::RESERVED.iter().any(|r| r == name)
+    crate::reserved_word(name)
 }
 
 /// The name of an expression read right to left, as `column_name` explains.

@@ -271,8 +271,22 @@ test("a view is shown as a view, not as a lambda with its parse tree for paramet
   assert.deepStrictEqual(functions.map((n) => [n.label, n.description, n.tooltip]), [["vw", "view", "vw: view"], ["f", "[x]", "f[x]"]]);
   assert.deepStrictEqual(liveCompletions(g, "rdb").map((c) => [c.label, c.detail]), [["vw", "view (rdb)"], ["f", "[x] (rdb)"]]);
   // The process is asked which it is, and gives parameters only when they are names.
-  assert.ok(GATHER.includes("`partitioned`ncols`view!"), GATHER);
+  // And the lambda's text where a slot's name is KDB-X's synthetic one (#2333).
+  assert.ok(GATHER.includes("`partitioned`ncols`view`ptext!"), GATHER);
   assert.ok(GATHER.includes("$[11h=type p:(value x)1;p;`$()]"), GATHER);
+});
+
+// KDB-X names a typed or pattern slot `0`, `1`...: the explorer and the
+// completions show the slot as the lambda writes it (#2333).
+test("a typed or pattern parameter is shown as the lambda writes it, in the tree and the completions (#2333)", () => {
+  const raw = {
+    rows: [row(".", "t", "function", { params: ["0", "1"], ptext: "{[a:`j;b:`s] (a;b)}" }), row(".", "m", "function", { params: ["a", "1"], ptext: "{[a;(u;v)] a}" })],
+    spaces: [{ ns: ".", total: 2 }],
+    more: 0,
+  };
+  const g = readGathered(raw);
+  assert.deepStrictEqual(g.entries.map((e) => e.params), [["a:`j", "b:`s"], ["a", "(u;v)"]]);
+  assert.deepStrictEqual(liveCompletions(g, "rdb").map((c) => c.detail).sort(), ["[a:`j;b:`s] (rdb)", "[a;(u;v)] (rdb)"]);
 });
 
 // A limit of 1e21 or more was written into q code as JavaScript writes it,

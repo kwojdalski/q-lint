@@ -185,6 +185,34 @@ export const ERRORS: Record<string, QError> = {
     example: "hopen`::1",
     checked: "seen",
   },
+  // KDB-X's module loader signals these from `use` (`.Q.m.mn`, `.Q.m.ld`),
+  // each with the module after a colon: `notfound: mymod`, `no export:
+  // /path/mymod/init.q`. PeachQ has no `use` (#2334).
+  notfound: {
+    meaning: "`use` found no module of that name: KDB-X lists the paths it tried above the error.",
+    causes: [
+      "A module name misspelt, or one not under any directory of `QPATH` (nor `~/.kx/mod`): `` use`mymod `` looks for `mymod.q` and `mymod/init.q` there.",
+      "A relative name, `` use`.sub ``, said outside the module it is relative to, or from one where the file is not beside it.",
+    ],
+    example: "use`qlintnosuchmodule",
+    checked: "kdbx",
+    peachq: "PeachQ has no `use`.",
+  },
+  cycle: {
+    meaning: "A module was loaded with `use` while it was still loading: it uses itself, directly or through another module.",
+    causes: ["Module a's `use` of b, while b's file says `` use`a ``.", "A module's own file saying `use` of its own name."],
+    checked: "kdbx",
+    peachq: "PeachQ has no `use`.",
+  },
+  "no export": {
+    meaning: "`use` ran the module's file, and the file assigned no `export`: KDB-X refuses a module that says nothing about what it exports, and names the file.",
+    causes: [
+      "A plain script loaded with `use` instead of `\\l`.",
+      "An `export` assigned inside a lambda, or under another `\\d`, rather than at the module's top level: `export:([f;g])`.",
+    ],
+    checked: "kdbx",
+    peachq: "PeachQ has no `use`.",
+  },
   io: {
     meaning: "PeachQ's message for a file it could not read or write: what KDB-X reports with \"OS reports\".",
     causes: ["A path that does not exist, or that the process may not read."],
@@ -200,13 +228,20 @@ function printed(text: string): string {
 
 /// The error's name: `'type` and `type` are `type`; an OS error -
 /// `name. OS reports: ...` - is `os`; anything after the first blank is
-/// dropped, as q's own messages are one word but for those.
+/// dropped, as q's own messages are one word but for those. KDB-X's module
+/// loader names its module after a colon: `notfound: mymod` is `notfound`,
+/// and `no export: /path/init.q` is `no export`.
 export function errorName(text: string): string {
   const t = printed(text);
   if (/OS reports:/.test(t)) {
     return /^hop\b/.test(t) ? "hop" : "os";
   }
-  return t.split(/\s/)[0] ?? "";
+  if (/^no export:/.test(t)) {
+    return "no export";
+  }
+  const word = t.split(/\s/)[0] ?? "";
+  const bare = word.replace(/:$/, "");
+  return bare !== word && Object.hasOwn(ERRORS, bare) ? bare : word;
 }
 
 /// Markdown `code` that holds any backtick: fenced by a run longer than

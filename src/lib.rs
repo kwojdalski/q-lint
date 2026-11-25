@@ -218,6 +218,12 @@ pub struct References {
     /// that is whichever context the file is loaded in, and `"."` at the
     /// root after it.
     pub loads: Vec<(String, String)>,
+    /// Whether the file is a KDB-X module: one that assigns `export` at its
+    /// top level, which `use` reads back (`semantics::is_module`).
+    pub module: bool,
+    /// The module each literal `` use`name `` loads, as written: `mymod`,
+    /// `pkg.sub`, or `.sub` relative to the module saying it.
+    pub uses: Vec<String>,
     /// Where a name is reached by a value computed at run time.
     pub dynamic: Vec<Dynamic>,
 }
@@ -590,7 +596,7 @@ pub fn word_at(source: &str, offset: usize) -> Option<(usize, usize)> {
 /// A local whose assignments settle its type, and that type as `type`
 /// returns it: see `semantics::infer`.
 pub use semantics::infer::{Typed, literal_type};
-pub use semantics::version::{Target, reported_for as version_reported_for};
+pub use semantics::version::{Target, TargetScope, reported_for as version_reported_for};
 
 /// Each local of each lambda in `source` whose every assignment is a plain
 /// one of a literal of the same type, in order of where it is first named.
@@ -663,6 +669,14 @@ pub(crate) static RESERVED: LazyLock<Vec<String>> =
 /// Whether q reserves `word`, as `reserved.json` lists the words.
 pub fn is_reserved(word: &str) -> bool {
     RESERVED.iter().any(|reserved| reserved == word)
+}
+
+/// Whether `word` is reserved on the release being linted for: as
+/// `is_reserved`, but a word only KDB-X has (its `builtins.json` summary
+/// starts `KDB-X:`, as `use`'s does) is a free name for an older
+/// `target-version` (`semantics::version::kdbx_only`).
+pub(crate) fn reserved_word(word: &str) -> bool {
+    is_reserved(word) && !semantics::version::kdbx_only(word)
 }
 
 /// What a name q defines is, as far as an editor shows it differently.
@@ -3101,7 +3115,7 @@ fn utc_clock(local: &str) -> String {
     }
 }
 
-fn boundary(s: &str, at: usize) -> bool {
+pub(crate) fn boundary(s: &str, at: usize) -> bool {
     // Callers walk bytes, so `at` can fall inside a multi-byte character -
     // the middle of a token, never the start of one.
     let Some(before) = s.get(..at) else {
@@ -4702,7 +4716,7 @@ pub(crate) fn slots(s: &str) -> Vec<&str> {
 }
 /// A lambda parameter name. `_` is absent deliberately: q reads `{[_] ...}` as
 /// a body, not a signature, which is what `named` below is about.
-fn is_param_name(s: &str) -> bool {
+pub(crate) fn is_param_name(s: &str) -> bool {
     re!(r"^\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$").is_match(s)
 }
 
@@ -4776,7 +4790,7 @@ fn pattern_within(s: &str, nested: bool, depth: usize) -> bool {
 /// (`a:`x`y`z; b:1; {[a b] 7}[`y]` is 7). A builtin applied, an operator, an
 /// iterator, or a literal at the head is 'nyi where the lambda is defined:
 /// `{[count x] 1}`, `{[a+b] 1}`, `{[a'] 1}`, `{[1 a] 1}` (#484).
-fn application(s: &str) -> bool {
+pub(crate) fn application(s: &str) -> bool {
     let s = s.trim();
     re!(r"^\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
         .find(s)
@@ -4785,7 +4799,7 @@ fn application(s: &str) -> bool {
         && !re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(s).any(|w| {
             boundary(s, w.start())
                 && !s[..w.start()].ends_with(['`', '.'])
-                && RESERVED.iter().any(|n| n == w.as_str())
+                && crate::reserved_word(w.as_str())
         })
 }
 /// The patterns `like` at `at` is given, in the order q 5 tries them: a
@@ -4938,7 +4952,7 @@ fn assigns_operand(rest: &str) -> bool {
     !rest.is_empty() && !rest.starts_with([';', ')', ']', '}', '\'', '[', '/', '\\', '\r', '\n'])
 }
 /// The first `byte` in `s` outside any bracket, brace or parenthesis.
-fn first_outside(s: &str, byte: u8) -> Option<usize> {
+pub(crate) fn first_outside(s: &str, byte: u8) -> Option<usize> {
     let mut depth = 0i32;
     for (i, b) in s.bytes().enumerate() {
         match b {
@@ -4986,17 +5000,36 @@ fn names_within(slot: &str, depth: usize) -> Vec<&str> {
         return vec![];
     }
     let slot = typed_at(slot).map_or(slot, |at| &slot[..at]);
+    // A dictionary or table pattern's field `k:p` matches its key or column
+    // `k` against the pattern `p`, which binds what it binds: `([k:v])`
+    // binds v, `([k:p:neg])` binds p, filtered by neg, and `([k:`j])` binds
+    // nothing - it matches the symbol (q 5: `([k:p:neg]):`k`z!5 6` sets p to
+    // -5, `{[([k:v:abs])] v}[`k`z!(-3;4)]` is 3, `([kq:`j]):`kq`z!5 6` is
+    // 'match, and none sets k or kq, #2329). A field with no colon binds
+    // its own name: `([k;v])` binds k and v, `([]a;b:c)` binds a and c.
+    let trimmed = slot.trim();
+    let whole = trimmed.starts_with('(') && matching(trimmed, 0, b'(', b')') == Some(trimmed.len());
+    if whole
+        && trimmed.starts_with("([")
+        && let Some(close) = matching(trimmed, 1, b'[', b']')
+    {
+        let mut names = field_names(slots(&trimmed[2..close - 1]), depth);
+        names.extend(field_names(
+            slots(&trimmed[close..trimmed.len() - 1]),
+            depth,
+        ));
+        return names;
+    }
     // A list pattern's items each take their own filter: `(a:neg;b)` binds
     // a and b, and not neg (q 5 `{[(a:neg;b)] (a;b)} 1 2` is -1 2, #668).
-    let trimmed = slot.trim();
-    if trimmed.starts_with('(')
-        && !trimmed.starts_with("([")
-        && matching(trimmed, 0, b'(', b')') == Some(trimmed.len())
-    {
-        return slots(&trimmed[1..trimmed.len() - 1])
-            .into_iter()
-            .flat_map(|item| names_within(item, depth + 1))
-            .collect();
+    if whole {
+        return items_names(slots(&trimmed[1..trimmed.len() - 1]), depth);
+    }
+    // A dictionary pattern `k!p`: what each side binds, each side its own
+    // pattern - `k!(a:neg;b)` binds k, a and b (q 5: `(k!(a:neg;b)):`x`y!1 2`
+    // sets k to `x`y and a to -1).
+    if let Some(at) = first_outside(trimmed, b'!') {
+        return items_names(vec![&trimmed[..at], &trimmed[at + 1..]], depth);
     }
     if application(trimmed) {
         return vec![];
@@ -5010,6 +5043,24 @@ fn names_within(slot: &str, depth: usize) -> Vec<&str> {
                 && !slot[m.end()..].trim_start().starts_with(':')
         })
         .map(|m| m.as_str())
+        .collect()
+}
+/// What the items of a pattern at `depth` bind, each its own pattern.
+fn items_names(items: Vec<&str>, depth: usize) -> Vec<&str> {
+    items
+        .into_iter()
+        .flat_map(|item| names_within(item, depth + 1))
+        .collect()
+}
+/// What the fields of a dictionary or table pattern at `depth` bind: the
+/// pattern after a field's first colon, or the field's own name.
+fn field_names(items: Vec<&str>, depth: usize) -> Vec<&str> {
+    items
+        .into_iter()
+        .flat_map(|item| match item.split_once(':') {
+            Some((_, p)) => names_within(p, depth + 1),
+            None => names_within(item, depth + 1),
+        })
         .collect()
 }
 /// Where a parameter slot would bind a name holding `_`: `Some(true)` for a
@@ -6250,7 +6301,7 @@ fn lint_rules(
     // `{foo:1;0}` and `foo:1` are 'assign (#434).
     let dotq = dotq_definitions(code, source);
     let reserved = |name: &str, at: usize| {
-        RESERVED.iter().any(|n| n == name) || dotq.iter().any(|(n, from)| n == name && at > *from)
+        crate::reserved_word(name) || dotq.iter().any(|(n, from)| n == name && at > *from)
     };
     // A UTF-8 BOM is not something q tolerates: it reports 'char on the first
     // line and loads nothing. Reported and then carried on past, because the
@@ -8190,7 +8241,7 @@ fn lint_rules(
         let stmt = body[start..semi].trim();
         let simple = re!(r"^[A-Za-z0-9_.]+(?:\s*(?:<>|<=|>=|[+\-*%=<>&|,#_])\s*[A-Za-z0-9_.]+)*$")
             .is_match(stmt);
-        let builtin = RESERVED.iter().any(|n| n == stmt);
+        let builtin = crate::reserved_word(stmt);
         // A string is blank in this view; `f "done"` must not pass for `f`.
         let quoted = v.comments[sig.body + start..sig.body + semi].contains('"');
         if simple && !builtin && !quoted {
@@ -8512,7 +8563,7 @@ fn lint_rules(
                 let trimmed = part.trim_start();
                 let lead = part.len() - trimmed.len();
                 if let Some(m) = re!(r"^([A-Za-z][A-Za-z0-9_]*)\s*:").captures(trimmed)
-                    && RESERVED.iter().any(|n| n == &m[1])
+                    && crate::reserved_word(&m[1])
                 {
                     // by and from build a table (q 5), and are left out.
                     if matches!(&m[1], "by" | "from") {
@@ -8579,7 +8630,7 @@ fn lint_rules(
                         ),
                     );
                 }
-            } else if RESERVED.iter().any(|n| n == name.as_str()) {
+            } else if crate::reserved_word(name.as_str()) {
                 add(
                     q.end() + name.start(),
                     "QF013",
@@ -9149,8 +9200,11 @@ fn lint_rules(
     // A KDB-X module - a file loaded with `use`, which says so by assigning
     // what it exports - runs in a namespace of its own, so a dotted name in
     // it is a sub-namespace as it would be under `\d`: KX's Kafka module
-    // defines `i.checkDict` and reads it back as `i.checkDict`.
-    let module = re!(r"\bexport\s*:\s*\(").is_match(code);
+    // defines `i.checkDict` and reads it back as `i.checkDict`. Any
+    // assignment says so, not only `export:(`: KDB-X 5 runs a module whose
+    // `` export:`f`g!(f;f) `` sits under `i.helper:{x+1}`, `key `.m.mod2`
+    // ``` ``i`f`export ```, and KX's ai module writes `export,:` (#2322).
+    let module = semantics::is_module(code, source);
     let mut depth = 0i32;
     let mut offset = 0;
     // Statements, not lines. q continues a line onto the next when that one
@@ -9327,7 +9381,7 @@ fn lint_rules(
             // A keyword in parentheses is a value, not a decorated token:
             // `(mod) . 7 3` is 1, and `mod . 7 3` does not parse. The
             // parentheses there are the point.
-            if RESERVED.iter().any(|n| n == m[1].trim()) {
+            if crate::reserved_word(m[1].trim()) {
                 continue;
             }
             if m[1].contains('_') {

@@ -78,7 +78,20 @@ pub fn build_from(
     }
     let loads: Vec<_> = reads.iter().map(|r| r.loads.as_slice()).collect();
     let tree = Tree::new(paths, roots);
-    let contexts = contexts(&loads, &tree);
+    let modules = modules(reads, &tree);
+    let contexts = contexts(&loads, &tree, &modules);
+    // A module's root names are its own context's, not the root's: no other
+    // file reads them there unless it loads the module at its root with `\l`.
+    let root = rooted(&loads, &tree, &contexts, &modules);
+    for (d, read) in reads.iter().enumerate() {
+        if modules.is_module[d] && !root[d] {
+            for name in &read.implicit_defines {
+                if let Some(defs) = definers.get_mut(name) {
+                    defs.retain(|&x| x != d);
+                }
+            }
+        }
+    }
     for (d, namespaces) in contexts.iter().enumerate() {
         for namespace in namespaces {
             for name in &reads[d].implicit_defines {
@@ -111,6 +124,15 @@ pub fn build_from(
         // each context the file is loaded in as well: with b.q loaded under
         // `\d .a`, its `g:{helper[]}` reads `.a.helper` (q 5, #531).
         let mut names = reads[i].names.clone();
+        // A module's own bare reads are its context's, and q does not fall
+        // back to the root for them.
+        if modules.is_module[i] && !root[i] {
+            let relative = &reads[i].relative;
+            names.retain(|name| {
+                !relative.iter().any(|r| r.implicit && r.resolved == *name)
+                    || relative.iter().any(|r| !r.implicit && r.resolved == *name)
+            });
+        }
         for namespace in &contexts[i] {
             for r in reads[i].relative.iter().filter(|r| r.implicit) {
                 let name = format!("{namespace}.{}", r.name);
@@ -150,6 +172,12 @@ pub fn build_from(
                 if identity[d] != identity[i] {
                     node.dependencies.insert(paths[d].clone());
                 }
+            }
+        }
+        // `` use`mymod `` runs mymod/init.q as `\l` would run a script.
+        for &(d, _) in &modules.uses[i] {
+            if identity[d] != identity[i] {
+                node.dependencies.insert(paths[d].clone());
             }
         }
         graph.insert(path.clone(), node);
@@ -256,31 +284,180 @@ pub fn loaded<T>(
 /// in: `\l c.q` at b.q's root, with b.q loaded under `\d .a`, puts c.q's
 /// `gg` at `.a.gg` (q 5). Only before the script's own first `\d`: after
 /// its `\d .`, `yy:2` is the root's `yy` and no `.a.yy` (q 5, #532).
-fn contexts<'r>(loads: &[&'r [(String, String)]], tree: &Tree) -> Vec<BTreeSet<&'r str>> {
-    let mut contexts: Vec<BTreeSet<&str>> = vec![BTreeSet::new(); loads.len()];
-    let mut pending: Vec<(usize, &str)> = vec![];
+///
+/// A KDB-X module runs in its own context, `.m.<module>` (`modules`), and
+/// what it loads at its root runs there too.
+fn contexts(
+    loads: &[&[(String, String)]],
+    tree: &Tree,
+    modules: &Modules,
+) -> Vec<BTreeSet<String>> {
+    let mut contexts: Vec<BTreeSet<String>> = vec![BTreeSet::new(); loads.len()];
+    let mut pending: Vec<(usize, String)> = vec![];
     for (i, file) in loads.iter().enumerate() {
         for (load, namespace) in file.iter() {
             if !namespace.is_empty() && namespace != "." {
                 for d in tree.targets(i, load) {
-                    pending.push((d, namespace));
+                    pending.push((d, namespace.clone()));
                 }
             }
         }
     }
+    for (d, namespaces) in modules.namespaces.iter().enumerate() {
+        pending.extend(namespaces.iter().map(|ns| (d, ns.clone())));
+    }
     while let Some((d, namespace)) = pending.pop() {
-        if !contexts[d].insert(namespace) {
+        if contexts[d].contains(&namespace) {
             continue;
         }
         for (load, inner) in loads[d].iter() {
             if inner.is_empty() {
                 for next in tree.targets(d, load) {
-                    pending.push((next, namespace));
+                    pending.push((next, namespace.clone()));
                 }
             }
         }
+        contexts[d].insert(namespace);
     }
     contexts
+}
+
+/// The context KDB-X runs the module at `file` in when it is found under
+/// `root` by its path there: `.m.mymod` for `mymod/init.q` or `mymod.q`,
+/// `.m.pkg.0sub` for `pkg/sub/init.q`, as `` use`pkg.sub `` names it. A
+/// file outside `root` is taken to be found by its own name. `None` for a
+/// path no module name spells.
+fn module_namespace(file: &Path, root: &Path) -> Option<String> {
+    let mut parts: Vec<&str> = match file.strip_prefix(root) {
+        Ok(relative) => relative
+            .components()
+            .map(|c| c.as_os_str().to_str())
+            .collect::<Option<_>>()?,
+        Err(_) => {
+            let own = file.file_name()?.to_str()?;
+            match file.parent().and_then(Path::file_name) {
+                Some(dir) if own.starts_with("init.") => vec![dir.to_str()?, own],
+                _ => vec![own],
+            }
+        }
+    };
+    let last = parts.pop()?;
+    let stem = last
+        .strip_suffix(".q")
+        .or_else(|| last.strip_suffix(".k"))?;
+    if stem != "init" || parts.is_empty() {
+        parts.push(stem);
+    }
+    let word = |p: &&str| {
+        p.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+            && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    };
+    if parts.is_empty() || !parts.iter().all(word) {
+        return None;
+    }
+    let rest: String = parts[1..].iter().map(|p| format!(".0{p}")).collect();
+    Some(format!(".m.{}{rest}", parts[0]))
+}
+
+/// The KDB-X modules of a tree, read as KDB-X 5's `.Q.m` loads them.
+struct Modules {
+    /// Whether each file is a module (`References::module`).
+    is_module: Vec<bool>,
+    /// The files each file's `` use`name `` reaches, each with the module
+    /// name it was reached by.
+    uses: Vec<Vec<(usize, String)>>,
+    /// The contexts each module runs in: `.m.mymod` for `` use`mymod ``.
+    namespaces: Vec<BTreeSet<String>>,
+}
+
+/// Each module's context, and the files each `use` reaches. KDB-X 5 finds
+/// `` use`a.b `` at `<dir>/a/b.q` or `<dir>/a/b/init.q` (`.k` and the
+/// compiled forms too) for each `<dir>` of its search path, `QPATH` then
+/// `~/.kx/mod`; the source does not say what that is, so the directories
+/// tried are those `\l` tries (`load_targets`). It runs the module in
+/// `.m.a.0b` - each name after the first gets a `0`, so `` use`pkg.sub ``
+/// leaves `key `.m.pkg` as ``` ``0sub ```. `` use`.b ``, in a module, is
+/// relative to it: beside an `init.q`, under a flat `a.q` (KDB-X tries
+/// `a.q/b.q`), one directory up for each dot more, and runs in the using
+/// module's context with `.0b` added. A module no `use` reaches is taken
+/// to be found by its path under the directory a `\l` in it is tried
+/// against first (`module_namespace`).
+fn modules(reads: &[&References], tree: &Tree) -> Modules {
+    let is_module: Vec<bool> = reads.iter().map(|r| r.module).collect();
+    let mut uses: Vec<Vec<(usize, String)>> = vec![vec![]; reads.len()];
+    for (i, read) in reads.iter().enumerate() {
+        for name in &read.uses {
+            let dots = name.len() - name.trim_start_matches('.').len();
+            let parts: Vec<&str> = name[dots..].split('.').collect();
+            let bases: Vec<PathBuf> = if dots == 0 {
+                load_targets(&tree.files[i], "", start_dir(tree.roots, &tree.files[i]))
+            } else if is_module[i] {
+                let file = &tree.files[i];
+                let mut base = if file.file_stem().is_some_and(|s| s == "init") {
+                    file.parent().map(Path::to_path_buf).unwrap_or_default()
+                } else {
+                    file.clone()
+                };
+                for _ in 1..dots {
+                    base.pop();
+                }
+                vec![base]
+            } else {
+                vec![]
+            };
+            let found = bases.iter().find_map(|base| {
+                let stem = parts.iter().fold(base.clone(), |p, part| p.join(part));
+                ["q", "k"]
+                    .iter()
+                    .map(|ext| stem.with_extension(ext))
+                    .chain(["init.q", "init.k"].iter().map(|f| stem.join(f)))
+                    .find_map(|p| tree.position.get(&lexical(&p)).copied())
+            });
+            if let Some(d) = found.filter(|&d| is_module[d]) {
+                uses[i].push((d, name.clone()));
+            }
+        }
+    }
+    let reached: BTreeSet<usize> = uses.iter().flatten().map(|&(d, _)| d).collect();
+    let mut namespaces: Vec<BTreeSet<String>> = vec![BTreeSet::new(); reads.len()];
+    let mut pending: Vec<(usize, String)> = vec![];
+    for (i, file) in tree.files.iter().enumerate() {
+        if is_module[i] && !reached.contains(&i) {
+            pending.extend(module_namespace(file, start_dir(tree.roots, file)).map(|ns| (i, ns)));
+        }
+        for (d, name) in &uses[i] {
+            if !name.starts_with('.') {
+                let mut parts = name.split('.');
+                let first = parts.next().unwrap_or_default();
+                let rest: String = parts.map(|p| format!(".0{p}")).collect();
+                pending.push((*d, format!(".m.{first}{rest}")));
+            }
+        }
+    }
+    while let Some((d, namespace)) = pending.pop() {
+        if !namespaces[d].insert(namespace.clone()) {
+            continue;
+        }
+        for (target, name) in &uses[d] {
+            let dots = name.len() - name.trim_start_matches('.').len();
+            if dots == 0 {
+                continue;
+            }
+            let mut base: Vec<&str> = namespace.split('.').collect();
+            for _ in 1..dots {
+                if base.len() > 2 {
+                    base.pop();
+                }
+            }
+            let rest: String = name[dots..].split('.').map(|p| format!(".0{p}")).collect();
+            pending.push((*target, format!("{}{rest}", base.join("."))));
+        }
+    }
+    Modules {
+        is_module,
+        uses,
+        namespaces,
+    }
 }
 
 /// Whether each file runs at the root: one no other file loads, which is
@@ -289,7 +466,15 @@ fn contexts<'r>(loads: &[&'r [(String, String)]], tree: &Tree) -> Vec<BTreeSet<&
 /// after `\d .a` / `\l b.q` with b.q's `ff:42`, has `.a.ff` and no `ff`,
 /// and a root `h:{ff}` throws 'ff (#525). Files that only load each other
 /// in a ring, and are put in no context, keep their root.
-fn rooted(loads: &[&[(String, String)]], tree: &Tree, contexts: &[BTreeSet<&str>]) -> Vec<bool> {
+///
+/// A KDB-X module runs at the root only when some file `\l`s it there:
+/// `use` runs it in a context of its own, and so does no load at all.
+fn rooted(
+    loads: &[&[(String, String)]],
+    tree: &Tree,
+    contexts: &[BTreeSet<String>],
+    modules: &Modules,
+) -> Vec<bool> {
     let id = &tree.identity;
     let mut loaded = vec![false; loads.len()];
     let mut pending = vec![];
@@ -305,7 +490,7 @@ fn rooted(loads: &[&[(String, String)]], tree: &Tree, contexts: &[BTreeSet<&str>
             }
         }
     }
-    pending.extend((0..loads.len()).filter(|&i| id[i] == i && !loaded[i]));
+    pending.extend((0..loads.len()).filter(|&i| id[i] == i && !loaded[i] && !modules.is_module[i]));
     let mut root = vec![false; loads.len()];
     while let Some(d) = pending.pop() {
         if std::mem::replace(&mut root[d], true) {
@@ -361,26 +546,21 @@ impl Placement {
     }
 }
 
-/// Where each file at `paths`, with `loads` its `References::loads`, puts
+/// Where each file at `paths`, with `reads` its `References`, puts
 /// its root definitions. The workspace index's counterpart of the contexts
 /// `build` gives the graph, which keeps every root name instead: an edge
 /// too many is a file rebuilt for nothing, a name too many is a read of a
 /// name q never creates passed as defined.
-pub fn placements(
-    paths: &[PathBuf],
-    loads: &[&[(String, String)]],
-    roots: &[PathBuf],
-) -> Vec<Placement> {
+pub fn placements(paths: &[PathBuf], reads: &[&References], roots: &[PathBuf]) -> Vec<Placement> {
+    let loads: Vec<_> = reads.iter().map(|r| r.loads.as_slice()).collect();
     let tree = Tree::new(paths, roots);
-    let contexts = contexts(loads, &tree);
-    let root = rooted(loads, &tree, &contexts);
+    let modules = modules(reads, &tree);
+    let contexts = contexts(&loads, &tree, &modules);
+    let root = rooted(&loads, &tree, &contexts, &modules);
     contexts
         .into_iter()
         .zip(root)
-        .map(|(contexts, root)| Placement {
-            contexts: contexts.into_iter().map(String::from).collect(),
-            root,
-        })
+        .map(|(contexts, root)| Placement { contexts, root })
         .collect()
 }
 

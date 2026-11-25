@@ -123,6 +123,24 @@ test("the locals capture keeps the arguments and locals up to the error", { skip
   assert.deepStrictEqual(await value(c, "(`ns~first(value .ns.m)3;key[`.qlint]~enlist`)"), [true, true]);
 });
 
+// A typed parameter list is the one q reads: the capture goes after it, and
+// keeps each name it binds. Before, the instrumented lambda failed with 'a
+// and captured nothing (#2332).
+test("the locals capture of a lambda with typed or pattern parameters keeps what each binds (#2332)", { skip }, async (t) => {
+  const { connection: c, dir } = await connect(t, "\\l lib.q\n", { "lib.q": "m:{[a:`j;(p;q)]\n  r:a+p+q;\n  r+`x}\n" });
+  const [def] = definitions(fs.readFileSync(path.join(dir, "lib.q"), "utf8"));
+  const captured = localsText(def.text);
+  assert.deepStrictEqual(captured.params, ["a", "p", "q"]);
+  const was = await value(c, "last value m");
+  assert.deepStrictEqual(readInstalled(await c.call(installLambda("err"), [def.name], [was], [captured.text], 0), 1), ["ok"]);
+  const answer = readAnswer(await c.call(RUN, ["m[1;2 3]"], [25, 80]));
+  assert.strictEqual(answer.ok, false);
+  assert.strictEqual(answer.error, "type");
+  const { d } = readRestored(await c.call(restoreExpression("err")));
+  assert.deepStrictEqual(d.args, { a: "1", p: "2", q: "3" });
+  assert.deepStrictEqual(d.locals, { r: "6" });
+});
+
 test("a captured local is text to 2000 characters, whatever the process's \\c (#1870)", { skip }, async (t) => {
   const { connection: c, dir } = await connect(t, "\\l lib.q\n\\c 25 40\n", { "lib.q": "\\d .ns\nw:{[a;b]\n  c:til a;\n  d:([] x:c; y:b);\n  d+`x}\n\\d .\n" });
   const [def] = definitions(fs.readFileSync(path.join(dir, "lib.q"), "utf8"));

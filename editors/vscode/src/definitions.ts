@@ -11,6 +11,13 @@
 // `{` to its `}`, blank and comment lines inside it kept, as q keeps them in
 // `last value f`.
 //
+// A KDB-X module - a file assigning `export` at its top level - runs in a
+// context of its own, `.m.<module>`, which is where its names are on a
+// process that loaded it with `use` (KDB-X 5: after `` md:use`modd ``,
+// `` key`.m.modd `` is ``` ``hlp`fd`export ``` and the root has no `fd`).
+// Its definitions are named there, by the file's path in the workspace as
+// the language server names them: `.m.mymod.f` for mymod/init.q.
+//
 // Texts are compared without trailing blanks on each line: KDB-X drops a
 // line's trailing blanks from a lambda's text, and PeachQ keeps them.
 //
@@ -78,22 +85,65 @@ function definitionOf(lines: string[], line: number, ctx: string): Definition | 
   return { name, text: text.slice(open, close + 1), line, endLine: line + lines.length - 1 };
 }
 
+/// Whether a statement assigns `export`, `export:` or `export,:`, alone or
+/// in a top-level `if[...]` as KX's arrowkdb does: what makes a file a
+/// KDB-X module.
+const EXPORT = /^(?:if\s*\[[^{]*?[;[]\s*)?export\s*,?\s*:/;
+
+/// The context KDB-X runs the module at `path` (relative to the directory
+/// it is found under, `/`- or `\`-separated) in: `.m.mymod` for
+/// `mymod/init.q` or `mymod.q`, `.m.pkg.0sub` for `pkg/sub/init.q`, as
+/// `` use`pkg.sub `` names it (KDB-X 5's `.Q.m.mn`). Undefined for a path no
+/// module name spells.
+export function moduleContext(path: string): string | undefined {
+  const parts = path.split(/[\\/]/).filter((p) => p !== "" && p !== ".");
+  const last = parts.pop();
+  const stem = last === undefined ? undefined : /^(.*)\.[qk]$/.exec(last)?.[1];
+  if (stem === undefined) {
+    return undefined;
+  }
+  if (stem !== "init" || parts.length === 0) {
+    parts.push(stem);
+  }
+  if (!parts.every((p) => /^[A-Za-z][A-Za-z0-9_]*$/.test(p))) {
+    return undefined;
+  }
+  return `.m.${parts[0]}${parts.slice(1).map((p) => `.0${p}`).join("")}`;
+}
+
 /// The functions `source` defines, in order, cut as q loads the script
 /// (`statements.ts`), so a lambda's text is what loading it gives: blank and
 /// comment lines inside kept, a block comment's lines as comment lines.
-export function definitions(source: string): Definition[] {
+/// `path`, the file's path in the workspace, names a KDB-X module's
+/// definitions in its context (`moduleContext`).
+export function definitions(source: string, path?: string): Definition[] {
   const out: Definition[] = [];
+  // Those of `out` made before any `\d`, which a module puts in its context.
+  const implicit = new Set<Definition>();
+  let module = false;
+  let switched = false;
   let ctx = "";
   for (const { text, start } of statementSpans(scriptCode(source))) {
     const lines = text.split("\n");
-    const switched = contextSwitch(text);
-    if (switched !== undefined) {
-      ctx = switched === "." ? "" : switched.slice(1);
+    const opened = contextSwitch(text);
+    if (opened !== undefined) {
+      ctx = opened === "." ? "" : opened.slice(1);
+      switched = true;
       continue;
     }
+    module ||= EXPORT.test(text);
     const found = definitionOf(lines, start, ctx);
     if (found !== undefined) {
       out.push(found);
+      if (!switched && !found.name.startsWith(".")) {
+        implicit.add(found);
+      }
+    }
+  }
+  const context = module && path !== undefined ? moduleContext(path) : undefined;
+  if (context !== undefined) {
+    for (const def of implicit) {
+      def.name = `${context}.${def.name}`;
     }
   }
   return out;

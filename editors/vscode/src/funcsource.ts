@@ -28,6 +28,7 @@
 // A view (`v::expr`) has a lambda's type too, and `get` of its name
 // evaluates it: the root's views (`views[]`) are not read (#1864).
 // Works on kdb+ (KDB-X) and PeachQ; held there by funcsource_q.test.js.
+import { SLOT_TEXT, slotParams } from "./paramcache";
 import { isProduction } from "./agent";
 import type { Process } from "./processes";
 import { FULL_TEXT, TEXT_LIMIT } from "./qtext";
@@ -84,7 +85,7 @@ export const CALLERS = [
   " says:{[f]k:@[-4!;last value f;{()}];raze{`$1_\"`\"vs x}each k where\"`\"=first each k};",
   " how:{[calls;says;nm;n]f:get n;$[nm in @[calls;f;`$()];`calls;nm in @[says;f;`$()];`mentions;`]}[calls;says;nm]each fns;",
   " w:where not null how;",
-  " `rows`scanned`more!(flip`name`params`how!(fns w;{(),(value get x)1}each fns w;how w);\"f\"$count fns;\"f\"$count todo)}",
+  ` \`rows\`scanned\`more!(flip\`name\`params\`how\`ptext!(fns w;{(),(value get x)1}each fns w;how w;{@[${SLOT_TEXT};get x;{""}]}each fns w);"f"$count fns;"f"$count todo)}`,
 ].join("\n");
 
 /// Namespaces `CALLERS` reads at most.
@@ -106,7 +107,7 @@ export function readSource(raw: unknown): Source {
   if (r === null || typeof r !== "object" || typeof r.type !== "number" || typeof r.text !== "string") {
     throw new Error(`the process answered something other than a function's source: ${JSON.stringify(raw)?.slice(0, 200)}`);
   }
-  return { type: r.type, text: r.text, ctx: typeof r.ctx === "string" ? r.ctx : "", params: strings(r.params) };
+  return { type: r.type, text: r.text, ctx: typeof r.ctx === "string" ? r.ctx : "", params: slotParams(strings(r.params), r.text) };
 }
 
 /// Whether Redefine can replace the function: only a lambda has a text to
@@ -136,7 +137,7 @@ export function readCallers(raw: unknown): Callers {
   }
   const callers = r.rows.flatMap((row: Record<string, unknown>): Caller[] =>
     row !== null && typeof row === "object" && typeof row.name === "string" && (row.how === "calls" || row.how === "mentions")
-      ? [{ name: row.name, params: strings(row.params), how: row.how }]
+      ? [{ name: row.name, params: slotParams(strings(row.params), typeof row.ptext === "string" ? row.ptext : undefined), how: row.how }]
       : [],
   );
   const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);

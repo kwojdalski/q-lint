@@ -130,10 +130,26 @@ pub(crate) fn global_multi_assignments(text: &str) -> impl Iterator<Item = (usiz
 /// Each name a pattern assignment binds, with where it starts and whether
 /// it is a global wherever it is written.
 fn pattern_assignments(text: &str) -> impl Iterator<Item = (usize, &str, bool)> {
+    pattern_targets(text)
+        .into_iter()
+        .flat_map(move |(at, close, double)| {
+            crate::pattern_names(&text[at..=close])
+                .into_iter()
+                .map(move |n| (at, n, double || n.contains('.')))
+        })
+}
+/// Each pattern-assignment target in `text`, wherever it stands: where its
+/// `(` opens, where its `)` closes, and whether `::` follows, which assigns
+/// globals. The one reading of KDB-X's pattern syntax the rules and the
+/// editor share: q 5 runs each of `(a;b):1 2`, `r:(a;b):1 2` (r is 1 2),
+/// `(a;b)::3 4`, `r:count (a;b):7 8`, `(k!v):`a`b!1 2` (k is `a`b),
+/// `([a;b])::d`, `([kk:vv]):d` (vv only) and `(a:`f;b):x` (a checked to be a
+/// float), a target being anything `is_pattern` takes (#2326, #2329).
+pub(crate) fn pattern_targets(text: &str) -> Vec<(usize, usize, bool)> {
     let bytes = text.as_bytes();
-    re!(r"\)\s*(::?)[^:]")
+    re!(r"\)\s*(::?)(?:[^:]|$)")
         .captures_iter(text)
-        .filter_map(move |c| {
+        .filter_map(|c| {
             let m = c.get(0).unwrap();
             let double = c[1].len() == 2;
             // Back to the `(` that opens the target. A filter can hold any
@@ -155,14 +171,9 @@ fn pattern_assignments(text: &str) -> impl Iterator<Item = (usize, &str, bool)> 
                 }
                 at = at.checked_sub(1)?;
             }
-            let target = &text[at..=m.start()];
-            crate::is_pattern(target, false).then(|| {
-                crate::pattern_names(target)
-                    .into_iter()
-                    .map(move |n| (at, n, double || n.contains('.')))
-            })
+            crate::is_pattern(&text[at..=m.start()], false).then_some((at, m.start(), double))
         })
-        .flatten()
+        .collect()
 }
 /// Whether a `set`, `insert` or `upsert` whose target is the symbol written
 /// at `tick`, with `rest` between it and the keyword, names what it writes:
@@ -868,10 +879,15 @@ fn scopes(code: &str, raw: &str) -> (Vec<Scope>, Vec<(usize, String)>) {
         // `{t:([]c:1 2); {c+1}[]}[]` is 11, and `{[a] t:([]x:1 2); x}[1]` is 'x.
         let view = local_view(&direct, true);
         let mut locals = scope.params.clone();
+        let targets = pattern_targets(&view);
         for a in assignment.captures_iter(&view) {
-            if boundary(&view, a.get(0).unwrap().start())
+            let at = a.get(0).unwrap().start();
+            if boundary(&view, at)
                 && a.get(2).is_none()
                 && !a[1].contains('.')
+                && !targets
+                    .iter()
+                    .any(|&(open, close, _)| open < at && at < close)
             {
                 locals.insert(a[1].into());
             }
@@ -1084,6 +1100,14 @@ fn global_writes(
             blank(&mut view[open + 1..close - 1]);
         }
     }
+    // A pattern's `k:` is a key or a filter, not an assignment: q 5's
+    // `([kk:vv]):d` binds vv alone and leaves `kk` undefined (#2330). What a
+    // target binds is read from it below, by `pattern_names`.
+    let targets = pattern_targets(code);
+    let mut patterns = view.clone();
+    for &(open, close, _) in &targets {
+        blank(&mut view[open + 1..close]);
+    }
     // A keyword inside a range already blanked ends no later than it, so it
     // is passed over: `select from select from t` scanned to the statement's
     // end once per keyword (#709).
@@ -1112,6 +1136,7 @@ fn global_writes(
             at += 1;
         }
         blank(&mut view[m.start()..at]);
+        blank(&mut patterns[m.start()..at]);
         blanked = at;
     }
     let code = std::str::from_utf8(&view).unwrap_or(code);
@@ -1288,7 +1313,9 @@ fn global_writes(
         }
     }
     // Each name of a flat target is written its own item of a list as long
-    // as the target: q 5's `(a;b):(1;{x})` makes `b` 100h (#2315).
+    // as the target: q 5's `(a;b):(1;{x})` makes `b` 100h (#2315). Read from
+    // the view with the targets put back, which the first pass blanked.
+    let code = std::str::from_utf8(&patterns).unwrap_or(code);
     for (at, name) in multi_assignments(code)
         .filter(|&(at, _)| scope_at(scopes, at).is_none())
         .chain(global_multi_assignments(code))
@@ -1608,8 +1635,67 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
             },
             &mut moved,
         ),
+        module: is_module(code, raw),
+        uses: uses(&view, &scopes),
         dynamic: dynamic(raw, &view, &call_time_access, &moved),
     }
+}
+
+/// Whether the file is a KDB-X module: one that assigns `export` at its top
+/// level, `export:([f])`, `` export:`f`g!(f;g) `` or `export,:...`, which is
+/// what `use` reads back - KDB-X 5's `.Q.m.ld` takes the module's `export`
+/// and refuses one without, 'no export: <path>. Such a file runs in a
+/// context of its own, `.m.<module>`: after `` m:use`mymod ``, `` key`.m.mymod ``
+/// is ``` ``helper`f`g`export ``` and the root has no `helper` ('helper).
+///
+/// Anywhere outside a lambda, a control statement's brackets included: KX's
+/// arrowkdb module assigns it in `if[5<=.z.K;export:...]`, which runs at
+/// the module's top level as any statement there does.
+pub(crate) fn is_module(code: &str, raw: &str) -> bool {
+    if !code.contains("export") {
+        return false;
+    }
+    let mut braces = 0i32;
+    for (i, c) in code.bytes().enumerate() {
+        match c {
+            b'{' => braces += 1,
+            b'}' => braces -= 1,
+            b'e' if braces == 0
+                && code[i..].starts_with("export")
+                && boundary(code, i)
+                && !code[..i].ends_with(['.', '`'])
+                && re!(r"^export\s*,?\s*:").is_match(&code[i..]) =>
+            {
+                let line = code[..i].rfind('\n').map_or(0, |p| p + 1);
+                if !crate::system_command(&raw[line..]) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The module each literal `` use`name `` loads, outside a lambda that binds
+/// `use` itself. `view` is the code view with system commands blanked.
+fn uses(view: &str, scopes: &[Scope]) -> Vec<String> {
+    let mut out = vec![];
+    for m in
+        re!(r"\buse\s*(?:\[\s*|\(\s*)?`(\.*[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)")
+            .captures_iter(view)
+    {
+        let at = m.get(0).unwrap().start();
+        if !boundary(view, at)
+            || scope_at(scopes, at).is_some_and(|s| scopes[s].locals.contains("use"))
+        {
+            continue;
+        }
+        out.push(m[1].to_string());
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// `value` of a symbol the source does not spell out: `value nm` reads the
@@ -3417,7 +3503,7 @@ pub fn check(
             let global = qualify(name, namespace);
             if comments[start..start + statement.len()].contains(['"', '{'])
                     || scope.is_some_and(|s| s.locals.contains(name))
-                    || crate::RESERVED.iter().any(|builtin| builtin == name)
+                    || crate::reserved_word(name)
                     // Keyed exactly: `.cfg:1` defines no root `cfg` (q 5: 'cfg).
                     // A lambda runs once the file has loaded, but a top-level
                     // read runs as it loads: q 5 refuses `r:limit` above
@@ -4713,7 +4799,7 @@ fn named_values(
             // `.q.bb:10 20` then `select bb from ([]a:1 2)` (#524).
             && !globals.contains_key(&format!(".q.{name}"))
             && !elsewhere(&format!(".q.{name}"))
-            && !crate::RESERVED.iter().any(|n| n == name)
+            && !crate::reserved_word(name)
             && !scope_at(scopes, at).is_some_and(|s| scopes[s].locals.contains(name))
     };
     let mut column = |at: usize, name: &str, table: &str, columns: &[String]| {
