@@ -97,14 +97,15 @@ test("the first name the process defines is read, as the console prints it, with
   assert.strictEqual(table.type, 98);
   assert.strictEqual(table.count, 100000);
   assert.match(table.text, /^a +b\n-+\n0 +x\n/);
-  assert.ok(table.text.length < 5000, "the console's rows bound a table");
+  assert.ok(table.text.length <= PREVIEW_LIMIT, "the limit bounds a table");
   assert.match(previewMarkdown(table, "dev"), /table, 100,000 rows/);
   assert.match(previewMarkdown(await preview(c, ["kt"]), "dev"), /: keyed table, 3 rows\n/);
   assert.match(previewMarkdown(await preview(c, ["dict"]), "dev"), /: dictionary, 2 items\n/);
   // A one-character name, which reaches q as a char.
   assert.strictEqual((await preview(c, ["x"])).text, "7\n");
-  // The console's width bounds a long string; the limit cuts what is left.
-  assert.ok((await preview(c, ["s"])).text.length <= 200);
+  // The limit cuts a long string, not the console's width, and says so (#2546).
+  const whole = await preview(c, ["s"]);
+  assert.deepStrictEqual([whole.text.length, whole.cut], [PREVIEW_LIMIT, true]);
   const cut = readPreview(await c.call(VALUE_PREVIEW, "s", 50));
   assert.strictEqual(cut.text.length, 50);
   assert.match(previewMarkdown(cut, "dev", 50), /The first 50 characters\.$/);
@@ -126,4 +127,15 @@ test("the first name the process defines is read, as the console prints it, with
   assert.deepStrictEqual(await preview(c, ["v"]), { found: true, name: "v", view: true });
   assert.strictEqual(String((await c.evaluate("calls")).value), "0");
   assert.deepStrictEqual(await preview(c, ["nope", ".lib.nope"]), { found: false });
+});
+
+test("the hover shows a value past the process's \\c whole, and says when the limit cut it (#2546)", { skip }, async (t) => {
+  const c = await connect(t, "l:til 100\nd:(til 40)!til 40\nstr:100#\"ab\"\n");
+  const l = await preview(c, ["l"]);
+  assert.deepStrictEqual([l.text.trim(), l.cut], [[...Array(100).keys()].join(" "), false]);
+  const d = await preview(c, ["d"]);
+  assert.deepStrictEqual([d.text.trim().split("\n").length, d.cut], [40, false]);
+  assert.strictEqual((await preview(c, ["str"])).text.trim(), JSON.stringify("ab".repeat(50)));
+  const cut = readPreview(await c.call(VALUE_PREVIEW, "l", 20));
+  assert.deepStrictEqual([cut.text.length, cut.cut], [20, true]);
 });
