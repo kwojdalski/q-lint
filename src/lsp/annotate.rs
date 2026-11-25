@@ -562,7 +562,10 @@ fn reference_lenses(params: &Value, sources: &Sources) -> Vec<Value> {
             by_name.entry(name.as_str()).or_default().push(i);
         }
     }
-    let mut counts = vec![0usize; defined.len()];
+    // Mentions counted by the wanted names they have, and only then given
+    // to the definitions those names count for: one name defined n times
+    // and read n times was n^2 increments (#2349).
+    let mut by_names: HashMap<Vec<&str>, usize> = HashMap::new();
     for file in sources.keys() {
         let Some((_, other)) = sources.text(file) else {
             continue;
@@ -572,18 +575,30 @@ fn reference_lenses(params: &Value, sources: &Sources) -> Vec<Value> {
         }
         let placement = sources.placement(file);
         for m in mentions(&other).iter().filter(|m| m.definition.is_none()) {
-            let mut hit: Vec<usize> = sources
+            let mut names: Vec<&str> = sources
                 .names(&other, m, &placement)
                 .iter()
-                .filter_map(|name| by_name.get(name.as_str()))
-                .flatten()
-                .copied()
+                .filter_map(|name| by_name.get_key_value(name.as_str()).map(|(k, _)| *k))
                 .collect();
-            hit.sort_unstable();
-            hit.dedup();
-            for i in hit {
-                counts[i] += 1;
+            if names.is_empty() {
+                continue;
             }
+            names.sort_unstable();
+            names.dedup();
+            *by_names.entry(names).or_insert(0) += 1;
+        }
+    }
+    let mut counts = vec![0usize; defined.len()];
+    for (names, n) in by_names {
+        let mut hit: Vec<usize> = names
+            .iter()
+            .flat_map(|name| &by_name[name])
+            .copied()
+            .collect();
+        hit.sort_unstable();
+        hit.dedup();
+        for i in hit {
+            counts[i] += n;
         }
     }
     defined
