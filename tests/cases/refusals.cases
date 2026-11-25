@@ -1725,3 +1725,34 @@ a:3.0e
 a:3.0c
 a:1 2.0s
 a:3.0p
+
+=== QE010 profile: general | one digit from 3 to 9 and a colon is no verb (q 5: '3:, #2234)
+a:3:"s"
+
+=== QE010 profile: general | one digit from 3 to 9 and a colon is no verb (q 5: '3:, #2234)
+a:x 3:"s"
+
+=== QE010 profile: general | one digit from 3 to 9 and a colon is no verb (q 5: '9:, #2234)
+a:x 9: y
+
+=== QE010 profile: general | one digit from 3 to 9 and a colon is no verb (q 5: '6:, #2234)
+a:1 2 6: 7
+
+=== QE010 profile: general | one digit from 3 to 9 and a colon is no verb (q 5: '3:, #2234)
+a:3:
+
+=== QE006 profile: general | one digit from 3 to 9 and a colon is no verb (q 5: '3:, #2234)
+a:x 3:00
+
+=== QE010 profile: general | one digit from 3 to 9 and a colon is no verb (q 5: '3:, #2234)
+a:3: 00
+
+=== clean profile: general | while q 5 parses each of these (#2234)
+a:x 0: y
+a:x 1: y
+a:x 2: y
+a:10:00
+a:"3:x"
+a:`3:x
+a:x3:y
+

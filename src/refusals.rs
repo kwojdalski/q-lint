@@ -450,8 +450,11 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
             // Read in `comments`, which keeps symbols and strings: the left
             // operand of `h 1:30` may be either.
             let left = comments[..whole.start()].trim_end();
+            // One digit from 3 to 9 is no verb on any left: q 5 refuses
+            // `x 3:00` with '3: (#2234).
             if whole.start() == line
                 || left.is_empty()
+                || matches!(&m[3], "3" | "4" | "5" | "6" | "7" | "8" | "9")
                 || left.ends_with(|c: char| ":([;{,+*%&|=<>~#$^!?@".contains(c))
             {
                 refuse(
@@ -1771,7 +1774,8 @@ fn null_literal(text: &str, not_last: bool, negative: bool) -> Option<String> {
 /// `1.5:0` as one token and refuses it, whatever is on its left -
 /// `$[c;1.5:0]`, `h 1.5:0`, `2000.01.01:x`, `1j:2`, `0N:x` and `-1:x` are
 /// each refused, naming the token (#660). A bare integer is left to QE006
-/// and to `0:`, `1:` and `2:`, the file verbs; so is a time, negative ones
+/// and to `0:`, `1:` and `2:`, the file verbs, but for one digit from 3 to
+/// 9, which is no verb (`3:"s"`, `x 9: y`, #2234); so is a time, negative ones
 /// included (`-12:34`), and `1e:2`, which q 5 parses.
 fn number_colon(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Finding>) {
     let b = source.as_bytes();
@@ -1791,7 +1795,13 @@ fn number_colon(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec
         if command_argument(source, whole.start())
             || (number.bytes().all(|d| d.is_ascii_digit())
                 && (c[1].is_empty()
-                    || unsym[whole.end()..].starts_with(|d: char| d.is_ascii_digit())))
+                    || unsym[whole.end()..].starts_with(|d: char| d.is_ascii_digit()))
+                // One digit from 3 to 9 and a colon is no verb, and no time
+                // without a digit after it: q 5 refuses `3:"s"`, `x 9: y`
+                // and `3:` (#2234). `3:00` is QE006's.
+                && !(c[1].is_empty()
+                    && re!(r"^[3-9]$").is_match(number)
+                    && !unsym[whole.end()..].starts_with(|d: char| d.is_ascii_digit())))
             || number.ends_with(['e', 'E'])
             || re!(r"[DT]\d+$").is_match(number)
             || (before.ends_with(':')
@@ -1800,6 +1810,21 @@ fn number_colon(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec
             continue;
         }
         let text = &whole.as_str()[..whole.len() - 1];
+        if re!(r"^[3-9]$").is_match(text) {
+            let mut finding = Finding::at(
+                path,
+                source,
+                whole.start(),
+                "QE010",
+                format!(
+                    "`{text}:` is no verb: only `0:`, `1:` and `2:` are, and q 5 refuses \
+                     `{text}:` with '{text}:"
+                ),
+            );
+            finding.end_column = finding.column.map(|c| c + 2);
+            out.push(finding);
+            continue;
+        }
         out.push(Finding::at(
             path,
             source,
