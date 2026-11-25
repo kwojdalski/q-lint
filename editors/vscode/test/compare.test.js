@@ -362,3 +362,35 @@ test("Compare Query matches a key repeated on many rows in linear time, in order
   // Before: 125 ms at 50k, 375 ms at 100k, 2.9 s at 200k.
   assert.ok(big < Math.max(small, 20) * 3, `${small} ms at 50k, ${big} ms at 100k`);
 });
+
+// ([k:til 20]a:til 20) against ([k:reverse til 20]a:reverse til 20), each
+// cut at 10 rows: every key is on both, and was called only on one side.
+test("a row whose key the other side did not send, as it came back cut, is not compared, not only on one side (#2158)", () => {
+  const keyed = (ks, total) => {
+    const t = table({ k: [7, ks.map(String), ks], a: [7, ks.map(String), ks] }, 1);
+    t.grid.count = total;
+    return t;
+  };
+  const up = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+  const down = [19, 18, 17, 16, 15, 14, 13, 12, 11, 10];
+  const c = compareOutcomes(side("a", keyed(up, 20)), side("b", keyed(down, 20)), -1);
+  assert.deepStrictEqual([c.same, c.partial, c.differing, c.onlyLeft, c.onlyRight, c.uncompared], [false, true, 0, 0, 0, 20]);
+  const page = loadPage();
+  const said = (comparison) => (page.send({ type: "compare", id: 1, code: "t", comparison }), page.posted.at(-1).rendered.summary);
+  assert.match(said(c), /^The rows held are the same\. Not every row came back/);
+  // Drawn as not compared, not as only on one side.
+  const cells = page.body.all((e) => e.tagName === "TR").slice(2)[0].children.filter((td) => td.className !== "gap");
+  assert.deepStrictEqual(cells.map((td) => [td.className, td.title]), [
+    ["", "Not compared: not among the rows b sent"],
+    ["", "Not compared: not among the rows b sent"],
+    ["missing", "Not among the rows b sent"],
+    ["missing", "Not among the rows b sent"],
+  ]);
+  // A key the whole other side does not have is only on this one; with a cell that differs, the rest is counted.
+  const whole = compareOutcomes(side("a", keyed([1, 2], 2)), side("b", keyed([2, 3], 3)), -1);
+  assert.deepStrictEqual([whole.onlyLeft, whole.onlyRight, whole.uncompared], [0, 1, 1]);
+  const t = keyed([1, 2], 9);
+  t.grid.raw[1] = [1, 5];
+  t.grid.cells[1] = ["1", "5"];
+  assert.match(said(compareOutcomes(side("a", t), side("b", keyed([2, 3], 9)), -1)), /^1 cell differs, 2 rows not compared, as the other side did not send them \(rows lined up by key\)\./);
+});

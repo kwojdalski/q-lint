@@ -53,6 +53,10 @@
     if (c.onlyRight > 0) {
       parts.push(plural(c.onlyRight, "row", "rows") + " only on " + r);
     }
+    if (c.uncompared > 0) {
+      // Past where the other side was cut: on it or not, unknown (#2158).
+      parts.push(plural(c.uncompared, "row", "rows") + " not compared, as the other side did not send them");
+    }
     (c.retyped || []).forEach(function (t) {
       parts.push(t.column + " is " + t.left + " on " + l + " and " + t.right + " on " + r);
     });
@@ -114,6 +118,12 @@
       // `here` and `there` are the two processes, `has` the columns the other has.
       const add = function (cells, other, here, there, has) {
         c.columns.forEach(function (_, i) {
+          if (row.uncompared) {
+            // The other side was cut before it (#2158): no difference to mark.
+            tr.appendChild(element("td", cells === undefined ? "missing" : "", cells === undefined ? undefined : cells[i])).title =
+              cells === undefined ? "Not among the rows " + here + " sent" : "Not compared: not among the rows " + there + " sent";
+            return;
+          }
           if (cells === undefined) {
             // Said as well as coloured: a background alone tells some readers nothing.
             tr.appendChild(element("td", "missing")).title = "No such row on " + here;

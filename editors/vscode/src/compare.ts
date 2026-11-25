@@ -56,6 +56,8 @@ export interface ComparedRow {
   right?: string[];
   /// Whether each column's cells differ.
   differs: boolean[];
+  /// A row one side has and the other may: it came back cut (#2158).
+  uncompared?: boolean;
 }
 
 export interface Comparison {
@@ -75,6 +77,9 @@ export interface Comparison {
   differing: number;
   onlyLeft: number;
   onlyRight: number;
+  /// Rows one side has that the other, cut, may have past what it sent:
+  /// neither only on one side nor compared (#2158).
+  uncompared: number;
   /// The columns both tables have whose type is not the same, with each
   /// side's: a float 1 and a long 1 are not the same answer.
   retyped: { column: string; left: string; right: string }[];
@@ -186,7 +191,7 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number,
     // Two values' text, not two errors': the same to the digits written,
     // unless the text of their type is the whole value.
     const digits = same && sa.kind === "text" && [left, right].some((o) => "answer" in o && o.answer.ok && !exactText(o.answer.type));
-    return { left: sa, right: sb, columns: [], inLeft: [], inRight: [], matchedBy: "place", rows: [], lined: 0, differing: 0, onlyLeft: 0, onlyRight: 0, retyped: [], cut: 0, digits, same, partial };
+    return { left: sa, right: sb, columns: [], inLeft: [], inRight: [], matchedBy: "place", rows: [], lined: 0, differing: 0, onlyLeft: 0, onlyRight: 0, uncompared: 0, retyped: [], cut: 0, digits, same, partial };
   }
   const ga = ha.grid;
   const gb = hb.grid;
@@ -275,13 +280,21 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number,
   let differing = 0;
   let onlyLeft = 0;
   let onlyRight = 0;
+  let uncompared = 0;
   let cut = 0;
+  // A side that sent fewer rows than it has may hold a row the other has
+  // past them, by its key or its place: that row is not compared (#2158).
+  const cutA = countA < ga.total;
+  const cutB = countB < gb.total;
   const rows: ComparedRow[] = [];
   for (const [ra, rb] of pairs) {
     const l = cells(ga, indexA, ra);
     const r = cells(gb, indexB, rb);
     const differs = columns.map((_, i) => ra === undefined || rb === undefined || indexA[i] < 0 || indexB[i] < 0 || cellDiffers(i, ra, rb));
-    if (l === undefined || ra === undefined) {
+    const unknown = (l === undefined && cutA) || (r === undefined && cutB);
+    if (unknown) {
+      uncompared++;
+    } else if (l === undefined || ra === undefined) {
       onlyRight++;
     } else if (r === undefined || rb === undefined) {
       onlyLeft++;
@@ -301,7 +314,7 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number,
       });
     }
     if (rows.length < COMPARE_ROWS) {
-      rows.push({ ...(l !== undefined ? { left: l } : {}), ...(r !== undefined ? { right: r } : {}), differs });
+      rows.push({ ...(l !== undefined ? { left: l } : {}), ...(r !== undefined ? { right: r } : {}), differs, ...(unknown ? { uncompared: true } : {}) });
     }
   }
   const sameColumns = namesA.length === namesB.length && namesA.every((n, i) => n === namesB[i]);
@@ -318,6 +331,7 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number,
     differing,
     onlyLeft,
     onlyRight,
+    uncompared,
     retyped,
     ...(keyedAlike ? {} : { rekeyed: { left: namesA.slice(0, keysA), right: namesB.slice(0, keysB) } }),
     cut,
