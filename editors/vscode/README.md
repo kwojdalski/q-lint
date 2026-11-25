@@ -912,17 +912,30 @@ gateway goes as `.gw.syncexec[query;servertypes]`, so the gateway runs it on
 a server of each type and joins what they answer. The server types are, in
 order: those **Query Gateway on Server Types...** (editor menu and palette)
 asks for, for the selection or the current line; those a line at column 0
-of the file names, `/ @servertypes hdb`; else the process's own. One
-statement goes as a string, `.gw.syncexec["select from trade";\`rdb\`hdb]`;
-several go as `({last value each x};("s1";"s2"))`, which each server runs in
-order, answering with the last value, since q's `value` of one string takes
-neither a newline nor a trailing comment as the end of a statement. The
-history keeps the call as it was sent, and running it again does not wrap
-it twice. A dashboard tile, a scheduled query, **Query a Tag** and
-**Compare Query**, which each open a connection of their own, go through it
-too, to the process's own server types. A query from a notebook, the Process Explorer or an agent goes to
-the gateway as written. `q-lint.connection.torqGateway.enable` off sends
-every query as written and hides both commands.
+of the file names, `/ @servertypes hdb` (a comment after them is none);
+else the process's own. `/ @servertypes none` sends the file's queries to
+the gateway itself. The query is one string,
+`.gw.syncexec["select from trade";\`rdb\`hdb]`, which a server under TorQ's
+read-only mode reads as well: several statements are joined into it, each
+after the first on a line that starts ` ;`. TorQ's `.gw.syncexec` defers
+its reply (`-30!`) on kdb+ 3.6 and later, so the call is sent as a plain
+string and its value formatted here, as direct evaluation does. Code that
+calls the gateway's own API or reads its state - any name in `.gw` or
+`.dataaccess`, such as `t:.gw.syncexec[...]`, `.gw.servers` or
+`.dataaccess.getdata[...]` - goes as written. The history keeps the call
+as it was sent, and running it again does not wrap it twice; **Query
+Gateway on Server Types...** sends such an entry to the types chosen. A
+dashboard tile, a scheduled query, **Query a Tag**, **Compare Query**,
+**Watch Query**, the REPL, the Interactive Window, Smart Send, notebook
+cells and their live values, the agent's query tool, Copy Value as JSON and
+SQL go through it too, and a drill-down, a wrangle step or a cell edit from
+a result goes to the server types it came from. Features that evaluate the
+code inside q-lint's own q - Run Query Asynchronously, Record Query Snapshot
+and snapshot tests, Explain aj Match, Benchmark, Time Lines on Process and
+the Join Assistant - refuse code a gateway would send to its servers, and
+say so, rather than run it on the gateway itself.
+`q-lint.connection.torqGateway.enable` off sends every query as written and
+hides both commands.
 
 **Streaming a tickerplant table.** With `q-lint.tickerplant.stream.enable`
 on (it is off by default: a subscriber is a load on a tickerplant, which
