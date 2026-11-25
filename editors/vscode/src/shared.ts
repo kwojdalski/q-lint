@@ -81,16 +81,28 @@ export function readSharedFile(text: string, trusted: boolean): SharedList {
 }
 
 /// The lists of several workspace folders' files as one (#1841), in folder
-/// order. A label an earlier folder's list took is qualified with the
-/// folder's name; and in a folder other than `first`, which a connect
+/// order. A label more than one folder's list names is qualified with the
+/// folder's name in each of them - with its path, should two folders share
+/// a name - so no folder keeps the bare label: which one would hang on
+/// folder order, and a file bound to it would follow the label to another
+/// folder's process when the folders are reordered or one is removed
+/// (#2511). And in a folder other than `first`, which a connect
 /// script and a launch are otherwise read against, a relative one is made
 /// that folder's. Problems are named by folder when there are several.
 export function mergeShared(lists: { name: string; path: string; read: SharedList }[], first: string | undefined): SharedList {
   const taken = new Set<string>();
   const own = (file: string, dir: string): string => (path.isAbsolute(file) || file.startsWith("~") ? file : path.join(dir, file));
+  const listing = new Map<string, number>();
+  for (const { read } of lists) {
+    for (const label of new Set(read.processes.map((p) => p.label))) {
+      listing.set(label, (listing.get(label) ?? 0) + 1);
+    }
+  }
+  const names = lists.map(({ name }) => name);
   const processes = lists.flatMap(({ name, path: dir, read }) =>
     read.processes.map((p) => {
-      const label = taken.has(p.label) ? `${p.label} (${name})` : p.label;
+      const shared = (listing.get(p.label) ?? 0) > 1;
+      const label = !shared && !taken.has(p.label) ? p.label : `${p.label} (${names.filter((n) => n === name).length > 1 ? dir : name})`;
       taken.add(label);
       if (dir === first) {
         return { ...p, label };

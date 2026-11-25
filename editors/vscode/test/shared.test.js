@@ -395,7 +395,7 @@ test("turning the shared list off closes a connection apart to one of its proces
   assert.strictEqual(connection.isOpen, false);
 });
 
-test("several folders' lists are one: a label taken is qualified, and a later folder's relative paths are its own (#1841)", { skip: process.platform === "win32" && "POSIX paths" }, () => {
+test("several folders' lists are one: a label two of them name is qualified in each, and a later folder's relative paths are its own (#1841, #2511)", { skip: process.platform === "win32" && "POSIX paths" }, () => {
   const list = (processes) => ({ processes, problems: [], secrets: [] });
   const merged = mergeShared(
     [
@@ -405,11 +405,21 @@ test("several folders' lists are one: a label taken is qualified, and a later fo
     "/a",
   );
   assert.deepStrictEqual(merged.processes, [
-    { label: "rdb", host: "h", port: 1, tags: [], initFile: "init.q" },
+    { label: "rdb (A)", host: "h", port: 1, tags: [], initFile: "init.q" },
     { label: "rdb (B)", host: "h", port: 2, tags: [], initFile: "/b/conn/init.q" },
     { label: "hdb", host: "h", port: 3, tags: [], launch: { script: "hdb.q", cwd: "/b" } },
   ]);
   assert.deepStrictEqual(merged.problems, ["B: x: no port"]);
+  // No folder keeps the bare label, so a label names the same process
+  // whatever the folders' order (#2511); two folders of one name are told
+  // apart by their paths.
+  const ports = (lists) => Object.fromEntries(mergeShared(lists, lists[0].path).processes.map((p) => [p.label, p.port]));
+  const a = { name: "A", path: "/a", read: list([{ label: "rdb", host: "h", port: 1, tags: [] }]) };
+  const b = { name: "B", path: "/b", read: list([{ label: "rdb", host: "h", port: 2, tags: [] }]) };
+  assert.deepStrictEqual(ports([a, b]), { "rdb (A)": 1, "rdb (B)": 2 });
+  assert.deepStrictEqual(ports([b, a]), { "rdb (B)": 2, "rdb (A)": 1 });
+  assert.deepStrictEqual(ports([b]), { rdb: 2 });
+  assert.deepStrictEqual(ports([a, { ...b, name: "A" }]), { "rdb (/a)": 1, "rdb (/b)": 2 });
 });
 
 test("in a multi-root workspace every folder's shared list is read and watched, and Add asks which (#1841)", async (t) => {
