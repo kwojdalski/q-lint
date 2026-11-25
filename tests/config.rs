@@ -106,3 +106,37 @@ fn fix_leaves_an_ignored_rule_alone() {
         "b:1==1\n"
     );
 }
+
+/// `--default-profile` stands in for `uqf` only where nothing names a
+/// profile: the editor's Lint q Code tool passes `style`, `--lsp`'s default,
+/// so it answers what the server shows - and a project's own `profile`, or
+/// `--profile`, still wins (#2292).
+#[test]
+fn the_default_profile_flag_yields_to_a_named_profile() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join("a.q"),
+        "f:{[x] x+1}\nd:2015.01.01T00:00:00.000\n",
+    )
+    .unwrap();
+    // QP002 is uqf's; style does not report it.
+    assert_eq!(codes(dir.path(), &[]).1, ["QP002"]);
+    assert!(
+        codes(dir.path(), &["--default-profile", "style"])
+            .1
+            .is_empty()
+    );
+    assert_eq!(
+        codes(
+            dir.path(),
+            &["--default-profile", "style", "--profile", "uqf"]
+        )
+        .1,
+        ["QP002"]
+    );
+    fs::write(dir.path().join("qlinter.toml"), "profile = \"uqf\"\n").unwrap();
+    assert_eq!(
+        codes(dir.path(), &["--default-profile", "style"]).1,
+        ["QP002"]
+    );
+}

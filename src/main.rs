@@ -203,6 +203,13 @@ struct Args {
     /// and no reason why.
     #[arg(long, hide = true)]
     stdio: bool,
+    /// The profile when neither `--profile` nor a configuration names one,
+    /// in place of `uqf`. Hidden: it is for the editor's own tools, which
+    /// lint as its server does and so pass `style`, `--lsp`'s default -
+    /// passing `--profile style` instead would outrank the project's
+    /// `profile` (#2292).
+    #[arg(long, hide = true, value_parser = ["general", "style", "styleq", "uqf"])]
+    default_profile: Option<String>,
 }
 #[derive(clap::Subcommand)]
 enum Command {
@@ -255,7 +262,14 @@ fn overrides(args: &Args) -> Result<Overrides, String> {
     let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
     Ok(Overrides {
         profile: args.profile.clone(),
-        default_profile: if args.lsp { "style" } else { "uqf" },
+        default_profile: match args.default_profile.as_deref() {
+            Some("general") => "general",
+            Some("style") => "style",
+            Some("styleq") => "styleq",
+            Some(_) => "uqf",
+            None if args.lsp => "style",
+            None => "uqf",
+        },
         layer: Layer {
             select: args
                 .select
