@@ -1776,3 +1776,17 @@ test(".h.val, q's own alias of value, evaluates a string as value does (#2273)",
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("the debugger's breakpoints patch a function in place: .Q.bs and what it calls, and -104!, are writers (#2276)", () => {
+  const asks = [
+    ".Q.bs[upd;1]", ".Q.bs[.ns.f;1]", ".Q.bc[g;1;::]", ".Q.bd[g;1]", ".Q.bu[g;1]", ".Q.bp[g;1;0xff]", ".Q.Ls(g;enlist 1;enlist 0xff)",
+    "-104!(g;enlist 1;enlist 0xff)", "(-104)!(g;1;0xff)", ".Q[`bs][g;1]", "(.Q`bs)[g;1]", "{.Q.bs[x;1]} g",
+  ];
+  for (const code of asks) {
+    assert.ok(writes(code).length > 0, code);
+  }
+  assert.deepStrictEqual(writes(".Q.bs[upd;1]"), ["calls .Q.bs"]);
+  assert.deepStrictEqual(writes("-104!(g;1;0xff)"), ["patches a function's code with -104!"]);
+  // Its table of breakpoints, read, is a read.
+  assert.deepStrictEqual(writes(".Q.BP"), []);
+});

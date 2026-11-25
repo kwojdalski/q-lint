@@ -148,6 +148,21 @@ test("every bypass form of the guard's fourth hunt, sent under reval, leaves the
   assert.deepStrictEqual(changed, []);
 });
 
+test("reval does not stop a breakpoint patching a function in place, so the guard must ask about it (#2276)", { skip, timeout: 60_000 }, async (t) => {
+  const box = new Sandbox("g:{a:x+1;a*2};");
+  t.after(() => box.stop());
+  await box.start();
+  for (const code of [".Q.bs[g;1]", ".Q.bs[upd;1]", ".Q.bc[g;1;::]", ".Q.Ls(g;enlist 1;enlist 0xff)", "-104!(g;enlist 1;enlist 0xff)", "(.Q`bs)[g;1]"]) {
+    assert.notDeepStrictEqual(writes(code), [], code);
+  }
+  // q refuses the update of .Q.BP, but g's code is patched before it: g
+  // then gives a wrong answer, or with no console takes q down.
+  assert.deepStrictEqual((await box.run("g 1")).answer.text, ["4"]);
+  const { refused } = await box.run(".Q.bs[g;1]");
+  assert.match(refused, /^noupdate/);
+  assert.notDeepStrictEqual((await box.run("g 1")).answer.text, ["4"]);
+});
+
 test("the fuzz's writer families, sent under reval whatever the guard reads, change nothing", { skip, timeout: 600_000 }, async (t) => {
   generator.setSeed(Number(process.env.QLINT_GUARD_FUZZ_SEED ?? 1));
   const count = Number(process.env.QLINT_BACKSTOP_FUZZ ?? 1500);

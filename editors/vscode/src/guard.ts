@@ -28,8 +28,9 @@
 //   `.Q.dpfts`, `.Q.dpt`, `.Q.dpts`, `.Q.hdpf`, `.Q.en`, `.Q.ens`,
 //   `.Q.enx`, `.Q.enxs`, `.Q.chk`, `.Q.dsftg`, `.Q.view`, `.Q.l`, `.Q.lo`,
 //   `.Q.li`, `.Q.bv`, `.Q.L`, `.Q.Xf` (which creates a file), `.Q.opt` (which
-//   sets `.Q.x`), KDB-X's `use` (which runs a module) and `.h.ht` (which
-//   writes HTML files) (#1775), and `0:` or `1:` to a
+//   sets `.Q.x`), KDB-X's `use` (which runs a module), `.h.ht` (which
+//   writes HTML files) (#1775), the debugger's `.Q.bs`, `.Q.bc`, `.Q.bd`,
+//   `.Q.bu`, `.Q.bp` and `.Q.Ls`, which patch a function's code (#2276), and `0:` or `1:` to a
 //   file handle (`` `:f 0: ``, `hsym[`f] 0:`, `(hsym `f) 1:`,
 //   `` (`$":f") 0: ``, `` 0:[`:f;x] ``, `` .[0:;(`:f;x)] ``) - or to
 //   anything else but a parse or prepare format (`"," 0: t`,
@@ -66,7 +67,8 @@
 //   `-11!(-2;..)`, which only count and check one; `-19!`, which
 //   compresses a file into another - each also spaced or with the number
 //   in parentheses (`-19 !x`, `(-19)!x`), with a type, `-11j!`, or computed,
-//   `(neg 11)!x` - one it cannot work out is asked about (#2208) - and with `!` passed as a value
+//   `(neg 11)!x` - one it cannot work out is asked about (#2208); `-104!`, which
+//   patches a function's code (#2276) - and with `!` passed as a value
 //   (`` (!)[-11;`:log] ``, `` .[!;(-19;..)] ``, `` !/[-11;`:log] ``, #2041);
 // - `@[` or `.[` on a variable named by a symbol, alone or in
 //   parentheses (`` .[(`t);..] ``), with three arguments or four: an
@@ -220,6 +222,9 @@ const WRITERS = new Set([
   "set", "upsert", "insert", "hdel", "exit", "hclose", "system", "save", "rsave", "dsave", "load", "rload", "setenv",
   ".Q.dpft", ".Q.dpfts", ".Q.dpt", ".Q.dpts", ".Q.hdpf", ".Q.en", ".Q.ens", ".Q.enx", ".Q.enxs", ".Q.chk", ".Q.dsftg",
   ".Q.view", ".Q.l", ".Q.lo", ".Q.li", ".Q.bv", ".Q.opt", ".Q.Xf", ".Q.L", "use", ".h.ht",
+  // The debugger's breakpoints patch a function's code in place, which
+  // `reval` does not stop (#2276).
+  ".Q.bs", ".Q.bc", ".Q.bd", ".Q.bu", ".Q.bp", ".Q.Ls",
 ]);
 /// What evaluates a string or a parse tree it is given: `.h.val` is q's own
 /// alias of `value` (#2273).
@@ -2265,6 +2270,11 @@ function readStatement(statement: string, found: Set<string>): void {
     // `-19!` compresses a file into another one.
     if (bang > 0 && fn === "-19") {
       found.add("writes a compressed file with -19!");
+      continue;
+    }
+    // `-104!`, `.Q.Ls`, sets or clears a breakpoint in a function's code (#2276).
+    if (bang > 0 && fn === "-104") {
+      found.add("patches a function's code with -104!");
       continue;
     }
     if (k.kind === "num" && (k.text === "0" || k.text === "1" || k.text === "2") && next?.text === ":" && touching(k, next)) {
