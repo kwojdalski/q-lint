@@ -915,24 +915,30 @@ pub fn tokens(
         .as_str()
     };
     let name = re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*");
-    // A global is a function when every assignment to it is a lambda that
-    // the statement ends with - `f:{...} each x` assigns a list, as QA012's
-    // rank table already knows - or a projection of one, as `index` decides:
-    // q 5's `p:{[a;b] a+b}[1;]` is type 104h and `p 2` is 3 (#367). The
-    // writes are `global_writes`', which a table column or a qSQL alias is
-    // not: after `t:([] f:1 2)`, q 5's `f` is still the lambda (#365).
-    let lambda: HashMap<String, bool> =
-        global_writes(code, raw, &scopes, &namespaces, resolved, true)
-            .into_iter()
-            .map(|(key, at)| (key, at.iter().all(|&at| assigns_lambda(code, raw, at))))
-            .collect();
+    // A global is a function when its last assignment makes it one
+    // (`holds_functions`) - a lambda the statement ends with, not
+    // `f:{...} each x`, which assigns a list as QA012's rank table already
+    // knows; a projection, as q 5's `p:{[a;b] a+b}[1;]`, 104h (#367); or a
+    // name holding one - as the outline has it. The writes are
+    // `global_writes`', which a table column or a qSQL alias is not: after
+    // `t:([] f:1 2)`, q 5's `f` is still the lambda (#365).
+    let writes = global_writes(code, raw, &scopes, &namespaces, resolved, true);
+    let lambda = holds_functions(code, raw, &writes, &scopes, &namespaces);
     // In a qSQL phrase a name is a column whenever the table has one by
     // that name - q 5's `select f from t` is the column even where `f` is a
     // lambda - and only the table says which, so none is coloured (#552).
     let outside_queries = crate::outside_query_phrases(code);
+    // A name a multiple assignment binds is written there, as `f:` is.
+    let bound: HashSet<usize> = multi_assignments(code)
+        .chain(global_multi_assignments(code))
+        .map(|(_, name)| name.as_ptr() as usize - code.as_ptr() as usize)
+        .collect();
     let mut out = vec![];
     for m in name.find_iter(code) {
-        if !boundary(code, m.start()) || outside_queries.as_bytes()[m.start()] == b' ' {
+        if !boundary(code, m.start())
+            || outside_queries.as_bytes()[m.start()] == b' '
+            || bound.contains(&m.start())
+        {
             continue;
         }
         // A system command's argument is no q: `\l f/a.q` names a file,
@@ -1160,8 +1166,13 @@ fn global_writes(
         if !literal_target(code, name.start() - 1, &code[name.end()..whole.end()]) {
             continue;
         }
+        // `set[`n;v]` writes the value after the name's `;` (#2315).
+        let value = match m.get(2) {
+            Some(_) => re!(r"^\s*;").find(&code[whole.end()..]).map_or(whole.end(), |semi| whole.end() + semi.end()),
+            None => whole.end(),
+        };
         for target in set_targets(name.as_str(), whole.start()) {
-            globals.entry(target).or_default().push(whole.end());
+            globals.entry(target).or_default().push(value);
         }
     }
     // `` load `:k `` defines the global its path ends in (#470).
@@ -1188,10 +1199,14 @@ fn global_writes(
         }
     }
     // Each of a symbol list, `` `p`q set'1 2 ``, parenthesised too (#464).
+    // Each is written its own item of a list as long as the names, which is
+    // what q 5 sets it to: `` `a`b set' (1;{x}) `` makes `b` 100h (#2315).
     for (whole, names) in each_set_targets(code) {
-        for name in names {
+        let items = list_items(code, whole.end).filter(|items| items.len() == names.len());
+        for (i, name) in names.into_iter().enumerate() {
+            let value = items.as_ref().map_or(whole.end, |items| items[i]);
             for target in set_targets(name, whole.start) {
-                globals.entry(target).or_default().push(whole.end);
+                globals.entry(target).or_default().push(value);
             }
         }
     }
@@ -1213,7 +1228,7 @@ fn global_writes(
                 "." => qualify(name, ""),
                 ctx => format!("{ctx}.{name}"),
             };
-            globals.entry(name).or_default().push(whole.end());
+            globals.entry(name).or_default().push(assigned_by_amend(code, whole.end()));
         }
     }
     for m in re!(r"\.\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)\s*;\s*\(\s*\)\s*;").captures_iter(code) {
@@ -1223,8 +1238,9 @@ fn global_writes(
         {
             continue;
         }
+        let value = assigned_by_amend(code, whole.end());
         for target in set_targets(&m[1], whole.start()) {
-            globals.entry(target).or_default().push(whole.end());
+            globals.entry(target).or_default().push(value);
         }
     }
     // A member of a namespace assigned by a literal index: q 5
@@ -1243,6 +1259,8 @@ fn global_writes(
                 .push(whole.end());
         }
     }
+    // Each name of a flat target is written its own item of a list as long
+    // as the target: q 5's `(a;b):(1;{x})` makes `b` 100h (#2315).
     for (at, name) in multi_assignments(code)
         .filter(|&(at, _)| scope_at(scopes, at).is_none())
         .chain(global_multi_assignments(code))
@@ -1250,12 +1268,54 @@ fn global_writes(
         let close = matching(code, at, b'(', b')').unwrap_or(at);
         let colon = close + code[close..].find(':').unwrap() + 1;
         let end = colon + usize::from(code[colon..].starts_with(':'));
+        let target = &code[at + 1..close.saturating_sub(1).max(at + 1)];
+        let flat: Vec<&str> = target.split(';').map(str::trim).collect();
+        let value = list_items(code, end)
+            .filter(|items| items.len() == flat.len())
+            .and_then(|items| Some(items[flat.iter().position(|n| *n == name)?]))
+            .unwrap_or(end);
         globals
             .entry(qualify(name, ns_at(at)))
             .or_default()
-            .push(end);
+            .push(value);
     }
     globals
+}
+
+/// Where each item of the list written at `at` starts, when what is
+/// written there is a parenthesised list and nothing after it: `(1;{x})`.
+fn list_items(code: &str, at: usize) -> Option<Vec<usize>> {
+    let open = code.len() - code[at..].trim_start().len();
+    if !code[open..].starts_with('(') {
+        return None;
+    }
+    let close = matching(code, open, b'(', b')')?;
+    let after = code[close..].trim_start_matches([' ', '\t']);
+    if !(after.is_empty() || after.starts_with([';', '\n', '\r', ')', ']', '}'])) {
+        return None;
+    }
+    let inside = &code[open + 1..close - 1];
+    let mut start = open + 1;
+    Some(
+        crate::slots(inside)
+            .iter()
+            .map(|item| {
+                let at = start;
+                start += item.len() + 1;
+                at
+            })
+            .collect(),
+    )
+}
+
+/// Where the value a functional amend assigns starts, from `at`, just past
+/// the arguments that name what it writes: after `:;` - `@[`.c;`n;:;{x}]`
+/// assigns `{x}` (#2315) - and `at` itself for any other function, which
+/// does not assign what follows it.
+fn assigned_by_amend(code: &str, at: usize) -> usize {
+    re!(r"^\s*:\s*;")
+        .find(&code[at..])
+        .map_or(at, |m| at + m.end())
 }
 
 /// What one file defines for the files around it: its global names, and
@@ -1308,10 +1368,9 @@ pub fn index(code: &str, raw: &str) -> crate::FileIndex {
         .1;
         globals.entry(resolved(&m[1], ns)).or_default();
     }
-    let lambdas = globals
-        .iter()
-        .filter(|(_, at)| at.iter().any(|&a| assigns_lambda(code, raw, a)))
-        .map(|(name, _)| name.clone())
+    let lambdas = holds_functions(code, raw, &globals, &scopes, &namespaces)
+        .into_iter()
+        .filter_map(|(name, function)| function.then_some(name))
         .collect();
     crate::FileIndex {
         defined: globals.into_keys().collect(),
@@ -5372,10 +5431,199 @@ fn assigns_lambda(code: &str, raw: &str, at: usize) -> bool {
     assigned_rank(code, raw, at).is_some()
 }
 
+/// Where the value assigned at `at` starts once each further assignment it
+/// chains is passed over: `{x+1}` for the `a` of `a:b:{x+1}`, which q 5
+/// assigns to both names. A `::` is passed over only where something follows
+/// it; `a:b::` composes nothing here, and is left as it is.
+pub(crate) fn chained_value(code: &str, mut at: usize) -> usize {
+    while let Some(m) =
+        re!(r"^[ \t]*\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*[ \t]*::?")
+            .find(&code[at..])
+            .filter(|m| {
+                let after = &code[at + m.end()..];
+                !after.starts_with(':')
+                    && !after
+                        .trim_start_matches([' ', '\t'])
+                        .starts_with([';', '\n', '\r', ')', ']', '}'])
+                    && !after.trim_start_matches([' ', '\t']).is_empty()
+            })
+    {
+        at += m.end();
+    }
+    at
+}
+
+/// What the value assigned at `at` says about whether the name holding it
+/// holds a function.
+enum Assigned<'a> {
+    /// A function, whatever else the file defines: a lambda, a projection
+    /// of one, or a derived function - q 5's `count each` is 104h and
+    /// `{x}'` 106h. With how many arguments it takes, where that is known.
+    Function(Option<usize>),
+    /// Another name, itself (`al:f`) or projected (`p:f[;1]`, each slot with
+    /// whether it is filled): a function when that name holds one.
+    Name(&'a str, Option<Vec<bool>>),
+    /// Anything else, which the source does not make a function.
+    Other,
+}
+
+/// `Assigned` of the value at `at`.
+fn assigned_value<'a>(code: &'a str, raw: &str, at: usize) -> Assigned<'a> {
+    if let Some(rank) = assigned_rank(code, raw, at) {
+        return Assigned::Function(Some(rank));
+    }
+    let ends = |from: usize| {
+        let after = code[from..].trim_start_matches([' ', '\t']);
+        after.is_empty() || after.starts_with([';', '\n', '\r', ')', ']', '}'])
+    };
+    let at = chained_value(code, at);
+    let start = code.len() - code[at..].trim_start_matches([' ', '\t']).len();
+    // The term: a lambda, or a name and the brackets it is indexed with.
+    let (name, mut end) = if code[start..].starts_with('{') {
+        match matching(code, start, b'{', b'}') {
+            Some(end) => (None, end),
+            None => return Assigned::Other,
+        }
+    } else if let Some(m) =
+        re!(r"^\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*").find(&code[start..])
+    {
+        (Some(m.as_str()), start + m.end())
+    } else {
+        return Assigned::Other;
+    };
+    let mut given = None;
+    if name.is_some() && code[end..].starts_with('[') {
+        let Some(close) = matching(code, end, b'[', b']') else {
+            return Assigned::Other;
+        };
+        // Cut where the code view says, and read in the source, where a
+        // string is not blank.
+        let mut slot_at = end + 1;
+        given = Some(
+            crate::slots(&code[end + 1..close - 1])
+                .iter()
+                .map(|slot| {
+                    let filled = !raw[slot_at..slot_at + slot.len()].trim().is_empty();
+                    slot_at += slot.len() + 1;
+                    filled
+                })
+                .collect(),
+        );
+        end = close;
+    }
+    // An iterator with nothing after it derives a function from whatever it
+    // follows - q 5's `5'` is 106h - and so does a keyword one given its
+    // left argument alone: `l each` is `each[l;]`, 104h.
+    let glyph = re!(r"^(?:'|':|/:|\\:|/|\\)").find(&code[end..]);
+    if let Some(glyph) = glyph
+        && ends(end + glyph.end())
+    {
+        return Assigned::Function(None);
+    }
+    if let Some(word) = re!(r"^[ \t]+(?:each|peach|over|scan|prior)\b").find(&code[end..])
+        && ends(end + word.end())
+    {
+        return Assigned::Function(None);
+    }
+    match name {
+        Some(name) if ends(end) => Assigned::Name(name, given),
+        _ => Assigned::Other,
+    }
+}
+
+/// Whether each global in `writes` holds a function once the file has
+/// loaded: what its last write assigns, at the top level where it has one
+/// there - a write inside a lambda happens when, and if, that runs. After
+/// `f:{x}` and `f:5`, q 5 holds `f` as 5, -7h (#2317). An alias or a
+/// projection of a name is a function when that name holds one, the file's
+/// own or q's: `al:f`, `p:f[;1]` and `up:upsert` (#2316). A name the file
+/// does not define, beyond q's own, is not known here.
+fn holds_functions(
+    code: &str,
+    raw: &str,
+    writes: &Writes,
+    scopes: &[Scope],
+    namespaces: &[(usize, String)],
+) -> HashMap<String, bool> {
+    let ns_at = |at: usize| {
+        namespaces[namespaces
+            .partition_point(|(p, _)| *p <= at)
+            .saturating_sub(1)]
+        .1
+        .as_str()
+    };
+    // Each function the file defines, with how many arguments it takes
+    // where that is known.
+    let mut functions: HashMap<&str, Option<usize>> = HashMap::new();
+    let mut aliases = vec![];
+    for (name, ats) in writes {
+        let top = ats
+            .iter()
+            .copied()
+            .filter(|&at| scope_at(scopes, at).is_none())
+            .max();
+        let Some(last) = top.or_else(|| ats.iter().copied().max()) else {
+            continue;
+        };
+        match assigned_value(code, raw, last) {
+            Assigned::Function(rank) => {
+                functions.insert(name.as_str(), rank);
+            }
+            Assigned::Name(target, given) => {
+                aliases.push((name.as_str(), resolved(target, ns_at(last)), target, given))
+            }
+            Assigned::Other => {}
+        }
+    }
+    // An alias of an alias resolves once the one it names has: a pass for
+    // each link, and a cycle, `a:b` and `b:a`, is never a function.
+    loop {
+        let before = aliases.len();
+        aliases.retain(|(name, key, target, given)| {
+            let rank = match functions.get(key.as_str()) {
+                Some(&rank) => rank,
+                None if writes.contains_key(key) => return true,
+                None => match crate::builtin(target) {
+                    Some(b) if b.kind == crate::BuiltinKind::Function => Some(b.params.len()),
+                    _ => return false,
+                },
+            };
+            let Some(given) = given else {
+                functions.insert(name, rank);
+                return false;
+            };
+            // Brackets apply what fills them, and project over what they
+            // leave open and over the arguments not given; empty ones apply
+            // a function of rank 1, and one whose rank is not known.
+            let open = given.iter().filter(|filled| !**filled).count();
+            let left = match rank {
+                Some(rank) if given.len() == 1 && open == 1 && rank <= 1 => 0,
+                Some(rank) => open + rank.saturating_sub(given.len()),
+                None if given.len() == 1 && open == 1 => 0,
+                None => open,
+            };
+            if left > 0 {
+                functions.insert(name, rank.map(|_| left));
+            }
+            false
+        });
+        if aliases.len() == before {
+            break;
+        }
+    }
+    writes
+        .keys()
+        .map(|name| (name.clone(), functions.contains_key(name.as_str())))
+        .collect()
+}
+
 /// How many arguments the lambda assigned at `at` still takes, or `None`
 /// when the value is not a function. A projection takes what its open slots
 /// and missing trailing arguments leave: `{[a;b;c] ...}[;1]` takes two.
 fn assigned_rank(code: &str, raw: &str, at: usize) -> Option<usize> {
+    // A chained assignment, `a:b:{x+1}`, assigns both names the lambda:
+    // q 5 types `a` and `b` 100h (#2310).
+    let at = chained_value(code, at);
     let rest = code[at..].trim_start();
     let brace = code.len() - rest.len();
     let ends = |from: usize| {

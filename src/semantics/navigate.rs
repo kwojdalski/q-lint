@@ -6,8 +6,9 @@
 //! scopes and the writes the checks already read, and stopped there: what a
 //! name holds when the script runs is still not this crate's to say.
 use super::{
-    Scope, assigns_lambda, call_time, first_switch, global_multi_assignments, global_writes,
-    local_view, multi_assignments, resolved, scope_at, scopes, top_level_statements,
+    Scope, assigns_lambda, call_time, chained_value, first_switch, global_multi_assignments,
+    global_writes, holds_functions, local_view, multi_assignments, resolved, scope_at, scopes,
+    top_level_statements,
 };
 use crate::{Definition, Local, Mention, Name, Place, boundary, pattern_names, signature};
 use std::collections::{HashMap, HashSet};
@@ -472,7 +473,10 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
     let statements = top_level_statements(code, raw);
     let mut out = vec![];
     let mut writes = HashSet::new();
-    for (name, values) in global_writes(code, raw, &scopes, &namespaces, resolved, true) {
+    let all = global_writes(code, raw, &scopes, &namespaces, resolved, true);
+    let held = holds_functions(code, raw, &all, &scopes, &namespaces);
+    for (name, values) in all {
+        let holds_function = held.get(&name).copied().unwrap_or(false);
         for value in values {
             let Some((at, len)) = written(code, &name, value) else {
                 continue;
@@ -480,6 +484,7 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
             writes.insert(at);
             let function = assigns_lambda(code, raw, value);
             let (detail, params) = if function {
+                let value = chained_value(code, value);
                 let brace = value + code[value..].len() - code[value..].trim_start().len();
                 let sig = signature(code, raw, brace);
                 let slots: Vec<&str> = sig.slots.iter().map(|slot| slot.trim()).collect();
@@ -519,6 +524,7 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
                 len,
                 definition: Some(Definition {
                     function,
+                    holds_function,
                     detail,
                     params,
                     start,
@@ -604,6 +610,7 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
                 .get(&at)
                 .map(|&(function, start, end)| Definition {
                     function,
+                    holds_function: function,
                     detail: String::new(),
                     params: vec![],
                     start,

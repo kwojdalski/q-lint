@@ -169,6 +169,62 @@ fn a_lambda_applied_to_empty_brackets_defines_a_value() {
     );
 }
 
+/// Each name `source` defines, once, with whether it holds a function once
+/// the file has loaded - what the outline says of it.
+fn holds(source: &str) -> Vec<(String, bool)> {
+    let mut out: Vec<(String, bool)> = vec![];
+    for m in mentions(source) {
+        if let Some(d) = &m.definition
+            && !out.iter().any(|(name, _)| *name == m.name)
+        {
+            out.push((m.name.clone(), d.holds_function));
+        }
+    }
+    out
+}
+
+#[test]
+fn a_name_is_outlined_by_the_value_q_holds_it_as() {
+    let named = |names: &[(&str, bool)]| -> Vec<(String, bool)> {
+        names.iter().map(|&(n, f)| (n.to_string(), f)).collect()
+    };
+    // KDB-X: `a:b:{x+1}` makes both 100h (#2310).
+    assert_eq!(holds("a:b:{x+1}\n"), named(&[("a", true), ("b", true)]));
+    // Each lambda written by set', a functional amend, a multiple
+    // assignment and `set` in brackets is 100h (#2315).
+    assert_eq!(
+        holds(
+            "`n1`n2 set' (1;{x})\n.[`n3;();:;{x}]\n(n5;n6):(1;{x})\n.c.z:0\n@[`.c;`n10;:;{x}]\nset[`n12;{x}]\n"
+        ),
+        named(&[
+            ("n1", false),
+            ("n2", true),
+            ("n3", true),
+            ("n5", false),
+            ("n6", true),
+            (".c.z", false),
+            (".c.n10", true),
+            ("n12", true),
+        ])
+    );
+    // An alias, a projection, a derived function and q's own: 100h, 104h,
+    // 104h, 104h - and applied to every argument, 3 (#2316).
+    assert_eq!(
+        holds("f:{[a;b] a+b}\np:f[;1]\nal:f\nce:count each\nup:upsert\nd:f[1;2]\n"),
+        named(&[
+            ("f", true),
+            ("p", true),
+            ("al", true),
+            ("ce", true),
+            ("up", true),
+            ("d", false),
+        ])
+    );
+    // The last write, wherever the name is first listed (#2317).
+    assert_eq!(holds("f:{x}\nf:5\n"), named(&[("f", false)]));
+    assert_eq!(holds("g:5\ng:{x}\n"), named(&[("g", true)]));
+}
+
 #[test]
 fn the_path_of_each_kind_of_load_is_found_under_the_cursor() {
     let source =

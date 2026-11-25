@@ -276,6 +276,12 @@ pub struct Mention {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Definition {
     pub function: bool,
+    /// Whether the name holds a function once the file has loaded: its last
+    /// write, at the top level where it has one, makes it one - a lambda, a
+    /// projection, a derived function, or a name holding one (q 5's `al:f`
+    /// is 100h, `ce:count each` 104h). The same for every write of a name,
+    /// and what the outline and the semantic tokens both say of it.
+    pub holds_function: bool,
     pub detail: String,
     pub params: Vec<String>,
     pub start: usize,

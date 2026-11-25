@@ -459,6 +459,33 @@ fn a_lambda_applied_to_empty_brackets_is_not_a_function() {
 }
 
 #[test]
+fn a_name_is_coloured_by_the_value_q_holds_it_as() {
+    // KDB-X: `a:b:{x+1}` makes both 100h (#2310).
+    assert_eq!(functions("a:b:{x+1}\nm:a 1\n"), ["a"]);
+    // So do set', a functional amend, a multiple assignment and `set` in
+    // brackets: each name below is 100h (#2315).
+    assert_eq!(
+        functions(
+            "`n1`n2 set' (1;{x})\n.[`n3;();:;{x}]\n(n5;n6):(1;{x})\n.c.z:0\n\
+             @[`.c;`n10;:;{x}]\nset[`n12;{x}]\nr:(n1;n2 1;n3 1;n5;n6 1;.c.n10 1;n12 1)\n"
+        ),
+        ["n2", "n3", "n6", ".c.n10", "n12"]
+    );
+    // An alias, a projection and a derived function: 100h, 104h, 104h and
+    // 104h; all of `f`'s arguments given, it is applied (#2316).
+    assert_eq!(
+        functions("f:{[a;b] a+b}\np:f[;1]\nal:f\nce:count each\nup:upsert\nd:f[1;2]\nr:(p 1;al;ce 1;up;d)\n")
+            .into_iter()
+            .filter(|name| *name != "f")
+            .collect::<Vec<_>>(),
+        ["p", "al", "ce", "up"]
+    );
+    // The last write is what the name holds: -7h, then 100h (#2317).
+    assert!(functions("f:{x}\nf:5\nr:f+1\n").is_empty());
+    assert_eq!(functions("g:5\ng:{x}\nr:g 1\n"), ["g"]);
+}
+
+#[test]
 fn a_root_lambda_is_not_coloured_inside_a_context() {
     use q_lint_rs::{TokenKind, Workspace, index, semantic_tokens_in};
     // q 5: under `\\d .ns`, `m:f 2` is 'f - no fallback to the root `f`,
