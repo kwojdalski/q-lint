@@ -67,7 +67,7 @@ function inline(text: string, values: Record<string, LiveValue>, breaks = false)
   let from = 0;
   for (const span of inlineSpans(text)) {
     // A tag is shown as written, as the page shows no HTML of the notebook's.
-    const html = span.kind === "code" ? `<code>${escapeHtml(span.expr.trim())}</code>` : span.kind === "html" ? escapeHtml(span.expr) : liveHtml(span.expr, values[span.expr]);
+    const html = span.kind === "code" ? `<code>${escapeHtml(codeText(span.expr))}</code>` : span.kind === "html" ? escapeHtml(span.expr) : liveHtml(span.expr, values[span.expr]);
     s += text.slice(from, span.start) + hold(html, text.slice(span.start, span.end));
     from = span.end;
   }
@@ -125,6 +125,13 @@ function inline(text: string, values: Record<string, LiveValue>, breaks = false)
   // What is held may hold more: a link's label.
   const restore = (text: string): string => text.replace(/\u0000(\d+)\u0000/g, (_m, i: string) => restore(held[Number(i)]));
   return restore(emphasis(s, held));
+}
+
+/// A code span's text: a line end is a space, and one space each side goes
+/// when both are there and it is not all spaces (CommonMark 6.1, #2400).
+function codeText(text: string): string {
+  const flat = text.replace(/\r?\n/g, " ");
+  return /^ [^]* $/.test(flat) && /[^ ]/.test(flat) ? flat.slice(1, -1) : flat;
 }
 
 /// What a character next to a delimiter run is, for whether the run opens

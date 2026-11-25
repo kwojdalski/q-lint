@@ -1080,6 +1080,13 @@ test("an HTML export pairs emphasis as the notebook does: by its delimiter runs 
   assert.strictEqual(markdownHtml("*a [b*](https://x.io) c*"), '<p><em>a <a href="https://x.io">b*</a> c</em></p>');
 });
 
+test("an HTML export keeps a code span's padding past the one space each side it drops (#2400)", () => {
+  assert.strictEqual(markdownHtml("`  padded  `"), "<p><code> padded </code></p>");
+  assert.strictEqual(markdownHtml("` a `"), "<p><code>a</code></p>");
+  assert.strictEqual(markdownHtml("`  `"), "<p><code>  </code></p>");
+  assert.strictEqual(markdownHtml("``a\nb``"), "<p><code>a b</code></p>");
+});
+
 test("an HTML export keeps a link's title, as the tip the notebook shows (#1944)", () => {
   assert.strictEqual(markdownHtml('[text](https://x.com "title")'), '<p><a href="https://x.com" title="title">text</a></p>');
   assert.strictEqual(markdownHtml("[text](https://x.com 'the title') and [b](https://y.io (in brackets))"), '<p><a href="https://x.com" title="the title">text</a> and <a href="https://y.io" title="in brackets">b</a></p>');
