@@ -37,7 +37,7 @@ export class AsyncQueries {
 
   constructor(
     context: ExtensionContext,
-    private readonly live: Pick<Live, "runOnActive" | "onAsyncMessage" | "onDidChange" | "showGrid" | "record" | "codeFromEditor"> & Partial<Pick<Live, "activeDirect">>,
+    private readonly live: Pick<Live, "runOnActive" | "onAsyncMessage" | "onDidChange" | "showGrid" | "record" | "codeFromEditor"> & Partial<Pick<Live, "activeDirect" | "gatewayRefusal">>,
   ) {
     context.subscriptions.push(
       commands.registerCommand(ADMIN_COMMANDS.runAsync, (code?: string) => this.run(code)),
@@ -108,6 +108,12 @@ export class AsyncQueries {
     const direct = this.live.activeDirect?.();
     if (direct !== undefined) {
       void window.showErrorMessage(plainMessage(`q-lint: Run Query Asynchronously: ${directRefusal(direct)}`));
+      return undefined;
+    }
+    // On a TorQ gateway it would run on the gateway itself (#2357).
+    const refused = this.live.gatewayRefusal?.("Run Query Asynchronously", code);
+    if (refused !== undefined) {
+      void window.showErrorMessage(plainMessage(refused));
       return undefined;
     }
     const configuration = workspace.getConfiguration("q-lint");

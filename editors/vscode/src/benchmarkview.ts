@@ -81,6 +81,11 @@ export function registerBenchmark(
       return say("q-lint: runs are two whole numbers, N then K, as 100 5.");
     }
     const expressions = [code.trim(), ...(second.trim() === "" ? [] : [second.trim()])];
+    // Timed inside q-lint's lambda, it would time the gateway (#2435).
+    const refused = live.gatewayRefusal("Benchmark", expressions.join("\n"));
+    if (refused !== undefined) {
+      return say(refused);
+    }
     let ran: { process: string; value: unknown } | undefined;
     try {
       // Turned off while it asked: nothing is timed (#1453).

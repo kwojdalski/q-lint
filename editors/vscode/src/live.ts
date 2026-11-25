@@ -72,7 +72,7 @@ import { clickedEditor, unsavedIn } from "./clicked";
 import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
 import { ClosedBeforeHandshake, QConnection, QError, type DirectMode, type Target } from "./qclient";
 import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, TunnelHandshakeError, readTunnel } from "./tunnel";
-import { GATEWAY_COMMANDS, fileServerTypes, gatewayParts, gatewayStatement, isGatewayCall, readGateway, withServerTypes } from "./gateway";
+import { GATEWAY_COMMANDS, fileServerTypes, gatewayJoined, gatewayParts, gatewayStatement, isGatewayCall, readGateway, withServerTypes } from "./gateway";
 import { isLocalHost } from "./launcher";
 import { HEARTBEAT, STEADY_MS, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
 import { clearedStamp, historyHeading, historyLabel, iconsEscaped, mergedHistory, plainMessage } from "./history";
@@ -2745,6 +2745,21 @@ export class Live {
     return { cut: statements(sent), plain: isGatewayCall(sent) };
   }
 
+  /// Whether Run sends `code` to the active process through `.gw.syncexec`:
+  /// it is a TorQ gateway (#909), and `code` not the gateway's own.
+  goesThroughGateway(code: string): boolean {
+    const process = this.activeProcess();
+    return process !== undefined && this.throughGateway(code, process) !== code;
+  }
+
+  /// `code` on the active process through `.gw.syncexecj`, its servers'
+  /// answers joined by `join` on the gateway, where Run would send it
+  /// through `.gw.syncexec`; undefined elsewhere. Copy Value as JSON (#2433).
+  gatewayJoinedOnActive(code: string, join: string): string | undefined {
+    const types = this.activeProcess()?.gateway;
+    return types === undefined || !this.goesThroughGateway(code) ? undefined : gatewayJoined(statements(code), types, join);
+  }
+
   /// Why `feature`, which runs `code` inside a lambda of q-lint's, refuses
   /// it on the active process: a TorQ gateway Run would send it through
   /// `.gw.syncexec` to, whose deferred reply never reaches that lambda
@@ -2752,7 +2767,7 @@ export class Live {
   /// elsewhere, and for the gateway's own code.
   gatewayRefusal(feature: string, code: string): string | undefined {
     const process = this.activeProcess();
-    if (process === undefined || this.throughGateway(code, process) === code) {
+    if (process === undefined || !this.goesThroughGateway(code)) {
       return undefined;
     }
     return `q-lint: ${feature} runs the code in q-lint's own q, which on the TorQ gateway ${process.label} would run it on the gateway itself, not through .gw.syncexec on its servers as Run Query does. Use Run Query there.`;

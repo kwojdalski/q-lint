@@ -677,6 +677,13 @@ class QTests {
     started: number,
     outcome: (item: TestItem, state: TestOutcome["state"], message?: string) => void,
   ): Promise<void> {
+    // Its result would be the gateway's own (#2432).
+    const refused = this.live.gatewayRefusal("A snapshot test", snapshot.query);
+    if (refused !== undefined) {
+      run.errored(item, new TestMessage(refused));
+      outcome(item, "errored", refused);
+      return;
+    }
     const done = await this.live.runOnActive(
       snapshot.query,
       async (connection) => readAnswer(await connection.call(SNAPSHOT_RUN, statements(snapshot.query))),

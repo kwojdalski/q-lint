@@ -60,6 +60,11 @@ export function registerAjExplainer(context: ExtensionContext, live: Live): { ex
       return say("q-lint: a row index is a whole number from 0.");
     }
     const index = Number(rowText.trim());
+    // Its tables would be read on the gateway itself (#2434).
+    const refused = live.gatewayRefusal(`Explain ${call.fn} Match`, `${call.left}\n${call.right}`);
+    if (refused !== undefined) {
+      return say(refused);
+    }
     let text: string;
     try {
       const ran = await live.runOnActive(explainGuardCode(call), (connection) => connection.call(EXPLAIN_AJ, asCode(call.columns), asCode(call.left), asCode(call.right), index));

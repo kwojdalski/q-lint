@@ -126,6 +126,8 @@ function fakeLive(answer, process = { label: "dev", tags: [] }) {
     activeProcess() {
       return this.active;
     },
+    // No TorQ gateway here.
+    gatewayRefusal: () => undefined,
     async connectTo() {
       return true;
     },

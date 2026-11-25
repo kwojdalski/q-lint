@@ -65,6 +65,8 @@ function setup(files, answer) {
     async codeFromEditor() {
       return this.code;
     },
+    // No TorQ gateway here.
+    gatewayRefusal: () => undefined,
     async runOnActive(code, query) {
       sent.push(code);
       return { process: "dev", value: await query({ call: async (lambda, statements, size) => (assert.strictEqual(lambda, SNAPSHOT_RUN), answer(statements, size)) }) };
