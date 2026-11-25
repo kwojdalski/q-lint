@@ -51,7 +51,7 @@ export function registerSql(
     let got;
     try {
       // Kept under `label`: only that process's schema (#1457).
-      got = await borrowWhenFree(live, async (connection) => readSchema(await connection.call(SQL_SCHEMA)), undefined, label);
+      got = await borrowWhenFree(live, async (connection) => readSchema(await connection.callPlain(SQL_SCHEMA)), undefined, label);
     } catch {
       // Moved elsewhere while it waited, or not read: no completions from it.
       return;
@@ -158,10 +158,12 @@ export function registerSql(
       // TorQ gateway's servers, not the gateway (#2596).
       const asked = label !== undefined && live.activeLabel() === label && !live.goesThroughGateway(sqlQuery(sql));
       if (asked) {
-        const has = await borrowWhenFree(live, async (connection) => connection.call(HAS_SQL));
+        // A probe the process refuses leaves it unknown: the query says
+        // what it needs (#2483).
+        const has = await borrowWhenFree(live, async (connection) => connection.callPlain(HAS_SQL)).catch(() => undefined);
         if (has !== undefined && has.value === false) {
           try {
-            await live.runOnActive(LOAD_SQL, (connection) => connection.call(LOAD_SQL));
+            await live.runOnActive(LOAD_SQL, (connection) => connection.callPlain(LOAD_SQL));
           } catch (error) {
             void window.showWarningMessage(plainMessage(`q-lint: could not load KDB-X's SQL engine (s.k_): ${error instanceof Error ? error.message : String(error)}`));
             return undefined;

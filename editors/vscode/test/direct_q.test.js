@@ -5,7 +5,8 @@
 // the wrapped process beside it. Needs a q binary, so it runs only when
 // QLINT_TEST_Q names one (a command line, run by the shell, as for
 // qclient.test.js) and is skipped otherwise - CI has no q. Each q listens on
-// a port from 54200 to 54219 and is killed when the test ends.
+// a port from 54200 to 54219 (or QLINT_TEST_PORTS) and is killed when the
+// test ends.
 const { stub } = require("./vscode_stub.js");
 const test = require("node:test");
 const assert = require("node:assert");
@@ -38,9 +39,13 @@ refused:{lambdas+:1;'"pm: no read permission on [",$[10h=type first x;first x;-3
 .z.ps:{$[10h=type x;value x;[lambdas+:1;'"pm: no async lambdas"]]}
 `;
 
-/// A free port from 54200 to 54219.
+/// The ports the q processes may take: 54200 to 54219, or the range
+/// QLINT_TEST_PORTS names ("54320-54339"), for a machine shared by runs.
+const [LOW, HIGH] = (process.env.QLINT_TEST_PORTS ?? "54200-54219").split("-").map(Number);
+
+/// A free port from LOW to HIGH.
 async function freePort(taken) {
-  for (let port = 54200; port <= 54219; port++) {
+  for (let port = LOW; port <= HIGH; port++) {
     if (taken.has(port)) continue;
     const free = await new Promise((resolve) => {
       const s = net.createServer().once("error", () => resolve(false)).listen(port, "127.0.0.1", () => s.close(() => resolve(true)));
@@ -50,7 +55,7 @@ async function freePort(taken) {
       return port;
     }
   }
-  throw new Error("no free port from 54200 to 54219");
+  throw new Error(`no free port from ${LOW} to ${HIGH}`);
 }
 
 async function startQ(t, source, taken) {
@@ -277,4 +282,31 @@ test("a direct process that refuses lambdas is queried with plain strings, and a
     delete stub.config.user["query.unwrapped"];
     assert.strictEqual(live.activeDirect(), undefined);
   });
+});
+
+test("a feature that sends only a plain string answers on a direct process: Copy Value as JSON, Run SQL (#2482, #2483)", { skip }, async (t) => {
+  const taken = new Set();
+  const pm = await startQ(t, PM, taken);
+  const { live } = await setUp(t, [{ label: "pm", host: "127.0.0.1", port: pm, tags: ["perm"], evaluation: "direct" }]);
+  const { registerPaste } = require("../out/pasteview.js");
+  const { registerSql } = require("../out/sqlview.js");
+  const { PASTE } = require("../out/pastetable.js");
+  const { LANGUAGE_COMMANDS } = require("../out/languagefeatures.js");
+  const vscode = require("vscode");
+  const context = stub.newContext();
+  registerPaste(context, live);
+  vscode.languages.registerCompletionItemProvider = () => ({ dispose() {} });
+  registerSql(context, live);
+  assert.strictEqual(await live.connectTo("pm"), true);
+  stub.messages.length = 0;
+  const json = await stub.commands.get(PASTE.copyJson)("t");
+  assert.deepStrictEqual(JSON.parse(json), [{ sym: "a", px: 1.5 }, { sym: "b", px: 2.5 }, { sym: "c", px: 3.5 }], JSON.stringify(stub.messages));
+  // Run SQL: the probe for the engine and the query go as plain strings,
+  // and the command never throws.
+  t.after(() => (vscode.window.activeTextEditor = undefined));
+  vscode.window.activeTextEditor = { document: { languageId: "sql", uri: { toString: () => "untitled:2483" }, getText: () => "select * from t" }, selection: { isEmpty: true } };
+  const code = await stub.commands.get(LANGUAGE_COMMANDS.runSql)();
+  assert.match(code, /^\.s\.e "select \* from t"/);
+  assert.strictEqual(live.history()[0].code, code);
+  assert.strictEqual(await ask(pm, "0=lambdas"), true);
 });
