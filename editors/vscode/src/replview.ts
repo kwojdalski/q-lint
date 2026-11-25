@@ -64,7 +64,9 @@ export function registerRepl(
       // The input is cleared for a line it sent, not under a run from the editor (#1922).
       panel.post({ type: uri === undefined ? "accepted" : "history", history: kept });
       const id = panel.add({ code });
-      const ran = await runText(live, replScript(code), uri);
+      // What was typed is made a script; code from the editor is one
+      // already, which replScript would misread (#2284).
+      const ran = await runText(live, uri === undefined ? replScript(code) : code, uri);
       names = undefined;
       if (ran === undefined) {
         panel.update(id, { ok: false, lines: ["Not run."] });
