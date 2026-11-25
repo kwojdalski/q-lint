@@ -884,8 +884,12 @@ function columnTypeOf(q: QValue): number {
 /// The first `n` items of a decoded list; the last `n` when `last`.
 function firstOf(q: QValue, n: number, last = false): QValue {
   const from = (length: number): [number, number] => (last ? [Math.max(0, length - n), length] : [0, n]);
-  if (q.kind === "vector" || q.kind === "list") {
-    return { ...q, v: q.v.slice(...from(q.v.length)) } as QValue;
+  if (q.kind === "vector") {
+    const [a, b] = from(q.v.length);
+    return { ...q, v: q.v.slice(a, b), ...(q.bytes !== undefined ? { bytes: q.bytes.slice(a, b) } : {}) };
+  }
+  if (q.kind === "list") {
+    return { ...q, v: q.v.slice(...from(q.v.length)) };
   }
   if (q.kind === "chars") {
     return { ...q, v: q.v.subarray(...from(q.v.length)) };
@@ -906,7 +910,8 @@ export function headOf(q: QValue, n: number): QValue {
 /// The items of a decoded list as values: a table's rows, a list's items.
 function itemsOf(q: QValue): QValue[] {
   if (q.kind === "vector") {
-    return q.v.map((v) => ({ kind: "atom", t: -q.t, v }));
+    const bytes = q.bytes;
+    return q.v.map((v, i) => (bytes?.[i] ? { kind: "atom", t: -q.t, v, bytes: bytes[i] as number[] } : { kind: "atom", t: -q.t, v }));
   }
   if (q.kind === "chars") {
     return [...q.v].map((v) => ({ kind: "atom", t: -10, v }));
@@ -1085,6 +1090,9 @@ export function gridOfQ(q: QValue, limit: number, precision = 7, last = false): 
   const raw = shown.map((c, i): unknown[] =>
     c.q.kind === "chars"
       ? [...c.q.v]
+      : // A symbol column's bytes where one is past ASCII, as GRID sends them (#2578).
+        c.q.kind === "vector" && c.q.t === 11
+        ? (c.q.bytes ?? [])
       : c.q.kind === "list"
         ? c.q.v.map((x) => (x.kind === "atom" && (x.t === -9 || x.t === -8) ? (typeof x.v === "number" && !Number.isNaN(x.v) ? x.v : false) : exactOf(x)))
         : c.q.kind === "vector" && [2, 5, 6, 7, 8, 9, 12, 13, 14, 15, 16, 17, 18, 19].includes(types[i])
@@ -1125,6 +1133,17 @@ function exactOf(q: QValue): unknown[] | false {
   if (q.kind === "atom" && (q.t === -9 || q.t === -8)) {
     return [q.t === -9 ? "f" : "e", q.v];
   }
+  // A symbol past ASCII as its bytes, or symbols as theirs (#2578).
+  if (q.kind === "atom" && q.t === -11 && q.bytes !== undefined) {
+    return ["s", q.bytes];
+  }
+  if (q.kind === "vector" && q.t === 11 && q.bytes !== undefined && q.v.length <= 200) {
+    return ["S", q.bytes.map((b, i) => (b === false ? [...Buffer.from(String(q.v[i] ?? ""), "utf8")] : b))];
+  }
+  const cast = castOf(q);
+  if (cast !== undefined) {
+    return ["c", cast];
+  }
   if (q.kind === "vector" && (q.t === 9 || q.t === 8) && q.v.length <= 200) {
     return [q.t === 9 ? "F" : "E", q.v];
   }
@@ -1143,6 +1162,38 @@ function exactOf(q: QValue): unknown[] | false {
     return dict === false ? false : ["t", dict];
   }
   return false;
+}
+
+/// Timestamps KDB-X reads a literal of: 1709.01.01 to 2290.12.31, in
+/// nanoseconds from 2000.
+const TIMESTAMP_FROM = BigInt(Date.UTC(1709, 0, 1) - Date.UTC(2000, 0, 1)) * 1_000_000n;
+const TIMESTAMP_TO = BigInt(Date.UTC(2291, 0, 1) - Date.UTC(2000, 0, 1)) * 1_000_000n - 1n;
+
+/// A minute, second, time, datetime or timestamp atom or vector that `-3!`
+/// writes as q cannot read back, as `GRID`'s `("c";(t;n))` sends it, `n` its
+/// count: past 99 hours (`**`), finer than a millisecond, or outside
+/// 1709-2290 (#2579). Undefined for anything else, or one q reads back.
+function castOf(q: QValue): [number, unknown] | undefined {
+  if ((q.kind !== "atom" && q.kind !== "vector") || (q.kind === "vector" && q.v.length > 200)) {
+    return undefined;
+  }
+  const t = Math.abs(q.t);
+  const items = q.kind === "atom" ? [q.v] : q.v;
+  const n = (f: (x: Item) => unknown): unknown => (q.kind === "atom" ? f(q.v) : q.v.map(f));
+  const finite = (x: Item): x is number | bigint => (typeof x === "number" && Number.isFinite(x)) || typeof x === "bigint";
+  if (t >= 17 && t <= 19) {
+    const from = [6000, 360000, 360000000][t - 17];
+    return items.some((x) => finite(x) && Math.abs(Number(x)) >= from && Math.abs(Number(x)) <= 2147483646) ? [q.t, n((x) => x)] : undefined;
+  }
+  if (t === 15) {
+    return items.some((x) => finite(x) && Math.abs(86400000 * Number(x) - Math.round(86400000 * Number(x))) > 0.001) ? [q.t, n((x) => x)] : undefined;
+  }
+  if (t === 12) {
+    const outside = items.some((x) => typeof x === "bigint" && (x < TIMESTAMP_FROM || x > TIMESTAMP_TO));
+    const long = (x: Item): unknown => (typeof x === "bigint" ? (Number.isSafeInteger(Number(x)) ? Number(x) : x.toString()) : x);
+    return outside ? [q.t, n(long)] : undefined;
+  }
+  return undefined;
 }
 
 /// A value decoded with its types as the tree `GRID` sends for it: a

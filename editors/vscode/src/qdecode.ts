@@ -10,13 +10,17 @@
 // longs, timestamps and timespans as bigints - with nulls as null and
 // infinities as +-Infinity, as the codec gives them.
 
+import { bytesText } from "./grid";
+
 /// One item of an atom or a simple list. A char is its byte, a symbol and a
 /// guid their text.
 export type Item = null | boolean | number | bigint | string;
 
 export type QValue =
-  | { kind: "atom"; t: number; v: Item }
-  | { kind: "vector"; t: number; attr: number; v: Item[] }
+  /// A symbol with a byte past ASCII keeps its bytes: its text reads them
+  /// as UTF-8 where they are, and a byte at a time where not (#2578).
+  | { kind: "atom"; t: number; v: Item; bytes?: number[] }
+  | { kind: "vector"; t: number; attr: number; v: Item[]; bytes?: (number[] | false)[] }
   /// A char vector, as its bytes: q's text escapes what is not printable.
   | { kind: "chars"; attr: number; v: Buffer }
   | { kind: "list"; attr: number; v: QValue[] }
@@ -160,13 +164,16 @@ export function decode(message: Buffer): QValue {
         if (end < 0) {
           throw new Error("a message shorter than its list");
         }
-        const s = b.toString("utf8", pos, end);
+        const raw = b.subarray(pos, end);
         pos = end + 1;
-        return s;
+        symbolBytes = raw.some((x) => x > 127) ? [...raw] : undefined;
+        return symbolBytes === undefined ? raw.toString("utf8") : (bytesText(symbolBytes) ?? raw.toString("utf8"));
       }
     }
     throw new Error(`no q type ${t}`);
   };
+  /// The bytes of the symbol `item` read last, when one is past ASCII.
+  let symbolBytes: number[] | undefined;
   const symbol = (): string => item(11) as string;
   const value = (): QValue => {
     const t = b.readInt8(pos++);
@@ -174,7 +181,8 @@ export function decode(message: Buffer): QValue {
       throw new Error(symbol());
     }
     if (t < 0 && t >= -19 && t !== -3) {
-      return { kind: "atom", t, v: item(-t) };
+      const v = item(-t);
+      return t === -11 && symbolBytes !== undefined ? { kind: "atom", t, v, bytes: symbolBytes } : { kind: "atom", t, v };
     }
     if (t === 99 || t === 127) {
       const k = value();
@@ -242,10 +250,15 @@ export function decode(message: Buffer): QValue {
       throw new Error("a message shorter than its list");
     }
     const v: Item[] = new Array(n);
+    let bytes: (number[] | false)[] | undefined;
     for (let i = 0; i < n; i++) {
       v[i] = item(t);
+      if (t === 11 && symbolBytes !== undefined) {
+        bytes ??= new Array(n).fill(false);
+        bytes[i] = symbolBytes;
+      }
     }
-    return { kind: "vector", t, attr, v };
+    return bytes === undefined ? { kind: "vector", t, attr, v } : { kind: "vector", t, attr, v, bytes };
   };
   return value();
 }

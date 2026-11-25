@@ -296,3 +296,41 @@ test("a projection, composition or derived function is written as -3! writes it,
   const { oneLine } = require("../out/qformat.js");
   assert.strictEqual(oneLine(decode(message("\x00\x00", Buffer.from([2, 0, 0, 0]), Buffer.from("6b6601", "hex"), Buffer.from("6a6502", "hex")))), "(+/;-:')");
 });
+
+/// What Copy as q writes of the direct grid of the value `-8!` gave as `hex`.
+function copied(hex) {
+  const { gridOfQ } = require("../out/qformat.js");
+  const { tableLiteral } = require("../out/qliteral.js");
+  const grid = gridOfQ(decode(Buffer.from(hex, "hex")), 100);
+  return { cells: grid.cells, literal: tableLiteral(grid).code };
+}
+
+test("a symbol past UTF-8 shows its bytes' characters and copies as them, as the wrapped grid does (#2578)", () => {
+  // KDB-X: -8!([] a:`$("caf\351";"b")), -8!([] a:(`$"caf\351";1)), -8!([] a:(`$("caf\351";"x");1))
+  assert.deepStrictEqual(copied("01000000260000006200630b000100000061000000010000000b0002000000636166e9006200"), {
+    cells: [["café", "b"]],
+    literal: '([] a:(`$"caf\\351";`b))',
+  });
+  assert.deepStrictEqual(copied("010000002e0000006200630b00010000006100000001000000000002000000f5636166e900f90100000000000000"), {
+    cells: [["`café", "1"]],
+    literal: '([] a:(`$"caf\\351";1))',
+  });
+  assert.strictEqual(copied("01000000350000006200630b000100000061000000010000000000020000000b0002000000636166e9007800f90100000000000000").literal, '([] a:((`$"caf\\351";`x);1))');
+  // A UTF-8 symbol is its characters still.
+  assert.strictEqual(shown(Buffer.from("f563c3a900", "hex")), "`cé");
+});
+
+test("a general column's time q cannot read back as -3! writes it copies as a cast from its count, as the wrapped grid does (#2579)", () => {
+  // KDB-X: -8! of each table, and the literal q reads back as it (~).
+  const cases = [
+    ["010000002a0000006200630b000100000061000000010000000000020000000a0000000000efe02e0000", '([] a:("";"u"$12000i))'],
+    ["010000002d0000006200630b00010000006100000001000000000002000000ed002a7515f90100000000000000", '([] a:("t"$360000000i;1))'],
+    ["01000000310000006200630b00010000006100000001000000000002000000f90100000000000000f12ab3f798be11f440", '([] a:(1;"z"$82203.9123456))'],
+    ["01000000310000006200630b00010000006100000001000000000002000000f90100000000000000f400006862be085380", '([] a:(1;"p"$-9200000000000000000))'],
+    // One q reads back is written as -3! writes it.
+    ["01000000310000006200630b00010000006100000001000000000002000000f90100000000000000f40000000000000000", "([] a:(1;2000.01.01D00:00:00.000000000))"],
+  ];
+  for (const [hex, literal] of cases) {
+    assert.strictEqual(copied(hex).literal, literal, hex);
+  }
+});
