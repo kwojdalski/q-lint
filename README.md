@@ -374,11 +374,13 @@ It takes comma-separated clauses of `==`, `!=`, `>=`, `<=`, `>`, `<` or `~=`
 must match exactly; a value that is none of these is a configuration error.
 
 `[severity]` sets how a rule's findings are reported, by code or prefix, the
-longest winning: `error`, `warning`, `info` (or `information`) or `hint`.
+longest winning: `error`, `warning`, `information` (or `info`) or `hint`.
+Every report spells the third `information`, as qls and the language
+server protocol do, however the configuration wrote it.
 
 ```toml
 [severity]
-QS = "info"          # every style rule, reported but not failing the run
+QS = "information"   # every style rule, reported but not failing the run
 QS006 = "warning"    # except this one
 ```
 

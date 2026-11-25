@@ -130,18 +130,27 @@ fn an_unknown_option_or_a_wrong_value_is_a_configuration_error() {
 
 #[test]
 fn a_severity_changes_how_a_finding_is_reported_in_every_format() {
+    // `info` and `information` are one level, reported as qls and the LSP
+    // spell it, `information` (#2122).
+    for spelt in ["information", "info"] {
+        let dir = project(&format!(
+            "[severity]\nQ = \"hint\"\nQX = \"{spelt}\"\nQL001 = \"error\"\n"
+        ));
+        let found = findings(dir.path());
+        let level = |code: &str| found.iter().find(|f| f.0 == code).unwrap().1.clone();
+        assert_eq!(
+            (level("QL001"), level("QX002")),
+            ("error".into(), "information".into()),
+            "{spelt}"
+        );
+        let (_, text, _) = run(dir.path(), &[]);
+        assert!(text.contains(": information: QX002"), "{spelt}: {text}");
+    }
     let dir = project("[severity]\nQ = \"hint\"\nQX = \"information\"\nQL001 = \"error\"\n");
-    let found = findings(dir.path());
-    let level = |code: &str| found.iter().find(|f| f.0 == code).unwrap().1.clone();
-    assert_eq!(
-        (level("QL001"), level("QX002")),
-        ("error".into(), "info".into())
-    );
 
     let (status, text, _) = run(dir.path(), &[]);
     assert_eq!(status, Some(1), "an error still fails the run");
     assert!(text.contains(": error: QL001"), "{text}");
-    assert!(text.contains(": info: QX002"), "{text}");
 
     let (_, github, _) = run(dir.path(), &["--format", "github"]);
     assert!(github.contains("::error file=a.q,line=6"), "{github}");
