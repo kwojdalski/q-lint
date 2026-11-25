@@ -802,13 +802,13 @@ test("parameters given to a notebook with no parameters cell do not read the Mar
   const run = await runNotebook(qnb, ex, SETTINGS, { lim: "7" });
   // The parameters' cell sends its own statements only; the first code
   // cell reads the Markdown above it and below it.
-  assert.deepStrictEqual(ex.codes, [["/ Parameters given to this run.\nlim:7;"], ["topt:til lim", "count topt", "lim"]]);
+  assert.deepStrictEqual(ex.codes, [["/ Parameters given to this run.\nlim:7;"], ["topt:til lim", { valued: "count topt" }, { valued: "lim" }]]);
   assert.deepStrictEqual(run.qnb.cells[1].metadata, { [LIVE_KEY]: { "count topt": { text: "v(count topt)" } } });
   // With a parameters cell, the Markdown after it is read after the values given.
   const withCell = { cells: [{ kind: "code", source: "/ @parameters\nlim:5" }, { kind: "markdown", source: "{{q: lim}}" }] };
   const ex2 = fakeExecutor((cut) => ({ ok: true, type: -7, text: [cut.join(";")] }));
   await runNotebook(withCell, ex2, SETTINGS, { lim: "7" });
-  assert.deepStrictEqual(ex2.codes, [["/ @parameters\nlim:5"], ["/ Parameters given to this run.\nlim:7;", "lim"]]);
+  assert.deepStrictEqual(ex2.codes, [["/ @parameters\nlim:5"], ["/ Parameters given to this run.\nlim:7;", { valued: "lim" }]]);
 });
 
 test("a JSON output that is an array or a string comes back from Jupyter as the same JSON (#1545)", () => {
