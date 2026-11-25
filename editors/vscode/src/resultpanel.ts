@@ -234,6 +234,9 @@ interface Shown {
   before?: { payload: GridPayload; process: string; at: number };
   /// The process holds the rest of it, for the grid to page through.
   held?: boolean;
+  /// The token the process holds it under (`gridLambda`): a page is asked
+  /// for of it, and of no other result (#2128).
+  token?: string;
   /// The last page asked for could not be fetched for now (a query was
   /// running, another process connected): the grid asks again only when
   /// scrolled (#1634).
@@ -369,7 +372,7 @@ export class QueryModes {
   private control: Control | undefined;
   private controls = 0;
   /// Fetches rows of a result the process holds; set by the live half.
-  private pager: ((process: string, offset: number, count: number) => Promise<GridPage | PageLater | string>) | undefined;
+  private pager: ((process: string, offset: number, count: number, token: string | undefined) => Promise<GridPage | PageLater | string>) | undefined;
   /// Runs a drill-down query on a process; set by the live half.
   private runner: ((code: string, process: string) => Promise<void>) | undefined;
   /// A page fetch under way, so a second is not sent behind it.
@@ -466,7 +469,7 @@ export class QueryModes {
   }
 
   /// Where the live half fetches pages of a held result from.
-  setPager(pager: (process: string, offset: number, count: number) => Promise<GridPage | PageLater | string>): void {
+  setPager(pager: (process: string, offset: number, count: number, token: string | undefined) => Promise<GridPage | PageLater | string>): void {
     this.pager = pager;
   }
 
@@ -489,7 +492,7 @@ export class QueryModes {
   /// same code and process is replaced under its id, so the page keeps its
   /// view, sort, filters and scroll, and no tab is added. One not on show
   /// is replaced where it is, and the result on show stays (#1636).
-  show(result: { process: string; code: string; millis: number; answer: GridAnswer; held?: boolean }, live: LiveSettings, inPlace = false): boolean {
+  show(result: { process: string; code: string; millis: number; answer: GridAnswer; held?: boolean; token?: string }, live: LiveSettings, inPlace = false): boolean {
     const { answer } = result;
     if (live.mode === "console" || !answer.ok) {
       return false;
@@ -531,6 +534,9 @@ export class QueryModes {
         }
       }
       shown.held = answer.grid.count > (answer.grid.cells[0]?.length ?? 0);
+      if (result.token !== undefined) {
+        shown.token = result.token;
+      }
     }
     // Kept by code, most recent last, so the oldest is the one dropped.
     this.previous.delete(result.code);
@@ -637,7 +643,7 @@ export class QueryModes {
     }
     this.paging = true;
     try {
-      const page = await this.pager(shown.process, have, Math.min(shown.limit, MAX_PAGED_ROWS - have));
+      const page = await this.pager(shown.process, have, Math.min(shown.limit, MAX_PAGED_ROWS - have), shown.token);
       shown.paused = false;
       if (typeof page === "string") {
         shown.held = false;

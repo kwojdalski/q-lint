@@ -193,6 +193,73 @@ fn output_file_takes_the_report_and_leaves_the_exit_code() {
     assert!(err.contains("no/such/dir/r.out"), "{err}");
 }
 
+/// The input an `--output-file` may not be is a file, not a name: a symlink
+/// to a source, a hard link to one, another case of its name on a disk that
+/// ignores case, and the file `--stdin-filename` lints the buffer as were
+/// each written over (#2116). Each is refused, exits 2, and leaves it as it
+/// was.
+#[test]
+fn output_file_is_never_an_input_under_another_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("a.q"), TWO).unwrap();
+    let mut targets = vec![];
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink("a.q", d.join("link.txt")).unwrap();
+        fs::create_dir(d.join("sub")).unwrap();
+        std::os::unix::fs::symlink("../a.q", d.join("sub/up.out")).unwrap();
+        targets.extend(["link.txt", "sub/up.out"]);
+    }
+    fs::hard_link(d.join("a.q"), d.join("hard.txt")).unwrap();
+    targets.push("hard.txt");
+    if d.join("A.Q").exists() {
+        targets.push("A.Q");
+    }
+    for target in targets {
+        let (status, _, err) = run(d, &["a.q", "--output-file", target]);
+        assert_eq!(status, Some(2), "{target}: {err}");
+        assert!(err.contains("one of the files to lint"), "{target}: {err}");
+        assert_eq!(fs::read_to_string(d.join("a.q")).unwrap(), TWO, "{target}");
+    }
+    // The buffer piped as a.q: its file is the one an editor saves it to.
+    for target in ["a.q", "hard.txt"] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(d)
+            .args([
+                "--isolated",
+                "--stdin-filename",
+                "a.q",
+                "--output-file",
+                target,
+            ])
+            .stdin(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(TWO.as_bytes())
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{target}: {err}");
+        assert!(err.contains("one of the files to lint"), "{target}: {err}");
+        assert_eq!(fs::read_to_string(d.join("a.q")).unwrap(), TWO, "{target}");
+    }
+    // A file of its own is still written.
+    let (status, _, err) = run(d, &["a.q", "--output-file", "rep.txt"]);
+    assert_eq!(status, Some(1), "{err}");
+    assert!(
+        fs::read_to_string(d.join("rep.txt"))
+            .unwrap()
+            .contains("QS001")
+    );
+}
+
 #[test]
 fn output_file_is_never_written_by_a_refused_run_or_over_an_input() {
     let dir = tempfile::tempdir().unwrap();

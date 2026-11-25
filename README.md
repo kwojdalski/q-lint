@@ -217,7 +217,10 @@ one the findings would give.
 `--output-file PATH` writes the report - in any format - to that file,
 replacing it, instead of standard output, which stays empty; the exit code is
 the one the run would give without it, and messages still go to standard
-error. Text written to a file is never coloured.
+error. Text written to a file is never coloured. A file the run reads is
+never the one it writes: one reached through a symlink or a hard link, or by
+another case of its name on a disk that ignores case, and the file
+`--stdin-filename` names, are refused with exit 2 and left as they were.
 
 ### The dependency graph: `qlinter analyze graph`
 
@@ -243,7 +246,8 @@ A file depends on another when:
   in a string or comment. A name no file defines is tried without its last
   segment, so `.cfg.opts.port` reaches the file defining `.cfg.opts`. A
   symbol handed straight to `get` or `value`, `` get`.ns.x `` or
-  `` get[`.ns.x] ``, is a read too;
+  `` get[`.ns.x] ``, is a read too, and so is a name on a `k)` line, which
+  reads q's globals as k has its names;
 - it loads the other by a literal path, `\l path` or `system "l path"`, or
   names it as a file symbol ending in `.q`, `` `:lib/x.q ``, whatever that is
   handed to - a project's own loader is invisible to reading otherwise. q
@@ -299,7 +303,9 @@ are not in it, says on standard error how many it passed over, and exits 0
 when nothing is new. Name the file in a configuration, `baseline =
 "qlinter-baseline.json"`, and every run under it - the language server's
 included - uses it without the flag; `--write-baseline` reads no baseline, so
-it always writes everything.
+it always writes everything. It never writes over a file the run lints, nor
+to a name ending `.q`, `.k` or `.qnb`: `qlinter --write-baseline o.q`, which
+lints the tree, is refused with exit 2 and leaves `o.q` as it was.
 
 A finding is matched on its file, its code and the text of its line with
 the blanks at either end trimmed, never its line number: lines added above
@@ -373,11 +379,13 @@ It takes comma-separated clauses of `==`, `!=`, `>=`, `<=`, `>`, `<` or `~=`
 must match exactly; a value that is none of these is a configuration error.
 
 `[severity]` sets how a rule's findings are reported, by code or prefix, the
-longest winning: `error`, `warning`, `info` (or `information`) or `hint`.
+longest winning: `error`, `warning`, `information` (or `info`) or `hint`.
+Every report spells the third `information`, as qls and the language
+server protocol do, however the configuration wrote it.
 
 ```toml
 [severity]
-QS = "info"          # every style rule, reported but not failing the run
+QS = "information"   # every style rule, reported but not failing the run
 QS006 = "warning"    # except this one
 ```
 
@@ -494,7 +502,9 @@ comment, a block comment's own `/`, a system command, or any line of a file
 whose brackets do not close. A `noqa` that suppresses nothing (QL003) is not
 accepted either - naming QL003 in it would only hide it - but counted, for
 `--fix --unsafe-fixes` to remove. It says how many it added, and exits 1 if any
-such finding is left.
+such finding is left. A file that is not valid UTF-8 is linted but never
+rewritten, by `--add-noqa` or `--fix`, and what each leaves in one is counted
+apart, as left for that reason.
 
 Diagnostics carry a
 code and a category; `qlinter --rules` lists them all and `qlinter --explain

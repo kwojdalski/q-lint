@@ -14,6 +14,7 @@
 import * as net from "node:net";
 import * as tls from "node:tls";
 import { deserialize, serialize } from "node-q/lib/c.js";
+import { checkedBody } from "./qdecode";
 import { GRID, GRID_TREE, gridLambda, readGridAnswer, type GridAnswer } from "./grid";
 import { RUN, readAnswer, type Answer } from "./query";
 
@@ -93,6 +94,16 @@ export function withReason(error: Error): Error {
   return error;
 }
 
+/// The address a connect to `host` dials. `localhost` is 127.0.0.1, where
+/// q listens - it binds IPv4 only, and Start Process binds a local process
+/// to 127.0.0.1 - and where q's own hopen of `:localhost:port goes. Node
+/// would try `::1` first, a port any local user may bind while q holds
+/// only the IPv4 one, and send it the user and password (#2123). Any other
+/// host, `::1` among them, is dialled as it is written.
+export function dialHost(host: string): string {
+  return /^localhost\.?$/i.test(host.trim()) ? "127.0.0.1" : host;
+}
+
 export class QConnection {
   /// What has arrived of the messages not yet read, in the chunks it came
   /// in: joined only once a whole message is there, since joining each
@@ -122,7 +133,7 @@ export class QConnection {
   /// is closed, so nothing is left open behind it.
   static open(target: Target, timeoutMs: number = CONNECT_TIMEOUT_MS, signal?: AbortSignal): Promise<QConnection> {
     return new Promise((resolve, reject) => {
-      const options = target.path !== undefined ? { path: target.path } : { host: target.host, port: target.port };
+      const options = target.path !== undefined ? { path: target.path } : { host: dialHost(target.host), port: target.port };
       const at = target.path ?? `${target.host}:${target.port}`;
       // The name the certificate must be for. An IP address cannot be sent
       // as the server name, and without one the check is against the host
@@ -204,8 +215,9 @@ export class QConnection {
   /// Run `statements` as `query` does, and when the value is tabular have
   /// the process send its first `limit` rows for the result panel too;
   /// with `tree`, a dictionary's or a nested list's tree as well.
-  queryGrid(statements: string[], size: [number, number], limit: number, tree = false, hold = false): Promise<GridAnswer> {
-    const lambda = hold ? gridLambda(tree, true) : tree ? GRID_TREE : GRID;
+  /// With `hold`, the token a cut result is held under (`gridLambda`).
+  queryGrid(statements: string[], size: [number, number], limit: number, tree = false, hold?: string): Promise<GridAnswer> {
+    const lambda = hold !== undefined ? gridLambda(tree, hold) : tree ? GRID_TREE : GRID;
     return this.call(lambda, statements, size, limit).then(readGridAnswer);
   }
 
@@ -350,7 +362,7 @@ export class QConnection {
       this.answerType = typeOf(message);
       this.answerMessage = message;
       try {
-        pending.resolve(deserialize(message, false, true, false, false));
+        pending.resolve(deserialize(checkedBody(message), false, true, false, false));
       } catch (error) {
         // A q error arrives as a message of type -128, which the codec
         // throws as an Error holding q's text - but an empty text as null,

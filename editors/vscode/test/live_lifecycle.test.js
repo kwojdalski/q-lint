@@ -14,11 +14,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /// A q process played by a socket server: it answers the handshake after
 /// `delay` ms (or what `delay()` gives then), then each message with what
 /// `answer` gives for what was sent (a value, sent as a response), or
-/// nothing when it gives undefined. `sent` keeps what it was sent; `drop`
+/// nothing when it gives undefined. `sent` keeps what it was sent, `logins`
+/// each handshake's `user:password`; `drop`
 /// closes the connections it has.
 async function fakeQ(answer = () => null, delay = 0) {
   const sockets = new Set();
   const sent = [];
+  const logins = [];
   const server = net.createServer((socket) => {
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));
@@ -28,6 +30,7 @@ async function fakeQ(answer = () => null, delay = 0) {
     socket.on("data", (chunk) => {
       if (!shook) {
         shook = true;
+        logins.push(chunk.subarray(0, chunk.length - 2).toString("utf8"));
         setTimeout(() => socket.writable && socket.write(Buffer.from([3])), typeof delay === "function" ? delay() : delay);
         return;
       }
@@ -55,6 +58,7 @@ async function fakeQ(answer = () => null, delay = 0) {
   return {
     port: server.address().port,
     sent,
+    logins,
     drop: () => {
       for (const s of sockets) s.destroy();
     },
@@ -335,4 +339,163 @@ test("a drill-down on the connected discovered prod process asks first, though a
   await live.runOnProcess("select from t", "srv/rdb", { what: "drill-down query" });
   assert.match(asked ?? "", /srv\/rdb is a production process/);
   assert.deepStrictEqual(a.sent, []);
+});
+
+// Edit moved the connected process and stored the new address's password
+// under its label; the connection stayed where it was (#1443), and the
+// reconnect after Abort dialled the old address with the new password (#2124).
+test("the reconnect after Abort goes to the process as saved, never the old address with the new password (#2124)", async (t) => {
+  const a = await fakeQ((sent) => (JSON.stringify(sent).includes("slow") ? undefined : 1));
+  const b = await fakeQ(() => 1);
+  t.after(() => (a.close(), b.close()));
+  const { live, context } = await setUp(t, [proc("a", a.port, { user: "bob" })]);
+  await context.secrets.store("q-lint.password.a", "pw-of-a");
+  assert.strictEqual(await live.connectTo("a"), true);
+  stub.inputs.push("a", "127.0.0.1", String(b.port), "bob", "pw-of-b", "");
+  stub.picks.push("No");
+  await stub.commands.get("q-lint.editProcess")("a");
+  assert.strictEqual(live.activeProcess().port, a.port, "still connected where it was");
+  const running = live.run("slow");
+  await until(() => live.isBusy());
+  await stub.commands.get("q-lint.abortQuery")();
+  await running;
+  await until(() => live.activeLabel() !== undefined);
+  assert.strictEqual(live.activeProcess().port, b.port, JSON.stringify(stub.messages));
+  assert.deepStrictEqual(a.logins, ["bob:pw-of-a"], "the old address never got the new password");
+  assert.deepStrictEqual(b.logins, ["bob:pw-of-b"]);
+});
+
+test("a connection kept at its old address is given no password saved for the new one (#2124)", async (t) => {
+  const a = await fakeQ(() => 1);
+  const b = await fakeQ(() => 1);
+  t.after(() => (a.close(), b.close()));
+  const { live, context } = await setUp(t, [proc("a", a.port, { user: "bob" })]);
+  await context.secrets.store("q-lint.password.a", "pw-of-a");
+  assert.strictEqual(await live.connectTo("a"), true);
+  stub.inputs.push("a", "127.0.0.1", String(b.port), "carol", "pw-of-carol", "");
+  stub.picks.push("No");
+  await stub.commands.get("q-lint.editProcess")("a");
+  // What Abort or a timeout reconnects to, as the connection still is.
+  assert.strictEqual(await live.open(live.activeProcess()), false);
+  assert.deepStrictEqual(a.logins, ["bob:pw-of-a"]);
+  assert.deepStrictEqual(b.logins, []);
+  assert.match(stub.messages.at(-1)[1], /edited to 127\.0\.0\.1:\d+ since it was connected/);
+  assert.ok(!JSON.stringify(stub.messages).includes("pw-of"));
+});
+
+// A query behind an unanswered heartbeat, or behind the reconnect after an
+// Abort, waited with no timeout, was not shown running, and Abort said no
+// query was running (#2126).
+test("a query waiting behind a heartbeat is shown running and ends at q-lint.query.timeout (#2126)", async (t) => {
+  const a = await fakeQ((sent) => (sent === "::" ? undefined : 1));
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)], { "connection.heartbeat.enable": true, "connection.heartbeatInterval": 1, "query.timeout": 1 });
+  await live.connectTo("a");
+  await until(() => live.isBusy());
+  const started = Date.now();
+  const running = live.run("1+1");
+  await sleep(200);
+  assert.match(live.api().statusText(), /waiting/);
+  await running;
+  assert.ok(Date.now() - started < 2500, `settled after ${Date.now() - started} ms`);
+  assert.deepStrictEqual(stub.messages.at(-1), ["info", "q-lint: the query timed out after 1 s (q-lint.query.timeout) waiting to be sent to a; it was not run."]);
+  assert.doesNotMatch(live.api().statusText(), /waiting/);
+  assert.ok(!a.sent.some((m) => JSON.stringify(m).includes("1+1")));
+});
+
+test("a query waiting for the reconnect after Abort is shown running, and Abort stops it (#2126)", async (t) => {
+  let delay = 0;
+  const a = await fakeQ((sent) => (JSON.stringify(sent).includes("slow") ? undefined : 1), () => delay);
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)]);
+  await live.connectTo("a");
+  const slow = live.run("slow");
+  await until(() => live.isBusy());
+  delay = 3000;
+  await stub.commands.get("q-lint.abortQuery")();
+  await slow;
+  const started = Date.now();
+  const second = live.run("1+1");
+  await sleep(200);
+  assert.match(live.api().statusText(), /a waiting/);
+  await stub.commands.get("q-lint.abortQuery")();
+  await second;
+  assert.ok(Date.now() - started < 1500, `settled after ${Date.now() - started} ms`);
+  assert.deepStrictEqual(stub.messages.at(-1), ["info", "q-lint: stopped the query waiting to be sent to a; it was not run."]);
+  assert.ok(!stub.messages.some(([, m]) => m === "q-lint: no query is running."), JSON.stringify(stub.messages));
+});
+
+// Each reconnect that opened started a fresh run of tries at the first, so
+// a process that drops every connection after the handshake was
+// reconnected to for ever (#2129).
+test("reconnectAttempts bounds the reconnects to a process that drops each connection after the handshake (#2129)", async (t) => {
+  let a;
+  a = await fakeQ(() => 1, () => (setTimeout(() => a.drop(), 150), 0));
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)], { "connection.autoReconnect.enable": true, "connection.reconnectAttempts": 2 });
+  assert.strictEqual(await live.connectTo("a"), true);
+  await until(() => stub.messages.some(([, m]) => /could not reconnect/.test(m)), 8000);
+  assert.deepStrictEqual(stub.messages.at(-1), ["warning", "q-lint: could not reconnect to a after 2 tries."]);
+  assert.strictEqual(a.logins.length, 3, "the connect and two reconnects");
+  await sleep(1500);
+  assert.strictEqual(a.logins.length, 3, JSON.stringify(stub.messages));
+  assert.strictEqual(stub.messages.filter(([, m]) => m === "q-lint: reconnected to a.").length, 2);
+});
+
+// The bar was redrawn only when the next beat was due: with the default 30 s
+// interval it showed the last round trip for 30 s, then a wait frozen until
+// the beat after (#2131).
+test("an unanswered heartbeat shows as no answer after 5 s, and its wait counts up (#2131)", async (t) => {
+  const a = await fakeQ((sent) => (sent === "::" ? undefined : 1));
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)], { "connection.heartbeat.enable": true, "connection.heartbeatInterval": 30 });
+  await live.connectTo("a");
+  await until(() => /no answer/.test(live.api().statusText()), 7000);
+  const first = live.api().statusText();
+  assert.match(first, /no answer 5/);
+  await sleep(2100);
+  assert.match(live.api().statusText(), /no answer 7/);
+});
+
+// Between an auto-reconnect's tries nothing was connecting, so a query
+// asked which process to connect to, and the pick ended the reconnect (#2132).
+test("a query run between an auto-reconnect's tries waits for it, and runs on the process reconnected to (#2132)", async (t) => {
+  const a = await fakeQ(() => 2);
+  const b = await fakeQ(() => 3);
+  t.after(() => (a.close(), b.close()));
+  const { live } = await setUp(t, [proc("a", a.port), proc("b", b.port)], { "connection.autoReconnect.enable": true });
+  await live.connectTo("a");
+  a.drop();
+  await until(() => /reconnecting to a/.test(live.api().statusText()));
+  let asked;
+  const pick = vscode.window.showQuickPick;
+  vscode.window.showQuickPick = async (_items, options) => ((asked = options?.title ?? "a pick"), undefined);
+  t.after(() => (vscode.window.showQuickPick = pick));
+  await live.run("1+1");
+  assert.strictEqual(asked, undefined, "it asked which process to connect to");
+  assert.strictEqual(live.activeLabel(), "a");
+  assert.strictEqual(live.history()[0].process, "a");
+  assert.strictEqual(live.history()[0].code, "1+1");
+  assert.deepStrictEqual(b.logins, []);
+});
+
+// The reconnect after a drop (or after Abort) asked the read-only guard's
+// modal question about the connect script from a timer, with nobody there,
+// and every query waited behind it (#2133).
+test("an automatic reconnect asks nothing about a connect script the guard holds: it connects without it and says so (#2133)", async (t) => {
+  const a = await fakeQ(() => null);
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("p", a.port, { tags: ["prod"], init: "marker:1" })], { "connection.autoReconnect.enable": true });
+  stub.picks.push("Run Anyway");
+  assert.strictEqual(await live.connectTo("p"), true);
+  const ran = () => a.sent.filter((m) => JSON.stringify(m).includes("marker:1")).length;
+  assert.strictEqual(ran(), 1);
+  const asked = stub.messages.length;
+  a.drop();
+  await until(() => stub.messages.some(([, m]) => m === "q-lint: reconnected to p."));
+  const after = stub.messages.slice(asked);
+  assert.ok(!after.some(([, m]) => /Run it anyway/.test(m)), JSON.stringify(after));
+  assert.ok(after.some(([kind, m]) => kind === "warning" && m === "q-lint: the connect script of p failed: it would change p, and a reconnect asks nobody: it was not run. Connect to p to be asked."), JSON.stringify(after));
+  assert.strictEqual(ran(), 1);
+  assert.strictEqual(live.activeLabel(), "p");
 });

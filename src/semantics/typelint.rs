@@ -9,7 +9,9 @@
 //!   q raises 'type (KDB-X and PeachQ, for each of those kinds).
 //! - QT034: two lists of different types joined with `,` - `1 2,`a`b`,
 //!   `n,"xy"` - which q runs, into a general list: the column or vector it
-//!   was meant to grow is no longer simple.
+//!   was meant to grow is no longer simple. Not where either side can be
+//!   `""`: a list of no items joined to a typed one takes its type, and
+//!   `"",1 2` is 1 2 (7h, KDB-X).
 //! - QT035: arithmetic (`+ - * %`) with a symbol on either side, which q
 //!   refuses with 'type.
 //!
@@ -24,6 +26,10 @@ use super::infer::{Typed, literal_type, typed_locals_up_to};
 use crate::Finding;
 use std::collections::HashMap;
 
+/// What an operand is known to be: its q type, and whether it can be `""`,
+/// a list of no items, which a join takes the other side's type from.
+type Operand = (i16, bool);
+
 /// The most locals a lambda may have for its types to be read here.
 const MOST_LOCALS: usize = 64;
 
@@ -37,11 +43,12 @@ pub(crate) fn check(path: &str, code: &str, source: &str, comments: &str) -> Vec
     if typed.is_empty() {
         return vec![];
     }
-    // The type of each typed local's every place, to read the other side.
-    let mut at_place: HashMap<usize, i16> = HashMap::new();
+    // The type of each typed local's every place, to read the other side,
+    // and whether it may be `""`.
+    let mut at_place: HashMap<usize, Operand> = HashMap::new();
     for t in &typed {
         for p in &t.local.places {
-            at_place.insert(p.at, t.kind);
+            at_place.insert(p.at, (t.kind, t.empty));
         }
     }
     let mut out = vec![];
@@ -72,7 +79,7 @@ fn judge(
     end: usize,
     t: &Typed,
     op: &str,
-    other: Option<i16>,
+    other: Option<Operand>,
     local_left: bool,
 ) {
     let text = source[start..end].trim();
@@ -86,7 +93,7 @@ fn judge(
                 "`{text}` is 'type: `{name}` is always a symbol here, and q does no arithmetic on one"
             ),
         )
-    } else if let Some(o) = other {
+    } else if let Some((o, other_empty)) = other {
         if COMPARE.contains(&op) && (symbol(t.kind) != symbol(o)) && simple(t.kind) && simple(o) {
             (
                 "QT033",
@@ -95,7 +102,16 @@ fn judge(
                     kind_name(t.kind)
                 ),
             )
-        } else if op == "," && simple(t.kind) && simple(o) && t.kind > 0 && o > 0 && t.kind != o {
+        } else if op == ","
+            && simple(t.kind)
+            && simple(o)
+            && t.kind > 0
+            && o > 0
+            && t.kind != o
+            // An empty side takes the other's type: `"",1 2` is 1 2 (#2118).
+            && !t.empty
+            && !other_empty
+        {
             let (l, r) = if local_left { (t.kind, o) } else { (o, t.kind) };
             (
                 "QT034",
@@ -112,6 +128,11 @@ fn judge(
         return;
     };
     out.push(Finding::at(path, source, start, code, detail));
+}
+
+/// The type of the literal `text`, and whether it is `""`, which has no items.
+fn literal(text: &str) -> Option<Operand> {
+    literal_type(text).map(|k| (k, text.trim() == "\"\""))
 }
 
 /// The words for a q type number.
@@ -152,8 +173,8 @@ fn right_side<'a>(
     code: &'a str,
     comments: &str,
     end: usize,
-    at_place: &HashMap<usize, i16>,
-) -> Option<(&'a str, Option<i16>, usize)> {
+    at_place: &HashMap<usize, Operand>,
+) -> Option<(&'a str, Option<Operand>, usize)> {
     let rest = &code[end..];
     let gap = rest.len() - rest.trim_start_matches([' ', '\t']).len();
     let after = &rest[gap..];
@@ -184,7 +205,7 @@ fn right_side<'a>(
         .find([';', ')', ']', '}', '\n'])
         .map_or(code.len(), |n| start + n);
     let text = comments[start..stop].trim_end();
-    let kind = literal_type(text).or_else(|| {
+    let kind = literal(text).or_else(|| {
         let name_end = start + text.len();
         let is_name = text.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
             && text.bytes().next().is_some_and(|c| c.is_ascii_alphabetic());
@@ -204,8 +225,8 @@ fn right_side<'a>(
 fn left_side(
     code: &str,
     at: usize,
-    at_place: &HashMap<usize, i16>,
-) -> Option<(&'static str, Option<i16>, usize)> {
+    at_place: &HashMap<usize, Operand>,
+) -> Option<(&'static str, Option<Operand>, usize)> {
     let before = code[..at].trim_end_matches([' ', '\t']);
     let op = COMPARE
         .iter()
@@ -265,7 +286,7 @@ fn left_side(
         }
     }
     let text = &left[start..];
-    let kind = literal_type(text).or_else(|| {
+    let kind = literal(text).or_else(|| {
         let is_name = text.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
             && text.bytes().next().is_some_and(|c| c.is_ascii_alphabetic());
         is_name.then(|| at_place.get(&start).copied()).flatten()

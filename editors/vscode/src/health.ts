@@ -50,3 +50,8 @@ export function latencyText(millis: number): string {
 /// How long a heartbeat may go unanswered before the status bar says so:
 /// the process is busy (q answers one message at a time), or gone.
 export const UNANSWERED_MS = 5000;
+
+/// How long a reconnected connection stays up before it counts as held,
+/// when no query was answered on it: the reconnects after it start again
+/// at the first try (#2129).
+export const STEADY_MS = 60_000;

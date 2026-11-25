@@ -372,12 +372,14 @@ function commentCell(source: string): string[] {
 /// so the `\d` ends with the cell; a script would carry it into every cell
 /// below, whose names would then land in that namespace (#1934). Read from
 /// the text: a namespace set inside a function the cell calls is not seen.
+/// A `\d` statement's lines after its first, even a comment, are its
+/// argument to q, so `\d .` and an indented line is no root (#2155).
 function leavesNamespace(source: string): boolean {
   let away = false;
   for (const statement of statements(source)) {
-    const command = /^\\d\s+(\S+)/.exec(statement);
-    for (const [, name] of command !== null ? [command] : statement.matchAll(/\bsystem\s*\[?\s*"d\s+([^"\s]+)/g)) {
-      away = name !== ".";
+    const command = /^\\d\s+(\S+)([^]*)$/.exec(statement);
+    for (const [, name, rest] of command !== null ? [command] : statement.matchAll(/\bsystem\s*\[?\s*"d\s+([^"\s]+)/g)) {
+      away = name !== "." || (rest ?? "").trim() !== "";
     }
   }
   return away;

@@ -13,7 +13,7 @@ const os = require("node:os");
 const path = require("node:path");
 const pkg = require("../package.json");
 const { DB_SETTINGS, DB_COMMANDS, dbOn, dbOff } = require("../out/dbfeatures.js");
-const { opProblem, opText, columnScript, columnScriptOf, readRun, HELPERS } = require("../out/colmanager.js");
+const { opProblem, opText, columnScript, columnScriptOf, readRun, HELPERS, columnsOf, readColumnDirs } = require("../out/colmanager.js");
 const { readDoc, qdocs, docMarkdown, docHtml, typeName, workspaceDocs } = require("../out/dbdoc.js");
 const { missingWeekdays, partitionProblems, partitionReport, readPartitions } = require("../out/partcheck.js");
 const { readSym, symReport } = require("../out/syminspect.js");
@@ -59,6 +59,56 @@ test("every switch is declared, on by default, and every command hidden by its s
   assert.strictEqual(dbOn((k, d) => (k === "charts.commandLine.enable" ? false : d), "chartCli"), false);
   assert.strictEqual(dbOn(() => "yes", "chartCli"), true);
   if (DB_SETTINGS.symInspector) assert.strictEqual(props["q-lint.hdbBrowser.symInspector.warnAbove"].default, 1000000);
+});
+
+// q writes a nested column with no attribute, but an empty partition's: one
+// set on it is refused before anything is written (#2141).
+test("the column manager refuses an attribute on a nested or mixed column (#2141)", () => {
+  const cols = ["date", "sym", "ex", "tags", "any"];
+  const types = { date: "d", sym: "s", ex: "C", tags: "J", any: "" };
+  const attr = (column, a) => opProblem({ op: "attr", column, attr: a }, cols, "date", cols, types);
+  assert.strictEqual(attr("ex", "g"), "ex is a nested column, which q writes to disk with no attribute");
+  assert.strictEqual(attr("tags", "u"), "tags is a nested column, which q writes to disk with no attribute");
+  assert.strictEqual(attr("any", "p"), "any is a mixed column, which q writes to disk with no attribute");
+  assert.deepStrictEqual([attr("sym", "g"), attr("ex", "")], [undefined, undefined]);
+  // The script refuses it too, in each directory, before writing.
+  assert.ok(HELPERS.some((h) => h.startsWith(".qlint.cm.attr:") && h.indexOf("nested, which q writes with no attribute") < h.indexOf(".qlint.cm.put[")));
+});
+
+// A cast q does not make fails in every partition with rows and is made in
+// an empty one alone; it is refused before anything is written, with why (#2140).
+test("the column manager refuses a cast q does not make, by the schema migration's table (#2140)", () => {
+  const cols = ["date", "sym", "tags", "ex", "sz"];
+  const types = { date: "d", sym: "s", tags: "J", ex: "C", sz: "j" };
+  const cast = (column, type) => opProblem({ op: "cast", column, type }, cols, "date", cols, types);
+  assert.strictEqual(cast("sym", "c"), "sym is not cast from s to c: the column manager makes no symbol into a char");
+  assert.strictEqual(cast("tags", "f"), "tags is not cast from J to f: a list column's items are lists, an atom column's are not");
+  assert.strictEqual(cast("ex", "c"), "ex is not cast from C to c: a column of strings holds lists, not chars");
+  assert.match(cast("sz", "g"), /^cast to one of q's type characters/);
+  assert.strictEqual(cast("sym", "u"), undefined);
+  assert.strictEqual(opProblem({ op: "cast", column: "sz", type: "u" }, cols, "date", cols, { ...types, sz: "d" }), "sz is not cast from d to u: q has no cast from date to minute");
+  for (const [column, type] of [["sz", "i"], ["sz", "f"], ["ex", "s"], ["ex", "j"], ["sym", "j"], ["sym", "s"]]) assert.strictEqual(cast(column, type), undefined, `${column} to ${type}`);
+  // A column whose type is not known is left to q, as before.
+  assert.strictEqual(opProblem({ op: "cast", column: "sym", type: "c" }, cols, "date"), undefined);
+});
+
+// meta reads the newest partition only: a column the newest have and the
+// older lack is added to the older ones, and one only the older have is
+// deleted or renamed there (#2138).
+test("the column manager takes its columns from every directory's .d, not the newest partition's meta (#2138)", () => {
+  const meta = ["date", "sym", "px", "ex"];
+  const dirs = readColumnDirs([["sym", "px"], ["sym", "px", "old"], ["sym", "px", "ex"], []]);
+  const { columns, everywhere } = columnsOf(meta, dirs);
+  assert.deepStrictEqual([columns, everywhere], [["date", "sym", "px", "ex", "old"], ["date", "sym", "px"]]);
+  assert.strictEqual(opProblem({ op: "add", column: "ex", value: "`" }, columns, "date", everywhere), undefined);
+  assert.strictEqual(opProblem({ op: "delete", column: "old" }, columns, "date", everywhere), undefined);
+  assert.strictEqual(opProblem({ op: "rename", column: "old", to: "older" }, columns, "date", everywhere), undefined);
+  assert.match(opProblem({ op: "rename", column: "px", to: "old" }, columns, "date", everywhere), /already has a column old/);
+  assert.match(opProblem({ op: "add", column: "px", value: "0n" }, columns, "date", everywhere), /already has a column px/);
+  assert.match(opProblem({ op: "reorder", order: ["px", "sym", "ex", "old"] }, columns, "date", everywhere), /^only some partitions have ex, old: /);
+  // One column in a directory arrives as a string; nothing read is meta's.
+  assert.deepStrictEqual(readColumnDirs(["sym", ["sym", "px"]]), [["sym"], ["sym", "px"]]);
+  assert.deepStrictEqual(columnsOf(meta, readColumnDirs(null)), { columns: meta, everywhere: meta });
 });
 
 test("the column manager checks an op against the table and writes a script the guard reads as a write", () => {
@@ -184,6 +234,17 @@ test("the partition check finds weekday gaps, and each kind of problem in an ans
   assert.deepStrictEqual(partitionProblems(single), []);
 });
 
+// A column enumerated against another domain in one partition than in the
+// rest, each domain in the root: a select across them is a mixed column (#2139).
+test("the partition check finds a column enumerated against another domain in some partitions (#2139)", () => {
+  const row = (partition, enums) => ({ table: "trade", partition, dir: true, dotd: true, columns: ["sym", "src", "px"], missing: [], types: [20, 21, 9], enums, maxIndexes: [], rows: 6 });
+  const answer = (rows) => ({ hdb: true, field: "date", root: "/db", all: rows.map((r) => r.partition), checked: rows.length, tables: ["trade"], domains: new Map([["sym", 10], ["dom2", 2], ["src", 3]]), rows });
+  const problems = partitionProblems(answer([row("2026.03.05", ["sym", "src", ""]), row("2026.03.06", ["dom2", "src", ""]), row("2026.03.09", ["sym", "src", ""])]));
+  assert.deepStrictEqual(problems.map((p) => [p.kind, p.what, p.partitions]), [["enumeration", "trade.sym is enumerated against dom2 here, sym in most partitions: a select across them makes it a mixed column", ["2026.03.06"]]]);
+  // Two columns, each against its own domain everywhere, are no problem.
+  assert.deepStrictEqual(partitionProblems(answer([row("2026.03.05", ["sym", "src", ""]), row("2026.03.06", ["sym", "src", ""])])), []);
+});
+
 // #2007: q writes a string or nested column with no rows as a general list
 // (type 0), and maps one with rows as 77h on.
 test("an empty partition's string or nested column is not a different type (#2007)", () => {
@@ -218,6 +279,41 @@ test("the sym report warns above the threshold and lists columns and growth", ()
   // Int partitions grow in number order, not text order (#1128).
   const ints = readSym({ sym: true, root: "/db", count: 300, bytes: 1, partitions: 3, sampled: 3, ctable: [], ccol: [], cdistinct: [], gpart: ["10", "8", "9"], gsize: [300, 100, 200] });
   assert.deepStrictEqual(ints.growth.map((g) => g.partition), ["8", "9", "10"]);
+});
+
+// A partition that uses only the first indexes is no smaller file: what the
+// next one adds is counted from the largest size before it (#2142).
+test("the sym report's growth counts from the largest size so far (#2142)", () => {
+  const a = readSym({ sym: true, root: "/db", count: 6, bytes: 64, partitions: 4, sampled: 4, ctable: [], ccol: [], cdistinct: [], gpart: ["2026.01.07", "2026.01.08", "2026.01.09", "2026.01.12"], gsize: [4, 2, 4, 6] });
+  const rows = symReport(a, "hdb", 1000).split("\n").filter((l) => /^\| 2026/.test(l));
+  assert.deepStrictEqual(rows, ["| 2026.01.07 | 4 |  |", "| 2026.01.08 | 4 | 0 |", "| 2026.01.09 | 4 | 0 |", "| 2026.01.12 | 6 | 2 |"]);
+});
+
+// Indexes past the file's end are no symbols of it: not a share past 100%,
+// but a warning of their own (#2143).
+test("the sym report counts no index past the file's end, and warns of them (#2143)", () => {
+  const a = readSym({ sym: true, root: "/db", count: 3, bytes: 64, partitions: 1, sampled: 1, ctable: ["trade", "quote"], ccol: ["sym", "sym"], cdistinct: [3, 2], cpast: [2, 0], gpart: ["2026.03.04"], gsize: [3] });
+  assert.deepStrictEqual(a.columns, [{ table: "trade", column: "sym", distinct: 3, past: 2 }, { table: "quote", column: "sym", distinct: 2, past: 0 }]);
+  const text = symReport(a, "hdb", 1000);
+  assert.match(text, /\| trade \| sym \| 3 \| 100\.0% \|/);
+  assert.match(text, /\*\*Warning:\*\* trade\.sym has 2 values whose index is past the end of sym/);
+  assert.doesNotMatch(text, /quote\.sym has/);
+  // An answer from before it is read as none past the end.
+  assert.strictEqual(readSym({ sym: true, root: "/db", count: 3, bytes: 1, partitions: 1, sampled: 1, ctable: ["t"], ccol: ["s"], cdistinct: [1], gpart: [], gsize: [] }).columns[0].past, 0);
+});
+
+// A database enumerated against mysym, or against sym and src: each domain
+// file a column is enumerated against is inspected (#2146).
+test("the sym report covers each domain a column is enumerated against (#2146)", () => {
+  const a = readSym({ sym: true, root: "/db", count: 9, bytes: 99, partitions: 0, sampled: 0, dnames: ["mysym", "src"], dcounts: [9, 3], dbytes: [99, 30], cdom: ["mysym", "src", "mysym"], ctable: ["sp", "sp", "sp"], ccol: ["s", "v", "u"], cdistinct: [3, 2, 4], cpast: [0, 0, 0], gdom: [], gpart: [], gsize: [] });
+  assert.deepStrictEqual([a.domain, a.count, a.columns.map((c) => c.column)], ["mysym", 9, ["u", "s"]]);
+  assert.deepStrictEqual(a.others, [{ domain: "src", count: 3, bytes: 30, columns: [{ table: "sp", column: "v", distinct: 2, past: 0 }], growth: [] }]);
+  const text = symReport(a, "splay", 1000);
+  assert.match(text, /^# Sym file of splay\n\n\/db\/mysym: 9 symbols, /);
+  assert.match(text, /\| sp \| u \| 4 \| 44\.4% \|/);
+  assert.match(text, /\n## src\n\n\/db\/src: 3 symbols, .*\n\n### By column\n[^]*\| sp \| v \| 2 \| 66\.7% \|/);
+  // An answer that names no domain is sym's.
+  assert.strictEqual(readSym({ sym: true, root: "/db", count: 1, bytes: 1, partitions: 0, sampled: 0, ctable: ["t"], ccol: ["s"], cdistinct: [1], gpart: [], gsize: [] }).domain, "sym");
 });
 
 test("the attribute advisor counts filters and suggests by shape, never for an unfiltered column", () => {
@@ -332,7 +428,7 @@ test("the attribute advisor does not take the sample for the table when the rows
   for (const [i, a] of unknown.entries()) assert.strictEqual(a.reason, counted[i].reason);
   for (const a of unknown) assert.match(a.reason, / \(in 100,000 rows sampled\)/);
   const report = adviceReport("quote", "hdb", sample(null), unknown, 6);
-  assert.match(report, /A partitioned table of an unknown number of rows; 100,000 rows sampled from its last partition/);
+  assert.match(report, /A partitioned table of an unknown number of rows; 100,000 rows sampled from its newest partition with rows/);
   assert.match(report, /\| time \|  \| s# \| 0 B \| 0 \|/);
   assert.match(report, /\| id \|  \| u# \| unknown \| 3 \|/);
   assert.match(report, /\| venue \|  \| g# \| unknown \| 2 \|/);
@@ -357,7 +453,7 @@ test("the attribute advisor's report names the kind of table as an adjective (#1
   assert.strictEqual(first("table"), "An in-memory table of 3 rows; 3 rows sampled; 0 saved and recent queries read for filters.");
   assert.strictEqual(first("keyed"), "A keyed table of 3 rows; 3 rows sampled; 0 saved and recent queries read for filters.");
   assert.strictEqual(first("splayed"), "A splayed table of 3 rows; 3 rows sampled; 0 saved and recent queries read for filters.");
-  assert.strictEqual(first("partitioned"), "A partitioned table of 3 rows; 3 rows sampled from its last partition; 0 saved and recent queries read for filters.");
+  assert.strictEqual(first("partitioned"), "A partitioned table of 3 rows; 3 rows sampled from its newest partition with rows; 0 saved and recent queries read for filters.");
   // A kind this does not know is still a table, said once.
   assert.strictEqual(first(""), "A table of 3 rows; 3 rows sampled; 0 saved and recent queries read for filters.");
   assert.strictEqual(first("odd_kind", null), "A table of an unknown number of rows; 3 rows sampled; 0 saved and recent queries read for filters.");
@@ -410,6 +506,21 @@ test("a schema diff names adds, drops, casts and order, and the script turns one
   assert.match(disk, /\.qlint\.cm\.add\[`ex;`\]/);
   assert.match(disk, /\.qlint\.cm\.cast\[`px;"j"\]/);
   assert.doesNotMatch(disk, /del\[`date\]/);
+});
+
+// An added column takes the target's attribute, after it is added; u# on a
+// column of one null a row is no attribute q sets (#2145).
+test("a schema migration sets the target's attribute on a column it adds (#2145)", () => {
+  const t = (kind, rows, cols) => ({ kind, rows, bytes: null, partitions: null, keys: [], ncols: cols.length, columns: cols.map(([name, type, attr = ""]) => ({ name, type, fkey: "", attr })) });
+  const to = t("table", 0, [["k", "j"], ["s", "s", "s"], ["g", "j", "g"], ["u", "j", "u"]]);
+  assert.deepStrictEqual(schemaDiff(t("table", 3, [["k", "j"]]), to).attrs, [{ name: "s", from: "", to: "s" }, { name: "g", from: "", to: "g" }, { name: "u", from: "", to: "u" }]);
+  const script = migrationScript("a", t("table", 3, [["k", "j"]]), "a", to, "b", "p");
+  assert.match(script, /\na:update g:0N from a\na:update u:0N from a\na:update s:`s#s from a\na:update g:`g#g from a\n\/ not written: u# on u: it is added with one null in every row, which u# refuses\n$/);
+  // One row, or none, takes u# too.
+  assert.match(migrationScript("a", t("table", 1, [["k", "j"]]), "a", to, "b", "p"), /\na:update u:`u#u from a\n$/);
+  const disk = migrationScript("trade", t("splayed", 3, [["k", "j"]]), "trade", to, "b", "p");
+  assert.match(disk, /\.qlint\.cm\.add\[`s;`\].*\n.*\.qlint\.cm\.attr\[`s;`s\]/s);
+  assert.doesNotMatch(disk, /\.qlint\.cm\.attr\[`u/);
 });
 
 test("test data: pools, ranges, a q generator per type, and CSV that sorts and repeats by seed", () => {

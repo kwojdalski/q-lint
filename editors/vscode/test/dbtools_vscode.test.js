@@ -20,7 +20,7 @@ const { registerDbTools } = require("../out/dbtoolsview.js");
 const { Dashboards, tileContent } = require("../out/dashboardview.js");
 const { TickerplantLog } = require("../out/tplogview.js");
 const { DB_COMMANDS, DB_SETTINGS } = require("../out/dbfeatures.js");
-const { RUN_SCRIPT } = require("../out/colmanager.js");
+const { COLUMN_DIRS, RUN_SCRIPT } = require("../out/colmanager.js");
 const { TABLE_INFO } = require("../out/tableinfo.js");
 const { DOCUMENT } = require("../out/dbdoc.js");
 const { SAVED_QUERIES_KEY } = require("../out/savedqueries.js");
@@ -68,8 +68,12 @@ async function fakeQ(answer) {
 const INFO = { kind: "partitioned", rows: 18, bytes: null, partitions: 3, keys: [], ncols: 3, cols: ["date", "sym", "px"], types: ["d", "s", "f"], fkeys: ["", "", ""], attrs: ["", "", ""] };
 const DOC = { pf: "date", parts: 3, tables: { name: "trade", kind: "partitioned", rows: 18, keys: [], cols: ["date", "sym"], types: ["d", "s"], fkeys: ["", ""], attrs: ["", ""] }, fnames: [], fparams: [] };
 
+/// Answers a test puts in place of the usual ones, by lambda.
+const answering = new Map();
+
 function answers(m) {
   const lambda = Array.isArray(m) ? m[0] : m;
+  if (answering.has(lambda)) return answering.get(lambda);
   if (lambda === TABLE_INFO) return INFO;
   if (lambda === DOCUMENT) return DOC;
   if (lambda === RUN_SCRIPT) return [true, "changed 3 of 3 directories"];
@@ -203,7 +207,22 @@ test("elsewhere the column manager shows its script and runs it only after Run",
   // A column the table lacks is refused before anything is shown.
   const n = q.sent.length;
   assert.match(await stub.commands.get(DB_COMMANDS.manageColumn)("trade", { op: "delete", column: "nope" }), /no column nope/);
-  assert.ok(q.sent.slice(n).every((m) => m[0] === TABLE_INFO));
+  assert.ok(q.sent.slice(n).every((m) => m[0] === TABLE_INFO || m[0] === COLUMN_DIRS));
+});
+
+// meta is the newest partition's: the column manager asks every directory's
+// .d, and adds to the older ones a column only the newest have (#2138).
+test("the column manager adds a column the newest partitions have and the older lack (#2138)", async (t) => {
+  capture();
+  answering.set(TABLE_INFO, { ...INFO, ncols: 4, cols: [...INFO.cols, "ex"], types: [...INFO.types, "s"], fkeys: [...INFO.fkeys, ""], attrs: [...INFO.attrs, ""] });
+  answering.set(COLUMN_DIRS, [["sym", "px"], ["sym", "px"], ["sym", "px", "ex"]]);
+  t.after(() => answering.clear());
+  const { q, live } = await setUp(t);
+  await live.connectTo("hdb");
+  stub.picks.push("Run");
+  assert.match(await stub.commands.get(DB_COMMANDS.manageColumn)("trade", { op: "add", column: "ex", value: "`" }), /changed 3 of 3 directories/);
+  assert.ok(q.sent.find((m) => m[0] === RUN_SCRIPT)[1].some((s) => s.includes(".qlint.cm.add[`ex;`]")));
+  assert.deepStrictEqual(q.sent.find((m) => m[0] === COLUMN_DIRS).slice(1), ["trade"]);
 });
 
 test("the column manager runs nothing when the active process changed while Run was asked (#1081)", async (t) => {

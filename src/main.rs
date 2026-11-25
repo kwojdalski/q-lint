@@ -282,6 +282,38 @@ fn overrides(args: &Args) -> Result<Overrides, String> {
     })
 }
 
+/// Refuse a run whose `flag` would write `target` over a file it reads.
+///
+/// Every flag that writes a file goes through this one check, before
+/// anything is written, so a refused run exits 2 and leaves the file as it
+/// was: `--write-baseline o.q`, with `o.q` taken for the flag's value and
+/// the tree linted, would otherwise replace the source with JSON (#2115).
+fn refuse_overwrite(flag: &str, target: Option<&Path>, inputs: &[PathBuf]) -> Result<(), String> {
+    let Some(target) = target else {
+        return Ok(());
+    };
+    if inputs.iter().any(|f| same_file(target, f)) {
+        return Err(format!(
+            "{flag} {}: it is one of the files to lint",
+            target.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Whether two paths reach one file on disk: compared as files, not names,
+/// so a symlink to a source, a hard link, or another case of its name on a
+/// disk that ignores case is the source (#2116). A path that names no file
+/// yet is no input, unless it is the input's own name. On Windows a hard
+/// link has a canonical path of its own, so files are told apart by volume
+/// and file index there, as by device and inode elsewhere.
+fn same_file(a: &Path, b: &Path) -> bool {
+    match (fs::metadata(a), fs::metadata(b)) {
+        (Ok(_), Ok(_)) => same_file::is_same_file(a, b).unwrap_or(false),
+        _ => config::absolute(a) == config::absolute(b),
+    }
+}
+
 /// Whether a path names q source.
 ///
 /// The extension, and nothing else: this runs before the file is opened, and
@@ -514,6 +546,8 @@ fn run(args: Args) -> Result<u8, String> {
     let mut failed = false;
     // Files read lossily, which are linted and reported but never fixed.
     let mut lossy = std::collections::HashSet::new();
+    // Every file the run reads, which no file it writes may be.
+    let mut inputs: Vec<PathBuf> = vec![];
     if stdin {
         if args.fix {
             return Err("--fix needs file paths; use --diff to preview stdin".into());
@@ -527,6 +561,11 @@ fn run(args: Args) -> Result<u8, String> {
             return Err("Stdin (- or --stdin-filename) must be the only input".into());
         }
         let name = args.stdin_filename.unwrap_or_else(|| "<stdin>".into());
+        // The file the buffer is linted as is the file an editor saves it
+        // to: a report written there replaces it (#2116).
+        if name != "<stdin>" {
+            inputs.push(PathBuf::from(&name));
+        }
         // Only q source, however the path arrived: a `.k` buffer is a
         // different language, refused as the same file named outright is
         // (#421).
@@ -562,15 +601,7 @@ fn run(args: Args) -> Result<u8, String> {
     } else {
         let (files, missing) = discover(paths, &policy, args.force_exclude)?;
         failed |= missing;
-        if let Some(out) = OUTPUT_PATH.get() {
-            let out = config::absolute(out);
-            if files.iter().any(|f| config::absolute(f) == out) {
-                return Err(format!(
-                    "--output-file {}: it is one of the files to lint",
-                    out.display()
-                ));
-            }
-        }
+        inputs.extend(files.iter().cloned());
         for path in files {
             // A file that cannot be read is reported and passed over, and the
             // run ends in exit 2, an input failure, whatever the others find.
@@ -617,6 +648,18 @@ fn run(args: Args) -> Result<u8, String> {
                 }
             }
         }
+    }
+    refuse_overwrite("--output-file", args.output_file.as_deref(), &inputs)?;
+    refuse_overwrite("--write-baseline", args.write_baseline.as_deref(), &inputs)?;
+    if let Some(file) = &args.write_baseline
+        && file
+            .extension()
+            .is_some_and(|e| ["q", "k", "qnb"].iter().any(|x| e.eq_ignore_ascii_case(x)))
+    {
+        return Err(format!(
+            "--write-baseline {}: a baseline is JSON, not q source; name it as one, such as qlinter-baseline.json",
+            file.display()
+        ));
     }
     // The files linted together are each other's workspace: a name one
     // defines is not undefined in another. Indexing reads them; nothing runs.
@@ -875,10 +918,16 @@ fn run(args: Args) -> Result<u8, String> {
     // finding is, as QP005's is where an operand's end cannot be told; and
     // a file the run never rewrites has no fix for anything in it.
     if args.fix {
-        let (mut unfixed, mut editor_only) = (0, 0);
+        let (mut unfixed, mut editor_only, mut undecoded) = (0, 0, 0);
         for (path, source) in &sources {
             let here: Vec<_> = findings.iter().filter(|f| f.path == *path).collect();
-            let fixes = if lossy.contains(path.as_str()) || !balanced(source) {
+            // A file that is not UTF-8 is never rewritten, fix or none: its
+            // findings are counted apart, for that reason (#2121).
+            if lossy.contains(path.as_str()) {
+                undecoded += here.len();
+                continue;
+            }
+            let fixes = if !balanced(source) {
                 vec![]
             } else {
                 fixes_for(here.iter().copied(), source)
@@ -896,6 +945,9 @@ fn run(args: Args) -> Result<u8, String> {
                 "qlinter: {editor_only} finding(s) left have a fix that only --unsafe-fixes applies"
             );
         }
+        if undecoded > 0 {
+            eprintln!("{}", undecoded_left(undecoded, "--fix"));
+        }
     }
     if failed {
         return Ok(2);
@@ -903,6 +955,15 @@ fn run(args: Args) -> Result<u8, String> {
     Ok(u8::from(findings.iter().any(|f| {
         matches!(f.severity.as_str(), "error" | "warning")
     })))
+}
+
+/// What a run that rewrites files says of the findings it left in files that
+/// are not valid UTF-8: none was looked at for a fix or a comment, since
+/// writing the decoded text back would change bytes it could not read.
+fn undecoded_left(count: usize, flag: &str) -> String {
+    format!(
+        "qlinter: {count} finding(s) left are in files that are not valid UTF-8, which {flag} never rewrites"
+    )
 }
 
 /// `--add-noqa`: each file rewritten with every finding accepted on its
@@ -922,7 +983,7 @@ fn add_noqa(
 ) -> Result<u8, String> {
     // More codes than this on one line is not a line anyone will read.
     const PASSES: usize = 64;
-    let (mut added, mut changed, mut left, mut stale) = (0, 0, 0, 0);
+    let (mut added, mut changed, mut left, mut stale, mut undecoded) = (0, 0, 0, 0, 0);
     // Each file as it is on disk once its first name is done: a later name
     // is linted against that, not the text read before the write (#1199).
     let mut written: std::collections::HashMap<PathBuf, String> = Default::default();
@@ -936,7 +997,7 @@ fn add_noqa(
             continue;
         }
         if lossy.contains(path.as_str()) {
-            left += policy.lint(source, path, workspace)?.len();
+            undecoded += policy.lint(source, path, workspace)?.len();
             continue;
         }
         let mut text = source.clone();
@@ -987,6 +1048,9 @@ fn add_noqa(
             "qlinter: {left} finding(s) left: on a line no comment can follow, such as one inside a string or a block comment, or in a file whose brackets do not close"
         );
     }
+    if undecoded > 0 {
+        eprintln!("{}", undecoded_left(undecoded, "--add-noqa"));
+    }
     if stale > 0 {
         eprintln!(
             "qlinter: {stale} noqa directive(s) suppress nothing (QL003): remove them with --fix --unsafe-fixes"
@@ -995,7 +1059,7 @@ fn add_noqa(
     Ok(if failed {
         2
     } else {
-        u8::from(left + stale > 0)
+        u8::from(left + stale + undecoded > 0)
     })
 }
 

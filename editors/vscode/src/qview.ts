@@ -15,6 +15,7 @@
 // - it only gives the value back. The value is held in `.qlint.shown` only
 // while it is shaped.
 import { deserialize } from "node-q/lib/c.js";
+import { checkedBody } from "./qdecode";
 import { gridLambda, readGridAnswer, type GridAnswer } from "./grid";
 
 export const VIEW_KINDS = ["view", "plot"] as const;
@@ -45,7 +46,7 @@ export function viewDefinition(size: [number, number], limit: number): string {
 export function readViewMessage(message: Buffer): { kind: ViewKind; answer: GridAnswer } | undefined {
   let value: unknown;
   try {
-    value = deserialize(message, false, true, false, false);
+    value = deserialize(checkedBody(message), false, true, false, false);
   } catch {
     return undefined;
   }

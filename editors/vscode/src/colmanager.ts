@@ -24,13 +24,16 @@
 // extends; a cast to `s` enumerates the same way. A string or symbol column
 // cast to a number or time is parsed (`"J"$`), not cast char by char (#1135).
 // Setting an attribute, or casting, reads the whole column of each partition and writes it back: the
-// script's header says so. A rename moves the column's files with the
+// script's header says so. It is written as it was: compressed with the
+// parameters `-21!` read off it, or plain - whatever the process's `.z.zd`
+// - and a directory whose file is not, after, is not reported changed (#2137). A rename moves the column's files with the
 // shell's mv (move on Windows, its paths with backslashes), each path quoted
 // for that shell (`.qlint.cm.mvcmd`, which takes the OS so both are tested
 // anywhere, #1137): q has no
 // rename of its own, and rewriting the column would read all of it. Works on kdb+ (KDB-X) and PeachQ; held there by
 // dbtools_q.test.js.
 
+import { castProblem } from "./migrate";
 import { PARTITION_DIRS } from "./partdir";
 import { RESERVED, symbolLiteral } from "./qliteral";
 
@@ -58,11 +61,48 @@ function nameProblem(name: string): string | undefined {
   return undefined;
 }
 
+/// The columns each directory of a table lists in its `.d` (#2138): `meta`
+/// reads the newest partition only, so a column added to the newest ones,
+/// or dropped from them, is one it cannot tell is in some partitions and not
+/// the others. Read-only; the directories are the column manager's - every
+/// partition on disk, each where q loaded it from, or the splayed table's.
+/// A directory whose `.d` cannot be read lists none.
+export const COLUMN_DIRS = [
+  "{[nm] t:`$(),nm; r:hsym`$system\"cd\"; p:.Q.qp get t;",
+  ` ds:$[1b~p;{\` sv x,y}[;t] each ${PARTITION_DIRS}[r;@[get;\`.Q.PD;()];@[get;\`.Q.PV;{.Q.pv}]];0b~p;enlist\` sv r,t;()];`,
+  " {@[{string(),get` sv x,`.d};x;()]} each ds}",
+].join("\n");
+
+/// What `COLUMN_DIRS` answered: each directory's columns.
+export function readColumnDirs(raw: unknown): string[][] {
+  if (!Array.isArray(raw)) return [];
+  // One column in a directory arrives as a string, not a list of one.
+  return raw.map((d) => (Array.isArray(d) ? d.map(String) : typeof d === "string" ? [d] : []));
+}
+
+/// Which columns a table has: `meta`'s, in its order, then those only an
+/// older directory lists; and those every directory lists. A table whose
+/// directories were not read is `meta`'s throughout.
+export function columnsOf(meta: string[], dirs: string[][]): { columns: string[]; everywhere: string[] } {
+  const read = dirs.filter((d) => d.length > 0);
+  if (read.length === 0) return { columns: meta, everywhere: meta };
+  const columns = [...new Set([...meta, ...read.flat()])];
+  return { columns, everywhere: columns.filter((c) => !read.some((d) => !d.includes(c)) || !read.flat().includes(c)) };
+}
+
 /// Why `op` cannot be applied to a table of `columns` partitioned by
-/// `field` (empty for a splayed one); undefined when it can.
-export function opProblem(op: ColumnOp, columns: string[], field = ""): string | undefined {
+/// `field` (empty for a splayed one); undefined when it can. `everywhere`
+/// is the columns every directory has (`columnsOf`): a column only some
+/// have can be added to the rest, and deleted or renamed where it is.
+/// `types` is meta's type of each column: a cast q does not make is refused
+/// here, by the schema migration's own table (`castProblem`), before any
+/// partition is written - run, it fails in each partition with rows and is
+/// made only in an empty one, which then differs from the rest (#2140).
+export function opProblem(op: ColumnOp, columns: string[], field = "", everywhere: string[] = columns, types: Record<string, string> = {}): string | undefined {
   const has = (c: string) => columns.includes(c);
   if (op.op === "reorder") {
+    const some = columns.filter((c) => c !== field && !everywhere.includes(c));
+    if (some.length > 0) return `only some partitions have ${some.join(", ")}: add it to the rest or delete it first`;
     const given = op.order.filter((c) => c !== field);
     const want = columns.filter((c) => c !== field);
     return given.length === want.length && want.every((c) => given.includes(c)) ? undefined : "a new order names every column once";
@@ -73,7 +113,7 @@ export function opProblem(op: ColumnOp, columns: string[], field = ""): string |
   if (op.op === "add") {
     const bad = nameProblem(op.column);
     if (bad !== undefined) return bad;
-    if (has(op.column)) return `the table already has a column ${op.column}`;
+    if (everywhere.includes(op.column)) return `the table already has a column ${op.column}`;
     if (op.value.trim() === "" || /[\r\n]/.test(op.value)) return "the default is one q value on one line: 0n, 0, `, \"\" or 0Np";
     return undefined;
   }
@@ -86,6 +126,16 @@ export function opProblem(op: ColumnOp, columns: string[], field = ""): string |
   }
   if (op.op === "cast" && (op.type.length !== 1 || !CAST_TYPES.includes(op.type))) {
     return `cast to one of q's type characters: ${CAST_TYPES.split("").join(" ")}`;
+  }
+  const from = types[op.column];
+  // q writes a nested column's file with no attribute: one set on it is
+  // reported set and is not there, but in an empty partition (#2141).
+  if (op.op === "attr" && op.attr !== "" && from !== undefined && (from === "" || from !== from.toLowerCase())) {
+    return `${op.column} is a ${from === "" ? "mixed" : "nested"} column, which q writes to disk with no attribute`;
+  }
+  if (op.op === "cast" && from !== undefined && from !== op.type) {
+    const refused = castProblem(from, op.type, true);
+    if (refused !== undefined) return `${op.column} is not cast from ${from} to ${op.type}: ${refused}`;
   }
   return undefined;
 }
@@ -140,13 +190,15 @@ export const HELPERS = [
   ".qlint.cm.cols:{[d] get ` sv d,`.d}",
   '.qlint.cm.enum:{$[11h=abs type x;(hsym`$system["cd"],"/sym")?x;x]}',
   '.qlint.cm.nested:{[c] c,`$string[c],/:("#";"##")}',
+  '.qlint.cm.zip:{[f] z:@[-21!;f;()]; $[count z;z`logicalBlockSize`algorithm`zipLevel;()]}',
+  '.qlint.cm.put:{[f;v] z:.qlint.cm.zip f; $[count z;f,z;count@[get;`.z.zd;()];(f;0;0;0);f] set v; z~.qlint.cm.zip f}',
   ".qlint.cm.add:{[c;v;d] cs:.qlint.cm.cols d; if[c in cs;:`$\"has \",string c]; (` sv d,c) set count[get ` sv d,first cs]#enlist .qlint.cm.enum v; (` sv d,`.d) set cs,c; `ok}",
   ".qlint.cm.del:{[c;d] cs:.qlint.cm.cols d; if[not c in cs;:`$\"no \",string c]; {if[not ()~key x;hdel x]} each ` sv' d,/:.qlint.cm.nested c; (` sv d,`.d) set cs except c; `ok}",
   '.qlint.cm.mvcmd:{[w;a;b] p:$[w;{"\\"",ssr[x;"/";"\\\\"],"\\""};{"\'",ssr[x;"\'";"\'\\\\\'\'"],"\'"}]; $[w;"move ";"mv "],p[1_string a]," ",p 1_string b}',
   '.qlint.cm.mv:{[d;a;b] f:` sv d,a; if[not ()~key f; system .qlint.cm.mvcmd["w"=first string .z.o;f;` sv d,b]]}',
   ".qlint.cm.ren:{[o;n;d] cs:.qlint.cm.cols d; if[not o in cs;:`$\"no \",string o]; if[n in cs;:`$\"has \",string n]; .qlint.cm.mv[d]'[.qlint.cm.nested o;.qlint.cm.nested n]; (` sv d,`.d) set @[cs;cs?o;:;n]; `ok}",
-  '.qlint.cm.cast:{[c;t;d] if[not c in .qlint.cm.cols d;:`$"no ",string c]; f:` sv d,c; v:get f; a:attr v; s:(0h=type v)|77h<=type v; y:(11h=abs type v)|type[v] within 20 76h; n:not t in "cs"; f set a#$["s"=t;.qlint.cm.enum $[s;`$v;`$string v];n&s;(upper t)$v;n&y;(upper t)$string v;t$v]; if[s&not "c"=t; {if[not ()~key x;hdel x]} each ` sv\' d,/:1_.qlint.cm.nested c]; `ok}',
-  ".qlint.cm.attr:{[c;a;d] if[not c in .qlint.cm.cols d;:`$\"no \",string c]; f:` sv d,c; f set a#get f; `ok}",
+  '.qlint.cm.cast:{[c;t;d] if[not c in .qlint.cm.cols d;:`$"no ",string c]; f:` sv d,c; v:get f; a:attr v; s:(0h=type v)|77h<=type v; y:(11h=abs type v)|type[v] within 20 76h; n:not t in "cs"; if[not .qlint.cm.put[f;a#$["s"=t;.qlint.cm.enum $[s;`$v;`$string v];n&s;(upper t)$v;n&y;(upper t)$string v;t$v]];:`$"written without the compression it had"]; if[s&not "c"=t; {if[not ()~key x;hdel x]} each ` sv\' d,/:1_.qlint.cm.nested c]; `ok}',
+  ".qlint.cm.attr:{[c;a;d] if[not c in .qlint.cm.cols d;:`$\"no \",string c]; f:` sv d,c; v:get f; if[(not null a)&(0h=type v)|77h<=type v;:`$\"nested, which q writes with no attribute\"]; if[not .qlint.cm.put[f;a#v];:`$\"written without the compression it had\"]; $[a~attr get f;`ok;`$\"written, but q kept no \",string[a],\"#\"]}",
   ".qlint.cm.order:{[o;d] cs:.qlint.cm.cols d; if[not (asc cs)~asc o;:`$\"other columns\"]; (` sv d,`.d) set o; `ok}",
   `.qlint.cm.pdirs:${PARTITION_DIRS}`,
   '.qlint.cm.dirs:{[t] r:hsym`$system"cd"; p:.Q.qp get t; if[1b~p; if[not .Q.pv~@[get;`.Q.PV;{.Q.pv}]; \'".Q.view is in force, showing ",string[count .Q.pv]," of ",string[count .Q.PV]," partitions: nothing was changed. This changes every partition on disk and loads the database again, which clears a view; clear it with .Q.view[] and run again"]]; $[1b~p;{` sv x,y}[;t] each .qlint.cm.pdirs[r;@[get;`.Q.PD;()];.Q.pv];0b~p;enlist ` sv r,t;\'"not a table on disk: ",string t]}',

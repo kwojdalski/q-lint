@@ -29,7 +29,8 @@ export function isLocalHost(host: string, hostname: string = os.hostname()): boo
 /// What `-p` is given for a process on `host`: a loopback host's port on
 /// 127.0.0.1 (its own 127.x address), so a process defined as local is not
 /// served on every interface with no password (#1671); any other host's,
-/// bare. q binds IPv4 only and takes no `::1:port`, so `::1` is 127.0.0.1.
+/// bare. q binds IPv4 only and takes no `::1:port`, so `::1` is 127.0.0.1
+/// here - though `launchPlan` starts no process at `::1` (#2130).
 /// A process in a stack (`peers`) is bare too: TorQ turns a `localhost` in
 /// process.csv into .z.h, the machine's name, and its processes connect to
 /// each other there, which a loopback-only q refuses (#1742).
@@ -101,6 +102,11 @@ export function launchPlan(
   }
   if (!isLocalHost(process.host)) {
     return { error: `${process.label} is on ${process.host}, not this machine: only a local process can be started.` };
+  }
+  // q listens on IPv4 only, and a connect dials ::1 as written, where it
+  // would never be: started at 127.0.0.1, it was refused (#2130).
+  if (process.host.trim() === "::1") {
+    return { error: `${process.label} is at ::1, and q listens on IPv4 only: give it the host 127.0.0.1 or localhost to start it here.` };
   }
   const cwd = launch.cwd !== undefined ? scriptPath(launch.cwd, home, folder) : (folder ?? home);
   if (cwd === undefined) {

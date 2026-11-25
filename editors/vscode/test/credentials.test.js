@@ -215,3 +215,45 @@ test("a credential command runs in the workspace folder only when it is trusted,
   assert.strictEqual(credentialCwd(false, "/ws", "/home/u"), "/home/u");
   assert.strictEqual(credentialCwd(true, undefined, "/home/u"), "/home/u");
 });
+
+// The command ran with no way to stop it: a connect elsewhere waited for it
+// to finish, and Disconnect or the timeout left what it started running (#2127).
+test("a credential command stopped or timed out is ended with everything it started (#2127)", { skip: process.platform === "win32" }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-creds-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const late = (name) => `sh -c "sleep 1; echo ran > '${path.join(dir, name)}'"; echo pw`;
+  await assert.rejects(runCredentialCommand(late("timeout"), { timeoutMs: 200 }), (e) => e.message === "the credential command did not finish in 0.2 s");
+  const stop = new AbortController();
+  const started = Date.now();
+  setTimeout(() => stop.abort(), 100);
+  await assert.rejects(runCredentialCommand(late("aborted"), { signal: stop.signal }), (e) => e.message === "the credential command was cancelled");
+  assert.ok(Date.now() - started < 1000);
+  await assert.rejects(runCredentialCommand("echo pw", { signal: stop.signal }), /cancelled/);
+  await sleep(1500);
+  assert.deepStrictEqual(fs.readdirSync(dir), [], "nothing it started ran on");
+});
+
+test("a connect elsewhere, or Disconnect, does not wait for a slow credential command (#2127)", { skip: process.platform === "win32" }, async (t) => {
+  const q = await fakeQ(1);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-creds-"));
+  t.after(() => (q.close(), fs.rmSync(dir, { recursive: true, force: true })));
+  const marker = path.join(dir, "ran");
+  const slow = `sh -c "sleep 2; echo ran > '${marker}'"; echo svc:pw`;
+  const { live } = await setUp(t, [
+    { label: "slow", host: "127.0.0.1", port: q.port, tags: [], credentialCommand: slow },
+    { label: "plain", host: "127.0.0.1", port: q.port, tags: [] },
+  ]);
+  const first = live.connectTo("slow");
+  await sleep(200);
+  const started = Date.now();
+  assert.strictEqual(await live.connectTo("plain"), true);
+  assert.ok(Date.now() - started < 1000, `the connect waited ${Date.now() - started} ms`);
+  assert.strictEqual(await first, false);
+  assert.strictEqual(live.activeLabel(), "plain");
+  const again = live.connectTo("slow");
+  await sleep(200);
+  await stub.commands.get("q-lint.disconnectProcess")();
+  assert.strictEqual(await again, false);
+  await sleep(2300);
+  assert.strictEqual(fs.existsSync(marker), false, "the command was left running");
+});

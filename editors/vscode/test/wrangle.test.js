@@ -66,6 +66,12 @@ test("each step is written as q over the step before, and the steps as a script 
   // A base's comments are dropped before it is nested, so they eat no ")" or ";" (#1072).
   assert.strictEqual(w.wrangleBase("select from t / note"), undefined);
   assert.strictEqual(w.wrangleQuery("select from t / note", [steps[1]]), "`px xasc (select from t)");
+  // A name read alone can be a partitioned table: a step but a filter is
+  // refused on one by the q sent, and a table in memory passes through (#2147).
+  assert.strictEqual(w.wrangleQuery("trade", [steps[1]]), `\`px xasc (${w.NOT_PARTITIONED}trade)`);
+  assert.strictEqual(w.wrangleQuery(".ns.t / note", [{ kind: "drop", column: "ex" }]), `delete ex from (${w.NOT_PARTITIONED}.ns.t)`);
+  assert.strictEqual(w.wrangleQuery("trade", steps), "`px xasc (select from (trade) where px>1)");
+  assert.match(w.wrangleScript("trade", [steps[1]], "rdb"), new RegExp(`\n  w:${w.NOT_PARTITIONED.replace(/[$[\]{}()*+?.\\^|]/g, "\\$&")}trade;\n  w:\`px xasc w;\n`));
   assert.strictEqual(w.wrangleQuery('select from t where s like "a /b" / note\n  / more', [steps[1]]), '`px xasc (select from t where s like "a /b")');
   assert.match(w.wrangleScript("select from t / note", steps, "rdb"), /\n  w:select from t;\n/);
   // A block comment, `/` to `\` alone on their lines, goes whole; so does what follows a `\` alone (#1280).

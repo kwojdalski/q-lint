@@ -36,7 +36,7 @@
 //! per-file-ignores = { "tests/*" = ["QS"] }
 //!
 //! [severity]                        # by code or prefix; the longest decides
-//! QS = "info"                       # error | warning | info (information) | hint
+//! QS = "information"                # error | warning | information (info) | hint
 //! QS006 = "warning"
 //!
 //! [rules.QS006]                     # a rule's own options; `options::OPTIONS` lists them
@@ -1071,8 +1071,11 @@ fn load(
                          hint, not {level}"
                     )
                 })?;
-            let level = if level == "information" {
-                "info"
+            // One spelling in every report, LSP's and qls's: a consumer
+            // filtering on `information` must not miss a finding a
+            // configuration spelt `info` (#2122).
+            let level = if level == "info" {
+                "information"
             } else {
                 level
             };

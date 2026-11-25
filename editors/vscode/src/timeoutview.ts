@@ -8,7 +8,7 @@ import { commands, window, workspace, type ExtensionContext } from "vscode";
 import { ADMIN_COMMANDS, adminOff, readAdmin } from "./admin";
 import type { Launcher } from "./launcherview";
 import type { Live, ProcessArg } from "./live";
-import { timeoutOf, withExtras } from "./processes";
+import { address, timeoutOf, withExtras } from "./processes";
 import { timeoutProblem } from "./processtimeout";
 import { plainMessage } from "./history";
 
@@ -98,10 +98,10 @@ export class ProcessTimeouts {
       );
       return undefined;
     }
-    const pid = process.server === undefined ? this.launcher.interrupt(process.label) : undefined;
+    const pid = process.server === undefined ? this.launcher.interrupt(process) : undefined;
     if (pid === undefined) {
       void window.showInformationMessage(
-        plainMessage(`q-lint: ${process.label} was not started from here (Start Process), so it cannot be interrupted from here. q-lint: Abort Current Query stops waiting for the query instead.`),
+        plainMessage(`q-lint: ${process.label} at ${address(process.host, process.port)} was not started from here (Start Process), so it cannot be interrupted from here. q-lint: Abort Current Query stops waiting for the query instead.`),
       );
       return undefined;
     }

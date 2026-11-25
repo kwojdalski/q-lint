@@ -386,7 +386,9 @@ class QnbKernel {
       if (outputs.length > 0) {
         await execution.replaceOutput(outputs);
       }
-      if (!success) {
+      // Off, the values are not read: what they showed was another run's
+      // (#2151).
+      if (!success || !featureOn("liveValues")) {
         await dropLiveValues(execution.cell);
       }
       execution.end(success, Date.now());
@@ -506,9 +508,10 @@ async function keepLiveValues(notebook: NotebookDocument, cells: NotebookCell[],
 }
 
 /// Drop the values kept for the Markdown the code cell `cell` reads: it
-/// failed or was not run, so what they showed was another run's (#1544).
+/// failed or was not run, or live values are off, so what they showed was
+/// another run's (#1544, #2151).
 async function dropLiveValues(cell: NotebookCell): Promise<void> {
-  if (!featureOn("liveValues") || cell.index < 0) {
+  if (cell.index < 0) {
     return;
   }
   const all = cell.notebook.getCells();
