@@ -1907,7 +1907,11 @@ pub(crate) enum Unnamed {
 }
 
 /// Where `opaque` finds each write it cannot name, and of what kind.
-pub(crate) fn unnamed_writes(code: &str, comments: &str, raw: &str) -> Vec<(usize, Unnamed)> {
+pub(crate) fn unnamed_writes<'c>(
+    code: &str,
+    comments: &'c str,
+    raw: &str,
+) -> Vec<(usize, Unnamed)> {
     let mut found: Vec<(usize, Unnamed)> = load_lines(code, raw)
         .filter(|(_, rest)| !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_'))
         .map(|(at, _)| (at, Unnamed::Evaluation))
@@ -1940,15 +1944,17 @@ pub(crate) fn unnamed_writes(code: &str, comments: &str, raw: &str) -> Vec<(usiz
         // closing one or an each: in `(get'') " -> " vs/:x` the string is
         // not what `get` is given.
         let skip = re!(r"^(?:[\s\[(@;]|\b(?:each|peach|enlist|raze)\b)*");
-        let arg = |text: &'_ str| text[skip.find(text).map_or(0, |p| p.end())..].to_string();
+        // Slices, not copies: `rest` runs to the end of the file, and a copy
+        // of it for each `system` was quadratic in them (#2341).
+        let arg = |text: &'c str| -> &'c str { &text[skip.find(text).map_or(0, |p| p.end())..] };
         let statement = &rest[..rest.find([';', '\n']).unwrap_or(rest.len())];
         // The string literal the argument is, or the name holding one.
-        let literal = |a: &str| -> Option<String> {
+        let literal = |a: &'c str| -> Option<&'c str> {
             if let Some(text) = a.strip_prefix('"') {
-                return Some(text.to_string());
+                return Some(text);
             }
             let n = re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*").find(a)?;
-            strings.get(n.as_str()).map(|s| s.to_string())
+            strings.get(n.as_str()).copied()
         };
         let name = |a: &str| {
             re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*")
@@ -1961,7 +1967,7 @@ pub(crate) fn unnamed_writes(code: &str, comments: &str, raw: &str) -> Vec<(usiz
             // no literal after it - `system$[WIN;"del ";"rm "],f`, `@[system;
             // cmd;h]` - so only a command that visibly starts with `l` or `d`
             // counts: written so, or held in a name bound to such a literal.
-            "system" => literal(&arg(rest)).and_then(|command| {
+            "system" => literal(arg(rest)).and_then(|command| {
                 // A literal `system "d .a"` starting its line switches as
                 // `\d .a` does, and `opens` reads it so: q 5 runs it, then
                 // `f:{x+1}`, `g:{f[`a]}`, and `.a.g[]` is 'type (#535).
@@ -1969,21 +1975,21 @@ pub(crate) fn unnamed_writes(code: &str, comments: &str, raw: &str) -> Vec<(usiz
                 let end = code[m.start()..]
                     .find('\n')
                     .map_or(code.len(), |i| m.start() + i);
-                if re!(r"^d\b").is_match(&command)
+                if re!(r"^d\b").is_match(command)
                     && start == m.start()
                     && opens(&code[start..end], &raw[start..end]).is_some()
                 {
                     None
-                } else if re!(r"^d\b").is_match(&command) {
+                } else if re!(r"^d\b").is_match(command) {
                     Some(Unnamed::Context)
                 } else {
                     re!(r"^l\b")
-                        .is_match(&command)
+                        .is_match(command)
                         .then_some(Unnamed::Evaluation)
                 }
             }),
             "value" => {
-                (statement.contains('"') || name(&arg(statement))).then_some(Unnamed::Evaluation)
+                (statement.contains('"') || name(arg(statement))).then_some(Unnamed::Evaluation)
             }
             // `get` of a string whole, written so or bound to a name: not
             // one built by joining, `get[".ns.",n,".predict"]`, which names
@@ -1992,9 +1998,9 @@ pub(crate) fn unnamed_writes(code: &str, comments: &str, raw: &str) -> Vec<(usiz
             _ => {
                 let a = arg(statement);
                 let whole = re!(r#"^"((?:[^"\\]|\\.)*)"\s*(?:[;)\]}]|$)"#)
-                    .captures(&a)
+                    .captures(a)
                     .is_some_and(|c| !c[1].starts_with('\\') || re!(r"^\\[ld]\b").is_match(&c[1]));
-                (whole || name(&a)).then_some(Unnamed::Evaluation)
+                (whole || name(a)).then_some(Unnamed::Evaluation)
             }
         };
         if let Some(kind) = write {
