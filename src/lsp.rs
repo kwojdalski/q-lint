@@ -2826,17 +2826,40 @@ fn quick_fixes(
     // client turned them off: here a person sees each edit and accepts it or
     // not.
     let lines = Lines::new(source);
+    // The client's diagnostics by where they start, so each finding is
+    // compared with those at its own position, first first: a scan of them
+    // all for each finding was quadratic on a whole-file selection (#2337).
+    // One whose start is not a pair of numbers is compared with every one.
+    let mut by_start: HashMap<(u64, u64), Vec<usize>> = HashMap::new();
+    let mut elsewhere: Vec<usize> = vec![];
+    for (i, d) in context.iter().enumerate() {
+        let start = &d["range"]["start"];
+        match (start["line"].as_u64(), start["character"].as_u64()) {
+            (Some(line), Some(character)) => by_start.entry((line, character)).or_default().push(i),
+            _ => elsewhere.push(i),
+        }
+    }
     let asked_about: Vec<(Finding, &Value)> = policy
         .lint(source, &path, ws)
         .unwrap_or_default()
         .into_iter()
         .filter_map(|finding| {
             let current = diagnostic(&finding, &lines);
-            let client_diagnostic = context.iter().find(|d| {
-                d["code"] == current["code"]
-                    && d["range"]["start"] == current["range"]["start"]
-                    && d["message"] == current["message"]
-            })?;
+            let start = &current["range"]["start"];
+            let key = (start["line"].as_u64()?, start["character"].as_u64()?);
+            let at = by_start.get(&key).map_or(&[][..], Vec::as_slice);
+            let client_diagnostic = at
+                .iter()
+                .chain(&elsewhere)
+                .copied()
+                .filter(|&i| {
+                    let d = &context[i];
+                    d["code"] == current["code"]
+                        && d["range"]["start"] == current["range"]["start"]
+                        && d["message"] == current["message"]
+                })
+                .min()
+                .map(|i| &context[i])?;
             Some((finding, client_diagnostic))
         })
         .collect();
@@ -4314,6 +4337,63 @@ mod tests {
         assert_eq!(
             (&replies[2]["id"], &replies[2]["result"]),
             (&json!(3), &Value::Null)
+        );
+    }
+
+    #[test]
+    fn code_actions_for_a_whole_file_are_linear_in_its_findings() {
+        // Select All asks for the code actions of every diagnostic at once.
+        // Each finding was matched against every diagnostic the client sent,
+        // and each masked the file again for its suppression and its fix:
+        // 22 s for 8000 stale noqa comments (#2335, #2337).
+        let policy = Policy::new(
+            crate::config::Overrides {
+                profile: None,
+                default_profile: "style",
+                layer: Layer::default(),
+                exclude: vec![],
+                config: None,
+                isolated: true,
+                target: None,
+                baseline: None,
+                no_baseline: false,
+            },
+            true,
+        );
+        let uri = "file:///t/a.q".to_string();
+        let ws = Workspace::default();
+        let time = |n: usize| {
+            let source: String = (0..n).map(|i| format!("v{i}:1 / noqa: QS001\n")).collect();
+            let lines = Lines::new(&source);
+            let found = policy.lint(&source, "/t/a.q", &ws).unwrap();
+            assert_eq!(found.len(), n);
+            let diagnostics: Vec<Value> = found.iter().map(|f| diagnostic(f, &lines)).collect();
+            let params = json!({
+                "textDocument": {"uri": uri},
+                "range": {"start": {"line": 0, "character": 0},
+                          "end": {"line": n, "character": 0}},
+                "context": {"diagnostics": diagnostics},
+            });
+            let mut docs = Documents::new();
+            docs.insert(uri.clone(), source);
+            let ask = || quick_fixes(&params, &docs, &ws, &policy, true, true);
+            assert_eq!(ask().len(), 2 * n + 1);
+            (0..3)
+                .map(|_| {
+                    let started = std::time::Instant::now();
+                    std::hint::black_box(ask());
+                    started.elapsed()
+                })
+                .min()
+                .unwrap()
+        };
+        time(250); // warm the allocator and the regex caches
+        let (small, large) = (time(250), time(2000));
+        // Quadratic is 64 times; linear is 8. 16 still fails a quadratic
+        // walk by four times.
+        assert!(
+            large < small * 16,
+            "250 findings took {small:?} and 2000 {large:?}"
         );
     }
 
