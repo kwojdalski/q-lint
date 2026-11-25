@@ -626,6 +626,8 @@ test("the command line reads its options, and refuses what it cannot run", () =>
   assert.deepStrictEqual(o.params, { n: "5", d: "2024.01.02" });
   assert.strictEqual(o.rowLimit, 0);
   assert.strictEqual(o.rowsFrom, "last");
+  assert.strictEqual(o.direct, false);
+  assert.strictEqual(parseArgs(["nb.qnb", "--process", "h:1", "--direct"]).direct, true);
   assert.deepStrictEqual(parseArgs(["-h"]), { help: true });
   assert.match(parseArgs(["nb.qnb"]).error, /--process is needed/);
   assert.match(parseArgs(["--process", "h:1"]).error, /no notebook/);
@@ -639,6 +641,11 @@ test("the command line names a process by host:port or by a listed label, and re
   const listed = [{ label: "rdb", host: "h", port: 1, tags: ["prod"], user: "u" }];
   assert.strictEqual(cliProcess("rdb", listed), listed[0]);
   assert.deepStrictEqual(cliProcess("[::1]:5001", [], "me", true), { label: "[::1]:5001", host: "::1", port: 5001, tags: [], user: "me", tls: true });
+  // --direct makes a host:port evaluate plain strings only; a listed
+  // process keeps its own evaluation (#2473).
+  assert.strictEqual(cliProcess("h:5001", [], undefined, false, true).evaluation, "direct");
+  assert.strictEqual(cliProcess("h:5001", []).evaluation, undefined);
+  assert.strictEqual(cliProcess("rdb", listed, undefined, false, true).evaluation, undefined);
   assert.match(cliProcess("rdb", []).error, /pass --processes/);
   assert.match(cliProcess("hdb", listed).error, /The labels are: rdb/);
   // A tunnelled or scripted process is refused, not dialled at its host (#1401).
