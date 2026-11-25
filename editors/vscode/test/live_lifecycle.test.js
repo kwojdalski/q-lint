@@ -449,12 +449,18 @@ test("an unanswered heartbeat shows as no answer after 5 s, and its wait counts 
   const a = await fakeQ((sent) => (sent === "::" ? undefined : 1));
   t.after(() => a.close());
   const { live } = await setUp(t, [proc("a", a.port)], { "connection.heartbeat.enable": true, "connection.heartbeatInterval": 30 });
+  const started = Date.now();
   await live.connectTo("a");
+  // A loaded runner reads the bar late (CI saw "no answer 8s" at the first
+  // look), so this holds what #2131 promises - shown from 5 s, never before,
+  // and counting up - rather than the exact second it is first read.
   await until(() => /no answer/.test(live.api().statusText()), 7000);
-  const first = live.api().statusText();
-  assert.match(first, /no answer 5/);
+  assert.ok(Date.now() - started >= 4900, `shown after ${Date.now() - started} ms`);
+  const seconds = () => Number(/no answer (\d+)/.exec(live.api().statusText())?.[1]);
+  const first = seconds();
+  assert.ok(first >= 5, live.api().statusText());
   await sleep(2100);
-  assert.match(live.api().statusText(), /no answer 7/);
+  assert.ok(seconds() >= first + 2, `${first} then ${live.api().statusText()}`);
 });
 
 // Between an auto-reconnect's tries nothing was connecting, so a query
