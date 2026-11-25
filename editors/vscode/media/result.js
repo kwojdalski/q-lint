@@ -1859,6 +1859,10 @@
         summary.mid = data.mid;
         summary.spread = data.spread;
       }
+      if (data.cut) {
+        summary.cut = true;
+        chartView.append(el("p", "note", "The process cut a list of this book at its console width (\\c): only the levels before the cut are drawn."));
+      }
     } else if (state.kind === "map") {
       data = MORE.mapData(grid, rows, { size: state.mapSize, colour: state.mapColour }, theme);
       summary = C.summary("map", data);

@@ -404,6 +404,11 @@ export interface Grid {
   values: ((number | null)[] | null)[];
   /// The rows the whole result has; more than are here when it was cut.
   total: number;
+  /// For a general column holding float or real vectors, each cell's
+  /// numbers as `GRID` sent them (`("F";v)`), whole where its text was cut
+  /// at the process's `\c` width; null for a cell or a column with none
+  /// (#2465). Absent when no column has any.
+  vectors?: (((number | null)[] | null)[] | null)[];
 }
 
 /// A char column's cell from its byte when sent: one past ASCII is no UTF-8
@@ -469,7 +474,27 @@ export function toGrid(payload: GridPayload, decimals: number): Grid {
     });
   });
   const rank = payload.rank.map((r, i) => (r.length === cells[i].length && r.every((x) => typeof x === "number") ? r : null));
-  return { columns, cells, rank, values, total: payload.count };
+  const vectors = payload.types.map((type, i) => {
+    const raw = payload.raw[i];
+    if (type !== 0 || raw.length !== cells[i].length) {
+      return null;
+    }
+    const v = raw.map(floatVector);
+    return v.some((x) => x !== null) ? v : null;
+  });
+  return { columns, cells, rank, values, total: payload.count, ...(vectors.some((v) => v !== null) ? { vectors } : {}) };
+}
+
+/// A general list's item `GRID` sent as `("F";v)` or `("E";v)` as its
+/// numbers, a null or an infinity as null; null for any other item.
+function floatVector(x: unknown): (number | null)[] | null {
+  if (!Array.isArray(x) || x.length !== 2 || (x[0] !== "F" && x[0] !== "E") || !Array.isArray(x[1])) {
+    return null;
+  }
+  return (x[1] as unknown[]).map((n) => {
+    const v = n === null ? NaN : Number(x[0] === "E" ? realValue(n) : n);
+    return Number.isFinite(v) ? v : null;
+  });
 }
 
 /// The rows a grid holds.

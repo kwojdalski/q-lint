@@ -89,14 +89,25 @@
         return { mode: "lists", bids: bids, asks: asks };
       }
       const r = rows[0];
-      const read = function (c) { return L.parseNumbers(grid.cells[c][r]) || []; };
+      // A cell's numbers as GRID sent them where it did (a float or real
+      // vector), its text otherwise: `-3!` text, cut at the process's `\c`
+      // width, which then drops the levels past it (#2465).
+      let cut = false;
+      const read = function (c) {
+        const sent = grid.vectors && grid.vectors[c] ? grid.vectors[c][r] : null;
+        if (sent) {
+          return sent;
+        }
+        cut = cut || /\.\.\.?$/.test(String(grid.cells[c][r]).trim());
+        return L.parseNumbers(grid.cells[c][r]) || [];
+      };
       const bp = read(cols.bp);
       const bs = read(cols.bs);
       const ap = read(cols.ap);
       const as = read(cols.as);
       bp.forEach(function (p, i) { add(bids, p, bs[i]); });
       ap.forEach(function (p, i) { add(asks, p, as[i]); });
-      return { mode: "lists", row: r, bids: bids, asks: asks };
+      return Object.assign({ mode: "lists", row: r, bids: bids, asks: asks }, cut ? { cut: true } : {});
     }
     rows.forEach(function (r) {
       // A symbol shows as buy or `buy, a string as "buy" (one character ,"b").
@@ -149,6 +160,7 @@
       depth: true,
       mode: book.mode,
       row: book.row,
+      cut: book.cut === true,
       mid: mid,
       spread: best.bid !== null && best.ask !== null ? best.ask - best.bid : null,
       datasets: [
