@@ -509,6 +509,13 @@ test("export: a cell that ends in another namespace is followed by \\d ., as the
   assert.strictEqual(exportScript([code("/ \\d .foo\n\\d\na:1")]), "/ \\d .foo\n\\d\na:1\n");
 });
 
+// q reads an indented line after `\d .` as more of its argument: the
+// context is then no root, and the cell's end must put it back (#2155).
+test("export: \\d . with an indented line under it does not leave the root, so \\d . follows (#2155)", () => {
+  const code = (source) => ({ kind: "code", source });
+  assert.strictEqual(exportScript([code("\\d .lib\nf:{x+1}\n\\d .\n  / back to the root"), code("b:2")]), "\\d .lib\nf:{x+1}\n\\d .\n  / back to the root\n\\d .\n\nb:2\n");
+});
+
 test("export: an indented comment opening a cell is not its first code line; the line under it is unindented (#1935)", () => {
   const { statements } = require("../out/statements.js");
   const script = exportScript([{ kind: "code", source: "f:{x+1}" }, { kind: "code", source: " / note\n g:3" }]);

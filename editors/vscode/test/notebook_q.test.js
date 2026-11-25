@@ -373,6 +373,8 @@ test("an exported notebook defines a name where its cell does: a cell's \\d ends
     ['system "d .foo"\na:1', "b:2\n\\\nnot code", "c:3"],
     // Back in the root by the cell's end: nothing to undo.
     ["\\d .foo\na:1\n\\d .\nb:2", "c:3"],
+    // An indented line under `\d .` is its argument to q: no root (#2155).
+    ["\\d .foo\na:1\n\\d .\n  / back to the root", "b:2", "c:3"],
   ]) {
     const { cells: ran, script } = await ranAndLoaded(t, cells, where);
     assert.deepStrictEqual(script, ran, JSON.stringify(cells));
