@@ -828,6 +828,31 @@ fn a_script_loaded_under_a_context_defines_in_it_for_the_others() {
 }
 
 #[test]
+fn a_foreign_keyword_in_a_script_loaded_under_a_context_is_read_there() {
+    // KDB-X 5 runs c.q to `.ns.g[]` 2: b.q is loaded under `\d .ns`, so its
+    // `true` is a.q's `.ns.true:0b`. QF015 called it undefined, and its fix
+    // to `1b` made `.ns.g[]` 1 (#2178).
+    let repo = Repo::new();
+    let b = "g:{$[true;1;2]}\n";
+    repo.write("a.q", ".ns.true:0b\n")
+        .write("b.q", b)
+        .write("c.q", "\\l a.q\n\\d .ns\n\\l b.q\n");
+    let args = ["--isolated", "--profile", "style", "--select", "QF015"];
+    assert_eq!(
+        repo.codes(".", &[&args[..], &["."]].concat()),
+        Vec::<String>::new()
+    );
+    let out = run(&repo.path("."), &[&args[..], &["--fix", "."]].concat());
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(fs::read_to_string(repo.path("b.q")).unwrap(), b);
+    // Without its loader, b.q is run at the root, where `true` is 'true.
+    assert_eq!(
+        repo.codes(".", &[&args[..], &["a.q", "b.q"]].concat()),
+        ["QF015"]
+    );
+}
+
+#[test]
 fn a_script_loaded_only_under_a_context_defines_nothing_at_the_root() {
     // q 5: after main.q's `\d .a` / `\l b.q`, the root has no `ff`, and
     // d.q's `h:{ff}` throws 'ff (#525).

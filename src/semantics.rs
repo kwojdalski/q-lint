@@ -714,11 +714,15 @@ pub(crate) fn opens(code_line: &str, raw_line: &str) -> Option<String> {
     // q reads `q)\d .foo` as `\d .foo`; `views` has blanked the prompt (#315).
     // k has `\d` too, and its context is q's: KDB-X 5 runs `k)\d .ns`,
     // `ff:1`, `\d .` and `key `.ns` is ``ff (#2056). The views blank the
-    // whole k line, so it is read from the source.
-    let code_line = if raw_line.starts_with("q)") {
+    // whole k line, so it is read from the source. Any run of prefixes is
+    // read past, as q does: KDB-X 5 runs `q)k)\d .qux`, `d:1`, `\d .` and
+    // `.qux.d` is 1 (#2194). A command holds no string to mask, so it too
+    // is read from the source.
+    let prefixes = crate::language_prefixes(raw_line);
+    let code_line = if prefixes > 0 && raw_line[prefixes..].starts_with('\\') {
+        &raw_line[prefixes..]
+    } else if raw_line.starts_with("q)") {
         &code_line[2..]
-    } else if raw_line.starts_with("k)\\") && code_line.trim().is_empty() {
-        &raw_line[2..]
     } else {
         code_line
     };
@@ -2296,7 +2300,10 @@ pub fn check(
     // What this file defines itself; the workspace answers for the rest,
     // keyed the same way (#359).
     let own: HashSet<String> = exact.keys().cloned().collect();
-    let elsewhere = |name: &str| ws.defined_elsewhere(name, &own);
+    // Asked where the file is loaded, as well as where it switches to: a
+    // bare name a file loaded under `\d .ns` reads is `.ns.`'s (#2178).
+    let placement = ws.placement(path);
+    let elsewhere = |name: &str| ws.defined_elsewhere_as_loaded(name, &own, placement);
     // Scopes by the offset they start at. Looking one up by scanning is linear
     // per global and quadratic over a file whose globals are mostly lambdas,
     // which is what a q library is.

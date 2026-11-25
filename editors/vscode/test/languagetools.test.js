@@ -340,6 +340,39 @@ test("Write Lint Baseline keeps the findings: the draft's ../ paths are resolved
   }
 });
 
+test("Write Lint Baseline writes nothing when qlinter could not read a file: exit 2 is said, with its reason (#2180)", async () => {
+  const { mkdtempSync, writeFileSync, existsSync, readFileSync, rmSync } = require("node:fs");
+  const { join, basename } = require("node:path");
+  const { tmpdir } = require("node:os");
+  const ws = mkdtempSync(join(tmpdir(), "qlint-bl-unread-"));
+  writeFileSync(join(ws, "qlinter-baseline.json"), "good");
+  // An older qlinter: a partial draft written, and exit 2.
+  const fake = join(ws, "..", `${basename(ws)}-partial.js`);
+  writeFileSync(
+    fake,
+    `const fs=require("fs");const a=process.argv;const d=a[a.indexOf("--write-baseline")+1];` +
+      `fs.writeFileSync(d,JSON.stringify({"qlinter-baseline":1,findings:[]}));` +
+      `process.stderr.write("qlinter: ./b.q: Permission denied (os error 13), skipped\\nqlinter: wrote 1 finding(s) in 1 file(s) to the baseline x\\n");process.exit(2);`,
+  );
+  const { context, restore } = setUp();
+  try {
+    vscode.workspace.workspaceFolders = [{ uri: { scheme: "file", fsPath: ws }, name: "ws" }];
+    registerBaseline(context, () => ({ command: process.execPath, args: [fake] }));
+    stub.picks.push("Replace");
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.writeBaseline)(), undefined);
+    assert.strictEqual(stub.messages.at(-1)[0], "warning");
+    assert.match(stub.messages.at(-1)[1], /could not read every file; no baseline was written: qlinter: \.\/b\.q: Permission denied/);
+    assert.strictEqual(readFileSync(join(ws, "qlinter-baseline.json"), "utf8"), "good");
+    stub.picks.length = 0;
+    assert.ok(existsSync(ws));
+  } finally {
+    vscode.workspace.workspaceFolders = undefined;
+    restore();
+    rmSync(ws, { recursive: true, force: true });
+    rmSync(fake, { force: true });
+  }
+});
+
 test("Write Lint Baseline says a qlinter a signal or the timeout stopped was stopped, not 'exit 1' (#1877)", { skip: process.platform === "win32" && "no signals" }, async () => {
   const { mkdtempSync, writeFileSync, existsSync, rmSync } = require("node:fs");
   const { join } = require("node:path");
@@ -1059,6 +1092,15 @@ test("Write Lint Baseline names the baseline in the configuration that governs t
   const { tmpdir } = require("node:os");
   assert.strictEqual(pyprojectWithBaseline('[project]\nname = "x"\n\n[tool.qlinter]\nignore = ["QF004"]\n'), '[project]\nname = "x"\n\n[tool.qlinter]\nbaseline = "qlinter-baseline.json"\nignore = ["QF004"]\n');
   assert.strictEqual(pyprojectWithBaseline('[tool.qlinter]\nbaseline = "b.json"\n'), undefined);
+  // The older [tool.q-lint], only sub-tables, dotted keys: each is the table
+  // qlinter reads, not one that names a baseline (#2179).
+  assert.strictEqual(pyprojectWithBaseline('[project]\nname = "x"\n\n[tool.q-lint]\nprofile = "style"\n'), '[project]\nname = "x"\n\n[tool.q-lint]\nbaseline = "qlinter-baseline.json"\nprofile = "style"\n');
+  assert.strictEqual(pyprojectWithBaseline('[tool.q-lint]\nbaseline = "b.json"\n'), undefined);
+  assert.strictEqual(pyprojectWithBaseline('[project]\nname = "x"\n\n[tool.qlinter.lint]\nselect = ["QS"]\n'), '[project]\nname = "x"\n\n[tool.qlinter]\nbaseline = "qlinter-baseline.json"\n\n[tool.qlinter.lint]\nselect = ["QS"]\n');
+  assert.strictEqual(pyprojectWithBaseline('[tool]\nqlinter.profile = "style"\n'), '[tool]\nqlinter.baseline = "qlinter-baseline.json"\nqlinter.profile = "style"\n');
+  assert.strictEqual(pyprojectWithBaseline('[tool]\nqlinter.baseline = "b.json"\n'), undefined);
+  assert.strictEqual(pyprojectWithBaseline('[tool]\nqlinter = { profile = "style" }\n'), null);
+  assert.strictEqual(pyprojectWithBaseline('[project]\nname = "x"\n'), '[project]\nname = "x"\n\n[tool.qlinter]\nbaseline = "qlinter-baseline.json"\n');
   assert.strictEqual(governingConfiguration("file: /w/*.q\nconfiguration: none - built-in defaults\n"), undefined);
   assert.strictEqual(governingConfiguration("file: /w/*.q\nconfiguration: /w/pyproject.toml\n"), "/w/pyproject.toml");
   const root = realpathSync(mkdtempSync(join(tmpdir(), "qlint-bl-gov-")));

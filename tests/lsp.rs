@@ -1268,6 +1268,27 @@ fn a_script_loaded_under_a_context_defines_there_and_not_at_the_root() {
 }
 
 #[test]
+fn a_foreign_keyword_is_read_where_the_editors_file_is_loaded() {
+    // b.q is loaded under c.q's `\d .ns`, so its `true` is a.q's
+    // `.ns.true` - KDB-X 5 runs `.ns.g[]` to 2 - and QF015 said it throws
+    // (#2178). Loaded at the root again, in the open c.q, it does, and b.q
+    // is linted again without being touched.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.q"), ".ns.true:0b\n").unwrap();
+    std::fs::write(dir.path().join("c.q"), "\\l a.q\n\\d .ns\n\\l b.q\n").unwrap();
+    let mut server = start_with_workspace(dir.path());
+    let b = file_uri(&dir.path().join("b.q"));
+    server.open(&b, "g:{$[true;1;2]}\n");
+    let found = codes_of(&server.diagnostics_for(&b));
+    assert!(!found.contains(&"QF015".to_string()), "{found:?}");
+    let c = file_uri(&dir.path().join("c.q"));
+    server.open(&c, "\\l a.q\n\\l b.q\n");
+    let found = codes_of(&server.diagnostics_for(&b));
+    assert!(found.contains(&"QF015".to_string()), "{found:?}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn editing_one_files_definitions_relints_the_others() {
     let dir = tempfile::tempdir().unwrap();
     let mut server = start_with_workspace(dir.path());
@@ -1372,6 +1393,44 @@ fn deleting_a_folder_forgets_every_definition_under_it() {
     );
     let found = codes_of(&server.diagnostics_for(&app));
     assert!(!found.contains(&"QF018".to_string()), "{found:?}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// A folder created on disk holding a file that is open is read for every
+/// file but that one, whose buffer is what the index holds: a folder
+/// renamed with an unsaved file in it (VS Code reopens the buffer under
+/// the new path, then the watcher reports the folder), or a checkout that
+/// creates one, put the disk's text over the buffer, and a name only the
+/// buffer defines was found nowhere (#2173).
+#[test]
+fn a_folder_created_on_disk_keeps_the_buffers_open_in_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let mut server = start_with_workspace(&root);
+    let app = file_uri(&root.join("app.q"));
+    server.open(&app, "r:newf 2\n");
+    server.diagnostics_for(&app);
+    std::fs::create_dir(root.join("core")).unwrap();
+    std::fs::write(root.join("core/A.q"), "f:{x}\n").unwrap();
+    let a = file_uri(&root.join("core/A.q"));
+    server.open(&a, "f:{x}\nnewf:{x}\n");
+    server.diagnostics_for(&a);
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+        "params":{"changes":[{"uri":file_uri(&root.join("core")),"type":1}]}}),
+    );
+    server.send(
+        json!({"jsonrpc":"2.0","id":80,"method":"textDocument/definition",
+        "params":{"textDocument":{"uri":app},"position":{"line":0,"character":3}}}),
+    );
+    let reply = server.until(|m| m["id"] == 80);
+    let found: Vec<&str> = reply["result"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|place| place["uri"].as_str().unwrap())
+        .collect();
+    assert_eq!(found, [a.as_str()], "{reply}");
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
@@ -2277,6 +2336,32 @@ fn with_run_on_save_another_files_save_does_not_lint_an_unsaved_buffer() {
     );
     let next = server.receive();
     assert_eq!(next["id"], 41, "{next}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn with_run_on_save_a_definition_typed_relints_the_others_when_saved() {
+    // The buffer is indexed as it is typed, for navigation (#2174), so the
+    // save changes nothing the index holds - and still lints the files
+    // whose findings the typed definitions changed, as it did before.
+    let dir = tempfile::tempdir().unwrap();
+    let (mut server, _) = start_with_options(
+        dir.path(),
+        &["--lsp", "--profile", "uqf"],
+        json!({"lint": {"run": "onSave"}}),
+        Some(dir.path()),
+    );
+    let lib = file_uri(&dir.path().join("lib.q"));
+    let app = file_uri(&dir.path().join("app.q"));
+    server.open(&lib, "cfg:5\n");
+    server.diagnostics_for(&lib);
+    server.open(&app, "n:cfg\n");
+    assert!(!codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
+    server.change(&lib, 2, "config:5\n");
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didSave",
+        "params":{"textDocument":{"uri":lib}}}));
+    server.diagnostics_for(&lib);
+    assert!(codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
@@ -3352,6 +3437,33 @@ fn a_bracket_being_typed_keeps_the_rest_of_the_files_findings_and_folds() {
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
+/// What is carried over a statement being typed is what the last version
+/// that closed reports against the workspace as it is now: another file
+/// defining `true` makes b.q's QF015 false, and dropping it makes it true
+/// again. The finding of the workspace as it was stayed until the bracket
+/// closed, and one the change caused was not shown (#2177).
+#[test]
+fn what_is_carried_follows_another_files_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = start_with_workspace(dir.path());
+    let (a, b) = (
+        file_uri(&dir.path().join("a.q")),
+        file_uri(&dir.path().join("b.q")),
+    );
+    server.open(&a, "a:1\n");
+    server.diagnostics_for(&a);
+    let good = "g:{$[true;1;2]}\n";
+    server.open(&b, good);
+    assert_eq!(codes_of(&server.diagnostics_for(&b)), ["QF015"]);
+    change(&mut server, &b, 2, &format!("{good}h:{{(1;\n"));
+    assert_eq!(codes_of(&server.diagnostics_for(&b)), ["QE001", "QF015"]);
+    change(&mut server, &a, 2, "true:1b\n");
+    assert_eq!(codes_of(&server.diagnostics_for(&b)), ["QE001"]);
+    change(&mut server, &a, 3, "a:1\n");
+    assert_eq!(codes_of(&server.diagnostics_for(&b)), ["QE001", "QF015"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
 #[test]
 fn a_document_that_never_closed_has_nothing_to_carry() {
     // Opened broken, there is no version whose results can be trusted, and
@@ -3951,6 +4063,119 @@ fn a_signature_changed_asks_for_hints_again() {
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
+/// The refreshes the server asks for after `text` becomes version
+/// `version` of `uri`, up to the answer to a request sent after it - each
+/// answered as a client answers it.
+fn refreshes_after(server: &mut Server, uri: &str, version: u64, text: &str) -> Vec<String> {
+    let marker = 500 + version;
+    server.change(uri, version as i64, text);
+    server.send(
+        json!({"jsonrpc":"2.0","id":marker,"method":"textDocument/foldingRange",
+        "params":{"textDocument":{"uri":uri}}}),
+    );
+    let mut seen = vec![];
+    loop {
+        let message = server.receive();
+        if message["id"] == marker {
+            break;
+        }
+        if let Some(method) = message["method"].as_str()
+            && method.ends_with("/refresh")
+        {
+            server.send(json!({"jsonrpc":"2.0","id":message["id"],"result":null}));
+            seen.push(method.to_string());
+        }
+    }
+    seen.sort();
+    seen
+}
+
+/// A server over `dir` whose client redraws lenses, hints and colours when
+/// asked, with `options` sent.
+fn start_refreshed(dir: &std::path::Path, options: Value) -> Server {
+    let mut server = Server::spawn(dir, &["--lsp"]);
+    let mut capabilities = client_capabilities();
+    capabilities["workspace"] = json!({"codeLens": {"refreshSupport": true},
+                                       "inlayHint": {"refreshSupport": true},
+                                       "semanticTokens": {"refreshSupport": true}});
+    server.send(
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+        "capabilities": capabilities, "initializationOptions": options,
+        "workspaceFolders":[{"uri":file_uri(dir),"name":"ws"}]}}),
+    );
+    server.receive();
+    server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    server
+}
+
+/// A reference count is of every read of the name, so a file that reads
+/// it once more, or once less, makes the count stale though the names it
+/// reads are the same: no refresh was asked for, and the lens kept its
+/// old count until the defining file was edited (#2175). A change to no
+/// read asks for nothing.
+#[test]
+fn another_read_of_a_name_asks_for_the_reference_counts_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = json!({"crossFileRefresh": {"enable": true},
+                         "referenceLens": {"enable": true}});
+    let mut server = start_refreshed(dir.path(), options);
+    let (a, b) = (
+        file_uri(&dir.path().join("a.q")),
+        file_uri(&dir.path().join("b.q")),
+    );
+    server.open(&a, "f:{x+1}\n");
+    server.diagnostics_for(&a);
+    server.open(&b, "f 1\n");
+    // Whatever the opens asked for is drained first.
+    refreshes_after(&mut server, &b, 2, "f 1\n");
+    assert_eq!(
+        refreshes_after(&mut server, &b, 3, "f 1\nf 2\n"),
+        ["workspace/codeLens/refresh"]
+    );
+    assert_eq!(
+        refreshes_after(&mut server, &b, 4, "f 1\n"),
+        ["workspace/codeLens/refresh"]
+    );
+    assert!(refreshes_after(&mut server, &b, 5, "f 3\n").is_empty());
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// A file loaded under another `\d` reads its names there, so where it is
+/// loaded decides its colours, its parameter hints and the counts of what
+/// it reads, though it defines nothing that moves: a loader's `\d` added
+/// or removed asked for no refresh, and the editor kept the file's old
+/// colours, hints and counts (#2176).
+#[test]
+fn a_file_loaded_somewhere_else_asks_for_colours_hints_and_counts_again() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.q"), ".ns.f:{x+1}\n").unwrap();
+    let options = json!({"crossFileRefresh": {"enable": true},
+                         "referenceLens": {"enable": true}});
+    let mut server = start_refreshed(dir.path(), options);
+    let (b, c) = (
+        file_uri(&dir.path().join("b.q")),
+        file_uri(&dir.path().join("c.q")),
+    );
+    server.open(&b, "f 1\n");
+    server.diagnostics_for(&b);
+    server.open(&c, "\\l a.q\n\\l b.q\n");
+    refreshes_after(&mut server, &c, 2, "\\l a.q\n\\l b.q\n");
+    let all = [
+        "workspace/codeLens/refresh",
+        "workspace/inlayHint/refresh",
+        "workspace/semanticTokens/refresh",
+    ];
+    assert_eq!(
+        refreshes_after(&mut server, &c, 3, "\\l a.q\n\\d .ns\n\\l b.q\n"),
+        all
+    );
+    assert_eq!(
+        refreshes_after(&mut server, &c, 4, "\\l a.q\n\\l b.q\n"),
+        all
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
 /// With `lint.scope: "workspace"` a file nobody opened reports, one the
 /// index excludes does not, and one changed on disk reports again; with the
 /// default scope only an open file reports (#1160).
@@ -4015,6 +4240,54 @@ fn the_workspace_scope_lints_files_nobody_opened() {
             break;
         }
     }
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// The last diagnostics published for each of `uris`, read until each has
+/// had some.
+fn last_published(
+    server: &mut Server,
+    uris: &[&str],
+) -> std::collections::HashMap<String, Vec<String>> {
+    let mut reported = std::collections::HashMap::new();
+    while uris.iter().any(|uri| !reported.contains_key(*uri)) {
+        let message = server.receive();
+        if message["method"] == "textDocument/publishDiagnostics" {
+            let uri = message["params"]["uri"].as_str().unwrap().to_string();
+            let codes = codes_of(message["params"]["diagnostics"].as_array().unwrap());
+            reported.insert(uri, codes);
+        }
+    }
+    reported
+}
+
+/// A file of a folder opened through a symlink, reported closed under the
+/// folder's spelling and then opened by its real path, reports once: what
+/// it reported closed is cleared when it opens, and what its buffer
+/// reported is cleared when it closes. Both stayed in the Problems panel,
+/// one of them with findings the file no longer had (#2172).
+#[cfg(unix)]
+#[test]
+fn a_file_opened_by_another_spelling_reports_under_one_uri() {
+    let dir = tempfile::tempdir().unwrap();
+    let real = dir.path().canonicalize().unwrap().join("real");
+    std::fs::create_dir(&real).unwrap();
+    std::fs::write(real.join("lib.q"), RESERVED_PARAM).unwrap();
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let (closed, open) = (file_uri(&link.join("lib.q")), file_uri(&real.join("lib.q")));
+    let options = json!({"lint": {"scope": "workspace"}});
+    let (mut server, _) = start_with_options(&link, &["--lsp"], options, Some(&link));
+    assert_eq!(codes_of(&server.diagnostics_for(&closed)), ["QF001"]);
+    server.open(&open, "f:{[d] 1+1}\n");
+    let reported = last_published(&mut server, &[&closed, &open]);
+    assert_eq!(reported[&open], Vec::<String>::new());
+    assert_eq!(reported[&closed], Vec::<String>::new(), "cleared on open");
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didClose",
+        "params":{"textDocument":{"uri":open}}}));
+    let reported = last_published(&mut server, &[&closed, &open]);
+    assert_eq!(reported[&closed], ["QF001"], "as the disk has it");
+    assert_eq!(reported[&open], Vec::<String>::new(), "cleared on close");
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 

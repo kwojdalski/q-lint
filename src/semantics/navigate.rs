@@ -217,8 +217,8 @@ pub(super) fn k_lines(code: &str, raw: &str) -> KLines {
         let end = offset + line.len();
         let blanked = code[offset..end].trim().is_empty();
         // A `k)\d .ns` is a command, its context `opens`' to read, and
-        // names nothing.
-        if line.starts_with("k)\\") {
+        // names nothing; so is one after more prefixes, `k)q)\d .ns` (#2194).
+        if line.starts_with("k)") && line[crate::language_prefixes(line)..].starts_with('\\') {
             k = false;
         } else if line.starts_with("k)") && blanked {
             k = true;

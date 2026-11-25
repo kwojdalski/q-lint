@@ -243,9 +243,12 @@ test("a run apart cancelled while its tunnel opens stops at once, and stops ssh 
   const far = { label: "far", host: "127.0.0.1", port: 1, tags: [], ssh: "bastion" };
   const { live } = await setUp(t, [far]);
   const stop = new AbortController();
-  const started = Date.now();
   const run = live.runApart(far, "1", stop.signal);
-  await sleep(300);
+  // Cancel while ssh runs: under load the stub can take longer than a fixed
+  // wait to start, and a cancel before then leaves no ssh to look at.
+  for (let i = 0; i < 100 && ssh.runs().length === 0; i++) await sleep(50);
+  assert.strictEqual(ssh.runs().length, 1, "ssh was started");
+  const started = Date.now();
   stop.abort();
   await assert.rejects(run, /the SSH tunnel through bastion was cancelled/);
   assert.ok(Date.now() - started < 3000, `took ${Date.now() - started} ms`);

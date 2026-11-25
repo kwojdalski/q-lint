@@ -696,11 +696,14 @@ fn run(args: Args) -> Result<u8, String> {
     let mut indexed = std::collections::HashSet::new();
     for (((_, source), file), placed) in sources.iter().zip(&disk).zip(placed) {
         if indexed.insert(fs::canonicalize(file).unwrap_or_else(|_| file.clone())) {
-            let mut file = index(source);
+            let mut defined = index(source);
             if let Some((placement, implicit)) = placed {
-                placement.apply(&mut file, &implicit);
+                placement.apply(&mut defined, &implicit);
+                // And where it is loaded, which a rule that calls a name
+                // undefined asks about the names the file reads (#2178).
+                workspace.place(file, &placement);
             }
-            workspace.add(&file);
+            workspace.add(&defined);
         }
     }
     if args.add_noqa {
@@ -819,6 +822,16 @@ fn run(args: Args) -> Result<u8, String> {
             .cmp(&(&b.path, b.line, b.column, &b.source, &b.rule))
     });
     if let Some(file) = &args.write_baseline {
+        // A run that could not read every input would write a baseline
+        // without that file's findings, and they would all come back as new
+        // once it reads again: nothing is written, the old one kept (#2180).
+        if failed {
+            eprintln!(
+                "qlinter: an input could not be read; no baseline written, {} left as it was",
+                file.display()
+            );
+            return Ok(2);
+        }
         let text = baseline::render(file, &findings, &sources);
         fs::write(file, text).map_err(|e| format!("{}: {e}", file.display()))?;
         eprintln!(

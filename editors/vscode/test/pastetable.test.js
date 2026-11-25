@@ -132,7 +132,17 @@ test("JSON is written as .j.k reads it", () => {
   // Keys in the text's order, integer-like ones too, as .j.k keeps them (#1075).
   assert.strictEqual(q('{"sym":"a","2024":1,"1":2}'), '(`sym`2024`1)!(enlist "a";1f;2f)');
   assert.strictEqual(q('[{"b":1,"1":2},{"1":3,"b":4}]'), "((`b`1)!1 2f;(`1`b)!3 4f)");
-  assert.strictEqual(q('{"a":1,"b":2,"a":3}'), "(`a`b)!3 2f");
+  // A repeated key kept each time, in its place, as KDB-X's .j.k keeps it (#2185).
+  assert.strictEqual(q('{"a":1,"b":2,"a":3}'), "(`a`b`a)!1 2 3f");
+  assert.strictEqual(q('{"a":1,"a":2}'), "(`a`a)!1 2f");
+  assert.strictEqual(q('[{"a":1,"a":2},{"a":3,"a":4}]'), "flip (`a`a)!(1 3f;2 4f)");
+  assert.strictEqual(q('[{"a":1,"b":2},{"a":3,"a":4}]'), "((`a`b)!1 2f;(`a`a)!3 4f)");
+  // A whole number past a long is capped at 2^63, as .j.k caps it; one with
+  // a fraction or an exponent is the double nearest.
+  assert.strictEqual(q("123456789012345678901234567890"), "9.223372036854776e18");
+  assert.strictEqual(q("[-123456789012345678901234567890,1]"), "-9.223372036854776e18 1");
+  assert.strictEqual(q("1e30"), "1e30");
+  assert.strictEqual(q("1234567890123456789012.5"), q("1.2345678901234568e21"));
   assert.strictEqual(q('{"__proto__":1}'), '(enlist `$"__proto__")!enlist 1f');
   assert.strictEqual(toJsonQuery('t:([] a:1); "x"'), '.j.j value "t:([] a:1); \\"x\\""');
   // The statements of a selection, each run as Run Selection runs it: a

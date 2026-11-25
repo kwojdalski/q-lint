@@ -401,6 +401,26 @@ fn a_functional_form_whose_qsql_q_refuses_is_refused() {
         Some(Err(e)) => assert!(e.contains("dup names"), "{e}"),
         other => panic!("{other:?}"),
     }
+    // A select whose columns are not a dictionary is 'type on KDB-X, and
+    // was written as an exec, which runs (#2193); `?[t;();();`px]` is the
+    // exec.
+    for form in [
+        "?[t;();0b;`px]",
+        "?[t;();1b;`px]",
+        "?[t;();0b;enlist `px]",
+        "?[t;();0b;(+;`px;1)]",
+    ] {
+        match functional_to_qsql(&format!("r:{form}\n"), 3) {
+            Some(Err(e)) => assert!(e.contains("'type"), "{form}: {e}"),
+            other => panic!("{form}: {other:?}"),
+        }
+        if let Some(out) = run_q(&format!(
+            "{TABLE}\n-1 @[{{value x;\"ran\"}};{};{{x}}];\n\\\\\n",
+            quoted(form)
+        )) {
+            assert_eq!(out.trim(), "type", "{form}");
+        }
+    }
     let source = "r:![t;();(enlist`sym)!enlist `sym;(enlist`sym)!enlist (first;`sym)]\n";
     let got = functional_to_qsql(source, 3).unwrap().unwrap();
     assert_eq!(got.text, "update first sym by sym from t");
@@ -506,6 +526,26 @@ const AROUND: &[(&str, &str)] = &[
     ("(?[t;();0b;()])", "(select from t)"),
     ("{count x}[?[t;();0b;()]]", "{count x}[select from t]"),
     ("(?[t;();0b;()];1)", "(select from t;1)"),
+    // An indented line after it continues the statement, as text after it
+    // on its line does, past blank and comment lines between (#2192): on
+    // KDB-X, `select from t where px>2` + newline + `  ,t` is 'type.
+    (
+        "?[t;enlist (>;`px;2);0b;()]\n  ,t",
+        "(select from t where px>2)\n  ,t",
+    ),
+    (
+        "?[t;enlist (>;`px;2);0b;()]\n\n  / a note\n\t,t",
+        "(select from t where px>2)\n\n  / a note\n\t,t",
+    ),
+    (
+        "?[t;enlist (>;`px;2);0b;()]\r\n  ,t",
+        "(select from t where px>2)\r\n  ,t",
+    ),
+    // A continuation that only closes or ends the statement does not join.
+    (
+        "?[t;enlist (>;`px;2);0b;()]\n  ;t",
+        "select from t where px>2\n  ;t",
+    ),
 ];
 
 /// `expression` with the functional form in it written as qSQL.
@@ -545,7 +585,14 @@ fn run_q(script: &str) -> Option<String> {
 
 /// A q string literal of `text`.
 fn quoted(text: &str) -> String {
-    format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
+    format!(
+        "\"{}\"",
+        text.replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\r', "\\r")
+            .replace('\n', "\\n")
+            .replace('\t', "\\t")
+    )
 }
 
 #[test]

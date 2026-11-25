@@ -45,6 +45,8 @@ jobs:
           check Cargo.toml                 's/^version = "\(.*\)"/\1/p;'
           check pyproject.toml             's/^version = "\(.*\)"/\1/p;'
           check editors/vscode/package.json 's/^  "version": "\(.*\)",/\1/p;'
+          check editors/vscode/package-lock.json 's/^  "version": "\(.*\)",/\1/p;'
+          check uv.lock                    '/^name = "q-lint-rs"$/{n;s/^version = "\(.*\)"/\1/p;}'
           exit $fail
 
   binaries:

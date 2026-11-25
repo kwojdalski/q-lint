@@ -792,6 +792,85 @@ fn an_open_buffer_is_read_as_the_editor_has_it_not_as_the_disk_does() {
     assert_eq!(places(&reply["result"]), [place("lib.q", 2, 0, 3)]);
 }
 
+/// With `lint.run: "onSave"` only the lint waits for a save: navigation
+/// answers from the buffer on screen. A change was kept and not indexed,
+/// so a name typed and not yet saved had no definition, and its rename was
+/// refused as one no file assigns (#2174).
+#[test]
+fn with_run_on_save_navigation_reads_the_unsaved_buffer() {
+    let dir = tempfile::tempdir().unwrap();
+    let (lib, main) = ("f:{x+1}\n", "\\l lib.q\nnewf 1\n");
+    let options = json!({"lint": {"run": "onSave"}});
+    let files = [("lib.q", lib), ("main.q", main)];
+    let (mut server, _) = Server::over(dir.path(), &files, client(), options);
+    let uri = server.open(dir.path(), "main.q", main);
+    let lib_uri = server.open(dir.path(), "lib.q", lib);
+    let typed = "f:{x+1}\nnewf:{[a] a}\n";
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didChange",
+        "params":{"textDocument":{"uri":lib_uri,"version":2},
+                  "contentChanges":[{"text":typed}]}}));
+    let reply = server.ask("textDocument/definition", &uri, main, "newf", 0, json!({}));
+    assert_eq!(places(&reply["result"]), [place("lib.q", 1, 0, 4)]);
+    let reply = server.ask(
+        "textDocument/rename",
+        &lib_uri,
+        typed,
+        "newf",
+        0,
+        json!({"newName": "g"}),
+    );
+    assert_eq!(
+        reply["result"]["changes"].as_object().unwrap().len(),
+        2,
+        "{reply}"
+    );
+}
+
+/// A file opened by another spelling of its path than the folder's - its
+/// real path under a folder opened through a symlink, or another case on a
+/// disk that ignores case - and closed again is still the workspace's: the
+/// close compared the spelling with the folder's, found it outside, and
+/// forgot the file's definitions until a restart (#2172).
+#[cfg(unix)]
+#[test]
+fn a_file_closed_under_another_spelling_of_its_path_stays_in_the_index() {
+    let dir = tempfile::tempdir().unwrap();
+    let real = dir.path().canonicalize().unwrap().join("Real");
+    std::fs::create_dir(&real).unwrap();
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let lib = "helper:{x+1}\n";
+    let main = "\\l lib.q\ng:{helper 1}\n";
+    let mut server = Server::start(&link, &[("lib.q", lib), ("main.q", main)]);
+    let uri = server.open(&link, "main.q", main);
+    let found = |server: &mut Server| {
+        let reply = server.ask(
+            "textDocument/definition",
+            &uri,
+            main,
+            "helper 1",
+            0,
+            json!({}),
+        );
+        places(&reply["result"])
+    };
+    assert_eq!(found(&mut server), [place("lib.q", 0, 0, 6)]);
+    let mut spellings = vec![real.clone()];
+    // The same folder in another case, where the disk takes it as one.
+    let other_case = real.with_file_name("REAL");
+    if other_case.exists() {
+        spellings.push(other_case);
+    }
+    for folder in spellings {
+        let opened = server.open(&folder, "lib.q", lib);
+        server.send(json!({"jsonrpc":"2.0","method":"textDocument/didClose",
+            "params":{"textDocument":{"uri":opened}}}));
+        assert_eq!(found(&mut server), [place("lib.q", 0, 0, 6)], "{folder:?}");
+        let reply = server.request("workspace/symbol", json!({"query": "helper"}));
+        assert_eq!(reply["result"].as_array().unwrap().len(), 1, "{folder:?}");
+    }
+}
+
 #[test]
 fn a_file_loaded_under_a_context_defines_its_names_there() {
     let dir = tempfile::tempdir().unwrap();
@@ -2247,6 +2326,66 @@ fn a_context_switched_on_a_k_line_is_followed() {
         places(&reply["result"]),
         [place("a.q", 1, 0, 2), place("b.q", 1, 2, 8)]
     );
+}
+
+#[test]
+fn a_context_switched_after_several_language_prefixes_is_followed() {
+    // #2194. q reads any run of `q)` and `k)` before a command as the
+    // command: on KDB-X 5, each of these lines then `d:1` and `\d .` leaves
+    // `.qux.d` 1 and `d` undefined. The outline put `d` at the root.
+    for prefix in ["q)k)", "k)q)", "q)q)", "k)k)", "q)k)q)"] {
+        let dir = tempfile::tempdir().unwrap();
+        let a = format!("{prefix}\\d .qux\nd:1\n\\d .\ngg:2\n");
+        let b = "\\l a.q\nr:.qux.d+gg\n";
+        let mut server = Server::start(dir.path(), &[("a.q", &a), ("b.q", b)]);
+        let reply = server.request("workspace/symbol", json!({"query": ""}));
+        let mut names: Vec<&str> = reply["result"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{prefix}: {reply}"))
+            .iter()
+            .map(|s| s["name"].as_str().unwrap())
+            .collect();
+        names.sort();
+        assert_eq!(names, [".qux.d", "gg", "r"], "{prefix}: {reply}");
+        // The outline puts `d` under `.qux`.
+        let uri = server.open(dir.path(), "a.q", &a);
+        let reply = server.request(
+            "textDocument/documentSymbol",
+            json!({"textDocument": {"uri": uri}}),
+        );
+        let outline: Vec<(&str, Vec<&str>)> = reply["result"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{prefix}: {reply}"))
+            .iter()
+            .map(|s| {
+                let children = s["children"].as_array().into_iter().flatten();
+                (
+                    s["name"].as_str().unwrap(),
+                    children.map(|c| c["name"].as_str().unwrap()).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            outline,
+            [(".qux", vec!["d"]), ("gg", vec![])],
+            "{prefix}: {reply}"
+        );
+        let uri = server.open(dir.path(), "b.q", b);
+        let reply = server.ask("textDocument/definition", &uri, b, ".qux.d", 0, json!({}));
+        assert_eq!(
+            places(&reply["result"]),
+            [place("a.q", 1, 0, 1)],
+            "{prefix}: {reply}"
+        );
+        // The command names no global: `d` and `.qux` on it are no reads.
+        let uri = server.open(dir.path(), "a.q", &a);
+        let reply = server.ask("textDocument/references", &uri, &a, "d:", 0, json!({}));
+        assert_eq!(
+            places(&reply["result"]),
+            [place("a.q", 1, 0, 1), place("b.q", 1, 2, 8)],
+            "{prefix}"
+        );
+    }
 }
 
 #[test]
