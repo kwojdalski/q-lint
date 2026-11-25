@@ -1323,9 +1323,11 @@ platform-neutral vsix and the wheel on every pull request and keeps both as
 workflow artifacts, so a packaging mistake fails there rather than at a tag.
 
 A release is a tag: `python3 scripts/dist.py bump X.Y.Z` sets the version in
-`Cargo.toml`, `Cargo.lock`, `pyproject.toml` and the extension, and refreshes
-its bundled server; commit, tag `vX.Y.Z` and push, and the release workflow
-builds and publishes every platform.
+`Cargo.toml`, `Cargo.lock`, `pyproject.toml`, `uv.lock` and the extension's
+`package.json` and `package-lock.json`, and builds the release binary; commit,
+tag `vX.Y.Z` and push, and the release workflow builds and publishes every
+platform. The extension's bundled server is not committed: `dist.py build`
+and the release copy the binary they build into it before packaging.
 
 ## pre-commit and CI
 
