@@ -137,7 +137,8 @@ test("callers are read from what q parsed: globals in context, nested lambdas, a
   // `.ns.u` calls `.ns.f`, not `f`; `shadow` has a parameter f; `str` a string.
   assert.deepStrictEqual(await of("f"), ["byname mentions", "m calls"]);
   // `.ns.k` mentions `g by symbol, which q resolves from the root when it runs.
-  assert.deepStrictEqual(await of("g"), [".ns.k mentions", "f calls", "multi calls"]);
+  // `p`, a projection of `f`, holds `f`'s lambda, so it calls `g` too (#2541).
+  assert.deepStrictEqual(await of("g"), [".ns.k mentions", "f calls", "multi calls", "p calls"]);
   assert.deepStrictEqual(await of(".ns.h"), [".ns.k calls"]);
   assert.deepStrictEqual(await of(".ns.f"), [".ns.u calls"]);
   assert.deepStrictEqual(await of(".ns.g"), []);
@@ -145,6 +146,19 @@ test("callers are read from what q parsed: globals in context, nested lambdas, a
   assert.ok(all.scanned >= 10, String(all.scanned));
   assert.strictEqual(all.more, 0);
   assert.deepStrictEqual(all.callers.find((x) => x.name === "m").params, ["x"]);
+});
+
+test("a caller held in a projection, a composition or a dictionary of handlers is found (#2541)", { skip }, async (t) => {
+  const source = [
+    ".ns.f:{x}", "direct:{.ns.f x}", "proj:{[a;b] .ns.f a+b}[;1]", "handlers:`upd`eod!({[x] .ns.f x};{x})",
+    "comp:('[{.ns.f x};{x}])", "data:`a`b!1 2", "tbl:([]a:1 2)", "none:{x}", "",
+  ].join("\n");
+  const c = await connect(t, source);
+  const got = readCallers(await c.call(CALLERS, EXCLUDED, ".ns.f", 1000));
+  assert.deepStrictEqual(got.callers.map((x) => `${x.name} ${x.how}`).sort(), ["comp calls", "direct calls", "handlers calls", "proj calls"]);
+  // A projection's bound argument is no parameter of its own.
+  assert.deepStrictEqual(got.callers.find((x) => x.name === "proj").params, []);
+  assert.deepStrictEqual(got.callers.find((x) => x.name === "direct").params, ["x"]);
 });
 
 // A view named to a reader is refused by its name, in `views[]`, before

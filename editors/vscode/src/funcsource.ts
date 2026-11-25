@@ -25,6 +25,10 @@
 // that names the function is a mention - `value`, `@` or `.` by name, which
 // q resolves when it runs, from the root, whatever the lambda's context. A
 // local, a parameter, a string or a comment that spells the name is neither.
+// A caller is a lambda, or what holds lambdas: a projection, a composition
+// or an iterator's derived function, or a list or dictionary of at most
+// 1000 items - a TorQ timer's projection, a table of handlers - as the dead
+// code check reads them (#2541); only a lambda's parameters are listed.
 // A view (`v::expr`) has a lambda's type too, and `get` of its name
 // evaluates it: the root's views (`views[]`) are not read (#1864).
 // Works on kdb+ (KDB-X) and PeachQ; held there by funcsource_q.test.js.
@@ -71,6 +75,7 @@ export const CALLERS = [
   " todo:`.,` sv'`,'asc(key`)except(`$\" \" vs ex),`;",
   " ex:` sv'`,'`$\" \" vs ex;",
   " todo:todo where{$[99h=type d:@[get;x;0];11h=type key d;0b]}each todo;",
+  " lam:{$[100h=t:type x;enlist x;t within 104 111h;raze .z.s each(),value x;$[t in 0 99h;1000>=count x;0b];raze .z.s each $[99h=t;value x;x];()]};",
   " seen:`$();fns:`$();",
   " while[(count todo)&m>count seen;",
   "  ns:first todo;todo:1_todo;seen,:ns;",
@@ -78,14 +83,16 @@ export const CALLERS = [
   "  k:asc(key d)except`;",
   "  kids:$[ns~`.;`$();k where{$[99h=type x;$[11h=type key x;(::)~first x;0b];0b]}each d k];",
   "  todo,:(` sv'ns,'kids)except ex;",
-  "  k:k where 100h=type each d k;",
-  "  fns,:$[ns~`.;k except views[];` sv'ns,'k]];",
+  "  k:(k except kids)except$[ns~`.;views[];`$()];",
+  "  k:k where 0<count each@[lam;;()]each d k;",
+  "  fns,:$[ns~`.;k;` sv'ns,'k]];",
   " rs:{[c;x]$[(null c)|\".\"=first string x;x;` sv`,c,x]};",
   " calls:{[rs;f]v:value f;g:v 3;(rs[first g]each(1_g)except`),raze .z.s[rs]each v where 100h=type each v}[rs];",
   " says:{[f]k:@[-4!;last value f;{()}];raze{`$1_\"`\"vs x}each k where\"`\"=first each k};",
-  " how:{[calls;says;nm;n]f:get n;$[nm in @[calls;f;`$()];`calls;nm in @[says;f;`$()];`mentions;`]}[calls;says;nm]each fns;",
+  " how:{[lam;calls;says;nm;n]l:lam get n;$[any nm in/:@[calls;;`$()]each l;`calls;any nm in/:@[says;;`$()]each l;`mentions;`]}[lam;calls;says;nm]each fns;",
   " w:where not null how;",
-  ` \`rows\`scanned\`more!(flip\`name\`params\`how\`ptext!(fns w;{(),(value get x)1}each fns w;how w;{@[${SLOT_TEXT};get x;{""}]}each fns w);"f"$count fns;"f"$count todo)}`,
+  " par:{f:get x;$[100h=type f;(),(value f)1;`$()]};",
+  ` \`rows\`scanned\`more!(flip\`name\`params\`how\`ptext!(fns w;par each fns w;how w;{f:get x;$[100h=type f;@[${SLOT_TEXT};f;{""}];""]}each fns w);"f"$count fns;"f"$count todo)}`,
 ].join("\n");
 
 /// Namespaces `CALLERS` reads at most.
