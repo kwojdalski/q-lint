@@ -1820,3 +1820,23 @@ fn many_calls_of_a_dotted_builtin_lint_in_bounded_time() {
         "1000 calls of .Q.dd took {small:?} and 8000 {large:?}"
     );
 }
+/// Many `\d` blocks: rank tracking found the namespace in force at each
+/// definition by scanning back over every switch, quadratic in them (#2340).
+/// Ten switches a definition, so the scan is most of the time.
+#[test]
+fn many_namespace_switches_lint_in_bounded_time() {
+    let time = |n: usize| {
+        let block = |i: usize| format!("\\d .n{i}\n{}f:{{x}}\n\\d .\n", "\\d .m\n".repeat(9));
+        let source: String = (0..n).map(block).collect();
+        best_of_three(|| lint(&source, "t.q", Profile::Uqf))
+    };
+    time(1000); // warm the allocator and the regex caches
+    let (small, large) = (time(1000), time(8000));
+    eprintln!("1000 namespace blocks took {small:?} and 8000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "1000 namespace blocks took {small:?} and 8000 {large:?}"
+    );
+}

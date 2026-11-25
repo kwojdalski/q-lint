@@ -7489,8 +7489,11 @@ fn lint_rules(
         }
         offset += line.len();
     }
+    // `spaces` is in order of offset, and starts at 0: the last switch at or
+    // before `at` by a search, where a scan back over every one for each
+    // name was quadratic in the switches (#2340).
     let qualified = |at: usize, name: &str| -> String {
-        let ns = &spaces.iter().rev().find(|(o, _)| *o <= at).unwrap().1;
+        let ns = &spaces[spaces.partition_point(|(o, _)| *o <= at) - 1].1;
         if name.starts_with('.') || ns.is_empty() {
             name.to_string()
         } else {
