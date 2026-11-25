@@ -853,6 +853,10 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QE012", "s:\u{201c}hi"),            // no close on the line
         ("QE012", "s:\u{201c}C:\\d\u{201d}"), // a backslash would be an escape
         ("QE012", "a:`\u{e9}"),               // no ASCII it stands for
+        // An atom appended in place is 'type, where `r:r,x` lists (#2253).
+        ("QV003", "f:{[n] r:0; i:0; while[i<n; r:r,i; i+:1]; r}"),
+        ("QV003", "f:{[s] r:`; do[2; r:r,s]; r}"),
+        ("QV003", "r:\"a\"\ndo[3; r:r,\"b\"]"),
     ] {
         for finding in lint(source, "probe.q", Profile::Uqf)
             .iter()
@@ -2106,4 +2110,32 @@ fn an_infix_keyword_with_a_left_operand_before_each_is_not_rewritten() {
         return;
     };
     assert_eq!(values, ["'type", "'type", "11b"]);
+}
+
+/// QV003's `r,:x` appends in place, and refuses what `r:r,x` lists: an atom
+/// to append to, or an item of another type. Where `r` was last an atom
+/// literal there is no fix; elsewhere it stays in the editor, its title
+/// saying so (#2253).
+#[test]
+fn append_in_place_is_offered_only_where_it_can_succeed() {
+    let source = "f:{[n] r:(); i:0; while[i<n; r:r,i; i+:1]; r}";
+    let finding = selected(source, &["QV003"]).remove(0);
+    let fix = q_lint_rs::fix_for(&finding, source).unwrap();
+    assert!(
+        !fix.batch_safe && fix.title.contains("'type"),
+        "{}",
+        fix.title
+    );
+    let scripts = [
+        "f:{[n] r:0; i:0; while[i<n; r:r,i; i+:1]; r};r:f 3",
+        "f:{[n] r:0; i:0; while[i<n; r,:i; i+:1]; r};r:f 3",
+        "f:{[n] r:(); i:0; while[i<n; r:r,i; i+:1]; r};r:f 3",
+        "f:{[n] r:(); i:0; while[i<n; r,:i; i+:1]; r};r:f 3",
+        "r:(); r,:1; r,:1.5",
+    ]
+    .map(String::from);
+    let Some(values) = values_on_q(&scripts) else {
+        return;
+    };
+    assert_eq!(values, ["0 0 1 2", "'type", "0 1 2", "0 1 2", "'type"]);
 }

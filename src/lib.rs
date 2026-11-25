@@ -1401,6 +1401,40 @@ pub fn whole_edit(before: &str, after: &str) -> Option<Fix> {
     })
 }
 
+/// Whether `name`, joined to itself at `at`, was last given an atom literal
+/// before it in the same lambda (or the file, outside one): `r:0` or
+/// `` r:` `` ahead of a loop of `r:r,x`, which `r,:x` would refuse (#2253).
+fn starts_as_atom(source: &str, code: &str, at: usize, name: &str) -> bool {
+    let mut depth = 0i32;
+    let mut scope = 0;
+    for (i, b) in code.as_bytes()[..at].iter().enumerate().rev() {
+        match b {
+            b'}' => depth += 1,
+            b'{' if depth == 0 => {
+                scope = i + 1;
+                break;
+            }
+            b'{' => depth -= 1,
+            _ => {}
+        }
+    }
+    let Ok(assigned) = regex::Regex::new(&format!(
+        r"(?:^|[^A-Za-z0-9_.`])({})[ \t]*:([^:;\n\]}}][^;\n\]}}]*)",
+        regex::escape(name)
+    )) else {
+        return false;
+    };
+    assigned
+        .captures_iter(&source[scope..at])
+        .filter(|c| {
+            code.as_bytes()[scope + c.get(1).unwrap().start()]
+                == source.as_bytes()[scope + c.get(1).unwrap().start()]
+        })
+        .last()
+        .and_then(|c| literal_type(&c[2]))
+        .is_some_and(|t| t < 0)
+}
+
 fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
     // A comment is what QL003 edits, so it passes the check below.
     if finding.code == "QL003" {
@@ -1629,20 +1663,29 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 false,
             )
         }
-        // `r:r,x` is `r,:x`, the same value, appended in place. Only in the
-        // editor: it is the loop's to decide, and a name another reference
-        // shares is copied either way.
+        // `r:r,x` is `r,:x`, appended in place - but not always the same
+        // value: `r:r,x` makes a general list of whatever it joins, and
+        // `r,:x` refuses with 'type when r is an atom, or a list x's items
+        // do not fit (q 5: `r:0; r,:1`, `r:1 2; r,:`a` and `r:(); r,:1;
+        // r,:1.5` are each 'type, #2253). So only in the editor, and not at
+        // all where r was last given an atom literal before the loop, where
+        // it can only fail.
         "QV003" => {
             let m =
                 re!(r"^(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*:[ \t]*(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*,")
                     .captures(source.get(start..)?)?;
-            if m[1] != m[2] {
+            if m[1] != m[2] || starts_as_atom(source, &v.code, start, &m[1]) {
                 return None;
             }
             (
                 m.get(0)?.as_str(),
                 format!("{},:", &m[1]).into(),
-                format!("Append in place with `{},:`", &m[1]).into(),
+                format!(
+                    "Append in place with `{},:` (q refuses it with 'type where the items \
+                     joined do not fit the list)",
+                    &m[1]
+                )
+                .into(),
                 false,
             )
         }
