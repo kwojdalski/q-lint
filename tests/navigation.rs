@@ -146,6 +146,196 @@ fn a_definition_carries_its_kind_its_signature_and_its_statement() {
     );
 }
 
+/// Each name `source` defines, with whether its definition is a function.
+fn kinds(source: &str) -> Vec<(String, bool)> {
+    mentions(source)
+        .iter()
+        .filter_map(|m| Some((m.name.clone(), m.definition.as_ref()?.function)))
+        .collect()
+}
+
+#[test]
+fn a_lambda_applied_to_empty_brackets_defines_a_value() {
+    // KDB-X: `c:{[] 42}[]` and `d:{[a] 7}[]` are -7h, `e:{x}[]` is `::`,
+    // and `h:{x+y}[]` a projection, 104h (#2309).
+    assert_eq!(
+        kinds("c:{[] 42}[]\nd:{[a] 7}[]\ne:{x}[]\nh:{x+y}[]\n"),
+        [
+            ("c".to_string(), false),
+            ("d".into(), false),
+            ("e".into(), false),
+            ("h".into(), true),
+        ]
+    );
+}
+
+/// Each name `source` defines, once, with whether it holds a function once
+/// the file has loaded - what the outline says of it.
+fn holds(source: &str) -> Vec<(String, bool)> {
+    let mut out: Vec<(String, bool)> = vec![];
+    for m in mentions(source) {
+        if let Some(d) = &m.definition
+            && !out.iter().any(|(name, _)| *name == m.name)
+        {
+            out.push((m.name.clone(), d.holds_function));
+        }
+    }
+    out
+}
+
+#[test]
+fn a_name_is_outlined_by_the_value_q_holds_it_as() {
+    let named = |names: &[(&str, bool)]| -> Vec<(String, bool)> {
+        names.iter().map(|&(n, f)| (n.to_string(), f)).collect()
+    };
+    // KDB-X: `a:b:{x+1}` makes both 100h (#2310).
+    assert_eq!(holds("a:b:{x+1}\n"), named(&[("a", true), ("b", true)]));
+    // Each lambda written by set', a functional amend, a multiple
+    // assignment and `set` in brackets is 100h (#2315).
+    assert_eq!(
+        holds(
+            "`n1`n2 set' (1;{x})\n.[`n3;();:;{x}]\n(n5;n6):(1;{x})\n.c.z:0\n@[`.c;`n10;:;{x}]\nset[`n12;{x}]\n"
+        ),
+        named(&[
+            ("n1", false),
+            ("n2", true),
+            ("n3", true),
+            ("n5", false),
+            ("n6", true),
+            (".c.z", false),
+            (".c.n10", true),
+            ("n12", true),
+        ])
+    );
+    // An alias, a projection, a derived function and q's own: 100h, 104h,
+    // 104h, 104h - and applied to every argument, 3 (#2316).
+    assert_eq!(
+        holds("f:{[a;b] a+b}\np:f[;1]\nal:f\nce:count each\nup:upsert\nd:f[1;2]\n"),
+        named(&[
+            ("f", true),
+            ("p", true),
+            ("al", true),
+            ("ce", true),
+            ("up", true),
+            ("d", false),
+        ])
+    );
+    // The last write, wherever the name is first listed (#2317).
+    assert_eq!(holds("f:{x}\nf:5\n"), named(&[("f", false)]));
+    assert_eq!(holds("g:5\ng:{x}\n"), named(&[("g", true)]));
+}
+
+#[test]
+fn a_name_with_a_segment_led_by_an_underscore_is_one_name() {
+    // KDB-X defines `.x.__h` and `a._b` (`key `.x` is ``__h, `key `a`
+    // ``_b), and `-4!` reads each as one token; `._c` is no name, but `.`,
+    // `_` and `c` (#2311).
+    assert_eq!(
+        seen(".x.__h:{x}\na._b:1\nq:.x.__h a._b\n"),
+        [
+            (".x.__h", ".x.__h".to_string(), 'w'),
+            ("a._b", "a._b".into(), 'w'),
+            ("q", "q".into(), 'w'),
+            (".x.__h", ".x.__h".into(), 'r'),
+            ("a._b", "a._b".into(), 'r'),
+        ]
+    );
+}
+
+#[test]
+fn a_key_of_a_dictionary_is_no_member_of_a_namespace() {
+    // KDB-X: after `.jobs:(`symbol$())!()`, `.jobs[`daily]:1` adds a key,
+    // and `key `.jobs` is `daily with no null - not a namespace; `get
+    // `.ns.describe.trades` signals 'trades (#2312). Into a namespace,
+    // `.c4[`a]:1` defines `.c4.a` (`key `.c4` is ``x`a).
+    let names: Vec<String> = holds(
+        ".jobs:(`symbol$())!()\n.jobs[`daily]:1\n\\d .ns\ndescribe:(`symbol$())!()\n\
+         .ns.describe[`trades]:\"t\"\n\\d .\n.c4.x:0\n.c4[`a]:1\n",
+    )
+    .into_iter()
+    .map(|(name, _)| name)
+    .collect();
+    assert_eq!(names, [".jobs", ".ns.describe", ".c4.x", ".c4.a"]);
+}
+
+#[test]
+fn a_k_lines_assignment_is_outlined_by_the_last_write() {
+    // KDB-X: `k)g:{x}` then `g:5` holds 5 (#2314, as #2317 for q lines).
+    assert_eq!(holds("k)g:{x}\ng:5\n"), [("g".to_string(), false)]);
+    assert_eq!(holds("g:5\nk)g:{x}\n"), [("g".to_string(), true)]);
+}
+
+/// Files whose names a real q is asked for: one for each way the outline
+/// has been wrong about what `\l` defines, or of what kind (#2309-#2317).
+const DEFINED_BY_LOAD: &[&str] = &[
+    "c:{[] 42}[]\nd:{[a] 7}[]\nh:{x+y}[]\n",
+    "a:b:{x+1}\n",
+    ".x.__h:{x}\n.x._k:{x}\nm._b:1\n",
+    ".jobs:(`symbol$())!()\n.jobs[`daily]:1\n.c4.x:0\n.c4[`a]:1\n",
+    "`n1`n2 set' (1;{x})\n.[`n3;();:;{x}]\n(n5;n6):(1;{x})\n.c.z:0\n@[`.c;`n10;:;{x}]\nset[`n12;{x}]\n",
+    "f:{[a;b] a+b}\np:f[;1]\nal:f\nce:count each\nup:upsert\nd:f[1;2]\n",
+    "f:{x}\nf:5\ng:5\ng:{x}\n",
+    "k)g:{[a] a+1}\nh:5\nk)h:{x}\n",
+];
+
+/// What loading the file at `path` defines on the q that QLINT_TEST_Q names:
+/// each name, a namespace's members by their whole name, with whether its
+/// value is a function (type 100h to 112h).
+fn loaded_by_q(q: &str, path: &Path) -> Vec<(String, bool)> {
+    let script = format!(
+        r#".dmp.isns:{{[v] $[99h<>type v;0b;11h<>type key v;0b;(`)~first key v]}};
+.dmp.walk:{{[nm] raze .dmp.one[nm] each (key get nm) except `}};
+.dmp.one:{{[nm;k] full:$[nm~`;k;` sv nm,k]; v:@[get;full;{{`dmperr}}]; $[.dmp.isns v; .dmp.walk full; enlist (full;type v)]}};
+.dmp.all:{{[] r:raze .dmp.one[`] each (key `.) except `; r,raze {{[n] nm:` sv `,n; v:@[get;nm;0]; $[.dmp.isns v; .dmp.walk nm; enlist (nm;type v)]}} each (key `) except ``q`Q`h`j`z`o`dmp}};
+.dmp.before:.dmp.all[];
+system "l {}";
+.dmp.after:.dmp.all[];
+{{-1 "defined ",string[x 0]," ",string x 1}} each .dmp.after where not .dmp.after[;0] in .dmp.before[;0];
+exit 0
+"#,
+        path.display().to_string().replace('\\', "/")
+    );
+    let dir = path.parent().unwrap();
+    let dump = dir.join("dump.q");
+    std::fs::write(&dump, script).unwrap();
+    let mut words = q.split_whitespace();
+    let out = Command::new(words.next().unwrap())
+        .args(words)
+        .arg(&dump)
+        .arg("-q")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run q");
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut names: Vec<(String, bool)> = text
+        .lines()
+        .filter_map(|line| line.strip_prefix("defined "))
+        .map(|line| {
+            let (name, kind) = line.rsplit_once(' ').unwrap_or_else(|| panic!("{text}"));
+            let kind: i16 = kind.parse().unwrap_or_else(|_| panic!("{text}"));
+            (name.to_string(), (100..=112).contains(&kind))
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn the_outline_names_what_q_defines_by_loading_the_file() {
+    let Ok(q) = std::env::var("QLINT_TEST_Q") else {
+        eprintln!("QLINT_TEST_Q names no q: the files stand as KDB-X loaded them");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    for (i, source) in DEFINED_BY_LOAD.iter().enumerate() {
+        let path = dir.path().join(format!("f{i}.q"));
+        std::fs::write(&path, source).unwrap();
+        let mut outlined = holds(source);
+        outlined.sort();
+        assert_eq!(outlined, loaded_by_q(&q, &path), "{source}");
+    }
+}
+
 #[test]
 fn the_path_of_each_kind_of_load_is_found_under_the_cursor() {
     let source =

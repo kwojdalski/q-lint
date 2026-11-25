@@ -314,3 +314,126 @@ test("a temporal or numeric literal is one token with the type letters q takes, 
   // With a c any of them is a char - 3c is "3" - so it is not a number.
   assert.deepStrictEqual(await scopesOf("a:3c", "3c"), ["source.q"]);
 });
+
+/// The text of each token of the one-line `source` the grammar colours as a
+/// constant; `k` for a k file.
+async function coloured(source, k = false) {
+  const { tokens } = (await (k ? kGrammar : grammar)).tokenizeLine(source, tm.INITIAL);
+  return tokens.filter((t) => t.scopes.some((x) => /^constant\./.test(x))).map((t) => source.slice(t.startIndex, t.endIndex));
+}
+
+/// Whether each line of `source` is all comment, as the grammar reads it; `k`
+/// for a k file.
+async function commentLines(source, k = false) {
+  const g = await (k ? kGrammar : grammar);
+  let stack = tm.INITIAL;
+  return source.split("\n").map((line) => {
+    const r = g.tokenizeLine(line, stack);
+    stack = r.ruleStack;
+    return r.tokens.every((t) => line.slice(t.startIndex, t.endIndex).trim() === "" || t.scopes.some((s) => s.startsWith("comment.")));
+  });
+}
+
+// q counts a block comment's depth: in the script below KDB-X leaves b, c,
+// d undefined and runs e:5, and the lambda's body is x+1 (f 1 is 2). Three
+// deep the same: h and k are skipped and m:3 runs.
+test("a block comment nests: its inner \\ closes the inner one, and the outer \\ is no end of script (#2298)", async () => {
+  const script = ["a:1", "/", "b:2", "/", "c:3", "\\", "d:4", "\\", "e:5"].join("\n");
+  const skipped = [false, true, true, true, true, true, true, true, false];
+  assert.deepStrictEqual(await commentLines(script), skipped);
+  assert.deepStrictEqual(await commentLines(script, true), skipped);
+  assert.deepStrictEqual(await scopesOf(script, "e"), ["variable.other.definition.q"]);
+  const deep = ["g:7", "/", "/", "/", "h:1", "\\", "\\", "k:2", "\\", "m:3"].join("\n");
+  const deepSkipped = [false, true, true, true, true, true, true, true, true, false];
+  assert.deepStrictEqual(await commentLines(deep), deepSkipped);
+  assert.deepStrictEqual(await commentLines(deep, true), deepSkipped);
+  // Inside a lambda: the closing brace is the lambda's, and the next line q.
+  const lambda = ["f:{", "  x+1", "/", "  junk", "/", "  more", "\\", "  junk2", "\\", "  }", "n:1"].join("\n");
+  assert.deepStrictEqual(await commentLines(lambda), [false, false, true, true, true, true, true, true, true, false, false]);
+  assert.deepStrictEqual(await commentLines(lambda, true), [false, false, true, true, true, true, true, true, true, false, false]);
+  assert.deepStrictEqual(await scopesOf(lambda, "}"), ["punctuation.section.function.end.q"]);
+  assert.deepStrictEqual(await scopesOf(lambda, "n"), ["variable.other.definition.q"]);
+  // A lone \ after the comment closes still ends the script.
+  assert.deepStrictEqual(await commentLines(`${script}\n\\\nz:1`), [...skipped, true, true]);
+});
+
+// On KDB-X each of these is one literal (`-4!` one token, `type value` a
+// timestamp, timespan or datetime): the hours after D or T are any number of
+// digits, with a fraction, when nothing follows them - 1970.01.01D0 is
+// midnight, 0D1.5 an hour and a half. With minutes the hours are two digits:
+// q refuses 0D1:23, 2024.01.02D1:23 and 2024.01.02T1:23.
+test("the hours after D or T are one digit or many, or a fraction, when no minutes follow (#2299)", async () => {
+  const temporal = [
+    "0D0", "0D1", "0D1p", "0D1n", "1D1", "1D1234", "0D123", "0D12.5", "0D1.5p",
+    "1970.01.01D0", "2024.01.02D1", "2024.01.02D1n", "2024.01.02D1p", "2024.01.02D1d", "2024.01.02D1z", "2024.01.02D123", "2024.01.02D1.5", "2024.01.02D12.5n",
+    "2024.01.02T1", "2024.01.02T1z", "2024.01.02T1d", "2024.01.02T123", "2024.01.02T1.5", "2024.01.02T12.5z",
+  ];
+  for (const literal of temporal) {
+    assert.deepStrictEqual(await scopesOf(`a:${literal}+1`, literal), ["constant.numeric.temporal.q"], literal);
+    assert.deepStrictEqual(await scopesOf(`a:${literal}`, literal, true), ["constant.numeric.temporal.k"], `k ${literal}`);
+  }
+  for (const text of ["0D1z", "0D1d", "0D1u", "2024.01.02T1p", "2024.01.02T12p"]) {
+    assert.deepStrictEqual(await coloured(`a:${text}`), [], text);
+    assert.deepStrictEqual(await coloured(`a:${text}`, true), [], `k ${text}`);
+  }
+});
+
+// KDB-X refuses a minute or second past 59, at any hour - 12:60, 12:34:67,
+// 123:45:67 - and takes 123:45:07 and 1234:56:07. What it refuses is one
+// token to `-4!` (q reads 12:3, 0D1:23 and 12:34e whole), so no piece of it
+// is coloured either.
+test("a minute or second past 59 is no literal, and no piece of a refused time is one (#2306)", async () => {
+  for (const literal of ["123:45:07", "1234:56:07", "123:45:07.5t", "12:59:59", "99:00", "0D24:00", "0D99:00", "2024.01.02D23:59:59.999", "2024.01.02T25:00"]) {
+    assert.deepStrictEqual(await scopesOf(`a:${literal}+1`, literal), ["constant.numeric.temporal.q"], literal);
+    assert.deepStrictEqual(await scopesOf(`a:${literal}`, literal, true), ["constant.numeric.temporal.k"], `k ${literal}`);
+  }
+  const refused = [
+    "123:45:67", "1234:56:78", "123:45:67t", "12:34:67", "12:60", "12:59:60", "123:60", "1234:60", "0D12:60", "1D12:60", "0D12:59:60",
+    "2024.01.02D12:34:60", "2024.01.02T12:60", "2024.01.02D12:60n",
+    "0D1:23", "2024.01.02D1:23", "2024.01.02T1:23", "0D123:00", "2024.01.02D123:45", "12:3", "12:34:5", "12:34e", "2024.01.02D12:34t", "1.5:3",
+  ];
+  for (const text of refused) {
+    assert.deepStrictEqual(await coloured(`a:${text}`), [], text);
+    assert.deepStrictEqual(await coloured(`a:${text}`, true), [], `k ${text}`);
+  }
+  // One digit before a colon is a file operator's, and a name's digits are
+  // the name's: q reads 1:23 as 1:, 23 and a12:3 as a12, :, 3.
+  assert.deepStrictEqual(await coloured("r:1:23"), ["1", "23"]);
+  assert.deepStrictEqual(await coloured("a12:3"), ["3"]);
+  assert.deepStrictEqual(await coloured("a12:3", true), ["3"]);
+});
+
+// KDB-X reads 1E3e as 1000e and 1E3f as 1000f, one token each, and refuses
+// 1E3, 1E3j and 1E-3e: after an integer an upper-case exponent needs its e or f.
+test("an integer's upper-case exponent is a number with an e or f after it (#2305)", async () => {
+  for (const literal of ["1E3e", "1E3f", "15E3e", "15E3f", "0E0e", "01E3e", "9E99f"]) {
+    assert.deepStrictEqual(await scopesOf(`a:${literal}+x`, literal), ["constant.numeric.q"], literal);
+    assert.deepStrictEqual(await scopesOf(`a:${literal}`, literal, true), ["constant.numeric.k"], `k ${literal}`);
+  }
+  for (const text of ["1E3", "1E3j", "1E3n", "1E3p", "1E3h"]) {
+    assert.deepStrictEqual(await coloured(`a:${text}`), [], text);
+    assert.deepStrictEqual(await coloured(`a:${text}`, true), [], `k ${text}`);
+  }
+});
+
+// As KDB-X's -4! reads them: `_a is a null symbol, drop and a name, and `__
+// a null symbol and two drops; inside a symbol vector, though, an element
+// may start with one - `a`_b is the two symbols `a`_b, ``_b and `:a`_b too.
+test("a symbol does not start with an underscore, but an element after another does (#2302)", async () => {
+  for (const k of [false, true]) {
+    const lang = k ? "k" : "q";
+    assert.deepStrictEqual(await coloured("x:`_a", k), ["`"], lang);
+    assert.deepStrictEqual(await coloured("x:`__", k), ["`"], lang);
+    assert.deepStrictEqual(await scopesOf("x:`_a", "a", k), [`variable.other.${lang}`], lang);
+    for (const symbols of ["`a`_b", "``_b", "`a``_b", "`a`b`_c"]) {
+      assert.deepStrictEqual((await coloured(`x:${symbols}`, k)).join(""), symbols, `${lang} ${symbols}`);
+    }
+    assert.deepStrictEqual(await coloured("x:`:a`_b", k), ["`:a", "`_b"], lang);
+    assert.deepStrictEqual(await scopesOf("x:`:a`_b", "`:a", k), [`constant.other.symbol.handle.${lang}`], lang);
+    assert.deepStrictEqual(await scopesOf("x:`:a`_b", "`_b", k), [`constant.other.symbol.${lang}`], lang);
+    // An underscore after the first character is the symbol's.
+    for (const symbol of ["`a_", "`._", "`1_a", "`:_a", "`a:_b"]) {
+      assert.deepStrictEqual(await coloured(`x:${symbol}`, k), [symbol], `${lang} ${symbol}`);
+    }
+  }
+});

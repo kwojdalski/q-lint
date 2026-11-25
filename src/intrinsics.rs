@@ -517,7 +517,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     // most it takes is the catalogue's, which `tests/help.rs` holds to q's.
     // A column-0 `[1;2;3]` under `keyjoin:lj` is a statement of its own (#742).
     for m in re!(concat!(
-        r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)",
+        r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)",
         blank!(),
         r"*\["
     ))

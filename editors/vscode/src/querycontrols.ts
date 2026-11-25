@@ -19,7 +19,7 @@
 // returns, formatted here.
 import { attrText, consoleLines, gridOf, gridOfQ, cutLines, formatQ, formatValue, vectorText } from "./qformat";
 import { decode, type QValue } from "./qdecode";
-import { TRAP, readAnswer, type Answer } from "./query";
+import { readAnswer, trapLines, type Answer } from "./query";
 import type { GridAnswer } from "./grid";
 import { QError } from "./qclient";
 import { iconsEscaped } from "./history";
@@ -87,17 +87,23 @@ export function limits(
 /// been cut at the process's `\c` width - it is that long and holds `..` -
 /// the value is `LAID_OUT`'s instead, every row and each cell to its end
 /// (#1995). Like `RUN` it defines nothing on the process.
-export const UNLIMITED = [
-  "{[s;size]",
-  ...TRAP,
-  " t:type r 1;",
-  " e:$[r[0]&t within 20 76h;@[value;r 1;{()}];()];",
-  " $[r 0;",
-  "   $[t within 1 19h;`ok`type`text`value`attr`precision!(1b;t;();$[t within 12 19h;\"jiifjiii\"[t-12h]$r 1;t=10h;\"x\"$r 1;r 1];attr r 1;system\"P\");",
-  "     (t within 20 76h)&type[e] within 1 19h;`ok`type`text`value`attr`vtype`domain`eattr`precision!(1b;t;();$[type[e] within 12 19h;\"jiifjiii\"[type[e]-12h]$e;e];attr e;type e;key r 1;attr r 1;system\"P\");",
-  `     \`ok\`type\`text!(1b;t;{[s;x]$[any(s like"*..*")&(-1+last system"c")<=count each s;"\\n"vs -1_${LAID_OUT}[${FULL_TEXT};0W;x];s]}[.Q.S["j"$size;0j] r 1;r 1])];`,
-  "   `ok`error`trace!(0b;r 1;r 2)]}",
-].join("\n");
+function unlimitedLambda(readOnly: boolean): string {
+  return [
+    "{[s;size]",
+    ...trapLines(readOnly),
+    " t:type r 1;",
+    " e:$[r[0]&t within 20 76h;@[value;r 1;{()}];()];",
+    " $[r 0;",
+    "   $[t within 1 19h;`ok`type`text`value`attr`precision!(1b;t;();$[t within 12 19h;\"jiifjiii\"[t-12h]$r 1;t=10h;\"x\"$r 1;r 1];attr r 1;system\"P\");",
+    "     (t within 20 76h)&type[e] within 1 19h;`ok`type`text`value`attr`vtype`domain`eattr`precision!(1b;t;();$[type[e] within 12 19h;\"jiifjiii\"[type[e]-12h]$e;e];attr e;type e;key r 1;attr r 1;system\"P\");",
+    `     \`ok\`type\`text!(1b;t;{[s;x]$[any(s like"*..*")&(-1+last system"c")<=count each s;"\\n"vs -1_${LAID_OUT}[${FULL_TEXT};0W;x];s]}[.Q.S["j"$size;0j] r 1;r 1])];`,
+    "   `ok`error`trace!(0b;r 1;r 2)]}",
+  ].join("\n");
+}
+
+export const UNLIMITED = unlimitedLambda(false);
+/// `UNLIMITED` under `reval` (`trapLines`).
+export const UNLIMITED_READ_ONLY = unlimitedLambda(true);
 
 /// The answer `UNLIMITED` gave, as `readAnswer` reads `RUN`'s, a simple list
 /// written out whole.

@@ -276,6 +276,12 @@ pub struct Mention {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Definition {
     pub function: bool,
+    /// Whether the name holds a function once the file has loaded: its last
+    /// write, at the top level where it has one, makes it one - a lambda, a
+    /// projection, a derived function, or a name holding one (q 5's `al:f`
+    /// is 100h, `ce:count each` 104h). The same for every write of a name,
+    /// and what the outline and the semantic tokens both say of it.
+    pub holds_function: bool,
     pub detail: String,
     pub params: Vec<String>,
     pub start: usize,
@@ -2621,7 +2627,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         // masked code is the only honest place to measure - a `;` inside
         // a string or a trailing comment must not end it.
         "QP006" => {
-            let name = re!(r"^\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*")
+            let name = re!(r"^\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
                 .find(v.code.get(start..)?)?
                 .as_str();
             let argument = argument_start(source, &v.comments, start + name.len())?;
@@ -4697,7 +4703,7 @@ pub(crate) fn slots(s: &str) -> Vec<&str> {
 /// A lambda parameter name. `_` is absent deliberately: q reads `{[_] ...}` as
 /// a body, not a signature, which is what `named` below is about.
 fn is_param_name(s: &str) -> bool {
-    re!(r"^\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*$").is_match(s)
+    re!(r"^\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$").is_match(s)
 }
 
 /// A q 5 parameter pattern, as written in code with strings blanked: a name,
@@ -4772,7 +4778,7 @@ fn pattern_within(s: &str, nested: bool, depth: usize) -> bool {
 /// `{[count x] 1}`, `{[a+b] 1}`, `{[a'] 1}`, `{[1 a] 1}` (#484).
 fn application(s: &str) -> bool {
     let s = s.trim();
-    re!(r"^\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*")
+    re!(r"^\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
         .find(s)
         .is_some_and(|head| s[head.end()..].starts_with([' ', '\t', '\n', '\r', '[', '(', '{']))
         && !re!(r"[-+*%,#$@&|^=<>~!?'/\\]").is_match(s)
@@ -4995,7 +5001,7 @@ fn names_within(slot: &str, depth: usize) -> Vec<&str> {
     if application(trimmed) {
         return vec![];
     }
-    re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*")
+    re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
         .find_iter(slot)
         .filter(|m| {
             boundary(slot, m.start())

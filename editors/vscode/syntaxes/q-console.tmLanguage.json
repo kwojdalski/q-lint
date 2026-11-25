@@ -91,9 +91,9 @@
           "match": "`:[A-Za-z0-9_.:/\\-]*"
         },
         {
-          "comment": "Past a colon a symbol takes slashes too: `a:b/c is one symbol.",
+          "comment": "Past a colon a symbol takes slashes too: `a:b/c is one symbol. q prints `$\"a-b\" as `a-b, so a minus is in one; a blank is not, since a table's column gap prints the same.",
           "name": "constant.other.symbol.q-console",
-          "match": "`[A-Za-z0-9_.]*(?::[A-Za-z0-9_.:/]*)?"
+          "match": "`[A-Za-z0-9_.\\-]*(?::[A-Za-z0-9_.:/\\-]*)?"
         },
         {
           "comment": "A guid, as q prints one: before the numbers, whose rules would colour its all-digit groups.",

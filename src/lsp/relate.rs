@@ -579,6 +579,7 @@ mod tests {
             len,
             definition: definition.map(|(start, end)| Definition {
                 function: true,
+                holds_function: true,
                 detail: String::new(),
                 params: vec![],
                 start,

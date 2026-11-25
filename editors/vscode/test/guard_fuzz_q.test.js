@@ -1,8 +1,10 @@
 // The read-only guard (#918) against a real q, differentially: random
 // expressions (guard_fuzz_gen.js) that the guard reads as read-only are run
 // on a sandbox q, and none may change it - a global, a namespace, a system
-// setting or a file in its directory. Three rounds of bypasses found this
-// way were fixed by class (#2186-#2211); this keeps them fixed. Needs a q
+// setting, the environment, a handle or a file in its directory. Three
+// rounds of bypasses found this way were fixed by class (#2186-#2211), and
+// a fifth hunt's families (#2264-#2277) joined the generator; this keeps
+// them fixed. Needs a q
 // binary, so it runs only when QLINT_TEST_Q names one, as guard_q.test.js
 // does. QLINT_GUARD_FUZZ sets how many expressions (default 5000) and
 // QLINT_GUARD_FUZZ_SEED the seed (default 1).
@@ -14,6 +16,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { writes } = require("../out/guard.js");
+const { statements } = require("../out/statements.js");
 const generator = require("./guard_fuzz_gen.js");
 
 const Q = process.env.QLINT_TEST_Q;
@@ -24,7 +27,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /// The sandbox's state, and how to compare it (guard_fuzz_init.q): every
 /// global of every namespace but `.hz`'s own hashed, the system settings,
-/// and each file under its directory hashed. `.hz.run` runs a string trapped.
+/// and each file under its directory hashed. `.hz.run` runs a query's
+/// statements trapped, each with `value`, as the extension's `RUN` does.
 const INIT = fs.readFileSync(path.join(__dirname, "guard_fuzz_init.q"), "utf8");
 
 function freePort() {
@@ -36,14 +40,27 @@ function freePort() {
   });
 }
 
-/// A q message: `.hz.run` applied to `text`, or `text` alone, as a string.
-function message(text, run) {
+/// A char vector, serialized.
+function qString(text) {
   const str = Buffer.from(text, "utf8");
+  const head = Buffer.from([10, 0, 0, 0, 0, 0]);
+  head.writeInt32LE(str.length, 2);
+  return Buffer.concat([head, str]);
+}
+
+/// A q message: `.hz.run` applied to `text` cut into its statements, as a
+/// query sends them, or `text` alone, as a string.
+function message(text, run) {
   const sym = Buffer.from(".hz.run\0", "latin1");
-  const body = run
-    ? Buffer.concat([Buffer.from([0, 0, 2, 0, 0, 0, 0xf5]), sym, Buffer.from([10, 0]), Buffer.alloc(4), str])
-    : Buffer.concat([Buffer.from([10, 0]), Buffer.alloc(4), str]);
-  body.writeInt32LE(str.length, body.length - str.length - 4);
+  let body;
+  if (run) {
+    const cut = statements(text);
+    const list = Buffer.from([0, 0, 0, 0, 0, 0]);
+    list.writeInt32LE(cut.length, 2);
+    body = Buffer.concat([Buffer.from([0, 0, 2, 0, 0, 0, 0xf5]), sym, list, ...cut.map(qString)]);
+  } else {
+    body = qString(text);
+  }
   const head = Buffer.from([1, 1, 0, 0, 0, 0, 0, 0]);
   head.writeInt32LE(8 + body.length, 4);
   return Buffer.concat([head, body]);

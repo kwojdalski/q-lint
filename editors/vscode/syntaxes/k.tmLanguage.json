@@ -16,11 +16,13 @@
   ],
   "repository": {
     "block-comment": {
+      "comment": "q counts a block comment's depth: a lone / inside one opens another, and only the \\ that closes the outermost ends it.",
       "name": "comment.block.k",
       "begin": "^/\\s*$",
       "end": "^\\\\\\s*$",
       "beginCaptures": { "0": { "name": "punctuation.definition.comment.begin.k" } },
-      "endCaptures": { "0": { "name": "punctuation.definition.comment.end.k" } }
+      "endCaptures": { "0": { "name": "punctuation.definition.comment.end.k" } },
+      "patterns": [{ "include": "#block-comment" }]
     },
     "end-of-script": {
       "comment": "A lone backslash outside a block ends the script; q reads nothing after it.",
@@ -80,13 +82,13 @@
     "symbol": {
       "patterns": [
         {
-          "comment": "A file or network handle: `:path/to/file, `:host:port. A minus is not in one: `:a-b is `:a minus b.",
-          "match": "`:[A-Za-z0-9_.:/]*",
-          "name": "constant.other.symbol.handle.k"
+          "comment": "A file or network handle: `:path/to/file, `:host:port. A minus is not in one: `:a-b is `:a minus b. Symbols written straight after it may start with an underscore (`:a`_b).",
+          "match": "(`:[A-Za-z0-9_.:/]*)((?:`_[A-Za-z0-9_.]*(?::[A-Za-z0-9_.:/]*)?)*)",
+          "captures": { "1": { "name": "constant.other.symbol.handle.k" }, "2": { "name": "constant.other.symbol.k" } }
         },
         {
-          "comment": "Past a colon a symbol takes slashes too: `a:b/c is one symbol.",
-          "match": "`[A-Za-z0-9_.]*(?::[A-Za-z0-9_.:/]*)?",
+          "comment": "Past a colon a symbol takes slashes too: `a:b/c is one symbol. It does not start with an underscore (`_a is a null symbol, drop, a) unless written straight after another symbol (`a`_b is two).",
+          "match": "`(?:[A-Za-z0-9.][A-Za-z0-9_.]*)?(?::[A-Za-z0-9_.:/]*)?(?:`_[A-Za-z0-9_.]*(?::[A-Za-z0-9_.:/]*)?)*",
           "name": "constant.other.symbol.k"
         }
       ]
@@ -189,9 +191,13 @@
       "comment": "No literal holds an underscore and no name starts with one, so one after a literal or before a name is drop or cut: 1_x is 1, drop, x.",
       "patterns": [
         {
-          "comment": "Timestamp, datetime, date, month, timespan and time literals, each with the type letters q reads as part of it: 12:34:56.789p and 2024.01.02n are one literal.",
+          "comment": "Timestamp, datetime, date, month, timespan and time literals, each with the type letters q reads as part of it: 12:34:56.789p and 2024.01.02n are one literal. The hours after D or T are any digits, with a fraction, when no minutes follow (1970.01.01D0, 0D1.5); with minutes, two.",
           "name": "constant.numeric.temporal.k",
-          "match": "(?<![A-Za-z0-9.`])(?:\\d{4}\\.\\d{2}\\.\\d{2}D(?:\\d{2}(?::\\d{2}(?::\\d{2}(?:\\.\\d*)?)?)?)?[npdz]?|\\d{4}\\.\\d{2}\\.\\d{2}T(?:\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d*)?)?[npdz]?|(?:\\d{2})?[dz]?)|\\d{4}\\.\\d{2}(?:\\.\\d{2}[npdzm]?|m)|\\d+D(?:\\d{2}(?::\\d{2}(?::\\d{2}(?:\\.\\d*)?)?)?)?[np]?|\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d*)?)?[nuvtp]?|\\d{3,}:\\d{2}(?::\\d{2}(?:\\.\\d*)?)?[uvt]?)(?![A-Za-z0-9.:])"
+          "match": "(?<![A-Za-z0-9.`])(?:\\d{4}\\.\\d{2}\\.\\d{2}D(?:(?:\\d{2}:[0-5]\\d(?::[0-5]\\d(?:\\.\\d*)?)?|\\d+(?:\\.\\d*)?))?[npdz]?|\\d{4}\\.\\d{2}\\.\\d{2}T(?:\\d{2}:[0-5]\\d(?::[0-5]\\d(?:\\.\\d*)?)?[npdz]?|(?:\\d+(?:\\.\\d*)?)?[dz]?)|\\d{4}\\.\\d{2}(?:\\.\\d{2}[npdzm]?|m)|\\d+D(?:(?:\\d{2}:[0-5]\\d(?::[0-5]\\d(?:\\.\\d*)?)?|\\d+(?:\\.\\d*)?))?[np]?|\\d{2}:[0-5]\\d(?::[0-5]\\d(?:\\.\\d*)?)?[nuvtp]?|\\d{3,}:[0-5]\\d(?::[0-5]\\d(?:\\.\\d*)?)?[uvt]?)(?![A-Za-z0-9.:])"
+        },
+        {
+          "comment": "What the rule above refuses once a colon follows two characters and a digit: q reads 12:60, 12:3 and 0D1:23 as one token, and an error, so no piece of it is coloured. A minute or second is never past 59.",
+          "match": "(?<![A-Za-z0-9.`])\\d[\\d.]*(?:[DT][\\d.]*)?\\d:[A-Za-z0-9.:]*"
         },
         {
           "name": "constant.language.null.k",
@@ -206,9 +212,9 @@
           "match": "(?<![A-Za-z0-9.`])0x[0-9a-fA-F]*(?![A-Za-z0-9])"
         },
         {
-          "comment": "As q reads them: a fraction takes e, f, n, t and p but no integer letter; an exponent is a lower-case e, or an unsigned upper-case one after a fraction, and takes only e or f. With c anything is a char. q reads digits, letters and dots as one token, and colons with them once it is shaped like a time, so nothing short of the whole token is a number: none of 1.5i, 1.2.3 or 12:34z is. One digit before a colon still is: 0:, 1: and 2: are the file operators.",
+          "comment": "As q reads them: a fraction takes e, f, n, t and p but no integer letter; an exponent is a lower-case e, or an unsigned upper-case one, which after an integer needs its e or f (1E3e, not 1E5), and takes only e or f. With c anything is a char. q reads digits, letters and dots as one token, and colons with them once it is shaped like a time, so nothing short of the whole token is a number: none of 1.5i, 1.2.3 or 12:34z is. One digit before a colon still is: 0:, 1: and 2: are the file operators.",
           "name": "constant.numeric.k",
-          "match": "(?<![A-Za-z0-9.`])(?:(?:\\d+\\.\\d*|\\.\\d+)(?:(?:e[+-]?\\d+|E\\d+)[ef]?|[efntp])?|\\d+(?:e[+-]?\\d+[ef]?|[hijefnuvtp])?)(?![A-Za-z0-9.]|(?<=\\d\\d):\\d)"
+          "match": "(?<![A-Za-z0-9.`])(?:(?:\\d+\\.\\d*|\\.\\d+)(?:(?:e[+-]?\\d+|E\\d+)[ef]?|[efntp])?|\\d+(?:e[+-]?\\d+[ef]?|E\\d+[ef]|[hijefnuvtp])?)(?![A-Za-z0-9.]|(?<=\\d\\d):\\d)"
         }
       ]
     },

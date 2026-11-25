@@ -30,6 +30,7 @@
   ],
   "repository": {
     "block-comment": {
+      "comment": "q counts a block comment's depth: a lone / inside one opens another, and only the \\ that closes the outermost ends it. The nested include keeps the inner \\ from closing the outer comment and the outer \\ from reading as end-of-script.",
       "name": "comment.block.q",
       "begin": "^/\\s*$",
       "end": "^\\\\\\s*$",
@@ -44,6 +45,9 @@
         }
       },
       "patterns": [
+        {
+          "include": "#block-comment"
+        },
         {
           "include": "#qdoc"
         }
@@ -261,12 +265,19 @@
       "patterns": [
         {
           "comment": "A file or network handle: `:path/to/file, `:host:port. A minus is not in one: `:a-b is `:a minus b.",
-          "match": "`:[A-Za-z0-9_.:/]*",
-          "name": "constant.other.symbol.handle.q"
+          "match": "(`:[A-Za-z0-9_.:/]*)((?:`_[A-Za-z0-9_.]*(?::[A-Za-z0-9_.:/]*)?)*)",
+          "captures": {
+            "1": {
+              "name": "constant.other.symbol.handle.q"
+            },
+            "2": {
+              "name": "constant.other.symbol.q"
+            }
+          }
         },
         {
-          "comment": "Past a colon a symbol takes slashes too: `a:b/c is one symbol.",
-          "match": "`[A-Za-z0-9_.]*(?::[A-Za-z0-9_.:/]*)?",
+          "comment": "Past a colon a symbol takes slashes too: `a:b/c is one symbol. It does not start with an underscore: `_a is a null symbol, drop, a.",
+          "match": "`(?:[A-Za-z0-9.][A-Za-z0-9_.]*)?(?::[A-Za-z0-9_.:/]*)?(?:`_[A-Za-z0-9_.]*(?::[A-Za-z0-9_.:/]*)?)*",
           "name": "constant.other.symbol.q"
         }
       ]
@@ -507,7 +518,11 @@
         {
           "comment": "Each shape with the type letters q reads as part of it, so 12:34:56.789p and 2024.01.02n are one literal. As KDB-X takes them; what q refuses (2024.01.02t, 12:34z, 1Dt) is left uncoloured.",
           "name": "constant.numeric.temporal.q",
-          "match": "(?<![A-Za-z0-9.`])(?:\\d{4}\\.\\d{2}\\.\\d{2}D(?:\\d{2}(?::\\d{2}(?::\\d{2}(?:\\.\\d*)?)?)?)?[npdz]?|\\d{4}\\.\\d{2}\\.\\d{2}T(?:\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d*)?)?[npdz]?|(?:\\d{2})?[dz]?)|\\d{4}\\.\\d{2}(?:\\.\\d{2}[npdzm]?|m)|\\d+D(?:\\d{2}(?::\\d{2}(?::\\d{2}(?:\\.\\d*)?)?)?)?[np]?|\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d*)?)?[nuvtp]?|\\d{3,}:\\d{2}(?::\\d{2}(?:\\.\\d*)?)?[uvt]?)(?![A-Za-z0-9.:])"
+          "match": "(?<![A-Za-z0-9.`])(?:\\d{4}\\.\\d{2}\\.\\d{2}D(?:(?:\\d{2}:[0-5]\\d(?::[0-5]\\d(?:\\.\\d*)?)?|\\d+(?:\\.\\d*)?))?[npdz]?|\\d{4}\\.\\d{2}\\.\\d{2}T(?:\\d{2}:[0-5]\\d(?::[0-5]\\d(?:\\.\\d*)?)?[npdz]?|(?:\\d+(?:\\.\\d*)?)?[dz]?)|\\d{4}\\.\\d{2}(?:\\.\\d{2}[npdzm]?|m)|\\d+D(?:(?:\\d{2}:[0-5]\\d(?::[0-5]\\d(?:\\.\\d*)?)?|\\d+(?:\\.\\d*)?))?[np]?|\\d{2}:[0-5]\\d(?::[0-5]\\d(?:\\.\\d*)?)?[nuvtp]?|\\d{3,}:[0-5]\\d(?::[0-5]\\d(?:\\.\\d*)?)?[uvt]?)(?![A-Za-z0-9.:])"
+        },
+        {
+          "comment": "What the rule above refuses once a colon follows two characters and a digit: q reads 12:60, 12:3, 0D1:23 and 12:34e as one token, and an error, so no piece of it is coloured. One digit before a colon is a file operator's (1:23 is 1:, 23).",
+          "match": "(?<![A-Za-z0-9.`])\\d[\\d.]*(?:[DT][\\d.]*)?\\d:[A-Za-z0-9.:]*"
         },
         {
           "comment": "A typed null or infinity. None is of symbol (the null symbol is a lone backtick) and no infinity of guid: q refuses 0Ns, 0Ws and 0Wg.",
@@ -523,9 +538,9 @@
           "match": "(?<![A-Za-z0-9.`])0x[0-9a-fA-F]*(?![A-Za-z0-9])"
         },
         {
-          "comment": "With p, a number is a timestamp that many hours past 2000: 1p. As KDB-X reads them: a fraction takes e, f, n, t and p but no integer letter (1.5i is an error); an exponent is a lower-case e, or an unsigned upper-case one after a fraction (1.5E3, not 1E5 or 1.5E-3), and takes only e or f after it. With c anything is a char, not a number: 3c is \"3\".",
+          "comment": "With p, a number is a timestamp that many hours past 2000: 1p. As KDB-X reads them: a fraction takes e, f, n, t and p but no integer letter (1.5i is an error); an exponent is a lower-case e, or an unsigned upper-case one (1.5E3, not 1.5E-3), which after an integer needs its e or f (1E3e and 1E3f, not 1E5), and takes only e or f after it. With c anything is a char, not a number: 3c is \"3\".",
           "name": "constant.numeric.q",
-          "match": "(?<![A-Za-z0-9.`])(?:(?:\\d+\\.\\d*|\\.\\d+)(?:(?:e[+-]?\\d+|E\\d+)[ef]?|[efntp])?|\\d+(?:e[+-]?\\d+[ef]?|[hijefnuvtp])?)(?![A-Za-z0-9.]|(?<=\\d\\d):\\d)"
+          "match": "(?<![A-Za-z0-9.`])(?:(?:\\d+\\.\\d*|\\.\\d+)(?:(?:e[+-]?\\d+|E\\d+)[ef]?|[efntp])?|\\d+(?:e[+-]?\\d+[ef]?|E\\d+[ef]|[hijefnuvtp])?)(?![A-Za-z0-9.]|(?<=\\d\\d):\\d)"
         }
       ]
     },
