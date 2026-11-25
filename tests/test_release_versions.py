@@ -3,6 +3,7 @@
 
 import hashlib
 import importlib.util
+import json
 import re
 import shutil
 from pathlib import Path
@@ -39,6 +40,17 @@ def test_bump_moves_every_declared_version(tmp_path, monkeypatch):
     dist.bump(type("Args", (), {"version": "v9.8.7"})())
     assert set(dist.declared_versions().values()) == {"9.8.7"}
     assert builds == [("cargo", "build", "--release")]
+    # package-lock.json's own entry for the package, not only its top (#2182),
+    # and nothing else in either lock file.
+    lock = json.loads((tmp_path / "editors" / "vscode" / "package-lock.json").read_text())
+    assert (lock["version"], lock["packages"][""]["version"]) == ("9.8.7", "9.8.7")
+    before = json.loads((ROOT / "editors" / "vscode" / "package-lock.json").read_text())
+    for p in [lock, before]:
+        p.pop("version")
+        p["packages"][""].pop("version")
+    assert lock == before
+    uv = (tmp_path / "uv.lock").read_text()
+    assert uv == (ROOT / "uv.lock").read_text().replace(f'version = "{old}"', 'version = "9.8.7"', 1)
 
 
 def published_release(folder, files):

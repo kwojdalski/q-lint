@@ -42,21 +42,51 @@ export function writtenCount(stderr: string): { findings: number; files: number 
   return m ? { findings: Number(m[1]), files: Number(m[2]) } : undefined;
 }
 
-/// `text`, a `pyproject.toml`, with `baseline = "<file>"` first in its
-/// `[tool.qlinter]` table, or undefined when that table names one already
-/// or there is no such table.
-export function pyprojectWithBaseline(text: string, file = BASELINE_FILE): string | undefined {
+/// `text`, a `pyproject.toml`, with `baseline = "<file>"` in the table
+/// qlinter reads, as config.rs finds it: `[tool.qlinter]`, or the older
+/// `[tool.q-lint]` (#2179). Its keys may also be only sub-tables
+/// (`[tool.qlinter.lint]`), which get the table itself, or dotted keys under
+/// `[tool]`. Undefined when that table names a baseline already; null when
+/// the table is written some other way (an inline table) and the line has
+/// to be added by hand.
+export function pyprojectWithBaseline(text: string, file = BASELINE_FILE): string | undefined | null {
   const lines = text.split("\n");
-  const at = lines.findIndex((l) => /^\s*\[\s*tool\.qlinter\s*\]\s*(#.*)?$/.test(l));
-  if (at < 0) {
-    return undefined;
+  const line = `baseline = "${file}"`;
+  const header = (l: string): RegExpExecArray | null =>
+    /^\s*\[\s*tool\s*\.\s*("?)(qlinter|q-lint)\1\s*(\.[^\]]*)?\]\s*(#.*)?$/.exec(l);
+  const tableEnd = (at: number): number => {
+    const end = lines.findIndex((l, i) => i > at && /^\s*\[/.test(l));
+    return end < 0 ? lines.length : end;
+  };
+  const own = lines.findIndex((l) => header(l) !== null && header(l)![3] === undefined);
+  if (own >= 0) {
+    if (lines.slice(own + 1, tableEnd(own)).some((l) => /^\s*baseline\s*=/.test(l))) {
+      return undefined;
+    }
+    lines.splice(own + 1, 0, line);
+    return lines.join("\n");
   }
-  const end = lines.findIndex((l, i) => i > at && /^\s*\[/.test(l));
-  if (lines.slice(at + 1, end < 0 ? undefined : end).some((l) => /^\s*baseline\s*=/.test(l))) {
-    return undefined;
+  // Dotted keys in [tool]: `qlinter.select = [...]`.
+  const tool = lines.findIndex((l) => /^\s*\[\s*tool\s*\]\s*(#.*)?$/.test(l));
+  const dotted = tool < 0 ? [] : lines.slice(tool + 1, tableEnd(tool)).map((l) => /^\s*("?)(qlinter|q-lint)\1\s*(\.|=)\s*"?(\w*)/.exec(l));
+  if (dotted.some((m) => m !== null && m[3] === "=")) {
+    return null;
   }
-  lines.splice(at + 1, 0, `baseline = "${file}"`);
-  return lines.join("\n");
+  const key = dotted.find((m) => m !== null);
+  if (key) {
+    if (dotted.some((m) => m !== null && m[4] === "baseline")) {
+      return undefined;
+    }
+    lines.splice(tool + 1, 0, `${key[2]}.${line}`);
+    return lines.join("\n");
+  }
+  // Only sub-tables: the table goes before the first of them.
+  const sub = lines.findIndex((l) => header(l) !== null);
+  if (sub >= 0) {
+    lines.splice(sub, 0, `[tool.${header(lines[sub])![2]}]`, line, "");
+    return lines.join("\n");
+  }
+  return `${text.replace(/\n*$/, "")}${text.trim() === "" ? "" : "\n\n"}[tool.qlinter]\n${line}\n`;
 }
 
 /// The configuration file `qlinter --show-settings` says governs a folder,
@@ -139,6 +169,12 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
         if (ran.code === null) {
           const why = ran.stderr.trim() === "" ? "" : `: ${ran.stderr.trim().slice(0, 500)}`;
           void window.showWarningMessage(plainMessage(`q-lint: qlinter ${ran.stopped ?? "was stopped before it finished"}; no baseline was written${why}`));
+          return undefined;
+        }
+        // Exit 2: an input it could not read, which a baseline would be
+        // missing - and replaced with - though an older qlinter writes it (#2180).
+        if (ran.code === 2) {
+          void window.showWarningMessage(plainMessage(`q-lint: qlinter could not read every file; no baseline was written: ${ran.stderr.trim().slice(0, 500) || "exit 2"}`));
           return undefined;
         }
         const count = writtenCount(ran.stderr);
@@ -263,10 +299,14 @@ async function offerConfiguration(dir: string, target: string, command: string, 
     void window.showInformationMessage(plainMessage(`q-lint: wrote ${BASELINE_FILE}; ${config} already names a baseline.`));
     return;
   }
+  if (after === null) {
+    void window.showInformationMessage(plainMessage(`q-lint: wrote ${BASELINE_FILE}. Add \`baseline = "${file}"\` to the qlinter table in ${config} for the editor and qlinter to use it.`));
+    return;
+  }
   const add = "Add";
   const answer = await window.showInformationMessage(
     plainMessage(
-      `q-lint: wrote ${BASELINE_FILE}. Add \`baseline = "${file}"\` to ${existsSync(config) ? `${config}${pyproject ? "'s [tool.qlinter]" : ""}` : `a new ${config}`}, so the editor and qlinter use it?`,
+      `q-lint: wrote ${BASELINE_FILE}. Add \`baseline = "${file}"\` to ${existsSync(config) ? `${config}${pyproject ? `'s [tool.${/^\s*\[\s*tool\s*\.\s*"?q-lint/m.test(before) ? "q-lint" : "qlinter"}]` : ""}` : `a new ${config}`}, so the editor and qlinter use it?`,
     ),
     add,
   );

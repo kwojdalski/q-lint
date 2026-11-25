@@ -305,7 +305,9 @@ when nothing is new. Name the file in a configuration, `baseline =
 included - uses it without the flag; `--write-baseline` reads no baseline, so
 it always writes everything. It never writes over a file the run lints, nor
 to a name ending `.q`, `.k` or `.qnb`: `qlinter --write-baseline o.q`, which
-lints the tree, is refused with exit 2 and leaves `o.q` as it was.
+lints the tree, is refused with exit 2 and leaves `o.q` as it was. Nor
+does a run that could not read one of its inputs write anything: it exits 2
+and keeps the baseline there, which a partial one would replace.
 
 A finding is matched on its file, its code and the text of its line with
 the blanks at either end trimmed, never its line number: lines added above
@@ -1032,7 +1034,7 @@ Development Host, or package and install it:
 
 ```sh
 mkdir -p server && install -m 755 ../../target/release/qlinter server/qlinter
-npx vsce package --out q-lint.vsix         # a name no release bump makes stale
+npx --yes @vscode/vsce package --out q-lint.vsix  # a name no release bump makes stale
 code --install-extension q-lint.vsix
 ```
 
@@ -1323,9 +1325,11 @@ platform-neutral vsix and the wheel on every pull request and keeps both as
 workflow artifacts, so a packaging mistake fails there rather than at a tag.
 
 A release is a tag: `python3 scripts/dist.py bump X.Y.Z` sets the version in
-`Cargo.toml`, `Cargo.lock`, `pyproject.toml` and the extension, and refreshes
-its bundled server; commit, tag `vX.Y.Z` and push, and the release workflow
-builds and publishes every platform.
+`Cargo.toml`, `Cargo.lock`, `pyproject.toml`, `uv.lock` and the extension's
+`package.json` and `package-lock.json`, and builds the release binary; commit,
+tag `vX.Y.Z` and push, and the release workflow builds and publishes every
+platform. The extension's bundled server is not committed: `dist.py build`
+and the release copy the binary they build into it before packaging.
 
 ## pre-commit and CI
 
@@ -1377,7 +1381,8 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 cargo build --release                                 # the Python harness needs it
 cargo test --release --test never_panic -- --ignored  # no panic on any mutated q in the tree
-Q_LINT_TEST_QLS=qls uv run pytest tests                # black-box CLI checks
+Q_LINT_TEST_QLS=qls uv run --with pytest --with pyyaml pytest tests
+                                                      # black-box CLI checks
 python3 scripts/check_invariance.py target/release/qlinter examples tests/corpus tests/cases
                                                       # findings unmoved by CRLF, position, comments
 cargo build --release --example profile               # for profiling the analysis API

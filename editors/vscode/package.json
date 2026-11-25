@@ -5396,7 +5396,7 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "vsce package",
+    "package": "npx --yes @vscode/vsce package",
     "test": "tsc -p ./ && node --test test/*.test.js",
     "chart": "node out/chartcli.js"
   },

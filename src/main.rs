@@ -822,6 +822,16 @@ fn run(args: Args) -> Result<u8, String> {
             .cmp(&(&b.path, b.line, b.column, &b.source, &b.rule))
     });
     if let Some(file) = &args.write_baseline {
+        // A run that could not read every input would write a baseline
+        // without that file's findings, and they would all come back as new
+        // once it reads again: nothing is written, the old one kept (#2180).
+        if failed {
+            eprintln!(
+                "qlinter: an input could not be read; no baseline written, {} left as it was",
+                file.display()
+            );
+            return Ok(2);
+        }
         let text = baseline::render(file, &findings, &sources);
         fs::write(file, text).map_err(|e| format!("{}: {e}", file.display()))?;
         eprintln!(

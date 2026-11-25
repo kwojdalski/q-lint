@@ -8,23 +8,30 @@
 // an array of numbers and nulls a float vector, of booleans a boolean
 // vector, of objects with the same keys in the same order a table, and any
 // other array a general list. A JSON number is read as JavaScript reads it,
-// the double nearest, and written so q reads the same double back.
+// the double nearest, and written so q reads the same double back - but a
+// whole number past what a long holds is +/-2^63, as `.j.k` caps it. A key
+// an object repeats is kept each time, as `.j.k` keeps it (#2185).
 import { plainName, qString, stringLiteral, symbolLiteral } from "./qliteral";
 import { floatText } from "./pastetable";
 import { statements } from "./statements";
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 
-/// Each object's keys in the order the text wrote them: `Object.keys` puts
-/// integer-like ones first, and `.j.k` keeps the text's order (#1075).
-const ORDER = new WeakMap<object, string[]>();
+/// Each object's keys and values in the order the text wrote them, a key
+/// repeated each time: `Object.keys` puts integer-like ones first and keeps
+/// one of each, and `.j.k` keeps the text's order (#1075) and every key.
+const ENTRIES = new WeakMap<object, [string, Json][]>();
 
-function keysOf(o: object): string[] {
-  return ORDER.get(o) ?? Object.keys(o);
+function entriesOf(o: { [key: string]: Json }): [string, Json][] {
+  return ENTRIES.get(o) ?? Object.entries(o);
+}
+
+function keysOf(o: { [key: string]: Json }): string[] {
+  return entriesOf(o).map(([k]) => k);
 }
 
 /// `text`, which `JSON.parse` has read, read again with each object's keys
-/// recorded in order; a repeated key keeps its first place and last value.
+/// and values recorded in order.
 function parseOrdered(text: string): Json {
   let at = 0;
   const space = (): void => {
@@ -38,16 +45,14 @@ function parseOrdered(text: string): Json {
     if (c === "{") {
       at++;
       const o: { [key: string]: Json } = {};
-      const keys: string[] = [];
+      const entries: [string, Json][] = [];
       space();
       while (text[at] !== "}") {
         const key = read() as string;
         space();
         at++; // the colon
         const v = read();
-        if (!Object.prototype.hasOwnProperty.call(o, key)) {
-          keys.push(key);
-        }
+        entries.push([key, v]);
         Object.defineProperty(o, key, { value: v, enumerable: true, writable: true, configurable: true });
         space();
         if (text[at] === ",") {
@@ -56,7 +61,7 @@ function parseOrdered(text: string): Json {
         }
       }
       at++;
-      ORDER.set(o, keys);
+      ENTRIES.set(o, entries);
       return o;
     }
     if (c === "[") {
@@ -78,6 +83,11 @@ function parseOrdered(text: string): Json {
     token.lastIndex = at;
     const m = token.exec(text);
     at += m?.[0].length ?? 1;
+    // A whole number a long cannot hold: `.j.k` reads it as 0W or -0W would
+    // be, +/-2^63 as a float, where JavaScript reads the double nearest.
+    if (m !== null && /^-?\d+$/.test(m[0]) && (BigInt(m[0]) >= 2n ** 63n || BigInt(m[0]) <= -(2n ** 63n))) {
+      return m[0].startsWith("-") ? -(2 ** 63) : 2 ** 63;
+    }
     return JSON.parse(m?.[0] ?? "null") as Json;
   };
   return read();
@@ -105,8 +115,8 @@ function sameKeys(items: Json[]): items is { [key: string]: Json }[] {
   if (!items.every((i) => i !== null && typeof i === "object" && !Array.isArray(i))) {
     return false;
   }
-  const first = keysOf(items[0] as object).join("\u0000");
-  return keysOf(items[0] as object).length > 0 && items.every((i) => keysOf(i as object).join("\u0000") === first);
+  const first = keysOf(items[0] as { [key: string]: Json }).join("\u0000");
+  return keysOf(items[0] as { [key: string]: Json }).length > 0 && items.every((i) => keysOf(i as { [key: string]: Json }).join("\u0000") === first);
 }
 
 /// A list's items as one q list: `enlist x` for one, `(x;y)` for more.
@@ -132,7 +142,8 @@ function array(items: Json[]): string {
   }
   if (sameKeys(items)) {
     const keys = keysOf(items[0]);
-    const columns = keys.map((k) => array(items.map((i) => i[k])));
+    // By place: a key repeated is a column each time.
+    const columns = keys.map((_, c) => array(items.map((i) => entriesOf(i)[c][1])));
     if (keys.every(plainName) && new Set(keys).size === keys.length) {
       return `([] ${keys.map((k, c) => `${k}:${columns[c]}`).join("; ")})`;
     }
@@ -158,16 +169,15 @@ export function value(json: Json): string {
   if (Array.isArray(json)) {
     return array(json);
   }
-  const keys = keysOf(json);
-  if (keys.length === 0) {
+  const entries = entriesOf(json);
+  if (entries.length === 0) {
     return "(`symbol$())!()";
   }
   // Parenthesised: `a`b!x;y would read as one expression to the right.
-  return `(${symbols(keys)})!${array(keys.map((k) => json[k])).replace(/^\(\)$/, "()")}`;
+  return `(${symbols(entries.map(([k]) => k))})!${array(entries.map(([, v]) => v)).replace(/^\(\)$/, "()")}`;
 }
 
-/// JSON text as q, or why it is not JSON. A key repeated in an object keeps
-/// its last value, as JavaScript reads it.
+/// JSON text as q, or why it is not JSON.
 export function jsonToQ(text: string): { code: string } | { error: string } {
   const json = text.replace(/^﻿/, "");
   try {

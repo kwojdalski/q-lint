@@ -230,6 +230,8 @@ def declared_versions() -> dict:
         (ROOT / "Cargo.toml", r'(?m)^version = "([^"]+)"'),
         (ROOT / "pyproject.toml", r'(?m)^version = "([^"]+)"'),
         (EXTENSION / "package.json", r'(?m)^  "version": "([^"]+)",'),
+        (EXTENSION / "package-lock.json", r'(?m)^  "version": "([^"]+)",'),
+        (ROOT / "uv.lock", r'(?m)^name = "q-lint-rs"\nversion = "([^"]+)"'),
     ]:
         m = re.search(pattern, path.read_text())
         found[str(path.relative_to(ROOT))] = m.group(1) if m else None
@@ -249,10 +251,19 @@ def bump(args) -> None:
     package = EXTENSION / "package.json"
     data = package.read_text()
     package.write_text(re.sub(r'"version": "[^"]+"', f'"version": "{new}"', data, count=1))
+    # The lock files carry it too: package-lock.json twice, at its top and
+    # for the package itself, and uv.lock for q-lint-rs (#2182). Rewritten,
+    # not re-resolved, so a bump needs no network and moves nothing else.
+    lock = EXTENSION / "package-lock.json"
+    lock.write_text(re.sub(r'(?m)^(  "version": |    "": \{\n(?:      .*\n)*?      "version": )"[^"]+"',
+                           lambda m: f'{m.group(1)}"{new}"', lock.read_text(), count=2))
+    uv = ROOT / "uv.lock"
+    uv.write_text(re.sub(r'(?m)^(name = "q-lint-rs"\nversion = )"[^"]+"', lambda m: f'{m.group(1)}"{new}"',
+                         uv.read_text(), count=1))
     # Cargo.lock follows the build.
     run("cargo", "build", "--release")
-    print(f"{old} -> {new}: Cargo.toml, Cargo.lock, pyproject.toml, editors/vscode/package.json. "
-          "Commit, tag v" + new + " and push to release.")
+    print(f"{old} -> {new}: Cargo.toml, Cargo.lock, pyproject.toml, uv.lock, editors/vscode/package.json "
+          "and package-lock.json. Commit, tag v" + new + " and push to release.")
 
 
 def main() -> None:
