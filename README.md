@@ -430,14 +430,16 @@ adds to it.
 The root is the directory the pattern is written relative to, never the path
 being linted: a configuration file's own directory for its patterns, and the
 directory qlinter runs in for `--exclude` (and for a `--config FILE` or the
-user-level file). So `qlinter .. --exclude src/`, run from `proj/tests`,
+user-level file - in the language server, the user-level file's patterns are
+rooted at the workspace folder holding the file instead). So `qlinter .. --exclude src/`, run from `proj/tests`,
 names `proj/tests/src`; a leading `../` climbs from the root, as Ruff resolves
 it, and `qlinter .. --exclude ../src` is the one that names `proj/src`.
 
 Under `uqf`, QP002, QP003 and QP005 - and QP007 where it is selected - pass
 over a file in a `tests`
 directory below that root - the configuration's directory, or the current
-one without a configuration - since a test may build a datetime or read the
+one without a configuration (in the language server, the workspace folder
+holding the file, wherever the editor started it) - since a test may build a datetime or read the
 local clock on purpose. A `tests` above the root exempts nothing, and
 `--select` naming one of them reports it regardless.
 
@@ -524,9 +526,11 @@ It implements `initialize`/`initialized`, `didOpen`/`didChange`/`didSave`/
 It also offers Quick Fixes through `textDocument/codeAction` for `==` → `=`,
 `!=` → `<>`, `+=`/`-=`/`*=` → `+:`/`-:`/`*:`, and a leading UTF-8 BOM -
 the BOM only where the editor sends one: VS Code decodes a UTF-8 file's BOM
-away before the server sees the text and writes it back on save, so there
-QE005 is never shown and Format Document leaves the BOM, which
-`qlinter --fix` removes.
+away before the server sees the text and writes it back on save. QE005 is
+still reported there, open or closed, while the file on disk starts with a
+BOM, since that is what q loads; it has no Quick Fix and Format Document
+leaves the BOM, which `qlinter --fix` - or saving with the encoding set to
+UTF-8 - removes.
 It also fixes `&&` → `&` and `||` → `|` when selected in the editor, and
 `f x` → `f[x]` for QP006 under the uqf profile - where the edit covers the
 whole application, not just the underlined name - along with every other
@@ -1254,6 +1258,10 @@ client that registers watchers for three: `**/*.q`, `**/*.toml`, and `**/*`
 for a path created or deleted (`kind` 5) - the last because a folder
 renamed, moved or deleted is one event for the folder and none for the
 files in it, which stands for every `.q` file and configuration it holds.
+A baseline, or another file the settings were read from by a name those
+miss, is watched by its own pattern too: rooted at its directory for a
+client that takes relative patterns, and otherwise as a glob relative to
+the workspace folder that holds it.
 A value the server cannot read is reported with `window/showMessage` and its
 default used.
 

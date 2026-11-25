@@ -7,22 +7,27 @@
 use super::Lines;
 use q_lint_rs::Finding;
 use serde_json::{Value, json};
+use std::cell::OnceCell;
 
 /// The related locations for `finding`, which starts at byte `at` of
 /// `text`, each a location in `uri` with a message - or none, for a rule
-/// that points at one place only.
+/// that points at one place only. `view` holds `text` with strings and
+/// comments blanked once it is first wanted, for all of a document's
+/// findings: made again for each, a file with many was quadratic (#2114).
 pub(super) fn related(
     finding: &Finding,
     text: &str,
+    view: &OnceCell<String>,
     lines: &Lines,
     at: usize,
     uri: &str,
 ) -> Vec<Value> {
     // Read with strings and comments blanked, so a name or a bracket in
     // one is not taken for code.
+    let view = || view.get_or_init(|| q_lint_rs::code_view(text)).as_str();
     let places = match finding.code.as_str() {
-        "QF008" => parameters(finding, &q_lint_rs::code_view(text), at),
-        "QB019" | "QB021" => columns(finding, &q_lint_rs::code_view(text), at),
+        "QF008" => parameters(finding, view(), at),
+        "QB019" | "QB021" => columns(finding, view(), at),
         _ => vec![],
     };
     places

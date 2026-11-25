@@ -202,6 +202,10 @@ pub struct Policy {
     baseline_off: std::cell::Cell<bool>,
     /// Findings a baseline passed over in this run.
     pub baselined: std::cell::Cell<usize>,
+    /// The directories a file no configuration governs takes the deepest
+    /// of that holds it as its project root, in place of the current
+    /// directory: a language server's workspace folders (`set_roots`).
+    roots: RefCell<Vec<PathBuf>>,
 }
 
 impl Policy {
@@ -215,6 +219,47 @@ impl Policy {
             baselines: RefCell::default(),
             baseline_off: std::cell::Cell::new(false),
             baselined: std::cell::Cell::new(0),
+            roots: RefCell::default(),
+        }
+    }
+
+    /// Root every file no configuration governs at the deepest of `roots`
+    /// that holds it, rather than at the current directory: an editor
+    /// starts its server in one folder, or anywhere, whatever folder the
+    /// file is in (#2109). What was read under other roots is forgotten.
+    pub fn set_roots<P: AsRef<Path>>(&self, roots: impl IntoIterator<Item = P>) {
+        let roots: Vec<PathBuf> = roots.into_iter().map(|r| absolute(r.as_ref())).collect();
+        if *self.roots.borrow() != roots {
+            *self.roots.borrow_mut() = roots;
+            self.cache.borrow_mut().clear();
+        }
+    }
+
+    /// The directory the settings of the file `full` take as the project's
+    /// top: where the configuration's patterns are rooted, or `base_dir`
+    /// when no configuration governs it.
+    fn project_root(&self, settings: &Settings, full: &Path) -> Result<PathBuf, String> {
+        match &settings.root {
+            Some(dir) => Ok(dir.clone()),
+            None => self.base_dir(full.parent().unwrap_or(full)),
+        }
+    }
+
+    /// Where a file in `dir` is rooted when no configuration governs it:
+    /// the deepest root holding it, or the current directory.
+    fn base_dir(&self, dir: &Path) -> Result<PathBuf, String> {
+        let dir = absolute(dir);
+        match self
+            .roots
+            .borrow()
+            .iter()
+            .filter(|root| dir.starts_with(root))
+            .max_by_key(|root| root.components().count())
+        {
+            Some(root) => Ok(root.clone()),
+            None => Ok(absolute(
+                &std::env::current_dir().map_err(|e| e.to_string())?,
+            )),
         }
     }
 
@@ -379,7 +424,7 @@ impl Policy {
         }
         let settings = match found {
             Some(settings) => settings,
-            None => Rc::new(user_config()?.unwrap_or_default()),
+            None => Rc::new(user_config(&self.base_dir(start)?)?.unwrap_or_default()),
         };
         let mut cache = self.cache.borrow_mut();
         for dir in visited {
@@ -429,8 +474,8 @@ impl Policy {
             return Ok(true);
         }
         let settings = self.settings(path)?;
-        let root = project_root(&settings)?;
         let full = absolute(path);
+        let root = self.project_root(&settings, &full)?;
         // A name pattern names a directory at any depth, and the walk asks
         // about each directory before entering it - so `gen` skips
         // `../other/gen/f.q` in a walk of `../other`. `matches` sees a
@@ -588,7 +633,8 @@ impl Policy {
     /// arithmetic on purpose, so QP002, QP003, QP005 and QP007 pass over a
     /// file in a `tests` directory below the project root: where the
     /// configuration's patterns are rooted, or the current directory when
-    /// there is none. A `tests` above the root - a checkout under `~/tests` -
+    /// there is none - in a language server, the workspace folder holding
+    /// the file. A `tests` above the root - a checkout under `~/tests` -
     /// exempts nothing, and a rule the command line selects by code reports
     /// regardless (#800, #416).
     fn test_exempt(&self, settings: &Settings, code: &str, path: &Path) -> bool {
@@ -605,10 +651,10 @@ impl Policy {
         {
             return false;
         }
-        let Ok(root) = project_root(settings) else {
+        let full = absolute(path);
+        let Ok(root) = self.project_root(settings, &full) else {
             return false;
         };
-        let full = absolute(path);
         full.strip_prefix(&root).is_ok_and(|relative| {
             relative
                 .parent()
@@ -713,18 +759,6 @@ fn per_file_ignored(settings: &Settings, code: &str, path: &Path) -> bool {
     })
 }
 
-/// The directory a file's settings take as the project's top: where the
-/// configuration's patterns are rooted, or the current directory when no
-/// configuration governs it.
-fn project_root(settings: &Settings) -> Result<PathBuf, String> {
-    match &settings.root {
-        Some(dir) => Ok(dir.clone()),
-        None => Ok(absolute(
-            &std::env::current_dir().map_err(|e| e.to_string())?,
-        )),
-    }
-}
-
 /// Ruff's matching: a pattern is tried against the path relative to the
 /// configuration's directory and against each directory above it within that
 /// root, so `vendor/*` and `vendor` both cover everything under `vendor/`. A
@@ -784,17 +818,14 @@ fn in_directory(dir: &Path) -> Result<Option<Settings>, String> {
     Ok(None)
 }
 
-/// The user-level configuration. Its patterns are rooted at the current
-/// directory, not at the configuration's own: a file under
-/// `~/.config/qlinter/` governs projects elsewhere, and Ruff resolves a user
-/// configuration's `exclude` and per-file-ignores against the directory it
-/// runs in.
-fn user_config() -> Result<Option<Settings>, String> {
+/// The user-level configuration. Its patterns are rooted at `base`, the
+/// current directory (a language server's workspace folder), not at the
+/// configuration's own: a file under `~/.config/qlinter/` governs projects
+/// elsewhere, and Ruff resolves a user configuration's `exclude` and
+/// per-file-ignores against the directory it runs in.
+fn user_config(base: &Path) -> Result<Option<Settings>, String> {
     match user_config_path() {
-        Some(path) if path.is_file() => {
-            let cwd = absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
-            load(&path, &[], Some(&cwd))
-        }
+        Some(path) if path.is_file() => load(&path, &[], Some(base)),
         _ => Ok(None),
     }
 }

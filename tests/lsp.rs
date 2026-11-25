@@ -1165,6 +1165,57 @@ fn codes_of(diagnostics: &[Value]) -> Vec<String> {
         .collect()
 }
 
+/// The server started in `cwd` under `--profile uqf` with `folders` as its
+/// workspace folders, as VS Code starts it in the first.
+fn start_with_folders(cwd: &std::path::Path, folders: &[&std::path::Path]) -> Server {
+    let mut server = Server::start_in(cwd, &[]);
+    let folders: Vec<Value> = folders
+        .iter()
+        .map(|f| json!({"uri": file_uri(f), "name": "ws"}))
+        .collect();
+    server.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize",
+        "params":{"capabilities":client_capabilities(),"workspaceFolders":folders}}));
+    server.receive();
+    server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    server
+}
+
+#[test]
+fn with_no_configuration_the_tests_exemption_is_rooted_at_the_files_folder() {
+    // With no configuration a file's project root was the server's current
+    // directory, so a second folder's tests/ reported QP002 and QP003 where
+    // `qlinter` run in that folder reports nothing - and, started at `/`, a
+    // folder under a `tests` directory was exempted although the CLI run in
+    // it is not (#2109).
+    let dir = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(dir.path()).unwrap();
+    let (a, b, nested) = (root.join("a"), root.join("b"), root.join("c/tests/proj"));
+    let source = "a:.z.Z\nb:.z.P\n";
+    for path in [a.join("x.q"), b.join("tests/t.q"), nested.join("t.q")] {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, source).unwrap();
+    }
+    let qp = |diagnostics: Vec<Value>| -> Vec<String> {
+        let mut codes = codes_of(&diagnostics);
+        codes.retain(|c| c.starts_with("QP"));
+        codes
+    };
+    let mut server = start_with_folders(&a, &[&a, &b]);
+    let uri = file_uri(&b.join("tests/t.q"));
+    server.open(&uri, source);
+    assert_eq!(qp(server.diagnostics_for(&uri)), Vec::<String>::new());
+    assert_eq!(server.shutdown_and_exit(), 0);
+
+    let mut server = start_with_folders(std::path::Path::new("/"), &[&nested]);
+    let uri = file_uri(&nested.join("t.q"));
+    server.open(&uri, source);
+    assert_eq!(
+        qp(server.diagnostics_for(&uri)),
+        ["QP002", "QP003", "QP003"]
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
 #[test]
 fn a_name_another_workspace_file_defines_is_not_undefined() {
     // lib.q is on disk and never opened; the server reads it at startup.
@@ -2152,6 +2203,52 @@ fn with_run_on_save_a_change_is_linted_only_when_saved() {
 }
 
 #[test]
+fn an_unclosed_statement_ending_in_a_non_ascii_character_keeps_the_server_alive() {
+    // The statement that does not close runs to the end of the text, and
+    // its last line was looked up one byte before that end: inside the `é`,
+    // where slicing panicked and the server exited 101 (#2108).
+    for ending in ["s:\"caf\u{e9}", "s:(\u{1f600}", "{\u{20ac}"] {
+        let mut server = Server::start();
+        server.initialize();
+        let uri = "file:///tmp/non-ascii-end.q";
+        server.open(uri, "a:1\n");
+        assert!(server.diagnostics_for(uri).is_empty());
+        server.change(uri, 2, ending);
+        assert_eq!(
+            codes_of(&server.diagnostics_for(uri)),
+            ["QE001"],
+            "{ending:?}"
+        );
+        assert_eq!(server.shutdown_and_exit(), 0, "{ending:?}");
+    }
+}
+
+#[test]
+fn with_run_on_save_an_unclosed_non_ascii_ending_folds_and_saves() {
+    // The same text reached through folding answered an internal error, and
+    // the save after it ended the server (#2108).
+    let dir = tempfile::tempdir().unwrap();
+    let (mut server, _) = start_with_options(
+        dir.path(),
+        &["--lsp"],
+        json!({"lint": {"run": "onSave"}}),
+        None,
+    );
+    let uri = "file:///tmp/on-save-non-ascii.q";
+    server.open(uri, "f:{\n 1}\n");
+    assert!(server.diagnostics_for(uri).is_empty());
+    server.change(uri, 2, "f:{\n 1}\ns:\"caf\u{e9}");
+    assert_eq!(
+        server.folding_ranges(uri),
+        json!([{"startLine": 0, "endLine": 1}])
+    );
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didSave",
+        "params":{"textDocument":{"uri":uri}}}));
+    assert_eq!(codes_of(&server.diagnostics_for(uri)), ["QE001"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn with_run_on_save_another_files_save_does_not_lint_an_unsaved_buffer() {
     // Saving b.q changes what the workspace defines, so the other open
     // documents are linted again - but not a.q's unsaved text (#550).
@@ -2511,6 +2608,55 @@ fn a_client_that_waits_for_registration_is_asked_to_watch_files() {
     // Every configuration by any name, `extend`ed bases included (#554).
     assert!(globs.contains(&"**/*.toml"), "{globs:?}");
     server.send(json!({"jsonrpc":"2.0","id":request["id"],"result":null}));
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn a_baseline_is_watched_by_a_client_without_relative_patterns() {
+    // A client that registers watchers but takes no pattern rooted
+    // elsewhere (Helix) was asked for `**/*.q`, `**/*.toml` and every path
+    // created or deleted: a baseline rewritten in place matched none, and
+    // what it hid stayed hidden, or shown, until a restart (#2111).
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir(root.join("ci")).unwrap();
+    std::fs::write(root.join("qlinter.toml"), "baseline = \"ci/base.json\"\n").unwrap();
+    let hidden = "{\"qlinter-baseline\": 1, \"findings\": [\n  {\"code\":\"QF001\",\
+                  \"count\":1,\"line\":\"f:{[desc] 1+1}\",\"path\":\"../a.q\"}\n]}\n";
+    std::fs::write(root.join("ci/base.json"), hidden).unwrap();
+    let mut server = Server::spawn(&root, &["--lsp"]);
+    let mut capabilities = client_capabilities();
+    capabilities["workspace"] = json!({"didChangeWatchedFiles": {"dynamicRegistration": true}});
+    server.send(
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+        "capabilities": capabilities,
+        "workspaceFolders":[{"uri":file_uri(&root),"name":"ws"}]}}),
+    );
+    server.receive();
+    server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    let uri = file_uri(&root.join("a.q"));
+    server.open(&uri, RESERVED_PARAM);
+    assert!(server.diagnostics_for(&uri).is_empty(), "baselined");
+    // Registered once the baseline has been read for the document, for
+    // every kind of event.
+    let wanted = json!({"globPattern": "ci/base.json"});
+    server.until(|m| {
+        m["method"] == "client/registerCapability"
+            && m["params"]["registrations"][0]["registerOptions"]["watchers"]
+                .as_array()
+                .unwrap()
+                .contains(&wanted)
+    });
+    std::fs::write(
+        root.join("ci/base.json"),
+        "{\"qlinter-baseline\": 1, \"findings\": []}\n",
+    )
+    .unwrap();
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+        "params":{"changes":[{"uri":file_uri(&root.join("ci/base.json")),"type":2}]}}),
+    );
+    assert_eq!(codes_of(&server.diagnostics_for(&uri)), ["QF001"]);
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
@@ -3875,7 +4021,8 @@ fn the_workspace_scope_lints_files_nobody_opened() {
 /// A closed file that starts with a BOM reports where an editor shows it
 /// (#2027): the editor holds the text without the BOM, so a finding on
 /// line 0 is where it is once the file is open, and the BOM's own finding
-/// stays at the start of the file.
+/// stays at the start of the file - open or closed. It went when the file
+/// was opened and came back when it was closed (#2110).
 #[test]
 fn a_closed_file_with_a_bom_reports_where_an_editor_shows_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -3892,8 +4039,31 @@ fn a_closed_file_with_a_bom_reports_where_an_editor_shows_it() {
     );
     server.open(&uri, RESERVED_PARAM);
     let open = server.diagnostics_for(&uri);
-    assert_eq!(codes_of(&open), ["QF001"], "{open:?}");
-    assert_eq!(closed[1]["range"], open[0]["range"]);
+    assert_eq!(open, closed, "the same, where the editor shows them");
+    // Still there as it is typed in: the disk has the BOM until a save.
+    server.change(&uri, 2, "f:{[desc] 1+2}\n");
+    assert_eq!(codes_of(&server.diagnostics_for(&uri)), ["QE005", "QF001"]);
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didClose",
+        "params":{"textDocument":{"uri":uri}}}));
+    assert_eq!(server.diagnostics_for(&uri), closed);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn an_open_file_reports_the_bom_on_disk_only_once_and_only_when_there() {
+    // A client that sends the BOM has it linted in the text, once; a file
+    // with none on disk reports none, whatever scope (#2110).
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(root.join("bom.q"), "\u{feff}a:1\n").unwrap();
+    std::fs::write(root.join("plain.q"), "a:1\n").unwrap();
+    let mut server = start_with_workspace(&root);
+    let bom = file_uri(&root.join("bom.q"));
+    server.open(&bom, "\u{feff}a:1\n");
+    assert_eq!(codes_of(&server.diagnostics_for(&bom)), ["QE005"]);
+    let plain = file_uri(&root.join("plain.q"));
+    server.open(&plain, "a:1\n");
+    assert!(server.diagnostics_for(&plain).is_empty());
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 

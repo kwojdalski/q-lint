@@ -121,20 +121,14 @@ impl Closed {
             return Ok(());
         }
         let read = idx.files.contains_key(key).then(|| on_disk(key)).flatten();
-        let Some((text, bom)) = read else {
+        let Some((text, _)) = read else {
             return self.clear(writer, key);
         };
         let uri = sources.uri(key);
-        let mut findings = linted(&uri, &text, &idx.ws, policy);
         // The text is the editor's, which has no BOM in it, so everything
-        // is found where the editor shows it. The BOM itself is still the
-        // file's, and q still refuses it: QE005 is asked of the file as it
-        // is on disk, and reported at its start (#2027).
-        if bom && let Ok(findings) = &mut findings {
-            let whole = format!("\u{feff}{text}");
-            let of_bom = linted(&uri, &whole, &idx.ws, policy).unwrap_or_default();
-            findings.splice(0..0, of_bom.into_iter().filter(|f| f.code == "QE005"));
-        }
+        // is found where the editor shows it; `linted` still reports the
+        // file's BOM (#2027).
+        let findings = linted(&uri, &text, &idx.ws, policy);
         // Nothing carried over for a file nobody is typing in, and nothing
         // of its text kept once it is linted.
         report(writer, &uri, &text, findings, &mut Kept::new(), opts)?;
