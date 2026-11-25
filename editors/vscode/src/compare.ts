@@ -19,7 +19,7 @@
 // (#1614), nor when a cell's text was cut at 200 characters. A cut is told
 // by the length it leaves a text, not by the `..` it ends in, which a
 // symbol or a path may end in itself (#2010).
-import { toGrid, typeName, type Grid, type GridPayload } from "./grid";
+import { symbolType, toGrid, typeName, type Grid, type GridPayload } from "./grid";
 import { atomLiteral, rawColumn } from "./qliteral";
 import type { Outcome } from "./tagquery";
 
@@ -218,7 +218,7 @@ const keyOf = (side: Held, keys: number, row: number): string =>
     .slice(0, keys)
     .map((c, i) => {
       const value = side.payload.types[i] === 0 ? undefined : side.raw[i]?.[row];
-      if (side.payload.types[i] === 11) {
+      if (symbolType(side.payload.types[i])) {
         return Array.isArray(value) ? `\u0001${value.join(",")}` : c[row];
       }
       return value === undefined || value === null ? c[row] : String(value);
