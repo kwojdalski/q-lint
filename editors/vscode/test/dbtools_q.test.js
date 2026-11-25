@@ -671,6 +671,21 @@ test("the sym inspector counts no index past the file's end as a symbol, and war
   assert.match(text, /trade\.sym has 3 values whose index is past the end of sym/);
 });
 
+// tags, a symbol list a row, holds the file's 4th and 5th symbols: they
+// are its share, and the file held 5 once the partition was written (#2530).
+test("the sym inspector counts a nested column of enumerations, its symbols and its growth (#2530)", { skip }, async (t) => {
+  const { connection } = await connect(t, [
+    'r:hsym`$"$DIR/n";',
+    ".Q.dd[r;2026.01.01,`trade`] set .Q.en[r] ([] sym:`aapl`ibm`msft;tags:(`a`b;enlist`a;enlist`b));",
+    "\\l $DIR/n",
+    "",
+  ].join("\n"));
+  const answer = readSym(await connection.call(SYM_INSPECT, 20));
+  assert.strictEqual(answer.count, 5);
+  assert.deepStrictEqual(answer.columns.map((c) => [c.table, c.column, c.distinct, c.past]).sort(), [["trade", "sym", 3, 0], ["trade", "tags", 2, 0]]);
+  assert.deepStrictEqual(answer.growth, [{ partition: "2026.01.01", size: 5 }]);
+});
+
 // .Q.ens[d;t;`mysym] enumerates against mysym, and a column may be against
 // a domain of its own beside sym: each is inspected (#2146).
 test("the sym inspector inspects a database enumerated against another domain than sym (#2146)", { skip }, async (t) => {
