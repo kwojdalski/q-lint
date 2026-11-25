@@ -2405,6 +2405,7 @@ fn numbers(
         // sign, so `1E` is a token of its own before the `-` (#2099).
         let string = last.ends_with('c') && !last.starts_with("0x");
         let mut reported = false;
+        let shapes = RunShapes::of(run);
         for (k, t) in run.iter().enumerate() {
             // A fraction that starts at its point is judged as the same
             // fraction with a 0 before it: q 5 reads `.5j` as `0.5j` and
@@ -2730,7 +2731,7 @@ fn numbers(
                 // token (#2224).
                 Some(format!("`{text}` is not a number or a date (yyyy.mm.dd)"))
             } else {
-                date_among_numbers(run, k, text)
+                date_among_numbers(&shapes, k, text)
             };
             // In a string only what q refuses as it reads the token.
             let detail =
@@ -2791,6 +2792,45 @@ fn suffix_tail(text: &str) -> bool {
     digit(p + 1) || b.get(p + 1) == Some(&b'.')
 }
 
+/// What QE010 asks of a whole run, read once for it rather than once for
+/// each of its items, which made one long vector literal quadratic (#2263).
+struct RunShapes<'a> {
+    items: Vec<&'a str>,
+    /// Whether any item of the run is a plain number.
+    any_number: bool,
+    /// `date_after[k]`: whether an item after the `k`th is a date.
+    date_after: Vec<bool>,
+    /// `infinity_after[k]`: whether an item after the `k`th is an infinity.
+    infinity_after: Vec<bool>,
+}
+
+fn run_date(t: &str) -> bool {
+    re!(r"^\d{4}\.\d\d\.\d\d$").is_match(t)
+}
+
+fn run_number(t: &str) -> bool {
+    re!(r"^\.?\d+(?:\.\d*)?(?:e[+-]?\d+)?[ef]?$").is_match(t)
+}
+
+impl<'a> RunShapes<'a> {
+    fn of(run: &[regex::Match<'a>]) -> Self {
+        let items: Vec<&str> = run.iter().map(|t| t.as_str()).collect();
+        let (mut date_after, mut infinity_after) =
+            (vec![false; items.len()], vec![false; items.len()]);
+        for k in (0..items.len().saturating_sub(1)).rev() {
+            date_after[k] = date_after[k + 1] || run_date(items[k + 1]);
+            infinity_after[k] = infinity_after[k + 1] || re!(r"^0[Ww]$").is_match(items[k + 1]);
+        }
+        let any_number = items.iter().any(|&t| run_number(t));
+        RunShapes {
+            items,
+            any_number,
+            date_after,
+            infinity_after,
+        }
+    }
+}
+
 /// QE010: a date or a month among plain numbers. q reads a vector literal
 /// by its items' shape, and a date has no shape in common with a number:
 /// q 5 refuses `1 2000.01.01` ('1), `1.5 2000.01.01`, `2000.01.01 1`
@@ -2801,20 +2841,15 @@ fn suffix_tail(text: &str) -> bool {
 /// An `m` after the last item reads every item as a month: q 5 refuses
 /// `1 2000.01m` and `1.5 2000.01m`, and takes `2001 2000.01m` (2020.01) and
 /// `2000.01 2000.01m`. q names the run's first item of the two, as here.
-fn date_among_numbers(run: &[regex::Match], k: usize, text: &str) -> Option<String> {
-    let date = |t: &str| re!(r"^\d{4}\.\d\d\.\d\d$").is_match(t);
-    let number = |t: &str| re!(r"^\.?\d+(?:\.\d*)?(?:e[+-]?\d+)?[ef]?$").is_match(t);
-    let infinity = |t: &str| re!(r"^0[Ww]$").is_match(t);
-    let items: Vec<&str> = run.iter().map(|t| t.as_str()).collect();
+fn date_among_numbers(shapes: &RunShapes, k: usize, text: &str) -> Option<String> {
+    let items = &shapes.items;
     let last = items[items.len() - 1];
-    if date(text)
-        && (items.iter().any(|&t| number(t)) || items[k + 1..].iter().any(|&t| infinity(t)))
-    {
+    if run_date(text) && (shapes.any_number || shapes.infinity_after[k]) {
         return Some(format!(
             "`{text}`: a date in a vector literal takes only dates or nulls beside it"
         ));
     }
-    if number(text) && items[k + 1..].iter().any(|&t| date(t)) {
+    if run_number(text) && shapes.date_after[k] {
         return Some(format!(
             "`{text}`: a number in a vector literal takes no date beside it"
         ));

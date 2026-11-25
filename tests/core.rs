@@ -1242,6 +1242,25 @@ fn a_wide_table_literal_lints_in_bounded_time() {
         "2000 keys and columns each took {small:?} and 16000 {large:?}"
     );
 }
+/// One long vector literal: QE010 looked over the whole run for a number or
+/// a date once for each of its items, so `a:1 1 1 ...` took time quadratic in
+/// its length - 2.75 s for 40000 items in a release build (#2263).
+#[test]
+fn a_long_vector_literal_lints_in_bounded_time() {
+    let time = |n: usize| {
+        let source = format!("a:{}\n", vec!["1"; n].join(" "));
+        best_of_three(|| lint(&source, "t.q", Profile::Style))
+    };
+    time(2000); // warm the allocator and the regex caches
+    let (small, large) = (time(2000), time(16000));
+    eprintln!("a vector of 2000 items took {small:?} and of 16000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "a vector of 2000 items took {small:?} and of 16000 {large:?}"
+    );
+}
 /// Lambdas nested in each other's bodies: each scope copied its whole body,
 /// and each implicit lambda's rank and each body's statements were read over
 /// the lambdas nested in it, so time and memory were quadratic in the depth -
