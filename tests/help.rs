@@ -1562,3 +1562,30 @@ fn hovering_a_glyph_shows_its_catalogue_entry() {
     );
     assert_eq!(span(&hover(&mut server, "<=", 0)["range"]), (2, 3, 5));
 }
+
+#[test]
+fn hovering_the_bang_of_an_internal_function_shows_no_dictionary() {
+    // With a negative integer on its left, `!` is an internal function:
+    // q 5 `-3!1 2` is the string "1 2", not a dictionary (#2248).
+    let dir = tempfile::tempdir().unwrap();
+    let text = "a:-3!x\nb:-11!`:log\nc:(-3)!x\nd:neg[3]!x\ne:x -3!y\nf:x-3!y\ng:`a`b!1 2\n";
+    let (mut server, uri) = serving(dir.path(), text, plain(), Value::Null);
+    let mut hover = |context: &str, skip: usize| {
+        server.ask("textDocument/hover", &uri, text, context, skip, Value::Null)["result"].clone()
+    };
+    for (context, skip) in [
+        ("3!x", 1),
+        ("11!", 2),
+        (")!x", 1),
+        ("]!x", 1),
+        ("3!y\nf", 1),
+    ] {
+        assert_eq!(hover(context, skip), Value::Null, "{context}");
+    }
+    // `x-3!y` subtracts `3!y`, and `` `a`b!1 2 `` is the dictionary.
+    for (context, skip) in [("x-3!y", 3), ("b!1", 1)] {
+        let reply = hover(context, skip);
+        let value = reply["contents"]["value"].as_str().unwrap();
+        assert!(value.starts_with("x!y"), "{context}: {value}");
+    }
+}
