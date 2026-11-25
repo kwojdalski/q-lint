@@ -1704,3 +1704,26 @@ test("an operator projected and applied later, and a gateway given to . or @, ar
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("an internal function's number with a type or computed is read as the number it is (#2208)", () => {
+  const cases = {
+    "-11j!`:tp.log": ["replays a log with -11!"],
+    "(-11j)!`:tp.log": ["replays a log with -11!"],
+    "(neg 11)!`:tp.log": ["replays a log with -11!"],
+    "(0-11)!`:tp.log": ["replays a log with -11!"],
+    "neg[19]!(`:a;`:b;17;2;6)": ["writes a compressed file with -19!"],
+    "-6j!(:;`a;77)": ["evaluates an assignment with -6!"],
+    "(neg 6)!(:;`a;77)": ["evaluates an assignment with -6!"],
+    // One it cannot work out may be any: asked about.
+    "(neg x)!y": ["calls an internal function the guard cannot read with !"],
+    // What only reads stays a read: -8!, a count of a log, a dictionary.
+    "(neg 8)!t": [],
+    "-8j!t": [],
+    "(neg 11)!(-2;`:tp.log)": [],
+    "(til 3)!`a`b`c": [],
+    "(1+2)!x": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

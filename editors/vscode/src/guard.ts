@@ -61,7 +61,8 @@
 // - `-11!`, which replays a log through `upd`, except `-11!(-1;..)` and
 //   `-11!(-2;..)`, which only count and check one; `-19!`, which
 //   compresses a file into another - each also spaced or with the number
-//   in parentheses (`-19 !x`, `(-19)!x`), and with `!` passed as a value
+//   in parentheses (`-19 !x`, `(-19)!x`), with a type, `-11j!`, or computed,
+//   `(neg 11)!x` - one it cannot work out is asked about (#2208) - and with `!` passed as a value
 //   (`` (!)[-11;`:log] ``, `` .[!;(-19;..)] ``, `` !/[-11;`:log] ``, #2041);
 // - `@[` or `.[` on a variable named by a symbol, alone or in
 //   parentheses (`` .[(`t);..] ``), with three arguments or four: an
@@ -399,6 +400,47 @@ function formatIn(t: Token[], from: number, to: number): boolean {
 /// Whether `t[i]` starts a handle cast from a string, `` `$":f" ``.
 function castHandle(t: Token[], i: number): boolean {
   return t[i]?.text === "`" && t[i + 1]?.text === "$" && t[i + 2]?.kind === "str" && t[i + 2].text.startsWith('":');
+}
+
+/// The whole number `t[from]` to `t[to]` comes to, read as q reads it, from
+/// the right - numbers, `-`, `+`, `*`, `neg` and parentheses - or undefined:
+/// `neg 11` and `0-11` are -11.
+function constant(t: Token[], from: number, to: number): number | undefined {
+  const value = (p: number, end: number): [number, number] | undefined => {
+    let left: number;
+    let next: number;
+    const k = t[p];
+    if (k === undefined || p >= end) return undefined;
+    if (k.kind === "num" && /^-?\d+[ihj]?$/.test(k.text)) {
+      left = parseInt(k.text, 10);
+      next = p + 1;
+    } else if (k.kind === "name" && k.text === "neg") {
+      const inner = t[p + 1]?.text === "[" ? value(p + 2, (items(t, p + 1).at(-1)?.[1] ?? end)) : value(p + 1, end);
+      if (inner === undefined) return undefined;
+      return t[p + 1]?.text === "[" ? [-inner[0], (items(t, p + 1).at(-1)?.[1] ?? end) + 1] : [-inner[0], inner[1]];
+    } else if (k.kind === "open" && k.text === "(") {
+      const close = items(t, p).at(-1)?.[1] ?? end;
+      const inner = value(p + 1, close);
+      if (inner === undefined || inner[1] !== close) return undefined;
+      left = inner[0];
+      next = close + 1;
+    } else {
+      return undefined;
+    }
+    if (next >= end) return [left, next];
+    // `0-11`, read here as two numbers, is a subtraction in q.
+    if (t[next].kind === "num" && t[next].text.startsWith("-") && t[next].n === t[next - 1].n + 1 && next + 1 === end && /^-\d+[ihj]?$/.test(t[next].text)) {
+      return [left + parseInt(t[next].text, 10), end];
+    }
+    const op = t[next];
+    if (op.kind !== "op" || !["-", "+", "*"].includes(op.text)) return undefined;
+    const right = value(next + 1, end);
+    if (right === undefined) return undefined;
+    return [op.text === "-" ? left - right[0] : op.text === "+" ? left + right[0] : left * right[0], right[1]];
+  };
+  if (to - from > 16) return undefined;
+  const read = value(from, to);
+  return read !== undefined && read[1] === to ? read[0] : undefined;
 }
 
 /// Where the items of the bracket or parenthesis that opens at `t[open]`
@@ -2052,7 +2094,7 @@ function readStatement(statement: string, found: Set<string>): void {
     // Where the `!` of an internal function `-N!` is, spaced or with the
     // number in parentheses: `-19 !x`, `(-19)!x`. Not after a number, where
     // it ends a list: `1 -19!x`.
-    const bang =
+    let bang =
       k.kind !== "num" || !k.text.startsWith("-") || t[i - 1]?.kind === "num"
         ? -1
         : next?.text === "!"
@@ -2060,11 +2102,40 @@ function readStatement(statement: string, found: Set<string>): void {
           : t[i - 1]?.text === "(" && next?.text === ")" && t[i + 2]?.text === "!"
             ? i + 2
             : -1;
+    // The number, with a type, `-11j`, as without (#2208).
+    let fn = bang > 0 ? k.text.replace(/^(-\d+)[ihj]$/, "$1") : "";
+    // Or computed, `(neg 11)!`, `(0-11)!`, `neg[6]!`: what it comes to, or,
+    // where it cannot be read, an internal function it cannot read (#2208).
+    if (k.kind === "op" && k.text === "!" && (t[i - 1]?.text === ")" || t[i - 1]?.text === "]") && t[i - 1].kind === "close") {
+      const left = t[i - 1].text === ")" ? leftArgument(t, i) : undefined;
+      let group: [number, number] | undefined = left !== undefined && left[0] < left[1] ? [left[0], i] : undefined;
+      if (t[i - 1].text === "]") {
+        let open = i - 1;
+        for (let depth = 0; open >= 0; open--) {
+          if (t[open].kind === "close") depth++;
+          else if (t[open].kind === "open" && --depth === 0) break;
+        }
+        scanned(i - open);
+        group = open > 0 && t[open - 1].kind === "name" ? [open - 1, i] : undefined;
+      }
+      const [a, b] = group === undefined ? [0, 0] : unwrapped(t, group[0], group[1]);
+      const tokensIn = group === undefined ? [] : t.slice(a, b);
+      if (group !== undefined && !(tokensIn.length === 1 && tokensIn[0].kind === "num") && tokensIn.every((x) => x.kind !== "sym" && x.kind !== "str")) {
+        const value = constant(t, a, b);
+        if (value !== undefined) {
+          bang = i;
+          fn = String(value);
+        } else if (tokensIn.some((x) => x.text === "neg" || x.text === "-" || (x.kind === "num" && x.text.startsWith("-")))) {
+          found.add("calls an internal function the guard cannot read with !");
+          continue;
+        }
+      }
+    }
     // `-6!` is `eval`, and `-24!` `reval` (#1774).
-    if (bang > 0 && (k.text === "-6" || k.text === "-24")) {
+    if (bang > 0 && (fn === "-6" || fn === "-24")) {
       const what = evaluates(t, bang, false);
       if (what !== undefined) {
-        found.add(`evaluates ${what.reason} with ${k.text}!`);
+        found.add(`evaluates ${what.reason} with ${fn}!`);
         i = what.at;
         continue;
       }
@@ -2098,12 +2169,12 @@ function readStatement(statement: string, found: Set<string>): void {
       }
     }
     // `-11!` replays a log; `-11!(-1;..)` and `(-2;..)` only count and check it.
-    if (bang > 0 && k.text === "-11" && !(t[bang + 1]?.text === "(" && /^-[12]$/.test(t[bang + 2]?.text ?? ""))) {
+    if (bang > 0 && fn === "-11" && !(t[bang + 1]?.text === "(" && /^-[12]$/.test(t[bang + 2]?.text ?? ""))) {
       found.add("replays a log with -11!");
       continue;
     }
     // `-19!` compresses a file into another one.
-    if (bang > 0 && k.text === "-19") {
+    if (bang > 0 && fn === "-19") {
       found.add("writes a compressed file with -19!");
       continue;
     }
