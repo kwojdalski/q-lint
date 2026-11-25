@@ -7519,6 +7519,9 @@ fn lint_rules(
     let global_definition = |m: &regex::Captures| -> bool {
         m[1].contains('.') || lambda_depth[m.get(0).unwrap().start()] == 0
     };
+    // Where each line of `source` ends, to find a line's start by: a search
+    // back from each definition was quadratic on one long line (#2345).
+    let newlines: Vec<usize> = source.match_indices('\n').map(|(at, _)| at).collect();
     let mut ranks: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     // Where each was last defined.
     let mut defined_at: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
@@ -7549,7 +7552,10 @@ fn lint_rules(
         // and comment lines between do not end it either.
         let next = code[end..].trim_start();
         let at = code.len() - next.len();
-        let line = source[..at].rfind('\n').map_or(0, |p| p + 1);
+        let line = match newlines.partition_point(|&p| p < at) {
+            0 => 0,
+            n => newlines[n - 1] + 1,
+        };
         if !next.is_empty()
             && !next.starts_with([';', ')', ']', '}'])
             && source[line..].starts_with([' ', '\t'])
