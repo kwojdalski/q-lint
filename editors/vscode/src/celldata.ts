@@ -293,8 +293,19 @@ const gridTable = (grid: Grid, from: RowLimitFrom): Table => ({
 /// which rows a cut grid holds.
 export function chartOutputs(mode: ChartMode, grid: Grid, from: RowLimitFrom = "first"): OutputPart[] {
   const table = gridTable(grid, from);
-  const { rank: _rank, ...shown } = grid;
-  const note = cutNote(table);
+  const { rank: _rank, ...whole } = grid;
+  // The rows the chart item holds: those before about `OUTPUT_LIMIT`
+  // characters of them, as a table's HTML and text are cut (#1855, #2156).
+  const rows = rowCount(table);
+  let size = 0;
+  let drawn = 0;
+  for (; drawn < rows && size < OUTPUT_LIMIT; drawn++) {
+    grid.cells.forEach((column, i) => {
+      size += JSON.stringify(column[drawn] ?? "").length + String(grid.values[i]?.[drawn] ?? "").length + 2;
+    });
+  }
+  const shown = drawn >= rows ? whole : { ...whole, cells: whole.cells.map((c) => c.slice(0, drawn)), values: whole.values.map((v) => v?.slice(0, drawn) ?? null) };
+  const note = cutNote(table, drawn);
   const spec: ChartSpec = {
     kind: mode.chart,
     ...(mode.title !== undefined ? { title: mode.title } : {}),

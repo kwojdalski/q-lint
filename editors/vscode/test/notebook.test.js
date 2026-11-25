@@ -484,6 +484,30 @@ test("an indented lone / or \\ on a cell's first line opens no block comment and
   assert.strictEqual(exportScript([{ kind: "code", source: " /\n x:1" }]), "/ /\nx:1\n");
 });
 
+test("a chart past what a cell's output holds draws its first rows and says why, not 'Invalid string length' (#2156)", () => {
+  const { OUTPUT_LIMIT, chartOutputs } = require("../out/celldata.js");
+  const rows = 190_000;
+  const column = (name, type, numeric) => ({ name, type, typeName: "", key: false, numeric, temporal: false });
+  const grid = {
+    columns: [column("x", 7, true), column("s", 11, false)],
+    cells: [[...Array(rows).keys()].map(String), new Array(rows).fill("ab".repeat(1500))],
+    rank: [null, null],
+    values: [[...Array(rows).keys()], null],
+    total: rows,
+  };
+  const [part] = chartOutputs({ mode: "chart", chart: "line" }, grid);
+  const chart = part.items[0].text;
+  assert.ok(chart.length < OUTPUT_LIMIT + 100_000, String(chart.length));
+  const spec = JSON.parse(chart);
+  const drawn = spec.grid.cells[0].length;
+  assert.ok(drawn > 0 && drawn < rows, String(drawn));
+  assert.deepStrictEqual([spec.grid.cells[1].length, spec.grid.values[0].length, spec.grid.values[1]], [drawn, drawn, null]);
+  assert.match(spec.note, new RegExp(`^Showing the first ${drawn.toLocaleString("en")} of 190,000 rows fetched: a cell's output holds about 64M characters\\.$`));
+  // A small one is whole, with no note.
+  const small = { ...grid, cells: grid.cells.map((c) => c.slice(0, 3)), values: [[0, 1, 2], null], total: 3 };
+  assert.strictEqual(JSON.parse(chartOutputs({ mode: "chart", chart: "line" }, small)[0].items[0].text).note, undefined);
+});
+
 test("a table past what a cell's output holds shows its first rows and says why, not 'Invalid string length' (#1855)", () => {
   const { OUTPUT_LIMIT } = require("../out/celldata.js");
   const rows = 400_000;
