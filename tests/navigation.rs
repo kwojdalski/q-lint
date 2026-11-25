@@ -259,6 +259,13 @@ fn a_key_of_a_dictionary_is_no_member_of_a_namespace() {
 }
 
 #[test]
+fn a_k_lines_assignment_is_outlined_by_the_last_write() {
+    // KDB-X: `k)g:{x}` then `g:5` holds 5 (#2314, as #2317 for q lines).
+    assert_eq!(holds("k)g:{x}\ng:5\n"), [("g".to_string(), false)]);
+    assert_eq!(holds("g:5\nk)g:{x}\n"), [("g".to_string(), true)]);
+}
+
+#[test]
 fn the_path_of_each_kind_of_load_is_found_under_the_cursor() {
     let source =
         "\\l lib/a.q\nsystem \"l lib/b.q\"\nf:`:lib/c.q\n/ \\l lib/d.q\n\\cd lib\n\\l e.q\n";

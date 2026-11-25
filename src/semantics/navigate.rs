@@ -180,7 +180,7 @@ pub(super) struct KLines {
     /// Each of `globals` that is assigned there, by where it is: whether a
     /// lambda is its value, and the span of its statement - the k statement
     /// at the top level, the name alone in a lambda (`k){fk::x}`).
-    assigned: HashMap<usize, (bool, usize, usize)>,
+    pub(super) assigned: HashMap<usize, (bool, usize, usize)>,
 }
 
 /// The `k)` lines of `raw` read as k, for the names in them.
@@ -600,8 +600,10 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
     let k = k_lines(code, raw);
     for (at, len, _) in k.globals {
         let word = &raw[at..at + len];
+        let name = resolved(word, ns_at(at));
+        let holds = held.get(&name).copied();
         out.push(Mention {
-            name: resolved(word, ns_at(at)),
+            name,
             implicit: !word.starts_with('.') && at < first_switch,
             at,
             len,
@@ -610,7 +612,7 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
                 .get(&at)
                 .map(|&(function, start, end)| Definition {
                     function,
-                    holds_function: function,
+                    holds_function: holds.unwrap_or(function),
                     detail: String::new(),
                     params: vec![],
                     start,

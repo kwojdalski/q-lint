@@ -938,6 +938,25 @@ pub fn tokens(
         .chain(global_multi_assignments(code))
         .map(|(_, name)| name.as_ptr() as usize - code.as_ptr() as usize)
         .collect();
+    // Whether the global `word` read at `at` is a function. Keyed as q
+    // resolves it: a root `f` is not `.f` (#1243). This file's own
+    // assignment decides; failing one, another file's lambda of that name
+    // is the function a call here reaches - that name and no other: q 5
+    // does not fall back from `\d .ns` to a root `f`, and `m:f 2` there is
+    // 'f (#366).
+    let function = |word: &str, at: usize| {
+        let name = resolved(word, ns_at(at));
+        match lambda.get(&name) {
+            Some(&is_lambda) => is_lambda,
+            None if !word.starts_with('.') && at < first => placement
+                .contexts
+                .iter()
+                .map(|ns| format!("{ns}.{name}"))
+                .chain(placement.root.then(|| name.clone()))
+                .any(|placed| ws.is_lambda(&placed)),
+            None => ws.is_lambda(&name),
+        }
+    };
     let mut out = vec![];
     for m in name.find_iter(code) {
         if !boundary(code, m.start())
@@ -966,24 +985,16 @@ pub fn tokens(
         {
             continue;
         }
-        // Keyed as q resolves it: a root `f` is not `.f` (#1243).
-        let name = resolved(m.as_str(), ns_at(m.start()));
-        // This file's own assignment decides; failing one, another file's
-        // lambda of that name is the function a call here reaches - that
-        // name and no other: q 5 does not fall back from `\d .ns` to a root
-        // `f`, and `m:f 2` there is 'f (#366).
-        let function = match lambda.get(&name) {
-            Some(&is_lambda) => is_lambda,
-            None if !m.as_str().starts_with('.') && m.start() < first => placement
-                .contexts
-                .iter()
-                .map(|ns| format!("{ns}.{name}"))
-                .chain(placement.root.then(|| name.clone()))
-                .any(|placed| ws.is_lambda(&placed)),
-            None => ws.is_lambda(&name),
-        };
-        if function {
+        if function(m.as_str(), m.start()) {
             out.push((m.start(), m.len(), TokenKind::Function));
+        }
+    }
+    // What a `k)` line reads, which the code view blanks: KDB-X runs
+    // `k)r:f 1` with q's `f` (#2314). Its own assignments are the grammar's.
+    let k = navigate::k_lines(code, raw);
+    for &(at, len, _) in &k.globals {
+        if !k.assigned.contains_key(&at) && function(&raw[at..at + len], at) {
+            out.push((at, len, TokenKind::Function));
         }
     }
     for scope in scopes.iter().filter(|s| s.named) {
@@ -5572,6 +5583,7 @@ fn holds_functions(
     // where that is known.
     let mut functions: HashMap<&str, Option<usize>> = HashMap::new();
     let mut aliases = vec![];
+    let mut lasts: HashMap<&str, usize> = HashMap::new();
     for (name, ats) in writes {
         let top = ats
             .iter()
@@ -5581,6 +5593,9 @@ fn holds_functions(
         let Some(last) = top.or_else(|| ats.iter().copied().max()) else {
             continue;
         };
+        if let Some(top) = top {
+            lasts.insert(name.as_str(), top);
+        }
         match assigned_value(code, raw, last) {
             Assigned::Function(rank) => {
                 functions.insert(name.as_str(), rank);
@@ -5627,10 +5642,23 @@ fn holds_functions(
             break;
         }
     }
-    writes
+    let mut out: HashMap<String, bool> = writes
         .keys()
         .map(|name| (name.clone(), functions.contains_key(name.as_str())))
-        .collect()
+        .collect();
+    // A `k)` line's own top-level assignment, `k)g:{[a] a+1}`, which KDB-X
+    // holds as 100h, where it is the name's last (#2314).
+    let k = navigate::k_lines(code, raw);
+    for &(at, len, lambda) in &k.globals {
+        let Some(&(function, ..)) = k.assigned.get(&at).filter(|_| lambda.is_none()) else {
+            continue;
+        };
+        let name = resolved(&raw[at..at + len], ns_at(at));
+        if lasts.get(name.as_str()).is_none_or(|&q| q < at) {
+            out.insert(name, function);
+        }
+    }
+    out
 }
 
 /// How many arguments the lambda assigned at `at` still takes, or `None`

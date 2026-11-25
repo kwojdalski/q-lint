@@ -505,6 +505,21 @@ fn a_name_inside_a_file_symbol_is_not_coloured() {
 }
 
 #[test]
+fn a_function_a_k_line_defines_or_calls_is_coloured() {
+    // KDB-X: after `k)g:{[a] a+1}`, `type g` is 100h and `t:g 3` is 4; a
+    // `k)` line calls q's `f` as q does (#2314).
+    let text = "k)g:{[a] a+1}\nt:g 3\nf:{x+1}\nk)r:f 1\n";
+    assert_eq!(functions(text), ["g", "f"]);
+    let at: Vec<usize> = q_lint_rs::semantic_tokens(text)
+        .iter()
+        .map(|t| t.0)
+        .collect();
+    assert_eq!(at, [16, 32]);
+    // The last write decides, a k one as any other.
+    assert!(functions("k)g:{x}\ng:5\nr:g\n").is_empty());
+}
+
+#[test]
 fn a_root_lambda_is_not_coloured_inside_a_context() {
     use q_lint_rs::{TokenKind, Workspace, index, semantic_tokens_in};
     // q 5: under `\\d .ns`, `m:f 2` is 'f - no fallback to the root `f`,
