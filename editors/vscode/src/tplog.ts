@@ -157,10 +157,18 @@ export function timeOfDay(text: string): number | null | undefined {
   return ((+m[1] * 60 + +m[2]) * 60 + +(m[3] ?? 0)) * 1000 + +(m[4] ?? "0").padEnd(3, "0");
 }
 
+/// A message number as the page's box holds it: NaN for a blank box or one
+/// that is not a whole number, which `Number` reads as 0 or a fraction (#2507).
+export function messageNumber(v: unknown): number {
+  if (typeof v === "number") return v;
+  const t = typeof v === "string" ? v.trim() : "";
+  return /^\d+$/.test(t) ? Number(t) : NaN;
+}
+
 /// Why a range `from`..`to` of a log of `count` messages cannot be
 /// replayed; undefined when it can.
 export function rangeProblem(from: number, to: number, count: number): string | undefined {
-  if (!Number.isInteger(from) || !Number.isInteger(to)) return "a range is two message numbers";
+  if (!Number.isInteger(from) || !Number.isInteger(to)) return "type the first and last message numbers";
   if (from < 0 || to >= count) return `the messages are numbered 0 to ${count - 1}`;
   if (from > to) return "the first message comes before the last";
   return undefined;

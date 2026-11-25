@@ -24,7 +24,7 @@ import { QConnection } from "./qclient";
 import { mergeEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import { qBinaryFrom, relativeBinaryProblem } from "./terminal";
-import { TPLOG_INIT, headNames, rangeProblem, readOthers, readReplayed, readTpLog, readTpPage, timeOfDay, type TpLog } from "./tplog";
+import { TPLOG_INIT, headNames, messageNumber, rangeProblem, readOthers, readReplayed, readTpLog, readTpPage, timeOfDay, type TpLog } from "./tplog";
 import { plainMessage } from "./history";
 import { spawnPlan } from "./launcher";
 import { lifeline, signalGroup } from "./lifeline";
@@ -287,7 +287,7 @@ export class TickerplantLog {
           break;
         }
         case "replay":
-          await this.replay(Number(msg.from), Number(msg.to));
+          await this.replay(messageNumber(msg.from), messageNumber(msg.to));
           break;
       }
     } catch (error) {
