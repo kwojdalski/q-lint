@@ -36,11 +36,19 @@ pub(crate) fn ranges(
             found.push(trim.span(inner));
             found.push((open, close + 1));
             if code.as_bytes()[open] == b'[' {
-                let head = code[..open]
+                let mut head = code[..open]
                     .bytes()
                     .rev()
                     .take_while(|b| b.is_ascii_alphanumeric() || b"._".contains(b))
                     .count();
+                // A symbol is one token with its backtick, and a file
+                // handle's `:` too: q's `-4!` reads `` `.p.f `` whole (#2318).
+                let before = &code[..open - head];
+                if before.ends_with("`:") {
+                    head += 2;
+                } else if before.ends_with('`') {
+                    head += 1;
+                }
                 found.push((open - head, close + 1));
             }
         }
@@ -284,6 +292,20 @@ mod tests {
         // A name with digits in it, and a plain number, are as before.
         assert_eq!(spans("a1:2\n", "1:"), ["a1", "a1:2"]);
         assert_eq!(spans("x:1.5\n", "5"), ["1.5", "x:1.5"]);
+    }
+
+    #[test]
+    fn a_call_through_a_symbol_grows_with_its_backtick() {
+        // KDB-X's `-4!` reads `` `.p.f `` and `` `:f `` as one token each
+        // (#2318).
+        assert_eq!(
+            spans("r:`.p.f[1;2]\n", "1;"),
+            ["1", "1;2", "[1;2]", "`.p.f[1;2]", "r:`.p.f[1;2]"]
+        );
+        assert_eq!(
+            spans("r:`:f[1]\n", "1]"),
+            ["1", "[1]", "`:f[1]", "r:`:f[1]"]
+        );
     }
 
     #[test]
