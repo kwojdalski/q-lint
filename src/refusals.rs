@@ -1342,7 +1342,20 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
             }
             continue;
         }
+        // Another glyph is a value too, where nothing is applied to it: q 5
+        // refuses `(+-)`, `(==)`, `f[+-]` and `!+\[1 2]` with the first
+        // glyph (#2228). A glyph with an operand of its own, `+-x`, is the
+        // second glyph's finding.
+        let glyph_operand = !colon
+            && next.starts_with(|c: char| GLYPHS.contains(&(c as u8)))
+            && !re!(r"^-\.?\d").is_match(next)
+            && {
+                let after = next[1..].trim_start_matches([':', '/', '\\', '\'']);
+                let after = continued(after);
+                after.is_empty() || after.starts_with([')', ']', '}', ';', '[', '\r', '\n'])
+            };
         let operand = colon
+            || glyph_operand
             || next.starts_with(|c: char| c.is_ascii_alphabetic() || "`(\"{".contains(c))
             || (bracket_form(next) && !pair)
             || (re!(r"^-\.?\d").is_match(next) && !(g == b'-' && spaced))

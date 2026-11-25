@@ -1958,3 +1958,43 @@ a:x<>0
 a:(<>)
 a:x<=0
 a:x <> 0
+
+=== QE008 profile: general | a glyph whose operand is another glyph (q 5: '+, #2228)
+a:(+-)
+
+=== QE008 profile: general | a glyph whose operand is another glyph (q 5: '=, #2228)
+a:(==)
+
+=== QE008 profile: general | a glyph whose operand is another glyph (q 5: '&, #2228)
+a:(&&)
+
+=== QE008 profile: general | a glyph whose operand is another glyph (q 5: '!, #2228)
+a:(!=)
+
+=== QE008 profile: general | a glyph whose operand is another glyph (q 5: '+, #2228)
+a:f[+-]
+
+=== QE008 profile: general | a glyph whose operand is another glyph (q 5: '+, #2228)
+a:(1;+-)
+
+=== QE008 profile: general | a glyph whose operand is another glyph (q 5: '=, #2228)
+a:@[x;0;==]
+
+=== QE008 profile: general | a glyph whose operand is another glyph (q 5: '!, #2228)
+a:!+\[1 2]
+
+=== QE008 profile: general | a glyph whose operand is another glyph (q 5: '+, #2228)
+a:(+-:)
+
+=== clean profile: general | while q 5 parses each of these (#2228)
+a:(+;-)
+a:(+)
+a:(=)
+a:f[+;-]
+a:@[x;0;=]
+a:(+/)
+a:(-')
+a:+[1;2]
+a:(+:)
+a:(<>)
+a:(<=)
