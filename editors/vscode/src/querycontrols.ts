@@ -31,6 +31,8 @@ import { QError, type DirectMode } from "./qclient";
 import type { Process } from "./processes";
 import { iconsEscaped } from "./history";
 import { FULL_TEXT, LAID_OUT } from "./qtext";
+import { contextSwitch } from "./statements";
+import { qString, stringLiteral } from "./qliteral";
 
 export const CONTROL_COMMANDS = {
   queryFile: "q-lint.queryEntireFile",
@@ -159,14 +161,25 @@ export interface Evaluated {
   typed: QValue | undefined;
 }
 
+/// `statement` as the plain string that runs it in `context`: q reads each
+/// message in the root again, so a `\d` sent as one statement is gone by
+/// the next (#2476), and one after it is sent with the `\d` in front, in
+/// the same message.
+export function inContextText(statement: string, context: string): string {
+  return context === "." ? statement : `system${stringLiteral(`d ${context}`)};value ${qString(statement)}`;
+}
+
 /// Send `statements` as plain strings, each in order, stopping at the first
 /// q error, which is answered as q sent it, with no trace: the process sends
-/// none. Anything else - the connection closing, an abort - throws.
+/// none. Anything else - the connection closing, an abort - throws. A `\d`
+/// among them holds for the statements after it, as in q's console.
 export async function evaluateAll(connection: Evaluator, statements: string[]): Promise<{ ok: true; last: Evaluated } | { ok: false; error: string }> {
   let last: { value: unknown; type: number | undefined; message?: Buffer } = { value: null, type: 101 };
+  let context = ".";
   for (const statement of statements) {
     try {
-      last = await connection.evaluate(statement);
+      last = await connection.evaluate(inContextText(statement, context));
+      context = contextSwitch(statement) ?? context;
     } catch (error) {
       if (error instanceof QError) {
         return { ok: false, error: error.message };

@@ -215,11 +215,18 @@ test("unlimited, unwrapped and timed-out queries against a real q process", { sk
     assert.deepStrictEqual((await runUnwrapped(connection, ["a:1;"], options)).type, 101);
   });
 
-  await t.test("unwrapped: a system command runs, but a \\d lasts only for its own message", async () => {
-    // q evaluates each string a client sends in the root context, so the
-    // statement after a \d is back there: zz lands in the root.
-    await runUnwrapped(connection, statements("\\d .uw\nzz:42\n\\d ."), options);
-    assert.deepStrictEqual((await runUnwrapped(connection, ["zz"], options)).text, ["42"]);
+  await t.test("unwrapped: a system command runs, and a \\d holds for the statements after it, as in q's console (#2476)", async () => {
+    // q reads each string a client sends in the root context, so the
+    // statements after a \d are sent with it in front: zz is .uw.zz.
+    await runUnwrapped(connection, ["zz:0"], options);
+    await runUnwrapped(connection, statements("\\d .uw\nzz:42\nh1:{x+1}\n\\d ."), options);
+    assert.deepStrictEqual((await runUnwrapped(connection, ["(zz;.uw.zz;`h1 in key `.uw;`h1 in key `.)"], options)).text, ["0", "42", "1b", "0b"]);
+    // A system "d .ns" holds too, and a \d . ends it.
+    assert.deepStrictEqual((await runUnwrapped(connection, statements('\\d .bar\nsystem "d"'), options)).text, ["`.bar"]);
+    assert.deepStrictEqual((await runUnwrapped(connection, statements('system "d .uw"\nzz\n\\d .\nzz'), options)).text, ["0"]);
+    assert.deepStrictEqual((await runUnwrapped(connection, statements("\\d .uw\nzz"), options)).text, ["42"]);
+    assert.deepStrictEqual((await runUnwrapped(connection, statements("\\d .uw\nw:5\nw"), options)).text, ["5"]);
+    // A query is read afresh in the root.
     assert.deepStrictEqual((await runUnwrapped(connection, ['system "d"'], options)).text, ["`."]);
     assert.deepStrictEqual((await runUnwrapped(connection, ["\\cd"], options)).ok, true);
   });
