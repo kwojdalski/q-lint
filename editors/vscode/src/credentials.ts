@@ -11,7 +11,8 @@
 //   `username`);
 // - or a line: the password when the process has a user, else
 //   `user:password` (split at the first colon), else the password alone.
-import { exec } from "node:child_process";
+import { spawn } from "node:child_process";
+import { signalGroup } from "./lifeline";
 
 export const CREDENTIAL_TIMEOUT_MS = 30_000;
 
@@ -60,43 +61,82 @@ export function parseCredentials(output: string, user?: string): Credentials | {
 }
 
 /// Run `command` in a shell and give what it printed; reject with how it
-/// ended - its exit code, a signal, the timeout - never with its output,
-/// which may hold the secret.
+/// ended - its exit code, a signal, the timeout, `signal` aborting - never
+/// with its output, which may hold the secret. It leads a process group of
+/// its own, ended whole at the timeout or the abort: a shell's `sleep` or
+/// prompt is not left running behind it (#2127).
 export function runCredentialCommand(
   command: string,
-  options: { cwd?: string; env?: Record<string, string>; timeoutMs?: number } = {},
+  options: { cwd?: string; env?: Record<string, string>; timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    exec(
-      command,
-      {
-        cwd: options.cwd,
-        // cmd.exe looks for a bare name (`vault`) in the folder it runs in
-        // before PATH; this turns that off (#1537).
-        env: { ...process.env, ...(process.platform === "win32" ? { NoDefaultCurrentDirectoryInExePath: "1" } : {}), ...options.env },
-        timeout: options.timeoutMs ?? CREDENTIAL_TIMEOUT_MS,
-        maxBuffer: 64 * 1024,
-        windowsHide: true,
-      },
-      (error, stdout) => {
-        if (error === null) {
-          resolve(String(stdout));
-          return;
+    const limit = options.timeoutMs ?? CREDENTIAL_TIMEOUT_MS;
+    if (options.signal?.aborted) {
+      reject(new Error("the credential command was cancelled"));
+      return;
+    }
+    // exec cannot start a group of its own, so the shell is spawned.
+    const child = spawn(command, {
+      shell: true,
+      cwd: options.cwd,
+      // cmd.exe looks for a bare name (`vault`) in the folder it runs in
+      // before PATH; this turns that off (#1537).
+      env: { ...process.env, ...(process.platform === "win32" ? { NoDefaultCurrentDirectoryInExePath: "1" } : {}), ...options.env },
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+      detached: process.platform !== "win32",
+    });
+    const out: Buffer[] = [];
+    let size = 0;
+    let ended: string | undefined;
+    const end = (why: string): void => {
+      if (ended === undefined) {
+        ended = why;
+        signalGroup(child, "SIGKILL");
+      }
+    };
+    const timer = setTimeout(() => end(`the credential command did not finish in ${limit / 1000} s`), limit);
+    const cancelled = (): void => end("the credential command was cancelled");
+    options.signal?.addEventListener("abort", cancelled, { once: true });
+    child.stdout?.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > 64 * 1024) {
+        end("the credential command printed more than 64 KB");
+      } else {
+        out.push(chunk);
+      }
+    });
+    let settled = false;
+    const settle = (error: Error | undefined, code: number | null, signal: NodeJS.Signals | null): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      options.signal?.removeEventListener("abort", cancelled);
+      if (ended !== undefined) {
+        reject(new Error(ended));
+      } else if (error !== undefined) {
+        reject(new Error("the credential command could not run"));
+      } else if (code === 0) {
+        resolve(Buffer.concat(out).toString("utf8"));
+      } else {
+        reject(new Error(code !== null ? `the credential command failed with exit code ${code}` : `the credential command could not run${signal ? ` (${signal})` : ""}`));
+      }
+    };
+    child.once("error", (error) => settle(error, null, null));
+    // On exit, not close: what it left behind may hold its stdout open.
+    child.once("exit", (code, signal) => {
+      if (ended !== undefined || code !== 0) {
+        settle(undefined, code, signal);
+      } else {
+        // Its output is all read once the pipe closes.
+        child.stdout?.once("close", () => settle(undefined, code, signal));
+        if (child.stdout === null || child.stdout.closed) {
+          settle(undefined, code, signal);
         }
-        const e = error as Error & { code?: number | string; signal?: string | null; killed?: boolean };
-        reject(
-          new Error(
-            e.killed && e.signal !== null && e.signal !== undefined
-              ? `the credential command did not finish in ${(options.timeoutMs ?? CREDENTIAL_TIMEOUT_MS) / 1000} s`
-              : e.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
-                ? "the credential command printed more than 64 KB"
-                : typeof e.code === "number"
-                  ? `the credential command failed with exit code ${e.code}`
-                  : `the credential command could not run${e.signal ? ` (${e.signal})` : ""}`,
-          ),
-        );
-      },
-    );
+      }
+    });
   });
 }
 

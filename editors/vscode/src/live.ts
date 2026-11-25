@@ -2075,7 +2075,7 @@ export class Live {
         const connection = await window.withProgress(
           { location: { viewId: VIEWS.processes }, title: `Connecting to ${process.label}` },
           async () => {
-            const target = await this.targetFor(process);
+            const target = await this.targetFor(process, cut.signal);
             for (;;) {
               try {
                 return await this.dial(process, target, cut.signal);
@@ -2265,7 +2265,7 @@ export class Live {
   /// Where and as whom `process` is connected to: its user and stored
   /// password, or what its credential command (#1034) prints, run now and
   /// kept nowhere. Throws why the command gave none.
-  private async targetFor(process: Process): Promise<Target> {
+  private async targetFor(process: Process, signal?: AbortSignal): Promise<Target> {
     if (process.credentialCommand === undefined || !this.setting(readAdmin).credentialCommand) {
       // The label's password is for the address and user saved under it: a
       // connection kept where it was when that was edited (#1443) gets none (#2124).
@@ -2276,7 +2276,9 @@ export class Live {
       const password = process.user ? await this.context.secrets.get(this.passwordKey(process)) : undefined;
       return targetOf(process, password);
     }
+    // Stopped with the connect it is for: by Disconnect, or a connect elsewhere (#2127).
     const output = await runCredentialCommand(process.credentialCommand, {
+      signal,
       cwd: credentialCwd(workspace.isTrusted !== false, workspace.workspaceFolders?.[0]?.uri.fsPath, os.homedir()),
       env: credentialEnv(process),
     });
@@ -2915,7 +2917,7 @@ export class Live {
     }
     // Through its tunnel, as any connect to it is (#1070). Cancelled while
     // it opens, nothing was sent, and the error says so (#1926).
-    const connection = await this.dial(process, await this.targetFor(process), signal).catch((error: unknown) => {
+    const connection = await (async () => this.dial(process, await this.targetFor(process, signal), signal))().catch((error: unknown) => {
       throw signal?.aborted && error instanceof Error ? new NotSent(error.message) : error;
     });
     const stop = (): void => connection.abort();
