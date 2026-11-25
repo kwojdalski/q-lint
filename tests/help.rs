@@ -187,6 +187,79 @@ fn the_catalogue_and_the_arity_rule_agree_on_how_many_arguments_a_word_takes() {
     assert!(!draws_qa010("r:enlist[1;2;3;4;5;6;7;8;9]\n"));
 }
 
+/// What a summary says of a result, and the q that shows it (#2250): each
+/// summary has to say the phrase, and with QLINT_TEST_Q each expression
+/// has to give `1b`. `.z.a` inside a handler is the client's (127.0.0.1
+/// from a local one), which needs a server to show and is left to the
+/// hunt that found it; at the console it is this host's.
+const SAID: &[(&str, &str, &str)] = &[
+    (
+        ".Q.res",
+        "til among them, are not in it",
+        "(not `til in .Q.res) and all `if`select`abs in .Q.res",
+    ),
+    (
+        ".Q.res",
+        "control words",
+        "all `if`do`while`from`by in .Q.res",
+    ),
+    (".z.a", "of the client", "-6h=type .z.a"),
+    (
+        ".h.xs",
+        "quotes are left as they are",
+        ".h.xs[\"<>&\\\"'\"]~\"&lt;&gt;&amp;\\\"'\"",
+    ),
+    (
+        ".h.he",
+        "with a ' in front",
+        "(.h.he[\"a<b\"] like \"HTTP/1.1 400 Bad Request*\") and (.h.he[\"a<b\"] like \"*text/plain*\") and \"\\r\\n\\r\\n'a<b\"~-8#.h.he \"a<b\"",
+    ),
+    (
+        "floor",
+        "a short or int keeps its type",
+        "(-5 -6 -7 -7 -7h~type each (floor 1h;floor 1i;floor 1j;floor 1.5e;floor 1.5)) and \"abc\"~floor \"AbC\"",
+    ),
+    (
+        "ceiling",
+        "a boolean, byte or char an int",
+        "-5 -6 -7 -7 -7 -6 -6 -6h~type each (ceiling 1h;ceiling 1i;ceiling 1j;ceiling 1.5e;ceiling 1.5;ceiling 1b;ceiling 0x01;ceiling \"a\")",
+    ),
+];
+
+#[test]
+fn a_summary_says_what_q_gives() {
+    for (name, phrase, _) in SAID {
+        let summary = &builtin(name).unwrap().summary;
+        assert!(summary.contains(phrase), "{name}: {summary}");
+    }
+    let Ok(q) = std::env::var("QLINT_TEST_Q") else {
+        eprintln!("QLINT_TEST_Q names no q: the summaries stand as KDB-X gave them");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let script: String = SAID
+        .iter()
+        .map(|(_, _, shown)| format!("-1 .Q.s1 @[value;{shown:?};{{`$x}}];\n"))
+        .chain(["exit 0\n".to_string()])
+        .collect();
+    std::fs::write(dir.path().join("said.q"), script).unwrap();
+    let mut words = q.split_whitespace();
+    let out = Command::new(words.next().unwrap())
+        .args(words)
+        .arg("said.q")
+        .arg("-q")
+        .current_dir(dir.path())
+        .stdin(Stdio::null())
+        .output()
+        .expect("run q");
+    let out = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        out.lines().collect::<Vec<_>>(),
+        vec!["1b"; SAID.len()],
+        "{out}"
+    );
+}
+
 /// The most arguments q takes for a value: a lambda its parameters, a
 /// primitive one or two, a projection what its slots leave open, a
 /// composition what its last function takes, and a derived function what
