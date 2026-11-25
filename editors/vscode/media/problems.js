@@ -133,6 +133,9 @@
     cards.appendChild(card("findings", s.total));
     cards.appendChild(card("errors", s.errors, s.errors > 0 ? "errors" : ""));
     cards.appendChild(card("warnings", s.warnings));
+    if (s.notes > 0) {
+      cards.appendChild(card("information", s.notes));
+    }
     cards.appendChild(card("files", s.files));
     document.body.appendChild(cards);
 
