@@ -45,6 +45,8 @@ async function fakeQ() {
     port: server.address().port,
     /// The statements each query sent.
     queries: () => sent.filter((m) => Array.isArray(m) && Array.isArray(m[1])).map((m) => m[1].join("\n")),
+    /// The gateway calls sent as plain strings, as a TorQ gateway's are (#2584).
+    gatewayCalls: () => sent.filter((m) => typeof m === "string" && m.startsWith(".gw.")),
     /// The lambda each query was sent with.
     lambdas: () => sent.filter((m) => Array.isArray(m) && Array.isArray(m[1])).map((m) => m[0]),
     close: () => {
@@ -183,23 +185,23 @@ test("a query to a guarded TorQ gateway is read as written, and a gateway call r
   stub.picks.push(undefined);
   await stub.commands.get("q-lint.queryCurrentLine")();
   assert.deepStrictEqual(asked(), ["This code would change rdb. Run it anyway?"]);
-  assert.deepStrictEqual(q.queries(), []);
+  assert.deepStrictEqual(q.gatewayCalls(), []);
   // Confirmed, it goes through the gateway, and the history keeps the call.
   stub.picks.push("Run Anyway");
   await stub.commands.get("q-lint.queryCurrentLine")();
-  assert.deepStrictEqual(q.queries(), [".gw.syncexec[\"delete from `trade\";enlist `rdb]"]);
+  assert.deepStrictEqual(q.gatewayCalls(), [".gw.syncexec[\"delete from `trade\";enlist `rdb]"]);
   const entry = live.history().find((e) => e.code.startsWith(".gw.syncexec"));
   assert.ok(entry);
   // Rerun as recorded: the write is inside a string, and still asked about.
   stub.picks.push(undefined);
   await stub.commands.get("q-lint.rerunQuery")(entry);
   assert.strictEqual(asked().length, 3);
-  assert.strictEqual(q.queries().length, 1);
+  assert.strictEqual(q.gatewayCalls().length, 1);
   // A read through the gateway is sent unasked.
   editor("select from trade");
   await stub.commands.get("q-lint.queryCurrentLine")();
   assert.strictEqual(asked().length, 3);
-  assert.deepStrictEqual(q.queries().at(-1), ".gw.syncexec[\"select from trade\";enlist `rdb]");
+  assert.deepStrictEqual(q.gatewayCalls().at(-1), ".gw.syncexec[\"select from trade\";enlist `rdb]");
 });
 
 test("paging (#922) holds no result on a guarded process, as holding assigns .qlint.held; unguarded, it does", async (t) => {
