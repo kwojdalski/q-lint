@@ -90,9 +90,13 @@ export async function runWithParameters(live: Live, source?: Uri, target?: Uri, 
         // As the kernel's interrupt: Cancel stops the query of the cell
         // running, not only the cells after it (#1564).
         let running = false;
+        const waiting = new AbortController();
         const stop = token.onCancellationRequested(() => {
           if (running) {
             void live.abort();
+          } else {
+            // Waiting to be sent behind a background read (#2560).
+            waiting.abort();
           }
         });
         try {
@@ -116,9 +120,9 @@ export async function runWithParameters(live: Live, source?: Uri, target?: Uri, 
                   } finally {
                     running = false;
                   }
-                });
+                }, "ask", undefined, waiting.signal);
                 if (ran === undefined) {
-                  throw new Error("Not run: no q process is connected, or a query is still running on it.");
+                  throw new Error(token.isCancellationRequested ? "the run was cancelled" : "Not run: no q process is connected, or a query is still running on it.");
                 }
                 return ran.value;
               },

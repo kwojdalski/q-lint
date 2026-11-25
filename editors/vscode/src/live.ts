@@ -2882,9 +2882,15 @@ export class Live {
   /// The active connection and its process, connecting first if there is
   /// none; undefined when none was connected or a query is still running.
   /// `seconds` (0: none) bound the wait for a connect under way or a
-  /// background read, and Abort ends it (#2126); `waited` is how long it was.
-  private async ready(seconds = 0, source = "q-lint.query.timeout"): Promise<{ connection: QConnection; process: Process; waited: number } | undefined> {
+  /// background read, and Abort ends it (#2126), as `signal` does for its
+  /// caller's wait alone (#2560); `waited` is how long it was.
+  private async ready(seconds = 0, source = "q-lint.query.timeout", signal?: AbortSignal): Promise<{ connection: QConnection; process: Process; waited: number } | undefined> {
     const waiter = { started: 0, stop: new AbortController() };
+    const stop = (): void => waiter.stop.abort();
+    signal?.addEventListener("abort", stop, { once: true });
+    if (signal?.aborted === true) {
+      stop();
+    }
     let disarm = (): void => {};
     let timedOut = false;
     // Whether `what` settled, rather than the wait being stopped.
@@ -2901,7 +2907,9 @@ export class Live {
         });
         this.showStatus();
       }
-      const stopped = new Promise<false>((resolve) => waiter.stop.signal.addEventListener("abort", () => resolve(false), { once: true }));
+      const stopped = waiter.stop.signal.aborted
+        ? Promise.resolve(false as const)
+        : new Promise<false>((resolve) => waiter.stop.signal.addEventListener("abort", () => resolve(false), { once: true }));
       const settled = await Promise.race([what.then(() => true, () => true), stopped]);
       if (!settled) {
         const to = this.active?.label ?? this.connectingAs?.label ?? this.reconnecting?.label ?? "the process";
@@ -2918,6 +2926,7 @@ export class Live {
       return ready === undefined ? undefined : { ...ready, waited: waiter.started === 0 ? 0 : Date.now() - waiter.started };
     } finally {
       disarm();
+      signal?.removeEventListener("abort", stop);
       if (this.waiters.delete(waiter)) {
         this.showStatus();
       }
@@ -2970,12 +2979,14 @@ export class Live {
   /// the read-only guard did not let `code` be sent: asked and declined, or
   /// refused outright for a caller that cannot ask (`guard` "refuse").
   /// With `expect`, the label of the process a question asked about, it
-  /// throws `movedFrom` instead of running on any other (#1081).
+  /// throws `movedFrom` instead of running on any other (#1081). `signal`
+  /// stops this call's wait to be sent, and nothing else's (#2560).
   async runOnActive<T>(
     code: GuardCode,
     query: (connection: QConnection) => Promise<T>,
     guard: "ask" | "refuse" = "ask",
     expect?: string,
+    signal?: AbortSignal,
   ): Promise<{ process: string; value: T } | undefined> {
     // Checked before `ready` would connect and before the guard asks: no
     // question about a process nothing will be sent to. `stillReady` keeps
@@ -2984,7 +2995,7 @@ export class Live {
       throw movedFrom(expect);
     }
     const asked = this.active ?? this.connectingAs;
-    const first = await this.ready(ownTimeout(asked, this.setting(readAdmin).processTimeout), timeoutSource(asked, this.setting(readAdmin).processTimeout));
+    const first = await this.ready(ownTimeout(asked, this.setting(readAdmin).processTimeout), timeoutSource(asked, this.setting(readAdmin).processTimeout), signal);
     if (first === undefined) {
       return undefined;
     }
