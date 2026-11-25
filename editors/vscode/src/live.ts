@@ -2455,6 +2455,15 @@ export class Live {
     if (call === undefined) {
       return;
     }
+    // Unanswered for UNANSWERED_MS, it shows so then, and its wait counts
+    // up each second - not at the next beat, an interval away (#2131).
+    let ticker: ReturnType<typeof setInterval> | undefined;
+    const watch = setTimeout(() => {
+      if (this.beatSent === sent && !this.disposed) {
+        this.showStatus();
+        ticker = setInterval(() => this.showStatus(), 1000);
+      }
+    }, UNANSWERED_MS);
     try {
       const connection = await call;
       if (connection === this.connection) {
@@ -2463,6 +2472,8 @@ export class Live {
     } catch {
       // Closed meanwhile: whenClosed says so.
     } finally {
+      clearTimeout(watch);
+      clearInterval(ticker);
       if (this.beatSent === sent) {
         this.beatSent = undefined;
       }

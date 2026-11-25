@@ -441,3 +441,18 @@ test("reconnectAttempts bounds the reconnects to a process that drops each conne
   assert.strictEqual(a.logins.length, 3, JSON.stringify(stub.messages));
   assert.strictEqual(stub.messages.filter(([, m]) => m === "q-lint: reconnected to a.").length, 2);
 });
+
+// The bar was redrawn only when the next beat was due: with the default 30 s
+// interval it showed the last round trip for 30 s, then a wait frozen until
+// the beat after (#2131).
+test("an unanswered heartbeat shows as no answer after 5 s, and its wait counts up (#2131)", async (t) => {
+  const a = await fakeQ((sent) => (sent === "::" ? undefined : 1));
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)], { "connection.heartbeat.enable": true, "connection.heartbeatInterval": 30 });
+  await live.connectTo("a");
+  await until(() => /no answer/.test(live.api().statusText()), 7000);
+  const first = live.api().statusText();
+  assert.match(first, /no answer 5/);
+  await sleep(2100);
+  assert.match(live.api().statusText(), /no answer 7/);
+});
