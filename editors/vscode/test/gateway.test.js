@@ -145,9 +145,10 @@ async function torq(t, servers = "") {
       `.gw.h:\`rdb\`hdb!(hopen \`::${rdb};hopen \`::${hdb})`,
       ".gw.servers:([] servertype:`rdb`hdb)",
       "role:`gateway",
-      ".gw.run:{[query;servertypes] servertypes,:(); if[count m:servertypes except key .gw.h; '\"not all of the requested server types are available: \",\",\" sv string m]; raze .gw.h[servertypes]@\\:({$[`.pm.valp~key`.pm.valp;.pm.valp x;value x]};query)}",
+      ".gw.run:{[query;servertypes;join] servertypes,:(); if[count m:servertypes except key .gw.h; '\"not all of the requested server types are available: \",\",\" sv string m]; join .gw.h[servertypes]@\\:({$[`.pm.valp~key`.pm.valp;.pm.valp x;value x]};query)}",
       ".gw.replies:()",
-      ".gw.syncexec:{[query;servertypes] -30!(::); .gw.replies,:enlist (.z.w;@[{(0b;.gw.run . x)};(query;servertypes);{(1b;x)}]); }",
+      ".gw.syncexecj:{[query;servertypes;join] -30!(::); .gw.replies,:enlist (.z.w;@[{(0b;.gw.run . x)};(query;servertypes;join);{(1b;x)}]); }",
+      ".gw.syncexec:.gw.syncexecj[;;raze]",
       ".z.ts:{r:.gw.replies; .gw.replies:(); {-30!(x 0;x[1]0;x[1]1)} each r}",
       "\\t 5",
       "",
@@ -304,6 +305,38 @@ test("the REPL, a notebook cell, its live values and the agent's query go throug
   const { runAgentQuery } = require("../out/agent.js");
   const agent = await live.runOnActive("count trade", (c) => runAgentQuery(c, "count trade", [25, 80], via));
   assert.deepStrictEqual(agent.value.data, [[2], [3]]);
+});
+
+// What runs code inside a lambda of q-lint's cannot go through a deferred
+// .gw.syncexec, and says so rather than run it on the gateway itself (#2357,
+// #2432, #2434, #2435, #2589, #2590); Copy Value as JSON joins the servers'
+// values on the gateway (#2433); SQL loads its engine on the servers (#2596).
+test("on a TorQ gateway, features that need q-lint's lambda refuse, Copy Value as JSON and SQL go through it (#2357, #2432, #2433, #2434, #2435, #2589, #2590, #2596)", { skip }, async (t) => {
+  const gw = await torq(t);
+  const { live } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb", "hdb"] }]);
+  assert.strictEqual(await live.connectTo("gw"), true);
+  const context = stub.newContext();
+  const refusal = /^q-lint: (.+) runs the code in q-lint's own q, which on the TorQ gateway gw would run it on the gateway itself, not through \.gw\.syncexec on its servers as Run Query does\. Use Run Query there\.$/;
+  const { registerBenchmark } = require("../out/benchmarkview.js");
+  assert.match(await registerBenchmark(context, live).benchmark("count trade", "", "10 1"), refusal);
+  const { registerAjExplainer } = require("../out/ajexplainview.js");
+  assert.match(await registerAjExplainer(context, live).explainRow("aj[`sym`time;trade;quote]", "0"), refusal);
+  const { registerJoinAssistant } = require("../out/joinassistview.js");
+  assert.match(await registerJoinAssistant(context, live).assist("trade", "trade"), refusal);
+  // The gateway's own code is no refusal, and Run's text for the rest.
+  assert.strictEqual(live.gatewayRefusal("Benchmark", "count .gw.servers"), undefined);
+  for (const feature of ["Time Lines on Process", "Record Query Snapshot", "Run Query Asynchronously"]) {
+    assert.match(live.gatewayRefusal(feature, "count trade"), refusal);
+  }
+  const vscode = require("vscode");
+  let clipboard = "";
+  vscode.env = { clipboard: { readText: async () => clipboard, writeText: async (s) => void (clipboard = s) } };
+  const { registerPaste } = require("../out/pasteview.js");
+  registerPaste(context, live);
+  stub.config.user["jsonConversion.enable"] = true;
+  assert.strictEqual(await stub.commands.get("q-lint.copyAsJson")("exec sym from trade"), '["a","b","c","d","e"]');
+  assert.strictEqual(live.goesThroughGateway('.s.e "select from trade"'), true);
+  assert.strictEqual(live.goesThroughGateway(".gw.servers"), false);
 });
 
 test("a query run apart - a dashboard tile, a scheduled export, Query a Tag - goes through the gateway too (#1230)", { skip }, async (t) => {

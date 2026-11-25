@@ -79,6 +79,11 @@ export function registerLineTimings(
     if (!(await live.toFileBinding(editor.document.uri))) {
       return "nothing was run";
     }
+    // Timed inside q-lint's lambda, it would time the gateway (#2589).
+    const refused = live.gatewayRefusal("Time Lines on Process", code);
+    if (refused !== undefined) {
+      return say(refused);
+    }
     let ran: { process: string; value: unknown } | undefined;
     try {
       ran = await live.runOnActive(code, async (connection) => {

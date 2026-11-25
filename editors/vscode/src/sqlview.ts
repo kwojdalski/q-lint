@@ -154,8 +154,9 @@ export function registerSql(
         }
       }
       // The engine first, where the bound process is connected and has none;
-      // one not connected yet loads it in the same query.
-      const asked = label !== undefined && live.activeLabel() === label;
+      // one not connected yet loads it in the same query, and so does a
+      // TorQ gateway's servers, not the gateway (#2596).
+      const asked = label !== undefined && live.activeLabel() === label && !live.goesThroughGateway(sqlQuery(sql));
       if (asked) {
         const has = await borrowWhenFree(live, async (connection) => connection.call(HAS_SQL));
         if (has !== undefined && has.value === false) {

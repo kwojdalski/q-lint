@@ -86,6 +86,11 @@ export function registerBenchmark(
     if (!(await live.toFileBinding(file))) {
       return "nothing was run";
     }
+    // Timed inside q-lint's lambda, it would time the gateway (#2435).
+    const refused = live.gatewayRefusal("Benchmark", expressions.join("\n"));
+    if (refused !== undefined) {
+      return say(refused);
+    }
     let ran: { process: string; value: unknown } | undefined;
     try {
       // Turned off while it asked: nothing is timed (#1453).

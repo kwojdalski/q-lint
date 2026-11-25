@@ -71,6 +71,11 @@ export function registerAjExplainer(context: ExtensionContext, live: Live): { ex
     if (!(await live.toFileBinding(file))) {
       return "nothing was run";
     }
+    // Its tables would be read on the gateway itself (#2434).
+    const refused = live.gatewayRefusal(`Explain ${call.fn} Match`, `${call.left}\n${call.right}`);
+    if (refused !== undefined) {
+      return say(refused);
+    }
     let text: string;
     try {
       const ran = await live.runOnActive(explainGuardCode(call), (connection) => connection.guarded(explainAjLambda, asCode(call.columns), asCode(call.left), asCode(call.right), index));

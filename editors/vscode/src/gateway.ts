@@ -95,6 +95,14 @@ export function gatewayParts(code: string): { query: string; types: string[] } |
   return { query: new TextDecoder().decode(new Uint8Array(bytes)), types };
 }
 
+/// `statements` run through the gateway on a server of each of `types`,
+/// what each answers joined by `join` - q the gateway applies to the list of
+/// them - in place of the `raze` `.gw.syncexec` joins with: TorQ's
+/// `.gw.syncexecj`.
+export function gatewayJoined(statements: string[], types: string[], join: string): string {
+  return `.gw.syncexecj[${qString(statements.length === 1 ? statements[0] : joined(statements))};${symbols(types)};${join}]`;
+}
+
 /// The names and symbols `statement` spells outside its strings and
 /// comments (a `/` at its start or after a blank, to the end of the line).
 function names(statement: string): string[] {
