@@ -314,3 +314,38 @@ test("a temporal or numeric literal is one token with the type letters q takes, 
   // With a c any of them is a char - 3c is "3" - so it is not a number.
   assert.deepStrictEqual(await scopesOf("a:3c", "3c"), ["source.q"]);
 });
+
+/// Whether each line of `source` is all comment, as the grammar reads it; `k`
+/// for a k file.
+async function commentLines(source, k = false) {
+  const g = await (k ? kGrammar : grammar);
+  let stack = tm.INITIAL;
+  return source.split("\n").map((line) => {
+    const r = g.tokenizeLine(line, stack);
+    stack = r.ruleStack;
+    return r.tokens.every((t) => line.slice(t.startIndex, t.endIndex).trim() === "" || t.scopes.some((s) => s.startsWith("comment.")));
+  });
+}
+
+// q counts a block comment's depth: in the script below KDB-X leaves b, c,
+// d undefined and runs e:5, and the lambda's body is x+1 (f 1 is 2). Three
+// deep the same: h and k are skipped and m:3 runs.
+test("a block comment nests: its inner \\ closes the inner one, and the outer \\ is no end of script (#2298)", async () => {
+  const script = ["a:1", "/", "b:2", "/", "c:3", "\\", "d:4", "\\", "e:5"].join("\n");
+  const skipped = [false, true, true, true, true, true, true, true, false];
+  assert.deepStrictEqual(await commentLines(script), skipped);
+  assert.deepStrictEqual(await commentLines(script, true), skipped);
+  assert.deepStrictEqual(await scopesOf(script, "e"), ["variable.other.definition.q"]);
+  const deep = ["g:7", "/", "/", "/", "h:1", "\\", "\\", "k:2", "\\", "m:3"].join("\n");
+  const deepSkipped = [false, true, true, true, true, true, true, true, true, false];
+  assert.deepStrictEqual(await commentLines(deep), deepSkipped);
+  assert.deepStrictEqual(await commentLines(deep, true), deepSkipped);
+  // Inside a lambda: the closing brace is the lambda's, and the next line q.
+  const lambda = ["f:{", "  x+1", "/", "  junk", "/", "  more", "\\", "  junk2", "\\", "  }", "n:1"].join("\n");
+  assert.deepStrictEqual(await commentLines(lambda), [false, false, true, true, true, true, true, true, true, false, false]);
+  assert.deepStrictEqual(await commentLines(lambda, true), [false, false, true, true, true, true, true, true, true, false, false]);
+  assert.deepStrictEqual(await scopesOf(lambda, "}"), ["punctuation.section.function.end.q"]);
+  assert.deepStrictEqual(await scopesOf(lambda, "n"), ["variable.other.definition.q"]);
+  // A lone \ after the comment closes still ends the script.
+  assert.deepStrictEqual(await commentLines(`${script}\n\\\nz:1`), [...skipped, true, true]);
+});

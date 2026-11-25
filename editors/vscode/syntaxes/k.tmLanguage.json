@@ -16,11 +16,13 @@
   ],
   "repository": {
     "block-comment": {
+      "comment": "q counts a block comment's depth: a lone / inside one opens another, and only the \\ that closes the outermost ends it.",
       "name": "comment.block.k",
       "begin": "^/\\s*$",
       "end": "^\\\\\\s*$",
       "beginCaptures": { "0": { "name": "punctuation.definition.comment.begin.k" } },
-      "endCaptures": { "0": { "name": "punctuation.definition.comment.end.k" } }
+      "endCaptures": { "0": { "name": "punctuation.definition.comment.end.k" } },
+      "patterns": [{ "include": "#block-comment" }]
     },
     "end-of-script": {
       "comment": "A lone backslash outside a block ends the script; q reads nothing after it.",

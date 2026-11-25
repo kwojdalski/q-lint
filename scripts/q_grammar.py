@@ -128,12 +128,15 @@ def grammar():
         ],
         "repository": {
             "block-comment": {
+                "comment": "q counts a block comment's depth: a lone / inside one opens another, "
+                "and only the \\ that closes the outermost ends it. The nested include keeps the inner "
+                "\\ from closing the outer comment and the outer \\ from reading as end-of-script.",
                 "name": "comment.block.q",
                 "begin": r"^/\s*$",
                 "end": r"^\\\s*$",
                 "beginCaptures": {"0": {"name": "punctuation.definition.comment.begin.q"}},
                 "endCaptures": {"0": {"name": "punctuation.definition.comment.end.q"}},
-                "patterns": [{"include": "#qdoc"}],
+                "patterns": [{"include": "#block-comment"}, {"include": "#qdoc"}],
             },
             "end-of-script": {
                 "comment": "A lone backslash outside a block ends the script; q reads nothing after it.",
