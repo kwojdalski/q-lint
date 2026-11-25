@@ -684,18 +684,22 @@ fn run(args: Args) -> Result<u8, String> {
     // with main.q's `\d .a` / `\l b.q`, b.q's `ff:42` is `.a.ff`, which
     // c.q's `\d .a` / `g:{ff}` reads, and there is no root `ff` for d.q's
     // `h:{ff}` (q 5, #525). Only a file that both switches context and
-    // loads can put another in a context.
-    let placed = if sources.iter().any(|(_, s)| {
-        (s.contains("\\d") || s.contains("\"d ")) && (s.contains("\\l") || s.contains("\"l "))
-    }) {
+    // loads can put another in a context - and which loads those are is
+    // read as the server reads them, not guessed from the text: a
+    // file-symbol load (`loadfile`:b.q`) or `system "d\t.a"` spells no
+    // `\l` or `"d ` (#2290).
+    let reads: Vec<_> = sources
+        .iter()
+        .map(|(_, source)| q_lint_rs::references(source, false))
+        .collect();
+    let placed = if reads
+        .iter()
+        .any(|r| r.loads.iter().any(|(_, ns)| !ns.is_empty() && ns != "."))
+    {
         let cwd = config::absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
         let paths: Vec<_> = sources
             .iter()
             .map(|(name, _)| PathBuf::from(name))
-            .collect();
-        let reads: Vec<_> = sources
-            .iter()
-            .map(|(_, source)| q_lint_rs::references(source, false))
             .collect();
         let loads: Vec<_> = reads.iter().map(|r| r.loads.as_slice()).collect();
         q_lint_rs::graph::placements(&paths, &loads, std::slice::from_ref(&cwd))
