@@ -2715,7 +2715,11 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 r"^(?:([a-z]+)[ \t]+|([-+*%!&|<>=~,^#$?@])[ \t]*)(each|peach|over|scan|prior)\b"
             )
             .captures(v.code.get(start..)?)?;
-            let word = m.get(1).or(m.get(2))?.as_str();
+            // Not a glyph: on KDB-X `(#) each x` is `#'[x]` and `(-) each x`
+            // `-'[x]`, projections, where q 4 counted and negated each - the
+            // reading QE008's `count each x` and `neg each x` keep. That fix
+            // is the one for the token, and a token gets one (#2251).
+            let word = m.get(1)?.as_str();
             let iterator = &m[3];
             if matches!(word, "each" | "peach" | "over" | "scan" | "prior") {
                 return None;

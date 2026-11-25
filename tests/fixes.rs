@@ -726,10 +726,8 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QE011", "r:within over x", "r:(within) over x", true),
         ("QE011", "r:xexp scan x", "r:(xexp) scan x", true),
         ("QE011", "r:mod prior x", "r:(mod) prior x", true),
-        ("QE011", "r:+ each x", "r:(+) each x", true),
         ("QE011", "f:{[x] cor each x}", "f:{[x] (cor) each x}", true),
         ("QE011", "r:x in each y", "r:x (in) each y", false),
-        ("QE011", "r:x + each y", "r:x (+) each y", false),
         ("QE011", "r:\"ab\" in each y", "r:\"ab\" (in) each y", false),
         // 'type before, a connection after: only in the editor.
         (
@@ -847,7 +845,10 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QE009", "f:{,\\:x}"),       // and `(,\:)x`
         ("QE009", "f:{,/:'x}"),       // and `(,/:')x`
         ("QE011", "r:f over each x"), // `(f over) each`, the author's to place
-        ("QT029", "h:hopen 1.5"),     // no handle it spells
+        ("QE011", "r:+ each x"),      // `(+) each x` is a projection on KDB-X (#2251)
+        ("QE011", "r:# each x"),      // and QE008 has the token's fix, `count each x`
+        ("QE011", "r:x + each y"),
+        ("QT029", "h:hopen 1.5"), // no handle it spells
         ("QT029", "h:hopen -1"),
         ("QT029", "h:hopen `"),
         ("QE012", "s:\u{201c}hi"),            // no close on the line
@@ -1954,4 +1955,85 @@ fn diff_keeps_untouched_lines_inside_a_change_as_context() {
         let hunks = &patch[patch.find("@@").unwrap()..];
         assert_eq!(hunks, expected, "{name}");
     }
+}
+
+/// What `r` holds once `script` has run on the q that QLINT_TEST_Q names (a
+/// command line): `.Q.s1 r`, or `'` and the error q signalled. Each script
+/// runs in a q of its own, so no global one leaves can stand in for a name
+/// another forgot. `None` where no q is named, as in CI.
+fn on_q(script: &str) -> Option<String> {
+    let q = std::env::var("QLINT_TEST_Q").ok()?;
+    let mut words = q.split_whitespace();
+    let dir = tempfile::tempdir().unwrap();
+    let case = dir.path().join("case.q");
+    fs::write(&case, script).unwrap();
+    let driver = dir.path().join("driver.q");
+    fs::write(
+        &driver,
+        format!(
+            "-1 .[{{system \"l \",x; .Q.s1 r}};enlist {:?};{{\"'\",x}}];\nexit 0\n",
+            case.display().to_string()
+        ),
+    )
+    .unwrap();
+    let out = Command::new(words.next()?)
+        .args(words)
+        .arg(&driver)
+        .arg("-q")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("run q");
+    Some(String::from_utf8_lossy(&out.stdout).trim_end().to_string())
+}
+
+/// `on_q` over each script, or `None` - said once - where no q is named.
+fn values_on_q(scripts: &[String]) -> Option<Vec<String>> {
+    let values: Option<Vec<String>> = scripts.iter().map(|s| on_q(s)).collect();
+    if values.is_none() {
+        eprintln!("QLINT_TEST_Q names no q: the values stand as KDB-X gave them");
+    }
+    values
+}
+
+/// What `--fix` leaves of `source` with `codes` selected, and with the
+/// editor-only fixes too where `unsafe_fixes`.
+fn fixed_with(source: &str, codes: &[&str], unsafe_fixes: bool) -> String {
+    q_lint_rs::fix_all(source, unsafe_fixes, |text| {
+        Ok::<_, ()>(selected(text, codes))
+    })
+    .unwrap()
+    .text
+}
+
+/// QE008 and QE011 both report the glyph of `r:# each x`, which q 5
+/// refuses. Only QE008 rewrites it - to `count each x`, what q 4 made of
+/// it. QE011's `(#) each x` was the other edit for the same token, and on
+/// KDB-X it is `#'[x]`: a projection, where a list was meant (#2251).
+#[test]
+fn a_glyph_before_each_gets_one_fix_and_it_keeps_the_monadic_reading() {
+    for (source, fixed) in [
+        ("r:# each x", "r:count each x"),
+        ("r:- each x", "r:neg each x"),
+        ("r:, each x", "r:enlist each x"),
+    ] {
+        for unsafe_fixes in [false, true] {
+            assert_eq!(fixed_with(source, &["QE008", "QE011"], unsafe_fixes), fixed);
+            assert_eq!(fixed_with(source, &["QE011"], unsafe_fixes), source);
+        }
+        let token: Vec<_> = selected(source, &["QE008", "QE011"])
+            .iter()
+            .filter_map(|f| q_lint_rs::fix_for(f, source))
+            .collect();
+        assert_eq!(token.len(), 1, "{source}");
+    }
+    let scripts = [
+        "x:(1 2;3);r:count each x",
+        "x:(1 2;3);r:(#) each x",
+        "x:1 2 3;r:neg each x",
+    ]
+    .map(String::from);
+    let Some(values) = values_on_q(&scripts) else {
+        return;
+    };
+    assert_eq!(values, ["2 1", "#'[(1 2;3)]", "-1 -2 -3"]);
 }

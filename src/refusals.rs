@@ -2100,6 +2100,15 @@ fn keyword_each(path: &str, source: &str, comments: &str, unsym: &str, out: &mut
                     w = word.as_str(),
                     it = &m[3]
                 )
+            } else if keyword.is_none() {
+                // `(#) each x` is a projection on KDB-X, `#'[x]` (#2251).
+                format!(
+                    "`{w}` is infix, so q 5 refuses `{w} {it}` at parse, and `({w}) {it} x` is \
+                     a projection: write `x {w}' y`, or the keyword of the monadic form \
+                     (`count each x` for `# each x`)",
+                    w = word.as_str(),
+                    it = &m[3]
+                )
             } else {
                 format!(
                     "`{w}` is infix, so q 5 refuses `{w} {it}` at parse: write `({w}) {it}`, \
