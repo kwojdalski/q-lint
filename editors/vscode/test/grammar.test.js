@@ -377,3 +377,28 @@ test("the hours after D or T are one digit or many, or a fraction, when no minut
     assert.deepStrictEqual(await coloured(`a:${text}`, true), [], `k ${text}`);
   }
 });
+
+// KDB-X refuses a minute or second past 59, at any hour - 12:60, 12:34:67,
+// 123:45:67 - and takes 123:45:07 and 1234:56:07. What it refuses is one
+// token to `-4!` (q reads 12:3, 0D1:23 and 12:34e whole), so no piece of it
+// is coloured either.
+test("a minute or second past 59 is no literal, and no piece of a refused time is one (#2306)", async () => {
+  for (const literal of ["123:45:07", "1234:56:07", "123:45:07.5t", "12:59:59", "99:00", "0D24:00", "0D99:00", "2024.01.02D23:59:59.999", "2024.01.02T25:00"]) {
+    assert.deepStrictEqual(await scopesOf(`a:${literal}+1`, literal), ["constant.numeric.temporal.q"], literal);
+    assert.deepStrictEqual(await scopesOf(`a:${literal}`, literal, true), ["constant.numeric.temporal.k"], `k ${literal}`);
+  }
+  const refused = [
+    "123:45:67", "1234:56:78", "123:45:67t", "12:34:67", "12:60", "12:59:60", "123:60", "1234:60", "0D12:60", "1D12:60", "0D12:59:60",
+    "2024.01.02D12:34:60", "2024.01.02T12:60", "2024.01.02D12:60n",
+    "0D1:23", "2024.01.02D1:23", "2024.01.02T1:23", "0D123:00", "2024.01.02D123:45", "12:3", "12:34:5", "12:34e", "2024.01.02D12:34t", "1.5:3",
+  ];
+  for (const text of refused) {
+    assert.deepStrictEqual(await coloured(`a:${text}`), [], text);
+    assert.deepStrictEqual(await coloured(`a:${text}`, true), [], `k ${text}`);
+  }
+  // One digit before a colon is a file operator's, and a name's digits are
+  // the name's: q reads 1:23 as 1:, 23 and a12:3 as a12, :, 3.
+  assert.deepStrictEqual(await coloured("r:1:23"), ["1", "23"]);
+  assert.deepStrictEqual(await coloured("a12:3"), ["3"]);
+  assert.deepStrictEqual(await coloured("a12:3", true), ["3"]);
+});

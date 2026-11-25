@@ -511,7 +511,11 @@
         {
           "comment": "Each shape with the type letters q reads as part of it, so 12:34:56.789p and 2024.01.02n are one literal. As KDB-X takes them; what q refuses (2024.01.02t, 12:34z, 1Dt) is left uncoloured.",
           "name": "constant.numeric.temporal.q",
-          "match": "(?<![A-Za-z0-9.`])(?:\\d{4}\\.\\d{2}\\.\\d{2}D(?:(?:\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d*)?)?|\\d+(?:\\.\\d*)?))?[npdz]?|\\d{4}\\.\\d{2}\\.\\d{2}T(?:\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d*)?)?[npdz]?|(?:\\d+(?:\\.\\d*)?)?[dz]?)|\\d{4}\\.\\d{2}(?:\\.\\d{2}[npdzm]?|m)|\\d+D(?:(?:\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d*)?)?|\\d+(?:\\.\\d*)?))?[np]?|\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d*)?)?[nuvtp]?|\\d{3,}:\\d{2}(?::\\d{2}(?:\\.\\d*)?)?[uvt]?)(?![A-Za-z0-9.:])"
+          "match": "(?<![A-Za-z0-9.`])(?:\\d{4}\\.\\d{2}\\.\\d{2}D(?:(?:\\d{2}:[0-5]\\d(?::[0-5]\\d(?:\\.\\d*)?)?|\\d+(?:\\.\\d*)?))?[npdz]?|\\d{4}\\.\\d{2}\\.\\d{2}T(?:\\d{2}:[0-5]\\d(?::[0-5]\\d(?:\\.\\d*)?)?[npdz]?|(?:\\d+(?:\\.\\d*)?)?[dz]?)|\\d{4}\\.\\d{2}(?:\\.\\d{2}[npdzm]?|m)|\\d+D(?:(?:\\d{2}:[0-5]\\d(?::[0-5]\\d(?:\\.\\d*)?)?|\\d+(?:\\.\\d*)?))?[np]?|\\d{2}:[0-5]\\d(?::[0-5]\\d(?:\\.\\d*)?)?[nuvtp]?|\\d{3,}:[0-5]\\d(?::[0-5]\\d(?:\\.\\d*)?)?[uvt]?)(?![A-Za-z0-9.:])"
+        },
+        {
+          "comment": "What the rule above refuses once a colon follows two characters and a digit: q reads 12:60, 12:3, 0D1:23 and 12:34e as one token, and an error, so no piece of it is coloured. One digit before a colon is a file operator's (1:23 is 1:, 23).",
+          "match": "(?<![A-Za-z0-9.`])\\d[\\d.]*(?:[DT][\\d.]*)?\\d:[A-Za-z0-9.:]*"
         },
         {
           "comment": "A typed null or infinity. None is of symbol (the null symbol is a lone backtick) and no infinity of guid: q refuses 0Ns, 0Ws and 0Wg.",

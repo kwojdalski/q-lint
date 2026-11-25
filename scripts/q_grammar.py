@@ -49,8 +49,9 @@ TEMPORAL_END = r"(?![A-Za-z0-9.:])"
 # The clock of a timestamp, datetime or timespan, and what follows the hours
 # of a time: 12, 12:34, 12:34:56, 12:34:56.789. Hours with nothing after them
 # are any number of digits, with a fraction: KDB-X reads 1970.01.01D0, 0D123
-# and 0D1.5. With minutes they are two: 0D1:23 is refused.
-MINUTES = r":\d{2}(?::\d{2}(?:\.\d*)?)?"
+# and 0D1.5. With minutes they are two: 0D1:23 is refused. A minute or second
+# is never past 59, at any hour: 12:60 and 123:45:67 are refused.
+MINUTES = r":[0-5]\d(?::[0-5]\d(?:\.\d*)?)?"
 HOURS = r"\d+(?:\.\d*)?"
 CLOCK = r"(?:\d{2}" + MINUTES + r"|" + HOURS + r")"
 NAME = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*"
@@ -335,6 +336,13 @@ def grammar():
                         )
                         + ")"
                         + TEMPORAL_END,
+                    },
+                    {
+                        "comment": "What the rule above refuses once a colon follows two characters "
+                        "and a digit: q reads 12:60, 12:3, 0D1:23 and 12:34e as one token, and an "
+                        "error, so no piece of it is coloured. One digit before a colon is a file "
+                        "operator's (1:23 is 1:, 23).",
+                        "match": BEFORE + r"\d[\d.]*(?:[DT][\d.]*)?\d:[A-Za-z0-9.:]*",
                     },
                     {
                         "comment": "A typed null or infinity. None is of symbol (the null symbol "
