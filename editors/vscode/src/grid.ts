@@ -67,8 +67,21 @@ import { TRAP, readAnswer, type Answer } from "./query";
 /// The most nodes `GRID` sends of a dictionary or a nested list's tree.
 export const TREE_NODES = 2000;
 
-/// The name a result cut at its limit is held under for paging (#922).
+/// The name results cut at their limit are held under for paging (#922):
+/// a dictionary from each client's handle to the token of its last such
+/// result and the table, so a client pages only its own result, and only
+/// the one it was given the token for (#2128). Entries of handles closed
+/// since are dropped at each hold.
 export const HELD = ".qlint.held";
+
+/// Whether `token` can be written into q as a string literal as it is: a
+/// result's hold token, which `newHoldToken` makes.
+function holdLiteral(token: string): string {
+  if (!/^[0-9a-f]{8,64}$/.test(token)) {
+    throw new Error(`not a hold token: ${token}`);
+  }
+  return `"${token}"`;
+}
 
 /// How `GRID` writes each column's cells, raw numbers and ranks, given the
 /// escapes `e` and the columns `c`; `PAGE` writes a page's the same way.
@@ -85,11 +98,12 @@ const COLUMN_LINES = [
 
 /// `GRID`, with the tree (`tree`) or without it (`()`): a tree is asked for
 /// only by the result panel, and only while `q-lint.results.tree.enable` is
-/// on, so nothing else sends its code. With `hold`, a table cut at its
-/// limit is kept on the process as `HELD`, for `PAGE` to send more of, and
-/// `HELD` is emptied when it is not cut: only the result panel asks for
-/// that, while `q-lint.results.paging.enable` is on.
-export function gridLambda(tree: boolean, hold = false): string {
+/// on, so nothing else sends its code. With `hold`, a token, a table cut
+/// at its limit is kept on the process in `HELD` for this client under
+/// that token, for `PAGE` to send more of, and this client's entry is
+/// dropped when it is not cut: only the result panel asks for that, while
+/// `q-lint.results.paging.enable` is on.
+export function gridLambda(tree: boolean, hold?: string): string {
   const lines = [
   "{[s;size;limit]",
   ...TRAP,
@@ -111,7 +125,12 @@ export function gridLambda(tree: boolean, hold = false): string {
   "       (k;s;u;count v;$[m;g[g;e;c]'[l;$[d;m#value v;m#v]];()])};"]),
   "     $[98h<>type t;t;",
   "       [m:count t;",
-  ...(hold ? [`        ${HELD}:$[(n>0)&m>n;t;()];`] : []),
+  ...(hold !== undefined
+    ? [
+        `        h:@[value;\`${HELD};()!()];h:$[99h=type h;@[{(key[x] inter key .z.W)#x};h;h];()!()];`,
+        `        ${HELD}:$[(n>0)&m>n;h,(enlist .z.w)!enlist(${holdLiteral(hold)};t);(enlist .z.w)_h];`,
+      ]
+    : []),
   "        t:$[1b~.Q.qp t;[j:$[n<0;(m+n)|0;0]+til m&abs n;$[count j;.Q.ind[t;j];select from t where i<0]];n sublist t];",
   "        c:$[count[cols t]=count distinct cols t;t cols t;value flip t];",
   "        `count`keys`names`types`cells`raw`rank`tree!(\"f\"$m;\"i\"$k;cols t;type each c;",
@@ -127,20 +146,22 @@ export const GRID = gridLambda(false);
 /// `GRID` with a dictionary's or a nested list's tree.
 export const GRID_TREE = gridLambda(true);
 
-/// The rows `off` to `off+n` of the table `GRID` held, as `GRID`'s `grid`
-/// writes them but for its `keys` and `tree`: `count` is the rows held,
-/// and the ranks are the page's own. q's error as a string when nothing is
-/// held, as after the process restarted or another result replaced it.
+/// The rows `off` to `off+n` of the table `GRID` held for this client
+/// under the token `tok`, as `GRID`'s `grid` writes them but for its `keys`
+/// and `tree`: `count` is the rows held, and the ranks are the page's own.
+/// q's error as a string when it is not held, as after the process
+/// restarted or another result of this client replaced it.
 export const PAGE = [
-  "{[off;n]",
-  " .[{[off;n]",
-  `   t:${HELD};if[not 98h=type t;'\`held];m:count t;e:{1_-1_-3!x} each "c"$til 256;`,
+  "{[tok;off;n]",
+  " .[{[tok;off;n]",
+  `   h:@[value;\`${HELD};()!()];h:$[99h=type h;$[.z.w in key h;h .z.w;()];()];if[not tok~first h;'\`held];`,
+  `   t:last h;if[not 98h=type t;'\`held];m:count t;e:{1_-1_-3!x} each "c"$til 256;`,
   "   j:(\"j\"$off)+til 0|(\"j\"$n)&m-\"j\"$off;",
   "   t:$[1b~.Q.qp t;$[count j;.Q.ind[t;j];select from t where i<0];t j];",
   "   c:$[count[cols t]=count distinct cols t;t cols t;value flip t];",
   "   `count`names`types`cells`raw`rank!(\"f\"$m;cols t;type each c;",
   ...COLUMN_LINES.map((line, i) => line.replace(/^ {7}/, "").replace(/;$/, i === COLUMN_LINES.length - 1 ? ")};" : ";")),
-  "   (off;n);{x}]}",
+  "   (tok;off;n);{x}]}",
 ].join("\n");
 
 /// What `GRID`'s `grid` holds, as the IPC client decodes it.

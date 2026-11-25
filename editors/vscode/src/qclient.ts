@@ -214,8 +214,9 @@ export class QConnection {
   /// Run `statements` as `query` does, and when the value is tabular have
   /// the process send its first `limit` rows for the result panel too;
   /// with `tree`, a dictionary's or a nested list's tree as well.
-  queryGrid(statements: string[], size: [number, number], limit: number, tree = false, hold = false): Promise<GridAnswer> {
-    const lambda = hold ? gridLambda(tree, true) : tree ? GRID_TREE : GRID;
+  /// With `hold`, the token a cut result is held under (`gridLambda`).
+  queryGrid(statements: string[], size: [number, number], limit: number, tree = false, hold?: string): Promise<GridAnswer> {
+    const lambda = hold !== undefined ? gridLambda(tree, hold) : tree ? GRID_TREE : GRID;
     return this.call(lambda, statements, size, limit).then(readGridAnswer);
   }
 

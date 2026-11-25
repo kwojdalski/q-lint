@@ -8,6 +8,7 @@
 // `processes.ts`'s; discovery servers, `discoveryservers.ts`'s; what a
 // terminal is sent, `terminal.ts`'s. This file is the VS Code around them.
 import * as os from "os";
+import { randomBytes } from "node:crypto";
 import * as path from "path";
 import {
   commands,
@@ -725,7 +726,7 @@ export class Live {
     this.terminals = terminals;
     this.runFileWith = (extra, document) => terminals.runFile(extra, document);
     this.modes = new QueryModes(context);
-    this.modes.setPager((label, offset, count) => this.pageHeld(label, offset, count));
+    this.modes.setPager((label, offset, count, token) => this.pageHeld(label, offset, count, token));
     this.modes.setRunner((code, label) => this.runOnProcess(code, label));
     this.controls = new QueryControls(context, {
       activeLabel: () => this.activeLabel(),
@@ -3166,10 +3167,12 @@ export class Live {
       // a process the read-only guard (#918) guards, as holding assigns.
       const readOnly = isProduction(process) || guardedBy(process, this.setting(readGuard)).length > 0;
       const hold = !controls.unwrapped && settings.mode !== "console" && this.modes.wantsHold(readOnly);
+      // This result's own, so a page is of it and no other (#2128).
+      const token = hold ? randomBytes(16).toString("hex") : undefined;
       const answer = controls.unwrapped
         ? await runUnwrapped(connection, cut, { size: consoleSize, limit: gridLimit, unlimited, grid: settings.mode !== "console" })
         : settings.mode !== "console"
-          ? await connection.queryGrid(cut, consoleSize, gridLimit, this.modes.wantsTree(), hold)
+          ? await connection.queryGrid(cut, consoleSize, gridLimit, this.modes.wantsTree(), token)
           : unlimited
             ? readUnlimited(await connection.call(UNLIMITED, cut, consoleSize))
             : await connection.query(cut, consoleSize);
@@ -3188,7 +3191,7 @@ export class Live {
       if (origin !== undefined) {
         this.answered.fire({ process: process.label, answer, millis, ...origin });
       }
-      if (!this.modes.show({ process: process.label, code, answer, millis, held: hold }, settings, as === "watched")) {
+      if (!this.modes.show({ process: process.label, code, answer, millis, held: hold, ...(token !== undefined ? { token } : {}) }, settings, as === "watched")) {
         this.show(render({ process: process.label, code, answer, millis }, settings), settings.autoClear || as === "watched");
       }
     } catch (error) {
@@ -3229,7 +3232,10 @@ export class Live {
   /// why they could not be fetched. Only on the connection the result came
   /// from, and only when no query is running on it.
   /// Either of those may pass, so the result stays held (#1634).
-  private async pageHeld(label: string, offset: number, count: number): Promise<GridPage | PageLater | string> {
+  private async pageHeld(label: string, offset: number, count: number, token: string | undefined): Promise<GridPage | PageLater | string> {
+    if (token === undefined) {
+      return "the process holds no rows of this result";
+    }
     const connection = this.connection;
     if (connection === undefined || this.activeLabel() !== label) {
       return { later: "it is not the connected process now; connect to it again, then scroll again" };
@@ -3237,7 +3243,7 @@ export class Live {
     if (connection.isBusy) {
       return { later: "a query is running on it; scroll again once it ends" };
     }
-    return readPage(await connection.call(PAGE, offset, count));
+    return readPage(await connection.call(PAGE, token, offset, count));
   }
 
   /// The saved query `from` was renamed `to`, or deleted: the results it

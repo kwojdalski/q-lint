@@ -14,6 +14,8 @@ const { statements } = require("../out/statements.js");
 const Q = process.env.QLINT_TEST_Q;
 const skip = Q ? false : "QLINT_TEST_Q names no q binary";
 const SIZE = [25, 80];
+/// The token a result is held under for paging (#2128).
+const TOKEN = "0123456789abcdef0123456789abcdef";
 
 function freePort() {
   return new Promise((resolve) => {
@@ -183,22 +185,22 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
     const { gridLambda, PAGE, readPage, appendPage, readGridAnswer } = require("../out/grid.js");
     const code = "([k:til 23] v:23#3 1 2 0n 5f; s:23#`c`a`b)";
     const full = (await connection.queryGrid(statements(code), SIZE, 100)).grid;
-    let grid = readGridAnswer(await connection.call(gridLambda(false, true), statements(code), SIZE, 10)).grid;
+    let grid = readGridAnswer(await connection.call(gridLambda(false, TOKEN), statements(code), SIZE, 10)).grid;
     assert.strictEqual(grid.cells[0].length, 10);
     while (grid.cells[0].length < grid.count) {
-      const page = readPage(await connection.call(PAGE, grid.cells[0].length, 10));
+      const page = readPage(await connection.call(PAGE, TOKEN, grid.cells[0].length, 10));
       assert.notStrictEqual(typeof page, "string", page);
       grid = appendPage(grid, page);
     }
     assert.deepStrictEqual(grid.cells, full.cells);
     assert.deepStrictEqual(grid.rank, full.rank);
     // Past the end: no rows; a result not cut empties what was held.
-    assert.strictEqual(readPage(await connection.call(PAGE, 23, 10)).cells[0].length, 0);
-    await connection.call(gridLambda(false, true), statements("([] a:1 2)"), SIZE, 10);
-    assert.strictEqual(readPage(await connection.call(PAGE, 0, 10)), "held");
+    assert.strictEqual(readPage(await connection.call(PAGE, TOKEN, 23, 10)).cells[0].length, 0);
+    await connection.call(gridLambda(false, TOKEN), statements("([] a:1 2)"), SIZE, 10);
+    assert.strictEqual(readPage(await connection.call(PAGE, TOKEN, 0, 10)), "held");
     // A partitioned table is held by reference and read with .Q.ind.
-    grid = readGridAnswer(await connection.call(gridLambda(false, true), statements("p"), SIZE, 4)).grid;
-    grid = appendPage(grid, readPage(await connection.call(PAGE, 4, 4)));
+    grid = readGridAnswer(await connection.call(gridLambda(false, TOKEN), statements("p"), SIZE, 4)).grid;
+    grid = appendPage(grid, readPage(await connection.call(PAGE, TOKEN, 4, 4)));
     assert.deepStrictEqual(grid.cells[1], ["a", "b", "c", "a", "b", "c"]);
     assert.deepStrictEqual(grid.cells[0].slice(3), ["2026.01.02", "2026.01.02", "2026.01.02"]);
     // Asked without hold, nothing is defined.
@@ -312,12 +314,42 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
       }
       // Held for paging and paged too: a page past the first is the held
       // table's own rows.
-      const held = readGridAnswer(await connection.call(gridLambda(false, true), statements(name), SIZE, 1)).grid;
-      assert.strictEqual(typeof readPage(await connection.call(PAGE, 0, 100)), "object", name);
+      const held = readGridAnswer(await connection.call(gridLambda(false, TOKEN), statements(name), SIZE, 1)).grid;
+      assert.strictEqual(typeof readPage(await connection.call(PAGE, TOKEN, 0, 100)), "object", name);
       assert.strictEqual(held.cells[0].length, 1);
     }
     // Ranked as before: a sorted column's ranks are its rows' places.
     assert.deepStrictEqual(shown.st, [[0, 1, 2], [0, 1, 2], [0, 1, 2]]);
     assert.deepStrictEqual(await connection.call(state, 0), before);
   });
+});
+
+// One .qlint.held for the whole process: a second client's, or this
+// client's next, grid query replaced the result, and scrolling the first
+// grid appended the other's rows to it (#2128).
+test("a held result is paged only by the client and the token it was held for (#2128)", { skip }, async (t) => {
+  const { gridLambda, PAGE, readPage, readGridAnswer } = require("../out/grid.js");
+  const q = await startQ(() => "trade:([] sym:20#`A`B; px:til 20)\n");
+  t.after(() => q.stop());
+  const one = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  const two = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => (one.abort(), two.abort()));
+  const a = "a".repeat(32);
+  const b = "b".repeat(32);
+  const first = readGridAnswer(await one.call(gridLambda(false, a), statements("select from trade where sym=`A"), SIZE, 5)).grid;
+  await two.call(gridLambda(false, b), statements("select from trade where sym=`B"), SIZE, 5);
+  const page = readPage(await one.call(PAGE, a, first.cells[0].length, 5));
+  assert.notStrictEqual(typeof page, "string", page);
+  assert.deepStrictEqual(page.cells[0], ["A", "A", "A", "A", "A"], "the other client's rows were sent");
+  // Another client's token, or this client's earlier one, is refused.
+  assert.strictEqual(readPage(await one.call(PAGE, b, 0, 5)), "held");
+  await one.call(gridLambda(false, b), statements("select from trade where sym=`B"), SIZE, 5);
+  assert.strictEqual(readPage(await one.call(PAGE, a, 5, 5)), "held");
+  assert.deepStrictEqual(readPage(await two.call(PAGE, b, 5, 5)).cells[1], ["11", "13", "15", "17", "19"]);
+  // A client gone leaves nothing held for it once another holds.
+  two.abort();
+  await new Promise((r) => setTimeout(r, 200));
+  await one.call(gridLambda(false, a), statements("select from trade"), SIZE, 5);
+  assert.strictEqual((await one.query(statements("count .qlint.held"), SIZE)).text.join(""), "1");
+  assert.throws(() => gridLambda(false, 'x";system"echo'), /not a hold token/);
 });
