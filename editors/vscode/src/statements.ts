@@ -12,6 +12,8 @@
 //   a no-break space or a form feed is a character like any other (#2279).
 // - A line that starts with a blank continues the statement above it - a
 //   closing `}` at column 0 starts a new one, which q refuses, here as there.
+//   A continuation line's leading tab is read as a space, as q reads it
+//   (#2280).
 // - A line that starts with `/` is a comment; `/` alone opens a block comment
 //   that `\` alone closes - and block comments nest, so inside one a `/`
 //   alone opens another - and `\` alone outside one ends the script.
@@ -128,7 +130,7 @@ export function statementSpans(text: string, firstLine = 0): Span[] {
       // q keeps a block comment in the statement around it as comment
       // lines: `/` and `\` alone as `/`, any other line with a `/` before it.
       if (current !== undefined) {
-        pending.push(line === "/" || line === "\\" ? "/" : `/${line}`);
+        pending.push(line === "/" || line === "\\" ? "/" : `/${line.replace(/^\t/, " ")}`);
       }
       depth = blockDepth(depth, line);
       continue;
@@ -144,7 +146,7 @@ export function statementSpans(text: string, firstLine = 0): Span[] {
       continue;
     }
     if (continues(line) && current !== undefined) {
-      current.text += `\n${[...pending, line].join("\n")}`;
+      current.text += `\n${[...pending, line.replace(/^\t/, " ")].join("\n")}`;
       current.end = at;
       pending = [];
       // A refused comment line among them is in the statement now.

@@ -85,9 +85,9 @@ const { TOOLING_SETTINGS, TOOLING_COMMANDS, toolingOn } = require("../out/toolin
 test("a statement is a line and the indented lines after it", () => {
   assert.deepStrictEqual(statements("a:1\nb:a+1\nb*10"), ["a:1", "b:a+1", "b*10"]);
   assert.deepStrictEqual(statements("f:{[x]\n  y:x+1;\n  y*2}\nf 3"), ["f:{[x]\n  y:x+1;\n  y*2}", "f 3"]);
-  // A tab continues as a space does; blank lines inside are kept, as q
-  // keeps them (#2282).
-  assert.deepStrictEqual(statements("f:{\n\tx+1\n\n  }\n"), ["f:{\n\tx+1\n\n  }"]);
+  // A tab continues as a space does, and is read as one; blank lines
+  // inside are kept, as q keeps them (#2280, #2282).
+  assert.deepStrictEqual(statements("f:{\n\tx+1\n\n  }\n"), ["f:{\n x+1\n\n  }"]);
   // CRLF is read as LF, and trailing spaces are dropped.
   assert.deepStrictEqual(statements("a:1  \r\nb:2\r\n"), ["a:1", "b:2"]);
 });

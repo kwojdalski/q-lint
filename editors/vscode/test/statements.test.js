@@ -7,6 +7,7 @@ const { statements, statementSpans, isBlankLine } = require("../out/statements.j
 const { statementSpans: timedSpans } = require("../out/linetimings.js");
 const { cells, shownCode } = require("../out/cells.js");
 const { isComplete } = require("../out/repl.js");
+const { replLines } = require("../out/terminal.js");
 const { definitions } = require("../out/definitions.js");
 
 test("only a space, a tab and a carriage return are blank to q (#2279)", () => {
@@ -48,4 +49,12 @@ test("blank and comment lines inside a statement stay in it, as q keeps them (#2
   assert.deepStrictEqual(statements("a:1\n\n/ note\nb:2"), ["a:1", "b:2"]);
   // The definitions drift compares are cut the same way.
   assert.deepStrictEqual(definitions("dr1:{[x]\n  / double it\n  y:x*2;\n\n  y+1}").map((d) => d.text), ["{[x]\n  / double it\n  y:x*2;\n\n  y+1}"]);
+});
+
+test("a continuation line's leading tab is read as a space, as q reads it (#2280)", () => {
+  assert.deepStrictEqual(statements('sql:"select *\n\tfrom t"'), ['sql:"select *\n from t"']);
+  assert.deepStrictEqual(statements('s:"a\n\t\tb"'), ['s:"a\n \tb"']);
+  // In a block comment inside a statement too.
+  assert.deepStrictEqual(statements("f:{x+\n/\n\tbar\n\\\n  y}"), ["f:{x+\n/\n/ bar\n/\n  y}"]);
+  assert.deepStrictEqual(replLines('sql:"select *\n\tfrom t"'), ['sql:"select *\\n from t"']);
 });
