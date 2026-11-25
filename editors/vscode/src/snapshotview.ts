@@ -56,7 +56,16 @@ export function registerSnapshots(context: ExtensionContext, live: Live, written
 
 /// The query's result as a snapshot records it, or undefined having said why.
 async function result(live: Live, query: string): Promise<string | undefined> {
-  const done = await live.runOnActive(query, async (connection) => readAnswer(await connection.call(SNAPSHOT_RUN, statements(query))));
+  // A declined read-only guard and a connection that drops while the query
+  // runs throw: said here, as every other caller of runOnActive says it,
+  // rather than left to reject the command (#2261).
+  let done: { process: string; value: ReturnType<typeof readAnswer> } | undefined;
+  try {
+    done = await live.runOnActive(query, async (connection) => readAnswer(await connection.call(SNAPSHOT_RUN, statements(query))));
+  } catch (error) {
+    void window.showInformationMessage(plainMessage(`q-lint: no snapshot was written: ${error instanceof Error ? error.message : String(error)}`));
+    return undefined;
+  }
   if (done === undefined) {
     return undefined;
   }
