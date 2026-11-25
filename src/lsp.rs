@@ -245,8 +245,9 @@ struct Index {
     /// A file's loads, or the set of files, changed since the placements
     /// were last worked out.
     stale: bool,
-    /// Bumped whenever what the workspace defines changes, which is what
-    /// makes the open documents' semantic tokens stale.
+    /// Bumped whenever what the workspace defines changes, or where a file
+    /// is loaded, which is what makes the open documents' semantic tokens
+    /// stale.
     generation: u64,
     /// Bumped whenever the names some file reads change, which is what
     /// makes a count of references stale.
@@ -394,7 +395,8 @@ impl Index {
     }
 
     /// Work out again where each file's definitions go, when a file's loads
-    /// or the set of files changed, and move those that moved. Only a load
+    /// or the set of files changed, and move those that moved - and whether
+    /// any file now sits anywhere else. Only a load
     /// under some `\d .a` can put a file anywhere but the root, so without
     /// one there is no graph to build.
     fn settle(&mut self) -> bool {
@@ -424,6 +426,12 @@ impl Index {
             if file.placement == placement {
                 continue;
             }
+            // Moved, whether or not what it defines moves with it: its reads
+            // resolve where it is loaded too, which is what its colours, its
+            // parameter hints and the counts of what it reads are drawn
+            // from. Only a definition moved counted, and a file that
+            // defines nothing kept them stale (#2176).
+            changed = true;
             let mut placed = file.own.clone();
             placement.apply(&mut placed, &file.implicit);
             file.placement = placement;
@@ -431,7 +439,6 @@ impl Index {
                 self.ws.remove(&file.placed);
                 self.ws.add(&placed);
                 file.placed = placed;
-                changed = true;
             }
         }
         if changed {

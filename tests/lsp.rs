@@ -4092,6 +4092,42 @@ fn another_read_of_a_name_asks_for_the_reference_counts_again() {
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
+/// A file loaded under another `\d` reads its names there, so where it is
+/// loaded decides its colours, its parameter hints and the counts of what
+/// it reads, though it defines nothing that moves: a loader's `\d` added
+/// or removed asked for no refresh, and the editor kept the file's old
+/// colours, hints and counts (#2176).
+#[test]
+fn a_file_loaded_somewhere_else_asks_for_colours_hints_and_counts_again() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.q"), ".ns.f:{x+1}\n").unwrap();
+    let options = json!({"crossFileRefresh": {"enable": true},
+                         "referenceLens": {"enable": true}});
+    let mut server = start_refreshed(dir.path(), options);
+    let (b, c) = (
+        file_uri(&dir.path().join("b.q")),
+        file_uri(&dir.path().join("c.q")),
+    );
+    server.open(&b, "f 1\n");
+    server.diagnostics_for(&b);
+    server.open(&c, "\\l a.q\n\\l b.q\n");
+    refreshes_after(&mut server, &c, 2, "\\l a.q\n\\l b.q\n");
+    let all = [
+        "workspace/codeLens/refresh",
+        "workspace/inlayHint/refresh",
+        "workspace/semanticTokens/refresh",
+    ];
+    assert_eq!(
+        refreshes_after(&mut server, &c, 3, "\\l a.q\n\\d .ns\n\\l b.q\n"),
+        all
+    );
+    assert_eq!(
+        refreshes_after(&mut server, &c, 4, "\\l a.q\n\\l b.q\n"),
+        all
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
 /// With `lint.scope: "workspace"` a file nobody opened reports, one the
 /// index excludes does not, and one changed on disk reports again; with the
 /// default scope only an open file reports (#1160).
