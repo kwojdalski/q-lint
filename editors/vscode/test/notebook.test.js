@@ -94,6 +94,8 @@ test("a file that is not a notebook is refused with what is wrong, never read as
   refused('{"qnb": 1}', /"cells" is missing/);
   refused('{"qnb": 1, "cells": [{"kind": "raw", "source": []}]}', /cell 1: "kind" is "raw"/);
   refused('{"qnb": 1, "cells": [{"kind": "code", "source": [1]}]}', /cell 1: "source" is not a list of lines/);
+  // A line with its own line end, as Jupyter writes lines, would come back as two (#2403).
+  refused('{"qnb": 1, "cells": [{"kind": "code", "source": [""]}, {"kind": "markdown", "source": ["a\\n", "b"]}]}', /cell 2: line 1 of "source" holds a line end/);
   refused('{"qnb": 1, "cells": [{"kind": "code", "source": [], "outputs": [{"items": [{"mime": "x"}]}]}]}', /cell 1, output 1, item 1 has neither/);
   refused('{"qnb": 1, "cells": [{"kind": "code", "source": [], "execution": {"order": "1"}}]}', /execution.order" is not a number/);
 });
