@@ -1401,6 +1401,40 @@ pub fn whole_edit(before: &str, after: &str) -> Option<Fix> {
     })
 }
 
+/// Whether `name`, joined to itself at `at`, was last given an atom literal
+/// before it in the same lambda (or the file, outside one): `r:0` or
+/// `` r:` `` ahead of a loop of `r:r,x`, which `r,:x` would refuse (#2253).
+fn starts_as_atom(source: &str, code: &str, at: usize, name: &str) -> bool {
+    let mut depth = 0i32;
+    let mut scope = 0;
+    for (i, b) in code.as_bytes()[..at].iter().enumerate().rev() {
+        match b {
+            b'}' => depth += 1,
+            b'{' if depth == 0 => {
+                scope = i + 1;
+                break;
+            }
+            b'{' => depth -= 1,
+            _ => {}
+        }
+    }
+    let Ok(assigned) = regex::Regex::new(&format!(
+        r"(?:^|[^A-Za-z0-9_.`])({})[ \t]*:([^:;\n\]}}][^;\n\]}}]*)",
+        regex::escape(name)
+    )) else {
+        return false;
+    };
+    assigned
+        .captures_iter(&source[scope..at])
+        .filter(|c| {
+            code.as_bytes()[scope + c.get(1).unwrap().start()]
+                == source.as_bytes()[scope + c.get(1).unwrap().start()]
+        })
+        .last()
+        .and_then(|c| literal_type(&c[2]))
+        .is_some_and(|t| t < 0)
+}
+
 fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
     // A comment is what QL003 edits, so it passes the check below.
     if finding.code == "QL003" {
@@ -1527,15 +1561,20 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             if name.contains('`') {
                 return None;
             }
+            // One character in quotes is a char atom, which ss and ssr
+            // refuse as they do the symbol (q 5: `"a" ss "a"` is 'type): a
+            // one-item string, as QB007 writes, in parentheses before an
+            // infix `ss`, where `enlist"a" ss "a"` would enlist the result
+            // (#2258).
+            let string = match (name.chars().count(), symbol.start()) {
+                (1, 0) => format!("(enlist\"{name}\")"),
+                (1, _) => format!("enlist\"{name}\""),
+                _ => format!("\"{name}\""),
+            };
             (
                 old,
-                format!(
-                    "{}\"{name}\"{}",
-                    &old[..symbol.start()],
-                    &old[symbol.end()..]
-                )
-                .into(),
-                format!("Pass the string \"{name}\"").into(),
+                format!("{}{string}{}", &old[..symbol.start()], &old[symbol.end()..]).into(),
+                format!("Pass the string {string}").into(),
                 false,
             )
         }
@@ -1629,20 +1668,29 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 false,
             )
         }
-        // `r:r,x` is `r,:x`, the same value, appended in place. Only in the
-        // editor: it is the loop's to decide, and a name another reference
-        // shares is copied either way.
+        // `r:r,x` is `r,:x`, appended in place - but not always the same
+        // value: `r:r,x` makes a general list of whatever it joins, and
+        // `r,:x` refuses with 'type when r is an atom, or a list x's items
+        // do not fit (q 5: `r:0; r,:1`, `r:1 2; r,:`a` and `r:(); r,:1;
+        // r,:1.5` are each 'type, #2253). So only in the editor, and not at
+        // all where r was last given an atom literal before the loop, where
+        // it can only fail.
         "QV003" => {
             let m =
                 re!(r"^(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*:[ \t]*(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*,")
                     .captures(source.get(start..)?)?;
-            if m[1] != m[2] {
+            if m[1] != m[2] || starts_as_atom(source, &v.code, start, &m[1]) {
                 return None;
             }
             (
                 m.get(0)?.as_str(),
                 format!("{},:", &m[1]).into(),
-                format!("Append in place with `{},:`", &m[1]).into(),
+                format!(
+                    "Append in place with `{},:` (q refuses it with 'type where the items \
+                     joined do not fit the list)",
+                    &m[1]
+                )
+                .into(),
                 false,
             )
         }
@@ -1997,11 +2045,21 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             // A string is blank in the code view, and a blank reads as the
             // space between operands: `a=f "x" and b=0` would group as
             // `(a=f) "x"`. Fill it, so the string stays part of its operand.
-            let filled: String = v.code[phrase..end]
-                .bytes()
-                .zip(v.comments[phrase..end].bytes())
-                .map(|(c, s)| {
-                    if c != s || !c.is_ascii() {
+            // A symbol and a dotted name are filled too, so the `and` of
+            // `` `and ``, `` `x.and `` or `x.and` is no keyword: grouping
+            // there closed the parenthesis inside the token, `(s=`)and`,
+            // which q 5 cannot parse (#2256).
+            let unsym = unsymbolled(&v.code[phrase..end]);
+            let code = &v.code.as_bytes()[phrase..end];
+            let filled: String = (0..code.len())
+                .map(|i| {
+                    let c = code[i];
+                    let named = c == b'.' && code.get(i + 1).is_some_and(u8::is_ascii_alphabetic);
+                    if c != v.comments.as_bytes()[phrase + i]
+                        || c != unsym.as_bytes()[i]
+                        || named
+                        || !c.is_ascii()
+                    {
                         '_'
                     } else {
                         c as char
@@ -2454,6 +2512,19 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 .iter()
                 .filter_map(|(r, to)| r.find_iter(line).find(&in_code).map(|m| (m, *r, *to)))
                 .min_by_key(|s| s.0.start())?;
+            // A cast keeps its value only where what it casts is a temporal
+            // value: a number cast to datetime counts days, and to timestamp
+            // nanoseconds - `` `datetime$1 `` is 2000.01.02T00:00, and
+            // `` `timestamp$1 `` 2000.01.01D00:00:00.000000001 (q 5, #2254).
+            // So only before a date, datetime or timestamp literal or the
+            // clock's own, or the empty list, which a table's schema casts;
+            // what a name holds is not known here.
+            if m.as_str().ends_with('$')
+                && !re!(r"^[ \t]*(?:-?\d{4}\.\d{2}\.\d{2}(?:[TD]\d|[^\w.:]|$)|\.z\.[pPzZdD](?:[^\w.]|$)|\([ \t]*\))")
+                    .is_match(&line[m.end()..])
+            {
+                return None;
+            }
             begin = start + m.start();
             (
                 &source[begin..start + m.end()],
@@ -2707,44 +2778,36 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         // `cor each x` becomes `(cor) each x`: with nothing on its left q 4
         // took the keyword as each's function, as it does `count each x`,
         // and on KDB-X `(cor) each x` is `each[cor;x]`. With an operand on
-        // the left - `x in each y` - what q 4 made of it is not certain, so
-        // only in the editor. An iterator keyword before another, `f over
-        // each x`, wants `(f over)`, which is the author's to place.
+        // the left - `x in each y` - there is no fix: `x (in) each y` indexes
+        // x by projections, 'type for any x, and whether `x in' y` or
+        // `in[x] each y` was meant is the author's to say (#2259). An
+        // iterator keyword before another, `f over each x`, wants
+        // `(f over)`, which is the author's to place.
         "QE011" => {
             let m = re!(
                 r"^(?:([a-z]+)[ \t]+|([-+*%!&|<>=~,^#$?@])[ \t]*)(each|peach|over|scan|prior)\b"
             )
             .captures(v.code.get(start..)?)?;
-            let word = m.get(1).or(m.get(2))?.as_str();
+            // Not a glyph: on KDB-X `(#) each x` is `#'[x]` and `(-) each x`
+            // `-'[x]`, projections, where q 4 counted and negated each - the
+            // reading QE008's `count each x` and `neg each x` keep. That fix
+            // is the one for the token, and a token gets one (#2251).
+            let word = m.get(1)?.as_str();
             let iterator = &m[3];
             if matches!(word, "each" | "peach" | "over" | "scan" | "prior") {
                 return None;
             }
-            let line_start = v.code[..start].rfind('\n').map_or(0, |p| p + 1);
-            let line = &source[line_start..];
-            let prompt = if line.starts_with("q)") { 2 } else { 0 };
-            // Read in the source: `code` blanks a string, which is an operand.
-            let left = source
-                .get(line_start + timed_prefix(line).max(prompt)..start)?
-                .trim_end_matches([' ', '\t']);
-            // A signature is no operand: `{[x] cor each y}`.
-            let signature = left.ends_with(']')
-                && left
-                    .bytes()
-                    .rev()
-                    .scan(0i32, |depth, c| {
-                        *depth += i32::from(c == b']') - i32::from(c == b'[');
-                        Some(*depth)
-                    })
-                    .position(|depth| depth == 0)
-                    .is_some_and(|p| left[..left.len() - 1 - p].ends_with('{'));
-            let infix = !signature
-                && left.ends_with(|c: char| c.is_ascii_alphanumeric() || "_.)]}\"`".contains(c));
+            // Read where comments are blank and strings are not, a string
+            // being an operand, and across an indented line: `s:x` over
+            // `  in each y` has `x` on the left (#2252).
+            if refusals::has_left_operand(source, &v.comments, start) {
+                return None;
+            }
             (
                 &source[start..start + word.len()],
                 format!("({word})").into(),
                 format!("Write `({word})`, the function {iterator} applies").into(),
-                !infix,
+                true,
             )
         }
         // `hopen `host:5000` takes the leading `:` a handle needs. The old
@@ -3637,6 +3700,13 @@ fn bare_segments(code: &str, source: &str) -> Vec<(usize, String, Vec<usize>)> {
 /// reading is the point: `n>=4|.00002*count text`, `0<x&y`.
 static LOGIC: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"\b(?:and|or)\b").unwrap());
+/// The `and`s and `or`s of `text` that are words: not the end of a dotted
+/// name, `x.and` or `.ns.or`, nor part of one, `and.x` (#2256).
+fn logic_words(text: &str) -> impl Iterator<Item = regex::Match<'_>> {
+    LOGIC.find_iter(text).filter(move |m| {
+        !text[..m.start()].ends_with(['.', '`']) && !text[m.end()..].starts_with('.')
+    })
+}
 /// A comparison to the left of one: the glyphs, and the words applied infix.
 /// q 5 `where a in 1 3 and b=0` is `a in (1 3 and b=0)` too (#735).
 static COMPARISON: LazyLock<regex::Regex> = LazyLock::new(|| {
@@ -3649,8 +3719,7 @@ static COMPARISON: LazyLock<regex::Regex> = LazyLock::new(|| {
 fn comparison_swallowed(clause: &str) -> bool {
     let clause =
         re!(r"`[\w.:/]*").replace_all(clause, |m: &regex::Captures| " ".repeat(m[0].len()));
-    LOGIC
-        .find_iter(&clause)
+    logic_words(&clause)
         .find(|logic| !clause[logic.end()..].starts_with(['\'', '/', '\\']))
         .is_some_and(|logic| COMPARISON.is_match(&clause[..logic.start()]))
 }
@@ -3664,7 +3733,7 @@ pub(crate) fn swallowed_comparisons(flat: &str) -> Vec<(usize, usize)> {
     let mut clause_start = 0;
     for clause in flat.split(',') {
         let mut from = 0;
-        for logic in LOGIC.find_iter(clause) {
+        for logic in logic_words(clause) {
             let operand = &clause[from..logic.start()];
             if COMPARISON.is_match(operand) {
                 let lead = operand.len() - operand.trim_start().len();

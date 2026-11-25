@@ -70,6 +70,20 @@ l:a mod each' / note
 m:"ab" in peach
 n:a in each [b]
 
+=== clean profile: general | and with the operand on the line above, which an indented line goes on (q 5 parses each, #2252)
+a:1 2;b:(1 2;3 4)
+g:a
+  mod each
+h:a / note
+
+  in each
+
+=== QE011 profile: general | nor does a line between the operand and an applied each make it any less refused (q 5: ' for each, #2252)
+s:x
+  in each y
+t:{[x;y] x
+  mod each y}
+
 === QE009 QE011 profile: general | while nothing on its left, an operand after each, or a signature on its left is refused (q 5: ' for each, #647)
 r:cor each
 s:a cor each' x
