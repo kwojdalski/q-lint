@@ -35,7 +35,28 @@ test("a query is a q string, several statements one string joined on `;` lines (
   // TorQ's typed and timed variants are gateway calls too (#1427).
   assert.ok(isGatewayCall('.gw.syncexecj["q";`rdb;raze]'));
   assert.ok(isGatewayCall('.gw.asyncexecjpt["q";`rdb;raze;();0D00:01]'));
-  assert.ok(!isGatewayCall(".gw.syncexec_x[1]"));
+  // Any name of the gateway's own is its code (#2588); one in another
+  // namespace is not.
+  assert.ok(isGatewayCall(".gw.syncexec_x[1]"));
+  assert.ok(!isGatewayCall("gw.syncexec[1]"));
+  assert.ok(!isGatewayCall("my.gw.syncexec[1]"));
+});
+
+// A call the user wrote and assigned or applied is not wrapped again: the
+// servers have no `.gw` (#2361). Nor is the gateway's own API and state,
+// meant to run on the gateway (#2588).
+test("a gateway call anywhere in a statement, and the gateway's own API, are the gateway's code (#2361, #2588)", () => {
+  assert.ok(isGatewayCall('t:.gw.syncexec["select from trade";`rdb]'));
+  assert.ok(isGatewayCall('count .gw.syncexec["select from trade";`rdb]'));
+  assert.ok(isGatewayCall("f:{.gw.syncexec[x;`rdb]}"));
+  assert.ok(isGatewayCall("`.gw.syncexec . (\"1\";`rdb)"));
+  assert.ok(isGatewayCall(".gw.servers"));
+  assert.ok(isGatewayCall("select from .gw.servers where servertype=`rdb"));
+  assert.ok(isGatewayCall(".dataaccess.getdata[`tablename`aggregations!(`trade;enlist[`avg]!enlist`px)]"));
+  // A string or a comment naming one is not.
+  assert.ok(!isGatewayCall('s:".gw.servers"'));
+  assert.ok(!isGatewayCall("count trade / not .gw.servers"));
+  assert.ok(!isGatewayCall("select from trade where time>2024.01.01D00:00"));
 });
 
 test("a file names its server types on a `/ @servertypes` line", () => {
@@ -43,6 +64,8 @@ test("a file names its server types on a `/ @servertypes` line", () => {
   assert.deepStrictEqual(fileServerTypes("a:1\n/@servertypes `hdb,rdb\n"), ["hdb", "rdb"]);
   assert.strictEqual(fileServerTypes("  / @servertypes rdb\n"), undefined);
   assert.strictEqual(fileServerTypes("/ @servertypes 1x\n"), undefined);
+  // `none`: the gateway itself (#2588).
+  assert.deepStrictEqual(fileServerTypes("/ @servertypes none\n.gw.servers"), []);
   assert.deepStrictEqual(serverTypes("rdb, hdb rdb"), ["rdb", "hdb"]);
   assert.strictEqual(serverTypes(""), undefined);
   // Read from every source, a discovery server's too: it runs nothing new.
@@ -117,6 +140,8 @@ async function torq(t, servers = "") {
     t,
     [
       `.gw.h:\`rdb\`hdb!(hopen \`::${rdb};hopen \`::${hdb})`,
+      ".gw.servers:([] servertype:`rdb`hdb)",
+      "role:`gateway",
       ".gw.run:{[query;servertypes] servertypes,:(); if[count m:servertypes except key .gw.h; '\"not all of the requested server types are available: \",\",\" sv string m]; raze .gw.h[servertypes]@\\:({$[`.pm.valp~key`.pm.valp;.pm.valp x;value x]};query)}",
       ".gw.replies:()",
       ".gw.syncexec:{[query;servertypes] -30!(::); .gw.replies,:enlist (.z.w;@[{(0b;.gw.run . x)};(query;servertypes);{(1b;x)}]); }",
@@ -209,6 +234,19 @@ test("several statements reach a read-only TorQ server as one string, on a direc
   }
 });
 
+test("a gateway call written by hand, and the gateway's own API and state, run on the gateway (#2361, #2588)", { skip }, async (t) => {
+  const gw = await torq(t);
+  const { live, query } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb", "hdb"] }]);
+  assert.strictEqual(await live.connectTo("gw"), true);
+  let r = await query('t:.gw.syncexec["exec sym from trade";`rdb]');
+  assert.deepStrictEqual([r.code, r.outcome], ['t:.gw.syncexec["exec sym from trade";`rdb]', "ok"]);
+  r = await query("exec servertype from .gw.servers");
+  assert.deepStrictEqual(r, { code: "exec servertype from .gw.servers", outcome: "ok", text: "`rdb`hdb" });
+  // A file can send its queries to the gateway itself.
+  r = await query("role\n/ @servertypes none");
+  assert.deepStrictEqual(r, { code: "role", outcome: "ok", text: "`gateway" });
+});
+
 test("a query run apart - a dashboard tile, a scheduled export, Query a Tag - goes through the gateway too (#1230)", { skip }, async (t) => {
   const gw = await torq(t);
   const { live } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb", "hdb"] }]);
@@ -257,7 +295,6 @@ test("a gateway call under a comment, or after another statement, is still one: 
   // inside another statement.
   assert.ok(!isGatewayCall('/ .gw.syncexec["1";`rdb]\nselect from trade'));
   assert.ok(!isGatewayCall('s:"\n .gw.syncexec[1]"'));
-  assert.ok(!isGatewayCall('r:.gw.syncexec["1";`rdb]'));
   assert.ok(!isGatewayCall("/ nothing to run"));
   assert.ok(!isGatewayCall(""));
 });
