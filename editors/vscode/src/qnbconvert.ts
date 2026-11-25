@@ -112,22 +112,133 @@ function inline(text: string, values: Record<string, LiveValue>, breaks = false)
     }
     const target = followed(src);
     // Its alt text alone, or with a title all of it as written.
-    return target === undefined ? (titled(a, b, c) === "" ? alt : m) : `${hold(`<a href="${escapeHtml(target)}"${titled(a, b, c)}>`)}${alt}${hold("</a>")}`;
+    return target === undefined ? (titled(a, b, c) === "" ? alt : m) : hold(`<a href="${escapeHtml(target)}"${titled(a, b, c)}>${emphasis(alt, held)}</a>`);
   });
   // A URL may hold balanced parentheses, as Wikipedia's do (#1554).
   s = s.replace(new RegExp(String.raw`\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)${TITLE}\)`, "g"), (m, label: string, href: string, a?: string, b?: string, c?: string) => {
-    // The tags are held, so the emphasis below finds no `_` in the URL (#1105).
+    // The link is held whole, so the emphasis below finds no `_` in the URL
+    // (#1105), and pairs no delimiter of its label with one outside it, as
+    // markdown-it reads a label on its own.
     const target = followed(href);
-    return target === undefined ? m : `${hold(`<a href="${escapeHtml(target)}"${titled(a, b, c)}>`)}${label}${hold("</a>")}`;
+    return target === undefined ? m : hold(`<a href="${escapeHtml(target)}"${titled(a, b, c)}>${emphasis(label, held)}</a>`);
   });
-  // A run of three first, so its tags nest (#1550). An underscore run
-  // inside a word is text (#1556), as `_` is below.
-  s = s.replace(/\*\*\*(?=\S)([\s\S]*?\S)\*\*\*|(^|[^\w])___(?=\S)([\s\S]*?\S)___(?!\w)/g, (_m, a: string | undefined, before: string, b: string) =>
-    a !== undefined ? `<em><strong>${a}</strong></em>` : `${before}<em><strong>${b}</strong></em>`);
-  s = s.replace(/\*\*(?=\S)([\s\S]*?\S)\*\*|(^|[^\w])__(?=\S)([\s\S]*?\S)__(?!\w)/g, (_m, a: string | undefined, before: string, b: string) =>
-    a !== undefined ? `<strong>${a}</strong>` : `${before}<strong>${b}</strong>`);
-  s = s.replace(/(^|[^\w*])([*_])(?=\S)([^*_]*?\S)\2(?!\w)/g, "$1<em>$3</em>");
-  return s.replace(/\u0000(\d+)\u0000/g, (_m, i: string) => held[Number(i)]);
+  // What is held may hold more: a link's label.
+  const restore = (text: string): string => text.replace(/\u0000(\d+)\u0000/g, (_m, i: string) => restore(held[Number(i)]));
+  return restore(emphasis(s, held));
+}
+
+/// What a character next to a delimiter run is, for whether the run opens
+/// or closes: a held piece stands for its markup - punctuation, as a
+/// backtick, a bracket, a `<` or an `&` is - or for a line's end, a `<br>`.
+function around(c: string | undefined, held: string | undefined): "space" | "punct" | "other" {
+  if (c === undefined || held === "<br>" || /\s/u.test(c)) {
+    return "space";
+  }
+  return held !== undefined || /[!-/:-@[-`{-~]|\p{P}|\p{S}/u.test(c) ? "punct" : "other";
+}
+
+/// Markdown's emphasis in `s`, inline text escaped with its pieces held: the
+/// runs of `*` and `_` paired as markdown-it pairs them - by whether a run
+/// can open or close (CommonMark 6.2's flanking rules: `**Rows:**42` is text,
+/// #2401), `_` never inside a word (#1556) while `*` may be (`foo*bar*`,
+/// #2392), the rule of three, and each closer with the nearest opener it may
+/// take, so tags always nest (#1550, #2391) and a run with nothing between
+/// is text (`***`, #2390). Two delimiters paired inside two more are
+/// `<strong>`.
+function emphasis(s: string, held: string[]): string {
+  // The text as units: a character, or a held piece whole.
+  const units = s.match(/\u0000\d+\u0000|[^]/gu) ?? [];
+  const heldOf = (u: string | undefined): string | undefined => (u !== undefined && u.startsWith("\u0000") && u.length > 1 ? held[Number(u.slice(1, -1))] : undefined);
+  const kind = (u: string | undefined): "space" | "punct" | "other" => around(u === undefined ? undefined : u[u.length - 1], heldOf(u));
+  type Delimiter = { at: number; marker: string; length: number; open: boolean; close: boolean; end: number };
+  const delimiters: Delimiter[] = [];
+  for (let i = 0; i < units.length; ) {
+    const marker = units[i];
+    if (marker !== "*" && marker !== "_") {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (units[j] === marker) {
+      j++;
+    }
+    const last = kind(units[i - 1]);
+    const next = kind(units[j]);
+    const left = next !== "space" && (next !== "punct" || last !== "other");
+    const right = last !== "space" && (last !== "punct" || next !== "other");
+    const open = left && (marker === "*" || !right || last === "punct");
+    const close = right && (marker === "*" || !left || next === "punct");
+    for (let k = i; k < j; k++) {
+      delimiters.push({ at: k, marker, length: j - i, open, close, end: -1 });
+    }
+    i = j;
+  }
+  // markdown-it's `balance_pairs`: each closer takes the nearest opener of
+  // its marker it may, skipping what is paired already.
+  const bottom: Record<string, number[]> = {};
+  const jumps: number[] = [];
+  let header = 0;
+  let lastAt = -2;
+  for (let c = 0; c < delimiters.length; c++) {
+    const closer = delimiters[c];
+    jumps.push(0);
+    if (delimiters[header].marker !== closer.marker || lastAt !== closer.at - 1) {
+      header = c;
+    }
+    lastAt = closer.at;
+    if (!closer.close) {
+      continue;
+    }
+    bottom[closer.marker] ??= [-1, -1, -1, -1, -1, -1];
+    const slot = (closer.open ? 3 : 0) + (closer.length % 3);
+    let o = header - jumps[header] - 1;
+    let lowest = o;
+    for (; o > bottom[closer.marker][slot]; o -= jumps[o] + 1) {
+      const opener = delimiters[o];
+      if (opener.marker !== closer.marker || !opener.open || opener.end >= 0) {
+        continue;
+      }
+      const odd = (opener.close || closer.open) && (opener.length + closer.length) % 3 === 0 && (opener.length % 3 !== 0 || closer.length % 3 !== 0);
+      if (!odd) {
+        const lastJump = o > 0 && !delimiters[o - 1].open ? jumps[o - 1] + 1 : 0;
+        jumps[c] = c - o + lastJump;
+        jumps[o] = lastJump;
+        closer.open = false;
+        opener.end = c;
+        opener.close = false;
+        lowest = -1;
+        lastAt = -2;
+        break;
+      }
+    }
+    if (lowest !== -1) {
+      bottom[closer.marker][slot] = lowest;
+    }
+  }
+  // Each pair as its tags, two adjacent ones inside two more as one strong.
+  const out = [...units];
+  for (let i = delimiters.length - 1; i >= 0; i--) {
+    const start = delimiters[i];
+    if (start.end === -1) {
+      continue;
+    }
+    const end = delimiters[start.end];
+    const strong =
+      i > 0 &&
+      delimiters[i - 1].end === start.end + 1 &&
+      delimiters[i - 1].marker === start.marker &&
+      delimiters[i - 1].at === start.at - 1 &&
+      delimiters[start.end + 1].at === end.at + 1;
+    const tag = strong ? "strong" : "em";
+    out[start.at] = `<${tag}>`;
+    out[end.at] = `</${tag}>`;
+    if (strong) {
+      out[delimiters[i - 1].at] = "";
+      out[delimiters[start.end + 1].at] = "";
+      i--;
+    }
+  }
+  return out.join("");
 }
 
 /// A live value as HTML, or the expression as written when it has none.

@@ -1063,6 +1063,23 @@ test("an HTML export breaks a list item's and a setext heading's lines as a para
   assert.strictEqual(markdownHtml("Line one  \nline two\n==="), "<h1>Line one<br>\nline two</h1>");
 });
 
+test("an HTML export pairs emphasis as the notebook does: by its delimiter runs (#2390, #2391, #2392, #2401)", () => {
+  // A run with nothing between is text (#2390).
+  assert.strictEqual(markdownHtml("Rated *** by users"), "<p>Rated *** by users</p>");
+  assert.strictEqual(markdownHtml("a ___ b"), "<p>a ___ b</p>");
+  // Tags nest (#2391).
+  assert.strictEqual(markdownHtml("**a *b***"), "<p><strong>a <em>b</em></strong></p>");
+  // `*` may be inside a word, and the text hold the other delimiter (#2392); `_` may not.
+  assert.strictEqual(markdownHtml("foo*bar* and *max_rows*"), "<p>foo<em>bar</em> and <em>max_rows</em></p>");
+  assert.strictEqual(markdownHtml("2*3*4"), "<p>2<em>3</em>4</p>");
+  assert.strictEqual(markdownHtml("**foo*bar*baz**"), "<p><strong>foo<em>bar</em>baz</strong></p>");
+  assert.strictEqual(markdownHtml("snake_case_name"), "<p>snake_case_name</p>");
+  // A run that cannot close is text (#2401).
+  assert.strictEqual(markdownHtml("**Rows:**42 loaded"), "<p>**Rows:**42 loaded</p>");
+  // A delimiter in a link's label pairs inside it alone.
+  assert.strictEqual(markdownHtml("*a [b*](https://x.io) c*"), '<p><em>a <a href="https://x.io">b*</a> c</em></p>');
+});
+
 test("an HTML export keeps a link's title, as the tip the notebook shows (#1944)", () => {
   assert.strictEqual(markdownHtml('[text](https://x.com "title")'), '<p><a href="https://x.com" title="title">text</a></p>');
   assert.strictEqual(markdownHtml("[text](https://x.com 'the title') and [b](https://y.io (in brackets))"), '<p><a href="https://x.com" title="the title">text</a> and <a href="https://y.io" title="in brackets">b</a></p>');
