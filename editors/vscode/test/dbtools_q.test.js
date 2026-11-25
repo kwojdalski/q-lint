@@ -912,6 +912,28 @@ test("a schema migration's q turns one table into the other, in memory and on di
 
 // A list column to an atom one, or back, is no cast: not written, and the
 // script runs; a symbol to a char is its first character (#1578).
+// A column the migration adds takes the target's attribute, in memory and
+// in every partition on disk; u# on a column of one null a row is left out,
+// with why, as q refuses it (#2145).
+test("a schema migration sets the target's attribute on the columns it adds (#2145)", { skip }, async (t) => {
+  const { connection, dir } = await connect(t, HDB() + "\na:([] k:1 2 3)\nb:([] k:1 2 3; s:`s#`a`b`c; p:`p#`x`x`y; g:`g#1 2 1; u:`u#1 2 3)\ntrade2:([] sym:`$(); px:`float$(); sz:`long$(); ex:`p#`symbol$(); n:`s#`long$(); w:`u#`long$())\n");
+  const info = async (n) => readTableInfo(await connection.call(TABLE_INFO, n, 100));
+  const script = migrationScript("a", await info("a"), "a", await info("b"), "b", "p");
+  assert.match(script, /\n\/ not written: u# on u: it is added with one null in every row, which u# refuses\n/);
+  const ran = readRun(await connection.call(RUN_SCRIPT, statements(script)));
+  assert.ok(ran.ok, ran.error);
+  assert.deepStrictEqual(await connection.call("{(exec t from meta a;string exec a from meta a)}", 0), ["jssjj", ["", "s", "p", "g", ""]]);
+  // On disk: every partition, as a q of its own loads it.
+  const disk = migrationScript("trade", await info("trade"), "trade", await info("trade2"), "trade2", "p");
+  assert.match(disk, /\n\/ not written: u# on w: /);
+  const done = readRun(await connection.call(RUN_SCRIPT, statements(disk)));
+  assert.ok(done.ok, done.error);
+  assert.match(done.text, /^changed (\d+) of \1 directories$/);
+  const parts = await onDisk(t, `${dir}/hdb`, '{{f:` sv(hsym`$string x),`trade; (string x;string get` sv f,`.d;{string attr get x} each ` sv\'f,/:`ex`n`w)} each .Q.pv}');
+  assert.deepStrictEqual(parts, ["2026.01.05", "2026.01.06", "2026.01.07"].map((p) => [p, ["sym", "px", "sz", "ex", "n", "w"], ["p", "s", ""]]));
+  assert.deepStrictEqual(await onDisk(t, `${dir}/hdb`, '{(string exec a from meta trade;"f"$count select from trade where null ex)}'), [["", "", "", "", "p", "s", ""], 18]);
+});
+
 test("a schema migration writes no list-atom cast, in memory or on disk", { skip }, async (t) => {
   const extra = '{[r;d] .Q.dd[r;d,`book`] set .Q.en[r] ([] sym:`a`b;sz:(1 2;3 4 5);px:1 2f)}[r] each 2026.01.05 2026.01.06 2026.01.07;';
   const { connection } = await connect(t, HDB(extra) + '\na:([] c:("ab";"c"); z:(1 2;3); s:`xy`z; n:1 2)\nb:([] c:"ab"; z:1 2; s:"xz"; n:(1 2;3))\nbook2:([] sym:`$(); sz:`long$(); px:`float$())\n');

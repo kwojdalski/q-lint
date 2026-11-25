@@ -35,9 +35,10 @@ export function schemaDiff(from: TableInfo, to: TableInfo): SchemaDiff {
   const cast = to.columns
     .filter((c) => fromCols.has(c.name) && fromCols.get(c.name)!.type !== c.type)
     .map((c) => ({ name: c.name, from: fromCols.get(c.name)!.type, to: c.type }));
+  // A column added takes the target's attribute too, set after it is added (#2145).
   const attrs = to.columns
-    .filter((c) => fromCols.has(c.name) && fromCols.get(c.name)!.attr !== c.attr)
-    .map((c) => ({ name: c.name, from: fromCols.get(c.name)!.attr, to: c.attr }));
+    .filter((c) => (fromCols.get(c.name)?.attr ?? "") !== c.attr)
+    .map((c) => ({ name: c.name, from: fromCols.get(c.name)?.attr ?? "", to: c.attr }));
   // After adding at the end and dropping, is the order the target's?
   const after = [...from.columns.map((c) => c.name).filter((n) => toCols.has(n)), ...add.map((a) => a.name)];
   const want = to.columns.map((c) => c.name);
@@ -115,6 +116,12 @@ export function castOf(c: string, from: string, to: string): string {
   return `"${to}"$${c}`;
 }
 
+/// Why the attribute of column `c` is not written: an added column holds
+/// one null in every row, which `u#` refuses on more than one row.
+function attrProblem(d: SchemaDiff, c: { name: string; to: string }, rows: number | null): string | undefined {
+  return c.to === "u" && d.add.some((a) => a.name === c.name) && (rows === null || rows > 1) ? "it is added with one null in every row, which u# refuses" : undefined;
+}
+
 /// The script, for review: what differs, as comments, then the q.
 export function migrationScript(name: string, fromInfo: TableInfo, fromWhere: string, toInfo: TableInfo, toWhere: string, process: string): string {
   // A partitioned table's first column is its partition field, which is in
@@ -142,7 +149,7 @@ export function migrationScript(name: string, fromInfo: TableInfo, fromWhere: st
       ...d.drop.map((column): ColumnOp => ({ op: "delete", column })),
       ...d.add.map((a): ColumnOp => ({ op: "add", column: a.name, value: nullOf(a.type) })),
       ...d.cast.filter((c) => !listType(c.to) && castProblem(c.from, c.to, true) === undefined).map((c): ColumnOp => ({ op: "cast", column: c.name, type: c.to })),
-      ...d.attrs.map((c): ColumnOp => ({ op: "attr", column: c.name, attr: c.to as "" | "s" | "u" | "p" | "g" })),
+      ...d.attrs.filter((c) => attrProblem(d, c, from.rows) === undefined).map((c): ColumnOp => ({ op: "attr", column: c.name, attr: c.to as "" | "s" | "u" | "p" | "g" })),
       ...(d.order ? [{ op: "reorder", order: d.order } as ColumnOp] : []),
     ];
     const skipped = d.cast.filter((c) => listType(c.to));
@@ -151,6 +158,7 @@ export function migrationScript(name: string, fromInfo: TableInfo, fromWhere: st
       ...head,
       ...skipped.map((c) => `/ not written: a cast of ${c.name} to the nested type ${c.to}, which the column manager does not make on disk`),
       ...refused.map((c) => `/ not written: a cast of ${c.name} from ${c.from} to ${c.to || "mixed"}: ${castProblem(c.from, c.to, true)}`),
+      ...d.attrs.filter((c) => attrProblem(d, c, from.rows) !== undefined).map((c) => `/ not written: ${c.to}# on ${c.name}: ${attrProblem(d, c, from.rows)}`),
       columnScriptOf(name, ops, process, `migrate ${name} to the schema of ${toWhere}`),
     ].join("\n") + "\n";
   }
@@ -176,7 +184,10 @@ export function migrationScript(name: string, fromInfo: TableInfo, fromWhere: st
     const problem = castProblem(c.from, c.to, false);
     lines.push(!plainName(c.name) ? odd(c.name, "the cast of") : problem === undefined ? assign(`update ${c.name}:${castOf(c.name, c.from, c.to)} from ${t}`) : `/ not written: a cast of ${c.name} from ${c.from} to ${c.to || "mixed"}: ${problem}`);
   }
-  for (const c of d.attrs) lines.push(!plainName(c.name) ? odd(c.name, "the attribute of") : assign(`update ${c.name}:${c.to ? `\`${c.to}#` : "`#"}${c.name} from ${t}`));
+  for (const c of d.attrs) {
+    const problem = attrProblem(d, c, from.rows);
+    lines.push(!plainName(c.name) ? odd(c.name, "the attribute of") : problem !== undefined ? `/ not written: ${c.to}# on ${c.name}: ${problem}` : assign(`update ${c.name}:${c.to ? `\`${c.to}#` : "`#"}${c.name} from ${t}`));
+  }
   if (d.order) lines.push(assign(`${symbols(d.order)} xcols ${t}`));
   const keys = to.keys.filter((k) => to.columns.some((c) => c.name === k));
   if (keys.length > 0) lines.push(assign(`${symbols(keys)} xkey ${t}`));

@@ -494,6 +494,21 @@ test("a schema diff names adds, drops, casts and order, and the script turns one
   assert.doesNotMatch(disk, /del\[`date\]/);
 });
 
+// An added column takes the target's attribute, after it is added; u# on a
+// column of one null a row is no attribute q sets (#2145).
+test("a schema migration sets the target's attribute on a column it adds (#2145)", () => {
+  const t = (kind, rows, cols) => ({ kind, rows, bytes: null, partitions: null, keys: [], ncols: cols.length, columns: cols.map(([name, type, attr = ""]) => ({ name, type, fkey: "", attr })) });
+  const to = t("table", 0, [["k", "j"], ["s", "s", "s"], ["g", "j", "g"], ["u", "j", "u"]]);
+  assert.deepStrictEqual(schemaDiff(t("table", 3, [["k", "j"]]), to).attrs, [{ name: "s", from: "", to: "s" }, { name: "g", from: "", to: "g" }, { name: "u", from: "", to: "u" }]);
+  const script = migrationScript("a", t("table", 3, [["k", "j"]]), "a", to, "b", "p");
+  assert.match(script, /\na:update g:0N from a\na:update u:0N from a\na:update s:`s#s from a\na:update g:`g#g from a\n\/ not written: u# on u: it is added with one null in every row, which u# refuses\n$/);
+  // One row, or none, takes u# too.
+  assert.match(migrationScript("a", t("table", 1, [["k", "j"]]), "a", to, "b", "p"), /\na:update u:`u#u from a\n$/);
+  const disk = migrationScript("trade", t("splayed", 3, [["k", "j"]]), "trade", to, "b", "p");
+  assert.match(disk, /\.qlint\.cm\.add\[`s;`\].*\n.*\.qlint\.cm\.attr\[`s;`s\]/s);
+  assert.doesNotMatch(disk, /\.qlint\.cm\.attr\[`u/);
+});
+
 test("test data: pools, ranges, a q generator per type, and CSV that sorts and repeats by seed", () => {
   assert.deepStrictEqual(symbolPool("3"), ["sym1", "sym2", "sym3"]);
   assert.deepStrictEqual(symbolPool("AAPL, `MSFT IBM"), ["AAPL", "MSFT", "IBM"]);
