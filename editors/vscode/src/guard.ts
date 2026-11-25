@@ -55,7 +55,8 @@
 //   through an adverb or to `.` or `@` (`` (?)[`sym;`x] ``, `` ?/[`sym;`x] ``,
 //   `` .[?;(`sym;`x)] ``), read as the call it makes (#2036);
 // - a string or a list sent to handle 0 (`0"a:1"`, `neg[0]"a:1"`,
-//   `0(@;`b;0;:;9)`), which the process evaluates itself as `value` would;
+//   `0(@;`b;0;:;9)`), or what a function gives, `0 raze("a:";"1")` (#2204),
+//   which the process evaluates itself as `value` would;
 // - `-11!`, which replays a log through `upd`, except `-11!(-1;..)` and
 //   `-11!(-2;..)`, which only count and check one; `-19!`, which
 //   compresses a file into another - each also spaced or with the number
@@ -74,7 +75,8 @@
 // - `value`, `get`, `eval`, `reval`, `-6!` or `-24!`, or in k code a monadic `.`
 //   (`` k)."a:1" ``), applied to a string that changes the process by these
 //   rules - `value "count t"` reads (#1776) - or one built or passed through
-//   another function (`value "a",":1"`), to `parse` or
+//   another function (`value "a",":1"`), or made without a string written,
+//   `` value string`a:1 ``, `` get`char$97 58 49 `` (#2203), to `parse` or
 //   `-5!`, or to a tree headed by `:`, `::` or `+:` (`eval(:;`t;())`), by
 //   an amend `@` or `.` of four items or more on a variable by name
 //   (`` value(@;`.;`a;:;1) ``, `` eval(@;enlist`.;enlist`a;:;1) ``), by
@@ -909,6 +911,19 @@ function called(t: Token[], lists: number[], byValue: boolean): string | undefin
 /// `` @[value;"x";::] ``, `eval parse "x"`.
 const PASSING = new Set(["each", "peach", "enlist", "parse", ...EVALUATORS]);
 const PASSING_OPS = new Set([..."@.'/\\:;"]);
+/// Whether a cast `$` with `left` on its left may give a string: to char,
+/// `` `char$ ``, `"c"$`, or a type not written, `` k).$x ``, `x$y`; not to a
+/// symbol, `` `$x ``, an enumeration, `` `sym$x ``, or a number, `"j"$x`.
+function castsToString(left: Token | undefined): boolean {
+  if (left === undefined || left.kind === "op" || left.kind === "open") return true;
+  if (left.kind === "sym") return left.text === "`char";
+  if (left.kind === "str") return ['"c"', '"C"', '"*"'].includes(left.text);
+  if (left.kind === "num") return /^10h?$/.test(left.text);
+  return true;
+}
+
+/// What makes a string of what may not be one.
+const STRINGY = new Set(["string", "ssr", "trim", "ltrim", "rtrim", "lower", "upper", "read0", "read1", ".Q.s", ".Q.s1", ".j.j"]);
 
 /// Where the argument of what ends at `t[last]` ends: at the first `;` or
 /// close outside the brackets it opens.
@@ -978,17 +993,31 @@ function strings(t: Token[], last: number, end: number, kCode: boolean): string 
   let parsed = false;
   let seen = false;
   let lambda = 0;
+  // The brackets open, and whether each is a list or a call's arguments,
+  // whose items a string made in is not what is evaluated: `eval(!;`t;..;`symbol$())`.
+  const opaque: boolean[] = [];
   for (let p = last + 1; p < end; p++) {
     const k = t[p];
     if (k.kind === "open" && k.text === "{") lambda++;
     else if (k.kind === "close" && k.text === "}") lambda--;
     if (lambda > 0 || k.text === "}") continue;
+    if (k.kind === "open") opaque.push(k.text === "[" || items(t, p).length > 1);
+    else if (k.kind === "close") opaque.pop();
+    const made = !opaque.includes(true);
     if (k.kind === "name") {
       parsed ||= k.text === "parse";
       passing &&= PASSING.has(unqualified(k.text));
+      // A string made without a string written, `` value string`a:1 ``,
+      // `` value .Q.s1 x `` (#2203).
+      if (made && STRINGY.has(unqualified(k.text))) return "a string";
     } else if (k.kind === "num" && k.text === "-5" && t[p + 1]?.text === "!") {
       parsed = true;
       p++;
+    } else if (made && k.kind === "num" && k.text === "-3" && t[p + 1]?.text === "!") {
+      return "a string";
+    } else if (made && k.kind === "op" && k.text === "$" && t[p + 1]?.text !== "[" && castsToString(t[p - 1])) {
+      // A cast, `` `char$97 58 49 ``, `"c"$0x..`, `` k).$`a:1 `` (#2203).
+      return "a string";
     } else if (k.kind === "op") {
       passing &&= PASSING_OPS.has(k.text);
     } else if (k.kind === "str") {
@@ -1982,7 +2011,14 @@ function readStatement(statement: string, found: Set<string>): void {
         (t[i - 2]?.text === "(" && t[i - 1]?.text === "neg" && next?.text === ")");
       const last = wrapped ? i + 1 : i;
       const first = t[last + 1];
-      if (first?.kind === "str" || first?.text === "(" || first?.text === "[" || (first?.kind === "op" && ["@", "."].includes(first.text)) || (first?.kind === "name" && first.text === "enlist")) {
+      // A function's result too, `0 raze("a:";"1")`, `0 {x}"a:1"` (#2204) - not
+      // a keyword between its arguments, `0 sublist x`.
+      if (
+        first?.kind === "str" ||
+        (first?.kind === "open" && first.text !== "]") ||
+        (first?.kind === "op" && ["@", "."].includes(first.text)) ||
+        (first?.kind === "name" && !INFIX.has(first.text))
+      ) {
         const what = evaluates(t, last, true);
         if (what !== undefined) {
           found.add(`evaluates ${what.reason} on handle 0`);

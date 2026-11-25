@@ -1631,3 +1631,37 @@ test("a target that may be a symbol it cannot read - computed, a handle made, a 
     assert.deepStrictEqual(writes(code), [], code);
   }
 });
+
+test("a string made without a string written is evaluated as one that writes, by value and by handle 0 (#2203, #2204)", () => {
+  const cases = {
+    "value string`a:77": ["evaluates a string with value"],
+    'value string`$".ns.v:77"': ["evaluates a string with value"],
+    "get`char$97 58 55 55": ["evaluates a string with get"],
+    "{value x}string`a:77": ["evaluates a string with value"],
+    "@[value;string`a:77;::]": ["evaluates a string with value"],
+    ".Q.trp[value;string`a:77;::]": ["evaluates a string with value"],
+    'value each enlist string`$"a:77"': ["evaluates a string with value"],
+    "k).$`a:77": ["evaluates a string with k's ."],
+    "value .Q.s1 x": ["evaluates a string with value"],
+    'value "c"$0x613a31': ["evaluates a string with value"],
+    // Handle 0 given what a function returns.
+    '0 raze("a:";"77")': ["evaluates a string on handle 0"],
+    '0 {x}"a:77"': ["evaluates a string on handle 0"],
+    "0 string`a:77": ["evaluates a string on handle 0"],
+    '0 ssr["a+=1";"=";":"]': ["evaluates a string on handle 0"],
+    '0 trim" b[0]:77 "': ["evaluates a string on handle 0"],
+    '(0)raze("a:";"77")': ["evaluates a string on handle 0"],
+    'neg[0]raze("a:";"77")': ["evaluates a string on handle 0"],
+    // A symbol cast, an enumeration, a list holding a cast,
+    // and a keyword after 0 are not strings made.
+    "get`$(),nm": [],
+    "value`$\"t\"": [],
+    "value`sym$`a": [],
+    "eval(!;`t;();0b;`symbol$())": [],
+    '0 sublist "abc"': [],
+    "0 xbar 1 2 3": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
