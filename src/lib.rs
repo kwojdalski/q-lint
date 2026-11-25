@@ -4088,10 +4088,20 @@ pub(crate) fn foreign_continues(line: &str, rest: &str) -> bool {
                 .find(|l| !l.trim().is_empty() && !comment(l))
                 .is_some_and(|l| l.starts_with([' ', '\t']))
 }
+/// The length of the run of language prefixes, `q)` and `k)` as many as
+/// are written, that `line` opens with: q reads `q)k)\d .ns` as `\d .ns`
+/// (#2194), as the extension's guard does (#2034).
+pub(crate) fn language_prefixes(line: &str) -> usize {
+    let mut n = 0;
+    while line[n..].starts_with("q)") || line[n..].starts_with("k)") {
+        n += 2;
+    }
+    n
+}
 /// Whether a source line is a system command whose argument is no q: any
-/// but `\t` and `\ts`, with or without a `q)` before it.
+/// but `\t` and `\ts`, with or without language prefixes before it.
 pub(crate) fn system_command(line: &str) -> bool {
-    line.strip_prefix("q)").unwrap_or(line).starts_with('\\') && timed_prefix(line) == 0
+    line[language_prefixes(line)..].starts_with('\\') && timed_prefix(line) == 0
 }
 /// A `q)` prompt is blank in the views, so its line would read as the
 /// indented continuation of the one before. It starts a statement, so the
@@ -4102,7 +4112,7 @@ fn prompts_start_statements(source: &str, v: &mut Views) {
     let mut at = 0;
     for line in source.split_inclusive('\n') {
         if line.starts_with("q)")
-            && !line.starts_with("q)\\")
+            && !line[language_prefixes(line)..].starts_with('\\')
             && v.code.as_bytes().get(at) == Some(&b' ')
         {
             v.code.replace_range(at..at + 1, ";");
@@ -4195,8 +4205,15 @@ fn views(source: &str) -> Views {
                 continue;
             }
         }
+        // A command after a run of prefixes is the command, as q reads
+        // `q)k)\d .ns` (#2194).
         let prefix = if string.is_none() && line.starts_with("q)") {
-            2
+            let run = language_prefixes(line);
+            if line[run..].starts_with('\\') {
+                run
+            } else {
+                2
+            }
         } else {
             0
         };
@@ -4208,7 +4225,7 @@ fn views(source: &str) -> Views {
         } else {
             0
         };
-        // q reads `q)\l f.q` as `\l f.q` (#316).
+        // q reads `q)\l f.q` as `\l f.q` (#316), and `q)k)\l f.q` too.
         let command = string.is_none() && line[prefix..].starts_with('\\');
         // q appends an indented line to the command before it, so after any
         // command but `\t` the lines that follow are its argument, not q:

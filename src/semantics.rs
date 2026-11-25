@@ -714,11 +714,15 @@ pub(crate) fn opens(code_line: &str, raw_line: &str) -> Option<String> {
     // q reads `q)\d .foo` as `\d .foo`; `views` has blanked the prompt (#315).
     // k has `\d` too, and its context is q's: KDB-X 5 runs `k)\d .ns`,
     // `ff:1`, `\d .` and `key `.ns` is ``ff (#2056). The views blank the
-    // whole k line, so it is read from the source.
-    let code_line = if raw_line.starts_with("q)") {
+    // whole k line, so it is read from the source. Any run of prefixes is
+    // read past, as q does: KDB-X 5 runs `q)k)\d .qux`, `d:1`, `\d .` and
+    // `.qux.d` is 1 (#2194). A command holds no string to mask, so it too
+    // is read from the source.
+    let prefixes = crate::language_prefixes(raw_line);
+    let code_line = if prefixes > 0 && raw_line[prefixes..].starts_with('\\') {
+        &raw_line[prefixes..]
+    } else if raw_line.starts_with("q)") {
         &code_line[2..]
-    } else if raw_line.starts_with("k)\\") && code_line.trim().is_empty() {
-        &raw_line[2..]
     } else {
         code_line
     };

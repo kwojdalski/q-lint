@@ -1158,7 +1158,9 @@ fn column_text(cols: &[(String, Node)]) -> Result<String, String> {
 /// name), and anything after it on the line, but a closing bracket or a
 /// `;`, is read into its last clause (`?[..][`px]` is not
 /// `select from t where px>2[`px]`, and `?[..],u` not
-/// `select from t,u`) (#2061).
+/// `select from t,u`) (#2061). An indented line after it is the same
+/// statement, past blank and comment lines, and joins it as text on its
+/// own line would (#2192).
 pub(crate) fn to_qsql_at(
     code: &str,
     source: &str,
@@ -1167,10 +1169,7 @@ pub(crate) fn to_qsql_at(
     let b = code.as_bytes();
     Some(bare_qsql_at(code, source, at)?.map(|mut c| {
         let before = c.start.checked_sub(1).map(|i| b[i]);
-        let after = b[c.end..]
-            .iter()
-            .find(|c| !matches!(c, b' ' | b'\t'))
-            .copied();
+        let after = following(b, c.end);
         let joined_before =
             before.is_some_and(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.'));
         let joined_after = !matches!(
@@ -1182,6 +1181,32 @@ pub(crate) fn to_qsql_at(
         }
         c
     }))
+}
+
+/// The first byte of the statement after byte `at` in the code view, or
+/// `None` where the statement ends first. A line that opens with a blank
+/// continues the one before it, as q reads a script; a line that is blank
+/// throughout (a comment line is, in the code view) is passed over, and q
+/// joins across it too.
+fn following(b: &[u8], mut at: usize) -> Option<u8> {
+    let blank = |c: &u8| matches!(c, b' ' | b'\t');
+    let mut line_start = false;
+    loop {
+        let start = at;
+        while b.get(at).is_some_and(blank) {
+            at += 1;
+        }
+        match b.get(at) {
+            Some(b'\r' | b'\n') => {
+                at += if b[at..].starts_with(b"\r\n") { 2 } else { 1 };
+                line_start = true;
+            }
+            None => return None,
+            // A line that opens with text is a statement of its own.
+            Some(_) if line_start && at == start => return None,
+            Some(&c) => return Some(c),
+        }
+    }
 }
 
 /// As `to_qsql_at`, the qSQL alone, whatever is around it.
@@ -1317,6 +1342,19 @@ fn written(verb: u8, table: &str, c: &Data, b: &Data, a: &Data) -> Result<String
     };
     match verb {
         b'?' => {
+            // `0b` or `1b` is a select, whose columns are a dictionary or
+            // `()`: q refuses any other with 'type, and an exec of them
+            // would run (#2193).
+            if matches!(b, Data::Leaf(l) if l == "0b" || l == "1b")
+                && !matches!(a, Data::Dict(..))
+                && !matches!(a, Data::List(items) if items.is_empty())
+            {
+                return Err(
+                    "a select whose columns are neither a dictionary nor (), which q refuses: \
+                     'type"
+                        .into(),
+                );
+            }
             let exec = matches!(&b, Data::List(items) if items.is_empty())
                 || matches!(&b, Data::Sym(s) if s.len() == 1)
                 || !matches!(a, Data::Dict(..) | Data::List(_));

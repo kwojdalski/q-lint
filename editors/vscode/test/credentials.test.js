@@ -233,6 +233,23 @@ test("a credential command stopped or timed out is ended with everything it star
   assert.deepStrictEqual(fs.readdirSync(dir), [], "nothing it started ran on");
 });
 
+// A command that printed its password and exited 0, leaving a child of its
+// own holding stdout, was waited on until the timeout and refused (#2191).
+// It settles at the exit with what it printed by then, and the child is
+// ended with it. Only whether the value matched is said, never the value.
+test("a credential command that exits 0 behind a child holding its stdout settles at the exit (#2191)", { skip: process.platform === "win32" }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-creds-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const marker = path.join(dir, "ran");
+  const started = Date.now();
+  const printed = await runCredentialCommand(`echo pw; (sleep 1; echo ran > '${marker}') &`, { timeoutMs: 3000 });
+  const took = Date.now() - started;
+  assert.ok(printed === "pw\n", "the command's output was not what it printed before it exited");
+  assert.ok(took < 1000, `it settled after ${took} ms`);
+  await sleep(1500);
+  assert.strictEqual(fs.existsSync(marker), false, "the child it left behind ran on");
+});
+
 test("a connect elsewhere, or Disconnect, does not wait for a slow credential command (#2127)", { skip: process.platform === "win32" }, async (t) => {
   const q = await fakeQ(1);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-creds-"));
