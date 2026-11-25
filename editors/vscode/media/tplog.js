@@ -82,7 +82,7 @@
   replay.appendChild(labelled("Replay messages", replayFrom));
   replay.appendChild(labelled("to", replayTo));
   replay.appendChild(button("Load Schema…", "Load a q file - the tickerplant's schema and upd - into the local q first", () => vscode.postMessage({ type: "schema" })));
-  replay.appendChild(button("Replay", "Run these messages in the local q, after asking", () => vscode.postMessage({ type: "replay", from: Number(replayFrom.value), to: Number(replayTo.value) })));
+  replay.appendChild(button("Replay", "Run these messages in the local q, after asking", () => vscode.postMessage({ type: "replay", from: replayFrom.value, to: replayTo.value })));
 
   [summary, filters, list, pager, steps, detail, replay, status].forEach((e) => document.body.appendChild(e));
 

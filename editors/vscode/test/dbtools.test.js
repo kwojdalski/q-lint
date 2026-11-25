@@ -20,7 +20,7 @@ const { readSym, symReport } = require("../out/syminspect.js");
 const { advise, filterCounts, adviceReport, readAttributeSample, ATTRIBUTE_SAMPLE } = require("../out/attradvice.js");
 const { schemaDiff, migrationScript, nullOf, castOf, castProblem } = require("../out/migrate.js");
 const { symbolPool, rangeOf, generator, testDataQ, testDataCsv, loadTypes, random } = require("../out/testdata.js");
-const { headNames, timeOfDay, rangeProblem, readTpPage, readTpLog, readReplayed } = require("../out/tplog.js");
+const { headNames, messageNumber, timeOfDay, rangeProblem, readTpPage, readTpLog, readReplayed } = require("../out/tplog.js");
 const { parseDashboards, changed, tileQueryProblem, dashboardNameProblem, withDashboard, refreshOf } = require("../out/dashboard.js");
 const { gridFromCsv, gridFromJson, chartFromGrid } = require("../out/chartfile.js");
 const { parseArgs, main, USAGE } = require("../out/chartcli.js");
@@ -593,6 +593,9 @@ test("the tickerplant log's readers, times of day and ranges", () => {
   assert.strictEqual(rangeProblem(0, 2, 3), undefined);
   assert.match(rangeProblem(2, 1, 3), /comes before/);
   assert.match(rangeProblem(0, 3, 3), /0 to 2/);
+  // A blank box is no message number, not message 0 (#2507).
+  assert.deepStrictEqual(["", " ", "1.5", "-1", "x", " 7 ", 3].map(messageNumber), [NaN, NaN, NaN, NaN, NaN, 7, 3]);
+  assert.match(rangeProblem(messageNumber(""), messageNumber("2"), 3), /type the first and last message numbers/);
   assert.deepStrictEqual(readTpPage({ total: 1, i: 4, fn: "upd", tb: "trade", rows: 2, tx: "09:00" }).rows, [{ index: 4, fn: "upd", table: "trade", rows: 2, time: "09:00" }]);
   assert.strictEqual(readTpLog({ count: 3, bytes: 10, size: 12, complete: false, tables: "trade" }).tables[0], "trade");
   assert.deepStrictEqual(readReplayed({ replayed: 2, failed: 0, errors: [], tables: ["t"], rows: [2] }).tables, [{ name: "t", rows: 2 }]);
