@@ -2050,7 +2050,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             // there closed the parenthesis inside the token, `(s=`)and`,
             // which q 5 cannot parse (#2256).
             let unsym = unsymbolled(&v.code[phrase..end]);
-            let code = v.code[phrase..end].as_bytes();
+            let code = &v.code.as_bytes()[phrase..end];
             let filled: String = (0..code.len())
                 .map(|i| {
                     let c = code[i];
