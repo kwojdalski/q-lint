@@ -203,6 +203,17 @@ test("the partition check finds weekday gaps, and each kind of problem in an ans
   assert.deepStrictEqual(partitionProblems(single), []);
 });
 
+// A column enumerated against another domain in one partition than in the
+// rest, each domain in the root: a select across them is a mixed column (#2139).
+test("the partition check finds a column enumerated against another domain in some partitions (#2139)", () => {
+  const row = (partition, enums) => ({ table: "trade", partition, dir: true, dotd: true, columns: ["sym", "src", "px"], missing: [], types: [20, 21, 9], enums, maxIndexes: [], rows: 6 });
+  const answer = (rows) => ({ hdb: true, field: "date", root: "/db", all: rows.map((r) => r.partition), checked: rows.length, tables: ["trade"], domains: new Map([["sym", 10], ["dom2", 2], ["src", 3]]), rows });
+  const problems = partitionProblems(answer([row("2026.03.05", ["sym", "src", ""]), row("2026.03.06", ["dom2", "src", ""]), row("2026.03.09", ["sym", "src", ""])]));
+  assert.deepStrictEqual(problems.map((p) => [p.kind, p.what, p.partitions]), [["enumeration", "trade.sym is enumerated against dom2 here, sym in most partitions: a select across them makes it a mixed column", ["2026.03.06"]]]);
+  // Two columns, each against its own domain everywhere, are no problem.
+  assert.deepStrictEqual(partitionProblems(answer([row("2026.03.05", ["sym", "src", ""]), row("2026.03.06", ["sym", "src", ""])])), []);
+});
+
 // #2007: q writes a string or nested column with no rows as a general list
 // (type 0), and maps one with rows as 77h on.
 test("an empty partition's string or nested column is not a different type (#2007)", () => {

@@ -4,8 +4,10 @@
 // file, a column or type that differs from the table's other partitions, a
 // symbol column enumerated against a domain the root does not hold or past
 // its end, and partitions whose rows are far from the rest - as a report
-// naming each problem's partitions. Free of any `vscode` import, so node
-// tests it; `dbtoolsview.ts` asks the process and opens the report.
+// naming each problem's partitions. A column enumerated against one domain
+// in some partitions and another in the rest is one too (#2139). Free of
+// any `vscode` import, so node tests it; `dbtoolsview.ts` asks the process
+// and opens the report.
 //
 // One read, defining nothing. The partitions are those on disk (`.Q.PV`):
 // a `.Q.view` hides none of them from the check (#1959), each in the
@@ -226,6 +228,18 @@ export function partitionProblems(a: Extract<PartAnswer, { hdb: true }>): Proble
     for (const [key, parts] of noDomain) {
       const [c, d] = key.split("|");
       add("enumeration", `${table}.${c} is enumerated against ${d || "an unknown domain"}, which the root has no file for`, parts);
+    }
+    // A column enumerated against one domain in most partitions and another
+    // in some: a select across both makes it a general list of enumerations
+    // of each, which compares and sorts as no symbol column does (#2139). A
+    // domain the root lacks is reported above.
+    const domainsOf = new Map<string, { d: string; p: string }[]>();
+    for (const r of good) for (const { c, d } of enumCols(r)) if (d !== "" && a.domains.has(d)) domainsOf.set(c, [...(domainsOf.get(c) ?? []), { d, p: r.partition }]);
+    for (const [c, seen] of domainsOf) {
+      const usual = mode(seen.map((x) => x.d));
+      for (const d of [...new Set(seen.map((x) => x.d))].filter((d) => d !== usual)) {
+        add("enumeration", `${table}.${c} is enumerated against ${d} here, ${usual} in most partitions: a select across them makes it a mixed column`, seen.filter((x) => x.d === d).map((x) => x.p));
+      }
     }
     // Each column's largest index against its own domain's size.
     const past = new Map<string, string[]>();

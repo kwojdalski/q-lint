@@ -380,6 +380,18 @@ test("the partition check takes an empty partition's string and nested columns a
   assert.deepStrictEqual(problems.map((p) => [p.table, p.partitions]).sort(), [["ev", ["2026.01.06"]], ["filled", ["2026.01.06"]]]);
 });
 
+test("the partition check finds a partition whose sym is enumerated against another domain (#2139)", { skip }, async (t) => {
+  const extra = [
+    "dom2:`x`y; (` sv r,`dom2) set dom2;",
+    ".Q.dd[r;2026.01.06,`trade`sym] set `dom2$6#`x`y;",
+  ].join("\n");
+  const { connection, dir } = await connect(t, HDB(extra));
+  // In a q of its own, a select across the two is no symbol column.
+  assert.strictEqual(await onDisk(t, `${dir}/hdb`, "{type exec sym from select sym from trade}"), 0);
+  const problems = partitionProblems(readPartitions(await connection.call(PARTITION_CHECK, 1000, true)));
+  assert.deepStrictEqual(problems.map((p) => [p.kind, p.what, p.partitions]), [["enumeration", "trade.sym is enumerated against dom2 here, sym in most partitions: a select across them makes it a mixed column", ["2026.01.06"]]]);
+});
+
 test("the partition check finds missing dates, files, differing types and outliers", { skip }, async (t) => {
   const extra = [
     "mk[r;;6] each 2026.01.12 2026.01.13;",
