@@ -146,6 +146,21 @@ fn literal(s: &str) -> Option<Literal> {
     );
     // A time vector may end in the letter of its type: `12:00u`,
     // `12:00:00v`, `12:00 13:00t` (#593).
+    // A month vector carries its `m` on the last item alone: `2000.01
+    // 2000.02m` (q 5: `til` of it is 'type, #2244). Without the `m` the same
+    // text is a float vector.
+    if let Some(months) = s.strip_suffix('m')
+        && re!(r"^\d{4}\.\d\d(?:\s+\d{4}\.\d\d)*$").is_match(months)
+    {
+        let len = months.split_whitespace().count();
+        return Some(Literal {
+            kind: Kind::Temporal,
+            vector: len > 1,
+            len,
+            negative: false,
+            short_integer: false,
+        });
+    }
     let unsuffixed = s
         .strip_suffix(['u', 'v', 't'])
         .filter(|t| re!(r"\d\d:\d\d(?::\d\d(?:\.\d*)?)?$").is_match(t))
@@ -160,6 +175,9 @@ fn literal(s: &str) -> Option<Literal> {
             short_integer: false,
         });
     }
+    // Its items may be nulls and infinities too, which make a vector of
+    // integers a float one: `1 0n`, `0w 1`, `1.5 0N`, `1 0Ne` (q 5: `1 2 3
+    // cor 1 0n` is 'length, #2242).
     let float = re!(
         r"^(?:-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+|E\d+)?|0[nNwW]|-0[wW])(?:\s+(?:-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+|E\d+)?|0[nNwW]|-0[wW]))*[ef]?$"
     );
@@ -180,9 +198,6 @@ fn literal(s: &str) -> Option<Literal> {
     None
 }
 
-    // Its items may be nulls and infinities too, which make a vector of
-    // integers a float one: `1 0n`, `0w 1`, `1.5 0N`, `1 0Ne` (q 5: `1 2 3
-    // cor 1 0n` is 'length, #2242).
 /// QB026. A literal pair of bounds whose first item is above its second, as
 /// the two items written: q 5 `5 within 10 1` is 0b, and so is every value,
 /// since `within` asks for low <= x <= high. Only a pair of numbers, or of

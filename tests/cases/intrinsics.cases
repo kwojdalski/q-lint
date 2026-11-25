@@ -899,3 +899,19 @@ f:distinct 0N 0N
 g:1 2 wsum 0w 1
 h:where 1 0 2
 
+
+=== QT008 profile: general | a month vector carries its m on the last item alone (q 5: 'type, #2244)
+a:til 2000.01 2000.02m
+
+=== QT009 profile: general | and is no count to where (q 5: 'type, #2244)
+a:where 2000.01 2000.02m
+
+=== QT013 profile: general | nor something flip transposes (q 5: 'rank, #2244)
+a:flip 2000.01 2000.02 2000.03m
+
+=== clean profile: general | q sorts it, and without the m the same text is a float vector (#2244)
+a:asc 2000.01 2000.02m
+b:where 2000.01 2000.02m=2000.01m
+c:sum 2000.01 2000.02
+d:distinct 2000.01 2000.02m
+
