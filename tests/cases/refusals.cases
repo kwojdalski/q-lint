@@ -1764,3 +1764,81 @@ select.b:1
 update.x:2
 b:select.b
 c:delete.y
+
+=== QE007 profile: general | a comma with nothing after it in a query (q 5: ',, #2215)
+a:select a, from t
+
+=== QE007 profile: general | a comma with nothing after it in a query (q 5: ',, #2215)
+a:select from t where a>1,
+
+=== QE007 profile: general | a comma with nothing after it in a query (q 5: ',, #2215)
+a:select a by b, from t
+
+=== QE007 profile: general | a comma with nothing after it in a query (q 5: ',, #2215)
+a:delete a, from t
+
+=== QE007 profile: general | a comma with nothing after it in a query (q 5: ',, #2215)
+a:update a:1, from t
+
+=== QE007 profile: general | a comma with nothing after it in a query (q 5: ',, #2215)
+a:exec a, from t
+
+=== clean profile: general | while q 5 parses each of these (#2215)
+a:select a,b from t
+a:select a from t where a>1,b<3
+a:select a by b,c from t
+a:select a,(1;2) from t
+a:select (a,) from t
+a:exec a,b from t
+a:select a from t where a in 1,2
+
+=== QE007 profile: general | a row limit with no count (q 5: '], #2225)
+a:select[] from t
+
+=== QE007 profile: general | a row limit with no count (q 5: ';, #2225)
+a:select[;2] from t
+
+=== QE007 profile: general | a row limit with no count (q 5: '], #2225)
+a:select[ ] from t
+
+=== clean profile: general | while q 5 parses each of these (#2225)
+a:select[2;] from t
+a:select[2] from t
+a:select[2;<a] from t
+a:select[<a] from t
+a:select[2 3] from t
+
+=== QE007 profile: general | a row limit with its sort before its count (q 5: 'length, #2226)
+a:select[<a;2] from t
+
+=== QE007 profile: general | a row limit with its sort before its count (q 5: 'length, #2226)
+a:select[>a;2] from t
+
+=== clean profile: general | while q 5 parses each of these (#2226)
+a:select[2;<a] from t
+a:select[<a] from t
+a:select[2;>a] from t
+a:select[x;<a] from t
+
+=== QE007 profile: general | a clause this query does not take (q 5: 'type, #2227)
+a:delete distinct a from t
+
+=== QE007 profile: general | a clause this query does not take (q 5: 'by, #2227)
+a:delete a by b from t
+
+=== QE007 profile: general | a clause this query does not take (q 5: 'from, #2227)
+a:select a by b by c from t
+
+=== QE007 profile: general | a clause this query does not take (q 5: 'by, #2227)
+a:delete by from t
+
+=== clean profile: general | while q 5 parses each of these (#2227)
+a:delete a from t
+a:select distinct a from t
+a:select a by b,c from t
+a:exec a by b from t
+a:update a by b from t
+a:select a by b from t where c by 1
+a:delete from t where a in exec a by b from t
+a:select a by b from select by c from t
+a:select by b from t

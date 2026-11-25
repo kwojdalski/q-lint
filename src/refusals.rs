@@ -673,7 +673,12 @@ fn missing_from(
             {
                 "has nothing after its `where`: q raises ',"
             }
-            Some(_) => continue,
+            Some(f) => {
+                match phrase_refusal(m.as_str(), m.end(), comments, statement, f.start(), at) {
+                    Some(detail) => detail,
+                    None => continue,
+                }
+            }
         };
         out.push(Finding::at(
             path,
@@ -683,6 +688,80 @@ fn missing_from(
             format!("`{}` {detail}", m.as_str()),
         ));
     }
+}
+
+/// QE007 too: a query whose phrases q refuses although its `from` is in
+/// place. Read from `statement`, the query's own text after its keyword
+/// with every bracket blanked, and `comments`, where strings and symbols are
+/// still there. Each was refused by q 5's `parse`: a `,` with nothing after
+/// it before `from`, `by` or `where` or at the end (`select a, from t`,
+/// `select from t where a>1,`: ',, #2215); a row limit with no count
+/// (`select[] from t` ']', `select[;2] from t` ';', #2225) or with its sort
+/// first (`select[<a;2] from t`, 'length, #2226); and `delete distinct a`
+/// ('type), a `by` in a delete ('by) and a second `by` ('from, #2227).
+fn phrase_refusal(
+    keyword: &str,
+    end: usize,
+    comments: &str,
+    statement: &str,
+    from: usize,
+    at: usize,
+) -> Option<&'static str> {
+    for (p, _) in statement.match_indices(',') {
+        let rest = comments[end + p + 1..at].trim_start();
+        // A word with a colon after it names a column, `select a,by:a from
+        // t`: QF013's.
+        if rest.is_empty()
+            || (re!(r"^(?:from|by|where)\b").is_match(rest)
+                && !re!(r"^(?:from|by|where)\s*:").is_match(rest))
+        {
+            return Some("has a `,` with nothing after it: q raises ',");
+        }
+    }
+    let after = comments[end..at].trim_start_matches([' ', '\t']);
+    if keyword == "select"
+        && let Some(open) = after.strip_prefix('[')
+    {
+        let (mut depth, mut slots, mut close) = (0i32, vec![0], None);
+        for (j, ch) in open.char_indices() {
+            match ch {
+                '(' | '[' | '{' => depth += 1,
+                ')' | '}' => depth -= 1,
+                ']' if depth == 0 => {
+                    close = Some(j);
+                    break;
+                }
+                ']' => depth -= 1,
+                ';' if depth == 0 => slots.push(j + 1),
+                _ => {}
+            }
+        }
+        if let Some(close) = close {
+            let inner = &open[..close];
+            let first = inner[..slots.get(1).map_or(inner.len(), |&s| s - 1)].trim();
+            if first.is_empty() {
+                return Some("has a row limit with no count in it: q refuses it at parse");
+            }
+            if slots.len() == 2 && first.starts_with(['<', '>']) {
+                return Some(
+                    "has its row limit's sort before its count: q raises 'length; write \
+                     `select[n;<c]`",
+                );
+            }
+        }
+    }
+    let phrase = &statement[..from];
+    if keyword == "delete" && re!(r"^\s*distinct\b").is_match(phrase) {
+        return Some("takes no `distinct`: q raises 'type");
+    }
+    let by = re!(r"\bby\b").find_iter(phrase).count();
+    if keyword == "delete" && by > 0 {
+        return Some("takes no `by`: q raises 'by");
+    }
+    if by > 1 {
+        return Some("has a second `by`: q raises 'from");
+    }
+    None
 }
 
 /// QT025. A signal of something that is not a symbol or a string. Verified:
