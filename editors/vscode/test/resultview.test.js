@@ -203,12 +203,18 @@ test("unwrapped mode makes the tree GRID would: entries and items as children, t
 test("a diff of a key repeated on many rows matches them in order in linear time (#1860)", () => {
   const { diffGrids } = require("../out/resultdiff.js");
   const mk = (rows) => ({ columns: [{ name: "s", key: true }, { name: "v", key: false }], cells: [Array.from({ length: rows }, (_, i) => "k" + (i % 10)), Array.from({ length: rows }, (_, i) => String(i))], total: rows });
+  // Best of three: one garbage collection or a busy machine during a single
+  // run made 400k look five times 200k with the code unchanged.
   const time = (rows) => {
     const a = mk(rows);
     const b = mk(rows);
-    const t = process.hrtime.bigint();
-    diffGrids(a, b);
-    return Number(process.hrtime.bigint() - t) / 1e6;
+    return Math.min(
+      ...[0, 1, 2].map(() => {
+        const t = process.hrtime.bigint();
+        diffGrids(a, b);
+        return Number(process.hrtime.bigint() - t) / 1e6;
+      }),
+    );
   };
   time(50_000);
   const small = time(200_000);

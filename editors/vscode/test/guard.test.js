@@ -807,7 +807,8 @@ test("hopen of hsym applied in brackets to a file is a change (#1729)", () => {
     // Of a process it only connects.
     'hopen hsym[`$"host:5000"]': [],
     "hopen hsym[`$\":host:5000\"]": [],
-    "hopen hsym[x]": [],
+    // Of a name, it may be either: asked about (#2207).
+    "hopen hsym[x]": ["opens a handle the guard cannot read with hopen"],
   };
   for (const [code, expected] of Object.entries(cases)) {
     assert.deepStrictEqual(writes(code), expected, code);
@@ -1388,7 +1389,8 @@ test("a lambda applied where it is written changes what its arguments name: {.[x
     "@[{.[x;();:;1]};`a;h]": ["amends `a in place"],
     // A name may hold a global's symbol, and an argument not written may be one.
     "{.[x;();:;1]} v": ["applies a lambda that may change the process through what it is given"],
-    "{.[x;();:;1]} . enlist `a": ["applies a lambda that may change the process through what it is given"],
+    // `enlist x` is read as its one item (#2201).
+    "{.[x;();:;1]} . enlist `a": ["amends `a in place"],
     // Applied to what it only reads, defined, or left as a value, it reads.
     '{value x}"count t"': [],
     "{x+1} each 1 2 3": [],
@@ -1517,4 +1519,247 @@ test("! passed as a value with -11 or -19 replays a log or writes a compressed f
 test("\\t and \\ts nested deep are read in a loop, not one call each", () => {
   assert.deepStrictEqual(writes(`${"\\ts ".repeat(2000)}a:1`), ["assigns a"]);
   assert.deepStrictEqual(writes(`${"\\t ".repeat(2000)}count t`), []);
+});
+
+const TOO_MUCH = "is too long or too deeply nested for the guard to read";
+
+test("the answer is the code's alone, whatever was read before it (#2190)", () => {
+  // Read-only, with more lambdas applied than one statement may have read
+  // again: asked about the first time and every time after, cold or warm.
+  const many = Array.from({ length: 3000 }, (_, i) => `{x+${i}} v${i}`).join(";");
+  const first = writes(many);
+  assert.ok(first.includes(TOO_MUCH), JSON.stringify(first));
+  assert.deepStrictEqual(writes(many), first);
+  writes("{x+1} v");
+  assert.deepStrictEqual(writes(many), first);
+  // Under the bound, it reads, each time.
+  const some = Array.from({ length: 800 }, (_, i) => `{x+${i}} v${i}`).join(";");
+  assert.deepStrictEqual(writes(some), []);
+  assert.deepStrictEqual(writes(some), []);
+});
+
+test("code too deep or too long to read is asked about, quickly, and never throws (#2210, #2211)", () => {
+  const timed = (code) => {
+    const started = process.hrtime.bigint();
+    const found = writes(code);
+    return [found, Number(process.hrtime.bigint() - started) / 1e6];
+  };
+  for (const code of [
+    `${"{x}@".repeat(1000)}\`a`,
+    `${"{x}[".repeat(600)}\`a${"]".repeat(600)}`,
+    `${"{.[x;();:;1]}[".repeat(1000)}v${"]".repeat(1000)}`,
+    `${"{x} each ".repeat(1000)}\`a`,
+    `${"@[".repeat(3000)}t${";0;neg]".repeat(3000)}`,
+  ]) {
+    const [found, ms] = timed(code);
+    assert.ok(found.includes(TOO_MUCH), `${code.slice(0, 20)}: ${JSON.stringify(found)}`);
+    // Well under the 100 ms a send may wait; generous for a loaded machine.
+    assert.ok(ms < 1000, `${code.slice(0, 20)}: ${ms} ms`);
+  }
+  // Deep parentheses are read without recursion, and a list of names in
+  // them still assigns each.
+  assert.deepStrictEqual(writes(`${"(".repeat(8000)}1${")".repeat(8000)}`), []);
+  assert.deepStrictEqual(writes("((a;(b;c));d):x"), ["assigns a", "assigns b", "assigns c", "assigns d"]);
+});
+
+test("code in another language than q and k is read as SQL, or asked about (#2197, #2209)", () => {
+  const cases = {
+    // KDB-X SQL, read as the SQL tab's guard reads it: a write word in any case.
+    "s)DROP TABLE t": ["runs SQL that changes data (DROP)"],
+    "s)INSERT INTO t VALUES(9,'q')": ["runs SQL that changes data (INSERT)"],
+    "s)CREATE TABLE zz (a int)": ["runs SQL that changes data (CREATE)"],
+    "k)s)Insert Into t Values(9,'q')": ["runs SQL that changes data (INSERT)"],
+    "s) select qt('a:1')": ["runs SQL that changes data (QT())"],
+    "\\t s)delete from t": ["runs SQL that changes data (DELETE)"],
+    "s)\\l f.q": ["runs the system command \\l through SQL"],
+    // A prefix after it is read again: KDB-X runs this as q.
+    "k)s)s)q)b[0]:77": ["assigns b"],
+    "s)SELECT * FROM t": [],
+    "q)s)select a from t where b=1": [],
+    // Python is not read: a `p)` line, and embedPy's or PyKX's evaluators.
+    'p)import os; os.remove("f")': ["runs Python the guard cannot read"],
+    '.p.e "import os"': ["runs Python with .p.e"],
+    '.p.qeval"1+1"': ["runs Python with .p.qeval"],
+    '.pykx.pyexec"x=1"': ["runs Python with .pykx.pyexec"],
+    // Nor any other language.
+    "r)print(1)": ["runs r) code the guard cannot read"],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("a target that may be a symbol it cannot read - computed, a handle made, a local's - counts as by name (#2198-#2202, #2207)", () => {
+  const asks = [
+    // #2198: computed.
+    "@[first`b;0;+;1]", '.[`$"a","";();:;77]', ".[`$string`a;();:;77]", ".[{`a}[];();:;77]", "update a:77 from first`t", "delete from first`t",
+    "![first`t;();0b;(enlist`a)!enlist 77]", "`a xdesc first`t", "() xkey `$string`kt", "(first`sym)?`zz", "((`sym;`zz)0)?`zz", ".[`a`zz 0;();:;77]",
+    "@[(`d;`zz)0;`a;neg]", ".[(`k!enlist`a)`k;();:;77]", ".[`a`zz inter`a;();:;77]", ".[1#`a;();:;77]", ".[last`zz`a;();:;77]",
+    // #2199: a file's handle made.
+    ".[hsym`o.txt;();:;77]", ".[-1!`o.txt;();:;77]", ".[.Q.dd[`:.;`o.txt];();:;77]", ".[` sv`:.`o.txt;();:;77]", '.[hsym`$"o.txt";();:;77]',
+    // #2200: held by a local, or given to a local lambda.
+    "{s:`a;.[s;();:;77]}[]", "{s:`t;update a:77 from s}[]", "{s:`sym;?[s;`zz]}[]", "{s:`kt;() xkey s}[]", '{f:{.[x;();neg]};f `$reverse"a"}[]',
+    // #2201: each item of `enlist x`.
+    "{.[x;();+;1]} each enlist `a", "{.[x;();+;1]}'[enlist `a]", "{.[x;();+;1]} peach enlist `a", "(.[;();+;1]) each enlist `a", ".[;();+;1] each enlist `a",
+    "@[;0;+;1] each enlist `b", "{update a:77 from x} each enlist `t",
+    // #2202: `?[` on a symbol in parentheses, as a parameter is given.
+    "?[(`sym);`zz]", "{?[x;`zz]}`sym", "{?[x;`zz]}[`sym]", "{[s]?[s;`zz]}[`sym]", "@[{?[x;`zz]};`sym;::]", ".[{?[x;`zz]};enlist `sym;::]",
+    // #2189, #2196: the items `.` applies to, a list of symbols, `enlist x`.
+    "(?) . `sym`x", ".[?;`sym`x]", '{value x} . enlist "a:1"',
+    // #2207: hopen of a handle made some way it cannot read.
+    "hopen hsym(`o.txt)", "hopen hsym first`o.txt", "hopen hsym`$string`o.txt", 'hopen hsym`$raze"o.txt"', "hopen hsym{`o.txt}[]", "hopen -1!(`o.txt)",
+    'hopen@`$":",string`o.txt', "@[hopen;hsym(`o.txt);::]", "(hopen)hsym(`o.txt)", "hopen each enlist hsym(`o.txt)", "{hopen x}hsym(`o.txt)", ".[hopen;enlist hsym(`o.txt);::]",
+  ];
+  for (const code of asks) {
+    assert.ok(writes(code).length > 0, code);
+  }
+  assert.deepStrictEqual(writes("@[first`b;0;+;1]"), ["amends what first`b names in place"]);
+  assert.deepStrictEqual(writes("update a:77 from first`t"), ["updates what first`t names in place"]);
+  assert.deepStrictEqual(writes("{s:`a;.[s;();:;77]}[]"), ["amends what s names in place"]);
+  assert.deepStrictEqual(writes("?[(`sym);`zz]"), ["extends the enumeration `sym with ?"]);
+  assert.deepStrictEqual(writes("hopen hsym first`o.txt"), ["opens a handle the guard cannot read with hopen"]);
+  // A value stays a value: a name, a list or dictionary of symbols, a
+  // symbol indexed, a table sorted or selected, a lambda trapped, and a
+  // process's handle.
+  const reads = [
+    "@[t;`a;neg]", "@[`a`b;0;:;`c]", "@[(`a;`b);0;:;1]", "@[`a`b!1 2;`a;+;1]", "@[(`t)[0];`a;:;1]", "@[(`d)`a;0;neg]", "update a:1 from `a xasc t",
+    "update a:1 from select from t", "delete from 0!kt", "@[{x+1};1;{x}]", "@[value;\"count t\";{x}]", "{s:select from t; update a:1 from s}[]",
+    "{s:`a; select from t where b=s}[]", "{f:{x+1}; f 2}[]", "(`p`q)?`q", "(exec b from t)?`x", "hopen (`:localhost:5000;1000)", "hopen hsym`$\"host:5000\"",
+    "`a xkey 0!kt", "{x[`a]} each enlist d",
+  ];
+  for (const code of reads) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});
+
+test("a string made without a string written is evaluated as one that writes, by value and by handle 0 (#2203, #2204)", () => {
+  const cases = {
+    "value string`a:77": ["evaluates a string with value"],
+    'value string`$".ns.v:77"': ["evaluates a string with value"],
+    "get`char$97 58 55 55": ["evaluates a string with get"],
+    "{value x}string`a:77": ["evaluates a string with value"],
+    "@[value;string`a:77;::]": ["evaluates a string with value"],
+    ".Q.trp[value;string`a:77;::]": ["evaluates a string with value"],
+    'value each enlist string`$"a:77"': ["evaluates a string with value"],
+    "k).$`a:77": ["evaluates a string with k's ."],
+    "value .Q.s1 x": ["evaluates a string with value"],
+    'value "c"$0x613a31': ["evaluates a string with value"],
+    // Handle 0 given what a function returns.
+    '0 raze("a:";"77")': ["evaluates a string on handle 0"],
+    '0 {x}"a:77"': ["evaluates a string on handle 0"],
+    "0 string`a:77": ["evaluates a string on handle 0"],
+    '0 ssr["a+=1";"=";":"]': ["evaluates a string on handle 0"],
+    '0 trim" b[0]:77 "': ["evaluates a string on handle 0"],
+    '(0)raze("a:";"77")': ["evaluates a string on handle 0"],
+    'neg[0]raze("a:";"77")': ["evaluates a string on handle 0"],
+    // A symbol cast, an enumeration, a list holding a cast,
+    // and a keyword after 0 are not strings made.
+    "get`$(),nm": [],
+    "value`$\"t\"": [],
+    "value`sym$`a": [],
+    "eval(!;`t;();0b;`symbol$())": [],
+    '0 sublist "abc"': [],
+    "0 xbar 1 2 3": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("a list headed by a lambda is the lambda applied to the rest: by value, eval, . and a gateway (#2186, #2195)", () => {
+  const cases = {
+    "value({.[x;();:;1]};`a)": ["evaluates a call of {.[x;();:;1]} with value"],
+    "eval({.[x;();:;1]};`a)": ["evaluates a call of {.[x;();:;1]} with eval"],
+    ".({.[x;();:;1]};`a)": ["evaluates a call of {.[x;();:;1]} with ."],
+    '.gw.syncexec[({value raze x};("a";":1"));`rdb]': ["runs a query the guard cannot read through .gw.syncexec"],
+    '.gw.syncexec[({value x,y};"a";":1");`rdb]': ["runs a query the guard cannot read through .gw.syncexec"],
+    // A lambda that only reads, on what only reads, still reads.
+    "value({x+1};2)": [],
+    '.gw.syncexec[({last value each x};("count t";"count u"));`rdb]': [],
+    // One that evaluates a string it builds asks, as it does sent alone.
+    '.gw.syncexec[({value raze x};("count";" t"));`rdb]': ["runs a query the guard cannot read through .gw.syncexec"],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("an operator projected and applied later, and a gateway given to . or @, are read as the calls they make (#2187, #2188)", () => {
+  const cases = {
+    "(?)[`sym] `x": ["extends the enumeration `sym with ?"],
+    "(?)[`sym;] `x": ["extends the enumeration `sym with ?"],
+    "(?)[`sym]@`x": ["extends the enumeration `sym with ?"],
+    "(!)[-11] `:log": ["replays a log with -11!"],
+    "(!)[-11;] `:log": ["replays a log with -11!"],
+    '.[.gw.syncexec;("a:1";`rdb)]': ["assigns a through .gw.syncexec", "runs a query the guard cannot read through .gw.syncexec"],
+    '.[`.gw.syncexec;("a:1";`rdb)]': ["assigns a through .gw.syncexec", "runs a query the guard cannot read through .gw.syncexec"],
+    "f[.gw.syncexec]": ["runs a query the guard cannot read through .gw.syncexec"],
+    // Projected on what only finds, or named alone, they read.
+    "(?)[`a`b] `b": [],
+    "(!)[-8] t": [],
+    ".gw.syncexec": [],
+    "g:.gw.syncexec": ["assigns g"],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("an internal function's number with a type or computed is read as the number it is (#2208)", () => {
+  const cases = {
+    "-11j!`:tp.log": ["replays a log with -11!"],
+    "(-11j)!`:tp.log": ["replays a log with -11!"],
+    "(neg 11)!`:tp.log": ["replays a log with -11!"],
+    "(0-11)!`:tp.log": ["replays a log with -11!"],
+    "neg[19]!(`:a;`:b;17;2;6)": ["writes a compressed file with -19!"],
+    "-6j!(:;`a;77)": ["evaluates an assignment with -6!"],
+    "(neg 6)!(:;`a;77)": ["evaluates an assignment with -6!"],
+    // One it cannot work out may be any: asked about.
+    "(neg x)!y": ["calls an internal function the guard cannot read with !"],
+    // What only reads stays a read: -8!, a count of a log, a dictionary.
+    "(neg 8)!t": [],
+    "-8j!t": [],
+    "(neg 11)!(-2;`:tp.log)": [],
+    "(til 3)!`a`b`c": [],
+    "(1+2)!x": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("a writer got with parse or -5!, or picked from .q by what the guard cannot read, is called (#2205, #2206)", () => {
+  const asks = [
+    '(parse"set")[`a;77]', '(parse("set")) . (`a;77)', '(-5!"set")[`a] 77', '{parse x}"set"', '(parse"upsert")[`t;(9;`q)]', '(parse"insert")[`t;(9;`q)]',
+    '(parse"xdesc")[`a;`t]', '(parse"hopen")`:o.txt', '(-5!"hopen")`:o.txt', '(parse"value")"a:77"', '(parse"system")"l f.q"', '(parse".")[`a;();:;77]',
+    '(parse"-11!")', "(parse x)[`a;77]",
+    '.q[`$"se","t"][`a;77]', '.q[`$reverse"tes"][`a] 77', '(.q@`$"se","t")[`a;77]', '((get`.q)`$"se","t")[`a;77]', '(.q`$"xk","ey")[`b;`t]',
+    "(.q (key .q) 71)[`a;77]", "((value .q) 71)[`a;77]", '((value .q) 68)"a:77"', '((value .q) 88)"l f.q"', "((value .q) 104)[`a;`t]",
+  ];
+  for (const code of asks) {
+    assert.ok(writes(code).length > 0, code);
+  }
+  assert.deepStrictEqual(writes('(parse"set")[`a;77]'), ["gets set with parse"]);
+  assert.deepStrictEqual(writes("((value .q) 71)[`a;77]"), ["calls a function picked from .q by what the guard cannot read"]);
+  // Parse of a query, and .q indexed by a read-only builtin's name, read.
+  for (const code of ['parse"select from t"', "-5!\"count t\"", ".q`count", ".q[`count]", "key .q", "count .q", '(.q`$"count")t']) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});
+
+test("a string made in an evaluator's own brackets, or cast after handle 0, is evaluated as one that writes (#2203, #2204)", () => {
+  const cases = {
+    "value[`char$97 58 55 55]": ["evaluates a string with value"],
+    "value/[`char$97 58 55 55]": ["evaluates a string with value"],
+    "value'[enlist string`$\".ns.v:77\"]": ["evaluates a string with value"],
+    "{[p;q]value[`char$97 58 55 55]}[0][1]": ["evaluates a string with value"],
+    "0 `char$97 58 55 55": ["evaluates a string on handle 0"],
+    "(0)`char$97 58 55 55": ["evaluates a string on handle 0"],
+    "neg[0]`char$97 58 55 55": ["evaluates a string on handle 0"],
+    "value[`t]": [],
+    "0 `a": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
 });
