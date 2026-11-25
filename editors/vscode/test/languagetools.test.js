@@ -1136,6 +1136,44 @@ test("Write Lint Baseline names the baseline in the configuration that governs t
   }
 });
 
+test("Write Lint Baseline under --isolated or --config=FILE shows the line and edits no configuration (#2296)", async (t) => {
+  const { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, realpathSync } = require("node:fs");
+  const { join } = require("node:path");
+  const { tmpdir } = require("node:os");
+  if (!existsSync(QLINTER)) {
+    t.skip("no qlinter built at target/release");
+    return;
+  }
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "qlint-bl-iso-")));
+  const { context, restore } = setUp();
+  try {
+    writeFileSync(join(root, "a.q"), "f:{[count] count}\nsum:1\n");
+    const own = 'profile = "style"\n';
+    writeFileSync(join(root, "qlinter.toml"), own);
+    writeFileSync(join(root, "team.toml"), own);
+    vscode.workspace.workspaceFolders = [{ uri: { scheme: "file", fsPath: root }, name: "ws" }];
+    for (const [args, says] of [
+      [["--isolated"], /--isolated and reads no configuration/],
+      [["--config=" + join(root, "team.toml")], /add `baseline = "qlinter-baseline.json"` to .*team\.toml/],
+    ]) {
+      registerBaseline(context, () => ({ command: QLINTER, args }));
+      stub.messages.length = 0;
+      // Were it asked to add the line, it would be answered so.
+      stub.picks.push("Write", "Add");
+      assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.writeBaseline)(), join(root, "qlinter-baseline.json"));
+      assert.ok(stub.messages.some(([, text]) => says.test(text)), JSON.stringify(stub.messages));
+      assert.strictEqual(readFileSync(join(root, "qlinter.toml"), "utf8"), own);
+      assert.strictEqual(readFileSync(join(root, "team.toml"), "utf8"), own);
+      rmSync(join(root, "qlinter-baseline.json"), { force: true });
+      stub.picks.length = 0;
+    }
+  } finally {
+    vscode.workspace.workspaceFolders = undefined;
+    restore();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a SQL schema is read only from the process it is kept for, not one connected while it waited (#1457)", async () => {
   const { context, restore } = setUp();
   vscode.languages.registerCompletionItemProvider = () => ({ dispose() {} });
