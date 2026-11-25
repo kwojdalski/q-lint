@@ -3601,8 +3601,11 @@ pub fn check(
                     matches!(word, "select" | "exec" | "update")
                         || matches!(word, "by" | "from" | "where") && query_at(at).is_some()
                         || INFIX.contains(&word)
+                        // Written before its argument: `sums x`, though
+                        // `sums[x;y]` takes a second (#2249).
                         || crate::builtin(word).is_some_and(|b| {
-                            b.kind == crate::BuiltinKind::Function && b.params.len() == 1
+                            b.kind == crate::BuiltinKind::Function
+                                && b.syntax.starts_with(&format!("{word} "))
                         })
                 });
             let head = match before.chars().next_back() {
