@@ -59,6 +59,10 @@ NAME = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*"
 # The first group is empty for a name with no leading dot, so `a.b` and `f`
 # stay whole in the second.
 SPLIT = r"(\.[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*(?=\.))?(" + NAME + ")"
+# The elements of a symbol vector that start with an underscore: none can
+# stand alone (`_a is a null symbol, drop, a), but one written straight after
+# another symbol is one too - KDB-X reads `a`_b as the symbols `a`_b.
+SYMBOL_TAIL = r"(?:`_[A-Za-z0-9_.]*(?::[A-Za-z0-9_.:/]*)?)*"
 NAMESPACE = {"name": "entity.name.namespace.q"}
 PARAMETERS = [
     {"match": r"[A-Za-z][A-Za-z0-9_]*", "name": "variable.parameter.q"},
@@ -249,12 +253,16 @@ def grammar():
                     {
                         "comment": "A file or network handle: `:path/to/file, `:host:port. "
                         "A minus is not in one: `:a-b is `:a minus b.",
-                        "match": r"`:[A-Za-z0-9_.:/]*",
-                        "name": "constant.other.symbol.handle.q",
+                        "match": r"(`:[A-Za-z0-9_.:/]*)(" + SYMBOL_TAIL + ")",
+                        "captures": {
+                            "1": {"name": "constant.other.symbol.handle.q"},
+                            "2": {"name": "constant.other.symbol.q"},
+                        },
                     },
                     {
-                        "comment": "Past a colon a symbol takes slashes too: `a:b/c is one symbol.",
-                        "match": r"`[A-Za-z0-9_.]*(?::[A-Za-z0-9_.:/]*)?",
+                        "comment": "Past a colon a symbol takes slashes too: `a:b/c is one symbol. "
+                        "It does not start with an underscore: `_a is a null symbol, drop, a.",
+                        "match": r"`(?:[A-Za-z0-9.][A-Za-z0-9_.]*)?(?::[A-Za-z0-9_.:/]*)?" + SYMBOL_TAIL,
                         "name": "constant.other.symbol.q",
                     },
                 ],

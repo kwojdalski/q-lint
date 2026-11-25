@@ -415,3 +415,25 @@ test("an integer's upper-case exponent is a number with an e or f after it (#230
     assert.deepStrictEqual(await coloured(`a:${text}`, true), [], `k ${text}`);
   }
 });
+
+// As KDB-X's -4! reads them: `_a is a null symbol, drop and a name, and `__
+// a null symbol and two drops; inside a symbol vector, though, an element
+// may start with one - `a`_b is the two symbols `a`_b, ``_b and `:a`_b too.
+test("a symbol does not start with an underscore, but an element after another does (#2302)", async () => {
+  for (const k of [false, true]) {
+    const lang = k ? "k" : "q";
+    assert.deepStrictEqual(await coloured("x:`_a", k), ["`"], lang);
+    assert.deepStrictEqual(await coloured("x:`__", k), ["`"], lang);
+    assert.deepStrictEqual(await scopesOf("x:`_a", "a", k), [`variable.other.${lang}`], lang);
+    for (const symbols of ["`a`_b", "``_b", "`a``_b", "`a`b`_c"]) {
+      assert.deepStrictEqual((await coloured(`x:${symbols}`, k)).join(""), symbols, `${lang} ${symbols}`);
+    }
+    assert.deepStrictEqual(await coloured("x:`:a`_b", k), ["`:a", "`_b"], lang);
+    assert.deepStrictEqual(await scopesOf("x:`:a`_b", "`:a", k), [`constant.other.symbol.handle.${lang}`], lang);
+    assert.deepStrictEqual(await scopesOf("x:`:a`_b", "`_b", k), [`constant.other.symbol.${lang}`], lang);
+    // An underscore after the first character is the symbol's.
+    for (const symbol of ["`a_", "`._", "`1_a", "`:_a", "`a:_b"]) {
+      assert.deepStrictEqual(await coloured(`x:${symbol}`, k), [symbol], `${lang} ${symbol}`);
+    }
+  }
+});
