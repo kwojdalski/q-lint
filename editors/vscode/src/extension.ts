@@ -91,7 +91,7 @@ import { registerSql } from "./sqlview";
 import { spawnSync } from "node:child_process";
 import { accessSync, chmodSync, constants, existsSync, statSync } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
-import { onPath } from "./relations";
+import { onPath, readGitPathWith } from "./relations";
 import {
   CloseAction,
   ErrorAction,
@@ -271,6 +271,8 @@ export async function activate(
     };
   }
 > {
+  // Every feature that runs git runs the one VS Code's `git.path` names (#2522).
+  readGitPathWith(() => workspace.getConfiguration("git").get<unknown>("path"));
   // Replacing the binary does not restart the server, and a window reload is
   // a blunt way to pick up a new one. This is the small way.
   context.subscriptions.push(commands.registerCommand("q-lint.restartServer", () => restart(context, true)));

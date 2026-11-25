@@ -15,7 +15,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { launchable } from "./batch";
-import { onProcessPath } from "./relations";
+import { gitCommand, onProcessPath, processGit } from "./relations";
 
 /// The part of a finding the dashboard reads.
 export interface Finding {
@@ -225,7 +225,7 @@ export async function lintTree(qlinter: string, args: string[], dir: string): Pr
 /// The repository `dir` is in: its top level, and `dir`'s path below it
 /// (`pkg/sub/`; empty at the top). Undefined outside one.
 async function within(dir: string): Promise<{ top: string; prefix: string } | undefined> {
-  const got = await run("git", ["rev-parse", "--show-toplevel", "--show-prefix"], dir).catch(() => undefined);
+  const got = await run(gitCommand(), ["rev-parse", "--show-toplevel", "--show-prefix"], dir).catch(() => undefined);
   if (got === undefined || got.code !== 0) {
     return undefined;
   }
@@ -238,20 +238,20 @@ async function within(dir: string): Promise<{ top: string; prefix: string } | un
 /// where qlinter looks for one too (#1897); undefined outside a git
 /// repository or before a first commit.
 export async function head(dir: string): Promise<{ commit: string; date: string; subject: string; clean: boolean } | undefined> {
-  const log = await run("git", ["log", "-1", "--format=%H%x00%cI%x00%s"], dir).catch(() => undefined);
+  const log = await run(gitCommand(), ["log", "-1", "--format=%H%x00%cI%x00%s"], dir).catch(() => undefined);
   if (log === undefined || log.code !== 0 || log.stdout.trim() === "") {
     return undefined;
   }
   const [commit, date, subject] = log.stdout.trim().split("\0");
   const above = ((await within(dir))?.prefix ?? "").split("/").filter((part) => part !== "");
   const configurations = above.map((_, i) => `:(top,glob)${above.slice(0, i).map((part) => `${part.replace(/[\\*?[]/g, "\\$&")}/`).join("")}*.toml`);
-  const status = await run("git", ["status", "--porcelain", "--", "*.q", "*.toml", ...configurations], dir).catch(() => undefined);
+  const status = await run(gitCommand(), ["status", "--porcelain", "--", "*.q", "*.toml", ...configurations], dir).catch(() => undefined);
   return { commit, date, subject: subject ?? "", clean: status !== undefined && status.code === 0 && status.stdout.trim() === "" };
 }
 
 /// The last `count` commits before `HEAD`, newest first, as `head` gives one.
 export async function history(dir: string, count: number): Promise<{ commit: string; date: string; subject: string }[]> {
-  const log = await run("git", ["log", `-${count}`, "--format=%H%x00%cI%x00%s"], dir);
+  const log = await run(gitCommand(), ["log", `-${count}`, "--format=%H%x00%cI%x00%s"], dir);
   if (log.code !== 0) {
     throw new Error("git log failed: is this a git repository with commits?");
   }
@@ -281,7 +281,7 @@ export async function lintCommit(qlinter: string, args: string[], dir: string, c
   const out = await mkdtemp(join(tmpdir(), "qlint-trend-"));
   try {
     await new Promise<void>((resolve, reject) => {
-      const [git, tarBinary] = [onProcessPath("git"), onProcessPath("tar")];
+      const [git, tarBinary] = [processGit(), onProcessPath("tar")];
       if (git === undefined || tarBinary === undefined) {
         reject(new Error(`git archive ${commit} failed: ${git === undefined ? "git" : "tar"} is not on PATH`));
         return;

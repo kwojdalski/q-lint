@@ -384,3 +384,23 @@ export function gitBinary(setting: unknown): string {
   const first: unknown = Array.isArray(setting) ? setting[0] : setting;
   return typeof first === "string" && first.trim() !== "" ? first.trim() : "git";
 }
+
+/// How `git.path` is read: by the extension, from VS Code's settings; with
+/// no editor, as unset.
+let gitSetting: () => unknown = () => undefined;
+
+/// Read `git.path` with `read` from now on.
+export function readGitPathWith(read: () => unknown): void {
+  gitSetting = read;
+}
+
+/// The git every feature runs (#2522): `gitBinary` of `git.path` now.
+export function gitCommand(): string {
+  return gitBinary(gitSetting());
+}
+
+/// `gitCommand()` found on PATH as `onProcessPath` finds one; undefined
+/// when it is not there.
+export function processGit(): string | undefined {
+  return onProcessPath(gitCommand());
+}

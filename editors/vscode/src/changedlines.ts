@@ -11,7 +11,7 @@
 import { execFile } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { dirname, relative } from "node:path";
-import { onProcessPath } from "./relations";
+import { processGit } from "./relations";
 import { relativeInside } from "./workspacewrite";
 
 /// Lines of `after` that are not in `before`, as pairs of 0-based first and
@@ -89,8 +89,9 @@ export type Git = (args: string[], cwd: string) => Promise<string | undefined>;
 
 export const runGit: Git = (args, cwd) =>
   new Promise((resolve) => {
-    // Found on PATH, not in the q file's folder as Windows would (#1407, #1538).
-    const git = onProcessPath("git");
+    // `git.path`'s, or found on PATH, not in the q file's folder as Windows
+    // would (#1407, #1538, #2522).
+    const git = processGit();
     if (git === undefined) {
       resolve(undefined);
       return;

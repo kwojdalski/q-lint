@@ -40,7 +40,7 @@ import {
   asAffectedTests,
   asGraph,
   changedFiles,
-  gitBinary,
+  gitCommand,
   isQ,
   onPath,
   picks,
@@ -330,7 +330,7 @@ export class Relations implements TreeDataProvider<Row> {
       );
       return;
     }
-    const named = gitBinary(workspace.getConfiguration("git").get<unknown>("path"));
+    const named = gitCommand();
     const binary = onPath(named, process.env.PATH, isFile);
     if (binary === undefined) {
       void window.showWarningMessage(
