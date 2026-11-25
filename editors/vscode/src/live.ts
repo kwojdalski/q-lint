@@ -3197,8 +3197,10 @@ export class Live {
       const unlimited = this.controls.unlimited || options.whole === true;
       const { consoleSize, gridLimit } = limits(settings, unlimited);
       // On a TorQ gateway, through `.gw.syncexec`, as `run` sends it (#1230).
-      const cut = statements(this.throughGateway(code, process));
-      if (connection.isDirect) {
+      const sent = this.throughGateway(code, process);
+      const cut = statements(sent);
+      // A gateway call defers its reply, so it goes as plain strings (#2584).
+      if (connection.isDirect || isGatewayCall(sent)) {
         this.sayNoReval(connection, process);
         return await runUnwrapped(connection, cut, { size: consoleSize, limit: gridLimit, unlimited, grid: true });
       }
@@ -3439,7 +3441,9 @@ export class Live {
       // direct evaluation, which sends nothing of ours, nor on production or
       // a process the read-only guard (#918) guards, as holding assigns.
       const readOnly = isProduction(process) || guardedBy(process, this.setting(readGuard)).length > 0;
-      const direct = connection.isDirect;
+      // A gateway call defers its reply past any lambda of ours, so it goes
+      // as plain strings too (#2584).
+      const direct = connection.isDirect || isGatewayCall(code);
       const hold = !direct && settings.mode !== "console" && this.modes.wantsHold(readOnly);
       // This result's own, so a page is of it and no other (#2128).
       const token = hold ? randomBytes(16).toString("hex") : undefined;
