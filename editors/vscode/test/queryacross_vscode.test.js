@@ -125,6 +125,24 @@ test("Query a Tag takes a tag row, or asks for a tag, and the code from the edit
   assert.strictEqual(queries(a).length, 2);
 });
 
+// A gateway in the tag, or compared, gets the code on the server types the
+// file names, as Run Query sends it (#2363).
+test("Query a Tag and Compare Query send a gateway the editor's code on the file's server types", async (t) => {
+  const gw = await fakeQ(table([1]));
+  const a = await fakeQ(table([2]));
+  t.after(() => [gw, a].forEach((q) => q.close()));
+  await setUp(t, [{ ...proc("gw", gw.port, ["desk"]), gateway: ["rdb"] }, proc("a", a.port, ["desk"])]);
+  const text = "count t\n/ @servertypes hdb";
+  vscode.window.activeTextEditor = {
+    document: { uri: vscode.Uri.file("/w/a.q"), lineAt: (n) => ({ text: text.split("\n")[n] }), lineCount: 2, getText: () => text },
+    selection: { active: { line: 0 }, isEmpty: true },
+  };
+  await stub.commands.get("q-lint.queryTag")("desk");
+  await stub.commands.get("q-lint.compareQuery")(undefined, "gw", "a");
+  const sent = gw.sent.filter((m) => typeof m === "string");
+  assert.deepStrictEqual(sent, ['.gw.syncexec["count t";enlist `hdb]', '.gw.syncexec["count t";enlist `hdb]']);
+});
+
 test("Query a Tag on guarded processes asks the read-only guard once; declined, nothing is sent", async (t) => {
   const a = await fakeQ(table([1]));
   const b = await fakeQ(table([2]));

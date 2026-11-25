@@ -3220,7 +3220,8 @@ export class Live {
   /// scheduled export writes the result, not its first page (#1613).
   /// `unattended`: run from a timer - a tile's refresh, a schedule - so the
   /// connect script asks nobody and its failure is thrown (#1618).
-  async runApart(process: Process, code: string, signal?: AbortSignal, options: { whole?: boolean; unattended?: boolean } = {}): Promise<GridAnswer> {
+  /// `serverTypes`: a gateway's, the file's `/ @servertypes` (#2363).
+  async runApart(process: Process, code: string, signal?: AbortSignal, options: { whole?: boolean; unattended?: boolean; serverTypes?: string[] } = {}): Promise<GridAnswer> {
     const commanded = process.credentialCommand !== undefined && this.setting(readAdmin).credentialCommand;
     if (!commanded && process.user && process.server !== undefined && (await this.context.secrets.get(this.passwordKey(process))) === undefined) {
       throw new Error(`no password is stored for ${process.user}: connect to ${process.label} once to give it`);
@@ -3246,7 +3247,7 @@ export class Live {
       const unlimited = this.controls.unlimited || options.whole === true;
       const { consoleSize, gridLimit } = limits(settings, unlimited);
       // On a TorQ gateway, through `.gw.syncexec`, as `run` sends it (#1230).
-      const sent = this.throughGateway(code, process);
+      const sent = this.throughGateway(code, process, options.serverTypes);
       const cut = statements(sent);
       // A gateway call defers its reply, so it goes as plain strings (#2584).
       if (connection.isDirect || isGatewayCall(sent)) {
