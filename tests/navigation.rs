@@ -243,6 +243,22 @@ fn a_name_with_a_segment_led_by_an_underscore_is_one_name() {
 }
 
 #[test]
+fn a_key_of_a_dictionary_is_no_member_of_a_namespace() {
+    // KDB-X: after `.jobs:(`symbol$())!()`, `.jobs[`daily]:1` adds a key,
+    // and `key `.jobs` is `daily with no null - not a namespace; `get
+    // `.ns.describe.trades` signals 'trades (#2312). Into a namespace,
+    // `.c4[`a]:1` defines `.c4.a` (`key `.c4` is ``x`a).
+    let names: Vec<String> = holds(
+        ".jobs:(`symbol$())!()\n.jobs[`daily]:1\n\\d .ns\ndescribe:(`symbol$())!()\n\
+         .ns.describe[`trades]:\"t\"\n\\d .\n.c4.x:0\n.c4[`a]:1\n",
+    )
+    .into_iter()
+    .map(|(name, _)| name)
+    .collect();
+    assert_eq!(names, [".jobs", ".ns.describe", ".c4.x", ".c4.a"]);
+}
+
+#[test]
 fn the_path_of_each_kind_of_load_is_found_under_the_cursor() {
     let source =
         "\\l lib/a.q\nsystem \"l lib/b.q\"\nf:`:lib/c.q\n/ \\l lib/d.q\n\\cd lib\n\\l e.q\n";

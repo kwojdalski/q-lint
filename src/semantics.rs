@@ -1133,6 +1133,7 @@ fn global_writes(
                 .push(m.end());
         }
     }
+    let assigned_whole: HashSet<String> = globals.keys().cloned().collect();
     // An operator assignment, `a,:1` or `a+:1`, writes the name too. Inside a
     // lambda it does not make the name local: q 5 gives 5 for
     // `a:5; {r:a; a+:1; r}[]`, and `{c,:1; c}` writes the global `c` - so
@@ -1244,12 +1245,18 @@ fn global_writes(
         }
     }
     // A member of a namespace assigned by a literal index: q 5
-    // `.cfg[`a]:1 2 3` defines `.cfg.a`.
+    // `.cfg[`a]:1 2 3` defines `.cfg.a`. Only a namespace has members: after
+    // `.jobs:(`symbol$())!()`, `.jobs[`daily]:1` adds a key to a dictionary,
+    // and KDB-X defines no `.jobs.daily` (#2312) - so not where the file
+    // assigns the name a whole value.
     for m in re!(r"(\.[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\[\s*((?:`[A-Za-z][A-Za-z0-9_]*)+)\s*\]\s*:")
         .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
-        if !boundary(code, whole.start()) || code[whole.end()..].starts_with(':') {
+        if !boundary(code, whole.start())
+            || code[whole.end()..].starts_with(':')
+            || assigned_whole.contains(&m[1])
+        {
             continue;
         }
         for name in m[2].split('`').skip(1) {
