@@ -125,17 +125,33 @@ export function runCredentialCommand(
       }
     };
     child.once("error", (error) => settle(error, null, null));
-    // On exit, not close: what it left behind may hold its stdout open.
+    // On exit, not close: what it left behind may hold its stdout open
+    // (#2191). Its group is ended then - nothing it started outlives it -
+    // and what it wrote, already in the pipe, is read to the pipe's close.
+    // A leftover that left the group still holds the pipe, so the read is
+    // given a moment and no more.
     child.once("exit", (code, signal) => {
       if (ended !== undefined || code !== 0) {
         settle(undefined, code, signal);
-      } else {
-        // Its output is all read once the pipe closes.
-        child.stdout?.once("close", () => settle(undefined, code, signal));
-        if (child.stdout === null || child.stdout.closed) {
-          settle(undefined, code, signal);
+        if (ended === undefined) {
+          signalGroup(child, "SIGKILL");
         }
+        return;
       }
+      signalGroup(child, "SIGKILL");
+      const stdout = child.stdout;
+      if (stdout === null || stdout.closed) {
+        settle(undefined, code, signal);
+        return;
+      }
+      const grace = setTimeout(() => {
+        settle(undefined, code, signal);
+        stdout.destroy();
+      }, 500);
+      stdout.once("close", () => {
+        clearTimeout(grace);
+        settle(undefined, code, signal);
+      });
     });
   });
 }
