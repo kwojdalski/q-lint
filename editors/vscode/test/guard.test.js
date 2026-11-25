@@ -1978,3 +1978,17 @@ test("a lambda made a derived function by an iterator and applied infix is given
     assert.deepStrictEqual(writes(code), [], code);
   }
 });
+
+test("an amend projection composed with another function, or applied through an iterator after @, amends what the composition is given (#2270)", () => {
+  const asks = [
+    "'[@[;0;:;77];::]`b", "('[@[;0;:;77];{x}])`b", "(@[;0;:;77]first@)`b", "(@[;0;:;77]{x}@)`b", "(@[;0;:;77]) @/: enlist`b", "'[::;@[;0;:;77]]`b",
+    "'[.[;();:;77];::]`a", "('[@[;0;:;77];::])[`b]", "(@[;0;:;77]) @' enlist`b", "'[@[;`a;:;1];::]`.",
+  ];
+  for (const code of asks) {
+    assert.ok(writes(code).length > 0, code);
+  }
+  // Given a value, a composed amend changes a copy.
+  for (const code of ["'[@[;0;:;77];::] b", "(@[;0;:;77]first@) (1 2;3 4)", "(@[;0;:;77]) @/: (1 2;3 4)", "'[@[;0;+;1];reverse] 1 2 3"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});

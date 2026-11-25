@@ -1586,6 +1586,36 @@ function throughParameters(t: Token[], all: Token[], statement: string, closes: 
   }
 }
 
+/// What the composition the amend projection whose bracket opens at
+/// `t[open]` is in is applied to - a composition `'[f;g]`, or functions
+/// juxtaposed in parentheses, `(f g@)` - past `@` or `.`, an iterator and
+/// `each`: `` '[@[;0;:;1];::]`b `` gives `` `b `` (#2270).
+function composedOn(t: Token[], open: number): [number, number] | undefined {
+  const close = items(t, open).at(-1)?.[1] ?? -1;
+  // The projection applied through `@` and an iterator: `(@[;0;:;1]) @/: x`.
+  let o = enclosing(t, open - 1);
+  let end = close;
+  if (o >= 0 && t[o].text === "(" && (items(t, o).at(-1)?.[1] ?? -1) === close + 1 && t[close + 2]?.kind === "op" && (t[close + 2].text === "@" || t[close + 2].text === ".")) {
+    end = close + 1;
+  } else {
+    // The bracket or parentheses of the composition it is in.
+    if (o < 0 || !((t[o].text === "[" && t[o - 1]?.text === "'") || t[o].text === "(")) return undefined;
+    end = items(t, o).at(-1)?.[1] ?? -1;
+    if (t[o].text === "[" && t[o - 1]?.text === "'") {
+      // `('[f;g])x`: past the parentheses around it.
+      if (t[o - 2]?.text === "(" && t[end + 1]?.text === ")") end++;
+    }
+  }
+  if (end < 0) return undefined;
+  let p = end + 1;
+  if (t[p]?.kind === "op" && (t[p].text === "@" || t[p].text === ".")) p++;
+  while (t[p]?.kind === "op" && ["'", "/", "\\", ":"].includes(t[p].text)) p++;
+  if (t[p]?.kind === "name" && ITERATORS.has(t[p].text)) p++;
+  if (t[p] === undefined || t[p].text === ";" || t[p].kind === "close") return undefined;
+  if (t[p].kind === "open" && t[p].text === "[") return items(t, p)[0];
+  return [p, argumentEnd(t, p - 1)];
+}
+
 /// Where the bracket around `t[s]` opens, -1 at the top.
 function enclosing(t: Token[], s: number): number {
   let open = s - 1;
@@ -1981,6 +2011,13 @@ function readStatement(statement: string, found: Set<string>): void {
                     : undefined;
           if (range !== undefined && (iterated ? itemSymbolic : symbolic)(t, range[0], range[1], held.at(-1))) {
             found.add(`${amend === "!" ? "updates or deletes from" : "amends"} what ${shown(t, range[0], range[1])} names in place`);
+          } else if (args[0][0] === args[0][1]) {
+            // The projection composed with other functions, `'[@[;0;:;77];::]`b`,
+            // `(@[;0;:;77]first@)`b`, is given what the composition is (#2270).
+            const given = composedOn(t, i);
+            if (given !== undefined && itemSymbolic(t, given[0], given[1], held.at(-1))) {
+              found.add(`${amend === "!" ? "updates or deletes from" : "amends"} what ${shown(t, given[0], given[1])} names in place`);
+            }
           }
         }
       }
