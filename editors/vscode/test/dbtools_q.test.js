@@ -686,6 +686,20 @@ test("the sym inspector counts a nested column of enumerations, its symbols and 
   assert.deepStrictEqual(answer.growth, [{ partition: "2026.01.01", size: 5 }]);
 });
 
+test("the sym inspector under a .Q.view samples every partition on disk (#2533)", { skip }, async (t) => {
+  const { connection } = await connect(t, [
+    'r:hsym`$"$DIR/v";',
+    "{[r;d;s] .Q.dd[r;d,`trade`] set .Q.en[r] ([] sym:s;px:count[s]#1f)}[r]'[2026.01.01 2026.01.02 2026.01.03;(`a`b;`a`b`c;0#`)];",
+    "\\l $DIR/v",
+    ".Q.view 2026.01.03",
+    "",
+  ].join("\n"));
+  const answer = readSym(await connection.call(SYM_INSPECT, 20));
+  assert.deepStrictEqual([answer.partitions, answer.sampled], [3, 3]);
+  assert.deepStrictEqual(answer.columns.map((c) => [c.table, c.column, c.distinct]), [["trade", "sym", 3]]);
+  assert.deepStrictEqual(answer.growth, [{ partition: "2026.01.01", size: 2 }, { partition: "2026.01.02", size: 3 }]);
+});
+
 // .Q.ens[d;t;`mysym] enumerates against mysym, and a column may be against
 // a domain of its own beside sym: each is inspected (#2146).
 test("the sym inspector inspects a database enumerated against another domain than sym (#2146)", { skip }, async (t) => {
