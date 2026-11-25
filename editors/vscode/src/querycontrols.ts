@@ -24,7 +24,7 @@
 // strings (`QConnection.direct`), so a feature that needs q-lint's lambda
 // is refused before it sends.
 import { attrText, consoleLines, gridOf, gridOfQ, cutLines, formatQ, formatValue, vectorText } from "./qformat";
-import { decode, type QValue } from "./qdecode";
+import { ByReference, decode, type QValue } from "./qdecode";
 import { readAnswer, trapLines, type Answer } from "./query";
 import type { GridAnswer } from "./grid";
 import { QError, type DirectMode } from "./qclient";
@@ -192,7 +192,11 @@ export async function evaluateAll(connection: Evaluator, statements: string[]): 
   let typed: QValue | undefined;
   try {
     typed = last.message === undefined ? undefined : decode(last.message);
-  } catch {
+  } catch (error) {
+    // The codec's value of one is its path's characters (#2569).
+    if (error instanceof ByReference) {
+      return { ok: false, error: error.message };
+    }
     typed = undefined;
   }
   return { ok: true, last: { value: last.value, type: last.type, typed } };

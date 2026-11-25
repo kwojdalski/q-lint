@@ -263,3 +263,19 @@ test("a dictionary's key is put in parentheses where -3! puts them (#2573)", () 
   ];
   for (const [q, text] of cases) assert.strictEqual(oneLine(q), text);
 });
+
+test("a splayed or partitioned table, sent by reference, is refused as that, not shown as one row of its path (#2569)", async () => {
+  const { ByReference } = require("../out/qdecode.js");
+  const { runUnwrapped } = require("../out/querycontrols.js");
+  // KDB-X: -8!pt of a partitioned pt, and -8!sp of a splayed sp mapped
+  // from :db/sp/ - a table whose dictionary's value is a symbol.
+  const pt = Buffer.from("010000001c0000006200630b000200000073796d00707800f5707400", "hex");
+  const sp = Buffer.from("01000000200000006200630b000300000073006e006300f53a64622f73702f00", "hex");
+  assert.throws(() => decode(pt), (e) => e instanceof ByReference && /by reference \(its name `pt\)/.test(e.message));
+  assert.throws(() => decode(sp), (e) => e instanceof ByReference && /by reference \(its path `:db\/sp\/\)/.test(e.message));
+  // The codec makes the path characters: never shown.
+  const fake = { evaluate: async () => ({ value: { s: [":"], n: ["."], c: ["/"] }, type: 98, message: sp }) };
+  const answer = await runUnwrapped(fake, ["sp"], { size: [25, 80], limit: 10, unlimited: false, grid: true });
+  assert.strictEqual(answer.ok, false);
+  assert.match(answer.error, /select from it/);
+});
