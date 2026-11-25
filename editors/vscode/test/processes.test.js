@@ -151,6 +151,16 @@ test("an import that takes away TLS, a tunnel or a guarded tag says what (#1269)
   assert.deepStrictEqual(protectionsRemoved(before, incoming, guard), [{ label: "a", what: ["TLS", "SSH tunnel", "tag Prod"] }]);
   assert.deepStrictEqual(withProtections(incoming[0], before[0], guard), { label: "a", host: "h", port: 1, tags: ["eu", "Prod"], tls: true, ssh: "jump" });
   assert.deepStrictEqual(protectionsRemoved(before, before, guard), []);
+  // Made direct on a guarded process, its reval backstop goes: asked, and
+  // kept as it was when the import is taken without it (#2496).
+  const prod = { label: "prod", host: "h", port: 1, tags: ["prod"], tls: true };
+  const direct = { ...prod, evaluation: "direct" };
+  assert.deepStrictEqual(protectionsRemoved([prod], [direct], ["prod"]), [{ label: "prod", what: ['reval backstop ("evaluation": "direct")'] }]);
+  assert.deepStrictEqual(withProtections(direct, prod, ["prod"]), prod);
+  assert.deepStrictEqual(withProtections(direct, { ...prod, evaluation: "wrapped" }, ["prod"]), { ...prod, evaluation: "wrapped" });
+  // Unguarded, or direct already, nothing is removed.
+  assert.deepStrictEqual(protectionsRemoved([prod], [direct], []), []);
+  assert.deepStrictEqual(protectionsRemoved([direct], [direct], ["prod"]), []);
 });
 
 test("a console size of the wrong type, as settings.json allows, is no size instead of failing every query", () => {
