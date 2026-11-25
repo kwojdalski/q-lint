@@ -4838,6 +4838,23 @@ pub(crate) fn dotq_definitions(code: &str, raw: &str) -> Vec<(String, usize)> {
     out.sort_by_key(|d| d.1);
     out
 }
+/// Whether `at` is a column of a table literal, `([] a:1)` or its key
+/// `([k:1] a:2)`: the nearest bracket open around it is the literal's.
+fn in_table_literal(code: &str, at: usize) -> bool {
+    let b = code.as_bytes();
+    let mut depth = 0i32;
+    for i in (0..at).rev() {
+        match b[i] {
+            b')' | b']' | b'}' => depth += 1,
+            b'(' | b'[' | b'{' if depth > 0 => depth -= 1,
+            b'(' => return code[i + 1..].trim_start().starts_with('['),
+            b'[' => return code[..i].trim_end().ends_with('('),
+            b'{' => return false,
+            _ => {}
+        }
+    }
+    false
+}
 /// Whether a compound or `::` assignment has a value to assign: q 5 refuses
 /// `{sum::x}` and `{count,:x}` with 'assign, but `{a:sum::}`, `(sum::)x`,
 /// `sum::'x` and `count,:;` apply the function instead (#432).
@@ -9331,7 +9348,7 @@ fn lint_rules(
                 from += part.len() + 1;
             }
         }
-        for (at, head) in heads {
+        for &(at, head) in &heads {
             // Of the 181 reserved names q refuses to assign inside a namespace
             // all but two: `from` and `by` are accepted there and read back fine,
             // checked one by one. TorQ's email settings define `.email.from`.
@@ -9393,6 +9410,39 @@ fn lint_rules(
                         format!("Root-level assignment to `{}`: q refuses it", &m[1]),
                     );
                 }
+            }
+        }
+        // Inside an expression too, outside a lambda and a query: q 5
+        // refuses `a:count:1`, `a:x+count:1`, `a:(til:1)`, `a:first :b`,
+        // `a:x[count:1]` and `a:(count::1)` with 'assign, as a file holding
+        // `a:x:count:1` stops loading there - `from` and `by` included in
+        // none of it (#2231). A query's own assignments are QF013's and
+        // QT028's; nothing to assign applies the function (`a:count::`).
+        if line_depth == 0 {
+            for m in re!(r"\b([a-z][a-zA-Z0-9_]*)\s*[-+*%,#_^&|!?@$~=<>]?:").captures_iter(line) {
+                let whole = m.get(0).unwrap();
+                let (p, name) = (whole.start(), &m[1]);
+                let at = offset + p;
+                let end = whole.end() + usize::from(line[whole.end()..].starts_with(':'));
+                if heads.iter().any(|&(h, _)| h == p)
+                    || !boundary(code, at)
+                    || matches!(
+                        name,
+                        "select" | "exec" | "update" | "delete" | "from" | "by"
+                    )
+                    || !reserved(name, at)
+                    || !assigns_operand(&line[end..])
+                    || enclosing_brace(code, at).is_some()
+                    || in_query(code, at)
+                    || in_table_literal(code, at)
+                {
+                    continue;
+                }
+                add(
+                    at,
+                    "QF004",
+                    format!("Assignment to `{name}` inside an expression: q refuses it ('assign)"),
+                );
             }
         }
         // The parentheses have to be empty in the source - a string between

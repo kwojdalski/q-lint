@@ -1453,3 +1453,60 @@ e:{select from ([]x:1 2) where x>1}
 g:{[px] select from ([]px:px) where px>1}
 h:{lim:10; exec px from t where px<lim}
 k:{[sym] select from (select from t) where sym=sym}
+
+=== QF004 profile: general | a builtin assigned inside an expression (q 5: 'assign, #2231)
+a:count:1
+
+=== QF004 profile: general | a builtin assigned inside an expression (q 5: 'assign, #2231)
+a:x+count:1
+
+=== QF004 profile: general | a builtin assigned inside an expression (q 5: 'assign, #2231)
+a:(til:1)
+
+=== QF004 profile: general | a builtin assigned inside an expression (q 5: 'assign, #2231)
+a:first :b
+
+=== QF004 profile: general | a builtin assigned inside an expression (q 5: 'assign, #2231)
+a:x!sum:1
+
+=== QF004 profile: general | a builtin assigned inside an expression (q 5: 'assign, #2231)
+a:x:count:1
+
+=== QF004 profile: general | a builtin assigned inside an expression (q 5: 'assign, #2231)
+a:count::1
+
+=== QF004 profile: general | a builtin assigned inside an expression (q 5: 'assign, #2231)
+a:x[count:1]
+
+=== QF004 profile: general | a builtin assigned inside an expression (q 5: 'assign, #2231)
+a:x+count+:1
+
+=== QF004 profile: general | a builtin assigned inside an expression (q 5: 'assign, #2231)
+a:(count::1)
+
+=== QF004 profile: general | a builtin assigned inside an expression (q 5: 'assign, #2231)
+a:x count:1
+
+=== QF004 profile: general | a builtin assigned inside an expression (q 5: 'assign, #2231)
+a:enlist count:1
+
+=== QF004 profile: general | a builtin assigned inside an expression (q 5: 'assign, #2231)
+a:f[;count:1]
+
+=== clean profile: general | while q 5 parses each of these (#2231)
+a:count x
+a:x+count 1
+a:(til 1)
+a:first b
+a:x!sum 1
+a:counts:1
+a:.q.count:1
+a:`count:1
+a:"count:1"
+a:x`count:1
+a:t.count:1
+a:count::
+a:count:
+a:x:from:1
+a:x:by:1
+a:x+.q.count:1
