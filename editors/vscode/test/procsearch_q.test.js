@@ -52,6 +52,22 @@ test("function definitions are searched everywhere but q's own, ignoring case", 
   assert.deepStrictEqual(await connection.call("{[x] key `.}", 0), ["top", "tradeCount"]);
 });
 
+test("the lambdas a projection, a composition or a dictionary of handlers holds are searched (#2544)", { skip }, async (t) => {
+  const source = [
+    "direct:{.ns.f x}", "proj:{[a;b] .ns.f a+b}[;1]", "handlers:`upd`eod!({[x] .ns.f x};{x})",
+    "comp:('[{x};{.ns.f x}])", "note:\".ns.f\"", "tbl:([]a:`.ns.f`b)", "",
+  ].join("\n");
+  const { connection } = await connect(t, source);
+  const found = readFound(await connection.call(SEARCH, ".ns.f", false, 100));
+  assert.deepStrictEqual(found.hits.map((h) => [h.name, h.line, h.text]), [
+    ["comp", 2, "{.ns.f x}"],
+    ["direct", 1, "{.ns.f x}"],
+    ["handlers", 1, "{[x] .ns.f x}"],
+    ["proj", 1, "{[a;b] .ns.f a+b}"],
+  ]);
+  assert.strictEqual(found.scanned, 4);
+});
+
 // KDB-X's root holds .s, its SQL interface's code: .s.init was listed as
 // the user's hit, its lambdas counted as searched.
 test("KDB-X's .s and .m are q's own, and not searched (#2167)", { skip }, async (t) => {

@@ -11,6 +11,11 @@
 // which the IPC client sends as a symbol, is made text again. At most
 // `limit` hits are answered: one more is looked for, so `more` says only
 // that there are more, not that the limit was reached (#1689).
+// The lambdas are those named and those held in a projection, a composition
+// or an iterator's derived function, or in a list or dictionary of at most
+// 1000 items - a timer's projection, a table of handlers - as the dead code
+// check reads them (#2544): a holder's hits are under its name, its lines
+// counted through its lambdas' texts one after another.
 // A view (`v::expr`) has a lambda's type, 100h, but no lambda's parts, and
 // `get` of its name evaluates it: the root's views (`views[]`; q keeps
 // them nowhere else) are neither searched nor counted (#1864).
@@ -26,6 +31,7 @@ export const SEARCH = [
   " esc:raze{$[x in \"[]?*\";\"[\",x,\"]\";enlist x]}each pat;",
   " todo:`.,` sv'`,'asc(key`)except`q`Q`h`j`o`s`z`m`qlint`;",
   " todo:todo where{$[99h=type d:@[get;x;0];11h=type key d;0b]}each todo;",
+  " lam:{$[100h=t:type x;enlist x;t within 104 111h;raze .z.s each(),value x;$[t in 0 99h;1000>=count x;0b];raze .z.s each $[99h=t;value x;x];()]};",
   " fns:`$();vn:`$();vw:views[];",
   " while[count todo;",
   "  ns:first todo;todo:1_todo;",
@@ -33,11 +39,12 @@ export const SEARCH = [
   "  kids:$[ns~`.;`$();k where{$[99h=type x;$[11h=type key x;(::)~first x;0b];0b]}each d k];",
   "  todo,:` sv'ns,'kids;",
   "  full:$[ns~`.;k;` sv'ns,'k];t:type each d k;",
-  "  fns,:(full where t=100h)except vw;",
+  "  j:where(not k in kids)&$[ns~`.;not k in vw;(count k)#1b];",
+  "  fns,:full[j]where 0<count each@[lam;;()]each d k j;",
   "  vn,:full where not(t within 100 112h)|k in kids];",
   " nm:();kd:();ln:();tx:();",
   " i:0;while[(i<count fns)&m>count nm;",
-  "  l:\"\\n\" vs last value get fns i;",
+  "  l:raze{\"\\n\" vs last value x}each lam get fns i;",
   "  w:where 0<count each(lower each l)ss\\:esc;",
   "  w:(m-count nm) sublist w;",
   "  nm,:(count w)#enlist string fns i;kd,:(count w)#`function;ln,:1+w;tx,:l w;",
