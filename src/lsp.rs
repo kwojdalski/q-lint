@@ -3110,10 +3110,38 @@ fn relint(
 ) -> Result<(), String> {
     for (uri, text) in docs {
         if Some(uri.as_str()) != except && !unsaved.contains(uri) {
+            recarry(uri, text, kept, &idx.ws, policy, opts);
             diagnose(writer, uri, text, kept, &idx.ws, policy, opts)?;
         }
     }
     Ok(())
+}
+
+/// What `uri` carries over a statement being typed in `text`, linted again
+/// against the workspace `ws` as it is now - or dropped, when that lint
+/// fails. The last version that closed reported against the workspace as
+/// it was then, and another file's change can make a finding of it false,
+/// or one true that it did not report: a QF015 on `true` stayed after
+/// another file defined `true`, until the bracket being typed closed
+/// (#2177). A document whose text is the version kept is linted whole
+/// anyway, and kept from that.
+fn recarry(
+    uri: &str,
+    text: &str,
+    kept: &mut Kept,
+    ws: &Workspace,
+    policy: &Policy,
+    opts: &Options,
+) {
+    if kept.get(uri).is_none_or(|good| good.text == text) {
+        return;
+    }
+    let Some(Good { text: good, .. }) = kept.remove(uri) else {
+        return;
+    };
+    // That version closes, so `diagnostics_of` keeps what it reports again.
+    let _ = linted(uri, &good, ws, policy)
+        .and_then(|findings| guarded(|| diagnostics_of(uri, &good, &findings, kept, opts)));
 }
 
 /// Lint one document and push its diagnostics.

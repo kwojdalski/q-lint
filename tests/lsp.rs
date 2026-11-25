@@ -3416,6 +3416,33 @@ fn a_bracket_being_typed_keeps_the_rest_of_the_files_findings_and_folds() {
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
+/// What is carried over a statement being typed is what the last version
+/// that closed reports against the workspace as it is now: another file
+/// defining `true` makes b.q's QF015 false, and dropping it makes it true
+/// again. The finding of the workspace as it was stayed until the bracket
+/// closed, and one the change caused was not shown (#2177).
+#[test]
+fn what_is_carried_follows_another_files_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = start_with_workspace(dir.path());
+    let (a, b) = (
+        file_uri(&dir.path().join("a.q")),
+        file_uri(&dir.path().join("b.q")),
+    );
+    server.open(&a, "a:1\n");
+    server.diagnostics_for(&a);
+    let good = "g:{$[true;1;2]}\n";
+    server.open(&b, good);
+    assert_eq!(codes_of(&server.diagnostics_for(&b)), ["QF015"]);
+    change(&mut server, &b, 2, &format!("{good}h:{{(1;\n"));
+    assert_eq!(codes_of(&server.diagnostics_for(&b)), ["QE001", "QF015"]);
+    change(&mut server, &a, 2, "true:1b\n");
+    assert_eq!(codes_of(&server.diagnostics_for(&b)), ["QE001"]);
+    change(&mut server, &a, 3, "a:1\n");
+    assert_eq!(codes_of(&server.diagnostics_for(&b)), ["QE001", "QF015"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
 #[test]
 fn a_document_that_never_closed_has_nothing_to_carry() {
     // Opened broken, there is no version whose results can be trusted, and
