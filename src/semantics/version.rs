@@ -65,9 +65,29 @@ fn runs(code: &str) -> Option<Runs> {
     })
 }
 
+/// The release from which q refuses what a rule reports, for a rule whose
+/// refusal is newer than the oldest target. QE008 (`-x`, `,x`), QE009
+/// (`+/x`, `count'x`) and QE011 (`cor each x`) are KDB-X's: q 5 refuses
+/// `-x` with '-, `+/1 2 3` with '/ and `count'(1 2;3)` with ' (run here),
+/// and q 4 ran each - it read a glyph applied to one argument as its
+/// monadic form, applied a derived function to what follows, and with
+/// nothing on its left took the keyword as each's function. That side is
+/// this project's own notes on the forms (the "q 4 read..." comments at
+/// each rule's fix in `lib.rs`), with no q 4 binary to run them on; the
+/// shapes those notes are unsure of are left unreported for a q 4 target
+/// too, since a refusal there is not known.
+fn refused_from(code: &str) -> Option<Target> {
+    matches!(code, "QE008" | "QE009" | "QE011").then_some(Target::KdbX)
+}
+
 /// Whether a finding of `code` stands for `target`: whether its construct
-/// does not run there. Not a QK rule, always.
+/// does not run there. A rule q refuses only from some release on reports
+/// for that release, a later one, or no target (the reference is q 5).
+/// Any other rule that is not a QK rule, always.
 pub fn reported_for(code: &str, target: Option<Target>) -> bool {
+    if let Some(from) = refused_from(code) {
+        return target.is_none_or(|target| target >= from);
+    }
     match (runs(code), target) {
         (None, _) => true,
         (Some(_), None) => false,

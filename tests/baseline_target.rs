@@ -361,3 +361,50 @@ fn the_type_lints_are_what_q_does() {
         "{text}"
     );
 }
+
+/// QE008, QE009 and QE011 say q refuses the line, which holds from KDB-X on:
+/// it refuses `-x` ('-), `+/1 2 3` ('/) and `count'(1 2;3)` ('), and q 4
+/// ran each (this project's notes at each rule's fix). So a q 4 target
+/// hears nothing of them, and KDB-X or no target does (#2324).
+#[test]
+fn a_refusal_only_kdbx_makes_is_not_reported_for_an_older_target() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(
+        d.join("a.q"),
+        "f:{-x}\ng:{+/x}\nh:{cor each x}\nc:{count'x}\n",
+    )
+    .unwrap();
+    let qe = |found: &[(String, usize)]| -> Vec<(String, usize)> {
+        found
+            .iter()
+            .filter(|(c, _)| matches!(c.as_str(), "QE008" | "QE009" | "QE011"))
+            .cloned()
+            .collect()
+    };
+    let pair = |c: &str, l: usize| (c.to_string(), l);
+    let all = vec![
+        pair("QE008", 1),
+        pair("QE009", 2),
+        pair("QE011", 3),
+        pair("QE009", 4),
+    ];
+    for target in [None, Some("kdbx")] {
+        let mut args = vec!["--isolated", "--profile", "general", "a.q"];
+        args.extend(target.iter().flat_map(|t| ["--target-version", *t]));
+        let (_, found, err) = run(d, &args);
+        assert_eq!(qe(&found), all, "{target:?}: {err}");
+    }
+    for target in ["3.6", "4.0", "4.1"] {
+        let args = [
+            "--isolated",
+            "--profile",
+            "general",
+            "--target-version",
+            target,
+            "a.q",
+        ];
+        let (_, found, err) = run(d, &args);
+        assert_eq!(qe(&found), vec![], "{target}: {err}");
+    }
+}

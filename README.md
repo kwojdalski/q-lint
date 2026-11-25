@@ -358,6 +358,12 @@ binary was at hand, so the older side is the release notes' word, not a
 test's. PeachQ runs the dictionary literal and `(a;b):`, and refuses
 `([k:v]):` ('nyi) and a filtered parameter ('parse).
 
+A target before KDB-X also quiets the refusals that are q 5's alone:
+QE008 (`-x`), QE009 (`+/x`, `count'x`) and QE011 (`cor each x`), which
+KDB-X refuses and q 4 ran. That side is this project's own reading of q 4,
+not a test's, and a shape it is unsure of goes unreported for such a target
+too.
+
 There is no QK004. It reported `-30!`, the deferred response, which q has
 from 3.6 on - the oldest release a target can name - so it could never
 report anything, and was withdrawn.
