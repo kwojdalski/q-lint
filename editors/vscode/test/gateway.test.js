@@ -390,3 +390,27 @@ test("a gateway call under a comment, or after another statement, is still one: 
   assert.ok(!isGatewayCall("/ nothing to run"));
   assert.ok(!isGatewayCall(""));
 });
+
+test("Query Gateway with Server Types from a file bound to another process runs nothing there (#2370)", { skip }, async (t) => {
+  const gw = await torq(t);
+  const plain = await startQ(t, "trade:([] sym:enlist `p; px:enlist 9f)\n");
+  const { live } = await setUp(t, [
+    { label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb", "hdb"] },
+    { label: "plain", host: "127.0.0.1", port: plain, tags: [] },
+  ]);
+  assert.strictEqual(await live.connectTo("gw"), true);
+  const vscode = require("vscode");
+  vscode.window.activeTextEditor = {
+    document: { uri: vscode.Uri.file("/w/a.q"), lineAt: () => ({ text: "count trade" }), getText: () => "count trade" },
+    selection: { active: { line: 0 }, isEmpty: true },
+  };
+  // The stub's workspaceState keeps nothing: the binding, as it is kept.
+  const bindings = { [vscode.Uri.file("/w/a.q").toString()]: "plain" };
+  live.context.workspaceState.get = (key, fallback) => (key === "q-lint.fileConnections" ? bindings : fallback);
+  assert.strictEqual(live.fileBinding(vscode.Uri.file("/w/a.q")), "plain");
+  const before = live.history().length;
+  stub.messages = [];
+  await stub.commands.get(GATEWAY_COMMANDS.queryWith)("hdb");
+  assert.strictEqual(live.history().length, before, "nothing was sent");
+  assert.match(stub.messages.at(-1)[1], /this file's queries go to plain, not the gateway gw; nothing was run/);
+});
