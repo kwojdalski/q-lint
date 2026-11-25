@@ -1331,7 +1331,7 @@ export class Live {
     const on =
       this.setting(readEnforce) &&
       guardedBy(process, this.setting(readGuard)).length > 0 &&
-      process.gateway === undefined &&
+      (process.gateway === undefined || !this.setting(readGateway).enabled) &&
       !isGatewayCall(guardText(code)) &&
       this.guardRefuses(code, [process]) === undefined;
     connection.readOnly = on;

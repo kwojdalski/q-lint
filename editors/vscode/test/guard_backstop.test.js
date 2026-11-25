@@ -118,6 +118,15 @@ test("a TorQ gateway is sent its .gw.syncexec call as a plain string, without re
   assert.strictEqual(live.history()[0].code, '.gw.syncexec["select from trade";enlist `rdb]');
 });
 
+// With the gateway feature off its code runs on the gateway as on any
+// process, so the backstop holds there too (#2598).
+test("with q-lint.connection.torqGateway.enable off, a guarded gateway's read goes under reval", async (t) => {
+  const { q, live, query } = await setUp(t, ["prod"], undefined, { "connection.torqGateway.enable": false }, { gateway: ["rdb"] });
+  await live.connectTo("rdb");
+  await query("select from trade");
+  assert.deepStrictEqual(q.queries(), [["RUN_READ_ONLY", "select from trade"]]);
+});
+
 test("a read reval refuses is asked about; declined, it is not sent again; confirmed, it is sent as it is", async (t) => {
   const { q, live, query } = await setUp(t, ["prod"], () => "noupdate: `. `c");
   await live.connectTo("rdb");
