@@ -60,7 +60,7 @@ test("a word is one token of q's: a name after n_ is its own, a float keeps its 
   const lines = [
     ...Object.values(examples).flatMap((entry) => entry.examples.flatMap((e) => [e.code, e.result])),
     ...sheet.flatMap((s) => s.items.flatMap((i) => [i.insert, i.example, i.result])),
-    ...["r:1_til 5", "last -1_trades", "x:.5+y", "0x00_x", "(.5;.25e3)", "1f_x", "2_'x", "1_.z.p", "x:1__y", "0Nj_x 12i_y", "2024.01.02_x", "0D00:00:01_x", "a1_b+x_1", ".ns.util.f[x.y]"],
+    ...["r:1_til 5", "last -1_trades", "x:.5+y", "0x00_x", "(.5;.25e3)", "1f_x", "2_'x", "1_.z.p", "x:1__y", "0Nj_x 12i_y", "2024.01.02_x", "0D00:00:01_x", "a1_b+x_1", ".ns.util.f[x.y]", "a:.ns.__p+1", ".tst._run x.y._z"],
   ].filter((l) => typeof l === "string" && !l.includes("\n"));
   assert.ok(lines.length >= 480, `${lines.length} lines`);
   assert.deepStrictEqual(notTokens(lines), []);

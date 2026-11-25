@@ -107,6 +107,15 @@ test("a dotted name is one word, a number is one, and an operator splits them", 
   assert.ok(!WORD.test("") && !WORD.test(" +-*%"));
 });
 
+// KDB-X's -4! reads .ns.__f, x.y._z and .tst._run as one name each: a
+// segment after a dot may start with an underscore or a digit.
+test("a dotted name is one word through a segment that starts with an underscore (#2300)", () => {
+  assert.deepStrictEqual(words("a:.ns.__p+1"), ["a", ".ns.__p", "1"]);
+  assert.deepStrictEqual(words(".strategy.__hedgeStep x.y._z .tst._runAllStep a.1"), [".strategy.__hedgeStep", "x.y._z", ".tst._runAllStep", "a.1"]);
+  // A dot that ends a name is still not in it, and a name starts with a letter.
+  assert.deepStrictEqual(words("f. _a"), ["f", "a"]);
+});
+
 test("nothing is added with both features off, and each adds only its own", () => {
   assert.strictEqual(languageConfiguration({ continuation: false, dotted: false }), undefined);
   assert.deepStrictEqual(Object.keys(languageConfiguration({ continuation: true, dotted: false })), ["onEnterRules"]);
