@@ -568,8 +568,39 @@ export function oneLine(q: QValue, precision = 7): string {
     case "table":
       return `+${oneLine({ kind: "dict", sorted: false, k: { kind: "vector", t: 11, attr: 0, v: q.cols }, v: { kind: "list", attr: 0, v: q.data } }, precision)}`;
     case "func":
-      return q.text ?? (q.t === 101 ? "::" : "func");
+      return funcText(q, precision);
   }
+}
+
+/// The iterators' glyphs, by type from 106: `'`, `/`, `\`, `':`, `/:`, `\:`.
+const ITERATORS = ["'", "/", "\\", "':", "/:", "\\:"];
+
+/// A function as `-3!` writes it (#2477): a lambda or a primitive its
+/// text; a projection its function and arguments, `{x+y}[1;]`; a
+/// composition its functions in turn, a unary primitive before another
+/// without its colon, `-sum`; a derived function its function and
+/// iterator, `+/`.
+function funcText(q: QValue & { kind: "func" }, precision: number): string {
+  if (q.text !== undefined) {
+    return q.text;
+  }
+  const parts = q.parts ?? [];
+  const text = (x: QValue): string => oneLine(x, precision);
+  if (q.t === 104 && parts.length > 0) {
+    return `${text(parts[0])}[${parts.slice(1).map(text).join(";")}]`;
+  }
+  if (q.t === 105 && parts.length > 0) {
+    return parts
+      .map((x, i) => {
+        const s = text(x);
+        return i < parts.length - 1 && x.kind === "func" && x.t === 101 && /^[^:]:$/.test(s) ? s.slice(0, -1) : s;
+      })
+      .join("");
+  }
+  if (q.t >= 106 && q.t <= 111 && parts.length === 1) {
+    return text(parts[0]) + ITERATORS[q.t - 106];
+  }
+  return q.t === 101 ? "::" : "func";
 }
 
 /// How many items a decoded list has; 1 for anything else.
@@ -655,7 +686,7 @@ export function formatQ(q: QValue, value: unknown, type?: number, precision = 7)
   if (q.kind === "func") {
     // A lambda arrives with its text; any other function as no more than
     // its kind.
-    return q.text !== undefined ? q.text.split("\n") : formatValue(value, type);
+    return q.text !== undefined || q.parts !== undefined ? funcText(q, precision).split("\n") : formatValue(value, type);
   }
   return nested(q, precision);
 }
