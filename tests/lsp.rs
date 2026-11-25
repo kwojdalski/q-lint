@@ -1253,6 +1253,30 @@ fn a_user_level_file_is_rooted_at_each_workspace_folder_not_the_first_searched()
 }
 
 #[test]
+fn a_configuration_the_cli_refuses_is_shown_to_the_user_not_only_logged() {
+    // `qlinter .` exits 2 over each: a typo in `ignore`, a required-version
+    // no release meets. The server lints with the defaults where such a file
+    // governs - and said so only on stderr, so the editor showed findings
+    // the project ignores and nobody knew why (#2291).
+    for config in [
+        "[lint]\nignore = [\"QF010\", \"QS99\"]\n",
+        "required-version = \"==0.1\"\n",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("qlinter.toml"), config).unwrap();
+        let uri = file_uri(&dir.path().join("a.q"));
+        let mut server = start_with_workspace(dir.path());
+        server.open(&uri, "f:{[x] y}\n");
+        let shown = server.until(|m| m["method"] == "window/showMessage");
+        let message = shown["params"]["message"].as_str().unwrap();
+        assert!(message.contains("qlinter.toml"), "{config}: {message}");
+        assert!(message.contains("defaults"), "{config}: {message}");
+        assert_eq!(shown["params"]["type"], 1, "{config}");
+        assert_eq!(server.shutdown_and_exit(), 0);
+    }
+}
+
+#[test]
 fn a_name_another_workspace_file_defines_is_not_undefined() {
     // lib.q is on disk and never opened; the server reads it at startup.
     let dir = tempfile::tempdir().unwrap();
@@ -2004,6 +2028,15 @@ fn the_reverse_precedence_fix_is_a_quick_fix_that_removes_the_pair() {
     server.initialize();
     server.open(uri, before);
     assert_eq!(codes_of(&server.diagnostics_for(uri)), ["QP005"]);
+    // Both selected is what `qlinter` refuses; the server keeps the
+    // profile's and says so where the user looks (#2291).
+    let shown = server.until(|m| m["method"] == "window/showMessage");
+    assert!(
+        shown["params"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("QP008")),
+        "{shown}"
+    );
     assert_eq!(server.shutdown_and_exit(), 0);
 
     let mut server = Server::start_in(

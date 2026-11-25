@@ -1293,6 +1293,18 @@ pub fn serve(
         let ran: Result<Result<u8, String>, String> = guarded(|| {
             loop {
                 handling = None;
+                // A configuration that could not be read, and so the defaults
+                // in force where it governs, as `qlinter` would refuse it: said
+                // where the user looks, once the client is listening (#2291).
+                if ready && !shutdown_requested {
+                    for told in policy.take_told() {
+                        send(
+                            writer,
+                            json!({"method": "window/showMessage", "params": {"type": 1,
+                                   "message": format!("q-lint: {told}")}}),
+                        )?;
+                    }
+                }
                 // Everything the client has sent so far, before the oldest of it is
                 // handled: what is behind a message can make it moot.
                 // And while nothing has, a closed file of the workspace is linted,

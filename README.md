@@ -412,7 +412,9 @@ name-pattern = "(?:password|secret|dsn)$"  # case-insensitive, on the name's las
 
 An option a rule does not have, a rule with none, or a value of the wrong kind
 is a configuration error (exit 2), so a typo cannot quietly leave the default
-in force. Both tables may also go under `[lint]`, and a file that `extend`s
+in force. The language server, which must keep linting, uses the defaults
+where such a file governs and says so in a `window/showMessage`, once per
+error. Both tables may also go under `[lint]`, and a file that `extend`s
 another overrides the base's entries one at a time.
 
 The keys and the values each takes are also a JSON Schema,

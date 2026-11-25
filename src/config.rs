@@ -199,6 +199,10 @@ pub struct Policy {
     /// problem once and uses the defaults for the files it governs.
     lenient: bool,
     warned: RefCell<HashSet<String>>,
+    /// What `warned` said and the language server has not yet shown the
+    /// user: stderr is a log nobody reads, and a configuration the command
+    /// line refuses must not be replaced by the defaults unseen (#2291).
+    told: RefCell<Vec<String>>,
     /// An editor's own selection, applied after everything else and only
     /// ever to turn rules off: a rule reports when the configuration and the
     /// command line select it AND this layer does. It is how a language
@@ -227,6 +231,7 @@ impl Policy {
             cache: RefCell::default(),
             lenient,
             warned: RefCell::default(),
+            told: RefCell::default(),
             narrowing: RefCell::default(),
             baselines: RefCell::default(),
             baseline_off: std::cell::Cell::new(false),
@@ -316,6 +321,20 @@ impl Policy {
         *self.narrowing.borrow_mut() = layers;
     }
 
+    /// Say `message` once for the problem `e`, on stderr and to be shown.
+    fn warn(&self, message: String, e: &str) {
+        if self.warned.borrow_mut().insert(e.to_string()) {
+            eprintln!("qlinter: {message}");
+            self.told.borrow_mut().push(message);
+        }
+    }
+
+    /// The problems warned about since the last call, for a language server
+    /// to show the user.
+    pub fn take_told(&self) -> Vec<String> {
+        std::mem::take(&mut *self.told.borrow_mut())
+    }
+
     /// Forget every file read, after one of them changed on disk.
     pub fn reset(&self) {
         self.cache.borrow_mut().clear();
@@ -394,9 +413,7 @@ impl Policy {
         match self.find(&start) {
             Ok(settings) => Ok(settings),
             Err(e) if self.lenient => {
-                if self.warned.borrow_mut().insert(e.clone()) {
-                    eprintln!("qlinter: {e}; using the defaults where it applies");
-                }
+                self.warn(format!("{e}; using the defaults where it applies"), &e);
                 Ok(Rc::new(Settings::default()))
             }
             Err(e) => Err(e),
@@ -580,9 +597,7 @@ impl Policy {
         // and keeps the forward rules, which are the profile's.
         let conflict = match self.conflict(&settings, file) {
             Err(e) if self.lenient => {
-                if self.warned.borrow_mut().insert(e.clone()) {
-                    eprintln!("qlinter: {e}; reporting {} only", UNDOES.join(" and "));
-                }
+                self.warn(format!("{e}; reporting {} only", UNDOES.join(" and ")), &e);
                 true
             }
             other => other.map(|()| false)?,
@@ -609,9 +624,7 @@ impl Policy {
                 // everything instead would bury what is new. A language
                 // server says so once and reports everything.
                 Err(e) if self.lenient => {
-                    if self.warned.borrow_mut().insert(e.clone()) {
-                        eprintln!("qlinter: {e}; reporting every finding");
-                    }
+                    self.warn(format!("{e}; reporting every finding"), e);
                 }
                 Err(e) => return Err(e.clone()),
             }
