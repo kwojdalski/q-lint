@@ -295,3 +295,21 @@ test("the q of the data tools against a real q process", { skip }, async (t) => 
     assert.deepStrictEqual(header.grid.names, ["x"]);
   });
 });
+
+test("Count by date runs on a table whose date or timestamp column is no q name (#2536)", { skip }, async (t) => {
+  const q = await startQ(() => [
+    'ts:flip(`$"trade date";`px)!(2026.01.01 2026.01.02 2026.01.02;1 2 3f)',
+    'tp:flip(`$"trade time";`px)!(2026.01.01D10:00 2026.01.02D11:00 2026.01.02D12:00;1 2 3f)',
+    "",
+  ].join("\n"));
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.abort());
+  for (const name of ["ts", "tp"]) {
+    const tpl = s.tableTemplates(name, readTableInfo(await connection.call(TABLE_INFO, name, 500))).find((x) => x.label === "Count by date");
+    const answer = await connection.queryGrid(statements(tpl.code), SIZE, 1000);
+    assert.ok(answer.ok, `${tpl.code}: ${answer.error}`);
+    assert.deepStrictEqual(cells(answer, "x"), ["1", "2"], tpl.code);
+    assert.deepStrictEqual(answer.grid.cells[0], ["2026.01.01", "2026.01.02"], tpl.code);
+  }
+});
