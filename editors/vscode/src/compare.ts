@@ -210,12 +210,17 @@ interface Held {
 const held = (payload: GridPayload, decimals: number): Held => ({ grid: toGrid(payload, decimals), payload, raw: payload.names.map((_, i) => rawColumn(payload, i)) });
 
 /// A row's key: its key columns' values, or their text where none was
-/// sent, joined by a character no cell shows.
+/// sent, joined by a character no cell shows. A symbol's raw is its bytes
+/// when one is past ASCII and `false` when none is, so it keys by those
+/// bytes or by its text, never by `"false"` (#2460).
 const keyOf = (side: Held, keys: number, row: number): string =>
   side.grid.cells
     .slice(0, keys)
     .map((c, i) => {
       const value = side.payload.types[i] === 0 ? undefined : side.raw[i]?.[row];
+      if (side.payload.types[i] === 11) {
+        return Array.isArray(value) ? `\u0001${value.join(",")}` : c[row];
+      }
       return value === undefined || value === null ? c[row] : String(value);
     })
     .join("\u0000");
