@@ -124,6 +124,12 @@ test("the processes setting is read, with the default package.json declares, and
     return fallback;
   });
   assert.deepStrictEqual(guard, { enabled: true, tags: ["prod", "prd", "production"] });
+  // Its reval backstop's, read at each send too.
+  const enforce = require("../out/guard.js").readEnforce((key, fallback) => {
+    read.set(key, fallback);
+    return fallback;
+  });
+  assert.strictEqual(enforce, true);
   for (const [key, spec] of Object.entries(declared)) {
     const short = key.replace(/^q-lint\./, "");
     assert.ok(read.has(short), `${key} is declared but never read`);
