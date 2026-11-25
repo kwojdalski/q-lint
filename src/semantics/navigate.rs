@@ -6,8 +6,8 @@
 //! scopes and the writes the checks already read, and stopped there: what a
 //! name holds when the script runs is still not this crate's to say.
 use super::{
-    Scope, assigns_lambda, call_time, first_switch, global_writes, local_view, multi_assignments,
-    resolved, scope_at, scopes, top_level_statements,
+    Scope, assigns_lambda, call_time, first_switch, global_multi_assignments, global_writes,
+    local_view, multi_assignments, resolved, scope_at, scopes, top_level_statements,
 };
 use crate::{Definition, Local, Mention, Name, Place, boundary, pattern_names, signature};
 use std::collections::HashSet;
@@ -567,8 +567,12 @@ fn local(code: &str, raw: &str, scopes: &[Scope], s: usize, name: &str) -> Local
     // `{[a] select b:a from ([] c:1 2)} 7` the parameter.
     let hidden = local_view(direct, true);
     let phrases = crate::outside_query_phrases(direct);
-    // A multiple assignment, `(a;b):v`, writes each name it binds.
+    // A multiple assignment, `(a;b):v`, writes each name it binds; so does
+    // `(a;b)::v` for a name the lambda has as a local, which q writes as
+    // `a::v` writes it, not the global: q 5 `{s:`a; (s;n)::(1;2); s+n}[]` is
+    // 3 and leaves no global `s` (#2119).
     let bound: HashSet<usize> = multi_assignments(direct)
+        .chain(global_multi_assignments(direct).filter(|(_, n)| !n.contains('.')))
         .map(|(_, bound)| offset_in(direct, bound))
         .collect();
     for m in re!(NAME).find_iter(direct) {

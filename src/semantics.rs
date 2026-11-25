@@ -115,7 +115,9 @@ pub(crate) fn multi_assignments(text: &str) -> impl Iterator<Item = (usize, &str
 }
 /// The globals a multiple assignment binds wherever it is written: each name
 /// of `(a;b)::v`, which in a lambda assigns the globals (q 5
-/// `init:{(n;m)::(1 2 3;4)}; init[]; n 0` is 1), and a dotted name in any
+/// `init:{(n;m)::(1 2 3;4)}; init[]; n 0` is 1) - except a name the lambda
+/// has as a parameter or local, which it assigns as `a::v` does, the local
+/// (#2119) - and a dotted name in any
 /// target, which no lambda has as a local (q 5 `(.ns.n;.ns.m):(1 2 3;4)`).
 pub(crate) fn global_multi_assignments(text: &str) -> impl Iterator<Item = (usize, &str)> {
     pattern_assignments(text)
@@ -2526,6 +2528,31 @@ pub fn check(
                 format!(
                     "`{name}` is {what} of this lambda, so `{name}::` assigns the local, not \
                      a global `{name}`: write the global with `set` and a symbol"
+                ),
+            ));
+        }
+        // And a name of a multiple assignment `(a;b)::v`: q 5 `{s:`a;
+        // (s;n)::(1;2); s+n}[]` is 3, sets the global `n` and no global `s`
+        // (#2119).
+        for (_, name) in global_multi_assignments(&view) {
+            if name.contains('.') || !scope.locals.contains(name) {
+                continue;
+            }
+            let at = name.as_ptr() as usize - view.as_ptr() as usize;
+            let what = if scope.params.contains(name) {
+                "a parameter"
+            } else {
+                "a local"
+            };
+            out.push(Finding::at(
+                path,
+                raw,
+                scope.body + at,
+                "QF022",
+                format!(
+                    "`{name}` is {what} of this lambda, so a `::` multiple assignment of it \
+                     assigns the local, not a global `{name}`: write the global with `set` and \
+                     a symbol"
                 ),
             ));
         }

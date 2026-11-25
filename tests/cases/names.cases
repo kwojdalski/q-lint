@@ -1405,12 +1405,18 @@ g:{b:1; b::2; b}
 h:{x::3; x}
 k:{(b;c):1 2; b::5; b}
 
+=== QF022 | so does a `::` multiple assignment of a parameter or local, which sets the globals only of the other names (q 5: f 0 is 1 with no global a and n 2; g[] is 1 with no global s, m 2 and k 3; #2119)
+f:{[a] (a;n)::(1;2); a}
+g:{s:`a; (s;(m;k))::(1;(2;3)); s}
+
 === clean | `::` on a name the lambda does not bind, in a nested lambda, or with nothing after it (#1140)
 f:{g::1}
 h:{b:1; {b::3}[]; b}
 k:{[d] r:d::; r}
 m:{[m;t] m t::}
 n:{.ns.a::1; a:2; a}
+p:{(b;c)::1 2; b}
+r:{s:1; (.ns.s;c)::1 2; s}
 
 === QF023 QB001 | a parameter read only where a column of its name wins (q 5: {[sym] select from ([]sym:`a`b) where sym=sym}`a gives both rows; #1169)
 f:{[sym] select from ([]sym:`a`b) where sym=sym}
