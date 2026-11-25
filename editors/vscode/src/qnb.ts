@@ -380,7 +380,7 @@ function commentCell(source: string): string[] {
 /// the text: a namespace set inside a function the cell calls is not seen.
 /// A `\d` statement's lines after its first, even a comment, are its
 /// argument to q, so `\d .` and an indented line is no root (#2155).
-function leavesNamespace(source: string): boolean {
+export function leavesNamespace(source: string): boolean {
   let away = false;
   for (const statement of statements(source)) {
     const command = /^\\d\s+(\S+)([^]*)$/.exec(statement);
