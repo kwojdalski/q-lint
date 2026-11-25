@@ -34,9 +34,14 @@ export interface Lambda {
   close: number;
   /// Where its body starts: after the `[...]` list, or after the `{`.
   bodyStart: number;
-  /// The names in its `[...]` list; undefined when it has none, and its
-  /// parameters are the `x`, `y` and `z` it reads.
+  /// The names its `[...]` list binds; undefined when it has none, and its
+  /// parameters are the `x`, `y` and `z` it reads. A typed slot binds its
+  /// name, `x:`j` binds x, and a pattern the names in it, `(a;b)` a and b
+  /// (`patternNames`).
   explicit: string[] | undefined;
+  /// The slots of its `[...]` list as written, one per argument q takes:
+  /// `{[(a;b);c]}` takes two. Undefined when it has no list.
+  slots?: string[];
   /// The lambdas directly inside it.
   children: Lambda[];
 }
@@ -125,7 +130,7 @@ export function lambdas(text: string, mask: boolean[] = codeMask(text)): Lambda[
 
 /// The `[a;b]` after a lambda's `{` (q allows space before it), if it has
 /// one.
-function paramList(text: string, mask: boolean[], open: number, close: number): { bodyStart: number; explicit: string[] | undefined } {
+function paramList(text: string, mask: boolean[], open: number, close: number): { bodyStart: number; explicit: string[] | undefined; slots?: string[] } {
   let i = open + 1;
   while (i < close && /\s/.test(text[i])) {
     i++;
@@ -133,9 +138,16 @@ function paramList(text: string, mask: boolean[], open: number, close: number): 
   if (text[i] === "[" && mask[i]) {
     // Up to the `]` q reads as one, less each comment on the way: a list
     // may hold one, and a `]` in it closes nothing (#1949).
+    // A pattern's own brackets nest inside it: `{[([k:v]);c] ...}`.
     let inside = "";
     let end = i + 1;
-    for (; end < close && !(text[end] === "]" && mask[end]); end++) {
+    let depth = 0;
+    for (; end < close && !(text[end] === "]" && mask[end] && depth === 0); end++) {
+      if (mask[end] && "([{".includes(text[end])) {
+        depth++;
+      } else if (mask[end] && ")]}".includes(text[end])) {
+        depth--;
+      }
       if (mask[end] || text[end] !== "/") {
         inside += text[end];
       } else {
@@ -144,13 +156,125 @@ function paramList(text: string, mask: boolean[], open: number, close: number): 
       }
     }
     if (end < close) {
-      const names = inside.trim() === "" ? [] : inside.split(";").map((n) => n.trim());
-      if (names.every((n) => NAME.test(n))) {
-        return { bodyStart: end + 1, explicit: names };
+      const slots = inside.trim() === "" ? [] : topLevel(inside, ";").map((n) => n.trim());
+      if (slots.every((n) => n === "" || NAME.test(n) || PATTERN.test(n))) {
+        return { bodyStart: end + 1, explicit: slots.flatMap(patternNames), slots };
       }
     }
   }
   return { bodyStart: open + 1, explicit: undefined };
+}
+
+/// A slot q 5 reads as a typed name or a pattern rather than an expression:
+/// a list, dictionary or table pattern, a literal, or a name with a type or
+/// filter after its colon (KDB-X: `{[x:`j;y:`j] x+y}[1;2]` is 3, `{[(a;b)]
+/// a+b} 1 2` is 3, `{[k!v] (k;v)}` binds both).
+const PATTERN = /^(?:\(|`|-?[0-9]|::$|[A-Za-z][A-Za-z0-9_]*\s*[:!])/;
+
+/// `text` cut at each `sep` outside any bracket.
+function topLevel(text: string, sep: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let from = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if ("([{".includes(c)) {
+      depth++;
+    } else if (")]}".includes(c)) {
+      depth--;
+    } else if (c === sep && depth === 0) {
+      out.push(text.slice(from, i));
+      from = i + 1;
+    }
+  }
+  out.push(text.slice(from));
+  return out;
+}
+
+/// Where `sep` first stands in `text` outside any bracket; -1 when nowhere.
+function firstOutside(text: string, sep: string): number {
+  const parts = topLevel(text, sep);
+  return parts.length > 1 ? parts[0].length : -1;
+}
+
+/// The names a parameter slot binds, as q 5 binds them and the language
+/// server reads them (`pattern_names`): a name; a typed or filtered name,
+/// `x:`j` or `n:{x>0}`, its name; a list `(a;b)` each item's names; a
+/// dictionary pattern `k!v` each side's; and a dictionary or table pattern
+/// `([k:v;w])` what each field binds - the pattern after its colon (v), or
+/// its own name (w). A literal binds nothing, nor does a key.
+export function patternNames(slot: string): string[] {
+  let s = slot.trim();
+  const typed = firstOutside(s, ":");
+  if (typed > 0) {
+    s = s.slice(0, typed).trim();
+  }
+  const whole = s.startsWith("(") && balanced(s);
+  if (whole && s.startsWith("([")) {
+    const close = matchingBracket(s, 1);
+    if (close > 0) {
+      const field = (f: string): string[] => {
+        const colon = f.indexOf(":");
+        return patternNames(colon < 0 ? f : f.slice(colon + 1));
+      };
+      return [...topLevel(s.slice(2, close), ";"), ...topLevel(s.slice(close + 1, -1), ";")].flatMap(field);
+    }
+  }
+  if (whole) {
+    return topLevel(s.slice(1, -1), ";").flatMap(patternNames);
+  }
+  const bang = firstOutside(s, "!");
+  if (bang > 0) {
+    return [...patternNames(s.slice(0, bang)), ...patternNames(s.slice(bang + 1))];
+  }
+  return NAME.test(s) ? [s] : [];
+}
+
+/// Whether the `(` starting `s` closes at its last character.
+function balanced(s: string): boolean {
+  let depth = 0;
+  for (let i = 0; i < s.length; i++) {
+    if ("([{".includes(s[i])) {
+      depth++;
+    } else if (")]}".includes(s[i]) && --depth === 0) {
+      return i === s.length - 1;
+    }
+  }
+  return false;
+}
+
+/// Where the `[` at `open` in `s` closes; -1 when it does not.
+function matchingBracket(s: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < s.length; i++) {
+    if ("([{".includes(s[i])) {
+      depth++;
+    } else if (")]}".includes(s[i]) && --depth === 0) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/// One argument name for each slot of `lambda`'s list, as a call writes
+/// them: a slot's own name, typed or not, or `arg1`, `arg2`... for one that
+/// is a pattern; its `x`, `y` and `z` when it has no list.
+export function argumentNames(text: string, lambda: Lambda, mask: boolean[] = codeMask(text)): string[] {
+  if (lambda.slots === undefined) {
+    return parameters(text, lambda, mask);
+  }
+  const taken = new Set(lambda.explicit ?? []);
+  return lambda.slots.map((slot, i) => {
+    const name = /^([A-Za-z][A-Za-z0-9_]*)\s*(?::|$)/.exec(slot.trim());
+    if (name !== null && !slot.trim().startsWith("(")) {
+      return name[1];
+    }
+    let arg = `arg${i + 1}`;
+    while (taken.has(arg)) {
+      arg += "_";
+    }
+    return arg;
+  });
 }
 
 /// The innermost lambda that holds `offset` (from its `{` to its `}`); or,

@@ -1310,6 +1310,10 @@ g:{x*2}         /  becomes
 g:{.qlint.cache.p4d5e6f:x;`x set .qlint.cache.p4d5e6f;x*2}
 ```
 
+A typed or pattern parameter list, `{[x:`j;y]}` or `{[(a;b);c]}`, is one
+q reads too: the statement goes after it, and keeps each name it binds
+(`x` and `y`; `a`, `b` and `c`).
+
 Run the definition (**Query Current Block**), call the function once, and
 each parameter is then a global holding that call's value, so **Query
 Current Line** or **Block** on a line of the body runs with them. The

@@ -17,6 +17,13 @@ test("the function at the cursor, with its parameters; a test is not one", () =>
   assert.strictEqual(functionAt(SRC, 0), undefined);
 });
 
+test("a typed or pattern parameter list takes one argument per slot (#2332)", () => {
+  // KDB-X: `{[(u;v);w] u+v+w}` takes two arguments, `{[n:{x>0}] n}` one.
+  assert.deepStrictEqual(functionAt("h:{[(u;v);w] u+v+w}\n", 0), { name: "h", params: ["arg1", "w"] });
+  assert.deepStrictEqual(functionAt("k:{[n:{x>0}] n}\n", 0), { name: "k", params: ["n"] });
+  assert.deepStrictEqual(functionAt("t:{ [x:`j;y] x+y}\n", 0), { name: "t", params: ["x", "y"] });
+});
+
 test("the suite's style decides the name and the assertion", () => {
   const target = { name: ".fx.mid", params: ["bid", "ask"] };
   const qt = detectStyle(".qt.fx.test_spread:{[] .qunit.assertEquals[1;1;\"x\"]}\n");
