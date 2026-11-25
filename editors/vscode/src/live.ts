@@ -819,7 +819,8 @@ export class Live {
         if (event.affectsConfiguration("q-lint.queryHistory.search") && !this.setting(readHistorySearch).enabled) {
           this.setHistoryFilter({});
         }
-        if (event.affectsConfiguration("q-lint.query.progress")) {
+        // The tooltip says the active process's evaluation, which the setting can change (#2489).
+        if (event.affectsConfiguration("q-lint.query.progress") || event.affectsConfiguration("q-lint.query.unwrapped")) {
           this.showStatus();
         }
         if (event.affectsConfiguration("q-lint.query.watch") && !this.setting(readWatch).enabled) {
