@@ -1834,3 +1834,39 @@ test("a string an evaluator, handle 0 or a gateway is given is read as value rea
     assert.deepStrictEqual(writes(code), [], code);
   }
 });
+
+test("an assignment written as a call, :[a;77], assigns its first argument by the rules of a:77 (#2264)", () => {
+  const cases = {
+    ":[a;77]": ["assigns a"],
+    "(:)[a;77]": ["assigns a"],
+    "::[a;77]": ["assigns a"],
+    "+:[a;1]": ["assigns a"],
+    ",:[b;7]": ["assigns b"],
+    "-:[a;1]": ["assigns a"],
+    "(+:)[a;1]": ["assigns a"],
+    "(,:)[b;7]": ["assigns b"],
+    "(::)[a;77]": ["assigns a"],
+    ":[b 0;77]": ["assigns b"],
+    ":[d`a;77]": ["assigns d"],
+    ":[.ns.v;77]": ["assigns .ns.v"],
+    ":[.z.ts;{}]": ["assigns .z.ts"],
+    ":[ a ;77]": ["assigns a"],
+    "count t;:[a;77]": ["assigns a"],
+    "$[1b;:[a;77];0]": ["assigns a"],
+    "k):[a;77]": ["assigns a"],
+    "{::[a;5]}[]": ["assigns a"],
+    "{+:[a;1]}[]": ["assigns a"],
+    "{:[.ns.v;1]}[]": ["assigns .ns.v"],
+    // In a lambda, plainly, it is a local, as `a:5` is.
+    "{:[a;5]; a}[]": [],
+    "{[x] +:[x;1]; x}[1]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+  assert.deepStrictEqual(writes(":[(a;s);(1;2)]"), ["assigns a", "assigns s"]);
+  // `:` as a value or a return is not one.
+  for (const code of ["@[d;`a;:;1]", ".[d;enlist`a;:;9]", "{:x+1}[2]", "{$[x;:1;:2]}[1b]", "(:)", "0:[(\"SJ\";\",\");x]"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});

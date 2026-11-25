@@ -21,6 +21,8 @@
 //   assignment, but one inside a column's expression (`([] c:g:1)`) is;
 //   `(a;b):x` assigns each name, by the same rules, as do `(a):x` and
 //   `((a;b);c):x` (#1772);
+// - an assignment written as a call, `:[a;77]`, `(+:)[a;1]`, by the same
+//   rules, to its first argument (#2264);
 // - `update` or `delete` from a table named by a symbol (`` from `t ``,
 //   `` from (`t) ``), which changes it in place;
 // - `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`, `system`,
@@ -2126,6 +2128,41 @@ function readStatement(statement: string, found: Set<string>): void {
             : operand.some((x, n) => (x.kind === "sym" && x.text.startsWith("`:")) || x.kind === "name" || (x.kind === "op" && x.text === "$") || (x.text === "-1" && operand[n + 1]?.text === "!"));
         if (handle) {
           found.add(k.text === "~" ? "deletes a file with k's ~" : k.text === "<" ? "opens a file with k's <" : "closes a handle with k's >");
+          continue;
+        }
+      }
+    }
+    // An assignment written as a call, `:[a;77]`, `::[a;77]`, `+:[a;1]`, and
+    // in parentheses, `(:)[a;77]`, `(+:)[a;1]` (#2264): its first argument
+    // is assigned by the rules of `a:77` - global at the top level, with
+    // `::`, to a dotted name, or compound or indexed to a name that is not a
+    // local of the lambda it is in.
+    if (k.kind === "op" && k.text === ":" && (next?.text !== ":" || !touching(k, next))) {
+      const wrapped = next?.text === ")" && next.kind === "close";
+      const bracket = t[i + (wrapped ? 2 : 1)];
+      // Where the operator starts: `::` and `+:` are one, `0:` a file verb.
+      const start = i > code && t[i - 1].kind === "op" && touching(t[i - 1], k) && (t[i - 1].text === ":" || OPERATORS.has(t[i - 1].text)) ? i - 1 : i;
+      const before = t[start - 1];
+      // After a lambda's parameters, `{[x]:[b 0;1]}`, it starts the body.
+      const params = before?.text === "]" && t.findIndex((x, n) => closes[n] === start - 1 && x.text === "[" && t[n - 1]?.text === "{") >= 0;
+      const opened = start === code || before === undefined || !touching(before, t[start]) || before.kind === "open" || before.kind === "op" || before.text === ";" || params;
+      if (bracket?.kind === "open" && bracket.text === "[" && opened && (!wrapped || before?.text === "(")) {
+        const global = t[start].text === ":" && start < i;
+        const compound = start < i && !global;
+        const first = items(t, i + (wrapped ? 2 : 1))[0];
+        const [a, b] = first === undefined ? [0, 0] : unwrapped(t, first[0], first[1]);
+        // A name, indexed or not, `b 0`, `d[`a]`, or names, `(a;s)`.
+        const names: string[] = [];
+        if (b > a && t[a].kind === "name") names.push(t[a].text);
+        else if (b > a && first !== undefined && t[first[0]].text === "(") destructured(t, first[0], names);
+        const indexed = b - a > 1 && t[a].kind === "name";
+        for (const target of names) {
+          const local = locals.at(-1)?.has(target) ?? false;
+          if (lambdas === 0 || global || target.includes(".") || ((compound || indexed) && !local)) {
+            found.add(`assigns ${target}`);
+          }
+        }
+        if (names.length > 0) {
           continue;
         }
       }
