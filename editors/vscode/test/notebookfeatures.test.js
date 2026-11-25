@@ -1100,6 +1100,27 @@ test("a Python notebook imported and exported is the notebook it was: no cell is
   assert.deepStrictEqual(JSON.parse(toIpynb(fromIpynb(JSON.stringify(spec)))), spec);
 });
 
+test("a Python notebook that names its language only in language_info goes back as Python, not as q (#2381)", () => {
+  const nb = { cells: [{ cell_type: "code", execution_count: null, metadata: {}, outputs: [], source: ["print(1)"] }, { cell_type: "code", execution_count: null, metadata: {}, outputs: [], source: ["%%q\n", "til 3"] }], metadata: { language_info: { name: "python" } }, nbformat: 4, nbformat_minor: 4 };
+  const back = JSON.parse(toIpynb(fromIpynb(JSON.stringify(nb))));
+  assert.deepStrictEqual(back.metadata, { language_info: { name: "python" } });
+  assert.deepStrictEqual(fromIpynb(JSON.stringify(back)).cells.map((c) => c.language ?? "q"), ["python", "q"]);
+  // A notebook that names none is written as q's.
+  assert.strictEqual(JSON.parse(toIpynb({ cells: [] })).metadata.language_info.name, "q");
+});
+
+test("a Jupyter kernelspec with no language is read by its name: python3's cells are Python, qpk's q (#2382)", () => {
+  const nb = (kernelspec) => JSON.stringify({ nbformat: 4, metadata: { kernelspec }, cells: [{ cell_type: "code", source: ["import pandas as pd\n", "x = 1"], metadata: {}, outputs: [] }] });
+  assert.strictEqual(fromIpynb(nb({ name: "python3", display_name: "Python 3 (ipykernel)" })).cells[0].language, "python");
+  assert.strictEqual(fromIpynb(nb({ name: "ir", display_name: "R" })).cells[0].language, "r");
+  assert.strictEqual(fromIpynb(nb({ name: "julia-1.10", display_name: "Julia 1.10" })).cells[0].language, "julia");
+  assert.strictEqual(fromIpynb(nb({ name: "qpk", display_name: "q (kdb+)" })).cells[0].language, undefined);
+  assert.strictEqual(fromIpynb(nb({ display_name: "?" })).cells[0].language, undefined);
+  // And back out, the notebook's own kernel kept, its cells untagged.
+  const back = JSON.parse(toIpynb(fromIpynb(nb({ name: "python3", display_name: "Python 3 (ipykernel)" }))));
+  assert.deepStrictEqual([back.metadata.kernelspec.name, back.cells[0].metadata, back.cells[0].source], ["python3", {}, ["import pandas as pd\n", "x = 1"]]);
+});
+
 test("a live value's expression is read as LIVE values it, whole: a / line in it hides nothing (#2033)", () => {
   const code = guardedText("1+1", ["Count: {{q: (1;\n/\nd6:9)}} rows"]);
   assert.deepStrictEqual(writes(code), ["assigns d6"]);

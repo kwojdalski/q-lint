@@ -427,9 +427,21 @@ function outputToJupyter(output: QnbOutput, order: number | undefined, last: boo
 const Q_KERNEL = { display_name: "q (kdb+)", language: "q", name: "qpk" };
 const Q_LANGUAGE = { name: "q", file_extension: ".q", mimetype: "text/x-q" };
 
-/// The language of the kernel a Jupyter notebook's `metadata` names.
-const kernelLanguage = (meta: Json): string =>
-  String((isObject(meta.language_info) ? meta.language_info.name : undefined) ?? (isObject(meta.kernelspec) ? meta.kernelspec.language : undefined) ?? "q").toLowerCase();
+/// The language of the kernel a Jupyter notebook's `metadata` names. A
+/// kernelspec's `language` is optional (#2382): with none, its `name` says
+/// it - `python3`, `ir`, `julia-1.10` - and only a q kernel's, or none, is q.
+function kernelLanguage(meta: Json): string {
+  const spec = isObject(meta.kernelspec) ? meta.kernelspec : undefined;
+  const named = (isObject(meta.language_info) ? meta.language_info.name : undefined) ?? spec?.language;
+  if (named !== undefined) {
+    return String(named).toLowerCase();
+  }
+  const kernel = typeof spec?.name === "string" ? spec.name.toLowerCase() : "";
+  if (kernel === "" || /^(qpk|q|kdb|kdbx?|jupyterq)$/.test(kernel)) {
+    return "q";
+  }
+  return kernel === "ir" ? "r" : /^python/.test(kernel) ? "python" : kernel.replace(/[-_]?\d[\d.]*$/, "") || kernel;
+}
 
 /// The notebook as an nbformat 4 Jupyter notebook, as JSON text: 4.5, with
 /// the cells' ids, when every cell has the id `fromIpynb` kept.
@@ -446,7 +458,9 @@ export function toIpynb(qnb: Qnb): string {
   });
   const notebook = {
     cells,
-    metadata: { ...meta, ...(meta.kernelspec === undefined ? { kernelspec: Q_KERNEL, language_info: Q_LANGUAGE } : {}) },
+    // q's only when the notebook names no language at all: a `language_info`
+    // of its own is never replaced (#2381).
+    metadata: { ...meta, ...(meta.kernelspec === undefined && meta.language_info === undefined ? { kernelspec: Q_KERNEL, language_info: Q_LANGUAGE } : {}) },
     nbformat: 4,
     nbformat_minor: ids ? 5 : 4,
   };
