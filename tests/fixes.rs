@@ -2037,3 +2037,51 @@ fn a_glyph_before_each_gets_one_fix_and_it_keeps_the_monadic_reading() {
     };
     assert_eq!(values, ["2 1", "#'[(1 2;3)]", "-1 -2 -3"]);
 }
+
+/// One statement, one fix, however it is laid out. An indented line goes
+/// on with the line above, so `s:x` over `  in each y` has `x` on the left
+/// as `s:x in each y` does, after a comment line or a no-break space too -
+/// and plain `--fix` once rewrote those two as having nothing there (#2252).
+#[test]
+fn the_same_statement_gets_the_same_fix_however_it_is_laid_out() {
+    let layouts = |one: &str, word: &str| {
+        let (head, tail) = one.split_once(word).unwrap();
+        [
+            one.to_string(),
+            format!("{}\n  {word}{tail}", head.trim_end()),
+            format!("{} / note\n\n  / more\n  {word}{tail}", head.trim_end()),
+            format!("{}\u{a0}{word}{tail}", head.trim_end()),
+        ]
+    };
+    for (one, word) in [
+        ("s:x in each y", "in"),
+        ("t:{[x;y] x mod each y}", "mod"),
+        ("u:\"ab\" in each y", "in"),
+    ] {
+        for source in layouts(one, word) {
+            // Nothing for plain `--fix`, which QE012 would only make a space.
+            assert_eq!(fixed_with(&source, &["QE011"], false), source, "{source:?}");
+        }
+    }
+    for (one, word, fixed) in [
+        ("r:cor each x", "cor", "(cor)"),
+        ("f:{[x] mod prior x}", "mod", "(mod)"),
+    ] {
+        let mut fixes = vec![];
+        for source in layouts(one, word) {
+            let after = fixed_with(&source, &["QE011"], false);
+            assert_eq!(after, source.replacen(word, fixed, 1), "{source:?}");
+            fixes.push(after);
+        }
+        // `(mod) prior x` is `x mod' prev x` on KDB-X, on every layout.
+        if one.starts_with("f:") {
+            let scripts = fixes[..3]
+                .iter()
+                .map(|f| format!("{f}\nr:f 10 4 7\n"))
+                .collect::<Vec<_>>();
+            if let Some(values) = values_on_q(&scripts) {
+                assert_eq!(values, ["0N 4 3"; 3]);
+            }
+        }
+    }
+}

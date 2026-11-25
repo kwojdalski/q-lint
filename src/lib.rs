@@ -2724,26 +2724,10 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             if matches!(word, "each" | "peach" | "over" | "scan" | "prior") {
                 return None;
             }
-            let line_start = v.code[..start].rfind('\n').map_or(0, |p| p + 1);
-            let line = &source[line_start..];
-            let prompt = if line.starts_with("q)") { 2 } else { 0 };
-            // Read in the source: `code` blanks a string, which is an operand.
-            let left = source
-                .get(line_start + timed_prefix(line).max(prompt)..start)?
-                .trim_end_matches([' ', '\t']);
-            // A signature is no operand: `{[x] cor each y}`.
-            let signature = left.ends_with(']')
-                && left
-                    .bytes()
-                    .rev()
-                    .scan(0i32, |depth, c| {
-                        *depth += i32::from(c == b']') - i32::from(c == b'[');
-                        Some(*depth)
-                    })
-                    .position(|depth| depth == 0)
-                    .is_some_and(|p| left[..left.len() - 1 - p].ends_with('{'));
-            let infix = !signature
-                && left.ends_with(|c: char| c.is_ascii_alphanumeric() || "_.)]}\"`".contains(c));
+            // Read where comments are blank and strings are not, a string
+            // being an operand, and across an indented line: `s:x` over
+            // `  in each y` has `x` on the left (#2252).
+            let infix = refusals::has_left_operand(source, &v.comments, start);
             (
                 &source[start..start + word.len()],
                 format!("({word})").into(),
