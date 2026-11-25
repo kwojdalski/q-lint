@@ -31,6 +31,12 @@ r1:{[p] reverse asc each p}
 r2:{[p] reverse asc'[p]}
 r3:{[p] reverse desc peach p}
 
+=== clean | and so do scan, over and prior: reverse reorders the iterations (q 5: reverse asc scan 3 1 2 is (`s#1 2 3;3 1 2), desc scan 3 1 2 is (3 1 2;3 2 1), #2255)
+r1:{[p] reverse asc scan p}
+r2:{[p] reverse desc prior p}
+r3:{[p] reverse asc over p}
+r4:{[p] distinct asc distinct scan p}
+
 === clean | each over apply iterates too (#402; q 5: reverse asc@'x is per item, desc@'x is not the same)
 r1:{[p] reverse asc@'p}
 r2:{[p] reverse asc .'p}

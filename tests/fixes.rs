@@ -2183,3 +2183,22 @@ fn a_datetime_cast_fix_keeps_the_instant() {
     };
     assert_eq!(values, ["1b", "1b", "1b", "0b"]);
 }
+
+/// `asc scan x` iterates `asc` to convergence, so `reverse` reverses the
+/// iterations, and `desc scan x` is another list: nothing to rewrite, as
+/// after `each` (#2255).
+#[test]
+fn a_sort_under_scan_or_prior_is_not_rewritten() {
+    for source in [
+        "x:3 1 2;r:reverse asc scan x",
+        "x:3 1 2;r:reverse asc prior x",
+        "x:3 1 2;r:reverse desc over x",
+    ] {
+        assert_eq!(fixed_with(source, &["QR001"], true), source);
+    }
+    let scripts = ["r:reverse asc scan 3 1 2", "r:desc scan 3 1 2"].map(String::from);
+    let Some(values) = values_on_q(&scripts) else {
+        return;
+    };
+    assert_eq!(values, ["(`s#1 2 3;3 1 2)", "(3 1 2;3 2 1)"]);
+}
