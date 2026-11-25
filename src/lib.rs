@@ -9143,8 +9143,11 @@ fn lint_rules(
     // A KDB-X module - a file loaded with `use`, which says so by assigning
     // what it exports - runs in a namespace of its own, so a dotted name in
     // it is a sub-namespace as it would be under `\d`: KX's Kafka module
-    // defines `i.checkDict` and reads it back as `i.checkDict`.
-    let module = re!(r"\bexport\s*:\s*\(").is_match(code);
+    // defines `i.checkDict` and reads it back as `i.checkDict`. Any
+    // assignment says so, not only `export:(`: KDB-X 5 runs a module whose
+    // `` export:`f`g!(f;f) `` sits under `i.helper:{x+1}`, `key `.m.mod2`
+    // ``` ``i`f`export ```, and KX's ai module writes `export,:` (#2322).
+    let module = semantics::is_module(code, source);
     let mut depth = 0i32;
     let mut offset = 0;
     // Statements, not lines. q continues a line onto the next when that one

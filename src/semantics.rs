@@ -1527,6 +1527,42 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     }
 }
 
+/// Whether the file is a KDB-X module: one that assigns `export` at its top
+/// level, `export:([f])`, `` export:`f`g!(f;g) `` or `export,:...`, which is
+/// what `use` reads back - KDB-X 5's `.Q.m.ld` takes the module's `export`
+/// and refuses one without, 'no export: <path>. Such a file runs in a
+/// context of its own, `.m.<module>`: after `` m:use`mymod ``, `` key`.m.mymod ``
+/// is ``` ``helper`f`g`export ``` and the root has no `helper` ('helper).
+///
+/// Anywhere outside a lambda, a control statement's brackets included: KX's
+/// arrowkdb module assigns it in `if[5<=.z.K;export:...]`, which runs at
+/// the module's top level as any statement there does.
+pub(crate) fn is_module(code: &str, raw: &str) -> bool {
+    if !code.contains("export") {
+        return false;
+    }
+    let mut braces = 0i32;
+    for (i, c) in code.bytes().enumerate() {
+        match c {
+            b'{' => braces += 1,
+            b'}' => braces -= 1,
+            b'e' if braces == 0
+                && code[i..].starts_with("export")
+                && boundary(code, i)
+                && !code[..i].ends_with(['.', '`'])
+                && re!(r"^export\s*,?\s*:").is_match(&code[i..]) =>
+            {
+                let line = code[..i].rfind('\n').map_or(0, |p| p + 1);
+                if !crate::system_command(&raw[line..]) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 /// `value` of a symbol the source does not spell out: `value nm` reads the
 /// global `nm` names, as `get nm` does - q 5 (KDB-X, `.z.K` 5,
 /// `.z.k` 2026.07.23) has `get~value` 1b, both `.:` (#142). But `value` of a

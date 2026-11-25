@@ -12,6 +12,24 @@ i.checkDict:{[d] d}
 check:{[d] i.checkDict d}
 export:([check])
 
+=== clean profile: styleq | any assignment to export makes a module: a dictionary, or one added to (KDB-X 5, #2322)
+i.helper:{x+1}
+f:{i.helper x}
+export:`f`g!(f;f)
+
+=== clean profile: styleq | an export joined to, as KX's ai module writes it (#2322)
+i.h:{x+1}
+export:([f:{i.h x}])
+export,:([g:{x*3}])
+
+=== clean profile: styleq | an export assigned in a control statement at the top level makes a module, as KX's arrowkdb assigns it
+clib.dt.printDatatype:{[x] -1 clib.dt.printDatatype_[x];}
+if[5<=.z.K;export:([printDatatype:clib.dt.printDatatype])]
+
+=== QS002 profile: styleq | an export assigned inside a lambda makes no module
+myspace.myvar:1
+f:{export:1; export}
+
 === clean profile: styleq | a leading dot is a namespace, which is the spelling the guidance asks for
 .myspace.myvar:1
 
