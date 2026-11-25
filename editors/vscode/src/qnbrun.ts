@@ -289,7 +289,8 @@ export interface Executor {
 export interface RunResult {
   qnb: Qnb;
   /// How many code cells ran, and the first that failed: its number from 1
-  /// among all cells, and why.
+  /// among the cells of the notebook run, the parameters cell the run put
+  /// in counting as none (#2389), and why.
   ran: number;
   failed?: { cell: number; message: string };
 }
@@ -310,14 +311,19 @@ export async function runNotebook(
   if (problem !== undefined) {
     throw new Error(problem);
   }
-  const cells = injectParameters(qnb.cells, overrides).map((c) => ({ ...c }));
+  const given = injectParameters(qnb.cells, overrides);
+  const cells = given.map((c) => ({ ...c }));
+  // Each cell's number from 1 in `qnb`, as its author sees it (#2389): the
+  // cell of `overrides` is the parameters cell's, before it, or the first.
+  const numbers = given.map((c) => qnb.cells.indexOf(c) + 1);
+  numbers.forEach((n, j) => (numbers[j] = n > 0 ? n : Math.max(1, numbers[j - 1] ?? 1)));
   // The process a cell with no `/ @process` runs on: the last one named,
   // as the editor's connection stays there (#2150).
   let named: string | undefined;
   let order = 0;
   let failed: RunResult["failed"];
   const stop = (i: number, message: string): void => {
-    failed ??= { cell: i + 1, message };
+    failed ??= { cell: numbers[i], message };
   };
   // The Markdown whose values the cell at `i` reads, and, when it does not
   // run or fails, or values are not read, what they showed was another
@@ -350,7 +356,10 @@ export async function runNotebook(
       dropLive(i);
       continue;
     }
-    hooks.progress?.(i + 1, cells.length);
+    // The cell of `overrides` is none of the notebook's to count.
+    if (given[i] === qnb.cells[numbers[i] - 1]) {
+      hooks.progress?.(numbers[i], qnb.cells.length);
+    }
     const start = Date.now();
     order++;
     const finish = (success: boolean, parts: OutputPart[]): void => {

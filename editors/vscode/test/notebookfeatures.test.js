@@ -551,7 +551,8 @@ test("a headless run numbers and runs the q cells, reads live values, and goes w
   assert.strictEqual(run.failed, undefined);
   assert.strictEqual(run.ran, 3);
   assert.deepStrictEqual(ex.sent, ["default", "default", "other"]);
-  assert.deepStrictEqual(seen, ["2/6", "3/6", "4/6"]);
+  // Counted as the notebook has its cells: the run's parameters cell is none of them (#2389).
+  assert.deepStrictEqual(seen, ["2/5", "3/5"]);
   const cells = run.qnb.cells;
   assert.strictEqual(cells[2].source, "/ Parameters given to this run.\nn:5;");
   assert.deepStrictEqual(cells.map((c) => c.execution?.order), [undefined, 1, 2, 3, undefined, undefined]);
@@ -621,6 +622,12 @@ test("a headless run stops at the first cell that fails, and clears what the cel
   // A process that cannot be had fails its cell with why.
   const refused = await runNotebook({ cells: [{ kind: "code", source: "1" }] }, { on: async () => { throw new Error("no such process"); } }, SETTINGS);
   assert.deepStrictEqual(refused.failed, { cell: 1, message: "no such process" });
+  // Named by its number in the notebook run, not counting the cell of the
+  // parameters given (#2389).
+  const params = { cells: [{ kind: "code", source: "/ @parameters\nn:1" }, { kind: "markdown", source: "m" }, { kind: "code", source: "1+`a" }, { kind: "code", source: "n" }] };
+  assert.deepStrictEqual((await runNotebook(params, ex, SETTINGS, { n: "2" })).failed, { cell: 3, message: "'type" });
+  const top = { cells: [{ kind: "code", source: "1+`a" }] };
+  assert.deepStrictEqual((await runNotebook(top, ex, SETTINGS, { n: "2" })).failed, { cell: 1, message: "'type" });
   await assert.rejects(runNotebook(qnb, ex, SETTINGS, { "1x": "1" }), /not a q name/);
   await assert.rejects(runNotebook(qnb, ex, SETTINGS, { x: "1\n2" }), /one line of q/);
 });
