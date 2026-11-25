@@ -9738,7 +9738,9 @@ fn lint_rules(
                 let (p, name) = (whole.start(), &m[1]);
                 let at = offset + p;
                 let end = whole.end() + usize::from(line[whole.end()..].starts_with(':'));
-                if heads.iter().any(|&(h, _)| h == p)
+                // `heads` is in order of offset: a search, where a scan of
+                // every statement on the line for each was quadratic (#2344).
+                if heads.binary_search_by_key(&p, |&(h, _)| h).is_ok()
                     || !boundary(code, at)
                     || matches!(
                         name,

@@ -1745,3 +1745,26 @@ fn a_small_file_pays_no_compilation_of_its_own() {
         "400 one-line files took {apart:?} and one of 400 lines {together:?}"
     );
 }
+/// One long line of statements, generated or minified q: QF004's check of
+/// each assignment inside an expression asked whether it began a statement
+/// by walking every statement on the line, quadratic in them (#2344). Empty
+/// statements are statements too, and cheap to make many of.
+#[test]
+fn a_line_of_many_statements_lints_in_bounded_time() {
+    let time = |n: usize| {
+        let source = (0..n)
+            .map(|i| format!("a{i}:b:c:d:e:f:g:h;;;;;;;;;;"))
+            .collect::<String>()
+            + "\n";
+        best_of_three(|| lint(&source, "t.q", Profile::General))
+    };
+    time(2500); // warm the allocator and the regex caches
+    let (small, large) = (time(2500), time(20000));
+    eprintln!("a line of 2500 statements took {small:?} and of 20000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "a line of 2500 statements took {small:?} and of 20000 {large:?}"
+    );
+}
