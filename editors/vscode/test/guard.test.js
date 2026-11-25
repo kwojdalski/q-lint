@@ -1802,3 +1802,20 @@ test("a writer picked out of .h by any index is called, as out of .q and .Q (#22
     assert.deepStrictEqual(writes(code), [], code);
   }
 });
+
+test("k's monadic ~ (hdel), < (hopen) and > (hclose) are read as those, on a file or a handle (#2275)", () => {
+  const asks = [
+    "k)~`:g.txt", "k)<`:o.txt", "k)>.z.w", "k)(~)`:g.txt", "k)~:`:g.txt", "k){~x}`:g.txt", "k)~-1!`g.txt", "k)<`$\":o.txt\"", "k){<x}`:o.txt",
+    "k)>(<`:o.txt)", "k)> 3", "k)a:1;~`:g.txt", "q)k)<`:o.txt",
+  ];
+  for (const code of asks) {
+    assert.ok(writes(code).length > 0, code);
+  }
+  assert.deepStrictEqual(writes("k)~`:g.txt"), ["deletes a file with k's ~"]);
+  assert.deepStrictEqual(writes("k)<`:o.txt"), ["opens a file with k's <"]);
+  assert.deepStrictEqual(writes("k)>.z.w"), ["closes a handle with k's >"]);
+  // Dyadic, or on a list, they compare, grade and match.
+  for (const code of ["k)1~1", "k)<3 1 2", "k)>3 1 2", "k)x<y", "k)a~b", "k)~0 1b", "k)#t", "k)<\"cab\""]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});

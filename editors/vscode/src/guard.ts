@@ -98,6 +98,8 @@
 //   and through a trap (`@[value;"a:1";h]`), and by their `.q.` names;
 //   passed as a value, through an adverb or a composition (`value/["a:1"]`,
 //   `'[value;::]"a:1"`), each string in the expression around it (#1766);
+// - in k code, `~`, `<` and `>` with nothing on their left - `hdel`,
+//   `hopen` and `hclose` - on a file, a handle or a name (#2275);
 // - a system command (`\l`, `\cd x`, `\\`), also after a language prefix
 //   or several, `k)\l f.q`, `q)k)\cd x` (#2034), except one that only reads a
 //   setting (`\c`, `\d`, `\P`, `\_`, `\r`, `\E` without an argument, and
@@ -2101,6 +2103,29 @@ function readStatement(statement: string, found: Set<string>): void {
         found.add(`evaluates ${what.reason} with ${kCode ? "k's ." : "(.)"}`);
         i = what.at;
         continue;
+      }
+    }
+    // In k, `~`, `<` and `>` with nothing on their left are `hdel`, `hopen`
+    // and `hclose` given a file or a handle (#2275): `` k)~`:f ``, `k)>.z.w`,
+    // also in parentheses, `` k)(~)`:f ``, and as `~:`. On a list written
+    // they are `not`, `iasc` and `idesc`; on a name, a file or a handle may
+    // be what it holds.
+    if (kCode && i >= code && k.kind === "op" && ["~", "<", ">"].includes(k.text)) {
+      const prev = t[i - 1];
+      const wrapped = prev?.text === "(" && next?.text === ")";
+      const monadic = i === code || prev === undefined || prev.kind === "open" || prev.text === ";" || (prev.kind === "op" && prev.text !== ")");
+      if (monadic) {
+        const start = (next?.text === ":" && touching(k, next)) || wrapped ? i + 2 : i + 1;
+        const operand = t.slice(start, argumentEnd(t, start - 1));
+        const list = (operand.length > 1 && operand.every((x) => x.kind === "num")) || (operand.length === 1 && operand[0].kind === "str");
+        const handle =
+          k.text === ">"
+            ? operand.length > 0 && !list
+            : operand.some((x, n) => (x.kind === "sym" && x.text.startsWith("`:")) || x.kind === "name" || (x.kind === "op" && x.text === "$") || (x.text === "-1" && operand[n + 1]?.text === "!"));
+        if (handle) {
+          found.add(k.text === "~" ? "deletes a file with k's ~" : k.text === "<" ? "opens a file with k's <" : "closes a handle with k's >");
+          continue;
+        }
       }
     }
     // `.q` by its symbol, `` (get`.q)`set ``, likewise.
