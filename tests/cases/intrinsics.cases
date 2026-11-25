@@ -915,3 +915,22 @@ b:where 2000.01 2000.02m=2000.01m
 c:sum 2000.01 2000.02
 d:distinct 2000.01 2000.02m
 
+
+=== QT017 profile: general | a null window, of any integer width (q 5: 'type, #2245)
+a:0N mavg 1 2 3
+b:0Nh msum 1 2 3
+c:mcount[0N;1 2]
+d:0Ni mdev 1 2
+
+=== QT014 profile: general | a null rotate count (q 5: 'domain, #2245)
+a:0N rotate 1 2 3
+b:rotate[0N;"abc"]
+c:0Nh rotate 1 2
+
+=== clean profile: general | mmin and mmax take a null window, and an infinity rotates (#2245)
+a:0N mmin 1 2 3
+b:mmax[0N;1 2 3]
+c:0W rotate 1 2 3
+d:-0W rotate 1 2 3
+e:2 mavg 1 2 3
+

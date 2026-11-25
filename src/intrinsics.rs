@@ -21,6 +21,8 @@ struct Literal {
     len: usize,
     negative: bool,
     short_integer: bool,
+    /// An integer null atom: `0N`, `0Nh`, `0Ni`, `0Nj`.
+    integer_null: bool,
 }
 fn literal(s: &str) -> Option<Literal> {
     let mut s = s.trim();
@@ -58,6 +60,7 @@ fn literal(s: &str) -> Option<Literal> {
             len: s.bytes().filter(|&b| b == b'`').count(),
             negative: false,
             short_integer: false,
+            integer_null: false,
         });
     }
     // Read from `comments`, where a string is still text. Its length is
@@ -70,6 +73,7 @@ fn literal(s: &str) -> Option<Literal> {
             len,
             negative: false,
             short_integer: false,
+            integer_null: false,
         });
     }
     if let Some(hex) = s.strip_prefix("0x")
@@ -82,6 +86,7 @@ fn literal(s: &str) -> Option<Literal> {
             len: hex.len() / 2,
             negative: false,
             short_integer: false,
+            integer_null: false,
         });
     }
     if re!(r"^[01]+b$").is_match(s) {
@@ -91,6 +96,7 @@ fn literal(s: &str) -> Option<Literal> {
             len: s.len() - 1,
             negative: false,
             short_integer: false,
+            integer_null: false,
         });
     }
     // A null or an infinity atom: the integer ones are integers and the
@@ -112,6 +118,7 @@ fn literal(s: &str) -> Option<Literal> {
             len: 1,
             negative: m.get(1).is_some(),
             short_integer: s.ends_with('h'),
+            integer_null: re!(r"^0N[hij]?$").is_match(s),
         });
     }
     // A vector's items may be nulls and infinities, the last one carrying
@@ -137,6 +144,7 @@ fn literal(s: &str) -> Option<Literal> {
             len: numbers.len(),
             negative: numbers.iter().any(|&v| v < 0),
             short_integer: s.ends_with('h'),
+            integer_null: false,
         });
     }
     // `2000.01.01`, `2000.01m`, `12:00`, `12:00:00.123`, `0D01`,
@@ -159,6 +167,7 @@ fn literal(s: &str) -> Option<Literal> {
             len,
             negative: false,
             short_integer: false,
+            integer_null: false,
         });
     }
     let unsuffixed = s
@@ -173,6 +182,7 @@ fn literal(s: &str) -> Option<Literal> {
             len: items.len(),
             negative: false,
             short_integer: false,
+            integer_null: false,
         });
     }
     // Its items may be nulls and infinities too, which make a vector of
@@ -193,6 +203,7 @@ fn literal(s: &str) -> Option<Literal> {
             len: s.split_whitespace().count(),
             negative: false,
             short_integer: false,
+            integer_null: false,
         });
     }
     None
@@ -618,6 +629,11 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             {
                 Some(("QT016", "Numeric math cannot operate on a symbol literal"))
             }
+            // A null window too, though `mmin` and `mmax` take one: q 5
+            // `0N mavg x` is 'type and `0N mmin x` is x (#2245).
+            "mavg" | "msum" | "mcount" | "mdev" if value.integer_null => {
+                Some(("QT017", "a null is no moving-window size"))
+            }
             "mavg" | "msum" | "mcount" | "mdev" | "mmin" | "mmax"
                 if value.vector
                     || matches!(
@@ -698,6 +714,8 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             )),
             // A symbol too, though it may name a table: q 5 `flip `t` is 'rank.
             "flip" => Some(("QT013", "flip cannot transpose an atom or a flat vector")),
+            // Nor is a null a count: q 5 `0N rotate x` is 'domain (#2245).
+            "rotate" if value.integer_null => Some(("QT014", "a null is no rotate count")),
             "rotate"
                 if value.vector
                     || matches!(

@@ -604,5 +604,17 @@
     "bad": "within[1;0x00]",
     "good": "within[1;0x0003]",
     "error": "type"
+  },
+  {
+    "code": "QT017",
+    "bad": "mavg[0N;1 2 3]",
+    "good": "mavg[2;1 2 3]",
+    "error": "type"
+  },
+  {
+    "code": "QT014",
+    "bad": "rotate[0N;1 2 3]",
+    "good": "rotate[0W;1 2 3]",
+    "error": "domain"
   }
 ]
