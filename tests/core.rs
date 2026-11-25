@@ -1861,3 +1861,23 @@ fn many_table_literals_with_char_columns_lint_in_bounded_time() {
         "1000 table literals took {small:?} and 8000 {large:?}"
     );
 }
+/// A select of many columns on one line: each column's assignment scanned
+/// on to the end of the statement for the value it holds, so a wide select
+/// was quadratic in its columns (#2346).
+#[test]
+fn a_wide_select_lints_in_bounded_time() {
+    let time = |n: usize| {
+        let columns: Vec<String> = (0..n).map(|i| format!("c{i}:x{i}")).collect();
+        let source = format!("a:select {} from t\n", columns.join(","));
+        best_of_three(|| lint(&source, "t.q", Profile::General))
+    };
+    time(2000); // warm the allocator and the regex caches
+    let (small, large) = (time(2000), time(16000));
+    eprintln!("a select of 2000 columns took {small:?} and of 16000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "a select of 2000 columns took {small:?} and of 16000 {large:?}"
+    );
+}

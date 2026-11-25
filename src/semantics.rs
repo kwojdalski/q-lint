@@ -4150,6 +4150,7 @@ fn named_values(
             .filter(|&(i, _)| i > 0)
             .any(|(i, _)| exact.contains_key(&name[..i]) || upserted.contains(&name[..i]))
     };
+    let stops = std::cell::OnceCell::new();
     for (name, at) in exact.iter().filter(|_| !dynamic) {
         let name = name.as_str();
         // One write, or later ones that only index into it at the top level:
@@ -4179,25 +4180,16 @@ fn named_values(
         };
         let start = at + m.get(2).unwrap().start();
         // The value runs to the end of the statement: a top-level `;`, or a
-        // newline the next line does not continue.
-        let mut end = start;
-        let mut depth = 0i32;
-        let bytes = code.as_bytes();
-        while end < bytes.len() {
-            match bytes[end] {
-                b'(' | b'[' | b'{' => depth += 1,
-                b')' | b']' | b'}' => {
-                    if depth == 0 {
-                        break;
-                    }
-                    depth -= 1
-                }
-                b';' if depth == 0 => break,
-                b'\n' if depth == 0 && !code[end + 1..].starts_with([' ', '\t']) => break,
-                _ => {}
-            }
-            end += 1;
-        }
+        // newline the next line does not continue - or the bracket that
+        // closes around it. That is the first such stop at the depth the
+        // value starts at, looked up in `stops`: a scan from each value was
+        // quadratic in a wide select's columns (#2346).
+        let (depth, stops) = stops.get_or_init(|| value_stops(code));
+        let end = stops
+            .get(&depth[start])
+            .and_then(|at| at.get(at.partition_point(|&p| p < start)))
+            .copied()
+            .unwrap_or(code.len());
         if let Some(value) = held(&code[start..end], &comments[start..end])
             // An indexed write into anything but an atom may change it:
             // `d[`c]:3` adds a key.
@@ -5291,6 +5283,35 @@ pub(crate) fn char_column_comparisons(code: &str, comments: &str) -> Vec<usize> 
         }
     }
     out
+}
+
+/// For finding where a statement's value ends: the bracket depth before each
+/// offset of `code`, and at each depth, in order, the offsets that end a
+/// value begun at that depth - a closing bracket, a `;`, and a newline the
+/// next line does not continue. Scanning from a value's start, the first
+/// of these at its own depth is where the scan stops: any bracket opened
+/// on the way closes before it, and one closed that it did not open is
+/// itself the stop.
+fn value_stops(code: &str) -> (Vec<i32>, HashMap<i32, Vec<usize>>) {
+    let bytes = code.as_bytes();
+    let mut depth = Vec::with_capacity(bytes.len() + 1);
+    let mut stops: HashMap<i32, Vec<usize>> = HashMap::new();
+    let mut d = 0i32;
+    for (i, &b) in bytes.iter().enumerate() {
+        depth.push(d);
+        match b {
+            b'(' | b'[' | b'{' => d += 1,
+            b')' | b']' | b'}' => {
+                stops.entry(d).or_default().push(i);
+                d -= 1;
+            }
+            b';' => stops.entry(d).or_default().push(i),
+            b'\n' if !code[i + 1..].starts_with([' ', '\t']) => stops.entry(d).or_default().push(i),
+            _ => {}
+        }
+    }
+    depth.push(d);
+    (depth, stops)
 }
 
 /// Each maximal run of name characters in `code` - alphanumerics, `_` and
