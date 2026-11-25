@@ -493,7 +493,9 @@ comment, a block comment's own `/`, a system command, or any line of a file
 whose brackets do not close. A `noqa` that suppresses nothing (QL003) is not
 accepted either - naming QL003 in it would only hide it - but counted, for
 `--fix --unsafe-fixes` to remove. It says how many it added, and exits 1 if any
-such finding is left.
+such finding is left. A file that is not valid UTF-8 is linted but never
+rewritten, by `--add-noqa` or `--fix`, and what each leaves in one is counted
+apart, as left for that reason.
 
 Diagnostics carry a
 code and a category; `qlinter --rules` lists them all and `qlinter --explain

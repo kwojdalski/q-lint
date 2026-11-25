@@ -921,10 +921,16 @@ fn run(args: Args) -> Result<u8, String> {
     // finding is, as QP005's is where an operand's end cannot be told; and
     // a file the run never rewrites has no fix for anything in it.
     if args.fix {
-        let (mut unfixed, mut editor_only) = (0, 0);
+        let (mut unfixed, mut editor_only, mut undecoded) = (0, 0, 0);
         for (path, source) in &sources {
             let here: Vec<_> = findings.iter().filter(|f| f.path == *path).collect();
-            let fixes = if lossy.contains(path.as_str()) || !balanced(source) {
+            // A file that is not UTF-8 is never rewritten, fix or none: its
+            // findings are counted apart, for that reason (#2121).
+            if lossy.contains(path.as_str()) {
+                undecoded += here.len();
+                continue;
+            }
+            let fixes = if !balanced(source) {
                 vec![]
             } else {
                 fixes_for(here.iter().copied(), source)
@@ -942,6 +948,9 @@ fn run(args: Args) -> Result<u8, String> {
                 "qlinter: {editor_only} finding(s) left have a fix that only --unsafe-fixes applies"
             );
         }
+        if undecoded > 0 {
+            eprintln!("{}", undecoded_left(undecoded, "--fix"));
+        }
     }
     if failed {
         return Ok(2);
@@ -949,6 +958,15 @@ fn run(args: Args) -> Result<u8, String> {
     Ok(u8::from(findings.iter().any(|f| {
         matches!(f.severity.as_str(), "error" | "warning")
     })))
+}
+
+/// What a run that rewrites files says of the findings it left in files that
+/// are not valid UTF-8: none was looked at for a fix or a comment, since
+/// writing the decoded text back would change bytes it could not read.
+fn undecoded_left(count: usize, flag: &str) -> String {
+    format!(
+        "qlinter: {count} finding(s) left are in files that are not valid UTF-8, which {flag} never rewrites"
+    )
 }
 
 /// `--add-noqa`: each file rewritten with every finding accepted on its
@@ -968,7 +986,7 @@ fn add_noqa(
 ) -> Result<u8, String> {
     // More codes than this on one line is not a line anyone will read.
     const PASSES: usize = 64;
-    let (mut added, mut changed, mut left, mut stale) = (0, 0, 0, 0);
+    let (mut added, mut changed, mut left, mut stale, mut undecoded) = (0, 0, 0, 0, 0);
     // Each file as it is on disk once its first name is done: a later name
     // is linted against that, not the text read before the write (#1199).
     let mut written: std::collections::HashMap<PathBuf, String> = Default::default();
@@ -982,7 +1000,7 @@ fn add_noqa(
             continue;
         }
         if lossy.contains(path.as_str()) {
-            left += policy.lint(source, path, workspace)?.len();
+            undecoded += policy.lint(source, path, workspace)?.len();
             continue;
         }
         let mut text = source.clone();
@@ -1033,6 +1051,9 @@ fn add_noqa(
             "qlinter: {left} finding(s) left: on a line no comment can follow, such as one inside a string or a block comment, or in a file whose brackets do not close"
         );
     }
+    if undecoded > 0 {
+        eprintln!("{}", undecoded_left(undecoded, "--add-noqa"));
+    }
     if stale > 0 {
         eprintln!(
             "qlinter: {stale} noqa directive(s) suppress nothing (QL003): remove them with --fix --unsafe-fixes"
@@ -1041,7 +1062,7 @@ fn add_noqa(
     Ok(if failed {
         2
     } else {
-        u8::from(left + stale > 0)
+        u8::from(left + stale + undecoded > 0)
     })
 }
 

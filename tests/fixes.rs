@@ -1394,6 +1394,45 @@ fn fix_says_how_many_findings_it_has_no_fix_for() {
     );
 }
 
+/// A file that is not UTF-8 is never rewritten, so what `--fix` and
+/// `--add-noqa` leave in it is for that reason, not for having no fix or
+/// being on a line no comment can follow: both QE004s here have a fix, and
+/// QF016's line takes a comment (#2121).
+#[test]
+fn what_a_file_that_is_not_utf8_leaves_is_put_down_to_its_encoding() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("nonutf.q");
+    let original = b"a:1==2\nb:\"caf\xe9\"\nc:x==y\nf:{[x;y] x}\n".to_vec();
+    fs::write(&path, &original).unwrap();
+    let run = |flag: &str| {
+        let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .args(["--isolated", "--select", "QE004,QF016", flag])
+            .arg(&path)
+            .output()
+            .unwrap();
+        (out.status.code(), String::from_utf8(out.stderr).unwrap())
+    };
+    let (status, err) = run("--fix");
+    assert_eq!(status, Some(1), "{err}");
+    assert!(
+        err.contains(
+            "qlinter: 3 finding(s) left are in files that are not valid UTF-8, which --fix never rewrites"
+        ),
+        "{err}"
+    );
+    assert!(!err.contains("have no fix"), "{err}");
+    let (status, err) = run("--add-noqa");
+    assert_eq!(status, Some(1), "{err}");
+    assert!(
+        err.contains(
+            "qlinter: 3 finding(s) left are in files that are not valid UTF-8, which --add-noqa never rewrites"
+        ),
+        "{err}"
+    );
+    assert!(!err.contains("no comment can follow"), "{err}");
+    assert_eq!(fs::read(&path).unwrap(), original);
+}
+
 /// A fix that deletes a token from between two numeric literals would leave
 /// them one vector literal: q 5 gives `10 30` for `10 20 30 {x} each 0 2`
 /// and for `{r:10 20 30 a:0 2; r}[]`, and `20 30` for
