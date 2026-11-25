@@ -15,7 +15,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { launchable } from "./batch";
-import { gitCommand, onProcessPath, processGit } from "./relations";
+import { gitCommand, onProcessPath } from "./relations";
 
 /// The part of a finding the dashboard reads.
 export interface Finding {
