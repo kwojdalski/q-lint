@@ -361,6 +361,21 @@ test("rows added by Load more read symbols from their bytes, keep them for Copy 
   assert.deepStrictEqual(order(grid.rank[3]), [3, 1, 2, 0]);
 });
 
+test("a column name with a byte past UTF-8 shows as its Latin-1 text, pages, and copies as q as the same name (#2467)", { skip }, async (t) => {
+  const { gridLambda, PAGE, readPage, readGridAnswer, appendPage } = require("../out/grid.js");
+  const { tableLiteral } = require("../out/qliteral.js");
+  const q = await startQ(() => 't:flip(`$("caf\\351";"caf\\303\\251";"a"))!(1 2 3 4;5 6 7 8;9 10 11 12)\n');
+  t.after(() => q.stop());
+  const c = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => c.abort());
+  const tok = "d".repeat(32);
+  const first = readGridAnswer(await c.call(gridLambda(false, tok), statements("t"), SIZE, 2)).grid;
+  assert.deepStrictEqual(first.names, ["caf\u00e9", "caf\u00e9", "a"]);
+  const all = appendPage(first, readPage(await c.call(PAGE, tok, 2, 2)));
+  const copied = tableLiteral(all).code;
+  assert.deepStrictEqual((await c.query(statements(`t~${copied}`), SIZE)).text, ["1b"], copied);
+});
+
 test("a held result is paged only by the client and the token it was held for (#2128)", { skip }, async (t) => {
   const { gridLambda, PAGE, readPage, readGridAnswer } = require("../out/grid.js");
   const q = await startQ(() => "trade:([] sym:20#`A`B; px:til 20)\n");

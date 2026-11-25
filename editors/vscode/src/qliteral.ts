@@ -500,7 +500,11 @@ export function tableParts(payload: GridPayload, rows?: number[]): Omit<QTable, 
     part(keys, names.length);
     parts.push(")");
   } else {
-    const symbols = names.map(symbolLiteral);
+    // A name of bytes past ASCII from them, as a symbol's (#2467).
+    const symbols = names.map((n, i) => {
+      const bytes = payload.nameBytes?.[i];
+      return bytes ? bytesSymbol(bytes) : symbolLiteral(n);
+    });
     // Parenthesised: `enlist `a!x` would be `enlist (`a!x)`.
     const nameList = symbols.length === 1 ? `(enlist ${symbols[0]})` : symbols.every((s) => /^`[A-Za-z0-9_.]*$/.test(s)) ? symbols.join("") : `(${symbols.join(";")})`;
     parts.push(`${keys > 0 ? `${keys}!` : ""}flip ${nameList}!`);
