@@ -2481,7 +2481,9 @@ A value is q text, so a string is `-p name '"text"'`. `--process` is
 Processes** writes it, which also names the processes `/ @process` cells ask
 for. A password is never an argument: it is read from `QLINT_Q_PASSWORD`
 for `--process` only, or `QLINT_Q_PASSWORD_<LABEL>` for a listed process (its label in capitals,
-anything but a letter or digit as `_`; two processes with users whose labels give one name, such as `rdb-1` and `rdb_1`, are refused), with `--user` for `host:port`. A
+anything but a letter or digit as `_`; two processes with users whose labels give one name, such as `rdb-1` and `rdb_1`, are refused), with `--user` for `host:port`. `--direct` sends a `host:port` only plain
+strings, for a process that refuses q-lint's lambda; a listed process keeps
+its own `evaluation`. A
 listed process tagged `prod`, `prd` or `production` is refused unless
 `--allow-production` is given. `--row-limit`, `--rows-from` and
 `--console-size` stand in for the settings. It exits 0 when every cell ran,

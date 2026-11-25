@@ -398,6 +398,9 @@ usage: node qnbrun.js NOTEBOOK.qnb --process HOST:PORT|LABEL [options]
                            writes it, for labels
   --user USER              the user for --process HOST:PORT
   --tls                    connect to --process HOST:PORT with TLS
+  --direct                 send --process HOST:PORT only plain strings,
+                           for a process that refuses q-lint's lambda
+                           (a listed process keeps its own evaluation)
   --allow-production       run on a process tagged prod, prd or production
   --row-limit N            rows a @grid or @chart cell is sent (default
                            1000; 0: every row)
@@ -420,6 +423,8 @@ export interface CliOptions {
   processes?: string;
   user?: string;
   tls: boolean;
+  /// `--process HOST:PORT` evaluates plain strings only (#2473).
+  direct: boolean;
   allowProduction: boolean;
   rowLimit: number;
   rowsFrom: RowLimitFrom;
@@ -435,6 +440,7 @@ export function parseArgs(argv: string[]): CliOptions | { error: string } | { he
   let processes: string | undefined;
   let user: string | undefined;
   let tls = false;
+  let direct = false;
   let allowProduction = false;
   let rowLimit = 1000;
   let rowsFrom: RowLimitFrom = "first";
@@ -463,6 +469,8 @@ export function parseArgs(argv: string[]): CliOptions | { error: string } | { he
         user = next();
       } else if (a === "--tls") {
         tls = true;
+      } else if (a === "--direct") {
+        direct = true;
       } else if (a === "--allow-production") {
         allowProduction = true;
       } else if (a === "--row-limit") {
@@ -511,6 +519,7 @@ export function parseArgs(argv: string[]): CliOptions | { error: string } | { he
     ...(processes !== undefined ? { processes } : {}),
     ...(user !== undefined ? { user } : {}),
     tls,
+    direct,
     allowProduction,
     rowLimit,
     rowsFrom,
@@ -544,8 +553,9 @@ export function passwordOf(target: Process, env: Record<string, string | undefin
 /// refused: the command line opens neither, and dialling its host and
 /// port straight would reach another process (#1401). A `host:port` takes
 /// the tags of every listed process at that address, so a production one
-/// is still one by its address (#1450).
-export function cliProcess(name: string, listed: Process[], user?: string, tls = false): Process | { error: string } {
+/// is still one by its address (#1450). `direct` makes a `host:port`
+/// evaluate plain strings only (#2473); a listed process keeps its own.
+export function cliProcess(name: string, listed: Process[], user?: string, tls = false, direct = false): Process | { error: string } {
   const found = listed.find((p) => p.label === name);
   if (found !== undefined) {
     const needs = [found.ssh !== undefined ? "an SSH tunnel (ssh)" : "", found.init !== undefined || found.initFile !== undefined ? "a connect script (init, initFile)" : ""].filter((x) => x !== "");
@@ -560,7 +570,15 @@ export function cliProcess(name: string, listed: Process[], user?: string, tls =
     // The loopback is one host however it is named: localhost, 127.x, ::1 (#1739).
     const same = (h: string): string => (/^(localhost|127(\.\d{1,3}){3}|::1|\[::1\])$/i.test(h) ? "localhost" : h.toLowerCase());
     const tags = [...new Set(listed.filter((p) => same(p.host) === same(host) && p.port === port).flatMap((p) => p.tags))];
-    return { label: name, host, port, tags, ...(user !== undefined ? { user } : {}), ...(tls ? { tls: true } : {}) };
+    return {
+      label: name,
+      host,
+      port,
+      tags,
+      ...(user !== undefined ? { user } : {}),
+      ...(tls ? { tls: true } : {}),
+      ...(direct ? { evaluation: "direct" as const } : {}),
+    };
   }
   return {
     error: listed.length === 0
@@ -606,7 +624,7 @@ export async function main(
     let connection = connections.get(name);
     if (connection === undefined) {
       connection = (async () => {
-        const target = cliProcess(name, listed, given ? options.user : undefined, given && options.tls);
+        const target = cliProcess(name, listed, given ? options.user : undefined, given && options.tls, given && options.direct);
         if ("error" in target) {
           throw new Error(target.error);
         }
@@ -622,8 +640,9 @@ export async function main(
         }).catch((error: unknown) => {
           throw new Error(`could not connect to ${target.label} (${address(target.host, target.port)}): ${error instanceof Error ? error.message : String(error)}`);
         });
-        // A process file's `"evaluation": "direct"` holds here too (#2470);
-        // with no settings, one that sets none is wrapped.
+        // A process file's `"evaluation": "direct"` holds here too (#2470),
+        // as does --direct for a host:port (#2473); with no settings, one
+        // that sets neither is wrapped.
         const mode = directMode(target, false);
         opened.direct = () => mode;
         return opened;
