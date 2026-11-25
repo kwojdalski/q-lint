@@ -67,14 +67,29 @@ test("a string or brackets nested and closed on the line leave an open one open 
   }
 });
 
+// On KDB-X f:{x,"abc / def"} over two lines fails with '{ when def"} starts
+// at column 0 and loads indented (f "z" is "zabc\n def"), and a string
+// alone the same: a line that ends inside a string is continued like one
+// that leaves a bracket open.
+test("a line that ends inside an open string is followed by an indented one (#2303)", () => {
+  for (const line of ['f:{x,"abc', 'g:"abc', 's:"a /b', 'f:{x,"a\\"b', 'h:{[x] -1 "done";"more', 'x:("a";"b']) {
+    assert.strictEqual(enter(line), "indent", line);
+  }
+  for (const line of ['x:"ab"', 'x:1 / it"s', 'x:"a" / "b', '/ "quoted', 'x:"a\\""']) {
+    assert.notStrictEqual(enter(line), "indent", line);
+  }
+});
+
 test("the patterns are linear: a long line is answered at once", () => {
   const line = `f:{${"a[b;c](d)".repeat(5000)}`;
   const start = Date.now();
   assert.strictEqual(enter(line), "indent");
   assert.strictEqual(enter(`${line}}`), undefined);
   assert.strictEqual(enter(`x:1 / ${"(".repeat(20000)}`), undefined);
-  // An unclosed string after many brackets is read once per bracket.
-  assert.strictEqual(enter(`x:"${'(\\"'.repeat(5000)}`), undefined);
+  // An unclosed string after many brackets is read once per bracket; it is
+  // open at the end, so the next line is indented (#2303).
+  assert.strictEqual(enter(`x:"${'(\\"'.repeat(5000)}`), "indent");
+  assert.strictEqual(enter(`x:${'"(\\"" '.repeat(5000)}`), undefined);
   assert.ok(Date.now() - start < 1000, `${Date.now() - start} ms`);
 });
 

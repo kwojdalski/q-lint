@@ -34,8 +34,11 @@ const SETTLED = settled(4);
 /// and `f:{` before a `}` the cursor sits on. A bracket in a trailing
 /// comment (` / see (a`) opens nothing; a comment after one that is open
 /// (`f:{ / doc`) leaves it open, and a string before it (`s:"a /b";f:{`)
-/// starts no comment (#1375).
-export const OPENS = new RegExp(String.raw`^(?:"(?:[^"\\]|\\.)*"|(?!\s/)[^"])*[{\[(]${SETTLED}*(?:\s/.*)?$`);
+/// starts no comment (#1375). A line that ends inside a string it opened
+/// (`f:{x,"abc`, `s:"a`) is continued the same way: the rest of the string at
+/// column 0 would end the statement there (#2303). A line that closes a string
+/// opened above looks the same and is indented too, which q does not mind.
+export const OPENS = new RegExp(String.raw`^(?:"(?:[^"\\]|\\.)*"|(?!\s/)[^"])*(?:[{\[(]${SETTLED}*(?:\s/.*)?|"(?:[^"\\]|\\.)*)$`);
 
 /// A comment line: what follows it is not a continuation of it. A `/` alone
 /// opens a block comment, and the line after it is text, not q.
