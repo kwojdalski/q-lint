@@ -7,7 +7,7 @@ import { window, workspace, type Uri } from "vscode";
 import { Stopped, type Live } from "./live";
 import { readLive } from "./liveconfig";
 import { render, type Answer } from "./query";
-import { statements } from "./statements";
+import { inContext, statements } from "./statements";
 import { plainMessage } from "./history";
 
 /// One run, as a pane shows it.
@@ -27,8 +27,9 @@ export function answerLines(ran: Pick<Ran, "process" | "code" | "millis" | "answ
 /// Run `code` and answer what it gave; undefined, having said why, when it
 /// was not run: nothing in it to run, no process, a query still running,
 /// or the guard's question declined. `uri`: the file it is from, whose
-/// bound process it goes to.
-export async function runText(live: Live, code: string, uri?: Uri): Promise<Ran | undefined> {
+/// bound process it goes to. `context`: the `\d` the text before it left,
+/// which it runs in (#2286).
+export async function runText(live: Live, code: string, uri?: Uri, context = "."): Promise<Ran | undefined> {
   const cut = statements(code);
   if (cut.length === 0) {
     return undefined;
@@ -55,7 +56,7 @@ export async function runText(live: Live, code: string, uri?: Uri): Promise<Ran 
   try {
     ran = await live.runOnActive(code, (connection) => {
       sentTo = live.activeLabel() ?? sentTo;
-      return connection.query(cut, consoleSize);
+      return connection.query(inContext(cut, context), consoleSize);
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

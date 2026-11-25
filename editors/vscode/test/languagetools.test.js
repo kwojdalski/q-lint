@@ -112,8 +112,10 @@ test("Explain qSQL finds where the query starts", () => {
   assert.strictEqual(leadBefore(f, f.indexOf("px")), 2);
   // A name ending in a query word is no query.
   assert.strictEqual(leadBefore("x:.my.select 1\n", 10), undefined);
-  // An empty first line above an indented one ends the walk (#1396).
-  assert.strictEqual(leadBefore("\n  select from t", 10), 3);
+  // An empty first line above an indented one ends the walk (#1396); in
+  // a file that indented line is one q skips, so it holds no query (#2278).
+  assert.strictEqual(leadBefore("\n  select from t", 10), undefined);
+  assert.strictEqual(leadBefore("a:1\n\n  select from t", 12), 7);
   // A query word in a string or a comment is no lead (#1466).
   const s = 'select from trade where sym like "update*"';
   assert.strictEqual(leadBefore(s, s.length), 0);

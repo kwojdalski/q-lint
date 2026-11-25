@@ -10,7 +10,7 @@
 // `{{a}}` is still taken for one; `q-lint.query.placeholders.enable` turns
 // them off.
 
-import { blockDepth } from "./statements";
+import { blockDepth, trimBlanks } from "./statements";
 
 /// Where `values` are remembered between queries: `globalState`, under this
 /// key, as `{ [name]: value }`.
@@ -60,11 +60,11 @@ export function placeholders(code: string): Placeholder[] {
     const command = !inString && depth === 0 && SYSTEM.test(line);
     if (!inString) {
       // A line of `/` alone opens a block comment, one of `\` alone closes it.
-      if (depth > 0 || line.trimEnd() === "/") {
-        depth = blockDepth(depth, line.trimEnd());
+      if (depth > 0 || trimBlanks(line) === "/") {
+        depth = blockDepth(depth, trimBlanks(line));
         continue;
       }
-      if (line.trimEnd() === "\\") {
+      if (trimBlanks(line) === "\\") {
         // The end of the script: nothing after it is sent (#1471).
         break;
       }

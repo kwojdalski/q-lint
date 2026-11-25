@@ -108,6 +108,35 @@ test("the REPL runs what is typed across lines inside a bracket, and completes t
   assert.deepStrictEqual(got.items, [{ label: "myfun", detail: "q" }]);
 });
 
+test("cells and REPL entries run in the \\d the text before them left, as \\l and a console do (#2286)", { skip }, async (t) => {
+  const q = await startQ("");
+  t.after(() => q.stop());
+  const { interactive, repl, editor } = await setUp(t, q.port);
+  editor("/ %% setup\n\\d .cdlib\n/ %% define\nadd:{x+y}\n/ %% use\nr:add[1;2]");
+  await stub.commands.get(C.runAllCells)();
+  assert.deepStrictEqual(interactive.entries().map((e) => e.ok), [true, true, true]);
+  // Run Cell alone runs in it too.
+  editor("/ %% setup\n\\d .cdlib\n/ %% again\nr2:add[3;4]", 2);
+  await stub.commands.get(C.runCell)(undefined, 2);
+  assert.strictEqual(await repl.enter("(.cdlib.r;.cdlib.r2;@[value;`add;`undefined])"), "ran");
+  assert.deepStrictEqual(repl.entries().at(-1).lines, ["3", "7", "`undefined"]);
+  assert.strictEqual(await repl.enter("\\d .zz8"), "ran");
+  assert.strictEqual(await repl.enter("dd:4"), "ran");
+  assert.strictEqual(await repl.enter("\\d ."), "ran");
+  assert.strictEqual(await repl.enter("(.zz8.dd;@[value;`dd;`undefined])"), "ran");
+  assert.deepStrictEqual(repl.entries().at(-1).lines, ["4", "`undefined"]);
+});
+
+test("code Smart Send gives the REPL runs as the editor has it, a block comment in a lambda no code (#2284)", { skip }, async (t) => {
+  const q = await startQ("");
+  t.after(() => q.stop());
+  const { repl } = await setUp(t, q.port);
+  await repl.runFromEditor("rp:{[x]\n  a:x+1;\n/\n  a:a*100;\n\\\n  a}", vscode.Uri.file("/w/a.q"));
+  assert.strictEqual(repl.entries().at(-1).ok, true);
+  assert.strictEqual(await repl.enter("rp 1"), "ran");
+  assert.deepStrictEqual(repl.entries().at(-1).lines, ["2"]);
+});
+
 test(".qlint.view and .qlint.plot, defined on the process, open what a query passes them", { skip }, async (t) => {
   const q = await startQ("");
   t.after(() => q.stop());

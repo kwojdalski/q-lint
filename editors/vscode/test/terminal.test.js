@@ -217,7 +217,9 @@ test("csh and tcsh set the variables with env, and get a ! escaped (#1683)", () 
 test("no tab reaches q's console, which reads one as completion (#1673)", () => {
   assert.deepStrictEqual(replLines("s:count\ttil 3"), ["s:count til 3"]);
   assert.deepStrictEqual(replLines('s:"a\tb"'), ['s:"a\\tb"']);
-  assert.deepStrictEqual(replLines('f:{\n\tx+1}\ns:"x\n\ty"'), ["f:{ x+1}", 's:"x\\n\\ty"']);
+  // A continuation line's leading tab is a space to q's loader (#2280).
+  assert.deepStrictEqual(replLines('f:{\n\tx+1}\ns:"x\n\ty"'), ["f:{ x+1}", 's:"x\\n y"']);
+  assert.deepStrictEqual(replLines('s:"x\n \ty"'), ['s:"x\\n \\ty"']);
   assert.deepStrictEqual(replLines('s:"q\\"\tz"'), ['s:"q\\"\\tz"']);
 });
 

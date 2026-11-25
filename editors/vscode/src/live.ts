@@ -76,7 +76,7 @@ import { HEARTBEAT, STEADY_MS, UNANSWERED_MS, backoffDelay, latencyText, readHea
 import { clearedStamp, historyHeading, historyLabel, iconsEscaped, mergedHistory, plainMessage } from "./history";
 import { render } from "./query";
 import { QueryModes, type PageLater, type Rendered } from "./resultpanel";
-import { blockAt, statements } from "./statements";
+import { blockAt, scriptCode, selectionCode, statements } from "./statements";
 import { assertWritable, relativeInside } from "./workspacewrite";
 import { commandLine, expandHome, qBinaryFrom, relativeBinaryProblem, replLines, shellKind, terminalCwd } from "./terminal";
 import { readDotenv, terminalEnv } from "./qenv";
@@ -157,18 +157,21 @@ type From = "line" | "selection" | "block" | "file";
 function codeAt(editor: TextEditor, from: From): string | undefined {
   const document = editor.document;
   const line = editor.selection.active.line;
+  // Read as q reads the file: a selection or a line as it reads there, in
+  // a block comment or after the script's end (#2287), and the file
+  // without the indented lines q skips before its first statement (#2278).
   if (from === "selection" && !editor.selection.isEmpty) {
-    return document.getText(editor.selection);
+    return selectionCode(document.getText().split("\n"), editor.selection.start.line, document.getText(editor.selection));
   }
   if (from === "file") {
-    return document.getText();
+    return scriptCode(document.getText());
   }
   if (from === "block") {
     const lines = document.getText().split(/\r?\n/);
     const block = blockAt(lines, line);
     return block === undefined ? undefined : lines.slice(block.start, block.end + 1).join("\n");
   }
-  return document.lineAt(line).text;
+  return selectionCode(document.getText().split("\n"), line, document.lineAt(line).text);
 }
 
 /// The editor a command is for: the one showing `uri`, a Uri a title-bar
@@ -1953,7 +1956,8 @@ export class Live {
         return;
       }
     }
-    const cut = statements(code);
+    // A script, read as q loads one (#2278).
+    const cut = statements(scriptCode(code));
     if (cut.length === 0) {
       return;
     }

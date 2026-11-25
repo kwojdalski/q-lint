@@ -10,7 +10,7 @@ import { CodeActionKind, MarkdownString, Range, commands, window, workspace, typ
 import { LANGUAGE_COMMANDS, languageOff, languageOn, type LanguageFeature } from "./languagefeatures";
 import { charKinds } from "./explorer";
 import { plainMessage } from "./history";
-import { blockAt, blockDepth } from "./statements";
+import { blockAt, blockDepth, trimBlanks } from "./statements";
 
 /// The server's titles for its two rewrites (`src/lsp.rs`).
 export const REWRITE_TITLES = {
@@ -71,8 +71,8 @@ export function leadBefore(text: string, offset: number): number | undefined {
   // A block comment inside the statement is read as blanks: it holds no lead.
   let depth = 0;
   const read = lines.slice(block.start).map((l) => {
-    const inside = depth > 0 || l.trimEnd() === "/";
-    depth = blockDepth(depth, l.trimEnd());
+    const inside = depth > 0 || trimBlanks(l) === "/";
+    depth = blockDepth(depth, trimBlanks(l));
     return inside ? " ".repeat(l.length) : l;
   });
   const code = read.join("\n").slice(0, end - start);
