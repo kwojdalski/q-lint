@@ -590,7 +590,7 @@ pub fn word_at(source: &str, offset: usize) -> Option<(usize, usize)> {
 /// A local whose assignments settle its type, and that type as `type`
 /// returns it: see `semantics::infer`.
 pub use semantics::infer::{Typed, literal_type};
-pub use semantics::version::{Target, reported_for as version_reported_for};
+pub use semantics::version::{Target, TargetScope, reported_for as version_reported_for};
 
 /// Each local of each lambda in `source` whose every assignment is a plain
 /// one of a literal of the same type, in order of where it is first named.
@@ -663,6 +663,14 @@ pub(crate) static RESERVED: LazyLock<Vec<String>> =
 /// Whether q reserves `word`, as `reserved.json` lists the words.
 pub fn is_reserved(word: &str) -> bool {
     RESERVED.iter().any(|reserved| reserved == word)
+}
+
+/// Whether `word` is reserved on the release being linted for: as
+/// `is_reserved`, but a word only KDB-X has (its `builtins.json` summary
+/// starts `KDB-X:`, as `use`'s does) is a free name for an older
+/// `target-version` (`semantics::version::kdbx_only`).
+pub(crate) fn reserved_word(word: &str) -> bool {
+    is_reserved(word) && !semantics::version::kdbx_only(word)
 }
 
 /// What a name q defines is, as far as an editor shows it differently.
@@ -3101,7 +3109,7 @@ fn utc_clock(local: &str) -> String {
     }
 }
 
-fn boundary(s: &str, at: usize) -> bool {
+pub(crate) fn boundary(s: &str, at: usize) -> bool {
     // Callers walk bytes, so `at` can fall inside a multi-byte character -
     // the middle of a token, never the start of one.
     let Some(before) = s.get(..at) else {
@@ -4785,7 +4793,7 @@ fn application(s: &str) -> bool {
         && !re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(s).any(|w| {
             boundary(s, w.start())
                 && !s[..w.start()].ends_with(['`', '.'])
-                && RESERVED.iter().any(|n| n == w.as_str())
+                && crate::reserved_word(w.as_str())
         })
 }
 /// The patterns `like` at `at` is given, in the order q 5 tries them: a
@@ -6250,7 +6258,7 @@ fn lint_rules(
     // `{foo:1;0}` and `foo:1` are 'assign (#434).
     let dotq = dotq_definitions(code, source);
     let reserved = |name: &str, at: usize| {
-        RESERVED.iter().any(|n| n == name) || dotq.iter().any(|(n, from)| n == name && at > *from)
+        crate::reserved_word(name) || dotq.iter().any(|(n, from)| n == name && at > *from)
     };
     // A UTF-8 BOM is not something q tolerates: it reports 'char on the first
     // line and loads nothing. Reported and then carried on past, because the
@@ -8190,7 +8198,7 @@ fn lint_rules(
         let stmt = body[start..semi].trim();
         let simple = re!(r"^[A-Za-z0-9_.]+(?:\s*(?:<>|<=|>=|[+\-*%=<>&|,#_])\s*[A-Za-z0-9_.]+)*$")
             .is_match(stmt);
-        let builtin = RESERVED.iter().any(|n| n == stmt);
+        let builtin = crate::reserved_word(stmt);
         // A string is blank in this view; `f "done"` must not pass for `f`.
         let quoted = v.comments[sig.body + start..sig.body + semi].contains('"');
         if simple && !builtin && !quoted {
@@ -8512,7 +8520,7 @@ fn lint_rules(
                 let trimmed = part.trim_start();
                 let lead = part.len() - trimmed.len();
                 if let Some(m) = re!(r"^([A-Za-z][A-Za-z0-9_]*)\s*:").captures(trimmed)
-                    && RESERVED.iter().any(|n| n == &m[1])
+                    && crate::reserved_word(&m[1])
                 {
                     // by and from build a table (q 5), and are left out.
                     if matches!(&m[1], "by" | "from") {
@@ -8579,7 +8587,7 @@ fn lint_rules(
                         ),
                     );
                 }
-            } else if RESERVED.iter().any(|n| n == name.as_str()) {
+            } else if crate::reserved_word(name.as_str()) {
                 add(
                     q.end() + name.start(),
                     "QF013",
@@ -9330,7 +9338,7 @@ fn lint_rules(
             // A keyword in parentheses is a value, not a decorated token:
             // `(mod) . 7 3` is 1, and `mod . 7 3` does not parse. The
             // parentheses there are the point.
-            if RESERVED.iter().any(|n| n == m[1].trim()) {
+            if crate::reserved_word(m[1].trim()) {
                 continue;
             }
             if m[1].contains('_') {

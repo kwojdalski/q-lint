@@ -106,7 +106,7 @@ fn a_missing_or_broken_baseline_is_an_error_not_silence() {
     assert!(err.contains("not a qlinter baseline"), "{err}");
 }
 
-const NEW_Q: &str = "d:([a:1;b:2])\ng:{(a;b):x; a+b}\nh:{[x:`j] x}\nr:-30!(::)\ns:.Q.Xf\nk:([sym:`a`b] px:1 2)\nt:([] px:1 2)\n";
+const NEW_Q: &str = "d:([a:1;b:2])\ng:{(a;b):x; a+b}\nh:{[x:`j] x}\nr:-30!(::)\ns:.Q.Xf\nk:([sym:`a`b] px:1 2)\nt:([] px:1 2)\nm:use`mymod\n";
 
 /// `--write-baseline` writes a file, and a file the run reads is never it:
 /// `--write-baseline o.q` with the tree linted, or `o.q` named as both, once
@@ -189,16 +189,26 @@ fn the_target_version_reports_what_does_not_run_there() {
     let (_, found, _) = run(d, &["--isolated", "--target-version", "3.6", "a.q"]);
     assert_eq!(
         qk(&found),
-        vec![pair("QK001", 1), pair("QK002", 2), pair("QK003", 3)]
+        vec![
+            pair("QK001", 1),
+            pair("QK002", 2),
+            pair("QK003", 3),
+            pair("QK006", 8)
+        ]
     );
     let (_, found, _) = run(d, &["--isolated", "--target-version", "4.0", "a.q"]);
     assert_eq!(
         qk(&found),
-        vec![pair("QK001", 1), pair("QK002", 2), pair("QK003", 3)]
+        vec![
+            pair("QK001", 1),
+            pair("QK002", 2),
+            pair("QK003", 3),
+            pair("QK006", 8)
+        ]
     );
-    // 4.1 runs the new syntax, and has no .Q.Xf.
+    // 4.1 runs the new syntax, and has no .Q.Xf, nor KDB-X's use.
     let (_, found, _) = run(d, &["--isolated", "--target-version", "4.1", "a.q"]);
-    assert_eq!(qk(&found), vec![pair("QK005", 5)]);
+    assert_eq!(qk(&found), vec![pair("QK005", 5), pair("QK006", 8)]);
     let (_, found, _) = run(d, &["--isolated", "--target-version", "kdbx", "a.q"]);
     assert_eq!(qk(&found), vec![pair("QK005", 5)]);
     // A configuration sets it per folder, and the flag wins.
@@ -209,7 +219,7 @@ fn the_target_version_reports_what_does_not_run_there() {
     assert_eq!(qk(&found), vec![]);
     fs::write(d.join("old/qlinter.toml"), "target-version = \"4.1\"\n").unwrap();
     let (_, found, _) = run(d, &["--target-version", "3.6", "a.q"]);
-    assert_eq!(qk(&found).len(), 3);
+    assert_eq!(qk(&found).len(), 4);
     fs::write(d.join("old/qlinter.toml"), "target-version = \"3.5\"\n").unwrap();
     let (status, _, err) = run(d, &["old/a.q"]);
     assert_eq!(status, Some(2));
@@ -407,4 +417,60 @@ fn a_refusal_only_kdbx_makes_is_not_reported_for_an_older_target() {
         let (_, found, err) = run(d, &args);
         assert_eq!(qe(&found), vec![], "{target}: {err}");
     }
+}
+
+/// KDB-X's `use` is no builtin of an older q: QK006 reports it read as the
+/// module loader, and a file binding the name itself - KDB-X refuses
+/// `{[use] use+1}[2]` ('nyi) and `use:1` ('assign) - is reported for KDB-X
+/// alone, where it is refused (#2325).
+#[test]
+fn a_builtin_only_kdbx_has_is_a_free_name_for_an_older_target() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(
+        d.join("binds.q"),
+        "f:{[use] use+1}\nuse:5\ng:{use:x; use}\n",
+    )
+    .unwrap();
+    fs::write(d.join("loads.q"), "m:use`mymod\nn:use[`other]\nk:.my.use\n").unwrap();
+    let codes = |found: &[(String, usize)]| -> Vec<(String, usize)> {
+        found
+            .iter()
+            .filter(|(c, _)| c.starts_with("QK") || c.starts_with("QF"))
+            .cloned()
+            .collect()
+    };
+    let pair = |c: &str, l: usize| (c.to_string(), l);
+    for target in ["3.6", "4.0", "4.1"] {
+        let args = [
+            "--isolated",
+            "--select",
+            "QK,QF",
+            "--target-version",
+            target,
+        ];
+        let (_, found, err) = run(d, &[&args[..], &["binds.q"]].concat());
+        assert_eq!(codes(&found), vec![], "{target}: {err}");
+        let (_, found, err) = run(d, &[&args[..], &["loads.q"]].concat());
+        assert_eq!(
+            codes(&found),
+            vec![pair("QK006", 1), pair("QK006", 2)],
+            "{target}: {err}"
+        );
+    }
+    let args = [
+        "--isolated",
+        "--select",
+        "QK,QF",
+        "--target-version",
+        "kdbx",
+    ];
+    let (_, found, err) = run(d, &[&args[..], &["binds.q"]].concat());
+    assert_eq!(
+        codes(&found),
+        vec![pair("QF001", 1), pair("QF004", 2), pair("QF003", 3)],
+        "{err}"
+    );
+    let (_, found, err) = run(d, &[&args[..], &["loads.q"]].concat());
+    assert_eq!(codes(&found), vec![], "{err}");
 }

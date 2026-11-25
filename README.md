@@ -350,6 +350,7 @@ every finding.
 | QK002 | a pattern assignment, `(a;b):x`, `([k:v]):d` | 4.1 and later |
 | QK003 | a typed or filtered parameter, `{[x:`j] ...}`, `{[(a;b)] ...}` | 4.1 and later |
 | QK005 | `.Q.Xf` or `.Q.Cf` | before 4.1, which removed them |
+| QK006 | a builtin only KDB-X has, `` use`mymod `` | KDB-X |
 
 Each fact is from KX's release notes (ChangesIn3.6, 4.0 and 4.1 on
 code.kx.com). Only the newest side was run here: KDB-X runs every 4.1
@@ -357,6 +358,11 @@ construct above and has neither `.Q.Xf` nor `.Q.Cf`. No 3.6, 4.0 or 4.1
 binary was at hand, so the older side is the release notes' word, not a
 test's. PeachQ runs the dictionary literal and `(a;b):`, and refuses
 `([k:v]):` ('nyi) and a filtered parameter ('parse).
+
+For a target before KDB-X, `use` is no builtin: a file may name a
+parameter or a global `use`, which KDB-X refuses ('nyi, 'assign) and QF001,
+QF003 and QF004 then report for KDB-X alone. The builtins only KDB-X has
+are the ones `src/builtins.json` describes as KDB-X's.
 
 A target before KDB-X also quiets the refusals that are q 5's alone:
 QE008 (`-x`), QE009 (`+/x`, `count'x`) and QE011 (`cor each x`), which
@@ -1421,7 +1427,7 @@ language server driven over real LSP framing as a real process.
 
 ### Rule and multiline regression corpus
 
-The taxonomy contains 144 codes. Ten literal-call rules cover excess builtin
+The taxonomy contains 145 codes. Ten literal-call rules cover excess builtin
 arguments (QA010), invalid literal types/shapes (QT008–QT014), and negative
 `til`/`where` counts (QD001–QD002). These checks leave unknown expressions
 unresolved and account for projections, seeded scans and variadic `enlist`.
@@ -1430,7 +1436,7 @@ unresolved and account for projections, seeded scans and variadic `enlist`.
 `tests/showcase.rs` checks exact code/line pairs under every profile, including
 silence in the clean section. Together with the three companion examples -
 `syntax-error.q`, `byte-order-mark.q` and `query-injection.q`, each holding
-a rule that would hide or stop the others - it covers all 142 rules available
+a rule that would hide or stop the others - it covers all 143 rules available
 in this build; QF006 and QLS001 are excluded.
 
 Multiline fixtures cover nested lambdas, split argument lists, comments,

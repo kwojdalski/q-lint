@@ -11,6 +11,7 @@
 //! | QK002 | a pattern assignment, `(a;b):x`, `([k:v]):d` | 4.1 and later |
 //! | QK003 | a typed or filtered parameter, `{[x:`j] ...}`, `{[(a;b)] ...}` | 4.1 and later |
 //! | QK005 | `.Q.Xf` or `.Q.Cf` | before 4.1: removed in it |
+//! | QK006 | a builtin only KDB-X has, `` use`mymod `` | KDB-X |
 //!
 //! There is no QK004. It reported `-30!`, the deferred response, which q
 //! has from 3.6 on; 3.6 is the oldest target there is, so no target could
@@ -20,7 +21,8 @@
 //! 4.1 construct above and has no `.Q.Xf` or `.Q.Cf`; there is no 3.6, 4.0
 //! or 4.1 binary on this machine, so the older side is the release notes'
 //! word and is not verified. PeachQ runs the dictionary literal and `(a;b):`
-//! but not `([k:v]):` ('nyi) or a filtered parameter ('parse).
+//! but not `([k:v]):` ('nyi) or a filtered parameter ('parse). QK006's
+//! fact is `src/builtins.json`'s: `use` is KDB-X's module loader.
 use crate::{Finding, matching};
 
 /// A release a file can be checked against, oldest first.
@@ -51,6 +53,39 @@ impl Target {
     }
 }
 
+thread_local! {
+    static TARGET: std::cell::Cell<Option<Target>> = const { std::cell::Cell::new(None) };
+}
+
+/// The `target-version` a lint is for, while this is alive: what
+/// `kdbx_only` asks. The configuration installs it around each file.
+pub struct TargetScope(Option<Target>);
+
+impl TargetScope {
+    pub fn install(target: Option<Target>) -> TargetScope {
+        TargetScope(TARGET.with(|t| t.replace(target)))
+    }
+}
+
+impl Drop for TargetScope {
+    fn drop(&mut self) {
+        TARGET.with(|t| t.set(self.0));
+    }
+}
+
+/// Whether `word` is a builtin only KDB-X has, its `builtins.json` summary
+/// starting `KDB-X:` - `use` - and the lint is for an older target, where
+/// it is no builtin at all: an ordinary name the file may bind, and that
+/// QK006 reports read as KDB-X's.
+pub(crate) fn kdbx_only(word: &str) -> bool {
+    TARGET.with(|t| t.get()).is_some_and(|t| t < Target::KdbX) && newer_builtin(word)
+}
+
+/// Whether `word` is a builtin only KDB-X has, whatever the target.
+fn newer_builtin(word: &str) -> bool {
+    crate::builtin(word).is_some_and(|b| b.summary.starts_with("KDB-X:"))
+}
+
 /// When each rule's construct runs: from a release on, or until one.
 enum Runs {
     From(Target),
@@ -61,6 +96,7 @@ fn runs(code: &str) -> Option<Runs> {
     Some(match code {
         "QK001" | "QK002" | "QK003" => Runs::From(Target::V41),
         "QK005" => Runs::Before(Target::V41),
+        "QK006" => Runs::From(Target::KdbX),
         _ => return None,
     })
 }
@@ -203,7 +239,56 @@ pub(crate) fn check(path: &str, code: &str, source: &str) -> Vec<Finding> {
             _ => {}
         }
     }
+    kdbx_builtins(path, code, source, &mut out);
     out
+}
+
+/// QK006. A builtin only KDB-X has - `use`, whose `builtins.json` summary
+/// says so - read as the builtin. An older q has no such word, so for it
+/// the name is the file's own: one the file assigns, `use:5`, or binds as
+/// a parameter, `{[use] use+1}`, is no use of KDB-X's (KDB-X refuses both,
+/// 'assign and 'nyi, which QF004 and QF001 report for it).
+fn kdbx_builtins(path: &str, code: &str, source: &str, out: &mut Vec<Finding>) {
+    for builtin in crate::BUILTINS.iter().filter(|b| newer_builtin(&b.name)) {
+        let word = builtin.name.as_str();
+        let found: Vec<usize> = code
+            .match_indices(word)
+            .map(|(at, _)| at)
+            .filter(|&at| {
+                crate::boundary(code, at)
+                    && !code[..at].ends_with(['.', '`'])
+                    && !code[at + word.len()..]
+                        .starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+            })
+            .collect();
+        let bound = found.iter().any(|&at| {
+            code[at + word.len()..]
+                .trim_start_matches([' ', '\t'])
+                .starts_with(':')
+                || in_signature(code, at)
+        });
+        if bound {
+            continue;
+        }
+        for at in found {
+            out.push(Finding::at(
+                path,
+                source,
+                at,
+                "QK006",
+                format!("`{word}` is a builtin only KDB-X has; an older q has no `{word}`"),
+            ));
+        }
+    }
+}
+
+/// Whether the word at `at` sits in a lambda's parameter list, `{[a;use]`.
+fn in_signature(code: &str, at: usize) -> bool {
+    let Some(open) = code[..at].rfind('[') else {
+        return false;
+    };
+    code[..open].trim_end_matches([' ', '\t']).ends_with('{')
+        && !code[open..at].contains([']', '{', '}'])
 }
 
 /// Whether the symbol `` `.Q.Cf `` (or `` `.Q.Xf ``) whose name starts at

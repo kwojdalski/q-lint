@@ -3390,7 +3390,7 @@ pub fn check(
             let global = qualify(name, namespace);
             if comments[start..start + statement.len()].contains(['"', '{'])
                     || scope.is_some_and(|s| s.locals.contains(name))
-                    || crate::RESERVED.iter().any(|builtin| builtin == name)
+                    || crate::reserved_word(name)
                     // Keyed exactly: `.cfg:1` defines no root `cfg` (q 5: 'cfg).
                     // A lambda runs once the file has loaded, but a top-level
                     // read runs as it loads: q 5 refuses `r:limit` above
@@ -4685,7 +4685,7 @@ fn named_values(
             // `.q.bb:10 20` then `select bb from ([]a:1 2)` (#524).
             && !globals.contains_key(&format!(".q.{name}"))
             && !elsewhere(&format!(".q.{name}"))
-            && !crate::RESERVED.iter().any(|n| n == name)
+            && !crate::reserved_word(name)
             && !scope_at(scopes, at).is_some_and(|s| scopes[s].locals.contains(name))
     };
     let mut column = |at: usize, name: &str, table: &str, columns: &[String]| {

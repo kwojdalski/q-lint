@@ -1006,5 +1006,12 @@
     "category": "compatibility",
     "summary": ".Q.Xf or .Q.Cf, removed in q 4.1: reported only for a target-version of 4.1 or KDB-X",
     "scope": "builtin"
+  },
+  {
+    "code": "QK006",
+    "name": "target-kdbx-builtin",
+    "category": "compatibility",
+    "summary": "A builtin only KDB-X has, use`mymod, which an older q lacks: reported only for an older target-version",
+    "scope": "builtin"
   }
 ]
