@@ -1319,6 +1319,29 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
                 (g, next.as_bytes().first()),
                 (b'<', Some(b'=' | b'>')) | (b'>', Some(b'='))
             );
+        // The pair is one operator, and it has no monadic form either: q 5
+        // refuses `a:<>0`, `f[<>0;1]` and `<=x` with the pair (#2230), and
+        // takes `(<>)` and `x<>0`.
+        if pair && !colon {
+            let expression = line_start + expression_start(&source[line_start..]);
+            if starts_operand(continued(&next[1..]))
+                && opens_expression(code, source, comments, i, expression)
+            {
+                let digraph = &comments[i..i + 2];
+                let mut finding = Finding::at(
+                    path,
+                    source,
+                    i,
+                    "QE008",
+                    format!(
+                        "`{digraph}` has no monadic form in q 5: q refuses this line with '{digraph}"
+                    ),
+                );
+                finding.end_column = finding.column.map(|c| c + 2);
+                out.push(finding);
+            }
+            continue;
+        }
         let operand = colon
             || next.starts_with(|c: char| c.is_ascii_alphabetic() || "`(\"{".contains(c))
             || (bracket_form(next) && !pair)

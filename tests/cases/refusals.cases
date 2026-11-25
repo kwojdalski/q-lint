@@ -1943,3 +1943,18 @@ a:x::1
 a:(::;1)
 a:(::)1
 a:{x::1}
+
+=== QE008 profile: general | a pair of glyphs with nothing on its left (q 5: '<>, #2230)
+a:<>0
+
+=== QE008 profile: general | a pair of glyphs with nothing on its left (q 5: '<>, #2230)
+f[<>0;1]
+
+=== QE008 profile: general | a pair of glyphs with nothing on its left (q 5: '<=, #2230)
+a:<=0
+
+=== clean profile: general | while q 5 parses each of these (#2230)
+a:x<>0
+a:(<>)
+a:x<=0
+a:x <> 0
