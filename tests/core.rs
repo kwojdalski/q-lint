@@ -496,6 +496,15 @@ fn a_name_with_a_segment_led_by_an_underscore_is_coloured() {
 }
 
 #[test]
+fn a_name_inside_a_file_symbol_is_not_coloured() {
+    // KDB-X's `-4!` reads `` `:a `` and `` `:f `` as one symbol token each,
+    // whatever function or parameter shares the name (#2313).
+    let text = "f:{x}\nh:{[a] r:`:a; `:f 0: a}\n";
+    assert!(functions(text).is_empty());
+    assert_eq!(parameters(text), [text.rfind('a').unwrap()]);
+}
+
+#[test]
 fn a_root_lambda_is_not_coloured_inside_a_context() {
     use q_lint_rs::{TokenKind, Workspace, index, semantic_tokens_in};
     // q 5: under `\\d .ns`, `m:f 2` is 'f - no fallback to the root `f`,

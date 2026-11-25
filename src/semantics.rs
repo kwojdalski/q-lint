@@ -928,6 +928,11 @@ pub fn tokens(
     // that name - q 5's `select f from t` is the column even where `f` is a
     // lambda - and only the table says which, so none is coloured (#552).
     let outside_queries = crate::outside_query_phrases(code);
+    // A symbol is one token, whatever names its text holds: q's `-4!` keeps
+    // `` `:f `` and `` `:a `` whole, so neither is the function `f` nor the
+    // parameter `a` (#2313).
+    let unsymbolled = crate::unsymbolled(code);
+    let symbol = |at: usize| unsymbolled.as_bytes()[at] == b' ';
     // A name a multiple assignment binds is written there, as `f:` is.
     let bound: HashSet<usize> = multi_assignments(code)
         .chain(global_multi_assignments(code))
@@ -938,6 +943,7 @@ pub fn tokens(
         if !boundary(code, m.start())
             || outside_queries.as_bytes()[m.start()] == b' '
             || bound.contains(&m.start())
+            || symbol(m.start())
         {
             continue;
         }
@@ -989,6 +995,7 @@ pub fn tokens(
         for m in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(direct) {
             if boundary(direct, m.start())
                 && view.as_bytes()[m.start()] != b' '
+                && !symbol(scope.body + m.start())
                 && !direct[m.end()..].starts_with('.')
                 && scope.params.contains(m.as_str())
             {
