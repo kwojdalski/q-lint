@@ -1783,7 +1783,9 @@ terminal is running: once q exits, it goes to the shell.
 namespaces, the root first, less those in
 `q-lint.processExplorer.excludedNamespaces`; under each, its tables with
 their row counts and columns (key columns marked), its functions with their
-parameters, and its variables with their type and count. A partitioned table
+parameters - a typed or pattern one as the lambda writes it, `b:`s` or
+`(u;v)`, where KDB-X names it `1` or `0` - and its variables with their
+type and count. A partitioned table
 is not loaded to count it: its count is each partition's, from `.Q.cn`, and
 the row says so; one it cannot count (a partition missing its directory) is
 shown not counted. It is read in one call that defines nothing on the process,

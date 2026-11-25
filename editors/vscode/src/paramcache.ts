@@ -256,6 +256,25 @@ function matchingBracket(s: string, open: number): number {
   return -1;
 }
 
+/// A q lambda (a string, for a query) giving the text `slotParams` reads
+/// for a lambda whose `(value f)1` holds a synthetic name, and "" for any
+/// other: its first 256 characters, which hold its parameter list.
+export const SLOT_TEXT = '{p:(value x)1;$[any{all x in .Q.n}each string p;256 sublist last value x;""]}';
+
+/// A lambda's parameters as a process's `(value f)1` names them, with each
+/// synthetic name read from `text`, the lambda's own: KDB-X names a typed
+/// or pattern slot by its place, `{[x:`j] x}` `,`0`, `{[(a;b)] a}` `,`0`
+/// and `{[a;b:`s] a}` `` `a`1 ``, which says nothing. Such a slot is shown as
+/// written, `b:`s` or `(a;b)`; without `text`, or past its list, as given.
+export function slotParams(params: string[], text: string | undefined): string[] {
+  if (text === undefined || text === "" || !params.some((p) => /^[0-9]+$/.test(p))) {
+    return params;
+  }
+  const lambda = lambdas(text)[0];
+  const slots = lambda !== undefined && lambda.open === text.indexOf("{") ? lambda.slots : undefined;
+  return params.map((p) => (/^[0-9]+$/.test(p) ? (slots?.[Number(p)]?.trim() || p) : p));
+}
+
 /// One argument name for each slot of `lambda`'s list, as a call writes
 /// them: a slot's own name, typed or not, or `arg1`, `arg2`... for one that
 /// is a pattern; its `x`, `y` and `z` when it has no list.
