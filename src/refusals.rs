@@ -23,7 +23,70 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     numbers(path, source, code, comments, &unsym, &mut out);
     number_colon(path, source, code, &unsym, &mut out);
     non_ascii(path, source, code, &mut out);
+    table_slots(path, source, code, &mut out);
     out
+}
+
+/// QE013. An empty column slot in a table literal: q 5 refuses
+/// `([] a:1 2; )`, `([] a:1 2;;b:3 4)`, `([a:1 2;] b:3 4)` and
+/// `([;a:1 2] b:3 4)` at parse with ';. An empty first slot after the key
+/// is taken - `([] ;a:1 2)` and `([] ;)` parse - so a literal that starts
+/// with one is left alone, and so is a list's empty item, `(1;;2)` (#2214).
+fn table_slots(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
+    let b = code.as_bytes();
+    // The slots between `from` and the closer at depth 0: where each `;`
+    // is, and whether the text before it, since the last one, is blank.
+    let slots = |from: usize, closer: u8| -> Option<(usize, Vec<(usize, bool)>)> {
+        let (mut depth, mut last, mut seps) = (0i32, from, vec![]);
+        for (j, &ch) in b.iter().enumerate().skip(from) {
+            match ch {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' if depth > 0 => depth -= 1,
+                c if c == closer && depth == 0 => {
+                    seps.push((j, code[last..j].trim().is_empty()));
+                    return Some((j, seps));
+                }
+                b')' | b']' | b'}' => return None,
+                b';' if depth == 0 => {
+                    seps.push((j, code[last..j].trim().is_empty()));
+                    last = j + 1;
+                }
+                _ => {}
+            }
+        }
+        None
+    };
+    for open in code.match_indices('(').map(|(i, _)| i) {
+        let gap = code[open + 1..].len() - code[open + 1..].trim_start().len();
+        if b.get(open + 1 + gap) != Some(&b'[') {
+            continue;
+        }
+        let Some((close, key)) = slots(open + 2 + gap, b']') else {
+            continue;
+        };
+        let Some((_, value)) = slots(close + 1, b')') else {
+            continue;
+        };
+        // Each entry is (end of slot, slot blank); a slot that ends at the
+        // closer is the last. The key's slots all count once it holds any.
+        let keyed = key.len() > 1 || !key[0].1;
+        let empty = key
+            .iter()
+            .filter(|_| keyed)
+            .chain(value.iter().skip(1).filter(|_| !value[0].1))
+            .find(|&&(_, blank)| blank);
+        if let Some(&(at, _)) = empty {
+            // Report the `;` that opens the empty slot, which is q's.
+            let semi = code[..at].rfind(';').unwrap_or(at);
+            out.push(Finding::at(
+                path,
+                source,
+                semi,
+                "QE013",
+                "An empty column slot in a table literal: q 5 refuses it at parse with ';".into(),
+            ));
+        }
+    }
 }
 
 /// QT024. An attribute applied to a literal it does not describe. Verified:

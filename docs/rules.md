@@ -1,6 +1,6 @@
 # Rules
 
-All 143 rules, generated from `src/taxonomy.json` - the same data
+All 144 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -59,6 +59,7 @@ it, or `ALL`.
 | <a id="qe010"></a>`QE010` | malformed-number | A number q 5 cannot parse: 1.5j, 2b, 3i 4j, 1y, 1.2.3, or an integer that overflows its type (2147483648i, 32768h) | every profile |
 | <a id="qe011"></a>`QE011` | infix-keyword-each | An infix keyword before each or peach: q 5 refuses cor each x and x within each y; write (cor) each, cor' or cor[x] each | every profile |
 | <a id="qe012"></a>`QE012` | non-ascii-character | A character past ASCII outside a string or comment - a no-break space, a curly quote, a byte-order mark mid-file - which q refuses with 'char | every profile |
+| <a id="qe013"></a>`QE013` | table-literal-empty-slot | An empty column slot in a table literal, ([] a:1 2; ) or ([] a:1 2;;b:3 4), which q 5 refuses at parse with '; | every profile |
 
 ## Names - parameters, locals, globals and what they shadow
 

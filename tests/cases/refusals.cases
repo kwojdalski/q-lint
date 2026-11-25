@@ -1842,3 +1842,49 @@ a:select a by b from t where c by 1
 a:delete from t where a in exec a by b from t
 a:select a by b from select by c from t
 a:select by b from t
+
+=== QE013 profile: general | an empty column slot in a table literal (q 5: ';, #2214)
+a:([] x:1 2; )
+
+=== QE013 profile: general | an empty column slot in a table literal (q 5: ';, #2214)
+a:([] x:1 2;;y:3 4)
+
+=== QE013 profile: general | an empty column slot in a table literal (q 5: ';, #2214)
+a:([x:1 2;] y:3 4)
+
+=== QE013 profile: general | an empty column slot in a table literal (q 5: ';, #2214)
+a:([;x:1 2] y:3 4)
+
+=== QE013 profile: general | an empty column slot in a table literal (q 5: ';, #2214)
+a:([] x:1 2;)
+
+=== QE013 profile: general | an empty column slot in a table literal (q 5: ';, #2214)
+a:([x:1 2] y:3 4;)
+
+=== QE013 profile: general | an empty column slot in a table literal (q 5: ';, #2214)
+a:([]x:1 2;y:3 4;)
+
+=== QE013 profile: general | an empty column slot in a table literal (q 5: ';, #2214)
+a:([x:1 2;;z:1 2] y:3 4)
+
+=== QE013 profile: general | an empty column slot in a table literal (q 5: ';, #2214)
+a:([] x:(1;2); )
+
+=== clean profile: general | while q 5 parses each of these (#2214)
+a:([] ;x:1 2)
+a:([] x:1 2; y:3 4)
+a:([] x:1 2)
+a:([x:1 2] y:3 4)
+a:([] )
+a:([]x:1 2;y:f[1;;2])
+a:([];x:1 2)
+a:([x:1 2] ;y:3 4)
+a:([a:1 2;b:3 4] c:5 6)
+a:([] ;)
+a:([ ] x:1 2)
+a:(1;;2)
+a:([]x:1 2) ;
+
+=== QE013 profile: general | an empty column slot before the closer on the line that continues the literal (q 5: ';, #2214)
+a:([] x:1 2;
+  )

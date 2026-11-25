@@ -84,6 +84,13 @@
     "scope": "builtin"
   },
   {
+    "code": "QE013",
+    "name": "table-literal-empty-slot",
+    "category": "syntax",
+    "summary": "An empty column slot in a table literal, ([] a:1 2; ) or ([] a:1 2;;b:3 4), which q 5 refuses at parse with ';",
+    "scope": "builtin"
+  },
+  {
     "code": "QF001",
     "name": "reserved-parameter",
     "category": "names",
