@@ -1893,7 +1893,10 @@ process brings back the old definition.
 Explorer's title bar or the palette, compares the functions the workspace's
 q files define with what the connected process holds. A definition is a
 top-level `name:{...}`, in the context `\d .ns` gives it, as loading the
-file would define it; texts are compared without trailing blanks. It reads
+file would define it; a KDB-X module's - a file assigning `export` - are
+in the context `use` runs it in, `.m.mymod.f` for mymod/init.q (`.m.pkg.0sub.k`
+for pkg/sub/init.q), named by the file's path in its workspace folder.
+Texts are compared without trailing blanks. It reads
 each name's `last value` from the process, and changes nothing there. The
 list shows the functions that differ, are not defined on the process or
 are not a lambda there; picking one that differs opens a diff of the
