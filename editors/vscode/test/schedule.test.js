@@ -445,6 +445,27 @@ test("an export is written whole beside the file and renamed over it; a failed w
   assert.deepStrictEqual(fs.readdirSync(dir).sort(), ["blocked.csv", "out.csv"]);
 });
 
+test("an export through a symbolic link replaces the file it names, and keeps a file's mode (#2518)", { skip: process.platform === "win32" ? "symbolic links and modes" : false }, async () => {
+  const { writeWhole } = require("../out/schedule.js");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-whole-"));
+  fs.mkdirSync(path.join(dir, "share"));
+  const real = path.join(dir, "share", "report.csv");
+  fs.writeFileSync(real, "old\n", { mode: 0o640 });
+  fs.chmodSync(real, 0o640);
+  const link = path.join(dir, "link.csv");
+  fs.symlinkSync(real, link);
+  await writeWhole(link, Buffer.from("new\n"));
+  assert.ok(fs.lstatSync(link).isSymbolicLink());
+  assert.strictEqual(fs.readFileSync(real, "utf8"), "new\n");
+  assert.strictEqual(fs.statSync(real).mode & 0o777, 0o640);
+  const secret = path.join(dir, "secret.csv");
+  fs.writeFileSync(secret, "old\n");
+  fs.chmodSync(secret, 0o600);
+  await writeWhole(secret, Buffer.from("new\n"));
+  assert.strictEqual(fs.statSync(secret).mode & 0o777, 0o600);
+  assert.deepStrictEqual(fs.readdirSync(path.join(dir, "share")), ["report.csv"]);
+});
+
 // v0.36 deleted a saved query or a process and left what ran it: the next
 // one given the name was then run on a timer nobody set for it (#1879).
 test("a schedule and a tile left by a deleted saved query go when another takes its name", async (t) => {
