@@ -18,6 +18,8 @@
 // by its first column's header. Only a full check (`deep`) reads data: the
 // largest index of every symbol column, to find one past its own domain's
 // end (#1103), as a float: a long arrives as an object, which reads as none.
+// A nested column of enumerations (77h, each item 20-76h) is one too: its
+// domain is its first item's and its largest index its items' (#2529).
 // A nested column (type 77h on), or one whose file q cannot read, without
 // its `c#` data file is missing `c#`: q fails on it at select (#1577).
 // Works on kdb+ (KDB-X) and PeachQ; held there by dbtools_q.test.js.
@@ -38,8 +40,8 @@ export const PARTITION_CHECK = [
   "  if[not`.d in k;:@[e;`dir;:;1b]];",
   "  cs:(),get` sv d,`.d;have:cs where cs in k;",
   "  ty:{[d;c]@[{type get x};` sv d,c;0Nh]}[d]each have;",
-  "  en:{[d;c;y]$[y within 20 76h;@[{key get x};` sv d,c;`];`]}[d]'[have;ty];",
-  "  mx:\"f\"${[d;deep;c;y]$[deep&y within 20 76h;@[{max\"j\"$get x};` sv d,c;0N];0N]}[d;deep]'[have;ty];",
+  "  en:{[d;c;y]$[y within 20 76h;@[{key get x};` sv d,c;`];y>=77h;@[{v:get x;$[count v;$[(type first v)within 20 76h;key first v;`];`]};` sv d,c;`];`]}[d]'[have;ty];",
+  "  mx:\"f\"${[d;deep;c;y]$[deep&y within 20 76h;@[{max\"j\"$get x};` sv d,c;0N];deep&y>=77h;@[{v:get x;$[count v;$[(type first v)within 20 76h;max\"j\"$raze v;0N];0N]};` sv d,c;0N];0N]}[d;deep]'[have;ty];",
   "  n:$[count have;@[{\"f\"$count get x};` sv d,first have;0n];0n];",
   "  nh:{`$string[x],\"#\"}each have;nh:nh where(not nh in k)&(ty>=77h)|null ty;",
   "  @[e;`dir`dotd`cols`missing`types`enums`maxidx`rows;:;(1b;1b;string cs;string(cs except have),nh;\"h\"$ty;string en;mx;n)]};",
@@ -214,8 +216,13 @@ export function partitionProblems(a: Extract<PartAnswer, { hdb: true }>): Proble
         }
       }
     }
-    // Enumerations: a domain the root has no file for, or an index past its end.
-    const enumCols = (r: PartRow) => r.columns.filter((c) => !r.missing.includes(c)).map((c, i) => ({ c, d: r.enums[i] ?? "", t: r.types[i], max: r.maxIndexes[i] ?? null })).filter((x) => x.t >= 20 && x.t <= 76);
+    // Enumerations: a domain the root has no file for, or an index past its
+    // end. A nested column is one when its items are (#2529).
+    const enumCols = (r: PartRow) =>
+      r.columns
+        .filter((c) => !r.missing.includes(c))
+        .map((c, i) => ({ c, d: r.enums[i] ?? "", t: r.types[i], max: r.maxIndexes[i] ?? null }))
+        .filter((x) => (x.t >= 20 && x.t <= 76) || (x.t >= 77 && x.d !== ""));
     const noDomain = new Map<string, string[]>();
     for (const r of good) {
       for (const { c, d } of enumCols(r)) {
