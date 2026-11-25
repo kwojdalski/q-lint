@@ -394,3 +394,31 @@ test("a row whose key the other side did not send, as it came back cut, is not c
   t.grid.cells[1] = ["1", "5"];
   assert.match(said(compareOutcomes(side("a", t), side("b", keyed([2, 3], 9)), -1)), /^1 cell differs, 2 rows not compared, as the other side did not send them \(rows lined up by key\)\./);
 });
+
+// 1%3 on a process at \P 3 and on one at \P 7 wrote 0.333 and 0.3333333:
+// the same value, called different. Text that agrees to the digits the
+// fewer of the two wrote cannot be told the same or different.
+test("floats written to two processes' \\P that agree as far as the fewer digits go are neither the same nor different (#2159)", () => {
+  const atom = (type, text) => ({ ok: true, type, text: [text] });
+  const both = (type, ta, tb) => compareOutcomes(side("a", atom(type, ta)), side("b", atom(type, tb)), -1);
+  const p = both(-9, "0.333", "0.3333333");
+  assert.deepStrictEqual([p.same, p.toDigits], [false, 1]);
+  assert.deepStrictEqual([both(9, "1e+03 0.333", "1000.5 0.3333333").toDigits, both(99, "`a`b!0.333 0.143", "`a`b!0.3333333 0.1428571").toDigits], [1, 1]);
+  // A float apart at the fewer digits, another type's text, or text around the numbers that differs: different.
+  assert.deepStrictEqual(
+    [both(-9, "0.333", "0.334"), both(-9, "0.333", "0.3343333"), both(-7, "1", "2"), both(0, "(0.333;`a)", "(0.3333333;`b)"), both(0, "(`a0.333;1)", "(`a0.3333333;1)"), both(-14, "2024.01.01", "2024.01.02")].map((c) => [c.same, c.toDigits]),
+    [[false, 0], [false, 0], [false, 0], [false, 0], [false, 0], [false, 0]],
+  );
+  const page = loadPage();
+  page.send({ type: "compare", id: 1, code: "1%3", comparison: p });
+  assert.strictEqual(page.posted.at(-1).rendered.summary, "a and b wrote the same answer as far as the fewer digits written go: their \\P differs, so whether they are the same cannot be told. Compare enlist of it to compare its every digit.");
+  // A cell GRID sent only as text, a column of dictionaries: not counted as differing.
+  const dicts = (text) => table({ a: [98, [text]] });
+  const c = compareOutcomes(side("a", dicts("`a`b!0.333 0.143")), side("b", dicts("`a`b!0.3333333 0.1428571")), -1);
+  assert.deepStrictEqual([c.same, c.differing, c.toDigits], [false, 0, 1]);
+  page.send({ type: "compare", id: 2, code: "t", comparison: c });
+  assert.strictEqual(page.posted.at(-1).rendered.summary, "1 cell is the same as far as the fewer digits written go, as the processes' \\P differs, and no further compared (rows lined up by place).");
+  // A symbol's text is all of it.
+  const syms = (text) => table({ s: [11, [text]] });
+  assert.deepStrictEqual([compareOutcomes(side("a", syms("0.1")), side("b", syms("0.10")), -1)].map((x) => [x.differing, x.toDigits]), [[1, 0]]);
+});

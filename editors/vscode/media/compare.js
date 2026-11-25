@@ -40,6 +40,10 @@
     if (c.partial && c.columns.length > 0 && c.differing === 0 && c.onlyLeft === 0 && c.onlyRight === 0) {
       return "The rows held are the same." + cutNote;
     }
+    if (c.columns.length === 0 && c.toDigits > 0) {
+      // Each to its own \P (#2159).
+      return l + " and " + r + " wrote the same answer as far as the fewer digits written go: their \\P differs, so whether they are the same cannot be told. Compare enlist of it to compare its every digit.";
+    }
     if (c.columns.length === 0) {
       return l + " and " + r + " gave different answers.";
     }
@@ -67,6 +71,9 @@
     }
     if (c.cut > 0) {
       parts.push(plural(c.cut, "cell is", "cells are") + " the same as far as shown, cut at 200 characters, and no further compared");
+    }
+    if (c.toDigits > 0) {
+      parts.push(plural(c.toDigits, "cell is", "cells are") + " the same as far as the fewer digits written go, as the processes' \\P differs, and no further compared");
     }
     if (parts.length === 0) {
       parts.push("the rows held are the same, the columns or row counts are not");

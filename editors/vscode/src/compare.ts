@@ -92,6 +92,10 @@ export interface Comparison {
   /// Whether the answers are text that holds a float only to the digits
   /// its process writes, so that `same` is the same to those digits.
   digits: boolean;
+  /// Answers whose text differs only in how many digits of a float each
+  /// wrote, and agrees to the fewer: written at two `\P`s, they may be the
+  /// same value or not (#2159). For two tables, the cells so compared.
+  toDigits: number;
   /// Whether the two answers are the same.
   same: boolean;
   /// Whether either side came back cut - fewer rows than its result has,
@@ -143,6 +147,29 @@ function side(outcome: Outcome): { side: Side } {
 /// float, a real and a datetime, a string, and a function.
 const exactText = (type: number): boolean => type === 10 || type >= 100 || (type < 0 && ![-8, -9, -15].includes(type));
 
+/// A float in q's text: not inside a name, a date or a time, and with no
+/// more than a float's `f` or a real's `e` after it.
+const NUMBER = /(?<![\w`".:-])-?\d+(?:\.\d*)?(?:e[+-]?\d+)?(?=[fe]?(?![\w.:]))/g;
+
+/// Whether texts `a` and `b`, which differ, differ only in the digits of
+/// their numbers, each of which may be the other's written to more or
+/// fewer digits: what each number's text says of its value - within half
+/// its last digit - overlaps the other's (#2159).
+export function sameToDigits(a: string, b: string): boolean {
+  const na = [...a.matchAll(NUMBER)];
+  const nb = [...b.matchAll(NUMBER)];
+  if (a === b || na.length === 0 || na.length !== nb.length || a.replace(NUMBER, "#") !== b.replace(NUMBER, "#")) {
+    return false;
+  }
+  // Half a unit of the last digit written: 0.333 is 0.333 +- 0.0005.
+  const half = (t: string): number => {
+    const [m, e] = t.replace("-", "").split("e");
+    const point = m.indexOf(".");
+    return 0.5 * 10 ** (Number(e ?? 0) - (point < 0 ? 0 : m.length - point - 1));
+  };
+  return na.every((x, i) => Math.abs(Number(x[0]) - Number(nb[i][0])) < half(x[0]) + half(nb[i][0]));
+}
+
 /// Whether two values `GRID` sent are the same: a long by its digits,
 /// however it was decoded, and a general list's item part by part.
 function sameValue(a: unknown, b: unknown): boolean {
@@ -191,7 +218,11 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number,
     // Two values' text, not two errors': the same to the digits written,
     // unless the text of their type is the whole value.
     const digits = same && sa.kind === "text" && [left, right].some((o) => "answer" in o && o.answer.ok && !exactText(o.answer.type));
-    return { left: sa, right: sb, columns: [], inLeft: [], inRight: [], matchedBy: "place", rows: [], lined: 0, differing: 0, onlyLeft: 0, onlyRight: 0, uncompared: 0, retyped: [], cut: 0, digits, same, partial };
+    // Of one type, and not one whose text is all of it, to fewer digits on one.
+    const typeOf = (o: Outcome): number | undefined => ("answer" in o && o.answer.ok ? o.answer.type : undefined);
+    const toDigits =
+      !same && !partial && sa.kind === "text" && sb.kind === "text" && typeOf(left) === typeOf(right) && !exactText(typeOf(left) ?? 10) && sameToDigits(sa.text, sb.text) ? 1 : 0;
+    return { left: sa, right: sb, columns: [], inLeft: [], inRight: [], matchedBy: "place", rows: [], lined: 0, differing: 0, onlyLeft: 0, onlyRight: 0, uncompared: 0, retyped: [], cut: 0, digits, toDigits, same, partial };
   }
   const ga = ha.grid;
   const gb = hb.grid;
@@ -282,6 +313,15 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number,
   let onlyRight = 0;
   let uncompared = 0;
   let cut = 0;
+  let toDigits = 0;
+  // A cell compared by its text, of a type that may hold a float - a
+  // general list's, a table's or a dictionary's - written to two `\P`s.
+  const digitsApart = (i: number, ra: number, rb: number): boolean => {
+    const [ta, va] = sent(ha, indexA[i], ra);
+    const [tb, vb] = sent(hb, indexB[i], rb);
+    const type = ha.payload.types[indexA[i]];
+    return (va === undefined || vb === undefined) && type === hb.payload.types[indexB[i]] && (type === 0 || type >= 77) && sameToDigits(ta, tb);
+  };
   // A side that sent fewer rows than it has may hold a row the other has
   // past them, by its key or its place: that row is not compared (#2158).
   const cutA = countA < ga.total;
@@ -299,6 +339,12 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number,
     } else if (r === undefined || rb === undefined) {
       onlyLeft++;
     } else {
+      columns.forEach((_, i) => {
+        if (differs[i] && indexA[i] >= 0 && indexB[i] >= 0 && digitsApart(i, ra, rb)) {
+          differs[i] = false;
+          toDigits++;
+        }
+      });
       differing += differs.filter(Boolean).length;
       columns.forEach((_, i) => {
         if (indexA[i] < 0 || indexB[i] < 0) {
@@ -336,7 +382,8 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number,
     ...(keyedAlike ? {} : { rekeyed: { left: namesA.slice(0, keysA), right: namesB.slice(0, keysB) } }),
     cut,
     digits: false,
-    same: !partial && sameColumns && keyedAlike && retyped.length === 0 && cut === 0 && differing === 0 && onlyLeft === 0 && onlyRight === 0 && ga.total === gb.total,
+    toDigits,
+    same: !partial && sameColumns && keyedAlike && retyped.length === 0 && cut === 0 && toDigits === 0 && differing === 0 && onlyLeft === 0 && onlyRight === 0 && ga.total === gb.total,
     partial,
   };
 }
