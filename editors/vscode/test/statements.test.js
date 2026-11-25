@@ -1,6 +1,6 @@
 // The one reader of q text every feature shares (#2278-#2287): what each
-// cuts from a file is what q's loader (`\l`) runs from it, by the rules
-// it follows, checked on KDB-X.
+// cuts from a file is what q's loader runs from it. scriptload_q.test.js
+// holds the cutter against a real q's `\l`; these hold the rules it found.
 const test = require("node:test");
 const assert = require("node:assert");
 const { statements, statementSpans, scriptCode, blockAt, lineKinds, isBlankLine } = require("../out/statements.js");
