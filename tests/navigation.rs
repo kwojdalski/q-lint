@@ -265,6 +265,77 @@ fn a_k_lines_assignment_is_outlined_by_the_last_write() {
     assert_eq!(holds("g:5\nk)g:{x}\n"), [("g".to_string(), true)]);
 }
 
+/// Files whose names a real q is asked for: one for each way the outline
+/// has been wrong about what `\l` defines, or of what kind (#2309-#2317).
+const DEFINED_BY_LOAD: &[&str] = &[
+    "c:{[] 42}[]\nd:{[a] 7}[]\nh:{x+y}[]\n",
+    "a:b:{x+1}\n",
+    ".x.__h:{x}\n.x._k:{x}\nm._b:1\n",
+    ".jobs:(`symbol$())!()\n.jobs[`daily]:1\n.c4.x:0\n.c4[`a]:1\n",
+    "`n1`n2 set' (1;{x})\n.[`n3;();:;{x}]\n(n5;n6):(1;{x})\n.c.z:0\n@[`.c;`n10;:;{x}]\nset[`n12;{x}]\n",
+    "f:{[a;b] a+b}\np:f[;1]\nal:f\nce:count each\nup:upsert\nd:f[1;2]\n",
+    "f:{x}\nf:5\ng:5\ng:{x}\n",
+    "k)g:{[a] a+1}\nh:5\nk)h:{x}\n",
+];
+
+/// What loading the file at `path` defines on the q that QLINT_TEST_Q names:
+/// each name, a namespace's members by their whole name, with whether its
+/// value is a function (type 100h to 112h).
+fn loaded_by_q(q: &str, path: &Path) -> Vec<(String, bool)> {
+    let script = format!(
+        r#".dmp.isns:{{[v] $[99h<>type v;0b;11h<>type key v;0b;(`)~first key v]}};
+.dmp.walk:{{[nm] raze .dmp.one[nm] each (key get nm) except `}};
+.dmp.one:{{[nm;k] full:$[nm~`;k;` sv nm,k]; v:@[get;full;{{`dmperr}}]; $[.dmp.isns v; .dmp.walk full; enlist (full;type v)]}};
+.dmp.all:{{[] r:raze .dmp.one[`] each (key `.) except `; r,raze {{[n] nm:` sv `,n; v:@[get;nm;0]; $[.dmp.isns v; .dmp.walk nm; enlist (nm;type v)]}} each (key `) except ``q`Q`h`j`z`o`dmp}};
+.dmp.before:.dmp.all[];
+system "l {}";
+.dmp.after:.dmp.all[];
+{{-1 "defined ",string[x 0]," ",string x 1}} each .dmp.after where not .dmp.after[;0] in .dmp.before[;0];
+exit 0
+"#,
+        path.display().to_string().replace('\\', "/")
+    );
+    let dir = path.parent().unwrap();
+    let dump = dir.join("dump.q");
+    std::fs::write(&dump, script).unwrap();
+    let mut words = q.split_whitespace();
+    let out = Command::new(words.next().unwrap())
+        .args(words)
+        .arg(&dump)
+        .arg("-q")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run q");
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut names: Vec<(String, bool)> = text
+        .lines()
+        .filter_map(|line| line.strip_prefix("defined "))
+        .map(|line| {
+            let (name, kind) = line.rsplit_once(' ').unwrap_or_else(|| panic!("{text}"));
+            let kind: i16 = kind.parse().unwrap_or_else(|_| panic!("{text}"));
+            (name.to_string(), (100..=112).contains(&kind))
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn the_outline_names_what_q_defines_by_loading_the_file() {
+    let Ok(q) = std::env::var("QLINT_TEST_Q") else {
+        eprintln!("QLINT_TEST_Q names no q: the files stand as KDB-X loaded them");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    for (i, source) in DEFINED_BY_LOAD.iter().enumerate() {
+        let path = dir.path().join(format!("f{i}.q"));
+        std::fs::write(&path, source).unwrap();
+        let mut outlined = holds(source);
+        outlined.sort();
+        assert_eq!(outlined, loaded_by_q(&q, &path), "{source}");
+    }
+}
+
 #[test]
 fn the_path_of_each_kind_of_load_is_found_under_the_cursor() {
     let source =
