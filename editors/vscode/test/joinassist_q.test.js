@@ -70,3 +70,15 @@ test("a view named as a table is refused, not evaluated (#1865)", { skip }, asyn
   assert.deepStrictEqual(await pending(), ["bad", "spy"]);
   assert.deepStrictEqual(readShape(await connection.call(TABLE_SHAPE, asCode("select from spy")), "q").columns, ["sym", "time", "px"]);
 });
+
+test("lj and ij on an unkeyed right table keep the left table's own time, joining only the right's own columns (#2408)", { skip }, async (t) => {
+  const { connection } = await connect(t, SERVER);
+  const shape = async (e) => readShape(await connection.call(TABLE_SHAPE, asCode(e)), e);
+  const joins = suggestJoins(await shape("trade"), await shape("quote"));
+  for (const join of ["lj", "ij"]) {
+    const s = joins.find((j) => j.join === join);
+    assert.match(s.why, /replace trade's time/);
+    const same = await connection.evaluate(`{r:value x;(cols[r]~\`sym\`time\`px\`bid)&(exec time from r)~exec time from trade where sym in quote\`sym}${JSON.stringify(s.expression)}`);
+    assert.strictEqual(same.value, true, s.expression);
+  }
+});

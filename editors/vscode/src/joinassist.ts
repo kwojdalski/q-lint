@@ -109,9 +109,14 @@ export function suggestJoins(left: Shape, right: Shape): Suggestion[] {
   } else if (right.keys.length === 0) {
     const keys = common.filter((c) => !TEMPORAL.has(type(right, c)) && !NUMERIC.has(type(right, c)) && type(right, c) !== "f");
     if (keys.length > 0 && keys.length < right.columns.length) {
-      const keyed = `${symbols(keys)} xkey ${r}`;
-      out.push({ join: "lj", expression: `${l} lj ${keyed}`, why: `${right.expression.trim()} has no keys, so it is keyed on the columns both share, ${keys.join(", ")}; where a key repeats, lj takes the first row with it.${onDisk(right)}` });
-      out.push({ join: "ij", expression: `${l} ij ${keyed}`, why: `Only the rows of ${left.expression.trim()} with a match on ${keys.join(", ")}.${onDisk(right)}` });
+      // A shared column left out of the keys would be overwritten in every
+      // row by the right table's: only its own columns are joined (#2408).
+      const own = right.columns.filter((c) => !common.includes(c));
+      const dropped = common.filter((c) => !keys.includes(c));
+      const keyed = `${symbols(keys)} xkey ${dropped.length > 0 ? `${symbols([...keys, ...own])}#${r}` : r}`;
+      const kept = dropped.length > 0 ? ` Only its own columns${own.length > 0 ? `, ${own.join(", ")},` : ""} are joined: a join on these keys would replace ${left.expression.trim()}'s ${dropped.join(", ")} with ${right.expression.trim()}'s.` : "";
+      out.push({ join: "lj", expression: `${l} lj ${keyed}`, why: `${right.expression.trim()} has no keys, so it is keyed on the columns both share, ${keys.join(", ")}; where a key repeats, lj takes the first row with it.${kept}${onDisk(right)}` });
+      out.push({ join: "ij", expression: `${l} ij ${keyed}`, why: `Only the rows of ${left.expression.trim()} with a match on ${keys.join(", ")}.${kept}${onDisk(right)}` });
     }
   }
 
