@@ -132,6 +132,10 @@ impl Closed {
                 continue;
             };
             let uri = sources.spelled_uri(&path, key);
+            // Two spellings the client knows by one URI report once.
+            if sent.contains(&uri) {
+                continue;
+            }
             // The text is the editor's, which has no BOM in it, so
             // everything is found where the editor shows it; `linted` still
             // reports the file's BOM (#2027).

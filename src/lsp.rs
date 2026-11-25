@@ -272,7 +272,10 @@ struct Index {
     /// reached it - a symlink by its own name, not its target's, which is
     /// its key. `qlinter .` lints a link by its name and under the
     /// configuration above it, and so does a workspace-scope lint (#2289).
-    reached: HashMap<String, std::collections::BTreeSet<String>>,
+    /// Each path is kept under `spelling(path)`, so one name reached by two
+    /// spellings - the scan's `C:/w\\a.q` and a URI's `C:/w/a.q` on Windows
+    /// - is linted and published once, not twice to one URI.
+    reached: HashMap<String, std::collections::BTreeMap<String, String>>,
     /// Each workspace folder as the client named it, which is how an answer
     /// names the files under it (`Sources::uri`).
     folders: Vec<Folder>,
@@ -544,7 +547,8 @@ impl Index {
                 self.reached
                     .entry(key.clone())
                     .or_default()
-                    .insert(path.to_string());
+                    .entry(spelling(path))
+                    .or_insert_with(|| path.to_string());
                 self.put_keyed(key, &text, false)
             }
             _ => self.forget(path),
@@ -554,7 +558,7 @@ impl Index {
     /// The paths the file `key` was read from disk by, or the key itself.
     fn spellings(&self, key: &str) -> Vec<String> {
         match self.reached.get(key) {
-            Some(paths) if !paths.is_empty() => paths.iter().cloned().collect(),
+            Some(paths) if !paths.is_empty() => paths.values().cloned().collect(),
             _ => vec![key.to_string()],
         }
     }
@@ -3791,6 +3795,21 @@ fn is_q_uri(uri: &str) -> bool {
     file_path(uri).is_some_and(|path| is_q_path(&path))
 }
 
+/// What tells two paths that name a file by the same name apart from two
+/// that name it by different ones (a symlink and its target): `path` with
+/// `.` dropped and its separators made one - on Windows a backslash and `/` both
+/// are, and the walk joins with one while a URI gives the other - and, on
+/// Windows, without case, which its filesystem ignores (#2289).
+fn spelling(path: &str) -> String {
+    let normal: std::path::PathBuf = Path::new(path).components().collect();
+    let normal = normal.to_string_lossy().into_owned();
+    if cfg!(windows) {
+        normal.replace('\\', "/").to_lowercase()
+    } else {
+        normal
+    }
+}
+
 /// A `file:` URI as a filesystem path, and `None` for any other scheme.
 ///
 /// Hand-rolled rather than pulling in a URL crate: the only scheme an editor
@@ -3937,6 +3956,48 @@ fn file_key(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One file read twice by one name, spelled two ways, is one path to
+    /// lint it by: on Windows the scan joins `\\` onto a folder a URI spells
+    /// with `/`, and a closed file was linted, and published to its URI,
+    /// once per spelling - an extra notification where a client waited for
+    /// the reply to shutdown, and two answers to one change (#2289).
+    #[test]
+    fn one_file_read_by_two_spellings_of_its_name_is_linted_by_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::write(root.join("a.q"), "a:1\n").unwrap();
+        let mut idx = Index::default();
+        let plain = root.join("a.q").to_string_lossy().into_owned();
+        let dotted = root.join(".").join("a.q").to_string_lossy().into_owned();
+        // A verbatim `\\?\` path, which a canonical one is on Windows,
+        // keeps its `.`: there the separators and the case differ instead.
+        let mut spelled = vec![plain.clone()];
+        if !cfg!(windows) {
+            spelled.push(dotted);
+        }
+        if cfg!(windows) {
+            spelled.push(plain.replace('\\', "/"));
+            spelled.push(plain.to_uppercase());
+        }
+        for path in &spelled {
+            idx.read(path);
+        }
+        assert_eq!(idx.spellings(&file_key(&plain)), [plain]);
+    }
+
+    #[test]
+    fn a_spelling_drops_dots_and_on_windows_separators_and_case() {
+        assert_eq!(spelling("/w/./a.q"), spelling("/w/a.q"));
+        assert_ne!(spelling("/w/link.q"), spelling("/w/t.q"));
+        if cfg!(windows) {
+            assert_eq!(spelling(r"C:\w\a.q"), spelling("c:/w/a.q"));
+            assert_eq!(spelling(r"//?/C:/w\a.q"), spelling("//?/C:/w/a.q"));
+        } else {
+            // A backslash is part of a name here.
+            assert_ne!(spelling(r"/w/b\a.q"), spelling("/w/b/a.q"));
+        }
+    }
 
     #[test]
     fn percent_escapes_decode_and_other_schemes_pass_through() {
