@@ -4018,6 +4018,54 @@ fn the_workspace_scope_lints_files_nobody_opened() {
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
+/// The last diagnostics published for each of `uris`, read until each has
+/// had some.
+fn last_published(
+    server: &mut Server,
+    uris: &[&str],
+) -> std::collections::HashMap<String, Vec<String>> {
+    let mut reported = std::collections::HashMap::new();
+    while uris.iter().any(|uri| !reported.contains_key(*uri)) {
+        let message = server.receive();
+        if message["method"] == "textDocument/publishDiagnostics" {
+            let uri = message["params"]["uri"].as_str().unwrap().to_string();
+            let codes = codes_of(message["params"]["diagnostics"].as_array().unwrap());
+            reported.insert(uri, codes);
+        }
+    }
+    reported
+}
+
+/// A file of a folder opened through a symlink, reported closed under the
+/// folder's spelling and then opened by its real path, reports once: what
+/// it reported closed is cleared when it opens, and what its buffer
+/// reported is cleared when it closes. Both stayed in the Problems panel,
+/// one of them with findings the file no longer had (#2172).
+#[cfg(unix)]
+#[test]
+fn a_file_opened_by_another_spelling_reports_under_one_uri() {
+    let dir = tempfile::tempdir().unwrap();
+    let real = dir.path().canonicalize().unwrap().join("real");
+    std::fs::create_dir(&real).unwrap();
+    std::fs::write(real.join("lib.q"), RESERVED_PARAM).unwrap();
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let (closed, open) = (file_uri(&link.join("lib.q")), file_uri(&real.join("lib.q")));
+    let options = json!({"lint": {"scope": "workspace"}});
+    let (mut server, _) = start_with_options(&link, &["--lsp"], options, Some(&link));
+    assert_eq!(codes_of(&server.diagnostics_for(&closed)), ["QF001"]);
+    server.open(&open, "f:{[d] 1+1}\n");
+    let reported = last_published(&mut server, &[&closed, &open]);
+    assert_eq!(reported[&open], Vec::<String>::new());
+    assert_eq!(reported[&closed], Vec::<String>::new(), "cleared on open");
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didClose",
+        "params":{"textDocument":{"uri":open}}}));
+    let reported = last_published(&mut server, &[&closed, &open]);
+    assert_eq!(reported[&closed], ["QF001"], "as the disk has it");
+    assert_eq!(reported[&open], Vec::<String>::new(), "cleared on close");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
 /// A closed file that starts with a BOM reports where an editor shows it
 /// (#2027): the editor holds the text without the BOM, so a finding on
 /// line 0 is where it is once the file is open, and the BOM's own finding

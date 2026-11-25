@@ -792,6 +792,51 @@ fn an_open_buffer_is_read_as_the_editor_has_it_not_as_the_disk_does() {
     assert_eq!(places(&reply["result"]), [place("lib.q", 2, 0, 3)]);
 }
 
+/// A file opened by another spelling of its path than the folder's - its
+/// real path under a folder opened through a symlink, or another case on a
+/// disk that ignores case - and closed again is still the workspace's: the
+/// close compared the spelling with the folder's, found it outside, and
+/// forgot the file's definitions until a restart (#2172).
+#[cfg(unix)]
+#[test]
+fn a_file_closed_under_another_spelling_of_its_path_stays_in_the_index() {
+    let dir = tempfile::tempdir().unwrap();
+    let real = dir.path().canonicalize().unwrap().join("Real");
+    std::fs::create_dir(&real).unwrap();
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let lib = "helper:{x+1}\n";
+    let main = "\\l lib.q\ng:{helper 1}\n";
+    let mut server = Server::start(&link, &[("lib.q", lib), ("main.q", main)]);
+    let uri = server.open(&link, "main.q", main);
+    let found = |server: &mut Server| {
+        let reply = server.ask(
+            "textDocument/definition",
+            &uri,
+            main,
+            "helper 1",
+            0,
+            json!({}),
+        );
+        places(&reply["result"])
+    };
+    assert_eq!(found(&mut server), [place("lib.q", 0, 0, 6)]);
+    let mut spellings = vec![real.clone()];
+    // The same folder in another case, where the disk takes it as one.
+    let other_case = real.with_file_name("REAL");
+    if other_case.exists() {
+        spellings.push(other_case);
+    }
+    for folder in spellings {
+        let opened = server.open(&folder, "lib.q", lib);
+        server.send(json!({"jsonrpc":"2.0","method":"textDocument/didClose",
+            "params":{"textDocument":{"uri":opened}}}));
+        assert_eq!(found(&mut server), [place("lib.q", 0, 0, 6)], "{folder:?}");
+        let reply = server.request("workspace/symbol", json!({"query": "helper"}));
+        assert_eq!(reply["result"].as_array().unwrap().len(), 1, "{folder:?}");
+    }
+}
+
 #[test]
 fn a_file_loaded_under_a_context_defines_its_names_there() {
     let dir = tempfile::tempdir().unwrap();

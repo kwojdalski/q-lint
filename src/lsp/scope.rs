@@ -116,9 +116,8 @@ impl Closed {
         opts: &Options,
     ) -> Result<(), String> {
         let sources = Sources::new(docs, idx);
-        if sources.open.contains_key(key) {
-            self.published.remove(key);
-            return Ok(());
+        if let Some(uri) = sources.open.get(key) {
+            return self.opened(writer, key, uri);
         }
         let read = idx.files.contains_key(key).then(|| on_disk(key)).flatten();
         let Some((text, _)) = read else {
@@ -148,9 +147,30 @@ impl Closed {
         }
     }
 
-    /// Whether diagnostics were published for `key` as a closed file.
-    pub(super) fn published(&self, key: &str) -> bool {
-        self.published.contains_key(key)
+    /// The file `key` is open as `uri`, whose buffer's diagnostics are the
+    /// ones that stand now: what was published for it closed is dropped -
+    /// and cleared, when it went to another spelling of its path, which the
+    /// buffer's would not replace. Left, a file opened by its real path
+    /// under a folder opened through a symlink was listed twice in the
+    /// Problems panel, once with what its buffer no longer says (#2172).
+    pub(super) fn opened(
+        &mut self,
+        writer: &mut impl Write,
+        key: &str,
+        uri: &str,
+    ) -> Result<(), String> {
+        match self.published.get(key) {
+            Some(to) if to != uri => self.clear(writer, key),
+            _ => {
+                self.published.remove(key);
+                Ok(())
+            }
+        }
+    }
+
+    /// The URI diagnostics were published to for `key` as a closed file.
+    pub(super) fn published_to(&self, key: &str) -> Option<&str> {
+        self.published.get(key).map(String::as_str)
     }
 
     pub(super) fn stop(&mut self) {

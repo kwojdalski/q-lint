@@ -482,19 +482,42 @@ impl Index {
     /// Whether the scan would have read `path`: index on, under a workspace
     /// folder, in no directory the scan skips, and not excluded.
     fn covers(&self, path: &str, policy: &Policy) -> bool {
-        let path = std::path::Path::new(path);
         self.enabled
-            && is_q_path(&path.to_string_lossy())
+            && is_q_path(path)
             && self.roots.iter().any(|root| {
                 let root = std::path::Path::new(root);
                 // The file and each directory above it within the folder,
                 // as the scan asks about each before entering it (#795).
-                path.starts_with(root)
-                    && !path
+                self.spelled_under(root, path).is_some_and(|path| {
+                    !path
                         .ancestors()
                         .take_while(|p| *p != root)
                         .any(|p| skipped(policy, p) || self.excluded(root, p))
+                })
             })
+    }
+
+    /// `path` as the scan reaches it under the workspace folder `root`: as
+    /// given, when it is spelled under the folder, and otherwise the same
+    /// file by its key, below the folder's key - opened in another case, by
+    /// its real path under a folder opened through a symlink, or with `C:`
+    /// for `c:`. Compared as spelled, a document closed under one spelling
+    /// was not covered by a folder given in another, and its definitions
+    /// were forgotten until a restart (#2172). The spelling is tried first:
+    /// a symlink to a file in the folder is read by the scan (#542), and
+    /// its key is where it points.
+    fn spelled_under(&self, root: &std::path::Path, path: &str) -> Option<std::path::PathBuf> {
+        let given = std::path::Path::new(path);
+        if given.starts_with(root) {
+            return Some(given.to_path_buf());
+        }
+        let key = std::path::PathBuf::from(file_key(path));
+        let rest = key.strip_prefix(file_key(&root.to_string_lossy())).ok()?;
+        Some(if rest.as_os_str().is_empty() {
+            root.to_path_buf()
+        } else {
+            root.join(rest)
+        })
     }
 
     /// A pattern is matched against the path relative to the folder it is
@@ -586,13 +609,11 @@ impl Index {
     /// have: a watcher reports a folder created or moved in as one event for
     /// the folder, not one per file inside it (#1217).
     fn add_tree(&mut self, path: &str, policy: &Policy) -> bool {
-        let dir = std::path::PathBuf::from(path);
-        let Some(root) = self
-            .roots
-            .iter()
-            .map(std::path::PathBuf::from)
-            .find(|root| dir.starts_with(root))
-        else {
+        let Some((root, dir)) = self.roots.iter().find_map(|root| {
+            let root = std::path::PathBuf::from(root);
+            let dir = self.spelled_under(&root, path)?;
+            Some((root, dir))
+        }) else {
             return false;
         };
         if !self.enabled
@@ -1507,6 +1528,9 @@ pub fn serve(
                         let uri = uri_of(&params["textDocument"]);
                         let text = params["textDocument"]["text"].as_str().unwrap_or("");
                         unsaved.remove(&uri);
+                        if is_q_uri(&uri) {
+                            closed.opened(writer, &file_key(&path_of(&uri)), &uri)?;
+                        }
                         publish(
                             writer,
                             &mut docs,
@@ -1592,7 +1616,9 @@ pub fn serve(
                         if closed.on && idx.files.contains_key(&key) {
                             closed.lint(writer, &key, &docs, &idx, policy, &opts)?;
                         }
-                        if !closed.published(&key) {
+                        // To the URI it was open by, when the file reports
+                        // under another (#2172).
+                        if closed.published_to(&key) != Some(uri.as_str()) {
                             send(
                                 writer,
                                 json!({"method": "textDocument/publishDiagnostics",
@@ -1881,7 +1907,7 @@ pub fn serve(
                                 config_changed = true;
                                 continue;
                             }
-                            if docs.contains_key(&uri) {
+                            if docs.contains_key(&uri) || is_open(&docs, &path) {
                                 continue;
                             }
                             // A directory, not entered through a symlink, as the
@@ -3603,6 +3629,15 @@ fn on_disk(path: &str) -> Option<(String, bool)> {
     let text = String::from_utf8_lossy(&bytes);
     let (text, bom) = q_lint_rs::as_an_editor_holds(&text);
     Some((text.to_string(), bom))
+}
+
+/// Whether the file `path` is an open document, under whatever spelling of
+/// its path it was opened by: its buffer, not the disk, is what the index
+/// holds of it (#2172).
+fn is_open(docs: &Documents, path: &str) -> bool {
+    let key = file_key(path);
+    docs.keys()
+        .any(|uri| is_q_uri(uri) && file_key(&path_of(uri)) == key)
 }
 
 /// One spelling per file, for the index: the editor's URI and the folder scan
