@@ -164,7 +164,15 @@ export async function main(argv: string[], io = { out: (s: string) => process.st
         : args.input === "-"
           ? gridFromFile(args.json ? "stdin.json" : "stdin.csv", io.stdin())
           : gridFromFile(args.input!, readFileSync(args.input!, "utf8"));
-    writeFileSync(args.out, chartFromGrid(grid, args.options));
+    // A query's result past the rows asked for is charted as far as it
+    // came, and says so, on the chart and here (#2456).
+    const held = grid.cells[0]?.length ?? 0;
+    const cut = args.query !== undefined && grid.total > held ? `the first ${held.toLocaleString("en-US")} of ${grid.total.toLocaleString("en-US")} rows` : undefined;
+    const options = cut === undefined ? args.options : { ...args.options, title: args.options.title ? `${args.options.title} (${cut})` : cut };
+    writeFileSync(args.out, chartFromGrid(grid, options));
+    if (cut !== undefined) {
+      io.err(`chart: the query answered ${grid.total.toLocaleString("en-US")} rows: only ${cut} are drawn\n`);
+    }
     io.out(`wrote ${args.out}\n`);
     return 0;
   } catch (error) {

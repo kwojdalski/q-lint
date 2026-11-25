@@ -78,3 +78,15 @@ test("a column of hex, binary or octal ids is text, not the numbers JavaScript r
     assert.strictEqual(gridFromCsv(`a\n1\n${word}\n`).columns[0].numeric, false, word);
   }
 });
+
+test("a query's chart of more rows than it draws says how many it left out, on the chart and on stderr (#2456)", { skip: require("./qserver.js").skip }, async (t) => {
+  const { connection, dir } = await require("./qserver.js").connect(t, "");
+  const port = (await connection.evaluate('system"p"')).value;
+  const out = path.join(dir, "big.svg");
+  const said = { out: [], err: [] };
+  const io = { out: (s) => said.out.push(s), err: (s) => said.err.push(s), stdin: () => "" };
+  const code = await main(["--host", "127.0.0.1", "--port", String(port), "--query", "([] x:til 250000; y:til 250000)", "--kind", "line", "-o", out], io);
+  assert.strictEqual(code, 0);
+  assert.match(said.err.join(""), /250,000 rows: only the first 100,000 of 250,000 rows are drawn/);
+  assert.match(fs.readFileSync(out, "utf8"), /the first 100,000 of 250,000 rows/);
+});
