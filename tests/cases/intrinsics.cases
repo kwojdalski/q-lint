@@ -828,3 +828,37 @@ g:max`a
 === clean profile: general | a digit straight after the name is part of another name, not an argument (#2241)
 a:{til1:1.5; til1}[]
 
+
+=== QT011 profile: general | a temporal or real null is an atom to sort (q 5: 'rank, #2243)
+a:asc 0Nd
+b:iasc 0Np
+c:desc 0Ne
+d:asc 0Wp
+
+=== QT012 profile: general | and to distinct (q 5: 'type, #2243)
+a:distinct 0Nd
+b:distinct 0Nt
+
+=== QT013 profile: general | and to flip (q 5: 'rank, #2243)
+a:flip 0Np
+b:flip 0Nz
+
+=== QT008 profile: general | a real or temporal null is no count (q 5: 'type, #2243)
+a:til 0Ne
+b:til 0Nm
+c:til 0Wd
+
+=== QT009 profile: general | nor something to repeat indices by (q 5: 'type, #2243)
+a:where 0Nd
+b:where 0Wt
+
+=== QT017 profile: general | nor a window (q 5: 'type, #2243)
+a:0Nd mavg 1 2
+
+=== clean profile: general | what q runs on the same nulls stays silent (#2243)
+a:sum 0Nd
+b:asc enlist 0Nd
+c:distinct (0Nd;0Nd)
+d:count 0Np
+e:til 0Wh
+

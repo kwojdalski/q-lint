@@ -95,11 +95,16 @@ fn literal(s: &str) -> Option<Literal> {
     }
     // A null or an infinity atom: the integer ones are integers and the
     // float ones floats (q 5: `asc 0N` and `iasc 0w` are 'rank, `til 0n`
-    // 'type, #616).
-    if let Some(m) = re!(r"^(-)?0(?:[NW][hij]?|([nw])[ef]?)$").captures(s) {
+    // 'type, #616). A type letter after `0N` or `0W` gives the real, float
+    // or temporal one: `0Ne`, `0Wf`, `0Nd`, `0Wp`, `0Nm` ... `0Nt` (q 5:
+    // `asc 0Nd` is 'rank, `til 0Ne` and `distinct 0Nd` 'type, #2243).
+    if let Some(m) = re!(r"^(-)?0(?:[NW]([hijefpmdznuvt])?|([nw])[ef]?)$").captures(s) {
+        let letter = m.get(2).map_or("", |l| l.as_str());
         return Some(Literal {
-            kind: if m.get(2).is_some() {
+            kind: if m.get(3).is_some() || matches!(letter, "e" | "f") {
                 Kind::Float
+            } else if !letter.is_empty() && "pmdznuvt".contains(letter) {
+                Kind::Temporal
             } else {
                 Kind::Integer
             },
