@@ -20,6 +20,12 @@ export const GATEWAY_COMMANDS = {
   queryWith: "q-lint.queryGatewayWithServerTypes",
 } as const;
 
+/// Statements as they go to a process: on a TorQ gateway through
+/// `.gw.syncexec`, `plain` when they are then a gateway call, which defers
+/// its reply past any lambda of q-lint's, so goes as plain strings
+/// (`Live.gatewayed`).
+export type Gatewayed = (cut: string[]) => { cut: string[]; plain: boolean };
+
 /// `q-lint.connection.torqGateway.enable`: whether a gateway's queries go
 /// through `.gw.syncexec`, and its commands are offered.
 export function readGateway(get: <T>(key: string, fallback: T) => T): { enabled: boolean } {

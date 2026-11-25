@@ -451,9 +451,9 @@ class QnbKernel {
         }
         running = true;
         try {
-          const [ok, parts]: [boolean, OutputPart[]] = cut.length === 0 ? [true, []] : await cellAnswer(connection, directive, cut, settings);
+          const [ok, parts]: [boolean, OutputPart[]] = cut.length === 0 ? [true, []] : await cellAnswer(connection, directive, cut, settings, (c) => this.live.gatewayed(c));
           // A value that cannot be read leaves the cell's output as it is.
-          const values = ok && markdown.length > 0 ? await liveValues(connection, texts).catch(() => []) : [];
+          const values = ok && markdown.length > 0 ? await liveValues(connection, texts, (c) => this.live.gatewayed(c)).catch(() => []) : [];
           return [ok, parts, values];
         } finally {
           // Answered: an Interrupt from here on has no query of the cell's

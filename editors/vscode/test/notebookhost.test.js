@@ -268,6 +268,7 @@ function slowLive() {
   return {
     release: (code) => waiting.get(code)?.(),
     // The guard's pieces, a cell's source and its live values (#1442), as one text.
+    gatewayed: (cut) => ({ cut, plain: false }),
     runOnActive: async (pieces, query) => {
       const code = guardText(pieces);
       await new Promise((resolve) => waiting.set(code, resolve));
@@ -390,6 +391,7 @@ function recordingLive(processes, active) {
       live.active = label;
       return true;
     },
+    gatewayed: (cut) => ({ cut, plain: false }),
     runOnActive: async (code, query) => {
       live.sent.push(guardText(code));
       const connection = {
