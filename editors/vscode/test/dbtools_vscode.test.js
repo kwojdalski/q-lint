@@ -329,6 +329,22 @@ test("a dashboard's and a saved query's $(name) are text in the picks, and any n
   dashboards.close();
 });
 
+// With no saved query, Add to Dashboard offered an empty pick (#2262).
+test("Add to Dashboard with no saved query says to save one first, and asks nothing", async (t) => {
+  capture();
+  const { live, context } = await setUp(t);
+  const dashboards = new Dashboards(context, live);
+  let asked;
+  stub.picks.push((o) => ((asked = o.title), undefined));
+  const said = await stub.commands.get(DB_COMMANDS.addToDashboard)();
+  assert.strictEqual(asked, undefined);
+  stub.picks.length = 0;
+  assert.strictEqual(said, "q-lint: there is no saved query to add yet; save one with q-lint: Save Query.");
+  assert.deepStrictEqual(stub.messages.at(-1), ["info", said]);
+  assert.deepStrictEqual(context.workspaceState.get(DASHBOARDS_KEY, []), []);
+  dashboards.close();
+});
+
 // A timer was set only when a tile had none: 5 s -> 300 s went on
 // querying every 5 s until the panel closed.
 test("changing a tile's refresh interval sets its timer again (#1123)", async (t) => {

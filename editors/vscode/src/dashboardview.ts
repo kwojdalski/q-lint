@@ -160,6 +160,8 @@ export class Dashboards {
   async add(query?: SavedQuery | string, dashboard?: string, processLabel?: string): Promise<string> {
     if (!on()) return say(dbOff("dashboards"));
     const saved = this.saved();
+    // Nothing to pick from: said, not an empty pick (#2262).
+    if (query === undefined && saved.length === 0) return say("q-lint: there is no saved query to add yet; save one with q-lint: Save Query.");
     const name =
       typeof query === "string"
         ? query
