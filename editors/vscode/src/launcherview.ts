@@ -299,6 +299,9 @@ export class Launcher {
       void window.showInformationMessage(plainMessage(`q-lint: ${label} was not started from here, so it is not stopped from here.`));
       return;
     }
+    // Connected to it, the connection is closed first, as Disconnect closes
+    // it: stopped, it did not drop, and is not reconnected to (#2134).
+    await this.live.stopping(label, this.started.get(label)!.port);
     await this.end(label);
   }
 

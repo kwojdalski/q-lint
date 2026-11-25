@@ -71,6 +71,7 @@ import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSetting
 import { ClosedBeforeHandshake, QConnection, QError, type Target } from "./qclient";
 import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, TunnelHandshakeError, readTunnel } from "./tunnel";
 import { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, readGateway } from "./gateway";
+import { isLocalHost } from "./launcher";
 import { HEARTBEAT, STEADY_MS, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
 import { clearedStamp, historyHeading, historyLabel, iconsEscaped, mergedHistory, plainMessage } from "./history";
 import { render } from "./query";
@@ -2421,6 +2422,19 @@ export class Live {
     this.reconnecting = undefined;
     this.showStatus();
     void window.showWarningMessage(plainMessage(`q-lint: could not reconnect to ${process.label} after ${tried} ${tried === 1 ? "try" : "tries"}.`));
+  }
+
+  /// The process `label`, started from here at `port`, is being stopped
+  /// (Stop Process): the connection to it closes as one the user closed,
+  /// and nothing reconnects to it (#2134).
+  async stopping(label: string, port: number): Promise<void> {
+    const at = this.active;
+    const to = at !== undefined && at.label === label && at.server === undefined && at.ssh === undefined && isLocalHost(at.host) && at.port === port;
+    if (to && (this.connection !== undefined || this.connecting !== undefined)) {
+      await this.disconnect();
+    } else if (this.reconnecting?.label === label) {
+      this.stopReconnecting();
+    }
   }
 
   /// Stop an automatic reconnect, if one is under way.

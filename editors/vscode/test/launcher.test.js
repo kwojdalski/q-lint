@@ -470,3 +470,24 @@ test("a process started here and then renamed is still running and stopped under
   assert.deepStrictEqual(launcher.running(), []);
   assert.strictEqual(await accepts(port), false);
 });
+
+// Stopping the connected process looked like a dropped connection: with
+// auto-reconnect on, q-lint warned, retried the process just stopped, and
+// said it could not reconnect (#2134).
+test("Stop Process on the connected process disconnects it: nothing reconnects to it (#2134)", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-"));
+  // Answers the handshake as q does.
+  fs.writeFileSync(path.join(dir, "fakeq.js"), FAKE.replace("(s) => s.end()", "(s) => s.once(\"data\", () => s.write(Buffer.from([3])))"));
+  const port = await freePort();
+  const { live } = await setUp(t, [proc("dev", port, { command: process.execPath, script: "fakeq.js", cwd: dir })]);
+  stub.config.user["connection.autoReconnect.enable"] = true;
+  await stub.commands.get(LAUNCH_COMMANDS.start)("dev");
+  for (let i = 0; i < 100 && !(await accepts(port)); i++) await sleep(50);
+  assert.strictEqual(await live.connectTo("dev"), true);
+  const said = stub.messages.length;
+  await stub.commands.get(LAUNCH_COMMANDS.stop)("dev");
+  await sleep(1500);
+  assert.strictEqual(live.activeLabel(), undefined);
+  assert.doesNotMatch(live.api().statusText(), /reconnecting/);
+  assert.deepStrictEqual(stub.messages.slice(said).filter(([, m]) => /reconnect/i.test(m)), []);
+});
