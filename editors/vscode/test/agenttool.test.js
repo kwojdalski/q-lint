@@ -67,6 +67,8 @@ function fakeLive({ active, wait = 0, during, shared = [] } = {}) {
     sharedList: () => shared,
     activeLabel: () => live.active?.label,
     activeProcess: () => live.active,
+    // No TorQ gateway here: statements go as written.
+    gatewayed: (cut) => ({ cut, plain: false }),
     connectTo: async (label) => {
       live.active = [dev, prod].find((p) => p.label === label);
       return live.active !== undefined;

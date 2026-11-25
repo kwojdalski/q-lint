@@ -2749,6 +2749,34 @@ export class Live {
     return cut.length === 0 ? code : gatewayStatement(cut, types);
   }
 
+  /// `cut`, statements for the active process, as they go to it from a
+  /// feature that runs code as Run does - the REPL, a notebook cell, an
+  /// agent: through `.gw.syncexec` on a TorQ gateway (#909), to the
+  /// process's server types. `plain` when that is a gateway call, which
+  /// defers its reply past any lambda of q-lint's, so it goes as plain
+  /// strings (#2584).
+  gatewayed(cut: string[]): { cut: string[]; plain: boolean } {
+    const process = this.active;
+    if (process === undefined || cut.length === 0) {
+      return { cut, plain: false };
+    }
+    const sent = this.throughGateway(cut.join("\n"), process);
+    return { cut: statements(sent), plain: isGatewayCall(sent) };
+  }
+
+  /// Why `feature`, which runs `code` inside a lambda of q-lint's, refuses
+  /// it on the active process: a TorQ gateway Run would send it through
+  /// `.gw.syncexec` to, whose deferred reply never reaches that lambda
+  /// (#2584), so it would run on the gateway itself instead. Undefined
+  /// elsewhere, and for the gateway's own code.
+  gatewayRefusal(feature: string, code: string): string | undefined {
+    const process = this.activeProcess();
+    if (process === undefined || this.throughGateway(code, process) === code) {
+      return undefined;
+    }
+    return `q-lint: ${feature} runs the code in q-lint's own q, which on the TorQ gateway ${process.label} would run it on the gateway itself, not through .gw.syncexec on its servers as Run Query does. Use Run Query there.`;
+  }
+
   /// Mark a saved process as a TorQ gateway with the server types its
   /// queries go to, or unmark it. `types` (from a keybinding or a test) sets
   /// them without asking; `""`, `[]` or `null` unmarks it.

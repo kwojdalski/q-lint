@@ -126,6 +126,7 @@ function fakeLive({ label = "rdb", launched = false, busy = false } = {}) {
     launched: () => launched,
     connectTo: async (l) => (live.connected.push(l), true),
     abort: async () => {},
+    gatewayed: (cut) => ({ cut, plain: false }),
     runOnActive: async (code, query) => {
       // A cell's guard pieces (#1442), as one text.
       live.sent.push(typeof code === "string" ? code : code.join("\n"));

@@ -9,6 +9,7 @@
 // a long above 2^53 would lose its last digits and a timestamp its
 // nanoseconds, so those are q's own text.
 import { findDiscovered, qualified, type Discovered, type Row } from "./discovery";
+import type { Gatewayed } from "./gateway";
 import { cellText, typeName, type GridAnswer, type GridPayload } from "./grid";
 import { address as hostPort, markdownText, tagColour, type Process } from "./processes";
 import type { QConnection } from "./qclient";
@@ -155,11 +156,12 @@ export function shape(answer: GridAnswer): AgentResult {
 
 /// Run the agent's `code` on `connection` and shape what comes back; the
 /// text of a value that is not tabular is cut at the console `size`. On a
-/// direct connection (#2470) each statement goes as a plain string.
-export async function runAgentQuery(connection: QConnection, code: string, size: [number, number]): Promise<AgentResult> {
-  const cut = statements(code);
+/// direct connection (#2470) each statement goes as a plain string, and so
+/// through a TorQ gateway, as `gateway` sends them (#2430).
+export async function runAgentQuery(connection: QConnection, code: string, size: [number, number], gateway?: Gatewayed): Promise<AgentResult> {
+  const { cut, plain } = gateway?.(statements(code)) ?? { cut: statements(code), plain: false };
   return shape(
-    connection.isDirect
+    connection.isDirect || plain
       ? await runUnwrapped(connection, cut, { size, limit: ROW_LIMIT, unlimited: false, grid: true })
       : await connection.queryGrid(cut, size, ROW_LIMIT),
   );

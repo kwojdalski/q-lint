@@ -283,6 +283,29 @@ test("a drill-down, a wrangle or a cell edit from a gateway's result goes to the
   assert.deepStrictEqual([live.history()[0].code, live.history()[0].outcome], ['.gw.syncexec["exec sym from trade where px>3";enlist `hdb]', "ok"]);
 });
 
+// The REPL, the Interactive Window and Smart Send (#2356), notebook cells
+// and their Markdown live values (#2428) and the agent's tool (#2430) send
+// code as Run does: through .gw.syncexec, as plain strings.
+test("the REPL, a notebook cell, its live values and the agent's query go through the gateway as Run does (#2356, #2428, #2430)", { skip }, async (t) => {
+  const gw = await torq(t);
+  const { live } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb", "hdb"] }]);
+  assert.strictEqual(await live.connectTo("gw"), true);
+  const { runText } = require("../out/consolerun.js");
+  const ran = await runText(live, "count trade");
+  assert.deepStrictEqual([ran.answer.ok, ran.answer.text], [true, ["2 3"]]);
+  const { cellAnswer, liveValues } = require("../out/qnbrun.js");
+  const via = (c) => live.gatewayed(c);
+  const settings = { consoleSize: [25, 80], rows: 100, rowLimitFrom: "first" };
+  const cell = await live.runOnActive("exec sym from trade", (c) => cellAnswer(c, { mode: "console" }, ["exec sym from trade"], settings, via));
+  assert.strictEqual(cell.value[0], true, JSON.stringify(cell.value));
+  assert.match(JSON.stringify(cell.value[1]), /`a`b`c`d`e/);
+  const values = await live.runOnActive("count trade", (c) => liveValues(c, ["{{q: count trade}}"], via));
+  assert.match(JSON.stringify(values.value), /2 3/);
+  const { runAgentQuery } = require("../out/agent.js");
+  const agent = await live.runOnActive("count trade", (c) => runAgentQuery(c, "count trade", [25, 80], via));
+  assert.deepStrictEqual(agent.value.data, [[2], [3]]);
+});
+
 test("a query run apart - a dashboard tile, a scheduled export, Query a Tag - goes through the gateway too (#1230)", { skip }, async (t) => {
   const gw = await torq(t);
   const { live } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb", "hdb"] }]);
