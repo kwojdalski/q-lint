@@ -13,7 +13,10 @@
 // connection's async listener (`Live.onAsyncMessage`) shows it. Called with
 // no client - from the process's own console or a timer, where `.z.w` is 0
 // - it only gives the value back. The value is held in `.qlint.shown` only
-// while it is shaped.
+// while it is shaped. Where q refuses that hold - in a read-only query
+// under `reval`, in a secondary thread of `peach` - nothing is shown and
+// it only gives the value back too, rather than failing the user's query
+// (#2540), as a logpoint does (#1894).
 import { deserialize } from "node-q/lib/c.js";
 import { checkedBody } from "./qdecode";
 import { gridLambda, readGridAnswer, type GridAnswer } from "./grid";
@@ -31,7 +34,7 @@ export function viewDefinition(size: [number, number], limit: number): string {
     `.qlint.grid:${gridLambda(false)}`,
     ".qlint.show:{[how;x]",
     " if[not 0<.z.w;:x];",
-    " .qlint.shown:x;",
+    " if[not @[{.qlint.shown:x;1b};x;0b];:x];",
     ` a:.qlint.grid[enlist".qlint.shown";${n(size[0])} ${n(size[1])}f;${n(limit)}f];`,
     " .qlint.shown:();",
     " neg[.z.w](`qlint;how;a);",

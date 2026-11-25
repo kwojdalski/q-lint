@@ -120,3 +120,14 @@ test("the process's own timeout is kept as a timeout, under its label (#1872)", 
   assert.deepStrictEqual([process, outcome], ["rdb", "timeout"]);
   assert.match(error, /^timed out after 1 s/);
 });
+
+test("a cell's or a REPL line's {{placeholders}} are asked for, as Run Query asks; Escape runs nothing (#2364)", async (t) => {
+  const live = await setUp(t);
+  stub.inputs.push("`a");
+  const ran = await runText(live, "select from t where sym={{sym}}");
+  assert.strictEqual(ran.code, "select from t where sym=`a");
+  assert.deepStrictEqual(kept(live), [["rdb", "ok", undefined, "select from t where sym=`a"]]);
+  stub.inputs.push(undefined);
+  assert.strictEqual(await runText(live, "select from t where sym={{sym}}"), undefined);
+  assert.strictEqual(kept(live).length, 1);
+});

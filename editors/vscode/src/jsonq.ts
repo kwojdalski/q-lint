@@ -13,6 +13,7 @@
 // an object repeats is kept each time, as `.j.k` keeps it (#2185).
 import { plainName, qString, stringLiteral, symbolLiteral } from "./qliteral";
 import { floatText } from "./pastetable";
+import { EVALUATE, type Evaluate } from "./query";
 import { statements } from "./statements";
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -193,8 +194,11 @@ export function jsonToQ(text: string): { code: string } | { error: string } {
 /// context as typed, its assignments global and `x` no parameter. Several
 /// statements go each as its own string, cut as a query's are, and the
 /// last one's value is the answer: to `value` a newline is a blank, and
-/// `bb:1` over `2 3` would be `bb:1 2 3` (#1969).
-export function toJsonQuery(expression: string): string {
+/// `bb:1` over `2 3` would be `bb:1 2 3` (#1969). `evaluate`'s `value`
+/// evaluates them: under `reval` on a guarded process
+/// (`QConnection.guarded`), so a write the guard missed is refused.
+export function toJsonQuery(expression: string, evaluate: Evaluate = EVALUATE): string {
   const all = statements(expression);
-  return all.length < 2 ? `.j.j value ${stringLiteral(all[0] ?? "")}` : `.j.j last value each (${all.map(qString).join(";")})`;
+  const v = evaluate.value;
+  return all.length < 2 ? `.j.j ${v} ${stringLiteral(all[0] ?? "")}` : `.j.j last ${v} each (${all.map(qString).join(";")})`;
 }

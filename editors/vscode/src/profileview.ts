@@ -66,6 +66,7 @@ export function registerFunctionProfile(
     if (!on()) {
       return say(toolingOff("functionProfile"));
     }
+    const file = givenCode === undefined ? window.activeTextEditor?.document.uri : undefined;
     const code = givenCode ?? (await live.codeFromEditor());
     if (code === undefined) {
       return "nothing to run";
@@ -90,6 +91,10 @@ export function registerFunctionProfile(
       return say(`q-lint: ${problem}.`);
     }
     const ns = namespace.trim();
+    // The editor's code is profiled on its file's process (#2439).
+    if (!(await live.toFileBinding(file))) {
+      return "nothing was run";
+    }
     let ran: { process: string; value: unknown } | undefined;
     try {
       ran = await live.runOnActive(guardedCode(ns, code), async (connection) => {

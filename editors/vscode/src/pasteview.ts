@@ -79,12 +79,17 @@ export function registerPaste(context: ExtensionContext, live: Live): void {
       if (!allowed("jsonConversion")) {
         return undefined;
       }
+      const file = typeof given === "string" ? undefined : window.activeTextEditor?.document.uri;
       const expression = typeof given === "string" ? given : await live.codeFromEditor();
       if (expression === undefined) {
         return undefined;
       }
+      // The editor's value is copied from its file's process (#2442).
+      if (!(await live.toFileBinding(file))) {
+        return undefined;
+      }
       try {
-        const ran = await live.runOnActive(expression, (connection) => connection.call(toJsonQuery(expression)));
+        const ran = await live.runOnActive(expression, (connection) => connection.guarded((evaluate) => toJsonQuery(expression, evaluate)));
         if (ran === undefined) {
           return undefined;
         }

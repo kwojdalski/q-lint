@@ -16,6 +16,7 @@
 // `.z.p` advances in microseconds there, so a statement faster than that
 // reads 0.
 
+import { EVALUATE, type Evaluate } from "./query";
 import type { Span } from "./statements";
 import { bytes } from "./tableinfo";
 
@@ -23,14 +24,21 @@ import { bytes } from "./tableinfo";
 /// statement in ns, then for each statement run whether it ran, its time in
 /// ns, its memory in bytes (null for a system command or a failure), and
 /// the error a failure gave. The list stops at the first failure.
-export const LINE_TIMINGS = [
-  "{[s]",
-  ' run:{[x] $["\\\\"=first x; [t0:.z.p; system 1_x; (1b;.z.p-t0;0N)]; [t0:.z.p; m:system "ts ",x; (1b;.z.p-t0;m 1)]]};',
-  ' cal:{[run] t0:.z.p; do[100; run "::"]; (.z.p-t0)%100}[run];',
-  " r:(); i:0;",
-  " while[i<count s; a:@[run;s i;{(0b;0Nn;x)}]; r,:enlist a; i:$[first a;i+1;count s]];",
-  ' (`float$cal; first each r; `float$r[;1]; {$[-7h=type x;`float$x;0n]} each r[;2]; {$[10h=type x;x;""]} each r[;2])}',
-].join("\n");
+/// Each statement goes to `evaluate`'s `system`: under `reval` on a
+/// guarded process (`QConnection.guarded`), where a write the guard missed
+/// is the statement's error.
+export function lineTimingsLambda(evaluate: Evaluate): string {
+  return [
+    "{[s]",
+    ` run:{[x] $["\\\\"=first x; [t0:.z.p; ${evaluate.system} 1_x; (1b;.z.p-t0;0N)]; [t0:.z.p; m:${evaluate.system} "ts ",x; (1b;.z.p-t0;m 1)]]};`,
+    ' cal:{[run] t0:.z.p; do[100; run "::"]; (.z.p-t0)%100}[run];',
+    " r:(); i:0;",
+    " while[i<count s; a:@[run;s i;{(0b;0Nn;x)}]; r,:enlist a; i:$[first a;i+1;count s]];",
+    ' (`float$cal; first each r; `float$r[;1]; {$[-7h=type x;`float$x;0n]} each r[;2]; {$[10h=type x;x;""]} each r[;2])}',
+  ].join("\n");
+}
+
+export const LINE_TIMINGS = lineTimingsLambda(EVALUATE);
 
 /// A statement of the code timed, and the lines it covers in the document,
 /// 0-based and inclusive.

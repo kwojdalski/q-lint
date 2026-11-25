@@ -54,7 +54,7 @@ import { guardDeclined, installLambda, leftInstrumented, readInstalled, readRest
 import type { Live } from "./live";
 import type { Process } from "./processes";
 import { readAnswer } from "./query";
-import { SNAPSHOT_EXTENSION, SNAPSHOT_RUN, parseSnapshot, sameResult, type Snapshot } from "./snapshot";
+import { SNAPSHOT_EXTENSION, SNAPSHOT_RUN, SNAPSHOT_RUN_READ_ONLY, parseSnapshot, sameResult, type Snapshot } from "./snapshot";
 import { statements } from "./statements";
 import {
   RERUN_FAILED,
@@ -679,7 +679,7 @@ class QTests {
   ): Promise<void> {
     const done = await this.live.runOnActive(
       snapshot.query,
-      async (connection) => readAnswer(await connection.call(SNAPSHOT_RUN, statements(snapshot.query))),
+      async (connection) => connection.trapped(SNAPSHOT_RUN, SNAPSHOT_RUN_READ_ONLY, readAnswer, statements(snapshot.query)),
       "ask",
       label,
     );

@@ -32,7 +32,7 @@ async function startQ(dir) {
   const script = path.join(dir, "server.q");
   fs.writeFileSync(script, "/ an empty process for the parameter cache tests\n");
   const port = await freePort();
-  const child = spawn(`${Q} ${script} -p ${port}`, { shell: true, stdio: ["ignore", "ignore", "pipe"], detached: true });
+  const child = spawn(`${Q} ${script} -p ${port} -s 2`, { shell: true, stdio: ["ignore", "ignore", "pipe"], detached: true });
   for (let i = 0; i < 100; i++) {
     const up = await new Promise((resolve) => {
       const s = net.connect(port, "127.0.0.1", () => {
@@ -84,7 +84,7 @@ test("a cached lambda's body lines run on their own with the call's arguments, o
   await t.test("multi-line, several parameters: the statement on its own indented line", async () => {
     const source = "calc:{[a;b;c]\n  s:a+b;\n  s*c\n  }\n";
     const { text, id } = instrument(source, "s*c");
-    assert.match(text, /^calc:\{\[a;b;c\]\n  \.qlint\.cache\.p[0-9a-f]{6}:\(a;b;c\);`a`b`c set'/);
+    assert.match(text, /^calc:\{\[a;b;c\]\n  @\[`\.qlint\.cache\.p[0-9a-f]{6} set;\(a;b;c\);::\];@\[`a`b`c set';/);
     await run(text);
     assert.strictEqual(await run("calc[1;2;3]"), "9");
     // Query Current Line on each body line, as the editor sends them.
@@ -99,7 +99,7 @@ test("a cached lambda's body lines run on their own with the call's arguments, o
   // projection (#2332).
   await t.test("typed and pattern parameters: after the list q reads, each name it binds", async () => {
     const typed = instrument("tf:{[x:`j;y:`j] x+y}", "x+y");
-    assert.ok(typed.text.startsWith("tf:{[x:`j;y:`j].qlint.cache."), typed.text);
+    assert.ok(typed.text.startsWith("tf:{[x:`j;y:`j]@[`.qlint.cache."), typed.text);
     await run(typed.text);
     assert.strictEqual(await run("tf[1;2]"), "3");
     assert.strictEqual(await run("(x;y)"), "1 2");
@@ -119,7 +119,7 @@ test("a cached lambda's body lines run on their own with the call's arguments, o
   await t.test("one parameter: set as an atom name, whatever its value", async () => {
     const source = "dbl:{[v] v*2}";
     const { text, id } = instrument(source, "v*2");
-    assert.ok(text.includes("`v set "), text);
+    assert.ok(text.includes("@[`v set;"), text);
     await run(text);
     assert.strictEqual(await run("dbl 1 2 3"), "2 4 6");
     assert.strictEqual(await run("v*2"), "2 4 6");
@@ -127,6 +127,26 @@ test("a cached lambda's body lines run on their own with the call's arguments, o
     // A second call sets it again.
     await run("dbl 1.5");
     assert.strictEqual(await run("v"), "1.5");
+  });
+
+  // Where q refuses the global writes - a secondary thread of peach, a
+  // read-only query under reval - the call is not kept, and the function
+  // still answers (#2548).
+  await t.test("under peach and reval the function answers, its call not kept", async () => {
+    const { text, id } = instrument("pc:{[m;n] m+n}", "m+n");
+    await run(text);
+    assert.strictEqual(await run("pc[1;] peach 10 20"), "11 21");
+    assert.strictEqual(await run(`@[value;\`.qlint.cache.${id};\`none]`), "`none");
+    connection.readOnly = true;
+    try {
+      assert.strictEqual(await run("pc[3;4]"), "7");
+    } finally {
+      connection.readOnly = false;
+    }
+    assert.strictEqual(await run("@[value;`n;`none]"), "`none");
+    // On the main thread it is kept, as before.
+    assert.strictEqual(await run("pc[1;20]"), "21");
+    assert.strictEqual(await run("(m;n)"), "1 20");
   });
 
   await t.test("implicit x, y and z", async () => {
@@ -166,7 +186,7 @@ test("a cached lambda's body lines run on their own with the call's arguments, o
     await run(source);
     assert.strictEqual(await run("(value wtot) 1"), "`p`q0");
     const { text, id } = instrument(source, "p wsum");
-    assert.ok(text.includes(`  q0].qlint.cache.${id}:(p;q0);`), JSON.stringify(text));
+    assert.ok(text.includes(`  q0]@[\`.qlint.cache.${id} set;(p;q0);::];`), JSON.stringify(text));
     await run(text);
     assert.strictEqual(await run("(value wtot) 1"), "`p`q0");
     assert.strictEqual(await run("wtot[1 2;3 4]"), "11f");
@@ -177,7 +197,7 @@ test("a cached lambda's body lines run on their own with the call's arguments, o
   await t.test("a script with tabs, loaded by q's own \\l, still reads", async () => {
     const source = "/ a script\nscale:{[w;f]\t\n\t\tr:w*f;\n\n\t\tr+1}\n";
     const { text } = instrument(source, "r+1");
-    assert.ok(text.includes("\t\n\t\t.qlint.cache."), JSON.stringify(text));
+    assert.ok(text.includes("\t\n\t\t@[`.qlint.cache."), JSON.stringify(text));
     const file = path.join(dir, "scale.q");
     fs.writeFileSync(file, text);
     await run(`\\l ${file}`);

@@ -10,7 +10,7 @@
 // the command refuses, the panel closes and nothing is sent.
 import { randomBytes } from "node:crypto";
 import { ViewColumn, commands, window, workspace, type ExtensionContext, type WebviewPanel } from "vscode";
-import { BENCHMARK, DEFAULT_RUNS, benchmarkHtml, expressionProblem, guardCode, readRuns, readTimings, summarise, type Summary } from "./benchmark";
+import { DEFAULT_RUNS, benchmarkHtml, benchmarkLambda, expressionProblem, guardCode, readRuns, readTimings, summarise, type Summary } from "./benchmark";
 import type { Live } from "./live";
 import { PROCESS_TOOL_COMMANDS, asCode, toolOff, toolOn } from "./processtools";
 import { plainMessage } from "./history";
@@ -44,6 +44,7 @@ export function registerBenchmark(
     if (!on()) {
       return say(toolOff("benchmark"));
     }
+    const file = given === undefined ? window.activeTextEditor?.document.uri : undefined;
     const code = given ?? (await live.codeFromEditor());
     if (code === undefined) {
       return "nothing to run";
@@ -81,10 +82,14 @@ export function registerBenchmark(
       return say("q-lint: runs are two whole numbers, N then K, as 100 5.");
     }
     const expressions = [code.trim(), ...(second.trim() === "" ? [] : [second.trim()])];
+    // The editor's code is timed on its file's process (#2438).
+    if (!(await live.toFileBinding(file))) {
+      return "nothing was run";
+    }
     let ran: { process: string; value: unknown } | undefined;
     try {
       // Turned off while it asked: nothing is timed (#1453).
-      ran = await live.runOnActive(guardCode(expressions, runs.n), async (connection) => (on() ? connection.call(BENCHMARK, expressions.map(asCode), runs.n, runs.k) : OFF));
+      ran = await live.runOnActive(guardCode(expressions, runs.n), async (connection) => (on() ? connection.guarded(benchmarkLambda, expressions.map(asCode), runs.n, runs.k) : OFF));
     } catch (error) {
       return say(`q-lint: the benchmark failed: ${error instanceof Error ? error.message : String(error)}`);
     }

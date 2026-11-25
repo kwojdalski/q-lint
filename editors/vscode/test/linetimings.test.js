@@ -252,3 +252,17 @@ test("a write on a guarded process is held until confirmed; a read is not asked 
   assert.ok(!stub.messages.some(([kind]) => kind === "warning"));
   assert.deepStrictEqual(q.sent.at(-1)[1], ["count trade", "select from trade"]);
 });
+
+test("a statement's {{placeholders}} are asked for before it is timed, as Run Query asks; Escape times nothing (#2445)", async (t) => {
+  const { editor } = fakeEditors();
+  const { q, live } = await setUp(t, [], ANSWER, { "query.lineTimings.enable": true });
+  assert.strictEqual(await live.connectTo("rdb"), true);
+  editor("select from t where sym={{s}}\ncount t");
+  stub.inputs.push("`a");
+  await stub.commands.get(TIME_LINES)();
+  assert.deepStrictEqual(q.sent.at(-1), [LINE_TIMINGS, ["select from t where sym=`a", "count t"]]);
+  const before = q.sent.length;
+  stub.inputs.push(undefined);
+  await stub.commands.get(TIME_LINES)();
+  assert.strictEqual(q.sent.length, before);
+});

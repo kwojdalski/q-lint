@@ -1159,6 +1159,25 @@ export class Live {
     return this.controls.binding(uri);
   }
 
+  /// Connect to the process the file `uri` is bound to, when it has one
+  /// and it is not the active connection, before a command sends that
+  /// file's code: a cell, a process tool, a watch. False, having said why,
+  /// when the connection cannot move there: a query is still running, or
+  /// the connect failed.
+  async toFileBinding(uri: Uri | undefined): Promise<boolean> {
+    const bound = uri === undefined ? undefined : this.fileBinding(uri);
+    if (bound === undefined || bound === this.activeLabel()) {
+      return true;
+    }
+    if (this.isBusy()) {
+      void window.showInformationMessage(
+        plainMessage(`q-lint: a query is still running on ${this.activeLabel()}; this file's code goes to ${bound}. q-lint: Abort Current Query stops waiting for it.`),
+      );
+      return false;
+    }
+    return this.connectTo(bound);
+  }
+
   /// Whether a query is running on the active connection: connecting
   /// elsewhere now would stop waiting for it.
   isBusy(): boolean {
@@ -2855,7 +2874,7 @@ export class Live {
   /// `code` with its `{{name}}` placeholders given the values the user
   /// types, each box starting from the value given last (#911); undefined
   /// when the user pressed Escape, and nothing is run.
-  private async filledIn(code: string): Promise<string | undefined> {
+  async filledIn(code: string): Promise<string | undefined> {
     const configuration = workspace.getConfiguration("q-lint");
     const names = readPlaceholders((key, fallback) => configuration.get(key, fallback)).enabled ? placeholderNames(code) : [];
     if (names.length === 0) {
@@ -3039,9 +3058,17 @@ export class Live {
     });
     try {
       const backstopped = this.backstop(ready.connection, ready.process, code);
-      let value: T;
+      let value: T | undefined;
+      // A query that throws `reval`'s refusal (`QConnection.guarded`) is
+      // asked about as one that answers it; declined, it throws it.
+      let thrown: { error: unknown } | undefined;
       try {
         value = await query(ready.connection);
+      } catch (error) {
+        if (!backstopped || ready.connection.refused === undefined) {
+          throw error;
+        }
+        thrown = { error };
       } finally {
         // Back to evaluating as it did, whatever the query threw.
         if (backstopped) {
@@ -3058,10 +3085,14 @@ export class Live {
             throw new Error(`Not run again: the connection to ${ready.process.label} closed or became busy while you were asked.`);
           }
           value = await query(ready.connection);
+          thrown = undefined;
         }
       }
+      if (thrown !== undefined) {
+        throw thrown.error;
+      }
       this.answeredOn = ready.connection;
-      return { process: ready.process.label, value };
+      return { process: ready.process.label, value: value as T };
     } catch (error) {
       if (timedOut) {
         throw new Stopped(`${timedOutError(timeout)} (${timeoutSource(ready.process, enabled)})`, "timeout");
@@ -3278,6 +3309,10 @@ export class Live {
         return;
       }
       seconds = Number(text.trim());
+    }
+    // The editor's code goes to its file's process (#2444).
+    if (typeof given !== "string" && !(await this.toFileBinding(window.activeTextEditor?.document.uri))) {
+      return;
     }
     const ready = await this.ready();
     if (ready === undefined) {

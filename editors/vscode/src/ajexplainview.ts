@@ -10,7 +10,7 @@
 // reads. Off (q-lint.query.ajExplainer.enable), the command refuses and
 // nothing is sent.
 import { EventEmitter, Uri, commands, window, workspace, type ExtensionContext, type TextDocumentContentProvider } from "vscode";
-import { EXPLAIN_AJ, explain, explainGuardCode, findAj, readMatch } from "./ajexplain";
+import { explainAjLambda, explain, explainGuardCode, findAj, readMatch } from "./ajexplain";
 import type { Live } from "./live";
 import { PROCESS_TOOL_COMMANDS, asCode, toolOff, toolOn } from "./processtools";
 import { plainMessage } from "./history";
@@ -37,13 +37,20 @@ export function registerAjExplainer(context: ExtensionContext, live: Live): { ex
     if (!on()) {
       return say(toolOff("ajExplainer"));
     }
-    const code = given ?? (await live.codeFromEditor(false));
-    if (code === undefined) {
+    const file = given === undefined ? window.activeTextEditor?.document.uri : undefined;
+    const written = given ?? (await live.codeFromEditor(false));
+    if (written === undefined) {
       return "nothing to explain";
     }
-    const call = findAj(code);
-    if (call === undefined) {
+    if (findAj(written) === undefined) {
       return say("q-lint: there is no aj[columns;left;right] call in the selection or the statement at the cursor.");
+    }
+    // Its `{{placeholders}}` asked for once there is a call to explain, as
+    // Run Query asks for them (#2446).
+    const code = given ?? (await live.filledIn(written));
+    const call = code === undefined ? undefined : findAj(code);
+    if (call === undefined) {
+      return code === undefined ? "nothing to explain" : say("q-lint: there is no aj[columns;left;right] call in the selection or the statement at the cursor.");
     }
     const rowText =
       givenRow ??
@@ -60,9 +67,13 @@ export function registerAjExplainer(context: ExtensionContext, live: Live): { ex
       return say("q-lint: a row index is a whole number from 0.");
     }
     const index = Number(rowText.trim());
+    // The editor's aj is explained on its file's process (#2443).
+    if (!(await live.toFileBinding(file))) {
+      return "nothing was run";
+    }
     let text: string;
     try {
-      const ran = await live.runOnActive(explainGuardCode(call), (connection) => connection.call(EXPLAIN_AJ, asCode(call.columns), asCode(call.left), asCode(call.right), index));
+      const ran = await live.runOnActive(explainGuardCode(call), (connection) => connection.guarded(explainAjLambda, asCode(call.columns), asCode(call.left), asCode(call.right), index));
       if (ran === undefined) {
         return "nothing was run";
       }

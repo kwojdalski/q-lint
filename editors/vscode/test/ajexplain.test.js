@@ -102,3 +102,24 @@ test("the guard reads an explanation's columns and tables as EXPLAIN_AJ values t
   assert.deepStrictEqual(writes(explainGuardCode(found)), ["assigns j1"]);
   assert.deepStrictEqual(writes(explainGuardCode(call)), []);
 });
+
+test("the editor's aj has its {{placeholders}} asked for once there is a call, as Run Query asks (#2446)", async (t) => {
+  vscode.window.showTextDocument = async () => {};
+  const { q, live } = await setUp(t, { answer: (m) => (Array.isArray(m) && m[0] === EXPLAIN_AJ ? RAW : null), register: registerAjExplainer });
+  await live.connectTo("rdb");
+  vscode.window.activeTextEditor = undefined;
+  let code = "aj[`sym`time;select from t where sym={{s}};quote]";
+  live.codeFromEditor = async (fill = true) => (assert.strictEqual(fill, false), code);
+  stub.inputs.push("`a");
+  await stub.commands.get(PROCESS_TOOL_COMMANDS.explainAj)(undefined, 0);
+  assert.deepStrictEqual(q.sent.at(-1), [EXPLAIN_AJ, " `sym`time", " select from t where sym=`a", " quote", 0]);
+  // No call, nothing asked; Escape, nothing sent.
+  const before = q.sent.length;
+  code = "select from t where sym={{s}}";
+  assert.match(await stub.commands.get(PROCESS_TOOL_COMMANDS.explainAj)(undefined, 0), /no aj\[columns;left;right\] call/);
+  code = "aj[`sym`time;select from t where sym={{s}};quote]";
+  stub.inputs.push(undefined);
+  assert.strictEqual(await stub.commands.get(PROCESS_TOOL_COMMANDS.explainAj)(undefined, 0), "nothing to explain");
+  assert.strictEqual(q.sent.length, before);
+  assert.strictEqual(stub.inputs.length, 0);
+});

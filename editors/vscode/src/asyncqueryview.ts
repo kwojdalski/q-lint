@@ -10,7 +10,9 @@
 // results with it, and says so.
 import { StatusBarAlignment, commands, window, workspace, type Disposable, type ExtensionContext, type StatusBarItem } from "vscode";
 import { ADMIN_COMMANDS, adminOff, readAdmin } from "./admin";
-import { ASYNC, readAsyncMessage, textPayload } from "./asyncquery";
+import { ASYNC, ASYNC_READ_ONLY, readAsyncMessage, textPayload } from "./asyncquery";
+import { refusalReason } from "./guard";
+import { refusedByReval } from "./query";
 import { elapsedText } from "./progress";
 import type { Live } from "./live";
 import { readLive } from "./liveconfig";
@@ -25,6 +27,8 @@ interface Pending {
   process: string;
   code: string;
   started: number;
+  /// Sent under `reval`, the read-only guard's backstop.
+  guarded: boolean;
 }
 
 export class AsyncQueries {
@@ -37,7 +41,7 @@ export class AsyncQueries {
 
   constructor(
     context: ExtensionContext,
-    private readonly live: Pick<Live, "runOnActive" | "onAsyncMessage" | "onDidChange" | "showGrid" | "record" | "codeFromEditor"> & Partial<Pick<Live, "activeDirect">>,
+    private readonly live: Pick<Live, "runOnActive" | "onAsyncMessage" | "onDidChange" | "showGrid" | "record" | "codeFromEditor"> & Partial<Pick<Live, "activeDirect" | "toFileBinding">>,
   ) {
     context.subscriptions.push(
       commands.registerCommand(ADMIN_COMMANDS.runAsync, (code?: string) => this.run(code)),
@@ -93,6 +97,7 @@ export class AsyncQueries {
       void window.showInformationMessage(plainMessage(adminOff("asyncQuery")));
       return undefined;
     }
+    const file = typeof given === "string" ? undefined : window.activeTextEditor?.document.uri;
     const code = typeof given === "string" ? given : await this.live.codeFromEditor();
     if (code === undefined) {
       return undefined;
@@ -100,6 +105,11 @@ export class AsyncQueries {
     const cut = statements(code);
     if (cut.length === 0) {
       void window.showInformationMessage("q-lint: nothing to run: it is blank or a comment.");
+      return undefined;
+    }
+    // The editor's code goes to its file's process (#2365), before asking
+    // whether that process evaluates directly.
+    if (this.live.toFileBinding !== undefined && !(await this.live.toFileBinding(file))) {
       return undefined;
     }
     // The answer comes back from q-lint's lambda, which a direct process is
@@ -114,13 +124,17 @@ export class AsyncQueries {
     const { consoleSize, gridLimit } = readLive((key, fallback) => configuration.get(key, fallback));
     const id = this.next++;
     let sent: { process: string; value: number | undefined } | undefined;
+    let guarded = false;
     try {
       sent = await this.live.runOnActive(code, async (connection) => {
         // Turned off at the pick or the guard: nothing is sent (#1454).
         if (!on()) {
           return undefined;
         }
-        connection.sendAsync(ASYNC, id, cut, consoleSize, Number.isFinite(gridLimit) ? gridLimit : 0);
+        // Under `reval` where that is the guard's backstop (#2355): its
+        // refusal arrives as the answer's error.
+        guarded = await connection.underReval();
+        connection.sendAsync(guarded ? ASYNC_READ_ONLY : ASYNC, id, cut, consoleSize, Number.isFinite(gridLimit) ? gridLimit : 0);
         return id;
       });
     } catch (error) {
@@ -135,7 +149,7 @@ export class AsyncQueries {
       void window.showInformationMessage(plainMessage(adminOff("asyncQuery")));
       return undefined;
     }
-    this.pending.set(id, { id, process: sent.process, code, started: Date.now() });
+    this.pending.set(id, { id, process: sent.process, code, started: Date.now(), guarded });
     this.showCount();
     void window.showInformationMessage(plainMessage(`q-lint: sent to ${sent.process} asynchronously; the result opens when it is ready.`));
     return id;
@@ -157,7 +171,15 @@ export class AsyncQueries {
       this.arrived.push({ process: p.process, code: p.code, ok: true, rows: grid.count });
     } else {
       this.arrived.push({ process: p.process, code: p.code, ok: false });
-      void window.showWarningMessage(plainMessage(`q-lint: the asynchronous query on ${p.process} failed: '${answer.error}`));
+      // No question can wait on an async answer: `reval`'s refusal is said,
+      // and Run Query is the way to be asked to run it anyway.
+      void window.showWarningMessage(
+        plainMessage(
+          p.guarded && refusedByReval(answer.error)
+            ? `q-lint: the asynchronous query was not run: ${refusalReason(p.process, answer.error)} Run Query asks whether to run it anyway.`
+            : `q-lint: the asynchronous query on ${p.process} failed: '${answer.error}`,
+        ),
+      );
     }
     await this.live.record({
       process: p.process,

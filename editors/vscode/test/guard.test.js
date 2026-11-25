@@ -15,9 +15,16 @@ test("the guard is on by default, for prod, prd and production, ignoring case", 
   // Configurable: another tag, and an empty list guards nothing.
   assert.deepStrictEqual(guardedBy({ tags: ["live"] }, settings({ "processes.readOnlyGuard.tags": [" Live "] })), ["live"]);
   assert.deepStrictEqual(guardedBy({ tags: ["prod"] }, settings({ "processes.readOnlyGuard.tags": [] })), []);
-  // A list that is not one of strings is the default one; "false" is not off.
-  assert.deepStrictEqual(settings({ "processes.readOnlyGuard.tags": "prod" }).tags, DEFAULT_GUARD_TAGS);
+  // A string is a list of tags, and a list keeps its strings: the user's
+  // own tags are never dropped for the defaults (#2519). A setting that
+  // names no tag is the default list; "false" is not off.
+  assert.deepStrictEqual(settings({ "processes.readOnlyGuard.tags": "live" }).tags, ["live"]);
+  assert.deepStrictEqual(settings({ "processes.readOnlyGuard.tags": "live, desk" }).tags, ["live", "desk"]);
+  assert.deepStrictEqual(settings({ "processes.readOnlyGuard.tags": ["live", 2026] }).tags, ["live"]);
+  assert.deepStrictEqual(guardedBy({ tags: ["live"] }, settings({ "processes.readOnlyGuard.tags": ["live", null] })), ["live"]);
   assert.deepStrictEqual(settings({ "processes.readOnlyGuard.tags": [1] }).tags, DEFAULT_GUARD_TAGS);
+  assert.deepStrictEqual(settings({ "processes.readOnlyGuard.tags": "" }).tags, DEFAULT_GUARD_TAGS);
+  assert.deepStrictEqual(settings({ "processes.readOnlyGuard.tags": 7 }).tags, DEFAULT_GUARD_TAGS);
   assert.strictEqual(settings({ "processes.readOnlyGuard.enable": "false" }).enabled, true);
 });
 

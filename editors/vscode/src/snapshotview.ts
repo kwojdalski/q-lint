@@ -16,6 +16,7 @@ import {
   SNAPSHOT_DIRECTORY,
   SNAPSHOT_EXTENSION,
   SNAPSHOT_RUN,
+  SNAPSHOT_RUN_READ_ONLY,
   formatSnapshot,
   parseSnapshot,
   preview,
@@ -61,7 +62,7 @@ async function result(live: Live, query: string): Promise<string | undefined> {
   // rather than left to reject the command (#2261).
   let done: { process: string; value: ReturnType<typeof readAnswer> } | undefined;
   try {
-    done = await live.runOnActive(query, async (connection) => readAnswer(await connection.call(SNAPSHOT_RUN, statements(query))));
+    done = await live.runOnActive(query, async (connection) => connection.trapped(SNAPSHOT_RUN, SNAPSHOT_RUN_READ_ONLY, readAnswer, statements(query)));
   } catch (error) {
     void window.showInformationMessage(plainMessage(`q-lint: no snapshot was written: ${error instanceof Error ? error.message : String(error)}`));
     return undefined;
@@ -115,6 +116,10 @@ async function record(live: Live): Promise<boolean> {
   }
   const query = await live.codeFromEditor();
   if (query === undefined) {
+    return false;
+  }
+  // Recorded from the file's own process (#2441).
+  if (!(await live.toFileBinding(editor.document.uri))) {
     return false;
   }
   const name = await window.showInputBox({

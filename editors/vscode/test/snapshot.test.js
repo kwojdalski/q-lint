@@ -4,7 +4,7 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const { stub, vscode } = require("./vscode_stub");
-const { formatSnapshot, parseSnapshot, sameResult, snapshotQuery, snapshotName, validName, preview, SNAPSHOT_COMMANDS, SNAPSHOT_RUN } = require("../out/snapshot.js");
+const { formatSnapshot, parseSnapshot, sameResult, snapshotQuery, snapshotName, validName, preview, SNAPSHOT_COMMANDS, SNAPSHOT_RUN, SNAPSHOT_RUN_READ_ONLY } = require("../out/snapshot.js");
 const { registerSnapshots } = require("../out/snapshotview.js");
 
 test("a snapshot file round-trips, and results compare without trailing blanks", () => {
@@ -65,9 +65,12 @@ function setup(files, answer) {
     async codeFromEditor() {
       return this.code;
     },
+    async toFileBinding() {
+      return true;
+    },
     async runOnActive(code, query) {
       sent.push(code);
-      return { process: "dev", value: await query({ call: async (lambda, statements, size) => (assert.strictEqual(lambda, SNAPSHOT_RUN), answer(statements, size)) }) };
+      return { process: "dev", value: await query({ trapped: async (lambda, readOnly, read, statements, size) => (assert.deepStrictEqual([lambda, readOnly], [SNAPSHOT_RUN, SNAPSHOT_RUN_READ_ONLY]), read(answer(statements, size))) }) };
     },
   };
   let told = 0;

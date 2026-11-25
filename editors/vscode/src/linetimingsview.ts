@@ -22,7 +22,7 @@ import {
 } from "vscode";
 import type { Live } from "./live";
 import { scriptCode, selectionCode } from "./statements";
-import { LINE_TIMINGS, bytesText, decorationText, durationText, readTimings, statementSpans, summary, type Timings } from "./linetimings";
+import { bytesText, lineTimingsLambda, decorationText, durationText, readTimings, statementSpans, summary, type Timings } from "./linetimings";
 import { TOOLING_COMMANDS, toolingOff, toolingOn } from "./toolingfeatures";
 import { plainMessage } from "./history";
 
@@ -63,16 +63,33 @@ export function registerLineTimings(
     const last = !whole && selection.end.character === 0 && selection.end.line > first ? selection.end.line - 1 : selection.end.line;
     // Read as q reads the file, and a selection as it reads there (#2287).
     const all = editor.document.getText();
-    const text = whole ? scriptCode(all) : selectionCode(all.split("\n"), first, editor.document.getText(new Range(first, 0, last, Number.MAX_SAFE_INTEGER)));
+    const written = whole ? scriptCode(all) : selectionCode(all.split("\n"), first, editor.document.getText(new Range(first, 0, last, Number.MAX_SAFE_INTEGER)));
+    // Its `{{placeholders}}` asked for, as Run Query asks for them (#2445).
+    const text = await live.filledIn(written);
+    if (text === undefined) {
+      return "nothing was run";
+    }
     const spans = statementSpans(text, first);
     if (spans.length === 0) {
       return say(`q-lint: ${whole ? "the file" : "the selection"} has no statement to time.`);
     }
     const code = spans.map((s) => s.text).join("\n");
     const version = editor.document.version;
+    // Timed on the file's own process (#2440).
+    if (!(await live.toFileBinding(editor.document.uri))) {
+      return "nothing was run";
+    }
     let ran: { process: string; value: unknown } | undefined;
     try {
-      ran = await live.runOnActive(code, (connection) => connection.call(LINE_TIMINGS, spans.map((s) => s.text)));
+      ran = await live.runOnActive(code, async (connection) => {
+        const raw = await connection.guarded(lineTimingsLambda, spans.map((s) => s.text));
+        // A statement `reval` refused is asked about, as a query's is.
+        const failed = readTimings(raw, spans).timings.find((t) => !t.ok);
+        if (failed?.error !== undefined) {
+          connection.noteRefusal(failed.error);
+        }
+        return raw;
+      });
     } catch (error) {
       return say(`q-lint: line timings failed: ${error instanceof Error ? error.message : String(error)}`);
     }
