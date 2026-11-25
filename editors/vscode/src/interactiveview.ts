@@ -25,7 +25,7 @@ import { ConsolePanel, type ConsoleEntry } from "./consolepanel";
 import { answerLines, runText } from "./consolerun";
 import { HAS_CELLS, INTERACTIVE_COMMANDS, readInteractive, turnedOff, type InteractiveSettings } from "./interactiveconfig";
 import type { Live } from "./live";
-import { blockAt, scriptCode, selectionCode, statements } from "./statements";
+import { blockAt, contextAfter, scriptCode, selectionCode, statements } from "./statements";
 import { plainMessage } from "./history";
 
 const settings = (): InteractiveSettings => readInteractive((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback));
@@ -64,9 +64,9 @@ export function registerInteractive(
   /// Cell runs one at a time, in order: a second Run Cell waits for the first.
   let queue: Promise<unknown> = Promise.resolve();
 
-  /// Run `code` into the Interactive Window under `title`: true when it ran
-  /// and q gave no error.
-  const runInto = async (code: string, uri: Uri, title?: string): Promise<boolean> => {
+  /// Run `code` into the Interactive Window under `title`, in `context`:
+  /// true when it ran and q gave no error.
+  const runInto = async (code: string, uri: Uri, title?: string, context = "."): Promise<boolean> => {
     // A cell queued before cells were turned off is not sent (#1277).
     if (!settings().cells) {
       return false;
@@ -76,7 +76,7 @@ export function registerInteractive(
     }
     panel.open();
     const id = panel.add({ ...(title !== undefined ? { title } : {}), code });
-    const ran = await runText(live, code, uri);
+    const ran = await runText(live, code, uri, context);
     if (ran === undefined) {
       panel.remove(id);
       return false;
@@ -93,8 +93,11 @@ export function registerInteractive(
     const chosen = choose(all);
     const run = queue.then(async () => {
       for (const cell of chosen) {
-        // Without the indented lines q skips above the first statement (#2278).
-        if (!(await runInto(shownCode(scriptCode(cellCode(lines, cell)), cell), document.uri, cellName(all, cell)))) {
+        // In the `\d` the file leaves above it, as loading the file runs it
+        // (#2286), and without the indented lines q skips above the first
+        // statement (#2278).
+        const context = contextAfter(scriptCode(lines.slice(0, cell.start).join("\n")));
+        if (!(await runInto(shownCode(scriptCode(cellCode(lines, cell)), cell), document.uri, cellName(all, cell), context))) {
           return;
         }
       }

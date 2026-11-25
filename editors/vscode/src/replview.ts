@@ -14,6 +14,7 @@ import { GATHER, LIMITS, fullName, readExplorer, readGathered } from "./explorer
 import { INTERACTIVE_COMMANDS, readInteractive, turnedOff } from "./interactiveconfig";
 import type { Live } from "./live";
 import { RESERVED } from "./qliteral";
+import { contextAfter } from "./statements";
 import { completionsFor, isComplete, parseHistory, pushHistory, replScript, searchHistory, wordAt, type Completion } from "./repl";
 
 const HISTORY_KEY = "q-lint.replHistory";
@@ -42,6 +43,8 @@ export function registerRepl(
   /// again after each run, since a run can define names.
   let names: { process: string; labels: string[] } | undefined;
   let running = false;
+  /// The `\d` the entries run so far left, by the process they ran on.
+  const namespaces = new Map<string, string>();
 
   const panel: ConsolePanel = new ConsolePanel(context, {
     viewType: "q-lint.replPane",
@@ -66,11 +69,19 @@ export function registerRepl(
       const id = panel.add({ code });
       // What was typed is made a script; code from the editor is one
       // already, which replScript would misread (#2284).
-      const ran = await runText(live, uri === undefined ? replScript(code) : code, uri);
+      const script = uri === undefined ? replScript(code) : code;
+      // In the `\d` the entries before left there, as a console keeps it
+      // (#2286).
+      const to = (uri !== undefined ? live.fileBinding(uri) : undefined) ?? live.activeLabel();
+      const namespace = (to !== undefined ? namespaces.get(to) : undefined) ?? ".";
+      const ran = await runText(live, script, uri, namespace);
       names = undefined;
       if (ran === undefined) {
         panel.update(id, { ok: false, lines: ["Not run."] });
         return false;
+      }
+      if (ran.answer.ok) {
+        namespaces.set(ran.process, contextAfter(script, namespace));
       }
       panel.update(id, { process: ran.process, millis: ran.millis, ok: ran.answer.ok, lines: answerLines(ran) });
       return true;

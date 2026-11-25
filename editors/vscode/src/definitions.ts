@@ -19,7 +19,7 @@
 // the process still holds the exact text it was told it holds, and only
 // when that text is what the file had before the edit.
 import { charKinds } from "./explorer";
-import { scriptCode, statementSpans } from "./statements";
+import { contextSwitch, scriptCode, statementSpans } from "./statements";
 
 export const DRIFT_COMMANDS = {
   check: "q-lint.checkDrift",
@@ -36,11 +36,6 @@ export interface Definition {
 }
 
 const NAME = /^(\.?[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)*)\s*:\s*\{/;
-const CONTEXT = /^\\d\s+(\.[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)*|\.)\s*$/;
-// `system "d .ns"` with a literal argument switches as `\d .ns` does, as the
-// language server reads it (#261); a computed one leaves the context as it was.
-const SYSTEM_CONTEXT = /^system\s*"d\s+(\.[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)*|\.)\s*"\s*;?\s*(?:\s\/.*)?$/;
-
 /// Where the lambda that opens at `open` in `text` closes, by `charKinds`'
 /// code characters; -1 when it does not.
 function closing(text: string, kinds: string, open: number): number {
@@ -91,9 +86,9 @@ export function definitions(source: string): Definition[] {
   let ctx = "";
   for (const { text, start } of statementSpans(scriptCode(source))) {
     const lines = text.split("\n");
-    const switched = lines.length === 1 ? (CONTEXT.exec(text.trim()) ?? SYSTEM_CONTEXT.exec(text.trim())) : null;
-    if (switched !== null) {
-      ctx = switched[1] === "." ? "" : switched[1].slice(1);
+    const switched = contextSwitch(text);
+    if (switched !== undefined) {
+      ctx = switched === "." ? "" : switched.slice(1);
       continue;
     }
     const found = definitionOf(lines, start, ctx);

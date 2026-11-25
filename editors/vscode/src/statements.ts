@@ -264,6 +264,37 @@ export function statements(text: string): string[] {
   return statementSpans(text).map((s) => s.text);
 }
 
+const CONTEXT = /^\\d\s+(\.[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)*|\.)\s*$/;
+// `system "d .ns"` with a literal argument switches as `\d .ns` does, as the
+// language server reads it (#261); a computed one leaves the context as it was.
+const SYSTEM_CONTEXT = /^system\s*"d\s+(\.[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)*|\.)\s*"\s*;?\s*(?:\s\/.*)?$/;
+
+/// The context `statement` switches to - `.ns`, or `.` for the root - when
+/// it is a `\d` line or a `system "d .ns"` with a literal name.
+export function contextSwitch(statement: string): string | undefined {
+  if (statement.includes("\n")) {
+    return undefined;
+  }
+  return (CONTEXT.exec(statement.trim()) ?? SYSTEM_CONTEXT.exec(statement.trim()))?.[1];
+}
+
+/// The context running `code` leaves, started in `context`: q's console
+/// keeps a `\d` for the lines typed after it, and a script for the lines
+/// after it, where a query is read afresh in the root (#2286).
+export function contextAfter(code: string, context = "."): string {
+  for (const statement of statements(code)) {
+    context = contextSwitch(statement) ?? context;
+  }
+  return context;
+}
+
+/// `cut`, statements to run, run in `context` as its text would be after
+/// what left that context: a `\d` in front of them. q reads each query in
+/// the root again, so no `\d .` is needed after them.
+export function inContext(cut: string[], context: string): string[] {
+  return context === "." ? cut : [`\\d ${context}`, ...cut];
+}
+
 /// The lines, 0-based and inclusive, of the statement the cursor's `line`
 /// is in: from the unindented line that starts it to its last continuation
 /// line. Undefined on a comment line, inside a block comment, before the

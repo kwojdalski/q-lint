@@ -3,7 +3,7 @@
 // holds the cutter against a real q's `\l`; these hold the rules it found.
 const test = require("node:test");
 const assert = require("node:assert");
-const { statements, statementSpans, scriptCode, selectionCode, blockAt, lineKinds, isBlankLine } = require("../out/statements.js");
+const { statements, statementSpans, scriptCode, selectionCode, blockAt, lineKinds, isBlankLine, contextAfter, contextSwitch, inContext } = require("../out/statements.js");
 const { statementSpans: timedSpans } = require("../out/linetimings.js");
 const { cells, shownCode } = require("../out/cells.js");
 const { isComplete } = require("../out/repl.js");
@@ -112,4 +112,16 @@ test("a k) statement's lines reach the terminal joined as k reads them (#2285)",
   assert.deepStrictEqual(replLines('k)e:"ab\n cd"'), ['k)e:"ab\\n cd"']);
   // q's own lines are joined with a blank still.
   assert.deepStrictEqual(replLines("f:{x+\n  y}"), ["f:{x+ y}"]);
+});
+
+test("the context a text leaves is the one the next runs in (#2286)", () => {
+  assert.strictEqual(contextAfter("\\d .cdlib"), ".cdlib");
+  assert.strictEqual(contextAfter("add:{x+y}", ".cdlib"), ".cdlib");
+  assert.strictEqual(contextAfter("\\d .a\nf:1\n\\d .", "."), ".");
+  assert.strictEqual(contextAfter('system "d .b"'), ".b");
+  // A `\d` inside a block comment switches nothing.
+  assert.strictEqual(contextAfter("/\n\\d .x\n\\"), ".");
+  assert.strictEqual(contextSwitch("f:{\n  \\d .x}"), undefined);
+  assert.deepStrictEqual(inContext(["add:{x+y}"], ".cdlib"), ["\\d .cdlib", "add:{x+y}"]);
+  assert.deepStrictEqual(inContext(["a:1"], "."), ["a:1"]);
 });
