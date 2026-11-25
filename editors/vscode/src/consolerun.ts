@@ -25,16 +25,22 @@ export function answerLines(ran: Pick<Ran, "process" | "code" | "millis" | "answ
   return render(ran, { includeQuery: false, ignoreNullReturn: false }).slice(1);
 }
 
-/// Run `code` and answer what it gave; undefined, having said why, when it
-/// was not run: nothing in it to run, no process, a query still running,
-/// or the guard's question declined. `uri`: the file it is from, whose
+/// Run `written`, its placeholders filled in, and answer what it gave;
+/// undefined, having said why, when it was not run: nothing in it to run,
+/// a placeholder's box escaped, no process, a query still running, or the
+/// guard's question declined. `uri`: the file it is from, whose
 /// bound process it goes to. `context`: the `\d` the text before it left,
 /// which it runs in (#2286).
-export async function runText(live: Live, code: string, uri?: Uri, context = "."): Promise<Ran | undefined> {
-  const cut = statements(code);
-  if (cut.length === 0) {
+export async function runText(live: Live, written: string, uri?: Uri, context = "."): Promise<Ran | undefined> {
+  if (statements(written).length === 0) {
     return undefined;
   }
+  // Its `{{placeholders}}` asked for, as Run Query asks for them (#2364).
+  const code = await live.filledIn(written);
+  if (code === undefined) {
+    return undefined;
+  }
+  const cut = statements(code);
   if (!(await live.toFileBinding(uri))) {
     return undefined;
   }

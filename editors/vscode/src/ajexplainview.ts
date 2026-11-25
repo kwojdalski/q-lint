@@ -38,13 +38,19 @@ export function registerAjExplainer(context: ExtensionContext, live: Live): { ex
       return say(toolOff("ajExplainer"));
     }
     const file = given === undefined ? window.activeTextEditor?.document.uri : undefined;
-    const code = given ?? (await live.codeFromEditor(false));
-    if (code === undefined) {
+    const written = given ?? (await live.codeFromEditor(false));
+    if (written === undefined) {
       return "nothing to explain";
     }
-    const call = findAj(code);
-    if (call === undefined) {
+    if (findAj(written) === undefined) {
       return say("q-lint: there is no aj[columns;left;right] call in the selection or the statement at the cursor.");
+    }
+    // Its `{{placeholders}}` asked for once there is a call to explain, as
+    // Run Query asks for them (#2446).
+    const code = given ?? (await live.filledIn(written));
+    const call = code === undefined ? undefined : findAj(code);
+    if (call === undefined) {
+      return code === undefined ? "nothing to explain" : say("q-lint: there is no aj[columns;left;right] call in the selection or the statement at the cursor.");
     }
     const rowText =
       givenRow ??

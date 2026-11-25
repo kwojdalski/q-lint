@@ -63,7 +63,12 @@ export function registerLineTimings(
     const last = !whole && selection.end.character === 0 && selection.end.line > first ? selection.end.line - 1 : selection.end.line;
     // Read as q reads the file, and a selection as it reads there (#2287).
     const all = editor.document.getText();
-    const text = whole ? scriptCode(all) : selectionCode(all.split("\n"), first, editor.document.getText(new Range(first, 0, last, Number.MAX_SAFE_INTEGER)));
+    const written = whole ? scriptCode(all) : selectionCode(all.split("\n"), first, editor.document.getText(new Range(first, 0, last, Number.MAX_SAFE_INTEGER)));
+    // Its `{{placeholders}}` asked for, as Run Query asks for them (#2445).
+    const text = await live.filledIn(written);
+    if (text === undefined) {
+      return "nothing was run";
+    }
     const spans = statementSpans(text, first);
     if (spans.length === 0) {
       return say(`q-lint: ${whole ? "the file" : "the selection"} has no statement to time.`);

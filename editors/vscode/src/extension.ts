@@ -300,7 +300,7 @@ export async function activate(
         );
         return undefined;
       }
-      return typeof code === "string" && typeof uri === "string" ? live.queryCode(code, Uri.parse(uri)) : undefined;
+      return typeof code === "string" && typeof uri === "string" ? live.queryFilledIn(code, Uri.parse(uri)) : undefined;
     }),
   );
   // A reference count lens hands over the document and the name's position;

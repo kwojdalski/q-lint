@@ -90,6 +90,8 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
         api() { return {}; }
         processes() { return []; }
         queryCode(code, uri) { world.queried.push([code, uri]); return Promise.resolve(); }
+        // Its placeholders asked for first, as Run Query asks (#2447).
+        queryFilledIn(code, uri) { world.queried.push([code, uri, "filled in"]); return Promise.resolve(); }
       },
     },
     "./agenttool": { registerAgentTool: () => () => undefined },
@@ -284,7 +286,7 @@ test("a Run lens's command sends its code as a query from its document", async (
   const run = w.commands[w.extension.RUN_DEFINITION];
   assert.strictEqual(w.extension.RUN_DEFINITION, "q-lint.runDefinition");
   await run("\\d .qt\ntest_a:{[] 1}\n\\d .\n.qt.test_a[]", "file:///ws/suite.q");
-  assert.deepStrictEqual(w.queried, [["\\d .qt\ntest_a:{[] 1}\n\\d .\n.qt.test_a[]", { parsed: "file:///ws/suite.q" }]]);
+  assert.deepStrictEqual(w.queried, [["\\d .qt\ntest_a:{[] 1}\n\\d .\n.qt.test_a[]", { parsed: "file:///ws/suite.q" }, "filled in"]]);
   // Anything else - run by hand from a keybinding with no arguments - is
   // nothing to send.
   await run();

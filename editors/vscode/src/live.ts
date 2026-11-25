@@ -2874,7 +2874,7 @@ export class Live {
   /// `code` with its `{{name}}` placeholders given the values the user
   /// types, each box starting from the value given last (#911); undefined
   /// when the user pressed Escape, and nothing is run.
-  private async filledIn(code: string): Promise<string | undefined> {
+  async filledIn(code: string): Promise<string | undefined> {
     const configuration = workspace.getConfiguration("q-lint");
     const names = readPlaceholders((key, fallback) => configuration.get(key, fallback)).enabled ? placeholderNames(code) : [];
     if (names.length === 0) {
