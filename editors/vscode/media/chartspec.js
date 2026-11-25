@@ -429,7 +429,10 @@
     // Enough digits to tell one tick from the next, far from zero.
     const digits = Math.min(17, Math.max(12, Math.ceil(Math.log10(Math.max(Math.abs(lo), Math.abs(hi)) / step)) + 2));
     const out = [];
-    for (let v = Math.floor(lo / step) * step; out.length < 50 && isFinite(v) && v - step / 2 <= hi; v += step) {
+    // Each tick from its index, not by adding the step: -0.3+0.1+0.1+0.1 is
+    // -2.8e-17, where the tick is 0 (#2074).
+    const k0 = Math.floor(lo / step);
+    for (let i = 0, v = k0 * step; out.length < 50 && isFinite(v) && v - step / 2 <= hi; i++, v = (k0 + i) * step) {
       out.push(+v.toPrecision(digits));
     }
     return out.length > 0 ? { values: out, step: step } : { values: [lo, hi], step: hi - lo };

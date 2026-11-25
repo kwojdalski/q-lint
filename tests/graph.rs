@@ -17,7 +17,7 @@ fn graph(files: &[(&str, &str)], symbols: bool) -> BTreeMap<String, Node> {
         .iter()
         .map(|(name, text)| (root.join(name), text.to_string()))
         .collect();
-    build(&sources, symbols, root)
+    build(&sources, symbols, &[root.to_path_buf()])
         .into_iter()
         .map(|(p, node)| (p.strip_prefix(root).unwrap().display().to_string(), node))
         .collect()

@@ -216,6 +216,31 @@ test("Compare Notebook Cells with the last commit diffs the cells only, and says
   assert.strictEqual(diff.last.summary, "1 cell changed, 1 added, 0 removed, 2 the same");
 });
 
+// Where the filesystem ignores case, a notebook opened as Sub/NB.qnb is the
+// one git tracks as Sub/nb.qnb: git is asked for it by git's name (#2106).
+test("a notebook opened in another case than git's name is still compared with the committed one", async (t) => {
+  const { dir, git } = repo({ "README": "r\n" });
+  fs.mkdirSync(path.join(dir, "Sub"));
+  fs.writeFileSync(path.join(dir, "Sub", "nb.qnb"), qnb([code("x:1")]));
+  git("add", ".");
+  git("commit", "-qm", "two");
+  if (!fs.existsSync(path.join(dir, "sub", "NB.qnb"))) {
+    t.skip("this filesystem tells case apart");
+    return;
+  }
+  load(fakeVscode());
+  const { gitShow } = require("../out/notebookgit.js");
+  const committed = qnb([code("x:1")]);
+  for (const opened of [path.join(dir, "Sub", "nb.qnb"), path.join(dir, "Sub", "NB.qnb"), path.join(dir, "sub", "NB.QNB")]) {
+    assert.strictEqual(await gitShow(opened), committed, opened);
+  }
+  // Outside a repository, git's own message.
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "qnbgit-nogit-"));
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(outside, "a.qnb"), committed);
+  await assert.rejects(gitShow(path.join(outside, "a.qnb")), /not a git repository/);
+});
+
 test("Compare Notebook Cells with another notebook, and what it says when there is none to compare", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qnbgit-"));
   fs.writeFileSync(path.join(dir, "a.qnb"), qnb([code("1")]));

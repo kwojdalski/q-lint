@@ -199,7 +199,9 @@ results name, each with its summary and a link to its row in
 (`partialFingerprints."qlinterBaseline/v1"`) is the baseline's key for it -
 its file, code and line text - so a finding keeps its identity when lines are
 added above it and gets a new one when its own line is edited. Paths are
-relative to the directory qlinter runs in; run it from the repository root.
+relative to the directory qlinter runs in, against the base `%SRCROOT%`
+that the run's `originalUriBaseIds` says is that directory; run it from the
+repository root. A file outside it is named by its absolute `file:` URI.
 
 `--format github` prints one GitHub Actions workflow command per finding -
 `::error`, `::warning` or `::notice` with its file, line, columns and the
@@ -320,7 +322,6 @@ every finding.
 | QK001 | a dictionary literal, `([a:1;b:2])` | 4.1 and later |
 | QK002 | a pattern assignment, `(a;b):x`, `([k:v]):d` | 4.1 and later |
 | QK003 | a typed or filtered parameter, `{[x:`j] ...}`, `{[(a;b)] ...}` | 4.1 and later |
-| QK004 | `-30!`, the deferred response | 3.6 and later |
 | QK005 | `.Q.Xf` or `.Q.Cf` | before 4.1, which removed them |
 
 Each fact is from KX's release notes (ChangesIn3.6, 4.0 and 4.1 on
@@ -329,6 +330,10 @@ construct above and has neither `.Q.Xf` nor `.Q.Cf`. No 3.6, 4.0 or 4.1
 binary was at hand, so the older side is the release notes' word, not a
 test's. PeachQ runs the dictionary literal and `(a;b):`, and refuses
 `([k:v]):` ('nyi) and a filtered parameter ('parse).
+
+There is no QK004. It reported `-30!`, the deferred response, which q has
+from 3.6 on - the oldest release a target can name - so it could never
+report anything, and was withdrawn.
 
 ### Configuration
 
@@ -425,14 +430,16 @@ adds to it.
 The root is the directory the pattern is written relative to, never the path
 being linted: a configuration file's own directory for its patterns, and the
 directory qlinter runs in for `--exclude` (and for a `--config FILE` or the
-user-level file). So `qlinter .. --exclude src/`, run from `proj/tests`,
+user-level file - in the language server, the user-level file's patterns are
+rooted at the workspace folder holding the file instead). So `qlinter .. --exclude src/`, run from `proj/tests`,
 names `proj/tests/src`; a leading `../` climbs from the root, as Ruff resolves
 it, and `qlinter .. --exclude ../src` is the one that names `proj/src`.
 
 Under `uqf`, QP002, QP003 and QP005 - and QP007 where it is selected - pass
 over a file in a `tests`
 directory below that root - the configuration's directory, or the current
-one without a configuration - since a test may build a datetime or read the
+one without a configuration (in the language server, the workspace folder
+holding the file, wherever the editor started it) - since a test may build a datetime or read the
 local clock on purpose. A `tests` above the root exempts nothing, and
 `--select` naming one of them reports it regardless.
 
@@ -499,7 +506,8 @@ These are heuristics over source text, not a proof: a clean lint means no rule
 matched, which is weaker than "this code is correct".
 Column-zero `p)`/`k)` blocks and their indented continuations are opaque to
 built-in q checks; Python/K syntax is not validated. Normal q analysis resumes
-on the next nonblank, unindented q line, and `q)` bodies are checked normally.
+on the next nonblank, unindented q line - a bare `/` among them, which opens a
+block comment as it does anywhere - and `q)` bodies are checked normally.
 The Python-only repository hook's embedded-q-in-Python check is outside the
 standalone q analyzers' scope.
 
@@ -518,9 +526,11 @@ It implements `initialize`/`initialized`, `didOpen`/`didChange`/`didSave`/
 It also offers Quick Fixes through `textDocument/codeAction` for `==` → `=`,
 `!=` → `<>`, `+=`/`-=`/`*=` → `+:`/`-:`/`*:`, and a leading UTF-8 BOM -
 the BOM only where the editor sends one: VS Code decodes a UTF-8 file's BOM
-away before the server sees the text and writes it back on save, so there
-QE005 is never shown and Format Document leaves the BOM, which
-`qlinter --fix` removes.
+away before the server sees the text and writes it back on save. QE005 is
+still reported there, open or closed, while the file on disk starts with a
+BOM, since that is what q loads; it has no Quick Fix and Format Document
+leaves the BOM, which `qlinter --fix` - or saving with the encoding set to
+UTF-8 - removes.
 It also fixes `&&` → `&` and `||` → `|` when selected in the editor, and
 `f x` → `f[x]` for QP006 under the uqf profile - where the edit covers the
 whole application, not just the underlined name - along with every other
@@ -605,7 +615,8 @@ transcript.
 running it: `textDocument/documentSymbol` (the outline; nested or flat, as
 the client declares), `workspace/symbol`, `textDocument/definition`,
 `textDocument/references`, `textDocument/documentHighlight` (a write told
-from a read), and `textDocument/prepareRename`/`textDocument/rename`.
+from a read - an assignment, an amend, and a table changed in place by its
+name, `` update .. from `t ``, `` `c xasc `t ``, `@[`t;..]`), and `textDocument/prepareRename`/`textDocument/rename`.
 
 The nested outline puts each name under the namespace it is in, the whole of
 the name before its last dot: `.qetl.io.read` is `read` under `.qetl.io`,
@@ -637,8 +648,10 @@ ignored.
 
 On the path of a load - `\l src/init.q`, `system "l src/init.q"`, or a file
 symbol `` `:lib/x.q `` - Go to Definition opens the file and a hover names it.
-The path is followed as the dependency graph follows it: against the first
-workspace folder, then the loading file's own directory and each one above it;
+The path is followed as the dependency graph follows it: against the
+workspace folder the loading file is in (the first, for a file in none) -
+each folder is the root of its own loads - then the loading file's own
+directory and each one above it;
 a directory loads the scripts directly in it. A load that reaches no file, or
 a relative one written after the script changes directory - a `\cd`, or the
 load of a directory, which q stays in - goes nowhere.
@@ -681,12 +694,16 @@ loaded in - and only its last part changes: `.lib.add` and `add` under
 in another namespace is refused. A dotted read through the global is one of
 those places, and only the global's part of it changes: `ta.c` for a table
 `ta` (q reads column `c` of the global), `.cfg.port` for a `.cfg` assigned
-whole. `prepareRename` answers with the range of
+whole. A file loaded under two contexts defines the name in both with one
+assignment, so both are renamed, and the uses of each with them.
+`prepareRename` answers with the range of
 that last part. `rename.enable: false` leaves renaming unannounced, and the
-rest of navigation on. The rename is refused for a name in a one-letter namespace
+rest of navigation on. The rename is refused while `workspaceIndex.enable` is
+`false`, since a file that is not open is then not read, for a name in a one-letter namespace
 (`.z.pg`, `.q.f`, which q keeps for itself), a name no indexed file assigns
 (q's own, or defined where the server cannot read), a new name that is not
-one q takes, is reserved or is already assigned, and one that is a
+one q takes, is reserved or is already assigned, one with a `_` where a
+`k)` line names the global (k would read it as its drop), and one that is a
 parameter or local of a lambda reading the global without its namespace,
 where it would hide the renamed global. It is also refused, naming the line,
 where a use cannot be told from something else or cannot be rewritten: `ta.c`
@@ -852,7 +869,7 @@ written only when the item is accepted; its `detail` says `adds \l
 lib/util.q`. "Can already see" is the document itself, every file it loads
 directly or through another, and every file loaded by a file that loads it -
 a sibling its loader brings in - so a load already there is never added
-twice. The path is written from the first workspace folder, or else from the
+twice. The path is written from the document's workspace folder, or else from the
 document's own directory, whichever the dependency graph follows to that
 file. The line goes after the last `\l` line above the cursor and above the
 file's first `\d`, keeping the loads' order; with none, after a leading
@@ -908,6 +925,8 @@ q-lint/testsReaching  {"textDocument": {"uri": U}, "previous": "the text before 
                    -> {"changed": [name], "tests": [{"uri": uri, "name": N}]}
 ```
 
+All three name a global as q does where its file is loaded: `ff:` in a
+file loaded under `\d .aa` is `.aa.ff`, in the `.aa` namespace.
 `deadCode` lists the functions no indexed file reads. A name counts as read
 when a file reads it as code, and also when its last part is spelled in a
 symbol or a string anywhere (`` `f ``, `value "f[]"`), since q reaches a
@@ -1239,6 +1258,10 @@ client that registers watchers for three: `**/*.q`, `**/*.toml`, and `**/*`
 for a path created or deleted (`kind` 5) - the last because a folder
 renamed, moved or deleted is one event for the folder and none for the
 files in it, which stands for every `.q` file and configuration it holds.
+A baseline, or another file the settings were read from by a name those
+miss, is watched by its own pattern too: rooted at its directory for a
+client that takes relative patterns, and otherwise as a glob relative to
+the workspace folder that holds it.
 A value the server cannot read is reported with `window/showMessage` and its
 default used.
 
@@ -1354,7 +1377,7 @@ language server driven over real LSP framing as a real process.
 
 ### Rule and multiline regression corpus
 
-The taxonomy contains 144 codes. Ten literal-call rules cover excess builtin
+The taxonomy contains 143 codes. Ten literal-call rules cover excess builtin
 arguments (QA010), invalid literal types/shapes (QT008–QT014), and negative
 `til`/`where` counts (QD001–QD002). These checks leave unknown expressions
 unresolved and account for projections, seeded scans and variadic `enlist`.
@@ -1363,7 +1386,7 @@ unresolved and account for projections, seeded scans and variadic `enlist`.
 `tests/showcase.rs` checks exact code/line pairs under every profile, including
 silence in the clean section. Together with the three companion examples -
 `syntax-error.q`, `byte-order-mark.q` and `query-injection.q`, each holding
-a rule that would hide or stop the others - it covers all 142 rules available
+a rule that would hide or stop the others - it covers all 141 rules available
 in this build; QF006 and QLS001 are excluded.
 
 Multiline fixtures cover nested lambdas, split argument lists, comments,

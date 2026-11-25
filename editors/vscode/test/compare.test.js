@@ -129,6 +129,23 @@ test("a column of another type is not the same answer, and the page says which (
   assert.strictEqual(page.posted.at(-1).rendered.summary, "px is float (f) on prod and long (j) on uat (rows lined up by place).");
 });
 
+test("answers that did not all come back are not called the same when their types, keys or cut cells differ (#2075)", () => {
+  const cutOff = (answer) => ({ ...answer, grid: { ...answer.grid, count: 1000 } });
+  const t = (type, keys = 0) => cutOff(table({ a: [7, ["1", "2"], [1, 2]], px: [type, ["1", "2"], [1, 2]] }, keys));
+  const note = " Not every row came back, so only the rows held were compared: raise q-lint.query.gridLimit or turn on Unlimited to compare them all.";
+  const page = loadPage();
+  const said = (c) => (page.send({ type: "compare", id: 1, code: "t", comparison: c }), page.posted.at(-1).rendered.summary);
+  const retyped = compareOutcomes(side("prod", t(9)), side("uat", t(7)), -1);
+  assert.deepStrictEqual([retyped.same, retyped.partial], [false, true]);
+  assert.strictEqual(said(retyped), "px is float (f) on prod and long (j) on uat (rows lined up by place)." + note);
+  assert.strictEqual(said(compareOutcomes(side("prod", t(7, 1)), side("uat", t(7)), -1)), "the table is keyed by a on prod and not keyed on uat (rows lined up by place)." + note);
+  const long = `"${"a".repeat(196)}...`;
+  const strings = () => cutOff(table({ s: [0, [long, '"b"'], [false, false]] }));
+  assert.strictEqual(said(compareOutcomes(side("a", strings()), side("b", strings()), -1)), "1 cell is the same as far as shown, cut at 200 characters, and no further compared (rows lined up by place)." + note);
+  // The rows held are the same, and only that.
+  assert.strictEqual(said(compareOutcomes(side("prod", t(7)), side("uat", t(7)), -1)), "The rows held are the same." + note);
+});
+
 test("tables that are not keyed by the same columns are not the same answer, and the page says how each is keyed (#2008)", () => {
   // ([k:1 2] v:10 20) and ([] k:1 2; v:10 20): the same cells, and not the same value.
   const t = (keys) => table({ k: [7, ["1", "2"], [1, 2]], j: [7, ["3", "4"], [3, 4]], v: [7, ["10", "20"], [10, 20]] }, keys);

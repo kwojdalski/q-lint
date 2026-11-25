@@ -307,26 +307,25 @@
     if (agg !== "count" && !numbers) {
       return { rows: [], columns: [], cells: [], note: "Choose a numeric column to take the " + agg + " of, or count." };
     }
+    // Grouped by rank where q ranked the column, so floats the grid rounds
+    // alike stay apart as q's `by` keeps them (#2078); by text where it did
+    // not. A group is labelled by its first row's text.
     const keys = function (c) {
       if (c < 0 || c >= grid.columns.length) {
-        return { of: function () { return ""; }, order: [""] };
+        return { of: function () { return ""; }, order: [""], label: function () { return ""; } };
       }
       const cells = grid.cells[c];
-      const rank = grid.rank[c];
+      const rank = grid.rank[c] && grid.rank[c].length === cells.length ? grid.rank[c] : null;
+      const of = rank ? function (r) { return rank[r]; } : function (r) { return cells[r]; };
       const first = new Map();
       rows.forEach(function (r) {
-        if (!first.has(cells[r])) {
-          first.set(cells[r], r);
+        if (!first.has(of(r))) {
+          first.set(of(r), r);
         }
       });
       const order = Array.from(first.keys());
-      order.sort(function (a, b) {
-        if (rank) {
-          return rank[first.get(a)] - rank[first.get(b)];
-        }
-        return textOrder(a, b);
-      });
-      return { of: function (r) { return cells[r]; }, order: order };
+      order.sort(rank ? function (a, b) { return a - b; } : textOrder);
+      return { of: of, order: order, label: function (k) { return cells[first.get(k)]; } };
     };
     const across = keys(spec.row);
     const down = keys(spec.column);
@@ -368,7 +367,7 @@
       }
       return meanText(agg === "sum" ? a.sum : agg === "avg" ? average(a.sum, a.mean, a.n) : agg === "min" ? a.min : a.max);
     };
-    const out = { rows: across.order, columns: spec.column >= 0 ? shown : [agg], cells: across.order.map(function (k) { return (acc.get(k) || shown.map(function () { return { n: 0, sum: 0, min: Infinity, max: -Infinity }; })).map(text); }) };
+    const out = { rows: across.order.map(across.label), columns: spec.column >= 0 ? shown.map(down.label) : [agg], cells: across.order.map(function (k) { return (acc.get(k) || shown.map(function () { return { n: 0, sum: 0, min: Infinity, max: -Infinity }; })).map(text); }) };
     if (down.order.length > shown.length) {
       out.note = "The first " + shown.length + " of " + down.order.length + " values of " + grid.columns[spec.column].name + " are shown as columns.";
     }
@@ -430,6 +429,19 @@
   /// or valueOf is not one of Object's.
   function ownValue(map, key) {
     return map && Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined;
+  }
+
+  /// Set `map[key]` as its own: assigning `__proto__` would set the
+  /// prototype, or nothing (#2079).
+  function setOwn(map, key, value) {
+    Object.defineProperty(map, key, { value: value, enumerable: true, writable: true, configurable: true });
+  }
+
+  /// A copy of `map`'s own entries.
+  function ownCopy(map) {
+    const out = {};
+    Object.keys(map || {}).forEach(function (k) { setOwn(out, k, map[k]); });
+    return out;
   }
 
   /// The points a chart's data draws: each dataset's or linked pane's.
@@ -999,7 +1011,7 @@
         sort();
       });
       if (menu) {
-        th.setAttribute("data-vscode-context", JSON.stringify({ webviewSection: "column", column: i, columnKind: columnKind(grid, i), preventDefaultContextMenuItems: false }));
+        th.setAttribute("data-vscode-context", JSON.stringify({ webviewSection: "column", column: i, columnKind: columnKind(grid, i), run: result.run, preventDefaultContextMenuItems: false }));
       }
       if (feature("columnLayout")) {
         // Drag a header to move its column; drag its right edge to resize it.
@@ -1407,7 +1419,7 @@
           // or to edit the cell.
           td.setAttribute("data-c", ci);
           td.setAttribute("data-r", r);
-          td.setAttribute("data-vscode-context", JSON.stringify({ webviewSection: "cell", column: ci, row: r, preventDefaultContextMenuItems: false }));
+          td.setAttribute("data-vscode-context", JSON.stringify({ webviewSection: "cell", column: ci, row: r, run: result.run, preventDefaultContextMenuItems: false }));
         }
         // A cell the diff marks keeps the diff's colour; then a rule's, a
         // colour column's, and the heatmap's.
@@ -1640,7 +1652,7 @@
     const colours = {};
     series.forEach(function (n) {
       if (ownValue(state.colours, n)) {
-        colours[n] = ownValue(state.colours, n);
+        setOwn(colours, n, ownValue(state.colours, n));
       }
     });
     const out = { kind: state.kind, series: series, bins: state.bins, colours: colours };
@@ -1669,7 +1681,7 @@
     if (preset.bins) {
       state.bins = preset.bins;
     }
-    state.colours = Object.assign({}, preset.colours || {});
+    state.colours = ownCopy(preset.colours);
     state.mapSize = preset.size ? at(preset.size) : -1;
     state.mapColour = preset.colour ? at(preset.colour) : -1;
   }
@@ -1753,7 +1765,7 @@
         colour.title = "The colour of " + name;
         colour.value = ownValue(state.colours, name) || (/^#[0-9a-f]{6}$/i.test(theme.colours[picked.indexOf(c) % theme.colours.length]) ? theme.colours[picked.indexOf(c) % theme.colours.length] : "#3794ff");
         colour.addEventListener("change", function () {
-          state.colours[name] = colour.value;
+          setOwn(state.colours, name, colour.value);
           save();
           drawChart();
         });

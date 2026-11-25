@@ -147,6 +147,24 @@ fn language_prefixes_preserve_following_q_diagnostics() {
     assert!(lint("a)x:1\n", "t.q", Profile::Style).is_empty());
 }
 
+#[test]
+fn a_bare_slash_after_a_foreign_line_opens_a_block_comment() {
+    // #2042. q 5 hands `t)c`, `/`, `  zz`, `\`, `show 1` to `.t.e` as `c`
+    // alone: the bare `/` opens a block comment, the `\` closes it, and q
+    // runs on. Read as part of the foreign statement, the `\` ended the
+    // script and the unclosed paren after it went unreported.
+    for prefix in ["p)", "k)"] {
+        let text = format!("fk:1\n{prefix}gk:2\n/\n zz\n\\\nshow fk\nx:(1;2\n");
+        let findings = lint(&text, "t.q", Profile::Style);
+        assert!(
+            findings.iter().any(|f| f.code == "QE001" && f.line == 7),
+            "{prefix}: {findings:?}"
+        );
+    }
+    // A `/ note` line is still carried over, as q carries it.
+    assert!(lint("k)gk:2\n/ note\n  (\n", "t.q", Profile::Style).is_empty());
+}
+
 /// The cases here were settled by running each one through a real q 4.x and
 /// asking it what the lambda's parameters actually are (`value value`), not by
 /// reading the reference manual. q accepts more in a parameter list than one
@@ -425,7 +443,34 @@ fn a_root_lambda_is_not_coloured_inside_a_context() {
     ws.add(&index(text));
     ws.add(&index("g:{x}\n"));
     assert!(
-        !semantic_tokens_in(text, &ws)
+        !semantic_tokens_in(text, &ws, &Default::default())
+            .iter()
+            .any(|t| t.2 == TokenKind::Function)
+    );
+}
+
+#[test]
+fn a_function_of_the_context_a_file_is_loaded_in_is_coloured() {
+    use q_lint_rs::graph::Placement;
+    use q_lint_rs::{TokenKind, Workspace, index, semantic_tokens_in};
+    // #2053. q 5 loads lib.q and b.q under `\d .aa`: `.aa.gg` calls
+    // `.aa.fz`, so b.q's `fz` is a function where it is read before any
+    // `\d` of its own, and not after `\d .bb`.
+    let text = "gg:{fz x}\nhh:fz 2\n\\d .bb\nkk:fz 3\n";
+    let mut ws = Workspace::default();
+    ws.add(&index(".aa.fz:{x+1}\n"));
+    let placement = Placement {
+        contexts: [".aa".to_string()].into(),
+        root: false,
+    };
+    let functions: Vec<usize> = semantic_tokens_in(text, &ws, &placement)
+        .iter()
+        .filter(|t| t.2 == TokenKind::Function)
+        .map(|t| t.0)
+        .collect();
+    assert_eq!(functions, [4, 13]);
+    assert!(
+        !semantic_tokens_in(text, &ws, &Placement::default())
             .iter()
             .any(|t| t.2 == TokenKind::Function)
     );
@@ -978,14 +1023,30 @@ fn a_long_where_phrase_lints_in_bounded_time() {
 /// length (#708).
 #[test]
 fn a_long_lambda_body_lints_in_bounded_time() {
-    let body: String = (0..16000).map(|i| format!("  a{i}:x+y*{i};\n")).collect();
-    let source = format!("f:{{[x;y]\n{body}  a0}}\n");
-    let started = std::time::Instant::now();
-    lint(&source, "t.q", Profile::Style);
-    let elapsed = started.elapsed();
+    let time = |n: usize| {
+        let body: String = (0..n).map(|i| format!("  a{i}:x+y*{i};\n")).collect();
+        let source = format!("f:{{[x;y]\n{body}  a0}}\n");
+        (0..3)
+            .map(|_| {
+                let started = std::time::Instant::now();
+                std::hint::black_box(lint(&source, "t.q", Profile::Style));
+                started.elapsed()
+            })
+            .min()
+            .unwrap()
+    };
+    time(1000); // warm the allocator and the regex caches
+    let (small, large) = (time(1000), time(8000));
+    eprintln!("a 1000-line lambda took {small:?} and an 8000-line one {large:?}");
+    // Quadratic is 64 times; linear is 8. A fixed 10 s bound on a 16000-line
+    // lambda measured the runner, not the walk: CI's Linux and Windows
+    // runners took 10.5 s for code whose debug build takes 2.8 s on Apple
+    // silicon, and master was already within a few percent of the bound.
+    // Linear measures 8.1 here (174 ms and 1.41 s). 16 still fails a quadratic walk by
+    // four times, as the many-conditions test above does.
     assert!(
-        elapsed < std::time::Duration::from_secs(10),
-        "a 16000-line lambda took {elapsed:?}"
+        large < small * 16,
+        "a 1000-line lambda took {small:?} and an 8000-line one {large:?}"
     );
 }
 /// Chained qSQL keywords: each one scanned on to the statement's end, more

@@ -15,7 +15,7 @@
 // the grid colours them - by `media/gridlook.js`, which the page runs too.
 import { charText, realValue, textBuffer, toGrid, type Grid, type GridPayload } from "./grid";
 import type { FormatRule } from "./resultlook";
-import { distinctNames, plainItem, rawColumn, tableParts, textNull } from "./qliteral";
+import { cutCells, distinctNames, itemValue, rawColumn, tableParts, textNull } from "./qliteral";
 import { toParquet } from "./parquet";
 import { toXlsx } from "./xlsx";
 
@@ -109,8 +109,8 @@ function jsonNumber(type: number, text: string, raw: unknown): string {
   if (raw === undefined) {
     return /^-?\d+$/.test(text) ? text : JSON.stringify(text);
   }
-  // A Long writes its every digit.
-  return String(raw);
+  // A Long writes its every digit, and -0 its sign (#2089).
+  return Object.is(raw, -0) ? "-0" : String(raw);
 }
 
 /// The rows to write: `rows` when given, and otherwise all of them.
@@ -145,11 +145,13 @@ function jsonParts(payload: GridPayload, rows?: number[]): string[] {
       if (value === null || textNull(type, text)) {
         return "null";
       }
-      if (type === 0 && typeof value === "number" && Number.isFinite(value)) {
-        // A float or real item as a number, not `-3!`'s `\P` text (#1485).
-        return String(text.endsWith("e") ? realValue(value) : value);
+      if (type === 0) {
+        // A number as a number, every digit of a float (#1485); a boolean,
+        // a null, a string as JSON's own (#2086).
+        const item = itemValue(text, value);
+        return "number" in item ? item.number : "boolean" in item ? String(item.boolean) : "null" in item ? "null" : JSON.stringify(item.text);
       }
-      return JSON.stringify(type === 0 ? plainItem(text) : type === 10 ? charText(text, value) : text);
+      return JSON.stringify(type === 10 ? charText(text, value) : text);
     };
   });
   const order = rowOrder(payload, rows);
@@ -210,6 +212,11 @@ export function exportResult(format: ExportFormat, payload: GridPayload, decimal
   if (payload.count > (payload.cells[0]?.length ?? 0)) {
     notes.push(`the grid held ${(payload.cells[0]?.length ?? 0).toLocaleString("en-US")} of the result's ${payload.count.toLocaleString("en-US")} rows`);
   }
+  // Every format writes such a cell as far as it was sent (#2087).
+  const cut = cutCells(payload, order);
+  if (cut > 0) {
+    notes.push(`${cut} cell(s) were cut at 200 characters or at the process's \\c width and are not their whole value`);
+  }
   switch (format) {
     case "json":
       return { data: textBuffer(jsonParts(payload, order)), rows: order.length, notes };
@@ -217,9 +224,6 @@ export function exportResult(format: ExportFormat, payload: GridPayload, decimal
       return { data: textBuffer(markdownParts(payload, decimals, order, formats)), rows: order.length, notes };
     case "q": {
       const table = tableParts(payload, order);
-      if (table.cut > 0) {
-        notes.push(`${table.cut} cell(s) were cut at 200 characters or at the process's \\c width and are not their whole value`);
-      }
       return { data: textBuffer([...table.parts, "\n"]), rows: order.length, notes };
     }
     case "xlsx": {

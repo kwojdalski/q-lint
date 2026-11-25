@@ -293,6 +293,21 @@ pub fn shadowing(source: &str, name: &str, offsets: &[usize]) -> Option<usize> {
     semantics::navigate::shadowing(&v.code, source, name, offsets)
 }
 
+/// Where `source` hands a global by its name to a word that changes it in
+/// place - `` update c:1 from `t ``, `` `c xasc `t ``, `@[`t;..]` - as the
+/// start of each such symbol's name.
+pub fn changed_by_name(source: &str) -> Vec<usize> {
+    let v = views(source);
+    semantics::navigate::changed_by_name(&v.code)
+}
+
+/// The first of `offsets` of `source` on a `k)` line, where k reads the
+/// name: see `semantics::navigate::on_k_line`.
+pub fn on_k_line(source: &str, offsets: &[usize]) -> Option<usize> {
+    let v = views(source);
+    semantics::navigate::on_k_line(&v.code, source, offsets)
+}
+
 /// What Extract Function writes for a selection: see `extract`.
 pub use semantics::extract::{Extraction, fresh_name};
 
@@ -521,13 +536,18 @@ pub mod graph;
 /// offset, byte length and kind - in order, and never inside a string or a
 /// comment, since those are blank in the view this reads.
 pub fn semantic_tokens(source: &str) -> Vec<(usize, usize, TokenKind)> {
-    semantic_tokens_in(source, &Workspace::default())
+    semantic_tokens_in(source, &Workspace::default(), &graph::Placement::default())
 }
 
-/// The same, with the functions other files in `ws` define coloured too.
-pub fn semantic_tokens_in(source: &str, ws: &Workspace) -> Vec<(usize, usize, TokenKind)> {
+/// The same, with the functions other files in `ws` define coloured too,
+/// for a file its loaders put where `placement` says.
+pub fn semantic_tokens_in(
+    source: &str,
+    ws: &Workspace,
+    placement: &graph::Placement,
+) -> Vec<(usize, usize, TokenKind)> {
     let v = views(source);
-    semantics::tokens(&v.code, source, ws)
+    semantics::tokens(&v.code, source, ws, placement)
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -611,7 +631,7 @@ pub fn builtin(name: &str) -> Option<&'static Builtin> {
     BUILTINS.iter().find(|builtin| builtin.name == name)
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Finding {
     pub path: String,
     pub line: usize,
@@ -2091,8 +2111,8 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         }
         // A number signalled is 'stype; signal it as a string.
         "QT025" => {
-            let m = re!(r"^'(\s*)(-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)")
-                .captures(source.get(start..)?)?;
+            let m =
+                re!(r"^'(\s*)(-?\d(?:e-|e\+\d|[A-Za-z0-9.:])*)").captures(source.get(start..)?)?;
             // Only the whole operand: `'10 20` with its first item quoted would
             // be `'"10" 20`, still 'stype, and `'1 2` would be `'enlist"1" 2`,
             // 'type (#1200).
@@ -2940,6 +2960,9 @@ fn boundary(s: &str, at: usize) -> bool {
         // `(x)_ns`. Verified with parse in q 5: "3_ns" is (_;3;`ns), and so
         // are "1.5_ns", "0x01_ns" and "3j_ns", while "x_ns" is `x_ns.
         Some('_') => !ends_in_name(&before[..before.len() - 1]),
+        // Nor after a number's exponent sign, which q reads on past: the `y`
+        // of `1e-y` is no name, since `-4!"1e-y"` is one token (#2099).
+        Some('-' | '+') => !in_number(s, at - 1),
         Some(c) => !c.is_alphanumeric() && !".`".contains(c),
     }
 }
@@ -3041,7 +3064,7 @@ fn refused_atom_condition(raw: &str) -> bool {
         // An hsym runs on over `/`: `` `:db/t `` is one symbol (q 5).
         || re!(r"^(?:`(?::[A-Za-z0-9_.:/]*|[A-Za-z0-9_.:]*))+$").is_match(raw)
         || re!(r"^0x(?:[0-9a-fA-F]{2}){2,}$").is_match(raw)
-        || re!(r"^-?(?:\d+\.\d*|\.\d+|\d+(?:\.\d*)?[eE][+-]?\d+)[ef]?$|^-?\d+[ef]$|^0[nwNW][ef]?$|^-0[wW][ef]?$|^0Ng$")
+        || re!(r"^-?(?:\d+\.\d*|\.\d+|\d+(?:\.\d*)?(?:e[+-]?\d+|E\d+))[ef]?$|^-?\d+[ef]$|^0[nwNW][ef]?$|^-0[wW][ef]?$|^0Ng$")
             .is_match(raw)
             && !re!(r"^-?0[NW]$").is_match(raw)
 }
@@ -3467,6 +3490,63 @@ fn edit_distance(a: &str, b: &str) -> usize {
     }
     row[b.len()]
 }
+/// Every expression q reads on its own: a statement, and each
+/// `;`-separated slot of a bracket, parenthesis or lambda, at every depth. A
+/// top-level statement ends at a newline the next line does not continue by
+/// indenting; inside a bracket a newline is nothing to q. Each comes as its
+/// own text - a nested group kept as its two brackets and nothing between,
+/// as `flat_filter` would blank it - beside the offset into `code` of each
+/// byte, and where it starts. One pass, so a deep nest costs no more than a
+/// flat file.
+fn bare_segments(code: &str, source: &str) -> Vec<(usize, String, Vec<usize>)> {
+    let b = code.as_bytes();
+    let src = source.as_bytes();
+    let mut out = vec![];
+    // Each open group: where it starts, its own bytes and their offsets.
+    let mut frames: Vec<(usize, Vec<u8>, Vec<usize>)> = vec![(0, vec![], vec![])];
+    let emit = |frame: (usize, Vec<u8>, Vec<usize>), out: &mut Vec<_>| {
+        if let Ok(text) = String::from_utf8(frame.1)
+            && !text.trim().is_empty()
+        {
+            out.push((frame.0, text, frame.2));
+        }
+    };
+    for (i, &c) in b.iter().enumerate() {
+        match c {
+            b'(' | b'[' | b'{' => {
+                let top = frames.last_mut().unwrap();
+                top.1.push(c);
+                top.2.push(i);
+                frames.push((i + 1, vec![], vec![]));
+            }
+            b')' | b']' | b'}' if frames.len() > 1 => {
+                emit(frames.pop().unwrap(), &mut out);
+                let top = frames.last_mut().unwrap();
+                top.1.push(c);
+                top.2.push(i);
+            }
+            b';' => {
+                let done = std::mem::replace(frames.last_mut().unwrap(), (i + 1, vec![], vec![]));
+                emit(done, &mut out);
+            }
+            b'\n' if frames.len() == 1 && !matches!(src.get(i + 1), Some(b' ' | b'\t')) => {
+                emit(
+                    std::mem::replace(&mut frames[0], (i + 1, vec![], vec![])),
+                    &mut out,
+                );
+            }
+            _ => {
+                let top = frames.last_mut().unwrap();
+                top.1.push(c);
+                top.2.push(i);
+            }
+        }
+    }
+    for frame in frames {
+        emit(frame, &mut out);
+    }
+    out
+}
 /// QB006's logic: the words only. `&` and `|` read the same way, but they
 /// are min and max as often as and and or, and there the right-to-left
 /// reading is the point: `n>=4|.00002*count text`, `0<x&y`.
@@ -3477,6 +3557,18 @@ static LOGIC: LazyLock<regex::Regex> =
 static COMPARISON: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(r"[<>=~]|\b(?:in|within|like)(?:[^A-Za-z0-9_.\[]|$)").unwrap()
 });
+/// Whether a comparison sits left of an `and`/`or` in `clause`, one bracket
+/// depth flattened: QB006's trap. A symbol is no word - `` `in`or `` names
+/// two symbols - and an iterated `and/:\:` or `or'` is a derived function
+/// someone applied on purpose, so neither counts.
+fn comparison_swallowed(clause: &str) -> bool {
+    let clause =
+        re!(r"`[\w.:/]*").replace_all(clause, |m: &regex::Captures| " ".repeat(m[0].len()));
+    LOGIC
+        .find_iter(&clause)
+        .find(|logic| !clause[logic.end()..].starts_with(['\'', '/', '\\']))
+        .is_some_and(|logic| COMPARISON.is_match(&clause[..logic.start()]))
+}
 /// The comparisons in a where phrase that an `and`/`or` to their right
 /// swallows, as byte ranges into `flat` - a phrase `flat_filter` has
 /// flattened. Each is an operand left of an `and`/`or` in its clause; q reads
@@ -3595,6 +3687,52 @@ fn phrase_end(code: &str, from: usize) -> usize {
     }
     code.len()
 }
+/// Where the number q's tokenizer reads from `at` ends: `text[at..]` starts
+/// with a digit, or a point and a digit. It runs on over letters, digits,
+/// points and a colon before a digit, and takes a sign only as q does (`-4!`
+/// on KDB-X 5): a `-` straight after a lower-case `e` always (`1e-3`, and
+/// `1e-` and `1e-y` too), a `+` there only before a digit (`1e+x` is `1e`,
+/// `+`, `x`), and none after an upper-case `E` - `1E-3` is `1E`, `-`, `3`
+/// (#2057, #2099). The regex patterns that scan a number spell its sign the
+/// same way, `e-|e\+\d`.
+pub(crate) fn number_end(text: &str, at: usize) -> usize {
+    re!(r"^\.?\d(?:e-|e\+\d|:\d|[0-9A-Za-z.])*")
+        .find(&text[at..])
+        .map_or(at, |m| at + m.end())
+}
+/// Whether the `+` or `-` at `i` is part of the number written before it:
+/// its exponent's sign, as `number_end` reads one. The token is read from the
+/// start of the run of letters, digits, points and colons it ends, left to
+/// right as q reads it: in `c3:1e-y` the run holds the name `c3`, the `:`
+/// and the number `1e-y`.
+fn in_number(text: &str, i: usize) -> bool {
+    let b = text.as_bytes();
+    let mut p = b[..i]
+        .iter()
+        .rposition(|c| !(c.is_ascii_alphanumeric() || b"._:".contains(c)))
+        .map_or(0, |p| p + 1);
+    if p > 0 && b[p - 1] == b'`' {
+        return false;
+    }
+    while p < i {
+        let c = b[p];
+        if c.is_ascii_digit() || c == b'.' && b.get(p + 1).is_some_and(u8::is_ascii_digit) {
+            let end = number_end(text, p);
+            if end > i {
+                return true;
+            }
+            p = end;
+        } else if c.is_ascii_alphabetic() {
+            p += b[p..i]
+                .iter()
+                .take_while(|c| c.is_ascii_alphanumeric() || b"._".contains(c))
+                .count();
+        } else {
+            p += 1;
+        }
+    }
+    false
+}
 /// Whether a top-level statement mixes `*`/`%` with a binary `+`/`-` - the
 /// pair whose right-to-left order readers most often get wrong. A `-` is
 /// binary only when it does not introduce a token: `a -b` applies `a` to
@@ -3673,18 +3811,9 @@ fn infix_runs(line: &str) -> Vec<Vec<(usize, bool)>> {
                 let introduces = c == b'-'
                     && spaced
                     && (digit(i + 1) || b.get(i + 1) == Some(&b'.') && digit(i + 2));
-                // The sign of a float's exponent: `1e-9` is one number.
-                let exponent = i > 1 && matches!(b[i - 1], b'e' | b'E') && {
-                    let mantissa = b[..i - 1]
-                        .iter()
-                        .rev()
-                        .take_while(|c| c.is_ascii_digit() || **c == b'.')
-                        .count();
-                    let before = b[..i - 1 - mantissa].last();
-                    mantissa > 0
-                        && b[i - 1 - mantissa].is_ascii_digit()
-                        && !before.is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_')
-                };
+                // The sign of a float's exponent: `1e-9` is one number, and
+                // `1E-9` is three tokens to q (#2099).
+                let exponent = in_number(line, i);
                 if operand && !introduces && !exponent {
                     open.last_mut().unwrap().push((i, false));
                 }
@@ -3860,6 +3989,27 @@ pub(crate) fn timed_prefix(line: &str) -> usize {
         .find(&line[prompt..])
         .map_or(0, |m| prompt + m.end())
 }
+/// Whether a statement handed to another language - a `k)` or `p)` line -
+/// goes on over `line`, with `rest` the source after it. The one reader of
+/// this for the views and for navigation's reading of `k)` lines.
+///
+/// An indented or blank line continues it. A column-0 comment line ends
+/// nothing an indented line continues after it: q 5 hands `t)a`, `/ note`,
+/// `  b` to `.t.e` as one statement, and `t)a`, `/ note`, `c:1` as `t)a` and
+/// then q (#317). A bare `/` is no comment line but a block comment's
+/// opener, and ends the statement: q 5 hands `t)c`, `/`, `  zz`, `\`,
+/// `show 1` to `.t.e` as `c` alone and then prints 1 (#2042).
+pub(crate) fn foreign_continues(line: &str, rest: &str) -> bool {
+    let bare = |l: &str| l.trim_end_matches(['\r', '\n', ' ', '\t']) == "/";
+    let comment = |l: &str| l.starts_with('/') && !bare(l);
+    line.starts_with([' ', '\t'])
+        || line.trim().is_empty()
+        || comment(line)
+            && rest
+                .lines()
+                .find(|l| !l.trim().is_empty() && !comment(l))
+                .is_some_and(|l| l.starts_with([' ', '\t']))
+}
 /// Whether a source line is a system command whose argument is no q: any
 /// but `\t` and `\ts`, with or without a `q)` before it.
 pub(crate) fn system_command(line: &str) -> bool {
@@ -3947,20 +4097,7 @@ fn views(source: &str) -> Views {
             }
             statement = !stripped.is_empty() && !line.starts_with(['\\', '/', ' ', '\t']);
         }
-        // A column-0 comment line ends nothing an indented line continues
-        // after it: q 5 hands `t)a`, `/ note`, `  b` to `.t.e` as one
-        // statement, and `t)a`, `/ note`, `c:1` as `t)a` and then q (#317).
-        let carried = || {
-            source[end..]
-                .lines()
-                .find(|l| !l.trim().is_empty() && !l.starts_with('/'))
-                .is_some_and(|l| l.starts_with([' ', '\t']))
-        };
-        if foreign
-            && !(line.starts_with([' ', '\t'])
-                || stripped.is_empty()
-                || line.starts_with('/') && carried())
-        {
+        if foreign && !foreign_continues(line, &source[end..]) {
             foreign = false;
         }
         if !ended && block == 0 && string.is_none() {
@@ -5815,6 +5952,41 @@ pub fn organise_loads(source: &str) -> Option<Fix> {
     Some(fix)
 }
 
+/// A text as an editor holds it, and whether a BOM came before it. An
+/// editor reads a leading BOM as the file's encoding, not as a character of
+/// line 1: it neither shows it nor counts it in a column. The language
+/// server reads every closed file through this (#2027), and the CLI places
+/// what it reports by it (#2097), so the two agree with each other and with
+/// the editor.
+pub fn as_an_editor_holds(text: &str) -> (&str, bool) {
+    match text.strip_prefix('\u{feff}') {
+        Some(rest) => (rest, true),
+        None => (text, false),
+    }
+}
+
+/// `findings` of `source` placed where an editor shows them: in a file that
+/// starts with a BOM, every column on line 1 is one UTF-16 unit left of where
+/// the rules, which read the BOM as the character it is, count it. QE005
+/// alone stays: it is the BOM's own, at 1:1.
+pub fn placed_as_an_editor_shows<'a>(
+    findings: impl IntoIterator<Item = &'a mut Finding>,
+    source: &str,
+) {
+    if !as_an_editor_holds(source).1 {
+        return;
+    }
+    for f in findings
+        .into_iter()
+        .filter(|f| f.line == 1 && f.code != "QE005")
+    {
+        f.column = f.column.map(|c| c.saturating_sub(1).max(1));
+        if f.end_line.is_none_or(|l| l == 1) {
+            f.end_column = f.end_column.map(|c| c.saturating_sub(1).max(1));
+        }
+    }
+}
+
 pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
     lint_in(source, path, profile, &Workspace::default())
 }
@@ -6637,7 +6809,7 @@ fn lint_rules(
         let sym = r"(?:`(?:\.?[A-Za-z][A-Za-z0-9_.:]*|:[A-Za-z0-9_.:/]*))+";
         // An exponent's sign is part of its number: `1e-3` is one float.
         let num =
-            r"-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*";
+            r"-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*(?:[ \t]+-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*)*";
         let string = r#""(?:[^"\\]|\\.)*""#;
         let op = r"(?:<=|>=|<>|<|>|=|\bin\b)";
         // A string literal is blanks by the time `code` is built, so the
@@ -6729,18 +6901,42 @@ fn lint_rules(
         {
             continue;
         }
+        // Inside a lambda `.z.s` is that lambda's own binding, and q takes
+        // an assignment to it: q 5 runs `{[a] .z.s:a; .z.s}[5]` as 5, and
+        // `.z.s::a` and `(.z.s;b):(a;2)` too, nested or not. Only at the top
+        // level, `\d` or not, is it 'domain; `` `.z.s set a `` sets the
+        // global wherever it is written, and is 'domain too. An amend in a
+        // lambda, `.z.s+:a` or `.z.s[0]:a`, works on the lambda, and is
+        // 'type (#2096).
+        let lambda_self = m.get(1).is_some()
+            && name.as_str() == ".z.s"
+            && enclosing_brace(code, name.start()).is_some();
+        let plain = code[name.end()..m.get(0).unwrap().end()]
+            .trim_start()
+            .starts_with(':');
+        if lambda_self && plain {
+            continue;
+        }
         add(
             name.start(),
             "QF019",
-            format!(
-                "`{}` is read-only: q refuses any assignment to it with 'domain",
-                name.as_str()
-            ),
+            if lambda_self {
+                "`.z.s` in a lambda is the lambda itself: amending it is 'type".into()
+            } else {
+                format!(
+                    "`{}` is read-only: q refuses any assignment to it with 'domain",
+                    name.as_str()
+                )
+            },
         );
     }
-    // And a multiple assignment: q 5 `(.z.i;.z.h):(1;`a)` is 'domain (#506).
+    // And a multiple assignment: q 5 `(.z.i;.z.h):(1;`a)` is 'domain (#506),
+    // though `.z.s` in a lambda's is the lambda's own, as above.
     for (at, name) in semantics::global_multi_assignments(code) {
-        if re!(r"^\.z\.[A-Za-z]$").is_match(name) && name != ".z.m" {
+        if re!(r"^\.z\.[A-Za-z]$").is_match(name)
+            && name != ".z.m"
+            && !(name == ".z.s" && enclosing_brace(code, at).is_some())
+        {
             // `at` is the target's start; the finding goes on the name.
             add(
                 at + code[at..]
@@ -7923,11 +8119,13 @@ fn lint_rules(
             // Only the last item takes a type suffix, and never `b`: `1 0b` is
             // the atom `1` applied to `0b`, and `1h 2` does not parse (q 5, #496).
             let suffixed = |item: &str| {
-                re!(r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[a-mo-vx-zA-MO-VX-Z]$|^-?0[nNwW][a-z]$")
+                re!(r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+|E\d+)?[a-mo-vx-zA-MO-VX-Z]$|^-?0[nNwW][a-z]$")
                     .is_match(item)
             };
-            if re!(r"^-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:\s+-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)+$")
-                .is_match(v)
+            if re!(
+                r"^-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*(?:\s+-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*)+$"
+            )
+            .is_match(v)
             {
                 let items: Vec<&str> = v.split_whitespace().collect();
                 let (last, init) = items.split_last().expect("two items or more");
@@ -7939,7 +8137,7 @@ fn lint_rules(
             if v == "()" {
                 return Some(Shape::Vector(Some(0)));
             }
-            if re!(r"^[01]b$|^0x[0-9a-fA-F]{1,2}$|^-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*$|^`[A-Za-z0-9_.]*$")
+            if re!(r"^[01]b$|^0x[0-9a-fA-F]{1,2}$|^-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*$|^`[A-Za-z0-9_.]*$")
                 .is_match(v)
             {
                 return Some(Shape::Atom);
@@ -8651,11 +8849,7 @@ fn lint_rules(
         if parts.len() < 2 || (m.as_str() == "$[" && parts.len() < 3) {
             continue;
         }
-        let condition = flat_filter(parts[0]);
-        if LOGIC
-            .find(&condition)
-            .is_some_and(|logic| COMPARISON.is_match(&condition[..logic.start()]))
-        {
+        if comparison_swallowed(&flat_filter(parts[0])) {
             add(
                 m.start(),
                 "QB006",
@@ -8663,6 +8857,40 @@ fn lint_rules(
                  it reads `a=1 and b=0` as `a=(1 and b=0)`, not `(a=1) and b=0`"
                     .into(),
             );
+        }
+    }
+    // QB006 everywhere else: an assigned, returned or bracketed boolean
+    // reads the same way. q 5: `{[a;b] ok:a>0 and b>0; ok}[1;-1]` is 1b,
+    // since it reads `a>(0 and b>0)` (#2092). A condition slot and a where
+    // phrase are reported above and below, so they are left to those.
+    let conditions: std::collections::HashSet<usize> = re!(r"(?:\b(?:if|while)|\$)\[")
+        .find_iter(code)
+        .filter(|m| m.as_str() == "$[" || boundary(code, m.start()))
+        .map(|m| m.end())
+        .collect();
+    for (start, mut flat, at) in bare_segments(code, source) {
+        if conditions.contains(&start) || flat.trim_start().starts_with('\\') {
+            continue;
+        }
+        if let Some(w) = re!(r"\bwhere\b").find(&flat) {
+            flat.truncate(w.start());
+        }
+        let mut clause_start = 0;
+        for clause in flat.split(',') {
+            if comparison_swallowed(clause) {
+                // At the expression, past a lambda's signature `[]`.
+                let body = clause.trim_start();
+                let body = body.strip_prefix("[]").unwrap_or(body).trim_start();
+                add(
+                    at[clause_start + clause.len() - body.len()],
+                    "QB006",
+                    "Comparison left of and/or without parentheses: q evaluates right to left, \
+                     so it reads `a=1 and b=0` as `a=(1 and b=0)`, not `(a=1) and b=0`"
+                        .into(),
+                );
+                break;
+            }
+            clause_start += clause.len() + 1;
         }
     }
     // `if`, `while` and `do` are statements: each returns `::`, so
@@ -9500,11 +9728,7 @@ fn lint_rules(
                 // next are not the trap - TorQ's torq.q pairs them that way.
                 // Parenthesised groups are blank in `phrase`, so a comma
                 // left in it is a top-level one.
-                if phrase.split(',').any(|clause| {
-                    LOGIC
-                        .find(clause)
-                        .is_some_and(|logic| COMPARISON.is_match(&clause[..logic.start()]))
-                }) {
+                if phrase.split(',').any(comparison_swallowed) {
                     // Quote the reader's own clause where it is short enough
                     // to read: `a=1 and b=3` reads as `a=(1 and b=3)`.
                     let raw_phrase = &source[start + w.end()..];
@@ -9963,4 +10187,122 @@ fn lint_rules(
         (&a.path, a.line, &a.rule, &a.detail).cmp(&(&b.path, b.line, &b.rule, &b.detail))
     });
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::number_end;
+
+    /// `text` in tokens, blanks left out: a number as `number_end` reads it
+    /// (with a `-` before it at the start, after a blank or after an
+    /// operator, as q joins a negative literal), a name, or one character.
+    fn tokens(text: &str) -> Vec<&str> {
+        let b = text.as_bytes();
+        let (mut out, mut i) = (vec![], 0);
+        let digit = |at: usize| {
+            b.get(at).is_some_and(u8::is_ascii_digit)
+                || b.get(at) == Some(&b'.') && b.get(at + 1).is_some_and(u8::is_ascii_digit)
+        };
+        while i < b.len() {
+            let start = i;
+            if b[i] == b' ' {
+                i += 1;
+                continue;
+            }
+            if digit(i) {
+                i = number_end(text, i);
+            } else if b[i] == b'-'
+                && digit(i + 1)
+                && (b.get(i.wrapping_sub(1)) == Some(&b' ')
+                    || out.last().is_none_or(|t: &&str| {
+                        t.len() == 1 && !t.as_bytes()[0].is_ascii_alphanumeric()
+                    }))
+            {
+                i = number_end(text, i + 1);
+            } else if b[i].is_ascii_alphabetic() {
+                i += b[i..]
+                    .iter()
+                    .take_while(|c| c.is_ascii_alphanumeric() || **c == b'_' || **c == b'.')
+                    .count();
+            } else {
+                i += 1;
+            }
+            out.push(&text[start..i]);
+        }
+        out
+    }
+
+    /// A number's tokens are q's own: each literal here with the tokens
+    /// `-4!` gives for it on KDB-X 5, blanks left out (#2057, #2099).
+    #[test]
+    fn a_number_ends_where_q_tokenizes_it() {
+        let cases: &[(&str, &[&str])] = &[
+            ("1e-3", &["1e-3"]),
+            ("1E-3", &["1E", "-", "3"]),
+            ("1e+3", &["1e+3"]),
+            ("1E+3", &["1E", "+", "3"]),
+            ("1E3", &["1E3"]),
+            ("1.5E-3", &["1.5E", "-", "3"]),
+            ("1.5e-3", &["1.5e-3"]),
+            (".5E-3", &[".5E", "-", "3"]),
+            (".5e-3", &[".5e-3"]),
+            ("1.E-3", &["1.E", "-", "3"]),
+            ("1.e-3", &["1.e-3"]),
+            ("2E", &["2E"]),
+            ("1E", &["1E"]),
+            ("1E+", &["1E", "+"]),
+            ("1Ef", &["1Ef"]),
+            ("2E3f", &["2E3f"]),
+            ("1E03", &["1E03"]),
+            ("1e-03", &["1e-03"]),
+            ("1e-3f", &["1e-3f"]),
+            ("1e-3e", &["1e-3e"]),
+            ("1e-3e-2", &["1e-3e-2"]),
+            ("1e1e-1", &["1e1e-1"]),
+            ("2e-3j", &["2e-3j"]),
+            ("1e-", &["1e-"]),
+            ("1e+", &["1e", "+"]),
+            ("1e+x", &["1e", "+", "x"]),
+            ("1e-x", &["1e-x"]),
+            ("1e-y+1", &["1e-y", "+", "1"]),
+            ("1e--3", &["1e-", "-", "3"]),
+            ("1e+-3", &["1e", "+", "-3"]),
+            ("1e-+3", &["1e-", "+", "3"]),
+            ("1e+.5", &["1e", "+", ".5"]),
+            ("1e3-2", &["1e3", "-", "2"]),
+            ("1e-3-1", &["1e-3", "-", "1"]),
+            ("3-1e-3", &["3", "-", "1e-3"]),
+            ("x-1E-3", &["x", "-", "1E", "-", "3"]),
+            ("x*1e-3", &["x", "*", "1e-3"]),
+            ("px-1e-3", &["px", "-", "1e-3"]),
+            ("x-2e", &["x", "-", "2e"]),
+            ("x -1E-3", &["x", "-1E", "-", "3"]),
+            ("1f-3", &["1f", "-", "3"]),
+            ("1b-3", &["1b", "-", "3"]),
+            ("1d-3", &["1d", "-", "3"]),
+            ("1he-2", &["1he-2"]),
+            ("0x1e-3", &["0x1e-3"]),
+            ("0x1E-3", &["0x1E", "-", "3"]),
+            ("0x1e", &["0x1e"]),
+            ("0Ne-3", &["0Ne-3"]),
+            ("0we-1", &["0we-1"]),
+            ("0NE-3", &["0NE", "-", "3"]),
+            ("12:00e-1", &["12:00e-1"]),
+            ("12:00E-1", &["12:00E", "-", "1"]),
+            ("2012.01.01e-3", &["2012.01.01e-3"]),
+            ("1E-3 1c", &["1E", "-", "3", "1c"]),
+            ("1 2E-3", &["1", "2E", "-", "3"]),
+            ("1E5 2.5", &["1E5", "2.5"]),
+            ("1e-3 2", &["1e-3", "2"]),
+            ("10e-1", &["10e-1"]),
+            ("2e10", &["2e10"]),
+            ("2e+10", &["2e+10"]),
+            ("1.5e-2 1e-1 3", &["1.5e-2", "1e-1", "3"]),
+            ("-1e-3", &["-1e-3"]),
+            ("-2.5e+2", &["-2.5e+2"]),
+        ];
+        for (text, want) in cases {
+            assert_eq!(tokens(text), *want, "{text}");
+        }
+    }
 }

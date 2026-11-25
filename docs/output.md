@@ -19,7 +19,7 @@ key with nothing to say is `null`, never left out:
 | `why` | string | The rule's summary, as `--rules` prints it; empty for a qls finding. |
 | `source` | string | `q-lint` for a builtin rule, `qls` for one reported by `--backend qls`. |
 | `severity` | string | `error` for what q refuses (the rules in `general`), `warning` for anything q accepts; a qls finding may also be `information` or `hint`. |
-| `column` | integer or null | Where the finding starts on `line`, from 1, counted in UTF-16 code units as an editor counts them. `null` when the rule reports the whole line. |
+| `column` | integer or null | Where the finding starts on `line`, from 1, counted in UTF-16 code units as an editor counts them: a leading BOM, which an editor hides, is no column, so line 1 reads the same with or without one (QE005, the BOM's own, is at 1). `null` when the rule reports the whole line. |
 | `end_line` | integer or null | The line the finding ends on, from 1, when that is not `line`; set only by qls today. |
 | `end_column` | integer or null | Where the finding ends, from 1 and in UTF-16 code units, one past its last character, on `end_line` or else on `line`. `null` when the finding has no end of its own. |
 | `code` | string | The rule's code, `QF001`: what `--select`, `--ignore`, `noqa` and `--explain` take. |

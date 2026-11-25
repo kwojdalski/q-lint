@@ -9,7 +9,7 @@ use q_lint_rs::{functional_to_qsql, qsql_to_functional};
 use std::process::{Command, Stdio};
 
 /// The table every case reads, as q.
-const TABLE: &str = "t:([]sym:`a`b`a`c`b;px:1 2 3 4 5f;size:10 20 30 40 50;flag:10101b;s:(\"ab\";\"cd\";\"ef\";\"gh\";\"ij\");time:09:30:00 09:31:00 09:32:00 09:33:00 09:34:00);s2:`a`b;";
+const TABLE: &str = "t:([]sym:`a`b`a`c`b;px:1 2 3 4 5f;size:10 20 30 40 50;flag:10101b;s:(\"ab\";\"cd\";\"ef\";\"gh\";\"ij\");time:09:30:00 09:31:00 09:32:00 09:33:00 09:34:00);s2:`a`b;pair:{(x;y)};";
 
 /// `(qsql, functional)`: each direction writes the other, where the second
 /// direction's qSQL is the first's up to spacing and implied names.
@@ -94,8 +94,63 @@ const CASES: &[(&str, &str)] = &[
         "select from t where px>-1.5",
         "?[t;enlist (>;`px;-1.5);0b;()]",
     ),
+    // An exponent's sign is its number's: `1e-3` is one float, not
+    // `1e` minus `3` (#2057).
+    (
+        "select x:px*1e-3 from t",
+        "?[t;();0b;(enlist`x)!enlist (*;`px;1e-3)]",
+    ),
+    (
+        "select from t where px>1e-3, size<2.5e+1",
+        "?[t;((>;`px;1e-3);(<;`size;2.5e+1));0b;()]",
+    ),
+    (
+        "select v:px+1.5e-2 1e-1 3 4 5 from t",
+        "?[t;();0b;(enlist`v)!enlist (+;`px;1.5e-2 1e-1 3 4 5)]",
+    ),
+    (
+        "select v:px-1e+1 from t",
+        "?[t;();0b;(enlist`v)!enlist (-;`px;1e+1)]",
+    ),
+    // `_` and `.` stand apart from their arguments, or q reads `px_1` and
+    // `pair.s2` as names; and `1e-1` is a float where the tree holds the
+    // real `1e` minus `1` (#2060).
+    (
+        "select x:px _ 1 from t",
+        "?[t;();0b;(enlist`x)!enlist (_;`px;1)]",
+    ),
+    (
+        "select v:2 _ s from t",
+        "?[t;();0b;(enlist`v)!enlist (_;2;`s)]",
+    ),
+    (
+        "select from t where sym in pair . s2",
+        "?[t;enlist (in;`sym;(.;`pair;`s2));0b;()]",
+    ),
+    (
+        "select v:px*1e - 1 from t",
+        "?[t;();0b;(enlist`v)!enlist (*;`px;(-;1e;1))]",
+    ),
+    (
+        "select v:px*1e + 1 from t",
+        "?[t;();0b;(enlist`v)!enlist (*;`px;(+;1e;1))]",
+    ),
     ("exec px from t", "?[t;();();`px]"),
     ("exec px by sym from t", "?[t;();`sym;`px]"),
+    // A named group is a dictionary, which keys the result by a table; an
+    // unnamed one keys it by its values (#2059).
+    (
+        "exec px by sym:sym from t",
+        "?[t;();(enlist`sym)!enlist `sym;`px]",
+    ),
+    (
+        "exec px by s:sym from t",
+        "?[t;();(enlist`s)!enlist `sym;`px]",
+    ),
+    (
+        "exec px by sym, size from t",
+        "?[t;();`sym`size!(`sym;`size);`px]",
+    ),
     ("exec px, size from t", "?[t;();();`px`size!(`px;`size)]"),
     (
         "exec sum size from t where px>2",
@@ -109,6 +164,24 @@ const CASES: &[(&str, &str)] = &[
         "update m:max px by sym from t",
         "![t;();(enlist`sym)!enlist `sym;(enlist`m)!enlist (max;`px)]",
     ),
+    // q renames a repeated name, written or implied, by how often it came
+    // before: KDB-X's `parse` holds `` `a`a1 `` for `select a:px, a:size`,
+    // and `` `a`a1`a1 `` when the third is written `a1` (#2062).
+    ("select a:px, a:size from t", "?[t;();0b;`a`a1!(`px;`size)]"),
+    (
+        "select px, px:size from t",
+        "?[t;();0b;`px`px1!(`px;`size)]",
+    ),
+    (
+        "select a:px, a1:size, a:sym from t",
+        "?[t;();0b;`a`a1`a1!(`px;`size;`sym)]",
+    ),
+    (
+        "select px, px, px1:size, px from t",
+        "?[t;();0b;`px`px1`px1`px2!(`px;`px;`size;`px)]",
+    ),
+    ("update a:px, a:size from t", "![t;();0b;`a`a1!(`px;`size)]"),
+    ("exec a:px, a:size from t", "?[t;();();`a`a1!(`px;`size)]"),
     // q names a dotted column by its last part (KDB-X: `px`, #1300).
     ("select t.px from t", "?[t;();0b;(enlist`px)!enlist `t.px]"),
     ("delete px, size from t", "![t;();0b;`px`size]"),
@@ -131,6 +204,21 @@ const CASES: &[(&str, &str)] = &[
     (
         "delete from t where px>2",
         "![t;enlist (>;`px;2);0b;`symbol$()]",
+    ),
+    // A query as the table keeps its parentheses on the way back: without
+    // them, `select from select from t where px>1 where size>20` is 'type
+    // (#2058).
+    (
+        "select from (select from t where px>1) where size>20",
+        "?[(select from t where px>1);enlist (>;`size;20);0b;()]",
+    ),
+    (
+        "exec px from (select from t where px>1)",
+        "?[(select from t where px>1);();();`px]",
+    ),
+    (
+        "select px from (t lj ([sym:`a`b] w:1 2))",
+        "?[(t lj ([sym:`a`b] w:1 2));();0b;(enlist`px)!enlist `px]",
     ),
     // A query in parentheses inside another is its own tree, each argument
     // as `parse` holds it: what the functional form takes, enlisted unless
@@ -351,6 +439,19 @@ fn a_column_named_with_a_word_of_q_is_not_written_as_qsql() {
             other => panic!("{form}: {other:?}"),
         }
     }
+    // Two columns of one name: q's qSQL renames the second, so there is
+    // none that gives both (#2062). KDB-X runs the form, and
+    // `select a:px, a:size from t` has the columns `a` and `a1`.
+    for form in [
+        "?[t;();0b;`a`a!(`px;`size)]",
+        "?[t;();0b;`px`px!(`px;`size)]",
+        "![t;();0b;`a`a!(`px;`size)]",
+    ] {
+        match functional_to_qsql(&format!("r:{form}\n"), 3) {
+            Some(Err(e)) => assert!(e.contains("rename"), "{form}: {e}"),
+            other => panic!("{form}: {other:?}"),
+        }
+    }
     // A symbol q reads as no name at all is no column either.
     match functional_to_qsql("r:?[t;();0b;(enlist`a:b)!enlist `px]\n", 3) {
         Some(Err(e)) => assert!(e.contains("cannot spell"), "{e}"),
@@ -374,6 +475,55 @@ fn the_cursor_can_be_anywhere_in_the_query() {
         .unwrap()
         .unwrap();
     assert_eq!(got.text, "select from t where px>2");
+}
+
+/// `(expression, rewritten)`: a functional form inside an expression, and
+/// the expression with it written as qSQL. The qSQL is bracketed where a
+/// name before it or anything after it on the line would read into it
+/// (#2061): on KDB-X, `countselect from t` is 'from, and
+/// `select from t where px>2[`px]` puts the index in the where clause.
+const AROUND: &[(&str, &str)] = &[
+    ("count?[t;();0b;()]", "count(select from t)"),
+    ("first![t;();0b;`symbol$()]", "first(delete from t)"),
+    (
+        "?[t;enlist (>;`px;2);0b;()][`px]",
+        "(select from t where px>2)[`px]",
+    ),
+    ("?[t;();0b;()]`px", "(select from t)`px"),
+    (
+        "?[t;enlist (>;`px;2);0b;()],t",
+        "(select from t where px>2),t",
+    ),
+    (
+        "?[t;enlist (>;`px;2);0b;()] lj ([sym:`a`b] w:1 2)",
+        "(select from t where px>2) lj ([sym:`a`b] w:1 2)",
+    ),
+    // Where nothing joins it, it stands as it is.
+    (
+        "1+count ?[t;enlist (>;`px;2);0b;()]",
+        "1+count select from t where px>2",
+    ),
+    ("(?[t;();0b;()])", "(select from t)"),
+    ("{count x}[?[t;();0b;()]]", "{count x}[select from t]"),
+    ("(?[t;();0b;()];1)", "(select from t;1)"),
+];
+
+/// `expression` with the functional form in it written as qSQL.
+fn rewritten_around(expression: &str) -> String {
+    let source = format!("r:{expression}\n");
+    let at = source.find(['?', '!']).unwrap() + 1;
+    let got = functional_to_qsql(&source, at)
+        .unwrap_or_else(|| panic!("no functional form in {expression}"))
+        .unwrap_or_else(|e| panic!("{expression}: {e}"));
+    let line = format!("{}{}{}", &source[..got.start], got.text, &source[got.end..]);
+    line["r:".len()..].trim_end().to_string()
+}
+
+#[test]
+fn qsql_written_into_an_expression_is_bracketed_where_it_would_join_it() {
+    for (expression, want) in AROUND {
+        assert_eq!(rewritten_around(expression), *want, "{expression}");
+    }
 }
 
 /// Run `script` on the q that QLINT_TEST_Q names, and what it printed.
@@ -414,6 +564,10 @@ fn each_rewrite_returns_what_the_query_it_came_from_returns() {
     for (functional, qsql) in BACK {
         script.push_str(&format!("ck[{}; {}];\n", quoted(functional), quoted(qsql)));
     }
+    for (expression, _) in AROUND {
+        let back = rewritten_around(expression);
+        script.push_str(&format!("ck[{}; {}];\n", quoted(expression), quoted(&back)));
+    }
     script.push_str("\\\\\n");
     let Some(out) = run_q(&script) else {
         eprintln!("QLINT_TEST_Q names no q: the cases stand as KDB-X ran them");
@@ -423,7 +577,11 @@ fn each_rewrite_returns_what_the_query_it_came_from_returns() {
         return;
     };
     let lines: Vec<&str> = out.lines().collect();
-    assert_eq!(lines.len(), 2 * CASES.len() + BACK.len(), "{out}");
+    assert_eq!(
+        lines.len(),
+        2 * CASES.len() + BACK.len() + AROUND.len(),
+        "{out}"
+    );
     assert!(lines.iter().all(|l| *l == "same"), "{out}");
 }
 
@@ -467,6 +625,9 @@ fn a_query_is_said_in_words() {
         words.contains("`px` equals the largest of `px` within each group of `sym`"),
         "{words}"
     );
+    // An exponent's sign is its number's (#2057).
+    let words = q_lint_rs::explain_qsql("r:select from t where px>1e-3\n", 3).unwrap();
+    assert!(words.contains("`px` is greater than `1e-3`"), "{words}");
     // What it has no words for is quoted.
     let words = q_lint_rs::explain_qsql("r:select from t where px>f[a;b]\n", 3).unwrap();
     assert!(words.contains("`px` is greater than `f[a;b]`"), "{words}");

@@ -1296,7 +1296,7 @@
               "prd",
               "production"
             ],
-            "markdownDescription": "The tags whose processes `#q-lint.processes.readOnlyGuard.enable#` guards, ignoring case. An empty list guards none."
+            "markdownDescription": "The tags whose processes `#q-lint.processes.readOnlyGuard.enable#` guards, ignoring case. An empty list guards none. A tag is read as a process's tags are: one with a blank or a comma in it is a tag for each word, so `live desk` guards a process tagged `live` and one tagged `desk`."
           }
         }
       },

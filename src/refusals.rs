@@ -37,9 +37,9 @@ fn attributes(path: &str, source: &str, code: &str, comments: &str, out: &mut Ve
     // A vector's items may run on across the indented line that continues
     // it: q 5 `w:`s#1` over `  1e-3` is 's-fail (#689).
     for m in re!(concat!(
-        r#"`([spu])#[ \t]*((?:`[A-Za-z0-9_.]*){2,}|\(\s*-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)+\s*\)|-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:"#,
+        r#"`([spu])#[ \t]*((?:`[A-Za-z0-9_.]*){2,}|\(\s*-?\d(?:e-|e\+\d|[A-Za-z0-9.:])*(?:[ \t]+-?\d(?:e-|e\+\d|[A-Za-z0-9.:])*)+\s*\)|-?\d(?:e-|e\+\d|[A-Za-z0-9.:])*(?:"#,
         blank!(),
-        r#"+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)+|[01]{2,}b|0x[0-9a-fA-F]{4,}|"(?:[^"\\]|\\.)+")"#
+        r#"+-?\d(?:e-|e\+\d|[A-Za-z0-9.:])*)+|[01]{2,}b|0x[0-9a-fA-F]{4,}|"(?:[^"\\]|\\.)+")"#
     ))
     .captures_iter(comments)
     {
@@ -294,6 +294,41 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
             format!(
                 "`{}` is no time: after an hour of three digits it takes three digits of \
                  fraction at most, and q refuses the literal",
+                whole.as_str()
+            ),
+        ));
+    }
+    // After the `D` of a timespan or timestamp the hour takes two digits at
+    // most, whatever follows: q 5 refuses `0D100:00`, `0D012:00:00`,
+    // `1D100:00:00`, `-0D100:00:00` and `2000.01.01D100:00`, and takes
+    // `0D99:00:00` (as 4D03:00:00) and `0D100`, a timespan of no colon
+    // (#2093). The `T` of a datetime is another matter: q 5 reads
+    // `2000.01.01T100:00:00` as a null, not a refusal.
+    for m in crate::captures_where(
+        re!(r"(\d+(?:\.\d\d\.\d\d)?)D\d{3,}:\d+(?::\d+)?(?:\.\d*)?"),
+        unsym,
+        |m| {
+            !unsym[..m.get(0).unwrap().start()]
+                .ends_with(|c: char| c.is_ascii_alphanumeric() || "._".contains(c))
+        },
+    ) {
+        let whole = m.get(0).unwrap();
+        if command_argument(source, whole.start()) || chars(whole.end()) {
+            continue;
+        }
+        let kind = if m[1].contains('.') {
+            "timestamp"
+        } else {
+            "timespan"
+        };
+        out.push(Finding::at(
+            path,
+            source,
+            whole.start(),
+            "QE006",
+            format!(
+                "`{}` is no {kind}: after its D the hour takes two digits at most, and q \
+                 refuses the literal",
                 whole.as_str()
             ),
         ));
@@ -606,6 +641,15 @@ fn missing_from(
             Some(f) if comments[m.end() + f.end()..at].trim().is_empty() => {
                 "has nothing after its `from`: q raises 'from"
             }
+            // Nor is a `where` straight after it a table: q 5 `parse
+            // "select a from where a>1"`, `"delete from where a>1"` and
+            // `"select from where"` are 'from, while `from where_t` and
+            // `from (where a>1)` read a table, and `from by b` applies the
+            // name `by` (#2095). Read from `comments` too, where `` from
+            // `t where `` still has its table.
+            Some(f) if re!(r"^\s*where\b").is_match(&comments[m.end() + f.end()..at]) => {
+                "has nothing between its `from` and its `where`: q raises 'from"
+            }
             // A where phrase with nothing in it: q 5 `parse "exec a from t
             // where"` and `parse "select from t where"` are ',.
             Some(f)
@@ -646,7 +690,7 @@ fn signals(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<F
     // `'2026.01.01D12:00` and `'1e-3` are each 'stype. So are a number
     // strand and an enlisted number or symbol, `'1 2` and `'enlist 1`, which
     // are lists (#612); `'enlist "a"` is the string "a" and signals 'a.
-    for m in re!(r#"(')(enlist[ \t]+(?:-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*|`[A-Za-z0-9_.:]*)|-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*|"(?:\\[0-7]{3}|\\.|[^"\\])+"|\(\s*\)|\(\s*-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*\s*\)|\([^()"]*;[^()]*\)|(?:`[A-Za-z0-9_.]*){2,})"#).captures_iter(comments) {
+    for m in re!(r#"(')(enlist[ \t]+(?:-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*|`[A-Za-z0-9_.:]*)|-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*(?:[ \t]+-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*)*|"(?:\\[0-7]{3}|\\.|[^"\\])+"|\(\s*\)|\(\s*-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*\s*\)|\([^()"]*;[^()]*\)|(?:`[A-Za-z0-9_.]*){2,})"#).captures_iter(comments) {
         let quote = m.get(1).unwrap();
         let value = m.get(2).unwrap();
         if code.as_bytes()[quote.start()] != b'\'' {
@@ -1826,7 +1870,7 @@ fn numbers(
     // A colon joins only a digit: before a name it is the I/O verb, and q 5
     // parses `x 0:y 1` as `(0:;`x;(`y;1))` (#665).
     let tokens: Vec<regex::Match> =
-        crate::boundary_captures(re!(r"\.?\d(?:[eE][+-]\d|:\d|[0-9A-Za-z.])*"), unsym, code)
+        crate::boundary_captures(re!(r"\.?\d(?:e-|e\+\d|:\d|[0-9A-Za-z.])*"), unsym, code)
             .into_iter()
             .map(|c| c.get(0).unwrap())
             .filter(|m| !command_argument(source, m.start()))
@@ -1863,8 +1907,9 @@ fn numbers(
         // any number before it as chars: `1h 2c` is " 2", and `1.5j 2c`,
         // `1y 2c`, `0Nh 1c` and `-0N 1c` all parse. Only what q refuses as it
         // reads the token is still refused there: a `b` it cannot read as a
-        // boolean (`2b 1c`, `0Nb 1c`), a byte (`0x1g 1c`), and an uppercase
-        // exponent's sign (`1E-3 1c`).
+        // boolean (`2b 1c`, `0Nb 1c`) and a byte (`0x1g 1c`). `1E-3 1c` is
+        // refused too, but not in the vector: an uppercase `E` takes no
+        // sign, so `1E` is a token of its own before the `-` (#2099).
         let string = last.ends_with('c') && !last.starts_with("0x");
         let mut reported = false;
         for (k, t) in run.iter().enumerate() {
@@ -1935,7 +1980,7 @@ fn numbers(
                     "`{text}`: an uppercase `E` exponent on an integer makes no number \
                      unless another item makes the vector float; write `e`"
                 ))
-            } else if re!(r"^\d+(?:\.\d*)?(?:[eE][+-]?\d+)?[hij]$").is_match(text)
+            } else if re!(r"^\d+(?:\.\d*)?(?:e[+-]?\d+|E\d+)?[hij]$").is_match(text)
                 && !re!(r"^\d+[hij]$").is_match(text)
             {
                 // `1e3j` too: an exponent makes a float, whatever it equals.
@@ -1943,7 +1988,7 @@ fn numbers(
                     "`{text}`: an integer type takes no fractional part or exponent"
                 ))
             } else if re!(r"^\d*[2-9]\d*b$").is_match(text)
-                || (re!(r"^\d+(?:\.\d*)?(?:[eE][+-]?\d+)?b$").is_match(text)
+                || (re!(r"^\d+(?:\.\d*)?(?:e[+-]?\d+|E\d+)?b$").is_match(text)
                     && !re!(r"^\d+b$").is_match(text))
             {
                 Some(format!("`{text}`: a boolean is written with 0 and 1 only"))
@@ -2095,7 +2140,7 @@ fn numbers(
                     "`{text}`: a time in a vector literal takes only times or nulls after it"
                 ))
             } else if k + 1 < run.len()
-                && (text.contains('.') || re!(r"^\d+[eE][+-]?\d+$").is_match(text))
+                && (text.contains('.') || re!(r"^\d+(?:e[+-]?\d+|E\d+)$").is_match(text))
                 && !text.contains(':')
                 && re!(r"^(?:\d+|0[nNwW])[hij]$").is_match(last)
             {
@@ -2141,16 +2186,25 @@ fn numbers(
                     "`{text}`: letters written against a number are part of it; put a blank \
                      between the number and the word"
                 ))
+            } else if re!(r"e-|e\+\d").is_match(text)
+                && !re!(r"^(?:\d+\.?\d*|\.\d+)e[+-]\d+[ef]?$").is_match(text)
+            {
+                // A `-` straight after a lower-case `e` is an exponent's sign
+                // whatever follows it, and a `+` before a digit, so q reads
+                // on to the token's end: `-4!"1e-y"` is one token, and q 5
+                // refuses `1e-y`, `1e-`, `2e-y+1`, `1e1e-1`, `0x1e-3` and
+                // `12:00e-1` with it, while `1e-3`, `1e-3e` and `1e-3f` are
+                // floats (#2099).
+                Some(format!(
+                    "`{text}`: a sign straight after an `e` is an exponent's, so q reads \
+                     all of `{text}` as one number"
+                ))
             } else {
-                None
+                date_among_numbers(run, k, text)
             };
             // In a string only what q refuses as it reads the token.
-            let detail = detail.filter(|_| {
-                !in_string
-                    || text.ends_with('b')
-                    || text.starts_with("0x")
-                    || re!(r"E[+-]").is_match(text)
-            });
+            let detail =
+                detail.filter(|_| !in_string || text.ends_with('b') || text.starts_with("0x"));
             if let Some(detail) = detail
                 && !reported
             {
@@ -2165,4 +2219,44 @@ fn numbers(
         }
         i = j + 1;
     }
+}
+
+/// QE010: a date or a month among plain numbers. q reads a vector literal
+/// by its items' shape, and a date has no shape in common with a number:
+/// q 5 refuses `1 2000.01.01` ('1), `1.5 2000.01.01`, `2000.01.01 1`
+/// ('2000.01.01), `2000.01.01 2000.01`, `2000.01.01 1e3` and `2000.01.01 1f`, and after a
+/// date an infinity, `2000.01.01 0W`. A null before or after it parses
+/// (`0N 2000.01.01`, `0W 2000.01.01`, `2000.01.01 0N`), as do a timestamp
+/// among numbers, `1 2000.01.01D00:00`, and floats, `1 2000.01` (#2094).
+/// An `m` after the last item reads every item as a month: q 5 refuses
+/// `1 2000.01m` and `1.5 2000.01m`, and takes `2001 2000.01m` (2020.01) and
+/// `2000.01 2000.01m`. q names the run's first item of the two, as here.
+fn date_among_numbers(run: &[regex::Match], k: usize, text: &str) -> Option<String> {
+    let date = |t: &str| re!(r"^\d{4}\.\d\d\.\d\d$").is_match(t);
+    let number = |t: &str| re!(r"^\.?\d+(?:\.\d*)?(?:e[+-]?\d+)?[ef]?$").is_match(t);
+    let infinity = |t: &str| re!(r"^0[Ww]$").is_match(t);
+    let items: Vec<&str> = run.iter().map(|t| t.as_str()).collect();
+    let last = items[items.len() - 1];
+    if date(text)
+        && (items.iter().any(|&t| number(t)) || items[k + 1..].iter().any(|&t| infinity(t)))
+    {
+        return Some(format!(
+            "`{text}`: a date in a vector literal takes only dates or nulls beside it"
+        ));
+    }
+    if number(text) && items[k + 1..].iter().any(|&t| date(t)) {
+        return Some(format!(
+            "`{text}`: a number in a vector literal takes no date beside it"
+        ));
+    }
+    if k + 1 < items.len()
+        && re!(r"^\d{4,}\.\d\dm$").is_match(last)
+        && (re!(r"^\d{1,3}$").is_match(text)
+            || (re!(r"^\d*\.\d*$").is_match(text) && !re!(r"^\d{4,}\.\d\d$").is_match(text)))
+    {
+        return Some(format!(
+            "`{text}`: the vector's `m` suffix makes every item a month, and this is none"
+        ));
+    }
+    None
 }

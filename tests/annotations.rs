@@ -849,6 +849,67 @@ fn a_qunit_test_runs_inside_its_namespace_fixtures() {
     assert_eq!(tests[1]["call"], ".other.testfoo[]");
 }
 
+/// A qUnit test is timed as `.qunit.runTest` times it, and fails over what
+/// its namespace's `qunitConfig` allows it (#2103): the config is sent with
+/// it, and read where it runs.
+#[test]
+fn a_qunit_test_fails_over_its_qunit_config_max_time_or_mem() {
+    let dir = tempfile::tempdir().unwrap();
+    let suite = "\\d .mytest\nqunitConfig:``testSlow!(::;`maxTime`maxMem!(5;0Wj))\n\
+                 testSlow:{do[3000000;sqrt 2.0];.qunit.assertTrue[1b;\"slow\"]}\n\\d .\n";
+    let mut server = Server::start(dir.path(), &[("suite.q", suite)]);
+    let reply = server.request("q-lint/tests", json!({}));
+    let tests = reply["result"][0]["tests"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"));
+    assert_eq!(tests.len(), 1, "{reply}");
+    assert_eq!(
+        tests[0]["code"],
+        "\\d .mytest\nqunitConfig:``testSlow!(::;`maxTime`maxMem!(5;0Wj))\n\\d .\n\
+         \\d .mytest\ntestSlow:{do[3000000;sqrt 2.0];.qunit.assertTrue[1b;\"slow\"]}\n\\d ."
+    );
+    assert_eq!(
+        tests[0]["call"],
+        "{[] t:.Q.ts[{@[{(1b;x[])};x;{(0b;x)}]};enlist .mytest.testSlow]; r:t 1; \
+         c:@[{.[`.mytest;`qunitConfig`testSlow]};::;``!``]; \
+         c:(`maxTime`maxMem!0W 0W),$[99h~type c;c;()!()]; \
+         if[r[0]&any t[0]>c`maxTime`maxMem;r:(0b;\"exceeded max config time/mem\")]; \
+         $[r 0;r 1;'r 1]}[]"
+    );
+}
+
+/// A namespace's `parameters*` runs each of its tests once for each value
+/// it gives, `.ns.parameter` set to it, as `.qunit.runNsTests` does
+/// (#2104): it, `beforeParameters*` and `afterParameters*` are sent with
+/// the test, and the first failure is the test's.
+#[test]
+fn a_qunit_test_runs_once_for_each_of_its_namespace_parameters() {
+    let dir = tempfile::tempdir().unwrap();
+    let suite = "\\d .mytest\nbeforeParameters:{`.mytest.n set 0}\nparameters:{1 2 3}\n\
+                 setUp:{`.mytest.n set n+1}\n\
+                 testParam:{.qunit.assertTrue[parameter in 1 2 3;\"param\"]}\n\\d .\n";
+    let mut server = Server::start(dir.path(), &[("suite.q", suite)]);
+    let reply = server.request("q-lint/tests", json!({}));
+    let tests = reply["result"][0]["tests"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"));
+    assert_eq!(tests.len(), 1, "{reply}");
+    assert_eq!(
+        tests[0]["code"],
+        "\\d .mytest\nbeforeParameters:{`.mytest.n set 0}\n\\d .\n\
+         \\d .mytest\nparameters:{1 2 3}\n\\d .\n\
+         \\d .mytest\nsetUp:{`.mytest.n set n+1}\n\\d .\n\
+         \\d .mytest\ntestParam:{.qunit.assertTrue[parameter in 1 2 3;\"param\"]}\n\\d ."
+    );
+    assert_eq!(
+        tests[0]["call"],
+        "{[] .mytest.beforeParameters[]; p:@[{x[]};.mytest.parameters;()]; i:0; f:(1b;::); \
+         do[max 1,count p; @[`.mytest;`parameter;:;p i]; .mytest.setUp[]; \
+         r:@[{(1b;x[])};.mytest.testParam;{(0b;x)}]; if[f 0;f:r]; i+:1]; \
+         $[f 0;f 1;'f 1]}[]"
+    );
+}
+
 /// Outside a file that uses qUnit, a `setUp*` or `tearDown*` is the
 /// file's own: never sent with a test or called around it (#1743).
 #[test]
@@ -1332,6 +1393,51 @@ fn a_test_carries_the_name_q_defines_it_by() {
     );
 }
 
+#[test]
+fn the_inventories_name_a_function_where_its_file_is_loaded() {
+    // #2046. q 5 loads b.q's `ff:{1}` under `\d .aa` as `.aa.ff`, which
+    // main.q calls and test_x's test reaches; test_y's bare `ff` is a root
+    // ff nothing defines.
+    let dir = tempfile::tempdir().unwrap();
+    let files = [
+        ("main.q", "\\d .aa\n\\l b.q\n\\d .\nshow .aa.ff[]\n"),
+        ("b.q", "ff:{1}\n"),
+        ("test_x.q", "\\l main.q\ntest_ff:{.aa.ff[]~1}\n"),
+        ("test_y.q", "\\l main.q\ntest_gg:{ff[]~1}\n"),
+    ];
+    let (mut server, _) = Server::over(dir.path(), &files, client(), Value::Null);
+    let reply = server.request("q-lint/definitions", json!({}));
+    let ff: Vec<(&str, &str)> = reply["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"))
+        .iter()
+        .filter(|d| d["uri"].as_str().unwrap().ends_with("/b.q"))
+        .map(|d| {
+            (
+                d["name"].as_str().unwrap(),
+                d["namespace"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(ff, [(".aa.ff", ".aa")], "{reply}");
+    let reply = server.request("q-lint/deadCode", json!({}));
+    let dead: Vec<&str> = reply["result"]["functions"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"))
+        .iter()
+        .map(|d| d["name"].as_str().unwrap())
+        .collect();
+    assert!(
+        !dead.contains(&".aa.ff") && !dead.contains(&"ff"),
+        "{reply}"
+    );
+    let (changed, tests) = reaching(&mut server, dir.path(), "b.q", "ff:{2}\n", "ff:{1}\n");
+    assert_eq!(
+        (changed, tests),
+        (json!([".aa.ff"]), vec!["test_ff".into()])
+    );
+}
+
 /// `q-lint/testsReaching` for `name`, saved as `now` over `previous`: the
 /// changed names and the tests reached, sorted.
 fn reaching(
@@ -1524,6 +1630,92 @@ fn renaming_a_folder_rewrites_the_loads_under_it_and_moving_a_loader_its_own() {
     );
     assert!(
         edits.contains(&("main.q".to_string(), 1, 3, 14, "lib/y.q".to_string())),
+        "{reply}"
+    );
+}
+
+#[test]
+fn each_workspace_folder_is_the_root_of_its_own_relative_loads() {
+    // #2045. Folders A and B each hold main.q (`\l lib.q`) and lib.q. A q
+    // started in B loads B's lib.q, so B's main.q leads there, and renaming
+    // one folder's lib.q rewrites that folder's load alone.
+    let dir = tempfile::tempdir().unwrap();
+    for folder in ["A", "B"] {
+        std::fs::create_dir_all(dir.path().join(folder)).unwrap();
+        std::fs::write(dir.path().join(folder).join("main.q"), "\\l lib.q\n").unwrap();
+        std::fs::write(dir.path().join(folder).join("lib.q"), "ff:{1}\n").unwrap();
+    }
+    let options = json!({"renameLoads": {"enable": true}});
+    let (mut server, _) = Server::over(&dir.path().join("A"), &[], client(), options);
+    let b = file_uri(&dir.path().join("B"));
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWorkspaceFolders",
+        "params":{"event":{"added":[{"uri":b,"name":"B"}],"removed":[]}}}),
+    );
+    let main = file_uri(&dir.path().join("B/main.q"));
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didOpen",
+        "params":{"textDocument":{"uri":main,"languageId":"q","version":1,"text":"\\l lib.q\n"}}}));
+    let reply = server.request(
+        "textDocument/definition",
+        json!({"textDocument":{"uri":main},"position":{"line":0,"character":4}}),
+    );
+    let targets: Vec<&str> = reply["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"))
+        .iter()
+        .map(|l| l["uri"].as_str().unwrap())
+        .collect();
+    assert_eq!(targets, [file_uri(&dir.path().join("B/lib.q"))], "{reply}");
+    for folder in ["A", "B"] {
+        let (old, new) = (format!("{folder}/lib.q"), format!("{folder}/util.q"));
+        let reply = server.request(
+            "workspace/willRenameFiles",
+            rename_params(dir.path(), &[(&old, &new)]),
+        );
+        assert_eq!(
+            renamed(&reply, dir.path()),
+            [(format!("{folder}/main.q"), 0, 3, 8, "util.q".to_string())],
+            "{reply}"
+        );
+    }
+}
+
+#[test]
+fn a_load_spelled_in_another_case_is_rewritten_on_a_disk_that_ignores_case() {
+    // #2050. Where the disk ignores case, q loads lib/u.q for `\l Lib/U.q`,
+    // so renaming lib/u.q, or the folder, moves what that load reaches.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("lib")).unwrap();
+    std::fs::write(dir.path().join("lib/u.q"), "u:1\n").unwrap();
+    if !dir.path().join("LIB/U.Q").exists() {
+        return;
+    }
+    let files = [("main.q", "\\l Lib/U.q\n\\l LIB/u.q\n")];
+    let options = json!({"renameLoads": {"enable": true}});
+    let (mut server, _) = Server::over(dir.path(), &files, client(), options);
+    let reply = server.request(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("lib/u.q", "lib/w.q")]),
+    );
+    // The part that still leads there keeps the case it was written in.
+    assert_eq!(
+        renamed(&reply, dir.path()),
+        [
+            ("main.q".to_string(), 0, 3, 10, "Lib/w.q".to_string()),
+            ("main.q".into(), 1, 3, 10, "LIB/w.q".into()),
+        ],
+        "{reply}"
+    );
+    let reply = server.request(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("lib", "core")]),
+    );
+    assert_eq!(
+        renamed(&reply, dir.path()),
+        [
+            ("main.q".to_string(), 0, 3, 10, "core/U.q".to_string()),
+            ("main.q".into(), 1, 3, 10, "core/u.q".into()),
+        ],
         "{reply}"
     );
 }

@@ -205,17 +205,39 @@ function headerColumn(frame: Frame, line: string): number | undefined {
 
 /// Of `candidates` (paths), the one sharing the most trailing segments with
 /// `path`, the file name at least; undefined when none does. A process on
-/// another machine prints its own paths.
-export function bestSuffixMatch(path: string, candidates: string[]): string | undefined {
+/// another machine prints its own paths. With `spelled` - a path as the disk
+/// spells it, undefined for none - segments that differ only in case are
+/// the same where the disk says so: `path`'s spelling of them, put in the
+/// candidate's place, is the candidate's own file (#2107). q prints a file
+/// as it was loaded, `Lib\Util.q` for lib\util.q on Windows.
+export function bestSuffixMatch(path: string, candidates: string[], spelled?: (path: string) => string | undefined): string | undefined {
   const segments = (p: string): string[] => p.split(/[\\/]+/).filter((s) => s !== "");
   const want = segments(path);
+  const shared = (have: string[], same: (a: string, b: string) => boolean): number => {
+    let n = 0;
+    while (n < want.length && n < have.length && same(want[want.length - 1 - n], have[have.length - 1 - n])) {
+      n++;
+    }
+    return n;
+  };
   let best: string | undefined;
   let score = 0;
   for (const candidate of candidates) {
     const have = segments(candidate);
-    let n = 0;
-    while (n < want.length && n < have.length && want[want.length - 1 - n] === have[have.length - 1 - n]) {
-      n++;
+    let n = shared(have, (a, b) => a === b);
+    const folded = spelled === undefined ? n : shared(have, (a, b) => a.toLowerCase() === b.toLowerCase());
+    if (folded > n && spelled !== undefined) {
+      // The candidate, its last `folded` segments as `path` spells them.
+      const parts = candidate.split(/([\\/]+)/);
+      for (let i = parts.length - 1, k = 0; i >= 0 && k < folded; i--) {
+        if (parts[i] !== "" && !/^[\\/]+$/.test(parts[i])) {
+          parts[i] = want[want.length - 1 - k++];
+        }
+      }
+      const own = spelled(candidate);
+      if (own !== undefined && spelled(parts.join("")) === own) {
+        n = folded;
+      }
     }
     if (n > score) {
       score = n;

@@ -1058,6 +1058,10 @@ export function gridOfQ(q: QValue, limit: number): GridPayload | undefined {
     if (c.q.kind === "list") {
       return listRanks(c.q.v);
     }
+    // A table column, a dictionary's value, by its rows as `iasc` sorts them (#2073).
+    if (c.q.kind === "table") {
+      return listRanks(itemsOf(c.q));
+    }
     if (c.q.kind !== "vector") {
       return [];
     }

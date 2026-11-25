@@ -473,14 +473,16 @@
         const xs = grid.values[columns[a]];
         const ys = grid.values[columns[b]];
         let k = 0;
-        let sx = 0;
-        let sy = 0;
         // Whether either column varies over these rows: the mean of one
         // that does not is off by rounding, which leaves cxx a hair above 0.
         let x0 = null;
         let y0 = null;
         let vx = false;
         let vy = false;
+        // Each column is scaled by its largest magnitude before it is summed
+        // or squared: 1e200 squared is Infinity, 1e-200 squared 0 (#2077).
+        let ax = 0;
+        let ay = 0;
         rows.forEach(function (row) {
           const x = xs[row];
           const y = ys[row];
@@ -492,27 +494,37 @@
             vx = vx || x !== x0;
             vy = vy || y !== y0;
             k++;
-            sx += x;
-            sy += y;
+            ax = Math.max(ax, Math.abs(x));
+            ay = Math.max(ay, Math.abs(y));
           }
         });
         let value = null;
-        if (k >= 2) {
+        if (k >= 2 && vx && vy) {
+          let sx = 0;
+          let sy = 0;
+          rows.forEach(function (row) {
+            if (xs[row] !== null && ys[row] !== null) {
+              sx += xs[row] / ax;
+              sy += ys[row] / ay;
+            }
+          });
           const mx = sx / k;
           const my = sy / k;
           let cxy = 0;
           let cxx = 0;
           let cyy = 0;
           rows.forEach(function (row) {
-            const x = xs[row];
-            const y = ys[row];
-            if (x !== null && y !== null) {
-              cxy += (x - mx) * (y - my);
-              cxx += (x - mx) * (x - mx);
-              cyy += (y - my) * (y - my);
+            if (xs[row] !== null && ys[row] !== null) {
+              const dx = xs[row] / ax - mx;
+              const dy = ys[row] / ay - my;
+              cxy += dx * dy;
+              cxx += dx * dx;
+              cyy += dy * dy;
             }
           });
-          value = vx && vy && cxx > 0 && cyy > 0 ? Math.max(-1, Math.min(1, cxy / Math.sqrt(cxx * cyy))) : null;
+          const q = cxy / Math.sqrt(cxx * cyy);
+          // An infinite value leaves no correlation to tell.
+          value = cxx > 0 && cyy > 0 && Number.isFinite(q) ? Math.max(-1, Math.min(1, q)) : null;
         }
         r[a][b] = r[b][a] = value;
         n[a][b] = n[b][a] = k;

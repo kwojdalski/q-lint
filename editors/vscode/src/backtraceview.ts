@@ -27,6 +27,7 @@ import {
   type TextDocument,
 } from "vscode";
 import { bestSuffixMatch, failedAt, headerLink, parseBacktrace, type Frame } from "./backtrace";
+import { diskSpelling } from "./changedlines";
 import { editorFeatureOn } from "./editorfeatures";
 import { globLiteral } from "./globliteral";
 import { plainMessage } from "./history";
@@ -42,10 +43,14 @@ export async function localFile(path: string): Promise<Uri | undefined> {
   if (base === undefined || base === "") {
     return undefined;
   }
-  const found = await workspace.findFiles(`**/${globLiteral(base)}`, "**/node_modules/**", 50);
+  // Any case: where the disk ignores it, q prints a file as it was loaded
+  // (#2107), and bestSuffixMatch asks the disk which spellings are one file.
+  const anyCase = globLiteral(base).replace(/[A-Za-z]/g, (c) => `[${c.toLowerCase()}${c.toUpperCase()}]`);
+  const found = await workspace.findFiles(`**/${anyCase}`, "**/node_modules/**", 50);
   const best = bestSuffixMatch(
     path,
     found.map((u) => u.fsPath),
+    diskSpelling,
   );
   return best === undefined ? undefined : found.find((u) => u.fsPath === best);
 }

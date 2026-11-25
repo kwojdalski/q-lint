@@ -206,7 +206,7 @@
     "code": "QF019",
     "name": "read-only-system-name",
     "category": "names",
-    "summary": "Assignment to a single-letter .z name, which q refuses with 'domain",
+    "summary": "Assignment to a single-letter .z name, which q refuses with 'domain - but for .z.s in a lambda, the lambda's own",
     "scope": "builtin"
   },
   {
@@ -991,13 +991,6 @@
     "name": "target-typed-parameter",
     "category": "compatibility",
     "summary": "A typed or filtered lambda parameter, {[x:`j] ...}, which q runs from 4.1 on: reported only for an older target-version",
-    "scope": "builtin"
-  },
-  {
-    "code": "QK004",
-    "name": "target-deferred-response",
-    "category": "compatibility",
-    "summary": "-30!, the deferred response, which q has from 3.6 on: reported only for an older target-version",
     "scope": "builtin"
   },
   {

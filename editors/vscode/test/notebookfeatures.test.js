@@ -11,7 +11,7 @@ const url = require("node:url");
 const pkg = require("../package.json");
 const { cellDirective } = require("../out/celldirectives.js");
 const { LIVE, LIVE_KEY, inlineSpans, liveExpressions, liveQueries, markdownAfter, readLiveValues, scanLive } = require("../out/livemarkdown.js");
-const { FULL_TEXT } = require("../out/qtext.js");
+const { ESCAPE_CUT, FULL_TEXT, UTF8_CUT } = require("../out/qtext.js");
 const { ERROR_MIME, fromIpynb, markdownHtml, toHtml, toIpynb, IpynbError } = require("../out/qnbconvert.js");
 const { INJECTED_KEY, cliProcess, guardedText, injectParameters, parametersCell, parametersOf, parseArgs, passwordOf, passwordVariable, runNotebook, writeAs } = require("../out/qnbrun.js");
 const { isProduction } = require("../out/agent.js");
@@ -118,9 +118,9 @@ test("the live lambda's answer is read by expression; anything else is refused",
   assert.throws(() => readLiveValues(["a"], { ok: 1 }), /1 live values/);
   // One lambda, nothing assigned on the process.
   assert.match(LIVE, /^\{\[es\]/);
-  // FULL_TEXT has locals of its own: qtext_q.test.js holds that it defines nothing.
+  // FULL_TEXT and the cuts have locals of their own: qtext_q.test.js holds that they define nothing.
   assert.ok(LIVE.includes(FULL_TEXT));
-  assert.doesNotMatch(LIVE.replace(FULL_TEXT, "").replace(/\b[rv]:/g, ""), /[a-zA-Z_.]+::?[^:]/);
+  assert.doesNotMatch(LIVE.replace(FULL_TEXT, "").split(ESCAPE_CUT).join("").split(UTF8_CUT).join("").replace(/\b[rv]:/g, ""), /[a-zA-Z_.]+::?[^:]/);
 });
 
 /// media/livemarkdown.js, the renderer's extension, as the editor loads it:
@@ -177,7 +177,7 @@ test("a continuation line's own > is q's: kept in the key, and sent as written (
   // With and without the `>` are two expressions, not one key.
   assert.deepStrictEqual(liveExpressions("{{q: x\n    >y}} {{q: x\n    y}}"), ["x\n >y", "x\n y"]);
   // The guard reads what is sent.
-  assert.deepStrictEqual(guardedText("1", ["{{q: 5\n    >3}}", "> {{q: sum\n> til 4}}"]), ["1", "5\n    >3", "sum\ntil 4"]);
+  assert.deepStrictEqual(guardedText("1", ["{{q: 5\n    >3}}", "> {{q: sum\n> til 4}}"]), ["1", { valued: "5\n    >3" }, { valued: "sum\ntil 4" }]);
 });
 
 // A fence, an indented code block and an HTML block are that in a
@@ -241,7 +241,7 @@ test("a live value in a table cell is read as the cell's text: its \\| is q's |,
   // Unescaped, the row splits inside it: two cells of text, and no query.
   assert.deepStrictEqual(liveQueries(table("| {{q: 1|2}} | x |")), []);
   assert.deepStrictEqual(guardedText("1", [table("| {{q: `t set 1|2}} | x |")]), ["1"]);
-  assert.deepStrictEqual(guardedText("1", [table("| {{q: `t set 1\\|2}} | x |")]), ["1", "`t set 1|2"]);
+  assert.deepStrictEqual(guardedText("1", [table("| {{q: `t set 1\\|2}} | x |")]), ["1", { valued: "`t set 1|2" }]);
   // The header's cells are read so too, and a cell past its last is not shown.
   assert.deepStrictEqual(liveExpressions("| {{q: a\\|b}} | {{q: c}} |\n|---|---|"), ["a|b", "c"]);
   assert.deepStrictEqual(liveExpressions(table("| {{q: d}} | e | {{q: f}} |\n\n{{q: g}}")), ["d", "g"]);
@@ -554,7 +554,7 @@ test("a headless run numbers and runs the q cells, reads live values, and goes w
 
 test("the guard reads a cell's live values' expressions with its source (#1088)", async () => {
   const markdown = ["Count {{q: count trade}}", "Gone {{q: delete from `trade}}", "Again {{q: count trade}}"];
-  assert.deepStrictEqual(guardedText("/ just a note", markdown), ["/ just a note", "count trade", "delete from `trade"]);
+  assert.deepStrictEqual(guardedText("/ just a note", markdown), ["/ just a note", { valued: "count trade" }, { valued: "delete from `trade" }]);
   assert.deepStrictEqual(writes(guardedText("/ just a note", markdown)), ["deletes from `trade in place"]);
   assert.deepStrictEqual(guardedText("1+1", []), ["1+1"]);
   // Each is read on its own: a cell ending the script or a `/` expression
@@ -566,7 +566,7 @@ test("the guard reads a cell's live values' expressions with its source (#1088)"
   const qnb = { cells: [{ kind: "code", source: "1" }, { kind: "markdown", source: markdown[1] }] };
   const ex = fakeExecutor((cut) => ({ ok: true, type: -7, text: [cut.join(";")] }));
   await runNotebook(qnb, ex, SETTINGS);
-  assert.deepStrictEqual(ex.codes, [["1", "delete from `trade"]]);
+  assert.deepStrictEqual(ex.codes, [["1", { valued: "delete from `trade" }]]);
 });
 
 test("a headless run stops at the first cell that fails, and clears what the cells after it showed", async () => {
@@ -1017,4 +1017,9 @@ test("a Python notebook imported and exported is the notebook it was: no cell is
   // With only a kernelspec's language to go by, too.
   const spec = { ...PYTHON_NOTEBOOK, metadata: { kernelspec: { display_name: "Python 3", language: "python", name: "python3" } } };
   assert.deepStrictEqual(JSON.parse(toIpynb(fromIpynb(JSON.stringify(spec)))), spec);
+});
+
+test("a live value's expression is read as LIVE values it, whole: a / line in it hides nothing (#2033)", () => {
+  const code = guardedText("1+1", ["Count: {{q: (1;\n/\nd6:9)}} rows"]);
+  assert.deepStrictEqual(writes(code), ["assigns d6"]);
 });

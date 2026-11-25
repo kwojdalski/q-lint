@@ -17,7 +17,7 @@
 // These are the extension's one writer of q strings and symbols: Paste as q
 // Table, the JSON conversion, the gateway's statements and the grid's cell
 // edits all use `qString` and `symbolLiteral`.
-import { realValue, type GridPayload } from "./grid";
+import { bytesText, realValue, type GridPayload } from "./grid";
 
 const NULL_GUID = "00000000-0000-0000-0000-000000000000";
 
@@ -98,6 +98,10 @@ export function symbolLiteral(name: string): string {
 /// so too.
 const VERB = /^(?:::|[-+*%&|^=<>~#_$?@.!][:/\\']*)(?=[;)\]]|$)/;
 
+/// A guid as `-3!` writes it, or a run of them, where it ends.
+const GUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+const GUIDS = new RegExp(`^${GUID}(?: ${GUID})*(?![A-Za-z0-9_.])`);
+
 /// `enlist x` for a list of the one item `x`, in parentheses when it is no
 /// noun: `enlist ::` is `enlist` itself, and `enlist +` a 'rank (#1968).
 function lone(item: string): string {
@@ -112,7 +116,8 @@ function lone(item: string): string {
 /// (q refuses `+(,`a)!,1`: #1501), and a run of symbols
 /// whose first starts with `_` (`` `_y ``, `` `_y`a ``) through `` `$ ``.
 /// `-3!` writes both, so a general list's item needs it, and a grid cell
-/// edit's value too.
+/// edit's value too. A guid, which `-3!` writes bare, and a run of them,
+/// are written through `"G"$` (#2081).
 export function readable(code: string): string {
   let out = "";
   let inString = false;
@@ -145,6 +150,13 @@ export function readable(code: string): string {
     } else if (ch === "+" && (last === "" || "(;[!,".includes(last)) && "(`".includes(code[i + 1] ?? " ")) {
       out += "flip ";
       last = "";
+      continue;
+    } else if (/[0-9a-f]/.test(ch) && !/[A-Za-z0-9_.`:]/.test(code[i - 1] ?? "") && GUIDS.test(code.slice(i))) {
+      const run = GUIDS.exec(code.slice(i))![0];
+      const guids = run.split(" ");
+      out += guids.length === 1 ? `("G"$"${run}")` : `("G"$(${guids.map((g) => `"${g}"`).join(";")}))`;
+      i += run.length - 1;
+      last = ")";
       continue;
     } else if (ch === "`" && code[i + 1] === "_" && !/[A-Za-z0-9_.`]/.test(code[i - 1] ?? "")) {
       const run = /^(?:`[A-Za-z0-9_.]*)+/.exec(code.slice(i))?.[0] ?? "`";
@@ -200,6 +212,18 @@ export function readableSymbols(code: string): string {
   return out;
 }
 
+/// A symbol's literal from its bytes: as its text where they are UTF-8,
+/// and otherwise through `` `$ `` with each byte past ASCII escaped, as no
+/// text holds it (#2083).
+export function bytesSymbol(bytes: number[]): string {
+  try {
+    return symbolLiteral(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(bytes)));
+  } catch {
+    const text = stringLiteral(Buffer.from(bytes).toString("latin1"));
+    return `\`$${text.replace(/[\u0080-\u00ff]/g, (c) => `\\${c.charCodeAt(0).toString(8)}`)}`;
+  }
+}
+
 /// Whether `name` can be a column name in `([] ...)` as written.
 export function plainName(name: string): boolean {
   return /^[A-Za-z][A-Za-z0-9_]*$/.test(name) && !RESERVED.has(name);
@@ -244,7 +268,7 @@ export function atomLiteral(type: number, text: string, raw: unknown): { literal
       }
       return ok(stringLiteral(text === "" ? " " : text));
     case 11:
-      return ok(symbolLiteral(text));
+      return ok(Array.isArray(raw) ? bytesSymbol(raw) : symbolLiteral(text));
     case 13:
       return ok(`${text}m`);
     case 15:
@@ -269,6 +293,12 @@ export function atomLiteral(type: number, text: string, raw: unknown): { literal
       }
       return ok(text);
     case 12:
+      // KDB-X reads a timestamp literal only from 1709.01.01 to 2290.12.31:
+      // past them, cast from the count of nanoseconds (#2082).
+      if (/^\d{4}\./.test(text) && (Number(text.slice(0, 4)) < 1709 || Number(text.slice(0, 4)) > 2290) && raw !== undefined && raw !== null) {
+        return ok(`"p"$${String(raw)}`);
+      }
+      return ok(text);
     case 14:
     case 16:
       return ok(text);
@@ -278,12 +308,13 @@ export function atomLiteral(type: number, text: string, raw: unknown): { literal
       }
       // A float or real item, sent as its float: every digit, not the
       // `\P` that `-3!` writes (#1485).
-      if (type === 0 && typeof raw === "number" && Number.isFinite(raw)) {
+      if ((type === 0 || type === 98) && typeof raw === "number" && Number.isFinite(raw)) {
         const real = text.endsWith("e");
         return ok(`${numberText(real ? Number(realValue(raw)) : raw)}${real ? "e" : "f"}`);
       }
-      // An item with floats or reals inside, sent as they are (#1502).
-      if (type === 0 && Array.isArray(raw)) {
+      // An item with floats or reals inside, sent as they are (#1502); a
+      // table column's row too (#2085).
+      if ((type === 0 || type === 98) && Array.isArray(raw)) {
         const exact = exactLiteral(raw);
         if (exact !== undefined) {
           return exact;
@@ -333,6 +364,34 @@ export function exactLiteral(raw: unknown[]): { literal: string; cut: boolean } 
     // A suffix where the items alone would not say the type.
     const suffix = real ? "e" : items.every((n) => /^[-0-9]+$/.test(n)) ? "f" : "";
     return { literal: `${items.join(" ")}${suffix}`, cut: false };
+  }
+  // A symbol, or symbols, from their bytes (#2083).
+  if (tag === "s" && Array.isArray(v)) {
+    return { literal: bytesSymbol(v as number[]), cut: false };
+  }
+  if (tag === "S" && Array.isArray(v) && v.every(Array.isArray)) {
+    const items = (v as number[][]).map(bytesSymbol);
+    return { literal: items.length === 1 ? `enlist ${items[0]}` : `(${items.join(";")})`, cut: false };
+  }
+  // A temporal cast from its count, which -3! wrote as q cannot read (#2082).
+  if (tag === "c" && Array.isArray(v) && v.length === 2 && typeof v[0] === "number" && LETTERS[Math.abs(v[0])] !== undefined) {
+    const [t, n] = v as [number, unknown];
+    const letter = LETTERS[Math.abs(t)];
+    const one = (x: unknown): string =>
+      t === 15 || t === -15
+        ? floatText(x, false)
+        : x === null || x === undefined
+          ? "0N"
+          : x === Infinity || x === -Infinity
+            ? `${x < 0 ? "-" : ""}0W`
+            : String(x);
+    const items = t < 0 ? [one(n)] : Array.isArray(n) ? n.map(one) : [one(n)];
+    // An int's suffix, and a float's where the items alone would read as longs.
+    const suffix = Math.abs(t) >= 17 ? "i" : Math.abs(t) === 15 && items.every((x) => /^[-0-9]+$/.test(x)) ? "f" : "";
+    if (t < 0) {
+      return { literal: `"${letter}"$${items[0]}${suffix}`, cut: false };
+    }
+    return { literal: `"${letter}"$${items.length === 1 ? "enlist " : ""}${items.join(" ")}${suffix}`, cut: false };
   }
   if (tag === "l" && Array.isArray(v) && v.length > 0) {
     let cut = false;
@@ -455,6 +514,20 @@ export function tableParts(payload: GridPayload, rows?: number[]): Omit<QTable, 
   return { parts, rows: order.length, total: payload.count, cut };
 }
 
+/// The cells of `rows` cut at 200 characters or at `\c`, whose text is not
+/// their whole value: what every export says it wrote (#2087).
+export function cutCells(payload: GridPayload, rows?: number[]): number {
+  const order = rows ?? [...Array(payload.cells[0]?.length ?? 0).keys()];
+  let cut = 0;
+  payload.types.forEach((type, i) => {
+    if (type === 0 || type === 98) {
+      const raw = payload.raw[i]?.length === payload.cells[i].length ? payload.raw[i] : undefined;
+      cut += order.filter((r) => atomLiteral(type, payload.cells[i][r] ?? "", raw === undefined ? undefined : raw[r]).cut).length;
+    }
+  });
+  return cut;
+}
+
 /// Whether a cell holds q's null of a type sent without raw numbers.
 export function textNull(type: number, text: string): boolean {
   return (type === 11 && text === "") || (type === 2 && (text === "" || text === NULL_GUID)) || (type >= 20 && type <= 76 && text === "");
@@ -480,6 +553,38 @@ export function distinctNames(names: string[]): string[] {
   });
 }
 
+/// An item of a general list as a format with numbers, booleans and nulls
+/// of its own holds it (#2086): a float or a real as its every digit (its
+/// raw, #1485), an integer atom (`1`, `1i`, `2h`, `0x01`) as its number's
+/// digits, `0b` and `1b` as booleans, an atom's null (`0N`, `0n`, `0Nd`,
+/// `` ` ``) as null, a symbol of bytes past ASCII as its characters
+/// (#2083), and anything else as `plainItem`'s text - an infinity among
+/// them, which such a format has no number for.
+export type ItemValue = { number: string } | { boolean: boolean } | { null: true } | { text: string };
+
+export function itemValue(text: string, raw: unknown): ItemValue {
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return { number: numberText(text.endsWith("e") ? Number(realValue(raw)) : raw) };
+  }
+  if (Array.isArray(raw) && raw[0] === "s" && Array.isArray(raw[1])) {
+    return { text: `\`${bytesText(raw[1]) ?? ""}` };
+  }
+  const integer = /^(-?\d+)[hij]?$/.exec(text);
+  if (integer !== null) {
+    return { number: integer[1] };
+  }
+  if (/^0x[0-9a-f]{2}$/.test(text)) {
+    return { number: String(parseInt(text.slice(2), 16)) };
+  }
+  if (text === "0b" || text === "1b") {
+    return { boolean: text === "1b" };
+  }
+  if (/^0N[a-z]?$|^0n$|^`$/.test(text)) {
+    return { null: true };
+  }
+  return { text: plainItem(text) };
+}
+
 /// An item of a general list as plain text: a string's characters, its
 /// escapes undone, for a format with strings of its own; any other item
 /// (and a string cut at 200 characters) as q wrote it. A run of octal
@@ -490,28 +595,30 @@ export function distinctNames(names: string[]): string[] {
 export function plainItem(text: string): string {
   const m = /^(?:"((?:[^"\\]|\\.)*)"|,"([^"\\]|\\[0-7]{3}|\\.)")$/s.exec(text);
   if (m === null) {
-    return text;
+    // A string cut at 200 characters: its characters up to the cut, less an
+    // escape or a UTF-8 character it cut inside, and the `...` (#2087).
+    const cut = /^"((?:[^"\\]|\\[0-7]{3}|\\[^0-7])*)(?:\\[0-7]{0,2})?\.\.\.$/s.exec(text);
+    if (cut === null) {
+      return text;
+    }
+    const whole = cut[1].replace(/((?:\\[0-7]{3})+)$/, (run: string) => {
+      const bytes = run.match(/[0-7]{3}/g)!.map((o) => parseInt(o, 8));
+      // The last byte that leads a character, and whether all of it is here.
+      let lead = bytes.length - 1;
+      while (lead > 0 && bytes[lead] >= 0x80 && bytes[lead] < 0xc0 && bytes.length - lead < 4) {
+        lead--;
+      }
+      const b = bytes[lead];
+      const need = b >= 0xf0 ? 4 : b >= 0xe0 ? 3 : b >= 0xc0 ? 2 : 1;
+      const kept = need > bytes.length - lead ? bytes.slice(0, lead) : bytes;
+      return kept.map((x) => `\\${x.toString(8).padStart(3, "0")}`).join("");
+    });
+    return `${plainItem(`"${whole}"`)}...`;
   }
   return (m[1] ?? m[2]).replace(/((?:\\[0-7]{3})+)|\\(.)/gs, (_, run: string | undefined, e: string) => {
     if (run === undefined) {
       return e === "n" ? "\n" : e === "r" ? "\r" : e === "t" ? "\t" : e;
     }
-    const bytes = Buffer.from(run.match(/[0-7]{3}/g)!.map((o) => parseInt(o, 8)));
-    const utf8 = new TextDecoder("utf-8", { fatal: true });
-    let out = "";
-    for (let i = 0; i < bytes.length; ) {
-      // The character the byte at `i` leads, by its length; latin1 if it is none.
-      const b = bytes[i];
-      const length = b < 0x80 ? 1 : b >= 0xc2 && b <= 0xdf ? 2 : b >= 0xe0 && b <= 0xef ? 3 : b >= 0xf0 && b <= 0xf4 ? 4 : 0;
-      let char: string | undefined;
-      try {
-        char = length > 0 && i + length <= bytes.length ? utf8.decode(bytes.subarray(i, i + length)) : undefined;
-      } catch {
-        char = undefined;
-      }
-      out += char ?? bytes.toString("latin1", i, i + 1);
-      i += char === undefined ? 1 : length;
-    }
-    return out;
+    return bytesText(run.match(/[0-7]{3}/g)!.map((o) => parseInt(o, 8))) ?? "";
   });
 }

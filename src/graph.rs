@@ -26,19 +26,38 @@ pub struct Node {
     pub dynamic: Vec<Dynamic>,
 }
 
+/// The directory a relative `\l` in `file` is tried against first: the
+/// deepest of `roots` that holds the file, or the first of them for a file
+/// none holds. Each is a directory q may be started in - the CLI's current
+/// one, each workspace folder of an editor - and the source does not say
+/// which, so a file is taken to run from its own: in a second folder, `\l
+/// lib.q` is that folder's lib.q, not the first's (#2045).
+pub fn start_dir<'r>(roots: &'r [PathBuf], file: &Path) -> &'r Path {
+    roots
+        .iter()
+        .filter(|root| file.starts_with(root))
+        .max_by_key(|root| root.components().count())
+        .or(roots.first())
+        .map_or(Path::new(""), PathBuf::as_path)
+}
+
 /// The graph of `files`, each an absolute path and its source. `symbols`
-/// counts a qualified symbol literal as a read of the name it spells. `cwd`
-/// is the first directory a relative `\l` path is tried against, before the
-/// loading file's own directory and its ancestors: q resolves it against
-/// the process's directory and nowhere else, and the source does not say
-/// which directory that is.
-pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap<PathBuf, Node> {
+/// counts a qualified symbol literal as a read of the name it spells.
+/// `roots` say the first directory a relative `\l` path is tried against
+/// (`start_dir`), before the loading file's own directory and its
+/// ancestors: q resolves it against the process's directory and nowhere
+/// else, and the source does not say which directory that is.
+pub fn build(
+    files: &[(PathBuf, String)],
+    symbols: bool,
+    roots: &[PathBuf],
+) -> BTreeMap<PathBuf, Node> {
     let paths: Vec<PathBuf> = files.iter().map(|(p, _)| p.clone()).collect();
     let reads: Vec<References> = files
         .iter()
         .map(|(_, source)| references(source, symbols))
         .collect();
-    build_from(&paths, &reads.iter().collect::<Vec<_>>(), cwd)
+    build_from(&paths, &reads.iter().collect::<Vec<_>>(), roots)
 }
 
 /// `build`, for a caller that already holds what each file reads: `reads[i]`
@@ -46,7 +65,11 @@ pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap
 /// for every file it indexes - an open buffer's as the editor has it - so
 /// the graph it draws is the one this module defines, of the text on screen,
 /// without reading the tree again for each request.
-pub fn build_from(paths: &[PathBuf], reads: &[&References], cwd: &Path) -> BTreeMap<PathBuf, Node> {
+pub fn build_from(
+    paths: &[PathBuf],
+    reads: &[&References],
+    roots: &[PathBuf],
+) -> BTreeMap<PathBuf, Node> {
     let mut definers: HashMap<String, Vec<usize>> = HashMap::new();
     for (i, read) in reads.iter().enumerate() {
         for name in &read.defines {
@@ -54,7 +77,7 @@ pub fn build_from(paths: &[PathBuf], reads: &[&References], cwd: &Path) -> BTree
         }
     }
     let loads: Vec<_> = reads.iter().map(|r| r.loads.as_slice()).collect();
-    let tree = Tree::new(paths, cwd);
+    let tree = Tree::new(paths, roots);
     let contexts = contexts(&loads, &tree);
     for (d, namespaces) in contexts.iter().enumerate() {
         for namespace in namespaces {
@@ -137,7 +160,7 @@ pub fn build_from(paths: &[PathBuf], reads: &[&References], cwd: &Path) -> BTree
 /// The files of a graph, found by any name a load reaches them by.
 struct Tree<'a> {
     files: &'a [PathBuf],
-    cwd: &'a Path,
+    roots: &'a [PathBuf],
     position: HashMap<PathBuf, usize>,
     /// The scripts directly in each directory.
     scripts_in: HashMap<&'a Path, Vec<usize>>,
@@ -146,7 +169,7 @@ struct Tree<'a> {
 }
 
 impl<'a> Tree<'a> {
-    fn new(files: &'a [PathBuf], cwd: &'a Path) -> Self {
+    fn new(files: &'a [PathBuf], roots: &'a [PathBuf]) -> Self {
         // A file is keyed by the path it was found at, a symlink by its own
         // name: `\l lib/link.q` is an edge to `lib/link.q`, which q 5 loads
         // (#526). A load reaching it through another name - a symlinked
@@ -182,7 +205,7 @@ impl<'a> Tree<'a> {
         }
         Tree {
             files,
-            cwd,
+            roots,
             position,
             scripts_in,
             identity,
@@ -194,7 +217,7 @@ impl<'a> Tree<'a> {
         loaded(
             &self.files[i],
             load,
-            self.cwd,
+            start_dir(self.roots, &self.files[i]),
             |p| self.position.get(p).copied(),
             |dir| self.scripts_in.get(dir).cloned().unwrap_or_default(),
         )
@@ -343,8 +366,12 @@ impl Placement {
 /// `build` gives the graph, which keeps every root name instead: an edge
 /// too many is a file rebuilt for nothing, a name too many is a read of a
 /// name q never creates passed as defined.
-pub fn placements(paths: &[PathBuf], loads: &[&[(String, String)]], cwd: &Path) -> Vec<Placement> {
-    let tree = Tree::new(paths, cwd);
+pub fn placements(
+    paths: &[PathBuf],
+    loads: &[&[(String, String)]],
+    roots: &[PathBuf],
+) -> Vec<Placement> {
+    let tree = Tree::new(paths, roots);
     let contexts = contexts(loads, &tree);
     let root = rooted(loads, &tree, &contexts);
     contexts

@@ -128,6 +128,13 @@ test("notebook features against a real q process", { skip }, async (t) => {
     });
     // One expression alone is still a list of one.
     assert.deepStrictEqual(readLiveValues(["d"], await connection.call(LIVE, ["d"])), { d: { text: "2024.01.01" } });
+    // Cut on a character, never inside a UTF-8 one or a -3! escape (#2071).
+    const wide8 = ['raze 100#enlist "\\346\\227\\245"', '`$raze 100#enlist "\\346\\227\\245"', 'enlist raze 100#enlist "\\346\\227\\245"', 'raze 300#enlist "a\\303\\251"'];
+    const cut8 = readLiveValues(wide8, await connection.call(LIVE, wide8));
+    assert.strictEqual(cut8[wide8[0]].text, "日".repeat(66));
+    assert.strictEqual(cut8[wide8[1]].text, "日".repeat(66));
+    assert.strictEqual(cut8[wide8[2]].text, `,"${"\\346\\227\\245".repeat(16)}\\346`);
+    assert.strictEqual(cut8[wide8[3]].text, "aé".repeat(66) + "a");
   });
 
   // The process is sent the expression as written, so a continuation line's

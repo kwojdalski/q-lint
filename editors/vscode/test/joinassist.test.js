@@ -153,3 +153,10 @@ test("on a guarded process a query that would change it is held", async (t) => {
   assert.match(await stub.commands.get(PROCESS_TOOL_COMMANDS.joinAssistant)("trade", "x:ref", "lj"), /not confirmed/);
   assert.strictEqual(q.sent.length, before);
 });
+
+test("the guard reads the expressions of a join's tables as TABLE_SHAPE values them, whole (#2033)", () => {
+  const { shapeGuardCode } = require("../out/joinassist.js");
+  const { writes } = require("../out/guard.js");
+  assert.deepStrictEqual(writes(shapeGuardCode(["(1;\n/\nj2:9)", "trade"])), ["assigns j2"]);
+  assert.deepStrictEqual(writes(shapeGuardCode(["trade", "quote"])), []);
+});

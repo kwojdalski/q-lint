@@ -158,6 +158,37 @@ fn the_target_version_reports_what_does_not_run_there() {
     );
 }
 
+/// A QK rule that no target can see is one `--rules` lists as on and that
+/// never reports: QK004 was one, for `-30!`, which every target has (#2091).
+#[test]
+fn every_qk_rule_listed_is_reported_for_some_target() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("a.q"), NEW_Q).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .arg("--rules")
+        .output()
+        .unwrap();
+    let listed: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| l.starts_with("QK"))
+        .map(|l| l[..5].to_string())
+        .collect();
+    let mut seen = std::collections::BTreeSet::new();
+    for target in ["3.6", "4.0", "4.1", "kdbx"] {
+        let (_, found, _) = run(d, &["--isolated", "--target-version", target, "a.q"]);
+        seen.extend(qk(&found).into_iter().map(|(c, _)| c));
+        // `-30!` (line 4) runs on every one of them.
+        assert!(!found.iter().any(|(_, l)| *l == 4), "{target}: {found:?}");
+    }
+    assert_eq!(seen.into_iter().collect::<Vec<_>>(), listed);
+    let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .args(["--explain", "QK004"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+}
+
 #[test]
 fn a_typed_local_is_judged_as_its_literal_would_be() {
     let dir = tempfile::tempdir().unwrap();
@@ -176,6 +207,15 @@ fn a_typed_local_is_judged_as_its_literal_would_be() {
             pair("QT033", 10),
         ]
     );
+    // q counts a string in bytes: `"é"` is a string, so joining it to
+    // longs is the mixed join `"ab"` gives (#2063).
+    fs::write(
+        d.join("b.q"),
+        "f:{c:\"\u{e9}\"; c,1 2}\ng:{c:\"ab\"; c,1 2}\nh:{c:\"e\"; c,1 2}\n",
+    )
+    .unwrap();
+    let (_, found, _) = run(d, &["--isolated", "--select", "QT034", "b.q"]);
+    assert_eq!(found, vec![pair("QT034", 1), pair("QT034", 2)]);
     // In the style profile, not in general.
     let (_, found, _) = run(d, &["--isolated", "--profile", "general", "a.q"]);
     assert!(

@@ -323,6 +323,10 @@ fn namespace_of(name: &str) -> Option<(&str, &str)> {
 const FIXTURES_BEFORE: [&str; 2] = ["beforeNamespace", "setUp"];
 const FIXTURES_AFTER: [&str; 2] = ["tearDown", "afterNamespace"];
 
+/// What qUnit's `.qunit.runTest` does with a test whose run takes longer,
+/// or more memory, than its namespace's `qunitConfig` allows (#2103).
+const OVER_CONFIG: &str = "exceeded max config time/mem";
+
 /// Each function a statement at column 0 of `text` defines, in order.
 pub(super) fn runnables(text: &str) -> Vec<Runnable> {
     let mut out: Vec<Runnable> = vec![];
@@ -333,15 +337,14 @@ pub(super) fn runnables(text: &str) -> Vec<Runnable> {
     // Read once: asked for each definition, the whole file was read again
     // for each (#1216).
     let contexts = q_lint_rs::contexts(text);
+    // A namespace's `qunitConfig`, where and as it is defined (#2103): not a
+    // function, so no runnable, but sent with the tests it configures.
+    let mut configs: Vec<(usize, String, String)> = vec![];
     for m in &mentions(text) {
         let Some(definition) = &m.definition else {
             continue;
         };
-        if !definition.function
-            || m.at != definition.start
-            || !(m.at == 0 || text[..m.at].ends_with('\n'))
-            || !seen.insert(m.at)
-        {
+        if m.at != definition.start || !(m.at == 0 || text[..m.at].ends_with('\n')) {
             continue;
         }
         let spelled = &text[m.at..m.at + m.len];
@@ -362,6 +365,18 @@ pub(super) fn runnables(text: &str) -> Vec<Runnable> {
         // file's first `\d` is wherever the process puts it, the root for a
         // query.
         let name = if m.implicit { spelled } else { &m.name };
+        if !definition.function {
+            if qunit
+                && namespace_of(name).is_some_and(|(_, leaf)| leaf == "qunitConfig")
+                && configs.iter().all(|(at, _, _)| *at != m.at)
+            {
+                configs.push((m.at, name.to_string(), code));
+            }
+            continue;
+        }
+        if !seen.insert(m.at) {
+            continue;
+        }
         let qunit_test =
             qunit && namespace_of(name).is_some_and(|(_, leaf)| leaf.starts_with("test"));
         out.push(Runnable {
@@ -394,21 +409,71 @@ pub(super) fn runnables(text: &str) -> Vec<Runnable> {
                     .collect()
             };
             let (before, after) = (of(&FIXTURES_BEFORE), of(&FIXTURES_AFTER));
-            if before.is_empty() && after.is_empty() {
+            // qUnit's `.qunit.runNsTests` runs each test once for each value
+            // its namespace's first `parameters*` gives, with `.ns.parameter`
+            // set to it, between its `beforeParameters*` and
+            // `afterParameters*` (#2104).
+            let mut parameters = of(&["parameters"]);
+            parameters.sort_by(|a, b| a.name.cmp(&b.name));
+            let parameters = parameters.first().copied();
+            let (before_all, after_all) = if parameters.is_some() {
+                (of(&["beforeParameters"]), of(&["afterParameters"]))
+            } else {
+                (vec![], vec![])
+            };
+            let config = configs
+                .iter()
+                .find(|(_, name, _)| namespace_of(name).is_some_and(|(n, _)| n == ns));
+            if before.is_empty() && after.is_empty() && parameters.is_none() && config.is_none() {
                 return None;
             }
             let calls = |rs: &[&Runnable]| -> String {
                 rs.iter().map(|r| format!("{}[]; ", r.name)).collect()
             };
-            let mut defined: Vec<&Runnable> = before.iter().chain(&after).copied().collect();
-            defined.sort_by_key(|r| r.at);
-            let fixtures = defined.iter().map(|r| format!("{}\n", r.code)).collect();
-            let call = format!(
-                "{{[] {}r:@[{{(1b;x[])}};{};{{(0b;x)}}]; {}$[r 0;r 1;'r 1]}}[]",
-                calls(&before),
-                run.name,
-                calls(&after),
-            );
+            let mut defined: Vec<(usize, &str)> = before
+                .iter()
+                .chain(&after)
+                .chain(&before_all)
+                .chain(&after_all)
+                .chain(&parameters)
+                .map(|r| (r.at, r.code.as_str()))
+                .chain(config.map(|(at, _, code)| (*at, code.as_str())))
+                .collect();
+            defined.sort_by_key(|(at, _)| *at);
+            defined.dedup();
+            let fixtures = defined
+                .iter()
+                .map(|(_, code)| format!("{code}\n"))
+                .collect();
+            // The test alone is timed, as `.qunit.runTest` times it, and
+            // fails over what `.ns.qunitConfig[`test]` allows (#2103).
+            let protected = format!("@[{{(1b;x[])}};{};{{(0b;x)}}]", run.name);
+            let ran = match config {
+                Some(_) => {
+                    let (_, leaf) = namespace_of(&run.name).unwrap_or_default();
+                    format!(
+                        "t:.Q.ts[{{{}}};enlist {}]; r:t 1; \
+                         c:@[{{.[`{ns};`qunitConfig`{leaf}]}};::;``!``]; \
+                         c:(`maxTime`maxMem!0W 0W),$[99h~type c;c;()!()]; \
+                         if[r[0]&any t[0]>c`maxTime`maxMem;r:(0b;\"{OVER_CONFIG}\")]; ",
+                        protected.replacen(&run.name, "x", 1),
+                        run.name,
+                    )
+                }
+                None => format!("r:{protected}; "),
+            };
+            let once = format!("{}{ran}{}", calls(&before), calls(&after));
+            let call = match parameters {
+                Some(p) => format!(
+                    "{{[] {}p:@[{{x[]}};{};()]; i:0; f:(1b;::); \
+                     do[max 1,count p; @[`{ns};`parameter;:;p i]; {once}if[f 0;f:r]; i+:1]; \
+                     {}$[f 0;f 1;'f 1]}}[]",
+                    calls(&before_all),
+                    p.name,
+                    calls(&after_all),
+                ),
+                None => format!("{{[] {once}$[r 0;r 1;'r 1]}}[]"),
+            };
             Some((i, fixtures, call))
         })
         .collect();

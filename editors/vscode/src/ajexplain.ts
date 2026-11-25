@@ -14,6 +14,7 @@
 // `.Q.s1` cuts a wide row at the process's `\c` width, short of the columns
 // the match turns on (#1908).
 import { charKinds } from "./explorer";
+import { valued, type GuardCode } from "./guard";
 import { FULL_TEXT } from "./qtext";
 
 export const EXPLAIN_AJ = [
@@ -108,6 +109,13 @@ export interface AjMatch {
 }
 
 /// What `EXPLAIN_AJ` answered. Throws when it is not that shape.
+/// What the read-only guard reads for an explanation of `call`: its
+/// columns and tables, each `value`d whole by `EXPLAIN_AJ`, so each is read
+/// as `value` reads it, a `/` line hiding nothing (#2033).
+export function explainGuardCode(call: Pick<AjCall, "columns" | "left" | "right">): GuardCode {
+  return [call.columns, call.left, call.right].map(valued);
+}
+
 export function readMatch(raw: unknown): AjMatch {
   const p = raw as unknown[];
   const s = (v: unknown) => (typeof v === "string" ? v : Array.isArray(v) && v.length === 0 ? "" : undefined);

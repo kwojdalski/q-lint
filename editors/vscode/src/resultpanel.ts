@@ -225,6 +225,9 @@ interface Shown {
   /// the session: a view's page keeps its state across a window reload,
   /// and must not take the next session's first result for its last.
   id: string;
+  /// Counts every result shown, one shown in place under its id too: a
+  /// menu's context names the one it was opened on (#2076).
+  run: number;
   /// When it ran.
   at: number;
   /// The previous run of the same code, when there was one.
@@ -319,11 +322,24 @@ interface PageMessage {
 interface CellContext {
   column?: unknown;
   row?: unknown;
+  /// The `run` of the result the menu was opened on.
+  run?: unknown;
 }
 
 /// Whether a result of `code` is the run of the saved query whose filled-in
 /// code is `expected`: that code, or that code sent through a TorQ gateway
 /// to any server types. Not any code that holds it (#1753).
+/// Whether a menu was opened on a result other than the one on show, run
+/// `now`: a watched query's next run, or another result, landed while it
+/// was open (#2076). Said so; a command given no `run` acts on the one on show.
+export function staleMenu(run: unknown, now: number): boolean {
+  if (typeof run !== "number" || run === now) {
+    return false;
+  }
+  void window.showInformationMessage("q-lint: the result changed while its menu was open. Right-click it again.");
+  return true;
+}
+
 export function savedRun(code: string, expected: string): boolean {
   if (code === expected) {
     return true;
@@ -345,6 +361,7 @@ export class QueryModes {
   private readonly media: Uri;
   private readonly session = randomBytes(6).toString("hex");
   private results = 0;
+  private runs = 0;
   /// The results kept, oldest first; `shown` is one of them.
   private history: Shown[] = [];
   /// The last run of each query's code, for the next run to compare with.
@@ -389,7 +406,7 @@ export class QueryModes {
       commands.registerCommand(RESULT_VIEW.loadMore, () => this.enabled("paging") && this.loadMore(true)),
       commands.registerCommand(RESULT_VIEW.pivot, () => this.enabled("pivot") && this.ask({ action: "view", view: "pivot" })),
       commands.registerCommand(RESULT_VIEW.saveChart, (format?: string, target?: Uri) => this.enabled("charts") && this.saveChart(format, target)),
-      commands.registerCommand(RESULT_VIEW.drillDown, (cell?: CellContext) => this.enabled("drilldown") && this.drill(cell?.column, cell?.row)),
+      commands.registerCommand(RESULT_VIEW.drillDown, (cell?: CellContext) => this.enabled("drilldown") && this.drill(cell?.column, cell?.row, cell?.run)),
       commands.registerCommand(RESULT_VIEW.addFormat, (cell?: CellContext | string, rule?: unknown) => this.enabled("conditionalFormats") && this.addFormat(cell, rule)),
       commands.registerCommand(RESULT_VIEW.clearFormats, (cell?: CellContext | string) => this.enabled("conditionalFormats") && this.clearFormats(cell)),
       commands.registerCommand(RESULT_VIEW.toggleBar, (cell?: CellContext | string) => this.enabled("cellCharts") && this.toggleCellChart(cell, "bar")),
@@ -443,9 +460,9 @@ export class QueryModes {
 
   /// The result on show, with the process and code it came from: what the
   /// Data Wrangler (#961) and a cell edit (#964) work from.
-  current(): { process: string; code: string; payload: GridPayload } | undefined {
+  current(): { process: string; code: string; payload: GridPayload; run: number } | undefined {
     const shown = this.shown;
-    return shown === undefined ? undefined : { process: shown.process, code: shown.code, payload: shown.payload };
+    return shown === undefined ? undefined : { process: shown.process, code: shown.code, payload: shown.payload, run: shown.run };
   }
 
   /// Where the live half fetches pages of a held result from.
@@ -500,6 +517,7 @@ export class QueryModes {
       view: replaced?.view ?? live.mode,
       limit: live.gridLimit,
       id: replaced?.id ?? `${this.session}.${++this.results}`,
+      run: ++this.runs,
       at: Date.now(),
       ...(last !== undefined ? { before: { payload: last.payload, process: last.process, at: last.at } } : {}),
       ...(saved !== undefined ? { saved } : {}),
@@ -1080,8 +1098,11 @@ export class QueryModes {
 
   /// Offer the drill-down templates for the cell at `column`, `row` of the
   /// result on show, and run the one picked on the process it came from.
-  private async drill(column: unknown, row: unknown): Promise<void> {
+  private async drill(column: unknown, row: unknown, run?: unknown): Promise<void> {
     const shown = this.shown;
+    if (shown !== undefined && staleMenu(run, shown.run)) {
+      return;
+    }
     if (shown === undefined || typeof column !== "number" || typeof row !== "number") {
       void window.showInformationMessage("q-lint: double-click a cell of the result grid, or right-click it, to drill down from it.");
       return;
@@ -1193,6 +1214,9 @@ export class QueryModes {
     const shown = this.shown;
     if (shown === undefined) {
       void window.showInformationMessage("q-lint: no result yet. Run a query in grid or chart mode first.");
+      return undefined;
+    }
+    if (typeof cell === "object" && staleMenu(cell.run, shown.run)) {
       return undefined;
     }
     const grid = toGrid(shown.payload, settings().gridDecimals);
@@ -1643,7 +1667,7 @@ export class QueryModes {
     if (this.shown === undefined) {
       return;
     }
-    const { process, code, millis, payload, view, limit, id } = this.shown;
+    const { process, code, millis, payload, view, limit, id, run } = this.shown;
     const live = settings();
     const features = this.viewSettings();
     const before = features.enable.diff ? this.shown.before : undefined;
@@ -1656,6 +1680,7 @@ export class QueryModes {
     const message = {
       type: "result",
       id,
+      run,
       view,
       process,
       code,

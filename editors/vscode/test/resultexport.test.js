@@ -62,6 +62,22 @@ test("a cell's q literal keeps its type: suffixes, typed nulls and infinities, s
   assert.strictEqual(lit(20, "x"), "`x");
   // A general list's item is q already, unless it was cut.
   assert.deepStrictEqual(atomLiteral(0, "`a`b", undefined), { literal: "`a`b", cut: false });
+  // A minute, second or time past 99 hours, which -3! writes **, and a
+  // timestamp outside 1709-2290, which KDB-X does not read: cast (#2082).
+  assert.strictEqual(lit(0, "(**:00;1)", ["l", [["c", [-17, 6000]], "1"]]), '("u"$6000i;1)');
+  assert.strictEqual(lit(0, "01:00 **:00", ["c", [17, [60, 6000]]]), '"u"$60 6000i');
+  assert.strictEqual(lit(0, ",**:00:00", ["c", [18, [360000]]]), '"v"$enlist 360000i');
+  assert.strictEqual(lit(0, "0N **:06:40.000", ["c", [19, [null, 400000000]]]), '"t"$0N 400000000i');
+  assert.strictEqual(lit(0, "2000.01.02T02:57:46.666", ["c", [-15, 1.123456789]]), '"z"$1.123456789');
+  assert.strictEqual(lit(0, "", ["c", [-12, -9200000000000000000n]]), '"p"$-9200000000000000000');
+  assert.strictEqual(lit(12, "1708.06.05D21:51:00.000000000", "-9200000000000000000"), '"p"$-9200000000000000000');
+  // But a guid, which -3! writes bare: q refuses it, or reads 0Ng as 0 (#2081).
+  const g = "8c680a01-5a49-5aab-5a65-d4bfddb6a661";
+  const z = "00000000-0000-0000-0000-000000000000";
+  assert.strictEqual(lit(0, `(${g};1)`, false), `(("G"$"${g}");1)`);
+  assert.strictEqual(lit(0, `(1 2;${z})`, false), `(1 2;("G"$"${z}"))`);
+  assert.strictEqual(lit(0, `,${g} ${z}`, false), `enlist ("G"$("${g}";"${z}"))`);
+  assert.strictEqual(lit(0, `("${g}";\`$"${g}")`, false), `("${g}";\`$"${g}")`);
   assert.strictEqual(atomLiteral(0, `"${"x".repeat(196)}...`, undefined).cut, true);
   // Cut by -3! at \c (#1484). KDB-X at \c 25 80: -3!til 40 is "0 1 ... 28 ..".
   const wide = `${Array.from({ length: 29 }, (_, i) => i).join(" ")} ..`;
@@ -405,6 +421,62 @@ test("a float or real item of a general list is written with every digit, not -3
   assert.strictEqual(tableLiteral(g).code, "([] a:(1.23456789f;`x;0n))");
 });
 
+test("a string cut at 200 characters is written as its characters up to the cut, and every format says so (#2087)", () => {
+  // KDB-X: GRID's cells of ([] s:(300#"a";"b";"caf\303\251",300#"\303\251")).
+  const long = `"${"a".repeat(196)}...`;
+  const utf = `"caf\\303\\251${"\\303\\251".repeat(23)}\\...`;
+  assert.strictEqual(utf.length, 200);
+  const p = { count: 3, keys: 0, names: ["s"], types: [0], cells: [[long, '"b"', utf]], raw: [[false, false, false]], rank: [[]] };
+  assert.deepStrictEqual(JSON.parse(toJson(p)).map((r) => r.s), [`${"a".repeat(196)}...`, "b", `café${"é".repeat(23)}...`]);
+  for (const format of EXPORT_FORMATS) {
+    assert.ok(exportResult(format, p, -1).notes.includes("2 cell(s) were cut at 200 characters or at the process's \\c width and are not their whole value"), format);
+  }
+  assert.deepStrictEqual(exportResult("json", p, -1, [1]).notes, []);
+  // Cut inside an escape, or inside a character's bytes: neither is kept.
+  assert.deepStrictEqual(['"caf\\303\\251 \\303...', '"\\346\\227\\245\\346\\227...', '"ab\\30...', '"x\\"...', '"ab\\\\...'].map(plainItem), ["café ...", "日...", "ab...", 'x"...', "ab\\..."]);
+});
+
+test("-0 keeps its sign in every export, a real's too (#2089)", () => {
+  const { realValue } = require("../out/grid.js");
+  assert.ok(Object.is(realValue(-0), -0));
+  const p = { count: 2, keys: 0, names: ["e", "f"], types: [8, 9], cells: [["-0", "1"], ["-0", "1"]], raw: [[-0, 1], [-0, 1]], rank: [[0, 1], [0, 1]] };
+  assert.match(toJson(p), /"e": -0, "f": -0\}/);
+  assert.strictEqual(tableLiteral(p).code, "([] e:(-0e;1e);f:(-0f;1f))");
+  assert.match(unzip(exportResult("xlsx", p, -1).data)["xl/worksheets/sheet1.xml"], /<c r="A2"><v>-0<\/v><\/c><c r="B2"><v>-0<\/v><\/c>/);
+  const file = toParquet(p, [0, 1]).data;
+  assert.ok(file.includes(Buffer.from([0, 0, 0, 0x80, 0, 0, 0x80, 0x3f])), "the real -0's float bytes");
+  assert.ok(file.includes(Buffer.from([0, 0, 0, 0, 0, 0, 0, 0x80])), "the float -0's");
+});
+
+test("Excel and Parquet write a general list's float with every digit, as JSON does (#2088)", () => {
+  // GRID's payload of ([] l:(acos -1;0n;"x";1b;7;9007199254740993)).
+  assert.deepStrictEqual(xlsxCell(0, "3.141593", Math.PI), { n: Math.PI });
+  assert.deepStrictEqual(xlsxCell(0, "0.1e", Math.fround(0.1)), { n: 0.1 });
+  assert.deepStrictEqual(xlsxCell(0, "0n", false), undefined);
+  assert.deepStrictEqual(xlsxCell(0, '"x"', false), { t: "x" });
+  assert.deepStrictEqual(xlsxCell(0, "1b", false), { b: true });
+  assert.deepStrictEqual(xlsxCell(0, "7", false), { n: 7 });
+  assert.deepStrictEqual(xlsxCell(0, "9007199254740993", false), { t: "9007199254740993" });
+  const p = { count: 3, keys: 0, names: ["l"], types: [0], cells: [["3.141593", "0n", '"x"']], raw: [[Math.PI, false, false]], rank: [[]] };
+  const file = toParquet(p, [0, 1, 2]).data;
+  assert.ok(file.includes(Buffer.from("3.141592653589793")), "every digit");
+  assert.ok(!file.includes(Buffer.from("3.141593")) && !file.includes(Buffer.from("0n")), "no \\P text, no q null");
+  const sheet = unzip(exportResult("xlsx", p, -1).data)["xl/worksheets/sheet1.xml"];
+  assert.match(sheet, /<c r="A2"><v>3\.141592653589793<\/v><\/c>/);
+});
+
+test("JSON writes a general list's integers, booleans and nulls as JSON's own, as it does a float's (#2086)", () => {
+  // KDB-X -3! of each item of ([] a:(1;0n;2.5;0Nj;1b;0x01;`a;"x";enlist "y";1 2;0Wh;-0we;0Ni;`;-7i;9007199254740993)).
+  const cells = ["1", "0n", "2.5", "0N", "1b", "0x01", "`a", '"x"', ',"y"', "1 2", "0Wh", "-0we", "0Ni", "`", "-7i", "9007199254740993"];
+  const raw = cells.map(() => false);
+  raw[2] = 2.5;
+  raw[11] = -Infinity;
+  const p = { count: cells.length, keys: 0, names: ["a"], types: [0], cells: [cells], raw: [raw], rank: [[]] };
+  const json = toJson(p);
+  assert.deepStrictEqual(JSON.parse(json).map((r) => r.a), [1, null, 2.5, null, true, 1, "`a", "x", "y", "1 2", "0Wh", "-0we", null, null, -7, 9007199254740992]);
+  assert.match(json, /"a": 9007199254740993\}/);
+});
+
 test("a float infinity in a general list is shown, sent to an agent and exported as q writes it, not as a long's 0W (#1733)", () => {
   const { toGrid } = require("../out/grid.js");
   const { jsonCell } = require("../out/agent.js");
@@ -483,6 +555,15 @@ test("a pivot groups by two columns in q's order and aggregates a third", () => 
   assert.match(page.pivot(g, rows, { row: 0, column: -1, value: 1, agg: "max" }).note, /numeric column/);
   assert.match(page.pivot(g, rows, { row: 1, column: 0, value: 2, agg: "min" }, 2).note, /first 2 of 3 values of sym/);
   assert.deepStrictEqual(page.defaultPivot(g), { row: 0, column: -1, value: 2, agg: "sum" });
+});
+
+test("a pivot keeps apart floats the grid rounds alike, as q's by does (#2078)", () => {
+  const g = grid([["px", 9], ["qty", 7]], [["1.00", "1.00", "1.00", "1.00"], ["10", "20", "30", "40"]], [[1.001, 1.002, 1.003, 1.002], [10, 20, 30, 40]], [[0, 1, 2, 1], [0, 1, 2, 3]]);
+  const p = page.pivot(g, [0, 1, 2, 3], { row: 0, column: -1, value: 1, agg: "sum" });
+  assert.deepStrictEqual(p, { rows: ["1.00", "1.00", "1.00"], columns: ["sum"], cells: [["10"], ["60"], ["30"]] });
+  // As columns too, in q's order.
+  const across = page.pivot(g, [3, 2, 0], { row: -1, column: 0, value: 1, agg: "sum" });
+  assert.deepStrictEqual([across.columns, across.cells], [["1.00", "1.00", "1.00"], [["10", "40", "30"]]]);
 });
 
 test("a pivot's aggregates keep every digit of a long: 123456789012345 is not 123456789012000 (#1487)", () => {

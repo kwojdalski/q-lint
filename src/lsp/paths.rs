@@ -73,13 +73,17 @@ fn relative(to: &Path, from: &Path) -> String {
     parts.join("/")
 }
 
-/// The workspace folder q is taken to be started in, as a key.
-fn root(sources: &Sources) -> Option<PathBuf> {
-    sources
+/// The workspace folder q is taken to be started in for the file `key`, as
+/// a key: the folder that holds it, or the first (`graph::start_dir`).
+fn root(sources: &Sources, key: &str) -> Option<PathBuf> {
+    let roots: Vec<PathBuf> = sources
         .idx
         .roots
-        .first()
+        .iter()
         .map(|r| PathBuf::from(file_key(r)))
+        .collect();
+    let root = q_lint_rs::graph::start_dir(&roots, Path::new(key));
+    (!root.as_os_str().is_empty()).then(|| root.to_path_buf())
 }
 
 /// Where a renamed path goes: each `(old, new)` names a file or a folder,
@@ -93,6 +97,42 @@ fn moved(path: &Path, renames: &[(PathBuf, PathBuf)]) -> Option<PathBuf> {
             new.join(rest)
         })
     })
+}
+
+/// Where the path `written` goes under `renames`, found as written or by
+/// its real path - a symlink followed (`/tmp` for `/private/tmp`, #1219),
+/// another case on a disk that ignores it (#2050) - and spelled as written
+/// as far as it still leads there.
+fn moved_as_written(written: &Path, renames: &[(PathBuf, PathBuf)]) -> Option<PathBuf> {
+    let target = moved(written, renames).or_else(|| {
+        let real = PathBuf::from(file_key(&written.to_string_lossy()));
+        let target = moved(&real, renames)?;
+        // What follows the renamed part, in the case it was written in,
+        // when the real path names the same parts.
+        let parts = written.components().count();
+        if parts != real.components().count() {
+            return Some(target);
+        }
+        let (old, new) = renames.iter().find(|(old, _)| real.starts_with(old))?;
+        let rest: PathBuf = written
+            .components()
+            .skip(old.components().count())
+            .collect();
+        Some(if rest.as_os_str().is_empty() {
+            new.clone()
+        } else {
+            new.join(rest)
+        })
+    })?;
+    Some(
+        written
+            .ancestors()
+            .find_map(|dir| {
+                let rest = target.strip_prefix(file_key(&dir.to_string_lossy())).ok()?;
+                Some(dir.join(rest))
+            })
+            .unwrap_or(target),
+    )
 }
 
 /// `workspace/willRenameFiles`: the edits that keep each load naming what
@@ -120,7 +160,6 @@ pub(super) fn will_rename(params: &Value, sources: &Sources) -> (Value, Option<S
     if renames.is_empty() {
         return (Value::Null, None);
     }
-    let root = root(sources);
     let mut changes: BTreeMap<String, Vec<Value>> = BTreeMap::new();
     let mut left: Vec<String> = vec![];
     for key in sources.keys() {
@@ -131,6 +170,7 @@ pub(super) fn will_rename(params: &Value, sources: &Sources) -> (Value, Option<S
             continue;
         };
         let from = Path::new(key);
+        let root = root(sources, key);
         let dir = from.parent().unwrap_or(Path::new(""));
         let new_from = moved(from, &renames);
         let new_dir = new_from.as_deref().and_then(Path::parent).unwrap_or(dir);
@@ -210,16 +250,8 @@ fn rewritten(
         // (`/tmp` for `/private/tmp`) is followed to its file, and the
         // part of it that still leads there is kept as written (#1219).
         let written = lexical(written);
-        let target = moved(&written, renames)
-            .or_else(|| moved(Path::new(&file_key(&written.to_string_lossy())), renames))?;
-        let spelled = written
-            .ancestors()
-            .find_map(|dir| {
-                let rest = target.strip_prefix(file_key(&dir.to_string_lossy())).ok()?;
-                Some(dir.join(rest))
-            })
-            .unwrap_or(target);
-        return Some(spelled.to_string_lossy().replace('\\', "/"));
+        let target = moved_as_written(&written, renames)?;
+        return Some(target.to_string_lossy().replace('\\', "/"));
     }
     // The bases in the order q tries them, each with where it will be.
     let mut bases: Vec<(PathBuf, PathBuf)> = vec![];
@@ -235,7 +267,9 @@ fn rewritten(
         let target = lexical(&base.join(written));
         target.exists().then_some(((base, new_base), target))
     })?;
-    let new_target = moved(&target, renames).unwrap_or_else(|| target.clone());
+    // On a disk that ignores case, `\l Lib/U.q` loads lib/u.q, and only
+    // its real path is among the renames (#2050).
+    let new_target = moved_as_written(&target, renames).unwrap_or_else(|| target.clone());
     let (old_base, new_base) = base;
     if new_target == target && new_base == old_base {
         return None;
@@ -277,7 +311,7 @@ pub(super) fn completion(cursor: &Cursor, sources: &Sources) -> Option<Value> {
         bases.push(PathBuf::new());
     } else {
         bases.extend(from.parent().map(Path::to_path_buf));
-        bases.extend(root(sources));
+        bases.extend(root(sources, &cursor.key));
     }
     let lines = Lines::new(cursor.text);
     let span = json!({"start": lines.json(start), "end": lines.json(cursor.offset)});

@@ -1109,6 +1109,20 @@ x:0;y:1
 if[(x=0) and y=0;-1 "a"]
 r:$[x and y=0;1;2]
 
+=== QB006 | assigned, returned or in a later $ slot it reads the same (q 5: {[a;b] ok:a>0 and b>0; ok}[1;-1] is 1b, {[a;b] (a>0) and b>0}[1;-1] 0b; #2092)
+f:{[a;b] ok:a>0 and b>0; ok}
+g:{[a;b] a>0 and b>0}
+h:{[a;b] $[a;0b;a>0 and b>0;1b;0b]}
+r:select ok:a>0 and b>0 from t
+s:(x=0 or y=0)
+
+=== clean | parenthesised, the comparison on the right, a symbol, or an iterated and (#2092)
+f:{[a;b] ok:(a>0) and b>0; ok}
+g:{[a;b] a and b>0}
+s:`in`or
+k:`.k.in`.k.or
+m:0=sum each/:kf and/:\:kf
+
 === QB021 profile: general | a select with a limit or a sort (q 5: 'dup names for cols/groups a; #573)
 t:([]a:1 2)
 r:select[1] a by a from t

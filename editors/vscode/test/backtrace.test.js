@@ -91,6 +91,17 @@ test("a path from another machine is matched by its trailing segments; a termina
   assert.strictEqual(bestSuffixMatch("/srv/app/src/lib.q", ["/ws/other/lib.q", "/ws/src/lib.q", "/ws/x.q"]), "/ws/src/lib.q");
   assert.strictEqual(bestSuffixMatch("C:\\app\\src\\lib.q", ["/ws/src/lib.q"]), "/ws/src/lib.q");
   assert.strictEqual(bestSuffixMatch("/srv/none.q", ["/ws/src/lib.q"]), undefined);
+  // q prints a file as it was loaded: Lib\Util.q for c:\proj\lib\util.q.
+  // The same where the disk says the two spellings are one file (#2107).
+  const insensitive = (p) => (p.toLowerCase().startsWith("c:\\proj\\") ? p.toLowerCase() : undefined);
+  assert.strictEqual(bestSuffixMatch("Lib\\Util.q", ["c:\\proj\\lib\\util.q"], insensitive), "c:\\proj\\lib\\util.q");
+  assert.strictEqual(bestSuffixMatch("Lib\\Util.q", ["c:\\proj\\other\\util.q", "c:\\proj\\lib\\util.q"], insensitive), "c:\\proj\\lib\\util.q");
+  // Where it tells case apart, or without asking it, they are two files.
+  const sensitive = (p) => (["/ws/lib/util.q"].includes(p) ? p : undefined);
+  assert.strictEqual(bestSuffixMatch("Lib/Util.q", ["/ws/lib/util.q"], sensitive), undefined);
+  assert.strictEqual(bestSuffixMatch("Lib\\Util.q", ["c:\\proj\\lib\\util.q"]), undefined);
+  // A segment matched exactly beats one matched only by case.
+  assert.strictEqual(bestSuffixMatch("src/Util.q", ["/ws/src/Util.q", "/ws/SRC/util.q"], insensitive), "/ws/src/Util.q");
   assert.deepStrictEqual(headerLink("  [5]  /w/lib2.q:5: mid:"), { start: 7, length: 11, file: "/w/lib2.q", line: 5 });
   assert.strictEqual(headerLink("  [3]  (.Q.trp)"), undefined);
   assert.strictEqual(headerLink("x:1"), undefined);

@@ -158,6 +158,19 @@ test("a decoded general column is ranked as q's iasc sorts it and differ splits 
   assert.deepStrictEqual(rank(atom(-11, "x"), atom(-7, 1n)), []);
 });
 
+test("a decoded table column of a dictionary is ranked by its rows, as GRID ranks it (#2073)", () => {
+  const { gridOfQ } = require("../out/qformat.js");
+  const syms = (v) => ({ kind: "vector", t: 11, attr: 0, v });
+  const longs = (v) => ({ kind: "vector", t: 7, attr: 0, v });
+  const table = (cols, data) => ({ kind: "table", attr: 0, cols, data });
+  // KDB-X: GRID's ranks of `a`b`c!([]x:10 9 100) are 1 0 2, of
+  // ([]x:1 1 0 1;y:`b`a`c`b) 2 1 0 2, of ([]x:0N 1 2) 0 1 2.
+  const rank = (v) => gridOfQ({ kind: "dict", sorted: false, k: syms(v.data[0].v.map((_, i) => `k${i}`)), v }, 100).rank[1];
+  assert.deepStrictEqual(rank(table(["x"], [longs([10n, 9n, 100n])])), [1, 0, 2]);
+  assert.deepStrictEqual(rank(table(["x", "y"], [longs([1n, 1n, 0n, 1n]), syms(["b", "a", "c", "b"])])), [2, 1, 0, 2]);
+  assert.deepStrictEqual(rank(table(["x"], [longs([null, 1n, 2n])])), [0, 1, 2]);
+});
+
 test("a long symbol in a general list is cut by code point in the grid and the tree (#1807)", () => {
   const { gridOfQ, treeOfQ } = require("../out/qformat.js");
   const lone = (s) => /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(s);

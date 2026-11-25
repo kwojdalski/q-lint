@@ -67,6 +67,7 @@ fn sarif_has_the_shape_code_scanning_requires_and_one_result_per_finding() {
         assert!(!r["message"]["text"].as_str().unwrap().is_empty());
         let loc = &r["locations"][0]["physicalLocation"];
         assert_eq!(loc["artifactLocation"]["uri"], "src/a.q");
+        assert_eq!(loc["artifactLocation"]["uriBaseId"], "%SRCROOT%");
         assert!(loc["region"]["startLine"].as_u64().unwrap() >= 1);
         let print = r["partialFingerprints"]["qlinterBaseline/v1"]
             .as_str()
@@ -217,4 +218,103 @@ fn output_file_is_never_written_by_a_refused_run_or_over_an_input() {
     assert_eq!(status, Some(2));
     assert!(err.contains("one of the files to lint"), "{err}");
     assert_eq!(fs::read_to_string(d.join("a.q")).unwrap(), TWO);
+}
+
+/// An editor, and GitHub's file view, hide a leading BOM and count no column
+/// for it, so every report places line 1 as it does: `{` of `f:{[count] 1}`
+/// at column 3 and `==` at 16-18, with or without a BOM before them. QE005,
+/// the BOM's own, stays at 1:1 (#2097).
+#[test]
+fn every_report_places_line_one_of_a_bom_file_where_an_editor_shows_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let line = "f:{[count] 1};a==b\n";
+    fs::write(d.join("plain.q"), line).unwrap();
+    fs::write(d.join("bom.q"), format!("\u{feff}{line}")).unwrap();
+    let places = |file: &str| -> Vec<(String, u64, u64)> {
+        let (_, out, err) = run(d, &["--select", "Q", "--format", "json", file]);
+        let found: serde_json::Value =
+            serde_json::from_str(&out).unwrap_or_else(|_| panic!("{err}"));
+        found
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| {
+                (
+                    f["code"].as_str().unwrap().to_string(),
+                    f["column"].as_u64().unwrap(),
+                    f["end_column"].as_u64().unwrap_or(0),
+                )
+            })
+            .collect()
+    };
+    let plain = places("plain.q");
+    let mut bom = places("bom.q");
+    assert_eq!(bom.remove(0), ("QE005".to_string(), 1, 2));
+    assert_eq!(bom, plain);
+    assert!(
+        plain.iter().any(|(c, col, _)| c == "QF001" && *col == 3),
+        "{plain:?}"
+    );
+    assert!(plain.contains(&("QE004".to_string(), 16, 18)), "{plain:?}");
+    // SARIF, the workflow commands and the text say the same.
+    let (_, out, _) = run(d, &["--select", "QE004", "--format", "sarif", "bom.q"]);
+    let report: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let region = &report["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["region"];
+    assert_eq!(
+        (region["startColumn"].as_u64(), region["endColumn"].as_u64()),
+        (Some(16), Some(18))
+    );
+    let (_, out, _) = run(d, &["--select", "QE004", "--format", "github", "bom.q"]);
+    assert!(out.contains("line=1,col=16,endColumn=18,"), "{out}");
+    let (_, out, _) = run(d, &["--select", "QE004", "bom.q"]);
+    assert!(out.contains("bom.q:1:16: "), "{out}");
+}
+
+/// A file outside the directory qlinter runs in is located by its `file:`
+/// URI, and a relative one by `%SRCROOT%`, which the run says is that
+/// directory: a bare absolute path is a reference SARIF readers resolve
+/// against their own base (#2098). Read back through an RFC 3986 parser,
+/// the two name the same file.
+#[test]
+fn sarif_locates_a_file_outside_the_run_by_its_file_uri() {
+    use iri_string::types::{UriAbsoluteStr, UriReferenceStr, UriStr};
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::create_dir_all(d.join("an")).unwrap();
+    fs::create_dir_all(d.join("w x")).unwrap();
+    fs::write(d.join("w x/c.q"), TWO).unwrap();
+    fs::write(d.join("an/b.q"), TWO).unwrap();
+    let (_, out, err) = run(&d.join("an"), &["--format", "sarif", "../w x/c.q", "b.q"]);
+    let report: serde_json::Value = serde_json::from_str(&out).unwrap_or_else(|_| panic!("{err}"));
+    let run0 = &report["runs"][0];
+    let base = run0["originalUriBaseIds"]["%SRCROOT%"]["uri"]
+        .as_str()
+        .unwrap();
+    let base = UriAbsoluteStr::new(base).unwrap();
+    assert_eq!(base.scheme_str(), "file");
+    let mut seen = vec![];
+    for r in run0["results"].as_array().unwrap() {
+        let loc = &r["locations"][0]["physicalLocation"]["artifactLocation"];
+        let reference = UriReferenceStr::new(loc["uri"].as_str().unwrap()).unwrap();
+        let file = match loc.get("uriBaseId") {
+            Some(id) => {
+                assert_eq!(id, "%SRCROOT%");
+                reference.resolve_against(base).to_string()
+            }
+            None => reference.to_string(),
+        };
+        let file = UriStr::new(&file).unwrap();
+        assert_eq!(file.scheme_str(), "file", "{loc}");
+        assert!(!file.path_str().contains('?'), "{loc}");
+        seen.push(file.path_str().rsplit_once("/").unwrap().1.to_string());
+        if loc.get("uriBaseId").is_none() {
+            assert!(file.path_str().ends_with("/w%20x/c.q"), "{loc}");
+        } else {
+            assert!(file.path_str().ends_with("/an/b.q"), "{loc}");
+        }
+    }
+    seen.sort();
+    seen.dedup();
+    assert_eq!(seen, ["b.q", "c.q"]);
 }

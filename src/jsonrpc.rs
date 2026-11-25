@@ -61,8 +61,16 @@ pub fn receive(reader: &mut impl BufRead) -> Result<Option<Result<Value, Malform
     // still ends the headers and `Content-Length` still counts the body.
     let mut bad_header = None;
     loop {
-        let mut line = String::new();
-        if reader.read_line(&mut line).map_err(|e| e.to_string())? == 0 {
+        // The cap bounds the read itself: a line is read only up to one
+        // byte past what the headers may still hold. Checked after the
+        // line, a peer that never sent a newline was buffered whole - 300
+        // MB held before the error (#2113).
+        let room = (MAX_HEADER_BYTES - size + 1) as u64;
+        let mut line = vec![];
+        let read = std::io::Read::take(&mut *reader, room)
+            .read_until(b'\n', &mut line)
+            .map_err(|e| e.to_string())?;
+        if read == 0 {
             return if size == 0 {
                 Ok(None)
             } else {
@@ -73,6 +81,7 @@ pub fn receive(reader: &mut impl BufRead) -> Result<Option<Result<Value, Malform
         if size > MAX_HEADER_BYTES {
             return Err("Invalid LSP headers".into());
         }
+        let line = String::from_utf8(line).map_err(|_| "Invalid LSP headers: not UTF-8")?;
         if line == "\r\n" || line == "\n" {
             break;
         }
@@ -131,4 +140,62 @@ pub fn receive(reader: &mut impl BufRead) -> Result<Option<Result<Value, Malform
         })));
     }
     Ok(Some(Ok(value)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read;
+
+    /// `n` bytes of `A`, counting how many were read.
+    struct Endless<'a> {
+        left: usize,
+        handed: &'a std::cell::Cell<usize>,
+    }
+
+    impl Read for Endless<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let n = buf.len().min(self.left);
+            buf[..n].fill(b'A');
+            self.left -= n;
+            self.handed.set(self.handed.get() + n);
+            Ok(n)
+        }
+    }
+
+    #[test]
+    fn a_header_line_with_no_end_is_read_no_further_than_the_cap() {
+        // 64 MiB with no newline: refused once the headers pass 64 KiB, and
+        // no more than that and one buffer's worth read (#2113).
+        let handed = std::cell::Cell::new(0);
+        let mut reader = std::io::BufReader::new(Endless {
+            left: 64 << 20,
+            handed: &handed,
+        });
+        assert_eq!(
+            receive(&mut reader).map(|_| ()),
+            Err("Invalid LSP headers".to_string())
+        );
+        assert!(
+            handed.get() <= MAX_HEADER_BYTES + (64 << 10),
+            "{} bytes read",
+            handed.get()
+        );
+    }
+
+    #[test]
+    fn headers_up_to_the_cap_are_read_and_one_byte_past_it_refused() {
+        let message = |pad: usize| {
+            let filler = format!("X-Pad: {}\r\n", "p".repeat(pad));
+            let body = "{}";
+            format!("{filler}Content-Length: {}\r\n\r\n{body}", body.len())
+        };
+        let fixed = message(0).len() - 2;
+        let at_cap = message(MAX_HEADER_BYTES - fixed);
+        let read = receive(&mut at_cap.as_bytes());
+        assert!(matches!(read, Ok(Some(Ok(_)))), "{read:?}");
+        let past = message(MAX_HEADER_BYTES - fixed + 1);
+        let read = receive(&mut past.as_bytes()).map(|_| ());
+        assert_eq!(read, Err("Invalid LSP headers".to_string()));
+    }
 }

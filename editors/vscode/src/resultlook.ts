@@ -354,6 +354,7 @@ export function xlsxRules(
   last: number,
   text: boolean[] = numeric.map((n) => !n),
   edge?: (rule: FormatRule, column: number) => number | undefined,
+  infinite?: (column: number) => { pos: boolean; neg: boolean },
 ): { dxfs: string[]; formatting: string[] } {
   const dxfs: string[] = [];
   const formatting: string[] = [];
@@ -374,7 +375,18 @@ export function xlsxRules(
     // every number, or none.
     const nth = (rule.op === "top" || rule.op === "bottom") && edge !== undefined ? edge(rule, c) : undefined;
     const ranked = (rule.op === "top" || rule.op === "bottom") && edge !== undefined;
-    if (ranked && (nth === undefined || nth === (rule.op === "top" ? Infinity : -Infinity))) {
+    // An infinity is written as the text 0w or -0w (0W, -0W: Excel's = is
+    // case-blind), which a comparison of numbers never matches: each one
+    // the grid's rule matches is matched by its text (#2090).
+    const inf = numeric[c] && infinite !== undefined ? infinite(c) : { pos: false, neg: false };
+    const matchesInf = (v: number): boolean =>
+      ranked ? (rule.op === "top" ? v >= (nth as number) : v <= (nth as number)) : rule.op === ">" ? v > Number(rule.value) : rule.op === ">=" ? v >= Number(rule.value) : rule.op === "<" ? v < Number(rule.value) : rule.op === "<=" ? v <= Number(rule.value) : rule.op === "<>";
+    const infTerms = [...(inf.pos && matchesInf(Infinity) ? [`${first}="0w"`] : []), ...(inf.neg && matchesInf(-Infinity) ? [`${first}="-0w"`] : [])];
+    const withInf = (formula: string | undefined): string | undefined => {
+      const terms = [...(formula === undefined ? [] : [formula]), ...infTerms];
+      return terms.length === 0 ? undefined : terms.length === 1 ? terms[0] : `OR(${terms.join(",")})`;
+    };
+    if (ranked && (nth === undefined || (nth === (rule.op === "top" ? Infinity : -Infinity) && infTerms.length === 0))) {
       priority--;
       return;
     }
@@ -388,14 +400,15 @@ export function xlsxRules(
     const at = ` dxfId="${dxf}" priority="${priority--}"`;
     let cf: string;
     if (ranked && nth !== undefined) {
-      const formula = Number.isFinite(nth) ? `AND(ISNUMBER(${first}),${first}${rule.op === "top" ? ">=" : "<="}${nth})` : `ISNUMBER(${first})`;
+      // Past an infinite Nth value only the infinities themselves match.
+      const formula = withInf(Number.isFinite(nth) ? `AND(ISNUMBER(${first}),${first}${rule.op === "top" ? ">=" : "<="}${nth})` : nth === (rule.op === "top" ? Infinity : -Infinity) ? undefined : `ISNUMBER(${first})`) as string;
       cf = `<cfRule type="expression"${at}><formula>${xmlAttr(formula)}</formula></cfRule>`;
     } else if (rule.op === "top" || rule.op === "bottom") {
       cf = `<cfRule type="top10"${at} rank="${Number(rule.value)}"${rule.op === "bottom" ? ' bottom="1"' : ""}/>`;
     } else {
       const want = formulaText(String(rule.value));
       const formula = numeric[c]
-        ? `AND(ISNUMBER(${first}),${first}${rule.op}${Number(rule.value)})`
+        ? (withInf(`AND(ISNUMBER(${first}),${first}${rule.op}${Number(rule.value)})`) as string)
         : rule.op === "contains"
           ? `AND(LEN(${first})>0,ISNUMBER(FIND(LOWER(${want}),LOWER(${first}))))`
           : `AND(LEN(${first})>0,${rule.op === "=" ? "" : "NOT("}EXACT(${first},${want})${rule.op === "=" ? "" : ")"})`;

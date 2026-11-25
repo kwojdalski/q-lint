@@ -10,8 +10,11 @@
 //! | QK001 | a dictionary literal, `([a:1;b:2])` | 4.1 and later |
 //! | QK002 | a pattern assignment, `(a;b):x`, `([k:v]):d` | 4.1 and later |
 //! | QK003 | a typed or filtered parameter, `{[x:`j] ...}`, `{[(a;b)] ...}` | 4.1 and later |
-//! | QK004 | `-30!`, the deferred response | 3.6 and later |
 //! | QK005 | `.Q.Xf` or `.Q.Cf` | before 4.1: removed in it |
+//!
+//! There is no QK004. It reported `-30!`, the deferred response, which q
+//! has from 3.6 on; 3.6 is the oldest target there is, so no target could
+//! ever see it, and it was withdrawn (#2091).
 //!
 //! Only the newest side of each fact was run here: KDB-X (q 5) runs every
 //! 4.1 construct above and has no `.Q.Xf` or `.Q.Cf`; there is no 3.6, 4.0
@@ -57,7 +60,6 @@ enum Runs {
 fn runs(code: &str) -> Option<Runs> {
     Some(match code {
         "QK001" | "QK002" | "QK003" => Runs::From(Target::V41),
-        "QK004" => Runs::From(Target::V36),
         "QK005" => Runs::Before(Target::V41),
         _ => return None,
     })
@@ -159,17 +161,6 @@ pub(crate) fn check(path: &str, code: &str, source: &str) -> Vec<Finding> {
                         ),
                     ));
                 }
-            }
-            b'-' if code[i..].starts_with("-30!")
-                && (i == 0 || !(word(b[i - 1]) || b[i - 1] == b'-')) =>
-            {
-                out.push(Finding::at(
-                    path,
-                    source,
-                    i,
-                    "QK004",
-                    "`-30!`, the deferred response, is in q from 3.6 on".into(),
-                ));
             }
             b'.' if (code[i..].starts_with(".Q.Xf") || code[i..].starts_with(".Q.Cf"))
                 && (i == 0 || !word(b[i - 1]))

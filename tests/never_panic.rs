@@ -702,3 +702,162 @@ fn mutated_sources_serve_without_panicking() {
 fn every_mutation_serves_without_panicking() {
     assert_none_panic_in_the_server(&variants(2, 20, 2));
 }
+
+/// Pieces of q a non-ASCII document is assembled from: names, strings and
+/// symbols with accented letters, a character outside the BMP, and every
+/// opener, so a statement that does not close often ends in one of them.
+const NON_ASCII: &[&str] = &[
+    "f:{[x] y:1; x}",
+    "t:([] a:1 2)",
+    "select a from t",
+    "(",
+    "[",
+    "{",
+    ")",
+    "]",
+    "}",
+    "\"",
+    "\"\u{e9}\"",
+    "\u{e9}",
+    "\u{20ac}",
+    "\u{1f600}",
+    "`\u{1f600}",
+    "x \u{e9}",
+    "\r\n",
+    "\n",
+    "\r",
+    " ",
+    "/",
+    "\\",
+    "`a",
+    "1",
+    "k)",
+    " from t where ",
+];
+
+/// A document of up to `most` pieces of `NON_ASCII`.
+fn non_ascii_document(rng: &mut Rng, most: usize) -> String {
+    (0..1 + rng.below(most))
+        .map(|_| NON_ASCII[rng.below(NON_ASCII.len())])
+        .collect()
+}
+
+/// One document edited `edits` times, each edit a text that closes, then
+/// the same cut short and left open on a non-ASCII character, then any
+/// text; after each the server is asked for its folds, colours and
+/// outline. What it reported as a caught panic, or that it stopped
+/// answering.
+fn edit_non_ascii(seed: &str, edits: usize) -> Vec<String> {
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = Reaped(
+        Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(dir.path())
+            .env("XDG_CONFIG_HOME", dir.path().join("no-such-config-home"))
+            .args(["--lsp", "--profile", "uqf"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn qlinter --lsp"),
+    );
+    let mut stdin = child.0.stdin.take().unwrap();
+    let messages = read_messages(child.0.stdout.take().unwrap());
+    let mut send = |value: Value| {
+        let body = serde_json::to_vec(&value).unwrap();
+        write!(stdin, "Content-Length: {}\r\n\r\n", body.len()).unwrap();
+        stdin.write_all(&body).unwrap();
+        stdin.flush().unwrap();
+    };
+    let wait = Duration::from_secs(60);
+    let mut failed = vec![];
+    // Until the reply to `id` and, after an edit, the diagnostics of `uri`.
+    let awaiting = |id: u64, failed: &mut Vec<String>, what: &str, uri: Option<&str>| {
+        let (mut replied, mut diagnosed) = (false, uri.is_none());
+        while !(replied && diagnosed) {
+            let Ok(message) = messages.recv_timeout(wait) else {
+                failed.push(format!("{what}: the server stopped answering"));
+                return false;
+            };
+            if reports_a_panic(&message) {
+                failed.push(format!("{what}: {message}"));
+            }
+            replied |= message["id"] == id && message.get("method").is_none();
+            diagnosed |= message["method"] == "textDocument/publishDiagnostics"
+                && message["params"]["uri"].as_str() == uri;
+        }
+        true
+    };
+    let on = json!({"enable": true});
+    send(
+        json!({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {
+        "capabilities": {"textDocument": {"publishDiagnostics": {"relatedInformation": true}}},
+        "initializationOptions": {"relatedInformation": on}}}),
+    );
+    if !awaiting(0, &mut failed, "initialize", None) {
+        return failed;
+    }
+    send(json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}));
+    let uri = "file:///non-ascii.q";
+    send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+        "textDocument": {"uri": uri, "languageId": "q", "version": 0, "text": ""}}}),
+    );
+    let mut rng = Rng::seeded(seed);
+    let (mut id, mut version) = (0, 0);
+    const OPENERS: &[&str] = &["(", "\"", "[", "{", "\"\u{e9}", "(\u{e9}", "{\u{1f600}"];
+    for _ in 0..edits {
+        let good = non_ascii_document(&mut rng, 25);
+        let cut: Vec<usize> = good
+            .char_indices()
+            .map(|(i, _)| i)
+            .chain([good.len()])
+            .collect();
+        let mut bad = good[..cut[rng.below(cut.len())]].to_string();
+        bad.push_str(OPENERS[rng.below(OPENERS.len())]);
+        if rng.below(2) == 0 {
+            bad.push_str(&non_ascii_document(&mut rng, 25));
+        }
+        for text in [good, bad, non_ascii_document(&mut rng, 25)] {
+            version += 1;
+            send(
+                json!({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
+                "textDocument": {"uri": uri, "version": version},
+                "contentChanges": [{"text": text}]}}),
+            );
+            for method in [
+                "textDocument/foldingRange",
+                "textDocument/semanticTokens/full",
+                "textDocument/documentSymbol",
+            ] {
+                id += 1;
+                send(json!({"jsonrpc": "2.0", "id": id, "method": method,
+                    "params": {"textDocument": {"uri": uri}}}));
+            }
+            let what = format!("{text:?}");
+            if !awaiting(id, &mut failed, &what, Some(uri)) {
+                return failed;
+            }
+        }
+    }
+    id += 1;
+    send(json!({"jsonrpc": "2.0", "id": id, "method": "shutdown"}));
+    awaiting(id, &mut failed, "shutdown", None);
+    send(json!({"jsonrpc": "2.0", "method": "exit"}));
+    let _ = child.0.wait();
+    failed
+}
+
+#[test]
+fn non_ascii_edits_serve_without_panicking() {
+    // Typing an accented letter or an emoji into a statement that does not
+    // close, at the end of the file, ended the server (#2108).
+    let failed = edit_non_ascii("non-ascii", 150);
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}
+
+#[test]
+#[ignore]
+fn many_non_ascii_edits_serve_without_panicking() {
+    let failed = edit_non_ascii("non-ascii, many", 3_000);
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}

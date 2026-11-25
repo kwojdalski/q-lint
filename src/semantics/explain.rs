@@ -21,26 +21,36 @@ pub(crate) fn explain_at(code: &str, comments: &str, source: &str, at: usize) ->
         return Some(explain(&parts));
     }
     // A functional form, through its qSQL spelling.
-    let Ok(conv) = super::functional::to_qsql_at(code, source, at)? else {
+    let Ok(conv) = super::functional::bare_qsql_at(code, source, at)? else {
         return None;
     };
     let text = format!("{}\n", conv.text);
     let v = crate::views(&text);
     let parts = layout::parts_at(&v.code, &v.comments, &text, 0)?;
+    // A backslash is no escape in a code span (CommonMark): the span is
+    // fenced by more backticks than it holds in a row instead (#2065).
     Some(format!(
-        "The functional form of `{}`.\n\n{}",
-        conv.text.replace('`', "\\`"),
+        "The functional form of {}.\n\n{}",
+        self::code(&conv.text),
         explain(&parts)
     ))
 }
 
-/// `text` as inline code.
+/// `text` as inline code: fenced by one backtick more than the longest
+/// run of them in it, with a blank inside where it holds any, so that a
+/// symbol (`` `a ``) or an empty one (``` `` ```) does not end the span.
 fn code(text: &str) -> String {
     let text = text.trim();
-    if text.contains('`') {
-        format!("`` {text} ``")
-    } else {
+    let (mut longest, mut run) = (0, 0);
+    for c in text.chars() {
+        run = if c == '`' { run + 1 } else { 0 };
+        longest = longest.max(run);
+    }
+    if longest == 0 {
         format!("`{text}`")
+    } else {
+        let fence = "`".repeat(longest + 1);
+        format!("{fence} {text} {fence}")
     }
 }
 
@@ -76,6 +86,19 @@ fn words(n: &Node) -> String {
                 ("each", [Node::Verb(m), x]) if monad(m).is_some() => {
                     format!("{} each item of {}", monad(m).unwrap_or_default(), words(x))
                 }
+                // `&` and `|` are the lesser and the greater of their
+                // arguments, item by item; on booleans that is "and" and
+                // "or", but on numbers it is one column of minima or maxima
+                // (KDB-X: `1 5&3 2` is `1 2`). `and` and `or` are the
+                // same functions (#2066).
+                ("&" | "and" | "|" | "or", [x, y]) if !(boolean(x) && boolean(y)) => {
+                    let which = if matches!(v.as_str(), "&" | "and") {
+                        "lesser"
+                    } else {
+                        "greater"
+                    };
+                    format!("the {which} of {} and {}", operand(x), operand(y))
+                }
                 (d, [x, y]) => match dyad(d) {
                     Some(phrase) => format!("{} {phrase} {}", operand(x), operand(y)),
                     None => quoted(),
@@ -84,6 +107,32 @@ fn words(n: &Node) -> String {
             }
         }
         _ => quoted(),
+    }
+}
+
+/// Whether `n` is sure to be boolean: a comparison, a test, a boolean
+/// literal, or `&`/`|` of two of them.
+fn boolean(n: &Node) -> bool {
+    match n {
+        Node::Leaf(l) => l
+            .strip_suffix('b')
+            .is_some_and(|bits| !bits.is_empty() && bits.bytes().all(|c| c == b'0' || c == b'1')),
+        Node::Apply(f, args) => match (&**f, &args[..]) {
+            (Node::Verb(v), [_, _])
+                if matches!(
+                    v.as_str(),
+                    ">" | "<" | ">=" | "<=" | "=" | "<>" | "~" | "in" | "within" | "like"
+                ) =>
+            {
+                true
+            }
+            (Node::Verb(v), [_]) if matches!(v.as_str(), "not" | "null") => true,
+            (Node::Verb(v), [x, y]) if matches!(v.as_str(), "&" | "and" | "|" | "or") => {
+                boolean(x) && boolean(y)
+            }
+            _ => false,
+        },
+        _ => false,
     }
 }
 
@@ -162,22 +211,27 @@ fn dyad(v: &str) -> Option<&'static str> {
     })
 }
 
-/// A column item: its name, where it has one, and its expression.
-fn column(item: &str) -> String {
+/// The name a column item is written with, `n:e`, and where its
+/// expression starts.
+fn name(item: &str) -> Option<(&str, &str)> {
     let b = item.as_bytes();
     let mut i = 0;
     while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
         i += 1;
     }
-    if i > 0
+    (i > 0
         && b[0].is_ascii_alphabetic()
         && b.get(i) == Some(&b':')
-        && !matches!(b.get(i + 1), Some(b':' | b'/' | b'\\' | b'\''))
-    {
-        let expr = item[i + 1..].trim();
-        return format!("{}: {}", code(&item[..i]), said(expr));
+        && !matches!(b.get(i + 1), Some(b':' | b'/' | b'\\' | b'\'')))
+    .then(|| (&item[..i], item[i + 1..].trim()))
+}
+
+/// A column item: its name, where it has one, and its expression.
+fn column(item: &str) -> String {
+    match name(item) {
+        Some((n, expr)) => format!("{}: {}", code(n), said(expr)),
+        None => said(item),
     }
-    said(item)
 }
 
 /// The `[...]` a `select` is written with, `select[2] a`: what is inside
@@ -297,6 +351,23 @@ fn explain(p: &layout::Parts) -> String {
             head.remove(0);
         }
     }
+    // `select[...]` takes a row count, a sort, or a count then a sort; any
+    // other order or number of items is 'length on KDB-X (`select[<px;2]`,
+    // `select[<px;>size]`, `select[2;3]`), and a query that does not run is
+    // not described as one that does (#2067).
+    let sort = |l: &String| l.starts_with(['<', '>']);
+    let runs = match &limit[..] {
+        [] | [_] => true,
+        [count, by] => !sort(count) && sort(by),
+        _ => false,
+    };
+    if !runs {
+        return format!(
+            "**In words.** q refuses this query with 'length: `select[...]` takes a row count, \
+             a sort (`<c`, `>c`), or a row count then a sort, as in {}.",
+            code("select[2;<px]")
+        );
+    }
     let in_place = from.trim_start().starts_with('`');
     let mut lines = vec![];
     lines.push(match p.lead {
@@ -341,15 +412,23 @@ fn explain(p: &layout::Parts) -> String {
             if distinct {
                 steps.push("Leaves out rows that repeat one already returned.".into());
             }
-            // A sort is applied before a limit, whatever order they are in.
-            let (sorts, limits): (Vec<&String>, Vec<&String>) =
-                limit.iter().partition(|l| l.starts_with(['<', '>']));
-            steps.extend(sorts.into_iter().chain(limits).map(|l| limited(l)));
+            // The sort, written second, is applied before the count.
+            steps.extend(limit.iter().rev().map(|l| limited(l)));
         }
         "exec" => {
-            if !by.is_empty() {
+            // One group unnamed keys the result by its values; a named one,
+            // or several, by a table of them (KDB-X: `exec px by s:sym
+            // from t` is keyed by a table with the column `s`, #2059).
+            if let [one] = &by[..]
+                && name(one).is_none()
+            {
                 steps.push(format!(
-                    "Groups the rows by {}: the result is a dictionary from each group.",
+                    "Groups the rows by {}: the result is a dictionary from each value of it.",
+                    column(one)
+                ));
+            } else if !by.is_empty() {
+                steps.push(format!(
+                    "Groups the rows by {}: the result is a dictionary from a table of the groups, one row for each.",
                     list(&by, column)
                 ));
             }
@@ -410,7 +489,12 @@ mod tests {
     fn a_dyad_inside_a_dyad_is_bracketed_as_q_reads_it() {
         let w = words("r:select from t where a>b and c<d\n");
         assert!(
-            w.contains("`a` is greater than (`b` and also (`c` is less than `d`))"),
+            w.contains("`a` is greater than (the lesser of `b` and (`c` is less than `d`))"),
+            "{w}"
+        );
+        let w = words("r:select from t where (a>b) and c<d\n");
+        assert!(
+            w.contains("(`a` is greater than `b`) and also (`c` is less than `d`)"),
             "{w}"
         );
         let w = words("r:select from t where a+1=b\n");
@@ -419,6 +503,34 @@ mod tests {
         assert!(w.contains("(`a` plus `1`) equals `b`"), "{w}");
         let w = words("r:select from t where px>2\n");
         assert!(w.contains("`px` is greater than `2`."), "{w}");
+    }
+
+    // On numbers `&` and `|` are the lesser and the greater, item by
+    // item (KDB-X: `select x:px&size from t` is one column of minima); on
+    // booleans, and and or (#2066).
+    #[test]
+    fn and_and_or_on_numbers_are_the_lesser_and_the_greater() {
+        let w = words("r:select x:px&size from t\n");
+        assert!(w.contains("`x`: the lesser of `px` and `size`"), "{w}");
+        let w = words("r:select x:px|size from t\n");
+        assert!(w.contains("`x`: the greater of `px` and `size`"), "{w}");
+        let w = words("r:select from t where px&size\n");
+        assert!(
+            w.contains("the rows where the lesser of `px` and `size`"),
+            "{w}"
+        );
+        let w = words("r:select from t where (px>1)|null size\n");
+        assert!(
+            w.contains("(`px` is greater than `1`) or else whether this is null: `size`"),
+            "{w}"
+        );
+        let w = words("r:select from t where flag&10101b\n");
+        assert!(w.contains("the lesser of `flag` and `10101b`"), "{w}");
+        let w = words("r:select from t where (px>1)&(size<3)|px=2\n");
+        assert!(
+            w.contains("(`px` is greater than `1`) and also ((`size` is less than `3`) or else (`px` equals `2`))"),
+            "{w}"
+        );
     }
 
     // Checked in KDB-X: `exec from t` is the last row as a dictionary;
@@ -446,6 +558,52 @@ mod tests {
         let w = words("r:select[2;>a] a from t\n");
         assert!(
             w.contains("2. Sorts the result by `a`, largest first.\n3. Keeps only the first 2"),
+            "{w}"
+        );
+        // One group unnamed keys an exec by its values, a named one by a
+        // table (#2059).
+        let w = words("r:exec px by sym from t\n");
+        assert!(w.contains("a dictionary from each value of it"), "{w}");
+        let w = words("r:exec px by sym:sym from t\n");
+        assert!(w.contains("a dictionary from a table of the groups"), "{w}");
+        let w = crate::explain_qsql("r:?[t;();(enlist`sym)!enlist`sym;`px]\n", 3).unwrap();
+        assert!(w.contains("a dictionary from a table of the groups"), "{w}");
+        // A backtick in the qSQL of a functional form is fenced, not
+        // escaped: a backslash is literal in a code span (#2065).
+        let w = crate::explain_qsql("r:![`t;();0b;enlist`px]\n", 3).unwrap();
+        assert!(
+            w.starts_with("The functional form of `` delete px from `t ``."),
+            "{w}"
+        );
+        let w = crate::explain_qsql("r:?[t;enlist (=;`sym;enlist`a);0b;()]\n", 3).unwrap();
+        assert!(
+            w.starts_with("The functional form of `` select from t where sym=`a ``."),
+            "{w}"
+        );
+        assert!(!w.contains('\\'), "{w}");
+        let w = words("r:select from t where s in ``a\n");
+        assert!(w.contains("``` ``a ```"), "{w}");
+        // A count then a sort is the only order of two q runs: on KDB-X
+        // `select[<px;2] from t`, two sorts and two counts are 'length
+        // (#2067).
+        for refused in [
+            "r:select[<px;2] from t\n",
+            "r:select[<px;>size] from t\n",
+            "r:select[2;3] from t\n",
+            "r:select[2;<px;1] from t\n",
+        ] {
+            let w = words(refused);
+            assert!(w.contains("q refuses this query with 'length"), "{w}");
+            assert!(!w.contains("Sorts the result"), "{w}");
+        }
+        let w = words("r:select[<px] from t\n");
+        assert!(
+            w.contains("Sorts the result by `px`, smallest first."),
+            "{w}"
+        );
+        let w = words("r:select[1 2;>px] from t\n");
+        assert!(
+            w.contains("Sorts the result by `px`, largest first.\n3. Keeps only 2 rows"),
             "{w}"
         );
         let w = words("r:delete from t\n");

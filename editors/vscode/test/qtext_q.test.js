@@ -10,7 +10,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { QConnection } = require("../out/qclient.js");
-const { FULL_TEXT, LAID_OUT } = require("../out/qtext.js");
+const { ESCAPE_CUT, FULL_TEXT, LAID_OUT, UTF8_CUT } = require("../out/qtext.js");
 const { writes } = require("../out/guard.js");
 
 const Q = process.env.QLINT_TEST_Q;
@@ -166,6 +166,47 @@ test("LAID_OUT shows every row and each cell to its end on a narrow console", { 
   // Cut to the characters asked for.
   assert.strictEqual((await c.evaluate(`${LAID_OUT}[${FULL_TEXT};7;til 30]`)).value, "0 1 2 3");
   assert.deepStrictEqual(Array.from((await c.evaluate("system\"c\"")).value, Number), [10, 20]);
+});
+
+test("LAID_OUT rules a dictionary with a table on one side as .Q.s does at a wide console (#2070)", { skip }, async (t) => {
+  const c = await connect(t, `${SERVER}\n\\c 10 20\n`);
+  const values = [
+    "(enlist`a)!([]x:enlist til 4)",
+    "([]x:enlist til 4)!enlist `a",
+    "`ab`cde!([]x:1 2)",
+    "([]x:1 2)!`ab`cde",
+    "([]x:1 2;yy:3 4)!`ab`cde",
+    "(`ab;`cdefg)!([]xxxxxxxxx:1 2;yy:3 4)",
+    "([k:`a`b] v:1 2)",
+  ];
+  for (const v of values) {
+    const laid = (await c.evaluate(`${LAID_OUT}[${FULL_TEXT};20000;${v}]`)).value;
+    const wide = (await c.evaluate(`{system"c 2000 3000";r:.Q.s x;system"c 10 20";r}${v}`)).value;
+    assert.strictEqual(laid, wide, v);
+  }
+});
+
+test("UTF8_CUT and ESCAPE_CUT cut on a character, and define nothing (#2071)", { skip }, async (t) => {
+  const c = await connect(t, `${SERVER}\n`);
+  const cut = async (f, n, s) => (await c.evaluate(`${f}[${n};${s}]`)).value;
+  const before = (await c.evaluate("key `.")).value;
+  assert.strictEqual(await cut(UTF8_CUT, 10, '"abc"'), "abc");
+  assert.strictEqual(await cut(UTF8_CUT, 2, '"abc"'), "ab");
+  assert.strictEqual(await cut(UTF8_CUT, 0, '"abc"'), "");
+  // é is two bytes, 日 three, 😀 four: never half of one.
+  assert.strictEqual(await cut(UTF8_CUT, 1, '"\\303\\251"'), "");
+  assert.strictEqual(await cut(UTF8_CUT, 3, '"a\\303\\251b"'), "aé");
+  assert.strictEqual(await cut(UTF8_CUT, 2, '"\\346\\227\\245"'), "");
+  assert.strictEqual(await cut(UTF8_CUT, 7, '"\\360\\237\\230\\200\\360\\237\\230\\200"'), "😀");
+  assert.strictEqual(await cut(UTF8_CUT, 8, '"\\360\\237\\230\\200\\360\\237\\230\\200"'), "😀😀");
+  // An escape -3! wrote is kept whole or not at all; an escaped backslash is whole.
+  assert.strictEqual(await cut(ESCAPE_CUT, 6, '"\\"\\\\346\\\\227\\""'), '"\\346');
+  assert.strictEqual(await cut(ESCAPE_CUT, 7, '"\\"\\\\346\\\\227\\""'), '"\\346');
+  assert.strictEqual(await cut(ESCAPE_CUT, 9, '"\\"\\\\346\\\\227\\""'), '"\\346\\227');
+  assert.strictEqual(await cut(ESCAPE_CUT, 3, '"\\"a\\\\\\\\b\\""'), '"a');
+  assert.strictEqual(await cut(ESCAPE_CUT, 4, '"\\"a\\\\\\\\b\\""'), '"a\\\\');
+  assert.strictEqual(await cut(ESCAPE_CUT, 2, '"ab"'), "ab");
+  assert.deepStrictEqual((await c.evaluate("key `.")).value, before);
 });
 
 test("the text lambdas are reads to the guard", () => {

@@ -10,7 +10,7 @@ use super::{
     resolved, scope_at, scopes, top_level_statements,
 };
 use crate::{Definition, Local, Mention, Name, Place, boundary, pattern_names, signature};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 const NAME: &str = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*";
 
@@ -77,7 +77,13 @@ fn ends_expression(rest: &str) -> bool {
 /// operator goes on from, one handed to any other word (`` `tb in tables[] ``,
 /// `count `tb`, which is 1) is not here, the text not saying whether it
 /// names the global or is only a symbol.
-fn by_name(code: &str) -> Vec<(usize, usize)> {
+///
+/// With each, whether the word changes the table in place - every one above
+/// that returns `` `tb ``: `update` and `delete` from it, `xkey`, `xasc`,
+/// `xdesc`, `n!`, and the amends and functional update or delete (`@`, `.`,
+/// `!`) - and so writes it, where a select, `?` and the words that take a
+/// name only read it (#2054).
+fn by_name(code: &str) -> Vec<(usize, usize, bool)> {
     const SYMBOL: &str = r"`(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)";
     let whole = |name: regex::Match| {
         !code[name.end()..].starts_with(|c: char| c.is_ascii_alphanumeric() || "_.:/`".contains(c))
@@ -94,7 +100,12 @@ fn by_name(code: &str) -> Vec<(usize, usize)> {
             && whole(name)
             && (filtered || ends_expression(rest))
         {
-            out.push((name.start(), name.len()));
+            // The phrase the `from` ends: the nearest query word before it.
+            let changes = re!(r"\b(select|exec|update|delete)\b")
+                .find_iter(&code[..m.get(0).unwrap().start()])
+                .last()
+                .is_some_and(|word| matches!(word.as_str(), "update" | "delete"));
+            out.push((name.start(), name.len(), changes));
         }
     }
     // The first argument of an amend, a functional query or a functional
@@ -104,7 +115,8 @@ fn by_name(code: &str) -> Vec<(usize, usize)> {
         let applied = code[..m.get(0).unwrap().start()]
             .ends_with(|c: char| c.is_ascii_alphanumeric() || "_.)]}`\"".contains(c));
         if !applied && whole(name) {
-            out.push((name.start(), name.len()));
+            let changes = !m.get(0).unwrap().as_str().starts_with('?');
+            out.push((name.start(), name.len(), changes));
         }
     }
     // The right of a word that keys or sorts in place, and of `n!`.
@@ -120,7 +132,7 @@ fn by_name(code: &str) -> Vec<(usize, usize)> {
             None => ends_expression(rest),
         };
         if boundary(code, m.get(0).unwrap().start()) && whole(name) && ends {
-            out.push((name.start(), name.len()));
+            out.push((name.start(), name.len(), true));
         }
     }
     // What a word that takes a name is given, bracketed or parenthesised.
@@ -137,10 +149,19 @@ fn by_name(code: &str) -> Vec<(usize, usize)> {
             None => ends_expression(rest),
         };
         if boundary(code, m.get(0).unwrap().start()) && whole(name) && ends {
-            out.push((name.start(), name.len()));
+            out.push((name.start(), name.len(), false));
         }
     }
     out
+}
+
+/// Where the code hands a global by its name to a word that changes it in
+/// place (`by_name`): the start of each such symbol's name.
+pub fn changed_by_name(code: &str) -> Vec<usize> {
+    by_name(code)
+        .into_iter()
+        .filter_map(|(at, _, changes)| changes.then_some(at))
+        .collect()
 }
 
 /// What the `k)` lines of a file name. Both views blank a `k)` line and the
@@ -155,6 +176,10 @@ struct KLines {
     lambdas: Vec<(usize, HashSet<String>)>,
     /// Each symbol: where its name starts, and the name.
     symbols: Vec<(usize, String)>,
+    /// Each of `globals` that is assigned there, by where it is: whether a
+    /// lambda is its value, and the span of its statement - the k statement
+    /// at the top level, the name alone in a lambda (`k){fk::x}`).
+    assigned: HashMap<usize, (bool, usize, usize)>,
 }
 
 /// The `k)` lines of `raw` read as k, for the names in them.
@@ -169,6 +194,7 @@ fn k_lines(code: &str, raw: &str) -> KLines {
         globals: vec![],
         lambdas: vec![],
         symbols: vec![],
+        assigned: HashMap::new(),
     };
     if !raw.contains("k)") {
         return out;
@@ -177,15 +203,34 @@ fn k_lines(code: &str, raw: &str) -> KLines {
     // comments and symbols too, so that offsets are the file's.
     let mut view = vec![b' '; raw.len()];
     let (mut offset, mut k) = (0, false);
+    // Where each k statement starts and ends, its lines' trailing blanks
+    // and comment left out of the end.
+    let mut statements: Vec<(usize, usize)> = vec![];
+    let content = |line: &str, offset: usize| {
+        let cut = line
+            .match_indices('/')
+            .find(|&(i, _)| i == 0 || line.as_bytes()[i - 1].is_ascii_whitespace())
+            .map_or(line.len(), |(i, _)| i);
+        offset + line[..cut].trim_end().len()
+    };
     for line in raw.split_inclusive('\n') {
         let end = offset + line.len();
         let blanked = code[offset..end].trim().is_empty();
-        if line.starts_with("k)") && blanked {
+        // A `k)\d .ns` is a command, its context `opens`' to read, and
+        // names nothing.
+        if line.starts_with("k)\\") {
+            k = false;
+        } else if line.starts_with("k)") && blanked {
             k = true;
             view[offset + 2..end].copy_from_slice(&raw.as_bytes()[offset + 2..end]);
-        } else if k && blanked && (line.starts_with([' ', '\t']) || line.trim().is_empty()) {
+            let lead = line[2..].len() - line[2..].trim_start().len();
+            statements.push((offset + 2 + lead, content(line, offset)));
+        } else if k && blanked && crate::foreign_continues(line, &raw[end..]) {
             view[offset..end].copy_from_slice(&raw.as_bytes()[offset..end]);
-        } else if !(k && line.starts_with('/')) {
+            if let Some(last) = statements.last_mut() {
+                last.1 = last.1.max(content(line, offset));
+            }
+        } else {
             k = false;
         }
         offset = end;
@@ -279,6 +324,27 @@ fn k_lines(code: &str, raw: &str) -> KLines {
         }
         let rest = text[at..].trim_start_matches([' ', '\t']);
         let assigned = rest.starts_with(':') && !rest.starts_with("::");
+        // What a global's own: `name:` at the top level of a statement,
+        // `name::` or a dotted `name:` in a lambda, as q has them.
+        let global = if lambda.is_none() {
+            assigned && open.is_empty()
+        } else {
+            rest.starts_with("::") || assigned && m.as_str().contains('.')
+        };
+        if global {
+            let value = rest.trim_start_matches(':').trim_start();
+            let span = if lambda.is_none() {
+                statements
+                    .iter()
+                    .rfind(|(s, _)| *s <= start)
+                    .copied()
+                    .unwrap_or((start, at))
+            } else {
+                (start, at)
+            };
+            out.assigned
+                .insert(start, (value.starts_with('{'), span.0, span.1.max(at)));
+        }
         let kind = match open.last() {
             // In a lambda's `[..]`, a parameter; in a table's, or straight
             // in its parentheses, `name:` is a column.
@@ -508,7 +574,7 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
             definition: None,
         });
     }
-    for (at, len) in by_name(code) {
+    for (at, len, _) in by_name(code) {
         if writes.contains(&at) || system(at) {
             continue;
         }
@@ -523,15 +589,26 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
             });
         }
     }
-    // What a `k)` line reads or assigns, which neither view shows.
-    for (at, len, _) in k_lines(code, raw).globals {
+    // What a `k)` line reads or assigns, which neither view shows. KDB-X 5
+    // runs `k)gk:fk+1` and `gk` is a global like any other (#2047).
+    let k = k_lines(code, raw);
+    for (at, len, _) in k.globals {
         let word = &raw[at..at + len];
         out.push(Mention {
             name: resolved(word, ns_at(at)),
             implicit: !word.starts_with('.') && at < first_switch,
             at,
             len,
-            definition: None,
+            definition: k
+                .assigned
+                .get(&at)
+                .map(|&(function, start, end)| Definition {
+                    function,
+                    detail: String::new(),
+                    params: vec![],
+                    start,
+                    end,
+                }),
         });
     }
     out.sort_by(|a, b| (a.at, &a.name).cmp(&(b.at, &b.name)));
@@ -801,6 +878,16 @@ pub fn rename(
         return Err(format!("this lambda already uses the name `{new}`"));
     }
     Ok(local.places.iter().map(|p| (p.at, p.len)).collect())
+}
+
+/// The first of `offsets` where a `k)` line names a global or a symbol, where
+/// k, not q, reads the name.
+pub fn on_k_line(code: &str, raw: &str, offsets: &[usize]) -> Option<usize> {
+    let k = k_lines(code, raw);
+    offsets.iter().copied().find(|&at| {
+        k.globals.iter().any(|&(place, _, _)| place == at)
+            || k.symbols.iter().any(|(place, _)| *place == at)
+    })
 }
 
 /// The first of `offsets` inside a lambda with a parameter or local called

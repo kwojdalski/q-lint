@@ -96,6 +96,24 @@ test("the page writes a time as linetimings does, the unit picked as rounded (#1
   }
 });
 
+test("the profile keeps the sort chosen when its tab is hidden and shown again, which reloads the page (#2080)", () => {
+  let state;
+  const api = () => ({ postMessage: (m) => posted.push(JSON.parse(JSON.stringify(m))), getState: () => state, setState: (s) => (state = JSON.parse(JSON.stringify(s))) });
+  let posted = [];
+  const profile = { type: "profile", id: 1, namespace: ".ns", process: "dev", code: "f[]", total: 10, overheadPerCall: 0, overheadTotal: 0, error: "", calls: 3, recorded: 3, functions: 2, stats: [{ fn: ".ns.a", calls: 2, total: 4, self: 4, mean: 2, max: 3 }, { fn: ".ns.b", calls: 1, total: 6, self: 6, mean: 6, max: 6 }], frames: [] };
+  const first = loadSmallPage(["profile.js"], { acquireVsCodeApi: api });
+  first.send(profile);
+  assert.strictEqual(posted.at(-1).rendered.sortedBy, "total desc");
+  const calls = () => first.find("button").find((b) => b.getAttribute?.("data-key") === "calls" || b.attributes?.["data-key"] === "calls");
+  calls().fire("click");
+  calls().fire("click");
+  assert.strictEqual(posted.at(-1).rendered.sortedBy, "calls asc");
+  posted = [];
+  const again = loadSmallPage(["profile.js"], { acquireVsCodeApi: api });
+  again.send(profile);
+  assert.strictEqual(posted.at(-1).rendered.sortedBy, "calls asc");
+});
+
 test("the guard reads every run as a write to the namespace", () => {
   const prod = { label: "p", tags: ["prod"] };
   const settings = { enabled: true, tags: ["prod"] };
@@ -272,7 +290,7 @@ test("the profile table's sort headers are buttons with aria-sort, and keep the 
       querySelector: (sel) => body.all((e) => e.tagName === "BUTTON" && sel.includes(`"${e.getAttribute("data-key")}"`))[0] ?? null,
     },
     window: { addEventListener: (_t, f) => listeners.push(f) },
-    acquireVsCodeApi: () => ({ postMessage: (m) => posted.push(m) }),
+    acquireVsCodeApi: () => ({ postMessage: (m) => posted.push(m), getState: () => undefined, setState: () => {} }),
   };
   vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "media", "profile.js"), "utf8"), sandbox);
