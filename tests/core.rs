@@ -1768,3 +1768,34 @@ fn a_line_of_many_statements_lints_in_bounded_time() {
         "a line of 2500 statements took {small:?} and of 20000 {large:?}"
     );
 }
+/// `--fix`, `--diff` and Format Document over a file with a fix on every
+/// line: each QP005 fix found its statement among all the file's, each fix
+/// copied the rest of the file, and each edit was spliced into the whole
+/// text and its lines counted from the top - quadratic in fixes (#2336).
+/// Timed with the findings linted once, so only the fixing is measured.
+#[test]
+fn fixing_every_line_is_linear() {
+    let time = |n: usize| {
+        let source: String = (0..n).map(|i| format!("r{i}:a*b+{i};\n")).collect();
+        let found = lint(&source, "t.q", Profile::Uqf);
+        // The findings of the source, and none once it has changed.
+        let lint = |s: &str| Ok::<_, ()>(if s == source { found.clone() } else { vec![] });
+        let fixed = q_lint_rs::fix_all(&source, false, lint).unwrap();
+        assert_eq!(fixed.first.len(), n);
+        let changed = q_lint_rs::fix_lines(&source, &[(1, n)], lint).unwrap();
+        assert_eq!(changed.text, fixed.text);
+        best_of_three(|| {
+            q_lint_rs::fix_all(&source, false, lint).unwrap();
+            q_lint_rs::fix_lines(&source, &[(1, n)], lint).unwrap();
+        })
+    };
+    time(500); // warm the allocator and the regex caches
+    let (small, large) = (time(500), time(4000));
+    eprintln!("fixing 500 lines took {small:?} and 4000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "fixing 500 lines took {small:?} and 4000 {large:?}"
+    );
+}

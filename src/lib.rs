@@ -1348,12 +1348,18 @@ fn fix_loop<E>(
         if selected.is_empty() {
             break;
         }
-        let before = updated.clone();
+        let before = std::mem::take(&mut updated);
+        // Each line's start in `before`, to number an edit's lines by: a
+        // count of the newlines from the top for each was quadratic (#2336).
+        let starts: Vec<usize> = match within {
+            Some(_) => before.match_indices('\n').map(|(at, _)| at).collect(),
+            None => vec![],
+        };
         for edit in selected.iter().rev() {
             if let Some(lines) = within.as_deref_mut() {
                 // From the last edit back, so each one's lines are still
                 // those of `before`.
-                let line = |at: usize| 1 + before[..at].matches('\n').count();
+                let line = |at: usize| 1 + starts.partition_point(|&n| n < at);
                 let (first, last) = (line(edit.start), line(edit.end));
                 let delta = edit.replacement.matches('\n').count() as isize
                     - before[edit.start..edit.end].matches('\n').count() as isize;
@@ -1366,8 +1372,16 @@ fn fix_loop<E>(
                     }
                 }
             }
-            updated.replace_range(edit.start..edit.end, &edit.replacement);
         }
+        // The edits are in order and do not overlap: one pass rebuilds the
+        // text, where splicing each into the whole was quadratic (#2336).
+        let mut done = 0;
+        for edit in &selected {
+            updated.push_str(&before[done..edit.start]);
+            updated.push_str(&edit.replacement);
+            done = edit.end;
+        }
+        updated.push_str(&before[done..]);
         if updated == before {
             break;
         }
@@ -1462,11 +1476,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
     }
     let line = finding.line.checked_sub(1)?;
     let column = finding.column?.checked_sub(1)?;
-    let line_start = if line == 0 {
-        0
-    } else {
-        source.match_indices('\n').nth(line - 1)?.0 + 1
-    };
+    let line_start = lines.start(line)?;
     let text = source.get(line_start..)?.split('\n').next()?;
     let mut units = 0;
     let mut byte = None;
@@ -1864,9 +1874,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
         // finding is on its line's first character; the edit is wherever
         // on that line the run is.
         "QP005" | "QP007" => {
-            let group = statement_groups(&v.code, source)
-                .into_iter()
-                .find(|&(a, b)| a <= start && start < b)?;
+            let group = lines.group(&v.code, source, start)?;
             let (from, end) = precedence_pair(v, source, group, finding.code == "QP005")?;
             begin = from;
             (
@@ -1879,9 +1887,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
         // The pair QP005's fix would write, removed: the inverse edit, and
         // the same parse tree.
         "QP008" => {
-            let group = statement_groups(&v.code, source)
-                .into_iter()
-                .find(|&(a, b)| a <= start && start < b)?;
+            let group = lines.group(&v.code, source, start)?;
             restated_pair(v, source, group, start, &mut None)?;
             let close = matching(&v.code, start, b'(', b')')?;
             (
@@ -2048,9 +2054,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
             let phrase = start + m.end();
             // The phrase ends where its statement does: a `;` or a bracket
             // closing round it, at its own depth.
-            let (_, group_end) = statement_groups(&v.code, source)
-                .into_iter()
-                .find(|&(a, b)| a <= start && start < b)?;
+            let (_, group_end) = lines.group(&v.code, source, start)?;
             let (mut depth, mut end) = (0i32, phrase);
             for &b in &v.code.as_bytes()[phrase..group_end] {
                 match b {
@@ -2909,10 +2913,17 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
     // q 5 indexed (`10 30`), and `r:10 20 30 a:0 2` loses `a:` the same
     // way. No rewrite says the same without brackets, so there is no fix -
     // unless the two were neighbours before the edit too.
-    let after: String = replacement
-        .chars()
-        .chain(source[begin + old.len()..].chars())
-        .collect();
+    // Only as much of what follows as `starts_number` reads: the blanks
+    // and line breaks after the replacement, and the three characters past
+    // them. The rest of the file, copied for each fix, made `--fix`
+    // quadratic in fixes (#2336).
+    let rest = &source[begin + old.len()..];
+    let blanks = rest.len() - rest.trim_start_matches([' ', '\t', '\r', '\n']).len();
+    let read = rest[blanks..]
+        .char_indices()
+        .nth(3)
+        .map_or(rest.len(), |(at, _)| blanks + at);
+    let after = format!("{replacement}{}", &rest[..read]);
     let blank = source[..begin].ends_with([' ', '\t']);
     if ends_in_number(&source[..begin])
         && starts_number(&after, blank)
@@ -4575,6 +4586,10 @@ fn edited_line_views(
 struct LineIndex {
     starts: Vec<usize>,
     states: Vec<(usize, LexState)>,
+    /// `statement_groups` of the source, made the first time a fix asks:
+    /// made for each finding, they were quadratic in findings (#2336).
+    /// With them, whether they are in order and apart.
+    groups: std::cell::OnceCell<(Vec<(usize, usize)>, bool)>,
 }
 impl LineIndex {
     fn new(source: &str) -> (Views, LineIndex) {
@@ -4582,7 +4597,31 @@ impl LineIndex {
         let starts = std::iter::once(0)
             .chain(source.match_indices('\n').map(|(at, _)| at + 1))
             .collect();
-        (v, LineIndex { starts, states })
+        (
+            v,
+            LineIndex {
+                starts,
+                states,
+                groups: std::cell::OnceCell::new(),
+            },
+        )
+    }
+    /// The statement group of `code` (the masking of `source` this index
+    /// was made with) that holds `at`, as the first of `statement_groups`
+    /// to hold it.
+    fn group(&self, code: &str, source: &str, at: usize) -> Option<(usize, usize)> {
+        let (groups, ordered) = self.groups.get_or_init(|| {
+            let groups = statement_groups(code, source);
+            let ordered = groups.windows(2).all(|w| w[0].1 <= w[1].0);
+            (groups, ordered)
+        });
+        // In order and apart, the one that could hold `at` is the last to
+        // start at or before it; otherwise, the first that holds it.
+        if *ordered {
+            let i = groups.partition_point(|&(a, _)| a <= at);
+            return groups[..i].last().copied().filter(|&(_, b)| at < b);
+        }
+        groups.iter().copied().find(|&(a, b)| a <= at && at < b)
     }
     /// Where 0-based line `row` starts, if the source has it.
     fn start(&self, row: usize) -> Option<usize> {
