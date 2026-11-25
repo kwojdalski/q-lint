@@ -42,10 +42,32 @@ pub struct FileIndex {
 ///
 /// Building one reads files and never runs them: the same passes the checks
 /// use, stopped before any rule.
+///
+/// And where each file's loaders put it, for one loaded anywhere but the
+/// root alone: a name a file reads bare before its first `\d` is read in
+/// each context it is loaded in, and a rule that says such a name is
+/// undefined has to ask there (#2178).
 #[derive(Default, Debug)]
 pub struct Workspace {
     defined: std::collections::HashMap<String, usize>,
     lambdas: std::collections::HashMap<String, usize>,
+    placements: std::collections::HashMap<std::path::PathBuf, graph::Placement>,
+}
+
+/// One key per file for `Workspace::place`, so a file placed under one
+/// spelling of its path is found under another: its real path, or for one
+/// not on disk - a buffer not yet saved - the real path of the nearest
+/// folder above it that is, as the language server keys its files.
+fn placement_key(path: &std::path::Path) -> std::path::PathBuf {
+    path.ancestors()
+        .find_map(|dir| {
+            let real = std::fs::canonicalize(dir).ok()?;
+            Some(match path.strip_prefix(dir).ok()? {
+                rest if rest.as_os_str().is_empty() => real,
+                rest => real.join(rest),
+            })
+        })
+        .unwrap_or_else(|| path.to_path_buf())
 }
 
 impl Workspace {
@@ -74,6 +96,28 @@ impl Workspace {
         }
     }
 
+    /// Record where the file `path` is loaded: its `graph::placements`
+    /// entry. A file loaded at the root alone is not kept.
+    pub fn place(&mut self, path: &std::path::Path, placement: &graph::Placement) {
+        if *placement == graph::Placement::default() {
+            if !self.placements.is_empty() {
+                self.placements.remove(&placement_key(path));
+            }
+        } else {
+            self.placements
+                .insert(placement_key(path), placement.clone());
+        }
+    }
+
+    /// Where the file `path` is loaded, when anywhere but the root alone.
+    pub(crate) fn placement(&self, path: &str) -> Option<&graph::Placement> {
+        if self.placements.is_empty() {
+            return None;
+        }
+        self.placements
+            .get(&placement_key(std::path::Path::new(path)))
+    }
+
     /// Whether a file other than the one whose own definitions are `own`
     /// defines `name`. The file asking may or may not have been added.
     pub(crate) fn defined_elsewhere(
@@ -81,6 +125,40 @@ impl Workspace {
         name: &str,
         own: &std::collections::HashSet<String>,
     ) -> bool {
+        self.elsewhere_but(name, |n| own.contains(n))
+    }
+
+    /// `defined_elsewhere`, for a name read in the file loaded where
+    /// `placement` says: a root name, which a read before the file's first
+    /// `\d` is, is also the name in each context the file is loaded in -
+    /// `true` in a file `\l`oaded under `\d .ns` is `.ns.true` (#2178). A
+    /// root read after a `\d .` is asked about those too, which can only
+    /// keep a finding back, never make one. The file's own root names are
+    /// its own in those contexts as well.
+    pub(crate) fn defined_elsewhere_as_loaded(
+        &self,
+        name: &str,
+        own: &std::collections::HashSet<String>,
+        placement: Option<&graph::Placement>,
+    ) -> bool {
+        if self.defined_elsewhere(name, own) {
+            return true;
+        }
+        let Some(placement) = placement.filter(|_| !name.starts_with('.')) else {
+            return false;
+        };
+        placement.contexts.iter().any(|ns| {
+            let mine = |n: &str| {
+                own.contains(n)
+                    || n.strip_prefix(ns.as_str())
+                        .and_then(|rest| rest.strip_prefix('.'))
+                        .is_some_and(|bare| own.contains(bare))
+            };
+            self.elsewhere_but(&format!("{ns}.{name}"), mine)
+        })
+    }
+
+    fn elsewhere_but(&self, name: &str, own: impl Fn(&str) -> bool) -> bool {
         // Or a namespace holding it, written as a whole: `.cfg:d` elsewhere
         // may give `.cfg.n` any value.
         std::iter::once(name)
@@ -89,7 +167,7 @@ impl Workspace {
                     .filter(|&(i, _)| i > 0)
                     .map(|(i, _)| &name[..i]),
             )
-            .any(|n| self.defined.get(n).copied().unwrap_or(0) > usize::from(own.contains(n)))
+            .any(|n| self.defined.get(n).copied().unwrap_or(0) > usize::from(own(n)))
     }
 
     /// Whether any file defines `name`, exactly.
@@ -7237,7 +7315,10 @@ fn lint_rules(
     // replaced b.q's `f:{x}` (#521). A top-level call after this file's
     // own definition meets that one.
     let own = semantics::index(code, source).defined;
-    let foreign = |at: usize, key: &str| ws.defined_elsewhere(key, &own) && in_lambda(at);
+    let placement = ws.placement(path);
+    let foreign = |at: usize, key: &str| {
+        ws.defined_elsewhere_as_loaded(key, &own, placement) && in_lambda(at)
+    };
     // Between the name and its bracket, the statement's blanks and nothing
     // else: a column-0 `[1;2;3]` under `r:f` is a statement of its own
     // (#729), and in `code` a string is blanks too - `f "x" [1]` indexes the
@@ -7922,7 +8003,8 @@ fn lint_rules(
     // `true:1b` loaded, q 5 runs `{[a] $[a;true;false]}` (#372). Under
     // `\d .ns` the name is `.ns.true`, which a root `true` does not define
     // and lib.q's own `\d .ns` does (q 5, #520).
-    let elsewhere = |key: &str| ws.defined_elsewhere(key, &Default::default());
+    let placement = ws.placement(path);
+    let elsewhere = |key: &str| ws.defined_elsewhere_as_loaded(key, &Default::default(), placement);
     // Nor can a file that writes globals it does not name say the name is
     // undefined: q 5 runs `\l lib.q` (`true:0b`) then `$[true;`yes;`no]` to
     // `no, which the fix to 1b would turn to `yes (#750).

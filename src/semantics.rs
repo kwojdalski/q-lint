@@ -2296,7 +2296,10 @@ pub fn check(
     // What this file defines itself; the workspace answers for the rest,
     // keyed the same way (#359).
     let own: HashSet<String> = exact.keys().cloned().collect();
-    let elsewhere = |name: &str| ws.defined_elsewhere(name, &own);
+    // Asked where the file is loaded, as well as where it switches to: a
+    // bare name a file loaded under `\d .ns` reads is `.ns.`'s (#2178).
+    let placement = ws.placement(path);
+    let elsewhere = |name: &str| ws.defined_elsewhere_as_loaded(name, &own, placement);
     // Scopes by the offset they start at. Looking one up by scanning is linear
     // per global and quadratic over a file whose globals are mostly lambdas,
     // which is what a q library is.

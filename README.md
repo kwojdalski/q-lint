@@ -1206,7 +1206,9 @@ Every key is optional, and these are the defaults:
 `lint.select` and `lint.ignore` are rule codes or prefixes applied after the
 configuration and the command line, and only turn rules off: a rule reports
 when the configuration selects it and they do too. `lint.run` is `onType` or
-`onSave`. `lint.severity` maps a code or prefix to `error`, `warning`,
+`onSave`; with `onSave` only the lint waits for the save, and navigation,
+hover and the other files' colours answer from the buffer as it is typed.
+`lint.severity` maps a code or prefix to `error`, `warning`,
 `information` or `hint`, the longest winning, over the configuration's own
 `[severity]`. `lint.scope` is `open` or
 `workspace`: with `workspace`, every file the index reads reports too, open

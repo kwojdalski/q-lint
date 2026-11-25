@@ -209,6 +209,11 @@ type Documents = HashMap<String, String>;
 /// `lint.run: "onSave"` is since they were last saved.
 type Unsaved = HashSet<String>;
 
+/// Of those, the ones whose edits changed what the workspace defines: the
+/// index took them as they were typed, and the other open documents are
+/// linted again for them when they are saved.
+type Redefined = HashSet<String>;
+
 /// What each open document reported the last time its brackets and strings
 /// all closed, and the text it reported that on - carried over, where the
 /// lines are unchanged, while a statement in it is being typed (`Carry`).
@@ -240,8 +245,9 @@ struct Index {
     /// A file's loads, or the set of files, changed since the placements
     /// were last worked out.
     stale: bool,
-    /// Bumped whenever what the workspace defines changes, which is what
-    /// makes the open documents' semantic tokens stale.
+    /// Bumped whenever what the workspace defines changes, or where a file
+    /// is loaded, which is what makes the open documents' semantic tokens
+    /// stale.
     generation: u64,
     /// Bumped whenever the names some file reads change, which is what
     /// makes a count of references stale.
@@ -252,6 +258,10 @@ struct Index {
     /// client redraws hints on request: it is one more reading of each file.
     signatures: u64,
     hinted: bool,
+    /// While set - a client that redraws reference counts on request - each
+    /// file's reads are tallied, every one and not just each name, since a
+    /// count changes with a read more of a name already read (#2175).
+    counted: bool,
     /// What may be read from disk: `.q` files under these folders, less
     /// those `exclude` names - and nothing at all while `enabled` is off,
     /// when only open documents are indexed.
@@ -305,6 +315,10 @@ struct Indexed {
     read: References,
     /// The parameters each definition declares, kept while `Index::hinted`.
     signed: Vec<(String, Vec<String>)>,
+    /// Every read of a global, by its name as written and whether it is
+    /// implicit, in order - what a reference count counts - kept while
+    /// `Index::counted`.
+    tally: Vec<(String, bool)>,
 }
 
 impl Index {
@@ -323,7 +337,11 @@ impl Index {
         let (loads, implicit) = (read.loads.clone(), read.implicit_defines.clone());
         let old = self.files.remove(&path);
         self.stale |= old.as_ref().is_none_or(|old| old.loads != loads);
-        if old.as_ref().is_none_or(|old| old.read.names != read.names) {
+        let tally = if self.counted { tally(text) } else { vec![] };
+        if old
+            .as_ref()
+            .is_none_or(|old| old.read.names != read.names || old.tally != tally)
+        {
             self.reads += 1;
         }
         let signed = if self.hinted {
@@ -340,6 +358,9 @@ impl Index {
             .unwrap_or_default();
         let mut placed = own.clone();
         placement.apply(&mut placed, &implicit);
+        if old.is_none() {
+            self.ws.place(Path::new(&path), &placement);
+        }
         let changed = old.as_ref().is_none_or(|old| old.placed != placed);
         if changed {
             if let Some(old) = &old {
@@ -356,6 +377,7 @@ impl Index {
             placed,
             read,
             signed,
+            tally,
         };
         self.files.insert(path, file);
         changed
@@ -363,9 +385,11 @@ impl Index {
 
     /// Forget `path`, leaving the placements to the caller's `settle`.
     fn forget(&mut self, path: &str) -> bool {
-        match self.files.remove(&file_key(path)) {
+        let key = file_key(path);
+        match self.files.remove(&key) {
             Some(old) => {
                 self.ws.remove(&old.placed);
+                self.ws.place(Path::new(&key), &Placement::default());
                 self.generation += 1;
                 self.reads += 1;
                 self.stale = true;
@@ -376,7 +400,8 @@ impl Index {
     }
 
     /// Work out again where each file's definitions go, when a file's loads
-    /// or the set of files changed, and move those that moved. Only a load
+    /// or the set of files changed, and move those that moved - and whether
+    /// any file now sits anywhere else. Only a load
     /// under some `\d .a` can put a file anywhere but the root, so without
     /// one there is no graph to build.
     fn settle(&mut self) -> bool {
@@ -406,6 +431,13 @@ impl Index {
             if file.placement == placement {
                 continue;
             }
+            // Moved, whether or not what it defines moves with it: its reads
+            // resolve where it is loaded too, which is what its colours, its
+            // parameter hints and the counts of what it reads are drawn
+            // from. Only a definition moved counted, and a file that
+            // defines nothing kept them stale (#2176).
+            changed = true;
+            self.ws.place(Path::new(key), &placement);
             let mut placed = file.own.clone();
             placement.apply(&mut placed, &file.implicit);
             file.placement = placement;
@@ -413,7 +445,6 @@ impl Index {
                 self.ws.remove(&file.placed);
                 self.ws.add(&placed);
                 file.placed = placed;
-                changed = true;
             }
         }
         if changed {
@@ -482,19 +513,42 @@ impl Index {
     /// Whether the scan would have read `path`: index on, under a workspace
     /// folder, in no directory the scan skips, and not excluded.
     fn covers(&self, path: &str, policy: &Policy) -> bool {
-        let path = std::path::Path::new(path);
         self.enabled
-            && is_q_path(&path.to_string_lossy())
+            && is_q_path(path)
             && self.roots.iter().any(|root| {
                 let root = std::path::Path::new(root);
                 // The file and each directory above it within the folder,
                 // as the scan asks about each before entering it (#795).
-                path.starts_with(root)
-                    && !path
+                self.spelled_under(root, path).is_some_and(|path| {
+                    !path
                         .ancestors()
                         .take_while(|p| *p != root)
                         .any(|p| skipped(policy, p) || self.excluded(root, p))
+                })
             })
+    }
+
+    /// `path` as the scan reaches it under the workspace folder `root`: as
+    /// given, when it is spelled under the folder, and otherwise the same
+    /// file by its key, below the folder's key - opened in another case, by
+    /// its real path under a folder opened through a symlink, or with `C:`
+    /// for `c:`. Compared as spelled, a document closed under one spelling
+    /// was not covered by a folder given in another, and its definitions
+    /// were forgotten until a restart (#2172). The spelling is tried first:
+    /// a symlink to a file in the folder is read by the scan (#542), and
+    /// its key is where it points.
+    fn spelled_under(&self, root: &std::path::Path, path: &str) -> Option<std::path::PathBuf> {
+        let given = std::path::Path::new(path);
+        if given.starts_with(root) {
+            return Some(given.to_path_buf());
+        }
+        let key = std::path::PathBuf::from(file_key(path));
+        let rest = key.strip_prefix(file_key(&root.to_string_lossy())).ok()?;
+        Some(if rest.as_os_str().is_empty() {
+            root.to_path_buf()
+        } else {
+            root.join(rest)
+        })
     }
 
     /// A pattern is matched against the path relative to the folder it is
@@ -520,7 +574,7 @@ impl Index {
         self.ws = Workspace::default();
         self.generation += 1;
         if self.enabled {
-            self.scan(policy);
+            self.scan(policy, docs);
         }
         for (uri, text) in docs.iter().filter(|(uri, _)| is_q_uri(uri)) {
             self.put(&path_of(uri), text);
@@ -537,6 +591,7 @@ impl Index {
         added: Vec<(String, String)>,
         removed: Vec<String>,
         policy: &Policy,
+        docs: &Documents,
     ) {
         self.roots.retain(|r| !removed.contains(r));
         self.folders.retain(|f| !removed.contains(&f.path));
@@ -566,33 +621,37 @@ impl Index {
         }
         if self.enabled && !added.is_empty() {
             let all = std::mem::replace(&mut self.roots, added.clone());
-            self.scan(policy);
+            self.scan(policy, docs);
             self.roots = all;
         }
         self.roots.extend(added);
         self.settle();
     }
 
-    fn scan(&mut self, policy: &Policy) {
-        self.scan_within(policy, MAX_FILES, MAX_ENTRIES)
+    fn scan(&mut self, policy: &Policy, docs: &Documents) {
+        self.scan_within(policy, docs, MAX_FILES, MAX_ENTRIES)
     }
 
-    fn scan_within(&mut self, policy: &Policy, max_files: usize, max_entries: usize) {
+    fn scan_within(
+        &mut self,
+        policy: &Policy,
+        docs: &Documents,
+        max_files: usize,
+        max_entries: usize,
+    ) {
         let stack = self.roots.iter().map(|r| (r.into(), r.into())).collect();
-        self.walk(policy, stack, max_files, max_entries);
+        self.walk(policy, docs, stack, max_files, max_entries);
     }
 
     /// Read every `.q` file under the directory `path`, as the scan would
     /// have: a watcher reports a folder created or moved in as one event for
     /// the folder, not one per file inside it (#1217).
-    fn add_tree(&mut self, path: &str, policy: &Policy) -> bool {
-        let dir = std::path::PathBuf::from(path);
-        let Some(root) = self
-            .roots
-            .iter()
-            .map(std::path::PathBuf::from)
-            .find(|root| dir.starts_with(root))
-        else {
+    fn add_tree(&mut self, path: &str, policy: &Policy, docs: &Documents) -> bool {
+        let Some((root, dir)) = self.roots.iter().find_map(|root| {
+            let root = std::path::PathBuf::from(root);
+            let dir = self.spelled_under(&root, path)?;
+            Some((root, dir))
+        }) else {
             return false;
         };
         if !self.enabled
@@ -603,20 +662,29 @@ impl Index {
         {
             return false;
         }
-        let changed = self.walk(policy, vec![(root, dir)], MAX_FILES, MAX_ENTRIES);
+        let changed = self.walk(policy, docs, vec![(root, dir)], MAX_FILES, MAX_ENTRIES);
         changed | self.settle()
     }
 
     /// Read the `.q` files under each `(folder, directory)` of `stack`, and
-    /// whether that changed the index.
+    /// whether that changed the index - all but the open documents, whose
+    /// text is the client's and never the disk's: a folder created with an
+    /// open file in it, by a rename or a checkout, put the disk's text over
+    /// the unsaved buffer (#2173).
     fn walk(
         &mut self,
         policy: &Policy,
+        docs: &Documents,
         mut stack: Vec<(std::path::PathBuf, std::path::PathBuf)>,
         max_files: usize,
         max_entries: usize,
     ) -> bool {
         let (mut seen, mut visited, mut changed) = (0, 0, false);
+        let open: HashSet<String> = docs
+            .keys()
+            .filter(|uri| is_q_uri(uri))
+            .map(|uri| file_key(&path_of(uri)))
+            .collect();
         while let Some((root, dir)) = stack.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else {
                 continue;
@@ -648,7 +716,12 @@ impl Index {
                 if kind.is_dir() {
                     stack.push((root.clone(), path));
                 } else {
-                    changed |= self.read(&path.to_string_lossy());
+                    let path = path.to_string_lossy();
+                    // Keyed only when something is open: a key costs a
+                    // canonicalize, and `read` pays one again.
+                    if open.is_empty() || !open.contains(&file_key(&path)) {
+                        changed |= self.read(&path);
+                    }
                     seen += 1;
                     if seen >= max_files {
                         return changed;
@@ -718,7 +791,8 @@ fn workspace_folders(params: &Value) -> Vec<(String, String)> {
 #[derive(Debug)]
 struct Options {
     /// Lint on save rather than on every change. An open buffer's text is
-    /// still kept current, for code actions and formatting.
+    /// still kept current, and indexed, for code actions, formatting and
+    /// navigation: only the lint waits (#2174).
     on_save: bool,
     /// `lint.scope: "workspace"`: publish diagnostics for every file the
     /// index reads, not only the open ones (`scope`).
@@ -1164,6 +1238,7 @@ pub fn serve(
     let mut queue: VecDeque<Incoming> = VecDeque::new();
     let mut docs: Documents = HashMap::new();
     let mut unsaved = Unsaved::new();
+    let mut redefined = Redefined::new();
     let mut kept = Kept::new();
     let mut idx = Index::default();
     let mut closed = scope::Closed::default();
@@ -1358,6 +1433,7 @@ pub fn serve(
                             refreshes("codeLens") && (opts.code_lens || opts.reference_lens);
                         hint_refresh = refreshes("inlayHint") && opts.inlay_hints;
                         idx.hinted = hint_refresh;
+                        idx.counted = lens_refresh && opts.reference_lens;
                         let watched = |key: &str| {
                             params
                                 .pointer(&format!(
@@ -1456,6 +1532,7 @@ pub fn serve(
                         closed.stop();
                         docs.clear();
                         unsaved.clear();
+                        redefined.clear();
                         kept.clear();
                         send(writer, json!({"id": id, "result": Value::Null}))?;
                     }
@@ -1507,6 +1584,10 @@ pub fn serve(
                         let uri = uri_of(&params["textDocument"]);
                         let text = params["textDocument"]["text"].as_str().unwrap_or("");
                         unsaved.remove(&uri);
+                        redefined.remove(&uri);
+                        if is_q_uri(&uri) {
+                            closed.opened(writer, &file_key(&path_of(&uri)), &uri)?;
+                        }
                         publish(
                             writer,
                             &mut docs,
@@ -1531,7 +1612,12 @@ pub fn serve(
                         {
                             if opts.on_save {
                                 // Kept, so a Quick Fix or a format reads what is on
-                                // screen; linted, and indexed, when it is saved.
+                                // screen, and indexed, so navigation answers from
+                                // it; linted when it is saved, and the others too
+                                // when what it defines changed (#2174).
+                                if !superseded && is_q_uri(&uri) && idx.set(&path_of(&uri), text) {
+                                    redefined.insert(uri.clone());
+                                }
                                 docs.insert(uri.clone(), text.to_string());
                                 unsaved.insert(uri);
                             } else if superseded {
@@ -1565,10 +1651,32 @@ pub fn serve(
                             .or_else(|| docs.get(&uri).cloned());
                         if let Some(text) = text {
                             unsaved.remove(&uri);
+                            let others = redefined.remove(&uri);
                             publish(
-                                writer, &mut docs, &unsaved, &mut kept, &mut idx, uri, text,
-                                policy, &opts,
+                                writer,
+                                &mut docs,
+                                &unsaved,
+                                &mut kept,
+                                &mut idx,
+                                uri.clone(),
+                                text,
+                                policy,
+                                &opts,
                             )?;
+                            // Indexed as it was typed, so the save itself changed
+                            // nothing the index holds.
+                            if others {
+                                relint(
+                                    writer,
+                                    &docs,
+                                    &unsaved,
+                                    &mut kept,
+                                    &idx,
+                                    Some(&uri),
+                                    policy,
+                                    &opts,
+                                )?;
+                            }
                         }
                         closed.sync(writer, &idx, &docs, false)?;
                     }
@@ -1576,6 +1684,7 @@ pub fn serve(
                         let uri = uri_of(&params["textDocument"]);
                         docs.remove(&uri);
                         unsaved.remove(&uri);
+                        redefined.remove(&uri);
                         kept.remove(&uri);
                         // The buffer is gone, so the disk is the authority again - and
                         // unsaved definitions it held no longer define anything.
@@ -1592,7 +1701,9 @@ pub fn serve(
                         if closed.on && idx.files.contains_key(&key) {
                             closed.lint(writer, &key, &docs, &idx, policy, &opts)?;
                         }
-                        if !closed.published(&key) {
+                        // To the URI it was open by, when the file reports
+                        // under another (#2172).
+                        if closed.published_to(&key) != Some(uri.as_str()) {
                             send(
                                 writer,
                                 json!({"method": "textDocument/publishDiagnostics",
@@ -1881,7 +1992,7 @@ pub fn serve(
                                 config_changed = true;
                                 continue;
                             }
-                            if docs.contains_key(&uri) {
+                            if docs.contains_key(&uri) || is_open(&docs, &path) {
                                 continue;
                             }
                             // A directory, not entered through a symlink, as the
@@ -1902,7 +2013,7 @@ pub fn serve(
                             changed |= if deleted {
                                 idx.remove_tree(&path, &docs)
                             } else if folder {
-                                idx.add_tree(&path, policy)
+                                idx.add_tree(&path, policy, &docs)
                             } else {
                                 idx.reload(&path, policy)
                             };
@@ -1928,7 +2039,7 @@ pub fn serve(
                             workspace_folders(&json!({"workspaceFolders": params["event"][key]}))
                         };
                         let removed = folders("removed").into_iter().map(|(path, _)| path);
-                        idx.change_roots(folders("added"), removed.collect(), policy);
+                        idx.change_roots(folders("added"), removed.collect(), policy, &docs);
                         // An open buffer still wins over what a folder held.
                         for (uri, text) in docs.iter().filter(|(uri, _)| is_q_uri(uri)) {
                             idx.put(&path_of(uri), text);
@@ -2161,6 +2272,18 @@ fn signatures(text: &str) -> Vec<(String, Vec<String>)> {
 /// The reply to a request whose handler panicked: JSON-RPC 2.0 §5.1's
 /// `-32603 Internal error`, rather than no reply, which a client cannot tell
 /// from a hung server.
+/// Every read of a global in `text`, as `Indexed::tally` keeps them.
+fn tally(text: &str) -> Vec<(String, bool)> {
+    guarded(|| {
+        q_lint_rs::mentions(text)
+            .into_iter()
+            .filter(|m| m.definition.is_none())
+            .map(|m| (m.name, m.implicit))
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
 fn internal_error(id: Value, panic: &str) -> Value {
     json!({"id": id, "error": {"code": INTERNAL_ERROR,
            "message": format!("qlinter failed on this document: {panic}")}})
@@ -2993,10 +3116,38 @@ fn relint(
 ) -> Result<(), String> {
     for (uri, text) in docs {
         if Some(uri.as_str()) != except && !unsaved.contains(uri) {
+            recarry(uri, text, kept, &idx.ws, policy, opts);
             diagnose(writer, uri, text, kept, &idx.ws, policy, opts)?;
         }
     }
     Ok(())
+}
+
+/// What `uri` carries over a statement being typed in `text`, linted again
+/// against the workspace `ws` as it is now - or dropped, when that lint
+/// fails. The last version that closed reported against the workspace as
+/// it was then, and another file's change can make a finding of it false,
+/// or one true that it did not report: a QF015 on `true` stayed after
+/// another file defined `true`, until the bracket being typed closed
+/// (#2177). A document whose text is the version kept is linted whole
+/// anyway, and kept from that.
+fn recarry(
+    uri: &str,
+    text: &str,
+    kept: &mut Kept,
+    ws: &Workspace,
+    policy: &Policy,
+    opts: &Options,
+) {
+    if kept.get(uri).is_none_or(|good| good.text == text) {
+        return;
+    }
+    let Some(Good { text: good, .. }) = kept.remove(uri) else {
+        return;
+    };
+    // That version closes, so `diagnostics_of` keeps what it reports again.
+    let _ = linted(uri, &good, ws, policy)
+        .and_then(|findings| guarded(|| diagnostics_of(uri, &good, &findings, kept, opts)));
 }
 
 /// Lint one document and push its diagnostics.
@@ -3605,6 +3756,15 @@ fn on_disk(path: &str) -> Option<(String, bool)> {
     Some((text.to_string(), bom))
 }
 
+/// Whether the file `path` is an open document, under whatever spelling of
+/// its path it was opened by: its buffer, not the disk, is what the index
+/// holds of it (#2172).
+fn is_open(docs: &Documents, path: &str) -> bool {
+    let key = file_key(path);
+    docs.keys()
+        .any(|uri| is_q_uri(uri) && file_key(&path_of(uri)) == key)
+}
+
 /// One spelling per file, for the index: the editor's URI and the folder scan
 /// reach the same file as `c:/a/b.q` and `C:\a\b.q` on Windows, through a
 /// symlinked folder (`/tmp` and `/private/tmp`), or in another case on a
@@ -3993,7 +4153,7 @@ mod tests {
                 enabled: true,
                 ..Index::default()
             };
-            idx.scan_within(&policy, MAX_FILES, max_entries);
+            idx.scan_within(&policy, &Documents::new(), MAX_FILES, max_entries);
             idx.files.len()
         };
         assert_eq!(scanned(10), 0);
