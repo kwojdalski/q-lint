@@ -1870,3 +1870,20 @@ test("an assignment written as a call, :[a;77], assigns its first argument by th
     assert.deepStrictEqual(writes(code), [], code);
   }
 });
+
+test("eval of a tree reads the tree's head past its parentheses, and every list in it, as eval evaluates them (#2265)", () => {
+  const asks = [
+    "eval((:);`a;77)", "eval(+;0;(:;`a;77))", "eval(enlist;(:;`a;77))", "eval(count;(:;`a;77))", "-6!(+;0;(:;`a;77))", "reval(enlist;(:;`a;77))",
+    "eval(enlist;(?;enlist`sym;enlist`zz))", "eval(+;0;(+;0;(@;enlist`b;0;:;77)))", "eval'[enlist (enlist;(:;`a;77))]", "eval[(+;0;(:;`a;77))]",
+    "value((:);`a;77)", "eval((::);`a;77)", "eval((+:);`a;1)",
+  ];
+  for (const code of asks) {
+    assert.ok(writes(code).length > 0, code);
+  }
+  assert.deepStrictEqual(writes("eval((:);`a;77)"), ["evaluates an assignment with eval"]);
+  assert.deepStrictEqual(writes("eval(+;0;(:;`a;77))"), ["evaluates an assignment with eval"]);
+  // A list value takes as they are: its items are not evaluated.
+  for (const code of ["value(+;0;(:;`a;77))", "eval(?;`t;();0b;())", "eval(+;1;(*;2;3))", "eval parse\"select from t\"", "eval(count;(enlist;1;2))"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});

@@ -906,7 +906,8 @@ function evaluated(t: Token[], j: number, byValue: boolean): { reason: string; a
   while (
     t[j] !== undefined &&
     ((t[j].kind === "open" && t[j].text !== "{") ||
-      (t[j].kind === "name" && ["each", "peach", "enlist"].includes(t[j].text)) ||
+      // (`enlist` heading a tree, `(enlist;(:;`a;77))`, is its head.)
+      (t[j].kind === "name" && ["each", "peach", "enlist"].includes(t[j].text) && !(t[j - 1]?.text === "(" && t[j + 1]?.text === ";")) ||
       (t[j].kind === "op" &&
         ["'", "@", "."].includes(t[j].text) &&
         !(t[j - 1]?.text === "(" && (t[j + 1]?.text === ";" || t[j + 1]?.text === "[" || (t[j - 2]?.text === "(" && t[j + 1]?.text === ")" && t[j + 2]?.text === ";")))))
@@ -927,8 +928,9 @@ function evaluated(t: Token[], j: number, byValue: boolean): { reason: string; a
   const projection = head && (k?.text === "@" || k?.text === ".") && t[j + 1]?.text === "[" ? items(t, j + 1) : [];
   const projected =
     projection.length > 0 && projection.length >= minimum(k?.text ?? "") && projection[0][0] === projection[0][1] && named(projection[projection.length - 1][1] + 1)?.kind === "sym" && (named(projection[projection.length - 1][1] + 1)?.text.length ?? 0) > 1;
-  // (`(::)` alone is the identity, not an assignment.)
-  const reason = head && k?.kind === "op" && (k.text === ":" || (OPERATORS.has(k.text) && t[j + 1]?.text === ":")) && items(t, j - 1).length > 1
+  // (`(::)` alone is the identity, not an assignment.) The tree's items are
+  // counted past the head's own parentheses, `eval((:);`a;77)` (#2265).
+  const reason = head && k?.kind === "op" && (k.text === ":" || (OPERATORS.has(k.text) && t[j + 1]?.text === ":")) && items(t, j - 1 - wrap).length > 1
     ? "an assignment"
     : head && k?.text === "!" && t[j + 1]?.text === ";" && (byValue ? t[j + 2] : t[j + 2]?.text === "enlist" ? t[j + 3] : undefined)?.kind === "sym"
       ? "a functional update or delete"
@@ -938,8 +940,31 @@ function evaluated(t: Token[], j: number, byValue: boolean): { reason: string; a
           // `` eval(@;enlist`.;enlist`a;:;1) `` (#1446).
           (head && (k?.text === "@" || k?.text === ".") && named(j + 1 + wrap)?.kind === "sym" && (named(j + 1 + wrap)?.text.length ?? 0) > 1 && items(t, j - 1 - wrap).length > minimum(k?.text ?? "")) || projected
           ? "an amend"
-          : called(t, lists, byValue);
+          : (called(t, lists, byValue) ?? (byValue || !head ? undefined : nested(t, j - 1 - wrap)));
   return reason === undefined ? undefined : { reason, at: j };
+}
+
+/// What a list in the tree opening at `t[open]` does that changes the
+/// process, `eval` evaluating each list in a tree before applying its
+/// head: `eval(+;0;(:;`a;77))` assigns `a` (#2265). Not `value`'s, which
+/// takes a list's items as they are.
+function nested(t: Token[], open: number): string | undefined {
+  const end = items(t, open).at(-1)?.[1] ?? open;
+  scanned(end - open);
+  for (let p = open + 1; p < end; p++) {
+    if (t[p].kind === "open" && t[p].text === "{") {
+      // A lambda in the tree is a value until it is applied: `called` reads that.
+      let depth = 0;
+      for (; p < end; p++) {
+        if (t[p].kind === "open") depth++;
+        else if (t[p].kind === "close" && --depth === 0) break;
+      }
+    } else if (t[p].kind === "open" && t[p].text === "(") {
+      const what = evaluated(t, p, false);
+      if (what !== undefined) return what.reason;
+    }
+  }
+  return undefined;
 }
 
 /// The text of `t[from]` to `t[to]`, spaced as written.
