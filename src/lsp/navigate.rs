@@ -623,7 +623,7 @@ fn document_symbols(params: &Value, sources: &Sources, nested: bool) -> Value {
             // The selection has to lie within the range (LSP 3.17).
             let start = definition.start.min(m.at);
             let end = definition.end.max(m.at + m.len);
-            Some((m, definition.function, start, end))
+            Some((m, definition.holds_function, start, end))
         })
         .collect();
     if !nested {
@@ -927,7 +927,7 @@ fn assigned(sources: &Sources, key: &str) -> Symbols {
         };
         for placed in placed(&m.name, m.implicit, placement) {
             found.entry(placed).or_insert_with(|| {
-                let kind = if definition.function {
+                let kind = if definition.holds_function {
                     FUNCTION
                 } else {
                     VARIABLE

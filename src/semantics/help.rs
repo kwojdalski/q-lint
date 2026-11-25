@@ -9,7 +9,7 @@
 use super::{Scope, scope_around, scopes};
 use crate::{Applied, BracketCall, Call, Completing, boundary, ends_in_name, matching, signature};
 
-const NAME: &str = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*";
+const NAME: &str = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*";
 /// How many lines of comment above a definition are its description. A
 /// licence header over a file's first function is not one.
 const MAX_COMMENT: usize = 40;

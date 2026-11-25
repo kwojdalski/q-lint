@@ -6,13 +6,14 @@
 //! scopes and the writes the checks already read, and stopped there: what a
 //! name holds when the script runs is still not this crate's to say.
 use super::{
-    Scope, assigns_lambda, call_time, first_switch, global_multi_assignments, global_writes,
-    local_view, multi_assignments, resolved, scope_at, scopes, top_level_statements,
+    Scope, assigns_lambda, call_time, chained_value, first_switch, global_multi_assignments,
+    global_writes, holds_functions, local_view, multi_assignments, resolved, scope_at, scopes,
+    top_level_statements,
 };
 use crate::{Definition, Local, Mention, Name, Place, boundary, pattern_names, signature};
 use std::collections::{HashMap, HashSet};
 
-const NAME: &str = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*";
+const NAME: &str = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*";
 
 /// Where `part`, a slice of `whole`, starts in it.
 fn offset_in(whole: &str, part: &str) -> usize {
@@ -84,7 +85,7 @@ fn ends_expression(rest: &str) -> bool {
 /// `!`) - and so writes it, where a select, `?` and the words that take a
 /// name only read it (#2054).
 fn by_name(code: &str) -> Vec<(usize, usize, bool)> {
-    const SYMBOL: &str = r"`(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)";
+    const SYMBOL: &str = r"`(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)";
     let whole = |name: regex::Match| {
         !code[name.end()..].starts_with(|c: char| c.is_ascii_alphanumeric() || "_.:/`".contains(c))
     };
@@ -179,7 +180,7 @@ pub(super) struct KLines {
     /// Each of `globals` that is assigned there, by where it is: whether a
     /// lambda is its value, and the span of its statement - the k statement
     /// at the top level, the name alone in a lambda (`k){fk::x}`).
-    assigned: HashMap<usize, (bool, usize, usize)>,
+    pub(super) assigned: HashMap<usize, (bool, usize, usize)>,
 }
 
 /// The `k)` lines of `raw` read as k, for the names in them.
@@ -472,7 +473,10 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
     let statements = top_level_statements(code, raw);
     let mut out = vec![];
     let mut writes = HashSet::new();
-    for (name, values) in global_writes(code, raw, &scopes, &namespaces, resolved, true) {
+    let all = global_writes(code, raw, &scopes, &namespaces, resolved, true);
+    let held = holds_functions(code, raw, &all, &scopes, &namespaces);
+    for (name, values) in all {
+        let holds_function = held.get(&name).copied().unwrap_or(false);
         for value in values {
             let Some((at, len)) = written(code, &name, value) else {
                 continue;
@@ -480,6 +484,7 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
             writes.insert(at);
             let function = assigns_lambda(code, raw, value);
             let (detail, params) = if function {
+                let value = chained_value(code, value);
                 let brace = value + code[value..].len() - code[value..].trim_start().len();
                 let sig = signature(code, raw, brace);
                 let slots: Vec<&str> = sig.slots.iter().map(|slot| slot.trim()).collect();
@@ -519,6 +524,7 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
                 len,
                 definition: Some(Definition {
                     function,
+                    holds_function,
                     detail,
                     params,
                     start,
@@ -556,7 +562,7 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
             definition: None,
         });
     }
-    for m in re!(r"`(\.[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)").captures_iter(code) {
+    for m in re!(r"`(\.[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)").captures_iter(code) {
         let name = m.get(1).unwrap();
         // A symbol runs on past where a name stops: `` `.a.b:c `` is no `.a.b`.
         if writes.contains(&name.start())
@@ -594,8 +600,10 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
     let k = k_lines(code, raw);
     for (at, len, _) in k.globals {
         let word = &raw[at..at + len];
+        let name = resolved(word, ns_at(at));
+        let holds = held.get(&name).copied();
         out.push(Mention {
-            name: resolved(word, ns_at(at)),
+            name,
             implicit: !word.starts_with('.') && at < first_switch,
             at,
             len,
@@ -604,6 +612,7 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
                 .get(&at)
                 .map(|&(function, start, end)| Definition {
                     function,
+                    holds_function: holds.unwrap_or(function),
                     detail: String::new(),
                     params: vec![],
                     start,
