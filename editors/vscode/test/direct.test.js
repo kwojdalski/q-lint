@@ -116,6 +116,7 @@ test("the explorer reads a direct process with one plain request a part, and sho
     "tables[]": ["t"],
     "\\f": ["f"],
     "\\v": ["t", "v"],
+    ".Q.pt": [],
     "\\a .foo": ["q"],
     "\\f .foo": ["g"],
     "\\v .foo": ["q", "sub", "w"],
@@ -135,6 +136,7 @@ test("the explorer reads a direct process with one plain request a part, and sho
   assert.deepStrictEqual(sent, [
     "key`",
     ...directRequests(".").map((r) => r.request),
+    ".Q.pt",
     ...directRequests(".foo").map((r) => r.request),
     ...directRequests(".priv").map((r) => r.request),
     ...directRequests(".z").map((r) => r.request),
@@ -153,6 +155,16 @@ test("the explorer reads a direct process with one plain request a part, and sho
     ["Functions unavailable", "pm: no read permission on [\\f .priv]"],
     ["Variables unavailable", "pm: no read permission on [\\v .priv]"],
   ]);
+  // A partitioned table is marked so, and Preview reads it by .Q.ind (#2481);
+  // .Q.pt refused, each table is read as any is.
+  const { previewCode } = require("../out/explorer.js");
+  const hdb = await gatherDirect(async (r) => ({ ok: true, value: r === "tables[]" ? ["pt", "sp"] : r === ".Q.pt" ? ["pt"] : [] }), []);
+  assert.deepStrictEqual(hdb.entries.map((e) => [e.name, e.partitioned, previewCode({ kind: "table", name: e.name, partitioned: e.partitioned }, 5)]), [
+    ["pt", true, ".Q.ind[pt;til 5&count pt]"],
+    ["sp", false, "5 sublist sp"],
+  ]);
+  const refused = await gatherDirect(async (r) => (r === ".Q.pt" ? { ok: false, error: "pm: no" } : { ok: true, value: r === "tables[]" ? ["pt"] : [] }), []);
+  assert.deepStrictEqual([refused.entries.map((e) => e.partitioned), refused.unavailable], [[false], undefined]);
   // The namespaces refused: the root is still read.
   const bare = await gatherDirect(async (r) => (r === "key`" ? { ok: false, error: "pm: no" } : { ok: true, value: r === "tables[]" ? ["t"] : [] }), []);
   const top = explorerTree(bare, []);
