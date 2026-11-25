@@ -657,6 +657,12 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
     ("QB017", "f:{[a]\n  a:a\n  }", "f:{[a]\n  a\n  }", false),
     // A cast before a temporal literal or the clock: the same instant.
     ("QP002", "r:`datetime$.z.p", "r:`timestamp$.z.p", false),
+    (
+        "QP002",
+        "t:([]a:`datetime$())",
+        "t:([]a:`timestamp$())",
+        false,
+    ),
     ("QP002", "r:2026.01.01T12:00", "r:2026.01.01D12:00", false),
     (
         "QP002",

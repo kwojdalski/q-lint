@@ -2517,9 +2517,10 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             // nanoseconds - `` `datetime$1 `` is 2000.01.02T00:00, and
             // `` `timestamp$1 `` 2000.01.01D00:00:00.000000001 (q 5, #2254).
             // So only before a date, datetime or timestamp literal or the
-            // clock's own; what a name holds is not known here.
+            // clock's own, or the empty list, which a table's schema casts;
+            // what a name holds is not known here.
             if m.as_str().ends_with('$')
-                && !re!(r"^[ \t]*(?:-?\d{4}\.\d{2}\.\d{2}(?:[TD]\d|[^\w.:]|$)|\.z\.[pPzZdD](?:[^\w.]|$))")
+                && !re!(r"^[ \t]*(?:-?\d{4}\.\d{2}\.\d{2}(?:[TD]\d|[^\w.:]|$)|\.z\.[pPzZdD](?:[^\w.]|$)|\([ \t]*\))")
                     .is_match(&line[m.end()..])
             {
                 return None;
