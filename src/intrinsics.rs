@@ -114,12 +114,21 @@ fn literal(s: &str) -> Option<Literal> {
             short_integer: s.ends_with('h'),
         });
     }
-    if re!(r"^-?\d+(?:\s+-?\d+)*[hij]?$").is_match(s) {
+    // A vector's items may be nulls and infinities, the last one carrying
+    // the vector's type: `1 0N`, `0N 1h`, `1 -0W`, `1 0Nh` (q 5: `flip 1 0N`
+    // is 'rank, `where 1 0N` 'limit, #2242). The null is the least long,
+    // and negative as a count.
+    if re!(r"^(?:-?\d+|0N|-?0W)(?:\s+(?:-?\d+|0N|-?0W))*[hij]?$").is_match(s) {
         // Values outside the host integer range stay unknown, not truncated.
         let numbers = s
             .trim_end_matches(['h', 'i', 'j'])
             .split_whitespace()
-            .map(str::parse::<i64>)
+            .map(|item| match item {
+                "0N" => Ok(i64::MIN),
+                "0W" => Ok(i64::MAX),
+                "-0W" => Ok(-i64::MAX),
+                _ => item.parse::<i64>(),
+            })
             .collect::<Result<Vec<_>, _>>()
             .ok()?;
         return Some(Literal {
@@ -152,9 +161,14 @@ fn literal(s: &str) -> Option<Literal> {
         });
     }
     let float = re!(
-        r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+|E\d+)?(?:\s+-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+|E\d+)?)*[ef]?$"
+        r"^(?:-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+|E\d+)?|0[nNwW]|-0[wW])(?:\s+(?:-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+|E\d+)?|0[nNwW]|-0[wW]))*[ef]?$"
     );
-    if float.is_match(s) && (s.contains(['.', 'e', 'E']) || s.ends_with('f')) {
+    if float.is_match(s)
+        && (s.contains(['.', 'e', 'E'])
+            || s.ends_with('f')
+            || s.split_whitespace()
+                .any(|item| matches!(item, "0n" | "0w" | "-0w")))
+    {
         return Some(Literal {
             kind: Kind::Float,
             vector: s.split_whitespace().count() > 1,
@@ -166,6 +180,9 @@ fn literal(s: &str) -> Option<Literal> {
     None
 }
 
+    // Its items may be nulls and infinities too, which make a vector of
+    // integers a float one: `1 0n`, `0w 1`, `1.5 0N`, `1 0Ne` (q 5: `1 2 3
+    // cor 1 0n` is 'length, #2242).
 /// QB026. A literal pair of bounds whose first item is above its second, as
 /// the two items written: q 5 `5 within 10 1` is 0b, and so is every value,
 /// since `within` asks for low <= x <= high. Only a pair of numbers, or of

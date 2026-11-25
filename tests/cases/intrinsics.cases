@@ -862,3 +862,40 @@ c:distinct (0Nd;0Nd)
 d:count 0Np
 e:til 0Wh
 
+
+=== QT013 profile: general | a vector holding a null is still a flat vector (q 5: 'rank, #2242)
+a:flip 1 0N
+b:flip 0N 1
+c:flip 1 0n
+
+=== QT008 profile: general | and no count (q 5: 'type, #2242)
+a:til 0N 1
+b:til 1 0w
+
+=== QD002 profile: general | a null long or int is the least of its type, a negative count to where (q 5: 'limit, #2242)
+a:where 1 0N
+b:where 1 0Ni
+c:where 1 -0W
+
+=== QT009 profile: general | a float vector holding an infinity is no count to where (q 5: 'type, #2242)
+a:where 0w 1
+b:where 0N 1h
+
+=== QT019 profile: general | three bounds, one of them null (q 5: 'length, #2242)
+a:5 within 0N 1 2
+
+=== QT018 profile: general | lengths that differ, one vector holding a null or infinity (q 5: 'length, #2242)
+a:1 2 3 cor 1 0N
+b:1 2 3 wsum 0w 1
+c:1 2 3 cov 1 0n
+
+=== clean profile: general | the same nulls where q takes them (#2242)
+a:flip (1 0N;2 3)
+b:5 within 0N 10
+c:1 2 3 cor 1 0N 2
+d:asc 1 0N
+e:sum 1 0n
+f:distinct 0N 0N
+g:1 2 wsum 0w 1
+h:where 1 0 2
+
