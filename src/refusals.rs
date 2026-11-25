@@ -1429,11 +1429,17 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         if i > 0 && c[i - 1] == b'\n' {
             line_start = i;
         }
+        // After an assignment's colon the verb opens the expression: q 5
+        // refuses `a:0:x` and `a::2:x` as it does `a: 0:x` (#2218). Not the
+        // colon a number ends, `12:0:x`.
         if !matches!(d, b'0'..=b'2')
             || c.get(i + 1) != Some(&b':')
             || comments.as_bytes()[i] != d
-            || i.checked_sub(1)
-                .is_some_and(|p| c[p].is_ascii_alphanumeric() || b"._`-:".contains(&c[p]))
+            || i.checked_sub(1).is_some_and(|p| {
+                c[p].is_ascii_alphanumeric()
+                    || b"._`-".contains(&c[p])
+                    || (c[p] == b':' && colon_ends_number(code, p + 1))
+            })
             || crate::system_command(&source[line_start..])
         {
             continue;
@@ -1448,6 +1454,9 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         let next = continued(&comments[i + 2..]);
         if !(next.starts_with(|c: char| c.is_ascii_alphanumeric() || "`(\"{.".contains(c))
             || re!(r"^-\.?\d").is_match(next))
+            // After an assignment, `a:0:00` and `t:1:30` are QE006's
+            // one-digit hour, refused for the same `:`.
+            || (i > 0 && c[i - 1] == b':' && comments[i + 2..].starts_with(|c: char| c.is_ascii_digit()))
         {
             continue;
         }
@@ -1588,18 +1597,49 @@ pub(crate) fn opens_expression(
                 })..]
                     .starts_with(|c: char| c.is_ascii_digit())
     });
+    // A colon that ends a minute or a time is no assignment: q 5 reads
+    // `a:12:?10` as `a:12:00?10`, and `12:30:#x` and `a:25:@y` the same
+    // way, while `a:1:?10` is '1: (#2220).
+    let minute = before.strip_suffix(':').is_some_and(minute_before);
     i == line_start
         || before.is_empty()
         || iterator
         || qsql
         || infix
         || operator
-        || before.ends_with([':', '(', '[', '{', ';'])
+        || (before.ends_with(':') && !minute)
+        || before.ends_with(['(', '[', '{', ';'])
         || after_signature(code, raw, before.len())
         || (before
             .bytes()
             .next_back()
             .is_some_and(|p| GLYPHS.contains(&p)))
+}
+
+/// Whether `head` - the text before a colon - ends in the digits q reads,
+/// with that colon, as a minute or a time: two digits or more (`12:`), or a
+/// time's fields (`12:30:`), not written against a name or a symbol. One
+/// digit and a colon is the I/O verb `0:`, `1:` or `2:`, or refused.
+pub(crate) fn minute_before(head: &str) -> bool {
+    let Some(m) = re!(r"\d+(?::\d+)*$").find(head) else {
+        return false;
+    };
+    (m.len() > 1)
+        && !head[..m.start()].ends_with(|c: char| c.is_ascii_alphanumeric() || "_.`".contains(c))
+}
+
+/// Whether the colon straight before `at` ends a number, `12:0:x`, rather
+/// than an assignment, `a:0:x` or `a1::0:x`: the run of name characters
+/// before it starts with a digit.
+fn colon_ends_number(code: &str, at: usize) -> bool {
+    let head = &code[..at - 1];
+    let run = &head[head.len()
+        - head
+            .bytes()
+            .rev()
+            .take_while(|c| c.is_ascii_alphanumeric() || b"._".contains(c))
+            .count()..];
+    run.starts_with(|c: char| c.is_ascii_digit())
 }
 
 /// QE009. A derived function applied by juxtaposition at the start of an

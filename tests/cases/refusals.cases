@@ -1481,7 +1481,7 @@ g:0Nd
 h:0xab
 i:2000.01m
 j:1e
-k:0:`:f.csv
+k:x 0:`:f.csv
 
 === QE007 profile: general | a row-limited select with no from (q 5: parse "select[2] a" is 'from) (#489)
 t:([]a:1 2)
@@ -2319,3 +2319,30 @@ a:`:b 2:x
 a:`b: 0:x
 a:`b: 1:x
 a:`b:2:x
+
+=== QE008 profile: general | an I/O verb straight after an assignment's colon has nothing on its left (q 5: '0:, #2218)
+a:0:x
+
+=== QE008 profile: general | an I/O verb straight after an assignment's colon has nothing on its left (q 5: '2:, #2218)
+a:2:x
+
+=== QE008 profile: general | an I/O verb straight after an assignment's colon has nothing on its left (q 5: '1:, #2218)
+a:1:x
+
+=== QE008 profile: general | an I/O verb straight after an assignment's colon has nothing on its left (q 5: '0:, #2218)
+a::0:x
+
+=== clean profile: general | while q 5 parses each of these (#2218)
+a:x 0:y
+a:0:[x;y]
+a:(0:)x
+a:`b 2:x
+
+
+=== clean profile: general | while q 5 parses each of these (#2220)
+a:12:?10
+a:25:@00:00.000
+a:12:00?10
+a:12:30:?10
+a:12:-10
+a:12:#10
