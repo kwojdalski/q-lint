@@ -315,6 +315,13 @@ test("a temporal or numeric literal is one token with the type letters q takes, 
   assert.deepStrictEqual(await scopesOf("a:3c", "3c"), ["source.q"]);
 });
 
+/// The text of each token of the one-line `source` the grammar colours as a
+/// constant; `k` for a k file.
+async function coloured(source, k = false) {
+  const { tokens } = (await (k ? kGrammar : grammar)).tokenizeLine(source, tm.INITIAL);
+  return tokens.filter((t) => t.scopes.some((x) => /^constant\./.test(x))).map((t) => source.slice(t.startIndex, t.endIndex));
+}
+
 /// Whether each line of `source` is all comment, as the grammar reads it; `k`
 /// for a k file.
 async function commentLines(source, k = false) {
@@ -348,4 +355,25 @@ test("a block comment nests: its inner \\ closes the inner one, and the outer \\
   assert.deepStrictEqual(await scopesOf(lambda, "n"), ["variable.other.definition.q"]);
   // A lone \ after the comment closes still ends the script.
   assert.deepStrictEqual(await commentLines(`${script}\n\\\nz:1`), [...skipped, true, true]);
+});
+
+// On KDB-X each of these is one literal (`-4!` one token, `type value` a
+// timestamp, timespan or datetime): the hours after D or T are any number of
+// digits, with a fraction, when nothing follows them - 1970.01.01D0 is
+// midnight, 0D1.5 an hour and a half. With minutes the hours are two digits:
+// q refuses 0D1:23, 2024.01.02D1:23 and 2024.01.02T1:23.
+test("the hours after D or T are one digit or many, or a fraction, when no minutes follow (#2299)", async () => {
+  const temporal = [
+    "0D0", "0D1", "0D1p", "0D1n", "1D1", "1D1234", "0D123", "0D12.5", "0D1.5p",
+    "1970.01.01D0", "2024.01.02D1", "2024.01.02D1n", "2024.01.02D1p", "2024.01.02D1d", "2024.01.02D1z", "2024.01.02D123", "2024.01.02D1.5", "2024.01.02D12.5n",
+    "2024.01.02T1", "2024.01.02T1z", "2024.01.02T1d", "2024.01.02T123", "2024.01.02T1.5", "2024.01.02T12.5z",
+  ];
+  for (const literal of temporal) {
+    assert.deepStrictEqual(await scopesOf(`a:${literal}+1`, literal), ["constant.numeric.temporal.q"], literal);
+    assert.deepStrictEqual(await scopesOf(`a:${literal}`, literal, true), ["constant.numeric.temporal.k"], `k ${literal}`);
+  }
+  for (const text of ["0D1z", "0D1d", "0D1u", "2024.01.02T1p", "2024.01.02T12p"]) {
+    assert.deepStrictEqual(await coloured(`a:${text}`), [], text);
+    assert.deepStrictEqual(await coloured(`a:${text}`, true), [], `k ${text}`);
+  }
 });

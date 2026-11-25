@@ -47,9 +47,12 @@ LITERAL_END = r"(?![A-Za-z0-9])"
 NUMBER_END = r"(?![A-Za-z0-9.]|(?<=\d\d):\d)"
 TEMPORAL_END = r"(?![A-Za-z0-9.:])"
 # The clock of a timestamp, datetime or timespan, and what follows the hours
-# of a time: 12, 12:34, 12:34:56, 12:34:56.789.
+# of a time: 12, 12:34, 12:34:56, 12:34:56.789. Hours with nothing after them
+# are any number of digits, with a fraction: KDB-X reads 1970.01.01D0, 0D123
+# and 0D1.5. With minutes they are two: 0D1:23 is refused.
 MINUTES = r":\d{2}(?::\d{2}(?:\.\d*)?)?"
-CLOCK = r"\d{2}(?:" + MINUTES + r")?"
+HOURS = r"\d+(?:\.\d*)?"
+CLOCK = r"(?:\d{2}" + MINUTES + r"|" + HOURS + r")"
 NAME = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*"
 # A dotted name split in two: the namespace `.ns.sub` and the member `.f`.
 # The first group is empty for a name with no leading dot, so `a.b` and `f`
@@ -317,7 +320,7 @@ def grammar():
                                 # timestamp: a timespan (n), date (d) or datetime (z) on request
                                 r"\d{4}\.\d{2}\.\d{2}D(?:" + CLOCK + r")?[npdz]?",
                                 # datetime: n and p only once it has minutes
-                                r"\d{4}\.\d{2}\.\d{2}T(?:\d{2}" + MINUTES + r"[npdz]?|(?:\d{2})?[dz]?)",
+                                r"\d{4}\.\d{2}\.\d{2}T(?:\d{2}" + MINUTES + r"[npdz]?|(?:" + HOURS + r")?[dz]?)",
                                 # date, as itself or a timestamp (p), datetime (z), month (m)
                                 # or timespan (n); and a month
                                 r"\d{4}\.\d{2}(?:\.\d{2}[npdzm]?|m)",
