@@ -1059,6 +1059,15 @@ test("Write Lint Baseline names the baseline in the configuration that governs t
   const { tmpdir } = require("node:os");
   assert.strictEqual(pyprojectWithBaseline('[project]\nname = "x"\n\n[tool.qlinter]\nignore = ["QF004"]\n'), '[project]\nname = "x"\n\n[tool.qlinter]\nbaseline = "qlinter-baseline.json"\nignore = ["QF004"]\n');
   assert.strictEqual(pyprojectWithBaseline('[tool.qlinter]\nbaseline = "b.json"\n'), undefined);
+  // The older [tool.q-lint], only sub-tables, dotted keys: each is the table
+  // qlinter reads, not one that names a baseline (#2179).
+  assert.strictEqual(pyprojectWithBaseline('[project]\nname = "x"\n\n[tool.q-lint]\nprofile = "style"\n'), '[project]\nname = "x"\n\n[tool.q-lint]\nbaseline = "qlinter-baseline.json"\nprofile = "style"\n');
+  assert.strictEqual(pyprojectWithBaseline('[tool.q-lint]\nbaseline = "b.json"\n'), undefined);
+  assert.strictEqual(pyprojectWithBaseline('[project]\nname = "x"\n\n[tool.qlinter.lint]\nselect = ["QS"]\n'), '[project]\nname = "x"\n\n[tool.qlinter]\nbaseline = "qlinter-baseline.json"\n\n[tool.qlinter.lint]\nselect = ["QS"]\n');
+  assert.strictEqual(pyprojectWithBaseline('[tool]\nqlinter.profile = "style"\n'), '[tool]\nqlinter.baseline = "qlinter-baseline.json"\nqlinter.profile = "style"\n');
+  assert.strictEqual(pyprojectWithBaseline('[tool]\nqlinter.baseline = "b.json"\n'), undefined);
+  assert.strictEqual(pyprojectWithBaseline('[tool]\nqlinter = { profile = "style" }\n'), null);
+  assert.strictEqual(pyprojectWithBaseline('[project]\nname = "x"\n'), '[project]\nname = "x"\n\n[tool.qlinter]\nbaseline = "qlinter-baseline.json"\n');
   assert.strictEqual(governingConfiguration("file: /w/*.q\nconfiguration: none - built-in defaults\n"), undefined);
   assert.strictEqual(governingConfiguration("file: /w/*.q\nconfiguration: /w/pyproject.toml\n"), "/w/pyproject.toml");
   const root = realpathSync(mkdtempSync(join(tmpdir(), "qlint-bl-gov-")));
