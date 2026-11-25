@@ -22,6 +22,27 @@ import { NO_REVAL, RUN, RUN_READ_ONLY, readAnswer, refusedByReval, type Answer }
 /// failing: the query ran, and this is what it gave.
 export class QError extends Error {}
 
+/// Why a connection evaluates directly (#2470): the process's own
+/// `"evaluation": "direct"`, or `q-lint.query.unwrapped` for a process that
+/// sets none.
+export interface DirectMode {
+  label: string;
+  from: "process" | "setting";
+}
+
+/// What a direct connection says of a call that needs q-lint's own lambda:
+/// it was refused here, before anything was sent.
+export function directRefusal(mode: DirectMode): string {
+  const how =
+    mode.from === "process"
+      ? `Set Process Evaluation on ${mode.label} (its "evaluation" in the process list) changes that`
+      : `q-lint.query.unwrapped (Toggle Unwrapped Query) changes that, or Set Process Evaluation for ${mode.label} alone`;
+  return `this needs q-lint's own evaluator lambda, and ${mode.label} uses direct evaluation, which sends only your code, as plain strings: nothing was sent. ${how}.`;
+}
+
+/// A call refused on a direct connection: nothing was sent.
+export class DirectRefused extends Error {}
+
 export interface Target {
   host: string;
   port: number;
@@ -131,6 +152,12 @@ export class QConnection {
   /// Listeners for the async messages the process sends, each whole: a
   /// tickerplant's updates to a subscriber (#915).
   private readonly onAsync: ((message: Buffer) => void)[] = [];
+  /// Whether, and why, this connection evaluates directly (#2470), asked at
+  /// each send so a changed setting holds at once. While it says so, only
+  /// `evaluate` sends: `call` and `sendAsync` - and so `query`,
+  /// `queryGrid` and `trapped`, every lambda of q-lint's - are refused
+  /// before anything is written, with `directRefusal`'s message.
+  direct: () => DirectMode | undefined = () => undefined;
 
   private constructor(private readonly socket: net.Socket) {
     socket.on("data", (chunk) => this.received(chunk));
@@ -218,6 +245,11 @@ export class QConnection {
     return this.pending !== undefined;
   }
 
+  /// Whether this connection evaluates directly: only plain strings go.
+  get isDirect(): boolean {
+    return this.direct() !== undefined;
+  }
+
   /// Run `statements` on the process and read the answer.
   query(statements: string[], size: [number, number]): Promise<Answer> {
     return this.trapped(RUN, RUN_READ_ONLY, readAnswer, statements, size);
@@ -284,6 +316,10 @@ export class QConnection {
   /// what q answers. One at a time: q answers a handle's messages in order,
   /// so a second would only wait behind the first.
   call(expression: string, ...args: unknown[]): Promise<unknown> {
+    const direct = this.direct();
+    if (direct !== undefined) {
+      return Promise.reject(new DirectRefused(directRefusal(direct)));
+    }
     const sent = args.map(statementsOut);
     const message: Buffer = serialize(sent.length === 0 ? expression : [expression, ...sent]);
     message.writeUInt8(SYNC, 1);
@@ -296,6 +332,10 @@ export class QConnection {
   sendAsync(expression: string, ...args: unknown[]): void {
     if (this.closed) {
       throw new Error("the connection is closed");
+    }
+    const direct = this.direct();
+    if (direct !== undefined) {
+      throw new DirectRefused(directRefusal(direct));
     }
     const sent = args.map(statementsOut);
     const message: Buffer = serialize(sent.length === 0 ? expression : [expression, ...sent]);

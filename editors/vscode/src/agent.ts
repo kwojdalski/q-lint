@@ -12,6 +12,7 @@ import { findDiscovered, qualified, type Discovered, type Row } from "./discover
 import { cellText, typeName, type GridAnswer, type GridPayload } from "./grid";
 import { address as hostPort, markdownText, tagColour, type Process } from "./processes";
 import type { QConnection } from "./qclient";
+import { runUnwrapped } from "./querycontrols";
 import { statements } from "./statements";
 
 export const AGENT = {
@@ -153,9 +154,15 @@ export function shape(answer: GridAnswer): AgentResult {
 }
 
 /// Run the agent's `code` on `connection` and shape what comes back; the
-/// text of a value that is not tabular is cut at the console `size`.
+/// text of a value that is not tabular is cut at the console `size`. On a
+/// direct connection (#2470) each statement goes as a plain string.
 export async function runAgentQuery(connection: QConnection, code: string, size: [number, number]): Promise<AgentResult> {
-  return shape(await connection.queryGrid(statements(code), size, ROW_LIMIT));
+  const cut = statements(code);
+  return shape(
+    connection.isDirect
+      ? await runUnwrapped(connection, cut, { size, limit: ROW_LIMIT, unlimited: false, grid: true })
+      : await connection.queryGrid(cut, size, ROW_LIMIT),
+  );
 }
 
 /// Every label a query can name: the saved processes, then the discovered

@@ -2,7 +2,8 @@
 // `explorer.ts`. What the active process holds is read in one call - on
 // connect, on Refresh, and after a query when auto refresh is on - and kept;
 // the tree and completion both answer from what was kept, so typing never
-// sends the process anything.
+// sends the process anything. A process evaluated directly (#2470) is read
+// on Refresh only, one plain request per part.
 //
 // A table's hover (#930) - its row's tooltip, and a hover on its name in a
 // q editor - asks the process for its details (`tableinfo.ts`) when first
@@ -35,6 +36,7 @@ import {
   GATHER,
   LIMITS,
   explorerTree,
+  gatherDirect,
   inCode,
   liveCompletions,
   previewCode,
@@ -52,6 +54,7 @@ import { wordStart } from "./idioms";
 import { borrowWhenFree } from "./infoview";
 import { readInsight } from "./insightconfig";
 import type { Live } from "./live";
+import { QError } from "./qclient";
 import { blockAt } from "./statements";
 import { TABLE_INFO, HOVER_COLUMNS, readTableInfo, tableMarkdown, type TableInfo } from "./tableinfo";
 
@@ -100,15 +103,18 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
   /// Live completion, while q-lint.processExplorer.liveCompletion.enable is on (#1779).
   private completionProvider: { dispose(): unknown } | undefined;
   /// A refresh asked for while a query ran or another refresh was out,
-  /// made once the connection is free.
+  /// made once the connection is free; `owedAsked` when it was Refresh's.
   private owed = false;
+  private owedAsked = false;
+  /// The process evaluated directly whose read waits for Refresh (#2470).
+  private directWaiting: string | undefined;
 
   constructor(context: ExtensionContext, private readonly live: Live) {
     this.view = window.createTreeView(EXPLORER.view, { treeDataProvider: this });
     context.subscriptions.push(
       this.view,
       this.changed,
-      commands.registerCommand(EXPLORER.refresh, () => this.refresh()),
+      commands.registerCommand(EXPLORER.refresh, () => this.refresh(true)),
       commands.registerCommand(EXPLORER.preview, (node?: Node) => this.preview(node)),
       commands.registerCommand(EXPLORER.toggleAutoRefresh, () => {
         // Where it is set: a user-level write is hidden by a workspace value.
@@ -164,19 +170,48 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
   /// refresh that the query's end pays; and a query sent while the
   /// explorer's call is out waits for it (`Live.borrow`) rather than being
   /// refused. Neither ever shows the user an error for the other.
-  async refresh(): Promise<void> {
+  ///
+  /// A process evaluated directly (#2470) is never sent `GATHER`: it is
+  /// read only when Refresh asks (`asked`), with one plain request per
+  /// part (`gatherDirect`), and a part it refuses is shown as unavailable.
+  async refresh(asked = false): Promise<void> {
     if (this.refreshing) {
       this.owed = true;
+      this.owedAsked ||= asked;
       return;
     }
+    // A Refresh that waited for a query is still one.
+    asked ||= this.owedAsked;
+    this.owedAsked = false;
     const { excludedNamespaces } = settings();
+    const direct = this.live.activeDirect();
+    if (direct !== undefined && !asked) {
+      // Kept from the last Refresh stays; nothing is sent.
+      this.directWaiting = direct.label;
+      this.owed = false;
+      this.show();
+      return;
+    }
+    this.directWaiting = undefined;
     const call = this.live.borrow(async (connection, process) => ({
       process: process.label,
-      gathered: readGathered(await connection.call(GATHER, excludedNamespaces.join(" "), LIMITS)),
+      gathered: connection.isDirect
+        ? await gatherDirect(async (request) => {
+            try {
+              return { ok: true, value: (await connection.evaluate(request)).value };
+            } catch (error) {
+              if (error instanceof QError) {
+                return { ok: false, error: error.message };
+              }
+              throw error;
+            }
+          }, excludedNamespaces)
+        : readGathered(await connection.call(GATHER, excludedNamespaces.join(" "), LIMITS)),
     }), "the Process Explorer's read");
     if (call === undefined) {
       // Busy with a query, or not connected: `connected` will refresh.
       this.owed = this.live.activeLabel() !== undefined;
+      this.owedAsked = asked && this.owed;
       return;
     }
     this.owed = false;
@@ -209,7 +244,9 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
           ? `Could not read ${label}: ${this.problem}`
           : this.refreshing && this.kept === undefined
             ? `Reading ${label}…`
-            : undefined;
+            : this.directWaiting === label && this.kept?.process !== label
+              ? `${label} is evaluated directly: Refresh reads its tables, namespaces, functions and variables, each as a plain request.`
+              : undefined;
     if (label === undefined) {
       this.kept = undefined;
     }

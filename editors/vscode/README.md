@@ -489,7 +489,7 @@ and clicking it switches. The commands:
   argument for a keybinding, and **Disconnect**.
 - **Import** and **Export Processes**: a JSON file holding
   `{"processes": [{"label", "host", "port", "user"?, "tags"?, "tls"?}]}`,
-  and any of `init`, `initFile`, `ssh`, `gateway` and `launch` (below).
+  and any of `init`, `initFile`, `ssh`, `gateway`, `evaluation` and `launch` (below).
   An import replaces processes of the same label, adds the rest, and says
   which entries it skipped. One that would take away a process's TLS, SSH
   tunnel or a tag the read-only guard guards is asked about first. A process
@@ -499,7 +499,7 @@ and clicking it switches. The commands:
 - **Set Connect Script**, on a process row: q code, or a q file, run on
   the process at every connect - the first, a reconnect after an abort, and
   an automatic reconnect - before any query is sent, as a query runs it
-  (unwrapped when `q-lint.query.unwrapped` is on). Use it to load helpers,
+  (as plain strings on a process evaluated directly). Use it to load helpers,
   set `\d`, or open handles a session needs. A file chosen inside the
   workspace folder is kept relative to it, and is read again at each
   connect; a leading `~` is your home directory. A script that fails, or a
@@ -527,6 +527,12 @@ and clicking it switches. The commands:
 - **Set Gateway Server Types**, on a process row: marks the process as a
   TorQ gateway, with the server types its queries go to (`rdb hdb`); empty
   unmarks it. See **TorQ gateways** below.
+- **Set Process Evaluation**, on a process row: `direct`, `wrapped`, or
+  follow `q-lint.query.unwrapped` (the default). Kept in the process list as
+  `"evaluation": "direct"`. Use `direct` for a process that refuses
+  q-lint's lambda - TorQ with permissions on, where `.pm` rejects
+  `{[s;rows;size] ...}` - and leave the rest wrapped. See **Toggle Unwrapped
+  Query** below for what direct evaluation costs.
 - **Start Process** and **Stop Process**, on a process row, and **Set
   Launch Definition**: start a q or TorQ process on this machine from its
   launch definition - a program (empty: `q-lint.terminal.qBinary`), a script
@@ -1187,7 +1193,7 @@ refusal as its error. Code the guard asked about and you confirmed is sent
 as it is. It covers a query (console, grid, chart, unlimited), a notebook
 cell and its live values, Query a Tag, Compare Query and the paths through
 `Live.runOnActive`; not a TorQ gateway, whose `.gw.syncexec` changes the
-gateway itself, unwrapped mode, which sends nothing of ours, or a process
+gateway itself, direct evaluation, which sends nothing of ours, or a process
 without `reval` (said once), where the guard alone holds. `reval` does not
 stop a breakpoint (`.Q.bs`, `-104!`) patching a function in place - q refuses
 the update of `.Q.BP` after the code is patched - so the guard asks about those.
@@ -1293,6 +1299,25 @@ kept for when it is on again.
   float is written at q's default `\P` of 7 digits, since q-lint asks the
   process nothing of its own. Errors still come back as q errors, without
   a trace. The status bar shows `unwrapped`.
+
+  This is direct evaluation, and a process can set it for itself with
+  **Set Process Evaluation** (`"evaluation": "direct"` or `"wrapped"`),
+  which wins over the setting; the status bar shows `direct` and the
+  connection's tooltip says which applies. The trade-off: wrapped runs your
+  code inside q-lint's lambda, which gives a backtrace, q's own formatting,
+  paging and `reval` on a guarded process; direct sends only your code, so
+  it works where a lambda is refused, but has no backtrace, the result is
+  formatted by q-lint, and nothing is read-only on the server - the
+  read-only guard still reads the code first, and on a guarded process
+  q-lint says once that the process does not enforce read-only. Run Query, the REPL, Interactive
+  Window and Smart Send, notebook cells, Run with Parameters, `{{q: }}` live
+  values, the connect script and the agent tool all evaluate directly;
+  features that need q-lint's lambda (benchmark, line timings, snapshots,
+  Explain aj, Run Query Asynchronously, logpoints...) refuse before sending
+  anything, naming the mode. The Process Explorer reads a direct process
+  only on Refresh, with plain requests (`tables[]`, `` key` ``, `\a`, `\f`,
+  `\v` per namespace): names and kinds only, and a request the process
+  refuses shows as unavailable.
 - **Query timeout**, `q-lint.query.timeout` seconds (`0`, the default, is
   none): a query still running then is aborted exactly as **Abort Current
   Query** aborts it, and the history records it as timed out.
@@ -1322,8 +1347,8 @@ kept for when it is on again.
   view, and shows the view. **Open q-lint Settings** opens Settings at
   q-lint's.
 
-Unlimited, unwrapped and the timeout apply to queries from the editor,
-the history and Preview; a notebook cell runs as before.
+Unlimited and the timeout apply to queries from the editor, the history
+and Preview; direct evaluation applies wherever your code is run.
 
 **Parameter cache.** **Toggle Parameter Cache**, `ctrl+shift+'` (also in
 the editor's context menu), is for running a lambda's body a line at a
@@ -2780,7 +2805,7 @@ nothing.
 | `q-lint.query.gridLimit` | `10000` | The most rows the process sends to the grid or chart. | - |
 | `q-lint.query.gridDecimals` | `-1` | Decimal places of a float or real in the grid and its CSV; `-1` as the process writes it (`\P`). | `q-processes.cfg.queryGridDecimals` (default 3) |
 | `q-lint.query.resultsLocation` | `"editor"` | Where a grid or chart opens: `editor`, beside it, or `panel`, the **q Results** view in the bottom panel. | - |
-| `q-lint.query.unwrapped` | `false` | Send code as plain strings, for a gateway that refuses a lambda, and format the result in q-lint. **Toggle Unwrapped Query** changes it. | - |
+| `q-lint.query.unwrapped` | `false` | Send code as plain strings (direct evaluation), for a gateway that refuses a lambda, and format the result in q-lint; a process's own `evaluation` (**Set Process Evaluation**) wins. **Toggle Unwrapped Query** changes it. | - |
 | `q-lint.query.timeout` | `0` | Seconds a query may run before it is aborted, as Abort does; `0` none. | - |
 | `q-lint.query.resultHistory` | `10` | Results the result panel keeps as tabs, 1 to 50. | - |
 | `q-lint.query.gridHeatmap` | `false` | Colour the grid's numeric columns by value. **Toggle Result Heatmap** changes it. | - |

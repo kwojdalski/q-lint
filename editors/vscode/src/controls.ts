@@ -18,6 +18,7 @@ import {
   FILE_CONNECTIONS_KEY,
   bindingFor,
   bindingText,
+  evaluationText,
   flagsText,
   readControls,
   savedFrom,
@@ -26,10 +27,13 @@ import {
   type UntitledBinding,
 } from "./querycontrols";
 import { isUriLike } from "./clicked";
+import type { DirectMode } from "./qclient";
 
 /// What the controls need of the live half.
 export interface ControlsHost {
   activeLabel(): string | undefined;
+  /// Whether, and why, the active process is evaluated directly (#2470).
+  activeDirect?(): DirectMode | undefined;
   /// A process the user picks, by label; undefined if none was.
   pick(title: string): Promise<string | undefined>;
 }
@@ -127,16 +131,32 @@ export class QueryControls {
   /// active connection. The live half calls it when the connection changes.
   refresh(): void {
     const unwrapped = this.settings().unwrapped;
-    const flags = flagsText(this.unlimitedOn, unwrapped);
+    // Connected, the active process's own evaluation is shown (#2470); with
+    // none, what the setting will do.
+    const label = this.host.activeLabel();
+    const direct = label === undefined ? undefined : this.host.activeDirect?.();
+    const flags = flagsText(this.unlimitedOn, label === undefined && unwrapped, direct !== undefined);
     if (flags === "") {
       this.flags.hide();
     } else {
       this.flags.text = flags;
-      this.flags.command = this.unlimitedOn ? CONTROL_COMMANDS.toggleUnlimited : CONTROL_COMMANDS.toggleUnwrapped;
+      this.flags.command = this.unlimitedOn
+        ? CONTROL_COMMANDS.toggleUnlimited
+        : direct?.from === "process"
+          ? CONTROL_COMMANDS.setEvaluation
+          : CONTROL_COMMANDS.toggleUnwrapped;
       this.flags.tooltip = [
         this.unlimitedOn ? "Unlimited query: console text is not cut at q-lint.output.consoleSize, and a grid or chart is sent every row." : "",
-        unwrapped ? "Unwrapped query (q-lint.query.unwrapped): code is sent as a plain string, and the result formatted here." : "",
-        `Click to turn ${this.unlimitedOn ? "unlimited" : "unwrapped"} off.`,
+        direct !== undefined && label !== undefined
+          ? evaluationText(label, direct, direct.from === "process")
+          : label === undefined && unwrapped
+            ? "Unwrapped query (q-lint.query.unwrapped): code is sent as a plain string, and the result formatted here."
+            : "",
+        this.unlimitedOn
+          ? "Click to turn unlimited off."
+          : direct?.from === "process"
+            ? `Click to set the evaluation of ${label}.`
+            : "Click to turn unwrapped off.",
       ].filter(Boolean).join("\n");
       this.flags.show();
     }

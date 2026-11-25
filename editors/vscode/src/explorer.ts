@@ -125,6 +125,8 @@ export interface Entry {
   partitioned: boolean;
   /// A table's columns in all, when that is more than `cols` holds.
   allCols?: number;
+  /// Read on a direct process (#2470): its name and kind only.
+  unread?: true;
 }
 
 export interface Gathered {
@@ -132,6 +134,17 @@ export interface Gathered {
   spaces: { ns: string; total: number }[];
   /// Namespaces left unread.
   more: number;
+  /// What a direct process refused to say (#2470): the request, the part it
+  /// was for, in `ns` or of the namespaces when that is undefined, and q's
+  /// error as q sent it.
+  unavailable?: Unavailable[];
+}
+
+export interface Unavailable {
+  ns?: string;
+  part: "Tables" | "Functions" | "Variables" | "Namespaces";
+  request: string;
+  error: string;
 }
 
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : []);
@@ -169,6 +182,78 @@ export function readGathered(raw: unknown): Gathered {
     s !== null && typeof s === "object" && typeof s.ns === "string" ? [{ ns: s.ns, total: number(s.total) ?? 0 }] : [],
   );
   return { entries, spaces, more: number(r.more) ?? 0 };
+}
+
+/// What reading a request as a plain string gave: its value as the codec
+/// decodes it, or q's error.
+export type Read = { ok: true; value: unknown } | { ok: false; error: string };
+
+/// The plain requests the explorer sends a direct process (#2470), for the
+/// root (`.`) or a namespace: no lambda, nothing defined. `\a`, `\f` and
+/// `\v` are what q's own `tables`, `system "f"` and `system "v"` read.
+export function directRequests(ns: string): { part: "Tables" | "Functions" | "Variables"; request: string }[] {
+  return ns === "."
+    ? [
+        { part: "Tables", request: "tables[]" },
+        { part: "Functions", request: "\\f" },
+        { part: "Variables", request: "\\v" },
+      ]
+    : [
+        { part: "Tables", request: `\\a ${ns}` },
+        { part: "Functions", request: `\\f ${ns}` },
+        { part: "Variables", request: `\\v ${ns}` },
+      ];
+}
+
+/// The request for the namespaces: the root's names that are namespaces.
+export const NAMESPACES_REQUEST = "key`";
+
+const names = (v: unknown): string[] => (Array.isArray(v) ? v : typeof v === "string" ? [v] : []).filter((x): x is string => typeof x === "string" && x !== "");
+
+/// What a direct process holds (#2470), read with `read`, one plain request
+/// at a time: its namespaces, then for the root and each namespace not
+/// `excluded` its tables, functions and variables - names and kinds only,
+/// since anything more would need q-lint's lambda. A request refused is
+/// kept in `unavailable` with q's error, and the rest is still read. At most
+/// `lim[1]` namespaces, and `lim[0]` names in each, sorted. A namespace
+/// nested in another is among its variables, as `\v` lists it.
+export async function gatherDirect(read: (request: string) => Promise<Read>, excluded: string[], lim: [number, number] = LIMITS): Promise<Gathered> {
+  const unavailable: Unavailable[] = [];
+  const listed = await read(NAMESPACES_REQUEST);
+  if (!listed.ok) {
+    unavailable.push({ part: "Namespaces", request: NAMESPACES_REQUEST, error: listed.error });
+  }
+  const all = [".", ...[...new Set(listed.ok ? names(listed.value) : [])].sort().map((n) => `.${n}`).filter((ns) => !excludedBy(ns, excluded))];
+  const read_ = all.slice(0, lim[1]);
+  const entries: Entry[] = [];
+  const spaces: { ns: string; total: number }[] = [];
+  for (const ns of read_) {
+    const got: Partial<Record<"Tables" | "Functions" | "Variables", string[]>> = {};
+    for (const { part, request } of directRequests(ns)) {
+      const answer = await read(request);
+      if (answer.ok) {
+        got[part] = names(answer.value);
+      } else {
+        unavailable.push({ ns, part, request, error: answer.error });
+      }
+    }
+    const tables = new Set(got.Tables ?? []);
+    const functions = new Set(got.Functions ?? []);
+    // `\v` lists the tables too.
+    const variables = new Set((got.Variables ?? []).filter((n) => !tables.has(n) && !functions.has(n)));
+    const kinds = new Map<string, Entry["kind"]>([
+      ...[...variables].map((n): [string, Entry["kind"]] => [n, "variable"]),
+      ...[...functions].map((n): [string, Entry["kind"]] => [n, "function"]),
+      ...[...tables].map((n): [string, Entry["kind"]] => [n, "table"]),
+    ]);
+    const sorted = [...kinds.keys()].sort();
+    spaces.push({ ns, total: sorted.length });
+    for (const name of sorted.slice(0, lim[0])) {
+      const kind = kinds.get(name)!;
+      entries.push({ ns, name, kind, type: kind === "table" ? 98 : kind === "function" ? 100 : 0, count: null, cols: [], keys: [], params: [], partitioned: false, unread: true });
+    }
+  }
+  return { entries, spaces, more: all.length - read_.length, ...(unavailable.length > 0 ? { unavailable } : {}) };
 }
 
 /// How q code names `entry`: `t` in the root, `.ns.t` elsewhere.
@@ -239,7 +324,14 @@ export interface Node {
   children?: Node[];
 }
 
+/// What a row read on a direct process says: its name and kind are all
+/// that was read.
+const UNREAD = "not read: direct evaluation";
+
 function tableNode(e: Entry): Node {
+  if (e.unread) {
+    return { kind: "table", label: e.name, description: UNREAD, tooltip: `${fullName(e)}: table. Only its name was read: the process is evaluated directly.`, name: fullName(e), partitioned: false };
+  }
   const rows = e.count === null ? "rows not counted" : plural(e.count, "row");
   const how = e.partitioned && e.count !== null ? " (partitioned, counted by .Q.cn)" : "";
   const all = e.allCols ?? e.cols.length;
@@ -268,6 +360,9 @@ function tableNode(e: Entry): Node {
 const shape = (e: Entry): string => (e.view ? "view" : e.type === 100 ? `[${e.params.join(";")}]` : typeName(e.type));
 
 function functionNode(e: Entry): Node {
+  if (e.unread) {
+    return { kind: "function", label: e.name, tooltip: `${fullName(e)}: a function. Only its name was read: the process is evaluated directly.`, name: fullName(e) };
+  }
   return {
     kind: "function",
     label: e.name,
@@ -278,6 +373,9 @@ function functionNode(e: Entry): Node {
 }
 
 function variableNode(e: Entry): Node {
+  if (e.unread) {
+    return { kind: "variable", label: e.name, tooltip: `${fullName(e)}: a variable. Only its name was read: the process is evaluated directly.`, name: fullName(e) };
+  }
   const t = typeName(e.type);
   // An atom's count is 1, which says nothing.
   const count = e.type < 0 || e.count === null ? "" : ` · ${plural(e.count, "item")}`;
@@ -307,6 +405,7 @@ export function explorerTree(g: Gathered, excluded: string[]): Node[] {
       ...group("Tables", "table", tableNode),
       ...group("Functions", "function", functionNode),
       ...group("Variables", "variable", variableNode),
+      ...(g.unavailable ?? []).filter((u) => u.ns === space.ns).map(unavailableNode),
       ...(shown < space.total
         ? [{ kind: "note" as const, label: `${plural(space.total - shown, "more name")} not shown`, description: `the first ${shown} in order are` }]
         : []),
@@ -321,7 +420,13 @@ export function explorerTree(g: Gathered, excluded: string[]): Node[] {
   if (g.more > 0) {
     nodes.push({ kind: "note", label: `${plural(g.more, "more namespace")} not read` });
   }
+  nodes.push(...(g.unavailable ?? []).filter((u) => u.ns === undefined).map(unavailableNode));
   return nodes;
+}
+
+/// A part a direct process refused, with q's error as it sent it.
+function unavailableNode(u: Unavailable): Node {
+  return { kind: "note", label: `${u.part} unavailable`, description: u.error, tooltip: `${u.request} was refused: '${u.error}` };
 }
 
 /// The code Preview runs: the first `limit` rows of a table, or a variable
