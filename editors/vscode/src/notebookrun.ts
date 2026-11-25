@@ -116,7 +116,7 @@ export async function runWithParameters(live: Live, source?: Uri, target?: Uri, 
                 const ran = await live.runOnActive(code, async (connection) => {
                   running = true;
                   try {
-                    return await use(connection);
+                    return await use(connection, (c) => live.gatewayed(c));
                   } finally {
                     running = false;
                   }

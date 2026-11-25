@@ -551,7 +551,8 @@ test("a double-clicked cell offers its drill-down templates, filled in, and runs
   const fake = fakeVscode({ "results.drilldownTemplates": [{ label: "next", query: "select from t where c>{{value}}" }, { query: "x", columns: ["other"] }] });
   const modes = loadModes(fake);
   const ran = [];
-  modes.setRunner(async (code, process) => ran.push([code, process]));
+  const from = [];
+  modes.setRunner(async (code, process, code0) => (ran.push([code, process]), from.push(code0)));
   let offered;
   fake.vscode.window.showQuickPick = async (items) => {
     offered = items;
@@ -563,6 +564,8 @@ test("a double-clicked cell offers its drill-down templates, filled in, and runs
   await new Promise((r) => setImmediate(r));
   assert.deepStrictEqual(offered.map((i) => [i.label, i.detail]), [["next", "select from t where c>20"]]);
   assert.deepStrictEqual(ran, [["select from t where c>20", "p"]]);
+  // With the code of the result it drills from: a gateway's names its server types (#2437).
+  assert.deepStrictEqual(from, [result([10, 20]).code]);
   // From the editor's context menu, with the cell's data-vscode-context.
   const { RESULT_VIEW } = require("../out/liveconfig.js");
   await fake.vscode.commands[RESULT_VIEW.drillDown]({ webviewSection: "cell", column: 0, row: 0 });

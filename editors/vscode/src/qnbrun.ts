@@ -23,6 +23,7 @@ import { valued, type GuardCode } from "./guard";
 import { LIVE, LIVE_KEY, LIVE_READ_ONLY, VALUE_LIMIT, liveQueries, markdownAfter, readLiveValues, type LiveValue } from "./livemarkdown";
 import type { GridAnswer, GridPayload } from "./grid";
 import { formatValue, oneLine } from "./qformat";
+import type { Gatewayed } from "./gateway";
 import { answerOf, directMode, evaluateAll } from "./querycontrols";
 import type { RowLimitFrom } from "./liveconfig";
 import { address, readProcessFile, type Process } from "./processes";
@@ -43,9 +44,11 @@ export interface RunSettings {
 
 /// Run a cell's statements `cut` on `connection` as its `mode` asks:
 /// whether it succeeded, and its outputs. On a direct connection (#2470)
-/// each statement goes as a plain string, and the answer is shaped here.
-export async function cellAnswer(connection: QConnection, mode: CellMode, cut: string[], settings: RunSettings): Promise<[boolean, OutputPart[]]> {
-  if (connection.isDirect) {
+/// each statement goes as a plain string, and the answer is shaped here;
+/// so too through a TorQ gateway, as `gateway` sends them (#2428).
+export async function cellAnswer(connection: QConnection, mode: CellMode, written: string[], settings: RunSettings, gateway?: Gatewayed): Promise<[boolean, OutputPart[]]> {
+  const { cut, plain } = gateway?.(written) ?? { cut: written, plain: false };
+  if (connection.isDirect || plain) {
     return directCellAnswer(connection, mode, cut, settings);
   }
   if (mode.mode === "chart") {
@@ -107,15 +110,16 @@ export function guardedText(source: string, markdown: string[]): GuardCode {
 
 /// The live values of the Markdown `sources`, each cell's by its key, read
 /// on `connection` in one call; empty when they have none. What is sent is
-/// each one's expression as written, not its key (#1993).
-export async function liveValues(connection: QConnection, sources: string[]): Promise<Record<string, LiveValue>[]> {
+/// each one's expression as written, not its key (#1993); through a TorQ
+/// gateway, as `gateway` sends it (#2428).
+export async function liveValues(connection: QConnection, sources: string[], gateway?: Gatewayed): Promise<Record<string, LiveValue>[]> {
   const queries = sources.map(liveQueries);
   const exprs = [...new Set(queries.flat().map((q) => q.expr))];
   if (exprs.length === 0) {
     return sources.map(() => ({}));
   }
-  const all = connection.isDirect
-    ? await directLiveValues(connection, exprs)
+  const all = connection.isDirect || (gateway !== undefined && exprs.some((e) => gateway([e]).plain))
+    ? await directLiveValues(connection, exprs, gateway)
     : readLiveValues(exprs, await connection.call(connection.readOnly ? LIVE_READ_ONLY : LIVE, exprs));
   for (const value of Object.values(all)) {
     if ("error" in value) {
@@ -129,10 +133,10 @@ export async function liveValues(connection: QConnection, sources: string[]): Pr
 /// a plain string, one failing not losing the rest, and written as `LIVE`
 /// writes them - a string or a symbol as its characters, anything else on
 /// one line as `-3!` does - at most `VALUE_LIMIT` characters.
-async function directLiveValues(connection: QConnection, exprs: string[]): Promise<Record<string, LiveValue>> {
+async function directLiveValues(connection: QConnection, exprs: string[], gateway?: Gatewayed): Promise<Record<string, LiveValue>> {
   const values: Record<string, LiveValue> = {};
   for (const expr of exprs) {
-    const ran = await evaluateAll(connection, [expr]);
+    const ran = await evaluateAll(connection, gateway?.([expr]).cut ?? [expr]);
     if (!ran.ok) {
       values[expr] = { error: ran.error };
       continue;
@@ -283,7 +287,8 @@ export function injectParameters(cells: QnbCell[], overrides: Record<string, str
 /// run's own when it is undefined. Throws, with why, when it cannot. The
 /// label is the cell's `/ @process`, or the last one a cell above named.
 export interface Executor {
-  on<T>(label: string | undefined, code: GuardCode, use: (connection: QConnection) => Promise<T>): Promise<T>;
+  /// `use` is given how statements go to a TorQ gateway, where one is.
+  on<T>(label: string | undefined, code: GuardCode, use: (connection: QConnection, gateway?: Gatewayed) => Promise<T>): Promise<T>;
 }
 
 export interface RunResult {
@@ -377,9 +382,9 @@ export async function runNotebook(
     const after = hooks.liveValues === false ? [] : markdownOf(i);
     named = directive.process ?? named;
     try {
-      const [ok, parts, values] = await executor.on(named, guardedText(cell.source, after.map((j) => cells[j].source)), async (connection) => {
-        const [ok, parts] = cut.length === 0 ? [true, []] : await cellAnswer(connection, directive, cut, settings);
-        const values = ok ? await liveValues(connection, after.map((j) => cells[j].source)) : [];
+      const [ok, parts, values] = await executor.on(named, guardedText(cell.source, after.map((j) => cells[j].source)), async (connection, gateway) => {
+        const [ok, parts] = cut.length === 0 ? [true, []] : await cellAnswer(connection, directive, cut, settings, gateway);
+        const values = ok ? await liveValues(connection, after.map((j) => cells[j].source), gateway) : [];
         return [ok, parts, values] as const;
       });
       finish(ok, parts);

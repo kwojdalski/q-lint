@@ -72,7 +72,7 @@ import { clickedEditor, unsavedIn } from "./clicked";
 import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
 import { ClosedBeforeHandshake, QConnection, QError, type DirectMode, type Target } from "./qclient";
 import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, TunnelHandshakeError, readTunnel } from "./tunnel";
-import { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, readGateway } from "./gateway";
+import { GATEWAY_COMMANDS, fileServerTypes, gatewayJoined, gatewayParts, gatewayStatement, isGatewayCall, readGateway, withServerTypes } from "./gateway";
 import { isLocalHost } from "./launcher";
 import { HEARTBEAT, STEADY_MS, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
 import { clearedStamp, historyHeading, historyLabel, iconsEscaped, mergedHistory, plainMessage } from "./history";
@@ -720,7 +720,7 @@ export class Live {
   /// often, how many runs so far, its timer and status bar item, and
   /// whether a run is out.
   private watching:
-    | { code: string; label: string; every: number; runs: number; timer: ReturnType<typeof setInterval>; status: StatusBarItem; running: boolean; asked: { write: boolean; tagged: boolean } }
+    | { code: string; label: string; every: number; runs: number; timer: ReturnType<typeof setInterval>; status: StatusBarItem; running: boolean; asked: { write: boolean; tagged: boolean }; serverTypes?: string[] }
     | undefined;
   /// The workspace's shared process list as last read (#955), when it is
   /// on and the file is there, and the watcher on the file.
@@ -749,7 +749,8 @@ export class Live {
     this.runFileWith = (extra, document) => terminals.runFile(extra, document);
     this.modes = new QueryModes(context);
     this.modes.setPager((label, offset, count, token) => this.pageHeld(label, offset, count, token));
-    this.modes.setRunner((code, label) => this.runOnProcess(code, label));
+    // A drill-down from a gateway's result goes to the servers it came from (#2437).
+    this.modes.setRunner((code, label, from) => this.runOnProcess(code, label, { serverTypes: gatewayParts(from)?.types }));
     this.controls = new QueryControls(context, {
       activeLabel: () => this.activeLabel(),
       activeDirect: () => this.activeDirect(),
@@ -1350,7 +1351,7 @@ export class Live {
     const on =
       this.setting(readEnforce) &&
       guardedBy(process, this.setting(readGuard)).length > 0 &&
-      process.gateway === undefined &&
+      (process.gateway === undefined || !this.setting(readGateway).enabled) &&
       !isGatewayCall(guardText(code)) &&
       this.guardRefuses(code, [process]) === undefined;
     connection.readOnly = on;
@@ -2726,7 +2727,13 @@ export class Live {
     // A file can name the server types its queries go to on a gateway.
     const document = window.activeTextEditor?.document;
     const named = document !== undefined && document.uri.toString() === uri.toString() ? fileServerTypes(document.getText()) : undefined;
-    await this.run(code, undefined, serverTypes ?? named);
+    // Types chosen for a gateway call already made, a history entry, are
+    // its types now; a call of any other shape keeps its own, said (#2592).
+    const retyped = serverTypes !== undefined && isGatewayCall(code) ? withServerTypes(code, serverTypes) : undefined;
+    if (serverTypes !== undefined && isGatewayCall(code) && retyped === undefined) {
+      void window.showInformationMessage(plainMessage(`q-lint: this code is a gateway call already, so it goes to the server types it names, not ${serverTypes.join(", ")}.`));
+    }
+    await this.run(retyped ?? code, undefined, serverTypes ?? named);
   }
 
   /// `code` as it goes to `process`: through `.gw.syncexec` on a TorQ gateway
@@ -2734,11 +2741,55 @@ export class Live {
   /// other process, or with q-lint.connection.torqGateway.enable off.
   private throughGateway(code: string, process: Process, serverTypes?: string[]): string {
     const types = serverTypes ?? process.gateway;
-    if (process.gateway === undefined || types === undefined || isGatewayCall(code) || !this.setting(readGateway).enabled) {
+    // `/ @servertypes none` names no server: the gateway itself (#2588).
+    if (process.gateway === undefined || types === undefined || types.length === 0 || isGatewayCall(code) || !this.setting(readGateway).enabled) {
       return code;
     }
     const cut = statements(code);
     return cut.length === 0 ? code : gatewayStatement(cut, types);
+  }
+
+  /// `cut`, statements for the active process, as they go to it from a
+  /// feature that runs code as Run does - the REPL, a notebook cell, an
+  /// agent: through `.gw.syncexec` on a TorQ gateway (#909), to the
+  /// process's server types. `plain` when that is a gateway call, which
+  /// defers its reply past any lambda of q-lint's, so it goes as plain
+  /// strings (#2584).
+  gatewayed(cut: string[]): { cut: string[]; plain: boolean } {
+    const process = this.active;
+    if (process === undefined || cut.length === 0) {
+      return { cut, plain: false };
+    }
+    const sent = this.throughGateway(cut.join("\n"), process);
+    return { cut: statements(sent), plain: isGatewayCall(sent) };
+  }
+
+  /// Whether Run sends `code` to the active process through `.gw.syncexec`:
+  /// it is a TorQ gateway (#909), and `code` not the gateway's own.
+  goesThroughGateway(code: string): boolean {
+    const process = this.activeProcess();
+    return process !== undefined && this.throughGateway(code, process) !== code;
+  }
+
+  /// `code` on the active process through `.gw.syncexecj`, its servers'
+  /// answers joined by `join` on the gateway, where Run would send it
+  /// through `.gw.syncexec`; undefined elsewhere. Copy Value as JSON (#2433).
+  gatewayJoinedOnActive(code: string, join: string): string | undefined {
+    const types = this.activeProcess()?.gateway;
+    return types === undefined || !this.goesThroughGateway(code) ? undefined : gatewayJoined(statements(code), types, join);
+  }
+
+  /// Why `feature`, which runs `code` inside a lambda of q-lint's, refuses
+  /// it on the active process: a TorQ gateway Run would send it through
+  /// `.gw.syncexec` to, whose deferred reply never reaches that lambda
+  /// (#2584), so it would run on the gateway itself instead. Undefined
+  /// elsewhere, and for the gateway's own code.
+  gatewayRefusal(feature: string, code: string): string | undefined {
+    const process = this.activeProcess();
+    if (process === undefined || !this.goesThroughGateway(code)) {
+      return undefined;
+    }
+    return `q-lint: ${feature} runs the code in q-lint's own q, which on the TorQ gateway ${process.label} would run it on the gateway itself, not through .gw.syncexec on its servers as Run Query does. Use Run Query there.`;
   }
 
   /// Mark a saved process as a TorQ gateway with the server types its
@@ -3213,7 +3264,8 @@ export class Live {
   /// scheduled export writes the result, not its first page (#1613).
   /// `unattended`: run from a timer - a tile's refresh, a schedule - so the
   /// connect script asks nobody and its failure is thrown (#1618).
-  async runApart(process: Process, code: string, signal?: AbortSignal, options: { whole?: boolean; unattended?: boolean } = {}): Promise<GridAnswer> {
+  /// `serverTypes`: a gateway's, the file's `/ @servertypes` (#2363).
+  async runApart(process: Process, code: string, signal?: AbortSignal, options: { whole?: boolean; unattended?: boolean; serverTypes?: string[] } = {}): Promise<GridAnswer> {
     const commanded = process.credentialCommand !== undefined && this.setting(readAdmin).credentialCommand;
     if (!commanded && process.user && process.server !== undefined && (await this.context.secrets.get(this.passwordKey(process))) === undefined) {
       throw new Error(`no password is stored for ${process.user}: connect to ${process.label} once to give it`);
@@ -3239,8 +3291,10 @@ export class Live {
       const unlimited = this.controls.unlimited || options.whole === true;
       const { consoleSize, gridLimit } = limits(settings, unlimited);
       // On a TorQ gateway, through `.gw.syncexec`, as `run` sends it (#1230).
-      const cut = statements(this.throughGateway(code, process));
-      if (connection.isDirect) {
+      const sent = this.throughGateway(code, process, options.serverTypes);
+      const cut = statements(sent);
+      // A gateway call defers its reply, so it goes as plain strings (#2584).
+      if (connection.isDirect || isGatewayCall(sent)) {
         this.sayNoReval(connection, process);
         return await runUnwrapped(connection, cut, { size: consoleSize, limit: gridLimit, unlimited, grid: true });
       }
@@ -3297,6 +3351,10 @@ export class Live {
       void window.showInformationMessage("q-lint: the query is empty: it is blank or only comments.");
       return;
     }
+    // Code from the editor goes to a gateway's servers as Run Query sends
+    // it: on the types the file names (#2368).
+    const document = typeof given === "string" ? undefined : window.activeTextEditor?.document;
+    const serverTypes = document === undefined ? undefined : fileServerTypes(document.getText());
     let seconds = typeof every === "number" && intervalProblem(String(every)) === undefined ? every : undefined;
     if (seconds === undefined) {
       const text = await window.showInputBox({
@@ -3363,6 +3421,7 @@ export class Live {
       status,
       running: false,
       asked: { write, tagged: tags.length > 0 || isProduction(process) },
+      ...(serverTypes !== undefined ? { serverTypes } : {}),
     };
     void commands.executeCommand("setContext", WATCHING, true);
     status.show();
@@ -3401,7 +3460,7 @@ export class Live {
     watched.runs++;
     watched.status.text = watchText(iconsEscaped(watched.label), watched.every, watched.runs);
     try {
-      await this.run(watched.code, first ? "watch" : "watched");
+      await this.run(watched.code, first ? "watch" : "watched", watched.serverTypes);
     } finally {
       watched.running = false;
     }
@@ -3485,7 +3544,9 @@ export class Live {
       // direct evaluation, which sends nothing of ours, nor on production or
       // a process the read-only guard (#918) guards, as holding assigns.
       const readOnly = isProduction(process) || guardedBy(process, this.setting(readGuard)).length > 0;
-      const direct = connection.isDirect;
+      // A gateway call defers its reply past any lambda of ours, so it goes
+      // as plain strings too (#2584).
+      const direct = connection.isDirect || isGatewayCall(code);
       const hold = !direct && settings.mode !== "console" && this.modes.wantsHold(readOnly);
       // This result's own, so a page is of it and no other (#2128).
       const token = hold ? randomBytes(16).toString("hex") : undefined;
@@ -3604,7 +3665,8 @@ export class Live {
   /// (#927), a wrangle step (#961), a cell edit (#964) - as a query from the
   /// editor is run, read by the guard, after asking when it is a production
   /// one (unless `askProduction` is false: the caller asked already).
-  async runOnProcess(code: string, label: string, options: { what?: string; mode?: QueryMode; askProduction?: boolean } = {}): Promise<void> {
+  /// `serverTypes`: on a gateway, those the result came from (#2437).
+  async runOnProcess(code: string, label: string, options: { what?: string; mode?: QueryMode; askProduction?: boolean; serverTypes?: string[] } = {}): Promise<void> {
     // The connected process when it is the one named - a saved process may
     // share a discovered one's label (#1711) - and `named` also finds a
     // discovered or shared process (#1425).
@@ -3629,7 +3691,7 @@ export class Live {
         return;
       }
     }
-    await this.run(code, undefined, undefined, options.mode);
+    await this.run(code, undefined, options.serverTypes, options.mode);
   }
 
   /// Say a long query has ended, when the window is not focused: the user

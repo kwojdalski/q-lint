@@ -54,10 +54,13 @@ export async function runText(live: Live, written: string, uri?: Uri, context = 
   try {
     ran = await live.runOnActive(code, (connection) => {
       sentTo = live.activeLabel() ?? sentTo;
-      // Direct evaluation (#2470): each statement as a plain string.
-      return connection.isDirect
-        ? runUnwrapped(connection, inContext(cut, context), { size: consoleSize, limit: 0, unlimited: false, grid: false })
-        : connection.query(inContext(cut, context), consoleSize);
+      // Through a TorQ gateway's .gw.syncexec, as Run sends it (#2356).
+      const sent = live.gatewayed(inContext(cut, context));
+      // Direct evaluation (#2470), or a gateway call (#2584): each
+      // statement as a plain string.
+      return connection.isDirect || sent.plain
+        ? runUnwrapped(connection, sent.cut, { size: consoleSize, limit: 0, unlimited: false, grid: false })
+        : connection.query(sent.cut, consoleSize);
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

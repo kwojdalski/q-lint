@@ -75,6 +75,11 @@ export function registerJoinAssistant(
     if (live.activeLabel() === undefined && givenLeft === undefined) {
       return say("q-lint: not connected to a q process; connect to the one with the tables.");
     }
+    // Its tables, and the list of them, would be read on the gateway itself (#2590).
+    const refused = live.gatewayRefusal("Join Assistant", [givenLeft ?? "tables[]", givenRight ?? ""].join("\n"));
+    if (refused !== undefined) {
+      return say(refused);
+    }
     const left = givenLeft ?? (await choose("Join Assistant (1 of 2): the left table"));
     if (left === undefined || left.trim() === "") {
       return "no left table";

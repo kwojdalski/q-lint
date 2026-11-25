@@ -147,6 +147,28 @@ test("Wrangle Result applies a step over the result's query on its process, in t
   assert.strictEqual(live.ran.at(-1).code, `delete sym from (${NOT_PARTITIONED}t)`);
 });
 
+// A gateway's result carries its code as sent; its steps are built over the
+// query inside and go to the same servers, not wrapped again (#2436), and a
+// cell edit goes there too (#2437).
+test("Wrangle Result and Edit Cell on a TorQ gateway's result build on the query inside its .gw.syncexec, sent to its server types", async () => {
+  const { live } = setUp();
+  live.shown = { process: "gw", code: '.gw.syncexec["select from t";enlist `hdb]', payload };
+  stub.picks.push("$(list-ordered) Sort...", "Descending");
+  await run(RESULT_VIEW.wrangleColumn, { webviewSection: "column", column: 1 });
+  assert.deepStrictEqual(live.ran.at(-1), { code: "`px xdesc (select from t)", label: "gw", options: { what: "wrangle query", mode: "grid", serverTypes: ["hdb"] } });
+  // Its answer, as the gateway sends it, goes on from the steps so far.
+  live.shown = { process: "gw", code: '.gw.syncexec["`px xdesc (select from t)";enlist `hdb]', payload };
+  stub.picks.push("$(code) Show steps as q");
+  await run(RESULT_VIEW.wrangle);
+  assert.match(opened.at(-1).content, /^\/ @servertypes hdb\n\/ Wrangled on gw by q-lint: 1 step\n/);
+  // The table is guessed from the query inside, too.
+  live.shown = { process: "gw", code: '.gw.syncexec["select from t";enlist `hdb]', payload };
+  stub.inputs.push((options) => (assert.strictEqual(options.value, "t"), "t"), "9.5");
+  stub.picks.push("Run");
+  await run(RESULT_VIEW.editCell, { webviewSection: "cell", column: 1, row: 1 });
+  assert.deepStrictEqual(live.ran.at(-1).options, { what: "cell edit", askProduction: false, serverTypes: ["hdb"] });
+});
+
 test("a result of a script cannot be wrangled; Escape sends nothing; turned off, the commands refuse (#961)", async () => {
   const { live } = setUp();
   live.shown = { process: "rdb", code: "a:1\nselect from t", payload };

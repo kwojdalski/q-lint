@@ -61,6 +61,12 @@ async function result(live: Live, query: string): Promise<string | undefined> {
   // runs throw: said here, as every other caller of runOnActive says it,
   // rather than left to reject the command (#2261).
   let done: { process: string; value: ReturnType<typeof readAnswer> } | undefined;
+  // Its result would be the gateway's own (#2432).
+  const refused = live.gatewayRefusal("Record Query Snapshot", query);
+  if (refused !== undefined) {
+    void window.showErrorMessage(plainMessage(refused));
+    return undefined;
+  }
   try {
     done = await live.runOnActive(query, async (connection) => connection.trapped(SNAPSHOT_RUN, SNAPSHOT_RUN_READ_ONLY, readAnswer, statements(query)));
   } catch (error) {

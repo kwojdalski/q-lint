@@ -185,6 +185,8 @@ test("the pastes write at the selection; Copy Value as JSON asks the process thr
   const live = {
     codeFromEditor: async () => "([] a:1 2)",
     toFileBinding: async () => true,
+    // No TorQ gateway here.
+    gatewayJoinedOnActive: () => undefined,
     runOnActive: async (code, query) => {
       sent.push(code);
       return { process: "dev", value: await query({ guarded: async (lambda) => (sent.push(lambda(EVALUATE)), '[{"a":1},{"a":2}]') }) };

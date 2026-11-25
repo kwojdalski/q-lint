@@ -204,7 +204,8 @@ class RunQueryTool implements LanguageModelTool<AgentInput> {
           throw new Error(`Nothing was run: the active connection moved from ${process.label} to ${now ?? "none"} before the query could start. Ask again.`);
         }
         running = true;
-        return runAgentQuery(connection, code, settings.consoleSize);
+        // Through a TorQ gateway's .gw.syncexec, as Run sends it (#2430).
+        return runAgentQuery(connection, code, settings.consoleSize, (c) => this.live.gatewayed(c));
       }, "refuse");
       if (ran === undefined) {
         return { error: `Nothing was run: a query is still running on ${process.label}, or the connection closed. Try again once it is free.` };

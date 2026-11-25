@@ -89,7 +89,12 @@ export function registerPaste(context: ExtensionContext, live: Live): void {
         return undefined;
       }
       try {
-        const ran = await live.runOnActive(expression, (connection) => connection.guarded((evaluate) => toJsonQuery(expression, evaluate)));
+        // On a TorQ gateway, its servers' values joined as Run joins them,
+        // made JSON on the gateway (#2433); elsewhere under the backstop.
+        const joined = live.gatewayJoinedOnActive(expression, "{.j.j raze x}");
+        const ran = await live.runOnActive(expression, (connection) =>
+          joined !== undefined ? connection.call(joined) : connection.guarded((evaluate) => toJsonQuery(expression, evaluate)),
+        );
         if (ran === undefined) {
           return undefined;
         }

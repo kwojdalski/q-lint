@@ -5,6 +5,7 @@
 // query lands in Query History under its process.
 import { ProgressLocation, commands, window, workspace, type ExtensionContext } from "vscode";
 import type { Row } from "./discovery";
+import { fileServerTypes } from "./gateway";
 import type { GridPayload } from "./grid";
 import { iconsEscaped, plainMessage } from "./history";
 import { NotSent, type Live } from "./live";
@@ -14,6 +15,13 @@ import { AT_ONCE, TAG_QUERY, allTags, mergeOutcomes, readTagQuery, tagged, type 
 import { COMPARE, compareOutcomes, readCompare, type Comparison } from "./compare";
 import { CompareView, type RenderedComparison } from "./compareview";
 import { readLive } from "./liveconfig";
+
+/// The server types the editor's file names for a gateway's queries, as
+/// Run Query reads them (#2363): code taken from it goes there too.
+function editorServerTypes(): string[] | undefined {
+  const document = window.activeTextEditor?.document;
+  return document === undefined ? undefined : fileServerTypes(document.getText());
+}
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -113,7 +121,7 @@ export class QueryAcross {
     if (!featureOn(setting(readCompare).enabled, "Compare Query", "q-lint.query.compare.enable")) {
       return;
     }
-    const { outcomes } = await this.runEach([a, b], code, `q-lint: comparing ${a.label} and ${b.label}`);
+    const { outcomes } = await this.runEach([a, b], code, `q-lint: comparing ${a.label} and ${b.label}`, typeof given === "string" ? undefined : editorServerTypes());
     // Turned off while it ran: no panel opens after the off closed it.
     if (!setting(readCompare).enabled) {
       return;
@@ -127,8 +135,9 @@ export class QueryAcross {
 
   /// Run `code` on each of `processes` over connections of their own, at
   /// most `AT_ONCE` at a time, with a cancellable notification; each run
-  /// is recorded in the history. In the order given.
-  private async runEach(processes: Process[], code: string, title: string): Promise<{ outcomes: Outcome[]; millis: number }> {
+  /// is recorded in the history. In the order given. `serverTypes`: where a
+  /// gateway among them sends it, the file's (#2363).
+  private async runEach(processes: Process[], code: string, title: string, serverTypes?: string[]): Promise<{ outcomes: Outcome[]; millis: number }> {
     const started = Date.now();
     const outcomes = await window.withProgress(
       { location: ProgressLocation.Notification, title, cancellable: true },
@@ -144,7 +153,7 @@ export class QueryAcross {
             // never sent, so not recorded (#1629, #1926).
             let sent = !stop.signal.aborted;
             try {
-              outcome = !sent ? { process: process.label, error: "cancelled" } : { process: process.label, answer: await this.live.runApart(process, code, stop.signal) };
+              outcome = !sent ? { process: process.label, error: "cancelled" } : { process: process.label, answer: await this.live.runApart(process, code, stop.signal, { serverTypes }) };
             } catch (error) {
               sent = !(error instanceof NotSent);
               outcome = { process: process.label, error: sent ? message(error) : "cancelled" };
@@ -218,7 +227,12 @@ export class QueryAcross {
     if (!featureOn(setting(readTagQuery).enabled, "Query a Tag", "q-lint.query.tagQuery.enable")) {
       return;
     }
-    const { outcomes, millis } = await this.runEach(processes, code, `q-lint: querying ${processes.length} process${processes.length === 1 ? "" : "es"} tagged ${tag}`);
+    const { outcomes, millis } = await this.runEach(
+      processes,
+      code,
+      `q-lint: querying ${processes.length} process${processes.length === 1 ? "" : "es"} tagged ${tag}`,
+      typeof given === "string" ? undefined : editorServerTypes(),
+    );
     const payload = mergeOutcomes(outcomes);
     this.lastTag = { tag, payload };
     this.live.showGrid(`tag ${tag}`, code, payload, millis);
