@@ -37,9 +37,9 @@ function apply(text, offset) {
 }
 
 test("the statement: one parameter is set as an atom name, several each", () => {
-  assert.strictEqual(cacheStatement(ID, ["a"]), ".qlint.cache.p1a2b3c:a;`a set .qlint.cache.p1a2b3c;");
-  assert.strictEqual(cacheStatement(ID, ["a", "b"]), ".qlint.cache.p1a2b3c:(a;b);`a`b set'.qlint.cache.p1a2b3c;");
-  assert.strictEqual(cacheStatement(ID, ["x", "y", "z"]), ".qlint.cache.p1a2b3c:(x;y;z);`x`y`z set'.qlint.cache.p1a2b3c;");
+  assert.strictEqual(cacheStatement(ID, ["a"]), "@[`.qlint.cache.p1a2b3c set;a;::];@[`a set;a;::];");
+  assert.strictEqual(cacheStatement(ID, ["a", "b"]), "@[`.qlint.cache.p1a2b3c set;(a;b);::];@[`a`b set';(a;b);::];");
+  assert.strictEqual(cacheStatement(ID, ["x", "y", "z"]), "@[`.qlint.cache.p1a2b3c set;(x;y;z);::];@[`x`y`z set';(x;y;z);::];");
 });
 
 test("an id is p and six hex digits, never one the file already uses", () => {
@@ -131,13 +131,13 @@ test("braces in strings and comments are not lambdas", () => {
 
 test("one-line lambdas: the statement goes straight after the parameters, and comes out byte for byte", () => {
   const cases = [
-    ["f:{[a;b] a+|b}", "f:{[a;b].qlint.cache.p1a2b3c:(a;b);`a`b set'.qlint.cache.p1a2b3c; a+b}"],
-    ["f:{[a]a|*2}", "f:{[a].qlint.cache.p1a2b3c:a;`a set .qlint.cache.p1a2b3c;a*2}"],
-    ["g:{x|*2}", "g:{.qlint.cache.p1a2b3c:x;`x set .qlint.cache.p1a2b3c;x*2}"],
-    ["h:{x+y|+z}", "h:{.qlint.cache.p1a2b3c:(x;y;z);`x`y`z set'.qlint.cache.p1a2b3c;x+y+z}"],
-    ["k:{[a] |}", "k:{[a].qlint.cache.p1a2b3c:a;`a set .qlint.cache.p1a2b3c; }"],
-    ["m:{[a] a / note }\n |}\n", "m:{[a].qlint.cache.p1a2b3c:a;`a set .qlint.cache.p1a2b3c; a / note }\n }\n"],
-    ["f:{[a] g:{[b] |b}; g a}", "f:{[a] g:{[b].qlint.cache.p1a2b3c:b;`b set .qlint.cache.p1a2b3c; b}; g a}"],
+    ["f:{[a;b] a+|b}", "f:{[a;b]@[`.qlint.cache.p1a2b3c set;(a;b);::];@[`a`b set';(a;b);::]; a+b}"],
+    ["f:{[a]a|*2}", "f:{[a]@[`.qlint.cache.p1a2b3c set;a;::];@[`a set;a;::];a*2}"],
+    ["g:{x|*2}", "g:{@[`.qlint.cache.p1a2b3c set;x;::];@[`x set;x;::];x*2}"],
+    ["h:{x+y|+z}", "h:{@[`.qlint.cache.p1a2b3c set;(x;y;z);::];@[`x`y`z set';(x;y;z);::];x+y+z}"],
+    ["k:{[a] |}", "k:{[a]@[`.qlint.cache.p1a2b3c set;a;::];@[`a set;a;::]; }"],
+    ["m:{[a] a / note }\n |}\n", "m:{[a]@[`.qlint.cache.p1a2b3c set;a;::];@[`a set;a;::]; a / note }\n }\n"],
+    ["f:{[a] g:{[b] |b}; g a}", "f:{[a] g:{[b]@[`.qlint.cache.p1a2b3c set;b;::];@[`b set;b;::]; b}; g a}"],
   ];
   for (const [marked, expected] of cases) {
     const { text, offset, toggle, after } = toggled(marked);
@@ -152,16 +152,16 @@ test("one-line lambdas: the statement goes straight after the parameters, and co
 
 test("multi-line lambdas: the statement gets a line of its own, indented as the body", () => {
   const cases = [
-    ["f:{[a;b]\n  c:a+b;\n  |c*2}\n", "f:{[a;b]\n  .qlint.cache.p1a2b3c:(a;b);`a`b set'.qlint.cache.p1a2b3c;\n  c:a+b;\n  c*2}\n"],
+    ["f:{[a;b]\n  c:a+b;\n  |c*2}\n", "f:{[a;b]\n  @[`.qlint.cache.p1a2b3c set;(a;b);::];@[`a`b set';(a;b);::];\n  c:a+b;\n  c*2}\n"],
     // Tabs, trailing spaces on the { line, CRLF and a blank line first.
-    ["f:{[a]  \r\n\r\n\t\ta|+1\r\n\t}", "f:{[a]  \r\n\t\t.qlint.cache.p1a2b3c:a;`a set .qlint.cache.p1a2b3c;\r\n\r\n\t\ta+1\r\n\t}"],
-    ["g:{\n    x|+y}", "g:{\n    .qlint.cache.p1a2b3c:(x;y);`x`y set'.qlint.cache.p1a2b3c;\n    x+y}"],
+    ["f:{[a]  \r\n\r\n\t\ta|+1\r\n\t}", "f:{[a]  \r\n\t\t@[`.qlint.cache.p1a2b3c set;a;::];@[`a set;a;::];\r\n\r\n\t\ta+1\r\n\t}"],
+    ["g:{\n    x|+y}", "g:{\n    @[`.qlint.cache.p1a2b3c set;(x;y);::];@[`x`y set';(x;y);::];\n    x+y}"],
     // A comment after the parameters keeps the statement on the { line.
-    ["f:{[a] / why\n  |a}", "f:{[a].qlint.cache.p1a2b3c:a;`a set .qlint.cache.p1a2b3c; / why\n  a}"],
+    ["f:{[a] / why\n  |a}", "f:{[a]@[`.qlint.cache.p1a2b3c set;a;::];@[`a set;a;::]; / why\n  a}"],
     // A nested multi-line lambda, indented deeper.
-    ["f:{[a]\n  g:{[b]\n    |b*2};\n  g a}", "f:{[a]\n  g:{[b]\n    .qlint.cache.p1a2b3c:b;`b set .qlint.cache.p1a2b3c;\n    b*2};\n  g a}"],
+    ["f:{[a]\n  g:{[b]\n    |b*2};\n  g a}", "f:{[a]\n  g:{[b]\n    @[`.qlint.cache.p1a2b3c set;b;::];@[`b set;b;::];\n    b*2};\n  g a}"],
     // Body text on the { line: straight after the parameters.
-    ["f:{[a] b:a;\n  |b}", "f:{[a].qlint.cache.p1a2b3c:a;`a set .qlint.cache.p1a2b3c; b:a;\n  b}"],
+    ["f:{[a] b:a;\n  |b}", "f:{[a]@[`.qlint.cache.p1a2b3c set;a;::];@[`a set;a;::]; b:a;\n  b}"],
   ];
   for (const [marked, expected] of cases) {
     const { text, offset, toggle, after } = toggled(marked);
@@ -180,7 +180,7 @@ test("removal from the inserted line itself, and from an outer lambda's other la
   const both = "f:{[a].qlint.cache.p1a2b3c:a;`a set .qlint.cache.p1a2b3c; {x} a}";
   const inner = toggleAt(both, both.indexOf("{x}") + 1, () => 0);
   assert.strictEqual(inner.kind, "insert");
-  assert.strictEqual(inner.text, ".qlint.cache.p000000:x;`x set .qlint.cache.p000000;");
+  assert.strictEqual(inner.text, "@[`.qlint.cache.p000000 set;x;::];@[`x set;x;::];");
 });
 
 test("refusals: no lambda, no parameters, and .qlint.cache text q-lint did not insert", () => {
@@ -246,7 +246,7 @@ test("a parameter list with a comment in it is still the lambda's parameters (#1
   const one = toggled("f:{[a; / first\n b] x+a+|b}");
   assert.strictEqual(one.toggle.kind, "insert");
   assert.deepStrictEqual(one.toggle.params, ["a", "b"]);
-  assert.strictEqual(one.after, "f:{[a; / first\n b].qlint.cache.p1a2b3c:(a;b);`a`b set'.qlint.cache.p1a2b3c; x+a+b}");
+  assert.strictEqual(one.after, "f:{[a; / first\n b]@[`.qlint.cache.p1a2b3c set;(a;b);::];@[`a`b set';(a;b);::]; x+a+b}");
   // And comes out again, byte for byte.
   const back = apply(one.after, one.after.indexOf("x+a"));
   assert.strictEqual(back.toggle.kind, "remove");

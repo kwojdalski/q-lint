@@ -8,8 +8,14 @@
 // parameter as a global of the same name, so the body's lines can then be run
 // on their own with the call's values:
 //
-//   f:{[a;b] a+b}   ->   f:{[a;b].qlint.cache.p1a2b3c:(a;b);`a`b set'.qlint.cache.p1a2b3c; a+b}
-//   g:{x*2}         ->   g:{.qlint.cache.p4d5e6f:x;`x set .qlint.cache.p4d5e6f;x*2}
+//   f:{[a;b] a+b}   ->   f:{[a;b]@[`.qlint.cache.p1a2b3c set;(a;b);::];@[`a`b set';(a;b);::]; a+b}
+//   g:{x*2}         ->   g:{@[`.qlint.cache.p4d5e6f set;x;::];@[`x set;x;::];x*2}
+//
+// The keeping is trapped: where q refuses a global write - under `reval`,
+// in a secondary thread of `peach` - the call is not kept and the function
+// still answers (#2548), as a logpoint's does (#1894). No lambda of its own,
+// which the scan would take for one of the user's. The untrapped form an
+// earlier q-lint inserted is still recognised, and removed.
 //
 // The lambda is found by reading the text, not by asking the language
 // server: the server answers no request for "the lambda at this position",
@@ -374,8 +380,20 @@ export function parameters(text: string, lambda: Lambda, mask: boolean[] = codeM
   return ["x", "y", "z"].slice(0, highest + 1);
 }
 
-/// The statement that caches a call of a lambda taking `params` under `id`.
+/// The statement that caches a call of a lambda taking `params` under `id`,
+/// trapped, so a call where q refuses the write still answers (#2548).
 export function cacheStatement(id: string, params: string[]): string {
+  const store = `${CACHE_NAMESPACE}.${id}`;
+  if (params.length === 1) {
+    return `@[\`${store} set;${params[0]};::];@[\`${params[0]} set;${params[0]};::];`;
+  }
+  const values = `(${params.join(";")})`;
+  return `@[\`${store} set;${values};::];@[${params.map((p) => "`" + p).join("")} set';${values};::];`;
+}
+
+/// The untrapped statement q-lint inserted before #2548, recognised so it
+/// can still be removed.
+function untrappedStatement(id: string, params: string[]): string {
   const store = `${CACHE_NAMESPACE}.${id}`;
   if (params.length === 1) {
     return `${store}:${params[0]};\`${params[0]} set ${store};`;
@@ -403,7 +421,7 @@ interface Inserted {
   id: string;
 }
 
-const STORE = /^\.qlint\.cache\.(p[0-9a-f]{6}):/;
+const STORE = /^(?:@\[`)?\.qlint\.cache\.(p[0-9a-f]{6})[: ]/;
 
 /// The statement q-lint inserted in `lambda`, exactly as it inserted it:
 /// first in the body, on the `{` line or on a line of its own after it.
@@ -424,21 +442,26 @@ function inserted(text: string, lambda: Lambda, params: string[], mask: boolean[
     return "unrecognised";
   }
   const at = (from: number, before: number): Inserted | undefined => {
-    const match = STORE.exec(text.slice(from, from + CACHE_NAMESPACE.length + 9));
+    const match = STORE.exec(text.slice(from, from + CACHE_NAMESPACE.length + 13));
     if (match === null) {
       return undefined;
     }
-    const statement = cacheStatement(match[1], params);
-    return text.startsWith(statement, from) && from + statement.length <= lambda.close
-      ? { start: before, end: from + statement.length, id: match[1] }
+    // Each form with how often it names the namespace: any more is not q-lint's.
+    const form = (
+      [
+        [cacheStatement(match[1], params), 1],
+        [untrappedStatement(match[1], params), 2],
+      ] as const
+    ).find(([s]) => text.startsWith(s, from));
+    return form !== undefined && form[1] === mentions && from + form[0].length <= lambda.close
+      ? { start: before, end: from + form[0].length, id: match[1] }
       : undefined;
   };
   const line = /^[ \t]*(\r?\n)[ \t]+/.exec(text.slice(lambda.bodyStart, lambda.close));
   const found =
     at(lambda.bodyStart, lambda.bodyStart) ??
     (line === null ? undefined : at(lambda.bodyStart + line[0].length, lambda.bodyStart + line[0].indexOf(line[1])));
-  // The statement names the namespace twice; any more is not q-lint's.
-  return found !== undefined && mentions === 2 ? found : "unrecognised";
+  return found ?? "unrecognised";
 }
 
 export type Toggle =

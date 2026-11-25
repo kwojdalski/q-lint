@@ -83,7 +83,7 @@ test("Toggle Parameter Cache edits only a q document: a text file is left as it 
   load(q);
   q.editor.selection.active = 4;
   await q.commands["q-lint.toggleParameterCache"]();
-  assert.match(q.document.text, /\.qlint\.cache\.p[0-9a-f]{6}:a/);
+  assert.match(q.document.text, /@\[`\.qlint\.cache\.p[0-9a-f]{6} set;a;::\]/);
 });
 
 test("the status bar follows the active document's language when it is changed", () => {
