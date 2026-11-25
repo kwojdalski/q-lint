@@ -403,7 +403,9 @@ Each has its own switch, listed in [Settings](#settings) and
   error typed in; a problem whose message names a q
   error (`'type`, `'length`, ...) gets a Quick Fix that explains it. A
   message of several words is one the code signalled, and is said to be;
-  only a single name is taken for one q could not find. The
+  only a single name is taken for one q could not find. KDB-X's module
+  loader's own - `'cycle`, `'notfound: mymod` and `'no export: <file>`, from
+  `use` - are explained as what they are. The
   catalogue is offline; each example in it was run on KDB-X and PeachQ, and
   the few from the KX reference alone are marked so. `q-lint.errorExplain.enable`.
 - **The q version check**: name a release in a folder's `qlinter.toml` -
