@@ -323,6 +323,9 @@ pub struct Typed {
     pub kind: i16,
     /// Where the value of its first assignment ends, blanks trimmed.
     pub end: usize,
+    /// Whether some assignment is `""`, a vector of no items: q joins one
+    /// to a list of any type into that list's type, `"",1 2` is 1 2 (7h).
+    pub empty: bool,
 }
 
 /// Each local in `raw` whose type its assignments settle. `code` is the
@@ -355,8 +358,13 @@ pub fn typed_locals_up_to(code: &str, raw: &str, comments: &str, most: usize) ->
                 continue;
             }
             let local = super::navigate::local_of(code, raw, &scopes, s, name);
-            if let Some((kind, end)) = settled(code, comments, &local, &sigs) {
-                out.push(Typed { local, kind, end });
+            if let Some((kind, end, empty)) = settled(code, comments, &local, &sigs) {
+                out.push(Typed {
+                    local,
+                    kind,
+                    end,
+                    empty,
+                });
             }
         }
     }
@@ -365,14 +373,16 @@ pub fn typed_locals_up_to(code: &str, raw: &str, comments: &str, most: usize) ->
 }
 
 /// The one type every write of `local` gives it, when each is a plain
-/// assignment of a literal, with where the first one's value ends.
+/// assignment of a literal, with where the first one's value ends and
+/// whether any is `""`.
 fn settled(
     code: &str,
     comments: &str,
     local: &Local,
     sigs: &[(usize, usize)],
-) -> Option<(i16, usize)> {
+) -> Option<(i16, usize, bool)> {
     let mut found: Option<(i16, usize)> = None;
+    let mut empty = false;
     for place in local.places.iter().filter(|p| p.write) {
         // A typed parameter, `{[a:`j] ...}` (q 4.1), is no assignment: `a`
         // is whatever the caller passes, checked to be a long.
@@ -382,13 +392,14 @@ fn settled(
         let value = assigned(code, place.at + place.len)?;
         let text = &comments[value.clone()];
         let t = literal_type(text)?;
+        empty |= text.trim() == "\"\"";
         match found {
             Some((k, _)) if k != t => return None,
             Some(_) => {}
             None => found = Some((t, value.start + text.trim_end().len())),
         }
     }
-    found
+    found.map(|(t, end)| (t, end, empty))
 }
 
 /// Each lambda signature in `code`, `{[...]`, as the bytes between its

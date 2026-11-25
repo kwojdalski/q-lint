@@ -28,6 +28,14 @@ key with nothing to say is `null`, never left out:
 A finding identifies itself by `code`; `rule` and `why` are for a reader,
 and a rule's wording can change between releases where its code does not.
 
+`severity` spells each level one way, as the language server protocol and
+qls do: `error`, `warning`, `information` or `hint`. A configuration's
+`[severity]` can give a builtin rule any of the four - written `info` or
+`information`, reported `information` - so a builtin finding, not only a
+qls one, may be `information` or `hint`. Only `error` and `warning` fail the
+run; `--format sarif` reports the other two as `note`, `--format github` as
+`notice`, and the language server as Information and Hint.
+
 ## `--statistics`
 
 `qlinter --statistics --format json` prints, instead of the findings, one

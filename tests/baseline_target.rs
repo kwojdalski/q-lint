@@ -108,6 +108,33 @@ fn a_missing_or_broken_baseline_is_an_error_not_silence() {
 
 const NEW_Q: &str = "d:([a:1;b:2])\ng:{(a;b):x; a+b}\nh:{[x:`j] x}\nr:-30!(::)\ns:.Q.Xf\nk:([sym:`a`b] px:1 2)\nt:([] px:1 2)\n";
 
+/// `--write-baseline` writes a file, and a file the run reads is never it:
+/// `--write-baseline o.q` with the tree linted, or `o.q` named as both, once
+/// replaced the source with JSON and exited 0 (#2115). A name that looks like
+/// q source is refused too, read or not, and a refused run writes nothing.
+#[test]
+fn a_baseline_is_never_written_over_q_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("o.q"), OLD).unwrap();
+    for args in [
+        &["--write-baseline", "o.q"][..],
+        &["--write-baseline", "o.q", "o.q"],
+        &["--write-baseline", "./o.q", "."],
+    ] {
+        let (status, _, err) = run(d, args);
+        assert_eq!(status, Some(2), "{args:?}: {err}");
+        assert!(err.contains("one of the files to lint"), "{args:?}: {err}");
+        assert_eq!(fs::read_to_string(d.join("o.q")).unwrap(), OLD, "{args:?}");
+    }
+    for name in ["new.q", "new.K", "new.qnb"] {
+        let (status, _, err) = run(d, &["--write-baseline", name, "o.q"]);
+        assert_eq!(status, Some(2), "{name}: {err}");
+        assert!(err.contains("a baseline is JSON"), "{name}: {err}");
+        assert!(!d.join(name).exists(), "{name}");
+    }
+}
+
 fn qk(found: &[(String, usize)]) -> Vec<(String, usize)> {
     found
         .iter()
@@ -187,6 +214,56 @@ fn every_qk_rule_listed_is_reported_for_some_target() {
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(2));
+}
+
+/// A symbol naming `.Q.Cf` is data, not a use of the function: each line
+/// up to `p:` runs on KDB-X (q 5), the description table of SpencerFX's
+/// namespaceQ.q among them (#2117). What follows is each a form KDB-X
+/// refuses with '.Q.Cf: the name, or its symbol read as the global - by
+/// `get` or `value`, first in `@[` or `.[`, or applied.
+#[test]
+fn a_symbol_naming_a_removed_function_is_reported_only_where_it_is_read() {
+    let data = [
+        "names:`.Q.Cf`.Q.Xf",
+        "d:(`.Q.Cf;\"create empty nested char file\")",
+        "r:`.Q.Cf in key `.Q",
+        "e:`.Q.Cf~`a",
+        "j:`.Q.Cf,`a",
+        "f:{`.Q.Cf}",
+        "h:`a`.Q.Cf",
+        "p:`:.Q.Cf",
+    ];
+    let read = [
+        "a1:.Q.Cf",
+        "a2:get `.Q.Cf",
+        "a3:value `.Q.Cf",
+        "a4:get`.Q.Cf",
+        "a5:value[`.Q.Cf]",
+        "a6:`.Q.Cf 1",
+        "a7:`.Q.Cf[1]",
+        "a8:@[`.Q.Cf;1]",
+        "a9:.[`.Q.Xf;enlist 1]",
+        "b1:`.Q.Cf . enlist 1",
+        "b2:`.Q.Cf @ 1",
+        "b3:`.Q.Cf x",
+        "b4:`.Q.Cf\"a\"",
+        "b5:`.Q.Cf .z.p",
+        "b6:`.Q.Cf -1",
+        "b7:`.Q.Cf each 1 2",
+        "b8:`.Q.Cf/[1;2]",
+        "b9:`.Q.Cf `a",
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let text: String = data.iter().chain(&read).map(|l| format!("{l}\n")).collect();
+    fs::write(d.join("a.q"), text).unwrap();
+    let want: Vec<_> = (data.len() + 1..=data.len() + read.len())
+        .map(|l| ("QK005".to_string(), l))
+        .collect();
+    for target in ["4.1", "kdbx"] {
+        let (_, found, err) = run(d, &["--isolated", "--target-version", target, "a.q"]);
+        assert_eq!(qk(&found), want, "{target}: {err}");
+    }
 }
 
 #[test]

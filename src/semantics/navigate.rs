@@ -6,8 +6,8 @@
 //! scopes and the writes the checks already read, and stopped there: what a
 //! name holds when the script runs is still not this crate's to say.
 use super::{
-    Scope, assigns_lambda, call_time, first_switch, global_writes, local_view, multi_assignments,
-    resolved, scope_at, scopes, top_level_statements,
+    Scope, assigns_lambda, call_time, first_switch, global_multi_assignments, global_writes,
+    local_view, multi_assignments, resolved, scope_at, scopes, top_level_statements,
 };
 use crate::{Definition, Local, Mention, Name, Place, boundary, pattern_names, signature};
 use std::collections::{HashMap, HashSet};
@@ -168,10 +168,10 @@ pub fn changed_by_name(code: &str) -> Vec<usize> {
 /// indented lines that continue it, as they do any other language's, but k
 /// reads and assigns q's globals under the `\d` in force: KDB-X 5 `fk:2`,
 /// `k)gk:fk+1`, then gk is 3 (#2019).
-struct KLines {
+pub(super) struct KLines {
     /// Each name that is a global: where, how long, and the lambda it is
     /// directly in.
-    globals: Vec<(usize, usize, Option<usize>)>,
+    pub(super) globals: Vec<(usize, usize, Option<usize>)>,
     /// Each lambda: where its brace opens, and its parameters and locals.
     lambdas: Vec<(usize, HashSet<String>)>,
     /// Each symbol: where its name starts, and the name.
@@ -189,7 +189,7 @@ struct KLines {
 /// implicit x, y or z, and a `name:` it assigns are its own, as in q, and a
 /// nested lambda reads the global: `k)f:{[fk] fk+1}`, `k){fk:5;fk+1}` and
 /// `k){{fk+x}x}` were each run, as was `k)([]fk:1 2)`, a column.
-fn k_lines(code: &str, raw: &str) -> KLines {
+pub(super) fn k_lines(code: &str, raw: &str) -> KLines {
     let mut out = KLines {
         globals: vec![],
         lambdas: vec![],
@@ -644,8 +644,12 @@ fn local(code: &str, raw: &str, scopes: &[Scope], s: usize, name: &str) -> Local
     // `{[a] select b:a from ([] c:1 2)} 7` the parameter.
     let hidden = local_view(direct, true);
     let phrases = crate::outside_query_phrases(direct);
-    // A multiple assignment, `(a;b):v`, writes each name it binds.
+    // A multiple assignment, `(a;b):v`, writes each name it binds; so does
+    // `(a;b)::v` for a name the lambda has as a local, which q writes as
+    // `a::v` writes it, not the global: q 5 `{s:`a; (s;n)::(1;2); s+n}[]` is
+    // 3 and leaves no global `s` (#2119).
     let bound: HashSet<usize> = multi_assignments(direct)
+        .chain(global_multi_assignments(direct).filter(|(_, n)| !n.contains('.')))
         .map(|(_, bound)| offset_in(direct, bound))
         .collect();
     for m in re!(NAME).find_iter(direct) {
