@@ -1998,3 +1998,44 @@ a:+[1;2]
 a:(+:)
 a:(<>)
 a:(<=)
+
+=== QE008 profile: general | a glyph straight after a dot that applies a value (q 5: ',, #2229)
+a:"s".,x
+
+=== QE008 profile: general | a glyph straight after a dot that applies a value (q 5: '$, #2229)
+a:"i".$x
+
+=== QE008 profile: general | a glyph straight after a dot that applies a value (q 5: '!, #2229)
+a:().!()
+
+=== clean profile: general | while q 5 parses each of these (#2229)
+a:x.,y
+a:"s".,
+a:"s",x
+a:"i"$x
+a:().(!)
+a:(.:)x
+a:x.y
+a:x . y
+a:x.(y)
+a:1.,x
+
+=== QE008 profile: general | a glyph straight after a dot that applies a value (q 5: ',, #2229)
+a:x[0].,y
+
+=== QE008 profile: general | a glyph straight after a dot that applies a value (q 5: ',, #2229)
+a:{x}.,y
+
+=== QE008 profile: general | a glyph straight after a dot that applies a value (q 5: ',, #2229)
+a:(x).,y
+
+=== QE008 profile: general | a glyph straight after a dot that applies a value (q 5: ',, #2229)
+a:"s". ,x
+
+=== QE008 profile: general | a glyph straight after a dot that applies a value (q 5: '-, #2229)
+a:x[0].-y
+
+=== clean profile: general | while q 5 parses each of these (#2229)
+a:x.,y
+a:"s".-1
+a:x /:y

@@ -1556,8 +1556,12 @@ pub(crate) fn opens_expression(
         && boundary(comments, before.len() - word.len());
     // `.` and `_` are operators too where they stand apart, and `_` after a
     // number is drop: q 5 refuses `f . ,v`, `v _ -v` and `1_f/v` (#567).
+    // A `.` straight after a value applies it, so what follows is its right
+    // argument: q 5 refuses `"s".,x`, `().!()` and `x[0].-y` (#2229), where
+    // `x.,y` and `1.,x` are a name and a float.
     let operator = before.strip_suffix(['.', '_']).is_some_and(|rest| {
         rest.ends_with([' ', '\t'])
+            || before.ends_with('.') && rest.ends_with(['"', ')', ']', '}'])
             || before.ends_with('_')
                 && rest[tail(rest, &|b| {
                     b.is_ascii_alphanumeric() || b == b'.' || b == b'_'
