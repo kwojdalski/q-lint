@@ -1910,3 +1910,23 @@ fn navigation_over_one_long_line_is_linear() {
         "a line of 2500 calls took {small:?} and of 20000 {large:?}"
     );
 }
+/// Navigation over many lambdas without a parameter list: each one's
+/// parameters were read from its scope, found by walking every scope in the
+/// file, so mentions - references, rename, the call hierarchy, code lenses
+/// - were quadratic in such lambdas (#2348).
+#[test]
+fn navigation_over_many_implicit_lambdas_is_linear() {
+    let time = |n: usize| {
+        let source: String = (0..n).map(|i| format!("f{i}:{{x}}\n")).collect();
+        best_of_three(|| q_lint_rs::mentions(&source))
+    };
+    time(4000); // warm the allocator and the regex caches
+    let (small, large) = (time(4000), time(32000));
+    eprintln!("4000 lambdas took {small:?} and 32000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "4000 lambdas took {small:?} and 32000 {large:?}"
+    );
+}
