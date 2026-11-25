@@ -472,6 +472,18 @@ test("a parameters cell's assignments are its parameters", () => {
     { name: "syms", value: "`EURUSD`GBPUSD" },
     { name: ".cfg.n", value: "10" },
     { name: "f", value: "{x}" },
+    { name: "x", value: "1" },
+  ]);
+  // Each assignment of a line of several (#2387), and one with `::` (#2388);
+  // a `;` in a string or in brackets is the value's.
+  assert.deepStrictEqual(parametersOf("/ @parameters\nstart:2024.01.01;end:2024.01.31\nsym:`EURUSD\nrows::100\nf:{x;y};s:\"a;b\";l:(1;2)"), [
+    { name: "start", value: "2024.01.01" },
+    { name: "end", value: "2024.01.31" },
+    { name: "sym", value: "`EURUSD" },
+    { name: "rows", value: "100" },
+    { name: "f", value: "{x;y}" },
+    { name: "s", value: '"a;b"' },
+    { name: "l", value: "(1;2)" },
   ]);
   // A " /" inside a string is not a comment (#1118).
   assert.deepStrictEqual(parametersOf('path:"/data /hdb"; / where\nq:"a\\" /b"\nn:1 ;'), [
