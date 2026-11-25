@@ -71,7 +71,7 @@ import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSetting
 import { ClosedBeforeHandshake, QConnection, QError, type Target } from "./qclient";
 import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, TunnelHandshakeError, readTunnel } from "./tunnel";
 import { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, readGateway } from "./gateway";
-import { HEARTBEAT, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
+import { HEARTBEAT, STEADY_MS, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
 import { clearedStamp, historyHeading, historyLabel, iconsEscaped, mergedHistory, plainMessage } from "./history";
 import { render } from "./query";
 import { QueryModes, type PageLater, type Rendered } from "./resultpanel";
@@ -637,6 +637,13 @@ export class Live {
   /// background read out on the connection: shown running, and ended by
   /// Abort and by their timeout as a query sent is (#2126).
   private readonly waiters = new Set<{ started: number; stop: AbortController }>();
+  /// The automatic reconnects made to a process since its connection last
+  /// held: answered a query, or stayed up `STEADY_MS`. A process that
+  /// accepts and then drops each connection is retried only
+  /// `q-lint.connection.reconnectAttempts` times in all (#2129).
+  private reconnectTries: { label: string; tried: number } | undefined;
+  /// The connection a query was last answered on.
+  private answeredOn: QConnection | undefined;
   /// Redraws the status bar each second while a query runs, so its time
   /// counts up (#910).
   private ticker: ReturnType<typeof setInterval> | undefined;
@@ -1997,9 +2004,11 @@ export class Live {
 
   async connectTo(row?: ProcessArg): Promise<boolean> {
     const process = await this.chosen(row, "Connect to which q process?", true);
-    // A connect the user asks for stops an automatic reconnect.
+    // A connect the user asks for stops an automatic reconnect, and the
+    // tries after its next drop start again.
     if (process !== undefined) {
       this.stopReconnecting();
+      this.reconnectTries = undefined;
     }
     if (process === undefined) {
       return false;
@@ -2109,6 +2118,7 @@ export class Live {
         }
         this.connection = connection;
         this.active = this.connectingAs ?? process;
+        const openedAt = Date.now();
         // The process as it is when a message comes or the connection
         // closes, not as connected to: it may be renamed or tagged since (#1699).
         connection.whenAsync((message) => {
@@ -2121,6 +2131,9 @@ export class Live {
         connection.whenClosed(() => {
           if (this.connection === connection) {
             const now = this.active ?? process;
+            if (this.answeredOn === connection || Date.now() - openedAt >= STEADY_MS) {
+              this.reconnectTries = undefined;
+            }
             this.connection = undefined;
             this.running = undefined;
             const configuration = workspace.getConfiguration("q-lint");
@@ -2340,8 +2353,11 @@ export class Live {
     // Read before each try: lowered meanwhile, the tries stop there (#1850).
     const attempts = (): number => readHealth((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback)).reconnectAttempts;
     let process = dropped;
-    let tried = 0;
-    for (let attempt = 1; attempt <= attempts(); attempt++) {
+    // Counted on from the reconnects before, while none of them held.
+    const carried = this.reconnectTries?.label === dropped.label ? this.reconnectTries.tried : 0;
+    this.reconnectTries = undefined;
+    let tried = carried;
+    for (let attempt = carried + 1; attempt <= attempts(); attempt++) {
       this.reconnecting = { label: process.label, attempt, of: attempts() };
       this.showStatus();
       await new Promise((resolve) => setTimeout(resolve, backoffDelay(attempt)));
@@ -2367,6 +2383,7 @@ export class Live {
         return;
       }
       if (connected) {
+        this.reconnectTries = { label: process.label, tried: attempt };
         this.reconnecting = undefined;
         this.showStatus();
         void window.showInformationMessage(plainMessage(`q-lint: reconnected to ${process.label}.`));
@@ -2790,7 +2807,9 @@ export class Live {
       }
     });
     try {
-      return { process: ready.process.label, value: await query(ready.connection) };
+      const value = await query(ready.connection);
+      this.answeredOn = ready.connection;
+      return { process: ready.process.label, value };
     } catch (error) {
       if (timedOut) {
         throw new Stopped(`${timedOutError(timeout)} (${timeoutSource(ready.process, enabled)})`, "timeout");
@@ -3177,6 +3196,8 @@ export class Live {
             ? readUnlimited(await connection.call(UNLIMITED, cut, consoleSize))
             : await connection.query(cut, consoleSize);
       const millis = Date.now() - started;
+      // Answered: the connection holds, and a drop after starts the tries again (#2129).
+      this.answeredOn = connection;
       if (!answer.ok && code === written && !controls.unwrapped) {
         this.lastFailure = { process: process.label, code, error: answer.error, trace: answer.trace };
       }

@@ -424,3 +424,20 @@ test("a query waiting for the reconnect after Abort is shown running, and Abort 
   assert.deepStrictEqual(stub.messages.at(-1), ["info", "q-lint: stopped the query waiting to be sent to a; it was not run."]);
   assert.ok(!stub.messages.some(([, m]) => m === "q-lint: no query is running."), JSON.stringify(stub.messages));
 });
+
+// Each reconnect that opened started a fresh run of tries at the first, so
+// a process that drops every connection after the handshake was
+// reconnected to for ever (#2129).
+test("reconnectAttempts bounds the reconnects to a process that drops each connection after the handshake (#2129)", async (t) => {
+  let a;
+  a = await fakeQ(() => 1, () => (setTimeout(() => a.drop(), 150), 0));
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)], { "connection.autoReconnect.enable": true, "connection.reconnectAttempts": 2 });
+  assert.strictEqual(await live.connectTo("a"), true);
+  await until(() => stub.messages.some(([, m]) => /could not reconnect/.test(m)), 8000);
+  assert.deepStrictEqual(stub.messages.at(-1), ["warning", "q-lint: could not reconnect to a after 2 tries."]);
+  assert.strictEqual(a.logins.length, 3, "the connect and two reconnects");
+  await sleep(1500);
+  assert.strictEqual(a.logins.length, 3, JSON.stringify(stub.messages));
+  assert.strictEqual(stub.messages.filter(([, m]) => m === "q-lint: reconnected to a.").length, 2);
+});
