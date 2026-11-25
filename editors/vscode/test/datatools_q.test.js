@@ -313,3 +313,16 @@ test("Count by date runs on a table whose date or timestamp column is no q name 
     assert.deepStrictEqual(answer.grid.cells[0], ["2026.01.01", "2026.01.02"], tpl.code);
   }
 });
+
+test("Show steps as q runs when the wrangled query reads a global named w (#2466)", { skip }, async (t) => {
+  const q = await startQ(() => "w:([] a:1 2 3)\nw1:`x\n");
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.abort());
+  const steps = [{ kind: "filter", column: "a", op: ">", value: "1" }];
+  for (const base of ["w", "select from w where a in exec a from w"]) {
+    const answer = await connection.queryGrid(statements(w.wrangleScript(base, steps, "test")), SIZE, 1000);
+    assert.ok(answer.ok, `${base}: ${answer.error}`);
+    assert.deepStrictEqual(cells(answer, "a"), ["2", "3"]);
+  }
+});
