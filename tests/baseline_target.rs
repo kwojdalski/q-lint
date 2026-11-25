@@ -474,3 +474,68 @@ fn a_builtin_only_kdbx_has_is_a_free_name_for_an_older_target() {
     let (_, found, err) = run(d, &[&args[..], &["loads.q"]].concat());
     assert_eq!(codes(&found), vec![], "{err}");
 }
+
+/// The QK rules read KDB-X's patterns as `semantics::pattern_targets` and
+/// `signature` do. Each line runs on KDB-X (q 5): `r:(a;b):1 2` sets r to
+/// 1 2, `(a;b)::3 4` and `{(a;b)::x}` the globals, `(k!v):d` k to the keys,
+/// `([a;b])::d` the globals a and b; `{ [x:`j] x}[1f]` is 'type and
+/// `{[k!v] (k;v)}` binds both. Each is 4.1's, a pattern assignment or a
+/// typed or pattern parameter (#2326, #2327), and the dictionary patterns in
+/// them are no dictionary literal (#2328).
+#[test]
+fn every_pattern_kdbx_reads_is_one_for_an_older_target() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let lines = [
+        "r:(a;b):1 2",
+        "(a2;b2)::3 4",
+        "{(a4;b4)::x}5 6",
+        "r5:count (a5;b5):7 8",
+        "(k1!v1):`a`b!1 2",
+        "([g1;g2])::`g1`g2!1 2",
+        "h:{ [x:`j] x}",
+        "h2:{ [(p;q)] p+q}",
+        "f1:{[k!v] (k;v)}",
+        "f4:{[([k:v])] v}",
+        "f2:{[`T!([t]);c] (t;c)}",
+        "f5:{[1;b] b}",
+        // Not one: a name applied in a slot binds nothing, a parenthesised
+        // name is no list, and a dictionary literal is QK001's.
+        "f6:{[f x] 1}",
+        "(z):1",
+        "dl:([a:1;b:2])",
+    ];
+    let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+    fs::write(d.join("a.q"), text).unwrap();
+    let (_, found, err) = run(
+        d,
+        &[
+            "--isolated",
+            "--select",
+            "QK",
+            "--target-version",
+            "4.0",
+            "a.q",
+        ],
+    );
+    let pair = |c: &str, l: usize| (c.to_string(), l);
+    assert_eq!(
+        qk(&found),
+        vec![
+            pair("QK002", 1),
+            pair("QK002", 2),
+            pair("QK002", 3),
+            pair("QK002", 4),
+            pair("QK002", 5),
+            pair("QK002", 6),
+            pair("QK003", 7),
+            pair("QK003", 8),
+            pair("QK003", 9),
+            pair("QK003", 10),
+            pair("QK003", 11),
+            pair("QK003", 12),
+            pair("QK001", 15),
+        ],
+        "{err}"
+    );
+}

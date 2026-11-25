@@ -139,11 +139,90 @@ pub(crate) fn check(path: &str, code: &str, source: &str) -> Vec<Finding> {
     let b = code.as_bytes();
     let mut out = vec![];
     let word = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'.';
-    // The last byte before `at` that is not a blank.
-    let before = |at: usize| code[..at].trim_end_matches([' ', '\t']).bytes().last();
+    // Patterns, read as `semantics::pattern_targets` reads them for every
+    // other rule and the editor: each target of a pattern assignment, and
+    // each lambda's parameter list, as byte ranges. A `([` inside one is
+    // the pattern's, never a dictionary literal (#2328).
+    let targets = super::pattern_targets(code);
+    let mut patterns: Vec<(usize, usize)> = targets.iter().map(|&(o, c, _)| (o, c)).collect();
+    let mut signatures = vec![];
+    for (i, _) in code.match_indices('{') {
+        let sig = crate::signature(code, source, i);
+        // A list of names holds no pattern, and is left out: there are as
+        // many as there are lambdas.
+        if sig.named
+            && sig.slots.iter().any(|slot| !crate::is_param_name(slot))
+            && let Some(open) = code[i + 1..].find('[').map(|p| i + 1 + p)
+        {
+            signatures.push((i, open, sig.body));
+            patterns.push((open, sig.body));
+        }
+    }
+    let inside = |at: usize| patterns.iter().any(|&(o, c)| o < at && at < c);
+    // QK002: a pattern assignment, wherever it stands and with `:` or `::`
+    // - KDB-X runs `r:(a;b):1 2`, `(a;b)::3 4`, `r:count (a;b):7 8`,
+    // `(k!v):`a`b!1 2` and `([a;b])::d` (#2326) - but only one with more
+    // than one item, a dictionary or a table: `(a):1` is no 4.1 construct.
+    for &(open, close, _) in &targets {
+        let inner = &code[open + 1..close];
+        if inside(open)
+            || !(inner.trim_start().starts_with('[')
+                || depth_one_semicolon(inner)
+                || crate::first_outside(inner, b'!').is_some())
+        {
+            continue;
+        }
+        let colon = close + 1 + (code[close + 1..].len() - code[close + 1..].trim_start().len());
+        let end = colon
+            + if code[colon..].starts_with("::") {
+                1
+            } else {
+                0
+            };
+        out.push(Finding::at(
+            path,
+            source,
+            open,
+            "QK002",
+            format!(
+                "`{}` is a pattern assignment, which q runs from 4.1 on",
+                first_line(&source[open..=end])
+            ),
+        ));
+    }
+    // QK003: a parameter list q reads as one whose slot is no plain name -
+    // typed, filtered or a pattern, `{[x:`j]}`, `{[(a;b)]}`, `{[k!v]}`,
+    // `{[1;b]}` - blanks after the brace or not: KDB-X runs `{ [x;y] x+y}`
+    // and refuses `{ [x:`j] x}[1f]` with 'type (#2327). A name applied in a
+    // slot, `{[f x] 1}`, binds nothing and is left alone, and so is `_`,
+    // which is QF002's (KDB-X refuses every call of `{[_] 1}` with 'match).
+    for &(brace, open, body) in &signatures {
+        let sig = crate::signature(code, source, brace);
+        if sig.slots.iter().any(|slot| {
+            !slot.is_empty()
+                && *slot != "_"
+                && !crate::is_param_name(slot)
+                && !crate::application(slot)
+        }) {
+            let close = code[..body].rfind(']').unwrap_or(open);
+            out.push(Finding::at(
+                path,
+                source,
+                brace,
+                "QK003",
+                format!(
+                    "`{}` types or filters a parameter, which q runs from 4.1 on",
+                    first_line(&source[brace..=close])
+                ),
+            ));
+        }
+    }
     for i in 0..b.len() {
         match b[i] {
-            b'(' if b.get(i + 1) == Some(&b'[') => {
+            b'(' if b.get(i + 1) == Some(&b'[')
+                && !inside(i)
+                && !targets.iter().any(|t| t.0 == i) =>
+            {
                 let Some(close) = matching(code, i + 1, b'[', b']').map(|e| e - 1) else {
                     continue;
                 };
@@ -151,69 +230,14 @@ pub(crate) fn check(path: &str, code: &str, source: &str) -> Vec<Finding> {
                 let inner = code[i + 2..close].trim();
                 if after.starts_with(')') && !inner.is_empty() {
                     let end = close + 1 + (code[close + 1..].len() - after.len());
-                    if b.get(end + 1) == Some(&b':') && b.get(end + 2) != Some(&b':') {
-                        out.push(Finding::at(
-                            path,
-                            source,
-                            i,
-                            "QK002",
-                            format!(
-                                "`{}` is a pattern assignment, which q runs from 4.1 on",
-                                first_line(&source[i..=end + 1])
-                            ),
-                        ));
-                    } else {
-                        out.push(Finding::at(
-                            path,
-                            source,
-                            i,
-                            "QK001",
-                            format!(
-                                "`{}` is a dictionary literal, which q reads from 4.1 on",
-                                first_line(&source[i..=end])
-                            ),
-                        ));
-                    }
-                }
-            }
-            b'(' => {
-                let Some(close) = matching(code, i, b'(', b')').map(|e| e - 1) else {
-                    continue;
-                };
-                let statement_start =
-                    matches!(before(i), None | Some(b';' | b'{' | b'[' | b'\n' | b'('));
-                if statement_start
-                    && b.get(close + 1) == Some(&b':')
-                    && !matches!(b.get(close + 2), Some(b':'))
-                    && code[i + 1..close].contains(';')
-                    && depth_one_semicolon(&code[i + 1..close])
-                {
                     out.push(Finding::at(
                         path,
                         source,
                         i,
-                        "QK002",
+                        "QK001",
                         format!(
-                            "`{}` is a pattern assignment, which q runs from 4.1 on",
-                            first_line(&source[i..=close + 1])
-                        ),
-                    ));
-                }
-            }
-            b'{' if b.get(i + 1) == Some(&b'[') => {
-                let Some(close) = matching(code, i + 1, b'[', b']').map(|e| e - 1) else {
-                    continue;
-                };
-                let params = &code[i + 2..close];
-                if params.contains([':', '(']) {
-                    out.push(Finding::at(
-                        path,
-                        source,
-                        i,
-                        "QK003",
-                        format!(
-                            "`{}` types or filters a parameter, which q runs from 4.1 on",
-                            first_line(&source[i..=close])
+                            "`{}` is a dictionary literal, which q reads from 4.1 on",
+                            first_line(&source[i..=end])
                         ),
                     ));
                 }
