@@ -38,6 +38,10 @@ test("TorQ usage and JSON logs", () => {
   const j = parseLine(JSON_LINE);
   assert.deepStrictEqual([j.kind, j.level, j.process, j.time], ["torq-json", "WARN", "rdb1", Date.UTC(2026, 10, 7, 12, 43, 29, 643)]);
   assert.strictEqual(parseLine('{"loglevel": broken').kind, "q");
+  // A usage log with -jsonlogs, as TorQ's logusage.q format writes it in KDB-X (#2417).
+  const usage = (type) => `{"p":"2026-11-25T12:00:00.000000000","id":7,"time":"0D00:00:00.000012000","zcmd":"pg","proctype":"rdb","procname":"rdb1","type":"${type}","ip":2130706433,"user":"bob","handle":12,"txtc":"1+\x60a","meminfo":[0,0,0,0,0,0],"length":5,"errorcheck":"type","level":"USAGE"}`;
+  assert.deepStrictEqual(parseLine(usage("e")), { kind: "torq-usage", level: "ERROR", process: "rdb1", time: Date.UTC(2026, 10, 25, 12) });
+  assert.deepStrictEqual(parseLine(usage("c")).level, "INFO");
 });
 
 test("plain q output: a q error with or without KDB-X's timestamp, levels near the start, and continuations", () => {
