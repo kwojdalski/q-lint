@@ -1448,9 +1448,11 @@ function throughParameters(t: Token[], all: Token[], statement: string, closes: 
       before.text === "{" ||
       // The argument of a lambda before it, which reads it in its place.
       before.text === "}" ||
-      // An item of a list, applied only once the list is: `value(f;x)`.
-      (before.text === "(" && after?.text === ";") ||
-      (before.text === ";" && (around(t, s) === 0 || after?.text === ";" || after?.text === ")")))
+      // An item of a list, applied only once the list is: `value(f;x)` -
+      // unless the list is picked from and applied, `({..};{x})[0]`a`,
+      // `` (`w`r!({..};{x}))[`w]`a ``, when it is read with what it could
+      // be given (#2267).
+      (((before.text === "(" && after?.text === ";") || (before.text === ";" && (around(t, s) === 0 || after?.text === ";" || after?.text === ")"))) && !pickedList(t, s)))
   ) {
     return;
   }
@@ -1534,6 +1536,34 @@ function throughParameters(t: Token[], all: Token[], statement: string, closes: 
       }
     }
   }
+}
+
+/// Where the bracket around `t[s]` opens, -1 at the top.
+function enclosing(t: Token[], s: number): number {
+  let open = s - 1;
+  for (let depth = 0; open >= 0; open--) {
+    if (t[open].kind === "close") depth++;
+    else if (t[open].kind === "open" && depth-- === 0) break;
+  }
+  scanned(s - open);
+  return open;
+}
+
+/// Whether the item at `t[s]` is in a list - a dictionary's values among
+/// them - that is indexed or applied where it is written: `(f;g)[0]`,
+/// `(f;g)@1`, `` (`a`b!(f;g))`a ``.
+function pickedList(t: Token[], s: number): boolean {
+  const open = enclosing(t, s);
+  if (open < 0 || t[open].text !== "(") return false;
+  const close = items(t, open).at(-1)?.[1] ?? -1;
+  scanned(s - open);
+  // A dictionary's values, `(`w`r!(f;g))`: the parentheses around it.
+  let end = close;
+  let keys = open - 2;
+  while (t[keys]?.kind === "sym") keys--;
+  if (t[open - 1]?.text === "!" && keys < open - 2 && t[keys]?.text === "(" && t[close + 1]?.text === ")") end = close + 1;
+  const after = t[end + 1];
+  return after !== undefined && ((after.kind === "open" && after.text === "[") || (after.kind === "op" && after.text === "@") || (end > close && (after.kind === "sym" || after.kind === "num")));
 }
 
 /// The operators that change the process given the right arguments, read
@@ -2326,8 +2356,30 @@ function readStatement(statement: string, found: Set<string>): void {
     }
     // An operator passed as a value is read as the call it makes (#2036).
     if (k.kind === "op" && VALUES.has(k.text)) {
-      for (const call of asValue(t, i)) {
+      const calls = asValue(t, i);
+      for (const call of calls) {
         for (const reason of rereadOf(call)) found.add(reason);
+      }
+      // An item of a list or a dictionary, or given to a function, it is
+      // applied where the guard cannot follow it - `(@;.)[0][`b;0;:;77]`,
+      // `{x}[!][-11;`:tp.log]` - to a symbol, or a log's number, in the
+      // expression around it (#2267).
+      const prev = t[i - 1];
+      // In brackets, given to a function - not to `.`, `@` or a composition,
+      // which apply it as `asValue` reads - or in a list picked from: a
+      // list's head is a tree's, which an evaluator reads.
+      const bracket = enclosing(t, i);
+      const given = t[bracket]?.text === "[" && !(t[bracket - 1]?.kind === "op" && (t[bracket - 1].text === "'" || (prev === t[bracket] && [".", "@"].includes(t[bracket - 1].text))));
+      const item = prev !== undefined && (prev.text === ";" || prev.kind === "open") && (next?.text === ";" || next?.text === "]" || (next?.text === ")" && prev.text !== "("));
+      if (calls.length === 0 && item && (given || (t[bracket]?.text === "(" && pickedList(t, i)))) {
+        const end = expressionEnd(t, i);
+        let target = false;
+        for (let p = expressionStart(t, i); p < end && !target; p++) {
+          target = (t[p].kind === "sym" && t[p].text.length > 1) || (t[p].kind === "num" && /^-\d/.test(t[p].text));
+        }
+        if (target) {
+          found.add(`applies ${k.text}, passed as a value, to what the guard cannot read`);
+        }
       }
     }
     // A symbol atom left of `?` extends the enumeration it names, and the
@@ -2448,7 +2500,7 @@ function readStatement(statement: string, found: Set<string>): void {
           else if (t[close].kind === "close" && depth-- === 0) break;
         }
         scanned(close - i);
-        const what = t[close]?.text === ")" && t[close + 1]?.kind === "open" && t[close + 1].text === "[" ? treesAround(t, i, true) : undefined;
+        const what = t[close]?.text === ")" && t[close + 1]?.kind === "open" && t[close + 1].text === "[" ? (treesAround(t, i, true) ?? stringsAround(t, i)) : undefined;
         if (what !== undefined) {
           found.add(`evaluates ${what.reason} on handle 0`);
           continue;

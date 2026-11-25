@@ -1933,3 +1933,18 @@ test("an evaluator given to a function that applies it - a trap's handler, .Q.fs
     assert.deepStrictEqual(writes(code), [], code);
   }
 });
+
+test("an amend, ?, !, eval or a writing lambda picked out of a list or a dictionary, or passed through {x}, is applied to what the guard cannot read (#2267)", () => {
+  const asks = [
+    "{x}[@][`b;0;:;77]", "(@;.)[0][`b;0;:;77]", "(.;::)[0][`b;enlist 0;:;77]", "(`a`b!(@;.))[`a][`b;0;:;77]", "(?;::)[0][`sym;`zz]", "{[f]f}[?][`sym;`zz]",
+    "{x}[!][-11;`:tp.log]", "(eval;::)[0](:;`a;77)", "({.[x;();:;77]};{x})[0]`a", "(`w`r!({.[x;();:;77]};{x}))[`w]`a", "@[{x};!;::][-11;`:tp.log]",
+    "(0;::)[0]\"a:77\"", "(-6!;::)[0](:;`a;77)", "({0};{.[x;();:;77]})@[1;::]`a",
+  ];
+  for (const code of asks) {
+    assert.ok(writes(code).length > 0, code);
+  }
+  // Lists of functions that only read, and operators in lists with nothing to write to.
+  for (const code of ["(`a`b!({x+1};{x*2}))[`a] 3", "({x+1};{x*2})[1] 3", "{x[0]} ({1};{2})", "(+;-)[0][1;2]", "(@;.)", "{x . y}[+;1 2]", "(0;1)[0]", "(`r`w!({0};{x}))[`w] 1"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});
