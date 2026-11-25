@@ -1052,7 +1052,9 @@ function strings(t: Token[], last: number, end: number, kCode: boolean): string 
     if (k.kind === "open" && k.text === "{") lambda++;
     else if (k.kind === "close" && k.text === "}") lambda--;
     if (lambda > 0 || k.text === "}") continue;
-    if (k.kind === "open") opaque.push(k.text === "[" || items(t, p).length > 1);
+    // (The evaluator's own brackets, `value[x]`, `value/[x]`, hold its argument.)
+    const own = k.text === "[" && t.slice(last + 1, p).every((x) => x.kind === "op" && ["/", "\\", "'", ":"].includes(x.text));
+    if (k.kind === "open") opaque.push(!own && (k.text === "[" || items(t, p).length > 1));
     else if (k.kind === "close") opaque.pop();
     const made = !opaque.includes(true);
     if (k.kind === "name") {
@@ -2230,6 +2232,7 @@ function readStatement(statement: string, found: Set<string>): void {
       // a keyword between its arguments, `0 sublist x`.
       if (
         first?.kind === "str" ||
+        first?.kind === "sym" ||
         (first?.kind === "open" && first.text !== "]") ||
         (first?.kind === "op" && ["@", "."].includes(first.text)) ||
         (first?.kind === "name" && !INFIX.has(first.text))

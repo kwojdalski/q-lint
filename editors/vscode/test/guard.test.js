@@ -1746,3 +1746,20 @@ test("a writer got with parse or -5!, or picked from .q by what the guard cannot
     assert.deepStrictEqual(writes(code), [], code);
   }
 });
+
+test("a string made in an evaluator's own brackets, or cast after handle 0, is evaluated as one that writes (#2203, #2204)", () => {
+  const cases = {
+    "value[`char$97 58 55 55]": ["evaluates a string with value"],
+    "value/[`char$97 58 55 55]": ["evaluates a string with value"],
+    "value'[enlist string`$\".ns.v:77\"]": ["evaluates a string with value"],
+    "{[p;q]value[`char$97 58 55 55]}[0][1]": ["evaluates a string with value"],
+    "0 `char$97 58 55 55": ["evaluates a string on handle 0"],
+    "(0)`char$97 58 55 55": ["evaluates a string on handle 0"],
+    "neg[0]`char$97 58 55 55": ["evaluates a string on handle 0"],
+    "value[`t]": [],
+    "0 `a": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
