@@ -359,7 +359,9 @@ impl Index {
         let read = guarded(|| q_lint_rs::references(text, false)).unwrap_or_default();
         let (loads, implicit) = (read.loads.clone(), read.implicit_defines.clone());
         let old = self.files.remove(&path);
-        self.stale |= old.as_ref().is_none_or(|old| old.loads != loads);
+        self.stale |= old.as_ref().is_none_or(|old| {
+            old.loads != loads || old.read.module != read.module || old.read.uses != read.uses
+        });
         let tally = if self.counted { tally(text) } else { vec![] };
         if old
             .as_ref()
@@ -437,8 +439,9 @@ impl Index {
     /// Work out again where each file's definitions go, when a file's loads
     /// or the set of files changed, and move those that moved - and whether
     /// any file now sits anywhere else. Only a load
-    /// under some `\d .a` can put a file anywhere but the root, so without
-    /// one there is no graph to build.
+    /// under some `\d .a`, or a KDB-X module, which runs in `.m.<module>`,
+    /// can put a file anywhere but the root, so without one there is no
+    /// graph to build.
     fn settle(&mut self) -> bool {
         if !std::mem::take(&mut self.stale) {
             return false;
@@ -447,15 +450,12 @@ impl Index {
         let contexts = self
             .files
             .values()
-            .any(|f| f.loads.iter().any(|(_, ns)| !ns.is_empty() && ns != "."));
+            .any(|f| f.read.module || f.loads.iter().any(|(_, ns)| !ns.is_empty() && ns != "."));
         let placements = if contexts {
             let paths: Vec<std::path::PathBuf> = keys.iter().map(Into::into).collect();
-            let loads: Vec<_> = keys
-                .iter()
-                .map(|k| self.files[k].loads.as_slice())
-                .collect();
+            let reads: Vec<_> = keys.iter().map(|k| &self.files[k].read).collect();
             let cwds = self.cwds();
-            guarded(|| q_lint_rs::graph::placements(&paths, &loads, &cwds))
+            guarded(|| q_lint_rs::graph::placements(&paths, &reads, &cwds))
                 .unwrap_or_else(|_| vec![Placement::default(); keys.len()])
         } else {
             vec![Placement::default(); keys.len()]

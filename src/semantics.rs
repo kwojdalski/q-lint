@@ -1523,6 +1523,8 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
             },
             &mut moved,
         ),
+        module: is_module(code, raw),
+        uses: uses(&view, &scopes),
         dynamic: dynamic(raw, &view, &call_time_access, &moved),
     }
 }
@@ -1561,6 +1563,26 @@ pub(crate) fn is_module(code: &str, raw: &str) -> bool {
         }
     }
     false
+}
+
+/// The module each literal `` use`name `` loads, outside a lambda that binds
+/// `use` itself. `view` is the code view with system commands blanked.
+fn uses(view: &str, scopes: &[Scope]) -> Vec<String> {
+    let mut out = vec![];
+    for m in re!(r"\buse\s*(?:\[\s*|\(\s*)?`(\.*[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)")
+        .captures_iter(view)
+    {
+        let at = m.get(0).unwrap().start();
+        if !boundary(view, at)
+            || scope_at(scopes, at).is_some_and(|s| scopes[s].locals.contains("use"))
+        {
+            continue;
+        }
+        out.push(m[1].to_string());
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// `value` of a symbol the source does not spell out: `value nm` reads the

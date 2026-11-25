@@ -218,6 +218,12 @@ pub struct References {
     /// that is whichever context the file is loaded in, and `"."` at the
     /// root after it.
     pub loads: Vec<(String, String)>,
+    /// Whether the file is a KDB-X module: one that assigns `export` at its
+    /// top level, which `use` reads back (`semantics::is_module`).
+    pub module: bool,
+    /// The module each literal `` use`name `` loads, as written: `mymod`,
+    /// `pkg.sub`, or `.sub` relative to the module saying it.
+    pub uses: Vec<String>,
     /// Where a name is reached by a value computed at run time.
     pub dynamic: Vec<Dynamic>,
 }
