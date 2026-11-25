@@ -45,14 +45,48 @@ export function gatewayStatement(statements: string[], types: string[]): string 
   return `.gw.syncexec[${qString(statements.length === 1 ? statements[0] : joined(statements))};${symbols(types)}]`;
 }
 
+/// One `.gw.syncexec[query;types]` call of a string, as `gatewayStatement`
+/// writes one: the call up to its types, the string, and the types.
+const CALL = /^(\.gw\.syncexec\[(?:enlist )?"((?:[^"\\]|\\.)*)";)((?:enlist )?(?:`[A-Za-z][A-Za-z0-9_.]*)+)\]$/s;
+
 /// `code` sent to `types` instead, when it is one `.gw.syncexec[query;types]`
 /// call of a string, as a query is recorded in the history: Query Gateway
 /// with Server Types does not keep the types it was recorded with (#2592).
 /// Undefined for any other code.
 export function withServerTypes(code: string, types: string[]): string | undefined {
   const cut = statements(code);
-  const m = cut.length !== 1 ? null : /^(\.gw\.syncexec\[(?:enlist )?"(?:[^"\\]|\\.)*";)(?:enlist )?(?:`[A-Za-z][A-Za-z0-9_.]*)+\]$/s.exec(cut[0]);
+  const m = cut.length !== 1 ? null : CALL.exec(cut[0]);
   return m === null ? undefined : `${m[1]}${symbols(types)}]`;
+}
+
+/// The query and the server types of `code` when it is one
+/// `.gw.syncexec[query;types]` call of a string - a result's code, as it was
+/// sent - so what is built on the result runs on the servers it came from
+/// (#2436, #2437). Undefined for any other code.
+export function gatewayParts(code: string): { query: string; types: string[] } | undefined {
+  const cut = statements(code);
+  const m = cut.length !== 1 ? null : CALL.exec(cut[0]);
+  if (m === null) {
+    return undefined;
+  }
+  const bytes: number[] = [];
+  const text = new TextEncoder().encode(m[2]);
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== 0x5c) {
+      bytes.push(text[i]);
+      continue;
+    }
+    const next = String.fromCharCode(text[++i]);
+    const octal = /^[0-7]{3}$/.test(String.fromCharCode(...text.slice(i, i + 3)));
+    if (octal) {
+      bytes.push(parseInt(String.fromCharCode(...text.slice(i, i + 3)), 8));
+      i += 2;
+    } else {
+      bytes.push(next === "n" ? 10 : next === "r" ? 13 : next === "t" ? 9 : text[i]);
+    }
+  }
+  const types = m[3].replace(/^enlist /, "").split("`").filter((t) => t !== "");
+  return { query: new TextDecoder().decode(new Uint8Array(bytes)), types };
 }
 
 /// The names and symbols `statement` spells outside its strings and

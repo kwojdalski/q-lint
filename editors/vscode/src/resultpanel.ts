@@ -374,7 +374,7 @@ export class QueryModes {
   /// Fetches rows of a result the process holds; set by the live half.
   private pager: ((process: string, offset: number, count: number, token: string | undefined) => Promise<GridPage | PageLater | string>) | undefined;
   /// Runs a drill-down query on a process; set by the live half.
-  private runner: ((code: string, process: string) => Promise<void>) | undefined;
+  private runner: ((code: string, process: string, from: string) => Promise<void>) | undefined;
   /// A page fetch under way, so a second is not sent behind it.
   private paging = false;
   /// Save Result Chart's requests, by key, until the page sends each image:
@@ -473,8 +473,9 @@ export class QueryModes {
     this.pager = pager;
   }
 
-  /// Where the live half runs a drill-down query.
-  setRunner(runner: (code: string, process: string) => Promise<void>): void {
+  /// Where the live half runs a drill-down query, given the code of the
+  /// result it drills from.
+  setRunner(runner: (code: string, process: string, from: string) => Promise<void>): void {
     this.runner = runner;
   }
 
@@ -1143,7 +1144,7 @@ export class QueryModes {
     if (this.runner === undefined) {
       return;
     }
-    await this.runner(picked.filled.code, shown.process);
+    await this.runner(picked.filled.code, shown.process, shown.code);
   }
 
   /// While the saved query `name` runs as `code`, its result is taken for
