@@ -175,7 +175,8 @@ export function injectParameters(cells: QnbCell[], overrides: Record<string, str
 }
 
 /// Where a run sends a cell: `use` on the process `label` names, or on the
-/// run's own when it is undefined. Throws, with why, when it cannot.
+/// run's own when it is undefined. Throws, with why, when it cannot. The
+/// label is the cell's `/ @process`, or the last one a cell above named.
 export interface Executor {
   on<T>(label: string | undefined, code: string | readonly string[], use: (connection: QConnection) => Promise<T>): Promise<T>;
 }
@@ -204,6 +205,9 @@ export async function runNotebook(
     throw new Error(problem);
   }
   const cells = injectParameters(qnb.cells, overrides).map((c) => ({ ...c }));
+  // The process a cell with no `/ @process` runs on: the last one named,
+  // as the editor's connection stays there (#2150).
+  let named: string | undefined;
   let order = 0;
   let failed: RunResult["failed"];
   const stop = (i: number, message: string): void => {
@@ -249,8 +253,9 @@ export async function runNotebook(
     }
     const cut = statements(cell.source);
     const after = markdownOf(i);
+    named = directive.process ?? named;
     try {
-      const [ok, parts, values] = await executor.on(directive.process, guardedText(cell.source, after.map((j) => cells[j].source)), async (connection) => {
+      const [ok, parts, values] = await executor.on(named, guardedText(cell.source, after.map((j) => cells[j].source)), async (connection) => {
         const [ok, parts] = cut.length === 0 ? [true, []] : await cellAnswer(connection, directive, cut, settings);
         const values = ok ? await liveValues(connection, after.map((j) => cells[j].source)) : [];
         return [ok, parts, values] as const;
@@ -295,8 +300,9 @@ usage: node qnbrun.js NOTEBOOK.qnb --process HOST:PORT|LABEL [options]
 
   -o, --output FILE        where to write the run: .qnb, .html or .ipynb
                            (default: NOTEBOOK.out.qnb beside the notebook)
-  --process HOST:PORT      the process cells run on unless they say
-                           \`/ @process <label>\`; or a label in --processes
+  --process HOST:PORT      the process cells run on until one says
+                           \`/ @process <label>\`, which it and the cells
+                           after it run on; or a label in --processes
   -p, --param NAME VALUE   a parameter, as q text; repeat for more
   --processes FILE         a process list, as q-lint: Export Processes
                            writes it, for labels

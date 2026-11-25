@@ -552,6 +552,29 @@ test("a headless run numbers and runs the q cells, reads live values, and goes w
   assert.strictEqual(qnb.cells.length, 5);
 });
 
+// The editor's connection stays on the process a `/ @process` cell named,
+// so the cells after it run there; a headless run does the same (#2150).
+test("a headless run sends the cells after a / @process cell to that process, as the editor does (#2150)", async () => {
+  const qnb = {
+    cells: [
+      { kind: "code", source: "a" },
+      { kind: "code", source: "/ @process other\nb" },
+      { kind: "code", source: "c" },
+      { kind: "markdown", source: "{{q: c}}" },
+      { kind: "code", source: "/ @process third" },
+      { kind: "code", source: "d" },
+    ],
+  };
+  const ex = fakeExecutor((cut) => ({ ok: true, type: -7, text: [cut.join(";")] }));
+  await runNotebook(qnb, ex, SETTINGS);
+  assert.deepStrictEqual(ex.sent, ["default", "other", "other", "third", "third"]);
+  // The parameters given go where the parameters cell went.
+  const params = { cells: [{ kind: "code", source: "/ @parameters\n/ @process other\nn:1" }, { kind: "code", source: "n" }] };
+  const ex2 = fakeExecutor((cut) => ({ ok: true, type: -7, text: [cut.join(";")] }));
+  await runNotebook(params, ex2, SETTINGS, { n: "2" });
+  assert.deepStrictEqual(ex2.sent, ["other", "other", "other"]);
+});
+
 test("the guard reads a cell's live values' expressions with its source (#1088)", async () => {
   const markdown = ["Count {{q: count trade}}", "Gone {{q: delete from `trade}}", "Again {{q: count trade}}"];
   assert.deepStrictEqual(guardedText("/ just a note", markdown), ["/ just a note", "count trade", "delete from `trade"]);
