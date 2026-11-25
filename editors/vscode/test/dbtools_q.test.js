@@ -14,7 +14,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { QConnection } = require("../out/qclient.js");
 const { statements } = require("../out/statements.js");
-const { columnScript, HELPERS, RUN_SCRIPT, readRun } = require("../out/colmanager.js");
+const { columnScript, columnsOf, COLUMN_DIRS, HELPERS, opProblem, readColumnDirs, RUN_SCRIPT, readRun } = require("../out/colmanager.js");
 const { DOCUMENT, readDoc, docMarkdown } = require("../out/dbdoc.js");
 const { PARTITION_CHECK, readPartitions, partitionProblems } = require("../out/partcheck.js");
 
@@ -62,7 +62,9 @@ async function startQ(source) {
     }
     await new Promise((r) => setTimeout(r, 100));
   }
-  process.kill(-child.pid, "SIGKILL");
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch {}
   throw new Error(`q did not start listening: ${stderr}`);
 }
 
@@ -221,6 +223,145 @@ test("the column manager's rename command quotes for sh, and for cmd with backsl
   assert.strictEqual(await mv("1b", "C:/my db/trade/px", "C:/my db/trade/price"), String.raw`move "C:\my db\trade\px" "C:\my db\trade\price"`);
 });
 
+/// What a q of its own makes of the database at `db` once it loads it: the
+/// truth on disk, not what the process that changed it says (#2137).
+async function onDisk(t, db, query) {
+  const q = await startQ(`\\l ${db}\n`);
+  try {
+    const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+    try {
+      return await connection.call(query, 0);
+    } finally {
+      connection.close();
+    }
+  } finally {
+    q.stop();
+  }
+}
+
+/// Each partition's table directory's column `c`, as a fresh q reads it:
+/// its type, attribute, compression (algorithm and level, or none), count
+/// and values - a copy: q sends no compressed column with an attribute.
+const COLUMN_ON_DISK = '{[t;c] {[t;c;p] f:` sv(hsym`$string p),t,c; z:-21!f; v:get f; (string p;"h"$type v;string attr v;$[count z;"f"$z`algorithm`zipLevel;()];"f"$count v;v til count v)}[t;c] each .Q.pv}';
+
+// A column of a compressed partition is written back compressed as it was,
+// and one of a plain partition plain, whatever the process's .z.zd (#2137).
+test("the column manager's cast and attribute keep each partition's compression (#2137)", { skip }, async (t) => {
+  const source = [
+    'r:hsym`$"$DIR/hdb";',
+    "mk:{[r;d] .Q.dd[r;d,`trade`] set .Q.en[r] ([] sym:`a`b`c`a;px:1 2 3 4f;sz:10 20 30 40;ex:(\"NY\";\"LN\";\"TK\";\"NY\"))};",
+    "mk[r;2026.01.05];",
+    ".z.zd:17 2 6; mk[r;2026.01.06];",
+    ".z.zd:16 1 0; mk[r;2026.01.07];",
+    ".z.zd:17 2 6;",
+    "\\l $DIR/hdb",
+    "",
+  ].join("\n");
+  const { connection, dir } = await connect(t, source);
+  assert.match(await run(connection, columnScript("trade", { op: "attr", column: "px", attr: "s" }, "hdb")), /changed 3 of 3 directories/);
+  assert.match(await run(connection, columnScript("trade", { op: "cast", column: "sz", type: "i" }, "hdb")), /changed 3 of 3 directories/);
+  assert.match(await run(connection, columnScript("trade", { op: "cast", column: "ex", type: "s" }, "hdb")), /changed 3 of 3 directories/);
+  const zips = [[], [2, 6], [1, 0]];
+  const px = await onDisk(t, `${dir}/hdb`, `{${COLUMN_ON_DISK}[\`trade;\`px]}`);
+  assert.deepStrictEqual(px, ["2026.01.05", "2026.01.06", "2026.01.07"].map((p, i) => [p, 9, "s", zips[i], 4, [1, 2, 3, 4]]));
+  const sz = await onDisk(t, `${dir}/hdb`, `{${COLUMN_ON_DISK}[\`trade;\`sz]}`);
+  assert.deepStrictEqual(sz.map((r) => r.slice(0, 5)), ["2026.01.05", "2026.01.06", "2026.01.07"].map((p, i) => [p, 6, "", zips[i], 4]));
+  const ex = await onDisk(t, `${dir}/hdb`, `{${COLUMN_ON_DISK}[\`trade;\`ex]}`);
+  assert.deepStrictEqual(ex.map((r) => r.slice(0, 5)), ["2026.01.05", "2026.01.06", "2026.01.07"].map((p, i) => [p, 20, "", zips[i], 4]));
+  assert.deepStrictEqual(await onDisk(t, `${dir}/hdb`, '{"f"$(count select from trade;first(select sum sz from trade)`sz)}'), [12, 300]);
+  assert.deepStrictEqual(await onDisk(t, `${dir}/hdb`, "{exec t from meta trade}"), "dsfis");
+});
+
+// A column added to the newest partitions only, or left in the oldest
+// only: meta reads the newest, and select fails on the others (#2138).
+test("the column manager adds a column the newest partitions have to the rest, and deletes one only the oldest have (#2138)", { skip }, async (t) => {
+  const source = [
+    'r:hsym`$"$DIR/hdb";',
+    "mk:{[r;d;t] .Q.dd[r;d,`trade`] set .Q.en[r] t};",
+    "mk[r;;([] sym:`a`b`c;px:1 2 3f;old:1 2 3)] each 2026.02.02 2026.02.03;",
+    "mk[r;;([] sym:`a`b`c;px:1 2 3f)] each 2026.02.04 2026.02.05;",
+    "mk[r;;([] sym:`a`b`c;px:1 2 3f;ex:`X`Y`X)] each 2026.02.09 2026.02.10;",
+    "\\l $DIR/hdb",
+    "",
+  ].join("\n");
+  const { connection, dir } = await connect(t, source);
+  const info = readTableInfo(await connection.call(TABLE_INFO, "trade", 100));
+  const meta = info.columns.map((c) => c.name);
+  assert.deepStrictEqual(meta, ["date", "sym", "px", "ex"]);
+  const { columns, everywhere } = columnsOf(meta, readColumnDirs(await connection.call(COLUMN_DIRS, "trade")));
+  assert.deepStrictEqual([columns, everywhere], [["date", "sym", "px", "ex", "old"], ["date", "sym", "px"]]);
+  const add = { op: "add", column: "ex", value: "`" };
+  assert.strictEqual(opProblem(add, columns, "date", everywhere), undefined);
+  assert.strictEqual(opProblem({ op: "delete", column: "old" }, columns, "date", everywhere), undefined);
+  assert.match(await run(connection, columnScript("trade", add, "hdb")), /changed 4 of 6 directories; left as they were: .*2026\.02\.09\/trade: has ex/);
+  assert.match(await run(connection, columnScript("trade", { op: "delete", column: "old" }, "hdb")), /changed 2 of 6 directories/);
+  // A q of its own: every partition lists the same columns, ex in each.
+  const db = `${dir}/hdb`;
+  assert.deepStrictEqual(
+    await onDisk(t, db, '{{f:` sv(hsym`$string x),`trade; (string x;string get` sv f,`.d;"h"$type get` sv f,`ex;string get` sv f,`ex)} each .Q.pv}'),
+    ["2026.02.02", "2026.02.03", "2026.02.04", "2026.02.05", "2026.02.09", "2026.02.10"].map((p, i) => [p, ["sym", "px", "ex"], 20, i < 4 ? ["", "", ""] : ["X", "Y", "X"]]),
+  );
+  assert.deepStrictEqual(await onDisk(t, db, '{"f"$exec x from select count i by date from trade where null ex}'), [3, 3, 3, 3]);
+  assert.deepStrictEqual(await onDisk(t, db, "{exec c from meta trade}"), ["date", "sym", "px", "ex"]);
+  assert.deepStrictEqual(await onDisk(t, db, '{key` sv(hsym`$string first .Q.pv),`trade}'), [".d", "ex", "px", "sym"]);
+});
+
+// q drops an attribute writing a nested column, but on an empty one (#2141).
+test("the column manager sets no attribute on a nested column, and says so in each directory (#2141)", { skip }, async (t) => {
+  const source = [
+    'r:hsym`$"$DIR/hdb";',
+    "mk:{[r;d;n] .Q.dd[r;d,`trade`] set .Q.en[r] ([] sym:n#`a`b`c;ex:n#(\"NY\";\"LN\";\"TK\"))};",
+    "mk[r;2026.01.05;3]; mk[r;2026.01.06;0]; mk[r;2026.01.07;3];",
+    "\\l $DIR/hdb",
+    "",
+  ].join("\n");
+  const { connection, dir } = await connect(t, source);
+  const db = `${dir}/hdb`;
+  const info = readTableInfo(await connection.call(TABLE_INFO, "trade", 100));
+  const columns = info.columns.map((c) => c.name);
+  const types = Object.fromEntries(info.columns.map((c) => [c.name, c.type]));
+  // q's own: g# on the strings is kept on the empty partition's file alone.
+  assert.deepStrictEqual(await onDisk(t, db, `{{f:hsym\`$"${dir}/probe/",string x; f set \`g#get\` sv(hsym\`$string x),\`trade\`ex; string attr get f} each .Q.pv}`), ["", "g", ""]);
+  assert.match(opProblem({ op: "attr", column: "ex", attr: "g" }, columns, "date", columns, types), /^ex is a nested column, which q writes to disk with no attribute$/);
+  // The script, run anyway, writes no directory.
+  const before = await onDisk(t, db, '{{string attr get` sv(hsym`$string x),`trade`ex} each .Q.pv}');
+  assert.match(await run(connection, columnScript("trade", { op: "attr", column: "ex", attr: "g" }, "hdb")), /^changed 0 of 3 directories; left as they were: .*nested, which q writes with no attribute/);
+  assert.deepStrictEqual(await onDisk(t, db, '{{string attr get` sv(hsym`$string x),`trade`ex} each .Q.pv}'), before);
+  assert.deepStrictEqual(before, ["", "", ""]);
+  // An attribute on a column q keeps it on is set, and the file says so.
+  assert.match(await run(connection, columnScript("trade", { op: "attr", column: "sym", attr: "g" }, "hdb")), /^changed 3 of 3 directories$/);
+  assert.deepStrictEqual(await onDisk(t, db, '{{string attr get` sv(hsym`$string x),`trade`sym} each .Q.pv}'), ["g", "g", "g"]);
+});
+
+// sym to c fails in every partition; a nested long column to f makes no
+// float column of a partition with rows (the script's parse fails there),
+// and one of the empty partition alone, which then differs (#2140).
+test("the column manager refuses the casts q does not make, before any partition is written (#2140)", { skip }, async (t) => {
+  const source = [
+    'r:hsym`$"$DIR/hdb";',
+    "mk:{[r;d;n] .Q.dd[r;d,`trade`] set .Q.en[r] ([] sym:n#`a`b`c;tags:n#(1 2;3 4 5;enlist 6);sz:n#10 20 30)};",
+    "mk[r;2026.01.05;3]; mk[r;2026.01.06;0]; mk[r;2026.01.07;3];",
+    "\\l $DIR/hdb",
+    "",
+  ].join("\n");
+  const { connection, dir } = await connect(t, source);
+  const info = readTableInfo(await connection.call(TABLE_INFO, "trade", 100));
+  const columns = info.columns.map((c) => c.name);
+  const types = Object.fromEntries(info.columns.map((c) => [c.name, c.type]));
+  const db = `${dir}/hdb`;
+  // What q's own cast makes of each partition's column, in a q of its own.
+  const own = (c, to) => onDisk(t, db, `{{@[{"h"$type ${to}$x};get\` sv(hsym\`$string x),\`trade\`${c};{"'",x}]} each .Q.pv}`);
+  assert.deepStrictEqual(await own("sym", '"c"'), ["'type", "'type", "'type"]);
+  assert.deepStrictEqual(await own("tags", '"f"'), [0, 9, 0]);
+  for (const [column, type] of [["sym", "c"], ["tags", "f"]]) {
+    assert.match(opProblem({ op: "cast", column, type }, columns, "date", columns, types), new RegExp(`^${column} is not cast from ${types[column]} to ${type}: `));
+  }
+  assert.strictEqual(opProblem({ op: "cast", column: "sz", type: "i" }, columns, "date", columns, types), undefined);
+  assert.match(await run(connection, columnScript("trade", { op: "cast", column: "sz", type: "i" }, "hdb")), /changed 3 of 3 directories/);
+  assert.deepStrictEqual(await onDisk(t, db, "{exec t from meta trade}"), "dsJi");
+  assert.deepStrictEqual(await onDisk(t, db, '{{"h"$type get` sv(hsym`$string x),`trade`sz} each .Q.pv}'), [6, 6, 6]);
+});
+
 test("the documenter reads tables, keys, foreign keys and functions", { skip }, async (t) => {
   const { connection } = await connect(t, HDB() + "\ns:([sym:`a`b] nm:(\"x\";\"y\"))\nf:([] sym:`s$`a`b`a; v:1 2 3)\nkt:([k:1 2] v:`p#`x`x)\n");
   const doc = readDoc(await connection.call(DOCUMENT, 100));
@@ -295,6 +436,18 @@ test("the partition check takes an empty partition's string and nested columns a
   const problems = partitionProblems(readPartitions(await connection.call(PARTITION_CHECK, 1000, true)));
   assert.deepStrictEqual(problems.filter((p) => p.kind !== "row count").map((p) => [p.kind, p.what, p.partitions]), []);
   assert.deepStrictEqual(problems.map((p) => [p.table, p.partitions]).sort(), [["ev", ["2026.01.06"]], ["filled", ["2026.01.06"]]]);
+});
+
+test("the partition check finds a partition whose sym is enumerated against another domain (#2139)", { skip }, async (t) => {
+  const extra = [
+    "dom2:`x`y; (` sv r,`dom2) set dom2;",
+    ".Q.dd[r;2026.01.06,`trade`sym] set `dom2$6#`x`y;",
+  ].join("\n");
+  const { connection, dir } = await connect(t, HDB(extra));
+  // In a q of its own, a select across the two is no symbol column.
+  assert.strictEqual(await onDisk(t, `${dir}/hdb`, "{type exec sym from select sym from trade}"), 0);
+  const problems = partitionProblems(readPartitions(await connection.call(PARTITION_CHECK, 1000, true)));
+  assert.deepStrictEqual(problems.map((p) => [p.kind, p.what, p.partitions]), [["enumeration", "trade.sym is enumerated against dom2 here, sym in most partitions: a select across them makes it a mixed column", ["2026.01.06"]]]);
 });
 
 test("the partition check finds missing dates, files, differing types and outliers", { skip }, async (t) => {
@@ -470,6 +623,64 @@ test("the sym inspector counts the file, its columns' shares and its growth", { 
   assert.strictEqual(readSym(await plain.call(SYM_INSPECT, 20)).sym, false);
 });
 
+// The middle partition uses only the first two symbols of a file that held
+// four already: it shows four, and the next adds none (#2142).
+test("the sym inspector's growth counts from the largest size before, not the partition just before (#2142)", { skip }, async (t) => {
+  const { connection } = await connect(t, [
+    'r:hsym`$"$DIR/g";',
+    "{[r;d;s] .Q.dd[r;d,`trade`] set .Q.en[r] ([] sym:s;px:count[s]#1f)}[r]'[2026.01.07 2026.01.08 2026.01.09;(`a`b`c`d;`a`b;`d`c`b`a)];",
+    "\\l $DIR/g",
+    "",
+  ].join("\n"));
+  const answer = readSym(await connection.call(SYM_INSPECT, 20));
+  assert.deepStrictEqual(answer.growth.map((g) => g.size), [4, 2, 4]);
+  const rows = symReport(answer, "g", 1e6).split("\n").filter((l) => /^\| 2026/.test(l));
+  assert.deepStrictEqual(rows, ["| 2026.01.07 | 4 |  |", "| 2026.01.08 | 4 | 0 |", "| 2026.01.09 | 4 | 0 |"]);
+});
+
+// A sym column whose indexes run past the 3-symbol file: 0 1 2 are its
+// symbols, 3 4 99 none (#2143).
+test("the sym inspector counts no index past the file's end as a symbol, and warns of them (#2143)", { skip }, async (t) => {
+  const { connection, dir } = await connect(t, [
+    'r:hsym`$"$DIR/b";',
+    "{[r;d] .Q.dd[r;d,`trade`] set .Q.en[r] ([] sym:6#`a`b`c;px:6#1f)}[r] each 2026.03.03 2026.03.04;",
+    ".Q.dd[r;2026.03.04,`trade`sym] set `sym!0 1 2 3 4 99;",
+    "\\l $DIR/b",
+    "",
+  ].join("\n"));
+  assert.deepStrictEqual(await onDisk(t, `${dir}/b`, '{"f"$(count sym;exec x from select count i by date from trade)}'), [3, [6, 6]]);
+  const answer = readSym(await connection.call(SYM_INSPECT, 20));
+  assert.deepStrictEqual(answer.columns, [{ table: "trade", column: "sym", distinct: 3, past: 3 }]);
+  assert.deepStrictEqual(answer.growth, [{ partition: "2026.03.03", size: 3 }, { partition: "2026.03.04", size: 3 }]);
+  const text = symReport(answer, "b", 1e6);
+  assert.match(text, /\| trade \| sym \| 3 \| 100\.0% \|/);
+  assert.match(text, /trade\.sym has 3 values whose index is past the end of sym/);
+});
+
+// .Q.ens[d;t;`mysym] enumerates against mysym, and a column may be against
+// a domain of its own beside sym: each is inspected (#2146).
+test("the sym inspector inspects a database enumerated against another domain than sym (#2146)", { skip }, async (t) => {
+  const { connection } = await connect(t, [
+    'r:hsym`$"$DIR/splay";',
+    "(` sv r,`sp`) set .Q.ens[r;([] s:`a`b`c; u:`x`y`z; n:1 2 3);`mysym];",
+    "\\l $DIR/splay",
+    "",
+  ].join("\n"));
+  const answer = readSym(await connection.call(SYM_INSPECT, 20));
+  assert.deepStrictEqual([answer.sym, answer.domain, answer.count, answer.others], [true, "mysym", 6, []]);
+  assert.deepStrictEqual(answer.columns.map((c) => [c.table, c.column, c.distinct]).sort(), [["sp", "s", 3], ["sp", "u", 3]]);
+  assert.match(symReport(answer, "splay", 1e6), /\/mysym: 6 symbols/);
+  const { connection: two } = await connect(t, [
+    'r:hsym`$"$DIR/two";src:`x`y`z;(` sv r,`src) set src;',
+    "{[r;d] .Q.dd[r;d,`trade`] set .Q.en[r] ([] sym:`a`b;src:`src$`x`z)}[r] each 2026.01.05 2026.01.06;",
+    "\\l $DIR/two",
+    "",
+  ].join("\n"));
+  const both = readSym(await two.call(SYM_INSPECT, 20));
+  assert.deepStrictEqual([both.domain, both.count, both.columns.map((c) => c.column)], ["sym", 2, ["sym"]]);
+  assert.deepStrictEqual(both.others.map((d) => [d.domain, d.count, d.columns.map((c) => [c.column, c.distinct]), d.growth.map((g) => g.size)]), [["src", 3, [["src", 2]], [3, 3]]]);
+});
+
 // A null symbol is no entry of the file, and a partition of no symbols
 // (empty, or all null) says nothing of its size (#1567, #1568).
 test("the sym inspector leaves out null symbols and partitions that hold none", { skip }, async (t) => {
@@ -510,6 +721,25 @@ test("the attribute advisor samples a table's columns without changing it", { sk
 
 // A table one partition lacks cannot be counted: its sample is advised on as
 // a sample, and a u# is not costed from the sample's rows (#1979).
+// An EOD that wrote no rows leaves the newest partition empty: the sample is
+// the newest one with rows, not none (#2144).
+test("the attribute advisor samples the newest partition that has rows (#2144)", { skip }, async (t) => {
+  const { connection } = await connect(t, [
+    'r:hsym`$"$DIR/e";',
+    "{[r;d;n] .Q.dd[r;d,`trade`] set .Q.en[r] ([] sym:`s#n#`a`a`b`b`c`c;px:n#1 2 3f;sz:n#10 20 30)}[r]'[2026.04.01 2026.04.02 2026.04.03 2026.04.06;6 6 5 0];",
+    "\\l $DIR/e",
+    "",
+  ].join("\n"));
+  const p = readAttributeSample(await connection.call(ATTRIBUTE_SAMPLE, "trade", 100000));
+  assert.deepStrictEqual([p.kind, p.rows, p.sampled, p.partitions], ["partitioned", 17, 5, 4]);
+  assert.deepStrictEqual(p.columns.map((c) => [c.name, c.attr, c.distinct, c.sorted]), [["sym", "s", 3, true], ["px", "", 3, false], ["sz", "", 3, false]]);
+  // Under a view of the empty one alone, that is what there is to sample.
+  await connection.call("{.Q.view 2026.04.06}", 0);
+  assert.strictEqual(readAttributeSample(await connection.call(ATTRIBUTE_SAMPLE, "trade", 100000)).sampled, 0);
+  await connection.call("{.Q.view 2026.04.01 2026.04.02}", 0);
+  assert.strictEqual(readAttributeSample(await connection.call(ATTRIBUTE_SAMPLE, "trade", 100000)).sampled, 6);
+});
+
 test("the attribute advisor does not cost a table it could not count from its sample (#1979)", { skip }, async (t) => {
   const { connection } = await connect(t, HDB("{[r;d] .Q.dd[r;d,`late`] set .Q.en[r] ([] sym:`a`b`c`d;qid:40 10 30 20;bid:1 2 3 4f)}[r] each 2026.01.05 2026.01.07;"));
   const s = readAttributeSample(await connection.call(ATTRIBUTE_SAMPLE, "late", 100000));
@@ -706,6 +936,28 @@ test("a schema migration's q turns one table into the other, in memory and on di
 
 // A list column to an atom one, or back, is no cast: not written, and the
 // script runs; a symbol to a char is its first character (#1578).
+// A column the migration adds takes the target's attribute, in memory and
+// in every partition on disk; u# on a column of one null a row is left out,
+// with why, as q refuses it (#2145).
+test("a schema migration sets the target's attribute on the columns it adds (#2145)", { skip }, async (t) => {
+  const { connection, dir } = await connect(t, HDB() + "\na:([] k:1 2 3)\nb:([] k:1 2 3; s:`s#`a`b`c; p:`p#`x`x`y; g:`g#1 2 1; u:`u#1 2 3)\ntrade2:([] sym:`$(); px:`float$(); sz:`long$(); ex:`p#`symbol$(); n:`s#`long$(); w:`u#`long$())\n");
+  const info = async (n) => readTableInfo(await connection.call(TABLE_INFO, n, 100));
+  const script = migrationScript("a", await info("a"), "a", await info("b"), "b", "p");
+  assert.match(script, /\n\/ not written: u# on u: it is added with one null in every row, which u# refuses\n/);
+  const ran = readRun(await connection.call(RUN_SCRIPT, statements(script)));
+  assert.ok(ran.ok, ran.error);
+  assert.deepStrictEqual(await connection.call("{(exec t from meta a;string exec a from meta a)}", 0), ["jssjj", ["", "s", "p", "g", ""]]);
+  // On disk: every partition, as a q of its own loads it.
+  const disk = migrationScript("trade", await info("trade"), "trade", await info("trade2"), "trade2", "p");
+  assert.match(disk, /\n\/ not written: u# on w: /);
+  const done = readRun(await connection.call(RUN_SCRIPT, statements(disk)));
+  assert.ok(done.ok, done.error);
+  assert.match(done.text, /^changed (\d+) of \1 directories$/);
+  const parts = await onDisk(t, `${dir}/hdb`, '{{f:` sv(hsym`$string x),`trade; (string x;string get` sv f,`.d;{string attr get x} each ` sv\'f,/:`ex`n`w)} each .Q.pv}');
+  assert.deepStrictEqual(parts, ["2026.01.05", "2026.01.06", "2026.01.07"].map((p) => [p, ["sym", "px", "sz", "ex", "n", "w"], ["p", "s", ""]]));
+  assert.deepStrictEqual(await onDisk(t, `${dir}/hdb`, '{(string exec a from meta trade;"f"$count select from trade where null ex)}'), [["", "", "", "", "p", "s", ""], 18]);
+});
+
 test("a schema migration writes no list-atom cast, in memory or on disk", { skip }, async (t) => {
   const extra = '{[r;d] .Q.dd[r;d,`book`] set .Q.en[r] ([] sym:`a`b;sz:(1 2;3 4 5);px:1 2f)}[r] each 2026.01.05 2026.01.06 2026.01.07;';
   const { connection } = await connect(t, HDB(extra) + '\na:([] c:("ab";"c"); z:(1 2;3); s:`xy`z; n:1 2)\nb:([] c:"ab"; z:1 2; s:"xz"; n:(1 2;3))\nbook2:([] sym:`$(); sz:`long$(); px:`float$())\n');

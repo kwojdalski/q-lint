@@ -7,7 +7,8 @@
 //
 // One read, defining nothing, of at most `lim` rows: the first rows of a
 // table in memory or of a splayed one, and of a partitioned table the
-// first rows of its last partition, mapped from the directory q loaded it
+// first rows of its newest partition that has any (`.Q.cn`: an empty newest
+// one, a quiet day, is no sample, #2144), mapped from the directory q loaded it
 // from (`.Q.pd`, so any segmenting is followed, #1977) so
 // the partition is not read whole. The current attributes are `meta`'s.
 // Whether a column is in order is asked of a copy of it (`x til count x`):
@@ -29,7 +30,8 @@ export const ATTRIBUTE_SAMPLE = [
   " t:get`$nm;if[not .Q.qt t;'\"not a table\"];",
   " p:.Q.qp t;part:1b~p;m:\"j\"$lim;",
   " n:\"f\"$$[part;@[{sum .Q.cn x};t;0n];count t];",
-  ` s:$[part;m sublist get\` sv(first${PARTITION_DIRS}[hsym\`$system"cd";-1#@[get;\`.Q.pd;()];-1#.Q.pv]),\`$nm;m sublist 0!t];`,
+  " k:$[part;$[count w:where 0<@[.Q.cn;t;()];last w;count[.Q.pv]-1];0];pd:@[get;`.Q.pd;()];",
+  ` s:$[part;m sublist get\` sv(first${PARTITION_DIRS}[hsym\`$system"cd";$[count[pd]=count .Q.pv;enlist pd k;()];enlist .Q.pv k]),\`$nm;m sublist 0!t];`,
   " mt:0!meta t;cs:(cols s)except$[part;.Q.pf;`$()];",
   " one:{[x] nested:0h=type x;",
   "  `d`runs`sorted!(\"f\"$count distinct x;\"f\"$$[nested;0n;sum differ x];$[nested;0b;{x~asc x}x til count x])};",
@@ -223,7 +225,7 @@ export function adviceReport(table: string, process: string, s: AttributeSample,
   const out = [
     `# Attributes for ${md(table)} on ${md(process)}`,
     "",
-    `${KINDS.get(s.kind) ?? "A table"} of ${s.rows === null ? "an unknown number of" : s.rows.toLocaleString("en-US")} rows; ${s.sampled.toLocaleString("en-US")} rows sampled${s.kind === "partitioned" ? " from its last partition" : ""}; ${queries} saved and recent queries read for filters.`,
+    `${KINDS.get(s.kind) ?? "A table"} of ${s.rows === null ? "an unknown number of" : s.rows.toLocaleString("en-US")} rows; ${s.sampled.toLocaleString("en-US")} rows sampled${s.kind === "partitioned" ? " from its newest partition with rows" : ""}; ${queries} saved and recent queries read for filters.`,
     "",
     "| column | now | suggested | memory, about | filtered by |",
     "| --- | --- | --- | --- | --- |",
