@@ -84,7 +84,7 @@ export function registerPaste(context: ExtensionContext, live: Live): void {
         return undefined;
       }
       try {
-        const ran = await live.runOnActive(expression, (connection) => connection.call(toJsonQuery(expression)));
+        const ran = await live.runOnActive(expression, (connection) => connection.guarded((evaluate) => toJsonQuery(expression, evaluate)));
         if (ran === undefined) {
           return undefined;
         }

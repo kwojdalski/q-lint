@@ -131,12 +131,12 @@ function fakeLive(answer, process = { label: "dev", tags: [] }) {
     },
     async runOnActive(code, query) {
       this.guarded.push(code);
-      const value = await query({
-        call: async (lambda, ...args) => {
-          sent.push({ lambda, args });
-          return answer(lambda, ...args);
-        },
-      });
+      const call = async (lambda, ...args) => {
+        sent.push({ lambda, args });
+        return answer(lambda, ...args);
+      };
+      // Not read-only: `trapped` sends the plain lambda, as a connection does.
+      const value = await query({ call, trapped: async (plain, _readOnly, read, ...args) => read(await call(plain, ...args)) });
       return { process: this.active.label, value };
     },
   };

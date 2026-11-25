@@ -123,7 +123,7 @@ test("turned off while it asked, nothing is sent and no status item is left (#14
   const live = {
     runOnActive: async (_code, query) => {
       await new Promise((r) => (release = r));
-      return { process: "p", value: await query({ sendAsync: (...a) => sent.push(a) }) };
+      return { process: "p", value: await query({ underReval: async () => false, sendAsync: (...a) => sent.push(a) }) };
     },
     onAsyncMessage: () => ({ dispose() {} }),
     onDidChange: () => ({ dispose() {} }),
@@ -149,7 +149,7 @@ test("turned off while it asked, nothing is sent and no status item is left (#14
 test("a pending query whose code starts with a blank line is listed by its first line of code (#1933)", async () => {
   stub.reset();
   const live = {
-    runOnActive: async (_code, query) => ({ process: "rdb", value: await query({ sendAsync() {} }) }),
+    runOnActive: async (_code, query) => ({ process: "rdb", value: await query({ underReval: async () => false, sendAsync() {} }) }),
     onAsyncMessage: () => ({ dispose() {} }),
     onDidChange: () => ({ dispose() {} }),
     codeFromEditor: async () => undefined,

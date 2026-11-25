@@ -10,7 +10,7 @@
 // the command refuses, the panel closes and nothing is sent.
 import { randomBytes } from "node:crypto";
 import { ViewColumn, commands, window, workspace, type ExtensionContext, type WebviewPanel } from "vscode";
-import { BENCHMARK, DEFAULT_RUNS, benchmarkHtml, expressionProblem, guardCode, readRuns, readTimings, summarise, type Summary } from "./benchmark";
+import { DEFAULT_RUNS, benchmarkHtml, benchmarkLambda, expressionProblem, guardCode, readRuns, readTimings, summarise, type Summary } from "./benchmark";
 import type { Live } from "./live";
 import { PROCESS_TOOL_COMMANDS, asCode, toolOff, toolOn } from "./processtools";
 import { plainMessage } from "./history";
@@ -84,7 +84,7 @@ export function registerBenchmark(
     let ran: { process: string; value: unknown } | undefined;
     try {
       // Turned off while it asked: nothing is timed (#1453).
-      ran = await live.runOnActive(guardCode(expressions, runs.n), async (connection) => (on() ? connection.call(BENCHMARK, expressions.map(asCode), runs.n, runs.k) : OFF));
+      ran = await live.runOnActive(guardCode(expressions, runs.n), async (connection) => (on() ? connection.guarded(benchmarkLambda, expressions.map(asCode), runs.n, runs.k) : OFF));
     } catch (error) {
       return say(`q-lint: the benchmark failed: ${error instanceof Error ? error.message : String(error)}`);
     }

@@ -24,7 +24,7 @@
 // it for the query and puts it back, error or not; otherwise the query runs
 // as one from the editor does (`query.ts`'s TRAP). Two results are the same
 // when their lines are, without trailing blanks.
-import { TRAP } from "./query";
+import { trapLines } from "./query";
 
 export const SNAPSHOT_COMMANDS = {
   record: "q-lint.recordSnapshot",
@@ -33,14 +33,21 @@ export const SNAPSHOT_COMMANDS = {
 
 /// Runs the statements `s` and prints the result at a 2000 by 2000
 /// console, answering as `query.ts`'s RUN does.
-export const SNAPSHOT_RUN = [
-  "{[s]",
-  " c:system\"c\";system\"c 2000 2000\";",
-  ...TRAP,
-  " t:$[r 0;@[.Q.S[2000 2000j;0j];r 1;{(0b;x)}];()];",
-  " system\"c \",\" \"sv string c;",
-  " $[not r 0;`ok`error`trace!(0b;r 1;r 2);0b~first t;`ok`error`trace!(0b;last t;\"\");`ok`type`text!(1b;type r 1;t)]}",
-].join("\n");
+function snapshotRun(readOnly: boolean): string {
+  return [
+    "{[s]",
+    " c:system\"c\";system\"c 2000 2000\";",
+    ...trapLines(readOnly),
+    " t:$[r 0;@[.Q.S[2000 2000j;0j];r 1;{(0b;x)}];()];",
+    " system\"c \",\" \"sv string c;",
+    " $[not r 0;`ok`error`trace!(0b;r 1;r 2);0b~first t;`ok`error`trace!(0b;last t;\"\");`ok`type`text!(1b;type r 1;t)]}",
+  ].join("\n");
+}
+
+export const SNAPSHOT_RUN = snapshotRun(false);
+/// `SNAPSHOT_RUN` under `reval`, sent by `QConnection.trapped` while the
+/// read-only guard's backstop is set, as a query is.
+export const SNAPSHOT_RUN_READ_ONLY = snapshotRun(true);
 export const SNAPSHOT_EXTENSION = ".qsnap";
 export const SNAPSHOT_DIRECTORY = "__snapshots__";
 

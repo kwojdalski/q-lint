@@ -3039,9 +3039,17 @@ export class Live {
     });
     try {
       const backstopped = this.backstop(ready.connection, ready.process, code);
-      let value: T;
+      let value: T | undefined;
+      // A query that throws `reval`'s refusal (`QConnection.guarded`) is
+      // asked about as one that answers it; declined, it throws it.
+      let thrown: { error: unknown } | undefined;
       try {
         value = await query(ready.connection);
+      } catch (error) {
+        if (!backstopped || ready.connection.refused === undefined) {
+          throw error;
+        }
+        thrown = { error };
       } finally {
         // Back to evaluating as it did, whatever the query threw.
         if (backstopped) {
@@ -3058,10 +3066,14 @@ export class Live {
             throw new Error(`Not run again: the connection to ${ready.process.label} closed or became busy while you were asked.`);
           }
           value = await query(ready.connection);
+          thrown = undefined;
         }
       }
+      if (thrown !== undefined) {
+        throw thrown.error;
+      }
       this.answeredOn = ready.connection;
-      return { process: ready.process.label, value };
+      return { process: ready.process.label, value: value as T };
     } catch (error) {
       if (timedOut) {
         throw new Stopped(`${timedOutError(timeout)} (${timeoutSource(ready.process, enabled)})`, "timeout");

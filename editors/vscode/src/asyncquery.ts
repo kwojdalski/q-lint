@@ -11,12 +11,16 @@
 // the process.
 import { deserialize } from "node-q/lib/c.js";
 import { checkedBody } from "./qdecode";
-import { GRID, readGridAnswer, type GridAnswer, type GridPayload } from "./grid";
+import { GRID, GRID_READ_ONLY, readGridAnswer, type GridAnswer, type GridPayload } from "./grid";
 
 export const ASYNC_TAG = "qlintAsync";
 
 /// The lambda an async query runs: the grid lambda's answer, sent back.
 export const ASYNC = `{[id;s;size;limit] neg[.z.w](\`${ASYNC_TAG};id;${GRID}[s;size;limit])}`;
+/// `ASYNC` under `reval`, sent while the read-only guard's backstop is set
+/// on a process that has it (`QConnection.underReval`): a write the guard
+/// missed comes back as `reval`'s error, not made.
+export const ASYNC_READ_ONLY = `{[id;s;size;limit] neg[.z.w](\`${ASYNC_TAG};id;${GRID_READ_ONLY}[s;size;limit])}`;
 
 /// What an async query sent back, read from the whole async message;
 /// undefined for any other message, which is not ours.

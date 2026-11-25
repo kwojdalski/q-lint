@@ -209,6 +209,7 @@ const OWN_WRITES = new Map([
   ["remotefiles.js LIST_DIRECTORY", "runs a shell command"],
   ["remotefiles.js READ_FILE", "runs a shell command"],
   ["snapshot.js SNAPSHOT_RUN", "sets \\c"],
+  ["snapshot.js SNAPSHOT_RUN_READ_ONLY", "sets \\c"],
   ["syssettings.js READ_SETTINGS", "calls system as a value"],
   ["syssettings.js SET_SETTING", "sets a setting"],
   ["testing.js TEST_RUN", "runs tests"],

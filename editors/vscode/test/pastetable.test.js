@@ -10,6 +10,7 @@ const assert = require("node:assert");
 const { stub, vscode } = require("./vscode_stub");
 const p = require("../out/pastetable.js");
 const { jsonToQ, toJsonQuery } = require("../out/jsonq.js");
+const { EVALUATE } = require("../out/query.js");
 const pkg = require("../package.json");
 
 test("CSV and TSV are read as a spreadsheet writes them", () => {
@@ -184,7 +185,7 @@ test("the pastes write at the selection; Copy Value as JSON asks the process thr
     codeFromEditor: async () => "([] a:1 2)",
     runOnActive: async (code, query) => {
       sent.push(code);
-      return { process: "dev", value: await query({ call: async (expr) => (sent.push(expr), '[{"a":1},{"a":2}]') }) };
+      return { process: "dev", value: await query({ guarded: async (lambda) => (sent.push(lambda(EVALUATE)), '[{"a":1},{"a":2}]') }) };
     },
   };
   const { registerPaste } = require("../out/pasteview.js");

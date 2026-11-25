@@ -233,3 +233,100 @@ test("a process without reval is sent the plain lambda, and the connection says 
   c.readOnly = false;
   assert.strictEqual((await c.evaluate("zz2")).value, 1);
 });
+
+/// A `Live` under the stand-in `vscode`, connected to `box` as a process
+/// tagged prod, with the process tools that evaluate the user's code
+/// registered: Benchmark, Copy Value as JSON, Explain aj Match, Time Lines
+/// and Run Query Asynchronously.
+async function toolsOn(t, box) {
+  const { stub, vscode } = require("./vscode_stub.js");
+  const { Live } = require("../out/live.js");
+  stub.reset();
+  Object.assign(stub.config.user, { "query.lineTimings.enable": true });
+  const context = stub.newContext();
+  await context.globalState.update("q-lint.processes", [{ label: "p", host: "127.0.0.1", port: box.port, tags: ["prod"] }]);
+  const live = new Live(context);
+  const benchmark = require("../out/benchmarkview.js").registerBenchmark(context, live);
+  require("../out/pasteview.js").registerPaste(context, live);
+  const aj = require("../out/ajexplainview.js").registerAjExplainer(context, live);
+  const timings = require("../out/linetimingsview.js").registerLineTimings(context, live);
+  const queries = new (require("../out/asyncqueryview.js").AsyncQueries)(context, live);
+  live.showGrid = () => {};
+  let clipboard = "";
+  vscode.env = { clipboard: { readText: async () => clipboard, writeText: async (s) => void (clipboard = s) } };
+  vscode.Range = class {
+    constructor(a, b, c, d) {
+      Object.assign(this, { start: { line: a, character: b }, end: { line: c, character: d } });
+    }
+  };
+  vscode.window.createTextEditorDecorationType = () => ({ dispose() {} });
+  vscode.Uri.from ??= (parts) => ({ ...parts, toString: () => `${parts.scheme}:${parts.path}` });
+  vscode.window.showTextDocument = async () => {};
+  const editor = (text) => ({
+    document: { uri: vscode.Uri.file("/w/a.q"), version: 1, lineCount: 1, getText: () => text, lineAt: () => ({ text, range: { end: { line: 0, character: text.length } } }) },
+    selection: { isEmpty: true, start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+    setDecorations() {},
+  });
+  t.after(async () => {
+    await stub.commands.get("q-lint.disconnectProcess")?.();
+    for (const d of context.subscriptions) d.dispose?.();
+  });
+  assert.strictEqual(await live.connectTo("p"), true);
+  return { stub, live, benchmark, aj, timings, queries, editor, clipboard: () => clipboard };
+}
+
+test("each process tool sends what the guard reads as read-only under reval, and asks when it refuses (#2355, #2423-#2427)", { skip, timeout: 120_000 }, async (t) => {
+  const box = new Sandbox("cnt:0; bump:{cnt+::1;cnt}; bumpT:{cnt+::1;([] sym:`a`b; time:1 2)}; quote:([] sym:`a`b; time:0 1; px:1 2f);");
+  t.after(() => box.stop());
+  await box.start();
+  const { stub, benchmark, aj, timings, queries, editor } = await toolsOn(t, box);
+  const { PASTE } = require("../out/pastetable.js");
+  const cnt = async () => (await box.connection.evaluate("`int$cnt")).value;
+  const refusal = /^Refused by the read-only evaluation of p: 'noupdate: `\. `cnt\. Run it anyway\?$/;
+  const asked = () => stub.messages.filter(([kind, text]) => kind === "warning" && refusal.test(text)).length;
+  const tools = {
+    benchmark: () => benchmark.benchmark("bump[]", "", "10 2"),
+    json: () => stub.commands.get(PASTE.copyJson)("bump[]"),
+    aj: () => aj.explainRow("aj[`sym`time;bumpT[];quote]", "0"),
+    timings: () => timings.time(editor("bump[]")),
+  };
+  for (const [name, run] of Object.entries(tools)) {
+    // Declined, nothing was changed; confirmed, it runs as it is.
+    const before = asked();
+    stub.picks.push(undefined);
+    await run();
+    assert.strictEqual(asked(), before + 1, `${name}: ${JSON.stringify(stub.messages.slice(-2))}`);
+    assert.strictEqual(await cnt(), 0, name);
+    stub.picks.push("Run Anyway");
+    await run();
+    assert.ok((await cnt()) > 0, name);
+    await box.connection.evaluate("cnt:0");
+  }
+  // An async answer cannot wait on a question: the refusal is said.
+  await queries.run("bump[]");
+  for (let i = 0; i < 100 && queries.state().arrived.length === 0; i++) await sleep(50);
+  assert.strictEqual(queries.state().arrived[0]?.ok, false);
+  assert.match(stub.messages.at(-1)[1], /^q-lint: the asynchronous query was not run: Refused by the read-only evaluation of p: 'noupdate: `\. `cnt\./);
+  assert.strictEqual(await cnt(), 0);
+  // Reads go as before.
+  assert.strictEqual((await benchmark.benchmark("sum til 10", "", "10 1")).summary.length, 1);
+  assert.strictEqual(await stub.commands.get(PASTE.copyJson)("til 2"), "[0,1]");
+});
+
+test("Record Query Snapshot's lambda has a reval twin that refuses a write (#2424)", { skip, timeout: 60_000 }, async (t) => {
+  const { SNAPSHOT_RUN, SNAPSHOT_RUN_READ_ONLY } = require("../out/snapshot.js");
+  const { readAnswer } = require("../out/query.js");
+  const box = new Sandbox("cnt:0; bump:{cnt+::1;cnt};");
+  t.after(() => box.stop());
+  await box.start();
+  const c = box.connection;
+  c.readOnly = true;
+  c.refused = undefined;
+  const refused = await c.trapped(SNAPSHOT_RUN, SNAPSHOT_RUN_READ_ONLY, readAnswer, statements("bump[]"));
+  assert.match(refused.error, /^noupdate/);
+  assert.match(c.refused, /^noupdate/);
+  const read = await c.trapped(SNAPSHOT_RUN, SNAPSHOT_RUN_READ_ONLY, readAnswer, statements("til 3"));
+  c.readOnly = false;
+  assert.deepStrictEqual(read.text, ["0 1 2"]);
+  assert.strictEqual((await c.evaluate("`int$cnt")).value, 0);
+});

@@ -47,6 +47,21 @@ export const NO_REVAL = "q-lint: this process has no reval";
 
 export const TRAP = trapLines();
 
+/// How a lambda that does not run its statements through `trapLines` -
+/// one that times them, prints them as JSON, explains an aj over them -
+/// evaluates the user's code: `value` and `system`, or their `reval`
+/// twins, the read-only guard's backstop. Spliced into the lambda's text
+/// where it would write `value` or `system`, applied to a string.
+export interface Evaluate {
+  value: string;
+  system: string;
+}
+
+/// `value` and `system` as they are.
+export const EVALUATE: Evaluate = { value: "value", system: "system" };
+/// Under `reval`: a write the code would make is a q error (`refusedByReval`).
+export const EVALUATE_READ_ONLY: Evaluate = { value: "{reval(value;x)}", system: "{reval(system;x)}" };
+
 /// `RUN`, its statements evaluated under `reval` when `readOnly`.
 function runLambda(readOnly: boolean): string {
   return [

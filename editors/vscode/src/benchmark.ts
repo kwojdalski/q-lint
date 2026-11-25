@@ -9,11 +9,19 @@
 // `\ts:N e` lines - its rules read the expression `\ts` times.
 import { durationText } from "./linetimings";
 import { bytesText } from "./processtools";
+import { EVALUATE, type Evaluate } from "./query";
 
-export const BENCHMARK = [
-  "{[exprs;n;k]",
-  " {[n;k;e] r:{[n;e;i] system \"ts:\",string[n],\" \",e}[n;e] each til k; (\"f\"$r[;0];\"f\"$r[;1])}[`long$n;`long$k] each exprs}",
-].join("\n");
+/// The lambda, timing with `evaluate`'s `system`: under `reval` on a
+/// guarded process (`QConnection.guarded`), so a write the guard missed is
+/// refused, not run N times K times.
+export function benchmarkLambda(evaluate: Evaluate): string {
+  return [
+    "{[exprs;n;k]",
+    ` {[n;k;e] r:{[n;e;i] ${evaluate.system} "ts:",string[n]," ",e}[n;e] each til k; ("f"$r[;0];"f"$r[;1])}[\`long$n;\`long$k] each exprs}`,
+  ].join("\n");
+}
+
+export const BENCHMARK = benchmarkLambda(EVALUATE);
 
 export const DEFAULT_RUNS = { n: 100, k: 5 };
 

@@ -16,7 +16,7 @@ import * as tls from "node:tls";
 import { deserialize, serialize } from "node-q/lib/c.js";
 import { checkedBody } from "./qdecode";
 import { GRID, GRID_READ_ONLY, GRID_TREE, GRID_TREE_READ_ONLY, gridLambda, readGridAnswer, type GridAnswer } from "./grid";
-import { NO_REVAL, RUN, RUN_READ_ONLY, readAnswer, refusedByReval, type Answer } from "./query";
+import { EVALUATE, EVALUATE_READ_ONLY, NO_REVAL, RUN, RUN_READ_ONLY, readAnswer, refusedByReval, type Answer, type Evaluate } from "./query";
 
 /// The process answered with an error (`'msg`), as against the connection
 /// failing: the query ran, and this is what it gave.
@@ -282,6 +282,34 @@ export class QConnection {
       this.noReval = true;
     }
     return read(await this.call(plain, ...args));
+  }
+
+  /// Send the lambda `lambda` builds applied to `args`, for one that
+  /// evaluates the user's code otherwise than `trapped`'s lambdas do: built
+  /// with `EVALUATE`, or, while `readOnly` is set and the process has
+  /// `reval`, with `EVALUATE_READ_ONLY`. A q error `reval` gave is kept in
+  /// `refused` and thrown; an error the lambda answers as data is the
+  /// caller's to pass to `noteRefusal`.
+  async guarded(lambda: (evaluate: Evaluate) => string, ...args: unknown[]): Promise<unknown> {
+    const evaluate = (await this.underReval()) ? EVALUATE_READ_ONLY : EVALUATE;
+    try {
+      return await this.call(lambda(evaluate), ...args);
+    } catch (error) {
+      if (error instanceof QError) {
+        this.noteRefusal(error.message);
+      }
+      throw error;
+    }
+  }
+
+  /// Whether what is sent next is evaluated under `reval`: `readOnly` is
+  /// set and the process has `reval`, asked each time; one without it
+  /// sets `noReval`, as `trapped` does.
+  async underReval(): Promise<boolean> {
+    if (this.readOnly && !this.noReval && (await this.call("`reval in key`.q")) !== true) {
+      this.noReval = true;
+    }
+    return this.readOnly && !this.noReval;
   }
 
   /// Keep `error` in `refused` when it is `reval` refusing what `readOnly`

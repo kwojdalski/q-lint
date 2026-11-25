@@ -22,7 +22,7 @@ import {
 } from "vscode";
 import type { Live } from "./live";
 import { scriptCode, selectionCode } from "./statements";
-import { LINE_TIMINGS, bytesText, decorationText, durationText, readTimings, statementSpans, summary, type Timings } from "./linetimings";
+import { bytesText, lineTimingsLambda, decorationText, durationText, readTimings, statementSpans, summary, type Timings } from "./linetimings";
 import { TOOLING_COMMANDS, toolingOff, toolingOn } from "./toolingfeatures";
 import { plainMessage } from "./history";
 
@@ -72,7 +72,15 @@ export function registerLineTimings(
     const version = editor.document.version;
     let ran: { process: string; value: unknown } | undefined;
     try {
-      ran = await live.runOnActive(code, (connection) => connection.call(LINE_TIMINGS, spans.map((s) => s.text)));
+      ran = await live.runOnActive(code, async (connection) => {
+        const raw = await connection.guarded(lineTimingsLambda, spans.map((s) => s.text));
+        // A statement `reval` refused is asked about, as a query's is.
+        const failed = readTimings(raw, spans).timings.find((t) => !t.ok);
+        if (failed?.error !== undefined) {
+          connection.noteRefusal(failed.error);
+        }
+        return raw;
+      });
     } catch (error) {
       return say(`q-lint: line timings failed: ${error instanceof Error ? error.message : String(error)}`);
     }

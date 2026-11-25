@@ -10,7 +10,7 @@
 // reads. Off (q-lint.query.ajExplainer.enable), the command refuses and
 // nothing is sent.
 import { EventEmitter, Uri, commands, window, workspace, type ExtensionContext, type TextDocumentContentProvider } from "vscode";
-import { EXPLAIN_AJ, explain, explainGuardCode, findAj, readMatch } from "./ajexplain";
+import { explainAjLambda, explain, explainGuardCode, findAj, readMatch } from "./ajexplain";
 import type { Live } from "./live";
 import { PROCESS_TOOL_COMMANDS, asCode, toolOff, toolOn } from "./processtools";
 import { plainMessage } from "./history";
@@ -62,7 +62,7 @@ export function registerAjExplainer(context: ExtensionContext, live: Live): { ex
     const index = Number(rowText.trim());
     let text: string;
     try {
-      const ran = await live.runOnActive(explainGuardCode(call), (connection) => connection.call(EXPLAIN_AJ, asCode(call.columns), asCode(call.left), asCode(call.right), index));
+      const ran = await live.runOnActive(explainGuardCode(call), (connection) => connection.guarded(explainAjLambda, asCode(call.columns), asCode(call.left), asCode(call.right), index));
       if (ran === undefined) {
         return "nothing was run";
       }

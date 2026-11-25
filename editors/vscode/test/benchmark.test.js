@@ -7,10 +7,11 @@ const { stub, vscode } = require("./vscode_stub.js");
 const test = require("node:test");
 const assert = require("node:assert");
 const { setUp } = require("./fakeq.js");
-const { BENCHMARK, benchmarkHtml, expressionProblem, guardCode, msText, readRuns, readTimings, summarise } = require("../out/benchmark.js");
+const { BENCHMARK, benchmarkHtml, benchmarkLambda, expressionProblem, guardCode, msText, readRuns, readTimings, summarise } = require("../out/benchmark.js");
 const { registerBenchmark } = require("../out/benchmarkview.js");
 const { PROCESS_TOOL_COMMANDS } = require("../out/processtools.js");
 const { guardCheck } = require("../out/guard.js");
+const { EVALUATE_READ_ONLY } = require("../out/query.js");
 const pkg = require("../package.json");
 
 test("runs and expressions are checked", () => {
@@ -67,7 +68,9 @@ test("the switch is declared on, and the command only where it can run", () => {
   assert.ok(entries.length === 2 && entries.every((m) => /config\.q-lint\.query\.benchmark\.enable/.test(m.when)));
 });
 
-const answer = (m) => (Array.isArray(m) && m[0] === BENCHMARK ? m[1].map(() => [[10, 12, 11], [64, 64, 64]]) : null);
+const READ_ONLY = benchmarkLambda(EVALUATE_READ_ONLY);
+const answer = (m) =>
+  m === "`reval in key`.q" ? true : Array.isArray(m) && (m[0] === BENCHMARK || m[0] === READ_ONLY) ? m[1].map(() => [[10, 12, 11], [64, 64, 64]]) : null;
 
 function panels() {
   const made = [];
@@ -106,12 +109,12 @@ test("on a guarded process an expression that writes is held unless confirmed", 
   const { q, live } = await setUp(t, { tags: ["prod"], answer, register: registerBenchmark });
   await live.connectTo("rdb");
   const before = q.sent.length;
-  // A read is sent unasked.
+  // A read is sent unasked, timed under reval (#2423).
   await stub.commands.get(PROCESS_TOOL_COMMANDS.benchmark)("sum til 10", "", "10 1");
-  assert.strictEqual(q.sent.length, before + 1);
+  assert.deepStrictEqual(q.sent.slice(before), ["`reval in key`.q", [READ_ONLY, [" sum til 10"], 10, 1]]);
   stub.picks.push(undefined);
   assert.match(await stub.commands.get(PROCESS_TOOL_COMMANDS.benchmark)("t:til 10", "", "10 1"), /not confirmed/);
-  assert.strictEqual(q.sent.length, before + 1);
+  assert.strictEqual(q.sent.length, before + 2);
 });
 
 test("turned off while it asks for the runs, nothing is timed (#1453)", async (t) => {

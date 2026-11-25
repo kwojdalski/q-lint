@@ -16,20 +16,29 @@
 import { charKinds } from "./explorer";
 import { valued, type GuardCode } from "./guard";
 import { FULL_TEXT } from "./qtext";
+import { EVALUATE, type Evaluate } from "./query";
 
-export const EXPLAIN_AJ = [
-  "{[c;l;r;i]",
-  " c:(),value c; L:0!value l; R:0!value r; i:`long$i;",
-  ` F:{2000 sublist x y}${FULL_TEXT}[2000];`,
-  " if[not i within(0;-1+count L);'\"no row \",string[i],\" in the left table, which has \",string[count L],\" rows\"];",
-  " if[not all c in cols L;'\"the left table has no column \",string first c except cols L];",
-  " if[not all c in cols R;'\"the right table has no column \",string first c except cols R];",
-  " ks:-1_c; tc:last c; row:L i;",
-  " w:til count R; miss:`; k:0;",
-  " while[(k<count ks)&0<count w; w:w where(R[ks k] w)=row ks k; if[0=count w;miss:ks k]; k+:1];",
-  " tm:R[tc] w; j:$[count w;tm bin row tc;-1];",
-  " (F row;\"f\"$count w;string miss;$[null miss;\"\";F row miss];$[j<0;-1f;\"f\"$w j];$[j<0;\"\";F R w j];$[count w;F first tm;\"\"];F row tc;tm~asc tm;string tc;\"f\"$count R)}",
-].join("\n");
+/// The lambda, its three expressions evaluated by `evaluate`'s `value`:
+/// under `reval` on a guarded process (`QConnection.guarded`), so a write
+/// the guard missed is refused.
+export function explainAjLambda(evaluate: Evaluate): string {
+  const v = evaluate.value;
+  return [
+    "{[c;l;r;i]",
+    ` c:(),${v} c; L:0!${v} l; R:0!${v} r; i:\`long$i;`,
+    ` F:{2000 sublist x y}${FULL_TEXT}[2000];`,
+    " if[not i within(0;-1+count L);'\"no row \",string[i],\" in the left table, which has \",string[count L],\" rows\"];",
+    " if[not all c in cols L;'\"the left table has no column \",string first c except cols L];",
+    " if[not all c in cols R;'\"the right table has no column \",string first c except cols R];",
+    " ks:-1_c; tc:last c; row:L i;",
+    " w:til count R; miss:`; k:0;",
+    " while[(k<count ks)&0<count w; w:w where(R[ks k] w)=row ks k; if[0=count w;miss:ks k]; k+:1];",
+    " tm:R[tc] w; j:$[count w;tm bin row tc;-1];",
+    " (F row;\"f\"$count w;string miss;$[null miss;\"\";F row miss];$[j<0;-1f;\"f\"$w j];$[j<0;\"\";F R w j];$[count w;F first tm;\"\"];F row tc;tm~asc tm;string tc;\"f\"$count R)}",
+  ].join("\n");
+}
+
+export const EXPLAIN_AJ = explainAjLambda(EVALUATE);
 
 export interface AjCall {
   fn: "aj" | "aj0";
