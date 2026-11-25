@@ -1442,6 +1442,9 @@ function throughParameters(t: Token[], all: Token[], statement: string, closes: 
   const before = t[s - 1];
   // Each parameter's argument as written, and the items it is applied to.
   let args: ([number, number] | undefined)[] = [];
+  // Made a derived function by an iterator, it may be applied infix: what
+  // is on its left is its first argument, `` `b{@[x;0;:;y]}'77 `` (#2271).
+  const left = iterated && before !== undefined && ["sym", "num", "str", "name", "close"].includes(before.kind) && before.text !== "}" ? leftArgument(t, s) : undefined;
   if (after?.kind === "open" && after.text === "[") {
     args = items(t, q).map(([a, b]) => (a === b ? undefined : [a, b]));
   } else if (after?.kind === "op" && (after.text === "@" || after.text === ".") && argumentEnd(t, q) > q + 1) {
@@ -1449,7 +1452,7 @@ function throughParameters(t: Token[], all: Token[], statement: string, closes: 
     // `.` applies it to the items of a list: `(x;y)`, `enlist x`, `` `a`b `` (#2196).
     args = after.text === "@" ? [arg] : (listed(t, arg[0], arg[1]) ?? []);
   } else if (after !== undefined && (["str", "sym", "num", "name"].includes(after.kind) || after.kind === "open")) {
-    args = [[q, argumentEnd(t, q - 1)]];
+    args = left !== undefined && left[0] < left[1] ? [left, [q, argumentEnd(t, q - 1)]] : [[q, argumentEnd(t, q - 1)]];
   } else if (before?.kind === "open" && before.text === "[" && (t[s - 2]?.text === "." || t[s - 2]?.text === "@") && t[s - 2].kind === "op") {
     // Applied by `.[f;(x;y)]` or `@[f;x]`, a trap among them.
     const all = items(t, s - 1);

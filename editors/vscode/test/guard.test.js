@@ -1964,3 +1964,17 @@ test("a by-name target computed by a lambda, a bracket call or a composition may
     assert.deepStrictEqual(writes(code), [], code);
   }
 });
+
+test("a lambda made a derived function by an iterator and applied infix is given its left argument (#2271)", () => {
+  const asks = [
+    "`b{@[x;0;:;y]}'77", "`a{.[x;();:;y]}/:77 78", "`a{.[x;();:;y]}\\:77", "`b{@[x;0;:;y]}/77", "`b{@[x;0;:;y]}\\77", "`a`c{.[x;();:;y]}'77 78",
+    "`b{@[x;0;:;y]}':77", "`t{update a:y from x}'77", "`sym{x?y}'`zz", "`a{x set y}'77", "(`b){@[x;0;:;y]}'77", "v{.[x;();:;y]}/:77",
+  ];
+  for (const code of asks) {
+    assert.ok(writes(code).length > 0, code);
+  }
+  assert.deepStrictEqual(writes("`b{@[x;0;:;y]}'77"), ["amends `b in place"]);
+  for (const code of ["1 2{x+y}'3 4", "t{x lj y}/:(r;s)", "0{x+y}/1 2 3", "`a`b{x,y}'`c`d", "\"ab\"{x,y}/:\"cd\"", "count{x+1}'[1 2]"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});
