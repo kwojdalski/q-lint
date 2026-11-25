@@ -11,7 +11,7 @@ const path = require("node:path");
 const net = require("node:net");
 const { spawn } = require("node:child_process");
 const pkg = require("../package.json");
-const { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, joined, readGateway, symbols } = require("../out/gateway.js");
+const { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, joined, readGateway, symbols, withServerTypes } = require("../out/gateway.js");
 const { qString } = require("../out/qliteral.js");
 const { givenServerTypes, parseProcesses, serverTypes } = require("../out/processes.js");
 const { Live } = require("../out/live.js");
@@ -208,6 +208,22 @@ test("a query to a TorQ gateway goes through .gw.syncexec to the server types as
   await stub.commands.get("q-lint.rerunQuery")(live.history().find((h) => h.code.includes("enlist `rdb]")));
   assert.deepStrictEqual(live.history()[0].code, '.gw.syncexec["exec sym from trade";enlist `rdb]');
   assert.strictEqual(live.history()[0].outcome, "ok");
+  // That entry queried on other server types goes to them (#2592).
+  r = await query('.gw.syncexec["exec sym from trade";enlist `rdb]', GATEWAY_COMMANDS.queryWith, "hdb");
+  assert.deepStrictEqual(r, { code: '.gw.syncexec["exec sym from trade";enlist `hdb]', outcome: "ok", text: "`c`d`e" });
+  // A call of another shape keeps its own, and says so.
+  stub.messages = [];
+  r = await query('t:.gw.syncexec["exec sym from trade";`rdb]', GATEWAY_COMMANDS.queryWith, "hdb");
+  assert.strictEqual(r.code, 't:.gw.syncexec["exec sym from trade";`rdb]');
+  assert.match(stub.messages.at(-1)[1], /goes to the server types it names, not hdb/);
+});
+
+test("a recorded gateway call is sent to other server types (#2592)", () => {
+  assert.strictEqual(withServerTypes('.gw.syncexec["count trade";enlist `rdb]', ["hdb", "rdb"]), '.gw.syncexec["count trade";`hdb`rdb]');
+  assert.strictEqual(withServerTypes('.gw.syncexec["a:\\"x;y]\\"\\n ;a";`rdb`hdb]', ["hdb"]), '.gw.syncexec["a:\\"x;y]\\"\\n ;a";enlist `hdb]');
+  assert.strictEqual(withServerTypes('t:.gw.syncexec["count trade";`rdb]', ["hdb"]), undefined);
+  assert.strictEqual(withServerTypes('.gw.syncexec[q;`rdb]', ["hdb"]), undefined);
+  assert.strictEqual(withServerTypes('.gw.syncexec["1";`rdb]\n.gw.syncexec["2";`rdb]', ["hdb"]), undefined);
 });
 
 test("several statements go to each server as one string", { skip }, async (t) => {

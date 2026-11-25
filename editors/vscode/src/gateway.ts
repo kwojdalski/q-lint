@@ -45,6 +45,16 @@ export function gatewayStatement(statements: string[], types: string[]): string 
   return `.gw.syncexec[${qString(statements.length === 1 ? statements[0] : joined(statements))};${symbols(types)}]`;
 }
 
+/// `code` sent to `types` instead, when it is one `.gw.syncexec[query;types]`
+/// call of a string, as a query is recorded in the history: Query Gateway
+/// with Server Types does not keep the types it was recorded with (#2592).
+/// Undefined for any other code.
+export function withServerTypes(code: string, types: string[]): string | undefined {
+  const cut = statements(code);
+  const m = cut.length !== 1 ? null : /^(\.gw\.syncexec\[(?:enlist )?"(?:[^"\\]|\\.)*";)(?:enlist )?(?:`[A-Za-z][A-Za-z0-9_.]*)+\]$/s.exec(cut[0]);
+  return m === null ? undefined : `${m[1]}${symbols(types)}]`;
+}
+
 /// The names and symbols `statement` spells outside its strings and
 /// comments (a `/` at its start or after a blank, to the end of the line).
 function names(statement: string): string[] {
