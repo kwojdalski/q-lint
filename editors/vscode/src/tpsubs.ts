@@ -1,7 +1,8 @@
 // The tickerplant subscribers view (#1042), as data: one read-only lambda
 // that reads `.u.w`, the subscriptions `u.q` keeps - a dictionary of each
 // table to its subscribers, each a handle and the symbols it asked for (`
-// for all) - with each handle's output queue from `.z.W`, its protocol from
+// for all), or on a TorQ segmented or chained tickerplant pubsub.q's
+// `.stpps` tables in its place - with each handle's output queue from `.z.W`, its protocol from
 // `-38!` where the process has it, and its host where the process records
 // one (TorQ's `.clients.clients`; plain q keeps no host for another handle).
 // Free of any `vscode` import, so node tests it; `tpsubsview.ts` shows it.
@@ -14,8 +15,19 @@ import type { ToolNode } from "./toolstree";
 
 export const SUBSCRIBERS = [
   "{[x]",
-  " if[not `w in key `.u;'\"not a tickerplant: it has no .u.w\"];",
-  " w:.u.w; if[not 99h=type w;'\"not a tickerplant: .u.w is not a dictionary\"];",
+  // TorQ's segmented and chained tickerplants keep no .u.w: pubsub.q's
+  // tables of handles taking all of a table, and of filtered ones (#2585),
+  // whose where clauses (enlisted as the table keeps them) and columns are
+  // shown as the symbols: `sym in` a list as that list, as .u.w's are.
+  " ff:{[f;c] while[(1=count f)&(0h=type first f)&not 100h<type first first f;f:first f]; g:$[1=count f;first f;()];",
+  "  w:$[(3=count g)&(`sym~g 1)&(in)~first g;\" \" sv string raze last g;count f;\"where \",\", \" sv -3!'f;\"\"];",
+  "  w,$[count c;$[count w;\", \";\"\"],\"columns \",\", \" sv string key c;\"\"]};",
+  " if[not `w in key `.u;",
+  "  if[not `subrequestall in key `.stpps;'\"not a tickerplant: it has no .u.w\"];",
+  "  a:.stpps.subrequestall; a:(key[a] except `)#a; f:0!.stpps.subrequestfiltered;",
+  "  w:(key a)!{{(x;`)}each x}each value a;",
+  "  w:{[w;t;r]w[t]:$[t in key w;w t;()],enlist r;w}/[w;f`tbl;flip(f`handle;ff'[f`filts;f`columns])]];",
+  " if[`w in key `.u;w:.u.w; if[not 99h=type w;'\"not a tickerplant: .u.w is not a dictionary\"]];",
   " qs:.z.W; qs:$[0h=type value qs;sum each value qs;value qs]; qs:(key .z.W)!qs;",
   " cl:@[get;`.clients.clients;{()}];",
   " hc:()!(); if[99h=type cl;cl:@[0!;cl;{()}]];",
@@ -24,7 +36,7 @@ export const SUBSCRIBERS = [
   " t:raze{[t;s](count s)#t}'[key w;value w];",
   " s:raze value w;",
   " h:`int$first each s;",
-  " (string t;\"f\"$h;{$[x in key y;(),y x;\"\"]}[;hc] each h;\"f\"$0^qs h;{$[(::)~x;\"\";all null x;\"\";\" \" sv string (),x]} each last each s;pr each h)}",
+  " (string t;\"f\"$h;{$[x in key y;(),y x;\"\"]}[;hc] each h;\"f\"$0^qs h;{$[10h=type x;x;(::)~x;\"\";all null x;\"\";\" \" sv string (),x]} each last each s;pr each h)}",
 ].join("\n");
 
 export interface Subscriber {
