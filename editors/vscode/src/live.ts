@@ -720,7 +720,7 @@ export class Live {
   /// often, how many runs so far, its timer and status bar item, and
   /// whether a run is out.
   private watching:
-    | { code: string; label: string; every: number; runs: number; timer: ReturnType<typeof setInterval>; status: StatusBarItem; running: boolean; asked: { write: boolean; tagged: boolean } }
+    | { code: string; label: string; every: number; runs: number; timer: ReturnType<typeof setInterval>; status: StatusBarItem; running: boolean; asked: { write: boolean; tagged: boolean }; serverTypes?: string[] }
     | undefined;
   /// The workspace's shared process list as last read (#955), when it is
   /// on and the file is there, and the watcher on the file.
@@ -3265,6 +3265,10 @@ export class Live {
       void window.showInformationMessage("q-lint: the query is empty: it is blank or only comments.");
       return;
     }
+    // Code from the editor goes to a gateway's servers as Run Query sends
+    // it: on the types the file names (#2368).
+    const document = typeof given === "string" ? undefined : window.activeTextEditor?.document;
+    const serverTypes = document === undefined ? undefined : fileServerTypes(document.getText());
     let seconds = typeof every === "number" && intervalProblem(String(every)) === undefined ? every : undefined;
     if (seconds === undefined) {
       const text = await window.showInputBox({
@@ -3327,6 +3331,7 @@ export class Live {
       status,
       running: false,
       asked: { write, tagged: tags.length > 0 || isProduction(process) },
+      ...(serverTypes !== undefined ? { serverTypes } : {}),
     };
     void commands.executeCommand("setContext", WATCHING, true);
     status.show();
@@ -3365,7 +3370,7 @@ export class Live {
     watched.runs++;
     watched.status.text = watchText(iconsEscaped(watched.label), watched.every, watched.runs);
     try {
-      await this.run(watched.code, first ? "watch" : "watched");
+      await this.run(watched.code, first ? "watch" : "watched", watched.serverTypes);
     } finally {
       watched.running = false;
     }
