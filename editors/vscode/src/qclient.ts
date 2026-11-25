@@ -15,8 +15,8 @@ import * as net from "node:net";
 import * as tls from "node:tls";
 import { deserialize, serialize } from "node-q/lib/c.js";
 import { checkedBody } from "./qdecode";
-import { GRID, GRID_TREE, gridLambda, readGridAnswer, type GridAnswer } from "./grid";
-import { RUN, readAnswer, type Answer } from "./query";
+import { GRID, GRID_READ_ONLY, GRID_TREE, GRID_TREE_READ_ONLY, gridLambda, readGridAnswer, type GridAnswer } from "./grid";
+import { NO_REVAL, RUN, RUN_READ_ONLY, readAnswer, refusedByReval, type Answer } from "./query";
 
 /// The process answered with an error (`'msg`), as against the connection
 /// failing: the query ran, and this is what it gave.
@@ -112,6 +112,17 @@ export class QConnection {
   private size = 0;
   private pending: { resolve: (v: unknown) => void; reject: (e: Error) => void } | undefined;
   private closed = false;
+  /// Whether the user's statements are evaluated under `reval`, the
+  /// read-only guard's backstop (`trapLines`): `Live` sets it around a send
+  /// to a guarded process of code the guard reads as read-only. Only the
+  /// lambdas that evaluate statements - `query`, `queryGrid`, `trapped` -
+  /// heed it.
+  readOnly = false;
+  /// Whether the process answered that it has no `reval`: its statements
+  /// are then evaluated with `value`, as before, and the guard alone holds.
+  noReval = false;
+  /// What `reval` refused since `refused` was last cleared: q's error.
+  refused: string | undefined;
   /// The q type of the last answer, read from the first byte of its body.
   private answerType: number | undefined;
   /// The last answer, the whole message.
@@ -209,7 +220,7 @@ export class QConnection {
 
   /// Run `statements` on the process and read the answer.
   query(statements: string[], size: [number, number]): Promise<Answer> {
-    return this.call(RUN, statements, size).then(readAnswer);
+    return this.trapped(RUN, RUN_READ_ONLY, readAnswer, statements, size);
   }
 
   /// Run `statements` as `query` does, and when the value is tabular have
@@ -217,8 +228,36 @@ export class QConnection {
   /// with `tree`, a dictionary's or a nested list's tree as well.
   /// With `hold`, the token a cut result is held under (`gridLambda`).
   queryGrid(statements: string[], size: [number, number], limit: number, tree = false, hold?: string): Promise<GridAnswer> {
-    const lambda = hold !== undefined ? gridLambda(tree, hold) : tree ? GRID_TREE : GRID;
-    return this.call(lambda, statements, size, limit).then(readGridAnswer);
+    const [plain, readOnly] =
+      hold !== undefined ? [gridLambda(tree, hold), gridLambda(tree, hold, true)] : tree ? [GRID_TREE, GRID_TREE_READ_ONLY] : [GRID, GRID_READ_ONLY];
+    return this.trapped(plain, readOnly, readGridAnswer, statements, size, limit);
+  }
+
+  /// Send `plain` applied to `args`, a lambda that evaluates the user's
+  /// statements as `trapLines` does, or, while `readOnly` is set, its
+  /// `reval` twin `readOnly`, and read the answer with `read`. A process
+  /// without `reval` is sent `plain` instead, and `noReval` set; a refusal
+  /// is kept in `refused`.
+  async trapped<T extends { ok: true } | { ok: false; error: string }>(plain: string, readOnly: string, read: (raw: unknown) => T, ...args: unknown[]): Promise<T> {
+    if (this.readOnly && !this.noReval) {
+      const answer = read(await this.call(readOnly, ...args));
+      if (answer.ok || answer.error !== NO_REVAL) {
+        if (!answer.ok) {
+          this.noteRefusal(answer.error);
+        }
+        return answer;
+      }
+      this.noReval = true;
+    }
+    return read(await this.call(plain, ...args));
+  }
+
+  /// Keep `error` in `refused` when it is `reval` refusing what `readOnly`
+  /// sent; the first one stays.
+  noteRefusal(error: string): void {
+    if (this.readOnly && this.refused === undefined && refusedByReval(error)) {
+      this.refused = error;
+    }
   }
 
   /// Send `text` as a char vector, as a client that sends a string does,

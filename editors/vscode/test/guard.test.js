@@ -1763,3 +1763,262 @@ test("a string made in an evaluator's own brackets, or cast after handle 0, is e
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test(".h.val, q's own alias of value, evaluates a string as value does (#2273)", () => {
+  const cases = {
+    '.h.val"a:77"': ["evaluates a string with .h.val"],
+    '.h.val "count t"': [],
+    "(.h.val)\"a:77\"": ["evaluates a string with .h.val"],
+    "@[.h.val;\"a:77\";::]": ["evaluates a string with .h.val"],
+    ".h.val(:;`a;77)": ["evaluates an assignment with .h.val"],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("the debugger's breakpoints patch a function in place: .Q.bs and what it calls, and -104!, are writers (#2276)", () => {
+  const asks = [
+    ".Q.bs[upd;1]", ".Q.bs[.ns.f;1]", ".Q.bc[g;1;::]", ".Q.bd[g;1]", ".Q.bu[g;1]", ".Q.bp[g;1;0xff]", ".Q.Ls(g;enlist 1;enlist 0xff)",
+    "-104!(g;enlist 1;enlist 0xff)", "(-104)!(g;1;0xff)", ".Q[`bs][g;1]", "(.Q`bs)[g;1]", "{.Q.bs[x;1]} g",
+  ];
+  for (const code of asks) {
+    assert.ok(writes(code).length > 0, code);
+  }
+  assert.deepStrictEqual(writes(".Q.bs[upd;1]"), ["calls .Q.bs"]);
+  assert.deepStrictEqual(writes("-104!(g;1;0xff)"), ["patches a function's code with -104!"]);
+  // Its table of breakpoints, read, is a read.
+  assert.deepStrictEqual(writes(".Q.BP"), []);
+});
+
+test("a writer picked out of .h by any index is called, as out of .q and .Q (#2272)", () => {
+  const asks = [".h[`ht]`g", "(.h`ht)`g", "(.h@`ht)`g", "(get`.h)[`ht]`g", "(value`.h)`ht", ".h[`$\"ht\"]`g", "{.h[x]}[`ht]`g", ".h[`val]\"a:77\"", "(.h . enlist`ht)`g", ".h[`$\"h\",\"t\"]`g"];
+  for (const code of asks) {
+    assert.ok(writes(code).length > 0, code);
+  }
+  assert.deepStrictEqual(writes(".h[`ht]`g"), ["calls .h.ht"]);
+  // Its readers, picked, read.
+  for (const code of [".h[`tx][`csv;t]", "(.h`hb)[\"a\";\"b\"]", ".h.tx[`csv;t]", "key .h", "(get`.h)`br"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});
+
+test("k's monadic ~ (hdel), < (hopen) and > (hclose) are read as those, on a file or a handle (#2275)", () => {
+  const asks = [
+    "k)~`:g.txt", "k)<`:o.txt", "k)>.z.w", "k)(~)`:g.txt", "k)~:`:g.txt", "k){~x}`:g.txt", "k)~-1!`g.txt", "k)<`$\":o.txt\"", "k){<x}`:o.txt",
+    "k)>(<`:o.txt)", "k)> 3", "k)a:1;~`:g.txt", "q)k)<`:o.txt",
+  ];
+  for (const code of asks) {
+    assert.ok(writes(code).length > 0, code);
+  }
+  assert.deepStrictEqual(writes("k)~`:g.txt"), ["deletes a file with k's ~"]);
+  assert.deepStrictEqual(writes("k)<`:o.txt"), ["opens a file with k's <"]);
+  assert.deepStrictEqual(writes("k)>.z.w"), ["closes a handle with k's >"]);
+  // Dyadic, or on a list, they compare, grade and match.
+  for (const code of ["k)1~1", "k)<3 1 2", "k)>3 1 2", "k)x<y", "k)a~b", "k)~0 1b", "k)#t", "k)<\"cab\""]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});
+
+test("a string an evaluator, handle 0 or a gateway is given is read as value reads it, not as a script (#2274)", () => {
+  const asks = [
+    'value"\\n/\\na:77"', 'value"count t\\n/\\na:77"', 'value"count t\\n\\\\\\na:77"', 'get"count t\\n/\\na:77"', 'eval parse"count t\\n/\\na:77"',
+    '0"count t\\n/\\na:77"', 'neg[0]"count t\\n/\\na:77"', '@[value;"count t\\n/\\na:77";::]', 'value/["count t\\n/\\na:77"]', '{value x}"count t\\n/\\na:77"',
+    'value each enlist"count t\\n/\\na:77"', '.gw.syncexec["count t\\n/\\na:77";`rdb]', 'value"count t\\n/ c\\na:77"', 'value"1\\r\\n/\\r\\na:77"',
+  ];
+  for (const code of asks) {
+    assert.ok(writes(code).length > 0, code);
+  }
+  // A string that only reads, on lines of its own, reads.
+  for (const code of ['value"count t\\n/ a comment\\n"', 'value"select from t\\n where a>1"', '.gw.syncexec["count t";`rdb]']) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});
+
+test("an assignment written as a call, :[a;77], assigns its first argument by the rules of a:77 (#2264)", () => {
+  const cases = {
+    ":[a;77]": ["assigns a"],
+    "(:)[a;77]": ["assigns a"],
+    "::[a;77]": ["assigns a"],
+    "+:[a;1]": ["assigns a"],
+    ",:[b;7]": ["assigns b"],
+    "-:[a;1]": ["assigns a"],
+    "(+:)[a;1]": ["assigns a"],
+    "(,:)[b;7]": ["assigns b"],
+    "(::)[a;77]": ["assigns a"],
+    ":[b 0;77]": ["assigns b"],
+    ":[d`a;77]": ["assigns d"],
+    ":[.ns.v;77]": ["assigns .ns.v"],
+    ":[.z.ts;{}]": ["assigns .z.ts"],
+    ":[ a ;77]": ["assigns a"],
+    "count t;:[a;77]": ["assigns a"],
+    "$[1b;:[a;77];0]": ["assigns a"],
+    "k):[a;77]": ["assigns a"],
+    "{::[a;5]}[]": ["assigns a"],
+    "{+:[a;1]}[]": ["assigns a"],
+    "{:[.ns.v;1]}[]": ["assigns .ns.v"],
+    // In a lambda, plainly, it is a local, as `a:5` is.
+    "{:[a;5]; a}[]": [],
+    "{[x] +:[x;1]; x}[1]": [],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+  assert.deepStrictEqual(writes(":[(a;s);(1;2)]"), ["assigns a", "assigns s"]);
+  // `:` as a value or a return is not one.
+  for (const code of ["@[d;`a;:;1]", ".[d;enlist`a;:;9]", "{:x+1}[2]", "{$[x;:1;:2]}[1b]", "(:)", "0:[(\"SJ\";\",\");x]"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});
+
+test("eval of a tree reads the tree's head past its parentheses, and every list in it, as eval evaluates them (#2265)", () => {
+  const asks = [
+    "eval((:);`a;77)", "eval(+;0;(:;`a;77))", "eval(enlist;(:;`a;77))", "eval(count;(:;`a;77))", "-6!(+;0;(:;`a;77))", "reval(enlist;(:;`a;77))",
+    "eval(enlist;(?;enlist`sym;enlist`zz))", "eval(+;0;(+;0;(@;enlist`b;0;:;77)))", "eval'[enlist (enlist;(:;`a;77))]", "eval[(+;0;(:;`a;77))]",
+    "value((:);`a;77)", "eval((::);`a;77)", "eval((+:);`a;1)",
+  ];
+  for (const code of asks) {
+    assert.ok(writes(code).length > 0, code);
+  }
+  assert.deepStrictEqual(writes("eval((:);`a;77)"), ["evaluates an assignment with eval"]);
+  assert.deepStrictEqual(writes("eval(+;0;(:;`a;77))"), ["evaluates an assignment with eval"]);
+  // A list value takes as they are: its items are not evaluated.
+  for (const code of ["value(+;0;(:;`a;77))", "eval(?;`t;();0b;())", "eval(+;1;(*;2;3))", "eval parse\"select from t\"", "eval(count;(enlist;1;2))"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});
+
+test("an evaluator passed as a value - in parentheses, through an iterator, a composition, a list - is read on the trees around it (#2266)", () => {
+  const asks = [
+    "((eval))(:;`a;77)", "(eval')enlist(:;`a;77)", "eval/[(:;`a;77)]", "'[eval;::](:;`a;77)", "(eval/)(:;`a;77)", "(-6!)(:;`a;77)", "((-6!))(:;`a;77)",
+    "((eval))(?;enlist`sym;enlist`zz)", "(eval;::)[0](:;`a;77)", "first[(eval;::)](:;`a;77)", "{x y}[eval;(count;(:;`a;77))]", "'[::;eval](eval;enlist(:;`a;77))",
+    "(value/)((@);`b;0;:;77)", "(.q.eval)(enlist;(:;`a;77))", "(-6!;::)[0](:;`a;77)", "(-24!)(:;`a;77)", "{x}[eval](:;`a;77)", "(eval) . enlist(:;`a;77)",
+  ];
+  for (const code of asks) {
+    assert.ok(writes(code).length > 0, code);
+  }
+  for (const code of ["(eval)(+;1;2)", "(eval')enlist(+;1;2)", "{x y}[eval;(count;1 2)]", "(-6!)(+;1;2)", "eval/[(*;2;3)]"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});
+
+test("handle 0 picked out of a list and applied to a tree evaluates it (#2266)", () => {
+  assert.deepStrictEqual(writes("(0;::)[0]((@);`b;0;:;77)"), ["evaluates an amend on handle 0"]);
+  assert.ok(writes("(0;::)[0](.;`b;enlist 0;:;77)").length > 0);
+  for (const code of ["(0;1)[0]", "(0;1 2)[1]", "(0;::)[0](+;1;2)", "x:(0;1)[0]"]) {
+    assert.deepStrictEqual(writes(code).filter((r) => !r.startsWith("assigns")), [], code);
+  }
+});
+
+test("an evaluator given to a function that applies it - a trap's handler, .Q.fs, a projection - is read on what it may be given (#2268)", () => {
+  const asks = [
+    "@[{'x};\"a:77\";value]", "@[{'x};\"a:77\";get]", "@[{'x};\"a:77\";.h.val]", "@[{'x};\"a:77\";(value;::)0]", "@[{'x};\"a:77\";{value x}]",
+    "@[{'x};`:o.txt;hopen]", ".[{'x};enlist `:o.txt;hopen]", ".Q.fs[value each;`:f.q]", ".Q.fs[{value each x};`:f.q]", ".Q.fsn[value each;`:f.q;100]",
+    "@[;\"a:77\"] value", ".Q.trp[{'x};\"a:77\";{[e;b](value) e}]", "@[{'x};`boom;{[e](0) e}]", ".[{'x};enlist\"a:77\";{[e](get) e}]", "{x y}[value;\"a:77\"]",
+  ];
+  for (const code of asks) {
+    assert.ok(writes(code).length > 0, code);
+  }
+  assert.deepStrictEqual(writes("@[{'x};\"a:77\";value]"), ["evaluates a string with value"]);
+  assert.deepStrictEqual(writes(".Q.fs[value each;`:f.q]"), ["applies what .Q.fs is given to a file's lines: evaluates a string with value"]);
+  // Handlers and line functions that only read, and value given a read.
+  for (const code of [
+    "@[value;\"count t\";{x}]", ".Q.trp[{count x};t;{-2 x;-2 .Q.sbt y;0}]", "@[{'x};`boom;{x}]", ".[{x+y};1 2;{-1 x;0}]", "@[get;`:f;()]",
+    ".Q.fs[{count x};`:f.csv]", ".Q.fsn[{`t insert flip x}[;100];`:f.csv;1000]" , "@[;\"count t\"] value", "@[hopen;`:localhost:5000;0N]",
+  ]) {
+    assert.deepStrictEqual(writes(code).filter((r) => !/insert/.test(r)), [], code);
+  }
+  // The iterator's colon is not an assignment called (#2264).
+  for (const code of ["{x,y}':[til 3]", "{x+y}/:[1;2 3]", "{x+y}\\:[1 2;3]"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});
+
+test("an amend, ?, !, eval or a writing lambda picked out of a list or a dictionary, or passed through {x}, is applied to what the guard cannot read (#2267)", () => {
+  const asks = [
+    "{x}[@][`b;0;:;77]", "(@;.)[0][`b;0;:;77]", "(.;::)[0][`b;enlist 0;:;77]", "(`a`b!(@;.))[`a][`b;0;:;77]", "(?;::)[0][`sym;`zz]", "{[f]f}[?][`sym;`zz]",
+    "{x}[!][-11;`:tp.log]", "(eval;::)[0](:;`a;77)", "({.[x;();:;77]};{x})[0]`a", "(`w`r!({.[x;();:;77]};{x}))[`w]`a", "@[{x};!;::][-11;`:tp.log]",
+    "(0;::)[0]\"a:77\"", "(-6!;::)[0](:;`a;77)", "({0};{.[x;();:;77]})@[1;::]`a",
+  ];
+  for (const code of asks) {
+    assert.ok(writes(code).length > 0, code);
+  }
+  // Lists of functions that only read, and operators in lists with nothing to write to.
+  for (const code of ["(`a`b!({x+1};{x*2}))[`a] 3", "({x+1};{x*2})[1] 3", "{x[0]} ({1};{2})", "(+;-)[0][1;2]", "(@;.)", "{x . y}[+;1 2]", "(0;1)[0]", "(`r`w!({0};{x}))[`w] 1"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});
+
+test("a by-name target computed by a lambda, a bracket call or a composition may be a symbol (#2269)", () => {
+  const asks = [
+    "@[{x}`b;0;:;77]", "update a:77 from {x}`t", "`a xdesc {x}`t", "xdesc[`a]{x}`t", "?[{x}`sym;`zz]", "{x}[`sym]?`zz", "![{x}`t;();0b;(enlist`a)!enlist 77]",
+    ".[{x}`b;enlist 0;:;77]", "@[{y}[0;`b];0;:;77]", "@[.[{x};enlist`b];0;:;77]", "@[enlist[`b]0;0;:;77]", "update a:77 from enlist[`t]0", "@[;0;:;77]{x}`b",
+    "{.[x;();:;77]}{x}`a", "@[@[{x};`b;::];0;:;77]", "@[{x}@`b;0;:;77]", "@[('[{x};::])`b;0;:;77]", "@[{x}[`b];0;:;77]",
+  ];
+  for (const code of asks) {
+    assert.ok(writes(code).length > 0, code);
+  }
+  assert.deepStrictEqual(writes("@[{x}`b;0;:;77]"), ["amends what {x}`b names in place"]);
+  // A lambda or a call given a value gives a value.
+  for (const code of ["@[{x} t;`a;neg]", "update c:1 from {select from x} t", "`a xasc {x} t", "@[enlist[1 2]0;0;:;9]", "@[{x+1} 1 2;0;:;9]", "update b:a from {x}[t]"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});
+
+test("a lambda made a derived function by an iterator and applied infix is given its left argument (#2271)", () => {
+  const asks = [
+    "`b{@[x;0;:;y]}'77", "`a{.[x;();:;y]}/:77 78", "`a{.[x;();:;y]}\\:77", "`b{@[x;0;:;y]}/77", "`b{@[x;0;:;y]}\\77", "`a`c{.[x;();:;y]}'77 78",
+    "`b{@[x;0;:;y]}':77", "`t{update a:y from x}'77", "`sym{x?y}'`zz", "`a{x set y}'77", "(`b){@[x;0;:;y]}'77", "v{.[x;();:;y]}/:77",
+  ];
+  for (const code of asks) {
+    assert.ok(writes(code).length > 0, code);
+  }
+  assert.deepStrictEqual(writes("`b{@[x;0;:;y]}'77"), ["amends `b in place"]);
+  for (const code of ["1 2{x+y}'3 4", "t{x lj y}/:(r;s)", "0{x+y}/1 2 3", "`a`b{x,y}'`c`d", "\"ab\"{x,y}/:\"cd\"", "count{x+1}'[1 2]"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});
+
+test("an amend projection composed with another function, or applied through an iterator after @, amends what the composition is given (#2270)", () => {
+  const asks = [
+    "'[@[;0;:;77];::]`b", "('[@[;0;:;77];{x}])`b", "(@[;0;:;77]first@)`b", "(@[;0;:;77]{x}@)`b", "(@[;0;:;77]) @/: enlist`b", "'[::;@[;0;:;77]]`b",
+    "'[.[;();:;77];::]`a", "('[@[;0;:;77];::])[`b]", "(@[;0;:;77]) @' enlist`b", "'[@[;`a;:;1];::]`.",
+  ];
+  for (const code of asks) {
+    assert.ok(writes(code).length > 0, code);
+  }
+  // Given a value, a composed amend changes a copy.
+  for (const code of ["'[@[;0;:;77];::] b", "(@[;0;:;77]first@) (1 2;3 4)", "(@[;0;:;77]) @/: (1 2;3 4)", "'[@[;0;+;1];reverse] 1 2 3"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});
+
+test("a helper lambda that updates, sorts or keys a table it is given by name is read as given the table (#2277)", () => {
+  for (const code of [
+    "{x lj `sym xkey y}[trade;ref]", "{update mid:0.5*bid+ask from x} quote", "{`time xasc x} trade", "{[t] delete from t where size=0} trade", "{update a:1 from x}[t]",
+    "{`sym xkey x} each (trade;quote)", "{![x;();0b;(enlist`c)!enlist(*;`price;2)]} trade", "{x lj `sym xkey y}/[trade;(r1;r2)]",
+  ]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+  // Given a symbol, or amending what it is given, it is asked about as before (#2035).
+  for (const code of ["{`time xasc x} `trade", "{update a:1 from x}`t", "{.[x;();:;1]} v", "{x set 1} v", "{@[x;0;:;1]} v", "{hopen x} f"]) {
+    assert.ok(writes(code).length > 0, code);
+  }
+});
+
+test("a system command's argument is read past a comment after it", () => {
+  for (const code of ["\\t 100 /c", "k)\\t\t100 /c", "\\t 100 / set the timer"]) {
+    assert.deepStrictEqual(writes(code), ["sets the timer with \\t"], code);
+  }
+  assert.deepStrictEqual(writes("\\t count t /c"), []);
+  assert.deepStrictEqual(writes("\\cd /tmp"), ["runs the system command \\cd"]);
+});
+
+test("an assignment call after an operator applied infix, and a lambda iterated by a keyword, are read as q reads them (#2264, #2271)", () => {
+  assert.deepStrictEqual(writes("0N!:[.z.ts;{}]"), ["assigns .z.ts"]);
+  assert.deepStrictEqual(writes("1+:[a;2]"), ["assigns a"]);
+  assert.deepStrictEqual(writes("{[x;y;z]::[a;77]}[0;0;0]"), ["assigns a"]);
+  // `each` takes the function on its left: what is left of that is not its argument.
+  assert.deepStrictEqual(writes("enlist {update v:77 from x} each enlist {`e}[]"), ["updates what ({`e}[]) names in place"]);
+  assert.deepStrictEqual(writes("count{x+1}'[1 2]"), []);
+});

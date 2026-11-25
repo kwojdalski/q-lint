@@ -78,9 +78,9 @@ test("every setting naming a program, a command or a q environment file is restr
   }
 });
 
-test("an untrusted workspace cannot turn the read-only guard off or change its tags", () => {
+test("an untrusted workspace cannot turn the read-only guard or its reval backstop off, or change its tags", () => {
   const guard = Object.keys(props).filter((key) => key.startsWith("q-lint.processes.readOnlyGuard."));
-  assert.deepStrictEqual(guard.sort(), ["q-lint.processes.readOnlyGuard.enable", "q-lint.processes.readOnlyGuard.tags"]);
+  assert.deepStrictEqual(guard.sort(), ["q-lint.processes.readOnlyGuard.enable", "q-lint.processes.readOnlyGuard.enforce", "q-lint.processes.readOnlyGuard.tags"]);
   for (const key of guard) {
     assert.ok(restricted.has(key), key);
   }

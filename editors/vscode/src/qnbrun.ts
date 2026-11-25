@@ -17,10 +17,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { isProduction } from "./agent";
-import { cellOutputs, chartCellOutputs, DATA, readCellData, type OutputPart } from "./celldata";
+import { cellOutputs, chartCellOutputs, DATA, DATA_READ_ONLY, readCellData, type OutputPart } from "./celldata";
 import { cellDirective, type CellMode } from "./celldirectives";
 import { valued, type GuardCode } from "./guard";
-import { LIVE, LIVE_KEY, liveQueries, markdownAfter, readLiveValues, type LiveValue } from "./livemarkdown";
+import { LIVE, LIVE_KEY, LIVE_READ_ONLY, liveQueries, markdownAfter, readLiveValues, type LiveValue } from "./livemarkdown";
 import type { RowLimitFrom } from "./liveconfig";
 import { address, readProcessFile, type Process } from "./processes";
 import { QConnection } from "./qclient";
@@ -47,7 +47,7 @@ export async function cellAnswer(connection: QConnection, mode: CellMode, cut: s
   }
   const answer = mode.mode === "console"
     ? await connection.query(cut, settings.consoleSize)
-    : readCellData(await connection.call(DATA, cut, settings.rows, settings.consoleSize));
+    : await connection.trapped(DATA, DATA_READ_ONLY, readCellData, cut, settings.rows, settings.consoleSize);
   return [answer.ok, cellOutputs(mode, answer, settings.rowLimitFrom)];
 }
 
@@ -69,7 +69,12 @@ export async function liveValues(connection: QConnection, sources: string[]): Pr
   if (exprs.length === 0) {
     return sources.map(() => ({}));
   }
-  const all = readLiveValues(exprs, await connection.call(LIVE, exprs));
+  const all = readLiveValues(exprs, await connection.call(connection.readOnly ? LIVE_READ_ONLY : LIVE, exprs));
+  for (const value of Object.values(all)) {
+    if ("error" in value) {
+      connection.noteRefusal(value.error);
+    }
+  }
   return queries.map((qs) => Object.fromEntries(qs.map((q) => [q.key, all[q.expr]])));
 }
 

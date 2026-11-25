@@ -21,19 +21,56 @@
 /// The lines that run the statements `s` into `r`: `(1b; last value)` or
 /// `(0b; error; trace)`. `grid.ts`'s lambda runs them the same way, from a
 /// lambda as deep, so the four frames dropped are its own there too.
-export const TRAP = [
-  " r:$[`trp in key `.Q;",
-  "   .Q.trp[{(1b;last value each x)};s;{(0b;x;.Q.sbt -4_y)}];",
-  "   @[{(1b;last value each x)};s;{(0b;x;\"\")}]];",
-];
+///
+/// `readOnly`: each statement is evaluated under `reval` instead, which
+/// refuses, with q's own error, what would change the process - a global
+/// assigned, a file written or deleted, a handle to a file opened, a system
+/// command that sets something or runs a shell. Reads run as they would,
+/// and `\d` in a statement holds for the statements after it, as under
+/// `value`. It is the read-only guard's backstop: code the guard reads as
+/// read-only goes to a guarded process this way, so a write the guard
+/// missed is a q error, not a change. A process without `reval` answers
+/// `NO_REVAL` having run nothing. A trace drops one frame more, the
+/// evaluator's.
+export function trapLines(readOnly = false): string[] {
+  const each = readOnly ? "last{reval(value;x)}each x" : "last value each x";
+  return [
+    ` r:$[${readOnly ? `not\`reval in key\`.q;(0b;"${NO_REVAL}";"");` : ""}\`trp in key \`.Q;`,
+    `   .Q.trp[{(1b;${each})};s;{(0b;x;.Q.sbt ${readOnly ? -5 : -4}_y)}];`,
+    `   @[{(1b;${each})};s;{(0b;x;"")}]];`,
+  ];
+}
 
-export const RUN = [
-  "{[s;size]",
-  ...TRAP,
-  " $[r 0;",
-  "   `ok`type`text!(1b;type r 1;.Q.S[\"j\"$size;0j] r 1);",
-  "   `ok`error`trace!(0b;r 1;r 2)]}",
-].join("\n");
+/// What a `readOnly` lambda answers as its error on a process without
+/// `reval`, having run nothing: no q error reads so.
+export const NO_REVAL = "q-lint: this process has no reval";
+
+export const TRAP = trapLines();
+
+/// `RUN`, its statements evaluated under `reval` when `readOnly`.
+function runLambda(readOnly: boolean): string {
+  return [
+    "{[s;size]",
+    ...trapLines(readOnly),
+    " $[r 0;",
+    "   `ok`type`text!(1b;type r 1;.Q.S[\"j\"$size;0j] r 1);",
+    "   `ok`error`trace!(0b;r 1;r 2)]}",
+  ].join("\n");
+}
+
+export const RUN = runLambda(false);
+/// `RUN` under `reval`.
+export const RUN_READ_ONLY = runLambda(true);
+
+/// Whether `error`, from a statement evaluated under `reval`, is `reval`
+/// refusing it: a global it would assign (`noupdate`), a file or a handle
+/// (`access`), a system command (`sys`), a message to handle 0 or to the
+/// process itself (`restricted`). Reads that change something on the way
+/// are refused so too: a function that caches into a global, the first
+/// `.Q.ind` on a partitioned table, which sets `.Q.PN`.
+export function refusedByReval(error: string): boolean {
+  return /^(noupdate|access)\b/.test(error) || error === "sys" || error === "restricted";
+}
 
 export type Answer =
   | { ok: true; type: number; text: string[] }

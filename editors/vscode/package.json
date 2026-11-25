@@ -37,6 +37,7 @@
         "q-lint.connection.credentialCommand.enable",
         "q-lint.processes.readOnlyGuard.enable",
         "q-lint.processes.readOnlyGuard.tags",
+        "q-lint.processes.readOnlyGuard.enforce",
         "q-lint.testing.runAffectedOnSave.enable",
         "q-lint.results.drilldownTemplates"
       ]
@@ -1297,6 +1298,11 @@
               "production"
             ],
             "markdownDescription": "The tags whose processes `#q-lint.processes.readOnlyGuard.enable#` guards, ignoring case. An empty list guards none. A tag is read as a process's tags are: one with a blank or a comma in it is a tag for each word, so `live desk` guards a process tagged `live` and one tagged `desk`."
+          },
+          "q-lint.processes.readOnlyGuard.enforce": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Send code that `#q-lint.processes.readOnlyGuard.enable#` reads as read-only to a guarded process so the process evaluates it under `reval`, q's read-only evaluation: a write the guard missed is then refused by q - `'noupdate`, `'access`, `'sys` - instead of made. A read q refuses (a function that caches into a global, `system \"pwd\"`, the first `.Q.ind` on a partitioned table) is asked about, and sent again as it is only when confirmed; code the guard asked about and you confirmed is sent as it is. Not on a TorQ gateway, whose `.gw.syncexec` changes the gateway itself, nor in unwrapped mode, nor on a process without `reval`, which is said once: the guard alone holds there. `reval` does not stop a breakpoint (`.Q.bs`, `-104!`) patching a function in place, which the guard asks about."
           }
         }
       },

@@ -84,8 +84,17 @@ async function setUp(t, port, tags = ["prod"], config = {}) {
     stub.picks = [];
     return stub.messages.some(([kind, text]) => kind === "warning" && /would change/.test(text));
   };
-  /// What the read `query` gives, as q shows it.
-  const read = async (query) => (await live.runOnActive(query, (c) => c.query([query], [10, 200]))).value.text.join("\n");
+  /// What the read `query` gives, as q shows it. A read the guard's
+  /// backstop sends under reval and q refuses there, `system "cd"`, is let
+  /// through when asked.
+  const read = async (query) => {
+    stub.picks.push("Run Anyway");
+    try {
+      return (await live.runOnActive(query, (c) => c.query([query], [10, 200]))).value.text.join("\n");
+    } finally {
+      stub.picks = [];
+    }
+  };
   return { live, send, read };
 }
 
