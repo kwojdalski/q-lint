@@ -181,21 +181,37 @@ pub struct Overrides {
     pub no_baseline: bool,
 }
 
+/// A directory searched for a configuration, and the workspace folder a
+/// user-level file's settings found from it are rooted at (`None` for any
+/// other settings).
+type Searched = (PathBuf, Option<PathBuf>);
+
 /// Settings for any file, found once per directory and remembered.
 pub struct Policy {
     overrides: Overrides,
-    /// Directory -> the settings governing files in it.
-    cache: RefCell<HashMap<PathBuf, Rc<Settings>>>,
+    /// Directory -> the settings governing files in it. A user-level file's
+    /// patterns are rooted at the workspace folder the file is under, so
+    /// its settings are kept by directory and that folder: the same
+    /// directory, above two folders, is searched through from both (#2288).
+    /// Everything else is kept with `None`.
+    cache: RefCell<HashMap<Searched, Rc<Settings>>>,
     /// A language server must not exit over a bad file: it reports each
     /// problem once and uses the defaults for the files it governs.
     lenient: bool,
     warned: RefCell<HashSet<String>>,
+    /// What `warned` said and the language server has not yet shown the
+    /// user: stderr is a log nobody reads, and a configuration the command
+    /// line refuses must not be replaced by the defaults unseen (#2291).
+    told: RefCell<Vec<String>>,
     /// An editor's own selection, applied after everything else and only
     /// ever to turn rules off: a rule reports when the configuration and the
     /// command line select it AND this layer does. It is how a language
     /// client's settings narrow what a repository's configuration - the one
     /// CI reads - turns on, without being able to widen it.
-    narrowing: RefCell<Option<Layer>>,
+    /// Several layers, each of which must select a rule: the editor's
+    /// `lint.select`/`lint.ignore`, and the rule families its feature toggles
+    /// turn off, which a longer selector in the first must not outrank.
+    narrowing: RefCell<Vec<Layer>>,
     /// Each baseline file read, or why it could not be.
     baselines: RefCell<HashMap<PathBuf, Rc<Result<Baseline, String>>>>,
     /// An editor's switch for the baseline, over everything else.
@@ -215,6 +231,7 @@ impl Policy {
             cache: RefCell::default(),
             lenient,
             warned: RefCell::default(),
+            told: RefCell::default(),
             narrowing: RefCell::default(),
             baselines: RefCell::default(),
             baseline_off: std::cell::Cell::new(false),
@@ -296,11 +313,26 @@ impl Policy {
         b
     }
 
-    /// Narrow every file's selection by `layer`, resolved the way a
+    /// Narrow every file's selection by each of `layers`, resolved the way a
     /// configuration's own layer is - the longest selector that names a code
-    /// decides - and then intersected with what is already selected.
-    pub fn narrow(&self, layer: Layer) {
-        *self.narrowing.borrow_mut() = Some(layer);
+    /// decides - and then intersected with what is already selected: a rule
+    /// reports only where every layer selects it (#2294).
+    pub fn narrow(&self, layers: Vec<Layer>) {
+        *self.narrowing.borrow_mut() = layers;
+    }
+
+    /// Say `message` once for the problem `e`, on stderr and to be shown.
+    fn warn(&self, message: String, e: &str) {
+        if self.warned.borrow_mut().insert(e.to_string()) {
+            eprintln!("qlinter: {message}");
+            self.told.borrow_mut().push(message);
+        }
+    }
+
+    /// The problems warned about since the last call, for a language server
+    /// to show the user.
+    pub fn take_told(&self) -> Vec<String> {
+        std::mem::take(&mut *self.told.borrow_mut())
     }
 
     /// Forget every file read, after one of them changed on disk.
@@ -341,7 +373,7 @@ impl Policy {
         let dir = absolute(dir);
         let mut cache = self.cache.borrow_mut();
         let before = cache.len();
-        cache.retain(|searched, _| !searched.starts_with(&dir));
+        cache.retain(|(searched, _), _| !searched.starts_with(&dir));
         cache.len() != before
     }
 
@@ -361,7 +393,7 @@ impl Policy {
         match &self.overrides.config {
             Some(explicit) => files.push(absolute(explicit)),
             None if !self.overrides.isolated => {
-                dirs = cache.keys().cloned().collect();
+                dirs = cache.keys().map(|(dir, _)| dir.clone()).collect();
                 files.extend(user_config_path());
             }
             None => {}
@@ -369,6 +401,7 @@ impl Policy {
         files.sort();
         files.dedup();
         dirs.sort();
+        dirs.dedup();
         (files, dirs)
     }
 
@@ -380,9 +413,7 @@ impl Policy {
         match self.find(&start) {
             Ok(settings) => Ok(settings),
             Err(e) if self.lenient => {
-                if self.warned.borrow_mut().insert(e.clone()) {
-                    eprintln!("qlinter: {e}; using the defaults where it applies");
-                }
+                self.warn(format!("{e}; using the defaults where it applies"), &e);
                 Ok(Rc::new(Settings::default()))
             }
             Err(e) => Err(e),
@@ -394,7 +425,7 @@ impl Policy {
             return Ok(Rc::new(Settings::default()));
         }
         if let Some(explicit) = &self.overrides.config {
-            let key = absolute(explicit);
+            let key = (absolute(explicit), None);
             if let Some(found) = self.cache.borrow().get(&key) {
                 return Ok(found.clone());
             }
@@ -403,7 +434,7 @@ impl Policy {
             // the file is chosen for this run, not found beside the source.
             let cwd = absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
             let settings = Rc::new(
-                load(&key, &[], Some(&cwd))?
+                load(&key.0, &[], Some(&cwd))?
                     .ok_or_else(|| format!("{}: no [tool.qlinter] table", explicit.display()))?,
             );
             self.cache.borrow_mut().insert(key, settings.clone());
@@ -411,24 +442,37 @@ impl Policy {
         }
         let mut visited = vec![];
         let mut found = None;
+        let base = self.base_dir(start)?;
         for dir in start.ancestors() {
-            if let Some(cached) = self.cache.borrow().get(dir) {
-                found = Some(cached.clone());
-                break;
+            {
+                let cache = self.cache.borrow();
+                let project = (dir.to_path_buf(), None);
+                let user = (dir.to_path_buf(), Some(base.clone()));
+                if let Some(cached) = cache.get(&project) {
+                    found = Some((cached.clone(), None));
+                    break;
+                }
+                if let Some(cached) = cache.get(&user) {
+                    found = Some((cached.clone(), user.1));
+                    break;
+                }
             }
             visited.push(dir.to_path_buf());
             if let Some(settings) = in_directory(dir)? {
-                found = Some(Rc::new(settings));
+                found = Some((Rc::new(settings), None));
                 break;
             }
         }
-        let settings = match found {
-            Some(settings) => settings,
-            None => Rc::new(user_config(&self.base_dir(start)?)?.unwrap_or_default()),
+        let (settings, rooted) = match found {
+            Some(found) => found,
+            None => match user_config(&base)? {
+                Some(settings) => (Rc::new(settings), Some(base)),
+                None => (Rc::new(Settings::default()), None),
+            },
         };
         let mut cache = self.cache.borrow_mut();
         for dir in visited {
-            cache.insert(dir, settings.clone());
+            cache.insert((dir, rooted.clone()), settings.clone());
         }
         Ok(settings)
     }
@@ -520,8 +564,8 @@ impl Policy {
             && self
                 .narrowing
                 .borrow()
-                .as_ref()
-                .is_none_or(|layer| apply(layer, code, true))
+                .iter()
+                .all(|layer| apply(layer, code, true))
     }
 
     /// Whether the configuration and flags select `code`, before the
@@ -553,9 +597,7 @@ impl Policy {
         // and keeps the forward rules, which are the profile's.
         let conflict = match self.conflict(&settings, file) {
             Err(e) if self.lenient => {
-                if self.warned.borrow_mut().insert(e.clone()) {
-                    eprintln!("qlinter: {e}; reporting {} only", UNDOES.join(" and "));
-                }
+                self.warn(format!("{e}; reporting {} only", UNDOES.join(" and ")), &e);
                 true
             }
             other => other.map(|()| false)?,
@@ -582,9 +624,7 @@ impl Policy {
                 // everything instead would bury what is new. A language
                 // server says so once and reports everything.
                 Err(e) if self.lenient => {
-                    if self.warned.borrow_mut().insert(e.clone()) {
-                        eprintln!("qlinter: {e}; reporting every finding");
-                    }
+                    self.warn(format!("{e}; reporting every finding"), e);
                 }
                 Err(e) => return Err(e.clone()),
             }

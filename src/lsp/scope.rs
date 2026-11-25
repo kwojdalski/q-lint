@@ -40,8 +40,9 @@ pub(super) struct Closed {
     pending: VecDeque<String>,
     queued: HashSet<String>,
     /// The closed files diagnostics were published for, by key, with the
-    /// URI they went to - which an empty list clears.
-    published: HashMap<String, String>,
+    /// URIs they went to - which an empty list clears: one for each path the
+    /// file was read by, a symlink beside its target being two (#2289).
+    published: HashMap<String, Vec<String>>,
     /// What the workspace defined when every file was last queued.
     generation: Option<u64>,
 }
@@ -119,32 +120,45 @@ impl Closed {
         if let Some(uri) = sources.open.get(key) {
             return self.opened(writer, key, uri);
         }
-        let read = idx.files.contains_key(key).then(|| on_disk(key)).flatten();
-        let Some((text, _)) = read else {
+        if !idx.files.contains_key(key) {
             return self.clear(writer, key);
-        };
-        let uri = sources.uri(key);
-        // The text is the editor's, which has no BOM in it, so everything
-        // is found where the editor shows it; `linted` still reports the
-        // file's BOM (#2027).
-        let findings = linted(&uri, &text, &idx.ws, policy);
-        // Nothing carried over for a file nobody is typing in, and nothing
-        // of its text kept once it is linted.
-        report(writer, &uri, &text, findings, &mut Kept::new(), opts)?;
-        self.published.insert(key.to_string(), uri);
+        }
+        // Each path the scan read it by, as `qlinter .` lints each name: a
+        // symlink under its own name and the configuration above it, not
+        // its target's - which may be outside every folder (#2289).
+        let mut sent = vec![];
+        for path in idx.spellings(key) {
+            let Some((text, _)) = on_disk(&path) else {
+                continue;
+            };
+            let uri = sources.spelled_uri(&path, key);
+            // The text is the editor's, which has no BOM in it, so
+            // everything is found where the editor shows it; `linted` still
+            // reports the file's BOM (#2027).
+            let findings = linted(&uri, &text, &idx.ws, policy);
+            // Nothing carried over for a file nobody is typing in, and
+            // nothing of its text kept once it is linted.
+            report(writer, &uri, &text, findings, &mut Kept::new(), opts)?;
+            sent.push(uri);
+        }
+        // What went to a path it is no longer read by.
+        for uri in self.published.remove(key).unwrap_or_default() {
+            if !sent.contains(&uri) {
+                empty(writer, &uri)?;
+            }
+        }
+        if !sent.is_empty() {
+            self.published.insert(key.to_string(), sent);
+        }
         Ok(())
     }
 
     /// Clear the diagnostics published for `key`, if any were.
     fn clear(&mut self, writer: &mut impl Write, key: &str) -> Result<(), String> {
-        match self.published.remove(key) {
-            Some(uri) => send(
-                writer,
-                json!({"method": "textDocument/publishDiagnostics",
-                       "params": {"uri": uri, "diagnostics": []}}),
-            ),
-            None => Ok(()),
+        for uri in self.published.remove(key).unwrap_or_default() {
+            empty(writer, &uri)?;
         }
+        Ok(())
     }
 
     /// The file `key` is open as `uri`, whose buffer's diagnostics are the
@@ -159,22 +173,33 @@ impl Closed {
         key: &str,
         uri: &str,
     ) -> Result<(), String> {
-        match self.published.get(key) {
-            Some(to) if to != uri => self.clear(writer, key),
-            _ => {
-                self.published.remove(key);
-                Ok(())
+        for to in self.published.remove(key).unwrap_or_default() {
+            if to != uri {
+                empty(writer, &to)?;
             }
         }
+        Ok(())
     }
 
-    /// The URI diagnostics were published to for `key` as a closed file.
-    pub(super) fn published_to(&self, key: &str) -> Option<&str> {
-        self.published.get(key).map(String::as_str)
+    /// Whether diagnostics were published to `uri` for `key` as a closed
+    /// file.
+    pub(super) fn published_to(&self, key: &str, uri: &str) -> bool {
+        self.published
+            .get(key)
+            .is_some_and(|to| to.iter().any(|to| to == uri))
     }
 
     pub(super) fn stop(&mut self) {
         self.pending.clear();
         self.queued.clear();
     }
+}
+
+/// No diagnostics for `uri`, which clears what was published to it.
+fn empty(writer: &mut impl Write, uri: &str) -> Result<(), String> {
+    send(
+        writer,
+        json!({"method": "textDocument/publishDiagnostics",
+               "params": {"uri": uri, "diagnostics": []}}),
+    )
 }

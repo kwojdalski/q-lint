@@ -1217,6 +1217,100 @@ fn with_no_configuration_the_tests_exemption_is_rooted_at_the_files_folder() {
 }
 
 #[test]
+fn a_user_level_file_is_rooted_at_each_workspace_folder_not_the_first_searched() {
+    // The user-level file's patterns are rooted at the folder holding the
+    // file. Found from b first, its settings - rooted at b - were kept for
+    // every directory above b, the shared parent among them, and a's search
+    // stopped there: `src/*` matched b/src only, and a/src/s.q kept the
+    // QF010 `qlinter` run in a does not report (#2288).
+    let dir = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(dir.path()).unwrap();
+    // `Server::spawn` points XDG_CONFIG_HOME at this, under its cwd.
+    let user = root.join("no-such-config-home/qlinter");
+    std::fs::create_dir_all(&user).unwrap();
+    std::fs::write(
+        user.join("qlinter.toml"),
+        "[lint]\nper-file-ignores = { \"src/*\" = [\"QF010\"] }\n",
+    )
+    .unwrap();
+    let source = "f:{[x] y}\n";
+    let (a, b) = (root.join("a"), root.join("b"));
+    for folder in [&a, &b] {
+        std::fs::create_dir_all(folder.join("src")).unwrap();
+        std::fs::write(folder.join("src/s.q"), source).unwrap();
+    }
+    let mut server = start_with_folders(&root, &[&a, &b]);
+    for folder in [&b, &a] {
+        let uri = file_uri(&folder.join("src/s.q"));
+        server.open(&uri, source);
+        let found = codes_of(&server.diagnostics_for(&uri));
+        assert!(
+            !found.contains(&"QF010".to_string()),
+            "{folder:?}: {found:?}"
+        );
+    }
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn a_configuration_the_cli_refuses_is_shown_to_the_user_not_only_logged() {
+    // `qlinter .` exits 2 over each: a typo in `ignore`, a required-version
+    // no release meets. The server lints with the defaults where such a file
+    // governs - and said so only on stderr, so the editor showed findings
+    // the project ignores and nobody knew why (#2291).
+    for config in [
+        "[lint]\nignore = [\"QF010\", \"QS99\"]\n",
+        "required-version = \"==0.1\"\n",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("qlinter.toml"), config).unwrap();
+        let uri = file_uri(&dir.path().join("a.q"));
+        let mut server = start_with_workspace(dir.path());
+        server.open(&uri, "f:{[x] y}\n");
+        let shown = server.until(|m| m["method"] == "window/showMessage");
+        let message = shown["params"]["message"].as_str().unwrap();
+        assert!(message.contains("qlinter.toml"), "{config}: {message}");
+        assert!(message.contains("defaults"), "{config}: {message}");
+        assert_eq!(shown["params"]["type"], 1, "{config}");
+        assert_eq!(server.shutdown_and_exit(), 0);
+    }
+}
+
+#[test]
+fn an_open_excluded_file_defines_nothing_for_the_others() {
+    // `qlinter .` reads no excluded file, so src/a.q's `ff` is undefined
+    // there. Opening lib/defs.q put its `ff` in the workspace and the
+    // QF018 went away until it was closed (#2295). Opened, it is still
+    // linted - the README: an exclude does not hide a document's findings.
+    let dir = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(dir.path()).unwrap();
+    std::fs::write(
+        root.join("qlinter.toml"),
+        "profile = \"style\"\nexclude = [\"lib/\"]\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("lib")).unwrap();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    // Its own `ff` is still defined for it.
+    let (defs, user) = ("ff:42\ng:{[x] y}\nk:{ff}\n", "h:ff\n");
+    std::fs::write(root.join("lib/defs.q"), defs).unwrap();
+    std::fs::write(root.join("src/a.q"), user).unwrap();
+    let (lib, src) = (
+        file_uri(&root.join("lib/defs.q")),
+        file_uri(&root.join("src/a.q")),
+    );
+    let mut server = start_with_workspace(&root);
+    server.open(&src, user);
+    assert_eq!(codes_of(&server.diagnostics_for(&src)), ["QF018"]);
+    server.open(&lib, defs);
+    assert_eq!(codes_of(&server.diagnostics_for(&lib)), ["QF010"]);
+    // Asked again, a.q still has its QF018.
+    server.change(&src, 2, user);
+    assert_eq!(codes_of(&server.diagnostics_for(&src)), ["QF018"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn a_name_another_workspace_file_defines_is_not_undefined() {
     // lib.q is on disk and never opened; the server reads it at startup.
     let dir = tempfile::tempdir().unwrap();
@@ -1968,6 +2062,15 @@ fn the_reverse_precedence_fix_is_a_quick_fix_that_removes_the_pair() {
     server.initialize();
     server.open(uri, before);
     assert_eq!(codes_of(&server.diagnostics_for(uri)), ["QP005"]);
+    // Both selected is what `qlinter` refuses; the server keeps the
+    // profile's and says so where the user looks (#2291).
+    let shown = server.until(|m| m["method"] == "window/showMessage");
+    assert!(
+        shown["params"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("QP008")),
+        "{shown}"
+    );
     assert_eq!(server.shutdown_and_exit(), 0);
 
     let mut server = Server::start_in(
@@ -3711,6 +3814,38 @@ fn performance_lints_can_be_turned_off() {
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
+/// A rule family a toggle turns off stays off when `lint.select` names one
+/// of its codes, or a longer prefix: the toggle is not one more `ignore`
+/// entry a longer selector outranks (#2294).
+#[test]
+fn a_feature_toggle_beats_a_longer_selector_in_lint_select() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("qlinter.toml"),
+        "target-version = \"4.0\"\n",
+    )
+    .unwrap();
+    let uri = file_uri(&dir.path().join("k.q"));
+    let run = |init: Value| {
+        let (mut server, _) = start_with_options(dir.path(), &["--lsp"], init, None);
+        server.open(&uri, "d:([a:1;b:2])\nr:abs each x\n");
+        let found = codes_of(&server.diagnostics_for(&uri));
+        assert_eq!(server.shutdown_and_exit(), 0);
+        found
+    };
+    let select = json!(["QK001", "QV002", "QF"]);
+    assert_eq!(run(json!({"lint": {"select": select}})), ["QK001", "QV002"]);
+    for (toggle, left) in [("versionCheck", "QV002"), ("performanceLints", "QK001")] {
+        for select in [json!(["QK001", "QV002", "QF"]), json!(["QK0", "QV0", "QF"])] {
+            assert_eq!(
+                run(json!({toggle: {"enable": false}, "lint": {"select": select}})),
+                [left],
+                "{toggle} off, select {select}"
+            );
+        }
+    }
+}
+
 /// `q-lint/formatChangedLines` makes the safe fixes for the findings on the
 /// lines it is given and no others; with the setting off, or no lines, it
 /// makes none.
@@ -4288,6 +4423,51 @@ fn a_file_opened_by_another_spelling_reports_under_one_uri() {
     let reported = last_published(&mut server, &[&closed, &open]);
     assert_eq!(reported[&closed], ["QF001"], "as the disk has it");
     assert_eq!(reported[&open], Vec::<String>::new(), "cleared on close");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// A symlinked file reports closed under its own name and the
+/// configuration above it, as `qlinter .` lints it: it reported under its
+/// target's URI - a file outside the workspace - with the target's
+/// configuration, and a link beside a target in the folder reported
+/// nothing while closed (#2289).
+#[cfg(unix)]
+#[test]
+fn a_symlinked_file_reports_closed_under_its_own_name_and_configuration() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let (proj, outside) = (root.join("proj"), root.join("outside"));
+    for (folder, ignored) in [(&proj, "QP002"), (&outside, "QF010")] {
+        std::fs::create_dir(folder).unwrap();
+        std::fs::write(
+            folder.join("qlinter.toml"),
+            format!("profile = \"uqf\"\nignore = [\"{ignored}\"]\n"),
+        )
+        .unwrap();
+    }
+    let source = "a:2015.01.01T00:00:00.000\nf:{[x] y}\n";
+    std::fs::write(outside.join("t.q"), source).unwrap();
+    std::os::unix::fs::symlink(outside.join("t.q"), proj.join("link.q")).unwrap();
+    let (link, target) = (
+        file_uri(&proj.join("link.q")),
+        file_uri(&outside.join("t.q")),
+    );
+    let options = json!({"lint": {"scope": "workspace"}});
+    let (mut server, _) = start_with_options(&proj, &["--lsp"], options.clone(), Some(&proj));
+    let reported = last_published(&mut server, &[&link]);
+    assert_eq!(reported[&link], ["QF010"]);
+    assert!(!reported.contains_key(&target), "{reported:?}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+
+    // The target beside it, in the folder: each name reports.
+    std::fs::rename(outside.join("t.q"), proj.join("t.q")).unwrap();
+    std::fs::remove_file(proj.join("link.q")).unwrap();
+    std::os::unix::fs::symlink(proj.join("t.q"), proj.join("link.q")).unwrap();
+    let inside = file_uri(&proj.join("t.q"));
+    let (mut server, _) = start_with_options(&proj, &["--lsp"], options, Some(&proj));
+    let reported = last_published(&mut server, &[&link, &inside]);
+    assert_eq!(reported[&link], ["QF010"]);
+    assert_eq!(reported[&inside], ["QF010"]);
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 

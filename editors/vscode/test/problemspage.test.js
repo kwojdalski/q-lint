@@ -6,7 +6,7 @@ const { loadSmallPage } = require("./smallpage.js");
 
 const point = (commit, total, errors) => ({ commit, date: "2026-11-2" + total % 10 + "T10:00:00Z", subject: "a change", total, errors });
 /// What the extension posts, with `trend` for its points.
-const view = (trend) => ({ type: "problems", id: 1, folder: "src", at: 0, commit: "c".repeat(40), clean: true, summary: { total: 9, errors: 1, warnings: 8, files: 2, rules: [], folders: [] }, trend });
+const view = (trend) => ({ type: "problems", id: 1, folder: "src", at: 0, commit: "c".repeat(40), clean: true, summary: { total: 9, errors: 1, warnings: 8, notes: 0, files: 2, rules: [], folders: [] }, trend });
 
 test("the trend chart is an image with a name that says the trend (#1350)", () => {
   const page = loadSmallPage(["problems.js"]);

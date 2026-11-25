@@ -254,6 +254,16 @@ export function readLint(stdout: string): LintFinding[] {
   }));
 }
 
+/// What the Lint q Code tool passes qlinter ahead of `lintArgs`, from the
+/// arguments the language server is started with (`serverArgs`): the same
+/// profile, configuration file and flags, less `--lsp`, and `style` where
+/// neither a profile nor the configuration names one - `--lsp`'s default,
+/// where the command line's is `uqf` (#2292). `--default-profile` yields to
+/// a project's `profile`, which `--profile style` would outrank.
+export function lintToolArgs(serverArgs: string[]): string[] {
+  return ["--default-profile", "style", ...serverArgs.filter((a) => a !== "--lsp" && a !== "--stdio")];
+}
+
 /// The arguments qlinter lints standard input with, as the file `name`.
 export function lintArgs(name: string): string[] {
   return ["--format", "json", "--color", "never", "--stdin-filename", name];

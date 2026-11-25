@@ -268,6 +268,11 @@ struct Index {
     roots: Vec<String>,
     exclude: Vec<glob::Pattern>,
     enabled: bool,
+    /// Each file read from disk by the paths it was read by, as the scan
+    /// reached it - a symlink by its own name, not its target's, which is
+    /// its key. `qlinter .` lints a link by its name and under the
+    /// configuration above it, and so does a workspace-scope lint (#2289).
+    reached: HashMap<String, std::collections::BTreeSet<String>>,
     /// Each workspace folder as the client named it, which is how an answer
     /// names the files under it (`Sources::uri`).
     folders: Vec<Folder>,
@@ -319,19 +324,34 @@ struct Indexed {
     /// implicit, in order - what a reference count counts - kept while
     /// `Index::counted`.
     tally: Vec<(String, bool)>,
+    /// An open document the scan would not read - excluded, or under a
+    /// directory the walk skips: linted, but what it defines is kept out of
+    /// `ws`, so a name only it defines is undefined elsewhere in the editor
+    /// as it is in the terminal (#2295).
+    withheld: bool,
 }
 
 impl Index {
     /// Record what `path` defines. Whether it changed is what tells the
     /// caller other open files need linting again.
-    fn set(&mut self, path: &str, text: &str) -> bool {
-        self.put(path, text) | self.settle()
+    fn set(&mut self, path: &str, text: &str, policy: &Policy) -> bool {
+        self.open(path, text, policy) | self.settle()
+    }
+
+    /// `put` for an open document, which the scan may have passed by.
+    fn open(&mut self, path: &str, text: &str, policy: &Policy) -> bool {
+        let withheld = self.withheld(path, policy);
+        self.put(path, text, withheld)
     }
 
     /// `set`, leaving the placements to the caller's `settle`, so a batch
     /// of files works them out once.
-    fn put(&mut self, path: &str, text: &str) -> bool {
-        let path = file_key(path);
+    fn put(&mut self, path: &str, text: &str, withheld: bool) -> bool {
+        self.put_keyed(file_key(path), text, withheld)
+    }
+
+    /// `put` for the file keyed `path`.
+    fn put_keyed(&mut self, path: String, text: &str, withheld: bool) -> bool {
         let own = index(text);
         let read = guarded(|| q_lint_rs::references(text, false)).unwrap_or_default();
         let (loads, implicit) = (read.loads.clone(), read.implicit_defines.clone());
@@ -361,12 +381,20 @@ impl Index {
         if old.is_none() {
             self.ws.place(Path::new(&path), &placement);
         }
-        let changed = old.as_ref().is_none_or(|old| old.placed != placed);
+        // What the workspace held of it, and what it holds now: nothing of
+        // a withheld one.
+        let before = old
+            .as_ref()
+            .filter(|old| !old.withheld)
+            .map(|old| &old.placed);
+        let changed = before != (!withheld).then_some(&placed);
         if changed {
-            if let Some(old) = &old {
+            if let Some(old) = old.as_ref().filter(|old| !old.withheld) {
                 self.ws.remove(&old.placed);
             }
-            self.ws.add(&placed);
+            if !withheld {
+                self.ws.add(&placed);
+            }
             self.generation += 1;
         }
         let file = Indexed {
@@ -378,6 +406,7 @@ impl Index {
             read,
             signed,
             tally,
+            withheld,
         };
         self.files.insert(path, file);
         changed
@@ -386,9 +415,12 @@ impl Index {
     /// Forget `path`, leaving the placements to the caller's `settle`.
     fn forget(&mut self, path: &str) -> bool {
         let key = file_key(path);
+        self.reached.remove(&key);
         match self.files.remove(&key) {
             Some(old) => {
-                self.ws.remove(&old.placed);
+                if !old.withheld {
+                    self.ws.remove(&old.placed);
+                }
                 self.ws.place(Path::new(&key), &Placement::default());
                 self.generation += 1;
                 self.reads += 1;
@@ -442,8 +474,10 @@ impl Index {
             placement.apply(&mut placed, &file.implicit);
             file.placement = placement;
             if placed != file.placed {
-                self.ws.remove(&file.placed);
-                self.ws.add(&placed);
+                if !file.withheld {
+                    self.ws.remove(&file.placed);
+                    self.ws.add(&placed);
+                }
                 file.placed = placed;
             }
         }
@@ -505,27 +539,68 @@ impl Index {
 
     fn read(&mut self, path: &str) -> bool {
         match on_disk(path) {
-            Some((text, _)) if is_q_path(path) => self.put(path, &text),
+            Some((text, _)) if is_q_path(path) => {
+                let key = file_key(path);
+                self.reached
+                    .entry(key.clone())
+                    .or_default()
+                    .insert(path.to_string());
+                self.put_keyed(key, &text, false)
+            }
             _ => self.forget(path),
+        }
+    }
+
+    /// The paths the file `key` was read from disk by, or the key itself.
+    fn spellings(&self, key: &str) -> Vec<String> {
+        match self.reached.get(key) {
+            Some(paths) if !paths.is_empty() => paths.iter().cloned().collect(),
+            _ => vec![key.to_string()],
         }
     }
 
     /// Whether the scan would have read `path`: index on, under a workspace
     /// folder, in no directory the scan skips, and not excluded.
     fn covers(&self, path: &str, policy: &Policy) -> bool {
-        self.enabled
-            && is_q_path(path)
-            && self.roots.iter().any(|root| {
-                let root = std::path::Path::new(root);
-                // The file and each directory above it within the folder,
-                // as the scan asks about each before entering it (#795).
-                self.spelled_under(root, path).is_some_and(|path| {
-                    !path
-                        .ancestors()
-                        .take_while(|p| *p != root)
-                        .any(|p| skipped(policy, p) || self.excluded(root, p))
-                })
+        self.enabled && is_q_path(path) && self.reached(path, policy)
+    }
+
+    /// Whether `path`, under a workspace folder, is one the configuration
+    /// passes by there - `exclude`, or a directory the walk skips - as
+    /// `qlinter .` would, whether or not the index is on (#2295). The
+    /// editor's own `workspaceIndex.exclude` keeps a closed file out of the
+    /// index, not an open one.
+    fn withheld(&self, path: &str, policy: &Policy) -> bool {
+        let mut under = false;
+        for root in &self.roots {
+            let root = std::path::Path::new(root);
+            if let Some(path) = self.spelled_under(root, path) {
+                under = true;
+                if !path
+                    .ancestors()
+                    .take_while(|p| *p != root)
+                    .any(|p| skipped(policy, p))
+                {
+                    return false;
+                }
+            }
+        }
+        under && is_q_path(path)
+    }
+
+    /// Whether the scan reaches `path` under some workspace folder.
+    fn reached(&self, path: &str, policy: &Policy) -> bool {
+        self.roots.iter().any(|root| {
+            let root = std::path::Path::new(root);
+            // The file and each directory above it within the folder,
+            // as the scan asks about each before entering it (#795).
+            self.spelled_under(root, path).is_some_and(|path| {
+                !path
+                    .ancestors()
+                    .take_while(|p| *p != root)
+                    .any(|p| skipped(policy, p) || self.excluded(root, p))
             })
+        })
     }
 
     /// `path` as the scan reaches it under the workspace folder `root`: as
@@ -571,13 +646,14 @@ impl Index {
     /// then the open documents over it, whose buffers win.
     fn rebuild(&mut self, policy: &Policy, docs: &Documents) {
         self.files.clear();
+        self.reached.clear();
         self.ws = Workspace::default();
         self.generation += 1;
         if self.enabled {
             self.scan(policy, docs);
         }
         for (uri, text) in docs.iter().filter(|(uri, _)| is_q_uri(uri)) {
-            self.put(&path_of(uri), text);
+            self.open(&path_of(uri), text, policy);
         }
         self.settle();
     }
@@ -966,7 +1042,7 @@ impl Options {
     /// could not be read. A bad value is reported and its default used: a
     /// server that refused to start over a typo in a setting would give an
     /// editor no diagnostics at all.
-    fn read(params: &Value) -> (Self, Layer, Vec<String>) {
+    fn read(params: &Value) -> (Self, Vec<Layer>, Vec<String>) {
         let init = &params["initializationOptions"];
         let mut options = Options::default();
         let mut problems = vec![];
@@ -1129,15 +1205,19 @@ impl Options {
                 .collect()
         };
         let select = codes("/lint/select", select);
-        let mut ignore = codes("/lint/ignore", ignore);
+        let ignore = codes("/lint/ignore", ignore);
+        // A rule family a toggle turns off is a layer of its own: in
+        // `lint.ignore`, `QK` would lose to a longer `QK001` in `lint.select`,
+        // the longest selector deciding, and the toggle would not hold (#2294).
+        let mut off = vec![];
         if !options.performance_lints {
-            ignore.push("QV".to_string());
+            off.push("QV".to_string());
         }
         if !options.version_check {
-            ignore.push("QK".to_string());
+            off.push("QK".to_string());
         }
         if !options.type_lints {
-            ignore.extend(["QT033", "QT034", "QT035"].map(String::from));
+            off.extend(["QT033", "QT034", "QT035"].map(String::from));
         }
         for text in exclude {
             match crate::config::pattern(&text) {
@@ -1172,14 +1252,24 @@ impl Options {
                 "/lint/severity must map codes to severities, not {other}"
             )),
         }
-        let layer = Layer {
-            // An empty list is no selection at all, not a selection of
-            // nothing: it is what an editor sends for a setting left alone.
-            select: (!select.is_empty()).then_some(select),
-            extend_select: vec![],
-            ignore,
-        };
-        (options, layer, problems)
+        let layers = [
+            Layer {
+                // An empty list is no selection at all, not a selection of
+                // nothing: it is what an editor sends for a setting left alone.
+                select: (!select.is_empty()).then_some(select),
+                extend_select: vec![],
+                ignore,
+            },
+            Layer {
+                select: None,
+                extend_select: vec![],
+                ignore: off,
+            },
+        ]
+        .into_iter()
+        .filter(|layer| layer.select.is_some() || !layer.ignore.is_empty())
+        .collect();
+        (options, layers, problems)
     }
 
     /// The severity a client asked for `code`, if it asked for one.
@@ -1279,6 +1369,18 @@ pub fn serve(
         let ran: Result<Result<u8, String>, String> = guarded(|| {
             loop {
                 handling = None;
+                // A configuration that could not be read, and so the defaults
+                // in force where it governs, as `qlinter` would refuse it: said
+                // where the user looks, once the client is listening (#2291).
+                if ready && !shutdown_requested {
+                    for told in policy.take_told() {
+                        send(
+                            writer,
+                            json!({"method": "window/showMessage", "params": {"type": 1,
+                                   "message": format!("q-lint: {told}")}}),
+                        )?;
+                    }
+                }
                 // Everything the client has sent so far, before the oldest of it is
                 // handled: what is behind a message can make it moot.
                 // And while nothing has, a closed file of the workspace is linted,
@@ -1405,11 +1507,9 @@ pub fn serve(
                         idx.roots = folders.iter().map(|(path, _)| path.clone()).collect();
                         policy.set_roots(&idx.roots);
                         idx.folders = folders.into_iter().map(Folder::of).collect();
-                        let layer;
-                        (opts, layer, problems) = Options::read(&params);
-                        if layer.select.is_some() || !layer.ignore.is_empty() {
-                            policy.narrow(layer);
-                        }
+                        let layers;
+                        (opts, layers, problems) = Options::read(&params);
+                        policy.narrow(layers);
                         policy.use_baseline(opts.baseline);
                         code_action_literals = params
                             .pointer(
@@ -1615,7 +1715,10 @@ pub fn serve(
                                 // screen, and indexed, so navigation answers from
                                 // it; linted when it is saved, and the others too
                                 // when what it defines changed (#2174).
-                                if !superseded && is_q_uri(&uri) && idx.set(&path_of(&uri), text) {
+                                if !superseded
+                                    && is_q_uri(&uri)
+                                    && idx.set(&path_of(&uri), text, policy)
+                                {
                                     redefined.insert(uri.clone());
                                 }
                                 docs.insert(uri.clone(), text.to_string());
@@ -1703,7 +1806,7 @@ pub fn serve(
                         }
                         // To the URI it was open by, when the file reports
                         // under another (#2172).
-                        if closed.published_to(&key) != Some(uri.as_str()) {
+                        if !closed.published_to(&key, &uri) {
                             send(
                                 writer,
                                 json!({"method": "textDocument/publishDiagnostics",
@@ -2042,7 +2145,7 @@ pub fn serve(
                         idx.change_roots(folders("added"), removed.collect(), policy, &docs);
                         // An open buffer still wins over what a folder held.
                         for (uri, text) in docs.iter().filter(|(uri, _)| is_q_uri(uri)) {
-                            idx.put(&path_of(uri), text);
+                            idx.open(&path_of(uri), text, policy);
                         }
                         idx.settle();
                         if idx.generation != generation {
@@ -2442,6 +2545,34 @@ fn escape(uri: &mut String, text: &str) {
 /// path below it - the innermost folder, when one holds another; and only a
 /// file in no folder by its real path.
 impl navigate::Sources<'_> {
+    /// The URI for the file keyed `key` as read from disk by `path`: by
+    /// the folder that path is spelled under and the rest of it, as the
+    /// client named the folder - a symlink by its own name (#2289). The
+    /// key's own URI when `path` is the key, or under no folder as spelled.
+    fn spelled_uri(&self, path: &str, key: &str) -> String {
+        let spelled = Path::new(path);
+        if path == key {
+            return self.uri(key);
+        }
+        let below = self
+            .idx
+            .folders
+            .iter()
+            .filter_map(|folder| {
+                Some((folder, spelled.strip_prefix(Path::new(&folder.path)).ok()?))
+            })
+            .min_by_key(|(_, rest)| rest.components().count());
+        let Some((folder, rest)) = below else {
+            return self.uri(key);
+        };
+        let mut uri = folder.uri.trim_end_matches('/').to_string();
+        for part in rest.components() {
+            uri.push('/');
+            escape(&mut uri, &part.as_os_str().to_string_lossy());
+        }
+        uri
+    }
+
     fn uri(&self, key: &str) -> String {
         if let Some(uri) = self.open.get(key) {
             return uri.to_string();
@@ -3091,7 +3222,7 @@ fn publish(
     opts: &Options,
 ) -> Result<(), String> {
     let path = path_of(&uri);
-    let changed = is_q_uri(&uri) && idx.set(&path, &text);
+    let changed = is_q_uri(&uri) && idx.set(&path, &text, policy);
     docs.insert(uri.clone(), text);
     diagnose(writer, &uri, &docs[&uri], kept, &idx.ws, policy, opts)?;
     if changed {

@@ -2024,7 +2024,9 @@ connection changed after you were asked, it reads nothing and tells the
 agent to ask again. It reads as the Process Explorer reads, with the same
 lambdas and limits, and only the connected process: to read another, an agent connects with Run q Query's `process`.
 **Lint q Code** (`q-lint_lint`, `#qLint`) runs the qlinter the language
-server runs on the code it is given, as the file `{"file"}` names (for its
+server runs, with the server's profile, configuration file and
+`q-lint.serverArgs` (and `style` where nothing names a profile, as for the
+server), on the code it is given, as the file `{"file"}` names (for its
 configuration) or `snippet.q`, and answers its findings. Each has its own
 setting, `q-lint.agent.schemaTool.enable` and `q-lint.agent.lintTool.enable`,
 as Run q Query has `q-lint.agent.queryTool.enable`; turned off, the tool is

@@ -286,7 +286,17 @@ async function offerConfiguration(dir: string, target: string, command: string, 
   const config = governing ?? join(dir, "qlinter.toml");
   // Named from the configuration's own directory, as qlinter reads it.
   const file = relative(canonicalDir(dirname(config)), join(canonicalDir(dirname(target)), basename(target))).split(sep).join("/");
-  if (args.includes("--config")) {
+  // `--isolated`: the server reads no configuration, so a line added to
+  // one would never reach the editor (#2296).
+  if (args.includes("--isolated")) {
+    void window.showInformationMessage(
+      plainMessage(`q-lint: wrote ${BASELINE_FILE}. The language server runs with --isolated and reads no configuration, so the editor does not use it: \`qlinter --baseline ${target}\` does.`),
+    );
+    return;
+  }
+  // `--config FILE` or clap's `--config=FILE`: that file is the user's to
+  // change, so the line is only shown (#2296).
+  if (args.some((a) => a === "--config" || a.startsWith("--config="))) {
     void window.showInformationMessage(
       plainMessage(`q-lint: wrote ${BASELINE_FILE}. q-lint.configFile names the configuration: add \`baseline = "${file}"\` to ${config} for the editor and qlinter to use it.`),
     );

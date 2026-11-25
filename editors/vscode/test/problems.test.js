@@ -44,6 +44,17 @@ test("a folder whose name starts with two dots is a folder of the tree, not one 
   assert.deepStrictEqual(s.folders.map((f) => f.folder).sort(), [".", "..x"]);
 });
 
+test("the warnings count holds warnings only: information and hint findings are counted apart (#2293)", () => {
+  // A [severity] table can lower a rule to information or hint; Problems and
+  // qlinter's own JSON do not call those warnings, so the card must not.
+  const root = path.resolve("/ws");
+  const s = summarise(
+    [F(path.join(root, "a.q"), "QF010", "information"), F(path.join(root, "a.q"), "QP002"), F(path.join(root, "b.q"), "QP002"), F(path.join(root, "b.q"), "QS001", "hint"), F(path.join(root, "b.q"), "QE004", "error")],
+    root,
+  );
+  assert.deepStrictEqual([s.total, s.errors, s.warnings, s.notes], [5, 1, 2, 2]);
+});
+
 test("findings are counted by rule and by folder, with their files", () => {
   const root = path.resolve("/ws");
   const findings = [
@@ -53,7 +64,7 @@ test("findings are counted by rule and by folder, with their files", () => {
     F(path.join(root, "top.q"), "QS001"),
   ];
   const s = summarise(findings, root);
-  assert.deepStrictEqual([s.total, s.errors, s.warnings, s.files], [4, 3, 1, 3]);
+  assert.deepStrictEqual([s.total, s.errors, s.warnings, s.notes, s.files], [4, 3, 1, 0, 3]);
   assert.deepStrictEqual(
     s.rules.map((r) => [r.code, r.count, r.files]),
     [

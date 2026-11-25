@@ -229,8 +229,13 @@ export function lintPlace(file: string, folders: { name: string; path: string }[
 
 export class LintTool implements LanguageModelTool<LintInput> {
   /// `servers`: the qlinter binaries to try, in order, as the language
-  /// server is started.
-  constructor(private readonly servers: () => string[]) {}
+  /// server is started. `args`: the arguments the server is started with,
+  /// less `--lsp` - its profile, configuration file and `serverArgs` - so
+  /// the tool answers what the server shows (#2292).
+  constructor(
+    private readonly servers: () => string[],
+    private readonly args: () => string[] = () => [],
+  ) {}
 
   prepareInvocation(): PreparedToolInvocation {
     return { invocationMessage: "Linting q code with qlinter" };
@@ -262,7 +267,7 @@ export class LintTool implements LanguageModelTool<LintInput> {
         return { error: "Linting was cancelled." };
       }
       try {
-        const ran = await runWith(command, lintArgs(file), input.code, cwd, LINT_TIMEOUT, token);
+        const ran = await runWith(command, [...this.args(), ...lintArgs(file)], input.code, cwd, LINT_TIMEOUT, token);
         if (token?.isCancellationRequested) {
           return { error: "Linting was cancelled." };
         }
@@ -287,9 +292,14 @@ export class LintTool implements LanguageModelTool<LintInput> {
 
 /// Register each tool while its setting is on, and unregister it when it is
 /// turned off. Needs VS Code 1.95's `lm.registerTool`; before it, nothing.
-export function registerAssistTools(context: ExtensionContext, live: Live, servers: () => string[]): { tables: ListTablesTool; lint: LintTool; registered: () => string[] } {
+export function registerAssistTools(
+  context: ExtensionContext,
+  live: Live,
+  servers: () => string[],
+  args: () => string[] = () => [],
+): { tables: ListTablesTool; lint: LintTool; registered: () => string[] } {
   const tables = new ListTablesTool(live);
-  const lint = new LintTool(servers);
+  const lint = new LintTool(servers, args);
   const registered = new Map<string, Disposable>();
   const sync = (): void => {
     if (typeof lm?.registerTool !== "function") {
