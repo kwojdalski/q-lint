@@ -2715,7 +2715,8 @@ export class Live {
   /// other process, or with q-lint.connection.torqGateway.enable off.
   private throughGateway(code: string, process: Process, serverTypes?: string[]): string {
     const types = serverTypes ?? process.gateway;
-    if (process.gateway === undefined || types === undefined || isGatewayCall(code) || !this.setting(readGateway).enabled) {
+    // `/ @servertypes none` names no server: the gateway itself (#2588).
+    if (process.gateway === undefined || types === undefined || types.length === 0 || isGatewayCall(code) || !this.setting(readGateway).enabled) {
       return code;
     }
     const cut = statements(code);
