@@ -116,6 +116,15 @@ test("a dotted name is one word through a segment that starts with an underscore
   assert.deepStrictEqual(words("f. _a"), ["f", "a"]);
 });
 
+// KDB-X's -4! reads `:f 0:.h.tx t as 0:, .h.tx and x 0:1 as 0:, 1: one digit
+// before a colon is a file verb, and what follows it a word of its own.
+test("a file verb's colon is not in the word after it (#2301)", () => {
+  assert.deepStrictEqual(words("0:.h.tx t"), ["0", ".h.tx", "t"]);
+  assert.deepStrictEqual(words("x 0:1;h 1:`a;2:x"), ["x", "0", "1", "h", "1", "a", "2", "x"]);
+  // A time keeps its colons.
+  assert.deepStrictEqual(words("10:30 0D00:00:01 12:00:00.123 123:45"), ["10:30", "0D00:00:01", "12:00:00.123", "123:45"]);
+});
+
 test("nothing is added with both features off, and each adds only its own", () => {
   assert.strictEqual(languageConfiguration({ continuation: false, dotted: false }), undefined);
   assert.deepStrictEqual(Object.keys(languageConfiguration({ continuation: true, dotted: false })), ["onEnterRules"]);

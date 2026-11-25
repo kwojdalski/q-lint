@@ -48,7 +48,9 @@ export const COMMENT = /^\s*\//;
 /// not, so `f.` is `f`. A segment after a dot may start with `_` or a digit,
 /// as q reads `.ns.__f` (#2300). A number takes the dot it starts with (`.5`)
 /// and ends at a `_`, as q reads it: `1_til 5` is `1` and `til` (#1992).
-export const WORD = /(\.?\d[\d.]*(?:[DT][\d.]*)?(?::[\d.]+)*(?:e[+-]?\d+)?[A-Za-z0-9]*)|(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*)/;
+/// It takes a colon only after two digits: one digit before a colon is a
+/// file verb, so `0:.h.tx` is `0` and `.h.tx` (#2301).
+export const WORD = /(\.?\d[\d.]*(?:[DT][\d.]*)?(?:(?<=\d\d):[\d.]+)*(?:e[+-]?\d+)?[A-Za-z0-9]*)|(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*)/;
 
 export interface EnterRule {
   beforeText: RegExp;
