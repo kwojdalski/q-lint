@@ -8,9 +8,9 @@
 // not the open buffers'. The trend is a point for each commit the dashboard
 // has seen with the q files clean against it, kept in the workspace's state,
 // and any older commits a person asks to be linted from git: each is
-// exported with `git archive` to a directory of its own and linted there,
+// written from an index of its own to a directory of its own and linted there,
 // never checked out.
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, sep } from "node:path";
@@ -184,7 +184,7 @@ export function readTrend(raw: unknown): Point[] {
 
 /// Run a program; resolves with its stdout, stderr and exit code (null when
 /// a signal or the timeout stopped it), or rejects when it cannot be started.
-export function run(command: string, args: string[], cwd: string, timeout = 300_000): Promise<{ stdout: string; stderr: string; code: number | null }> {
+export function run(command: string, args: string[], cwd: string, timeout = 300_000, env?: NodeJS.ProcessEnv): Promise<{ stdout: string; stderr: string; code: number | null }> {
   return new Promise((resolve, reject) => {
     // On Windows a bare name is looked for in `cwd` before PATH (#1407).
     const binary = onProcessPath(command);
@@ -194,7 +194,7 @@ export function run(command: string, args: string[], cwd: string, timeout = 300_
     }
     // A .cmd wrapper through a shell, as Node starts one (#1610).
     const launch = launchable(binary, args);
-    execFile(launch.command, launch.args, { cwd, timeout, maxBuffer: 256 * 1024 * 1024, windowsHide: true, shell: launch.shell }, (error, stdout, stderr) => {
+    execFile(launch.command, launch.args, { cwd, timeout, maxBuffer: 256 * 1024 * 1024, windowsHide: true, shell: launch.shell, ...(env !== undefined ? { env } : {}) }, (error, stdout, stderr) => {
       const failed = error as (Error & { code?: unknown }) | null;
       if (failed && typeof failed.code === "string") {
         reject(new Error(`${command} could not be run: ${failed.message}`));
@@ -264,9 +264,12 @@ export async function history(dir: string, count: number): Promise<{ commit: str
     });
 }
 
-/// The findings of `commit`: its q files and configuration exported with
-/// `git archive` into a directory of its own and linted there; the
-/// directory is removed after. The working tree is never touched. The
+/// The findings of `commit`: its q files and configuration written into a
+/// directory of its own, from an index of its own (`read-tree` and
+/// `checkout-index`), and linted there; the directory is removed after.
+/// The working tree and its index are never touched. Not `git archive`,
+/// which leaves out `export-ignore` paths and rewrites `export-subst`
+/// files, so a point counted fewer findings than the tree has (#2414). The
 /// export is of the whole repository and `dir`'s place in it is what is
 /// linted, so a configuration above `dir` counts as it does in the working
 /// tree (#1897); a commit without `dir` has nothing to lint.
@@ -276,41 +279,23 @@ export async function lintCommit(qlinter: string, args: string[], dir: string, c
   }
   const repository = await within(dir);
   if (repository === undefined) {
-    throw new Error(`git archive ${commit} failed: ${dir} is not in a git repository`);
+    throw new Error(`exporting ${commit} failed: ${dir} is not in a git repository`);
   }
-  const out = await mkdtemp(join(tmpdir(), "qlint-trend-"));
+  const base = await mkdtemp(join(tmpdir(), "qlint-trend-"));
   try {
-    await new Promise<void>((resolve, reject) => {
-      const [git, tarBinary] = [onProcessPath("git"), onProcessPath("tar")];
-      if (git === undefined || tarBinary === undefined) {
-        reject(new Error(`git archive ${commit} failed: ${git === undefined ? "git" : "tar"} is not on PATH`));
-        return;
+    const out = join(base, "tree");
+    const env = { ...process.env, GIT_INDEX_FILE: join(base, "index") };
+    for (const step of [["read-tree", commit], ["checkout-index", "-a", "-f", `--prefix=${out}${sep}`]]) {
+      const done = await run("git", step, repository.top, 300_000, env);
+      if (done.code !== 0) {
+        throw new Error(`exporting ${commit} failed: ${done.stderr.trim() || `git ${step[0]} exited ${done.code}`}`);
       }
-      const archive = spawn(git, ["archive", "--format=tar", commit], { cwd: repository.top, windowsHide: true });
-      const tar = spawn(tarBinary, ["-x", "-f", "-", "-C", out], { windowsHide: true });
-      archive.stdout.pipe(tar.stdin);
-      let failed = "";
-      archive.stderr.on("data", (d) => (failed += d));
-      archive.on("error", reject);
-      tar.on("error", reject);
-      // Both must succeed: tar can exit 0 on the empty stream of a git
-      // archive that failed (#1400).
-      let closed = 0;
-      const done = (what: string) => (code: number | null) => {
-        if (code !== 0) {
-          reject(new Error(`git archive ${commit} failed: ${failed.trim() || `${what} exited ${code}`}`));
-        } else if (++closed === 2) {
-          resolve();
-        }
-      };
-      archive.on("close", done("git archive"));
-      tar.on("close", done("tar"));
-    });
+    }
     const place = join(out, repository.prefix);
     await mkdir(place, { recursive: true });
     return await lintTree(qlinter, args, place);
   } finally {
-    await rm(out, { recursive: true, force: true });
+    await rm(base, { recursive: true, force: true });
   }
 }
 
