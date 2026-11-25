@@ -62,13 +62,15 @@ import {
   givenServerTypes,
   tlsChoices,
   withExtras,
+  evaluationOf,
+  type Evaluation,
   withProtections,
   withRelabel,
   type Process,
 } from "./processes";
 import { clickedEditor, unsavedIn } from "./clicked";
 import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
-import { ClosedBeforeHandshake, QConnection, QError, type Target } from "./qclient";
+import { ClosedBeforeHandshake, QConnection, QError, type DirectMode, type Target } from "./qclient";
 import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, TunnelHandshakeError, readTunnel } from "./tunnel";
 import { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, readGateway } from "./gateway";
 import { isLocalHost } from "./launcher";
@@ -86,7 +88,7 @@ import { QueryControls } from "./controls";
 import { ParameterCache } from "./paramcachecontrol";
 import { DASHBOARDS_KEY, parseDashboards, retargetedTiles } from "./dashboard";
 import { SCHEDULES_KEY, parseSchedules, retargetedSchedules } from "./schedule";
-import { CONTROL_COMMANDS, FILE_CONNECTIONS_KEY, UNLIMITED, UNLIMITED_READ_ONLY, armTimeout, limits, readUnlimited, runUnwrapped, timedOutError, withBinding } from "./querycontrols";
+import { CONTROL_COMMANDS, FILE_CONNECTIONS_KEY, UNLIMITED, UNLIMITED_READ_ONLY, armTimeout, directMode, evaluationText, limits, readUnlimited, runUnwrapped, timedOutError, withBinding } from "./querycontrols";
 import { elapsedText, finishedText, readProgress, shouldNotify } from "./progress";
 import {
   HISTORY_COMMANDS,
@@ -676,9 +678,11 @@ export class Live {
   /// The processes said to have no `reval`, so the read-only guard's
   /// backstop cannot hold there: each is said once.
   private readonly toldNoReval = new Set<string>();
+  /// The guarded processes said to be evaluated directly, without `reval`.
+  private readonly toldDirect = new Set<string>();
   /// The last query from the editor that failed, with q's backtrace: what
   /// Capture Locals at Last Error (#985) runs again. Not one sent through a
-  /// gateway, nor in unwrapped mode, which has no backtrace.
+  /// gateway, nor in direct evaluation, which has no backtrace.
   lastFailure: { process: string; code: string; error: string; trace: string } | undefined;
   private readonly controls: QueryControls;
   private readonly parameterCache: ParameterCache;
@@ -748,6 +752,7 @@ export class Live {
     this.modes.setRunner((code, label) => this.runOnProcess(code, label));
     this.controls = new QueryControls(context, {
       activeLabel: () => this.activeLabel(),
+      activeDirect: () => this.activeDirect(),
       pick: async (title) => (await this.chosen(undefined, title, true))?.label,
     });
     this.parameterCache = new ParameterCache(context);
@@ -785,6 +790,7 @@ export class Live {
       c(TUNNEL_COMMANDS.set, (row?: ProcessArg, destination?: string | null) => this.setSshTunnel(row, destination)),
       c(SHARED_COMMANDS.add, (row?: ProcessArg) => this.addToShared(row)),
       c(GATEWAY_COMMANDS.set, (row?: ProcessArg, types?: string | string[] | null) => this.setGateway(row, types)),
+      c(CONTROL_COMMANDS.setEvaluation, (row?: ProcessArg, mode?: string | null) => this.setEvaluation(row, mode)),
       c(GATEWAY_COMMANDS.queryWith, (types?: unknown) => this.queryGatewayWith(givenServerTypes(types))),
       c(HISTORY_COMMANDS.filter, (filter?: HistoryFilter) => this.filterHistory(filter)),
       c(HISTORY_COMMANDS.clearFilter, () => this.setHistoryFilter({})),
@@ -1316,6 +1322,12 @@ export class Live {
   /// as it is. Not on a TorQ gateway, whose `.gw.syncexec` changes the
   /// gateway itself, so the guard alone holds there. Whether it was set.
   private backstop(connection: QConnection, process: Process, code: GuardCode): boolean {
+    if (connection.isDirect) {
+      connection.readOnly = false;
+      connection.refused = undefined;
+      this.sayNoReval(connection, process);
+      return false;
+    }
     const on =
       this.setting(readEnforce) &&
       guardedBy(process, this.setting(readGuard)).length > 0 &&
@@ -1325,6 +1337,22 @@ export class Live {
     connection.readOnly = on;
     connection.refused = undefined;
     return on;
+  }
+
+  /// On a direct connection to a guarded process, said once: nothing of
+  /// q-lint's runs there, so `reval` is not applied and the process does
+  /// not enforce read-only; the guard's own reading still holds (#2470).
+  private sayNoReval(connection: QConnection, process: Process): void {
+    const mode = connection.direct();
+    if (mode === undefined || guardedBy(process, this.setting(readGuard)).length === 0 || this.toldDirect.has(process.label)) {
+      return;
+    }
+    this.toldDirect.add(process.label);
+    void window.showInformationMessage(
+      plainMessage(
+        `q-lint: ${process.label} uses direct evaluation (${mode.from === "process" ? 'its "evaluation"' : "q-lint.query.unwrapped"}), so your code is sent as plain strings and reval is not applied: ${process.label} does not enforce read-only. The read-only guard still reads what is sent and asks before code that would change it.`,
+      ),
+    );
   }
 
   /// After a send `backstop` set: `reval`'s refusal, if it refused, and
@@ -1391,6 +1419,7 @@ export class Live {
       this.status.text = `$(plug) q: ${iconsEscaped(label)}${health}`;
       this.status.tooltip = [
         `Connected to ${this.active === undefined ? "" : address(this.active.host, this.active.port)}. Click to switch.`,
+        ...(this.active === undefined ? [] : [evaluationText(label, this.activeDirect(), this.active.evaluation !== undefined)]),
         ...(unanswered >= UNANSWERED_MS
           ? [`The heartbeat has had no answer for ${elapsedText(unanswered)}: the process is busy, or gone.`]
           : this.latency !== undefined
@@ -2049,7 +2078,7 @@ export class Live {
       const answer = await window.withProgress(
         { location: { viewId: VIEWS.processes }, title: `Running the connect script of ${process.label}` },
         () =>
-          controls.unwrapped
+          connection.isDirect
             ? runUnwrapped(connection, cut, { size: consoleSize, limit: 0, unlimited: false, grid: false })
             : connection.query(cut, consoleSize),
       );
@@ -2247,6 +2276,24 @@ export class Live {
   /// names, if it names one (#908): the tunnel closes with the connection,
   /// and the connection with the tunnel. `signal` stops the connect.
   private async dial(process: Process, target: Target, signal?: AbortSignal): Promise<QConnection> {
+    const connection = await this.dialed(process, target, signal);
+    // Asked at each send, so a changed setting or process holds at once (#2470).
+    connection.direct = () => this.directOf(connection === this.connection && this.active !== undefined ? this.active : process);
+    return connection;
+  }
+
+  /// Whether, and why, `process` is evaluated directly (#2470).
+  private directOf(process: Process): DirectMode | undefined {
+    return directMode(process, this.controls.settings().unwrapped);
+  }
+
+  /// Whether, and why, the active process is evaluated directly: what the
+  /// status bar says.
+  activeDirect(): DirectMode | undefined {
+    return this.active === undefined ? undefined : this.directOf(this.active);
+  }
+
+  private async dialed(process: Process, target: Target, signal?: AbortSignal): Promise<QConnection> {
     if (process.ssh === undefined) {
       return QConnection.open(target, undefined, signal);
     }
@@ -2716,6 +2763,61 @@ export class Live {
     );
   }
 
+  /// Set how a saved process's code is evaluated (#2470): `direct`, as
+  /// plain strings, `wrapped`, in q-lint's lambda, or neither, following
+  /// q-lint.query.unwrapped. `mode` (from a keybinding or a test) sets it
+  /// without asking; `""` or `null` is neither.
+  private async setEvaluation(row?: ProcessArg, mode?: string | null): Promise<void> {
+    const process = await this.chosen(row, "Set the evaluation of which q process?");
+    if (process === undefined) {
+      return;
+    }
+    let chosen: Evaluation | undefined;
+    if (mode === undefined) {
+      const global = this.controls.settings().unwrapped ? "direct" : "wrapped";
+      const items = [
+        { label: "Follow q-lint.query.unwrapped", description: `now ${global}`, value: undefined },
+        { label: "Wrapped", description: "q-lint's lambda runs the code: backtrace, reval, every feature", value: "wrapped" as const },
+        { label: "Direct", description: "plain strings only, for a process that refuses a lambda", value: "direct" as const },
+      ];
+      const picked = await window.showQuickPick(
+        items.map((i) => ({ ...i, picked: i.value === process.evaluation })),
+        { title: `Evaluation of ${process.label}`, placeHolder: `Now: ${process.evaluation ?? `following q-lint.query.unwrapped (${global})`}` },
+      );
+      if (picked === undefined) {
+        return;
+      }
+      chosen = picked.value;
+    } else {
+      chosen = evaluationOf(mode);
+    }
+    const now = this.processes();
+    if (!now.some((p) => p.label === process.label)) {
+      void window.showErrorMessage(plainMessage(`q-lint: "${process.label}" was deleted meanwhile; it was not changed.`));
+      return;
+    }
+    const set = (p: Process): Process => {
+      const { evaluation: _old, ...rest } = p;
+      void _old;
+      return withExtras({ ...rest }, { ...rest, ...(chosen !== undefined ? { evaluation: chosen } : {}) });
+    };
+    await this.save(now.map((p) => (p.label === process.label ? set(p) : p)));
+    if (this.active?.label === process.label && this.active.server === undefined) {
+      this.active = set(this.active);
+    }
+    this.showStatus();
+    const effective = this.directOf(set(process)) === undefined ? "wrapped" : "direct";
+    void window.showInformationMessage(
+      plainMessage(
+        chosen === undefined
+          ? `q-lint: ${process.label} follows q-lint.query.unwrapped: its code is evaluated ${effective} now.`
+          : chosen === "direct"
+            ? `q-lint: ${process.label}'s code is sent as plain strings (direct evaluation); features that need q-lint's lambda are refused there.`
+            : `q-lint: ${process.label}'s code runs in q-lint's lambda (wrapped evaluation), whatever q-lint.query.unwrapped says.`,
+      ),
+    );
+  }
+
   /// Query the selection, or the current line, on the connected gateway with
   /// server types asked for (or `types`, from a keybinding).
   private async queryGatewayWith(types?: string | string[]): Promise<void> {
@@ -3096,7 +3198,8 @@ export class Live {
       const { consoleSize, gridLimit } = limits(settings, unlimited);
       // On a TorQ gateway, through `.gw.syncexec`, as `run` sends it (#1230).
       const cut = statements(this.throughGateway(code, process));
-      if (controls.unwrapped) {
+      if (connection.isDirect) {
+        this.sayNoReval(connection, process);
         return await runUnwrapped(connection, cut, { size: consoleSize, limit: gridLimit, unlimited, grid: true });
       }
       // Under `reval` where that is the guard's backstop; a refusal is
@@ -3333,23 +3436,24 @@ export class Live {
       // tabular comes back as console mode's text.
       const cut = statements(code);
       // Paging (#922) leaves a cut result on the process: never in
-      // unwrapped mode, which sends nothing of ours, nor on production or
+      // direct evaluation, which sends nothing of ours, nor on production or
       // a process the read-only guard (#918) guards, as holding assigns.
       const readOnly = isProduction(process) || guardedBy(process, this.setting(readGuard)).length > 0;
-      const hold = !controls.unwrapped && settings.mode !== "console" && this.modes.wantsHold(readOnly);
+      const direct = connection.isDirect;
+      const hold = !direct && settings.mode !== "console" && this.modes.wantsHold(readOnly);
       // This result's own, so a page is of it and no other (#2128).
       const token = hold ? randomBytes(16).toString("hex") : undefined;
       const send = async () =>
-        controls.unwrapped
+        direct
           ? await runUnwrapped(connection, cut, { size: consoleSize, limit: gridLimit, unlimited, grid: settings.mode !== "console" })
           : settings.mode !== "console"
             ? await connection.queryGrid(cut, consoleSize, gridLimit, this.modes.wantsTree(), token)
             : unlimited
               ? await connection.trapped(UNLIMITED, UNLIMITED_READ_ONLY, readUnlimited, cut, consoleSize)
               : await connection.query(cut, consoleSize);
-      // Unwrapped mode sends the text alone, so nothing of ours can put it
-      // under `reval`: the guard alone holds there.
-      const backstopped = !controls.unwrapped && this.backstop(connection, process, written);
+      // Direct evaluation sends the text alone, so nothing of ours can put
+      // it under `reval`: the guard alone holds there (`backstop` says so).
+      const backstopped = this.backstop(connection, process, written);
       let answer: Awaited<ReturnType<typeof send>>;
       try {
         answer = await send();
@@ -3370,7 +3474,7 @@ export class Live {
       const millis = Date.now() - started;
       // Answered: the connection holds, and a drop after starts the tries again (#2129).
       this.answeredOn = connection;
-      if (!answer.ok && code === written && !controls.unwrapped) {
+      if (!answer.ok && code === written && !direct) {
         this.lastFailure = { process: process.label, code, error: answer.error, trace: answer.trace };
       }
       entry = {

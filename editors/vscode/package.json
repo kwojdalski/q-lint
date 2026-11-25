@@ -614,7 +614,7 @@
             "type": "boolean",
             "default": false,
             "order": 124,
-            "markdownDescription": "Page through a result cut at `q-lint.query.gridLimit`: the process keeps the whole result as `.qlint.held`, and the grid asks it for the next `gridLimit` rows as it scrolls to the end, up to 1,000,000 rows. Off by default, because it defines `.qlint.held` on the process and holds the result there until the next grid query while paging is on (`.qlint.held:()` frees it). Never on a process tagged `prod`, and never in unwrapped mode."
+            "markdownDescription": "Page through a result cut at `q-lint.query.gridLimit`: the process keeps the whole result as `.qlint.held`, and the grid asks it for the next `gridLimit` rows as it scrolls to the end, up to 1,000,000 rows. Off by default, because it defines `.qlint.held` on the process and holds the result there until the next grid query while paging is on (`.qlint.held:()` frees it). Never on a process tagged `prod`, and never in direct evaluation (unwrapped)."
           },
           "q-lint.results.pivot.enable": {
             "type": "boolean",
@@ -757,7 +757,7 @@
             "type": "boolean",
             "default": false,
             "order": 114,
-            "markdownDescription": "Send a query as a plain string, statement by statement, for a gateway that refuses a lambda, instead of in the lambda q-lint runs it with. The result is whatever the process returns, formatted by q-lint rather than the process, so it is close to q's console but not exact, and an error has no backtrace. **q-lint: Toggle Unwrapped Query** changes it."
+            "markdownDescription": "Evaluate directly: send a query as a plain string, statement by statement, for a gateway that refuses a lambda, instead of in the lambda q-lint runs it with. The result is whatever the process returns, formatted by q-lint rather than the process, so it is close to q's console but not exact; an error has no backtrace; `reval` is not applied; and features that need q-lint's lambda (benchmark, line timings, async queries...) refuse. It is the default for every process: one whose `evaluation` is set (**q-lint: Set Process Evaluation**) to `direct` or `wrapped` follows that instead. **q-lint: Toggle Unwrapped Query** changes it."
           },
           "q-lint.query.timeout": {
             "type": "number",
@@ -1302,7 +1302,7 @@
           "q-lint.processes.readOnlyGuard.enforce": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Send code that `#q-lint.processes.readOnlyGuard.enable#` reads as read-only to a guarded process so the process evaluates it under `reval`, q's read-only evaluation: a write the guard missed is then refused by q - `'noupdate`, `'access`, `'sys` - instead of made. A read q refuses (a function that caches into a global, `system \"pwd\"`, the first `.Q.ind` on a partitioned table) is asked about, and sent again as it is only when confirmed; code the guard asked about and you confirmed is sent as it is. Not on a TorQ gateway, whose `.gw.syncexec` changes the gateway itself, nor in unwrapped mode, nor on a process without `reval`, which is said once: the guard alone holds there. `reval` does not stop a breakpoint (`.Q.bs`, `-104!`) patching a function in place, which the guard asks about."
+            "markdownDescription": "Send code that `#q-lint.processes.readOnlyGuard.enable#` reads as read-only to a guarded process so the process evaluates it under `reval`, q's read-only evaluation: a write the guard missed is then refused by q - `'noupdate`, `'access`, `'sys` - instead of made. A read q refuses (a function that caches into a global, `system \"pwd\"`, the first `.Q.ind` on a partitioned table) is asked about, and sent again as it is only when confirmed; code the guard asked about and you confirmed is sent as it is. Not on a TorQ gateway, whose `.gw.syncexec` changes the gateway itself, nor in direct evaluation (unwrapped), nor on a process without `reval`, which is said once: the guard alone holds there. `reval` does not stop a breakpoint (`.Q.bs`, `-104!`) patching a function in place, which the guard asks about."
           }
         }
       },
@@ -2544,6 +2544,12 @@
         "command": "q-lint.queryGatewayWithServerTypes",
         "title": "Query Gateway on Server Types...",
         "category": "q-lint"
+      },
+      {
+        "command": "q-lint.setProcessEvaluation",
+        "title": "Set Process Evaluation",
+        "category": "q-lint",
+        "icon": "$(symbol-string)"
       },
       {
         "command": "q-lint.streamTable",
@@ -3792,6 +3798,11 @@
           "command": "q-lint.setGatewayServerTypes",
           "when": "view == q-lint.processes && viewItem =~ /^process/ && config.q-lint.connection.torqGateway.enable",
           "group": "2_edit@6"
+        },
+        {
+          "command": "q-lint.setProcessEvaluation",
+          "when": "view == q-lint.processes && viewItem =~ /^process/",
+          "group": "2_edit@7"
         },
         {
           "command": "q-lint.streamTable",

@@ -9,6 +9,7 @@ import { readLive } from "./liveconfig";
 import { render, type Answer } from "./query";
 import { inContext, statements } from "./statements";
 import { plainMessage } from "./history";
+import { runUnwrapped } from "./querycontrols";
 
 /// One run, as a pane shows it.
 export interface Ran {
@@ -56,7 +57,10 @@ export async function runText(live: Live, code: string, uri?: Uri, context = "."
   try {
     ran = await live.runOnActive(code, (connection) => {
       sentTo = live.activeLabel() ?? sentTo;
-      return connection.query(inContext(cut, context), consoleSize);
+      // Direct evaluation (#2470): each statement as a plain string.
+      return connection.isDirect
+        ? runUnwrapped(connection, inContext(cut, context), { size: consoleSize, limit: 0, unlimited: false, grid: false })
+        : connection.query(inContext(cut, context), consoleSize);
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

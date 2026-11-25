@@ -20,7 +20,10 @@ import { isProduction } from "./agent";
 import { cellOutputs, chartCellOutputs, DATA, DATA_READ_ONLY, readCellData, type OutputPart } from "./celldata";
 import { cellDirective, type CellMode } from "./celldirectives";
 import { valued, type GuardCode } from "./guard";
-import { LIVE, LIVE_KEY, LIVE_READ_ONLY, liveQueries, markdownAfter, readLiveValues, type LiveValue } from "./livemarkdown";
+import { LIVE, LIVE_KEY, LIVE_READ_ONLY, VALUE_LIMIT, liveQueries, markdownAfter, readLiveValues, type LiveValue } from "./livemarkdown";
+import type { GridAnswer, GridPayload } from "./grid";
+import { formatValue, oneLine } from "./qformat";
+import { answerOf, directMode, evaluateAll } from "./querycontrols";
 import type { RowLimitFrom } from "./liveconfig";
 import { address, readProcessFile, type Process } from "./processes";
 import { QConnection } from "./qclient";
@@ -39,8 +42,12 @@ export interface RunSettings {
 }
 
 /// Run a cell's statements `cut` on `connection` as its `mode` asks:
-/// whether it succeeded, and its outputs.
+/// whether it succeeded, and its outputs. On a direct connection (#2470)
+/// each statement goes as a plain string, and the answer is shaped here.
 export async function cellAnswer(connection: QConnection, mode: CellMode, cut: string[], settings: RunSettings): Promise<[boolean, OutputPart[]]> {
+  if (connection.isDirect) {
+    return directCellAnswer(connection, mode, cut, settings);
+  }
   if (mode.mode === "chart") {
     const answer = await connection.queryGrid(cut, settings.consoleSize, settings.rows);
     return [answer.ok, chartCellOutputs(mode, answer, settings.rowLimitFrom)];
@@ -49,6 +56,44 @@ export async function cellAnswer(connection: QConnection, mode: CellMode, cut: s
     ? await connection.query(cut, settings.consoleSize)
     : await connection.trapped(DATA, DATA_READ_ONLY, readCellData, cut, settings.rows, settings.consoleSize);
   return [answer.ok, cellOutputs(mode, answer, settings.rowLimitFrom)];
+}
+
+/// `cellAnswer` on a direct connection: the statements sent as plain
+/// strings, and the last value shown as the cell's mode asks - a chart's
+/// rows and a table's as the lambdas would send them, at most `rows`, the
+/// first or the last.
+async function directCellAnswer(connection: QConnection, mode: CellMode, cut: string[], settings: RunSettings): Promise<[boolean, OutputPart[]]> {
+  const ran = await evaluateAll(connection, cut);
+  if (!ran.ok) {
+    const failed: GridAnswer = { ok: false, error: ran.error, trace: "" };
+    return [false, mode.mode === "chart" ? chartCellOutputs(mode, failed, settings.rowLimitFrom) : cellOutputs(mode, failed, settings.rowLimitFrom)];
+  }
+  const { typed } = ran.last;
+  const tabular = typed !== undefined && (typed.kind === "table" || (typed.kind === "dict" && typed.k.kind === "table" && typed.v.kind === "table"));
+  const answer = answerOf(ran.last, { size: settings.consoleSize, limit: Infinity, unlimited: false, grid: mode.mode === "chart" || tabular });
+  const grid = answer.ok && answer.grid !== undefined ? rowsOf(answer.grid, settings.rows) : undefined;
+  if (mode.mode === "chart") {
+    const shown: GridAnswer = grid === undefined ? answer : { ...answer, grid };
+    return [true, chartCellOutputs(mode, shown, settings.rowLimitFrom)];
+  }
+  if (mode.mode === "console" || grid === undefined || !tabular) {
+    const { grid: _g, ...text } = answer;
+    void _g;
+    return [true, cellOutputs(mode, text, settings.rowLimitFrom)];
+  }
+  return [true, cellOutputs(mode, { ok: true, table: { columns: grid.names, types: grid.types, keys: grid.keys, data: grid.cells, total: grid.count } }, settings.rowLimitFrom)];
+}
+
+/// `grid` cut to `rows` rows: the first, or the last when it is negative;
+/// every one when it is infinite.
+function rowsOf(grid: GridPayload, rows: number): GridPayload {
+  const n = Math.abs(rows);
+  const have = grid.cells[0]?.length ?? 0;
+  if (!(n < have)) {
+    return grid;
+  }
+  const cut = <T>(column: T[]): T[] => (column.length !== have ? column : rows < 0 ? column.slice(have - n) : column.slice(0, n));
+  return { ...grid, cells: grid.cells.map(cut), raw: grid.raw.map(cut), rank: grid.rank.map(cut) };
 }
 
 /// What the read-only guard reads for a code cell `source` run with the
@@ -69,13 +114,41 @@ export async function liveValues(connection: QConnection, sources: string[]): Pr
   if (exprs.length === 0) {
     return sources.map(() => ({}));
   }
-  const all = readLiveValues(exprs, await connection.call(connection.readOnly ? LIVE_READ_ONLY : LIVE, exprs));
+  const all = connection.isDirect
+    ? await directLiveValues(connection, exprs)
+    : readLiveValues(exprs, await connection.call(connection.readOnly ? LIVE_READ_ONLY : LIVE, exprs));
   for (const value of Object.values(all)) {
     if ("error" in value) {
       connection.noteRefusal(value.error);
     }
   }
   return queries.map((qs) => Object.fromEntries(qs.map((q) => [q.key, all[q.expr]])));
+}
+
+/// The live values of `exprs` on a direct connection (#2470): each sent as
+/// a plain string, one failing not losing the rest, and written as `LIVE`
+/// writes them - a string or a symbol as its characters, anything else on
+/// one line as `-3!` does - at most `VALUE_LIMIT` characters.
+async function directLiveValues(connection: QConnection, exprs: string[]): Promise<Record<string, LiveValue>> {
+  const values: Record<string, LiveValue> = {};
+  for (const expr of exprs) {
+    const ran = await evaluateAll(connection, [expr]);
+    if (!ran.ok) {
+      values[expr] = { error: ran.error };
+      continue;
+    }
+    const { value, type, typed } = ran.last;
+    const text =
+      typed?.kind === "chars"
+        ? Buffer.from(typed.v).toString("utf8")
+        : type === -11 && typeof value === "string"
+          ? value
+          : typed !== undefined
+            ? oneLine(typed)
+            : formatValue(value, type).join(" ");
+    values[expr] = { text: Array.from(text).slice(0, VALUE_LIMIT).join("") };
+  }
+  return values;
 }
 
 /// An output as the file keeps it: an error as VS Code writes one.
@@ -541,7 +614,7 @@ export async function main(
           throw new Error(`${target.label} is a production process (tagged ${target.tags.join(", ")}); pass --allow-production to run the notebook there`);
         }
         const password = passwordOf(target, env, given, listed);
-        return QConnection.open({
+        const opened = await QConnection.open({
           host: target.host,
           port: target.port,
           ...(target.user ? { user: target.user, password } : {}),
@@ -549,6 +622,11 @@ export async function main(
         }).catch((error: unknown) => {
           throw new Error(`could not connect to ${target.label} (${address(target.host, target.port)}): ${error instanceof Error ? error.message : String(error)}`);
         });
+        // A process file's `"evaluation": "direct"` holds here too (#2470);
+        // with no settings, one that sets none is wrapped.
+        const mode = directMode(target, false);
+        opened.direct = () => mode;
+        return opened;
       })();
       connections.set(name, connection);
     }

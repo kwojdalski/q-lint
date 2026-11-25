@@ -549,7 +549,7 @@ function cutCell(text: string): string {
 
 /// A value decoded with its types on one line, as q's `-3!` writes it:
 /// `` `a`b!1 2 ``, `(1;`a)`, `,1 2`.
-function oneLine(q: QValue): string {
+export function oneLine(q: QValue): string {
   switch (q.kind) {
     case "atom":
       return atomText(q.v, q.t);

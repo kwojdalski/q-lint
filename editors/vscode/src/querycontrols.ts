@@ -17,11 +17,18 @@
 // a gateway that refuses a lambda. The process evaluates each as it
 // evaluates any string a client sends, and the answer is whatever it
 // returns, formatted here.
+//
+// Direct evaluation (#2470) is that, per process: a process's own
+// `"evaluation"` (`direct` or `wrapped`) wins, and one that sets none follows
+// `q-lint.query.unwrapped`. A direct connection sends nothing but plain
+// strings (`QConnection.direct`), so a feature that needs q-lint's lambda
+// is refused before it sends.
 import { attrText, consoleLines, gridOf, gridOfQ, cutLines, formatQ, formatValue, vectorText } from "./qformat";
 import { decode, type QValue } from "./qdecode";
 import { readAnswer, trapLines, type Answer } from "./query";
 import type { GridAnswer } from "./grid";
-import { QError } from "./qclient";
+import { QError, type DirectMode } from "./qclient";
+import type { Process } from "./processes";
 import { iconsEscaped } from "./history";
 import { FULL_TEXT, LAID_OUT } from "./qtext";
 
@@ -29,6 +36,7 @@ export const CONTROL_COMMANDS = {
   queryFile: "q-lint.queryEntireFile",
   toggleUnlimited: "q-lint.toggleUnlimitedQuery",
   toggleUnwrapped: "q-lint.toggleUnwrappedQuery",
+  setEvaluation: "q-lint.setProcessEvaluation",
   chooseFileConnection: "q-lint.chooseConnectionForFile",
   clearFileConnection: "q-lint.clearConnectionForFile",
   startRepl: "q-lint.startRepl",
@@ -56,6 +64,15 @@ export function readControls(get: <T>(key: string, fallback: T) => T): ControlSe
     // A timer takes at most 2^31-1 ms; a day is plenty.
     timeout: typeof timeout === "number" && Number.isFinite(timeout) && timeout > 0 ? Math.min(timeout, 86_400) : 0,
   };
+}
+
+/// Whether, and why, `process` is evaluated directly (#2470): its own
+/// `evaluation` when it sets one, else `q-lint.query.unwrapped`.
+export function directMode(process: Pick<Process, "label" | "evaluation">, unwrapped: boolean): DirectMode | undefined {
+  if (process.evaluation !== undefined) {
+    return process.evaluation === "direct" ? { label: process.label, from: "process" } : undefined;
+  }
+  return unwrapped ? { label: process.label, from: "setting" } : undefined;
 }
 
 /// The console size an unlimited query asks `.Q.S` for: more lines and
@@ -134,24 +151,25 @@ export interface Evaluator {
   evaluate(text: string): Promise<{ value: unknown; type: number | undefined; message?: Buffer }>;
 }
 
-/// Run `statements` unwrapped: each sent as a plain string, in order,
-/// stopping at the first q error, and the last one's value shown. Its text
-/// is formatted here and cut at `size` unless `unlimited`; when `grid` asks
-/// and the value is tabular, its rows (at most `limit`, unless `unlimited`)
-/// come too. A q error is the answer's error, with no trace: the process
-/// sends none. Anything else - the connection closing, an abort - throws.
-export async function runUnwrapped(
-  connection: Evaluator,
-  statements: string[],
-  options: { size: [number, number]; limit: number; unlimited: boolean; grid: boolean },
-): Promise<GridAnswer> {
+/// The last value of statements sent as plain strings: as the codec decoded
+/// it, its q type, and the message read again with its types when it can be.
+export interface Evaluated {
+  value: unknown;
+  type: number | undefined;
+  typed: QValue | undefined;
+}
+
+/// Send `statements` as plain strings, each in order, stopping at the first
+/// q error, which is answered as q sent it, with no trace: the process sends
+/// none. Anything else - the connection closing, an abort - throws.
+export async function evaluateAll(connection: Evaluator, statements: string[]): Promise<{ ok: true; last: Evaluated } | { ok: false; error: string }> {
   let last: { value: unknown; type: number | undefined; message?: Buffer } = { value: null, type: 101 };
   for (const statement of statements) {
     try {
       last = await connection.evaluate(statement);
     } catch (error) {
       if (error instanceof QError) {
-        return { ok: false, error: error.message, trace: "" };
+        return { ok: false, error: error.message };
       }
       throw error;
     }
@@ -164,6 +182,30 @@ export async function runUnwrapped(
   } catch {
     typed = undefined;
   }
+  return { ok: true, last: { value: last.value, type: last.type, typed } };
+}
+
+/// Run `statements` unwrapped: each sent as a plain string, in order,
+/// stopping at the first q error, and the last one's value shown. Its text
+/// is formatted here and cut at `size` unless `unlimited`; when `grid` asks
+/// and the value is tabular, its rows (at most `limit`, unless `unlimited`)
+/// come too. A q error is the answer's error, with no trace: the process
+/// sends none. Anything else - the connection closing, an abort - throws.
+export async function runUnwrapped(
+  connection: Evaluator,
+  statements: string[],
+  options: { size: [number, number]; limit: number; unlimited: boolean; grid: boolean },
+): Promise<GridAnswer> {
+  const ran = await evaluateAll(connection, statements);
+  if (!ran.ok) {
+    return { ok: false, error: ran.error, trace: "" };
+  }
+  return answerOf(ran.last, options);
+}
+
+/// The answer `runUnwrapped` shows for `last`.
+export function answerOf(last: Evaluated, options: { size: [number, number]; limit: number; unlimited: boolean; grid: boolean }): GridAnswer {
+  const { typed } = last;
   let text: string[];
   if (typed === undefined) {
     const lines = formatValue(last.value, last.type);
@@ -233,8 +275,20 @@ export function withBinding(stored: unknown, uri: string, label: string | undefi
 }
 
 /// What the status bar says of the query flags: empty when none is on.
-export function flagsText(unlimited: boolean, unwrapped: boolean): string {
-  return [unlimited ? "$(unfold) unlimited" : "", unwrapped ? "$(symbol-string) unwrapped" : ""].filter(Boolean).join(" ");
+/// `direct`: the active process is evaluated directly (#2470), said as
+/// that; with no process, `unwrapped` is the setting's.
+export function flagsText(unlimited: boolean, unwrapped: boolean, direct = false): string {
+  return [unlimited ? "$(unfold) unlimited" : "", direct ? "$(symbol-string) direct" : unwrapped ? "$(symbol-string) unwrapped" : ""].filter(Boolean).join(" ");
+}
+
+/// How the status bar's tooltip says `mode`, the active process's: which
+/// evaluation, where it is set, and what it costs.
+export function evaluationText(label: string, mode: DirectMode | undefined, pinned: boolean): string {
+  if (mode === undefined) {
+    return `Evaluation on ${label}: wrapped${pinned ? " (its \"evaluation\")" : ""} - q-lint's lambda runs your code, with q's backtrace and, on a guarded process, reval.`;
+  }
+  const where = mode.from === "process" ? 'its "evaluation": "direct"' : "q-lint.query.unwrapped";
+  return `Evaluation on ${label}: direct (${where}) - your code is sent as plain strings and the result formatted by q-lint: no backtrace, no reval, and features that need q-lint's lambda are refused.`;
 }
 
 /// What the status bar says of the active file's process: undefined when it

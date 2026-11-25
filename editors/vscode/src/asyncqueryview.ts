@@ -16,6 +16,7 @@ import type { Live } from "./live";
 import { readLive } from "./liveconfig";
 import { statements } from "./statements";
 import { iconsEscaped, plainMessage } from "./history";
+import { DirectRefused, directRefusal } from "./qclient";
 
 const on = (): boolean => readAdmin((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback)).asyncQuery;
 
@@ -36,7 +37,7 @@ export class AsyncQueries {
 
   constructor(
     context: ExtensionContext,
-    private readonly live: Pick<Live, "runOnActive" | "onAsyncMessage" | "onDidChange" | "showGrid" | "record" | "codeFromEditor">,
+    private readonly live: Pick<Live, "runOnActive" | "onAsyncMessage" | "onDidChange" | "showGrid" | "record" | "codeFromEditor"> & Partial<Pick<Live, "activeDirect">>,
   ) {
     context.subscriptions.push(
       commands.registerCommand(ADMIN_COMMANDS.runAsync, (code?: string) => this.run(code)),
@@ -101,6 +102,14 @@ export class AsyncQueries {
       void window.showInformationMessage("q-lint: nothing to run: it is blank or a comment.");
       return undefined;
     }
+    // The answer comes back from q-lint's lambda, which a direct process is
+    // never sent (#2470): refused before the guard asks. A process connected
+    // to for this run is refused by the connection, before it sends.
+    const direct = this.live.activeDirect?.();
+    if (direct !== undefined) {
+      void window.showErrorMessage(plainMessage(`q-lint: Run Query Asynchronously: ${directRefusal(direct)}`));
+      return undefined;
+    }
     const configuration = workspace.getConfiguration("q-lint");
     const { consoleSize, gridLimit } = readLive((key, fallback) => configuration.get(key, fallback));
     const id = this.next++;
@@ -115,7 +124,8 @@ export class AsyncQueries {
         return id;
       });
     } catch (error) {
-      void window.showErrorMessage(plainMessage(`q-lint: ${error instanceof Error ? error.message : String(error)}`));
+      const why = error instanceof Error ? error.message : String(error);
+      void window.showErrorMessage(plainMessage(`q-lint: ${error instanceof DirectRefused ? `Run Query Asynchronously: ${why}` : why}`));
       return undefined;
     }
     if (sent === undefined) {

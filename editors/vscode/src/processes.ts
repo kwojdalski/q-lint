@@ -38,7 +38,13 @@ export interface Process {
   /// Seconds a query on it may run before its connection is dropped (#1036),
   /// over `q-lint.query.timeout`.
   timeout?: number;
+  /// How code is evaluated there (#2470): `wrapped`, in q-lint's lambda, or
+  /// `direct`, as plain strings, for a process that refuses a lambda (TorQ
+  /// with permissions on). Unset, `q-lint.query.unwrapped` decides.
+  evaluation?: Evaluation;
 }
+
+export type Evaluation = "wrapped" | "direct";
 
 /// A local process's start: `command` (default `q-lint.terminal.qBinary`)
 /// with `script`, `-p <port>` and `args`, in `cwd` with `env` added.
@@ -138,6 +144,11 @@ export function processTooltip(process: Process, from?: string): string {
     ...(process.launch !== undefined ? ["has a launch definition"] : []),
     ...(process.credentialCommand !== undefined ? ["gets its credentials from a command at connect"] : []),
     ...(process.timeout !== undefined ? [`queries time out after ${process.timeout} s`] : []),
+    ...(process.evaluation === "direct"
+      ? ["evaluation: direct - code is sent as plain strings: no backtrace, no reval"]
+      : process.evaluation === "wrapped"
+        ? ["evaluation: wrapped, whatever q-lint.query.unwrapped says"]
+        : []),
     ...(from === undefined ? [] : [`listed by ${markdownText(from)}, connected to as ${markdownText(`${from}/${process.label}`)}`]),
   ].join("\n\n");
 }
@@ -321,35 +332,47 @@ export function timeoutOf(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.min(value, 86_400) : undefined;
 }
 
+/// A process's evaluation as written (#2470): `direct` or `wrapped`, any
+/// case, or undefined for anything else - which follows the setting.
+export function evaluationOf(value: unknown): Evaluation | undefined {
+  const v = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return v === "direct" || v === "wrapped" ? v : undefined;
+}
+
+type Extras = Pick<Process, "ssh" | "gateway" | "launch" | "credentialCommand" | "timeout" | "evaluation">;
+
 /// The SSH destination, gateway server types, launch definition, credential
-/// command and timeout of a process entry. `trusted`: from a source whose
-/// code may run (the saved list, an import, a trusted workspace), which
-/// alone may name an SSH host or a program to run.
-function extrasOf(e: Record<string, unknown>, trusted: boolean): Pick<Process, "ssh" | "gateway" | "launch" | "credentialCommand" | "timeout"> {
+/// command, timeout and evaluation of a process entry. `trusted`: from a
+/// source whose code may run (the saved list, an import, a trusted
+/// workspace), which alone may name an SSH host or a program to run.
+function extrasOf(e: Record<string, unknown>, trusted: boolean): Extras {
   const ssh = trusted ? sshDestination(e.ssh) : undefined;
   const gateway = serverTypes(e.gateway);
   const launch = trusted ? launchOf(e.launch) : undefined;
   const credentialCommand = trusted ? credentialCommandOf(e.credentialCommand) : undefined;
   const timeout = timeoutOf(e.timeout);
+  const evaluation = evaluationOf(e.evaluation);
   return {
     ...(ssh !== undefined ? { ssh } : {}),
     ...(gateway !== undefined ? { gateway } : {}),
     ...(launch !== undefined ? { launch } : {}),
     ...(credentialCommand !== undefined ? { credentialCommand } : {}),
     ...(timeout !== undefined ? { timeout } : {}),
+    ...(evaluation !== undefined ? { evaluation } : {}),
   };
 }
 
 /// `process` with the SSH destination, gateway, launch definition,
-/// credential command and timeout of `from`: Edit Process asks for none of
-/// them, and keeps them.
-export function withExtras<P extends Process>(process: P, from: Pick<Process, "ssh" | "gateway" | "launch" | "credentialCommand" | "timeout">): P {
-  const { ssh: _s, gateway: _g, launch: _l, credentialCommand: _c, timeout: _t, ...rest } = process;
+/// credential command, timeout and evaluation of `from`: Edit Process asks
+/// for none of them, and keeps them.
+export function withExtras<P extends Process>(process: P, from: Extras): P {
+  const { ssh: _s, gateway: _g, launch: _l, credentialCommand: _c, timeout: _t, evaluation: _e, ...rest } = process;
   void _s;
   void _g;
   void _l;
   void _c;
   void _t;
+  void _e;
   return {
     ...rest,
     ...(from.ssh !== undefined ? { ssh: from.ssh } : {}),
@@ -357,6 +380,7 @@ export function withExtras<P extends Process>(process: P, from: Pick<Process, "s
     ...(from.launch !== undefined ? { launch: from.launch } : {}),
     ...(from.credentialCommand !== undefined ? { credentialCommand: from.credentialCommand } : {}),
     ...(from.timeout !== undefined ? { timeout: from.timeout } : {}),
+    ...(from.evaluation !== undefined ? { evaluation: from.evaluation } : {}),
   } as P;
 }
 
@@ -368,7 +392,7 @@ export function withExtras<P extends Process>(process: P, from: Pick<Process, "s
 /// not run for this connection; its address stays its own either way.
 export function resaved<P extends Process>(opened: P, saved: Process): P {
   const moved = passwordsToForget([opened], [saved]).length > 0;
-  return withExtras(opened, { ...opened, timeout: saved.timeout, ...(moved ? {} : { credentialCommand: saved.credentialCommand }) });
+  return withExtras(opened, { ...opened, timeout: saved.timeout, evaluation: saved.evaluation, ...(moved ? {} : { credentialCommand: saved.credentialCommand }) });
 }
 
 /// The processes a process file lists, as `parseProcesses` reads them, with
