@@ -221,6 +221,55 @@ test("the column manager's rename command quotes for sh, and for cmd with backsl
   assert.strictEqual(await mv("1b", "C:/my db/trade/px", "C:/my db/trade/price"), String.raw`move "C:\my db\trade\px" "C:\my db\trade\price"`);
 });
 
+/// What a q of its own makes of the database at `db` once it loads it: the
+/// truth on disk, not what the process that changed it says (#2137).
+async function onDisk(t, db, query) {
+  const q = await startQ(`\\l ${db}\n`);
+  try {
+    const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+    try {
+      return await connection.call(query, 0);
+    } finally {
+      connection.close();
+    }
+  } finally {
+    q.stop();
+  }
+}
+
+/// Each partition's table directory's column `c`, as a fresh q reads it:
+/// its type, attribute, compression (algorithm and level, or none), count
+/// and values - a copy: q sends no compressed column with an attribute.
+const COLUMN_ON_DISK = '{[t;c] {[t;c;p] f:` sv(hsym`$string p),t,c; z:-21!f; v:get f; (string p;"h"$type v;string attr v;$[count z;"f"$z`algorithm`zipLevel;()];"f"$count v;v til count v)}[t;c] each .Q.pv}';
+
+// A column of a compressed partition is written back compressed as it was,
+// and one of a plain partition plain, whatever the process's .z.zd (#2137).
+test("the column manager's cast and attribute keep each partition's compression (#2137)", { skip }, async (t) => {
+  const source = [
+    'r:hsym`$"$DIR/hdb";',
+    "mk:{[r;d] .Q.dd[r;d,`trade`] set .Q.en[r] ([] sym:`a`b`c`a;px:1 2 3 4f;sz:10 20 30 40;ex:(\"NY\";\"LN\";\"TK\";\"NY\"))};",
+    "mk[r;2026.01.05];",
+    ".z.zd:17 2 6; mk[r;2026.01.06];",
+    ".z.zd:16 1 0; mk[r;2026.01.07];",
+    ".z.zd:17 2 6;",
+    "\\l $DIR/hdb",
+    "",
+  ].join("\n");
+  const { connection, dir } = await connect(t, source);
+  assert.match(await run(connection, columnScript("trade", { op: "attr", column: "px", attr: "s" }, "hdb")), /changed 3 of 3 directories/);
+  assert.match(await run(connection, columnScript("trade", { op: "cast", column: "sz", type: "i" }, "hdb")), /changed 3 of 3 directories/);
+  assert.match(await run(connection, columnScript("trade", { op: "cast", column: "ex", type: "s" }, "hdb")), /changed 3 of 3 directories/);
+  const zips = [[], [2, 6], [1, 0]];
+  const px = await onDisk(t, `${dir}/hdb`, `{${COLUMN_ON_DISK}[\`trade;\`px]}`);
+  assert.deepStrictEqual(px, ["2026.01.05", "2026.01.06", "2026.01.07"].map((p, i) => [p, 9, "s", zips[i], 4, [1, 2, 3, 4]]));
+  const sz = await onDisk(t, `${dir}/hdb`, `{${COLUMN_ON_DISK}[\`trade;\`sz]}`);
+  assert.deepStrictEqual(sz.map((r) => r.slice(0, 5)), ["2026.01.05", "2026.01.06", "2026.01.07"].map((p, i) => [p, 6, "", zips[i], 4]));
+  const ex = await onDisk(t, `${dir}/hdb`, `{${COLUMN_ON_DISK}[\`trade;\`ex]}`);
+  assert.deepStrictEqual(ex.map((r) => r.slice(0, 5)), ["2026.01.05", "2026.01.06", "2026.01.07"].map((p, i) => [p, 20, "", zips[i], 4]));
+  assert.deepStrictEqual(await onDisk(t, `${dir}/hdb`, '{"f"$(count select from trade;first(select sum sz from trade)`sz)}'), [12, 300]);
+  assert.deepStrictEqual(await onDisk(t, `${dir}/hdb`, "{exec t from meta trade}"), "dsfis");
+});
+
 test("the documenter reads tables, keys, foreign keys and functions", { skip }, async (t) => {
   const { connection } = await connect(t, HDB() + "\ns:([sym:`a`b] nm:(\"x\";\"y\"))\nf:([] sym:`s$`a`b`a; v:1 2 3)\nkt:([k:1 2] v:`p#`x`x)\n");
   const doc = readDoc(await connection.call(DOCUMENT, 100));

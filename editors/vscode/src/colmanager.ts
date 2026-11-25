@@ -24,7 +24,9 @@
 // extends; a cast to `s` enumerates the same way. A string or symbol column
 // cast to a number or time is parsed (`"J"$`), not cast char by char (#1135).
 // Setting an attribute, or casting, reads the whole column of each partition and writes it back: the
-// script's header says so. A rename moves the column's files with the
+// script's header says so. It is written as it was: compressed with the
+// parameters `-21!` read off it, or plain - whatever the process's `.z.zd`
+// - and a directory whose file is not, after, is not reported changed (#2137). A rename moves the column's files with the
 // shell's mv (move on Windows, its paths with backslashes), each path quoted
 // for that shell (`.qlint.cm.mvcmd`, which takes the OS so both are tested
 // anywhere, #1137): q has no
@@ -140,13 +142,15 @@ export const HELPERS = [
   ".qlint.cm.cols:{[d] get ` sv d,`.d}",
   '.qlint.cm.enum:{$[11h=abs type x;(hsym`$system["cd"],"/sym")?x;x]}',
   '.qlint.cm.nested:{[c] c,`$string[c],/:("#";"##")}',
+  '.qlint.cm.zip:{[f] z:@[-21!;f;()]; $[count z;z`logicalBlockSize`algorithm`zipLevel;()]}',
+  '.qlint.cm.put:{[f;v] z:.qlint.cm.zip f; $[count z;f,z;count@[get;`.z.zd;()];(f;0;0;0);f] set v; z~.qlint.cm.zip f}',
   ".qlint.cm.add:{[c;v;d] cs:.qlint.cm.cols d; if[c in cs;:`$\"has \",string c]; (` sv d,c) set count[get ` sv d,first cs]#enlist .qlint.cm.enum v; (` sv d,`.d) set cs,c; `ok}",
   ".qlint.cm.del:{[c;d] cs:.qlint.cm.cols d; if[not c in cs;:`$\"no \",string c]; {if[not ()~key x;hdel x]} each ` sv' d,/:.qlint.cm.nested c; (` sv d,`.d) set cs except c; `ok}",
   '.qlint.cm.mvcmd:{[w;a;b] p:$[w;{"\\"",ssr[x;"/";"\\\\"],"\\""};{"\'",ssr[x;"\'";"\'\\\\\'\'"],"\'"}]; $[w;"move ";"mv "],p[1_string a]," ",p 1_string b}',
   '.qlint.cm.mv:{[d;a;b] f:` sv d,a; if[not ()~key f; system .qlint.cm.mvcmd["w"=first string .z.o;f;` sv d,b]]}',
   ".qlint.cm.ren:{[o;n;d] cs:.qlint.cm.cols d; if[not o in cs;:`$\"no \",string o]; if[n in cs;:`$\"has \",string n]; .qlint.cm.mv[d]'[.qlint.cm.nested o;.qlint.cm.nested n]; (` sv d,`.d) set @[cs;cs?o;:;n]; `ok}",
-  '.qlint.cm.cast:{[c;t;d] if[not c in .qlint.cm.cols d;:`$"no ",string c]; f:` sv d,c; v:get f; a:attr v; s:(0h=type v)|77h<=type v; y:(11h=abs type v)|type[v] within 20 76h; n:not t in "cs"; f set a#$["s"=t;.qlint.cm.enum $[s;`$v;`$string v];n&s;(upper t)$v;n&y;(upper t)$string v;t$v]; if[s&not "c"=t; {if[not ()~key x;hdel x]} each ` sv\' d,/:1_.qlint.cm.nested c]; `ok}',
-  ".qlint.cm.attr:{[c;a;d] if[not c in .qlint.cm.cols d;:`$\"no \",string c]; f:` sv d,c; f set a#get f; `ok}",
+  '.qlint.cm.cast:{[c;t;d] if[not c in .qlint.cm.cols d;:`$"no ",string c]; f:` sv d,c; v:get f; a:attr v; s:(0h=type v)|77h<=type v; y:(11h=abs type v)|type[v] within 20 76h; n:not t in "cs"; if[not .qlint.cm.put[f;a#$["s"=t;.qlint.cm.enum $[s;`$v;`$string v];n&s;(upper t)$v;n&y;(upper t)$string v;t$v]];:`$"written without the compression it had"]; if[s&not "c"=t; {if[not ()~key x;hdel x]} each ` sv\' d,/:1_.qlint.cm.nested c]; `ok}',
+  ".qlint.cm.attr:{[c;a;d] if[not c in .qlint.cm.cols d;:`$\"no \",string c]; f:` sv d,c; $[.qlint.cm.put[f;a#get f];`ok;`$\"written without the compression it had\"]}",
   ".qlint.cm.order:{[o;d] cs:.qlint.cm.cols d; if[not (asc cs)~asc o;:`$\"other columns\"]; (` sv d,`.d) set o; `ok}",
   `.qlint.cm.pdirs:${PARTITION_DIRS}`,
   '.qlint.cm.dirs:{[t] r:hsym`$system"cd"; p:.Q.qp get t; if[1b~p; if[not .Q.pv~@[get;`.Q.PV;{.Q.pv}]; \'".Q.view is in force, showing ",string[count .Q.pv]," of ",string[count .Q.PV]," partitions: nothing was changed. This changes every partition on disk and loads the database again, which clears a view; clear it with .Q.view[] and run again"]]; $[1b~p;{` sv x,y}[;t] each .qlint.cm.pdirs[r;@[get;`.Q.PD;()];.Q.pv];0b~p;enlist ` sv r,t;\'"not a table on disk: ",string t]}',
