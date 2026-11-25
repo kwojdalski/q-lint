@@ -119,3 +119,14 @@ test("a FIFO in a folder is listed without opening it, and is not read (#2157)",
   // And the process still answers.
   assert.strictEqual(Number(await soon(connection.call("{[x] a}", 0))), 1);
 });
+
+// key answers () for a link to nothing, as for no path at all: it was listed
+// as a folder, which then said "no such directory" and opened as no file.
+test("a broken link is listed as an unreadable file, not a folder (#2168)", { skip: skip || (process.platform === "win32" && "no symlinks") }, async (t) => {
+  const { connection, dir } = await connect(t, "a:1\n");
+  fs.symlinkSync(path.join(dir, "nowhere"), path.join(dir, "broken"));
+  fs.mkdirSync(path.join(dir, "empty"));
+  const byName = Object.fromEntries(readListing(await connection.call(LIST_DIRECTORY, dir, 1000)).entries.map((e) => [e.name, e]));
+  assert.deepStrictEqual([byName.broken, byName.empty], [{ name: "broken", file: true, size: -2 }, { name: "empty", file: false, size: -1 }]);
+  await assert.rejects(connection.call(READ_FILE, path.join(dir, "broken"), 100), /not a file/);
+});

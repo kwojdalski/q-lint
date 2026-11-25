@@ -53,9 +53,11 @@ export const LIST_DIRECTORY = [
   " if[not 11h=type k;'$[()~k;\"no such directory\";\"not a directory\"]];",
   " n:count k; k:(`long$lim) sublist asc k;",
   " f:y each ($[\"/\"=last p;p;p,\"/\"]),/:string k;",
-  " isf:{@[{-11h=type key x};x;0b]} each f;",
+  // A folder is what key lists; a link to nothing, which key answers ()
+  // for, is a file that cannot be read (#2168).
+  " isf:{@[{not 11h=type key x};x;0b]} each f;",
   ` r:${REGULAR}[p;string k];`,
-  " sz:{[r;x]@[{[r;x]$[not -11h=type key x;-1;r;hcount x;-3]}[r];x;-2]}'[r;f];",
+  " sz:{[r;x]@[{[r;x]$[11h=type k:key x;-1;()~k;-2;r;hcount x;-3]}[r];x;-2]}'[r;f];",
   " (string k;isf;\"f\"$sz;\"f\"$n)}",
 ].join("\n");
 
