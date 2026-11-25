@@ -152,7 +152,7 @@ export function gridLambda(tree: boolean, hold?: string, readOnly = false): stri
     : []),
   "        t:$[1b~.Q.qp t;[j:$[n<0;(m+n)|0;0]+til m&abs n;$[count j;.Q.ind[t;j];select from t where i<0]];n sublist t];",
   "        c:$[count[cols t]=count distinct cols t;t cols t;value flip t];",
-  "        `count`keys`names`types`cells`raw`rank`tree!(\"f\"$m;\"i\"$k;cols t;{$[x within 77 97h;0h;x]}each type each c;",
+  "        `count`keys`names`types`cells`raw`rank`tree!(\"f\"$m;\"i\"$k;$[any 127<\"i\"$\"x\"$raze nm:string cols t;{$[any 127<\"i\"$\"x\"$x;\"x\"$x;`$x]} each nm;cols t];{$[x within 77 97h;0h;x]}each type each c;",
   ...COLUMN_LINES,
   tree ? `          $[(0h=type v)|$[99h=type v;98h<>type key v;0b];g[g;e;${TREE_NODES};"";v];()])]]};` : "          ())]]};",
   "     (r 1;\"j\"$limit);{[e]e}]);",
@@ -181,7 +181,7 @@ export const PAGE = [
   "   j:(\"j\"$off)+til 0|(\"j\"$n)&m-\"j\"$off;",
   "   t:$[1b~.Q.qp t;$[count j;.Q.ind[t;j];select from t where i<0];t j];",
   "   c:$[count[cols t]=count distinct cols t;t cols t;value flip t];",
-  "   `count`names`types`cells`raw`rank!(\"f\"$m;cols t;{$[x within 77 97h;0h;x]}each type each c;",
+  "   `count`names`types`cells`raw`rank!(\"f\"$m;$[any 127<\"i\"$\"x\"$raze nm:string cols t;{$[any 127<\"i\"$\"x\"$x;\"x\"$x;`$x]} each nm;cols t];{$[x within 77 97h;0h;x]}each type each c;",
   ...COLUMN_LINES.map((line, i) => line.replace(/^ {7}/, "").replace(/;$/, i === COLUMN_LINES.length - 1 ? ")};" : ";")),
   "   (tok;off;n);{x}]}",
 ].join("\n");
@@ -197,6 +197,9 @@ export interface GridPayload {
   rank: number[][];
   /// A dictionary or a general list as a tree, when it was one.
   tree?: TreeNode;
+  /// Each name's bytes, null for one with none past ASCII; absent when no
+  /// name has one (#2467).
+  nameBytes?: (number[] | null)[];
 }
 
 /// One node of a value's tree: its key in its parent (a dictionary's key,
@@ -283,6 +286,16 @@ export function bytesText(raw: unknown): string | undefined {
   return out;
 }
 
+/// The column names `GRID` or `PAGE` sent: where one has a byte past
+/// ASCII, each such name's bytes and the rest as symbols. A name is read
+/// from its bytes, as a symbol cell is, and they are kept for Copy as q
+/// (#2467).
+function sentNames(sent: unknown[]): { names: string[]; nameBytes?: (number[] | null)[] } {
+  const bytes = sent.map((n) => (Array.isArray(n) || n instanceof Uint8Array ? Array.from(n as ArrayLike<number>) : null));
+  const names = sent.map((n, i) => (bytes[i] !== null ? bytesText(bytes[i])! : n === null ? "" : String(n)));
+  return bytes.some((b) => b !== null) ? { names, nameBytes: bytes } : { names };
+}
+
 /// Whether a column of type `type` is of symbols: plain or enumerated.
 export const symbolType = (type: number): boolean => type === 11 || (type >= 20 && type <= 76);
 
@@ -348,7 +361,7 @@ export function readGridAnswer(raw: unknown): GridAnswer {
     grid: {
       count: typeof g.count === "number" ? g.count : (cells[0]?.length ?? 0),
       keys: typeof g.keys === "number" ? g.keys : 0,
-      names: names.map((n) => (n === null ? "" : String(n))),
+      ...sentNames(names),
       types: types.map(Number),
       cells: sentCells(cells as unknown[][], types.map(Number), perColumn(g.raw)),
       raw: rawColumns(perColumn(g.raw), types.map(Number)),
@@ -599,7 +612,17 @@ export function pickColumns(payload: GridPayload, columns: number[]): GridPayloa
     keys++;
   }
   const pick = <T>(of: T[][]): T[][] => columns.map((i) => of[i] ?? []);
-  return { ...payload, keys, names: columns.map((i) => payload.names[i]), types: columns.map((i) => payload.types[i]), cells: pick(payload.cells), raw: pick(payload.raw), rank: pick(payload.rank) };
+  const nameBytes = payload.nameBytes;
+  return {
+    ...payload,
+    keys,
+    names: columns.map((i) => payload.names[i]),
+    types: columns.map((i) => payload.types[i]),
+    cells: pick(payload.cells),
+    raw: pick(payload.raw),
+    rank: pick(payload.rank),
+    ...(nameBytes !== undefined ? { nameBytes: columns.map((i) => nameBytes[i] ?? null) } : {}),
+  };
 }
 
 /// A page `PAGE` sent: the rows held, and the page's columns as `GRID`'s.
@@ -621,7 +644,7 @@ export function readPage(raw: unknown): GridPage | string {
   if (g === null || typeof g !== "object" || !Array.isArray(g.names) || !Array.isArray(g.cells) || g.cells.length !== g.names.length) {
     return `the process answered something other than a page: ${JSON.stringify(raw)?.slice(0, 200)}`;
   }
-  const names = (g.names as unknown[]).map((n) => (n === null ? "" : String(n)));
+  const { names } = sentNames(g.names as unknown[]);
   const perColumn = (x: unknown): unknown[][] => names.map((_, i) => (Array.isArray(x) && Array.isArray(x[i]) ? x[i] : []));
   const types = Array.isArray(g.types) ? g.types.map(Number) : [];
   return {
