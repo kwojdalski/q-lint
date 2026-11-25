@@ -133,6 +133,36 @@ export function scriptCode(text: string): string {
     .join("\n");
 }
 
+/// What `text`, selected in `lines` (a document's) from line `start`, runs:
+/// read as the document reads there (#2287). Inside a block comment its
+/// lines up to the one that closes it are no code, and after the script's
+/// end nothing is.
+export function selectionCode(lines: string[], start: number, text: string): string {
+  let depth = 0;
+  for (let i = 0; i < start && i < lines.length; i++) {
+    const line = trimBlanks(lines[i]);
+    if (i === 0 && line.startsWith("#!")) {
+      continue;
+    }
+    if (depth > 0 || line === "/") {
+      depth = blockDepth(depth, line);
+    } else if (line === "\\") {
+      return "";
+    }
+  }
+  // Those lines are made blank, so each line keeps its number.
+  return text
+    .split("\n")
+    .map((line) => {
+      if (depth === 0) {
+        return line;
+      }
+      depth = blockDepth(depth, trimBlanks(line));
+      return "";
+    })
+    .join("\n");
+}
+
 /// A control character q refuses with 'char wherever it is in a script
 /// before its end, in a comment too: all but the tab, the line feed, the
 /// form feed and the carriage return (checked on KDB-X).

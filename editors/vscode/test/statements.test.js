@@ -3,7 +3,7 @@
 // holds the cutter against a real q's `\l`; these hold the rules it found.
 const test = require("node:test");
 const assert = require("node:assert");
-const { statements, statementSpans, scriptCode, blockAt, lineKinds, isBlankLine } = require("../out/statements.js");
+const { statements, statementSpans, scriptCode, selectionCode, blockAt, lineKinds, isBlankLine } = require("../out/statements.js");
 const { statementSpans: timedSpans } = require("../out/linetimings.js");
 const { cells, shownCode } = require("../out/cells.js");
 const { isComplete } = require("../out/repl.js");
@@ -79,4 +79,18 @@ test("a script's indented lines before its first statement are skipped, as q ski
   assert.deepStrictEqual(lineKinds(["  a:1", "b:2", "  +1"]), ["commented", "starts", "continues"]);
   assert.deepStrictEqual(cells(["  a:1", "/ %% one", "b:2"]).map((c) => c.start), [1]);
   assert.deepStrictEqual(definitions("  f:{x}\ng:{y}").map((d) => d.name), ["g"]);
+});
+
+test("a selection is read as the document reads at its first line (#2287)", () => {
+  const lines = ["a:1", "/", "Usage example (not run):", "  dropAll[]", "\\", "b:2", "c:3"];
+  const picked = selectionCode(lines, 3, lines.slice(3).join("\n"));
+  assert.deepStrictEqual(statements(picked), ["b:2", "c:3"]);
+  // Its lines keep their numbers, for line timings.
+  assert.deepStrictEqual(statementSpans(picked, 3).map((s) => s.start), [5, 6]);
+  // Nested block comments close one at a time.
+  assert.deepStrictEqual(statements(selectionCode(["/", "/", "x", "\\", "y", "\\", "z:1"], 2, "x\n\\\ny\n\\\nz:1")), ["z:1"]);
+  // After the script's end nothing runs.
+  assert.deepStrictEqual(statements(selectionCode(["a:1", "\\", "b:2"], 2, "b:2")), []);
+  // Outside them it is the selection.
+  assert.strictEqual(selectionCode(["a:1", "b:2"], 1, "b:2"), "b:2");
 });

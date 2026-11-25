@@ -25,7 +25,7 @@ import { ConsolePanel, type ConsoleEntry } from "./consolepanel";
 import { answerLines, runText } from "./consolerun";
 import { HAS_CELLS, INTERACTIVE_COMMANDS, readInteractive, turnedOff, type InteractiveSettings } from "./interactiveconfig";
 import type { Live } from "./live";
-import { blockAt, scriptCode, statements } from "./statements";
+import { blockAt, scriptCode, selectionCode, statements } from "./statements";
 import { plainMessage } from "./history";
 
 const settings = (): InteractiveSettings => readInteractive((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback));
@@ -266,7 +266,8 @@ export function registerInteractive(
     const document = editor.document;
     let code: string | undefined;
     if (!editor.selection.isEmpty) {
-      code = document.getText(editor.selection);
+      // Read as q reads the file there (#2287).
+      code = selectionCode(document.getText().split("\n"), editor.selection.start.line, document.getText(editor.selection));
     } else {
       const lines = document.getText().split(/\r?\n/);
       const step = smartStep(lines, editor.selection.active.line, blockAt);
