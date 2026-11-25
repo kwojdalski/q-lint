@@ -71,7 +71,7 @@ it, or `ALL`.
 | <a id="qf004"></a>`QF004` | reserved-definition | Assignment to a builtin outside a lambda, which q refuses | every profile |
 | <a id="qf005"></a>`QF005` | nested-local-reference | Nested lambda expects an outer local | every profile |
 | <a id="qf006"></a>`QF006` | reserved-name-in-embedded-q | Builtin column name in embedded q | a Python hook |
-| <a id="qf007"></a>`QF007` | not-a-parameter-list | Brackets after { that are no parameter list or pattern: q 5 refuses the lambda where it is defined | every profile |
+| <a id="qf007"></a>`QF007` | not-a-parameter-list | Brackets after { that are no parameter list or pattern: q 5 refuses the lambda where it is defined, or with a symbol in a slot every call to it | every profile |
 | <a id="qf008"></a>`QF008` | duplicate-parameter | Parameter declared more than once | `style` and above |
 | <a id="qf009"></a>`QF009` | empty-parameter-slot | Empty slot in a parameter list is still a parameter | `style` and above |
 | <a id="qf010"></a>`QF010` | implicit-argument-with-signature | x, y or z used where parameters are declared | every profile |

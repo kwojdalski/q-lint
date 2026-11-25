@@ -1500,6 +1500,28 @@ fn a_builtin_assigned_in_a_namespace_is_refused_not_shadowed() {
     assert!(!f[0].why.contains("shadow"), "{}", f[0].why);
 }
 #[test]
+fn qf007_says_whether_q_refuses_the_definition_or_every_call() {
+    // q 5 (KDB-X 2026.07.23): `{[a+b] 1}` is 'nyi where it is defined;
+    // `{[a`b;x] x}` and `{[a`] 1}` are defined, and every call is 'type
+    // (#2239).
+    let detail = |source: &str| {
+        lint(source, "t.q", Profile::General)
+            .into_iter()
+            .find(|f| f.code == "QF007")
+            .map(|f| f.detail)
+            .unwrap_or_default()
+    };
+    assert!(detail("m:{[a+b] 1}").ends_with("refuses the lambda where it is defined: 'nyi"));
+    for source in ["f:{[a`b;x] x}", "n:{[a`] 1}"] {
+        let d = detail(source);
+        assert!(
+            d.ends_with("defines the lambda but refuses every call with 'type"),
+            "{d}"
+        );
+    }
+}
+
+#[test]
 fn a_finding_is_an_error_exactly_when_q_refuses_the_code() {
     // The scope says whether q refuses the construct, so it decides the
     // severity: a hand-kept list of codes drifted from it (#512, #513).

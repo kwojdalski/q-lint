@@ -6273,11 +6273,17 @@ fn lint_rules(
         if !sig.named {
             // Not a parameter list, so none of the rules below apply to it -
             // and neither does the rank the source appears to declare.
-            if !sig.slots.is_empty() {
+            // A name with a point at its end is no refusal: q 5 defines
+            // `{[name.] 1}` and `{[name.] 1}[1]` is 1 - only the body's
+            // `name` is not bound, as in `{[name.] name}[1]`, 'name (#2239).
+            let trailing_dot = |s: &str| re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*\.$").is_match(s);
+            if !sig.slots.is_empty()
+                && !(!offenders.is_empty() && offenders.iter().all(|s| trailing_dot(s)))
+            {
                 let underscore = offenders.iter().any(|s| underscore_in(s));
                 let rest: Vec<&str> = offenders
                     .into_iter()
-                    .filter(|s| !underscore_in(s))
+                    .filter(|s| !underscore_in(s) && !trailing_dot(s))
                     .collect();
                 // A string literal is blank by the time the rules see it, so
                 // there is nothing to quote back - it is still why q refused
@@ -6301,6 +6307,10 @@ fn lint_rules(
                     // A literal with a stray dot: q 5 refuses `{[..] 1}`
                     // with '. and `{[1 .] 1}` with 'nyi (#594).
                     "q 5 refuses the lambda where it is defined"
+                } else if !rest.is_empty() && rest.iter().all(|s| s.contains('`')) {
+                    // A symbol written into a slot: q 5 defines `{[a`b;x] x}`
+                    // and `{[a`] 1}`, and refuses every call with 'type (#2239).
+                    "q 5 defines the lambda but refuses every call with 'type"
                 } else {
                     "q 5 refuses the lambda where it is defined: 'nyi"
                 };

@@ -1510,3 +1510,14 @@ a:count:
 a:x:from:1
 a:x:by:1
 a:x+.q.count:1
+
+=== QF007 profile: general | a symbol in a slot: q 5 defines the lambda and refuses every call with 'type (#2239)
+f:{[a`b;x] x}
+
+=== QF007 profile: general | and a name with a backtick after it (q 5: {[a`] 1}[1] is 'type, #2239)
+n:{[a`] 1}
+
+=== clean profile: general | while a name with a point at its end is no refusal: q 5 defines each, and {[name.] 1}[1] is 1 (#2239)
+g:{[name.] name}
+h:{[name.] 1}
+k:{[name.;b] b}

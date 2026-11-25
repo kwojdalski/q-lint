@@ -136,7 +136,7 @@
     "code": "QF007",
     "name": "not-a-parameter-list",
     "category": "names",
-    "summary": "Brackets after { that are no parameter list or pattern: q 5 refuses the lambda where it is defined",
+    "summary": "Brackets after { that are no parameter list or pattern: q 5 refuses the lambda where it is defined, or with a symbol in a slot every call to it",
     "scope": "builtin"
   },
   {
