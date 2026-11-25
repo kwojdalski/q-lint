@@ -126,6 +126,10 @@ const TOGGLED = "/ ";
 /// stays what was typed: a comment being started, or a block comment meant.
 /// With `editor.comments.insertSpace` off the toggle writes that same lone
 /// `/`, which cannot be told from typing and is left.
+///
+/// The toggle that uncomments `//` or `/ /` takes the first `/` (and a blank)
+/// away and leaves the same lone `/` (#2304); that is answered by a `.` after
+/// it (`/.`, `/ .`). Backspace on `//` takes the second `/`, and is left.
 export function blankCommentFixes(changes: readonly LineChange[], lineAt: (line: number) => string): BlankCommentFix[] {
   // A change that adds or removes a line moves the lines the others name.
   if (changes.some((c) => c.line !== c.endLine || /[\r\n]/.test(c.text))) {
@@ -141,6 +145,8 @@ export function blankCommentFixes(changes: readonly LineChange[], lineAt: (line:
       fixes.push({ line: c.line, character: c.character + TOGGLED.length, kind: "mark" });
     } else if (c.rangeLength === TOGGLED.length && c.text === "" && /^[ \t]*\.[ \t]*$/.test(text) && text[c.character] === ".") {
       fixes.push({ line: c.line, character: c.character, kind: "clear" });
+    } else if ((c.rangeLength === 1 || c.rangeLength === TOGGLED.length) && c.text === "" && /^[ \t]*\/[ \t]*$/.test(text) && text[c.character] === "/" && text.slice(0, c.character).trim() === "") {
+      fixes.push({ line: c.line, character: text.length, kind: "mark" });
     }
   }
   return fixes;

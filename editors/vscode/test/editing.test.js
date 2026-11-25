@@ -252,6 +252,26 @@ test("a comment toggle on a blank line leaves no lone slash, and toggles back to
   assert.strictEqual(toggled(some.text, [1, 2]).text, "f:{\n  \n\n  x}");
 });
 
+// Uncommenting a qdoc separator `//`, or `/ /`, takes one `/` (and a blank)
+// away and leaves a lone `/`, which q reads as a block comment's opening, as
+// on a blank line. KDB-X reads `/.` and `/ .` as comments.
+test("uncommenting a line to a lone slash leaves a comment, not a block (#2304)", () => {
+  // What VS Code alone leaves.
+  assert.strictEqual(toggle("a:1\n//\nb:2", [1]).text, "a:1\n/\nb:2");
+  assert.strictEqual(toggled("a:1\n//\nb:2", [1]).text, "a:1\n/.\nb:2");
+  assert.strictEqual(toggled("/ /", [0]).text, "/.");
+  assert.strictEqual(toggled("// ", [0]).text, "/ .");
+  assert.strictEqual(toggled("f:{\n  //\n  x}", [1]).text, "f:{\n  /.\n  x}");
+  assert.strictEqual(toggled("//\n//", [0, 1]).text, "/.\n/.");
+  // A line left with more than the slash is a comment already.
+  assert.strictEqual(toggled("//x", [0]).text, "/x");
+  assert.strictEqual(toggled("/ / x", [0]).text, "/ x");
+  // The slash before the cursor deleted from `//` is a block comment being
+  // written: Backspace takes the second slash, the toggle the first.
+  const fixes = (changes, text) => blankCommentFixes(changes, (l) => text.split("\n")[l]);
+  assert.deepStrictEqual(fixes([{ line: 0, endLine: 0, character: 1, rangeLength: 1, text: "" }], "/"), []);
+});
+
 test("only the toggle's own edit on a blank line is answered", () => {
   const fixes = (changes, text) => blankCommentFixes(changes, (l) => text.split("\n")[l]);
   const insert = (line, character, text) => ({ line, endLine: line, character, rangeLength: 0, text });

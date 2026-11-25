@@ -967,7 +967,7 @@
             "type": "boolean",
             "default": true,
             "order": 147,
-            "markdownDescription": "**Toggle Line Comment** on a blank line of a q or k file writes `/ .` and selects the `.`, so the comment typed next replaces it; toggled back, the line is blank again. VS Code alone writes a lone `/ `, which q reads as the opening of a block comment: everything below it stops running, with no error. A `/` you type yourself is left as typed, and so is the toggle with `editor.comments.insertSpace` off. Off, nothing listens and the toggle is VS Code's own."
+            "markdownDescription": "**Toggle Line Comment** on a blank line of a q or k file writes `/ .` and selects the `.`, so the comment typed next replaces it; toggled back, the line is blank again. VS Code alone writes a lone `/ `, which q reads as the opening of a block comment: everything below it stops running, with no error. The toggle that uncomments `//` to a lone `/` is answered the same way, with `/.`. A `/` you type yourself is left as typed, and so is the toggle with `editor.comments.insertSpace` off. Off, nothing listens and the toggle is VS Code's own."
           },
           "q-lint.editor.parameterCache.enable": {
             "type": "boolean",
