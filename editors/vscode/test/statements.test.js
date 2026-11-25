@@ -106,3 +106,10 @@ test("a test's code is cut as q loads it, a block comment inside no end (#2283)"
     ".ns.test_blk[]",
   ]);
 });
+
+test("a k) statement's lines reach the terminal joined as k reads them (#2285)", () => {
+  assert.deepStrictEqual(replLines("k)kf:{x+\n  y}\ng:kf[1;2]"), ["k)kf:{x+;y}", "g:kf[1;2]"]);
+  assert.deepStrictEqual(replLines('k)e:"ab\n cd"'), ['k)e:"ab\\n cd"']);
+  // q's own lines are joined with a blank still.
+  assert.deepStrictEqual(replLines("f:{x+\n  y}"), ["f:{x+ y}"]);
+});
