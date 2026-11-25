@@ -131,3 +131,69 @@ test("turned off while it asks for the runs, nothing is timed (#1453)", async (t
   assert.deepStrictEqual(q.sent.slice(before), []);
   assert.strictEqual(made.length, 0);
 });
+
+test("each process tool sends the editor's code to the process its file is bound to (#2365, #2438-#2444)", async (t) => {
+  panels();
+  vscode.window.showTextDocument = async () => {};
+  vscode.env = { clipboard: { readText: async () => "", writeText: async () => {} } };
+  vscode.window.createTextEditorDecorationType = () => ({ dispose() {} });
+  vscode.Range = class {
+    constructor(a, b, c, d) {
+      Object.assign(this, { start: { line: a, character: b }, end: { line: c, character: d } });
+    }
+  };
+  const tools = {};
+  const { live } = await setUp(t, {
+    answer,
+    more: [{ label: "dev" }],
+    register: (context, live) => {
+      tools.benchmark = registerBenchmark(context, live);
+      tools.profile = require("../out/profileview.js").registerFunctionProfile(context, live);
+      tools.timings = require("../out/linetimingsview.js").registerLineTimings(context, live);
+      tools.aj = require("../out/ajexplainview.js").registerAjExplainer(context, live);
+      require("../out/pasteview.js").registerPaste(context, live);
+      require("../out/snapshotview.js").registerSnapshots(context, live, () => {});
+      tools.async = new (require("../out/asyncqueryview.js").AsyncQueries)(context, live);
+    },
+  });
+  stub.config.user["query.lineTimings.enable"] = true;
+  stub.config.user["query.functionProfile.enable"] = true;
+  stub.config.user["query.watch.enable"] = true;
+  stub.changeConfig("q-lint.query.lineTimings.enable");
+  const uri = Object.assign(vscode.Uri.file("/w/a.q"), { scheme: "file" });
+  // Choose Connection for File's binding (the stub keeps no workspaceState).
+  live.fileBinding = (u) => (u.toString() === uri.toString() ? "dev" : undefined);
+  const text = "aj[`sym`time;t;q]";
+  const editor = {
+    document: { uri, version: 1, lineCount: 1, getText: () => text, lineAt: () => ({ text, range: { end: { line: 0, character: text.length } } }) },
+    selection: { isEmpty: true, start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+    setDecorations() {},
+  };
+  vscode.window.activeTextEditor = editor;
+  live.codeFromEditor = async () => text;
+  const sentTo = [];
+  const runOnActive = live.runOnActive.bind(live);
+  live.runOnActive = (...a) => (sentTo.push(live.activeLabel()), runOnActive(...a));
+  const { PASTE } = require("../out/pastetable.js");
+  const { SNAPSHOT_COMMANDS } = require("../out/snapshot.js");
+  const runs = {
+    benchmark: () => tools.benchmark.benchmark(undefined, "", "1 1"),
+    profile: () => tools.profile.profile(".x"),
+    timings: () => tools.timings.time(editor),
+    json: () => stub.commands.get(PASTE.copyJson)(),
+    aj: () => tools.aj.explainRow(undefined, "0"),
+    snapshot: () => (stub.inputs.push("s"), stub.commands.get(SNAPSHOT_COMMANDS.record)()),
+    async: () => tools.async.run(),
+  };
+  for (const [name, run] of Object.entries(runs)) {
+    assert.strictEqual(await live.connectTo("rdb"), true);
+    sentTo.length = 0;
+    await run().catch(() => undefined);
+    assert.deepStrictEqual(sentTo, ["dev"], name);
+  }
+  // Watch Query too, which asks for no guard but connects itself.
+  assert.strictEqual(await live.connectTo("rdb"), true);
+  await live.watch(undefined, 60);
+  assert.strictEqual(live.activeLabel(), "dev");
+  await stub.commands.get("q-lint.stopWatchingQuery")?.();
+});

@@ -1159,6 +1159,25 @@ export class Live {
     return this.controls.binding(uri);
   }
 
+  /// Connect to the process the file `uri` is bound to, when it has one
+  /// and it is not the active connection, before a command sends that
+  /// file's code: a cell, a process tool, a watch. False, having said why,
+  /// when the connection cannot move there: a query is still running, or
+  /// the connect failed.
+  async toFileBinding(uri: Uri | undefined): Promise<boolean> {
+    const bound = uri === undefined ? undefined : this.fileBinding(uri);
+    if (bound === undefined || bound === this.activeLabel()) {
+      return true;
+    }
+    if (this.isBusy()) {
+      void window.showInformationMessage(
+        plainMessage(`q-lint: a query is still running on ${this.activeLabel()}; this file's code goes to ${bound}. q-lint: Abort Current Query stops waiting for it.`),
+      );
+      return false;
+    }
+    return this.connectTo(bound);
+  }
+
   /// Whether a query is running on the active connection: connecting
   /// elsewhere now would stop waiting for it.
   isBusy(): boolean {
@@ -3290,6 +3309,10 @@ export class Live {
         return;
       }
       seconds = Number(text.trim());
+    }
+    // The editor's code goes to its file's process (#2444).
+    if (typeof given !== "string" && !(await this.toFileBinding(window.activeTextEditor?.document.uri))) {
+      return;
     }
     const ready = await this.ready();
     if (ready === undefined) {

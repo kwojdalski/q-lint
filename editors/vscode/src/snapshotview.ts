@@ -118,6 +118,10 @@ async function record(live: Live): Promise<boolean> {
   if (query === undefined) {
     return false;
   }
+  // Recorded from the file's own process (#2441).
+  if (!(await live.toFileBinding(editor.document.uri))) {
+    return false;
+  }
   const name = await window.showInputBox({
     title: "Record Query Snapshot",
     prompt: `The snapshot's name: written to ${SNAPSHOT_DIRECTORY}/<name>${SNAPSHOT_EXTENSION} beside this file`,

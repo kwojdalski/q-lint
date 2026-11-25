@@ -70,6 +70,10 @@ export function registerLineTimings(
     }
     const code = spans.map((s) => s.text).join("\n");
     const version = editor.document.version;
+    // Timed on the file's own process (#2440).
+    if (!(await live.toFileBinding(editor.document.uri))) {
+      return "nothing was run";
+    }
     let ran: { process: string; value: unknown } | undefined;
     try {
       ran = await live.runOnActive(code, async (connection) => {

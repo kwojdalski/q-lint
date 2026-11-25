@@ -44,6 +44,7 @@ export function registerBenchmark(
     if (!on()) {
       return say(toolOff("benchmark"));
     }
+    const file = given === undefined ? window.activeTextEditor?.document.uri : undefined;
     const code = given ?? (await live.codeFromEditor());
     if (code === undefined) {
       return "nothing to run";
@@ -81,6 +82,10 @@ export function registerBenchmark(
       return say("q-lint: runs are two whole numbers, N then K, as 100 5.");
     }
     const expressions = [code.trim(), ...(second.trim() === "" ? [] : [second.trim()])];
+    // The editor's code is timed on its file's process (#2438).
+    if (!(await live.toFileBinding(file))) {
+      return "nothing was run";
+    }
     let ran: { process: string; value: unknown } | undefined;
     try {
       // Turned off while it asked: nothing is timed (#1453).

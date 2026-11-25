@@ -41,7 +41,7 @@ export class AsyncQueries {
 
   constructor(
     context: ExtensionContext,
-    private readonly live: Pick<Live, "runOnActive" | "onAsyncMessage" | "onDidChange" | "showGrid" | "record" | "codeFromEditor"> & Partial<Pick<Live, "activeDirect">>,
+    private readonly live: Pick<Live, "runOnActive" | "onAsyncMessage" | "onDidChange" | "showGrid" | "record" | "codeFromEditor"> & Partial<Pick<Live, "activeDirect" | "toFileBinding">>,
   ) {
     context.subscriptions.push(
       commands.registerCommand(ADMIN_COMMANDS.runAsync, (code?: string) => this.run(code)),
@@ -97,6 +97,7 @@ export class AsyncQueries {
       void window.showInformationMessage(plainMessage(adminOff("asyncQuery")));
       return undefined;
     }
+    const file = typeof given === "string" ? undefined : window.activeTextEditor?.document.uri;
     const code = typeof given === "string" ? given : await this.live.codeFromEditor();
     if (code === undefined) {
       return undefined;
@@ -104,6 +105,11 @@ export class AsyncQueries {
     const cut = statements(code);
     if (cut.length === 0) {
       void window.showInformationMessage("q-lint: nothing to run: it is blank or a comment.");
+      return undefined;
+    }
+    // The editor's code goes to its file's process (#2365), before asking
+    // whether that process evaluates directly.
+    if (this.live.toFileBinding !== undefined && !(await this.live.toFileBinding(file))) {
       return undefined;
     }
     // The answer comes back from q-lint's lambda, which a direct process is

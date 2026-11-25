@@ -65,6 +65,9 @@ function setup(files, answer) {
     async codeFromEditor() {
       return this.code;
     },
+    async toFileBinding() {
+      return true;
+    },
     async runOnActive(code, query) {
       sent.push(code);
       return { process: "dev", value: await query({ trapped: async (lambda, readOnly, read, statements, size) => (assert.deepStrictEqual([lambda, readOnly], [SNAPSHOT_RUN, SNAPSHOT_RUN_READ_ONLY]), read(answer(statements, size))) }) };

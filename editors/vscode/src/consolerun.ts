@@ -35,17 +35,8 @@ export async function runText(live: Live, code: string, uri?: Uri, context = "."
   if (cut.length === 0) {
     return undefined;
   }
-  const bound = uri === undefined ? undefined : live.fileBinding(uri);
-  if (bound !== undefined && bound !== live.activeLabel()) {
-    if (live.isBusy()) {
-      void window.showInformationMessage(
-        plainMessage(`q-lint: a query is still running on ${live.activeLabel()}; this file's code goes to ${bound}. q-lint: Abort Current Query stops waiting for it.`),
-      );
-      return undefined;
-    }
-    if (!(await live.connectTo(bound))) {
-      return undefined;
-    }
+  if (!(await live.toFileBinding(uri))) {
+    return undefined;
   }
   const configuration = workspace.getConfiguration("q-lint");
   const { consoleSize } = readLive((key, fallback) => configuration.get(key, fallback));

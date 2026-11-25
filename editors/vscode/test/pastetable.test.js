@@ -167,6 +167,7 @@ test("the switches are declared, on by default, and hide the commands when off",
 function fakeEditor(text) {
   const editor = {
     text,
+    document: { uri: { toString: () => "file:///w/a.q" } },
     selections: [{ start: text.length, end: text.length }],
     edit: async (f) => {
       f({ replace: (s, code) => (editor.text = editor.text.slice(0, s.start) + code + editor.text.slice(s.end)) });
@@ -183,6 +184,7 @@ test("the pastes write at the selection; Copy Value as JSON asks the process thr
   const sent = [];
   const live = {
     codeFromEditor: async () => "([] a:1 2)",
+    toFileBinding: async () => true,
     runOnActive: async (code, query) => {
       sent.push(code);
       return { process: "dev", value: await query({ guarded: async (lambda) => (sent.push(lambda(EVALUATE)), '[{"a":1},{"a":2}]') }) };

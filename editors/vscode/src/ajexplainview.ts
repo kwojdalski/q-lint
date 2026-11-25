@@ -37,6 +37,7 @@ export function registerAjExplainer(context: ExtensionContext, live: Live): { ex
     if (!on()) {
       return say(toolOff("ajExplainer"));
     }
+    const file = given === undefined ? window.activeTextEditor?.document.uri : undefined;
     const code = given ?? (await live.codeFromEditor(false));
     if (code === undefined) {
       return "nothing to explain";
@@ -60,6 +61,10 @@ export function registerAjExplainer(context: ExtensionContext, live: Live): { ex
       return say("q-lint: a row index is a whole number from 0.");
     }
     const index = Number(rowText.trim());
+    // The editor's aj is explained on its file's process (#2443).
+    if (!(await live.toFileBinding(file))) {
+      return "nothing was run";
+    }
     let text: string;
     try {
       const ran = await live.runOnActive(explainGuardCode(call), (connection) => connection.guarded(explainAjLambda, asCode(call.columns), asCode(call.left), asCode(call.right), index));
