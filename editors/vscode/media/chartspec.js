@@ -113,6 +113,9 @@
 
   /// The temporal types q holds as whole units: month, date, minute, second.
   const WHOLE = [13, 14, 17, 18];
+  /// And those whose unit is a nanosecond or a millisecond - timestamp,
+  /// timespan, time: an axis of any of them ticks whole units (#2162).
+  const UNITS = WHOLE.concat([12, 16, 19]);
 
   /// How an axis writes a temporal column's value - its own unit since
   /// 2000.01.01, as grid.ts sends it - in q's notation, to the second; with
@@ -412,11 +415,16 @@
   /// `whole`: the axis is in whole units (a date's days), so a step is one
   /// at least and every tick a whole one.
   function ticks(lo, hi, whole) {
+    // A whole axis's least step: one unit, or one double where they are
+    // further apart than that - a timestamp near 7.6e17 is held to 128 ns.
+    const size = Math.max(Math.abs(lo), Math.abs(hi));
+    const unit = whole ? Math.max(1, size > 0 ? Math.pow(2, Math.floor(Math.log2(size)) - 52) : 0) : 0;
     // A range within a few ulps of its ends (0.3 and 0.1+0.2) is one value:
     // a step that small would not move `v` on. 50 ms of timestamps, or
-    // 1e12 to 1e12+60, is a range.
-    if (!(hi - lo > Math.max(Math.abs(lo), Math.abs(hi)) * (64 * Number.EPSILON))) {
-      const d = Math.abs(lo) || 1;
+    // 1e12 to 1e12+60, is a range, and so is a unit of a whole axis.
+    if (!(hi - lo > size * (64 * Number.EPSILON)) && !(whole && hi - lo >= unit)) {
+      // A whole axis's one value: two units either side (#2162).
+      const d = whole ? 4 * unit : Math.abs(lo) || 1;
       lo -= d / 2;
       hi += d / 2;
     }
@@ -425,7 +433,7 @@
     const raw = hi / 5 - lo / 5;
     const mag = Math.pow(10, Math.floor(Math.log10(raw)));
     const round = [1, 2, 5, 10].map(function (m) { return m * mag; }).filter(function (s) { return s >= raw; })[0];
-    const step = whole ? Math.max(1, round) : round;
+    const step = whole ? Math.max(unit, round) : round;
     // Enough digits to tell one tick from the next, far from zero.
     const digits = Math.min(17, Math.max(12, Math.ceil(Math.log10(Math.max(Math.abs(lo), Math.abs(hi)) / step)) + 2));
     const out = [];
@@ -523,7 +531,7 @@
         hi = 1;
       }
       const x0 = grid.columns[0];
-      const t = ticks(lo, hi, x0 && x0.temporal && WHOLE.indexOf(x0.type) >= 0);
+      const t = ticks(lo, hi, x0 && x0.temporal && UNITS.indexOf(x0.type) >= 0);
       const a = Math.min(lo, t.values[0]);
       const b = Math.max(hi, t.values[t.values.length - 1]);
       xOf = function (x) { return left + (b === a ? pw / 2 : ((x / 2 - a / 2) / (b / 2 - a / 2)) * pw); };

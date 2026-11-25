@@ -70,6 +70,26 @@ test("a date, month, minute or second x axis ticks whole units, each label once 
   assert.strictEqual(M.linkedConfig(grid, ld, ld.panes[0], "#f00", look, {}, true).options.scales.x.ticks.precision, 0);
 });
 
+// A timestamp is whole nanoseconds near 7.6e17: a range under ~11 us was
+// taken for one value and widened by half its size, to 2006-2038; and a
+// timestamp, timespan or time at 0 ticked a fraction of its unit apart,
+// each label written over and over.
+test("a timestamp, timespan or time x axis ticks at least one unit, or one double, apart (#2162)", () => {
+  const g = (type, vals) => ({ columns: [{ name: "t", numeric: false, temporal: true, type }, { name: "y", numeric: true }], cells: [vals.map(String), vals.map((_, i) => String(i))], values: [vals, vals.map((_, i) => i)] });
+  const labels = (grid) => {
+    const rows = grid.values[0].map((_, i) => i);
+    return [...C.chartSvg(grid, rows, "scatter", C.chartData(grid, rows, "scatter", [1], 20), { colours: ["#f00"] }, {}).matchAll(/text-anchor="middle"[^>]*>([^<]*)</g)].map((m) => m[1]).filter((l) => /\d/.test(l));
+  };
+  // 2024.01.01D12:00:00 and 2 ns later.
+  const t0 = 757425600000000000;
+  const stamps = labels(g(12, [t0, t0 + 2]));
+  assert.ok(stamps.length >= 2 && stamps.every((l) => /^2024\.01\.01D1[12]:/.test(l)) && new Set(stamps).size === stamps.length, stamps.join(" | "));
+  for (const [type, vals] of [[19, [0]], [19, [0, 1]], [16, [0]], [12, [0]]]) {
+    const ls = labels(g(type, vals));
+    assert.ok(ls.length >= 2 && new Set(ls).size === ls.length, type + ": " + ls.join(" | "));
+  }
+});
+
 // A .qnb file's chart height "1px;position:fixed;inset:0;..." went into the
 // renderer's cssText whole (#1834): only a number in / @height's range is.
 test("a notebook chart's height is a number in / @height's range, or the default", () => {
