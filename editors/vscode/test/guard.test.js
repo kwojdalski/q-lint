@@ -1665,3 +1665,21 @@ test("a string made without a string written is evaluated as one that writes, by
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("a list headed by a lambda is the lambda applied to the rest: by value, eval, . and a gateway (#2186, #2195)", () => {
+  const cases = {
+    "value({.[x;();:;1]};`a)": ["evaluates a call of {.[x;();:;1]} with value"],
+    "eval({.[x;();:;1]};`a)": ["evaluates a call of {.[x;();:;1]} with eval"],
+    ".({.[x;();:;1]};`a)": ["evaluates a call of {.[x;();:;1]} with ."],
+    '.gw.syncexec[({value raze x};("a";":1"));`rdb]': ["runs a query the guard cannot read through .gw.syncexec"],
+    '.gw.syncexec[({value x,y};"a";":1");`rdb]': ["runs a query the guard cannot read through .gw.syncexec"],
+    // A lambda that only reads, on what only reads, still reads.
+    "value({x+1};2)": [],
+    '.gw.syncexec[({last value each x};("count t";"count u"));`rdb]': [],
+    // One that evaluates a string it builds asks, as it does sent alone.
+    '.gw.syncexec[({value raze x};("count";" t"));`rdb]': ["runs a query the guard cannot read through .gw.syncexec"],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

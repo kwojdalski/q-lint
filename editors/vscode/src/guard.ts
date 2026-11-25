@@ -84,7 +84,8 @@
 //   or by the symbol of
 //   a writer above (`` value(`.q.set;`a;1) ``), or by anything that, called
 //   on the rest, changes the process (`value(hopen;`:f)`,
-//   `value(value;"a:1")`, #1767), also through `[`,
+//   `value(value;"a:1")`, #1767), a lambda among them,
+//   `` value({.[x;();:;1]};`a) `` (#2195), also through `[`,
 //   `each`, `'`, `@`, `.` or `enlist`, in parentheses (`(value)"a:1"`)
 //   and through a trap (`@[value;"a:1";h]`), and by their `.q.` names;
 //   passed as a value, through an adverb or a composition (`value/["a:1"]`,
@@ -103,7 +104,9 @@
 //   `.gw.asyncexec`, in brackets or applied (`.gw.syncexec . (q;`rdb)`),
 //   which runs it on the gateway's servers (#909), and a query there that
 //   is not strings written in the call - a list the servers evaluate, a
-//   name, one built or given later, `.gw.syncexec[;`rdb] "a:1"` (#2039).
+//   name, one built or given later, `.gw.syncexec[;`rdb] "a:1"` (#2039) -
+//   and one headed by a lambda that, applied to the rest, changes them,
+//   `({value raze x};("a";":1"))` (#2186).
 // - code in a language other than q and k: KDB-X SQL after `s)`, read as
 //   the SQL tab reads it, `s)drop table t`, and anything else not read at
 //   all, Python after `p)` or given to `.p.e`, `.pykx.pyexec` (#2197, #2209);
@@ -888,7 +891,9 @@ function called(t: Token[], lists: number[], byValue: boolean): string | undefin
   for (const open of [...lists].reverse()) {
     const all = items(t, open);
     const [hs, he] = all[0];
-    if (all.length < 2 || he - hs < 1 || !["name", "sym", "op", "open"].includes(t[hs].kind) || t[hs].text === "{") {
+    // A lambda at the head too, `value({.[x;();:;1]};`a)` (#2195): read
+    // applied to the rest, with them in place of its parameters.
+    if (all.length < 2 || he - hs < 1 || !["name", "sym", "op", "open"].includes(t[hs].kind)) {
       continue;
     }
     const head = he - hs === 1 && t[hs].kind === "sym" ? t[hs].text.slice(1) : joined(t, hs, he);
@@ -1407,10 +1412,13 @@ function gateway(t: Token[], i: number, found: Set<string>): void {
         ? listed(t, i + 2, argumentEnd(t, i + 1))
         : undefined;
   const end = args !== undefined ? args[args.length - 1][1] : argumentEnd(t, i);
+  // Whether a string in it writes, which is asked about already.
+  let written = false;
   for (let j = i + 1; j < end; j++) {
     if (t[j].kind === "str") {
       for (const reason of writes(qText(t[j].text))) {
         found.add(`${reason} through ${name}`);
+        written = true;
       }
     }
   }
@@ -1427,7 +1435,14 @@ function gateway(t: Token[], i: number, found: Set<string>): void {
           if (t[close].kind === "open") depth++;
           else if (t[close].kind === "close" && --depth === 0) break;
         }
-        readable = t[j - 1]?.text === "(" && t[close + 1]?.text === ";" && rereadOf(joined(t, j, close + 1)).length === 0;
+        // Read applied to the rest of the list, as the servers apply it:
+        // `({value raze x};("a";":1"))` evaluates "a:1" (#2186).
+        const list = t[j - 1]?.text === "(" ? items(t, j - 1) : [];
+        readable =
+          t[j - 1]?.text === "(" &&
+          t[close + 1]?.text === ";" &&
+          (written || rereadOf(`${joined(t, j, close + 1)}[${list.slice(1).map(([a, b]) => joined(t, a, b)).join(";")}]`).length === 0) &&
+          rereadOf(joined(t, j, close + 1)).length === 0;
         j = close;
       } else {
         readable = k.kind === "str" || k.text === ";" || k.text === "(" || k.text === ")" || k.text === "enlist";
@@ -1896,6 +1911,22 @@ function readStatement(statement: string, found: Set<string>): void {
     // and in parentheses, `k)(.)"a:1"`, `k)(.:)"a:1"` (#1728), which q
     // applies the same way: `(.)"a:1"`.
     const unaryDot = k.kind === "op" && k.text === "." && t[i - 1]?.text === "(" && t[i - 1].kind === "open";
+    // In q too, `.` with nothing on its left applied to a list or a string
+    // is `value`: `.({.[x;();:;1]};`a)` (#2195).
+    const qDot =
+      !kCode &&
+      k.kind === "op" &&
+      k.text === "." &&
+      (i === code || [";", "[", "{", ":"].includes(t[i - 1]?.text ?? "")) &&
+      (next?.kind === "str" || (next?.kind === "open" && next.text === "("));
+    if (qDot) {
+      const what = evaluates(t, i, true);
+      if (what !== undefined) {
+        found.add(`evaluates ${what.reason} with .`);
+        i = what.at;
+        continue;
+      }
+    }
     let after = next?.text === ":" && touching(k, next) ? i + 2 : i + 1;
     const parenthesised = unaryDot && t[after]?.text === ")";
     if (parenthesised || (kCode && k.kind === "op" && k.text === "." && i >= code && (t[i - 1].kind === "op" || t[i - 1].kind === "open" || i === code || t[i - 1].text === ";"))) {
