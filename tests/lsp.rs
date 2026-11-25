@@ -4015,6 +4015,83 @@ fn a_signature_changed_asks_for_hints_again() {
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
+/// The refreshes the server asks for after `text` becomes version
+/// `version` of `uri`, up to the answer to a request sent after it - each
+/// answered as a client answers it.
+fn refreshes_after(server: &mut Server, uri: &str, version: u64, text: &str) -> Vec<String> {
+    let marker = 500 + version;
+    server.change(uri, version as i64, text);
+    server.send(
+        json!({"jsonrpc":"2.0","id":marker,"method":"textDocument/foldingRange",
+        "params":{"textDocument":{"uri":uri}}}),
+    );
+    let mut seen = vec![];
+    loop {
+        let message = server.receive();
+        if message["id"] == marker {
+            break;
+        }
+        if let Some(method) = message["method"].as_str()
+            && method.ends_with("/refresh")
+        {
+            server.send(json!({"jsonrpc":"2.0","id":message["id"],"result":null}));
+            seen.push(method.to_string());
+        }
+    }
+    seen.sort();
+    seen
+}
+
+/// A server over `dir` whose client redraws lenses, hints and colours when
+/// asked, with `options` sent.
+fn start_refreshed(dir: &std::path::Path, options: Value) -> Server {
+    let mut server = Server::spawn(dir, &["--lsp"]);
+    let mut capabilities = client_capabilities();
+    capabilities["workspace"] = json!({"codeLens": {"refreshSupport": true},
+                                       "inlayHint": {"refreshSupport": true},
+                                       "semanticTokens": {"refreshSupport": true}});
+    server.send(
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+        "capabilities": capabilities, "initializationOptions": options,
+        "workspaceFolders":[{"uri":file_uri(dir),"name":"ws"}]}}),
+    );
+    server.receive();
+    server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    server
+}
+
+/// A reference count is of every read of the name, so a file that reads
+/// it once more, or once less, makes the count stale though the names it
+/// reads are the same: no refresh was asked for, and the lens kept its
+/// old count until the defining file was edited (#2175). A change to no
+/// read asks for nothing.
+#[test]
+fn another_read_of_a_name_asks_for_the_reference_counts_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = json!({"crossFileRefresh": {"enable": true},
+                         "referenceLens": {"enable": true}});
+    let mut server = start_refreshed(dir.path(), options);
+    let (a, b) = (
+        file_uri(&dir.path().join("a.q")),
+        file_uri(&dir.path().join("b.q")),
+    );
+    server.open(&a, "f:{x+1}\n");
+    server.diagnostics_for(&a);
+    server.open(&b, "f 1\n");
+    // Whatever the opens asked for is drained first.
+    refreshes_after(&mut server, &b, 2, "f 1\n");
+    assert_eq!(
+        refreshes_after(&mut server, &b, 3, "f 1\nf 2\n"),
+        ["workspace/codeLens/refresh"]
+    );
+    assert_eq!(
+        refreshes_after(&mut server, &b, 4, "f 1\n"),
+        ["workspace/codeLens/refresh"]
+    );
+    assert!(refreshes_after(&mut server, &b, 5, "f 3\n").is_empty());
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
 /// With `lint.scope: "workspace"` a file nobody opened reports, one the
 /// index excludes does not, and one changed on disk reports again; with the
 /// default scope only an open file reports (#1160).

@@ -257,6 +257,10 @@ struct Index {
     /// client redraws hints on request: it is one more reading of each file.
     signatures: u64,
     hinted: bool,
+    /// While set - a client that redraws reference counts on request - each
+    /// file's reads are tallied, every one and not just each name, since a
+    /// count changes with a read more of a name already read (#2175).
+    counted: bool,
     /// What may be read from disk: `.q` files under these folders, less
     /// those `exclude` names - and nothing at all while `enabled` is off,
     /// when only open documents are indexed.
@@ -310,6 +314,10 @@ struct Indexed {
     read: References,
     /// The parameters each definition declares, kept while `Index::hinted`.
     signed: Vec<(String, Vec<String>)>,
+    /// Every read of a global, by its name as written and whether it is
+    /// implicit, in order - what a reference count counts - kept while
+    /// `Index::counted`.
+    tally: Vec<(String, bool)>,
 }
 
 impl Index {
@@ -328,7 +336,11 @@ impl Index {
         let (loads, implicit) = (read.loads.clone(), read.implicit_defines.clone());
         let old = self.files.remove(&path);
         self.stale |= old.as_ref().is_none_or(|old| old.loads != loads);
-        if old.as_ref().is_none_or(|old| old.read.names != read.names) {
+        let tally = if self.counted { tally(text) } else { vec![] };
+        if old
+            .as_ref()
+            .is_none_or(|old| old.read.names != read.names || old.tally != tally)
+        {
             self.reads += 1;
         }
         let signed = if self.hinted {
@@ -361,6 +373,7 @@ impl Index {
             placed,
             read,
             signed,
+            tally,
         };
         self.files.insert(path, file);
         changed
@@ -1407,6 +1420,7 @@ pub fn serve(
                             refreshes("codeLens") && (opts.code_lens || opts.reference_lens);
                         hint_refresh = refreshes("inlayHint") && opts.inlay_hints;
                         idx.hinted = hint_refresh;
+                        idx.counted = lens_refresh && opts.reference_lens;
                         let watched = |key: &str| {
                             params
                                 .pointer(&format!(
@@ -2245,6 +2259,18 @@ fn signatures(text: &str) -> Vec<(String, Vec<String>)> {
 /// The reply to a request whose handler panicked: JSON-RPC 2.0 §5.1's
 /// `-32603 Internal error`, rather than no reply, which a client cannot tell
 /// from a hung server.
+/// Every read of a global in `text`, as `Indexed::tally` keeps them.
+fn tally(text: &str) -> Vec<(String, bool)> {
+    guarded(|| {
+        q_lint_rs::mentions(text)
+            .into_iter()
+            .filter(|m| m.definition.is_none())
+            .map(|m| (m.name, m.implicit))
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
 fn internal_error(id: Value, panic: &str) -> Value {
     json!({"id": id, "error": {"code": INTERNAL_ERROR,
            "message": format!("qlinter failed on this document: {panic}")}})
