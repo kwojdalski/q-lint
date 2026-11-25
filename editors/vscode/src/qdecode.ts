@@ -23,8 +23,11 @@ export type QValue =
   | { kind: "table"; attr: number; cols: string[]; data: QValue[] }
   /// A dictionary; `sorted` for one with the `s` attribute (type 127).
   | { kind: "dict"; sorted: boolean; k: QValue; v: QValue }
-  /// A function: a lambda's text, or none for any other kind.
-  | { kind: "func"; t: number; text?: string };
+  /// A function: a lambda's or a primitive's text; for a projection (104),
+  /// a composition (105) or a derived function (106-111), which q sends as
+  /// their parts, `parts`: the function and its arguments, the functions
+  /// composed, or the function an iterator derives from (#2477).
+  | { kind: "func"; t: number; text?: string; parts?: QValue[] };
 
 /// A value q sends by reference - a mapped table, as its path - so none of
 /// it can be shown: said as that, never as the codec's reading of it.
@@ -187,21 +190,23 @@ export function decode(message: Buffer): QValue {
         const index = b.readUInt8(pos++);
         // A primitive is sent as its index in q's table: (::), the generic
         // null, is unary 0 and keeps no text; `count` is unary 13, `#:`.
-        const text = index === 0 && t === 101 ? undefined : PRIMITIVES[t - 101][index];
+        // Unary 255 is an argument a projection leaves out, written as none.
+        const text = t === 101 && index === 255 ? "" : index === 0 && t === 101 ? undefined : PRIMITIVES[t - 101][index];
         return { kind: "func", t, ...(text !== undefined ? { text } : {}) };
       }
+      const parts: QValue[] = [];
       if (t <= 105) {
         const n = b.readInt32LE(pos);
         pos += 4;
         for (let i = 0; i < n; i++) {
-          value();
+          parts.push(value());
         }
       } else if (t <= 111) {
-        value();
+        parts.push(value());
       } else {
         throw new Error(`q-lint cannot read a value of type ${t}`);
       }
-      return { kind: "func", t };
+      return { kind: "func", t, parts };
     }
     const attr = b.readInt8(pos++);
     if (t === 98) {
