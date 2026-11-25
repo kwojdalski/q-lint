@@ -169,9 +169,30 @@ test("an earlier commit git cannot export is an error, not 0 findings (#1400)", 
   // The linter is never reached: a stand-in that would report nothing.
   const linter = path.join(dir, "none.js");
   fs.writeFileSync(linter, 'console.log("[]");');
-  await assert.rejects(lintCommit(process.execPath, [linter], dir, "deadbeefdeadbeef"), /git archive deadbeefdeadbeef failed/);
+  await assert.rejects(lintCommit(process.execPath, [linter], dir, "deadbeefdeadbeef"), /exporting deadbeefdeadbeef failed/);
   const at = git("rev-parse", "HEAD").trim();
   assert.deepStrictEqual(await lintCommit(process.execPath, [linter], dir, at), []);
+});
+
+test("an earlier commit is linted with its export-ignore and export-subst files as committed, its index left alone (#2414)", async (t) => {
+  const { dir, git } = repo(t);
+  fs.mkdirSync(path.join(dir, "legacy"));
+  fs.writeFileSync(path.join(dir, "b.q"), "b:1\n");
+  fs.writeFileSync(path.join(dir, "legacy", "a.q"), "a:1\n");
+  fs.writeFileSync(path.join(dir, "v.q"), "v:\"$Format:%H$\"\n");
+  fs.writeFileSync(path.join(dir, ".gitattributes"), "legacy/ export-ignore\nv.q export-subst\n");
+  git("add", ".");
+  git("commit", "-qm", "one");
+  fs.writeFileSync(path.join(dir, "staged.q"), "s:1\n");
+  git("add", "staged.q");
+  // A stand-in linter: each .q file under it, with its text.
+  const linter = path.join(dir, "..", `${path.basename(dir)}-files.js`);
+  t.after(() => fs.rmSync(linter, { force: true }));
+  fs.writeFileSync(linter, 'const fs=require("fs"),p=require("path");const w=(d)=>fs.readdirSync(d,{withFileTypes:true}).flatMap((e)=>e.isDirectory()?w(p.join(d,e.name)):e.name.endsWith(".q")?[p.relative(".",p.join(d,e.name))]:[]);console.log(JSON.stringify(w(".").sort().map((f)=>({path:f,code:fs.readFileSync(f,"utf8").trim()}))));');
+  const at = git("rev-parse", "HEAD").trim();
+  const found = await lintCommit(process.execPath, [linter], dir, at);
+  assert.deepStrictEqual(found.map((f) => [f.path.split(path.sep).join("/"), f.code]), [["b.q", "b:1"], ["legacy/a.q", "a:1"], ["v.q", 'v:"$Format:%H$"']]);
+  assert.strictEqual(git("diff", "--cached", "--name-only").trim(), "staged.q");
 });
 
 test("the switches are declared, and the commands only where they can run", () => {

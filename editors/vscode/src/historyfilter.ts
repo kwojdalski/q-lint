@@ -3,6 +3,7 @@
 // file. No `vscode` import, so node tests it; `live.ts` is the VS Code around
 // it.
 
+import { leavesNamespace } from "./qnb";
 import { blockDepth } from "./statements";
 
 export const HISTORY_COMMANDS = {
@@ -116,7 +117,8 @@ export function historyJson(entries: Entry[]): string {
 /// each query after a comment line naming its process, time, duration and
 /// outcome, and its error under it. Its own block comments (`/` ... `\`)
 /// are kept as they ran, an end of script (`\` alone) and what follows it in
-/// its entry are commented out, and each entry loads as it ran on its own.
+/// its entry are commented out, and each entry loads as it ran on its own:
+/// one that leaves a namespace set is followed by `\d .`.
 export function historyScript(entries: Entry[]): string {
   const comment = (text: string): string => `/ ${text.replace(/\r?\n/g, " ")}`;
   return (
@@ -127,6 +129,9 @@ export function historyScript(entries: Entry[]): string {
           comment(`${e.process}, ${e.at}, ${e.millis} ms, ${e.outcome}${e.agent ? ", run by an agent" : ""}`),
           ...(e.error !== undefined && e.outcome !== "ok" ? [comment(`'${e.error}`)] : []),
           standalone(e.code.replace(/\r?\n$/, "")),
+          // q runs each query in the root: a `\d` it leaves set ends with it,
+          // and would carry into every entry below in a script (#2383).
+          ...(leavesNamespace(e.code) ? ["\\d ."] : []),
         ].join("\n"),
       )
       .join("\n\n") + "\n"

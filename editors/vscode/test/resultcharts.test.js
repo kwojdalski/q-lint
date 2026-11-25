@@ -37,6 +37,32 @@ test("an order book by level is found by its column names and drawn as cumulativ
   assert.deepStrictEqual(config.data.datasets.map((s) => [s.stepped, s.borderColor]), [["after", "#89d185"], ["before", "#f14c4c"]]);
 });
 
+test("a book of float lists is drawn from the numbers GRID sent, not from its text cut at \\c, and a cut it could not read past is said (#2465)", () => {
+  const { toGrid } = require("../out/grid.js");
+  const n = 50;
+  const bid = [...Array(n).keys()].map((i) => 100 - i);
+  const ask = [...Array(n).keys()].map((i) => 101 + i);
+  const size = bid.map(() => 1e6);
+  // -3! of each, cut at an 80-column console as the process writes it.
+  const text = (v) => (v.join(" ").length > 78 ? v.join(" ").slice(0, 76) + ".." : v.join(" "));
+  const payload = (sent) => ({
+    count: 1,
+    keys: 0,
+    names: ["bidPrice", "bidSize", "askPrice", "askSize"],
+    types: [0, 0, 0, 0],
+    cells: [bid, size, ask, size].map((v) => [text(v)]),
+    raw: [bid, size, ask, size].map((v) => (sent ? [["F", v]] : [false])),
+    rank: [[], [], [], []],
+  });
+  const d = M.depthData(toGrid(payload(true), -1), [0]);
+  assert.deepStrictEqual(d.datasets.map((s) => s.levels), [n, n]);
+  assert.strictEqual(d.datasets[0].data[0].y, n * 1e6);
+  assert.strictEqual(d.cut, false);
+  const cut = M.depthData(toGrid(payload(false), -1), [0]);
+  assert.ok(cut.datasets[0].levels < n);
+  assert.strictEqual(cut.cut, true);
+});
+
 test("the depth chart on screen steps each level the way its SVG does: a level's size holds up to the next price (#1385)", () => {
   // Chart.js 4's stepped segment: "after" goes up or down first, any other
   // mode across first (lineTo(previous.x, target.y) or (target.x, previous.y)).

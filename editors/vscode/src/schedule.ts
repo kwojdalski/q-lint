@@ -186,12 +186,20 @@ export function scheduleText(s: Pick<ScheduledExport, "query" | "process" | "for
 /// Write `data` to `file` whole or not at all: into a file beside it, then
 /// renamed over it. Written in place, a reader saw an empty or half file,
 /// and a write that failed (a full disk, Excel holding it) left the last
-/// good export lost (#1539). Throws why not, the old file as it was.
+/// good export lost (#1539). Throws why not, the old file as it was. A
+/// symbolic link is followed, so the file it names is the one replaced, and
+/// that file's mode is kept (#2518).
 export async function writeWhole(file: string, data: Uint8Array): Promise<void> {
-  const temp = path.join(path.dirname(file), `.${path.basename(file)}.${randomBytes(4).toString("hex")}.tmp`);
+  const target = await fs.realpath(file).catch(() => file);
+  const mode = await fs.stat(target).then((s) => s.mode & 0o7777, () => undefined);
+  const temp = path.join(path.dirname(target), `.${path.basename(target)}.${randomBytes(4).toString("hex")}.tmp`);
   try {
-    await fs.writeFile(temp, data);
-    await fs.rename(temp, file);
+    await fs.writeFile(temp, data, mode === undefined ? undefined : { mode });
+    if (mode !== undefined) {
+      // As the umask allows none of it at creation.
+      await fs.chmod(temp, mode);
+    }
+    await fs.rename(temp, target);
   } catch (error) {
     await fs.rm(temp, { force: true });
     throw error;

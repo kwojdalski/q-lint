@@ -42,6 +42,33 @@ test("a JSON file that starts with a UTF-8 byte order mark is read as a CSV with
   assert.throws(() => gridFromJson('[﻿{"t":1}]'), SyntaxError);
 });
 
+test("a JSON table's columns keep the text's order, integer-like names too, so the first is the x axis (#2449)", () => {
+  const names = (g) => g.columns.map((c) => c.name);
+  assert.deepStrictEqual(names(gridFromJson('[{"year":"y1","2024":1,"2025":2},{"year":"y2","2024":3,"2025":4}]')), ["year", "2024", "2025"]);
+  assert.deepStrictEqual(names(gridFromJson('{"region":["EU","US"],"2024":[1,3],"2025":[2,4]}')), ["region", "2024", "2025"]);
+  assert.deepStrictEqual(gridFromJson('{"region":["EU","US"],"2024":[1,3]}').cells[0], ["EU", "US"]);
+});
+
+test("a tab-separated header with a comma in a name is read by its tabs, and a .tsv always (#2457)", () => {
+  const g = gridFromCsv("date\tprice (EUR, net)\tqty\nmon\t1.5\t2\n");
+  assert.deepStrictEqual(g.columns.map((c) => [c.name, c.numeric]), [["date", false], ["price (EUR, net)", true], ["qty", true]]);
+  assert.deepStrictEqual(gridFromFile("a.tsv", "a,b\tc\n1,2\t3\n").columns.map((c) => c.name), ["a,b", "c"]);
+  assert.deepStrictEqual(gridFromCsv("a,b\n1,2\n").columns.map((c) => c.name), ["a", "b"]);
+});
+
+test("a one-column CSV's empty lines are null cells, each at its own row (#2458)", () => {
+  const g = gridFromCsv("\nlatency\n5\n\n\n7\n9\n");
+  assert.deepStrictEqual(g.values[0], [5, null, null, 7, 9]);
+  // Two columns: a blank line is no row.
+  assert.deepStrictEqual(gridFromCsv("a,b\n1,2\n\n3,4\n").values, [[1, 3], [2, 4]]);
+});
+
+test("a JSON column of strings is text, however much they look like numbers (#2469)", () => {
+  const g = gridFromJson('[{"day":"mon","zip":"02134","sales":5},{"day":"tue","zip":"10001","sales":null}]');
+  assert.deepStrictEqual(g.columns.map((c) => [c.name, c.numeric]), [["day", false], ["zip", false], ["sales", true]]);
+  assert.deepStrictEqual(gridFromJson('{"zip":["02134","10001"],"n":[1,2]}').columns.map((c) => c.numeric), [false, true]);
+});
+
 test("JSON columns of unequal length keep every value: the short ones are padded with empty cells (#1941)", () => {
   const short = gridFromJson('{"t":[1],"b":[5,6,7]}');
   assert.strictEqual(short.total, 3);
@@ -70,4 +97,16 @@ test("a column of hex, binary or octal ids is text, not the numbers JavaScript r
   for (const word of ["Infinity", "1e", "e5", ".", "1.2.3", "--1", "1 2"]) {
     assert.strictEqual(gridFromCsv(`a\n1\n${word}\n`).columns[0].numeric, false, word);
   }
+});
+
+test("a query's chart of more rows than it draws says how many it left out, on the chart and on stderr (#2456)", { skip: require("./qserver.js").skip }, async (t) => {
+  const { connection, dir } = await require("./qserver.js").connect(t, "");
+  const port = (await connection.evaluate('system"p"')).value;
+  const out = path.join(dir, "big.svg");
+  const said = { out: [], err: [] };
+  const io = { out: (s) => said.out.push(s), err: (s) => said.err.push(s), stdin: () => "" };
+  const code = await main(["--host", "127.0.0.1", "--port", String(port), "--query", "([] x:til 250000; y:til 250000)", "--kind", "line", "-o", out], io);
+  assert.strictEqual(code, 0);
+  assert.match(said.err.join(""), /250,000 rows: only the first 100,000 of 250,000 rows are drawn/);
+  assert.match(fs.readFileSync(out, "utf8"), /the first 100,000 of 250,000 rows/);
 });

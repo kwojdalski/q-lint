@@ -17,7 +17,7 @@
 // fill in and never sent.
 import { TABLE_INFO, readTableInfo, type TableInfo } from "./tableinfo";
 import { qName } from "./explorer";
-import { symbolLiteral } from "./qliteral";
+import { plainName, symbolLiteral } from "./qliteral";
 
 /// The commands, as `schemaview.ts` registers them.
 export const SCHEMA_COMMANDS = {
@@ -275,8 +275,14 @@ export function tableTemplates(name: string, info: TableInfo, limit = 100): Tabl
     return stamp === undefined ? undefined : { by: "date", code: `${stamp.name}.date` };
   })();
   if (dated !== undefined) {
+    const column = dated.by === dated.code ? dated.code : dated.code.replace(/\.date$/, "");
     const by = dated.by === dated.code ? dated.by : `${dated.by}:${dated.code}`;
-    out.push({ label: "Count by date", detail: `rows per ${dated.by === dated.code ? dated.by : `date of ${dated.code.replace(/\.date$/, "")}`}`, code: `select count i by ${by} from ${t}`, runs: true });
+    // A column that is no q name cannot be written in a select: the query
+    // is functional, the column a symbol (#2536).
+    const code = plainName(column)
+      ? `select count i by ${by} from ${t}`
+      : `?[${t};();(enlist ${symbolLiteral(dated.by)})!enlist ${dated.by === dated.code ? symbolLiteral(column) : `($;enlist\`date;${symbolLiteral(column)})`};(enlist\`x)!enlist(count;\`i)]`;
+    out.push({ label: "Count by date", detail: `rows per ${dated.by === dated.code ? dated.by : `date of ${column}`}`, code, runs: true });
   }
   if (!partitioned && info.kind !== "splayed" && info.columns.length > 0 && info.columns.length === info.ncols) {
     // Each column enlisted: one row, whatever the column holds.

@@ -362,6 +362,29 @@ test("turned off while a tick runs, the schedules still due wait (#1296)", async
   assert.strictEqual(schedules.ticking, false);
 });
 
+test("a schedule removed or turned off while its query runs writes nothing (#2557)", async (t) => {
+  const { live, schedules, context } = await setUp(t, [{ label: "p", host: "h", port: 1, tags: [] }], [{ name: "q", code: "1+1" }]);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-schedule-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const every = (id) => ({ id, query: "q", process: "p", format: "csv", path: path.join(dir, `${id}.csv`), every: 1, mode: "replace", since: 0 });
+  live.runApart = async () => {
+    await context.workspaceState.update(SCHEDULES_KEY, []);
+    return { ok: true, type: -7, text: ["2"] };
+  };
+  await context.workspaceState.update(SCHEDULES_KEY, [every("s1")]);
+  await schedules.tick(new Date(2026, 10, 22, 9, 30));
+  assert.strictEqual(fs.existsSync(path.join(dir, "s1.csv")), false);
+  assert.deepStrictEqual(schedules.list(), []);
+  live.runApart = async () => {
+    stub.config.user["export.schedule.enable"] = false;
+    stub.changeConfig("q-lint.export.schedule.enable");
+    return { ok: true, type: -7, text: ["2"] };
+  };
+  await context.workspaceState.update(SCHEDULES_KEY, [every("s2")]);
+  await schedules.tick(new Date(2026, 10, 22, 9, 31));
+  assert.strictEqual(fs.existsSync(path.join(dir, "s2.csv")), false);
+});
+
 function freePort() {
   return new Promise((resolve) => {
     const s = net.createServer().listen(0, "127.0.0.1", () => {
@@ -443,6 +466,27 @@ test("an export is written whole beside the file and renamed over it; a failed w
   await assert.rejects(writeWhole(blocked, Buffer.from("x")));
   assert.ok(fs.statSync(blocked).isDirectory());
   assert.deepStrictEqual(fs.readdirSync(dir).sort(), ["blocked.csv", "out.csv"]);
+});
+
+test("an export through a symbolic link replaces the file it names, and keeps a file's mode (#2518)", { skip: process.platform === "win32" ? "symbolic links and modes" : false }, async () => {
+  const { writeWhole } = require("../out/schedule.js");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-whole-"));
+  fs.mkdirSync(path.join(dir, "share"));
+  const real = path.join(dir, "share", "report.csv");
+  fs.writeFileSync(real, "old\n", { mode: 0o640 });
+  fs.chmodSync(real, 0o640);
+  const link = path.join(dir, "link.csv");
+  fs.symlinkSync(real, link);
+  await writeWhole(link, Buffer.from("new\n"));
+  assert.ok(fs.lstatSync(link).isSymbolicLink());
+  assert.strictEqual(fs.readFileSync(real, "utf8"), "new\n");
+  assert.strictEqual(fs.statSync(real).mode & 0o777, 0o640);
+  const secret = path.join(dir, "secret.csv");
+  fs.writeFileSync(secret, "old\n");
+  fs.chmodSync(secret, 0o600);
+  await writeWhole(secret, Buffer.from("new\n"));
+  assert.strictEqual(fs.statSync(secret).mode & 0o777, 0o600);
+  assert.deepStrictEqual(fs.readdirSync(path.join(dir, "share")), ["report.csv"]);
 });
 
 // v0.36 deleted a saved query or a process and left what ran it: the next

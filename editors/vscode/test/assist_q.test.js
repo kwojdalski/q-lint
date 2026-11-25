@@ -127,3 +127,9 @@ test("List q Tables reads only a table the process lists: no view run, no file r
   }
   assert.strictEqual(String((await c.evaluate("calls")).value), "0");
 });
+
+test("DESCRIBE writes a column name that is no q name as a symbol, so its columns can be told apart (#2549)", { skip }, async (t) => {
+  const c = await connect(t, SERVER + '\nct:flip(`a;`$"b c";`$"d e f")!(1 2;3 4;5 6)\n');
+  const [d] = readDescribed(await c.call(DESCRIBE, "ct"));
+  assert.strictEqual(d.text, 'a `$"b c" `$"d e f"');
+});

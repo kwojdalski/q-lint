@@ -450,6 +450,20 @@ test("the partition check finds a partition whose sym is enumerated against anot
   assert.deepStrictEqual(problems.map((p) => [p.kind, p.what, p.partitions]), [["enumeration", "trade.sym is enumerated against dom2 here, sym in most partitions: a select across them makes it a mixed column", ["2026.01.06"]]]);
 });
 
+test("the partition check reads a nested column of enumerations for its domain and largest index (#2529)", { skip }, async (t) => {
+  const extra = [
+    "{[r;d] .Q.dd[r;d,`ev`] set .Q.en[r] ([] sym:`a`b;tags:(`a`b;enlist`c))}[r] each 2026.01.05 2026.01.06 2026.01.07;",
+    ".Q.dd[r;2026.01.06,`ev`tags] set (`sym!enlist 9;`sym!7 8);",
+  ].join("\n");
+  const { connection } = await connect(t, HDB(extra));
+  const answer = readPartitions(await connection.call(PARTITION_CHECK, 1000, true));
+  const row = answer.rows.find((r) => r.table === "ev" && r.partition === "2026.01.06");
+  assert.deepStrictEqual([row.enums[1], row.maxIndexes[1]], ["sym", 9]);
+  const problems = partitionProblems(answer);
+  assert.deepStrictEqual(problems.map((p) => [p.kind, p.what, p.partitions]), [["enumeration", "ev.tags has a symbol index past the end of sym", ["2026.01.06"]]]);
+  assert.ok(answer.rows.filter((r) => r.table === "ev").every((r) => r.enums[1] === "sym"));
+});
+
 test("the partition check finds missing dates, files, differing types and outliers", { skip }, async (t) => {
   const extra = [
     "mk[r;;6] each 2026.01.12 2026.01.13;",
@@ -655,6 +669,35 @@ test("the sym inspector counts no index past the file's end as a symbol, and war
   const text = symReport(answer, "b", 1e6);
   assert.match(text, /\| trade \| sym \| 3 \| 100\.0% \|/);
   assert.match(text, /trade\.sym has 3 values whose index is past the end of sym/);
+});
+
+// tags, a symbol list a row, holds the file's 4th and 5th symbols: they
+// are its share, and the file held 5 once the partition was written (#2530).
+test("the sym inspector counts a nested column of enumerations, its symbols and its growth (#2530)", { skip }, async (t) => {
+  const { connection } = await connect(t, [
+    'r:hsym`$"$DIR/n";',
+    ".Q.dd[r;2026.01.01,`trade`] set .Q.en[r] ([] sym:`aapl`ibm`msft;tags:(`a`b;enlist`a;enlist`b));",
+    "\\l $DIR/n",
+    "",
+  ].join("\n"));
+  const answer = readSym(await connection.call(SYM_INSPECT, 20));
+  assert.strictEqual(answer.count, 5);
+  assert.deepStrictEqual(answer.columns.map((c) => [c.table, c.column, c.distinct, c.past]).sort(), [["trade", "sym", 3, 0], ["trade", "tags", 2, 0]]);
+  assert.deepStrictEqual(answer.growth, [{ partition: "2026.01.01", size: 5 }]);
+});
+
+test("the sym inspector under a .Q.view samples every partition on disk (#2533)", { skip }, async (t) => {
+  const { connection } = await connect(t, [
+    'r:hsym`$"$DIR/v";',
+    "{[r;d;s] .Q.dd[r;d,`trade`] set .Q.en[r] ([] sym:s;px:count[s]#1f)}[r]'[2026.01.01 2026.01.02 2026.01.03;(`a`b;`a`b`c;0#`)];",
+    "\\l $DIR/v",
+    ".Q.view 2026.01.03",
+    "",
+  ].join("\n"));
+  const answer = readSym(await connection.call(SYM_INSPECT, 20));
+  assert.deepStrictEqual([answer.partitions, answer.sampled], [3, 3]);
+  assert.deepStrictEqual(answer.columns.map((c) => [c.table, c.column, c.distinct]), [["trade", "sym", 3]]);
+  assert.deepStrictEqual(answer.growth, [{ partition: "2026.01.01", size: 2 }, { partition: "2026.01.02", size: 3 }]);
 });
 
 // .Q.ens[d;t;`mysym] enumerates against mysym, and a column may be against

@@ -303,8 +303,9 @@ export function atomLiteral(type: number, text: string, raw: unknown): { literal
     case 16:
       return ok(text);
     default:
+      // An enumeration's symbol from its bytes when sent, as a symbol's (#2463).
       if (type >= 20 && type <= 76) {
-        return ok(symbolLiteral(text));
+        return ok(Array.isArray(raw) ? bytesSymbol(raw) : symbolLiteral(text));
       }
       // A float or real item, sent as its float: every digit, not the
       // `\P` that `-3!` writes (#1485).
@@ -499,7 +500,11 @@ export function tableParts(payload: GridPayload, rows?: number[]): Omit<QTable, 
     part(keys, names.length);
     parts.push(")");
   } else {
-    const symbols = names.map(symbolLiteral);
+    // A name of bytes past ASCII from them, as a symbol's (#2467).
+    const symbols = names.map((n, i) => {
+      const bytes = payload.nameBytes?.[i];
+      return bytes ? bytesSymbol(bytes) : symbolLiteral(n);
+    });
     // Parenthesised: `enlist `a!x` would be `enlist (`a!x)`.
     const nameList = symbols.length === 1 ? `(enlist ${symbols[0]})` : symbols.every((s) => /^`[A-Za-z0-9_.]*$/.test(s)) ? symbols.join("") : `(${symbols.join(";")})`;
     parts.push(`${keys > 0 ? `${keys}!` : ""}flip ${nameList}!`);

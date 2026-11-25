@@ -304,6 +304,7 @@
     const agg = AGGREGATIONS.indexOf(spec.agg) >= 0 ? spec.agg : "count";
     const valueColumn = spec.value >= 0 && spec.value < grid.columns.length ? spec.value : -1;
     const numbers = valueColumn >= 0 && grid.columns[valueColumn].numeric ? grid.values[valueColumn] : null;
+    const whole = numbers !== null && [5, 6, 7].indexOf(grid.columns[valueColumn].type) >= 0;
     if (agg !== "count" && !numbers) {
       return { rows: [], columns: [], cells: [], note: "Choose a numeric column to take the " + agg + " of, or count." };
     }
@@ -356,6 +357,15 @@
         a.mean += v / a.n - a.mean / a.n;
         a.min = Math.min(a.min, v);
         a.max = Math.max(a.max, v);
+        // A short, int or long by its digits: a double past 2^53 is a
+        // number no cell holds (#2451).
+        const digits = whole ? grid.cells[valueColumn][r] : "";
+        if (whole && /^-?\d+$/.test(digits) && a.exact !== false) {
+          const b = BigInt(digits);
+          a.exact = { sum: (a.exact ? a.exact.sum : 0n) + b, min: a.exact && a.exact.min < b ? a.exact.min : b, max: a.exact && a.exact.max > b ? a.exact.max : b };
+        } else {
+          a.exact = false;
+        }
       }
     });
     const text = function (a) {
@@ -364,6 +374,9 @@
       }
       if (a.n === 0) {
         return "";
+      }
+      if (a.exact && agg !== "avg") {
+        return String(a.exact[agg === "sum" ? "sum" : agg]);
       }
       return meanText(agg === "sum" ? a.sum : agg === "avg" ? average(a.sum, a.mean, a.n) : agg === "min" ? a.min : a.max);
     };
@@ -1858,6 +1871,10 @@
       if (data.mid !== undefined) {
         summary.mid = data.mid;
         summary.spread = data.spread;
+      }
+      if (data.cut) {
+        summary.cut = true;
+        chartView.append(el("p", "note", "The process cut a list of this book at its console width (\\c): only the levels before the cut are drawn."));
       }
     } else if (state.kind === "map") {
       data = MORE.mapData(grid, rows, { size: state.mapSize, colour: state.mapColour }, theme);

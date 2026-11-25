@@ -205,15 +205,25 @@ export function wrangleQuery(base: string, steps: Step[]): string {
 }
 
 /// The steps as a script to keep: one line each, over a local `w`, in a
-/// lambda run at once so nothing is assigned on the process.
+/// lambda run at once so nothing is assigned on the process. A name
+/// assigned in a lambda is local all through it, so where the query names
+/// a `w` of its own the local is `w1`, or the first such name it does not
+/// (#2466).
 export function wrangleScript(base: string, steps: Step[], process: string): string {
-  const first = startOf(base, steps).split(/\r?\n/);
+  const start = startOf(base, steps);
+  const text = [start, ...steps.map((s) => stepCode(s, "x"))].join("\n");
+  const used = (n: string) => new RegExp(`(?<![\\w.])${n}(?![\\w])`).test(text);
+  let w = "w";
+  for (let k = 1; used(w); k++) {
+    w = `w${k}`;
+  }
+  const first = start.split(/\r?\n/);
   return [
     `/ Wrangled on ${process} by q-lint: ${steps.length} step${steps.length === 1 ? "" : "s"}`,
     "{[]",
-    `  w:${first.join("\n    ")};`,
-    ...steps.map((s) => `  w:${stepCode(s, "w")};`),
-    "  w}[]",
+    `  ${w}:${first.join("\n    ")};`,
+    ...steps.map((s) => `  ${w}:${stepCode(s, w)};`),
+    `  ${w}}[]`,
     "",
   ].join("\n");
 }

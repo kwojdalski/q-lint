@@ -30,3 +30,12 @@ test("an exported script loads every entry, whatever comment an entry starts wit
   assert.deepStrictEqual(await load("slash.q", ["hs3:3", "  /\n  hs2:1", "hs1:2"], "`hs1`hs2`hs3"), { ran: true, error: null, defined: [true, true, true] });
   assert.deepStrictEqual(await load("both.q", ["hb3:3", "\t/ one\n  /\n  / two\n  hb2:hb1", "hb1:2"], "`hb1`hb2`hb3"), { ran: true, error: null, defined: [true, true, true] });
 });
+
+test("an exported script defines an entry's names where it ran, after an entry that left a \\d set (#2383)", { skip }, async (t) => {
+  const { connection: c, dir } = await connect(t, "");
+  const file = path.join(dir, "ns.q");
+  // Newest first, as kept: the \d ran first, and q reset it after.
+  fs.writeFileSync(file, historyScript(["htotal:sum 1 2 3", "\\d .hcfg\nhlimit:10", 'system "d .hsys";hn:1'].map(entry)));
+  assert.strictEqual((await c.evaluate(`@[system;"l ${file}";{x}]`)).value, null);
+  assert.deepStrictEqual((await c.evaluate("(`htotal in key `.;`hlimit in key `.hcfg;`htotal in key `.hcfg)")).value, [true, true, false]);
+});

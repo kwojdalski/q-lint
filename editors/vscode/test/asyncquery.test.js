@@ -195,6 +195,21 @@ test("a query sent async leaves the connection free; its table, value and error 
   assert.deepStrictEqual(live.history().map((e) => [e.code, e.outcome]), [["'boom", "error"], ["1+1", "ok"], ["busy 1", "ok"]]);
 });
 
+test("with Unlimited on, an async query's grid has every row, not gridLimit's (#2367, real q)", { skip }, async (t) => {
+  const port = await freePort();
+  const q = await startQ(port);
+  t.after(() => q.stop());
+  const { live, queries, shown } = await setUp(t, [{ label: "a", host: "127.0.0.1", port, tags: [] }]);
+  stub.config.user["query.gridLimit"] = 10;
+  t.after(() => delete stub.config.user["query.gridLimit"]);
+  assert.strictEqual(await live.connectTo("a"), true);
+  await stub.commands.get("q-lint.toggleUnlimitedQuery")();
+  assert.strictEqual(live.queryUnlimited(), true);
+  await queries.run("([] a:til 30)");
+  await until(() => shown.length === 1);
+  assert.strictEqual(shown[0].cells[0].length, 30);
+});
+
 test("a write sent async to a guarded process is held for confirmation, and not sent when declined (real q)", { skip }, async (t) => {
   const port = await freePort();
   const q = await startQ(port);

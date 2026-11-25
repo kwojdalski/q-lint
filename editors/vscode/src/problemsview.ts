@@ -4,7 +4,7 @@
 // their trend over commits (`problems.ts`). Each refresh on a commit whose q
 // files are unchanged adds that commit to the trend, kept in the workspace's
 // state; **Lint Earlier Commits** adds the last ones from git. Every point
-// is of a commit exported with `git archive` and linted apart, never checked
+// is of a commit written out from an index of its own and linted apart, never checked
 // out: the commit's files, not the q files git ignores in the folder. Nothing is sent to
 // a q process. Off (q-lint.problemsDashboard.enable), the panel closes and
 // the commands refuse.

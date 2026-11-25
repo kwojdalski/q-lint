@@ -327,6 +327,55 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
 // One .qlint.held for the whole process: a second client's, or this
 // client's next, grid query replaced the result, and scrolling the first
 // grid appended the other's rows to it (#2128).
+test("rows added by Load more read symbols from their bytes, keep them for Copy as q, and sort as q sorts (#2452, #2453, #2461, #2462, #2463, #2464)", { skip }, async (t) => {
+  const { gridLambda, PAGE, readPage, readGridAnswer, appendPage, toGrid } = require("../out/grid.js");
+  const { tableLiteral } = require("../out/qliteral.js");
+  const q = await startQ(() =>
+    [
+      'sym:`$("caf\\351";"x\\377";"ok");',
+      't:([] s:`$("x\\377";"caf\\351";"a";"b");e:`sym$`sym$`$("caf\\351";"ok";"x\\377";"ok");g:(10;`a;100;2.5);c:"\\377b\\351a";l:(`$"caf\\351";1;`$("x\\377";"y");2))',
+      "",
+    ].join("\n"),
+  );
+  t.after(() => q.stop());
+  const c = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => c.abort());
+  const tok = "c".repeat(32);
+  const first = readGridAnswer(await c.call(gridLambda(false, tok), statements("t"), SIZE, 2)).grid;
+  // The first two rows' s has bytes past ASCII; the page's "a" "b" none.
+  const page = readPage(await c.call(PAGE, tok, 2, 2));
+  assert.notStrictEqual(typeof page, "string", page);
+  assert.deepStrictEqual(page.cells[1], ["x\u00ff", "ok"]);
+  const all = appendPage(first, page);
+  assert.deepStrictEqual(all.cells[0], ["x\u00ff", "caf\u00e9", "a", "b"]);
+  assert.deepStrictEqual(all.cells[1], ["caf\u00e9", "ok", "x\u00ff", "ok"]);
+  assert.deepStrictEqual(all.cells[4], ["`caf\u00e9", "1", "`x\u00ff`y", "2"]);
+  const copied = tableLiteral(all).code;
+  assert.deepStrictEqual((await c.query(statements(`(select s from t)~select s from ${copied}`), SIZE)).text, ["1b"], copied);
+  assert.deepStrictEqual((await c.query(statements(`(exec value e from t)~exec e from ${copied}`), SIZE)).text, ["1b"], copied);
+  // q's order: a general column cannot be sorted by its text, so is not
+  // ranked once paged; a char column sorts by its byte.
+  const grid = toGrid(all, -1);
+  assert.strictEqual(grid.rank[2], null);
+  const order = (r) => r.map((x, i) => [x, i]).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
+  assert.deepStrictEqual(order(grid.rank[3]), [3, 1, 2, 0]);
+});
+
+test("a column name with a byte past UTF-8 shows as its Latin-1 text, pages, and copies as q as the same name (#2467)", { skip }, async (t) => {
+  const { gridLambda, PAGE, readPage, readGridAnswer, appendPage } = require("../out/grid.js");
+  const { tableLiteral } = require("../out/qliteral.js");
+  const q = await startQ(() => 't:flip(`$("caf\\351";"caf\\303\\251";"a"))!(1 2 3 4;5 6 7 8;9 10 11 12)\n');
+  t.after(() => q.stop());
+  const c = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => c.abort());
+  const tok = "d".repeat(32);
+  const first = readGridAnswer(await c.call(gridLambda(false, tok), statements("t"), SIZE, 2)).grid;
+  assert.deepStrictEqual(first.names, ["caf\u00e9", "caf\u00e9", "a"]);
+  const all = appendPage(first, readPage(await c.call(PAGE, tok, 2, 2)));
+  const copied = tableLiteral(all).code;
+  assert.deepStrictEqual((await c.query(statements(`t~${copied}`), SIZE)).text, ["1b"], copied);
+});
+
 test("a held result is paged only by the client and the token it was held for (#2128)", { skip }, async (t) => {
   const { gridLambda, PAGE, readPage, readGridAnswer } = require("../out/grid.js");
   const q = await startQ(() => "trade:([] sym:20#`A`B; px:til 20)\n");
