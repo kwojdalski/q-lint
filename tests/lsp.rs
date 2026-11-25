@@ -1268,6 +1268,27 @@ fn a_script_loaded_under_a_context_defines_there_and_not_at_the_root() {
 }
 
 #[test]
+fn a_foreign_keyword_is_read_where_the_editors_file_is_loaded() {
+    // b.q is loaded under c.q's `\d .ns`, so its `true` is a.q's
+    // `.ns.true` - KDB-X 5 runs `.ns.g[]` to 2 - and QF015 said it throws
+    // (#2178). Loaded at the root again, in the open c.q, it does, and b.q
+    // is linted again without being touched.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.q"), ".ns.true:0b\n").unwrap();
+    std::fs::write(dir.path().join("c.q"), "\\l a.q\n\\d .ns\n\\l b.q\n").unwrap();
+    let mut server = start_with_workspace(dir.path());
+    let b = file_uri(&dir.path().join("b.q"));
+    server.open(&b, "g:{$[true;1;2]}\n");
+    let found = codes_of(&server.diagnostics_for(&b));
+    assert!(!found.contains(&"QF015".to_string()), "{found:?}");
+    let c = file_uri(&dir.path().join("c.q"));
+    server.open(&c, "\\l a.q\n\\l b.q\n");
+    let found = codes_of(&server.diagnostics_for(&b));
+    assert!(found.contains(&"QF015".to_string()), "{found:?}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn editing_one_files_definitions_relints_the_others() {
     let dir = tempfile::tempdir().unwrap();
     let mut server = start_with_workspace(dir.path());

@@ -591,6 +591,43 @@ fn a_foreign_keyword_is_looked_up_in_the_namespace_it_is_read_in() {
 }
 
 #[test]
+fn a_foreign_keyword_is_looked_up_where_the_file_is_loaded() {
+    use q_lint_rs::{Workspace, graph::Placement, index, lint_in};
+    // KDB-X 5: with lib.q's `.ns.true:0b` loaded, a loader's `\d .ns` /
+    // `\l use.q` makes `true` in use.q `.ns.true`, and `.ns.g[]` is 2. The
+    // fix to `1b` made it 1 (#2178). So for a read QF018 calls undefined.
+    let main = "g:{$[true;1;2]}\nr:vv\n";
+    let lib = ".ns.true:0b\n.ns.vv:5\n";
+    let found = |placement: Option<Placement>| {
+        let mut ws = Workspace::default();
+        ws.add(&index(lib));
+        ws.add(&index(main));
+        if let Some(placement) = placement {
+            ws.place(std::path::Path::new("use.q"), &placement);
+        }
+        let mut codes: Vec<String> = lint_in(main, "use.q", Profile::Style, &ws)
+            .into_iter()
+            .map(|f| f.code)
+            .filter(|c| c == "QF015" || c == "QF018")
+            .collect();
+        codes.sort();
+        codes
+    };
+    assert_eq!(found(None), ["QF015", "QF018"]);
+    let in_ns = Placement {
+        contexts: [".ns".to_string()].into(),
+        root: false,
+    };
+    assert_eq!(found(Some(in_ns)), Vec::<String>::new());
+    // Loaded in another context, the names are still undefined there.
+    let elsewhere = Placement {
+        contexts: [".other".to_string()].into(),
+        root: false,
+    };
+    assert_eq!(found(Some(elsewhere)), ["QF015", "QF018"]);
+}
+
+#[test]
 fn a_lambda_another_file_redefines_has_no_known_rank_in_a_lambda() {
     use q_lint_rs::{Workspace, index, lint, lint_in};
     // q 5, b.q then a.q loaded: `g[]` is 3, as a.q's `f:{x+y}` replaced

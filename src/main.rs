@@ -696,11 +696,14 @@ fn run(args: Args) -> Result<u8, String> {
     let mut indexed = std::collections::HashSet::new();
     for (((_, source), file), placed) in sources.iter().zip(&disk).zip(placed) {
         if indexed.insert(fs::canonicalize(file).unwrap_or_else(|_| file.clone())) {
-            let mut file = index(source);
+            let mut defined = index(source);
             if let Some((placement, implicit)) = placed {
-                placement.apply(&mut file, &implicit);
+                placement.apply(&mut defined, &implicit);
+                // And where it is loaded, which a rule that calls a name
+                // undefined asks about the names the file reads (#2178).
+                workspace.place(file, &placement);
             }
-            workspace.add(&file);
+            workspace.add(&defined);
         }
     }
     if args.add_noqa {

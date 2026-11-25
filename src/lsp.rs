@@ -358,6 +358,9 @@ impl Index {
             .unwrap_or_default();
         let mut placed = own.clone();
         placement.apply(&mut placed, &implicit);
+        if old.is_none() {
+            self.ws.place(Path::new(&path), &placement);
+        }
         let changed = old.as_ref().is_none_or(|old| old.placed != placed);
         if changed {
             if let Some(old) = &old {
@@ -382,9 +385,11 @@ impl Index {
 
     /// Forget `path`, leaving the placements to the caller's `settle`.
     fn forget(&mut self, path: &str) -> bool {
-        match self.files.remove(&file_key(path)) {
+        let key = file_key(path);
+        match self.files.remove(&key) {
             Some(old) => {
                 self.ws.remove(&old.placed);
+                self.ws.place(Path::new(&key), &Placement::default());
                 self.generation += 1;
                 self.reads += 1;
                 self.stale = true;
@@ -432,6 +437,7 @@ impl Index {
             // from. Only a definition moved counted, and a file that
             // defines nothing kept them stale (#2176).
             changed = true;
+            self.ws.place(Path::new(key), &placement);
             let mut placed = file.own.clone();
             placement.apply(&mut placed, &file.implicit);
             file.placement = placement;
