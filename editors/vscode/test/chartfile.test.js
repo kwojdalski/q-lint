@@ -42,6 +42,13 @@ test("a JSON file that starts with a UTF-8 byte order mark is read as a CSV with
   assert.throws(() => gridFromJson('[﻿{"t":1}]'), SyntaxError);
 });
 
+test("a JSON table's columns keep the text's order, integer-like names too, so the first is the x axis (#2449)", () => {
+  const names = (g) => g.columns.map((c) => c.name);
+  assert.deepStrictEqual(names(gridFromJson('[{"year":"y1","2024":1,"2025":2},{"year":"y2","2024":3,"2025":4}]')), ["year", "2024", "2025"]);
+  assert.deepStrictEqual(names(gridFromJson('{"region":["EU","US"],"2024":[1,3],"2025":[2,4]}')), ["region", "2024", "2025"]);
+  assert.deepStrictEqual(gridFromJson('{"region":["EU","US"],"2024":[1,3]}').cells[0], ["EU", "US"]);
+});
+
 test("JSON columns of unequal length keep every value: the short ones are padded with empty cells (#1941)", () => {
   const short = gridFromJson('{"t":[1],"b":[5,6,7]}');
   assert.strictEqual(short.total, 3);

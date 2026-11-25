@@ -26,13 +26,13 @@ function entriesOf(o: { [key: string]: Json }): [string, Json][] {
   return ENTRIES.get(o) ?? Object.entries(o);
 }
 
-function keysOf(o: { [key: string]: Json }): string[] {
+export function keysOf(o: { [key: string]: Json }): string[] {
   return entriesOf(o).map(([k]) => k);
 }
 
 /// `text`, which `JSON.parse` has read, read again with each object's keys
 /// and values recorded in order.
-function parseOrdered(text: string): Json {
+export function parseOrdered(text: string): Json {
   let at = 0;
   const space = (): void => {
     while (/\s/.test(text[at] ?? "")) {

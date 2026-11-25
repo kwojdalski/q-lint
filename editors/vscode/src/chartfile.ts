@@ -11,6 +11,7 @@
 // would need a rasterizer, and so a dependency.
 import type { Column, Grid, GridPayload } from "./grid";
 import { toGrid } from "./grid";
+import { keysOf, parseOrdered } from "./jsonq";
 import { readDelimited } from "./pastetable";
 
 // The chart code is the webviews' own, plain script; it exports itself to
@@ -70,19 +71,24 @@ const text = (v: unknown) => (v === null || v === undefined ? "" : typeof v === 
 
 /// A JSON table - an array of row objects, or an object of column arrays -
 /// as a grid. A byte order mark before it, as some tools write a UTF-8
-/// file, is not part of the JSON (#1940).
+/// file, is not part of the JSON (#1940). Columns are in the order the text
+/// names them: `Object.keys` puts integer-like names first (#2449).
 export function gridFromJson(json: string): Grid {
-  const v: unknown = JSON.parse(json.replace(/^\uFEFF/, ""));
+  const source = json.replace(/^\uFEFF/, "");
+  JSON.parse(source);
+  const v = parseOrdered(source) as unknown;
+  const keys = (o: object): string[] => [...new Set(keysOf(o as Parameters<typeof keysOf>[0]))];
   if (Array.isArray(v)) {
     const rows = v.filter((r): r is Record<string, unknown> => r !== null && typeof r === "object" && !Array.isArray(r));
     if (rows.length === 0) throw new Error("the JSON is not an array of objects");
-    const names = [...new Set(rows.flatMap((r) => Object.keys(r)))];
+    const names = [...new Set(rows.flatMap(keys))];
     // A row's own keys only: one lacking `valueOf` is an empty cell, not
     // Object.prototype's method (#1480).
     return gridOf(names, names.map((n) => rows.map((r) => text(Object.hasOwn(r, n) ? r[n] : undefined))));
   }
   if (v !== null && typeof v === "object") {
-    const cols = Object.entries(v as Record<string, unknown>).filter(([, c]) => Array.isArray(c)) as [string, unknown[]][];
+    const o = v as Record<string, unknown>;
+    const cols = keys(o).map((n): [string, unknown] => [n, o[n]]).filter(([, c]) => Array.isArray(c)) as [string, unknown[]][];
     if (cols.length === 0) throw new Error("the JSON is not an object of column arrays");
     // As long as the longest: a shorter column ends in empty cells, so no
     // value is dropped for sitting past the first column's end (#1941).
