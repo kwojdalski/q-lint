@@ -414,7 +414,7 @@ test("the attribute advisor does not take the sample for the table when the rows
   for (const [i, a] of unknown.entries()) assert.strictEqual(a.reason, counted[i].reason);
   for (const a of unknown) assert.match(a.reason, / \(in 100,000 rows sampled\)/);
   const report = adviceReport("quote", "hdb", sample(null), unknown, 6);
-  assert.match(report, /A partitioned table of an unknown number of rows; 100,000 rows sampled from its last partition/);
+  assert.match(report, /A partitioned table of an unknown number of rows; 100,000 rows sampled from its newest partition with rows/);
   assert.match(report, /\| time \|  \| s# \| 0 B \| 0 \|/);
   assert.match(report, /\| id \|  \| u# \| unknown \| 3 \|/);
   assert.match(report, /\| venue \|  \| g# \| unknown \| 2 \|/);
@@ -439,7 +439,7 @@ test("the attribute advisor's report names the kind of table as an adjective (#1
   assert.strictEqual(first("table"), "An in-memory table of 3 rows; 3 rows sampled; 0 saved and recent queries read for filters.");
   assert.strictEqual(first("keyed"), "A keyed table of 3 rows; 3 rows sampled; 0 saved and recent queries read for filters.");
   assert.strictEqual(first("splayed"), "A splayed table of 3 rows; 3 rows sampled; 0 saved and recent queries read for filters.");
-  assert.strictEqual(first("partitioned"), "A partitioned table of 3 rows; 3 rows sampled from its last partition; 0 saved and recent queries read for filters.");
+  assert.strictEqual(first("partitioned"), "A partitioned table of 3 rows; 3 rows sampled from its newest partition with rows; 0 saved and recent queries read for filters.");
   // A kind this does not know is still a table, said once.
   assert.strictEqual(first(""), "A table of 3 rows; 3 rows sampled; 0 saved and recent queries read for filters.");
   assert.strictEqual(first("odd_kind", null), "A table of an unknown number of rows; 3 rows sampled; 0 saved and recent queries read for filters.");

@@ -697,6 +697,25 @@ test("the attribute advisor samples a table's columns without changing it", { sk
 
 // A table one partition lacks cannot be counted: its sample is advised on as
 // a sample, and a u# is not costed from the sample's rows (#1979).
+// An EOD that wrote no rows leaves the newest partition empty: the sample is
+// the newest one with rows, not none (#2144).
+test("the attribute advisor samples the newest partition that has rows (#2144)", { skip }, async (t) => {
+  const { connection } = await connect(t, [
+    'r:hsym`$"$DIR/e";',
+    "{[r;d;n] .Q.dd[r;d,`trade`] set .Q.en[r] ([] sym:`s#n#`a`a`b`b`c`c;px:n#1 2 3f;sz:n#10 20 30)}[r]'[2026.04.01 2026.04.02 2026.04.03 2026.04.06;6 6 5 0];",
+    "\\l $DIR/e",
+    "",
+  ].join("\n"));
+  const p = readAttributeSample(await connection.call(ATTRIBUTE_SAMPLE, "trade", 100000));
+  assert.deepStrictEqual([p.kind, p.rows, p.sampled, p.partitions], ["partitioned", 17, 5, 4]);
+  assert.deepStrictEqual(p.columns.map((c) => [c.name, c.attr, c.distinct, c.sorted]), [["sym", "s", 3, true], ["px", "", 3, false], ["sz", "", 3, false]]);
+  // Under a view of the empty one alone, that is what there is to sample.
+  await connection.call("{.Q.view 2026.04.06}", 0);
+  assert.strictEqual(readAttributeSample(await connection.call(ATTRIBUTE_SAMPLE, "trade", 100000)).sampled, 0);
+  await connection.call("{.Q.view 2026.04.01 2026.04.02}", 0);
+  assert.strictEqual(readAttributeSample(await connection.call(ATTRIBUTE_SAMPLE, "trade", 100000)).sampled, 6);
+});
+
 test("the attribute advisor does not cost a table it could not count from its sample (#1979)", { skip }, async (t) => {
   const { connection } = await connect(t, HDB("{[r;d] .Q.dd[r;d,`late`] set .Q.en[r] ([] sym:`a`b`c`d;qid:40 10 30 20;bid:1 2 3 4f)}[r] each 2026.01.05 2026.01.07;"));
   const s = readAttributeSample(await connection.call(ATTRIBUTE_SAMPLE, "late", 100000));
