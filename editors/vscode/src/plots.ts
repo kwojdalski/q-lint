@@ -113,15 +113,25 @@ export const PLOTS = new PlotStore();
 /// label's text ("status online=1") is escaped data, not a handler. The
 /// tags are read with their quoted values whole, since a value may hold a
 /// `>`: `<image x=">" onerror="..."/>` is refused (#1738), and an
-/// unclosed quote holds the rest.
+/// unclosed quote holds the rest. A handler may have space before its `=`,
+/// and `<set>` or `<animate>` may write one: both are refused (#2450).
 export function plainSvg(svg: unknown): svg is string {
   return (
     typeof svg === "string" &&
     svg.length < 20_000_000 &&
     svg.startsWith('<svg xmlns="http://www.w3.org/2000/svg"') &&
     svg.trimEnd().endsWith("</svg>") &&
-    !/<script|<foreignObject|\son[a-z]+=|javascript:|href=/i.test((svg.match(/<(?:[^>"']|"[^"]*"?|'[^']*'?)*>?/g) ?? []).join(""))
+    !/<script|<foreignObject|<set\b|<animate|\son[a-z]+\s*=|javascript:|href\s*=/i.test(decodeReferences((svg.match(/<(?:[^>"']|"[^"]*"?|'[^']*'?)*>?/g) ?? []).join("")))
   );
+}
+
+/// Markup with its character references read, so `jav&#x61;script:` is
+/// looked for as the browser reads it (#2450).
+function decodeReferences(markup: string): string {
+  return markup.replace(/&#(x[0-9a-f]+|\d+);?/gi, (_, n: string) => {
+    const code = n[0].toLowerCase() === "x" ? parseInt(n.slice(1), 16) : parseInt(n, 10);
+    return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : "";
+  });
 }
 
 /// A file name for a plot: its kind and when it was drawn.

@@ -53,6 +53,13 @@ test("only chartSvg's plain SVG is kept: no script, handler or link", () => {
   }
 });
 
+test("a handler with space before its =, a scheme in character references and a <set> writing a handler are refused (#2450)", () => {
+  for (const bad of ['<rect onload ="alert(1)"/>', '<a xlink:href\n="x"><text>x</text></a>', '<a b="jav&#x61;script:alert(1)"/>', '<a b="jav&#97;script:x"/>', '<set attributeName="onmouseover" to="alert(1)"/>', '<animate attributeName="href" to="x"/>']) {
+    assert.strictEqual(plainSvg(svg(bad)), false, bad);
+  }
+  assert.strictEqual(plainSvg(svg("<text>a &#38; b = c</text>")), true);
+});
+
 test("a label that reads like a handler or link is text, and the plot is kept (#1475)", () => {
   for (const label of ["status online=1", "see href=x", "javascript: tips"]) {
     assert.strictEqual(plainSvg(svg(`<text x="1">${label}</text>`)), true, label);
