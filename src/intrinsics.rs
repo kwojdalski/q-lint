@@ -378,7 +378,10 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
     const LITERAL: &str = r#"(?:-?\.?\d[A-Za-z0-9.:]*(?:[ \t]+-?\.?\d[A-Za-z0-9.:]*)*)|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*""#;
     // So is `.` given a one-item list: `til . enlist 2.5` and
     // `.[til;enlist 2.5]` (q 5: 'type, #617).
-    for (pattern, name_group, arg_group) in [
+    // Each compiled once, not for every file (#2350).
+    static COMPILED: [std::sync::OnceLock<regex::Regex>; 4] =
+        [const { std::sync::OnceLock::new() }; 4];
+    for (k, (pattern, name_group, arg_group)) in [
         (format!(r"\b({BUILTINS})[ \t]*@[ \t]*({LITERAL})"), 1, 2),
         (
             format!(r"@\[[ \t]*({BUILTINS})[ \t]*;[ \t]*({LITERAL})[ \t]*\]"),
@@ -395,8 +398,12 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
             1,
             2,
         ),
-    ] {
-        for call in regex::Regex::new(&pattern).unwrap().captures_iter(comments) {
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let compiled = COMPILED[k].get_or_init(|| regex::Regex::new(&pattern).unwrap());
+        for call in compiled.captures_iter(comments) {
             let whole = call.get(0).unwrap();
             let name = call.get(name_group).unwrap();
             if !boundary(code, whole.start()) || code.get(name.range()) != Some(name.as_str()) {
@@ -516,6 +523,10 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     // 'rank - `ij[a;b;c]`, `ssr[a;b;c;d]`, `.Q.dd[a;b;c]` (#2246). The
     // most it takes is the catalogue's, which `tests/help.rs` holds to q's.
     // A column-0 `[1;2;3]` under `keyjoin:lj` is a statement of its own (#742).
+    // Whether the file assigns a name, asked once a name: asked for each
+    // call, it compiled a pattern and searched the file every time (#2339).
+    // The names are the catalogue's, so the answers are few.
+    let mut assigns: std::collections::HashMap<&str, bool> = std::collections::HashMap::new();
     for m in re!(concat!(
         r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)",
         blank!(),
@@ -524,14 +535,15 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
-        let name = &m[1];
+        let name = m.get(1).unwrap().as_str();
         let Some(arity) = most_arguments(name) else {
             continue;
         };
         if BUILTINS.split('|').any(|b| b == name)
             || !boundary(code, whole.start())
             || redefined(name, whole.start())
-            || (name.starts_with('.') && assigned(code, name))
+            || (name.starts_with('.')
+                && *assigns.entry(name).or_insert_with(|| assigned(code, name)))
         {
             continue;
         }

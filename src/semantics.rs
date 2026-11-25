@@ -976,6 +976,9 @@ pub fn tokens(
             None => ws.is_lambda(&name),
         }
     };
+    // Each line's start from one table of newlines, not a search back from
+    // each name, which was quadratic on a long line (#2347).
+    let newlines: Vec<usize> = code.match_indices('\n').map(|(at, _)| at).collect();
     let mut out = vec![];
     for m in name.find_iter(code) {
         if !boundary(code, m.start())
@@ -987,7 +990,10 @@ pub fn tokens(
         }
         // A system command's argument is no q: `\l f/a.q` names a file,
         // whatever lambda `f` is (#553).
-        let line = code[..m.start()].rfind('\n').map_or(0, |p| p + 1);
+        let line = match newlines.partition_point(|&p| p < m.start()) {
+            0 => 0,
+            n => newlines[n - 1] + 1,
+        };
         if crate::system_command(&raw[line..]) {
             continue;
         }
@@ -2078,7 +2084,11 @@ pub(crate) enum Unnamed {
 }
 
 /// Where `opaque` finds each write it cannot name, and of what kind.
-pub(crate) fn unnamed_writes(code: &str, comments: &str, raw: &str) -> Vec<(usize, Unnamed)> {
+pub(crate) fn unnamed_writes<'c>(
+    code: &str,
+    comments: &'c str,
+    raw: &str,
+) -> Vec<(usize, Unnamed)> {
     let mut found: Vec<(usize, Unnamed)> = load_lines(code, raw)
         .filter(|(_, rest)| !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_'))
         .map(|(at, _)| (at, Unnamed::Evaluation))
@@ -2111,15 +2121,17 @@ pub(crate) fn unnamed_writes(code: &str, comments: &str, raw: &str) -> Vec<(usiz
         // closing one or an each: in `(get'') " -> " vs/:x` the string is
         // not what `get` is given.
         let skip = re!(r"^(?:[\s\[(@;]|\b(?:each|peach|enlist|raze)\b)*");
-        let arg = |text: &'_ str| text[skip.find(text).map_or(0, |p| p.end())..].to_string();
+        // Slices, not copies: `rest` runs to the end of the file, and a copy
+        // of it for each `system` was quadratic in them (#2341).
+        let arg = |text: &'c str| -> &'c str { &text[skip.find(text).map_or(0, |p| p.end())..] };
         let statement = &rest[..rest.find([';', '\n']).unwrap_or(rest.len())];
         // The string literal the argument is, or the name holding one.
-        let literal = |a: &str| -> Option<String> {
+        let literal = |a: &'c str| -> Option<&'c str> {
             if let Some(text) = a.strip_prefix('"') {
-                return Some(text.to_string());
+                return Some(text);
             }
             let n = re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*").find(a)?;
-            strings.get(n.as_str()).map(|s| s.to_string())
+            strings.get(n.as_str()).copied()
         };
         let name = |a: &str| {
             re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*")
@@ -2132,7 +2144,7 @@ pub(crate) fn unnamed_writes(code: &str, comments: &str, raw: &str) -> Vec<(usiz
             // no literal after it - `system$[WIN;"del ";"rm "],f`, `@[system;
             // cmd;h]` - so only a command that visibly starts with `l` or `d`
             // counts: written so, or held in a name bound to such a literal.
-            "system" => literal(&arg(rest)).and_then(|command| {
+            "system" => literal(arg(rest)).and_then(|command| {
                 // A literal `system "d .a"` starting its line switches as
                 // `\d .a` does, and `opens` reads it so: q 5 runs it, then
                 // `f:{x+1}`, `g:{f[`a]}`, and `.a.g[]` is 'type (#535).
@@ -2140,21 +2152,21 @@ pub(crate) fn unnamed_writes(code: &str, comments: &str, raw: &str) -> Vec<(usiz
                 let end = code[m.start()..]
                     .find('\n')
                     .map_or(code.len(), |i| m.start() + i);
-                if re!(r"^d\b").is_match(&command)
+                if re!(r"^d\b").is_match(command)
                     && start == m.start()
                     && opens(&code[start..end], &raw[start..end]).is_some()
                 {
                     None
-                } else if re!(r"^d\b").is_match(&command) {
+                } else if re!(r"^d\b").is_match(command) {
                     Some(Unnamed::Context)
                 } else {
                     re!(r"^l\b")
-                        .is_match(&command)
+                        .is_match(command)
                         .then_some(Unnamed::Evaluation)
                 }
             }),
             "value" => {
-                (statement.contains('"') || name(&arg(statement))).then_some(Unnamed::Evaluation)
+                (statement.contains('"') || name(arg(statement))).then_some(Unnamed::Evaluation)
             }
             // `get` of a string whole, written so or bound to a name: not
             // one built by joining, `get[".ns.",n,".predict"]`, which names
@@ -2163,9 +2175,9 @@ pub(crate) fn unnamed_writes(code: &str, comments: &str, raw: &str) -> Vec<(usiz
             _ => {
                 let a = arg(statement);
                 let whole = re!(r#"^"((?:[^"\\]|\\.)*)"\s*(?:[;)\]}]|$)"#)
-                    .captures(&a)
+                    .captures(a)
                     .is_some_and(|c| !c[1].starts_with('\\') || re!(r"^\\[ld]\b").is_match(&c[1]));
-                (whole || name(&a)).then_some(Unnamed::Evaluation)
+                (whole || name(a)).then_some(Unnamed::Evaluation)
             }
         };
         if let Some(kind) = write {
@@ -4141,17 +4153,51 @@ fn named_values(
             }))
             .collect()
     };
-    let in_literal = |at: usize| {
-        literals.iter().any(|&(open, header, close)| {
-            open < at && at < close && {
-                let depth = depth[at] - depth[open + 1];
-                (depth == 0 || (depth == 1 && at < header))
-                    && matches!(
-                        code[..at].trim_end().as_bytes().last(),
-                        Some(b'[' | b']' | b';')
-                    )
+    let opens_column = |at: usize, &(open, header, close): &(usize, usize, usize)| {
+        open < at && at < close && {
+            let depth = depth[at] - depth[open + 1];
+            (depth == 0 || (depth == 1 && at < header))
+                && matches!(
+                    code[..at].trim_end().as_bytes().last(),
+                    Some(b'[' | b']' | b';')
+                )
+        }
+    };
+    // The literals are in order of their `(`, and nest or stand apart: the
+    // ones around an offset are the last to open before it and the literals
+    // around that one, so each assignment climbs those instead of asking
+    // every literal in the file, which was quadratic (#2343). `None` if two
+    // overlapped without nesting, when every one is asked.
+    let parents: Option<Vec<Option<usize>>> = {
+        let mut parents = Vec::with_capacity(literals.len());
+        let mut open: Vec<usize> = vec![];
+        let mut nested = true;
+        for (i, &(start, _, close)) in literals.iter().enumerate() {
+            while open.last().is_some_and(|&j| literals[j].2 <= start) {
+                open.pop();
             }
-        })
+            if open.last().is_some_and(|&j| close > literals[j].2) {
+                nested = false;
+            }
+            parents.push(open.last().copied());
+            open.push(i);
+        }
+        nested.then_some(parents)
+    };
+    let in_literal = |at: usize| match &parents {
+        Some(parents) => {
+            let mut next = literals
+                .partition_point(|&(open, _, _)| open < at)
+                .checked_sub(1);
+            while let Some(i) = next {
+                if opens_column(at, &literals[i]) {
+                    return true;
+                }
+                next = parents[i];
+            }
+            false
+        }
+        None => literals.iter().any(|literal| opens_column(at, literal)),
     };
     for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*(?:\[[^\]]*\])?\s*[-+*%,&|^#_!~=<>$?@.]?::?")
         .captures_iter(code)
@@ -4281,6 +4327,7 @@ fn named_values(
             .filter(|&(i, _)| i > 0)
             .any(|(i, _)| exact.contains_key(&name[..i]) || upserted.contains(&name[..i]))
     };
+    let stops = std::cell::OnceCell::new();
     for (name, at) in exact.iter().filter(|_| !dynamic) {
         let name = name.as_str();
         // One write, or later ones that only index into it at the top level:
@@ -4310,25 +4357,16 @@ fn named_values(
         };
         let start = at + m.get(2).unwrap().start();
         // The value runs to the end of the statement: a top-level `;`, or a
-        // newline the next line does not continue.
-        let mut end = start;
-        let mut depth = 0i32;
-        let bytes = code.as_bytes();
-        while end < bytes.len() {
-            match bytes[end] {
-                b'(' | b'[' | b'{' => depth += 1,
-                b')' | b']' | b'}' => {
-                    if depth == 0 {
-                        break;
-                    }
-                    depth -= 1
-                }
-                b';' if depth == 0 => break,
-                b'\n' if depth == 0 && !code[end + 1..].starts_with([' ', '\t']) => break,
-                _ => {}
-            }
-            end += 1;
-        }
+        // newline the next line does not continue - or the bracket that
+        // closes around it. That is the first such stop at the depth the
+        // value starts at, looked up in `stops`: a scan from each value was
+        // quadratic in a wide select's columns (#2346).
+        let (depth, stops) = stops.get_or_init(|| value_stops(code));
+        let end = stops
+            .get(&depth[start])
+            .and_then(|at| at.get(at.partition_point(|&p| p < start)))
+            .copied()
+            .unwrap_or(code.len());
         if let Some(value) = held(&code[start..end], &comments[start..end])
             // An indexed write into anything but an atom may change it:
             // `d[`c]:3` adds a key.
@@ -4619,7 +4657,7 @@ fn named_values(
     let vector = r"-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?[A-Za-z0-9.]*)+|(?:`[A-Za-z0-9_.]*){2,}|\([^()]*;[^()]*\)";
     // The statement's blanks around the operator: `bump:v+` and then a
     // column-0 `1 2` are two statements (#742).
-    let pair = regex::Regex::new(&format!(
+    let pair = re_built!(&format!(
         concat!(
             r"(?P<l>{name_re}|{vector})",
             blank!(),
@@ -4629,8 +4667,7 @@ fn named_values(
         ),
         name_re = name_re,
         vector = vector
-    ))
-    .unwrap();
+    ));
     let length = |text: &str, at: usize| -> Option<usize> {
         if re!(r"^\.?[A-Za-z]").is_match(text) {
             match visible(text, at)? {
@@ -4693,7 +4730,7 @@ fn named_values(
     let operand = r#""(?:\\.|[^"\\])*"|[01]+b|0x[0-9a-fA-F]+|(?:-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?[ \t]+)*-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?e\b|-?0[NW][hij]?\b|-?\d+[hij]?(?:[ \t]+-?\d+[hij]?)*|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*"#;
     // The statement's blanks around the operator: `inc:x+` and then a
     // column-0 `"done"` are two statements (#741).
-    let infix = regex::Regex::new(&format!(
+    let infix = re_built!(&format!(
         concat!(
             r"(?P<l>{operand})",
             blank!(),
@@ -4702,8 +4739,7 @@ fn named_values(
             r"*(?P<r>{operand})"
         ),
         operand = operand
-    ))
-    .unwrap();
+    ));
     let kind_of = |text: &str, at: usize| -> Option<Arithmetic> {
         // `.5e` is a number, `.ns.a` a name (#587).
         if text.starts_with(char::is_alphabetic) || re!(r"^\.[A-Za-z]").is_match(text) {
@@ -5153,7 +5189,7 @@ fn named_values(
     let row = r"\(|-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+";
     // Infix, the row is in the same statement: `add:`t insert` and then a
     // column-0 `(1;2;3)` are two statements (#743).
-    let forms = regex::Regex::new(&format!(
+    let forms = re_built!(&format!(
         concat!(
             r"`(?P<a>{name})",
             blank!(),
@@ -5167,8 +5203,7 @@ fn named_values(
         ),
         name = name,
         row = row
-    ))
-    .unwrap();
+    ));
     let dictionary = re!(r"^\(?\s*(?:`[A-Za-z][A-Za-z0-9_.]*)+\s*\)?\s*!");
     let dictionaries: HashSet<&str> = re!(
         r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*:\s*\(?\s*(?:`[A-Za-z][A-Za-z0-9_.]*)+\s*\)?\s*!"
@@ -5401,6 +5436,9 @@ pub(crate) fn char_column_comparisons(code: &str, comments: &str) -> Vec<usize> 
     // only on its name: worked out once per name, not once per where phrase,
     // which rescanned the file for each and was quadratic in them (#1206).
     let mut known: HashMap<&str, Vec<(regex::Regex, usize, usize, usize)>> = HashMap::new();
+    // Every name's places, found once: a search of the file for each table
+    // was quadratic in tables (#2342).
+    let runs = std::cell::OnceCell::new();
     for (start, end, table) in qsql_phrases(code) {
         let Some((t, e)) = table else {
             continue;
@@ -5409,9 +5447,9 @@ pub(crate) fn char_column_comparisons(code: &str, comments: &str) -> Vec<usize> 
             continue;
         }
         let name = &code[t..e];
-        let patterns = known
-            .entry(name)
-            .or_insert_with(|| char_column_patterns(code, comments, name));
+        let patterns = known.entry(name).or_insert_with(|| {
+            char_column_patterns(code, comments, name, runs.get_or_init(|| name_runs(code)))
+        });
         let end = end.min(code.len());
         for (pattern, op, chars, n) in patterns.iter() {
             for m in pattern.captures_iter(&comments[start..end]) {
@@ -5425,6 +5463,57 @@ pub(crate) fn char_column_comparisons(code: &str, comments: &str) -> Vec<usize> 
     out
 }
 
+/// For finding where a statement's value ends: the bracket depth before each
+/// offset of `code`, and at each depth, in order, the offsets that end a
+/// value begun at that depth - a closing bracket, a `;`, and a newline the
+/// next line does not continue. Scanning from a value's start, the first
+/// of these at its own depth is where the scan stops: any bracket opened
+/// on the way closes before it, and one closed that it did not open is
+/// itself the stop.
+fn value_stops(code: &str) -> (Vec<i32>, HashMap<i32, Vec<usize>>) {
+    let bytes = code.as_bytes();
+    let mut depth = Vec::with_capacity(bytes.len() + 1);
+    let mut stops: HashMap<i32, Vec<usize>> = HashMap::new();
+    let mut d = 0i32;
+    for (i, &b) in bytes.iter().enumerate() {
+        depth.push(d);
+        match b {
+            b'(' | b'[' | b'{' => d += 1,
+            b')' | b']' | b'}' => {
+                stops.entry(d).or_default().push(i);
+                d -= 1;
+            }
+            b';' => stops.entry(d).or_default().push(i),
+            b'\n' if !code[i + 1..].starts_with([' ', '\t']) => stops.entry(d).or_default().push(i),
+            _ => {}
+        }
+    }
+    depth.push(d);
+    (depth, stops)
+}
+
+/// Each maximal run of name characters in `code` - alphanumerics, `_` and
+/// `.` - by its text, with where it stands, in order.
+fn name_runs(code: &str) -> HashMap<&str, Vec<(usize, usize)>> {
+    let mut out: HashMap<&str, Vec<(usize, usize)>> = HashMap::new();
+    let mut start = None;
+    for (i, c) in code.char_indices() {
+        let named = c.is_alphanumeric() || c == '_' || c == '.';
+        match (named, start) {
+            (true, None) => start = Some(i),
+            (false, Some(s)) => {
+                out.entry(&code[s..i]).or_default().push((s, i));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(s) = start {
+        out.entry(&code[s..]).or_default().push((s, code.len()));
+    }
+    out
+}
+
 /// For `char_column_comparisons`: the patterns that compare a char column of
 /// the table `name` with a string, each with the group of its operator, the
 /// group of its string and the column's width. Empty where the file does not
@@ -5433,31 +5522,38 @@ fn char_column_patterns(
     code: &str,
     comments: &str,
     name: &str,
+    runs: &HashMap<&str, Vec<(usize, usize)>>,
 ) -> Vec<(regex::Regex, usize, usize, usize)> {
     let mut out = vec![];
-    let whole = |m: &regex::Match| {
-        !code[..m.start()].ends_with(|c: char| c.is_alphanumeric() || "_.".contains(c))
-            && !code[m.end()..].starts_with(|c: char| c.is_alphanumeric() || "_.".contains(c))
+    let named = |c: char| c.is_alphanumeric() || "_.".contains(c);
+    let whole = |&(start, end): &(usize, usize)| {
+        !code[..start].ends_with(named) && !code[end..].starts_with(named)
     };
-    let uses: Vec<regex::Match> = regex::Regex::new(&regex::escape(name))
-        .unwrap()
-        .find_iter(code)
-        .filter(whole)
-        .collect();
-    let writes: Vec<&regex::Match> = uses
+    // A name of name characters stands whole exactly where a run of them is
+    // the name; any other is searched for.
+    let uses: Vec<(usize, usize)> = if !name.is_empty() && name.chars().all(named) {
+        runs.get(name).cloned().unwrap_or_default()
+    } else {
+        regex::Regex::new(&regex::escape(name))
+            .unwrap()
+            .find_iter(code)
+            .map(|m| (m.start(), m.end()))
+            .filter(whole)
+            .collect()
+    };
+    let writes: Vec<&(usize, usize)> = uses
         .iter()
-        .filter(|m| {
-            code[..m.start()].ends_with('`')
-                || re!(r"^\s*(?:[,\[]|:(?:[^:]|$))").is_match(&code[m.end()..])
+        .filter(|&&(start, end)| {
+            code[..start].ends_with('`') || re!(r"^\s*(?:[,\[]|:(?:[^:]|$))").is_match(&code[end..])
         })
         .collect();
-    let [only] = writes[..] else {
+    let [&(only_start, only_end)] = writes[..] else {
         return out;
     };
-    if only.start() != 0 && !code[..only.start()].ends_with('\n') {
+    if only_start != 0 && !code[..only_start].ends_with('\n') {
         return out;
     }
-    let value = crate::past_blanks(code, only.end() + 1);
+    let value = crate::past_blanks(code, only_end + 1);
     let Some(inner) = re!(r"^\(\s*\[\s*\]").find(&code[value..]) else {
         return out;
     };

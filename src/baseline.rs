@@ -34,14 +34,24 @@ pub struct Baseline {
     counts: HashMap<(String, String, String), usize>,
 }
 
-/// The text a finding is matched on: its line, blanks trimmed.
-pub(crate) fn line_text(source: &str, line: usize) -> String {
-    source
-        .lines()
-        .nth(line.saturating_sub(1))
-        .unwrap_or("")
-        .trim()
-        .to_string()
+/// A source split into lines once, for the text each finding is matched on:
+/// a walk from the top for each finding was quadratic in them (#2338).
+pub(crate) struct SourceLines<'a>(Vec<&'a str>);
+
+impl<'a> SourceLines<'a> {
+    pub(crate) fn new(source: &'a str) -> Self {
+        SourceLines(source.lines().collect())
+    }
+
+    /// The text a finding is matched on: its line, blanks trimmed.
+    pub(crate) fn text(&self, line: usize) -> String {
+        self.0
+            .get(line.saturating_sub(1))
+            .copied()
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    }
 }
 
 /// `path` relative to `root`, with `/`; as it is where it is not under it.
@@ -123,9 +133,10 @@ impl Baseline {
         let mut order: Vec<usize> = (0..findings.len()).collect();
         order.sort_by_key(|&i| (findings[i].line, findings[i].column));
         let mut keep = vec![true; findings.len()];
+        let lines = SourceLines::new(source);
         for i in order {
             let f = &findings[i];
-            let text = line_text(source, f.line);
+            let text = lines.text(f.line);
             let known = self
                 .counts
                 .get(&(rel.clone(), f.code.clone(), text.clone()))
@@ -151,17 +162,18 @@ pub fn render(file: &Path, findings: &[Finding], sources: &[(String, String)]) -
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_default();
-    let text_of: HashMap<&str, &str> = sources
+    let text_of: HashMap<&str, SourceLines> = sources
         .iter()
-        .map(|(p, s)| (p.as_str(), s.as_str()))
+        .map(|(p, s)| (p.as_str(), SourceLines::new(s)))
         .collect();
     let mut counts: BTreeMap<(String, String, String), usize> = BTreeMap::new();
     for f in findings {
-        let source = text_of.get(f.path.as_str()).copied().unwrap_or("");
         let key = (
             key_path(&root, Path::new(&f.path)),
             f.code.clone(),
-            line_text(source, f.line),
+            text_of
+                .get(f.path.as_str())
+                .map_or_else(String::new, |lines| lines.text(f.line)),
         );
         *counts.entry(key).or_insert(0) += 1;
     }

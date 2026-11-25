@@ -92,9 +92,9 @@ fn level(severity: &str) -> &'static str {
 /// ordinal of findings sharing that key after it: like a baseline entry it
 /// survives lines moving above it and changes when its own line does.
 pub fn sarif(findings: &[Finding], sources: &[(String, String)], cwd: &Path) -> Value {
-    let text_of: HashMap<&str, &str> = sources
+    let text_of: HashMap<&str, baseline::SourceLines> = sources
         .iter()
-        .map(|(p, s)| (p.as_str(), s.as_str()))
+        .map(|(p, s)| (p.as_str(), baseline::SourceLines::new(s)))
         .collect();
     // Every code a result names, in code order, each with its index.
     let mut codes: BTreeMap<&str, &Finding> = BTreeMap::new();
@@ -126,12 +126,10 @@ pub fn sarif(findings: &[Finding], sources: &[(String, String)], cwd: &Path) -> 
         .iter()
         .map(|f| {
             let path = shown(cwd, &f.path);
-            let source = text_of.get(f.path.as_str()).copied().unwrap_or("");
-            let key = format!(
-                "{path}\0{}\0{}",
-                f.code,
-                baseline::line_text(source, f.line)
-            );
+            let text = text_of
+                .get(f.path.as_str())
+                .map_or_else(String::new, |lines| lines.text(f.line));
+            let key = format!("{path}\0{}\0{text}", f.code);
             let hash = fnv1a(&key);
             let n = seen.entry(hash).or_insert(0);
             *n += 1;
@@ -267,6 +265,48 @@ mod tests {
             code: "QS001".into(),
             category: "style".into(),
         }
+    }
+
+    #[test]
+    fn sarif_and_baselines_are_linear_in_findings() {
+        // Each finding's line text was found by walking its file from the
+        // top, for SARIF's fingerprints, --write-baseline and --baseline
+        // alike: 9 s for 40,000 findings (#2338).
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("b.json");
+        let path = dir.path().join("a.q").to_string_lossy().into_owned();
+        let time = |n: usize| {
+            let source: String = (0..n).map(|i| format!("a{i}:\"x\"=`y\n")).collect();
+            let findings: Vec<Finding> = (1..=n)
+                .map(|line| Finding {
+                    line,
+                    ..finding(&path, "d")
+                })
+                .collect();
+            let sources = vec![(path.clone(), source.clone())];
+            std::fs::write(&file, baseline::render(&file, &findings, &sources)).unwrap();
+            let known = baseline::Baseline::read(&file).unwrap();
+            let mut all = findings.clone();
+            assert_eq!(known.filter(&path, &source, &mut all), n);
+            (0..3)
+                .map(|_| {
+                    let started = std::time::Instant::now();
+                    std::hint::black_box(sarif(&findings, &sources, dir.path()));
+                    std::hint::black_box(baseline::render(&file, &findings, &sources));
+                    known.filter(&path, &source, &mut findings.clone());
+                    started.elapsed()
+                })
+                .min()
+                .unwrap()
+        };
+        time(1000); // warm the allocator
+        let (small, large) = (time(1000), time(8000));
+        // Quadratic is 64 times; linear is 8. 16 still fails a quadratic
+        // walk by four times.
+        assert!(
+            large < small * 16,
+            "1000 findings took {small:?} and 8000 {large:?}"
+        );
     }
 
     #[test]

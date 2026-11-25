@@ -161,8 +161,8 @@ use crate::jsonrpc::{INVALID_REQUEST, Malformed, receive, send};
 use q_lint_rs::graph::Placement;
 use q_lint_rs::{
     FileIndex, Finding, Fix, References, TokenKind, Workspace, balanced, broken_statement,
-    file_suppression_for, fix_all, fix_for, fix_lines, folds, functional_to_qsql, organise_loads,
-    qsql_layout_at, qsql_layouts, qsql_to_functional, rule_url, semantic_tokens_in,
+    file_suppression_for, fix_all, fix_lines, fixes_each, folds, functional_to_qsql,
+    organise_loads, qsql_layout_at, qsql_layouts, qsql_to_functional, rule_url, semantic_tokens_in,
     suppressions_for, whole_edit,
 };
 use serde_json::{Value, json};
@@ -2826,17 +2826,40 @@ fn quick_fixes(
     // client turned them off: here a person sees each edit and accepts it or
     // not.
     let lines = Lines::new(source);
+    // The client's diagnostics by where they start, so each finding is
+    // compared with those at its own position, first first: a scan of them
+    // all for each finding was quadratic on a whole-file selection (#2337).
+    // One whose start is not a pair of numbers is compared with every one.
+    let mut by_start: HashMap<(u64, u64), Vec<usize>> = HashMap::new();
+    let mut elsewhere: Vec<usize> = vec![];
+    for (i, d) in context.iter().enumerate() {
+        let start = &d["range"]["start"];
+        match (start["line"].as_u64(), start["character"].as_u64()) {
+            (Some(line), Some(character)) => by_start.entry((line, character)).or_default().push(i),
+            _ => elsewhere.push(i),
+        }
+    }
     let asked_about: Vec<(Finding, &Value)> = policy
         .lint(source, &path, ws)
         .unwrap_or_default()
         .into_iter()
         .filter_map(|finding| {
             let current = diagnostic(&finding, &lines);
-            let client_diagnostic = context.iter().find(|d| {
-                d["code"] == current["code"]
-                    && d["range"]["start"] == current["range"]["start"]
-                    && d["message"] == current["message"]
-            })?;
+            let start = &current["range"]["start"];
+            let key = (start["line"].as_u64()?, start["character"].as_u64()?);
+            let at = by_start.get(&key).map_or(&[][..], Vec::as_slice);
+            let client_diagnostic = at
+                .iter()
+                .chain(&elsewhere)
+                .copied()
+                .filter(|&i| {
+                    let d = &context[i];
+                    d["code"] == current["code"]
+                        && d["range"]["start"] == current["range"]["start"]
+                        && d["message"] == current["message"]
+                })
+                .min()
+                .map(|i| &context[i])?;
             Some((finding, client_diagnostic))
         })
         .collect();
@@ -2847,8 +2870,14 @@ fn quick_fixes(
     } else {
         asked_about.iter().map(|_| None).collect()
     };
+    let fixes = fixes_each(asked_about.iter().map(|(finding, _)| finding), source);
+    // Where each suppression edit is in `suppressions`, by the edit: a scan
+    // of them all for each was quadratic in a selection's findings.
+    let mut suppression_at: HashMap<String, usize> = HashMap::new();
     let mut in_file: Vec<(String, Option<Value>)> = vec![];
-    for ((finding, client_diagnostic), suppression) in asked_about.iter().zip(accepted) {
+    for (((finding, client_diagnostic), suppression), fix) in
+        asked_about.iter().zip(accepted).zip(fixes)
+    {
         // The edit's range comes from the fix, not from the diagnostic. The
         // two coincide for an operator swapped in place, but `f x` becomes
         // `f[x]` by replacing the whole application while the diagnostic
@@ -2870,21 +2899,19 @@ fn quick_fixes(
                 "edit": {"changes": changes},
             })
         };
-        actions.extend(
-            fix_for(finding, source)
-                .filter(|f| f.batch_safe || unsafe_fixes)
-                .map(action),
-        );
+        actions.extend(fix.filter(|f| f.batch_safe || unsafe_fixes).map(action));
         if let Some(suppression) = suppression.map(action) {
-            match suppressions
-                .iter_mut()
-                .find(|s| s["edit"] == suppression["edit"])
-            {
-                Some(same) => same["diagnostics"]
-                    .as_array_mut()
-                    .expect("made above")
-                    .push((*client_diagnostic).clone()),
-                None => suppressions.push(suppression),
+            match suppression_at.entry(suppression["edit"].to_string()) {
+                std::collections::hash_map::Entry::Occupied(at) => {
+                    suppressions[*at.get()]["diagnostics"]
+                        .as_array_mut()
+                        .expect("made above")
+                        .push((*client_diagnostic).clone())
+                }
+                std::collections::hash_map::Entry::Vacant(at) => {
+                    at.insert(suppressions.len());
+                    suppressions.push(suppression);
+                }
             }
         }
         // One edit a code, and each asked for once: it masks the file.
@@ -4310,6 +4337,63 @@ mod tests {
         assert_eq!(
             (&replies[2]["id"], &replies[2]["result"]),
             (&json!(3), &Value::Null)
+        );
+    }
+
+    #[test]
+    fn code_actions_for_a_whole_file_are_linear_in_its_findings() {
+        // Select All asks for the code actions of every diagnostic at once.
+        // Each finding was matched against every diagnostic the client sent,
+        // and each masked the file again for its suppression and its fix:
+        // 22 s for 8000 stale noqa comments (#2335, #2337).
+        let policy = Policy::new(
+            crate::config::Overrides {
+                profile: None,
+                default_profile: "style",
+                layer: Layer::default(),
+                exclude: vec![],
+                config: None,
+                isolated: true,
+                target: None,
+                baseline: None,
+                no_baseline: false,
+            },
+            true,
+        );
+        let uri = "file:///t/a.q".to_string();
+        let ws = Workspace::default();
+        let time = |n: usize| {
+            let source: String = (0..n).map(|i| format!("v{i}:1 / noqa: QS001\n")).collect();
+            let lines = Lines::new(&source);
+            let found = policy.lint(&source, "/t/a.q", &ws).unwrap();
+            assert_eq!(found.len(), n);
+            let diagnostics: Vec<Value> = found.iter().map(|f| diagnostic(f, &lines)).collect();
+            let params = json!({
+                "textDocument": {"uri": uri},
+                "range": {"start": {"line": 0, "character": 0},
+                          "end": {"line": n, "character": 0}},
+                "context": {"diagnostics": diagnostics},
+            });
+            let mut docs = Documents::new();
+            docs.insert(uri.clone(), source);
+            let ask = || quick_fixes(&params, &docs, &ws, &policy, true, true);
+            assert_eq!(ask().len(), 2 * n + 1);
+            (0..3)
+                .map(|_| {
+                    let started = std::time::Instant::now();
+                    std::hint::black_box(ask());
+                    started.elapsed()
+                })
+                .min()
+                .unwrap()
+        };
+        time(250); // warm the allocator and the regex caches
+        let (small, large) = (time(250), time(2000));
+        // Quadratic is 64 times; linear is 8. 16 still fails a quadratic
+        // walk by four times.
+        assert!(
+            large < small * 16,
+            "250 findings took {small:?} and 2000 {large:?}"
         );
     }
 

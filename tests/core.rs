@@ -1747,3 +1747,260 @@ fn typed_locals_and_version_rules_lint_in_bounded_time() {
         "500 statements took {small:?} and 4000 took {large:?}"
     );
 }
+/// Accepting each of a file's findings where it is - `--add-noqa`, and an
+/// editor's Select All asking for the code actions of every finding - masked
+/// a copy of the whole file again for each, and so did the fix of each stale
+/// `noqa` (QL003), which `--fix`, `--diff` and Format Document ask for:
+/// quadratic in the findings, 22 s for 8000 in an editor (#2335).
+#[test]
+fn accepting_or_fixing_every_finding_is_linear() {
+    let accept = |n: usize| {
+        let source: String = (0..n).map(|i| format!("r{i}:a*b+{i};\n")).collect();
+        let found = lint(&source, "t.q", Profile::Uqf);
+        let accepted = q_lint_rs::suppressions_for(&found, &source);
+        assert!(accepted.iter().flatten().count() >= n);
+        best_of_three(|| q_lint_rs::suppressions_for(&found, &source))
+    };
+    accept(1000); // warm the allocator and the regex caches
+    let (small, large) = (accept(1000), accept(8000));
+    eprintln!("accepting 1000 findings took {small:?} and 8000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "accepting 1000 findings took {small:?} and 8000 {large:?}"
+    );
+    let fix = |n: usize| {
+        let source: String = (0..n)
+            .map(|i| format!("g{i}:{{[a] a}} / noqa: QF016\n"))
+            .collect();
+        let found = lint(&source, "t.q", Profile::Uqf);
+        let fixes = q_lint_rs::fixes_for(&found, &source);
+        assert_eq!(fixes.iter().filter(|f| f.replacement.is_empty()).count(), n);
+        best_of_three(|| q_lint_rs::fixes_for(&found, &source))
+    };
+    fix(1000);
+    let (small, large) = (fix(1000), fix(8000));
+    eprintln!("fixing 1000 stale noqa took {small:?} and 8000 {large:?}");
+    assert!(
+        large < small * 16,
+        "fixing 1000 stale noqa took {small:?} and 8000 {large:?}"
+    );
+}
+/// About thirteen patterns built from constants were compiled again on every
+/// lint: 2.4 ms before a file's first byte was read, 90% of the time to lint
+/// a small one, paid per file by a pre-commit run and per open document by
+/// the language server (#2350). Linting a line as a file of its own should
+/// cost about what the same line costs inside a larger file.
+#[test]
+fn a_small_file_pays_no_compilation_of_its_own() {
+    let line = "f:{[a;b] a+b};\n";
+    let many = line.repeat(400);
+    let time = || {
+        let one = best_of_three(|| {
+            for _ in 0..400 {
+                std::hint::black_box(lint(line, "t.q", Profile::Uqf));
+            }
+        });
+        let together = best_of_three(|| lint(&many, "t.q", Profile::Uqf));
+        (one, together)
+    };
+    time(); // warm the allocator and the regex caches
+    let (apart, together) = time();
+    eprintln!("400 one-line files took {apart:?} and one of 400 lines {together:?}");
+    // Compiling per lint made 400 files about 100 times one of 400 lines in
+    // a debug build (8.4 s and 85 ms); without it they are about twice.
+    assert!(
+        apart < together * 16,
+        "400 one-line files took {apart:?} and one of 400 lines {together:?}"
+    );
+}
+/// One long line of statements, generated or minified q: QF004's check of
+/// each assignment inside an expression asked whether it began a statement
+/// by walking every statement on the line, quadratic in them (#2344). Empty
+/// statements are statements too, and cheap to make many of.
+#[test]
+fn a_line_of_many_statements_lints_in_bounded_time() {
+    let time = |n: usize| {
+        let source = (0..n)
+            .map(|i| format!("a{i}:b:c:d:e:f:g:h;;;;;;;;;;"))
+            .collect::<String>()
+            + "\n";
+        best_of_three(|| lint(&source, "t.q", Profile::General))
+    };
+    time(2500); // warm the allocator and the regex caches
+    let (small, large) = (time(2500), time(20000));
+    eprintln!("a line of 2500 statements took {small:?} and of 20000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "a line of 2500 statements took {small:?} and of 20000 {large:?}"
+    );
+}
+/// `--fix`, `--diff` and Format Document over a file with a fix on every
+/// line: each QP005 fix found its statement among all the file's, each fix
+/// copied the rest of the file, and each edit was spliced into the whole
+/// text and its lines counted from the top - quadratic in fixes (#2336).
+/// Timed with the findings linted once, so only the fixing is measured.
+#[test]
+fn fixing_every_line_is_linear() {
+    let time = |n: usize| {
+        let source: String = (0..n).map(|i| format!("r{i}:a*b+{i};\n")).collect();
+        let found = lint(&source, "t.q", Profile::Uqf);
+        // The findings of the source, and none once it has changed.
+        let lint = |s: &str| Ok::<_, ()>(if s == source { found.clone() } else { vec![] });
+        let fixed = q_lint_rs::fix_all(&source, false, lint).unwrap();
+        assert_eq!(fixed.first.len(), n);
+        let changed = q_lint_rs::fix_lines(&source, &[(1, n)], lint).unwrap();
+        assert_eq!(changed.text, fixed.text);
+        best_of_three(|| {
+            q_lint_rs::fix_all(&source, false, lint).unwrap();
+            q_lint_rs::fix_lines(&source, &[(1, n)], lint).unwrap();
+        })
+    };
+    time(1000); // warm the allocator and the regex caches
+    let (small, large) = (time(1000), time(8000));
+    eprintln!("fixing 1000 lines took {small:?} and 8000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "fixing 1000 lines took {small:?} and 8000 {large:?}"
+    );
+}
+/// Every bracket call of a `.Q`, `.h` or `.j` function, correct ones too,
+/// asked whether the file assigns the name by compiling a pattern for it and
+/// searching the whole file: quadratic in such calls (#2339).
+#[test]
+fn many_calls_of_a_dotted_builtin_lint_in_bounded_time() {
+    let time = |n: usize| {
+        let source: String = (0..n)
+            .map(|i| format!("p{i}:.Q.dd[hdb;`t{i}];\n"))
+            .collect();
+        best_of_three(|| lint(&source, "t.q", Profile::Uqf))
+    };
+    time(1000); // warm the allocator and the regex caches
+    let (small, large) = (time(1000), time(8000));
+    eprintln!("1000 calls of .Q.dd took {small:?} and 8000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "1000 calls of .Q.dd took {small:?} and 8000 {large:?}"
+    );
+}
+/// Many `\d` blocks: rank tracking found the namespace in force at each
+/// definition by scanning back over every switch, quadratic in them (#2340).
+/// Ten switches a definition, so the scan is most of the time.
+#[test]
+fn many_namespace_switches_lint_in_bounded_time() {
+    let time = |n: usize| {
+        let block = |i: usize| format!("\\d .n{i}\n{}f:{{x}}\n\\d .\n", "\\d .m\n".repeat(9));
+        let source: String = (0..n).map(block).collect();
+        best_of_three(|| lint(&source, "t.q", Profile::Uqf))
+    };
+    time(1000); // warm the allocator and the regex caches
+    let (small, large) = (time(1000), time(8000));
+    eprintln!("1000 namespace blocks took {small:?} and 8000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "1000 namespace blocks took {small:?} and 8000 {large:?}"
+    );
+}
+/// Many table literals each compared on a char column: the check for those
+/// comparisons searched the whole file for each table's name, quadratic in
+/// tables (#2342).
+#[test]
+fn many_table_literals_with_char_columns_lint_in_bounded_time() {
+    let time = |n: usize| {
+        let source: String = (0..n)
+            .map(|i| format!("t{i}:([] c:(\"ab\";\"cd\"));select from t{i} where c=\"ab\";\n"))
+            .collect();
+        best_of_three(|| q_lint_rs::lint_every_rule(&source, "t.q", &Workspace::default(), true))
+    };
+    time(1000); // warm the allocator and the regex caches
+    let (small, large) = (time(1000), time(8000));
+    eprintln!("1000 table literals took {small:?} and 8000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "1000 table literals took {small:?} and 8000 {large:?}"
+    );
+}
+/// A select of many columns on one line: each column's assignment scanned
+/// on to the end of the statement for the value it holds, so a wide select
+/// was quadratic in its columns (#2346). Blanks between the columns make
+/// that scan longer without adding names for every other rule to read.
+#[test]
+fn a_wide_select_lints_in_bounded_time() {
+    let time = |n: usize| {
+        let columns: Vec<String> = (0..n).map(|i| format!("c{i}:x{i}")).collect();
+        let source = format!(
+            "a:select {} from t\n",
+            columns.join(&format!("{},", " ".repeat(40)))
+        );
+        best_of_three(|| lint(&source, "t.q", Profile::General))
+    };
+    time(1000); // warm the allocator and the regex caches
+    let (small, large) = (time(1000), time(8000));
+    eprintln!("a select of 1000 columns took {small:?} and of 8000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "a select of 1000 columns took {small:?} and of 8000 {large:?}"
+    );
+}
+/// Navigation and semantic tokens on one long line: whether each name sat on
+/// a system command's line was asked by searching back to the line's start,
+/// so hover, definition, references, symbols and semantic tokens were
+/// quadratic in the line's length (#2347).
+#[test]
+fn navigation_over_one_long_line_is_linear() {
+    let time = |n: usize| {
+        let calls: Vec<String> = (0..n).map(|i| format!("f[{i}]")).collect();
+        let source = format!("f:{{x}};r:{}\n", calls.join("+"));
+        assert!(q_lint_rs::mentions(&source).len() > n);
+        best_of_three(|| {
+            std::hint::black_box(q_lint_rs::mentions(&source));
+            q_lint_rs::semantic_tokens_in(
+                &source,
+                &Workspace::default(),
+                &q_lint_rs::graph::Placement::default(),
+            )
+        })
+    };
+    time(2500); // warm the allocator and the regex caches
+    let (small, large) = (time(2500), time(20000));
+    eprintln!("a line of 2500 calls took {small:?} and of 20000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "a line of 2500 calls took {small:?} and of 20000 {large:?}"
+    );
+}
+/// Navigation over many lambdas without a parameter list: each one's
+/// parameters were read from its scope, found by walking every scope in the
+/// file, so mentions - references, rename, the call hierarchy, code lenses
+/// - were quadratic in such lambdas (#2348).
+#[test]
+fn navigation_over_many_implicit_lambdas_is_linear() {
+    let time = |n: usize| {
+        let source: String = (0..n).map(|i| format!("f{i}:{{x}}\n")).collect();
+        best_of_three(|| q_lint_rs::mentions(&source))
+    };
+    time(4000); // warm the allocator and the regex caches
+    let (small, large) = (time(4000), time(32000));
+    eprintln!("4000 lambdas took {small:?} and 32000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "4000 lambdas took {small:?} and 32000 {large:?}"
+    );
+}
