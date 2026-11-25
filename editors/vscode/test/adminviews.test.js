@@ -269,7 +269,11 @@ test("turned off while asked, closing a handle, setting \\t and toggling a timer
   ]) {
     turn(key, true);
     assert.strictEqual(await live.connectTo(process), true);
-    await sleep(30);
+    // Connecting starts each shown view's read of the process; refresh()
+    // hands back that read while it is in flight, so this waits for it to
+    // be answered rather than for a fixed 30 ms, after which a read on a
+    // loaded machine was sometimes still to come and was taken for a change.
+    await Promise.all([ADMIN_VIEWS.clients, ADMIN_VIEWS.timers].map((id) => viewOf(id).refresh()));
     const before = q.sent.length;
     stub.messages = [];
     const { picks = [], inputs = [] } = answers(key);

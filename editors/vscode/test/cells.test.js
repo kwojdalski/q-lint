@@ -297,11 +297,17 @@ test("a blank line in a multi-line string is part of the string, as q reads it (
 test("replScript reads a long script once: twice the lines take about twice the time, not four times (#1858)", () => {
   const block = ['f:{[x;y]', '  a:x+y; / a comment (', '  b:"a string with { and \\" in it";', '  c:(1 2', '   3 4);', '  a*b}', '/', 'a block ( comment', '\\', 'g:f[1;2]', 's:"two', 'lines"'];
   const script = (n) => Array.from({ length: n }, (_, i) => block[i % block.length]).join("\n");
+  // Best of three: one garbage collection or a busy machine during a single
+  // run can make one size look slow with the code unchanged.
   const time = (n) => {
     const text = script(n);
-    const t = process.hrtime.bigint();
-    replScript(text);
-    return Number(process.hrtime.bigint() - t) / 1e6;
+    return Math.min(
+      ...[0, 1, 2].map(() => {
+        const t = process.hrtime.bigint();
+        replScript(text);
+        return Number(process.hrtime.bigint() - t) / 1e6;
+      }),
+    );
   };
   time(2000);
   const small = time(20_000);

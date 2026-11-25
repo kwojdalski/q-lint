@@ -344,7 +344,8 @@ test(".qlint.view: a call opens its value in the grid while the switch is on; of
   assert.ok(await live.connectTo("dev"));
   assert.strictEqual(view.listening(), true);
   await live.run(".qlint.view t");
-  await sleep(20);
+  // Until it is shown, not a fixed 20 ms a loaded machine can outrun.
+  for (const end = Date.now() + 10_000; view.shown().length === 0 && Date.now() < end; ) await sleep(10);
   assert.deepStrictEqual(view.shown(), [{ kind: "view", process: "dev", rows: 2 }]);
   stub.config.user["view.enable"] = false;
   stub.changeConfig("q-lint.view.enable");
@@ -384,7 +385,8 @@ test("defined on connect only while q-lint.view.defineOnConnect is on, and never
 test("defined on connect to a process the guard lets through", async (t) => {
   const { q, live } = await setUp(t, { config: { "view.defineOnConnect": true } });
   assert.ok(await live.connectTo("dev"));
-  for (let i = 0; i < 50 && q.queries.length === 0; i++) await sleep(10);
+  // Until it is sent, with a deadline a loaded machine cannot outrun (it was 0.5 s).
+  for (const end = Date.now() + 10_000; q.queries.length === 0 && Date.now() < end; ) await sleep(10);
   assert.strictEqual(q.queries.length, 1);
   assert.match(q.queries[0], /^\.qlint\.grid:/);
 });

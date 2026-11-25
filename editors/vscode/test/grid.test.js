@@ -695,15 +695,16 @@ test("adding a page to many held rows costs far less than ranking them all again
   };
   let grid = appendPage({ ...page(0, 0) }, page(0, held));
   const next = page(held, 5_000);
-  let t = process.hrtime.bigint();
-  for (let k = 0; k < 3; k++) {
-    grid = appendPage(grid, next);
-  }
-  const append = Number(process.hrtime.bigint() - t) / 3;
+  // Each the best of three: one garbage collection or a busy machine during
+  // a single run can make either look slow with the code unchanged.
+  const timed = (f) => {
+    const t = process.hrtime.bigint();
+    f();
+    return Number(process.hrtime.bigint() - t);
+  };
+  const append = Math.min(...[0, 1, 2].map(() => timed(() => (grid = appendPage(grid, next)))));
   const s = grid.cells[1];
-  t = process.hrtime.bigint();
-  denseRank(s.length, (a, b) => codePointOrder(s[a], s[b]));
-  const all = Number(process.hrtime.bigint() - t);
+  const all = Math.min(...[0, 1, 2].map(() => timed(() => denseRank(s.length, (a, b) => codePointOrder(s[a], s[b])))));
   // Before, one page re-ranked both columns (about 2 x all).
   assert.ok(append < all / 2, `append ${append / 1e6} ms vs one full ranking ${all / 1e6} ms`);
 });

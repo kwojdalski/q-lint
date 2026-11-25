@@ -18,6 +18,14 @@ const { Launcher } = require("../out/launcherview.js");
 
 const Q = process.env.QLINT_TEST_Q;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Waits until `ready()` holds, failing past a deadline: generous, as a
+// process started on a loaded machine took longer than the 5 s the waits
+// here once gave it, after which a test went on as though it had started.
+async function until(ready, what, ms = 20_000) {
+  for (const end = Date.now() + ms; !(await ready()); await sleep(50)) {
+    if (Date.now() > end) throw new Error(`not ${what} in ${ms / 1000} s`);
+  }
+}
 const proc = (label, port, launch, extra = {}) => ({ label, host: "127.0.0.1", port, tags: [], ...(launch ? { launch } : {}), ...extra });
 
 test("a process defined on a loopback host listens on the loopback only, not on every interface (#1671)", () => {
@@ -219,13 +227,13 @@ test("Start Process starts the definition, shows its output, and Stop Process en
   const port = await freePort();
   const { live, launcher, output } = await setUp(t, [proc("fake", port, { command: process.execPath, script: "fake.js", cwd: dir, env: { A: "x" } }), proc("bare", port), proc("dup", port, { command: process.execPath, script: "fake.js", cwd: dir })]);
   await stub.commands.get(LAUNCH_COMMANDS.start)("fake");
-  for (let i = 0; i < 100 && !(await accepts(port)); i++) await sleep(50);
+  await until(() => accepts(port), "listening on port");
   assert.ok(await accepts(port));
   const [running] = launcher.running();
   assert.deepStrictEqual([running.label, running.port], ["fake", port]);
   assert.match(stub.messages.at(-1)[1], new RegExp(`^q-lint: started fake \\(pid \\d+\\) on port ${port}\\.$`));
   assert.ok(live.launched("fake"));
-  for (let i = 0; i < 50 && !output("fake").includes("listening"); i++) await sleep(20);
+  await until(() => output("fake").includes("listening"), "listening in fake's output");
   const realDir = fs.realpathSync(dir);
   assert.match(output("fake"), new RegExp(`^\\$ .*node.* ${path.join(dir, "fake.js").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} -p 127\\.0\\.0\\.1:${port}    \\(in .*\\)\\nlistening on ${port} in (${dir}|${realDir}) A=x\\n`));
   // Started twice: said, not started.
@@ -241,7 +249,7 @@ test("Start Process starts the definition, shows its output, and Stop Process en
   await stub.commands.get(LAUNCH_COMMANDS.stop)();
   assert.deepStrictEqual(launcher.running(), []);
   assert.strictEqual(await accepts(port), false);
-  for (let i = 0; i < 50 && !output("fake").includes("ended"); i++) await sleep(20);
+  await until(() => output("fake").includes("ended"), "ended in fake's output");
   assert.match(output("fake"), /bye\n\[fake ended: exit code 0\]\n$/);
   // A process not started from here is not stopped from here.
   await stub.commands.get(LAUNCH_COMMANDS.stop)("bare");
@@ -254,13 +262,13 @@ test("Start Process run twice at once starts one process (#1249)", async (t) => 
   const port = await freePort();
   const { launcher, output, dispose } = await setUp(t, [proc("fake", port, { command: process.execPath, script: "fake.js", cwd: dir })]);
   await Promise.all([stub.commands.get(LAUNCH_COMMANDS.start)("fake"), stub.commands.get(LAUNCH_COMMANDS.start)("fake")]);
-  for (let i = 0; i < 100 && !(await accepts(port)); i++) await sleep(50);
+  await until(() => accepts(port), "listening on port");
   assert.strictEqual(launcher.running().length, 1);
   assert.ok(stub.messages.some((m) => m[1] === "q-lint: fake is already running from here."), JSON.stringify(stub.messages));
   // One command line in its output: the second was never spawned.
   assert.strictEqual(output("fake").split("\n").filter((l) => l.startsWith("$ ")).length, 1);
   dispose();
-  for (let i = 0; i < 100 && (await accepts(port)); i++) await sleep(50);
+  await until(async () => !(await accepts(port)), "stopped listening on port");
   assert.strictEqual(await accepts(port), false);
 });
 
@@ -270,10 +278,10 @@ test("what was started is stopped when VS Code closes, and when the launcher is 
   const [a, b] = [await freePort(), await freePort()];
   const { launcher, dispose } = await setUp(t, [proc("a", a, { command: process.execPath, script: "fake.js", cwd: dir }), proc("b", b, { command: process.execPath, script: "fake.js", cwd: dir })]);
   await stub.commands.get(LAUNCH_COMMANDS.start)("a");
-  for (let i = 0; i < 100 && !(await accepts(a)); i++) await sleep(50);
+  await until(() => accepts(a), "listening on a");
   stub.config.user["processes.launcher.enable"] = false;
   stub.changeConfig("q-lint.processes.launcher.enable");
-  for (let i = 0; i < 100 && (await accepts(a)); i++) await sleep(50);
+  await until(async () => !(await accepts(a)), "stopped listening on a");
   assert.strictEqual(await accepts(a), false);
   // Off: Start refuses and starts nothing.
   stub.messages = [];
@@ -288,9 +296,9 @@ test("what was started is stopped when VS Code closes, and when the launcher is 
   // On again; closing VS Code stops it.
   stub.config.user["processes.launcher.enable"] = true;
   await stub.commands.get(LAUNCH_COMMANDS.start)("b");
-  for (let i = 0; i < 100 && !(await accepts(b)); i++) await sleep(50);
+  await until(() => accepts(b), "listening on b");
   dispose();
-  for (let i = 0; i < 100 && (await accepts(b)); i++) await sleep(50);
+  await until(async () => !(await accepts(b)), "stopped listening on b");
   assert.strictEqual(await accepts(b), false);
 });
 
@@ -300,18 +308,18 @@ test("turned off, or VS Code closing, the launcher's output channels go too (#14
   const [a, b] = [await freePort(), await freePort()];
   const { closed, dispose, output } = await setUp(t, [proc("a", a, { command: process.execPath, script: "fake.js", cwd: dir }), proc("b", b, { command: process.execPath, script: "fake.js", cwd: dir })]);
   await stub.commands.get(LAUNCH_COMMANDS.start)("a");
-  for (let i = 0; i < 100 && !(await accepts(a)); i++) await sleep(50);
+  await until(() => accepts(a), "listening on a");
   stub.config.user["processes.launcher.enable"] = false;
   stub.changeConfig("q-lint.processes.launcher.enable");
-  for (let i = 0; i < 100 && !closed.has("q: a"); i++) await sleep(50);
+  await until(() => closed.has("q: a"), "q: a closed");
   assert.ok(closed.has("q: a"));
   // It ended before its channel went: its end is in it.
   assert.match(output("a"), /\[a ended: /);
   stub.config.user["processes.launcher.enable"] = true;
   await stub.commands.get(LAUNCH_COMMANDS.start)("b");
-  for (let i = 0; i < 100 && !(await accepts(b)); i++) await sleep(50);
+  await until(() => accepts(b), "listening on b");
   dispose();
-  for (let i = 0; i < 100 && !closed.has("q: b"); i++) await sleep(50);
+  await until(() => closed.has("q: b"), "q: b closed");
   assert.ok(closed.has("q: b"));
 });
 
@@ -384,7 +392,7 @@ test("a real q process is started, connected to, and stopped", { skip: Q ? false
   }
   const { live, launcher, output } = await setUp(t, [proc("q", port, { command: words[0], script: "server.q", cwd: dir, ...(words.length > 1 ? { args: words.slice(1) } : {}), env })]);
   await stub.commands.get(LAUNCH_COMMANDS.start)("q");
-  for (let i = 0; i < 100 && !(await accepts(port)); i++) await sleep(100);
+  await until(() => accepts(port), "listening on port");
   assert.ok(await accepts(port), output("q"));
   // Still running with no stdin: q does not take its end for an exit.
   await sleep(500);
@@ -394,7 +402,7 @@ test("a real q process is started, connected to, and stopped", { skip: Q ? false
   assert.deepStrictEqual((await live.borrow((c) => c.query(["answer"], [10, 80]))).text, ["42"]);
   await stub.commands.get(LAUNCH_COMMANDS.stop)("q");
   assert.strictEqual(await accepts(port), false);
-  for (let i = 0; i < 50 && live.activeLabel() !== undefined; i++) await sleep(20);
+  await until(() => live.activeLabel() === undefined, "disconnected");
   assert.strictEqual(live.activeLabel(), undefined);
 });
 
@@ -414,7 +422,7 @@ test("Stop Process ends what a wrapper script started too, and frees its port (#
   const port = await freePort();
   const { launcher } = await setUp(t, [proc("w", port, { command: path.join(dir, "wrap.sh"), script: "fake.js", cwd: dir })]);
   await stub.commands.get(LAUNCH_COMMANDS.start)("w");
-  for (let i = 0; i < 100 && !(await accepts(port)); i++) await sleep(50);
+  await until(() => accepts(port), "listening on port");
   assert.ok(await accepts(port));
   const stopped = stub.commands.get(LAUNCH_COMMANDS.stop)("w").then(() => true);
   assert.strictEqual(await Promise.race([stopped, sleep(5000).then(() => false)]), true);
@@ -430,7 +438,7 @@ test("Stop Process ends what a wrapper left running after it exited (#1744)", { 
   const port = await freePort();
   const { launcher } = await setUp(t, [proc("bg", port, { command: path.join(dir, "bg.sh"), script: "fake.js", cwd: dir })]);
   await stub.commands.get(LAUNCH_COMMANDS.start)("bg");
-  for (let i = 0; i < 100 && !(await accepts(port)); i++) await sleep(50);
+  await until(() => accepts(port), "listening on port");
   assert.ok(await accepts(port));
   const stopped = stub.commands.get(LAUNCH_COMMANDS.stop)("bg").then(() => true);
   assert.strictEqual(await Promise.race([stopped, sleep(8000).then(() => false)]), true);
@@ -459,7 +467,7 @@ test("a process started here and then renamed is still running and stopped under
   const port = await freePort();
   const { live, launcher } = await setUp(t, [proc("rdb", port, { command: process.execPath, script: "fake.js", cwd: dir })]);
   await stub.commands.get(LAUNCH_COMMANDS.start)("rdb");
-  for (let i = 0; i < 100 && !(await accepts(port)); i++) await sleep(50);
+  await until(() => accepts(port), "listening on port");
   stub.inputs = ["rdb1", "127.0.0.1", String(port), "", ""];
   stub.picks = ["No"];
   await stub.commands.get("q-lint.editProcess")("rdb");
@@ -482,7 +490,7 @@ test("Stop Process on the connected process disconnects it: nothing reconnects t
   const { live } = await setUp(t, [proc("dev", port, { command: process.execPath, script: "fakeq.js", cwd: dir })]);
   stub.config.user["connection.autoReconnect.enable"] = true;
   await stub.commands.get(LAUNCH_COMMANDS.start)("dev");
-  for (let i = 0; i < 100 && !(await accepts(port)); i++) await sleep(50);
+  await until(() => accepts(port), "listening on port");
   assert.strictEqual(await live.connectTo("dev"), true);
   const said = stub.messages.length;
   await stub.commands.get(LAUNCH_COMMANDS.stop)("dev");
