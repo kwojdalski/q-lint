@@ -11,7 +11,7 @@ const path = require("node:path");
 const net = require("node:net");
 const { spawn } = require("node:child_process");
 const pkg = require("../package.json");
-const { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, readGateway, symbols } = require("../out/gateway.js");
+const { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, joined, readGateway, symbols } = require("../out/gateway.js");
 const { qString } = require("../out/qliteral.js");
 const { givenServerTypes, parseProcesses, serverTypes } = require("../out/processes.js");
 const { Live } = require("../out/live.js");
@@ -20,14 +20,16 @@ const Q = process.env.QLINT_TEST_Q;
 const skip = Q ? false : "QLINT_TEST_Q names no q binary";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-test("a query is a q string, several statements a lambda over their strings", () => {
+test("a query is a q string, several statements one string joined on `;` lines (#2492, #2591)", () => {
   assert.strictEqual(qString('a:"x\\y"\n\tb'), '"a:\\"x\\\\y\\"\\n\\tb"');
   assert.strictEqual(qString("1"), 'enlist "1"');
   assert.strictEqual(qString("\x01é"), '"\\001é"');
   assert.strictEqual(symbols(["rdb"]), "enlist `rdb");
   assert.strictEqual(symbols(["rdb", "hdb"]), "`rdb`hdb");
   assert.strictEqual(gatewayStatement(["select from trade"], ["rdb", "hdb"]), '.gw.syncexec["select from trade";`rdb`hdb]');
-  assert.strictEqual(gatewayStatement(["n:1 / one", "n+1"], ["hdb"]), '.gw.syncexec[({last value each x};("n:1 / one";"n+1"));enlist `hdb]');
+  assert.strictEqual(gatewayStatement(["n:1 / one", "n+1"], ["hdb"]), '.gw.syncexec["n:1 / one\\n ;n+1";enlist `hdb]');
+  // A system command cannot be followed on its line, so it is `system`.
+  assert.strictEqual(joined(["\\d .x", "f:{x+\n 1}", "f 1"]), 'system "d .x"\n ;f:{x+\n 1}\n ;f 1');
   assert.ok(isGatewayCall('.gw.syncexec["1";`rdb]'));
   assert.ok(!isGatewayCall("select from trade"));
   // TorQ's typed and timed variants are gateway calls too (#1427).
@@ -100,15 +102,26 @@ async function startQ(t, body) {
 }
 
 /// An rdb, an hdb and a gateway over them, as TorQ's: `.gw.syncexec` runs
-/// the query on a server of each type and razes what they answer.
-async function torq(t) {
-  const rdb = await startQ(t, "trade:([] sym:`a`b; px:1 2f)\n");
-  const hdb = await startQ(t, "trade:([] sym:`c`d`e; px:3 4 5f)\n");
+/// the query on a server of each type and razes what they answer. As
+/// TorQ's on kdb+ 3.6 and later (`syncexecjt`, `processes/gateway.q`), it
+/// defers its reply with `-30!(::)` and sends the joined result, or the
+/// error, from a timer with `-30!(handle;error;result)`: whatever the
+/// message that called it would have answered is discarded (#2584). Each
+/// server gets the query as TorQ sends it, `value`d - through `.pm.valp`
+/// where the server defines one, as TorQ's read-only mode does (#2591).
+/// `servers` adds code to the rdb and the hdb.
+async function torq(t, servers = "") {
+  const rdb = await startQ(t, `trade:([] sym:\`a\`b; px:1 2f)\n${servers}\n`);
+  const hdb = await startQ(t, `trade:([] sym:\`c\`d\`e; px:3 4 5f)\n${servers}\n`);
   const gw = await startQ(
     t,
     [
       `.gw.h:\`rdb\`hdb!(hopen \`::${rdb};hopen \`::${hdb})`,
-      ".gw.syncexec:{[query;servertypes] servertypes,:(); if[count m:servertypes except key .gw.h; '\"not all of the requested server types are available: \",\",\" sv string m]; raze .gw.h[servertypes]@\\:query}",
+      ".gw.run:{[query;servertypes] servertypes,:(); if[count m:servertypes except key .gw.h; '\"not all of the requested server types are available: \",\",\" sv string m]; raze .gw.h[servertypes]@\\:({$[`.pm.valp~key`.pm.valp;.pm.valp x;value x]};query)}",
+      ".gw.replies:()",
+      ".gw.syncexec:{[query;servertypes] -30!(::); .gw.replies,:enlist (.z.w;@[{(0b;.gw.run . x)};(query;servertypes);{(1b;x)}]); }",
+      ".z.ts:{r:.gw.replies; .gw.replies:(); {-30!(x 0;x[1]0;x[1]1)} each r}",
+      "\\t 5",
       "",
     ].join("\n"),
   );
@@ -169,7 +182,7 @@ test("a query to a TorQ gateway goes through .gw.syncexec to the server types as
   assert.strictEqual(live.history()[0].outcome, "ok");
 });
 
-test("several statements go to each server as one lambda over their strings", { skip }, async (t) => {
+test("several statements go to each server as one string", { skip }, async (t) => {
   const gw = await torq(t);
   const { live, lines } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb", "hdb"] }]);
   assert.strictEqual(await live.connectTo("gw"), true);
@@ -177,7 +190,23 @@ test("several statements go to each server as one lambda over their strings", { 
   await live.run("n:count trade / rows\nn*10");
   // Each server's last value, joined: 2 rows on the rdb, 3 on the hdb.
   assert.deepStrictEqual(lines.slice(1), ["20 30"]);
-  assert.deepStrictEqual(live.history()[0], { ...live.history()[0], code: '.gw.syncexec[({last value each x};("n:count trade / rows";"n*10"));`rdb`hdb]', outcome: "ok" });
+  assert.deepStrictEqual(live.history()[0], { ...live.history()[0], code: '.gw.syncexec["n:count trade / rows\\n ;n*10";`rdb`hdb]', outcome: "ok" });
+});
+
+// TorQ's read-only mode runs each query as `reval parse x`, which refuses
+// anything but a string with 'type (#2591); a direct connection promises
+// nothing of q-lint's is sent, a lambda neither (#2492).
+test("several statements reach a read-only TorQ server as one string, on a direct connection too (#2492, #2591)", { skip }, async (t) => {
+  const gw = await torq(t, ".pm.valp:{reval parse x}");
+  for (const evaluation of [undefined, "direct"]) {
+    const { live, lines } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb", "hdb"], ...(evaluation ? { evaluation } : {}) }]);
+    assert.strictEqual(await live.connectTo("gw"), true);
+    lines.length = 0;
+    await live.run("count trade / rows first\nexec max px from trade");
+    assert.deepStrictEqual([live.history()[0].outcome, lines.slice(1)], ["ok", ["2 5f"]], String(evaluation));
+    assert.strictEqual(live.history()[0].code, '.gw.syncexec["count trade / rows first\\n ;exec max px from trade";`rdb`hdb]');
+    await stub.commands.get("q-lint.disconnectProcess")?.();
+  }
 });
 
 test("a query run apart - a dashboard tile, a scheduled export, Query a Tag - goes through the gateway too (#1230)", { skip }, async (t) => {

@@ -110,11 +110,12 @@ test("an unguarded process is sent the plain lambda", async (t) => {
   assert.deepStrictEqual(q.queries(), [["RUN", "select from trade"]]);
 });
 
-test("a TorQ gateway is sent the plain lambda: .gw.syncexec changes the gateway itself", async (t) => {
+test("a TorQ gateway is sent its .gw.syncexec call as a plain string, without reval: it changes the gateway itself (#2584)", async (t) => {
   const { q, live, query } = await setUp(t, ["prod"], undefined, {}, { gateway: ["rdb"] });
   await live.connectTo("rdb");
   await query("select from trade");
-  assert.strictEqual(q.queries()[0][0], "RUN");
+  assert.deepStrictEqual(q.queries(), []);
+  assert.strictEqual(live.history()[0].code, '.gw.syncexec["select from trade";enlist `rdb]');
 });
 
 test("a read reval refuses is asked about; declined, it is not sent again; confirmed, it is sent as it is", async (t) => {
