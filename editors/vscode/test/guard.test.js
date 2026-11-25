@@ -1763,3 +1763,16 @@ test("a string made in an evaluator's own brackets, or cast after handle 0, is e
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test(".h.val, q's own alias of value, evaluates a string as value does (#2273)", () => {
+  const cases = {
+    '.h.val"a:77"': ["evaluates a string with .h.val"],
+    '.h.val "count t"': [],
+    "(.h.val)\"a:77\"": ["evaluates a string with .h.val"],
+    "@[.h.val;\"a:77\";::]": ["evaluates a string with .h.val"],
+    ".h.val(:;`a;77)": ["evaluates an assignment with .h.val"],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

@@ -78,7 +78,7 @@
 //   too and applied by `each`, an adverb, `@` or `.` (`` (.[;();:;1]) `a ``,
 //   `` (.[;();:;1]) each `a`b ``, #2038), and the amend or `!`
 //   passed as a value (`` .[@;(`.;`a;:;1)] ``, `` (@) . (`.;..) ``);
-// - `value`, `get`, `eval`, `reval`, `-6!` or `-24!`, or in k code a monadic `.`
+// - `value`, `get`, `eval`, `reval`, `.h.val` (#2273), `-6!` or `-24!`, or in k code a monadic `.`
 //   (`` k)."a:1" ``), applied to a string that changes the process by these
 //   rules - `value "count t"` reads (#1776) - or one built or passed through
 //   another function (`value "a",":1"`), or made without a string written,
@@ -221,8 +221,9 @@ const WRITERS = new Set([
   ".Q.dpft", ".Q.dpfts", ".Q.dpt", ".Q.dpts", ".Q.hdpf", ".Q.en", ".Q.ens", ".Q.enx", ".Q.enxs", ".Q.chk", ".Q.dsftg",
   ".Q.view", ".Q.l", ".Q.lo", ".Q.li", ".Q.bv", ".Q.opt", ".Q.Xf", ".Q.L", "use", ".h.ht",
 ]);
-/// What evaluates a string or a parse tree it is given.
-const EVALUATORS = new Set(["value", "get", "eval", "reval"]);
+/// What evaluates a string or a parse tree it is given: `.h.val` is q's own
+/// alias of `value` (#2273).
+const EVALUATORS = new Set(["value", "get", "eval", "reval", ".h.val"]);
 /// What changes the process when it is called on the right arguments: the
 /// writers, the evaluators, `hopen` and what sorts or keys a table. Taken
 /// out of `.q` or named by its symbol, it is the function itself, whose
