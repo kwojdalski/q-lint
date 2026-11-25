@@ -181,11 +181,20 @@ pub struct Overrides {
     pub no_baseline: bool,
 }
 
+/// A directory searched for a configuration, and the workspace folder a
+/// user-level file's settings found from it are rooted at (`None` for any
+/// other settings).
+type Searched = (PathBuf, Option<PathBuf>);
+
 /// Settings for any file, found once per directory and remembered.
 pub struct Policy {
     overrides: Overrides,
-    /// Directory -> the settings governing files in it.
-    cache: RefCell<HashMap<PathBuf, Rc<Settings>>>,
+    /// Directory -> the settings governing files in it. A user-level file's
+    /// patterns are rooted at the workspace folder the file is under, so
+    /// its settings are kept by directory and that folder: the same
+    /// directory, above two folders, is searched through from both (#2288).
+    /// Everything else is kept with `None`.
+    cache: RefCell<HashMap<Searched, Rc<Settings>>>,
     /// A language server must not exit over a bad file: it reports each
     /// problem once and uses the defaults for the files it governs.
     lenient: bool,
@@ -345,7 +354,7 @@ impl Policy {
         let dir = absolute(dir);
         let mut cache = self.cache.borrow_mut();
         let before = cache.len();
-        cache.retain(|searched, _| !searched.starts_with(&dir));
+        cache.retain(|(searched, _), _| !searched.starts_with(&dir));
         cache.len() != before
     }
 
@@ -365,7 +374,7 @@ impl Policy {
         match &self.overrides.config {
             Some(explicit) => files.push(absolute(explicit)),
             None if !self.overrides.isolated => {
-                dirs = cache.keys().cloned().collect();
+                dirs = cache.keys().map(|(dir, _)| dir.clone()).collect();
                 files.extend(user_config_path());
             }
             None => {}
@@ -373,6 +382,7 @@ impl Policy {
         files.sort();
         files.dedup();
         dirs.sort();
+        dirs.dedup();
         (files, dirs)
     }
 
@@ -398,7 +408,7 @@ impl Policy {
             return Ok(Rc::new(Settings::default()));
         }
         if let Some(explicit) = &self.overrides.config {
-            let key = absolute(explicit);
+            let key = (absolute(explicit), None);
             if let Some(found) = self.cache.borrow().get(&key) {
                 return Ok(found.clone());
             }
@@ -407,7 +417,7 @@ impl Policy {
             // the file is chosen for this run, not found beside the source.
             let cwd = absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
             let settings = Rc::new(
-                load(&key, &[], Some(&cwd))?
+                load(&key.0, &[], Some(&cwd))?
                     .ok_or_else(|| format!("{}: no [tool.qlinter] table", explicit.display()))?,
             );
             self.cache.borrow_mut().insert(key, settings.clone());
@@ -415,24 +425,37 @@ impl Policy {
         }
         let mut visited = vec![];
         let mut found = None;
+        let base = self.base_dir(start)?;
         for dir in start.ancestors() {
-            if let Some(cached) = self.cache.borrow().get(dir) {
-                found = Some(cached.clone());
-                break;
+            {
+                let cache = self.cache.borrow();
+                let project = (dir.to_path_buf(), None);
+                let user = (dir.to_path_buf(), Some(base.clone()));
+                if let Some(cached) = cache.get(&project) {
+                    found = Some((cached.clone(), None));
+                    break;
+                }
+                if let Some(cached) = cache.get(&user) {
+                    found = Some((cached.clone(), user.1));
+                    break;
+                }
             }
             visited.push(dir.to_path_buf());
             if let Some(settings) = in_directory(dir)? {
-                found = Some(Rc::new(settings));
+                found = Some((Rc::new(settings), None));
                 break;
             }
         }
-        let settings = match found {
-            Some(settings) => settings,
-            None => Rc::new(user_config(&self.base_dir(start)?)?.unwrap_or_default()),
+        let (settings, rooted) = match found {
+            Some(found) => found,
+            None => match user_config(&base)? {
+                Some(settings) => (Rc::new(settings), Some(base)),
+                None => (Rc::new(Settings::default()), None),
+            },
         };
         let mut cache = self.cache.borrow_mut();
         for dir in visited {
-            cache.insert(dir, settings.clone());
+            cache.insert((dir, rooted.clone()), settings.clone());
         }
         Ok(settings)
     }

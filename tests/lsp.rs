@@ -1217,6 +1217,42 @@ fn with_no_configuration_the_tests_exemption_is_rooted_at_the_files_folder() {
 }
 
 #[test]
+fn a_user_level_file_is_rooted_at_each_workspace_folder_not_the_first_searched() {
+    // The user-level file's patterns are rooted at the folder holding the
+    // file. Found from b first, its settings - rooted at b - were kept for
+    // every directory above b, the shared parent among them, and a's search
+    // stopped there: `src/*` matched b/src only, and a/src/s.q kept the
+    // QF010 `qlinter` run in a does not report (#2288).
+    let dir = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(dir.path()).unwrap();
+    // `Server::spawn` points XDG_CONFIG_HOME at this, under its cwd.
+    let user = root.join("no-such-config-home/qlinter");
+    std::fs::create_dir_all(&user).unwrap();
+    std::fs::write(
+        user.join("qlinter.toml"),
+        "[lint]\nper-file-ignores = { \"src/*\" = [\"QF010\"] }\n",
+    )
+    .unwrap();
+    let source = "f:{[x] y}\n";
+    let (a, b) = (root.join("a"), root.join("b"));
+    for folder in [&a, &b] {
+        std::fs::create_dir_all(folder.join("src")).unwrap();
+        std::fs::write(folder.join("src/s.q"), source).unwrap();
+    }
+    let mut server = start_with_folders(&root, &[&a, &b]);
+    for folder in [&b, &a] {
+        let uri = file_uri(&folder.join("src/s.q"));
+        server.open(&uri, source);
+        let found = codes_of(&server.diagnostics_for(&uri));
+        assert!(
+            !found.contains(&"QF010".to_string()),
+            "{folder:?}: {found:?}"
+        );
+    }
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn a_name_another_workspace_file_defines_is_not_undefined() {
     // lib.q is on disk and never opened; the server reads it at startup.
     let dir = tempfile::tempdir().unwrap();
