@@ -682,6 +682,27 @@ test("opening a second log lists its messages, not the first one's (#1258)", { s
   assert.deepStrictEqual(log.posted[1].rows.map((r) => r.index), [0]);
 });
 
+// A file that was not a log stopped the open log's q first, and every
+// click on its panel did nothing after (#2552).
+test("opening a file that is not a log leaves the open log working", { skip: Q ? false : "QLINT_TEST_Q names no q binary" }, async (t) => {
+  capture();
+  stub.reset();
+  stub.config.user["terminal.qBinary"] = Q;
+  const context = stub.newContext();
+  const log = new TickerplantLog(context);
+  t.after(() => log.close());
+  const file = tpLogFile(t);
+  assert.strictEqual(await log.open(file), "2 messages");
+  const port = log.port;
+  const bad = path.join(path.dirname(file), "bad.log");
+  fs.writeFileSync(bad, "not a log\n");
+  assert.match(await log.open(bad), /could not read .*bad\.log/);
+  assert.strictEqual(log.port, port);
+  log.posted.length = 0;
+  await log.receive({ type: "page", table: "", from: "", to: "", offset: 0 });
+  assert.deepStrictEqual(log.posted.map((m) => [m.type, m.total]), [["page", 2]]);
+});
+
 test("the local q's directory is removed once the q has exited, where it cannot be before (#1287)", { skip: process.platform === "win32" || process.getuid?.() === 0 ? "a read-only directory stands in for a running q on POSIX, as a non-root user" : false }, async () => {
   const { once } = require("node:events");
   const { spawn } = require("node:child_process");
