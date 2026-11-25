@@ -97,3 +97,25 @@ test("a file or a folder whose name ends in a blank is listed and read as what i
   assert.deepStrictEqual(fs.readdirSync(dir).sort(), [" lead", "dir ", "plain", "server.q", "trail "]);
   assert.deepStrictEqual(await connection.call("{[x] key `.}", 0), ["a"]);
 });
+
+// hcount and read1 open the file, and opening a FIFO with no writer blocks:
+// a folder holding one stopped the single-threaded process answering anyone.
+// Only a regular file is sized or read; anything else is listed, not opened.
+test("a FIFO in a folder is listed without opening it, and is not read (#2157)", { skip: skip || (process.platform === "win32" && "no mkfifo") }, async (t) => {
+  const { connection, dir } = await connect(t, "a:1\n", { "f.txt": "hi" });
+  require("node:child_process").execFileSync("mkfifo", [path.join(dir, "pipe")]);
+  fs.symlinkSync("f.txt", path.join(dir, "link"));
+  // Under a second: the q is killed with its process group when the test ends.
+  const soon = (p) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error("the process did not answer: it is blocked")), 3000))]);
+  const listing = readListing(await soon(connection.call(LIST_DIRECTORY, dir, 1000)));
+  const byName = Object.fromEntries(listing.entries.map((e) => [e.name, e]));
+  assert.deepStrictEqual([byName.pipe, byName["f.txt"], byName.link], [
+    { name: "pipe", file: true, size: -3 },
+    { name: "f.txt", file: true, size: 2 },
+    { name: "link", file: true, size: 2 },
+  ]);
+  await assert.rejects(soon(connection.call(READ_FILE, path.join(dir, "pipe"), 100)), /not a regular file/);
+  assert.strictEqual(readFileHead(await soon(connection.call(READ_FILE, path.join(dir, "link"), 100))).text, "hi");
+  // And the process still answers.
+  assert.strictEqual(Number(await soon(connection.call("{[x] a}", 0))), 1);
+});

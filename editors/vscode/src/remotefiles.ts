@@ -5,9 +5,10 @@
 // `vscode` import, so node tests it; `remotefilesview.ts` shows them.
 //
 // Each lambda only reads: none writes a file, assigns a global or runs a
-// system command (the working directory is `system"cd"` with no argument,
-// which reads it). Paths arrive as strings and are made symbols there
-// (`AS_FILE`), each character kept.
+// system command but two that read - the working directory is `system"cd"`
+// with no argument, and which entries are regular files is asked of `find`
+// and `test -f` (`REGULAR`). Paths arrive as strings and are made symbols
+// there (`AS_FILE`), each character kept.
 // Works on kdb+ (KDB-X) and PeachQ; held there by processtools_q.test.js.
 import { isBoolean, isNumber, isString, listOf } from "./processtools";
 
@@ -24,6 +25,28 @@ export const WORKING_DIRECTORY = "{[x] system\"cd\"}";
 /// wire is (`-9!`), which keeps every character (#2011).
 const AS_FILE = '{[t]s:`$t;hsym $[t~string s;s;-9!0x01000000,(reverse 0x0 vs "i"$10+count t),0xf5,("x"$t),0x00]}';
 
+/// A text quoted for `sh`.
+const SH = "{\"'\",ssr[x;\"'\";\"'\\\\''\"],\"'\"}";
+
+/// Whether each of names `n` in directory `d` is a regular file, or a link
+/// to one. `hcount`, `read1` and `get` open a file, and opening a FIFO with
+/// no writer blocks - the whole process, which answers no one until a writer
+/// comes (#2157); a device or a socket is no file to read either. `key`
+/// answers a path for each alike, and q has no call that tells them apart
+/// without opening one (`-21!` opens it too), so `find`, which only stats,
+/// is asked once for the folder. Windows has no FIFO in its file system, and
+/// no `find` of this kind: there every path `key` answers is one. Where the
+/// command fails, none is taken for a file. The command is in brackets:
+/// `system` sends its output to a file after the last of what it is given,
+/// and takes a leading `cd` for its own `\cd`.
+const REGULAR = [
+  `{[d;n]$[.z.o in\`w32\`w64;count[n]#1b;`,
+  `   n in @[{2_'x where x like"./*"}system@;"(cd -- ",${SH}[d]," && find -L . -mindepth 1 -maxdepth 1 -type f 2>/dev/null; true)";()]]}`,
+].join("\n");
+
+/// The same for the one path `p`.
+const IS_REGULAR = `{[p]$[.z.o in\`w32\`w64;1b;@[{0<count system x};"(test -f ",${SH}[p]," && echo f; true)";0b]]}`;
+
 export const LIST_DIRECTORY = [
   "{[p;lim]",
   ` y:${AS_FILE}; p:(),p; k:key y p;`,
@@ -31,7 +54,8 @@ export const LIST_DIRECTORY = [
   " n:count k; k:(`long$lim) sublist asc k;",
   " f:y each ($[\"/\"=last p;p;p,\"/\"]),/:string k;",
   " isf:{@[{-11h=type key x};x;0b]} each f;",
-  " sz:{@[{$[-11h=type key x;hcount x;-1]};x;-2]} each f;",
+  ` r:${REGULAR}[p;string k];`,
+  " sz:{[r;x]@[{[r;x]$[not -11h=type key x;-1;r;hcount x;-3]}[r];x;-2]}'[r;f];",
   " (string k;isf;\"f\"$sz;\"f\"$n)}",
 ].join("\n");
 
@@ -43,6 +67,7 @@ export const READ_FILE = [
   "{[p;cap]",
   ` f:${AS_FILE}(),p;`,
   " if[not -11h=type key f;'\"not a file\"];",
+  ` if[not ${IS_REGULAR}(),p;'"not a regular file: a FIFO, a socket or a device, which is not opened"];`,
   " n:hcount f; m:(`long$cap)&n;",
   " b:$[m=0;`byte$();read1(f;0;m)];",
   " if[m<n;",
@@ -56,7 +81,8 @@ export const READ_FILE = [
 export interface Entry {
   name: string;
   file: boolean;
-  /// Bytes; -1 for a directory, -2 for one the process cannot read.
+  /// Bytes; -1 for a directory, -2 for one the process cannot read, -3 for
+  /// one that is no regular file - a FIFO, a socket, a device - not opened.
   size: number;
 }
 
