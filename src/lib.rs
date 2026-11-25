@@ -2707,9 +2707,11 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         // `cor each x` becomes `(cor) each x`: with nothing on its left q 4
         // took the keyword as each's function, as it does `count each x`,
         // and on KDB-X `(cor) each x` is `each[cor;x]`. With an operand on
-        // the left - `x in each y` - what q 4 made of it is not certain, so
-        // only in the editor. An iterator keyword before another, `f over
-        // each x`, wants `(f over)`, which is the author's to place.
+        // the left - `x in each y` - there is no fix: `x (in) each y` indexes
+        // x by projections, 'type for any x, and whether `x in' y` or
+        // `in[x] each y` was meant is the author's to say (#2259). An
+        // iterator keyword before another, `f over each x`, wants
+        // `(f over)`, which is the author's to place.
         "QE011" => {
             let m = re!(
                 r"^(?:([a-z]+)[ \t]+|([-+*%!&|<>=~,^#$?@])[ \t]*)(each|peach|over|scan|prior)\b"
@@ -2727,12 +2729,14 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             // Read where comments are blank and strings are not, a string
             // being an operand, and across an indented line: `s:x` over
             // `  in each y` has `x` on the left (#2252).
-            let infix = refusals::has_left_operand(source, &v.comments, start);
+            if refusals::has_left_operand(source, &v.comments, start) {
+                return None;
+            }
             (
                 &source[start..start + word.len()],
                 format!("({word})").into(),
                 format!("Write `({word})`, the function {iterator} applies").into(),
-                !infix,
+                true,
             )
         }
         // `hopen `host:5000` takes the leading `:` a handle needs. The old

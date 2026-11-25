@@ -719,16 +719,13 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QE009", "f:{.foo.f/x}", "f:{(.foo.f/)x}", true),
         ("QE009", "f:{+/x+y}", "f:{(+/)x+y}", true),
         // Each keyword in parentheses: on KDB-X `(cor) each x` is
-        // `each[cor;x]`, as `count each x` is. With an operand on the left
-        // what q 4 meant is not certain, so only in the editor.
+        // `each[cor;x]`, as `count each x` is.
         ("QE011", "r:cor each x", "r:(cor) each x", true),
         ("QE011", "r:1+mavg peach x", "r:1+(mavg) peach x", true),
         ("QE011", "r:within over x", "r:(within) over x", true),
         ("QE011", "r:xexp scan x", "r:(xexp) scan x", true),
         ("QE011", "r:mod prior x", "r:(mod) prior x", true),
         ("QE011", "f:{[x] cor each x}", "f:{[x] (cor) each x}", true),
-        ("QE011", "r:x in each y", "r:x (in) each y", false),
-        ("QE011", "r:\"ab\" in each y", "r:\"ab\" (in) each y", false),
         // 'type before, a connection after: only in the editor.
         (
             "QT029",
@@ -848,6 +845,8 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QE011", "r:+ each x"),      // `(+) each x` is a projection on KDB-X (#2251)
         ("QE011", "r:# each x"),      // and QE008 has the token's fix, `count each x`
         ("QE011", "r:x + each y"),
+        ("QE011", "r:x in each y"), // `x (in) each y` is 'type, and `in'` a guess (#2259)
+        ("QE011", "r:\"ab\" in each y"),
         ("QT029", "h:hopen 1.5"), // no handle it spells
         ("QT029", "h:hopen -1"),
         ("QT029", "h:hopen `"),
@@ -2084,4 +2083,27 @@ fn the_same_statement_gets_the_same_fix_however_it_is_laid_out() {
             }
         }
     }
+}
+
+/// With an operand on the left there is no QE011 fix, not even in the
+/// editor: `x (in) each y` applies x to a list of projections, 'type for
+/// any data, and which of `x in' y` and `in[x] each y` was meant the
+/// message offers and the author picks (#2259).
+#[test]
+fn an_infix_keyword_with_a_left_operand_before_each_is_not_rewritten() {
+    for source in ["a:x in each y", "a:x mod each y", "a:x\n  in each y"] {
+        for unsafe_fixes in [false, true] {
+            assert_eq!(fixed_with(source, &["QE011"], unsafe_fixes), source);
+        }
+    }
+    let scripts = [
+        "x:1 2;y:(1 3;2 4);r:x (in) each y",
+        "x:7;y:3 4;r:x (mod) each y",
+        "x:1 2;y:(1 3;2 4);r:x in' y",
+    ]
+    .map(String::from);
+    let Some(values) = values_on_q(&scripts) else {
+        return;
+    };
+    assert_eq!(values, ["'type", "'type", "11b"]);
 }
