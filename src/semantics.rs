@@ -5396,7 +5396,14 @@ fn assigned_rank(code: &str, raw: &str, at: usize) -> Option<usize> {
     // arguments than it takes: q 5's `{[a;b] a+b}[1]` is 104h (#551).
     if code[end..].starts_with('[') {
         let close = matching(code, end, b'[', b']')?;
-        let slots = crate::slots(&code[end + 1..close - 1]);
+        let inside = &code[end + 1..close - 1];
+        // Empty brackets apply a lambda of rank 1 or none, to `::`: q 5's
+        // `{[] 42}[]` and `{[a] 7}[]` are 42 and 7, -7h, and only a lambda
+        // that takes two or more is projected by them - `{x+y}[]` is 104h.
+        if inside.trim().is_empty() && rank() <= 1 {
+            return None;
+        }
+        let slots = crate::slots(inside);
         let open = slots.iter().filter(|slot| slot.trim().is_empty()).count();
         let missing = rank().saturating_sub(slots.len());
         return (open + missing > 0 && ends(close)).then_some(open + missing);

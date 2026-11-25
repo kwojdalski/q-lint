@@ -450,6 +450,15 @@ fn a_projection_is_coloured_as_a_function() {
 }
 
 #[test]
+fn a_lambda_applied_to_empty_brackets_is_not_a_function() {
+    // KDB-X: `{[] 42}[]`, `{[a] 7}[]` and `{x}[]` apply the lambda, and the
+    // name holds what it returns: -7h, -7h and `::` (#2309). A lambda that
+    // takes two is projected: `{x+y}[]` is 104h.
+    assert!(functions("c:{[] 42}[]\nd:{[a] 7}[]\ne:{x}[]\nr:(c;d;e)\n").is_empty());
+    assert_eq!(functions("h:{x+y}[]\nr:h 1\n"), ["h"]);
+}
+
+#[test]
 fn a_root_lambda_is_not_coloured_inside_a_context() {
     use q_lint_rs::{TokenKind, Workspace, index, semantic_tokens_in};
     // q 5: under `\\d .ns`, `m:f 2` is 'f - no fallback to the root `f`,

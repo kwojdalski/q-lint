@@ -146,6 +146,29 @@ fn a_definition_carries_its_kind_its_signature_and_its_statement() {
     );
 }
 
+/// Each name `source` defines, with whether its definition is a function.
+fn kinds(source: &str) -> Vec<(String, bool)> {
+    mentions(source)
+        .iter()
+        .filter_map(|m| Some((m.name.clone(), m.definition.as_ref()?.function)))
+        .collect()
+}
+
+#[test]
+fn a_lambda_applied_to_empty_brackets_defines_a_value() {
+    // KDB-X: `c:{[] 42}[]` and `d:{[a] 7}[]` are -7h, `e:{x}[]` is `::`,
+    // and `h:{x+y}[]` a projection, 104h (#2309).
+    assert_eq!(
+        kinds("c:{[] 42}[]\nd:{[a] 7}[]\ne:{x}[]\nh:{x+y}[]\n"),
+        [
+            ("c".to_string(), false),
+            ("d".into(), false),
+            ("e".into(), false),
+            ("h".into(), true),
+        ]
+    );
+}
+
 #[test]
 fn the_path_of_each_kind_of_load_is_found_under_the_cursor() {
     let source =
