@@ -55,6 +55,7 @@ async function fakeQ() {
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   return {
     port: server.address().port,
+    sent,
     queries: () => sent.filter((m) => Array.isArray(m) && Array.isArray(m[1])).map((m) => m[1].join("\n")),
     drop: () => sockets.forEach((s) => s.destroy()),
     close: () => {
@@ -66,12 +67,12 @@ async function fakeQ() {
 
 const { Live } = require("../out/live.js");
 
-async function setUp(t, config = { "query.watch.enable": true }, tags = []) {
+async function setUp(t, config = { "query.watch.enable": true }, tags = [], extra = {}) {
   stub.reset();
   Object.assign(stub.config.user, config);
   const q = await fakeQ();
   const context = stub.newContext();
-  await context.globalState.update("q-lint.processes", [{ label: "rdb", host: "127.0.0.1", port: q.port, tags }]);
+  await context.globalState.update("q-lint.processes", [{ label: "rdb", host: "127.0.0.1", port: q.port, tags, ...extra }]);
   // The status bar items made, to see the watch's come and go.
   const items = [];
   const create = vscode.window.createStatusBarItem;
@@ -110,6 +111,24 @@ test("Watch Query runs now and again every interval, refreshing in place, until 
   assert.strictEqual(watchItem().disposed, true);
   await sleep(1200);
   assert.strictEqual(q.queries().length, runs);
+});
+
+// The editor's code goes to a gateway's servers as Run Query sends it: on
+// the types its file names, every run (#2368).
+test("Watch Query on a TorQ gateway sends each run to the file's server types", async (t) => {
+  const { q, live } = await setUp(t, { "query.watch.enable": true }, [], { gateway: ["rdb"] });
+  assert.strictEqual(await live.connectTo("rdb"), true);
+  const text = "count t\n/ @servertypes hdb";
+  vscode.window.activeTextEditor = {
+    document: { uri: vscode.Uri.file("/w/a.q"), lineAt: (n) => ({ text: text.split("\n")[n] }), lineCount: 2, getText: () => text },
+    selection: { active: { line: 0 }, isEmpty: true },
+  };
+  t.after(() => (vscode.window.activeTextEditor = undefined));
+  await stub.commands.get("q-lint.watchQuery")(undefined, 1);
+  await sleep(1300);
+  const sent = q.sent.filter((m) => typeof m === "string");
+  assert.ok(sent.length >= 2, `ran ${sent.length} times`);
+  assert.deepStrictEqual([...new Set(sent)], ['.gw.syncexec["count t";enlist `hdb]']);
 });
 
 test("a watch stops on disconnect, and on a dropped connection, and says so", async (t) => {
