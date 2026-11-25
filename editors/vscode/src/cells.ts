@@ -13,7 +13,7 @@
 // without ending the statement (`f:{x+` / `/ %%` / `  y}` defines f), and a
 // cell cut there would send half a statement.
 
-import { blockDepth } from "./statements";
+import { blockDepth, isBlankLine, trimBlanks } from "./statements";
 
 /// The text after `%%` names the cell: `/ %% load the trades`.
 const MARKER = /^\/\s*%%(.*)$/;
@@ -24,8 +24,9 @@ export function looksLikeMarker(line: string): boolean {
   return MARKER.test(line);
 }
 
-const trimEnd = (line: string): string => line.replace(/\s+$/, "");
-const blank = (line: string): boolean => line.trim() === "";
+// q's blanks only: a line of a no-break space is code to q (#2279).
+const trimEnd = trimBlanks;
+const blank = isBlankLine;
 const indented = (line: string): boolean => line.startsWith(" ") || line.startsWith("\t");
 
 /// How q reads each line of `lines`: inside a comment (a block comment, the
@@ -131,7 +132,8 @@ export function cellCode(lines: string[], cell: Cell): string {
 export function shownCode(code: string, cell: Pick<Cell, "marker">): string {
   const lines = code.split(/\r?\n/);
   const body = cell.marker === undefined ? lines : lines.slice(1);
-  return body.join("\n").replace(/^\s*\n/, "").replace(/\s+$/, "");
+  // q's blanks only: a line of a no-break space is code to q (#2279).
+  return body.join("\n").replace(/^(?:[ \t\r]*\n)+/, "").replace(/[ \t\r\n]+$/, "");
 }
 
 /// A cell's name for the Interactive Window and a lens's tooltip: its

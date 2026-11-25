@@ -2,21 +2,43 @@
 //
 // A query sends q a list of statements, not the text: `value` reads one
 // statement, and a newline inside the string does not end one, so
-// `value "a:1\nb:a+1"` fails with 'b. The rules are those q applies when it
-// loads a script, so a block that loads from a file runs the same as a query:
-// a line that starts with a space or a tab continues the statement above it -
-// a closing `}` at column 0 starts a new one, which q refuses, here as there -
-// a line that starts with `/` is a comment, `/` alone opens a block comment
-// that `\` alone closes - and block comments nest, so inside one a `/` alone
-// opens another (checked on KDB-X) - and `\` alone outside one ends the
-// script. A comment
-// is skipped without ending the statement around it: an indented line after
-// one still continues the statement above it. A first line starting `#!`
-// is skipped too, as q skips a script's shebang line.
+// `value "a:1\nb:a+1"` fails with 'b. The rules are those of q's loader, what
+// `\l` of the same text runs (checked on KDB-X), so code runs the same as a
+// query as it does loaded from a file. Every feature that reads q text - a
+// query, a cell, the terminal, the REPL, a test, line timings, drift - reads
+// it here, so they cannot read it differently:
+//
+// - q's blanks are the space, the tab and the carriage return, nothing else:
+//   a no-break space or a form feed is a character like any other (#2279).
+// - A line that starts with a blank continues the statement above it - a
+//   closing `}` at column 0 starts a new one, which q refuses, here as there.
+// - A line that starts with `/` is a comment; `/` alone opens a block comment
+//   that `\` alone closes - and block comments nest, so inside one a `/`
+//   alone opens another - and `\` alone outside one ends the script.
+// - A comment is skipped without ending the statement around it: an
+//   indented line after one still continues the statement above it.
+// - A first line starting `#!` is skipped, as q skips a shebang.
 
 /// Whether `line` is read as part of the statement above it.
 function continues(line: string): boolean {
   return line.startsWith(" ") || line.startsWith("\t");
+}
+
+/// `line` without the trailing blanks q drops: spaces, tabs and carriage
+/// returns, and no other whitespace (#2279). A loop, not a regular
+/// expression, which takes time quadratic in a long run of blanks.
+export function trimBlanks(line: string): string {
+  let end = line.length;
+  while (end > 0 && (line[end - 1] === " " || line[end - 1] === "\t" || line[end - 1] === "\r")) {
+    end--;
+  }
+  return line.slice(0, end);
+}
+
+/// Whether `line` is blank to q: nothing but spaces, tabs and carriage
+/// returns.
+export function isBlankLine(line: string): boolean {
+  return trimBlanks(line) === "";
 }
 
 /// The block-comment depth after `line`, its trailing blanks trimmed, read
@@ -52,28 +74,51 @@ export function stringOpen(open: boolean, line: string): boolean {
   return open;
 }
 
-function blank(line: string): boolean {
-  return line.trim() === "";
+/// A control character q refuses with 'char wherever it is in a script
+/// before its end, in a comment too: all but the tab, the line feed, the
+/// form feed and the carriage return (checked on KDB-X).
+const REFUSED = /[\x00-\x08\x0b\x0e-\x1f]/;
+
+/// One statement: its text, as q runs it, and its first and last lines.
+export interface Span {
+  text: string;
+  start: number;
+  end: number;
 }
 
-/// The statements of `text`, in order, each with its continuation lines
-/// joined by newlines.
-export function statements(text: string): string[] {
-  const out: string[] = [];
-  let current: string[] | undefined;
+/// The statements of `text`, in order, each with the lines it covers counted
+/// from `firstLine`.
+export function statementSpans(text: string, firstLine = 0): Span[] {
+  const out: Span[] = [];
+  let current: Span | undefined;
   // Whether a string is open at the end of the statement so far.
   let quoted = false;
+  // A comment line q refuses (`REFUSED`), as the statement it is to
+  // `value`, which refuses it too: q stops there, and so does the query.
+  let refused: Span | undefined;
   let depth = 0;
   const end = (): void => {
     if (current !== undefined) {
-      out.push(current.join("\n"));
+      out.push(current);
       current = undefined;
     }
+    if (refused !== undefined) {
+      out.push(refused);
+      refused = undefined;
+    }
   };
-  for (const [i, raw] of text.split(/\r?\n/).entries()) {
-    const line = raw.replace(/\s+$/, "");
+  for (const [i, raw] of text.split("\n").entries()) {
+    const line = trimBlanks(raw);
+    const at = firstLine + i;
     if (i === 0 && line.startsWith("#!")) {
       continue;
+    }
+    const comment = depth > 0 || line.startsWith("/") || (current === undefined && continues(line) && line.trimStart().startsWith("/"));
+    if (comment && refused === undefined && REFUSED.test(line)) {
+      refused = { text: depth > 0 || line === "/" ? `/${line}` : line.trimStart(), start: at, end: at };
+      if (current === undefined) {
+        end();
+      }
     }
     if (depth > 0 || line === "/") {
       depth = blockDepth(depth, line);
@@ -83,15 +128,17 @@ export function statements(text: string): string[] {
       // The end of the script: q reads nothing after it.
       break;
     }
-    if (blank(line)) {
+    if (line === "") {
       // In a string a blank line is part of it, as q reads it (#1465).
       if (quoted && current !== undefined) {
-        current.push(line);
+        current.text += "\n";
+        current.end = at;
       }
       continue;
     }
     if (continues(line) && current !== undefined) {
-      current.push(line);
+      current.text += `\n${line}`;
+      current.end = at;
       quoted = stringOpen(quoted, line);
       continue;
     }
@@ -99,18 +146,24 @@ export function statements(text: string): string[] {
       continue;
     }
     end();
-    current = [continues(line) ? line.trimStart() : line];
+    current = { text: continues(line) ? line.trimStart() : line, start: at, end: at };
     quoted = stringOpen(false, line);
   }
   end();
   return out;
 }
 
+/// The statements of `text`, in order, each with its continuation lines
+/// joined by newlines.
+export function statements(text: string): string[] {
+  return statementSpans(text).map((s) => s.text);
+}
+
 /// The lines, 0-based and inclusive, of the statement the cursor's `line`
 /// is in: from the unindented line that starts it (or the file's first code
 /// line, indented or not) to its last continuation line. Undefined on a blank or comment line, or inside a block comment.
 export function blockAt(lines: string[], line: number): { start: number; end: number } | undefined {
-  const at = (i: number): string => (lines[i] ?? "").replace(/\s+$/, "");
+  const at = (i: number): string => trimBlanks(lines[i] ?? "");
   // Where block comments are, read from the top.
   const commented: boolean[] = [];
   let depth = 0;
@@ -130,13 +183,13 @@ export function blockAt(lines: string[], line: number): { start: number; end: nu
     }
   }
   const code = (i: number): boolean =>
-    i >= 0 && i < lines.length && !commented[i] && !blank(at(i)) && !at(i).startsWith("/");
+    i >= 0 && i < lines.length && !commented[i] && !isBlankLine(at(i)) && !at(i).startsWith("/");
   // A comment inside a statement is skipped, as `statements` skips it.
-  const skipped = (i: number): boolean => commented[i] || blank(at(i)) || at(i).startsWith("/");
+  const skipped = (i: number): boolean => commented[i] || isBlankLine(at(i)) || at(i).startsWith("/");
   if (commented[line] ?? true) {
     return undefined;
   }
-  if (blank(at(line))) {
+  if (isBlankLine(at(line))) {
     // A blank line is in a statement only when an indented line follows it.
     let next = line + 1;
     while (next < lines.length && skipped(next)) {
