@@ -303,8 +303,9 @@ export function atomLiteral(type: number, text: string, raw: unknown): { literal
     case 16:
       return ok(text);
     default:
+      // An enumeration's symbol from its bytes when sent, as a symbol's (#2463).
       if (type >= 20 && type <= 76) {
-        return ok(symbolLiteral(text));
+        return ok(Array.isArray(raw) ? bytesSymbol(raw) : symbolLiteral(text));
       }
       // A float or real item, sent as its float: every digit, not the
       // `\P` that `-3!` writes (#1485).

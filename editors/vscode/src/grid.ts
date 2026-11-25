@@ -27,7 +27,7 @@
 //          decoded as UTF-8, which a byte past ASCII alone is not; a
 //          symbol column's past ASCII, each symbol's bytes where it has
 //          one past ASCII and `0b` where not, its cells read from them
-//          (#2083). For a
+//          (#2083), and an enumerated column's the same (#2463). For a
 //          general column, each float or real item as a float, which `-3!`
 //          writes to `\P` digits - a table column's rows too (#2085) -
 //          and `0b` for any other item (not a null,
@@ -100,7 +100,7 @@ const COLUMN_LINES = [
   "          {[e;x]$[type[x] within 1 76h;string x;{$[200<count x;(197#x),\"...\";x]} each",
   "            {[e;x]$[10h=type x;$[1=count x;\",\";\"\"],\"\\\"\",raze[e\"i\"$200 sublist x],\"\\\"\";-3!x]}[e] each x]}[e] each c;",
   "          {[c]u:type c;$[u in 12 16h;\"j\"$c;u in 13 14 17 18 19h;\"i\"$c;u=15h;\"f\"$c;u=10h;\"x\"$c;u in 2 5 6 7 8 9h;c;",
-  "            u=11h;$[any 127<\"i\"$\"x\"$raze s:string c;{$[any 127<\"i\"$\"x\"$x;\"x\"$x;0b]} each s;()];",
+  "            (u=11h)|u within 20 76h;$[any 127<\"i\"$\"x\"$raze s:string c;{$[any 127<\"i\"$\"x\"$x;\"x\"$x;0b]} each s;()];",
   "            (u=0h)|u within 77 98h;{[g;x]$[-9h=t:type x;$[null x;0b;x];-8h=t;$[null x;0b;\"f\"$x];g x]}[{$[-9h=t:type x;(\"f\";x);-8h=t;(\"e\";\"f\"$x);",
   "              (t in 8 9h)&200>=count x;($[t=9h;\"F\";\"E\"];\"f\"$x);(0h=t)&200>=count x;",
   "              $[all 0b~/:r:.z.s each x;0b;(\"l\";@[r;w;:;-3!'x w:where 0b~/:r])];",
@@ -283,6 +283,35 @@ export function bytesText(raw: unknown): string | undefined {
   return out;
 }
 
+/// Whether a column of type `type` is of symbols: plain or enumerated.
+export const symbolType = (type: number): boolean => type === 11 || (type >= 20 && type <= 76);
+
+/// The cells `GRID` or `PAGE` sent, a symbol of bytes past ASCII read from
+/// them: its text alone is U+FFFD where they are no UTF-8 (#2083), in a
+/// symbol or an enumerated column (#2463), on every page (#2462), and as a
+/// general list's item, `("s";b)` or `("S";bs)` (#2464).
+function sentCells(cells: unknown[][], types: number[], raw: unknown[][]): string[][] {
+  return cells.map((c, i) =>
+    c.map((x, r) => {
+      const text = typeof x === "string" ? x : String(x);
+      const sent = raw[i]?.[r];
+      if (symbolType(types[i])) {
+        return bytesText(sent) ?? text;
+      }
+      if (types[i] === 0 && Array.isArray(sent) && sent.length === 2 && !text.endsWith("...")) {
+        const [tag, v] = sent;
+        if (tag === "s" && Array.isArray(v)) {
+          return `\`${bytesText(v)}`;
+        }
+        if (tag === "S" && Array.isArray(v) && v.every(Array.isArray)) {
+          return `${v.length === 1 ? "," : ""}${v.map((b) => `\`${bytesText(b)}`).join("")}`;
+        }
+      }
+      return text;
+    }),
+  );
+}
+
 /// Each column's raw numbers, a real column's made `realValue`s.
 function rawColumns(raw: unknown[][], types: number[]): unknown[][] {
   return raw.map((c, i) => (types[i] === 8 ? c.map(realValue) : c));
@@ -321,14 +350,7 @@ export function readGridAnswer(raw: unknown): GridAnswer {
       keys: typeof g.keys === "number" ? g.keys : 0,
       names: names.map((n) => (n === null ? "" : String(n))),
       types: types.map(Number),
-      cells: (cells as unknown[][]).map((c, i) =>
-        c.map((x, r) => {
-          // A symbol of bytes past ASCII from them: its text alone is U+FFFD
-          // where they are no UTF-8 (#2083).
-          const bytes = Number(types[i]) === 11 ? bytesText(perColumn(g.raw)[i][r]) : undefined;
-          return bytes ?? (typeof x === "string" ? x : String(x));
-        }),
-      ),
+      cells: sentCells(cells as unknown[][], types.map(Number), perColumn(g.raw)),
       raw: rawColumns(perColumn(g.raw), types.map(Number)),
       rank: perColumn(g.rank) as number[][],
       ...(tree !== undefined ? { tree } : {}),
@@ -606,7 +628,7 @@ export function readPage(raw: unknown): GridPage | string {
     count: typeof g.count === "number" ? g.count : 0,
     names,
     types,
-    cells: perColumn(g.cells).map((c) => c.map((x) => (typeof x === "string" ? x : String(x)))),
+    cells: sentCells(perColumn(g.cells), types, perColumn(g.raw)),
     raw: rawColumns(perColumn(g.raw), types),
     rank: perColumn(g.rank) as number[][],
   };
@@ -775,14 +797,25 @@ export function appendPage(payload: GridPayload, page: GridPage): GridPayload {
     throw new Error("the rows held on the process are not this result's");
   }
   const cells = payload.cells.map((c, i) => c.concat(page.cells[i]));
-  const raw = payload.raw.map((r, i) => (r.length === payload.cells[i].length && page.raw[i].length === page.cells[i].length ? r.concat(page.raw[i]) : []));
+  // A symbol column's bytes are sent only by an answer with one past
+  // ASCII: the other's are each `0b`, none past it (#2461).
+  const raw = payload.raw.map((held, i) => {
+    const pad = (r: unknown[], n: number, other: unknown[]): unknown[] => (symbolType(payload.types[i]) && r.length === 0 && n > 0 && other.length > 0 ? new Array(n).fill(false) : r);
+    const r = pad(held, payload.cells[i].length, page.raw[i]);
+    const p = pad(page.raw[i], page.cells[i].length, held);
+    return r.length === payload.cells[i].length && p.length === page.cells[i].length ? r.concat(p) : [];
+  });
   const rank = cells.map((column, i) => {
     const held = payload.cells[i].length;
     const ranked = payload.rank[i].length === held && page.rank[i].length === page.cells[i].length;
-    if (!ranked) {
+    // A general column of other than strings q ranked by its values, which
+    // no cell's text sorts as (#2452): unranked once paged, as one q could
+    // not sort.
+    if (!ranked || (payload.types[i] === 0 && column.some((cell) => !/^,?"/.test(cell)))) {
       return [];
     }
-    const byNumber = NUMERIC.has(payload.types[i]) || TEMPORAL.has(payload.types[i]);
+    // A char by its byte, always sent: one past ASCII is U+FFFD as text (#2453).
+    const byNumber = NUMERIC.has(payload.types[i]) || TEMPORAL.has(payload.types[i]) || payload.types[i] === 10;
     // Each row's key is worked out when it is first compared.
     const byValue = byNumber && raw[i].length === column.length && raw[i].length > 0;
     const keys = new Array<number | bigint | string | undefined>(column.length);
