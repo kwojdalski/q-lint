@@ -523,6 +523,10 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     // 'rank - `ij[a;b;c]`, `ssr[a;b;c;d]`, `.Q.dd[a;b;c]` (#2246). The
     // most it takes is the catalogue's, which `tests/help.rs` holds to q's.
     // A column-0 `[1;2;3]` under `keyjoin:lj` is a statement of its own (#742).
+    // Whether the file assigns a name, asked once a name: asked for each
+    // call, it compiled a pattern and searched the file every time (#2339).
+    // The names are the catalogue's, so the answers are few.
+    let mut assigns: std::collections::HashMap<&str, bool> = std::collections::HashMap::new();
     for m in re!(concat!(
         r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)",
         blank!(),
@@ -531,14 +535,15 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
-        let name = &m[1];
+        let name = m.get(1).unwrap().as_str();
         let Some(arity) = most_arguments(name) else {
             continue;
         };
         if BUILTINS.split('|').any(|b| b == name)
             || !boundary(code, whole.start())
             || redefined(name, whole.start())
-            || (name.starts_with('.') && assigned(code, name))
+            || (name.starts_with('.')
+                && *assigns.entry(name).or_insert_with(|| assigned(code, name)))
         {
             continue;
         }

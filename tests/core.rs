@@ -1799,3 +1799,24 @@ fn fixing_every_line_is_linear() {
         "fixing 500 lines took {small:?} and 4000 {large:?}"
     );
 }
+/// Every bracket call of a `.Q`, `.h` or `.j` function, correct ones too,
+/// asked whether the file assigns the name by compiling a pattern for it and
+/// searching the whole file: quadratic in such calls (#2339).
+#[test]
+fn many_calls_of_a_dotted_builtin_lint_in_bounded_time() {
+    let time = |n: usize| {
+        let source: String = (0..n)
+            .map(|i| format!("p{i}:.Q.dd[hdb;`t{i}];\n"))
+            .collect();
+        best_of_three(|| lint(&source, "t.q", Profile::Uqf))
+    };
+    time(1000); // warm the allocator and the regex caches
+    let (small, large) = (time(1000), time(8000));
+    eprintln!("1000 calls of .Q.dd took {small:?} and 8000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "1000 calls of .Q.dd took {small:?} and 8000 {large:?}"
+    );
+}
