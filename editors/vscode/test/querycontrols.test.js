@@ -276,6 +276,22 @@ test("an unwrapped query sends each statement as a string and shows the last val
   assert.deepStrictEqual(grid.grid.cells, [["0", "1", "2"]]);
 });
 
+test("an unwrapped statement after a \\d is sent with the \\d in front, since q reads each message in the root (#2476)", async () => {
+  const sent = [];
+  const fake = { evaluate: async (text) => (sent.push(text), { value: null, type: 101 }) };
+  const options = { size: [25, 80], limit: 10, unlimited: false, grid: false };
+  await runUnwrapped(fake, ["\\d .lib", 'h1:{x+"a"}', "x", 'system "d .b"', "y", "\\d .", "z"], options);
+  assert.deepStrictEqual(sent, [
+    "\\d .lib",
+    'system"d .lib";value "h1:{x+\\"a\\"}"',
+    'system"d .lib";value enlist "x"',
+    'system"d .lib";value "system \\"d .b\\""',
+    'system"d .b";value enlist "y"',
+    'system"d .b";value "\\\\d ."',
+    "z",
+  ]);
+});
+
 test("a file's connection is kept by URI, and shown only when it is not the active one", () => {
   const stored = withBinding(undefined, "file:///a.q", "rdb");
   assert.deepStrictEqual(stored, { "file:///a.q": "rdb" });
