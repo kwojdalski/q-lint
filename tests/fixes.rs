@@ -863,6 +863,75 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
     }
 }
 
+/// `--fix` over the shapes of #2214-#2239, in every profile. What q 5 runs
+/// comes back byte for byte - a minute before a glyph (`a:12:?10` is
+/// `12:00?10`, and once became the refused `a:12:distinct 10`), a symbol
+/// before an iterator or an I/O verb, a keyword with a point in a name, a
+/// fraction with an `s` - and what it refuses becomes, where a fix applies,
+/// a line it parses. Each row was checked with `parse` on KDB-X q 5 on both
+/// sides.
+#[test]
+fn fix_leaves_what_q_runs_and_repairs_only_what_it_refuses() {
+    use q_lint_rs::{Profile, fix_all, lint};
+    let runs = [
+        "a:12:?10",
+        "a:12:30:?10",
+        "a:12:#10",
+        "a:25:@00:00.000",
+        "a:x`a/b",
+        "a:1`a/b",
+        "a:x`a'b",
+        "a:`b: 2:x",
+        "a:`b: 0:x",
+        "a:3.0s",
+        "a:1 2.0s",
+        "exec.fill:{x}\nb:exec.fill 1",
+        "f:{[name.] 1}",
+        "a:x in '\"a\"",
+        "a:x '[y]",
+        "a:(::)1",
+        "a:x.,y",
+        "a:select from -1#t",
+    ];
+    let repaired = [
+        ("a:\"s\".,x", "a:\"s\". enlist x"),
+        ("a:().!()", "a:(). key ()"),
+        ("a:x[0].-y", "a:x[0]. neg y"),
+        ("a:select from !t", "a:select from key t"),
+        ("a:select from- t", "a:select from neg t"),
+    ];
+    for profile in [Profile::General, Profile::Style, Profile::Uqf] {
+        let fix = |source: &str| {
+            fix_all(source, false, |text| {
+                Ok::<_, ()>(lint(text, "probe.q", profile))
+            })
+            .unwrap()
+            .text
+        };
+        for source in runs {
+            assert_eq!(fix(source), source, "{profile:?}");
+        }
+        for (source, fixed) in repaired {
+            assert_eq!(fix(source), fixed, "{profile:?}");
+        }
+    }
+    // Nothing q refuses for want of a left operand is given a meaning: `..a`
+    // is a name typed with a point too many, not `value .a`, and
+    // `update a from\ t` has no operand to put in parentheses.
+    for source in [
+        "a:..a",
+        "a:update a from\\ t",
+        "a:in b",
+        "a:(::1)",
+        "a:<>0",
+        "a:(+-)",
+    ] {
+        for finding in lint(source, "probe.q", Profile::Uqf) {
+            assert!(q_lint_rs::fix_for(&finding, source).is_none(), "{source}");
+        }
+    }
+}
+
 /// The findings of `codes` alone, with every rule run: QP007 is in no
 /// profile, so a profile cannot be asked for it.
 #[cfg(test)]

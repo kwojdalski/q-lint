@@ -1481,7 +1481,7 @@ g:0Nd
 h:0xab
 i:2000.01m
 j:1e
-k:0:`:f.csv
+k:x 0:`:f.csv
 
 === QE007 profile: general | a row-limited select with no from (q 5: parse "select[2] a" is 'from) (#489)
 t:([]a:1 2)
@@ -1595,3 +1595,754 @@ h:{[]-.5}
 k:{[a] -1}
 n:{x[0]-1}
 p:{[a]a[0]-1}
+
+=== QE010 profile: general | a digit or a point after a number's type letter runs the token on (q 5: '1i2, #2221)
+a:1i2
+
+=== QE010 profile: general | a digit or a point after a number's type letter runs the token on (q 5: '2h3, #2221)
+a:2h3
+
+=== QE010 profile: general | a digit or a point after a number's type letter runs the token on (q 5: '3i5, #2221)
+a:1 2 3i5
+
+=== QE010 profile: general | a digit or a point after a number's type letter runs the token on (q 5: '1i., #2221)
+a:1i.
+
+=== QE010 profile: general | a digit or a point after a number's type letter runs the token on (q 5: '1b., #2221)
+a:1b.
+
+=== QE010 profile: general | a digit or a point after a number's type letter runs the token on (q 5: '0x01., #2221)
+a:0x01.
+
+=== QE010 profile: general | a digit or a point after a number's type letter runs the token on (q 5: '1.5f2, #2221)
+a:1.5f2
+
+=== QE010 profile: general | a digit or a point after a number's type letter runs the token on (q 5: '1e1e1, #2221)
+a:1e1e1
+
+=== QE010 profile: general | a digit or a point after a number's type letter runs the token on (q 5: '2000.01m., #2221)
+a:2000.01m.
+
+=== QE010 profile: general | a digit or a point after a number's type letter runs the token on (q 5: '1f.5, #2221)
+a:1f.5
+
+=== QE010 profile: general | a digit or a point after a number's type letter runs the token on (q 5: '1i., #2221)
+a:1i.z
+
+=== QE010 profile: general | a digit or a point after a number's type letter runs the token on (q 5: '1j.a, #2221)
+a:1j.a
+
+=== clean profile: general | while q 5 parses each of these (#2221)
+a:1i
+a:1.5f
+a:1e10
+a:2000.01m
+a:0x01
+a:1b
+a:1 2 3i
+a:1i+2
+a:1.
+a:1e-5
+a:2000.01.01D10:00
+
+=== QE010 profile: general | two points make a date or nothing, whatever follows them (q 5: '1.2.a, #2224)
+a:1.2.a
+
+=== QE010 profile: general | two points make a date or nothing, whatever follows them (q 5: '3.4.z.K, #2224)
+a:3.4.z.K
+
+=== QE010 profile: general | two points make a date or nothing, whatever follows them (q 5: '2026.05.2, #2224)
+a:2026.05.2912000f
+
+=== clean profile: general | while q 5 parses each of these (#2224)
+a:1.2 .a
+a:(3.4<.z.K)
+a:3.4<.z.K
+a:2026.05.29D12
+a:1.2+.a
+
+=== QE010 profile: general | a boolean or a byte takes no minus (q 5: '-1b, #2222)
+a:-1b
+
+=== QE010 profile: general | a boolean or a byte takes no minus (q 5: '-0b, #2222)
+a:-0b
+
+=== QE010 profile: general | a boolean or a byte takes no minus (q 5: '-1b, #2222)
+a:-1b+1
+
+=== QE010 profile: general | a boolean or a byte takes no minus (q 5: '-0x01, #2222)
+a:-0x01
+
+=== QE010 profile: general | a boolean or a byte takes no minus (q 5: '-1b, #2222)
+a:x -1b
+
+=== QE010 profile: general | a boolean or a byte takes no minus (q 5: '-1b, #2222)
+a:(-1b)
+
+=== QE010 profile: general | a boolean or a byte takes no minus (q 5: '-10b, #2222)
+a:-10b
+
+=== clean profile: general | while q 5 parses each of these (#2222)
+a:x-1b
+a:1b
+a:0x01
+a:-1
+a:-1 0b
+
+=== QE010 profile: general | only a lone 0 comes before a null's or an infinity's letter (q 5: '1N, #2223)
+a:1N
+
+=== QE010 profile: general | only a lone 0 comes before a null's or an infinity's letter (q 5: '10N, #2223)
+a:10N
+
+=== QE010 profile: general | only a lone 0 comes before a null's or an infinity's letter (q 5: '10N, #2223)
+a:n#10N?5
+
+=== QE010 profile: general | only a lone 0 comes before a null's or an infinity's letter (q 5: '1W, #2223)
+a:1W
+
+=== QE010 profile: general | only a lone 0 comes before a null's or an infinity's letter (q 5: '00N, #2223)
+a:00N
+
+=== clean profile: general | while q 5 parses each of these (#2223)
+a:2n
+a:0N
+a:0W
+a:0n
+a:0w
+a:10 0N
+a:1 0N
+a:-0W
+
+
+=== clean profile: general | while q 5 parses each of these (#2236)
+a:3.0s
+a:3.5s
+a:3s
+a:3.0
+a:3.0f
+a:3.0e
+a:3.0c
+a:1 2.0s
+a:3.0p
+
+=== QE010 profile: general | one digit from 3 to 9 and a colon is no verb (q 5: '3:, #2234)
+a:3:"s"
+
+=== QE010 profile: general | one digit from 3 to 9 and a colon is no verb (q 5: '3:, #2234)
+a:x 3:"s"
+
+=== QE010 profile: general | one digit from 3 to 9 and a colon is no verb (q 5: '9:, #2234)
+a:x 9: y
+
+=== QE010 profile: general | one digit from 3 to 9 and a colon is no verb (q 5: '6:, #2234)
+a:1 2 6: 7
+
+=== QE010 profile: general | one digit from 3 to 9 and a colon is no verb (q 5: '3:, #2234)
+a:3:
+
+=== QE006 profile: general | one digit from 3 to 9 and a colon is no verb (q 5: '3:, #2234)
+a:x 3:00
+
+=== QE010 profile: general | one digit from 3 to 9 and a colon is no verb (q 5: '3:, #2234)
+a:3: 00
+
+=== clean profile: general | while q 5 parses each of these (#2234)
+a:x 0: y
+a:x 1: y
+a:x 2: y
+a:10:00
+a:"3:x"
+a:`3:x
+a:x3:y
+
+
+=== clean profile: general | while q 5 parses each of these (#2219)
+exec.fill:{x}
+b:exec.fill 1
+select.b:1
+update.x:2
+b:select.b
+c:delete.y
+
+=== QE007 profile: general | a comma with nothing after it in a query (q 5: ',, #2215)
+a:select a, from t
+
+=== QE007 profile: general | a comma with nothing after it in a query (q 5: ',, #2215)
+a:select from t where a>1,
+
+=== QE007 profile: general | a comma with nothing after it in a query (q 5: ',, #2215)
+a:select a by b, from t
+
+=== QE007 profile: general | a comma with nothing after it in a query (q 5: ',, #2215)
+a:delete a, from t
+
+=== QE007 profile: general | a comma with nothing after it in a query (q 5: ',, #2215)
+a:update a:1, from t
+
+=== QE007 profile: general | a comma with nothing after it in a query (q 5: ',, #2215)
+a:exec a, from t
+
+=== clean profile: general | while q 5 parses each of these (#2215)
+a:select a,b from t
+a:select a from t where a>1,b<3
+a:select a by b,c from t
+a:select a,(1;2) from t
+a:select (a,) from t
+a:exec a,b from t
+a:select a from t where a in 1,2
+
+=== QE007 profile: general | a row limit with no count (q 5: '], #2225)
+a:select[] from t
+
+=== QE007 profile: general | a row limit with no count (q 5: ';, #2225)
+a:select[;2] from t
+
+=== QE007 profile: general | a row limit with no count (q 5: '], #2225)
+a:select[ ] from t
+
+=== clean profile: general | while q 5 parses each of these (#2225)
+a:select[2;] from t
+a:select[2] from t
+a:select[2;<a] from t
+a:select[<a] from t
+a:select[2 3] from t
+
+=== QE007 profile: general | a row limit with its sort before its count (q 5: 'length, #2226)
+a:select[<a;2] from t
+
+=== QE007 profile: general | a row limit with its sort before its count (q 5: 'length, #2226)
+a:select[>a;2] from t
+
+=== clean profile: general | while q 5 parses each of these (#2226)
+a:select[2;<a] from t
+a:select[<a] from t
+a:select[2;>a] from t
+a:select[x;<a] from t
+
+=== QE007 profile: general | a clause this query does not take (q 5: 'type, #2227)
+a:delete distinct a from t
+
+=== QE007 profile: general | a clause this query does not take (q 5: 'by, #2227)
+a:delete a by b from t
+
+=== QE007 profile: general | a clause this query does not take (q 5: 'from, #2227)
+a:select a by b by c from t
+
+=== QE007 profile: general | a clause this query does not take (q 5: 'by, #2227)
+a:delete by from t
+
+=== clean profile: general | while q 5 parses each of these (#2227)
+a:delete a from t
+a:select distinct a from t
+a:select a by b,c from t
+a:exec a by b from t
+a:update a by b from t
+a:select a by b from t where c by 1
+a:delete from t where a in exec a by b from t
+a:select a by b from select by c from t
+a:select by b from t
+
+=== QE013 profile: general | an empty column slot in a table literal (q 5: ';, #2214)
+a:([] x:1 2; )
+
+=== QE013 profile: general | an empty column slot in a table literal (q 5: ';, #2214)
+a:([] x:1 2;;y:3 4)
+
+=== QE013 profile: general | an empty column slot in a table literal (q 5: ';, #2214)
+a:([x:1 2;] y:3 4)
+
+=== QE013 profile: general | an empty column slot in a table literal (q 5: ';, #2214)
+a:([;x:1 2] y:3 4)
+
+=== QE013 profile: general | an empty column slot in a table literal (q 5: ';, #2214)
+a:([] x:1 2;)
+
+=== QE013 profile: general | an empty column slot in a table literal (q 5: ';, #2214)
+a:([x:1 2] y:3 4;)
+
+=== QE013 profile: general | an empty column slot in a table literal (q 5: ';, #2214)
+a:([]x:1 2;y:3 4;)
+
+=== QE013 profile: general | an empty column slot in a table literal (q 5: ';, #2214)
+a:([x:1 2;;z:1 2] y:3 4)
+
+=== QE013 profile: general | an empty column slot in a table literal (q 5: ';, #2214)
+a:([] x:(1;2); )
+
+=== clean profile: general | while q 5 parses each of these (#2214)
+a:([] ;x:1 2)
+a:([] x:1 2; y:3 4)
+a:([] x:1 2)
+a:([x:1 2] y:3 4)
+a:([] )
+a:([]x:1 2;y:f[1;;2])
+a:([];x:1 2)
+a:([x:1 2] ;y:3 4)
+a:([a:1 2;b:3 4] c:5 6)
+a:([] ;)
+a:([ ] x:1 2)
+a:(1;;2)
+a:([]x:1 2) ;
+
+=== QE013 profile: general | an empty column slot before the closer on the line that continues the literal (q 5: ';, #2214)
+a:([] x:1 2;
+  )
+
+=== QE008 profile: general | two points start no name (q 5: '., #2232)
+a:..a
+
+=== QE008 profile: general | two points start no name (q 5: '., #2232)
+a:.Q.a,..Q.A
+
+=== QE008 profile: general | two points start no name (q 5: '., #2232)
+..sl.init[]
+
+=== QE010 profile: general | two points start no name (q 5: '1..a, #2232)
+a:1..a
+
+=== QE008 profile: general | two points start no name (q 5: '., #2232)
+a:(..a)
+
+=== clean profile: general | while q 5 parses each of these (#2232)
+a:.Q.a,.Q.A
+a:x..a
+a:`..a
+a:"..a"
+.sl.init[]
+a:x ..a
+a:{x}..a
+
+=== QE008 profile: general | :: applied to a value with nothing on its left (q 5: '::, #2233)
+a:{::1}
+
+=== QE008 profile: general | :: applied to a value with nothing on its left (q 5: '::, #2233)
+a:(::1)
+
+=== QE008 profile: general | :: applied to a value with nothing on its left (q 5: '::, #2233)
+a:@[x;::1]
+
+=== QE008 profile: general | :: applied to a value with nothing on its left (q 5: ', #2233)
+a:(:: 1)
+
+=== QE008 profile: general | :: applied to a value with nothing on its left (q 5: ', #2233)
+a:{:: 1}
+
+=== QE008 profile: general | :: applied to a value with nothing on its left (q 5: '::, #2233)
+a:(::`a)
+
+=== QE008 profile: general | :: applied to a value with nothing on its left (q 5: '::, #2233)
+a:{[x]::1}
+
+=== clean profile: general | while q 5 parses each of these (#2233)
+a:{a::1}
+a:{::}
+a:(::)
+a:@[x;::]
+a:x::1
+a:(::;1)
+a:(::)1
+a:{x::1}
+
+=== QE008 profile: general | a pair of glyphs with nothing on its left (q 5: '<>, #2230)
+a:<>0
+
+=== QE008 profile: general | a pair of glyphs with nothing on its left (q 5: '<>, #2230)
+f[<>0;1]
+
+=== QE008 profile: general | a pair of glyphs with nothing on its left (q 5: '<=, #2230)
+a:<=0
+
+=== clean profile: general | while q 5 parses each of these (#2230)
+a:x<>0
+a:(<>)
+a:x<=0
+a:x <> 0
+
+=== QE008 profile: general | a glyph whose operand is another glyph (q 5: '+, #2228)
+a:(+-)
+
+=== QE008 profile: general | a glyph whose operand is another glyph (q 5: '=, #2228)
+a:(==)
+
+=== QE008 profile: general | a glyph whose operand is another glyph (q 5: '&, #2228)
+a:(&&)
+
+=== QE008 profile: general | a glyph whose operand is another glyph (q 5: '!, #2228)
+a:(!=)
+
+=== QE008 profile: general | a glyph whose operand is another glyph (q 5: '+, #2228)
+a:f[+-]
+
+=== QE008 profile: general | a glyph whose operand is another glyph (q 5: '+, #2228)
+a:(1;+-)
+
+=== QE008 profile: general | a glyph whose operand is another glyph (q 5: '=, #2228)
+a:@[x;0;==]
+
+=== QE008 profile: general | a glyph whose operand is another glyph (q 5: '!, #2228)
+a:!+\[1 2]
+
+=== QE008 profile: general | a glyph whose operand is another glyph (q 5: '+, #2228)
+a:(+-:)
+
+=== clean profile: general | while q 5 parses each of these (#2228)
+a:(+;-)
+a:(+)
+a:(=)
+a:f[+;-]
+a:@[x;0;=]
+a:(+/)
+a:(-')
+a:+[1;2]
+a:(+:)
+a:(<>)
+a:(<=)
+
+=== QE008 profile: general | a glyph straight after a dot that applies a value (q 5: ',, #2229)
+a:"s".,x
+
+=== QE008 profile: general | a glyph straight after a dot that applies a value (q 5: '$, #2229)
+a:"i".$x
+
+=== QE008 profile: general | a glyph straight after a dot that applies a value (q 5: '!, #2229)
+a:().!()
+
+=== clean profile: general | while q 5 parses each of these (#2229)
+a:x.,y
+a:"s".,
+a:"s",x
+a:"i"$x
+a:().(!)
+a:(.:)x
+a:x.y
+a:x . y
+a:x.(y)
+a:1.,x
+
+=== QE008 profile: general | a glyph straight after a dot that applies a value (q 5: ',, #2229)
+a:x[0].,y
+
+=== QE008 profile: general | a glyph straight after a dot that applies a value (q 5: ',, #2229)
+a:{x}.,y
+
+=== QE008 profile: general | a glyph straight after a dot that applies a value (q 5: ',, #2229)
+a:(x).,y
+
+=== QE008 profile: general | a glyph straight after a dot that applies a value (q 5: ',, #2229)
+a:"s". ,x
+
+=== QE008 profile: general | a glyph straight after a dot that applies a value (q 5: '-, #2229)
+a:x[0].-y
+
+=== clean profile: general | while q 5 parses each of these (#2229)
+a:x.,y
+a:"s".-1
+a:x /:y
+
+=== QE008 profile: general | a glyph or an iterator straight after from (q 5: '!, #2235)
+a:select from !t
+
+=== QE008 profile: general | a glyph or an iterator straight after from (q 5: ', #2235)
+a:select from- t
+
+=== QE009 profile: general | a glyph or an iterator straight after from (q 5: ', #2235)
+a:update a from\ t
+
+=== QE008 profile: general | a glyph or an iterator straight after from (q 5: ', #2235)
+a:select from- 1
+
+=== QE008 profile: general | a glyph or an iterator straight after from (q 5: ', #2235)
+a:select from - t
+
+=== clean profile: general | while q 5 parses each of these (#2235)
+a:select from t
+a:select from(t)
+a:select from `t
+a:select from .a.t
+a:select from -1#t
+a:select from t where -1<a
+a:update a:1 from t
+
+=== QE008 profile: general | an infix keyword with nothing on its left (q 5: ', #2217)
+a:in b
+
+=== QE008 profile: general | an infix keyword with nothing on its left (q 5: ', #2217)
+a:except b
+
+=== QE008 profile: general | an infix keyword with nothing on its left (q 5: ', #2217)
+a:like "a"
+
+=== QE008 profile: general | an infix keyword with nothing on its left (q 5: ', #2217)
+a:mod 2
+
+=== QE008 profile: general | an infix keyword with nothing on its left (q 5: ', #2217)
+a:xasc t
+
+=== QE008 profile: general | an infix keyword with nothing on its left (q 5: ', #2217)
+a:set 1
+
+=== QE008 profile: general | an infix keyword with nothing on its left (q 5: ', #2217)
+a:x: each y
+
+=== QE008 profile: general | an infix keyword with nothing on its left (q 5: ', #2217)
+a:{ div 2}
+
+=== QE008 profile: general | an infix keyword with nothing on its left (q 5: 'insert, #2217)
+a:insert`x
+
+=== QE008 profile: general | an infix keyword with nothing on its left (q 5: ', #2217)
+a:each y
+
+=== QE008 profile: general | an infix keyword with nothing on its left (q 5: ', #2217)
+a:within 1 2
+
+=== QE008 QF010 profile: general | an infix keyword with nothing on its left (q 5: ', #2217)
+a:{[x] in y}
+
+=== QE008 profile: general | an infix keyword with nothing on its left (q 5: ', #2217)
+a:(mod 2)
+
+=== clean profile: general | while q 5 parses each of these (#2217)
+a:1 in b
+a:in[1;b]
+a:(in)
+a:x mod 2
+a:`a xasc t
+a:f each y
+a:{x div 2}
+a:`t insert 1
+a:(in;1)
+a:.q.in 1
+a:in
+a:mod[2]
+
+=== QE008 profile: general | where before from is the function (q 5: ', #2217)
+a:select from t where each b
+
+=== clean profile: general | while q 5 parses each of these (#2217)
+nums:raze exec 1_/:num[idx]@'where each b idx from uniqueTab
+a:select where each b from t
+a:select a by where each b from t
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:x 'y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:1 '2
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+if[1>0 '"failed"]
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '\, #2216)
+a:1 \2
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '\, #2216)
+a:x \y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: ', #2216)
+a:1 \ c
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '\:, #2216)
+a:x \:y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '':, #2216)
+a:x ':y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:x '`a
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:-1 '"";
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:{x 'y}
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:x '(y)
+
+=== clean profile: general | while q 5 parses each of these (#2216)
+if[1>0;'"failed"]
+a: '"x"
+a:x / comment
+a:"x '\" y"
+f:{x '[y]}
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: ', #2216)
+a:x ' y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: ', #2216)
+a:x \ y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+f[x '"s"]
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:(x 'y)
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:1 2 '3
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:"ab" 'c
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:x[0] 'y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:{x} 'y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:`a 'y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '/, #2216)
+a:x '/y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '\, #2216)
+a:x '\y
+
+=== clean profile: general | while q 5 parses each of these (#2216)
+a:x ':[y]
+a:x \:[y]
+a:x '
+a:x \
+a:1+ '"x"
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+if[1 '2]
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+do[3 'x]
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:x 'y;
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '/:, #2216)
+a:x '/:y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:"a" '"b"
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+f:{x '1}
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '/, #2216)
+a:x \/y
+
+=== clean profile: general | while q 5 parses each of these (#2216)
+a:x in '"a"
+a:select 'x from t
+a:x mod 'y
+a:x each 'y
+a:x '
+a:x ' ;
+a:(x ')
+a:x[x '[y]]
+a:x-'y
+a:x - 'y
+a:x+ \y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: ', #2216)
+a:{x} \ y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '\, #2216)
+a:{x} \y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:{x} 'y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '\, #2216)
+a:x \"i"
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: ', #2216)
+a:x \ "i"
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:x '"i"
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:x__y '"s"
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:.t.__a '"s"
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:.t._a '"s"
+
+=== QE010 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '2006.05m2, #2216)
+a:2006.05m2
+
+=== QE010 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '1m2, #2216)
+a:1m2
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: ', #2216)
+a:{x} \ 1 2
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: ', #2216)
+a:f \ y
+
+=== clean profile: general | while q 5 parses each of these (#2216)
+a:2006.05m2006.04m
+a:(1#`) {x} \ y
+a:1 {x} \ y
+a:x g \ y
+a:x g 'y
+a:f x '"s"
+
+
+=== clean profile: general | while q 5 parses each of these (#2216)
+a:(avg '')G
+a:f x '"s"
+
+
+=== clean profile: general | while q 5 parses each of these (#2237)
+a:x`a/b
+a:x`a\b
+a:x`a/
+a:x `a/b
+a:(`a/)b
+a:x`a/:b
+a:x`a'b
+a:x`:a/b
+a:x`a.b/c
+a:1`a/b
+a:x`a\:b
+
+=== QE008 profile: general | a symbol ending in a colon is an I/O verb's left operand (q 5: '2:, #2238)
+a:2:x
+
+=== clean profile: general | while q 5 parses each of these (#2238)
+a:`b: 2:x
+a:`b 2:x
+a:`b:c 2:x
+a:`:b 2:x
+a:`b: 0:x
+a:`b: 1:x
+a:`b:2:x
+
+=== QE008 profile: general | an I/O verb straight after an assignment's colon has nothing on its left (q 5: '0:, #2218)
+a:0:x
+
+=== QE008 profile: general | an I/O verb straight after an assignment's colon has nothing on its left (q 5: '2:, #2218)
+a:2:x
+
+=== QE008 profile: general | an I/O verb straight after an assignment's colon has nothing on its left (q 5: '1:, #2218)
+a:1:x
+
+=== QE008 profile: general | an I/O verb straight after an assignment's colon has nothing on its left (q 5: '0:, #2218)
+a::0:x
+
+=== clean profile: general | while q 5 parses each of these (#2218)
+a:x 0:y
+a:0:[x;y]
+a:(0:)x
+a:`b 2:x
+
+
+=== clean profile: general | while q 5 parses each of these (#2220)
+a:12:?10
+a:25:@00:00.000
+a:12:00?10
+a:12:30:?10
+a:12:-10
+a:12:#10

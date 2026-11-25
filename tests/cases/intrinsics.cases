@@ -789,7 +789,7 @@ a:x within 1 10
 b:x within 5 5
 c:x within lo hi
 d:x within 10 1+y
-e:x within 10:00 9:30
+e:x within 10:00 09:30:00
 f:x within 0W 1
 g:x within `b`a
 h:x within (10;1)

@@ -45,21 +45,21 @@
     "code": "QE007",
     "name": "qsql-missing-from",
     "category": "syntax",
-    "summary": "select, exec, update or delete with no from before the statement ends, or nothing after its from or its where",
+    "summary": "select, exec, update or delete with no from before the statement ends, nothing after its from or its where, or a phrase q refuses: a trailing comma, an empty row limit, a second by",
     "scope": "builtin"
   },
   {
     "code": "QE008",
     "name": "monadic-glyph",
     "category": "syntax",
-    "summary": "A glyph applied to one argument; q 5 refuses -x, ,x, #x and the rest - the keyword is neg, enlist, count, not...",
+    "summary": "A glyph applied to one argument; q 5 refuses -x, ,x, #x and the rest - the keyword is neg, enlist, count, not... - and an infix keyword with nothing on its left, in b",
     "scope": "builtin"
   },
   {
     "code": "QE009",
     "name": "juxtaposed-derived-function",
     "category": "syntax",
-    "summary": "A derived function applied by juxtaposition: q 5 refuses +/x, count'x and x/y; write (+/)x, +/[x] or sum x",
+    "summary": "A derived function applied by juxtaposition: q 5 refuses +/x, count'x and x/y, and an iterator after a blank, x 'y; write (+/)x, +/[x] or sum x",
     "scope": "builtin"
   },
   {
@@ -81,6 +81,13 @@
     "name": "non-ascii-character",
     "category": "syntax",
     "summary": "A character past ASCII outside a string or comment - a no-break space, a curly quote, a byte-order mark mid-file - which q refuses with 'char",
+    "scope": "builtin"
+  },
+  {
+    "code": "QE013",
+    "name": "table-literal-empty-slot",
+    "category": "syntax",
+    "summary": "An empty column slot in a table literal, ([] a:1 2; ) or ([] a:1 2;;b:3 4), which q 5 refuses at parse with ';",
     "scope": "builtin"
   },
   {
@@ -129,7 +136,7 @@
     "code": "QF007",
     "name": "not-a-parameter-list",
     "category": "names",
-    "summary": "Brackets after { that are no parameter list or pattern: q 5 refuses the lambda where it is defined",
+    "summary": "Brackets after { that are no parameter list or pattern: q 5 refuses the lambda where it is defined, or with a symbol in a slot every call to it",
     "scope": "builtin"
   },
   {

@@ -2599,7 +2599,9 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 b'_' => "floor",
                 _ => return None,
             };
-            if rest[1..].starts_with("::") {
+            // Nor `..a`, a name typed with one point too many, which
+            // `value .a` would run (#2232).
+            if rest[1..].starts_with("::") || keyword == "value" && rest[1..].starts_with('.') {
                 return None;
             }
             let old = &source[start..start + 1 + usize::from(rest[1..].starts_with(':'))];
@@ -2663,7 +2665,12 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                     let s = v.code[..run]
                         .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || "._".contains(ch)))
                         .map_or(0, |p| p + 1);
-                    if !c[s].is_ascii_alphabetic() && c[s] != b'.' || !boundary(&v.code, s) {
+                    // A qSQL word is no operand: `update a from\ t` has
+                    // nothing to put in parentheses (#2235).
+                    if !c[s].is_ascii_alphabetic() && c[s] != b'.'
+                        || !boundary(&v.code, s)
+                        || matches!(&v.code[s..run], "from" | "by" | "where")
+                    {
                         return None;
                     }
                     s
@@ -3345,7 +3352,7 @@ pub(crate) fn in_qsql_phrase(code: &str, at: usize) -> bool {
 
 /// `in_qsql_phrase`, where `joins` says whether the from phrase is refused:
 /// a `,` there joins tables, but a keyword after it still ends the operand.
-fn qsql_phrase(code: &str, at: usize, joins: bool) -> bool {
+pub(crate) fn qsql_phrase(code: &str, at: usize, joins: bool) -> bool {
     // Each `,` of a where phrase asks this again, and every walk back to the
     // keyword passed all the conditions before it (#707). So the answer from
     // each top-level `,` passed is kept, for the length of the lint, for the
@@ -4831,6 +4838,23 @@ pub(crate) fn dotq_definitions(code: &str, raw: &str) -> Vec<(String, usize)> {
     out.sort_by_key(|d| d.1);
     out
 }
+/// Whether `at` is a column of a table literal, `([] a:1)` or its key
+/// `([k:1] a:2)`: the nearest bracket open around it is the literal's.
+fn in_table_literal(code: &str, at: usize) -> bool {
+    let b = code.as_bytes();
+    let mut depth = 0i32;
+    for i in (0..at).rev() {
+        match b[i] {
+            b')' | b']' | b'}' => depth += 1,
+            b'(' | b'[' | b'{' if depth > 0 => depth -= 1,
+            b'(' => return code[i + 1..].trim_start().starts_with('['),
+            b'[' => return code[..i].trim_end().ends_with('('),
+            b'{' => return false,
+            _ => {}
+        }
+    }
+    false
+}
 /// Whether a compound or `::` assignment has a value to assign: q 5 refuses
 /// `{sum::x}` and `{count,:x}` with 'assign, but `{a:sum::}`, `(sum::)x`,
 /// `sum::'x` and `count,:;` apply the function instead (#432).
@@ -6249,11 +6273,17 @@ fn lint_rules(
         if !sig.named {
             // Not a parameter list, so none of the rules below apply to it -
             // and neither does the rank the source appears to declare.
-            if !sig.slots.is_empty() {
+            // A name with a point at its end is no refusal: q 5 defines
+            // `{[name.] 1}` and `{[name.] 1}[1]` is 1 - only the body's
+            // `name` is not bound, as in `{[name.] name}[1]`, 'name (#2239).
+            let trailing_dot = |s: &str| re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*\.$").is_match(s);
+            if !sig.slots.is_empty()
+                && !(!offenders.is_empty() && offenders.iter().all(|s| trailing_dot(s)))
+            {
                 let underscore = offenders.iter().any(|s| underscore_in(s));
                 let rest: Vec<&str> = offenders
                     .into_iter()
-                    .filter(|s| !underscore_in(s))
+                    .filter(|s| !underscore_in(s) && !trailing_dot(s))
                     .collect();
                 // A string literal is blank by the time the rules see it, so
                 // there is nothing to quote back - it is still why q refused
@@ -6277,6 +6307,10 @@ fn lint_rules(
                     // A literal with a stray dot: q 5 refuses `{[..] 1}`
                     // with '. and `{[1 .] 1}` with 'nyi (#594).
                     "q 5 refuses the lambda where it is defined"
+                } else if !rest.is_empty() && rest.iter().all(|s| s.contains('`')) {
+                    // A symbol written into a slot: q 5 defines `{[a`b;x] x}`
+                    // and `{[a`] 1}`, and refuses every call with 'type (#2239).
+                    "q 5 defines the lambda but refuses every call with 'type"
                 } else {
                     "q 5 refuses the lambda where it is defined: 'nyi"
                 };
@@ -9324,7 +9358,7 @@ fn lint_rules(
                 from += part.len() + 1;
             }
         }
-        for (at, head) in heads {
+        for &(at, head) in &heads {
             // Of the 181 reserved names q refuses to assign inside a namespace
             // all but two: `from` and `by` are accepted there and read back fine,
             // checked one by one. TorQ's email settings define `.email.from`.
@@ -9386,6 +9420,39 @@ fn lint_rules(
                         format!("Root-level assignment to `{}`: q refuses it", &m[1]),
                     );
                 }
+            }
+        }
+        // Inside an expression too, outside a lambda and a query: q 5
+        // refuses `a:count:1`, `a:x+count:1`, `a:(til:1)`, `a:first :b`,
+        // `a:x[count:1]` and `a:(count::1)` with 'assign, as a file holding
+        // `a:x:count:1` stops loading there - `from` and `by` included in
+        // none of it (#2231). A query's own assignments are QF013's and
+        // QT028's; nothing to assign applies the function (`a:count::`).
+        if line_depth == 0 {
+            for m in re!(r"\b([a-z][a-zA-Z0-9_]*)\s*[-+*%,#_^&|!?@$~=<>]?:").captures_iter(line) {
+                let whole = m.get(0).unwrap();
+                let (p, name) = (whole.start(), &m[1]);
+                let at = offset + p;
+                let end = whole.end() + usize::from(line[whole.end()..].starts_with(':'));
+                if heads.iter().any(|&(h, _)| h == p)
+                    || !boundary(code, at)
+                    || matches!(
+                        name,
+                        "select" | "exec" | "update" | "delete" | "from" | "by"
+                    )
+                    || !reserved(name, at)
+                    || !assigns_operand(&line[end..])
+                    || enclosing_brace(code, at).is_some()
+                    || in_query(code, at)
+                    || in_table_literal(code, at)
+                {
+                    continue;
+                }
+                add(
+                    at,
+                    "QF004",
+                    format!("Assignment to `{name}` inside an expression: q refuses it ('assign)"),
+                );
             }
         }
         // The parentheses have to be empty in the source - a string between
