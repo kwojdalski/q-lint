@@ -14,6 +14,7 @@
 import * as net from "node:net";
 import * as tls from "node:tls";
 import { deserialize, serialize } from "node-q/lib/c.js";
+import { checkedBody } from "./qdecode";
 import { GRID, GRID_TREE, gridLambda, readGridAnswer, type GridAnswer } from "./grid";
 import { RUN, readAnswer, type Answer } from "./query";
 
@@ -361,7 +362,7 @@ export class QConnection {
       this.answerType = typeOf(message);
       this.answerMessage = message;
       try {
-        pending.resolve(deserialize(message, false, true, false, false));
+        pending.resolve(deserialize(checkedBody(message), false, true, false, false));
       } catch (error) {
         // A q error arrives as a message of type -128, which the codec
         // throws as an Error holding q's text - but an empty text as null,

@@ -29,7 +29,16 @@ export type QValue =
 /// The body of a compressed message, uncompressed, behind an 8-byte header:
 /// kdb+'s scheme (code.kx.com/q/basics/ipc), as its own clients undo it.
 function decompress(message: Buffer): Buffer {
-  const out = Buffer.alloc(message.readUInt32LE(8));
+  if (message.length < 12) {
+    throw new Error("a compressed message shorter than its header");
+  }
+  const size = message.readUInt32LE(8);
+  // A copy takes two bytes and a flag bit and gives at most 257: a size
+  // past that is not of this message, and is not allocated (#2136).
+  if (size < 8 || size > 8 + (message.length - 12) * 257) {
+    throw new Error("a compressed message whose size is not its own");
+  }
+  const out = Buffer.alloc(size);
   const table = new Int32Array(256);
   let s = 8;
   let p = s;
@@ -37,6 +46,9 @@ function decompress(message: Buffer): Buffer {
   let f = 0;
   let i = 0;
   while (s < out.length) {
+    if (d >= message.length) {
+      throw new Error("a compressed message shorter than it says");
+    }
     if (i === 0) {
       f = message[d++];
       i = 1;
@@ -87,7 +99,7 @@ const PRIMITIVES: readonly (readonly string[])[] = [
 /// The value a whole q message holds (its header included), with its types.
 /// Throws on what it cannot read, an error message included.
 export function decode(message: Buffer): QValue {
-  const b = message.readUInt8(2) === 1 ? decompress(message) : message;
+  const b = checkedBody(message);
   let pos = 8;
   const int = (n: number): number => (n === INT_NULL ? NaN : n === INT_INF ? Infinity : n === -INT_INF ? -Infinity : n);
   const item = (t: number): Item => {
@@ -136,6 +148,11 @@ export function decode(message: Buffer): QValue {
       }
       case 11: {
         const end = b.indexOf(0, pos);
+        // No NUL left: indexOf's -1 put pos back at 0, and each symbol
+        // after read the message again, until the heap ran out (#2136).
+        if (end < 0) {
+          throw new Error("a message shorter than its list");
+        }
         const s = b.toString("utf8", pos, end);
         pos = end + 1;
         return s;
@@ -215,4 +232,110 @@ export function decode(message: Buffer): QValue {
     return { kind: "vector", t, attr, v };
   };
   return value();
+}
+
+const SHORT = "a message shorter than its list";
+
+/// `message` uncompressed (or itself, when it is not compressed), once it
+/// is checked to hold one whole value: every item of every list, every
+/// symbol's NUL, inside its bytes. A message cut short or corrupted, from a
+/// server or the network, throws here instead of sending a decoder - this
+/// one or node-q's, whose symbol reader starts the message again when it
+/// finds no NUL - reading past its end, for ever (#2136). Linear in the
+/// message: a simple list is stepped over whole.
+export function checkedBody(message: Buffer): Buffer {
+  if (message.length < 9) {
+    throw new Error("a message shorter than its header");
+  }
+  const b = message.readUInt8(2) === 1 ? decompress(message) : message;
+  let pos = 8;
+  const need = (n: number): void => {
+    if (!(n >= 0) || pos + n > b.length) {
+      throw new Error(SHORT);
+    }
+  };
+  const symbol = (): void => {
+    const end = b.indexOf(0, pos);
+    if (end < 0) {
+      throw new Error(SHORT);
+    }
+    pos = end + 1;
+  };
+  // A width for each simple type; enumerations (20-76) are ints.
+  const width = (t: number): number | undefined => (t >= 20 && t <= 76 ? 4 : t >= 1 && t <= 19 && t !== 3 && t !== 11 ? WIDTH[t] : undefined);
+  const value = (): void => {
+    need(1);
+    const t = b.readInt8(pos++);
+    if (t === -128 || t === -11) {
+      symbol();
+      return;
+    }
+    if (t < 0) {
+      const w = width(-t);
+      if (w === undefined) {
+        throw new Error(`a value of no q type (${t})`);
+      }
+      need(w);
+      pos += w;
+      return;
+    }
+    if (t === 99 || t === 127) {
+      value();
+      value();
+      return;
+    }
+    if (t >= 100) {
+      if (t === 100) {
+        symbol();
+        value();
+      } else if (t <= 103) {
+        need(1);
+        pos++;
+      } else if (t <= 105) {
+        need(4);
+        const n = b.readInt32LE(pos);
+        pos += 4;
+        need(n);
+        for (let i = 0; i < n; i++) {
+          value();
+        }
+      } else if (t <= 112) {
+        value();
+      } else {
+        throw new Error(`a value of no q type (${t})`);
+      }
+      return;
+    }
+    need(1);
+    pos++;
+    if (t === 98) {
+      value();
+      return;
+    }
+    need(4);
+    const n = b.readInt32LE(pos);
+    pos += 4;
+    // Each item takes a byte at least.
+    need(n);
+    if (t === 0) {
+      for (let i = 0; i < n; i++) {
+        value();
+      }
+    } else if (t === 11) {
+      for (let i = 0; i < n; i++) {
+        symbol();
+      }
+    } else if (t === 10) {
+      pos += n;
+    } else {
+      const w = width(t);
+      if (w === undefined) {
+        throw new Error(`a value of no q type (${t})`);
+      }
+      need(n * w);
+      pos += n * w;
+    }
+  };
+  value();
+  return b;
 }

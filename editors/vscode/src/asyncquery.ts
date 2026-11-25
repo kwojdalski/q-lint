@@ -10,6 +10,7 @@
 // answer)`, which the connection's async listener reads. Nothing is kept on
 // the process.
 import { deserialize } from "node-q/lib/c.js";
+import { checkedBody } from "./qdecode";
 import { GRID, readGridAnswer, type GridAnswer, type GridPayload } from "./grid";
 
 export const ASYNC_TAG = "qlintAsync";
@@ -22,7 +23,7 @@ export const ASYNC = `{[id;s;size;limit] neg[.z.w](\`${ASYNC_TAG};id;${GRID}[s;s
 export function readAsyncMessage(message: Buffer): { id: number; answer: GridAnswer } | undefined {
   let value: unknown;
   try {
-    value = deserialize(message, false, true, false, false);
+    value = deserialize(checkedBody(message), false, true, false, false);
   } catch {
     return undefined;
   }
