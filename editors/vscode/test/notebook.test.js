@@ -172,6 +172,15 @@ test("a table answer is read; anything else is refused", () => {
   assert.throws(() => readCellData({ ok: true, table: true, columns: ["a"], data: [] }), /0 columns of data for 1 column names/);
 });
 
+// The codec reads a string as UTF-8: a byte that is part of no UTF-8
+// character comes as its bytes, read as the result grid reads them (#2154).
+test("a cell sent as its bytes is read from them: UTF-8 where it is, a lone byte past ASCII its Latin-1 character (#2154)", () => {
+  const raw = { ok: true, table: true, columns: ["s", "y"], types: [0, 11], keys: 0, data: [["\ufffda", "b"], ["\ufffd", "\u00e9"]], bytes: [[[0xff, 0x61], false], [[0xe9], [0xc3, 0xa9]]], total: 2 };
+  assert.deepStrictEqual(readCellData(raw).table.data, [["\u00ffa", "b"], ["\u00e9", "\u00e9"]]);
+  // A column with no such byte sends none.
+  assert.deepStrictEqual(readCellData({ ...raw, bytes: [[], []] }).table.data, raw.data);
+});
+
 // A column named by the null symbol - what an empty csv header gives -
 // arrives as null. It has no name: it is not the column `null` (#1981).
 test("a column named by the null symbol has an empty name, not the word null (#1981)", () => {
@@ -475,6 +484,30 @@ test("an indented lone / or \\ on a cell's first line opens no block comment and
   assert.strictEqual(exportScript([{ kind: "code", source: " /\n x:1" }]), "/ /\nx:1\n");
 });
 
+test("a chart past what a cell's output holds draws its first rows and says why, not 'Invalid string length' (#2156)", () => {
+  const { OUTPUT_LIMIT, chartOutputs } = require("../out/celldata.js");
+  const rows = 190_000;
+  const column = (name, type, numeric) => ({ name, type, typeName: "", key: false, numeric, temporal: false });
+  const grid = {
+    columns: [column("x", 7, true), column("s", 11, false)],
+    cells: [[...Array(rows).keys()].map(String), new Array(rows).fill("ab".repeat(1500))],
+    rank: [null, null],
+    values: [[...Array(rows).keys()], null],
+    total: rows,
+  };
+  const [part] = chartOutputs({ mode: "chart", chart: "line" }, grid);
+  const chart = part.items[0].text;
+  assert.ok(chart.length < OUTPUT_LIMIT + 100_000, String(chart.length));
+  const spec = JSON.parse(chart);
+  const drawn = spec.grid.cells[0].length;
+  assert.ok(drawn > 0 && drawn < rows, String(drawn));
+  assert.deepStrictEqual([spec.grid.cells[1].length, spec.grid.values[0].length, spec.grid.values[1]], [drawn, drawn, null]);
+  assert.match(spec.note, new RegExp(`^Showing the first ${drawn.toLocaleString("en")} of 190,000 rows fetched: a cell's output holds about 64M characters\\.$`));
+  // A small one is whole, with no note.
+  const small = { ...grid, cells: grid.cells.map((c) => c.slice(0, 3)), values: [[0, 1, 2], null], total: 3 };
+  assert.strictEqual(JSON.parse(chartOutputs({ mode: "chart", chart: "line" }, small)[0].items[0].text).note, undefined);
+});
+
 test("a table past what a cell's output holds shows its first rows and says why, not 'Invalid string length' (#1855)", () => {
   const { OUTPUT_LIMIT } = require("../out/celldata.js");
   const rows = 400_000;
@@ -498,6 +531,13 @@ test("export: a cell that ends in another namespace is followed by \\d ., as the
   // Back in the root already, or never out of it: nothing is added.
   assert.strictEqual(exportScript([code("\\d .foo\na:1\n\\d .\nb:2")]), "\\d .foo\na:1\n\\d .\nb:2\n");
   assert.strictEqual(exportScript([code("/ \\d .foo\n\\d\na:1")]), "/ \\d .foo\n\\d\na:1\n");
+});
+
+// q reads an indented line after `\d .` as more of its argument: the
+// context is then no root, and the cell's end must put it back (#2155).
+test("export: \\d . with an indented line under it does not leave the root, so \\d . follows (#2155)", () => {
+  const code = (source) => ({ kind: "code", source });
+  assert.strictEqual(exportScript([code("\\d .lib\nf:{x+1}\n\\d .\n  / back to the root"), code("b:2")]), "\\d .lib\nf:{x+1}\n\\d .\n  / back to the root\n\\d .\n\nb:2\n");
 });
 
 test("export: an indented comment opening a cell is not its first code line; the line under it is unindented (#1935)", () => {

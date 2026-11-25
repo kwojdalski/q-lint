@@ -177,7 +177,8 @@ export function injectParameters(cells: QnbCell[], overrides: Record<string, str
 }
 
 /// Where a run sends a cell: `use` on the process `label` names, or on the
-/// run's own when it is undefined. Throws, with why, when it cannot.
+/// run's own when it is undefined. Throws, with why, when it cannot. The
+/// label is the cell's `/ @process`, or the last one a cell above named.
 export interface Executor {
   on<T>(label: string | undefined, code: GuardCode, use: (connection: QConnection) => Promise<T>): Promise<T>;
 }
@@ -193,7 +194,8 @@ export interface RunResult {
 /// Run the notebook `qnb`'s q cells in order on `executor`, with its
 /// parameters `overrides`; the notebook with this run's outputs.
 /// `progress` hears each cell as it starts; `cancelled` is asked before
-/// each, and stops the run; `liveValues: false` reads no Markdown values.
+/// each, and stops the run; `liveValues: false` reads no Markdown values,
+/// and drops those an earlier run kept.
 export async function runNotebook(
   qnb: Qnb,
   executor: Executor,
@@ -206,14 +208,24 @@ export async function runNotebook(
     throw new Error(problem);
   }
   const cells = injectParameters(qnb.cells, overrides).map((c) => ({ ...c }));
+  // The process a cell with no `/ @process` runs on: the last one named,
+  // as the editor's connection stays there (#2150).
+  let named: string | undefined;
   let order = 0;
   let failed: RunResult["failed"];
   const stop = (i: number, message: string): void => {
     failed ??= { cell: i + 1, message };
   };
   // The Markdown whose values the cell at `i` reads, and, when it does not
-  // run or fails, what they showed was another run's (#1544).
-  const markdownOf = (i: number): number[] => (hooks.liveValues === false ? [] : markdownAfter(cells, i).filter((j) => cells[j].kind === "markdown"));
+  // run or fails, or values are not read, what they showed was another
+  // run's (#1544, #2151).
+  // Parameters put at the top, with no parameters cell, are not the first
+  // code cell: the Markdown above that is read after it, as without them
+  // (#2152).
+  const injected = cells.findIndex((c) => c.metadata?.[INJECTED_KEY] === true);
+  const leads = injected >= 0 && !cells.slice(0, injected).some((c) => c.kind === "code");
+  const kinds = cells.map((c, j) => ({ kind: leads && j === injected ? ("markdown" as const) : c.kind }));
+  const markdownOf = (i: number): number[] => (leads && i === injected ? [] : markdownAfter(kinds, i).filter((j) => cells[j].kind === "markdown"));
   const dropLive = (i: number): void => {
     for (const j of markdownOf(i)) {
       const { [LIVE_KEY]: _old, ...rest } = cells[j].metadata ?? {};
@@ -250,9 +262,10 @@ export async function runNotebook(
       continue;
     }
     const cut = statements(cell.source);
-    const after = markdownOf(i);
+    const after = hooks.liveValues === false ? [] : markdownOf(i);
+    named = directive.process ?? named;
     try {
-      const [ok, parts, values] = await executor.on(directive.process, guardedText(cell.source, after.map((j) => cells[j].source)), async (connection) => {
+      const [ok, parts, values] = await executor.on(named, guardedText(cell.source, after.map((j) => cells[j].source)), async (connection) => {
         const [ok, parts] = cut.length === 0 ? [true, []] : await cellAnswer(connection, directive, cut, settings);
         const values = ok ? await liveValues(connection, after.map((j) => cells[j].source)) : [];
         return [ok, parts, values] as const;
@@ -266,6 +279,8 @@ export async function runNotebook(
       if (!ok) {
         const error = parts.find((p) => p.kind === "error");
         stop(i, error?.kind === "error" ? error.message : "the cell failed");
+        dropLive(i);
+      } else if (hooks.liveValues === false) {
         dropLive(i);
       }
     } catch (error) {
@@ -297,8 +312,9 @@ usage: node qnbrun.js NOTEBOOK.qnb --process HOST:PORT|LABEL [options]
 
   -o, --output FILE        where to write the run: .qnb, .html or .ipynb
                            (default: NOTEBOOK.out.qnb beside the notebook)
-  --process HOST:PORT      the process cells run on unless they say
-                           \`/ @process <label>\`; or a label in --processes
+  --process HOST:PORT      the process cells run on until one says
+                           \`/ @process <label>\`, which it and the cells
+                           after it run on; or a label in --processes
   -p, --param NAME VALUE   a parameter, as q text; repeat for more
   --processes FILE         a process list, as q-lint: Export Processes
                            writes it, for labels

@@ -521,6 +521,19 @@ test("a code cell that runs reads the live values of the Markdown after it into 
   assert.strictEqual(fake.edits.length, 1);
 });
 
+test("with live values off, a cell that runs drops the values kept for the Markdown after it (#2151)", async () => {
+  const fake = fakeVscode();
+  fake.settings["notebook.liveValues.enable"] = false;
+  const live = recordingLive(PROCESSES, "dev1");
+  load(fake, live);
+  const notebook = notebookWith(fake, [["code", "total:70"], ["markdown", "Total is {{q: total}}"]]);
+  notebook.cells[1].metadata = { keep: 1, "q-lint.liveValues": { total: { text: "50" } } };
+  const [e] = await runCells(fake, notebook, [0]);
+  assert.strictEqual(e.success, true);
+  assert.deepStrictEqual(live.sent, ["total:70"]);
+  assert.deepStrictEqual(fake.edits.flatMap((x) => x.list), [{ index: 1, metadata: { keep: 1 } }]);
+});
+
 test("a code cell with no statement still reads the live values of the Markdown after it, as a headless run does (#1996)", async () => {
   const fake = fakeVscode();
   const live = recordingLive(PROCESSES, "dev1");

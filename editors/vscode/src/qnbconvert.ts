@@ -54,9 +54,13 @@ function tableCells(line: string): string[] {
   return row.split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|"));
 }
 
-/// One line of Markdown's inline text as HTML: code spans as they are,
-/// live values as `liveHtml` writes them, everything escaped.
-function inline(text: string, values: Record<string, LiveValue>): string {
+/// Markdown's inline text as HTML: code spans as they are, live values as
+/// `liveHtml` writes them, everything escaped. A paragraph or an item is
+/// read whole, as `liveQueries` reads it, so a `{{q: }}` over two lines is
+/// one value under the key the run kept it by (#2149); a line's trailing
+/// blanks go, and with `breaks` two spaces or a backslash at a line's end
+/// is a `<br>` (#1945).
+function inline(text: string, values: Record<string, LiveValue>, breaks = false): string {
   const held: string[] = [];
   // What each held piece is as plain text, for a link's target: a URL is
   // text, and none of the page's HTML (#1942).
@@ -73,9 +77,14 @@ function inline(text: string, values: Record<string, LiveValue>): string {
     s += text.slice(from, span.start) + hold(html, text.slice(span.start, span.end));
     from = span.end;
   }
+  s += text.slice(from);
+  if (breaks) {
+    s = s.replace(/(?<!\\)((?:\\\\)*)\\\n/g, (_m, pairs: string) => `${pairs}${hold("<br>")}\n`).replace(/[ \t]* {2}\n/g, () => `${hold("<br>")}\n`);
+  }
+  s = s.replace(/[ \t]+\n/g, "\n");
   // A backslash escapes any ASCII punctuation (CommonMark 2.4, #1310).
   s = escapeHtml(
-    (s + text.slice(from))
+    s
       .replace(/\\([!-/:-@[-`{-~])/g, (_m, c: string) => hold(escapeHtml(c), c))
       // The entities a result's table is written with (#1309).
       .replace(/&(amp|lt|gt|quot|#\d{1,7}|#[xX][0-9a-fA-F]{1,6});/g, (m, e: string) => hold(escapeHtml(entity(e) ?? m), entity(e) ?? m))
@@ -152,11 +161,7 @@ export function markdownHtml(source: string, values: Record<string, LiveValue> =
     if (paragraph.length > 0) {
       // A line's end is a space, as the notebook shows it: a break only
       // after two spaces or a backslash not itself escaped (#1945).
-      const text = paragraph.map((l, at) => {
-        const hard = at < paragraph.length - 1 && /(?: {2,}|(?<!\\)\\(?:\\\\)*)$/.test(l);
-        return hard ? `${inline(l.endsWith("\\") ? l.slice(0, -1) : l.trimEnd(), values)}<br>` : inline(l.trimEnd(), values);
-      });
-      out.push(`<p>${text.join("\n")}</p>`);
+      out.push(`<p>${inline(paragraph.join("\n").trimEnd(), values, true)}</p>`);
       paragraph = [];
     }
     if (list !== undefined) {
@@ -246,7 +251,7 @@ export function markdownHtml(source: string, values: Record<string, LiveValue> =
     } else if (paragraph.length > 0 && /^ {0,3}(=+|-+)\s*$/.test(line)) {
       // A setext heading: the paragraph above a line of = or - (#1551).
       const level = line.trim()[0] === "=" ? 1 : 2;
-      out.push(`<h${level}>${paragraph.map((l) => inline(l.trimEnd(), values)).join("\n")}</h${level}>`);
+      out.push(`<h${level}>${inline(paragraph.join("\n").trimEnd(), values)}</h${level}>`);
       paragraph = [];
     } else if (heading !== null) {
       flush();
@@ -276,7 +281,7 @@ export function markdownHtml(source: string, values: Record<string, LiveValue> =
       list ??= { tag, start: tag === "ol" ? parseInt(item[1], 10) : 1, items: [] };
       list.items.push({ text: item[2], column: line.length - item[2].length, under: [] });
     } else if (list !== undefined && /^\s+\S/.test(line)) {
-      list.items[list.items.length - 1].text += ` ${line.trim()}`;
+      list.items[list.items.length - 1].text += `\n${line.trim()}`;
     } else {
       if (list !== undefined) {
         flush();

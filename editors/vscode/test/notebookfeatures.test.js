@@ -552,6 +552,29 @@ test("a headless run numbers and runs the q cells, reads live values, and goes w
   assert.strictEqual(qnb.cells.length, 5);
 });
 
+// The editor's connection stays on the process a `/ @process` cell named,
+// so the cells after it run there; a headless run does the same (#2150).
+test("a headless run sends the cells after a / @process cell to that process, as the editor does (#2150)", async () => {
+  const qnb = {
+    cells: [
+      { kind: "code", source: "a" },
+      { kind: "code", source: "/ @process other\nb" },
+      { kind: "code", source: "c" },
+      { kind: "markdown", source: "{{q: c}}" },
+      { kind: "code", source: "/ @process third" },
+      { kind: "code", source: "d" },
+    ],
+  };
+  const ex = fakeExecutor((cut) => ({ ok: true, type: -7, text: [cut.join(";")] }));
+  await runNotebook(qnb, ex, SETTINGS);
+  assert.deepStrictEqual(ex.sent, ["default", "other", "other", "third", "third"]);
+  // The parameters given go where the parameters cell went.
+  const params = { cells: [{ kind: "code", source: "/ @parameters\n/ @process other\nn:1" }, { kind: "code", source: "n" }] };
+  const ex2 = fakeExecutor((cut) => ({ ok: true, type: -7, text: [cut.join(";")] }));
+  await runNotebook(params, ex2, SETTINGS, { n: "2" });
+  assert.deepStrictEqual(ex2.sent, ["other", "other", "other"]);
+});
+
 test("the guard reads a cell's live values' expressions with its source (#1088)", async () => {
   const markdown = ["Count {{q: count trade}}", "Gone {{q: delete from `trade}}", "Again {{q: count trade}}"];
   assert.deepStrictEqual(guardedText("/ just a note", markdown), ["/ just a note", { valued: "count trade" }, { valued: "delete from `trade" }]);
@@ -753,6 +776,41 @@ test("a failed run drops the live values of the Markdown after the cells it did 
   assert.doesNotMatch(toHtml(run.qnb, "n"), /from last week/);
 });
 
+// Values not read are not this run's: they go, as a failed cell's do (#2151).
+test("a run with live values off drops the values an earlier run kept, and writes none (#2151)", async () => {
+  const stale = { [LIVE_KEY]: { total: { text: "50" } } };
+  const qnb = {
+    cells: [
+      { kind: "markdown", source: "Top {{q: total}}", metadata: stale },
+      { kind: "code", source: "total:10*n" },
+      { kind: "markdown", source: "Total is {{q: total}}", metadata: { keep: 1, ...stale } },
+    ],
+  };
+  const ex = fakeExecutor((cut) => ({ ok: true, type: -7, text: [cut.join(";")] }));
+  const run = await runNotebook(qnb, ex, SETTINGS, { n: "7" }, { liveValues: false });
+  assert.strictEqual(run.failed, undefined);
+  assert.deepStrictEqual(ex.codes.flat().filter((c) => c === "total"), []);
+  // The parameters' cell is the first.
+  assert.deepStrictEqual(run.qnb.cells[1].metadata, {});
+  assert.deepStrictEqual(run.qnb.cells[3].metadata, { keep: 1 });
+  assert.doesNotMatch(toHtml(run.qnb, "n"), />50</);
+});
+
+test("parameters given to a notebook with no parameters cell do not read the Markdown above the first code cell (#2152)", async () => {
+  const qnb = { cells: [{ kind: "markdown", source: "Trades: {{q: count topt}}" }, { kind: "code", source: "topt:til lim" }, { kind: "markdown", source: "{{q: lim}}" }] };
+  const ex = fakeExecutor((cut) => ({ ok: true, type: -7, text: [cut.join(";")] }));
+  const run = await runNotebook(qnb, ex, SETTINGS, { lim: "7" });
+  // The parameters' cell sends its own statements only; the first code
+  // cell reads the Markdown above it and below it.
+  assert.deepStrictEqual(ex.codes, [["/ Parameters given to this run.\nlim:7;"], ["topt:til lim", "count topt", "lim"]]);
+  assert.deepStrictEqual(run.qnb.cells[1].metadata, { [LIVE_KEY]: { "count topt": { text: "v(count topt)" } } });
+  // With a parameters cell, the Markdown after it is read after the values given.
+  const withCell = { cells: [{ kind: "code", source: "/ @parameters\nlim:5" }, { kind: "markdown", source: "{{q: lim}}" }] };
+  const ex2 = fakeExecutor((cut) => ({ ok: true, type: -7, text: [cut.join(";")] }));
+  await runNotebook(withCell, ex2, SETTINGS, { lim: "7" });
+  assert.deepStrictEqual(ex2.codes, [["/ @parameters\nlim:5"], ["/ Parameters given to this run.\nlim:7;", "lim"]]);
+});
+
 test("a JSON output that is an array or a string comes back from Jupyter as the same JSON (#1545)", () => {
   for (const text of ["[1,2]", '"abc"', '{"a":[1]}', "3"]) {
     const qnb = { cells: [{ kind: "code", source: "1", outputs: [{ items: [{ mime: "application/json", text }] }] }] };
@@ -812,7 +870,7 @@ test("an HTML export shows an indented code block as code, as the cell and live 
   assert.strictEqual(markdownHtml("# T\n\tt:1 <b>"), "<h1>T</h1>\n<pre><code>t:1 &lt;b&gt;</code></pre>");
   // Under a paragraph line or a list item it is not code.
   assert.strictEqual(markdownHtml("text\n    more"), "<p>text\nmore</p>");
-  assert.strictEqual(markdownHtml("- a\n    b"), "<ul><li>a b</li></ul>");
+  assert.strictEqual(markdownHtml("- a\n    b"), "<ul><li>a\nb</li></ul>");
 });
 
 test("an HTML export keeps balanced parentheses in a link's URL (#1554)", () => {
@@ -921,11 +979,11 @@ test("an HTML export nests a list written under an item, as the notebook shows i
   assert.strictEqual(markdownHtml("1. a\n   - b\n2. c"), "<ol><li>a<ul><li>b</li></ul></li><li>c</li></ol>");
   // Deeper, a numbered one under a bullet, and an item's own next line.
   assert.strictEqual(markdownHtml("- a\n  - b\n    - c\n  - d\n- e"), "<ul><li>a<ul><li>b<ul><li>c</li></ul></li><li>d</li></ul></li><li>e</li></ul>");
-  assert.strictEqual(markdownHtml("* a\n  3. b\n  4. c\n     more"), '<ul><li>a<ol start="3"><li>b</li><li>c more</li></ol></li></ul>');
+  assert.strictEqual(markdownHtml("* a\n  3. b\n  4. c\n     more"), '<ul><li>a<ol start="3"><li>b</li><li>c\nmore</li></ol></li></ul>');
   assert.strictEqual(markdownHtml("- a\n\t- b"), "<ul><li>a<ul><li>b</li></ul></li></ul>");
   // Under the item's text, not under its marker: a sibling, as before.
   assert.strictEqual(markdownHtml("- a\n - b"), "<ul><li>a</li><li>b</li></ul>");
-  assert.strictEqual(markdownHtml("- a\n  b\n  c"), "<ul><li>a b c</li></ul>");
+  assert.strictEqual(markdownHtml("- a\n  b\n  c"), "<ul><li>a\nb\nc</li></ul>");
   // What is nested is text still: escaped, and its live value read.
   assert.strictEqual(
     markdownHtml("- a\n  - <b>x</b> {{q: n}} [l](javascript:alert(1))", { n: { text: "<7>" } }),
@@ -962,6 +1020,22 @@ test("an HTML export breaks a paragraph's line only where the notebook does: aft
   assert.strictEqual(markdownHtml("end\\\n\nnext"), "<p>end\\</p>\n<p>next</p>");
   assert.strictEqual(markdownHtml("Title  \n==="), "<h1>Title</h1>");
   assert.strictEqual(markdownHtml("a <b>  \n*c*"), "<p>a &lt;b&gt;<br>\n<em>c</em></p>");
+});
+
+// The export reads a paragraph, a list item and a quote whole, as the run
+// does: a value over two lines is found, under the key it was kept by (#2149).
+test("an HTML export shows a {{q: }} written over two lines, by the key the run kept it under (#2149)", () => {
+  for (const [source, html] of [
+    ["Para {{q: 1+\n 2}} end", '<p>Para <span class="live" title="q: 1+\n 2">3</span> end</p>'],
+    ["- item {{q: 1+\n  2}} x", '<ul><li>item <span class="live" title="q: 1+\n 2">3</span> x</li></ul>'],
+    ["> quote {{q: 1+\n> 2}}", '<blockquote><p>quote <span class="live" title="q: 1+\n 2">3</span></p></blockquote>'],
+    ["# x\nSub {{q: 1+\n2}}\n---", '<h1>x</h1>\n<h2>Sub <span class="live" title="q: 1+\n 2">3</span></h2>'],
+  ]) {
+    assert.deepStrictEqual(liveExpressions(source), ["1+\n 2"], source);
+    assert.strictEqual(markdownHtml(source, { "1+\n 2": { text: "3" } }), html, source);
+  }
+  // A hard break beside it is still one.
+  assert.strictEqual(markdownHtml("a  \nb {{q: 1+\n 2}}", { "1+\n 2": { text: "3" } }), '<p>a<br>\nb <span class="live" title="q: 1+\n 2">3</span></p>');
 });
 
 /// A Python notebook as Jupyter saves one: a figure shown, a value with
