@@ -1948,3 +1948,19 @@ test("an amend, ?, !, eval or a writing lambda picked out of a list or a diction
     assert.deepStrictEqual(writes(code), [], code);
   }
 });
+
+test("a by-name target computed by a lambda, a bracket call or a composition may be a symbol (#2269)", () => {
+  const asks = [
+    "@[{x}`b;0;:;77]", "update a:77 from {x}`t", "`a xdesc {x}`t", "xdesc[`a]{x}`t", "?[{x}`sym;`zz]", "{x}[`sym]?`zz", "![{x}`t;();0b;(enlist`a)!enlist 77]",
+    ".[{x}`b;enlist 0;:;77]", "@[{y}[0;`b];0;:;77]", "@[.[{x};enlist`b];0;:;77]", "@[enlist[`b]0;0;:;77]", "update a:77 from enlist[`t]0", "@[;0;:;77]{x}`b",
+    "{.[x;();:;77]}{x}`a", "@[@[{x};`b;::];0;:;77]", "@[{x}@`b;0;:;77]", "@[('[{x};::])`b;0;:;77]", "@[{x}[`b];0;:;77]",
+  ];
+  for (const code of asks) {
+    assert.ok(writes(code).length > 0, code);
+  }
+  assert.deepStrictEqual(writes("@[{x}`b;0;:;77]"), ["amends what {x}`b names in place"]);
+  // A lambda or a call given a value gives a value.
+  for (const code of ["@[{x} t;`a;neg]", "update c:1 from {select from x} t", "`a xasc {x} t", "@[enlist[1 2]0;0;:;9]", "@[{x+1} 1 2;0;:;9]", "update b:a from {x}[t]"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});

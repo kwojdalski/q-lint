@@ -394,15 +394,26 @@ function leftArgument(t: Token[], at: number): [number, number] | undefined {
   if (k.kind !== "close") {
     return [at - 1, at];
   }
+  const opening = (close: number): number => {
+    let open = close;
+    for (let depth = 0; open >= 0; open--) {
+      if (t[open].kind === "close") depth++;
+      else if (t[open].kind === "open" && --depth === 0) break;
+    }
+    scanned(close - open);
+    return open;
+  };
+  if (k.text === "]") {
+    // A call, `` {x}[`sym] ``, `` f[`t] ``: the function with its brackets (#2269).
+    const open = opening(at - 1);
+    const callee = t[open - 1];
+    const start = callee?.kind === "name" ? open - 1 : callee?.text === "}" ? opening(open - 1) : -1;
+    return start < 0 ? [at, at] : [start, at];
+  }
   if (k.text !== ")") {
     return [at, at];
   }
-  let open = at - 1;
-  for (let depth = 0; open >= 0; open--) {
-    if (t[open].kind === "close") depth++;
-    else if (t[open].kind === "open" && --depth === 0) break;
-  }
-  scanned(at - open);
+  const open = opening(at - 1);
   return open < 0 ? [at, at] : [open, at];
 }
 
@@ -676,13 +687,26 @@ function symbolic(t: Token[], from: number, to: number, held: ReadonlySet<string
     // A lambda applied gives what its body does.
     // A lambda applied gives what its body does; projected, `{[a;b]..}[a]`, it
     // is a function.
-    const named = t[from + 1]?.text === "[" && t[from + 1].kind === "open" ? items(t, from + 1).filter(([a, b]) => a < b).length : 0;
+    const named = t[from + 1]?.text === "[" && t[from + 1].kind === "open" ? items(t, from + 1).filter(([a, b]) => a < b).length : implicit(t, from, end - 1);
     const given = bracket >= 0 ? items(t, bracket).filter(([a, b]) => a < b).length : 1;
-    return (bracket >= 0 || (termEnd < to && !infix)) && given >= named && tokenSymbolic(t, from + 1, end - 1, held);
+    // What it is given too, which it may give back: `` {x}`t ``, `` {y}[0;`t] ``,
+    // `` {x}@`t `` (#2269).
+    const applied = bracket >= 0 || (termEnd < to && (!infix || next.text === "@" || next.text === "."));
+    const argument = bracket >= 0 ? items(t, bracket).some(([a, b]) => symbolic(t, a, b, held)) : applied && symbolic(t, termEnd + (infix ? 1 : 0), to, held);
+    return applied && given >= named && (tokenSymbolic(t, from + 1, end - 1, held) || argument);
+  }
+  // A function applied with `@[f;x]` or `.[f;(x)]`, a trap among them,
+  // gives what `f` gives `x`: `` @[{x};`t;::] `` (#2269).
+  if (k.kind === "op" && (k.text === "@" || k.text === ".") && bracket >= 0) {
+    const args = items(t, bracket);
+    return args.length >= 2 && args.length <= 3 && tokenSymbolic(t, args[0][0], args[0][1], held) === false && symbolicArgument(t, args[1][0], args[1][1], held);
   }
   if (k.kind === "open") {
     const list = items(t, from);
     if (termEnd >= to) return false;
+    // A function in parentheses, a composition, `` ('[{x};::])`t ``, applied (#2269).
+    const fn = list.length === 1 && (t[list[0][0]].text === "{" || (t[list[0][0]].kind === "op" && t[list[0][0]].text === "'"));
+    if (fn && !infix) return bracket >= 0 ? items(t, bracket).some(([a, b]) => symbolic(t, a, b, held)) : symbolic(t, termEnd, to, held);
     if (infix) return keeps && (list.some(([a, b]) => symbolic(t, a, b, held)) || after());
     // Indexed: an item of the list or dictionary in it, or of the variable
     // a symbol in it names, `` (`d)`a ``.
@@ -691,6 +715,8 @@ function symbolic(t: Token[], from: number, to: number, held: ReadonlySet<string
   }
   if (k.kind === "name") {
     const name = unqualified(k.text);
+    // Called in brackets and indexed, `` enlist[`t]0 ``: an item of what it gives (#2269).
+    if (bracket >= 0 && termEnd < to && !infix && name !== "select" && items(t, bracket).some(([a, b]) => tokenSymbolic(t, a, b, held))) return true;
     if (name === "select" || NOT_SYMBOLS.has(name)) return false;
     if (held?.has(k.text) ?? false) return true;
     // (A function alone is that function: `@[value;x;h]` traps.)
@@ -706,6 +732,25 @@ function symbolic(t: Token[], from: number, to: number, held: ReadonlySet<string
     return KEEPS.has(name) && itemSymbolic(t, termEnd, to, held);
   }
   return false;
+}
+
+/// How many parameters the lambda opening at `t[open]` and closing at
+/// `t[close]` takes without naming them: `x`, `y` and `z`, up to the last
+/// its body uses, not counting a lambda in it.
+function implicit(t: Token[], open: number, close: number): number {
+  let last = 0;
+  for (let p = open + 1, depth = 0; p < close; p++) {
+    if (t[p].kind === "open" && t[p].text === "{") depth++;
+    else if (t[p].kind === "close" && t[p].text === "}") depth--;
+    else if (depth === 0 && t[p].kind === "name") last = Math.max(last, ["x", "y", "z"].indexOf(t[p].text) + 1);
+  }
+  return last;
+}
+
+/// Whether `t[from]` to `t[to]`, what `.[f;..]` or `@[f;..]` gives `f`,
+/// may hold a symbol: `` `t ``, `` enlist`t ``, `` (`t;1) ``.
+function symbolicArgument(t: Token[], from: number, to: number, held: ReadonlySet<string> | undefined): boolean {
+  return symbolic(t, from, to, held) || itemSymbolic(t, from, to, held);
 }
 
 /// Whether a symbol, a cast or a function that may make one is anywhere in
