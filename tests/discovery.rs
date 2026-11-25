@@ -877,6 +877,38 @@ fn a_script_loaded_only_under_a_context_defines_nothing_at_the_root() {
 }
 
 #[test]
+fn a_load_placed_without_a_literal_backslash_l_is_placed_as_the_server_places_it() {
+    // KDB-X 5: `system "d\t.a"` then `system "l\tb.q"` defines `.a.ff` and
+    // no root `ff`. The CLI only built placements when the text spelled
+    // `\d`/`"d ` and `\l`/`"l `, so it ran b.q at the root and answered the
+    // opposite of the server: QF018 on c.q, none on d.q (#2290).
+    let repo = Repo::new();
+    repo.write(
+        "main.q",
+        "system \"d\t.a\"\nsystem \"l\tb.q\"\nsystem \"d .\"\n",
+    )
+    .write("b.q", "ff:42\n")
+    .write("c.q", "\\d .a\ng:{ff}\n\\d .\n")
+    .write("d.q", "h:{ff}\n");
+    let style = ["--isolated", "--profile", "style", "--select", "QF018"];
+    let found = run(&repo.path("."), &[&style[..], &["."]].concat());
+    let found: serde_json::Value = serde_json::from_slice(&found.stdout).unwrap();
+    let files: Vec<_> = found
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            std::path::Path::new(f["path"].as_str().unwrap())
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    assert_eq!(files, ["d.q"]);
+}
+
+#[test]
 fn a_path_that_does_not_exist_is_reported_and_the_rest_are_still_linted() {
     // One stale path in a pre-commit or CI file list used to end the run
     // before anything was linted (#265).

@@ -21,6 +21,7 @@ import {
   type TextEditorDecorationType,
 } from "vscode";
 import type { Live } from "./live";
+import { scriptCode, selectionCode } from "./statements";
 import { LINE_TIMINGS, bytesText, decorationText, durationText, readTimings, statementSpans, summary, type Timings } from "./linetimings";
 import { TOOLING_COMMANDS, toolingOff, toolingOn } from "./toolingfeatures";
 import { plainMessage } from "./history";
@@ -60,7 +61,9 @@ export function registerLineTimings(
     const first = whole ? 0 : selection.start.line;
     // A selection that ends at the start of a line does not take that line.
     const last = !whole && selection.end.character === 0 && selection.end.line > first ? selection.end.line - 1 : selection.end.line;
-    const text = whole ? editor.document.getText() : editor.document.getText(new Range(first, 0, last, Number.MAX_SAFE_INTEGER));
+    // Read as q reads the file, and a selection as it reads there (#2287).
+    const all = editor.document.getText();
+    const text = whole ? scriptCode(all) : selectionCode(all.split("\n"), first, editor.document.getText(new Range(first, 0, last, Number.MAX_SAFE_INTEGER)));
     const spans = statementSpans(text, first);
     if (spans.length === 0) {
       return say(`q-lint: ${whole ? "the file" : "the selection"} has no statement to time.`);

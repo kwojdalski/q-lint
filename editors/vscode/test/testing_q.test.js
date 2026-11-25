@@ -212,3 +212,11 @@ test("a qUnit test runs inside the setUp and tearDown the server sends with it (
   // tearDown ran, the test failing or not.
   assert.strictEqual((await c.evaluate("`t in key `.testCalc")).value, false);
 });
+
+test("a test whose body holds a block comment passes, as it does loaded (#2283)", { skip }, async (t) => {
+  const c = await connect(t, "");
+  const code = "test_blk:{\n  a:1;\n/\n  junk\n\\\n  a~1}";
+  assert.deepStrictEqual(await run(c, testStatements({ code, call: "test_blk[]" })), { passed: true, text: "1b", errored: false });
+  const scoped = { code: `\\d .qt.b\n${code}\n\\d .`, call: ".qt.b.test_blk[]" };
+  assert.deepStrictEqual(await run(c, testStatements(scoped)), { passed: true, text: "1b", errored: false });
+});

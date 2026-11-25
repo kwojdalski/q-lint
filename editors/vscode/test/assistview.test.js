@@ -239,6 +239,39 @@ test("Lint q Code: qlinter's findings on the code given as standard input", asyn
   assert.deepStrictEqual(await realTools.lint.run({ code: "f:{[x] x+1}\n" }), { findings: [], count: 0 });
 });
 
+test("Lint q Code runs qlinter with the server's arguments, and style where nothing names a profile (#2292)", async (t) => {
+  const { lintToolArgs } = require("../out/assist.js");
+  const { launch } = require("../out/settings.js");
+  assert.deepStrictEqual(lintToolArgs(["--lsp", "--profile", "general", "--config", "/c.toml", "--isolated"]), ["--default-profile", "style", "--profile", "general", "--config", "/c.toml", "--isolated"]);
+  const real = path.join(__dirname, "..", "..", "..", "target", "release", "qlinter");
+  if (!fs.existsSync(real)) {
+    t.diagnostic("no target/release/qlinter: the real binary is not run");
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-linttool-args-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const code = "f:{[x] x+1}\nd:2015.01.01T00:00:00.000\n";
+  const run = async (settings) => {
+    const { live, context } = setup(settings);
+    vscode.workspace.workspaceFolders = [{ name: "p", uri: vscode.Uri.file(dir), index: 0 }];
+    const args = () => lintToolArgs(launch(vscode.workspace.getConfiguration("q-lint"), dir).args);
+    const out = await registerAssistTools(context, live, () => [real], args).lint.run({ code, file: "a.q" });
+    return out.findings.map((f) => f.code);
+  };
+  // QP002 is uqf's: the server, with no profile anywhere, runs style; with
+  // q-lint.profile general, general. Neither reports it.
+  assert.deepStrictEqual(await run({}), []);
+  assert.deepStrictEqual(await run({ profile: "general" }), []);
+  assert.deepStrictEqual(await run({ profile: "uqf" }), ["QP002"]);
+  // The project's own profile still governs, as it does the server.
+  fs.writeFileSync(path.join(dir, "qlinter.toml"), 'profile = "uqf"\n');
+  assert.deepStrictEqual(await run({}), ["QP002"]);
+  // A configuration file the settings name, as the server is given it.
+  fs.writeFileSync(path.join(dir, "general.toml"), 'profile = "general"\n');
+  assert.deepStrictEqual(await run({ configFile: "general.toml" }), []);
+  vscode.workspace.workspaceFolders = undefined;
+});
+
 test("Lint q Code answers the first 200 findings, with their count (#1628)", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-lintcap-"));
   const fake = path.join(dir, "qlinter");

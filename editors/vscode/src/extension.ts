@@ -46,6 +46,7 @@ import { registerUndefinedNames } from "./undefinednamesview";
 import { registerIdioms } from "./idiomsview";
 import { Drift } from "./driftview";
 import { registerAssistTools } from "./assisttools";
+import { lintToolArgs } from "./assist";
 import { launchable } from "./batch";
 import { registerChat } from "./chat";
 import { registerQsqlDraft } from "./qsqldraft";
@@ -335,11 +336,17 @@ export async function activate(
   const across = new QueryAcross(context, live);
   const saved = new SavedQueries(context, live);
   const drift = new Drift(context, live);
-  // The tools' qlinter is the one the server is started from.
-  const assistTools = registerAssistTools(context, live, () => {
-    const { serverPath } = launch(workspace.getConfiguration("q-lint"), workspace.workspaceFolders?.[0]?.uri.fsPath);
-    return serverPath ? [serverPath] : [bundledServer(context), pathServer()].filter((c): c is string => !!c);
-  });
+  // The tools' qlinter is the one the server is started from, with its
+  // arguments: Lint q Code answers what the server shows (#2292).
+  const assistTools = registerAssistTools(
+    context,
+    live,
+    () => {
+      const { serverPath } = launch(workspace.getConfiguration("q-lint"), workspace.workspaceFolders?.[0]?.uri.fsPath);
+      return serverPath ? [serverPath] : [bundledServer(context), pathServer()].filter((c): c is string => !!c);
+    },
+    () => lintToolArgs(launch(workspace.getConfiguration("q-lint"), workspace.workspaceFolders?.[0]?.uri.fsPath).args),
+  );
   const chatParticipant = registerChat(context, live);
   registerQsqlDraft(context, live);
   const repl = registerRepl(context, live);

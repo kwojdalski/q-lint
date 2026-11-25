@@ -188,6 +188,12 @@ select from t where a=1 and b=0
 === clean | parenthesised, the comparison is said out loud
 select from t where (a=1) and b=0
 
+=== clean | a dotted name or a symbol that ends in and or or is no logic (#2256)
+x.and:`a;x.or:`b;t:([]s:`a`b;b:0 1)
+r:select from t where s=x.or,b=0
+u:select from t where s=`and,b=0
+f:{[a] ok:a=x.and; ok}
+
 === QB006 | a word comparison left of and reads the same (q 5: where a in 1 3 and b=0 is a in (1 3 and b=0), 'length) (#735)
 select from t where a in 1 3 and b=0
 

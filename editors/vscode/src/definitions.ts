@@ -19,7 +19,7 @@
 // the process still holds the exact text it was told it holds, and only
 // when that text is what the file had before the edit.
 import { charKinds } from "./explorer";
-import { blockDepth } from "./statements";
+import { contextSwitch, scriptCode, statementSpans } from "./statements";
 
 export const DRIFT_COMMANDS = {
   check: "q-lint.checkDrift",
@@ -36,11 +36,6 @@ export interface Definition {
 }
 
 const NAME = /^(\.?[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)*)\s*:\s*\{/;
-const CONTEXT = /^\\d\s+(\.[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)*|\.)\s*$/;
-// `system "d .ns"` with a literal argument switches as `\d .ns` does, as the
-// language server reads it (#261); a computed one leaves the context as it was.
-const SYSTEM_CONTEXT = /^system\s*"d\s+(\.[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)*|\.)\s*"\s*;?\s*(?:\s\/.*)?$/;
-
 /// Where the lambda that opens at `open` in `text` closes, by `charKinds`'
 /// code characters; -1 when it does not.
 function closing(text: string, kinds: string, open: number): number {
@@ -83,71 +78,24 @@ function definitionOf(lines: string[], line: number, ctx: string): Definition | 
   return { name, text: text.slice(open, close + 1), line, endLine: line + lines.length - 1 };
 }
 
-/// The functions `source` defines, in order, by the rules q loads a script
-/// with: a line starting with a blank continues the statement above, `/`
-/// alone opens a block comment that `\` alone closes, and `\` alone outside
-/// one ends the script.
+/// The functions `source` defines, in order, cut as q loads the script
+/// (`statements.ts`), so a lambda's text is what loading it gives: blank and
+/// comment lines inside kept, a block comment's lines as comment lines.
 export function definitions(source: string): Definition[] {
   const out: Definition[] = [];
   let ctx = "";
-  let current: { line: number; lines: string[] } | undefined;
-  // Blank and comment lines after the statement's last line: kept only if
-  // a continuation line follows, as q keeps them in the lambda's text.
-  let pending: string[] = [];
-  let depth = 0;
-  const end = (): void => {
-    if (current !== undefined) {
-      const first = current.lines[0];
-      const switched = CONTEXT.exec(first.trim()) ?? SYSTEM_CONTEXT.exec(first.trim());
-      if (switched !== null && current.lines.length === 1) {
-        ctx = switched[1] === "." ? "" : switched[1].slice(1);
-      } else {
-        const found = definitionOf(current.lines, current.line, ctx);
-        if (found !== undefined) {
-          out.push(found);
-        }
-      }
-      current = undefined;
-    }
-    pending = [];
-  };
-  for (const [i, raw] of source.split("\n").entries()) {
-    const line = raw.replace(/\r$/, "");
-    const bare = line.replace(/\s+$/, "");
-    if (i === 0 && bare.startsWith("#!")) {
+  for (const { text, start } of statementSpans(scriptCode(source))) {
+    const lines = text.split("\n");
+    const switched = contextSwitch(text);
+    if (switched !== undefined) {
+      ctx = switched === "." ? "" : switched.slice(1);
       continue;
     }
-    if (depth > 0 || bare === "/") {
-      // A block comment does not end the statement around it (#1463). q
-      // keeps it in the lambda's text as comment lines: `/` and `\` alone
-      // as `/`, any other line with a `/` before it (checked on KDB-X).
-      if (current !== undefined) {
-        pending.push(bare === "/" || bare === "\\" ? "/" : `/${line}`);
-      }
-      depth = blockDepth(depth, bare);
-      continue;
+    const found = definitionOf(lines, start, ctx);
+    if (found !== undefined) {
+      out.push(found);
     }
-    if (bare === "\\") {
-      break;
-    }
-    if (bare === "" || (bare.startsWith("/") && current !== undefined)) {
-      if (current !== undefined) {
-        pending.push(line);
-      }
-      continue;
-    }
-    if ((line.startsWith(" ") || line.startsWith("\t")) && current !== undefined) {
-      current.lines.push(...pending, line);
-      pending = [];
-      continue;
-    }
-    if (bare.startsWith("/")) {
-      continue;
-    }
-    end();
-    current = { line: i, lines: [line.trimStart()] };
   }
-  end();
   return out;
 }
 

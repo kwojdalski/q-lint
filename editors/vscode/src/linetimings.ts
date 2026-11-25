@@ -16,7 +16,7 @@
 // `.z.p` advances in microseconds there, so a statement faster than that
 // reads 0.
 
-import { blockDepth, stringOpen } from "./statements";
+import type { Span } from "./statements";
 import { bytes } from "./tableinfo";
 
 /// The lambda: given the statements, it answers the overhead per
@@ -34,11 +34,7 @@ export const LINE_TIMINGS = [
 
 /// A statement of the code timed, and the lines it covers in the document,
 /// 0-based and inclusive.
-export interface Span {
-  text: string;
-  start: number;
-  end: number;
-}
+export type { Span } from "./statements";
 
 /// One statement's timing.
 export interface Timing extends Span {
@@ -61,60 +57,8 @@ export interface Timings {
 }
 
 /// The statements of `text`, as `statements` cuts them (q's script rules),
-/// each with the lines it covers counted from `firstLine`: a line that starts
-/// with a blank continues the statement above it, `/` alone opens a block
-/// comment `\` alone closes, `\` alone outside one ends the script, a comment
-/// line is skipped, and so is a first line starting `#!`.
-export function statementSpans(text: string, firstLine = 0): Span[] {
-  const out: Span[] = [];
-  let current: { lines: string[]; start: number; end: number } | undefined;
-  // Whether a string is open at the end of the statement so far.
-  let quoted = false;
-  let depth = 0;
-  const end = (): void => {
-    if (current !== undefined) {
-      out.push({ text: current.lines.join("\n"), start: current.start, end: current.end });
-      current = undefined;
-    }
-  };
-  for (const [i, raw] of text.split(/\r?\n/).entries()) {
-    const line = raw.replace(/\s+$/, "");
-    const at = firstLine + i;
-    if (i === 0 && line.startsWith("#!")) {
-      continue;
-    }
-    if (depth > 0 || line === "/") {
-      depth = blockDepth(depth, line);
-      continue;
-    }
-    if (line === "\\") {
-      break;
-    }
-    if (line.trim() === "") {
-      // In a string a blank line is part of it, as q reads it (#1465).
-      if (quoted && current !== undefined) {
-        current.lines.push(line);
-        current.end = at;
-      }
-      continue;
-    }
-    const continues = line.startsWith(" ") || line.startsWith("\t");
-    if (continues && current !== undefined) {
-      current.lines.push(line);
-      current.end = at;
-      quoted = stringOpen(quoted, line);
-      continue;
-    }
-    if (line.startsWith("/")) {
-      continue;
-    }
-    end();
-    current = { lines: [continues ? line.trimStart() : line], start: at, end: at };
-    quoted = stringOpen(false, line);
-  }
-  end();
-  return out;
-}
+/// each with the lines it covers counted from `firstLine`.
+export { statementSpans } from "./statements";
 
 const numbers = (v: unknown): v is number[] => Array.isArray(v) && v.every((n) => typeof n === "number" || n === null);
 

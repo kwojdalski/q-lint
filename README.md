@@ -123,12 +123,16 @@ the edits, run `qlinter --fix path/to/file.q`.
 `--fix` re-lints the changed files and reports any remaining findings, and
 says on standard error how many of them it has no fix for, so that a finding
 still listed is not taken for one to run `--fix` on again. Batch fixing handles `==`, `!=`, `+=`, `-=`,
-`*=`, a leading UTF-8 BOM, an invalid string escape (`"C:\data"` →
-`"C:\\data"`), `true`/`false`/`None`/`return x` → `1b`/`0b`/`(::)`/`:x`,
-a table literal of scalars (each column enlisted), a symbol used as a `like`
-pattern (`` `a* `` → `"a*"`), `f . ()` → `f[]`, `til 5.0` → `til 5` (and `2.0 rotate`, `3.0 mavg`),
-a number signalled → a string, `where a:1` → `where a=1`, `distinct asc distinct` → `asc distinct`,
-redundant parentheses around one token (styleq), and - under `--profile uqf` -
+`*=` (QE004), a leading UTF-8 BOM (QE005), an invalid string escape (`"C:\data"` →
+`"C:\\data"`, QE002), `true`/`false`/`None`/`return x` → `1b`/`0b`/`(::)`/`:x` (QF015),
+a table literal of scalars, each column enlisted (QT005), a symbol used as a `like`
+pattern (`` `a* `` → `"a*"`, QB007), `f . ()` → `f[]` (QA004), `til 5.0` → `til 5` (QT008,
+and `2.0 rotate` QT014, `3.0 mavg` QT017), a number signalled → a string (QT025),
+`where a:1` → `where a=1` (QT028), what q 5 refuses and q 4 read another way →
+the q 5 spelling of that reading (`-x` → `neg x` QE008, `+/x` → `(+/)x` QE009,
+`cor each x` → `(cor) each x` QE011), a no-break space, dash or curly quote pasted
+from a document → its ASCII (QE012),
+redundant parentheses around one token (QS004, styleq), and - under `--profile uqf` -
 parentheses showing the order q already evaluates `a*b+c` in (QP005, and
 QP007 for `a+b*c` where that is selected) or removing them where QP008 is
 selected, and the
@@ -137,23 +141,31 @@ application swallowed. Each was checked in q 5 to leave the program alone, or
 to replace code that could only fail.
 
 Some rewrites change behaviour or guess at intent, so they remain editor Quick
-Fixes that you choose individually: `&&` → `&`, `||` → `|`, `reverse asc` →
-`desc` (they differ on a dictionary's tied keys), a symbol given to
-`ss`/`ssr` → a string, dropping a lambda's trailing `;` so it returns its last
-value, `a -1` → `a - 1`, a string compared with `=` in a filter → `like`
-(on a char column as long as the string, `=` is valid q), `=` against a
-vector in a filter → `in`, `f(a;b)` →
-`f[a;b]`, `` `int$"12" `` → `"I"$"12"`, `` `symbol$"abc" `` → `` `$"abc" ``, removing a statement that never runs,
-removing an unused local's name while keeping its expression,
-`{x} each y` → `y` and `{x+1} each a` → `a+1` (they differ on an empty typed list, and
-`{x} each` drops a `` `s# `` or `` `g# `` attribute), parentheses
-round each comparison an `and`/`or` swallows in a where phrase, `~` → `=` in
-a filter, `x` → the one declared parameter, deleting a commented-out
-definition, passing an outer local into a nested lambda that reads it
-(`{a+x}` → `{[x;a] a+x}[;a]`), dropping the trailing `;` of `$[c;a;b;]`,
-`$[c;a]` → `if[c;a]` where nothing takes its value, `10/2` → `10%2`, removing `a:a`, renaming a parameter
-that shadows a builtin, a column one typo from the table's, and (uqf)
-`.z.P` → `.z.p` and datetime → timestamp. Add
+Fixes that you choose individually: `&&` → `&`, `||` → `|` (QE004), `reverse asc` →
+`desc` (QR001: they differ on a dictionary's tied keys), `distinct asc distinct` →
+`asc distinct` (QR003: the attribute differs on a table), a symbol given to
+`ss`/`ssr` → a string (QT007), dropping a lambda's trailing `;` so it returns its last
+value (QB012), `a -1` → `a - 1` (QB010), a string compared with `=` in a filter → `like`
+(QB015: on a char column as long as the string, `=` is valid q), `=` against a
+vector in a filter → `in` (QB008), `f(a;b)` →
+`f[a;b]` (QA008), `` `int$"12" `` → `"I"$"12"` (QT004), `` `symbol$"abc" `` → `` `$"abc" `` (QT032),
+removing a statement that never runs (QB020),
+removing an unused local's name while keeping its expression (QF017),
+`{x} each y` → `y` (QR002) and `{x+1} each a` → `a+1` (QR004) (they differ on an empty typed list, and
+`{x} each` drops a `` `s# `` or `` `g# `` attribute), `abs each x` → `abs x` (QV002: they
+differ on the empty list), `r:r,x` → `r,:x` in a loop (QV003: q refuses it with 'type
+where the items joined do not fit `r`), parentheses
+round each comparison an `and`/`or` swallows in a where phrase (QB006), `~` → `=` in
+a filter (QB005), `x` → the one declared parameter (QF010), deleting a commented-out
+definition (QL002), passing an outer local into a nested lambda that reads it
+(`{a+x}` → `{[x;a] a+x}[;a]`, QF005), dropping the trailing `;` of `$[c;a;b;]` (QA007),
+`$[c;a]` → `if[c;a]` where nothing takes its value (QA006), `10/2` → `10%2` (QB014),
+removing `a:a` (QB017), renaming a parameter
+that shadows a builtin (QF001), a column one typo from the table's (QF020),
+`` hopen `host:5000 `` → `` hopen `:host:5000 `` (QT029), removing a `noqa` comment
+that suppresses nothing (QL003), and (uqf)
+`.z.P` → `.z.p` (QP003) and a datetime → a timestamp (QP002: a literal, or a cast of a
+literal or the clock, where the instant is the same). Add
 `--unsafe-fixes` - Ruff's flag of the same name - to have `--diff` and `--fix`
 include them. Both CLI options use the builtin backend (or `--backend all`);
 `--fix` requires file paths rather than stdin.
@@ -412,7 +424,9 @@ name-pattern = "(?:password|secret|dsn)$"  # case-insensitive, on the name's las
 
 An option a rule does not have, a rule with none, or a value of the wrong kind
 is a configuration error (exit 2), so a typo cannot quietly leave the default
-in force. Both tables may also go under `[lint]`, and a file that `extend`s
+in force. The language server, which must keep linting, uses the defaults
+where such a file governs and says so in a `window/showMessage`, once per
+error. Both tables may also go under `[lint]`, and a file that `extend`s
 another overrides the base's entries one at a time.
 
 The keys and the values each takes are also a JSON Schema,

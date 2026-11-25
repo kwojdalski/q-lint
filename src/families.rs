@@ -237,14 +237,18 @@ fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut V
 /// (#402): q 5 gives `(3 1 2;5 4)` for `distinct asc distinct@'x` and three
 /// items for `asc distinct@'x`.
 /// The iterator may start the indented line that continues the statement:
-/// `reverse asc` over `  .'p` is `reverse asc .'p` (#685).
+/// `reverse asc` over `  .'p` is `reverse asc .'p` (#685). The keyword
+/// iterators all count: `asc scan x` is the list of `asc`'s iterations to
+/// convergence, so `reverse asc scan 3 1 2` is `` (`s#1 2 3;3 1 2) `` where
+/// `desc scan 3 1 2` is `(3 1 2;3 2 1)` (q 5, #2255), and `asc prior x`
+/// sorts pairs.
 fn iterated(code: &str, at: usize) -> bool {
     let rest = &code[at..];
     rest.starts_with(['\'', '/', '\\'])
         || re!(concat!(
             "^",
             blank!(),
-            r"*(?:each|peach)\b|^",
+            r"*(?:each|peach|scan|over|prior)\b|^",
             blank!(),
             r"*[@.]['/\\]"
         ))

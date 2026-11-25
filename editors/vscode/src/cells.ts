@@ -11,9 +11,11 @@
 // indented (a continuation line) marks nothing. Nor does one between a
 // statement and its indented continuation lines: q skips a comment there
 // without ending the statement (`f:{x+` / `/ %%` / `  y}` defines f), and a
-// cell cut there would send half a statement.
+// cell cut there would send half a statement. Each line is read by
+// `lineKinds`, the reader the statement cutter shares, which also skips
+// indented lines above the first statement as q does (#2278).
 
-import { blockDepth } from "./statements";
+import { lineKinds, trimBlanks } from "./statements";
 
 /// The text after `%%` names the cell: `/ %% load the trades`.
 const MARKER = /^\/\s*%%(.*)$/;
@@ -22,44 +24,6 @@ const MARKER = /^\/\s*%%(.*)$/;
 /// whether a file has cells at all.
 export function looksLikeMarker(line: string): boolean {
   return MARKER.test(line);
-}
-
-const trimEnd = (line: string): string => line.replace(/\s+$/, "");
-const blank = (line: string): boolean => line.trim() === "";
-const indented = (line: string): boolean => line.startsWith(" ") || line.startsWith("\t");
-
-/// How q reads each line of `lines`: inside a comment (a block comment, the
-/// shebang, after the script's end), a comment line, blank, a continuation
-/// line, or code that starts a statement.
-type LineKind = "commented" | "comment" | "blank" | "continues" | "starts";
-
-function kinds(lines: string[]): LineKind[] {
-  const out: LineKind[] = [];
-  let depth = 0;
-  let ended = false;
-  let open = false;
-  for (const [i, raw] of lines.entries()) {
-    const line = trimEnd(raw);
-    if (ended || (i === 0 && line.startsWith("#!"))) {
-      out.push("commented");
-    } else if (depth > 0 || line === "/") {
-      out.push("commented");
-      depth = blockDepth(depth, line);
-    } else if (line === "\\") {
-      out.push("commented");
-      ended = true;
-    } else if (blank(line)) {
-      out.push("blank");
-    } else if (indented(line) && open) {
-      out.push("continues");
-    } else if (line.startsWith("/")) {
-      out.push("comment");
-    } else {
-      out.push("starts");
-      open = true;
-    }
-  }
-  return out;
 }
 
 export interface Cell {
@@ -74,10 +38,10 @@ export interface Cell {
 
 /// The lines of `lines` that are cell markers, by q's reading of them.
 export function markers(lines: string[]): number[] {
-  const kind = kinds(lines);
+  const kind = lineKinds(lines);
   const out: number[] = [];
   for (let i = 0; i < lines.length; i++) {
-    if (kind[i] !== "comment" || !MARKER.test(trimEnd(lines[i]))) {
+    if (kind[i] !== "comment" || !MARKER.test(trimBlanks(lines[i]))) {
       continue;
     }
     // A marker inside a statement - an indented line follows it, past
@@ -103,14 +67,14 @@ export function cells(lines: string[]): Cell[] {
   if (at.length === 0) {
     return [];
   }
-  const kind = kinds(lines);
+  const kind = lineKinds(lines);
   const out: Cell[] = [];
   if (kind.slice(0, at[0]).includes("starts")) {
     out.push({ start: 0, end: at[0] - 1, title: "" });
   }
   for (const [k, line] of at.entries()) {
     const end = (at[k + 1] ?? lines.length) - 1;
-    out.push({ start: line, end, marker: line, title: (MARKER.exec(trimEnd(lines[line]))?.[1] ?? "").trim() });
+    out.push({ start: line, end, marker: line, title: (MARKER.exec(trimBlanks(lines[line]))?.[1] ?? "").trim() });
   }
   return out;
 }
@@ -131,7 +95,8 @@ export function cellCode(lines: string[], cell: Cell): string {
 export function shownCode(code: string, cell: Pick<Cell, "marker">): string {
   const lines = code.split(/\r?\n/);
   const body = cell.marker === undefined ? lines : lines.slice(1);
-  return body.join("\n").replace(/^\s*\n/, "").replace(/\s+$/, "");
+  // q's blanks only: a line of a no-break space is code to q (#2279).
+  return body.join("\n").replace(/^(?:[ \t\r]*\n)+/, "").replace(/[ \t\r\n]+$/, "");
 }
 
 /// A cell's name for the Interactive Window and a lens's tooltip: its
@@ -145,7 +110,7 @@ export function cellName(all: Cell[], cell: Cell): string {
 /// The first line after `after` that starts a statement, as q reads the
 /// file; undefined when none does. Smart Send moves the cursor there.
 export function nextStatement(lines: string[], after: number): number | undefined {
-  const kind = kinds(lines);
+  const kind = lineKinds(lines);
   for (let i = after + 1; i < lines.length; i++) {
     if (kind[i] === "starts") {
       return i;

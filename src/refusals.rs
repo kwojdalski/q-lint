@@ -2061,23 +2061,7 @@ fn keyword_each(path: &str, source: &str, comments: &str, unsym: &str, out: &mut
         // With an operand on its left and nothing applied after `each`, the
         // pair is a projection: q 5 parses `a mod each`, `(a mod each;1)`,
         // `a in each[b]` and `a mod each'`, and refuses `a mod each' x` (#647).
-        let line = &source[line_start..];
-        let prompt = if line.starts_with("q)") { 2 } else { 0 };
-        let left = source[line_start + crate::timed_prefix(line).max(prompt)..word.start()]
-            .trim_end_matches([' ', '\t']);
-        // A signature is no operand: q 5 refuses `{[x] cor each}`.
-        let signature = left.ends_with(']')
-            && left
-                .bytes()
-                .rev()
-                .scan(0i32, |depth, c| {
-                    *depth += i32::from(c == b']') - i32::from(c == b'[');
-                    Some(*depth)
-                })
-                .position(|depth| depth == 0)
-                .is_some_and(|p| left[..left.len() - 1 - p].ends_with('{'));
-        let infix = !signature
-            && left.ends_with(|c: char| c.is_ascii_alphanumeric() || "_.)]}\"`".contains(c));
+        let infix = has_left_operand(source, comments, word.start());
         let it = m.get(3).unwrap().end();
         let derived = it + re!(r"^(?:[/\\']:?)*").find(&source[it..]).map_or(0, |d| d.end());
         // Read past comments, which `comments` has blanked: `a cor each / x`
@@ -2100,6 +2084,15 @@ fn keyword_each(path: &str, source: &str, comments: &str, unsym: &str, out: &mut
                     w = word.as_str(),
                     it = &m[3]
                 )
+            } else if keyword.is_none() {
+                // `(#) each x` is a projection on KDB-X, `#'[x]` (#2251).
+                format!(
+                    "`{w}` is infix, so q 5 refuses `{w} {it}` at parse, and `({w}) {it} x` is \
+                     a projection: write `x {w}' y`, or the keyword of the monadic form \
+                     (`count each x` for `# each x`)",
+                    w = word.as_str(),
+                    it = &m[3]
+                )
             } else {
                 format!(
                     "`{w}` is infix, so q 5 refuses `{w} {it}` at parse: write `({w}) {it}`, \
@@ -2112,6 +2105,55 @@ fn keyword_each(path: &str, source: &str, comments: &str, unsym: &str, out: &mut
         finding.end_column = finding.column.map(|c| c + word.len());
         out.push(finding);
     }
+}
+
+/// Whether an operand stands on the left of `at` in its statement - a
+/// name, a literal, a string or a closing bracket - rather than nothing, an
+/// operator or a lambda's signature (q 5 refuses `{[x] cor each}`). Read
+/// across an indented line, which q joins to the one above: `s:x` over
+/// `  in each y` is `s:x in each y` (#2252).
+pub(crate) fn has_left_operand(source: &str, comments: &str, at: usize) -> bool {
+    let left = left_of(source, comments, at);
+    let signature = left.ends_with(']')
+        && left
+            .bytes()
+            .rev()
+            .scan(0i32, |depth, c| {
+                *depth += i32::from(c == b']') - i32::from(c == b'[');
+                Some(*depth)
+            })
+            .position(|depth| depth == 0)
+            .is_some_and(|p| left[..left.len() - 1 - p].ends_with('{'));
+    !signature && left.ends_with(|c: char| c.is_ascii_alphanumeric() || "_.)]}\"`".contains(c))
+}
+
+/// What stands before `at` in its statement, without the blanks between:
+/// the text of its line after a `q)` prompt or `\t` prefix, or - where
+/// nothing is there and the line is indented, the line above going on -
+/// the end of the last line above that holds code. Blank and comment lines
+/// between do not end the statement (#224). `comments` is the source with
+/// its comments blanked and strings kept, a string being an operand; every
+/// blank is trimmed, a no-break space too.
+fn left_of<'a>(source: &str, comments: &'a str, at: usize) -> &'a str {
+    let line_start = |end: usize| comments[..end].rfind('\n').map_or(0, |p| p + 1);
+    let left = |start: usize, end: usize| {
+        let from = (start + expression_start(&source[start..])).min(end);
+        comments[from..end].trim_end_matches(char::is_whitespace)
+    };
+    let mut start = line_start(at);
+    let own = left(start, at);
+    if !own.is_empty() || !source[start..].starts_with([' ', '\t']) {
+        return own;
+    }
+    while start > 0 {
+        let end = start - 1;
+        start = line_start(end);
+        let above = left(start, end);
+        if !above.is_empty() {
+            return above;
+        }
+    }
+    own
 }
 
 /// The narrow integer type a vector item is parsed as, and the largest

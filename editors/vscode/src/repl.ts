@@ -3,7 +3,7 @@
 // the word Tab completes and what it offers, and the history and its search.
 // Nothing here touches VS Code or a process.
 
-import { blockDepth } from "./statements";
+import { blockDepth, trimBlanks } from "./statements";
 
 /// Whether each `(`, `[` and `{` of `text` is closed and no string is left
 /// open: then Enter runs it, else it starts a new line, as the Julia REPL
@@ -44,7 +44,7 @@ function scan(text: string, stops: number[] = []): Open & { at: Open[] } {
     // closes it (#1111); inside one a `/` alone opens another (#1500).
     if ((i === 0 || text[i - 1] === "\n") && !inString) {
       const end = text.indexOf("\n", i);
-      const line = text.slice(i, end < 0 ? text.length : end).trimEnd();
+      const line = trimBlanks(text.slice(i, end < 0 ? text.length : end));
       if (block > 0 || (depth <= 0 && line === "/")) {
         const after = blockDepth(block, line);
         if (after !== block) {

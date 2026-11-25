@@ -77,13 +77,16 @@ fn convention(name: &str) -> Option<Convention> {
 // adverb to `f` instead of applying `f`. Brackets around what follows
 // would change the line, not respell it. The `f` joins too: q 5
 // `a:2.5; a ljf 2` is 'rank, as `a ij 2` is, not an index (#621).
+// Checked word by word against q 5's `parse "f w 1 2"`: `dsave` and
+// `setenv` are infix there, and `aj`, `aj0` and `ej` are applied, as
+// `find` - no reserved word at all - is (#2257).
 pub(crate) const INFIX: &[&str] = &[
-    "aj", "aj0", "and", "asof", "bin", "binr", "cor", "cov", "cross", "cut", "div", "each",
-    "except", "ej", "find", "ij", "in", "insert", "inter", "like", "lj", "lsq", "mmu", "mod", "or",
-    "over", "peach", "pj", "prior", "rotate", "scan", "set", "ss", "sublist", "sv", "uj", "union",
-    "upsert", "vs", "wavg", "within", "wsum", "xasc", "xbar", "xcol", "xcols", "xdesc", "xexp",
-    "xgroup", "xkey", "xlog", "xprev", "xrank", "ema", "fby", "mavg", "mcount", "mdev", "mmax",
-    "mmin", "msum", "scov", "ijf", "ljf", "ujf",
+    "and", "asof", "bin", "binr", "cor", "cov", "cross", "cut", "div", "dsave", "each", "except",
+    "ij", "in", "insert", "inter", "like", "lj", "lsq", "mmu", "mod", "or", "over", "peach", "pj",
+    "prior", "rotate", "scan", "set", "setenv", "ss", "sublist", "sv", "uj", "union", "upsert",
+    "vs", "wavg", "within", "wsum", "xasc", "xbar", "xcol", "xcols", "xdesc", "xexp", "xgroup",
+    "xkey", "xlog", "xprev", "xrank", "ema", "fby", "mavg", "mcount", "mdev", "mmax", "mmin",
+    "msum", "scov", "ijf", "ljf", "ujf",
 ];
 fn qualify(name: &str, ns: &str) -> String {
     if name.starts_with('.') {

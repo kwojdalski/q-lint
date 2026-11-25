@@ -112,8 +112,10 @@ test("Explain qSQL finds where the query starts", () => {
   assert.strictEqual(leadBefore(f, f.indexOf("px")), 2);
   // A name ending in a query word is no query.
   assert.strictEqual(leadBefore("x:.my.select 1\n", 10), undefined);
-  // An empty first line above an indented one ends the walk (#1396).
-  assert.strictEqual(leadBefore("\n  select from t", 10), 3);
+  // An empty first line above an indented one ends the walk (#1396); in
+  // a file that indented line is one q skips, so it holds no query (#2278).
+  assert.strictEqual(leadBefore("\n  select from t", 10), undefined);
+  assert.strictEqual(leadBefore("a:1\n\n  select from t", 12), 7);
   // A query word in a string or a comment is no lead (#1466).
   const s = 'select from trade where sym like "update*"';
   assert.strictEqual(leadBefore(s, s.length), 0);
@@ -1128,6 +1130,44 @@ test("Write Lint Baseline names the baseline in the configuration that governs t
       // The project's ignore still holds, and the baseline hides the rest.
       const out = require("node:child_process").spawnSync(QLINTER, ["--format", "json", "."], { cwd: dir, encoding: "utf8" });
       assert.deepStrictEqual(JSON.parse(out.stdout).length ?? JSON.parse(out.stdout).findings?.length, 0, out.stdout + out.stderr);
+    }
+  } finally {
+    vscode.workspace.workspaceFolders = undefined;
+    restore();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Write Lint Baseline under --isolated or --config=FILE shows the line and edits no configuration (#2296)", async (t) => {
+  const { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, realpathSync } = require("node:fs");
+  const { join } = require("node:path");
+  const { tmpdir } = require("node:os");
+  if (!existsSync(QLINTER)) {
+    t.skip("no qlinter built at target/release");
+    return;
+  }
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "qlint-bl-iso-")));
+  const { context, restore } = setUp();
+  try {
+    writeFileSync(join(root, "a.q"), "f:{[count] count}\nsum:1\n");
+    const own = 'profile = "style"\n';
+    writeFileSync(join(root, "qlinter.toml"), own);
+    writeFileSync(join(root, "team.toml"), own);
+    vscode.workspace.workspaceFolders = [{ uri: { scheme: "file", fsPath: root }, name: "ws" }];
+    for (const [args, says] of [
+      [["--isolated"], /--isolated and reads no configuration/],
+      [["--config=" + join(root, "team.toml")], /add `baseline = "qlinter-baseline.json"` to .*team\.toml/],
+    ]) {
+      registerBaseline(context, () => ({ command: QLINTER, args }));
+      stub.messages.length = 0;
+      // Were it asked to add the line, it would be answered so.
+      stub.picks.push("Write", "Add");
+      assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.writeBaseline)(), join(root, "qlinter-baseline.json"));
+      assert.ok(stub.messages.some(([, text]) => says.test(text)), JSON.stringify(stub.messages));
+      assert.strictEqual(readFileSync(join(root, "qlinter.toml"), "utf8"), own);
+      assert.strictEqual(readFileSync(join(root, "team.toml"), "utf8"), own);
+      rmSync(join(root, "qlinter-baseline.json"), { force: true });
+      stub.picks.length = 0;
     }
   } finally {
     vscode.workspace.workspaceFolders = undefined;

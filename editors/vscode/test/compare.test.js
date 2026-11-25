@@ -367,11 +367,18 @@ test("the page shows two answers that are not tables as text, and says when they
 
 test("Compare Query matches a key repeated on many rows in linear time, in order (#1860)", () => {
   const mk = (rows) => ({ ok: true, type: 99, text: [], grid: { count: rows, keys: 1, names: ["s", "v"], types: [11, 7], cells: [Array.from({ length: rows }, (_, i) => "k" + (i % 10)), Array.from({ length: rows }, (_, i) => String(i))], raw: [[], []], rank: [[], []] } });
+  // Best of three, as the diff's twin in resultview.test.js: one garbage
+  // collection or a busy machine during a single run can make one size look
+  // slow with the code unchanged.
   const time = (rows) => {
     const o = { process: "p", answer: mk(rows), millis: 1 };
-    const t = process.hrtime.bigint();
-    compareOutcomes(o, o, -1);
-    return Number(process.hrtime.bigint() - t) / 1e6;
+    return Math.min(
+      ...[0, 1, 2].map(() => {
+        const t = process.hrtime.bigint();
+        compareOutcomes(o, o, -1);
+        return Number(process.hrtime.bigint() - t) / 1e6;
+      }),
+    );
   };
   time(10_000);
   const small = time(50_000);

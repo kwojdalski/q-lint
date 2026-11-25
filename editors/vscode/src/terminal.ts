@@ -264,8 +264,12 @@ function untab(code: string, inString: boolean): string {
 /// (`\d .ns`, `\cd /tmp`) is left as it is - q does not read comments in
 /// one - and its continuation lines (`\t {x+` then `  1}[2]`) joined to it
 /// as any statement's are: a newline sent would run each line alone (#1674).
+/// A `k)` statement's lines are joined with `;`: in k a newline between
+/// them ends an expression, inside a lambda too, where in q it is a blank
+/// (#2285).
 export function replLine(statement: string): string {
   const lines = statement.split("\n");
+  const between = statement.startsWith("k)") ? ";" : " ";
   let out = "";
   if (statement.startsWith("\\")) {
     out = lines.shift()!.replace(/\t/g, " ");
@@ -285,7 +289,7 @@ export function replLine(statement: string): string {
       // A comment line inside a lambda.
       continue;
     }
-    out = out === "" ? untab(code, false) : `${out} ${untab(code, false)}`;
+    out = out === "" ? untab(code, false) : `${out}${between}${untab(code, false)}`;
   }
   return out;
 }

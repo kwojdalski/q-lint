@@ -79,7 +79,11 @@ export interface Point {
 export interface Summary {
   total: number;
   errors: number;
+  /// Findings of severity `warning` only (#2293).
   warnings: number;
+  /// Findings of severity `information` or `hint`: a `[severity]` table can
+  /// lower a rule to either, and they are neither errors nor warnings.
+  notes: number;
   files: number;
   rules: RuleCount[];
   folders: FolderCount[];
@@ -107,9 +111,11 @@ export function summarise(findings: Finding[], root: string | string[], depth = 
   const rules = new Map<string, RuleCount & { paths: Set<string> }>();
   const folders = new Map<string, FolderCount & { paths: Set<string> }>();
   let errors = 0;
+  let warnings = 0;
   for (const f of findings) {
     const error = f.severity === "error";
     errors += error ? 1 : 0;
+    warnings += f.severity === "warning" ? 1 : 0;
     const r = rules.get(f.code) ?? { code: f.code, rule: f.rule, category: f.category, severity: f.severity, count: 0, files: 0, paths: new Set<string>() };
     r.count++;
     r.paths.add(f.path);
@@ -128,7 +134,8 @@ export function summarise(findings: Finding[], root: string | string[], depth = 
   return {
     total: findings.length,
     errors,
-    warnings: findings.length - errors,
+    warnings,
+    notes: findings.length - errors - warnings,
     files: new Set(findings.map((f) => f.path)).size,
     rules: [...rules.values()].map(strip).sort((a, b) => b.count - a.count || a.code.localeCompare(b.code)),
     folders: [...folders.values()].map(strip).sort((a, b) => b.count - a.count || a.folder.localeCompare(b.folder)),
