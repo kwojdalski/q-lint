@@ -638,6 +638,25 @@ test("the sym inspector's growth counts from the largest size before, not the pa
   assert.deepStrictEqual(rows, ["| 2026.01.07 | 4 |  |", "| 2026.01.08 | 4 | 0 |", "| 2026.01.09 | 4 | 0 |"]);
 });
 
+// A sym column whose indexes run past the 3-symbol file: 0 1 2 are its
+// symbols, 3 4 99 none (#2143).
+test("the sym inspector counts no index past the file's end as a symbol, and warns of them (#2143)", { skip }, async (t) => {
+  const { connection, dir } = await connect(t, [
+    'r:hsym`$"$DIR/b";',
+    "{[r;d] .Q.dd[r;d,`trade`] set .Q.en[r] ([] sym:6#`a`b`c;px:6#1f)}[r] each 2026.03.03 2026.03.04;",
+    ".Q.dd[r;2026.03.04,`trade`sym] set `sym!0 1 2 3 4 99;",
+    "\\l $DIR/b",
+    "",
+  ].join("\n"));
+  assert.deepStrictEqual(await onDisk(t, `${dir}/b`, '{"f"$(count sym;exec x from select count i by date from trade)}'), [3, [6, 6]]);
+  const answer = readSym(await connection.call(SYM_INSPECT, 20));
+  assert.deepStrictEqual(answer.columns, [{ table: "trade", column: "sym", distinct: 3, past: 3 }]);
+  assert.deepStrictEqual(answer.growth, [{ partition: "2026.03.03", size: 3 }, { partition: "2026.03.04", size: 3 }]);
+  const text = symReport(answer, "b", 1e6);
+  assert.match(text, /\| trade \| sym \| 3 \| 100\.0% \|/);
+  assert.match(text, /trade\.sym has 3 values whose index is past the end of sym/);
+});
+
 // A null symbol is no entry of the file, and a partition of no symbols
 // (empty, or all null) says nothing of its size (#1567, #1568).
 test("the sym inspector leaves out null symbols and partitions that hold none", { skip }, async (t) => {

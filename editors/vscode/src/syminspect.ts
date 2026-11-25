@@ -14,7 +14,9 @@
 // its share, and each partition's largest index is how big the file was,
 // at least, when it was written - an enumeration only ever appends. A null
 // symbol (index 0N) is no entry of the file, and a partition holding no
-// symbol says nothing of its size, so both are left out (#1567, #1568). Those
+// symbol says nothing of its size, so both are left out (#1567, #1568); so
+// is an index past the file's end, which is no symbol of it but is counted
+// and warned of (#2143). Those
 // columns' data is read, so `lim` is kept small. Works on kdb+ (KDB-X) and
 // PeachQ; held there by dbtools_q.test.js.
 
@@ -35,10 +37,11 @@ export const SYM_INSPECT = [
   " one:{[enc;p;t;d] cs:enc d;([] part:(count cs)#p;tbl:(count cs)#t;col:cs;ix:{\"j\"$get` sv x,y}[d]each cs)};",
   " rows:raze raze{[one;enc;pt;p;b]{[one;enc;p;b;t]one[enc;`$string p;t;` sv b,t]}[one;enc;p;b]each pt}[one;enc;pt]'[s;sd];",
   " rows,:raze{[one;enc;r;t]one[enc;`;t;` sv r,t]}[one;enc;r]each o;",
-  " c:$[count rows;0!select d:\"f\"$count distinct except[raze ix;0N]by tbl,col from rows;([] tbl:`$();col:`$();d:`float$())];",
-  " g:$[count rows;select from(0!select x:\"f\"$1+max max each ix by part from rows where not null part)where x>0;([] part:`$();x:`float$())];",
-  " `sym`root`count`bytes`partitions`sampled`ctable`ccol`cdistinct`gpart`gsize!(1b;system\"cd\";\"f\"$n;\"f\"$b;\"f\"$count pv;\"f\"$count s;",
-  "  string c`tbl;string c`col;c`d;string g`part;g`x)}",
+  " w:$[null n;0W;n];kept:{[w;x]x where x within(0;w-1)}[w];",
+  " c:$[count rows;0!select d:\"f\"$count distinct kept raze ix,p:\"f\"$sum w<=raze ix by tbl,col from rows;([] tbl:`$();col:`$();d:`float$();p:`float$())];",
+  " g:$[count rows;select from(0!select x:\"f\"$1+max kept raze ix by part from rows where not null part)where x>0;([] part:`$();x:`float$())];",
+  " `sym`root`count`bytes`partitions`sampled`ctable`ccol`cdistinct`cpast`gpart`gsize!(1b;system\"cd\";\"f\"$n;\"f\"$b;\"f\"$count pv;\"f\"$count s;",
+  "  string c`tbl;string c`col;c`d;c`p;string g`part;g`x)}",
 ].join("\n");
 
 /// Partitions the inspector reads, spread over the range.
@@ -53,7 +56,8 @@ export type SymAnswer =
       bytes: number | null;
       partitions: number;
       sampled: number;
-      columns: { table: string; column: string; distinct: number }[];
+      /// `past`: how many of a column's values index past the file's end.
+      columns: { table: string; column: string; distinct: number; past: number }[];
       growth: { partition: string; size: number }[];
     };
 
@@ -74,6 +78,7 @@ export function readSym(raw: unknown): SymAnswer {
   const tables = strings(r.ctable);
   const cols = strings(r.ccol);
   const distinct = numbers(r.cdistinct);
+  const past = numbers(r.cpast);
   const parts = strings(r.gpart);
   const sizes = numbers(r.gsize);
   // Partitions in order by number, so int partitions 8 9 10 grow in that order (#1128).
@@ -84,7 +89,7 @@ export function readSym(raw: unknown): SymAnswer {
     bytes: number(r.bytes),
     partitions: number(r.partitions) ?? 0,
     sampled: number(r.sampled) ?? 0,
-    columns: tables.map((table, i) => ({ table, column: cols[i] ?? "", distinct: distinct[i] ?? 0 })).sort((a, b) => b.distinct - a.distinct),
+    columns: tables.map((table, i) => ({ table, column: cols[i] ?? "", distinct: distinct[i] ?? 0, past: past[i] || 0 })).sort((a, b) => b.distinct - a.distinct),
     growth: parts.map((partition, i) => ({ partition, size: sizes[i] ?? 0 })).sort((a, b) => a.partition.localeCompare(b.partition, "en", { numeric: true })),
   };
 }
@@ -122,6 +127,13 @@ export function symReport(a: SymAnswer, process: string, warnAbove: number): str
       out.push(`| ${md(c.table)} | ${md(c.column)} | ${n(c.distinct)} | ${a.count ? `${((100 * c.distinct) / a.count).toFixed(1)}%` : ""} |`);
     }
     out.push("");
+  }
+  const corrupt = a.columns.filter((c) => c.past > 0);
+  if (corrupt.length > 0) {
+    out.push(
+      `**Warning:** ${corrupt.map((c) => `${md(c.table)}.${md(c.column)} has ${n(c.past)} value${c.past === 1 ? "" : "s"}`).join(", ")} whose index is past the end of sym: no symbol of the file, so they are left out of the counts here. Partition Check's full check names the partitions.`,
+      "",
+    );
   }
   if (a.growth.length > 0) {
     out.push(

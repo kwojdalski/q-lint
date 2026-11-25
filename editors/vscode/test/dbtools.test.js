@@ -289,6 +289,19 @@ test("the sym report's growth counts from the largest size so far (#2142)", () =
   assert.deepStrictEqual(rows, ["| 2026.01.07 | 4 |  |", "| 2026.01.08 | 4 | 0 |", "| 2026.01.09 | 4 | 0 |", "| 2026.01.12 | 6 | 2 |"]);
 });
 
+// Indexes past the file's end are no symbols of it: not a share past 100%,
+// but a warning of their own (#2143).
+test("the sym report counts no index past the file's end, and warns of them (#2143)", () => {
+  const a = readSym({ sym: true, root: "/db", count: 3, bytes: 64, partitions: 1, sampled: 1, ctable: ["trade", "quote"], ccol: ["sym", "sym"], cdistinct: [3, 2], cpast: [2, 0], gpart: ["2026.03.04"], gsize: [3] });
+  assert.deepStrictEqual(a.columns, [{ table: "trade", column: "sym", distinct: 3, past: 2 }, { table: "quote", column: "sym", distinct: 2, past: 0 }]);
+  const text = symReport(a, "hdb", 1000);
+  assert.match(text, /\| trade \| sym \| 3 \| 100\.0% \|/);
+  assert.match(text, /\*\*Warning:\*\* trade\.sym has 2 values whose index is past the end of sym/);
+  assert.doesNotMatch(text, /quote\.sym has/);
+  // An answer from before it is read as none past the end.
+  assert.strictEqual(readSym({ sym: true, root: "/db", count: 3, bytes: 1, partitions: 1, sampled: 1, ctable: ["t"], ccol: ["s"], cdistinct: [1], gpart: [], gsize: [] }).columns[0].past, 0);
+});
+
 test("the attribute advisor counts filters and suggests by shape, never for an unfiltered column", () => {
   // Order is asked of a copy: `asc` would mark the table's own column s# (#1863).
   assert.deepStrictEqual(ATTRIBUTE_SAMPLE.match(/[^;\[]*\basc [^\])]*/g), ["{x~asc x}x til count x"]);
