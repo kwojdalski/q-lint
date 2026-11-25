@@ -84,11 +84,13 @@ export class ScheduledExports {
       return [];
     }
     const ran: string[] = [];
-    for (const { id } of this.list().filter((s) => isDue(s, now))) {
+    for (const { id, since } of this.list().filter((s) => isDue(s, now))) {
       // Asked again before each run: one before it may have taken long
-      // enough for a later tick to run this one, or to be running it (#1089).
+      // enough for a later tick to run this one, or to be running it
+      // (#1089). One that ran since, stamped after this tick's `now`, is
+      // not a clock put back, and not run again (#2160).
       const s = this.list().find((x) => x.id === id);
-      if (s === undefined || !isDue(s, now) || this.running.has(id)) {
+      if (s === undefined || s.since !== since || !isDue(s, now) || this.running.has(id)) {
         continue;
       }
       // Turned off while an earlier one ran: the rest wait (#1296).
@@ -104,6 +106,7 @@ export class ScheduledExports {
   /// Run `s` now and write its file; say a failure. Its new `last`.
   private async runOne(s: ScheduledExport, now: Date): Promise<string> {
     this.running.add(s.id);
+    const before = s.since;
     let last: string;
     try {
       const file = await this.export(s, now);
@@ -114,8 +117,10 @@ export class ScheduledExports {
     } finally {
       this.running.delete(s.id);
     }
-    // Read again: the list may have changed while it ran.
-    await this.save(this.list().map((x) => (x.id === s.id ? { ...x, since: now.getTime(), last } : x)));
+    // Read again: the list may have changed while it ran. A later run
+    // stamped meanwhile is not stamped back (#2160); a clock put back is.
+    const later = (x: ScheduledExport): boolean => x.since !== before && x.since > now.getTime();
+    await this.save(this.list().map((x) => (x.id === s.id && !later(x) ? { ...x, since: now.getTime(), last } : x)));
     return last;
   }
 
