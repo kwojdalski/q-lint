@@ -268,6 +268,11 @@ struct Index {
     roots: Vec<String>,
     exclude: Vec<glob::Pattern>,
     enabled: bool,
+    /// Each file read from disk by the paths it was read by, as the scan
+    /// reached it - a symlink by its own name, not its target's, which is
+    /// its key. `qlinter .` lints a link by its name and under the
+    /// configuration above it, and so does a workspace-scope lint (#2289).
+    reached: HashMap<String, std::collections::BTreeSet<String>>,
     /// Each workspace folder as the client named it, which is how an answer
     /// names the files under it (`Sources::uri`).
     folders: Vec<Folder>,
@@ -342,7 +347,11 @@ impl Index {
     /// `set`, leaving the placements to the caller's `settle`, so a batch
     /// of files works them out once.
     fn put(&mut self, path: &str, text: &str, withheld: bool) -> bool {
-        let path = file_key(path);
+        self.put_keyed(file_key(path), text, withheld)
+    }
+
+    /// `put` for the file keyed `path`.
+    fn put_keyed(&mut self, path: String, text: &str, withheld: bool) -> bool {
         let own = index(text);
         let read = guarded(|| q_lint_rs::references(text, false)).unwrap_or_default();
         let (loads, implicit) = (read.loads.clone(), read.implicit_defines.clone());
@@ -406,6 +415,7 @@ impl Index {
     /// Forget `path`, leaving the placements to the caller's `settle`.
     fn forget(&mut self, path: &str) -> bool {
         let key = file_key(path);
+        self.reached.remove(&key);
         match self.files.remove(&key) {
             Some(old) => {
                 if !old.withheld {
@@ -529,8 +539,23 @@ impl Index {
 
     fn read(&mut self, path: &str) -> bool {
         match on_disk(path) {
-            Some((text, _)) if is_q_path(path) => self.put(path, &text, false),
+            Some((text, _)) if is_q_path(path) => {
+                let key = file_key(path);
+                self.reached
+                    .entry(key.clone())
+                    .or_default()
+                    .insert(path.to_string());
+                self.put_keyed(key, &text, false)
+            }
             _ => self.forget(path),
+        }
+    }
+
+    /// The paths the file `key` was read from disk by, or the key itself.
+    fn spellings(&self, key: &str) -> Vec<String> {
+        match self.reached.get(key) {
+            Some(paths) if !paths.is_empty() => paths.iter().cloned().collect(),
+            _ => vec![key.to_string()],
         }
     }
 
@@ -621,6 +646,7 @@ impl Index {
     /// then the open documents over it, whose buffers win.
     fn rebuild(&mut self, policy: &Policy, docs: &Documents) {
         self.files.clear();
+        self.reached.clear();
         self.ws = Workspace::default();
         self.generation += 1;
         if self.enabled {
@@ -1780,7 +1806,7 @@ pub fn serve(
                         }
                         // To the URI it was open by, when the file reports
                         // under another (#2172).
-                        if closed.published_to(&key) != Some(uri.as_str()) {
+                        if !closed.published_to(&key, &uri) {
                             send(
                                 writer,
                                 json!({"method": "textDocument/publishDiagnostics",
@@ -2519,6 +2545,34 @@ fn escape(uri: &mut String, text: &str) {
 /// path below it - the innermost folder, when one holds another; and only a
 /// file in no folder by its real path.
 impl navigate::Sources<'_> {
+    /// The URI for the file keyed `key` as read from disk by `path`: by
+    /// the folder that path is spelled under and the rest of it, as the
+    /// client named the folder - a symlink by its own name (#2289). The
+    /// key's own URI when `path` is the key, or under no folder as spelled.
+    fn spelled_uri(&self, path: &str, key: &str) -> String {
+        let spelled = Path::new(path);
+        if path == key {
+            return self.uri(key);
+        }
+        let below = self
+            .idx
+            .folders
+            .iter()
+            .filter_map(|folder| {
+                Some((folder, spelled.strip_prefix(Path::new(&folder.path)).ok()?))
+            })
+            .min_by_key(|(_, rest)| rest.components().count());
+        let Some((folder, rest)) = below else {
+            return self.uri(key);
+        };
+        let mut uri = folder.uri.trim_end_matches('/').to_string();
+        for part in rest.components() {
+            uri.push('/');
+            escape(&mut uri, &part.as_os_str().to_string_lossy());
+        }
+        uri
+    }
+
     fn uri(&self, key: &str) -> String {
         if let Some(uri) = self.open.get(key) {
             return uri.to_string();

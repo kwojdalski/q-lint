@@ -4426,6 +4426,51 @@ fn a_file_opened_by_another_spelling_reports_under_one_uri() {
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
+/// A symlinked file reports closed under its own name and the
+/// configuration above it, as `qlinter .` lints it: it reported under its
+/// target's URI - a file outside the workspace - with the target's
+/// configuration, and a link beside a target in the folder reported
+/// nothing while closed (#2289).
+#[cfg(unix)]
+#[test]
+fn a_symlinked_file_reports_closed_under_its_own_name_and_configuration() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let (proj, outside) = (root.join("proj"), root.join("outside"));
+    for (folder, ignored) in [(&proj, "QP002"), (&outside, "QF010")] {
+        std::fs::create_dir(folder).unwrap();
+        std::fs::write(
+            folder.join("qlinter.toml"),
+            format!("profile = \"uqf\"\nignore = [\"{ignored}\"]\n"),
+        )
+        .unwrap();
+    }
+    let source = "a:2015.01.01T00:00:00.000\nf:{[x] y}\n";
+    std::fs::write(outside.join("t.q"), source).unwrap();
+    std::os::unix::fs::symlink(outside.join("t.q"), proj.join("link.q")).unwrap();
+    let (link, target) = (
+        file_uri(&proj.join("link.q")),
+        file_uri(&outside.join("t.q")),
+    );
+    let options = json!({"lint": {"scope": "workspace"}});
+    let (mut server, _) = start_with_options(&proj, &["--lsp"], options.clone(), Some(&proj));
+    let reported = last_published(&mut server, &[&link]);
+    assert_eq!(reported[&link], ["QF010"]);
+    assert!(!reported.contains_key(&target), "{reported:?}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+
+    // The target beside it, in the folder: each name reports.
+    std::fs::rename(outside.join("t.q"), proj.join("t.q")).unwrap();
+    std::fs::remove_file(proj.join("link.q")).unwrap();
+    std::os::unix::fs::symlink(proj.join("t.q"), proj.join("link.q")).unwrap();
+    let inside = file_uri(&proj.join("t.q"));
+    let (mut server, _) = start_with_options(&proj, &["--lsp"], options, Some(&proj));
+    let reported = last_published(&mut server, &[&link, &inside]);
+    assert_eq!(reported[&link], ["QF010"]);
+    assert_eq!(reported[&inside], ["QF010"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
 /// A closed file that starts with a BOM reports where an editor shows it
 /// (#2027): the editor holds the text without the BOM, so a finding on
 /// line 0 is where it is once the file is open, and the BOM's own finding
