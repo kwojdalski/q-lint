@@ -64,6 +64,9 @@ test("a file names its server types on a `/ @servertypes` line", () => {
   assert.deepStrictEqual(fileServerTypes("a:1\n/@servertypes `hdb,rdb\n"), ["hdb", "rdb"]);
   assert.strictEqual(fileServerTypes("  / @servertypes rdb\n"), undefined);
   assert.strictEqual(fileServerTypes("/ @servertypes 1x\n"), undefined);
+  // A comment after them is no more types (#2587).
+  assert.deepStrictEqual(fileServerTypes("/ @servertypes rdb hdb / the live and history ones\nselect from t"), ["rdb", "hdb"]);
+  assert.deepStrictEqual(fileServerTypes("/ @servertypes `rdb`hdb  - both\n"), ["rdb", "hdb"]);
   // `none`: the gateway itself (#2588).
   assert.deepStrictEqual(fileServerTypes("/ @servertypes none\n.gw.servers"), []);
   assert.deepStrictEqual(serverTypes("rdb, hdb rdb"), ["rdb", "hdb"]);

@@ -95,15 +95,18 @@ export function isGatewayCall(code: string): boolean {
 }
 
 /// The server types a file names for its queries: a line at column 0
-/// `/ @servertypes rdb hdb`. `/ @servertypes none` names no server, `[]`:
-/// the file's queries run on the gateway itself (#2588). Undefined when it
-/// names none.
+/// `/ @servertypes rdb hdb`, read to its first word that is no q name - a
+/// comment after them is none (#2587). `/ @servertypes none` names no
+/// server, `[]`: the file's queries run on the gateway itself (#2588).
+/// Undefined when it names none.
 export function fileServerTypes(text: string): string[] | undefined {
   const m = /^\/[ \t]*@servertypes[ \t]+(.+)$/m.exec(text);
   if (m === null) {
     return undefined;
   }
-  const types = [...new Set(m[1].split(/[\s,`]+/).filter((t) => /^[A-Za-z][A-Za-z0-9_.]*$/.test(t)))];
+  const words = m[1].split(/[\s,`]+/).filter((t) => t !== "");
+  const end = words.findIndex((t) => !/^[A-Za-z][A-Za-z0-9_.]*$/.test(t));
+  const types = [...new Set(end < 0 ? words : words.slice(0, end))];
   if (types.length === 1 && types[0] === "none") {
     return [];
   }
