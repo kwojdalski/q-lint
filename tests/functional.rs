@@ -506,6 +506,26 @@ const AROUND: &[(&str, &str)] = &[
     ("(?[t;();0b;()])", "(select from t)"),
     ("{count x}[?[t;();0b;()]]", "{count x}[select from t]"),
     ("(?[t;();0b;()];1)", "(select from t;1)"),
+    // An indented line after it continues the statement, as text after it
+    // on its line does, past blank and comment lines between (#2192): on
+    // KDB-X, `select from t where px>2` + newline + `  ,t` is 'type.
+    (
+        "?[t;enlist (>;`px;2);0b;()]\n  ,t",
+        "(select from t where px>2)\n  ,t",
+    ),
+    (
+        "?[t;enlist (>;`px;2);0b;()]\n\n  / a note\n\t,t",
+        "(select from t where px>2)\n\n  / a note\n\t,t",
+    ),
+    (
+        "?[t;enlist (>;`px;2);0b;()]\r\n  ,t",
+        "(select from t where px>2)\r\n  ,t",
+    ),
+    // A continuation that only closes or ends the statement does not join.
+    (
+        "?[t;enlist (>;`px;2);0b;()]\n  ;t",
+        "select from t where px>2\n  ;t",
+    ),
 ];
 
 /// `expression` with the functional form in it written as qSQL.
@@ -545,7 +565,14 @@ fn run_q(script: &str) -> Option<String> {
 
 /// A q string literal of `text`.
 fn quoted(text: &str) -> String {
-    format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
+    format!(
+        "\"{}\"",
+        text.replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\r', "\\r")
+            .replace('\n', "\\n")
+            .replace('\t', "\\t")
+    )
 }
 
 #[test]
