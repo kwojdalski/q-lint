@@ -456,3 +456,25 @@ test("an unanswered heartbeat shows as no answer after 5 s, and its wait counts 
   await sleep(2100);
   assert.match(live.api().statusText(), /no answer 7/);
 });
+
+// Between an auto-reconnect's tries nothing was connecting, so a query
+// asked which process to connect to, and the pick ended the reconnect (#2132).
+test("a query run between an auto-reconnect's tries waits for it, and runs on the process reconnected to (#2132)", async (t) => {
+  const a = await fakeQ(() => 2);
+  const b = await fakeQ(() => 3);
+  t.after(() => (a.close(), b.close()));
+  const { live } = await setUp(t, [proc("a", a.port), proc("b", b.port)], { "connection.autoReconnect.enable": true });
+  await live.connectTo("a");
+  a.drop();
+  await until(() => /reconnecting to a/.test(live.api().statusText()));
+  let asked;
+  const pick = vscode.window.showQuickPick;
+  vscode.window.showQuickPick = async (_items, options) => ((asked = options?.title ?? "a pick"), undefined);
+  t.after(() => (vscode.window.showQuickPick = pick));
+  await live.run("1+1");
+  assert.strictEqual(asked, undefined, "it asked which process to connect to");
+  assert.strictEqual(live.activeLabel(), "a");
+  assert.strictEqual(live.history()[0].process, "a");
+  assert.strictEqual(live.history()[0].code, "1+1");
+  assert.deepStrictEqual(b.logins, []);
+});

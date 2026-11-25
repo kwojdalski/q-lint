@@ -644,6 +644,10 @@ export class Live {
   private reconnectTries: { label: string; tried: number } | undefined;
   /// The connection a query was last answered on.
   private answeredOn: QConnection | undefined;
+  /// Settles when the automatic reconnect under way ends or is stopped: a
+  /// query sent meanwhile waits for it (#2132).
+  private reconnectDone: Promise<void> | undefined;
+  private endReconnect: (() => void) | undefined;
   /// Redraws the status bar each second while a query runs, so its time
   /// counts up (#910).
   private ticker: ReturnType<typeof setInterval> | undefined;
@@ -1314,7 +1318,7 @@ export class Live {
         ? `A query has been running on ${label} for ${took}. q-lint: Abort Current Query stops waiting for it.`
         : "A query is running. q-lint: Abort Current Query stops waiting for it.";
     } else if (this.waiters.size > 0) {
-      const to = label ?? this.connectingAs?.label ?? "the process";
+      const to = label ?? this.connectingAs?.label ?? this.reconnecting?.label ?? "the process";
       this.status.text = `$(sync~spin) q: ${iconsEscaped(to)} waiting`;
       this.status.tooltip = `A query waits to be sent to ${to}: a connect, or another call, is under way. q-lint: Abort Current Query stops it.`;
     } else if (label !== undefined) {
@@ -2349,6 +2353,22 @@ export class Live {
   /// each try (`backoffDelay`), until it connects, the tries run out, or the
   /// user connects elsewhere or disconnects (#917).
   private async autoReconnect(dropped: Process): Promise<void> {
+    let end = (): void => {};
+    const done = new Promise<void>((resolve) => (end = resolve));
+    this.reconnectDone = done;
+    this.endReconnect = end;
+    try {
+      await this.tryReconnecting(dropped);
+    } finally {
+      end();
+      if (this.reconnectDone === done) {
+        this.reconnectDone = undefined;
+        this.endReconnect = undefined;
+      }
+    }
+  }
+
+  private async tryReconnecting(dropped: Process): Promise<void> {
     const run = ++this.reconnectRun;
     // Read before each try: lowered meanwhile, the tries stop there (#1850).
     const attempts = (): number => readHealth((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback)).reconnectAttempts;
@@ -2398,6 +2418,8 @@ export class Live {
   /// Stop an automatic reconnect, if one is under way.
   private stopReconnecting(): void {
     this.reconnectRun++;
+    // What waits for it goes on now, not after the backoff it sleeps in.
+    this.endReconnect?.();
     if (this.reconnecting !== undefined) {
       // A try dialing now is stopped too, not left to connect (#1705).
       if (this.connection === undefined) {
@@ -2699,7 +2721,7 @@ export class Live {
       const stopped = new Promise<false>((resolve) => waiter.stop.signal.addEventListener("abort", () => resolve(false), { once: true }));
       const settled = await Promise.race([what.then(() => true, () => true), stopped]);
       if (!settled) {
-        const to = this.active?.label ?? this.connectingAs?.label ?? "the process";
+        const to = this.active?.label ?? this.connectingAs?.label ?? this.reconnecting?.label ?? "the process";
         void window.showInformationMessage(
           plainMessage(timedOut
             ? `q-lint: the query ${timedOutError(seconds)} (${source}) waiting to be sent to ${to}; it was not run.`
@@ -2720,8 +2742,12 @@ export class Live {
   }
 
   private async readyAfter(wait: (what: Promise<unknown> | undefined) => Promise<boolean>): Promise<{ connection: QConnection; process: Process } | undefined> {
-    // A reconnect still under way (after an abort) is waited for, not
-    // replaced by asking which process to connect to.
+    // A reconnect still under way (after an abort, or an automatic one
+    // between its tries, #2132) is waited for, not replaced by asking which
+    // process to connect to.
+    if (this.connection === undefined && this.reconnecting !== undefined && !(await wait(this.reconnectDone))) {
+      return undefined;
+    }
     if (this.connection === undefined && this.connecting !== undefined && !(await wait(this.connecting))) {
       return undefined;
     }
