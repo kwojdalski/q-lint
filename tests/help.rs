@@ -524,6 +524,13 @@ fn a_glyph_is_one_outside_names_numbers_strings_and_comments() {
         assert_eq!(glyph(source, context, skip), None, "{context}");
     }
     assert_eq!(glyph(source, "x-1", 1), Some("-"));
+    // A timed line's command is no glyph, though the q it times is
+    // (#2247): the backslash of `\t` is not Scan, nor the `:` of `\t:10`.
+    let source = "a:1\n\\t 1000\n\\ts f[]\n\\t:10 x+y\n";
+    for (context, skip) in [("\\t 1000", 0), ("\\ts", 0), ("\\t:10", 0), ("\\t:10", 2)] {
+        assert_eq!(glyph(source, context, skip), None, "{context}");
+    }
+    assert_eq!(glyph(source, "x+y", 1), Some("+"));
 }
 
 #[test]
