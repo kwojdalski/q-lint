@@ -61,6 +61,20 @@ test("every switch is declared, on by default, and every command hidden by its s
   if (DB_SETTINGS.symInspector) assert.strictEqual(props["q-lint.hdbBrowser.symInspector.warnAbove"].default, 1000000);
 });
 
+// q writes a nested column with no attribute, but an empty partition's: one
+// set on it is refused before anything is written (#2141).
+test("the column manager refuses an attribute on a nested or mixed column (#2141)", () => {
+  const cols = ["date", "sym", "ex", "tags", "any"];
+  const types = { date: "d", sym: "s", ex: "C", tags: "J", any: "" };
+  const attr = (column, a) => opProblem({ op: "attr", column, attr: a }, cols, "date", cols, types);
+  assert.strictEqual(attr("ex", "g"), "ex is a nested column, which q writes to disk with no attribute");
+  assert.strictEqual(attr("tags", "u"), "tags is a nested column, which q writes to disk with no attribute");
+  assert.strictEqual(attr("any", "p"), "any is a mixed column, which q writes to disk with no attribute");
+  assert.deepStrictEqual([attr("sym", "g"), attr("ex", "")], [undefined, undefined]);
+  // The script refuses it too, in each directory, before writing.
+  assert.ok(HELPERS.some((h) => h.startsWith(".qlint.cm.attr:") && h.indexOf("nested, which q writes with no attribute") < h.indexOf(".qlint.cm.put[")));
+});
+
 // A cast q does not make fails in every partition with rows and is made in
 // an empty one alone; it is refused before anything is written, with why (#2140).
 test("the column manager refuses a cast q does not make, by the schema migration's table (#2140)", () => {

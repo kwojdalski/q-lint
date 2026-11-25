@@ -62,7 +62,9 @@ async function startQ(source) {
     }
     await new Promise((r) => setTimeout(r, 100));
   }
-  process.kill(-child.pid, "SIGKILL");
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch {}
   throw new Error(`q did not start listening: ${stderr}`);
 }
 
@@ -302,6 +304,33 @@ test("the column manager adds a column the newest partitions have to the rest, a
   assert.deepStrictEqual(await onDisk(t, db, '{"f"$exec x from select count i by date from trade where null ex}'), [3, 3, 3, 3]);
   assert.deepStrictEqual(await onDisk(t, db, "{exec c from meta trade}"), ["date", "sym", "px", "ex"]);
   assert.deepStrictEqual(await onDisk(t, db, '{key` sv(hsym`$string first .Q.pv),`trade}'), [".d", "ex", "px", "sym"]);
+});
+
+// q drops an attribute writing a nested column, but on an empty one (#2141).
+test("the column manager sets no attribute on a nested column, and says so in each directory (#2141)", { skip }, async (t) => {
+  const source = [
+    'r:hsym`$"$DIR/hdb";',
+    "mk:{[r;d;n] .Q.dd[r;d,`trade`] set .Q.en[r] ([] sym:n#`a`b`c;ex:n#(\"NY\";\"LN\";\"TK\"))};",
+    "mk[r;2026.01.05;3]; mk[r;2026.01.06;0]; mk[r;2026.01.07;3];",
+    "\\l $DIR/hdb",
+    "",
+  ].join("\n");
+  const { connection, dir } = await connect(t, source);
+  const db = `${dir}/hdb`;
+  const info = readTableInfo(await connection.call(TABLE_INFO, "trade", 100));
+  const columns = info.columns.map((c) => c.name);
+  const types = Object.fromEntries(info.columns.map((c) => [c.name, c.type]));
+  // q's own: g# on the strings is kept on the empty partition's file alone.
+  assert.deepStrictEqual(await onDisk(t, db, `{{f:hsym\`$"${dir}/probe/",string x; f set \`g#get\` sv(hsym\`$string x),\`trade\`ex; string attr get f} each .Q.pv}`), ["", "g", ""]);
+  assert.match(opProblem({ op: "attr", column: "ex", attr: "g" }, columns, "date", columns, types), /^ex is a nested column, which q writes to disk with no attribute$/);
+  // The script, run anyway, writes no directory.
+  const before = await onDisk(t, db, '{{string attr get` sv(hsym`$string x),`trade`ex} each .Q.pv}');
+  assert.match(await run(connection, columnScript("trade", { op: "attr", column: "ex", attr: "g" }, "hdb")), /^changed 0 of 3 directories; left as they were: .*nested, which q writes with no attribute/);
+  assert.deepStrictEqual(await onDisk(t, db, '{{string attr get` sv(hsym`$string x),`trade`ex} each .Q.pv}'), before);
+  assert.deepStrictEqual(before, ["", "", ""]);
+  // An attribute on a column q keeps it on is set, and the file says so.
+  assert.match(await run(connection, columnScript("trade", { op: "attr", column: "sym", attr: "g" }, "hdb")), /^changed 3 of 3 directories$/);
+  assert.deepStrictEqual(await onDisk(t, db, '{{string attr get` sv(hsym`$string x),`trade`sym} each .Q.pv}'), ["g", "g", "g"]);
 });
 
 // sym to c fails in every partition; a nested long column to f makes no

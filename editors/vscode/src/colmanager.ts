@@ -128,6 +128,11 @@ export function opProblem(op: ColumnOp, columns: string[], field = "", everywher
     return `cast to one of q's type characters: ${CAST_TYPES.split("").join(" ")}`;
   }
   const from = types[op.column];
+  // q writes a nested column's file with no attribute: one set on it is
+  // reported set and is not there, but in an empty partition (#2141).
+  if (op.op === "attr" && op.attr !== "" && from !== undefined && (from === "" || from !== from.toLowerCase())) {
+    return `${op.column} is a ${from === "" ? "mixed" : "nested"} column, which q writes to disk with no attribute`;
+  }
   if (op.op === "cast" && from !== undefined && from !== op.type) {
     const refused = castProblem(from, op.type, true);
     if (refused !== undefined) return `${op.column} is not cast from ${from} to ${op.type}: ${refused}`;
@@ -193,7 +198,7 @@ export const HELPERS = [
   '.qlint.cm.mv:{[d;a;b] f:` sv d,a; if[not ()~key f; system .qlint.cm.mvcmd["w"=first string .z.o;f;` sv d,b]]}',
   ".qlint.cm.ren:{[o;n;d] cs:.qlint.cm.cols d; if[not o in cs;:`$\"no \",string o]; if[n in cs;:`$\"has \",string n]; .qlint.cm.mv[d]'[.qlint.cm.nested o;.qlint.cm.nested n]; (` sv d,`.d) set @[cs;cs?o;:;n]; `ok}",
   '.qlint.cm.cast:{[c;t;d] if[not c in .qlint.cm.cols d;:`$"no ",string c]; f:` sv d,c; v:get f; a:attr v; s:(0h=type v)|77h<=type v; y:(11h=abs type v)|type[v] within 20 76h; n:not t in "cs"; if[not .qlint.cm.put[f;a#$["s"=t;.qlint.cm.enum $[s;`$v;`$string v];n&s;(upper t)$v;n&y;(upper t)$string v;t$v]];:`$"written without the compression it had"]; if[s&not "c"=t; {if[not ()~key x;hdel x]} each ` sv\' d,/:1_.qlint.cm.nested c]; `ok}',
-  ".qlint.cm.attr:{[c;a;d] if[not c in .qlint.cm.cols d;:`$\"no \",string c]; f:` sv d,c; $[.qlint.cm.put[f;a#get f];`ok;`$\"written without the compression it had\"]}",
+  ".qlint.cm.attr:{[c;a;d] if[not c in .qlint.cm.cols d;:`$\"no \",string c]; f:` sv d,c; v:get f; if[(not null a)&(0h=type v)|77h<=type v;:`$\"nested, which q writes with no attribute\"]; if[not .qlint.cm.put[f;a#v];:`$\"written without the compression it had\"]; $[a~attr get f;`ok;`$\"written, but q kept no \",string[a],\"#\"]}",
   ".qlint.cm.order:{[o;d] cs:.qlint.cm.cols d; if[not (asc cs)~asc o;:`$\"other columns\"]; (` sv d,`.d) set o; `ok}",
   `.qlint.cm.pdirs:${PARTITION_DIRS}`,
   '.qlint.cm.dirs:{[t] r:hsym`$system"cd"; p:.Q.qp get t; if[1b~p; if[not .Q.pv~@[get;`.Q.PV;{.Q.pv}]; \'".Q.view is in force, showing ",string[count .Q.pv]," of ",string[count .Q.PV]," partitions: nothing was changed. This changes every partition on disk and loads the database again, which clears a view; clear it with .Q.view[] and run again"]]; $[1b~p;{` sv x,y}[;t] each .qlint.cm.pdirs[r;@[get;`.Q.PD;()];.Q.pv];0b~p;enlist ` sv r,t;\'"not a table on disk: ",string t]}',
