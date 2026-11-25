@@ -32,6 +32,7 @@ import type { Process } from "./processes";
 import { iconsEscaped } from "./history";
 import { FULL_TEXT, LAID_OUT } from "./qtext";
 import { contextSwitch } from "./statements";
+import { SHARED_SOURCE } from "./discovery";
 import { qString, stringLiteral } from "./qliteral";
 
 export const CONTROL_COMMANDS = {
@@ -68,11 +69,18 @@ export function readControls(get: <T>(key: string, fallback: T) => T): ControlSe
   };
 }
 
+/// The list a listed process is from, as a message names it.
+function listName(server: string): string {
+  return server === SHARED_SOURCE ? "the workspace's shared process list" : `${server}'s process list`;
+}
+
 /// Whether, and why, `process` is evaluated directly (#2470): its own
 /// `evaluation` when it sets one, else `q-lint.query.unwrapped`.
-export function directMode(process: Pick<Process, "label" | "evaluation">, unwrapped: boolean): DirectMode | undefined {
+export function directMode(process: Pick<Process, "label" | "evaluation" | "server">, unwrapped: boolean): DirectMode | undefined {
   if (process.evaluation !== undefined) {
-    return process.evaluation === "direct" ? { label: process.label, from: "process" } : undefined;
+    return process.evaluation !== "direct"
+      ? undefined
+      : { label: process.label, from: "process", ...(process.server !== undefined ? { list: listName(process.server) } : {}) };
   }
   return unwrapped ? { label: process.label, from: "setting" } : undefined;
 }
@@ -341,7 +349,12 @@ export function evaluationText(label: string, mode: DirectMode | undefined, pinn
   if (mode === undefined) {
     return `Evaluation on ${label}: wrapped${pinned ? " (its \"evaluation\")" : ""} - q-lint's lambda runs your code, with q's backtrace and, on a guarded process, reval.`;
   }
-  const where = mode.from === "process" ? 'its "evaluation": "direct"' : "q-lint.query.unwrapped";
+  const where =
+    mode.list !== undefined
+      ? `its "evaluation": "direct" in ${mode.list}`
+      : mode.from === "process"
+        ? 'its "evaluation": "direct"'
+        : "q-lint.query.unwrapped";
   return `Evaluation on ${label}: direct (${where}) - your code is sent as plain strings and the result formatted by q-lint: no backtrace, no reval, and features that need q-lint's lambda are refused.`;
 }
 

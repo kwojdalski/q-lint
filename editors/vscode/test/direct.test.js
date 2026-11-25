@@ -173,3 +173,16 @@ test("the explorer reads a direct process with one plain request a part, and sho
   const many = await gatherDirect(async (r) => ({ ok: true, value: r === "key`" ? ["a", "b", "c"] : r.startsWith("\\v") ? ["x", "y", "z"] : [] }), [], [2, 2]);
   assert.deepStrictEqual([many.spaces.map((s) => s.ns), many.more, many.entries.filter((e) => e.ns === ".").map((e) => e.name)], [[".", ".a"], 2, ["x", "y"]]);
 });
+
+test("a listed process's direct evaluation is said to be its list's, not Set Process Evaluation's (#2488)", () => {
+  const desk = directMode({ label: "desk/pm", evaluation: "direct", server: "desk" }, false);
+  assert.deepStrictEqual(desk, { label: "desk/pm", from: "process", list: "desk's process list" });
+  const shared = directMode({ label: ".qlint/pm", evaluation: "direct", server: ".qlint" }, false);
+  assert.strictEqual(shared.list, "the workspace's shared process list");
+  assert.match(evaluationText("desk/pm", desk, true), /direct \(its "evaluation": "direct" in desk's process list\)/);
+  const refused = directRefusal(desk);
+  assert.match(refused, /nothing was sent\. Its "evaluation" in desk.s process list changes that\.$/);
+  assert.doesNotMatch(refused, /Set Process Evaluation/);
+  // A listed process that sets none follows the setting, which Toggle changes.
+  assert.deepStrictEqual(directMode({ label: "desk/pm", server: "desk" }, true), { label: "desk/pm", from: "setting" });
+});
