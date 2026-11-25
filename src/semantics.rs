@@ -3976,17 +3976,51 @@ fn named_values(
             }))
             .collect()
     };
-    let in_literal = |at: usize| {
-        literals.iter().any(|&(open, header, close)| {
-            open < at && at < close && {
-                let depth = depth[at] - depth[open + 1];
-                (depth == 0 || (depth == 1 && at < header))
-                    && matches!(
-                        code[..at].trim_end().as_bytes().last(),
-                        Some(b'[' | b']' | b';')
-                    )
+    let opens_column = |at: usize, &(open, header, close): &(usize, usize, usize)| {
+        open < at && at < close && {
+            let depth = depth[at] - depth[open + 1];
+            (depth == 0 || (depth == 1 && at < header))
+                && matches!(
+                    code[..at].trim_end().as_bytes().last(),
+                    Some(b'[' | b']' | b';')
+                )
+        }
+    };
+    // The literals are in order of their `(`, and nest or stand apart: the
+    // ones around an offset are the last to open before it and the literals
+    // around that one, so each assignment climbs those instead of asking
+    // every literal in the file, which was quadratic (#2343). `None` if two
+    // overlapped without nesting, when every one is asked.
+    let parents: Option<Vec<Option<usize>>> = {
+        let mut parents = Vec::with_capacity(literals.len());
+        let mut open: Vec<usize> = vec![];
+        let mut nested = true;
+        for (i, &(start, _, close)) in literals.iter().enumerate() {
+            while open.last().is_some_and(|&j| literals[j].2 <= start) {
+                open.pop();
             }
-        })
+            if open.last().is_some_and(|&j| close > literals[j].2) {
+                nested = false;
+            }
+            parents.push(open.last().copied());
+            open.push(i);
+        }
+        nested.then_some(parents)
+    };
+    let in_literal = |at: usize| match &parents {
+        Some(parents) => {
+            let mut next = literals
+                .partition_point(|&(open, _, _)| open < at)
+                .checked_sub(1);
+            while let Some(i) = next {
+                if opens_column(at, &literals[i]) {
+                    return true;
+                }
+                next = parents[i];
+            }
+            false
+        }
+        None => literals.iter().any(|literal| opens_column(at, literal)),
     };
     for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*(?:\[[^\]]*\])?\s*[-+*%,&|^#_!~=<>$?@.]?::?")
         .captures_iter(code)
