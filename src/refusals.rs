@@ -1880,7 +1880,15 @@ fn derived_operand(
                         .map_or(0, |(p, ch)| p + ch.len_utf8());
                     (s < end && boundary(view, s)).then_some(s)
                 };
+                let end = q;
                 q = token(q)?;
+                // A symbol is its own operand, not part of the name before
+                // it: q 5 parses `` x`a/b `` as `` x (`a/) b ``, the derived
+                // function applied infix, and `` x`a`b/y `` the same (#2237).
+                if let Some(tick) = c[q..end].iter().position(|&ch| ch == b'`') {
+                    q += tick;
+                    break;
+                }
                 // After a number `_` is drop, not part of a name: `-2_/:x`
                 // and `1_'x` apply the derived `_/:` and `_'` infix.
                 if c[q].is_ascii_digit()

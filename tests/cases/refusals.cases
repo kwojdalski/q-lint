@@ -2294,3 +2294,16 @@ a:f x '"s"
 a:(avg '')G
 a:f x '"s"
 
+
+=== clean profile: general | while q 5 parses each of these (#2237)
+a:x`a/b
+a:x`a\b
+a:x`a/
+a:x `a/b
+a:(`a/)b
+a:x`a/:b
+a:x`a'b
+a:x`:a/b
+a:x`a.b/c
+a:1`a/b
+a:x`a\:b
