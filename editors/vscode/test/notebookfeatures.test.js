@@ -812,7 +812,7 @@ test("an HTML export shows an indented code block as code, as the cell and live 
   assert.strictEqual(markdownHtml("# T\n\tt:1 <b>"), "<h1>T</h1>\n<pre><code>t:1 &lt;b&gt;</code></pre>");
   // Under a paragraph line or a list item it is not code.
   assert.strictEqual(markdownHtml("text\n    more"), "<p>text\nmore</p>");
-  assert.strictEqual(markdownHtml("- a\n    b"), "<ul><li>a b</li></ul>");
+  assert.strictEqual(markdownHtml("- a\n    b"), "<ul><li>a\nb</li></ul>");
 });
 
 test("an HTML export keeps balanced parentheses in a link's URL (#1554)", () => {
@@ -921,11 +921,11 @@ test("an HTML export nests a list written under an item, as the notebook shows i
   assert.strictEqual(markdownHtml("1. a\n   - b\n2. c"), "<ol><li>a<ul><li>b</li></ul></li><li>c</li></ol>");
   // Deeper, a numbered one under a bullet, and an item's own next line.
   assert.strictEqual(markdownHtml("- a\n  - b\n    - c\n  - d\n- e"), "<ul><li>a<ul><li>b<ul><li>c</li></ul></li><li>d</li></ul></li><li>e</li></ul>");
-  assert.strictEqual(markdownHtml("* a\n  3. b\n  4. c\n     more"), '<ul><li>a<ol start="3"><li>b</li><li>c more</li></ol></li></ul>');
+  assert.strictEqual(markdownHtml("* a\n  3. b\n  4. c\n     more"), '<ul><li>a<ol start="3"><li>b</li><li>c\nmore</li></ol></li></ul>');
   assert.strictEqual(markdownHtml("- a\n\t- b"), "<ul><li>a<ul><li>b</li></ul></li></ul>");
   // Under the item's text, not under its marker: a sibling, as before.
   assert.strictEqual(markdownHtml("- a\n - b"), "<ul><li>a</li><li>b</li></ul>");
-  assert.strictEqual(markdownHtml("- a\n  b\n  c"), "<ul><li>a b c</li></ul>");
+  assert.strictEqual(markdownHtml("- a\n  b\n  c"), "<ul><li>a\nb\nc</li></ul>");
   // What is nested is text still: escaped, and its live value read.
   assert.strictEqual(
     markdownHtml("- a\n  - <b>x</b> {{q: n}} [l](javascript:alert(1))", { n: { text: "<7>" } }),
@@ -962,6 +962,22 @@ test("an HTML export breaks a paragraph's line only where the notebook does: aft
   assert.strictEqual(markdownHtml("end\\\n\nnext"), "<p>end\\</p>\n<p>next</p>");
   assert.strictEqual(markdownHtml("Title  \n==="), "<h1>Title</h1>");
   assert.strictEqual(markdownHtml("a <b>  \n*c*"), "<p>a &lt;b&gt;<br>\n<em>c</em></p>");
+});
+
+// The export reads a paragraph, a list item and a quote whole, as the run
+// does: a value over two lines is found, under the key it was kept by (#2149).
+test("an HTML export shows a {{q: }} written over two lines, by the key the run kept it under (#2149)", () => {
+  for (const [source, html] of [
+    ["Para {{q: 1+\n 2}} end", '<p>Para <span class="live" title="q: 1+\n 2">3</span> end</p>'],
+    ["- item {{q: 1+\n  2}} x", '<ul><li>item <span class="live" title="q: 1+\n 2">3</span> x</li></ul>'],
+    ["> quote {{q: 1+\n> 2}}", '<blockquote><p>quote <span class="live" title="q: 1+\n 2">3</span></p></blockquote>'],
+    ["# x\nSub {{q: 1+\n2}}\n---", '<h1>x</h1>\n<h2>Sub <span class="live" title="q: 1+\n 2">3</span></h2>'],
+  ]) {
+    assert.deepStrictEqual(liveExpressions(source), ["1+\n 2"], source);
+    assert.strictEqual(markdownHtml(source, { "1+\n 2": { text: "3" } }), html, source);
+  }
+  // A hard break beside it is still one.
+  assert.strictEqual(markdownHtml("a  \nb {{q: 1+\n 2}}", { "1+\n 2": { text: "3" } }), '<p>a<br>\nb <span class="live" title="q: 1+\n 2">3</span></p>');
 });
 
 /// A Python notebook as Jupyter saves one: a figure shown, a value with
