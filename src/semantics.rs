@@ -5232,6 +5232,9 @@ pub(crate) fn char_column_comparisons(code: &str, comments: &str) -> Vec<usize> 
     // only on its name: worked out once per name, not once per where phrase,
     // which rescanned the file for each and was quadratic in them (#1206).
     let mut known: HashMap<&str, Vec<(regex::Regex, usize, usize, usize)>> = HashMap::new();
+    // Every name's places, found once: a search of the file for each table
+    // was quadratic in tables (#2342).
+    let runs = std::cell::OnceCell::new();
     for (start, end, table) in qsql_phrases(code) {
         let Some((t, e)) = table else {
             continue;
@@ -5240,9 +5243,9 @@ pub(crate) fn char_column_comparisons(code: &str, comments: &str) -> Vec<usize> 
             continue;
         }
         let name = &code[t..e];
-        let patterns = known
-            .entry(name)
-            .or_insert_with(|| char_column_patterns(code, comments, name));
+        let patterns = known.entry(name).or_insert_with(|| {
+            char_column_patterns(code, comments, name, runs.get_or_init(|| name_runs(code)))
+        });
         let end = end.min(code.len());
         for (pattern, op, chars, n) in patterns.iter() {
             for m in pattern.captures_iter(&comments[start..end]) {
@@ -5256,6 +5259,28 @@ pub(crate) fn char_column_comparisons(code: &str, comments: &str) -> Vec<usize> 
     out
 }
 
+/// Each maximal run of name characters in `code` - alphanumerics, `_` and
+/// `.` - by its text, with where it stands, in order.
+fn name_runs(code: &str) -> HashMap<&str, Vec<(usize, usize)>> {
+    let mut out: HashMap<&str, Vec<(usize, usize)>> = HashMap::new();
+    let mut start = None;
+    for (i, c) in code.char_indices() {
+        let named = c.is_alphanumeric() || c == '_' || c == '.';
+        match (named, start) {
+            (true, None) => start = Some(i),
+            (false, Some(s)) => {
+                out.entry(&code[s..i]).or_default().push((s, i));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(s) = start {
+        out.entry(&code[s..]).or_default().push((s, code.len()));
+    }
+    out
+}
+
 /// For `char_column_comparisons`: the patterns that compare a char column of
 /// the table `name` with a string, each with the group of its operator, the
 /// group of its string and the column's width. Empty where the file does not
@@ -5264,31 +5289,38 @@ fn char_column_patterns(
     code: &str,
     comments: &str,
     name: &str,
+    runs: &HashMap<&str, Vec<(usize, usize)>>,
 ) -> Vec<(regex::Regex, usize, usize, usize)> {
     let mut out = vec![];
-    let whole = |m: &regex::Match| {
-        !code[..m.start()].ends_with(|c: char| c.is_alphanumeric() || "_.".contains(c))
-            && !code[m.end()..].starts_with(|c: char| c.is_alphanumeric() || "_.".contains(c))
+    let named = |c: char| c.is_alphanumeric() || "_.".contains(c);
+    let whole = |&(start, end): &(usize, usize)| {
+        !code[..start].ends_with(named) && !code[end..].starts_with(named)
     };
-    let uses: Vec<regex::Match> = regex::Regex::new(&regex::escape(name))
-        .unwrap()
-        .find_iter(code)
-        .filter(whole)
-        .collect();
-    let writes: Vec<&regex::Match> = uses
+    // A name of name characters stands whole exactly where a run of them is
+    // the name; any other is searched for.
+    let uses: Vec<(usize, usize)> = if !name.is_empty() && name.chars().all(named) {
+        runs.get(name).cloned().unwrap_or_default()
+    } else {
+        regex::Regex::new(&regex::escape(name))
+            .unwrap()
+            .find_iter(code)
+            .map(|m| (m.start(), m.end()))
+            .filter(whole)
+            .collect()
+    };
+    let writes: Vec<&(usize, usize)> = uses
         .iter()
-        .filter(|m| {
-            code[..m.start()].ends_with('`')
-                || re!(r"^\s*(?:[,\[]|:(?:[^:]|$))").is_match(&code[m.end()..])
+        .filter(|&&(start, end)| {
+            code[..start].ends_with('`') || re!(r"^\s*(?:[,\[]|:(?:[^:]|$))").is_match(&code[end..])
         })
         .collect();
-    let [only] = writes[..] else {
+    let [&(only_start, only_end)] = writes[..] else {
         return out;
     };
-    if only.start() != 0 && !code[..only.start()].ends_with('\n') {
+    if only_start != 0 && !code[..only_start].ends_with('\n') {
         return out;
     }
-    let value = crate::past_blanks(code, only.end() + 1);
+    let value = crate::past_blanks(code, only_end + 1);
     let Some(inner) = re!(r"^\(\s*\[\s*\]").find(&code[value..]) else {
         return out;
     };

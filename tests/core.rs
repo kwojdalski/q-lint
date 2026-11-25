@@ -1840,3 +1840,24 @@ fn many_namespace_switches_lint_in_bounded_time() {
         "1000 namespace blocks took {small:?} and 8000 {large:?}"
     );
 }
+/// Many table literals each compared on a char column: the check for those
+/// comparisons searched the whole file for each table's name, quadratic in
+/// tables (#2342).
+#[test]
+fn many_table_literals_with_char_columns_lint_in_bounded_time() {
+    let time = |n: usize| {
+        let source: String = (0..n)
+            .map(|i| format!("t{i}:([] c:(\"ab\";\"cd\"));select from t{i} where c=\"ab\";\n"))
+            .collect();
+        best_of_three(|| q_lint_rs::lint_every_rule(&source, "t.q", &Workspace::default(), true))
+    };
+    time(1000); // warm the allocator and the regex caches
+    let (small, large) = (time(1000), time(8000));
+    eprintln!("1000 table literals took {small:?} and 8000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "1000 table literals took {small:?} and 8000 {large:?}"
+    );
+}
