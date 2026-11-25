@@ -74,6 +74,19 @@ test("every example in the error catalogue raises the error it explains", { skip
   }
 });
 
+// 'domain's causes named a roll from an empty list, which KDB-X answers with
+// nulls, and a negative take of a generator, which it answers 'nyi or
+// 'length for: each cause now ends in an example of it, which raises it.
+test("each cause of 'domain ends in an example that raises 'domain (#2169)", { skip }, async (t) => {
+  const c = await connect(t, "a:1\n");
+  for (const cause of ERRORS.domain.causes) {
+    const example = /\(`([^`]+)`\)\.$/.exec(cause)?.[1];
+    assert.ok(example !== undefined, `no example ends: ${cause}`);
+    const answer = await c.call("{r:@[{(1b;value x)};x;{(0b;x)}]; $[r 0;\"(no error)\";r 1]}", ` ${example}`);
+    assert.strictEqual(errorName(String(answer)), "domain", `${example} raised ${answer}`);
+  }
+});
+
 // What Explain qSQL takes as one statement is what q loads as one: a blank
 // line, a comment line or a block comment inside a query does not end it.
 test("q loads a query with a blank or a comment line inside it as one statement (#2015)", { skip }, async (t) => {

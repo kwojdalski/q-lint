@@ -124,3 +124,45 @@ test("turned off at a prompt, Find in Processes sends nothing (#2005)", async (t
     assert.deepStrictEqual(q.sent, []);
   }
 });
+
+// Each process was searched within its own timeout only, 0 unless it had
+// one, and the notification had no Cancel: one that never answered kept the
+// search, and every other process's hits, from ever being shown.
+test("a process that does not answer is given up at q-lint.query.timeout, and Cancel shows what the rest found (#2161)", async (t) => {
+  const { SILENT } = require("./fakeq.js");
+  const hung = await fakeQ(SILENT);
+  t.after(() => hung.close());
+  await setUp(t, { tags: ["eu"], answer, register: registerFindInProcesses, config: { "query.timeout": 1 }, more: [{ label: "hung", port: hung.port, tags: ["eu"] }] });
+  const { vscode } = require("./vscode_stub.js");
+  const started = Date.now();
+  const outcomes = await stub.commands.get(PROCESS_TOOL_COMMANDS.findInProcesses)("eu", "trade", false);
+  assert.ok(Date.now() - started < 3000, `took ${Date.now() - started} ms`);
+  assert.deepStrictEqual(outcomes.map((o) => [o.process, "found" in o]), [["rdb", true], ["hung", false]]);
+  assert.match(outcomes[1].error, /did not answer within 1 s \(q-lint\.query\.timeout\)/);
+  // With no timeout, Cancel ends it: the notification can be cancelled, and the hits that came back are shown.
+  stub.config.user["query.timeout"] = 0;
+  const shown = vscode.window.withProgress;
+  t.after(() => (vscode.window.withProgress = shown));
+  let options;
+  vscode.window.withProgress = async (o, task) => {
+    options = o;
+    const listeners = [];
+    const token = { isCancellationRequested: false, onCancellationRequested: (f) => (listeners.push(f), { dispose() {} }) };
+    setTimeout(() => ((token.isCancellationRequested = true), listeners.forEach((f) => f())), 300);
+    return task({ report() {} }, token);
+  };
+  const cancelled = await stub.commands.get(PROCESS_TOOL_COMMANDS.findInProcesses)("eu", "trade", false);
+  assert.strictEqual(options.cancellable, true);
+  assert.deepStrictEqual(cancelled.map((o) => [o.process, "found" in o ? "found" : o.error]), [["rdb", "found"], ["hung", "cancelled before it answered"]]);
+});
+
+// q's lower changes A to Z only: "ünï" found nothing in "Ünï", and the box
+// said the search ignored case.
+test("the text box says only A to Z are matched in either case, as q's lower does (#2166)", async (t) => {
+  await setUp(t, { tags: ["eu"], answer, register: registerFindInProcesses });
+  let prompt;
+  stub.inputs.push((o) => ((prompt = o.prompt), "trade"));
+  stub.picks.push((o) => o.items[0]);
+  await stub.commands.get(PROCESS_TOOL_COMMANDS.findInProcesses)("eu");
+  assert.strictEqual(prompt, "Text to find in function definitions; A to Z match in either case, other letters only as written.");
+});

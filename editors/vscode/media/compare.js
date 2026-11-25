@@ -32,6 +32,10 @@
         ? l + " and " + r + " gave the same answer to the digits shown. A float that is not in a list or a table is compared as each console writes it: compare enlist of it to compare its every digit."
         : l + " and " + r + " gave the same answer.";
     }
+    // Text that only a cut at the process's \c, not sent, would leave so (#2164).
+    if (c.partial && c.unsureCut && c.columns.length === 0 && c.left.kind === c.right.kind && c.left.text === c.right.text) {
+      return "Each answer's text is the same, and ends in .. as q writes a value it cut at the process's console width (\\c), which q-lint is not told: whether the rest is the same cannot be told.";
+    }
     // Only the part that came back was compared (#1614).
     const cutNote = " Not every row came back, so only the rows held were compared: raise q-lint.query.gridLimit or turn on Unlimited to compare them all.";
     if (c.partial && c.columns.length === 0 && c.left.kind === c.right.kind && c.left.text === c.right.text) {
@@ -40,6 +44,10 @@
     // Unless a column's type, the keys or a cut cell differ (#2075).
     if (c.partial && c.columns.length > 0 && c.differing === 0 && c.onlyLeft === 0 && c.onlyRight === 0 && (c.retyped || []).length === 0 && !c.rekeyed && !(c.cut > 0)) {
       return "The rows held are the same." + cutNote;
+    }
+    if (c.columns.length === 0 && c.toDigits > 0) {
+      // Each to its own \P (#2159).
+      return l + " and " + r + " wrote the same answer as far as the fewer digits written go: their \\P differs, so whether they are the same cannot be told. Compare enlist of it to compare its every digit.";
     }
     if (c.columns.length === 0) {
       return l + " and " + r + " gave different answers.";
@@ -54,16 +62,32 @@
     if (c.onlyRight > 0) {
       parts.push(plural(c.onlyRight, "row", "rows") + " only on " + r);
     }
+    if (c.uncompared > 0) {
+      // Past where the other side was cut: on it or not, unknown (#2158).
+      parts.push(plural(c.uncompared, "row", "rows") + " not compared, as the other side did not send them");
+    }
     (c.retyped || []).forEach(function (t) {
       parts.push(t.column + " is " + t.left + " on " + l + " and " + t.right + " on " + r);
     });
+    if (c.reshaped) {
+      // A list and a table, a dictionary and a keyed table (#2163).
+      parts.push("the answer is " + c.reshaped.left + " on " + l + " and " + c.reshaped.right + " on " + r);
+    }
     if (c.rekeyed) {
       // Keyed by other columns, or one of them not at all (#2008).
       const by = function (keys, said) { return keys.length === 0 ? "not keyed" : said + keys.join(", "); };
       parts.push("the table is " + by(c.rekeyed.left, "keyed by ") + " on " + l + " and " + by(c.rekeyed.right, c.rekeyed.left.length === 0 ? "keyed by " : "by ") + " on " + r);
     }
-    if (c.cut > 0) {
-      parts.push(plural(c.cut, "cell is", "cells are") + " the same as far as shown, cut at 200 characters, and no further compared");
+    // Cut by GRID at 200 characters, or by q at its \c (#2165).
+    const consoleCut = c.consoleCut || 0;
+    if (c.cut - consoleCut > 0) {
+      parts.push(plural(c.cut - consoleCut, "cell is", "cells are") + " the same as far as shown, cut at 200 characters, and no further compared");
+    }
+    if (consoleCut > 0) {
+      parts.push(plural(consoleCut, "cell is", "cells are") + " the same as far as shown, ending in .. as q writes an item it cut at the process's console width (\\c), and no further compared");
+    }
+    if (c.toDigits > 0) {
+      parts.push(plural(c.toDigits, "cell is", "cells are") + " the same as far as the fewer digits written go, as the processes' \\P differs, and no further compared");
     }
     if (parts.length === 0) {
       parts.push("the rows held are the same, the columns or row counts are not");
@@ -115,6 +139,12 @@
       // `here` and `there` are the two processes, `has` the columns the other has.
       const add = function (cells, other, here, there, has) {
         c.columns.forEach(function (_, i) {
+          if (row.uncompared) {
+            // The other side was cut before it (#2158): no difference to mark.
+            tr.appendChild(element("td", cells === undefined ? "missing" : "", cells === undefined ? undefined : cells[i])).title =
+              cells === undefined ? "Not among the rows " + here + " sent" : "Not compared: not among the rows " + there + " sent";
+            return;
+          }
           if (cells === undefined) {
             // Said as well as coloured: a background alone tells some readers nothing.
             tr.appendChild(element("td", "missing")).title = "No such row on " + here;
