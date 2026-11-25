@@ -212,9 +212,9 @@
           "match": "(?<![A-Za-z0-9.`])0x[0-9a-fA-F]*(?![A-Za-z0-9])"
         },
         {
-          "comment": "As q reads them: a fraction takes e, f, n, t and p but no integer letter; an exponent is a lower-case e, or an unsigned upper-case one after a fraction, and takes only e or f. With c anything is a char. q reads digits, letters and dots as one token, and colons with them once it is shaped like a time, so nothing short of the whole token is a number: none of 1.5i, 1.2.3 or 12:34z is. One digit before a colon still is: 0:, 1: and 2: are the file operators.",
+          "comment": "As q reads them: a fraction takes e, f, n, t and p but no integer letter; an exponent is a lower-case e, or an unsigned upper-case one, which after an integer needs its e or f (1E3e, not 1E5), and takes only e or f. With c anything is a char. q reads digits, letters and dots as one token, and colons with them once it is shaped like a time, so nothing short of the whole token is a number: none of 1.5i, 1.2.3 or 12:34z is. One digit before a colon still is: 0:, 1: and 2: are the file operators.",
           "name": "constant.numeric.k",
-          "match": "(?<![A-Za-z0-9.`])(?:(?:\\d+\\.\\d*|\\.\\d+)(?:(?:e[+-]?\\d+|E\\d+)[ef]?|[efntp])?|\\d+(?:e[+-]?\\d+[ef]?|[hijefnuvtp])?)(?![A-Za-z0-9.]|(?<=\\d\\d):\\d)"
+          "match": "(?<![A-Za-z0-9.`])(?:(?:\\d+\\.\\d*|\\.\\d+)(?:(?:e[+-]?\\d+|E\\d+)[ef]?|[efntp])?|\\d+(?:e[+-]?\\d+[ef]?|E\\d+[ef]|[hijefnuvtp])?)(?![A-Za-z0-9.]|(?<=\\d\\d):\\d)"
         }
       ]
     },

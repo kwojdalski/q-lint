@@ -402,3 +402,16 @@ test("a minute or second past 59 is no literal, and no piece of a refused time i
   assert.deepStrictEqual(await coloured("a12:3"), ["3"]);
   assert.deepStrictEqual(await coloured("a12:3", true), ["3"]);
 });
+
+// KDB-X reads 1E3e as 1000e and 1E3f as 1000f, one token each, and refuses
+// 1E3, 1E3j and 1E-3e: after an integer an upper-case exponent needs its e or f.
+test("an integer's upper-case exponent is a number with an e or f after it (#2305)", async () => {
+  for (const literal of ["1E3e", "1E3f", "15E3e", "15E3f", "0E0e", "01E3e", "9E99f"]) {
+    assert.deepStrictEqual(await scopesOf(`a:${literal}+x`, literal), ["constant.numeric.q"], literal);
+    assert.deepStrictEqual(await scopesOf(`a:${literal}`, literal, true), ["constant.numeric.k"], `k ${literal}`);
+  }
+  for (const text of ["1E3", "1E3j", "1E3n", "1E3p", "1E3h"]) {
+    assert.deepStrictEqual(await coloured(`a:${text}`), [], text);
+    assert.deepStrictEqual(await coloured(`a:${text}`, true), [], `k ${text}`);
+  }
+});

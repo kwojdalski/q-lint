@@ -356,13 +356,14 @@ def grammar():
                         "comment": "With p, a number is a timestamp that many hours past 2000: 1p. "
                         "As KDB-X reads them: a fraction takes e, f, n, t and p but no integer "
                         "letter (1.5i is an error); an exponent is a lower-case e, or an "
-                        "unsigned upper-case one after a fraction (1.5E3, not 1E5 or 1.5E-3), "
-                        "and takes only e or f after it. With c anything is a char, not a "
+                        "unsigned upper-case one (1.5E3, not 1.5E-3), which after an integer "
+                        "needs its e or f (1E3e and 1E3f, not 1E5), and takes only e or f after "
+                        "it. With c anything is a char, not a "
                         "number: 3c is \"3\".",
                         "name": "constant.numeric.q",
                         "match": BEFORE
                         + r"(?:(?:\d+\.\d*|\.\d+)(?:(?:e[+-]?\d+|E\d+)[ef]?|[efntp])?"
-                        + r"|\d+(?:e[+-]?\d+[ef]?|[hijefnuvtp])?)"
+                        + r"|\d+(?:e[+-]?\d+[ef]?|E\d+[ef]|[hijefnuvtp])?)"
                         + NUMBER_END,
                     },
                 ],
