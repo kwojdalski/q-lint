@@ -807,7 +807,8 @@ test("hopen of hsym applied in brackets to a file is a change (#1729)", () => {
     // Of a process it only connects.
     'hopen hsym[`$"host:5000"]': [],
     "hopen hsym[`$\":host:5000\"]": [],
-    "hopen hsym[x]": [],
+    // Of a name, it may be either: asked about (#2207).
+    "hopen hsym[x]": ["opens a handle the guard cannot read with hopen"],
   };
   for (const [code, expected] of Object.entries(cases)) {
     assert.deepStrictEqual(writes(code), expected, code);
@@ -1388,7 +1389,8 @@ test("a lambda applied where it is written changes what its arguments name: {.[x
     "@[{.[x;();:;1]};`a;h]": ["amends `a in place"],
     // A name may hold a global's symbol, and an argument not written may be one.
     "{.[x;();:;1]} v": ["applies a lambda that may change the process through what it is given"],
-    "{.[x;();:;1]} . enlist `a": ["applies a lambda that may change the process through what it is given"],
+    // `enlist x` is read as its one item (#2201).
+    "{.[x;();:;1]} . enlist `a": ["amends `a in place"],
     // Applied to what it only reads, defined, or left as a value, it reads.
     '{value x}"count t"': [],
     "{x+1} each 1 2 3": [],
@@ -1570,6 +1572,8 @@ test("code in another language than q and k is read as SQL, or asked about (#219
     "s) select qt('a:1')": ["runs SQL that changes data (QT())"],
     "\\t s)delete from t": ["runs SQL that changes data (DELETE)"],
     "s)\\l f.q": ["runs the system command \\l through SQL"],
+    // A prefix after it is read again: KDB-X runs this as q.
+    "k)s)s)q)b[0]:77": ["assigns b"],
     "s)SELECT * FROM t": [],
     "q)s)select a from t where b=1": [],
     // Python is not read: a `p)` line, and embedPy's or PyKX's evaluators.
@@ -1582,5 +1586,48 @@ test("code in another language than q and k is read as SQL, or asked about (#219
   };
   for (const [code, expected] of Object.entries(cases)) {
     assert.deepStrictEqual(writes(code), expected, code);
+  }
+});
+
+test("a target that may be a symbol it cannot read - computed, a handle made, a local's - counts as by name (#2198-#2202, #2207)", () => {
+  const asks = [
+    // #2198: computed.
+    "@[first`b;0;+;1]", '.[`$"a","";();:;77]', ".[`$string`a;();:;77]", ".[{`a}[];();:;77]", "update a:77 from first`t", "delete from first`t",
+    "![first`t;();0b;(enlist`a)!enlist 77]", "`a xdesc first`t", "() xkey `$string`kt", "(first`sym)?`zz", "((`sym;`zz)0)?`zz", ".[`a`zz 0;();:;77]",
+    "@[(`d;`zz)0;`a;neg]", ".[(`k!enlist`a)`k;();:;77]", ".[`a`zz inter`a;();:;77]", ".[1#`a;();:;77]", ".[last`zz`a;();:;77]",
+    // #2199: a file's handle made.
+    ".[hsym`o.txt;();:;77]", ".[-1!`o.txt;();:;77]", ".[.Q.dd[`:.;`o.txt];();:;77]", ".[` sv`:.`o.txt;();:;77]", '.[hsym`$"o.txt";();:;77]',
+    // #2200: held by a local, or given to a local lambda.
+    "{s:`a;.[s;();:;77]}[]", "{s:`t;update a:77 from s}[]", "{s:`sym;?[s;`zz]}[]", "{s:`kt;() xkey s}[]", '{f:{.[x;();neg]};f `$reverse"a"}[]',
+    // #2201: each item of `enlist x`.
+    "{.[x;();+;1]} each enlist `a", "{.[x;();+;1]}'[enlist `a]", "{.[x;();+;1]} peach enlist `a", "(.[;();+;1]) each enlist `a", ".[;();+;1] each enlist `a",
+    "@[;0;+;1] each enlist `b", "{update a:77 from x} each enlist `t",
+    // #2202: `?[` on a symbol in parentheses, as a parameter is given.
+    "?[(`sym);`zz]", "{?[x;`zz]}`sym", "{?[x;`zz]}[`sym]", "{[s]?[s;`zz]}[`sym]", "@[{?[x;`zz]};`sym;::]", ".[{?[x;`zz]};enlist `sym;::]",
+    // #2189, #2196: the items `.` applies to, a list of symbols, `enlist x`.
+    "(?) . `sym`x", ".[?;`sym`x]", '{value x} . enlist "a:1"',
+    // #2207: hopen of a handle made some way it cannot read.
+    "hopen hsym(`o.txt)", "hopen hsym first`o.txt", "hopen hsym`$string`o.txt", 'hopen hsym`$raze"o.txt"', "hopen hsym{`o.txt}[]", "hopen -1!(`o.txt)",
+    'hopen@`$":",string`o.txt', "@[hopen;hsym(`o.txt);::]", "(hopen)hsym(`o.txt)", "hopen each enlist hsym(`o.txt)", "{hopen x}hsym(`o.txt)", ".[hopen;enlist hsym(`o.txt);::]",
+  ];
+  for (const code of asks) {
+    assert.ok(writes(code).length > 0, code);
+  }
+  assert.deepStrictEqual(writes("@[first`b;0;+;1]"), ["amends what first`b names in place"]);
+  assert.deepStrictEqual(writes("update a:77 from first`t"), ["updates what first`t names in place"]);
+  assert.deepStrictEqual(writes("{s:`a;.[s;();:;77]}[]"), ["amends what s names in place"]);
+  assert.deepStrictEqual(writes("?[(`sym);`zz]"), ["extends the enumeration `sym with ?"]);
+  assert.deepStrictEqual(writes("hopen hsym first`o.txt"), ["opens a handle the guard cannot read with hopen"]);
+  // A value stays a value: a name, a list or dictionary of symbols, a
+  // symbol indexed, a table sorted or selected, a lambda trapped, and a
+  // process's handle.
+  const reads = [
+    "@[t;`a;neg]", "@[`a`b;0;:;`c]", "@[(`a;`b);0;:;1]", "@[`a`b!1 2;`a;+;1]", "@[(`t)[0];`a;:;1]", "@[(`d)`a;0;neg]", "update a:1 from `a xasc t",
+    "update a:1 from select from t", "delete from 0!kt", "@[{x+1};1;{x}]", "@[value;\"count t\";{x}]", "{s:select from t; update a:1 from s}[]",
+    "{s:`a; select from t where b=s}[]", "{f:{x+1}; f 2}[]", "(`p`q)?`q", "(exec b from t)?`x", "hopen (`:localhost:5000;1000)", "hopen hsym`$\"host:5000\"",
+    "`a xkey 0!kt", "{x[`a]} each enlist d",
+  ];
+  for (const code of reads) {
+    assert.deepStrictEqual(writes(code), [], code);
   }
 });
