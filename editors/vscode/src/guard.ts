@@ -147,17 +147,22 @@ export interface GuardSettings {
 
 export const DEFAULT_GUARD_TAGS = ["prod", "prd", "production"];
 
-/// The settings read as `readLive` reads the query ones, at each send. A
-/// tag list that is not a list of strings is the default one; an empty
-/// list guards nothing. Each tag is read as a process's tags are, by
-/// `parseTags`: one with a blank or a comma in it is a tag for each word,
-/// since no process can carry it whole - `live desk` guards a process
-/// tagged `live` and one tagged `desk` (#2040).
+/// The settings read as `readLive` reads the query ones, at each send.
+/// The tags are the strings of the list, or a string written in its place
+/// (`"live, desk"`), and an item that is not a string is dropped rather
+/// than the user's own tags with it (#2519); only an empty list guards
+/// nothing, and a setting that names no tag at all is the default list.
+/// Each tag is read as a process's tags are, by `parseTags`: one with a
+/// blank or a comma in it is a tag for each word, since no process can
+/// carry it whole - `live desk` guards a process tagged `live` and one
+/// tagged `desk` (#2040).
 export function readGuard(get: <T>(key: string, fallback: T) => T): GuardSettings {
   const tags = get<unknown>("processes.readOnlyGuard.tags", DEFAULT_GUARD_TAGS);
+  const named = typeof tags === "string" ? [tags] : Array.isArray(tags) ? tags.filter((t): t is string => typeof t === "string") : [];
+  const read = parseTags(named.join(" "));
   return {
     enabled: get<unknown>("processes.readOnlyGuard.enable", true) !== false,
-    tags: Array.isArray(tags) && tags.every((t) => typeof t === "string") ? parseTags(tags.join(" ")) : DEFAULT_GUARD_TAGS,
+    tags: read.length > 0 || (Array.isArray(tags) && tags.length === 0) ? read : DEFAULT_GUARD_TAGS,
   };
 }
 
