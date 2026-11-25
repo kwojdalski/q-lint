@@ -340,6 +340,13 @@ export class QConnection {
     return { value, type: this.answerType, message: this.answerMessage };
   }
 
+  /// Send `expression`, a string applied to nothing, and resolve with what
+  /// q answers: with `call`, or on a direct connection with `evaluate`,
+  /// since it is a plain string either way (#2482, #2483).
+  async callPlain(expression: string): Promise<unknown> {
+    return this.isDirect ? (await this.evaluate(expression)).value : this.call(expression);
+  }
+
   /// Send `expression` applied to `args` as a sync message, and resolve with
   /// what q answers. One at a time: q answers a handle's messages in order,
   /// so a second would only wait behind the first.
