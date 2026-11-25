@@ -600,6 +600,28 @@ test("Interrupt once a cell's query has answered aborts nothing; while it is out
   assert.strictEqual(aborts, 1);
 });
 
+// Interrupt only aborted a query already sent: a cell waiting behind a
+// background read waited on until the process was free (#2560).
+test("Interrupt on a cell waiting to be sent stops its wait, and aborts nothing", async () => {
+  const fake = fakeVscode();
+  const live = recordingLive(PROCESSES, "dev1");
+  let aborts = 0;
+  live.abort = async () => void aborts++;
+  let waiting;
+  live.runOnActive = (_code, _query, _guard, _expect, signal) =>
+    new Promise((resolve) => ((waiting = signal), signal.addEventListener("abort", () => resolve(undefined))));
+  load(fake, live);
+  const notebook = notebookWith(fake, [["code", "1+1"]]);
+  const create = fake.registered.controller.createNotebookCellExecution;
+  let execution;
+  fake.registered.controller.createNotebookCellExecution = (cell) => (execution = create(cell));
+  const ran = fake.registered.controller.executeHandler(notebook.cells, notebook);
+  for (let i = 0; waiting === undefined && i < 1000; i++) await new Promise((r) => setImmediate(r));
+  execution.cancel();
+  await ran;
+  assert.deepStrictEqual([aborts, execution.success, outputText(execution)], [0, false, "Interrupted: the cell was not run."]);
+});
+
 test("a code cell that fails drops the live values kept for the Markdown after it (#1544)", async () => {
   const fake = fakeVscode();
   const live = recordingLive(PROCESSES, "dev1");
@@ -720,6 +742,28 @@ test("cancelling Run with Parameters aborts the query of the cell running (#1564
   const result = await run;
   assert.strictEqual(live.aborted, 1);
   assert.strictEqual(result.failed.cell, 1);
+});
+
+test("cancelling Run with Parameters while a cell waits to be sent stops the wait (#2560)", async () => {
+  const fake = fakeVscode();
+  const live = recordingLive(PROCESSES, "dev1");
+  const { runWithParameters } = loadRun(fake, live);
+  const { Uri } = fake.vscode;
+  fake.written.set("/ws/p.qnb", Buffer.from(JSON.stringify({ qnb: 1, cells: [{ kind: "code", source: ["1"] }, { kind: "code", source: ["2"] }] })));
+  const token = { isCancellationRequested: false, listeners: [], onCancellationRequested: (f) => (token.listeners.push(f), { dispose() {} }) };
+  fake.vscode.window.withProgress = async (_o, task) => task({ report() {} }, token);
+  live.aborted = 0;
+  live.abort = async () => void live.aborted++;
+  let waiting;
+  live.runOnActive = (_code, _query, _guard, _expect, signal) =>
+    new Promise((resolve) => ((waiting = signal), signal.addEventListener("abort", () => resolve(undefined))));
+  const run = runWithParameters(live, Uri.file("/ws/p.qnb"), Uri.file("/ws/p-run.qnb"), {});
+  for (let i = 0; waiting === undefined && i < 1000; i++) await new Promise((r) => setImmediate(r));
+  token.isCancellationRequested = true;
+  token.listeners.forEach((f) => f());
+  const result = await run;
+  assert.strictEqual(live.aborted, 0);
+  assert.deepStrictEqual(result.failed, { cell: 1, message: "the run was cancelled" });
 });
 
 test("Run Notebook with Parameters runs the notebook on the active connection and writes the run; off, it refuses", async () => {

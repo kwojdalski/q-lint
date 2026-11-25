@@ -435,11 +435,15 @@ class QnbKernel {
     const limit = readNotebook((key, fallback) => configuration.get(key, fallback));
     const settings = { consoleSize, rows: rowsArgument(limit), rowLimitFrom: limit.rowLimitFrom };
     let running = false;
+    const waiting = new AbortController();
     const listener = execution.token.onCancellationRequested(() => {
       // As Abort Current Query: stop waiting, and reconnect once the process
-      // is free.
+      // is free. Not sent yet, behind a background read: stop this cell's
+      // wait (#2560).
       if (running) {
         void this.live.abort();
+      } else {
+        waiting.abort();
       }
     });
     try {
@@ -460,9 +464,9 @@ class QnbKernel {
           // to abort (#1998).
           running = false;
         }
-      });
+      }, "ask", undefined, waiting.signal);
       if (result === undefined) {
-        return finish(false, [notice("Not run: no q process is connected, or a query is still running on it.")]);
+        return finish(false, [notice(execution.token.isCancellationRequested ? "Interrupted: the cell was not run." : "Not run: no q process is connected, or a query is still running on it.")]);
       }
       if (result.value === undefined) {
         return finish(false, [notice("Interrupted: the cell was not run.")]);

@@ -174,23 +174,48 @@ export function parametersCell(cells: readonly Pick<QnbCell, "kind" | "source" |
 const NAME = /^\.?[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)*$/;
 
 /// The parameters a parameters cell assigns, in order, by name: each line
-/// `name:value`, a trailing `;` and comment left off. Other lines are not
+/// `name:value` or `name::value` (#2388), its comment left off, and each
+/// assignment of a line of several, `a:1;b:2` (#2387). Other lines are not
 /// parameters, and the lines are q's statements: one in a block comment or
 /// a string, or a statement of more than one line, is none (#1470). An
 /// indented comment line after one is no part of it (#1732).
 export function parametersOf(source: string): { name: string; value: string }[] {
   const found: { name: string; value: string }[] = [];
   for (const line of statements(source).map(withoutCommentLines).filter((s) => !s.includes("\n"))) {
-    const m = /^(\.?[a-zA-Z][\w.]*)\s*:\s*(.*)$/.exec(line);
-    if (m === null) {
-      continue;
-    }
-    const value = withoutComment(m[2]).trim().replace(/;$/, "").trimEnd().replace(/;$/, "");
-    if (NAME.test(m[1]) && value !== "" && !value.startsWith(":")) {
-      found.push({ name: m[1], value });
+    for (const part of topLevel(withoutComment(line))) {
+      const m = /^\s*(\.?[a-zA-Z][\w.]*)\s*::?\s*(.*)$/.exec(part);
+      const value = m?.[2].trim() ?? "";
+      if (m !== null && NAME.test(m[1]) && value !== "" && !value.startsWith(":")) {
+        found.push({ name: m[1], value });
+      }
     }
   }
   return found;
+}
+
+/// `text` split at each `;` outside a string and outside brackets.
+function topLevel(text: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let quoted = false;
+  let from = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      i += c === "\\" ? 1 : 0;
+      quoted = c !== '"';
+    } else if (c === '"') {
+      quoted = true;
+    } else if ("([{".includes(c)) {
+      depth++;
+    } else if (")]}".includes(c)) {
+      depth = Math.max(0, depth - 1);
+    } else if (c === ";" && depth === 0) {
+      parts.push(text.slice(from, i));
+      from = i + 1;
+    }
+  }
+  return [...parts, text.slice(from)];
 }
 
 /// A statement without its continuation lines that are only a comment, as
@@ -264,7 +289,8 @@ export interface Executor {
 export interface RunResult {
   qnb: Qnb;
   /// How many code cells ran, and the first that failed: its number from 1
-  /// among all cells, and why.
+  /// among the cells of the notebook run, the parameters cell the run put
+  /// in counting as none (#2389), and why.
   ran: number;
   failed?: { cell: number; message: string };
 }
@@ -285,14 +311,19 @@ export async function runNotebook(
   if (problem !== undefined) {
     throw new Error(problem);
   }
-  const cells = injectParameters(qnb.cells, overrides).map((c) => ({ ...c }));
+  const given = injectParameters(qnb.cells, overrides);
+  const cells = given.map((c) => ({ ...c }));
+  // Each cell's number from 1 in `qnb`, as its author sees it (#2389): the
+  // cell of `overrides` is the parameters cell's, before it, or the first.
+  const numbers = given.map((c) => qnb.cells.indexOf(c) + 1);
+  numbers.forEach((n, j) => (numbers[j] = n > 0 ? n : Math.max(1, numbers[j - 1] ?? 1)));
   // The process a cell with no `/ @process` runs on: the last one named,
   // as the editor's connection stays there (#2150).
   let named: string | undefined;
   let order = 0;
   let failed: RunResult["failed"];
   const stop = (i: number, message: string): void => {
-    failed ??= { cell: i + 1, message };
+    failed ??= { cell: numbers[i], message };
   };
   // The Markdown whose values the cell at `i` reads, and, when it does not
   // run or fails, or values are not read, what they showed was another
@@ -325,7 +356,10 @@ export async function runNotebook(
       dropLive(i);
       continue;
     }
-    hooks.progress?.(i + 1, cells.length);
+    // The cell of `overrides` is none of the notebook's to count.
+    if (given[i] === qnb.cells[numbers[i] - 1]) {
+      hooks.progress?.(numbers[i], qnb.cells.length);
+    }
     const start = Date.now();
     order++;
     const finish = (success: boolean, parts: OutputPart[]): void => {

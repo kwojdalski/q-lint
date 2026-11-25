@@ -12,6 +12,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { changedLines, committedText } = require("../out/changedlines.js");
+const { readGitPathWith } = require("../out/relations.js");
 const { registerFormatChanged, changedLineEdits, FORMAT_CHANGED, FORMAT_CHANGED_NOW } = require("../out/formatchangedview.js");
 const pkg = require("../package.json");
 
@@ -64,6 +65,26 @@ test("the committed text comes from git HEAD; untracked is empty; outside git, n
   t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
   fs.writeFileSync(path.join(outside, "c.q"), "c\n");
   assert.strictEqual(await committedText(path.join(outside, "c.q")), undefined);
+});
+
+// Find Affected Tests ran VS Code's `git.path`, and this git on PATH only:
+// with git there alone, every file was "not in a git repository" (#2522).
+test("the committed text is read with the git VS Code's git.path names, when PATH has none", async (t) => {
+  const { dir, git } = repo(t);
+  const file = path.join(dir, "a.q");
+  fs.writeFileSync(file, "a:1\n");
+  git("add", ".");
+  git("commit", "-qm", "one");
+  const binary = execFileSync(process.platform === "win32" ? "where" : "which", ["git"], { encoding: "utf8" }).split(/\r?\n/)[0].trim();
+  const old = process.env.PATH;
+  process.env.PATH = path.join(dir, "no-such-dir");
+  t.after(() => {
+    process.env.PATH = old;
+    readGitPathWith(() => undefined);
+  });
+  assert.strictEqual(await committedText(file), undefined);
+  readGitPathWith(() => [binary, "/elsewhere/git"]);
+  assert.strictEqual(await committedText(file), "a:1\n");
 });
 
 // Where the filesystem ignores case, the editor keeps the spelling a file

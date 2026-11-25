@@ -41,8 +41,14 @@ import { NULL_TYPE, trapLines } from "./query";
 import type { CellMode, ChartMode } from "./celldirectives";
 import type { RowLimitFrom } from "./liveconfig";
 import { bytesText, toGrid, type Grid, type GridAnswer } from "./grid";
+import { FULL_TEXT } from "./qtext";
+
+/// How much of one value the grid shows.
+const VALUE_LIMIT = 500;
 
 /// `DATA`, its statements evaluated under `reval` when `readOnly` (`trapLines`).
+/// An item of a general column is `FULL_TEXT`'s, whole whatever the
+/// process's `\c`, which `-3!` cut at with `..` (#2537).
 function dataLambda(readOnly: boolean): string {
   return [
     "{[s;rows;size]",
@@ -55,7 +61,7 @@ function dataLambda(readOnly: boolean): string {
     " n:\"j\"$rows;m:count t;",
     " u:$[1b~.Q.qp t;[j:$[n<0;(m+n)|0;0]+til m&abs n;$[count j;.Q.ind[t;j];select from t where i<0]];n sublist t];",
     " c:{$[count[cols x]=count distinct cols x;x cols x;value flip x]} u;",
-    " str:{$[(0h=type x)|76h<type x;{$[10h=type x;x;-3!x]} each x;string x]};",
+    ` str:{[F;x]$[(0h=type x)|76h<type x;{[F;x]$[10h=type x;x;F[${VALUE_LIMIT};x]]}[F] each x;string x]}[${FULL_TEXT}];`,
     " d:str each c;",
     " `ok`table`columns`types`keys`data`bytes`total!(1b;1b;cols t;type each c;k;d;",
     "   {$[any 127<\"i\"$\"x\"$raze x;{$[any 127<\"i\"$\"x\"$x;\"x\"$x;0b]} each x;()]} each d;count t)}",
@@ -69,9 +75,6 @@ export const DATA_READ_ONLY = dataLambda(true);
 /// How many rows `@grid` and `@chart` ask for by default:
 /// `q-lint.notebook.rowLimit`'s default.
 export const GRID_ROWS = 1000;
-/// How much of one value the grid shows.
-const VALUE_LIMIT = 500;
-
 export interface Table {
   columns: string[];
   /// Each column's q type.

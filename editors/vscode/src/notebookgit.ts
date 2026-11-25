@@ -17,7 +17,7 @@ import { featureOn, qnbOf, requireFeature } from "./notebook";
 import { NOTEBOOK } from "./qnb";
 import { diffCells, diffSummary, hasOutputs, notebookJson, notebookText, stripQnb, type CellLike } from "./qnbgit";
 import { plainMessage } from "./history";
-import { onProcessPath } from "./relations";
+import { onProcessPath, processGit } from "./relations";
 import { selectedMany } from "./clicked";
 import { gitName, runGit } from "./changedlines";
 
@@ -37,8 +37,9 @@ export async function gitShow(file: string, ref: string = HEAD): Promise<string>
   const top = (await runGit(["rev-parse", "--show-toplevel"], path.dirname(file)))?.trim();
   const [spec, cwd] = top ? [`${ref}:${gitName(top, file)}`, top] : [`${ref}:./${path.basename(file)}`, path.dirname(file)];
   return new Promise((resolve, reject) => {
-    // Found on PATH, not in the notebook's folder as Windows would (#1407).
-    const git = onProcessPath("git");
+    // `git.path`'s, or found on PATH, not in the notebook's folder as
+    // Windows would (#1407, #2522).
+    const git = processGit();
     if (git === undefined) {
       reject(new Error("git is not on PATH"));
       return;
@@ -230,7 +231,7 @@ export type AttributesAt = "info" | "gitattributes";
 /// Run git in `cwd`: its exit code and output.
 function git(args: string[], cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const binary = onProcessPath("git");
+    const binary = processGit();
     if (binary === undefined) {
       resolve({ code: -1, stdout: "", stderr: "git is not on PATH" });
       return;

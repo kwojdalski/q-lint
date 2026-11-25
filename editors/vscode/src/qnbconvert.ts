@@ -19,6 +19,7 @@
 // Python notebook (PyKX's magic) is q, without the magic line.
 import { escapeHtml } from "./celldata";
 import { inlineSpans, storedValues, type LiveValue } from "./livemarkdown";
+import { markdownBlocks } from "./markdownblocks";
 import type { Qnb, QnbCell, QnbItem, QnbOutput } from "./qnb";
 
 /// VS Code's mime types for an error and for the two streams.
@@ -47,18 +48,11 @@ function entity(name: string): string | undefined {
   return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : undefined;
 }
 
-/// A GFM table row's cells: split on the pipes not escaped, the outer ones
-/// dropped, an escaped pipe a pipe.
-function tableCells(line: string): string[] {
-  const row = line.trim().replace(/^\|/, "").replace(/(^|[^\\])\|$/, "$1");
-  return row.split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|"));
-}
-
 /// Markdown's inline text as HTML: code spans as they are, live values as
 /// `liveHtml` writes them, everything escaped. A paragraph or an item is
 /// read whole, as `liveQueries` reads it, so a `{{q: }}` over two lines is
 /// one value under the key the run kept it by (#2149); a line's trailing
-/// blanks go, and with `breaks` two spaces or a backslash at a line's end
+/// and a later line's leading blanks go, and with `breaks` two spaces or a backslash at a line's end
 /// is a `<br>` (#1945).
 function inline(text: string, values: Record<string, LiveValue>, breaks = false): string {
   const held: string[] = [];
@@ -73,7 +67,7 @@ function inline(text: string, values: Record<string, LiveValue>, breaks = false)
   let from = 0;
   for (const span of inlineSpans(text)) {
     // A tag is shown as written, as the page shows no HTML of the notebook's.
-    const html = span.kind === "code" ? `<code>${escapeHtml(span.expr.trim())}</code>` : span.kind === "html" ? escapeHtml(span.expr) : liveHtml(span.expr, values[span.expr]);
+    const html = span.kind === "code" ? `<code>${escapeHtml(codeText(span.expr))}</code>` : span.kind === "html" ? escapeHtml(span.expr) : liveHtml(span.expr, values[span.expr]);
     s += text.slice(from, span.start) + hold(html, text.slice(span.start, span.end));
     from = span.end;
   }
@@ -81,7 +75,8 @@ function inline(text: string, values: Record<string, LiveValue>, breaks = false)
   if (breaks) {
     s = s.replace(/(?<!\\)((?:\\\\)*)\\\n/g, (_m, pairs: string) => `${pairs}${hold("<br>")}\n`).replace(/[ \t]* {2}\n/g, () => `${hold("<br>")}\n`);
   }
-  s = s.replace(/[ \t]+\n/g, "\n");
+  // And a later line's leading ones, as markdown-it's `newline` rule drops them.
+  s = s.replace(/[ \t]+\n/g, "\n").replace(/\n[ \t]+/g, "\n");
   // A backslash escapes any ASCII punctuation (CommonMark 2.4, #1310).
   s = escapeHtml(
     s
@@ -117,22 +112,140 @@ function inline(text: string, values: Record<string, LiveValue>, breaks = false)
     }
     const target = followed(src);
     // Its alt text alone, or with a title all of it as written.
-    return target === undefined ? (titled(a, b, c) === "" ? alt : m) : `${hold(`<a href="${escapeHtml(target)}"${titled(a, b, c)}>`)}${alt}${hold("</a>")}`;
+    return target === undefined ? (titled(a, b, c) === "" ? alt : m) : hold(`<a href="${escapeHtml(target)}"${titled(a, b, c)}>${emphasis(alt, held)}</a>`);
   });
   // A URL may hold balanced parentheses, as Wikipedia's do (#1554).
   s = s.replace(new RegExp(String.raw`\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)${TITLE}\)`, "g"), (m, label: string, href: string, a?: string, b?: string, c?: string) => {
-    // The tags are held, so the emphasis below finds no `_` in the URL (#1105).
+    // The link is held whole, so the emphasis below finds no `_` in the URL
+    // (#1105), and pairs no delimiter of its label with one outside it, as
+    // markdown-it reads a label on its own.
     const target = followed(href);
-    return target === undefined ? m : `${hold(`<a href="${escapeHtml(target)}"${titled(a, b, c)}>`)}${label}${hold("</a>")}`;
+    return target === undefined ? m : hold(`<a href="${escapeHtml(target)}"${titled(a, b, c)}>${emphasis(label, held)}</a>`);
   });
-  // A run of three first, so its tags nest (#1550). An underscore run
-  // inside a word is text (#1556), as `_` is below.
-  s = s.replace(/\*\*\*(?=\S)([\s\S]*?\S)\*\*\*|(^|[^\w])___(?=\S)([\s\S]*?\S)___(?!\w)/g, (_m, a: string | undefined, before: string, b: string) =>
-    a !== undefined ? `<em><strong>${a}</strong></em>` : `${before}<em><strong>${b}</strong></em>`);
-  s = s.replace(/\*\*(?=\S)([\s\S]*?\S)\*\*|(^|[^\w])__(?=\S)([\s\S]*?\S)__(?!\w)/g, (_m, a: string | undefined, before: string, b: string) =>
-    a !== undefined ? `<strong>${a}</strong>` : `${before}<strong>${b}</strong>`);
-  s = s.replace(/(^|[^\w*])([*_])(?=\S)([^*_]*?\S)\2(?!\w)/g, "$1<em>$3</em>");
-  return s.replace(/\u0000(\d+)\u0000/g, (_m, i: string) => held[Number(i)]);
+  // What is held may hold more: a link's label.
+  const restore = (text: string): string => text.replace(/\u0000(\d+)\u0000/g, (_m, i: string) => restore(held[Number(i)]));
+  return restore(emphasis(s, held));
+}
+
+/// A code span's text: a line end is a space, and one space each side goes
+/// when both are there and it is not all spaces (CommonMark 6.1, #2400).
+function codeText(text: string): string {
+  const flat = text.replace(/\r?\n/g, " ");
+  return /^ [^]* $/.test(flat) && /[^ ]/.test(flat) ? flat.slice(1, -1) : flat;
+}
+
+/// What a character next to a delimiter run is, for whether the run opens
+/// or closes: a held piece stands for its markup - punctuation, as a
+/// backtick, a bracket, a `<` or an `&` is - or for a line's end, a `<br>`.
+function around(c: string | undefined, held: string | undefined): "space" | "punct" | "other" {
+  if (c === undefined || held === "<br>" || /\s/u.test(c)) {
+    return "space";
+  }
+  return held !== undefined || /[!-/:-@[-`{-~]|\p{P}|\p{S}/u.test(c) ? "punct" : "other";
+}
+
+/// Markdown's emphasis in `s`, inline text escaped with its pieces held: the
+/// runs of `*` and `_` paired as markdown-it pairs them - by whether a run
+/// can open or close (CommonMark 6.2's flanking rules: `**Rows:**42` is text,
+/// #2401), `_` never inside a word (#1556) while `*` may be (`foo*bar*`,
+/// #2392), the rule of three, and each closer with the nearest opener it may
+/// take, so tags always nest (#1550, #2391) and a run with nothing between
+/// is text (`***`, #2390). Two delimiters paired inside two more are
+/// `<strong>`.
+function emphasis(s: string, held: string[]): string {
+  // The text as units: a character, or a held piece whole.
+  const units = s.match(/\u0000\d+\u0000|[^]/gu) ?? [];
+  const heldOf = (u: string | undefined): string | undefined => (u !== undefined && u.startsWith("\u0000") && u.length > 1 ? held[Number(u.slice(1, -1))] : undefined);
+  const kind = (u: string | undefined): "space" | "punct" | "other" => around(u === undefined ? undefined : u[u.length - 1], heldOf(u));
+  type Delimiter = { at: number; marker: string; length: number; open: boolean; close: boolean; end: number };
+  const delimiters: Delimiter[] = [];
+  for (let i = 0; i < units.length; ) {
+    const marker = units[i];
+    if (marker !== "*" && marker !== "_") {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (units[j] === marker) {
+      j++;
+    }
+    const last = kind(units[i - 1]);
+    const next = kind(units[j]);
+    const left = next !== "space" && (next !== "punct" || last !== "other");
+    const right = last !== "space" && (last !== "punct" || next !== "other");
+    const open = left && (marker === "*" || !right || last === "punct");
+    const close = right && (marker === "*" || !left || next === "punct");
+    for (let k = i; k < j; k++) {
+      delimiters.push({ at: k, marker, length: j - i, open, close, end: -1 });
+    }
+    i = j;
+  }
+  // markdown-it's `balance_pairs`: each closer takes the nearest opener of
+  // its marker it may, skipping what is paired already.
+  const bottom: Record<string, number[]> = {};
+  const jumps: number[] = [];
+  let header = 0;
+  let lastAt = -2;
+  for (let c = 0; c < delimiters.length; c++) {
+    const closer = delimiters[c];
+    jumps.push(0);
+    if (delimiters[header].marker !== closer.marker || lastAt !== closer.at - 1) {
+      header = c;
+    }
+    lastAt = closer.at;
+    if (!closer.close) {
+      continue;
+    }
+    bottom[closer.marker] ??= [-1, -1, -1, -1, -1, -1];
+    const slot = (closer.open ? 3 : 0) + (closer.length % 3);
+    let o = header - jumps[header] - 1;
+    let lowest = o;
+    for (; o > bottom[closer.marker][slot]; o -= jumps[o] + 1) {
+      const opener = delimiters[o];
+      if (opener.marker !== closer.marker || !opener.open || opener.end >= 0) {
+        continue;
+      }
+      const odd = (opener.close || closer.open) && (opener.length + closer.length) % 3 === 0 && (opener.length % 3 !== 0 || closer.length % 3 !== 0);
+      if (!odd) {
+        const lastJump = o > 0 && !delimiters[o - 1].open ? jumps[o - 1] + 1 : 0;
+        jumps[c] = c - o + lastJump;
+        jumps[o] = lastJump;
+        closer.open = false;
+        opener.end = c;
+        opener.close = false;
+        lowest = -1;
+        lastAt = -2;
+        break;
+      }
+    }
+    if (lowest !== -1) {
+      bottom[closer.marker][slot] = lowest;
+    }
+  }
+  // Each pair as its tags, two adjacent ones inside two more as one strong.
+  const out = [...units];
+  for (let i = delimiters.length - 1; i >= 0; i--) {
+    const start = delimiters[i];
+    if (start.end === -1) {
+      continue;
+    }
+    const end = delimiters[start.end];
+    const strong =
+      i > 0 &&
+      delimiters[i - 1].end === start.end + 1 &&
+      delimiters[i - 1].marker === start.marker &&
+      delimiters[i - 1].at === start.at - 1 &&
+      delimiters[start.end + 1].at === end.at + 1;
+    const tag = strong ? "strong" : "em";
+    out[start.at] = `<${tag}>`;
+    out[end.at] = `</${tag}>`;
+    if (strong) {
+      out[delimiters[i - 1].at] = "";
+      out[delimiters[start.end + 1].at] = "";
+      i--;
+    }
+  }
+  return out.join("");
 }
 
 /// A live value as HTML, or the expression as written when it has none.
@@ -147,149 +260,56 @@ export function liveHtml(expr: string, value: LiveValue | undefined): string {
   return `<code>{{q: ${escapeHtml(expr)}}}</code>`;
 }
 
-/// A Markdown cell as HTML, its live values from `values`.
+/// A Markdown cell as HTML, its live values from `values`: its blocks as
+/// the notebook's renderer reads them (`markdownBlocks`, #2393) - a list
+/// item, a quote and what is in them as Markdown of their own, a list
+/// ended where a new one starts - and each one's inline text by `inline`.
+/// An HTML block is shown as written, as a tag is.
 export function markdownHtml(source: string, values: Record<string, LiveValue> = {}): string {
-  const lines = source.split(/\r?\n/);
   const out: string[] = [];
-  let paragraph: string[] = [];
-  // An item: its text, the column that text starts at, and the lines
-  // written under it from that column on - a list of its own (#1943).
-  let list: { tag: "ul" | "ol"; start: number; items: { text: string; column: number; under: string[] }[] } | undefined;
-  // Whether the last line not indented was a list item's.
-  let listed = false;
-  const flush = (): void => {
-    if (paragraph.length > 0) {
+  let line = "";
+  let open = 0;
+  for (const block of markdownBlocks(source)) {
+    open += block.kind === "open" ? 1 : block.kind === "close" ? -1 : 0;
+    switch (block.kind) {
+      case "open":
+        line += block.tag === "ol" && block.start !== undefined && block.start !== 1 ? `<ol start="${block.start}">` : `<${block.tag}>`;
+        break;
+      case "close":
+        line += `</${block.tag}>`;
+        break;
       // A line's end is a space, as the notebook shows it: a break only
-      // after two spaces or a backslash not itself escaped (#1945).
-      out.push(`<p>${inline(paragraph.join("\n").trimEnd(), values, true)}</p>`);
-      paragraph = [];
-    }
-    if (list !== undefined) {
-      const start = list.tag === "ol" && list.start !== 1 ? ` start="${list.start}"` : "";
-      const item = (i: { text: string; under: string[] }): string =>
-        `<li>${inline(i.text, values)}${i.under.length > 0 ? markdownHtml(i.under.join("\n"), values) : ""}</li>`;
-      out.push(`<${list.tag}${start}>${list.items.map(item).join("")}</${list.tag}>`);
-      list = undefined;
-    }
-  };
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    // A list under the last item: a line indented to the item's text that
-    // starts an item, and what follows it there. It is that item's own
-    // Markdown, as a quote's lines are the quote's (#1943).
-    const last = list?.items[list.items.length - 1];
-    const indent = (/^[ \t]*/.exec(line) as RegExpExecArray)[0].replace(/\t/g, "    ");
-    if (last !== undefined && line.trim() !== "" && indent.length >= last.column) {
-      const under = indent.slice(last.column) + line.trimStart();
-      if (last.under.length > 0 || /^ {0,3}([-*+]|\d{1,9}[.)])(?:\s|$)/.test(under)) {
-        last.under.push(under);
-        continue;
+      // after two spaces or a backslash not itself escaped (#1945, #2399).
+      case "paragraph":
+        line += block.hidden ? inline(block.text, values, true) : `<p>${inline(block.text, values, true)}</p>`;
+        break;
+      case "heading":
+        line += `<h${block.depth}>${inline(block.text, values, true)}</h${block.depth}>`;
+        break;
+      case "code":
+        line += `<pre><code>${escapeHtml(block.text)}</code></pre>`;
+        break;
+      case "hr":
+        line += "<hr>";
+        break;
+      case "html":
+        line += `<p>${escapeHtml(block.text)}</p>`;
+        break;
+      case "table": {
+        const cell = (tag: string, text: string, at: number): string =>
+          `<${tag}${block.aligns[at] ? ` style="text-align:${block.aligns[at]}"` : ""}>${inline(text, values)}</${tag}>`;
+        const head = block.head.map((c, at) => cell("th", c, at));
+        const body = block.rows.map((row) => `<tr>${block.aligns.map((_a, at) => cell("td", row[at] ?? "", at)).join("")}</tr>`);
+        line += `<table><thead><tr>${head.join("")}</tr></thead>${body.length > 0 ? `<tbody>${body.join("")}</tbody>` : ""}</table>`;
+        break;
       }
     }
-    // A backtick fence's info string holds no backtick: "```a``` b" is a
-    // line of text with a code span in it, not a fence (#1307).
-    const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
-    if (fence !== null && !(fence[1][0] === "`" && fence[2].includes("`"))) {
-      flush();
-      // Closed only by a bare run of the same character, at least as long:
-      // a "```q" inside is code (#1308).
-      const close = new RegExp(`^ {0,3}${fence[1][0]}{${fence[1].length},}\\s*$`);
-      const code: string[] = [];
-      for (i++; i < lines.length && !close.test(lines[i]); i++) {
-        code.push(lines[i]);
-      }
-      out.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`);
-      continue;
-    }
-    // An indented code block, where `liveExpressions` reads one: not under
-    // a paragraph line or a list item (#1553). Blank lines inside it are
-    // its; those after it are not.
-    if (/^(?: {4}|\t)/.test(line) && line.trim() !== "" && paragraph.length === 0 && !listed) {
-      flush();
-      const code: string[] = [];
-      for (; i < lines.length && (/^(?: {4}|\t)/.test(lines[i]) || lines[i].trim() === ""); i++) {
-        code.push(lines[i].replace(/^(?: {4}|\t)/, ""));
-      }
-      while (code[code.length - 1].trim() === "") {
-        code.pop();
-      }
-      i--;
-      out.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`);
-      continue;
-    }
-    if (line.trim() !== "" && !/^(?: {4}|\t)/.test(line)) {
-      listed = /^ {0,3}([-*+]|\d{1,9}[.)])(?:\s|$)/.test(line);
-    }
-    // A GFM table: a header row, a delimiter row of as many cells, then
-    // rows up to a blank line (#1309).
-    const delimiter = i + 1 < lines.length ? tableCells(lines[i + 1]) : [];
-    if (
-      line.includes("|") &&
-      /^ {0,3}\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/.test(lines[i + 1] ?? "") &&
-      tableCells(line).length === delimiter.length
-    ) {
-      flush();
-      const align = delimiter.map((d) => (d.endsWith(":") ? (d.startsWith(":") ? "center" : "right") : d.startsWith(":") ? "left" : ""));
-      const cell = (tag: string, text: string, at: number): string =>
-        `<${tag}${align[at] ? ` style="text-align:${align[at]}"` : ""}>${inline(text, values)}</${tag}>`;
-      const head = tableCells(line).map((c, at) => cell("th", c, at));
-      const body: string[] = [];
-      for (i += 2; i < lines.length && lines[i].trim() !== "" && !/^ {0,3}(`{3,}|~{3,}|#{1,6}\s|>)/.test(lines[i]); i++) {
-        const cells = tableCells(lines[i]);
-        body.push(`<tr>${align.map((_a, at) => cell("td", cells[at] ?? "", at)).join("")}</tr>`);
-      }
-      i--;
-      out.push(`<table><thead><tr>${head.join("")}</tr></thead>${body.length > 0 ? `<tbody>${body.join("")}</tbody>` : ""}</table>`);
-      continue;
-    }
-    // A closing run of `#` only after a space: `# Using C#` keeps its `#`
-    // (CommonMark, #1237).
-    const heading = /^ {0,3}(#{1,6})\s+(.*?)\s*$/.exec(line);
-    const item = /^ {0,3}([-*+]|\d{1,9}[.)])\s+(.*)$/.exec(line);
-    if (line.trim() === "") {
-      flush();
-    } else if (paragraph.length > 0 && /^ {0,3}(=+|-+)\s*$/.test(line)) {
-      // A setext heading: the paragraph above a line of = or - (#1551).
-      const level = line.trim()[0] === "=" ? 1 : 2;
-      out.push(`<h${level}>${inline(paragraph.join("\n").trimEnd(), values)}</h${level}>`);
-      paragraph = [];
-    } else if (heading !== null) {
-      flush();
-      const text = heading[2].replace(/(^|\s+)#+$/, "");
-      out.push(`<h${heading[1].length}>${inline(text, values)}</h${heading[1].length}>`);
-    } else if (/^ {0,3}([-*_])(\s*\1){2,}\s*$/.test(line)) {
-      flush();
-      out.push("<hr>");
-    } else if (/^ {0,3}>/.test(line)) {
-      flush();
-      const quote: string[] = [];
-      for (; i < lines.length && /^ {0,3}>/.test(lines[i]); i++) {
-        quote.push(lines[i].replace(/^ {0,3}> ?/, ""));
-      }
-      i--;
-      out.push(`<blockquote>${markdownHtml(quote.join("\n"), values)}</blockquote>`);
-    } else if (item !== null && (paragraph.length === 0 || (item[2].trim() !== "" && /^([-*+]|0*1[.)])$/.test(item[1])))) {
-      // Only a bullet or a "1." with text interrupts a paragraph: "in
-      // 2024. it ran" goes on with it (CommonMark 5.2, #1311).
-      if (paragraph.length > 0) {
-        flush();
-      }
-      const tag = /\d/.test(item[1]) ? "ol" : "ul";
-      if (list !== undefined && list.tag !== tag) {
-        flush();
-      }
-      list ??= { tag, start: tag === "ol" ? parseInt(item[1], 10) : 1, items: [] };
-      list.items.push({ text: item[2], column: line.length - item[2].length, under: [] });
-    } else if (list !== undefined && /^\s+\S/.test(line)) {
-      list.items[list.items.length - 1].text += `\n${line.trim()}`;
-    } else {
-      if (list !== undefined) {
-        flush();
-      }
-      paragraph.push(line.trimStart());
+    // A block at the cell's top is a line of its own.
+    if (open === 0) {
+      out.push(line);
+      line = "";
     }
   }
-  flush();
   return out.join("\n");
 }
 
@@ -427,9 +447,21 @@ function outputToJupyter(output: QnbOutput, order: number | undefined, last: boo
 const Q_KERNEL = { display_name: "q (kdb+)", language: "q", name: "qpk" };
 const Q_LANGUAGE = { name: "q", file_extension: ".q", mimetype: "text/x-q" };
 
-/// The language of the kernel a Jupyter notebook's `metadata` names.
-const kernelLanguage = (meta: Json): string =>
-  String((isObject(meta.language_info) ? meta.language_info.name : undefined) ?? (isObject(meta.kernelspec) ? meta.kernelspec.language : undefined) ?? "q").toLowerCase();
+/// The language of the kernel a Jupyter notebook's `metadata` names. A
+/// kernelspec's `language` is optional (#2382): with none, its `name` says
+/// it - `python3`, `ir`, `julia-1.10` - and only a q kernel's, or none, is q.
+function kernelLanguage(meta: Json): string {
+  const spec = isObject(meta.kernelspec) ? meta.kernelspec : undefined;
+  const named = (isObject(meta.language_info) ? meta.language_info.name : undefined) ?? spec?.language;
+  if (named !== undefined) {
+    return String(named).toLowerCase();
+  }
+  const kernel = typeof spec?.name === "string" ? spec.name.toLowerCase() : "";
+  if (kernel === "" || /^(qpk|q|kdb|kdbx?|jupyterq)$/.test(kernel)) {
+    return "q";
+  }
+  return kernel === "ir" ? "r" : /^python/.test(kernel) ? "python" : kernel.replace(/[-_]?\d[\d.]*$/, "") || kernel;
+}
 
 /// The notebook as an nbformat 4 Jupyter notebook, as JSON text: 4.5, with
 /// the cells' ids, when every cell has the id `fromIpynb` kept.
@@ -446,7 +478,9 @@ export function toIpynb(qnb: Qnb): string {
   });
   const notebook = {
     cells,
-    metadata: { ...meta, ...(meta.kernelspec === undefined ? { kernelspec: Q_KERNEL, language_info: Q_LANGUAGE } : {}) },
+    // q's only when the notebook names no language at all: a `language_info`
+    // of its own is never replaced (#2381).
+    metadata: { ...meta, ...(meta.kernelspec === undefined && meta.language_info === undefined ? { kernelspec: Q_KERNEL, language_info: Q_LANGUAGE } : {}) },
     nbformat: 4,
     nbformat_minor: ids ? 5 : 4,
   };

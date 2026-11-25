@@ -177,6 +177,12 @@ function readCell(raw: unknown, where: string): QnbCell {
   if (typeof raw.source === "string") {
     source = raw.source;
   } else if (Array.isArray(raw.source) && raw.source.every((l) => typeof l === "string")) {
+    // A line ending in "\n", as Jupyter writes one, would read as two and
+    // save as two (#2403): refused, as a save could not give it back.
+    const broken = raw.source.findIndex((l) => l.includes("\n"));
+    if (broken >= 0) {
+      throw new QnbError(`${where}: line ${broken + 1} of "source" holds a line end; a .qnb writes each line without one (a Jupyter notebook is read by Import Jupyter Notebook as q Notebook)`);
+    }
     source = raw.source.join("\n");
   } else {
     throw new QnbError(`${where}: "source" is not a list of lines`);

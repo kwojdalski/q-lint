@@ -403,6 +403,29 @@ test("a query waiting behind a heartbeat is shown running and ends at q-lint.que
   assert.ok(!a.sent.some((m) => JSON.stringify(m).includes("1+1")));
 });
 
+// A notebook cell's Interrupt before it was sent stopped nothing: the cell
+// waited on behind the background read until the process was free (#2560).
+test("a call waiting behind a heartbeat stops at its own signal, and the heartbeat is left running (#2560)", async (t) => {
+  const a = await fakeQ((sent) => (sent === "::" ? undefined : 1));
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)], { "connection.heartbeat.enable": true, "connection.heartbeatInterval": 1 });
+  await live.connectTo("a");
+  await until(() => live.isBusy());
+  const stop = new AbortController();
+  const started = Date.now();
+  const running = live.runOnActive(["1+1"], (connection) => connection.query(["1+1"], [25, 80]), "ask", undefined, stop.signal);
+  await sleep(200);
+  assert.match(live.api().statusText(), /waiting/);
+  stop.abort();
+  assert.strictEqual(await running, undefined);
+  assert.ok(Date.now() - started < 1500, `settled after ${Date.now() - started} ms`);
+  assert.deepStrictEqual(stub.messages.at(-1), ["info", "q-lint: stopped the query waiting to be sent to a; it was not run."]);
+  assert.ok(!a.sent.some((m) => JSON.stringify(m).includes("1+1")));
+  assert.strictEqual(live.isBusy(), true, "the heartbeat is still out");
+  // A signal stopped before the call waits on nothing.
+  assert.strictEqual(await live.runOnActive(["2+2"], async () => 4, "ask", undefined, stop.signal), undefined);
+});
+
 test("a query waiting for the reconnect after Abort is shown running, and Abort stops it (#2126)", async (t) => {
   let delay = 0;
   const a = await fakeQ((sent) => (JSON.stringify(sent).includes("slow") ? undefined : 1), () => delay);

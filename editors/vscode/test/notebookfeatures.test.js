@@ -472,6 +472,18 @@ test("a parameters cell's assignments are its parameters", () => {
     { name: "syms", value: "`EURUSD`GBPUSD" },
     { name: ".cfg.n", value: "10" },
     { name: "f", value: "{x}" },
+    { name: "x", value: "1" },
+  ]);
+  // Each assignment of a line of several (#2387), and one with `::` (#2388);
+  // a `;` in a string or in brackets is the value's.
+  assert.deepStrictEqual(parametersOf("/ @parameters\nstart:2024.01.01;end:2024.01.31\nsym:`EURUSD\nrows::100\nf:{x;y};s:\"a;b\";l:(1;2)"), [
+    { name: "start", value: "2024.01.01" },
+    { name: "end", value: "2024.01.31" },
+    { name: "sym", value: "`EURUSD" },
+    { name: "rows", value: "100" },
+    { name: "f", value: "{x;y}" },
+    { name: "s", value: '"a;b"' },
+    { name: "l", value: "(1;2)" },
   ]);
   // A " /" inside a string is not a comment (#1118).
   assert.deepStrictEqual(parametersOf('path:"/data /hdb"; / where\nq:"a\\" /b"\nn:1 ;'), [
@@ -539,7 +551,8 @@ test("a headless run numbers and runs the q cells, reads live values, and goes w
   assert.strictEqual(run.failed, undefined);
   assert.strictEqual(run.ran, 3);
   assert.deepStrictEqual(ex.sent, ["default", "default", "other"]);
-  assert.deepStrictEqual(seen, ["2/6", "3/6", "4/6"]);
+  // Counted as the notebook has its cells: the run's parameters cell is none of them (#2389).
+  assert.deepStrictEqual(seen, ["2/5", "3/5"]);
   const cells = run.qnb.cells;
   assert.strictEqual(cells[2].source, "/ Parameters given to this run.\nn:5;");
   assert.deepStrictEqual(cells.map((c) => c.execution?.order), [undefined, 1, 2, 3, undefined, undefined]);
@@ -609,6 +622,12 @@ test("a headless run stops at the first cell that fails, and clears what the cel
   // A process that cannot be had fails its cell with why.
   const refused = await runNotebook({ cells: [{ kind: "code", source: "1" }] }, { on: async () => { throw new Error("no such process"); } }, SETTINGS);
   assert.deepStrictEqual(refused.failed, { cell: 1, message: "no such process" });
+  // Named by its number in the notebook run, not counting the cell of the
+  // parameters given (#2389).
+  const params = { cells: [{ kind: "code", source: "/ @parameters\nn:1" }, { kind: "markdown", source: "m" }, { kind: "code", source: "1+`a" }, { kind: "code", source: "n" }] };
+  assert.deepStrictEqual((await runNotebook(params, ex, SETTINGS, { n: "2" })).failed, { cell: 3, message: "'type" });
+  const top = { cells: [{ kind: "code", source: "1+`a" }] };
+  assert.deepStrictEqual((await runNotebook(top, ex, SETTINGS, { n: "2" })).failed, { cell: 1, message: "'type" });
   await assert.rejects(runNotebook(qnb, ex, SETTINGS, { "1x": "1" }), /not a q name/);
   await assert.rejects(runNotebook(qnb, ex, SETTINGS, { x: "1\n2" }), /one line of q/);
 });
@@ -986,7 +1005,9 @@ test("an HTML export nests a list written under an item, as the notebook shows i
   assert.strictEqual(markdownHtml("1. a\n   - b\n2. c"), "<ol><li>a<ul><li>b</li></ul></li><li>c</li></ol>");
   // Deeper, a numbered one under a bullet, and an item's own next line.
   assert.strictEqual(markdownHtml("- a\n  - b\n    - c\n  - d\n- e"), "<ul><li>a<ul><li>b<ul><li>c</li></ul></li><li>d</li></ul></li><li>e</li></ul>");
-  assert.strictEqual(markdownHtml("* a\n  3. b\n  4. c\n     more"), '<ul><li>a<ol start="3"><li>b</li><li>c\nmore</li></ol></li></ul>');
+  assert.strictEqual(markdownHtml("* a\n  1. b\n  4. c\n     more"), "<ul><li>a<ol><li>b</li><li>c\nmore</li></ol></li></ul>");
+  // A numbered item from 3 does not break the item's text (CommonMark 5.2), as the notebook shows it.
+  assert.strictEqual(markdownHtml("* a\n  3. b\n  4. c\n     more"), "<ul><li>a\n3. b\n4. c\nmore</li></ul>");
   assert.strictEqual(markdownHtml("- a\n\t- b"), "<ul><li>a<ul><li>b</li></ul></li></ul>");
   // Under the item's text, not under its marker: a sibling, as before.
   assert.strictEqual(markdownHtml("- a\n - b"), "<ul><li>a</li><li>b</li></ul>");
@@ -996,6 +1017,74 @@ test("an HTML export nests a list written under an item, as the notebook shows i
     markdownHtml("- a\n  - <b>x</b> {{q: n}} [l](javascript:alert(1))", { n: { text: "<7>" } }),
     '<ul><li>a<ul><li>&lt;b&gt;x&lt;/b&gt; <span class="live" title="q: n">&lt;7&gt;</span> [l](javascript:alert(1))</li></ul></li></ul>',
   );
+});
+
+// The export read Markdown's blocks with rules of its own: a list item held
+// only text and lists, a quote only `>` lines, a table every line to a blank
+// one. It reads them now as the notebook's renderer does (`markdownBlocks`).
+test("an HTML export draws a list item's and a quote's blocks as the notebook does (#2393, #2394, #2395, #2397)", () => {
+  // A line that starts no block goes on with the paragraph above it (#2393).
+  assert.strictEqual(markdownHtml("- item one\ncontinued here"), "<ul><li>item one\ncontinued here</li></ul>");
+  assert.strictEqual(markdownHtml("> quoted\ncontinued here"), "<blockquote><p>quoted\ncontinued here</p></blockquote>");
+  // A quote, a second paragraph, code and a list after an empty line are the item's (#2394).
+  assert.strictEqual(markdownHtml("- a\n\n  second paragraph of a"), "<ul><li><p>a</p><p>second paragraph of a</p></li></ul>");
+  assert.strictEqual(markdownHtml("1. step\n\n   ```\n   x:1\n   ```"), "<ol><li><p>step</p><pre><code>x:1</code></pre></li></ol>");
+  assert.strictEqual(markdownHtml("- a\n  > note"), "<ul><li>a<blockquote><p>note</p></blockquote></li></ul>");
+  assert.strictEqual(markdownHtml("- a\n\n  - b"), "<ul><li><p>a</p><ul><li>b</li></ul></li></ul>");
+  // An item's first line is Markdown too, and a fence in it ends there (#2395).
+  assert.strictEqual(markdownHtml("- > quoted item"), "<ul><li><blockquote><p>quoted item</p></blockquote></li></ul>");
+  assert.strictEqual(markdownHtml("- # Heading item"), "<ul><li><h1>Heading item</h1></li></ul>");
+  assert.strictEqual(markdownHtml("1. ---"), "<ol><li><hr></li></ol>");
+  assert.strictEqual(
+    markdownHtml("- ```\n  x:1\n  ```\n\n# Results\n\nThe *mean* is 3."),
+    "<ul><li><pre><code>x:1</code></pre></li></ul>\n<h1>Results</h1>\n<p>The <em>mean</em> is 3.</p>",
+  );
+  // An empty item is one, and an item's text may start on the next line (#2397).
+  assert.strictEqual(markdownHtml("- a\n-\n- c"), "<ul><li>a</li><li></li><li>c</li></ul>");
+  assert.strictEqual(markdownHtml("-\n  a"), "<ul><li>a</li></ul>");
+});
+
+test("an HTML export ends a table, a list and a fence's indent where the notebook does (#2396, #2398, #2402)", () => {
+  // A fence's own indent is not its code's (#2396).
+  assert.strictEqual(markdownHtml("   ```\n   x:1\n     y\n   ```"), "<pre><code>x:1\n  y</code></pre>");
+  // A line that starts another block ends a table (#2398).
+  assert.strictEqual(
+    markdownHtml("| a | b |\n|---|---|\n| 1 | 2 |\n- next item\n---"),
+    "<table><thead><tr><th>a</th><th>b</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>\n<ul><li>next item</li></ul>\n<hr>",
+  );
+  assert.strictEqual(markdownHtml("| a |\n|---|\n| 1 |\n    code"), "<table><thead><tr><th>a</th></tr></thead><tbody><tr><td>1</td></tr></tbody></table>\n<pre><code>code</code></pre>");
+  // Another delimiter or bullet starts another list (#2402).
+  assert.strictEqual(markdownHtml("1. a\n2. b\n1) x\n2) y"), "<ol><li>a</li><li>b</li></ol>\n<ol><li>x</li><li>y</li></ol>");
+  assert.strictEqual(markdownHtml("- a\n+ b"), "<ul><li>a</li></ul>\n<ul><li>b</li></ul>");
+});
+
+test("an HTML export breaks a list item's and a setext heading's lines as a paragraph's (#2399)", () => {
+  assert.strictEqual(markdownHtml("- Address:  \n  1 Main St\\\n  London"), "<ul><li>Address:<br>\n1 Main St<br>\nLondon</li></ul>");
+  assert.strictEqual(markdownHtml("Line one  \nline two\n==="), "<h1>Line one<br>\nline two</h1>");
+});
+
+test("an HTML export pairs emphasis as the notebook does: by its delimiter runs (#2390, #2391, #2392, #2401)", () => {
+  // A run with nothing between is text (#2390).
+  assert.strictEqual(markdownHtml("Rated *** by users"), "<p>Rated *** by users</p>");
+  assert.strictEqual(markdownHtml("a ___ b"), "<p>a ___ b</p>");
+  // Tags nest (#2391).
+  assert.strictEqual(markdownHtml("**a *b***"), "<p><strong>a <em>b</em></strong></p>");
+  // `*` may be inside a word, and the text hold the other delimiter (#2392); `_` may not.
+  assert.strictEqual(markdownHtml("foo*bar* and *max_rows*"), "<p>foo<em>bar</em> and <em>max_rows</em></p>");
+  assert.strictEqual(markdownHtml("2*3*4"), "<p>2<em>3</em>4</p>");
+  assert.strictEqual(markdownHtml("**foo*bar*baz**"), "<p><strong>foo<em>bar</em>baz</strong></p>");
+  assert.strictEqual(markdownHtml("snake_case_name"), "<p>snake_case_name</p>");
+  // A run that cannot close is text (#2401).
+  assert.strictEqual(markdownHtml("**Rows:**42 loaded"), "<p>**Rows:**42 loaded</p>");
+  // A delimiter in a link's label pairs inside it alone.
+  assert.strictEqual(markdownHtml("*a [b*](https://x.io) c*"), '<p><em>a <a href="https://x.io">b*</a> c</em></p>');
+});
+
+test("an HTML export keeps a code span's padding past the one space each side it drops (#2400)", () => {
+  assert.strictEqual(markdownHtml("`  padded  `"), "<p><code> padded </code></p>");
+  assert.strictEqual(markdownHtml("` a `"), "<p><code>a</code></p>");
+  assert.strictEqual(markdownHtml("`  `"), "<p><code>  </code></p>");
+  assert.strictEqual(markdownHtml("``a\nb``"), "<p><code>a b</code></p>");
 });
 
 test("an HTML export keeps a link's title, as the tip the notebook shows (#1944)", () => {
@@ -1098,6 +1187,27 @@ test("a Python notebook imported and exported is the notebook it was: no cell is
   // With only a kernelspec's language to go by, too.
   const spec = { ...PYTHON_NOTEBOOK, metadata: { kernelspec: { display_name: "Python 3", language: "python", name: "python3" } } };
   assert.deepStrictEqual(JSON.parse(toIpynb(fromIpynb(JSON.stringify(spec)))), spec);
+});
+
+test("a Python notebook that names its language only in language_info goes back as Python, not as q (#2381)", () => {
+  const nb = { cells: [{ cell_type: "code", execution_count: null, metadata: {}, outputs: [], source: ["print(1)"] }, { cell_type: "code", execution_count: null, metadata: {}, outputs: [], source: ["%%q\n", "til 3"] }], metadata: { language_info: { name: "python" } }, nbformat: 4, nbformat_minor: 4 };
+  const back = JSON.parse(toIpynb(fromIpynb(JSON.stringify(nb))));
+  assert.deepStrictEqual(back.metadata, { language_info: { name: "python" } });
+  assert.deepStrictEqual(fromIpynb(JSON.stringify(back)).cells.map((c) => c.language ?? "q"), ["python", "q"]);
+  // A notebook that names none is written as q's.
+  assert.strictEqual(JSON.parse(toIpynb({ cells: [] })).metadata.language_info.name, "q");
+});
+
+test("a Jupyter kernelspec with no language is read by its name: python3's cells are Python, qpk's q (#2382)", () => {
+  const nb = (kernelspec) => JSON.stringify({ nbformat: 4, metadata: { kernelspec }, cells: [{ cell_type: "code", source: ["import pandas as pd\n", "x = 1"], metadata: {}, outputs: [] }] });
+  assert.strictEqual(fromIpynb(nb({ name: "python3", display_name: "Python 3 (ipykernel)" })).cells[0].language, "python");
+  assert.strictEqual(fromIpynb(nb({ name: "ir", display_name: "R" })).cells[0].language, "r");
+  assert.strictEqual(fromIpynb(nb({ name: "julia-1.10", display_name: "Julia 1.10" })).cells[0].language, "julia");
+  assert.strictEqual(fromIpynb(nb({ name: "qpk", display_name: "q (kdb+)" })).cells[0].language, undefined);
+  assert.strictEqual(fromIpynb(nb({ display_name: "?" })).cells[0].language, undefined);
+  // And back out, the notebook's own kernel kept, its cells untagged.
+  const back = JSON.parse(toIpynb(fromIpynb(nb({ name: "python3", display_name: "Python 3 (ipykernel)" }))));
+  assert.deepStrictEqual([back.metadata.kernelspec.name, back.cells[0].metadata, back.cells[0].source], ["python3", {}, ["import pandas as pd\n", "x = 1"]]);
 });
 
 test("a live value's expression is read as LIVE values it, whole: a / line in it hides nothing (#2033)", () => {

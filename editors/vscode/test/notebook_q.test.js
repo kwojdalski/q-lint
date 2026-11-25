@@ -97,6 +97,11 @@ test("notebook cells against a real q process", { skip }, async (t) => {
     });
   });
 
+  await t.test("an item of a general column is whole, not cut at the process's \\c width with .. (#2537)", async () => {
+    const answer = await data("([] id:1 2; l:(til 40;`a`b))");
+    assert.deepStrictEqual(answer.table.data[1], [[...Array(40).keys()].join(" "), "`a`b"]);
+  });
+
   await t.test("a keyed table is unkeyed and says how many key columns it had", async () => {
     const answer = await data("kt");
     assert.deepStrictEqual(answer.table, { columns: ["k", "v"], types: [7, 11], keys: 1, data: [["1", "2"], ["x", "y"]], total: 2 });
