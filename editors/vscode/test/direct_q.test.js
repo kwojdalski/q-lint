@@ -270,6 +270,9 @@ test("a direct process that refuses lambdas is queried with plain strings, and a
   await t.test("q-lint.query.unwrapped is every unset process's mode; a process's own evaluation wins", async () => {
     stub.config.user["query.unwrapped"] = true;
     assert.deepStrictEqual(live.activeDirect(), { label: "rdb", from: "setting" });
+    // The connection's tooltip says so at once, as the flags item does (#2489).
+    stub.changeConfig("q-lint.query.unwrapped");
+    assert.match(live.status.tooltip, /Evaluation on rdb: direct \(q-lint\.query\.unwrapped\)/);
     assert.strictEqual((await run("a:10;b:20;a+b")).text, "30");
     await stub.commands.get("q-lint.setProcessEvaluation")("rdb", "wrapped");
     assert.strictEqual(live.processes().find((p) => p.label === "rdb").evaluation, "wrapped");
