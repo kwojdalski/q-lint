@@ -2307,3 +2307,15 @@ a:x`:a/b
 a:x`a.b/c
 a:1`a/b
 a:x`a\:b
+
+=== QE008 profile: general | a symbol ending in a colon is an I/O verb's left operand (q 5: '2:, #2238)
+a:2:x
+
+=== clean profile: general | while q 5 parses each of these (#2238)
+a:`b: 2:x
+a:`b 2:x
+a:`b:c 2:x
+a:`:b 2:x
+a:`b: 0:x
+a:`b: 1:x
+a:`b:2:x

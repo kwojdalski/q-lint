@@ -1438,6 +1438,13 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         {
             continue;
         }
+        // A symbol ending in a colon is the verb's left operand: q 5 parses
+        // `` a:`b: 2:x `` as `(2:;,`b:;`x)` (#2238).
+        if re!(r"`(?::[A-Za-z0-9_.:/]*|[A-Za-z0-9_.][A-Za-z0-9_.:]*)$")
+            .is_match(code[..i].trim_end_matches([' ', '\t']))
+        {
+            continue;
+        }
         let next = continued(&comments[i + 2..]);
         if !(next.starts_with(|c: char| c.is_ascii_alphanumeric() || "`(\"{.".contains(c))
             || re!(r"^-\.?\d").is_match(next))
