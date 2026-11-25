@@ -136,7 +136,7 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
     const { columns, everywhere } = columnsOf(info.columns.map((c) => c.name), readColumnDirs(dirs.value));
     const op = given ?? (await askOp(columns.filter((c) => c !== field)));
     if (op === undefined) return "cancelled";
-    const problem = opProblem(op, columns, field, everywhere);
+    const problem = opProblem(op, columns, field, everywhere, Object.fromEntries(info.columns.map((c) => [c.name, c.type])));
     if (problem !== undefined) return say(`q-lint: ${problem}.`);
     const script = columnScript(table, op, process.label);
     // A guarded process is refused before anything is shown to run.

@@ -61,6 +61,23 @@ test("every switch is declared, on by default, and every command hidden by its s
   if (DB_SETTINGS.symInspector) assert.strictEqual(props["q-lint.hdbBrowser.symInspector.warnAbove"].default, 1000000);
 });
 
+// A cast q does not make fails in every partition with rows and is made in
+// an empty one alone; it is refused before anything is written, with why (#2140).
+test("the column manager refuses a cast q does not make, by the schema migration's table (#2140)", () => {
+  const cols = ["date", "sym", "tags", "ex", "sz"];
+  const types = { date: "d", sym: "s", tags: "J", ex: "C", sz: "j" };
+  const cast = (column, type) => opProblem({ op: "cast", column, type }, cols, "date", cols, types);
+  assert.strictEqual(cast("sym", "c"), "sym is not cast from s to c: the column manager makes no symbol into a char");
+  assert.strictEqual(cast("tags", "f"), "tags is not cast from J to f: a list column's items are lists, an atom column's are not");
+  assert.strictEqual(cast("ex", "c"), "ex is not cast from C to c: a column of strings holds lists, not chars");
+  assert.match(cast("sz", "g"), /^cast to one of q's type characters/);
+  assert.strictEqual(cast("sym", "u"), undefined);
+  assert.strictEqual(opProblem({ op: "cast", column: "sz", type: "u" }, cols, "date", cols, { ...types, sz: "d" }), "sz is not cast from d to u: q has no cast from date to minute");
+  for (const [column, type] of [["sz", "i"], ["sz", "f"], ["ex", "s"], ["ex", "j"], ["sym", "j"], ["sym", "s"]]) assert.strictEqual(cast(column, type), undefined, `${column} to ${type}`);
+  // A column whose type is not known is left to q, as before.
+  assert.strictEqual(opProblem({ op: "cast", column: "sym", type: "c" }, cols, "date"), undefined);
+});
+
 // meta reads the newest partition only: a column the newest have and the
 // older lack is added to the older ones, and one only the older have is
 // deleted or renamed there (#2138).

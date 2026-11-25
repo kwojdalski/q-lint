@@ -304,6 +304,35 @@ test("the column manager adds a column the newest partitions have to the rest, a
   assert.deepStrictEqual(await onDisk(t, db, '{key` sv(hsym`$string first .Q.pv),`trade}'), [".d", "ex", "px", "sym"]);
 });
 
+// sym to c fails in every partition; a nested long column to f makes no
+// float column of a partition with rows (the script's parse fails there),
+// and one of the empty partition alone, which then differs (#2140).
+test("the column manager refuses the casts q does not make, before any partition is written (#2140)", { skip }, async (t) => {
+  const source = [
+    'r:hsym`$"$DIR/hdb";',
+    "mk:{[r;d;n] .Q.dd[r;d,`trade`] set .Q.en[r] ([] sym:n#`a`b`c;tags:n#(1 2;3 4 5;enlist 6);sz:n#10 20 30)};",
+    "mk[r;2026.01.05;3]; mk[r;2026.01.06;0]; mk[r;2026.01.07;3];",
+    "\\l $DIR/hdb",
+    "",
+  ].join("\n");
+  const { connection, dir } = await connect(t, source);
+  const info = readTableInfo(await connection.call(TABLE_INFO, "trade", 100));
+  const columns = info.columns.map((c) => c.name);
+  const types = Object.fromEntries(info.columns.map((c) => [c.name, c.type]));
+  const db = `${dir}/hdb`;
+  // What q's own cast makes of each partition's column, in a q of its own.
+  const own = (c, to) => onDisk(t, db, `{{@[{"h"$type ${to}$x};get\` sv(hsym\`$string x),\`trade\`${c};{"'",x}]} each .Q.pv}`);
+  assert.deepStrictEqual(await own("sym", '"c"'), ["'type", "'type", "'type"]);
+  assert.deepStrictEqual(await own("tags", '"f"'), [0, 9, 0]);
+  for (const [column, type] of [["sym", "c"], ["tags", "f"]]) {
+    assert.match(opProblem({ op: "cast", column, type }, columns, "date", columns, types), new RegExp(`^${column} is not cast from ${types[column]} to ${type}: `));
+  }
+  assert.strictEqual(opProblem({ op: "cast", column: "sz", type: "i" }, columns, "date", columns, types), undefined);
+  assert.match(await run(connection, columnScript("trade", { op: "cast", column: "sz", type: "i" }, "hdb")), /changed 3 of 3 directories/);
+  assert.deepStrictEqual(await onDisk(t, db, "{exec t from meta trade}"), "dsJi");
+  assert.deepStrictEqual(await onDisk(t, db, '{{"h"$type get` sv(hsym`$string x),`trade`sz} each .Q.pv}'), [6, 6, 6]);
+});
+
 test("the documenter reads tables, keys, foreign keys and functions", { skip }, async (t) => {
   const { connection } = await connect(t, HDB() + "\ns:([sym:`a`b] nm:(\"x\";\"y\"))\nf:([] sym:`s$`a`b`a; v:1 2 3)\nkt:([k:1 2] v:`p#`x`x)\n");
   const doc = readDoc(await connection.call(DOCUMENT, 100));

@@ -33,6 +33,7 @@
 // rename of its own, and rewriting the column would read all of it. Works on kdb+ (KDB-X) and PeachQ; held there by
 // dbtools_q.test.js.
 
+import { castProblem } from "./migrate";
 import { PARTITION_DIRS } from "./partdir";
 import { RESERVED, symbolLiteral } from "./qliteral";
 
@@ -93,7 +94,11 @@ export function columnsOf(meta: string[], dirs: string[][]): { columns: string[]
 /// `field` (empty for a splayed one); undefined when it can. `everywhere`
 /// is the columns every directory has (`columnsOf`): a column only some
 /// have can be added to the rest, and deleted or renamed where it is.
-export function opProblem(op: ColumnOp, columns: string[], field = "", everywhere: string[] = columns): string | undefined {
+/// `types` is meta's type of each column: a cast q does not make is refused
+/// here, by the schema migration's own table (`castProblem`), before any
+/// partition is written - run, it fails in each partition with rows and is
+/// made only in an empty one, which then differs from the rest (#2140).
+export function opProblem(op: ColumnOp, columns: string[], field = "", everywhere: string[] = columns, types: Record<string, string> = {}): string | undefined {
   const has = (c: string) => columns.includes(c);
   if (op.op === "reorder") {
     const some = columns.filter((c) => c !== field && !everywhere.includes(c));
@@ -121,6 +126,11 @@ export function opProblem(op: ColumnOp, columns: string[], field = "", everywher
   }
   if (op.op === "cast" && (op.type.length !== 1 || !CAST_TYPES.includes(op.type))) {
     return `cast to one of q's type characters: ${CAST_TYPES.split("").join(" ")}`;
+  }
+  const from = types[op.column];
+  if (op.op === "cast" && from !== undefined && from !== op.type) {
+    const refused = castProblem(from, op.type, true);
+    if (refused !== undefined) return `${op.column} is not cast from ${from} to ${op.type}: ${refused}`;
   }
   return undefined;
 }
