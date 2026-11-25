@@ -1248,3 +1248,81 @@ test("a cell naming --process's own label connects as --process does (#2135)", a
   }
   assert.deepStrictEqual(logins, ["bob:not-a-real-secret", "bob:not-a-real-secret"]);
 });
+
+/// A direct connection (#2470) that answers every plain string with the
+/// value q's `-8!` gives as `hex` (or a Buffer of one), and `\P` with 7.
+function directConnection(answers) {
+  const { deserialize } = require("node-q/lib/c.js");
+  const sent = [];
+  const fromQ = (hex) => {
+    const message = Buffer.isBuffer(hex) ? hex : Buffer.from(hex.replace(/^0x/, ""), "hex");
+    message.writeUInt8(2, 1);
+    return { value: deserialize(message, false, true, false, false), type: message.readInt8(8), message };
+  };
+  return {
+    sent,
+    isDirect: true,
+    noteRefusal() {},
+    evaluate: async (text) => {
+      sent.push(text);
+      return text === "\\P" ? { value: 7, type: -6 } : fromQ(answers[text]);
+    },
+  };
+}
+
+/// -8! of `til n`, built here.
+function tilMessage(n) {
+  const body = Buffer.alloc(6 + 8 * n);
+  body.writeInt8(7, 0);
+  body.writeUInt32LE(n, 2);
+  for (let i = 0; i < n; i++) body.writeBigInt64LE(BigInt(i), 6 + 8 * i);
+  const head = Buffer.from([1, 0, 0, 0, 0, 0, 0, 0]);
+  head.writeUInt32LE(8 + body.length, 4);
+  return Buffer.concat([head, body]);
+}
+
+test("a direct live value writes only the items it keeps, never the whole value (#2480)", async () => {
+  const { liveValues } = require("../out/qnbrun.js");
+  const qformat = require("../out/qformat.js");
+  const oneLine = qformat.oneLine;
+  const written = [];
+  qformat.oneLine = (q, ...rest) => (written.push(q.kind === "vector" ? q.v.length : q.kind === "dict" ? q.k.v.length : -1), oneLine(q, ...rest));
+  try {
+    const big = tilMessage(100000);
+    const connection = directConnection({ "til 100000": big });
+    const [values] = await liveValues(connection, ["{{q: til 100000}}"]);
+    const text = values["til 100000"].text;
+    assert.strictEqual(text.length, 200);
+    assert.ok(text.startsWith("0 1 2 3 "), text);
+    assert.deepStrictEqual(written, [200]);
+  } finally {
+    qformat.oneLine = oneLine;
+  }
+});
+
+test("a direct cell makes grid cells only of the rows it shows, and none in console mode (#2486)", async () => {
+  const { cellAnswer } = require("../out/qnbrun.js");
+  const qformat = require("../out/qformat.js");
+  const gridOfQ = qformat.gridOfQ;
+  const limits = [];
+  qformat.gridOfQ = (q, limit, ...rest) => (limits.push(limit), gridOfQ(q, limit, ...rest));
+  try {
+    // -8!([] a:til 5)
+    const connection = directConnection({ t: "0x01000000470000006200630b0001000000610000000100000007000500000000000000000000000100000000000000020000000000000003000000000000000400000000000000" });
+    const settings = { ...SETTINGS, rows: 2 };
+    const [ok, parts] = await cellAnswer(connection, cellDirective("t"), ["t"], settings);
+    assert.strictEqual(ok, true);
+    assert.match(JSON.stringify(parts), /a\\n-\\n0\\n1\\n2\\n3\\n4/);
+    assert.deepStrictEqual(limits, []);
+    // A grid cell: the first two rows, or the last two, of 5.
+    const first = JSON.stringify((await cellAnswer(connection, cellDirective("/ @grid\nt"), ["t"], settings))[1]);
+    assert.deepStrictEqual(limits, [2]);
+    assert.match(first, /<td[^>]*>1<\/td>/);
+    assert.doesNotMatch(first, /<td[^>]*>2<\/td>/);
+    const last = JSON.stringify((await cellAnswer(connection, cellDirective("/ @grid\nt"), ["t"], { ...settings, rows: -2 }))[1]);
+    assert.match(last, /<td[^>]*>4<\/td>/);
+    assert.doesNotMatch(last, /<td[^>]*>2<\/td>/);
+  } finally {
+    qformat.gridOfQ = gridOfQ;
+  }
+});

@@ -22,7 +22,7 @@ import { cellDirective, type CellMode } from "./celldirectives";
 import { valued, type GuardCode } from "./guard";
 import { LIVE, LIVE_KEY, LIVE_READ_ONLY, VALUE_LIMIT, liveQueries, markdownAfter, readLiveValues, type LiveValue } from "./livemarkdown";
 import type { GridAnswer, GridPayload } from "./grid";
-import { formatValue, oneLine } from "./qformat";
+import { formatValue, gridOfQ, headOf, oneLine } from "./qformat";
 import type { Gatewayed } from "./gateway";
 import { answerOf, directMode, evaluateAll } from "./querycontrols";
 import type { RowLimitFrom } from "./liveconfig";
@@ -71,10 +71,19 @@ async function directCellAnswer(connection: QConnection, mode: CellMode, cut: st
     const failed: GridAnswer = { ok: false, error: ran.error, trace: "" };
     return [false, mode.mode === "chart" ? chartCellOutputs(mode, failed, settings.rowLimitFrom) : cellOutputs(mode, failed, settings.rowLimitFrom)];
   }
-  const { typed } = ran.last;
+  const { typed, precision } = ran.last;
   const tabular = typed !== undefined && (typed.kind === "table" || (typed.kind === "dict" && typed.k.kind === "table" && typed.v.kind === "table"));
-  const answer = answerOf(ran.last, { size: settings.consoleSize, limit: Infinity, unlimited: false, grid: mode.mode === "chart" || tabular });
-  const grid = answer.ok && answer.grid !== undefined ? rowsOf(answer.grid, settings.rows) : undefined;
+  // Only the rows shown are made grid cells, and none for a console cell,
+  // which shows text (#2486).
+  const gridded = mode.mode === "chart" || (mode.mode !== "console" && tabular);
+  const answer = answerOf(ran.last, { size: settings.consoleSize, limit: Infinity, unlimited: false, grid: gridded && typed === undefined });
+  const grid = !answer.ok || !gridded
+    ? undefined
+    : typed !== undefined
+      ? gridOfQ(typed, Math.abs(settings.rows), precision, settings.rows < 0)
+      : answer.grid !== undefined
+        ? rowsOf(answer.grid, settings.rows)
+        : undefined;
   if (mode.mode === "chart") {
     const shown: GridAnswer = grid === undefined ? answer : { ...answer, grid };
     return [true, chartCellOutputs(mode, shown, settings.rowLimitFrom)];
@@ -142,15 +151,17 @@ async function directLiveValues(connection: QConnection, exprs: string[], gatewa
       continue;
     }
     const { value, type, typed, precision } = ran.last;
+    // Only what is kept is written: a character is at most 4 bytes, and
+    // any other item at least one character (#2480).
     const text =
       typed?.kind === "chars"
-        ? Buffer.from(typed.v).toString("utf8")
+        ? Buffer.from(typed.v.subarray(0, 4 * VALUE_LIMIT)).toString("utf8")
         : type === -11 && typeof value === "string"
           ? value
           : typed !== undefined
-            ? oneLine(typed, precision)
+            ? oneLine(headOf(typed, VALUE_LIMIT), precision)
             : formatValue(value, type).join(" ");
-    values[expr] = { text: Array.from(text).slice(0, VALUE_LIMIT).join("") };
+    values[expr] = { text: Array.from(text.slice(0, 2 * VALUE_LIMIT)).slice(0, VALUE_LIMIT).join("") };
   }
   return values;
 }
