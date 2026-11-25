@@ -2013,3 +2013,12 @@ test("a system command's argument is read past a comment after it", () => {
   assert.deepStrictEqual(writes("\\t count t /c"), []);
   assert.deepStrictEqual(writes("\\cd /tmp"), ["runs the system command \\cd"]);
 });
+
+test("an assignment call after an operator applied infix, and a lambda iterated by a keyword, are read as q reads them (#2264, #2271)", () => {
+  assert.deepStrictEqual(writes("0N!:[.z.ts;{}]"), ["assigns .z.ts"]);
+  assert.deepStrictEqual(writes("1+:[a;2]"), ["assigns a"]);
+  assert.deepStrictEqual(writes("{[x;y;z]::[a;77]}[0;0;0]"), ["assigns a"]);
+  // `each` takes the function on its left: what is left of that is not its argument.
+  assert.deepStrictEqual(writes("enlist {update v:77 from x} each enlist {`e}[]"), ["updates what ({`e}[]) names in place"]);
+  assert.deepStrictEqual(writes("count{x+1}'[1 2]"), []);
+});

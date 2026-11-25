@@ -135,6 +135,7 @@
 // 100 ms, and the answer is the code's alone, not what was read before
 // (#2190, #2210, #2211).
 import { parseTags, type Process } from "./processes";
+import { RESERVED } from "./qliteral";
 import { sqlWrites } from "./sql";
 import { statements } from "./statements";
 
@@ -1448,7 +1449,10 @@ function throughParameters(t: Token[], all: Token[], statement: string, closes: 
   let args: ([number, number] | undefined)[] = [];
   // Made a derived function by an iterator, it may be applied infix: what
   // is on its left is its first argument, `` `b{@[x;0;:;y]}'77 `` (#2271).
-  const left = iterated && before !== undefined && ["sym", "num", "str", "name", "close"].includes(before.kind) && before.text !== "}" ? leftArgument(t, s) : undefined;
+  // Not through `each` or another keyword, nor with a builtin on its left,
+  // which applies to what it gives: `enlist f each x`, `count f'x`.
+  const adverb = iterated && t[e + 1]?.kind === "op";
+  const left = adverb && before !== undefined && ["sym", "num", "str", "name", "close"].includes(before.kind) && before.text !== "}" && !(before.kind === "name" && RESERVED.has(before.text)) ? leftArgument(t, s) : undefined;
   if (after?.kind === "open" && after.text === "[") {
     args = items(t, q).map(([a, b]) => (a === b ? undefined : [a, b]));
   } else if (after?.kind === "op" && (after.text === "@" || after.text === ".") && argumentEnd(t, q) > q + 1) {
@@ -2374,10 +2378,14 @@ function readStatement(statement: string, found: Set<string>): void {
       const wrapped = next?.text === ")" && next.kind === "close";
       const bracket = t[i + (wrapped ? 2 : 1)];
       // Where the operator starts: `::` and `+:` are one, `0:` a file verb.
-      const start = i > code && t[i - 1].kind === "op" && touching(t[i - 1], k) && (t[i - 1].text === ":" || OPERATORS.has(t[i - 1].text)) ? i - 1 : i;
-      const before = t[start - 1];
+      // (An operator with its left argument touching it, `0N!:[a;1]`, is
+      // applied to the call, not made compound with it.)
       // After a lambda's parameters, `{[x]:[b 0;1]}`, it starts the body.
-      const params = before?.text === "]" && t.findIndex((x, n) => closes[n] === start - 1 && x.text === "[" && t[n - 1]?.text === "{") >= 0;
+      const paramsEnd = (n: number): boolean => t[n]?.text === "]" && t.findIndex((x, m) => closes[m] === n && x.text === "[" && t[m - 1]?.text === "{") >= 0;
+      const infixOp = i - 1 > code && touching(t[i - 2], t[i - 1]) && ["num", "name", "sym", "str", "close"].includes(t[i - 2].kind) && !paramsEnd(i - 2);
+      const start = i > code && t[i - 1].kind === "op" && touching(t[i - 1], k) && (t[i - 1].text === ":" || OPERATORS.has(t[i - 1].text)) && !infixOp ? i - 1 : i;
+      const before = t[start - 1];
+      const params = paramsEnd(start - 1);
       const opened = start === code || before === undefined || !touching(before, t[start]) || before.kind === "open" || before.kind === "op" || before.text === ";" || params;
       if (bracket?.kind === "open" && bracket.text === "[" && opened && (!wrapped || before?.text === "(")) {
         const global = t[start].text === ":" && start < i;
