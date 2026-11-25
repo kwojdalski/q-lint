@@ -85,8 +85,9 @@ const { TOOLING_SETTINGS, TOOLING_COMMANDS, toolingOn } = require("../out/toolin
 test("a statement is a line and the indented lines after it", () => {
   assert.deepStrictEqual(statements("a:1\nb:a+1\nb*10"), ["a:1", "b:a+1", "b*10"]);
   assert.deepStrictEqual(statements("f:{[x]\n  y:x+1;\n  y*2}\nf 3"), ["f:{[x]\n  y:x+1;\n  y*2}", "f 3"]);
-  // A tab continues as a space does, and blank lines inside are skipped.
-  assert.deepStrictEqual(statements("f:{\n\tx+1\n\n  }\n"), ["f:{\n\tx+1\n  }"]);
+  // A tab continues as a space does; blank lines inside are kept, as q
+  // keeps them (#2282).
+  assert.deepStrictEqual(statements("f:{\n\tx+1\n\n  }\n"), ["f:{\n\tx+1\n\n  }"]);
   // CRLF is read as LF, and trailing spaces are dropped.
   assert.deepStrictEqual(statements("a:1  \r\nb:2\r\n"), ["a:1", "b:2"]);
 });
@@ -101,11 +102,12 @@ test("comments are not sent", () => {
   // A block comment: `/` alone to `\\` alone.
   assert.deepStrictEqual(statements("a:1\n/\nb:2\nc:3\n\\\nd:4"), ["a:1", "d:4"]);
   // A comment line or a block comment between a statement and an indented
-  // line is skipped, and the statement goes on, as q loads a script: a
-  // file that loads runs the same as a query (#894).
-  assert.deepStrictEqual(statements("a:1\n/ note\n  +2"), ["a:1\n  +2"]);
-  assert.deepStrictEqual(statements("f:{\n/ a comment\n  x+1}\nf 1"), ["f:{\n  x+1}", "f 1"]);
-  assert.deepStrictEqual(statements("f:{\n/\njunk\n\\\n  x+1}"), ["f:{\n  x+1}"]);
+  // line does not end it, and the statement goes on, as q loads a script: a
+  // file that loads runs the same as a query (#894). It stays in the
+  // statement, as q keeps it, a block comment as comment lines (#2282).
+  assert.deepStrictEqual(statements("a:1\n/ note\n  +2"), ["a:1\n/ note\n  +2"]);
+  assert.deepStrictEqual(statements("f:{\n/ a comment\n  x+1}\nf 1"), ["f:{\n/ a comment\n  x+1}", "f 1"]);
+  assert.deepStrictEqual(statements("f:{\n/\njunk\n\\\n  x+1}"), ["f:{\n/\n/junk\n/\n  x+1}"]);
   // A trailing comment stays: q's parser drops it.
   assert.deepStrictEqual(statements("a:1 / one"), ["a:1 / one"]);
 });
@@ -166,7 +168,7 @@ test("a block runs on past comment lines and block comments inside it (#894)", (
   for (const line of [1, 3, 4, 5]) {
     assert.strictEqual(blockAt(lines, line), undefined, `line ${line}`);
   }
-  assert.deepStrictEqual(statements(lines.slice(0, 7).join("\n")), ["f:{\n  x+1;\n  x}"]);
+  assert.deepStrictEqual(statements(lines.slice(0, 7).join("\n")), ["f:{\n/ a comment\n  x+1;\n/\n/junk\n/\n  x}"]);
 });
 
 test("no block after a lone backslash, or on a blank line between statements", () => {

@@ -157,3 +157,18 @@ test("hot reload never overwrites a function the process holds as the file did n
   const rows = driftRows(definitions(FILE).map((def) => ({ file: "a.q", def })), await states(c, before));
   assert.deepStrictEqual(rows.find((r) => r.name === "g"), { name: "g", file: "a.q", line: 6, status: "differs", text: "{x+1}", processText: "{x+100}" });
 });
+
+test("a file run as a query compares the same, its lambdas' blank and comment lines kept (#2282)", { skip }, async (t) => {
+  const { statements } = require("../out/statements.js");
+  const file = "dr1:{[x]\n  / double it\n  y:x*2;\n\n  y+1}\ndr2:{[x]\n  a:x;\n/\n  not run\n\\\n  a}\n";
+  const c = await connect(t, "");
+  const ran = await c.query(statements(file), [25, 80]);
+  assert.strictEqual(ran.ok, true);
+  const defs = definitions(file);
+  const rows = driftRows(defs.map((def) => ({ file: "a.q", def })), await states(c, defs));
+  assert.deepStrictEqual(rows.map((r) => `${r.name}:${r.status}`), ["dr1:same", "dr2:same"]);
+  // And edited, hot reload replaces what the query defined.
+  const edited = file.replace("y+1", "y+2");
+  const plan = reloadPlan(changedSince(defs, definitions(edited)), await states(c, definitions(edited)));
+  assert.deepStrictEqual(plan.send.map((s) => s.name), ["dr1"]);
+});

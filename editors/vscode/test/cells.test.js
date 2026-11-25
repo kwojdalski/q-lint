@@ -59,9 +59,10 @@ test("a marker between a statement and its indented continuation is a comment in
   assert.deepStrictEqual(markers(L("f:{x+\n/ %% mid\n\n/ note\n  y}")), []);
   // Before any statement an indented line starts one, so the marker counts.
   assert.deepStrictEqual(markers(L("/ %% one\n  x:1")), [0]);
-  // A cell's code cuts into the statements q would run.
+  // A cell's code cuts into the statements q would run, the marker a
+  // comment line in f, as q keeps it (#2282).
   const all = cells(lines);
-  assert.deepStrictEqual(statements(cellCode(lines, all[0])), ["f:{x+\n  y}"]);
+  assert.deepStrictEqual(statements(cellCode(lines, all[0])), ["f:{x+\n/ %% mid\n  y}"]);
 });
 
 test("looksLikeMarker is the cheap test by text alone", () => {
@@ -279,14 +280,15 @@ test("block comments nest, as KDB-X reads them: every reader skips to the matchi
 
 test("a marker with a block comment between it and a continuation line is a comment in the statement (#1464)", () => {
   const lines = L("f:{x+\n/ %% two\n/\nnote\n\\\n  y}\n/ %% three\ng:1");
-  assert.deepStrictEqual(statements(lines.join("\n")), ["f:{x+\n  y}", "g:1"]);
+  assert.deepStrictEqual(statements(lines.join("\n")), ["f:{x+\n/ %% two\n/\n/note\n/\n  y}", "g:1"]);
   assert.deepStrictEqual(markers(lines), [6]);
 });
 
 test("a blank line in a multi-line string is part of the string, as q reads it (#1465)", () => {
   const { statementSpans } = require("../out/linetimings.js");
   const src = 's:"line one\n\n  line three"\nt:"a\\"\n   \n  b"\nu:1 / "\n\n  +2';
-  const want = ['s:"line one\n\n  line three"', 't:"a\\"\n\n  b"', 'u:1 / "\n  +2'];
+  // Outside a string too, as q keeps a blank line in a statement (#2282).
+  const want = ['s:"line one\n\n  line three"', 't:"a\\"\n\n  b"', 'u:1 / "\n\n  +2'];
   assert.deepStrictEqual(statements(src), want);
   assert.deepStrictEqual(statementSpans(src).map((s) => [s.text, s.start, s.end]), [[want[0], 0, 2], [want[1], 3, 5], [want[2], 6, 8]]);
 });

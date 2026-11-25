@@ -15,8 +15,10 @@
 // - A line that starts with `/` is a comment; `/` alone opens a block comment
 //   that `\` alone closes - and block comments nest, so inside one a `/`
 //   alone opens another - and `\` alone outside one ends the script.
-// - A comment is skipped without ending the statement around it: an
-//   indented line after one still continues the statement above it.
+// - The blank and comment lines between a statement's lines stay in it, as q
+//   keeps them (a lambda's text holds them), a block comment's lines made
+//   comment lines as q makes them (#2282). So a comment line inside an open
+//   string reaches `value`, which refuses it as `\l` does (#2281).
 // - A first line starting `#!` is skipped, as q skips a shebang.
 
 /// Whether `line` is read as part of the statement above it.
@@ -91,8 +93,9 @@ export interface Span {
 export function statementSpans(text: string, firstLine = 0): Span[] {
   const out: Span[] = [];
   let current: Span | undefined;
-  // Whether a string is open at the end of the statement so far.
-  let quoted = false;
+  // The blank and comment lines since the statement's last line: in it only
+  // when a continuation line follows, as q keeps them.
+  let pending: string[] = [];
   // A comment line q refuses (`REFUSED`), as the statement it is to
   // `value`, which refuses it too: q stops there, and so does the query.
   let refused: Span | undefined;
@@ -106,6 +109,7 @@ export function statementSpans(text: string, firstLine = 0): Span[] {
       out.push(refused);
       refused = undefined;
     }
+    pending = [];
   };
   for (const [i, raw] of text.split("\n").entries()) {
     const line = trimBlanks(raw);
@@ -121,6 +125,11 @@ export function statementSpans(text: string, firstLine = 0): Span[] {
       }
     }
     if (depth > 0 || line === "/") {
+      // q keeps a block comment in the statement around it as comment
+      // lines: `/` and `\` alone as `/`, any other line with a `/` before it.
+      if (current !== undefined) {
+        pending.push(line === "/" || line === "\\" ? "/" : `/${line}`);
+      }
       depth = blockDepth(depth, line);
       continue;
     }
@@ -128,18 +137,18 @@ export function statementSpans(text: string, firstLine = 0): Span[] {
       // The end of the script: q reads nothing after it.
       break;
     }
-    if (line === "") {
-      // In a string a blank line is part of it, as q reads it (#1465).
-      if (quoted && current !== undefined) {
-        current.text += "\n";
-        current.end = at;
+    if (line === "" || (line.startsWith("/") && current !== undefined)) {
+      if (current !== undefined) {
+        pending.push(line);
       }
       continue;
     }
     if (continues(line) && current !== undefined) {
-      current.text += `\n${line}`;
+      current.text += `\n${[...pending, line].join("\n")}`;
       current.end = at;
-      quoted = stringOpen(quoted, line);
+      pending = [];
+      // A refused comment line among them is in the statement now.
+      refused = undefined;
       continue;
     }
     if (line.startsWith("/")) {
@@ -147,7 +156,6 @@ export function statementSpans(text: string, firstLine = 0): Span[] {
     }
     end();
     current = { text: continues(line) ? line.trimStart() : line, start: at, end: at };
-    quoted = stringOpen(false, line);
   }
   end();
   return out;
