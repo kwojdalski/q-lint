@@ -591,6 +591,9 @@ impl Server {
     /// client declares and the options it sends.
     fn over(dir: &Path, files: &[(&str, &str)], client: Value, options: Value) -> (Self, Value) {
         for (name, text) in files {
+            if let Some(parent) = dir.join(name).parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
             std::fs::write(dir.join(name), text).unwrap();
         }
         let mut child = Command::new(env!("CARGO_BIN_EXE_qlinter"))
@@ -1098,6 +1101,62 @@ fn a_file_loaded_under_a_context_defines_its_names_there() {
 }
 
 #[test]
+fn a_kdbx_modules_names_are_found_in_its_own_context() {
+    // KDB-X 5, with QPATH holding mymod/init.q: `` m:use`mymod `` runs it
+    // in `.m.mymod` - `` key`.m.mymod `` is ``` ``helper`f`g`export ``` -
+    // and root `helper` is 'helper (#2320).
+    let dir = tempfile::tempdir().unwrap();
+    let module = "helper:{x*2}\nf:{helper x+1}\ng:{[a;b] a+b}\nexport:([f;g])\n";
+    let mut server = Server::start(dir.path(), &[("mymod/init.q", module)]);
+    let text = "r:helper 3\ns:.m.mymod.helper 4\n";
+    let uri = server.open(dir.path(), "other.q", text);
+    let reply = server.ask(
+        "textDocument/definition",
+        &uri,
+        text,
+        "helper 3",
+        0,
+        json!({}),
+    );
+    assert_eq!(places(&reply["result"]), []);
+    let reply = server.ask(
+        "textDocument/definition",
+        &uri,
+        text,
+        ".m.mymod.helper",
+        10,
+        json!({}),
+    );
+    assert_eq!(places(&reply["result"]), [place("init.q", 0, 0, 6)]);
+    // The module's own read is a reference to it, and the root read is not.
+    let reply = server.ask(
+        "textDocument/references",
+        &uri,
+        text,
+        ".m.mymod.helper",
+        10,
+        json!({"context": {"includeDeclaration": true}}),
+    );
+    assert_eq!(
+        places(&reply["result"]),
+        [
+            place("init.q", 0, 0, 6),
+            place("init.q", 1, 3, 9),
+            place("other.q", 1, 2, 17)
+        ]
+    );
+    let reply = server.request("workspace/symbol", json!({"query": "f"}));
+    let names: Vec<&str> = reply["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["name"].as_str())
+        .collect();
+    assert!(names.contains(&".m.mymod.f"), "{names:?}");
+    assert!(!names.contains(&"f"), "{names:?}");
+}
+
+#[test]
 fn a_name_only_its_namespace_or_dot_q_defines_goes_there() {
     let dir = tempfile::tempdir().unwrap();
     let files = [("cfg.q", ".cfg:`n`m!1 2\n"), ("q.q", ".q.answer:{42}\n")];
@@ -1263,6 +1322,29 @@ fn highlights_mark_a_write_apart_from_a_read() {
             ((6, 3, 5), 2)
         ]
     );
+}
+
+#[test]
+fn a_dictionary_pattern_outlines_what_it_binds_and_not_its_keys() {
+    // KDB-X 5 binds vv, b1, b2 and p for these, and neither kk, b nor the
+    // filter neg: `value`kk` and `value`b` are 'kk and 'b (#2330, #2329).
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "d:`kk`b!(1;2 3)\n([kk:vv]):d\n([b:(b1;b2)]):d\n([k:p:neg]):`k`z!5 6\n";
+    let uri = server.open(dir.path(), "pa.q", text);
+    let reply = server.request(
+        "textDocument/documentSymbol",
+        json!({"textDocument": {"uri": uri}}),
+    );
+    let names: Vec<&str> = reply["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["d", "vv", "b1", "b2", "p"]);
+    let reply = server.request("workspace/symbol", json!({"query": "kk"}));
+    assert_eq!(reply["result"], json!([]), "{reply}");
 }
 
 #[test]

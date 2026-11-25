@@ -404,7 +404,9 @@ Each has its own switch, listed in [Settings](#settings) and
   error typed in; a problem whose message names a q
   error (`'type`, `'length`, ...) gets a Quick Fix that explains it. A
   message of several words is one the code signalled, and is said to be;
-  only a single name is taken for one q could not find. The
+  only a single name is taken for one q could not find. KDB-X's module
+  loader's own - `'cycle`, `'notfound: mymod` and `'no export: <file>`, from
+  `use` - are explained as what they are. The
   catalogue is offline; each example in it was run on KDB-X and PeachQ, and
   the few from the KX reference alone are marked so. `q-lint.errorExplain.enable`.
 - **The q version check**: name a release in a folder's `qlinter.toml` -
@@ -1335,6 +1337,10 @@ g:{x*2}         /  becomes
 g:{.qlint.cache.p4d5e6f:x;`x set .qlint.cache.p4d5e6f;x*2}
 ```
 
+A typed or pattern parameter list, `{[x:`j;y]}` or `{[(a;b);c]}`, is one
+q reads too: the statement goes after it, and keeps each name it binds
+(`x` and `y`; `a`, `b` and `c`).
+
 Run the definition (**Query Current Block**), call the function once, and
 each parameter is then a global holding that call's value, so **Query
 Current Line** or **Block** on a line of the body runs with them. The
@@ -1804,7 +1810,9 @@ terminal is running: once q exits, it goes to the shell.
 namespaces, the root first, less those in
 `q-lint.processExplorer.excludedNamespaces`; under each, its tables with
 their row counts and columns (key columns marked), its functions with their
-parameters, and its variables with their type and count. A partitioned table
+parameters - a typed or pattern one as the lambda writes it, `b:`s` or
+`(u;v)`, where KDB-X names it `1` or `0` - and its variables with their
+type and count. A partitioned table
 is not loaded to count it: its count is each partition's, from `.Q.cn`, and
 the row says so; one it cannot count (a partition missing its directory) is
 shown not counted. It is read in one call that defines nothing on the process,
@@ -1918,7 +1926,10 @@ process brings back the old definition.
 Explorer's title bar or the palette, compares the functions the workspace's
 q files define with what the connected process holds. A definition is a
 top-level `name:{...}`, in the context `\d .ns` gives it, as loading the
-file would define it; texts are compared without trailing blanks. It reads
+file would define it; a KDB-X module's - a file assigning `export` - are
+in the context `use` runs it in, `.m.mymod.f` for mymod/init.q (`.m.pkg.0sub.k`
+for pkg/sub/init.q), named by the file's path in its workspace folder.
+Texts are compared without trailing blanks. It reads
 each name's `last value` from the process, and changes nothing there. The
 list shows the functions that differ, are not defined on the process or
 are not a lambda there; picking one that differs opens a diff of the

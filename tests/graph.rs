@@ -1034,3 +1034,66 @@ fn eval_and_a_bracketed_value_of_a_string_are_dynamic() {
         [(1, "eval"), (2, "value"), (3, "value"), (4, "eval")]
     );
 }
+
+#[test]
+fn a_modules_names_live_in_its_own_context() {
+    // KDB-X 5, with QPATH holding mymod/init.q: after `` m:use`mymod ``,
+    // `` key`.m.mymod `` is ``` ``helper`f`g`export ```, and root `helper`
+    // is 'helper. So a root read of `helper` reads nothing the module
+    // defines, and `.m.mymod.helper` reads its own (#2320).
+    let module = "helper:{x*2}\nf:{helper x+1}\ng:{[a;b] a+b}\nexport:([f;g])\n";
+    let g = graph(
+        &[
+            ("mymod/init.q", module),
+            ("other.q", "r:helper 3\n"),
+            ("qualified.q", "s:.m.mymod.helper 4\n"),
+        ],
+        false,
+    );
+    assert!(deps(&g, "other.q").is_empty());
+    assert_eq!(deps(&g, "qualified.q"), ["init.q"]);
+}
+
+#[test]
+fn use_is_an_edge_to_the_module_it_loads() {
+    // KDB-X 5 runs mymod/init.q for `` use`mymod ``, tried as `mymod.q` and
+    // then `mymod/init.q` under each directory of its search path; and
+    // `` use`pkg.sub `` runs pkg/sub/init.q in `.m.pkg.0sub` (#2323).
+    let module = "f:{x+1}\nexport:([f])\n";
+    let g = graph(
+        &[
+            ("mymod/init.q", module),
+            ("flat.q", "h:{x}\nexport:([h])\n"),
+            ("pkg/sub/init.q", "k:{x+100}\nexport:([k])\n"),
+            ("pkg/init.q", "w:{x+7}\nr:use`.sub\nexport:([w;r])\n"),
+            ("user.q", "m:use`mymod\nr:m.f 1\n"),
+            ("flatuser.q", "a:use `flat\n"),
+            ("nested.q", "b:use`pkg.sub\n"),
+            ("relative.q", "c:use`pkg\n"),
+            ("named.q", "t:.m.pkg.w 1\n"),
+            // Not a module: KDB-X refuses `use` of a file with no export.
+            ("plain.q", "z:1\n"),
+            ("noexport.q", "d:use`plain\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "user.q"), ["init.q"]);
+    assert_eq!(deps(&g, "flatuser.q"), ["flat.q"]);
+    assert_eq!(
+        g["nested.q"].dependencies.iter().collect::<Vec<_>>(),
+        [Path::new("/no-such-root/pkg/sub/init.q")]
+    );
+    assert_eq!(
+        g["pkg/init.q"].dependencies.iter().collect::<Vec<_>>(),
+        [Path::new("/no-such-root/pkg/sub/init.q")]
+    );
+    assert_eq!(
+        g["relative.q"].dependencies.iter().collect::<Vec<_>>(),
+        [Path::new("/no-such-root/pkg/init.q")]
+    );
+    assert_eq!(
+        g["named.q"].dependencies.iter().collect::<Vec<_>>(),
+        [Path::new("/no-such-root/pkg/init.q")]
+    );
+    assert!(deps(&g, "noexport.q").is_empty());
+}

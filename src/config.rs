@@ -602,11 +602,12 @@ impl Policy {
             }
             other => other.map(|()| false)?,
         };
+        let target = self.target(&settings);
         let mut found = {
             let _options = OptionsScope::install(settings.options.clone());
+            let _target = q_lint_rs::TargetScope::install(target);
             lint_every_rule(source, path, ws, structure)
         };
-        let target = self.target(&settings);
         found.retain(|f| {
             !(conflict && OPPOSITE.contains(&f.code.as_str()))
                 && version_reported_for(&f.code, target)

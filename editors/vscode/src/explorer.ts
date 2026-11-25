@@ -37,6 +37,7 @@
 //
 // Works on kdb+ (KDB-X) and PeachQ, both of which have `.Q.qt`, `.Q.qp` and
 // `.Q.cn`; held there by qclient.test.js.
+import { SLOT_TEXT, slotParams } from "./paramcache";
 import { RESERVED } from "./qliteral";
 
 // A view (`v::expr`) has a lambda's type, 100h, and `value` of it is not a
@@ -61,14 +62,15 @@ export const GATHER = [
   "  spaces,:enlist`ns`total!(ns;\"f\"$count k);",
   "  rows,:{[ns;n;nm;x]",
   "   t:type x;tb:$[98h=t;1b;.Q.qt x];fn:t within 100 112h;part:$[tb;1b~.Q.qp x;0b];",
-  "   `ns`name`kind`type`count`cols`keys`params`partitioned`ncols`view!(ns;nm;",
+  "   `ns`name`kind`type`count`cols`keys`params`partitioned`ncols`view`ptext!(ns;nm;",
   "    $[tb;`table;fn;`function;`variable];t;",
   "    \"f\"$$[fn;0N;part;@[{sum .Q.cn x};x;0n];count x];",
   "    $[tb;n sublist(),cols x;`$()];",
   "    $[tb&99h=t;(),keys x;`$()];",
   "    $[100h=t;@[{$[11h=type p:(value x)1;p;`$()]};x;{`$()}];`$()];",
   "    part;\"f\"$$[tb;count cols x;0];",
-  "    $[100h=t;@[{not 11h=type(value x)1};x;0b];0b])}[ns;n]'[n sublist k;d n sublist k]];",
+  "    $[100h=t;@[{not 11h=type(value x)1};x;0b];0b];",
+  `    $[100h=t;@[${SLOT_TEXT};x;{""}];""])}[ns;n]'[n sublist k;d n sublist k]];`,
   " `rows`spaces`more!(rows;spaces;\"f\"$count todo)}",
 ].join("\n");
 
@@ -154,7 +156,8 @@ export function readGathered(raw: unknown): Gathered {
             count: number(row.count),
             cols: strings(row.cols),
             keys: strings(row.keys),
-            params: strings(row.params),
+            // A typed or pattern slot as written, not KDB-X's synthetic `0` (#2333).
+            params: slotParams(strings(row.params), typeof row.ptext === "string" ? row.ptext : undefined),
             ...(row.view === true ? { view: true as const } : {}),
             partitioned: row.partitioned === true,
             ...(number(row.ncols) !== null && number(row.ncols)! > strings(row.cols).length ? { allCols: number(row.ncols)! } : {}),

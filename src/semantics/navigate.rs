@@ -370,7 +370,11 @@ pub(super) fn k_lines(code: &str, raw: &str) -> KLines {
         }
         names.push((start, m.len(), lambda, kind));
     }
-    let reserved: HashSet<&str> = crate::RESERVED.iter().map(String::as_str).collect();
+    let reserved: HashSet<&str> = crate::RESERVED
+        .iter()
+        .map(String::as_str)
+        .filter(|w| crate::reserved_word(w))
+        .collect();
     for (at, len, lambda, kind) in names {
         let word = &text[at..at + len];
         let own = lambda.is_some_and(|l| out.lambdas[l].1.contains(word));
@@ -533,7 +537,11 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
             });
         }
     }
-    let reserved: HashSet<&str> = crate::RESERVED.iter().map(String::as_str).collect();
+    let reserved: HashSet<&str> = crate::RESERVED
+        .iter()
+        .map(String::as_str)
+        .filter(|w| crate::reserved_word(w))
+        .collect();
     let unsymbolled = crate::unsymbolled(code);
     for m in re!(NAME).find_iter(&unsymbolled) {
         let word = m.as_str();
@@ -870,7 +878,7 @@ pub fn rename(
     if !re!(r"^[A-Za-z][A-Za-z0-9_]*$").is_match(new) {
         return Err(format!("`{new}` is not a name q takes for a local"));
     }
-    if crate::RESERVED.iter().any(|word| word == new) {
+    if crate::reserved_word(new) {
         return Err(format!("`{new}` is a q builtin, which q refuses to assign"));
     }
     let (s, _) = local_at(code, &scopes, offset).expect("checked by renamable");

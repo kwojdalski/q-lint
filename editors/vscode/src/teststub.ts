@@ -16,7 +16,7 @@
 // to be filled in: the stub fails until they are.
 import { definitions } from "./definitions";
 import { globLiteral } from "./globliteral";
-import { codeMask, lambdas, parameters } from "./paramcache";
+import { argumentNames, codeMask, lambdas } from "./paramcache";
 
 export const TEST_STUB_COMMAND = "q-lint.generateTestStub";
 
@@ -39,7 +39,9 @@ export function functionAt(text: string, line: number): Target | undefined {
   }
   const mask = codeMask(def.text);
   const lambda = lambdas(def.text, mask)[0];
-  return lambda === undefined ? undefined : { name: def.name, params: parameters(def.text, lambda, mask) };
+  // One argument per slot q takes, a pattern's named `arg1`...: KDB-X's
+  // `{[(u;v);w] u+v+w}` takes two, and `{[n:{x>0}] n}` one, `n` (#2332).
+  return lambda === undefined ? undefined : { name: def.name, params: argumentNames(def.text, lambda, mask) };
 }
 
 export interface Style {

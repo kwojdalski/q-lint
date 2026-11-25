@@ -1025,8 +1025,8 @@ typedLocals:{[]
   r3:n,v;
   (r1;r2;r3)}
 
-/ QK001-QK003 and QK005 report only for a configuration's target-version that does
-/ not run them; with no profile deciding, every one is shown here.
+/ QK001-QK003, QK005 and QK006 report only for a configuration's target-version that
+/ does not run them; with no profile deciding, every one is shown here.
 / expect-next: QK001
 dictLiteral:([a:1;b:2])
 / expect-next: QK003
@@ -1037,6 +1037,8 @@ patterns:{[]
   a+b}
 / expect-next: QK005
 removed:{[] .Q.Xf}
+/ expect-next: QK006
+loaded:{[] use`mymod}
 
 / QS002: a dot that is not a namespace. It fires only at root, so the file
 / returns there first - inside the `\d .demo` above, the same text names a

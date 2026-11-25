@@ -13,6 +13,7 @@
 // `lim` of each. Only a lambda has parameters of its own: `(value f)1` of a
 // projection is its bound argument, of a composition a part (#1575). Works on kdb+ (KDB-X) and PeachQ; held there by
 // dbtools_q.test.js.
+import { SLOT_TEXT, slotParams } from "./paramcache";
 import { definitions } from "./definitions";
 import { blockDepth } from "./statements";
 
@@ -34,11 +35,12 @@ export const DOCUMENT = [
   // A dictionary held at a dotted name is listed among the namespaces, and
   // `\f` of one that is no context signals: it has no functions (#1867).
   " fs:m sublist(system\"f\"),raze{@[{` sv'(` sv`,x),/:system\"f \",string` sv`,x};x;`$()]}each ns;",
-  " `pf`parts`tables`fnames`fparams!(",
+  " `pf`parts`tables`fnames`fparams`ftexts!(",
   "  $[@[{0<count .Q.pv};::;0b];string .Q.pf;\"\"];",
   "  \"f\"$@[{count .Q.pv};::;0];",
   "  {[one;bad;t] @[one;t;bad t]}[one;bad] each ts;",
-  "  string fs;{@[{f:get x;$[100h=type f;string(value f)1;()]};x;()]}each fs)}",
+  "  string fs;{@[{f:get x;$[100h=type f;string(value f)1;()]};x;()]}each fs;",
+  `  {@[{f:get x;$[100h=type f;${SLOT_TEXT} f;""]};x;""]}each fs)}`,
 ].join("\n");
 
 /// Tables and functions a document covers at most.
@@ -91,11 +93,16 @@ export function readDoc(raw: unknown): DbDoc {
   });
   const fnames = strings(r.fnames);
   const params = Array.isArray(r.fparams) ? r.fparams : [];
+  const texts = Array.isArray(r.ftexts) ? r.ftexts : [];
+  const text = (i: number): string | undefined => (typeof texts[i] === "string" ? texts[i] : undefined);
   return {
     field: strings(r.pf).join(""),
     partitions: number(r.parts) ?? 0,
     tables,
-    functions: fnames.map((name, i) => ({ name, params: fnames.length === 1 && !Array.isArray(params[0]) ? strings(params) : strings(params[i]) })),
+    functions: fnames.map((name, i) => ({
+      name,
+      params: slotParams(fnames.length === 1 && !Array.isArray(params[0]) ? strings(params) : strings(params[i]), text(i)),
+    })),
   };
 }
 

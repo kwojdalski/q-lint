@@ -94,6 +94,28 @@ test("a cached lambda's body lines run on their own with the call's arguments, o
     assert.strictEqual(await run(`.qlint.cache.${id}`), "1 2 3");
   });
 
+  // KDB-X reads a typed or pattern list as the parameters, and the
+  // statement goes after it: before it, `f[1;2]` was 'j and `h 1 2` a
+  // projection (#2332).
+  await t.test("typed and pattern parameters: after the list q reads, each name it binds", async () => {
+    const typed = instrument("tf:{[x:`j;y:`j] x+y}", "x+y");
+    assert.ok(typed.text.startsWith("tf:{[x:`j;y:`j].qlint.cache."), typed.text);
+    await run(typed.text);
+    assert.strictEqual(await run("tf[1;2]"), "3");
+    assert.strictEqual(await run("(x;y)"), "1 2");
+    const pattern = instrument("tp:{[(u;v);w] u+v+w}", "u+v");
+    await run(pattern.text);
+    assert.strictEqual(await run("tp[1 2;10]"), "13");
+    assert.strictEqual(await run("(u;v;w)"), "1 2 10");
+    const dict = instrument("td:{[([k:p:abs])] p}", "] p");
+    await run(dict.text);
+    assert.strictEqual(await run("td `k`z!(-3;4)"), "3");
+    assert.strictEqual(await run("p"), "3");
+    const spaced = instrument("ts:{ [a:`j;b] a+b}", "a+b");
+    await run(spaced.text);
+    assert.strictEqual(await run("ts[1;2]"), "3");
+  });
+
   await t.test("one parameter: set as an atom name, whatever its value", async () => {
     const source = "dbl:{[v] v*2}";
     const { text, id } = instrument(source, "v*2");

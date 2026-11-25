@@ -59,6 +59,18 @@ import { borrowWhenFree } from "./infoview";
 import type { Live } from "./live";
 import { plainMessage } from "./history";
 
+
+/// `uri`'s path in its workspace folder, which a KDB-X module's context is
+/// named by (`moduleContext`); outside every folder, as the language server
+/// takes such a file, by its own name - its directory's for an `init.q`.
+function modulePath(uri: Uri): string {
+  const relative = workspace.asRelativePath?.(uri, false);
+  if (relative !== undefined && relative !== uri.fsPath) {
+    return relative;
+  }
+  const parts = uri.fsPath.split(/[\\/]/);
+  return parts.slice(/^init\.[qk]$/.test(parts[parts.length - 1] ?? "") ? -2 : -1).join("/");
+}
 export const DRIFT_SCHEME = "q-lint-drift";
 /// Files and definitions a drift check reads at most.
 export const DRIFT_FILES = 5000;
@@ -178,7 +190,7 @@ export class Drift implements TextDocumentContentProvider {
         return;
       }
     }
-    this.baselines.set(document.uri.toString(), lastByName(definitions(text)));
+    this.baselines.set(document.uri.toString(), lastByName(definitions(text, modulePath(document.uri))));
   }
 
   private name(document: TextDocument): string {
@@ -193,7 +205,7 @@ export class Drift implements TextDocumentContentProvider {
     }
     const key = document.uri.toString();
     const before = this.baselines.get(key);
-    const now = definitions(document.getText());
+    const now = definitions(document.getText(), modulePath(document.uri));
     const file = this.name(document);
     const done = (out: Reloaded): Reloaded => ((this.last = out), out);
     if (before === undefined) {
@@ -318,7 +330,7 @@ export class Drift implements TextDocumentContentProvider {
         continue;
       }
       const file = workspace.asRelativePath?.(uri) ?? uri.fsPath;
-      for (const def of definitions(text)) {
+      for (const def of definitions(text, modulePath(uri))) {
         out.push({ file, uri, def });
       }
       if (out.length >= DRIFT_DEFINITIONS) {

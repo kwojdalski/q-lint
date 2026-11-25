@@ -26,12 +26,19 @@ function freePort() {
   });
 }
 
-async function startQ(source) {
+// `files`, by path under the script's directory, are written beside it,
+// and that directory is the process's QPATH, where `use` finds a module.
+async function startQ(source, files = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-drift-"));
   const script = path.join(dir, "server.q");
   fs.writeFileSync(script, source.replaceAll("$DIR", dir));
+  for (const [name, text] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(dir, name)), { recursive: true });
+    fs.writeFileSync(path.join(dir, name), text);
+  }
   const port = await freePort();
-  const child = spawn(`${Q} ${script} -p ${port}`, { shell: true, stdio: ["ignore", "ignore", "pipe"], detached: true, cwd: dir });
+  const env = { ...process.env, QPATH: dir };
+  const child = spawn(`${Q} ${script} -p ${port}`, { shell: true, stdio: ["ignore", "ignore", "pipe"], detached: true, cwd: dir, env });
   let stderr = "";
   child.stderr.on("data", (d) => (stderr += d));
   for (let i = 0; i < 100; i++) {
@@ -58,8 +65,8 @@ async function startQ(source) {
   throw new Error(`q did not start listening: ${stderr}`);
 }
 
-async function connect(t, source) {
-  const q = await startQ(source);
+async function connect(t, source, files) {
+  const q = await startQ(source, files);
   t.after(() => q.stop());
   const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
   t.after(() => connection.close());
@@ -98,6 +105,21 @@ test("the file a process loaded compares the same, name by name", { skip }, asyn
   assert.deepStrictEqual([...held.values()].map((s) => s.state), ["missing", "other", "other"]);
   const one = readDrift(await c.call(DRIFT, "g"));
   assert.deepStrictEqual([...one.entries()], [["g", { state: "lambda", text: "{x+1}" }]]);
+});
+
+// KDB-X runs a module in `.m.<module>`: after `` md:use`modd ``, `` key`.m.modd ``
+// is ``` ``hlp`fd`export ``` and the root has no `fd`, which Check Drift
+// asked about and called missing (#2321).
+test("a KDB-X module's functions are compared where use put them (#2321)", { skip }, async (t) => {
+  const mod = "hlp:{x*2}\nfd:{hlp x+1}\nexport:([fd])\n";
+  const c = await connect(t, "md:use`modd\nps:use`pkg.sub\n", { "modd/init.q": mod, "pkg/sub/init.q": "k:{x+100}\nexport:([k])\n" });
+  const defs = definitions(mod, "modd/init.q");
+  assert.deepStrictEqual(defs.map((d) => d.name), [".m.modd.hlp", ".m.modd.fd"]);
+  const rows = driftRows(defs.map((def) => ({ file: "modd/init.q", def })), await states(c, defs));
+  assert.deepStrictEqual(rows.map((r) => `${r.name}:${r.status}`), [".m.modd.hlp:same", ".m.modd.fd:same"]);
+  const nested = definitions("k:{x+100}\nexport:([k])\n", "pkg/sub/init.q");
+  const held = await states(c, nested);
+  assert.deepStrictEqual([...held.entries()], [[".m.pkg.0sub.k", { state: "lambda", text: "{x+100}" }]]);
 });
 
 // The process holds a name's last definition, as the file leaves it: one

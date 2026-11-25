@@ -99,3 +99,29 @@ test("a table with more columns than are read says how many it has", { skip }, a
   assert.strictEqual(node.description, "2 rows · 600 columns");
   assert.deepStrictEqual(node.children.slice(-1)[0], { kind: "note", label: "100 more columns not shown", description: "the first 500 are" });
 });
+
+// KDB-X names a typed or pattern slot by its place in `(value f)1`:
+// `{[a:`j;b:`s] (a;b)}` gives `0`1 and `{[(u;v)] u+v}` ,`0, which the
+// explorer, the documenter, Find Callers and the source view showed as the
+// parameters. Each is the slot as written now (#2333).
+test("a typed or pattern parameter is shown as written, not as KDB-X's synthetic 0, 1 (#2333)", { skip }, async (t) => {
+  const { CALLERS, SOURCE, readCallers, readSource } = require("../out/funcsource.js");
+  const { DOCUMENT, readDoc } = require("../out/dbdoc.js");
+  const q = await startQ(".tp.typed:{[a:`j;b:`s] (a;b)};\n.tp.pat:{[(u;v)] u+v};\n.tp.mix:{[a;b:`s] a};\n.tp.plain:{[a;b] a+b};\n.tp.call:{.tp.pat x};\n");
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.close());
+  const g = readGathered(await connection.call(GATHER, EXCLUDED, LIMITS));
+  const params = (name) => g.entries.find((e) => e.ns === ".tp" && e.name === name).params;
+  assert.deepStrictEqual(params("typed"), ["a:`j", "b:`s"]);
+  assert.deepStrictEqual(params("pat"), ["(u;v)"]);
+  assert.deepStrictEqual(params("mix"), ["a", "b:`s"]);
+  assert.deepStrictEqual(params("plain"), ["a", "b"]);
+  const doc = readDoc(await connection.call(DOCUMENT, 100));
+  assert.deepStrictEqual(doc.functions.find((f) => f.name === ".tp.typed").params, ["a:`j", "b:`s"]);
+  assert.deepStrictEqual(readSource(await connection.call(SOURCE, ".tp.pat")).params, ["(u;v)"]);
+  const callers = readCallers(await connection.call(CALLERS, EXCLUDED, ".tp.pat", 50));
+  assert.deepStrictEqual(callers.callers.map((c) => [c.name, c.params]), [[".tp.call", ["x"]]]);
+  const typedCallers = readCallers(await connection.call(CALLERS, EXCLUDED, ".tp.call", 50));
+  assert.deepStrictEqual(typedCallers.callers, []);
+});

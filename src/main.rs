@@ -687,22 +687,23 @@ fn run(args: Args) -> Result<u8, String> {
     // loads can put another in a context - and which loads those are is
     // read as the server reads them, not guessed from the text: a
     // file-symbol load (`loadfile`:b.q`) or `system "d\t.a"` spells no
-    // `\l` or `"d ` (#2290).
+    // `\l` or `"d ` (#2290). A KDB-X module runs in a context of its own,
+    // `.m.<module>`, too.
     let reads: Vec<_> = sources
         .iter()
         .map(|(_, source)| q_lint_rs::references(source, false))
         .collect();
     let placed = if reads
         .iter()
-        .any(|r| r.loads.iter().any(|(_, ns)| !ns.is_empty() && ns != "."))
+        .any(|r| r.module || r.loads.iter().any(|(_, ns)| !ns.is_empty() && ns != "."))
     {
         let cwd = config::absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
         let paths: Vec<_> = sources
             .iter()
             .map(|(name, _)| PathBuf::from(name))
             .collect();
-        let loads: Vec<_> = reads.iter().map(|r| r.loads.as_slice()).collect();
-        q_lint_rs::graph::placements(&paths, &loads, std::slice::from_ref(&cwd))
+        let read: Vec<_> = reads.iter().collect();
+        q_lint_rs::graph::placements(&paths, &read, std::slice::from_ref(&cwd))
             .into_iter()
             .zip(reads)
             .map(|(placement, read)| Some((placement, read.implicit_defines)))

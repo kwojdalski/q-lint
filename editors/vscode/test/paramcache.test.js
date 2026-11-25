@@ -59,6 +59,22 @@ test("explicit parameters are the [...] list, spaces and all", () => {
   assert.deepStrictEqual(paramsAt("f:{[a] a+|x}"), ["a"]);
 });
 
+test("a typed or pattern list binds what q binds, and the body starts after it (#2332)", () => {
+  const { lambdas, parameters, patternNames } = require("../out/paramcache.js");
+  const at = (text) => {
+    const [l] = lambdas(text);
+    return [parameters(text, l), text.slice(l.bodyStart)];
+  };
+  assert.deepStrictEqual(at("f:{[x:`j;y:`j] x+y}"), [["x", "y"], " x+y}"]);
+  assert.deepStrictEqual(at("h:{[(x;y)] x+y}"), [["x", "y"], " x+y}"]);
+  assert.deepStrictEqual(at("g:{[a:`j;b] a+b}"), [["a", "b"], " a+b}"]);
+  assert.deepStrictEqual(at("k:{[([k:v:abs]);c] v+c}"), [["v", "c"], " v+c}"]);
+  assert.deepStrictEqual(at("m:{ [k!v] (k;v)}"), [["k", "v"], " (k;v)}"]);
+  assert.deepStrictEqual(patternNames("([]a;b:c)"), ["a", "c"]);
+  assert.deepStrictEqual(patternNames("`a`b!(p;q:neg)"), ["p", "q"]);
+  assert.deepStrictEqual(patternNames("1"), []);
+});
+
 test("implicit parameters are x, y and z up to the highest the body reads", () => {
   assert.deepStrictEqual(paramsAt("{x|+1}"), ["x"]);
   assert.deepStrictEqual(paramsAt("{|y}"), ["x", "y"]);
@@ -238,5 +254,8 @@ test("a parameter list with a comment in it is still the lambda's parameters (#1
   // What is no list of names is none still: a string, or an index.
   assert.deepStrictEqual(paramsAt('f:{["a" b] |x}'), ["x"]);
   assert.deepStrictEqual(paramsAt("f:{[a 1] |x}"), ["x"]);
-  assert.deepStrictEqual(paramsAt("f:{[a; / b]\n 1] |x}"), ["x"]);
+  // A literal slot is a pattern, which KDB-X reads as a parameter list:
+  // `(value f)1` of `{[a; / b]\n 1] 0|x}` is `a`1, and `x` there a global
+  // (#2332).
+  assert.deepStrictEqual(paramsAt("f:{[a; / b]\n 1] |x}"), ["a"]);
 });

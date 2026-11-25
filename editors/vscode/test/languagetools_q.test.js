@@ -33,12 +33,19 @@ function freePort() {
   });
 }
 
-async function connect(t, source) {
+// `files`, by path under the script's directory, are written beside it,
+// and that directory is the process's QPATH, where `use` finds a module.
+async function connect(t, source, files = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-lang-"));
   const script = path.join(dir, "server.q");
   fs.writeFileSync(script, source);
+  for (const [name, text] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(dir, name)), { recursive: true });
+    fs.writeFileSync(path.join(dir, name), text);
+  }
   const port = await freePort();
-  const child = spawn(`${Q} ${script} -p ${port}`, { shell: true, stdio: ["ignore", "ignore", "pipe"], detached: true, cwd: dir });
+  const env = { ...process.env, QPATH: dir };
+  const child = spawn(`${Q} ${script} -p ${port}`, { shell: true, stdio: ["ignore", "ignore", "pipe"], detached: true, cwd: dir, env });
   const stop = () => {
     try {
       process.kill(-child.pid, "SIGKILL");
@@ -71,6 +78,27 @@ test("every example in the error catalogue raises the error it explains", { skip
     // PeachQ names some differently, as the catalogue says.
     const alternative = /reports '([a-z-]+)/.exec(entry.peachq ?? "")?.[1];
     assert.ok(got === name || got === alternative, `${name}: ${entry.example} raised '${got}'`);
+  }
+});
+
+// KDB-X's module loader signals 'cycle, 'notfound: <name> and 'no export:
+// <file> from `use`, which Explain q Error took for an undefined name or a
+// message the code signalled (#2334).
+test("KDB-X's module loader errors are explained as what they are (#2334)", { skip }, async (t) => {
+  const { explainError } = require("../out/errorexplain.js");
+  const c = await connect(t, "a:1\n", { "cyc/init.q": "r:use`cyc\nexport:([r])\n", "badexp/init.q": "a:1\n" });
+  const raised = async (code) => String(await c.call("{r:@[{(1b;value x)};x;{(0b;x)}]; $[r 0;\"(no error)\";r 1]}", ` ${code}`));
+  const cases = [
+    ["use`cyc", "cycle", /it uses itself/],
+    ["use`qlintnosuchmodule", "notfound", /found no module of that name/],
+    ["use`badexp", "no export", /assigned no `export`/],
+  ];
+  for (const [code, name, meaning] of cases) {
+    const error = await raised(code);
+    assert.strictEqual(errorName(error), name, `${code}: ${error}`);
+    const text = explainError(error);
+    assert.match(text, meaning, error);
+    assert.doesNotMatch(text, /is not defined where it was read|a message the code signalled/, error);
   }
 });
 

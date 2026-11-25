@@ -17,6 +17,22 @@ const {
 const { readAssist, assistOff, ASSIST_SETTINGS } = require("../out/assistconfig.js");
 const pkg = require("../package.json");
 
+test("a KDB-X module's definitions are named in its context, .m.<module> (#2321)", () => {
+  const { moduleContext } = require("../out/definitions.js");
+  const mod = "hlp:{x*2}\nfd:{hlp x+1}\n.abs.f:{x}\nexport:([fd])\n\\d .ns\nh:{x}\n";
+  assert.deepStrictEqual(definitions(mod, "modd/init.q").map((d) => d.name), [".m.modd.hlp", ".m.modd.fd", ".abs.f", ".ns.h"]);
+  // Joined to, as KX's ai module does; and a script without an export, or no path, is no module.
+  assert.deepStrictEqual(definitions("f:{x}\nexport,:([f])\n", "flat.q").map((d) => d.name), [".m.flat.f"]);
+  assert.deepStrictEqual(definitions("f:{x}\n", "flat.q").map((d) => d.name), ["f"]);
+  assert.deepStrictEqual(definitions("f:{x}\nif[5<=.z.K;export:([f])]\n", "flat.q").map((d) => d.name), [".m.flat.f"]);
+  assert.deepStrictEqual(definitions(mod).map((d) => d.name), ["hlp", "fd", ".abs.f", ".ns.h"]);
+  assert.strictEqual(moduleContext("mymod/init.q"), ".m.mymod");
+  assert.strictEqual(moduleContext("mymod.q"), ".m.mymod");
+  assert.strictEqual(moduleContext("pkg\\sub\\init.q"), ".m.pkg.0sub");
+  assert.strictEqual(moduleContext("init.q"), ".m.init");
+  assert.strictEqual(moduleContext("my-mod/init.q"), undefined);
+});
+
 test("definitions: top-level lambdas, in their context, with their lines", () => {
   const text = [
     "#!/usr/bin/env q",

@@ -52,14 +52,14 @@
     "code": "QE008",
     "name": "monadic-glyph",
     "category": "syntax",
-    "summary": "A glyph applied to one argument; q 5 refuses -x, ,x, #x and the rest - the keyword is neg, enlist, count, not... - and an infix keyword with nothing on its left, in b",
+    "summary": "A glyph applied to one argument; q 5 refuses -x, ,x, #x and the rest - the keyword is neg, enlist, count, not... - and an infix keyword with nothing on its left, in b; KDB-X only: not for an older target-version",
     "scope": "builtin"
   },
   {
     "code": "QE009",
     "name": "juxtaposed-derived-function",
     "category": "syntax",
-    "summary": "A derived function applied by juxtaposition: q 5 refuses +/x, count'x and x/y, and an iterator after a blank, x 'y; write (+/)x, +/[x] or sum x",
+    "summary": "A derived function applied by juxtaposition: q 5 refuses +/x, count'x and x/y, and an iterator after a blank, x 'y; write (+/)x, +/[x] or sum x; KDB-X only: not for an older target-version",
     "scope": "builtin"
   },
   {
@@ -73,7 +73,7 @@
     "code": "QE011",
     "name": "infix-keyword-each",
     "category": "syntax",
-    "summary": "An infix keyword before each or peach: q 5 refuses cor each x and x within each y; write (cor) each, cor' or cor[x] each",
+    "summary": "An infix keyword before each or peach: q 5 refuses cor each x and x within each y; write (cor) each, cor' or cor[x] each; KDB-X only: not for an older target-version",
     "scope": "builtin"
   },
   {
@@ -1005,6 +1005,13 @@
     "name": "target-removed-q-function",
     "category": "compatibility",
     "summary": ".Q.Xf or .Q.Cf, removed in q 4.1: reported only for a target-version of 4.1 or KDB-X",
+    "scope": "builtin"
+  },
+  {
+    "code": "QK006",
+    "name": "target-kdbx-builtin",
+    "category": "compatibility",
+    "summary": "A builtin only KDB-X has, use`mymod, which an older q lacks: reported only for an older target-version",
     "scope": "builtin"
   }
 ]

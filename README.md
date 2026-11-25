@@ -270,7 +270,14 @@ A file depends on another when:
   runs - tried against the current directory only. A script loaded under `\d .a`
   runs in `.a`, so what it defines at its root is `.a.name` as well as
   `name`, and so is what the scripts it loads at its root define; a name it
-  reads there is looked up in `.a` as well.
+  reads there is looked up in `.a` as well;
+- it loads the other as a KDB-X module, `` use`name ``: `name.q` or
+  `name/init.q` (`` use`a.b `` is `a/b.q` or `a/b/init.q`) where a `\l` is
+  tried, the module's search path not being in the source, and `` use`.b ``
+  in a module beside it. A module is a file that assigns `export` at its top
+  level, and its names are where KDB-X puts them, `.m.name` (`.m.a.0b` for
+  `` use`a.b ``), never at the root: a root `helper` reads nothing a module
+  defines, `.m.mymod.helper` reads mymod's.
 
 A name several files define gives an edge to each of them - which one wins is
 load order, and load order is not in the source. With `--detail` each file's
@@ -343,6 +350,7 @@ every finding.
 | QK002 | a pattern assignment, `(a;b):x`, `([k:v]):d` | 4.1 and later |
 | QK003 | a typed or filtered parameter, `{[x:`j] ...}`, `{[(a;b)] ...}` | 4.1 and later |
 | QK005 | `.Q.Xf` or `.Q.Cf` | before 4.1, which removed them |
+| QK006 | a builtin only KDB-X has, `` use`mymod `` | KDB-X |
 
 Each fact is from KX's release notes (ChangesIn3.6, 4.0 and 4.1 on
 code.kx.com). Only the newest side was run here: KDB-X runs every 4.1
@@ -350,6 +358,17 @@ construct above and has neither `.Q.Xf` nor `.Q.Cf`. No 3.6, 4.0 or 4.1
 binary was at hand, so the older side is the release notes' word, not a
 test's. PeachQ runs the dictionary literal and `(a;b):`, and refuses
 `([k:v]):` ('nyi) and a filtered parameter ('parse).
+
+For a target before KDB-X, `use` is no builtin: a file may name a
+parameter or a global `use`, which KDB-X refuses ('nyi, 'assign) and QF001,
+QF003 and QF004 then report for KDB-X alone. The builtins only KDB-X has
+are the ones `src/builtins.json` describes as KDB-X's.
+
+A target before KDB-X also quiets the refusals that are q 5's alone:
+QE008 (`-x`), QE009 (`+/x`, `count'x`) and QE011 (`cor each x`), which
+KDB-X refuses and q 4 ran. That side is this project's own reading of q 4,
+not a test's, and a shape it is unsure of goes unreported for such a target
+too.
 
 There is no QK004. It reported `-30!`, the deferred response, which q has
 from 3.6 on - the oldest release a target can name - so it could never
@@ -1408,7 +1427,7 @@ language server driven over real LSP framing as a real process.
 
 ### Rule and multiline regression corpus
 
-The taxonomy contains 144 codes. Ten literal-call rules cover excess builtin
+The taxonomy contains 145 codes. Ten literal-call rules cover excess builtin
 arguments (QA010), invalid literal types/shapes (QT008–QT014), and negative
 `til`/`where` counts (QD001–QD002). These checks leave unknown expressions
 unresolved and account for projections, seeded scans and variadic `enlist`.
@@ -1417,7 +1436,7 @@ unresolved and account for projections, seeded scans and variadic `enlist`.
 `tests/showcase.rs` checks exact code/line pairs under every profile, including
 silence in the clean section. Together with the three companion examples -
 `syntax-error.q`, `byte-order-mark.q` and `query-injection.q`, each holding
-a rule that would hide or stop the others - it covers all 142 rules available
+a rule that would hide or stop the others - it covers all 143 rules available
 in this build; QF006 and QLS001 are excluded.
 
 Multiline fixtures cover nested lambdas, split argument lists, comments,
