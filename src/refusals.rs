@@ -1244,10 +1244,14 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         // `1 _x` and the `_` inside `x_y` follow an operand.
         // `.` too, where it starts no name or number: q 5 refuses `.(v)`,
         // `. v` and `.:v` with '. - the monadic form is `value` (#571).
+        // Two points start no name either: q 5 refuses `..a`, `(..a)` and
+        // `.Q.a,..Q.A` with '. (#2232); `x..a` follows an operand.
         let dot = g == b'.'
-            && !b
-                .get(i + 1)
-                .is_some_and(|&n| n.is_ascii_alphanumeric() || n == b'_' || n == b'.');
+            && !b.get(i + 1).is_some_and(|&n| {
+                n.is_ascii_alphanumeric()
+                    || n == b'_'
+                    || (n == b'.' && !b.get(i + 2).is_some_and(u8::is_ascii_alphabetic))
+            });
         if !(GLYPHS.contains(&g) || g == b'_' || dot)
             || code.as_bytes()[i] != g
             || crate::system_command(&source[line_start..])

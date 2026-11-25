@@ -1888,3 +1888,27 @@ a:([]x:1 2) ;
 === QE013 profile: general | an empty column slot before the closer on the line that continues the literal (q 5: ';, #2214)
 a:([] x:1 2;
   )
+
+=== QE008 profile: general | two points start no name (q 5: '., #2232)
+a:..a
+
+=== QE008 profile: general | two points start no name (q 5: '., #2232)
+a:.Q.a,..Q.A
+
+=== QE008 profile: general | two points start no name (q 5: '., #2232)
+..sl.init[]
+
+=== QE010 profile: general | two points start no name (q 5: '1..a, #2232)
+a:1..a
+
+=== QE008 profile: general | two points start no name (q 5: '., #2232)
+a:(..a)
+
+=== clean profile: general | while q 5 parses each of these (#2232)
+a:.Q.a,.Q.A
+a:x..a
+a:`..a
+a:"..a"
+.sl.init[]
+a:x ..a
+a:{x}..a

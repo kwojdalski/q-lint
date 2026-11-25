@@ -2599,7 +2599,9 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 b'_' => "floor",
                 _ => return None,
             };
-            if rest[1..].starts_with("::") {
+            // Nor `..a`, a name typed with one point too many, which
+            // `value .a` would run (#2232).
+            if rest[1..].starts_with("::") || keyword == "value" && rest[1..].starts_with('.') {
                 return None;
             }
             let old = &source[start..start + 1 + usize::from(rest[1..].starts_with(':'))];
