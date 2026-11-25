@@ -34,7 +34,7 @@ export const DESCRIBE = [
   "  v:get s;t:type v;",
   "  $[100h=t;(`lambda;t;0n;last value v);",
   "   t within 101 112h;(`function;t;0n;300 sublist F[300;v]);",
-  "   .Q.qt v;($[1b~p:.Q.qp v;`partitioned;0b~p;`splayed;99h=t;`keyed;`table];t;0n;300 sublist\" \"sv string cols v);",
+  "   .Q.qt v;($[1b~p:.Q.qp v;`partitioned;0b~p;`splayed;99h=t;`keyed;`table];t;0n;300 sublist\" \"sv{s:string x;$[all s in .Q.an;s;\"`$\",-3!s]}each cols v);",
   "   (`variable;t;\"f\"$count v;300 sublist F[300;$[0>t;v;10 sublist v]])]}[F]each n;",
   " `name`kind`type`count`text!(n;r[;0];r[;1];r[;2];r[;3])}",
 ].join("\n");
