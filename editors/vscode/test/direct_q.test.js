@@ -310,3 +310,18 @@ test("a feature that sends only a plain string answers on a direct process: Copy
   assert.strictEqual(live.history()[0].code, code);
   assert.strictEqual(await ask(pm, "0=lambdas"), true);
 });
+
+test("on a guarded direct process, a feature that needs q-lint's lambda is refused before the guard asks (#2485)", { skip }, async (t) => {
+  const taken = new Set();
+  const pm = await startQ(t, PM, taken);
+  const { live, benchmark } = await setUp(t, [{ label: "pm", host: "127.0.0.1", port: pm, tags: ["perm"], evaluation: "direct" }]);
+  stub.config.user["processes.readOnlyGuard.tags"] = ["perm"];
+  t.after(() => delete stub.config.user["processes.readOnlyGuard.tags"]);
+  assert.strictEqual(await live.connectTo("pm"), true);
+  stub.messages.length = 0;
+  const said = await benchmark.benchmark("zz:1", "", "10 2");
+  assert.match(said, /this needs q-lint's own evaluator lambda, and pm uses direct evaluation.*nothing was sent/);
+  // Not asked "Run it anyway?" about a change that could not be sent.
+  assert.deepStrictEqual(stub.messages.filter(([kind]) => kind === "warning"), []);
+  assert.strictEqual(await ask(pm, "0=lambdas"), true);
+});

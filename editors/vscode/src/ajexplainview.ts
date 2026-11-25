@@ -78,7 +78,7 @@ export function registerAjExplainer(context: ExtensionContext, live: Live): { ex
     }
     let text: string;
     try {
-      const ran = await live.runOnActive(explainGuardCode(call), (connection) => connection.guarded(explainAjLambda, asCode(call.columns), asCode(call.left), asCode(call.right), index));
+      const ran = await live.runOnActive(explainGuardCode(call), (connection) => connection.guarded(explainAjLambda, asCode(call.columns), asCode(call.left), asCode(call.right), index), "ask", undefined, undefined, true);
       if (ran === undefined) {
         return "nothing was run";
       }

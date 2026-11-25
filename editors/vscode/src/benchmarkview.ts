@@ -94,7 +94,7 @@ export function registerBenchmark(
     let ran: { process: string; value: unknown } | undefined;
     try {
       // Turned off while it asked: nothing is timed (#1453).
-      ran = await live.runOnActive(guardCode(expressions, runs.n), async (connection) => (on() ? connection.guarded(benchmarkLambda, expressions.map(asCode), runs.n, runs.k) : OFF));
+      ran = await live.runOnActive(guardCode(expressions, runs.n), async (connection) => (on() ? connection.guarded(benchmarkLambda, expressions.map(asCode), runs.n, runs.k) : OFF), "ask", undefined, undefined, true);
     } catch (error) {
       return say(`q-lint: the benchmark failed: ${error instanceof Error ? error.message : String(error)}`);
     }
