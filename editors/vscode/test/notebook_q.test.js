@@ -170,6 +170,13 @@ test("notebook cells against a real q process", { skip }, async (t) => {
     assert.deepStrictEqual((await data("select from sp where n>1")).table.data[0], ["c", "de"]);
   });
 
+  await t.test("a byte past ASCII that is no UTF-8 is its Latin-1 character, not U+FFFD (#2154)", async () => {
+    const answer = await data('([] s:("\\377a";"bb";"\\303\\251"); y:(`$"\\351";`b;`$"\\303\\251"); c:"\\351bc")');
+    assert.deepStrictEqual(answer.table.data, [["\u00ffa", "bb", "\u00e9"], ["\u00e9", "b", "\u00e9"], ["\u00e9", "b", "c"]]);
+    // Plain text comes as before, with no bytes beside it.
+    assert.deepStrictEqual((await data("([] s:(\"ab\";\"\u00e9\"))")).table.data, [["ab", "\u00e9"]]);
+  });
+
   await t.test("a table with two columns of one name keeps both, as q shows them", async () => {
     // A keyed table may name a value column as its key column.
     const keyed = await data("([a:1 2] a:3 4)");

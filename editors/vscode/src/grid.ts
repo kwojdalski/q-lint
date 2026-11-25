@@ -213,6 +213,32 @@ export function realValue(x: unknown): unknown {
   return x;
 }
 
+/// Bytes as text: UTF-8 where they are, and each byte that is part of no
+/// UTF-8 character its Latin-1 character, spoiling none of the others
+/// (#1737). Undefined when `raw` is no list of bytes.
+export function bytesText(raw: unknown): string | undefined {
+  if (!Array.isArray(raw) && !(raw instanceof Uint8Array)) {
+    return undefined;
+  }
+  const bytes = Buffer.from(raw as number[]);
+  const utf8 = new TextDecoder("utf-8", { fatal: true });
+  let out = "";
+  for (let i = 0; i < bytes.length; ) {
+    // The character the byte at `i` leads, by its length; latin1 if it is none.
+    const b = bytes[i];
+    const length = b < 0x80 ? 1 : b >= 0xc2 && b <= 0xdf ? 2 : b >= 0xe0 && b <= 0xef ? 3 : b >= 0xf0 && b <= 0xf4 ? 4 : 0;
+    let char: string | undefined;
+    try {
+      char = length > 0 && i + length <= bytes.length ? utf8.decode(bytes.subarray(i, i + length)) : undefined;
+    } catch {
+      char = undefined;
+    }
+    out += char ?? bytes.toString("latin1", i, i + 1);
+    i += char === undefined ? 1 : length;
+  }
+  return out;
+}
+
 /// Each column's raw numbers, a real column's made `realValue`s.
 function rawColumns(raw: unknown[][], types: number[]): unknown[][] {
   return raw.map((c, i) => (types[i] === 8 ? c.map(realValue) : c));

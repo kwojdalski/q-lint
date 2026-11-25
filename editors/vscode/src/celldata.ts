@@ -25,7 +25,13 @@
 // made one signed count by `liveconfig.ts`'s `rowsArgument`. A value that is not a table answers as `RUN` would.
 // `rows` and `size` arrive as floats, and are made long there.
 //
-//   table     `ok`table`columns`types`keys`data`total!(1b;1b;...)
+// A column with a byte past ASCII in its text sends, in `bytes`, each such
+// cell's bytes and `0b` for the others: the codec reads a string as UTF-8,
+// so a byte that is part of no UTF-8 character would be U+FFFD whatever it
+// was. Such a cell is read from its bytes, as the result grid reads a
+// symbol's (`bytesText`, #2154).
+//
+//   table     `ok`table`columns`types`keys`data`bytes`total!(1b;1b;...)
 //   other     `ok`table`type`text!(1b;0b;type;.Q.S lines)
 //   failure   `ok`error`trace!(0b;q's error;its backtrace, or "")
 //
@@ -34,7 +40,7 @@ import type { Answer } from "./query";
 import { NULL_TYPE } from "./query";
 import type { CellMode, ChartMode } from "./celldirectives";
 import type { RowLimitFrom } from "./liveconfig";
-import { toGrid, type Grid, type GridAnswer } from "./grid";
+import { bytesText, toGrid, type Grid, type GridAnswer } from "./grid";
 
 export const DATA = [
   "{[s;rows;size]",
@@ -50,7 +56,9 @@ export const DATA = [
   " u:$[1b~.Q.qp t;[j:$[n<0;(m+n)|0;0]+til m&abs n;$[count j;.Q.ind[t;j];select from t where i<0]];n sublist t];",
   " c:{$[count[cols x]=count distinct cols x;x cols x;value flip x]} u;",
   " str:{$[(0h=type x)|76h<type x;{$[10h=type x;x;-3!x]} each x;string x]};",
-  " `ok`table`columns`types`keys`data`total!(1b;1b;cols t;type each c;k;str each c;count t)}",
+  " d:str each c;",
+  " `ok`table`columns`types`keys`data`bytes`total!(1b;1b;cols t;type each c;k;d;",
+  "   {$[any 127<\"i\"$\"x\"$raze x;{$[any 127<\"i\"$\"x\"$x;\"x\"$x;0b]} each x;()]} each d;count t)}",
 ].join("\n");
 
 /// How many rows `@grid` and `@chart` ask for by default:
@@ -105,7 +113,14 @@ export function readCellData(raw: unknown): CellData {
     return { ok: true, type: typeof r.type === "number" ? r.type : 0, text: strings(r.text) };
   }
   const columns = strings(r.columns);
-  const data = Array.isArray(r.data) ? r.data.map(strings) : [];
+  const bytes = Array.isArray(r.bytes) ? r.bytes : [];
+  const data = Array.isArray(r.data)
+    ? r.data.map((c, i) => {
+        const cells = strings(c);
+        const b = bytes[i];
+        return Array.isArray(b) && b.length === cells.length ? cells.map((x, k) => bytesText(b[k]) ?? x) : cells;
+      })
+    : [];
   const types = Array.isArray(r.types) ? r.types.map(Number) : [];
   if (data.length !== columns.length) {
     throw new Error(`the process answered ${data.length} columns of data for ${columns.length} column names`);

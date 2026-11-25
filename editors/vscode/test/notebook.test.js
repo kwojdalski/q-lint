@@ -172,6 +172,15 @@ test("a table answer is read; anything else is refused", () => {
   assert.throws(() => readCellData({ ok: true, table: true, columns: ["a"], data: [] }), /0 columns of data for 1 column names/);
 });
 
+// The codec reads a string as UTF-8: a byte that is part of no UTF-8
+// character comes as its bytes, read as the result grid reads them (#2154).
+test("a cell sent as its bytes is read from them: UTF-8 where it is, a lone byte past ASCII its Latin-1 character (#2154)", () => {
+  const raw = { ok: true, table: true, columns: ["s", "y"], types: [0, 11], keys: 0, data: [["\ufffda", "b"], ["\ufffd", "\u00e9"]], bytes: [[[0xff, 0x61], false], [[0xe9], [0xc3, 0xa9]]], total: 2 };
+  assert.deepStrictEqual(readCellData(raw).table.data, [["\u00ffa", "b"], ["\u00e9", "\u00e9"]]);
+  // A column with no such byte sends none.
+  assert.deepStrictEqual(readCellData({ ...raw, bytes: [[], []] }).table.data, raw.data);
+});
+
 // A column named by the null symbol - what an empty csv header gives -
 // arrives as null. It has no name: it is not the column `null` (#1981).
 test("a column named by the null symbol has an empty name, not the word null (#1981)", () => {
