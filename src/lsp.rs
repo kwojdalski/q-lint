@@ -319,18 +319,29 @@ struct Indexed {
     /// implicit, in order - what a reference count counts - kept while
     /// `Index::counted`.
     tally: Vec<(String, bool)>,
+    /// An open document the scan would not read - excluded, or under a
+    /// directory the walk skips: linted, but what it defines is kept out of
+    /// `ws`, so a name only it defines is undefined elsewhere in the editor
+    /// as it is in the terminal (#2295).
+    withheld: bool,
 }
 
 impl Index {
     /// Record what `path` defines. Whether it changed is what tells the
     /// caller other open files need linting again.
-    fn set(&mut self, path: &str, text: &str) -> bool {
-        self.put(path, text) | self.settle()
+    fn set(&mut self, path: &str, text: &str, policy: &Policy) -> bool {
+        self.open(path, text, policy) | self.settle()
+    }
+
+    /// `put` for an open document, which the scan may have passed by.
+    fn open(&mut self, path: &str, text: &str, policy: &Policy) -> bool {
+        let withheld = self.withheld(path, policy);
+        self.put(path, text, withheld)
     }
 
     /// `set`, leaving the placements to the caller's `settle`, so a batch
     /// of files works them out once.
-    fn put(&mut self, path: &str, text: &str) -> bool {
+    fn put(&mut self, path: &str, text: &str, withheld: bool) -> bool {
         let path = file_key(path);
         let own = index(text);
         let read = guarded(|| q_lint_rs::references(text, false)).unwrap_or_default();
@@ -361,12 +372,20 @@ impl Index {
         if old.is_none() {
             self.ws.place(Path::new(&path), &placement);
         }
-        let changed = old.as_ref().is_none_or(|old| old.placed != placed);
+        // What the workspace held of it, and what it holds now: nothing of
+        // a withheld one.
+        let before = old
+            .as_ref()
+            .filter(|old| !old.withheld)
+            .map(|old| &old.placed);
+        let changed = before != (!withheld).then_some(&placed);
         if changed {
-            if let Some(old) = &old {
+            if let Some(old) = old.as_ref().filter(|old| !old.withheld) {
                 self.ws.remove(&old.placed);
             }
-            self.ws.add(&placed);
+            if !withheld {
+                self.ws.add(&placed);
+            }
             self.generation += 1;
         }
         let file = Indexed {
@@ -378,6 +397,7 @@ impl Index {
             read,
             signed,
             tally,
+            withheld,
         };
         self.files.insert(path, file);
         changed
@@ -388,7 +408,9 @@ impl Index {
         let key = file_key(path);
         match self.files.remove(&key) {
             Some(old) => {
-                self.ws.remove(&old.placed);
+                if !old.withheld {
+                    self.ws.remove(&old.placed);
+                }
                 self.ws.place(Path::new(&key), &Placement::default());
                 self.generation += 1;
                 self.reads += 1;
@@ -442,8 +464,10 @@ impl Index {
             placement.apply(&mut placed, &file.implicit);
             file.placement = placement;
             if placed != file.placed {
-                self.ws.remove(&file.placed);
-                self.ws.add(&placed);
+                if !file.withheld {
+                    self.ws.remove(&file.placed);
+                    self.ws.add(&placed);
+                }
                 file.placed = placed;
             }
         }
@@ -505,7 +529,7 @@ impl Index {
 
     fn read(&mut self, path: &str) -> bool {
         match on_disk(path) {
-            Some((text, _)) if is_q_path(path) => self.put(path, &text),
+            Some((text, _)) if is_q_path(path) => self.put(path, &text, false),
             _ => self.forget(path),
         }
     }
@@ -513,19 +537,45 @@ impl Index {
     /// Whether the scan would have read `path`: index on, under a workspace
     /// folder, in no directory the scan skips, and not excluded.
     fn covers(&self, path: &str, policy: &Policy) -> bool {
-        self.enabled
-            && is_q_path(path)
-            && self.roots.iter().any(|root| {
-                let root = std::path::Path::new(root);
-                // The file and each directory above it within the folder,
-                // as the scan asks about each before entering it (#795).
-                self.spelled_under(root, path).is_some_and(|path| {
-                    !path
-                        .ancestors()
-                        .take_while(|p| *p != root)
-                        .any(|p| skipped(policy, p) || self.excluded(root, p))
-                })
+        self.enabled && is_q_path(path) && self.reached(path, policy)
+    }
+
+    /// Whether `path`, under a workspace folder, is one the configuration
+    /// passes by there - `exclude`, or a directory the walk skips - as
+    /// `qlinter .` would, whether or not the index is on (#2295). The
+    /// editor's own `workspaceIndex.exclude` keeps a closed file out of the
+    /// index, not an open one.
+    fn withheld(&self, path: &str, policy: &Policy) -> bool {
+        let mut under = false;
+        for root in &self.roots {
+            let root = std::path::Path::new(root);
+            if let Some(path) = self.spelled_under(root, path) {
+                under = true;
+                if !path
+                    .ancestors()
+                    .take_while(|p| *p != root)
+                    .any(|p| skipped(policy, p))
+                {
+                    return false;
+                }
+            }
+        }
+        under && is_q_path(path)
+    }
+
+    /// Whether the scan reaches `path` under some workspace folder.
+    fn reached(&self, path: &str, policy: &Policy) -> bool {
+        self.roots.iter().any(|root| {
+            let root = std::path::Path::new(root);
+            // The file and each directory above it within the folder,
+            // as the scan asks about each before entering it (#795).
+            self.spelled_under(root, path).is_some_and(|path| {
+                !path
+                    .ancestors()
+                    .take_while(|p| *p != root)
+                    .any(|p| skipped(policy, p) || self.excluded(root, p))
             })
+        })
     }
 
     /// `path` as the scan reaches it under the workspace folder `root`: as
@@ -577,7 +627,7 @@ impl Index {
             self.scan(policy, docs);
         }
         for (uri, text) in docs.iter().filter(|(uri, _)| is_q_uri(uri)) {
-            self.put(&path_of(uri), text);
+            self.open(&path_of(uri), text, policy);
         }
         self.settle();
     }
@@ -1639,7 +1689,10 @@ pub fn serve(
                                 // screen, and indexed, so navigation answers from
                                 // it; linted when it is saved, and the others too
                                 // when what it defines changed (#2174).
-                                if !superseded && is_q_uri(&uri) && idx.set(&path_of(&uri), text) {
+                                if !superseded
+                                    && is_q_uri(&uri)
+                                    && idx.set(&path_of(&uri), text, policy)
+                                {
                                     redefined.insert(uri.clone());
                                 }
                                 docs.insert(uri.clone(), text.to_string());
@@ -2066,7 +2119,7 @@ pub fn serve(
                         idx.change_roots(folders("added"), removed.collect(), policy, &docs);
                         // An open buffer still wins over what a folder held.
                         for (uri, text) in docs.iter().filter(|(uri, _)| is_q_uri(uri)) {
-                            idx.put(&path_of(uri), text);
+                            idx.open(&path_of(uri), text, policy);
                         }
                         idx.settle();
                         if idx.generation != generation {
@@ -3115,7 +3168,7 @@ fn publish(
     opts: &Options,
 ) -> Result<(), String> {
     let path = path_of(&uri);
-    let changed = is_q_uri(&uri) && idx.set(&path, &text);
+    let changed = is_q_uri(&uri) && idx.set(&path, &text, policy);
     docs.insert(uri.clone(), text);
     diagnose(writer, &uri, &docs[&uri], kept, &idx.ws, policy, opts)?;
     if changed {

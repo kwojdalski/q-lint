@@ -1277,6 +1277,40 @@ fn a_configuration_the_cli_refuses_is_shown_to_the_user_not_only_logged() {
 }
 
 #[test]
+fn an_open_excluded_file_defines_nothing_for_the_others() {
+    // `qlinter .` reads no excluded file, so src/a.q's `ff` is undefined
+    // there. Opening lib/defs.q put its `ff` in the workspace and the
+    // QF018 went away until it was closed (#2295). Opened, it is still
+    // linted - the README: an exclude does not hide a document's findings.
+    let dir = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(dir.path()).unwrap();
+    std::fs::write(
+        root.join("qlinter.toml"),
+        "profile = \"style\"\nexclude = [\"lib/\"]\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("lib")).unwrap();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    // Its own `ff` is still defined for it.
+    let (defs, user) = ("ff:42\ng:{[x] y}\nk:{ff}\n", "h:ff\n");
+    std::fs::write(root.join("lib/defs.q"), defs).unwrap();
+    std::fs::write(root.join("src/a.q"), user).unwrap();
+    let (lib, src) = (
+        file_uri(&root.join("lib/defs.q")),
+        file_uri(&root.join("src/a.q")),
+    );
+    let mut server = start_with_workspace(&root);
+    server.open(&src, user);
+    assert_eq!(codes_of(&server.diagnostics_for(&src)), ["QF018"]);
+    server.open(&lib, defs);
+    assert_eq!(codes_of(&server.diagnostics_for(&lib)), ["QF010"]);
+    // Asked again, a.q still has its QF018.
+    server.change(&src, 2, user);
+    assert_eq!(codes_of(&server.diagnostics_for(&src)), ["QF018"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn a_name_another_workspace_file_defines_is_not_undefined() {
     // lib.q is on disk and never opened; the server reads it at startup.
     let dir = tempfile::tempdir().unwrap();
