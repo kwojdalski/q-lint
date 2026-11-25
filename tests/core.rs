@@ -1881,3 +1881,32 @@ fn a_wide_select_lints_in_bounded_time() {
         "a select of 2000 columns took {small:?} and of 16000 {large:?}"
     );
 }
+/// Navigation and semantic tokens on one long line: whether each name sat on
+/// a system command's line was asked by searching back to the line's start,
+/// so hover, definition, references, symbols and semantic tokens were
+/// quadratic in the line's length (#2347).
+#[test]
+fn navigation_over_one_long_line_is_linear() {
+    let time = |n: usize| {
+        let calls: Vec<String> = (0..n).map(|i| format!("f[{i}]")).collect();
+        let source = format!("f:{{x}};r:{}\n", calls.join("+"));
+        assert!(q_lint_rs::mentions(&source).len() > n);
+        best_of_three(|| {
+            std::hint::black_box(q_lint_rs::mentions(&source));
+            q_lint_rs::semantic_tokens_in(
+                &source,
+                &Workspace::default(),
+                &q_lint_rs::graph::Placement::default(),
+            )
+        })
+    };
+    time(2500); // warm the allocator and the regex caches
+    let (small, large) = (time(2500), time(20000));
+    eprintln!("a line of 2500 calls took {small:?} and of 20000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "a line of 2500 calls took {small:?} and of 20000 {large:?}"
+    );
+}

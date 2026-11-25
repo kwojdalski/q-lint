@@ -933,6 +933,9 @@ pub fn tokens(
     // that name - q 5's `select f from t` is the column even where `f` is a
     // lambda - and only the table says which, so none is coloured (#552).
     let outside_queries = crate::outside_query_phrases(code);
+    // Each line's start from one table of newlines, not a search back from
+    // each name, which was quadratic on a long line (#2347).
+    let newlines: Vec<usize> = code.match_indices('\n').map(|(at, _)| at).collect();
     let mut out = vec![];
     for m in name.find_iter(code) {
         if !boundary(code, m.start()) || outside_queries.as_bytes()[m.start()] == b' ' {
@@ -940,7 +943,10 @@ pub fn tokens(
         }
         // A system command's argument is no q: `\l f/a.q` names a file,
         // whatever lambda `f` is (#553).
-        let line = code[..m.start()].rfind('\n').map_or(0, |p| p + 1);
+        let line = match newlines.partition_point(|&p| p < m.start()) {
+            0 => 0,
+            n => newlines[n - 1] + 1,
+        };
         if crate::system_command(&raw[line..]) {
             continue;
         }
