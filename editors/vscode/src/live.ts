@@ -2912,6 +2912,16 @@ export class Live {
       );
       return;
     }
+    // The file's code goes to the process it is bound to: not the gateway
+    // asked about, it would run there without the types (#2370).
+    const file = window.activeTextEditor?.document.uri;
+    const bound = file === undefined ? undefined : this.fileBinding(file);
+    if (bound !== undefined && bound !== process.label) {
+      void window.showInformationMessage(
+        plainMessage(`q-lint: this file's queries go to ${bound}, not the gateway ${process.label}; nothing was run. Clear or change the file's connection to query ${process.label} on server types.`),
+      );
+      return;
+    }
     let given = types;
     if (given === undefined) {
       const document = window.activeTextEditor?.document;
