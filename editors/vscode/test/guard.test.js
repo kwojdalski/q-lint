@@ -1683,3 +1683,24 @@ test("a list headed by a lambda is the lambda applied to the rest: by value, eva
     assert.deepStrictEqual(writes(code), expected, code);
   }
 });
+
+test("an operator projected and applied later, and a gateway given to . or @, are read as the calls they make (#2187, #2188)", () => {
+  const cases = {
+    "(?)[`sym] `x": ["extends the enumeration `sym with ?"],
+    "(?)[`sym;] `x": ["extends the enumeration `sym with ?"],
+    "(?)[`sym]@`x": ["extends the enumeration `sym with ?"],
+    "(!)[-11] `:log": ["replays a log with -11!"],
+    "(!)[-11;] `:log": ["replays a log with -11!"],
+    '.[.gw.syncexec;("a:1";`rdb)]': ["assigns a through .gw.syncexec", "runs a query the guard cannot read through .gw.syncexec"],
+    '.[`.gw.syncexec;("a:1";`rdb)]': ["assigns a through .gw.syncexec", "runs a query the guard cannot read through .gw.syncexec"],
+    "f[.gw.syncexec]": ["runs a query the guard cannot read through .gw.syncexec"],
+    // Projected on what only finds, or named alone, they read.
+    "(?)[`a`b] `b": [],
+    "(!)[-8] t": [],
+    ".gw.syncexec": [],
+    "g:.gw.syncexec": ["assigns g"],
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), expected, code);
+  }
+});

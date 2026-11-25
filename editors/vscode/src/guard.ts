@@ -53,7 +53,8 @@
 //   `` ?[`sym;`x] ``), which extends that enumeration, and the sym file
 //   when the symbol is a handle; also passed as a value, in parentheses,
 //   through an adverb or to `.` or `@` (`` (?)[`sym;`x] ``, `` ?/[`sym;`x] ``,
-//   `` .[?;(`sym;`x)] ``), read as the call it makes (#2036);
+//   `` .[?;(`sym;`x)] ``), read as the call it makes (#2036), projected
+//   and applied after too, `` (?)[`sym] `x `` (#2188);
 // - a string or a list sent to handle 0 (`0"a:1"`, `neg[0]"a:1"`,
 //   `0(@;`b;0;:;9)`), or what a function gives, `0 raze("a:";"1")` (#2204),
 //   which the process evaluates itself as `value` would;
@@ -102,7 +103,8 @@
 //   written, with a symbol it could hold (`` {.[x;();:;1]} v ``, #2035);
 // - any of these in a string given to a TorQ gateway's `.gw.syncexec` or
 //   `.gw.asyncexec`, in brackets or applied (`.gw.syncexec . (q;`rdb)`),
-//   which runs it on the gateway's servers (#909), and a query there that
+//   which runs it on the gateway's servers (#909), given to `.` or `@` or
+//   any function, `.[.gw.syncexec;("a:1";`rdb)]` (#2187), and a query there that
 //   is not strings written in the call - a list the servers evaluate, a
 //   name, one built or given later, `.gw.syncexec[;`rdb] "a:1"` (#2039) -
 //   and one headed by a lambda that, applied to the rest, changes them,
@@ -1373,6 +1375,25 @@ function asValue(t: Token[], i: number): string[] {
     const after = t[q];
     if (after?.kind === "open" && after.text === "[") {
       args = items(t, q);
+      // Projected, `` (?)[`sym] ``, `` (!)[-11;] ``, and applied after:
+      // `` (?)[`sym] `x ``, `` (?)[`sym]@`x `` (#2188).
+      const close = args[args.length - 1][1];
+      const more = t[close + 1];
+      const later: [number, number][] | undefined =
+        more?.kind === "open" && more.text === "["
+          ? items(t, close + 1)
+          : more?.kind === "op" && (more.text === "@" || more.text === ".") && argumentEnd(t, close + 1) > close + 2
+            ? more.text === "@"
+              ? [[close + 2, argumentEnd(t, close + 1)]]
+              : listed(t, close + 2, argumentEnd(t, close + 1))
+            : more !== undefined && (["str", "sym", "num", "name"].includes(more.kind) || (more.kind === "open" && more.text !== "{"))
+              ? [[close + 1, argumentEnd(t, close)]]
+              : undefined;
+      const takes = op === "?" || op === "!" ? 2 : 3;
+      if (later !== undefined && (args.length < takes || args.some(([a, b]) => a === b))) {
+        const filled = args.map((arg): [number, number] => (arg[0] === arg[1] && later.length > 0 ? (later.shift() as [number, number]) : arg));
+        args = [...filled, ...later];
+      }
     } else if (after?.kind === "op" && (after.text === "." || after.text === "@") && argumentEnd(t, q) > q + 1) {
       args = after.text === "@" ? [[q + 1, argumentEnd(t, q)]] : listed(t, q + 1, argumentEnd(t, q));
     }
@@ -1457,7 +1478,25 @@ function gateway(t: Token[], i: number, found: Set<string>): void {
       e++;
     }
     const after = t[e + 1];
-    readable = (after === undefined || after.text === ";" || after.kind === "close") && (t[i].kind === "sym" || s === i || t[s - 1] === undefined || t[s - 1].text === ";" || t[s - 1].text === ":");
+    // Not given to anything: `.[.gw.syncexec;("a:1";`rdb)]` applies it, and
+    // `f[.gw.syncexec]`, `(.gw.syncexec;x)` may (#2187).
+    let open = s - 1;
+    for (let depth = 0; open >= 0; open--) {
+      if (t[open].kind === "close") depth++;
+      else if (t[open].kind === "open" && depth-- === 0) break;
+    }
+    scanned(s - open);
+    const given = open >= 0 && t[open].text !== "{";
+    if (given) {
+      // What it is given with, read as its query is.
+      const close = items(t, open).at(-1)?.[1] ?? t.length;
+      for (let j = open + 1; j < close; j++) {
+        if (t[j].kind === "str") {
+          for (const reason of writes(qText(t[j].text))) found.add(`${reason} through ${name}`);
+        }
+      }
+    }
+    readable = !given && (after === undefined || after.text === ";" || after.kind === "close") && (t[s - 1] === undefined || t[s - 1].text === ";" || t[s - 1].text === ":" || t[s - 1].text === "{");
   }
   if (!readable) {
     found.add(`runs a query the guard cannot read through ${name}`);
@@ -1945,7 +1984,7 @@ function readStatement(statement: string, found: Set<string>): void {
       continue;
     }
     // A gateway called by its symbol: `` `.gw.syncexec . ("a:1";`rdb) `` (#2039).
-    if (k.kind === "sym" && GATEWAY_EXEC.test(k.text.slice(1)) && next !== undefined && ((next.kind === "op" && (next.text === "." || next.text === "@")) || (next.kind === "open" && next.text === "[") || next.kind === "str")) {
+    if (k.kind === "sym" && GATEWAY_EXEC.test(k.text.slice(1))) {
       gateway(t, i, found);
       continue;
     }
