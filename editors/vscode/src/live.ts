@@ -1958,7 +1958,13 @@ export class Live {
     }
     const refused = unattended ? this.guardRefuses(code, [process]) : undefined;
     if (refused !== undefined) {
-      throw new Error(`the connect script of ${process.label} was not run, and nothing was: ${refused}`);
+      if (throws) {
+        throw new Error(`the connect script of ${process.label} was not run, and nothing was: ${refused}`);
+      }
+      // A reconnect q-lint makes itself connects without it, as one whose
+      // question was declined does, and says so (#2133).
+      failed(`it would change ${process.label}, and a reconnect asks nobody: it was not run. Connect to ${process.label} to be asked.`);
+      return;
     }
     if (!unattended && !(await this.guardAllows(code, [process], `The connect script of ${process.label}`))) {
       this.show([`# ${process.label} - connect script not run: changing a read-only process was not confirmed`], false);
@@ -2112,7 +2118,9 @@ export class Live {
         }
         this.opening = connection;
         try {
-          await this.runConnectScript(connection, process, stopped);
+          // A reconnect from a timer or after an abort asks no question:
+          // nobody may be at the keyboard, and every query waits on it (#2133).
+          await this.runConnectScript(connection, process, stopped, untilFree || quiet, false);
         } finally {
           this.opening = undefined;
         }

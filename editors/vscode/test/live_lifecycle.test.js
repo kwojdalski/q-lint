@@ -478,3 +478,24 @@ test("a query run between an auto-reconnect's tries waits for it, and runs on th
   assert.strictEqual(live.history()[0].code, "1+1");
   assert.deepStrictEqual(b.logins, []);
 });
+
+// The reconnect after a drop (or after Abort) asked the read-only guard's
+// modal question about the connect script from a timer, with nobody there,
+// and every query waited behind it (#2133).
+test("an automatic reconnect asks nothing about a connect script the guard holds: it connects without it and says so (#2133)", async (t) => {
+  const a = await fakeQ(() => null);
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("p", a.port, { tags: ["prod"], init: "marker:1" })], { "connection.autoReconnect.enable": true });
+  stub.picks.push("Run Anyway");
+  assert.strictEqual(await live.connectTo("p"), true);
+  const ran = () => a.sent.filter((m) => JSON.stringify(m).includes("marker:1")).length;
+  assert.strictEqual(ran(), 1);
+  const asked = stub.messages.length;
+  a.drop();
+  await until(() => stub.messages.some(([, m]) => m === "q-lint: reconnected to p."));
+  const after = stub.messages.slice(asked);
+  assert.ok(!after.some(([, m]) => /Run it anyway/.test(m)), JSON.stringify(after));
+  assert.ok(after.some(([kind, m]) => kind === "warning" && m === "q-lint: the connect script of p failed: it would change p, and a reconnect asks nobody: it was not run. Connect to p to be asked."), JSON.stringify(after));
+  assert.strictEqual(ran(), 1);
+  assert.strictEqual(live.activeLabel(), "p");
+});
