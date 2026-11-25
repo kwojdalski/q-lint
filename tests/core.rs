@@ -1023,14 +1023,30 @@ fn a_long_where_phrase_lints_in_bounded_time() {
 /// length (#708).
 #[test]
 fn a_long_lambda_body_lints_in_bounded_time() {
-    let body: String = (0..16000).map(|i| format!("  a{i}:x+y*{i};\n")).collect();
-    let source = format!("f:{{[x;y]\n{body}  a0}}\n");
-    let started = std::time::Instant::now();
-    lint(&source, "t.q", Profile::Style);
-    let elapsed = started.elapsed();
+    let time = |n: usize| {
+        let body: String = (0..n).map(|i| format!("  a{i}:x+y*{i};\n")).collect();
+        let source = format!("f:{{[x;y]\n{body}  a0}}\n");
+        (0..3)
+            .map(|_| {
+                let started = std::time::Instant::now();
+                std::hint::black_box(lint(&source, "t.q", Profile::Style));
+                started.elapsed()
+            })
+            .min()
+            .unwrap()
+    };
+    time(1000); // warm the allocator and the regex caches
+    let (small, large) = (time(1000), time(8000));
+    eprintln!("a 1000-line lambda took {small:?} and an 8000-line one {large:?}");
+    // Quadratic is 64 times; linear is 8. A fixed 10 s bound on a 16000-line
+    // lambda measured the runner, not the walk: CI's Linux and Windows
+    // runners took 10.5 s for code whose debug build takes 2.8 s on Apple
+    // silicon, and master was already within a few percent of the bound.
+    // Linear measures 8.1 here (174 ms and 1.41 s). 16 still fails a quadratic walk by
+    // four times, as the many-conditions test above does.
     assert!(
-        elapsed < std::time::Duration::from_secs(10),
-        "a 16000-line lambda took {elapsed:?}"
+        large < small * 16,
+        "a 1000-line lambda took {small:?} and an 8000-line one {large:?}"
     );
 }
 /// Chained qSQL keywords: each one scanned on to the statement's end, more
