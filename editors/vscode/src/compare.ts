@@ -93,6 +93,9 @@ export interface Comparison {
   /// Cells that are the same as far as their text goes, which was cut at
   /// 200 characters: the rest of each was not compared.
   cut: number;
+  /// Of those, the cells `GRID` did not cut at 200 characters, which end in
+  /// `..` as `-3!` leaves an item it cut at the process's `\c` (#2165).
+  consoleCut: number;
   /// Whether the answers are text that holds a float only to the digits
   /// its process writes, so that `same` is the same to those digits.
   digits: boolean;
@@ -244,7 +247,7 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number,
     const typeOf = (o: Outcome): number | undefined => ("answer" in o && o.answer.ok ? o.answer.type : undefined);
     const toDigits =
       !same && !partial && sa.kind === "text" && sb.kind === "text" && typeOf(left) === typeOf(right) && !exactText(typeOf(left) ?? 10) && sameToDigits(sa.text, sb.text) ? 1 : 0;
-    return { left: sa, right: sb, columns: [], inLeft: [], inRight: [], matchedBy: "place", rows: [], lined: 0, differing: 0, onlyLeft: 0, onlyRight: 0, uncompared: 0, retyped: [], cut: 0, digits, toDigits, same, partial, unsureCut };
+    return { left: sa, right: sb, columns: [], inLeft: [], inRight: [], matchedBy: "place", rows: [], lined: 0, differing: 0, onlyLeft: 0, onlyRight: 0, uncompared: 0, retyped: [], cut: 0, consoleCut: 0, digits, toDigits, same, partial, unsureCut };
   }
   const ga = ha.grid;
   const gb = hb.grid;
@@ -336,6 +339,7 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number,
   let onlyRight = 0;
   let uncompared = 0;
   let cut = 0;
+  let consoleCut = 0;
   let toDigits = 0;
   // A cell compared by its text, of a type that may hold a float - a
   // general list's, a table's or a dictionary's - written to two `\P`s.
@@ -379,6 +383,9 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number,
           r[i] = atomLiteral(hb.payload.types[indexB[i]], ...sent(hb, indexB[i], rb)).literal;
         } else if (!differs[i] && ha.payload.types[indexA[i]] === 0 && itemCut(sent(ha, indexA[i], ra)[0])) {
           cut++;
+          // GRID's cut leaves 200 bytes ending `...`; any other, `-3!`'s.
+          const text = sent(ha, indexA[i], ra)[0];
+          consoleCut += text.endsWith("...") && Buffer.byteLength(text, "utf8") === 200 ? 0 : 1;
         }
       });
     }
@@ -405,6 +412,7 @@ export function compareOutcomes(left: Outcome, right: Outcome, decimals: number,
     ...(shapes[0] === shapes[1] ? {} : { reshaped: { left: shapes[0], right: shapes[1] } }),
     ...(keyedAlike ? {} : { rekeyed: { left: namesA.slice(0, keysA), right: namesB.slice(0, keysB) } }),
     cut,
+    consoleCut,
     digits: false,
     toDigits,
     same: !partial && sameColumns && keyedAlike && shapes[0] === shapes[1] && retyped.length === 0 && cut === 0 && toDigits === 0 && differing === 0 && onlyLeft === 0 && onlyRight === 0 && ga.total === gb.total,

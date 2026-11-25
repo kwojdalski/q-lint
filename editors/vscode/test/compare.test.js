@@ -461,3 +461,18 @@ test("a text that ends in .. where q may or may not have cut it is said to be un
   assert.deepStrictEqual([sure.partial, sure.unsureCut], [true, false]);
   assert.match(said(sure), /^The part of each answer that came back is the same; the text was cut at the console size/);
 });
+
+// 30 30#til 900: each row's item is 79 characters, cut at \c 80, and the
+// page said the cells were cut at 200 characters.
+test("a cell q cut at its console width is not said to be cut at 200 characters (#2165)", () => {
+  const item = `${Array.from({ length: 30 }, (_, i) => i).join(" ")}`.slice(0, 77) + "..";
+  const long = `"${"a".repeat(196)}...`;
+  const cells = (...items) => table({ x: [0, items, items.map(() => false)] });
+  const page = loadPage();
+  const said = (c) => (page.send({ type: "compare", id: 1, code: "t", comparison: c }), page.posted.at(-1).rendered.summary);
+  const c = compareOutcomes(side("a", cells(item)), side("b", cells(item)), -1);
+  assert.deepStrictEqual([c.same, c.cut, c.consoleCut], [false, 1, 1]);
+  assert.strictEqual(said(c), "1 cell is the same as far as shown, ending in .. as q writes an item it cut at the process's console width (\\c), and no further compared (rows lined up by place).");
+  const both = compareOutcomes(side("a", cells(item, long, item)), side("b", cells(item, long, item)), -1);
+  assert.strictEqual(said(both), "1 cell is the same as far as shown, cut at 200 characters, and no further compared, 2 cells are the same as far as shown, ending in .. as q writes an item it cut at the process's console width (\\c), and no further compared (rows lined up by place).");
+});

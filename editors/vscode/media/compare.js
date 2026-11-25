@@ -77,8 +77,13 @@
       const by = function (keys, said) { return keys.length === 0 ? "not keyed" : said + keys.join(", "); };
       parts.push("the table is " + by(c.rekeyed.left, "keyed by ") + " on " + l + " and " + by(c.rekeyed.right, c.rekeyed.left.length === 0 ? "keyed by " : "by ") + " on " + r);
     }
-    if (c.cut > 0) {
-      parts.push(plural(c.cut, "cell is", "cells are") + " the same as far as shown, cut at 200 characters, and no further compared");
+    // Cut by GRID at 200 characters, or by q at its \c (#2165).
+    const consoleCut = c.consoleCut || 0;
+    if (c.cut - consoleCut > 0) {
+      parts.push(plural(c.cut - consoleCut, "cell is", "cells are") + " the same as far as shown, cut at 200 characters, and no further compared");
+    }
+    if (consoleCut > 0) {
+      parts.push(plural(consoleCut, "cell is", "cells are") + " the same as far as shown, ending in .. as q writes an item it cut at the process's console width (\\c), and no further compared");
     }
     if (c.toDigits > 0) {
       parts.push(plural(c.toDigits, "cell is", "cells are") + " the same as far as the fewer digits written go, as the processes' \\P differs, and no further compared");
