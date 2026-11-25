@@ -21,10 +21,15 @@ import { plainMessage } from "./history";
 
 export const DEAD_CODE = "q-lint/deadCode";
 
-/// Which of a space-separated list of names the body of some function in
-/// the process names as a word - its last part (`helper` in its own
-/// namespace) or the whole name (`.util.helper`, #1227) - other than its own: every namespace but q's own
-/// (PeachQ's `.help` among them), and `.z`. A root name that is no namespace (`.cfg:42`) lists nothing (#1370).
+/// Which of a space-separated list of names some function in the process
+/// other than itself calls or mentions, read from what q parsed as Find
+/// Callers reads it (#2535): a lambda's globals (`(value f)3`, resolved in
+/// its context, so `helper` in `.util` is `.util.helper`), those of the
+/// lambdas nested in it, and a symbol among its tokens that names it
+/// (`value`, `@` or `.` by name, #1227). A parameter, a local, a string or a
+/// comment that spells the name is none of these. Every namespace but q's
+/// own (PeachQ's `.help` among them), KDB-X's SQL `.s` and q-lint's `.qlint`
+/// (#2534), and `.z`. A root name that is no namespace (`.cfg:42`) lists nothing (#1370).
 /// The functions are the lambdas of every namespace, however deep, and
 /// those held in a projection, a composition or an iterator's derived
 /// function, or in a list or dictionary of at most 1000 items - a table of
@@ -35,7 +40,7 @@ export const CALLED = [
   " n:\" \" vs(),nms;",
   " lam:{$[100h=t:type x;enlist x;t within 104 111h;raze .z.s each(),value x;$[t in 0 99h;1000>=count x;0b];raze .z.s each $[99h=t;value x;x];()]};",
   " isns:{$[99h=type x;$[11h=type key x;(::)~first x;0b];0b]};",
-  " todo:`.,` sv'`,'(key`) except``q`Q`h`j`o`m`help;",
+  " todo:`.,` sv'`,'(key`) except``q`Q`h`j`o`m`s`help`qlint;",
   " fs:`$();b:();",
   " while[count todo;",
   "  ns:first todo;todo:1_todo;",
@@ -46,9 +51,12 @@ export const CALLED = [
   "  todo,:` sv'ns,'kids;k:k except kids;",
   "  l:@[lam;;()]each d k;",
   "  fs,:raze(count each l)#'$[ns~`.;k;` sv'ns,'k];",
-  "  b,:raze{last value x}each'l];",
-  " w:{[s;l] any {[s;l;i] not any s[(i-1),i+count l] in .Q.an,\"_.\"}[s;l] each ss[s;l]};",
-  " n where {[b;fs;w;n] any (fs<>`$n) & (w[;last \".\" vs n] each b) or w[;n] each b}[b;fs;w] each n}",
+  "  b,:raze l];",
+  " rs:{[c;x]$[(null c)|\".\"=first string x;x;` sv`,c,x]};",
+  " calls:{[rs;f]v:value f;g:v 3;(rs[first g]each(1_g)except`),raze .z.s[rs]each v where 100h=type each v}[rs];",
+  " says:{[f]k:@[-4!;last value f;{()}];raze{`$1_\"`\"vs x}each k where\"`\"=first each k};",
+  " u:{[calls;says;f]@[calls;f;`$()],@[says;f;`$()]}[calls;says]each b;",
+  " n where{[fs;u;n]any(fs<>n)&n in/:u}[fs;u]each`$n}",
 ].join("\n");
 
 export interface DeadFunction {

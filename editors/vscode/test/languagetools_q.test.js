@@ -168,6 +168,20 @@ test("the process check reads nested namespaces, and the lambdas a projection, a
   assert.deepStrictEqual(await held(), before);
 });
 
+test("the process check reads what each lambda calls, not its text: a parameter, a local, a comment or q's own code is no call (#2534, #2535)", { skip }, async (t) => {
+  const source = [
+    ".lib.f:{x+1}", ".lib.x:{x+2}", ".lib.uncalled:{x+3}", ".lib.k:{x}", ".lib.data:{x}", ".lib.n:{x}",
+    "user:{[data] n:data+1; / k and n\n \"x k n\",string n}",
+    // A real call, and a mention by symbol, are still read.
+    ".lib.used:{x}", ".lib.named:{x}", "runner:{.lib.used x}", "byname:{value(`.lib.named;x)}",
+    "",
+  ].join("\n");
+  const c = await connect(t, source);
+  const got = await c.call(CALLED, ".lib.f .lib.x .lib.uncalled .lib.k .lib.data .lib.n .lib.used .lib.named");
+  const names = (Array.isArray(got) ? got : [got]).map(String).sort();
+  assert.deepStrictEqual(names, [".lib.named", ".lib.used"]);
+});
+
 test("the SQL tab's query runs on KDB-X's SQL engine, loading it where there is none", { skip }, async (t) => {
   const c = await connect(t, "t:([]sym:`a`b`a;px:1 2 3f;size:10 20 30)\n");
   const schema = readSchema(await c.call(SQL_SCHEMA));
