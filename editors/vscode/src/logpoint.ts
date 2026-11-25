@@ -17,6 +17,10 @@
 // `delete qlint from`.` deletes the user's root variable of that name
 // instead (#1871).
 //
+// The wrapper's parameters are its own, one per slot the function takes, so
+// a typed (`[x:`j]`) or pattern (`[(a;b)]`) parameter list is checked by
+// the function it calls (#2406).
+//
 // Only a lambda takes a logpoint. A projection or alias made of `f` before
 // the logpoint keeps calling the original, unlogged.
 
@@ -36,7 +40,9 @@ export const LOG_ADD = [
   // goes, and the new definition is wrapped (#2558).
   " o:@[get;`.qlint.log.orig;{(`$())!()}];",
   " if[nm in key o;$[.qlint.log.wrap[nm]~f;'\"it has a logpoint already\";[.qlint.log.orig:(enlist nm)_o;.qlint.log.wrap:(enlist nm)_.qlint.log.wrap]]];",
-  " p:(value f)1;if[p~enlist`;p:`$()];",
+  // The wrapper takes one plain parameter per slot: a typed or pattern
+  // slot's names (`0`1 on KDB-X) are no names to bind (#2406).
+  " p:(value f)1;p:`$\"a\",/:string til $[p~enlist`;0;count p];",
   " s:\";\"sv string p;a:$[0=count p;\"enlist(::)\";1=count p;\"enlist \",s;\"(\",s,\")\"];n:\"`\",string nm;",
   " w:value\"{[\",s,\"] 0N!(\",n,\";\",a,\");@[{.qlint.log.hits:-1000 sublist .qlint.log.hits,enlist x};(.z.p;\",n,\";300 sublist -3!\",a,\");{}];.qlint.log.orig[\",n,\"] . \",a,\"}\";",
   " if[not`log in key`.qlint;.qlint.log.orig:(`$())!();.qlint.log.wrap:(`$())!();.qlint.log.hits:()];",
