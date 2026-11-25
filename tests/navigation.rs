@@ -226,6 +226,23 @@ fn a_name_is_outlined_by_the_value_q_holds_it_as() {
 }
 
 #[test]
+fn a_name_with_a_segment_led_by_an_underscore_is_one_name() {
+    // KDB-X defines `.x.__h` and `a._b` (`key `.x` is ``__h, `key `a`
+    // ``_b), and `-4!` reads each as one token; `._c` is no name, but `.`,
+    // `_` and `c` (#2311).
+    assert_eq!(
+        seen(".x.__h:{x}\na._b:1\nq:.x.__h a._b\n"),
+        [
+            (".x.__h", ".x.__h".to_string(), 'w'),
+            ("a._b", "a._b".into(), 'w'),
+            ("q", "q".into(), 'w'),
+            (".x.__h", ".x.__h".into(), 'r'),
+            ("a._b", "a._b".into(), 'r'),
+        ]
+    );
+}
+
+#[test]
 fn the_path_of_each_kind_of_load_is_found_under_the_cursor() {
     let source =
         "\\l lib/a.q\nsystem \"l lib/b.q\"\nf:`:lib/c.q\n/ \\l lib/d.q\n\\cd lib\n\\l e.q\n";

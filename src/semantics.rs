@@ -747,7 +747,7 @@ pub(crate) fn contexts(code: &str, raw: &str) -> Vec<(usize, String)> {
 /// at each line. Shared by the checks and by the editor's semantic tokens,
 /// which have to agree about what a name in a body refers to.
 fn scopes(code: &str, raw: &str) -> (Vec<Scope>, Vec<(usize, String)>) {
-    let assignment = re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*:(:)?");
+    let assignment = re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*:(:)?");
     let mut scopes: Vec<Scope> = vec![];
     let mut stack: Vec<usize> = vec![];
     // Braces past q's own limit open no scope of their own: q refuses the
@@ -914,7 +914,7 @@ pub fn tokens(
         .1
         .as_str()
     };
-    let name = re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*");
+    let name = re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*");
     // A global is a function when its last assignment makes it one
     // (`holds_functions`) - a lambda the statement ends with, not
     // `f:{...} each x`, which assigns a list as QA012's rank table already
@@ -1028,7 +1028,7 @@ fn global_writes(
     qualify: fn(&str, &str) -> String,
     call_time_sets: bool,
 ) -> HashMap<String, Vec<usize>> {
-    let assignment = re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*:(:)?");
+    let assignment = re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*:(:)?");
     let ns_at = |at: usize| {
         namespaces[namespaces
             .partition_point(|(p, _)| *p <= at)
@@ -1139,7 +1139,7 @@ fn global_writes(
     // only a name the lambda has no plain `name:` local of is a global write.
     // `/:` and `\:` are adverbs, `_` and `.` continue a name, and `::` is a
     // view or a global assignment, which the pass above holds.
-    for a in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*[-+*%&|^=<>,#~!?@$]:")
+    for a in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*[-+*%&|^=<>,#~!?@$]:")
         .captures_iter(code)
     {
         let m = a.get(0).unwrap();
@@ -1245,7 +1245,7 @@ fn global_writes(
     }
     // A member of a namespace assigned by a literal index: q 5
     // `.cfg[`a]:1 2 3` defines `.cfg.a`.
-    for m in re!(r"(\.[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\[\s*((?:`[A-Za-z][A-Za-z0-9_]*)+)\s*\]\s*:")
+    for m in re!(r"(\.[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\[\s*((?:`[A-Za-z][A-Za-z0-9_]*)+)\s*\]\s*:")
         .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
@@ -1337,7 +1337,7 @@ fn load_lines<'a>(code: &'a str, raw: &'a str) -> impl Iterator<Item = (usize, &
 /// The global each `k)` line assigns at its start, `k)lim:100`, under the
 /// `\d` in force: k assigns q's globals, though both views blank the line.
 fn k_writes(raw: &str, namespaces: &[(usize, String)]) -> Vec<String> {
-    re!(r"(?m)^k\)\s*(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*:")
+    re!(r"(?m)^k\)\s*(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*:")
         .captures_iter(raw)
         .map(|m| {
             let at = m.get(0).unwrap().start();
@@ -1452,7 +1452,7 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
         }
         names.insert(key);
     };
-    let name = re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*");
+    let name = re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*");
     for m in name.find_iter(&unsymbolled) {
         if !boundary(&unsymbolled, m.start()) {
             continue;
@@ -1490,7 +1490,7 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     // Bracketed or parenthesised too: q 5 `(get[`cfg];value[`cfg];get (`cfg))`
     // is 5 5 5 after `cfg:5` (#537).
     for m in re!(
-        r"\b(get|value)\s*(?:([\[(])\s*)?`(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)"
+        r"\b(get|value)\s*(?:([\[(])\s*)?`(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)"
     )
     .captures_iter(&view)
     {
@@ -1536,7 +1536,8 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     // the way a callback is registered. An unqualified symbol is far more
     // often a column than a function, and is left alone.
     if symbols {
-        for m in re!(r"`(\.[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)").captures_iter(&view)
+        for m in
+            re!(r"`(\.[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)").captures_iter(&view)
         {
             names.insert(m[1].to_string());
         }
@@ -1614,7 +1615,7 @@ fn value_of_symbols<'n>(
             || re!(r"^\.Q\.dd\b").is_match(text)
             || re!(r"^`[A-Za-z.][A-Za-z0-9_.]*[ \t]*(?:$|[;\])}\r\n])").is_match(text)
     };
-    let assignment = re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*:(:)?");
+    let assignment = re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*:(:)?");
     // Every assignment's name, with its scope, its namespace and whether it
     // assigns a symbol.
     type Write<'n> = (Option<usize>, &'n str, bool);
@@ -2341,7 +2342,7 @@ pub fn check(
             .filter_map(|c| bound.get(c.get(1).unwrap().as_str()).copied())
             .collect()
     };
-    let assignment = re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*:(:)?");
+    let assignment = re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*:(:)?");
     let (scopes, namespaces) = scopes(code, raw);
     let ns_at = |at| {
         namespaces[namespaces
@@ -2389,7 +2390,7 @@ pub fn check(
     // Called in brackets, with `@`, or by juxtaposition - `f[`a]`, `f@`a` and
     // `f `a` are all 'type in q 5 (#495). The last two only when the symbol
     // is the whole argument: `f `a!1` adds to a dictionary's values.
-    for call in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)(?:\s*\[\s*`\.?[A-Za-z][A-Za-z0-9_.:]*\s*\]|(\s*@\s*|[ \t]+)`\.?[A-Za-z][A-Za-z0-9_.:]*)").captures_iter(code) {
+    for call in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\s*\[\s*`\.?[A-Za-z][A-Za-z0-9_.:]*\s*\]|(\s*@\s*|[ \t]+)`\.?[A-Za-z][A-Za-z0-9_.:]*)").captures_iter(code) {
         if dynamic {break;}
         let at=call.get(0).unwrap().start();let name=&call[1];if !boundary(code,at){continue;}
         if call.get(2).is_some() && !operand_ends(code, comments, call.get(0).unwrap().end()) {continue;}
@@ -3498,12 +3499,12 @@ pub fn check(
         // code, and the quote has to be blank in both views, which is what
         // distinguishes a masked string from a comment.
         let named = re!(
-            "(\\.?[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z][A-Za-z0-9_]*)*)[ \\t]+([`\"(A-Za-z0-9]|\\.[A-Za-z])"
+            "(\\.?[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)[ \\t]+([`\"(A-Za-z0-9]|\\.[A-Za-z])"
         );
         // Each query's phrases, from the keyword to `from` and through a
         // `where`, with the table it reads.
         let queries: Vec<(usize, usize, &str)> = re!(
-            r"\b(?:select|exec|update|delete)\b[^\n;]*?\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\b(?:\s+where\b[^\n;]*)?"
+            r"\b(?:select|exec|update|delete)\b[^\n;]*?\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\b(?:\s+where\b[^\n;]*)?"
         )
         .captures_iter(code)
         .map(|m| {
@@ -3987,7 +3988,7 @@ fn named_values(
         .1;
         resolved(name, ns)
     };
-    let name_re = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*";
+    let name_re = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*";
     // Every place a name is written: `a:`, `a::`, `a+:`, `a[i]:`, `a set`,
     // and `(a;b):`. A name written anywhere but its one plain top-level
     // assignment is not known.
@@ -4038,7 +4039,7 @@ fn named_values(
             }
         })
     };
-    for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*(?:\[[^\]]*\])?\s*[-+*%,&|^#_!~=<>$?@.]?::?")
+    for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*(?:\[[^\]]*\])?\s*[-+*%,&|^#_!~=<>$?@.]?::?")
         .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
@@ -4247,7 +4248,7 @@ fn named_values(
     // to 2 4 6 once lib.q's `init:{b::1 2 3}` is loaded (#523).
     // Inside a qSQL phrase a column of the table wins over the global of the
     // same name, and the text cannot say which columns the table has (#465).
-    let foreign_calls: Vec<usize> = re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*")
+    let foreign_calls: Vec<usize> = re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
         .find_iter(code)
         .filter(|m| boundary(code, m.start()) && foreign_lambda(&key(m.as_str(), m.start())))
         .map(|m| m.start())
@@ -4343,7 +4344,7 @@ fn named_values(
     // name and a symbol or parenthesis, `` a`b `` and `a(0)` (q 5: 'type).
     // `@[a;0]` and `.[a;enlist 0]` are read after this loop (#608).
     let indexed = re!(concat!(
-        r#"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)(?:\[|'[ \t]*\[|[`(]|[ \t]*@[ \t]*[0-9"`(A-Za-z]|[ \t]+\.[ \t]+[0-9"`(A-Za-z]|"#,
+        r#"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\[|'[ \t]*\[|[`(]|[ \t]*@[ \t]*[0-9"`(A-Za-z]|[ \t]+\.[ \t]+[0-9"`(A-Za-z]|"#,
         blank!(),
         r#"+([0-9"`(]|\.?[A-Za-z][A-Za-z0-9_]*))"#
     ));
@@ -4415,8 +4416,9 @@ fn named_values(
             ),
         ));
     }
-    for m in re!(r"[@.][ \t]*\[[ \t]*(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)[ \t]*;")
-        .captures_iter(code)
+    for m in
+        re!(r"[@.][ \t]*\[[ \t]*(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)[ \t]*;")
+            .captures_iter(code)
     {
         let name = m.get(1).unwrap();
         let open = m.get(0).unwrap().start() + code[m.get(0).unwrap().start()..].find('[').unwrap();
@@ -4452,7 +4454,7 @@ fn named_values(
     // The literal may start the indented line that continues the statement:
     // q 5 `r:a` over `  -1` is 'domain too (#687).
     for m in re!(concat!(
-        r"(?m)(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)",
+        r"(?m)(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)",
         blank!(),
         r"+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])}]|$)"
     ))
@@ -4477,7 +4479,7 @@ fn named_values(
     // like their top-level forms. A lambda's closing brace ends the literal too.
     // `local_atom` says when the text is sure.
     for m in re!(concat!(
-        r"(?m)(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)",
+        r"(?m)(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)",
         blank!(),
         r"+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])}]|$)"
     ))
@@ -4574,7 +4576,7 @@ fn named_values(
     // those operand kinds. An older note in this repository had `"a"*3` as
     // 291, on a version it did not record.
     // Booleans and bytes before plain integers, or `1b` matches as `1`.
-    let operand = r#""(?:\\.|[^"\\])*"|[01]+b|0x[0-9a-fA-F]+|(?:-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?[ \t]+)*-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?e\b|-?0[NW][hij]?\b|-?\d+[hij]?(?:[ \t]+-?\d+[hij]?)*|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*"#;
+    let operand = r#""(?:\\.|[^"\\])*"|[01]+b|0x[0-9a-fA-F]+|(?:-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?[ \t]+)*-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?e\b|-?0[NW][hij]?\b|-?\d+[hij]?(?:[ \t]+-?\d+[hij]?)*|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*"#;
     // The statement's blanks around the operator: `inc:x+` and then a
     // column-0 `"done"` are two statements (#741).
     let infix = regex::Regex::new(&format!(
@@ -4701,7 +4703,7 @@ fn named_values(
     // No `\b` before the keyword: `1_select` is a drop of a select (#351),
     // and `boundary` tells that from the name `x_select`. An indented line
     // continues the column list, and in a lambda a newline is whitespace (#336).
-    for m in re!(r"(?:select|exec|update)\b((?:[^\n;]|\n[ \t])*?)\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\b")
+    for m in re!(r"(?:select|exec|update)\b((?:[^\n;]|\n[ \t])*?)\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\b")
     .captures_iter(code)
     {
         if !boundary(code, m.get(0).unwrap().start()) {
@@ -4808,7 +4810,7 @@ fn named_values(
     // did not open: `(select from t where a>1),select ...` (#260), or a `;`
     // outside every bracket.
     let mut from = 0;
-    while let Some(m) = re!(r"(?:select|exec|update|delete)\b[^\n;]*?\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s+where\b")
+    while let Some(m) = re!(r"(?:select|exec|update|delete)\b[^\n;]*?\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s+where\b")
         .captures_at(code, from)
     {
         if !boundary(code, m.get(0).unwrap().start()) {
@@ -4879,7 +4881,7 @@ fn named_values(
     }
     // `` `c xkey t `` and its neighbours name columns by symbol, so a
     // missing one is the error whatever the file defines.
-    for m in re!(r"((?:`[A-Za-z][A-Za-z0-9_]*)+)\s+(?:xkey|xasc|xdesc|xcols)\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)").captures_iter(code) {
+    for m in re!(r"((?:`[A-Za-z][A-Za-z0-9_]*)+)\s+(?:xkey|xasc|xdesc|xcols)\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)").captures_iter(code) {
         let table = m.get(2).unwrap();
         if !operand_ends(code, comments, table.end()) {
             continue;
@@ -4987,7 +4989,7 @@ fn named_values(
     for m in re!(concat!(
         r"(?:\b(ljf|ijf|lj|ij|pj)|\((ljf|ijf|lj|ij|pj)\))(?:",
         blank!(),
-        r"+|\s*\[[^;\[\]]*;\s*)(\(\s*\[|\(\s*(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*\)|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)"
+        r"+|\s*\[[^;\[\]]*;\s*)(\(\s*\[|\(\s*(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*\)|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)"
     ))
     .captures_iter(code)
     .filter(|m| !code[..m.get(0).unwrap().start()].ends_with('.'))
@@ -5033,7 +5035,7 @@ fn named_values(
     // the same of the bracket form, `insert[`t;(1;2;3)]`, of upsert on the
     // table itself, `t upsert (1;2;3)`, and of a simple vector row,
     // `` `t insert 1 2 3 ``, whose items are the values.
-    let name = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*";
+    let name = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*";
     let row = r"\(|-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+";
     // Infix, the row is in the same statement: `add:`t insert` and then a
     // column-0 `(1;2;3)` are two statements (#743).
@@ -5055,7 +5057,7 @@ fn named_values(
     .unwrap();
     let dictionary = re!(r"^\(?\s*(?:`[A-Za-z][A-Za-z0-9_.]*)+\s*\)?\s*!");
     let dictionaries: HashSet<&str> = re!(
-        r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*:\s*\(?\s*(?:`[A-Za-z][A-Za-z0-9_.]*)+\s*\)?\s*!"
+        r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*:\s*\(?\s*(?:`[A-Za-z][A-Za-z0-9_.]*)+\s*\)?\s*!"
     )
     .captures_iter(code)
     .filter(|m| boundary(code, m.get(0).unwrap().start()))

@@ -13,7 +13,7 @@ use super::{
 use crate::{Definition, Local, Mention, Name, Place, boundary, pattern_names, signature};
 use std::collections::{HashMap, HashSet};
 
-const NAME: &str = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*";
+const NAME: &str = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*";
 
 /// Where `part`, a slice of `whole`, starts in it.
 fn offset_in(whole: &str, part: &str) -> usize {
@@ -85,7 +85,7 @@ fn ends_expression(rest: &str) -> bool {
 /// `!`) - and so writes it, where a select, `?` and the words that take a
 /// name only read it (#2054).
 fn by_name(code: &str) -> Vec<(usize, usize, bool)> {
-    const SYMBOL: &str = r"`(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)";
+    const SYMBOL: &str = r"`(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)";
     let whole = |name: regex::Match| {
         !code[name.end()..].starts_with(|c: char| c.is_ascii_alphanumeric() || "_.:/`".contains(c))
     };
@@ -562,7 +562,7 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
             definition: None,
         });
     }
-    for m in re!(r"`(\.[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)").captures_iter(code) {
+    for m in re!(r"`(\.[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)").captures_iter(code) {
         let name = m.get(1).unwrap();
         // A symbol runs on past where a name stops: `` `.a.b:c `` is no `.a.b`.
         if writes.contains(&name.start())

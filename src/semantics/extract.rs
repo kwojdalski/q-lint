@@ -21,7 +21,7 @@
 use super::{Scope, scope_at, scopes, top_level_statements};
 use crate::{boundary, query_clause};
 
-const NAME: &str = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*";
+const NAME: &str = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*";
 
 /// What Extract Function writes: the trimmed selection `start..end`, which
 /// becomes the call, `params` (in the order the lambda around introduces

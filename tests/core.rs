@@ -486,6 +486,16 @@ fn a_name_is_coloured_by_the_value_q_holds_it_as() {
 }
 
 #[test]
+fn a_name_with_a_segment_led_by_an_underscore_is_coloured() {
+    // KDB-X: `-4!".x.__h 1"` reads `.x.__h` as one token, and `key `.x`
+    // after these two lines is ``__h`_k (#2311).
+    assert_eq!(
+        functions(".x.__h:{x}\n.x._k:{x}\nq:(.x.__h 1;.x._k 2)\n"),
+        [".x.__h", ".x._k"]
+    );
+}
+
+#[test]
 fn a_root_lambda_is_not_coloured_inside_a_context() {
     use q_lint_rs::{TokenKind, Workspace, index, semantic_tokens_in};
     // q 5: under `\\d .ns`, `m:f 2` is 'f - no fallback to the root `f`,
