@@ -2005,3 +2005,11 @@ test("a helper lambda that updates, sorts or keys a table it is given by name is
     assert.ok(writes(code).length > 0, code);
   }
 });
+
+test("a system command's argument is read past a comment after it", () => {
+  for (const code of ["\\t 100 /c", "k)\\t\t100 /c", "\\t 100 / set the timer"]) {
+    assert.deepStrictEqual(writes(code), ["sets the timer with \\t"], code);
+  }
+  assert.deepStrictEqual(writes("\\t count t /c"), []);
+  assert.deepStrictEqual(writes("\\cd /tmp"), ["runs the system command \\cd"]);
+});

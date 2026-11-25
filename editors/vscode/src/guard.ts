@@ -1869,7 +1869,8 @@ function readStatement(statement: string, found: Set<string>): void {
   while (language === undefined && text.startsWith("\\")) {
     const command = /^\\(\\|[A-Za-z_]+)(?::\d+)?\s*([\s\S]*)$/.exec(text);
     const name = command?.[1] ?? "";
-    const argument = (command?.[2] ?? "").trim();
+    // (A comment after it, ` /c`, is not its argument: `\t 100 /c` sets the timer.)
+    const argument = (command?.[2] ?? "").replace(/\s+\/.*$/, "").trim();
     if (name === "t" && !text.startsWith("\\t:") && /^\d+$/.test(argument)) {
       found.add("sets the timer with \\t");
     } else if (name === "t" || name === "ts") {
