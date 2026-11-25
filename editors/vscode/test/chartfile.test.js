@@ -49,6 +49,26 @@ test("a JSON table's columns keep the text's order, integer-like names too, so t
   assert.deepStrictEqual(gridFromJson('{"region":["EU","US"],"2024":[1,3]}').cells[0], ["EU", "US"]);
 });
 
+test("a tab-separated header with a comma in a name is read by its tabs, and a .tsv always (#2457)", () => {
+  const g = gridFromCsv("date\tprice (EUR, net)\tqty\nmon\t1.5\t2\n");
+  assert.deepStrictEqual(g.columns.map((c) => [c.name, c.numeric]), [["date", false], ["price (EUR, net)", true], ["qty", true]]);
+  assert.deepStrictEqual(gridFromFile("a.tsv", "a,b\tc\n1,2\t3\n").columns.map((c) => c.name), ["a,b", "c"]);
+  assert.deepStrictEqual(gridFromCsv("a,b\n1,2\n").columns.map((c) => c.name), ["a", "b"]);
+});
+
+test("a one-column CSV's empty lines are null cells, each at its own row (#2458)", () => {
+  const g = gridFromCsv("\nlatency\n5\n\n\n7\n9\n");
+  assert.deepStrictEqual(g.values[0], [5, null, null, 7, 9]);
+  // Two columns: a blank line is no row.
+  assert.deepStrictEqual(gridFromCsv("a,b\n1,2\n\n3,4\n").values, [[1, 3], [2, 4]]);
+});
+
+test("a JSON column of strings is text, however much they look like numbers (#2469)", () => {
+  const g = gridFromJson('[{"day":"mon","zip":"02134","sales":5},{"day":"tue","zip":"10001","sales":null}]');
+  assert.deepStrictEqual(g.columns.map((c) => [c.name, c.numeric]), [["day", false], ["zip", false], ["sales", true]]);
+  assert.deepStrictEqual(gridFromJson('{"zip":["02134","10001"],"n":[1,2]}').columns.map((c) => c.numeric), [false, true]);
+});
+
 test("JSON columns of unequal length keep every value: the short ones are padded with empty cells (#1941)", () => {
   const short = gridFromJson('{"t":[1],"b":[5,6,7]}');
   assert.strictEqual(short.total, 3);
