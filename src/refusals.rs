@@ -1736,6 +1736,93 @@ fn juxtaposed_derived(
         finding.end_column = finding.column.map(|col| col + iter.len());
         out.push(finding);
     }
+    detached_iterator(path, source, code, &view, &opener, out);
+}
+
+/// QE009 too. An `'` or a `\` written after a blank that follows a value,
+/// with something after it: q 5 refuses `x 'y`, `1 \2`, `x ':y`,
+/// `if[c '"msg"]` (a `;` left out before a signal) and `x '/y`, naming the
+/// iterator, and takes `x '[y]`, `x '` and `(x ')`. The blank is no
+/// separator: the value before it is the iterator's operand, and with a
+/// value on its left the derived function is applied infix - q 5 parses
+/// `count key mp '"s"` - as `key mp'"s"` would be. After an infix keyword or
+/// a qSQL word the quote is a signal: `x in '"a"` and `select 'x from t`
+/// parse. A `/` after a blank opens a comment (#2216).
+fn detached_iterator(
+    path: &str,
+    source: &str,
+    code: &str,
+    view: &str,
+    opener: &std::collections::HashMap<usize, usize>,
+    out: &mut Vec<Finding>,
+) {
+    let c = code.as_bytes();
+    let v = view.as_bytes();
+    for (i, &it) in c.iter().enumerate() {
+        if !matches!(it, b'\'' | b'\\') || v[i] != it || i == 0 || !matches!(c[i - 1], b' ' | b'\t')
+        {
+            continue;
+        }
+        let line_start = code[..i].rfind('\n').map_or(0, |p| p + 1);
+        if crate::system_command(&source[line_start..]) {
+            continue;
+        }
+        let before = view[line_start..i].trim_end_matches([' ', '\t']);
+        let Some(&last) = before.as_bytes().last() else {
+            continue;
+        };
+        // A signature is no value: `{[a] '"x"}` signals (#2216).
+        if !(last.is_ascii_alphanumeric() || b"_)]}\"".contains(&last))
+            || after_signature(code, source, line_start + before.len())
+        {
+            continue;
+        }
+        let word = &before[before.len()
+            - before
+                .bytes()
+                .rev()
+                .take_while(|b| b.is_ascii_alphanumeric() || *b == b'_')
+                .count()..];
+        if crate::semantics::INFIX.contains(&word)
+            || matches!(
+                word,
+                "select" | "exec" | "update" | "delete" | "by" | "where" | "from"
+            )
+        {
+            continue;
+        }
+        let end = i + 1 + usize::from(c.get(i + 1) == Some(&b':'));
+        // More iterators after it derive more, and apply nothing: q 5 parses
+        // `(avg '')G`, and refuses `x '/y`.
+        let rest = view[end..].trim_start_matches(['\'', '/', '\\', ':', ' ', '\t']);
+        if rest.is_empty() || rest.starts_with(['\r', '\n', '[', ';', ')', ']', '}']) {
+            continue;
+        }
+        // The blank changes nothing: the value before it is the iterator's
+        // operand, and the derived function is refused only where it would
+        // be applied by juxtaposition. With a value on its left it is
+        // applied infix: q 5 parses `count key mp '"s"` and `(1#`) {x} \ y`.
+        let operand_end = line_start + before.len();
+        let expression = line_start + expression_start(&source[line_start..]);
+        if !derived_operand(view, c, opener, operand_end)
+            .is_some_and(|start| opens_expression(code, source, view, start, expression))
+        {
+            continue;
+        }
+        let iter = &code[i..end];
+        let mut finding = Finding::at(
+            path,
+            source,
+            i,
+            "QE009",
+            format!(
+                "`{iter}` after a blank derives no function from the value before it: q 5 \
+                 refuses this line with '{iter}"
+            ),
+        );
+        finding.end_column = finding.column.map(|col| col + iter.len());
+        out.push(finding);
+    }
 }
 
 /// Where the operand of an iterator at `at` starts, if it has one: a glyph

@@ -2124,3 +2124,173 @@ a:select from t where each b
 nums:raze exec 1_/:num[idx]@'where each b idx from uniqueTab
 a:select where each b from t
 a:select a by where each b from t
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:x 'y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:1 '2
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+if[1>0 '"failed"]
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '\, #2216)
+a:1 \2
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '\, #2216)
+a:x \y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: ', #2216)
+a:1 \ c
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '\:, #2216)
+a:x \:y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '':, #2216)
+a:x ':y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:x '`a
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:-1 '"";
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:{x 'y}
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:x '(y)
+
+=== clean profile: general | while q 5 parses each of these (#2216)
+if[1>0;'"failed"]
+a: '"x"
+a:x / comment
+a:"x '\" y"
+f:{x '[y]}
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: ', #2216)
+a:x ' y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: ', #2216)
+a:x \ y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+f[x '"s"]
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:(x 'y)
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:1 2 '3
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:"ab" 'c
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:x[0] 'y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:{x} 'y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:`a 'y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '/, #2216)
+a:x '/y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '\, #2216)
+a:x '\y
+
+=== clean profile: general | while q 5 parses each of these (#2216)
+a:x ':[y]
+a:x \:[y]
+a:x '
+a:x \
+a:1+ '"x"
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+if[1 '2]
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+do[3 'x]
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:x 'y;
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '/:, #2216)
+a:x '/:y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:"a" '"b"
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+f:{x '1}
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '/, #2216)
+a:x \/y
+
+=== clean profile: general | while q 5 parses each of these (#2216)
+a:x in '"a"
+a:select 'x from t
+a:x mod 'y
+a:x each 'y
+a:x '
+a:x ' ;
+a:(x ')
+a:x[x '[y]]
+a:x-'y
+a:x - 'y
+a:x+ \y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: ', #2216)
+a:{x} \ y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '\, #2216)
+a:{x} \y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:{x} 'y
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '\, #2216)
+a:x \"i"
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: ', #2216)
+a:x \ "i"
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:x '"i"
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:x__y '"s"
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:.t.__a '"s"
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '', #2216)
+a:.t._a '"s"
+
+=== QE010 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '2006.05m2, #2216)
+a:2006.05m2
+
+=== QE010 profile: general | an iterator after a blank, applied by juxtaposition (q 5: '1m2, #2216)
+a:1m2
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: ', #2216)
+a:{x} \ 1 2
+
+=== QE009 profile: general | an iterator after a blank, applied by juxtaposition (q 5: ', #2216)
+a:f \ y
+
+=== clean profile: general | while q 5 parses each of these (#2216)
+a:2006.05m2006.04m
+a:(1#`) {x} \ y
+a:1 {x} \ y
+a:x g \ y
+a:x g 'y
+a:f x '"s"
+
+
+=== clean profile: general | while q 5 parses each of these (#2216)
+a:(avg '')G
+a:f x '"s"
+
