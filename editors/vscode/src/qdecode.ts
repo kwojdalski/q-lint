@@ -26,6 +26,10 @@ export type QValue =
   /// A function: a lambda's text, or none for any other kind.
   | { kind: "func"; t: number; text?: string };
 
+/// A value q sends by reference - a mapped table, as its path - so none of
+/// it can be shown: said as that, never as the codec's reading of it.
+export class ByReference extends Error {}
+
 /// The body of a compressed message, uncompressed, behind an 8-byte header:
 /// kdb+'s scheme (code.kx.com/q/basics/ipc), as its own clients undo it.
 function decompress(message: Buffer): Buffer {
@@ -202,6 +206,13 @@ export function decode(message: Buffer): QValue {
     const attr = b.readInt8(pos++);
     if (t === 98) {
       const dict = value();
+      // A mapped splayed or partitioned table is sent as its columns and
+      // its path, or its name: none of its rows (#2569).
+      if (dict.kind === "dict" && dict.v.kind === "atom" && dict.v.t === -11) {
+        const ref = dict.v.v === null ? "" : ` \`${dict.v.v}`;
+        const as = String(dict.v.v).startsWith(":") ? "its path" : "its name";
+        throw new ByReference(`a splayed or partitioned table is sent by reference (${as}${ref}), with none of its rows: select from it to see them, as select from t does.`);
+      }
       if (dict.kind !== "dict" || dict.k.kind !== "vector" || dict.v.kind !== "list") {
         throw new Error("a table that is not a dictionary of columns");
       }
