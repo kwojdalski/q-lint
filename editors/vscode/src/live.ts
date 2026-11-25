@@ -72,7 +72,7 @@ import { clickedEditor, unsavedIn } from "./clicked";
 import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
 import { ClosedBeforeHandshake, QConnection, QError, type DirectMode, type Target } from "./qclient";
 import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, TunnelHandshakeError, readTunnel } from "./tunnel";
-import { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, readGateway } from "./gateway";
+import { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, readGateway, withServerTypes } from "./gateway";
 import { isLocalHost } from "./launcher";
 import { HEARTBEAT, STEADY_MS, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
 import { clearedStamp, historyHeading, historyLabel, iconsEscaped, mergedHistory, plainMessage } from "./history";
@@ -2707,7 +2707,13 @@ export class Live {
     // A file can name the server types its queries go to on a gateway.
     const document = window.activeTextEditor?.document;
     const named = document !== undefined && document.uri.toString() === uri.toString() ? fileServerTypes(document.getText()) : undefined;
-    await this.run(code, undefined, serverTypes ?? named);
+    // Types chosen for a gateway call already made, a history entry, are
+    // its types now; a call of any other shape keeps its own, said (#2592).
+    const retyped = serverTypes !== undefined && isGatewayCall(code) ? withServerTypes(code, serverTypes) : undefined;
+    if (serverTypes !== undefined && isGatewayCall(code) && retyped === undefined) {
+      void window.showInformationMessage(plainMessage(`q-lint: this code is a gateway call already, so it goes to the server types it names, not ${serverTypes.join(", ")}.`));
+    }
+    await this.run(retyped ?? code, undefined, serverTypes ?? named);
   }
 
   /// `code` as it goes to `process`: through `.gw.syncexec` on a TorQ gateway
