@@ -521,7 +521,9 @@ export class QTerminals {
     const layout = layoutEnvFor(qBinaryFrom(settings.qBinary, folder?.uri.fsPath, os.homedir()) ?? settings.qBinary, from);
     const { shown, hidden, refs } = terminalEnv(layout, variables, await dotenvFor(from));
     // A file inside the folder is named relative to it, as you would type it.
-    const relative = file !== undefined && cwd !== undefined ? relativeInside(cwd, file) : undefined;
+    // One starting with `-` from `./`, or q reads it as an option (#2373).
+    const inside = file !== undefined && cwd !== undefined ? relativeInside(cwd, file) : undefined;
+    const relative = inside?.startsWith("-") ? `.${path.sep}${inside}` : inside;
     const args = file === undefined ? [] : [relative ?? file, ...extraArgs];
     // A relative q is the folder's, as in the launcher, also for a file
     // outside every folder, whose terminal starts elsewhere (#1716).
