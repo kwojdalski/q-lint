@@ -1736,6 +1736,7 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
             code,
             raw,
             &view,
+            &scopes,
             |at| {
                 if scope_at(&scopes, at).is_some() || at < first_switch {
                     String::new()
@@ -1945,11 +1946,12 @@ fn loads(
     code: &str,
     raw: &str,
     view: &str,
+    scopes: &[Scope],
     namespace_at: impl Fn(usize) -> String,
     moved: &mut Vec<usize>,
 ) -> Vec<(String, String)> {
     let sites = load_sites(code, raw, view);
-    let cd = changes_directory(code, raw, view).min(loads_directory(raw, &sites));
+    let cd = changes_directory(code, raw, view, scopes).min(loads_directory(raw, &sites, scopes));
     let mut loads = vec![];
     for (at, path, symbol) in sites {
         let path = &raw[path];
@@ -1965,8 +1967,10 @@ fn loads(
 }
 
 /// Where the script first changes directory, `\cd lib` or `system "cd lib"`,
-/// or past the end when it never does.
-fn changes_directory(code: &str, raw: &str, view: &str) -> usize {
+/// or past the end when it never does. Not in a lambda, which changes it
+/// only when called: KDB-X loads the lib.q beside the script for `\l lib.q`
+/// under `cdTo:{system "cd ",x}` (#2821).
+fn changes_directory(code: &str, raw: &str, view: &str, scopes: &[Scope]) -> usize {
     raw.split_inclusive('\n')
         .scan(0, |offset, line| {
             let at = *offset;
@@ -1984,7 +1988,8 @@ fn changes_directory(code: &str, raw: &str, view: &str) -> usize {
             re!(r#"\bsystem\s*(?:\[\s*|@\s*)?"cd\s+\S"#)
                 .find_iter(raw)
                 .map(|m| m.start())
-                .filter(|&at| view[at..].starts_with("system") && boundary(view, at)),
+                .filter(|&at| view[at..].starts_with("system") && boundary(view, at))
+                .filter(|&at| scope_at(scopes, at).is_none()),
         )
         .min()
         .unwrap_or(usize::MAX)
@@ -1995,8 +2000,9 @@ fn changes_directory(code: &str, raw: &str, view: &str) -> usize {
 /// loads db/helper.q for `\l helper.q` and fails where only the directory it
 /// started in has one (#1365). The text cannot tell a directory from a data
 /// file, which moves nowhere, so any last component without a dot counts;
-/// `\l .`, a database reloading itself, stays where it is.
-fn loads_directory(raw: &str, sites: &[(usize, Range<usize>, bool)]) -> usize {
+/// `\l .`, a database reloading itself, stays where it is, and so does the
+/// script whose lambda loads one, until it is called (#2821).
+fn loads_directory(raw: &str, sites: &[(usize, Range<usize>, bool)], scopes: &[Scope]) -> usize {
     let directory = |path: &str| {
         let name = path.trim_end_matches(['/', '\\']);
         let name = name.rsplit(['/', '\\']).next().unwrap_or(name);
@@ -2006,6 +2012,7 @@ fn loads_directory(raw: &str, sites: &[(usize, Range<usize>, bool)]) -> usize {
         .iter()
         .filter(|(_, path, symbol)| !symbol && directory(&raw[path.clone()]))
         .map(|&(at, ..)| at)
+        .filter(|&at| scope_at(scopes, at).is_none())
         .min()
         .unwrap_or(usize::MAX)
 }
@@ -2056,8 +2063,10 @@ fn load_sites(code: &str, raw: &str, view: &str) -> Vec<(usize, Range<usize>, bo
 /// navigation request on one follows to the file it names.
 pub fn load_paths(code: &str, raw: &str) -> Vec<Range<usize>> {
     let view = commands_blanked(code, raw);
+    let (scopes, _) = scopes(code, raw);
     let sites = load_sites(code, raw, &view);
-    let cd = changes_directory(code, raw, &view).min(loads_directory(raw, &sites));
+    let cd =
+        changes_directory(code, raw, &view, &scopes).min(loads_directory(raw, &sites, &scopes));
     sites
         .into_iter()
         .filter(|(at, path, symbol)| *symbol || *at <= cd || raw[path.clone()].starts_with('/'))

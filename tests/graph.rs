@@ -496,6 +496,39 @@ fn a_relative_load_after_a_change_of_directory_is_dynamic() {
 }
 
 #[test]
+fn a_change_of_directory_in_a_lambda_moves_no_load_below_it() {
+    // KDB-X: under `cdTo:{system "cd ",x}`, never called, `\l lib.q` loads
+    // the lib.q beside the script, and `lf` is 1 (#2821). So under a lambda
+    // that would load a directory.
+    for helper in [
+        "cdTo:{system \"cd \",x}\n",
+        "cdTo:{system \"cd lib\"}\n",
+        "ld:{system \"l db\"}\n",
+        "ld:{[d]\n  system \"l db\";\n  d}\n",
+    ] {
+        let g = graph(
+            &[
+                ("lib.q", "lf:1\n"),
+                ("a.q", &format!("{helper}\\l lib.q\n")),
+            ],
+            false,
+        );
+        assert_eq!(deps(&g, "a.q"), ["lib.q"], "{helper:?}");
+        assert!(kinds(&g, "a.q").is_empty(), "{helper:?}");
+    }
+    // At the top level a directory computed moves it as a literal one does.
+    let g = graph(
+        &[
+            ("lib.q", "lf:1\n"),
+            ("a.q", "d:\"lib\"\nsystem \"cd \",d\n\\l lib.q\n"),
+        ],
+        false,
+    );
+    assert!(deps(&g, "a.q").is_empty());
+    assert_eq!(kinds(&g, "a.q"), [(3, "load")]);
+}
+
+#[test]
 fn a_relative_load_after_a_directory_load_is_dynamic() {
     // KDB-X: `\l db` leaves the process in db, so the `\l helper.q` after it
     // loads db/helper.q, and fails where only the directory it started in has
