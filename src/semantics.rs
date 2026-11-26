@@ -3663,24 +3663,43 @@ pub fn check(
         // standing in for a function another file defines (#110).
         // It answers with the rank that lambda still takes, `None` when the
         // name holds no lambda there.
+        // Each name's root assignments, in order, gathered once and searched
+        // by bisection: gathered again for each use, a global assigned and
+        // read over and over took time quadratic in the file (#2869).
+        let root_writes: HashMap<&str, Vec<usize>> = globals
+            .iter()
+            .map(|(name, assignments)| {
+                let mut root: Vec<usize> = assignments
+                    .iter()
+                    .copied()
+                    .filter(|&a| scope_at(&scopes, a).is_none())
+                    .collect();
+                root.sort_unstable();
+                (name.as_str(), root)
+            })
+            .collect();
+        // `sqrt enorm2::` composes - psaris's funq defines `enorm` so - and
+        // the `::` with nothing after it assigns nothing.
+        let valued_writes: HashMap<&str, Vec<usize>> = root_writes
+            .iter()
+            .map(|(&name, root)| {
+                let valued = root
+                    .iter()
+                    .copied()
+                    .filter(|&a| {
+                        let value = code[a..].trim_start_matches([' ', '\t']);
+                        !(value.is_empty() || value.starts_with([';', '\n', '\r', ')', ']', '}']))
+                    })
+                    .collect();
+                (name, valued)
+            })
+            .collect();
         let held_rank = |name: &str, at: usize, in_lambda: bool| {
-            let assignments = globals.get(name)?;
-            // `sqrt enorm2::` composes - psaris's funq defines `enorm` so - and
-            // the `::` with nothing after it assigns nothing.
-            let mut root: Vec<usize> = assignments
-                .iter()
-                .copied()
-                .filter(|&a| scope_at(&scopes, a).is_none())
-                .filter(|&a| {
-                    let value = code[a..].trim_start_matches([' ', '\t']);
-                    !(value.is_empty() || value.starts_with([';', '\n', '\r', ')', ']', '}']))
-                })
-                .collect();
-            root.sort_unstable();
+            let root = valued_writes.get(name)?;
             let live = if in_lambda {
                 root.last()
             } else {
-                root.iter().rev().find(|&&a| a < at)
+                root[..root.partition_point(|&a| a < at)].last()
             };
             match live {
                 Some(&a) => assigned_rank(code, raw, a),
@@ -3721,17 +3740,11 @@ pub fn check(
         // The columns of the table literal `table` holds where it is read at
         // `at`, by the same assignment-in-force rule as `held_rank`.
         let columns_of = |table: &str, at: usize, in_lambda: bool| -> Option<Vec<String>> {
-            let mut root: Vec<usize> = globals
-                .get(table)?
-                .iter()
-                .copied()
-                .filter(|&a| scope_at(&scopes, a).is_none())
-                .collect();
-            root.sort_unstable();
+            let root = root_writes.get(table)?;
             let &start = if in_lambda {
                 root.last()
             } else {
-                root.iter().rev().find(|&&a| a < at)
+                root[..root.partition_point(|&a| a < at)].last()
             }?;
             let (mut end, mut depth, bytes) = (start, 0i32, code.as_bytes());
             while end < bytes.len() {

@@ -2120,3 +2120,22 @@ fn many_queries_in_one_lambda_lint_in_linear_time() {
         "4000 queries took {small:?} and 32000 {large:?}"
     );
 }
+/// A global assigned and read over and over, as a generated or a long
+/// imperative script does: each read gathered every assignment of the name
+/// to find the one in force (#2869).
+#[test]
+fn a_global_reassigned_and_read_many_times_lints_in_linear_time() {
+    let time = |n: usize| {
+        let source = "a:1\nr:a 0\n".repeat(n);
+        best_of_three(|| lint(&source, "t.q", Profile::Uqf))
+    };
+    time(2000); // warm the allocator and the regex caches
+    let (small, large) = (time(2000), time(16000));
+    eprintln!("2000 reassignments took {small:?} and 16000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "2000 reassignments took {small:?} and 16000 {large:?}"
+    );
+}
