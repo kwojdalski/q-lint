@@ -58,3 +58,13 @@ test("an exported script defines an entry's names where it ran, after an entry t
   assert.strictEqual((await c.evaluate(`@[system;"l ${file}";{x}]`)).value, null);
   assert.deepStrictEqual((await c.evaluate("(`htotal in key `.;`hlimit in key `.hcfg;`htotal in key `.hcfg)")).value, [true, true, false]);
 });
+
+test("an exported script loads the entries after one that holds a / and a no-break space (#2907)", { skip }, async (t) => {
+  const { connection: c, dir } = await connect(t, "");
+  const file = path.join(dir, "nbsp.q");
+  // A line comment to q: closed as a block comment, its `\\` ended the
+  // script before the newer entry.
+  fs.writeFileSync(file, historyScript(["hn3:hn1+hn2", "hn1:1\n/\u00a0\nhn2:2", "hf1:1\n/\f\nhf2:2"].map(entry)));
+  assert.strictEqual((await c.evaluate(`@[system;"l ${file}";{x}]`)).value, null);
+  assert.deepStrictEqual((await c.evaluate("`hf1`hf2`hn1`hn2`hn3 in key `.")).value, [true, true, true, true, true]);
+});
