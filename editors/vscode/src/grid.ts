@@ -180,6 +180,10 @@ export const GRID_TREE_READ_ONLY = gridLambda(true, undefined, true);
 /// The rows `off` to `off+n` of the table `GRID` held for this client
 /// under the token `tok`, as `GRID`'s `grid` writes them but for its `keys`
 /// and `tree`: `count` is the rows held, and the ranks are the page's own.
+/// A general column holding other than strings is ranked over every row up
+/// to the page's last instead: q orders it by its values, which no cell's
+/// text sorts as (#3082), a char atom before the strings (#3069). Not a
+/// partitioned table's, read by row index.
 /// q's error as a string when it is not held, as after the process
 /// restarted or another result of this client replaced it.
 export const PAGE = [
@@ -188,11 +192,12 @@ export const PAGE = [
   `   h:@[value;\`${HELD};()!()];h:$[99h=type h;$[.z.w in key h;h .z.w;()];()];if[not tok~first h;'\`held];`,
   `   t:last h;if[not 98h=type t;'\`held];m:count t;e:{1_-1_-3!x} each "c"$til 256;`,
   "   j:(\"j\"$off)+til 0|(\"j\"$n)&m-\"j\"$off;",
-  "   y:$[p:1b~.Q.qp t;();type each $[count[cols t]=count distinct cols t;t cols t;value flip t]];",
+  "   y:type each d:$[p:1b~.Q.qp t;();$[count[cols t]=count distinct cols t;t cols t;value flip t]];",
   "   t:$[p;$[count j;.Q.ind[t;j];select from t where i<0];t j];",
   "   c:$[count[cols t]=count distinct cols t;t cols t;value flip t];if[p;y:type each c];",
+  "   r:$[p;c;{[k;u;x;d]$[(u=0h)|u within 77 97h;$[all 10h=type each d:k sublist d;x;d];x]}[(\"j\"$off)+count j]'[y;c;d]];",
   "   `count`names`types`cells`raw`rank!(\"f\"$m;$[any 127<\"i\"$\"x\"$raze nm:string cols t;{$[any 127<\"i\"$\"x\"$x;\"x\"$x;`$x]} each nm;cols t];{$[x within 77 97h;0h;x]}each y;",
-  ...COLUMN_LINES.map((line, i) => line.replace(/^ {7}/, "").replace(/;$/, i === COLUMN_LINES.length - 1 ? ")};" : ";")),
+  ...COLUMN_LINES.map((line, i) => (i === COLUMN_LINES.length - 1 ? line.replace(/^ {7}/, "").replace(/ each c;$/, " each r)};") : line.replace(/^ {7}/, ""))),
   "   (tok;off;n);{x}]}",
 ].join("\n");
 
@@ -825,8 +830,9 @@ function remember(rank: number[]): number[] {
 /// `payload` with `page`'s rows after its own. The ranks are ranked again
 /// over both - by the raw numbers where there are some, by the text where q
 /// sorts by it (symbols, chars, booleans, bytes, guids) - and are dropped
-/// for a column q could not sort. A page whose columns are not the
-/// payload's is refused.
+/// for a column q could not sort. A general column `PAGE` ranked over every
+/// row takes those ranks. A page whose columns are not the payload's is
+/// refused.
 export function appendPage(payload: GridPayload, page: GridPage): GridPayload {
   if (page.names.length !== payload.names.length || page.names.some((n, i) => n !== payload.names[i] || page.types[i] !== payload.types[i])) {
     throw new Error("the rows held on the process are not this result's");
@@ -842,10 +848,15 @@ export function appendPage(payload: GridPayload, page: GridPage): GridPayload {
   });
   const rank = cells.map((column, i) => {
     const held = payload.cells[i].length;
+    // `PAGE` ranked a general column of other than strings over the rows
+    // held and its own (#3082).
+    if (payload.types[i] === 0 && held > 0 && page.rank[i].length === column.length) {
+      return page.rank[i];
+    }
     const ranked = payload.rank[i].length === held && page.rank[i].length === page.cells[i].length;
     // A general column of other than strings q ranked by its values, which
-    // no cell's text sorts as (#2452): unranked once paged, as one q could
-    // not sort.
+    // no cell's text sorts as (#2452): unranked when the page ranked only
+    // its own rows, as one q could not sort.
     if (!ranked || (payload.types[i] === 0 && column.some((cell) => !/^,?"/.test(cell)))) {
       return [];
     }

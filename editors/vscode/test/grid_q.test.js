@@ -213,6 +213,28 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
     await connection.queryGrid(statements("([] a:til 50)"), SIZE, 10);
     assert.strictEqual((await connection.query(statements("key `.qlint"), SIZE)).text.join(""), before);
   });
+  await t.test("a general column of other than strings is ranked by q over every row held once paged, not sorted by its text (#3069, #3082)", async () => {
+    const { gridLambda, PAGE, readPage, appendPage, readGridAnswer, toGrid } = require("../out/grid.js");
+    const { visibleRows } = require("../media/result.js");
+    const cases = [
+      ["([] g:(10;9;100;2.5;`a;20;1;3))", 4, ["1", "3", "9", "10", "20", "100", "2.5", "`a"]],
+      // Char atoms sort before the strings, a one-character one among them.
+      ['([] a:("b";enlist"a";"";"abc";"B";"ab";enlist"a"))', 2, ['"B"', '"b"', '""', ',"a"', ',"a"', '"ab"', '"abc"']],
+      ["([] a:(1 2;3 4;1 2;0 1;5 6))", 2, ["0 1", "1 2", "1 2", "3 4", "5 6"]],
+      // Strings alone are ranked by their text, as before.
+      ['([] a:("bb";enlist"a";"abc";"BB";"ab"))', 2, ['"BB"', ',"a"', '"ab"', '"abc"', '"bb"']],
+    ];
+    for (const [code, limit, sorted] of cases) {
+      const full = (await connection.queryGrid(statements(code), SIZE, 100)).grid;
+      let grid = readGridAnswer(await connection.call(gridLambda(false, TOKEN), statements(code), SIZE, limit)).grid;
+      while (grid.cells[0].length < grid.count) {
+        grid = appendPage(grid, readPage(await connection.call(PAGE, TOKEN, grid.cells[0].length, limit)));
+      }
+      assert.deepStrictEqual(grid.rank, full.rank, code);
+      const shown = toGrid(grid, -1);
+      assert.deepStrictEqual(visibleRows(shown, [], { column: 0, descending: false }).map((r) => shown.cells[0][r]), sorted, code);
+    }
+  });
   await t.test("a general column pages though the rows of a cut or a page are all of one type, which q makes a vector of (#3068)", async () => {
     const { gridLambda, PAGE, readPage, appendPage, readGridAnswer } = require("../out/grid.js");
     const cases = [
@@ -415,10 +437,10 @@ test("rows added by Load more read symbols from their bytes, keep them for Copy 
   const copied = tableLiteral(all).code;
   assert.deepStrictEqual((await c.query(statements(`(select s from t)~select s from ${copied}`), SIZE)).text, ["1b"], copied);
   assert.deepStrictEqual((await c.query(statements(`(exec value e from t)~exec e from ${copied}`), SIZE)).text, ["1b"], copied);
-  // q's order: a general column cannot be sorted by its text, so is not
-  // ranked once paged; a char column sorts by its byte.
+  // q's order: a general column cannot be sorted by its text, so q ranks
+  // it again over the rows held (#3082); a char column sorts by its byte.
   const grid = toGrid(all, -1);
-  assert.strictEqual(grid.rank[2], null);
+  assert.deepStrictEqual(grid.rank[2], [0, 3, 1, 2]);
   const order = (r) => r.map((x, i) => [x, i]).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
   assert.deepStrictEqual(order(grid.rank[3]), [3, 1, 2, 0]);
 });

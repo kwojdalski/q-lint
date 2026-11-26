@@ -648,6 +648,16 @@ test("a page added to a symbol column ranks it in code point order, as q sorts b
   assert.deepStrictEqual(panel.visibleRows(grid, [], { column: 0, descending: false }), [2, 1, 0]);
 });
 
+test("a page that ranks a general column over every row held gives the column those ranks; one that ranks its own rows leaves it unranked (#3082)", () => {
+  const first = { count: 4, keys: 0, names: ["g"], types: [0], cells: [["10", "9"]], raw: [[]], rank: [[1, 0]] };
+  const page = { count: 4, names: ["g"], types: [0], cells: [["100", "2.5"]], raw: [[]], rank: [[1, 0, 2, 3]] };
+  assert.deepStrictEqual(appendPage(first, page).rank[0], [1, 0, 2, 3]);
+  // A partitioned table's page, ranked alone: by text only if all are strings.
+  assert.deepStrictEqual(appendPage(first, { ...page, rank: [[0, 1]] }).rank[0], []);
+  // The last page, of no rows.
+  assert.deepStrictEqual(appendPage(first, { ...page, cells: [[]], rank: [[1, 0]] }).rank[0], [1, 0]);
+});
+
 test("a page added to a string column ranks a cell GRID cut at 197 characters by its characters, not its quote (#1643)", () => {
   const long = '"' + "z".repeat(196) + "...";
   const first = { count: 3, keys: 0, names: ["s"], types: [0], cells: [['"apple"']], raw: [[]], rank: [[0]] };
