@@ -37,6 +37,11 @@ export function expressionProblem(expression: string): string | undefined {
   if (e.startsWith("\\")) {
     return "the benchmark times a q expression, not a system command";
   }
+  // After `\ts:N ` a leading `/` opens a comment: q would time nothing,
+  // and the table show it beside the real expression (#2987).
+  if (e.startsWith("/")) {
+    return "the benchmark times a q expression, not a comment";
+  }
   return undefined;
 }
 
