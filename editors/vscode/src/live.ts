@@ -3151,12 +3151,13 @@ export class Live {
     const timeout = ownTimeout(ready.process, enabled);
     let timedOut = false;
     // What is left of it after waiting to be sent.
-    const disarm = armTimeout(left(timeout, waited), () => {
+    const expire = (): void => {
       if (this.running?.started === started) {
         timedOut = true;
         void this.abort(timeout, timeoutSource(ready?.process, enabled));
       }
-    });
+    };
+    let disarm = armTimeout(left(timeout, waited), expire);
     try {
       const backstopped = this.backstop(ready.connection, ready.process, code);
       let value: T | undefined;
@@ -3181,10 +3182,13 @@ export class Live {
         if (guard === "refuse") {
           throw new Error(refusalReason(ready.process.label, refused));
         }
+        // Not timed while the user is asked (#2559).
+        disarm();
         if (await this.refusedAnyway(ready.process, refused)) {
           if (!ready.connection.isOpen || ready.connection.isBusy) {
             throw new Error(`Not run again: the connection to ${ready.process.label} closed or became busy while you were asked.`);
           }
+          disarm = armTimeout(timeout, expire);
           value = await query(ready.connection);
           thrown = undefined;
         }
@@ -3330,10 +3334,11 @@ export class Live {
     const controls = this.controls.settings();
     const timeout = effectiveTimeout(process, controls.timeout, this.setting(readAdmin).processTimeout);
     let timedOut = false;
-    const disarm = armTimeout(timeout, () => {
+    const expire = (): void => {
       timedOut = true;
       connection.abort();
-    });
+    };
+    let disarm = armTimeout(timeout, expire);
     try {
       await this.runConnectScript(connection, process, undefined, options.unattended === true);
       const configuration = workspace.getConfiguration("q-lint");
@@ -3359,7 +3364,13 @@ export class Live {
       if (options.unattended === true) {
         throw new Error(refusalReason(process.label, refused));
       }
-      return (await this.refusedAnyway(process, refused)) ? await connection.queryGrid(cut, consoleSize, gridLimit) : answer;
+      // The user's time to answer is not the query's (#2559).
+      disarm();
+      if (!(await this.refusedAnyway(process, refused))) {
+        return answer;
+      }
+      disarm = armTimeout(timeout, expire);
+      return await connection.queryGrid(cut, consoleSize, gridLimit);
     } catch (error) {
       throw timedOut ? new Error(timedOutError(timeout)) : signal?.aborted ? new Error("cancelled") : error;
     } finally {
@@ -3579,12 +3590,13 @@ export class Live {
     this.showStatus();
     // A query still running at the timeout is aborted as Abort does; the
     // time it waited to be sent counts (#2126).
-    const disarm = armTimeout(left(timeout, waited), () => {
+    const expire = (): void => {
       if (this.running?.started === started) {
         this.timedOut = started;
         void this.abort(timeout, timeoutSource(process, timeoutOn));
       }
-    });
+    };
+    let disarm = armTimeout(left(timeout, waited), expire);
     let entry: HistoryEntry;
     try {
       // Grid and chart modes ask for the rows too; a value that is not
@@ -3621,8 +3633,14 @@ export class Live {
       }
       const refused = backstopped ? this.backstopped(connection, process) : undefined;
       // A watched query's later runs ask nothing: its error says why.
+      // Not timed while the user is asked; the query sent again has a
+      // timeout of its own (#2559).
+      if (refused !== undefined && as !== "watched") {
+        disarm();
+      }
       if (refused !== undefined && as !== "watched" && (await this.refusedAnyway(process, refused))) {
         if (connection.isOpen && !connection.isBusy && this.connection === connection) {
+          disarm = armTimeout(timeout, expire);
           answer = await send();
         } else {
           void window.showInformationMessage(plainMessage(`q-lint: the connection to ${process.label} closed or became busy while you were asked; nothing more was run.`));
