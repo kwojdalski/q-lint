@@ -49,5 +49,23 @@ object per rule that has any, the most frequent first:
 | `summary` | string | The rule's summary, as `why` above. |
 
 The exit code is the one the findings would give: 0 with none, 1 with any.
+
+## `--show-settings`
+
+`qlinter --show-settings --format json PATH...` prints one array on a single
+line, with an object for each path in the order they were given:
+
+<!-- settings-fields: tests/output_doc.rs checks this table against the CLI -->
+| field | type | meaning |
+|---|---|---|
+| `file` | string | The path asked about, as an absolute path. |
+| `configuration` | string or null | The configuration file that governs it; `null` where none does and the built-in defaults apply. |
+| `profile` | string | The profile in force there. |
+| `target-version` | string or null | The `target-version` in force - `3.6`, `4.0`, `4.1` or `kdbx` - and `null` with none, where the QK rules report nothing. |
+| `rules` | array of strings | The codes of the rules that report for the file, sorted. |
+
+`--format sarif` and `--format github` report findings, and are refused here
+as `--rules` and `--explain` refuse them.
+
 `--format sarif` and `--format github` are described in the README's
 [Reports for CI](../README.md#reports-for-ci).

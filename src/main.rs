@@ -608,6 +608,14 @@ fn run(args: Args) -> Result<u8, String> {
     }
     let policy = Policy::new(overrides(&args)?, false);
     if args.show_settings {
+        // As `--rules` does: text printed under `--format json` is nothing
+        // the script that asked for JSON can read (#2760).
+        if !matches!(args.format.as_str(), "text" | "json") {
+            return Err(format!(
+                "--format {} reports findings; --show-settings prints text or json",
+                args.format
+            ));
+        }
         // The buffer an editor pipes is the file it asks about (#806),
         // named `-` or not, as Ruff's `--stdin-filename X -` names it.
         let only_stdin = args.paths.is_empty() || args.paths == [Path::new("-")];
@@ -618,6 +626,7 @@ fn run(args: Args) -> Result<u8, String> {
         } else {
             args.paths.clone()
         };
+        let mut described = vec![];
         for path in &paths {
             // A directory is described as a file inside it would be, so its
             // own configuration counts.
@@ -626,7 +635,14 @@ fn run(args: Args) -> Result<u8, String> {
             } else {
                 path.to_path_buf()
             };
-            out!("{}\n", policy.describe(&probe, &args.backend)?);
+            described.push(policy.describe(&probe, &args.backend)?);
+        }
+        if args.format == "json" {
+            out!("{}", serde_json::to_string(&described).unwrap());
+        } else {
+            for one in &described {
+                out!("{one}\n");
+            }
         }
         return Ok(0);
     }

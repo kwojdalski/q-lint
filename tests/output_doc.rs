@@ -75,6 +75,25 @@ fn every_statistics_field_is_documented() {
 }
 
 #[test]
+fn every_show_settings_field_is_documented_in_order() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.q"), "a:1\n").unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(dir.path())
+        .args(["--isolated", "--show-settings", "--format", "json", "a.q"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let printed = String::from_utf8(out.stdout).unwrap();
+    let one = printed
+        .trim_end()
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .unwrap_or_else(|| panic!("{printed}"));
+    assert_eq!(documented("settings-fields"), keys_in_order(one));
+}
+
+#[test]
 fn the_documented_example_is_what_the_cli_prints() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("a.q"), "f:{[count] count+1}\n").unwrap();

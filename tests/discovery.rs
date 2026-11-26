@@ -523,6 +523,69 @@ fn show_settings_names_the_file_in_force() {
     assert!(text.contains("QE004"), "{text}");
 }
 
+/// `--show-settings --format json` is JSON, one object for each path: it
+/// printed the text whatever the format, which no `json.loads` reads, and
+/// took `sarif` and `github`, which `--rules` refuses (#2760).
+#[test]
+fn show_settings_prints_json_when_asked_and_refuses_a_findings_format() {
+    let repo = Repo::new();
+    repo.write(
+        "qlinter.toml",
+        "profile = \"style\"\ntarget-version = \"4.1\"\n[lint]\nselect = [\"QS001\", \"QF016\"]\n",
+    )
+    .write("src/a.q", SOURCE)
+    .write("b.q", SOURCE);
+    let out = run(&repo.path("."), &["--show-settings", "src/a.q", "b.q"]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.starts_with("[{\"file\":\""), "{text}");
+    assert_eq!(text.lines().count(), 1, "{text}");
+    let shown: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let shown = shown.as_array().unwrap();
+    assert_eq!(shown.len(), 2, "{text}");
+    for (one, name) in shown.iter().zip(["a.q", "b.q"]) {
+        assert!(one["file"].as_str().unwrap().ends_with(name), "{one}");
+        let file = one["configuration"].as_str().unwrap();
+        assert!(file.ends_with("qlinter.toml"), "{one}");
+        assert_eq!(one["profile"], "style");
+        assert_eq!(one["target-version"], "4.1");
+        assert_eq!(one["rules"], serde_json::json!(["QF016", "QS001"]));
+    }
+    // No configuration and no target are `null`, not left out.
+    let out = run(&repo.path("."), &["--isolated", "--show-settings", "b.q"]);
+    let shown: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(shown[0]["configuration"].is_null(), "{shown}");
+    assert!(shown[0]["target-version"].is_null(), "{shown}");
+    assert_eq!(shown[0]["profile"], "uqf");
+    // `run` asks for JSON; these ask for another format, or for none.
+    let asked = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(repo.path("."))
+            .env("XDG_CONFIG_HOME", repo.path("no-such-config-home"))
+            .arg("--show-settings")
+            .args(args)
+            .arg("b.q")
+            .output()
+            .unwrap()
+    };
+    for format in ["sarif", "github"] {
+        let out = asked(&["--format", format]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{format}: {stderr}");
+        assert!(
+            stderr.contains("--show-settings prints text or json"),
+            "{format}: {stderr}"
+        );
+        assert!(out.stdout.is_empty(), "{format}");
+    }
+    // Text is what it prints unasked, and under `--format text`.
+    for args in [&[][..], &["--format", "text"]] {
+        let text = String::from_utf8(asked(args).stdout).unwrap();
+        assert!(text.starts_with("file: "), "{text}");
+        assert!(text.contains("\nrules (2): QF016 QS001\n"), "{text}");
+    }
+}
+
 #[test]
 fn a_user_level_configuration_applies_where_no_project_has_one() {
     let repo = Repo::new();

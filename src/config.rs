@@ -750,7 +750,7 @@ impl Policy {
     /// QLS001 comes only from qls. Nor one the `target-version` in force
     /// keeps from reporting, as `lint` keeps it: a QK rule with no target, or
     /// QE008 under a 4.x one, listed as on and then finding nothing (#2748).
-    pub fn describe(&self, path: &Path, backend: &str) -> Result<String, String> {
+    pub fn describe(&self, path: &Path, backend: &str) -> Result<Described, String> {
         let settings = self.settings(path)?;
         self.conflict(&settings, path)?;
         let target = self.target(&settings);
@@ -759,7 +759,7 @@ impl Policy {
             "qls" => backend != "builtin",
             _ => backend != "qls",
         };
-        let mut codes: Vec<&str> = RULES
+        let mut codes: Vec<&'static str> = RULES
             .iter()
             .filter(|r| runs(&r.scope))
             .map(|r| r.code.as_str())
@@ -771,20 +771,43 @@ impl Policy {
             })
             .collect();
         codes.sort_unstable();
-        Ok(format!(
+        Ok(Described {
+            file: absolute(path).display().to_string(),
+            configuration: settings.file.as_ref().map(|f| f.display().to_string()),
+            profile: self.profile(&settings),
+            target: target.map(Target::name),
+            rules: codes,
+        })
+    }
+}
+
+/// What `--show-settings` says of one path: its keys under `--format json`,
+/// in this order, and its lines as text.
+#[derive(serde::Serialize)]
+pub struct Described {
+    file: String,
+    /// The file that governs it; none where the built-in defaults do.
+    configuration: Option<String>,
+    profile: String,
+    #[serde(rename = "target-version")]
+    target: Option<&'static str>,
+    rules: Vec<&'static str>,
+}
+
+impl std::fmt::Display for Described {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
             "file: {}\nconfiguration: {}\nprofile: {}\ntarget-version: {}\nrules ({}): {}",
-            absolute(path).display(),
-            settings
-                .file
-                .as_ref()
-                .map_or("none - built-in defaults".into(), |f| f
-                    .display()
-                    .to_string()),
-            self.profile(&settings),
-            target.map_or("none - the QK rules report nothing", Target::name),
-            codes.len(),
-            codes.join(" ")
-        ))
+            self.file,
+            self.configuration
+                .as_deref()
+                .unwrap_or("none - built-in defaults"),
+            self.profile,
+            self.target.unwrap_or("none - the QK rules report nothing"),
+            self.rules.len(),
+            self.rules.join(" ")
+        )
     }
 }
 
