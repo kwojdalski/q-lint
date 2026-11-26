@@ -187,6 +187,34 @@ test("an order book is drawn as its depth by itself; a map is offered for positi
   assert.ok(!kinds().includes("map"));
 });
 
+test("the kind chosen comes back after a book drawn as its depth, or a map (#3137)", () => {
+  const page = loadPage(undefined);
+  const kind = () => page.body.all((e) => e.tagName === "SELECT")[0];
+  const choose = (k) => {
+    kind().value = k;
+    kind().fire("change");
+  };
+  const plain = (name) => [["t", 7, ["1", "2", "3"]], [name, 9, ["1", "2", "3"]]];
+  page.send(result("s.1", plain("v"), { view: "chart" }));
+  choose("bar");
+  page.send(result("s.2", BOOK, { view: "chart" }));
+  assert.strictEqual(page.rendered().chart.kind, "depth");
+  page.send(result("s.3", plain("w"), { view: "chart" }));
+  assert.strictEqual(page.rendered().chart.kind, "bar", "not Line: Bar was chosen");
+  assert.strictEqual(kind().children.find((o) => o.selected).value, "bar");
+  // A map, chosen for one result's positions, is not the next result's kind.
+  page.send(result("s.4", [["city", 11, ["Ldn", "NY"]], ["lat", 9, ["51.5", "40.7"]], ["lon", 9, ["-0.1", "-74"]]], { view: "chart" }));
+  choose("map");
+  assert.strictEqual(page.rendered().chart.kind, "map");
+  page.send(result("s.5", plain("x"), { view: "chart" }));
+  assert.strictEqual(page.rendered().chart.kind, "bar");
+  // A page that never chose: Line, as before.
+  const fresh = loadPage(undefined);
+  fresh.send(result("s.1", BOOK, { view: "chart" }));
+  fresh.send(result("s.2", plain("v"), { view: "chart" }));
+  assert.strictEqual(fresh.rendered().chart.kind, "line");
+});
+
 test("linked panes read every series at the crosshair, zoom together on a drag and show all on a double-click (#1018)", () => {
   FakeChart.made = [];
   const page = loadPage(undefined, { Chart: FakeChart });

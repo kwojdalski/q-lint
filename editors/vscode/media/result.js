@@ -1720,6 +1720,20 @@
     });
   }
 
+  /// The kinds only some results offer, found by their columns.
+  const OWN_KINDS = ["depth", "map"];
+
+  /// Set the chart's kind. `state.usual` keeps the last one every result
+  /// offers, for the result after one drawn as depth or as a map (#3137).
+  function setKind(kind) {
+    [state.kind, kind].forEach(function (k) {
+      if (OWN_KINDS.indexOf(k) < 0) {
+        state.usual = k;
+      }
+    });
+    state.kind = kind;
+  }
+
   /// The chart drawn, as a preset a saved query keeps (#1019): its kind,
   /// series, right axis, bins, colours and map columns, by name.
   function currentPreset(picked) {
@@ -1753,7 +1767,7 @@
   function applyPreset(grid, preset) {
     const at = function (n) { return grid.columns.findIndex(function (c) { return c.name === n; }); };
     state.view = "chart";
-    state.kind = preset.kind;
+    setKind(preset.kind);
     state.columns = (preset.series || []).map(at).filter(function (i) { return i >= 0; });
     state.y2 = preset.y2 ? at(preset.y2) : -1;
     if (preset.bins) {
@@ -1803,7 +1817,9 @@
     kind.setAttribute("aria-label", "Chart kind");
     const KINDS = kinds();
     if (KINDS.indexOf(state.kind) < 0) {
-      state.kind = "line";
+      // Not a kind this result offers - depth, after a book: the kind
+      // chosen before it, not Line whatever that was (#3137).
+      state.kind = KINDS.indexOf(state.usual) >= 0 ? state.usual : "line";
     }
     KINDS.forEach(function (k) {
       const o = el("option", "", KIND_NAMES[k] || k[0].toUpperCase() + k.slice(1));
@@ -1812,7 +1828,7 @@
       kind.append(o);
     });
     kind.addEventListener("change", function () {
-      state.kind = kind.value;
+      setKind(kind.value);
       save();
       drawChart();
     });
@@ -2271,7 +2287,7 @@
 
   /// What is kept of a result's page when another is chosen from the tabs.
   /// Its chart kind, bins and Compare too, so it is drawn as it was (#1638).
-  const PER_RESULT = ["view", "sort", "filters", "columns", "top", "open", "names", "pivot", "y2", "colours", "mapSize", "mapColour", "zoom", "kind", "bins", "compare"];
+  const PER_RESULT = ["view", "sort", "filters", "columns", "top", "open", "names", "pivot", "y2", "colours", "mapSize", "mapColour", "zoom", "kind", "usual", "bins", "compare"];
 
   window.addEventListener("message", function (event) {
     const m = event.data;
@@ -2309,7 +2325,7 @@
           state.zoom = null;
           // An order book is drawn as its depth (#1016) when its columns fit.
           if ((!m.features || m.features.depthChart !== false) && MORE.depthColumns(m.grid)) {
-            state.kind = "depth";
+            setKind("depth");
           }
         }
         state.view = m.view;
