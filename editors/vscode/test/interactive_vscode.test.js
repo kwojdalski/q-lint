@@ -267,7 +267,7 @@ test("the REPL's input is cleared for a line it sent, not for a run from the edi
   await repl.runFromEditor("a:1", vscode.Uri.file("/w/a.q"));
   assert.deepStrictEqual(kinds(), [{ type: "history", history: ["a:1"] }]);
   assert.strictEqual(await repl.enter("b:2"), "ran");
-  assert.deepStrictEqual(kinds().slice(1), [{ type: "accepted", history: ["b:2", "a:1"] }]);
+  assert.deepStrictEqual(kinds().slice(1), [{ type: "accepted", history: ["b:2", "a:1"], code: "b:2" }]);
 });
 
 test("the REPL: Enter inside a bracket starts a new line; a complete input runs, is kept, and lands in Query History", async (t) => {
