@@ -2017,12 +2017,66 @@ fn loads_directory(raw: &str, sites: &[(usize, Range<usize>, bool)], scopes: &[S
         .unwrap_or(usize::MAX)
 }
 
-/// Whether what a load pattern found at `at` is q's `system` and not a name
-/// ending in it: after `.my.system:{-1 x}`, KDB-X's `.my.system "l b.q"`
-/// prints `l b.q` and loads nothing (#1362). A trap, `@[system;...]`, starts
-/// at its `@`.
-fn is_system(view: &str, at: usize) -> bool {
-    view[at..].starts_with('@') || boundary(view, at)
+/// Each load `system` is handed as a string, `"l x.q"`, however it is
+/// applied: where the `system` is, and the bytes of the path - or nothing
+/// for a load no edge follows, which `dynamic` lists. q's `system` and not a
+/// name ending in it: after `.my.system:{-1 x}`, KDB-X's
+/// `.my.system "l b.q"` prints `l b.q` and loads nothing (#1362).
+///
+/// Applied with brackets or `@`, or trapped, it loads as well: q 5 loads
+/// lib.q for `system["l lib.q"]`, `system@"l lib.q"` and
+/// `@[system;"l lib.q";{-1 x}]` (#762). So it does in parentheses,
+/// `system ("l lib.q")`, trapped with `.`, `.[system;enlist "l lib.q";h]`,
+/// and applied to each of a list of one, `system each enlist "l lib.q"`,
+/// `system'[enlist ...]`, `system@'enlist ...`, `system . enlist ...`; KDB-X
+/// has lib.q's names after each (#2804). Any other way of handing it the
+/// string is taken for a load that reading does not follow, as is the head
+/// of a path joined at run time, `system "l dir/",x`, which is no load of
+/// `dir/`.
+fn system_loads(raw: &str, view: &str) -> Vec<(usize, Option<Range<usize>>)> {
+    let mut found = vec![];
+    for m in re!(r"\bsystem\b").find_iter(view) {
+        if !boundary(view, m.start()) {
+            continue;
+        }
+        let Some(load) = re!(r#"^((?:\s|[(\[;@'.]|\b(?:each|peach|enlist)\b)*)"(l\s[^"]*)""#)
+            .captures(&raw[m.end()..])
+        else {
+            continue;
+        };
+        let applied: String = load[1]
+            .chars()
+            .filter(|c| !c.is_whitespace() && *c != '(')
+            .collect();
+        // An argument of a trap, and of nothing else: `(system;"l b.q")` is
+        // a list.
+        let before = view[..m.start()].trim_end();
+        let followed = match applied.as_str() {
+            ";" if before.ends_with("@[") => true,
+            ";enlist" if before.ends_with(".[") => true,
+            _ if applied.starts_with(';') => continue,
+            "" | "[" | "@" | "eachenlist" | "peachenlist" | "'[enlist" | "@'enlist" | ".enlist" => {
+                true
+            }
+            _ => false,
+        };
+        let text = load.get(2).unwrap();
+        let from = m.end() + text.start();
+        let joined = raw[m.end() + load.get(0).unwrap().end()..]
+            .trim_start_matches([' ', '\t'])
+            .starts_with(',');
+        let path = re!(r"^l\s+(\S+)\s*$")
+            .captures(text.as_str())
+            .map(|p| p.get(1).unwrap().range())
+            .map(|p| from + p.start..from + p.end);
+        match path {
+            Some(path) if followed && !joined => found.push((m.start(), Some(path))),
+            Some(_) => found.push((m.start(), None)),
+            None if joined => found.push((m.start(), None)),
+            None => {}
+        }
+    }
+    found
 }
 
 /// Each literal load `loads` reads: where its statement starts, the bytes of
@@ -2035,20 +2089,9 @@ fn load_sites(code: &str, raw: &str, view: &str) -> Vec<(usize, Range<usize>, bo
             sites.push((at, from + path.start..from + path.end, false));
         }
     }
-    // Applied with brackets or `@`, or trapped, it loads as well: q 5 loads
-    // lib.q for `system["l lib.q"]`, `system@"l lib.q"` and
-    // `@[system;"l lib.q";{-1 x}]` (#762).
-    for m in re!(r#"(?:\bsystem\s*(?:\[\s*|@\s*)?|@\[\s*system\s*;\s*)"l\s+([^"\s]+)\s*""#)
-        .captures_iter(raw)
-    {
-        let at = m.get(0).unwrap().start();
-        // Not the head of a path joined at run time, `system "l dir/",x`,
-        // which is a dynamic load, not one of `dir/`.
-        let joined = raw[m.get(0).unwrap().end()..]
-            .trim_start_matches([' ', '\t'])
-            .starts_with(',');
-        if view[at..].starts_with(&raw[at..at + 2]) && !joined && is_system(view, at) {
-            sites.push((at, m.get(1).unwrap().range(), false));
+    for (at, path) in system_loads(raw, view) {
+        if let Some(path) = path {
+            sites.push((at, path, false));
         }
     }
     // The symbol runs on over `:` and `/`, so `.q` must end it: `` `:x.qd ``
@@ -2168,13 +2211,9 @@ fn dynamic(
             push(m.start(), "set");
         }
     }
-    for m in
-        re!(r#"(?:\bsystem\s*(?:\[\s*|@\s*)?|@\[\s*system\s*;\s*)"l\s[^"]*"\s*,"#).find_iter(raw)
-    {
-        if view[m.start()..].starts_with(&raw[m.start()..m.start() + 2])
-            && is_system(view, m.start())
-        {
-            push(m.start(), "load");
+    for (at, path) in system_loads(raw, view) {
+        if path.is_none() {
+            push(at, "load");
         }
     }
     found.sort_by_key(|d| (d.line, d.kind));

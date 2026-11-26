@@ -496,6 +496,45 @@ fn a_relative_load_after_a_change_of_directory_is_dynamic() {
 }
 
 #[test]
+fn system_applied_in_parentheses_by_dot_or_to_each_loads() {
+    // KDB-X: `` `cfun in key`. `` is 1b after each, with lib.q's `cfun:{x}`
+    // (#2804).
+    for load in [
+        "system (\"l lib.q\")\n",
+        "system ( \"l lib.q\" )\n",
+        "system[(\"l lib.q\")]\n",
+        ".[system;enlist \"l lib.q\";{-1 x}]\n",
+        "system each enlist \"l lib.q\"\n",
+        "system peach enlist \"l lib.q\"\n",
+        "system'[enlist \"l lib.q\"]\n",
+        "system@'enlist \"l lib.q\"\n",
+        "system . enlist \"l lib.q\"\n",
+    ] {
+        let g = graph(&[("lib.q", "cfun:{x}\n"), ("a.q", load)], false);
+        assert_eq!(deps(&g, "a.q"), ["lib.q"], "{load:?}");
+        assert!(kinds(&g, "a.q").is_empty(), "{load:?}");
+    }
+    // A shape not read is a load all the same, which the file says it has:
+    // KDB-X runs lib.q twice for the first.
+    for load in [
+        "system each (\"l lib.q\";\"l lib.q\")\n",
+        "system (\"l lib/\",f)\n",
+        ".[system;enlist \"l lib/\",f;{-1 x}]\n",
+    ] {
+        let g = graph(&[("lib.q", "cfun:{x}\n"), ("a.q", load)], false);
+        assert!(deps(&g, "a.q").is_empty(), "{load:?}");
+        assert_eq!(kinds(&g, "a.q"), [(1, "load")], "{load:?}");
+    }
+    // A list holding `system` applies it to nothing.
+    let g = graph(
+        &[("lib.q", "cfun:{x}\n"), ("a.q", "l:(system;\"l lib.q\")\n")],
+        false,
+    );
+    assert!(deps(&g, "a.q").is_empty());
+    assert!(kinds(&g, "a.q").is_empty());
+}
+
+#[test]
 fn a_change_of_directory_in_a_lambda_moves_no_load_below_it() {
     // KDB-X: under `cdTo:{system "cd ",x}`, never called, `\l lib.q` loads
     // the lib.q beside the script, and `lf` is 1 (#2821). So under a lambda
