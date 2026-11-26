@@ -83,6 +83,22 @@ test("columns are matched by name: a new one is added, a missing one removed", (
   assert.deepStrictEqual(d.changes, [[1, 1, "2"]]);
 });
 
+test("columns of one name are matched in their order: the second a to the second a (#3074)", () => {
+  // As ([] a:1 2)!([] a:3 4) is sent: a key and a value column, both a.
+  const twice = (keys, ...columns) =>
+    toGrid({ count: 2, keys, names: columns.map((c) => c[0]), types: columns.map(() => 7), cells: columns.map((c) => c.slice(1).map(String)), raw: columns.map(() => []), rank: columns.map(() => [0, 1]) }, -1);
+  const g = twice(1, ["a", 1, 2], ["a", 3, 4]);
+  const same = diffGrids(g, g);
+  assert.deepStrictEqual([same.matchedBy, same.changes, same.changed, same.addedColumns, same.removedColumns], ["key", [], 0, [], []]);
+  // A change in the second a is one against the second a before.
+  const d = diffGrids(g, twice(1, ["a", 1, 2], ["a", 3, 5]));
+  assert.deepStrictEqual([d.changes, d.changed, d.removedColumns], [[[1, 1, "4"]], 1, []]);
+  // One more of a name than before is added, one fewer removed.
+  assert.deepStrictEqual(diffGrids(twice(0, ["a", 1, 2]), twice(0, ["a", 1, 2], ["b", 0, 0], ["a", 3, 4])).addedColumns, [1, 2]);
+  const fewer = diffGrids(twice(0, ["a", 1, 2], ["a", 3, 4]), twice(0, ["a", 1, 2]));
+  assert.deepStrictEqual([fewer.changed, fewer.removedColumns], [0, ["a"]]);
+});
+
 test("a diff lists at most DIFF_CELLS changes, and counts them all", () => {
   const n = DIFF_CELLS + 10;
   const d = diffGrids(grid({ a: Array.from({ length: n }, (_, i) => i) }), grid({ a: Array.from({ length: n }, (_, i) => i + 1) }));
