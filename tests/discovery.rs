@@ -1154,6 +1154,24 @@ fn a_foreign_keyword_in_a_script_loaded_under_a_context_is_read_there() {
 }
 
 #[test]
+fn a_script_only_measured_under_a_context_keeps_its_root_definitions() {
+    // KDB-X runs b.q, mon.q, then c.q's `r:bfun` to `{x+1}`: `hcount` under
+    // `\\d .a` loads nothing, and `` key `.a `` is ``` ``sz ``` (#2805).
+    let repo = Repo::new();
+    repo.write("b.q", "bfun:{x+1}\n")
+        .write("mon.q", "\\d .a\nsz:hcount `:b.q\n")
+        .write("c.q", "r:bfun\n");
+    let style = ["--isolated", "--profile", "style", "--select", "QF018"];
+    assert_eq!(
+        repo.codes(".", &[&style[..], &["."]].concat()),
+        Vec::<String>::new()
+    );
+    // A loader called there does put them in `.a`.
+    repo.write("mon.q", "\\d .a\n.ld.f `:b.q\n");
+    assert_eq!(repo.codes(".", &[&style[..], &["."]].concat()), ["QF018"]);
+}
+
+#[test]
 fn a_name_assigned_under_a_computed_context_is_not_a_root_definition() {
     // KDB-X runs lib.q, then use.q to 'dfun: `system "d ",ns` put `dfun` in
     // `.app`, the context `ns` held (#2813).

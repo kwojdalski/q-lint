@@ -195,7 +195,10 @@ pub fn build_from(
                 );
             }
         }
-        for (load, _) in &reads[i].loads {
+        // A script only measured or read, `` hcount `:b.q ``, is reached
+        // too, though nothing puts it in a context (#2805).
+        let loads = reads[i].loads.iter().map(|(load, _)| load);
+        for load in loads.chain(&reads[i].mentions) {
             for d in targets(i, load) {
                 if identity[d] != identity[i] {
                     node.dependencies.insert(paths[d].clone());

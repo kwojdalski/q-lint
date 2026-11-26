@@ -1791,29 +1791,32 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
         .collect();
     defines.sort();
     defines.dedup();
-    let mut moved = vec![];
+    let (mut moved, mut mentions) = (vec![], vec![]);
+    let loads = loads(
+        code,
+        raw,
+        &view,
+        &scopes,
+        |at| {
+            if scope_at(&scopes, at).is_some() || at < first_switch {
+                String::new()
+            } else if ns_at(at).is_empty() {
+                ".".into()
+            } else {
+                ns_at(at).to_string()
+            }
+        },
+        &mut moved,
+        &mut mentions,
+    );
     crate::References {
         names,
         relative,
         defines,
         implicit_defines,
         root_defines,
-        loads: loads(
-            code,
-            raw,
-            &view,
-            &scopes,
-            |at| {
-                if scope_at(&scopes, at).is_some() || at < first_switch {
-                    String::new()
-                } else if ns_at(at).is_empty() {
-                    ".".into()
-                } else {
-                    ns_at(at).to_string()
-                }
-            },
-            &mut moved,
-        ),
+        loads,
+        mentions,
         module: is_module(code, raw),
         uses: uses(&view, &scopes),
         dynamic: dynamic(raw, &view, &call_time_access, &moved),
@@ -2038,6 +2041,11 @@ fn value_of_symbols<'n>(
 /// `system "cd lib"` or the load of a directory, is read from a directory
 /// the text does not settle: q 5 loads lib/x.q for `\cd lib` then `\l x.q`
 /// (#763). Its offset goes in `moved` instead, for `dynamic` to list.
+///
+/// A file symbol handed to a keyword that runs none of the file is no load,
+/// and its path goes in `mentions`: KDB-X runs `\d .a` /
+/// `` sz:hcount `:b.q `` and `` key `.a `` is ``` ``sz ```, with b.q's names
+/// where its loader put them (#2805).
 fn loads(
     code: &str,
     raw: &str,
@@ -2045,13 +2053,16 @@ fn loads(
     scopes: &[Scope],
     namespace_at: impl Fn(usize) -> String,
     moved: &mut Vec<usize>,
+    mentions: &mut Vec<String>,
 ) -> Vec<(String, String)> {
     let sites = load_sites(code, raw, view);
     let changes = changes_directory(code, raw, view, &sites);
     let mut loads = vec![];
     for (at, path, symbol) in sites {
         let path = &raw[path];
-        if !symbol && displaced(scopes, &changes, at) && !path.starts_with('/') {
+        if symbol && only_read(view, at) {
+            mentions.push(path.to_string());
+        } else if !symbol && displaced(scopes, &changes, at) && !path.starts_with('/') {
             moved.push(at);
         } else {
             loads.push((path.to_string(), namespace_at(at)));
@@ -2059,7 +2070,25 @@ fn loads(
     }
     loads.sort();
     loads.dedup();
+    mentions.sort();
+    mentions.dedup();
     loads
+}
+
+/// Whether the file symbol at `at` is the argument of a keyword that runs
+/// nothing of the file: `hcount`, `hdel`, `hopen` and `key` measure, delete,
+/// open and look for it, and `read0` and `read1` hand back its text - which
+/// is a load after all where the statement evaluates it,
+/// `` value each read0 `:x.q ``.
+fn only_read(view: &str, at: usize) -> bool {
+    let line = &view[view[..at].rfind('\n').map_or(0, |i| i + 1)..at];
+    let Some(word) = re!(r"\b(hcount|hdel|hopen|key|read0|read1)[ \t]*[\[(]?[ \t]*$").find(line)
+    else {
+        return false;
+    };
+    boundary(line, word.start())
+        && !(word.as_str().starts_with("read")
+            && re!(r"\b(?:value|get|eval|reval|system)\b").is_match(&line[..word.start()]))
 }
 
 /// Where the script changes directory: `\cd lib`, `system "cd lib"`, or the

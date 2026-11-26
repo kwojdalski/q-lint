@@ -238,6 +238,10 @@ pub struct References {
     /// that is whichever context the file is loaded in, and `"."` at the
     /// root after it.
     pub loads: Vec<(String, String)>,
+    /// The file symbols naming a script that are handed to a keyword which
+    /// measures, opens, deletes or reads the file and runs none of it,
+    /// `` hcount `:lib/x.q ``: the file is reached, and loaded nowhere.
+    pub mentions: Vec<String>,
     /// Whether the file is a KDB-X module: one that assigns `export` at its
     /// top level, which `use` reads back (`semantics::is_module`).
     pub module: bool,

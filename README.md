@@ -278,7 +278,10 @@ A file depends on another when:
   runs - tried against the current directory only. A script loaded under `\d .a`
   runs in `.a`, so what it defines at its root is `.a.name` as well as
   `name`, and so is what the scripts it loads at its root define; a name it
-  reads there is looked up in `.a` as well;
+  reads there is looked up in `.a` as well. A file symbol handed to
+  `hcount`, `hdel`, `hopen`, `key`, `read0` or `read1` is an edge and no
+  load - nothing of the file runs, so it is put in no context - unless the
+  text read is evaluated, `` value each read0`:x.q ``;
 - it loads the other as a KDB-X module, `` use`name ``: `name.q` or
   `name/init.q` (`` use`a.b `` is `a/b.q` or `a/b/init.q`) where a `\l` is
   tried, the module's search path not being in the source, and `` use`.b ``

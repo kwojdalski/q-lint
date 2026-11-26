@@ -636,6 +636,49 @@ fn a_namespace_read_whole_reaches_the_files_assigning_its_members() {
 }
 
 #[test]
+fn a_script_only_measured_or_read_is_reached_and_loaded_nowhere() {
+    // KDB-X runs b.q, mon.q and c.q: `r` is b.q's `{x+1}` and `` key `.a ``
+    // is ``` ``sz ```, for `hcount` runs nothing of b.q (#2805).
+    for read in [
+        "sz:hcount `:b.q",
+        "sz:hcount[`:b.q]",
+        "there:not () ~ key `:b.q",
+        "text:read0 `:b.q",
+        "bytes:count read1 (`:b.q)",
+    ] {
+        let g = graph(
+            &[
+                ("b.q", "bfun:{x+1}\n"),
+                ("mon.q", &format!("\\d .a\n{read}\n")),
+                ("c.q", "r:bfun\n"),
+                ("d.q", "r:.a.bfun\n"),
+            ],
+            false,
+        );
+        assert_eq!(deps(&g, "mon.q"), ["b.q"], "{read}");
+        assert_eq!(deps(&g, "c.q"), ["b.q"], "{read}");
+        assert!(deps(&g, "d.q").is_empty(), "{read}");
+    }
+    // Handed to anything else it may be loaded, a loader called under
+    // `\d .a` putting b.q's names there (KDB-X), and so is the text of a
+    // script once it is evaluated.
+    for load in [".ld.f `:b.q", "value each read0 `:b.q", "mykey `:b.q"] {
+        let g = graph(
+            &[
+                ("b.q", "bfun:{x+1}\n"),
+                ("mon.q", &format!("\\d .a\n{load}\n")),
+                ("c.q", "r:bfun\n"),
+                ("d.q", "r:.a.bfun\n"),
+            ],
+            false,
+        );
+        assert_eq!(deps(&g, "mon.q"), ["b.q"], "{load}");
+        assert!(deps(&g, "c.q").is_empty(), "{load}");
+        assert_eq!(deps(&g, "d.q"), ["b.q"], "{load}");
+    }
+}
+
+#[test]
 fn a_context_switched_to_by_a_computed_name_is_dynamic() {
     // KDB-X runs lib.q, and `key `.app` is ``dfun: the root has no `dfun`,
     // and use.q's read of one is 'dfun (#2813).
