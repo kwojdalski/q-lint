@@ -189,8 +189,24 @@
 
   /// What a chart of `kind` over `rows` of the grid draws, before colours:
   /// {type, labels?, datasets: [{label, data}], note?}. `columns` are the
-  /// y columns, as chartable() gives them; `bins` is for a histogram.
+  /// y columns, as chartable() gives them; `bins` is for a histogram. With
+  /// no row, or no value in any, a note says so: axes around nothing read
+  /// as a chart that failed to draw (#3149).
   function chartData(grid, rows, kind, columns, bins) {
+    const data = seriesData(grid, rows, kind, columns, bins);
+    if (data.note) {
+      return data;
+    }
+    if (rows.length === 0) {
+      return { type: "bar", datasets: [], note: "No row to chart." };
+    }
+    const drawn = data.datasets.some(function (d) {
+      return d.data.some(function (p) { return p !== null && (typeof p !== "number" || isFinite(p)); });
+    });
+    return drawn ? data : { type: "bar", datasets: [], note: kind === "candlestick" ? "No row has all four of open, high, low and close." : "Every value is null." };
+  }
+
+  function seriesData(grid, rows, kind, columns, bins) {
     if (columns.length === 0 && kind !== "candlestick") {
       return { type: "bar", datasets: [], note: "No numeric column to chart" + (kind === "histogram" ? "." : " against the first.") };
     }

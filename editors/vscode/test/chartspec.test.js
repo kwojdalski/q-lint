@@ -143,3 +143,17 @@ test("a saved scatter over row numbers ticks whole rows, and a saved histogram w
   const counts = texts(C.chartSvg(list, [0, 1, 2, 3], "histogram", C.chartData(list, [0, 1, 2, 3], "histogram", [0], 3), look, {}));
   assert.deepStrictEqual(counts.slice(0, counts.indexOf("1 - 2")), ["0", "1", "2"]);
 });
+
+test("a result with no rows, or only nulls, says so in place of empty axes (#3149)", () => {
+  const g = (vals) => ({ columns: [{ name: "s", numeric: false, type: 11 }, { name: "v", numeric: true, type: 9 }, { name: "w", numeric: true, type: 9 }, { name: "x", numeric: true, type: 9 }, { name: "y", numeric: true, type: 9 }], cells: [vals.map(() => "a")].concat([0, 1, 2, 3].map(() => vals.map(String))), values: [null, vals, vals, vals, vals] });
+  for (const kind of ["line", "area", "step", "bar", "scatter", "histogram", "candlestick"]) {
+    assert.strictEqual(C.chartData(g([]), [], kind, [1], 20).note, "No row to chart.", kind);
+    const nulls = C.chartData(g([null, null]), [0, 1], kind, [1], 20);
+    assert.strictEqual(nulls.note, kind === "candlestick" ? "No row has all four of open, high, low and close." : "Every value is null.", kind);
+    assert.deepStrictEqual(nulls.datasets, []);
+    assert.strictEqual(C.chartData(g([null, 2]), [0, 1], kind, [1], 20).note, undefined, kind);
+  }
+  assert.match(C.chartSvg(g([]), [], "line", C.chartData(g([]), [], "line", [1], 20), { colours: ["#f00"] }, {}), />No row to chart\.</);
+  // A column there is none of is still what is said first.
+  assert.match(C.chartData({ columns: [{ name: "s", numeric: false }], cells: [[]], values: [null] }, [], "line", [], 20).note, /^No numeric column/);
+});
