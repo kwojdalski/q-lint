@@ -201,7 +201,9 @@ fn suffix_type(letter: u8) -> Option<i16> {
 
 /// The vector type of numbers written `1 2.5 0N`, with an optional type
 /// letter on the last: a float where any is written with a point or is a
-/// float null or infinity, a long otherwise.
+/// float null or infinity, a long otherwise. Nothing where a whole number is
+/// past the largest its type holds, which q refuses: `32768h`, `-32768h`
+/// and `9223372036854775808` alike, though not as a float (#2672).
 fn numbers(tokens: &[&str]) -> Option<i16> {
     let (last, rest) = tokens.split_last()?;
     let (last, letter) = match last.as_bytes().last() {
@@ -214,6 +216,9 @@ fn numbers(tokens: &[&str]) -> Option<i16> {
         _ => (*last, None),
     };
     let mut float = false;
+    // The largest whole number written, sign aside: more digits than a
+    // `u64` holds is past every type's.
+    let mut largest = 0u64;
     for token in rest.iter().copied().chain([last]) {
         match token {
             "0N" | "0W" | "-0W" => {}
@@ -228,15 +233,29 @@ fn numbers(tokens: &[&str]) -> Option<i16> {
                     return None;
                 }
                 float |= digits.contains('.');
+                let whole = whole.trim_start_matches('0');
+                largest = largest.max(match whole {
+                    "" => 0,
+                    _ => whole.parse().unwrap_or(u64::MAX),
+                });
             }
         }
     }
+    let fits = |t: i16| {
+        let most = match t {
+            5 => i16::MAX as u64,
+            6 => i32::MAX as u64,
+            _ => i64::MAX as u64,
+        };
+        (largest <= most).then_some(t)
+    };
     match (letter, float) {
         // A point or a float null under an integer's letter is refused.
         (Some(5..=7), true) => None,
+        (Some(t @ 5..=7), false) => fits(t),
         (Some(t), _) => Some(t),
         (None, true) => Some(9),
-        (None, false) => Some(7),
+        (None, false) => fits(7),
     }
 }
 
