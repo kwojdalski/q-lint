@@ -8502,27 +8502,55 @@ fn lint_rules(
     }
     // Keywords from other languages are plain names to q, and undefined ones:
     // `return 1` throws 'return. `null` is absent from this list because it
-    // is a q function. A file that declares one of these as a parameter or
-    // assigns it anywhere has made it a name, and its uses are left alone.
-    let mut declared: std::collections::HashSet<&str> = std::collections::HashSet::new();
-    for (brace, _) in code.match_indices('{') {
-        declared.extend(signature(code, source, brace).slots);
-    }
-    for m in re!(r"([A-Za-z][A-Za-z0-9_]*)\s*:").captures_iter(code) {
-        declared.insert(m.get(1).unwrap().as_str());
-    }
-    // And a multiple assignment's names: q 5 `(true;false):10b` then
-    // `show true` prints 1b (#371).
-    declared.extend(
-        semantics::multi_assignments(code)
-            .chain(semantics::global_multi_assignments(code))
-            .map(|(_, n)| n),
-    );
-    // A column: named as a symbol somewhere (`` `sym`return!... ``), or read
-    // inside a query, where a bare name is the column before any global.
-    for m in re!(r"`([A-Za-z][A-Za-z0-9_]*)").captures_iter(code) {
-        declared.insert(m.get(1).unwrap().as_str());
-    }
+    // is a q function. A name the file defines as a global, or the lambda
+    // around the use binds - a parameter, a local, either in a multiple
+    // assignment (q 5 `(true;false):10b` then `show true` prints 1b, #371) -
+    // is left alone. Only there: a select's `return:a` names a column, a
+    // symbol `` `true `` is data, and another lambda's local `else:` binds
+    // nothing here, so none of them defines the name (#2703, #2704).
+    let own_globals = std::cell::OnceCell::new();
+    let multi = std::cell::OnceCell::new();
+    let declared = |at: usize, name: &str| -> bool {
+        if own_globals
+            .get_or_init(|| semantics::index(code, source).defined)
+            .contains(&qualified(at, name))
+        {
+            return true;
+        }
+        let brace = enclosing_brace(code, at);
+        let (multi, global_multi): &(Vec<(usize, &str)>, Vec<&str>) = multi.get_or_init(|| {
+            (
+                semantics::multi_assignments(code).collect(),
+                semantics::global_multi_assignments(code)
+                    .map(|(_, n)| n)
+                    .collect(),
+            )
+        });
+        if global_multi.contains(&name)
+            || multi
+                .iter()
+                .any(|&(a, n)| n == name && enclosing_brace(code, a) == brace)
+        {
+            return true;
+        }
+        let Some(brace) = brace else {
+            return false;
+        };
+        let sig = signature(code, source, brace);
+        if sig.slots.iter().any(|p| pattern_names(p).contains(&name)) {
+            return true;
+        }
+        let end = matching(code, brace, b'{', b'}').unwrap_or(code.len());
+        regex::Regex::new(&format!(r"\b{name}\s*:"))
+            .unwrap()
+            .find_iter(&code[brace..end])
+            .any(|m| {
+                let a = brace + m.start();
+                boundary(code, a)
+                    && enclosing_brace(code, a) == Some(brace)
+                    && !in_qsql_phrase(code, a)
+            })
+    };
     // Another file of the workspace may define it too: with lib.q's
     // `true:1b` loaded, q 5 runs `{[a] $[a;true;false]}` (#372). Under
     // `\d .ns` the name is `.ns.true`, which a root `true` does not define
@@ -8545,8 +8573,8 @@ fn lint_rules(
         if opaque
             || !boundary(code, whole.start())
             || after.starts_with('.')
-            || declared.contains(name)
             || in_query
+            || declared(whole.start(), name)
             || elsewhere(&qualified(whole.start(), name))
             || elsewhere(&format!(".q.{name}"))
         {

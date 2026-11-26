@@ -508,6 +508,23 @@ f:{[x] return x}
 === clean | a symbol is not a name
 s:`return
 
+=== QF015 | nor does a symbol spelling the keyword define it (q 5: after flags:`true`false!10b, f 1b is 'true, #2703)
+flags:`true`false!10b
+f:{[a] $[a;true;false]}
+
+=== QF015 | nor a select's alias, nor another lambda's local (q 5: g 1 is 'return and k 1 is 'else, #2704)
+t:([]a:1 2)
+r:select return:a from t
+g:{[a] return a}
+h:{[x] else:x+1; else}
+k:{[x] x+else}
+
+=== clean | but a symbol set as a global, and the lambda's own local or pattern, do (#2703, #2704)
+`true set 1b
+f:{[a] $[a;true;0b]}
+g:{[x] else:x+1; else}
+h:{[(return;b)] return+b}
+
 === clean | within one statement q evaluates right to left, so this assigns first
 f:{[x] x#a where (a:x mod 7) in 2 3}
 
