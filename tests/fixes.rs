@@ -547,6 +547,15 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
         "f:{r:(); do[n; r,:1]; r}",
         false,
     ),
+    // A parameter is a local whatever is assigned, and outside a lambda
+    // both spellings write the global (#2798).
+    (
+        "QV003",
+        "f:{[r] do[2; r:r,3]; r}",
+        "f:{[r] do[2; r,:3]; r}",
+        false,
+    ),
+    ("QV003", "r:1 2\ndo[3; r:r,4]", "r:1 2\ndo[3; r,:4]", false),
     ("QR004", "r:{x+1} each 1 2 3", "r:1 2 3+1", false),
     ("QR004", "r:{2-x} each a,b", "r:2-a,b", false),
     ("QR004", "r:{x%2} each a,b", "r:(a,b)%2", false),
@@ -951,6 +960,12 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QV003", "f:{[n] r:0; i:0; while[i<n; r:r,i; i+:1]; r}"),
         ("QV003", "f:{[s] r:`; do[2; r:r,s]; r}"),
         ("QV003", "r:\"a\"\ndo[3; r:r,\"b\"]"),
+        // `r:r,x` is all that makes `r` a local: `r,:x` would amend the
+        // global `r` (#2798)
+        ("QV003", "r:1 2\nf:{do[2; r:r,x]; r}"),
+        ("QV003", "r:1 2\ng:{[x] do[1; r:r,x]; count r}"),
+        ("QV003", "f:{g:{r:()}; do[2; r:r,x]; r}"), // assigned in another lambda
+        ("QV003", "f:{s:`r:1; do[2; r:r,x]; r}"),   // and in a symbol
     ] {
         for finding in lint(source, "probe.q", Profile::Uqf)
             .iter()

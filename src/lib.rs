@@ -1732,6 +1732,37 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
             if m[1] != m[2] || starts_as_atom(source, &v.code, start, &m[1]) {
                 return None;
             }
+            // In a lambda `r:r,x` is what makes `r` a local, and `r,:x` does
+            // not: alone, it would amend the global `r` where the lambda
+            // was refused with 'r. So only where `r` is a local without it -
+            // a parameter, or assigned before this, and by more than
+            // another join this fix would rewrite as well (#2798).
+            if let Some(brace) = enclosing_brace(&v.code, start).filter(|_| !m[1].contains('.')) {
+                let name = &m[1];
+                let sig = signature(&v.code, source, brace);
+                let parameter = if sig.named {
+                    sig.slots.iter().any(|p| pattern_names(p).contains(&name))
+                } else {
+                    matches!(name, "x" | "y" | "z")
+                };
+                let before = unsymbolled(&top_level(v.code.get(sig.body..start)?));
+                let assigned = before.match_indices(name).any(|(i, _)| {
+                    let after = &before[i + name.len()..];
+                    let value = after.trim_start_matches([' ', '\t']);
+                    boundary(&before, i)
+                        && value.starts_with(':')
+                        && !value.starts_with("::")
+                        && !value[1..]
+                            .trim_start_matches([' ', '\t'])
+                            .strip_prefix(name)
+                            .is_some_and(|rest| {
+                                rest.trim_start_matches([' ', '\t']).starts_with(',')
+                            })
+                });
+                if !parameter && !assigned {
+                    return None;
+                }
+            }
             (
                 m.get(0)?.as_str(),
                 format!("{},:", &m[1]).into(),
