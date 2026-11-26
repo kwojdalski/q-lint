@@ -55,11 +55,21 @@ struct Query {
 /// `width`, laid out; what Format Document adds when asked to. A query
 /// that is not longer than `width` is never touched, laid out or not, so
 /// formatting twice changes nothing the second time.
+///
+/// One query a line: a query that starts on the line an earlier layout ends
+/// on is left for the next format. Its lines are indented to its column,
+/// and that column is the one the earlier layout leaves it at, not the one
+/// it has now. Laid out by where they stood, the queries of
+/// `r:(select ..;select ..;..)` were each indented by all the text before
+/// them on the one line - 64 MB of blanks for a thousand of them, and four
+/// times that for twice as many (#3007).
 pub(crate) fn layouts(code: &str, comments: &str, source: &str, width: usize) -> Vec<Layout> {
     let plain = crate::unsymbolled(code);
     let mut out: Vec<Layout> = vec![];
+    // Where the line the last layout ends on ends.
+    let mut moved = 0;
     for at in leads(&plain) {
-        if out.last().is_some_and(|l| at < l.end) {
+        if at < moved {
             continue;
         }
         let Some(query) = parse(&plain, comments, source, at) else {
@@ -70,6 +80,9 @@ pub(crate) fn layouts(code: &str, comments: &str, source: &str, width: usize) ->
         }
         let text = render(&query, source, width);
         if text != source[query.start..query.end] {
+            moved = source[query.end..]
+                .find('\n')
+                .map_or(source.len(), |n| query.end + n);
             out.push(Layout {
                 start: query.start,
                 end: query.end,
