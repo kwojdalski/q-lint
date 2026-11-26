@@ -65,6 +65,31 @@ endToken:" ; "
 apiKey:"abc123" / rotate yearly
 f:{secret:"s3cr3t"; secret}
 
+=== QX002 | a handle that carries its password, as a symbol or as the string hopen takes too (#2738; q 5 reads `:proddb:5010:svc:hunter2 as one symbol)
+h:{hopen `:proddb:5010:svc:hunter2}
+g:{hopen ":prod-db:5010:svc:hunter2"}
+k:{hopen (`:tcps://prod.db:5010:svc:hunter2;500)}
+l:{hopen `:unix://5010:svc:hunter2}
+
+=== clean | a handle with no password, an empty one, or one joined on at run time (#2738)
+a:{hopen `:proddb:5010}
+b:{hopen `:proddb:5010:svc}
+c:{hopen `:proddb:5010:svc:}
+d:{[user;pass] hopen `$":proddb:5010:",user,":",pass}
+e:"dial :h:5010:u:p here"
+
+=== QX002 | .z.pw checking the password it is given against a literal (#2738)
+.z.pw:{[u;p] p~"hunter2"}
+
+=== QX002 | by its implicit name, with the literal on the left (#2738)
+.z.pw:{$[x=`admin;"hunter2"~y;0b]}
+
+=== QX002 | or matched against a pattern that spells it (#2738)
+.z.pw:{[user;pass] (user in `a`b) and pass like "hunt*"}
+
+=== clean | .z.pw comparing the user, or the password with what it read or hashed (#2738)
+.z.pw:{[u;p] $[u~"admin";p~getenv`PW;(md5 p)~0x00]}
+
 === QX001 | get evaluates a string as value does (q 5)
 f:{get "select from t where a=",x}
 

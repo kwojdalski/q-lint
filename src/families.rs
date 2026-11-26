@@ -249,6 +249,91 @@ fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut V
             ));
         }
     }
+    // A handle that carries its password, `` `:host:5010:user:password `` -
+    // a symbol, or the same text as a string, which `hopen` takes too and a
+    // host with a `-` in it needs (q 5: `` `:prod-db:5010:svc:pw `` is no
+    // symbol, and `hopen ":localhost:5010:u:p"` dials as the symbol does):
+    // after the port, a user and a password that is not empty (#2738).
+    let symbols =
+        re!(r"`:(?:(?:tcps?://)?[A-Za-z0-9._]*:|unix://)[0-9]+:[A-Za-z0-9._/]+:[A-Za-z0-9._/:]+")
+            .find_iter(code)
+            .map(|m| m.start());
+    let strings = re!(r#"":(?:(?:tcps?://)?[A-Za-z0-9._-]*:|unix://)[0-9]+:[^\s:"]+:[^\s"]+""#)
+        .find_iter(comments)
+        // The whole of one string: its text is blank in the code view.
+        .filter(|m| code[m.start() + 1..m.end() - 1].trim().is_empty())
+        .map(|m| m.start());
+    let mut handles: Vec<usize> = symbols.chain(strings).collect();
+    handles.sort_unstable();
+    for at in handles {
+        out.push(Finding::at(
+            path,
+            source,
+            at,
+            "QX002",
+            "This handle carries its password: a credential in source is in every copy of \
+             it; read it from the environment or a file at startup"
+                .to_string(),
+        ));
+    }
+    // `.z.pw` checking the password it is given against a string literal,
+    // `.z.pw:{[u;p] p~"hunter2"}`: its second argument, by the name the
+    // lambda gives it, on either side of `~`, `=` or `like` (#2738).
+    for m in re!(r"\.z\.pw[ \t]*::?[ \t]*\{").find_iter(code) {
+        if !boundary(code, m.start()) {
+            continue;
+        }
+        let brace = m.end() - 1;
+        let sig = crate::signature(code, source, brace);
+        let given = match sig.slots.get(1) {
+            Some(slot) if sig.named => slot.trim(),
+            _ if sig.named => continue,
+            _ => "y",
+        };
+        if !crate::is_param_name(given) {
+            continue;
+        }
+        let end = matching(code, brace, b'{', b'}').unwrap_or(code.len());
+        let is_given = |text: &str, at: usize| {
+            text[at..].starts_with(given)
+                && boundary(text, at)
+                && !text[at + given.len()..]
+                    .starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+        };
+        for lit in re!(r#""((?:\\.|[^"\\])*)""#).captures_iter(&comments[sig.body..end]) {
+            let (start, stop) = (
+                sig.body + lit.get(0).unwrap().start(),
+                sig.body + lit.get(0).unwrap().end(),
+            );
+            let value = lit.get(1).unwrap().as_str();
+            if !value.bytes().any(|b| b.is_ascii_alphanumeric()) {
+                continue;
+            }
+            let before = code[sig.body..start].trim_end();
+            let left = ["~", "=", "like"]
+                .iter()
+                .find_map(|op| before.strip_suffix(op))
+                .map(str::trim_end)
+                .is_some_and(|b| b.len() >= given.len() && is_given(b, b.len() - given.len()));
+            let after = code[stop..end].trim_start();
+            let right = after
+                .strip_prefix(['~', '='])
+                .map(str::trim_start)
+                .is_some_and(|a| is_given(a, 0));
+            if left || right {
+                out.push(Finding::at(
+                    path,
+                    source,
+                    start,
+                    "QX002",
+                    "`.z.pw` checks the password against a string literal: a credential in \
+                     source is in every copy of it; read it from the environment or a file at \
+                     startup"
+                        .to_string(),
+                ));
+            }
+        }
+    }
 }
 
 /// Whether the keyword that ends at `at` is the operand of an iterator -
