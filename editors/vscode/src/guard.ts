@@ -766,6 +766,25 @@ function implicit(t: Token[], open: number, close: number): number {
   return last;
 }
 
+/// Whether the `upsert` at `t[i]`, applied infix, is given a value on its
+/// left: a name alone that is no local holding a symbol (`held`), or a
+/// table written out, `([] a:1 2)`.
+function upsertsValue(t: Token[], i: number, held: ReadonlySet<string> | undefined): boolean {
+  const left = t[i - 1];
+  if (left?.kind === "name") {
+    return !INFIX.has(left.text) && !(held?.has(left.text) ?? false);
+  }
+  if (left?.kind !== "close" || left.text !== ")") {
+    return false;
+  }
+  let open = i - 1;
+  for (let depth = 0; open >= 0; open--) {
+    if (t[open].kind === "close") depth++;
+    else if (t[open].kind === "open" && --depth === 0) break;
+  }
+  return open >= 0 && t[open].text === "(" && t[open + 1]?.text === "[" && t[open + 1].kind === "open";
+}
+
 /// Whether `t[from]` to `t[to]`, what `.[f;..]` or `@[f;..]` gives `f`,
 /// may hold a symbol: `` `t ``, `` enlist`t ``, `` (`t;1) ``.
 function symbolicArgument(t: Token[], from: number, to: number, held: ReadonlySet<string> | undefined): boolean {
@@ -2215,6 +2234,12 @@ function readStatement(statement: string, found: Set<string>): void {
         continue;
       }
       if (WRITERS.has(unqualified(k.text))) {
+        // `upsert` on a value gives a new table: on a name alone, the value it
+        // holds, or a table written out, `t upsert s`, `([]a:1 2) upsert s`;
+        // only a symbol or a handle names what it changes (#2644).
+        if (unqualified(k.text) === "upsert" && upsertsValue(t, i, held.at(-1))) {
+          continue;
+        }
         // `system` of a literal is read as the command it runs: `system "c"`
         // only reads, as `\c` does.
         const bracket = next?.text === "[" && next.kind === "open" ? 1 : 0;

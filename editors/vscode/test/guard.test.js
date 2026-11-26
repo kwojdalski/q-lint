@@ -2085,3 +2085,15 @@ test(".z.ph and .h.jx value the query string they are given, as .h.val does: the
   assert.deepStrictEqual(writes('.h.jx[0j;"zz:1"]'), ["calls .h.jx"]);
   assert.deepStrictEqual(writes('.h.jx[0j] "zz:1"'), ["calls .h.jx"]);
 });
+
+test("upsert on a value - a name alone or a table written out - gives a new table: a read (#2644)", () => {
+  for (const code of ["t upsert s", "([]a:1 2) upsert ([]a:enlist 3)", "kt upsert s", "([k:1 2]v:3 4) upsert (1;5)", "d upsert `a`b!1 2"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+  // On a symbol, in brackets, or inside a lambda given a name, it is asked about.
+  for (const code of ["`t upsert s", "(`t) upsert s", "`:db/t/ upsert s", "upsert[`t;s]", "{x upsert y}[`t;s]"]) {
+    assert.ok(writes(code).includes("calls upsert"), code);
+  }
+  // What the right side does is still read.
+  assert.deepStrictEqual(writes("t upsert `:f set 1"), ["calls set"]);
+});
