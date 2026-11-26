@@ -1398,6 +1398,46 @@ fn the_tests_exemption_from_qp002_counts_only_directories_below_the_root() {
     ));
 }
 
+/// The command line lifts the tests exemption for the rule it names by its
+/// code. A prefix lifted it too - `--select Q` and `--select QP` reported
+/// in `tests/` what `--select ALL`, which names the same rules, did not
+/// (#2757).
+#[test]
+fn the_tests_exemption_is_lifted_by_a_code_not_by_a_prefix_or_all() {
+    let repo = Repo::new();
+    repo.write("tests/x.q", "t:.z.Z\nu:.z.T\n")
+        .write("src/x.q", "t:.z.Z\nu:.z.T\n");
+    let clock = |args: &[&str], file: &str| -> Vec<String> {
+        let args = [&["--isolated"], args, &[file]].concat();
+        let mut codes = repo.codes(".", &args);
+        codes.retain(|c| c == "QP002" || c == "QP003");
+        codes
+    };
+    for selector in ["ALL", "Q", "QP", "QP00"] {
+        for flag in ["--select", "--extend-select"] {
+            assert_eq!(
+                clock(&[flag, selector], "tests/x.q"),
+                Vec::<String>::new(),
+                "{flag} {selector}"
+            );
+            assert_eq!(
+                clock(&[flag, selector], "src/x.q"),
+                ["QP002", "QP003", "QP003"],
+                "{flag} {selector}"
+            );
+        }
+    }
+    assert_eq!(clock(&["--select", "QP002"], "tests/x.q"), ["QP002"]);
+    assert_eq!(
+        clock(&["--select", "QP,QP003"], "tests/x.q"),
+        ["QP003", "QP003"]
+    );
+    assert_eq!(
+        clock(&["--extend-select", "QP002,QP003"], "tests/x.q"),
+        ["QP002", "QP003", "QP003"]
+    );
+}
+
 #[test]
 fn the_routine_mix_is_in_no_profile_and_reports_only_where_it_is_selected() {
     // QP007 is the mix school precedence reads as q does: no profile turns

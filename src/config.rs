@@ -718,7 +718,9 @@ impl Policy {
     /// there is none - in a language server, the workspace folder holding
     /// the file. A `tests` above the root - a checkout under `~/tests` -
     /// exempts nothing, and a rule the command line selects by code reports
-    /// regardless (#800, #416).
+    /// regardless (#800, #416). By its own code: `Q` and `QP` name every one
+    /// of them as `ALL` does, and lifted the exemption where `ALL` did not
+    /// (#2757).
     fn test_exempt(&self, settings: &Settings, code: &str, path: &Path) -> bool {
         if !["QP002", "QP003", "QP005", "QP007"].contains(&code) {
             return false;
@@ -729,7 +731,7 @@ impl Policy {
             .iter()
             .flatten()
             .chain(&cli.extend_select)
-            .any(|s| s != "ALL" && names(s, code))
+            .any(|s| s == code)
         {
             return false;
         }

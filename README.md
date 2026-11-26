@@ -489,7 +489,8 @@ directory below that root - the configuration's directory, or the current
 one without a configuration (in the language server, the workspace folder
 holding the file, wherever the editor started it) - since a test may build a datetime or read the
 local clock on purpose. A `tests` above the root exempts nothing, and
-`--select` naming one of them reports it regardless.
+`--select` or `--extend-select` naming one of them by its own code reports it
+regardless; a prefix such as `QP` leaves the exemption standing, as `ALL` does.
 
 In `pyproject.toml` the same keys go under `[tool.qlinter]`, and
 `[tool.qlinter.lint]`. Also: `extend-exclude`, and `extend = "../qlinter.toml"`
