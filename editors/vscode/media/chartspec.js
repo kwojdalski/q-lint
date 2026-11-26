@@ -41,20 +41,54 @@
   /// value until the next.
   const LINES = ["line", "area", "step"];
 
-  /// The columns a candle chart draws, [open, high, low, close]: by name
+  /// A candle's four values, and the names a column takes one by.
+  const OHLC = [["open", "o"], ["high", "h"], ["low", "l"], ["close", "c"]];
+  const NO_CANDLES = "A candle chart needs open, high, low and close columns: four numeric columns after the first.";
+
+  /// The columns a candle chart draws, [open, high, low, close], as
+  /// {columns}, or the {note} said when it cannot tell them: by name
   /// (open/o, high/h, low/l, close/c, any case), or else the first four
-  /// columns it can plot, in order. Null when there are not four.
-  function ohlcColumns(grid) {
+  /// columns it can plot, in order.
+  ///
+  /// Some of the four words but not all (`open, high, low, lastpx`): those
+  /// keep their value, and each one missing is the unnamed column in its
+  /// place among them - before the first named for the values before it,
+  /// after the one before it otherwise. With no column there the note says
+  /// which is missing: the first four columns would draw a size as the open
+  /// (#3125).
+  function candleColumns(grid) {
     const can = chartable(grid, "candlestick");
-    const names = [["open", "o"], ["high", "h"], ["low", "l"], ["close", "c"]];
-    const found = names.map(function (alias) {
-      const at = can.filter(function (c) { return alias.indexOf(grid.columns[c].name.toLowerCase()) >= 0; });
-      return at.length ? at[0] : -1;
-    });
+    const called = function (c, names) { return names.indexOf(grid.columns[c].name.toLowerCase()) >= 0; };
+    const find = function (letters) {
+      return OHLC.map(function (alias) {
+        const at = can.filter(function (c) { return called(c, letters ? alias : alias.slice(0, 1)); });
+        return at.length ? at[0] : -1;
+      });
+    };
+    const found = find(true);
     if (found.every(function (c) { return c >= 0; })) {
-      return found;
+      return { columns: found };
     }
-    return can.length >= 4 ? can.slice(0, 4) : null;
+    const named = find(false);
+    const first = named.findIndex(function (c) { return c >= 0; });
+    if (first < 0) {
+      return can.length >= 4 ? { columns: can.slice(0, 4) } : { note: NO_CANDLES };
+    }
+    const free = can.filter(function (c) { return named.indexOf(c) < 0; });
+    const before = free.filter(function (c) { return c < named[first]; }).slice(-first);
+    const out = named.map(function (c, i) { return i < first && before.length === first ? before[i] : c; });
+    for (let i = first + 1; i < 4; i++) {
+      if (out[i] < 0) {
+        const next = free.filter(function (c) { return c > out[i - 1] && out.indexOf(c) < 0; });
+        out[i] = next.length ? next[0] : -1;
+      }
+    }
+    const missing = OHLC.filter(function (_, i) { return out[i] < 0; }).map(function (alias) { return alias[0]; });
+    return missing.length === 0 ? { columns: out } : { note: "A candle chart needs open, high, low and close columns: no column here is the " + missing.join(" or ") + "." };
+  }
+
+  function ohlcColumns(grid) {
+    return candleColumns(grid).columns || null;
   }
 
   /// The columns a chart can plot: the numeric ones, and for every kind but
@@ -225,10 +259,11 @@
       };
     }
     if (kind === "candlestick") {
-      const ohlc = ohlcColumns(grid);
-      if (!ohlc) {
-        return { type: "bar", datasets: [], note: "A candle chart needs open, high, low and close columns: four numeric columns after the first." };
+      const candles = candleColumns(grid);
+      if (!candles.columns) {
+        return { type: "bar", datasets: [], note: candles.note };
       }
+      const ohlc = candles.columns;
       const v = function (c, r) { return grid.values[c][r]; };
       // A row missing any of the four draws no candle.
       const whole = function (r) { return ohlc.every(function (c) { return v(c, r) !== null; }); };

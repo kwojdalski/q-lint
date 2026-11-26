@@ -157,3 +157,22 @@ test("a result with no rows, or only nulls, says so in place of empty axes (#314
   // A column there is none of is still what is said first.
   assert.match(C.chartData({ columns: [{ name: "s", numeric: false }], cells: [[]], values: [null] }, [], "line", [], 20).note, /^No numeric column/);
 });
+
+test("candles keep the columns named open, high, low or close when not all four are: the rest take the places left, or the missing one is said (#3125)", () => {
+  const g = (...names) => ({ columns: names.map((name, i) => ({ name, numeric: i > 0, type: i > 0 ? 9 : 19 })), cells: names.map(() => ["1"]), values: names.map((_, i) => (i > 0 ? [1] : null)) });
+  const names = (grid) => { const at = C.ohlcColumns(grid); return at && at.map((c) => grid.columns[c].name).join(","); };
+  // The trade size is no open, and the last price is the close.
+  assert.strictEqual(names(g("time", "size", "open", "high", "low", "lastpx")), "open,high,low,lastpx");
+  assert.strictEqual(names(g("time", "open", "high", "low", "last", "volume")), "open,high,low,last");
+  assert.strictEqual(names(g("time", "first", "high", "low", "close", "volume")), "first,high,low,close");
+  assert.strictEqual(names(g("time", "Open", "close", "hi", "lo")), "Open,hi,lo,close");
+  // Nothing where the close would be: said, not drawn from the size.
+  const none = g("time", "size", "open", "high", "low");
+  assert.strictEqual(C.ohlcColumns(none), null);
+  assert.strictEqual(C.chartData(none, [0], "candlestick", [], 20).note, "A candle chart needs open, high, low and close columns: no column here is the close.");
+  assert.match(C.chartData(g("time", "high", "x"), [0], "candlestick", [], 20).note, /no column here is the open or close\.$/);
+  // As before: all four by name or letter, in any order; no name, the first four.
+  assert.strictEqual(names(g("time", "size", "c", "l", "h", "o")), "o,h,l,c");
+  assert.strictEqual(names(g("time", "a", "b", "c", "d", "e")), "a,b,c,d");
+  assert.match(C.chartData(g("time", "a", "b"), [0], "candlestick", [], 20).note, /four numeric columns after the first\.$/);
+});
