@@ -103,6 +103,9 @@ function holdLiteral(token: string): string {
 /// the same way. `y` is the type each column has in the whole table: q
 /// makes a vector of a general column's rows when those cut are all of one
 /// type, and they are written as a general column's all the same (#3068).
+/// The ranks are dense. A float column's share one only where the values
+/// are the same number, as `distinct` and `by` group them: `differ` takes
+/// floats within q's comparison tolerance as equal (#3070).
 const COLUMN_LINES = [
   "          {[e;u;x]$[u within 1 76h;string x;{$[200<count x;(197#x),\"...\";x]} each",
   "            {[e;x]$[10h=type x;$[1=count x;\",\";\"\"],\"\\\"\",raze[e\"i\"$200 sublist x],\"\\\"\";-3!x]}[e] each x]}[e]'[y;c];",
@@ -119,7 +122,7 @@ const COLUMN_LINES = [
   "              abs[t]within 17 19h;$[any(abs w:\"i\"$x)within(1+5999 359999 359999999 abs[t]-17),2147483646;(\"c\";(t;w));0b];",
   "              15h=abs t;$[any 0.001<abs m-\"j\"$m:86400000*\"f\"$x;(\"c\";(t;\"f\"$x));0b];",
   "              12h=abs t;$[all(null x)|(x in -0W 0Wp)|x within 1709.01.01D00:00 2290.12.31D23:59:59.999999999;0b;(\"c\";(t;\"j\"$x))];0b]}] each c;()]}'[y;c];",
-  "          {@[{i:iasc x:x til count x;\"i\"$@[count[x]#0;i;:;-1+sums differ x i]};x;{[e]()}]} each c;",
+  "          {@[{i:iasc x:x til count x;\"i\"$@[count[x]#0;i;:;$[type[x]in 8 9 15h;{(-1+sums g=til count g)g:x?x};{-1+sums differ x}]x i]};x;{[e]()}]} each c;",
 ];
 
 /// `GRID`, with the tree (`tree`) or without it (`()`): a tree is asked for

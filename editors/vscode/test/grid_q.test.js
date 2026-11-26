@@ -235,6 +235,28 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
       assert.deepStrictEqual(visibleRows(shown, [], { column: 0, descending: false }).map((r) => shown.cells[0][r]), sorted, code);
     }
   });
+  await t.test("floats q's distinct and by keep apart have ranks of their own, so Stats and Pivot do not merge them (#3070)", async () => {
+    const { toGrid } = require("../out/grid.js");
+    const { columnStats, pivot } = require("../media/result.js");
+    const cases = [
+      ["1 1.0000000000000002 1.00000000000001 1 2 3", [0, 1, 2, 0, 3, 4]],
+      ["0.3,(0.1+0.2),0.3", [0, 1, 0]],
+      ["100000000 100000000.0000001 100000001f", [0, 1, 2]],
+      ['"e"$1 1.0000001 1 0n', [1, 2, 1, 0]],
+      ["2000.01.01T00:00:00.000+0 0.00000000001 0", [0, 1, 0]],
+      ["(0f;neg 0f;0n;0n;0w;-0w)", [2, 2, 0, 0, 3, 1]],
+    ];
+    for (const [column, rank] of cases) {
+      const code = `([] a:${column}; n:1)`;
+      const payload = (await connection.queryGrid(statements(code), SIZE, 100)).grid;
+      assert.deepStrictEqual(payload.rank[0], rank, code);
+      const q = (await connection.query(statements(`t:${code};(count distinct t\`a;count select sum n by a from t)`), SIZE)).text.join("");
+      const grid = toGrid(payload, 7);
+      const rows = rank.map((_, r) => r);
+      const distinct = columnStats(grid, rows)[0].distinct;
+      assert.strictEqual(`${distinct} ${pivot(grid, rows, { row: 0, column: -1, value: 1, agg: "sum" }, 50).rows.length}`, q, code);
+    }
+  });
   await t.test("a general column pages though the rows of a cut or a page are all of one type, which q makes a vector of (#3068)", async () => {
     const { gridLambda, PAGE, readPage, appendPage, readGridAnswer } = require("../out/grid.js");
     const cases = [
