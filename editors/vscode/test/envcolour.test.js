@@ -14,6 +14,10 @@ const { EnvironmentColour } = require("../out/envcolourview.js");
 test("colours: the defaults, a setting's names and hex kept, junk dropped, the most cautious wins", () => {
   assert.deepStrictEqual(readEnvColours(undefined), DEFAULT_ENV_COLOURS);
   assert.deepStrictEqual(readEnvColours({ Prod: "RED", dev: "green", x: "pink", y: "#00ff00", z: 3, __proto__: "red" }), { prod: "red", dev: "green", y: "#00ff00" });
+  // #2526: a key is split as process tags are, so "live desk" matches them.
+  const split = readEnvColours({ "live desk": "red", "prod-eu": "amber" });
+  assert.deepStrictEqual(split, { live: "red", desk: "red", "prod-eu": "amber" });
+  assert.deepStrictEqual(envColourOf(["live", "desk", "prod-eu"], split), { tag: "live", colour: "red" });
   const colours = readEnvColours(undefined);
   assert.deepStrictEqual(envColourOf(["fx", "uat", "prod"], colours), { tag: "prod", colour: "red" });
   assert.deepStrictEqual(envColourOf(["UAT"], colours), { tag: "UAT", colour: "amber" });
