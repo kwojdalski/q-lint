@@ -609,6 +609,31 @@ m:([]c:"ab")
 `m insert enlist "c"
 z:select from m where c="ab"
 
+=== clean profile: general | the table is the one q resolves the name to: under its `\d`, by its whole name, and after a `q)` prompt (q 5 keeps both rows of each, #2774)
+\d .zz
+t:([]c:"ab";v:1 2)
+r:select from t where c="ab"
+\d .
+s:select from .zz.t where c="ab"
+q)u:([]c:"xyz";v:1 2 3)
+q)w:select from u where c="xbz"
+
+=== QB015 profile: general | and not another context's table of the same name (q 5: each is 'length, #2774)
+t:([]c:"abc";v:1 2 3)
+\d .zz
+t:([]c:"ab";v:1 2)
+x:select from t where c="abc"
+\d .
+y:select from t where c="ab"
+z:select from .zz.t where c="abc"
+
+=== QB015 profile: general | nor one a symbol gives rows to under its context (#2774)
+\d .zz
+m:([]c:"ab")
+`m insert enlist "c"
+\d .
+z:select from .zz.m where c="ab"
+
 === QB015 | the empty string is no better
 select from t where sym=""
 

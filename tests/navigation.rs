@@ -79,6 +79,22 @@ fn a_column_and_a_builtin_are_no_global() {
     );
 }
 
+/// q 5 after these lines has `h`, `x` and `aa` in the root and nothing else:
+/// a symbol is one token over its `:`, and only the expression `\t` times
+/// is q (#2775, #2776).
+#[test]
+fn a_symbol_and_a_system_command_write_no_global() {
+    let source = "h:`:localhost:5000\nx:`a:b:c\n\\t:100 1+1\n\\ts:10 aa:2\n\\l c:/q/lib.q\n";
+    assert_eq!(
+        seen(source),
+        [
+            ("h", "h".to_string(), 'w'),
+            ("x", "x".into(), 'w'),
+            ("aa", "aa".into(), 'w')
+        ]
+    );
+}
+
 #[test]
 fn every_way_of_writing_a_global_is_a_definition_at_its_name() {
     let source = "`tab set ([] a:1 2)\n@[`.;`amended;:;5]\n.cfg[`key]:1\n\

@@ -1653,10 +1653,18 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
             let m = re!(concat!(r"^reverse", blank!(), r"+(asc|desc)\b"))
                 .captures(source.get(start..)?)?;
             let other = if &m[1] == "asc" { "desc" } else { "asc" };
+            // `asc` marks what it sorted: q 5 has `attr asc 3 1 2` as `` `s ``
+            // and `attr reverse desc 3 1 2` as `` ` ``, and a table's first
+            // column likewise. `desc` marks nothing, as `reverse asc` (#2800).
+            let attribute = if other == "asc" {
+                " (`asc` marks the result as sorted, which `reverse desc` does not)"
+            } else {
+                ""
+            };
             (
                 m.get(0)?.as_str(),
                 other.into(),
-                format!("Replace `reverse {}` with `{other}`", &m[1]).into(),
+                format!("Replace `reverse {}` with `{other}`{attribute}", &m[1]).into(),
                 false,
             )
         }
@@ -1732,6 +1740,37 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
                     .captures(source.get(start..)?)?;
             if m[1] != m[2] || starts_as_atom(source, &v.code, start, &m[1]) {
                 return None;
+            }
+            // In a lambda `r:r,x` is what makes `r` a local, and `r,:x` does
+            // not: alone, it would amend the global `r` where the lambda
+            // was refused with 'r. So only where `r` is a local without it -
+            // a parameter, or assigned before this, and by more than
+            // another join this fix would rewrite as well (#2798).
+            if let Some(brace) = enclosing_brace(&v.code, start).filter(|_| !m[1].contains('.')) {
+                let name = &m[1];
+                let sig = signature(&v.code, source, brace);
+                let parameter = if sig.named {
+                    sig.slots.iter().any(|p| pattern_names(p).contains(&name))
+                } else {
+                    matches!(name, "x" | "y" | "z")
+                };
+                let before = unsymbolled(&top_level(v.code.get(sig.body..start)?));
+                let assigned = before.match_indices(name).any(|(i, _)| {
+                    let after = &before[i + name.len()..];
+                    let value = after.trim_start_matches([' ', '\t']);
+                    boundary(&before, i)
+                        && value.starts_with(':')
+                        && !value.starts_with("::")
+                        && !value[1..]
+                            .trim_start_matches([' ', '\t'])
+                            .strip_prefix(name)
+                            .is_some_and(|rest| {
+                                rest.trim_start_matches([' ', '\t']).starts_with(',')
+                            })
+                });
+                if !parameter && !assigned {
+                    return None;
+                }
             }
             (
                 m.get(0)?.as_str(),
@@ -2336,6 +2375,24 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
             if sig.named && sig.slots.len() >= 8 {
                 return None;
             }
+            // `.z.s` is the lambda itself, which the rewrite gives one more
+            // parameter: `.z.s x-1` would then be a projection, and adding
+            // to it 'type (#2796).
+            if re!(r"\.z\.s\b").is_match(&top_level(&v.code[sig.body..close - 1])) {
+                return None;
+            }
+            // An argument the lambda takes and does not read is named for
+            // that, where `x` would be a parameter QF016 reports as never
+            // read - and not when the body has that name for something else
+            // (#2797).
+            let spare = |n: usize| -> Option<Vec<String>> {
+                let names: Vec<String> = match n {
+                    1 => vec!["unused".into()],
+                    _ => (1..=n).map(|i| format!("unused{i}")).collect(),
+                };
+                let body = &v.code[sig.body..close - 1];
+                (!re!(r"\bunused[0-9]?\b").is_match(body)).then_some(names)
+            };
             // The local goes last and the projection fills only its slot:
             // first, it would push `x` to a position QS008 then reports (#772).
             let (header, slots) = if sig.named {
@@ -2343,15 +2400,35 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
                 // the `[` (#323).
                 let bracket = v.code[brace + 1..].find('[')? + brace + 1;
                 let inner = &source[bracket + 1..sig.body - 1];
-                (format!("{{[{inner};{name}]"), sig.slots.len())
+                // `{[] b}` takes one argument, which `[]` passes: an empty
+                // slot before the local would be the one QF009 reports, and
+                // `{[b] b}[b]` no projection but the call (#2797).
+                if sig.slots.iter().all(|p| p.is_empty()) && sig.slots.len() == 1 {
+                    (format!("{{[{};{name}]", spare(1)?[0]), 1)
+                } else {
+                    (format!("{{[{inner};{name}]"), sig.slots.len())
+                }
             } else {
                 // Implicit arguments become explicit ones, as many as q
                 // gives the lambda - and at least `x`, or the projection
                 // would fill every slot and run on the spot. A column in a
                 // query is no argument: `{exec sum y from t}` takes one (#777).
                 let rank = lambda_rank(&v.code, source, brace, close - 1);
-                let params = ["x", "x;y", "x;y;z"][rank - 1];
-                (format!("{{[{params};{name}] "), rank)
+                let reads = implicit_reads(&v.code, sig.body, close - 1);
+                let unread = reads[..rank].iter().filter(|r| !**r).count();
+                let mut spare = if unread > 0 { spare(unread)? } else { vec![] }.into_iter();
+                let params: Vec<String> = ["x", "y", "z"][..rank]
+                    .iter()
+                    .zip(reads)
+                    .map(|(p, read)| {
+                        if read {
+                            p.to_string()
+                        } else {
+                            spare.next().unwrap_or_default()
+                        }
+                    })
+                    .collect();
+                (format!("{{[{};{name}] ", params.join(";")), rank)
             };
             // Passed in, the local is read where the lambda is written, so it
             // has to hold a value there: a parameter of the lambda around it,
@@ -2612,7 +2689,9 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
             {
                 return None;
             }
-            let text = &v.code[start..close];
+            // Not inside a symbol, which runs on over `:` and `/`:
+            // `` `:db/count `` is a file, and renamed another one (#2799).
+            let text = unsymbolled(&v.code[start..close]);
             let mut depth = 0i32;
             let mut out = String::new();
             let mut at = 0;
@@ -5191,6 +5270,12 @@ fn pattern_within(s: &str, nested: bool, depth: usize) -> bool {
         items(&s[2..close - 1], &|c| field(c)) && items(&s[close..s.len() - 1], &|c| field(c))
     } else if whole(s) {
         items(&s[1..s.len() - 1], &|c| is_pattern(c, true))
+    } else if s.starts_with('[') && matching(s, 0, b'[', b']') == Some(s.len()) {
+        // One pattern in brackets is that pattern, and none is one too: q 5
+        // `{[[a]] a} 5` is 5, `{[[(a;b)]] a+b} 1 2` is 3 and `{[[]] 1}[]` is
+        // 1. Two are no pattern: `{[[a;b]] a+b}` is 'nyi (#2789).
+        let inner = &s[1..s.len() - 1];
+        slots(inner).len() == 1 && is_pattern(inner, true)
     } else if let Some(at) = typed_at(s) {
         !iterated_type(s) && is_pattern(&s[..at], nested)
     } else if let Some(at) = first_outside(s, b'!') {
@@ -5447,6 +5532,11 @@ fn names_within(slot: &str, depth: usize) -> Vec<&str> {
     if whole {
         return items_names(slots(&trimmed[1..trimmed.len() - 1]), depth);
     }
+    // A pattern in brackets binds what it binds: q 5 `{[[a:`j]] a} 1` is 1
+    // (#2789).
+    if trimmed.starts_with('[') && matching(trimmed, 0, b'[', b']') == Some(trimmed.len()) {
+        return names_within(&trimmed[1..trimmed.len() - 1], depth + 1);
+    }
     // A dictionary pattern `k!p`: what each side binds, each side its own
     // pattern - `k!(a:neg;b)` binds k, a and b (q 5: `(k!(a:neg;b)):`x`y!1 2`
     // sets k to `x`y and a to -1).
@@ -5515,6 +5605,10 @@ fn underscore_binding(s: &str, depth: usize) -> Option<bool> {
         worst(&parts, &fields)
     } else if whole(s) {
         worst(&slots(&s[1..s.len() - 1]), &inner)
+    } else if s.starts_with('[') && matching(s, 0, b'[', b']') == Some(s.len()) {
+        // A pattern in brackets: q 5 `{[[_]] 1}[1]` is 'match and
+        // `{[[_a]] 1}` is '_ (#2789).
+        inner(&s[1..s.len() - 1])
     } else if let Some(at) = typed_at(s) {
         inner(&s[..at])
     } else if let Some(at) = first_outside(s, b'!') {
@@ -5562,12 +5656,21 @@ pub(crate) fn lambda_rank(code: &str, raw: &str, brace: usize, end: usize) -> us
             sig.slots.len()
         };
     }
+    match implicit_reads(code, sig.body, end) {
+        [_, _, true] => 3,
+        [_, true, _] => 2,
+        _ => 1,
+    }
+}
+/// Which of `x`, `y` and `z` a lambda body, `start` to `end`, reads itself -
+/// what q counts its implicit arguments by.
+fn implicit_reads(code: &str, start: usize, end: usize) -> [bool; 3] {
     // A nested lambda reads its own arguments, so it is left out - as one
     // blank, jumped over from its brace's match: blanking it in a copy of
     // the whole body made a nest of lambdas quadratic (#704).
     let b = code.as_bytes();
     let mut body = vec![];
-    let mut i = sig.body;
+    let mut i = start;
     while i < end {
         if b[i] == b'{' {
             match matching(code, i, b'{', b'}') {
@@ -5599,13 +5702,7 @@ pub(crate) fn lambda_rank(code: &str, raw: &str, brace: usize, end: usize) -> us
                     .starts_with(|c: char| c.is_ascii_alphanumeric() || "_.".contains(c))
         })
     };
-    if reads("z") {
-        3
-    } else if reads("y") {
-        2
-    } else {
-        1
-    }
+    [reads("x"), reads("y"), reads("z")]
 }
 /// `text` with the column names of each table literal blanked, `z` in
 /// `([]z:x)` and `([z:1]b:2)`: a column name reads nothing, while its value
@@ -9503,7 +9600,11 @@ fn lint_rules(
         // `xv.pcSplit:xv.i.applyIdx{[pc;n;features;target] ...}` it is the
         // argument of a projection, and the block documents what that
         // projection takes - `function` among it.
-        let lead = &code[code[..at].rfind('\n').map_or(0, |p| p + 1)..at];
+        // After a `q)` prompt too, which the views hold a `;` for: q loads
+        // `q)g:{[a] a}` as the same definition (#2790).
+        let line = code[..at].rfind('\n').map_or(0, |p| p + 1);
+        let prompt = usize::from(source[line..].starts_with("q)"));
+        let lead = &code[line + prompt..at];
         if !re!(r"^\s*(?:\.?[A-Za-z][A-Za-z0-9_.]*\s*::?)?\s*$").is_match(lead) {
             continue;
         }
@@ -9901,7 +10002,7 @@ fn lint_rules(
     // QP008's copy of the file, made at its first candidate pair.
     let mut unparenthesised = None;
     // QB015's exception: a char column compared with a string as long (#754).
-    let char_columns = semantics::char_column_comparisons(code, &v.comments);
+    let char_columns = semantics::char_column_comparisons(code, &v.comments, source);
     // Where each group's top-level statement ends. Inside a bracket every
     // line is a group of its own, but a query there may go on over the next
     // lines - a newline in a lambda is whitespace - so the query rules read

@@ -772,8 +772,10 @@ fn missing_from(
             }
             let text = std::str::from_utf8(&flat).unwrap_or_default();
             let complete = flat.len() == whole.len();
-            let read = |end: usize| complete || end < text.len();
-            match re!(r"\bfrom\b").find(text).filter(|f| read(f.end())) {
+            // Two bytes on, where `query_words` reads a point and the name
+            // that makes the word a segment of one.
+            let read = |end: usize| complete || end + 1 < text.len();
+            match query_words(re!(r"\bfrom\b"), text).find(|f| read(f.end())) {
                 None if complete => break text.len(),
                 None => continue,
                 Some(first) => {
@@ -794,7 +796,7 @@ fn missing_from(
         };
         let flat = String::from_utf8(flat).unwrap_or_default();
         let statement = &flat[..own];
-        let from = re!(r"\bfrom\b").find_iter(statement).last();
+        let from = query_words(re!(r"\bfrom\b"), statement).last();
         let detail = match from {
             // The bare word straight before a `;`: q 5 `parse "r:select;1"`
             // and `parse "(exec;delete)"` are ',.
@@ -813,7 +815,11 @@ fn missing_from(
             // `from (where a>1)` read a table, and `from by b` applies the
             // name `by` (#2095). Read from `comments` too, where `` from
             // `t where `` still has its table.
-            Some(f) if re!(r"^\s*where\b").is_match(&comments[m.end() + f.end()..at]) => {
+            Some(f)
+                if query_words(re!(r"^\s*where\b"), &comments[m.end() + f.end()..at])
+                    .next()
+                    .is_some() =>
+            {
                 "has nothing between its `from` and its `where`: q raises 'from"
             }
             // A where phrase with nothing in it: q 5 `parse "exec a from t
@@ -869,7 +875,9 @@ fn phrase_refusal(
         // A word with a colon after it names a column, `select a,by:a from
         // t`: QF013's.
         if rest.is_empty()
-            || (re!(r"^(?:from|by|where)\b").is_match(rest)
+            || (query_words(re!(r"^(?:from|by|where)\b"), rest)
+                .next()
+                .is_some()
                 && !re!(r"^(?:from|by|where)\s*:").is_match(rest))
         {
             return Some("has a `,` with nothing after it: q raises ',");
@@ -933,14 +941,47 @@ fn phrase_refusal(
     if keyword == "delete" && re!(r"^\s*distinct\b").is_match(phrase) {
         return Some("takes no `distinct`: q raises 'type");
     }
-    let by = re!(r"\bby\b").find_iter(phrase).count();
+    let first_by = query_words(re!(r"\bby\b"), phrase).next();
+    let by = query_words(re!(r"\bby\b"), phrase).count();
     if keyword == "delete" && by > 0 {
         return Some("takes no `by`: q raises 'by");
     }
     if by > 1 {
         return Some("has a second `by`: q raises 'from");
     }
+    // No column before `by` or `from`: q 5 parses `update from t` and
+    // `update by s from t` and raises 'type on any table, a where phrase or
+    // not. `exec by s from t` is 'nyi for one by column with no name of its
+    // own - `exec by s,d from t` and `exec by a:s from t` run (#2782).
+    let columns = &comments[end..end + first_by.map_or(from, |b| b.start())];
+    if keyword == "update" && columns.trim().is_empty() {
+        return Some("has no column to update: q raises 'type");
+    }
+    if keyword == "exec"
+        && columns.trim().is_empty()
+        && first_by.is_some_and(|b| {
+            let by = &phrase[b.end()..];
+            !by.trim().is_empty() && !by.contains([',', ':'])
+        })
+    {
+        return Some("has one unnamed `by` column and no column to return: q raises 'nyi");
+    }
     None
+}
+
+/// The matches of a qSQL word's pattern in `text` that are the word: a
+/// segment of a dotted name is not. q 5 reads `.rng.from`, `from.x` and
+/// `.grp.by` as names - `select px by .grp.by from t where d>=.rng.from`
+/// runs, and `parse "select px from.t"` is 'from (#2773).
+fn query_words<'t>(
+    word: &'static regex::Regex,
+    text: &'t str,
+) -> impl Iterator<Item = regex::Match<'t>> {
+    word.find_iter(text).filter(|m| {
+        !text[..m.start()].ends_with('.')
+            && !(text[m.end()..].starts_with('.')
+                && text[m.end() + 1..].starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_'))
+    })
 }
 
 /// QT025. A signal of something that is not a symbol or a string. Verified:
@@ -2182,11 +2223,19 @@ fn derived_operand(
                     }
                     break;
                 }
-                // A number vector is one operand: `1 2'y`.
-                while c[q].is_ascii_digit() {
+                // A number vector is one operand: `1 2'y`. A byte or a
+                // boolean is a run of its own, as QE010 reads it: q 5 parses
+                // `0 1b/x` as `0 (1b/) x` and `1b 0/x` as `1b (0/) x`, the
+                // derived function applied infix (#2783).
+                let mut end = end;
+                while c[q].is_ascii_digit() && !lone_literal(&view[q..end]) {
                     let gap = view[..q].trim_end_matches([' ', '\t']).len();
                     match token(gap) {
-                        Some(s) if gap < q && c[s].is_ascii_digit() => q = s,
+                        Some(s)
+                            if gap < q && c[s].is_ascii_digit() && !lone_literal(&view[s..gap]) =>
+                        {
+                            (q, end) = (s, gap);
+                        }
                         _ => break,
                     }
                 }
@@ -2285,7 +2334,7 @@ fn monadic_keyword(
 /// continues the statement: `a:x cor` over ` each y` is refused too (#2851).
 fn keyword_each(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Vec<Finding>) {
     for m in re!(
-        r"(?:\b(and|asof|bin|binr|cor|cov|cross|cut|div|dsave|each|ema|except|fby|ij|ijf|in|insert|inter|like|lj|ljf|lsq|mavg|mcount|mdev|mmax|mmin|mmu|mod|msum|or|over|peach|pj|prior|rotate|scan|scov|set|setenv|ss|sublist|sv|uj|ujf|union|upsert|vs|wavg|within|wsum|xasc|xbar|xcol|xcols|xdesc|xexp|xgroup|xkey|xlog|xprev|xrank)(?:[ \t]+|[ \t]*(?:\r?\n[ \t]*)*\r?\n[ \t]+)|([-+*%!&|<>=~,^#$?@])[ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?)(each|peach|over|scan|prior)\b"
+        r"(?:\b(and|asof|bin|binr|cor|cov|cross|cut|div|dsave|each|ema|except|fby|ij|ijf|in|insert|inter|like|lj|ljf|lsq|mavg|mcount|mdev|mmax|mmin|mmu|mod|msum|or|over|peach|pj|prior|rotate|scan|scov|set|setenv|ss|sublist|sv|uj|ujf|union|upsert|vs|wavg|within|wsum|xasc|xbar|xcol|xcols|xdesc|xexp|xgroup|xkey|xlog|xprev|xrank)(?:[ \t]+|[ \t]*(?:\r?\n[ \t]*)*\r?\n[ \t]+)|(<=|>=|<>|[-+*%!&|<>=~,^#$?@])[ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?)(each|peach|over|scan|prior)\b"
     )
     .captures_iter(unsym)
     {
@@ -2296,6 +2345,12 @@ fn keyword_each(path: &str, source: &str, comments: &str, unsym: &str, out: &mut
             && (!boundary(unsym, word.start()) || unsym[..word.start()].ends_with('.')))
             || crate::system_command(&source[line_start..])
         {
+            continue;
+        }
+        // A string or a symbol between the two is blank in `unsym` and is the
+        // iterator's own left operand: q 5 parses `"x" , "abc" each 0 2` as
+        // `"x" , ("abc" each 0 2)` (#2771).
+        if !comments[word.end()..m.get(3).unwrap().start()].trim().is_empty() {
             continue;
         }
         // With an operand on its left and nothing applied after `each`, the
@@ -2721,6 +2776,12 @@ fn non_ascii(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
     }
 }
 
+/// Whether `token` is a byte or a boolean literal, which joins no vector of
+/// the numbers around it.
+fn lone_literal(token: &str) -> bool {
+    re!(r"^(?:0x[0-9a-fA-F]*|[01]+b)$").is_match(token)
+}
+
 /// QE010. A number q 5 will not parse. Each shape was refused by `parse`,
 /// which names the token: an integer type with a fraction (`1.5j`, and
 /// `1.5 2j`, where the suffix types every item), a suffix on any item but
@@ -2768,7 +2829,7 @@ fn numbers(
         // A byte or a boolean is a run of its own: q 5 parses `2i 0x01` as
         // `2i` applied to `0x01`, and `1 2 1b` and `2i 0x01 3` the same way
         // (#486), so the item before it is the vector's last.
-        let lone = |t: &regex::Match| re!(r"^(?:0x[0-9a-fA-F]*|[01]+b)$").is_match(t.as_str());
+        let lone = |t: &regex::Match| lone_literal(t.as_str());
         let mut j = i;
         while j + 1 < tokens.len()
             && !lone(&tokens[j])

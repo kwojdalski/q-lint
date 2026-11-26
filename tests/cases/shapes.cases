@@ -1455,6 +1455,21 @@ a[0]:9
 b:"x"
 b[0]:"y"
 
+=== QT022 profile: general | under a `\d` too, by the bare name there and the whole one elsewhere (q 5: each 'type; #2787)
+\d .zz
+a:2.5
+a[0]:9
+b:"x"
+\d .
+.zz.b[0]:"y"
+
+=== clean profile: general | while the same name in another context is another value (q 5: the root `a` is 9 2 3; #2787)
+\d .zz
+a:2.5
+\d .
+a:1 2 3
+a[0]:9
+
 === clean profile: general | an indexed assignment into a vector or dictionary keeps it a list (q 5: d 2 is 3)
 v:1 2 3
 v[0]:9

@@ -125,6 +125,25 @@ f:{[1 a] 1}
 g:{[a'] 1}
 h:{[neg y] y}
 
+=== clean profile: general | one pattern in brackets is that pattern, and binds what it binds (q 5: f 5 is 5, g[1;2] and h 1 2 are 3, m 1 is 1 and o[] is 1; #2789)
+f:{[[a]] a}
+r:f 5
+g:{[[a];[b]] a+b}
+h:{[[(a;b)]] a+b}
+k:{[(a;[b])] a+b}
+m:{[[a:`j]] a}
+n:{[[a]:`j] a}
+o:{[[]] 1}
+p:{[[[a]];b] a+b}
+
+=== QF007 profile: general | while two in one pair of brackets are none (q 5: 'nyi for each, #2789)
+g:{[[a;b]] a+b}
+h:{[[a;b];c] a+b+c}
+k:{[[a+b]] 1}
+
+=== QF002 profile: general | and `_` in brackets is `_` (q 5: f 1 is 'match, #2789)
+f:{[[_]] 1}
+
 === clean profile: general | a q 5 typed slot takes any function or type after the colon (q 5: k["xy";2] is (`xy;2), and each lambda takes two) (#437)
 k:{[a:`$;b] (a;b)}
 r:k["xy";2]
@@ -861,6 +880,23 @@ bb;
 bb:2;
 \d .
 bb;
+
+=== QF018 | a name inside a symbol is not assigned by the `:` after it (q 5: `` `:localhost:5000 `` and `` `a:b:c `` are one symbol each, #2775)
+h:`:localhost:5000
+x:`a:b:c
+f:{[] localhost}
+g:{[] b}
+
+=== QF018 | nor is `t` by a timing command's repeat count (#2776)
+\t:100 1+1
+\ts:10 1+1
+f:{[] t}
+g:{[] ts}
+
+=== clean | the expression a timing command times does assign (q 5: `aa` is 2 after `\t:10 aa:2`, #2776)
+\t:10 aa:2
+\ts bb:3
+f:{[] aa+bb}
 
 === QF018 | a top-level assignment still reads its source
 aa:bb;

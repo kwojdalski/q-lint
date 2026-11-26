@@ -1611,6 +1611,32 @@ b:{x+y} over y
 c:"x + each y"
 d:max over y
 
+=== clean profile: general | a string or a symbol between the two is the iterator's own left operand (q 5 parses each line; #2771)
+a:"x" , "abc" each 0 2
+b:`a , `b`c each 0 1
+c:"ab" ~ "ab" each 0 1
+d:`a`b cross `c`d each 0 1
+e:1 2 ,
+  "abc" each 0 1
+
+=== QE011 profile: general | a two-character comparison is one glyph (q 5: parse "x <= each y" is ' ) (#2772)
+x:1 2 3;y:2 3 4
+a:x <= each y
+b:x >= each y
+c:x <> each y
+
+=== clean profile: general | a byte or a boolean ends no number vector, so the derived function after it is applied infix (q 5: parse "0 1b/0x0102" is ((/;1b);0;0x0102), #2783)
+a:0 1b/0x0102
+b:1b 0/0x0102
+c:0 0x01/0x0102
+d:0 1 01b/0x0102
+e:0 1b'0x0102
+
+=== QE009 profile: general | while a vector of one type is one operand, and a lone boolean has nothing on its left (q 5: '/, #2783)
+a:0 1/0x0102
+b:1b/0x0102
+c:1 2f/0x0102
+
 === QT029 profile: general | a negative or exponent float, read whole (q 5: each is 'type) (#504)
 a:hopen -1.5
 b:hopen 1e3
@@ -1904,6 +1930,39 @@ a:select a by b by c from t
 
 === QE007 profile: general | a clause this query does not take (q 5: 'by, #2227)
 a:delete by from t
+
+=== clean profile: general | QE007: a segment of a dotted name is no `from`, `by` or `where` (q 5 runs each with the names defined; #2773)
+s:select px from t where date>=.rng.from
+f:{select px from t where date>=.rng.from}
+v:select px by .grp.by from t
+w:exec px from t where date>=.rng.from
+u:update px:2 from t where date>=.rng.from
+d:delete from t where date>=.rng.from
+a:select px, by.x from t
+b:select px by sym, by.x from t
+c:select from where.x
+
+=== QE007 profile: general | so a `from` that is one has no table after it (q 5: parse "select px from.t" is 'from, #2773)
+e:select px from.t
+
+=== QE007 profile: general | an update with no column (q 5: 'type on any table, #2782)
+r1:update from t
+r2:update by sym from t
+r3:update from t where px>1
+r4:{update
+  from x}
+
+=== QE007 profile: general | an exec with one unnamed by column and no column (q 5: 'nyi, #2782)
+r:exec by sym from t
+
+=== clean profile: general | while q 5 runs these (#2782)
+r1:exec by sym,date from t
+r2:exec by a:sym from t
+r3:update distinct from t
+r4:exec distinct by sym from t
+r5:exec from t
+r6:update a:1 by sym from t
+r7:exec px by sym from t
 
 === clean profile: general | while q 5 parses each of these (#2227)
 a:delete a from t

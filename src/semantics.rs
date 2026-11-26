@@ -1219,10 +1219,16 @@ fn global_writes(
         blanked = at;
     }
     let code = std::str::from_utf8(&view).unwrap_or(code);
+    // Nor does a symbol or a system command assign: `` `:localhost:5000 ``
+    // and `` `a:b:c `` are one symbol each, and after `\t:100 1+1` and
+    // `\l c:/q/lib.q` q 5 has no `localhost`, `b`, `t` or `c` (#2775, #2776).
+    // The expression `\t` times is q and does: `\t:10 aa:1` defines `aa`.
+    // Both stay in `code`, where `` `n set `` and `\l` are read below.
+    let written = crate::unsymbolled(&commands_blanked(code, raw));
     let mut globals: HashMap<String, Vec<usize>> = HashMap::new();
-    for a in assignment.captures_iter(code) {
+    for a in assignment.captures_iter(&written) {
         let m = a.get(0).unwrap();
-        if !boundary(code, m.start()) {
+        if !boundary(&written, m.start()) {
             continue;
         }
         // `::` assigns a parameter or local where the lambda has one: q 5
@@ -1266,10 +1272,10 @@ fn global_writes(
     // `/:` and `\:` are adverbs, `_` and `.` continue a name, and `::` is a
     // view or a global assignment, which the pass above holds.
     for a in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*[-+*%&|^=<>,#~!?@$]:")
-        .captures_iter(code)
+        .captures_iter(&written)
     {
         let m = a.get(0).unwrap();
-        if !boundary(code, m.start()) || code[m.end()..].starts_with(':') {
+        if !boundary(&written, m.start()) || written[m.end()..].starts_with(':') {
             continue;
         }
         let local = scope_at(scopes, m.start()).is_some_and(|s| scopes[s].locals.contains(&a[1]));
@@ -4631,12 +4637,18 @@ fn named_values(
         let Some((&at, rest)) = at.split_first() else {
             continue;
         };
+        // The name as it is written there, which under a `\d` is not the
+        // name it is kept by: q 5 `\d .zz`, `a:2.5`, `a[0]:9` is 'type
+        // (#2787).
         let indexes = |&r: &usize| {
             r > at
                 && scope_at(scopes, r).is_none()
-                && code[r..]
-                    .strip_prefix(name)
-                    .is_some_and(|after| after.trim_start().starts_with('['))
+                && re!(r"^\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
+                    .find(&code[r..])
+                    .is_some_and(|written| {
+                        key(written.as_str(), r) == name
+                            && code[r + written.end()..].trim_start().starts_with('[')
+                    })
         };
         if !rest.iter().all(indexes) {
             continue;
@@ -5822,18 +5834,33 @@ fn qsql_phrases(code: &str) -> Vec<Phrase> {
 /// Where a where phrase compares a char column of a table literal with a
 /// string exactly as long: the offset of each such operator. q 5 compares
 /// row by row and runs it - `t:([]c:"ab";v:1 2); select from t where c="ab"`
-/// keeps both rows (#754). Only a table this file assigns once, at column 0,
-/// with no `\d` in the file and no symbol naming it: `` `t upsert ``, `` `t
-/// insert `` and the rest change its rows.
-pub(crate) fn char_column_comparisons(code: &str, comments: &str) -> Vec<usize> {
+/// keeps both rows (#754). Only a table this file assigns once, at the start
+/// of a line, with no symbol naming it: `` `t upsert ``, `` `t insert `` and
+/// the rest change its rows.
+///
+/// The table is the one q resolves the name to under the `\d` in force, on
+/// both sides: after `\d .zz` and `t:([]c:"ab";v:1 2)`, q 5 keeps both rows
+/// of `select from t where c="ab"` there and of `select from .zz.t where
+/// c="ab"` at the root (#2774).
+pub(crate) fn char_column_comparisons(code: &str, comments: &str, raw: &str) -> Vec<usize> {
     let mut out = vec![];
-    if re!(r#"(?m)^\\d\b|system\s*"d\b"#).is_match(comments) {
-        return out;
-    }
+    // Read only for a file that switches: every name is the root's otherwise.
+    let contexts = if re!(r#"\\d\b|system\s*"d\b"#).is_match(raw) {
+        contexts(code, raw)
+    } else {
+        vec![(0, String::new())]
+    };
+    let ns_at = |at: usize| {
+        contexts[contexts
+            .partition_point(|(p, _)| *p <= at)
+            .saturating_sub(1)]
+        .1
+        .as_str()
+    };
     // A table's char columns, with the patterns that compare each, depend
     // only on its name: worked out once per name, not once per where phrase,
     // which rescanned the file for each and was quadratic in them (#1206).
-    let mut known: HashMap<&str, Vec<(regex::Regex, usize, usize, usize)>> = HashMap::new();
+    let mut known: HashMap<String, Vec<(regex::Regex, usize, usize, usize)>> = HashMap::new();
     // Every name's places, found once: a search of the file for each table
     // was quadratic in tables (#2342).
     let runs = std::cell::OnceCell::new();
@@ -5844,9 +5871,10 @@ pub(crate) fn char_column_comparisons(code: &str, comments: &str) -> Vec<usize> 
         if !code[start..].starts_with("where") {
             continue;
         }
-        let name = &code[t..e];
-        let patterns = known.entry(name).or_insert_with(|| {
-            char_column_patterns(code, comments, name, runs.get_or_init(|| name_runs(code)))
+        let name = resolved(&code[t..e], ns_at(t));
+        let patterns = known.entry(name).or_insert_with_key(|name| {
+            let runs = runs.get_or_init(|| name_runs(code));
+            char_column_patterns((code, comments, raw), name, runs, &ns_at)
         });
         let end = end.min(code.len());
         for (pattern, op, chars, n) in patterns.iter() {
@@ -5916,11 +5944,13 @@ fn name_runs(code: &str) -> HashMap<&str, Vec<(usize, usize)>> {
 /// the table `name` with a string, each with the group of its operator, the
 /// group of its string and the column's width. Empty where the file does not
 /// assign `name` a table literal exactly once, or nothing of it compares.
-fn char_column_patterns(
-    code: &str,
-    comments: &str,
+/// `name` is the name as q resolves it, and `ns_at` the context in force at
+/// an offset.
+fn char_column_patterns<'n>(
+    (code, comments, raw): (&str, &str, &str),
     name: &str,
     runs: &HashMap<&str, Vec<(usize, usize)>>,
+    ns_at: &dyn Fn(usize) -> &'n str,
 ) -> Vec<(regex::Regex, usize, usize, usize)> {
     let mut out = vec![];
     let named = |c: char| c.is_alphanumeric() || "_.".contains(c);
@@ -5930,7 +5960,24 @@ fn char_column_patterns(
     // A name of name characters stands whole exactly where a run of them is
     // the name; any other is searched for.
     let uses: Vec<(usize, usize)> = if !name.is_empty() && name.chars().all(named) {
-        runs.get(name).cloned().unwrap_or_default()
+        // Written in full it is the name anywhere - a root name at the root
+        // only - and by its last part under the context that holds it.
+        let (context, leaf) = match name.rfind('.') {
+            Some(dot) if dot > 0 && name.starts_with('.') => (&name[..dot], &name[dot + 1..]),
+            _ => ("", name),
+        };
+        let mut uses: Vec<(usize, usize)> = runs
+            .get(leaf)
+            .into_iter()
+            .flatten()
+            .filter(|&&(start, _)| ns_at(start) == context)
+            .copied()
+            .collect();
+        if leaf != name {
+            uses.extend(runs.get(name).into_iter().flatten());
+            uses.sort_unstable();
+        }
+        uses
     } else {
         regex::Regex::new(&regex::escape(name))
             .unwrap()
@@ -5948,7 +5995,10 @@ fn char_column_patterns(
     let [&(only_start, only_end)] = writes[..] else {
         return out;
     };
-    if only_start != 0 && !code[..only_start].ends_with('\n') {
+    // At the start of its line, or of its statement after a `q)` prompt,
+    // which the views blank.
+    let line = code[..only_start].rfind('\n').map_or(0, |n| n + 1);
+    if only_start != line && raw.get(line..only_start) != Some("q)") {
         return out;
     }
     // Past the character after the name, which `\s` lets be a no-break
