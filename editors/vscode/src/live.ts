@@ -76,7 +76,7 @@ import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, TunnelHandshakeError, r
 import { GATEWAY_COMMANDS, fileServerTypes, gatewayJoined, gatewayParts, gatewayStatement, isGatewayCall, readGateway, withServerTypes } from "./gateway";
 import { isLocalHost } from "./launcher";
 import { HEARTBEAT, STEADY_MS, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
-import { clearedStamp, historyHeading, historyLabel, iconsEscaped, mergedHistory, plainMessage } from "./history";
+import { clearedStamp, historyHeading, historyLabel, iconsEscaped, mergedHistory, parseQueryHistory, plainMessage } from "./history";
 import { render } from "./query";
 import { QueryModes, type PageLater, type Rendered } from "./resultpanel";
 import { blockAt, scriptCode, selectionCode, statements } from "./statements";
@@ -1223,8 +1223,7 @@ export class Live {
   }
 
   private storedHistory(): HistoryEntry[] {
-    const stored = this.context.globalState.get<unknown>(HISTORY_KEY, []);
-    return Array.isArray(stored) ? (stored as HistoryEntry[]) : [];
+    return parseQueryHistory<HistoryEntry>(this.context.globalState.get<unknown>(HISTORY_KEY, []));
   }
 
   /// The history through the Query History view's filter.
