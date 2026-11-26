@@ -635,7 +635,7 @@ export class Live {
   /// Connections apart the user asked for - a stream's, a diff's - still
   /// running their connect script, which Abort and Disconnect close:
   /// nothing else reaches them (#2567).
-  private readonly preparingApart = new Set<{ connection: QConnection; process: Process }>();
+  private readonly preparingApart = new Set<{ connection: QConnection; process: Process; what?: string }>();
   /// Stops the connect under way: a reconnect after an abort that waits for
   /// the process to be free, or any connect Disconnect or a connect
   /// elsewhere replaces (#1704).
@@ -2343,12 +2343,17 @@ export class Live {
     }
   }
 
-  /// Close the connections apart still in their connect script; the labels
-  /// of their processes.
+  /// Close the connections apart still in their connect script, or in what
+  /// their caller sets them up with (`settingUp`); what was stopped, as the
+  /// user is told it: `the connect script of a, b`.
   private stopPreparingApart(): string[] {
-    const labels = [...this.preparingApart].map(({ connection, process }) => (connection.abort(), process.label));
+    const stopped = new Map<string, Set<string>>();
+    for (const { connection, process, what = "the connect script of" } of this.preparingApart) {
+      connection.abort();
+      stopped.set(what, (stopped.get(what) ?? new Set<string>()).add(process.label));
+    }
     this.preparingApart.clear();
-    return [...new Set(labels)];
+    return [...stopped].map(([what, labels]) => `${what} ${[...labels].join(", ")}`);
   }
 
   // --- connections
@@ -2659,6 +2664,45 @@ export class Live {
     this.separate.add(kept);
     connection.whenClosed(() => this.separate.delete(kept));
     return connection;
+  }
+
+  /// `call` over `connection`, one apart to `process` that its caller is
+  /// still setting up - a stream's table list, its `.u.sub` - which a
+  /// process that does not answer would hold for ever, as no query timeout
+  /// covers it: bounded as its connect script was, and closed by Abort,
+  /// Disconnect or `signal`, as it was then (#3023). `what` is how Abort and
+  /// Disconnect name it before the process's label. Undefined when one of
+  /// those closed it: whoever stopped it knows.
+  async settingUp<T>(connection: QConnection, process: Process, what: string, call: () => Promise<T>, signal?: AbortSignal): Promise<{ answer: T } | undefined> {
+    if (signal?.aborted) {
+      connection.abort();
+      return undefined;
+    }
+    const timeout = effectiveTimeout(process, this.controls.settings().timeout, this.setting(readAdmin).processTimeout) || APART_SCRIPT_TIMEOUT;
+    let timedOut = false;
+    const disarm = armTimeout(timeout, () => {
+      timedOut = true;
+      connection.abort();
+    });
+    const stop = (): void => connection.abort();
+    signal?.addEventListener("abort", stop);
+    const preparing = { connection, process, what };
+    this.preparingApart.add(preparing);
+    try {
+      return { answer: await call() };
+    } catch (error) {
+      if (timedOut) {
+        throw new Error(timedOutError(timeout));
+      }
+      if (signal?.aborted || !this.preparingApart.has(preparing)) {
+        return undefined;
+      }
+      throw error;
+    } finally {
+      disarm();
+      signal?.removeEventListener("abort", stop);
+      this.preparingApart.delete(preparing);
+    }
   }
 
   /// Close the connections apart to the processes `which` picks: a setting
@@ -3011,7 +3055,7 @@ export class Live {
     }
     this.reconnectRun++;
     if (this.connection === undefined && this.connecting === undefined) {
-      void window.showInformationMessage(plainMessage(apart.length > 0 ? `q-lint: stopped the connect script of ${apart.join(", ")} on a connection of its own.` : "q-lint: not connected to a q process."));
+      void window.showInformationMessage(plainMessage(apart.length > 0 ? `q-lint: stopped ${apart.join(" and ")} on a connection of its own.` : "q-lint: not connected to a q process."));
       return;
     }
     this.reconnectStopped = true;
@@ -4320,7 +4364,7 @@ export class Live {
     const process = this.active;
     if (connection === undefined || process === undefined || !connection.isBusy) {
       const stopped = timedOut === undefined ? this.stopPreparingApart() : [];
-      void window.showInformationMessage(plainMessage(stopped.length > 0 ? `q-lint: stopped the connect script of ${stopped.join(", ")} on a connection of its own.` : "q-lint: no query is running."));
+      void window.showInformationMessage(plainMessage(stopped.length > 0 ? `q-lint: stopped ${stopped.join(" and ")} on a connection of its own.` : "q-lint: no query is running."));
       return;
     }
     this.aborted = this.running?.started;

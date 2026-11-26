@@ -970,7 +970,11 @@ editor, newest first, keeping the last `q-lint.tickerplant.stream.rows`
 (1000; at most 10,000). The grid counts the rows received, redraws at most
 five times a second, and **Pause** stops redrawing while the rows keep
 coming. Closing it closes the connection, which the tickerplant drops as a
-subscriber; it says so when the process closes it instead. On a process
+subscriber; it says so when the process closes it instead. While it waits
+for the table list or for `.u.sub`'s answer a notification says so: its
+Cancel, **Abort Current Query** or **Disconnect** gives it up, and it waits
+no longer than the query timeout that holds for the process, or 60 seconds
+with none. On a process
 tagged `prod` it asks first. The lambda that subscribes defines nothing on
 the process. Turning the setting off hides the command and closes every
 stream.
