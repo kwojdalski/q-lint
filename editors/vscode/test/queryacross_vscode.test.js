@@ -125,6 +125,21 @@ test("Query a Tag takes a tag row, or asks for a tag, and the code from the edit
   assert.strictEqual(queries(a).length, 2);
 });
 
+// The workspace's shared list (.qlint/processes.json) is in the pool: its
+// tags are offered and its processes queried, named `.qlint/label` (#2359).
+test("Query a Tag offers and queries the processes of the workspace's shared list", async (t) => {
+  const rdb = await fakeQ(table([7]));
+  t.after(() => rdb.close());
+  const { live, across } = await setUp(t, []);
+  live.sharedList = () => [{ server: { label: ".qlint", url: "file:///w/.qlint/processes.json" }, state: { processes: [proc("rdb", rdb.port, ["prod"])], problems: [], loading: false, fetchedAt: 1 } }];
+  let offered;
+  stub.picks.push((options) => ((offered = options.items.map((i) => `${i.label} ${i.description}`)), options.items[0]));
+  await stub.commands.get("q-lint.queryTag")(undefined, "count t");
+  assert.deepStrictEqual(offered, ["prod 1 process"]);
+  assert.deepStrictEqual(queries(rdb), ["count t"]);
+  assert.deepStrictEqual(across.state().tag.payload.cells[0], [".qlint/rdb"]);
+});
+
 // A gateway in the tag, or compared, gets the code on the server types the
 // file names, as Run Query sends it (#2363).
 test("Query a Tag and Compare Query send a gateway the editor's code on the file's server types", async (t) => {
