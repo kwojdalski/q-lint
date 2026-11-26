@@ -106,6 +106,31 @@ x:`a+
 "a"
 y:`a+"a"+
 
+=== QT003 profile: general | a word operator ending its line, the operand indented under it (#2881; q 5: 'type)
+r:`a mod
+  "a"
+
+=== QT003 profile: general | and a number there, past a comment line (#2881; q 5: 'type)
+r:`a xbar
+  / the widths
+  1 2
+
+=== QT003 profile: general | as with a comment after the operator (#2881; q 5: 'type)
+r:`a mod / of the string
+  "a"
+
+=== clean profile: general | while the empty list or a projection on the indented line runs, and a column-0 string is its own statement (#2881; q 5: (), mod[`a]+[2], (), +[`a]+[2], mod[`a])
+r1:`a mod
+  ()
+r2:`a mod
+  2+
+r3:`a+
+  ()
+r4:`a+
+  2+
+r5:`a mod
+"a"
+
 === clean profile: general | a symbol atom beside the empty list is the empty list, and beside a dictionary of them that dictionary (#2880; q 5: () each, `x`y!(();()) for the last two)
 r:`a+()
 r1:()*`a
