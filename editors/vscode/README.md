@@ -1131,20 +1131,29 @@ statements as it reads a query (`q-lint.query.lineTimings.enable`).
 palette, runs the selection, or the statement at the cursor, with every
 function of a namespace you name (`.lib`; the first one the code names is
 offered) timed, as cProfile times a Python program. Each lambda directly in
-the namespace is replaced for the run by a wrapper of the same rank that
-notes, by `.z.p`, when it is entered and left - through an error too - and
-the very objects that were there are put back after, whether the run
-succeeded or failed; a second message follows to make sure of it, and the
-working state in `.qlint.prof` is deleted. The panel shows the functions as
+the namespace is replaced for the run by its own text with the timing
+written into it - a note, by `.z.p`, where its body starts and wherever it
+hands a value back or signals - and the very objects that were there are
+put back after, whether the run succeeded or failed; a second message
+follows to make sure of it, and the working state in `.qlint.prof` is
+deleted. A function timed is still one function: a call adds no frame to
+q's stack, so a recursion as deep as q allows still runs, one through
+`.z.s` is counted call by call, and a reference the run takes to a function
+- a callback it registers, `.z.ts` - goes on answering once the profile is
+over, the timing in it doing nothing then. The panel shows the functions as
 a table - calls, total, self (less the calls it made), per call, longest -
 sortable by any column, and the calls as a flame chart, merged by their
-path of callers. The wrapper costs time on every call: it is measured on
-the process before each run (a thousand calls of `{x}` through a wrapper
-against a thousand direct ones; about 1.7 µs a call on KDB-X and 4.8 µs on
-PeachQ here) and the panel says how much it adds in all. Only functions
-called by name are seen: one stored in a dictionary or set as a callback
-before the run keeps the original, projections and compositions are not
-wrapped, and at most the first 100,000 calls are recorded. Since a run
+path of callers. The timing costs time on every call: it is measured on
+the process before each run (a thousand calls of `{x}` timed against a
+thousand plain ones; about 1 µs a call on KDB-X here) and the panel says
+how much it adds in all. Only functions called by name are seen: one stored
+in a dictionary or set as a callback before the run keeps the original,
+projections and compositions are not timed, nor is a function whose text is
+not a q lambda's (one written in k), which the panel names; and at most the
+first 100,000 calls are recorded. A call that an error of q's own ends
+(`'type`, not a `'` the text writes) is not seen to end: it is closed when
+a timed caller of it returns, or the run ends, and a call made in between
+is drawn under it. Since a run
 replaces the namespace's functions, the read-only guard asks first on a
 guarded process, whatever the query (`q-lint.query.functionProfile.enable`).
 

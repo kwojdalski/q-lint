@@ -51,7 +51,7 @@
 
   function summary(p) {
     const parts = [
-      p.functions + " function" + (p.functions === 1 ? "" : "s") + " of " + p.namespace + " wrapped",
+      p.functions + " function" + (p.functions === 1 ? "" : "s") + " of " + p.namespace + " timed",
       p.calls + " call" + (p.calls === 1 ? "" : "s") + " in " + duration(p.total),
     ];
     if (p.recorded < p.calls) {
@@ -151,6 +151,11 @@
           duration(p.overheadTotal) + " in all; a function's time includes it for each call it makes. Every function was put back as it was.",
       ),
     );
+    if (p.untimed.length > 0) {
+      header.appendChild(
+        element("div", "note", "Not timed, their text being one the timing cannot be written into: " + p.untimed.join(", ") + ". Their time is counted in their callers'."),
+      );
+    }
     document.body.appendChild(header);
     document.body.appendChild(element("h2", "", "Functions"));
     if (p.stats.length === 0) {

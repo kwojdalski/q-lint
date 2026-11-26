@@ -1100,7 +1100,7 @@
             "type": "boolean",
             "default": true,
             "order": 149,
-            "markdownDescription": "**Profile Functions on Process**: run the selection, or the statement at the cursor, with every function of a namespace timed, and show them as a sortable table and a flame chart. The functions are replaced by timing wrappers for the run and put back after; the read-only guard asks first on a guarded process. Off, the command is hidden and refuses."
+            "markdownDescription": "**Profile Functions on Process**: run the selection, or the statement at the cursor, with every function of a namespace timed, and show them as a sortable table and a flame chart. The functions are replaced by ones with the timing in their text for the run and put back after; the read-only guard asks first on a guarded process. Off, the command is hidden and refuses."
           },
           "q-lint.problemsDashboard.enable": {
             "type": "boolean",
