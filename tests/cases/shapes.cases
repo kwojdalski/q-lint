@@ -94,6 +94,18 @@ z:f[`a%]
 w:`b-
 u:`a mod
 
+=== QT003 profile: general | but a string after the operator is an operand, and the sum 'type (#2881; q 5: each is 'type)
+r:`a+"a"
+r2:`a-""
+r3:(`a*"ab";2)
+r4:`a mod
+  "a"
+
+=== clean profile: general | while a string on the next line at column 0 is a statement of its own, and an operator after the string composes (#2881; q 5: +[`a], then "a"; +[`a]+["a"])
+x:`a+
+"a"
+y:`a+"a"+
+
 === QT003 profile: general | xbar is arithmetic too, infix or applied with brackets (#2882; q 5: each is 'type)
 r:`a xbar 1 2
 r2:2 xbar `a

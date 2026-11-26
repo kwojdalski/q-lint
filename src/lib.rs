@@ -7348,7 +7348,12 @@ fn lint_rules(
         // `+[`]%[n]`, no error - as a template's `` `%name%] `` reads.
         // Nothing on its right at all is a projection too: `` `a+ ``,
         // `` (`a*;1) `` and `` f[`a%] `` build `+[`a]` and run (q 5, #599).
-        if m.as_str().starts_with('`') && operand_ends(code, &v.comments, m.end()) {
+        // A string there is an operand, though blank in `code`: `` `a+"a" ``
+        // and `` `a-"" `` are 'type (KDB-X, #2881).
+        if m.as_str().starts_with('`')
+            && operand_ends(code, &v.comments, m.end())
+            && !v.comments[past_blanks(&v.comments, m.end())..].starts_with('"')
+        {
             continue;
         }
         if m.as_str().starts_with('`') {
