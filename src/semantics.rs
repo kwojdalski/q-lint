@@ -5415,7 +5415,10 @@ fn named_values(
     // table itself, `t upsert (1;2;3)`, and of a simple vector row,
     // `` `t insert 1 2 3 ``, whose items are the values.
     let name = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*";
-    let row = r"\(|-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+";
+    // One value is an atom, a number or a symbol, and a row of one: KDB-X
+    // `` `t insert 4 ``, `` `t insert `a `` and `t upsert 4` are 'length on a
+    // table of two columns, and run on a table of one (#2895).
+    let row = r"\(|-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)*|`[A-Za-z0-9_.:]*";
     // Infix, the row is in the same statement: `add:`t insert` and then a
     // column-0 `(1;2;3)` are two statements (#743).
     let forms = re_built!(&format!(
@@ -5512,8 +5515,17 @@ fn named_values(
             }
             (slots.len(), close)
         } else {
+            // A symbol vector is matched to the columns, not counted here:
+            // KDB-X runs `` `s insert `a`b `` on two symbol columns.
+            if r.as_str().starts_with('`') && code[r.end()..].starts_with('`') {
+                continue;
+            }
             (r.as_str().split_whitespace().count(), r.end())
         };
+        // `10b` and `0x0102` are one word and two values, and 'type.
+        let atom = values == 1
+            && r.as_str() != "("
+            && (r.as_str().starts_with('`') || held(r.as_str(), r.as_str()) == Some(Held::Atom));
         // The row ends the call: a bracket form closes after it.
         let ends = if m.name("op3").is_some() {
             code[end..].trim_start().starts_with(']')
@@ -5523,10 +5535,13 @@ fn named_values(
         if !ends {
             continue;
         }
-        let Some(Held::Table(columns, _)) = visible(table.as_str(), table.start()) else {
+        let Some(Held::Table(columns, keyed)) = visible(table.as_str(), table.start()) else {
             continue;
         };
-        let message = if rows.is_empty() {
+        // Into a keyed table an atom is 'type, which is not this rule's.
+        let message = if atom {
+            (!keyed && columns.len() > 1).then(|| "One value".to_string())
+        } else if rows.is_empty() {
             (values > 1 && values != columns.len()).then(|| format!("{values} values"))
         } else {
             rows.iter()

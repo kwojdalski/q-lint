@@ -1254,6 +1254,26 @@ same:`a=
 match:`x=
   1 2 3
 
+=== QT027 profile: general | one value for a table of two columns (#2895; q 5: each 'length)
+t:([]a:1 2 3;b:`x`y`z)
+`t insert 4
+`t insert `a
+insert[`t;4]
+`t upsert 4f
+r:t upsert -4
+
+=== clean profile: general | which a table of one column takes; a keyed table, a symbol vector and a joined row are not counted (#2895; q 5: the first three run, then 'type, and two more run)
+u:([]a:1 2 3)
+`u insert 4
+`u upsert 4
+r:u upsert 4
+k:([a:1 2]c:10 20)
+`k insert 4
+s:([]a:`x`y;b:`p`q)
+`s insert `a`b
+t:([]a:1 2 3;b:`x`y`z)
+`t insert 4,`w
+
 === clean | a b suffix does not continue a numeric run: `1 0b` is 1 applied to 0b (#496)
 r1:1 2 3+1 0b
 r2:1 2 3=1 0b
