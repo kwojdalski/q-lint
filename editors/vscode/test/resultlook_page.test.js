@@ -88,6 +88,26 @@ test("a column of numeric lists draws sparklines, a numeric column a data bar wh
   assert.strictEqual(page.rows()[1].children[1].style.backgroundImage, undefined);
 });
 
+test("a sparkline is drawn from the vector GRID sent, not from the cell's text cut at the console width; one drawn from cut text says so (#3122)", () => {
+  const page = loadPage(undefined);
+  const whole = Array.from({ length: 100 }, (_, i) => (i < 99 ? i + 0.5 : -500));
+  const text = whole.slice(0, 11).join(" ") + " ..";
+  const m = result("s.1", [["v", 0, [text, "1 2 3"]], ["w", 0, ["1 2 3 4 5 ..", "4 5 6"]]]);
+  m.grid.vectors = [[whole, [1, 2, 3]], null];
+  page.send(m);
+  const points = (td) => decodeURIComponent(td.style.backgroundImage).match(/ d="([^"]*)"/)[1].match(/[ML]/g);
+  const [a, b] = page.rows();
+  assert.strictEqual(points(a.children[0]).length, 100, "every value of the vector, the last (the low) among them");
+  assert.doesNotMatch(a.children[0].className, /\bcut\b/);
+  assert.strictEqual(a.children[0].title, text);
+  // No vector for the column: the text's numbers, marked as a part where q cut it.
+  assert.strictEqual(points(a.children[1]).length, 4);
+  assert.match(a.children[1].className, /\bspark cut\b/);
+  assert.match(a.children[1].title, /first 4 values only/);
+  assert.doesNotMatch(b.children[1].className, /\bcut\b/);
+  assert.strictEqual(b.children[1].title, "4 5 6");
+});
+
 test("a column named __proto__ resized sends its width back as the widths' own entry (#1884)", () => {
   const page = loadPage(undefined);
   page.send(result("s.1", [["__proto__", 7, ["1", "2"]], ["b", 7, ["3", "4"]]]));

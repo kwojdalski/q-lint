@@ -1528,7 +1528,11 @@
             counts.bars++;
           }
         } else if (chart && chart.kind === "spark") {
-          const values = LOOK.parseNumbers(raw);
+          // The vector GRID sent (#2465) when it sent one: the cell's text
+          // is `-3!`'s, cut at the process's `\c` width, so a line drawn
+          // from it is of the vector's start only (#3122).
+          const sent = grid.vectors && grid.vectors[ci] ? grid.vectors[ci][r] : null;
+          const values = sent || LOOK.parseNumbers(raw);
           const url = values ? LOOK.sparkUrl(values, d.colour) : null;
           if (url) {
             td.style.backgroundImage = url;
@@ -1537,6 +1541,12 @@
             td.textContent = "";
             td.className += " spark";
             counts.sparks++;
+            // No vector came (a list of integers, or a long one): the line
+            // is of the text, and says so where q cut it.
+            if (!sent && /\.\.\.?$/.test(String(raw).trim())) {
+              td.className += " cut";
+              td.title += "\nThe line is of the first " + values.length + " values only: q cut this cell's text.";
+            }
           }
         }
         const level = heat[ci] && !marked && !filled ? heat[ci][r] : null;
