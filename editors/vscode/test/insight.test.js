@@ -87,6 +87,13 @@ const INFO = {
   attrs: ["u", "g", ""],
 };
 
+test("a column name or foreign key holding a line break stays in its row of the table hover (#2665)", () => {
+  const info = readTableInfo({ ...INFO, cols: ["id", "note\n# HEADING\r\nx", "c"], fkeys: ["", "a\rb", ""] });
+  const md = tableMarkdown("t", "p", info);
+  assert.match(md, /^\| note \\# HEADING x \| `s` \| `g` grouped \| a b \|$/m);
+  assert.doesNotMatch(md, /^\\# HEADING/m);
+});
+
 test("a table's details become a short hover, every name escaped", () => {
   const info = readTableInfo(INFO);
   assert.deepStrictEqual(info.columns[2], { name: "c|d", type: "", fkey: "", attr: "" });
