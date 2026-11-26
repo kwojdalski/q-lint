@@ -262,6 +262,22 @@ impl Policy {
         }
     }
 
+    /// `project_root`, for `--force-exclude`. With no configuration and no
+    /// root, the top of the checkout the file is in comes before the current
+    /// directory: that is the same from wherever the run starts, so one file
+    /// gets one answer (#2875). Only a file in no checkout is left to the
+    /// current directory.
+    fn checkout_root(&self, settings: &Settings, full: &Path) -> Result<PathBuf, String> {
+        let dir = full.parent().unwrap_or(full);
+        if settings.root.is_none()
+            && !self.roots.borrow().iter().any(|root| dir.starts_with(root))
+            && let Some(top) = dir.ancestors().find(|top| top.join(".git").exists())
+        {
+            return Ok(top.to_path_buf());
+        }
+        self.project_root(settings, full)
+    }
+
     /// Where a file in `dir` is rooted when no configuration governs it:
     /// the deepest root holding it, or the current directory.
     fn base_dir(&self, dir: &Path) -> Result<PathBuf, String> {
@@ -522,7 +538,7 @@ impl Policy {
     pub fn force_excluded(&self, path: &Path) -> Result<bool, String> {
         let settings = self.settings(path)?;
         let full = absolute(path);
-        let root = self.project_root(&settings, &full)?;
+        let root = self.checkout_root(&settings, &full)?;
         // The project's top is not a directory of the project, whatever it
         // is called: `qlinter --force-exclude .` in a checkout named
         // `target` linted nothing, and passed (#2874).

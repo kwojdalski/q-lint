@@ -1361,6 +1361,43 @@ fn force_exclude_does_not_read_the_project_roots_own_name_as_a_default_directory
     );
 }
 
+/// A file no configuration governs gets one answer from `--force-exclude`
+/// wherever the run starts: its default directories are read from the top
+/// of the checkout it is in, not from the current directory, which linted
+/// `target/a.q` from inside `target` and skipped it from above (#2875).
+#[test]
+fn force_exclude_reads_default_directories_from_the_checkout_without_a_configuration() {
+    let repo = Repo::new();
+    repo.write(".git/HEAD", "ref: refs/heads/master\n")
+        .write("target/a.q", SOURCE)
+        .write("src/b.q", SOURCE);
+    let style = ["--isolated", "--profile", "style"];
+    let file = repo.path("target/a.q");
+    let file = file.to_str().unwrap();
+    for cwd in [".", "target", "src"] {
+        assert_eq!(
+            repo.codes(cwd, &[&style[..], &["--force-exclude", file]].concat()),
+            Vec::<String>::new(),
+            "from {cwd}"
+        );
+    }
+    assert_eq!(
+        repo.codes(
+            "target",
+            &[&style[..], &["--force-exclude", "a.q"]].concat()
+        ),
+        Vec::<String>::new()
+    );
+    // A file outside `target` is linted from inside it.
+    assert_eq!(
+        repo.codes(
+            "target",
+            &[&style[..], &["--force-exclude", "../src/b.q"]].concat()
+        ),
+        ["QF016"]
+    );
+}
+
 #[test]
 fn force_exclude_applies_a_name_pattern_to_a_file_outside_its_root() {
     // `--exclude gen` is rooted at the cwd, here/; a walk of ../other skips
