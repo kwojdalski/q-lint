@@ -272,7 +272,8 @@
       return node.text || "dictionary of " + n;
     }
     if (node.type === 98) {
-      return "table of " + n + " row" + (node.count === 1 ? "" : "s");
+      // `keyed`: a keyed table, which q sends as a table (#2503).
+      return (node.text === "keyed" ? "keyed table of " : "table of ") + n + " row" + (node.count === 1 ? "" : "s");
     }
     if (node.type > 0 && node.type < 20 && node.type !== 10 && node.text === "") {
       return TYPE_NAMES[node.type] + " list of " + n;

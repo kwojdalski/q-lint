@@ -165,6 +165,8 @@ test("a tree node says what it holds, and opens when it has children or had some
   assert.strictEqual(panel.treeText(node(0, 3)), "list of 3");
   assert.strictEqual(panel.treeText(node(99, 1200)), "dictionary of 1,200");
   assert.strictEqual(panel.treeText(node(98, 1)), "table of 1 row");
+  assert.strictEqual(panel.treeText({ ...node(98, 2), text: "keyed" }), "keyed table of 2 rows");
+  assert.strictEqual(panel.treeOpens({ ...node(98, 2), text: "keyed" }), false);
   assert.strictEqual(panel.treeText(node(7, 4)), "long list of 4");
   assert.strictEqual(panel.treeText(node(10, 2, '"ab"')), '"ab"');
   assert.strictEqual(panel.treeText(node(-7, 1, "42")), "42");

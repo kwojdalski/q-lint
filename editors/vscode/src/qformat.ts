@@ -1254,8 +1254,10 @@ export function treeOfQ(q: QValue, budget = TREE_NODES, key = "", precision = 7)
   const count = q.kind === "dict" ? countOf(q.k) : countOf(q);
   const shown = open ? Math.min(count, Math.max(0, budget - 1)) : 0;
   const share = shown > 0 ? Math.floor((budget - 1) / shown) : 0;
-  const type = q.kind === "list" ? 0 : q.kind === "chars" ? 10 : q.kind === "table" ? 98 : q.kind === "dict" ? 99 : q.t;
-  const text = open || q.kind === "table" || q.kind === "dict" ? "" : cutCell(oneLine(q, precision));
+  // A keyed table is a table, marked `keyed`, as `GRID` sends one (#2503).
+  const keyed = q.kind === "dict" && !dict;
+  const type = q.kind === "list" ? 0 : q.kind === "chars" ? 10 : q.kind === "table" || keyed ? 98 : q.kind === "dict" ? 99 : q.t;
+  const text = keyed ? "keyed" : open || q.kind === "table" || q.kind === "dict" ? "" : cutCell(oneLine(q, precision));
   let children: TreeNode[] = [];
   if (shown > 0) {
     const items = itemsOf(firstOf(q.kind === "dict" ? q.v : q, shown));
