@@ -122,6 +122,18 @@ test("a query asks for each placeholder, starting from the value given last, and
   assert.deepStrictEqual(context.globalState.get(PLACEHOLDER_VALUES_KEY), { sym: "`a", n: "10" });
 });
 
+test("values another window remembered while a box was open are kept (#2527)", async (t) => {
+  const { context, sent, query } = setUp(t, "select from t where date={{date}}");
+  stub.inputs.push(async () => {
+    // Window 2 remembers {{sym}} while this window's {{date}} box is open.
+    await context.globalState.update(PLACEHOLDER_VALUES_KEY, { sym: "`AAPL" });
+    return "2026.11.25";
+  });
+  await query();
+  assert.deepStrictEqual(sent, ["select from t where date=2026.11.25"]);
+  assert.deepStrictEqual(context.globalState.get(PLACEHOLDER_VALUES_KEY), { sym: "`AAPL", date: "2026.11.25" });
+});
+
 test("with placeholders off, or none in the code, nothing is asked", async (t) => {
   const { sent, query } = setUp(t, "f:{{x}}; {{a}}");
   stub.config.user["query.placeholders.enable"] = false;
