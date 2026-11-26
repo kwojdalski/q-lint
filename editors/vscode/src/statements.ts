@@ -308,6 +308,8 @@ export function statements(text: string): string[] {
 // (#2785). A context's name may start with a digit or an underscore, at any
 // level: KDB-X switches to `.1a` and `.a._b` (#2916).
 const CONTEXT = /^(?:q\))*\\d\s+(\.\w+(?:\.\w+)*|\.)(?:[ \t]+\/.*)?\s*$/;
+// The `q)` prompts a statement opens with, which q reads its code after.
+const PROMPTS = /^(?:q\))*/;
 // `system "d .ns"` with a literal argument switches as `\d .ns` does, as the
 // language server reads it (#261), in brackets too, `system["d .ns"]`; a
 // computed one leaves the context as it was.
@@ -329,7 +331,7 @@ export function contextSwitch(statement: string): string | undefined {
     return undefined;
   }
   const line = statement.trim();
-  const call = systemContext(line, 0);
+  const call = systemContext(line, PROMPTS.exec(line)![0].length);
   return CONTEXT.exec(line)?.[1] ?? (call !== undefined && /^\s*;?\s*(?:\s\/.*)?$/.test(line.slice(call.end)) ? call.context : undefined);
 }
 
@@ -345,7 +347,7 @@ export function contextLeft(statement: string): string | undefined {
   }
   let left: string | undefined;
   let depth = 0;
-  for (let i = 0; i < statement.length; i++) {
+  for (let i = PROMPTS.exec(statement)![0].length; i < statement.length; i++) {
     const c = statement[i];
     const before = statement[i - 1] ?? "\n";
     if (c === '"') {
