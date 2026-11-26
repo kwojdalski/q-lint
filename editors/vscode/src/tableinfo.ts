@@ -103,8 +103,9 @@ export function tableMarkdown(name: string, process: string, info: TableInfo, li
       : []),
     info.bytes !== null ? `${bytes(info.bytes)} in memory (-22!)` : info.kind === "splayed" || info.kind === "partitioned" ? "on disk, not measured" : "",
   ].filter((f) => f !== "");
-  // markdownText escapes `|` too, which a Markdown table cell needs.
-  const cell = markdownText;
+  // markdownText escapes `|` too, which a Markdown table cell needs; a
+  // line break would end the row, so it is a space (#2665).
+  const cell = (text: string): string => markdownText(text.replace(/\r?\n|\r/g, " "));
   const rows = info.columns.slice(0, limit).map((c) => {
     const key = info.keys.includes(c.name) ? " (key)" : "";
     return `| ${cell(c.name)}${key} | ${c.type === "" ? "" : `\`${c.type}\``} | ${c.attr === "" ? "" : `\`${c.attr}\` ${ATTRIBUTES[c.attr] ?? ""}`} | ${cell(c.fkey)} |`;

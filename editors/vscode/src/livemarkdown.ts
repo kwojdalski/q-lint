@@ -26,8 +26,9 @@ export const LIVE_KEY = "q-lint.liveValues";
 /// The most characters of one value the process sends.
 export const VALUE_LIMIT = 200;
 
-/// `y`, cut from `x`, with the attributes `x` has.
-const ATTR = "{$[98h=type x;flip .z.s'[flip x;flip y];99h=type x;.z.s[key x;key y]!.z.s[value x;value y];(attr x)#y]}";
+/// `y`, cut from `x`, with the attributes `x` has: a sorted table's or
+/// dictionary's own `` `s# `` too, which `flip` and `!` drop (#2708).
+const ATTR = "{$[98h=type x;(attr x)#flip .z.s'[flip x;flip y];99h=type x;(attr x)#.z.s[key x;key y]!.z.s[value x;value y];(attr x)#y]}";
 
 /// `LIVE`, each expression evaluated under `reval` when `readOnly` - with
 /// `value` on a process without it - as `trapLines` evaluates statements.

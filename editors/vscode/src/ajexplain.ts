@@ -7,8 +7,9 @@
 //
 // The call's three arguments are the user's expressions, evaluated on the
 // process, so the lambda is sent through the read-only guard with the call
-// as the code it reads. It assigns nothing. Works on kdb+ (KDB-X) and
-// PeachQ; held there by processtools_q.test.js.
+// as the code it reads. It assigns nothing: a table is unkeyed as a value,
+// never by its name. Works on kdb+ (KDB-X) and PeachQ; held there by
+// processtools_q.test.js.
 //
 // A row and a time are written by `FULL_TEXT`, up to 2000 characters:
 // `.Q.s1` cuts a wide row at the process's `\c` width, short of the columns
@@ -25,7 +26,10 @@ export function explainAjLambda(evaluate: Evaluate): string {
   const v = evaluate.value;
   return [
     "{[c;l;r;i]",
-    ` c:(),${v} c; L:0!${v} l; R:0!${v} r; i:\`long$i;`,
+    // A table written as its name is refused, as aj refuses it ('type):
+    // `0!` of a symbol unkeys the global it names, in place (#2981).
+    ' T:{[w;t]if[-11h=type t;\'w," table is the symbol ",(-3!t),": aj takes a table, not the name of one"];0!t};',
+    ` c:(),${v} c; L:T["the left"]${v} l; R:T["the right"]${v} r; i:\`long$i;`,
     ` F:{2000 sublist x y}${FULL_TEXT}[2000];`,
     " if[not i within(0;-1+count L);'\"no row \",string[i],\" in the left table, which has \",string[count L],\" rows\"];",
     " if[not all c in cols L;'\"the left table has no column \",string first c except cols L];",
@@ -48,29 +52,36 @@ export interface AjCall {
 }
 
 /// The top-level arguments of a bracketed call starting at `open`, or
-/// undefined when its brackets do not close.
-function args(code: string, open: number): { parts: string[]; end: number } | undefined {
+/// undefined when its brackets do not close. `kinds` is `charKinds(code)`:
+/// a `;` or a bracket in a string or in a comment on one of the call's
+/// lines is not the call's, and a comment is not part of an argument
+/// (#2982).
+function args(code: string, kinds: string, open: number): { parts: string[]; end: number } | undefined {
   const parts: string[] = [];
   let depth = 0;
   let start = open + 1;
+  const part = (end: number) => {
+    let text = "";
+    for (let i = start; i < end; i++) {
+      text += kinds[i] === "m" ? "" : code[i];
+    }
+    return text.trim();
+  };
   for (let i = open; i < code.length; i++) {
     const c = code[i];
-    if (c === '"') {
-      for (i++; i < code.length && code[i] !== '"'; i++) {
-        if (code[i] === "\\") {
-          i++;
-        }
-      }
-    } else if (c === "[" || c === "(" || c === "{") {
+    if (kinds[i] !== "c") {
+      continue;
+    }
+    if (c === "[" || c === "(" || c === "{") {
       depth++;
     } else if (c === "]" || c === ")" || c === "}") {
       depth--;
       if (depth === 0) {
-        parts.push(code.slice(start, i).trim());
+        parts.push(part(i));
         return { parts, end: i };
       }
     } else if (c === ";" && depth === 1) {
-      parts.push(code.slice(start, i).trim());
+      parts.push(part(i));
       start = i + 1;
     }
   }
@@ -78,8 +89,8 @@ function args(code: string, open: number): { parts: string[]; end: number } | un
 }
 
 /// The first `aj[cols;left;right]` or `aj0[...]` call in `code`, its
-/// arguments as written; undefined when there is none. One written in a
-/// comment or a string is not a call (#1914).
+/// arguments as written, less their comments; undefined when there is
+/// none. One written in a comment or a string is not a call (#1914).
 export function findAj(code: string): AjCall | undefined {
   const kinds = charKinds(code);
   for (const m of code.matchAll(/(?:^|[^A-Za-z0-9_.`])(aj0?)\s*\[/g)) {
@@ -87,7 +98,7 @@ export function findAj(code: string): AjCall | undefined {
     if (kinds[open] !== "c") {
       continue;
     }
-    const got = args(code, open);
+    const got = args(code, kinds, open);
     if (got !== undefined && got.parts.length === 3 && got.parts.every((p) => p !== "")) {
       return { fn: m[1] as AjCall["fn"], columns: got.parts[0], left: got.parts[1], right: got.parts[2] };
     }
@@ -136,16 +147,22 @@ export function readMatch(raw: unknown): AjMatch {
   return { row, candidates: p[1], missedKey, missedValue, matched: p[4], matchedRow, earliest, time, sorted: p[8], timeColumn, rightRows: p[10] };
 }
 
+/// What a row with no match is left with - by `aj0` as by `aj`, which
+/// differ only in whose time a matched row takes (#2983).
+function unmatched(call: AjCall): string {
+  return `${call.fn} leaves the columns only ${call.right} has null in this row, and a column both tables have keeps the left row's value.`;
+}
+
 /// The explanation, as plain text lines.
 export function explain(call: AjCall, index: number, process: string, m: AjMatch): string {
   const lines = [`/ ${call.fn}[${call.columns};${call.left};${call.right}] on ${process}: row ${index} of ${call.left}`, "", `left row ${index}: ${m.row}`, ""];
   if (m.rightRows === 0) {
     // No row to be the earliest and no key that missed (#1909).
-    lines.push(`No match: ${call.right} has no rows.`, `${call.fn} leaves the right table's columns null in this row${call.fn === "aj0" ? "" : ", keeping the left row's own"}.`);
+    lines.push(`No match: ${call.right} has no rows.`, unmatched(call));
   } else if (m.missedKey !== "") {
     lines.push(
       `No match: none of the ${m.rightRows} rows of ${call.right} has ${m.missedKey} = ${m.missedValue}.`,
-      `${call.fn} leaves the right table's columns null in this row${call.fn === "aj0" ? "" : ", keeping the left row's own"}.`,
+      unmatched(call),
     );
   } else if (m.matched < 0) {
     lines.push(

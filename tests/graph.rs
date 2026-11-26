@@ -308,6 +308,67 @@ u:{value \"1\"}
 }
 
 #[test]
+fn a_write_into_a_computed_name_by_amend_insert_or_delete_is_dynamic() {
+    // KDB-X, after `` nm:`$"dyn1" ``: `` @[`.;nm;:;1 2] `` and
+    // `.[nm;();:;1 2]` make a `dyn1`, `nm upsert ([]a:1 2)` a table of that
+    // name, `nm insert` adds to it, and `` ![`.;();0b;enlist nm] `` removes
+    // it (#2826).
+    let source = "\
+nm:`$\"dyn\",string 1
+@[`.;nm;:;1 2]
+.[nm;();:;1 2]
+nm insert ([]a:1 2)
+nm upsert ([]a:1 2)
+@[`.;nm;,;3]
+![`.;();0b;enlist nm]
+f:{[t;x] t insert x}
+g:{insert[x;y]}
+(`$\"dyn2\") upsert ([]a:1 2)
+upsert[nm;([]a:1 2)]
+";
+    let g = graph(&[("dyn.q", source)], false);
+    let lines: Vec<_> = (2..=11).map(|line| (line, "set")).collect();
+    assert_eq!(kinds(&g, "dyn.q"), lines);
+    // The same with the name written is a definition, and an upsert into a
+    // table held, not named, writes nothing: KDB-X's `t upsert x` returns
+    // a table and leaves `t` as it was.
+    let source = "\
+@[`.;`a;:;1 2]
+.[`b;();:;1 2]
+`c insert ([]a:1 2)
+`d upsert ([]a:1 2)
+@[`.;enlist`e;,;3]
+![`.;();0b;enlist`a]
+![`.;();0b;`a`b]
+t:([]a:1 2)
+r:t upsert ([]a:3 4)
+h:{[t;x] t upsert x}
+.[`:data/t;();,;t]
+k:x!y
+";
+    let g = graph(&[("named.q", source)], false);
+    assert!(
+        kinds(&g, "named.q").is_empty(),
+        "{:?}",
+        kinds(&g, "named.q")
+    );
+}
+
+#[test]
+fn a_path_joined_from_a_list_written_out_is_not_dynamic() {
+    // KDB-X: `` ` sv (`:dir;`file) `` is `` `:dir/file ``, a path as
+    // `` ` sv `:dir,`file `` is (#2816). A name joined so is still one.
+    let source = "\
+a:` sv (`:dir;`file)
+b:` sv ( `:dir;`file)
+c:` sv ((`:dir);`file)
+d:` sv (`ns;`file)
+";
+    let g = graph(&[("paths.q", source)], false);
+    assert_eq!(kinds(&g, "paths.q"), [(4, "sv")]);
+}
+
+#[test]
 fn value_of_a_name_holding_a_symbol_is_dynamic_like_get() {
     // #142. q 5 (KDB-X, .z.K 5, .z.k 2026.07.23): `get~value` is 1b - both
     // are `.:` - and after `x:42; nm:`x`, `value nm` and `get nm` are both
@@ -493,6 +554,232 @@ fn a_relative_load_after_a_change_of_directory_is_dynamic() {
     assert!(deps(&g, "b.q").is_empty());
     assert_eq!(kinds(&g, "b.q"), [(2, "load")]);
     assert_eq!(deps(&g, "c.q"), ["x.q"]);
+}
+
+#[test]
+fn system_applied_in_parentheses_by_dot_or_to_each_loads() {
+    // KDB-X: `` `cfun in key`. `` is 1b after each, with lib.q's `cfun:{x}`
+    // (#2804).
+    for load in [
+        "system (\"l lib.q\")\n",
+        "system ( \"l lib.q\" )\n",
+        "system[(\"l lib.q\")]\n",
+        ".[system;enlist \"l lib.q\";{-1 x}]\n",
+        "system each enlist \"l lib.q\"\n",
+        "system peach enlist \"l lib.q\"\n",
+        "system'[enlist \"l lib.q\"]\n",
+        "system@'enlist \"l lib.q\"\n",
+        "system . enlist \"l lib.q\"\n",
+    ] {
+        let g = graph(&[("lib.q", "cfun:{x}\n"), ("a.q", load)], false);
+        assert_eq!(deps(&g, "a.q"), ["lib.q"], "{load:?}");
+        assert!(kinds(&g, "a.q").is_empty(), "{load:?}");
+    }
+    // A shape not read is a load all the same, which the file says it has:
+    // KDB-X runs lib.q twice for the first.
+    for load in [
+        "system each (\"l lib.q\";\"l lib.q\")\n",
+        "system (\"l lib/\",f)\n",
+        ".[system;enlist \"l lib/\",f;{-1 x}]\n",
+    ] {
+        let g = graph(&[("lib.q", "cfun:{x}\n"), ("a.q", load)], false);
+        assert!(deps(&g, "a.q").is_empty(), "{load:?}");
+        assert_eq!(kinds(&g, "a.q"), [(1, "load")], "{load:?}");
+    }
+    // A list holding `system` applies it to nothing.
+    let g = graph(
+        &[("lib.q", "cfun:{x}\n"), ("a.q", "l:(system;\"l lib.q\")\n")],
+        false,
+    );
+    assert!(deps(&g, "a.q").is_empty());
+    assert!(kinds(&g, "a.q").is_empty());
+}
+
+#[test]
+fn a_namespace_read_whole_reaches_the_files_assigning_its_members() {
+    // KDB-X, with every file loaded: `whole` is
+    // ``` ``port`host`retries!(::;5010;`localhost;3) ``` and `p` 5010 (#2827).
+    let g = graph(
+        &[
+            ("cfg.q", ".cfg.port:5010\n.cfg.host:`localhost\n"),
+            ("cfg2.q", "\\d .cfg\nretries:3\n"),
+            ("a.q", "whole:.cfg\n"),
+            ("b.q", "whole2:get `.cfg\n"),
+            ("c.q", "n:count .cfg\n"),
+            ("d.q", "p:.cfg`port\n"),
+            ("e.q", "p:.cfg.missing\n"),
+            ("deep.q", ".app.db.user:`u\n"),
+            ("f.q", "u:.app.db\nv:.app\n"),
+        ],
+        false,
+    );
+    for reader in ["a.q", "b.q", "c.q", "d.q"] {
+        assert_eq!(deps(&g, reader), ["cfg.q", "cfg2.q"], "{reader}");
+        let shared: Vec<_> = g[reader].ambiguous.keys().collect();
+        assert_eq!(shared, [".cfg"], "{reader}");
+    }
+    // A member nobody assigns is no read of the others.
+    assert!(deps(&g, "e.q").is_empty());
+    assert!(deps(&g, "cfg.q").is_empty());
+    // Nested, each namespace above the name is one too.
+    assert_eq!(deps(&g, "f.q"), ["deep.q"]);
+    // A namespace assigned whole is the file's that assigns it, as before.
+    let g = graph(
+        &[
+            ("cfg.q", ".cfg:`port`host!(5010;`localhost)\n"),
+            ("more.q", ".cfg.retries:3\n"),
+            ("a.q", "whole:.cfg\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "a.q"), ["cfg.q"]);
+}
+
+#[test]
+fn a_script_only_measured_or_read_is_reached_and_loaded_nowhere() {
+    // KDB-X runs b.q, mon.q and c.q: `r` is b.q's `{x+1}` and `` key `.a ``
+    // is ``` ``sz ```, for `hcount` runs nothing of b.q (#2805).
+    for read in [
+        "sz:hcount `:b.q",
+        "sz:hcount[`:b.q]",
+        "there:not () ~ key `:b.q",
+        "text:read0 `:b.q",
+        "bytes:count read1 (`:b.q)",
+    ] {
+        let g = graph(
+            &[
+                ("b.q", "bfun:{x+1}\n"),
+                ("mon.q", &format!("\\d .a\n{read}\n")),
+                ("c.q", "r:bfun\n"),
+                ("d.q", "r:.a.bfun\n"),
+            ],
+            false,
+        );
+        assert_eq!(deps(&g, "mon.q"), ["b.q"], "{read}");
+        assert_eq!(deps(&g, "c.q"), ["b.q"], "{read}");
+        assert!(deps(&g, "d.q").is_empty(), "{read}");
+    }
+    // Handed to anything else it may be loaded, a loader called under
+    // `\d .a` putting b.q's names there (KDB-X), and so is the text of a
+    // script once it is evaluated.
+    for load in [".ld.f `:b.q", "value each read0 `:b.q", "mykey `:b.q"] {
+        let g = graph(
+            &[
+                ("b.q", "bfun:{x+1}\n"),
+                ("mon.q", &format!("\\d .a\n{load}\n")),
+                ("c.q", "r:bfun\n"),
+                ("d.q", "r:.a.bfun\n"),
+            ],
+            false,
+        );
+        assert_eq!(deps(&g, "mon.q"), ["b.q"], "{load}");
+        assert!(deps(&g, "c.q").is_empty(), "{load}");
+        assert_eq!(deps(&g, "d.q"), ["b.q"], "{load}");
+    }
+}
+
+#[test]
+fn a_column_delete_names_is_no_read_of_a_global() {
+    // KDB-X, with `px:{x}` defined, runs `delete px from t` to `t` without
+    // its column `px`: the list names columns and reads nothing (#2806).
+    let g = graph(
+        &[
+            ("lib.q", "px:{x}\nhelper:{x}\n"),
+            ("one.q", "t:([]a:1 2;px:3 4)\nr:delete px from t\n"),
+            ("two.q", "f:{[t] delete a, helper from t}\n"),
+            ("rows.q", "f:{[t] delete from t where a=px}\n"),
+            ("gone.q", "delete px from `.\n"),
+        ],
+        false,
+    );
+    assert!(deps(&g, "one.q").is_empty());
+    assert!(deps(&g, "two.q").is_empty());
+    assert!(g["one.q"].ambiguous.is_empty() && g["two.q"].ambiguous.is_empty());
+    // A row delete's `where` is an expression, and reads what it names; and
+    // a delete from a namespace names the global it removes.
+    assert_eq!(deps(&g, "rows.q"), ["lib.q"]);
+    assert_eq!(deps(&g, "gone.q"), ["lib.q"]);
+}
+
+#[test]
+fn a_context_switched_to_by_a_computed_name_is_dynamic() {
+    // KDB-X runs lib.q, and `key `.app` is ``dfun: the root has no `dfun`,
+    // and use.q's read of one is 'dfun (#2813).
+    let g = graph(
+        &[
+            (
+                "lib.q",
+                "ns:\".app\"\nsystem \"d \",ns\ndfun:{x}\n.abs.g:1\nsystem \"d .\"\nroot:2\n",
+            ),
+            ("use.q", "r:dfun\n"),
+            ("abs.q", "r:.abs.g+root\n"),
+        ],
+        false,
+    );
+    assert_eq!(kinds(&g, "lib.q"), [(2, "namespace")]);
+    assert!(deps(&g, "use.q").is_empty());
+    // A name written in full is where it says, and one after a switch that
+    // names its context is in that context.
+    assert_eq!(deps(&g, "abs.q"), ["lib.q"]);
+    // Bracketed, and in a lambda, where it is listed and moves nothing here.
+    let g = graph(
+        &[
+            (
+                "lib.q",
+                "f:{system[\"d \",string x]}\nkept:1\nsystem \"d .a\"\n",
+            ),
+            ("use.q", "r:kept\n"),
+        ],
+        false,
+    );
+    assert_eq!(kinds(&g, "lib.q"), [(1, "namespace")]);
+    assert_eq!(deps(&g, "use.q"), ["lib.q"]);
+}
+
+#[test]
+fn a_change_of_directory_in_a_lambda_moves_no_load_below_it() {
+    // KDB-X: under `cdTo:{system "cd ",x}`, never called, `\l lib.q` loads
+    // the lib.q beside the script, and `lf` is 1 (#2821). So under a lambda
+    // that would load a directory.
+    for helper in [
+        "cdTo:{system \"cd \",x}\n",
+        "cdTo:{system \"cd lib\"}\n",
+        "ld:{system \"l db\"}\n",
+        "ld:{[d]\n  system \"l db\";\n  d}\n",
+    ] {
+        let g = graph(
+            &[
+                ("lib.q", "lf:1\n"),
+                ("a.q", &format!("{helper}\\l lib.q\n")),
+            ],
+            false,
+        );
+        assert_eq!(deps(&g, "a.q"), ["lib.q"], "{helper:?}");
+        assert!(kinds(&g, "a.q").is_empty(), "{helper:?}");
+    }
+    // The lambda's own loads are moved by it, a lambda in it included.
+    let g = graph(
+        &[
+            ("lib.q", "lf:1\n"),
+            (
+                "a.q",
+                "f:{system \"cd \",x;\n  system \"l lib.q\";\n  @[{system \"l lib.q\"};::;{x}]}\n",
+            ),
+        ],
+        false,
+    );
+    assert!(deps(&g, "a.q").is_empty());
+    assert_eq!(kinds(&g, "a.q"), [(2, "load"), (3, "load")]);
+    // At the top level a directory computed moves it as a literal one does.
+    let g = graph(
+        &[
+            ("lib.q", "lf:1\n"),
+            ("a.q", "d:\"lib\"\nsystem \"cd \",d\n\\l lib.q\n"),
+        ],
+        false,
+    );
+    assert!(deps(&g, "a.q").is_empty());
+    assert_eq!(kinds(&g, "a.q"), [(3, "load")]);
 }
 
 #[test]
@@ -976,18 +1263,66 @@ fn a_loaded_directory_leads_to_the_scripts_in_it() {
         false,
     );
     assert_eq!(deps(&g, "main.q"), ["init.q"]);
-    // Not the head of a path joined at run time; and `\l .` is the current
-    // directory, not the one beside the file that says it.
+    // Not the head of a path joined at run time.
     let g = graph(
         &[
             ("db/init.q", "fromdir:42\n"),
-            ("db/reload.q", "f:{system \"l .\"}\n"),
             ("main.q", "L:{system \"l db/\",x}\n"),
         ],
         false,
     );
     assert!(deps(&g, "main.q").is_empty());
-    assert_eq!(deps(&g, "db/reload.q"), ["main.q"]);
+}
+
+#[test]
+fn a_load_of_the_current_directory_itself_runs_no_script() {
+    // KDB-X, started beside b.q (`bx:1`): after `\l .` or `system "l ."`,
+    // `` `bx in key`. `` is 0b - `.Q.lo` runs scripts unless the load is of
+    // `.` - where `\l ./` and `\l ../here` run b.q (#2814).
+    for load in ["\\l .\n", "system \"l .\"\n", "\\d .db\n\\l .\n"] {
+        let g = graph(
+            &[
+                ("a.q", load),
+                ("b.q", "bx:1\n"),
+                ("db/reload.q", "f:{system \"l .\"}\n"),
+            ],
+            false,
+        );
+        assert!(deps(&g, "a.q").is_empty(), "{load:?}");
+        assert!(deps(&g, "db/reload.q").is_empty(), "{load:?}");
+    }
+    let g = graph(&[("a.q", "\\l ./\n"), ("b.q", "bx:1\n")], false);
+    assert_eq!(deps(&g, "a.q"), ["b.q"]);
+    // b.q is not put in `.db` by a load that does not run it, so its `bx`
+    // stays the root's, which c.q reads.
+    let g = graph(
+        &[
+            ("a.q", "\\d .db\n\\l .\n"),
+            ("b.q", "bx:1\n"),
+            ("sub/c.q", "r:bx\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "sub/c.q"), ["b.q"]);
+}
+
+#[test]
+fn a_loaded_directory_runs_no_script_named_as_a_partition() {
+    // KDB-X: `\l db` with db/a.q and db/1b.q stops with 'part and never
+    // runs 1b.q - `.Q.lo` takes an entry starting with a digit for a
+    // partition, as it takes `par.txt` (#2815).
+    let g = graph(
+        &[
+            ("db/a.q", "aa:1\n"),
+            ("db/1b.q", "bb:1\n"),
+            ("main.q", "\\l db\n"),
+            // Loaded by its own path it is a script like any other.
+            ("named.q", "\\l db/1b.q\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "main.q"), ["a.q"]);
+    assert_eq!(deps(&g, "named.q"), ["1b.q"]);
 }
 
 #[test]
@@ -1005,6 +1340,28 @@ fn a_load_after_a_q_prompt_is_an_edge() {
     // q 5 reads `q)\l b.q` as `\l b.q` (#536).
     let g = graph(&[("b.q", "zz:1\n"), ("a.q", "q)\\l b.q\n")], false);
     assert_eq!(deps(&g, "a.q"), ["b.q"]);
+}
+
+#[test]
+fn a_load_on_a_k_line_is_an_edge() {
+    // KDB-X: with lib.q's `kl:1`, `` `kl in key`. `` is 1b after
+    // `k)\l lib.q` and after `q)k)\l lib.q` (#2819).
+    for load in ["k)\\l lib.q\n", "q)k)\\l lib.q\n", "k)q)\\l lib.q\n"] {
+        let g = graph(&[("lib.q", "kl:1\n"), ("a.q", load)], false);
+        assert_eq!(deps(&g, "a.q"), ["lib.q"], "{load:?}");
+    }
+    // Under the `\d` in force, as any load is, and not in a block comment.
+    let g = graph(
+        &[
+            ("lib.q", "kl:1\n"),
+            ("a.q", "\\d .a\nk)\\l lib.q\n"),
+            ("b.q", "r:.a.kl\n"),
+            ("c.q", "/\nk)\\l lib.q\n\\\nr:1\n\\\nk)\\l lib.q\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "b.q"), ["lib.q"]);
+    assert!(deps(&g, "c.q").is_empty());
 }
 
 #[test]
@@ -1045,6 +1402,7 @@ fn a_modules_names_live_in_its_own_context() {
     let g = graph(
         &[
             ("mymod/init.q", module),
+            ("user.q", "m:use`mymod\n"),
             ("other.q", "r:helper 3\n"),
             ("qualified.q", "s:.m.mymod.helper 4\n"),
         ],
@@ -1052,6 +1410,23 @@ fn a_modules_names_live_in_its_own_context() {
     );
     assert!(deps(&g, "other.q").is_empty());
     assert_eq!(deps(&g, "qualified.q"), ["init.q"]);
+}
+
+#[test]
+fn a_script_no_use_reaches_is_no_module_whatever_it_assigns() {
+    // KDB-X 5: `\l a.q` then `util 1` is 2, and `key `.m` is `()`. A global
+    // named `export` makes a module only of a file some `use` loads (#2668).
+    let script = "export:{[t;f] (`$\":\",f) 0: csv 0: t}\nutil:{x+1}\n";
+    let g = graph(
+        &[
+            ("a.q", script),
+            ("b.q", "r:util 1\n"),
+            ("c.q", "s:.m.a.util 1\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "b.q"), ["a.q"]);
+    assert!(deps(&g, "c.q").is_empty());
 }
 
 #[test]
@@ -1096,4 +1471,51 @@ fn use_is_an_edge_to_the_module_it_loads() {
         [Path::new("/no-such-root/pkg/init.q")]
     );
     assert!(deps(&g, "noexport.q").is_empty());
+}
+
+/// A script every loader loads under a context defines there and not at the
+/// root: after `\d .a` / `\l lib/b.q`, b.q's `ff:42` is `.a.ff`, and q 5 has
+/// no `ff` for a root reader, which the lint calls undefined. The graph kept
+/// the root name, and an edge from each such reader (#2876).
+#[test]
+fn a_script_loaded_only_under_a_context_defines_no_root_name() {
+    let g = graph(
+        &[
+            ("main.q", "\\d .a\n\\l lib/b.q\n"),
+            ("lib/b.q", "ff:42\n"),
+            ("d.q", "h:{ff}\n"),
+            ("e.q", "k:{.a.ff}\n"),
+            ("f.q", "\\d .a\nm:{ff}\n"),
+        ],
+        false,
+    );
+    assert!(deps(&g, "d.q").is_empty());
+    assert_eq!(deps(&g, "e.q"), ["b.q"]);
+    assert_eq!(deps(&g, "f.q"), ["b.q"]);
+    // Loaded at the root as well, it defines there too.
+    let g = graph(
+        &[
+            ("main.q", "\\d .a\n\\l lib/b.q\n"),
+            ("other.q", "\\l lib/b.q\n"),
+            ("lib/b.q", "ff:42\n"),
+            ("d.q", "h:{ff}\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "d.q"), ["b.q"]);
+    // Nor does it take from the root a name the script assigns again after
+    // a `\\d .`: KDB-X runs main.q to `.a.xx` 1 and a root `xx` 2 (#2824).
+    let g = graph(
+        &[
+            ("main.q", "\\d .a\n\\l lib/b.q\n"),
+            ("lib/b.q", "xx:1\nonly:1\n\\d .\nxx:2\n"),
+            ("d.q", "h:{xx}\n"),
+            ("e.q", "k:{.a.xx}\n"),
+            ("f.q", "m:{only}\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "d.q"), ["b.q"]);
+    assert_eq!(deps(&g, "e.q"), ["b.q"]);
+    assert!(deps(&g, "f.q").is_empty());
 }

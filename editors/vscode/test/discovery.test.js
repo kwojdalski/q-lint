@@ -116,6 +116,19 @@ test("a server's failure, skipped entries and emptiness are notes under it", () 
   assert.strictEqual(serverDescription(EMPTY_STATE), "");
 });
 
+// A refresh that failed once showed the failure in place of every process
+// the server had listed, as its state held none.
+test("a server that failed after listing shows the failure above the processes it last listed (#3025)", () => {
+  const server = { label: "s", url: "http://s" };
+  const state = { ...listed([proc("rdb"), proc("hdb")]), error: "it answered 503 Service Unavailable" };
+  assert.deepStrictEqual(
+    children([], [{ server, state }], { kind: "server", server, state }).map((r) => (r.kind === "note" ? `${r.level}: ${r.text}` : `${r.kind} ${r.server}/${r.process.label}`)),
+    ["error: Could not load: it answered 503 Service Unavailable. Its processes are as it last listed them.", "discovered s/hdb", "discovered s/rdb"],
+  );
+  assert.strictEqual(serverDescription(state), "failed, 2 processes as last listed");
+  assert.strictEqual(serverDescription({ ...listed([proc("rdb")]), error: "x" }), "failed, 1 process as last listed");
+});
+
 test("a discovered process is named server/label, or by a label only one server lists", () => {
   const servers = [
     { server: { label: "a", url: "http://a" }, state: listed([proc("rdb", [], 1), proc("hdb", [], 2)]) },

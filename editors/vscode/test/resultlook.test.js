@@ -23,10 +23,10 @@ function grid(columns) {
   };
 }
 
-test("a column's suffix names its format, in any case, with decimals, and the base name is what the header shows (#1012)", () => {
+test("a column's suffix names its format, with decimals, and the base name is what the header shows (#1012)", () => {
   assert.deepStrictEqual(L.columnFormat("ret_PCT"), { base: "ret", suffix: "PCT", kind: "pct", digits: 2, label: L.SUFFIXES.PCT.label });
-  assert.strictEqual(L.columnFormat("ret_pct1").digits, 1);
-  assert.strictEqual(L.columnFormat("spread_bps").kind, "bps");
+  assert.strictEqual(L.columnFormat("ret_PCT1").digits, 1);
+  assert.strictEqual(L.columnFormat("spread_BPS").kind, "bps");
   assert.strictEqual(L.columnFormat("a_b_CCY").base, "a_b");
   assert.strictEqual(L.columnFormat("px_BG").kind, "bg");
   assert.strictEqual(L.columnFormat("px_BG2"), null, "a colour takes no decimals");
@@ -317,6 +317,20 @@ test("Excel's conditional formats match the cells the grid's rules do (#1266)", 
   ]);
 });
 
+test("a rule value's control characters stay out of Excel's sheet XML, and one over 255 characters is split into literals Excel takes (#2660)", () => {
+  const { xlsxRules } = require("../out/resultlook.js");
+  const rule = (value) => ({ column: "s", op: "contains", value, style: { bold: true } });
+  const long = "a".repeat(300) + '"';
+  const out = xlsxRules([rule("35=D\u0001"), rule(long)], ["s"], [false], () => "A", 4, [true]).formatting;
+  const formulas = out.map((f) => /<formula>(.*)<\/formula>/.exec(f)[1]);
+  assert.strictEqual(formulas[0], "AND(LEN(A2)&gt;0,ISNUMBER(FIND(LOWER(&quot;35=D&quot;),LOWER(A2))))");
+  assert.ok(!/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(out.join("")));
+  const literals = formulas[1].replace(/&quot;/g, '"').match(/"(?:[^"]|"")*"/g);
+  assert.deepStrictEqual(literals.map((l) => l.slice(1, -1).replace(/""/g, '"').length), [255, 46]);
+  assert.strictEqual(literals.map((l) => l.slice(1, -1).replace(/""/g, '"')).join(""), long);
+  assert.match(formulas[1], /&quot;&amp;&quot;/);
+});
+
 test("a text rule on a general list of strings is left out of Excel, which holds the strings without their quotes (#1411)", () => {
   const strings = { count: 2, keys: 0, names: ["s", "m"], types: [0, 0], cells: [['"abc"', '"x"'], ["1", "`a"]], raw: [[], []], rank: [[0, 1], [0, 1]] };
   const grid = { columns: [col("s", 0), col("m", 0)], cells: strings.cells, rank: [null, null], values: [null, null], total: 2 };
@@ -337,6 +351,11 @@ test("the HTML export is one escaped table, the cells a rule matches styled as t
   assert.match(html, /<tr><td>c<\/td><td class="n" style="background:#f14c4c;font-weight:bold">9<\/td><\/tr>\n<tr><td>b&lt;c<\/td><td class="n" style="background:#f14c4c;font-weight:bold">5<\/td><\/tr>/);
   assert.ok(!/<script/i.test(toHtml({ ...PAYLOAD, cells: [["<script>x</script>", "b", "c"], ["1", "2", "3"]] }, -1)));
   assert.strictEqual(exportResult("html", PAYLOAD, -1).rows, 3);
+});
+
+test("a query with 200k backtick runs still gets a fence: the runs are not spread into one call (#2663)", () => {
+  const code = `s in ${"`a".repeat(200000)} and "\`\`\`\`"`;
+  assert.strictEqual(report.fenceFor(code), "`````");
 });
 
 test("a result sent to a notebook or a report is its query in a fence it cannot close, its rows as a table, and its chart (#1021)", () => {
@@ -404,6 +423,71 @@ test("Excel colours the 0w and -0w cells the grid's rules colour, a top N of the
   const sheet = unzip(exportResult("xlsx", p, -1, undefined, rules).data)["xl/worksheets/sheet1.xml"];
   const formulas = [...sheet.matchAll(/<formula>([^<]*)<\/formula>/g)].map((m) => m[1].replace(/&quot;/g, '"').replace(/&gt;/g, ">").replace(/&lt;/g, "<"));
   assert.deepStrictEqual(formulas, ['OR(AND(ISNUMBER(A2),A2>1),A2="0w")', 'B2="0w"', 'OR(AND(ISNUMBER(A2),A2<=2),A2="-0w")', 'OR(AND(ISNUMBER(B2),B2<=2),B2="-0w")']);
+});
+
+test("a suffix names a format in upper case only: order_num, zip_code and item_pct are plain names (#3087)", () => {
+  for (const name of ["order_num", "seq_num", "zip_code", "crow_bar", "item_pct", "px_bg", "px_fg", "pnl_ccy", "spread_bps", "ret_pct1", "ret_Pct", "ret_pCT"]) {
+    assert.strictEqual(L.columnFormat(name), null, name);
+  }
+  // Nothing of them is reformatted, and their headers are whole.
+  const g = grid([["order_num", 7, ["1234567"]], ["year_num", 7, ["2024"]], ["item_pct", 9, ["50"]], ["zip_code", 11, ["a1"]], ["ret_PCT", 9, ["0.5"]]]);
+  const formats = L.columnFormats(g);
+  assert.deepStrictEqual(formats.slice(0, 4), [null, null, null, null]);
+  assert.deepStrictEqual(g.cells.map((c, i) => L.formatNumber(formats[i], g.values[i] && g.values[i][0], c[0])), ["1234567", "2024", "50", "a1", "50.00%"]);
+  assert.strictEqual(formats[4].base, "ret");
+  const md = require("../out/resultexport.js").toMarkdown({ count: 1, keys: 0, names: ["trade_num", "year_num", "item_pct"], types: [7, 7, 9], cells: [["20240001"], ["2024"], ["50"]], raw: [[20240001], [2024], [50]], rank: [[0], [0], [0]] }, 7, undefined, true);
+  assert.match(md, /\| 20240001 \| 2024 \| 50(\.0+)? \|/);
+});
+
+test("a rule on a long past 2^53 compares the integers q wrote, not the doubles they round to (#3085)", () => {
+  const big = ["9007199254740992", "9007199254740993", "9007199254740994"];
+  // The values grid.ts keeps: doubles, the first two the same one.
+  const g = grid([["a", 7, [...big, "5", "", "0W"], [...big.map(Number), 5, null, null]]]);
+  const rows = (op, text) => {
+    assert.strictEqual(look.ruleValueProblem(op, text, true), undefined);
+    const rule = look.parseRule({ column: "a", op, value: look.ruleValue(op, text, true), style: { bold: true } });
+    return [...L.ruleRows(g, rule)].sort();
+  };
+  assert.deepStrictEqual(rows("=", "9007199254740993"), [1]);
+  assert.deepStrictEqual(rows("<>", "9007199254740993"), [0, 2, 3, 5]);
+  assert.deepStrictEqual(rows(">", "9007199254740992"), [1, 2, 5]);
+  assert.deepStrictEqual(rows(">=", "9007199254740993"), [1, 2, 5]);
+  assert.deepStrictEqual(rows("<", "9007199254740993"), [0, 3]);
+  assert.deepStrictEqual(rows("<=", " 9007199254740993 "), [0, 1, 3]);
+  // A value a double holds, a fraction and one in exponent form, as before.
+  assert.strictEqual(look.ruleValue(">", "5", true), 5);
+  assert.deepStrictEqual(rows("=", "5"), [3]);
+  assert.deepStrictEqual(rows(">", "5.5"), [0, 1, 2, 5]);
+  assert.deepStrictEqual(rows("<", "9.1e15"), [0, 1, 2, 3]);
+  // The greatest and the least are of the integers too, not a tie of doubles.
+  const two = grid([["a", 7, big.slice(0, 2), big.slice(0, 2).map(Number)]]);
+  assert.deepStrictEqual([...L.ruleRows(two, { column: "a", op: "top", value: 1, style: {} })], [1]);
+  assert.deepStrictEqual([...L.ruleRows(two, { column: "a", op: "bottom", value: 1, style: {} })], [0]);
+  // Its words show the number, not a string.
+  assert.strictEqual(L.ruleText({ column: "a", op: "=", value: look.ruleValue("=", "9007199254740993", true), style: { bold: true } }), "a = 9007199254740993: bold");
+  assert.strictEqual(L.ruleText({ column: "s", op: "=", value: "12", style: { bold: true } }), 's = "12": bold');
+});
+
+test("a rule on a float column compares as q does, to its tolerance: = 0.3 matches 0.1+0.2 (#3086)", () => {
+  const g = grid([["a", 9, ["0.1", "0.2", "0.3", "0.3000001", "", "0w", "-0.3", "0"], [0.1, 0.2, 0.1 + 0.2, 0.3000001, null, null, -(0.1 + 0.2), 0]]]);
+  const rows = (op, value) => [...L.ruleRows(g, { column: "a", op, value, style: { bold: true } })].sort();
+  assert.deepStrictEqual(rows("=", 0.3), [2]);
+  assert.deepStrictEqual(rows("<>", 0.3), [0, 1, 3, 5, 6, 7]);
+  // q's < and > are of values it does not hold equal.
+  assert.deepStrictEqual(rows(">", 0.3), [3, 5]);
+  assert.deepStrictEqual(rows(">=", 0.3), [2, 3, 5]);
+  assert.deepStrictEqual(rows("<", 0.3), [0, 1, 6, 7]);
+  assert.deepStrictEqual(rows("<=", 0.3), [0, 1, 2, 6, 7]);
+  assert.deepStrictEqual(rows("=", -0.3), [6]);
+  assert.deepStrictEqual(rows("<", -0.3), []);
+  // Nothing but 0 is 0, and an infinity is only itself.
+  assert.deepStrictEqual(rows("=", 0), [7]);
+  assert.deepStrictEqual(rows("=", 1e-300), []);
+  assert.deepStrictEqual(rows(">=", 1e308), [5]);
+  // A long column's values are exact: these two are within the tolerance.
+  const whole = grid([["a", 7, ["100000000000000", "100000000000001"]]]);
+  assert.deepStrictEqual([...L.ruleRows(whole, { column: "a", op: "=", value: 100000000000000, style: {} })], [0]);
+  assert.deepStrictEqual([...L.ruleRows(whole, { column: "a", op: ">", value: 100000000000000, style: {} })], [1]);
 });
 
 test("Excel colours a long it holds as text, past 2^53, as the grid's rule does (#2459)", () => {

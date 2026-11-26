@@ -110,6 +110,16 @@ test("Enter runs only a complete input: brackets closed, no string open", () => 
   assert.ok(isComplete("f:{x+\ny}"));
   // A block comment, `/` alone to `\` alone, counts no bracket (#1111).
   assert.ok(isComplete("/\n(\n\\\n1+1"));
+  // Nor does a system command's line, which q's console runs as it is
+  // (#2920); `\t` times q code, where a bracket is one.
+  assert.ok(isComplete("\\grep -c '(' paren.txt"));
+  assert.ok(isComplete("\\awk '{print $1' paren.txt"));
+  assert.ok(isComplete('\\l a"b.q\n1+1'));
+  assert.ok(!isComplete("\\grep -c '(' paren.txt\nf:{x+"));
+  assert.ok(!isComplete("\\t {x+"));
+  assert.ok(isComplete("f:{\n\\x{y}}"), "inside a bracket it is no command");
+  // The line after one is a statement of its own, not its continuation.
+  assert.strictEqual(replScript("\\grep -c '(' paren.txt\na:1"), "\\grep -c '(' paren.txt\na:1");
   assert.ok(isComplete("/ \n{\n\\ \n1+1"), "trailing blanks on the / and \\ lines");
   assert.ok(!isComplete("/\n(\n\\\n1+("), "brackets after the block count");
   assert.ok(!isComplete("f:{\n/\n(\n\\\n}"), "inside a bracket a / line is a continuation, not a block");

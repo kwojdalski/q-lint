@@ -29,6 +29,7 @@ export const FULL_TEXT = [
   " if[not(r like\"*..*\")&(count r)>=-1+last system\"c\";:r];",
   " .[{[f;r;n;x]",
   "   t:type x;c:count x;",
+  "   if[t within -76 -20h;:\"`\",string[key x],\"$\",f[n;value x]];",
   "   if[t<0;:1_f[n;enlist x]];",
   "   a:$[t>99h;\"\";null a:attr x;\"\";\"`\",string[a],\"#\"];",
   "   if[t=0h;if[0=c;:r];o:();i:0;m:0;",
@@ -46,7 +47,7 @@ export const FULL_TEXT = [
   "   if[t=100h;:last value x];",
   "   if[t=104h;v:value x;",
   "    :f[n;first v],\"[\",(\";\"sv{[f;n;v;i]$[104h=type{x;y}[v i;0];\"\";f[n;v i]]}[f;n;v]each 1_til count v),\"]\"];",
-  "   if[t=105h;:raze f[n]each value x];",
+  "   if[t=105h;v:value x;:raze{[f;n;v;i]s:f[n;v i];$[(i<-1+count v)&(101h=type v i)&(2=count s)&(\":\"=last s)&not\":\"=first s;-1_s;s]}[f;n;v]each til count v];",
   "   if[t within 106 111h;:f[n;value x],(enlist\"'\";enlist\"/\";enlist\"\\\\\";\"':\";\"/:\";\"\\\\:\")t-106];",
   "   r};(.z.s;r;n;x);{[r;e]r}[r]]}",
 ].join("\n");

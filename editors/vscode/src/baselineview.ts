@@ -3,14 +3,15 @@
 // the findings in it are not shown, and a new one is. **q-lint: Write Lint
 // Baseline** writes one: it runs `qlinter --write-baseline` over the folder
 // into a scratch file, says how many findings it holds, and only when asked
-// writes `qlinter-baseline.json` into the folder - asking again before it
+// writes the baseline the folder's configuration names, or else
+// `qlinter-baseline.json` into the folder - asking again before it
 // replaces one - and then offers to name it in the folder's `qlinter.toml`,
 // showing the line. Off (q-lint.baseline.enable), the command refuses and
 // the server shows every finding. Nothing is sent to a q process.
 import { execFile } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, posix, relative, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { commands, window, workspace, type ExtensionContext } from "vscode";
 import { launchable } from "./batch";
 import { LANGUAGE_COMMANDS, languageOff, languageOn } from "./languagefeatures";
@@ -41,8 +42,75 @@ export function tomlWithBaseline(text: string, file = BASELINE_FILE): string | u
   return inLineEnds(text, (lf) => tomlWithBaselineLf(lf, file));
 }
 
+/// A TOML key `name` as it may be spelt: bare, or in either quote (#2747).
+const key = (name: string): string => `(?:${name}|"${name}"|'${name}')`;
+
+/// `baseline =` at a line's start, its key spelt any way TOML allows.
+const BASELINE_KEY = new RegExp(String.raw`^\s*${key("baseline")}\s*=\s*(.*)$`);
+
+/// A pyproject.toml header of qlinter's table, `[tool.qlinter]` or the older
+/// `[tool.q-lint]`, either part in either quote or none (#2747); `sub`: the
+/// sub-table's rest (`.lint`), when it is one.
+const PYPROJECT_HEADER = new RegExp(String.raw`^\s*\[\s*${key("tool")}\s*\.\s*(?:"(?<q>qlinter|q-lint)"|'(?<s>qlinter|q-lint)'|(?<b>qlinter|q-lint))\s*(?<sub>\.[^\]]*)?\]\s*(#.*)?$`);
+
+/// Dotted keys of qlinter's table under `[tool]` (`qlinter.select = ...`),
+/// or at the top of the file (`tool.qlinter.select = ...`): its name, what
+/// follows it (`.` or `=`), and the next key.
+const DOTTED = (prefix: string): RegExp =>
+  new RegExp(String.raw`^\s*${prefix}(?:"(?<q>qlinter|q-lint)"|'(?<s>qlinter|q-lint)'|(?<b>qlinter|q-lint))\s*(?<then>\.|=)\s*(?:"(?<k1>\w*)"|'(?<k2>\w*)'|(?<k3>\w*))(?:\s*=\s*(?<value>.*))?`);
+
+/// A TOML string value's text - a basic or a literal string - or undefined
+/// for anything else.
+function tomlValue(value: string): string | undefined {
+  const literal = /^'([^']*)'/.exec(value);
+  if (literal !== null) {
+    return literal[1];
+  }
+  const basic = /^"((?:[^"\\]|\\.)*)"/.exec(value);
+  try {
+    return basic === null ? undefined : (JSON.parse(`"${basic[1]}"`) as string);
+  } catch {
+    return undefined;
+  }
+}
+
+/// The baseline file a configuration's text names, as written, or
+/// undefined for none; `pyproject`: read from its qlinter table (#2765).
+export function namedBaseline(text: string, pyproject: boolean): string | undefined {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const firstTable = lines.findIndex((l) => /^\s*\[/.test(l));
+  const top = firstTable < 0 ? lines : lines.slice(0, firstTable);
+  if (!pyproject) {
+    const m = top.map((l) => BASELINE_KEY.exec(l)).find((x) => x !== null);
+    return m ? tomlValue(m[1]) : undefined;
+  }
+  const value = (m: RegExpExecArray | null | undefined): string | undefined => (m?.groups?.value === undefined ? undefined : tomlValue(m.groups.value));
+  const isBaseline = (m: RegExpExecArray | null): boolean => m !== null && m.groups!.then === "." && (m.groups!.k1 ?? m.groups!.k2 ?? m.groups!.k3) === "baseline";
+  const root = top.map((l) => DOTTED(String.raw`${key("tool")}\s*\.\s*`).exec(l)).find(isBaseline);
+  if (root !== undefined) {
+    return value(root);
+  }
+  for (let at = 0; at < lines.length; at++) {
+    const end = lines.findIndex((l, i) => i > at && /^\s*\[/.test(l));
+    const body = lines.slice(at + 1, end < 0 ? lines.length : end);
+    const header = PYPROJECT_HEADER.exec(lines[at]);
+    if (header !== null && header.groups!.sub === undefined) {
+      const m = body.map((l) => BASELINE_KEY.exec(l)).find((x) => x !== null);
+      if (m) {
+        return tomlValue(m[1]);
+      }
+    } else if (new RegExp(String.raw`^\s*\[\s*${key("tool")}\s*\]\s*(#.*)?$`).test(lines[at])) {
+      const m = body.map((l) => DOTTED("").exec(l)).find(isBaseline);
+      if (m !== undefined) {
+        return value(m);
+      }
+    }
+  }
+  return undefined;
+}
+
 function tomlWithBaselineLf(text: string, file: string): string | undefined {
-  if (/^\s*baseline\s*=/m.test(text)) {
+  if (text.split("\n").some((l) => BASELINE_KEY.test(l))) {
     return undefined;
   }
   const lines = text.split("\n");
@@ -75,38 +143,49 @@ export function pyprojectWithBaseline(text: string, file = BASELINE_FILE): strin
 function pyprojectWithBaselineLf(text: string, file: string): string | undefined | null {
   const lines = text.split("\n");
   const line = `baseline = ${tomlString(file)}`;
-  const header = (l: string): RegExpExecArray | null =>
-    /^\s*\[\s*tool\s*\.\s*("?)(qlinter|q-lint)\1\s*(\.[^\]]*)?\]\s*(#.*)?$/.exec(l);
+  const header = (l: string): RegExpExecArray | null => PYPROJECT_HEADER.exec(l);
+  const named = (m: RegExpExecArray): string => m.groups!.q ?? m.groups!.s ?? m.groups!.b;
   const tableEnd = (at: number): number => {
     const end = lines.findIndex((l, i) => i > at && /^\s*\[/.test(l));
     return end < 0 ? lines.length : end;
   };
-  const own = lines.findIndex((l) => header(l) !== null && header(l)![3] === undefined);
+  // Keys of `tool` at the top of the file, before any table (`tool.qlinter.x
+  // = ...`, `tool = {...}`): a [tool.qlinter] table after them would be the
+  // same table twice, so the line is added by hand (#2747).
+  const firstTable = lines.findIndex((l) => /^\s*\[/.test(l));
+  const top = (firstTable < 0 ? lines : lines.slice(0, firstTable)).map((l) => DOTTED(String.raw`${key("tool")}\s*\.\s*`).exec(l));
+  if (top.some((m) => m !== null && m.groups!.then === "." && (m.groups!.k1 ?? m.groups!.k2 ?? m.groups!.k3) === "baseline")) {
+    return undefined;
+  }
+  if (top.some((m) => m !== null) || (firstTable < 0 ? lines : lines.slice(0, firstTable)).some((l) => new RegExp(String.raw`^\s*${key("tool")}\s*=`).test(l))) {
+    return null;
+  }
+  const own = lines.findIndex((l) => header(l) !== null && header(l)!.groups!.sub === undefined);
   if (own >= 0) {
-    if (lines.slice(own + 1, tableEnd(own)).some((l) => /^\s*baseline\s*=/.test(l))) {
+    if (lines.slice(own + 1, tableEnd(own)).some((l) => BASELINE_KEY.test(l))) {
       return undefined;
     }
     lines.splice(own + 1, 0, line);
     return lines.join("\n");
   }
   // Dotted keys in [tool]: `qlinter.select = [...]`.
-  const tool = lines.findIndex((l) => /^\s*\[\s*tool\s*\]\s*(#.*)?$/.test(l));
-  const dotted = tool < 0 ? [] : lines.slice(tool + 1, tableEnd(tool)).map((l) => /^\s*("?)(qlinter|q-lint)\1\s*(\.|=)\s*"?(\w*)/.exec(l));
-  if (dotted.some((m) => m !== null && m[3] === "=")) {
+  const tool = lines.findIndex((l) => new RegExp(String.raw`^\s*\[\s*${key("tool")}\s*\]\s*(#.*)?$`).test(l));
+  const dotted = tool < 0 ? [] : lines.slice(tool + 1, tableEnd(tool)).map((l) => DOTTED("").exec(l));
+  if (dotted.some((m) => m !== null && m.groups!.then === "=")) {
     return null;
   }
-  const key = dotted.find((m) => m !== null);
-  if (key) {
-    if (dotted.some((m) => m !== null && m[4] === "baseline")) {
+  const first = dotted.find((m) => m !== null);
+  if (first) {
+    if (dotted.some((m) => m !== null && (m.groups!.k1 ?? m.groups!.k2 ?? m.groups!.k3) === "baseline")) {
       return undefined;
     }
-    lines.splice(tool + 1, 0, `${key[2]}.${line}`);
+    lines.splice(tool + 1, 0, `${named(first)}.${line}`);
     return lines.join("\n");
   }
   // Only sub-tables: the table goes before the first of them.
   const sub = lines.findIndex((l) => header(l) !== null);
   if (sub >= 0) {
-    lines.splice(sub, 0, `[tool.${header(lines[sub])![2]}]`, line, "");
+    lines.splice(sub, 0, `[tool.${named(header(lines[sub])!)}]`, line, "");
     return lines.join("\n");
   }
   return `${text.replace(/\n*$/, "")}${text.trim() === "" ? "" : "\n\n"}[tool.qlinter]\n${line}\n`;
@@ -170,10 +249,28 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
         return undefined;
       }
       const dir = folder.uri.fsPath;
-      const target = join(dir, BASELINE_FILE);
       const { command, args } = qlinter();
       if (command === undefined) {
         void window.showWarningMessage("q-lint: no qlinter to run: set q-lint.serverPath, or put qlinter on PATH.");
+        return undefined;
+      }
+      // The configuration that governs the folder, and the baseline it
+      // names: that file is the one written, not a new one nothing reads
+      // (#2765). `--isolated`: the server reads none.
+      const shown = args.includes("--isolated") ? undefined : await runQlinter(command, [...args, "--show-settings", "."], dir).catch(() => undefined);
+      const governing = shown === undefined ? undefined : governingConfiguration(shown.stdout);
+      let configured: string | undefined;
+      try {
+        configured = governing === undefined ? undefined : namedBaseline(readFileSync(governing, "utf8"), basename(governing) === "pyproject.toml");
+      } catch {
+        configured = undefined;
+      }
+      const target = configured === undefined || governing === undefined ? join(dir, BASELINE_FILE) : resolve(dirname(governing), configured);
+      const name = relative(dir, target).split(sep).join("/");
+      if (configured !== undefined && (name === ".." || name.startsWith("../") || isAbsolute(name))) {
+        void window.showWarningMessage(
+          plainMessage(`q-lint: ${governing} names the baseline ${target}, outside ${folder.name}, which holds more than this folder's findings; no baseline was written. Write it with \`qlinter --write-baseline\` where that configuration is.`),
+        );
         return undefined;
       }
       const scratch = mkdtempSync(join(tmpdir(), "qlint-baseline-"));
@@ -195,9 +292,10 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
           return undefined;
         }
         // Exit 2: an input it could not read, which a baseline would be
-        // missing - and replaced with - though an older qlinter writes it (#2180).
+        // missing - and replaced with - though an older qlinter writes it
+        // (#2180); or a configuration it could not use (#2769).
         if (ran.code === 2) {
-          void window.showWarningMessage(plainMessage(`q-lint: qlinter could not read every file; no baseline was written: ${ran.stderr.trim().slice(0, 500) || "exit 2"}`));
+          void window.showWarningMessage(plainMessage(`q-lint: qlinter failed (exit 2); no baseline was written: ${ran.stderr.trim().slice(0, 500) || "no reason given"}`));
           return undefined;
         }
         const count = writtenCount(ran.stderr);
@@ -214,12 +312,12 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
         const exists = existsSync(target);
         const write = exists ? "Replace" : "Write";
         const answer = await window.showWarningMessage(
-          plainMessage(`${exists ? "Replace" : "Write"} ${BASELINE_FILE} in ${folder.name}?`),
+          plainMessage(`${exists ? "Replace" : "Write"} ${name} in ${folder.name}?`),
           {
             modal: true,
             detail:
               `It will hold today's ${count.findings} finding(s) in ${count.files} file(s); the editor and qlinter then report only findings that are not in it.` +
-              (exists ? ` The ${BASELINE_FILE} there now is replaced.` : ""),
+              (exists ? ` The ${name} there now is replaced.` : ""),
           },
           write,
         );
@@ -236,12 +334,12 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
         const text = absolutePaths(readFileSync(draft, "utf8"), canonicalDir(scratch));
         try {
           assertWritable(dir, target);
-          writeFileSync(target, rebased(text, dir, canonicalDir(dir)));
+          writeFileSync(target, besideIt(rebased(text, dir, canonicalDir(dir)), dirname(name)));
         } catch (error) {
           void window.showErrorMessage(plainMessage(`q-lint: could not write ${target}: ${error instanceof Error ? error.message : String(error)}`));
           return undefined;
         }
-        await offerConfiguration(dir, target, command, args, on);
+        await offerConfiguration(dir, target, args, on, governing, configured !== undefined);
         return target;
       } finally {
         rmSync(scratch, { recursive: true, force: true });
@@ -271,6 +369,13 @@ function mapPaths(text: string, f: (path: string) => string): string {
     }
     return typeof path === "string" ? `"path":${JSON.stringify(f(path))}` : whole;
   });
+}
+
+/// A baseline's `text`, its paths relative to the folder, with each made
+/// relative to `sub` - the baseline's own directory, below the folder - as
+/// qlinter reads them (#2765). One still absolute is left as it is.
+function besideIt(text: string, sub: string): string {
+  return sub === "." ? text : mapPaths(text, (path) => (/^(\/|[A-Za-z]:)/.test(path) ? path : posix.relative(sub, path)));
 }
 
 /// A baseline written from a scratch directory, its paths made absolute,
@@ -307,10 +412,9 @@ function canonicalDir(dir: string): string {
 /// `pyproject.toml`'s `[tool.qlinter]` - showing the line, and write it
 /// only when asked. A new `qlinter.toml` only where none governs: one beside
 /// another would hide it (#1602). Under q-lint.configFile (`--config`) the
-/// line is only shown: that file is the user's to change.
-async function offerConfiguration(dir: string, target: string, command: string, args: string[], on: () => boolean): Promise<void> {
-  const shown = await runQlinter(command, [...args, "--show-settings", "."], dir).catch(() => undefined);
-  const governing = shown === undefined ? undefined : governingConfiguration(shown.stdout);
+/// line is only shown: that file is the user's to change. `named`: the
+/// configuration names `target` already (#2765).
+async function offerConfiguration(dir: string, target: string, args: string[], on: () => boolean, governing: string | undefined, named: boolean): Promise<void> {
   const config = governing ?? join(dir, "qlinter.toml");
   // Named from the configuration's own directory, as qlinter reads it.
   const file = relative(canonicalDir(dirname(config)), join(canonicalDir(dirname(target)), basename(target))).split(sep).join("/");
@@ -327,6 +431,22 @@ async function offerConfiguration(dir: string, target: string, command: string, 
   if (args.some((a) => a === "--config" || a.startsWith("--config="))) {
     void window.showInformationMessage(
       plainMessage(`q-lint: wrote ${BASELINE_FILE}. q-lint.configFile names the configuration: add \`baseline = ${tomlString(file)}\` to ${config} for the editor and qlinter to use it.`),
+    );
+    return;
+  }
+  if (named) {
+    void window.showInformationMessage(plainMessage(`q-lint: wrote ${target}, the baseline ${config} names.`));
+    return;
+  }
+  // Neither in the folder nor above it - the user-level configuration -
+  // it governs other projects too: one project's baseline there would
+  // bind them all, so the line is only shown (#2745).
+  const up = relative(canonicalDir(dirname(config)), canonicalDir(dir));
+  if (up === ".." || up.startsWith(`..${sep}`) || isAbsolute(up)) {
+    void window.showInformationMessage(
+      plainMessage(
+        `q-lint: wrote ${BASELINE_FILE}. ${config} governs this folder from outside it, and other projects too, so it is not changed: for the editor and qlinter to use the baseline, give the folder a qlinter.toml with \`baseline = ${tomlString(BASELINE_FILE)}\` (and \`extend = ${tomlString(config)}\` to keep that configuration's settings).`,
+      ),
     );
     return;
   }

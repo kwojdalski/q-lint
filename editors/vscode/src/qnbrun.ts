@@ -437,6 +437,9 @@ export async function runNotebook(
   return { qnb: { ...qnb, cells }, ran: order, ...(failed !== undefined ? { failed } : {}) };
 }
 
+/// The files a run is written as, by their extension: `writeAs`'s kinds.
+const WRITTEN = /\.(?:qnb|html?|ipynb)$/i;
+
 /// A run's notebook as the file `target` names it: HTML, Jupyter or `.qnb`.
 export function writeAs(qnb: Qnb, target: string, name: string): string {
   if (/\.html?$/i.test(target)) {
@@ -575,6 +578,11 @@ export function parseArgs(argv: string[]): CliOptions | { error: string } | { he
   const problem = parameterProblem(params);
   if (problem !== undefined) {
     return { error: problem };
+  }
+  if (output !== undefined && !WRITTEN.test(output)) {
+    // Any other name was written as a `.qnb`: `-o lib.q` put the
+    // notebook's JSON over a q script (#3008).
+    return { error: `--output takes a .qnb, .html or .ipynb file, and ${output} is none` };
   }
   const notebook = positional[0];
   return {

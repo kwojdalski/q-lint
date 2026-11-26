@@ -6,15 +6,16 @@
 //
 // `DEFINED` is sent as one lambda with the names, space-separated (a
 // one-character string reaches q as a char), and answers a boolean for each:
-// whether its namespace's `key` holds it - or, for a bare name, the root's or
-// `.q`'s, where q also looks. Nothing is evaluated, and nothing is defined.
+// whether its namespace's `key` holds it - or a table's columns, `t.c`
+// (#2808) - or, for a bare name, the root's or `.q`'s, where q also looks.
+// Nothing is evaluated, and nothing is defined.
 
 /// The command that checks the active file now.
 export const CHECK_UNDEFINED = "q-lint.checkUndefinedNames";
 
 export const DEFINED = [
   "{[ns]",
-  " {[n] s:` vs n; @[{[s;n] $[1=count s;(n in key `.) or n in key `.q;(last s) in key ` sv -1_s]}[s];n;0b]} each `$\" \" vs (),ns}",
+  " {[n] s:` vs n; @[{[s;n] $[1=count s;(n in key `.) or n in key `.q;(last s) in $[98h=type v:get p:` sv -1_s;cols v;key p]]}[s];n;0b]} each `$\" \" vs (),ns}",
 ].join("\n");
 
 /// One global the server found no definition of: each name q may resolve

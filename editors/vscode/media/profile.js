@@ -51,13 +51,26 @@
 
   function summary(p) {
     const parts = [
-      p.functions + " function" + (p.functions === 1 ? "" : "s") + " of " + p.namespace + " wrapped",
+      p.functions + " function" + (p.functions === 1 ? "" : "s") + " of " + p.namespace + " timed",
       p.calls + " call" + (p.calls === 1 ? "" : "s") + " in " + duration(p.total),
     ];
     if (p.recorded < p.calls) {
       parts.push("the first " + p.recorded + " recorded");
     }
     return parts.join(", ") + ".";
+  }
+
+  // What became of the functions after the run: all put back, but for the
+  // ones the run itself defined anew, which are as it left them (#2980).
+  function putBack(p) {
+    if (p.kept.length === 0) {
+      return "Every function was put back as it was.";
+    }
+    const one = p.kept.length === 1;
+    return (
+      "The run itself defined " + p.kept.join(", ") + " anew: " + (one ? "it is" : "they are") + " as the run left " + (one ? "it" : "them") +
+      ". Every other function was put back as it was."
+    );
   }
 
   function sorted(stats) {
@@ -148,9 +161,14 @@
         "div",
         "note",
         "Timed on " + p.process + " by .z.p. The timing adds about " + duration(p.overheadPerCall) + " a call, measured there, " +
-          duration(p.overheadTotal) + " in all; a function's time includes it for each call it makes. Every function was put back as it was.",
+          duration(p.overheadTotal) + " in all; a function's time includes it for each call it makes. " + putBack(p),
       ),
     );
+    if (p.untimed.length > 0) {
+      header.appendChild(
+        element("div", "note", "Not timed, their text being one the timing cannot be written into: " + p.untimed.join(", ") + ". Their time is counted in their callers'."),
+      );
+    }
     document.body.appendChild(header);
     document.body.appendChild(element("h2", "", "Functions"));
     if (p.stats.length === 0) {

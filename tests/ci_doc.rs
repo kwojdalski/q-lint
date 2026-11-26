@@ -42,6 +42,48 @@ fn command(starting: &str) -> &'static str {
         .unwrap_or_else(|| panic!("docs/ci.md lost `{starting}`"))
 }
 
+/// The guide opened with "1 when it reports a finding": a gate written from
+/// that passes with findings a `[severity]` made `information` or `hint`,
+/// which do not fail the run (#2768).
+#[test]
+fn the_exit_codes_the_guide_opens_with_are_the_ones_a_run_gives() {
+    let opening = DOC.split("\n\n").nth(1).unwrap().replace('\n', " ");
+    assert!(
+        opening.starts_with(
+            "qlinter exits 1 when it reports a finding that is an error or a warning, 0 when it \
+             reports none - nothing at all, or only findings a `[severity]` table made \
+             `information` or `hint` - and 2 when it cannot run"
+        ),
+        "{opening}"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("clean.q"), "a:1\n").unwrap();
+    std::fs::write(dir.path().join("found.q"), "f:{[count] count+1}\n").unwrap();
+    assert_eq!(run(dir.path(), "qlinter clean.q").0, 0);
+    assert_eq!(run(dir.path(), "qlinter found.q").0, 1);
+    for (severity, exit) in [
+        ("error", 1),
+        ("warning", 1),
+        ("information", 0),
+        ("hint", 0),
+    ] {
+        std::fs::write(
+            dir.path().join("qlinter.toml"),
+            format!("[severity]\nQF001 = \"{severity}\"\n"),
+        )
+        .unwrap();
+        let (code, printed) = run(dir.path(), "qlinter found.q");
+        assert_eq!(code, exit, "{severity}");
+        assert!(printed.contains("QF001"), "{severity}: {printed}");
+    }
+    std::fs::write(
+        dir.path().join("qlinter.toml"),
+        "baseline = \"none.json\"\n",
+    )
+    .unwrap();
+    assert_eq!(run(dir.path(), "qlinter found.q").0, 2);
+}
+
 #[test]
 fn the_baseline_walkthrough_keeps_old_findings_out_and_new_ones_in() {
     let dir = tempfile::tempdir().unwrap();

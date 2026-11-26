@@ -10,6 +10,7 @@
 // and q-lint.jsonConversion.enable for the two JSON commands.
 import { commands, env, window, workspace, type ExtensionContext } from "vscode";
 import { editorFeatureOff, editorFeatureOn, type EditorFeature } from "./editorfeatures";
+import { fileServerTypes } from "./gateway";
 import { jsonToQ, toJsonQuery } from "./jsonq";
 import type { Live } from "./live";
 import { PASTE, pasteTable, MAX_ROWS } from "./pastetable";
@@ -79,7 +80,8 @@ export function registerPaste(context: ExtensionContext, live: Live): void {
       if (!allowed("jsonConversion")) {
         return undefined;
       }
-      const file = typeof given === "string" ? undefined : window.activeTextEditor?.document.uri;
+      const document = typeof given === "string" ? undefined : window.activeTextEditor?.document;
+      const file = document?.uri;
       const expression = typeof given === "string" ? given : await live.codeFromEditor();
       if (expression === undefined) {
         return undefined;
@@ -91,8 +93,9 @@ export function registerPaste(context: ExtensionContext, live: Live): void {
       try {
         // On a TorQ gateway, its servers' values joined as Run joins them,
         // made JSON on the gateway (#2433); elsewhere under the backstop,
-        // or on a direct process as the plain string it is (#2482).
-        const joined = live.gatewayJoinedOnActive(expression, "{.j.j raze x}");
+        // or on a direct process as the plain string it is (#2482). To the
+        // server types the file names, as Run Query sends it (#3062).
+        const joined = live.gatewayJoinedOnActive(expression, "{.j.j raze x}", document === undefined ? undefined : fileServerTypes(document.getText()));
         const ran = await live.runOnActive(expression, (connection) =>
           joined !== undefined
             ? connection.call(joined)

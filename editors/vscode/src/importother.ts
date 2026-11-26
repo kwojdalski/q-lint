@@ -26,6 +26,7 @@
 // connections are not q processes, and are not taken. Its user name is
 // kept with the password in its secret storage, so `kdb.servers` gives
 // none.
+import { isIPv6 } from "node:net";
 import { inflateSync } from "node:zlib";
 import { DEFAULT_GUARD_TAGS } from "./guard";
 import { hostProblem, parseTags, plainHost, portProblem, type Process } from "./processes";
@@ -131,6 +132,21 @@ function folderTags(name: string, folder: string | undefined, guarded?: readonly
   return [...(folder !== undefined ? [folder] : []), ...(at > 0 ? [name.slice(0, at)] : [])].flatMap((f) => nameTags(f, guarded));
 }
 
+/// `line` cut after a bare IPv6 host, which is before its port, or before
+/// its port and user, or those and a password: the longest of the three
+/// that is an address with a number for a port after it (`::1:5002:me` is
+/// `::1` on 5002, not `::1:5002` on port `me`), a folder or a type before
+/// it left on it. Null when none is an address.
+function bareV6(line: string): [string, string, string] | null {
+  const fields = line.split(":");
+  const cuts = [1, 2, 3].filter((after) => {
+    const host = fields.slice(0, -after).join(":");
+    return fields.length - after >= 3 && isIPv6(host.slice(Math.max(host.lastIndexOf("/"), host.lastIndexOf("#")) + 1).trim());
+  });
+  const after = cuts.find((n) => /^\d+$/.test(fields[fields.length - n].trim())) ?? cuts[0];
+  return after === undefined ? null : [line, fields.slice(0, -after).join(":"), fields.slice(-after).join(":")];
+}
+
 /// qStudio's server list lines, as **Copy Server List** writes them.
 /// `guarded`: the read-only guard's tags, which `nameTags` reads a folder by.
 export function readQStudioLines(text: string, guarded?: readonly string[]): Imported {
@@ -149,7 +165,13 @@ export function readQStudioLines(text: string, guarded?: readonly string[]): Imp
       name = line.slice(0, at).trim();
       line = line.slice(at + 1).trim();
     }
-    const parts = line.split(":");
+    // An IPv6 host is cut from the port where it ends, not at its own
+    // colons: in brackets, as a URL writes one, or bare, when what is
+    // before the last of the fields a line can have is an address. Split
+    // at every colon, `[::1]:5001` was no host and `::1:5002` none at all
+    // (#3114).
+    const v6 = /^((?:.*[\/#])?\[[^\]]*\])(?::(.*))?$/.exec(line) ?? bareV6(line);
+    const parts = v6 !== null ? [v6[1], ...(v6[2]?.split(":") ?? [])] : line.split(":");
     if (parts.length < 2) {
       out.skipped.push(`${name || line}: no host:port`);
       continue;
@@ -180,7 +202,10 @@ export function readQStudioLines(text: string, guarded?: readonly string[]): Imp
 export function readQStudioXml(xml: string, guarded?: readonly string[]): Imported {
   const out: Imported = { processes: [], skipped: [] };
   const seen = new Set<string>();
-  for (const m of xml.matchAll(/<ServerConfig\b([^>]*)\/?>/g)) {
+  // A `>` in a quoted value is the value's, as XML has it: the tag ended
+  // there, a server named `a>b` was one of no host, and a MySQL one whose
+  // password held it lost its jdbcType and was imported as kdb (#3100).
+  for (const m of xml.matchAll(/<ServerConfig\b((?:[^>"']|"[^"]*"|'[^']*')*)>/g)) {
     const attrs: Record<string, string> = {};
     for (const a of m[1].matchAll(/([A-Za-z_][\w.-]*)\s*=\s*("([^"]*)"|'([^']*)')/g)) {
       attrs[a[1]] = xmlUnescape(a[3] ?? a[4] ?? "");

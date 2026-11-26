@@ -38,7 +38,11 @@ async function fakeQ(refuse = () => undefined) {
         const m = deserialize(message);
         sent.push(m);
         const error = Array.isArray(m) && typeof m[0] === "string" && m[0].includes("reval(value;x)") ? refuse(m) : undefined;
-        const out = serialize(error === undefined ? { ok: true, type: -7, text: ["1"] } : { ok: false, error, trace: "" });
+        // Asked apart whether it has reval: not when `refuse` says so.
+        const out =
+          m === "`reval in key`.q"
+            ? serialize(refuse(m) !== NO_REVAL)
+            : serialize(error === undefined ? { ok: true, type: -7, text: ["1"] } : { ok: false, error, trace: "" });
         out.writeUInt8(2, 1);
         socket.write(out);
       }
@@ -198,4 +202,63 @@ test("the connection evaluates as before after a backstopped send, refused or no
   });
   assert.strictEqual(seen.readOnly, false);
   assert.strictEqual(seen.refused, undefined);
+});
+
+test("a .gw. or .dataaccess. name in code sent to a guarded process that is no gateway keeps reval (#2637)", async (t) => {
+  const { q, live, query } = await setUp(t, ["prod"]);
+  await live.connectTo("rdb");
+  await query("count .gw.servers");
+  await query("key .dataaccess.cfg");
+  assert.deepStrictEqual(q.queries(), [
+    ["RUN_READ_ONLY", "count .gw.servers"],
+    ["RUN_READ_ONLY", "key .dataaccess.cfg"],
+  ]);
+  // A REPL, a notebook cell or an agent is not told to send it plain.
+  assert.strictEqual(live.gatewayed(["count .gw.servers"]).plain, false);
+  // Its statements go as they were cut, not read as a script again: the `/`
+  // lines q keeps of a block comment in a lambda open none (#3162).
+  const cut = ["rp:{[x]\n  a:x+1;\n/\n/  a:a*100;\n/\n  a}", "rp 1"];
+  assert.deepStrictEqual(live.gatewayed(cut).cut, cut);
+});
+
+test("on a process reval does not hold on, a gateway call still goes as a plain string (#2584, #2637)", async (t) => {
+  const { q, live, query } = await setUp(t, ["dev"]);
+  await live.connectTo("rdb");
+  await query("count .gw.servers");
+  assert.deepStrictEqual(q.queries(), []);
+  assert.strictEqual(live.gatewayed(["count .gw.servers"]).plain, true);
+});
+
+test("a connect script the guard reads as read-only goes under reval on a guarded process (#2641)", async (t) => {
+  const { q, live } = await setUp(t, ["prod"], undefined, {}, { init: "count t" });
+  assert.strictEqual(await live.connectTo("rdb"), true);
+  assert.deepStrictEqual(q.queries(), [["RUN_READ_ONLY", "count t"]]);
+});
+
+test("a connect script reval refuses is asked about; declined it is not sent again, confirmed it is sent as it is (#2641)", async (t) => {
+  const { q, live } = await setUp(t, ["prod"], () => "restricted", {}, { init: "count t" });
+  stub.picks.push(undefined);
+  await live.connectTo("rdb");
+  assert.deepStrictEqual(warnings(), [refusalQuestion("rdb", "restricted")]);
+  assert.deepStrictEqual(q.queries(), [["RUN_READ_ONLY", "count t"]]);
+  await stub.commands.get("q-lint.disconnectProcess")?.();
+  stub.picks.push("Run Anyway");
+  await live.connectTo("rdb");
+  assert.deepStrictEqual(q.queries().slice(1), [
+    ["RUN_READ_ONLY", "count t"],
+    ["RUN", "count t"],
+  ]);
+});
+
+test("an error whose text is NO_REVAL's, from a process that has reval, is a q error: reval stays on (#2638)", async (t) => {
+  // This process answers the reval check true; the user's code raised the text.
+  const { q, live, query } = await setUp(t, ["prod"], (m) => (Array.isArray(m) && m[1].join("\n").includes("no reval") ? NO_REVAL : undefined));
+  await live.connectTo("rdb");
+  await query(`'"${NO_REVAL}"`);
+  await query("count trade");
+  assert.deepStrictEqual(q.queries(), [
+    ["RUN_READ_ONLY", `'"${NO_REVAL}"`],
+    ["RUN_READ_ONLY", "count trade"],
+  ]);
+  assert.deepStrictEqual(stub.messages.filter(([, text]) => /has no reval/.test(text)), []);
 });

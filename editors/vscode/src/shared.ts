@@ -7,6 +7,7 @@
 // said. What would run something - a connect script, an SSH jump host, a
 // launch definition - is read only in a trusted workspace.
 import * as path from "node:path";
+import { onConnectOf } from "./connectscript";
 import { SHARED_SOURCE } from "./discovery";
 import { parseProcesses, type Process } from "./processes";
 
@@ -27,6 +28,10 @@ export function readShared(get: <T>(key: string, fallback: T) => T): { enabled: 
 /// The fields a shared entry may not hold, ignoring case.
 const SECRET = /^(password|passwd|pwd|pass|secret|token|apikey|api_key|credentials?)$/i;
 
+/// The fields of an entry that are a process's: what Add to Shared Process
+/// List writes, and writes over.
+const READ = new Set<string>(["label", "host", "port", "user", "tags", "tls", "server", "init", "initFile", "ssh", "gateway", "launch", "credentialCommand", "timeout", "evaluation"]);
+
 export interface SharedList {
   processes: Process[];
   /// What was wrong with the entries skipped, and what was dropped.
@@ -43,9 +48,6 @@ export function readSharedFile(text: string, trusted: boolean): SharedList {
   const list = Array.isArray(json) ? json : typeof json === "object" && json !== null ? (json as { processes?: unknown }).processes : undefined;
   const secrets: string[] = [];
   let untrusted = 0;
-  // An entry reached through a tunnel is not listed untrusted: without its
-  // tunnel it would be connected to directly, password and all (#1507).
-  const tunnelled = new Set<string>();
   const cleaned = Array.isArray(list)
     ? list.map((entry, i) => {
         if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
@@ -59,15 +61,19 @@ export function readSharedFile(text: string, trusted: boolean): SharedList {
         if (!trusted && ["init", "initFile", "ssh", "launch", "credentialCommand"].some((k) => k in kept)) {
           untrusted++;
         }
-        if (!trusted && typeof kept.ssh === "string" && kept.ssh.trim() !== "" && typeof kept.label === "string") {
-          tunnelled.add(kept.label.trim());
-        }
         return kept;
       })
     : json;
-  const read = parseProcesses(Array.isArray(list) ? { processes: cleaned } : cleaned, trusted);
-  const processes = read.processes.filter((p) => !tunnelled.has(p.label));
-  const skipped = read.processes.filter((p) => tunnelled.has(p.label)).map((p) => p.label);
+  // Read as a trusted workspace reads it, and what runs something taken off
+  // after: the entry kept of a label is then the same one either way, and
+  // one with an `ssh` that is no destination is skipped in both (#3095).
+  const read = parseProcesses(Array.isArray(list) ? { processes: cleaned } : cleaned, true);
+  // An entry reached through a tunnel is not listed untrusted: without its
+  // tunnel it would be connected to directly, password and all (#1507). The
+  // entry kept, that is: a repeat of its label, skipped, hid a direct one by
+  // naming a tunnel (#3108).
+  const processes = trusted ? read.processes : read.processes.filter((p) => p.ssh === undefined).map((p) => onConnectOf(p, undefined));
+  const skipped = trusted ? [] : read.processes.filter((p) => p.ssh !== undefined).map((p) => p.label);
   return {
     processes,
     problems: [
@@ -140,8 +146,8 @@ export function secretsWarning(labels: string[]): string {
 }
 
 /// The list's text with `process` in it, in place of an entry of its label
-/// or after the rest, written as an export writes one: a saved process holds
-/// no password. `text` undefined: a new file. Throws a SyntaxError when the
+/// (whose other fields it keeps) or after the rest, written as an export
+/// writes one: a saved process holds no password. `text` undefined: a new file. Throws a SyntaxError when the
 /// text there is not JSON, and an Error when it is JSON that holds no list
 /// to add to - a `processes` that is not a list, or no object at all - so
 /// what the file does hold is not written over (#1886). An object with no
@@ -161,7 +167,12 @@ export function withShared(text: string | undefined, process: Process): string {
     return typeof label === "string" && label.trim() === process.label;
   });
   if (at >= 0) {
-    holder.processes[at] = entry;
+    // What the entry holds that is no part of a process stays in it: the
+    // file is kept by hand, and a `comment` or an `owner` written into the
+    // entry was gone with the entry written anew (#3107). In the order the
+    // entry had them, after the process's own; a secret is not kept.
+    const kept = Object.entries(holder.processes[at] as Record<string, unknown>).filter(([k]) => !READ.has(k) && !SECRET.test(k));
+    holder.processes[at] = { ...entry, ...Object.fromEntries(kept) };
   } else {
     holder.processes.push(entry);
   }

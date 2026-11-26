@@ -5,9 +5,10 @@
 // the calls as a flame chart (`media/profile.js`).
 //
 // It changes the process for the length of the run - each function of the
-// namespace is replaced by a timing wrapper and put back after - so it goes
-// through `Live.runOnActive` with code the read-only guard reads as a write:
-// a guarded process asks first, whatever the query. The originals are put
+// namespace is replaced by one with the timing in its text and put back
+// after - so it goes through `Live.runOnActive` with code the read-only
+// guard reads as a write: a guarded process asks first, whatever the query.
+// The originals are put
 // back by the same lambda that replaced them, and a second message
 // (`PROFILE_CLEANUP`) follows it either way, so a run that failed half way
 // leaves nothing behind. Off (q-lint.query.functionProfile.enable), the
@@ -19,7 +20,7 @@
 import { randomBytes } from "node:crypto";
 import { Uri, ViewColumn, commands, window, workspace, type ExtensionContext, type Webview, type WebviewPanel } from "vscode";
 import type { Live } from "./live";
-import { PROFILE, PROFILE_CLEANUP, namespaceProblem, profileView, readProfile, type ProfileView } from "./profile";
+import { PROFILE_CLEANUP, namespaceProblem, profileView, readProfile, runProfile, type ProfileView } from "./profile";
 import { statements } from "./statements";
 import { TOOLING_COMMANDS, toolingOff, toolingOn } from "./toolingfeatures";
 import { plainMessage } from "./history";
@@ -95,15 +96,20 @@ export function registerFunctionProfile(
     if (!(await live.toFileBinding(file))) {
       return "nothing was run";
     }
+    // Run inside q-lint's lambda, it would profile the gateway (#3060).
+    const refused = live.gatewayRefusal("Profile Functions", code);
+    if (refused !== undefined) {
+      return say(refused);
+    }
     let ran: { process: string; value: unknown } | undefined;
     try {
       ran = await live.runOnActive(guardedCode(ns, code), async (connection) => {
-        // Turned off while it asked: no wrapper is installed (#1453).
+        // Turned off while it asked: no function is replaced (#1453).
         if (!on()) {
           return OFF;
         }
         try {
-          return await connection.call(PROFILE, `\`${ns}`, cut);
+          return await runProfile((q, ...args) => connection.call(q, ...args), ns, cut);
         } finally {
           // Whatever became of it: a connection that closed cannot be asked.
           if (connection.isOpen) {

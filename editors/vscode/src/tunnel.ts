@@ -29,10 +29,12 @@ export const TUNNEL_TIMEOUT_MS = 20_000;
 /// `host:port` as the jump host sees it, and
 /// the destination after `--`, so nothing in it is read as an option. A
 /// `host:port` or `[v6]:port` destination is given to ssh as `-p`; a bare
-/// IPv6 address has no port, its last group is not one (#1068).
+/// IPv6 address has no port, its last group is not one (#1068). The user
+/// is all before the last `@`, whatever it holds: `a:b@bastion:2222` has the
+/// port 2222 too (#3117).
 export function sshArgs(destination: string, local: number | string, host: string, port: number): string[] {
-  const bracketed = /^([^@]*@)?\[([^\]]+)\](?::(\d+))?$/.exec(destination);
-  const plain = /^([^:]*):(\d+)$/.exec(destination);
+  const bracketed = /^(.*@)?\[([^\]@]+)\](?::(\d+))?$/.exec(destination);
+  const plain = /^((?:.*@)?[^:@]*):(\d+)$/.exec(destination);
   const m = bracketed ? [destination, `${bracketed[1] ?? ""}${bracketed[2]}`, bracketed[3]] : plain ?? [destination, destination, undefined];
   const target = host.includes(":") ? `[${host}]` : host;
   return [
@@ -131,7 +133,14 @@ export function shownError(error: unknown): string {
 
 /// A connect through an open tunnel that closed before the handshake: as
 /// likely a refused user as a forward that reached no q.
-export class TunnelHandshakeError extends TunnelConnectError {}
+export class TunnelHandshakeError extends TunnelConnectError {
+  /// Whether ssh said the forward's channel did not open (`channel 2: open
+  /// failed: connect failed: Connection refused`): nothing was reached, so
+  /// no user or password was refused (#3033).
+  get reachedNothing(): boolean {
+    return /\bopen failed\b/.test(this.sshSaid);
+  }
+}
 
 export class SshTunnel {
   private closed = false;

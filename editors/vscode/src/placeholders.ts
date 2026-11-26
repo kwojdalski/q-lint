@@ -10,7 +10,7 @@
 // `{{a}}` is still taken for one; `q-lint.query.placeholders.enable` turns
 // them off.
 
-import { blockDepth, trimBlanks } from "./statements";
+import { COMMAND_LINE, blockDepth, trimBlanks } from "./statements";
 
 /// Where `values` are remembered between queries: `globalState`, under this
 /// key, as `{ [name]: value }`.
@@ -38,8 +38,6 @@ export interface Placeholder {
 }
 
 const PLACEHOLDER = /\{\{[ \t]*(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)[ \t]*\}\}/y;
-/// A system command's line, other than `\t` and `\ts`, which time q code.
-const SYSTEM = /^\\(?!ts?(?:[:\s]|$))\S/;
 /// q's implicit parameters: `{{x}}` is a lambda returning its argument.
 const IMPLICIT = new Set(["x", "y", "z"]);
 
@@ -57,7 +55,7 @@ export function placeholders(code: string): Placeholder[] {
     // takes what follows a blank and a slash there as the argument it is
     // (`\l /data/x.q`, `\cd /hdb`, `\cp /a /b`), never as a comment. Only
     // `\t` and `\ts` time q code, where a comment is one (#1984).
-    const command = !inString && depth === 0 && SYSTEM.test(line);
+    const command = !inString && depth === 0 && COMMAND_LINE.test(line);
     if (!inString) {
       // A line of `/` alone opens a block comment, one of `\` alone closes it.
       if (depth > 0 || trimBlanks(line) === "/") {

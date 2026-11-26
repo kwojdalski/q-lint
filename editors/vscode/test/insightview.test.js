@@ -237,6 +237,13 @@ test("Open Function Source shows the process's text read-only; Edit and Redefine
   assert.strictEqual(sources.state().copies.length, 1);
 });
 
+test("Open Function Source takes a function named as a symbol, `.ns.h, as the name .ns.h (#2649)", async (t) => {
+  const { q } = await setUp(t);
+  const uri = await stub.commands.get("q-lint.openFunctionSource")("`.ns.h");
+  assert.strictEqual(uri.path, "/.ns.h.q");
+  assert.deepStrictEqual(calls(q, SOURCE), [[".ns.h"]]);
+});
+
 test("a second Redefine is checked against the text the process kept, not the one the editor sent (#1895)", async (t) => {
   const { q } = await setUp(t);
   const uri = await stub.commands.get("q-lint.openFunctionSource")(".ns.h");
@@ -347,6 +354,23 @@ test("a table's hover: in the explorer when first shown, and on its name in a q 
   assert.strictEqual(calls(q, TABLE_INFO).length, 2);
 });
 
+test("a table's name in a comment or a string gets no hover, and the process is not asked (#2922)", async (t) => {
+  const { q } = await setUp(t, [], { "processExplorer.editorTableHover.enable": true });
+  const at = (text, line, character) => providers.hover.provideHover(documentOf(uriOf("file", "/a.q"), text), new Position(line, character));
+  assert.strictEqual(await at("/ trade is rebuilt nightly", 0, 4), undefined);
+  assert.strictEqual(await at("n:count t / trade", 0, 14), undefined);
+  assert.strictEqual(await at('s:"select from trade"', 0, 16), undefined);
+  // A block comment's line and a string open from the line above, which
+  // only the lines above tell.
+  assert.strictEqual(await at("/\ntrade\n\\\nx:1", 1, 2), undefined);
+  assert.strictEqual(await at('s:"select\n  from trade"', 1, 9), undefined);
+  assert.strictEqual(calls(q, TABLE_INFO).length, 0);
+  // As code, and as a symbol, it still does.
+  assert.ok(await at('s:"select from t";count trade', 0, 26));
+  assert.ok(await at("/ note\nmeta `trade", 1, 8));
+  assert.strictEqual(calls(q, TABLE_INFO).length, 1);
+});
+
 test("the Process Monitor and HDB browser read the process on Refresh, and empty on disconnect", async (t) => {
   const { views } = await setUp(t);
   await stub.commands.get("q-lint.refreshProcessMonitor")();
@@ -408,4 +432,28 @@ test("turning a feature on or off takes effect without a reload", async (t) => {
   stub.config.user["processMonitor.enable"] = false;
   stub.changeConfig("q-lint.processMonitor.enable");
   assert.deepStrictEqual(views.monitor(), []);
+});
+
+test("the editor table hover on a direct process shows the process label as written, not as Markdown (#2656)", async () => {
+  stub.reset();
+  const Hover = vscode.Hover;
+  vscode.Hover = class {
+    constructor(contents) {
+      this.contents = contents;
+    }
+  };
+  stub.config.user["processExplorer.editorTableHover.enable"] = true;
+  const label = "rdb ![x](https://example.com/beacon.png) [Open docs](https://evil.example/)";
+  const explorer = Object.create(ProcessExplorer.prototype);
+  explorer.live = { activeLabel: () => label };
+  explorer.kept = { process: label, gathered: { entries: [{ ns: ".", name: "t", kind: "table", type: 98, count: null, cols: [], keys: [], params: [], partitioned: false, unread: true }], spaces: [] } };
+  explorer.tableDetails = async () => undefined;
+  try {
+    const hover = await explorer.hover({ lineAt: () => ({ text: "t" }) }, { line: 0, character: 0 });
+    assert.match(hover.contents.value, /^\*\*t\*\* on rdb \\!\\\[x\\\]\\\(https/);
+    assert.doesNotMatch(hover.contents.value, /\]\(https?:/);
+  } finally {
+    vscode.Hover = Hover;
+    delete stub.config.user["processExplorer.editorTableHover.enable"];
+  }
 });

@@ -144,6 +144,8 @@ test("the q of the data tools against a real q process", { skip }, async (t) => 
     for (const op of w.filterOps(strings)) answers[op] = await kept(op, op === "in" ? '("yy";"xy")' : op === "like" ? '"?y"' : first);
     assert.deepStrictEqual(answers, { "=": ["3"], "<>": ["1", "2", "4"], like: ["3", "1"], in: ["3", "1"], null: ["2"], "not null": ["3", "1", "4"] });
     assert.deepStrictEqual(await kept("=", w.cellLiteral(base.grid, 1, 3)), ["4"]);
+    // `in` runs on the value it starts from too, one string: 'type before (#3090).
+    assert.deepStrictEqual([await kept("in", first), await kept("in", w.cellLiteral(base.grid, 1, 3)), await kept("in", 'enlist "yy"')], [["3"], ["4"], ["1"]]);
     // The ordering tests are q's 'length on strings: they are not offered.
     const answer = await connection.queryGrid(statements(w.wrangleQuery(from, [{ kind: "filter", column: "b", op: "<", value: first }])), SIZE, 1000);
     assert.deepStrictEqual([answer.ok, answer.error], [false, "length"]);
@@ -348,4 +350,122 @@ test("Show steps as q runs when the wrangled query reads a global named w (#2466
     assert.ok(answer.ok, `${base}: ${answer.error}`);
     assert.deepStrictEqual(cells(answer, "a"), ["2", "3"]);
   }
+});
+
+test("a general cell's new value is one item: a join adds no column, and :: is the generic null (#3078, #3079)", { skip }, async (t) => {
+  const q = await startQ(() => 'tt:([] id:1 2 3; s:("ab";"cd";"ef"))\ng:([] id:1 2 3; g:(1;`a;"s"))\n');
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.abort());
+  const shown = async (table) => (await connection.queryGrid(statements(table), SIZE, 1000)).grid;
+  const edit = async (table, row, value) => {
+    const edited = w.editStatement(await shown(table), 1, row, table, value);
+    const answer = await connection.query(statements(edited.code), SIZE);
+    assert.ok(answer.ok, `${edited.code}: ${answer.error}`);
+  };
+  await edit("tt", 0, '"x","y"');
+  let after = await shown("tt");
+  assert.deepStrictEqual([after.names, after.cells[1]], [["id", "s"], ['"xy"', '"cd"', '"ef"']]);
+  await edit("g", 1, "1,2");
+  await edit("g", 0, "::");
+  after = await shown("g");
+  assert.deepStrictEqual([after.names, after.cells[1]], [["id", "g"], ["::", "1 2", '"s"']]);
+});
+
+test("a one-character value typed into a column of strings is stored as a string (#3080)", { skip }, async (t) => {
+  const q = await startQ(() => 'tt:([] id:1 2 3; s:("ab";"cd";"ef"))\n');
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.abort());
+  const shown = async (code) => (await connection.queryGrid(statements(code), SIZE, 1000)).grid;
+  const edited = w.editStatement(await shown("tt"), 1, 0, "tt", '"x"');
+  const answer = await connection.query(statements(edited.code), SIZE);
+  assert.ok(answer.ok, `${edited.code}: ${answer.error}`);
+  assert.deepStrictEqual((await shown("tt")).cells[1], [',"x"', '"cd"', '"ef"']);
+  assert.deepStrictEqual((await shown("([] t:type each tt`s)")).cells[0], ["10", "10", "10"]);
+});
+
+test("= and in on a column of lists or tables run on the value they start from, the first cell (#3091)", { skip }, async (t) => {
+  const q = await startQ(() => "");
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.abort());
+  for (const [from, column, kept] of [
+    ["([] s:(1 2;3 4;1 2); v:1 2 3)", 0, { "=": ["1", "3"], "<>": ["2"], in: ["1", "3"] }],
+    ["([] v:1 2 3; t:(([] a:1 2);([] a:1 2);1))", 1, { "=": ["1", "2"], "<>": ["3"], in: ["1", "2"] }],
+  ]) {
+    const base = (await connection.queryGrid(statements(from), SIZE, 1000)).grid;
+    const step = (op, value) => ({ kind: "filter", column: base.names[column], op, value, strings: w.stringColumn(base, column), general: base.types[column] === 0 });
+    for (const op of ["=", "<>", "in"]) {
+      const code = w.wrangleQuery(from, [step(op, w.cellLiteral(base, column, 0))]);
+      const answer = await connection.queryGrid(statements(code), SIZE, 1000);
+      assert.ok(answer.ok, `${code}: ${answer.error}`);
+      assert.deepStrictEqual(cells(answer, "v"), kept[op], code);
+    }
+  }
+  // A list of cells is still a list of them.
+  const lists = await connection.queryGrid(statements(w.wrangleQuery("([] s:(1 2;3 4;5 6); v:1 2 3)", [{ kind: "filter", column: "s", op: "in", value: "(1 2;5 6)", general: true }])), SIZE, 1000);
+  assert.deepStrictEqual(cells(lists, "v"), ["1", "3"]);
+});
+
+test("like on a symbol or enumerated column runs on the value it starts from (#3092)", { skip }, async (t) => {
+  const q = await startQ(() => "e:`ab`cd`ef\n");
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.abort());
+  for (const from of ["([] s:`ab`cd`ef; v:1 2 3)", "([] s:`e$`ab`cd`ef; v:1 2 3)"]) {
+    const base = (await connection.queryGrid(statements(from), SIZE, 1000)).grid;
+    const code = w.wrangleQuery(from, [{ kind: "filter", column: "s", op: "like", value: w.filterValue(base, 0, 0, "like") }]);
+    const answer = await connection.queryGrid(statements(code), SIZE, 1000);
+    assert.ok(answer.ok, `${code}: ${answer.error}`);
+    assert.deepStrictEqual(cells(answer, "v"), ["1"], code);
+  }
+});
+
+test("the schema diagram reads the tables of a namespace in a namespace, and their foreign keys (#3052)", { skip }, async (t) => {
+  const q = await startQ(() => [
+    "trade:([] sym:`a`b; px:1 2f)",
+    '.ref.inst:([sym:`a`b] nm:("A";"B"))',
+    ".feed.book.l2:([] sym:`.ref.inst$`a`b; lvl:1 2)",
+    ".feed.book.deep.l3:([] lvl:1 2)",
+    // A dictionary of symbols is no namespace, and an excluded root is not walked.
+    ".feed.cfg:`a`b!(1;([] x:1 2))",
+    ".skip.in.t:([] a:1 2)",
+    "",
+  ].join("\n"));
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.abort());
+  const { tables, failed } = s.readSchema(await connection.call(s.SCHEMA, "q Q h j o s skip", s.SCHEMA_TABLES, s.SCHEMA_COLUMNS));
+  assert.deepStrictEqual(failed, []);
+  const mine = tables.filter((x) => /^(trade|\.ref\.|\.feed\.|\.skip\.)/.test(x.name));
+  assert.deepStrictEqual(mine.map((x) => x.name).sort(), [".feed.book.deep.l3", ".feed.book.l2", ".ref.inst", "trade"]);
+  assert.deepStrictEqual(s.schemaLinks(mine).map((l) => `${l.from}.${l.column}->${l.to} ${l.kind}`), [".feed.book.l2.sym->.ref.inst foreign key"]);
+  assert.match(s.schemaMermaid(mine), / {2}_ref_inst \|\|--o\{ _feed_book_l2 : "sym"/);
+  assert.strictEqual((s.schemaSvg(mine).match(/<path class="edge/g) ?? []).length, 1);
+});
+
+test("the schema diagram draws a foreign key held in a column past those it shows (#3053)", { skip }, async (t) => {
+  const q = await startQ(() => [
+    "inst:([sym:`a`b] lot:100 200)",
+    'wide:flip((`$"c",/:string til 44),`sym)!(44#enlist 1 2),enlist`inst$`a`b',
+    "narrow:([] sym:`inst$`a`b; px:1 2f)",
+    "",
+  ].join("\n"));
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.abort());
+  const { tables, failed } = s.readSchema(await connection.call(s.SCHEMA, "q Q h j o s", s.SCHEMA_TABLES, s.SCHEMA_COLUMNS));
+  assert.deepStrictEqual(failed, []);
+  const mine = tables.filter((x) => ["inst", "wide", "narrow"].includes(x.name));
+  assert.deepStrictEqual(s.schemaLinks(mine).map((l) => `${l.from}.${l.column}->${l.to}`).sort(), ["narrow.sym->inst", "wide.sym->inst"]);
+  // The columns shown are still the first 40: the one read past them is the key's.
+  const wide = mine.find((x) => x.name === "wide").info;
+  assert.strictEqual(wide.ncols, 45);
+  assert.deepStrictEqual(wide.columns.map((c) => c.name), [...Array.from({ length: s.SCHEMA_COLUMNS }, (_, i) => `c${i}`), "sym"]);
+  const svg = s.schemaSvg(mine);
+  assert.strictEqual((svg.match(/<path class="edge/g) ?? []).length, 2);
+  assert.match(svg, /… 5 more/);
+  assert.ok(svg.includes("c39") && !svg.includes("c40"), "wide's box lists its first 40 columns only");
+  assert.match(s.schemaMermaid(mine), / {2}inst \|\|--o\{ wide : "sym"/);
 });

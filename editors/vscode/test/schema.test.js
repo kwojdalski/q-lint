@@ -37,6 +37,15 @@ test("table templates: select first, meta, count by date and an insert of typed 
   assert.match(s.tableTemplates("a b", info())[3].code, /\n\(`\$"a b"\) insert \(\n/);
 });
 
+test("the insert template keeps a name holding a line break inside its / comment (#3055)", () => {
+  const evil = "note\n.z.pw:{[u;p]1b};1";
+  const odd = info({ kind: "table", ncols: 2, columns: [{ name: evil, type: "s", fkey: evil, attr: "" }, { name: "px", type: "f", fkey: "", attr: "" }] });
+  const code = s.tableTemplates(evil, odd).find((x) => x.label === "Insert template").code;
+  assert.ok(code.split("\n").every((line) => !line.startsWith(".z.pw")), code);
+  assert.match(code, /^\/ One row for note\\n\.z\.pw:\{\[u;p\]1b\};1: replace each null/);
+  assert.match(code, /\n {2}enlist `; +\/ note\\n\.z\.pw:\{\[u;p\]1b\};1 \(s\), a key of note\\n\.z\.pw:\{\[u;p\]1b\};1\n/);
+});
+
 const tables = [
   { name: "s", info: info({ kind: "keyed", keys: ["sym"], ncols: 2, columns: [{ name: "sym", type: "s", fkey: "", attr: "u" }, { name: "nm", type: "C", fkey: "", attr: "" }] }) },
   { name: "t", info: info({ columns: [{ name: "sym", type: "s", fkey: "s", attr: "" }, { name: "px", type: "f", fkey: "", attr: "" }], ncols: 2 }) },

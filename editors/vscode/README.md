@@ -490,6 +490,9 @@ and clicking it switches. The commands:
 - **Import** and **Export Processes**: a JSON file holding
   `{"processes": [{"label", "host", "port", "user"?, "tags"?, "tls"?}]}`,
   and any of `init`, `initFile`, `ssh`, `gateway`, `evaluation` and `launch` (below).
+  A stored password is never exported; an export of processes with a
+  connect script, credential command or launch definition, any of which
+  may hold a secret, asks first and can leave those out.
   An import replaces processes of the same label, adds the rest, and says
   which entries it skipped. One that would take away a process's TLS, SSH
   tunnel or a tag the read-only guard guards is asked about first. A process
@@ -610,7 +613,9 @@ answer of 5 MB or less, read as UTF-8 or the charset it names. It follows
 up to 20 redirects, and sends the auth header only to the server's own
 origin. Why one failed - no answer, a status, the wrong
 content type, too large, not JSON - shows under the server's row, as do the
-entries it skipped and why; nothing pops up.
+entries it skipped and why; nothing pops up. A server that fails after it
+has listed keeps the processes it last listed, under the failure, until a
+fetch answers: one refresh that fails is no word that they are gone.
 
 A discovered process may share a label with a saved one, or with one another
 server lists. Its row shows its own label, but once connected it is
@@ -827,7 +832,11 @@ A function changed on the process since it was loaded, or not loaded, is
 left alone, and the run's output names those; one redefined while the tests
 ran is left as it is then. A call made where q refuses a global write
 (under `reval`, in a secondary thread of `peach`) answers as before and is
-not counted. `.qlint.cov` holds the counts and the originals
+not counted. Only the name is replaced: a call made through a reference
+taken before the run - a dictionary of handlers, `.z.ts`, a timer's
+projection - runs the function as it was, and is not counted; the run's
+output names the functions counted as never run, and says so. `.qlint.cov`
+holds the counts and the originals
 meanwhile, and is deleted after; `.qlint` itself stays, empty when nothing
 else of q-lint's is in it, as q cannot remove a namespace. When the
 functions cannot be put back over the active connection - another process
@@ -913,27 +922,40 @@ a server of each type and joins what they answer. The server types are, in
 order: those **Query Gateway on Server Types...** (editor menu and palette)
 asks for, for the selection or the current line; those a line at column 0
 of the file names, `/ @servertypes hdb` (a comment after them is none);
-else the process's own. `/ @servertypes none` sends the file's queries to
+else the process's own. Server types are q names: one that is not, `hdb-eu`
+or `2hdb`, is named and refused - in the box, and on a file's line, whose
+queries are then not sent - rather than dropped. `/ @servertypes none` sends the file's queries to
 the gateway itself. The query is one string,
 `.gw.syncexec["select from trade";\`rdb\`hdb]`, which a server under TorQ's
 read-only mode reads as well: several statements are joined into it, each
-after the first on a line that starts ` ;`. TorQ's `.gw.syncexec` defers
+after the first on a line that starts ` ;`, or with a `\d` among them as
+the strings of a list valued in turn, so a function defined after the `\d`
+is bound to its namespace. TorQ's `.gw.syncexec` defers
 its reply (`-30!`) on kdb+ 3.6 and later, so the call is sent as a plain
 string and its value formatted here, as direct evaluation does. Code that
 calls the gateway's own API or reads its state - any name in `.gw` or
 `.dataaccess`, such as `t:.gw.syncexec[...]`, `.gw.servers` or
-`.dataaccess.getdata[...]` - goes as written. The history keeps the call
+`.dataaccess.getdata[...]` - goes as written, and so does a read of the
+state a gateway keeps as every TorQ process does, in `.servers`, `.clients`
+or `.timer`, or of `.kxdash`: `select from .servers.SERVERS` on a gateway is
+the gateway's discovery, not a server's. A selection is read statement by
+statement: the gateway's own go as written, with those a name ties to them
+(`count t` under `t:.gw.syncexec[...]`), and the others through
+`.gw.syncexec`. The history keeps the call
 as it was sent, and running it again does not wrap it twice; **Query
 Gateway on Server Types...** sends such an entry to the types chosen. A
 dashboard tile, a scheduled query, **Query a Tag**, **Compare Query**,
 **Watch Query**, the REPL, the Interactive Window, Smart Send, notebook
 cells and their live values, the agent's query tool, Copy Value as JSON and
-SQL go through it too, and a drill-down, a wrangle step or a cell edit from
+SQL go through it too - a code cell, Smart Send and Copy Value as JSON to
+the server types their file names - and a drill-down, a wrangle step or a cell edit from
 a result goes to the server types it came from. Features that evaluate the
 code inside q-lint's own q - Run Query Asynchronously, Record Query Snapshot
-and snapshot tests, Explain aj Match, Benchmark, Time Lines on Process and
-the Join Assistant - refuse code a gateway would send to its servers, and
-say so, rather than run it on the gateway itself.
+and snapshot tests, Explain aj Match, Benchmark, Time Lines on Process,
+Profile Functions and the Join Assistant - refuse code a gateway would send
+to its servers, and say so, rather than run it on the gateway itself. The
+Process Explorer lists the gateway's own names, so its **Preview** and the
+reads of **Table Templates** run on the gateway itself.
 `q-lint.connection.torqGateway.enable` off sends every query as written and
 hides both commands.
 
@@ -948,7 +970,11 @@ editor, newest first, keeping the last `q-lint.tickerplant.stream.rows`
 (1000; at most 10,000). The grid counts the rows received, redraws at most
 five times a second, and **Pause** stops redrawing while the rows keep
 coming. Closing it closes the connection, which the tickerplant drops as a
-subscriber; it says so when the process closes it instead. On a process
+subscriber; it says so when the process closes it instead. While it waits
+for the table list or for `.u.sub`'s answer a notification says so: its
+Cancel, **Abort Current Query** or **Disconnect** gives it up, and it waits
+no longer than the query timeout that holds for the process, or 60 seconds
+with none. On a process
 tagged `prod` it asks first. The lambda that subscribes defines nothing on
 the process. Turning the setting off hides the command and closes every
 stream.
@@ -1115,20 +1141,30 @@ statements as it reads a query (`q-lint.query.lineTimings.enable`).
 palette, runs the selection, or the statement at the cursor, with every
 function of a namespace you name (`.lib`; the first one the code names is
 offered) timed, as cProfile times a Python program. Each lambda directly in
-the namespace is replaced for the run by a wrapper of the same rank that
-notes, by `.z.p`, when it is entered and left - through an error too - and
-the very objects that were there are put back after, whether the run
-succeeded or failed; a second message follows to make sure of it, and the
-working state in `.qlint.prof` is deleted. The panel shows the functions as
+the namespace is replaced for the run by its own text with the timing
+written into it - a note, by `.z.p`, where its body starts and wherever it
+hands a value back or signals - and the very objects that were there are
+put back after, whether the run succeeded or failed (a function the run
+itself defines anew keeps its new definition, and the panel names it); a
+second message follows to make sure of it, and the working state in
+`.qlint.prof` is deleted. A function timed is still one function: a call adds no frame to
+q's stack, so a recursion as deep as q allows still runs, one through
+`.z.s` is counted call by call, and a reference the run takes to a function
+- a callback it registers, `.z.ts` - goes on answering once the profile is
+over, the timing in it doing nothing then. The panel shows the functions as
 a table - calls, total, self (less the calls it made), per call, longest -
 sortable by any column, and the calls as a flame chart, merged by their
-path of callers. The wrapper costs time on every call: it is measured on
-the process before each run (a thousand calls of `{x}` through a wrapper
-against a thousand direct ones; about 1.7 µs a call on KDB-X and 4.8 µs on
-PeachQ here) and the panel says how much it adds in all. Only functions
-called by name are seen: one stored in a dictionary or set as a callback
-before the run keeps the original, projections and compositions are not
-wrapped, and at most the first 100,000 calls are recorded. Since a run
+path of callers. The timing costs time on every call: it is measured on
+the process before each run (a thousand calls of `{x}` timed against a
+thousand plain ones; about 1 µs a call on KDB-X here) and the panel says
+how much it adds in all. Only functions called by name are seen: one stored
+in a dictionary or set as a callback before the run keeps the original,
+projections and compositions are not timed, nor is a function whose text is
+not a q lambda's (one written in k), which the panel names; and at most the
+first 100,000 calls are recorded. A call that an error of q's own ends
+(`'type`, not a `'` the text writes) is not seen to end: it is closed when
+a timed caller of it returns, or the run ends, and a call made in between
+is drawn under it. Since a run
 replaces the namespace's functions, the read-only guard asks first on a
 guarded process, whatever the query (`q-lint.query.functionProfile.enable`).
 
@@ -1242,7 +1278,12 @@ bar shows its round trip: `q: rdb 3 ms`. It defines nothing on the process,
 and a q error back (a gateway that refuses the string) still counts as an
 answer. It is skipped while a query or the Process Explorer's read is out,
 and a query sent while one is out waits for it; one unanswered for 5 seconds
-shows as `no answer 12s` - the process is busy, or gone. A process that logs
+shows as `no answer 12s` - the process is busy, or gone. Which, q-lint asks
+at every third heartbeat that finds one still out: its host is dialled, and
+a host that takes no connection - a VPN down, a network gone without a
+word - has the connection closed as dropped, where a busy process keeps
+it. Every connection also has TCP keepalive on, so one idle on a dead
+network closes without a heartbeat. A process that logs
 its clients sees every heartbeat. With
 `q-lint.connection.autoReconnect.enable` on, a connection the process or the
 network drops is reconnected: the status bar shows `reconnecting to rdb (2
@@ -1276,7 +1317,9 @@ workspace. **Save Query** - on the view's title bar, in a q editor's
 context menu, or on a Query History entry - saves the selection, or the
 statement at the cursor, or that entry's code, as written, under a name you
 give (the first line is offered); placeholders stay in it and are asked for
-each time it runs. On a saved query's row: **Run Saved Query** runs it on
+each time it runs. Saved from a file that names its TorQ gateway server
+types, it keeps that `/ @servertypes` line above its code, and its runs,
+scheduled exports and dashboard tiles go to them. On a saved query's row: **Run Saved Query** runs it on
 the active connection as a query from the editor runs (connecting first if
 there is none; the read-only guard applies, and it lands in Query History),
 **Edit Saved Query** - also a click on the row - opens it as a q document of
@@ -1406,19 +1449,31 @@ code that runs anywhere it matters.
 
 **Logpoints.** **Add Logpoint** (a q editor's context menu) logs the calls
 of the function under the cursor - or one named - on the active process
-without editing its file: the function is replaced there by a wrapper of
-the same parameters that prints `(name; arguments)` with `0N!`, to the
-process's console or log (a launched process's output channel), keeps the
-last 1000 calls as text in `.qlint.log.hits`, and calls the original, kept
-in `.qlint.log.orig`. Where q refuses a global write - a call made under
+without editing its file: the function is replaced there by its own text
+with one statement more at the start of its body, which prints
+`(name; arguments)` with `0N!`, to the process's console or log (a launched
+process's output channel), and keeps the last 1000 calls as text in
+`.qlint.log.hits`; what the name held is kept in `.qlint.log.saved`. The
+function is otherwise itself: a call uses no more of q's stack, so a deep
+recursion runs as before, and a call it makes of itself through `.z.s` is
+logged too. Where q refuses a global write - a call made under
 `reval`, or in a secondary thread of `peach` - the call is printed but not
-kept, and the function answers as before. The editor marks the definition `logpoint on
+kept, and the function answers as before. A call q refuses on a typed or
+pattern parameter list never starts, and is not logged. The editor marks the definition `logpoint on
 <process>`. **Show Logpoint Hits** reads the calls kept, **Remove
 Logpoint** puts one function back, and **Remove All Logpoints** all of
-them; a function redefined while it had a logpoint is left as it is. With
+them; a function redefined while it had a logpoint is left as it is. What
+reads or replaces a definition takes the function as it was before the
+logpoint: **Check Drift**, **Diff Function** and **Open Function Source**
+show it without the logging, a coverage run and **Capture Locals** work
+over it and put the logpoint back, and hot reload and **Redefine on
+Process** put the logpoint on the new definition. A backtrace names the
+function as before. With
 the last one removed, `.qlint.log` is deleted and `.qlint` is left empty: q
 cannot remove a namespace. Only a lambda takes one, and a projection or
-alias made of the function before keeps calling the original. Adding and
+alias made of the function before keeps calling the original; a reference
+taken while the logpoint is on - a handler, a timer - keeps answering,
+unlogged, once it is removed. Adding and
 removing go through the read-only guard; reading the
 hits changes nothing. `q-lint.logpoints.enable` hides the commands.
 
@@ -1656,9 +1711,10 @@ is sent to the connected process only on **Run**, through the read-only
 guard, as it assigns a global. The process reads the file by its path, so it
 must run on this machine, or the path be changed in the editor first.
 
-**Column formats.** A column whose name ends in one of these suffixes (any
-case, after the last `_`) is shown formatted, so the query decides how its
-result looks. The header shows the name without the suffix, which stays in
+**Column formats.** A column whose name ends in one of these suffixes (in
+upper case, after the last `_`) is shown formatted, so the query decides how
+its result looks. A lower-case ending is no suffix: `order_num` and
+`zip_code` are shown as q writes them. The header shows the name without the suffix, which stays in
 its tooltip, and a cell's tooltip is q's own text:
 
 | Suffix | Shown as |
@@ -1973,7 +2029,8 @@ list shows the functions that differ, are not defined on the process or
 are not a lambda there; picking one that differs opens a diff of the
 process's text and the file's, and picking another opens the file at its
 definition. An open file is read as the editor has it. It reads up to 5000
-files and 20,000 definitions. Off by default
+files and 20,000 definitions, and its summary says so when the workspace
+has more than it compared. Off by default
 (`q-lint.processExplorer.driftDetection.enable`), since it reads every
 function the workspace defines from the process.
 
@@ -1992,7 +2049,12 @@ new one, or one the process does not hold as a lambda is listed as not
 sent. You are asked on every save that sends something, until you pick
 **Reload on Every Save** for that file and process, which lasts until the
 window closes or the setting is turned off; a production process is never
-offered it.
+offered it. A KDB-X module's function (`.m.<module>.<name>`) is replaced
+in what the module exports too: in its `export`, which the next `use`
+answers, and in every global holding what it exported - `` m:use`mymod ``
+keeps the functions themselves, so `m.f` would otherwise run the old one.
+A handle kept in a local or a projection keeps what it has. **Redefine on
+Process** does the same.
 
 **Find Callers in Process**, on a function in the explorer or the name
 under the cursor, lists the loaded functions that call it, read from what q
@@ -2295,7 +2357,10 @@ the palette) reads a function's definition - the name under the cursor, or
 one typed - on two processes you pick and opens VS Code's side-by-side diff
 of them. **Diff Namespace Across Processes...** reads every function
 directly in a namespace on both and lists the ones that differ or are on
-one side only; the one picked opens the same diff. Each process is read
+one side only; the one picked opens the same diff. A side whose process
+holds the name as something other than a function says what - "a table",
+"a dictionary", "a view" - where one that does not hold it says it is not
+defined. Each process is read
 over a connection of its own, closed after, with a read-only lambda, so the
 active connection is left as it is. `q-lint.processes.functionDiff.enable`
 off hides both.

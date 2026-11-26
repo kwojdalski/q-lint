@@ -385,6 +385,45 @@ test("a discovered process listed at another host or port forgets its password, 
   void again;
 });
 
+// One failed refresh - a 503, a timeout - replaced what the server had
+// listed with nothing: its processes left the view, and a connect by label,
+// a bound file and an automatic reconnect found no process of that name.
+test("a discovery refresh that fails keeps the processes the server last listed (#3025)", async (t) => {
+  const http = require("node:http");
+  const q = await fakeQ(() => GATHERED);
+  t.after(() => q.close());
+  let down = false;
+  const server = http.createServer((req, res) => {
+    res.writeHead(down ? 503 : 200, { "content-type": "application/json" });
+    res.end(down ? "busy" : JSON.stringify([{ label: "rdb", host: "127.0.0.1", port: q.port }]));
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  t.after(() => server.close());
+  const { live } = await setUp(t, []);
+  await stub.commands.get("q-lint.addDiscoveryServer")({ label: "desk", url: `http://127.0.0.1:${server.address().port}/` });
+  assert.strictEqual(await live.connectTo("desk/rdb"), true);
+  const listedAt = live.discovery.discovered()[0].state.fetchedAt;
+  down = true;
+  await stub.commands.get("q-lint.reloadDiscoveryServer")("desk");
+  const { state } = live.discovery.discovered()[0];
+  assert.match(state.error, /503/);
+  assert.deepStrictEqual(state.processes.map((p) => p.label), ["rdb"]);
+  assert.strictEqual(state.fetchedAt, listedAt, "when they were listed, not when the refresh failed");
+  await stub.commands.get("q-lint.disconnectProcess")();
+  stub.messages.length = 0;
+  assert.strictEqual(await live.connectTo("desk/rdb"), true, JSON.stringify(stub.messages));
+  // Up again, it lists what it lists now, and the failure goes.
+  down = false;
+  await stub.commands.get("q-lint.reloadDiscoveryServer")("desk");
+  assert.strictEqual(live.discovery.discovered()[0].state.error, undefined);
+  assert.ok(live.discovery.discovered()[0].state.fetchedAt >= listedAt);
+  // Edited to a URL that fails, it keeps nothing of what the other listed.
+  down = true;
+  await stub.commands.get("q-lint.editDiscoveryServer")("desk", { url: `http://127.0.0.1:${server.address().port}/other` });
+  assert.match(live.discovery.discovered()[0].state.error, /503/);
+  assert.deepStrictEqual(live.discovery.discovered()[0].state.processes, []);
+});
+
 // Deleting a server, or removing its processes, left the connection to one
 // of them open, and reconnected to it after a drop (#2565).
 test("deleting a discovery server, or removing its processes, disconnects from its process", async (t) => {
@@ -595,6 +634,50 @@ test("Export Processes says why it could not write the file", async (t) => {
   assert.deepStrictEqual(stub.messages.at(-1), ["error", "q-lint: could not write /ro/q-processes.json: EACCES: permission denied, open '/ro/q-processes.json'"]);
 });
 
+// Under the title "passwords are not exported", a connect script's
+// password, a launch's environment and the credential command went into
+// the file with nothing said (#3096).
+test("Export Processes asks before writing connect scripts, credential commands and launch definitions, and can leave them out", async (t) => {
+  const { vscode } = require("./vscode_stub.js");
+  const secret = {
+    ...proc("s", 1),
+    ssh: "me@bastion",
+    init: '.z.pw:{[u;p] p~"hunter2"}',
+    launch: { env: { TOKEN: "tok_live_9f8e7d" } },
+    credentialCommand: "vault kv get -field=pw secret/rdb",
+  };
+  const { live } = await setUp(t, [secret, proc("plain", 2), { ...proc("f", 3), initFile: "init.q" }]);
+  const written = [];
+  const titles = [];
+  vscode.window.showSaveDialog = async (o) => (titles.push(o.title), vscode.Uri.file("/out/q-processes.json"));
+  vscode.workspace.fs = { writeFile: async (_uri, bytes) => void written.push(Buffer.from(bytes).toString("utf8")) };
+  // Escape: no file is asked for, and nothing is written.
+  let asked;
+  stub.picks.push((o) => ((asked = o), undefined));
+  await stub.commands.get("q-lint.exportProcesses")();
+  assert.match(asked.message, /^2 q process\(es\) have a connect script, credential command or launch definition, which an export writes as they are: .* Export them too\?$/);
+  assert.deepStrictEqual(asked.items, [{ modal: true, detail: "s: connect script, credential command, launch definition\nf: connect script" }, "Export All", "Export Without Them"]);
+  assert.deepStrictEqual([titles, written], [[], []]);
+  stub.picks.push("Export Without Them");
+  await stub.commands.get("q-lint.exportProcesses")();
+  assert.deepStrictEqual(JSON.parse(written[0]).processes, [{ ...proc("s", 1), ssh: "me@bastion" }, proc("plain", 2), proc("f", 3)]);
+  assert.ok(!/hunter2|tok_live|vault/.test(written[0]));
+  assert.deepStrictEqual(stub.messages.at(-1), ["info", "q-lint: exported 3 q process(es) to /out/q-processes.json, without their connect scripts, credential commands and launch definitions."]);
+  stub.picks.push("Export All");
+  await stub.commands.get("q-lint.exportProcesses")();
+  assert.deepStrictEqual(JSON.parse(written[1]).processes, live.processes());
+  assert.deepStrictEqual(stub.messages.at(-1), ["info", "q-lint: exported 3 q process(es) to /out/q-processes.json."]);
+  // The title promises what is true of every export: the stored passwords.
+  assert.deepStrictEqual(titles, ["Export q processes (stored passwords are not exported)", "Export q processes (stored passwords are not exported)"]);
+  // A list with none of them is exported unasked.
+  const { live: bare } = await setUp(t, [proc("plain", 2), { ...proc("t", 4), ssh: "me@bastion" }]);
+  vscode.window.showSaveDialog = async () => vscode.Uri.file("/out/q-processes.json");
+  vscode.workspace.fs = { writeFile: async (_uri, bytes) => void written.push(Buffer.from(bytes).toString("utf8")) };
+  await stub.commands.get("q-lint.exportProcesses")();
+  assert.deepStrictEqual(JSON.parse(written[2]).processes, bare.processes());
+  assert.ok(!stub.messages.some(([kind]) => kind === "warning"));
+});
+
 // Edit a server's auth header while a fetch with the old one is out: the
 // Edit's fetch was taken for that one, as its URL was the same, so the
 // server went on showing the old header's 401 until the next refresh.
@@ -678,6 +761,26 @@ test("Set SSH Tunnel forgets the stored password when the way changes, and keeps
   await stub.commands.get("q-lint.setSshTunnel")("rdb", null);
   assert.strictEqual(live.processes()[0].ssh, undefined);
   assert.strictEqual(secrets.has("q-lint.password.rdb"), false);
+});
+
+test("Set SSH Tunnel's box says what is wrong with a destination, and takes a domain login (#3116, #3117)", async (t) => {
+  const { live } = await setUp(t, [proc("rdb", 5010)]);
+  let said;
+  stub.inputs.push(({ validateInput }) => ((said = [":2222", "me@", "me@b:99999", "a b", "CORP\\me@bastion", " "].map((v) => validateInput(v))), "CORP\\me@bastion"));
+  await stub.commands.get("q-lint.setSshTunnel")("rdb");
+  assert.deepStrictEqual(said, [
+    "A host is needed before the port.",
+    "A host is needed after the @.",
+    "The port after the colon is a whole number between 1 and 65535.",
+    "A host ssh takes has no space.",
+    undefined,
+    undefined,
+  ]);
+  assert.strictEqual(live.processes()[0].ssh, "CORP\\me@bastion");
+  // Handed one that is none, it is refused, not saved.
+  await stub.commands.get("q-lint.setSshTunnel")("rdb", ":2222");
+  assert.deepStrictEqual(stub.messages.at(-1), ["error", 'q-lint: ":2222" is not an SSH destination; the tunnel was not set.']);
+  assert.strictEqual(live.processes()[0].ssh, "CORP\\me@bastion");
 });
 
 // Disconnect while a connect waits for the handshake: the connect went on,

@@ -678,11 +678,11 @@ tier2:{$[x>1000;`huge;x>100;`large;`small]}
 mid:{select from x where px within 10 1}
 mid2:{select from x where px within 1 10}
 
-/ QB023: where gives a typed list, empty or not, and () is the empty general
+/ QB023: til gives a typed list, empty or not, and () is the empty general
 / list, so the match is never true; count asks whether it is empty.
 / expect-next: QB023
-nohits:{[p] ()~where p>100}
-nohits2:{[p] 0=count where p>100}
+nohits:{[n] ()~til n}
+nohits2:{[n] 0=count til n}
 
 / QT036: getenv gives a string, so null gives a vector - empty when unset -
 / and $[...] refuses a vector with 'type; "" matched with it is an atom.

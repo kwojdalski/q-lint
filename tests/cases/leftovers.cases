@@ -27,6 +27,17 @@ g:{
 / r: {flip(0|;LIM&)@'flip merge x where 2=count each x}each I  / ranges by line
 // .gw.formatresponse:{[status;sync;result]$[not[status]and sync;'result;result]}};
 
+=== clean profile: styleq | a label of the documentation before the colon defines nothing, and the fix deleted the line (#2926)
+/ Example: {x+1} each 1 2 3
+/ Returns: {[a;b] a+b}
+/ e.g: {x}
+/ usage: {x} 1
+/ eg: {x}[1]
+// example: {wsum[x;x]} .quantQ.so.randNSphere[1.0;3]
+
+=== QL002 profile: styleq | while a capitalised name set to a lambda, with no blank after its colon, is a definition
+/ Sharpe:{avg[x]%dev x}
+
 === clean profile: styleq | a trailing comment after code is not a commented-out line
 f:{x+1} / g:{x} was slower
 

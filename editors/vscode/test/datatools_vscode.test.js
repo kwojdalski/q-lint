@@ -65,7 +65,7 @@ function fakeLive(over = {}) {
     process: { label: "rdb", host: "localhost", port: 5000, tags: [] },
     resultOnShow: () => live.shown,
     runOnProcess: async (code, label, options) => void live.ran.push({ code, label, options }),
-    run: async (code, as, serverTypes, mode) => void live.ran.push({ code, mode }),
+    run: async (code, as, serverTypes, mode) => void live.ran.push(serverTypes === undefined ? { code, mode } : { code, mode, serverTypes }),
     activeProcess: () => live.process,
     activeLabel: () => live.process?.label,
     connectTo: async () => false,
@@ -145,6 +145,33 @@ test("Wrangle Result applies a step over the result's query on its process, in t
   stub.picks.push("$(trash) Drop column");
   await run(RESULT_VIEW.wrangleColumn, { column: 0 });
   assert.strictEqual(live.ran.at(-1).code, `delete sym from (${NOT_PARTITIONED}t)`);
+});
+
+test("a filter step says whether its column is a general list, which is matched cell by cell (#3091)", async () => {
+  const { live, tools } = setUp();
+  live.shown = { process: "rdb", code: "t", payload: { ...payload, names: ["s", "px"], types: [0, 9], cells: [["1 2", "3 4"], ["1.5", "2"]], raw: [[], [1.5, 2]] } };
+  stub.picks.push("$(filter) Filter rows...", "=");
+  stub.inputs.push((options) => options.value);
+  await run(RESULT_VIEW.wrangleColumn, { webviewSection: "column", column: 0 });
+  assert.strictEqual(live.ran.at(-1).code, "select from (t) where s~\\:1 2");
+  assert.deepStrictEqual(tools.wrangleSteps("rdb", live.ran.at(-1).code), [{ kind: "filter", column: "s", op: "=", value: "1 2", strings: false, general: true }]);
+});
+
+test("a like filter on a symbol column is pre-filled with a string, not the symbol like refuses (#3092)", async () => {
+  const { live } = setUp();
+  stub.picks.push("$(filter) Filter rows...", "like");
+  stub.inputs.push((options) => (assert.strictEqual(options.value, 'enlist "a"'), options.value));
+  await run(RESULT_VIEW.wrangleColumn, { webviewSection: "column", column: 0 });
+  assert.strictEqual(live.ran.at(-1).code, 'select from (select from t) where sym like enlist "a"');
+});
+
+test("a wrangle step on a column named i is refused: a filter or a cast of it reads the row's index (#3089)", async () => {
+  const { live } = setUp();
+  live.shown = { process: "rdb", code: "t", payload: { ...payload, names: ["i", "px"], types: [7, 9], cells: [["10", "20"], ["1.5", "2"]], raw: [[10, 20], [1.5, 2]] } };
+  stub.picks.push("$(filter) Filter rows...");
+  await run(RESULT_VIEW.wrangleColumn, { webviewSection: "column", column: 0 });
+  assert.deepStrictEqual(stub.messages.at(-1), ["warning", "q-lint: the column i cannot be named in q-sql (i there is the row's index, not the column)."]);
+  assert.deepStrictEqual(live.ran, []);
 });
 
 // A gateway's result carries its code as sent; its steps are built over the
@@ -315,6 +342,17 @@ test("the CSV load wizard shows the guessed types, takes a change, writes the st
   assert.deepStrictEqual(off.live.ran, []);
 });
 
+test("the CSV load wizard shows a column name or sample holding $(word) as written, not as an icon (#2658)", async () => {
+  setUp();
+  const priced = path.join(tmp, "prices.csv");
+  fs.writeFileSync(priced, "item,Price $(USD),Qty\nwidget,$(sync~spin) 3.50,10\n");
+  let shown;
+  stub.picks.push((options) => ((shown = options.items.find((i) => i.at === 1)), undefined));
+  await run(DATA_FILES.wizard, vscode.Uri.file(priced));
+  assert.strictEqual(shown.label, "Price \\$(USD)");
+  assert.strictEqual(shown.detail, "e.g. \\$(sync~spin) 3.50");
+});
+
 test("the CSV load wizard runs on the process it asked about, even when another became active meanwhile (#1293)", async () => {
   const { live } = setUp();
   stub.picks.push("$(check) Done", (options) => (assert.match(options.message ?? options, /on rdb\?/), (live.process = { label: "other", host: "localhost", port: 5001, tags: [] }), "Run"));
@@ -342,7 +380,9 @@ test("Table Templates reads the table, runs a read picked and opens the insert t
   stub.picks.push((options) => (assert.deepStrictEqual(options.items.map((i) => i.label), ["Select first 100", "meta", "Insert template"]), "meta"));
   await run(SCHEMA_COMMANDS.templates, { kind: "table", label: "trade", name: "trade" });
   assert.deepStrictEqual(live.sent, [["TABLE_INFO", "trade", 500]]);
-  assert.deepStrictEqual(live.ran, [{ code: "meta trade", mode: undefined }]);
+  // With no server types: the table was read on this process, so on a TorQ
+  // gateway the read runs on the gateway itself (#3061).
+  assert.deepStrictEqual(live.ran, [{ code: "meta trade", mode: undefined, serverTypes: [] }]);
   stub.picks.push("Insert template");
   await run(SCHEMA_COMMANDS.templates, { kind: "table", label: "trade", name: "trade" });
   assert.match(opened.at(-1).content, /^\/ One row for trade/);

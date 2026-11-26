@@ -18,6 +18,9 @@ export interface SourceFile {
   /// The file's URI, as a string.
   uri: string;
   text: string;
+  /// Its path in the workspace (`modulePathOf`), which names a KDB-X
+  /// module's functions where the process holds them (#2917).
+  path?: string;
 }
 
 /// One counted statement: where it is, and the function it is in.
@@ -42,7 +45,7 @@ export interface CoveragePlan {
 
 /// The names each file defines, in order, each once.
 export function definedNames(files: SourceFile[]): string[] {
-  return [...new Set(files.flatMap((f) => definitions(f.text).map((d) => d.name)))];
+  return [...new Set(files.flatMap((f) => definitions(f.text, f.path).map((d) => d.name)))];
 }
 
 /// Where the lambda of the definition on lines `first` to `last` opens: the
@@ -65,7 +68,7 @@ export function coveragePlan(files: SourceFile[], states: Map<string, ProcessSta
   const skipped = new Map<string, "missing" | "changed">();
   for (const file of files) {
     const lines = file.text.split("\n");
-    for (const def of definitions(file.text)) {
+    for (const def of definitions(file.text, file.path)) {
       if (seen.has(def.name)) {
         continue;
       }
@@ -118,6 +121,33 @@ export function coverageByFile(plan: CoveragePlan, counts: unknown, installed: S
     out.set(probe.uri, file);
   });
   return out;
+}
+
+/// The functions `installed` names that no statement was counted in, in the
+/// order of the plan: never called by their name while the tests ran.
+export function neverCounted(plan: CoveragePlan, counts: unknown, installed: Set<string>): string[] {
+  const list = Array.isArray(counts) ? counts.map(Number) : [];
+  const run = new Set(plan.probes.filter((_, k) => list[k] > 0).map((p) => p.name));
+  return [...new Set(plan.probes.map((p) => p.name))].filter((name) => installed.has(name) && !run.has(name));
+}
+
+/// Names `uncountedNote` lists before it counts the rest.
+const UNCOUNTED_NAMED = 10;
+
+/// What the run's output says of functions counted as never run: only the
+/// name is replaced, so a call through a reference taken before the run
+/// runs the function as it was, and none of it is counted (#2976).
+/// Undefined when there is none.
+export function uncountedNote(names: string[]): string | undefined {
+  if (names.length === 0) {
+    return undefined;
+  }
+  const more = names.length - UNCOUNTED_NAMED;
+  return (
+    `Counted as never run: ${names.slice(0, UNCOUNTED_NAMED).join(", ")}${more > 0 ? ` and ${more} more` : ""}. ` +
+    "A call is counted where it is made by the function's name: one made through a reference taken before the run - " +
+    "a dictionary of handlers, .z.ts, a timer's projection - runs the function as it was, and is not counted."
+  );
 }
 
 /// One line saying what was covered: statements run of those counted.

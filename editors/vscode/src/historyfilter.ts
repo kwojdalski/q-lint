@@ -4,7 +4,7 @@
 // it.
 
 import { leavesNamespace } from "./qnb";
-import { blockDepth } from "./statements";
+import { blockDepth, trimBlanks } from "./statements";
 
 export const HISTORY_COMMANDS = {
   filter: "q-lint.filterQueryHistory",
@@ -141,13 +141,21 @@ export function historyScript(entries: Entry[]): string {
 /// `code` made to load in a script as it ran on its own (#1098): the line
 /// that starts its first statement unindented, as the comments above it
 /// are, so it does not continue the entry above, and a block comment it leaves open closed, so it does not
-/// hide the entries below. The rules are `statements.ts`'s.
+/// hide the entries below. The rules are `statements.ts`'s. An indented
+/// first line that is a command once unindented - `  \`, `  \\`,
+/// `  \l lib.q` - was none as it ran, and q ran nothing of its statement:
+/// unindented, `\` ended the script and `\\` q, so the statement is a
+/// comment (#3000).
 function standalone(code: string): string {
   const lines = code.split("\n");
   let depth = 0;
   let started = false;
+  // In the statement of such a command, which runs to the next unindented line.
+  let unrun = false;
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].replace(/\s+$/, "");
+    // q's blanks: `/` and a no-break space is a line comment, and the `\`
+    // that closed it as a block comment ended the script (#2907).
+    const line = trimBlanks(lines[i]);
     if (depth > 0 || line === "/") {
       depth = blockDepth(depth, line);
     } else if (line === "\\") {
@@ -159,6 +167,11 @@ function standalone(code: string): string {
       // (#1924). `/` alone stays indented, a comment as it ran: at the
       // margin it would open a block comment over every entry below.
       const text = line.trimStart();
+      if (text !== line && (unrun || text.startsWith("\\"))) {
+        unrun = true;
+        lines[i] = `/ ${lines[i].trimStart()}`;
+        continue;
+      }
       if (text !== "/") {
         lines[i] = lines[i].trimStart();
       }

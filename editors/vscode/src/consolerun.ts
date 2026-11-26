@@ -4,10 +4,11 @@
 // asks before code that would change a guarded process, and Abort Current
 // Query stops waiting - and recorded in Query History as a query is.
 import { window, workspace, type Uri } from "vscode";
+import { fileServerTypes } from "./gateway";
 import { Stopped, type Live } from "./live";
 import { readLive } from "./liveconfig";
 import { render, type Answer } from "./query";
-import { inContext, statements } from "./statements";
+import { contextSwitch, inContext, scriptInContext, statements } from "./statements";
 import { plainMessage } from "./history";
 import { UNLIMITED, UNLIMITED_READ_ONLY, limits, readUnlimited, runUnwrapped } from "./querycontrols";
 
@@ -41,9 +42,17 @@ export async function runText(live: Live, written: string, uri?: Uri, context = 
     return undefined;
   }
   const cut = statements(code);
+  // Kept behind the `\d` it ran in, so Run Query Again and the history's
+  // script run it there too and not in the root (#2915); a `\d` of its own
+  // needs none.
+  const kept = contextSwitch(cut[0]) !== undefined ? code : scriptInContext(code, context);
   if (!(await live.toFileBinding(uri))) {
     return undefined;
   }
+  // The server types its file names on a `/ @servertypes` line, which Run
+  // Query sends the same code to (#3063).
+  const file = uri === undefined ? undefined : (workspace.textDocuments ?? []).find((d) => d.uri.toString() === uri.toString());
+  const named = file === undefined ? undefined : fileServerTypes(file.getText());
   const configuration = workspace.getConfiguration("q-lint");
   // Toggle Unlimited Query holds here as for Run Query (#2362).
   const unlimited = live.isUnlimited();
@@ -57,7 +66,7 @@ export async function runText(live: Live, written: string, uri?: Uri, context = 
     ran = await live.runOnActive(code, (connection) => {
       sentTo = live.activeLabel() ?? sentTo;
       // Through a TorQ gateway's .gw.syncexec, as Run sends it (#2356).
-      const sent = live.gatewayed(inContext(cut, context));
+      const sent = live.gatewayed(inContext(cut, context), named);
       // Direct evaluation (#2470), or a gateway call (#2584): each
       // statement as a plain string. Unlimited as Run Query is (#2362).
       return connection.isDirect || sent.plain
@@ -77,7 +86,7 @@ export async function runText(live: Live, written: string, uri?: Uri, context = 
     const outcome = error instanceof Stopped ? error.outcome : "error";
     const said = outcome === "aborted" ? "aborted" : message;
     const answer: Answer = { ok: false, error: said, trace: "" };
-    await live.record({ process, code, at: new Date(started).toISOString(), millis: Date.now() - started, outcome, error: said });
+    await live.record({ process, code: kept, at: new Date(started).toISOString(), millis: Date.now() - started, outcome, error: said });
     return { process, code, millis: Date.now() - started, answer };
   }
   if (ran === undefined) {
@@ -87,7 +96,7 @@ export async function runText(live: Live, written: string, uri?: Uri, context = 
   const answer = ran.value;
   await live.record({
     process: ran.process,
-    code,
+    code: kept,
     at: new Date(started).toISOString(),
     millis,
     outcome: answer.ok ? "ok" : "error",

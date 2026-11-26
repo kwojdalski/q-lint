@@ -14,6 +14,8 @@ enum Kind {
     Byte,
     /// A date, month, time, timespan, timestamp or datetime, unsuffixed.
     Temporal,
+    /// The guid null, `0Ng`: the one guid q reads as a literal.
+    Guid,
 }
 struct Literal {
     kind: Kind,
@@ -94,6 +96,19 @@ fn literal(s: &str) -> Option<Literal> {
             kind: Kind::Bool,
             vector: s.len() > 2,
             len: s.len() - 1,
+            negative: false,
+            short_integer: false,
+            integer_null: false,
+        });
+    }
+    // The guid null, in either case, and an atom only: q 5 `type 0Ng` and
+    // `type 0ng` are -2h, while `0Wg`, `-0Ng` and `0Ng 0Ng` do not parse
+    // (#2784).
+    if matches!(s, "0Ng" | "0ng") {
+        return Some(Literal {
+            kind: Kind::Guid,
+            vector: false,
+            len: 1,
             negative: false,
             short_integer: false,
             integer_null: false,
@@ -209,26 +224,125 @@ fn literal(s: &str) -> Option<Literal> {
     None
 }
 
+/// Whether `where` reads `s` as counts with a negative one among them, where
+/// `s` is no vector literal: a general list of two integer atoms or more,
+/// all long or all int - q 5 `where (1i;-2)` and `where (1;-2h)` are 'type -
+/// or a literal dictionary of as many keys as counts, whose values are such
+/// a list or an integer vector. A null is the least of its type, as in a
+/// vector (#2242).
+fn negative_counts(s: &str) -> bool {
+    let s = s.trim();
+    if !s.contains('"')
+        && let [keys, values] = s.split('!').collect::<Vec<_>>()[..]
+    {
+        let count = literal(keys).map(|k| k.len);
+        return match literal(values) {
+            Some(v) => {
+                v.kind == Kind::Integer
+                    && v.vector
+                    && v.negative
+                    && !v.short_integer
+                    && count == Some(v.len)
+            }
+            None => count == general_counts(values) && negative_counts(values),
+        };
+    }
+    general_counts(s).is_some()
+        && items_of(s)
+            .iter()
+            .any(|item| literal(item).is_some_and(|v| v.negative || v.integer_null))
+}
+
+/// The items of the general list `s` is, inside the parentheses that wrap
+/// all of it; none when it is no such list.
+fn items_of(s: &str) -> Vec<&str> {
+    let mut s = s.trim();
+    for _ in 0..crate::MAX_NESTING {
+        if !(s.starts_with('(') && matching(s, 0, b'(', b')') == Some(s.len())) {
+            return vec![];
+        }
+        s = s[1..s.len() - 1].trim();
+        let items = slots(s);
+        if items.len() > 1 {
+            return items;
+        }
+    }
+    vec![]
+}
+
+/// How many integer atoms of one width the general list `s` holds, when
+/// that is all it holds: the vector q makes of `(1;-2)` and `(1i;2i)`.
+fn general_counts(s: &str) -> Option<usize> {
+    let items = items_of(s);
+    let int = |item: &str| item.trim().ends_with('i');
+    (items.len() > 1
+        && items.iter().all(|item| {
+            int(item) == int(items[0])
+                && literal(item)
+                    .is_some_and(|v| v.kind == Kind::Integer && !v.vector && !v.short_integer)
+        }))
+    .then_some(items.len())
+}
+
 /// QB026. A literal pair of bounds whose first item is above its second, as
 /// the two items written: q 5 `5 within 10 1` is 0b, and so is every value,
-/// since `within` asks for low <= x <= high. Only a pair of numbers, or of
-/// temporals spelt alike - `2024.01.10 2024.01.01`, `10:00 09:30` - whose
-/// fixed-width digits then order as their text does. A null or an
-/// infinity, a symbol, or anything not a literal is left alone.
-fn reversed_bounds(s: &str) -> Option<(&str, &str)> {
+/// since `within` asks for low <= x <= high. A pair of numbers, infinities
+/// among them (`0w -0w`, `0W 1`), or of temporals spelt alike -
+/// `2024.01.10 2024.01.01`, `10:00 09:30` - whose fixed-width digits then
+/// order as their text does; or a pair of symbols or of characters, which q
+/// orders by their bytes (`"za"`, `` `z`a ``, #2680). The pair may be a
+/// general list, `(10;1)` (#2681). A null, or anything not a literal, is
+/// left alone. The two items come back as written, for the message.
+fn reversed_bounds(s: &str) -> Option<(String, String)> {
     let mut s = s.trim();
     while s.starts_with('(') && matching(s, 0, b'(', b')') == Some(s.len()) {
         s = s[1..s.len() - 1].trim();
     }
-    let items: Vec<&str> = s.split_whitespace().collect();
+    // Two characters, as one string or as a general list of two.
+    let char_atom = re!(r#"^"([^"\\])"$"#);
+    if let Some(pair) = re!(r#"^"([^"\\])([^"\\])"$"#).captures(s) {
+        let (low, high) = (&pair[1], &pair[2]);
+        return (low > high).then(|| (format!("\"{low}\""), format!("\"{high}\"")));
+    }
+    // Two symbols: `` `z`a `` or `` `z `a ``.
+    if let Some(pair) = re!(r"^`([A-Za-z0-9_.:]*)[ \t]*`([A-Za-z0-9_.:]*)$").captures(s) {
+        let (low, high) = (&pair[1], &pair[2]);
+        return (low > high).then(|| (format!("`{low}"), format!("`{high}")));
+    }
+    let items: Vec<&str> = if s.contains(';') {
+        slots(s).into_iter().map(str::trim).collect()
+    } else {
+        s.split_whitespace().collect()
+    };
     let [low, high] = items[..] else {
         return None;
     };
+    if let (Some(a), Some(b)) = (char_atom.captures(low), char_atom.captures(high)) {
+        return (a[1] > b[1]).then(|| (low.to_string(), high.to_string()));
+    }
+    let symbol = re!(r"^`[A-Za-z0-9_.:]*$");
+    if symbol.is_match(low) && symbol.is_match(high) {
+        return (low > high).then(|| (low.to_string(), high.to_string()));
+    }
+    // A number, or an infinity ordered as one: `-0w` below every number and
+    // `0w` above it. Two infinities of one sign are left alone, since `0W`
+    // and `0w` differ only by a promotion.
     let number = re!(r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+|E\d+)?$");
-    let suffixed = high.strip_suffix(['h', 'i', 'j', 'e', 'f']).unwrap_or(high);
-    if number.is_match(low) && number.is_match(suffixed) {
-        let (a, b) = (low.parse::<f64>().ok()?, suffixed.parse::<f64>().ok()?);
-        return (a > b).then_some((low, high));
+    let value = |t: &str| -> Option<f64> {
+        let t = t.strip_suffix(['h', 'i', 'j', 'e', 'f']).unwrap_or(t);
+        match t {
+            "0w" | "0W" => Some(f64::INFINITY),
+            "-0w" | "-0W" => Some(f64::NEG_INFINITY),
+            _ if number.is_match(t) => t.parse::<f64>().ok(),
+            _ => None,
+        }
+    };
+    // In a vector only the last item carries the type letter.
+    let unsuffixed = |t: &str| !t.ends_with(['h', 'i', 'j', 'e', 'f']);
+    if (unsuffixed(low) || s.contains(';'))
+        && let (Some(a), Some(b)) = (value(low), value(high))
+    {
+        return (a > b).then(|| (low.to_string(), high.to_string()));
     }
     let temporal = re!(
         r"^(?:\d{4}\.\d\d(?:\.\d\d(?:[DT](?:\d\d(?::\d\d(?::\d\d(?:\.\d*)?)?)?)?)?)?|\d\d:\d\d(?::\d\d(?:\.\d*)?)?|\d+D(?:\d\d(?::\d\d(?::\d\d(?:\.\d*)?)?)?)?)$"
@@ -239,7 +353,7 @@ fn reversed_bounds(s: &str) -> Option<(&str, &str)> {
         && temporal.is_match(suffixed)
         && shape(low) == shape(suffixed)
         && low > suffixed)
-        .then_some((low, high))
+        .then(|| (low.to_string(), high.to_string()))
 }
 
 /// A call to one of the checked builtins: where it starts, which builtin,
@@ -368,6 +482,32 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
             at: whole.start(),
             name: call.get(1).unwrap().as_str(),
             args: vec![&comments[arg.start()..arg.end()]],
+            projection: false,
+        });
+    }
+    // `where` counts a dictionary by its values and a list in parentheses
+    // as the vector its items make, and the literal above stops short of
+    // both: `` where `a`b!1 -1 `` and `where ((1;-2))` (#2941). The argument
+    // is the rest of the expression, which `negative_counts` reads; the `!`
+    // is one in `code`, where a string has none.
+    for name in re!(r"\bwhere\b").find_iter(code) {
+        if !boundary(code, name.start()) || crate::query_clause(code, name.start()) == Some("from")
+        {
+            continue;
+        }
+        let Some(end) = argument_end(code, comments, raw, name.end()) else {
+            continue;
+        };
+        let arg = &comments[name.end()..end];
+        if arg.trim_start().starts_with('[')
+            || !(code[name.end()..end].contains('!') || arg.trim_start().starts_with("(("))
+        {
+            continue;
+        }
+        out.push(Call {
+            at: name.start(),
+            name: &code[name.range()],
+            args: vec![arg],
             projection: false,
         });
     }
@@ -511,6 +651,33 @@ const LAMBDAS: &[&str] = &[
     "ssr", "aj", "aj0", "ajf", "ajf0", "ej", "wj", "wj1",
 ];
 
+/// The primitives KDB-X refuses where one is projected past its rank, with
+/// 'nyi: `count[1;]`, `first[;1]` and `neg[1;]` never become a function,
+/// while `sum[1;]`, `abs[;1]` and `last[1;]` do (#2948). By its name in `.q`
+/// each projects, `.q.count[1;]`, so only the bare word is refused.
+const NO_PROJECTION: &[&str] = &[
+    "count",
+    "distinct",
+    "first",
+    "flip",
+    "floor",
+    "get",
+    "group",
+    "hclose",
+    "inv",
+    "key",
+    "ltime",
+    "neg",
+    "not",
+    "null",
+    "reciprocal",
+    "reverse",
+    "string",
+    "type",
+    "value",
+    "where",
+];
+
 pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Finding> {
     let mut out = vec![];
     // A keyword the file redefines in `.q` calls the new definition from
@@ -536,12 +703,16 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     {
         let whole = m.get(0).unwrap();
         let name = m.get(1).unwrap().as_str();
-        let Some(arity) = most_arguments(name) else {
+        // `.q.ssr` is `ssr` itself, and `.q.count` `count`, which the loop
+        // below reads only by its bare name: q 5 `.q.ssr[a;b;c;d]` and
+        // `.q.count[1;2]` are 'rank (#2942).
+        let bare = name.strip_prefix(".q.").unwrap_or(name);
+        let Some(arity) = most_arguments(bare) else {
             continue;
         };
-        if BUILTINS.split('|').any(|b| b == name)
+        if (bare == name && BUILTINS.split('|').any(|b| b == name))
             || !boundary(code, whole.start())
-            || redefined(name, whole.start())
+            || redefined(bare, whole.start())
             || (name.starts_with('.')
                 && *assigns.entry(name).or_insert_with(|| assigned(code, name)))
         {
@@ -554,10 +725,15 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
         let slots = slots(&code[open + 1..close - 1]);
         let given = slots.len();
         // An elided slot makes a projection, which q refuses where it is
-        // made only for a function it defines as a lambda: q 5 `xasc[a;b;]`
-        // is 'rank, while `bin[a;b;]` is a projection that fails when run.
+        // made for a function it defines as a lambda, and for the primitives
+        // in `NO_PROJECTION`: q 5 `xasc[a;b;]` is 'rank and `ltime[1;]`
+        // 'nyi, while `bin[a;b;]` is a projection that fails when run.
         let projection = slots.iter().any(|slot| slot.trim().is_empty());
-        if given > arity && (!projection || LAMBDAS.contains(&name)) {
+        if given > arity
+            && (!projection
+                || LAMBDAS.contains(&bare)
+                || (bare == name && NO_PROJECTION.contains(&name)))
+        {
             out.push(Finding::at(
                 path,
                 source,
@@ -567,6 +743,113 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
                     "{name} accepts at most {arity} argument(s), but this call supplies {given}"
                 ),
             ));
+        }
+    }
+    // The same count where the call is not one `name[...]`: q 5 refuses
+    // `ssr["a";"a"]["b";"c"]`, `(ssr)["a";"a";"b";"c"]`, `ssr . (a;b;c;d)`,
+    // `.[ssr;(a;b;c;d)]` and `ssr'[a;b;c;d]` with 'rank, as it does `count .
+    // 1 2`, `count'[1;2]` and `(count)[1;2]` (#2933). Not through `/` or
+    // `\`, which take two of a unary function: `count/[1;2]` runs.
+    for m in re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*").find_iter(code) {
+        let name = m.as_str();
+        let bare = name.strip_prefix(".q.").unwrap_or(name);
+        let Some(arity) = most_arguments(bare).filter(|&n| n < usize::MAX) else {
+            continue;
+        };
+        if !boundary(code, m.start())
+            || redefined(bare, m.start())
+            || (name.starts_with('.')
+                && *assigns.entry(name).or_insert_with(|| assigned(code, name)))
+        {
+            continue;
+        }
+        let refused = |projection: bool| {
+            !projection
+                || LAMBDAS.contains(&bare)
+                || (bare == name && NO_PROJECTION.contains(&name))
+        };
+        let mut report = |detail: String| {
+            out.push(Finding::at(path, source, m.start(), "QA010", detail));
+        };
+        // A slot is empty where `comments` has nothing: in `code` a string
+        // is blank too.
+        let kept = |part: &str| {
+            let from = part.as_ptr() as usize - code.as_ptr() as usize;
+            &comments[from..from + part.len()]
+        };
+        let elided = |parts: &[&str]| parts.iter().any(|part| kept(part).trim().is_empty());
+        let over = |given: usize, how: &str| {
+            format!("{name} accepts at most {arity} argument(s), but {how} {given}")
+        };
+        // In parentheses of its own it is still the function: `(ssr)`.
+        let wrapped = crate::parenthesised(code, m.start(), m.end());
+        let end = wrapped.unwrap_or(m.end());
+        let next = end + (code[end..].len() - code[end..].trim_start_matches([' ', '\t']).len());
+        let rest = &code[next..];
+        if rest.starts_with('[') {
+            let Some((at, given, left)) = crate::over_applied(code, comments, next, arity) else {
+                continue;
+            };
+            if at != next {
+                report(format!(
+                    "{given} argument slots applied to a projection of {name} that accepts \
+                     {left} more: 'rank at runtime"
+                ));
+            } else if wrapped.is_some()
+                && let Some(close) = matching(code, at, b'[', b']')
+                && refused(elided(&slots(&code[at + 1..close - 1])))
+            {
+                // Without the parentheses the first bracket is the loop's
+                // above, or the one's below.
+                report(over(given, "this call supplies"));
+            }
+        } else if wrapped.is_none() && next == end && rest.starts_with("'[") {
+            let Some(close) = matching(code, next + 1, b'[', b']') else {
+                continue;
+            };
+            // A slot left empty is a projection of the derived function:
+            // q 5 `count'[1;]` is one.
+            let parts = slots(&code[next + 2..close - 1]);
+            if parts.len() > arity && !elided(&parts) {
+                report(over(parts.len(), "`'` applies it to"));
+            }
+        } else if (next > end || wrapped.is_some())
+            && re!(concat!(r"^\.(?:", blank!(), r"+|\()")).is_match(rest)
+        {
+            // `name . list`, the list read as QA012 reads a lambda's.
+            let after = crate::past_blanks(comments, next + 1);
+            let list = &code[after..];
+            let len = if list.starts_with('(') {
+                matching(list, 0, b'(', b')')
+            } else {
+                list.find(|c: char| ";)]}\r\n".contains(c))
+                    .or(Some(list.len()))
+            };
+            if let Some(len) = len
+                && crate::operand_ends(code, comments, after + len)
+                && let Some(given) = crate::listed(&list[..len], &comments[after..after + len])
+                && given > arity
+            {
+                report(over(given, "`.` applies it to"));
+            }
+        } else if wrapped.is_none()
+            && rest.starts_with(';')
+            && let before = code[..m.start()].trim_end()
+            && before.ends_with(".[")
+            && !before[..before.len() - 2]
+                .ends_with(|c: char| c.is_alphanumeric() || "_.".contains(c))
+            && let Some(close) = matching(code, before.len() - 1, b'[', b']')
+        {
+            // `.[name;list]`, and under a handler, which is then all that
+            // runs: q 5 `.[ssr;(a;b;c;d);{x}]` is "rank". An empty third
+            // slot is a projection of the dot.
+            let parts = slots(&code[before.len()..close - 1]);
+            if (parts.len() == 2 || parts.len() == 3 && !kept(parts[2]).trim().is_empty())
+                && let Some(given) = crate::listed(parts[1], kept(parts[1]))
+                && given > arity
+            {
+                report(over(given, "`.` applies it to"));
+            }
         }
     }
     for Call {
@@ -589,11 +872,14 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             out.push(Finding::at(path, source, at, id, detail))
         };
         let max_arity = most_arguments(name).unwrap_or(arity);
-        // A projection is refused only by a builtin q defines as a lambda,
-        // which checks its slots where it is projected: q 5 `til[3;]`,
-        // `til[;3]` and `mavg[1;;]` are 'rank, while `sum[1;]` and
-        // `count[1;]` are not refused until they run, if then (#631).
-        if args.len() > max_arity && (!projection || LAMBDAS.contains(&name)) {
+        // A projection is refused by a builtin q defines as a lambda, which
+        // checks its slots where it is projected - q 5 `til[3;]`, `til[;3]`
+        // and `mavg[1;;]` are 'rank (#631) - and by the primitives KDB-X
+        // answers 'nyi for, `count[1;]` and `first[;1]` (#2948). `sum[1;]`
+        // and `abs[;1]` are not refused until they run, if then.
+        if args.len() > max_arity
+            && (!projection || LAMBDAS.contains(&name) || NO_PROJECTION.contains(&name))
+        {
             report(
                 &mut out,
                 "QA010",
@@ -605,12 +891,32 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             );
             continue;
         }
+        // A projection of `within` with its bounds given is already always
+        // false wherever it is applied: `within[;10 1]` (#2681).
+        if name == "within"
+            && projection
+            && args.len() == 2
+            && let Some((low, high)) = reversed_bounds(args[1])
+        {
+            report(
+                &mut out,
+                "QB026",
+                format!(
+                    "within takes its bounds low then high, and {low} is above {high}, so \
+                     nothing is within them and this is always false: swap the two"
+                ),
+            );
+            continue;
+        }
         if projection || args.len() != arity {
             continue;
         }
         if name == "within" {
-            if let Some(bounds) = literal(args[1])
-                && (!bounds.vector || bounds.len != 2)
+            // The empty list is no pair of bounds either, whatever is
+            // tested: KDB-X `5 within ()` and `1 2 within ()` are 'length
+            // (#2901).
+            if re!(r"^\(\s*\)$").is_match(args[1].trim())
+                || literal(args[1]).is_some_and(|bounds| !bounds.vector || bounds.len != 2)
             {
                 report(
                     &mut out,
@@ -666,6 +972,17 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
                 continue;
             }
         }
+        // A general list of long atoms, or of int ones, is the vector they
+        // make, and a dictionary is counted by its values: q 5 `where (1;-2)`
+        // and `` where `a`b!1 -1 `` are 'limit, as `where 1 -2` is (#2941).
+        if name == "where" && negative_counts(args[0]) {
+            report(
+                &mut out,
+                "QD002",
+                "where: where cannot repeat an index a negative number of times".into(),
+            );
+            continue;
+        }
         let Some(value) = literal(args[0]) else {
             continue;
         };
@@ -678,6 +995,14 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             {
                 Some(("QT016", "Numeric math cannot operate on a symbol literal"))
             }
+            // Nor on the guid null: q 5 `neg 0Ng` and `abs 0Ng` are 'type
+            // (#2784).
+            "sqrt" | "log" | "exp" | "abs" | "neg" | "sin" | "cos" | "tan" | "acos" | "asin"
+            | "atan" | "reciprocal" | "ceiling" | "signum"
+                if value.kind == Kind::Guid =>
+            {
+                Some(("QT016", "Numeric math cannot operate on a guid literal"))
+            }
             // A null window too, though `mmin` and `mmax` take one: q 5
             // `0N mavg x` is 'type and `0N mmin x` is x (#2245).
             "mavg" | "msum" | "mcount" | "mdev" if value.integer_null => {
@@ -687,7 +1012,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
                 if value.vector
                     || matches!(
                         value.kind,
-                        Kind::Float | Kind::Symbol | Kind::Char | Kind::Temporal
+                        Kind::Float | Kind::Symbol | Kind::Char | Kind::Temporal | Kind::Guid
                     ) =>
             {
                 Some(("QT017", "Moving-window size must be an integer atom"))
@@ -695,10 +1020,14 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
 
             // A symbol atom runs - `til` is `key` there and lists a
             // namespace - and so does a byte atom. Any vector, a string of
-            // any length, a float and a temporal atom are 'type.
+            // any length, a float, a temporal atom and the guid null are
+            // 'type.
             "til"
                 if value.vector
-                    || matches!(value.kind, Kind::Float | Kind::Char | Kind::Temporal) =>
+                    || matches!(
+                        value.kind,
+                        Kind::Float | Kind::Char | Kind::Temporal | Kind::Guid
+                    ) =>
             {
                 Some(("QT008", "til needs an integer atom, not this literal"))
             }
@@ -713,8 +1042,10 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             // A date, month, time or timespan is no count: q 5 `where 12:00
             // 13:00` and `where 0D01 0D02` are 'type (#736).
             "where"
-                if matches!(value.kind, Kind::Float | Kind::Symbol | Kind::Temporal)
-                    || (matches!(value.kind, Kind::Char | Kind::Byte) && value.len > 0)
+                if matches!(
+                    value.kind,
+                    Kind::Float | Kind::Symbol | Kind::Temporal | Kind::Guid
+                ) || (matches!(value.kind, Kind::Char | Kind::Byte) && value.len > 0)
                     || (matches!(value.kind, Kind::Integer | Kind::Bool) && !value.vector)
                     || value.short_integer =>
             {
@@ -742,11 +1073,25 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
                             name,
                             "avg" | "med" | "dev" | "var" | "sdev" | "svar" | "all" | "any" | "avgs"
                         )))
+                    // The guid null as a symbol atom is: q 5 `sum 0Ng` runs
+                    // and `avg 0Ng` is 'type (#2784).
+                    || (value.kind == Kind::Guid
+                        && matches!(
+                            name,
+                            "avg" | "med" | "dev" | "var" | "sdev" | "svar" | "all" | "any" | "avgs"
+                        ))
                     // A string is numeric to `sum`, `avg` and `ratios`, and
                     // not to these five (q 5: `avgs "ab"` is 'type, #606).
                     || (value.kind == Kind::Char
                         && value.vector
-                        && matches!(name, "prd" | "sums" | "prds" | "deltas" | "avgs")) =>
+                        && matches!(name, "prd" | "sums" | "prds" | "deltas" | "avgs"))
+                    // Nor is a product of times, dates or timespans a
+                    // thing, where their sum is: KDB-X `prd 12:00 13:00`,
+                    // `prds 2024.01.01 2024.01.02` and `prd 0D01 0D02` are
+                    // 'type, and an atom passes through (#2902).
+                    || (value.kind == Kind::Temporal
+                        && value.vector
+                        && matches!(name, "prd" | "prds")) =>
             {
                 Some((
                     "QT010",
@@ -769,7 +1114,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
                 if value.vector
                     || matches!(
                         value.kind,
-                        Kind::Float | Kind::Symbol | Kind::Char | Kind::Temporal
+                        Kind::Float | Kind::Symbol | Kind::Char | Kind::Temporal | Kind::Guid
                     ) =>
             {
                 Some(("QT014", "rotate requires an integer atom for its count"))

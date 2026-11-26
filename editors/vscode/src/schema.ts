@@ -17,7 +17,7 @@
 // fill in and never sent.
 import { TABLE_INFO, readTableInfo, type TableInfo } from "./tableinfo";
 import { qName } from "./explorer";
-import { plainName, symbolLiteral } from "./qliteral";
+import { commentText, plainName, symbolLiteral } from "./qliteral";
 
 /// The commands, as `schemaview.ts` registers them.
 export const SCHEMA_COMMANDS = {
@@ -40,17 +40,26 @@ export function readSchemaTools(get: <T>(key: string, fallback: T) => T): { temp
 }
 
 /// Every table's details: the root namespace's and those of the root
-/// namespaces not in `ex` (space separated, as the explorer's setting),
-/// at most `lim` tables of `nc` columns each. A table that cannot be
-/// read answers its error as a string.
+/// namespaces not in `ex` (space separated, as the explorer's setting) and
+/// of the namespaces in them, however deep (#3052), at most `lim` tables
+/// of `nc` columns each - and past those, each column that points into a
+/// table, so its link is drawn (#3053). A table that cannot be read
+/// answers its error as a string.
 export const SCHEMA = [
   "{[ex;lim;nc]",
   ` f:${TABLE_INFO.replace(/\n/g, "\n  ")};`,
   " n:(),tables`.;",
   " ns:` sv'`,'(key`)except(`$\" \" vs ex),`;",
-  " n,:raze{@[{$[99h=type get x;` sv'x,'tables x;`$()]};x;{`$()}]}each ns;",
+  // A child namespace is a dictionary whose first key is the null symbol,
+  // as DOCUMENT walks them (#2413).
+  " todo:ns where{$[99h=type d:@[get;x;0];11h=type key d;0b]}each ns;ns:`$();",
+  " while[count todo;s:first todo;todo:1_todo;ns,:s;d:get s;k:(key d)except`;",
+  "  todo,:` sv's,'k where{$[99h=type x;$[11h=type key x;(::)~first x;0b];0b]}each d k];",
+  " n,:raze{@[{` sv'x,'tables x};x;{`$()}]}each ns;",
   " n:(\"j\"$lim)sublist n;",
-  " (string n;{[f;c;x]@[f[;c];string x;{x}]}[f;nc]each n)}",
+  // `meta` is read whole, and cut here: every `f` is seen.
+  " g:{[f;c;x] r:f[x;0W];i:where(c>til count r`cols)|0<count each r`fkeys;@[r;`cols`types`fkeys`attrs;@[;i]]};",
+  " (string n;{[g;x]@[g;string x;{x}]}[g[f;\"j\"$nc]]each n)}",
 ].join("\n");
 
 /// Tables a diagram draws at most, and columns of each it lists.
@@ -290,12 +299,12 @@ export function tableTemplates(name: string, info: TableInfo, limit = 100): Tabl
     const rows = info.columns.map((c, i) => {
       const value = `enlist ${NULL_OF[c.type] ?? "()"}${i === info.columns.length - 1 ? ")" : ";"}`;
       // A foreign key takes a key of its table: a null is not one.
-      return `  ${value.padEnd(width)} / ${c.name}${c.type ? ` (${c.type})` : ""}${info.keys.includes(c.name) ? ", key" : ""}${c.fkey ? `, a key of ${c.fkey}` : ""}`;
+      return `  ${value.padEnd(width)} / ${commentText(c.name)}${c.type ? ` (${c.type})` : ""}${info.keys.includes(c.name) ? ", key" : ""}${c.fkey ? `, a key of ${commentText(c.fkey)}` : ""}`;
     });
     out.push({
       label: "Insert template",
       detail: "a row of typed nulls to fill in, opened in an editor",
-      code: [`/ One row for ${name}: replace each null, then run the statement.`, `${/^`\$/.test(symbolLiteral(name)) ? `(${symbolLiteral(name)})` : symbolLiteral(name)} insert (`, ...rows, ""].join("\n"),
+      code: [`/ One row for ${commentText(name)}: replace each null, then run the statement.`, `${/^`\$/.test(symbolLiteral(name)) ? `(${symbolLiteral(name)})` : symbolLiteral(name)} insert (`, ...rows, ""].join("\n"),
       runs: false,
     });
   }

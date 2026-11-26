@@ -449,6 +449,24 @@ test("export: block comments nest as the cell nests them, so the script runs wha
   assert.deepStrictEqual(statements(script), ["b:2", "c:3", "d:4"]);
 });
 
+test("export: a / and a no-break space or a form feed is a line comment, as q reads it, and no \\ is added that would end the script (#2906)", () => {
+  const { statements } = require("../out/statements.js");
+  for (const blank of ["\u00a0", "\f"]) {
+    const cells = [
+      { kind: "code", source: `a:1\n/${blank}\nb:2` },
+      { kind: "code", source: "c:3" },
+    ];
+    const script = exportScript(cells);
+    assert.strictEqual(script, `a:1\n/${blank}\nb:2\n\nc:3\n`);
+    assert.deepStrictEqual(statements(script), ["a:1", "b:2", "c:3"]);
+  }
+  // A lone `\` and such a character is no end of the cell either: q runs
+  // it as a system command, and the script keeps it as it is.
+  assert.strictEqual(exportScript([{ kind: "code", source: "a:1\n\\\u00a0\nb:2" }]), "a:1\n\\\u00a0\nb:2\n");
+  // In a markdown cell it closes nothing, and needs no indent.
+  assert.strictEqual(exportScript([{ kind: "markdown", source: "x\n\\\u00a0" }]), "/\nx\n\\\u00a0\n\\\n");
+});
+
 test("fields this extension does not know are kept on an output, an item and a run too", () => {
   // Saved by a later q-lint, or another tool: the README promises a save of
   // what was opened writes the same file.
@@ -468,6 +486,43 @@ test("fields this extension does not know are kept on an output, an item and a r
   assert.strictEqual(serializeQnb(parseQnb(text)), text);
 });
 
+test("a metadata that is no object, and an item's base64 beside its text, are kept for the save (#2993)", () => {
+  // Neither is read, and neither is refused: each was dropped by a save of
+  // what was opened, being a field the format knows.
+  const file = {
+    qnb: 1,
+    cells: [
+      { kind: "code", source: ["a:1"], metadata: ["tag"] },
+      { kind: "markdown", source: ["# a"], metadata: "note", id: "c2" },
+      {
+        kind: "code",
+        source: ["1"],
+        outputs: [
+          { items: [{ mime: "text/plain", text: "1", base64: "/w==" }], metadata: [1] },
+          { items: [{ mime: "text/plain", base64: "MQ==", text: 5 }, { mime: "text/plain", text: "1", base64: null }], metadata: null },
+        ],
+      },
+    ],
+    metadata: "note",
+  };
+  const text = JSON.stringify(file, null, 1) + "\n";
+  const read = parseQnb(text);
+  assert.strictEqual(read.metadata, undefined);
+  assert.strictEqual(read.cells[0].metadata, undefined);
+  assert.deepStrictEqual(read.cells[2].outputs[0].items[0], { mime: "text/plain", text: "1", extra: { base64: "/w==" } });
+  assert.deepStrictEqual(read.cells[2].outputs[1].items[0], { mime: "text/plain", base64: "MQ==", extra: { text: 5 } });
+  assert.strictEqual(serializeQnb(read), text);
+  assert.strictEqual(serializeQnb(parseQnb(serializeQnb(read))), text);
+  // What the editor has since given the cell is what is written, once.
+  const edited = { cells: [{ ...read.cells[0], metadata: { tag: "x" } }, { ...read.cells[2], outputs: [{ items: [{ mime: "text/plain", base64: "MQ==", extra: { base64: "/w==", text: "1" } }] }] }] };
+  assert.deepStrictEqual(JSON.parse(serializeQnb(edited)).cells, [
+    { kind: "code", source: ["a:1"], metadata: { tag: "x" } },
+    { kind: "code", source: ["1"], outputs: [{ items: [{ mime: "text/plain", base64: "MQ==", text: "1" }] }] },
+  ]);
+  // A known field of any other kind is still never written from what was kept.
+  assert.deepStrictEqual(JSON.parse(serializeQnb({ cells: [{ kind: "code", source: "2", extra: { outputs: "x", execution: 1, language: 2 } }] })).cells, [{ kind: "code", source: ["2"] }]);
+});
+
 test("a cell that opens with a qDoc comment runs: @param and its kin are documentation, not directives", () => {
   const documented = "/ @param x long\n/ @return long\n/ @throws type\nf:{x+1}";
   assert.deepStrictEqual(cellDirective(documented), { mode: "console" });
@@ -484,6 +539,24 @@ test("an indented lone / or \\ on a cell's first line opens no block comment and
     assert.deepStrictEqual(statements(script), ["a:1", "b:2"], script);
   }
   assert.strictEqual(exportScript([{ kind: "code", source: " /\n x:1" }]), "/ /\nx:1\n");
+});
+
+// As the cell sends it, an indented `\\` or `\l` is no command and q runs
+// nothing of its statement (`value "  \\\\"` on KDB-X): unindented in the
+// script it was one, and `\\` ended q there (#3000).
+test("export: an indented command on a cell's first line is a comment, with the lines that continue it (#3000)", () => {
+  const { statements } = require("../out/statements.js");
+  const code = (source) => ({ kind: "code", source });
+  for (const first of ["  \\\\", "\t\\\\", "  \\\\ ", "  \\\\x", "  \\l lib.q", "  \\d .foo", " / note\n  \\\\"]) {
+    const script = exportScript([code("a:1"), code(first), code("g:{x}")]);
+    assert.deepStrictEqual(statements(script), ["a:1", "g:{x}"], script);
+  }
+  assert.strictEqual(exportScript([code("  \\\\"), code("g:{x}")]), "/ \\\\\n\ng:{x}\n");
+  // Its statement runs to the next unindented line, comments and blanks in it.
+  assert.strictEqual(exportScript([code("  \\\\\n  x:1\n\n  / c\n/ d\n   y:2\nz:3\n  +1")]), "/ \\\\\n/ x:1\n\n/ / c\n/ d\n/ y:2\nz:3\n  +1\n");
+  assert.strictEqual(exportScript([code(" \\\n x:1"), code("b:2")]), "/ \\\n/ x:1\n\nb:2\n");
+  // At the margin it is the command the cell ran, and stays one.
+  assert.strictEqual(exportScript([code("\\l lib.q\n  a"), code("b:2")]), "\\l lib.q\n  a\n\nb:2\n");
 });
 
 test("a chart past what a cell's output holds draws its first rows and says why, not 'Invalid string length' (#2156)", () => {
@@ -540,6 +613,59 @@ test("export: a cell that ends in another namespace is followed by \\d ., as the
 test("export: \\d . with an indented line under it does not leave the root, so \\d . follows (#2155)", () => {
   const code = (source) => ({ kind: "code", source });
   assert.strictEqual(exportScript([code("\\d .lib\nf:{x+1}\n\\d .\n  / back to the root"), code("b:2")]), "\\d .lib\nf:{x+1}\n\\d .\n  / back to the root\n\\d .\n\nb:2\n");
+});
+
+// What switches the context in a script is KDB-X's to say: each line here
+// was loaded by one, which then answered `\d` (#2999).
+test("export: \\d . follows a cell that left the root by any way q takes, after a prompt or through system or value (#2999)", () => {
+  const { leavesNamespace } = require("../out/qnb.js");
+  const code = (source) => ({ kind: "code", source });
+  for (const left of [
+    "q)\\d .foo",
+    "k)\\d .foo",
+    "K)\\d .foo",
+    "q)k)\\d .foo",
+    'system("d .foo")',
+    'system["d .foo"]',
+    'system"d .foo";',
+    'system "d  .foo"',
+    '(system) "d .foo"',
+    'system@"d .foo"',
+    '@[system;"d .foo";::]',
+    '.[system;enlist "d .foo";::]',
+    'system each enlist "d .foo"',
+    'x:"d .foo"; system x',
+    'system "d ",".foo"',
+    'value "\\\\d .foo"',
+    'value "q)\\\\d .foo"',
+    'value"k)\\\\d .foo"',
+    'value "system \\"d .foo\\""',
+    'eval parse "\\\\d .foo"',
+    'get "\\\\d .foo"',
+    'f:{system "d .foo"}; f[]',
+    // Back and out again, and a root that is only in a comment or a string.
+    '\\d .\nsystem("d .foo")',
+    'q)\\d .foo\na:1 / system "d ."',
+    'q)\\d .foo\nback:"\\\\d ."',
+  ]) {
+    assert.strictEqual(leavesNamespace(`${left}\nf:{x}`), true, left);
+    assert.strictEqual(exportScript([code(`${left}\nf:{x}`), code("g:{x}")]), `${left}\nf:{x}\n\\d .\n\ng:{x}\n`, left);
+  }
+  for (const stays of [
+    // A blank before the `d` is no switch to q, nor is a string nothing runs as one.
+    'system " d .foo"',
+    '-1 "d .foo";',
+    "/ q)\\d .foo\na:1",
+    'a:1 / system "d .foo"',
+    // Back in the root by the cell's end.
+    'system "d .foo"; system "d ."',
+    "\\d .foo\nq)\\d .",
+    "q)\\d .foo\nk)\\d .",
+    'k)\\d .foo\n@[system;"d .";::]',
+    '\\d .foo\nvalue "\\\\d ."',
+  ]) {
+    assert.strictEqual(leavesNamespace(`${stays}\nf:{x}`), false, stays);
+  }
 });
 
 test("export: an indented comment opening a cell is not its first code line; the line under it is unindented (#1935)", () => {

@@ -20,7 +20,7 @@
 // symbol under `~`. Every row with those values is changed.
 import { charKinds } from "./explorer";
 import type { GridPayload } from "./grid";
-import { atomLiteral, plainName, rawColumn, readable, symbolLiteral } from "./qliteral";
+import { atomLiteral, plainName, qString, rawColumn, readable, symbolLiteral } from "./qliteral";
 import { blockDepth, statements } from "./statements";
 
 export const FILTER_OPS = ["=", "<>", "<", ">", "<=", ">=", "like", "in", "null", "not null"] as const;
@@ -32,7 +32,8 @@ export const filterOps = (strings: boolean): FilterOp[] => FILTER_OPS.filter((o)
 
 export type Step =
   /// `strings`: the column holds strings, which are matched whole (#2014).
-  | { kind: "filter"; column: string; op: FilterOp; value: string; strings?: boolean }
+  /// `general`: it is a general list, each cell matched whole (#3091).
+  | { kind: "filter"; column: string; op: FilterOp; value: string; strings?: boolean; general?: boolean }
   | { kind: "sort"; column: string; descending: boolean }
   | { kind: "rename"; column: string; to: string }
   /// `strings`: the column holds strings, which are parsed rather than cast.
@@ -98,8 +99,14 @@ export function wrangleBase(code: string): string | undefined {
   return undefined;
 }
 
-/// Why `name` cannot be written in q-sql as a column, or undefined.
+/// Why `name` cannot be written in q-sql as a column, or undefined. `i`
+/// there is the row's index, whatever column the table has of that name: a
+/// filter or a cast of it read the index, and a cell edit found its row by
+/// it (#3081, #3089).
 export function columnProblem(name: string): string | undefined {
+  if (name === "i") {
+    return "the column i cannot be named in q-sql (i there is the row's index, not the column)";
+  }
   return plainName(name) ? undefined : `the column ${name} cannot be named in q-sql (it is not a plain name, or it is a reserved word)`;
 }
 
@@ -114,10 +121,20 @@ export function stepCode(step: Step, x: string): string {
       const v = r.includes(",") ? `(${r})` : r;
       // A string is equal as a whole, and null when it is empty: `=` and
       // `null` ask each of its characters, 'length and 'type here (#2014).
+      // So is a cell of any general column - a list, a table - which `=`
+      // compares item by item (#3091).
       const whole: Partial<Record<FilterOp, string>> =
-        step.strings === true ? { "=": `${c}~\\:${v}`, "<>": `not ${c}~\\:${v}`, null: `0=count each ${c}`, "not null": `0<count each ${c}` } : {};
+        step.strings === true
+          ? { "=": `${c}~\\:${v}`, "<>": `not ${c}~\\:${v}`, null: `0=count each ${c}`, "not null": `0<count each ${c}` }
+          : step.general === true
+            ? { "=": `${c}~\\:${v}`, "<>": `not ${c}~\\:${v}` }
+            : {};
+      // And `in` takes a list of them: one string is a list of characters
+      // to it, 'type against a column of strings, so a value that is no
+      // general list is the one item looked for (#3090).
+      const items = step.strings === true || step.general === true ? "{$[0h=type x;x;enlist x]}" : "";
       const test =
-        whole[step.op] ?? (step.op === "null" ? `null ${c}` : step.op === "not null" ? `not null ${c}` : step.op === "in" ? `${c} in ${v}` : `${c}${step.op === "like" ? " like " : step.op}${v}`);
+        whole[step.op] ?? (step.op === "null" ? `null ${c}` : step.op === "not null" ? `not null ${c}` : step.op === "in" ? `${c} in ${items}${v}` : `${c}${step.op === "like" ? " like " : step.op}${v}`);
       return `select from ${x} where ${test}`;
     }
     case "sort":
@@ -315,9 +332,14 @@ export function editStatement(payload: GridPayload, column: number, row: number,
     tests.push(enumerated ? `(${names[i]}=${atom.literal})` : `(${names[i]}~\\:(${readable(atom.literal)}))`);
   }
   const c = names[column];
-  // A general column takes a list as long as the rows found.
-  const v = readable(value.trim());
-  const set = payload.types[column] === 0 ? `(count i)#enlist ${v}` : `(${v})`;
+  // A general column takes a list as long as the rows found. The value is
+  // in parentheses there too: a comma outside them starts a second column
+  // of the update (#3078), and `enlist ::` is a projection (#3079).
+  // A column of strings keeps a string: `"x"` alone is a char atom, which
+  // `like` and a string filter of the column then fail on (#3080).
+  const typed = readable(value.trim());
+  const v = stringColumn(payload, column) && /^"(?:[^"\\]|\\(?:\d{3}|.))"$/.test(typed) ? `enlist ${typed}` : typed;
+  const set = payload.types[column] === 0 ? `(count i)#enlist (${v})` : `(${v})`;
   return { code: `update ${c}:${set} from ${symbolLiteral(table)} where ${tests.join(",")}`, matchedBy: by.map((i) => names[i]) };
 }
 
@@ -325,4 +347,15 @@ export function editStatement(payload: GridPayload, column: number, row: number,
 export function cellLiteral(payload: GridPayload, column: number, row: number): string {
   const raw = rawColumn(payload, column);
   return atomLiteral(payload.types[column], payload.cells[column]?.[row] ?? "", raw === undefined ? undefined : raw[row]).literal;
+}
+
+/// The value a filter's prompt starts from: the cell's literal, but for
+/// `like` on a symbol or enumerated column its text as a string, the
+/// pattern `like` takes - a symbol there is 'type (#3092).
+export function filterValue(payload: GridPayload, column: number, row: number, op: FilterOp): string {
+  const type = payload.types[column];
+  if (op === "like" && (type === 11 || (type >= 20 && type <= 76))) {
+    return qString(payload.cells[column]?.[row] ?? "");
+  }
+  return cellLiteral(payload, column, row);
 }

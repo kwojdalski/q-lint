@@ -29,7 +29,7 @@
 //! was.
 use super::{Documents, Index, Lines, file_key, is_q_uri, path_of};
 use q_lint_rs::graph::{self, Placement};
-use q_lint_rs::{Mention, Name, load_at, mentions, name_at, symbol_mentions};
+use q_lint_rs::{Mention, Name, load_at, load_directory, mentions, name_at, symbol_mentions};
 use serde_json::{Value, json};
 use std::{
     borrow::Cow,
@@ -42,6 +42,7 @@ const NAMESPACE: u8 = 3;
 pub(super) const FUNCTION: u8 = 12;
 pub(super) const VARIABLE: u8 = 13;
 /// LSP's `DocumentHighlightKind`s.
+const TEXT: u8 = 1;
 const READ: u8 = 2;
 const WRITE: u8 = 3;
 /// How many symbols one `workspace/symbol` reply carries. A client filters
@@ -328,6 +329,7 @@ impl<'a> Sources<'a> {
             self.keys()
                 .into_iter()
                 .filter(|key| Path::new(key).parent() == Some(Path::new(&dir)))
+                .filter(|key| !graph::partition_named(Path::new(key)))
                 .map(str::to_string)
                 .collect()
         };
@@ -341,7 +343,8 @@ impl<'a> Sources<'a> {
     /// cursor is on no load.
     pub(super) fn load_under(&self, cursor: &Cursor) -> Option<(usize, usize, Vec<String>)> {
         let (at, len) = load_at(cursor.text, cursor.offset)?;
-        let files = self.loaded(&cursor.key, &cursor.text[at..at + len], true);
+        let load = as_run(cursor.text, at, &cursor.text[at..at + len]);
+        let files = self.loaded(&cursor.key, &load, true);
         Some((at, len, files))
     }
 
@@ -566,7 +569,8 @@ fn references(params: &Value, sources: &Sources) -> Value {
 }
 
 /// `textDocument/documentHighlight`: the same name elsewhere in this
-/// document, marked as read or written.
+/// document, marked as read or written - and, as text, a symbol that may be
+/// the name, which Find References lists too (#2679).
 fn highlights(params: &Value, sources: &Sources) -> Value {
     let Some(cursor) = sources.cursor(params) else {
         return json!([]);
@@ -585,7 +589,8 @@ fn highlights(params: &Value, sources: &Sources) -> Value {
             let placement = sources.placement(&cursor.key);
             let code = q_lint_rs::code_view(cursor.text);
             let changed = q_lint_rs::changed_by_name(cursor.text);
-            mentions(cursor.text)
+            let all = mentions(cursor.text);
+            let mut found: Vec<(usize, Value)> = all
                 .iter()
                 .filter_map(|m| {
                     let part = sources
@@ -594,9 +599,30 @@ fn highlights(params: &Value, sources: &Sources) -> Value {
                     let write = m.definition.is_some()
                         || q_lint_rs::amended_at(&code, m.at + m.len)
                         || changed.contains(&m.at);
-                    Some(highlight(m.at, part, write))
+                    Some((m.at, highlight(m.at, part, write)))
                 })
-                .collect()
+                .collect();
+            let known: HashSet<usize> = all.iter().map(|m| m.at).collect();
+            let leaves: HashSet<&str> = targets
+                .iter()
+                .filter_map(|name| name.rsplit('.').next())
+                .collect();
+            for leaf in leaves {
+                for m in symbol_mentions(cursor.text, leaf) {
+                    if !known.contains(&m.at)
+                        && sources
+                            .names(cursor.text, &m, &placement)
+                            .iter()
+                            .any(|name| targets.contains(name))
+                    {
+                        let text = json!({"range": range(&lines, m.at, m.len), "kind": TEXT});
+                        found.push((m.at, text));
+                    }
+                }
+            }
+            found.sort_by_key(|(at, _)| *at);
+            found.dedup_by_key(|(at, _)| *at);
+            found.into_iter().map(|(_, place)| place).collect()
         }
     }
 }
@@ -1022,9 +1048,13 @@ fn renamable_global(
         return Err("nothing here is a name q-lint can rename".into());
     };
     // q keeps every one-letter namespace for itself: `.z.pg` is a callback,
-    // `.q.f` a word of the language.
+    // `.q.f` a word of the language. `.m` is where KDB-X runs a module, and
+    // what a module file assigns there is the workspace's own (#2666).
     if let Some(name) = sorted.iter().find(|name| {
-        name.len() > 2 && name.starts_with('.') && name.as_bytes().get(2) == Some(&b'.')
+        name.len() > 2
+            && name.starts_with('.')
+            && name.as_bytes().get(2) == Some(&b'.')
+            && !name.starts_with(".m.")
     }) {
         return Err(format!(
             "`{name}` is in `{}`, a namespace q keeps for itself, where a name means what q \
@@ -1108,6 +1138,13 @@ fn rename_global(
         let mut done = HashSet::new();
         let mut edited = vec![];
         let all = mentions(&text);
+        // What a module exports: `use` returns it, and `f` of `([f;g])` is
+        // a key of that as much as a read of `f` (#2666).
+        let exports: Vec<(usize, usize)> = all
+            .iter()
+            .filter(|m| m.name == "export" && targets.iter().any(|t| t.starts_with(".m.")))
+            .filter_map(|m| m.definition.as_ref().map(|d| (d.start, d.end)))
+            .collect();
         for m in &all {
             if done.contains(&m.at) {
                 continue;
@@ -1118,6 +1155,20 @@ fn rename_global(
             let Some(part) = sources.spelt(&text, m, placement, &targets) else {
                 continue;
             };
+            if exports
+                .iter()
+                .any(|&(start, end)| start <= m.at && m.at < end)
+                && text[..m.at].trim_end().ends_with(['[', ';'])
+                && text[m.at + m.len..].trim_start().starts_with([';', ']'])
+            {
+                let (line, _) = lines.position(m.at);
+                return Err(format!(
+                    "`{old}` is a key of what the module exports at {}:{}: a file that takes \
+                     the module with `use` reads it as `m.{old}`, which a rename cannot follow",
+                    Path::new(key).display(),
+                    line + 1
+                ));
+            }
             done.insert(m.at);
             edited.push(m.at);
             let spelling = &text[m.at..m.at + part];
@@ -1184,6 +1235,51 @@ fn rename_global(
                 Path::new(key).display(),
                 line + 1
             ));
+        }
+        // A string the file runs as q is code no edit here rewrites, and
+        // a name in it is looked up when it runs: `value "myf 1"` signals
+        // 'myf once `myf` is `myg` everywhere else (KDB-X 5). Read where it
+        // stands it is the name under the `\d` in force, and in a lambda the
+        // one where the lambda is called, so either may be the global: the
+        // rename is refused and names the line (#3005).
+        let ran: Vec<(usize, String)> = q_lint_rs::evaluated_strings(&text)
+            .into_iter()
+            .filter(|(_, code)| code.contains(old))
+            .collect();
+        if !ran.is_empty() {
+            let contexts = q_lint_rs::contexts(&text);
+            let names = |word: &str| {
+                targets.contains(word)
+                    || word
+                        .match_indices('.')
+                        .any(|(dot, _)| dot > 0 && targets.contains(&word[..dot]))
+            };
+            for (at, code) in &ran {
+                let switch = contexts.partition_point(|(start, _)| start <= at);
+                let ns = contexts
+                    .get(switch.wrapping_sub(1))
+                    .map_or("", |(_, ns)| ns.as_str());
+                let named = mentions(code).iter().any(|m| {
+                    let word = &code[m.at..m.at + m.len];
+                    if word.starts_with('.') {
+                        return names(word);
+                    }
+                    names(word)
+                        || !ns.is_empty() && ns != "." && names(&format!("{ns}.{word}"))
+                        || switch <= 1
+                            && placed(word, true, placement).iter().any(|name| names(name))
+                });
+                if named {
+                    let (line, _) = lines.position(*at);
+                    return Err(format!(
+                        "the string at {}:{} is run as q and names `{old}`: a rename does not \
+                         rewrite a string, and one that left it would change some uses and \
+                         not others",
+                        Path::new(key).display(),
+                        line + 1
+                    ));
+                }
+            }
         }
         // A bare name in a qSQL phrase is a column whenever the table has
         // one of that name, which only the table says; the table after
@@ -1287,4 +1383,17 @@ fn re_name(name: &str) -> bool {
     let mut chars = name.chars();
     chars.next().is_some_and(|c| c.is_ascii_alphabetic())
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// The path of the load at `at` of `text` as q reads it: after `\cd dir`,
+/// a relative `\l x.q` is dir/x.q - q 5 loads it, where the link and Go to
+/// Definition led nowhere (#2961).
+pub(super) fn as_run(text: &str, at: usize, load: &str) -> String {
+    if Path::new(load).is_absolute() || load.starts_with('/') || !text.contains("cd") {
+        return load.to_string();
+    }
+    match load_directory(text, at) {
+        Some(dir) => format!("{dir}/{load}"),
+        None => load.to_string(),
+    }
 }

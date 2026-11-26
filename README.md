@@ -29,7 +29,7 @@ Windows x86-64 are on the
 With Rust 1.88 or later:
 
 ```sh
-cargo install --git https://github.com/kwojdalski/q-lint --tag v0.40.0 --locked
+cargo install --git https://github.com/kwojdalski/q-lint --tag v0.41.0 --locked
 ```
 
 From a checkout:
@@ -43,7 +43,8 @@ environment gets `qlinter` with no Rust on the target machine. In a
 checkout, `uv sync` builds it and `uv run qlinter src/` runs it.
 
 The VS Code extension is a `.vsix` on the same releases page, one per
-platform, with the matching `qlinter` bundled.
+platform with the matching `qlinter` bundled, plus a platform-neutral one
+that uses the `qlinter` on `PATH`.
 
 ## Quick start
 
@@ -133,7 +134,7 @@ matched, which is weaker than "this code is correct".
 | choose rules | `--profile`, `--select`, `--extend-select`, `--ignore` |
 | report only new findings | `--write-baseline FILE` once, then `--baseline FILE` |
 | check against an older q | `--target-version 3.6`, `4.0`, `4.1` or `kdbx` |
-| see which configuration applies | `--show-settings PATH` |
+| see which configuration and rules apply | `--show-settings PATH` (JSON with `--format json`) |
 | add KX's qls as a second backend | `--backend qls` or `--backend all` |
 
 [docs/cli.md](docs/cli.md) covers every option, the full list of fixes,
@@ -175,7 +176,7 @@ table. One file at the repository root governs everything below it.
 profile = "style"
 exclude = ["lib/vendor/", "generated"]
 target-version = "4.1"
-required-version = ">=0.40"
+required-version = ">=0.41"
 
 [lint]
 extend-select = ["QS001"]
@@ -206,9 +207,11 @@ It reads the same configuration files as the command line, so the editor
 and CI agree.
 
 - **VS Code**: the extension bundles the server. It also connects to q
-  processes you add, to run code, browse results and work in q notebooks;
-  the server itself never connects to anything. See
-  [its README](editors/vscode/README.md).
+  processes you add: run code, results in a grid or chart, Query History
+  and saved queries, q notebooks (`.qnb`), TorQ gateway routing and logs,
+  HDB tools, logpoints, profiling and a Testing view, with a read-only guard
+  for production processes. The server itself never connects to anything.
+  See [its README](editors/vscode/README.md).
 - **Neovim, Helix, Emacs, Sublime Text, Kakoune, Zed**: configuration
   snippets in [docs/editors.md](docs/editors.md).
 - **Writing a client**: [docs/lsp.md](docs/lsp.md) lists what the server

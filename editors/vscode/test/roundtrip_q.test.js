@@ -77,6 +77,8 @@ const ATOMS = [
   "acos -1", "0n", "0w", "-0w", "-0f", "0.1", "1e300", "5e-324", "-1.7976931348623157e308",
   '"x"', '"\\351"', '"\\""', '" "',
   "`a", "`", '`$"a b"', '`$"_y"', '`$"caf\\351"', '`$"caf\\303\\251"',
+  // What ends a symbol in -3!'s text, inside one (#3076).
+  '`$"a;b"', '`$"a`b"', '`$"a)b"', '`$"a]b"', '`$"a}b"', '`$"a!b"', '`$"a$b"', '`$"a#b"', '`$"a b`c"',
   "2024.01.02D03:04:05.123456789", "0Np", "0Wp", "-0Wp", '"p"$-9200000000000000000', '"p"$9200000000000000000',
   "1709.01.01D00:00", "2290.12.31D23:59:59.999999999",
   "2024.01m", "0Nm", "0Wm",
@@ -96,6 +98,7 @@ const LISTS = [
   "2024.01.02T03:04:05.123 0Nz", '"z"$0n 1.123456789 0w', '"z"$2 1.5',  "-100:00 0Wu", '"t"$-2147483646 0N',  '"v"$enlist 2147483646', "0D01 0Nn", "01:00 100:00", "100:00:00 0Nv", '"t"$0N 400000000',
   "enlist 1", "enlist 0.1", "enlist `a", 'enlist "x"', "enlist 100:00", "`float$()", "`long$()", "`symbol$()", '""', "`guid$()",
   '"caf\\303\\251"', '"caf\\351"', '"tab\\there"', "200#\"a\"",
+  '`$("a;b";"x")', '`$("a`b";"a b")', '(`$("a)b";"c"))!1 2', '(`$"a]b";(`$"a}b";1))',
   "(1;`a)", "(1 2;0Ng)", "(0Ng,0Ng;1)", "(`a`b!1 2;1)", "(([]x:1 2);1)", "((1;2);(3;`a))", "(::;1)", "({x};1)",
 ];
 
@@ -127,6 +130,11 @@ function values() {
     "([] f:-0.0 1)",
     "([] a:(1;0n;2.5;0Nj;1b;0x01))",
     "([] l:(acos -1;0n;\"x\"))",
+    // Dates, months and datetimes outside years 1 to 9999, which q writes as it cannot read (#3073).
+    '([] a:"d"$-800000 -730120 -730119 2921939 2921940 3000000)',
+    '([] a:"m"$-30000 -23989 -23988 95999 96000 100000)',
+    '([] a:"z"$-1000000 -730119 2921939.5 2921940 3000000f)',
+    '([k:"d"$-800000 0] v:"m"$100000 0)',
     // A mapped splayed table's nested columns (77h).
     "sp",
   ]);
@@ -184,6 +192,38 @@ test("a result exported is read back as the value it is, on a real q", { skip },
     const json = JSON.parse(exportResult("json", g, -1).data.toString("utf8"));
     assert.deepStrictEqual(json.map((r) => r.s), ["ab", "cd", "x", "café"]);
     assert.strictEqual(json[0].f, Math.acos(-1));
+  });
+
+  await t.test("a function q writes as it does not read back - one defined in q, a composition - is counted, and Copy as q says so (#3084)", async () => {
+    const note = /cell\(s\) hold a function q writes as it does not read back/;
+    for (const [code, unread] of [
+      ["([] a:(til;1))", 1],
+      ["([] a:(neg abs@;1))", 1],
+      ["([] a:(til each;xbar[5];('[til;count]);1))", 3],
+      ["([] a:((til;1);`a`b!(neg abs@;2);3))", 2],
+      // What q reads back is not counted.
+      ["([] a:(sum;{x};+[1];neg;+/;1))", 0],
+      ['([] a:("k){x}";`k;{[k](k){x}};1))', 0],
+    ]) {
+      const g = await grid(code);
+      assert.strictEqual(tableLiteral(g).unread, unread, code);
+      const notes = exportResult("q", g, -1).notes.join();
+      assert.strictEqual(note.test(notes), unread > 0, `${code}: ${notes}`);
+      if (unread === 0) {
+        const same = await connection.query(statements(`(${code})~${tableLiteral(g).code}`), SIZE);
+        assert.deepStrictEqual(same.text, ["1b"], code);
+      }
+    }
+  });
+
+  await t.test("a Parquet datetime is the millisecond q shows for it, not the next (#3083)", async () => {
+    const g = await grid("([] a:2000.01.01T00:00:00.000 + 0.0000000058 0.0000000116 0.5 0.99999999999 -0.0000000058 8000.123456789 -8000.987654321)");
+    for (let r = 0; r < g.cells[0].length; r++) {
+      const shown = /^(\d{4})\.(\d\d)\.(\d\d)T(\d\d):(\d\d):(\d\d)\.(\d{3})$/.exec(g.cells[0][r]).slice(1).map(Number);
+      const want = Buffer.alloc(8);
+      want.writeBigInt64LE(BigInt(Date.UTC(shown[0], shown[1] - 1, shown[2], shown[3], shown[4], shown[5], shown[6])));
+      assert.ok(exportResult("parquet", g, -1, [r]).data.includes(want), `${g.cells[0][r]} of ${g.raw[0][r]}`);
+    }
   });
 
   await t.test("a symbol of bytes that are no UTF-8 exports as its characters, not U+FFFD (#2083)", async () => {

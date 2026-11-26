@@ -10,8 +10,8 @@ The nearest file wins, so a sub-project can carry its own. With none,
 its patterns relative to the directory qlinter runs in.
 
 `--config FILE` uses one file for everything, `--isolated` ignores them
-all, and `--show-settings PATH` prints which file governs a path and the
-rules it turns on. The language server finds each document's configuration
+all, and `--show-settings PATH` prints which file governs a path, the
+`target-version` in force and the rules that report there. The language server finds each document's configuration
 the same way and re-reads it when it changes.
 
 ## Keys
@@ -51,7 +51,9 @@ specific selector wins, so `ignore = ["QS"]` with
 
 Under `uqf`, QP002, QP003, QP005 and QP007 skip files in a `tests`
 directory below the configuration's directory, since a test may build a
-datetime or read the local clock on purpose.
+datetime or read the local clock on purpose. Selecting one by its own code
+(`--select QP002`) reports it there anyway; a prefix such as `QP`, like
+`ALL`, leaves the exemption standing.
 
 ### Severity
 
@@ -64,6 +66,7 @@ QS006 = "warning"    # except this one
 The longest matching code or prefix wins. Only `error` and `warning` fail
 the run. Severity changes how a finding is reported, never whether; that is
 `select` and `ignore`. An editor's `lint.severity` overrides it again.
+`QLS001` sets the severity of every qls finding.
 
 ### Rule options
 
@@ -95,7 +98,10 @@ one entry at a time.
 ## Exclude patterns
 
 `exclude`, `extend-exclude`, `--exclude` and the keys of
-`per-file-ignores` are globs read the way Ruff reads them:
+`per-file-ignores` are globs read the way Ruff reads them, with the same
+glob crate: `*` and `?` match a `/` too, `[a-z]` and `[!a]` (or `[^a]`) one
+character, `{gen,vendor}` either name, and `\` escapes (on Windows write
+`[*]`). A pattern that does not parse, `[bad`, is a configuration error.
 
 - A pattern with a `/` anywhere (`lib/`, `./lib`, `src/gen/*.q`) is anchored
   at the configuration's directory, or the current directory for

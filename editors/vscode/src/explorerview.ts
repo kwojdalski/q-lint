@@ -50,13 +50,15 @@ import {
   type Node,
 } from "./explorer";
 import { nameAt } from "./funcsource";
+import { markdownText } from "./history";
 import { wordStart } from "./idioms";
 import { borrowWhenFree } from "./infoview";
 import { readInsight } from "./insightconfig";
 import type { Live } from "./live";
 import { QError } from "./qclient";
-import { blockAt } from "./statements";
+import { blockAt, lineContext } from "./statements";
 import { TABLE_INFO, HOVER_COLUMNS, readTableInfo, tableMarkdown, type TableInfo } from "./tableinfo";
+import { inStringOrComment } from "./temporal";
 
 const ICONS: Record<Node["kind"], string> = {
   namespace: "symbol-namespace",
@@ -137,6 +139,13 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
           this.problem = undefined;
           this.show();
         } else if (this.owed || settings().autoRefresh || this.modeChanged()) {
+          void this.refresh();
+        }
+      }),
+      // A refresh skipped for a background read - the heartbeat's - not a
+      // query: no event ends that, so the read's end pays it (#3020).
+      live.onDidFree(() => {
+        if (this.owed) {
           void this.refresh();
         }
       }),
@@ -273,7 +282,9 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
       void window.showInformationMessage("q-lint: Preview shows a table or a variable of the Process Explorer.");
       return;
     }
-    await this.live.run(code);
+    // What the explorer lists is the process's own: on a TorQ gateway it
+    // is read there, not on its servers through .gw.syncexec (#3061).
+    await this.live.run(code, undefined, []);
   }
 
   private switchHover(): void {
@@ -341,7 +352,12 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
     if (kept === undefined || this.live.activeLabel() !== kept.process || !insight().editorTableHover) {
       return undefined;
     }
-    const word = nameAt(document.lineAt(position.line).text, position.character);
+    // Not in a comment or a string, as the examples hover reads them
+    // (#1663): the word there names no table, and this hover asks the
+    // process about it (#2922).
+    const above = Array.from({ length: position.line + 1 }, (_, i) => document.lineAt(i).text);
+    const { commented, quoted } = lineContext(above);
+    const word = commented || inStringOrComment(above[position.line], position.character, quoted) ? undefined : nameAt(above[position.line], position.character);
     const entry = word === undefined ? undefined : tableNamed(kept.gathered, word);
     if (word === undefined || entry === undefined) {
       return undefined;
@@ -350,7 +366,7 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
     // Listed by a direct process and not read: nothing more is known, so
     // no rows or columns are stated (#2490).
     if (info === undefined && entry.unread === true) {
-      return new Hover(new MarkdownString(`**${word}** on ${kept.process}: table, not read - its rows and columns are read only by q-lint's lambda, which direct evaluation does not send.`));
+      return new Hover(new MarkdownString(`**${markdownText(word)}** on ${markdownText(kept.process)}: table, not read - its rows and columns are read only by q-lint's lambda, which direct evaluation does not send.`));
     }
     // Busy: what the explorer already knows, its rows and columns.
     return new Hover(

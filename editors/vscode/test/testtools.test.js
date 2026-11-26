@@ -10,8 +10,9 @@ const { TEST_RUN } = require("../out/testing.js");
 const { DRIFT } = require("../out/definitions.js");
 const { installLambda, restoreExpression } = require("../out/instrument.js");
 const { SNAPSHOT_RUN } = require("../out/snapshot.js");
-const { coveragePlan, coverageByFile, coverageSummary, definedNames } = require("../out/coverage.js");
+const { coveragePlan, coverageByFile, coverageSummary, definedNames, neverCounted, uncountedNote } = require("../out/coverage.js");
 const { formatSnapshot } = require("../out/snapshot.js");
+const { EVALUATE } = require("../out/query.js");
 
 const range = (line, a, b) => ({ start: { line, character: a }, end: { line, character: b } });
 
@@ -138,7 +139,13 @@ function fakeLive(answer, process = { label: "dev", tags: [] }) {
         return answer(lambda, ...args);
       };
       // Not read-only: `trapped` sends the plain lambda, as a connection does.
-      const value = await query({ call, callOwn: call, trapped: async (plain, _readOnly, read, ...args) => read(await call(plain, ...args)) });
+      const value = await query({
+        call,
+        callOwn: call,
+        trapped: async (plain, _readOnly, read, ...args) => read(await call(plain, ...args)),
+        guarded: async (lambda, ...args) => call(lambda(EVALUATE), ...args),
+        noteRefusal: () => {},
+      });
       return { process: this.active.label, value };
     },
   };
@@ -165,7 +172,7 @@ test("coverage plans only the functions the process holds as the file has them",
   const plan = coveragePlan(files, states);
   assert.deepStrictEqual(plan.names, ["f"]);
   assert.deepStrictEqual(plan.skipped, [{ name: "g", why: "changed" }]);
-  assert.strictEqual(plan.src[0], "{[a]\n  qlintcov:.qlint.cov.hit 0;b:a+1;\n  qlintcov:.qlint.cov.hit qlintcov;$[b>2;g b;b]}");
+  assert.strictEqual(plan.src[0], "{[a]\n  qlintcovh:$[`cov in key`.qlint;.qlint.cov.hit;{x}];qlintcov:qlintcovh 0;b:a+1;\n  qlintcov:qlintcovh qlintcov;$[b>2;g b;b]}");
   assert.deepStrictEqual(
     plan.probes.map((p) => [p.start, p.end]),
     [
@@ -178,8 +185,25 @@ test("coverage plans only the functions the process holds as the file has them",
   assert.strictEqual(coverageSummary(byFile, 1), "Coverage: 1 of 2 statements run (50%) in 1 function across 1 file.");
   // Not installed: not counted.
   assert.strictEqual(coverageByFile(plan, [3, 0], new Set()).size, 0);
+  // Never run by its name, which is all that is counted (#2976).
+  assert.deepStrictEqual(neverCounted(plan, [3, 0], new Set(["f"])), []);
+  assert.deepStrictEqual(neverCounted(plan, [0, 0], new Set(["f"])), ["f"]);
+  assert.deepStrictEqual(neverCounted(plan, [0, 0], new Set()), []);
+  assert.strictEqual(uncountedNote([]), undefined);
+  assert.match(uncountedNote(Array.from({ length: 12 }, (_, i) => `f${i}`)), /^Counted as never run: f0, f1, .*, f9 and 2 more\. /);
   // Missing on the process.
   assert.deepStrictEqual(coveragePlan(files, new Map()).skipped.map((s) => s.why), ["missing", "missing"]);
+});
+
+// A process that loaded mymod/init.q with `use` holds its f as .m.mymod.f.
+test("coverage asks for a KDB-X module's functions in the module's context (#2917)", () => {
+  const files = [{ uri: "file:///ws/mymod/init.q", text: "f:{x+1}\nexport:([f])\n", path: "mymod/init.q" }];
+  assert.deepStrictEqual(definedNames(files), [".m.mymod.f"]);
+  const plan = coveragePlan(files, new Map([[".m.mymod.f", { state: "lambda", text: "{x+1}" }]]));
+  assert.deepStrictEqual(plan.names, [".m.mymod.f"]);
+  assert.deepStrictEqual(plan.skipped, []);
+  // A file that exports nothing is a script: its names are the root's.
+  assert.deepStrictEqual(definedNames([{ uri: "file:///ws/mymod/init.q", text: "f:{x+1}\n", path: "mymod/init.q" }]), ["f"]);
 });
 
 test("coverage of a lambda that opens below its name is placed on the lambda's lines (#1900)", () => {
@@ -242,6 +266,8 @@ test("the Coverage profile instruments, runs the tests, puts the functions back 
   assert.deepStrictEqual(await profile.loadDetailedCoverage(run, run.coverage[0]), run.coverage[0].details);
   assert.deepStrictEqual(explorer.coverage(), [{ uri: "file:///ws/lib.q", covered: 2, total: 3, hit: [1, 2], missed: [3] }]);
   assert.match(run.output, /Coverage: 2 of 3 statements run \(66\.7%\) in 2 functions across 1 file\./);
+  // g ran no statement: the output says what is not counted (#2976).
+  assert.match(run.output, /Counted as never run: g\. A call is counted where it is made by the function's name: one made through a reference taken before the run/);
   // A plain run instruments nothing.
   const before = live.sent.length;
   await explorer.run();

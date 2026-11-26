@@ -218,7 +218,7 @@ export function registerFindInProcesses(
     const own = readAdmin(get).processTimeout;
     const global = readControls(get).timeout;
     const outcomes = await window.withProgress(
-      { location: ProgressLocation.Notification, title: `q-lint: finding "${text}" in ${processes.length} process${processes.length === 1 ? "" : "es"} tagged ${tag}`, cancellable: true },
+      { location: ProgressLocation.Notification, title: plainMessage(`q-lint: finding "${text}" in ${processes.length} process${processes.length === 1 ? "" : "es"} tagged ${tag}`), cancellable: true },
       (_progress, token) =>
         eachLimited(processes, AT_ONCE, async (process): Promise<Outcome> => {
           try {

@@ -640,6 +640,9 @@ test("a drill-down from a merged tag result runs on the process of the row click
   assert.deepStrictEqual(ran, [["select from t where c>20", "rdb2"], ["select from t where c>10", "rdb1"]]);
 });
 
+/// An SVG as chartSvg makes one, around `body`.
+const chartSvg = (body) => `<svg xmlns="http://www.w3.org/2000/svg">${body}</svg>`;
+
 test("Save Result Chart asks the page for the chart and writes the image it sends to the file given (#926)", async () => {
   const fake = fakeVscode();
   const modes = loadModes(fake);
@@ -650,9 +653,9 @@ test("Save Result Chart asks the page for the chart and writes the image it send
   const asked = page.posted.at(-1).control;
   assert.strictEqual(asked.action, "image");
   assert.strictEqual(asked.format, "svg");
-  page.receive({ type: "image", id: page.posted.at(-1).id, format: "svg", data: "<svg></svg>", key: asked.key });
+  page.receive({ type: "image", id: page.posted.at(-1).id, format: "svg", data: chartSvg(""), key: asked.key });
   await saving;
-  assert.strictEqual(fake.written["/c.svg"], "<svg></svg>");
+  assert.strictEqual(fake.written["/c.svg"], chartSvg(""));
   // A PNG arrives as a data URL; anything else is not written.
   const png = fake.vscode.commands[RESULT_VIEW.saveChart]("png", new fake.vscode.Uri("/c.png"));
   const key = page.posted.at(-1).control.key;
@@ -663,6 +666,11 @@ test("Save Result Chart asks the page for the chart and writes the image it send
   page.receive({ type: "image", id: page.posted.at(-1).id, format: "svg", data: "<script>", key: page.posted.at(-1).control.key });
   await bad;
   assert.strictEqual(fake.written["/x.svg"], undefined);
+  // An SVG that would run is not written either: the q Plots check (#2653).
+  const scripted = fake.vscode.commands[RESULT_VIEW.saveChart]("svg", new fake.vscode.Uri("/y.svg"));
+  page.receive({ type: "image", id: page.posted.at(-1).id, format: "svg", data: chartSvg('<script>alert(document.domain)</script><image href="x" onerror="alert(1)"/>'), key: page.posted.at(-1).control.key });
+  await scripted;
+  assert.strictEqual(fake.written["/y.svg"], undefined);
 });
 
 test("Save Result Chart run twice saves each chart to its own file; neither is left waiting (#1130)", async () => {
@@ -677,12 +685,12 @@ test("Save Result Chart run twice saves each chart to its own file; neither is l
   const firstKey = page.posted.at(-1).control.key;
   const second = fake.vscode.commands[RESULT_VIEW.saveChart]("svg", new fake.vscode.Uri("/b.svg"));
   const secondKey = page.posted.at(-1).control.key;
-  page.receive({ type: "image", id: page.posted.at(-1).id, format: "svg", data: "<svg>b</svg>", key: secondKey });
-  page.receive({ type: "image", id: page.posted.at(-1).id, format: "svg", data: "<svg>a</svg>", key: firstKey });
+  page.receive({ type: "image", id: page.posted.at(-1).id, format: "svg", data: chartSvg("b"), key: secondKey });
+  page.receive({ type: "image", id: page.posted.at(-1).id, format: "svg", data: chartSvg("a"), key: firstKey });
   const settled = await Promise.race([Promise.all([first, second]).then(() => true), new Promise((r) => setTimeout(() => r(false), 500))]);
   assert.strictEqual(settled, true);
-  assert.strictEqual(fake.written["/a.svg"], "<svg>a</svg>");
-  assert.strictEqual(fake.written["/b.svg"], "<svg>b</svg>");
+  assert.strictEqual(fake.written["/a.svg"], chartSvg("a"));
+  assert.strictEqual(fake.written["/b.svg"], chartSvg("b"));
   assert.strictEqual(dialogs, 0);
 });
 
@@ -696,19 +704,44 @@ test("a command's request is not replayed to a later result, and a second page's
   fake.vscode.window.showSaveDialog = async () => (dialogs++, undefined);
   const saving = fake.vscode.commands[RESULT_VIEW.saveChart]("svg", new fake.vscode.Uri("/a.svg"));
   const asked = page.posted.at(-1).control;
-  page.receive({ type: "image", id: page.posted.at(-1).id, format: "svg", data: "<svg>a</svg>", key: asked.key });
+  page.receive({ type: "image", id: page.posted.at(-1).id, format: "svg", data: chartSvg("a"), key: asked.key });
   await saving;
   // The other open page answers the same request: it is not pending, so it is dropped.
-  page.receive({ type: "image", id: page.posted.at(-1).id, format: "svg", data: "<svg>a</svg>", key: asked.key });
+  page.receive({ type: "image", id: page.posted.at(-1).id, format: "svg", data: chartSvg("a"), key: asked.key });
   await new Promise((r) => setImmediate(r));
   assert.strictEqual(dialogs, 0);
   // The next query's result does not carry the old request.
   modes.show({ ...result([3, 4]), code: "u" }, live({ mode: "chart" }));
   assert.strictEqual(page.posted.at(-1).control, undefined);
   // The page's own Save button (no key) still asks where to save.
-  page.receive({ type: "image", id: page.posted.at(-1).id, format: "svg", data: "<svg>b</svg>" });
+  page.receive({ type: "image", id: page.posted.at(-1).id, format: "svg", data: chartSvg("b") });
   await new Promise((r) => setImmediate(r));
   assert.strictEqual(dialogs, 1);
+});
+
+test("the page's Save button on a result that draws no chart says so; a second page's empty answer does not say it twice (#3139)", async () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  const { RESULT_VIEW } = require("../out/liveconfig.js");
+  modes.show(result([1, 2]), live({ mode: "chart" }));
+  const page = fake.pages[0];
+  const info = [];
+  let dialogs = 0;
+  fake.vscode.window.showInformationMessage = async (m) => info.push(m);
+  fake.vscode.window.showSaveDialog = async () => (dialogs++, undefined);
+  for (const format of ["png", "svg"]) {
+    page.receive({ type: "image", id: page.posted.at(-1).id, format, data: "" });
+  }
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual([info.length, dialogs], [2, 0]);
+  assert.match(info[0], /draws no chart, so there is nothing to save/);
+  // The command's request, answered empty by two open pages: said once.
+  const saving = fake.vscode.commands[RESULT_VIEW.saveChart]("svg", new fake.vscode.Uri("/a.svg"));
+  const asked = page.posted.at(-1).control;
+  page.receive({ type: "image", id: page.posted.at(-1).id, format: "svg", data: "", key: asked.key });
+  page.receive({ type: "image", id: page.posted.at(-1).id, format: "svg", data: "", key: asked.key });
+  await saving;
+  assert.strictEqual(info.length, 3);
 });
 
 test("a result keeps its saved query's new name once the query is renamed, and none once it is deleted (#1413)", () => {

@@ -126,7 +126,7 @@ fn tests(params: &Value, sources: &Sources) -> Value {
             continue;
         };
         let lines = Lines::new(&text);
-        let tests: Vec<Value> = runnables(&text)
+        let tests: Vec<Value> = runnables(&text, &sources.placement(&key))
             .into_iter()
             .filter_map(|run| {
                 let call = run.test?;
@@ -147,7 +147,12 @@ fn tests(params: &Value, sources: &Sources) -> Value {
 }
 
 /// `q-lint/globalAt`: the global at `position` - `{names, range}`, each name
-/// q may resolve it to - or null on a local, a word of q's, or nothing.
+/// q may resolve it to - or null on a local, a word of q's, or nothing. And
+/// null on a name in a qSQL phrase, as `unresolved` leaves one out: `c` of
+/// `select c from t` is the table's column wherever it has one, which only
+/// the table says, and a client that read the process's global `c` showed
+/// it as the value there (#2958). The table after `from` is a global, and
+/// so is a name written from the root, `.cfg.limit`, which is no column.
 fn global_at(params: &Value, sources: &Sources) -> Value {
     let Some(cursor) = sources.cursor(params) else {
         return Value::Null;
@@ -155,6 +160,10 @@ fn global_at(params: &Value, sources: &Sources) -> Value {
     let Some(Name::Global { at, len, .. }) = name_at(cursor.text, cursor.offset) else {
         return Value::Null;
     };
+    let clause = q_lint_rs::query_clauses(cursor.text, &[at])[0];
+    if clause.is_some_and(|c| c != "from") && !cursor.text[at..].starts_with('.') {
+        return Value::Null;
+    }
     let mut names: Vec<String> = sources.targets(&cursor, at).into_iter().collect();
     names.sort();
     if names.is_empty() {
@@ -166,8 +175,11 @@ fn global_at(params: &Value, sources: &Sources) -> Value {
 /// `q-lint/unresolvedNames`: each global the document reads that no indexed
 /// file defines - by each name q may resolve it to, where it is written -
 /// for a client to ask a process about. Not a word of q's, not a name in a
-/// one-letter namespace (`.z.pc`, `.Q.dd`), which are q's own, not one in a
-/// qSQL phrase but the table's, and not one in a system command.
+/// one-letter namespace (`.z.pc`, `.Q.dd`), which are q's own - but for
+/// `.m`, where KDB-X runs a module's own names - not one in a
+/// qSQL phrase but the table's, and not one in a system command. A name is
+/// defined when a file assigns it or a name it is read through: `.cfg.port`
+/// by the dictionary `.cfg`, `t.c` by the table `t`.
 fn unresolved(params: &Value, sources: &Sources) -> Value {
     let Some((uri, text)) = sources.document(params) else {
         return json!([]);
@@ -191,13 +203,23 @@ fn unresolved(params: &Value, sources: &Sources) -> Value {
         let names = sources.names(text, &m, &placement);
         let qs = |name: &str| {
             let mut parts = name.split('.');
-            name.starts_with('.') && parts.nth(1).is_some_and(|ns| ns.len() == 1)
+            name.starts_with('.') && parts.nth(1).is_some_and(|ns| ns.len() == 1 && ns != "m")
         };
-        if names.is_empty()
-            || names
-                .iter()
-                .any(|name| qs(name) || sources.idx.ws.defines(name))
-        {
+        // As QF018 and the graph read it, a name no file assigns is tried
+        // without its last part (#2807).
+        let defined = |name: &str| {
+            std::iter::once(name)
+                .chain(
+                    name.match_indices('.')
+                        .filter(|&(i, _)| i > 0)
+                        .map(|(i, _)| &name[..i]),
+                )
+                .any(|n| sources.idx.ws.defines(n))
+        };
+        // One of q's own by the name the file gives it, and not by the
+        // context a loader put the file in: a bare `helper` in a file loaded
+        // under `\d .a` is `.a.helper`, and no name of q's (#2818).
+        if names.is_empty() || qs(&m.name) || names.iter().any(|name| defined(name)) {
             continue;
         }
         out.push(json!({

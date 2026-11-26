@@ -1,6 +1,7 @@
 // How the query history shows an entry: its row's label and its tooltip.
 // Free of any `vscode` import, so node tests it; `live.ts` is the VS Code
 // around it.
+import { contextSwitch } from "./statements";
 
 /// `text` as Markdown that shows it as written: every character Markdown
 /// could read as syntax is escaped.
@@ -95,9 +96,11 @@ export function clearedStamp(stored: unknown, at: string, now: Date): string | u
 
 /// A query's label: its first line that is not blank, without the CR of a
 /// CRLF file, cut to `LABEL_LIMIT` characters - never inside a surrogate
-/// pair, which would show a replacement character.
+/// pair, which would show a replacement character. The `\d` a query is
+/// kept behind is not the query: its label is the line after (#2915).
 export function historyLabel(code: string): string {
-  const first = code.split(/\r?\n/).find((line) => line.trim() !== "")?.trim() ?? "";
+  const lines = code.split(/\r?\n/).filter((line) => line.trim() !== "");
+  const first = (lines.length > 1 && contextSwitch(lines[0]) !== undefined ? lines[1] : (lines[0] ?? "")).trim();
   const chars = Array.from(first);
   return chars.length > LABEL_LIMIT ? `${chars.slice(0, LABEL_LIMIT - 1).join("")}…` : first;
 }
@@ -121,4 +124,15 @@ export function iconsEscaped(text: string): string {
 /// `]` and `(` leaves it text (#1306).
 export function plainMessage(text: string): string {
   return text.replace(/\]\(/g, "]\u200b(");
+}
+
+/// `text` as a test run's output terminal shows it as written (#2661): it
+/// wants CRLF line ends, and runs ESC and other control characters, so
+/// each line end becomes CRLF and every other C0 control but tab, and DEL, is shown
+/// as its Control Pictures symbol (ESC as U+241B).
+export function terminalText(text: string): string {
+  return text
+    .replace(/\r?\n/g, "\n")
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, (c) => String.fromCharCode(c === "\u007f" ? 0x2421 : 0x2400 + c.charCodeAt(0)))
+    .replace(/\n/g, "\r\n");
 }

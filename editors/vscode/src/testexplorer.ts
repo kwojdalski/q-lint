@@ -47,8 +47,8 @@ import {
 } from "vscode";
 import { open } from "node:fs/promises";
 import { isProduction } from "./agent";
-import { coverageByFile, coveragePlan, coverageSummary, definedNames, type CoveragePlan, type SourceFile } from "./coverage";
-import { DRIFT, DRIFT_BATCH, readDrift, type ProcessState } from "./definitions";
+import { coverageByFile, coveragePlan, coverageSummary, definedNames, neverCounted, uncountedNote, type CoveragePlan, type SourceFile } from "./coverage";
+import { DRIFT, DRIFT_BATCH, modulePathOf, readDrift, type ProcessState } from "./definitions";
 import { editorFeatureOff, editorFeatureOn, type EditorFeature, type Server } from "./editorfeatures";
 import { guardDeclined, installLambda, leftInstrumented, readInstalled, readRestored, restoreApart, restoreExpression, type Restored } from "./instrument";
 import type { Live } from "./live";
@@ -58,7 +58,6 @@ import { SNAPSHOT_EXTENSION, SNAPSHOT_RUN, SNAPSHOT_RUN_READ_ONLY, parseSnapshot
 import { statements } from "./statements";
 import {
   RERUN_FAILED,
-  TEST_RUN,
   failureText,
   functionTestId,
   isK4Test,
@@ -69,7 +68,7 @@ import {
   k4Statement,
   parseK4unit,
   readServerTests,
-  readTestResult,
+  runTest,
   splitMatch,
   testRunGuardCode,
   testStatements,
@@ -77,7 +76,7 @@ import {
   type ServerTest,
   type TestMode,
 } from "./testing";
-import { plainMessage } from "./history";
+import { plainMessage, terminalText } from "./history";
 
 export { RERUN_FAILED } from "./testing";
 export const TEST_CONTROLLER = "q-lint.tests";
@@ -470,7 +469,7 @@ class QTests {
     // Every call below goes to `process` and no other: a run does not
     // follow a connection made while it is under way (#1283).
     const covering = coverage ? await this.coverStart(run, process).catch((error: unknown) => {
-      run.appendOutput(`Coverage not counted: ${error instanceof Error ? error.message : String(error)}\r\n`);
+      run.appendOutput(`${terminalText(`Coverage not counted: ${error instanceof Error ? error.message : String(error)}`)}\r\n`);
       return undefined;
     }) : undefined;
     const outcome = (item: TestItem, state: TestOutcome["state"], message?: string): void => {
@@ -515,7 +514,7 @@ class QTests {
     };
     const send = (statements: string[], mode: TestMode) =>
       sending(() =>
-        this.live.runOnActive(testRunGuardCode(statements), async (connection) => readTestResult(await connection.call(TEST_RUN, statements, mode)), "ask", process.label, undefined, true),
+        this.live.runOnActive(testRunGuardCode(statements), (connection) => runTest(connection, statements, mode), "ask", process.label, undefined, true),
       );
     // A row whose minver is above the process's .z.K is not run, as KUltf
     // does not load it (#1594): asked once, when a row of the run has one.
@@ -531,7 +530,7 @@ class QTests {
       for (const row of rows) {
         const done = await send([k4Statement(row)], "run");
         if (done !== undefined && !done.value.passed) {
-          run.appendOutput(`${row.action} (line ${row.line + 1}) failed: ${done.value.text}\r\n`);
+          run.appendOutput(`${terminalText(`${row.action} (line ${row.line + 1}) failed: ${done.value.text}`)}\r\n`);
         }
       }
     };
@@ -661,7 +660,7 @@ class QTests {
       watches.forEach((w) => w?.dispose());
       if (covering !== undefined && !stopped) {
         await this.coverEnd(run, covering, process).catch((error: unknown) =>
-          run.appendOutput(`Coverage not read: ${error instanceof Error ? error.message : String(error)}\r\n`),
+          run.appendOutput(`${terminalText(`Coverage not read: ${error instanceof Error ? error.message : String(error)}`)}\r\n`),
         );
       }
       run.end();
@@ -731,7 +730,8 @@ class QTests {
     for (const uri of found) {
       try {
         const open = dirty.get(uri.toString());
-        out.push({ uri: uri.toString(), text: open !== undefined ? open.getText() : Buffer.from(await workspace.fs.readFile(uri)).toString("utf8") });
+        const text = open !== undefined ? open.getText() : Buffer.from(await workspace.fs.readFile(uri)).toString("utf8");
+        out.push({ uri: uri.toString(), text, path: modulePathOf(uri.fsPath, workspace.asRelativePath?.(uri, false)) });
       } catch {
         // Gone since it was listed.
       }
@@ -791,7 +791,7 @@ class QTests {
       }
       sent = plan.names;
       const statuses = readInstalled(await connection.call(install, plan.names, plan.was, plan.src, plan.probes.length), plan.names.length);
-      statuses.forEach((status, i) => status !== "ok" && run.appendOutput(`Not instrumented, ${plan.names[i]}: ${status}\r\n`));
+      statuses.forEach((status, i) => status !== "ok" && run.appendOutput(`${terminalText(`Not instrumented, ${plan.names[i]}: ${status}`)}\r\n`));
       return { plan, installed: new Set(plan.names.filter((_, i) => statuses[i] === "ok")) };
     }, "ask", label, undefined, true).catch(async (error: unknown) => {
       if (sent !== undefined) {
@@ -851,5 +851,9 @@ class QTests {
       });
     }
     run.appendOutput(`${coverageSummary(byFile, covering.installed.size)}\r\n`);
+    const uncounted = uncountedNote(neverCounted(covering.plan, done.d, covering.installed));
+    if (uncounted !== undefined) {
+      run.appendOutput(`${terminalText(uncounted)}\r\n`);
+    }
   }
 }

@@ -3,7 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const net = require("node:net");
-const { address, consoleSize, hostProblem, parseProcesses } = require("../out/processes.js");
+const { address, consoleSize, hostProblem, parseProcesses, plainHost } = require("../out/processes.js");
 const { readLive } = require("../out/liveconfig.js");
 
 // An IPv6 address was written `::1:5000`: the port read as part of the
@@ -134,6 +134,9 @@ test("an import that moves a process to another host or user forgets its passwor
   const reached = [p("t", "h1", "u"), p("s", "h1", "u"), p("x", "h1", "u")].map((q, i) => (i === 0 ? { ...q, tls: true } : i === 1 ? { ...q, ssh: "jump" } : q));
   assert.deepStrictEqual(passwordsToForget(reached, [p("t", "h1", "u"), p("s", "h1", "u"), { ...p("x", "h1", "u"), ssh: "other" }]), ["t", "s", "x"]);
   assert.deepStrictEqual(passwordsToForget(reached, reached), []);
+  // One host in another letter case, or with the root's dot, is not another (#3109).
+  const cased = [p("a", "RDB1.corp", "bob"), p("b", "rdb1.corp", "bob"), p("c", "rdb1.corp", "bob")];
+  assert.deepStrictEqual(passwordsToForget(cased, [p("a", "rdb1.corp", "bob"), p("b", "rdb1.corp.", "bob"), p("c", "rdb2.corp", "bob")]), ["c"]);
 });
 
 // Only the tunnel or TLS changed, the refusal named an address edit to the
@@ -211,4 +214,46 @@ test("a host that is none is skipped in a list read from elsewhere, and kept in 
   // And its row says so.
   assert.ok(processTooltip(stored.processes[0]).includes("\n\nnot a host (A host only: the port is asked for next\\.): Edit Process changes it\n\n"));
   assert.doesNotMatch(processTooltip({ label: "a", host: "h", port: 1, tags: [] }), /not a host/);
+});
+
+test("a key of a listed process written as it is not read is said, not left out in silence (#3110)", () => {
+  const read = parseProcesses(
+    [
+      { label: "a", host: "h", port: 1, timeout: "30", user: 1001, launch: "q tick.q", credentialCommand: ["vault"], evaluation: "plain", gateway: true },
+      { label: "b", host: "h", port: 2, timeout: 86401 },
+      // Left out, null or blank is none, and no problem; nor is what is read.
+      { label: "c", host: "h", port: 3, timeout: null, user: " ", launch: null, credentialCommand: "", evaluation: null, gateway: [] },
+      { label: "d", host: "h", port: 4, timeout: 30, user: "me", launch: {}, credentialCommand: "vault", evaluation: "Direct", gateway: "rdb hdb" },
+    ],
+    true,
+  );
+  assert.deepStrictEqual(read.processes, [
+    { label: "a", host: "h", port: 1, tags: [] },
+    { label: "b", host: "h", port: 2, tags: [], timeout: 86400 },
+    { label: "c", host: "h", port: 3, tags: [] },
+    { label: "d", host: "h", port: 4, user: "me", tags: [], gateway: ["rdb", "hdb"], launch: {}, credentialCommand: "vault", timeout: 30, evaluation: "direct" },
+  ]);
+  assert.deepStrictEqual(read.problems, [
+    "Entry 1 (a): user is 1001, not text, so it was not read.",
+    "Entry 1 (a): gateway is true, not server types, a list or a string of names, so it was not read.",
+    'Entry 1 (a): launch is "q tick.q", not a launch definition, an object, so it was not read.',
+    'Entry 1 (a): credentialCommand is ["vault"], not a command, as text, so it was not read.',
+    'Entry 1 (a): timeout is "30", not a number of seconds above 0, so it was not read.',
+    'Entry 1 (a): evaluation is "plain", not "wrapped" or "direct", so it was not read.',
+    "Entry 2 (b): timeout is 86401, not a day or less, so 86400 was read.",
+  ]);
+  // A list that may run nothing is not told of what it would not read anyway.
+  assert.deepStrictEqual(parseProcesses([{ label: "a", host: "h", port: 1, launch: "q", credentialCommand: 1 }]).problems, []);
+});
+
+test("a host name with letters outside ASCII is taken, and kept as it is looked up (#3120)", () => {
+  assert.strictEqual(hostProblem("münchen.example"), undefined);
+  assert.strictEqual(hostProblem(" 日本語.jp "), undefined);
+  assert.deepStrictEqual(["münchen.example", "MÜNCHEN.Example.", "日本語.jp", "rdb.example"].map(plainHost), ["xn--mnchen-3ya.example", "xn--mnchen-3ya.example.", "xn--wgv71a119e.jp", "rdb.example"]);
+  assert.deepStrictEqual(parseProcesses([{ label: "a", host: "münchen.example", port: 1 }]), { processes: [{ label: "a", host: "xn--mnchen-3ya.example", port: 1, tags: [] }], problems: [] });
+  // Not what only starts as a name: nothing of it is cut off to make one.
+  for (const bad of ["mün chen", "ü/x", "ü#1", "ü:5000", "me@ü", "ü,x"]) {
+    assert.ok(hostProblem(bad) !== undefined, bad);
+    assert.strictEqual(plainHost(bad), bad);
+  }
 });

@@ -141,6 +141,65 @@ def test_lsp_server_modes(tmp_path, mode, exit_code):
         assert not result.stdout
 
 
+@pytest.mark.parametrize("mode", ["normal", "utf-8", "utf-16", "utf-32"])
+def test_qls_positions_are_read_in_the_encoding_the_server_counts_in(tmp_path, mode):
+    """A qls column was passed through as the server counted it (#2870).
+
+    qls names no encoding and counts bytes, so every column after a
+    character past ASCII was off, and by a BOM's three bytes on line 1. A
+    finding's column counts UTF-16 units, whatever the server counts.
+    """
+    server = tmp_path / "fake qls"
+    server.write_text(f"#!{sys.executable}\nMODE={mode!r}\n" + SERVER)
+    server.chmod(0o755)
+    qls = ("--backend", "qls", "--qls-executable", server, "--qls-timeout", "5", "--format", "json")
+    for source, column in [
+        ("a:1;WIDE", 5),
+        # `a:"` 3, the emoji 2 UTF-16 units, `é` 1, `";` 2.
+        ('a:"\U0001f600\u00e9";WIDE', 9),
+        # A BOM is no column to an editor, nor here.
+        ("\ufeffa:1;WIDE", 5),
+    ]:
+        result = run("-", *qls, source=source)
+        assert result.returncode == 1, result.stderr
+        finding = json.loads(result.stdout)[0]
+        assert (finding["line"], finding["column"], finding["end_column"]) == (
+            1,
+            column,
+            column + 4,
+        ), (mode, source)
+
+
+@pytest.mark.parametrize("mode", ["missing", "crash", "silent"])
+def test_backend_all_reports_the_builtin_findings_when_qls_fails(tmp_path, mode):
+    """A qls that is missing, crashing or slow ended the run with nothing shown.
+
+    The builtin findings were already computed, and under `--fix` the files
+    already rewritten (#2871).
+    """
+    server = tmp_path / "fake qls"
+    if mode != "missing":
+        server.write_text(f"#!{sys.executable}\nMODE={mode!r}\n" + SERVER)
+        server.chmod(0o755)
+    bad = tmp_path / "bad.q"
+    bad.write_text("f:{[x;y] x==y}\n")
+    qls = ("--isolated", "--backend", "all", "--qls-executable", server, "--qls-timeout", "0.5")
+    result = run(*qls, "--format", "json", bad)
+    assert result.returncode == 2, result.stderr
+    assert [f["code"] for f in json.loads(result.stdout)] == ["QE004"]
+    assert "reporting the builtin findings only" in result.stderr
+    baseline = tmp_path / "baseline.json"
+    result = run(*qls, "--write-baseline", baseline, bad)
+    assert result.returncode == 2 and not baseline.exists(), result.stderr
+    assert "qls reported nothing; no baseline written" in result.stderr
+    if mode == "missing":
+        # Asked before anything is written, so nothing is.
+        result = run(*qls, "--fix", bad)
+        assert result.returncode == 2, result.stderr
+        assert "Cannot start qls" in result.stderr and "nothing fixed" in result.stderr
+        assert bad.read_text() == "f:{[x;y] x==y}\n"
+
+
 @pytest.mark.skipif(not os.environ.get("Q_LINT_TEST_QLS"), reason="Optional real qls")
 def test_real_qls():
     result = run(
@@ -155,6 +214,62 @@ def test_real_qls():
     )
     assert result.returncode in (0, 1), result.stderr
     assert isinstance(json.loads(result.stdout), list)
+
+
+def test_qls_findings_are_baselined_and_take_a_severity(tmp_path):
+    """The configuration has the say over a qls finding it has over its own.
+
+    qls's findings joined the run after the baseline and `[severity]` had
+    been applied: `--write-baseline` wrote them and `--baseline` never took
+    them back, so each returned as new and failed the run (#2754), and a
+    severity for QLS001 was read and did nothing (#2755).
+    """
+    server = tmp_path / "fake qls"
+    server.write_text(f"#!{sys.executable}\nMODE='normal'\n" + SERVER)
+    server.chmod(0o755)
+    (tmp_path / "a.q").write_text("x:1\nBAD:2\n")
+    (tmp_path / "b.q").write_text("y:1\n")
+
+    def qls(*args, backend="all"):
+        result = run(
+            *args,
+            "--backend",
+            backend,
+            "--qls-executable",
+            server,
+            "--format",
+            "json",
+            "a.q",
+            "b.q",
+            cwd=tmp_path,
+        )
+        found = [(f["code"], f["severity"], f["line"]) for f in json.loads(result.stdout or "[]")]
+        return result.returncode, found, result.stderr
+
+    assert qls("--isolated") == (1, [("QLS001", "warning", 2)], "")
+    code, found, stderr = qls("--isolated", "--write-baseline", "base.json")
+    assert (code, found) == (0, []), stderr
+    assert "wrote 1 finding(s) in 1 file(s)" in stderr
+    assert '"code":"QLS001"' in (tmp_path / "base.json").read_text()
+    for backend in ("all", "qls"):
+        code, found, stderr = qls("--isolated", "--baseline", "base.json", backend=backend)
+        assert (code, found) == (0, []), (backend, stderr)
+        assert "1 finding(s) in the baseline not shown" in stderr, backend
+    # One more than the baseline holds is new, as it is for a built-in rule.
+    (tmp_path / "b.q").write_text("y:1\nBAD:3\n")
+    code, found, _ = qls("--isolated", "--baseline", "base.json")
+    assert (code, found) == (1, [("QLS001", "warning", 2)])
+    (tmp_path / "b.q").write_text("y:1\n")
+
+    (tmp_path / "qlinter.toml").write_text('[severity]\nQLS001 = "hint"\n')
+    for backend in ("all", "qls"):
+        assert qls(backend=backend) == (0, [("QLS001", "hint", 2)], ""), backend
+    (tmp_path / "qlinter.toml").write_text('[severity]\nQLS = "error"\n')
+    assert qls() == (1, [("QLS001", "error", 2)], "")
+    # A baseline named in the configuration is the one in force for them too.
+    (tmp_path / "qlinter.toml").write_text('baseline = "base.json"\n')
+    code, found, _ = qls()
+    assert (code, found) == (0, [])
 
 
 def test_only_q_files_are_linted_however_the_path_arrives(tmp_path):

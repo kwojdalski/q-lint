@@ -407,6 +407,20 @@ test("defined on connect to a process the guard lets through", async (t) => {
   assert.match(q.queries[0], /^\.qlint\.grid:/);
 });
 
+// The definition took the connection the moment it opened, so the query
+// that had connected - a Run with no process connected yet - was refused
+// with "a query is still running", of a query nobody ran.
+test("the query that connects runs after the definition made on connect, not refused for it (#3027)", async (t) => {
+  const { q, live } = await setUp(t, { config: { "view.defineOnConnect": true } });
+  stub.picks.push((options) => options.items[0]);
+  await live.run("40+2");
+  assert.strictEqual(q.queries.length, 2);
+  assert.match(q.queries[0], /^\.qlint\.grid:/);
+  assert.strictEqual(q.queries[1], "40+2");
+  assert.ok(!said(/a query is still running/), JSON.stringify(stub.messages));
+  assert.deepStrictEqual(live.history().map((e) => [e.code, e.outcome]), [["40+2", "ok"]]);
+});
+
 test("not defined on connect while the setting is off, its default", async (t) => {
   const { q, live } = await setUp(t);
   assert.ok(await live.connectTo("dev"));

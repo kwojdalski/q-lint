@@ -527,6 +527,54 @@ test("an unanswered heartbeat shows as no answer after 5 s, and its wait counts 
   assert.ok(seconds() >= first + 2, `${first} then ${live.api().statusText()}`);
 });
 
+// A network gone with no FIN or RST left the socket open: the heartbeat
+// showed "no answer" for ever, and the automatic reconnect never began.
+test("a heartbeat unanswered three beats on closes the connection of a host that takes none, and keeps a busy process's (#3031)", async (t) => {
+  const a = await fakeQ((sent) => (sent === "::" ? undefined : 1));
+  t.after(() => a.close());
+  // The heartbeat's seconds are the fake clock's.
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  t.after(() => t.mock.timers.reset());
+  const { live } = await setUp(t, [proc("a", a.port)], { "connection.heartbeat.enable": true, "connection.heartbeatInterval": 1 });
+  await live.connectTo("a");
+  await until(() => a.sent.includes("::"));
+  const connect = net.connect;
+  const asked = [];
+  let gone = false;
+  net.connect = (...args) => {
+    // The network gone, its host is one no connection reaches.
+    const socket = gone ? new net.Socket() : connect(...args);
+    if (gone) {
+      setImmediate(() => socket.destroy(new Error("connect EHOSTUNREACH")));
+    }
+    asked.push(new Promise((resolve) => socket.once("close", resolve)));
+    return socket;
+  };
+  t.after(() => (net.connect = connect));
+  stub.messages.length = 0;
+  const beats = async (n) => {
+    for (let i = 0; i < n; i++) {
+      t.mock.timers.tick(1000);
+      await sleep(5);
+    }
+  };
+  // A busy process: its host takes a connection, and it keeps its own.
+  await beats(2);
+  assert.strictEqual(asked.length, 0, "its host was asked before the third beat");
+  await beats(1);
+  assert.strictEqual(asked.length, 1);
+  await asked[0];
+  await sleep(20);
+  assert.strictEqual(live.activeLabel(), "a");
+  assert.deepStrictEqual(stub.messages, []);
+  assert.strictEqual(a.logins.length, 1, "asking the host logged in to the process");
+  gone = true;
+  await beats(3);
+  assert.strictEqual(asked.length, 2);
+  await until(() => live.activeLabel() === undefined);
+  assert.deepStrictEqual(stub.messages, [["warning", "q-lint: the connection to a closed."]]);
+});
+
 // Between an auto-reconnect's tries nothing was connecting, so a query
 // asked which process to connect to, and the pick ended the reconnect (#2132).
 test("a query run between an auto-reconnect's tries waits for it, and runs on the process reconnected to (#2132)", async (t) => {
@@ -617,4 +665,526 @@ test("Disconnect while a query runs stops it at once: nothing shown, recorded as
   assert.strictEqual(live.activeLabel(), undefined);
   assert.strictEqual(live.history()[0].code, "slowone");
   assert.strictEqual(live.history()[0].outcome, "aborted");
+});
+
+// A file bound to another process could not send its code while the Process
+// Explorer's read - or any background read - was out on the connection: "a
+// query is still running", of a read Abort does not call one. Only a query
+// holds the connection where it is (#3039).
+test("a file bound elsewhere connects there while a background read is out, and is refused only by a query (#3039)", async (t) => {
+  const dev = await fakeQ(() => undefined);
+  const hdb = await fakeQ(() => undefined);
+  t.after(() => (dev.close(), hdb.close()));
+  const { live, context } = await setUp(t, [proc("dev", dev.port), proc("hdb", hdb.port)]);
+  const bindings = { "file:///hdb.q": "hdb", "file:///dev.q": "dev" };
+  context.workspaceState.get = (key, fallback) => (key === "q-lint.fileConnections" ? bindings : fallback);
+  assert.strictEqual(await live.connectTo("dev"), true);
+  const read = live.borrow((connection) => connection.evaluate("tables[]"), "the Process Explorer's read");
+  read.catch(() => {});
+  assert.strictEqual(live.isBusy(), true);
+  assert.strictEqual(live.queryRunning(), false);
+  stub.messages = [];
+  assert.strictEqual(await live.toFileBinding(vscode.Uri.file("/hdb.q")), true);
+  assert.strictEqual(live.activeLabel(), "hdb");
+  assert.deepStrictEqual(stub.messages, []);
+  // A query is the user's to wait for: the connection stays.
+  const running = live.run("slowone");
+  await until(() => live.isBusy());
+  assert.strictEqual(live.queryRunning(), true);
+  assert.strictEqual(await live.toFileBinding(vscode.Uri.file("/dev.q")), false);
+  assert.strictEqual(live.activeLabel(), "hdb");
+  assert.deepStrictEqual(stub.messages, [["info", "q-lint: a query is still running on hdb; this file's code goes to dev. q-lint: Abort Current Query stops waiting for it."]]);
+  await stub.commands.get("q-lint.disconnectProcess")();
+  await running;
+});
+
+// Load more sent its page straight on the connection: a query run while it
+// was out was refused ("a query is still running", of none), and a page asked
+// for during the Process Explorer's read was put off as if a query ran. It is
+// a background read like theirs, taking its turn (#3017).
+test("Load more takes its turn with background reads, and a query sent meanwhile waits for it (#3017)", async (t) => {
+  const page = { count: 5, names: ["c"], types: [7], cells: [["3", "4"]], raw: [[3, 4]], rank: [[0, 1]] };
+  let answerRead;
+  const a = await fakeQ((message) => {
+    const text = JSON.stringify(message);
+    if (text.includes("slowread")) {
+      return new Promise((resolve) => (answerRead = () => resolve(1)));
+    }
+    if (text.includes("token")) {
+      return new Promise((resolve) => setTimeout(() => resolve(page), 150));
+    }
+    return { ok: true, type: -7, text: ["2"] };
+  });
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)]);
+  await live.connectTo("a");
+  // Asked for while another read is out: it waits, not "a query is running".
+  const read = live.borrow((connection) => connection.evaluate("slowread"), "the Process Explorer's read");
+  const more = live.pageHeld("a", 100, 2, "token");
+  await sleep(50);
+  answerRead();
+  await read;
+  // A query sent while the page is out waits for it, and runs.
+  stub.messages = [];
+  await sleep(20);
+  assert.strictEqual(live.isBusy(), true, "the page is out");
+  await live.run("1+1");
+  assert.deepStrictEqual((await more).cells, [["3", "4"]]);
+  assert.deepStrictEqual(stub.messages, []);
+  assert.deepStrictEqual(live.history().map((e) => [e.code, e.outcome]), [["1+1", "ok"]]);
+});
+
+// A watched query's run was a query like any other: a cell, a test or a
+// query from the editor sent while one was out was refused with "a query is
+// still running", of a query the user never ran - a Run All stopped midway
+// through, every interval. It waits for the run, as for a background read.
+test("a query sent while a watched query's run is out waits for that run (#3029)", async (t) => {
+  const answer = { ok: true, type: -7, text: ["2"] };
+  let answerWatch;
+  const a = await fakeQ((message) => (JSON.stringify(message).includes("watchme") ? new Promise((resolve) => (answerWatch = () => resolve(answer))) : answer));
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)], { "query.watch.enable": true });
+  await live.connectTo("a");
+  const watching = stub.commands.get("q-lint.watchQuery")("watchme", 1);
+  await until(() => answerWatch !== undefined);
+  stub.messages = [];
+  const cell = live.runOnActive("1+1", (connection) => connection.query(["1+1"], [25, 80]));
+  await sleep(50);
+  assert.ok(!a.sent.some((message) => JSON.stringify(message).includes("1+1")), "the cell is not sent while the run is out");
+  answerWatch();
+  assert.strictEqual((await cell)?.process, "a");
+  assert.deepStrictEqual(stub.messages, []);
+  await watching;
+  await stub.commands.get("q-lint.stopWatchingQuery")();
+});
+
+// A query run with no connection connects first, and that connect was
+// nobody's wait: no timeout ended it, the bar said "not connected", and
+// Abort said no query was running while one waited to be sent.
+test("the connect a query starts is its wait: shown waiting, stopped by Abort, ended at q-lint.query.timeout (#3019)", async (t) => {
+  const a = await fakeQ(() => 1, 1500);
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)], { "query.timeout": 1 });
+  stub.picks.push((options) => options.items[0]);
+  let started = Date.now();
+  const first = live.run("1+1");
+  await until(() => a.logins.length === 1);
+  assert.match(live.api().statusText(), /a waiting/);
+  await stub.commands.get("q-lint.abortQuery")();
+  await first;
+  assert.ok(Date.now() - started < 900, `settled after ${Date.now() - started} ms`);
+  assert.deepStrictEqual(stub.messages, [["info", "q-lint: stopped the query waiting to be sent to a; it was not run."]]);
+  assert.doesNotMatch(live.api().statusText(), /waiting/);
+  // A file's bound process, connected to for its query, as well.
+  stub.messages.length = 0;
+  started = Date.now();
+  await live.runOnProcess("2+2", "a", { what: "query" });
+  assert.ok(Date.now() - started < 1400, `settled after ${Date.now() - started} ms`);
+  assert.deepStrictEqual(stub.messages, [["info", "q-lint: the query timed out after 1 s (q-lint.query.timeout) waiting to be sent to a; it was not run."]]);
+  assert.strictEqual(live.activeLabel(), undefined, "the connect was stopped with the query");
+  await sleep(50);
+  assert.deepStrictEqual(live.history(), []);
+});
+
+// A query that waited for a connect went on, when the connect ended with
+// no connection, to ask "Connect to which q process?": of a user who had
+// pressed Disconnect, or had just been told the connect failed.
+test("a query that waited for a connect that was disconnected, or failed, is not run and asks for no process (#3015)", async (t) => {
+  const a = await fakeQ(() => 1, 1500);
+  t.after(() => a.close());
+  // A process that closes every connection before the handshake.
+  const refusing = net.createServer((socket) => socket.on("data", () => setTimeout(() => socket.destroy(), 100)).on("error", () => {}));
+  await new Promise((r) => refusing.listen(0, "127.0.0.1", r));
+  t.after(() => refusing.close());
+  const { live } = await setUp(t, [proc("a", a.port), proc("b", refusing.address().port)]);
+  const asked = [];
+  const pick = vscode.window.showQuickPick;
+  vscode.window.showQuickPick = async (_items, options) => void asked.push(options?.title);
+  t.after(() => (vscode.window.showQuickPick = pick));
+  const connect = live.connectTo("a");
+  await until(() => a.logins.length === 1);
+  const first = live.run("1+1");
+  await sleep(50);
+  await stub.commands.get("q-lint.disconnectProcess")();
+  assert.strictEqual(await connect, false);
+  await first;
+  assert.deepStrictEqual(stub.messages, [["info", "q-lint: the connect to a did not complete; the query was not run."]]);
+  stub.messages.length = 0;
+  const refused = live.connectTo("b");
+  await sleep(30);
+  const second = live.run("2+2");
+  assert.strictEqual(await refused, false);
+  await second;
+  assert.deepStrictEqual(stub.messages.map(([, m]) => m.replace(/\(.*$/, "")), ["q-lint: could not connect to b ", "q-lint: the connect to b did not complete; the query was not run."]);
+  assert.deepStrictEqual(asked, []);
+  assert.deepStrictEqual(live.history(), []);
+});
+
+// The line a Run Line runs from was kept in one field until `run` took it,
+// after the connect a bound file's first query makes: a second Run Line
+// during that connect put its line there, and the first query's result was
+// drawn beside the second line.
+test("two Run Lines during a bound file's connect each draw their result at their own line (#3022)", async (t) => {
+  const a = await fakeQ((sent) => ({ ok: true, type: -7, text: [JSON.stringify(sent).includes("10*10") ? "100" : "2"] }), 300);
+  t.after(() => a.close());
+  const { context, live } = await setUp(t, [proc("a", a.port)]);
+  const lines = ["1+1", "10*10"];
+  const uri = vscode.Uri.file("/w/bound.q");
+  context.workspaceState.get = (key, fallback) => (key === "q-lint.fileConnections" ? { [uri.toString()]: "a" } : fallback);
+  const editor = {
+    document: { uri, version: 1, languageId: "q", lineAt: (line) => ({ text: lines[line] }), getText: () => lines.join("\n") },
+    selection: { active: { line: 0 }, isEmpty: true },
+  };
+  vscode.window.activeTextEditor = editor;
+  t.after(() => (vscode.window.activeTextEditor = undefined));
+  const answers = [];
+  live.onDidAnswer((answered) => answers.push([answered.line, answered.answer.text]));
+  const first = stub.commands.get("q-lint.queryCurrentLine")();
+  await until(() => a.logins.length === 1);
+  editor.selection = { active: { line: 1 }, isEmpty: true };
+  const second = stub.commands.get("q-lint.queryCurrentLine")();
+  await Promise.all([first, second]);
+  assert.deepStrictEqual(answers[0], [0, ["2"]], JSON.stringify(answers));
+  assert.ok(answers.every(([line, text]) => (line === 0) === (text[0] === "2")), JSON.stringify(answers));
+});
+
+// During a connect, and during Abort's reconnect - which waits, perhaps for
+// minutes, until the process is free - the bar said "not connected" and the
+// process's environment colour went, while a query sent then is sent there.
+test("the status bar says a connect and Abort's reconnect are under way, and the environment colour stays through the reconnect (#3018)", async (t) => {
+  const { EnvironmentColour } = require("../out/envcolourview.js");
+  let delay = 300;
+  const a = await fakeQ((sent) => (JSON.stringify(sent).includes("slow") ? undefined : 1), () => delay);
+  t.after(() => a.close());
+  const { context, live } = await setUp(t, [proc("a", a.port, { tags: ["prod"] })], { "processes.environmentColor.enable": true });
+  const items = [];
+  const create = vscode.window.createStatusBarItem;
+  vscode.window.createStatusBarItem = (id, ...rest) => {
+    const item = { ...create(id, ...rest), id, shown: false, show() { this.shown = true; }, hide() { this.shown = false; }, dispose() {} };
+    items.push(item);
+    return item;
+  };
+  t.after(() => (vscode.window.createStatusBarItem = create));
+  new EnvironmentColour(context, live);
+  const colour = () => items.find((item) => item.id === "q-lint.environment");
+  const connect = live.connectTo("a");
+  await until(() => a.logins.length === 1);
+  assert.strictEqual(live.api().statusText(), "$(sync~spin) q: connecting to a");
+  assert.strictEqual(await connect, true);
+  assert.strictEqual(live.api().statusText(), "$(plug) q: a");
+  assert.strictEqual(colour().shown, true);
+  const slow = live.run("slow");
+  await until(() => live.isBusy());
+  delay = 400;
+  await stub.commands.get("q-lint.abortQuery")();
+  await slow;
+  assert.strictEqual(live.api().statusText(), "$(sync~spin) q: reconnecting to a");
+  assert.strictEqual(colour().shown, true, "the colour of the process the next query goes to");
+  assert.match(colour().tooltip, /^Reconnecting to a, tagged prod/);
+  await until(() => live.activeLabel() === "a");
+  assert.strictEqual(live.api().statusText(), "$(plug) q: a");
+  assert.match(colour().tooltip, /^Connected to a, tagged prod/);
+  // Stopped by Disconnect, neither stays.
+  const again = live.run("slow");
+  await until(() => live.isBusy());
+  await stub.commands.get("q-lint.abortQuery")();
+  await again;
+  assert.strictEqual(colour().shown, true);
+  await stub.commands.get("q-lint.disconnectProcess")();
+  assert.strictEqual(colour().shown, false);
+  await until(() => live.api().statusText() === "$(debug-disconnect) q: not connected", 1000);
+  assert.strictEqual(live.api().statusText(), "$(debug-disconnect) q: not connected");
+});
+
+// After Disconnect the process last connected to was still taken for the one
+// a waiting query goes to, and for the one a connect under way is to: the
+// wait was timed by its timeout and said its name, and Stop Process on it
+// stopped the connect to another.
+test("a connect after Disconnect has nothing of the process disconnected from: not its timeout, its name, or its Stop Process (#3038)", async (t) => {
+  const dev = await fakeQ(() => 1);
+  const hdb = await fakeQ(() => ({ ok: true, type: -7, text: ["4"] }), 1300);
+  t.after(() => (dev.close(), hdb.close()));
+  const { live } = await setUp(t, [proc("dev", dev.port, { timeout: 1 }), proc("hdb", hdb.port)]);
+  assert.strictEqual(await live.connectTo("dev"), true);
+  await stub.commands.get("q-lint.disconnectProcess")();
+  stub.messages.length = 0;
+  const connect = live.connectTo("hdb");
+  await until(() => hdb.logins.length === 1);
+  const stopped = live.run("1+1");
+  await sleep(50);
+  await stub.commands.get("q-lint.abortQuery")();
+  await stopped;
+  assert.deepStrictEqual(stub.messages, [["info", "q-lint: stopped the query waiting to be sent to hdb; it was not run."]]);
+  stub.messages.length = 0;
+  // Longer than dev's timeout, and the query is sent to hdb all the same.
+  const run = live.run("2+2");
+  await live.stopping("dev", dev.port);
+  assert.strictEqual(await connect, true, "Stop Process on dev left the connect to hdb");
+  await run;
+  assert.deepStrictEqual(stub.messages, []);
+  assert.deepStrictEqual(live.history().map((e) => [e.process, e.code, e.outcome]), [["hdb", "2+2", "ok"]]);
+});
+
+// The status bar's item runs Connect ("Click to switch"): picking the
+// process already connected there closed the connection and opened it
+// again, and the query running on it was recorded as aborted.
+test("picking the connected process from Connect's list keeps the connection and the query running on it (#3030)", async (t) => {
+  let answer;
+  const a = await fakeQ((sent) => (JSON.stringify(sent).includes("slow") ? new Promise((resolve) => (answer = resolve)) : 1));
+  t.after(() => a.close());
+  const { live, events } = await setUp(t, [proc("a", a.port), proc("b", a.port)]);
+  assert.strictEqual(await live.connectTo("a"), true);
+  const slow = live.run("slow");
+  await until(() => answer !== undefined);
+  stub.picks.push((options) => options.items.find((item) => item.label === "a"));
+  await stub.commands.get(live.status.command)();
+  assert.strictEqual(a.logins.length, 1, "connected once");
+  answer({ ok: true, type: -7, text: ["42"] });
+  await slow;
+  assert.deepStrictEqual(live.history().map((e) => [e.code, e.outcome]), [["slow", "ok"]]);
+  assert.deepStrictEqual(events, ["connected", "queried"]);
+  assert.deepStrictEqual(stub.messages, [["info", "q-lint: already connected to a."]]);
+});
+
+// Connect stopped an automatic reconnect as soon as a process was chosen,
+// before a discovered process's password was asked for: Escape there
+// connected nowhere and left the dropped process disconnected for good.
+test("Escape at a discovered process's password box leaves the automatic reconnect under way (#3028)", async (t) => {
+  const a = await fakeQ(() => 1);
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)], { "connection.autoReconnect.enable": true });
+  live.discovery.discovered = () => [{ server: { label: "disc", url: "http://x" }, state: { processes: [proc("rdb", a.port, { user: "u" })], problems: [], loading: false } }];
+  assert.strictEqual(await live.connectTo("a"), true);
+  a.drop();
+  await until(() => /reconnecting to a/.test(live.api().statusText()));
+  stub.inputs.push(undefined);
+  assert.strictEqual(await live.connectTo("disc/rdb"), false);
+  assert.match(live.api().statusText(), /reconnecting to a/);
+  await until(() => live.activeLabel() === "a", 3000);
+  assert.strictEqual(live.activeLabel(), "a");
+});
+
+// A reconnect to a process from a discovery server dialed the address it
+// had at the first connect: one restarted on another port, which its server
+// now lists, was never reconnected to.
+test("a reconnect to a discovered process dials the address its server lists now (#3021)", async (t) => {
+  let answer;
+  const old = await fakeQ(() => 1);
+  const moved = await fakeQ((sent) => (JSON.stringify(sent).includes("slow") ? new Promise((resolve) => (answer = resolve)) : 1));
+  const again = await fakeQ(() => 1);
+  t.after(() => (old.close(), moved.close(), again.close()));
+  const { live } = await setUp(t, [], { "connection.autoReconnect.enable": true });
+  let listed = [proc("rdb", old.port)];
+  live.discovery.discovered = () => [{ server: { label: "disc", url: "http://x" }, state: { processes: listed, problems: [], loading: false } }];
+  assert.strictEqual(await live.connectTo("disc/rdb"), true);
+  listed = [proc("rdb", moved.port)];
+  old.drop();
+  await until(() => live.activeLabel() === undefined);
+  await until(() => live.activeLabel() === "disc/rdb", 3000);
+  assert.deepStrictEqual([live.activeProcess()?.port, moved.logins.length], [moved.port, 1]);
+  // Abort's reconnect too.
+  const slow = live.run("slow");
+  await until(() => answer !== undefined);
+  listed = [proc("rdb", again.port)];
+  await stub.commands.get("q-lint.abortQuery")();
+  await slow;
+  await until(() => live.activeLabel() === "disc/rdb");
+  assert.deepStrictEqual([live.activeProcess()?.port, again.logins.length], [again.port, 1]);
+});
+
+/// A context whose workspace state is kept, as a window's is.
+function keeping(context) {
+  const kept = new Map();
+  context.workspaceState = { get: (k, d) => (kept.has(k) ? kept.get(k) : d), update: async (k, v) => void kept.set(k, v), keys: () => [...kept.keys()] };
+  return context;
+}
+
+/// What another window's rename of the saved process `from` to `to`, or its
+/// deletion (`to` undefined), leaves in the state every window shares.
+async function elsewhere(context, from, to) {
+  const saved = context.globalState.get("q-lint.processes");
+  await context.globalState.update("q-lint.processes", to === undefined ? saved.filter((p) => p.label !== from) : saved.map((p) => (p.label === from ? { ...p, label: to } : p)));
+  const log = context.globalState.get("q-lint.processRelabels", []);
+  await context.globalState.update("q-lint.processRelabels", [...log, { n: log.length + 1, from, to: to ?? null }]);
+}
+
+// The process was renamed in another window: the reconnect after a drop
+// found no saved process of the old label and ended without a word, the
+// status bar going to "not connected" after "Reconnecting.".
+test("an automatic reconnect follows a rename made in another window, and says why it stops when the process was deleted there (#3036)", async (t) => {
+  const a = await fakeQ(() => ({ ok: true, type: -7, text: ["2"] }));
+  t.after(() => a.close());
+  const { context, live } = await setUp(t, [proc("rdb", a.port)], { "connection.autoReconnect.enable": true });
+  keeping(context);
+  assert.strictEqual(await live.connectTo("rdb"), true);
+  await elsewhere(context, "rdb", "rdb-eu");
+  a.drop();
+  await until(() => live.activeLabel() === undefined);
+  await until(() => live.activeLabel() !== undefined, 3000);
+  assert.strictEqual(live.activeLabel(), "rdb-eu");
+  assert.deepStrictEqual(stub.messages.map((m) => m[1]), ["q-lint: the connection to rdb closed. Reconnecting.", "q-lint: reconnected to rdb-eu."]);
+  // Answered, the connection held: the next reconnect's tries start again.
+  await live.run("1+1");
+  stub.messages.length = 0;
+  await elsewhere(context, "rdb-eu", undefined);
+  a.drop();
+  await until(() => stub.messages.length === 2, 3000);
+  assert.deepStrictEqual(stub.messages, [
+    ["warning", "q-lint: the connection to rdb-eu closed. Reconnecting."],
+    ["warning", "q-lint: stopped reconnecting to rdb-eu: it is no longer in the process list."],
+  ]);
+  assert.strictEqual(live.api().statusText(), "$(debug-disconnect) q: not connected");
+});
+
+// The log of renames (#1749) was read only when a workspace opened: a file
+// bound to a process another window then renamed stayed bound to the old
+// label, and every Run Line in it failed until a reload.
+test("a file bound to a process renamed in another window runs on it under its new label, without a reload (#3035)", async (t) => {
+  const a = await fakeQ(() => ({ ok: true, type: -7, text: ["2"] }));
+  t.after(() => a.close());
+  stub.reset();
+  let focus;
+  vscode.window.onDidChangeWindowState = (listener) => ((focus = listener), new vscode.Disposable(() => {}));
+  t.after(() => delete vscode.window.onDidChangeWindowState);
+  const context = keeping(stub.newContext());
+  await context.globalState.update("q-lint.processes", [proc("rdb", a.port), proc("hdb", a.port)]);
+  const report = vscode.Uri.file("/w/report.q");
+  const eod = vscode.Uri.file("/w/eod.q");
+  await context.workspaceState.update("q-lint.fileConnections", { [report.toString()]: "rdb", [eod.toString()]: "hdb" });
+  const live = new Live(context);
+  t.after(async () => {
+    await stub.commands.get("q-lint.disconnectProcess")?.();
+    for (const d of context.subscriptions) d.dispose?.();
+  });
+  await sleep(10);
+  await elsewhere(context, "rdb", "rdb-eu");
+  vscode.window.activeTextEditor = {
+    document: { uri: report, version: 1, languageId: "q", lineAt: () => ({ text: "1+1" }), getText: () => "1+1" },
+    selection: { active: { line: 0 }, isEmpty: true },
+  };
+  t.after(() => (vscode.window.activeTextEditor = undefined));
+  await stub.commands.get("q-lint.queryCurrentLine")();
+  assert.deepStrictEqual(stub.messages, []);
+  assert.deepStrictEqual([live.fileBinding(report), live.activeLabel()], ["rdb-eu", "rdb-eu"]);
+  assert.deepStrictEqual(live.history().map((e) => [e.process, e.code, e.outcome]), [["rdb-eu", "1+1", "ok"]]);
+  // And when the window is come back to, before anything is run in it.
+  await elsewhere(context, "hdb", "hdb-eu");
+  focus({ focused: true });
+  await sleep(10);
+  assert.strictEqual(live.fileBinding(eod), "hdb-eu");
+});
+
+// A host that takes no connection was read as a process busy with the
+// query it was left with: Abort's reconnect dialed it again every 10 s
+// without end, and without a word.
+test("Abort's reconnect gives up, saying why, on a host that takes no connection (#3032)", async (t) => {
+  const a = await fakeQ((sent) => (JSON.stringify(sent).includes("slow") ? undefined : 1));
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)]);
+  assert.strictEqual(await live.connectTo("a"), true);
+  const slow = live.run("slow");
+  await until(() => a.sent.some((sent) => JSON.stringify(sent).includes("slow")));
+  // The network goes: a SYN nothing answers is a socket that never connects.
+  const connect = net.connect;
+  let dials = 0;
+  net.connect = () => (dials++, new net.Socket());
+  t.after(() => (net.connect = connect));
+  const turn = async () => {
+    for (let i = 0; i < 5; i++) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  };
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  t.after(() => t.mock.timers.reset());
+  await stub.commands.get("q-lint.abortQuery")();
+  await slow;
+  stub.messages.length = 0;
+  for (let i = 0; i < 3; i++) {
+    await turn();
+    t.mock.timers.tick(10_000);
+  }
+  await turn();
+  t.mock.timers.reset();
+  assert.strictEqual(dials, 1);
+  assert.deepStrictEqual(stub.messages, [["error", `q-lint: could not connect to a (127.0.0.1:${a.port}): 127.0.0.1:${a.port} could not be reached in 10 s`]]);
+  assert.strictEqual(live.api().statusText(), "$(debug-disconnect) q: not connected");
+});
+
+// Abort's reconnect gave its login up after 10 s and made another, for as
+// long as the process was busy: once free, the process answered every one
+// in turn - the password checked and `.z.po` run for each, a one-time
+// credential spent on a connection long closed.
+test("Abort's reconnect leaves one login with a busy process, and is connected by it once the process is free (#3024)", async (t) => {
+  let busy = 0;
+  const a = await fakeQ((sent) => (JSON.stringify(sent).includes("slow") ? undefined : 1), () => busy);
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port, { user: "me" })]);
+  assert.strictEqual(await live.connectTo("a"), true);
+  const slow = live.run("slow");
+  await until(() => a.sent.some((sent) => JSON.stringify(sent).includes("slow")));
+  // The process is 25 s from the end of its query, by a clock the test turns.
+  busy = 25_000;
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  t.after(() => t.mock.timers.reset());
+  const turn = async () => {
+    for (let i = 0; i < 5; i++) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  };
+  await stub.commands.get("q-lint.abortQuery")();
+  await slow;
+  for (let i = 0; i < 20 && a.logins.length < 2; i++) {
+    await turn();
+  }
+  for (const seconds of [10, 10, 4]) {
+    t.mock.timers.tick(seconds * 1000);
+    await turn();
+  }
+  assert.deepStrictEqual([a.logins, live.activeLabel()], [["me:", "me:"], undefined]);
+  t.mock.timers.tick(1000);
+  for (let i = 0; i < 20 && live.activeLabel() === undefined; i++) {
+    await turn();
+  }
+  t.mock.timers.reset();
+  assert.deepStrictEqual([a.logins, live.activeLabel()], [["me:", "me:"], "a"]);
+});
+
+// Disconnect and Abort close the connections apart still in their connect
+// script (#2567) - and closed a tile's refresh and a scheduled export on
+// other processes with them, which failed with nothing said.
+test("Disconnect, and Abort with nothing running, leave a background run on another process in its connect script (#3026)", async (t) => {
+  const ok = { ok: true, type: -7, text: ["2"] };
+  const dev = await fakeQ(() => ok);
+  const hdb = await fakeQ((sent) => (JSON.stringify(sent).includes("prepare") ? sleep(200).then(() => ok) : ok));
+  t.after(() => (dev.close(), hdb.close()));
+  const { live } = await setUp(t, [proc("dev", dev.port), proc("hdb", hdb.port, { init: "prepare[]" })]);
+  assert.strictEqual(await live.connectTo("dev"), true);
+  for (const [command, said] of [
+    ["q-lint.abortQuery", [["info", "q-lint: no query is running."]]],
+    ["q-lint.disconnectProcess", []],
+  ]) {
+    hdb.sent.length = 0;
+    stub.messages.length = 0;
+    const background = live.runApart(live.processes()[1], "til 3", undefined, { unattended: true });
+    await until(() => hdb.sent.length === 1);
+    await stub.commands.get(command)();
+    assert.deepStrictEqual((await background).text, ["2"], command);
+    assert.deepStrictEqual(stub.messages, said, command);
+  }
+});
+
+// A result cut at the grid limit is held for the connection it came on. On
+// one opened again - an automatic reconnect, a restart - Load more said the
+// lambda's own marker: "could not fetch more rows from a: held".
+test("Load more on a connection opened again says the result is held no more, not the lambda's marker (#3037)", async (t) => {
+  const { PAGE } = require("../out/grid.js");
+  const a = await fakeQ((sent) => (Array.isArray(sent) && sent[0] === PAGE ? "held" : { ok: true, type: -7, text: ["2"] }));
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)]);
+  assert.strictEqual(await live.connectTo("a"), true);
+  assert.strictEqual(
+    await live.pageHeld("a", 100, 100, "token"),
+    "it no longer holds this result: it restarted, the connection to it was opened again, or a later result replaced it. Run the query again to see the rest",
+  );
+  assert.deepStrictEqual(a.sent.at(-1).slice(1), ["token", 100, 100]);
 });

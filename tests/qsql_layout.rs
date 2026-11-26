@@ -132,6 +132,43 @@ const LAID_OUT: &[(&str, usize, &str)] = &[
         20,
         "r:{x}\n  select n:count i\n      by sym\n    from trade\n   where px>1\n",
     ),
+    // Under a tab, each line starts with the same tab: how wide it is
+    // shown is the editor's, and blanks in its place were 3 where the
+    // tab is 4 or 8 (#2803).
+    (
+        "f:{[s]\n\tselect n:count i, px:avg px by sym from trade where sym in s}\nr:f`a`b\n",
+        40,
+        "f:{[s]\n\tselect n:count i, px:avg px\n\t    by sym\n\t  from trade\n\t where sym in s}\nr:f`a`b\n",
+    ),
+    (
+        "f:{[s]\n\tr:select n:count i,px:avg px from trade where sym in s,px>1,sz<400,not null px;\n\tr}\nr:f`a`b\n",
+        30,
+        "f:{[s]\n\tr:select n:count i, px:avg px\n\t    from trade\n\t   where sym in s,\n\t         px>1,\n\t         sz<400,\n\t         not null px;\n\tr}\nr:f`a`b\n",
+    ),
+    // No clause word starts left of the tab: `where` under `exec` moves
+    // every clause word right, as at column 0.
+    (
+        "f:{[s]\n\texec px from trade where sym in s, sz>100, px>0}\nr:f`a`b\n",
+        20,
+        "f:{[s]\n\texec px\n\t from trade\n\twhere sym in s,\n\t      sz>100,\n\t      px>0}\nr:f`a`b\n",
+    ),
+    // A character shown two cells wide is two columns, and one past the
+    // basic plane is not counted by its bytes or its UTF-16 units.
+    (
+        "r:(\"\u{1F600}\u{1F600}\";select n:count i, px:avg px by sym from trade where px>1, sz<400)\n",
+        40,
+        "r:(\"\u{1F600}\u{1F600}\";select n:count i, px:avg px\n              by sym\n            from trade\n           where px>1, sz<400)\n",
+    ),
+    (
+        "r:(\"\u{65E5}\u{672C}\";select n:count i, px:avg px by sym from trade where px>1, sz<400)\n",
+        40,
+        "r:(\"\u{65E5}\u{672C}\";select n:count i, px:avg px\n              by sym\n            from trade\n           where px>1, sz<400)\n",
+    ),
+    (
+        "r:(\"\u{e9}\";select n:count i, px:avg px by sym from trade where px>1, sz<400)\n",
+        40,
+        "r:(\"\u{e9}\";select n:count i, px:avg px\n           by sym\n         from trade\n        where px>1, sz<400)\n",
+    ),
 ];
 
 /// Queries left alone at any width.
@@ -166,6 +203,44 @@ fn long_queries_are_laid_out() {
             std::fs::write(format!("{dir}/{n}.after.q"), &got).unwrap();
         }
     }
+}
+
+/// A query is indented to its column, and for one that follows another on
+/// a line that is the column the first one's layout leaves it at. So a
+/// format lays out one query a line, and the next format the one after it,
+/// where it then stands; each was laid out by where it stood before, the
+/// second here indented by 36 with its `select` at column 19 (#3007).
+#[test]
+fn a_second_query_on_a_line_is_laid_out_where_the_first_leaves_it() {
+    let source = "r:(select a,b from t where a>0,b>0;select a,b from t where a>0,b>0)\n";
+    let once = format(source, 20);
+    assert_eq!(
+        once,
+        "r:(select a, b\n     from t\n    where a>0, b>0;select a,b from t where a>0,b>0)\n"
+    );
+    let twice = format(&once, 20);
+    assert_eq!(
+        twice,
+        "r:(select a, b\n     from t\n    where a>0, b>0;select a,\n                          b\n                     \
+         from t\n                    where a>0,\n                          b>0)\n"
+    );
+    assert_eq!(format(&twice, 20), twice);
+}
+
+/// What a format writes for a line of queries does not grow with the square
+/// of the line: a thousand queries in one list were each indented by all the
+/// text before them, 64 MB of blanks, and two thousand by four times that
+/// (#3007).
+#[test]
+fn a_long_line_of_queries_is_not_indented_by_its_own_length() {
+    let query = "select a,b from t where a>0,b>0";
+    let source = format!("r:({})\n", vec![query; 1000].join(";"));
+    let written: usize = qsql_layouts(&source, 40).iter().map(|l| l.text.len()).sum();
+    assert!(
+        written < 200,
+        "{written} bytes for a line of {}",
+        source.len()
+    );
 }
 
 #[test]

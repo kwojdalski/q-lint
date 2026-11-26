@@ -1276,6 +1276,63 @@ fn a_configuration_the_cli_refuses_is_shown_to_the_user_not_only_logged() {
     }
 }
 
+/// A configuration that selects QP008 beside QP005 is said once, however
+/// many files it governs, and says which rules it keeps. The warning was
+/// keyed on its text, which held the file's path - a popup for each open
+/// file - and named QP007 as reported with QP007 off (#2767).
+#[test]
+fn opposite_conventions_are_said_once_for_a_configuration_naming_the_rules_kept() {
+    let said = |config: &str| {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("qlinter.toml"), config).unwrap();
+        let mut server = Server::spawn(dir.path(), &["--lsp"]);
+        server.initialize();
+        let uris: Vec<String> = (0..5)
+            .map(|n| file_uri(&dir.path().join(format!("f{n}.q"))))
+            .collect();
+        for uri in &uris {
+            server.open(uri, "w:a*b+c\n");
+        }
+        // The reply to a request sent after them is behind everything the
+        // opens made the server say.
+        server.send(
+            json!({"jsonrpc":"2.0","id":40,"method":"textDocument/hover",
+            "params":{"textDocument":{"uri":uris[4]},"position":{"line":0,"character":0}}}),
+        );
+        let mut shown = Vec::new();
+        let mut linted = 0;
+        loop {
+            let message = server.receive();
+            if message["id"] == 40 {
+                break;
+            }
+            if message["method"] == "window/showMessage" {
+                shown.push(message["params"]["message"].as_str().unwrap().to_string());
+            } else if message["method"] == "textDocument/publishDiagnostics" {
+                let found = message["params"]["diagnostics"].as_array().unwrap();
+                assert!(codes_of(found).iter().all(|c| c != "QP008"), "{message}");
+                linted += 1;
+            }
+        }
+        assert!(linted >= 5, "{linted}");
+        assert_eq!(server.shutdown_and_exit(), 0);
+        shown
+    };
+    let shown = said("profile = \"uqf\"\nextend-select = [\"QP008\"]\n");
+    assert_eq!(shown.len(), 1, "{shown:?}");
+    assert!(
+        shown[0].contains("qlinter.toml: QP008"),
+        "it names the configuration, not one of its files: {shown:?}"
+    );
+    assert!(shown[0].ends_with("; reporting QP005 only"), "{shown:?}");
+    let shown = said("profile = \"uqf\"\nextend-select = [\"QP008\", \"QP007\"]\n");
+    assert_eq!(shown.len(), 1, "{shown:?}");
+    assert!(
+        shown[0].ends_with("; reporting QP005 and QP007 only"),
+        "{shown:?}"
+    );
+}
+
 #[test]
 fn an_open_excluded_file_defines_nothing_for_the_others() {
     // `qlinter .` reads no excluded file, so src/a.q's `ff` is undefined
@@ -1307,6 +1364,40 @@ fn an_open_excluded_file_defines_nothing_for_the_others() {
     // Asked again, a.q still has its QF018.
     server.change(&src, 2, user);
     assert_eq!(codes_of(&server.diagnostics_for(&src)), ["QF018"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn an_open_excluded_file_loads_nothing_for_the_others() {
+    // `qlinter .` reads no excluded file, so reader.q's `lf` is lib.q's, at
+    // the root. Opening scratch/try.q, which loads lib.q under `\d .a`,
+    // moved `lf` into `.a` for every other file and reader.q got a QF018
+    // the terminal never reports (#2825). The same load in a file the scan
+    // reads does move it.
+    let dir = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(dir.path()).unwrap();
+    std::fs::write(root.join("qlinter.toml"), "exclude = [\"scratch\"]\n").unwrap();
+    std::fs::create_dir_all(root.join("scratch")).unwrap();
+    let (loader, user) = ("\\d .a\n\\l lib.q\n", "r:lf\n");
+    std::fs::write(root.join("lib.q"), "lf:{x}\n").unwrap();
+    std::fs::write(root.join("reader.q"), user).unwrap();
+    std::fs::write(root.join("scratch/try.q"), "1\n").unwrap();
+    let (reader, scratch, main) = (
+        file_uri(&root.join("reader.q")),
+        file_uri(&root.join("scratch/try.q")),
+        file_uri(&root.join("main.q")),
+    );
+    let mut server = start_with_workspace(&root);
+    server.open(&reader, user);
+    assert!(codes_of(&server.diagnostics_for(&reader)).is_empty());
+    server.open(&scratch, loader);
+    server.diagnostics_for(&scratch);
+    server.change(&reader, 2, user);
+    assert!(codes_of(&server.diagnostics_for(&reader)).is_empty());
+    server.open(&main, loader);
+    // The other two open documents report again, in no set order.
+    let reported = last_published(&mut server, &[&reader, &scratch]);
+    assert_eq!(reported[&reader], ["QF018"]);
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
@@ -2218,6 +2309,44 @@ fn an_editor_select_cannot_widen_the_configuration() {
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
+/// An editor's `lint.select` shows only those rules, among the ones the
+/// configuration turns on - QP008 among them. Only its own code turns QP008
+/// on, and that rule ran for the editor's layer too, which turns nothing on:
+/// `["ALL"]` and `["QP"]` hid the QP008 the configuration selects (#2756).
+#[test]
+fn an_editor_select_keeps_the_reverse_convention_the_configuration_selects() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("qlinter.toml"),
+        "profile = \"style\"\nextend-select = [\"QP008\"]\n",
+    )
+    .unwrap();
+    let uri = file_uri(&dir.path().join("a.q"));
+    let shown = |select: Value| {
+        let (mut server, _) = start_with_options(
+            dir.path(),
+            &["--lsp"],
+            json!({"lint": {"select": select}}),
+            None,
+        );
+        server.open(&uri, "a:2*(3+4)\nf:{[desc] desc}\n");
+        let found = codes_of(&server.diagnostics_for(&uri));
+        assert_eq!(server.shutdown_and_exit(), 0);
+        found
+    };
+    assert_eq!(shown(json!([])), ["QP008", "QF001"]);
+    assert_eq!(shown(json!(["ALL"])), ["QP008", "QF001"]);
+    assert_eq!(shown(json!(["QP"])), ["QP008"]);
+    assert_eq!(shown(json!(["QP", "QF"])), ["QP008", "QF001"]);
+    assert_eq!(shown(json!(["QP008"])), ["QP008"]);
+    assert_eq!(shown(json!(["QF"])), ["QF001"]);
+    // It still turns nothing on: without the configuration's own selection
+    // no editor setting reports QP008.
+    std::fs::write(dir.path().join("qlinter.toml"), "profile = \"style\"\n").unwrap();
+    assert_eq!(shown(json!(["ALL"])), ["QF001"]);
+    assert_eq!(shown(json!(["QP008"])), Vec::<String>::new());
+}
+
 #[test]
 fn an_editor_ignore_drops_a_rule_the_configuration_selects() {
     let dir = tempfile::tempdir().unwrap();
@@ -2799,6 +2928,34 @@ fn a_client_that_waits_for_registration_is_asked_to_watch_files() {
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
+/// The baseline in force accepts a file's QE001 in the editor as it does on
+/// the command line: what is new in the file is shown, where passing over
+/// the QE001 left the document with no diagnostics at all (#2750).
+#[test]
+fn a_baselined_qe001_does_not_hide_the_rest_of_its_document() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(root.join("qlinter.toml"), "baseline = \"b.json\"\n").unwrap();
+    let held = "{\"qlinter-baseline\": 1, \"findings\": [\n  {\"code\":\"QE001\",\
+                \"count\":1,\"line\":\"x:(1;2\",\"path\":\"a.q\"}\n]}\n";
+    std::fs::write(root.join("b.json"), held).unwrap();
+    let mut server = Server::spawn(&root, &["--lsp"]);
+    server.initialize();
+    let uri = file_uri(&root.join("a.q"));
+    server.open(&uri, "x:(1;2\ng:{x+1}\n");
+    assert!(server.diagnostics_for(&uri).is_empty(), "baselined");
+    server.change(&uri, 2, "x:(1;2\ng:{x+1}\nf:{[count] count}\n");
+    let found = server.diagnostics_for(&uri);
+    assert_eq!(codes_of(&found), ["QF001"], "{found:?}");
+    assert_eq!(found[0]["range"]["start"]["line"], 2, "{found:?}");
+    // And a bracket left open since is the document's one finding again.
+    server.change(&uri, 3, "x:(1;2\ng:{x+1}\nf:{[count] count}\ny:(3;4\n");
+    let found = server.diagnostics_for(&uri);
+    assert_eq!(codes_of(&found), ["QE001"], "{found:?}");
+    assert_eq!(found[0]["range"]["start"]["line"], 3, "{found:?}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
 #[test]
 fn a_baseline_is_watched_by_a_client_without_relative_patterns() {
     // A client that registers watchers but takes no pattern rooted
@@ -2899,6 +3056,47 @@ fn a_workspace_folder_added_later_is_indexed_and_a_removed_one_forgotten() {
     );
     assert!(codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
     assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn a_workspace_folder_removed_under_another_spelling_of_its_uri_is_forgotten() {
+    // The roots were compared as the text the client sent, so a folder
+    // removed as `B/` or `./B` - a client need not spell it as it did when it
+    // added it - stayed a root, and what only it defines stayed defined
+    // (#2962). Each spelling names the folder `file_key` names.
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = (dir.path().join("A"), dir.path().join("B"));
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    std::fs::write(b.join("lib.q"), "helper:{[a] a+1}\n").unwrap();
+    let plain = file_uri(&b);
+    let slash = format!("{plain}/");
+    let dotted = format!("{}/./B", plain.strip_suffix("/B").unwrap());
+    for (added, removed) in [(&plain, &slash), (&plain, &dotted), (&slash, &plain)] {
+        let (mut server, _) = start_with_options(
+            dir.path(),
+            &["--lsp", "--profile", "uqf"],
+            json!({}),
+            Some(&a),
+        );
+        let app = file_uri(&a.join("b.q"));
+        server.open(&app, "f:{[a] r:helper; r}\n");
+        assert!(codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
+        let change = |added: Value, removed: Value| {
+            json!({"jsonrpc":"2.0","method":"workspace/didChangeWorkspaceFolders",
+            "params":{"event":{"added":added,"removed":removed}}})
+        };
+        server.send(change(json!([{"uri": added, "name": "B"}]), json!([])));
+        let found = codes_of(&server.diagnostics_for(&app));
+        assert!(!found.contains(&"QF018".to_string()), "{added}: {found:?}");
+        server.send(change(json!([]), json!([{"uri": removed, "name": "B"}])));
+        let found = codes_of(&server.diagnostics_for(&app));
+        assert!(
+            found.contains(&"QF018".to_string()),
+            "{added} {removed}: {found:?}"
+        );
+        assert_eq!(server.shutdown_and_exit(), 0);
+    }
 }
 
 #[test]
@@ -3934,7 +4132,6 @@ fn selection_ranges_grow_from_the_token_to_the_definition() {
             "x;(1;2)",
             "[x;(1;2)]",
             "g[x;(1;2)]",
-            "[x] g[x;(1;2)]",
             "{[x] g[x;(1;2)]}",
             "f:{[x] g[x;(1;2)]}",
         ]
@@ -4272,6 +4469,11 @@ fn another_read_of_a_name_asks_for_the_reference_counts_again() {
         ["workspace/codeLens/refresh"]
     );
     assert!(refreshes_after(&mut server, &b, 5, "f 3\n").is_empty());
+    // A symbol that may be the name is counted too (#2679).
+    assert_eq!(
+        refreshes_after(&mut server, &b, 6, "f 3\n`f\n"),
+        ["workspace/codeLens/refresh"]
+    );
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
@@ -4423,6 +4625,52 @@ fn a_file_opened_by_another_spelling_reports_under_one_uri() {
     let reported = last_published(&mut server, &[&closed, &open]);
     assert_eq!(reported[&closed], ["QF001"], "as the disk has it");
     assert_eq!(reported[&open], Vec::<String>::new(), "cleared on close");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// A file renamed in case alone, on a disk that ignores case, is one file
+/// under a new name: the watcher says lib.q is deleted and Lib.q created,
+/// and lib.q still answers on the disk - as Lib.q - so the key it was read
+/// under was never forgotten. Its diagnostics stayed under the old name,
+/// beside the new one's, and Go to Definition listed both (#2817). A disk
+/// that tells the two names apart has no such rename to make.
+#[test]
+fn a_file_renamed_in_case_alone_is_forgotten_under_its_old_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(root.join("lib.q"), RESERVED_PARAM).unwrap();
+    if !root.join("LIB.Q").exists() {
+        return;
+    }
+    let (old, new, app) = (
+        file_uri(&root.join("lib.q")),
+        file_uri(&root.join("Lib.q")),
+        file_uri(&root.join("app.q")),
+    );
+    let options = json!({"lint": {"scope": "workspace"}});
+    let (mut server, _) = start_with_options(&root, &["--lsp"], options, Some(&root));
+    assert_eq!(codes_of(&server.diagnostics_for(&old)), ["QF001"]);
+    std::fs::rename(root.join("lib.q"), root.join("Lib.q")).unwrap();
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+        "params":{"changes":[{"uri":old,"type":3},{"uri":new,"type":1}]}}),
+    );
+    let reported = last_published(&mut server, &[&old, &new]);
+    assert_eq!(reported[&old], Vec::<String>::new(), "cleared");
+    assert_eq!(reported[&new], ["QF001"]);
+    server.open(&app, "r:f 1\n");
+    server.send(
+        json!({"jsonrpc":"2.0","id":81,"method":"textDocument/definition",
+        "params":{"textDocument":{"uri":app},"position":{"line":0,"character":2}}}),
+    );
+    let reply = server.until(|m| m["id"] == 81);
+    let found: Vec<&str> = reply["result"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|place| place["uri"].as_str().unwrap())
+        .collect();
+    assert_eq!(found, [new.as_str()], "{reply}");
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 

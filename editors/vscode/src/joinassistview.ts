@@ -12,7 +12,7 @@
 // and nothing is sent.
 import { Position, commands, window, workspace, type ExtensionContext } from "vscode";
 import { borrowWhenFree } from "./infoview";
-import { TABLES, TABLE_SHAPE, lastSelectedLine, readShape, shapeGuardCode, tableExpression, suggestJoins, type Shape, type Suggestion } from "./joinassist";
+import { TABLES, lastSelectedLine, readShape, shapeGuardCode, tableExpression, tableShapeLambda, suggestJoins, type Shape, type Suggestion } from "./joinassist";
 import type { Live } from "./live";
 import { PROCESS_TOOL_COMMANDS, asCode, isString, listOf, toolOff, toolOn } from "./processtools";
 import { statements } from "./statements";
@@ -92,8 +92,8 @@ export function registerJoinAssistant(
     let shapes: Shape[];
     try {
       const ran = await live.runOnActive(shapeGuardCode(expressions), async (connection) => [
-        readShape(await connection.call(TABLE_SHAPE, asCode(expressions[0])), expressions[0]),
-        readShape(await connection.call(TABLE_SHAPE, asCode(expressions[1])), expressions[1]),
+        readShape(await connection.guarded(tableShapeLambda, asCode(expressions[0])), expressions[0]),
+        readShape(await connection.guarded(tableShapeLambda, asCode(expressions[1])), expressions[1]),
       ], "ask", undefined, undefined, true);
       if (ran === undefined) {
         return "nothing was run";

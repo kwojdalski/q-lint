@@ -131,7 +131,9 @@ test("notebook features against a real q process", { skip }, async (t) => {
     // A big table or dictionary is written from its first items, its text
     // as the old unbounded -3! of the same value wrote it (#1559) on a
     // console wide enough to write 200 characters.
-    const big = ["([] a:til 1000000; b:1000000#`x)", "(til 1000000)!til 1000000", "1000000#0b", "(1000000#enlist 1 2)", "([k:til 1000000] v:1000000#`x)", "`s#til 300", "`u#til 300", "([]time:`s#til 300;x:300#1)", "([k:`u#til 300]x:300#1)", "(`s#til 300)!300#1"];
+    const big = ["([] a:til 1000000; b:1000000#`x)", "(til 1000000)!til 1000000", "1000000#0b", "(1000000#enlist 1 2)", "([k:til 1000000] v:1000000#`x)", "`s#til 300", "`u#til 300", "([]time:`s#til 300;x:300#1)", "([k:`u#til 300]x:300#1)", "(`s#til 300)!300#1",
+      // A sorted dictionary's and table's own `s# (#2708).
+      "`s#`a`b!1 2", "`s#([]a:1 2)", "`s#([k:1 2]v:3 4)"];
     const got = readLiveValues(big, await connection.call(LIVE, big));
     const want = readLiveValues(big, await connection.call('{c:system"c";system"c 2000 2000";r:{(1b;200 sublist -3!value x)} each x;system"c "," "sv string c;r}', big));
     big.forEach((e) => {

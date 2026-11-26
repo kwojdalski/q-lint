@@ -6,9 +6,9 @@
 //! scopes and the writes the checks already read, and stopped there: what a
 //! name holds when the script runs is still not this crate's to say.
 use super::{
-    Scope, assigns_lambda, call_time, chained_value, first_switch, global_multi_assignments,
-    global_writes, holds_functions, local_view, multi_assignments, resolved, scope_at, scopes,
-    top_level_statements,
+    Scope, assigns_lambda, call_time, chained_value, deleted_columns, first_switch,
+    global_multi_assignments, global_writes, holds_functions, local_view, multi_assignments,
+    resolved, scope_at, scopes, top_level_statements, within,
 };
 use crate::{Definition, Local, Mention, Name, Place, boundary, pattern_names, signature};
 use std::collections::{HashMap, HashSet};
@@ -181,6 +181,9 @@ pub(super) struct KLines {
     /// lambda is its value, and the span of its statement - the k statement
     /// at the top level, the name alone in a lambda (`k){fk::x}`).
     pub(super) assigned: HashMap<usize, (bool, usize, usize)>,
+    /// Each of `assigned` whose value is a lambda, by where it is: its
+    /// signature as written, `[a;b]` or nothing, and what a caller passes.
+    pub(super) params: HashMap<usize, (String, Vec<String>)>,
 }
 
 /// The `k)` lines of `raw` read as k, for the names in them.
@@ -196,6 +199,7 @@ pub(super) fn k_lines(code: &str, raw: &str) -> KLines {
         lambdas: vec![],
         symbols: vec![],
         assigned: HashMap::new(),
+        params: HashMap::new(),
     };
     if !raw.contains("k)") {
         return out;
@@ -214,9 +218,22 @@ pub(super) fn k_lines(code: &str, raw: &str) -> KLines {
             .map_or(line.len(), |(i, _)| i);
         offset + line[..cut].trim_end().len()
     };
+    // How deep in a block comment a k statement folds in (#3010): its lines
+    // are no k, and the statement goes on after it.
+    let mut block = 0usize;
     for line in raw.split_inclusive('\n') {
         let end = offset + line.len();
         let blanked = code[offset..end].trim().is_empty();
+        let bare = line.trim_end_matches(['\r', '\n', ' ', '\t']);
+        if block > 0 || k && bare == "/" && crate::foreign_continues(line, &raw[end..]) {
+            block = match bare {
+                "/" => block + 1,
+                "\\" => block - 1,
+                _ => block,
+            };
+            offset = end;
+            continue;
+        }
         // A `k)\d .ns` is a command, its context `opens`' to read, and
         // names nothing; so is one after more prefixes, `k)q)\d .ns` (#2194).
         if line.starts_with("k)") && line[crate::language_prefixes(line)..].starts_with('\\') {
@@ -280,6 +297,8 @@ pub(super) fn k_lines(code: &str, raw: &str) -> KLines {
         Column,
     }
     let mut names = vec![];
+    // Each lambda assigned to a global: the name's place and the brace's.
+    let mut assigned_lambdas: Vec<(usize, usize)> = vec![];
     let mut open: Vec<(u8, Option<usize>, bool)> = vec![];
     let bytes = text.as_bytes();
     let mut at = 0;
@@ -345,6 +364,9 @@ pub(super) fn k_lines(code: &str, raw: &str) -> KLines {
             };
             out.assigned
                 .insert(start, (value.starts_with('{'), span.0, span.1.max(at)));
+            if value.starts_with('{') {
+                assigned_lambdas.push((start, text.len() - value.len()));
+            }
         }
         let kind = match open.last() {
             // In a lambda's `[..]`, a parameter; in a table's, or straight
@@ -375,6 +397,40 @@ pub(super) fn k_lines(code: &str, raw: &str) -> KLines {
         .map(String::as_str)
         .filter(|w| crate::reserved_word(w))
         .collect();
+    // What each assigned lambda takes, read as a q line's is, k writing a
+    // lambda the same way: KDB-X 5 `k)f:{[a;b] a}` and `k)g:{x+y}` both take
+    // two arguments, and `k)h:{1}` takes `x` (#2950).
+    for (assigned, brace) in assigned_lambdas {
+        let l = out.lambdas.partition_point(|(at, _)| *at < brace);
+        let sig = signature(text, raw, brace);
+        let (detail, params) = if sig.named {
+            let slots: Vec<&str> = sig.slots.iter().map(|slot| slot.trim()).collect();
+            let params = match slots.as_slice() {
+                [""] => vec![],
+                slots => slots.iter().map(|slot| slot.to_string()).collect(),
+            };
+            (format!("[{}]", slots.join(";")), params)
+        } else {
+            let reads = |name: &str| {
+                names.iter().any(|(at, len, lambda, kind)| {
+                    *lambda == Some(l) && *kind != Kind::Column && &text[*at..at + len] == name
+                })
+            };
+            let taken = if reads("z") {
+                3
+            } else if reads("y") {
+                2
+            } else {
+                1
+            };
+            let params = ["x", "y", "z"][..taken].iter().map(|n| n.to_string());
+            (String::new(), params.collect())
+        };
+        out.params.insert(
+            assigned,
+            (detail, super::help::left_open(text, brace, params)),
+        );
+    }
     for (at, len, lambda, kind) in names {
         let word = &text[at..at + len];
         let own = lambda.is_some_and(|l| out.lambdas[l].1.contains(word));
@@ -482,7 +538,9 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
             0 => 0,
             n => newlines[n - 1] + 1,
         };
-        crate::system_command(&raw[line..])
+        // A timed line's `\t`, `\ts` or `\t:n` is a command too, though
+        // what follows it is q: its `t` is no global (#2812).
+        crate::system_command(&raw[line..]) || at < line + crate::timed_prefix(&raw[line..])
     };
     let statements = top_level_statements(code, raw);
     let mut out = vec![];
@@ -495,6 +553,10 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
             let Some((at, len)) = written(code, &name, value) else {
                 continue;
             };
+            // `\t:10 f x` times ten runs, and assigns no `t`.
+            if system(at) {
+                continue;
+            }
             writes.insert(at);
             let function = assigns_lambda(code, raw, value);
             let (detail, params) = if function {
@@ -553,6 +615,7 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
         .filter(|w| crate::reserved_word(w))
         .collect();
     let unsymbolled = crate::unsymbolled(code);
+    let deleted = deleted_columns(code);
     for m in re!(NAME).find_iter(&unsymbolled) {
         let word = m.as_str();
         if !boundary(&unsymbolled, m.start()) || writes.contains(&m.start()) || system(m.start()) {
@@ -566,9 +629,11 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
         {
             continue;
         }
+        // Nor is a column `delete` names, which q never evaluates (#2806).
         if !word.contains('.')
             && (reserved.contains(word)
-                || scope_at(&scopes, m.start()).is_some_and(|s| scopes[s].locals.contains(word)))
+                || scope_at(&scopes, m.start()).is_some_and(|s| scopes[s].locals.contains(word))
+                || within(&deleted, m.start()))
         {
             continue;
         }
@@ -625,17 +690,17 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
             implicit: !word.starts_with('.') && at < first_switch,
             at,
             len,
-            definition: k
-                .assigned
-                .get(&at)
-                .map(|&(function, start, end)| Definition {
+            definition: k.assigned.get(&at).map(|&(function, start, end)| {
+                let (detail, params) = k.params.get(&at).cloned().unwrap_or_default();
+                Definition {
                     function,
                     holds_function: holds.unwrap_or(function),
-                    detail: String::new(),
-                    params: vec![],
+                    detail,
+                    params,
                     start,
                     end,
-                }),
+                }
+            }),
         });
     }
     out.sort_by(|a, b| (a.at, &a.name).cmp(&(b.at, &b.name)));
@@ -768,6 +833,34 @@ pub fn name_at(code: &str, raw: &str, offset: usize) -> Option<Name> {
     })
 }
 
+/// Why nothing is renamed at `offset`, where no local is written.
+///
+/// Only a global is told that the language server renames it. A blank, a
+/// number, a string, a comment and a symbol are no name at all, and a word
+/// of q's keeps its name: the same answer for each sent the reader of F2 on
+/// `count` to the server that had just answered (#2959).
+fn no_local(code: &str, raw: &str, offset: usize) -> String {
+    let word = re!(NAME)
+        .find_iter(code)
+        .take_while(|m| m.start() <= offset)
+        .find(|m| offset <= m.end() && boundary(code, m.start()));
+    let Some(word) = word.map(|m| m.as_str()) else {
+        return "there is no name here to rename".into();
+    };
+    if crate::is_reserved(word) {
+        return format!("`{word}` is a word of q's own, which keeps its name");
+    }
+    let global = mentions(code, code, raw)
+        .iter()
+        .any(|m| m.at <= offset && offset <= m.at + m.len);
+    if global {
+        return "q-lint renames a lambda's parameters and locals within one file only: a global \
+                is renamed across the workspace, by the language server"
+            .into();
+    }
+    format!("`{word}` here is neither a local nor a global, and only those are renamed")
+}
+
 /// Why the local at `offset` cannot be renamed, or the local when it can.
 ///
 /// Only a parameter or a local is renamed in one file. A global is named
@@ -775,11 +868,7 @@ pub fn name_at(code: &str, raw: &str, offset: usize) -> Option<Name> {
 /// file it indexes (`lsp::navigate`).
 fn renamable(code: &str, raw: &str, scopes: &[Scope], offset: usize) -> Result<Local, String> {
     let Some((s, name)) = local_at(code, scopes, offset) else {
-        return Err(
-            "q-lint renames a lambda's parameters and locals within one file only: a global \
-             is renamed across the workspace, by the language server"
-                .into(),
-        );
+        return Err(no_local(code, raw, offset));
     };
     let local = local(code, raw, scopes, s, name);
     if !local

@@ -31,9 +31,10 @@ import {
   type WebviewPanel,
 } from "vscode";
 import { editorFeatureOff, editorFeatureOn, type EditorFeature } from "./editorfeatures";
-import { commentedOut, examplesMarkdown, HELP, html, HelpCatalog, nameAt, pageHtml } from "./helpcatalog";
+import { examplesMarkdown, HELP, html, HelpCatalog, nameAt, pageHtml } from "./helpcatalog";
 import type { Live } from "./live";
 import { plainMessage } from "./history";
+import { lineContext } from "./statements";
 
 const on = (feature: EditorFeature): boolean => editorFeatureOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), feature);
 
@@ -59,10 +60,12 @@ export function registerHelp(context: ExtensionContext, live: Live): HelpApi {
   let shown: { name: string; html: string } | undefined;
 
   // The name at `position`, or none in a comment or a string - a block
-  // comment's lines included, which only the lines above it tell.
+  // comment's lines included, and a string open from a line above (#2910),
+  // which only the lines above it tell.
   const nameUnder = (document: TextDocument, position: Position): ReturnType<typeof nameAt> => {
     const above = Array.from({ length: position.line + 1 }, (_, i) => document.lineAt(i).text);
-    return commentedOut(above) ? undefined : nameAt(above[position.line], position.character);
+    const { commented, quoted } = lineContext(above);
+    return commented ? undefined : nameAt(above[position.line], position.character, quoted);
   };
 
   const hover = (document: TextDocument, position: Position): Hover | undefined => {

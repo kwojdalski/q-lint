@@ -57,7 +57,8 @@ its `$/cancelRequest` arrives is answered `RequestCancelled`.
 - `workspace/symbol`: ranked by exact name, then last segment, prefix,
   substring and letters in order; at most 512.
 - `textDocument/definition`, `references` and `documentHighlight` (writes
-  told from reads). A global is resolved as q resolves it: under the `\d` in
+  told from reads; a symbol that may be the name is listed too, marked as
+  text). A global is resolved as q resolves it: under the `\d` in
   force, in the context a file is loaded in, and through a namespace
   assigned whole. When several files define a name, the current file's
   definition comes first, then files it loads, then files that load it.
@@ -90,15 +91,20 @@ its `$/cancelRequest` arrives is answered `RequestCancelled`.
 - `textDocument/completion` is off by default: an editor told that a server
   completes stops offering the buffer's own words, and this server knows no
   columns. When on, it offers locals, workspace names as the `\d` in force
-  reads them, then q's words. `autoLoad` adds the `\l` that loads a name's
+  reads them, then q's words. A client declaring `insertReplaceSupport` is
+  offered both the typed prefix and the whole name under the cursor to
+  replace. `autoLoad` adds the `\l` that loads a name's
   file; `loadPathCompletion` completes paths after `\l `.
 - `textDocument/codeLens`: **Run** and **Run test** on top-level functions
-  (`codeLens.enable`), and a reference count (`referenceLens.enable`). They
+  (`codeLens.enable`), and a reference count (`referenceLens.enable`). Run
+  wraps the code in the `\d` it runs in, including a file loaded only under
+  `\d .ns` or a KDB-X module (`.m.<name>`). They
   run the client commands `q-lint.runDefinition` and
   `q-lint.showReferences`, so they are off unless the client registers
   those, as the VS Code extension does.
 - With `renameLoads.enable`, `workspace/willRenameFiles` returns the edits
-  that keep every `\l` naming the file it named.
+  that keep every `\l` naming the file it named, and the name in a
+  `` use`name `` that reaches a renamed module.
 
 ## The server's own requests
 
@@ -145,13 +151,15 @@ q-lint/formatChangedLines  {"textDocument": {"uri": U}, "lines": [[first, last],
   never asks git, so the client sends the changed files. A test file is a
   `.q` file named `test_*` or `*_test`, or under a `test` or `tests`
   directory. `unindexed` holds sent files the index lacks; `dynamic` holds
-  test files that load by a computed path. Ask on save or when a view is
+  test files that load by a computed path or a string (`value "\\l lib.q"`),
+  or reach a file that does. Ask on save or when a view is
   shown, not on every keystroke.
 - `deadCode` lists functions nothing reads; a name spelled in any symbol or
   string counts as read. `dynamic` counts computed names, so treat the list
   as candidates.
 - `testsReaching` compares the document's top-level functions with
-  `previous` and returns the tests that reach a changed one.
+  `previous` and returns the tests that reach a changed one, through calls
+  and through globals that hold one (`al:f`, `h:f each`).
 - `formatChangedLines` answers `[]` unless `formatChangedLines.enable` is
   on; it is for formatting only what git says changed.
 

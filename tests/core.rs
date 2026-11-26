@@ -113,6 +113,20 @@ fn a_multi_byte_blank_before_an_assigned_name_does_not_panic() {
     }
 }
 #[test]
+fn a_no_break_space_before_a_tables_colon_does_not_panic() {
+    // `only_end + 1` was the middle of the two-byte space, where
+    // `past_blanks` sliced: exit 101 and every other file's findings lost
+    // (#2864). The second is the fuzz case it was minimised from.
+    for source in [
+        "t\u{a0}:([] a:1 2 3)\nr:select from t where a>1\n",
+        "t\u{a0}:([])select from t where",
+        "t\u{3000}:([] c:\"ab\")\nr:select from t where c=\"a\"\n",
+    ] {
+        let found = lint(source, "t.q", Profile::General);
+        assert!(found.iter().any(|f| f.code == "QE012"), "{source:?}");
+    }
+}
+#[test]
 fn a_typed_slot_that_swallows_the_closing_brace_does_not_panic() {
     // A brace auto-closed after `{[a:` is typed: q 5 refuses it with '} (#732).
     let f = lint("f:{[a:}]", "t.q", Profile::General);
@@ -179,6 +193,261 @@ fn a_bare_slash_after_a_foreign_line_opens_a_block_comment() {
     }
     // A `/ note` line is still carried over, as q carries it.
     assert!(lint("k)gk:2\n/ note\n  (\n", "t.q", Profile::Style).is_empty());
+}
+
+#[test]
+fn the_last_prefix_of_a_run_names_the_language() {
+    // #2989. KDB-X 5 runs `q)k)a:#1 2 3` as k (a is 3), `q)q)b:1` as q and
+    // hands `q)t)1+1` to `.t.e` as `1+1`: a run of prefixes is read past
+    // whole, and its last one says whose the line is. Only the first `q)`
+    // was, so the rest was read as q and its `)` reported.
+    for foreign in ["q)k)a:#1 2 3\n", "q)t)f(\n", "q)q)k)a:#(1;2\n  )]\n"] {
+        let findings = lint(foreign, "t.q", Profile::Style);
+        assert!(findings.is_empty(), "{foreign:?}: {findings:?}");
+    }
+    assert!(lint("q)q)b:1\nshow b\n", "t.q", Profile::General).is_empty());
+    // What follows a run that ends in `q)` is q, and is read as q.
+    let findings = lint("q)q)f:{]\n", "t.q", Profile::Style);
+    assert_eq!(
+        (&*findings[0].code, findings[0].line, findings[0].column),
+        ("QE001", 1, Some(8))
+    );
+    let findings = lint("q)k)q)f:{[desc] desc}\n", "t.q", Profile::Style);
+    assert_eq!((&*findings[0].code, findings[0].line), ("QF001", 1));
+    // #2990. A capital is a prefix too: with `.K.e` defined KDB-X 5 hands
+    // `K)select * from (t` to it, as it hands `t)` to `.t.e`.
+    for foreign in ["K)select * from (t\n", "q)K)a:(\n", "T)x]\n  y)\n"] {
+        let findings = lint(foreign, "t.q", Profile::Style);
+        assert!(findings.is_empty(), "{foreign:?}: {findings:?}");
+    }
+    // The q after such a line is still read.
+    let findings = lint("K)a:(\nf:{]\n", "t.q", Profile::Style);
+    assert_eq!((&*findings[0].code, findings[0].line), ("QE001", 2));
+}
+
+#[test]
+fn a_context_switch_is_followed_in_each_spelling_q_runs() {
+    // #2997. KDB-X 5 leaves `system "d"` at `.foo` after each of these, and
+    // the `from:1` under it defines `.foo.from`. Only `\d .foo` and
+    // `system "d .foo"` at the start of a line were followed, so the rest
+    // drew QF012's "Root-level assignment" and QF004's root message.
+    for switch in [
+        "system[\"d .foo\"]",
+        "system(\"d .foo\")",
+        "system (\"d .foo\")",
+        "system@\"d .foo\"",
+        "@[system;\"d .foo\";::]",
+        "value \"\\\\d .foo\"",
+        "a:1;system \"d .foo\"",
+        "a:1;value \"\\\\d .foo\";b:2",
+        "k)\\d .foo",
+        "q)system \"d .foo\"",
+        "q)q)system[\"d .foo\"]",
+    ] {
+        let source = format!("{switch}\nfrom:1\nsum:1\n");
+        let findings = lint(&source, "t.q", Profile::Style);
+        let said: Vec<_> = findings.iter().map(|f| (&*f.code, &*f.detail)).collect();
+        assert_eq!(
+            said,
+            [(
+                "QF004",
+                "Namespace-level assignment to `sum`: q refuses it ('assign)"
+            )],
+            "{switch}"
+        );
+        // The one reader: the names after it are the namespace's for the
+        // editor too.
+        let contexts = q_lint_rs::contexts(&source);
+        assert_eq!(contexts.last().unwrap().1, ".foo", "{switch}");
+    }
+    // The statements before a switch later on the line were in the context
+    // the line began in.
+    let findings = lint(
+        "from:1;system \"d .foo\";from:2\nby:1\n\\d .\nby:2\n",
+        "t.q",
+        Profile::Style,
+    );
+    let at: Vec<_> = findings
+        .iter()
+        .map(|f| (&*f.code, f.line, f.column))
+        .collect();
+    assert_eq!(at, [("QF012", 1, Some(1)), ("QF012", 4, Some(1))]);
+    // A computed command, and one that may not run, name no context.
+    for none in [
+        "system \"d \",x",
+        "if[0b;system \"d .foo\"]",
+        "a:\"system[\\\"d .foo\\\"]\"",
+        "f:{system \"d .foo\"}",
+    ] {
+        let findings = lint(&format!("{none}\nfrom:1\n"), "t.q", Profile::Style);
+        assert!(findings.iter().any(|f| f.code == "QF012"), "{none}");
+    }
+}
+
+#[test]
+fn a_k_line_stands_down_only_the_names_it_may_write() {
+    // #3004. Any `k)` line with a colon in it made the whole file one that
+    // "writes names it does not say", and four findings about names the
+    // line never touches were dropped with it.
+    let body = "f:{x+y}\nr:f[1;2;3]\nh:1h\ns:h[\"hi\"]\nv:undefinedName\n";
+    let codes = |source: &str| {
+        let mut codes: Vec<String> = lint(source, "t.q", Profile::Uqf)
+            .into_iter()
+            .map(|f| f.code)
+            .filter(|c| ["QA012", "QF018", "QT022"].contains(&&**c))
+            .collect();
+        codes.sort();
+        codes
+    };
+    let all = ["QA012", "QF018", "QT022"];
+    assert_eq!(codes(body), all);
+    // A write of another name, a lambda's own locals, and no write at all:
+    // a colon in a string, in a symbol, in the verb `#:`.
+    for k in [
+        "k)zzk:1",
+        "k)zzk::1",
+        "k)g:{a:x;a}",
+        "k)-1\"t: x\"",
+        "k)zzk:`:f 0:,\"a\"",
+        "k)zzk:#:",
+        "k)zzk:1;zzj:2",
+        "k)1+1 / a:1",
+    ] {
+        assert_eq!(codes(&format!("{body}{k}\n")), all, "{k}");
+        assert_eq!(codes(&format!("{k}\n{body}")), all, "{k}");
+    }
+    // The name the line writes is the one that is no longer known: KDB-X 5
+    // runs `f:{x}`, `k)f:{x+y}`, `f[1;2]` to 3.
+    for (k, left) in [
+        ("k)f:{x}", ["QF018", "QT022"]),
+        ("k)h:\"abc\"", ["QA012", "QF018"]),
+        ("k)undefinedName:1", ["QA012", "QT022"]),
+        ("q)k)undefinedName:1", ["QA012", "QT022"]),
+        ("k)zzk:1;undefinedName:2", ["QA012", "QT022"]),
+    ] {
+        assert_eq!(codes(&format!("{k}\n{body}")), left, "{k}");
+    }
+    // A write the line does not name may be of any of them: KDB-X 5 writes
+    // `a`, `o`, `e` and `j`, `r`, `y` and `b` here.
+    for k in [
+        "k)g:{a::x}",
+        "k)n:1+o:2",
+        "k)(e;j):1 2",
+        "k)r+:1",
+        "k)x:1\n  y:2",
+        "k).[`b;();:;1]",
+        "k)g:{\n  a::x}",
+    ] {
+        assert!(codes(&format!("{body}{k}\n")).is_empty(), "{k}");
+    }
+}
+
+#[test]
+fn a_lambda_another_file_defines_is_no_handle() {
+    // #3002. `.log.info "select from t returned ",string n` logs a line
+    // when log.q, which this file loads, holds `.log.info:{-1 x}`; QX001
+    // knew only the lambdas of the file it was reading.
+    use q_lint_rs::{Workspace, index, lint_in};
+    let app = "f:{[n] .log.info \"select from t returned \",string n}\n";
+    let injected = |ws: &Workspace| {
+        lint_in(app, "app.q", Profile::Style, ws)
+            .iter()
+            .any(|f| f.code == "QX001")
+    };
+    let mut ws = Workspace::default();
+    ws.add(&index(app));
+    assert!(injected(&ws));
+    ws.add(&index(".log.info:{-1 x}\n"));
+    assert!(!injected(&ws));
+    // A name another file gives a handle is still one.
+    let mut ws = Workspace::default();
+    ws.add(&index(".log.info:hopen 5000\n"));
+    assert!(injected(&ws));
+}
+
+#[test]
+fn a_string_sent_to_handle_zero_is_evaluated() {
+    // #3011. Handle 0 is the process itself: KDB-X 5 runs `f:{x}`,
+    // `0 "f:{x+y}"`, `f[1;2]` to 3, and QA012 called it an error.
+    let rank = |evaluated: &str| {
+        let source = format!("f:{{x}}\n{evaluated}\nr:f[1;2]\n");
+        lint(&source, "t.q", Profile::Uqf)
+            .iter()
+            .any(|f| f.code == "QA012")
+    };
+    for evaluated in [
+        "0 \"f:{x+y}\"",
+        "0(\"f:{x+y}\")",
+        "0[\"f:{x+y}\"]",
+        "0@\"f:{x+y}\"",
+        "0i \"f:{x+y}\"",
+        "-0 \"f:{x+y}\"",
+        "(neg 0) \"f:{x+y}\"",
+        "a:count 0 \"f:{x+y}\"",
+        "s:\"f:{x+y}\"\n0 s",
+    ] {
+        assert!(!rank(evaluated), "{evaluated}");
+        let source = format!("{evaluated}\n");
+        let kinds: Vec<_> = q_lint_rs::references(&source, false)
+            .dynamic
+            .iter()
+            .map(|d| d.kind)
+            .collect();
+        assert!(
+            evaluated.contains("0 s") || kinds == ["value"],
+            "{evaluated}: {kinds:?}"
+        );
+    }
+    // No handle: a longer number, a list, a file verb, a string, a comment.
+    for other in [
+        "a:10 \"ab\"",
+        "a:1 0 \"ab\"",
+        "a:(0;\"f:{x+y}\")",
+        "a:x0 \"ab\"",
+        "h:0 0:\"ab\"",
+        "a:\"0 \\\"f:{x+y}\\\"\"",
+        "/ 0 \"f:{x+y}\"",
+    ] {
+        assert!(rank(other), "{other}");
+        assert!(
+            q_lint_rs::references(&format!("{other}\n"), false)
+                .dynamic
+                .is_empty(),
+            "{other}"
+        );
+    }
+}
+
+#[test]
+fn a_block_comment_folds_into_the_foreign_statement_an_indented_line_continues() {
+    // #3010. KDB-X 5 hands `t)e`, `/`, `  f`, `\`, `  g` to `.t.e` as one
+    // statement, "e\n/\n/  f\n/\n  g", and loads `k)f:{[a;b] a+`, `/`,
+    // `  old: a*b`, `\`, `  b}` as one k lambda: the block comment folds
+    // into the statement when an indented line follows its `\`. The bare
+    // `/` ended the statement, so the `  b}` was read as q.
+    for prefix in ["p)", "k)", "q)k)"] {
+        for text in [
+            format!("{prefix}f:{{[a;b] a+\n/\n  old: a*b\n\\\n  b}}\nshow f[1;2]\n"),
+            // Past a blank line, a comment line, a second block and a
+            // nested one, as q 5 reads each.
+            format!("{prefix}e(\n/\n f\n\\\n\n/ note\n/\n/\n\\\n h\n\\\n  g)}}\n"),
+        ] {
+            let findings = lint(&text, "t.q", Profile::Style);
+            assert!(findings.is_empty(), "{text:?}: {findings:?}");
+        }
+        // The q after it is read, and the block is still a block: its `\`
+        // ends no script.
+        let text = format!("{prefix}e\n/\n  f\n\\\n  g\nx:(1;2\n");
+        let findings = lint(&text, "t.q", Profile::Style);
+        assert!(
+            findings.iter().any(|f| f.code == "QE001" && f.line == 6),
+            "{prefix}: {findings:?}"
+        );
+        // A block nothing closes leaves no line to continue the statement.
+        let text = format!("{prefix}e\n/\n  f)\n");
+        let findings = lint(&text, "t.q", Profile::Style);
+        assert!(findings.iter().all(|f| f.code == "QE003"), "{findings:?}");
+    }
 }
 
 /// The cases here were settled by running each one through a real q 4.x and
@@ -283,6 +552,24 @@ fn parameter_rules_for_lists_q_does_accept() {
             "{source:?} should be clean: {found:?}"
         );
     }
+}
+
+/// QF008 names each repeated parameter as the other rules name a name, not
+/// as a Rust list (#2694).
+#[test]
+fn a_repeated_parameter_is_named_in_backticks() {
+    let found = lint("f:{[a;b;a;b] a+b}", "t.q", Profile::Style);
+    let f = found.iter().find(|f| f.code == "QF008").unwrap();
+    assert_eq!(f.detail, "Parameter `a`, `b` is declared more than once");
+}
+
+/// QF016 says nothing of a slot q refuses with '_, which QF002 reports: the
+/// name inside it is not a parameter (#2695).
+#[test]
+fn an_underscore_slot_is_no_unread_parameter() {
+    let found = lint("f:{[ _a;b] b}", "t.q", Profile::Style);
+    assert!(found.iter().any(|f| f.code == "QF002"), "{found:?}");
+    assert!(!found.iter().any(|f| f.code == "QF016"), "{found:?}");
 }
 
 /// Windows checks files out with CRLF by default, so a rule that is blind to
@@ -502,6 +789,28 @@ fn a_name_inside_a_file_symbol_is_not_coloured() {
     let text = "f:{x}\nh:{[a] r:`:a; `:f 0: a}\n";
     assert!(functions(text).is_empty());
     assert_eq!(parameters(text), [text.rfind('a').unwrap()]);
+}
+
+#[test]
+fn the_command_word_of_a_timed_line_is_not_coloured() {
+    // `\t` times what follows it and reads no `t`, whatever function is
+    // named `t` or `ts` (#2777); what follows it is q, and is coloured.
+    let text =
+        "t:{x}\nts:{x}\n\\t foo 1\n\\t r:1+1\n\\t:10 t 2\nq)\\t ts 1\n\\ts t 3\n\\ts:5 ts 4\n";
+    let at: Vec<usize> = q_lint_rs::semantic_tokens(text)
+        .iter()
+        .map(|t| t.0)
+        .collect();
+    assert_eq!(functions(text), ["t", "ts", "t", "ts"]);
+    assert_eq!(
+        at,
+        [
+            text.find("t 2").unwrap(),
+            text.find("ts 1").unwrap(),
+            text.find("t 3").unwrap(),
+            text.find("ts 4").unwrap()
+        ]
+    );
 }
 
 #[test]
@@ -966,6 +1275,61 @@ fn string_equality_in_a_filter_names_the_row_count() {
     }
 }
 
+/// QV001 says more than "put it first" of a constraint with the column on the
+/// right: q 5 narrows the partitions only for one that starts with the
+/// column, and `where d=date, sym=s` measured slower than either order of
+/// `date=d` (#2741).
+#[test]
+fn a_partition_constraint_read_from_the_right_is_told_to_turn_round() {
+    for (source, advice) in [
+        (
+            "r:select from t where sym=`a, d=date",
+            "write the constraint with `date` on the left and put it first",
+        ),
+        (
+            "r:select from t where sym=`a, (date=d)",
+            "put the `date` constraint first",
+        ),
+    ] {
+        let found = lint(source, "t.q", Profile::Style);
+        assert!(
+            found
+                .iter()
+                .any(|f| f.code == "QV001" && f.detail.ends_with(advice)),
+            "{source:?}: QV001 should end {advice}: {found:?}"
+        );
+    }
+}
+
+/// QR001 does not call the two the same outright: both sorts are stable,
+/// so with d:`a`b`c!1 1 2 q 5 gives `c`b`a for `key reverse asc d` and
+/// `c`a`b for `key desc d`, and 0b for `(reverse desc d)~asc d` (#2739).
+#[test]
+fn reverse_of_a_sort_is_the_other_sort_only_up_to_ties() {
+    for (source, claim) in [
+        (
+            "r:reverse asc d",
+            "`reverse asc` is `desc`, in one pass; on",
+        ),
+        (
+            "r:reverse desc d",
+            "`reverse desc` is `asc`, in one pass; on",
+        ),
+        (
+            "r:reverse asc d",
+            "differ in the order of keys whose values tie",
+        ),
+    ] {
+        let found = lint(source, "t.q", Profile::Style);
+        assert!(
+            found
+                .iter()
+                .any(|f| f.code == "QR001" && f.detail.contains(claim)),
+            "{source:?}: QR001 should say {claim}: {found:?}"
+        );
+    }
+}
+
 /// QE009 names the iterator the way q 5's error does, whole: `b:,/:a` is
 /// '/:, `-':a` is ':, `f\:a` is '\:, and `{+/x}` is '/.
 #[test]
@@ -1027,6 +1391,25 @@ fn a_vector_comparison_names_the_row_count_that_runs() {
     assert!(messages[0].contains("`<>` against a 2-item vector literal"));
     assert!(messages[0].contains("unless the table has exactly 2 rows"));
     assert!(messages[1].contains("`=` against a 3-item vector literal"));
+}
+#[test]
+fn a_two_character_glyph_before_an_iterator_keyword_is_named_whole() {
+    // #2772: `x <= each y` was reported at the `=`, with `x =' y` as the
+    // rewrite - another comparison. q 5 runs `1 2<='2 3`.
+    for glyph in ["<=", ">=", "<>"] {
+        let source = format!("x:1 2;y:2 3\nr:x {glyph} each y\n");
+        let found: Vec<_> = lint(&source, "t.q", Profile::General)
+            .into_iter()
+            .filter(|f| f.code == "QE011")
+            .collect();
+        assert_eq!(found.len(), 1, "{glyph}: {found:?}");
+        assert_eq!((found[0].column, found[0].end_column), (Some(5), Some(7)));
+        assert!(
+            found[0].detail.contains(&format!("write `x {glyph}' y`")),
+            "{}",
+            found[0].detail
+        );
+    }
 }
 #[test]
 fn an_indexed_integer_names_the_error_of_a_closed_handle() {
@@ -1517,6 +1900,47 @@ fn an_invalid_escape_names_a_non_ascii_char_whole() {
     assert_eq!(qe002.detail, "Invalid escape \\é");
 }
 
+/// And a line break after it in words: echoed, it split the finding over
+/// two lines of the text output (#2996).
+#[test]
+fn an_invalid_escape_at_a_line_end_is_named_in_words() {
+    for (source, named) in [
+        ("s:\"abc\\\n  def\"\n", "a backslash at the end of a line"),
+        (
+            "s:\"abc\\\r\n  def\"\r\n",
+            "a backslash at the end of a line",
+        ),
+        ("s:\"abc\\\tdef\"\n", "a backslash before a tab"),
+        ("s:\"abc\\\u{1}def\"\n", "a backslash before U+0001"),
+    ] {
+        let found = lint(source, "t.q", Profile::General);
+        let qe002 = found.iter().find(|f| f.code == "QE002").expect("QE002");
+        assert_eq!(qe002.detail, format!("Invalid escape: {named}"));
+    }
+}
+
+/// QB004 counts a message as q keeps it. In a script q drops the blanks and
+/// the CR that end each line of a string, and keeps the line break and the
+/// next line's indent: KDB-X 5 reads `"abc  \n  def \t \n  ghi"` from a file
+/// as "abc\n  def\n  ghi", in a CRLF file too (#2995).
+#[test]
+fn a_thrown_message_is_counted_without_the_blanks_ending_its_lines() {
+    let x = "x".repeat(120);
+    let thrown = |end: &str, last: &str| {
+        let source = format!("f:{{'\"{x}{end}  {x}{end}  {last}\"}}{end}");
+        lint(&source, "t.q", Profile::Style)
+            .into_iter()
+            .find(|f| f.code == "QB004")
+            .map(|f| f.detail)
+    };
+    for end in ["\n", "\r\n", "  \n", " \t\r\n"] {
+        // 120, a break, 2 + 120, a break, 2 + 8: the 254 q keeps.
+        assert_eq!(thrown(end, "yyyyyyyy"), None, "{end:?}");
+        let over = thrown(end, "yyyyyyyyy").expect("QB004");
+        assert!(over.contains("255 bytes"), "{end:?}: {over}");
+    }
+}
+
 /// A typed slot binds its pattern's names: q 5 defines `{[a:`j] a}` and checks
 /// the type at the call, so `a` is a parameter, not body text (#304). A slot
 /// that is no pattern at all is still reported.
@@ -2003,4 +2427,150 @@ fn navigation_over_many_implicit_lambdas_is_linear() {
         large < small * 16,
         "4000 lambdas took {small:?} and 32000 {large:?}"
     );
+}
+/// QS007 asked, for each `@param`, whether its run documents some other
+/// lambda, and read every lambda in the file to answer: a file documented a
+/// function at a time was quadratic in its length (#2865).
+#[test]
+fn many_documented_functions_lint_in_linear_time() {
+    let time = |n: usize| {
+        let source: String = (0..n)
+            .map(|i| format!("/ @param a x\nf{i}:{{[a] a}}\n"))
+            .collect();
+        best_of_three(|| lint(&source, "t.q", Profile::Uqf))
+    };
+    time(1000); // warm the allocator and the regex caches
+    let (small, large) = (time(1000), time(8000));
+    eprintln!("1000 documented functions took {small:?} and 8000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "1000 documented functions took {small:?} and 8000 {large:?}"
+    );
+}
+/// QS007 says what the lambda declares by the names its slots bind: a
+/// typed slot's name and a pattern's, not the slots as written (#2778).
+#[test]
+fn a_stale_param_is_told_the_names_the_signature_binds() {
+    let source = "/ @param zz nothing\nf:{[x:`j;(a;b);] x+a+b}\n";
+    let found = lint(source, "t.q", Profile::StyleQ);
+    let messages: Vec<&str> = found
+        .iter()
+        .filter(|f| f.code == "QS007")
+        .map(|f| f.detail.as_str())
+        .collect();
+    assert_eq!(
+        messages,
+        [
+            "`@param zz` names a parameter this lambda does not take; it declares \
+          [\"x\", \"a\", \"b\"]"
+        ]
+    );
+}
+/// QB004 read on from each top-level signal to the next `;` or closer,
+/// which in a file of them is the end of the file (#2866).
+#[test]
+fn many_top_level_signals_lint_in_linear_time() {
+    let time = |n: usize| {
+        let source: String = (0..n).map(|i| format!("a{i}:'\"x\"\n")).collect();
+        best_of_three(|| lint(&source, "t.q", Profile::Uqf))
+    };
+    time(2000); // warm the allocator and the regex caches
+    let (small, large) = (time(2000), time(16000));
+    eprintln!("2000 signals took {small:?} and 16000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "2000 signals took {small:?} and 16000 {large:?}"
+    );
+}
+/// A file of statements left open - a bad paste or merge. The line each
+/// unclosed bracket is reported before was counted from the start of the
+/// file; and with QE001 deselected, so that the other rules run, each line
+/// read on to the end of its statement, the file's (#2867).
+#[test]
+fn many_unclosed_statements_lint_in_linear_time() {
+    for structure in [true, false] {
+        let time = |n: usize| {
+            let source: String = (0..n).map(|i| format!("a{i}:(1\n")).collect();
+            best_of_three(|| {
+                q_lint_rs::lint_every_rule(&source, "t.q", &Workspace::default(), structure)
+            })
+        };
+        time(2500); // warm the allocator and the regex caches
+        let (small, large) = (time(2500), time(20000));
+        eprintln!("2500 unclosed statements took {small:?} and 20000 {large:?}");
+        // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk
+        // by four times.
+        assert!(
+            large < small * 16,
+            "2500 unclosed statements took {small:?} and 20000 {large:?}"
+        );
+    }
+}
+/// `statement_view` validated the whole scope as UTF-8 again for each
+/// query in it, so one lambda of many queries was quadratic (#2868).
+#[test]
+fn many_queries_in_one_lambda_lint_in_linear_time() {
+    let time = |n: usize| {
+        let body: String = (0..n)
+            .map(|i| format!(" r{i}:select a from t where b>0;\n"))
+            .collect();
+        let source = format!("f:{{[t]\n{body} }}\n");
+        best_of_three(|| lint(&source, "t.q", Profile::Uqf))
+    };
+    time(4000); // warm the allocator and the regex caches
+    let (small, large) = (time(4000), time(32000));
+    eprintln!("4000 queries took {small:?} and 32000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "4000 queries took {small:?} and 32000 {large:?}"
+    );
+}
+/// A global assigned and read over and over, as a generated or a long
+/// imperative script does: each read gathered every assignment of the name
+/// to find the one in force (#2869).
+#[test]
+fn a_global_reassigned_and_read_many_times_lints_in_linear_time() {
+    let time = |n: usize| {
+        let source = "a:1\nr:a 0\n".repeat(n);
+        best_of_three(|| lint(&source, "t.q", Profile::Uqf))
+    };
+    time(2000); // warm the allocator and the regex caches
+    let (small, large) = (time(2000), time(16000));
+    eprintln!("2000 reassignments took {small:?} and 16000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "2000 reassignments took {small:?} and 16000 {large:?}"
+    );
+}
+
+/// A control character where q reads code is 'char in q 5, as a character
+/// past ASCII is: a NUL from a binary merge, an ESC from pasted terminal
+/// output. A tab, a form feed and a carriage return are blank, and load
+/// (#2860).
+#[test]
+fn a_control_character_in_code_is_reported_as_q_refuses_it() {
+    for ch in [
+        '\0', '\x01', '\x07', '\x08', '\x0b', '\x0e', '\x1b', '\x1f', '\x7f',
+    ] {
+        let source = format!("a:1;{ch}b:2\n");
+        let found = lint(&source, "t.q", Profile::General);
+        let of: Vec<_> = found.iter().filter(|f| f.code == "QE012").collect();
+        assert_eq!(of.len(), 1, "{ch:?}: {found:?}");
+        assert_eq!((of[0].line, of[0].column), (1, Some(5)), "{ch:?}");
+        let named = format!("U+{:04X} ", u32::from(ch));
+        assert!(of[0].detail.starts_with(&named), "{}", of[0].detail);
+    }
+    for ch in ['\t', '\x0c', '\r'] {
+        let source = format!("a:1;{ch}b:2\n");
+        let found = lint(&source, "t.q", Profile::General);
+        assert!(found.iter().all(|f| f.code != "QE012"), "{ch:?}: {found:?}");
+    }
 }

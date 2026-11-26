@@ -64,7 +64,7 @@
           "properties": {
             "name-pattern": {
               "type": "string",
-              "default": "(?:password|passwd|pwd|secret|token|api_?key|credentials?)$",
+              "default": "(?:password|passwd|pwd|secret|token|(?:api|secret|access|private|client)_?key|credentials?)$",
               "description": "A case-insensitive regular expression the last part of a name must match for QX002 to read its string as a credential."
             }
           }

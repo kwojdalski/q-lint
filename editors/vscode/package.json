@@ -3,7 +3,7 @@
   "displayName": "q-lint",
   "description": "q/kdb+ for VS Code: linting, Quick Fixes, navigation and help from the source, and connections to q processes to run code on.",
   "icon": "icon.png",
-  "version": "0.40.0",
+  "version": "0.41.0",
   "publisher": "wojdalski",
   "license": "MIT",
   "engines": {
@@ -1100,7 +1100,7 @@
             "type": "boolean",
             "default": true,
             "order": 149,
-            "markdownDescription": "**Profile Functions on Process**: run the selection, or the statement at the cursor, with every function of a namespace timed, and show them as a sortable table and a flame chart. The functions are replaced by timing wrappers for the run and put back after; the read-only guard asks first on a guarded process. Off, the command is hidden and refuses."
+            "markdownDescription": "**Profile Functions on Process**: run the selection, or the statement at the cursor, with every function of a namespace timed, and show them as a sortable table and a flame chart. The functions are replaced by ones with the timing in their text for the run and put back after; the read-only guard asks first on a guarded process. Off, the command is hidden and refuses."
           },
           "q-lint.problemsDashboard.enable": {
             "type": "boolean",
@@ -1319,7 +1319,7 @@
             "type": "boolean",
             "default": false,
             "order": 600,
-            "markdownDescription": "Send a heartbeat on the active connection every `#q-lint.connection.heartbeatInterval#` seconds: a `::` sent as a plain string, whose round trip the status bar shows (`q: rdb 3 ms`). One the process has not answered for 5 seconds shows as `no answer`. It is skipped while a query runs. Off by default: a process that logs its clients sees every heartbeat."
+            "markdownDescription": "Send a heartbeat on the active connection every `#q-lint.connection.heartbeatInterval#` seconds: a `::` sent as a plain string, whose round trip the status bar shows (`q: rdb 3 ms`). One the process has not answered for 5 seconds shows as `no answer`. One still unanswered three heartbeats later has its host asked for a TCP connection: a process that is only busy keeps its connection, and one whose host gives none - the network dropped without a word - has its connection closed as dropped. It is skipped while a query runs. Off by default: a process that logs its clients sees every heartbeat."
           },
           "q-lint.connection.heartbeatInterval": {
             "type": "number",

@@ -492,8 +492,9 @@ const TOKEN =
   /-?0[NWw][pmdznuvt]|-?\d{4}\.\d{2}\.\d{2}(?:[DT][0-9:.]*)?|-?\d{4}\.\d{2}m|-?\d+D[0-9:.]*|-?\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?|-?\d+(?:\.\d+)?j?/g;
 
 /// Whether `index` of `line` is inside a string or after a comment's `/`.
-export function inStringOrComment(line: string, index: number): boolean {
-  let quoted = false;
+/// `quoted` when the line starts inside a string the lines above it left
+/// open (`lineContext` of statements.ts tells).
+export function inStringOrComment(line: string, index: number, quoted = false): boolean {
   for (let i = 0; i < index && i < line.length; i++) {
     const c = line[i];
     if (quoted) {
@@ -513,10 +514,12 @@ export function inStringOrComment(line: string, index: number): boolean {
 
 /// The temporal literal or epoch-sized number under `character` of `line`,
 /// with where it starts and ends, and what it converts to. Undefined for
-/// anything else, a number too small to be a time among them.
+/// anything else, a number too small to be a time among them. `quoted` when
+/// the line starts inside a string open from the lines above it (#2919).
 export function temporalAt(
   line: string,
   character: number,
+  quoted = false,
 ): { start: number; end: number; text: string; what: string; conversions: Conversion[] } | undefined {
   for (const m of line.matchAll(TOKEN)) {
     let start = m.index ?? 0;
@@ -545,7 +548,7 @@ export function temporalAt(
     while (k >= 0 && /[A-Za-z0-9_.:/]/.test(line[k])) {
       k--;
     }
-    if (line[k] === "`" || inStringOrComment(line, start)) {
+    if (line[k] === "`" || inStringOrComment(line, start, quoted)) {
       return undefined;
     }
     // A bare number counts once it is as long as an epoch: 9 digits.

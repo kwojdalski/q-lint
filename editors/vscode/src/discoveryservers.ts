@@ -181,7 +181,10 @@ export class DiscoveryServers {
         state = { processes, problems, loading: false, fetchedAt: Date.now(), removed: false };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        state = { processes: [], problems: [], error: message, loading: false, fetchedAt: Date.now(), removed: false };
+        // What it last listed stays, beside the failure: a refresh that
+        // fails once - a 503, a timeout - is no word that its processes are
+        // gone, and they are connected to, bound and reconnected by label (#3025).
+        state = { processes: before.processes, problems: before.problems, error: message, loading: false, fetchedAt: before.fetchedAt ?? Date.now(), removed: false };
       }
       // A server edited or deleted meanwhile keeps what its new URL answers,
       // and one whose processes were removed meanwhile stays so.
@@ -443,6 +446,9 @@ export class DiscoveryServers {
       if (kept !== undefined && answer.secret === undefined) {
         await this.context.secrets.store(secretKey(server.label), kept);
       }
+      this.states.delete(old.label);
+    } else if (server.url !== old.url) {
+      // What another URL listed is not this one's to keep when it fails (#3025).
       this.states.delete(old.label);
     }
     await this.keepSecret(server.label, answer.secret);

@@ -25,7 +25,7 @@ export const USAGE = [
   "options:",
   `  --kind <${CHART_KINDS.join("|")}>   default line`,
   "  --x <column>        the x axis (default: the first column)",
-  "  --y <a,b,...>       the columns plotted (default: every numeric one)",
+  "  --y <a,b,...>       the columns plotted (default: every numeric one); a name holding a comma is given alone",
   "  --title <text>      a title over the chart",
   "  --width <px> --height <px>   default 800 by 450",
   "  --background <colour>        default #ffffff",
@@ -45,6 +45,9 @@ export interface CliArgs {
   query?: string;
   /// Send the query as plain strings, for a process that refuses a lambda (#2494).
   direct?: boolean;
+  /// What `--y` was given, whole: one column's name when the table has a
+  /// column of that name, comma and all (#3147).
+  y?: string;
   options: ChartOptions;
 }
 
@@ -59,6 +62,7 @@ export function parseArgs(argv: string[]): CliArgs | string {
   let user: string | undefined;
   let query: string | undefined;
   let direct = false;
+  let y: string | undefined;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const value = (): string => {
@@ -82,7 +86,8 @@ export function parseArgs(argv: string[]): CliArgs | string {
           options.x = value();
           break;
         case "--y":
-          options.y = value().split(",").map((s) => s.trim()).filter(Boolean);
+          y = value();
+          options.y = y.split(",").map((s) => s.trim()).filter(Boolean);
           break;
         case "--title":
           options.title = value();
@@ -139,7 +144,7 @@ export function parseArgs(argv: string[]): CliArgs | string {
     const changes = writes(query);
     if (changes.length > 0) return `the query would change the process (${changes.join("; ")}): a chart only reads`;
   }
-  return { input, json, out, host, port, user, query, ...(direct ? { direct } : {}), options };
+  return { input, json, out, host, port, user, query, ...(direct ? { direct } : {}), ...(y !== undefined ? { y } : {}), options };
 }
 
 /// The grid a query answers, over a connection opened for it and closed.
@@ -156,8 +161,13 @@ async function queryGrid(args: CliArgs): Promise<Grid> {
       connection.direct = () => ({ label: `${args.host}:${args.port}`, from: "process" });
       answer = await runUnwrapped(connection, statements(args.query!), { size: [25, 200], limit: 100_000, unlimited: false, grid: true });
     } else {
+      // Under `reval`, so q holds the promise that a chart only reads when
+      // the guard's reading misses a write; a process without it is sent
+      // the plain lambda (#2642).
+      connection.readOnly = true;
       answer = await connection.queryGrid(statements(args.query!), [25, 200], 100_000);
     }
+    if (connection.refused !== undefined) throw new Error(`the query would change the process (refused by its read-only evaluation: '${connection.refused}): a chart only reads`);
     if (!answer.ok) throw new Error(`the query failed: ${answer.error}`);
     if (answer.grid === undefined) throw new Error("the query's answer is not a table");
     return gridFromPayload(answer.grid);
@@ -184,7 +194,10 @@ export async function main(argv: string[], io = { out: (s: string) => process.st
     // came, and says so, on the chart and here (#2456).
     const held = grid.cells[0]?.length ?? 0;
     const cut = args.query !== undefined && grid.total > held ? `the first ${held.toLocaleString("en-US")} of ${grid.total.toLocaleString("en-US")} rows` : undefined;
-    const options = cut === undefined ? args.options : { ...args.options, title: args.options.title ? `${args.options.title} (${cut})` : cut };
+    // A header may hold a comma (#2457): `--y "x,y"` is that column where
+    // there is one, and two columns only where there is not (#3147).
+    const y = args.y !== undefined && grid.columns.some((c) => c.name === args.y) ? { y: [args.y] } : {};
+    const options = { ...args.options, ...y, ...(cut === undefined ? {} : { title: args.options.title ? `${args.options.title} (${cut})` : cut }) };
     writeFileSync(args.out, chartFromGrid(grid, options));
     if (cut !== undefined) {
       io.err(`chart: the query answered ${grid.total.toLocaleString("en-US")} rows: only ${cut} are drawn\n`);

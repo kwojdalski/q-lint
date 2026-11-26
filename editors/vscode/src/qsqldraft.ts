@@ -115,7 +115,7 @@ export async function draftQsql(live: Live, given?: string): Promise<Drafted | u
   let code: string;
   try {
     code = await window.withProgress(
-      { location: ProgressLocation.Notification, title: `q-lint: drafting qSQL with ${model.name}`, cancellable: true },
+      { location: ProgressLocation.Notification, title: plainMessage(`q-lint: drafting qSQL with ${model.name}`), cancellable: true },
       async (_progress, token) => {
         const tables = await tablesOfProcess(live, process);
         return extractCode(await ask(model, qsqlPrompt(description, tables, process), token));

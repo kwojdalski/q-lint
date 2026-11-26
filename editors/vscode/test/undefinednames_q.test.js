@@ -95,6 +95,9 @@ test("DEFINED answers whether each name is defined, a bare one in the root or .q
     x: true,
     v: true,
   });
+  // A table's column read as t.c is defined where t is a table (#2808).
+  const columns = ["t.a", "t.b", "t.z"];
+  assert.deepStrictEqual(Object.fromEntries(readDefined(await c.call(DEFINED, columns.join(" ")), columns)), { "t.a": true, "t.b": true, "t.z": false });
   // One name, one character long.
   assert.deepStrictEqual([...readDefined(await c.call(DEFINED, "x"), ["x"])], [["x", true]]);
   assert.strictEqual(String((await c.evaluate("calls")).value), "0", "the view was not evaluated");

@@ -1084,7 +1084,7 @@ export class QueryModes {
     const bytes =
       format === "png" && data.startsWith(prefix)
         ? Buffer.from(data.slice(prefix.length), "base64")
-        : format === "svg" && data.startsWith("<svg")
+        : format === "svg" && plainSvg(data)
           ? Buffer.from(data, "utf8")
           : undefined;
     const request = message.key !== undefined ? this.saving.get(message.key) : undefined;
@@ -1095,7 +1095,9 @@ export class QueryModes {
       if (format === undefined || bytes === undefined) {
         if (typeof message.error === "string") {
           void window.showErrorMessage(plainMessage(`q-lint: could not save the chart: ${message.error}`));
-        } else if (request !== undefined) {
+        } else if (request !== undefined || message.key === undefined) {
+          // Asked for by the command, or by the page's own Save button
+          // (#3139) - not a second page's answer to a request met already.
           void window.showInformationMessage("q-lint: the result on show draws no chart, so there is nothing to save. Its Chart view says why.");
         }
         return;
@@ -1652,7 +1654,7 @@ export class QueryModes {
     }
     const folder = Uri.joinPath(to, "..");
     let relative: string | undefined;
-    if (svg !== undefined && svg.startsWith("<svg")) {
+    if (plainSvg(svg)) {
       const base = to.path.replace(/^.*\//, "").replace(/\.[^.]*$/, "") || "report";
       let names: string[] = [];
       try {

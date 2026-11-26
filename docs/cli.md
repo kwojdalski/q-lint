@@ -30,8 +30,9 @@ Which files and which configuration:
   the command line is linted anyway unless `--force-exclude` is given, as in
   Ruff; pre-commit hooks pass it.
 - `--config` uses one file for everything; `--isolated` ignores every
-  configuration file. `--show-settings` prints which file governs each path
-  and the rules it turns on.
+  configuration file. `--show-settings` prints which file governs each path,
+  the `target-version` in force and the rules that report there (as JSON
+  with `--format json`, [output.md](output.md#--show-settings)).
 - `-` reads standard input. `--stdin-filename` gives it a path, for
   configuration and messages, and implies reading standard input.
 
@@ -91,7 +92,9 @@ is one more than a count of characters.
 under `--format json` it is a list of `{"code", "count", "summary"}`.
 
 `--output-file` never writes over a file the run reads, including one reached
-through a link; that is refused with exit 2.
+through a link, the configuration or baseline in force, or any name ending
+`.q`, `.k` or `.qnb` (more often a path to lint taken for the flag's value);
+each is refused with exit 2.
 
 ## Fixes
 
@@ -104,7 +107,7 @@ working program alone, or to replace code that could only fail: `==`,
 `!=`, `+=`, `-=`, `*=` (QE004); a leading BOM (QE005); an invalid string
 escape (QE002); `true`, `false`, `None`, `return x` (QF015); a table
 literal of scalars (QT005); a symbol used as a `like` pattern (QB007);
-`f . ()` (QA004); a float where q wants an integer (QT008, QT014, QT017);
+`f . ()` for a lambda that takes nothing (QA004); a float where q wants an integer (QT008, QT014, QT017);
 a number signalled (QT025); `where a:1` (QT028); the q 4 spellings q 5
 refuses, `-x`, `+/x`, `cor each x` (QE008, QE009, QE011); a pasted
 no-break space, dash or curly quote (QE012); redundant parentheses round
@@ -122,6 +125,7 @@ and `{x+1} each a` (QR002, QR004); `abs each x` (QV002); `r:r,x` in a loop
 filter (QB005); implicit `x` beside a declared parameter (QF010);
 commented-out code (QL002); an outer local a nested lambda reads (QF005);
 `$[c;a;b;]` and `$[c;a]` (QA007, QA006); `10/2` (QB014); `a:a` (QB017);
+any other `f . ()` (QA004: `count[]` is 1, where `. ()` was 'type);
 a parameter that shadows a builtin (QF001); a column one typo away
 (QF020); `` hopen `host:5000 `` (QT029); an unused `noqa` (QL003); and
 under `uqf`, `.z.P` and datetimes (QP003, QP002).
@@ -141,9 +145,12 @@ every run, the language server's included. A finding is matched on its
 file, its code and the trimmed text of its line, never the line number, so
 lines added above it leave it matched and editing its own line makes it new.
 Paths are relative to the baseline file. A missing or malformed baseline is
-an error (exit 2). `--write-baseline` refuses a path ending `.q`, `.k` or
-`.qnb` and any file the run lints, and writes nothing if an input could not
-be read. [ci.md](ci.md#adopting-on-a-tree-with-findings) walks through
+an error (exit 2). `--write-baseline` refuses a path ending `.q`, `.k`,
+`.qnb` or `.toml`, any file the run lints and the configuration it reads, and
+writes nothing if an input could not be read. qls findings are baselined like
+built-in ones. A file whose brackets do not balance reports only its first
+QE001; once that is baselined, what stands behind it reports, so the baseline
+records it too. [ci.md](ci.md#adopting-on-a-tree-with-findings) walks through
 adopting one.
 
 ## The q version check
@@ -177,18 +184,24 @@ directory. A file depends on another when it:
 
 - reads a global the other defines, resolved as q resolves it: a bare name
   under the `\d` in force, a name no file defines tried without its last
-  segment, and a symbol handed straight to `get` or `value`;
+  segment, a namespace read whole (`.cfg` as a dictionary) as a read of each
+  file assigning a name in it, and a symbol handed straight to `get` or
+  `value`;
 - loads it by a literal path, `\l path`, `system "l path"` or a file symbol
   ending `.q`, tried against the current directory, then the loading file's
-  directory and each one above it; a directory loads the scripts in it;
+  directory and each one above it; a directory loads the scripts in it. A
+  file symbol handed to `hcount`, `key`, `read0` and the like is an edge but
+  no load, so it puts nothing in the loader's `\d` context;
 - loads it as a KDB-X module, `` use`name ``, whose names live under
-  `.m.name`.
+  `.m.name`. A file is a module only if it assigns `export` and some `use`
+  reaches it; otherwise it is a script, its names at the root.
 
 A name several files define is an edge to each, since which wins is load
 order. `--detail` lists those under `ambiguous`, and under `dynamic` each
 line where a name is reached by a value computed at run time (`value` of a
-string, `get` of a computed name, `eval`, `` ` sv ``,
-`system "l ",path`). A caller that wants to be safe can treat such a file as
+string, `get` of a computed name, `eval`, `` ` sv ``, `set` or an amend
+into a computed name, `system "d ",ns` (kind `namespace`), and
+`system "l ",path` or `value "\\l lib.q"` (kind `load`)). A caller that wants to be safe can treat such a file as
 depending on everything.
 
 `--symbols` also counts a qualified symbol literal, `` `.ns.f ``, as a read,

@@ -52,6 +52,30 @@ export function mergeEnv(...layers: Record<string, string>[]): Record<string, st
   return Object.assign({}, ...layers) as Record<string, string>;
 }
 
+/// A launch definition's `own` variables with what they name in place, as
+/// a shell and a task read one: `$NAME` and `${NAME}` are the variable's
+/// value, `${env:NAME}` too, and a `~` the value starts with is `home`.
+/// Passed as written, `PATH=/opt/kx/bin:$PATH` gave q a PATH of that text,
+/// and none of its `system` commands found their program (#3102). A name is
+/// looked up in `base` - what q is started with besides - and in the own
+/// ones before it, without case on Windows, as its environment is. A
+/// `$NAME` no variable has is left as it is written, since a value may hold
+/// a `$` of its own; `${env:NAME}`, which only names one, is then empty.
+export function expandEnv(own: Record<string, string>, base: Record<string, string | undefined>, home: string, platform: string = globalThis.process.platform): Record<string, string> {
+  const set = new Map<string, string>();
+  const key = (name: string): string => (platform === "win32" ? name.toUpperCase() : name);
+  const keep = (name: string, value: string | undefined): void => void (value !== undefined && set.set(key(name), value));
+  Object.entries(base).forEach(([name, value]) => keep(name, value));
+  const expanded: Record<string, string> = {};
+  for (const [name, value] of Object.entries(own)) {
+    expanded[name] = value
+      .replace(/^~(?=$|[\\/])/, () => home)
+      .replace(/\$\{env:([^}]*)\}|\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (text: string, task?: string, braced?: string, bare?: string) => (task !== undefined ? (set.get(key(task)) ?? "") : (set.get(key((braced ?? bare)!)) ?? text)));
+    keep(name, expanded[name]);
+  }
+  return expanded;
+}
+
 /// The variables q reads as it starts, which a shell's startup file often
 /// exports.
 const Q_NAMES = ["QHOME", "QLIC", "QINIT"];
