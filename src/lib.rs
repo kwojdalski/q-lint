@@ -2537,18 +2537,21 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
             let symbols = unsymbolled(&v.code[line_start..line_end]);
             let symbols = &symbols[start - line_start..];
             let in_code = |m: &regex::Match| {
-                if m.as_str().starts_with('"') {
-                    code.as_bytes()[m.end() - 1] == b'$'
-                } else {
-                    code[m.range()] == *m.as_str()
-                        && (!m.as_str().starts_with(|c: char| c.is_ascii_digit())
-                            || symbols.as_bytes()[m.start()] == code.as_bytes()[m.start()])
-                }
+                code_around_string(code, m)
+                    && (!m.as_str().starts_with(|c: char| c.is_ascii_digit())
+                        || symbols.as_bytes()[m.start()] == code.as_bytes()[m.start()])
             };
-            let swaps: [(&regex::Regex, &str); 6] = [
+            let swaps: [(&regex::Regex, &str); 12] = [
                 (re!(r"`datetime(\s*\$)"), "`timestamp$1"),
                 (re!(r#""z"(\s*\$)"#), "\"p\"$1"),
                 (re!(r"\b15h(\s*\$)"), "12h$1"),
+                // The type in parentheses, and as `$`'s first argument (#2720).
+                (re!(r"(\(\s*)`datetime(\s*\)\s*\$)"), "${1}`timestamp$2"),
+                (re!(r#"(\(\s*)"z"(\s*\)\s*\$)"#), "${1}\"p\"$2"),
+                (re!(r"(\(\s*-?)15h(\s*\)\s*\$)"), "${1}12h$2"),
+                (re!(r"(\$\[\s*)`datetime(\s*;)"), "${1}`timestamp$2"),
+                (re!(r#"(\$\[\s*)"z"(\s*;)"#), "${1}\"p\"$2"),
+                (re!(r"(\$\[\s*-?)15h(\s*;)"), "${1}12h$2"),
                 (re!(r"(^|[^\w.])(-?0[NnWw])z\b"), "$1${2}p"),
                 // The `z` goes with the `T`: left behind it keeps the
                 // literal a datetime, `2024.01.01D12:00z` (q 5: -15h, #2743).
@@ -2566,10 +2569,13 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
             // So only before a date, datetime or timestamp literal or the
             // clock's own, or the empty list, which a table's schema casts;
             // what a name holds is not known here.
-            if m.as_str().ends_with('$')
+            if m.as_str().ends_with(['$', ';'])
                 && !re!(r"^[ \t]*(?:-?\d{4}\.\d{2}\.\d{2}(?:[TD]\d|[^\w.:]|$)|\.z\.[pPzZdD](?:[^\w.]|$)|\([ \t]*\))")
                     .is_match(&line[m.end()..])
             {
+                return None;
+            }
+            if m.as_str().starts_with('$') && !cast_brackets(&v.code, start + m.start()) {
                 return None;
             }
             begin = start + m.start();
@@ -3138,6 +3144,24 @@ fn scalar_literal(s: &str) -> bool {
 fn char_atom(s: &str) -> Option<usize> {
     let m = re!(r#"^"((?:\\[0-7]{3}|\\.|[^"\\])*)""#).captures(s)?;
     (q_bytes(&m[1]).len() == 1).then(|| m.get(0).unwrap().end())
+}
+
+/// Whether a match is code but for the one string it may hold: `"z"$` and
+/// `$["z";` are casts where everything around the type string is code.
+/// `code` has strings blanked, and the match was made where they are kept.
+fn code_around_string(code: &str, m: &regex::Match) -> bool {
+    let s = m.as_str();
+    let (open, close) = match (s.find('"'), s.rfind('"')) {
+        (Some(open), Some(close)) if open < close => (open, close + 1),
+        _ => (0, 0),
+    };
+    code[m.start()..m.start() + open] == s[..open] && code[m.start() + close..m.end()] == s[close..]
+}
+
+/// Whether the `$[` at `at` of `code` is a cast, `$[type;value]`, and no
+/// conditional, which has three slots or more: q 5 `$[15h;1;2]` is 1.
+fn cast_brackets(code: &str, at: usize) -> bool {
+    matching(code, at + 1, b'[', b']').is_some_and(|end| slots(&code[at + 2..end - 1]).len() == 2)
 }
 
 /// The UTC clock QP003 asks for in place of a local one: the same clock in
@@ -10757,6 +10781,22 @@ fn lint_rules(
                     ]
                     .iter()
                     .filter_map(|regex| regex.find_iter(literals).find(in_code)),
+                )
+                // The type in parentheses, or as `$`'s first argument, casts
+                // the same: q 5 `(15h)$x`, `` (`datetime)$x ``, `$["z";x]` and
+                // `` $[`datetime;x] `` are each -15h (#2720).
+                .chain(
+                    [
+                        re!(r#"\(\s*(?:"[A-Za-z ]*[zZ][A-Za-z ]*"|`datetime|-?15h)\s*\)\s*\$"#),
+                        re!(r#"\$\[\s*(?:"[A-Za-z ]*[zZ][A-Za-z ]*"|`datetime|-?15h)\s*;"#),
+                    ]
+                    .iter()
+                    .filter_map(|regex| {
+                        regex.find_iter(literals).find(|m| {
+                            code_around_string(line, m)
+                                && (!m.as_str().starts_with('$') || cast_brackets(line, m.start()))
+                        })
+                    }),
                 )
                 // Digits and a `z` alone: q 5 reads `20240101z` as that
                 // date's datetime, nine digits or more as seconds from 1970,

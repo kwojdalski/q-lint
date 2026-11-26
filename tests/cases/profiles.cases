@@ -451,6 +451,29 @@ c:20240101z
 d:20240101.5z
 e:1.2345678z
 
+=== QP002 QS004 profile: uqf | a cast whose type is in parentheses (q 5: type (15h)$2024.01.01 is -15h) (#2720)
+a:(15h)$2024.01.01
+
+=== QP002 QS004 profile: uqf | the parse in parentheses, and the type as a symbol or a string (#2720)
+b:(-15h)$"2024.01.01T00:00"
+c:(`datetime)$2024.01.01
+d:("z")$2024.01.01
+
+=== QP002 profile: uqf | the type as the first argument of $ (q 5: type $["z";2024.01.01] is -15h) (#2720)
+a:$["z";2024.01.01]
+
+=== QP002 profile: uqf | as a symbol or a short there too (#2720)
+b:$[`datetime;2024.01.01]
+c:$[15h;2024.01.01]
+
+=== clean profile: uqf | a conditional has three slots and casts nothing (q 5: $[15h;1;2] is 1), nor does a string applied to in parentheses (#2720)
+f:{x}
+a:$[15h;1;2]
+b:$["z";1;2]
+c:(f "z")$"ab"
+d:"use (15h)$x or $[`datetime;x]"
+e:$[12h;2024.01.01]
+
 === QP002 profile: uqf | a timestamp's spelling with a z after it is a datetime (q 5: type 2024.01.01D12:00:00.000z is -15h) (#2743)
 a:2024.01.01D12:00:00.000z
 
