@@ -21,7 +21,7 @@ import {
   type TreeView,
 } from "vscode";
 import { ADMIN_COMMANDS, ADMIN_VIEWS, adminOff, readAdmin, type AdminFeature } from "./admin";
-import { CLIENTS, clientDescription, closeCode, readClients } from "./clients";
+import { CLIENTS, clientDescription, closeCode, readClients, type ClientRow } from "./clients";
 import { guardedBy, readGuard } from "./guard";
 import { borrowWhenFree } from "./infoview";
 import type { Live } from "./live";
@@ -29,7 +29,7 @@ import { readLive } from "./liveconfig";
 import type { Process } from "./processes";
 import type { QConnection } from "./qclient";
 import { statements } from "./statements";
-import { TIMERS, intervalCode, intervalProblem, readTimers, toggleCode } from "./timers";
+import { TIMERS, intervalCode, intervalProblem, lastRunText, periodText, readTimers, toggleCode } from "./timers";
 import { plainMessage } from "./history";
 
 /// A row of either view: what it shows, and what its commands act on.
@@ -40,6 +40,8 @@ export interface AdminNode {
   icon?: string;
   contextValue?: string;
   handle?: number;
+  /// The client a Connected Clients row shows.
+  client?: ClientRow;
   job?: { id: number; active: boolean };
   interval?: number;
 }
@@ -212,6 +214,7 @@ async function readClientNodes(connection: QConnection): Promise<{ nodes: AdminN
       icon: row.self ? "plug" : "person",
       contextValue: row.self ? "clientSelf" : "client",
       handle: row.handle,
+      client: row,
     })),
     ...(rows.length === 0 ? { message: "No open handles." } : !tracked ? { message: "q keeps no address or user for another client's handle; TorQ's .clients records them." } : {}),
   };
@@ -231,8 +234,8 @@ async function readTimerNodes(connection: QConnection): Promise<{ nodes: AdminNo
       },
       ...state.jobs.map((job) => ({
         label: job.description !== "" ? job.description : job.func,
-        description: `${job.active ? "" : "off · "}every ${job.period} · next ${job.nextrun}`,
-        tooltip: [`TorQ timer ${job.id}${job.active ? "" : " (off)"}`, `runs ${job.func}`, `every ${job.period}`, `next ${job.nextrun}`, `last ${job.lastrun}`].join("\n"),
+        description: `${job.active ? "" : "off · "}${periodText(job.period)} · next ${job.nextrun}`,
+        tooltip: [`TorQ timer ${job.id}${job.active ? "" : " (off)"}`, `runs ${job.func}`, periodText(job.period), `next ${job.nextrun}`, `last ${lastRunText(job.lastrun)}`].join("\n"),
         icon: job.active ? "play-circle" : "debug-pause",
         contextValue: job.active ? "torqTimerOn" : "torqTimerOff",
         job: { id: job.id, active: job.active },
@@ -292,7 +295,7 @@ export function registerAdminViews(context: ExtensionContext, live: Live_): { cl
     if ((await window.showWarningMessage(plainMessage(`Close handle ${node.handle} on ${process.label}? The client it belongs to is disconnected.`), { modal: true }, yes)) !== yes) {
       return false;
     }
-    const done = await change(closeCode(node.handle), `close handle ${node.handle}`, process.label, clients);
+    const done = await change(closeCode(node.client ?? { handle: node.handle, kind: "", user: "", host: "" }), `close handle ${node.handle}`, process.label, clients);
     // The view as it is now: turned off meanwhile, there is none to read for.
     await clients.view?.refresh();
     return done;

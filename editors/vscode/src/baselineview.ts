@@ -25,10 +25,23 @@ export function tomlString(file: string): string {
   return JSON.stringify(file);
 }
 
+/// `f` of `text` read with LF line ends, and its answer written back with
+/// CRLF ones when every line of `text` ends so: the lines added are the
+/// file's own, not LF among CRLF (#2523).
+function inLineEnds<T extends string | undefined | null>(text: string, f: (lf: string) => T): T {
+  const crlf = text.includes("\r\n") && !/(^|[^\r])\n/.test(text);
+  const out = f(crlf ? text.replace(/\r\n/g, "\n") : text);
+  return (crlf && typeof out === "string" ? out.replace(/\n/g, "\r\n") : out) as T;
+}
+
 /// `text`, a `qlinter.toml`, with `baseline = "<file>"` as its first key -
 /// a top-level key has to come before any `[table]` - or undefined when it
 /// names a baseline already.
 export function tomlWithBaseline(text: string, file = BASELINE_FILE): string | undefined {
+  return inLineEnds(text, (lf) => tomlWithBaselineLf(lf, file));
+}
+
+function tomlWithBaselineLf(text: string, file: string): string | undefined {
   if (/^\s*baseline\s*=/m.test(text)) {
     return undefined;
   }
@@ -56,6 +69,10 @@ export function writtenCount(stderr: string): { findings: number; files: number 
 /// the table is written some other way (an inline table) and the line has
 /// to be added by hand.
 export function pyprojectWithBaseline(text: string, file = BASELINE_FILE): string | undefined | null {
+  return inLineEnds(text, (lf) => pyprojectWithBaselineLf(lf, file));
+}
+
+function pyprojectWithBaselineLf(text: string, file: string): string | undefined | null {
   const lines = text.split("\n");
   const line = `baseline = ${tomlString(file)}`;
   const header = (l: string): RegExpExecArray | null =>

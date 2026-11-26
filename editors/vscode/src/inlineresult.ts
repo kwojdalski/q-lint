@@ -15,6 +15,8 @@ export interface Answered {
   uri: string;
   /// 0-based: the line the result is drawn at the end of.
   line: number;
+  /// The document's version when it was sent: edits since move the line.
+  version?: number;
 }
 
 /// The answer as one short line: q's console text joined, or the error.

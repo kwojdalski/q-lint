@@ -105,7 +105,7 @@ export function registerLocalsAtError(
         replaced = true;
         const [status] = readInstalled(await connection.call(install, [picked.name], [state.text], [captured.text], 0), 1);
         if (status !== "ok") {
-          await connection.call(restore);
+          await connection.callOwn(restore);
           replaced = false;
           throw new Error(`${picked.name} could not be instrumented: ${status}`);
         }
@@ -115,13 +115,15 @@ export function registerLocalsAtError(
           .call(RUN, statements(failure.code), [25, 200])
           .then(readAnswer)
           .catch(async (error: unknown) => {
-            replaced = !(await connection.call(restore).then(
+            replaced = !(await connection.callOwn(restore).then(
               () => true,
               () => false,
             ));
             throw error;
           });
-        const restored = readRestored(await connection.call(restore));
+        // Put back as it was installed, though the evaluation turned direct
+        // meanwhile (#2562).
+        const restored = readRestored(await connection.callOwn(restore));
         replaced = false;
         return { captured, answer, restored, text: state.text };
       }, "ask", failure.process, undefined, true);

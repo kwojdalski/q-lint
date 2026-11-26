@@ -179,6 +179,24 @@ test("cells guess their type from what the codec gave", () => {
   assert.strictEqual(cellText([Long.fromInt(1), Long.fromInt(2)]), "1 2");
 });
 
+// A vector was written whole and then cut: seconds with the extension host
+// blocked for 10 million floats (#2580).
+test("only what fits the console's width of a long list is written, and the line is cut the same", () => {
+  const floats = (n) => ({ kind: "vector", t: 9, attr: 0, v: Array.from({ length: n }, (_, i) => i + 0.5) });
+  const started = Date.now();
+  const long = consoleLines(floats(3_000_000), [25, 80]);
+  assert.ok(Date.now() - started < 500, `${Date.now() - started} ms`);
+  assert.deepStrictEqual(long, consoleLines(floats(100), [25, 80]));
+  assert.strictEqual(long[0].length, 79);
+  // In a cell of a one-row table, and as an item of a list.
+  const cell = { kind: "table", attr: 0, cols: ["a"], data: [{ kind: "list", attr: 0, v: [floats(3_000_000)] }] };
+  const quick = Date.now();
+  assert.deepStrictEqual(consoleLines(cell, [25, 80]), consoleLines({ ...cell, data: [{ kind: "list", attr: 0, v: [floats(100)] }] }, [25, 80]));
+  const chars = { kind: "chars", attr: 0, v: Buffer.from("é".repeat(1_000_000)) };
+  assert.deepStrictEqual(consoleLines(chars, [25, 80]), consoleLines({ ...chars, v: Buffer.from("é".repeat(100)) }, [25, 80]));
+  assert.ok(Date.now() - quick < 500, `${Date.now() - quick} ms`);
+});
+
 test("text is cut at the console size as .Q.S cuts it", () => {
   assert.deepStrictEqual(cutLines(["abcdefgh", "ab"], [5, 6]), ["abcd..", "ab"]);
   assert.deepStrictEqual(cutLines(["1", "2", "3", "4"], [3, 80]), ["1", "2", ".."]);

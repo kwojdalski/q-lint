@@ -63,6 +63,16 @@ test("a function redefined since its logpoint is listed with none, and takes a n
   assert.strictEqual(await value(c, "last value sq"), "{x*x*x}");
 });
 
+test("a hit keeps 300 characters of its arguments, not the process's \\c width (#2547)", { skip }, async (t) => {
+  const { connection: c } = await connect(t, SRC + "two:{[a;b] b}\n");
+  await c.call(LOG_ADD, "two");
+  assert.strictEqual(await value(c, "two[til 100;`abc]"), "abc");
+  const [hit] = readLogpoints(await c.call(LOG_LIST)).hits;
+  assert.ok(hit.args.length > 79, hit.args);
+  assert.match(hit.args, /^\(0 1 2 .* 98 99;`abc\)$/);
+  assert.strictEqual(await c.call(LOG_REMOVE, "two"), true);
+});
+
 test("the last logpoint off leaves .qlint empty, and a root variable named qlint alone (#1871)", { skip }, async (t) => {
   const { connection: c } = await connect(t, SRC + "qlint:7\n.qlint.cache.p1:42\n");
   for (const name of ["sq", "now"]) await c.call(LOG_ADD, name);

@@ -63,6 +63,8 @@ export function registerInteractive(
   const panel = new ConsolePanel(context, { viewType: "q-lint.interactiveWindow", title: "q Interactive", input: false });
   /// Cell runs one at a time, in order: a second Run Cell waits for the first.
   let queue: Promise<unknown> = Promise.resolve();
+  /// Smart Send's statements to the REPL, one at a time, in order (#2563).
+  let replQueue: Promise<unknown> = Promise.resolve();
 
   /// Run `code` into the Interactive Window under `title`, in `context`:
   /// true when it ran and q gave no error.
@@ -290,11 +292,22 @@ export function registerInteractive(
           void window.showInformationMessage(CELLS_OFF);
           return;
         }
-        await runInto(code, document.uri);
+        {
+          // Queued as Run Cell is: the cursor has moved past it already, so
+          // a second Shift+Enter while one runs waits, not refused (#2563).
+          const sent = code;
+          const run = queue.then(() => runInto(sent, document.uri));
+          queue = run.catch(() => {});
+          await run;
+        }
         return;
-      case "repl":
-        await repl.runFromEditor(code, document.uri);
+      case "repl": {
+        const sent = code;
+        const run = replQueue.then(() => repl.runFromEditor(sent, document.uri));
+        replQueue = run.catch(() => {});
+        await run;
         return;
+      }
       case "terminal":
         await live.sendToTerminal(code, document.uri);
         return;

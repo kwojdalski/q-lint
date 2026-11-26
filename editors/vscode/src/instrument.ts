@@ -13,11 +13,14 @@
 // `.qlint.<ns>` there: the caller restores first, so a run that was
 // interrupted is put right before another starts.
 //
-// Coverage puts `.qlint.cov.hit k;` in front of each statement of a
+// Coverage puts `qlintcov:.qlint.cov.hit k;` in front of each statement of a
 // function's own body: INSTALL defines it to add 1 to `.qlint.cov.d[k]`
 // under a trap, so a caller q refuses a global write to (`reval`, a
 // secondary thread of `peach`) still gets the function's answer, uncounted
-// (#1894). The locals capture keeps the call's arguments as the
+// (#1894), and to answer `k+1`. Only the first probe is given its index as
+// a constant; each after it passes on the local the one before set, since
+// the body's own statements run in order. A constant a probe would give
+// a function of about 120 statements more than q allows ('limit, #2543). The locals capture keeps the call's arguments as the
 // parameter cache (#892) does, which statement it is on, and each local as
 // a statement at the top of the body assigns it.
 import type { Live } from "./live";
@@ -129,8 +132,8 @@ export interface Covered {
   statements: BodyStatement[];
 }
 
-/// `text` (a lambda, `{` to `}`) with `.qlint.cov.hit k;` in front of each
-/// of its body's statements, `k` counting from `first`. Undefined when it is
+/// `text` (a lambda, `{` to `}`) with a probe in front of each of its
+/// body's statements, counting from `first`. Undefined when it is
 /// not one lambda or has no statement.
 export function coverageText(text: string, first: number): Covered | undefined {
   const mask = codeMask(text);
@@ -145,7 +148,7 @@ export function coverageText(text: string, first: number): Covered | undefined {
   return {
     text: inserted(
       text,
-      statements.map((s, k) => ({ offset: s.start, text: `.qlint.cov.hit ${first + k};` })),
+      statements.map((s, k) => ({ offset: s.start, text: `qlintcov:.qlint.cov.hit ${k === 0 ? first : "qlintcov"};` })),
     ),
     statements,
   };
@@ -221,7 +224,7 @@ export function installLambda(ns: "cov" | "err"): string {
   return [
     "{[nms;was;src;d]",
     ` ${n}.saved:(\`$())!();${n}.inst:(\`$())!();`,
-    ns === "cov" ? ' .qlint.cov.d:("j"$d)#0j;.qlint.cov.hit:{@[{.qlint.cov.d[x]+:1};x;{}]};' : " .qlint.err.d:`args`locals`at!((`$())!();(`$())!();0N);",
+    ns === "cov" ? ' .qlint.cov.d:("j"$d)#0j;.qlint.cov.hit:{@[{.qlint.cov.d[x]+:1};x;{}];x+1};' : " .qlint.err.d:`args`locals`at!((`$())!();(`$())!();0N);",
     " r:{[nm;w;s]",
     "  nm:`$nm;old:@[get;nm;{::}];",
     "  if[not 100h=type old;:\"missing\"];",
@@ -301,7 +304,8 @@ export async function restoreApart(
   const opening = live.openSeparate(process);
   try {
     const connection = await Promise.race([opening, late]);
-    return readRestored(await Promise.race([connection.call(restore), late]));
+    // Only a restore: sent though the process is now evaluated directly (#2562).
+    return readRestored(await Promise.race([connection.callOwn(restore), late]));
   } finally {
     clearTimeout(timer);
     // Closed whether it answered or not: a connection a busy process

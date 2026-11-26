@@ -90,6 +90,12 @@ export class Dashboards {
         this.add(query as SavedQuery | string | undefined, typeof dashboard === "string" ? dashboard : undefined, typeof process === "string" ? process : undefined),
       ),
       workspace.onDidChangeConfiguration((event) => event.affectsConfiguration("q-lint.dashboards") && !on() && this.close()),
+      // A tile whose process or saved query was deleted or renamed is drawn
+      // as it is now, and the timer of one gone stops (#2550).
+      live.onDidChangeTiles(() => {
+        const d = this.current();
+        if (this.panel !== undefined && d !== undefined) this.render(d, false);
+      }),
       { dispose: () => this.close() },
     );
   }

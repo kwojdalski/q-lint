@@ -107,7 +107,8 @@ export function registerFunctionProfile(
         } finally {
           // Whatever became of it: a connection that closed cannot be asked.
           if (connection.isOpen) {
-            await connection.call(PROFILE_CLEANUP, 0).catch(() => undefined);
+            // Though the evaluation turned direct meanwhile (#2562).
+            await connection.callOwn(PROFILE_CLEANUP, 0).catch(() => undefined);
           }
         }
       }, "ask", undefined, undefined, true);

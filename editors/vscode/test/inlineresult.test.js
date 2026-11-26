@@ -116,13 +116,35 @@ test("off, nothing is drawn and Clear refuses; turned on, it draws", (t) => {
   assert.deepStrictEqual(feature.shown("file:///w/a.q"), []);
 });
 
+test("an answer lands on the line its statement was moved to while it ran, and not in a document closed meanwhile (#2553)", (t) => {
+  const { answered, feature, changes, editor } = harness(t, true);
+  editor.document.version = 1;
+  vscode.workspace.textDocuments = [editor.document];
+  t.after(() => (vscode.workspace.textDocuments = []));
+  // Sent from line 2 at version 1; two lines are added at the top meanwhile.
+  editor.document.version = 2;
+  changes.fire({ document: editor.document, contentChanges: [{ range: { start: { line: 0 }, end: { line: 0 } }, text: "x:0\ny:0\n" }] });
+  answered.fire({ process: "rdb", answer: { ok: true, type: -7, text: ["3"] }, millis: 3, uri: "file:///w/a.q", line: 2, version: 1 });
+  assert.deepStrictEqual(feature.shown("file:///w/a.q"), [{ line: 4, text: "3" }]);
+  // Its own line edited meanwhile: not drawn.
+  feature.clear();
+  editor.document.version = 3;
+  changes.fire({ document: editor.document, contentChanges: [{ range: { start: { line: 4 }, end: { line: 4 } }, text: "z" }] });
+  answered.fire({ process: "rdb", answer: { ok: true, type: -7, text: ["3"] }, millis: 3, uri: "file:///w/a.q", line: 4, version: 2 });
+  assert.deepStrictEqual(feature.shown("file:///w/a.q"), []);
+  // Closed meanwhile: not kept for when it opens again.
+  vscode.workspace.textDocuments = [];
+  answered.fire({ process: "rdb", answer: { ok: true, type: -7, text: ["3"] }, millis: 3, uri: "file:///w/a.q", line: 4, version: 3 });
+  assert.deepStrictEqual(feature.shown("file:///w/a.q"), []);
+});
+
 test("Run Line and Run Selection hand over their answer and line; Run Block does not", async (t) => {
   const { live } = await setUp(t, { answer: (m) => (Array.isArray(m) ? { ok: true, type: -7, text: ["42"] } : null) });
   const got = [];
   live.onDidAnswer((a) => got.push(a));
   const lines = ["a:1", "1+41", "b:2"];
   vscode.window.activeTextEditor = {
-    document: { uri: vscode.Uri.file("/w/a.q"), lineAt: (n) => ({ text: lines[n] }), getText: (sel) => (sel ? "1+41\nb:2" : lines.join("\n")) },
+    document: { uri: vscode.Uri.file("/w/a.q"), version: 7, lineAt: (n) => ({ text: lines[n] }), getText: (sel) => (sel ? "1+41\nb:2" : lines.join("\n")) },
     selection: { active: { line: 1 }, isEmpty: true },
   };
   t.after(() => (vscode.window.activeTextEditor = undefined));
@@ -131,6 +153,7 @@ test("Run Line and Run Selection hand over their answer and line; Run Block does
   assert.strictEqual(got.length, 1);
   assert.strictEqual(got[0].line, 1);
   assert.strictEqual(got[0].uri, "file:///w/a.q");
+  assert.strictEqual(got[0].version, 7);
   assert.deepStrictEqual(got[0].answer.text, ["42"]);
   // A selection from line 1 to the start of line 3 ends on line 2.
   vscode.window.activeTextEditor.selection = { active: { line: 3 }, isEmpty: false, start: { line: 1, character: 0 }, end: { line: 3, character: 0 } };

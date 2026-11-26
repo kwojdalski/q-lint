@@ -18,6 +18,10 @@ export function registerInlineResults(
 ): { shown: (uri: string) => { line: number; text: string }[]; active: () => boolean; clear: () => string | undefined } {
   /// Each document's results: line to text.
   const results = new Map<string, Map<number, { text: string; hover: MarkdownString }>>();
+  /// Each document's recent edits, by the version each made: a query sent
+  /// at an older version is answered at the line those edits moved it to,
+  /// not the line it was on (#2553).
+  const edits = new Map<string, { version: number; changes: { start: number; end: number; added: number }[] }[]>();
   let decoration: TextEditorDecorationType | undefined;
   let listeners: Disposable[] = [];
 
@@ -43,7 +47,35 @@ export function registerInlineResults(
       }
     }
   };
+  /// The line `a` is on now: moved by what was edited since it was sent;
+  /// undefined when its own line was edited, the edits are no longer all
+  /// kept, or its document was closed meanwhile.
+  const lineNow = (a: Answered): number | undefined => {
+    if (a.version === undefined) {
+      return a.line;
+    }
+    const document = workspace.textDocuments.find((d) => d.uri.toString() === a.uri);
+    if (document === undefined) {
+      return undefined;
+    }
+    const since = (edits.get(a.uri) ?? []).filter((e) => e.version > a.version!);
+    if (since.length !== document.version - a.version) {
+      return undefined;
+    }
+    let line: number | undefined = a.line;
+    for (const e of since) {
+      for (const c of e.changes) {
+        line = line === undefined ? undefined : shiftLines([line], c.start, c.end, c.added)[0];
+      }
+    }
+    return line;
+  };
   const answered = (a: Answered): void => {
+    const at = lineNow(a);
+    if (at === undefined) {
+      return;
+    }
+    a = { ...a, line: at };
     const lines = results.get(a.uri) ?? new Map();
     const text = shortForm(a.answer);
     // q's output as text in a code block: a "---" under a header row is no
@@ -65,6 +97,14 @@ export function registerInlineResults(
       live.onDidAnswer(answered),
       workspace.onDidChangeTextDocument((event) => {
         const key = event.document.uri.toString();
+        if (event.contentChanges.length > 0) {
+          const log = edits.get(key) ?? [];
+          log.push({
+            version: event.document.version,
+            changes: event.contentChanges.map((c) => ({ start: c.range.start.line, end: c.range.end.line, added: (c.text.match(/\n/g) ?? []).length })),
+          });
+          edits.set(key, log.slice(-200));
+        }
         const lines = results.get(key);
         if (lines === undefined || event.contentChanges.length === 0) {
           return;
@@ -80,11 +120,15 @@ export function registerInlineResults(
         drawAll(key);
       }),
       window.onDidChangeVisibleTextEditors(() => drawAll()),
-      workspace.onDidCloseTextDocument((d) => void results.delete(d.uri.toString())),
+      workspace.onDidCloseTextDocument((d) => {
+        results.delete(d.uri.toString());
+        edits.delete(d.uri.toString());
+      }),
     ];
   };
   const stop = (): void => {
     results.clear();
+    edits.clear();
     for (const l of listeners) {
       l.dispose();
     }

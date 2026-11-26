@@ -174,6 +174,10 @@ test("a result of a script cannot be wrangled; Escape sends nothing; turned off,
   live.shown = { process: "rdb", code: "a:1\nselect from t", payload };
   await run(RESULT_VIEW.wrangle);
   assert.match(infos().at(-1), /cannot be wrangled: the query has more than one statement/);
+  // A dictionary is shown as key and value columns, but is no table (#2538).
+  live.shown = { process: "rdb", code: "`a`b!1 2", payload: { ...payload, keys: 1, names: ["key", "value"] } };
+  await run(RESULT_VIEW.wrangle);
+  assert.match(infos().at(-1), /cannot be wrangled: it is a dictionary, not a table/);
   live.shown = { process: "rdb", code: "t", payload };
   stub.picks.push(undefined);
   await run(RESULT_VIEW.wrangle);

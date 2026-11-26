@@ -180,11 +180,15 @@ class RunQueryTool implements LanguageModelTool<AgentInput> {
     // Process Explorer's read of the process - is never sent.
     let stopped: "timeout" | "cancelled" | undefined;
     let running = false;
+    // Ends the wait for the connection, not only what follows it (#2551).
+    const waiting = new AbortController();
     const stop = (why: "timeout" | "cancelled"): void => {
       if (stopped === undefined) {
         stopped = why;
         if (running) {
           void this.live.abort();
+        } else {
+          waiting.abort();
         }
       }
     };
@@ -206,8 +210,11 @@ class RunQueryTool implements LanguageModelTool<AgentInput> {
         running = true;
         // Through a TorQ gateway's .gw.syncexec, as Run sends it (#2430).
         return runAgentQuery(connection, code, settings.consoleSize, (c) => this.live.gatewayed(c));
-      }, "refuse");
+      }, "refuse", undefined, waiting.signal);
       if (ran === undefined) {
+        if (stopped !== undefined) {
+          throw new Error("not run");
+        }
         return { error: `Nothing was run: a query is still running on ${process.label}, or the connection closed. Try again once it is free.` };
       }
       label = ran.process;

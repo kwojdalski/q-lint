@@ -519,6 +519,30 @@ test("adding a tile to an open dashboard runs the new tile only (#1789)", async 
   dashboards.close();
 });
 
+// Deleting a process left its tiles drawn on an open dashboard, their
+// timers running and their Refresh doing nothing (#2550).
+test("an open dashboard draws its tiles again when a tile's process is deleted", async (t) => {
+  const { panels } = capture();
+  const { live, context } = await setUp(t);
+  await context.globalState.update("q-lint.processes", [...live.processes(), { label: "b", host: "127.0.0.1", port: 1, tags: [] }]);
+  await context.workspaceState.update(SAVED_QUERIES_KEY, [{ name: "px", code: "select from trade" }]);
+  live.runApart = async () => ({ ok: true, type: -7, text: ["1"] });
+  const dashboards = new Dashboards(context, live);
+  stub.inputs.push("Desk");
+  stub.picks.push("$(add) New dashboard...");
+  const a = await stub.commands.get(DB_COMMANDS.addToDashboard)("px", undefined, "hdb");
+  const b = await stub.commands.get(DB_COMMANDS.addToDashboard)("px", "Desk", "b");
+  await stub.commands.get(DB_COMMANDS.openDashboard)("Desk");
+  await dashboards.receive({ type: "refresh-interval", id: a, seconds: 5 });
+  assert.strictEqual(dashboards.timerCount(), 1);
+  stub.picks.push("Delete");
+  await stub.commands.get("q-lint.deleteProcess")("hdb");
+  const layout = panels[0].posted.filter((m) => m.type === "layout").at(-1);
+  assert.deepStrictEqual(layout.tiles.map((x) => x.id), [b]);
+  assert.strictEqual(dashboards.timerCount(), 0);
+  dashboards.close();
+});
+
 // Add to Dashboard offers discovered and shared processes, but a tile ran
 // only on a saved one: "There is no saved process desk/rdb", every time.
 test("a tile on a discovered process runs on it (#1122)", async (t) => {

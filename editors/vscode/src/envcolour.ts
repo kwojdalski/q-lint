@@ -15,21 +15,25 @@ export type EnvColourName = (typeof ENV_COLOUR_NAMES)[number];
 
 export const DEFAULT_ENV_COLOURS: Record<string, string> = { prod: "red", prd: "red", production: "red", uat: "amber" };
 
+import { parseTags } from "./processes";
+
 const HEX = /^#[0-9a-f]{6}$/i;
 
 /// `q-lint.processes.environmentColor.colors` as written: tag (lower case)
 /// to a colour name or `#rrggbb`; anything else dropped. Not an object: the
-/// defaults.
+/// defaults. A key is split as process tags are (`parseTags`), so `live desk`
+/// colours both words a process tagged "live desk" is stored with (#2526).
 export function readEnvColours(value: unknown): Record<string, string> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return { ...DEFAULT_ENV_COLOURS };
   }
   const out: Record<string, string> = {};
   for (const [tag, colour] of Object.entries(value as Record<string, unknown>)) {
-    const key = tag.trim().toLowerCase();
     const c = typeof colour === "string" ? colour.trim().toLowerCase() : "";
-    if (key !== "" && (ENV_COLOUR_NAMES.includes(c as EnvColourName) || HEX.test(c))) {
-      Object.defineProperty(out, key, { value: c, enumerable: true, writable: true, configurable: true });
+    if (ENV_COLOUR_NAMES.includes(c as EnvColourName) || HEX.test(c)) {
+      for (const key of parseTags(tag)) {
+        Object.defineProperty(out, key, { value: c, enumerable: true, writable: true, configurable: true });
+      }
     }
   }
   return out;

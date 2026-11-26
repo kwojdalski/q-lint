@@ -138,7 +138,7 @@ function fakeLive(answer, process = { label: "dev", tags: [] }) {
         return answer(lambda, ...args);
       };
       // Not read-only: `trapped` sends the plain lambda, as a connection does.
-      const value = await query({ call, trapped: async (plain, _readOnly, read, ...args) => read(await call(plain, ...args)) });
+      const value = await query({ call, callOwn: call, trapped: async (plain, _readOnly, read, ...args) => read(await call(plain, ...args)) });
       return { process: this.active.label, value };
     },
   };
@@ -165,7 +165,7 @@ test("coverage plans only the functions the process holds as the file has them",
   const plan = coveragePlan(files, states);
   assert.deepStrictEqual(plan.names, ["f"]);
   assert.deepStrictEqual(plan.skipped, [{ name: "g", why: "changed" }]);
-  assert.strictEqual(plan.src[0], "{[a]\n  .qlint.cov.hit 0;b:a+1;\n  .qlint.cov.hit 1;$[b>2;g b;b]}");
+  assert.strictEqual(plan.src[0], "{[a]\n  qlintcov:.qlint.cov.hit 0;b:a+1;\n  qlintcov:.qlint.cov.hit qlintcov;$[b>2;g b;b]}");
   assert.deepStrictEqual(
     plan.probes.map((p) => [p.start, p.end]),
     [
@@ -340,7 +340,7 @@ function fakeLiveLeft(end, apart, allowed = true) {
   live.asked = [];
   live.guardAllows = async (code, targets, what) => (live.asked.push([code, targets.map((p) => p.label), what]), allowed);
   live.openSeparate = async (process) => ({
-    call: async (lambda) => (live.apart.push([process.label, lambda]), apart()),
+    callOwn: async (lambda) => (live.apart.push([process.label, lambda]), apart()),
     abort() {},
   });
   return live;
@@ -414,7 +414,7 @@ test("a coverage run that fails once the functions were replaced puts them back 
     return { ok: true, failed: false, text: "1b" };
   });
   live.guardAllows = async () => true;
-  live.openSeparate = async (process) => ({ call: async (lambda) => (apart.push([process.label, lambda]), { kept: [], d: [0, 0, 0] }), abort() {} });
+  live.openSeparate = async (process) => ({ callOwn: async (lambda) => (apart.push([process.label, lambda]), { kept: [], d: [0, 0, 0] }), abort() {} });
   stub.config.user["testExplorer.coverage.enable"] = true;
   const explorer = registerTestExplorer(stub.newContext(), live, () => ({ sendRequest: async () => TESTS }));
   await explorer.discover();

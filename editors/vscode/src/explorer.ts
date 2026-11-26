@@ -95,14 +95,20 @@ export interface ExplorerSettings {
 /// settings. A preview limit that is not a positive whole number is 5. A
 /// namespace is its bare name, written `.zz` or as the symbol `` `zz `` too:
 /// the names are sent joined, and the IPC client sends text that starts
-/// with a backtick as a symbol, which the lambdas cannot cut (#1965).
+/// with a backtick as a symbol, which the lambdas cannot cut (#1965). A
+/// value that is not a list is the default list, and an item that is not a
+/// string is skipped, not made the name `null` (#2525).
 export function readExplorer(get: <T>(key: string, fallback: T) => T): ExplorerSettings {
-  const excluded = get<unknown>("processExplorer.excludedNamespaces", ["q", "Q", "h", "j", "o", "s"]);
+  const fallback = ["q", "Q", "h", "j", "o", "s"];
+  const excluded = get<unknown>("processExplorer.excludedNamespaces", fallback);
   const limit = get<unknown>("processExplorer.previewLimit", 5);
   return {
     excludedNamespaces: Array.isArray(excluded)
-      ? excluded.map((n) => String(n).trim().replace(/^`*\.?/, "")).filter((n) => n !== "" && !/\s/.test(n))
-      : [],
+      ? excluded
+          .filter((n): n is string => typeof n === "string")
+          .map((n) => n.trim().replace(/^`*\.?/, ""))
+          .filter((n) => n !== "" && !/\s/.test(n))
+      : fallback,
     // At most 2^53-1: 1e21 is written `1e+21`, which `til` refuses (#1852).
     previewLimit: typeof limit === "number" && Number.isInteger(limit) && limit > 0 ? Math.min(limit, Number.MAX_SAFE_INTEGER) : 5,
     autoRefresh: get<unknown>("processExplorer.autoRefresh", false) === true,

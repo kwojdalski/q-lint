@@ -499,3 +499,27 @@ test("Stop Process on the connected process disconnects it: nothing reconnects t
   assert.doesNotMatch(live.api().statusText(), /reconnecting/);
   assert.deepStrictEqual(stub.messages.slice(said).filter(([, m]) => /reconnect/i.test(m)), []);
 });
+
+test("Restart and turning the launcher off close the connection first: no drop, no reconnect (#2564)", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-"));
+  fs.writeFileSync(path.join(dir, "fakeq.js"), FAKE.replace("(s) => s.end()", "(s) => s.once(\"data\", () => s.write(Buffer.from([3])))"));
+  const port = await freePort();
+  const { live, launcher } = await setUp(t, [proc("dev", port, { command: process.execPath, script: "fakeq.js", cwd: dir })]);
+  stub.config.user["connection.autoReconnect.enable"] = true;
+  await stub.commands.get(LAUNCH_COMMANDS.start)("dev");
+  await until(() => accepts(port), "listening on port");
+  assert.strictEqual(await live.connectTo("dev"), true);
+  const said = stub.messages.length;
+  assert.strictEqual(await launcher.restart("dev"), undefined);
+  await sleep(1500);
+  assert.strictEqual(live.activeLabel(), undefined);
+  assert.deepStrictEqual(stub.messages.slice(said).filter(([, m]) => /reconnect/i.test(m)), []);
+  // Off: the same.
+  assert.strictEqual(await live.connectTo("dev"), true);
+  stub.config.user["processes.launcher.enable"] = false;
+  stub.changeConfig("q-lint.processes.launcher.enable");
+  await until(async () => !(await accepts(port)), "stopped listening");
+  await sleep(1500);
+  assert.strictEqual(live.activeLabel(), undefined);
+  assert.deepStrictEqual(stub.messages.slice(said).filter(([, m]) => /reconnect/i.test(m)), []);
+});

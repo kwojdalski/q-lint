@@ -84,8 +84,15 @@ function fakeLive({ active, wait = 0, during, shared = [] } = {}) {
       const check = guardCheck(code, targets, readGuard((key, fallback) => settings[key] ?? fallback));
       return check === undefined ? undefined : guardRefusal(check);
     },
-    runOnActive: async (code, query) => {
-      await sleep(wait);
+    runOnActive: async (code, query, _guard, _expect, signal) => {
+      // Stopped while it waits, as Live.ready stops a waiter: nothing is run.
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, wait);
+        signal?.addEventListener("abort", () => (clearTimeout(timer), resolve()), { once: true });
+      });
+      if (signal?.aborted) {
+        return undefined;
+      }
       during?.(live);
       const connection = {
         queryGrid: () => {
@@ -132,6 +139,23 @@ test("a timeout that passes while the query waits for the connection still stops
   assert.notStrictEqual(result, "still waiting", "the query ran on past its timeout");
   assert.match(result.error, /1 s/);
   assert.deepStrictEqual(live.ran, [], "a query whose time was up before it started was sent");
+});
+
+test("the timeout and Cancel end the wait for a busy connection, not only what follows it (#2551)", async () => {
+  settings = { "agent.queryTimeout": 1 };
+  const live = fakeLive({ active: dev, wait: 8000 });
+  const started = Date.now();
+  const result = await within(register(live).run({ query: "slow 100" }, token()), 2500);
+  assert.notStrictEqual(result, "still waiting", "the tool waited for the process to be free");
+  assert.match(result.error, /waited longer than 1 s/);
+  assert.ok(Date.now() - started < 2500);
+  settings = { "agent.queryTimeout": 0 };
+  const t = token();
+  const running = register(fakeLive({ active: dev, wait: 8000 })).run({ query: "slow 100" }, t);
+  await sleep(50);
+  t.cancel();
+  assert.match((await within(running, 1000)).error, /cancelled before it ran/);
+  assert.deepStrictEqual(live.ran, []);
 });
 
 test("a cancellation while the query waits for the connection keeps it from running", async () => {

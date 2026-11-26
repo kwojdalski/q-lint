@@ -130,3 +130,15 @@ test("a broken link is listed as an unreadable file, not a folder (#2168)", { sk
   assert.deepStrictEqual([byName.broken, byName.empty], [{ name: "broken", file: true, size: -2 }, { name: "empty", file: false, size: -1 }]);
   await assert.rejects(connection.call(READ_FILE, path.join(dir, "broken"), 100), /not a file/);
 });
+
+// find wrote each name on a line of its own, so a name holding a newline was
+// two lines, neither a file: it was listed as one that cannot be read (#2542).
+test("a file whose name holds a newline or a tab is listed as the file it is (#2542)", { skip: skip || (process.platform === "win32" && "no such names") }, async (t) => {
+  const { connection, dir } = await connect(t, "a:1\n", { "two\nlines.txt": "x", "tab\tin.txt": "y", "plain.txt": "hello" });
+  const byName = Object.fromEntries(readListing(await connection.call(LIST_DIRECTORY, dir, 1000)).entries.map((e) => [e.name, e]));
+  assert.deepStrictEqual([byName["two\nlines.txt"], byName["tab\tin.txt"], byName["plain.txt"]], [
+    { name: "two\nlines.txt", file: true, size: 1 },
+    { name: "tab\tin.txt", file: true, size: 1 },
+    { name: "plain.txt", file: true, size: 5 },
+  ]);
+});

@@ -152,9 +152,14 @@ export class ConsolePanel {
     this.post({ type: "remove", id });
   }
 
+  /// Drop the finished runs. One still running is kept and drawn again, or
+  /// its answer would have no entry to land in (#2501).
   clear(): void {
-    this.list = [];
+    this.list = this.list.filter((e) => e.ok === undefined);
     this.post({ type: "clear" });
+    for (const entry of this.list) {
+      this.post({ type: "add", entry });
+    }
   }
 
   post(message: Record<string, unknown>): void {

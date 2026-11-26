@@ -288,7 +288,10 @@
       history = Array.isArray(m.history) ? m.history : history;
       pointer = -1;
       draft = "";
-      setValue("");
+      // Only the line it sent: what was typed since Enter stays (#2498).
+      if (typeof m.code !== "string" || input.value === m.code) {
+        setValue("");
+      }
     } else if (m.type === "history") {
       // A run from the editor: what is typed here stays (#1922), and a
       // walk through the history stays on the entry it shows.

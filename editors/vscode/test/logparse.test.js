@@ -48,7 +48,8 @@ test("plain q output: a q error with or without KDB-X's timestamp, levels near t
   const kx = KDBX.map(parseLine);
   assert.deepStrictEqual(kx.map((p) => p.kind), ["q", "q", "q", "q", "q", "cont", "cont", "cont", "cont"]);
   assert.deepStrictEqual(kx.map((p) => p.level), [undefined, "INFO", "WARN", undefined, "ERROR", undefined, undefined, undefined, undefined]);
-  assert.strictEqual(kx[4].time, Date.UTC(2026, 10, 21, 20, 41, 3, 930));
+  // KDB-X's error stamp is local time (#2595).
+  assert.strictEqual(kx[4].time, new Date(2026, 10, 21, 20, 41, 3, 930).getTime());
   assert.strictEqual(KDBX[1].slice(...kx[1].timeSpan), "2026.11.21D20:41:03.930014000");
   assert.strictEqual(KDBX[1].slice(...kx[1].levelSpan), "INFO");
   const pq = PEACHQ.map(parseLine);
@@ -59,6 +60,19 @@ test("plain q output: a q error with or without KDB-X's timestamp, levels near t
   assert.strictEqual(parseLine("2026.11.21T12:00:00.000 the error was fine").level, undefined);
   assert.strictEqual(parseLine("one two three ERROR").level, undefined);
   assert.strictEqual(parseLine("2026.11.21 rdb1 FATAL out of memory").level, "ERROR");
+});
+
+test("KDB-X's error stamp is read as local time, beside TorQ's UTC lines (#2595)", (t) => {
+  const tz = process.env.TZ;
+  t.after(() => (tz === undefined ? delete process.env.TZ : (process.env.TZ = tz)));
+  process.env.TZ = "America/New_York";
+  const lg = parseLine("2026.11.25D21:24:18.241112000|mac.lan|rdb|rdb1|ERR|init|about to fail");
+  const err = parseLine("'2026.11.25T16:24:19.278 type");
+  assert.strictEqual(lg.time, Date.UTC(2026, 10, 25, 21, 24, 18, 241));
+  assert.strictEqual(err.time, Date.UTC(2026, 10, 25, 21, 24, 19, 278));
+  assert.ok(err.time > lg.time);
+  // Summer time: four hours behind UTC, not five.
+  assert.strictEqual(parseLine("'2026.07.01T12:00:00.000 type").time, Date.UTC(2026, 6, 1, 16));
 });
 
 test("times and times of day", () => {
