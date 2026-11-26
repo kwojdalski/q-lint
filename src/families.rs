@@ -10,9 +10,10 @@ pub fn check(
     code: &str,
     comments: &str,
     foreign: &[usize],
+    ws: &crate::Workspace,
 ) -> Vec<Finding> {
     let mut out = vec![];
-    query_injection(path, source, code, comments, &mut out);
+    query_injection(path, source, code, comments, ws, &mut out);
     credentials(path, source, code, comments, &mut out);
     simplifications(path, source, code, comments, &mut out);
     leftovers(path, source, comments, foreign, &mut out);
@@ -37,6 +38,88 @@ fn argument(code: &str, comments: &str, source: &str, after: usize) -> Option<(u
     }
     let start = argument_start(source, comments, after)?;
     Some((start, argument_end(code, comments, source, start)?))
+}
+
+/// What `name` at `at..after` is applied to, however the application is
+/// written: `name x` and `name[x]`, and also `name@x`, `name . enlist x`,
+/// `(name) x`, and the trap forms `@[name;x;h]` and `.[name;enlist x;h]`, which run
+/// `name x` and hand an error to `h`. KDB-X 5 defines `s` in the process for
+/// each of them given `"select from t where a=",x` and an `x` of
+/// `"1;s:42;0"` (#2992).
+fn applied(
+    code: &str,
+    comments: &str,
+    source: &str,
+    at: usize,
+    after: usize,
+) -> Option<(usize, usize)> {
+    let blank = [' ', '\t'];
+    let rest = code[after..].trim_start_matches(blank);
+    let next = code.len() - rest.len();
+    let before = code[..at].trim_end_matches(blank);
+    if rest.starts_with(';') {
+        let dot = before.ends_with(".[");
+        if !dot && !before.ends_with("@[") {
+            return None;
+        }
+        let close = matching(code, before.len() - 1, b'[', b']')?;
+        let slot = slots(code.get(next + 1..close - 1)?).into_iter().next()?;
+        let (mut start, end) = (next + 1, next + 1 + slot.len());
+        // `.` applies to a list of arguments, here a list of the one.
+        if dot {
+            start += re!(r"^\s*enlist\b").find(slot)?.end();
+        }
+        return Some((start, end));
+    }
+    // In parentheses of its own, `(value) x`.
+    if rest.starts_with(')') && before.ends_with('(') {
+        return argument(code, comments, source, next + 1);
+    }
+    let after = match re!(r"^(?:@|\.[ \t]+enlist\b)").find(rest) {
+        Some(m) => next + m.end(),
+        None => after,
+    };
+    argument(code, comments, source, after)
+}
+
+/// Each string literal the file gives q to run in this process, as the
+/// offset of its opening quote and the text q reads: one in what `value`,
+/// `get`, `parse` or `-5!` is applied to, however applied, and one sent to
+/// handle 0. KDB-X 5 calls `myf` for each of `value "myf 1"`, `eval parse
+/// "myf 1"`, `eval -5!"myf 1"` and `0 "myf 1"`, and `get "myf"` is the
+/// function (#3005). In order, each once.
+pub(crate) fn evaluated_strings(code: &str, comments: &str, source: &str) -> Vec<(usize, String)> {
+    let literal = re!(r#""((?:[^"\\]|\\.)*)""#);
+    let text = |body: &str| String::from_utf8_lossy(&crate::q_bytes(body)).into_owned();
+    let mut out = vec![];
+    for m in re!(r"\b(?:value|get|parse)\b|-5!").find_iter(code) {
+        let extent = match m.as_str() {
+            "-5!" => argument(code, comments, source, m.end()),
+            _ if !boundary(code, m.start()) => None,
+            _ => applied(code, comments, source, m.start(), m.end()),
+        };
+        let Some((start, end)) = extent.filter(|(start, end)| start < end) else {
+            continue;
+        };
+        let Some(given) = comments.get(start..end) else {
+            continue;
+        };
+        for s in literal.captures_iter(given) {
+            out.push((start + s.get(0).unwrap().start(), text(&s[1])));
+        }
+    }
+    for (_, given) in crate::semantics::handle_zero(code, source) {
+        if let Some(s) = comments
+            .get(given..)
+            .and_then(|rest| literal.captures(rest))
+            && s.get(0).unwrap().start() == 0
+        {
+            out.push((given, text(&s[1])));
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// Whether `start..end` builds a query: joins a string that names a qSQL
@@ -129,24 +212,35 @@ fn builds_query(code: &str, comments: &str, mut start: usize, mut end: usize) ->
 /// level) a string that names a qSQL statement with something that is not a
 /// string literal. `value "select from t"` is a constant, and `value x` says
 /// nothing about where `x` came from.
-fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
+fn query_injection(
+    path: &str,
+    source: &str,
+    code: &str,
+    comments: &str,
+    ws: &crate::Workspace,
+    out: &mut Vec<Finding>,
+) {
     // `get` of a string evaluates it as `value` does (q 5), and a string sent
     // over a handle - `h "select ...",x` - is evaluated by the remote
     // process's `.z.pg`, which is `value` by default. A name applied to a
     // query string is taken for a handle unless it is one of q's own, or a
-    // lambda this file defines, with `:` or `::`: `lg "update finished"` logs
-    // a line (#345, #654).
+    // lambda this file or another of the run defines, with `:` or `::`:
+    // `lg "update finished"` logs a line (#345, #654, #3002).
     let lambda = |name: &str| {
-        regex::Regex::new(&format!(
-            r"(?:^|[^A-Za-z0-9_.`]){}[ \t]*::?[ \t]*\{{",
-            regex::escape(name)
-        ))
-        .is_ok_and(|r| r.is_match(code))
+        ws.is_lambda(name)
+            || regex::Regex::new(&format!(
+                r"(?:^|[^A-Za-z0-9_.`]){}[ \t]*::?[ \t]*\{{",
+                regex::escape(name)
+            ))
+            .is_ok_and(|r| r.is_match(code))
     };
     // The handle may be a dotted name, `.conn.h` or the caller's `.z.w`, or
-    // the async `neg[h]` and `(neg h)` (#652).
+    // the async `neg[h]` and `(neg h)` (#652). What it is sent may stand in
+    // parentheses or brackets, after `@`, or in a trap whose first slot is
+    // the handle: KDB-X 5 has the remote run each of `h("..",x)`,
+    // `h["..",x]`, `(neg h)("..",x)`, `h@"..",x` and `@[h;"..",x;e]` (#3006).
     let handles: Vec<(usize, usize)> = re!(
-        r#"(?:(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]+|(neg[ \t]*\[[^\[\]"]*\]|\(neg[ \t]+[^()"]*\))[ \t]*)"(?:select|exec|update|delete)\b"#
+        r#"(?:(\.?[A-Za-z][A-Za-z0-9_.]*)|(neg[ \t]*\[[^\[\]"]*\]|\(neg[ \t]+[^()"]*\)))[ \t]*([(\[@;]?)[ \t]*"(?:select|exec|update|delete)\b"#
     )
     .captures_iter(comments)
     .filter_map(|c| {
@@ -155,7 +249,11 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
         (code[handle.start()..].starts_with(handle.as_str())
             && !(name
                 && (crate::reserved_word(handle.as_str())
-                    || lambda(handle.as_str()))))
+                    || lambda(handle.as_str())))
+            && (&c[3] != ";"
+                || code[..handle.start()]
+                    .trim_end_matches([' ', '\t'])
+                    .ends_with("@[")))
         .then_some((handle.start(), handle.end()))
     })
     .collect();
@@ -174,9 +272,40 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
         if !boundary(code, m.start()) || code[line..].starts_with('\\') {
             continue;
         }
-        let Some((start, end)) = argument(code, comments, source, m.end()) else {
+        let Some((mut start, end)) = applied(code, comments, source, m.start(), m.end()) else {
             continue;
         };
+        let word = &code[m.start()..m.end()];
+        let given = code[start..end].trim_start();
+        // `eval` evaluates a parse tree, and a string is its own: KDB-X 5
+        // returns `eval "select from t where a=",x` as the text it was
+        // given and runs nothing. Parsed first, the text does run (#2991).
+        if word == "eval" {
+            let Some(parsed) = re!(r"^(?:parse\b|-5!)").find(given) else {
+                continue;
+            };
+            start = end - given.len() + parsed.end();
+        }
+        // A symbol is looked up or read from disk, never evaluated: `get
+        // hsym `$"/data/update/",d` reads the file of that name, and sent
+        // over a handle it names a variable there (#3012).
+        if given.starts_with('`') || re!(r"^hsym\b").is_match(given) {
+            continue;
+        }
+        // A name applied to text is a handle only on the evidence that the
+        // text is a query, and a query reads `from` something: `.log.info
+        // "update complete: ",string n` logs a line (#3002). The word has to
+        // be in a string, which the code view has blank.
+        let handle = !matches!(word, "value" | "eval" | "get");
+        if handle
+            && !re!(r"\bfrom\b").find_iter(&comments[start..end]).any(|f| {
+                code[start + f.start()..start + f.end()]
+                    .bytes()
+                    .all(|b| b == b' ')
+            })
+        {
+            continue;
+        }
         // Built where it is run, or into a local this lambda runs on a later
         // statement - `q:"select ...",s; value q`, the commoner way to write
         // it (#2735). Any assignment of the local before the call counts.

@@ -16,7 +16,7 @@
 // dbtools_q.test.js.
 import { SLOT_TEXT, slotParams } from "./paramcache";
 import { definitions } from "./definitions";
-import { blockDepth } from "./statements";
+import { blockDepth, trimBlanks } from "./statements";
 
 export const DOCUMENT = [
   "{[lim]",
@@ -127,14 +127,17 @@ export function readDoc(raw: unknown): DbDoc {
 export function qdocs(source: string): Map<string, string> {
   const lines = source.split(/\r?\n/);
   // Each line's block comment depth before it: block comments nest (#1817).
+  // A `/` or `\` opens or closes one only at the margin: indented, as in a
+  // lambda, `/` is a comment line, and counted as an opener it hid the doc
+  // of every function below (#3001).
   const depth: number[] = [];
-  lines.reduce((d, line, i) => ((depth[i] = d), blockDepth(d, line.trim())), 0);
+  lines.reduce((d, line, i) => ((depth[i] = d), blockDepth(d, trimBlanks(line))), 0);
   const out = new Map<string, string>();
   for (const def of definitions(source)) {
     const above: string[] = [];
     for (let i = def.line - 1; i >= 0; i--) {
       const line = lines[i].trim();
-      if (line === "\\") {
+      if (trimBlanks(lines[i]) === "\\") {
         // A block comment's close: back to the `/` that opened it, a
         // nested block and all.
         if (depth[i] !== 1) break;

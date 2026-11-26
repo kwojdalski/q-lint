@@ -214,9 +214,22 @@ pub(super) fn k_lines(code: &str, raw: &str) -> KLines {
             .map_or(line.len(), |(i, _)| i);
         offset + line[..cut].trim_end().len()
     };
+    // How deep in a block comment a k statement folds in (#3010): its lines
+    // are no k, and the statement goes on after it.
+    let mut block = 0usize;
     for line in raw.split_inclusive('\n') {
         let end = offset + line.len();
         let blanked = code[offset..end].trim().is_empty();
+        let bare = line.trim_end_matches(['\r', '\n', ' ', '\t']);
+        if block > 0 || k && bare == "/" && crate::foreign_continues(line, &raw[end..]) {
+            block = match bare {
+                "/" => block + 1,
+                "\\" => block - 1,
+                _ => block,
+            };
+            offset = end;
+            continue;
+        }
         // A `k)\d .ns` is a command, its context `opens`' to read, and
         // names nothing; so is one after more prefixes, `k)q)\d .ns` (#2194).
         if line.starts_with("k)") && line[crate::language_prefixes(line)..].starts_with('\\') {

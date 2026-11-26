@@ -1235,6 +1235,51 @@ fn rename_global(
                 line + 1
             ));
         }
+        // A string the file runs as q is code no edit here rewrites, and
+        // a name in it is looked up when it runs: `value "myf 1"` signals
+        // 'myf once `myf` is `myg` everywhere else (KDB-X 5). Read where it
+        // stands it is the name under the `\d` in force, and in a lambda the
+        // one where the lambda is called, so either may be the global: the
+        // rename is refused and names the line (#3005).
+        let ran: Vec<(usize, String)> = q_lint_rs::evaluated_strings(&text)
+            .into_iter()
+            .filter(|(_, code)| code.contains(old))
+            .collect();
+        if !ran.is_empty() {
+            let contexts = q_lint_rs::contexts(&text);
+            let names = |word: &str| {
+                targets.contains(word)
+                    || word
+                        .match_indices('.')
+                        .any(|(dot, _)| dot > 0 && targets.contains(&word[..dot]))
+            };
+            for (at, code) in &ran {
+                let switch = contexts.partition_point(|(start, _)| start <= at);
+                let ns = contexts
+                    .get(switch.wrapping_sub(1))
+                    .map_or("", |(_, ns)| ns.as_str());
+                let named = mentions(code).iter().any(|m| {
+                    let word = &code[m.at..m.at + m.len];
+                    if word.starts_with('.') {
+                        return names(word);
+                    }
+                    names(word)
+                        || !ns.is_empty() && ns != "." && names(&format!("{ns}.{word}"))
+                        || switch <= 1
+                            && placed(word, true, placement).iter().any(|name| names(name))
+                });
+                if named {
+                    let (line, _) = lines.position(*at);
+                    return Err(format!(
+                        "the string at {}:{} is run as q and names `{old}`: a rename does not \
+                         rewrite a string, and one that left it would change some uses and \
+                         not others",
+                        Path::new(key).display(),
+                        line + 1
+                    ));
+                }
+            }
+        }
         // A bare name in a qSQL phrase is a column whenever the table has
         // one of that name, which only the table says; the table after
         // `from` is a global (#1207). So is the head of `ta.c` there: the

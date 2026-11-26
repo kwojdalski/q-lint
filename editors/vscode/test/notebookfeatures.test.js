@@ -656,6 +656,36 @@ test("the command line reads its options, and refuses what it cannot run", () =>
   assert.match(parseArgs(["a.qnb", "--process", "h:1", "-p", "a b", "1"]).error, /not a q name/);
 });
 
+// Any name was written, as a `.qnb`: `-o lib.q` put the notebook's JSON over
+// a q script (#3008).
+test("the command line refuses an --output that is no .qnb, .html or .ipynb, and leaves the file as it is (#3008)", async () => {
+  const { main } = require("../out/qnbrun.js");
+  const os = require("node:os");
+  for (const output of ["lib.q", "run.json", "results.txt", "noextension", "run.qnb.bak", "dir.html/run"]) {
+    for (const flag of ["-o", "--output"]) {
+      assert.match(parseArgs(["nb.qnb", "--process", "h:1", flag, output]).error, /--output takes a \.qnb, \.html or \.ipynb file/, output);
+    }
+  }
+  for (const output of ["run.qnb", "run.html", "run.htm", "run.ipynb", "RUN.QNB", "/a/b.c/run.HTML", "C:\\runs\\run.ipynb", "\\\\?\\C:\\runs\\run.qnb"]) {
+    assert.strictEqual(parseArgs(["nb.qnb", "--process", "h:1", "-o", output]).output, output);
+  }
+  // Left out, it is the notebook's own name, whatever that ends in.
+  assert.strictEqual(parseArgs(["lib.q", "--process", "h:1"]).output, "lib.q.out.qnb");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-qnbrun-"));
+  try {
+    const [nb, script] = [path.join(dir, "nb.qnb"), path.join(dir, "lib.q")];
+    fs.writeFileSync(nb, JSON.stringify({ qnb: 1, cells: [{ kind: "code", source: ["a:1"] }] }));
+    fs.writeFileSync(script, "f:{x+1}\n");
+    const said = [];
+    // No process is asked: the options are refused before the notebook is read.
+    assert.strictEqual(await main([nb, "--process", "127.0.0.1:1", "-o", script], {}, (line) => said.push(line)), 2);
+    assert.match(said.join("\n"), /lib\.q is none/);
+    assert.strictEqual(fs.readFileSync(script, "utf8"), "f:{x+1}\n");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("the command line names a process by host:port or by a listed label, and reads a password from the environment", () => {
   const listed = [{ label: "rdb", host: "h", port: 1, tags: ["prod"], user: "u" }];
   assert.strictEqual(cliProcess("rdb", listed), listed[0]);

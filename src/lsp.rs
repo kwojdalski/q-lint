@@ -3004,7 +3004,7 @@ fn qdoc_action(params: &Value, docs: &Documents) -> Option<Value> {
         let d = m.definition.as_ref()?;
         (d.function
             && m.at == d.start
-            && (m.at == 0 || source[..m.at].ends_with('\n'))
+            && starts_statement(source, m.at)
             && (d.start..=d.end).contains(&cursor))
         .then_some((m, d))
     })?;
@@ -3031,9 +3031,11 @@ fn qdoc_action(params: &Value, docs: &Documents) -> Option<Value> {
     block.push_str(newline);
     let at = lines.json(m.at);
     let mut changes = serde_json::Map::new();
+    // Above the line, which `q)` prompts may start (#3003).
+    let line = json!({"line": at["line"], "character": 0});
     changes.insert(
         uri.clone(),
-        json!([{"range": {"start": at, "end": at}, "newText": block}]),
+        json!([{"range": {"start": line, "end": line}, "newText": block}]),
     );
     Some(json!({
         "title": format!("Generate qDoc for {}", &source[m.at..m.at + m.len]),
@@ -3622,6 +3624,17 @@ fn severity(name: &str) -> i64 {
         "hint" => 4,
         _ => 2,
     }
+}
+
+/// Whether the name at byte `at` starts a statement of its own: at column
+/// 0, or right after the `q)` prompts its line starts with. q runs
+/// `q)h:{x}` and `q)q)h:{x}` as `h:{x}`, so each is a definition to run, to
+/// count the references of and to document like one at column 0 (#3003). A
+/// run with another language in it, `k)q)h:{x}`, is not q's to run.
+fn starts_statement(text: &str, at: usize) -> bool {
+    let line = text[..at].rfind('\n').map_or(0, |i| i + 1);
+    let lead = &text.as_bytes()[line..at];
+    lead.len().is_multiple_of(2) && lead.chunks(2).all(|prompt| prompt == b"q)")
 }
 
 /// Where each line starts, as an LSP client counts lines: the protocol ends

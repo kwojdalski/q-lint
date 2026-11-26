@@ -9,7 +9,7 @@
 //! the editor the statement to send, and a link goes where Go to Definition
 //! on the path goes.
 use super::navigate::{Sources, range};
-use super::{Lines, file_key, path_of};
+use super::{Lines, file_key, path_of, starts_statement};
 use q_lint_rs::graph::Placement;
 use q_lint_rs::{Mention, argument_slots, load_paths, mentions, symbol_mentions, typed_locals};
 use serde_json::{Value, json};
@@ -360,7 +360,7 @@ pub(super) fn runnables(text: &str, placement: &Placement) -> Vec<Runnable> {
         let Some(definition) = &m.definition else {
             continue;
         };
-        if m.at != definition.start || !(m.at == 0 || text[..m.at].ends_with('\n')) {
+        if m.at != definition.start || !starts_statement(text, m.at) {
             continue;
         }
         let spelled = &text[m.at..m.at + m.len];
@@ -560,7 +560,7 @@ fn reference_lenses(params: &Value, sources: &Sources) -> Vec<Value> {
         };
         if !definition.function
             || m.at != definition.start
-            || !(m.at == 0 || text[..m.at].ends_with('\n'))
+            || !starts_statement(text, m.at)
             || !seen.insert(m.at)
         {
             continue;

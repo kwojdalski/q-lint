@@ -503,6 +503,31 @@ fn each_load_path_links_to_the_file_it_loads() {
     assert_eq!(reply["tooltip"], "Open lib/util.q", "{reply}");
 }
 
+/// A load after a language prefix is a load: KDB-X 5 runs b.q for
+/// `k)\l b.q`, `q)k)\l b.q` and `K)\l b.q`, and none of them was linked
+/// (#2994).
+#[test]
+fn a_load_after_a_language_prefix_links_to_its_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[("b.q", "b:1\n")]);
+    let text = "k)\\l b.q\nq)k)\\l b.q\nq)\\l b.q\nK)\\l b.q\r\nk)a:1\n\
+                /\nk)\\l b.q\n\\\nk)s:\"\\l b.q\"\n";
+    std::fs::write(dir.path().join("main.q"), text).unwrap();
+    let uri = server.open(dir.path(), "main.q", text);
+    let reply = server.whole("textDocument/documentLink", &uri, json!({}));
+    assert_eq!(
+        links(&reply, dir.path()),
+        [
+            (0, 5, 8, "b.q".to_string()),
+            (1, 7, 10, "b.q".into()),
+            (2, 5, 8, "b.q".into()),
+            (3, 5, 8, "b.q".into()),
+            // Not the one in the block comment, nor a k string.
+        ],
+        "{reply}"
+    );
+}
+
 #[test]
 fn document_links_are_announced_and_can_be_turned_off() {
     let dir = tempfile::tempdir().unwrap();
@@ -656,6 +681,72 @@ fn a_qdoc_block_ends_its_lines_as_the_file_does() {
         )),
         "{actions:?}"
     );
+}
+
+/// q runs `q)h:{x}` as `h:{x}`, so a definition after the prompts its line
+/// starts with is run, tested, counted and documented like one at column 0:
+/// it had no Run lens, no Run test lens, no reference count, no entry in
+/// the test list and no Generate qDoc (#3003).
+#[test]
+fn a_definition_after_a_q_prompt_is_run_tested_counted_and_documented() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = json!({"codeLens": {"enable": true}, "referenceLens": {"enable": true}});
+    let (mut server, _) = Server::over(dir.path(), &[], client(), options);
+    let text = "q)h:{[a;b]\n  a-b}\nq)q)test_b:{1b}\nk)q)c:{x}\nk)test_c:{1b}\n\
+                r:h[1;2]\n";
+    std::fs::write(dir.path().join("suite.q"), text).unwrap();
+    let uri = server.open(dir.path(), "suite.q", text);
+    let reply = server.whole("textDocument/codeLens", &uri, json!({}));
+    let found: Vec<(u64, &str, &str)> = reply["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"))
+        .iter()
+        .map(|l| {
+            (
+                l["range"]["start"]["line"].as_u64().unwrap(),
+                l["command"]["title"].as_str().unwrap(),
+                // What a Run lens sends; a count opens the references.
+                l["command"]["arguments"][0]
+                    .as_str()
+                    .filter(|_| l["command"]["command"] == "q-lint.runDefinition")
+                    .unwrap_or(""),
+            )
+        })
+        .collect();
+    assert_eq!(
+        found,
+        [
+            // What is sent is the statement, without its prompt.
+            (0, "Run", "h:{[a;b]\n  a-b}"),
+            (2, "Run", "test_b:{1b}"),
+            (2, "Run test", "test_b:{1b}\ntest_b[]"),
+            // Not the k lines: they are no q to send.
+            (0, "1 reference", ""),
+            (2, "0 references", ""),
+        ],
+        "{reply}"
+    );
+    let reply = server.request("q-lint/tests", json!({"textDocument": {"uri": uri}}));
+    let names: Vec<&str> = reply["result"][0]["tests"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"))
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["test_b"], "{reply}");
+    // The block goes above the line, before its prompt.
+    let actions = actions_at(&mut server, &uri, 1, 3, None);
+    assert_eq!(
+        qdoc(&actions, &uri),
+        Some((
+            "Generate qDoc for h".to_string(),
+            "/ @param a\n/ @param b\n/ @return\n".to_string(),
+            (0, 0)
+        )),
+        "{actions:?}"
+    );
+    let actions = actions_at(&mut server, &uri, 3, 5, None);
+    assert_eq!(qdoc(&actions, &uri), None, "{actions:?}");
 }
 
 #[test]

@@ -61,10 +61,16 @@ function closing(text: string, kinds: string, open: number): number {
   return -1;
 }
 
+/// The prompts a line of q may open with: q runs `q)g:{x}`, and `k)q)g:{x}`,
+/// as `g:{x}`. A line whose last prompt is `k)` is k, and its lambda's text
+/// on the process is another (`k){x}`), so it is no definition here.
+const PROMPTS = /^(?:[qkK]\))*q\)[ \t]*/;
+
 /// The definition `lines` (one statement, from `line`) make in context
-/// `ctx`, or undefined when it is not a function definition.
+/// `ctx`, or undefined when it is not a function definition. Behind `q)`
+/// prompts it is one all the same (#3009).
 function definitionOf(lines: string[], line: number, ctx: string): Definition | undefined {
-  const text = lines.join("\n");
+  const text = lines.join("\n").replace(PROMPTS, "");
   const m = NAME.exec(text);
   if (m === null) {
     return undefined;

@@ -376,6 +376,35 @@ from:1
 from:1
 by:2
 
+=== clean | from in a namespace is no root assignment, however q was told to switch (q 5: key `.foo is ``from after each of these) (#2997)
+system["d .foo"]
+from:1
+system("d .")
+system@"d .foo"
+from:1
+\d .
+@[system;"d .foo";::]
+from:1
+\d .
+a:1;system "d .foo"
+from:1
+\d .
+value "\\d .foo"
+from:1
+\d .
+k)\d .foo
+from:1
+k)\d .
+q)system "d .foo"
+from:1
+\d .
+
+=== QF012 | and one in a string, in a comment or in brackets that may not run switches nothing
+a:"system[\"d .foo\"]"
+/ system["d .foo"]
+if[0b;system "d .foo"]
+from:1
+
 === QF013 QT005 | a table-literal column is not a local assignment, so QF013 alone reports it (#192)
 m:{([] count:1)}
 

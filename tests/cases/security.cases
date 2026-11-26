@@ -137,6 +137,55 @@ password:"abc"
 === QX001 | the joined query in parentheses is the same query (#502)
 f:{value ("select from t where s=`",x)}
 
+=== QX001 | value in the first slot of a trap, or in parentheses of its own, runs the same query (#2992)
+f:{@[value;"select from t where a=",x;{x}]}
+g:{.[value;enlist "select from t where a=",x;{x}]}
+h:{(value) "select from t where a=",x}
+l:{@[get;"select from t where a=",x;{x}]}
+
+=== QX001 | as it does applied with @, or with . to a list of the one argument
+h:{value@"select from t where a=",x}
+k:{value . enlist "select from t where a=",x}
+
+=== clean | a trap that runs a constant, one whose handler builds the text, and a list that only holds value (#2992)
+f:{@[value;"select from t";{x}]}
+g:{@[value;x;{"select from t where a=",x}]}
+h:{(a;value;"select from t where a=",x)}
+
+=== QX001 | a handle given its query in parentheses or brackets, after @, or in a trap (#3006)
+f:{[h;x] h("select from t where a=",x)}
+g:{[h;x] h["select from t where a=",x]}
+k:{[h;x] (neg h)("select from t where a=",x)}
+l:{[h;x] h ("select from t where a=",x)}
+m:{[h;x] h@"select from t where a=",x}
+n:{[h;x] @[h;"select from t where a=",x;{x}]}
+
+=== clean | a constant sent in brackets, and a list that holds a handle and a query (#3006)
+f:{[h] h["select from t"]}
+g:{[h;x] (h;"select from t where a=",x)}
+
+=== QX001 | eval of the query parsed runs it (#2991)
+f:{eval parse "select from t where a=",x}
+g:{eval -5!"select from t where a=",x}
+k:{[s] q:"select from t where a=",s; eval parse q}
+
+=== clean | eval of a string returns the string and runs nothing (#2991)
+f:{eval "select from t where a=",x}
+g:{@[eval;"select from t where a=",x;{x}]}
+k:{[s] q:"select from t where a=",s; eval q}
+
+=== clean | get of a symbol reads a file or a variable, whatever its text says (#3012)
+f:{[d] get hsym `$"/data/update/",d}
+g:{[d] get `$":/data/delete/",d}
+
+=== clean | a message that starts with a query word and reads from nothing is no query sent over a handle (#3002)
+f:{[n] .log.info "update complete: ",string n}
+h:{[n] lg "select returned ",string n}
+k:{[n] .log.out "exec time ",string n}
+
+=== QX001 | while a query whose from comes in a later piece is one (#3002)
+f:{[h;c] h "select ",c," from t"}
+
 === QX001 | a query built into a local and run on a later statement, on one path or every one (#2735)
 f:{[s] q:"select from t where sym=`",s; value q}
 g:{[s] q:"select from t"; if[count s; q:"select from t where sym=`",s]; get q}

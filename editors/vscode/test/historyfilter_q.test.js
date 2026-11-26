@@ -31,6 +31,25 @@ test("an exported script loads every entry, whatever comment an entry starts wit
   assert.deepStrictEqual(await load("both.q", ["hb3:3", "\t/ one\n  /\n  / two\n  hb2:hb1", "hb1:2"], "`hb1`hb2`hb3"), { ran: true, error: null, defined: [true, true, true] });
 });
 
+test("an exported script loads past an entry whose first line is an indented \\ or \\\\, which q did not run as one (#3000)", { skip }, async (t) => {
+  const { connection: c, dir } = await connect(t, "");
+  for (const [name, first] of [["end.q", "  \\"], ["exit.q", "  \\\\"], ["more.q", "  \\\\\n  hn:1"]]) {
+    // Newest first, as kept; each ran on its own, oldest first.
+    const codes = ["hq2:2", first, "hq1:1"];
+    for (const code of [...codes].reverse()) {
+      await c.call("{@[value;x;{x}]}", code);
+    }
+    const ran = (await c.evaluate("`hq1`hq2`hn in key `.")).value;
+    await c.evaluate("![`.;();0b;`hq1`hq2]");
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, historyScript(codes.map(entry)));
+    assert.strictEqual((await c.evaluate(`@[system;"l ${file}";{x}]`)).value, null, name);
+    assert.deepStrictEqual((await c.evaluate("`hq1`hq2`hn in key `.")).value, ran, name);
+    assert.deepStrictEqual(ran, [true, true, false], name);
+    await c.evaluate("![`.;();0b;`hq1`hq2]");
+  }
+});
+
 test("an exported script defines an entry's names where it ran, after an entry that left a \\d set (#2383)", { skip }, async (t) => {
   const { connection: c, dir } = await connect(t, "");
   const file = path.join(dir, "ns.q");

@@ -2509,6 +2509,77 @@ fn a_global_named_by_a_symbol_is_renamed_where_q_takes_the_name() {
 }
 
 #[test]
+fn a_string_run_as_q_that_names_the_global_refuses_the_rename() {
+    // #3005. KDB-X 5 calls `myf` for `value "myf 1"`, `eval parse "myf 1"`,
+    // `eval -5!"myf 1"`, `0 "myf 1"` and a trapped `value`, and `get "myf"`
+    // is the function: a rename that changed the definition and left the
+    // string made each of them signal 'myf. No edit rewrites a string, so
+    // the rename is refused and names the line.
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let rename = |server: &mut Server, uri: &str, text: &str, name: &str| {
+        server.ask(
+            "textDocument/rename",
+            uri,
+            text,
+            &format!("{name}:"),
+            0,
+            json!({"newName": "renamed"}),
+        )
+    };
+    // Each case has a name of its own, `N` here: the files stay open.
+    for (i, ran) in [
+        "r:value \"N 1\"",
+        "r:eval parse \"N 1\"",
+        "r:eval -5!\"N 1\"",
+        "r:0 \"N 1\"",
+        "r:@[value;\"N 1\";{x}]",
+        "r:get \"N\"",
+        "r:value \"1+\",\"N 1\"",
+        // In a lambda under a `\d`, where the name is looked up at the call.
+        "\\d .o\nf:{value \"N 1\"}",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let (file, name) = (format!("a{i}.q"), format!("ma{i}"));
+        let text = format!("N:{{x+1}}\nt:N 2\n{ran}\n").replace('N', &name);
+        let uri = server.open(dir.path(), &file, &text);
+        let why = refused(&rename(&mut server, &uri, &text, &name));
+        let line = text.lines().count();
+        assert!(
+            why.contains(&format!("`{name}`")) && why.contains(&format!("{file}:{line}")),
+            "{ran}: {why}"
+        );
+    }
+    // Not a string nothing runs here, one sent to another process, a local
+    // of the string's own lambda, a longer name, or a name in a namespace.
+    for (i, kept) in [
+        "s:\"N 1\"",
+        "h:hopen 5000\nr:h \"N 1\"",
+        "r:value \"{[N] N+1} 2\"",
+        "r:value \"Ns 1\"",
+        "r:value \".o.N 1\"",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let (file, name) = (format!("b{i}.q"), format!("mb{i}"));
+        let text = format!("N:{{x+1}}\nt:N 2\n{kept}\n").replace('N', &name);
+        let uri = server.open(dir.path(), &file, &text);
+        let reply = rename(&mut server, &uri, &text, &name);
+        assert_eq!(
+            edits(&reply["result"]),
+            [
+                edit(&file, 0, 0, 3, "renamed"),
+                edit(&file, 1, 2, 5, "renamed")
+            ],
+            "{kept}: {reply}"
+        );
+    }
+}
+
+#[test]
 fn a_symbol_that_may_name_the_global_refuses_the_rename() {
     // #2018. `` `tc in tables[] `` is 1b before a rename of tc and 0b after
     // one that leaves the symbol (KDB-X 5), and nothing in the text says
@@ -2889,6 +2960,23 @@ fn a_block_comment_after_a_k_line_is_no_k() {
     assert_eq!(
         edits(&reply["result"]),
         [edit("a.q", 0, 0, 2, "fz"), edit("a.q", 5, 5, 7, "fz")]
+    );
+}
+
+#[test]
+fn a_block_comment_inside_a_k_statement_is_no_k_and_does_not_end_it() {
+    // #3010. KDB-X 5 loads `k)gk:{[zz] zz+`, `/`, ` zz in a comment`, `\`,
+    // `  zz}` as one k lambda: the block comment folds into the statement
+    // the indented line continues. So the `zz` after it is the lambda's
+    // parameter, as the one before it is, and no use of the global.
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "zz:1\nk)gk:{[zz] zz+\n/\n zz in a comment\n\\\n  zz}\nshow zz\n";
+    let uri = server.open(dir.path(), "a.q", text);
+    let reply = server.ask("textDocument/references", &uri, text, "zz:", 0, json!({}));
+    assert_eq!(
+        places(&reply["result"]),
+        [place("a.q", 0, 0, 2), place("a.q", 6, 5, 7)]
     );
 }
 

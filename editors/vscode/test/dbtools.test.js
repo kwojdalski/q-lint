@@ -207,6 +207,10 @@ test("the documenter reads one table's answer, takes the qDoc above a definition
   // A block nested in the doc's block is part of it: the doc is the outer one's (#1817).
   const nested = qdocs(["/", "Adds one to x.", "/", "old note", "\\", "Returns a long.", "\\", "f:{x+1}"].join("\n"));
   assert.strictEqual(nested.get("f"), "Adds one to x.\n/\nold note\n\\\nReturns a long.");
+  // An indented `/` or `\\` opens and closes no block comment, in a lambda
+  // or above a definition: q reads the first as a comment line (#3001).
+  const indented = qdocs(["f:{[x]", "  /", "  x}", "/", " g returns its argument", "\\", "g:{x}", "/", "h's doc", "  \\", "still h's", "\\", "h:{x}"].join("\n"));
+  assert.deepStrictEqual([...indented], [["g", "g returns its argument"], ["h", "h's doc\n\\\nstill h's"]]);
   const md = docMarkdown(doc, "rdb", "now", new Map([[".lib.f", "x <b>"]]));
   assert.match(md, /### t\\<1\\>/);
   assert.match(md, /\| k \(key\) \| long \| unique \|/);

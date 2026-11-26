@@ -376,6 +376,16 @@ pub fn symbol_mentions(source: &str, leaf: &str) -> Vec<Mention> {
     semantics::navigate::symbols(&v.code, source, leaf)
 }
 
+/// Each string literal `source` gives q to run in the process itself, as
+/// the offset of its opening quote and the text q reads: one in what
+/// `value`, `get`, `parse` or `-5!` is applied to, and one sent to handle 0.
+/// What it names is named by no token of the file, so a rename reads it
+/// apart (#3005).
+pub fn evaluated_strings(source: &str) -> Vec<(usize, String)> {
+    let v = views(source);
+    families::evaluated_strings(&v.code, &v.comments, source)
+}
+
 /// The path of the load at byte `offset` of `source` - `\l path`,
 /// `system "l path"` or a file symbol, as `References::loads` reads it - as
 /// its start and length, when the offset is in one. Its end counts: a cursor
@@ -563,12 +573,33 @@ pub fn argument_slots(source: &str) -> Vec<BracketCall> {
 
 /// The paths of the loads in `source` - `\l path`, `system "l path"` and a
 /// file symbol - as start and length, in order.
+///
+/// A `\l` after a language prefix or a run of them loads as well: KDB-X 5
+/// runs b.q for `k)\l b.q`, `q)k)\l b.q` and `K)\l b.q` (#2994). The views
+/// blank another language's line whole, so that one is read from the
+/// source, where `foreign_offsets` says it is a line that runs.
 pub fn load_paths(source: &str) -> Vec<(usize, usize)> {
     let v = views(source);
-    semantics::load_paths(&v.code, source)
+    let mut paths: Vec<(usize, usize)> = semantics::load_paths(&v.code, source)
         .into_iter()
         .map(|path| (path.start, path.len()))
-        .collect()
+        .collect();
+    let mut at = 0;
+    for line in source.split_inclusive('\n') {
+        let run = language_prefixes(line);
+        if run > 0
+            && (v.foreign_offsets.binary_search(&at).is_ok()
+                || v.code[at + run..].starts_with("\\l"))
+            && let Some(m) = re!(r"^\\l[ \t]+(\S+)").captures(&line[run..])
+        {
+            let path = m.get(1).unwrap();
+            paths.push((at + run + path.start(), path.len()));
+        }
+        at += line.len();
+    }
+    paths.sort_unstable();
+    paths.dedup();
+    paths
 }
 
 /// The module names of the `` use`name `` loads in `source` - `mymod` of
@@ -2630,9 +2661,15 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
             // assigns, so there only the `b:` is removed: q 5 gives 3 for
             // `{[x;b] r:x+b:b;r}[1;2]` and for `{[x;b] r:x+b;r}[1;2]`.
             let before = v.code[..start].trim_end();
+            // A run of `q)` prompts is no part of the statement, which
+            // starts after it as it does at the line's start: removing only
+            // `a:` from `q)a:a` leaves `q)a`, which q 5 prints on every
+            // load (#2998).
+            let prompted = start > line_start
+                && line_start + language_prefixes(&source[line_start..]) == start;
             let statement = before.is_empty()
                 || before.ends_with([';', '{'])
-                || (start == line_start && enclosing_brace(&v.code, start).is_none())
+                || ((start == line_start || prompted) && enclosing_brace(&v.code, start).is_none())
                 || enclosing_brace(&v.code, start).is_some_and(|brace| {
                     let sig = signature(&v.code, source, brace);
                     sig.named && v.code[sig.body..start].trim().is_empty()
@@ -2651,7 +2688,9 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
                     "Remove the self-assignment".into(),
                     false,
                 )
-            } else if source[line_start..start].trim().is_empty() && line_rest.trim().is_empty() {
+            } else if (prompted || source[line_start..start].trim().is_empty())
+                && line_rest.trim().is_empty()
+            {
                 let end = start + whole.end() + line_rest.len();
                 let end = (end + 1).min(source.len());
                 begin = line_start;
@@ -4524,8 +4563,19 @@ pub fn shown(text: &str) -> Cow<'_, str> {
 /// The bytes q makes of a string literal's body, the text between its
 /// quotes. q strings are bytes, so `"é"` is two items, and an escape is the
 /// one byte it stands for: `\n`, `\"`, `\012` (#226). A byte that was not
-/// UTF-8 is the one byte it is (#2862).
+/// UTF-8 is the one byte it is (#2862). Of a string written over several
+/// lines q keeps each line break and the next line's indent, and drops the
+/// blanks and the CR that end a line: KDB-X 5 reads `"abc  \n  def"` from a
+/// script as "abc\n  def", in a CRLF file too (#2995).
 pub(crate) fn q_bytes(body: &str) -> Vec<u8> {
+    let kept;
+    let body = match body.contains('\n') {
+        true => {
+            kept = re!(r"[ \t\r]+\n").replace_all(body, "\n");
+            &*kept
+        }
+        false => body,
+    };
     let mut out = vec![];
     for m in re!(r"\\[0-7]{3}|\\.|[^\\]").find_iter(body) {
         match m.as_str().strip_prefix('\\') {
@@ -4603,25 +4653,47 @@ pub(crate) fn timed_prefix(line: &str) -> usize {
 /// nothing an indented line continues after it: q 5 hands `t)a`, `/ note`,
 /// `  b` to `.t.e` as one statement, and `t)a`, `/ note`, `c:1` as `t)a` and
 /// then q (#317). A bare `/` is no comment line but a block comment's
-/// opener, and ends the statement: q 5 hands `t)c`, `/`, `  zz`, `\`,
-/// `show 1` to `.t.e` as `c` alone and then prints 1 (#2042).
+/// opener, and the same holds of the block: q 5 hands `t)c`, `/`, `  zz`,
+/// `\`, `show 1` to `.t.e` as `c` alone and then prints 1 (#2042), and
+/// `t)e`, `/`, `  f`, `\`, `  g` as one statement, the block folded into it
+/// (#3010). For a bare `/` this says whether the statement goes on after
+/// the block it opens; the block's own lines are the caller's to skip.
 pub(crate) fn foreign_continues(line: &str, rest: &str) -> bool {
-    let bare = |l: &str| l.trim_end_matches(['\r', '\n', ' ', '\t']) == "/";
-    let comment = |l: &str| l.starts_with('/') && !bare(l);
-    line.starts_with([' ', '\t'])
-        || line.trim().is_empty()
-        || comment(line)
-            && rest
-                .lines()
-                .find(|l| !l.trim().is_empty() && !comment(l))
-                .is_some_and(|l| l.starts_with([' ', '\t']))
+    let bare = |l: &str, c: &str| l.trim_end_matches(['\r', '\n', ' ', '\t']) == c;
+    let comment = |l: &str| l.starts_with('/') && !bare(l, "/");
+    if line.starts_with([' ', '\t']) || line.trim().is_empty() {
+        return true;
+    }
+    // Comment lines, blank lines and whole block comments are read past, to
+    // the line that says: an unclosed block leaves none.
+    let mut depth = usize::from(bare(line, "/"));
+    if depth == 0 && !comment(line) {
+        return false;
+    }
+    for l in rest.lines() {
+        if depth > 0 {
+            if bare(l, "/") {
+                depth += 1;
+            } else if bare(l, "\\") {
+                depth -= 1;
+            }
+        } else if bare(l, "/") {
+            depth = 1;
+        } else if !l.trim().is_empty() && !comment(l) {
+            return l.starts_with([' ', '\t']);
+        }
+    }
+    false
 }
-/// The length of the run of language prefixes, `q)` and `k)` as many as
-/// are written, that `line` opens with: q reads `q)k)\d .ns` as `\d .ns`
-/// (#2194), as the extension's guard does (#2034).
+/// The length of the run of language prefixes that `line` opens with, as
+/// many as are written and of any letter: q reads `q)k)\d .ns` as `\d .ns`
+/// (#2194), as the extension's guard does (#2034), and the last prefix of a
+/// run names the language of what follows - KDB-X 5 runs `q)k)a:#1 2 3` as
+/// k, `q)q)b:1` as q and hands `q)t)1+1` to `.t.e` as `1+1` (#2989).
 pub(crate) fn language_prefixes(line: &str) -> usize {
+    let bytes = line.as_bytes();
     let mut n = 0;
-    while line[n..].starts_with("q)") || line[n..].starts_with("k)") {
+    while bytes.get(n).is_some_and(u8::is_ascii_alphabetic) && bytes.get(n + 1) == Some(&b')') {
         n += 2;
     }
     n
@@ -4635,13 +4707,14 @@ pub(crate) fn system_command(line: &str) -> bool {
 /// indented continuation of the one before. It starts a statement, so the
 /// rules see a `;` in its place: q 5 runs `q)a:2.5` and then refuses
 /// `q)r:string a 0` with 'type (#585). A `q)\` command is read as a command
-/// already, and keeps its blank.
+/// already, and keeps its blank; so does a `q)k)` line, which is k's.
 fn prompts_start_statements(source: &str, v: &mut Views) {
     let mut at = 0;
     for line in source.split_inclusive('\n') {
         if line.starts_with("q)")
             && !line[language_prefixes(line)..].starts_with('\\')
             && v.code.as_bytes().get(at) == Some(&b' ')
+            && v.foreign_offsets.binary_search(&at).is_err()
         {
             v.code.replace_range(at..at + 1, ";");
             v.comments.replace_range(at..at + 1, ";");
@@ -4794,37 +4867,40 @@ fn lex_line(
         }
         st.statement = !stripped.is_empty() && !line.starts_with(['\\', '/', ' ', '\t']);
     }
-    if st.foreign && !foreign_continues(line, rest) {
+    // Inside the block comment a foreign statement folds in, nothing is
+    // asked: the bare `/` that opened it already said the statement goes on
+    // after it (#3010).
+    if st.foreign && st.block == 0 && !foreign_continues(line, rest) {
         st.foreign = false;
     }
+    let run = if st.string.is_none() {
+        language_prefixes(line)
+    } else {
+        0
+    };
+    // A command after a run of prefixes is the command, as q reads
+    // `q)k)\d .ns` (#2194).
+    let commanded = line[run..].starts_with('\\');
     if !st.ended && st.block == 0 && st.string.is_none() {
         // Any `x)` line is another language: q hands it to `.x.e`, which
         // is how `p)` reaches embedPy and `k)` reaches k, and a test
-        // harness may define `.t.e` for `t)`. `q)` is q itself, and its
-        // prefix is stripped below instead.
-        if bytes.len() >= 2 && bytes[0].is_ascii_lowercase() && bytes[0] != b'q' && bytes[1] == b')'
-        {
+        // harness may define `.t.e` for `t)` - or `.K.e` for `K)`, a capital
+        // being a prefix as well (#2990). `q)` is q itself, and its prefix is
+        // stripped below instead; after it the last prefix of the run is the
+        // one that says, so `q)k)a:#1 2 3` is k and `q)q)b:1` is q (#2989).
+        if run > 0 && (bytes[0] != b'q' || bytes[run - 2] != b'q' && !commanded) {
             st.foreign = true;
         }
-        if st.foreign {
+        // A bare `/` in a foreign statement that goes on after it still
+        // opens a block comment, which is masked as one below.
+        if st.foreign && stripped != "/" {
             blank(comments);
             blank(code);
             record.foreign_offsets.push(offset);
             return;
         }
     }
-    // A command after a run of prefixes is the command, as q reads
-    // `q)k)\d .ns` (#2194).
-    let prefix = if st.string.is_none() && line.starts_with("q)") {
-        let run = language_prefixes(line);
-        if line[run..].starts_with('\\') {
-            run
-        } else {
-            2
-        }
-    } else {
-        0
-    };
+    let prefix = if bytes.first() == Some(&b'q') { run } else { 0 };
     // `\t` and `\ts` run their argument as q, so its strings and its
     // comment are masked as on any other line (#222); the command itself
     // stays, for the rules that read system commands.
@@ -4933,9 +5009,10 @@ fn lex_line(
 ///
 /// The lines before are unchanged because what any of them reads of a
 /// later line (`foreign_continues`) is whether it is blank, indented or a
-/// comment line: an edit after a line's first byte that leaves it neither
-/// blank nor a bare `/` changes none of those, and one that makes it a bare
-/// `/` opens a block, which ends the line in another state.
+/// comment line, or opens or closes a block comment: an edit after a line's
+/// first byte that leaves it neither blank nor a bare `/` changes none of
+/// the first three, and one that makes or unmakes a bare `/` or `\` opens,
+/// closes or keeps open a block, which ends the line in another state.
 fn edited_line_views(
     source: &str,
     states: &[(usize, LexState)],
@@ -7085,6 +7162,7 @@ fn lint_rules(
         code,
         &v.comments,
         &v.foreign_offsets,
+        ws,
     ));
     out.extend(refusals::check(path, source, code, &v.comments));
     out.extend(semantics::typelint::check(path, code, source, &v.comments));
@@ -8253,6 +8331,13 @@ fn lint_rules(
             *assigned
                 .entry(qualified(name.start(), name.as_str()))
                 .or_default() += 1;
+        }
+        // And one a `k)` line assigns: q 5 `f:{x}`, `k)f:{x+y}`, then
+        // `f[1;2]` is 3 (#3004).
+        for (at, name) in semantics::k_statement_writes(source) {
+            if let Some(name) = name {
+                *assigned.entry(qualified(at, name)).or_default() += 1;
+            }
         }
         // Each name of a `set'`: q 5 `` f:{x}; `f`g set' ({x+y};1); f[1;2] ``
         // is 3 (#753).
@@ -10456,6 +10541,11 @@ fn lint_rules(
             continue;
         }
         if system_command(first_raw) {
+            // `k)\d .ns` is q's context too, and the views hold none of a k
+            // line: read from the source, as QF018 reads it (#2997).
+            if let Some(ns) = semantics::opens(first, first_raw) {
+                namespace = !ns.is_empty();
+            }
             offset += line.len();
             continue;
         }
@@ -10473,6 +10563,22 @@ fn lint_rules(
         if let Some(ns) = semantics::opens(first, first_raw) {
             namespace = !ns.is_empty();
         }
+        // So does a later statement of the line, for what follows it: the
+        // statements before it were in the context the line began in. The
+        // next line starts in the last one (#2997).
+        let later = semantics::opens_later(line, raw);
+        let entered = namespace;
+        if let Some((_, ns)) = later.last() {
+            namespace = !ns.is_empty();
+        }
+        let namespace_at = |at: usize| {
+            later
+                .iter()
+                .rev()
+                .find(|(from, _)| *from <= at)
+                .map_or(entered, |(_, ns)| !ns.is_empty())
+        };
+        let namespace = entered;
         // More from the same guidelines:
         //
         //   "Do not use unnecessary parentheses - the compiler doesn't need
@@ -10637,6 +10743,7 @@ fn lint_rules(
             }
         }
         for &(at, head) in &heads {
+            let namespace = namespace_at(at);
             // Of the 181 reserved names q refuses to assign inside a namespace
             // all but two: `from` and `by` are accepted there and read back fine,
             // checked one by one. TorQ's email settings define `.email.from`.
@@ -11640,15 +11747,21 @@ fn lint_rules(
                 i,
                 "QE002",
                 // The whole char after the backslash, which may be more than
-                // one byte: `\é` is named as such, not half of it (#233).
-                format!(
-                    "Invalid escape \\{}",
-                    v.comments[i + 1..]
-                        .chars()
-                        .next()
-                        .map(String::from)
-                        .unwrap_or_default()
-                ),
+                // one byte: `\é` is named as such, not half of it (#233). A
+                // line break or another control character is named in
+                // words: written out it split the finding over two lines of
+                // the text output, and a CRLF file's held a bare CR (#2996).
+                match v.comments[i + 1..].chars().next() {
+                    Some('\n' | '\r') => {
+                        "Invalid escape: a backslash at the end of a line".to_string()
+                    }
+                    Some('\t') => "Invalid escape: a backslash before a tab".to_string(),
+                    Some(c) if c.is_control() => {
+                        format!("Invalid escape: a backslash before U+{:04X}", c as u32)
+                    }
+                    Some(c) => format!("Invalid escape \\{c}"),
+                    None => "Invalid escape \\".to_string(),
+                },
             );
             i += 2;
         }
