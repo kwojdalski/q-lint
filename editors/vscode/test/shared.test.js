@@ -420,6 +420,11 @@ test("several folders' lists are one: a label two of them name is qualified in e
   assert.deepStrictEqual(ports([b, a]), { "rdb (B)": 2, "rdb (A)": 1 });
   assert.deepStrictEqual(ports([b]), { rdb: 2 });
   assert.deepStrictEqual(ports([a, { ...b, name: "A" }]), { "rdb (/a)": 1, "rdb (/b)": 2 });
+  // A list naming "rdb (B)" itself: folder B's rdb is numbered, not given
+  // that label a second time (#2512).
+  const holds = { name: "A", path: "/a", read: list([{ label: "rdb", host: "h", port: 1, tags: [] }, { label: "rdb (B)", host: "h", port: 3, tags: [] }]) };
+  assert.deepStrictEqual(ports([holds, b]), { "rdb (A)": 1, "rdb (B)": 3, "rdb (B 2)": 2 });
+  assert.deepStrictEqual(ports([b, holds]), { "rdb (B)": 2, "rdb (A)": 1, "rdb (B) (A)": 3 });
 });
 
 test("in a multi-root workspace every folder's shared list is read and watched, and Add asks which (#1841)", async (t) => {
