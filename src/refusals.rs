@@ -31,8 +31,9 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
 /// QE013. An empty column slot in a table literal: q 5 refuses
 /// `([] a:1 2; )`, `([] a:1 2;;b:3 4)`, `([a:1 2;] b:3 4)` and
 /// `([;a:1 2] b:3 4)` at parse with ';. An empty first slot after the key
-/// is taken - `([] ;a:1 2)` and `([] ;)` parse - so a literal that starts
-/// with one is left alone, and so is a list's empty item, `(1;;2)` (#2214).
+/// is taken - `([] ;a:1 2)` and `([] ;)` parse - but only that one: q 5
+/// refuses `([] ;;b:1 2)`, `([] ;a:1 2;)` and `([] ;;)` (#2854). A list's
+/// empty item, `(1;;2)`, is left alone (#2214).
 fn table_slots(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
     let b = code.as_bytes();
     // The slots between `from` and the closer at depth 0: where each `;`
@@ -74,7 +75,12 @@ fn table_slots(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
         let empty = key
             .iter()
             .filter(|_| keyed)
-            .chain(value.iter().skip(1).filter(|_| !value[0].1))
+            .chain(
+                value
+                    .iter()
+                    .skip(1)
+                    .filter(|_| !value[0].1 || value.len() > 2),
+            )
             .find(|&&(_, blank)| blank);
         if let Some(&(at, _)) = empty {
             // Report the `;` that opens the empty slot, which is q's.

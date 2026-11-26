@@ -2519,3 +2519,14 @@ a:(<=>)
 b:(>=<)
 c:f[<>,;1]
 d:>>x
+
+=== QE013 profile: general | a second empty slot after the empty first slot q takes (#2854; q 5: ';)
+a:([] ;;b:1 2)
+
+=== QE013 profile: general | or an empty last slot after it (#2854; q 5: ';)
+a:([] ;a:1 2;)
+
+=== clean profile: general | while the empty first slot alone, or before columns, parses (#2854; q 5 parses each)
+a:([] ;a:1 2)
+b:([] ;)
+c:([] ;a:1 2;b:3 4)
