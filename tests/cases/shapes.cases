@@ -1363,6 +1363,35 @@ b:(1 2 3)+4 5
 c:1 2 3+(4 5)
 d:(`a`b`c)=`a`b
 
+=== QT006 profile: general | a vector of times, a literal or beside a name (#2899; q 5: each 'length)
+a:1 2 3
+r1:12:00 13:00+1 2 3
+r2:1 2 3+12:00:00 13:00:00
+r3:a+12:00 13:00
+r4:2024.01.01D12:00 2024.01.02D12:00+1 2 3
+a1:12:00 13:00+1 2 3
+
+=== clean profile: general | times of the same count, and a time atom (#2899; q 5: each runs)
+a:1 2 3
+r1:12:00 13:00+1 2
+r2:a+12:00 13:00 14:00
+r3:a+12:00
+
+=== QT006 profile: general | a boolean or a byte vector written as one token (#2900; q 5: each 'length)
+a:1 2 3
+r1:101b+1 2
+r2:1 2+101b
+r3:a+10b
+r4:10b-a
+r5:a+0x0102
+
+=== clean profile: general | which pairs with a vector of its own count, and an atom with any (#2900; q 5: each runs)
+a:1 2 3
+r1:101b+1 2 3
+r2:a+101b
+r3:a+1b
+r4:a+0x01
+
 === clean profile: general | a parenthesised atom pairs with any vector (q 5: 5 6, 2 3 4)
 a:(1)+4 5
 b:1 2 3+(1)

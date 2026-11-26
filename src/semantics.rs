@@ -2371,17 +2371,28 @@ pub fn check(
     // An operand is a symbol vector, a numeric vector, a byte vector with at
     // least two items, or a parenthesised list or vector. `shape` decides the length of
     // each; this pattern only has to find them.
-    for m in re!(concat!(
-        r#"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*\)|"(?:[^"\\\n]|\\.)*")"#,
+    // A numeric item may be a time, with a colon before a digit, and a
+    // boolean vector is one token, a digit an item: KDB-X
+    // `12:00 13:00+1 2 3`, `10b=101b` and `101b+1 2` are 'length (#2899,
+    // #2900).
+    let pairs = re!(concat!(
+        r#"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?(?:[A-Za-z0-9.]|:\d)*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?(?:[A-Za-z0-9.]|:\d)*)+|[01]{2,}b|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*\)|"(?:[^"\\\n]|\\.)*")"#,
         blank!(),
         r"*(?P<op>(?:<>|<=|>=|[+*%&|=<>^-]|\b(?:and|or|mod|div|xexp|xlog)\b)'?|,')",
         blank!(),
-        r#"*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*\)|"(?:[^"\\\n]|\\.)*")"#
-    ))
-    .captures_iter(comments)
-    {
+        r#"*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?(?:[A-Za-z0-9.]|:\d)*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?(?:[A-Za-z0-9.]|:\d)*)+|[01]{2,}b|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*\)|"(?:[^"\\\n]|\\.)*")"#
+    ));
+    let mut at = 0;
+    while let Some(m) = pairs.captures_at(comments, at) {
         let whole = m.get(0).unwrap();
         let op = m.name("op").unwrap();
+        // A match that starts inside a name is no operand, and the one
+        // after its colon may be: `a1:12:00 13:00+1 2 3`.
+        if !boundary(code, whole.start()) {
+            at = whole.start() + 1;
+            continue;
+        }
+        at = whole.end();
         // Read in `comments`, where a string is still text: an operand is
         // code, or a whole string literal - blank in `code`, and not opened
         // by the closing quote of another - whose items `string_items` counts.
@@ -2420,8 +2431,7 @@ pub fn check(
         // The right operand is everything to the right of the operator, so it
         // has to end here for its length to be the one counted: `4 5,6` is
         // three items, not two. Same test as QB018's.
-        if negative || exponent || !boundary(code, whole.start()) || !operand_ends(code, comments, whole.end())
-        {
+        if negative || exponent || !operand_ends(code, comments, whole.end()) {
             continue;
         }
         // `` `dd`del`div`dfn `` is one symbol vector, not `div` between two:
@@ -4848,7 +4858,10 @@ fn named_values(
     // Two vectors of known, different lengths under an operator that pairs
     // items - QT006 for a name rather than a literal. `,` and `~` take any
     // lengths and are not in the set.
-    let vector = r"-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?[A-Za-z0-9.]*)+|(?:`[A-Za-z0-9_.]*){2,}|\([^()]*;[^()]*\)";
+    // A time's colon and a one-token boolean or byte vector as in the
+    // literal rule: KDB-X `a:1 2 3; a+12:00 13:00`, `a+10b` and `a+0x0102`
+    // are 'length (#2899, #2900).
+    let vector = r"-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?(?:[A-Za-z0-9.]|:\d)*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?(?:[A-Za-z0-9.]|:\d)*)+|[01]{2,}b|0x(?:[0-9a-fA-F]{2}){2,}|(?:`[A-Za-z0-9_.]*){2,}|\([^()]*;[^()]*\)";
     // The statement's blanks around the operator: `bump:v+` and then a
     // column-0 `1 2` are two statements (#742).
     let pair = re_built!(&format!(
@@ -4889,11 +4902,13 @@ fn named_values(
         let negative = op.as_str() == "-"
             && code[..op.start()].ends_with(char::is_whitespace)
             && re!(r"^\.?\d").is_match(&code[op.end()..]);
-        if !named
-            || negative
-            || !boundary(code, l.start())
-            || !operand_ends(code, comments, r.end())
-        {
+        // A match that starts inside a name is no operand, and the one
+        // after its colon may be: `a1:12:00 13:00+a`.
+        if !boundary(code, l.start()) {
+            at = l.start() + 1;
+            continue;
+        }
+        if !named || negative || !operand_ends(code, comments, r.end()) {
             continue;
         }
         if let (Some(a), Some(b)) = (length(l.as_str(), l.start()), length(r.as_str(), r.start()))
