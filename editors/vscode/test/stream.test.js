@@ -497,3 +497,36 @@ test("on a direct process, Stream Tickerplant Table refuses before it asks anyth
   assert.deepStrictEqual(panels, []);
   assert.deepStrictEqual(streams.state(), []);
 });
+
+// A connect script that blocks held Stream Table's connection apart for as
+// long as it ran: Abort said no query ran, Disconnect that nothing was
+// connected, and nothing stopped it (#2567).
+test("Abort, Disconnect and Cancel stop a connection apart that waits in its connect script", async (t) => {
+  const { fakeQ, SILENT } = require("./fakeq.js");
+  const vscode = require("vscode");
+  const { SUBSCRIBE } = require("../out/stream.js");
+  // The connect script is never answered.
+  const q = await fakeQ((m) => (Array.isArray(m) && m[0] === SUBSCRIBE ? ["trade", ["time", "sym", "px"]] : JSON.stringify(m).includes("blocks") ? SILENT : null));
+  t.after(() => q.close());
+  await setUp(t, [{ label: "tp", host: "127.0.0.1", port: q.port, tags: [], init: "blocks[]" }]);
+  stub.config.user["tickerplant.stream.enable"] = true;
+  const ended = async (stop) => {
+    const started = Date.now();
+    const streaming = stub.commands.get(STREAM_COMMANDS.start)("tp", "trade");
+    await sleep(300);
+    await stop();
+    await streaming;
+    return Date.now() - started;
+  };
+  assert.ok((await ended(() => stub.commands.get("q-lint.abortQuery")())) < 2000);
+  assert.ok(stub.messages.some(([, m]) => m === "q-lint: stopped the connect script of tp on a connection of its own."), JSON.stringify(stub.messages));
+  stub.messages.length = 0;
+  assert.ok((await ended(() => stub.commands.get("q-lint.disconnectProcess")())) < 2000);
+  assert.ok(stub.messages.some(([, m]) => m === "q-lint: stopped the connect script of tp on a connection of its own."), JSON.stringify(stub.messages));
+  // The progress's Cancel.
+  const progress = vscode.window.withProgress;
+  t.after(() => (vscode.window.withProgress = progress));
+  let cancel;
+  vscode.window.withProgress = async (options, task) => (options.cancellable ? task({ report() {} }, { isCancellationRequested: false, onCancellationRequested: (f) => (cancel = f) }) : progress(options, task));
+  assert.ok((await ended(() => cancel())) < 2000);
+});

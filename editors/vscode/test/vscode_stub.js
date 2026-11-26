@@ -248,6 +248,7 @@ const vscode = new Proxy(
     TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
     ConfigurationTarget: { Global: 1, Workspace: 2, WorkspaceFolder: 3 },
     StatusBarAlignment: { Left: 1, Right: 2 },
+    ProgressLocation: { SourceControl: 1, Window: 10, Notification: 15 },
     CompletionItemKind: new Proxy({}, { get: (_t, k) => String(k) }),
     window,
     workspace,
